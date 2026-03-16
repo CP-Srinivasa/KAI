@@ -1,0 +1,268 @@
+# ─────────────────────────────────────────────
+# Watchlists — AI Analyst Trading Bot
+# ─────────────────────────────────────────────
+# Format:
+#   symbol/name: primary identifier (uppercase for tickers)
+#   aliases: list of alternative names / spellings used in news text
+#   tags: thematic labels for grouping and thematic mapping
+
+crypto:
+  - symbol: BTC
+    name: Bitcoin
+    aliases: [bitcoin, "₿", XBT, "btc"]
+    tags: [store_of_value, layer1, major, halving]
+
+  - symbol: ETH
+    name: Ethereum
+    aliases: [ethereum, ether, "eth"]
+    tags: [layer1, smart_contracts, defi, major]
+
+  - symbol: SOL
+    name: Solana
+    aliases: [solana, "sol"]
+    tags: [layer1, high_performance]
+
+  - symbol: BNB
+    name: BNB
+    aliases: [binance coin, bnb, "BNB chain"]
+    tags: [exchange_token, defi, cex]
+
+  - symbol: XRP
+    name: XRP
+    aliases: [ripple, xrp, "ripple labs"]
+    tags: [payments, legal_risk, remittance]
+
+  - symbol: ADA
+    name: Cardano
+    aliases: [cardano, ada]
+    tags: [layer1, academic]
+
+  - symbol: AVAX
+    name: Avalanche
+    aliases: [avalanche, avax]
+    tags: [layer1, defi]
+
+  - symbol: LINK
+    name: Chainlink
+    aliases: [chainlink, link]
+    tags: [oracle, defi, infrastructure]
+
+  - symbol: DOT
+    name: Polkadot
+    aliases: [polkadot, dot]
+    tags: [layer0, interoperability, parachain]
+
+  - symbol: MATIC
+    name: Polygon
+    aliases: [polygon, matic, "polygon matic"]
+    tags: [layer2, ethereum, scaling]
+
+  - symbol: DOGE
+    name: Dogecoin
+    aliases: [dogecoin, doge]
+    tags: [meme, speculative]
+
+  - symbol: USDT
+    name: Tether
+    aliases: [tether, usdt, "tether usd"]
+    tags: [stablecoin, liquidity_risk]
+
+  - symbol: USDC
+    name: USD Coin
+    aliases: [usdc, "usd coin", circle]
+    tags: [stablecoin, regulated]
+
+equities:
+  - symbol: MSTR
+    name: MicroStrategy
+    aliases: [microstrategy, "micro strategy"]
+    tags: [bitcoin_proxy, btc_holdings, corporate_bitcoin]
+
+  - symbol: COIN
+    name: Coinbase
+    aliases: [coinbase, "coinbase global"]
+    tags: [exchange, crypto_proxy, regulated]
+
+  - symbol: MARA
+    name: Marathon Digital
+    aliases: [marathon digital, "mara holdings", "marathon holdings"]
+    tags: [bitcoin_mining, btc_proxy, miner]
+
+  - symbol: RIOT
+    name: Riot Platforms
+    aliases: [riot platforms, riot blockchain, riot]
+    tags: [bitcoin_mining, btc_proxy, miner]
+
+  - symbol: NVDA
+    name: NVIDIA
+    aliases: [nvidia, nvda]
+    tags: [ai, semiconductors, gpu, data_center]
+
+  - symbol: HOOD
+    name: Robinhood
+    aliases: [robinhood, "robinhood markets"]
+    tags: [retail_trading, crypto_proxy, brokerage]
+
+  - symbol: SQ
+    name: Block (Square)
+    aliases: [block, square, "block inc", "jack dorsey"]
+    tags: [bitcoin_proxy, payments, fintech]
+
+  - symbol: PYPL
+    name: PayPal
+    aliases: [paypal]
+    tags: [payments, fintech, crypto_integration]
+
+etfs:
+  - symbol: IBIT
+    name: iShares Bitcoin Trust
+    aliases: [ibit, "blackrock bitcoin etf", "ishares bitcoin", "blackrock btc"]
+    tags: [bitcoin_etf, institutional, blackrock]
+
+  - symbol: FBTC
+    name: Fidelity Wise Origin Bitcoin Fund
+    aliases: [fbtc, "fidelity bitcoin etf", "fidelity btc"]
+    tags: [bitcoin_etf, institutional, fidelity]
+
+  - symbol: GBTC
+    name: Grayscale Bitcoin Trust
+    aliases: [gbtc, "grayscale bitcoin", grayscale, "grayscale btc"]
+    tags: [bitcoin_etf, institutional, grayscale]
+
+  - symbol: BITO
+    name: ProShares Bitcoin Strategy ETF
+    aliases: [bito, "proshares bitcoin"]
+    tags: [bitcoin_futures_etf, institutional]
+
+  - symbol: ARKW
+    name: ARK Next Generation Internet ETF
+    aliases: [arkw, "ark invest", "cathie wood etf"]
+    tags: [innovation_etf, crypto_exposure, ark]
+
+persons:
+  - name: Satoshi Nakamoto
+    aliases: [satoshi, "satoshi nakamoto"]
+    tags: [bitcoin, founder, anonymous]
+
+  - name: Vitalik Buterin
+    aliases: [vitalik, "vitalik buterin"]
+    tags: [ethereum, founder, developer]
+
+  - name: Michael Saylor
+    aliases: [saylor, "michael saylor", "saylor btc"]
+    tags: [bitcoin, microstrategy, whale, corporate_bitcoin]
+
+  - name: Gary Gensler
+    aliases: [gensler, "gary gensler", "sec chair"]
+    tags: [sec, regulation, crypto_risk]
+
+  - name: Cathie Wood
+    aliases: ["cathie wood", cathie, "ark invest ceo"]
+    tags: [institutional, bitcoin_bull, ark]
+
+  - name: Brian Armstrong
+    aliases: ["brian armstrong", "armstrong coinbase"]
+    tags: [coinbase, exchange, ceo]
+
+  - name: CZ
+    aliases: [cz, "changpeng zhao", "cz binance"]
+    tags: [binance, exchange, ceo]
+
+  - name: Elizabeth Warren
+    aliases: [warren, "elizabeth warren", "senator warren"]
+    tags: [regulation, crypto_risk, politics]
+
+  - name: Jerome Powell
+    aliases: [powell, "jerome powell", "fed chair", "powell fed"]
+    tags: [fed, macro, monetary_policy]
+
+  - name: Sam Bankman-Fried
+    aliases: [sbf, "sam bankman-fried", "sam bankman fried", ftx]
+    tags: [ftx, fraud, legal, risk]
+
+topics:
+  - name: Bitcoin ETF
+    aliases: ["bitcoin etf", "spot etf", "btc etf", "etf approval", "spot bitcoin etf"]
+    tags: [institutional, regulatory, bitcoin]
+
+  - name: DeFi
+    aliases: [defi, "decentralized finance", "decentralised finance", "yield farming", "liquidity pool"]
+    tags: [ethereum, protocol, smart_contracts]
+
+  - name: Regulation
+    aliases: [regulation, regulatory, sec, cftc, compliance, ban, legislation, "crypto law",
+              "crypto ban", "financial regulation"]
+    tags: [risk, legal, macro]
+
+  - name: Halving
+    aliases: [halving, halvening, "bitcoin halving", "btc halving", "block reward"]
+    tags: [bitcoin, supply, bullish_catalyst]
+
+  - name: Stablecoin
+    aliases: [stablecoin, usdt, usdc, tether, depeg, "stablecoin collapse"]
+    tags: [risk, liquidity, systemic]
+
+  - name: FED
+    aliases: [fed, "federal reserve", "interest rate", "rate hike", "rate cut",
+              fomc, powell, "monetary policy", "quantitative tightening", qt, qe]
+    tags: [macro, monetary_policy, risk]
+
+  - name: Layer2
+    aliases: ["layer 2", layer2, l2, rollup, "optimistic rollup", zk, "zk rollup",
+              lightning, "lightning network", arbitrum, optimism, "base chain"]
+    tags: [ethereum, scaling, tech_upgrade]
+
+  - name: AI
+    aliases: ["artificial intelligence", ai, "machine learning", llm, gpt, chatgpt,
+              openai, anthropic, "ai tokens"]
+    tags: [tech, macro, innovation]
+
+  - name: Hack
+    aliases: [hack, exploit, hacked, "rug pull", "exit scam", breach, "smart contract exploit"]
+    tags: [security, risk, bearish]
+
+  - name: Institutional
+    aliases: [institutional, "hedge fund", blackrock, fidelity, "wall street", "institutional adoption",
+              etf, "institutional investor"]
+    tags: [adoption, bullish_catalyst, mainstream]
+
+domains:
+  - domain: coindesk.com
+    credibility: 0.85
+    tags: [crypto_news, primary]
+
+  - domain: cointelegraph.com
+    credibility: 0.80
+    tags: [crypto_news, primary]
+
+  - domain: bloomberg.com
+    credibility: 0.95
+    tags: [finance, premium, macro]
+
+  - domain: reuters.com
+    credibility: 0.95
+    tags: [finance, wire, macro]
+
+  - domain: wsj.com
+    credibility: 0.93
+    tags: [finance, premium, macro]
+
+  - domain: theblock.co
+    credibility: 0.83
+    tags: [crypto_news, institutional]
+
+  - domain: decrypt.co
+    credibility: 0.78
+    tags: [crypto_news, retail]
+
+  - domain: bitcoinmagazine.com
+    credibility: 0.77
+    tags: [bitcoin, news]
+
+  - domain: ft.com
+    credibility: 0.92
+    tags: [finance, premium, macro]
+
+  - domain: sec.gov
+    credibility: 1.0
+    tags: [regulatory, official, primary_source]

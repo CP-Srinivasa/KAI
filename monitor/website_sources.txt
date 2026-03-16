@@ -1,0 +1,22 @@
+# ============================================================
+# Website / News Domain Sources
+# Format: domain|name|type|language|category|status
+# ============================================================
+cointelegraph.com|CoinTelegraph|news_website|en|crypto|active
+tradingview.com|TradingView|market_data_website|en|trading|active
+btc-echo.de|BTC-Echo|news_website|de|crypto|active
+beincrypto.com|BeInCrypto|news_website|en|crypto|active
+coinmarketcap.com|CoinMarketCap|market_data_website|en|crypto|active
+coin.dance|Coin Dance|reference_website|en|bitcoin|active
+manager-magazin.de|Manager Magazin|news_website|de|finance|active
+decrypt.co|Decrypt|news_website|en|crypto|active
+bankless.com|Bankless|news_website|en|crypto_defi|active
+theblock.co|The Block|news_website|en|crypto|active
+bitcoinmagazine.com|Bitcoin Magazine|news_website|en|bitcoin|active
+blockworks.co|Blockworks|news_website|en|crypto|active
+coinbureau.com|Coin Bureau|review_website|en|crypto|active
+thedefiant.io|The Defiant|news_website|en|defi|active
+ft.com|Financial Times|news_website|en|finance|active
+a16zcrypto.com|a16z Crypto|research_website|en|crypto_vc|active
+coinledger.io|CoinLedger|tools_website|en|crypto_tax|reference_only
+coinbase.com|Coinbase Learn|educational_website|en|crypto|reference_only

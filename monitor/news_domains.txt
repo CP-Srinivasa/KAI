@@ -1,0 +1,23 @@
+# ============================================================
+# Trusted News Domains for Credibility Scoring
+# Format: domain|credibility_score|category|language
+# ============================================================
+reuters.com|0.98|finance_news|en
+bloomberg.com|0.97|finance_news|en
+ft.com|0.96|finance_news|en
+wsj.com|0.95|finance_news|en
+coindesk.com|0.87|crypto_news|en
+cointelegraph.com|0.82|crypto_news|en
+theblock.co|0.85|crypto_news|en
+blockworks.co|0.83|crypto_news|en
+bitcoinmagazine.com|0.80|bitcoin_news|en
+decrypt.co|0.79|crypto_news|en
+beincrypto.com|0.72|crypto_news|en
+btc-echo.de|0.78|crypto_news|de
+manager-magazin.de|0.85|finance_news|de
+handelsblatt.com|0.88|finance_news|de
+spiegel.de|0.85|general_news|de
+bankless.com|0.75|crypto_defi_news|en
+thedefiant.io|0.74|defi_news|en
+coinbureau.com|0.70|crypto_review|en
+a16zcrypto.com|0.82|crypto_research|en

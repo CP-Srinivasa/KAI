@@ -1,0 +1,31 @@
+# ============================================================
+# Social Media Account Watchlist
+# Format: platform|handle|name|category
+# ============================================================
+twitter|@ElonMusk|Elon Musk|influencer
+twitter|@APompliano|Anthony Pompliano|crypto_influencer
+twitter|@saylor|Michael Saylor|bitcoin_maxi
+twitter|@VitalikButerin|Vitalik Buterin|ethereum_founder
+twitter|@cz_binance|Changpeng Zhao|exchange_ceo
+twitter|@IOHK_Charles|Charles Hoskinson|cardano_founder
+twitter|@aantonop|Andreas M. Antonopoulos|bitcoin_educator
+twitter|@PeterMcCormack|Peter McCormack|podcaster
+twitter|@Girlgone_crypto|Lea Thompson|crypto_influencer
+twitter|@CryptoJebb|Crypto Jebb|crypto_influencer
+twitter|@Natbrunell|Natalie Brunell|crypto_journalist
+twitter|@LayahHeilpern|Layah Heilpern|crypto_journalist
+twitter|@seb3point0|Sebastien Couture|podcaster
+twitter|@crainbf|Brian Fabian Crain|podcaster
+twitter|@tw_tter|Friederike Ernst|crypto_dev
+twitter|@meherroy|Meher Roy|podcaster
+twitter|@felixlts|Felix Lutsch|crypto_analyst
+twitter|@danielhoppmann|Daniel Hoppmann|crypto_analyst
+twitter|@philipp_frohn|Philipp Frohn|crypto_analyst
+twitter|@florian_adomeit|Florian Adomeit|crypto_analyst
+twitter|@julius_nagel|Julius Nagel|crypto_analyst
+twitter|@freshfey|Feyyaz Alingan|crypto_analyst
+twitter|@moeeinvest|Sohejl Shahshahani Far|crypto_analyst
+twitter|@markus_miller|Markus Miller|trading_coach
+twitter|@joemenninger|Joern Menninger|podcaster
+twitter|@sandor_defaime|Sandor Horvath|defi_analyst
+twitter|@stefanviete|Stefan Viete|crypto_analyst

@@ -1,0 +1,42 @@
+# ============================================================
+# Hashtag Monitor List
+# ============================================================
+#bitcoin
+#btc
+#ethereum
+#eth
+#crypto
+#cryptocurrency
+#defi
+#nft
+#blockchain
+#web3
+#altcoin
+#hodl
+#trading
+#cryptotrading
+#bullrun
+#bearmarket
+#halving
+#staking
+#yield
+#dao
+#smartcontract
+#layer2
+#rollup
+#metaverse
+#play2earn
+#krypto
+#kryptowährung
+#kryptomarkt
+#bitcoindeutsch
+#kryptoinvest
+#ElonMusk
+#MichaelSaylor
+#VitalikButerin
+#cz_binance
+#APompliano
+#saylor
+#aantonop
+#IOHK_Charles
+#PeterMcCormack

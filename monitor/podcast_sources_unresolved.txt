@@ -1,0 +1,44 @@
+# ============================================================
+# Podcast Sources - UNRESOLVED
+# Apple Podcasts & Spotify require API resolution
+# ============================================================
+
+# --- Apple Podcasts (requires iTunes Search API) ---
+# https://itunes.apple.com/lookup?id=<ID> to find feedUrl
+apple_podcast_1513814577|https://podcasts.apple.com/de/podcast/bitcoin-verstehen/id1513814577|Bitcoin Verstehen|requires_api
+apple_podcast_1617631427|https://podcasts.apple.com/ae/podcast/alles-coin-nichts-muss/id1617631427|Alles Coin nichts muss|requires_api
+apple_podcast_1345084187|https://podcasts.apple.com/us/podcast/krypto-podcast-bitcoin-nfts-web3-defi-und-metaverse/id1345084187|Krypto Podcast|requires_api
+apple_podcast_1761597435|https://podcasts.apple.com/no/podcast/frei-durch-krypto-podcast/id1761597435|Frei durch Krypto|requires_api
+apple_podcast_1638735728|https://podcasts.apple.com/de/podcast/bitcoin2go/id1638735728|Bitcoin2Go|requires_api
+apple_podcast_1485248511|https://podcasts.apple.com/gh/podcast/blockchain-germany/id1485248511|Blockchain Germany|requires_api
+apple_podcast_1713548797|https://podcasts.apple.com/no/podcast/web3welt/id1713548797|Web3Welt|requires_api
+apple_podcast_1261133600|https://podcasts.apple.com/us/podcast/the-bad-crypto-podcast/id1261133600|The Bad Crypto Podcast|requires_api
+apple_podcast_1415720320|https://podcasts.apple.com/us/podcast/stephan-livera-podcast/id1415720320|Stephan Livera Podcast|requires_api
+
+# --- Spotify Shows (no public RSS) ---
+spotify_show_7sDXM8BlxsUqzL2IqmLqwE|https://open.spotify.com/show/7sDXM8BlxsUqzL2IqmLqwE|Unknown|requires_api
+spotify_show_41TNnXSv5ExcQSzEGLlGhy|https://open.spotify.com/show/41TNnXSv5ExcQSzEGLlGhy|Unknown|requires_api
+spotify_show_41TtLE0AKsokP5XBbSoLwe|https://open.spotify.com/show/41TtLE0AKsokP5XBbSoLwe|Unknown|requires_api
+spotify_show_1cJrrfGY1SKBIRn5noKSAf|https://open.spotify.com/show/1cJrrfGY1SKBIRn5noKSAf|Unknown|requires_api
+spotify_show_0bn8XQHWGxXULjhp1jRmOJ|https://open.spotify.com/show/0bn8XQHWGxXULjhp1jRmOJ|Unknown|requires_api
+spotify_show_2aYhtPsnaQAXJG3q3936u4|https://open.spotify.com/show/2aYhtPsnaQAXJG3q3936u4|Unknown|requires_api
+spotify_show_2jXIy9OQZh2gI65OwfvaPq|https://open.spotify.com/show/2jXIy9OQZh2gI65OwfvaPq|Unknown|requires_api
+spotify_show_3ggY18n7dqoxPGljBdRFrj|https://open.spotify.com/show/3ggY18n7dqoxPGljBdRFrj|Unknown|requires_api
+spotify_show_34UHUOMlsMBf85aNOBhztV|https://open.spotify.com/show/34UHUOMlsMBf85aNOBhztV|Unknown|requires_api
+spotify_show_6vaEao0SXlarPUUBSdvb4T|https://open.spotify.com/show/6vaEao0SXlarPUUBSdvb4T|Unknown|requires_api
+
+# --- Spotify for Podcasters (may have Anchor RSS) ---
+anchor_teachmedefi|https://podcasters.spotify.com/pod/show/teachmedefi|TeachMeDeFi|rss_resolution_needed
+
+# --- Website Landing Pages ---
+btc_echo_podcasts|https://www.btc-echo.de/podcasts/|BTC-Echo Podcasts|manual_resolution
+krypto_x|https://www.krypto-x.de/|Krypto-X|manual_resolution
+cryptonerds_de|https://www.cryptonerds.com/de/|Cryptonerds DE|manual_resolution
+
+# --- Reference / Educational pages (NOT podcasts) ---
+a16z_crypto_readings|https://a16zcrypto.com/posts/article/crypto-readings-resources/|a16z Crypto Readings|disabled_not_podcast
+coinledger_rainbow|https://coinledger.io/bitcoin-rainbow-chart|CoinLedger Rainbow Chart|disabled_not_podcast
+coinledger_tax|https://coinledger.io/guides/crypto-tax|CoinLedger Tax Guide|disabled_not_podcast
+coinbase_learn|https://www.coinbase.com/learn|Coinbase Learn|disabled_not_podcast
+coinledger_calc|https://coinledger.io/crypto-profit-calculator|CoinLedger Calculator|disabled_not_podcast
+tradingview_main|https://www.tradingview.com|TradingView|disabled_not_podcast

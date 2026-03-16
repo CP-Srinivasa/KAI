@@ -1,0 +1,41 @@
+# ============================================================
+# Podcast Sources - Raw Input (unclassified)
+# Resolver: app/ingestion/resolvers/podcast_resolver.py
+# ============================================================
+
+# --- Block A: Reference/Educational pages (NOT podcast feeds) ---
+https://a16zcrypto.com/posts/article/crypto-readings-resources/
+https://coinledger.io/bitcoin-rainbow-chart
+https://coinledger.io/guides/crypto-tax
+https://www.coinbase.com/learn
+https://coinledger.io/crypto-profit-calculator
+https://www.tradingview.com
+
+# --- Block B: Podcast sources (mixed types — see resolved/unresolved files) ---
+https://epicenter.tv/episodes/
+https://podcasts.apple.com/de/podcast/bitcoin-verstehen/id1513814577
+https://www.btc-echo.de/podcasts/
+https://www.wiwo.de/podcast/boersenwoche/
+https://podcasts.apple.com/ae/podcast/alles-coin-nichts-muss/id1617631427
+https://podcasts.apple.com/us/podcast/krypto-podcast-bitcoin-nfts-web3-defi-und-metaverse/id1345084187
+https://podcasters.spotify.com/pod/show/teachmedefi
+https://www.krypto-x.de/
+https://saschahuber.podigee.io/
+https://www.cryptonerds.com/de/
+https://podcasts.apple.com/no/podcast/frei-durch-krypto-podcast/id1761597435
+https://podcasts.apple.com/de/podcast/bitcoin2go-bitcoin-kryptow%C3%A4hrungen-und-finanzen-mit/id1638735728
+https://podcasts.apple.com/gh/podcast/blockchain-germany-startups-and-venture-capital/id1485248511
+https://podcasts.apple.com/no/podcast/web3welt-der-krypto-podcast-f%C3%BCr-die-reale-welt-mit/id1713548797
+https://open.spotify.com/show/7sDXM8BlxsUqzL2IqmLqwE
+https://open.spotify.com/show/41TNnXSv5ExcQSzEGLlGhy
+https://open.spotify.com/show/41TtLE0AKsokP5XBbSoLwe
+https://open.spotify.com/show/1cJrrfGY1SKBIRn5noKSAf
+https://cointelegraph.com/podcasts/hashing-it-out
+https://podcasts.apple.com/us/podcast/the-bad-crypto-podcast/id1261133600
+https://open.spotify.com/show/0bn8XQHWGxXULjhp1jRmOJ
+https://podcasts.apple.com/us/podcast/stephan-livera-podcast/id1415720320
+https://open.spotify.com/show/2aYhtPsnaQAXJG3q3936u4
+https://open.spotify.com/show/2jXIy9OQZh2gI65OwfvaPq
+https://open.spotify.com/show/3ggY18n7dqoxPGljBdRFrj
+https://open.spotify.com/show/34UHUOMlsMBf85aNOBhztV
+https://open.spotify.com/show/6vaEao0SXlarPUUBSdvb4T

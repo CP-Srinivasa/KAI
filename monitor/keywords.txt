@@ -1,0 +1,350 @@
+# ============================================================
+# AI Analyst Trading Bot - Keyword Monitor List
+# Format: one keyword/phrase per line, # = comment
+# Aliases defined in entity_aliases.yml
+# ============================================================
+
+# --- Crypto Core ---
+Air-Gapping
+Airdrop
+Altcoin
+Anti-Money Laundering
+AML
+Annual Percentage Rate
+APR
+Annual Percentage Yield
+APY
+Arbitrage
+Application Specific Integrated Circuit
+ASIC
+Asset Backed Tokens
+All Time High
+ATH
+All Time Low
+ATL
+Atomic Swap
+Audit
+Baking
+Beacon Chain
+Bitcoin
+BTC
+Black Swan
+Blase
+Block
+Block Explorer
+Block Header
+Block Reward
+Blockchain
+Bot
+Bug Bounty
+Brain Wallet
+BUIDL
+Burn
+Bytecode
+Central Bank Digital Currency
+CBDC
+Client
+Coin
+Coinbase
+Cold Wallet
+Collateral
+Confirmation
+Consensus
+Contract
+Cross-Chain
+Custody
+DAO
+dApp
+Decentralized Finance
+DeFi
+Dezentralisierung
+Deposit
+Dezentrale Exchange
+DEX
+Diamond Hands
+Difficulty
+Digitaler Wertgegenstand
+Digitale Signatur
+Dip
+Discord
+Distributed Ledger Technology
+Diversifikation
+Double Spending
+Delegated Proof-of-Stake
+dPoS
+Dump
+Do Your Own Research
+DYOR
+Enterprise Ethereum Alliance
+EEA
+ELI5
+ENS
+Entropie
+Epoche
+ERC20
+ERC721
+Escrow
+Ethereum
+ETH
+Ether
+Ethereum Virtual Machine
+EVM
+Faucet
+Fiat Währung
+Finney
+First In First Out
+FiFo
+Flippening
+Fear of missing out
+FOMO
+Fork
+FUD
+Fungible Token
+Gas
+Gaslimit
+Gaspreis
+Genesis Block
+GitHub
+Governance Token
+GPU
+Gwei
+Halving
+Hard Fork
+Hardware Wallet
+Hash
+Hash Rate
+HODL
+Hot Wallet
+Hyperledger
+Identicon
+Immutability
+Infura
+Intermediary
+ICO
+Interne Transaktion
+Interplanetares File System
+IPFS
+Keystore Datei
+Kryptowährung
+Cryptocurrency
+Know Your Customer
+KYC
+Layer 2
+Ledger
+Leverage
+Liquidität
+Liquidity Pool
+Liquidity Provider Tokens
+LP Tokens
+Main Net
+Marktkapitalisierung
+Market Cap
+Max Supply
+Memecoin
+Merkle Tree
+MetaMask
+Micropayment
+Microtransaction
+Mining
+Mining Pool
+Mining Rig
+Mnemonic Seed
+Moon
+Multi Signature
+MultiSig
+Node
+Full Node
+Light Node
+Non-fungible Token
+NFT
+Nonce
+OpenSea
+Optimistic Rollup
+Oracle
+Orphan
+Over-the-Counter
+OTC
+Peer-to-Peer
+P2P
+Paper Wallet
+Plasma
+Play-to-Earn
+Private Blockchain
+Permissioned Ledger
+Private Key
+Privater Schlüssel
+PoA
+Ponzi Scheme
+PoS
+PoW
+Pre-Mining
+Pre-Sale
+Protokoll
+Public Blockchain
+Public Key
+Return on Investment
+ROI
+Rollups
+Satoshi
+Satoshi Nakamoto
+Scam
+Second Layer Solutions
+Secure Element
+Security Token
+Seed Phrase
+Segregated Witness
+SegWit
+Sharding
+SHA-256
+Shill
+Shitcoin
+Sidechain
+Skalierbarkeit
+Slashing
+Smart Contract
+Silk Road
+Soft Cap
+Soft Fork
+Solidity
+Stablecoin
+Staking
+State Channel
+Sybil Attacke
+Testnet
+Token
+Token Issuance
+Tokenisierung
+Transaktion
+Transaktionsgebühr
+Unbanked
+Unconfirmed
+Unstoppable Domains
+Utility Token
+Validator
+Vaporware
+Verschlüsselung
+Volatilität
+Wallet
+Wal
+Web3
+Wei
+Whitepaper
+Wrapped Token
+Yield Farming
+Zero Knowledge Proof
+zk-SNARK
+51% Attacke
+
+# --- Traditional Finance ---
+Aktien
+Ask
+Bid
+Call
+Put
+Börse
+NYSE
+New York Stock Exchange
+DAX
+Deutscher Aktienindex
+Börsenaufsicht
+Chartanalyse
+Fibonacci Retracements
+Gann Linien
+Indikatoren
+Pivot
+CFDs
+Earnings
+ETFs
+Fundamentalanalyse
+wirtschaftliche Faktoren
+politische Faktoren
+Zinssätze
+Beschäftigungsdaten
+Inflation
+Industriedaten
+industrielle Produktion
+Verbraucherpreise
+CPI
+Zinsentscheide
+Geldpolitik
+Handelsmärkte
+Aktienmarkt
+Devisenmarkt
+Forex
+Währungen
+Rohstoffmarkt
+Anleihenmarkt
+Derivatenmärkte
+Hexensabbat
+Long
+Short
+Stop Order
+Market Order
+Limit Order
+Stop Limit Order
+Trailing Stop Order
+Spread
+Linienchart
+Balkenchart
+Kerzenchart
+Candlestick Charts
+Kerzenkörper
+Dochte
+Trading Plan
+Trading Tagebuch
+Trendlinien
+Trendumkehrpunkte
+Widerstandslinie
+Unterstützungslinie
+
+# --- Key People / Influencers ---
+Chris Larsen
+Changpeng Zhao
+CZ
+Tyler Winklevoss
+Cameron Winklevoss
+Matthew Mellon
+Matthew Roszak
+Brock Pierce
+Michael Novogratz
+Brendan Blumer
+Dan Larimer
+Valery Vavilov
+Charles Hoskinson
+Brad Garlinghouse
+Barry Silbert
+Vitalik Buterin
+Tim Draper
+Song Chi-Hyung
+Elon Musk
+Anthony Pompliano
+Pomp
+Michael Saylor
+Andreas M. Antonopoulos
+Lea Thompson
+Crypto Jebb
+Natalie Brunell
+Layah Heilpern
+Bitcoin2Go
+Peter McCormack
+Sebastien Couture
+Brian Fabian Crain
+Friederike Ernst
+Meher Roy
+Felix Lutsch
+Jonas Hofmeister
+Manuel Bassler
+Daniel Hoppmann
+Philipp Frohn
+Florian Adomeit
+Julius Nagel
+Feyyaz Alingan
+Sohejl Shahshahani Far
+Markus Miller
+Sascha Huber
+Eric Heinemann
+Jonny Danner
+Mirco Recksiek
+Joern Menninger
+Sandor Horvath
+Stefan Viete

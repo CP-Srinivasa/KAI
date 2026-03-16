@@ -1,0 +1,16 @@
+# ============================================================
+# Podcast Sources - RESOLVED RSS Feeds
+# Format: source_id|rss_url|title|status
+# ============================================================
+
+# Podigee: pattern {handle}.podigee.io/feed/mp3
+sascha_huber|https://saschahuber.podigee.io/feed/mp3|Sascha Huber Podcast|active
+
+# Epicenter: known RSS
+epicenter_tv|https://epicenter.tv/feed/podcast/|Epicenter Podcast|needs_verification
+
+# WiWo Börsenwoche
+wiwo_boersenwoche|https://www.wiwo.de/podcast/boersenwoche/rss|WirtschaftsWoche Börsenwoche|needs_verification
+
+# CoinTelegraph Hashing It Out
+cointelegraph_hashing|https://feeds.buzzsprout.com/1275785.rss|Hashing It Out|needs_verification

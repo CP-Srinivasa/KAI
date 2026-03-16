@@ -1,0 +1,27 @@
+# ============================================================
+# YouTube Channel Monitor List (deduplicated)
+# Resolver: app/ingestion/resolvers/youtube_resolver.py
+# ============================================================
+https://www.youtube.com/@Bankless
+https://www.youtube.com/@CoinBureau
+https://www.youtube.com/@CryptoCasey
+https://www.youtube.com/@DigitalAssetNews
+https://www.youtube.com/@AnthonyPompliano
+https://www.youtube.com/@UnchainedCrypto
+https://www.youtube.com/@davincij15
+https://www.youtube.com/@tonevays
+https://www.youtube.com/@carpenoctom
+https://www.youtube.com/@MMCryptoTube
+https://www.youtube.com/@KryptoReport
+https://www.youtube.com/@ORACLEFASTMONEYTRADER
+https://www.youtube.com/@CryptoDad
+https://www.youtube.com/@TargetHit
+https://www.youtube.com/@TradermacherDe
+https://www.youtube.com/c/JacobCryptoBury
+https://www.youtube.com/@99Bitcoins
+https://www.youtube.com/@TodayTrader
+https://www.youtube.com/@TheBitBoyX
+https://www.youtube.com/@intothecryptoverse
+https://www.youtube.com/@AltcoinDaily
+https://www.youtube.com/@CryptoBanterGroup
+https://www.youtube.com/@CryptosRUs

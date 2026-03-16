@@ -1,0 +1,58 @@
+# ============================================================
+# Entity Alias Groups
+# Format: canonical_name, aliases list, social handles, category
+# ============================================================
+
+entity_aliases:
+  - canonical: "Anthony Pompliano"
+    aliases: ["Pomp", "Anthony Pompliano"]
+    handles:
+      twitter: "@APompliano"
+    category: crypto_influencer
+
+  - canonical: "Michael Saylor"
+    aliases: ["Michael J. Saylor", "Saylor"]
+    handles:
+      twitter: "@saylor"
+    category: bitcoin_maxi
+
+  - canonical: "Changpeng Zhao"
+    aliases: ["CZ", "CZ Binance", "Changpeng Zhao"]
+    handles:
+      twitter: "@cz_binance"
+    category: exchange_ceo
+
+  - canonical: "Vitalik Buterin"
+    aliases: ["Vitalik", "VB"]
+    handles:
+      twitter: "@VitalikButerin"
+    category: ethereum_founder
+
+  - canonical: "Charles Hoskinson"
+    aliases: ["Charles Hoskinson", "CH"]
+    handles:
+      twitter: "@IOHK_Charles"
+    category: cardano_founder
+
+  - canonical: "Andreas M. Antonopoulos"
+    aliases: ["Andreas Antonopoulos", "aantonop"]
+    handles:
+      twitter: "@aantonop"
+    category: bitcoin_educator
+
+  - canonical: "Elon Musk"
+    aliases: ["Elon", "ElonMusk"]
+    handles:
+      twitter: "@ElonMusk"
+    category: tech_influencer
+
+  - canonical: "Peter McCormack"
+    aliases: ["Peter McCormack"]
+    handles:
+      twitter: "@PeterMcCormack"
+    category: podcaster
+
+  - canonical: "Sascha Huber"
+    aliases: ["Sascha Huber"]
+    handles: {}
+    category: crypto_analyst_de
