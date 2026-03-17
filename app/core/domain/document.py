@@ -7,15 +7,51 @@ from uuid import UUID, uuid4
 
 from pydantic import BaseModel, Field
 
-from app.core.enums import SentimentLabel, SortBy, SourceType
+from app.core.enums import DocumentType, SentimentLabel, SortBy, SourceType
+
+# ── Media-type specific metadata ─────────────────────────────────────────────
+
+
+class YouTubeVideoMeta(BaseModel):
+    """Metadata specific to YouTube videos."""
+
+    video_id: str | None = None
+    channel_id: str | None = None
+    channel_name: str | None = None
+    duration_seconds: int | None = None
+    view_count: int | None = None
+    like_count: int | None = None
+    thumbnail_url: str | None = None
+
+
+class PodcastEpisodeMeta(BaseModel):
+    """Metadata specific to podcast episodes."""
+
+    podcast_title: str | None = None
+    episode_number: int | None = None
+    season: int | None = None
+    audio_url: str | None = None
+    duration_seconds: int | None = None
+    feed_url: str | None = None
+
+
+# ── Unified document model ────────────────────────────────────────────────────
 
 
 class CanonicalDocument(BaseModel):
+    """Unified document representation for all source types.
+
+    Used for news articles, podcast episodes, YouTube videos, and web pages.
+    Media-specific details live in youtube_meta / podcast_meta sub-models.
+    All other analysis fields (sentiment, scores, tags) are shared.
+    """
+
     id: UUID = Field(default_factory=uuid4)
     external_id: str | None = None
     source_id: str | None = None
     source_name: str | None = None
     source_type: SourceType | None = None
+    document_type: DocumentType = DocumentType.UNKNOWN
     provider: str | None = None
 
     url: str
@@ -34,6 +70,7 @@ class CanonicalDocument(BaseModel):
     cleaned_text: str | None = None
     summary: str | None = None
 
+    # Entity extraction
     entities: list[str] = Field(default_factory=list)
     tickers: list[str] = Field(default_factory=list)
     crypto_assets: list[str] = Field(default_factory=list)
@@ -41,6 +78,7 @@ class CanonicalDocument(BaseModel):
     organizations: list[str] = Field(default_factory=list)
     topics: list[str] = Field(default_factory=list)
 
+    # Analysis scores
     sentiment_label: SentimentLabel | None = None
     sentiment_score: float | None = None
     relevance_score: float | None = None
@@ -49,21 +87,31 @@ class CanonicalDocument(BaseModel):
     novelty_score: float | None = None
     historical_similarity_score: float | None = None
 
+    # Engagement signals
     clicks: int | None = None
     views: int | None = None
     engagement: int | None = None
 
+    # AI-enriched fields
     ai_tags: list[str] = Field(default_factory=list)
     ai_region: str | None = None
     ai_organizations: list[str] = Field(default_factory=list)
     related_events: list[str] = Field(default_factory=list)
 
+    # Media-type specific metadata (only one populated per document)
+    youtube_meta: YouTubeVideoMeta | None = None
+    podcast_meta: PodcastEpisodeMeta | None = None
+
+    # Catch-all for source-specific extras
     metadata: dict[str, Any] = Field(default_factory=dict)
     content_hash: str | None = None
 
     def compute_hash(self) -> str:
         content = f"{self.url}|{self.title}|{self.raw_text or ''}"
         return hashlib.sha256(content.encode()).hexdigest()
+
+
+# ── Query DSL ─────────────────────────────────────────────────────────────────
 
 
 class QuerySpec(BaseModel):
@@ -84,6 +132,7 @@ class QuerySpec(BaseModel):
     categories: list[str] = Field(default_factory=list)
     regions: list[str] = Field(default_factory=list)
     source_types: list[SourceType] = Field(default_factory=list)
+    document_types: list[DocumentType] = Field(default_factory=list)
 
     min_credibility: float | None = None
     min_sentiment_abs: float | None = None

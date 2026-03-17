@@ -3,11 +3,11 @@
 Classifies raw podcast URLs and attempts feed resolution where possible.
 
 Resolution outcomes:
-- RSS/Atom path detected → podcast_feed / active (already a feed)
-- Podigee subdomain      → podcast_feed / active (pattern: {handle}.podigee.io/feed/mp3)
-- Apple Podcasts         → podcast_page / requires_api
-- Spotify show           → podcast_page / requires_api
-- Anything else          → unresolved_source / unresolved
+- RSS/Atom path detected         → podcast_feed / active (already a feed)
+- Podigee subdomain              → podcast_feed / active (pattern: {handle}.podigee.io/feed/mp3)
+- Apple Podcasts                 → podcast_page / requires_api
+- Spotify (open or podcasters)   → podcast_page / requires_api
+- Anything else                  → unresolved_source / unresolved
 """
 
 from __future__ import annotations
@@ -58,12 +58,21 @@ def resolve_podcast_url(raw_url: str) -> PodcastSource:
         )
 
     if result.source_type == SourceType.PODCAST_PAGE:
+        # Apple/Spotify → requires_api; generic landing pages → unresolved
+        if result.status == SourceStatus.REQUIRES_API:
+            return PodcastSource(
+                raw_url=raw_url,
+                source_type=SourceType.PODCAST_PAGE,
+                status=SourceStatus.REQUIRES_API,
+                resolved_url=None,
+                notes=result.notes,
+            )
         return PodcastSource(
             raw_url=raw_url,
-            source_type=SourceType.PODCAST_PAGE,
-            status=SourceStatus.REQUIRES_API,
+            source_type=SourceType.UNRESOLVED_SOURCE,
+            status=SourceStatus.UNRESOLVED,
             resolved_url=None,
-            notes=result.notes,
+            notes=result.notes or "Podcast landing page — no feed URL detected",
         )
 
     return PodcastSource(

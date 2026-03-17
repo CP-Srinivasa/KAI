@@ -54,3 +54,13 @@ class SortBy(StrEnum):
     IMPACT = "impact"
     SENTIMENT = "sentiment"
     CREDIBILITY = "credibility"
+
+
+class DocumentType(StrEnum):
+    ARTICLE = "article"
+    PODCAST_EPISODE = "podcast_episode"
+    YOUTUBE_VIDEO = "youtube_video"
+    SOCIAL_POST = "social_post"
+    RESEARCH_REPORT = "research_report"
+    REFERENCE = "reference"
+    UNKNOWN = "unknown"

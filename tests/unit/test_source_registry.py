@@ -84,6 +84,7 @@ class TestSourceType:
             "rss_feed",
             "website",
             "news_api",
+            "news_domain",
             "youtube_channel",
             "podcast_feed",
             "podcast_page",

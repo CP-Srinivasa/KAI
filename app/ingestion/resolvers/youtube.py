@@ -13,6 +13,9 @@ _PATTERNS: list[tuple[str, re.Pattern[str]]] = [
     ("custom", re.compile(r"youtube\.com/c/([\w-]+)", re.IGNORECASE)),
 ]
 
+# youtu.be short links are video links, not channel links
+_YOUTU_BE_RE = re.compile(r"youtu\.be/([\w-]+)", re.IGNORECASE)
+
 
 @dataclass(frozen=True)
 class YouTubeChannel:
@@ -24,8 +27,25 @@ class YouTubeChannel:
 
 
 def normalize_youtube_url(raw_url: str) -> YouTubeChannel:
-    """Normalize a YouTube URL to its canonical form."""
+    """Normalize a YouTube URL to its canonical form.
+
+    Handles: @handle, /channel/, /user/, /c/, and youtu.be short links.
+    youtu.be links are video URLs (not channels) — returned with type 'video_link'.
+    """
     url = raw_url.strip()
+
+    # youtu.be short links point to individual videos, not channels
+    m = _YOUTU_BE_RE.search(url)
+    if m:
+        video_id = m.group(1)
+        return YouTubeChannel(
+            raw_url=url,
+            normalized_url=f"https://www.youtube.com/watch?v={video_id}",
+            handle=video_id,
+            channel_type="video_link",
+            notes="youtu.be short link — video, not a channel",
+        )
+
     for channel_type, pattern in _PATTERNS:
         m = pattern.search(url)
         if m:

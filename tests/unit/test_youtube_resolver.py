@@ -49,6 +49,14 @@ def test_normalize_youtube_url(
     assert ch.handle == expected_handle
 
 
+def test_youtu_be_short_link() -> None:
+    ch = normalize_youtube_url("https://youtu.be/dQw4w9WgXcQ")
+    assert ch.channel_type == "video_link"
+    assert ch.handle == "dQw4w9WgXcQ"
+    assert ch.normalized_url == "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+    assert ch.notes is not None
+
+
 def test_unknown_url_returns_unknown_type() -> None:
     ch = normalize_youtube_url("https://example.com/not-youtube")
     assert ch.channel_type == "unknown"
