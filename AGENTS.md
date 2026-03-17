@@ -208,7 +208,25 @@ docs/            → architecture and module documentation
 
 ---
 
-## 11. Aktueller Stand
+## 11. Branch- und PR-Regeln
+
+**Vollständige Strategie → [.github/BRANCH_STRATEGY.md](./.github/BRANCH_STRATEGY.md)**
+
+| Regel | Wert |
+|---|---|
+| `master` geschützt | Kein direkter Push — nur via PR |
+| Required CI checks | `Lint & Format Check` + `Tests` |
+| PR-Template | Pflicht — alle Abschnitte ausfüllen |
+| Branch-Schema | `<agent>/<phase>/<name>` z.B. `codex/p2/rss-scheduler` |
+| Merge-Strategie | Squash and Merge, Branch danach löschen |
+
+**Branch Protection in GitHub aktivieren:**
+> Settings → Branches → Add rule → `master`
+> ✅ Require PR · ✅ Require status checks (lint + test) · ✅ No bypass
+
+---
+
+## 12. Aktueller Stand
 
 **Phase 1 — Foundation** ✅ abgeschlossen
 **Phase 2 — Ingestion Core** 🔄 nächste Phase
@@ -217,7 +235,7 @@ Vollständige Task-Liste → [TASKLIST.md](./TASKLIST.md)
 
 ---
 
-## 12. Test & Quality Commands
+## 13. Test & Quality Commands
 
 ```bash
 pytest                          # alle Tests
@@ -229,7 +247,7 @@ python -m app.cli.main --help   # CLI
 
 ---
 
-## 13. Pflicht-Referenzdokumente
+## 14. Pflicht-Referenzdokumente
 
 | Dokument | Zweck |
 |---|---|
@@ -237,4 +255,6 @@ python -m app.cli.main --help   # CLI
 | `PROJECT_SPEC.md` | Fachliche Spezifikation aller Features |
 | `TASKLIST.md` | Operativer Task-Plan nach Phase |
 | `AGENT_ROLES.md` | Vollständiges Rollenmodell mit Eskalationspfad |
+| `.github/BRANCH_STRATEGY.md` | Branch-Namenskonvention, PR-Workflow, Commit-Format |
+| `.github/pull_request_template.md` | Pflicht-PR-Template |
 | `app/<modul>/AGENTS.md` | Modul-spezifischer Kontrakt |

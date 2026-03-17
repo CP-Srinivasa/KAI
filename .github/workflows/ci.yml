@@ -2,9 +2,10 @@ name: CI
 
 on:
   push:
-    branches: [main, master, develop]
+    branches: [master]
   pull_request:
-    branches: [main, master, develop]
+    branches: [master]
+    types: [opened, synchronize, reopened]
 
 env:
   PYTHON_VERSION: "3.12"
@@ -30,7 +31,7 @@ jobs:
       postgres:
         image: postgres:16-alpine
         env:
-          POSTGRES_DB: ai_analyst_bot_test
+          POSTGRES_DB: kai_test
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
         ports:
@@ -41,7 +42,7 @@ jobs:
           --health-timeout 5s
           --health-retries 5
     env:
-      DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/ai_analyst_bot_test
+      DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/kai_test
       APP_ENV: testing
       OPENAI_API_KEY: sk-test-key
       TELEGRAM_ENABLED: "false"
@@ -74,3 +75,30 @@ jobs:
           python-version: ${{ env.PYTHON_VERSION }}
       - run: pip install -e ".[dev]" mypy
       - run: mypy app/ --ignore-missing-imports
+
+  pr-check:
+    name: PR Completeness Check
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check PR template fields filled
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          python3 - <<'EOF'
+          import os, sys
+          body = os.environ.get("PR_BODY", "")
+          required = [
+              "Änderungsbericht",
+              "Quality Gates",
+              "Risiken",
+              "Nächste TODOs",
+              "Testbefehl",
+          ]
+          missing = [r for r in required if r not in body]
+          if missing:
+              print(f"❌ PR-Template unvollständig. Fehlende Abschnitte: {missing}")
+              sys.exit(1)
+          print("✅ PR-Template vollständig.")
+          EOF
