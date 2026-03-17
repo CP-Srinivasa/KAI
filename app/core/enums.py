@@ -39,6 +39,14 @@ class MarketScope(StrEnum):
     UNKNOWN = "unknown"
 
 
+class AuthMode(StrEnum):
+    NONE = "none"
+    API_KEY = "api_key"
+    OAUTH = "oauth"
+    BASIC = "basic"
+    MANUAL = "manual"
+
+
 class SortBy(StrEnum):
     PUBLISHED_AT = "published_at"
     RELEVANCE = "relevance"
