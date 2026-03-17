@@ -42,6 +42,11 @@ class BaseAnalysisProvider(ABC):
     def provider_name(self) -> str:
         """Name of the provider (e.g. 'openai', 'anthropic')."""
 
+    @property
+    def model(self) -> str | None:
+        """Model name used by this provider instance (e.g. 'gpt-4o'). Override if applicable."""
+        return None
+
     @abstractmethod
     async def analyze(
         self,
