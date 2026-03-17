@@ -17,6 +17,7 @@ Spam penalty: if spam_probability > 0.7 → priority capped at 3.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
 from app.core.domain.document import AnalysisResult
 
@@ -85,3 +86,23 @@ def is_alert_worthy(result: AnalysisResult, min_priority: int = 7) -> bool:
         return False
     score = compute_priority(result)
     return score.priority >= min_priority
+
+
+def calculate_final_relevance(
+    llm_relevance: float,
+    keyword_hits: list[Any]
+) -> float:
+    """Blend LLM relevance score with keyword hit multipliers.
+
+    If document has strong keyword hits, it boosts the LLM base score.
+    """
+    if not keyword_hits:
+        return llm_relevance
+
+    # Calculate keyword density/weight
+    # Simple approach: each hit adds 0.05, max +0.3 boost
+    boost = min(0.3, len(keyword_hits) * 0.05)
+
+    final_score = llm_relevance + boost
+    return min(1.0, final_score)
+

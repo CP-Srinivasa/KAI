@@ -5,10 +5,42 @@ from typer.testing import CliRunner
 from app.cli import main as cli_main
 from app.cli.main import app
 from app.core.domain.document import CanonicalDocument
+from app.core.enums import SourceStatus, SourceType
 from app.ingestion.base.interfaces import FetchResult
+from app.ingestion.classifier import ClassificationResult
 from app.ingestion.resolvers.rss import RSSResolveResult
+from app.ingestion.rss.service import RSSCollectedFeed
+from app.storage.document_ingest import IngestPersistStats
 
 runner = CliRunner()
+
+
+def _collected_feed(
+    *,
+    url: str,
+    docs: list[CanonicalDocument],
+    resolved_url: str | None = None,
+    is_valid: bool = True,
+    error: str | None = None,
+) -> RSSCollectedFeed:
+    return RSSCollectedFeed(
+        classification=ClassificationResult(SourceType.RSS_FEED, SourceStatus.ACTIVE),
+        resolved_feed=RSSResolveResult(
+            url=url,
+            is_valid=is_valid,
+            resolved_url=resolved_url or url,
+            feed_title="Test Feed" if is_valid else None,
+            entry_count=len(docs),
+            error=error,
+        ),
+        fetch_result=FetchResult(
+            source_id="manual",
+            documents=docs,
+            fetched_at=datetime.now(UTC),
+            success=is_valid and error is None,
+            error=error,
+        ),
+    )
 
 
 def test_cli_help() -> None:
@@ -74,28 +106,33 @@ def test_ingest_rss_dry_run_skips_storage(monkeypatch) -> None:
         CanonicalDocument(url="https://example.com/article-2", title="Ethereum upgrade"),
     ]
 
-    async def fake_resolve(url: str, timeout: int = 10) -> RSSResolveResult:
-        return RSSResolveResult(
-            url=url,
-            is_valid=True,
-            resolved_url=url,
-            feed_title="Test Feed",
-            entry_count=len(docs),
-        )
+    async def fake_collect(url: str, *, source_id: str, source_name: str) -> RSSCollectedFeed:
+        return _collected_feed(url=url, docs=docs)
 
-    async def fake_fetch(self) -> FetchResult:
-        return FetchResult(
-            source_id=self.source_id,
-            documents=docs,
-            fetched_at=datetime.now(UTC),
-            success=True,
+    async def fake_persist(
+        session_factory,
+        result: FetchResult,
+        *,
+        dry_run: bool,
+        existing_limit: int = 1000,
+    ):
+        assert session_factory is None
+        assert dry_run is True
+        return IngestPersistStats(
+            fetched_count=len(docs),
+            candidate_count=2,
+            batch_duplicates=1,
+            existing_duplicates=0,
+            saved_count=0,
+            failed_count=0,
+            preview_documents=[docs[0], docs[2]],
         )
 
     def fail_build_session_factory(_settings):
         raise AssertionError("dry-run should not build a DB session factory")
 
-    monkeypatch.setattr(cli_main, "resolve_rss_feed", fake_resolve)
-    monkeypatch.setattr(cli_main.RSSFeedAdapter, "fetch", fake_fetch)
+    monkeypatch.setattr(cli_main, "_collect_rss_feed", fake_collect)
+    monkeypatch.setattr(cli_main, "persist_fetch_result", fake_persist)
     monkeypatch.setattr(cli_main, "build_session_factory", fail_build_session_factory)
 
     result = runner.invoke(app, ["ingest", "rss", "https://example.com/feed", "--dry-run"])
@@ -115,56 +152,33 @@ def test_ingest_rss_persists_only_new_documents(monkeypatch) -> None:
         CanonicalDocument(url="https://example.com/article-2", title="Ethereum upgrade"),
     ]
 
-    async def fake_resolve(url: str, timeout: int = 10) -> RSSResolveResult:
-        return RSSResolveResult(
-            url=url,
-            is_valid=True,
-            resolved_url="https://example.com/feed.xml",
-            feed_title="Test Feed",
-            entry_count=len(docs),
+    async def fake_collect(url: str, *, source_id: str, source_name: str) -> RSSCollectedFeed:
+        return _collected_feed(url=url, docs=docs, resolved_url="https://example.com/feed.xml")
+
+    saved_preview = [CanonicalDocument(url="https://example.com/article-1", title="Bitcoin rises")]
+
+    async def fake_persist(
+        session_factory,
+        result: FetchResult,
+        *,
+        dry_run: bool,
+        existing_limit: int = 1000,
+    ):
+        assert session_factory == "session-factory"
+        assert dry_run is False
+        return IngestPersistStats(
+            fetched_count=len(docs),
+            candidate_count=2,
+            batch_duplicates=1,
+            existing_duplicates=1,
+            saved_count=1,
+            failed_count=0,
+            preview_documents=saved_preview,
         )
 
-    async def fake_fetch(self) -> FetchResult:
-        return FetchResult(
-            source_id=self.source_id,
-            documents=docs,
-            fetched_at=datetime.now(UTC),
-            success=True,
-        )
-
-    class FakeSessionContext:
-        async def __aenter__(self):
-            return object()
-
-        async def __aexit__(self, exc_type, exc, tb):
-            return False
-
-    class FakeSessionFactory:
-        def begin(self) -> FakeSessionContext:
-            return FakeSessionContext()
-
-    class FakeDocumentRepository:
-        saved_urls: list[str] = []
-        existing_urls: set[str] = {"https://example.com/article-2"}
-
-        def __init__(self, session) -> None:
-            self._session = session
-
-        async def get_by_url(self, url: str):
-            return object() if url in self.existing_urls else None
-
-        async def get_by_hash(self, content_hash: str):
-            return None
-
-        async def save(self, doc: CanonicalDocument) -> CanonicalDocument:
-            self.saved_urls.append(doc.url)
-            self.existing_urls.add(doc.url)
-            return doc
-
-    monkeypatch.setattr(cli_main, "resolve_rss_feed", fake_resolve)
-    monkeypatch.setattr(cli_main.RSSFeedAdapter, "fetch", fake_fetch)
-    monkeypatch.setattr(cli_main, "build_session_factory", lambda _settings: FakeSessionFactory())
-    monkeypatch.setattr(cli_main, "DocumentRepository", FakeDocumentRepository)
+    monkeypatch.setattr(cli_main, "_collect_rss_feed", fake_collect)
+    monkeypatch.setattr(cli_main, "build_session_factory", lambda _settings: "session-factory")
+    monkeypatch.setattr(cli_main, "persist_fetch_result", fake_persist)
 
     result = runner.invoke(app, ["ingest", "rss", "https://example.com/feed"])
 
@@ -172,24 +186,125 @@ def test_ingest_rss_persists_only_new_documents(monkeypatch) -> None:
     assert "RSS feed validated: https://example.com/feed.xml" in result.output
     assert "Existing duplicates skipped: 1" in result.output
     assert "Saved: 1" in result.output
-    assert FakeDocumentRepository.saved_urls == ["https://example.com/article-1"]
+    assert "https://example.com/article-1" in result.output
 
 
 def test_ingest_rss_rejects_invalid_feed(monkeypatch) -> None:
-    async def fake_resolve(url: str, timeout: int = 10) -> RSSResolveResult:
-        return RSSResolveResult(
-            url=url,
-            is_valid=False,
-            resolved_url=None,
-            feed_title=None,
-            entry_count=0,
-            error="Response is not a valid RSS or Atom feed",
+    async def fake_collect(url: str, *, source_id: str, source_name: str) -> RSSCollectedFeed:
+        return RSSCollectedFeed(
+            classification=ClassificationResult(SourceType.WEBSITE, SourceStatus.ACTIVE),
+            resolved_feed=RSSResolveResult(
+                url=url,
+                is_valid=False,
+                resolved_url=None,
+                feed_title=None,
+                entry_count=0,
+                error="Response is not a valid RSS or Atom feed",
+            ),
+            fetch_result=FetchResult(
+                source_id=source_id,
+                documents=[],
+                fetched_at=datetime.now(UTC),
+                success=False,
+                error=(
+                    "URL is not a valid RSS/Atom feed. "
+                    "Classified as website (active). "
+                    "Response is not a valid RSS or Atom feed"
+                ),
+            ),
         )
 
-    monkeypatch.setattr(cli_main, "resolve_rss_feed", fake_resolve)
+    monkeypatch.setattr(cli_main, "_collect_rss_feed", fake_collect)
 
     result = runner.invoke(app, ["ingest", "rss", "https://example.com"])
 
     assert result.exit_code == 1
     assert "URL is not a valid RSS/Atom feed" in result.output
     assert "website" in result.output
+
+
+def test_query_analyze_pending() -> None:
+    from app.analysis.pipeline import PipelineResult
+    from tests.unit.factories import make_analysis_result, make_llm_output
+
+    async def fake_list(self, is_analyzed: bool, limit: int):
+        return [
+            CanonicalDocument(url="https://example.com/1", title="Doc 1"),
+            CanonicalDocument(url="https://example.com/2", title="Doc 2"),
+        ]
+
+    updated_docs = []
+    async def fake_update(self, doc: CanonicalDocument) -> None:
+        updated_docs.append(doc)
+
+    async def fake_run_batch(self, docs):
+        results = []
+        for doc in docs:
+            results.append(
+                PipelineResult(
+                    document=doc,
+                    llm_output=make_llm_output(),
+                    analysis_result=make_analysis_result(document_id=doc.id)
+                )
+            )
+        return results
+
+    class FakeSessionFactory:
+        def begin(self):
+            class FakeSessionContext:
+                async def __aenter__(self): return object()
+                async def __aexit__(self, exc_type, exc, tb): return False
+            return FakeSessionContext()
+
+    from _pytest.monkeypatch import MonkeyPatch
+
+    from app.analysis import pipeline
+    from app.analysis.keywords import engine as kw_engine
+    from app.storage.db import session as db_session
+    from app.storage.repositories import document_repo
+
+    mp = MonkeyPatch()
+    mp.setattr(db_session, "build_session_factory", lambda _settings: FakeSessionFactory())
+    mp.setattr(document_repo.DocumentRepository, "list", fake_list)
+    mp.setattr(document_repo.DocumentRepository, "update_analysis", fake_update)
+    mp.setattr(pipeline.AnalysisPipeline, "run_batch", fake_run_batch)
+    mp.setattr(kw_engine.KeywordEngine, "from_monitor_dir", lambda p: object())
+
+    try:
+        result = runner.invoke(app, ["query", "analyze-pending", "--limit", "2"])
+        assert result.exit_code == 0
+        assert "Analyzing 2 documents" in result.output
+        assert "Analysis complete! 2 success" in result.output
+        assert len(updated_docs) == 2
+    finally:
+        mp.undo()
+
+
+def test_query_analyze_pending_empty() -> None:
+    async def fake_list(self, is_analyzed: bool, limit: int):
+        return []
+
+    class FakeSessionFactory:
+        def begin(self):
+            class FakeSessionContext:
+                async def __aenter__(self): return object()
+                async def __aexit__(self, exc_type, exc, tb): return False
+            return FakeSessionContext()
+
+    from _pytest.monkeypatch import MonkeyPatch
+
+    from app.analysis.keywords import engine as kw_engine
+    from app.storage.db import session as db_session
+    from app.storage.repositories import document_repo
+
+    mp = MonkeyPatch()
+    mp.setattr(db_session, "build_session_factory", lambda _settings: FakeSessionFactory())
+    mp.setattr(document_repo.DocumentRepository, "list", fake_list)
+    mp.setattr(kw_engine.KeywordEngine, "from_monitor_dir", lambda p: object())
+
+    try:
+        result = runner.invoke(app, ["query", "analyze-pending"])
+        assert result.exit_code == 0
+        assert "No pending documents" in result.output
+    finally:
+        mp.undo()

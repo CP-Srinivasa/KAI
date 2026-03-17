@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from sqlalchemy import Boolean, DateTime, Float, Index, String, Text
+from sqlalchemy import Boolean, DateTime, Float, Index, Integer, String, Text
 from sqlalchemy.dialects.postgresql import JSON
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -57,7 +57,10 @@ class CanonicalDocumentModel(Base):
     sentiment_score: Mapped[float | None] = mapped_column(Float, nullable=True)
     relevance_score: Mapped[float | None] = mapped_column(Float, nullable=True)
     impact_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    novelty_score: Mapped[float | None] = mapped_column(Float, nullable=True)
     credibility_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    spam_probability: Mapped[float | None] = mapped_column(Float, nullable=True)
+    priority_score: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
 
     # State flags
     is_duplicate: Mapped[bool] = mapped_column(

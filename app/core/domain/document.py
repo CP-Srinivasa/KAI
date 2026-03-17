@@ -18,7 +18,7 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID, uuid4
 
-from pydantic import BaseModel, Field, computed_field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, computed_field, model_validator
 
 from app.core.enums import DocumentType, MarketScope, SentimentLabel, SortBy, SourceType
 
@@ -122,8 +122,11 @@ class CanonicalDocument(BaseModel):
     sentiment_score: float | None = Field(default=None, ge=-1.0, le=1.0)
     relevance_score: float | None = Field(default=None, ge=0.0, le=1.0)
     impact_score: float | None = Field(default=None, ge=0.0, le=1.0)
-    credibility_score: float | None = Field(default=None, ge=0.0, le=1.0)
     novelty_score: float | None = Field(default=None, ge=0.0, le=1.0)
+    credibility_score: float | None = Field(default=None, ge=0.0, le=1.0)
+    spam_probability: float | None = Field(default=None, ge=0.0, le=1.0)
+    # Computed by scoring.compute_priority(), stored for alert threshold queries
+    priority_score: int | None = Field(default=None, ge=1, le=10)
     historical_similarity_score: float | None = Field(default=None, ge=0.0, le=1.0)
 
     # Engagement signals
@@ -178,6 +181,9 @@ class AnalysisResult(BaseModel):
     Always links back to CanonicalDocument via document_id.
     raw_output preserves the original LLM response for debugging and re-analysis.
     """
+
+    # Required configuration for strict validation
+    model_config = ConfigDict(strict=True, validate_assignment=True)
 
     id: UUID = Field(default_factory=uuid4)
     document_id: UUID

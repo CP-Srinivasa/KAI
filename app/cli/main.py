@@ -1,21 +1,18 @@
-from dataclasses import dataclass
 from pathlib import Path
 
 import typer
 from rich.console import Console
 from rich.table import Table
 
-from app.core.domain.document import CanonicalDocument
 from app.core.logging import configure_logging
 from app.core.settings import get_settings
-from app.enrichment.deduplication.deduplicator import Deduplicator
 from app.ingestion.base.interfaces import FetchResult
 from app.ingestion.classifier import classify_url
 from app.ingestion.resolvers.podcast import load_and_resolve_podcasts
 from app.ingestion.resolvers.youtube import load_youtube_channels
 from app.ingestion.rss.service import RSSCollectedFeed, collect_rss_feed
 from app.storage.db.session import build_session_factory
-from app.storage.repositories.document_repo import DocumentRepository
+from app.storage.document_ingest import IngestPersistStats, persist_fetch_result
 
 app = typer.Typer(name="trading-bot", help="AI Analyst Trading Bot CLI", no_args_is_help=True)
 console = Console()
@@ -31,16 +28,6 @@ app.add_typer(podcasts_app, name="podcasts")
 app.add_typer(youtube_app, name="youtube")
 app.add_typer(query_app, name="query")
 app.add_typer(ingest_app, name="ingest")
-
-
-@dataclass(frozen=True)
-class RSSIngestStats:
-    fetched_count: int
-    candidate_count: int
-    batch_duplicates: int
-    existing_duplicates: int
-    saved_count: int
-    preview_documents: list[CanonicalDocument]
 
 
 @app.callback()
@@ -186,18 +173,9 @@ def query_analyze_pending(
                     error_count += 1
                     continue
 
+                # apply_to_document() merges entities + scores + priority onto doc
+                res.apply_to_document()
                 doc = res.document
-                doc.entity_mentions = res.entity_mentions
-
-                if res.llm_output:
-                    doc.sentiment_label = res.llm_output.sentiment_label
-                    doc.sentiment_score = res.llm_output.sentiment_score
-                    doc.relevance_score = res.llm_output.relevance_score
-                    doc.impact_score = res.llm_output.impact_score
-                    doc.market_scope = res.llm_output.market_scope
-                    doc.tags = list(set(doc.tags + res.llm_output.tags))
-                    doc.tickers = list(set(doc.tickers + res.llm_output.affected_assets))
-                    doc.categories = list(set(doc.categories + res.llm_output.affected_sectors))
 
                 try:
                     await repo.update_analysis(doc)
@@ -222,7 +200,11 @@ def ingest_rss(
     url: str = typer.Argument(..., help="RSS feed URL to ingest"),
     source_id: str = typer.Option("manual", help="Source ID"),
     source_name: str = typer.Option("Manual Ingest", help="Source name"),
-    dry_run: bool = typer.Option(False, "--dry-run", help="Fetch and deduplicate without storing"),
+    persist: bool = typer.Option(
+        True,
+        "--persist/--dry-run",
+        help="Persist fetched documents; use --dry-run to skip storage",
+    ),
 ) -> None:
     """Classify, validate, fetch, deduplicate, and optionally store an RSS feed."""
     import asyncio
@@ -234,7 +216,7 @@ def ingest_rss(
             console.print(f"[red]Error:[/red] {result.error}")
             raise typer.Exit(1)
 
-        stats = await _persist_rss_documents(result, dry_run=dry_run)
+        stats = await _persist_rss_documents(result, dry_run=not persist)
 
         resolved_url = collected.resolved_feed.resolved_url or url
         console.print(f"[green]RSS feed validated:[/green] {resolved_url}")
@@ -250,7 +232,7 @@ def ingest_rss(
         console.print(f"[bold]Fetched:[/bold] {stats.fetched_count}")
         console.print(f"[bold]Batch duplicates skipped:[/bold] {stats.batch_duplicates}")
 
-        if dry_run:
+        if not persist:
             console.print(
                 f"[bold]Dry run:[/bold] would store up to {stats.candidate_count} documents"
             )
@@ -258,6 +240,8 @@ def ingest_rss(
         else:
             console.print(f"[bold]Existing duplicates skipped:[/bold] {stats.existing_duplicates}")
             console.print(f"[bold]Saved:[/bold] {stats.saved_count}")
+            if stats.failed_count:
+                console.print(f"[bold red]Save errors:[/bold red] {stats.failed_count}")
 
         if not stats.preview_documents:
             console.print("[yellow]No new document previews available.[/yellow]")
@@ -290,47 +274,13 @@ async def _collect_rss_feed(
     )
 
 
-async def _persist_rss_documents(result: FetchResult, *, dry_run: bool) -> RSSIngestStats:
-    deduplicator = Deduplicator()
-    scored_documents = deduplicator.filter_scored(result.documents)
-    preview_documents = [doc for doc, score in scored_documents if not score.is_duplicate]
-    batch_duplicates = sum(1 for _, score in scored_documents if score.is_duplicate)
-
+async def _persist_rss_documents(result: FetchResult, *, dry_run: bool) -> IngestPersistStats:
     if dry_run:
-        return RSSIngestStats(
-            fetched_count=len(result.documents),
-            candidate_count=len(preview_documents),
-            batch_duplicates=batch_duplicates,
-            existing_duplicates=0,
-            saved_count=0,
-            preview_documents=preview_documents,
-        )
+        return await persist_fetch_result(None, result, dry_run=True)
 
     settings = get_settings()
     session_factory = build_session_factory(settings.db)
-    saved_count = 0
-    existing_duplicates = 0
-
-    async with session_factory.begin() as session:
-        repo = DocumentRepository(session)
-        for doc in preview_documents:
-            if await repo.get_by_url(doc.url):
-                existing_duplicates += 1
-                continue
-            if doc.content_hash and await repo.get_by_hash(doc.content_hash):
-                existing_duplicates += 1
-                continue
-            await repo.save(doc)
-            saved_count += 1
-
-    return RSSIngestStats(
-        fetched_count=len(result.documents),
-        candidate_count=len(preview_documents),
-        batch_duplicates=batch_duplicates,
-        existing_duplicates=existing_duplicates,
-        saved_count=saved_count,
-        preview_documents=preview_documents,
-    )
+    return await persist_fetch_result(session_factory, result, dry_run=dry_run)
 
 
 if __name__ == "__main__":

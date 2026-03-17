@@ -106,6 +106,35 @@ class DocumentRepository:
         )
         await self._session.flush()
 
+    async def update_analysis(self, doc: CanonicalDocument) -> None:
+        """Update a document with analysis scores, entities, and priority. Sets is_analyzed=True."""
+        await self._session.execute(
+            update(CanonicalDocumentModel)
+            .where(CanonicalDocumentModel.id == str(doc.id))
+            .values(
+                sentiment_label=doc.sentiment_label.value if doc.sentiment_label else None,
+                sentiment_score=doc.sentiment_score,
+                relevance_score=doc.relevance_score,
+                impact_score=doc.impact_score,
+                credibility_score=doc.credibility_score,
+                novelty_score=doc.novelty_score,
+                spam_probability=doc.spam_probability,
+                priority_score=doc.priority_score,
+                market_scope=doc.market_scope.value,
+                entity_mentions=[e.model_dump() for e in doc.entity_mentions],
+                entities=doc.entities,
+                tickers=doc.tickers,
+                crypto_assets=doc.crypto_assets,
+                people=doc.people,
+                organizations=doc.organizations,
+                tags=doc.tags,
+                topics=doc.topics,
+                categories=doc.categories,
+                is_analyzed=True,
+            )
+        )
+        await self._session.flush()
+
 
 # ── Mapping helpers ───────────────────────────────────────────────────────────
 
@@ -134,7 +163,10 @@ def _to_model(doc: CanonicalDocument) -> CanonicalDocumentModel:
         sentiment_score=doc.sentiment_score,
         relevance_score=doc.relevance_score,
         impact_score=doc.impact_score,
+        novelty_score=doc.novelty_score,
         credibility_score=doc.credibility_score,
+        spam_probability=doc.spam_probability,
+        priority_score=doc.priority_score,
         is_duplicate=doc.is_duplicate,
         is_analyzed=doc.is_analyzed,
         entity_mentions=[e.model_dump() for e in doc.entity_mentions],
@@ -191,7 +223,10 @@ def _from_model(model: CanonicalDocumentModel) -> CanonicalDocument:
         sentiment_score=model.sentiment_score,
         relevance_score=model.relevance_score,
         impact_score=model.impact_score,
+        novelty_score=model.novelty_score,
         credibility_score=model.credibility_score,
+        spam_probability=model.spam_probability,
+        priority_score=model.priority_score,
         is_duplicate=model.is_duplicate,
         is_analyzed=model.is_analyzed,
         entity_mentions=entity_mentions,

@@ -37,6 +37,42 @@ class PipelineResult:
     def success(self) -> bool:
         return self.error is None
 
+    def apply_to_document(self) -> None:
+        """Applies analysis results, entities and blended scores directly to the document."""
+        self.document.entity_mentions = self.entity_mentions
+
+        # Sync simple entities
+        for ent in self.entity_mentions:
+            if ent.entity_type == "topic" and ent.name not in self.document.topics:
+                self.document.topics.append(ent.name)
+
+        if not self.analysis_result or not self.llm_output:
+            return
+
+        res = self.analysis_result
+        self.document.sentiment_label = res.sentiment_label
+        self.document.sentiment_score = res.sentiment_score
+        self.document.impact_score = res.impact_score
+        self.document.credibility_score = 1.0 - res.spam_probability
+        self.document.novelty_score = res.novelty_score
+        self.document.spam_probability = res.spam_probability
+        self.document.market_scope = res.market_scope
+
+        # Merge structured extras
+        self.document.tags = list(set(self.document.tags + res.tags))
+        self.document.tickers = list(set(self.document.tickers + res.affected_assets))
+        self.document.categories = list(set(self.document.categories + res.affected_sectors))
+
+        from app.analysis.scoring import calculate_final_relevance, compute_priority
+        # Calculate Blended Relevance
+        blended = calculate_final_relevance(res.relevance_score, self.keyword_hits)
+        self.document.relevance_score = blended
+        res.relevance_score = blended
+
+        # Compute Priority
+        priority = compute_priority(res)
+        self.document.priority_score = priority.priority
+
 
 class AnalysisPipeline:
     """Run keyword + entity + LLM analysis on one or many documents.

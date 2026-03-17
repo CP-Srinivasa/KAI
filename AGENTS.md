@@ -182,25 +182,40 @@ Jede Aufgabe gilt als **nicht abgeschlossen**, solange einer dieser Gates nicht 
 ```
 app/
   core/              → settings, logging, domain types, enums, errors      [AGENTS.md ✅]
+    domain/          → CanonicalDocument, AnalysisResult, QuerySpec, events
   ingestion/         → source adapters, resolvers, classifiers, RSS        [AGENTS.md ✅]
+    base/            → FetchResult, SourceMetadata, BaseSourceAdapter (ABC)
+    rss/             → RSSAdapter, RSSService, collect_rss_feed
+    schedulers/      → RSSScheduler (periodic fetch)
+    resolvers/       → YouTube, Podcast resolvers
   normalization/     → content cleaning, text normalization
   enrichment/        → deduplication, entity matching                      [AGENTS.md ✅]
+    deduplication/   → Deduplicator (batch hash dedup)
+    entities/        → hits_to_entity_mentions()
   analysis/          → Analysekern: keyword engine, query DSL, pipeline    [AGENTS.md ✅]
     base/            → LLMAnalysisOutput, BaseAnalysisProvider (ABC)
     keywords/        → KeywordEngine, WatchlistEntry, EntityAlias
     query/           → QueryExecutor (in-memory QuerySpec filter)
     rules/           → RuleAnalyzer, KeywordMatcher, AssetDetector
-    scoring.py       → compute_priority(), is_alert_worthy()
-    pipeline.py      → AnalysisPipeline (keyword → entity → LLM → AnalysisResult)
+    historical/      → EventAnalogMatcher, HistoricalEvent (analog detection)
+    providers/       → OpenAIAnalysisProvider (analysis layer, structured outputs)
+    scoring.py       → compute_priority(), is_alert_worthy(), calculate_final_relevance()
+    pipeline.py      → AnalysisPipeline + PipelineResult.apply_to_document()
+    validation.py    → validate_llm_output(), sanitize_scores()
   integrations/      → Provider-Implementierungen (HTTP-Schicht)
-    openai/          → OpenAIAnalysisProvider (gpt-4o, structured outputs)
+    openai/          → OpenAIAnalysisProvider (integrations layer, gpt-4o)
     cryptopanic/     → CryptoPanicClient + Adapter (NEWS_API)
   api/               → FastAPI routers + shared deps                       [AGENTS.md ✅]
   cli/               → Typer commands                                      [AGENTS.md ✅]
   storage/           → DB models, repositories, migrations (PostgreSQL)
+    models/          → CanonicalDocumentModel, HistoricalEventModel, SourceModel
+    repositories/    → DocumentRepository, EventRepository, SourceRepository
+    migrations/      → 0001 sources | 0002 documents | 0003 events | 0004 score columns
+    document_ingest.py → persist_fetch_result() helper (ingest + dedup + save)
 monitor/             → user-editable source lists, keywords, watchlists
+  historical_events.yml → 13 Seed-Events für analog matching
 docker/              → Dockerfile (production), docker-compose.yml
-tests/unit/          → pytest unit tests (304 passing)
+tests/unit/          → pytest unit tests (340 passing — ruff clean)
 ```
 
 ---
@@ -209,20 +224,41 @@ tests/unit/          → pytest unit tests (304 passing)
 
 | Model | Datei | Zweck |
 |---|---|---|
-| `CanonicalDocument` | `app/core/domain/document.py` | Normalisierte Content-Einheit |
-| `AnalysisResult` | `app/core/domain/document.py` | LLM/Regel-Analyse-Ergebnis |
+| `CanonicalDocument` | `app/core/domain/document.py` | Normalisierte Content-Einheit (Haupt-Datenmodell) |
+| `AnalysisResult` | `app/core/domain/document.py` | LLM/Regel-Analyse-Ergebnis (in-memory, nicht persistiert) |
 | `EntityMention` | `app/core/domain/document.py` | Strukturierte Entity-Extraktion |
-| `LLMAnalysisOutput` | `app/analysis/base/interfaces.py` | Rohausgabe des LLM-Providers |
-| `PipelineResult` | `app/analysis/pipeline.py` | Komplettes Analyse-Ergebnis |
-| `KeywordHit` | `app/analysis/keywords/engine.py` | Keyword-Match mit Kategorie |
 | `QuerySpec` | `app/core/domain/document.py` | Filter-DSL für Dokument-Suche |
-| `SourceMetadata` | `app/ingestion/base/interfaces.py` | Source-Deskriptor |
+| `HistoricalEvent` | `app/core/domain/events.py` | Historisches Marktereignis (Referenzdaten) |
+| `EventAnalog` | `app/core/domain/events.py` | Erkannte Analogie zu historischem Event |
+| `LLMAnalysisOutput` | `app/analysis/base/interfaces.py` | Strukturierter LLM-Output (Pydantic, via beta.parse) |
+| `PipelineResult` | `app/analysis/pipeline.py` | Vollständiges Analyse-Ergebnis inkl. apply_to_document() |
+| `KeywordHit` | `app/analysis/keywords/engine.py` | Keyword-Match mit Kategorie und Vorkommen |
+| `PriorityScore` | `app/analysis/scoring.py` | Berechneter Priority-Score (1–10) mit Audit-Info |
 | `FetchResult` | `app/ingestion/base/interfaces.py` | Adapter-Fetch-Output |
+| `SourceMetadata` | `app/ingestion/base/interfaces.py` | Source-Deskriptor |
 | `AppSettings` | `app/core/settings.py` | Gesamte Konfiguration |
+
+**End-to-End Datenfluss → [docs/data_flow.md](./docs/data_flow.md)**
 
 ---
 
-## 11. Branch- und PR-Regeln
+## 11. Interface-Grenzen (verbindlich)
+
+Jeder Agent darf nur in seinem Bereich schreiben. Grenzüberschreitungen erfordern Spec.
+
+| Grenze | Regel |
+|---|---|
+| **Ingestion → Storage** | Adapter liefert `FetchResult`. `persist_fetch_result()` in `app/storage/document_ingest.py` ist der einzige Einstiegspunkt für Persistierung nach Ingest. |
+| **Storage → Analysis** | `DocumentRepository.list(is_analyzed=False)` liefert die Analyse-Queue. Nie direkt ORM-Modelle an Pipeline übergeben. |
+| **Analysis → Storage** | `PipelineResult.apply_to_document()` mutiert `CanonicalDocument`. Danach `repo.update_analysis(doc)`. Kein anderer Pfad. |
+| **Analysis → Alerting** | `is_alert_worthy(result, min_priority)` ist das einzige Gate. Kein direkter Score-Zugriff in Alert-Code. |
+| **LLM Provider** | Immer über `BaseAnalysisProvider.analyze()`. Nie direkt `openai.ChatCompletions` im Business-Code aufrufen. |
+| **Domain Models** | `app/core/domain/` ist provider-agnostisch. Kein Import von `openai`, `anthropic`, etc. |
+| **Config** | Alle Settings über `AppSettings`. Kein `os.environ` direkt. Keine Credentials im Code. |
+
+---
+
+## 12. Branch- und PR-Regeln
 
 **Vollständige Strategie → [.github/BRANCH_STRATEGY.md](./.github/BRANCH_STRATEGY.md)**
 
@@ -251,7 +287,8 @@ tests/unit/          → pytest unit tests (304 passing)
 |---|---|---|
 | P1 Foundation | ✅ | Settings, Enums, FastAPI, CLI, DB-Session, Logging |
 | P2 Ingestion | ✅ | Source Registry, Classifier, RSS, CryptoPanic, CanonicalDocument, Dedup |
-| P3 Analysekern | ✅ | KeywordEngine, RuleAnalyzer, QueryExecutor, OpenAI Provider, Pipeline |
+| P3 Analysekern | ✅ | KeywordEngine, RuleAnalyzer, QueryExecutor, OpenAI Provider (structured), Pipeline, Historical Events, Validation |
+| P3.5 Contracts | ✅ | End-to-End Data Flow Contract, priority_score, spam_probability in DB, apply_to_document(), docs/data_flow.md |
 | P4 Alerting | 🔄 | Telegram, Email, Alert Rules — nächste Phase |
 
 Vollständige Task-Liste → [TASKLIST.md](./TASKLIST.md)
