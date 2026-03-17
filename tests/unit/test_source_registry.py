@@ -81,9 +81,16 @@ class TestAuthMode:
 class TestSourceType:
     def test_all_source_types_present(self):
         expected = {
-            "rss_feed", "website", "news_api", "youtube_channel",
-            "podcast_feed", "podcast_page", "reference_page",
-            "social_api", "manual_source", "unresolved_source",
+            "rss_feed",
+            "website",
+            "news_api",
+            "youtube_channel",
+            "podcast_feed",
+            "podcast_page",
+            "reference_page",
+            "social_api",
+            "manual_source",
+            "unresolved_source",
         }
         assert {t.value for t in SourceType} == expected
 
@@ -91,7 +98,11 @@ class TestSourceType:
 class TestSourceStatus:
     def test_all_statuses_present(self):
         expected = {
-            "active", "planned", "disabled",
-            "requires_api", "manual_resolution", "unresolved",
+            "active",
+            "planned",
+            "disabled",
+            "requires_api",
+            "manual_resolution",
+            "unresolved",
         }
         assert {s.value for s in SourceStatus} == expected

@@ -10,11 +10,12 @@ RUN pip install --no-cache-dir hatchling
 FROM base AS production
 
 COPY pyproject.toml .
+COPY README.md .
 COPY app/ ./app/
 COPY monitor/ ./monitor/
 COPY alembic.ini .
 
-RUN pip install --no-cache-dir -e .
+RUN pip install --no-cache-dir .
 
 RUN useradd -m -u 1000 botuser && chown -R botuser:botuser /app
 USER botuser

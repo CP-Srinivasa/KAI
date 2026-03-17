@@ -73,9 +73,7 @@ class SourceRepository:
                 changes[key] = changes[key].value
         changes["updated_at"] = datetime.now(UTC)
         await self._session.execute(
-            update(SourceModel)
-            .where(SourceModel.source_id == source_id)
-            .values(**changes)
+            update(SourceModel).where(SourceModel.source_id == source_id).values(**changes)
         )
         await self._session.flush()
         return await self.get_by_id(source_id)

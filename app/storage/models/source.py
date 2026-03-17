@@ -19,9 +19,7 @@ class SourceModel(Base):
     status: Mapped[str] = mapped_column(
         String(50), nullable=False, default=SourceStatus.PLANNED, index=True
     )
-    auth_mode: Mapped[str] = mapped_column(
-        String(50), nullable=False, default=AuthMode.NONE
-    )
+    auth_mode: Mapped[str] = mapped_column(String(50), nullable=False, default=AuthMode.NONE)
     original_url: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
     normalized_url: Mapped[str | None] = mapped_column(Text, nullable=True)
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)

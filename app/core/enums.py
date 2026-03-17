@@ -12,6 +12,7 @@ class SourceType(StrEnum):
     SOCIAL_API = "social_api"
     MANUAL_SOURCE = "manual_source"
     UNRESOLVED_SOURCE = "unresolved_source"
+    NEWS_DOMAIN = "news_domain"
 
 
 class SourceStatus(StrEnum):

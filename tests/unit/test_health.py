@@ -6,9 +6,10 @@ def test_health_endpoint(client):
     assert "version" in data
 
 
-def test_sources_placeholder(client):
-    response = client.get("/sources")
+def test_sources_classify_endpoint(client):
+    response = client.get("/sources/classify?url=https://cointelegraph.com/rss")
     assert response.status_code == 200
+    assert response.json()["source_type"] == "rss_feed"
 
 
 def test_query_validate_empty(client):
