@@ -17,19 +17,7 @@ Modulares, produktionsreifes AI-Analyse- und Trading-Bot-System für Krypto- und
 ## Quick Start
 
 ```bash
-# 1. Konfiguration
-cp .env.example .env
-# .env mit API-Keys befüllen
-
-# 2. Mit Docker starten
-docker-compose up -d
-
-# 3. Oder lokal
-pip install -e ".[dev]"
-uvicorn app.api.main:app --reload
-
-# 4. API-Docs
-open http://localhost:8000/docs
+# --- #
 ```
 
 ## CLI
@@ -93,13 +81,7 @@ ai_analyst_trading_bot/
 
 ## Konfiguration
 
-Alle Settings via `.env`. Siehe `.env.example` für alle Optionen.
-
-Wichtigste Keys:
-- `OPENAI_API_KEY` — Für LLM-Analyse erforderlich
-- `DATABASE_URL` — PostgreSQL Connection String
-- `TELEGRAM_BOT_TOKEN` + `TELEGRAM_CHAT_ID` — Für Telegram-Alerts
-- `YOUTUBE_API_KEY` — Für YouTube-Kanal-Monitoring
+----------------
 
 ## Development
 
