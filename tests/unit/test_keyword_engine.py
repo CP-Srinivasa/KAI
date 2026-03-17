@@ -1,278 +1,135 @@
-"""Tests for KeywordEngine, WatchlistEntry, EntityAlias loaders."""
+"""Tests for the Keyword Engine Phase 3.2."""
 
 from pathlib import Path
 
-import yaml
+import pytest
 
-from app.analysis.keywords.aliases import EntityAlias, load_entity_aliases
-from app.analysis.keywords.engine import KeywordEngine, _tokenize
-from app.analysis.keywords.watchlist import WatchlistEntry, load_watchlist
-
-# ── Fixtures ──────────────────────────────────────────────────────────────────
+from app.analysis.keywords.loader import KeywordLoader
+from app.analysis.keywords.matcher import KeywordMatcher
+from app.core.domain.document import CanonicalDocument
 
 
-def _make_engine(
-    keywords: set[str] | None = None,
-    watchlist: list[WatchlistEntry] | None = None,
-    aliases: list[EntityAlias] | None = None,
-) -> KeywordEngine:
-    return KeywordEngine(
-        keywords=frozenset(keywords or set()),
-        watchlist_entries=watchlist or [],
-        entity_aliases=aliases or [],
+@pytest.fixture
+def mock_monitor_dir(tmp_path: Path):
+    monitor_dir = tmp_path / "monitor"
+    monitor_dir.mkdir()
+
+    # Create fake keywords.txt
+    keywords_content = """# Comment
+bitcoin
+ethereum # L1
+defi
+"""
+    (monitor_dir / "keywords.txt").write_text(keywords_content, encoding="utf-8")
+
+    # Create fake entity_aliases.yml
+    aliases_content = """entity_aliases:
+  - canonical: "Vitalik Buterin"
+    aliases: ["Vitalik", "VB"]
+    handles:
+      twitter: "@VitalikButerin"
+    category: "founder"
+
+  - canonical: "Changpeng Zhao"
+    aliases: ["CZ", "CZ Binance"]
+    handles:
+      twitter: "@cz_binance"
+    category: "exchange_ceo"
+"""
+    (monitor_dir / "entity_aliases.yml").write_text(aliases_content, encoding="utf-8")
+
+    return monitor_dir
+
+
+def test_keyword_loader_loads_keywords(mock_monitor_dir):
+    loader = KeywordLoader(mock_monitor_dir)
+    keywords = loader.load_keywords()
+
+    assert "bitcoin" in keywords
+    assert "ethereum" in keywords
+    assert "defi" in keywords
+    assert "Comment" not in keywords
+    assert "L1" not in keywords
+
+
+def test_keyword_loader_loads_aliases(mock_monitor_dir):
+    loader = KeywordLoader(mock_monitor_dir)
+    aliases = loader.load_aliases()
+
+    assert aliases["vitalik buterin"] == "Vitalik Buterin"
+    assert aliases["vb"] == "Vitalik Buterin"
+    assert aliases["@vitalikbuterin"] == "Vitalik Buterin"
+
+    assert aliases["cz"] == "Changpeng Zhao"
+    assert aliases["@cz_binance"] == "Changpeng Zhao"
+
+
+def test_matcher_exact_word_boundaries():
+    matcher = KeywordMatcher(keywords={"bot", "coin"}, alias_map={})
+
+    doc1 = CanonicalDocument(
+        title="We found a bot", cleaned_text="Nothing here.", url="http://example.com/1"
     )
+    result1 = matcher.match(doc1)
+    assert result1.hit_count == 1
+    assert "bot" in result1.matched_keywords
 
-
-def _btc_entry() -> WatchlistEntry:
-    return WatchlistEntry(
-        symbol="BTC",
-        name="Bitcoin",
-        aliases=frozenset({"bitcoin", "xbt", "₿"}),
-        tags=("store_of_value",),
-        category="crypto",
+    doc2 = CanonicalDocument(
+        title="This is a bottle", cleaned_text="I collected coins.", url="http://example.com/2"
     )
-
-
-def _eth_entry() -> WatchlistEntry:
-    return WatchlistEntry(
-        symbol="ETH",
-        name="Ethereum",
-        aliases=frozenset({"ethereum", "ether"}),
-        tags=("layer1",),
-        category="crypto",
-    )
-
-
-def _saylor_alias() -> EntityAlias:
-    return EntityAlias(
-        canonical="Michael Saylor",
-        aliases=frozenset({"saylor", "michael saylor", "michael j. saylor"}),
-        handles={"twitter": "@saylor"},
-        category="bitcoin_maxi",
-    )
-
-
-# ── Tokenizer ─────────────────────────────────────────────────────────────────
-
-
-def test_tokenizer_strips_punctuation():
-    tokens = _tokenize("Bitcoin, ETH! rally — BTC?")
-    assert "bitcoin" in tokens
-    assert "eth" in tokens
-    assert "btc" in tokens
-
-
-def test_tokenizer_empty():
-    assert _tokenize("") == []
-
-
-def test_tokenizer_preserves_special_chars():
-    tokens = _tokenize("₿ is Bitcoin's symbol")
-    assert "₿" in tokens
-
-
-# ── Watchlist matching ─────────────────────────────────────────────────────────
-
-
-def test_match_by_symbol():
-    engine = _make_engine(watchlist=[_btc_entry()])
-    hits = engine.match("BTC rallied today")
-    assert any(h.canonical == "BTC" and h.category == "crypto" for h in hits)
-
-
-def test_match_by_name():
-    engine = _make_engine(watchlist=[_btc_entry()])
-    hits = engine.match("Bitcoin is up 5%")
-    assert any(h.canonical == "BTC" for h in hits)
-
-
-def test_match_by_alias():
-    engine = _make_engine(watchlist=[_btc_entry()])
-    hits = engine.match("XBT futures settle at record high")
-    assert any(h.canonical == "BTC" for h in hits)
-
-
-def test_multiple_assets():
-    engine = _make_engine(watchlist=[_btc_entry(), _eth_entry()])
-    hits = engine.match("BTC and ETH both rally as altcoins lag")
-    canonicals = {h.canonical for h in hits}
-    assert "BTC" in canonicals
-    assert "ETH" in canonicals
-
-
-def test_occurrence_count():
-    engine = _make_engine(watchlist=[_btc_entry()])
-    hits = engine.match("BTC is up. Bitcoin surged. BTC hit ATH.")
-    btc_hit = next((h for h in hits if h.canonical == "BTC"), None)
-    assert btc_hit is not None
-    assert btc_hit.occurrences == 3  # BTC, Bitcoin, BTC
-
-
-# ── Entity alias matching ──────────────────────────────────────────────────────
-
-
-def test_match_entity_alias():
-    engine = _make_engine(aliases=[_saylor_alias()])
-    hits = engine.match("Saylor announces 1000 BTC purchase")
-    assert any(h.canonical == "Michael Saylor" for h in hits)
-
-
-def test_match_entity_canonical_name():
-    engine = _make_engine(aliases=[_saylor_alias()])
-    hits = engine.match("Michael Saylor is bullish on bitcoin")
-    assert any(h.canonical == "Michael Saylor" for h in hits)
-
-
-def test_entity_category_passthrough():
-    engine = _make_engine(aliases=[_saylor_alias()])
-    hits = engine.match("Saylor tweets again")
-    hit = next((h for h in hits if h.canonical == "Michael Saylor"), None)
-    assert hit is not None
-    assert hit.category == "bitcoin_maxi"
-
-
-# ── Keyword matching ───────────────────────────────────────────────────────────
-
-
-def test_plain_keyword_match():
-    engine = _make_engine(keywords={"inflation", "regulation"})
-    hits = engine.match("inflation data shows CPI above expectations regulation fears grow")
-    canonicals = {h.canonical for h in hits}
-    assert "inflation" in canonicals
-    assert "regulation" in canonicals
-
-
-def test_keyword_category_is_keyword():
-    engine = _make_engine(keywords={"inflation"})
-    hits = engine.match("inflation surges")
-    hit = next((h for h in hits if h.canonical == "inflation"), None)
-    assert hit is not None
-    assert hit.category == "keyword"
-
-
-# ── Priority: watchlist > entity > keyword ────────────────────────────────────
-
-
-def test_watchlist_overrides_keyword():
-    # "Bitcoin" added as both keyword and watchlist entry — watchlist wins
-    engine = _make_engine(
-        keywords={"Bitcoin"},
-        watchlist=[_btc_entry()],
-    )
-    hits = engine.match("Bitcoin surges")
-    hit = next((h for h in hits if h.canonical in ("BTC", "Bitcoin")), None)
-    assert hit is not None
-    assert hit.canonical == "BTC"       # watchlist wins
-    assert hit.category == "crypto"
-
-
-# ── match_tickers ──────────────────────────────────────────────────────────────
-
-
-def test_match_tickers_returns_symbols_only():
-    engine = _make_engine(watchlist=[_btc_entry(), _eth_entry()], keywords={"regulation"})
-    tickers = engine.match_tickers("BTC and ETH react to new regulation")
-    assert "BTC" in tickers
-    assert "ETH" in tickers
-    assert "regulation" not in tickers
-
-
-# ── match_entities ────────────────────────────────────────────────────────────
-
-
-def test_match_entities_excludes_tickers():
-    engine = _make_engine(watchlist=[_btc_entry()], aliases=[_saylor_alias()])
-    entities = engine.match_entities("Saylor buys more BTC")
-    names = [e.canonical for e in entities]
-    assert "Michael Saylor" in names
-    assert "BTC" not in names
-
-
-# ── Edge cases ────────────────────────────────────────────────────────────────
-
-
-def test_empty_text():
-    engine = _make_engine(watchlist=[_btc_entry()])
-    assert engine.match("") == []
-
-
-def test_no_matches():
-    engine = _make_engine(watchlist=[_btc_entry()])
-    assert engine.match("The weather in Berlin is nice today") == []
-
-
-def test_results_sorted_by_occurrences_desc():
-    engine = _make_engine(watchlist=[_btc_entry(), _eth_entry()])
-    hits = engine.match("BTC BTC BTC ETH")
-    assert hits[0].canonical == "BTC"
-    assert hits[0].occurrences == 3
-
-
-# ── from_monitor_dir ──────────────────────────────────────────────────────────
-
-
-def test_from_monitor_dir_loads_real_files():
-    """Smoke test: loads from actual monitor/ directory."""
-    engine = KeywordEngine.from_monitor_dir("monitor")
-    hits = engine.match("Bitcoin ETF approved — BTC surges past ATH")
-    canonicals = {h.canonical for h in hits}
-    assert "BTC" in canonicals
-
-
-def test_from_monitor_dir_missing_files(tmp_path: Path):
-    """Missing monitor files → empty engine, no crash."""
-    engine = KeywordEngine.from_monitor_dir(tmp_path)
-    assert engine.match("anything") == []
-
-
-def test_from_monitor_dir_partial_files(tmp_path: Path):
-    """Only watchlists.yml present — still loads cleanly."""
-    watchlist_data = {
-        "crypto": [{"symbol": "SOL", "name": "Solana", "aliases": ["solana"], "tags": []}]
+    result2 = matcher.match(doc2)
+    # "bot" inside "bottle", "coin" inside "coins" — word boundary prevents match
+    assert result2.hit_count == 0
+
+
+def test_matcher_alias_resolution():
+    alias_map = {
+        "vb": "Vitalik Buterin",
+        "@vitalikbuterin": "Vitalik Buterin",
+        "pomp": "Anthony Pompliano",
     }
-    (tmp_path / "watchlists.yml").write_text(yaml.dump(watchlist_data))
-    engine = KeywordEngine.from_monitor_dir(tmp_path)
-    hits = engine.match("Solana breaks $200")
-    assert any(h.canonical == "SOL" for h in hits)
+    matcher = KeywordMatcher(keywords={"ethereum"}, alias_map=alias_map)
+
+    doc = CanonicalDocument(
+        title="VB talks about Ethereum",
+        cleaned_text="@vitalikbuterin says Pomp is wrong.",
+        url="http://example.com/1",
+    )
+    result = matcher.match(doc)
+
+    keys = result.matched_keywords
+    assert "Vitalik Buterin" in keys
+    assert "Anthony Pompliano" in keys
+    assert "ethereum" in keys
+    assert "vb" not in keys  # Resolved to canonical
+
+    # Check frequency
+    # "VB" -> 1 hit, "@vitalikbuterin" -> 1 hit => frequency for Vitalik should be 2
+    vitalik_hit = next(hit for hit in result.hits if hit.canonical_name == "Vitalik Buterin")
+    assert vitalik_hit.frequency == 2
+    assert "title" in vitalik_hit.locations
+    assert "body" in vitalik_hit.locations
 
 
-# ── Loader unit tests ─────────────────────────────────────────────────────────
+def test_matcher_scoring_title_priority():
+    matcher = KeywordMatcher(keywords={"bitcoin"}, alias_map={})
+
+    doc_title = CanonicalDocument(
+        title="Bitcoin is booming", cleaned_text="Market is up.", url="http://example.com/1"
+    )
+    res_title = matcher.match(doc_title)
+
+    doc_body = CanonicalDocument(
+        title="Market update", cleaned_text="Bitcoin is booming.", url="http://example.com/2"
+    )
+    res_body = matcher.match(doc_body)
+
+    assert res_title.total_score > res_body.total_score
 
 
-def test_load_watchlist_missing_file(tmp_path: Path):
-    assert load_watchlist(tmp_path / "nonexistent.yml") == []
-
-
-def test_load_watchlist_parses_crypto(tmp_path: Path):
-    data = {
-        "crypto": [{"symbol": "BTC", "name": "Bitcoin", "aliases": ["bitcoin"], "tags": ["l1"]}]
-    }
-    p = tmp_path / "watchlists.yml"
-    p.write_text(yaml.dump(data))
-    entries = load_watchlist(p)
-    assert len(entries) == 1
-    assert entries[0].symbol == "BTC"
-    assert "bitcoin" in entries[0].aliases
-
-
-def test_load_entity_aliases_missing_file(tmp_path: Path):
-    assert load_entity_aliases(tmp_path / "nonexistent.yml") == []
-
-
-def test_load_entity_aliases_parses(tmp_path: Path):
-    data = {
-        "entity_aliases": [
-            {
-                "canonical": "Vitalik Buterin",
-                "aliases": ["Vitalik", "vitalik"],
-                "handles": {"twitter": "@VitalikButerin"},
-                "category": "ethereum_founder",
-            }
-        ]
-    }
-    p = tmp_path / "entity_aliases.yml"
-    p.write_text(yaml.dump(data))
-    entities = load_entity_aliases(p)
-    assert len(entities) == 1
-    assert entities[0].canonical == "Vitalik Buterin"
-    assert "vitalik" in entities[0].aliases
+def test_matcher_empty_document():
+    matcher = KeywordMatcher(keywords={"bitcoin"}, alias_map={})
+    doc = CanonicalDocument(title="", cleaned_text="", url="http://example.com/1")
+    res = matcher.match(doc)
+    assert res.hit_count == 0
+    assert res.total_score == 0.0
