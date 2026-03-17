@@ -23,3 +23,10 @@ logs/
 *.sqlite3
 .DS_Store
 alembic/versions/*.py
+
+# API Keys & Secrets
+*_API_Key.txt
+*_API-Key.txt
+*_KEY.txt
+*EMAIL-API.txt
+*.key.txt

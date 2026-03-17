@@ -10,29 +10,7 @@ services:
       - "8000:8000"
     env_file: .env
     environment:
-      DATABASE_URL: postgresql+asyncpg://postgres:postgres@postgres:5432/ai_analyst_bot
-      REDIS_URL: redis://redis:6379/0
-    depends_on:
-      postgres:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-    volumes:
-      - ./monitor:/app/monitor:ro
-      - ./logs:/app/logs
-    restart: unless-stopped
-    networks: [botnet]
-
-  worker:
-    build:
-      context: .
-      dockerfile: docker/Dockerfile
-      target: production
-    command: python -m app.cli.main ingest run
-    env_file: .env
-    environment:
-      DATABASE_URL: postgresql+asyncpg://postgres:postgres@postgres:5432/ai_analyst_bot
-      REDIS_URL: redis://redis:6379/0
+      DB_URL: postgresql+asyncpg://postgres:postgres@postgres:5432/ai_analyst_bot
     depends_on:
       postgres:
         condition: service_healthy
@@ -59,19 +37,6 @@ services:
       retries: 5
     networks: [botnet]
 
-  redis:
-    image: redis:7-alpine
-    ports:
-      - "6379:6379"
-    volumes:
-      - redis_data:/data
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-    networks: [botnet]
-
   adminer:
     image: adminer:latest
     ports:
@@ -81,7 +46,6 @@ services:
 
 volumes:
   postgres_data:
-  redis_data:
 
 networks:
   botnet:

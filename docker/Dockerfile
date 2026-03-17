@@ -13,7 +13,6 @@ COPY pyproject.toml .
 COPY app/ ./app/
 COPY monitor/ ./monitor/
 COPY alembic.ini .
-COPY app/storage/migrations/ ./app/storage/migrations/
 
 RUN pip install --no-cache-dir -e .
 

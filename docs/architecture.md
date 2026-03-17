@@ -1,101 +1,83 @@
-# Architektur: AI Analyst Trading Bot
+# Architecture — AI Analyst Trading Bot
 
-## Leitmotiv
+## Overview
 
-**SIMPLE BUT POWERFUL** — Modular, produktionsorientiert, erweiterbar.
+Modular, production-oriented AI-powered market intelligence platform.  
+**Motto: Simple but Powerful**
 
-## Design-Prinzipien
-
-1. **Modulare Service-Architektur** — Jede Komponente ist isoliert und unabhängig testbar
-2. **Deterministische Datenflüsse** — Ingestion → Normalisierung → Analyse → Alerting → Storage
-3. **Provider-Abstraktion** — LLM-Provider, Alert-Kanäle und Marktdaten-Quellen sind austauschbar
-4. **Konfigurationsgetrieben** — Alle Settings via `.env` und YAML
-5. **Observability First** — Strukturiertes JSON-Logging, Health Checks, Usage-Tracking
-
-## System-Schichten
+## High-Level Flow
 
 ```
-┌─────────────────────────────────────────────────┐
-│              API / CLI Layer                     │
-│       FastAPI REST API + Typer CLI               │
-└──────────────────┬──────────────────────────────┘
-                   │
-┌──────────────────▼──────────────────────────────┐
-│           Orchestration Layer                    │
-│     APScheduler Jobs + Worker Processes          │
-└──────────────────┬──────────────────────────────┘
-                   │
-┌──────────────────▼──────────────────────────────┐
-│             Ingestion Layer                      │
-│  RSS | News API | YouTube | Podcasts | Social    │
-│  BaseSourceAdapter → fetch() → normalize()       │
-└──────────────────┬──────────────────────────────┘
-                   │
-┌──────────────────▼──────────────────────────────┐
-│        Normalization + Enrichment                │
-│  CanonicalDocument ← Dedup ← Entity Extract     │
-└──────────────────┬──────────────────────────────┘
-                   │
-┌──────────────────▼──────────────────────────────┐
-│             Analysis Layer                       │
-│  Rule-based Scoring → LLM (OpenAI/Anthropic)    │
-│  Sentiment | Impact | Novelty | Historical       │
-└──────────────────┬──────────────────────────────┘
-                   │
-┌──────────────────▼──────────────────────────────┐
-│             Alerting Layer                       │
-│     Telegram | Email | Webhook                  │
-│     Rules → Breaking | Digest | Watchlist       │
-└──────────────────┬──────────────────────────────┘
-                   │
-┌──────────────────▼──────────────────────────────┐
-│         Trading Preparation Layer                │
-│  Signal Candidates | Watchlists | Event→Asset   │
-└──────────────────┬──────────────────────────────┘
-                   │
-┌──────────────────▼──────────────────────────────┐
-│              Storage Layer                       │
-│   PostgreSQL (SQLAlchemy 2.x) | Alembic         │
-└─────────────────────────────────────────────────┘
+Source Registry
+   ↓
+Source Classification / Resolution
+   ↓
+Ingestion
+   ↓
+Normalization / Canonicalization
+   ↓
+Deduplication / Enrichment
+   ↓
+Rule-Based Analysis
+   ↓
+LLM Analysis
+   ↓
+Scoring / Ranking / Historical Linking
+   ↓
+Alerts / Research / Signal Candidates
 ```
 
-## Kernmodelle
+## Module Map
 
-### CanonicalDocument
-Zentrales normalisiertes Dokumentenschema. Alle Adapter produzieren dieses Format.
-Datei: `app/core/domain/document.py`
+| Module | Responsibility |
+|--------|---------------|
+| `app/core/` | Settings, logging, domain types, enums, errors |
+| `app/ingestion/` | Source adapters, resolvers, schedulers |
+| `app/normalization/` | Content cleaning, metadata alignment (Phase 2) |
+| `app/enrichment/` | Entities, tags, dedup helpers (Phase 2) |
+| `app/analysis/` | Keyword logic, scoring, LLM pipeline (Phase 3) |
+| `app/integrations/` | Provider-specific clients (Phase 3) |
+| `app/alerts/` | Telegram, email, alert rules (Phase 4) |
+| `app/research/` | Briefs, summaries, watchlists (Phase 5) |
+| `app/trading/` | Signal candidates (Phase 5) |
+| `app/api/` | FastAPI endpoints |
+| `app/cli/` | Typer commands |
+| `app/storage/` | DB models, repositories, migrations |
+| `monitor/` | User-editable source lists and watchlists |
 
-### AnalysisResult
-Strukturierter LLM-Output. Vor Storage via `LLMAnalysisOutput` (Pydantic) validiert.
-Datei: `app/analysis/llm/base.py`
+## Source Taxonomy
 
-### QuerySpec
-Such-/Filter-DSL Schema mit Boolean-Operator-Unterstützung.
-Datei: `app/core/query/schema.py`
+Every source is classified as one of:
+- `rss_feed` — validated RSS/Atom feed
+- `website` — monitored website
+- `news_api` — API-based news provider
+- `youtube_channel` — YouTube channel
+- `podcast_feed` — resolved podcast RSS
+- `podcast_page` — podcast landing page (not a feed)
+- `reference_page` — educational/reference resource
+- `social_api` — social media API source
+- `manual_source` — manually curated content
+- `unresolved_source` — URL not yet classified
 
-## Modul-Übersicht
+## Source Status Lifecycle
 
-| Modul | Zweck |
-|-------|-------|
-| `app/core/` | Settings, Logging, Errors, Enums, Domain-Modelle, Query DSL |
-| `app/ingestion/` | Source-Adapter (RSS, News, YouTube, Podcasts, Social) |
-| `app/normalization/` | Text-Bereinigung, Spracherkennung |
-| `app/enrichment/` | Deduplication, Entity-Extraction, Tagging |
-| `app/analysis/` | Scoring, LLM-Analyse, Sentiment, Narratives |
-| `app/alerts/` | Telegram, Email, Webhook-Benachrichtigungen |
-| `app/storage/` | DB-Modelle, Repositories, Migrations |
-| `app/trading/` | Signal-Vorbereitung, Watchlists, Event-Mapping |
-| `app/integrations/` | OpenAI, Anthropic, YouTube, Reddit Adapter |
-| `app/api/` | FastAPI REST Endpoints |
-| `app/cli/` | Typer CLI Commands |
+`active` → `disabled` | `requires_api` | `manual_resolution` | `unresolved`
 
-## Implementierungsphasen
+## Key Design Rules
 
-| Phase | Status | Beschreibung |
-|-------|--------|-------------|
-| Phase 1 – Foundation | ✅ | Repo, Settings, Logging, DB, Base Adapters, Query DSL, CI, Docker |
-| Phase 2 – Ingestion Core | 🔄 | RSS-Scheduling, News APIs, Podcast-Resolver, YouTube-Registry |
-| Phase 3 – Analysis Core | ⏳ | Keyword-Analyse, Sentiment-Pipeline, LLM-Provider |
-| Phase 4 – Alerting | ⏳ | Telegram, Email, Alert-Rules, Digest |
-| Phase 5 – Research/Trading | ⏳ | Watchlists, Signal-Kandidaten, Historical Analogs |
-| Phase 6 – Advanced | ⏳ | Transcripts, Narrative Clustering, MCP Adapter |
+1. Classify first, resolve second, ingest third
+2. Never fake RSS feeds
+3. No business logic in adapters or controllers
+4. LLM output always validated against `LLMAnalysisOutput` schema
+5. All secrets via environment variables — never hardcoded
+
+## Delivery Phases
+
+| Phase | Content |
+|-------|---------|
+| 1 | Foundation: settings, logging, models, API, CLI, Docker, CI |
+| 2 | Ingestion: RSS, podcasts, YouTube, websites, dedup |
+| 3 | Analysis: query DSL, keywords, LLM, scoring |
+| 4 | Alerting: Telegram, email, rules |
+| 5 | Research & signals: watchlists, briefs, signal candidates |
+| 6 | Advanced: transcripts, social connectors, narrative clustering |

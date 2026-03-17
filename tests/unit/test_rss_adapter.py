@@ -1,65 +1,114 @@
-"""Tests for the RSS Feed Adapter."""
+"""RSS adapter tests — httpx is mocked, no network calls."""
 
 from __future__ import annotations
 
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import feedparser
 import pytest
 
 from app.core.enums import SourceStatus, SourceType
-from app.ingestion.rss.adapter import RSSFeedAdapter, _strip_html
+from app.ingestion.base.interfaces import SourceMetadata
+from app.ingestion.rss.adapter import RSSFeedAdapter
+
+SAMPLE_RSS = b"""<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>Test Feed</title>
+    <link>https://example.com</link>
+    <description>A test RSS feed</description>
+    <item>
+      <title>Bitcoin hits new high</title>
+      <link>https://example.com/article-1</link>
+      <description>Bitcoin has reached a new all-time high today.</description>
+      <guid>https://example.com/article-1</guid>
+      <pubDate>Mon, 01 Jan 2024 12:00:00 +0000</pubDate>
+      <author>Test Author</author>
+    </item>
+    <item>
+      <title>Ethereum upgrade complete</title>
+      <link>https://example.com/article-2</link>
+      <description>The Ethereum network has completed its upgrade.</description>
+      <guid>https://example.com/article-2</guid>
+    </item>
+  </channel>
+</rss>"""
 
 
-class TestHTMLStripping:
-    def test_strips_tags(self) -> None:
-        assert _strip_html("<p>Hello <strong>World</strong></p>") == "Hello World"
-
-    def test_handles_empty(self) -> None:
-        assert _strip_html("") == ""
-
-    def test_plain_text_unchanged(self) -> None:
-        assert _strip_html("Plain text") == "Plain text"
-
-
-class TestRSSAdapterMetadata:
-    def test_metadata_fields(self) -> None:
-        adapter = RSSFeedAdapter(
-            source_id="test_rss", feed_url="https://example.com/feed.rss",
-            source_name="Test Feed", language="en", categories=["crypto"],
-        )
-        meta = adapter.metadata
-        assert meta.source_id == "test_rss"
-        assert meta.source_type == SourceType.RSS_FEED
-        assert meta.status == SourceStatus.ACTIVE
-        assert "crypto" in meta.categories
-
-    def test_to_dict(self) -> None:
-        adapter = RSSFeedAdapter(
-            source_id="rss_test", feed_url="https://feeds.example.com/rss", source_name="Example",
-        )
-        d = adapter.metadata.to_dict()
-        assert d["source_type"] == "rss_feed"
+def _make_adapter() -> RSSFeedAdapter:
+    metadata = SourceMetadata(
+        source_id="test-feed",
+        source_name="Test Feed",
+        source_type=SourceType.RSS_FEED,
+        url="https://example.com/feed",
+        status=SourceStatus.ACTIVE,
+    )
+    return RSSFeedAdapter(metadata, timeout=5, max_retries=1)
 
 
-class TestRSSNormalization:
-    def test_normalize_empty_feed(self) -> None:
-        adapter = RSSFeedAdapter(source_id="t", feed_url="https://ex.com", source_name="T")
-        docs = adapter._normalize("<rss version='2.0'><channel></channel></rss>")
-        assert isinstance(docs, list)
-        assert len(docs) == 0
+@pytest.mark.asyncio
+async def test_fetch_returns_documents() -> None:
+    adapter = _make_adapter()
+    with patch.object(adapter, "_fetch_raw", new=AsyncMock(return_value=SAMPLE_RSS)):
+        result = await adapter.fetch()
+    assert result.success is True
+    assert result.source_id == "test-feed"
+    assert len(result.documents) == 2
 
-    def test_normalize_basic_feed(self) -> None:
-        feed_xml = """<?xml version="1.0"?>
-        <rss version="2.0"><channel>
-          <item>
-            <title>Bitcoin hits ATH</title>
-            <link>https://example.com/btc-ath</link>
-            <description>Bitcoin reached a new all-time high.</description>
-          </item>
-        </channel></rss>"""
-        adapter = RSSFeedAdapter(
-            source_id="test", feed_url="https://ex.com/feed", source_name="Test", categories=["crypto"],
-        )
-        docs = adapter._normalize(feed_xml)
-        assert len(docs) == 1
-        assert docs[0].title == "Bitcoin hits ATH"
-        assert docs[0].source_id == "test"
-        assert "crypto" in docs[0].categories
+
+@pytest.mark.asyncio
+async def test_fetch_document_fields() -> None:
+    adapter = _make_adapter()
+    with patch.object(adapter, "_fetch_raw", new=AsyncMock(return_value=SAMPLE_RSS)):
+        result = await adapter.fetch()
+    doc = result.documents[0]
+    assert doc.title == "Bitcoin hits new high"
+    assert doc.url == "https://example.com/article-1"
+    assert doc.source_id == "test-feed"
+    assert doc.source_type == SourceType.RSS_FEED
+    assert doc.author == "Test Author"
+    assert doc.published_at is not None
+
+
+@pytest.mark.asyncio
+async def test_fetch_on_http_error_returns_failure() -> None:
+    import httpx
+
+    adapter = _make_adapter()
+    with patch.object(
+        adapter,
+        "_fetch_raw",
+        new=AsyncMock(
+            side_effect=httpx.HTTPStatusError(
+                "404", request=MagicMock(), response=MagicMock()
+            )
+        ),
+    ):
+        result = await adapter.fetch()
+    assert result.success is False
+    assert result.error is not None
+    assert result.documents == []
+
+
+@pytest.mark.asyncio
+async def test_validate_valid_feed() -> None:
+    adapter = _make_adapter()
+    with patch.object(adapter, "_fetch_raw", new=AsyncMock(return_value=SAMPLE_RSS)):
+        valid = await adapter.validate()
+    assert valid is True
+
+
+@pytest.mark.asyncio
+async def test_validate_invalid_feed() -> None:
+    adapter = _make_adapter()
+    with patch.object(adapter, "_fetch_raw", new=AsyncMock(return_value=b"not a feed")):
+        # feedparser doesn't crash, but version will be empty and entries empty
+        valid = await adapter.validate()
+    assert valid is False
+
+
+def test_feedparser_parses_sample() -> None:
+    """Sanity check: feedparser can parse our sample XML."""
+    feed = feedparser.parse(SAMPLE_RSS)
+    assert len(feed.entries) == 2
+    assert feed.entries[0].title == "Bitcoin hits new high"

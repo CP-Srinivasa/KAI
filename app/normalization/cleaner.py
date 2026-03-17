@@ -1,101 +1,49 @@
-"""
-Text Cleaner / Normalizer
-==========================
-Cleans and normalizes raw text from ingested documents.
-
-Design:
-- Pure functions, no side effects
-- No ML dependencies in this module (use langdetect separately)
-- All functions accept str and return str
-"""
+"""Basic content cleaning and normalization helpers."""
 
 from __future__ import annotations
 
+import hashlib
 import re
-import unicodedata
+from urllib.parse import urlparse, urlunparse
+
+_HTML_TAG_RE = re.compile(r"<[^>]+>")
+_WHITESPACE_RE = re.compile(r"\s+")
 
 
-# Regex patterns compiled once at module load
-_HTML_TAG = re.compile(r"<[^>]+>")
-_WHITESPACE = re.compile(r"\s+")
-_URL_PATTERN = re.compile(r"https?://\S+|www\.\S+")
-_MULTIPLE_NEWLINES = re.compile(r"\n{3,}")
-_CONTROL_CHARS = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
+def clean_text(text: str | None) -> str | None:
+    """Strip HTML tags and collapse whitespace."""
+    if not text:
+        return None
+    text = _HTML_TAG_RE.sub(" ", text)
+    text = _WHITESPACE_RE.sub(" ", text).strip()
+    return text or None
 
 
-def strip_html(text: str) -> str:
-    """Remove HTML tags from text."""
-    return _HTML_TAG.sub(" ", text)
+def normalize_url(url: str) -> str:
+    """Normalize a URL for deduplication comparison.
 
-
-def normalize_whitespace(text: str) -> str:
-    """Collapse multiple whitespace chars to a single space."""
-    return _WHITESPACE.sub(" ", text).strip()
-
-
-def remove_control_chars(text: str) -> str:
-    """Remove non-printable control characters."""
-    return _CONTROL_CHARS.sub("", text)
-
-
-def normalize_unicode(text: str) -> str:
-    """Normalize unicode to NFC form (composed characters)."""
-    return unicodedata.normalize("NFC", text)
-
-
-def remove_urls(text: str) -> str:
-    """Remove URLs from text (optional, for analysis purposes)."""
-    return _URL_PATTERN.sub(" ", text)
-
-
-def truncate(text: str, max_chars: int = 10000) -> str:
-    """Truncate text to max_chars, breaking at word boundary."""
-    if len(text) <= max_chars:
-        return text
-    truncated = text[:max_chars]
-    last_space = truncated.rfind(" ")
-    return truncated[:last_space].rstrip() + "…" if last_space > 0 else truncated + "…"
-
-
-def clean_text(raw: str, strip_urls: bool = False, max_chars: int = 10000) -> str:
+    Lowercases scheme and host, strips trailing slash from path,
+    removes fragment. Query params are kept (some feeds use them as IDs).
     """
-    Full cleaning pipeline for ingested text:
-    1. Normalize unicode
-    2. Strip HTML tags
-    3. Remove control characters
-    4. Optionally remove URLs
-    5. Normalize whitespace
-    6. Truncate if needed
-    """
-    if not raw:
-        return ""
-    text = normalize_unicode(raw)
-    text = strip_html(text)
-    text = remove_control_chars(text)
-    if strip_urls:
-        text = remove_urls(text)
-    text = normalize_whitespace(text)
-    text = truncate(text, max_chars)
-    return text
-
-
-def extract_title_from_text(text: str, max_len: int = 200) -> str:
-    """
-    Extract a pseudo-title from raw text (first non-empty line).
-    Fallback for sources without explicit title fields.
-    """
-    for line in text.splitlines():
-        line = line.strip()
-        if len(line) > 10:
-            return line[:max_len]
-    return ""
+    try:
+        parsed = urlparse(url.strip())
+        normalized = parsed._replace(
+            scheme=parsed.scheme.lower(),
+            netloc=parsed.netloc.lower(),
+            path=parsed.path.rstrip("/"),
+            fragment="",
+        )
+        return urlunparse(normalized)
+    except Exception:
+        return url.strip().lower()
 
 
 def normalize_title(title: str) -> str:
-    """
-    Normalize a title for comparison purposes.
-    Lowercases, removes punctuation, normalizes whitespace.
-    """
-    title = normalize_unicode(title.lower())
-    title = re.sub(r"[^\w\s]", " ", title)
-    return normalize_whitespace(title)
+    """Normalize a title for comparison (lowercase, collapsed whitespace)."""
+    return _WHITESPACE_RE.sub(" ", title.lower().strip())
+
+
+def content_hash(url: str, title: str, text: str | None = None) -> str:
+    """Compute a stable SHA-256 hash over url + title + text."""
+    raw = f"{normalize_url(url)}|{normalize_title(title)}|{text or ''}"
+    return hashlib.sha256(raw.encode()).hexdigest()

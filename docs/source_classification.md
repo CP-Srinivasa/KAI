@@ -1,72 +1,76 @@
-# Source Classification Guide
+# Source Classification
+
+## Overview
+
+Every source must be classified before ingestion. Classification is based on URL patterns only — no HTTP requests are made during classification.
 
 ## Source Types
 
-| Typ | Beschreibung | Beispiel |
-|-----|-------------|---------|
-| `rss_feed` | Direkter RSS/Atom-Feed | `https://feeds.example.com/rss` |
-| `website` | News-/Editorial-Website | `cointelegraph.com` |
-| `news_api` | Strukturierte News-API | NewsAPI.org, Bing News |
-| `social_api` | Social Media Plattform API | Twitter/X API, Reddit API |
-| `youtube_channel` | YouTube-Kanal | `@Bankless` |
-| `podcast_feed` | Aufgelöster Podcast RSS-Feed | Podigee, direktes RSS |
-| `podcast_page` | Podcast Landing Page (kein Feed) | `btc-echo.de/podcasts/` |
-| `reference_page` | Bildungs-/Referenzressource | `coinledger.io/guides/crypto-tax` |
-| `market_data` | Preis-/OHLCV-Datenprovider | CoinGecko, CoinMarketCap |
-| `unresolved_source` | Benötigt Klassifikation | Unbekannter URL-Typ |
+| Type | When applied |
+|------|-------------|
+| `rss_feed` | URL path matches known RSS/Atom patterns (`/feed`, `/rss`, `.xml`, etc.) |
+| `youtube_channel` | `youtube.com` or `youtu.be` domain |
+| `podcast_feed` | Podigee subdomain (pattern-resolvable) |
+| `podcast_page` | Apple Podcasts or Spotify show page (requires API) |
+| `website` | Everything else — general news or data website |
+| `reference_page` | Set manually in `monitor/website_sources.txt` |
+| `unresolved_source` | URL could not be classified |
 
 ## Source Status
 
-| Status | Bedeutung |
-|--------|-----------|
-| `active` | Operativ, wird abgerufen |
-| `planned` | Implementierung geplant |
-| `disabled` | Absichtlich deaktiviert |
-| `requires_api` | Benötigt API-Key-Konfiguration |
-| `manual_resolution` | Menschliche Überprüfung erforderlich |
-| `rss_resolution_needed` | Wahrscheinlich RSS vorhanden, noch nicht gefunden |
+| Status | Meaning |
+|--------|---------|
+| `active` | Ready for ingestion |
+| `requires_api` | Needs platform API access (Apple, Spotify) |
+| `unresolved` | No resolution strategy available |
+| `disabled` | Manually disabled |
+| `planned` | Not yet implemented |
 
-## Wichtige Regel: Spotify & Apple Podcasts ≠ RSS Feeds
+## Classifier Rules (in priority order)
 
-Apple Podcasts und Spotify URLs sind **Landing Pages**, keine RSS-Feeds.
-Sie erfordern externe APIs zur Auflösung:
+1. YouTube domain → `youtube_channel / active`
+2. `open.spotify.com/show/` → `podcast_page / requires_api`
+3. `podcasts.apple.com` → `podcast_page / requires_api`
+4. `*.podigee.io` → `podcast_feed / active` (feed: `{base}/feed/mp3`)
+5. Path matches RSS pattern → `rss_feed / active`
+6. Otherwise → `website / active`
 
-- **Apple Podcasts**: iTunes Search API → `https://itunes.apple.com/lookup?id=<ID>`
-- **Spotify**: Kein öffentliches RSS. Spotify API oder manuelle Recherche erforderlich.
+## Podcast Resolution
 
-## Podigee-Feeds (Pattern-basiert auflösbar)
+`PodcastResolver` loads `monitor/podcast_feeds_raw.txt` and classifies each entry:
+- RSS paths → confirmed `podcast_feed`
+- Podigee → constructed feed URL via pattern
+- Apple/Spotify → `podcast_page / requires_api`
+- Other pages → `unresolved_source`
+
+## YouTube Resolution
+
+`YouTubeResolver` loads `monitor/youtube_channels.txt` and normalizes each URL:
+- `@handle` → `https://www.youtube.com/@{handle}`
+- `/channel/{id}` → `https://www.youtube.com/channel/{id}`
+- `/c/{name}` → `https://www.youtube.com/c/{name}`
+- `/user/{name}` → `https://www.youtube.com/user/{name}`
+
+Duplicates (same normalized URL) are removed automatically.
+
+## CLI Usage
+
+```bash
+# Classify a single URL
+python -m app.cli.main sources classify https://epicenter.tv/feed/podcast/
+
+# Resolve all podcast sources
+python -m app.cli.main podcasts resolve
+
+# Resolve all YouTube channels
+python -m app.cli.main youtube resolve
+
+# Ingest an RSS feed
+python -m app.cli.main ingest rss https://cointelegraph.com/rss
+```
+
+## API Usage
 
 ```
-{handle}.podigee.io → https://{handle}.podigee.io/feed/mp3
+GET /sources/classify?url=https://epicenter.tv/feed/podcast/
 ```
-
-Beispiel: `saschahuber.podigee.io` → `https://saschahuber.podigee.io/feed/mp3`
-
-## YouTube URL-Normalisierung
-
-YouTube-Kanäle existieren in mehreren URL-Formaten:
-- `youtube.com/@Handle` (aktueller Standard)
-- `youtube.com/c/ChannelName` (Legacy)
-- `youtube.com/channel/UCxxxxxx` (Channel-ID)
-
-Resolver: `app/ingestion/resolvers/youtube_resolver.py`
-
-**Deduplication**: `@CoinBureau` erschien zweimal in der Quellliste → bereinigt.
-
-## Referenzseiten (keine News-Quellen)
-
-Diese Ressourcen sind als `reference_page` klassifiziert und werden **nicht als News** ingested:
-
-- `a16zcrypto.com/posts/article/crypto-readings-resources/` → reference
-- `coinledger.io/bitcoin-rainbow-chart` → reference
-- `coinledger.io/guides/crypto-tax` → reference
-- `coinbase.com/learn` → reference
-- `coinledger.io/crypto-profit-calculator` → reference
-- `tradingview.com` → market data platform (kein News-Feed)
-
-## Status-Dateien
-
-- `monitor/podcast_feeds_resolved.txt` — Bestätigte RSS-Feeds, bereit zur Ingestion
-- `monitor/podcast_sources_unresolved.txt` — Benötigt API-Key oder manuelle Auflösung
-- `monitor/website_sources.txt` — News-/Reference-Websites
-- `monitor/news_domains.txt` — Domains mit Credibility-Scores

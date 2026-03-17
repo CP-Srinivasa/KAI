@@ -1,80 +1,35 @@
-"""Sources management endpoints."""
-from __future__ import annotations
+from fastapi import APIRouter, Query
+from pydantic import BaseModel
 
-from typing import Any
+from app.ingestion.classifier import ClassificationResult, classify_url
 
-from fastapi import APIRouter, HTTPException, Query
-
-from app.core.enums import SourceStatus, SourceType
-from app.ingestion.source_registry import get_registry
-
-router = APIRouter()
+router = APIRouter(prefix="/sources", tags=["sources"])
 
 
-@router.get("/")
-async def list_sources(
-    status: str | None = Query(None, description="Filter by status (active, requires_api, disabled, ...)"),
-    source_type: str | None = Query(None, alias="type", description="Filter by source type (rss_feed, website, ...)"),
-    fetchable_only: bool = Query(False, description="Return only fetchable sources"),
-) -> dict[str, Any]:
-    """
-    List all registered sources from the in-memory SourceRegistry.
-
-    The registry is populated at startup from monitor/ files.
-    Use ?fetchable_only=true to get only sources that can be actively ingested.
-    """
-    registry = get_registry()
-
-    if fetchable_only:
-        entries = registry.fetchable()
-    else:
-        entries = registry.all()
-
-    # Apply optional filters
-    if status:
-        try:
-            status_enum = SourceStatus(status)
-            entries = [e for e in entries if e.status == status_enum]
-        except ValueError:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Invalid status '{status}'. Valid values: {[s.value for s in SourceStatus]}",
-            )
-
-    if source_type:
-        try:
-            type_enum = SourceType(source_type)
-            entries = [e for e in entries if e.source_type == type_enum]
-        except ValueError:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Invalid type '{source_type}'. Valid values: {[t.value for t in SourceType]}",
-            )
-
-    return {
-        "sources": [e.to_dict() for e in entries],
-        "total": len(entries),
-        "registry_summary": registry.summary(),
-    }
+class SourcesResponse(BaseModel):
+    message: str
 
 
-@router.get("/summary")
-async def registry_summary() -> dict[str, Any]:
-    """Return a summary of the source registry (counts by status and type)."""
-    registry = get_registry()
-    return registry.summary()
+class ClassifyResponse(BaseModel):
+    url: str
+    source_type: str
+    status: str
+    notes: str | None
 
 
-@router.get("/{source_id}")
-async def get_source(source_id: str) -> dict[str, Any]:
-    """Get a single source by ID from the registry."""
-    registry = get_registry()
-    entry = registry.get(source_id)
+@router.get("", response_model=SourcesResponse)
+async def list_sources() -> SourcesResponse:
+    return SourcesResponse(message="Sources endpoint — Phase 2 (storage integration in Phase 2+)")
 
-    if entry is None:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Source '{source_id}' not found in registry",
-        )
 
-    return entry.to_dict()
+@router.get("/classify", response_model=ClassifyResponse)
+async def classify_source(
+    url: str = Query(..., description="URL to classify"),
+) -> ClassifyResponse:
+    result: ClassificationResult = classify_url(url)
+    return ClassifyResponse(
+        url=url,
+        source_type=result.source_type.value,
+        status=result.status.value,
+        notes=result.notes,
+    )

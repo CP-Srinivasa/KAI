@@ -1,102 +1,80 @@
-"""Tests for Podcast Source Resolver."""
-
-from __future__ import annotations
+from pathlib import Path
 
 import pytest
 
 from app.core.enums import SourceStatus, SourceType
-from app.ingestion.resolvers.podcast_resolver import (
-    URLCategory,
-    classify_batch,
-    classify_url,
+from app.ingestion.resolvers.podcast import load_and_resolve_podcasts, resolve_podcast_url
+
+F = SourceType.PODCAST_FEED
+P = SourceType.PODCAST_PAGE
+U = SourceType.UNRESOLVED_SOURCE
+ACT = SourceStatus.ACTIVE
+API = SourceStatus.REQUIRES_API
+UNR = SourceStatus.UNRESOLVED
+
+
+@pytest.mark.parametrize(
+    "url,expected_type,expected_status",
+    [
+        # Direct RSS feed
+        ("https://epicenter.tv/feed/podcast/", F, ACT),
+        ("https://example.com/feed.xml", F, ACT),
+        # Podigee → resolves to feed
+        ("https://saschahuber.podigee.io", F, ACT),
+        # Apple → requires_api
+        ("https://podcasts.apple.com/de/podcast/bitcoin-verstehen/id1513814577", P, API),
+        # Spotify → requires_api
+        ("https://open.spotify.com/show/abcXYZ", P, API),
+        # Generic website → unresolved
+        ("https://www.btc-echo.de/podcasts/", U, UNR),
+    ],
 )
+def test_resolve_podcast_url(
+    url: str, expected_type: SourceType, expected_status: SourceStatus
+) -> None:
+    result = resolve_podcast_url(url)
+    assert result.source_type == expected_type, f"URL: {url}"
+    assert result.status == expected_status, f"URL: {url}"
 
 
-class TestApplePodcastClassification:
-    def test_apple_podcast_classified(self) -> None:
-        url = "https://podcasts.apple.com/de/podcast/bitcoin-verstehen/id1513814577"
-        result = classify_url(url)
-        assert result.category == URLCategory.APPLE_PODCAST
-        assert result.status == SourceStatus.REQUIRES_API
-        assert result.source_type == SourceType.PODCAST_PAGE
-        assert "1513814577" in (result.source_id or "")
-        assert "itunes.apple.com" in result.requires_action
+def test_resolve_podigee_constructs_feed_url() -> None:
+    result = resolve_podcast_url("https://saschahuber.podigee.io")
+    assert result.resolved_url == "https://saschahuber.podigee.io/feed/mp3"
 
 
-class TestSpotifyClassification:
-    def test_spotify_show_classified(self) -> None:
-        url = "https://open.spotify.com/show/7sDXM8BlxsUqzL2IqmLqwE"
-        result = classify_url(url)
-        assert result.category == URLCategory.SPOTIFY_SHOW
-        assert result.status == SourceStatus.REQUIRES_API
-        assert "7sDXM8BlxsUqzL2IqmLqwE" in (result.source_id or "")
-
-    def test_spotify_anchor_classified(self) -> None:
-        url = "https://podcasters.spotify.com/pod/show/teachmedefi"
-        result = classify_url(url)
-        assert result.category == URLCategory.SPOTIFY_ANCHOR
-        assert result.status == SourceStatus.RSS_RESOLUTION_NEEDED
+def test_resolve_podigee_already_has_feed_url() -> None:
+    result = resolve_podcast_url("https://saschahuber.podigee.io/feed/mp3")
+    assert result.resolved_url == "https://saschahuber.podigee.io/feed/mp3"
 
 
-class TestPodigeeClassification:
-    def test_podigee_resolves_to_rss(self) -> None:
-        url = "https://saschahuber.podigee.io/"
-        result = classify_url(url)
-        assert result.category == URLCategory.PODIGEE_FEED
-        assert result.status == SourceStatus.ACTIVE
-        assert result.resolved_rss_url == "https://saschahuber.podigee.io/feed/mp3"
-
-    def test_podigee_source_type(self) -> None:
-        url = "https://saschahuber.podigee.io/"
-        result = classify_url(url)
-        assert result.source_type == SourceType.PODCAST_FEED
+def test_resolve_rss_has_resolved_url() -> None:
+    result = resolve_podcast_url("https://epicenter.tv/feed/podcast/")
+    assert result.resolved_url == "https://epicenter.tv/feed/podcast/"
 
 
-class TestReferencePageClassification:
-    def test_a16z_crypto_is_reference(self) -> None:
-        url = "https://a16zcrypto.com/posts/article/crypto-readings-resources/"
-        result = classify_url(url)
-        assert result.category == URLCategory.REFERENCE_RESOURCE
-        assert result.status == SourceStatus.DISABLED
-
-    def test_coinledger_is_reference(self) -> None:
-        url = "https://coinledger.io/bitcoin-rainbow-chart"
-        result = classify_url(url)
-        assert result.category == URLCategory.REFERENCE_RESOURCE
-
-    def test_tradingview_is_reference(self) -> None:
-        url = "https://www.tradingview.com"
-        result = classify_url(url)
-        assert result.category == URLCategory.REFERENCE_RESOURCE
-
-    def test_coinbase_learn_is_reference(self) -> None:
-        url = "https://www.coinbase.com/learn"
-        result = classify_url(url)
-        assert result.category == URLCategory.REFERENCE_RESOURCE
+def test_apple_has_no_resolved_url() -> None:
+    result = resolve_podcast_url("https://podcasts.apple.com/de/podcast/x/id123")
+    assert result.resolved_url is None
 
 
-class TestDirectRSSClassification:
-    def test_rss_path_detected(self) -> None:
-        url = "https://example.com/feed/rss"
-        result = classify_url(url)
-        assert result.category == URLCategory.DIRECT_RSS
-        assert result.status == SourceStatus.ACTIVE
-        assert result.resolved_rss_url == url
+def test_load_and_resolve_returns_tuples(tmp_path: Path) -> None:
+    monitor = tmp_path / "monitor"
+    monitor.mkdir()
+    (monitor / "podcast_feeds_raw.txt").write_text(
+        "# Comment\n"
+        "https://epicenter.tv/feed/podcast/\n"
+        "https://podcasts.apple.com/de/podcast/x/id123\n"
+        "https://saschahuber.podigee.io\n",
+        encoding="utf-8",
+    )
+    resolved, unresolved = load_and_resolve_podcasts(monitor)
+    assert len(resolved) == 2  # epicenter + podigee
+    assert len(unresolved) == 1  # apple
 
-    def test_epicenter_episodes_not_rss(self) -> None:
-        # /episodes/ is NOT an RSS feed
-        url = "https://epicenter.tv/episodes/"
-        result = classify_url(url)
-        assert result.category != URLCategory.DIRECT_RSS
 
-
-class TestBatchClassification:
-    def test_skips_comments_and_blanks(self) -> None:
-        urls = [
-            "# This is a comment",
-            "",
-            "  ",
-            "https://open.spotify.com/show/7sDXM8BlxsUqzL2IqmLqwE",
-        ]
-        results = classify_batch(urls)
-        assert len(results) == 1
+def test_load_and_resolve_from_real_monitor() -> None:
+    resolved, unresolved = load_and_resolve_podcasts(Path("monitor"))
+    assert isinstance(resolved, list)
+    assert isinstance(unresolved, list)
+    for src in unresolved:
+        assert src.status in (SourceStatus.REQUIRES_API, SourceStatus.UNRESOLVED)

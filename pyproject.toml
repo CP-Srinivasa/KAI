@@ -39,9 +39,7 @@ dependencies = [
     "python-dateutil>=2.9.0",
     "langdetect>=1.0.9",
     "tiktoken>=0.8.0",
-    "python-telegram-bot>=21.9",
-    "aiosmtplib>=3.0.2",
-    "ccxt>=4.4.0",
+
 ]
 
 [project.optional-dependencies]

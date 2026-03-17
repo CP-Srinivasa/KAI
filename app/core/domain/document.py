@@ -1,120 +1,96 @@
-"""
-Canonical Document Domain Model
-================================
-The central data model. Every source adapter normalizes to CanonicalDocument.
-"""
-
 from __future__ import annotations
 
 import hashlib
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID, uuid4
 
-from pydantic import BaseModel, Field, computed_field, model_validator
+from pydantic import BaseModel, Field
 
-from app.core.enums import (
-    AnalysisStatus,
-    DocumentPriority,
-    EventType,
-    Language,
-    MarketScope,
-    SentimentLabel,
-    SourceType,
-)
-from app.core.types import ContentHash, DocumentId, JsonDict, ScoreFloat, SentimentScore
-
-
-class EntityMention(BaseModel):
-    name: str
-    entity_type: str  # person, organization, ticker, crypto_asset, location
-    canonical_name: str | None = None
-    confidence: float = 1.0
-    mentions: int = 1
-
-
-class AnalysisResult(BaseModel):
-    """Structured LLM analysis result. Validated before storage."""
-    sentiment_label: SentimentLabel = SentimentLabel.NEUTRAL
-    sentiment_score: SentimentScore = 0.0
-    relevance_score: ScoreFloat = 0.0
-    impact_score: ScoreFloat = 0.0
-    confidence_score: ScoreFloat = 0.0
-    novelty_score: ScoreFloat = 0.0
-    credibility_score: ScoreFloat = 0.5
-    spam_probability: ScoreFloat = 0.0
-    market_scope: MarketScope = MarketScope.UNKNOWN
-    affected_assets: list[str] = Field(default_factory=list)
-    affected_sectors: list[str] = Field(default_factory=list)
-    event_type: EventType = EventType.UNKNOWN
-    bull_case: str = ""
-    bear_case: str = ""
-    neutral_case: str = ""
-    historical_analogs: list[str] = Field(default_factory=list)
-    narrative_cluster: str | None = None
-    recommended_priority: DocumentPriority = DocumentPriority.LOW
-    actionable: bool = False
-    tags: list[str] = Field(default_factory=list)
-    explanation_short: str = ""
-    explanation_long: str = ""
-    analyzed_by: str = ""
-    analyzed_at: datetime | None = None
-    analysis_model: str = ""
-    token_count: int = 0
-    cost_usd: float = 0.0
+from app.core.enums import SentimentLabel, SortBy, SourceType
 
 
 class CanonicalDocument(BaseModel):
-    """Unified document schema. All adapters produce this after normalization."""
-    id: DocumentId = Field(default_factory=uuid4)
-    external_id: str = ""
-    source_id: str
-    source_name: str
-    source_type: SourceType
-    provider: str = ""
+    id: UUID = Field(default_factory=uuid4)
+    external_id: str | None = None
+    source_id: str | None = None
+    source_name: str | None = None
+    source_type: SourceType | None = None
+    provider: str | None = None
+
     url: str
     title: str
-    subtitle: str = ""
-    author: str = ""
+    subtitle: str | None = None
+    author: str | None = None
     published_at: datetime | None = None
-    fetched_at: datetime = Field(default_factory=datetime.utcnow)
-    language: Language = Language.UNKNOWN
-    country: str = ""
-    region: str = ""
+    fetched_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    language: str | None = None
+    country: str | None = None
+    region: str | None = None
     categories: list[str] = Field(default_factory=list)
     tags: list[str] = Field(default_factory=list)
-    raw_text: str = ""
-    cleaned_text: str = ""
-    summary: str = ""
-    entities: list[EntityMention] = Field(default_factory=list)
+
+    raw_text: str | None = None
+    cleaned_text: str | None = None
+    summary: str | None = None
+
+    entities: list[str] = Field(default_factory=list)
     tickers: list[str] = Field(default_factory=list)
     crypto_assets: list[str] = Field(default_factory=list)
     people: list[str] = Field(default_factory=list)
     organizations: list[str] = Field(default_factory=list)
     topics: list[str] = Field(default_factory=list)
-    clicks: int = 0
-    views: int = 0
-    engagement: int = 0
-    analysis: AnalysisResult | None = None
-    analysis_status: AnalysisStatus = AnalysisStatus.PENDING
-    content_hash: ContentHash = ""
-    is_duplicate: bool = False
-    canonical_id: DocumentId | None = None
-    related_events: list[str] = Field(default_factory=list)
+
+    sentiment_label: SentimentLabel | None = None
+    sentiment_score: float | None = None
+    relevance_score: float | None = None
+    impact_score: float | None = None
+    credibility_score: float | None = None
+    novelty_score: float | None = None
+    historical_similarity_score: float | None = None
+
+    clicks: int | None = None
+    views: int | None = None
+    engagement: int | None = None
+
     ai_tags: list[str] = Field(default_factory=list)
-    metadata: JsonDict = Field(default_factory=dict)
+    ai_region: str | None = None
+    ai_organizations: list[str] = Field(default_factory=list)
+    related_events: list[str] = Field(default_factory=list)
 
-    @model_validator(mode="after")
-    def set_content_hash(self) -> CanonicalDocument:
-        if not self.content_hash:
-            payload = f"{self.url}|{self.title}|{self.published_at}"
-            self.content_hash = hashlib.sha256(payload.encode()).hexdigest()
-        return self
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    content_hash: str | None = None
 
-    @property
-    def is_analyzed(self) -> bool:
-        return self.analysis_status == AnalysisStatus.COMPLETED
+    def compute_hash(self) -> str:
+        content = f"{self.url}|{self.title}|{self.raw_text or ''}"
+        return hashlib.sha256(content.encode()).hexdigest()
 
-    @property
-    def impact_score(self) -> float:
-        return self.analysis.impact_score if self.analysis else 0.0
+
+class QuerySpec(BaseModel):
+    query_text: str | None = None
+    include_terms: list[str] = Field(default_factory=list)
+    exclude_terms: list[str] = Field(default_factory=list)
+    any_terms: list[str] = Field(default_factory=list)
+    all_terms: list[str] = Field(default_factory=list)
+    exact_phrases: list[str] = Field(default_factory=list)
+    title_terms: list[str] = Field(default_factory=list)
+    meta_terms: list[str] = Field(default_factory=list)
+
+    from_date: datetime | None = None
+    to_date: datetime | None = None
+    countries: list[str] = Field(default_factory=list)
+    languages: list[str] = Field(default_factory=list)
+    domains: list[str] = Field(default_factory=list)
+    categories: list[str] = Field(default_factory=list)
+    regions: list[str] = Field(default_factory=list)
+    source_types: list[SourceType] = Field(default_factory=list)
+
+    min_credibility: float | None = None
+    min_sentiment_abs: float | None = None
+    min_views: int | None = None
+    min_clicks: int | None = None
+
+    deduplicate: bool = True
+    sort_by: SortBy = SortBy.PUBLISHED_AT
+    limit: int = Field(default=50, ge=1, le=1000)
+    offset: int = Field(default=0, ge=0)

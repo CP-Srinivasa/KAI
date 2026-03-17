@@ -1,16 +1,14 @@
-"""Health check endpoint."""
-from __future__ import annotations
-from datetime import datetime
 from fastapi import APIRouter
+from pydantic import BaseModel
 
-router = APIRouter()
+router = APIRouter(tags=["health"])
 
 
-@router.get("/health")
-async def health() -> dict:
-    return {
-        "status": "ok",
-        "timestamp": datetime.utcnow().isoformat(),
-        "service": "ai-analyst-trading-bot",
-        "version": "0.1.0",
-    }
+class HealthResponse(BaseModel):
+    status: str
+    version: str
+
+
+@router.get("/health", response_model=HealthResponse)
+async def health() -> HealthResponse:
+    return HealthResponse(status="ok", version="0.1.0")

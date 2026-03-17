@@ -1,7 +1,9 @@
-"""Shared pytest fixtures and configuration."""
-from __future__ import annotations
-import os
+import pytest
+from fastapi.testclient import TestClient
 
-os.environ.setdefault("APP_ENV", "testing")
-os.environ.setdefault("OPENAI_API_KEY", "sk-test-key-not-real")
-os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://postgres:postgres@localhost:5432/ai_analyst_bot_test")
+from app.api.main import create_app
+
+
+@pytest.fixture
+def client() -> TestClient:
+    return TestClient(create_app())

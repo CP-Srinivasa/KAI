@@ -1,25 +1,47 @@
-"""Tests for application settings."""
+from app.core.settings import (
+    AlertSettings,
+    AppSettings,
+    DBSettings,
+    ProviderSettings,
+    SourceSettings,
+)
 
-from __future__ import annotations
 
-import pytest
+def test_app_settings_defaults():
+    settings = AppSettings()
+    assert settings.env == "development"
+    assert settings.log_level == "INFO"
+    assert settings.monitor_dir == "monitor"
 
-from app.core.settings import AppSettings, Environment
+
+def test_db_settings_defaults():
+    settings = DBSettings()
+    assert "postgresql" in settings.url
+    assert settings.pool_size > 0
 
 
-class TestAppSettings:
-    def test_defaults(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        # conftest sets APP_ENV=testing globally; clear it to test the code default
-        monkeypatch.delenv("APP_ENV", raising=False)
-        settings = AppSettings()
-        assert settings.env == Environment.DEVELOPMENT
-        assert not settings.is_production
-        assert settings.port == 8000
+def test_alert_settings_defaults():
+    settings = AlertSettings()
+    assert settings.dry_run is True
+    assert settings.telegram_enabled is False
+    assert settings.email_enabled is False
 
-    def test_is_production(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("APP_ENV", "production")
-        assert AppSettings().is_production
 
-    def test_is_testing(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setenv("APP_ENV", "testing")
-        assert AppSettings().is_testing
+def test_provider_settings_defaults():
+    settings = ProviderSettings()
+    assert settings.openai_model == "gpt-4o"
+    assert settings.openai_timeout > 0
+
+
+def test_source_settings_defaults():
+    settings = SourceSettings()
+    assert settings.fetch_timeout > 0
+    assert settings.max_retries > 0
+
+
+def test_app_settings_contains_sub_settings():
+    settings = AppSettings()
+    assert isinstance(settings.db, DBSettings)
+    assert isinstance(settings.alerts, AlertSettings)
+    assert isinstance(settings.providers, ProviderSettings)
+    assert isinstance(settings.sources, SourceSettings)

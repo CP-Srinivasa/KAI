@@ -1,68 +1,38 @@
-"""
-Application Errors
-==================
-Custom exception hierarchy. All domain errors extend AppError.
-"""
-
-from __future__ import annotations
-
-from typing import Any
-
-
 class AppError(Exception):
-    def __init__(self, message: str, details: dict[str, Any] | None = None) -> None:
-        super().__init__(message)
-        self.message = message
-        self.details = details or {}
+    """Base application error."""
 
 
-class IngestionError(AppError): pass
-class SourceNotFoundError(IngestionError): pass
+class ConfigurationError(AppError):
+    """Invalid or missing configuration."""
 
 
-class FetchError(IngestionError):
-    def __init__(self, message: str, status_code: int | None = None, **kw: Any) -> None:
-        super().__init__(message, **kw)
-        self.status_code = status_code
+class SourceError(AppError):
+    """Source-related error."""
 
 
-class RateLimitError(FetchError):
-    def __init__(self, message: str, retry_after_seconds: int | None = None, **kw: Any) -> None:
-        super().__init__(message, status_code=429, **kw)
-        self.retry_after_seconds = retry_after_seconds
+class IngestionError(SourceError):
+    """Error during ingestion."""
 
 
-class ParseError(IngestionError): pass
-class NormalizationError(AppError): pass
-class AnalysisError(AppError): pass
-class LLMError(AnalysisError): pass
-class LLMTimeoutError(LLMError): pass
-class LLMCostLimitError(LLMError): pass
+class ResolutionError(SourceError):
+    """Error resolving a source URL."""
 
 
-class LLMOutputValidationError(LLMError):
-    def __init__(self, message: str, raw_output: str = "", **kw: Any) -> None:
-        super().__init__(message, **kw)
-        self.raw_output = raw_output
+class AnalysisError(AppError):
+    """Error during analysis."""
 
 
-class StorageError(AppError): pass
-class DocumentNotFoundError(StorageError): pass
-class DuplicateDocumentError(StorageError): pass
-class AlertError(AppError): pass
-class TelegramError(AlertError): pass
-class EmailError(AlertError): pass
+class ProviderError(AnalysisError):
+    """Error from an external provider (LLM, API)."""
 
 
-class QueryError(AppError): pass
+class StorageError(AppError):
+    """Error during storage operations."""
 
 
-class QueryParseError(QueryError):
-    def __init__(self, message: str, query: str = "", position: int = -1, **kw: Any) -> None:
-        super().__init__(message, **kw)
-        self.query = query
-        self.position = position
+class ValidationError(AppError):
+    """Schema or data validation error."""
 
 
-class QueryValidationError(QueryError): pass
-class ConfigurationError(AppError): pass
+class AlertError(AppError):
+    """Error during alert delivery."""
