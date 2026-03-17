@@ -34,6 +34,7 @@ def main() -> None:
 
 # ── sources ──────────────────────────────────────────────────────────────────
 
+
 @sources_app.command("classify")
 def sources_classify(
     url: str = typer.Argument(..., help="URL to classify"),
@@ -51,6 +52,7 @@ def sources_classify(
 
 
 # ── podcasts ─────────────────────────────────────────────────────────────────
+
 
 @podcasts_app.command("resolve")
 def podcasts_resolve() -> None:
@@ -74,6 +76,7 @@ def podcasts_resolve() -> None:
 
 # ── youtube ──────────────────────────────────────────────────────────────────
 
+
 @youtube_app.command("resolve")
 def youtube_resolve() -> None:
     """Resolve and normalize YouTube channels from monitor/youtube_channels.txt."""
@@ -96,6 +99,7 @@ def youtube_resolve() -> None:
 
 # ── query ─────────────────────────────────────────────────────────────────────
 
+
 @query_app.command("validate")
 def query_validate(
     query: str = typer.Argument(..., help="Query string to validate"),
@@ -106,6 +110,7 @@ def query_validate(
 
 
 # ── ingest ────────────────────────────────────────────────────────────────────
+
 
 @ingest_app.command("rss")
 def ingest_rss(

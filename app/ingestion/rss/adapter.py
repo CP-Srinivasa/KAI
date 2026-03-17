@@ -93,9 +93,7 @@ class RSSFeedAdapter(BaseSourceAdapter):
         published: datetime | None = None
         if entry.get("published_parsed"):
             try:
-                published = datetime.fromtimestamp(
-                    time.mktime(entry.published_parsed), tz=UTC
-                )
+                published = datetime.fromtimestamp(time.mktime(entry.published_parsed), tz=UTC)
             except (ValueError, OverflowError, OSError):
                 published = None
 

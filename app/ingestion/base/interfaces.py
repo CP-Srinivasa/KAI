@@ -3,6 +3,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime
+from typing import Any
 
 from app.core.domain.document import CanonicalDocument
 from app.core.enums import SourceStatus, SourceType
@@ -17,7 +18,7 @@ class SourceMetadata:
     status: SourceStatus = SourceStatus.ACTIVE
     provider: str | None = None
     notes: str | None = None
-    metadata: dict = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -27,7 +28,7 @@ class FetchResult:
     fetched_at: datetime
     success: bool
     error: str | None = None
-    metadata: dict = field(default_factory=dict)
+    metadata: dict[str, Any] = field(default_factory=dict)
 
 
 class BaseSourceAdapter(ABC):

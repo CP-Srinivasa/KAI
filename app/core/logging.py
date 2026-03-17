@@ -24,5 +24,5 @@ def configure_logging(log_level: str = "INFO") -> None:
     )
 
 
-def get_logger(name: str) -> structlog.stdlib.BoundLogger:
-    return structlog.get_logger(name)
+def get_logger(name: str) -> structlog.BoundLogger:
+    return structlog.get_logger(name)  # type: ignore[no-any-return]

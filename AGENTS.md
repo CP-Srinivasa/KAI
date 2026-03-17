@@ -1,7 +1,8 @@
 # AGENTS.md — KAI Platform
 
-> Universal entry point for all coding agents: Claude Code, OpenAI Codex, Google Antigravity.
-> Read this before touching any code.
+> **Verbindliches Betriebsdokument für alle Coding-Agenten.**
+> Claude Code · OpenAI Codex · Google Antigravity
+> Dieses Dokument lesen, bevor eine einzige Zeile Code angefasst wird.
 
 ---
 
@@ -12,138 +13,228 @@
 **Mission**: Agent-capable development & operations platform for AI-driven market intelligence.
 **Motto**: Simple but Powerful
 
-This is **not just an app** — it is a spec-driven, modular, machine-readable platform designed
-to be developed and operated by both humans and AI agents.
+Dies ist **keine normale App** — es ist eine spec-driven, modulare, maschinenlesbare Plattform,
+die von Menschen und AI-Agenten gemeinsam entwickelt und betrieben wird.
 
 ---
 
-## 2. Provider Decisions (fixed)
+## 2. Provider-Entscheidungen (fest)
 
-| # | Concern | Decision |
+| # | Bereich | Entscheidung |
 |---|---|---|
 | A | Repo | GitHub |
-| B | Language | Python 3.12+ |
+| B | Sprache | Python 3.12+ |
 | C | API Framework | FastAPI |
-| D | Database | PostgreSQL (TimescaleDB optional later) |
-| E | AI Providers | OpenAI/ChatGPT (primary), Anthropic (optional), Google Antigravity (optional) |
+| D | Datenbank | PostgreSQL (TimescaleDB optional) |
+| E | AI-Provider | OpenAI/ChatGPT (primär), Anthropic (optional), Google Antigravity (optional) |
 
 ---
 
-## 3. Module Map
+## 3. Rollen-Zuordnung
+
+| Agent | Rolle | Zuständig für |
+|---|---|---|
+| **OpenAI Codex** | Implementierer | Neue Features nach Spec, Unit Tests, Refactoring (1 Modul), CI-Fixes, Lint |
+| **Claude Code** | Architekt | Neue Module, Interface-Änderungen, Multi-File, Spec → Code, AGENTS.md pflegen |
+| **Google Antigravity** | Orchestrator | Workflows, MCP/Skills, Build/Deploy, multi-Agent-Koordination |
+
+**Vollständiges Rollenmodell → [AGENT_ROLES.md](./AGENT_ROLES.md)**
+
+---
+
+## 4. Task-Typen und Zuständigkeit
+
+| Task-Typ | Zuständiger Agent |
+|---|---|
+| Feature implementieren (Spec vorhanden, 1 Modul) | Codex |
+| Unit Test schreiben oder reparieren | Codex |
+| Refactoring innerhalb eines Moduls (kein Interface-Bruch) | Codex |
+| CI-Pipeline-Fehler beheben | Codex |
+| Lint / Typ-Korrekturen | Codex |
+| Neues Modul einführen | Claude Code |
+| Interface oder Domain-Modell ändern | Claude Code |
+| Multi-File-Änderung (2+ Module) | Claude Code |
+| Spec schreiben oder AGENTS.md aktualisieren | Claude Code |
+| Agentischen Workflow definieren | Antigravity |
+| MCP-Tool oder Skill definieren | Antigravity |
+| Build / Deploy / CI-Pipeline aufbauen | Antigravity |
+| Unklare Anforderung | → Operator entscheidet |
+
+---
+
+## 5. Pflicht: Kein Agent ändert Architektur ohne Spec
+
+> **RULE-ZERO**: Kein Agent darf ein neues Modul, Interface, Domain-Modell oder
+> eine Provider-Abstraktion einführen oder ändern, ohne dass eine Spec existiert.
+
+Eine **Spec** ist eine der folgenden:
+- Ein Abschnitt in `PROJECT_SPEC.md`
+- Ein `AGENTS.md` im betreffenden Modul
+- Eine explizite schriftliche Anweisung des Operators in der aktuellen Session
+
+**Was erlaubt ist ohne Spec:**
+- Implementierung innerhalb bestehender Interfaces
+- Tests schreiben
+- Lint/CI-Fixes
+- Dokumentation verbessern
+
+**Was NICHT erlaubt ist ohne Spec:**
+- Neue `app/<modul>/` Verzeichnisse anlegen
+- Bestehende Pydantic-Modelle umbenennen oder Felder entfernen
+- Provider-Abstraktionen ändern
+- `app/core/` anfassen
+- `AGENTS.md` oder `AGENT_ROLES.md` ändern
+
+---
+
+## 6. Pflicht-Task-Format
+
+Jede Aufgabe, die an einen Agenten übergeben wird, muss folgendes enthalten:
+
+```
+## Task: <kurzer Titel>
+
+**Agent**: [Codex | Claude Code | Antigravity]
+**Phase**: [P1 | P2 | P3 | ...]
+**Modul**: app/<modul>/
+**Typ**: [feature | test | refactor | fix | spec | deploy]
+
+### Beschreibung
+<Was soll gebaut/geändert werden — in 2–5 Sätzen>
+
+### Spec-Referenz
+<Abschnitt in PROJECT_SPEC.md oder AGENTS.md, der diese Aufgabe beschreibt>
+
+### Akzeptanzkriterien
+- [ ] <messbares Kriterium 1>
+- [ ] <messbares Kriterium 2>
+
+### Constraints
+- <Was NICHT geändert werden darf>
+- <Welche bestehenden Interfaces stabil bleiben müssen>
+```
+
+---
+
+## 7. Pflicht-Output-Format (pro Agent)
+
+### OpenAI Codex
+
+```
+## Codex Report
+- Task: <Titel>
+- Dateien erstellt: [Liste oder "keine"]
+- Dateien geändert: [Liste]
+- Annahmen: [Liste]
+- TODOs: [Liste oder "keine"]
+- Test-Befehl: pytest tests/unit/<datei>.py
+- ruff check: ✅ / ❌ (Fehler angeben)
+```
+
+### Claude Code
+
+```
+## Claude Code Report
+- Task: <Titel>
+- Architekturentscheidung: <Was wurde wie entschieden und warum>
+- Dateien erstellt: [Liste]
+- Dateien geändert: [Liste]
+- Interface-Änderungen: [Ja/Nein — wenn Ja: was genau]
+- AGENTS.md aktualisiert: [Ja/Nein — welche Dateien]
+- Annahmen: [Liste]
+- TODOs: [Liste]
+- Test-Befehl: pytest tests/unit/<datei>.py
+```
+
+### Google Antigravity
+
+```
+## Antigravity Report
+- Task: <Titel>
+- Workflow-Schritte: [geordnete Liste]
+- Eingesetzte Agenten: [Codex | Claude Code | beide]
+- MCP/Skills aktiviert: [Liste oder "keine"]
+- Ergebnis: <Was wurde produziert>
+- Validierung: <Wie wurde das Ergebnis geprüft>
+- TODOs: [Liste]
+```
+
+---
+
+## 8. Quality Gates (Pflicht)
+
+Jede Aufgabe gilt als **nicht abgeschlossen**, solange einer dieser Gates nicht erfüllt ist:
+
+| Gate | Prüfung |
+|---|---|
+| **Tests** | `pytest` läuft durch ohne Fehler |
+| **Lint** | `ruff check .` ohne Fehler |
+| **Typisierung** | Keine `Any`, kein nacktes `dict` in öffentlichen Interfaces |
+| **Secrets** | Keine Credentials oder API-Keys im Code |
+| **Spec-Konformität** | Implementierung entspricht der referenzierten Spec |
+| **AGENTS.md** | Aktualisiert, wenn Interface oder Modul geändert |
+| **Failure-Handling** | Fehlerszenarien explizit behandelt (kein `pass` in `except`) |
+
+---
+
+## 9. Modul-Map
 
 ```
 app/
-  core/          → settings, logging, domain types, enums, errors
-  ingestion/     → source adapters, resolvers, classifiers, RSS
+  core/          → settings, logging, domain types, enums, errors  [AGENTS.md ✅]
+  ingestion/     → source adapters, resolvers, classifiers, RSS    [AGENTS.md ✅]
   normalization/ → content cleaning, canonical alignment
-  enrichment/    → deduplication, entity helpers
-  analysis/      → base interfaces for LLM + rule-based providers
-  api/           → FastAPI routers (health, sources, query)
-  cli/           → Typer commands
+  enrichment/    → deduplication, entity helpers                   [AGENTS.md ✅]
+  analysis/      → base interfaces für LLM + rule-based providers  [AGENTS.md ✅]
+  api/           → FastAPI routers                                  [AGENTS.md ✅]
+  cli/           → Typer commands                                   [AGENTS.md ✅]
   storage/       → DB models, session (PostgreSQL/SQLAlchemy)
 monitor/         → user-editable source lists, keywords, watchlists
 tests/unit/      → pytest unit tests
 docs/            → architecture and module documentation
 ```
 
-Each module has its own `AGENTS.md` with: purpose, public interface, constraints, test commands.
-
 ---
 
-## 4. Architecture Rules (non-negotiable)
+## 10. Key Domain Models
 
-- **Pydantic everywhere** — all inputs/outputs typed via Pydantic models, no bare `dict` or `Any`
-- **Provider abstraction** — LLM providers extend `BaseAnalysisProvider`, never called directly from business logic
-- **Adapter pattern** — source adapters extend `BaseSourceAdapter`
-- **No secrets in code** — all config via `pydantic-settings` + `.env`
-- **Classify before ingest** — source type must be resolved before fetching
-- **Structured LLM output** — all LLM responses validated against schema
-- **No silent drift** — if you change an interface, update its AGENTS.md
-
----
-
-## 5. Current Phase
-
-**Phase 1 — Foundation** ✅ complete
-**Phase 2 — Ingestion Core** 🔄 next
-
-Phase 2 scope:
-- RSS scheduling (APScheduler)
-- News API adapter (newsdata.io)
-- Source registry (DB-backed)
-- Dedup pipeline (DB-aware)
-- DB session + migrations (Alembic)
-
----
-
-## 6. Agent Role Model
-
-**→ See [AGENT_ROLES.md](./AGENT_ROLES.md) for the full binding operations model.**
-
-| Agent | Role |
-|---|---|
-| **OpenAI Codex** | Implementer — code, tests, refactoring, CI fixes |
-| **Claude Code** | Architect — modules, interfaces, specs, multi-file changes |
-| **Google Antigravity** | Orchestrator — workflows, MCP/Skills, build/deploy |
-
----
-
-## 7. Agent Collaboration Protocol
-
-When working in this repo, any agent MUST:
-
-1. **Read the module's `AGENTS.md`** before writing code in that module
-2. **Reuse existing domain models** — `CanonicalDocument`, `SourceMetadata`, etc.
-3. **Follow existing naming** — do not rename, reorganize, or restructure without explicit instruction
-4. **Write tests** for all non-trivial logic (pytest, place in `tests/unit/`)
-5. **Report after changes**:
-   - Files created
-   - Files modified
-   - Assumptions made
-   - TODOs left
-   - Test command to verify
-
----
-
-## 8. Key Domain Models
-
-| Model | Location | Purpose |
+| Model | Datei | Zweck |
 |---|---|---|
-| `CanonicalDocument` | `app/core/domain/document.py` | Normalized content unit |
-| `AnalysisResult` | `app/core/domain/document.py` | LLM output container |
-| `SourceMetadata` | `app/ingestion/base/interfaces.py` | Source descriptor |
-| `FetchResult` | `app/ingestion/base/interfaces.py` | Adapter fetch output |
-| `AppSettings` | `app/core/settings.py` | All config aggregated |
+| `CanonicalDocument` | `app/core/domain/document.py` | Normalisierte Content-Einheit |
+| `AnalysisResult` | `app/core/domain/document.py` | LLM-Output-Container |
+| `SourceMetadata` | `app/ingestion/base/interfaces.py` | Source-Deskriptor |
+| `FetchResult` | `app/ingestion/base/interfaces.py` | Adapter-Fetch-Output |
+| `AppSettings` | `app/core/settings.py` | Gesamte Konfiguration |
 
 ---
 
-## 9. Test & Quality Commands
+## 11. Aktueller Stand
+
+**Phase 1 — Foundation** ✅ abgeschlossen
+**Phase 2 — Ingestion Core** 🔄 nächste Phase
+
+Vollständige Task-Liste → [TASKLIST.md](./TASKLIST.md)
+
+---
+
+## 12. Test & Quality Commands
 
 ```bash
-# Run all tests
-pytest
-
-# Lint
-ruff check .
-
-# Type check (optional)
-mypy app/
-
-# Run API (dev)
-uvicorn app.api.main:app --reload
-
-# Run CLI
-python -m app.cli.main --help
+pytest                          # alle Tests
+ruff check .                    # Lint
+mypy app/                       # Typ-Check (optional)
+uvicorn app.api.main:app --reload   # API starten
+python -m app.cli.main --help   # CLI
 ```
 
 ---
 
-## 10. What "Done" Means
+## 13. Pflicht-Referenzdokumente
 
-A task is complete when:
-- [ ] Code exists and is typed
-- [ ] Tests exist and pass
-- [ ] `ruff check` passes
-- [ ] Module `AGENTS.md` updated if interface changed
-- [ ] No hardcoded secrets
-- [ ] Failure paths handled explicitly
+| Dokument | Zweck |
+|---|---|
+| `CLAUDE.md` | Vollständige Architekturprinzipien und Non-Negotiables |
+| `PROJECT_SPEC.md` | Fachliche Spezifikation aller Features |
+| `TASKLIST.md` | Operativer Task-Plan nach Phase |
+| `AGENT_ROLES.md` | Vollständiges Rollenmodell mit Eskalationspfad |
+| `app/<modul>/AGENTS.md` | Modul-spezifischer Kontrakt |

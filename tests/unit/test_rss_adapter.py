@@ -79,9 +79,7 @@ async def test_fetch_on_http_error_returns_failure() -> None:
         adapter,
         "_fetch_raw",
         new=AsyncMock(
-            side_effect=httpx.HTTPStatusError(
-                "404", request=MagicMock(), response=MagicMock()
-            )
+            side_effect=httpx.HTTPStatusError("404", request=MagicMock(), response=MagicMock())
         ),
     ):
         result = await adapter.fetch()
