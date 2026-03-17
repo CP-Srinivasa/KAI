@@ -15,7 +15,6 @@ import httpx
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 from app.core.domain.document import CanonicalDocument
-from app.core.enums import SourceType
 from app.ingestion.base.interfaces import BaseSourceAdapter, FetchResult, SourceMetadata
 from app.normalization.cleaner import clean_text
 
@@ -101,7 +100,7 @@ class RSSFeedAdapter(BaseSourceAdapter):
             external_id=entry.get("id") or entry.get("link") or "",
             source_id=self.source_id,
             source_name=self.metadata.source_name,
-            source_type=SourceType.RSS_FEED,
+            source_type=self.metadata.source_type,  # honour actual type (e.g. PODCAST_FEED)
             url=entry.get("link", ""),
             title=entry.get("title", ""),
             author=entry.get("author"),

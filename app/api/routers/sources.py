@@ -1,9 +1,12 @@
+from pathlib import Path
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.api.deps import get_source_repo
 from app.core.enums import SourceStatus, SourceType
 from app.core.errors import StorageError
-from app.ingestion.classifier import ClassificationResult, classify_url
+from app.core.settings import get_settings
+from app.ingestion.classifier import ClassificationResult, SourceClassifier
 from app.storage.repositories.source_repo import SourceRepository
 from app.storage.schemas.source import SourceCreate, SourceRead, SourceUpdate
 
@@ -35,7 +38,9 @@ async def list_sources(
 async def classify_source(
     url: str = Query(..., description="URL to classify"),  # noqa: B008
 ) -> dict:
-    result: ClassificationResult = classify_url(url)
+    settings = get_settings()
+    classifier = SourceClassifier.from_monitor_dir(Path(settings.monitor_dir))
+    result: ClassificationResult = classifier.classify(url)
     return {
         "url": url,
         "source_type": result.source_type.value,
