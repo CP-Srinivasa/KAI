@@ -36,9 +36,7 @@ class CanonicalDocumentModel(Base):
     title: Mapped[str] = mapped_column(Text, nullable=False)
     author: Mapped[str | None] = mapped_column(String(255), nullable=True)
     language: Mapped[str | None] = mapped_column(String(10), nullable=True, index=True)
-    market_scope: Mapped[str] = mapped_column(
-        String(50), nullable=False, server_default="unknown"
-    )
+    market_scope: Mapped[str] = mapped_column(String(50), nullable=False, server_default="unknown")
 
     published_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True, index=True
@@ -81,4 +79,4 @@ class CanonicalDocumentModel(Base):
     categories: Mapped[list | None] = mapped_column(JSON, nullable=True)
     youtube_meta: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     podcast_meta: Mapped[dict | None] = mapped_column(JSON, nullable=True)
-    metadata: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    document_metadata: Mapped[dict | None] = mapped_column("metadata", JSON, nullable=True)

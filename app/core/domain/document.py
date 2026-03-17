@@ -181,8 +181,8 @@ class AnalysisResult(BaseModel):
 
     id: UUID = Field(default_factory=uuid4)
     document_id: UUID
-    provider: str                              # "openai" | "anthropic" | "rule"
-    model: str | None = None                   # e.g. "gpt-4o"
+    provider: str  # "openai" | "anthropic" | "rule"
+    model: str | None = None  # e.g. "gpt-4o"
     analyzed_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
     # Core scores — all validated ranges

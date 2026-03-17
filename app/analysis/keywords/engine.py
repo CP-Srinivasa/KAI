@@ -26,8 +26,8 @@ from app.analysis.keywords.watchlist import WatchlistEntry, load_watchlist
 
 @dataclass(frozen=True)
 class KeywordHit:
-    canonical: str    # canonical name/symbol (BTC, not bitcoin)
-    category: str     # "crypto" | "equity" | "etf" | "macro" | "keyword" | person-category
+    canonical: str  # canonical name/symbol (BTC, not bitcoin)
+    category: str  # "crypto" | "equity" | "etf" | "macro" | "keyword" | person-category
     occurrences: int  # count of matches in text
 
 
@@ -90,11 +90,7 @@ class KeywordEngine:
 
     def match_tickers(self, text: str) -> list[str]:
         """Return matched ticker symbols (crypto/equity/etf only)."""
-        return [
-            h.canonical
-            for h in self.match(text)
-            if h.category in ("crypto", "equity", "etf")
-        ]
+        return [h.canonical for h in self.match(text) if h.category in ("crypto", "equity", "etf")]
 
     def match_entities(self, text: str) -> list[KeywordHit]:
         """Return only person/org entity hits."""

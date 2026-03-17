@@ -20,13 +20,13 @@ _DEFAULT_TIMEOUT = 20
 @dataclass(frozen=True)
 class CryptoPanicPost:
     id: int
-    kind: str               # "news" | "media"
+    kind: str  # "news" | "media"
     title: str
     url: str
     published_at: datetime
     source_domain: str
     source_title: str
-    currencies: list[str]   # e.g. ["BTC", "ETH"]
+    currencies: list[str]  # e.g. ["BTC", "ETH"]
     extra: dict[str, Any] = field(default_factory=dict)
 
 
@@ -46,7 +46,7 @@ class CryptoPanicClient:
         self,
         *,
         kind: str = "news",
-        filter: str | None = None,      # "rising" | "hot" | "bullish" | "bearish" | "important"
+        filter: str | None = None,  # "rising" | "hot" | "bullish" | "bearish" | "important"
         currencies: list[str] | None = None,
         regions: str = "en",
         public: bool = True,
@@ -80,9 +80,7 @@ class CryptoPanicClient:
     def _parse_post(self, raw: dict[str, Any]) -> CryptoPanicPost:
         source = raw.get("source") or {}
         currencies = [c["code"] for c in raw.get("currencies") or []]
-        published_at = datetime.fromisoformat(
-            raw["published_at"].replace("Z", "+00:00")
-        )
+        published_at = datetime.fromisoformat(raw["published_at"].replace("Z", "+00:00"))
         return CryptoPanicPost(
             id=raw["id"],
             kind=raw.get("kind", "news"),

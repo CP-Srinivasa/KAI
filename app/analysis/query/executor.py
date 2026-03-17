@@ -51,12 +51,14 @@ class QueryExecutor:
         # ── Score filters ──────────────────────────────────────────────────────
         if spec.min_credibility is not None:
             result = [
-                d for d in result
+                d
+                for d in result
                 if d.credibility_score is not None and d.credibility_score >= spec.min_credibility
             ]
         if spec.min_sentiment_abs is not None:
             result = [
-                d for d in result
+                d
+                for d in result
                 if d.sentiment_score is not None
                 and abs(d.sentiment_score) >= spec.min_sentiment_abs
             ]
@@ -66,16 +68,18 @@ class QueryExecutor:
             result = [d for d in result if d.clicks is not None and d.clicks >= spec.min_clicks]
 
         # ── Text filters ───────────────────────────────────────────────────────
-        has_text_filter = any([
-            spec.query_text,
-            spec.include_terms,
-            spec.exclude_terms,
-            spec.any_terms,
-            spec.all_terms,
-            spec.exact_phrases,
-            spec.title_terms,
-            spec.meta_terms,
-        ])
+        has_text_filter = any(
+            [
+                spec.query_text,
+                spec.include_terms,
+                spec.exclude_terms,
+                spec.any_terms,
+                spec.all_terms,
+                spec.exact_phrases,
+                spec.title_terms,
+                spec.meta_terms,
+            ]
+        )
         if has_text_filter:
             result = [d for d in result if _text_matches(spec, d)]
 

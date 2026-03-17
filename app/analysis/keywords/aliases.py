@@ -21,7 +21,7 @@ import yaml
 @dataclass(frozen=True)
 class EntityAlias:
     canonical: str
-    aliases: frozenset[str]   # all lowercased
+    aliases: frozenset[str]  # all lowercased
     handles: dict[str, str]
     category: str
 

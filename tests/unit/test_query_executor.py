@@ -48,6 +48,7 @@ executor = QueryExecutor()
 
 # ── Dedup filter ──────────────────────────────────────────────────────────────
 
+
 def test_exclude_duplicates_default():
     docs = [
         _doc(url="https://a.com", title="A", is_duplicate=False),
@@ -68,6 +69,7 @@ def test_include_duplicates():
 
 
 # ── Date filters ──────────────────────────────────────────────────────────────
+
 
 def test_from_date_filter():
     t1 = datetime(2024, 1, 1, tzinfo=UTC)
@@ -94,6 +96,7 @@ def test_to_date_filter():
 
 
 # ── Taxonomy filters ───────────────────────────────────────────────────────────
+
 
 def test_source_type_filter():
     docs = [
@@ -147,6 +150,7 @@ def test_categories_filter():
 
 # ── Score filters ──────────────────────────────────────────────────────────────
 
+
 def test_min_credibility_filter():
     docs = [
         _doc(url="https://a.com", title="A", credibility_score=0.3),
@@ -178,6 +182,7 @@ def test_min_sentiment_abs_filter():
 
 
 # ── Text filters ───────────────────────────────────────────────────────────────
+
 
 def test_query_text_filter():
     docs = [
@@ -229,6 +234,7 @@ def test_title_terms_filter():
 
 # ── Sorting ────────────────────────────────────────────────────────────────────
 
+
 def test_sort_by_relevance():
     docs = [
         _doc(url="https://a.com", title="A", relevance_score=0.3),
@@ -261,6 +267,7 @@ def test_sort_by_published_at():
 
 
 # ── Pagination ────────────────────────────────────────────────────────────────
+
 
 def test_limit_and_offset():
     docs = [_doc(url=f"https://x{i}.com", title=f"Doc {i}") for i in range(10)]

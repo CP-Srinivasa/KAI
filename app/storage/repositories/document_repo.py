@@ -148,16 +148,14 @@ def _to_model(doc: CanonicalDocument) -> CanonicalDocumentModel:
         categories=doc.categories,
         youtube_meta=doc.youtube_meta.model_dump() if doc.youtube_meta else None,
         podcast_meta=doc.podcast_meta.model_dump() if doc.podcast_meta else None,
-        metadata=doc.metadata,
+        document_metadata=doc.metadata,
     )
 
 
 def _from_model(model: CanonicalDocumentModel) -> CanonicalDocument:
     from app.core.domain.document import EntityMention, PodcastEpisodeMeta, YouTubeVideoMeta
 
-    entity_mentions = [
-        EntityMention.model_validate(e) for e in (model.entity_mentions or [])
-    ]
+    entity_mentions = [EntityMention.model_validate(e) for e in (model.entity_mentions or [])]
     youtube_meta = (
         YouTubeVideoMeta.model_validate(model.youtube_meta) if model.youtube_meta else None
     )
@@ -207,5 +205,5 @@ def _from_model(model: CanonicalDocumentModel) -> CanonicalDocument:
         categories=model.categories or [],
         youtube_meta=youtube_meta,
         podcast_meta=podcast_meta,
-        metadata=model.metadata or {},
+        metadata=model.document_metadata or {},
     )

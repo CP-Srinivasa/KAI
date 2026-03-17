@@ -181,17 +181,26 @@ Jede Aufgabe gilt als **nicht abgeschlossen**, solange einer dieser Gates nicht 
 
 ```
 app/
-  core/          → settings, logging, domain types, enums, errors  [AGENTS.md ✅]
-  ingestion/     → source adapters, resolvers, classifiers, RSS    [AGENTS.md ✅]
-  normalization/ → content cleaning, canonical alignment
-  enrichment/    → deduplication, entity helpers                   [AGENTS.md ✅]
-  analysis/      → base interfaces für LLM + rule-based providers  [AGENTS.md ✅]
-  api/           → FastAPI routers                                  [AGENTS.md ✅]
-  cli/           → Typer commands                                   [AGENTS.md ✅]
-  storage/       → DB models, session (PostgreSQL/SQLAlchemy)
-monitor/         → user-editable source lists, keywords, watchlists
-tests/unit/      → pytest unit tests
-docs/            → architecture and module documentation
+  core/              → settings, logging, domain types, enums, errors      [AGENTS.md ✅]
+  ingestion/         → source adapters, resolvers, classifiers, RSS        [AGENTS.md ✅]
+  normalization/     → content cleaning, text normalization
+  enrichment/        → deduplication, entity matching                      [AGENTS.md ✅]
+  analysis/          → Analysekern: keyword engine, query DSL, pipeline    [AGENTS.md ✅]
+    base/            → LLMAnalysisOutput, BaseAnalysisProvider (ABC)
+    keywords/        → KeywordEngine, WatchlistEntry, EntityAlias
+    query/           → QueryExecutor (in-memory QuerySpec filter)
+    rules/           → RuleAnalyzer, KeywordMatcher, AssetDetector
+    scoring.py       → compute_priority(), is_alert_worthy()
+    pipeline.py      → AnalysisPipeline (keyword → entity → LLM → AnalysisResult)
+  integrations/      → Provider-Implementierungen (HTTP-Schicht)
+    openai/          → OpenAIAnalysisProvider (gpt-4o, structured outputs)
+    cryptopanic/     → CryptoPanicClient + Adapter (NEWS_API)
+  api/               → FastAPI routers + shared deps                       [AGENTS.md ✅]
+  cli/               → Typer commands                                      [AGENTS.md ✅]
+  storage/           → DB models, repositories, migrations (PostgreSQL)
+monitor/             → user-editable source lists, keywords, watchlists
+docker/              → Dockerfile (production), docker-compose.yml
+tests/unit/          → pytest unit tests (304 passing)
 ```
 
 ---
@@ -201,7 +210,12 @@ docs/            → architecture and module documentation
 | Model | Datei | Zweck |
 |---|---|---|
 | `CanonicalDocument` | `app/core/domain/document.py` | Normalisierte Content-Einheit |
-| `AnalysisResult` | `app/core/domain/document.py` | LLM-Output-Container |
+| `AnalysisResult` | `app/core/domain/document.py` | LLM/Regel-Analyse-Ergebnis |
+| `EntityMention` | `app/core/domain/document.py` | Strukturierte Entity-Extraktion |
+| `LLMAnalysisOutput` | `app/analysis/base/interfaces.py` | Rohausgabe des LLM-Providers |
+| `PipelineResult` | `app/analysis/pipeline.py` | Komplettes Analyse-Ergebnis |
+| `KeywordHit` | `app/analysis/keywords/engine.py` | Keyword-Match mit Kategorie |
+| `QuerySpec` | `app/core/domain/document.py` | Filter-DSL für Dokument-Suche |
 | `SourceMetadata` | `app/ingestion/base/interfaces.py` | Source-Deskriptor |
 | `FetchResult` | `app/ingestion/base/interfaces.py` | Adapter-Fetch-Output |
 | `AppSettings` | `app/core/settings.py` | Gesamte Konfiguration |
@@ -229,7 +243,16 @@ docs/            → architecture and module documentation
 ## 12. Aktueller Stand
 
 **Phase 1 — Foundation** ✅ abgeschlossen
-**Phase 2 — Ingestion Core** 🔄 nächste Phase
+**Phase 2 — Ingestion Core** ✅ abgeschlossen
+**Phase 3 — Analysekern** ✅ abgeschlossen
+**Phase 4 — Alerting** 🔄 nächste Phase
+
+| Phase | Status | Geliefert |
+|---|---|---|
+| P1 Foundation | ✅ | Settings, Enums, FastAPI, CLI, DB-Session, Logging |
+| P2 Ingestion | ✅ | Source Registry, Classifier, RSS, CryptoPanic, CanonicalDocument, Dedup |
+| P3 Analysekern | ✅ | KeywordEngine, RuleAnalyzer, QueryExecutor, OpenAI Provider, Pipeline |
+| P4 Alerting | 🔄 | Telegram, Email, Alert Rules — nächste Phase |
 
 Vollständige Task-Liste → [TASKLIST.md](./TASKLIST.md)
 
@@ -238,11 +261,24 @@ Vollständige Task-Liste → [TASKLIST.md](./TASKLIST.md)
 ## 13. Test & Quality Commands
 
 ```bash
-pytest                          # alle Tests
-ruff check .                    # Lint
-mypy app/                       # Typ-Check (optional)
-uvicorn app.api.main:app --reload   # API starten
-python -m app.cli.main --help   # CLI
+# Tests + Lint (lokal)
+pytest                                    # 304+ Tests (alle)
+ruff check .                              # Lint (muss fehlerfrei sein)
+mypy app/                                 # Typ-Check (optional)
+
+# Lokaler Start
+cp .env.example .env                      # API-Keys eintragen
+uvicorn app.api.main:app --reload         # API auf :8000
+python -m app.cli.main --help             # CLI
+
+# Docker
+docker compose up --build                 # App + PostgreSQL starten
+docker compose --profile dev up adminer  # + DB-UI auf :8080
+docker compose down                       # stoppen
+
+# Alembic
+alembic upgrade head                      # Migrationen anwenden
+alembic revision --autogenerate -m "..."  # neue Migration erstellen
 ```
 
 ---

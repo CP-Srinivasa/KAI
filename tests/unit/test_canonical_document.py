@@ -73,9 +73,7 @@ class TestCanonicalDocument:
 
     def test_manual_hash_not_overwritten(self):
         custom_hash = "a" * 64
-        doc = CanonicalDocument(
-            url="https://example.com/a", title="Test", content_hash=custom_hash
-        )
+        doc = CanonicalDocument(url="https://example.com/a", title="Test", content_hash=custom_hash)
         assert doc.content_hash == custom_hash
 
     def test_word_count_from_raw_text(self):
@@ -148,6 +146,7 @@ class TestCanonicalDocument:
 class TestAnalysisResult:
     def test_minimal(self):
         from uuid import uuid4
+
         doc_id = uuid4()
         result = AnalysisResult(
             document_id=doc_id,
@@ -169,6 +168,7 @@ class TestAnalysisResult:
 
     def test_score_ranges(self):
         from uuid import uuid4
+
         with pytest.raises(ValidationError):
             AnalysisResult(
                 document_id=uuid4(),
@@ -184,6 +184,7 @@ class TestAnalysisResult:
 
     def test_priority_bounds(self):
         from uuid import uuid4
+
         with pytest.raises(ValidationError):
             AnalysisResult(
                 document_id=uuid4(),

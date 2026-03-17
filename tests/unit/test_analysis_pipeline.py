@@ -155,10 +155,7 @@ async def test_pipeline_llm_error_captured():
 async def test_run_batch_returns_all_results():
     engine = _btc_engine()
     pipeline = AnalysisPipeline(keyword_engine=engine)
-    docs = [
-        CanonicalDocument(url=f"https://example.com/{i}", title=f"Doc {i}")
-        for i in range(5)
-    ]
+    docs = [CanonicalDocument(url=f"https://example.com/{i}", title=f"Doc {i}") for i in range(5)]
     results = await pipeline.run_batch(docs)
     assert len(results) == 5
     assert all(isinstance(r, PipelineResult) for r in results)
@@ -172,8 +169,7 @@ async def test_run_batch_concurrency():
     provider = _mock_provider(llm_out)
     pipeline = AnalysisPipeline(keyword_engine=engine, provider=provider)
     docs = [
-        CanonicalDocument(url=f"https://example.com/{i}", title=f"BTC doc {i}")
-        for i in range(8)
+        CanonicalDocument(url=f"https://example.com/{i}", title=f"BTC doc {i}") for i in range(8)
     ]
     results = await pipeline.run_batch(docs)
     assert len(results) == 8
