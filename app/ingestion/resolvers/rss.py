@@ -16,6 +16,8 @@ import feedparser
 import httpx
 from tenacity import retry, stop_after_attempt, wait_exponential
 
+from app.security.ssrf import SecurityError, validate_url
+
 _DEFAULT_HEADERS = {
     "User-Agent": "ai-analyst-bot/0.1 (feed validator)",
     "Accept": ("application/rss+xml, application/atom+xml, application/xml, text/xml, */*"),
@@ -55,7 +57,22 @@ async def resolve_rss_feed(url: str, timeout: int = 10) -> RSSResolveResult:
     Returns RSSResolveResult with is_valid=True only if feedparser
     can parse the content and finds a recognisable feed structure.
     Never constructs or guesses alternative URLs.
+
+    SSRF protection: private IPs and non-http(s) URLs are rejected before
+    any network connection is made.
     """
+    try:
+        validate_url(url)
+    except SecurityError as exc:
+        return RSSResolveResult(
+            url=url,
+            is_valid=False,
+            resolved_url=None,
+            feed_title=None,
+            entry_count=0,
+            error=f"Security violation: {exc}",
+        )
+
     try:
         content, resolved_url = await _fetch(url, timeout)
     except httpx.HTTPError as exc:

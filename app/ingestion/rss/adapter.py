@@ -17,6 +17,7 @@ from tenacity import retry, stop_after_attempt, wait_exponential
 from app.core.domain.document import CanonicalDocument
 from app.ingestion.base.interfaces import BaseSourceAdapter, FetchResult, SourceMetadata
 from app.normalization.cleaner import clean_text
+from app.security.ssrf import validate_url
 
 _DEFAULT_HEADERS = {
     "User-Agent": "ai-analyst-bot/0.1 (feed reader)",
@@ -38,6 +39,7 @@ class RSSFeedAdapter(BaseSourceAdapter):
     async def fetch(self) -> FetchResult:
         fetched_at = datetime.now(UTC)
         try:
+            validate_url(self.metadata.url)  # SSRF guard before any network call
             raw = await self._fetch_raw()
             feed = feedparser.parse(raw)
             documents = [self._entry_to_doc(e, fetched_at) for e in feed.entries]

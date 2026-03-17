@@ -85,7 +85,11 @@ async def test_resolve_http_error_returns_invalid() -> None:
     client.__aenter__ = AsyncMock(return_value=client)
     client.__aexit__ = AsyncMock(return_value=False)
     client.get = AsyncMock(side_effect=httpx.ConnectError("Connection refused"))
-    with patch("app.ingestion.resolvers.rss.httpx.AsyncClient", return_value=client):
+    # Bypass SSRF validation so we can test the HTTP-layer error path
+    with (
+        patch("app.ingestion.resolvers.rss.validate_url", return_value=None),
+        patch("app.ingestion.resolvers.rss.httpx.AsyncClient", return_value=client),
+    ):
         result = await resolve_rss_feed("https://offline.example.com/feed")
     assert result.is_valid is False
     assert result.resolved_url is None

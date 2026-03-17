@@ -21,7 +21,10 @@ async def create_source(
     try:
         return await repo.create(data)
     except StorageError as e:
-        raise HTTPException(status_code=409, detail=str(e)) from e
+        # Do not expose internal DB error details to the caller
+        raise HTTPException(
+            status_code=409, detail="Source already exists or constraint violated"
+        ) from e
 
 
 @router.get("", response_model=list[SourceRead])

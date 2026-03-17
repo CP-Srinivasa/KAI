@@ -51,6 +51,8 @@ class AppSettings(BaseSettings):
     env: str = Field(default="development")
     log_level: str = Field(default="INFO")
     monitor_dir: str = Field(default="monitor")
+    # Bearer token for API auth. Empty = auth disabled (dev only). Set in production.
+    api_key: str = Field(default="")
 
     db: DBSettings = Field(default_factory=DBSettings)
     alerts: AlertSettings = Field(default_factory=AlertSettings)
