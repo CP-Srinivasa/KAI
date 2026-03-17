@@ -4,6 +4,7 @@ from logging.config import fileConfig
 from alembic import context
 from sqlalchemy.ext.asyncio import create_async_engine
 
+import app.storage.models.document  # noqa: F401 — register ORM models with Base
 import app.storage.models.source  # noqa: F401 — register ORM models with Base
 from app.core.settings import DBSettings
 from app.storage.db.session import Base

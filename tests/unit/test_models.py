@@ -29,28 +29,27 @@ def test_canonical_document_minimal():
 
 def test_canonical_document_hash():
     doc = CanonicalDocument(url="https://example.com", title="Test", raw_text="Hello")
-    h = doc.compute_hash()
-    assert isinstance(h, str)
-    assert len(h) == 64  # sha256 hex
+    assert isinstance(doc.content_hash, str)
+    assert len(doc.content_hash) == 64  # sha256 hex
 
 
 def test_canonical_document_hash_deterministic():
     doc1 = CanonicalDocument(url="https://example.com", title="Test", raw_text="Hello")
     doc2 = CanonicalDocument(url="https://example.com", title="Test", raw_text="Hello")
-    assert doc1.compute_hash() == doc2.compute_hash()
+    assert doc1.content_hash == doc2.content_hash
 
 
 def test_canonical_document_hash_differs_on_content():
     doc1 = CanonicalDocument(url="https://example.com", title="Test", raw_text="Hello")
     doc2 = CanonicalDocument(url="https://example.com", title="Test", raw_text="World")
-    assert doc1.compute_hash() != doc2.compute_hash()
+    assert doc1.content_hash != doc2.content_hash
 
 
 def test_query_spec_defaults():
     spec = QuerySpec()
     assert spec.limit == 50
     assert spec.offset == 0
-    assert spec.deduplicate is True
+    assert spec.exclude_duplicates is True
     assert spec.sort_by == SortBy.PUBLISHED_AT
 
 
