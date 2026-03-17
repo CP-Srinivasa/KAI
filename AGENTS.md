@@ -76,7 +76,19 @@ Phase 2 scope:
 
 ---
 
-## 6. Agent Collaboration Protocol
+## 6. Agent Role Model
+
+**→ See [AGENT_ROLES.md](./AGENT_ROLES.md) for the full binding operations model.**
+
+| Agent | Role |
+|---|---|
+| **OpenAI Codex** | Implementer — code, tests, refactoring, CI fixes |
+| **Claude Code** | Architect — modules, interfaces, specs, multi-file changes |
+| **Google Antigravity** | Orchestrator — workflows, MCP/Skills, build/deploy |
+
+---
+
+## 7. Agent Collaboration Protocol
 
 When working in this repo, any agent MUST:
 
@@ -93,7 +105,7 @@ When working in this repo, any agent MUST:
 
 ---
 
-## 7. Key Domain Models
+## 8. Key Domain Models
 
 | Model | Location | Purpose |
 |---|---|---|
@@ -105,7 +117,7 @@ When working in this repo, any agent MUST:
 
 ---
 
-## 8. Test & Quality Commands
+## 9. Test & Quality Commands
 
 ```bash
 # Run all tests
@@ -126,7 +138,7 @@ python -m app.cli.main --help
 
 ---
 
-## 9. What "Done" Means
+## 10. What "Done" Means
 
 A task is complete when:
 - [ ] Code exists and is typed
