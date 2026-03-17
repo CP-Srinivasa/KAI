@@ -1,19 +1,18 @@
 """OpenAI analysis provider.
 
-Uses the OpenAI Chat Completions API with JSON mode to produce structured
-LLMAnalysisOutput. Prompt is versioned — change PROMPT_VERSION when updating.
+Uses the OpenAI Chat Completions beta structured-outputs API to produce
+validated LLMAnalysisOutput directly — no manual JSON parsing.
 
 Design:
 - Inject the OpenAI client (testable, replaceable)
-- Hard text limit to avoid token blowout (first 2000 chars)
-- JSON schema enforced via response_format={"type": "json_object"}
-- Output validated by LLMAnalysisOutput (Pydantic)
-- All exceptions wrapped into provider-level errors
+- Hard text limit to avoid token blowout (first 4000 chars)
+- Structured output via beta.chat.completions.parse(response_format=LLMAnalysisOutput)
+- No manual JSON decoding — Pydantic validates directly from parsed output
+- All exceptions wrapped into ProviderError
 """
 
 from __future__ import annotations
 
-import json
 from typing import Any
 
 from openai import AsyncOpenAI
@@ -21,40 +20,50 @@ from openai import AsyncOpenAI
 from app.analysis.base.interfaces import BaseAnalysisProvider, LLMAnalysisOutput
 from app.core.errors import ProviderError
 
-PROMPT_VERSION = "v1"
-_MAX_TEXT_CHARS = 2000
-_DEFAULT_MODEL = "gpt-4o-mini"
+PROMPT_VERSION = "v2"
+_MAX_TEXT_CHARS = 4000
+_DEFAULT_MODEL = "gpt-4o"
 
 _SYSTEM_PROMPT = """\
 You are a professional financial news analyst specialized in crypto and traditional markets.
-Analyze the provided article title and text, then return a JSON object with exactly these fields:
+Analyze the provided article and return a structured analysis with these guidelines:
 
-{
-  "sentiment_label": "bullish" | "bearish" | "neutral" | "mixed",
-  "sentiment_score": float from -1.0 (very bearish) to 1.0 (very bullish),
-  "relevance_score": float 0.0–1.0 (how relevant is this to crypto/financial markets),
-  "impact_score": float 0.0–1.0 (potential market impact),
-  "confidence_score": float 0.0–1.0 (your confidence in this analysis),
-  "novelty_score": float 0.0–1.0 (how novel/surprising is this information),
-  "spam_probability": float 0.0–1.0 (probability this is spam/clickbait),
-  "market_scope": "crypto" | "equities" | "macro" | "etf" | "mixed" | "unknown",
-  "affected_assets": list of asset names/tickers (e.g. ["Bitcoin", "ETH"]),
-  "affected_sectors": list of sectors (e.g. ["DeFi", "Mining"]),
-  "event_type": short string or null (e.g. "regulatory", "hack", "partnership"),
-  "short_reasoning": one sentence summary of the key signal,
-  "bull_case": one sentence bull case or null,
-  "bear_case": one sentence bear case or null,
-  "recommended_priority": integer 1–10 (10 = most urgent for a trader),
-  "actionable": true if this warrants immediate attention, false otherwise,
-  "tags": list of up to 10 relevant topic tags
-}
-
-Be concise. Do not include any text outside the JSON object.
+- sentiment_label: overall market sentiment direction
+- sentiment_score: -1.0 (very bearish) to 1.0 (very bullish)
+- relevance_score: 0.0–1.0, how relevant to crypto/financial markets
+- impact_score: 0.0–1.0, potential market-moving impact
+- confidence_score: 0.0–1.0, your analytical confidence
+- novelty_score: 0.0–1.0, how new/surprising this information is
+- spam_probability: 0.0–1.0, likelihood of spam/clickbait
+- market_scope: primary market affected
+- affected_assets: list of specific asset names or tickers
+- affected_sectors: list of market sectors (e.g. DeFi, Mining, Layer1)
+- event_type: category such as regulatory, hack, partnership, macro, earnings, or null
+- short_reasoning: one concise sentence summarizing the key signal
+- bull_case: one sentence bullish scenario or null
+- bear_case: one sentence bearish scenario or null
+- recommended_priority: 1–10 urgency for a trader (10 = act now)
+- actionable: true if this warrants immediate attention
+- tags: up to 10 relevant topic tags
 """
 
 
+def _build_user_content(title: str, text: str, context: dict[str, Any] | None) -> str:
+    truncated = text[:_MAX_TEXT_CHARS] if text else ""
+    parts = [f"Title: {title}"]
+    if truncated:
+        parts.append(f"\nText:\n{truncated}")
+    else:
+        parts.append("\n[Title only — no body text provided]")
+    if context:
+        import json as _json
+
+        parts.append(f"\nContext:\n{_json.dumps(context, ensure_ascii=False)}")
+    return "\n".join(parts)
+
+
 class OpenAIAnalysisProvider(BaseAnalysisProvider):
-    """OpenAI-backed analysis provider using JSON mode."""
+    """OpenAI-backed analysis provider using structured outputs (beta.parse)."""
 
     def __init__(
         self,
@@ -69,36 +78,34 @@ class OpenAIAnalysisProvider(BaseAnalysisProvider):
     def provider_name(self) -> str:
         return "openai"
 
+    @property
+    def model(self) -> str:
+        return self._model
+
     async def analyze(
         self,
         title: str,
         text: str,
         context: dict[str, Any] | None = None,
     ) -> LLMAnalysisOutput:
-        truncated_text = text[:_MAX_TEXT_CHARS] if text else ""
-        user_content = f"Title: {title}\n\nText:\n{truncated_text}"
+        user_content = _build_user_content(title, text, context)
 
         try:
-            response = await self._client.chat.completions.create(
+            response = await self._client.beta.chat.completions.parse(
                 model=self._model,
-                response_format={"type": "json_object"},
                 messages=[
                     {"role": "system", "content": _SYSTEM_PROMPT},
                     {"role": "user", "content": user_content},
                 ],
+                response_format=LLMAnalysisOutput,
                 temperature=0.1,
-                max_tokens=800,
+                max_tokens=1024,
             )
         except Exception as exc:
             raise ProviderError(f"OpenAI API call failed: {exc}") from exc
 
-        raw = response.choices[0].message.content or ""
-        try:
-            data = json.loads(raw)
-        except json.JSONDecodeError as exc:
-            raise ProviderError(f"OpenAI returned invalid JSON: {exc}\nRaw: {raw}") from exc
+        parsed = response.choices[0].message.parsed
+        if parsed is None:
+            raise ProviderError("OpenAI returned null parsed output")
 
-        try:
-            return LLMAnalysisOutput(**data)
-        except Exception as exc:
-            raise ProviderError(f"OpenAI output failed validation: {exc}\nData: {data}") from exc
+        return parsed

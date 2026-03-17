@@ -6,16 +6,14 @@ from rich.console import Console
 from rich.table import Table
 
 from app.core.domain.document import CanonicalDocument
-from app.core.enums import SourceStatus, SourceType
 from app.core.logging import configure_logging
 from app.core.settings import get_settings
 from app.enrichment.deduplication.deduplicator import Deduplicator
-from app.ingestion.base.interfaces import FetchResult, SourceMetadata
-from app.ingestion.classifier import ClassificationResult, SourceClassifier, classify_url
+from app.ingestion.base.interfaces import FetchResult
+from app.ingestion.classifier import classify_url
 from app.ingestion.resolvers.podcast import load_and_resolve_podcasts
-from app.ingestion.resolvers.rss import RSSResolveResult, resolve_rss_feed
 from app.ingestion.resolvers.youtube import load_youtube_channels
-from app.ingestion.rss.adapter import RSSFeedAdapter
+from app.ingestion.rss.service import RSSCollectedFeed, collect_rss_feed
 from app.storage.db.session import build_session_factory
 from app.storage.repositories.document_repo import DocumentRepository
 
@@ -137,6 +135,85 @@ def query_validate(
         raise typer.Exit(1) from err
 
 
+@query_app.command("analyze-pending")
+def query_analyze_pending(
+    limit: int = typer.Option(50, help="Max documents to process in this run"),
+) -> None:
+    """Run the analysis pipeline on all pending (unanalyzed) documents."""
+    import asyncio
+
+    async def run() -> None:
+        settings = get_settings()
+        monitor_dir = Path(settings.monitor_dir)
+
+        from app.analysis.keywords.engine import KeywordEngine
+        from app.analysis.pipeline import AnalysisPipeline
+        from app.integrations.openai.provider import OpenAIAnalysisProvider
+        from app.storage.db.session import build_session_factory
+        from app.storage.repositories.document_repo import DocumentRepository
+
+        console.print("[bold]Initializing Analysis Engine...[/bold]")
+        keyword_engine = KeywordEngine.from_monitor_dir(monitor_dir)
+
+        provider = None
+        if settings.providers.openai_api_key:
+            provider = OpenAIAnalysisProvider.from_settings(settings.providers)
+        else:
+            console.print(
+                "[yellow]Warning:[/yellow] No OpenAI API key found. LLM Analysis will be skipped."
+            )
+
+        pipeline = AnalysisPipeline(keyword_engine, provider, run_llm=bool(provider))
+        session_factory = build_session_factory(settings.db)
+
+        async with session_factory.begin() as session:
+            repo = DocumentRepository(session)
+            docs = await repo.list(is_analyzed=False, limit=limit)
+
+            if not docs:
+                console.print("[green]No pending documents to analyze.[/green]")
+                return
+
+            console.print(f"[bold]Analyzing {len(docs)} documents...[/bold]")
+            results = await pipeline.run_batch(docs)
+
+            success_count = 0
+            error_count = 0
+
+            for res in results:
+                if not res.success:
+                    console.print(f"[red]Failed doc {res.document.id}:[/red] {res.error}")
+                    error_count += 1
+                    continue
+
+                doc = res.document
+                doc.entity_mentions = res.entity_mentions
+
+                if res.llm_output:
+                    doc.sentiment_label = res.llm_output.sentiment_label
+                    doc.sentiment_score = res.llm_output.sentiment_score
+                    doc.relevance_score = res.llm_output.relevance_score
+                    doc.impact_score = res.llm_output.impact_score
+                    doc.market_scope = res.llm_output.market_scope
+                    doc.tags = list(set(doc.tags + res.llm_output.tags))
+                    doc.tickers = list(set(doc.tickers + res.llm_output.affected_assets))
+                    doc.categories = list(set(doc.categories + res.llm_output.affected_sectors))
+
+                try:
+                    await repo.update_analysis(doc)
+                    success_count += 1
+                except Exception as e:
+                    console.print(f"[red]Failed to save doc {doc.id}:[/red] {e}")
+                    error_count += 1
+
+            console.print(
+                f"[bold green]Analysis complete![/bold green] "
+                f"{success_count} success, {error_count} failed."
+            )
+
+    asyncio.run(run())
+
+
 # ── ingest ────────────────────────────────────────────────────────────────────
 
 
@@ -151,31 +228,24 @@ def ingest_rss(
     import asyncio
 
     async def run() -> None:
-        try:
-            classification, resolved_feed = await _validate_rss_input(url)
-            result = await _fetch_rss_documents(
-                resolved_feed=resolved_feed,
-                source_id=source_id,
-                source_name=source_name,
-                classification=classification,
-            )
-            if not result.success:
-                raise RuntimeError(result.error or "RSS fetch failed")
-            stats = await _persist_rss_documents(result, dry_run=dry_run)
-        except RuntimeError as err:
-            console.print(f"[red]Error:[/red] {err}")
-            raise typer.Exit(1) from err
+        collected = await _collect_rss_feed(url, source_id=source_id, source_name=source_name)
+        result = collected.fetch_result
+        if not result.success:
+            console.print(f"[red]Error:[/red] {result.error}")
+            raise typer.Exit(1)
 
-        resolved_url = resolved_feed.resolved_url or url
+        stats = await _persist_rss_documents(result, dry_run=dry_run)
+
+        resolved_url = collected.resolved_feed.resolved_url or url
         console.print(f"[green]RSS feed validated:[/green] {resolved_url}")
         console.print(
-            f"[bold]Classification:[/bold] {classification.source_type.value} "
-            f"({classification.status.value})"
+            f"[bold]Classification:[/bold] {collected.classification.source_type.value} "
+            f"({collected.classification.status.value})"
         )
-        if classification.notes:
-            console.print(f"[bold]Classifier notes:[/bold] {classification.notes}")
-        if resolved_feed.feed_title:
-            console.print(f"[bold]Feed title:[/bold] {resolved_feed.feed_title}")
+        if collected.classification.notes:
+            console.print(f"[bold]Classifier notes:[/bold] {collected.classification.notes}")
+        if collected.resolved_feed.feed_title:
+            console.print(f"[bold]Feed title:[/bold] {collected.resolved_feed.feed_title}")
 
         console.print(f"[bold]Fetched:[/bold] {stats.fetched_count}")
         console.print(f"[bold]Batch duplicates skipped:[/bold] {stats.batch_duplicates}")
@@ -203,45 +273,21 @@ def ingest_rss(
     asyncio.run(run())
 
 
-async def _validate_rss_input(url: str) -> tuple[ClassificationResult, RSSResolveResult]:
-    settings = get_settings()
-    classifier = SourceClassifier.from_monitor_dir(Path(settings.monitor_dir))
-    classification = classifier.classify(url)
-    resolved_feed = await resolve_rss_feed(url, timeout=settings.sources.fetch_timeout)
-
-    if not resolved_feed.is_valid:
-        details = (
-            f"Classified as {classification.source_type.value} ({classification.status.value}). "
-            f"{resolved_feed.error or 'Feed validation failed.'}"
-        )
-        raise RuntimeError(f"URL is not a valid RSS/Atom feed. {details}")
-
-    return classification, resolved_feed
-
-
-async def _fetch_rss_documents(
+async def _collect_rss_feed(
+    url: str,
     *,
-    resolved_feed: RSSResolveResult,
     source_id: str,
     source_name: str,
-    classification: ClassificationResult,
-) -> FetchResult:
+) -> RSSCollectedFeed:
     settings = get_settings()
-    metadata = SourceMetadata(
+    return await collect_rss_feed(
+        url=url,
         source_id=source_id,
         source_name=source_name,
-        source_type=SourceType.RSS_FEED,
-        url=resolved_feed.resolved_url or resolved_feed.url,
-        status=SourceStatus.ACTIVE,
-        notes=classification.notes,
-        metadata={"classified_source_type": classification.source_type.value},
-    )
-    adapter = RSSFeedAdapter(
-        metadata,
+        monitor_dir=Path(settings.monitor_dir),
         timeout=settings.sources.fetch_timeout,
         max_retries=settings.sources.max_retries,
     )
-    return await adapter.fetch()
 
 
 async def _persist_rss_documents(result: FetchResult, *, dry_run: bool) -> RSSIngestStats:

@@ -1,0 +1,198 @@
+# Historical Market Events — Reference Data for Analog Matching
+# Format: each event has id (slug), title, description, event_date, category,
+#         sentiment_direction, impact_magnitude (0.0–1.0), affected_assets,
+#         affected_sectors, tags
+#
+# Categories: halving | crash | regulatory | hack | etf | macro | partnership | other
+
+events:
+  # ── Bitcoin Halvings ──────────────────────────────────────────────────────
+
+  - id: btc-halving-2024
+    title: "Bitcoin Halving 2024"
+    description: >
+      Bitcoin block reward halved from 6.25 BTC to 3.125 BTC at block 840000.
+      Preceded by strong institutional demand via spot ETFs approved in January 2024.
+    event_date: "2024-04-20"
+    category: halving
+    sentiment_direction: bullish
+    impact_magnitude: 0.85
+    affected_assets: [BTC]
+    affected_sectors: [Mining, Layer1]
+    tags: [halving, supply-reduction, mining, bitcoin, institutional]
+
+  - id: btc-halving-2020
+    title: "Bitcoin Halving 2020"
+    description: >
+      Bitcoin block reward halved from 12.5 to 6.25 BTC at block 630000.
+      Preceded a major bull run to ~$69k ATH in November 2021.
+    event_date: "2020-05-11"
+    category: halving
+    sentiment_direction: bullish
+    impact_magnitude: 0.80
+    affected_assets: [BTC]
+    affected_sectors: [Mining, Layer1]
+    tags: [halving, supply-reduction, mining, bitcoin, bull-run]
+
+  - id: btc-halving-2016
+    title: "Bitcoin Halving 2016"
+    description: >
+      Bitcoin block reward halved from 25 to 12.5 BTC at block 420000.
+      Preceded the 2017 bull run with BTC reaching ~$20k.
+    event_date: "2016-07-09"
+    category: halving
+    sentiment_direction: bullish
+    impact_magnitude: 0.75
+    affected_assets: [BTC]
+    affected_sectors: [Mining, Layer1]
+    tags: [halving, supply-reduction, mining, bitcoin]
+
+  # ── Bitcoin Spot ETF ──────────────────────────────────────────────────────
+
+  - id: btc-spot-etf-approval-2024
+    title: "SEC Approves Bitcoin Spot ETFs (US)"
+    description: >
+      The US SEC approved 11 Bitcoin spot ETF applications from BlackRock (IBIT),
+      Fidelity (FBTC), ARK, Invesco and others on January 10, 2024.
+      Triggered massive institutional inflows and a new ATH above $73k in March 2024.
+    event_date: "2024-01-10"
+    category: etf
+    sentiment_direction: bullish
+    impact_magnitude: 0.95
+    affected_assets: [BTC, IBIT, FBTC, GBTC, ARKB]
+    affected_sectors: [Layer1, ETF, Institutional]
+    tags: [etf, sec, regulatory, institutional, bitcoin, blackrock, fidelity]
+
+  # ── FTX Collapse ──────────────────────────────────────────────────────────
+
+  - id: ftx-collapse-2022
+    title: "FTX Exchange Collapse"
+    description: >
+      FTX, the world's second-largest crypto exchange, collapsed on November 11, 2022
+      after a liquidity crisis revealed misuse of customer funds by FTX and Alameda.
+      BTC fell ~25% in a week, industry-wide contagion followed.
+    event_date: "2022-11-11"
+    category: crash
+    sentiment_direction: bearish
+    impact_magnitude: 0.95
+    affected_assets: [BTC, ETH, FTT, SOL]
+    affected_sectors: [CeFi, Exchange, DeFi]
+    tags: [exchange-collapse, fraud, contagion, bankruptcy, ftx, sam-bankman-fried]
+    source_url: "https://en.wikipedia.org/wiki/FTX_collapse"
+
+  # ── Terra/Luna Crash ──────────────────────────────────────────────────────
+
+  - id: luna-terra-crash-2022
+    title: "Terra/Luna Collapse (LUNA/UST De-peg)"
+    description: >
+      The Terra ecosystem collapsed in May 2022 when UST lost its dollar peg,
+      triggering a death spiral that wiped out ~$60 billion in value.
+      LUNA fell from ~$80 to near zero within days.
+    event_date: "2022-05-09"
+    category: crash
+    sentiment_direction: bearish
+    impact_magnitude: 0.90
+    affected_assets: [LUNA, UST, BTC, ETH]
+    affected_sectors: [Stablecoin, DeFi, Layer1]
+    tags: [stablecoin, depeg, algorithmic, collapse, contagion, terra, luna]
+
+  # ── Regulatory Events ─────────────────────────────────────────────────────
+
+  - id: china-crypto-ban-2021
+    title: "China Bans Crypto Trading and Mining (2021)"
+    description: >
+      China's central bank declared all crypto transactions illegal in September 2021
+      and ordered mining operations to cease. This followed earlier restrictions in May 2021.
+      BTC dropped ~15% on the news.
+    event_date: "2021-09-24"
+    category: regulatory
+    sentiment_direction: bearish
+    impact_magnitude: 0.75
+    affected_assets: [BTC, ETH]
+    affected_sectors: [Mining, Layer1, Exchange]
+    tags: [china, ban, regulatory, mining, crackdown]
+
+  - id: sec-ripple-lawsuit-2020
+    title: "SEC Sues Ripple over XRP (2020)"
+    description: >
+      The SEC filed a lawsuit against Ripple Labs in December 2020, alleging XRP
+      is an unregistered security. Multiple exchanges delisted XRP, price dropped ~65%.
+    event_date: "2020-12-22"
+    category: regulatory
+    sentiment_direction: bearish
+    impact_magnitude: 0.70
+    affected_assets: [XRP, BTC]
+    affected_sectors: [Layer1, Exchange]
+    tags: [sec, lawsuit, securities, regulatory, ripple, xrp]
+
+  # ── Hacks ─────────────────────────────────────────────────────────────────
+
+  - id: mt-gox-hack-2014
+    title: "Mt. Gox Hack and Bankruptcy"
+    description: >
+      Mt. Gox, handling ~70% of Bitcoin transactions at the time, filed for bankruptcy
+      after losing ~850,000 BTC to hackers. The hack shook confidence in crypto exchanges.
+    event_date: "2014-02-28"
+    category: hack
+    sentiment_direction: bearish
+    impact_magnitude: 0.85
+    affected_assets: [BTC]
+    affected_sectors: [Exchange, CeFi]
+    tags: [hack, exchange, bankruptcy, security, mtgox, bitcoin]
+
+  - id: ronin-bridge-hack-2022
+    title: "Ronin Bridge Hack ($625M)"
+    description: >
+      North Korea's Lazarus Group hacked the Ronin bridge used by Axie Infinity,
+      stealing ~$625M in ETH and USDC. Largest DeFi hack at the time.
+    event_date: "2022-03-23"
+    category: hack
+    sentiment_direction: bearish
+    impact_magnitude: 0.75
+    affected_assets: [ETH, AXS, RON]
+    affected_sectors: [Bridge, DeFi, Gaming]
+    tags: [hack, bridge, defi, lazarus, north-korea, ronin, axie]
+
+  # ── Macro Events ──────────────────────────────────────────────────────────
+
+  - id: fed-rate-hike-cycle-2022
+    title: "Federal Reserve Rate Hike Cycle 2022"
+    description: >
+      The Federal Reserve raised interest rates from near-zero to 4.5% during 2022
+      to combat 40-year high inflation. Risk assets including crypto sold off heavily,
+      BTC fell from ~$48k to ~$16k.
+    event_date: "2022-03-16"
+    category: macro
+    sentiment_direction: bearish
+    impact_magnitude: 0.85
+    affected_assets: [BTC, ETH]
+    affected_sectors: [Macro, Layer1, DeFi]
+    tags: [fed, interest-rates, inflation, macro, monetary-policy, risk-off]
+
+  - id: covid-crash-2020
+    title: "COVID-19 Market Crash"
+    description: >
+      Global markets crashed in March 2020 as COVID-19 spread worldwide.
+      BTC fell ~50% in a single day (March 12, 2020, 'Black Thursday').
+    event_date: "2020-03-12"
+    category: macro
+    sentiment_direction: bearish
+    impact_magnitude: 0.85
+    affected_assets: [BTC, ETH]
+    affected_sectors: [Macro, Layer1]
+    tags: [covid, crash, macro, black-thursday, liquidity, risk-off]
+
+  # ── Ethereum ──────────────────────────────────────────────────────────────
+
+  - id: ethereum-merge-2022
+    title: "Ethereum Merge (PoS Transition)"
+    description: >
+      Ethereum transitioned from Proof-of-Work to Proof-of-Stake on September 15, 2022.
+      Energy consumption dropped ~99.95%. ETH issuance reduced significantly.
+    event_date: "2022-09-15"
+    category: other
+    sentiment_direction: bullish
+    impact_magnitude: 0.80
+    affected_assets: [ETH]
+    affected_sectors: [Layer1, Mining, DeFi]
+    tags: [ethereum, merge, proof-of-stake, pos, issuance, energy]
