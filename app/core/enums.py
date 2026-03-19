@@ -83,12 +83,15 @@ class DocumentStatus(str, Enum):  # noqa: UP042
                                     │
                                     └──────► FAILED      (ingest or analysis error)
 
-    Owners:
-    - PENDING    → prepare_ingested_document()  in document_ingest.py
-    - PERSISTED  → DocumentRepository.save()   in document_repo.py
-    - ANALYZED   → DocumentRepository.update_analysis()  in document_repo.py
-    - DUPLICATE  → DocumentRepository.mark_duplicate()   in document_repo.py
-    - FAILED     → persist_fetch_result() error handler  in document_ingest.py
+    Owners (the ONLY code that may set each status):
+    - PENDING    → prepare_ingested_document()        in document_ingest.py
+    - PERSISTED  → DocumentRepository.save_document() in document_repo.py
+    - ANALYZED   → DocumentRepository.update_analysis()     in document_repo.py
+    - DUPLICATE  → DocumentRepository.mark_duplicate()      in document_repo.py
+    - FAILED     → repo.update_status(FAILED) — called from:
+                   persist_fetch_result() (ingest errors),
+                   run_rss_pipeline() (analysis/DB errors),
+                   analyze_pending CLI (analysis/DB errors)
     """
 
     PENDING = "pending"
