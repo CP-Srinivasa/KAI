@@ -71,6 +71,8 @@ async def test_ensemble_uses_first_provider_when_available():
     openai.analyze.assert_called_once()
     assert result.sentiment_label == SentimentLabel.BULLISH
     assert ensemble.model == "openai"
+    assert ensemble.active_provider_name == "openai"
+    assert ensemble.provider_chain == ["openai", "internal"]
 
 
 @pytest.mark.asyncio
@@ -113,6 +115,7 @@ def test_ensemble_provider_name_reflects_all_providers():
     ensemble = EnsembleProvider(providers=[p1, p2])
     assert "openai" in ensemble.provider_name
     assert "internal" in ensemble.provider_name
+    assert ensemble.provider_chain == ["openai", "internal"]
 
 
 def test_ensemble_empty_providers_raises():

@@ -340,7 +340,7 @@ All four gates must pass. No partial promotions.
 ## Invariants
 
 > Full invariant list is canonical in `docs/contracts.md §Immutable Invariants`.
-> Intelligence-layer invariants (I-14 through I-25) are listed here for quick reference.
+> Intelligence-layer invariants (I-14 through I-26) are listed here for quick reference.
 
 | ID | Rule |
 |----|------|
@@ -354,5 +354,6 @@ All four gates must pass. No partial promotions.
 | I-21 | `InternalCompanionProvider.provider_name` is always `"companion"` — distinct from `"internal"`. Factory routes `"internal"` → `InternalModelProvider`, `"companion"` → `InternalCompanionProvider` |
 | I-22 | `EnsembleProvider` requires at least one provider. `InternalModelProvider` MUST be last for guaranteed fallback. All fail → `RuntimeError` |
 | I-23 | `EnsembleProvider.model` MUST return the winning provider's `provider_name` immediately after `analyze()` completes — this is the canonical winner signal |
-| I-24 | For `EnsembleProvider`: `_resolve_analysis_source()` MUST be re-evaluated AFTER `analyze()` using `provider.model` (winner name), not the composite `provider_name` |
+| I-24 | `_resolve_analysis_source_from_winner(winning_name)` is called inside `isinstance(provider, EnsembleProvider)` guard AFTER `analyze()` succeeds. Never called in error/fallback paths. |
 | I-25 | `doc.provider` stores the winning provider name (e.g. `"openai"`), never the composite ensemble string. `doc.metadata["ensemble_chain"]` records the full ordered list. |
+| I-26 | Teacher eligibility is determined exclusively by `analysis_source=EXTERNAL_LLM`. `doc.provider`, `doc.metadata["ensemble_chain"]`, and all other metadata MUST NOT be used as teacher-eligibility criteria. |

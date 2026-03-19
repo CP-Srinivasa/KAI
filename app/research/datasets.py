@@ -44,9 +44,9 @@ def _build_export_metadata(doc: CanonicalDocument) -> dict[str, str]:
     1. Returns doc.analysis_source if it was explicitly set (Sprint 5B persisted field)
     2. Falls back to deriving from doc.provider (legacy computed path)
 
-    EnsembleProvider compound names ("ensemble(...)") map to INTERNAL conservatively
-    until Sprint 5B's persisted field is written at apply_to_document() time.
-    See docs/contracts.md §13e, §14d, §14f.
+    Real ensemble winner runs now persist the concrete winner tier explicitly.
+    Legacy rows without analysis_source still derive compound provider names
+    like "ensemble(...)" conservatively as INTERNAL via effective_analysis_source.
     """
     return {
         "document_id": str(doc.id),

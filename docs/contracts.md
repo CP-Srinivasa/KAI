@@ -896,6 +896,16 @@ rows = [r for r in jsonl_rows if r["metadata"]["analysis_source"] == "external_l
 Documents with `analysis_source="rule"` or `"internal"` CAN be included in the full export
 for auditing or evaluation purposes, but MUST NOT appear in the fine-tuning training corpus.
 
+**Prohibited teacher-filter fields** (I-26):
+The following fields MUST NOT be used as primary teacher-eligibility criteria:
+- `doc.provider` — may be `"openai"` (teacher), `"internal"` (not teacher), or a legacy
+  composite `"ensemble(openai,internal)"` — ambiguous without `analysis_source`
+- `doc.metadata["ensemble_chain"]` — audit trail only, not a classification signal
+- Any other metadata field
+
+The **only valid teacher filter** is `metadata["analysis_source"] == "external_llm"`.
+This ensures no ensemble composition detail can bypass I-16 or I-19.
+
 ---
 
 #### 14f. provider vs analysis_source — Contract Separation
@@ -961,41 +971,93 @@ both wrong for downstream corpus filtering (I-16, I-19).
 
 ---
 
-#### 15b. The Fix: Post-analyze winner resolution
+#### 15b. The Fix: Post-analyze winner resolution (Implemented in Sprint 5C)
 
-`EnsembleProvider` already tracks the winner:
+`EnsembleProvider` exposes two public properties that enable provider-agnostic winner resolution:
 
 ```python
 # app/analysis/ensemble/provider.py
-self._active_provider_name = provider.provider_name   # set after each successful analyze()
+@property
+def active_provider_name(self) -> str:
+    """Return the provider that actually produced the latest result."""
+    return self._active_provider_name   # updated after each successful analyze()
 
 @property
-def model(self) -> str | None:
-    return self._active_provider_name                 # the winner's provider_name
+def provider_chain(self) -> list[str]:
+    """Ordered technical trace of configured providers."""
+    return [provider.provider_name for provider in self._providers]
 ```
 
-After `await self._provider.analyze(...)` returns, `provider.model` contains the winner.
-The pipeline must re-resolve `analysis_source` using this value.
+**Implementation approach: duck-typing (no isinstance check)**
 
-**Resolution function (string-based, post-analyze):**
+The pipeline uses two helper functions that inspect providers via `getattr`:
 
 ```python
-def _resolve_analysis_source_from_winner(winning_name: str) -> AnalysisSource:
-    name = winning_name.strip().lower()
-    if not name or name in {"fallback", "rule", "internal", "companion"}:
-        return AnalysisSource.INTERNAL   # Tier 2 or fallback
-    return AnalysisSource.EXTERNAL_LLM  # openai, anthropic, gemini, etc.
+# app/analysis/pipeline.py
+
+def _resolve_runtime_provider_name(provider: BaseAnalysisProvider | None) -> str | None:
+    """Return the actual winner name after analyze() — for EnsembleProvider via duck typing."""
+    if provider is None:
+        return None
+    active = getattr(provider, "active_provider_name", None)
+    if isinstance(active, str) and active.strip():
+        return active.strip()
+    return provider.provider_name.strip() or None
+
+def _resolve_trace_metadata(provider: BaseAnalysisProvider | None) -> dict[str, object]:
+    """Return ensemble_chain metadata if the provider exposes provider_chain."""
+    if provider is None:
+        return {}
+    chain = getattr(provider, "provider_chain", None)
+    if not isinstance(chain, (list, tuple)):
+        return {}
+    entries = [str(n).strip() for n in chain if str(n).strip()]
+    return {"ensemble_chain": entries} if entries else {}
 ```
 
-**Pipeline call site** (after successful `analyze()`):
+**`_resolve_analysis_source` is now string-based (no ensemble composite guard needed):**
 
 ```python
+def _resolve_analysis_source(provider_name: str | None) -> AnalysisSource:
+    if not provider_name:
+        return AnalysisSource.RULE
+    name = provider_name.strip().lower()
+    if name in {"fallback", "rule"}:
+        return AnalysisSource.RULE
+    if name in {"internal", "companion"}:
+        return AnalysisSource.INTERNAL
+    return AnalysisSource.EXTERNAL_LLM
+```
+
+The composite string `"ensemble(openai,internal)"` never reaches this function in Sprint-5C+
+pipelines — `_resolve_runtime_provider_name` returns the winner name instead. The composite
+guard remains in `CanonicalDocument.effective_analysis_source` for legacy DB rows only (§15e).
+
+**Pipeline call site** (success path):
+
+```python
+# trace_metadata resolved before analyze() — provider_chain doesn't change
+trace_metadata = _resolve_trace_metadata(self._provider)   # {"ensemble_chain": [...]} or {}
+
 llm_output = await self._provider.analyze(title=..., text=..., context=...)
-# Re-resolve analysis_source using the actual winner (I-24)
-winning_name = self._provider.model or self._provider.provider_name
-analysis_source = _resolve_analysis_source_from_winner(winning_name)
-provider_name = winning_name   # I-25: store winner, not composite
+
+# winner name resolved AFTER analyze() — active_provider_name updated by EnsembleProvider
+provider_name = _resolve_runtime_provider_name(self._provider) or self._provider.provider_name
+analysis_source = _resolve_analysis_source(provider_name)   # I-24
 ```
+
+**Error path** (except branch):
+
+```python
+except Exception as exc:
+    # analysis_source = RULE (set by _build_fallback_analysis, always — I-13)
+    # provider_name stays "fallback" (initialized at top of run())
+    # _resolve_runtime_provider_name() is not called in the error path
+    analysis_result = self._build_fallback_analysis(...)
+```
+
+The error path never performs winner resolution. `analysis_source=RULE` always when analysis
+failed — regardless of which provider was configured.
 
 ---
 
@@ -1072,24 +1134,34 @@ Every downstream consumer relies on `doc.analysis_source` — never on `doc.prov
 
 2. analyze_pending → AnalysisPipeline.run(doc)
    Pre-analyze:
-     analysis_source = _resolve_analysis_source(ensemble)  → INTERNAL (conservative pre-5C fallback)
+     trace_metadata = _resolve_trace_metadata(ensemble)
+       → {"ensemble_chain": ["openai", "internal"]}  (provider_chain property)
 
 3. await ensemble.analyze(title, text, context)
-   openai succeeds → ensemble._active_provider_name = "openai"
-   winning_name = ensemble.model  → "openai"
+   EnsembleProvider iterates providers in order:
+     → tries openai.analyze()   ← succeeds
+     → (internal.analyze() never called)
+   ensemble._active_provider_name = "openai"   ← winner recorded (I-23)
 
-4. Post-analyze (Sprint-5C)
-   analysis_source = _resolve_analysis_source_from_winner("openai")  → EXTERNAL_LLM
-   provider_name   = "openai"   # winner name, not composite
+   Fallback scenario (openai fails):
+     → tries openai.analyze()   ← raises RuntimeError
+     → tries internal.analyze() ← succeeds
+     ensemble._active_provider_name = "internal"
+     analysis_source (post-5C) → INTERNAL ✅ (correct, internal ran)
+
+4. Post-analyze (Sprint-5C, success path)
+   provider_name   = _resolve_runtime_provider_name(ensemble)
+                   = ensemble.active_provider_name → "openai"
+   analysis_source = _resolve_analysis_source("openai")  → EXTERNAL_LLM (I-24)
 
 5. AnalysisResult created
    analysis_result.analysis_source = EXTERNAL_LLM
    analysis_result.document_id     = str(doc.id)
 
 6. PipelineResult.apply_to_document()
-   doc.provider                     = "openai"
+   doc.provider                     = "openai"           # winner name (I-25)
    doc.analysis_source              = EXTERNAL_LLM
-   doc.metadata["ensemble_chain"]   = ["openai", "internal"]
+   doc.metadata["ensemble_chain"]   = ["openai", "internal"]  # from trace_metadata
 
 7. document_repo.update_analysis(doc_id, analysis_result)
    DB: analysis_source = "external_llm"   # persisted
@@ -1115,10 +1187,21 @@ If `doc.analysis_source` is set (post-pipeline), that value is returned directly
 If not set (legacy pre-5B row), the property derives from `doc.provider` conservatively.
 This guarantees no consumer ever branches on `provider` for tier decisions.
 
+**Error-path scenario** (all ensemble providers fail → RuntimeError re-raised):
+```
+3'. All providers fail → pipeline except branch → _build_fallback_analysis()
+    analysis_source  = RULE   (set by fallback builder, always)
+    provider_name    = "ensemble(openai,internal)"  (unchanged, composite — pre-5C legacy)
+    doc.analysis_source = RULE after apply_to_document()
+    → teacher-ineligible ✅ (RULE never teacher — I-19)
+    → effective_analysis_source returns RULE (analysis_source is set)
+```
+`_resolve_analysis_source_from_winner()` is never called in the error path (I-24).
+
 **Legacy rows** (pre-Sprint-5C, where `doc.provider = "ensemble(openai,internal)"`):
 - `doc.analysis_source` may be `None` or `INTERNAL`
 - `effective_analysis_source` returns `INTERNAL` (conservative)
-- These rows are NOT corpus-eligible even if `openai` had won — intentional tradeoff
+- These rows are NOT corpus-eligible even if `openai` had won — intentional tradeoff (I-26)
 
 ---
 
@@ -1151,5 +1234,6 @@ These may never be broken without a new spec:
 | I-21 | `InternalCompanionProvider.provider_name` is always `"companion"` — distinct from `"internal"` (heuristic). factory.py routes `"internal"` → `InternalModelProvider`, `"companion"` → `InternalCompanionProvider` |
 | I-22 | `EnsembleProvider` requires at least one provider. InternalModelProvider MUST be the last entry to guarantee a fallback result. If all providers fail, raises `RuntimeError` |
 | I-23 | `EnsembleProvider.model` MUST return the winning provider's `provider_name` (not the composite string) immediately after `analyze()` completes. This is the canonical winner signal for pipeline source resolution. |
-| I-24 | `_resolve_analysis_source()` MUST be called AFTER `provider.analyze()` when the provider is an `EnsembleProvider`, using the winning `provider_name` from `provider.model`, not the composite `provider_name`. Pre-analyze resolution is only valid for non-ensemble providers. |
+| I-24 | `_resolve_runtime_provider_name(provider)` resolves the winner name AFTER `analyze()` succeeds using duck-typed `active_provider_name`. `_resolve_analysis_source(winner_name)` then derives the tier. Neither is called in the error/fallback path — only `RULE` is valid when analysis failed. |
 | I-25 | `doc.provider` stores the **winning** provider name (e.g. `"openai"`, `"internal"`) — never the composite ensemble string. `doc.metadata["ensemble_chain"]` records the full ordered list for traceability. |
+| I-26 | Teacher eligibility is determined exclusively by `analysis_source=EXTERNAL_LLM`. `doc.provider`, `doc.metadata["ensemble_chain"]`, and all other metadata fields MUST NOT be used as teacher-eligibility criteria. No ensemble composition detail may bypass I-16 or I-19. |

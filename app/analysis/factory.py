@@ -73,4 +73,27 @@ def create_provider(provider_type: str, settings: Any) -> BaseAnalysisProvider |
 
         return GeminiAnalysisProvider.from_settings(settings.providers)
 
+    if provider_type == "ensemble":
+        from app.analysis.ensemble.provider import EnsembleProvider
+
+        providers = []
+
+        if getattr(settings.providers, "openai_api_key", None):
+            providers.append(create_provider("openai", settings))
+        if getattr(settings.providers, "anthropic_api_key", None):
+            providers.append(create_provider("anthropic", settings))
+        if getattr(settings.providers, "gemini_api_key", None):
+            providers.append(create_provider("gemini", settings))
+
+        companion = create_provider("companion", settings)
+        if companion:
+            providers.append(companion)
+
+        # Internal model must be last (guaranteed fallback)
+        internal = create_provider("internal", settings)
+        if internal:
+            providers.append(internal)
+
+        return EnsembleProvider([p for p in providers if p is not None])
+
     raise ValueError(f"Unsupported analysis provider: {provider_type!r}")

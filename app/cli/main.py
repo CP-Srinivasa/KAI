@@ -224,6 +224,7 @@ def analyze_pending(
                         str(res.document.id),
                         res.analysis_result,
                         provider_name=res.document.provider,
+                        metadata_updates=res.trace_metadata,
                     )
                     success_count += 1
                 except Exception as e:

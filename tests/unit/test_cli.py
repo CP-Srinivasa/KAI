@@ -238,7 +238,7 @@ def test_query_analyze_pending() -> None:
     updated_docs = []
 
     async def fake_update(
-        self, document_id: str, result, *, provider_name: str | None = None
+        self, document_id: str, result, *, provider_name: str | None = None, metadata_updates=None
     ) -> None:
         updated_docs.append(document_id)
 
@@ -364,7 +364,7 @@ def test_query_analyze_pending_without_openai_key_uses_fallback_analysis(monkeyp
         ]
 
     async def fake_update(
-        self, document_id: str, result, *, provider_name: str | None = None
+        self, document_id: str, result, *, provider_name: str | None = None, metadata_updates=None
     ) -> None:
         captured_results.append(result)
 
@@ -492,9 +492,13 @@ def test_ingest_rss_saved_documents_flow_into_analyze_pending(monkeypatch) -> No
             result,
             *,
             provider_name: str | None = None,
+            metadata_updates=None,
         ) -> None:
             for index, existing in enumerate(stored_docs):
                 if str(existing.id) == document_id:
+                    updated_metadata = dict(existing.metadata)
+                    if metadata_updates:
+                        updated_metadata.update(metadata_updates)
                     stored_docs[index] = existing.model_copy(
                         update={
                             "provider": provider_name,
@@ -504,6 +508,7 @@ def test_ingest_rss_saved_documents_flow_into_analyze_pending(monkeypatch) -> No
                             "priority_score": result.recommended_priority,
                             "relevance_score": result.relevance_score,
                             "tickers": result.affected_assets,
+                            "metadata": updated_metadata,
                         }
                     )
                     return

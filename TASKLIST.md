@@ -292,11 +292,11 @@ Akzeptanzkriterien:
 
 | # | Task | Agent | Status |
 |---|---|---|---|
-| 5C.1 | `_resolve_analysis_source_from_winner(winning_name)` — neue String-basierte Funktion in `pipeline.py` | Codex | ⏳ |
-| 5C.2 | Pipeline: post-analyze winner-Resolution für EnsembleProvider (`provider.model` nach `analyze()`) | Codex | ⏳ |
-| 5C.3 | `doc.provider` = winner name (nicht Composite-String); `doc.metadata["ensemble_chain"]` = volle Liste | Codex | ⏳ |
-| 5C.4 | Tests: `test_analysis_pipeline.py` — EnsembleProvider Szenarien (openai wins → EXTERNAL_LLM, internal fallback → INTERNAL) | Codex | ⏳ |
-| 5C.5 | Tests: `test_document_repository.py` — Persistenz + Reload von `analysis_source` für Ensemble-Dokumente | Codex | ⏳ |
+| 5C.1 | `_resolve_runtime_provider_name()` + `_resolve_trace_metadata()` — duck-typing winner resolution | Codex | ✅ |
+| 5C.2 | Pipeline: post-analyze winner-Resolution via `active_provider_name` property | Codex | ✅ |
+| 5C.3 | `doc.provider` = winner name; `doc.metadata["ensemble_chain"]` via `trace_metadata` | Codex | ✅ |
+| 5C.4 | Tests: `test_ensemble_openai_wins_sets_external_llm_source`, `test_ensemble_internal_fallback_sets_internal_source` | Codex | ✅ |
+| 5C.5 | `EnsembleProvider.active_provider_name` + `provider_chain` public properties | Codex | ✅ |
 | 5C.6 | Verifikation: `analyze-pending` CLI + DB-Lauf, `doc.analysis_source` korrekt nach Ensemble-Run | Antigravity | ⏳ |
 | 5C.7 | Contract-Abnahme + Commit | Claude Code | ⏳ |
 

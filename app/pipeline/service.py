@@ -157,6 +157,7 @@ async def run_rss_pipeline(
                             str(res.document.id),
                             res.analysis_result,
                             provider_name=res.document.provider,
+                            metadata_updates=res.trace_metadata,
                         )
                     else:
                         await repo.update_status(str(res.document.id), DocumentStatus.ANALYZED)

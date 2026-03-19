@@ -200,6 +200,7 @@ async def test_run_rss_pipeline_full_chain(monkeypatch) -> None:
         result,
         *,
         provider_name: str | None = None,
+        metadata_updates=None,
     ) -> None:
         updated_docs.append(document_id)
 
@@ -271,6 +272,7 @@ async def test_run_rss_pipeline_dry_run_skips_db_writes(monkeypatch) -> None:
         result,
         *,
         provider_name: str | None = None,
+        metadata_updates=None,
     ) -> None:
         update_calls.append(document_id)
 
@@ -328,7 +330,7 @@ async def test_run_rss_pipeline_skipped_count_sums_both_duplicate_types(monkeypa
         )
 
     async def fake_update(
-        self, document_id: str, result, *, provider_name: str | None = None
+        self, document_id: str, result, *, provider_name: str | None = None, metadata_updates=None
     ) -> None:
         pass
 

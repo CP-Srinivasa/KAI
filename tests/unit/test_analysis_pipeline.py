@@ -6,6 +6,8 @@ from unittest.mock import AsyncMock
 import pytest
 
 from app.analysis.base.interfaces import LLMAnalysisOutput
+from app.analysis.ensemble.provider import EnsembleProvider
+from app.analysis.internal_model.provider import InternalModelProvider
 from app.analysis.keywords.engine import KeywordEngine
 from app.analysis.keywords.watchlist import WatchlistEntry
 from app.analysis.pipeline import AnalysisPipeline, PipelineResult
@@ -149,33 +151,46 @@ async def test_pipeline_with_companion_provider_marks_internal_analysis_source()
 
 
 @pytest.mark.asyncio
-async def test_pipeline_with_ensemble_provider_marks_internal_not_external_llm():
-    """Pre-Sprint-5C conservative behavior: composite provider_name → INTERNAL (I-19 guard).
-
-    Uses a mock with provider_name="ensemble(openai,internal)" and model=None.
-    _resolve_analysis_source() sees the composite string pre-analyze and maps → INTERNAL.
-
-    Sprint-5C will supersede this with post-analyze winner resolution
-    via _resolve_analysis_source_from_winner().
-    When Sprint-5C is implemented, this test will be replaced by:
-      - test_ensemble_openai_wins_sets_external_llm_source  (openai won → EXTERNAL_LLM)
-      - test_ensemble_internal_fallback_sets_internal_source (internal won → INTERNAL)
-    See docs/contracts.md §15, TASKLIST.md Sprint 5C.
-    """
+async def test_ensemble_openai_wins_sets_external_llm_source():
     llm_out = _make_llm_output()
-    provider = _mock_named_provider("ensemble(openai,internal)", llm_out)
-    engine = _btc_engine()
-    pipeline = AnalysisPipeline(keyword_engine=engine, provider=provider, run_llm=True)
+    openai_provider = _mock_named_provider("openai", llm_out)
+    internal_provider = InternalModelProvider(_btc_engine())
+    ensemble = EnsembleProvider([openai_provider, internal_provider])
 
+    engine = _btc_engine()
+    pipeline = AnalysisPipeline(keyword_engine=engine, provider=ensemble, run_llm=True)
     result = await pipeline.run(_make_doc())
 
     assert result.analysis_result is not None
-    assert result.analysis_result.analysis_source == AnalysisSource.INTERNAL
-
+    assert result.provider_name == "openai"
+    assert result.analysis_result.analysis_source == AnalysisSource.EXTERNAL_LLM
+    assert result.trace_metadata == {"ensemble_chain": ["openai", "internal"]}
     result.apply_to_document()
+    assert result.document.analysis_source == AnalysisSource.EXTERNAL_LLM
+    assert result.document.provider == "openai"
+    assert result.document.metadata.get("ensemble_chain") == ["openai", "internal"]
 
+@pytest.mark.asyncio
+async def test_ensemble_internal_fallback_sets_internal_source():
+    openai_provider = AsyncMock()
+    openai_provider.provider_name = "openai"
+    openai_provider.model = "gpt-4o"
+    openai_provider.analyze = AsyncMock(side_effect=RuntimeError("API Error"))
+    internal_provider = InternalModelProvider(_btc_engine())
+    ensemble = EnsembleProvider([openai_provider, internal_provider])
+
+    engine = _btc_engine()
+    pipeline = AnalysisPipeline(keyword_engine=engine, provider=ensemble, run_llm=True)
+    result = await pipeline.run(_make_doc("Bitcoin halving", "BTC halving outlook"))
+
+    assert result.analysis_result is not None
+    assert result.provider_name == "internal"
+    assert result.analysis_result.analysis_source == AnalysisSource.INTERNAL
+    assert result.trace_metadata == {"ensemble_chain": ["openai", "internal"]}
+    result.apply_to_document()
     assert result.document.analysis_source == AnalysisSource.INTERNAL
-    assert result.document.effective_analysis_source == AnalysisSource.INTERNAL
+    assert result.document.provider == "internal"
+    assert result.document.metadata.get("ensemble_chain") == ["openai", "internal"]
 
 
 def test_apply_to_document_falls_back_to_llm_market_scope():

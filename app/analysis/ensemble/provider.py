@@ -51,6 +51,16 @@ class EnsembleProvider(BaseAnalysisProvider):
     def model(self) -> str | None:
         return self._active_provider_name
 
+    @property
+    def active_provider_name(self) -> str:
+        """Return the provider that actually produced the latest result."""
+        return self._active_provider_name
+
+    @property
+    def provider_chain(self) -> list[str]:
+        """Ordered technical trace of configured providers."""
+        return [provider.provider_name for provider in self._providers]
+
     async def analyze(
         self,
         title: str,

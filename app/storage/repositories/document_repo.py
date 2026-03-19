@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from datetime import datetime
 from typing import Any
 
@@ -83,6 +84,7 @@ class DocumentRepository:
         result: AnalysisResult,
         *,
         provider_name: str | None = None,
+        metadata_updates: Mapping[str, object] | None = None,
     ) -> None:
         """Write analysis scores to the document and set status=ANALYZED.
 
@@ -92,6 +94,8 @@ class DocumentRepository:
         """
         doc = await self.get_by_id(document_id)
         current_meta = doc.metadata if doc else {}
+        if metadata_updates:
+            current_meta.update(metadata_updates)
         current_meta["explanation_short"] = result.explanation_short
         current_meta["explanation_long"] = result.explanation_long
 

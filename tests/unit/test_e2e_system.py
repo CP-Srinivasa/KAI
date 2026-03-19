@@ -291,6 +291,187 @@ def test_analysis_source_e2e_cli_db_and_research_consumers(tmp_path, monkeypatch
         asyncio.run(async_engine.dispose())
 
 
+def test_ensemble_winner_trace_e2e_cli_db_and_dataset_filtering(tmp_path, monkeypatch):
+    runner = CliRunner()
+    db_path = tmp_path / "ensemble_winner_e2e.sqlite"
+    async_db_url = f"sqlite+aiosqlite:///{db_path}"
+
+    async_engine = create_async_engine(async_db_url)
+    session_factory = async_sessionmaker(async_engine, expire_on_commit=False)
+
+    async def init_db() -> None:
+        async with async_engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+
+    async def seed_docs() -> tuple[str, str]:
+        async with session_factory.begin() as session:
+            repo = DocumentRepository(session)
+            pending = await repo.save(
+                CanonicalDocument(
+                    url="https://example.com/ensemble-openai",
+                    title="Bitcoin ETF ensemble winner test",
+                    raw_text="Bitcoin ETF demand stays strong.",
+                )
+            )
+            internal = await repo.save(
+                CanonicalDocument(
+                    url="https://example.com/internal-teacher",
+                    title="Internal-only analysis row",
+                    raw_text="Macro liquidity remains stable for BTC.",
+                )
+            )
+            await repo.update_analysis(
+                str(internal.id),
+                make_analysis_result(
+                    document_id=internal.id,
+                    analysis_source=AnalysisSource.INTERNAL,
+                    sentiment_label=SentimentLabel.NEUTRAL,
+                    sentiment_score=0.0,
+                    relevance_score=0.45,
+                    impact_score=0.3,
+                    novelty_score=0.25,
+                    market_scope=MarketScope.CRYPTO,
+                    affected_assets=["BTC"],
+                    explanation_short="Internal baseline",
+                    explanation_long="Internal baseline path.",
+                    recommended_priority=5,
+                ),
+                provider_name="internal",
+            )
+            return str(pending.id), str(internal.id)
+
+    async def load_doc(document_id: str) -> CanonicalDocument | None:
+        async with session_factory.begin() as session:
+            repo = DocumentRepository(session)
+            return await repo.get_by_id(document_id)
+
+    class FakeKeywordEngine:
+        def match(self, text: str) -> list[object]:
+            return []
+
+        def match_tickers(self, text: str) -> list[str]:
+            return ["BTC"]
+
+    class FakeOpenAIProvider:
+        provider_name = "openai"
+        model = "gpt-4o"
+
+        async def analyze(self, title: str, text: str, context=None):
+            return make_llm_output(
+                sentiment_label=SentimentLabel.BULLISH,
+                sentiment_score=0.7,
+                relevance_score=0.88,
+                impact_score=0.62,
+                novelty_score=0.41,
+                confidence_score=0.82,
+                spam_probability=0.02,
+                market_scope=MarketScope.CRYPTO,
+                affected_assets=["BTC"],
+                tags=["ensemble"],
+                actionable=True,
+            )
+
+    class FakeInternalProvider:
+        provider_name = "internal"
+        model = "rule-heuristic-v1"
+
+        async def analyze(self, title: str, text: str, context=None):
+            return make_llm_output(
+                sentiment_label=SentimentLabel.NEUTRAL,
+                sentiment_score=0.0,
+                relevance_score=0.4,
+                impact_score=0.25,
+                novelty_score=0.2,
+                confidence_score=0.55,
+                spam_probability=0.04,
+                market_scope=MarketScope.CRYPTO,
+                affected_assets=["BTC"],
+                tags=["internal"],
+                actionable=False,
+            )
+
+    from app.analysis.ensemble.provider import EnsembleProvider
+
+    settings = AppSettings()
+    settings.db.url = async_db_url
+    settings.monitor_dir = str(tmp_path)
+
+    monkeypatch.setattr(cli_main, "get_settings", lambda: settings)
+    monkeypatch.setattr(
+        "app.storage.db.session.build_session_factory",
+        lambda _db: session_factory,
+    )
+    monkeypatch.setattr(
+        "app.analysis.keywords.engine.KeywordEngine.from_monitor_dir",
+        lambda _path: FakeKeywordEngine(),
+    )
+    monkeypatch.setattr(
+        "app.analysis.factory.create_provider",
+        lambda provider_type, _settings: EnsembleProvider(
+            [FakeOpenAIProvider(), FakeInternalProvider()]
+        ),
+    )
+
+    try:
+        asyncio.run(init_db())
+        pending_id, internal_id = asyncio.run(seed_docs())
+
+        result = runner.invoke(
+            app,
+            ["query", "analyze-pending", "--provider", "openai", "--limit", "10"],
+        )
+
+        assert result.exit_code == 0
+        assert "Analyzing 1 documents" in result.output
+        assert "Analysis complete! 1 success, 0 failed." in result.output
+
+        stored = asyncio.run(load_doc(pending_id))
+        internal_doc = asyncio.run(load_doc(internal_id))
+
+        assert stored is not None
+        assert stored.status == DocumentStatus.ANALYZED
+        assert stored.provider == "openai"
+        assert stored.analysis_source == AnalysisSource.EXTERNAL_LLM
+        assert stored.effective_analysis_source == AnalysisSource.EXTERNAL_LLM
+        assert stored.metadata["ensemble_chain"] == ["openai", "internal"]
+
+        brief = ResearchBriefBuilder("ensemble-e2e").build([stored])
+        assert brief.top_documents[0].analysis_source == "external_llm"
+
+        signals = extract_signal_candidates([stored], min_priority=0)
+        assert len(signals) == 1
+        assert signals[0].analysis_source == "external_llm"
+
+        assert internal_doc is not None
+        assert internal_doc.analysis_source == AnalysisSource.INTERNAL
+
+        dataset_path = tmp_path / "ensemble_external_dataset.jsonl"
+        export_result = runner.invoke(
+            app,
+            [
+                "research",
+                "dataset-export",
+                str(dataset_path),
+                "--source-type",
+                "external_llm",
+                "--limit",
+                "10",
+            ],
+        )
+
+        assert export_result.exit_code == 0
+        rows = [
+            json.loads(line)
+            for line in dataset_path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+        assert len(rows) == 1
+        assert rows[0]["metadata"]["provider"] == "openai"
+        assert rows[0]["metadata"]["analysis_source"] == "external_llm"
+    finally:
+        asyncio.run(async_engine.dispose())
+
+
 def test_legacy_analysis_source_fallback_remains_stable_for_research_consumers(tmp_path):
     db_path = tmp_path / "analysis_source_legacy.sqlite"
     async_db_url = f"sqlite+aiosqlite:///{db_path}"

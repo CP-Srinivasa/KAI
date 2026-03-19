@@ -35,14 +35,54 @@ def _unique_strings(values: list[str]) -> list[str]:
     return result
 
 
-def _resolve_analysis_source(provider: BaseAnalysisProvider | None) -> AnalysisSource:
-    if provider is None:
+def _resolve_analysis_source(provider_name: str | None) -> AnalysisSource:
+    if not provider_name:
         return AnalysisSource.RULE
 
-    provider_name = provider.provider_name.strip().lower()
-    if provider_name in {"internal", "companion"} or provider_name.startswith("ensemble("):
+    provider_name = provider_name.strip().lower()
+    if provider_name in {"fallback", "rule"}:
+        return AnalysisSource.RULE
+    if provider_name in {"internal", "companion"}:
         return AnalysisSource.INTERNAL
     return AnalysisSource.EXTERNAL_LLM
+
+
+def _resolve_runtime_provider_name(provider: BaseAnalysisProvider | None) -> str | None:
+    if provider is None:
+        return None
+
+    normalized = provider.provider_name.strip()
+    if normalized.startswith("ensemble("):
+        active_provider_name = getattr(provider, "active_provider_name", None)
+        if isinstance(active_provider_name, str):
+            winner = active_provider_name.strip()
+            if winner:
+                return winner
+
+        if isinstance(provider.model, str):
+            winner = provider.model.strip()
+            if winner:
+                return winner
+
+    return normalized or None
+
+
+def _resolve_trace_metadata(provider: BaseAnalysisProvider | None) -> dict[str, object]:
+    if provider is None:
+        return {}
+
+    provider_chain = getattr(provider, "provider_chain", None)
+    chain: list[str] = []
+    if isinstance(provider_chain, (list, tuple)):
+        chain = [str(name).strip() for name in provider_chain if str(name).strip()]
+    elif provider.provider_name.startswith("ensemble(") and provider.provider_name.endswith(")"):
+        composite = provider.provider_name[len("ensemble(") : -1]
+        chain = [name.strip() for name in composite.split(",") if name.strip()]
+
+    if not chain:
+        return {}
+
+    return {"ensemble_chain": chain}
 
 
 def _fallback_relevance(
@@ -154,6 +194,7 @@ class PipelineResult:
     analysis_result: AnalysisResult | None = None
     error: str | None = None
     provider_name: str | None = None
+    trace_metadata: dict[str, object] = field(default_factory=dict)
 
     @property
     def success(self) -> bool:
@@ -163,6 +204,8 @@ class PipelineResult:
         """Apply analysis results, entities, and scores directly to the document."""
         self.document.entity_mentions = self.entity_mentions
         self.document.provider = self.provider_name
+        if self.trace_metadata:
+            self.document.metadata.update(self.trace_metadata)
         _sync_flat_entities(self.document, self.entity_mentions)
 
         if not self.analysis_result:
@@ -230,8 +273,8 @@ class AnalysisPipeline:
 
         llm_output: LLMAnalysisOutput | None = None
         analysis_result: AnalysisResult | None = None
-        analysis_source = _resolve_analysis_source(self._provider)
         provider_name = "fallback"
+        trace_metadata = _resolve_trace_metadata(self._provider)
 
         fallback_reason: str | None = None
         if self._provider is None:
@@ -258,7 +301,12 @@ class AnalysisPipeline:
                     text=text,
                     context=context,
                 )
-                provider_name = self._provider.provider_name
+                provider_name = (
+                    _resolve_runtime_provider_name(self._provider)
+                    or self._provider.provider_name
+                )
+                analysis_source = _resolve_analysis_source(provider_name)
+
                 analysis_result = AnalysisResult(
                     document_id=str(doc.id),
                     analysis_source=analysis_source,
@@ -300,6 +348,7 @@ class AnalysisPipeline:
             llm_output=llm_output,
             analysis_result=analysis_result,
             provider_name=provider_name,
+            trace_metadata=trace_metadata,
         )
 
     def _build_fallback_analysis(
