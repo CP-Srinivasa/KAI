@@ -34,9 +34,9 @@ class AlertMessage:
 class AlertDeliveryResult:
     """Result of a single alert delivery attempt."""
 
-    channel: str          # "telegram" | "email" | "dry_run"
+    channel: str  # "telegram" | "email" | "dry_run"
     success: bool
-    message_id: str | None = None   # channel-specific ID when available
+    message_id: str | None = None  # channel-specific ID when available
     error: str | None = None
 
 
@@ -68,9 +68,7 @@ class BaseAlertChannel(ABC):
         ...
 
     @abstractmethod
-    async def send_digest(
-        self, messages: list[AlertMessage], period: str
-    ) -> AlertDeliveryResult:
+    async def send_digest(self, messages: list[AlertMessage], period: str) -> AlertDeliveryResult:
         """Send a bundled digest of multiple alert messages.
 
         period: human-readable label e.g. "last 60 minutes"

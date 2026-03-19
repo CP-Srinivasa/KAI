@@ -235,6 +235,7 @@ def test_query_analyze_pending() -> None:
         ]
 
     updated_docs = []
+
     async def fake_update(self, document_id: str, result) -> None:
         updated_docs.append(document_id)
 
@@ -245,7 +246,7 @@ def test_query_analyze_pending() -> None:
                 PipelineResult(
                     document=doc,
                     llm_output=make_llm_output(),
-                    analysis_result=make_analysis_result(document_id=doc.id)
+                    analysis_result=make_analysis_result(document_id=doc.id),
                 )
             )
         return results
@@ -253,8 +254,12 @@ def test_query_analyze_pending() -> None:
     class FakeSessionFactory:
         def begin(self):
             class FakeSessionContext:
-                async def __aenter__(self): return object()
-                async def __aexit__(self, exc_type, exc, tb): return False
+                async def __aenter__(self):
+                    return object()
+
+                async def __aexit__(self, exc_type, exc, tb):
+                    return False
+
             return FakeSessionContext()
 
     from _pytest.monkeypatch import MonkeyPatch
@@ -288,8 +293,12 @@ def test_query_analyze_pending_empty() -> None:
     class FakeSessionFactory:
         def begin(self):
             class FakeSessionContext:
-                async def __aenter__(self): return object()
-                async def __aexit__(self, exc_type, exc, tb): return False
+                async def __aenter__(self):
+                    return object()
+
+                async def __aexit__(self, exc_type, exc, tb):
+                    return False
+
             return FakeSessionContext()
 
     from _pytest.monkeypatch import MonkeyPatch
@@ -383,8 +392,7 @@ def test_ingest_rss_saved_documents_flow_into_analyze_pending(monkeypatch) -> No
 
         async def get_pending_documents(self, limit: int = 50):
             docs_to_return = [
-                doc for doc in stored_docs
-                if not doc.is_analyzed and not doc.is_duplicate
+                doc for doc in stored_docs if not doc.is_analyzed and not doc.is_duplicate
             ]
             return docs_to_return[:limit]
 
@@ -400,9 +408,7 @@ def test_ingest_rss_saved_documents_flow_into_analyze_pending(monkeypatch) -> No
                         }
                     )
                     return
-            raise AssertionError(
-                f"Document {document_id} was not persisted before analysis"
-            )
+            raise AssertionError(f"Document {document_id} was not persisted before analysis")
 
     class FakeKeywordEngine:
         def match(self, text: str) -> list[object]:

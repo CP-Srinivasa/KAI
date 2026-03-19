@@ -15,6 +15,7 @@ def make_document(**kwargs) -> CanonicalDocument:
     defaults.update(kwargs)
     return CanonicalDocument(**defaults)
 
+
 def make_llm_output(**kwargs) -> LLMAnalysisOutput:
     defaults = {
         "sentiment_label": SentimentLabel.NEUTRAL,
@@ -29,6 +30,7 @@ def make_llm_output(**kwargs) -> LLMAnalysisOutput:
     }
     defaults.update(kwargs)
     return LLMAnalysisOutput(**defaults)
+
 
 def make_analysis_result(document_id: uuid.UUID | str, **kwargs) -> AnalysisResult:
     defaults = {

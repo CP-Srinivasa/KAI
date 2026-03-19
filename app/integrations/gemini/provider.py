@@ -67,6 +67,7 @@ class GeminiAnalysisProvider(BaseAnalysisProvider):
         Note: google-genai Client is wrapped in asyncio.to_thread because it blocks.
         """
         import asyncio
+
         user_prompt = format_user_prompt(
             title=title,
             text=text[:_MAX_TEXT_CHARS],
@@ -88,7 +89,7 @@ class GeminiAnalysisProvider(BaseAnalysisProvider):
         )
 
         if not response.text:
-             raise ValueError("Gemini returned empty structured output")
+            raise ValueError("Gemini returned empty structured output")
 
         # response.text is guaranteed to be a JSON string matching schema
         return LLMAnalysisOutput.model_validate_json(response.text)

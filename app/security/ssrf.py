@@ -26,27 +26,27 @@ from app.core.errors import SecurityError
 
 # Private and reserved IPv4 networks — never reachable from the internet
 _BLOCKED_NETWORKS_V4: tuple[ipaddress.IPv4Network, ...] = (
-    ipaddress.IPv4Network("10.0.0.0/8"),        # RFC 1918 private
-    ipaddress.IPv4Network("172.16.0.0/12"),      # RFC 1918 private
-    ipaddress.IPv4Network("192.168.0.0/16"),     # RFC 1918 private
-    ipaddress.IPv4Network("127.0.0.0/8"),        # loopback
-    ipaddress.IPv4Network("169.254.0.0/16"),     # link-local / cloud metadata
-    ipaddress.IPv4Network("100.64.0.0/10"),      # shared address space (RFC 6598)
-    ipaddress.IPv4Network("192.0.0.0/24"),       # IETF protocol assignments
-    ipaddress.IPv4Network("192.0.2.0/24"),       # TEST-NET-1 (documentation)
-    ipaddress.IPv4Network("198.51.100.0/24"),    # TEST-NET-2 (documentation)
-    ipaddress.IPv4Network("203.0.113.0/24"),     # TEST-NET-3 (documentation)
-    ipaddress.IPv4Network("224.0.0.0/4"),        # multicast
-    ipaddress.IPv4Network("240.0.0.0/4"),        # reserved
-    ipaddress.IPv4Network("0.0.0.0/8"),          # "this" network
+    ipaddress.IPv4Network("10.0.0.0/8"),  # RFC 1918 private
+    ipaddress.IPv4Network("172.16.0.0/12"),  # RFC 1918 private
+    ipaddress.IPv4Network("192.168.0.0/16"),  # RFC 1918 private
+    ipaddress.IPv4Network("127.0.0.0/8"),  # loopback
+    ipaddress.IPv4Network("169.254.0.0/16"),  # link-local / cloud metadata
+    ipaddress.IPv4Network("100.64.0.0/10"),  # shared address space (RFC 6598)
+    ipaddress.IPv4Network("192.0.0.0/24"),  # IETF protocol assignments
+    ipaddress.IPv4Network("192.0.2.0/24"),  # TEST-NET-1 (documentation)
+    ipaddress.IPv4Network("198.51.100.0/24"),  # TEST-NET-2 (documentation)
+    ipaddress.IPv4Network("203.0.113.0/24"),  # TEST-NET-3 (documentation)
+    ipaddress.IPv4Network("224.0.0.0/4"),  # multicast
+    ipaddress.IPv4Network("240.0.0.0/4"),  # reserved
+    ipaddress.IPv4Network("0.0.0.0/8"),  # "this" network
 )
 
 _BLOCKED_NETWORKS_V6: tuple[ipaddress.IPv6Network, ...] = (
-    ipaddress.IPv6Network("::1/128"),            # loopback
-    ipaddress.IPv6Network("fc00::/7"),           # unique local
-    ipaddress.IPv6Network("fe80::/10"),          # link-local
-    ipaddress.IPv6Network("ff00::/8"),           # multicast
-    ipaddress.IPv6Network("::/128"),             # unspecified
+    ipaddress.IPv6Network("::1/128"),  # loopback
+    ipaddress.IPv6Network("fc00::/7"),  # unique local
+    ipaddress.IPv6Network("fe80::/10"),  # link-local
+    ipaddress.IPv6Network("ff00::/8"),  # multicast
+    ipaddress.IPv6Network("::/128"),  # unspecified
 )
 
 _ALLOWED_SCHEMES = {"http", "https"}

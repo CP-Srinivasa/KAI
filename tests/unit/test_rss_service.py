@@ -115,6 +115,7 @@ async def test_collect_rss_feed_rejects_non_feed_source_types(
         class _Cls:
             def classify(self, url: str) -> ClassificationResult:
                 return ClassificationResult(st, SourceStatus.ACTIVE)
+
         return _Cls()
 
     resolve_called = False

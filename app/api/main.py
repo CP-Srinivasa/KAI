@@ -19,8 +19,8 @@ from app.storage.document_ingest import persist_fetch_result
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     settings = get_settings()
     configure_logging(settings.log_level)
-    validate_secrets(settings)          # warn/fail on missing secrets at startup
-    setup_auth(app, settings.api_key)   # attach bearer-token middleware if key is set
+    validate_secrets(settings)  # warn/fail on missing secrets at startup
+    setup_auth(app, settings.api_key)  # attach bearer-token middleware if key is set
     app.state.session_factory = build_session_factory(settings.db)
 
     async def persist_result(result: FetchResult):

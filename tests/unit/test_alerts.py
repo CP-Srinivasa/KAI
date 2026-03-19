@@ -370,8 +370,12 @@ def test_telegram_channel_name():
 
 
 async def test_email_dry_run_send():
-    settings = _dry_run_settings(email_enabled=True, email_host="smtp.example.com",
-                                  email_from="bot@example.com", email_to="user@example.com")
+    settings = _dry_run_settings(
+        email_enabled=True,
+        email_host="smtp.example.com",
+        email_from="bot@example.com",
+        email_to="user@example.com",
+    )
     ch = EmailAlertChannel(settings)
     result = await ch.send(_make_alert_msg())
     assert result.success is True

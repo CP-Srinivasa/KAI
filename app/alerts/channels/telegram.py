@@ -43,9 +43,7 @@ class TelegramAlertChannel(BaseAlertChannel):
         text = format_telegram_message(message)
         return await self._post_message(text)
 
-    async def send_digest(
-        self, messages: list[AlertMessage], period: str
-    ) -> AlertDeliveryResult:
+    async def send_digest(self, messages: list[AlertMessage], period: str) -> AlertDeliveryResult:
         if self._settings.dry_run:
             return AlertDeliveryResult(
                 channel=self.channel_name, success=True, message_id="dry_run"

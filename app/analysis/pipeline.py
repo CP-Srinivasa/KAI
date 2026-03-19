@@ -68,6 +68,7 @@ class PipelineResult:
         self.document.categories = list(set(self.document.categories + res.affected_sectors))
 
         from app.analysis.scoring import calculate_final_relevance, compute_priority
+
         # Calculate Blended Relevance
         blended = calculate_final_relevance(res.relevance_score, self.keyword_hits)
         self.document.relevance_score = blended

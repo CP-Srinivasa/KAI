@@ -58,7 +58,7 @@ def setup_auth(app: FastAPI, api_key: str) -> None:
                 headers={"WWW-Authenticate": "Bearer"},
             )
 
-        token = auth_header[len("Bearer "):]
+        token = auth_header[len("Bearer ") :]
         # Use constant-time comparison to prevent timing attacks
         if not secrets.compare_digest(token, api_key):
             return JSONResponse(

@@ -51,9 +51,7 @@ class EmailAlertChannel(BaseAlertChannel):
         loop = asyncio.get_event_loop()
         return await loop.run_in_executor(None, self._send_smtp, subject, body)
 
-    async def send_digest(
-        self, messages: list[AlertMessage], period: str
-    ) -> AlertDeliveryResult:
+    async def send_digest(self, messages: list[AlertMessage], period: str) -> AlertDeliveryResult:
         if self._settings.dry_run:
             return AlertDeliveryResult(
                 channel=self.channel_name, success=True, message_id="dry_run"

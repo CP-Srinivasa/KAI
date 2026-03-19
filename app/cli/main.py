@@ -388,9 +388,7 @@ def pipeline_run(
         if settings.providers.openai_api_key:
             provider = OpenAIAnalysisProvider.from_settings(settings.providers)
         else:
-            console.print(
-                "[yellow]Warning:[/yellow] No OpenAI API key — LLM analysis skipped."
-            )
+            console.print("[yellow]Warning:[/yellow] No OpenAI API key — LLM analysis skipped.")
 
         session_factory = None if dry_run else build_session_factory(settings.db)
 
@@ -506,6 +504,7 @@ def alerts_evaluate_pending(
         session_factory = build_session_factory(settings.db)
         async with session_factory.begin() as session:
             from app.storage.repositories.document_repo import DocumentRepository
+
             repo = DocumentRepository(session)
             docs = await repo.list(is_analyzed=True, limit=limit)
 

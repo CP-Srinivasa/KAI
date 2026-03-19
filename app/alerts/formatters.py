@@ -32,12 +32,7 @@ def _priority_label(priority: int) -> str:
 
 def _escape_md(text: str) -> str:
     """Escape Telegram Markdown v1 special characters."""
-    return (
-        text.replace("*", "\\*")
-        .replace("_", "\\_")
-        .replace("`", "\\`")
-        .replace("[", "\\[")
-    )
+    return text.replace("*", "\\*").replace("_", "\\_").replace("`", "\\`").replace("[", "\\[")
 
 
 # ── Telegram ─────────────────────────────────────────────────────────────────
@@ -96,9 +91,7 @@ def format_email_body(msg: AlertMessage) -> str:
     actionable_str = "Yes" if msg.actionable else "No"
     tags_str = ", ".join(msg.tags) if msg.tags else "—"
     return (
-        "KAI Market Alert\n"
-        + "=" * 40
-        + "\n\n"
+        "KAI Market Alert\n" + "=" * 40 + "\n\n"
         f"Priority:    {msg.priority}/10 ({_priority_label(msg.priority)})\n"
         f"Sentiment:   {msg.sentiment_label.upper()}\n"
         f"Actionable:  {actionable_str}\n\n"
@@ -124,9 +117,5 @@ def format_email_digest_body(messages: list[AlertMessage], period: str) -> str:
     ]
     for i, msg in enumerate(messages, 1):
         excerpt = msg.explanation[:120]
-        lines.append(
-            f"{i}. [P{msg.priority}] {msg.title}\n"
-            f"   {excerpt}\n"
-            f"   {msg.url}\n"
-        )
+        lines.append(f"{i}. [P{msg.priority}] {msg.title}\n   {excerpt}\n   {msg.url}\n")
     return "\n".join(lines)

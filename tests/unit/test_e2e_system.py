@@ -45,11 +45,13 @@ def test_full_system_e2e_flow(monkeypatch):
             cli_main.get_settings.cache_clear()
 
         real_get_settings = cli_main.get_settings
+
         def fake_get_settings():
             s = real_get_settings()
             s.db.url = async_db_url
             s.providers.openai_api_key = "fake_key_for_test"
             return s
+
         monkeypatch.setattr(cli_main, "get_settings", fake_get_settings)
 
         # Mock RSS feed collection to return 1 valid entry
@@ -57,6 +59,7 @@ def test_full_system_e2e_flow(monkeypatch):
             class FakeResolved:
                 feed_title = "E2E Test Feed"
                 resolved_url = "https://example.com/e2e-feed"
+
             class FakeClass:
                 source_type = SourceType.RSS_FEED
                 status = SourceStatus.ACTIVE
@@ -79,8 +82,8 @@ def test_full_system_e2e_flow(monkeypatch):
                     success=True,
                     source_id="btc-echo",
                     fetched_at=datetime.datetime.now(datetime.UTC),
-                    documents=docs
-                )
+                    documents=docs,
+                ),
             )
 
         monkeypatch.setattr(cli_main, "_collect_rss_feed", fake_collect)
@@ -94,9 +97,7 @@ def test_full_system_e2e_flow(monkeypatch):
         with sync_session() as session:
             # SQLAlchemy 2.0 select
             doc = session.execute(
-                select(CanonicalDocumentModel).where(
-                    ~CanonicalDocumentModel.is_analyzed
-                )
+                select(CanonicalDocumentModel).where(~CanonicalDocumentModel.is_analyzed)
             ).scalar_one_or_none()
             assert doc is not None
             assert doc.title == "System Test Article about Bitcoin"
@@ -106,13 +107,15 @@ def test_full_system_e2e_flow(monkeypatch):
         # 4. Mock OpenAI provider to avoid network calls during test
         async def fake_analyze(self, text, **kwargs):
             from tests.unit.factories import make_llm_output
+
             return make_llm_output(
                 relevance_score=0.9,
                 impact_score=0.8,
                 novelty_score=0.7,
                 confidence_score=0.95,
-                sentiment_label=SentimentLabel.BULLISH
+                sentiment_label=SentimentLabel.BULLISH,
             )
+
         monkeypatch.setattr(OpenAIAnalysisProvider, "analyze", fake_analyze)
 
         # Execute Step 4: analyze-pending
@@ -129,14 +132,14 @@ def test_full_system_e2e_flow(monkeypatch):
                     " novelty_score, sentiment_label"
                     " FROM canonical_documents WHERE id = :id"
                 ),
-                {"id": doc_id_str}
+                {"id": doc_id_str},
             ).fetchone()
 
             assert row is not None
-            assert row[0] == 1       # is_analyzed=True
-            assert row[1] >= 0.9     # relevance (blended; boosted by "Bitcoin" keyword)
-            assert row[2] == 0.8     # impact_score
-            assert row[3] == 0.7     # novelty_score
+            assert row[0] == 1  # is_analyzed=True
+            assert row[1] >= 0.9  # relevance (blended; boosted by "Bitcoin" keyword)
+            assert row[2] == 0.8  # impact_score
+            assert row[3] == 0.7  # novelty_score
             assert row[4] == "bullish"  # sentiment_label
 
     finally:

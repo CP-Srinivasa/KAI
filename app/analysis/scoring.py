@@ -99,10 +99,7 @@ def is_alert_worthy(
     return score.priority >= min_priority
 
 
-def calculate_final_relevance(
-    llm_relevance: float,
-    keyword_hits: list[Any]
-) -> float:
+def calculate_final_relevance(llm_relevance: float, keyword_hits: list[Any]) -> float:
     """Blend LLM relevance score with keyword hit multipliers.
 
     If document has strong keyword hits, it boosts the LLM base score.
@@ -116,4 +113,3 @@ def calculate_final_relevance(
 
     final_score = llm_relevance + boost
     return min(1.0, final_score)
-

@@ -82,7 +82,7 @@ class AnthropicAnalysisProvider(BaseAnalysisProvider):
         # Remove definition references that Anthropic might bulk at, keeping it simple
         if "$defs" in schema:
             # We assume it is mostly flat for Anthropic.
-            pass # Keep it for now, Anthropic supports standard JSON schema
+            pass  # Keep it for now, Anthropic supports standard JSON schema
 
         tools = [
             {

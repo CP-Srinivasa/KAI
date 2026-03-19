@@ -112,9 +112,7 @@ async def test_analyze_text_truncated(provider, monkeypatch):
     assert len(captured) == 1
     # The content string passed to generate_content should not exceed limit + prompt overhead
     content_arg = (
-        captured[0]["args"][1]
-        if captured[0]["args"]
-        else captured[0]["kwargs"].get("contents", "")
+        captured[0]["args"][1] if captured[0]["args"] else captured[0]["kwargs"].get("contents", "")
     )
     assert len(content_arg) <= mod._MAX_TEXT_CHARS + 500
 

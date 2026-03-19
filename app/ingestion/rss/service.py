@@ -51,7 +51,11 @@ async def collect_rss_feed(
     # Guard: refuse to treat non-feed sources as RSS feeds
     if classification.source_type not in _rss_compatible:
         _dummy_resolved = RSSResolveResult(
-            url=url, is_valid=False, resolved_url=None, feed_title=None, entry_count=0,
+            url=url,
+            is_valid=False,
+            resolved_url=None,
+            feed_title=None,
+            entry_count=0,
             error=f"'{classification.source_type.value}' is not an RSS/Atom feed.",
         )
         return RSSCollectedFeed(
