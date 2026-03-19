@@ -25,6 +25,7 @@ from typing import Any
 
 from app.core.domain.document import CanonicalDocument
 from app.core.enums import SourceStatus, SourceType
+from app.normalization.cleaner import clean_text
 
 
 @dataclass
@@ -70,16 +71,20 @@ def normalize_fetch_item(
 
     content_hash is auto-computed by CanonicalDocument.model_validator (do not set it).
     """
+    sanitized_url = item.url.strip()
+    sanitized_title = (item.title or "").strip()
+    sanitized_external_id = item.external_id.strip() if item.external_id else None
+
     return CanonicalDocument(
-        url=item.url,
-        external_id=item.external_id,
-        title=item.title or "",
-        raw_text=item.content,
+        url=sanitized_url,
+        external_id=sanitized_external_id,
+        title=sanitized_title,
+        raw_text=clean_text(item.content),
         published_at=item.published_at,
         source_id=source_id,
         source_name=source_name,
         source_type=source_type,
-        metadata=item.metadata,
+        metadata=dict(item.metadata),
     )
 
 

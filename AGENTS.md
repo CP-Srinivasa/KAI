@@ -341,13 +341,17 @@ Jedes `CanonicalDocument` durchläuft einen klar definierten Lebenszyklus.
 | Status | Wert | Bedeutung | Gesetzt von |
 |---|---|---|---|
 | `PENDING` | `"pending"` | In-Memory, noch nicht in DB | `prepare_ingested_document()` |
-| `PERSISTED` | `"persisted"` | In DB gespeichert, wartet auf Analyse | `DocumentRepository.save()` |
-| `ANALYZED` | `"analyzed"` | AnalysisResult geschrieben, Scores gesetzt | `DocumentRepository.update_analysis()` |
-| `FAILED` | `"failed"` | Nicht-behebbarer Fehler, für Audit aufbewahrt | `persist_fetch_result()` / Analyse-Fehler |
-| `DUPLICATE` | `"duplicate"` | Vom Dedup-Gate blockiert, nicht analysiert | `persist_fetch_result()` |
+| `PERSISTED` | `"persisted"` | In DB gespeichert, wartet auf Analyse | `DocumentRepository.save_document()` |
+| `ANALYZED` | `"analyzed"` | AnalysisResult geschrieben, Scores gesetzt | `DocumentRepository.update_analysis(doc_id, result)` |
+| `FAILED` | `"failed"` | Nicht-behebbarer Fehler, für Audit aufbewahrt | `repo.update_status(FAILED)` im Pipeline-Fehler-Handler |
+| `DUPLICATE` | `"duplicate"` | Vom Dedup-Gate erkannt und **nicht gespeichert** | In-Memory erkannt; `repo.mark_duplicate()` für bereits persistierte Dokumente |
+
+**Hinweis DUPLICATE/FAILED bei Ingest**: `persist_fetch_result()` erkennt Duplikate in-memory
+und verwirft das Dokument (kein DB-Eintrag). Kein DB-Status wird gesetzt. Status `DUPLICATE`
+wird nur in DB geschrieben, wenn `repo.mark_duplicate()` explizit auf ein bereits persistiertes Dokument aufgerufen wird.
 
 **Konvenienz-Flags** (für ORM-Queries, bleiben in Sync mit `status`):
-- `is_duplicate=True` ↔ `status=DUPLICATE`
+- `is_duplicate=True` ↔ `status=DUPLICATE` (nur bei explizit gesetztem DB-Eintrag)
 - `is_analyzed=True` ↔ `status=ANALYZED`
 
 ---

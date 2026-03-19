@@ -42,14 +42,16 @@ def test_prepare_ingested_document_normalizes_identity_fields() -> None:
     prepared = document_ingest.prepare_ingested_document(
         CanonicalDocument(
             url="https://www.example.com/article?utm_source=rss",
-            title="Bitcoin hits $100K!",
-            raw_text="alpha",
+            title=" Bitcoin hits $100K! ",
+            raw_text="<p>alpha</p>",
             is_duplicate=True,
             is_analyzed=True,
         )
     )
 
     assert prepared.url == "https://example.com/article"
+    assert prepared.title == "Bitcoin hits $100K!"
+    assert prepared.raw_text == "alpha"
     assert prepared.content_hash is not None
     assert prepared.status == DocumentStatus.PENDING
     assert prepared.is_duplicate is False
@@ -78,6 +80,9 @@ async def test_persist_fetch_result_dry_run_normalizes_and_deduplicates() -> Non
     assert stats.fetched_count == 2
     assert stats.candidate_count == 1
     assert stats.batch_duplicates == 1
+    assert len(stats.duplicate_documents) == 1
+    assert stats.duplicate_documents[0].status == DocumentStatus.DUPLICATE
+    assert stats.duplicate_documents[0].is_duplicate is True
     assert stats.preview_documents[0].url == "https://example.com/article"
     assert stats.preview_documents[0].metadata["normalized_title"] == "bitcoin hits 100k"
 
@@ -137,6 +142,8 @@ async def test_persist_fetch_result_skips_existing_duplicates_and_saves_unique(m
     assert len(saved_docs) == 1
     assert saved_docs[0].url == "https://feeds.example.com/story"
     assert stats.preview_documents[0].status == DocumentStatus.PERSISTED
+    assert len(stats.duplicate_documents) == 1
+    assert stats.duplicate_documents[0].status == DocumentStatus.DUPLICATE
     assert saved_docs[0].is_duplicate is False
     assert saved_docs[0].is_analyzed is False
     assert saved_docs[0].metadata["normalized_title"] == "ethereum upgrade ships"
@@ -181,4 +188,85 @@ async def test_persist_fetch_result_continues_after_save_error(monkeypatch) -> N
     assert stats.failed_count == 1
     assert len(stats.errors) == 1
     assert "RuntimeError: db unavailable" in stats.errors
+    assert len(stats.failed_documents) == 1
+    assert stats.failed_documents[0].status == DocumentStatus.FAILED
     assert len(saved_docs) == 1
+
+
+async def test_persist_fetch_result_rejects_invalid_document_urls(monkeypatch) -> None:
+    saved_docs: list[CanonicalDocument] = []
+
+    class FakeDocumentRepository:
+        def __init__(self, session) -> None:
+            self._session = session
+
+        async def list(self, **kwargs) -> list[CanonicalDocument]:
+            return []
+
+        async def get_by_url(self, url: str):
+            return None
+
+        async def get_by_hash(self, content_hash: str):
+            return None
+
+        async def save_document(self, doc: CanonicalDocument) -> str:
+            saved_docs.append(doc)
+            return str(doc.id)
+
+    monkeypatch.setattr(document_ingest, "DocumentRepository", FakeDocumentRepository)
+
+    stats = await document_ingest.persist_fetch_result(
+        _session_factory(),
+        _result(
+            CanonicalDocument(url="javascript:alert(1)", title="Bad link", raw_text="x"),
+            CanonicalDocument(
+                url="https://example.com/good?utm_source=rss",
+                title=" Good link ",
+                raw_text="<p>body</p>",
+            ),
+        ),
+    )
+
+    assert stats.saved_count == 1
+    assert stats.failed_count == 1
+    assert len(saved_docs) == 1
+    assert saved_docs[0].url == "https://example.com/good"
+    assert saved_docs[0].raw_text == "body"
+    assert len(stats.failed_documents) == 1
+    assert stats.failed_documents[0].status == DocumentStatus.FAILED
+    assert "Unsupported or empty document URL" in stats.failed_documents[0].metadata["ingest_error"]
+
+
+async def test_persist_fetch_result_treats_save_idempotency_as_duplicate(monkeypatch) -> None:
+    existing_id = "existing-doc-id"
+
+    class FakeDocumentRepository:
+        def __init__(self, session) -> None:
+            self._session = session
+
+        async def list(self, **kwargs) -> list[CanonicalDocument]:
+            return []
+
+        async def get_by_url(self, url: str):
+            return None
+
+        async def get_by_hash(self, content_hash: str):
+            return None
+
+        async def save_document(self, doc: CanonicalDocument) -> str:
+            return existing_id
+
+    monkeypatch.setattr(document_ingest, "DocumentRepository", FakeDocumentRepository)
+
+    stats = await document_ingest.persist_fetch_result(
+        _session_factory(),
+        _result(CanonicalDocument(url="https://example.com/idempotent", title="Same hash")),
+    )
+
+    assert stats.saved_count == 0
+    assert stats.existing_duplicates == 1
+    assert len(stats.duplicate_documents) == 1
+    assert stats.duplicate_documents[0].status == DocumentStatus.DUPLICATE
+    assert stats.duplicate_documents[0].metadata["duplicate_reasons"] == [
+        "idempotent_hash_collision"
+    ]

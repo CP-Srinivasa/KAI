@@ -114,7 +114,7 @@ class AnalysisResult(BaseModel):
 
     sentiment_label: SentimentLabel
     sentiment_score: float              # [-1.0, 1.0]
-    relevance_score: float              # [0.0, 1.0]
+    relevance_score: float              # [0.0, 1.0] — blended with keyword hits by apply_to_document()
     impact_score: float                 # [0.0, 1.0]
     novelty_score: float                # [0.0, 1.0]
     confidence_score: float             # [0.0, 1.0]
@@ -129,15 +129,19 @@ class AnalysisResult(BaseModel):
 
     actionable: bool
     tags: list[str]
+    spam_probability: float = 0.0       # stored for audit; ALWAYS pass separately to compute_priority()
+    recommended_priority: int | None    # set by apply_to_document() after scoring
 ```
 
 Rules:
 - Must be fully populated — all score fields are required (no optional scores)
 - Must be schema-validated — all ranges enforced by Pydantic
 - Must not contain provider-specific fields (`provider`, `model`, `raw_output` removed)
-- `spam_probability` is NOT stored on `AnalysisResult` — pass separately to `compute_priority(spam_probability=...)`
+- `spam_probability` IS stored on `AnalysisResult` for audit — but scoring functions
+  (`compute_priority`, `is_alert_worthy`) receive it as an **explicit separate parameter**
+- `recommended_priority` is set by `apply_to_document()` after `compute_priority()` runs — not by the LLM
 - `AnalysisResult` is in-memory only — no separate DB table
-- scores are written back to `canonical_documents` via `repo.update_analysis()`
+- scores are written back to `canonical_documents` via `repo.update_analysis(document_id, result)`
 
 ---
 
@@ -151,16 +155,22 @@ pending → persisted → analyzed
 
 | Status | Meaning | Owner |
 |---|---|---|
-| `pending` | in-memory, not yet saved | `document_ingest.py` |
-| `persisted` | saved to DB, awaiting analysis | `document_repo.save()` |
-| `analyzed` | scores written, pipeline complete | `document_repo.update_analysis()` |
-| `failed` | error at ingest or analysis | `document_ingest.py` / pipeline error handler |
-| `duplicate` | blocked by dedup gate | `document_ingest.py` |
+| `pending` | in-memory only — not yet saved to DB | `prepare_ingested_document()` in `document_ingest.py` |
+| `persisted` | saved to DB, awaiting analysis | `DocumentRepository.save_document()` |
+| `analyzed` | scores written, pipeline complete | `DocumentRepository.update_analysis()` |
+| `failed` | non-recoverable error — kept for audit | `repo.update_status(FAILED)` in pipeline error handler |
+| `duplicate` | blocked at dedup gate — NOT saved | detected in-memory; `repo.mark_duplicate()` for retroactive marking |
+
+Important: `DUPLICATE` and `FAILED` at the ingest stage are **in-memory states**.
+Documents detected as duplicates by `persist_fetch_result()` are silently dropped (never saved to DB).
+`status=DUPLICATE` is only written to DB when `repo.mark_duplicate()` is called explicitly
+on an already-persisted document.
 
 Rules:
 - transitions are one-way — no rollback, no recycling
 - `is_analyzed=True` must always be set together with `status=analyzed`
-- `is_duplicate=True` must always be set together with `status=duplicate`
+- `is_duplicate=True` must always be set together with `status=duplicate` (only when persisted)
+- a document's status is always `pending` before any DB operation
 
 ---
 
@@ -186,9 +196,13 @@ raw = (relevance × 0.30) + (impact × 0.30) + (novelty × 0.20)
     + (actionable × 0.15) + ((1 - spam) × 0.05)
 
 priority = round(raw × 9) + 1          # maps [0.0, 1.0] → [1, 10]
+
+# Actionability bonus: +1 if result.actionable is True (and priority < 10)
+if actionable:
+    priority = min(10, priority + 1)
 ```
 
-Cap: if `spam_probability > 0.7` → `priority = min(priority, 3)`
+Cap: if `spam_probability > 0.7` → `priority = min(priority, 3)` (applied after bonus)
 
 Scale:
 - 8–10: high urgency, actionable
@@ -208,7 +222,7 @@ class AnalysisPipeline:
     async def run_batch(
         self,
         documents: list[CanonicalDocument],
-        max_concurrent: int = _MAX_CONCURRENT,
+        # concurrency is bounded by module-level _MAX_CONCURRENT = 5
     ) -> list[PipelineResult]: ...
 ```
 
@@ -244,7 +258,7 @@ Scoring is part of the pipeline result — not a separate side-effect.
 # Only valid mutation path:
 result: PipelineResult = await pipeline.run(doc)
 result.apply_to_document()          # writes scores + entities to doc in-place
-await repo.update_analysis(doc)     # persists to DB
+await repo.update_analysis(str(doc.id), result.analysis_result)  # persists to DB
 ```
 
 Rules:
@@ -260,20 +274,34 @@ Rules:
 ```python
 class Deduplicator:
     def is_duplicate(self, doc: CanonicalDocument) -> bool: ...
-    def score(self, doc: CanonicalDocument) -> DedupResult: ...
-    def filter_new(self, docs: list[CanonicalDocument]) -> list[CanonicalDocument]: ...
+    def score(self, doc: CanonicalDocument) -> DuplicateScore: ...
+    def filter(self, docs: list[CanonicalDocument]) -> list[CanonicalDocument]: ...
+    def filter_scored(
+        self, docs: list[CanonicalDocument]
+    ) -> list[tuple[CanonicalDocument, DuplicateScore]]: ...
+    def register(self, doc: CanonicalDocument) -> None: ...
 ```
 
-Criteria (in order of priority):
-1. normalized URL match
-2. content hash match (`content_hash`)
-3. title similarity (fuzzy, configurable threshold)
+`DuplicateScore` carries:
+```python
+@dataclass(frozen=True)
+class DuplicateScore:
+    score: float          # 0.0 = unique
+    is_duplicate: bool    # True when score >= threshold
+    reasons: list[str]    # e.g. ['url_match', 'title_hash']
+```
+
+Criteria (in order of signal strength):
+1. normalized URL match (score 1.0)
+2. content hash match (score 1.0)
+3. title hash match (score 0.85 — catches same headline across sources)
 
 Rules:
 - conservative by default — prefer false negatives over false positives
-- `is_duplicate()` never writes to DB — query only
-- dedup is enforced exclusively by `document_ingest.py` before `repo.save()`
-- `is_duplicate=True` must always be set together with `status=duplicate` (Invariant I-10 analog)
+- `is_duplicate()` never writes to DB — read-only
+- dedup is enforced exclusively by `document_ingest.py` before `repo.save_document()`
+- `filter_scored()` is used by `persist_fetch_result()` — returns all docs with scores for auditing
+- detected duplicates in ingest are dropped in-memory (never saved), not written as status=DUPLICATE
 
 ---
 

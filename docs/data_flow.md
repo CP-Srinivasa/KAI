@@ -167,13 +167,18 @@ Implementation note:
 
 ---
 
-### 9. Downstream Layers (Later Phases)
+### 9. Downstream Layers
 
-Once core pipeline is stable:
+After analysis completes, the pipeline dispatches to:
 
-- Alerting (Phase 7)
-- Research generation
-- Signal candidates
+**Alerting** (`app/alerts/`) — implemented (Sprint 3)
+- `AlertService.process_document(doc, result, spam_probability)` is called from `run_rss_pipeline()`
+- Gate: `ThresholdEngine.should_alert()` — only documents above `min_priority` are dispatched
+- Channels: Telegram (httpx async) + Email (smtplib via executor)
+- Dry-run mode: always active by default (`ALERT_DRY_RUN=true`)
+
+**Research generation** — planned (Sprint 4)
+**Signal candidates** — planned (Sprint 4)
 
 ---
 
@@ -261,4 +266,4 @@ If any step breaks these rules, it must be refactored.
 | Storage | `app/storage/repositories/` | Claude Code |
 | Pipeline orchestration | `app/pipeline/service.py` | Claude Code |
 | CLI / Scheduling | `app/cli/` | Antigravity |
-| Downstream (Alerts) | `app/alerts/` | Codex |
+| Downstream (Alerts) | `app/alerts/` | Claude Code |

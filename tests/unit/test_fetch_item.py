@@ -49,10 +49,18 @@ def test_fetch_item_metadata_defaults_to_empty_dict():
 def test_fetch_item_has_no_analysis_fields():
     item = FetchItem(url="https://example.com")
     analysis_fields = [
-        "sentiment_label", "sentiment_score", "relevance_score",
-        "impact_score", "novelty_score", "spam_probability",
-        "priority_score", "credibility_score", "tickers",
-        "entity_mentions", "categories", "tags",
+        "sentiment_label",
+        "sentiment_score",
+        "relevance_score",
+        "impact_score",
+        "novelty_score",
+        "spam_probability",
+        "priority_score",
+        "credibility_score",
+        "tickers",
+        "entity_mentions",
+        "categories",
+        "tags",
     ]
     for field_name in analysis_fields:
         assert not hasattr(item, field_name), f"FetchItem must not have field: {field_name}"
@@ -64,8 +72,14 @@ def test_fetch_item_has_no_analysis_fields():
 def test_fetch_item_has_no_persistence_state():
     item = FetchItem(url="https://example.com")
     persistence_fields = [
-        "status", "is_analyzed", "is_duplicate",
-        "content_hash", "id", "source_id", "source_name", "source_type",
+        "status",
+        "is_analyzed",
+        "is_duplicate",
+        "content_hash",
+        "id",
+        "source_id",
+        "source_name",
+        "source_type",
     ]
     for field_name in persistence_fields:
         assert not hasattr(item, field_name), f"FetchItem must not have field: {field_name}"
@@ -115,6 +129,23 @@ def test_normalize_preserves_metadata():
         item, source_id="s", source_name="S", source_type=SourceType.RSS_FEED
     )
     assert doc.metadata["image_url"] == "https://example.com/img.png"
+
+
+def test_normalize_fetch_item_strips_and_cleans_external_fields():
+    item = FetchItem(
+        url=" https://example.com/article ",
+        external_id=" guid-1 ",
+        title=" Bitcoin Hits ATH ",
+        content="<p>Hello <b>World</b></p>",
+        metadata={"author": "Alice"},
+    )
+    doc = normalize_fetch_item(
+        item, source_id="s", source_name="S", source_type=SourceType.RSS_FEED
+    )
+    assert doc.url == "https://example.com/article"
+    assert doc.external_id == "guid-1"
+    assert doc.title == "Bitcoin Hits ATH"
+    assert doc.raw_text == "Hello World"
 
 
 def test_normalize_sets_empty_title_when_none():

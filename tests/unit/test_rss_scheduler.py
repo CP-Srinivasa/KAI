@@ -128,6 +128,40 @@ async def test_scheduler_poll_one_uses_default_persist_service(monkeypatch) -> N
 
 
 @pytest.mark.asyncio
+async def test_scheduler_poll_one_accepts_sync_persist_callback(monkeypatch) -> None:
+    doc = CanonicalDocument(url="https://example.com/article-1", title="Bitcoin jumps")
+    collected = _collected_feed(doc)
+    persisted_results: list[FetchResult] = []
+
+    async def fake_collect_rss_feed(**kwargs) -> RSSCollectedFeed:
+        return collected
+
+    def fake_persist_result(result: FetchResult) -> IngestPersistStats:
+        persisted_results.append(result)
+        return IngestPersistStats(
+            fetched_count=1,
+            candidate_count=1,
+            batch_duplicates=0,
+            existing_duplicates=0,
+            saved_count=1,
+            failed_count=0,
+            preview_documents=[doc],
+        )
+
+    monkeypatch.setattr(rss_scheduler, "collect_rss_feed", fake_collect_rss_feed)
+    monkeypatch.setattr(rss_scheduler, "get_settings", lambda: AppSettings())
+
+    scheduler = rss_scheduler.RSSScheduler(
+        "session-factory",
+        persist_result=fake_persist_result,
+    )
+
+    await scheduler._poll_one(_source())
+
+    assert persisted_results == [collected.fetch_result]
+
+
+@pytest.mark.asyncio
 async def test_scheduler_poll_one_survives_persist_failure(monkeypatch) -> None:
     doc = CanonicalDocument(url="https://example.com/article-1", title="Bitcoin jumps")
     collected = _collected_feed(doc)
