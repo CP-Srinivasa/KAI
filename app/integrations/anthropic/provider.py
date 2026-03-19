@@ -95,7 +95,7 @@ class AnthropicAnalysisProvider(BaseAnalysisProvider):
         # Provide a hint to use the tool
         user_prompt += "\n\nPlease output your analysis by calling the 'record_analysis' tool."
 
-        response = await self._client.messages.create(
+        response = await self._client.messages.create(  # type: ignore[call-overload]
             model=self._model,
             system=SYSTEM_PROMPT_V1,
             max_tokens=self._max_tokens,

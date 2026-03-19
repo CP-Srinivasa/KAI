@@ -27,9 +27,9 @@ class HistoricalEventModel(Base):
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     # JSON columns
-    affected_assets: Mapped[list | None] = mapped_column(JSON, nullable=True)
-    affected_sectors: Mapped[list | None] = mapped_column(JSON, nullable=True)
-    tags: Mapped[list | None] = mapped_column(JSON, nullable=True)
+    affected_assets: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
+    affected_sectors: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
+    tags: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

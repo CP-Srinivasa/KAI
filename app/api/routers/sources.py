@@ -1,4 +1,5 @@
 from pathlib import Path
+from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
@@ -40,7 +41,7 @@ async def list_sources(
 @router.get("/classify")
 async def classify_source(
     url: str = Query(..., description="URL to classify"),  # noqa: B008
-) -> dict:
+) -> dict[str, Any]:
     settings = get_settings()
     classifier = SourceClassifier.from_monitor_dir(Path(settings.monitor_dir))
     result: ClassificationResult = classifier.classify(url)

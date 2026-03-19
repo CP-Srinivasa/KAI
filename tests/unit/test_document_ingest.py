@@ -61,6 +61,23 @@ def test_prepare_ingested_document_normalizes_identity_fields() -> None:
     assert prepared.metadata["normalized_title"] == "bitcoin hits 100k"
 
 
+def test_prepare_ingested_document_enforces_field_limits() -> None:
+    prepared = document_ingest.prepare_ingested_document(
+        CanonicalDocument(
+            url="https://example.com/article",
+            external_id="x" * 600,
+            title="T" * 1200,
+            raw_text="a" * 60_000,
+        )
+    )
+
+    assert prepared.external_id is not None
+    assert len(prepared.external_id) == 512
+    assert len(prepared.title) == 1000
+    assert prepared.raw_text is not None
+    assert len(prepared.raw_text) == 50_000
+
+
 async def test_persist_fetch_result_dry_run_normalizes_and_deduplicates() -> None:
     docs = [
         CanonicalDocument(

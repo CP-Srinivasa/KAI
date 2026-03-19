@@ -1,5 +1,6 @@
 import uuid
 from datetime import UTC, datetime
+from typing import Any
 
 from sqlalchemy import DateTime, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
@@ -35,7 +36,7 @@ class SourceModel(Base):
         onupdate=lambda: datetime.now(UTC),
     )
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "source_id": self.source_id,
             "source_type": SourceType(self.source_type),

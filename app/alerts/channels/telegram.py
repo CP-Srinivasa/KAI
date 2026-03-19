@@ -8,6 +8,8 @@ Sends alerts via Telegram Bot API (sendMessage endpoint).
 
 from __future__ import annotations
 
+from typing import Any
+
 import httpx
 
 from app.alerts.base.interfaces import AlertDeliveryResult, AlertMessage, BaseAlertChannel
@@ -63,7 +65,7 @@ class TelegramAlertChannel(BaseAlertChannel):
             async with httpx.AsyncClient(timeout=15) as client:
                 response = await client.post(url, json=payload)
             response.raise_for_status()
-            data: dict = response.json()
+            data: dict[str, Any] = response.json()
             message_id = str(data.get("result", {}).get("message_id", ""))
             return AlertDeliveryResult(
                 channel=self.channel_name,

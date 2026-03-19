@@ -20,6 +20,9 @@ from app.normalization.cleaner import clean_text, content_hash, normalize_title,
 from app.storage.repositories.document_repo import DocumentRepository
 
 _INGEST_DEDUP_THRESHOLD = 0.85
+_MAX_EXTERNAL_ID_CHARS = 512
+_MAX_TITLE_CHARS = 1000
+_MAX_RAW_TEXT_CHARS = 50_000
 
 
 @dataclass(frozen=True)
@@ -63,6 +66,12 @@ def _is_supported_document_url(url: str) -> bool:
     return parsed.scheme in {"http", "https"} and bool(parsed.netloc)
 
 
+def _truncate_optional_text(value: str | None, *, limit: int) -> str | None:
+    if value is None:
+        return None
+    return value[:limit]
+
+
 def prepare_ingested_document(doc: CanonicalDocument) -> CanonicalDocument:
     """Normalize storage identity fields for a fetched document.
 
@@ -70,10 +79,18 @@ def prepare_ingested_document(doc: CanonicalDocument) -> CanonicalDocument:
     - content_hash uses normalized url/title/body for stable dedup identity
     - normalized title/url are recorded in metadata for audit/debugging
     - raw_text is defensively cleaned again before storage
+    - externally sourced fields are capped before DB persistence
     """
     original_url = doc.url.strip()
-    sanitized_title = doc.title.strip()
-    sanitized_text = clean_text(doc.raw_text)
+    sanitized_external_id = _truncate_optional_text(
+        doc.external_id.strip() if doc.external_id else None,
+        limit=_MAX_EXTERNAL_ID_CHARS,
+    )
+    sanitized_title = _truncate_optional_text(doc.title.strip(), limit=_MAX_TITLE_CHARS) or ""
+    sanitized_text = _truncate_optional_text(
+        clean_text(doc.raw_text),
+        limit=_MAX_RAW_TEXT_CHARS,
+    )
     normalized_url = normalize_url(original_url)
     normalized_title = normalize_title(sanitized_title)
     metadata = dict(doc.metadata)
@@ -84,6 +101,7 @@ def prepare_ingested_document(doc: CanonicalDocument) -> CanonicalDocument:
     return doc.model_copy(
         update={
             "url": normalized_url,
+            "external_id": sanitized_external_id,
             "title": sanitized_title,
             "raw_text": sanitized_text,
             "content_hash": content_hash(normalized_url, sanitized_title, sanitized_text),

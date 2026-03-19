@@ -31,7 +31,8 @@ def upgrade() -> None:
         END
         """
     )
-    op.alter_column("canonical_documents", "status", nullable=False, server_default="pending")
+    with op.batch_alter_table("canonical_documents") as batch_op:
+        batch_op.alter_column("status", nullable=False, server_default="pending")
 
 
 def downgrade() -> None:

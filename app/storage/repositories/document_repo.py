@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from typing import Any
 
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -53,7 +54,7 @@ class DocumentRepository:
 
     async def update_status(self, document_id: str, status: DocumentStatus) -> None:
         """Explicitly advance a document to a new lifecycle status."""
-        values: dict = {"status": status.value}
+        values: dict[str, Any] = {"status": status.value}
         if status == DocumentStatus.ANALYZED:
             values["is_analyzed"] = True
             values["is_duplicate"] = False

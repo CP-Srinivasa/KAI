@@ -16,7 +16,8 @@ import feedparser
 import httpx
 from tenacity import retry, stop_after_attempt, wait_exponential
 
-from app.security.ssrf import SecurityError, validate_url
+from app.core.errors import SecurityError
+from app.security.ssrf import validate_url
 
 _DEFAULT_HEADERS = {
     "User-Agent": "ai-analyst-bot/0.1 (feed validator)",

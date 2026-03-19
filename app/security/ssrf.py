@@ -24,6 +24,8 @@ from urllib.parse import urlparse
 
 from app.core.errors import SecurityError
 
+__all__ = ["validate_url", "is_safe_url", "SecurityError"]
+
 # Private and reserved IPv4 networks — never reachable from the internet
 _BLOCKED_NETWORKS_V4: tuple[ipaddress.IPv4Network, ...] = (
     ipaddress.IPv4Network("10.0.0.0/8"),  # RFC 1918 private
@@ -99,11 +101,11 @@ def validate_url(url: str) -> None:
                         f"({network}) — SSRF protection blocked this request."
                     )
         elif isinstance(ip, ipaddress.IPv6Address):
-            for network in _BLOCKED_NETWORKS_V6:
-                if ip in network:
+            for net6 in _BLOCKED_NETWORKS_V6:
+                if ip in net6:
                     raise SecurityError(
                         f"URL '{url}' resolves to private/reserved IPv6 {ip} "
-                        f"({network}) — SSRF protection blocked this request."
+                        f"({net6}) — SSRF protection blocked this request."
                     )
 
 
