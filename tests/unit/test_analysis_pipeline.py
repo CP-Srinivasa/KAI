@@ -150,7 +150,18 @@ async def test_pipeline_with_companion_provider_marks_internal_analysis_source()
 
 @pytest.mark.asyncio
 async def test_pipeline_with_ensemble_provider_marks_internal_not_external_llm():
-    """EnsembleProvider compound name must NOT be classified as EXTERNAL_LLM (I-19 guard)."""
+    """Pre-Sprint-5C conservative behavior: composite provider_name → INTERNAL (I-19 guard).
+
+    Uses a mock with provider_name="ensemble(openai,internal)" and model=None.
+    _resolve_analysis_source() sees the composite string pre-analyze and maps → INTERNAL.
+
+    Sprint-5C will supersede this with post-analyze winner resolution
+    via _resolve_analysis_source_from_winner().
+    When Sprint-5C is implemented, this test will be replaced by:
+      - test_ensemble_openai_wins_sets_external_llm_source  (openai won → EXTERNAL_LLM)
+      - test_ensemble_internal_fallback_sets_internal_source (internal won → INTERNAL)
+    See docs/contracts.md §15, TASKLIST.md Sprint 5C.
+    """
     llm_out = _make_llm_output()
     provider = _mock_named_provider("ensemble(openai,internal)", llm_out)
     engine = _btc_engine()

@@ -1,19 +1,35 @@
+import asyncio
 import datetime
+import json
 import os
 import uuid
 
 from sqlalchemy import create_engine, select, text
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.orm import sessionmaker
 from typer.testing import CliRunner
 
 import app.cli.main as cli_main
 from app.cli.main import app
 from app.core.domain.document import CanonicalDocument
-from app.core.enums import SentimentLabel, SourceStatus, SourceType
+from app.core.enums import (
+    AnalysisSource,
+    DocumentStatus,
+    MarketScope,
+    SentimentLabel,
+    SourceStatus,
+    SourceType,
+)
+from app.core.settings import AppSettings
 from app.ingestion.rss.service import FetchResult, RSSCollectedFeed
 from app.integrations.openai.provider import OpenAIAnalysisProvider
+from app.research.briefs import ResearchBriefBuilder
+from app.research.datasets import export_training_data
+from app.research.signals import extract_signal_candidates
 from app.storage.db.session import Base
 from app.storage.models.document import CanonicalDocumentModel
+from app.storage.repositories.document_repo import DocumentRepository
+from tests.unit.factories import make_analysis_result, make_llm_output
 
 
 def test_full_system_e2e_flow(monkeypatch):
@@ -149,3 +165,194 @@ def test_full_system_e2e_flow(monkeypatch):
                 os.remove(db_path)
             except Exception:
                 pass  # Windows file lock workaround
+
+
+def test_analysis_source_e2e_cli_db_and_research_consumers(tmp_path, monkeypatch):
+    runner = CliRunner()
+    db_path = tmp_path / "analysis_source_e2e.sqlite"
+    async_db_url = f"sqlite+aiosqlite:///{db_path}"
+
+    async_engine = create_async_engine(async_db_url)
+    session_factory = async_sessionmaker(async_engine, expire_on_commit=False)
+
+    async def init_db() -> None:
+        async with async_engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+
+    async def seed_doc() -> str:
+        async with session_factory.begin() as session:
+            repo = DocumentRepository(session)
+            persisted = await repo.save(
+                CanonicalDocument(
+                    url="https://example.com/internal-analysis",
+                    title="Bitcoin macro companion test",
+                    raw_text="Bitcoin macro liquidity conditions remain supportive.",
+                )
+            )
+            return str(persisted.id)
+
+    async def load_doc(document_id: str) -> CanonicalDocument | None:
+        async with session_factory.begin() as session:
+            repo = DocumentRepository(session)
+            return await repo.get_by_id(document_id)
+
+    class FakeKeywordEngine:
+        def match(self, text: str) -> list[object]:
+            return []
+
+        def match_tickers(self, text: str) -> list[str]:
+            return ["BTC"]
+
+    class FakeCompanionProvider:
+        provider_name = "companion"
+        model = "kai-analyst-v1"
+
+        async def analyze(self, title: str, text: str, context=None):
+            return make_llm_output(
+                sentiment_label=SentimentLabel.BULLISH,
+                sentiment_score=0.6,
+                relevance_score=0.8,
+                impact_score=0.55,
+                novelty_score=0.45,
+                confidence_score=0.75,
+                spam_probability=0.03,
+                market_scope=MarketScope.CRYPTO,
+                affected_assets=["BTC"],
+                tags=["companion"],
+                actionable=True,
+            )
+
+    settings = AppSettings()
+    settings.db.url = async_db_url
+    settings.monitor_dir = str(tmp_path)
+
+    monkeypatch.setattr(cli_main, "get_settings", lambda: settings)
+    monkeypatch.setattr(
+        "app.storage.db.session.build_session_factory",
+        lambda _db: session_factory,
+    )
+    monkeypatch.setattr(
+        "app.analysis.keywords.engine.KeywordEngine.from_monitor_dir",
+        lambda _path: FakeKeywordEngine(),
+    )
+    monkeypatch.setattr(
+        "app.analysis.factory.create_provider",
+        lambda provider_type, _settings: FakeCompanionProvider(),
+    )
+
+    try:
+        asyncio.run(init_db())
+        document_id = asyncio.run(seed_doc())
+
+        result = runner.invoke(
+            app,
+            ["query", "analyze-pending", "--provider", "companion", "--limit", "10"],
+        )
+
+        assert result.exit_code == 0
+        assert "Analyzing 1 documents" in result.output
+        assert "Analysis complete! 1 success, 0 failed." in result.output
+
+        stored = asyncio.run(load_doc(document_id))
+
+        assert stored is not None
+        assert stored.status == DocumentStatus.ANALYZED
+        assert stored.is_analyzed is True
+        assert stored.provider == "companion"
+        assert stored.analysis_source == AnalysisSource.INTERNAL
+        assert stored.effective_analysis_source == AnalysisSource.INTERNAL
+
+        brief = ResearchBriefBuilder("companion-e2e").build([stored])
+        assert brief.top_documents[0].analysis_source == "internal"
+
+        signals = extract_signal_candidates([stored], min_priority=0)
+        assert len(signals) == 1
+        assert signals[0].analysis_source == "internal"
+
+        dataset_path = tmp_path / "companion_dataset.jsonl"
+        export_result = runner.invoke(
+            app,
+            [
+                "research",
+                "dataset-export",
+                str(dataset_path),
+                "--source-type",
+                "internal",
+                "--limit",
+                "10",
+            ],
+        )
+
+        assert export_result.exit_code == 0
+        row = json.loads(dataset_path.read_text(encoding="utf-8").splitlines()[0])
+        assert row["metadata"]["provider"] == "companion"
+        assert row["metadata"]["analysis_source"] == "internal"
+    finally:
+        asyncio.run(async_engine.dispose())
+
+
+def test_legacy_analysis_source_fallback_remains_stable_for_research_consumers(tmp_path):
+    db_path = tmp_path / "analysis_source_legacy.sqlite"
+    async_db_url = f"sqlite+aiosqlite:///{db_path}"
+
+    async def exercise_legacy_path() -> CanonicalDocument | None:
+        engine = create_async_engine(async_db_url)
+        session_factory = async_sessionmaker(engine, expire_on_commit=False)
+        try:
+            async with engine.begin() as conn:
+                await conn.run_sync(Base.metadata.create_all)
+
+            async with session_factory.begin() as session:
+                repo = DocumentRepository(session)
+                persisted = await repo.save(
+                    CanonicalDocument(
+                        url="https://example.com/legacy-openai",
+                        title="Legacy OpenAI analyzed document",
+                        raw_text="Macro policy and bitcoin liquidity update.",
+                        provider="openai",
+                    )
+                )
+                await repo.update_analysis(
+                    str(persisted.id),
+                    make_analysis_result(
+                        document_id=persisted.id,
+                        sentiment_label=SentimentLabel.BULLISH,
+                        sentiment_score=0.7,
+                        relevance_score=0.9,
+                        impact_score=0.6,
+                        novelty_score=0.5,
+                        market_scope=MarketScope.MACRO,
+                        affected_assets=["BTC"],
+                        explanation_short="Legacy external analysis",
+                        explanation_long="Legacy external analysis path.",
+                        recommended_priority=8,
+                    ),
+                )
+
+            async with session_factory.begin() as session:
+                repo = DocumentRepository(session)
+                return await repo.get_by_url("https://example.com/legacy-openai")
+        finally:
+            await engine.dispose()
+
+    stored = asyncio.run(exercise_legacy_path())
+
+    assert stored is not None
+    assert stored.provider == "openai"
+    assert stored.analysis_source is None
+    assert stored.effective_analysis_source == AnalysisSource.EXTERNAL_LLM
+
+    brief = ResearchBriefBuilder("legacy").build([stored])
+    assert brief.top_documents[0].analysis_source == "external_llm"
+
+    signals = extract_signal_candidates([stored], min_priority=0)
+    assert len(signals) == 1
+    assert signals[0].analysis_source == "external_llm"
+
+    dataset_path = tmp_path / "legacy_dataset.jsonl"
+    count = export_training_data([stored], dataset_path)
+    row = json.loads(dataset_path.read_text(encoding="utf-8").splitlines()[0])
+
+    assert count == 1
+    assert row["metadata"]["provider"] == "openai"
+    assert row["metadata"]["analysis_source"] == "external_llm"

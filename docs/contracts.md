@@ -904,14 +904,15 @@ These are two distinct concepts that must never be conflated:
 
 | Concept | Field | Type | Persistence | Purpose |
 |---------|-------|------|-------------|---------|
-| `provider` | `doc.provider` | `str \| None` | DB column (now) | Technical engine name: `"openai"`, `"internal"`, `"ensemble(openai,internal)"`, `"fallback"` |
-| `analysis_source` | `doc.analysis_source` | `AnalysisSource` enum | computed property (now), DB column (Sprint 5B) | Semantic tier: `RULE` / `INTERNAL` / `EXTERNAL_LLM` |
+| `provider` | `doc.provider` | `str \| None` | DB column | Technical engine name. Pre-5C: `"openai"`, `"internal"`, `"ensemble(openai,internal)"`, `"fallback"`. Post-5C: always the **winner name** — never a composite string. |
+| `analysis_source` | `doc.analysis_source` | `AnalysisSource` enum | DB column (migration 0006) | Semantic tier: `RULE` / `INTERNAL` / `EXTERNAL_LLM` — stable, use this for filtering. |
+| `ensemble_chain` | `doc.metadata["ensemble_chain"]` | `list[str]` | JSON metadata | Full ordered provider list when `EnsembleProvider` was used. Set by Sprint-5C. Legacy rows: absent. |
 
 **Rules:**
-- `provider` is a raw, provider-specific string — it must not be used directly for corpus filtering
+- `provider` is a technical string — never use it directly for corpus filtering or tier decisions
 - `analysis_source` is the stable semantic value — always use this for filtering and guardrails
-- `provider` may change spelling (e.g. new providers) without breaking the `analysis_source` contract
-- `analysis_source` must NEVER be set manually — always derived from `provider` (or persisted from pipeline)
+- `provider` semantics changed in Sprint-5C: composite `"ensemble(...)"` strings are legacy only
+- `analysis_source` must NEVER be set manually — always set by pipeline at result creation time
 - Downstream code (ResearchBrief, SignalCandidate, alerts) consumes analysis results via the same
   `CanonicalDocument` contract regardless of which tier produced them — no branching on `provider`
 
@@ -1055,6 +1056,69 @@ For `OpenAIAnalysisProvider`, `AnthropicAnalysisProvider`, `GeminiAnalysisProvid
 - `_resolve_analysis_source()` logic (provider-object-based, pre-analyze) — unchanged.
 
 Only `EnsembleProvider` triggers post-analyze winner resolution (I-24).
+
+---
+
+#### 15g. End-to-End Provenance Flow (post Sprint-5C)
+
+This trace documents the full lifecycle of provenance from ingestion to research outputs.
+Every downstream consumer relies on `doc.analysis_source` — never on `doc.provider`.
+
+```
+1. Ingestion
+   doc.provider       = None
+   doc.analysis_source = None
+   doc.status          = PERSISTED
+
+2. analyze_pending → AnalysisPipeline.run(doc)
+   Pre-analyze:
+     analysis_source = _resolve_analysis_source(ensemble)  → INTERNAL (conservative pre-5C fallback)
+
+3. await ensemble.analyze(title, text, context)
+   openai succeeds → ensemble._active_provider_name = "openai"
+   winning_name = ensemble.model  → "openai"
+
+4. Post-analyze (Sprint-5C)
+   analysis_source = _resolve_analysis_source_from_winner("openai")  → EXTERNAL_LLM
+   provider_name   = "openai"   # winner name, not composite
+
+5. AnalysisResult created
+   analysis_result.analysis_source = EXTERNAL_LLM
+   analysis_result.document_id     = str(doc.id)
+
+6. PipelineResult.apply_to_document()
+   doc.provider                     = "openai"
+   doc.analysis_source              = EXTERNAL_LLM
+   doc.metadata["ensemble_chain"]   = ["openai", "internal"]
+
+7. document_repo.update_analysis(doc_id, analysis_result)
+   DB: analysis_source = "external_llm"   # persisted
+   DB: provider        = "openai"
+
+8. Reload from DB (_from_model)
+   doc.analysis_source = AnalysisSource.EXTERNAL_LLM  (explicit field)
+   doc.effective_analysis_source → returns doc.analysis_source  → EXTERNAL_LLM
+
+9. export_training_data(doc)
+   metadata["analysis_source"] = effective_analysis_source.value  → "external_llm"
+   → teacher-eligible ✅ (I-16, I-19 satisfied)
+
+10. extract_signal_candidates(doc)
+    signal.analysis_source = effective_analysis_source.value  → "external_llm"
+
+11. ResearchBriefBuilder._to_brief_document(doc)
+    brief_doc.analysis_source = effective_analysis_source.value  → "external_llm"
+```
+
+**Consistency invariant**: All consumers in steps 9–11 read `doc.effective_analysis_source`.
+If `doc.analysis_source` is set (post-pipeline), that value is returned directly.
+If not set (legacy pre-5B row), the property derives from `doc.provider` conservatively.
+This guarantees no consumer ever branches on `provider` for tier decisions.
+
+**Legacy rows** (pre-Sprint-5C, where `doc.provider = "ensemble(openai,internal)"`):
+- `doc.analysis_source` may be `None` or `INTERNAL`
+- `effective_analysis_source` returns `INTERNAL` (conservative)
+- These rows are NOT corpus-eligible even if `openai` had won — intentional tradeoff
 
 ---
 

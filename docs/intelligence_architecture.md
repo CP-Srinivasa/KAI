@@ -319,18 +319,28 @@ All four gates must pass. No partial promotions.
 
 | Sprint | Component | Status |
 |--------|-----------|--------|
-| 4C | Relax `apply_to_document()` guard — Tier 1 results persisted | ⏳ |
-| 4C | `analyze_pending` None-guard — FAILED instead of silent | ⏳ |
-| 5A | `InternalCompanionProvider` skeleton + settings fields | ⏳ |
-| 5A | Factory `"internal"` branch in `create_provider()` | ⏳ |
-| 5B | `AnalysisSource` enum + `analysis_source` DB migration | ⏳ |
-| 5B | Companion model first training run (offline, against Tier 3 corpus) | ⏳ |
-| 5C | Priority fallback chain (Tier 3 → Tier 2 → Tier 1) | ⏳ |
+| 4C | Relax `apply_to_document()` guard — Tier 1 results persisted | ✅ |
+| 4C | `analyze_pending` None-guard — FAILED instead of silent | ✅ |
+| 4D | `InternalModelProvider` (heuristic, zero deps) | ✅ |
+| 4D | `EnsembleProvider` (ordered fallback, first success wins) | ✅ |
+| 4D | `InternalCompanionProvider` (HTTP to local model endpoint) | ✅ |
+| 4D | Factory routing: `"internal"` / `"companion"` / ensemble | ✅ |
+| 5A | `InternalCompanionProvider` settings fields + localhost validation | ✅ |
+| 5B | `AnalysisSource` enum + `doc.analysis_source` field | ✅ |
+| 5B | `analysis_source` DB migration (migration 0006) + ORM column | ✅ |
+| 5B | `effective_analysis_source` property — backward-compat accessor | ✅ |
+| 5B | Pipeline: `_resolve_analysis_source()` + `apply_to_document()` write | ✅ |
+| 5B | Provenance in research outputs: briefs, signals, datasets | ✅ |
+| 5C | `EnsembleProvider` Winner-Traceability — post-analyze resolution | ⏳ |
+| 5C | `doc.provider` = winner name; `doc.metadata["ensemble_chain"]` = full list | ⏳ |
 | 6 | Distillation pipeline + evaluation gate automation | ⏳ |
 
 ---
 
 ## Invariants
+
+> Full invariant list is canonical in `docs/contracts.md §Immutable Invariants`.
+> Intelligence-layer invariants (I-14 through I-25) are listed here for quick reference.
 
 | ID | Rule |
 |----|------|
@@ -340,3 +350,9 @@ All four gates must pass. No partial promotions.
 | I-17 | Companion model `impact_score` cap: ≤ 0.8 (conservative, not overconfident) |
 | I-18 | `AnalysisSource` is set at result creation time — immutable after `apply_to_document()` |
 | I-19 | Rule-only documents (`analysis_source=RULE`) NEVER serve as distillation teacher signal |
+| I-20 | `InternalModelProvider.provider_name` is always `"internal"`, `recommended_priority` ≤ 5, `actionable=False`, `sentiment_label=NEUTRAL` — hard invariants, not configurable |
+| I-21 | `InternalCompanionProvider.provider_name` is always `"companion"` — distinct from `"internal"`. Factory routes `"internal"` → `InternalModelProvider`, `"companion"` → `InternalCompanionProvider` |
+| I-22 | `EnsembleProvider` requires at least one provider. `InternalModelProvider` MUST be last for guaranteed fallback. All fail → `RuntimeError` |
+| I-23 | `EnsembleProvider.model` MUST return the winning provider's `provider_name` immediately after `analyze()` completes — this is the canonical winner signal |
+| I-24 | For `EnsembleProvider`: `_resolve_analysis_source()` MUST be re-evaluated AFTER `analyze()` using `provider.model` (winner name), not the composite `provider_name` |
+| I-25 | `doc.provider` stores the winning provider name (e.g. `"openai"`), never the composite ensemble string. `doc.metadata["ensemble_chain"]` records the full ordered list. |

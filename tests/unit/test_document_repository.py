@@ -165,7 +165,11 @@ async def test_update_analysis_sets_analyzed_status(session_factory) -> None:
             tags=["macro"],
             affected_sectors=["defi", "layer1"],
         )
-        await repo.update_analysis(str(saved.id), analysis_result)
+        await repo.update_analysis(
+            str(saved.id),
+            analysis_result,
+            provider_name="companion",
+        )
 
     async with session_factory() as session:
         repo = DocumentRepository(session)
@@ -175,6 +179,7 @@ async def test_update_analysis_sets_analyzed_status(session_factory) -> None:
     assert stored.status == DocumentStatus.ANALYZED
     assert stored.is_duplicate is False
     assert stored.is_analyzed is True
+    assert stored.provider == "companion"
     assert stored.analysis_source == AnalysisSource.INTERNAL
     assert stored.effective_analysis_source == AnalysisSource.INTERNAL
     assert stored.sentiment_label == SentimentLabel.BULLISH

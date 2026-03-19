@@ -220,7 +220,11 @@ def analyze_pending(
                     continue
 
                 try:
-                    await repo.update_analysis(str(res.document.id), res.analysis_result)
+                    await repo.update_analysis(
+                        str(res.document.id),
+                        res.analysis_result,
+                        provider_name=res.document.provider,
+                    )
                     success_count += 1
                 except Exception as e:
                     console.print(f"[red]Failed to save doc {res.document.id}:[/red] {e}")

@@ -153,7 +153,11 @@ async def run_rss_pipeline(
                 res.apply_to_document()
                 try:
                     if res.analysis_result is not None:
-                        await repo.update_analysis(str(res.document.id), res.analysis_result)
+                        await repo.update_analysis(
+                            str(res.document.id),
+                            res.analysis_result,
+                            provider_name=res.document.provider,
+                        )
                     else:
                         await repo.update_status(str(res.document.id), DocumentStatus.ANALYZED)
                     analyzed_count += 1

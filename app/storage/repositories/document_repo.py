@@ -77,35 +77,54 @@ class DocumentRepository:
         )
         await self._session.flush()
 
-    async def update_analysis(self, document_id: str, result: AnalysisResult) -> None:
-        """Write analysis scores to the document and set status=ANALYZED."""
+    async def update_analysis(
+        self,
+        document_id: str,
+        result: AnalysisResult,
+        *,
+        provider_name: str | None = None,
+    ) -> None:
+        """Write analysis scores to the document and set status=ANALYZED.
+
+        provider_name is an optional technical trace of the runtime-selected analysis
+        engine. It lets callers persist the actual provider/winner without leaking
+        provider-specific fields into AnalysisResult itself.
+        """
         doc = await self.get_by_id(document_id)
         current_meta = doc.metadata if doc else {}
         current_meta["explanation_short"] = result.explanation_short
         current_meta["explanation_long"] = result.explanation_long
 
+        values: dict[str, Any] = {
+            "sentiment_label": result.sentiment_label.value,
+            "analysis_source": result.analysis_source.value if result.analysis_source else None,
+            "sentiment_score": result.sentiment_score,
+            "relevance_score": result.relevance_score,
+            "impact_score": result.impact_score,
+            "novelty_score": result.novelty_score,
+            "credibility_score": 1.0 - result.spam_probability,
+            "spam_probability": result.spam_probability,
+            "priority_score": result.recommended_priority,
+            "market_scope": (
+                result.market_scope.value
+                if result.market_scope
+                else (doc.market_scope.value if doc else "unknown")
+            ),
+            "tags": result.tags,
+            "tickers": result.affected_assets,
+            "categories": result.affected_sectors,
+            "status": DocumentStatus.ANALYZED.value,
+            "is_duplicate": False,
+            "is_analyzed": True,
+            "document_metadata": current_meta,
+        }
+        if provider_name is not None:
+            values["provider"] = provider_name
+
         await self._session.execute(
             update(CanonicalDocumentModel)
             .where(CanonicalDocumentModel.id == document_id)
-            .values(
-                sentiment_label=result.sentiment_label.value,
-                analysis_source=result.analysis_source.value if result.analysis_source else None,
-                sentiment_score=result.sentiment_score,
-                relevance_score=result.relevance_score,
-                impact_score=result.impact_score,
-                novelty_score=result.novelty_score,
-                credibility_score=1.0 - result.spam_probability,
-                spam_probability=result.spam_probability,
-                priority_score=result.recommended_priority,
-                market_scope=result.market_scope.value if result.market_scope else None,
-                tags=result.tags,
-                tickers=result.affected_assets,
-                categories=result.affected_sectors,
-                status=DocumentStatus.ANALYZED.value,
-                is_duplicate=False,
-                is_analyzed=True,
-                document_metadata=current_meta,
-            )
+            .values(**values)
         )
         await self._session.flush()
 

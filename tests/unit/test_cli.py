@@ -237,7 +237,9 @@ def test_query_analyze_pending() -> None:
 
     updated_docs = []
 
-    async def fake_update(self, document_id: str, result) -> None:
+    async def fake_update(
+        self, document_id: str, result, *, provider_name: str | None = None
+    ) -> None:
         updated_docs.append(document_id)
 
     async def fake_run_batch(self, docs):
@@ -361,7 +363,9 @@ def test_query_analyze_pending_without_openai_key_uses_fallback_analysis(monkeyp
             )
         ]
 
-    async def fake_update(self, document_id: str, result) -> None:
+    async def fake_update(
+        self, document_id: str, result, *, provider_name: str | None = None
+    ) -> None:
         captured_results.append(result)
 
     monkeypatch.setattr(cli_main, "get_settings", lambda: settings)
@@ -482,11 +486,18 @@ def test_ingest_rss_saved_documents_flow_into_analyze_pending(monkeypatch) -> No
             ]
             return docs_to_return[:limit]
 
-        async def update_analysis(self, document_id: str, result) -> None:
+        async def update_analysis(
+            self,
+            document_id: str,
+            result,
+            *,
+            provider_name: str | None = None,
+        ) -> None:
             for index, existing in enumerate(stored_docs):
                 if str(existing.id) == document_id:
                     stored_docs[index] = existing.model_copy(
                         update={
+                            "provider": provider_name,
                             "status": DocumentStatus.ANALYZED,
                             "is_analyzed": True,
                             "is_duplicate": False,
