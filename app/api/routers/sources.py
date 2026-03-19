@@ -68,7 +68,7 @@ async def update_source(
     source_id: str,
     data: SourceUpdate,
     repo: SourceRepository = Depends(get_source_repo),  # noqa: B008
-) -> SourceRepository:
+) -> SourceRead:
     source = await repo.update(source_id, data)
     if not source:
         raise HTTPException(status_code=404, detail=f"Source {source_id} not found")

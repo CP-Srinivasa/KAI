@@ -14,6 +14,7 @@ from __future__ import annotations
 import logging
 
 from app.core.errors import ConfigurationError
+from app.core.settings import AppSettings
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +28,7 @@ def _redact(value: str) -> str:
     return value[:4] + "****"
 
 
-def validate_secrets(settings) -> None:  # type: ignore[type-arg]
+def validate_secrets(settings: AppSettings) -> None:
     """Validate required secrets are present.
 
     Args:
@@ -88,9 +89,9 @@ def validate_secrets(settings) -> None:  # type: ignore[type-arg]
         )
 
     logger.info(
-        "secrets_validation_passed",
-        env=settings.env,
-        openai_key_prefix=_redact(settings.providers.openai_api_key),
-        telegram_enabled=settings.alerts.telegram_enabled,
-        email_enabled=settings.alerts.email_enabled,
+        "secrets_validation_passed: env=%s, openai_key_prefix=%s, telegram=%s, email=%s",
+        settings.env,
+        _redact(settings.providers.openai_api_key),
+        settings.alerts.telegram_enabled,
+        settings.alerts.email_enabled,
     )

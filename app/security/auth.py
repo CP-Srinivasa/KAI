@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import logging
 import secrets
+from collections.abc import Awaitable, Callable
 
 from fastapi import FastAPI, Request, Response
 from fastapi.responses import JSONResponse
@@ -45,7 +46,9 @@ def setup_auth(app: FastAPI, api_key: str) -> None:
         return  # no middleware attached
 
     @app.middleware("http")
-    async def _bearer_auth(request: Request, call_next) -> Response:
+    async def _bearer_auth(
+        request: Request, call_next: Callable[[Request], Awaitable[Response]]
+    ) -> Response:
         # Health endpoint is always public (needed for Docker healthchecks)
         if request.url.path in ("/health", "/health/"):
             return await call_next(request)
