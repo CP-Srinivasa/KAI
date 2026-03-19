@@ -1,7 +1,7 @@
 import json
 from pathlib import Path
 
-from app.core.enums import MarketScope, SentimentLabel
+from app.core.enums import AnalysisSource, MarketScope, SentimentLabel
 from app.research.datasets import export_training_data
 from tests.unit.factories import make_document
 
@@ -30,6 +30,7 @@ def test_export_training_data_exports_structured_targets_and_metadata(tmp_path: 
         market_scope=MarketScope.ETF,
     )
     doc.provider = "openai"
+    doc.analysis_source = AnalysisSource.EXTERNAL_LLM
 
     out_file = tmp_path / "training.jsonl"
     count = export_training_data([doc], out_file)
@@ -84,6 +85,7 @@ def test_export_training_data_exports_rule_based_defaults_without_optional_reaso
         raw_text="Rule-based analyzed text.",
         is_analyzed=True,
         provider=None,
+        analysis_source=AnalysisSource.RULE,
         sentiment_label=SentimentLabel.NEUTRAL,
         relevance_score=0.3,
     )
@@ -111,7 +113,8 @@ def test_export_training_data_marks_internal_provider_metadata(tmp_path: Path) -
     doc = make_document(
         raw_text="Internal companion output text.",
         is_analyzed=True,
-        provider="internal",
+        provider="companion",
+        analysis_source=AnalysisSource.INTERNAL,
     )
 
     out_file = tmp_path / "training.jsonl"
@@ -120,8 +123,47 @@ def test_export_training_data_marks_internal_provider_metadata(tmp_path: Path) -
     assert count == 1
     row = _read_jsonl_row(out_file)
 
-    assert row["metadata"]["provider"] == "internal"
+    assert row["metadata"]["provider"] == "companion"
     assert row["metadata"]["analysis_source"] == "internal"
+
+
+def test_export_training_data_supports_legacy_rows_without_explicit_analysis_source(
+    tmp_path: Path,
+) -> None:
+    doc = make_document(
+        raw_text="Legacy analyzed text.",
+        is_analyzed=True,
+        provider="openai",
+    )
+
+    out_file = tmp_path / "legacy.jsonl"
+    count = export_training_data([doc], out_file)
+
+    assert count == 1
+    row = _read_jsonl_row(out_file)
+
+    assert row["metadata"]["provider"] == "openai"
+    assert row["metadata"]["analysis_source"] == "external_llm"
+
+
+def test_export_training_data_prefers_explicit_analysis_source_over_provider(
+    tmp_path: Path,
+) -> None:
+    doc = make_document(
+        raw_text="Ensemble analyzed text.",
+        is_analyzed=True,
+        analysis_source=AnalysisSource.EXTERNAL_LLM,
+    )
+    doc.provider = "ensemble(openai,internal)"
+
+    out_file = tmp_path / "ensemble.jsonl"
+    count = export_training_data([doc], out_file)
+
+    assert count == 1
+    row = _read_jsonl_row(out_file)
+
+    assert row["metadata"]["provider"] == "ensemble(openai,internal)"
+    assert row["metadata"]["analysis_source"] == "external_llm"
 
 
 def test_export_training_data_skips_documents_without_text(tmp_path: Path) -> None:

@@ -10,7 +10,7 @@ from app.analysis.keywords.engine import KeywordEngine
 from app.analysis.keywords.watchlist import WatchlistEntry
 from app.analysis.pipeline import AnalysisPipeline, PipelineResult
 from app.core.domain.document import AnalysisResult, CanonicalDocument
-from app.core.enums import MarketScope, SentimentLabel
+from app.core.enums import AnalysisSource, MarketScope, SentimentLabel
 
 
 def _btc_engine() -> KeywordEngine:
@@ -33,6 +33,14 @@ def _mock_provider(output: LLMAnalysisOutput):
     provider = AsyncMock()
     provider.provider_name = "openai"
     provider.model = "gpt-4o"
+    provider.analyze = AsyncMock(return_value=output)
+    return provider
+
+
+def _mock_named_provider(name: str, output: LLMAnalysisOutput):
+    provider = AsyncMock()
+    provider.provider_name = name
+    provider.model = name
     provider.analyze = AsyncMock(return_value=output)
     return provider
 
@@ -76,6 +84,7 @@ async def test_pipeline_keyword_stage_no_provider():
     assert result.analysis_result.explanation_short.startswith("Rule-based fallback analysis")
     assert result.analysis_result.affected_assets == ["BTC"]
     assert result.analysis_result.spam_probability >= 0.0
+    assert result.analysis_result.analysis_source == AnalysisSource.RULE
 
 
 @pytest.mark.asyncio
@@ -118,6 +127,44 @@ async def test_pipeline_with_llm_provider():
     assert result.analysis_result.document_id == str(result.document.id)
     assert result.analysis_result.sentiment_label == SentimentLabel.BULLISH
     assert isinstance(result.analysis_result.explanation_short, str)
+    assert result.analysis_result.analysis_source == AnalysisSource.EXTERNAL_LLM
+
+
+@pytest.mark.asyncio
+async def test_pipeline_with_companion_provider_marks_internal_analysis_source():
+    llm_out = _make_llm_output()
+    provider = _mock_named_provider("companion", llm_out)
+    engine = _btc_engine()
+    pipeline = AnalysisPipeline(keyword_engine=engine, provider=provider, run_llm=True)
+
+    result = await pipeline.run(_make_doc())
+
+    assert result.analysis_result is not None
+    assert result.analysis_result.analysis_source == AnalysisSource.INTERNAL
+
+    result.apply_to_document()
+
+    assert result.document.analysis_source == AnalysisSource.INTERNAL
+    assert result.document.provider == "companion"
+
+
+@pytest.mark.asyncio
+async def test_pipeline_with_ensemble_provider_marks_internal_not_external_llm():
+    """EnsembleProvider compound name must NOT be classified as EXTERNAL_LLM (I-19 guard)."""
+    llm_out = _make_llm_output()
+    provider = _mock_named_provider("ensemble(openai,internal)", llm_out)
+    engine = _btc_engine()
+    pipeline = AnalysisPipeline(keyword_engine=engine, provider=provider, run_llm=True)
+
+    result = await pipeline.run(_make_doc())
+
+    assert result.analysis_result is not None
+    assert result.analysis_result.analysis_source == AnalysisSource.INTERNAL
+
+    result.apply_to_document()
+
+    assert result.document.analysis_source == AnalysisSource.INTERNAL
+    assert result.document.effective_analysis_source == AnalysisSource.INTERNAL
 
 
 def test_apply_to_document_falls_back_to_llm_market_scope():
@@ -129,6 +176,7 @@ def test_apply_to_document_falls_back_to_llm_market_scope():
     llm_output = _make_llm_output()
     analysis_result = AnalysisResult(
         document_id=str(doc.id),
+        analysis_source=AnalysisSource.EXTERNAL_LLM,
         sentiment_label=llm_output.sentiment_label,
         sentiment_score=llm_output.sentiment_score,
         relevance_score=llm_output.relevance_score,
@@ -150,6 +198,7 @@ def test_apply_to_document_falls_back_to_llm_market_scope():
     result.apply_to_document()
 
     assert doc.market_scope == MarketScope.CRYPTO
+    assert doc.analysis_source == AnalysisSource.EXTERNAL_LLM
 
 
 @pytest.mark.asyncio
@@ -165,6 +214,12 @@ async def test_pipeline_run_llm_false_uses_fallback_analysis():
     assert result.llm_output is None
     assert result.analysis_result is not None
     assert "disabled" in result.analysis_result.explanation_short.lower()
+    assert result.analysis_result.analysis_source == AnalysisSource.RULE
+
+    result.apply_to_document()
+
+    assert result.document.provider == "fallback"
+    assert result.document.analysis_source == AnalysisSource.RULE
 
 
 @pytest.mark.asyncio
@@ -184,6 +239,12 @@ async def test_pipeline_llm_error_uses_rule_fallback():
     assert result.analysis_result is not None
     assert "failed" in result.analysis_result.explanation_short.lower()
     assert result.keyword_hits is not None
+    assert result.analysis_result.analysis_source == AnalysisSource.RULE
+
+    result.apply_to_document()
+
+    assert result.document.provider == "fallback"
+    assert result.document.analysis_source == AnalysisSource.RULE
 
 
 def test_apply_to_document_with_fallback_analysis_sets_scores_and_entities():
@@ -204,6 +265,7 @@ def test_apply_to_document_with_fallback_analysis_sets_scores_and_entities():
     assert doc.relevance_score is not None
     assert doc.credibility_score is not None
     assert "BTC" in doc.tickers
+    assert doc.analysis_source == AnalysisSource.RULE
 
 
 @pytest.mark.asyncio

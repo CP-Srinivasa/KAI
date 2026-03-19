@@ -9,7 +9,7 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.domain.document import AnalysisResult, CanonicalDocument
-from app.core.enums import DocumentStatus, DocumentType, SourceType
+from app.core.enums import AnalysisSource, DocumentStatus, DocumentType, SourceType
 from app.core.errors import StorageError
 from app.storage.models.document import CanonicalDocumentModel
 
@@ -89,6 +89,7 @@ class DocumentRepository:
             .where(CanonicalDocumentModel.id == document_id)
             .values(
                 sentiment_label=result.sentiment_label.value,
+                analysis_source=result.analysis_source.value if result.analysis_source else None,
                 sentiment_score=result.sentiment_score,
                 relevance_score=result.relevance_score,
                 impact_score=result.impact_score,
@@ -208,6 +209,7 @@ def _to_model(doc: CanonicalDocument) -> CanonicalDocumentModel:
         source_type=doc.source_type.value if doc.source_type else None,
         document_type=doc.document_type.value,
         provider=doc.provider,
+        analysis_source=doc.analysis_source.value if doc.analysis_source else None,
         url=doc.url,
         title=doc.title,
         author=doc.author,
@@ -264,6 +266,9 @@ def _from_model(model: CanonicalDocumentModel) -> CanonicalDocument:
         source_type=SourceType(model.source_type) if model.source_type else None,
         document_type=DocumentType(model.document_type),
         provider=model.provider,
+        analysis_source=(
+            AnalysisSource(model.analysis_source) if model.analysis_source else None
+        ),
         url=model.url,
         title=model.title,
         author=model.author,

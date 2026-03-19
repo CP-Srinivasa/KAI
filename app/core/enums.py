@@ -15,6 +15,12 @@ class SourceType(StrEnum):
     NEWS_DOMAIN = "news_domain"
 
 
+class AnalysisSource(StrEnum):
+    RULE = "rule"
+    INTERNAL = "internal"
+    EXTERNAL_LLM = "external_llm"
+
+
 class SourceStatus(StrEnum):
     ACTIVE = "active"
     PLANNED = "planned"

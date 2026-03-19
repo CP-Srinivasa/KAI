@@ -1,22 +1,12 @@
-"""Dataset export module for Companion Model ML tuning."""
+"""Dataset export module for Companion Model ML tuning.
+
+Contract reference: docs/contracts.md §14
+"""
 
 import json
 from pathlib import Path
 
 from app.core.domain.document import CanonicalDocument
-
-_RULE_BASED_PROVIDERS: frozenset[str] = frozenset({"fallback", "rule"})
-_INTERNAL_PROVIDERS: frozenset[str] = frozenset({"internal", "companion"})
-
-
-def _analysis_source(doc: CanonicalDocument) -> str:
-    """Derive dataset analysis provenance from the persisted provider tag."""
-    provider = (doc.provider or "").strip().lower()
-    if not provider or provider in _RULE_BASED_PROVIDERS:
-        return "rule"
-    if provider in _INTERNAL_PROVIDERS:
-        return "internal"
-    return "external_llm"
 
 
 def _unique_strings(values: list[str]) -> list[str]:
@@ -33,25 +23,35 @@ def _unique_strings(values: list[str]) -> list[str]:
 
 def _build_target_data(doc: CanonicalDocument) -> dict[str, object]:
     return {
-        "sentiment_label": doc.sentiment_label.value if doc.sentiment_label else "neutral",
-        "sentiment_score": doc.sentiment_score or 0.0,
-        "relevance_score": doc.relevance_score or 0.0,
+        "affected_assets": _unique_strings(doc.tickers + doc.crypto_assets),
         "impact_score": doc.impact_score or 0.0,
+        "market_scope": doc.market_scope.value if doc.market_scope else "unknown",
         "novelty_score": doc.novelty_score or 0.0,
         "priority_score": doc.priority_score or 1,
+        "relevance_score": doc.relevance_score or 0.0,
+        "sentiment_label": doc.sentiment_label.value if doc.sentiment_label else "neutral",
+        "sentiment_score": doc.sentiment_score or 0.0,
         "spam_probability": doc.spam_probability or 0.0,
-        "market_scope": doc.market_scope.value if doc.market_scope else "unknown",
         "summary": doc.summary or "",
         "tags": list(doc.ai_tags),
-        "affected_assets": _unique_strings(doc.tickers + doc.crypto_assets),
     }
 
 
 def _build_export_metadata(doc: CanonicalDocument) -> dict[str, str]:
+    """Build the metadata block for a JSONL training row.
+
+    Uses doc.effective_analysis_source — the backward-compatible accessor that:
+    1. Returns doc.analysis_source if it was explicitly set (Sprint 5B persisted field)
+    2. Falls back to deriving from doc.provider (legacy computed path)
+
+    EnsembleProvider compound names ("ensemble(...)") map to INTERNAL conservatively
+    until Sprint 5B's persisted field is written at apply_to_document() time.
+    See docs/contracts.md §13e, §14d, §14f.
+    """
     return {
         "document_id": str(doc.id),
         "provider": (doc.provider or "unknown").strip() or "unknown",
-        "analysis_source": _analysis_source(doc),
+        "analysis_source": doc.effective_analysis_source.value,
     }
 
 
@@ -62,7 +62,8 @@ def export_training_data(documents: list[CanonicalDocument], output_path: Path) 
     - only analyzed documents are exported
     - only persisted structured labels are exported as assistant targets
     - free-form reasoning fields like chain-of-thought are not part of the format
-    - dataset metadata carries provenance (`provider`, `analysis_source`)
+    - dataset metadata carries provenance (provider, analysis_source)
+    - analysis_source prefers the explicit field and falls back only for legacy rows
     """
     count = 0
     with output_path.open("w", encoding="utf-8") as f:

@@ -104,80 +104,72 @@ Fix: Sprint 4C Task 4.10 — relax the guard.
 
 ---
 
-## Tier 2 — InternalCompanionProvider (Sprint 5 — planned)
+## Tier 2 — Internal Providers
 
-**Status**: Architectural slot reserved. `app/analysis/providers/` directory exists (empty).
+Tier 2 has two distinct implementations. Both implement `BaseAnalysisProvider` — zero pipeline changes required.
 
-### Interface
+### Tier 2a — InternalModelProvider (`APP_LLM_PROVIDER=internal`)
 
-Implements `BaseAnalysisProvider` exactly — **zero pipeline changes required**:
+**Status**: ✅ Implemented (`app/analysis/internal_model/provider.py`)
+
+```
+provider_name = "internal"
+analysis_source → INTERNAL
+```
+
+Rule-based heuristics. No network. Always available. Acts as the guaranteed fallback in `EnsembleProvider`.
+Conservative output: `actionable=False`, `sentiment=NEUTRAL`, `impact=0.0`. Priority ceiling ~5.
+
+**Use case**: Last-resort fallback inside EnsembleProvider, or for environments with no model access at all.
+
+### Tier 2b — InternalCompanionProvider (`APP_LLM_PROVIDER=companion`)
+
+**Status**: ✅ Implemented (`app/analysis/providers/companion.py`)
+
+```
+provider_name = "companion"
+analysis_source → INTERNAL
+```
+
+HTTP client to a local OpenAI-compatible endpoint (e.g. Ollama, llama.cpp, vLLM — localhost only).
+Returns full `LLMAnalysisOutput`. Impact capped at 0.8 (Invariant I-17). Can produce SignalCandidates.
+
+**Use case**: Local model inference without external API dependencies.
+
+### Tier 2 Output Scope (InternalCompanionProvider)
+
+| Field | Source | Notes |
+|-------|--------|-------|
+| `sentiment_label` | model output | |
+| `sentiment_score` | model output | |
+| `relevance_score` | model output | |
+| `impact_score` | model output | **capped at 0.8** (I-17) |
+| `tags` | model output | |
+| `actionable` | `priority >= 7` | alert threshold, not signal threshold |
+| `market_scope` | model output | |
+| `affected_assets` | model output | |
+| `short_reasoning` | model output | stored in `doc.metadata["explanation_short"]` |
+| `novelty_score` | `0.5` | hardcoded conservative |
+| `spam_probability` | `0.0` | hardcoded conservative |
+| `confidence_score` | `0.7` | hardcoded conservative |
+
+**Priority range with companion**: Typical strong output → priority 8 (SignalCandidate threshold).
+
+### Settings (Implemented)
 
 ```python
-# app/analysis/providers/companion.py  (Sprint 5)
-class InternalCompanionProvider(BaseAnalysisProvider):
-    provider_name = "internal"
-    model: str  # e.g. "kai-analyst-v1"
-
-    async def analyze(
-        self, title: str, text: str, context: dict
-    ) -> LLMAnalysisOutput: ...
-```
-
-### Output Scope (Sprint 5)
-
-The companion model is trained to produce a **subset** of `LLMAnalysisOutput`.
-
-Fields it MUST produce (trained):
-
-| Field | Notes |
-|-------|-------|
-| `sentiment_label` | BULLISH / BEARISH / NEUTRAL |
-| `sentiment_score` | -1.0 .. 1.0 |
-| `relevance_score` | 0.0 .. 1.0 |
-| `impact_score` | Conservative — cap at 0.8 |
-| `tags` | Category tags |
-| `actionable` | bool |
-| `market_scope` | LOCAL / REGIONAL / GLOBAL |
-| `affected_assets` | list[str] |
-| `explanation_short` | Brief reasoning |
-
-Fields with **conservative defaults** (not trained in Sprint 5):
-
-| Field | Default | Reason |
-|-------|---------|--------|
-| `novelty_score` | `0.5` | Neutral — companion has no memory |
-| `spam_probability` | `0.0` | Assume legitimate |
-| `confidence_score` | `0.7` | Intermediate confidence |
-
-**Priority range with companion**: With typical outputs (sentiment + impact up to 0.8, actionable=True):
-```
-raw ≈ (0.8×0.30) + (0.7×0.30) + (0.5×0.20) + (1×0.15) + (1.0×0.05)
-    = 0.24 + 0.21 + 0.10 + 0.15 + 0.05 = 0.75 → priority = 8
-```
-Companion CAN produce `SignalCandidate` objects (priority ≥ 8 achievable).
-
-### Settings Extension (Sprint 5)
-
-```python
-# app/core/settings.py — new fields in ProviderSettings
-companion_model_endpoint: str | None = None      # e.g. "http://localhost:8080/v1"
+# app/core/settings.py — ProviderSettings
+companion_model_endpoint: str | None = None      # e.g. "http://localhost:11434"
 companion_model_name: str = "kai-analyst-v1"
 companion_model_timeout: int = 10                # seconds
 ```
 
-### Factory Extension (Sprint 5)
+### Factory Routing (Implemented)
 
 ```python
-# app/analysis/factory.py — new branch in create_provider()
-case "internal":
-    if not settings.companion_model_endpoint:
-        return None
-    from app.analysis.providers.companion import InternalCompanionProvider
-    return InternalCompanionProvider(
-        endpoint=settings.companion_model_endpoint,
-        model=settings.companion_model_name,
-        timeout=settings.companion_model_timeout,
-    )
+# app/analysis/factory.py
+"internal"   → InternalModelProvider(keyword_engine)       # always returns instance
+"companion"  → InternalCompanionProvider(endpoint, model)  # returns None if endpoint not set
 ```
 
 ### Security Constraints
@@ -203,54 +195,77 @@ case "internal":
 
 ## Provider Selection Logic
 
-### Current (Sprint 4)
+### Current (implemented)
 
 ```
 APP_LLM_PROVIDER env var → create_provider() → provider | None
-if None → AnalysisPipeline runs without LLM → RuleAnalyzer result only
+if None → AnalysisPipeline runs without LLM → RuleAnalyzer fallback result
+
+Supported values: "openai", "anthropic", "claude", "gemini", "internal", "companion"
+EnsembleProvider: constructed directly (not via APP_LLM_PROVIDER)
 ```
 
-### Sprint 5 Target (with priority fallback)
+### EnsembleProvider (implemented)
+
+```python
+EnsembleProvider(providers=[openai_provider, internal_provider])
+# Tries each in order, returns first success
+# InternalModelProvider MUST be the last entry (guaranteed fallback)
+# provider_name → "ensemble(openai,internal)" (compound, for traceability)
+# model → actual winner's provider_name (tracked at runtime)
+```
+
+### Sprint 5C — Priority Fallback Chain (planned)
 
 ```
-1. Try configured provider (Tier 3 or Tier 2 via APP_LLM_PROVIDER)
-2. If Tier 3 fails or unavailable → try Tier 2 if companion_model_endpoint set
-3. If Tier 2 unavailable → Tier 1 (RuleAnalyzer, always available)
+1. Try configured external provider (Tier 3)
+2. If unavailable → try companion (Tier 2b, if companion_model_endpoint set)
+3. Always falls back to internal (Tier 2a, always available)
 
 Result: always a valid AnalysisResult, never None
 ```
 
-**Note**: Full fallback chain (step 2) is Sprint 5C scope. Sprint 5A adds companion as standalone option only.
+Currently: EnsembleProvider achieves this for specific configurations. Sprint 5C will automate
+the chain in the factory/pipeline layer.
 
 ---
 
-## AnalysisSource Tracking (Sprint 5 — planned)
+## AnalysisSource Tracking
 
-### Enum
+### Enum — ✅ Implemented
 
 ```python
-# app/analysis/base/interfaces.py  (Sprint 5 addition)
-class AnalysisSource(str, Enum):
-    RULE = "rule"                  # Tier 1 — RuleAnalyzer
-    INTERNAL = "internal"          # Tier 2 — InternalCompanionProvider
+# app/core/enums.py
+class AnalysisSource(StrEnum):
+    RULE = "rule"                  # Tier 1 — fallback / rule-based heuristics
+    INTERNAL = "internal"          # Tier 2 — InternalModelProvider or InternalCompanionProvider
     EXTERNAL_LLM = "external_llm"  # Tier 3 — OpenAI / Anthropic / Gemini
 ```
 
-### AnalysisResult Extension
+### Computed Property — ✅ Implemented
 
 ```python
-# AnalysisResult — new optional field (Sprint 5)
-analysis_source: AnalysisSource | None = None
+# app/core/domain/document.py — @property (derived from doc.provider, NOT stored)
+doc.analysis_source: AnalysisSource
 ```
 
-### DB Column
+Derivation:
+- `doc.provider in {None, "fallback", "rule"}` → `RULE`
+- `doc.provider in {"internal", "companion"}` → `INTERNAL`
+- `doc.provider.startswith("ensemble(")` → `INTERNAL` (conservative, Sprint 5B gap)
+- else → `EXTERNAL_LLM`
 
-`canonical_documents.analysis_source VARCHAR(20)` — requires Alembic migration (Sprint 5B).
+### DB Column — ⏳ Sprint 5B (planned)
 
-Enables:
-- Filtering LLM-enriched vs companion vs rule-only documents in research outputs
-- Distillation corpus selection: only `EXTERNAL_LLM` documents serve as teacher signal
-- Quality reporting by tier
+`canonical_documents.analysis_source VARCHAR(20)` — Alembic migration required.
+
+Once persisted, `EnsembleProvider` can write the actual winning provider's tier at
+`apply_to_document()` time. The computed property fallback remains for backward compatibility.
+
+Enables (now via computed property, properly via DB column after Sprint 5B):
+- Distillation corpus selection: only `EXTERNAL_LLM` documents as teacher signal (I-19)
+- Quality reporting and filtering by tier in research outputs
+- EnsembleProvider winner traceability (Sprint 5B)
 
 ---
 

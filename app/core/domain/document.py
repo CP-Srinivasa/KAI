@@ -21,6 +21,7 @@ from uuid import UUID, uuid4
 from pydantic import BaseModel, ConfigDict, Field, computed_field, model_validator
 
 from app.core.enums import (
+    AnalysisSource,
     DocumentStatus,
     DocumentType,
     MarketScope,
@@ -91,6 +92,7 @@ class CanonicalDocument(BaseModel):
     source_type: SourceType | None = None
     document_type: DocumentType = DocumentType.UNKNOWN
     provider: str | None = None
+    analysis_source: AnalysisSource | None = None
 
     # Core content
     url: str
@@ -189,6 +191,19 @@ class CanonicalDocument(BaseModel):
         text = self.cleaned_text or self.raw_text or ""
         return len(text.split()) if text else 0
 
+    @property
+    def effective_analysis_source(self) -> AnalysisSource:
+        """Return the explicit source when present, else a conservative legacy fallback."""
+        if self.analysis_source is not None:
+            return self.analysis_source
+
+        provider = (self.provider or "").strip().lower()
+        if not provider or provider in {"fallback", "rule"}:
+            return AnalysisSource.RULE
+        if provider in {"internal", "companion"} or provider.startswith("ensemble("):
+            return AnalysisSource.INTERNAL
+        return AnalysisSource.EXTERNAL_LLM
+
 
 # ── Analysis Result ───────────────────────────────────────────────────────────
 
@@ -208,6 +223,7 @@ class AnalysisResult(BaseModel):
 
     document_id: str
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    analysis_source: AnalysisSource | None = None
 
     # Core scores — all required, validated ranges
     sentiment_label: SentimentLabel

@@ -808,7 +808,10 @@ def research_signals(
 @research_app.command("dataset-export")
 def research_dataset_export(
     output_file: str = typer.Argument(..., help="Path to output JSONL file"),
-    provider: str = typer.Option("openai", help="Filter by provider (e.g. openai)"),
+    source_type: str = typer.Option(
+        "external_llm",
+        help="Filter by analysis source, e.g. external_llm, internal, rule",
+    ),
     limit: int = typer.Option(1000, help="Max documents to export"),
 ) -> None:
     """Export analyzed documents (Teacher Outputs) to JSONL for Companion Model tuning."""
@@ -827,11 +830,13 @@ def research_dataset_export(
             repo = DocumentRepository(session)
             docs = await repo.list(is_analyzed=True, limit=limit)
 
-        if provider and provider != "all":
-            docs = [d for d in docs if d.provider == provider]
+        if source_type and source_type != "all":
+            docs = [d for d in docs if d.effective_analysis_source.value == source_type]
 
         if not docs:
-            console.print(f"[yellow]No analyzed documents found for provider {provider}.[/yellow]")
+            console.print(
+                f"[yellow]No analyzed documents found for source_type {source_type}.[/yellow]"
+            )
             return
 
         out_path = Path(output_file)
@@ -847,7 +852,7 @@ def research_dataset_export(
 
 @research_app.command("evaluate")
 def research_evaluate(
-    teacher_provider: str = typer.Option("openai", help="The baseline model provider"),
+    teacher_source: str = typer.Option("external_llm", help="The baseline extraction source"),
     limit: int = typer.Option(50, help="Number of documents to evaluate over"),
 ) -> None:
     """Run the internal companion model against teacher outputs and print metrics."""
@@ -869,9 +874,11 @@ def research_evaluate(
             repo = DocumentRepository(session)
             docs = await repo.list(is_analyzed=True, limit=limit)
 
-        teacher_docs = [d for d in docs if d.provider == teacher_provider]
+        teacher_docs = [d for d in docs if d.effective_analysis_source.value == teacher_source]
         if not teacher_docs:
-            console.print(f"[yellow]No documents analyzed by '{teacher_provider}' found.[/yellow]")
+            console.print(
+                f"[yellow]No documents analyzed by source '{teacher_source}' found.[/yellow]"
+            )
             return
 
         keyword_engine = KeywordEngine.from_monitor_dir(monitor_dir)

@@ -11,7 +11,7 @@ from app.analysis.base.interfaces import BaseAnalysisProvider, LLMAnalysisOutput
 from app.analysis.keywords.engine import KeywordEngine, KeywordHit
 from app.analysis.rules.rule_analyzer import compute_spam_probability
 from app.core.domain.document import AnalysisResult, CanonicalDocument, EntityMention
-from app.core.enums import MarketScope, SentimentLabel
+from app.core.enums import AnalysisSource, MarketScope, SentimentLabel
 from app.core.logging import get_logger
 from app.enrichment.entities.matcher import hits_to_entity_mentions
 
@@ -33,6 +33,16 @@ def _unique_strings(values: list[str]) -> list[str]:
         seen.add(key)
         result.append(normalized)
     return result
+
+
+def _resolve_analysis_source(provider: BaseAnalysisProvider | None) -> AnalysisSource:
+    if provider is None:
+        return AnalysisSource.RULE
+
+    provider_name = provider.provider_name.strip().lower()
+    if provider_name in {"internal", "companion"} or provider_name.startswith("ensemble("):
+        return AnalysisSource.INTERNAL
+    return AnalysisSource.EXTERNAL_LLM
 
 
 def _fallback_relevance(
@@ -160,6 +170,7 @@ class PipelineResult:
 
         res = self.analysis_result
         spam_prob = self.llm_output.spam_probability if self.llm_output else res.spam_probability
+        self.document.analysis_source = res.analysis_source
 
         self.document.sentiment_label = res.sentiment_label
         self.document.sentiment_score = res.sentiment_score
@@ -219,6 +230,8 @@ class AnalysisPipeline:
 
         llm_output: LLMAnalysisOutput | None = None
         analysis_result: AnalysisResult | None = None
+        analysis_source = _resolve_analysis_source(self._provider)
+        provider_name = "fallback"
 
         fallback_reason: str | None = None
         if self._provider is None:
@@ -245,8 +258,10 @@ class AnalysisPipeline:
                     text=text,
                     context=context,
                 )
+                provider_name = self._provider.provider_name
                 analysis_result = AnalysisResult(
                     document_id=str(doc.id),
+                    analysis_source=analysis_source,
                     sentiment_label=llm_output.sentiment_label,
                     sentiment_score=llm_output.sentiment_score,
                     relevance_score=llm_output.relevance_score,
@@ -284,7 +299,7 @@ class AnalysisPipeline:
             entity_mentions=entity_mentions,
             llm_output=llm_output,
             analysis_result=analysis_result,
-            provider_name=self._provider.provider_name if self._provider else "fallback",
+            provider_name=provider_name,
         )
 
     def _build_fallback_analysis(
@@ -333,6 +348,7 @@ class AnalysisPipeline:
 
         return AnalysisResult(
             document_id=str(document.id),
+            analysis_source=AnalysisSource.RULE,
             sentiment_label=SentimentLabel.NEUTRAL,
             sentiment_score=0.0,
             relevance_score=relevance_score,

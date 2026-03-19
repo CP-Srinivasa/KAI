@@ -32,6 +32,7 @@ class BriefDocument(BaseModel):
     actionable: bool
     published_at: datetime | None
     source_name: str | None
+    analysis_source: str
 
 
 class ResearchBrief(BaseModel):
@@ -219,6 +220,7 @@ class ResearchBriefBuilder:
             actionable=bool((document.priority_score or 0) >= 8),
             published_at=document.published_at,
             source_name=document.source_name,
+            analysis_source=document.effective_analysis_source.value,
         )
 
     def _rank_terms(self, values: Any, *, limit: int = 5) -> list[BriefFacet]:

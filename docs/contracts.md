@@ -621,10 +621,9 @@ Promotion gates before the companion becomes an active default:
 
 ---
 
-### 13. Intelligence Layer Extension Contracts (Sprint 5 — planned)
+### 13. Intelligence Layer Contracts
 
-Defines the exact extension points for introducing the companion model and `AnalysisSource` tracking.
-These are **stubs** — not yet implemented. Code must not reference them before Sprint 5.
+Defines the architecture for the companion model and `AnalysisSource` tracking.
 
 Full architecture reference: [docs/intelligence_architecture.md](./intelligence_architecture.md)
 
@@ -632,85 +631,146 @@ Full architecture reference: [docs/intelligence_architecture.md](./intelligence_
 
 #### 13a. ProviderSettings Extension
 
+**Status: ✅ Implemented** (`app/core/settings.py`)
+
 ```python
-# app/core/settings.py — additions to ProviderSettings
-companion_model_endpoint: str | None = None      # e.g. "http://localhost:8080/v1"
+companion_model_endpoint: str | None = None      # e.g. "http://localhost:11434"
 companion_model_name: str = "kai-analyst-v1"
 companion_model_timeout: int = 10                # seconds
 ```
 
 Security constraint: `companion_model_endpoint` MUST be `localhost` or an explicitly allowlisted
-internal address. Validation must reject external URLs at settings load time (Sprint 5A).
+internal address. Field validator rejects external URLs at settings load time.
 
 ---
 
-#### 13b. Factory Extension
+#### 13b. Factory Routing
 
-```python
-# app/analysis/factory.py — new branch in create_provider()
-case "internal":
-    if not settings.companion_model_endpoint:
-        return None
-    from app.analysis.providers.companion import InternalCompanionProvider
-    return InternalCompanionProvider(
-        endpoint=settings.companion_model_endpoint,
-        model=settings.companion_model_name,
-        timeout=settings.companion_model_timeout,
-    )
-```
+**Status: ✅ Implemented** (`app/analysis/factory.py`)
 
-The companion provider slot in `app/analysis/providers/` is reserved and empty until Sprint 5A.
-`APP_LLM_PROVIDER=internal` must not be set in production before Sprint 5A is complete.
+The factory distinguishes two internal tiers:
+
+| `APP_LLM_PROVIDER` | Provider class | `provider_name` | Notes |
+|--------------------|---------------|-----------------|-------|
+| `"internal"` | `InternalModelProvider` | `"internal"` | Rule heuristics, no network, always available (Tier 2a) |
+| `"companion"` | `InternalCompanionProvider` | `"companion"` | HTTP to local model endpoint (Tier 2b) |
+| `"openai"` | `OpenAIAnalysisProvider` | `"openai"` | API key required |
+| `"anthropic"` / `"claude"` | `AnthropicAnalysisProvider` | `"anthropic"` | API key required |
+| `"gemini"` | `GeminiAnalysisProvider` | `"gemini"` | API key required |
+
+`"internal"` always returns an instance (never `None`).
+`"companion"` returns `None` if `companion_model_endpoint` is not set.
+All external providers return `None` if the corresponding API key is missing.
+
+**Note**: Earlier contract stubs (pre-Sprint 5A) listed `"internal"` as the companion HTTP provider.
+The final implementation uses `"companion"` for the HTTP provider and `"internal"` for the
+always-available heuristic model. Code and tests are authoritative.
+
+`EnsembleProvider` (`app/analysis/ensemble/provider.py`) is not a factory target — it wraps
+multiple providers directly. Its `provider_name` is a compound string like
+`"ensemble(openai,internal)"` (see §13e on EnsembleProvider and analysis_source).
 
 ---
 
 #### 13c. AnalysisSource Enum
 
+**Status: ✅ Implemented** (`app/core/enums.py`, `app/core/domain/document.py`)
+
 ```python
-# app/analysis/base/interfaces.py  (Sprint 5B addition)
-class AnalysisSource(str, Enum):
-    RULE = "rule"                  # Tier 1 — RuleAnalyzer
-    INTERNAL = "internal"          # Tier 2 — InternalCompanionProvider
+# app/core/enums.py
+class AnalysisSource(StrEnum):
+    RULE = "rule"                  # Tier 1 — fallback / rule-based heuristics
+    INTERNAL = "internal"          # Tier 2 — InternalModelProvider or InternalCompanionProvider
     EXTERNAL_LLM = "external_llm"  # Tier 3 — OpenAI / Anthropic / Gemini
 ```
 
-`AnalysisResult` extension (Sprint 5B):
+**Current implementation**: `AnalysisSource` is a **computed property** on `CanonicalDocument`,
+derived from `doc.provider`. It is NOT yet a persisted DB column (Sprint 5B pending).
+
 ```python
-analysis_source: AnalysisSource | None = None
+# app/core/domain/document.py — @property (derived, not stored)
+@property
+def analysis_source(self) -> AnalysisSource:
+    provider = (self.provider or "").strip().lower()
+    if not provider or provider in {"fallback", "rule"}:     → RULE
+    if provider in {"internal", "companion"}:                → INTERNAL
+    if provider.startswith("ensemble("):                     → INTERNAL (conservative)
+    else:                                                    → EXTERNAL_LLM
 ```
 
-DB migration required (Sprint 5B):
-```sql
-ALTER TABLE canonical_documents ADD COLUMN analysis_source VARCHAR(20);
-```
+**Sprint 5B**: Introduce as a persisted DB column (`canonical_documents.analysis_source VARCHAR(20)`)
+so that `EnsembleProvider` correctly records the actual winning provider's tier at analysis time,
+not at export time. The computed property will remain as a backward-compatibility fallback.
 
 Invariants:
-- `analysis_source` is set at result creation time — immutable after `apply_to_document()`
-- `analysis_source=RULE` documents NEVER serve as distillation teacher signal
-- Distillation corpus selects only `analysis_source=EXTERNAL_LLM` documents
+- `analysis_source=RULE` documents NEVER serve as distillation teacher signal (I-19)
+- `analysis_source=INTERNAL` documents are evaluation-only, not teacher signal
+- Distillation corpus selects ONLY `analysis_source=EXTERNAL_LLM` documents (§14e)
 
 ---
 
 #### 13d. Companion Model Output Scope
 
-The companion model produces a **subset** of `LLMAnalysisOutput` (same schema, subset of fields trained):
+**Status: ✅ Implemented** (`app/analysis/providers/companion.py`)
 
-| Field | Trained? | Sprint 5 default if not trained |
-|-------|----------|--------------------------------|
-| `sentiment_label` | ✅ | — |
-| `sentiment_score` | ✅ | — |
-| `relevance_score` | ✅ | — |
-| `impact_score` | ✅ (cap ≤ 0.8) | — |
-| `tags` | ✅ | — |
-| `actionable` | ✅ | — |
-| `market_scope` | ✅ | — |
-| `affected_assets` | ✅ | — |
-| `explanation_short` | ✅ | — |
-| `novelty_score` | ❌ | `0.5` |
-| `spam_probability` | ❌ | `0.0` |
-| `confidence_score` | ❌ | `0.7` |
+The companion model (`InternalCompanionProvider`) produces `LLMAnalysisOutput` via HTTP to a
+local OpenAI-compatible endpoint. Impact score is capped at 0.8 client-side (Invariant I-17).
 
-Companion model `impact_score` cap: ≤ 0.8 (conservative, not overconfident — Invariant I-17).
+| Field | Source | Notes |
+|-------|--------|-------|
+| `sentiment_label` | model output | required |
+| `sentiment_score` | model output | required |
+| `relevance_score` | model output | required |
+| `impact_score` | model output | **capped at 0.8** (I-17) |
+| `tags` | model output | required |
+| `actionable` | `priority >= 7` | alert-worthy threshold, NOT signal threshold |
+| `market_scope` | model output | required |
+| `affected_assets` | model output | required |
+| `short_reasoning` | model output (internal) | stored as `doc.metadata["explanation_short"]` |
+| `novelty_score` | hardcoded `0.5` | not trained in Sprint 5 |
+| `spam_probability` | hardcoded `0.0` | not trained in Sprint 5 |
+| `confidence_score` | hardcoded `0.7` | not trained in Sprint 5 |
+
+**Note on `co_thought`**: The companion prompt uses `co_thought` as a field name internally for
+chain-of-thought reasoning. This maps to `LLMAnalysisOutput.short_reasoning` and is stored in
+`doc.metadata["explanation_short"]`. This is DISTINCT from the removed `co_thought` export field
+(§14c). The internal reasoning trace is not part of the training corpus output format.
+
+**Actionable threshold note**: `actionable=(priority >= 7)` matches the alert threshold
+(Telegram/Email). The signal threshold (`extract_signal_candidates()`) is `priority >= 8`.
+A document can be alert-worthy (`actionable=True`) without being signal-worthy.
+
+---
+
+#### 13e. EnsembleProvider and analysis_source
+
+**EnsembleProvider** (`app/analysis/ensemble/provider.py`) wraps multiple providers in priority
+order. Its `provider_name` is a compound string: `"ensemble(openai,internal)"`.
+
+**Problem**: `EnsembleProvider.provider_name` is a compound string. The pipeline cannot know which
+inner provider actually won without the persisted `analysis_source` column (Sprint 5B).
+
+**Current mitigation (two-layer)**:
+
+1. `_resolve_analysis_source()` in `app/analysis/pipeline.py` maps any `provider_name` that
+   starts with `"ensemble("` to `INTERNAL`. This is the primary guard — it sets
+   `AnalysisResult.analysis_source = INTERNAL`, which `apply_to_document()` writes to
+   `doc.analysis_source`.
+
+2. `CanonicalDocument.effective_analysis_source` applies the same `startswith("ensemble(")` guard
+   as a fallback for legacy rows where `doc.analysis_source` is `None` (pre-pipeline or pre-5B rows).
+
+Both guards are in sync. The property guard is only reached when `doc.analysis_source is None`.
+
+**Sprint 5B goal** (winner traceability): The DB column `analysis_source` already exists (migration
+0006). The remaining work is to write the **actual winner's tier** at `apply_to_document()` time
+using `EnsembleProvider._active_provider_name` instead of the conservative `INTERNAL` default.
+Until then, all ensemble results are classified as `INTERNAL` conservatively.
+
+| EnsembleProvider scenario | `doc.provider` | Current `analysis_source` | Sprint 5B (after winner tracking) |
+|--------------------------|----------------|--------------------------|----------------------------------|
+| openai won | `"ensemble(openai,internal)"` | `"internal"` ⚠️ (conservative) | `"external_llm"` ✅ |
+| internal won | `"ensemble(openai,internal)"` | `"internal"` ✅ (correct) | `"internal"` ✅ |
 
 ---
 
@@ -801,22 +861,26 @@ format with an explicit reasoning corpus, independently of `export_training_data
 | Value | Meaning | `doc.provider` values | Use as teacher? |
 |-------|---------|----------------------|-----------------|
 | `"external_llm"` | External LLM (OpenAI, Anthropic, Gemini) | `"openai"`, `"anthropic"`, `"gemini"`, etc. | ✅ yes |
-| `"internal"` | Companion model (Sprint 5B+) | `"internal"`, `"companion"` | ⚠️ evaluation only |
+| `"internal"` | Tier 2 analysis (heuristic or companion HTTP) | `"internal"`, `"companion"`, `"ensemble(...)"` | ⚠️ evaluation only |
 | `"rule"` | Rule-based / fallback analysis | `None`, `"fallback"`, `"rule"` | ❌ no (I-19) |
 
-**Derivation logic** (implemented in `_analysis_source()`, `app/research/datasets.py`):
-```python
-_RULE_BASED_PROVIDERS = {"fallback", "rule"}
-_INTERNAL_PROVIDERS   = {"internal", "companion"}
+**Source of truth**: `doc.effective_analysis_source` (`CanonicalDocument`, `app/core/domain/document.py`).
 
-if not provider or provider in _RULE_BASED_PROVIDERS:  → "rule"
-elif provider in _INTERNAL_PROVIDERS:                   → "internal"
-else:                                                   → "external_llm"
+```python
+# Backward-compatible accessor (current implementation):
+doc.effective_analysis_source
+# → returns doc.analysis_source if explicitly set (Sprint 5B field)
+# → falls back to derivation from doc.provider (legacy path for pre-Sprint-5B rows)
 ```
 
-**Sprint 5B update**: When `AnalysisSource` enum and `doc.analysis_source` land on
-`CanonicalDocument`, `_analysis_source()` will be updated to use it directly.
-The exported values and their semantics remain identical.
+The export reads `doc.effective_analysis_source.value` — never derives analysis_source inline.
+
+**EnsembleProvider**: `doc.provider = "ensemble(openai,internal)"` maps to `"internal"` (conservative).
+See §13e for the full explanation and Sprint 5B fix.
+
+**Sprint 5B**: `analysis_source: AnalysisSource | None` is already on `CanonicalDocument` and `AnalysisResult`.
+The DB migration will enable it to be written at `apply_to_document()` time. Until then it is `None`
+and `effective_analysis_source` derives from `doc.provider` as fallback.
 
 ---
 
@@ -831,6 +895,34 @@ rows = [r for r in jsonl_rows if r["metadata"]["analysis_source"] == "external_l
 
 Documents with `analysis_source="rule"` or `"internal"` CAN be included in the full export
 for auditing or evaluation purposes, but MUST NOT appear in the fine-tuning training corpus.
+
+---
+
+#### 14f. provider vs analysis_source — Contract Separation
+
+These are two distinct concepts that must never be conflated:
+
+| Concept | Field | Type | Persistence | Purpose |
+|---------|-------|------|-------------|---------|
+| `provider` | `doc.provider` | `str \| None` | DB column (now) | Technical engine name: `"openai"`, `"internal"`, `"ensemble(openai,internal)"`, `"fallback"` |
+| `analysis_source` | `doc.analysis_source` | `AnalysisSource` enum | computed property (now), DB column (Sprint 5B) | Semantic tier: `RULE` / `INTERNAL` / `EXTERNAL_LLM` |
+
+**Rules:**
+- `provider` is a raw, provider-specific string — it must not be used directly for corpus filtering
+- `analysis_source` is the stable semantic value — always use this for filtering and guardrails
+- `provider` may change spelling (e.g. new providers) without breaking the `analysis_source` contract
+- `analysis_source` must NEVER be set manually — always derived from `provider` (or persisted from pipeline)
+- Downstream code (ResearchBrief, SignalCandidate, alerts) consumes analysis results via the same
+  `CanonicalDocument` contract regardless of which tier produced them — no branching on `provider`
+
+**Companion model in research outputs:**
+Companion-analyzed documents (`analysis_source=INTERNAL`) flow through the same research pipeline:
+- `ResearchBrief.key_documents` — ✅ included
+- `ResearchBrief.top_actionable_signals` — ✅ if `priority >= 8`
+- `SignalCandidate` — ✅ if `priority >= 8` (companion can reach 8 with strong output)
+- Alert gating — ✅ same `ThresholdEngine.is_alert_worthy()` path
+
+No parallel models, no second result format. Provenance is tracked via `analysis_source` only.
 
 ---
 

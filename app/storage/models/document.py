@@ -31,6 +31,7 @@ class CanonicalDocumentModel(Base):
         String(50), nullable=False, server_default="unknown", index=True
     )
     provider: Mapped[str | None] = mapped_column(String(100), nullable=True)
+    analysis_source: Mapped[str | None] = mapped_column(String(20), nullable=True, index=True)
 
     url: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
     title: Mapped[str] = mapped_column(Text, nullable=False)

@@ -6,7 +6,7 @@ import pytest
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.core.domain.document import AnalysisResult, CanonicalDocument
-from app.core.enums import DocumentStatus, MarketScope, SentimentLabel
+from app.core.enums import AnalysisSource, DocumentStatus, MarketScope, SentimentLabel
 from app.storage.db.session import Base
 from app.storage.repositories.document_repo import DocumentRepository
 
@@ -150,6 +150,7 @@ async def test_update_analysis_sets_analyzed_status(session_factory) -> None:
         )
         analysis_result = AnalysisResult(
             document_id=str(saved.id),
+            analysis_source=AnalysisSource.INTERNAL,
             sentiment_label=SentimentLabel.BULLISH,
             sentiment_score=0.7,
             relevance_score=0.8,
@@ -174,6 +175,8 @@ async def test_update_analysis_sets_analyzed_status(session_factory) -> None:
     assert stored.status == DocumentStatus.ANALYZED
     assert stored.is_duplicate is False
     assert stored.is_analyzed is True
+    assert stored.analysis_source == AnalysisSource.INTERNAL
+    assert stored.effective_analysis_source == AnalysisSource.INTERNAL
     assert stored.sentiment_label == SentimentLabel.BULLISH
     assert stored.priority_score == analysis_result.recommended_priority
     assert stored.categories == ["defi", "layer1"]

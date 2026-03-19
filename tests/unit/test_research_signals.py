@@ -38,6 +38,7 @@ def test_extract_signal_candidates_filters_priority():
     assert candidates[0].confidence == 0.9
     assert candidates[0].source_quality == 0.99
     assert candidates[0].target_asset == "BTC"
+    assert candidates[0].analysis_source in ("external_llm", "rule", "internal")
 
 
 def test_extract_signal_candidates_direction_mapping():
@@ -50,6 +51,21 @@ def test_extract_signal_candidates_direction_mapping():
     assert len(candidates) == 3
     directions = {c.direction_hint for c in candidates}
     assert directions == {"bullish", "bearish", "neutral"}
+
+
+def test_signal_candidate_analysis_source_propagation():
+    docs = [
+        make_document(is_analyzed=True, priority_score=10, provider="openai"),
+        make_document(is_analyzed=True, priority_score=10, provider="companion"),
+        make_document(is_analyzed=True, priority_score=10, provider="rule"),
+        make_document(is_analyzed=True, priority_score=10, provider=None),
+    ]
+    candidates = extract_signal_candidates(docs)
+    sources = [c.analysis_source for c in candidates]
+
+    assert sources.count("external_llm") == 1
+    assert sources.count("internal") == 1
+    assert sources.count("rule") == 2
 
 
 def test_signal_candidate_strict_validation():
@@ -66,11 +82,11 @@ def test_signal_candidate_strict_validation():
             risk_notes="High vol",
             source_quality=0.8,
             recommended_next_step="Review ETH neutral signal — human decision required.",
-            priority=-1,  # Invalid — below ge=0
             sentiment=SentimentLabel.BULLISH,
             affected_assets=[],
             market_scope=MarketScope.UNKNOWN,
             published_at=None,
+            analysis_source="rule",
         )
 
 
@@ -131,5 +147,6 @@ def test_extract_signal_candidates_fallback_compatible():
     assert sig.confidence == 0.5  # fallback default
     assert sig.source_quality == 0.5  # fallback default
     assert sig.target_asset == "General Market" # fallback primary asset
+    assert sig.analysis_source == "rule"
     assert "spam_prob=0.00" in sig.risk_notes
     assert "scope=unknown" in sig.risk_notes

@@ -32,6 +32,7 @@ class SignalCandidate(BaseModel):
     risk_notes: str
     source_quality: float
     recommended_next_step: str
+    analysis_source: str
 
     # Research metrics - NOT execution instructions
     priority: int = Field(ge=0, le=10)
@@ -100,6 +101,7 @@ def extract_signal_candidates(
                     f"Review {direction} signal for {primary_asset} "
                     "- human decision required."
                 ),
+                analysis_source=doc.effective_analysis_source.value,
                 priority=effective_priority,
                 sentiment=doc.sentiment_label or SentimentLabel.NEUTRAL,
                 affected_assets=assets,

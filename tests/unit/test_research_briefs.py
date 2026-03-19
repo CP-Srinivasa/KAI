@@ -60,6 +60,7 @@ def test_research_brief_builder_with_valid_documents():
     assert brief.summary.startswith("2 analyzed documents")
     assert len(brief.top_actionable_signals) == 1
     assert brief.top_actionable_signals[0].title == "High Priority DeFi Hack"
+    assert brief.top_actionable_signals[0].analysis_source in ("external_llm", "rule", "internal")
     assert len(brief.top_documents) == 2
     assert brief.top_documents[0].title == "High Priority DeFi Hack"
     assert len(brief.key_documents) == 1
@@ -87,6 +88,7 @@ def test_research_brief_builder_handles_missing_priority_safely():
     assert brief.top_documents[0].priority_score == 0
     assert brief.top_documents[0].summary == "Analyzed without priority"
     assert brief.top_documents[0].sentiment_label == "neutral"
+    assert brief.top_documents[0].analysis_source == "rule"
 
 
 def test_research_brief_to_markdown():
