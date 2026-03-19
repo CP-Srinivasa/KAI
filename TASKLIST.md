@@ -1,7 +1,7 @@
 # TASKLIST.md — KAI Platform Sprint Plan
 
 > Sprints sind **streng sequenziell**. Sprint N startet erst, wenn Sprint N-1 vollständig abgeschlossen ist.
-> Letzte Aktualisierung: 2026-03-19
+> Letzte Aktualisierung: 2026-03-20
 
 ---
 
@@ -75,92 +75,85 @@
 **Ziel**: Verwertbare Outputs für Entscheidungen — Watchlists, Briefs, Signal-Kandidaten.
 
 **Architektur-Basis (Claude Code, abgeschlossen ✅)**:
-- `app/research/watchlists.py` — `WatchlistRegistry` + `find_by_text()`
-- `app/research/briefs.py` — `ResearchBrief`, `BriefDocument`, `ResearchBriefBuilder`
+- `app/research/watchlists.py` — `WatchlistRegistry` (multi-type: assets/persons/topics/sources), `filter_documents()`, `from_file()`, `save()`
+- `app/research/briefs.py` — `ResearchBrief`, `BriefFacet`, `BriefDocument`, `ResearchBriefBuilder`
 - `app/research/signals.py` — `SignalCandidate`, `extract_signal_candidates()`
 - `app/research/__init__.py` — öffentliche Exports definiert
+- `app/research/AGENTS.md` — Modul-Kontrakt für alle Agenten
 - `app/analysis/keywords/watchlist.py` — `load_watchlist()` jetzt mit `persons`+`topics`
 - `docs/contracts.md §11` — vollständige Sprint 4 Contracts dokumentiert
 - `monitor/watchlists.yml` — Seed-Datei vorhanden (13 crypto, 8 equity, 5 ETF, 10 persons, 10 topics)
 
+> ⚠ **Offene Lücke**: `WatchlistRegistry.find_by_text()` — in früherer Spec referenziert, aber nicht in
+> finaler Implementierung enthalten. Vorgesehen für Sprint 4B. Bis dahin: `filter_documents()` verwenden.
+
 ---
 
-### Sprint 4 Phase A — Watchlist + Research Brief CLI (→ Codex)
+### Sprint 4 Phase A — Watchlist + Research Brief CLI ✅
 
-**Status**: ⏳ bereit für Codex
+**Status**: ✅ abgeschlossen — CLI + API + Tests vollständig
 
 | # | Task | Agent | Status |
 |---|---|---|---|
-| 4.1 | `research watchlists list` CLI — alle Watchlists aus registry ausgeben | Codex | ⏳ |
-| 4.2 | `research watchlists for <tag>` CLI — Symbole einer Watchlist ausgeben | Codex | ⏳ |
-| 4.3 | `research brief <cluster>` CLI — ResearchBrief für einen Cluster bauen | Codex | ⏳ |
-| 4.4 | `GET /research/briefs/{cluster}` API-Endpoint | Codex | ⏳ |
-| 4.5 | Tests für alle neuen CLI-Commands + API-Endpoint | Codex | ⏳ |
+| 4.1 | `research watchlists list` CLI | — | ✅ |
+| 4.2 | `research watchlists for <tag>` CLI | — | ✅ |
+| 4.3 | `research brief <cluster>` CLI | — | ✅ |
+| 4.4 | `GET /research/brief` API-Endpoint | — | ✅ |
+| 4.5 | Tests für CLI + API | — | ✅ |
 
-**Codex-Spec für 4.1–4.5:**
+**Codex-Spec für 4.4–4.5 (CLI ✅ — nur noch API + Tests):**
 
 ```
-## Task: Sprint 4A — Research CLI + API
+## Task: Sprint 4A — Research API-Endpoint + Tests
 
 Agent: Codex
 Phase: Sprint 4A
-Modul: app/cli/main.py, app/api/routers/research.py
+Modul: app/api/routers/research.py
 Typ: feature
 
 Beschreibung:
-  Baue die CLI-Schicht für das Research-Modul und den ersten API-Endpoint.
-  Alle Models und Builder sind fertig in app/research/ — nur die Eingangspunkte fehlen.
+  CLI-Commands (4.1–4.3) sind bereits implementiert in app/cli/main.py.
+  Offene Aufgabe: API-Endpoint + Tests für Research Brief.
 
-Spec-Referenz: docs/contracts.md §11, app/research/__init__.py
+Spec-Referenz: app/research/__init__.py, docs/research_outputs.md, app/research/AGENTS.md
 
 Constraints:
-  - NICHT: neue Models einführen
-  - NICHT: app/research/*.py ändern
-  - NICHT: monitor/watchlists.yml ändern
-  - Typer-Subgruppe "research" unter dem bestehenden app in app/cli/main.py
-  - API-Router analog zu app/api/routers/alerts.py
-
-CLI-Befehle (Typer):
-  research watchlists list
-    → WatchlistRegistry.from_monitor_dir(settings.monitor_dir)
-    → für jede Watchlist: Tag + Symbole ausgeben (Rich Table)
-
-  research watchlists for <tag>
-    → get_watchlist(tag) ausgeben
-    → Exit 1 wenn leer
-
-  research brief <cluster> [--days 7] [--limit 50] [--format markdown|json]
-    → repo.list(is_analyzed=True, limit=limit) holen
-    → WatchlistRegistry.find_by_text() zum Filtern nutzen
-    → ResearchBriefBuilder(cluster).build(gefilterte_docs)
-    → to_markdown() oder to_json_dict() ausgeben
+  - NICHT: app/research/*.py ändern (alle Models sind final)
+  - NICHT: app/cli/main.py ändern (CLI ist fertig)
+  - NICHT: WatchlistRegistry.find_by_text() verwenden — nutze filter_documents() stattdessen
+  - API-Router analog zu app/api/routers/alerts.py (Bearer-Auth-Pattern)
+  - Kein Trading-Execution-Code
+  - Kein Alert-Upgrade
 
 API-Endpoint:
-  POST /research/briefs/{cluster}
-    Body: { "days": 7, "limit": 50 }
-    Returns: ResearchBrief.to_json_dict()
+  GET /research/briefs/{cluster}?watchlist_type=assets&limit=100&format=md
+    → WatchlistRegistry.from_monitor_dir(settings.monitor_dir)
+    → registry.filter_documents(docs, cluster, item_type=resolved_type)
+    → ResearchBriefBuilder(cluster).build(filtered_docs)
+    → to_markdown() oder to_json_dict() je nach format-Parameter
     Auth: Bearer-Token (analog /alerts/test)
 
 Akzeptanzkriterien:
   - [ ] ruff check . sauber
-  - [ ] pytest tests/unit/test_research_cli.py grün
-  - [ ] pytest tests/unit/test_research_api.py grün
+  - [ ] pytest tests/unit/test_research_api.py grün (neuer Test-File)
   - [ ] WatchlistRegistry korrekt aus monitor_dir geladen
   - [ ] Brief-Output enthält cluster_name, document_count, top_actionable_signals
+  - [ ] Kein DB-Schreiben im Router
+  - [ ] 401 bei fehlendem Bearer-Token
 ```
 
 ---
 
-### Sprint 4 Phase B — Signal Candidates (→ Antigravity koordiniert Codex)
+### Sprint 4 Phase B — Signal Candidates ✅
 
-**Status**: ⏳ nach Phase A
+**Status**: ✅ abgeschlossen — CLI + API + Tests vollständig
 
 | # | Task | Agent | Status |
 |---|---|---|---|
-| 4.6 | `research signals list [--watchlist <tag>] [--min-priority 8]` CLI | Codex | ⏳ |
-| 4.7 | `GET /research/signals` API-Endpoint | Codex | ⏳ |
-| 4.8 | Watchlist-Boost-Integration in signals CLI | Codex | ⏳ |
-| 4.9 | Tests für Signal-CLI + API | Codex | ⏳ |
+| 4.6 | `research signals [--watchlist <tag>] [--min-priority 8]` CLI | — | ✅ |
+| 4.7 | `GET /research/signals` API-Endpoint | — | ✅ |
+| 4.8 | Watchlist-Boost-Integration in signals CLI | — | ✅ |
+| 4.9 | Tests für Signal-CLI + API | — | ✅ |
 
 **Codex-Spec für 4.6–4.9:**
 
