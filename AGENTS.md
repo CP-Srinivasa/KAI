@@ -218,7 +218,7 @@ app/
 monitor/             → user-editable source lists, keywords, watchlists
   historical_events.yml → 13 Seed-Events für analog matching
 docker/              → Dockerfile (production), docker-compose.yml
-tests/unit/          → pytest unit tests (340 passing — ruff clean)
+tests/unit/          → pytest unit tests (445 passing — ruff clean)
 ```
 
 ---
@@ -254,7 +254,7 @@ Jeder Agent darf nur in seinem Bereich schreiben. Grenzüberschreitungen erforde
 |---|---|
 | **Ingestion → Storage** | Adapter liefert `FetchResult`. `persist_fetch_result()` in `app/storage/document_ingest.py` ist der einzige Einstiegspunkt für Persistierung nach Ingest. |
 | **Storage → Analysis** | `DocumentRepository.list(is_analyzed=False)` liefert die Analyse-Queue. Nie direkt ORM-Modelle an Pipeline übergeben. |
-| **Analysis → Storage** | `PipelineResult.apply_to_document()` mutiert `CanonicalDocument`. Danach `repo.update_analysis(doc)`. Kein anderer Pfad. |
+| **Analysis → Storage** | `PipelineResult.apply_to_document()` mutiert `CanonicalDocument`. Danach `repo.update_analysis(doc_id, result)`. Kein anderer Pfad. |
 | **Pipeline Entry-Point** | `run_rss_pipeline()` in `app/pipeline/service.py` ist der kanonische End-to-End-Einstiegspunkt. CLI `pipeline run` und Scheduler rufen ausschließlich diese Funktion auf. |
 | **Analysis → Alerting** | `is_alert_worthy(result, min_priority)` ist das einzige Gate. Kein direkter Score-Zugriff in Alert-Code. |
 | **LLM Provider** | Immer über `BaseAnalysisProvider.analyze()`. Nie direkt `openai.ChatCompletions` im Business-Code aufrufen. |
@@ -302,7 +302,7 @@ Jeder Agent darf nur in seinem Bereich schreiben. Grenzüberschreitungen erforde
 | PD Provider | ✅ | Claude (Anthropic) + Gemini Provider-Implementierungen |
 | P7 Alerting | ✅ | app/alerts/ — Telegram, Email, ThresholdEngine, DigestCollector, AlertService, CLI alerts, API /alerts/test |
 
-**Test-Stand**: 445 passed, 0 failed, 0 xfailed
+**Test-Stand**: 461 passed, 0 failed, 0 xfailed
 
 Vollständige Task-Liste → [TASKLIST.md](./TASKLIST.md)
 
@@ -391,7 +391,7 @@ Vollständige Dokumentation → [docs/security.md](./docs/security.md)
 
 ```bash
 # Tests + Lint (lokal)
-pytest                                    # 353+ Tests (alle)
+pytest                                    # 445+ Tests (alle)
 ruff check .                              # Lint (muss fehlerfrei sein)
 mypy app/                                 # Typ-Check (optional)
 

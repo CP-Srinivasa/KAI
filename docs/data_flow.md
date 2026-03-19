@@ -201,11 +201,11 @@ Implementation: `DocumentStatus` enum in `app/core/enums.py`
 
 | Status | Meaning | Set by |
 |---|---|---|
-| `pending` | in-memory, not yet in DB | `prepare_ingested_document()` |
-| `persisted` | saved to DB, waiting for analysis | `DocumentRepository.save()` |
-| `analyzed` | analysis complete, scores written | `DocumentRepository.update_analysis()` |
-| `failed` | non-recoverable error, kept for audit | ingest or analysis error handler |
-| `duplicate` | blocked at dedup gate | `persist_fetch_result()` |
+| `pending` | in-memory, not yet in DB | `prepare_ingested_document()` in `document_ingest.py` |
+| `persisted` | saved to DB, waiting for analysis | `DocumentRepository.save_document()` |
+| `analyzed` | analysis complete, scores written | `DocumentRepository.update_analysis(doc_id, result)` |
+| `failed` | non-recoverable error, kept for audit | `repo.update_status(FAILED)` — called from ingest, pipeline, and CLI error handlers |
+| `duplicate` | blocked at dedup gate — **not saved to DB** | detected in-memory by `persist_fetch_result()`; `repo.mark_duplicate()` for already-persisted docs only |
 
 ---
 
@@ -238,6 +238,32 @@ Each step should log:
 - output
 - errors
 - timing
+
+---
+
+## Precise Layer Boundaries
+
+These boundaries define exactly where each phase ends and the next begins.
+No code may cross a boundary without going through the defined entry point.
+
+| Boundary | Ends at | Begins at | Contract object |
+|---|---|---|---|
+| **Ingestion ends** | `BaseSourceAdapter.fetch()` returns `FetchResult` | — | `FetchResult` |
+| **Persistence begins** | — | `persist_fetch_result(session_factory, result)` in `document_ingest.py` | `FetchResult` → `CanonicalDocument` (status=PERSISTED) |
+| **Normalization** | Inside adapter: `normalize_fetch_item()` | — | `FetchItem` → `CanonicalDocument` |
+| **Deduplication** | Inside `persist_fetch_result()` | — | `Deduplicator.filter_scored()` |
+| **Analysis begins** | — | `AnalysisPipeline.run_batch(docs)` where `docs` have `status=PERSISTED` | `CanonicalDocument` → `PipelineResult` |
+| **Scoring embedded** | — | `PipelineResult.apply_to_document()` — the only score mutation point | `AnalysisResult` → `CanonicalDocument` fields |
+| **Analysis storage** | — | `DocumentRepository.update_analysis(doc_id, result)` | `AnalysisResult` → DB scores, `status=ANALYZED` |
+| **Alerting** | — | `AlertService.process_document(doc, result, spam_prob)` | gated by `ThresholdEngine.should_alert()` |
+
+Rules:
+- `FetchResult` is read-only after creation — no mutation downstream
+- `persist_fetch_result()` is the ONLY consumer of `FetchResult` that writes to DB
+- `AnalysisPipeline.run()` input is always `CanonicalDocument` with `status=PERSISTED`
+- `apply_to_document()` is the ONLY score mutation point (Invariant I-4)
+- `update_analysis()` is the ONLY DB write path for analysis scores
+- No LLM calls inside any DB session — analysis runs between two separate sessions
 
 ---
 

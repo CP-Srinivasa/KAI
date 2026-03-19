@@ -47,7 +47,10 @@ def compute_priority(
 ) -> PriorityScore:
     """Compute a priority score (1–10) from an AnalysisResult.
 
-    spam_probability must be passed separately — it is not stored on AnalysisResult.
+    spam_probability MUST be passed as an explicit parameter — even though
+    AnalysisResult carries a spam_probability field, callers must supply it
+    separately to make the scoring input auditable and independent of result
+    mutation order (apply_to_document() may update result fields in-place).
     Returns a PriorityScore with the integer priority and audit info.
     """
     actionable_value = 1.0 if result.actionable else 0.0

@@ -41,8 +41,10 @@ Rules:
 - As close to the source as possible — minimal transformation before `normalize_fetch_item()`
 - `metadata` is a free-form bag for source-specific extras (image URL, author, feed tags, …)
 
-Migration note: `FetchResult.documents` currently holds `list[CanonicalDocument]`.
-Target state: adapters produce `list[FetchItem]`, normalization runs in `persist_fetch_result()`.
+Implementation: Adapters create `FetchItem` internally, then call `normalize_fetch_item()` to
+convert to `CanonicalDocument`. `FetchResult.documents` carries `list[CanonicalDocument]` by design.
+Normalization is adapter-owned — it must NOT move into `persist_fetch_result()`, which is a
+storage helper and must not contain source-type-specific transformation logic.
 
 ---
 
@@ -117,7 +119,8 @@ class AnalysisResult(BaseModel):
     relevance_score: float              # [0.0, 1.0] — blended with keyword hits by apply_to_document()
     impact_score: float                 # [0.0, 1.0]
     novelty_score: float                # [0.0, 1.0]
-    confidence_score: float             # [0.0, 1.0]
+    confidence_score: float             # [0.0, 1.0] — in-memory only, NOT persisted to DB
+                                        # DB stores credibility_score = 1.0 - spam_probability
 
     market_scope: MarketScope | None
     affected_assets: list[str]
@@ -158,7 +161,7 @@ pending → persisted → analyzed
 | `pending` | in-memory only — not yet saved to DB | `prepare_ingested_document()` in `document_ingest.py` |
 | `persisted` | saved to DB, awaiting analysis | `DocumentRepository.save_document()` |
 | `analyzed` | scores written, pipeline complete | `DocumentRepository.update_analysis()` |
-| `failed` | non-recoverable error — kept for audit | `repo.update_status(FAILED)` in pipeline error handler |
+| `failed` | non-recoverable error — kept for audit | `repo.update_status(FAILED)` — ingest, `run_rss_pipeline()`, and `analyze_pending` CLI error handlers |
 | `duplicate` | blocked at dedup gate — NOT saved | detected in-memory; `repo.mark_duplicate()` for retroactive marking |
 
 Important: `DUPLICATE` and `FAILED` at the ingest stage are **in-memory states**.
@@ -181,7 +184,7 @@ Every layer has a defined input and output. No layer may bypass another.
 | Boundary | Rule |
 |---|---|
 | Ingestion → Storage | adapter returns `FetchResult`; only `persist_fetch_result()` persists |
-| Storage → Analysis | `repo.list(is_analyzed=False, is_duplicate=False)` feeds the analysis queue |
+| Storage → Analysis | `repo.get_pending_documents()` feeds the analysis queue — filters `status=PERSISTED` (not just flags) |
 | Analysis → Storage | `apply_to_document()` then `repo.update_analysis()` — no other path |
 | Analysis → Alerting | `is_alert_worthy()` is the only gate — no direct score access |
 | LLM calls | always via `BaseAnalysisProvider.analyze()` — never direct SDK calls |

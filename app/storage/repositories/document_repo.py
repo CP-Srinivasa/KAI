@@ -41,9 +41,15 @@ class DocumentRepository:
         return str(persisted_doc.id)
 
     async def get_pending_documents(self, limit: int = 50) -> list[CanonicalDocument]:
-        """Return documents that are persisted and waiting for analysis."""
+        """Return documents in status=PERSISTED that are waiting for analysis.
+
+        Filters explicitly on status=PERSISTED so FAILED and DUPLICATE documents
+        are never returned for re-analysis.  The is_analyzed/is_duplicate flags
+        are kept as secondary guards for backward-compat DB queries only.
+        """
         stmt = (
             select(CanonicalDocumentModel)
+            .where(CanonicalDocumentModel.status == DocumentStatus.PERSISTED.value)
             .where(CanonicalDocumentModel.is_analyzed == False)  # noqa: E712
             .where(CanonicalDocumentModel.is_duplicate == False)  # noqa: E712
             .order_by(CanonicalDocumentModel.published_at.desc())
