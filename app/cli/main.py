@@ -867,6 +867,30 @@ def research_evaluate(
         from app.analysis.keywords.engine import KeywordEngine
         from app.analysis.pipeline import AnalysisPipeline
         from app.research.evaluation import compare_outputs
+
+        out_path = Path(output_file)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+
+        count = export_training_data(docs, out_path)
+        console.print(
+            f"[green]Successfully exported {count} documents to {out_path.absolute()}[/green]"
+        )
+
+    asyncio.run(run())
+
+
+@research_app.command("evaluate")
+def research_evaluate(
+    teacher_source: str = typer.Option("external_llm", help="The baseline extraction source"),
+    limit: int = typer.Option(50, help="Number of documents to evaluate over"),
+) -> None:
+    """Run the internal companion model against teacher outputs and print metrics."""
+    import asyncio
+
+    async def run() -> None:
+        from app.analysis.keywords.engine import KeywordEngine
+        from app.analysis.pipeline import AnalysisPipeline
+        from app.research.evaluation import compare_outputs
         from app.storage.db.session import build_session_factory
         from app.storage.repositories.document_repo import DocumentRepository
 
@@ -907,19 +931,5 @@ def research_evaluate(
         from rich.table import Table
         table = Table(title="Companion Evaluation Metrics")
         table.add_column("Metric", style="cyan")
-        table.add_column("Value", justify="right")
-
-        table.add_row("Dataset Size", str(metrics.document_count))
-        table.add_row("Sentiment Match", f"{metrics.sentiment_accuracy:.1%}")
-        table.add_row("Actionable Match", f"{metrics.actionable_accuracy:.1%}")
-        table.add_row("Priority MSE", f"{metrics.priority_mse:.3f}")
-        table.add_row("Relevance MSE", f"{metrics.relevance_mse:.3f}")
-        table.add_row("Impact MSE", f"{metrics.impact_mse:.3f}")
-
-        console.print(table)
-
-    asyncio.run(run())
-
-
 if __name__ == "__main__":
     app()

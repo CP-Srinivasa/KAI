@@ -1,8 +1,22 @@
-"""Evaluation module for comparing models against a baseline."""
+"""Evaluation module for comparing models against a baseline.
 
-from dataclasses import dataclass
+Two evaluation surfaces:
+- compare_outputs(): live CanonicalDocument comparison (Sprint 5 / evaluate CLI)
+- compare_datasets(): offline JSONL export comparison (Sprint 6 / distillation readiness)
+
+Contract reference: docs/contracts.md §16
+"""
+
+import json
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any
 
 from app.core.domain.document import CanonicalDocument
+
+# ---------------------------------------------------------------------------
+# Sprint 5 / evaluate CLI — live CanonicalDocument comparison (unchanged)
+# ---------------------------------------------------------------------------
 
 
 @dataclass
@@ -53,7 +67,7 @@ def compare_outputs(
         if t_act == c_act:
             matched_acts += 1
 
-        p_err = (float(t_doc.priority_score or 1) - float(c_doc.priority_score or 1))
+        p_err = float(t_doc.priority_score or 1) - float(c_doc.priority_score or 1)
         p_err_sq += p_err * p_err
 
         r_err = (t_doc.relevance_score or 0.0) - (c_doc.relevance_score or 0.0)
@@ -75,4 +89,169 @@ def compare_outputs(
         relevance_mse=r_err_sq / count,
         impact_mse=i_err_sq / count,
         novelty_mse=n_err_sq / count,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Sprint 6 — offline JSONL dataset comparison
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class EvaluationMetrics:
+    """Aggregate metrics from an offline JSONL dataset comparison.
+
+    All error metrics use MAE (mean absolute error), not MSE, for interpretability.
+    """
+
+    sentiment_agreement: float  # fraction of rows where sentiment_label matches (0.0–1.0)
+    priority_mae: float         # mean absolute error on priority_score (1–10 scale)
+    relevance_mae: float        # mean absolute error on relevance_score (0.0–1.0)
+    impact_mae: float           # mean absolute error on impact_score (0.0–1.0)
+    tag_overlap_mean: float     # average Jaccard similarity of tags lists (0.0–1.0)
+    sample_count: int           # number of rows successfully paired and evaluated
+    missing_pairs: int          # baseline rows with no matching document_id in teacher set
+
+
+@dataclass
+class EvaluationReport:
+    """Full report from compare_datasets().
+
+    dataset_type identifies the baseline tier being evaluated:
+    - "rule_baseline"       — comparing teacher vs Tier 1 (rule-based) outputs
+    - "internal_benchmark"  — comparing teacher vs Tier 2 (internal/companion) outputs
+    - "custom"              — any other comparison
+    """
+
+    metrics: EvaluationMetrics
+    dataset_type: str
+    teacher_count: int
+    baseline_count: int
+    paired_count: int
+    notes: list[str] = field(default_factory=list)
+
+
+def load_jsonl(path: Path | str) -> list[dict[str, Any]]:
+    """Load a JSONL export file into a list of row dicts.
+
+    Compatible with the format produced by export_training_data().
+    """
+    rows: list[dict[str, Any]] = []
+    with Path(path).open("r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if line:
+                rows.append(json.loads(line))
+    return rows
+
+
+def _extract_target(row: dict[str, Any]) -> dict[str, Any]:
+    """Extract the assistant target dict from a JSONL row."""
+    content = row["messages"][2]["content"]
+    if isinstance(content, str):
+        return json.loads(content)  # type: ignore[no-any-return]
+    return dict(content)
+
+
+def _jaccard(a: list[str], b: list[str]) -> float:
+    """Jaccard similarity between two tag lists. Both empty → 1.0."""
+    sa, sb = set(a), set(b)
+    if not sa and not sb:
+        return 1.0
+    union = sa | sb
+    return len(sa & sb) / len(union) if union else 0.0
+
+
+def _mean(vals: list[float]) -> float:
+    return sum(vals) / len(vals) if vals else 0.0
+
+
+def compare_datasets(
+    teacher_rows: list[dict[str, Any]],
+    baseline_rows: list[dict[str, Any]],
+    *,
+    dataset_type: str = "rule_baseline",
+) -> EvaluationReport:
+    """Compare exported baseline rows against teacher rows, matched by document_id.
+
+    Contract reference: docs/contracts.md §16b
+
+    Args:
+        teacher_rows:  JSONL rows produced by export_training_data(teacher_only=True).
+                       Must have metadata.analysis_source == "external_llm".
+        baseline_rows: JSONL rows from rule or internal tier export.
+                       dataset_type distinguishes the comparison surface.
+        dataset_type:  "rule_baseline" | "internal_benchmark" | "custom"
+
+    Returns:
+        EvaluationReport with per-metric MAE and Jaccard tag overlap.
+
+    Notes:
+        - Matching is by metadata.document_id (not list position).
+        - Baseline rows without a matching teacher row are counted in missing_pairs.
+        - No LLM calls, no model inference — pure score comparison.
+    """
+    teacher_index: dict[str, dict[str, Any]] = {
+        row["metadata"]["document_id"]: _extract_target(row) for row in teacher_rows
+    }
+
+    sentiment_matches = 0
+    priority_errors: list[float] = []
+    relevance_errors: list[float] = []
+    impact_errors: list[float] = []
+    tag_overlaps: list[float] = []
+    missing = 0
+    paired = 0
+
+    for row in baseline_rows:
+        doc_id = row["metadata"]["document_id"]
+        if doc_id not in teacher_index:
+            missing += 1
+            continue
+
+        teacher = teacher_index[doc_id]
+        baseline = _extract_target(row)
+        paired += 1
+
+        if teacher.get("sentiment_label") == baseline.get("sentiment_label"):
+            sentiment_matches += 1
+
+        priority_errors.append(
+            abs(
+                float(teacher.get("priority_score", 1))
+                - float(baseline.get("priority_score", 1))
+            )
+        )
+        relevance_errors.append(
+            abs(
+                float(teacher.get("relevance_score", 0.0))
+                - float(baseline.get("relevance_score", 0.0))
+            )
+        )
+        impact_errors.append(
+            abs(
+                float(teacher.get("impact_score", 0.0))
+                - float(baseline.get("impact_score", 0.0))
+            )
+        )
+        tag_overlaps.append(
+            _jaccard(teacher.get("tags", []), baseline.get("tags", []))
+        )
+
+    metrics = EvaluationMetrics(
+        sentiment_agreement=sentiment_matches / paired if paired else 0.0,
+        priority_mae=_mean(priority_errors),
+        relevance_mae=_mean(relevance_errors),
+        impact_mae=_mean(impact_errors),
+        tag_overlap_mean=_mean(tag_overlaps),
+        sample_count=paired,
+        missing_pairs=missing,
+    )
+
+    return EvaluationReport(
+        metrics=metrics,
+        dataset_type=dataset_type,
+        teacher_count=len(teacher_rows),
+        baseline_count=len(baseline_rows),
+        paired_count=paired,
     )

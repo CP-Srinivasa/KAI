@@ -482,6 +482,108 @@ Acceptance Criteria:
 
 ---
 
+## Sprint 6 — Dataset Construction, Evaluation Harness, Distillation Readiness
+
+**Ziel**: Den bestehenden Intelligence-Stack für Distillation vorbereiten, ohne neue Runtime-Architektur
+zu bauen. Sprint 6 liefert klare Dataset-Rollen, einen offline Evaluation Harness und die
+Readiness-Regeln für Teacher/Benchmark/Baseline.
+
+**Contract-Basis**:
+- `docs/dataset_evaluation_contract.md`
+- `docs/contracts.md §17`
+- `docs/intelligence_architecture.md §Distillation Path`
+
+| # | Task | Agent | Status |
+|---|---|---|---|
+| 6.1 | Teacher-only dataset export — `export_training_data(teacher_only=True)` + I-27 function-level guard | Claude Code | ✅ |
+| 6.2 | CLI: `dataset-export --teacher-only` flag + `--source-type internal/rule` für Benchmark/Baseline | Codex | ⏳ |
+| 6.3 | CLI: `research evaluate-datasets` — JSONL-Export vergleichen, Rich-Tabelle ausgeben | Codex | ⏳ |
+| 6.4 | `compare_datasets()` — JSONL-basierter Harness, Join über `document_id` | Claude Code | ✅ |
+| 6.5 | Pflichtmetriken: `sentiment_agreement`, `priority_mae`, `relevance_mae`, `impact_mae`, `tag_overlap_mean` | Claude Code | ✅ |
+| 6.6 | `load_jsonl()` Helper für offline JSONL-Vergleich | Claude Code | ✅ |
+| 6.7 | Contract-Abnahme + Commit | Claude Code | ⏳ |
+
+**Codex-Spec für Sprint 6.2 — CLI-Erweiterung:**
+
+```
+## Task: Sprint 6.2 — Dataset Export CLI --teacher-only Flag
+
+Agent: Codex
+Phase: Sprint 6
+Modul: app/cli/main.py
+Typ: feature (minimal, kein Interface-Break)
+
+Beschreibung:
+  Ergänze den bestehenden `research dataset-export` CLI-Befehl um ein --teacher-only Flag.
+  Die Funktion export_training_data(teacher_only=True) ist bereits implementiert.
+  Nur der CLI-Hookup fehlt.
+
+Spec-Referenz: docs/contracts.md §16d, I-27
+
+Änderungen in app/cli/main.py:
+  In research_dataset_export():
+    teacher_only: bool = typer.Option(False, "--teacher-only", help="Export only EXTERNAL_LLM rows (strict mode, I-27)")
+
+  Aufruf:
+    count = export_training_data(docs, out_path, teacher_only=teacher_only)
+
+  Hinweis: CLI-Vorfilter über source_type bleibt zusätzlich erhalten — beide Mechanismen
+  können kombiniert werden (--source-type external_llm --teacher-only = maximale Sicherheit).
+
+Constraints:
+  - NICHT: export_training_data() ändern (bereits implementiert und getestet)
+  - NICHT: DB-Schema oder Repository ändern
+  - NICHT: Neue Module anlegen
+
+Akzeptanzkriterien:
+  - [ ] ruff check . sauber
+  - [ ] pytest tests/unit/ grün (keine Regression)
+  - [ ] CLI `research dataset-export teacher.jsonl --teacher-only` exportiert nur external_llm Rows
+  - [ ] `research dataset-export benchmark.jsonl --source-type internal` exportiert interne Rows
+```
+
+**Codex-Spec für Sprint 6.3 — evaluate-datasets CLI:**
+
+```
+## Task: Sprint 6.3 — research evaluate-datasets CLI
+
+Agent: Codex
+Phase: Sprint 6
+Modul: app/cli/main.py
+Typ: feature
+
+Beschreibung:
+  Neuer CLI-Befehl `research evaluate-datasets --teacher <file> --baseline <file>`.
+  Lädt zwei JSONL-Dateien und ruft compare_datasets() auf.
+  Gibt EvaluationReport als Rich-Tabelle aus.
+
+Spec-Referenz: docs/contracts.md §16b, §17
+
+Neuer CLI-Befehl:
+  @research_app.command("evaluate-datasets")
+  def research_evaluate_datasets(
+      teacher_file: str = typer.Argument(...),
+      baseline_file: str = typer.Argument(...),
+      dataset_type: str = typer.Option("rule_baseline", help="rule_baseline|internal_benchmark|custom"),
+  )
+    → load_jsonl(teacher_file) + load_jsonl(baseline_file)
+    → compare_datasets(teacher_rows, baseline_rows, dataset_type=dataset_type)
+    → Rich Table: alle EvaluationMetrics Felder + teacher/baseline/paired count
+
+Constraints:
+  - KEINE LLM-Calls, kein Model-Loading
+  - KEIN neues Module anlegen
+  - compare_datasets() und load_jsonl() sind bereits fertig — nur CLI-Hookup
+
+Akzeptanzkriterien:
+  - [ ] ruff check . sauber
+  - [ ] pytest tests/unit/ grün (neue Tests für CLI optional)
+  - [ ] `research evaluate-datasets teacher.jsonl rule.jsonl` gibt korrekte Metriken aus
+  - [ ] Fehlermeldung wenn Datei nicht existiert
+```
+
+---
+
 ## Sprint 5 — Intelligence Layer (Companion Model)
 
 > **Startet erst nach Sprint 4C-Abschluss.**

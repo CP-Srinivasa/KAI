@@ -684,23 +684,22 @@ class AnalysisSource(StrEnum):
     EXTERNAL_LLM = "external_llm"  # Tier 3 — OpenAI / Anthropic / Gemini
 ```
 
-**Current implementation**: `AnalysisSource` is a **computed property** on `CanonicalDocument`,
-derived from `doc.provider`. It is NOT yet a persisted DB column (Sprint 5B pending).
+**Current implementation**:
+- `CanonicalDocument.analysis_source: AnalysisSource | None` exists as an explicit field
+- `AnalysisResult.analysis_source: AnalysisSource | None` exists as an explicit field
+- `canonical_documents.analysis_source` is a persisted DB column (migration `0006`)
+- `CanonicalDocument.effective_analysis_source` remains the backward-compatible accessor for legacy rows
 
 ```python
-# app/core/domain/document.py — @property (derived, not stored)
-@property
-def analysis_source(self) -> AnalysisSource:
-    provider = (self.provider or "").strip().lower()
-    if not provider or provider in {"fallback", "rule"}:     → RULE
-    if provider in {"internal", "companion"}:                → INTERNAL
-    if provider.startswith("ensemble("):                     → INTERNAL (conservative)
-    else:                                                    → EXTERNAL_LLM
+# app/core/domain/document.py — compatibility accessor
+doc.analysis_source                 # explicit persisted field when available
+doc.effective_analysis_source       # explicit field first, legacy fallback second
 ```
 
-**Sprint 5B**: Introduce as a persisted DB column (`canonical_documents.analysis_source VARCHAR(20)`)
-so that `EnsembleProvider` correctly records the actual winning provider's tier at analysis time,
-not at export time. The computed property will remain as a backward-compatibility fallback.
+**Post Sprint 5C behavior**:
+- the pipeline writes `analysis_source` at analysis-result creation time
+- winner-traceability writes the actual winning provider name to `doc.provider`
+- legacy composite provider strings remain compatibility-only and must not drive new filtering logic
 
 Invariants:
 - `analysis_source=RULE` documents NEVER serve as distillation teacher signal (I-19)
@@ -861,10 +860,11 @@ format with an explicit reasoning corpus, independently of `export_training_data
 | Value | Meaning | `doc.provider` values | Use as teacher? |
 |-------|---------|----------------------|-----------------|
 | `"external_llm"` | External LLM (OpenAI, Anthropic, Gemini) | `"openai"`, `"anthropic"`, `"gemini"`, etc. | ✅ yes |
-| `"internal"` | Tier 2 analysis (heuristic or companion HTTP) | `"internal"`, `"companion"`, `"ensemble(...)"` | ⚠️ evaluation only |
+| `"internal"` | Tier 2 analysis (heuristic or companion HTTP) | `"internal"`, `"companion"` | ⚠️ evaluation only |
 | `"rule"` | Rule-based / fallback analysis | `None`, `"fallback"`, `"rule"` | ❌ no (I-19) |
 
-**Source of truth**: `doc.effective_analysis_source` (`CanonicalDocument`, `app/core/domain/document.py`).
+**Source of truth**: exported `metadata["analysis_source"]`, produced from
+`doc.effective_analysis_source` (`CanonicalDocument`, `app/core/domain/document.py`).
 
 ```python
 # Backward-compatible accessor (current implementation):
@@ -875,12 +875,10 @@ doc.effective_analysis_source
 
 The export reads `doc.effective_analysis_source.value` — never derives analysis_source inline.
 
-**EnsembleProvider**: `doc.provider = "ensemble(openai,internal)"` maps to `"internal"` (conservative).
-See §13e for the full explanation and Sprint 5B fix.
-
-**Sprint 5B**: `analysis_source: AnalysisSource | None` is already on `CanonicalDocument` and `AnalysisResult`.
-The DB migration will enable it to be written at `apply_to_document()` time. Until then it is `None`
-and `effective_analysis_source` derives from `doc.provider` as fallback.
+**EnsembleProvider**:
+- post Sprint 5C, `doc.provider` stores the winner name, not the composite string
+- legacy rows with `doc.provider="ensemble(...)"` remain compatibility-only and map conservatively
+  to `"internal"` through `effective_analysis_source`
 
 ---
 
@@ -1207,25 +1205,31 @@ This guarantees no consumer ever branches on `provider` for tier decisions.
 
 ---
 
-### 16. Sprint-5D — Distillation Corpus Safety + Evaluation Baseline
+### 16. Sprint-6 — Distillation Corpus Safety + Evaluation Baseline
 
-Defines the final hardening layer before Sprint 6 (teacher-only export, evaluation metrics, corpus integrity).
+**Status: ✅ Implemented (Sprint 6)**
+
+Implemented in this sprint:
+- `export_training_data(teacher_only=True)` — function-level teacher guard (I-27) ✅
+- `compare_datasets()` — JSONL-based offline evaluation harness with 5 mandatory metrics ✅
+- `EvaluationMetrics` / `EvaluationReport` dataclasses ✅
+- `load_jsonl()` helper ✅
+- 19 new tests covering all modes and edge cases ✅
 
 ---
 
-#### 16a. The Gap: Teacher-Eligibility Enforced Only at CLI Layer
+#### 16a. Teacher-Eligibility at Function Level ✅
 
 After Sprint-5C, `analysis_source=EXTERNAL_LLM` is written correctly for all new analyzed documents.
+Sprint-6 closes the direct-API-caller gap by adding `teacher_only=True` at function level.
 
 **Current safety coverage:**
 
 | Call path | Teacher filter applied? |
 |---|---|
 | `research dataset-export --source-type external_llm` (CLI) | ✅ before calling `export_training_data()` |
-| `export_training_data(docs, path)` (direct API call) | ❌ no filter — caller must pre-filter |
-| `export_training_data(docs, path, teacher_only=True)` | ❌ parameter does not yet exist |
-
-The gap: any code that calls `export_training_data()` directly without pre-filtering receives the full set including RULE and INTERNAL documents. This violates the spirit of I-16/I-19 if a caller accidentally passes an unfiltered list.
+| `export_training_data(docs, path)` (direct API call, default) | ✅ no filter — caller responsible (unchanged) |
+| `export_training_data(docs, path, teacher_only=True)` | ✅ function-level strict guard (I-27) |
 
 ---
 
@@ -1313,17 +1317,51 @@ The evaluation command MUST NOT call any external API. All inference in Sprint-5
 
 ---
 
-#### 16f. Sprint-5D Acceptance Criteria
+#### 16f. Sprint-6 Acceptance Criteria ✅
 
-All must hold before Sprint-6 begins:
+All conditions satisfied in Sprint 6:
 
-1. `export_training_data(docs, path, teacher_only=True)` skips RULE and INTERNAL docs
-2. `export_training_data(docs, path)` (default, no flag) — unchanged behavior
-3. `export_training_data(docs, path, teacher_only=True)` with legacy row (`analysis_source=None`) → skipped
-4. CLI `dataset-export --teacher-only` → calls function with `teacher_only=True`
-5. `pytest` passes (all existing + new corpus-safety tests)
-6. `ruff check .` clean
-7. `compare_outputs()` and `research evaluate` CLI work without changes
+1. ✅ `export_training_data(docs, path, teacher_only=True)` skips RULE and INTERNAL docs
+2. ✅ `export_training_data(docs, path)` (default, no flag) — unchanged behavior
+3. ✅ `export_training_data(docs, path, teacher_only=True)` with legacy row (`analysis_source=None`) → skipped (strict mode)
+4. ⏳ CLI `dataset-export --teacher-only` flag → Codex task 6.2
+5. ✅ `pytest` passes (22 tests in test_datasets.py + test_evaluation.py, 550+ total)
+6. ✅ `ruff check .` clean
+7. ✅ `compare_outputs()` and `research evaluate` CLI unchanged and passing
+
+---
+
+### 17. Sprint-6 — Dataset Construction, Evaluation Harness, Distillation Readiness
+
+**Status: ✅ Architecture and core harness implemented. Codex tasks 6.1–6.5 pending.**
+
+Core implementation in `app/research/datasets.py` and `app/research/evaluation.py`.
+
+Sprint 6 defines three dataset roles and one offline evaluation harness:
+- teacher-only dataset export (`teacher_only=True`) ✅
+- internal benchmark export (CLI `--source-type internal`) ⏳ Codex 6.2
+- rule baseline export (CLI `--source-type rule`) ⏳ Codex 6.2
+- dataset-to-dataset evaluation by `document_id` (`compare_datasets()`) ✅
+
+Mandatory role mapping:
+- `analysis_source=external_llm` → teacher-only dataset (fine-tuning eligible)
+- `analysis_source=internal` → internal benchmark (evaluation only, never teacher)
+- `analysis_source=rule` → rule baseline (floor metrics only, never teacher)
+
+Mandatory metric set (all implemented in `EvaluationMetrics`):
+- `sentiment_agreement` — fraction of rows with matching sentiment_label
+- `priority_mae` — mean absolute error on priority_score (1–10 scale)
+- `relevance_mae` — mean absolute error on relevance_score (0.0–1.0)
+- `impact_mae` — mean absolute error on impact_score (0.0–1.0)
+- `tag_overlap_mean` — average Jaccard similarity of tags lists
+
+Sprint-6 guardrails (all enforced):
+- no training on `rule` as teacher (I-19, I-30)
+- no training on `internal` as teacher (I-30)
+- teacher-only filtering uses `doc.analysis_source` directly (strict, not `effective_analysis_source`) (§16b, I-31)
+- evaluation matches rows by `metadata["document_id"]` only (I-32)
+
+Remaining Codex tasks: CLI `--teacher-only` flag, Rich table output for `compare_datasets`, test for CLI integration.
 
 ---
 
@@ -1359,5 +1397,10 @@ These may never be broken without a new spec:
 | I-24 | `_resolve_runtime_provider_name(provider)` resolves the winner name AFTER `analyze()` succeeds using duck-typed `active_provider_name`. `_resolve_analysis_source(winner_name)` then derives the tier. Neither is called in the error/fallback path — only `RULE` is valid when analysis failed. |
 | I-25 | `doc.provider` stores the **winning** provider name (e.g. `"openai"`, `"internal"`) — never the composite ensemble string. `doc.metadata["ensemble_chain"]` records the full ordered list for traceability. |
 | I-26 | Teacher eligibility is determined exclusively by `analysis_source=EXTERNAL_LLM`. `doc.provider`, `doc.metadata["ensemble_chain"]`, and all other metadata fields MUST NOT be used as teacher-eligibility criteria. No ensemble composition detail may bypass I-16 or I-19. |
-| I-27 | `export_training_data()` MUST enforce teacher-eligibility at the function level when `teacher_only=True`. CLI-layer pre-filtering is not sufficient — direct API callers must be protected by the same guardrail. |
+| I-27 | `export_training_data()` MUST enforce teacher-eligibility at the function level when `teacher_only=True`. Uses `doc.analysis_source` directly (not `effective_analysis_source`) — legacy rows without an explicit field are excluded. ✅ Implemented. |
 | I-28 | The `evaluate` CLI command compares teacher-labeled scores against rule-baseline scores (no LLM calls). This is the Sprint-6 baseline only — it does NOT represent companion-model accuracy until a real companion inference endpoint is configured. |
+| I-29 | Sprint-6 dataset roles are determined exclusively by `analysis_source`: `EXTERNAL_LLM` = teacher-only, `INTERNAL` = benchmark-only, `RULE` = baseline-only. |
+| I-30 | `INTERNAL` and `RULE` rows MUST NEVER be used as teacher labels for distillation, even when other metadata appears favorable. |
+| I-31 | Teacher-only filtering MUST use `doc.analysis_source` directly (strict mode, not `effective_analysis_source`) — never `provider`, `ensemble_chain`, source name, title, or URL. |
+| I-32 | `compare_datasets()` joins datasets by `metadata["document_id"]` only. No fuzzy matching by URL, title, or publish time is allowed. |
+| I-33 | The minimal Sprint-6 metric set is mandatory: `sentiment_agreement`, `priority_mae`, `relevance_mae`, `impact_mae`, and `tag_overlap_mean`. All are implemented in `EvaluationMetrics`. |

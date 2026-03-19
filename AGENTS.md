@@ -287,7 +287,10 @@ Jeder Agent darf nur in seinem Bereich schreiben. Grenzüberschreitungen erforde
 **Sprint 2 — Provider Consolidation** ✅ abgeschlossen
 **Sprint 3 — Alerting** ✅ abgeschlossen
 **Sprint 4 — Research & Signals** ✅ Phases A/B/C/D abgeschlossen
-**Sprint 5 — Intelligence Layer (Companion Model)** ⏳ geplant
+**Sprint 5B — analysis_source Provenance** ✅ Pipeline + Persistenz + DB-Spalte (migration 0006)
+**Sprint 5C — Winner-Traceability** ✅ EnsembleProvider winner → doc.provider, ensemble_chain, I-23–25
+**Sprint 5D — Corpus Safety + Eval Baseline** ✅ teacher_only I-27, compare_datasets(), EvaluationMetrics, I-27–33
+**Sprint 6 — Dataset + Evaluation Harness** ⏳ CLI-Erweiterungen (6.2/6.3) ausstehend
 
 | Phase | Status | Geliefert |
 |---|---|---|
@@ -295,20 +298,22 @@ Jeder Agent darf nur in seinem Bereich schreiben. Grenzüberschreitungen erforde
 | P2 Ingestion | ✅ | Source Registry, Classifier, RSS, CryptoPanic, CanonicalDocument, Dedup |
 | P3 Analysekern | ✅ | KeywordEngine, RuleAnalyzer, QueryExecutor, OpenAI Provider (structured), Pipeline, Historical Events, Validation |
 | P3.5 Contracts | ✅ | End-to-End Data Flow Contract, priority_score, spam_probability in DB, apply_to_document(), docs/data_flow.md |
-| P3.6 Pipeline Loop | ✅ | run_rss_pipeline(), pipeline run CLI, query list CLI, test_pipeline_service.py — Kernpfad geschlossen |
+| P3.6 Pipeline Loop | ✅ | run_rss_pipeline(), pipeline run CLI, query list CLI, test_pipeline_service.py |
 | P6 Audit | ✅ | 6 Architectural Invariants geprüft + behoben, tote Provider gelöscht, RSS-Guard, Security-Layer |
-| PA Hardening | ✅ | SSRF-Schutz, Bearer-Auth, Secrets-Validation, Pre-commit/Pre-push Hooks, CI-Security-Job, DocumentStatus-Enum, FetchResult-Contracts, docs/security.md |
-| PB Contracts | ✅ | docs/contracts.md, vollständige Error-Handling-Doku, Repository-Boundary-Doku |
+| PA Hardening | ✅ | SSRF-Schutz, Bearer-Auth, Secrets-Validation, Pre-commit/Pre-push Hooks, CI-Security-Job, docs/security.md |
+| PB Contracts | ✅ | docs/contracts.md §1–17, vollständige Error-Handling-Doku, Repository-Boundary-Doku |
 | PC Tests | ✅ | Test-Factory für AnalysisResult, kein Ad-hoc-Mocking mehr |
 | PD Provider | ✅ | Claude (Anthropic) + Gemini Provider-Implementierungen |
-| P7 Alerting | ✅ | app/alerts/ — Telegram, Email, ThresholdEngine, DigestCollector, AlertService, CLI alerts, API /alerts/test |
-| P8 Research Models | ✅ | app/research/ — WatchlistRegistry (multi-type: assets/persons/topics/sources), ResearchBrief+BriefFacet, ResearchBriefBuilder, SignalCandidate, extract_signal_candidates(), contracts.md §11, app/research/AGENTS.md |
-| P8 Research CLI | ✅ | app/cli/main.py — research brief, research watchlists, research signals commands |
-| P8 Intelligence Architecture | ✅ | docs/intelligence_architecture.md, docs/contracts.md §12–13, Drei-Tier-Stack definiert (Rule/Companion/External), AnalysisSource Enum, Distillation Path |
-| P8D Provider Tier Stack | ✅ | InternalModelProvider (Tier 2, heuristisch, zero deps), EnsembleProvider (ordered fallback), InternalCompanionProvider (Tier 2b, HTTP localhost), factory.py separation, I-20/21/22, 521 Tests |
-| P9 Intelligence Layer | ⏳ Sprint 5 | Training Corpus, Evaluation Harness, Distillation Pipeline, AnalysisSource DB Migration |
+| P7 Alerting | ✅ | app/alerts/ — Telegram, Email, ThresholdEngine, DigestCollector, AlertService, CLI alerts |
+| P8 Research Models | ✅ | WatchlistRegistry, ResearchBrief, SignalCandidate, extract_signal_candidates(), contracts.md §11 |
+| P8 Research CLI | ✅ | research brief/watchlists/signals/dataset-export/evaluate CLI commands |
+| P8D Provider Tier Stack | ✅ | InternalModelProvider, EnsembleProvider, InternalCompanionProvider, factory.py routing, I-20–22 |
+| P9A Provenance Stack | ✅ | AnalysisSource DB-Spalte (migration 0006), effective_analysis_source, Pipeline + Repo + Research consumers, I-18–19 |
+| P9B Winner-Traceability | ✅ | _resolve_runtime_provider_name, active_provider_name, provider_chain, ensemble_chain, E2E-Tests, I-23–26 |
+| P9C Corpus Safety | ✅ | teacher_only in export_training_data (I-27), compare_datasets + EvaluationMetrics + EvaluationReport + load_jsonl, dataset_evaluation_contract.md, contracts.md §16–17, I-27–33 |
+| P10 Distillation Readiness | ⏳ Sprint 6 | teacher/internal/rule CLI-Export-Runs, offline floor-gap Metriken, Evaluation-Report CLI |
 
-**Test-Stand**: 521 passed, 0 failed, 0 xfailed
+**Test-Stand**: 542 passed, 0 failed, 0 xfailed
 
 Vollständige Task-Liste → [TASKLIST.md](./TASKLIST.md)
 

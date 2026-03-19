@@ -1,12 +1,13 @@
 """Dataset export module for Companion Model ML tuning.
 
-Contract reference: docs/contracts.md §14
+Contract reference: docs/contracts.md §14, §16
 """
 
 import json
 from pathlib import Path
 
 from app.core.domain.document import CanonicalDocument
+from app.core.enums import AnalysisSource
 
 
 def _unique_strings(values: list[str]) -> list[str]:
@@ -55,7 +56,12 @@ def _build_export_metadata(doc: CanonicalDocument) -> dict[str, str]:
     }
 
 
-def export_training_data(documents: list[CanonicalDocument], output_path: Path) -> int:
+def export_training_data(
+    documents: list[CanonicalDocument],
+    output_path: Path,
+    *,
+    teacher_only: bool = False,
+) -> int:
     """Export analyzed documents to JSONL with structured training targets.
 
     The export stays aligned to the current intelligence contract:
@@ -64,11 +70,26 @@ def export_training_data(documents: list[CanonicalDocument], output_path: Path) 
     - free-form reasoning fields like chain-of-thought are not part of the format
     - dataset metadata carries provenance (provider, analysis_source)
     - analysis_source prefers the explicit field and falls back only for legacy rows
+
+    Args:
+        documents:    Analyzed CanonicalDocuments to export.
+        output_path:  Destination JSONL file path.
+        teacher_only: When True, only export documents where analysis_source is explicitly
+                      set to EXTERNAL_LLM (strict mode, I-27, §16c). Legacy rows without
+                      an explicit analysis_source field are excluded — intentionally
+                      conservative to prevent corpus contamination from pre-5B rows.
+                      CLI-layer pre-filtering is not sufficient for direct API callers.
     """
     count = 0
     with output_path.open("w", encoding="utf-8") as f:
         for doc in documents:
             if not doc.is_analyzed:
+                continue
+
+            # Strict teacher-eligibility check (I-27, §16c):
+            # Uses doc.analysis_source directly (not effective_analysis_source) so that
+            # legacy rows without an explicit field are excluded when teacher_only=True.
+            if teacher_only and doc.analysis_source != AnalysisSource.EXTERNAL_LLM:
                 continue
 
             text_block = (doc.cleaned_text or doc.raw_text or "").strip()

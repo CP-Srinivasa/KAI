@@ -215,18 +215,17 @@ EnsembleProvider(providers=[openai_provider, internal_provider])
 # model → actual winner's provider_name (tracked at runtime)
 ```
 
-### Sprint 5C — Priority Fallback Chain (planned)
+### Sprint 5C — EnsembleProvider Winner-Traceability ✅
 
-```
-1. Try configured external provider (Tier 3)
-2. If unavailable → try companion (Tier 2b, if companion_model_endpoint set)
-3. Always falls back to internal (Tier 2a, always available)
+Post-`analyze()` resolution via duck-typing:
+- `_resolve_runtime_provider_name(provider)` — reads `active_provider_name` from `EnsembleProvider` after `analyze()` completes
+- `_resolve_trace_metadata(provider)` — reads `provider_chain` from `EnsembleProvider` to build `ensemble_chain`
+- `_resolve_analysis_source(provider_name)` — string-based, maps winner name to `AnalysisSource`
 
-Result: always a valid AnalysisResult, never None
-```
-
-Currently: EnsembleProvider achieves this for specific configurations. Sprint 5C will automate
-the chain in the factory/pipeline layer.
+Result:
+- `doc.provider` = actual winning provider name (e.g. `"openai"`, `"internal"`)
+- `doc.analysis_source` = correct tier for the winner (never conservative `INTERNAL` override)
+- `doc.metadata["ensemble_chain"]` = ordered list of all configured providers (for audit)
 
 ---
 
@@ -242,63 +241,92 @@ class AnalysisSource(StrEnum):
     EXTERNAL_LLM = "external_llm"  # Tier 3 — OpenAI / Anthropic / Gemini
 ```
 
-### Computed Property — ✅ Implemented
+### Optional Field + Backward-Compat Property — ✅ Implemented (Sprint 5B)
 
 ```python
-# app/core/domain/document.py — @property (derived from doc.provider, NOT stored)
-doc.analysis_source: AnalysisSource
+# app/core/domain/document.py
+doc.analysis_source: AnalysisSource | None  # set by apply_to_document() via pipeline
+doc.effective_analysis_source: AnalysisSource  # @property — backward-compat accessor
 ```
 
-Derivation:
+`effective_analysis_source` derivation (fallback for legacy rows without DB column):
+- `doc.analysis_source is not None` → return it directly
 - `doc.provider in {None, "fallback", "rule"}` → `RULE`
 - `doc.provider in {"internal", "companion"}` → `INTERNAL`
-- `doc.provider.startswith("ensemble(")` → `INTERNAL` (conservative, Sprint 5B gap)
+- `doc.provider.startswith("ensemble(")` → `INTERNAL` (pre-5C composite guard)
 - else → `EXTERNAL_LLM`
 
-### DB Column — ⏳ Sprint 5B (planned)
+### DB Column — ✅ Implemented (Sprint 5B, migration 0006)
 
-`canonical_documents.analysis_source VARCHAR(20)` — Alembic migration required.
+`canonical_documents.analysis_source VARCHAR(20)` — Alembic migration `0006_add_analysis_source_column.py`.
 
-Once persisted, `EnsembleProvider` can write the actual winning provider's tier at
-`apply_to_document()` time. The computed property fallback remains for backward compatibility.
+`apply_to_document()` writes `doc.analysis_source` from `AnalysisResult.analysis_source` (set at
+pipeline result creation time). The `effective_analysis_source` property remains for backward
+compatibility with pre-5B rows.
 
-Enables (now via computed property, properly via DB column after Sprint 5B):
+Enables:
 - Distillation corpus selection: only `EXTERNAL_LLM` documents as teacher signal (I-19)
 - Quality reporting and filtering by tier in research outputs
-- EnsembleProvider winner traceability (Sprint 5B)
+- EnsembleProvider winner traceability (Sprint 5C)
 
 ---
 
-## Distillation Path (Sprint 6 — planned)
+## Distillation Path (Sprint 6 foundation)
+
+Detailed contract reference: [dataset_evaluation_contract.md](./dataset_evaluation_contract.md)
 
 ### Overview
 
 ```
-Tier 3 outputs (teacher)
+Teacher-only dataset
       │  analysis_source = EXTERNAL_LLM
       ▼
-Distillation Corpus  (DB query: analysis_source=EXTERNAL_LLM, is_analyzed=True)
+Distillation-ready corpus
       │
       ▼
-Offline Training  (fine-tuning or structured prediction head)
+Internal benchmark export
+      │  analysis_source = INTERNAL
+      ▼
+Rule baseline export
+      │  analysis_source = RULE
+      ▼
+Offline evaluation harness
       │
       ▼
-Evaluation Gate  (4 metrics, all must pass)
-      │
-      ├── PASS → promote to app/analysis/providers/companion.py
-      └── FAIL → annotate, retry, or escalate
+Distillation readiness report
 ```
 
-### Evaluation Gate
+Sprint 6 remains offline at the dataset boundary. The runtime foundation is already in place:
+- `export_training_data(..., teacher_only=True)` for strict teacher-only export
+- `compare_datasets()` and `load_jsonl()` for offline JSONL comparison
+- no new provider runtime or training engine introduced at this stage
 
-| Metric | Threshold | Description |
-|--------|-----------|-------------|
-| Sentiment accuracy | ≥ 0.85 | 3-class (BULLISH/BEARISH/NEUTRAL) |
-| Relevance MAE | ≤ 0.15 | Mean absolute error vs Tier 3 |
-| Impact MAE | ≤ 0.20 | Mean absolute error vs Tier 3 |
-| Actionable F1 | ≥ 0.75 | Binary classification |
+### Dataset Roles
 
-All four gates must pass. No partial promotions.
+| Role | `analysis_source` | Purpose |
+|------|-------------------|---------|
+| Teacher-only dataset | `EXTERNAL_LLM` | Teacher signal for distillation |
+| Internal benchmark export | `INTERNAL` | Measure internal quality against teacher outputs |
+| Rule baseline export | `RULE` | Measure deterministic floor and regression gap |
+
+Rules:
+- only `EXTERNAL_LLM` is teacher-eligible
+- `INTERNAL` is benchmark-only
+- `RULE` is baseline-only
+- teacher filtering uses `analysis_source` only
+
+### Required Evaluation Metrics
+
+| Metric | Meaning |
+|--------|---------|
+| `sentiment_agreement` | exact label agreement rate |
+| `priority_mae` | mean absolute deviation of priority score |
+| `relevance_mae` | mean absolute deviation vs teacher/reference |
+| `impact_mae` | mean absolute deviation vs teacher/reference |
+| `tag_overlap_mean` | mean Jaccard overlap of normalized tag sets |
+
+Thresholds are intentionally not frozen in the architecture layer yet.
+Sprint 6 first standardizes dataset roles, evaluation inputs, and minimal metrics.
 
 ---
 
@@ -331,16 +359,16 @@ All four gates must pass. No partial promotions.
 | 5B | `effective_analysis_source` property — backward-compat accessor | ✅ |
 | 5B | Pipeline: `_resolve_analysis_source()` + `apply_to_document()` write | ✅ |
 | 5B | Provenance in research outputs: briefs, signals, datasets | ✅ |
-| 5C | `EnsembleProvider` Winner-Traceability — post-analyze resolution | ⏳ |
-| 5C | `doc.provider` = winner name; `doc.metadata["ensemble_chain"]` = full list | ⏳ |
-| 6 | Distillation pipeline + evaluation gate automation | ⏳ |
+| 5C | `EnsembleProvider` Winner-Traceability — post-analyze resolution | ✅ |
+| 5C | `doc.provider` = winner name; `doc.metadata["ensemble_chain"]` = full list | ✅ |
+| 6 | Dataset construction + evaluation harness + distillation readiness | 🔄 |
 
 ---
 
 ## Invariants
 
 > Full invariant list is canonical in `docs/contracts.md §Immutable Invariants`.
-> Intelligence-layer invariants (I-14 through I-26) are listed here for quick reference.
+> Intelligence-layer invariants (I-14 through I-33) are listed here for quick reference.
 
 | ID | Rule |
 |----|------|
@@ -354,6 +382,13 @@ All four gates must pass. No partial promotions.
 | I-21 | `InternalCompanionProvider.provider_name` is always `"companion"` — distinct from `"internal"`. Factory routes `"internal"` → `InternalModelProvider`, `"companion"` → `InternalCompanionProvider` |
 | I-22 | `EnsembleProvider` requires at least one provider. `InternalModelProvider` MUST be last for guaranteed fallback. All fail → `RuntimeError` |
 | I-23 | `EnsembleProvider.model` MUST return the winning provider's `provider_name` immediately after `analyze()` completes — this is the canonical winner signal |
-| I-24 | `_resolve_analysis_source_from_winner(winning_name)` is called inside `isinstance(provider, EnsembleProvider)` guard AFTER `analyze()` succeeds. Never called in error/fallback paths. |
+| I-24 | `_resolve_runtime_provider_name(provider)` uses duck-typing (`getattr(provider, "active_provider_name", None)`) AFTER `analyze()` succeeds to resolve the winner. `_resolve_analysis_source(winner_name)` is then called string-based. Never invoked in error/fallback paths. |
 | I-25 | `doc.provider` stores the winning provider name (e.g. `"openai"`), never the composite ensemble string. `doc.metadata["ensemble_chain"]` records the full ordered list. |
 | I-26 | Teacher eligibility is determined exclusively by `analysis_source=EXTERNAL_LLM`. `doc.provider`, `doc.metadata["ensemble_chain"]`, and all other metadata MUST NOT be used as teacher-eligibility criteria. |
+| I-27 | `export_training_data(..., teacher_only=True)` is the function-level teacher guardrail. It filters strictly on `doc.analysis_source == EXTERNAL_LLM`; legacy rows without an explicit field are excluded in strict mode. |
+| I-28 | Current `evaluate` CLI is a baseline-only comparison path, not a full companion accuracy harness yet. |
+| I-29 | Sprint-6 dataset roles are determined only by `analysis_source`: teacher/external, benchmark/internal, baseline/rule. |
+| I-30 | `INTERNAL` and `RULE` rows are never teacher labels. |
+| I-31 | Teacher-only filtering must never branch on `provider` or `ensemble_chain`. |
+| I-32 | Evaluation joins datasets by `document_id` only. |
+| I-33 | Sprint-6 minimum metrics are `sentiment_agreement`, `priority_mae`, `relevance_mae`, `impact_mae`, `tag_overlap_mean`. |

@@ -173,3 +173,80 @@ def test_export_training_data_skips_documents_without_text(tmp_path: Path) -> No
     count = export_training_data([doc], out_file)
 
     assert count == 0
+
+
+# ---------------------------------------------------------------------------
+# Sprint 6 — teacher_only enforcement (I-27)
+# ---------------------------------------------------------------------------
+
+
+def test_export_training_data_teacher_only_exports_only_external_llm(tmp_path: Path) -> None:
+    """teacher_only=True must filter at function level, not just CLI layer (I-27)."""
+    teacher = make_document(
+        raw_text="Teacher content.",
+        is_analyzed=True,
+        provider="openai",
+        analysis_source=AnalysisSource.EXTERNAL_LLM,
+    )
+    rule_doc = make_document(
+        raw_text="Rule content.",
+        is_analyzed=True,
+        provider=None,
+        analysis_source=AnalysisSource.RULE,
+    )
+    internal_doc = make_document(
+        raw_text="Internal content.",
+        is_analyzed=True,
+        provider="internal",
+        analysis_source=AnalysisSource.INTERNAL,
+    )
+
+    out_file = tmp_path / "teacher.jsonl"
+    count = export_training_data([teacher, rule_doc, internal_doc], out_file, teacher_only=True)
+
+    assert count == 1
+    row = _read_jsonl_row(out_file)
+    assert row["metadata"]["analysis_source"] == "external_llm"
+    assert row["metadata"]["provider"] == "openai"
+
+
+def test_export_training_data_teacher_only_false_exports_all_analyzed(tmp_path: Path) -> None:
+    """teacher_only=False (default) must export all analyzed tiers."""
+    docs = [
+        make_document(
+            raw_text=f"Content {i}.",
+            is_analyzed=True,
+            analysis_source=src,
+        )
+        for i, src in enumerate(
+            [AnalysisSource.EXTERNAL_LLM, AnalysisSource.INTERNAL, AnalysisSource.RULE]
+        )
+    ]
+
+    out_file = tmp_path / "all.jsonl"
+    count = export_training_data(docs, out_file)
+
+    assert count == 3
+
+
+def test_export_training_data_teacher_only_excludes_legacy_rows_without_explicit_source(
+    tmp_path: Path,
+) -> None:
+    """teacher_only=True uses strict doc.analysis_source check (not effective_analysis_source).
+
+    Legacy rows without an explicit analysis_source field are excluded even when
+    doc.provider implies EXTERNAL_LLM. This prevents corpus contamination from pre-5B rows.
+    See §16c and I-27.
+    """
+    legacy_doc = make_document(
+        raw_text="Legacy openai content.",
+        is_analyzed=True,
+        provider="openai",
+        # analysis_source=None (not set) — legacy row, no explicit tier stored
+    )
+
+    out_file = tmp_path / "legacy_teacher.jsonl"
+    count = export_training_data([legacy_doc], out_file, teacher_only=True)
+
+    # Intentionally conservative: legacy rows are excluded to prevent contamination
+    assert count == 0
