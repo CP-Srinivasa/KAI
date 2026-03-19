@@ -936,6 +936,128 @@ If they become inconsistent with the code, the system becomes unstable.
 
 ---
 
+### 15. Sprint-5C — Winner-Traceability Contract
+
+Defines exactly how the winning provider is identified, stored, and used to derive
+`analysis_source` when `EnsembleProvider` is in the pipeline.
+
+---
+
+#### 15a. The Problem: Composite provider_name loses winner identity
+
+`EnsembleProvider.provider_name` is a static composite string built at construction time:
+
+```python
+"ensemble(openai,internal)"   # always this, regardless of who won
+```
+
+The pipeline (Sprint 5B) calls `_resolve_analysis_source(self._provider)` **before**
+`analyze()` runs. At that point the winner is unknown. The only safe option was `INTERNAL`.
+
+This produces a systematic misclassification: when `openai` wins inside an ensemble,
+`doc.analysis_source = INTERNAL` and `doc.provider = "ensemble(openai,internal)"` —
+both wrong for downstream corpus filtering (I-16, I-19).
+
+---
+
+#### 15b. The Fix: Post-analyze winner resolution
+
+`EnsembleProvider` already tracks the winner:
+
+```python
+# app/analysis/ensemble/provider.py
+self._active_provider_name = provider.provider_name   # set after each successful analyze()
+
+@property
+def model(self) -> str | None:
+    return self._active_provider_name                 # the winner's provider_name
+```
+
+After `await self._provider.analyze(...)` returns, `provider.model` contains the winner.
+The pipeline must re-resolve `analysis_source` using this value.
+
+**Resolution function (string-based, post-analyze):**
+
+```python
+def _resolve_analysis_source_from_winner(winning_name: str) -> AnalysisSource:
+    name = winning_name.strip().lower()
+    if not name or name in {"fallback", "rule", "internal", "companion"}:
+        return AnalysisSource.INTERNAL   # Tier 2 or fallback
+    return AnalysisSource.EXTERNAL_LLM  # openai, anthropic, gemini, etc.
+```
+
+**Pipeline call site** (after successful `analyze()`):
+
+```python
+llm_output = await self._provider.analyze(title=..., text=..., context=...)
+# Re-resolve analysis_source using the actual winner (I-24)
+winning_name = self._provider.model or self._provider.provider_name
+analysis_source = _resolve_analysis_source_from_winner(winning_name)
+provider_name = winning_name   # I-25: store winner, not composite
+```
+
+---
+
+#### 15c. doc.provider — winner name, not composite
+
+`doc.provider` must store the **winning** provider name after Sprint-5C:
+
+| Before Sprint-5C | After Sprint-5C |
+|---|---|
+| `doc.provider = "ensemble(openai,internal)"` | `doc.provider = "openai"` |
+| `doc.analysis_source = "internal"` (wrong) | `doc.analysis_source = "external_llm"` (correct) |
+
+The ensemble membership is preserved in `doc.metadata["ensemble_chain"]` (list of all
+provider names in order). This separates traceability from the semantic value.
+
+**`apply_to_document()` after Sprint-5C:**
+
+```python
+self.document.provider = self.provider_name          # winner name (e.g. "openai")
+self.document.metadata["ensemble_chain"] = ...       # ["openai", "internal"] if ensemble
+```
+
+---
+
+#### 15d. analysis_source decision table (post Sprint-5C)
+
+| Scenario | `winning_name` | `doc.analysis_source` | Corpus use |
+|---|---|---|---|
+| No provider configured | `"fallback"` | `RULE` | ❌ never |
+| Provider call failed → fallback | `"fallback"` | `RULE` | ❌ never |
+| InternalModelProvider ran | `"internal"` | `INTERNAL` | ⚠️ eval only |
+| InternalCompanionProvider ran | `"companion"` | `INTERNAL` | ⚠️ eval only |
+| OpenAI ran (direct) | `"openai"` | `EXTERNAL_LLM` | ✅ teacher |
+| Ensemble: openai won | `"openai"` (from `ensemble.model`) | `EXTERNAL_LLM` | ✅ teacher |
+| Ensemble: internal fallback | `"internal"` (from `ensemble.model`) | `INTERNAL` | ⚠️ eval only |
+| Ensemble: companion fallback | `"companion"` (from `ensemble.model`) | `INTERNAL` | ⚠️ eval only |
+
+---
+
+#### 15e. Backward compatibility
+
+- Pre-Sprint-5C rows: `doc.provider` may be `"ensemble(openai,internal)"`.
+  `effective_analysis_source` maps `startswith("ensemble(")` → `INTERNAL` (conservative).
+  These rows are NOT upgraded automatically. The conservative mapping is intentional.
+- New rows (Sprint-5C+): `doc.provider` is always the winner name. The `ensemble_chain`
+  metadata key is present if an `EnsembleProvider` was used.
+
+---
+
+#### 15f. Non-ensemble providers: no change
+
+For `OpenAIAnalysisProvider`, `AnthropicAnalysisProvider`, `GeminiAnalysisProvider`,
+`InternalModelProvider`, `InternalCompanionProvider` used directly (not via ensemble):
+
+- `provider.model` is the **model identifier** (e.g. `"gpt-4o"`, `"rule-heuristic-v1"`),
+  **not** the provider name.
+- The pipeline uses `provider.provider_name` for `doc.provider` — unchanged.
+- `_resolve_analysis_source()` logic (provider-object-based, pre-analyze) — unchanged.
+
+Only `EnsembleProvider` triggers post-analyze winner resolution (I-24).
+
+---
+
 ## Immutable Invariants
 
 These may never be broken without a new spec:
@@ -964,3 +1086,6 @@ These may never be broken without a new spec:
 | I-20 | `InternalModelProvider.provider_name` is always `"internal"`, `recommended_priority` ≤ 5, `actionable=False`, `sentiment_label=NEUTRAL` — these are hard invariants, not configurable |
 | I-21 | `InternalCompanionProvider.provider_name` is always `"companion"` — distinct from `"internal"` (heuristic). factory.py routes `"internal"` → `InternalModelProvider`, `"companion"` → `InternalCompanionProvider` |
 | I-22 | `EnsembleProvider` requires at least one provider. InternalModelProvider MUST be the last entry to guarantee a fallback result. If all providers fail, raises `RuntimeError` |
+| I-23 | `EnsembleProvider.model` MUST return the winning provider's `provider_name` (not the composite string) immediately after `analyze()` completes. This is the canonical winner signal for pipeline source resolution. |
+| I-24 | `_resolve_analysis_source()` MUST be called AFTER `provider.analyze()` when the provider is an `EnsembleProvider`, using the winning `provider_name` from `provider.model`, not the composite `provider_name`. Pre-analyze resolution is only valid for non-ensemble providers. |
+| I-25 | `doc.provider` stores the **winning** provider name (e.g. `"openai"`, `"internal"`) — never the composite ensemble string. `doc.metadata["ensemble_chain"]` records the full ordered list for traceability. |

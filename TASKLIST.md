@@ -284,6 +284,107 @@ Akzeptanzkriterien:
 
 ---
 
+## Sprint 5C — Winner-Traceability
+
+**Ziel**: `EnsembleProvider`-Runs schreiben den tatsächlichen Gewinner als `doc.provider` und die korrekte `analysis_source` — kein konservativer `INTERNAL`-Override mehr wenn `openai` gewonnen hat.
+
+**Contract-Basis**: `docs/contracts.md §15` (I-23/I-24/I-25)
+
+| # | Task | Agent | Status |
+|---|---|---|---|
+| 5C.1 | `_resolve_analysis_source_from_winner(winning_name)` — neue String-basierte Funktion in `pipeline.py` | Codex | ⏳ |
+| 5C.2 | Pipeline: post-analyze winner-Resolution für EnsembleProvider (`provider.model` nach `analyze()`) | Codex | ⏳ |
+| 5C.3 | `doc.provider` = winner name (nicht Composite-String); `doc.metadata["ensemble_chain"]` = volle Liste | Codex | ⏳ |
+| 5C.4 | Tests: `test_analysis_pipeline.py` — EnsembleProvider Szenarien (openai wins → EXTERNAL_LLM, internal fallback → INTERNAL) | Codex | ⏳ |
+| 5C.5 | Tests: `test_document_repository.py` — Persistenz + Reload von `analysis_source` für Ensemble-Dokumente | Codex | ⏳ |
+| 5C.6 | Verifikation: `analyze-pending` CLI + DB-Lauf, `doc.analysis_source` korrekt nach Ensemble-Run | Antigravity | ⏳ |
+| 5C.7 | Contract-Abnahme + Commit | Claude Code | ⏳ |
+
+**Codex-Spec:**
+
+```
+## Task: Sprint 5C — EnsembleProvider Winner-Traceability
+
+Agent: Codex
+Phase: Sprint 5C
+Modul: app/analysis/pipeline.py, tests/unit/test_analysis_pipeline.py
+Typ: contract-fix (minimaler Hook, keine neue ML-Logik)
+
+Spec-Referenz: docs/contracts.md §15 (I-23/I-24/I-25)
+
+Änderungen:
+
+1. app/analysis/pipeline.py
+
+   a) Neue Funktion (string-basiert, für post-analyze):
+
+      def _resolve_analysis_source_from_winner(winning_name: str) -> AnalysisSource:
+          name = winning_name.strip().lower()
+          if not name or name in {"fallback", "rule", "internal", "companion"}:
+              return AnalysisSource.INTERNAL
+          return AnalysisSource.EXTERNAL_LLM
+
+   b) In run() — nach erfolgreichem llm_output = await self._provider.analyze(...):
+
+      winning_name = self._provider.model or self._provider.provider_name
+      analysis_source = _resolve_analysis_source_from_winner(winning_name)
+      provider_name = winning_name   # winner name, nicht Composite-String
+
+      WICHTIG: Das ERSETZT die bisherige pre-analyze Resolution NUR im LLM-Erfolgsfall.
+      Fehlerfall (except-Branch) und fallback_reason-Branch bleiben unverändert:
+      - Fallback-Branch: analysis_source = AnalysisSource.RULE (unveränderlich)
+      - Except-Branch: ruft _build_fallback_analysis(), bleibt RULE
+
+   c) In apply_to_document() — ensemble_chain in metadata:
+
+      if self.provider_name and "," in (self._document_ensemble_chain or ""):
+          # nur wenn Ensemble: speichere Kette in metadata
+          pass
+
+      Einfacher: In PipelineResult, neues Feld:
+          ensemble_chain: list[str] | None = None
+
+      In run() befüllen:
+          from app.analysis.ensemble.provider import EnsembleProvider
+          ensemble_chain = None
+          if isinstance(self._provider, EnsembleProvider):
+              ensemble_chain = [p.provider_name for p in self._provider._providers]
+
+      In apply_to_document():
+          if self.ensemble_chain:
+              meta = dict(self.document.metadata or {})
+              meta["ensemble_chain"] = self.ensemble_chain
+              self.document.metadata = meta
+
+2. tests/unit/test_analysis_pipeline.py — neue Tests:
+
+   test_ensemble_openai_wins_sets_external_llm_source:
+     - EnsembleProvider([mock_openai, InternalModelProvider])
+     - mock_openai.analyze returns valid LLMAnalysisOutput
+     - result.analysis_result.analysis_source == AnalysisSource.EXTERNAL_LLM
+     - result.provider_name == "openai"
+     - result.document.metadata["ensemble_chain"] == ["openai", "internal"]
+
+   test_ensemble_internal_fallback_sets_internal_source:
+     - EnsembleProvider([failing_openai, InternalModelProvider])
+     - result.analysis_result.analysis_source == AnalysisSource.INTERNAL
+     - result.provider_name == "internal"
+
+   test_direct_provider_source_resolution_unchanged:
+     - Direkt OpenAIProvider (kein Ensemble) → EXTERNAL_LLM (unveränderlich)
+     - Direkt InternalModelProvider → INTERNAL (unveränderlich)
+
+Acceptance Criteria:
+  - ruff check . sauber
+  - pytest -q grün (alle bestehenden + neue Tests)
+  - _resolve_analysis_source() (alte Funktion) bleibt für non-ensemble Providers
+  - _resolve_analysis_source_from_winner() wird NUR im LLM-Erfolgsfall nach analyze() genutzt
+  - Kein Scope-Drift: keine anderen Dateien berühren
+  - doc.provider == "openai" (nicht "ensemble(openai,internal)") wenn openai gewann
+```
+
+---
+
 ## Sprint 5 — Intelligence Layer (Companion Model)
 
 > **Startet erst nach Sprint 4C-Abschluss.**
