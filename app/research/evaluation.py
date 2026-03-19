@@ -8,6 +8,7 @@ Contract reference: docs/contracts.md §16
 """
 
 import json
+from datetime import UTC, datetime
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -112,6 +113,48 @@ class EvaluationMetrics:
     sample_count: int           # number of rows successfully paired and evaluated
     missing_pairs: int          # baseline rows with no matching document_id in teacher set
 
+    def to_json_dict(self) -> dict[str, float | int]:
+        return {
+            "sentiment_agreement": self.sentiment_agreement,
+            "priority_mae": self.priority_mae,
+            "relevance_mae": self.relevance_mae,
+            "impact_mae": self.impact_mae,
+            "tag_overlap_mean": self.tag_overlap_mean,
+            "sample_count": self.sample_count,
+            "missing_pairs": self.missing_pairs,
+        }
+
+
+@dataclass
+class PromotionValidation:
+    """Evaluates whether metrics meet the Sprint 7 companion promotion thresholds."""
+    sentiment_pass: bool
+    priority_pass: bool
+    relevance_pass: bool
+    impact_pass: bool
+    tag_overlap_pass: bool
+
+    @property
+    def is_promotable(self) -> bool:
+        return all([
+            self.sentiment_pass,
+            self.priority_pass,
+            self.relevance_pass,
+            self.impact_pass,
+            self.tag_overlap_pass,
+        ])
+
+
+def validate_promotion(metrics: EvaluationMetrics) -> PromotionValidation:
+    """Check metrics against strict promotion thresholds defined in contracts."""
+    return PromotionValidation(
+        sentiment_pass=metrics.sentiment_agreement >= 0.85,
+        priority_pass=metrics.priority_mae <= 1.5,
+        relevance_pass=metrics.relevance_mae <= 0.15,
+        impact_pass=metrics.impact_mae <= 0.20,
+        tag_overlap_pass=metrics.tag_overlap_mean >= 0.30,
+    )
+
 
 @dataclass
 class EvaluationReport:
@@ -129,6 +172,16 @@ class EvaluationReport:
     baseline_count: int
     paired_count: int
     notes: list[str] = field(default_factory=list)
+
+    def to_json_dict(self) -> dict[str, object]:
+        return {
+            "dataset_type": self.dataset_type,
+            "teacher_count": self.teacher_count,
+            "baseline_count": self.baseline_count,
+            "paired_count": self.paired_count,
+            "metrics": self.metrics.to_json_dict(),
+            "notes": list(self.notes),
+        }
 
 
 def load_jsonl(path: Path | str) -> list[dict[str, Any]]:
@@ -255,3 +308,54 @@ def compare_datasets(
         baseline_count=len(baseline_rows),
         paired_count=paired,
     )
+
+
+def save_evaluation_report(
+    report: EvaluationReport,
+    output_path: Path | str,
+    *,
+    teacher_dataset: Path | str,
+    candidate_dataset: Path | str,
+) -> Path:
+    """Persist an EvaluationReport as structured JSON for reproducible offline review."""
+    resolved_path = Path(output_path)
+    resolved_path.parent.mkdir(parents=True, exist_ok=True)
+
+    payload = {
+        "report_type": "dataset_evaluation",
+        "generated_at": datetime.now(UTC).isoformat(),
+        "inputs": {
+            "teacher_dataset": str(Path(teacher_dataset).resolve()),
+            "candidate_dataset": str(Path(candidate_dataset).resolve()),
+        },
+        **report.to_json_dict(),
+    }
+    resolved_path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+    return resolved_path
+
+
+def save_benchmark_artifact(
+    output_path: Path | str,
+    *,
+    teacher_dataset: Path | str,
+    candidate_dataset: Path | str,
+    report: EvaluationReport,
+    report_path: Path | str | None = None,
+) -> Path:
+    """Write a small benchmark manifest that can serve as a future tuning artifact hook."""
+    resolved_path = Path(output_path)
+    resolved_path.parent.mkdir(parents=True, exist_ok=True)
+
+    payload = {
+        "artifact_type": "companion_benchmark",
+        "generated_at": datetime.now(UTC).isoformat(),
+        "status": "benchmark_ready" if report.paired_count > 0 else "needs_more_data",
+        "dataset_type": report.dataset_type,
+        "teacher_dataset": str(Path(teacher_dataset).resolve()),
+        "candidate_dataset": str(Path(candidate_dataset).resolve()),
+        "evaluation_report": str(Path(report_path).resolve()) if report_path else None,
+        "metrics": report.metrics.to_json_dict(),
+        "paired_count": report.paired_count,
+    }
+    resolved_path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+    return resolved_path

@@ -933,6 +933,31 @@ def research_evaluate_datasets(
 
     console.print(table)
 
+    if report.dataset_type == "internal_benchmark" and report.paired_count > 0:
+        from app.research.evaluation import validate_promotion
+        promotion = validate_promotion(metrics)
+
+        prom_table = Table(title="Companion Promotion Readiness (Sprint 7 Gates)")
+        prom_table.add_column("Gate", style="cyan")
+        prom_table.add_column("Required", style="yellow")
+        prom_table.add_column("Status", style="bold")
+
+        def status_str(passed: bool) -> str:
+            return "[green]PASS[/green]" if passed else "[red]FAIL[/red]"
+
+        prom_table.add_row("Sentiment", ">= 0.85", status_str(promotion.sentiment_pass))
+        prom_table.add_row("Priority MAE", "<= 1.50", status_str(promotion.priority_pass))
+        prom_table.add_row("Relevance MAE", "<= 0.15", status_str(promotion.relevance_pass))
+        prom_table.add_row("Impact MAE", "<= 0.20", status_str(promotion.impact_pass))
+        prom_table.add_row("Tag Overlap", ">= 0.30", status_str(promotion.tag_overlap_pass))
+        
+        console.print(prom_table)
+        
+        if promotion.is_promotable:
+            console.print("\n[bold green]✅ Companion is READY for Production Promotion.[/bold green]")
+        else:
+            console.print("\n[bold red]❌ Companion does NOT meet all criteria for promotion.[/bold red]")
+
 
 @research_app.command("evaluate")
 def research_evaluate(
