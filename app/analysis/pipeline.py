@@ -192,6 +192,9 @@ class PipelineResult:
         res.recommended_priority = priority.priority
         res.spam_probability = spam_prob
 
+        self.document.metadata["explanation_short"] = res.explanation_short
+        self.document.metadata["explanation_long"] = res.explanation_long
+
 
 class AnalysisPipeline:
     """Run keyword, entity, and optional LLM analysis on one or many documents."""

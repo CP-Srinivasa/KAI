@@ -714,6 +714,126 @@ Companion model `impact_score` cap: ≤ 0.8 (conservative, not overconfident —
 
 ---
 
+### 14. Dataset Export Contract (`export_training_data`)
+
+Defines the stable format for training corpus export used in companion model fine-tuning.
+Implementation: `app/research/datasets.py`.
+
+---
+
+#### 14a. JSONL Row Format
+
+Each row is a JSON object with two top-level keys:
+
+```json
+{
+  "messages": [
+    {"role": "system",    "content": "You are a highly precise financial AI analyst."},
+    {"role": "user",      "content": "<title + source + text>"},
+    {"role": "assistant", "content": "<JSON target scores — sorted keys>"}
+  ],
+  "metadata": {
+    "document_id":     "<uuid — str>",
+    "provider":        "<openai|anthropic|gemini|fallback|internal|unknown>",
+    "analysis_source": "<external_llm|internal|rule>"
+  }
+}
+```
+
+**Requirements:**
+- Only documents with `is_analyzed=True` are included
+- Documents with no text (`cleaned_text` and `raw_text` both empty/None after strip) are skipped
+- One row per document
+- Assistant target is JSON-serialized with sorted keys (deterministic output)
+
+---
+
+#### 14b. Assistant Target Fields
+
+| Field | Type | Required | Notes |
+|-------|------|----------|-------|
+| `affected_assets` | list[str] | ✅ | deduplicated from `doc.tickers + doc.crypto_assets` |
+| `impact_score` | float | ✅ | 0.0 .. 1.0 |
+| `market_scope` | str | ✅ | e.g. `"crypto"` / `"etf"` / `"unknown"` |
+| `novelty_score` | float | ✅ | 0.0 .. 1.0 |
+| `priority_score` | int | ✅ | 1 .. 10 |
+| `relevance_score` | float | ✅ | 0.0 .. 1.0 |
+| `sentiment_label` | str | ✅ | `"bullish"` / `"bearish"` / `"neutral"` |
+| `sentiment_score` | float | ✅ | -1.0 .. 1.0 |
+| `spam_probability` | float | ✅ | 0.0 .. 1.0 |
+| `summary` | str | ✅ | `doc.summary` or `""` |
+| `tags` | list[str] | ✅ | `doc.ai_tags` |
+
+All fields are always present (no optional fields in the assistant target).
+
+---
+
+#### 14c. `co_thought` — Final Decision: REMOVED
+
+**`co_thought` is NOT part of the export format.**
+
+This field was considered during Sprint 5A design. Final rationale for removal:
+
+1. **Contamination risk**: Rule-based analysis sets `explanation_short = "Rule-based fallback
+   analysis. ..."` — a heuristic label, not reasoning. Including it as chain-of-thought
+   training signal would teach the companion model a placeholder, not financial reasoning.
+
+2. **Inconsistent quality**: Even LLM-sourced `explanation_short` values vary in quality and
+   depth. The field is a brief annotation, not a structured reasoning trace.
+
+3. **Schema coupling**: `co_thought` would couple the export to `doc.metadata["explanation_short"]`
+   — an implementation detail, not a stable contract field.
+   The assistant target must be derived from stable, persisted DB fields only.
+
+4. **Architecture-specific**: Chain-of-thought training formats are model-specific.
+   The export targets structured output fine-tuning (labels + scores), not reasoning-trace
+   distillation. These are separate training objectives.
+
+**If chain-of-thought distillation is required in the future**, it must use a dedicated export
+format with an explicit reasoning corpus, independently of `export_training_data()`.
+
+---
+
+#### 14d. `analysis_source` in Metadata
+
+**Required field.** Enables distillation pipeline to filter by tier.
+
+| Value | Meaning | `doc.provider` values | Use as teacher? |
+|-------|---------|----------------------|-----------------|
+| `"external_llm"` | External LLM (OpenAI, Anthropic, Gemini) | `"openai"`, `"anthropic"`, `"gemini"`, etc. | ✅ yes |
+| `"internal"` | Companion model (Sprint 5B+) | `"internal"`, `"companion"` | ⚠️ evaluation only |
+| `"rule"` | Rule-based / fallback analysis | `None`, `"fallback"`, `"rule"` | ❌ no (I-19) |
+
+**Derivation logic** (implemented in `_analysis_source()`, `app/research/datasets.py`):
+```python
+_RULE_BASED_PROVIDERS = {"fallback", "rule"}
+_INTERNAL_PROVIDERS   = {"internal", "companion"}
+
+if not provider or provider in _RULE_BASED_PROVIDERS:  → "rule"
+elif provider in _INTERNAL_PROVIDERS:                   → "internal"
+else:                                                   → "external_llm"
+```
+
+**Sprint 5B update**: When `AnalysisSource` enum and `doc.analysis_source` land on
+`CanonicalDocument`, `_analysis_source()` will be updated to use it directly.
+The exported values and their semantics remain identical.
+
+---
+
+#### 14e. Distillation Corpus Filtering
+
+The distillation training pipeline MUST filter the exported JSONL by `analysis_source`:
+
+```python
+# Only use external LLM rows as teacher signal (Invariant I-19)
+rows = [r for r in jsonl_rows if r["metadata"]["analysis_source"] == "external_llm"]
+```
+
+Documents with `analysis_source="rule"` or `"internal"` CAN be included in the full export
+for auditing or evaluation purposes, but MUST NOT appear in the fine-tuning training corpus.
+
+---
+
 ## Final Rule
 
 These contracts define the system.
@@ -749,3 +869,6 @@ These may never be broken without a new spec:
 | I-17 | Companion model `impact_score` cap: ≤ 0.8 (conservative, not overconfident) |
 | I-18 | `AnalysisSource` is set at result creation time — immutable after `apply_to_document()` |
 | I-19 | Rule-only documents (`analysis_source=RULE`) NEVER serve as distillation teacher signal |
+| I-20 | `InternalModelProvider.provider_name` is always `"internal"`, `recommended_priority` ≤ 5, `actionable=False`, `sentiment_label=NEUTRAL` — these are hard invariants, not configurable |
+| I-21 | `InternalCompanionProvider.provider_name` is always `"companion"` — distinct from `"internal"` (heuristic). factory.py routes `"internal"` → `InternalModelProvider`, `"companion"` → `InternalCompanionProvider` |
+| I-22 | `EnsembleProvider` requires at least one provider. InternalModelProvider MUST be the last entry to guarantee a fallback result. If all providers fail, raises `RuntimeError` |

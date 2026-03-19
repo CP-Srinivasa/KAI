@@ -218,7 +218,7 @@ app/
 monitor/             → user-editable source lists, keywords, watchlists
   historical_events.yml → 13 Seed-Events für analog matching
 docker/              → Dockerfile (production), docker-compose.yml
-tests/unit/          → pytest unit tests (497 passing — ruff clean)
+tests/unit/          → pytest unit tests (521 passing — ruff clean)
 ```
 
 ---
@@ -286,8 +286,8 @@ Jeder Agent darf nur in seinem Bereich schreiben. Grenzüberschreitungen erforde
 **Sprint 1 — Foundation & Contracts** ✅ abgeschlossen
 **Sprint 2 — Provider Consolidation** ✅ abgeschlossen
 **Sprint 3 — Alerting** ✅ abgeschlossen
-**Sprint 4 — Research & Signals** ⏳ Phase C ausstehend
-**Sprint 5 — Intelligence Layer (Companion Model)** ⏳ geplant nach Sprint 4C
+**Sprint 4 — Research & Signals** ✅ Phases A/B/C/D abgeschlossen
+**Sprint 5 — Intelligence Layer (Companion Model)** ⏳ geplant
 
 | Phase | Status | Geliefert |
 |---|---|---|
@@ -305,9 +305,10 @@ Jeder Agent darf nur in seinem Bereich schreiben. Grenzüberschreitungen erforde
 | P8 Research Models | ✅ | app/research/ — WatchlistRegistry (multi-type: assets/persons/topics/sources), ResearchBrief+BriefFacet, ResearchBriefBuilder, SignalCandidate, extract_signal_candidates(), contracts.md §11, app/research/AGENTS.md |
 | P8 Research CLI | ✅ | app/cli/main.py — research brief, research watchlists, research signals commands |
 | P8 Intelligence Architecture | ✅ | docs/intelligence_architecture.md, docs/contracts.md §12–13, Drei-Tier-Stack definiert (Rule/Companion/External), AnalysisSource Enum, Distillation Path |
-| P9 Intelligence Layer | ⏳ Sprint 5 | InternalCompanionProvider, ProviderSettings Extension, Factory "internal" Branch, AnalysisSource DB Migration |
+| P8D Provider Tier Stack | ✅ | InternalModelProvider (Tier 2, heuristisch, zero deps), EnsembleProvider (ordered fallback), InternalCompanionProvider (Tier 2b, HTTP localhost), factory.py separation, I-20/21/22, 521 Tests |
+| P9 Intelligence Layer | ⏳ Sprint 5 | Training Corpus, Evaluation Harness, Distillation Pipeline, AnalysisSource DB Migration |
 
-**Test-Stand**: 497 passed, 0 failed, 0 xfailed
+**Test-Stand**: 521 passed, 0 failed, 0 xfailed
 
 Vollständige Task-Liste → [TASKLIST.md](./TASKLIST.md)
 

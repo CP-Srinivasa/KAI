@@ -262,6 +262,28 @@ Akzeptanzkriterien:
 
 ---
 
+## Sprint 4 Phase D — Provider-Independent Intelligence Architecture ✅
+
+**Ziel**: Three-tier provider architecture: Rule-based → InternalModelProvider → EnsembleProvider + Companion
+
+| # | Task | Status |
+|---|---|---|
+| 4D.1 | `app/analysis/internal_model/provider.py` — `InternalModelProvider` (heuristisch, zero deps, immer verfügbar) | ✅ |
+| 4D.2 | `app/analysis/ensemble/provider.py` — `EnsembleProvider` (ordered fallback, first success wins) | ✅ |
+| 4D.3 | `app/analysis/providers/companion.py` — `InternalCompanionProvider` (HTTP zu lokalem Endpoint) | ✅ |
+| 4D.4 | `app/analysis/factory.py` — `"internal"` → `InternalModelProvider`, `"companion"` → `InternalCompanionProvider` | ✅ |
+| 4D.5 | `app/core/settings.py` — `companion_model_*` Felder + localhost-Validator | ✅ |
+| 4D.6 | `tests/unit/test_internal_model_provider.py` — 10 Tests | ✅ |
+| 4D.7 | `tests/unit/test_ensemble_provider.py` — 7 Tests | ✅ |
+| 4D.8 | `docs/contracts.md` — I-20/I-21/I-22 Provider-Tier Invarianten | ✅ |
+
+**Contracts (I-20–22)**:
+- `InternalModelProvider`: `provider_name="internal"`, `priority≤5`, `actionable=False`, `sentiment=NEUTRAL`
+- `InternalCompanionProvider`: `provider_name="companion"`, `impact_score≤0.8`, localhost-only endpoint
+- `EnsembleProvider`: min 1 provider, InternalModelProvider als letzter Eintrag = garantierter Fallback
+
+---
+
 ## Sprint 5 — Intelligence Layer (Companion Model)
 
 > **Startet erst nach Sprint 4C-Abschluss.**

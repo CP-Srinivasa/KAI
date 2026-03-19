@@ -79,6 +79,11 @@ class DocumentRepository:
 
     async def update_analysis(self, document_id: str, result: AnalysisResult) -> None:
         """Write analysis scores to the document and set status=ANALYZED."""
+        doc = await self.get_by_id(document_id)
+        current_meta = doc.metadata if doc else {}
+        current_meta["explanation_short"] = result.explanation_short
+        current_meta["explanation_long"] = result.explanation_long
+
         await self._session.execute(
             update(CanonicalDocumentModel)
             .where(CanonicalDocumentModel.id == document_id)
@@ -98,6 +103,7 @@ class DocumentRepository:
                 status=DocumentStatus.ANALYZED.value,
                 is_duplicate=False,
                 is_analyzed=True,
+                document_metadata=current_meta,
             )
         )
         await self._session.flush()

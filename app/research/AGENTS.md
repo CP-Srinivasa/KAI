@@ -27,6 +27,8 @@ No direct DB access. All input arrives as `list[CanonicalDocument]`.
 | `watchlists.py` | `WatchlistRegistry` — tag-based watchlist access from `monitor/watchlists.yml` |
 | `briefs.py` | `ResearchBrief`, `ResearchBriefBuilder` — cluster-level research snapshot |
 | `signals.py` | `SignalCandidate`, `extract_signal_candidates()` — high-priority signals extraction |
+| `datasets.py` | `export_training_data()` — JSONL export for companion model fine-tuning (see §14) |
+| `evaluation.py` | `compare_outputs()`, `EvaluationResult` — companion vs teacher metric comparison |
 
 ---
 
