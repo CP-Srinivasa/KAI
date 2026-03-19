@@ -266,17 +266,19 @@ async def test_run_rss_pipeline_dry_run_skips_db_writes(monkeypatch) -> None:
     monkeypatch.setattr(pipeline_service, "persist_fetch_result", fake_persist)
     monkeypatch.setattr(document_repo.DocumentRepository, "update_analysis", fake_update_analysis)
 
+    fake_factory = FakeSessionFactory()
     stats = await pipeline_service.run_rss_pipeline(
         "https://example.com/feed",
-        session_factory=None,
+        session_factory=fake_factory,
         keyword_engine=FakeKeywordEngine(),
         provider=FakeProvider(),
         dry_run=True,
     )
 
-    # persist_fetch_result called with dry_run=True and session_factory=None
+    # persist_fetch_result called with dry_run=True; session_factory is the real factory
+    # (persist_fetch_result short-circuits in dry_run before touching session_factory)
     assert len(persist_calls) == 1
-    assert persist_calls[0]["session_factory"] is None
+    assert persist_calls[0]["session_factory"] is fake_factory
     assert persist_calls[0]["dry_run"] is True
 
     # No DB writes

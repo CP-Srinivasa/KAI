@@ -386,3 +386,4 @@ These may never be broken without a new spec:
 | I-8 | `spam_probability > 0.7` → `priority_score ≤ 3` |
 | I-9 | status transitions are one-way |
 | I-10 | `is_analyzed` and `status=analyzed` are set together, atomically |
+| I-11 | `AnalysisResult.confidence_score` is in-memory only — NOT written to DB. The DB column `credibility_score` is computed as `1.0 - spam_probability` inside `update_analysis()` |

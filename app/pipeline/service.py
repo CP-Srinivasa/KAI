@@ -94,7 +94,7 @@ async def run_rss_pipeline(
 
     # ── Stage 2: Persist ────────────────────────────────────────────────────
     ingest_stats = await persist_fetch_result(
-        None if dry_run else session_factory,
+        session_factory,
         fetch_result,
         dry_run=dry_run,
     )

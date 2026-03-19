@@ -213,6 +213,10 @@ def analyze_pending(
                 except Exception as e:
                     console.print(f"[red]Failed to save doc {res.document.id}:[/red] {e}")
                     error_count += 1
+                    try:
+                        await repo.update_status(str(res.document.id), DocumentStatus.FAILED)
+                    except Exception:
+                        pass  # best-effort — do not mask the original error
 
         console.print(
             f"[bold green]Analysis complete![/bold green] "
