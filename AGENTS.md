@@ -290,7 +290,7 @@ Jeder Agent darf nur in seinem Bereich schreiben. Grenzüberschreitungen erforde
 **Sprint 5B — analysis_source Provenance** ✅ Pipeline + Persistenz + DB-Spalte (migration 0006)
 **Sprint 5C — Winner-Traceability** ✅ EnsembleProvider winner → doc.provider, ensemble_chain, I-23–25
 **Sprint 5D — Corpus Safety + Eval Baseline** ✅ teacher_only I-27, compare_datasets(), EvaluationMetrics, I-27–33
-**Sprint 6 — Dataset + Evaluation Harness** ⏳ CLI-Erweiterungen (6.2/6.3) ausstehend
+**Sprint 6 — Dataset + Evaluation Harness** ✅ abgeschlossen — dataset-export --teacher-only, evaluate-datasets, 547 Tests
 
 | Phase | Status | Geliefert |
 |---|---|---|
@@ -311,9 +311,9 @@ Jeder Agent darf nur in seinem Bereich schreiben. Grenzüberschreitungen erforde
 | P9A Provenance Stack | ✅ | AnalysisSource DB-Spalte (migration 0006), effective_analysis_source, Pipeline + Repo + Research consumers, I-18–19 |
 | P9B Winner-Traceability | ✅ | _resolve_runtime_provider_name, active_provider_name, provider_chain, ensemble_chain, E2E-Tests, I-23–26 |
 | P9C Corpus Safety | ✅ | teacher_only in export_training_data (I-27), compare_datasets + EvaluationMetrics + EvaluationReport + load_jsonl, dataset_evaluation_contract.md, contracts.md §16–17, I-27–33 |
-| P10 Distillation Readiness | ⏳ Sprint 6 | teacher/internal/rule CLI-Export-Runs, offline floor-gap Metriken, Evaluation-Report CLI |
+| P10 Distillation Readiness | ✅ | dataset-export --teacher-only/--source-type, research evaluate-datasets JSONL harness, 5 Pflichtmetriken, contracts.md §17 ✅ |
 
-**Test-Stand**: 542 passed, 0 failed, 0 xfailed
+**Test-Stand**: 547 passed, 0 failed, 0 xfailed
 
 Vollständige Task-Liste → [TASKLIST.md](./TASKLIST.md)
 

@@ -17,6 +17,7 @@ python -m app.cli.main --help
 | `sources` | List/add/disable sources | planned Phase 2 |
 | `query` | Run DSL query against documents | planned Phase 2 |
 | `alerts` | Test alert delivery | planned Phase 4 |
+| `research` | Watchlists, briefs, signals, dataset export, offline dataset evaluation | active Sprint 4–6 |
 
 ## Constraints
 

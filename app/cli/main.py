@@ -817,9 +817,14 @@ def research_dataset_export(
         "external_llm",
         help="Filter by analysis source, e.g. external_llm, internal, rule",
     ),
+    teacher_only: bool = typer.Option(
+        False,
+        "--teacher-only",
+        help="Export only EXTERNAL_LLM rows (strict mode, I-27)",
+    ),
     limit: int = typer.Option(1000, help="Max documents to export"),
 ) -> None:
-    """Export analyzed documents (Teacher Outputs) to JSONL for Companion Model tuning."""
+    """Export analyzed documents to JSONL for Companion Model tuning."""
     import asyncio
     from pathlib import Path
 
@@ -847,7 +852,7 @@ def research_dataset_export(
         out_path = Path(output_file)
         out_path.parent.mkdir(parents=True, exist_ok=True)
 
-        count = export_training_data(docs, out_path)
+        count = export_training_data(docs, out_path, teacher_only=teacher_only)
         console.print(
             f"[green]Successfully exported {count} documents to {out_path.absolute()}[/green]"
         )
@@ -855,28 +860,78 @@ def research_dataset_export(
     asyncio.run(run())
 
 
-@research_app.command("evaluate")
-def research_evaluate(
-    teacher_source: str = typer.Option("external_llm", help="The baseline extraction source"),
-    limit: int = typer.Option(50, help="Number of documents to evaluate over"),
+@research_app.command("evaluate-datasets")
+def research_evaluate_datasets(
+    teacher_file: str = typer.Argument(..., help="Path to teacher JSONL file"),
+    candidate_file: str = typer.Argument(..., help="Path to candidate JSONL file"),
+    dataset_type: str = typer.Option(
+        "rule_baseline",
+        "--dataset-type",
+        help="Dataset comparison type: rule_baseline, internal_benchmark, custom",
+    ),
 ) -> None:
-    """Run the internal companion model against teacher outputs and print metrics."""
-    import asyncio
+    """Compare two exported JSONL datasets and print offline evaluation metrics."""
+    import json
 
-    async def run() -> None:
-        from app.analysis.keywords.engine import KeywordEngine
-        from app.analysis.pipeline import AnalysisPipeline
-        from app.research.evaluation import compare_outputs
+    from app.research.evaluation import compare_datasets, load_jsonl
 
-        out_path = Path(output_file)
-        out_path.parent.mkdir(parents=True, exist_ok=True)
-
-        count = export_training_data(docs, out_path)
+    normalized_type = dataset_type.strip().lower()
+    allowed_types = {"rule_baseline", "internal_benchmark", "custom"}
+    if normalized_type not in allowed_types:
         console.print(
-            f"[green]Successfully exported {count} documents to {out_path.absolute()}[/green]"
+            f"[red]Error:[/red] Unsupported dataset type '{dataset_type}'. "
+            "Use rule_baseline, internal_benchmark, or custom."
         )
+        raise typer.Exit(1)
 
-    asyncio.run(run())
+    def load_rows(label: str, path_str: str) -> list[dict[str, object]]:
+        try:
+            return load_jsonl(path_str)
+        except FileNotFoundError as err:
+            console.print(f"[red]Error:[/red] {label} dataset file not found: {path_str}")
+            raise typer.Exit(1) from err
+        except json.JSONDecodeError as err:
+            console.print(
+                f"[red]Error:[/red] Invalid JSONL content in {label} dataset "
+                f"'{path_str}': {err.msg}"
+            )
+            raise typer.Exit(1) from err
+        except OSError as err:
+            console.print(
+                f"[red]Error:[/red] Could not read {label} dataset '{path_str}': {err}"
+            )
+            raise typer.Exit(1) from err
+
+    teacher_rows = load_rows("Teacher", teacher_file)
+    candidate_rows = load_rows("Candidate", candidate_file)
+
+    if not teacher_rows:
+        console.print("[yellow]Teacher dataset is empty.[/yellow]")
+    if not candidate_rows:
+        console.print("[yellow]Candidate dataset is empty.[/yellow]")
+
+    report = compare_datasets(teacher_rows, candidate_rows, dataset_type=normalized_type)
+    if report.paired_count == 0:
+        console.print("[yellow]No overlapping document_id pairs found.[/yellow]")
+
+    metrics = report.metrics
+
+    table = Table(title="Dataset Evaluation Metrics")
+    table.add_column("Metric", style="cyan")
+    table.add_column("Value", style="green")
+
+    table.add_row("Dataset Type", report.dataset_type)
+    table.add_row("Teacher Rows", str(report.teacher_count))
+    table.add_row("Candidate Rows", str(report.baseline_count))
+    table.add_row("Paired Documents", str(report.paired_count))
+    table.add_row("Missing Pairs", str(metrics.missing_pairs))
+    table.add_row("Sentiment Agreement", f"{metrics.sentiment_agreement:.2%}")
+    table.add_row("Priority MAE", f"{metrics.priority_mae:.4f}")
+    table.add_row("Relevance MAE", f"{metrics.relevance_mae:.4f}")
+    table.add_row("Impact MAE", f"{metrics.impact_mae:.4f}")
+    table.add_row("Tag Overlap Mean", f"{metrics.tag_overlap_mean:.4f}")
+
+    console.print(table)
 
 
 @research_app.command("evaluate")
@@ -931,5 +986,22 @@ def research_evaluate(
         from rich.table import Table
         table = Table(title="Companion Evaluation Metrics")
         table.add_column("Metric", style="cyan")
+        table.add_column("Value", style="green", justify="right")
+
+        table.add_row("Document Count", str(metrics.document_count))
+        table.add_row("Matched Sentiments", str(metrics.matched_sentiments))
+        table.add_row("Matched Actionable", str(metrics.matched_actionable))
+        table.add_row("Sentiment Accuracy", f"{metrics.sentiment_accuracy:.2%}")
+        table.add_row("Actionable Accuracy", f"{metrics.actionable_accuracy:.2%}")
+        table.add_row("Priority MSE", f"{metrics.priority_mse:.4f}")
+        table.add_row("Relevance MSE", f"{metrics.relevance_mse:.4f}")
+        table.add_row("Impact MSE", f"{metrics.impact_mse:.4f}")
+        table.add_row("Novelty MSE", f"{metrics.novelty_mse:.4f}")
+
+        console.print(table)
+
+    asyncio.run(run())
+
+
 if __name__ == "__main__":
     app()

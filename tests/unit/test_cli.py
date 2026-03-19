@@ -1,3 +1,4 @@
+import json
 from datetime import UTC, datetime
 
 import yaml  # type: ignore[import-untyped]
@@ -6,7 +7,14 @@ from typer.testing import CliRunner
 from app.cli import main as cli_main
 from app.cli.main import app
 from app.core.domain.document import CanonicalDocument
-from app.core.enums import DocumentStatus, MarketScope, SentimentLabel, SourceStatus, SourceType
+from app.core.enums import (
+    AnalysisSource,
+    DocumentStatus,
+    MarketScope,
+    SentimentLabel,
+    SourceStatus,
+    SourceType,
+)
 from app.core.settings import AppSettings
 from app.ingestion.base.interfaces import FetchResult
 from app.ingestion.classifier import ClassificationResult
@@ -694,3 +702,230 @@ def test_research_brief_filters_documents_by_watchlist_type(monkeypatch, tmp_pat
     assert '"title": "Research Brief: regulation"' in result.output
     assert "Gensler warns on crypto regulation" in result.output
     assert "Vitalik discusses scaling" not in result.output
+
+
+def _make_dataset_row(
+    *,
+    document_id: str,
+    analysis_source: str = "external_llm",
+    provider: str = "openai",
+    sentiment_label: str = "bullish",
+    priority_score: int = 8,
+    relevance_score: float = 0.9,
+    impact_score: float = 0.6,
+    tags: list[str] | None = None,
+) -> dict[str, object]:
+    target = {
+        "affected_assets": ["BTC"],
+        "impact_score": impact_score,
+        "market_scope": "crypto",
+        "novelty_score": 0.4,
+        "priority_score": priority_score,
+        "relevance_score": relevance_score,
+        "sentiment_label": sentiment_label,
+        "sentiment_score": 0.7,
+        "spam_probability": 0.05,
+        "summary": "Synthetic dataset row.",
+        "tags": tags or ["btc"],
+    }
+    return {
+        "messages": [
+            {"role": "system", "content": "You are a highly precise financial AI analyst."},
+            {"role": "user", "content": "Analyze..."},
+            {"role": "assistant", "content": json.dumps(target, sort_keys=True)},
+        ],
+        "metadata": {
+            "document_id": document_id,
+            "provider": provider,
+            "analysis_source": analysis_source,
+        },
+    }
+
+
+def _write_jsonl_rows(path, rows: list[dict[str, object]]) -> None:
+    with path.open("w", encoding="utf-8") as handle:
+        for row in rows:
+            handle.write(json.dumps(row) + "\n")
+
+
+def test_research_dataset_export_teacher_only_uses_strict_export_flag(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    from app.storage.db import session as db_session
+    from app.storage.repositories import document_repo
+    from tests.unit.factories import make_document
+
+    settings = AppSettings()
+    settings.monitor_dir = str(tmp_path)
+
+    class FakeSessionFactory:
+        def begin(self):
+            class FakeSessionContext:
+                async def __aenter__(self):
+                    return object()
+
+                async def __aexit__(self, exc_type, exc, tb):
+                    return False
+
+            return FakeSessionContext()
+
+    async def fake_list(self, **kwargs):
+        return [
+            make_document(
+                raw_text="Teacher content.",
+                is_analyzed=True,
+                provider="openai",
+                analysis_source=AnalysisSource.EXTERNAL_LLM,
+            ),
+            make_document(
+                raw_text="Internal content.",
+                is_analyzed=True,
+                provider="companion",
+                analysis_source=AnalysisSource.INTERNAL,
+            ),
+            make_document(
+                raw_text="Rule content.",
+                is_analyzed=True,
+                provider=None,
+                analysis_source=AnalysisSource.RULE,
+            ),
+        ]
+
+    monkeypatch.setattr(cli_main, "get_settings", lambda: settings)
+    monkeypatch.setattr(db_session, "build_session_factory", lambda _db: FakeSessionFactory())
+    monkeypatch.setattr(document_repo.DocumentRepository, "list", fake_list)
+
+    out_file = tmp_path / "teacher_only.jsonl"
+    result = runner.invoke(
+        app,
+        [
+            "research",
+            "dataset-export",
+            str(out_file),
+            "--source-type",
+            "all",
+            "--teacher-only",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "Successfully exported 1 documents" in result.output
+
+    lines = out_file.read_text(encoding="utf-8").strip().splitlines()
+    assert len(lines) == 1
+    row = json.loads(lines[0])
+    assert row["metadata"]["analysis_source"] == "external_llm"
+    assert row["metadata"]["provider"] == "openai"
+
+
+def test_research_evaluate_datasets_prints_metrics_table(tmp_path) -> None:
+    teacher_file = tmp_path / "teacher.jsonl"
+    candidate_file = tmp_path / "candidate.jsonl"
+
+    _write_jsonl_rows(
+        teacher_file,
+        [_make_dataset_row(document_id="doc-1", analysis_source="external_llm")],
+    )
+    _write_jsonl_rows(
+        candidate_file,
+        [_make_dataset_row(document_id="doc-1", analysis_source="internal")],
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "research",
+            "evaluate-datasets",
+            str(teacher_file),
+            str(candidate_file),
+            "--dataset-type",
+            "internal_benchmark",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "Dataset Evaluation Metrics" in result.output
+    assert "Dataset Type" in result.output
+    assert "internal_benchmark" in result.output
+    assert "Teacher Rows" in result.output
+    assert "Candidate Rows" in result.output
+    assert "Paired Documents" in result.output
+    assert "Sentiment Agreement" in result.output
+    assert "100.00%" in result.output
+
+
+def test_research_evaluate_datasets_missing_candidate_file_fails(tmp_path) -> None:
+    teacher_file = tmp_path / "teacher.jsonl"
+    _write_jsonl_rows(
+        teacher_file,
+        [_make_dataset_row(document_id="doc-1", analysis_source="external_llm")],
+    )
+
+    missing_candidate = tmp_path / "missing.jsonl"
+    result = runner.invoke(
+        app,
+        [
+            "research",
+            "evaluate-datasets",
+            str(teacher_file),
+            str(missing_candidate),
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "Candidate dataset file not found" in result.output
+
+
+def test_research_evaluate_datasets_handles_empty_files(tmp_path) -> None:
+    teacher_file = tmp_path / "teacher_empty.jsonl"
+    candidate_file = tmp_path / "candidate_empty.jsonl"
+    teacher_file.write_text("", encoding="utf-8")
+    candidate_file.write_text("", encoding="utf-8")
+
+    result = runner.invoke(
+        app,
+        [
+            "research",
+            "evaluate-datasets",
+            str(teacher_file),
+            str(candidate_file),
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "Teacher dataset is empty." in result.output
+    assert "Candidate dataset is empty." in result.output
+    assert "No overlapping document_id pairs found." in result.output
+    assert "Paired Documents" in result.output
+
+
+def test_research_evaluate_datasets_reports_missing_pairs(tmp_path) -> None:
+    teacher_file = tmp_path / "teacher.jsonl"
+    candidate_file = tmp_path / "candidate.jsonl"
+
+    _write_jsonl_rows(
+        teacher_file,
+        [_make_dataset_row(document_id="doc-1", analysis_source="external_llm")],
+    )
+    _write_jsonl_rows(
+        candidate_file,
+        [_make_dataset_row(document_id="doc-99", analysis_source="rule")],
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "research",
+            "evaluate-datasets",
+            str(teacher_file),
+            str(candidate_file),
+            "--dataset-type",
+            "rule_baseline",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "No overlapping document_id pairs found." in result.output
+    assert "Missing Pairs" in result.output
+    assert "rule_baseline" in result.output

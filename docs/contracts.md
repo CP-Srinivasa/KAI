@@ -1250,15 +1250,17 @@ def export_training_data(
             if not doc.is_analyzed:
                 continue
             # I-27: enforce teacher eligibility at function level
-            if teacher_only and doc.effective_analysis_source != AnalysisSource.EXTERNAL_LLM:
+            if teacher_only and doc.analysis_source != AnalysisSource.EXTERNAL_LLM:
                 continue
             ...
 ```
 
 **Default `teacher_only=False`** — backward-compatible. Existing callers unaffected.
 
-**CLI integration**: `dataset-export --teacher-only` flag passes `teacher_only=True` to the function,
-replacing the current pre-filter pattern with the function's own guardrail.
+**Current repo status**:
+- `export_training_data(..., teacher_only=True)` is implemented and is the canonical strict guard
+- CLI hook-up via `dataset-export --teacher-only` is implemented in
+  [app/cli/main.py](C:/Users/sasch/.local/bin/ai_analyst_trading_bot/app/cli/main.py)
 
 ---
 
@@ -1324,24 +1326,26 @@ All conditions satisfied in Sprint 6:
 1. ✅ `export_training_data(docs, path, teacher_only=True)` skips RULE and INTERNAL docs
 2. ✅ `export_training_data(docs, path)` (default, no flag) — unchanged behavior
 3. ✅ `export_training_data(docs, path, teacher_only=True)` with legacy row (`analysis_source=None`) → skipped (strict mode)
-4. ⏳ CLI `dataset-export --teacher-only` flag → Codex task 6.2
-5. ✅ `pytest` passes (22 tests in test_datasets.py + test_evaluation.py, 550+ total)
+4. ✅ CLI `dataset-export --teacher-only` flag passes `teacher_only=True`
+5. ✅ `pytest` passes (22 tests in test_datasets.py + test_evaluation.py, 547 total)
 6. ✅ `ruff check .` clean
 7. ✅ `compare_outputs()` and `research evaluate` CLI unchanged and passing
+8. ✅ `research evaluate-datasets` wraps `load_jsonl()` + `compare_datasets()` and handles missing or empty files defensively
 
 ---
 
 ### 17. Sprint-6 — Dataset Construction, Evaluation Harness, Distillation Readiness
 
-**Status: ✅ Architecture and core harness implemented. Codex tasks 6.1–6.5 pending.**
+**Status: ✅ Architecture, core harness, and CLI hooks complete.**
 
 Core implementation in `app/research/datasets.py` and `app/research/evaluation.py`.
+Full CLI spec: [docs/dataset_evaluation_contract.md](./dataset_evaluation_contract.md).
 
 Sprint 6 defines three dataset roles and one offline evaluation harness:
 - teacher-only dataset export (`teacher_only=True`) ✅
-- internal benchmark export (CLI `--source-type internal`) ⏳ Codex 6.2
-- rule baseline export (CLI `--source-type rule`) ⏳ Codex 6.2
-- dataset-to-dataset evaluation by `document_id` (`compare_datasets()`) ✅
+- internal benchmark export (CLI `--source-type internal`) ✅
+- rule baseline export (CLI `--source-type rule`) ✅
+- dataset-to-dataset evaluation by `document_id` (`compare_datasets()` + `research evaluate-datasets`) ✅
 
 Mandatory role mapping:
 - `analysis_source=external_llm` → teacher-only dataset (fine-tuning eligible)
@@ -1361,7 +1365,7 @@ Sprint-6 guardrails (all enforced):
 - teacher-only filtering uses `doc.analysis_source` directly (strict, not `effective_analysis_source`) (§16b, I-31)
 - evaluation matches rows by `metadata["document_id"]` only (I-32)
 
-Remaining Codex tasks: CLI `--teacher-only` flag, Rich table output for `compare_datasets`, test for CLI integration.
+Remaining non-runtime task: contract acceptance / commit flow.
 
 ---
 

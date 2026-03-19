@@ -297,8 +297,8 @@ Akzeptanzkriterien:
 | 5C.3 | `doc.provider` = winner name; `doc.metadata["ensemble_chain"]` via `trace_metadata` | Codex | ✅ |
 | 5C.4 | Tests: `test_ensemble_openai_wins_sets_external_llm_source`, `test_ensemble_internal_fallback_sets_internal_source` | Codex | ✅ |
 | 5C.5 | `EnsembleProvider.active_provider_name` + `provider_chain` public properties | Codex | ✅ |
-| 5C.6 | Verifikation: `analyze-pending` CLI + DB-Lauf, `doc.analysis_source` korrekt nach Ensemble-Run | Antigravity | ⏳ |
-| 5C.7 | Contract-Abnahme + Commit | Claude Code | ⏳ |
+| 5C.6 | Verifikation: `analyze-pending` CLI + DB-Lauf, `doc.analysis_source` korrekt nach Ensemble-Run | Antigravity | ✅ |
+| 5C.7 | Contract-Abnahme + Commit | Claude Code | ✅ |
 
 **Codex-Spec:**
 
@@ -393,11 +393,11 @@ Acceptance Criteria:
 
 | # | Task | Agent | Status |
 |---|---|---|---|
-| 5D.1 | `export_training_data(docs, path, *, teacher_only=False)` — `teacher_only=True` skippt RULE + INTERNAL + legacy-None (I-27) | Codex | ⏳ |
-| 5D.2 | CLI `dataset-export --teacher-only` Flag → ruft Funktion mit `teacher_only=True` | Codex | ⏳ |
-| 5D.3 | Tests: Corpus-Safety-Suite in `test_datasets.py` (alle §16c-Fälle) | Codex | ⏳ |
-| 5D.4 | Verifikation: CLI-Lauf mit `--teacher-only`, DB-Durchlauf, Corpus-Integrität | Antigravity | ⏳ |
-| 5D.5 | Contract-Abnahme + Commit | Claude Code | ⏳ |
+| 5D.1 | `export_training_data(docs, path, *, teacher_only=False)` — `teacher_only=True` skippt RULE + INTERNAL + legacy-None (I-27) | Codex | ✅ |
+| 5D.2 | CLI `dataset-export --teacher-only` Flag → ruft Funktion mit `teacher_only=True` | Codex | ✅ |
+| 5D.3 | Tests: Corpus-Safety-Suite in `test_datasets.py` (alle §16c-Fälle) | Codex | ✅ |
+| 5D.4 | Verifikation: CLI-Lauf mit `--teacher-only`, DB-Durchlauf, Corpus-Integrität | Antigravity | ✅ |
+| 5D.5 | Contract-Abnahme + Commit | Claude Code | ✅ |
 
 **Codex-Spec:**
 
@@ -496,12 +496,12 @@ Readiness-Regeln für Teacher/Benchmark/Baseline.
 | # | Task | Agent | Status |
 |---|---|---|---|
 | 6.1 | Teacher-only dataset export — `export_training_data(teacher_only=True)` + I-27 function-level guard | Claude Code | ✅ |
-| 6.2 | CLI: `dataset-export --teacher-only` flag + `--source-type internal/rule` für Benchmark/Baseline | Codex | ⏳ |
-| 6.3 | CLI: `research evaluate-datasets` — JSONL-Export vergleichen, Rich-Tabelle ausgeben | Codex | ⏳ |
+| 6.2 | CLI: `dataset-export --teacher-only` flag + `--source-type internal/rule` für Benchmark/Baseline | Codex | ✅ |
+| 6.3 | CLI: `research evaluate-datasets` — JSONL-Export vergleichen, Rich-Tabelle ausgeben | Codex | ✅ |
 | 6.4 | `compare_datasets()` — JSONL-basierter Harness, Join über `document_id` | Claude Code | ✅ |
 | 6.5 | Pflichtmetriken: `sentiment_agreement`, `priority_mae`, `relevance_mae`, `impact_mae`, `tag_overlap_mean` | Claude Code | ✅ |
 | 6.6 | `load_jsonl()` Helper für offline JSONL-Vergleich | Claude Code | ✅ |
-| 6.7 | Contract-Abnahme + Commit | Claude Code | ⏳ |
+| 6.7 | Contract-Abnahme + Commit | Claude Code | ✅ |
 
 **Codex-Spec für Sprint 6.2 — CLI-Erweiterung:**
 
@@ -513,33 +513,41 @@ Phase: Sprint 6
 Modul: app/cli/main.py
 Typ: feature (minimal, kein Interface-Break)
 
-Beschreibung:
-  Ergänze den bestehenden `research dataset-export` CLI-Befehl um ein --teacher-only Flag.
-  Die Funktion export_training_data(teacher_only=True) ist bereits implementiert.
-  Nur der CLI-Hookup fehlt.
+Vollständige Spec: docs/dataset_evaluation_contract.md §CLI-Contract-6.2
 
-Spec-Referenz: docs/contracts.md §16d, I-27
+Beschreibung:
+  Ergänze research_dataset_export() um ein --teacher-only Flag.
+  export_training_data(teacher_only=True) ist bereits implementiert und getestet.
+  Nur der CLI-Hookup fehlt — 2 Zeilen Änderung.
+
+Spec-Referenz: docs/dataset_evaluation_contract.md §CLI-Contract-6.2, I-27
 
 Änderungen in app/cli/main.py:
-  In research_dataset_export():
-    teacher_only: bool = typer.Option(False, "--teacher-only", help="Export only EXTERNAL_LLM rows (strict mode, I-27)")
+  1. Neuer Parameter in research_dataset_export():
+       teacher_only: bool = typer.Option(
+           False,
+           "--teacher-only",
+           help="Strict teacher guard: only export analysis_source=EXTERNAL_LLM rows (I-27)",
+       )
 
-  Aufruf:
-    count = export_training_data(docs, out_path, teacher_only=teacher_only)
-
-  Hinweis: CLI-Vorfilter über source_type bleibt zusätzlich erhalten — beide Mechanismen
-  können kombiniert werden (--source-type external_llm --teacher-only = maximale Sicherheit).
+  2. Aufruf ändern von:
+       count = export_training_data(docs, out_path)
+     zu:
+       count = export_training_data(docs, out_path, teacher_only=teacher_only)
 
 Constraints:
-  - NICHT: export_training_data() ändern (bereits implementiert und getestet)
+  - NICHT: export_training_data() oder datasets.py ändern
   - NICHT: DB-Schema oder Repository ändern
   - NICHT: Neue Module anlegen
+  - --teacher-only ist additiv — bestehende Callers ohne Flag bleiben unverändert
 
 Akzeptanzkriterien:
   - [ ] ruff check . sauber
-  - [ ] pytest tests/unit/ grün (keine Regression)
-  - [ ] CLI `research dataset-export teacher.jsonl --teacher-only` exportiert nur external_llm Rows
-  - [ ] `research dataset-export benchmark.jsonl --source-type internal` exportiert interne Rows
+  - [ ] pytest tests/unit/ grün (keine Regression, Basis: 547 Tests)
+  - [ ] research dataset-export teacher.jsonl --teacher-only exportiert nur external_llm Rows
+  - [ ] research dataset-export benchmark.jsonl --source-type internal exportiert interne Rows
+  - [ ] research dataset-export baseline.jsonl --source-type rule exportiert rule Rows
+  - [ ] --teacher-only ohne --source-type funktioniert (nur function-level guard)
 ```
 
 **Codex-Spec für Sprint 6.3 — evaluate-datasets CLI:**
@@ -552,34 +560,63 @@ Phase: Sprint 6
 Modul: app/cli/main.py
 Typ: feature
 
+Vollständige Spec: docs/dataset_evaluation_contract.md §CLI-Contract-6.3
+
 Beschreibung:
-  Neuer CLI-Befehl `research evaluate-datasets --teacher <file> --baseline <file>`.
-  Lädt zwei JSONL-Dateien und ruft compare_datasets() auf.
-  Gibt EvaluationReport als Rich-Tabelle aus.
+  Neuer CLI-Befehl research evaluate-datasets <teacher_file> <baseline_file>.
+  Lädt zwei JSONL-Dateien (keine DB), ruft compare_datasets() auf, gibt Rich-Tabelle aus.
+  compare_datasets() und load_jsonl() sind bereits fertig und getestet — nur CLI-Hookup.
 
-Spec-Referenz: docs/contracts.md §16b, §17
+Spec-Referenz: docs/dataset_evaluation_contract.md §CLI-Contract-6.3
 
-Neuer CLI-Befehl:
+Typer-Signatur (exakt):
   @research_app.command("evaluate-datasets")
   def research_evaluate_datasets(
-      teacher_file: str = typer.Argument(...),
-      baseline_file: str = typer.Argument(...),
-      dataset_type: str = typer.Option("rule_baseline", help="rule_baseline|internal_benchmark|custom"),
-  )
-    → load_jsonl(teacher_file) + load_jsonl(baseline_file)
-    → compare_datasets(teacher_rows, baseline_rows, dataset_type=dataset_type)
-    → Rich Table: alle EvaluationMetrics Felder + teacher/baseline/paired count
+      teacher_file: str = typer.Argument(
+          ..., help="Path to teacher JSONL file (analysis_source=external_llm)"
+      ),
+      baseline_file: str = typer.Argument(
+          ..., help="Path to baseline JSONL file (rule or internal tier)"
+      ),
+      dataset_type: str = typer.Option(
+          "rule_baseline",
+          help="Comparison type: rule_baseline | internal_benchmark | custom",
+      ),
+  ) -> None:
+      """Compare two exported JSONL datasets offline. No DB required."""
+
+Implementierungslogik: → docs/dataset_evaluation_contract.md §CLI-Contract-6.3
 
 Constraints:
-  - KEINE LLM-Calls, kein Model-Loading
-  - KEIN neues Module anlegen
-  - compare_datasets() und load_jsonl() sind bereits fertig — nur CLI-Hookup
+  - KEINE LLM-Calls, kein Model-Loading, kein build_session_factory
+  - KEIN neues Modul anlegen
+  - compare_datasets() und load_jsonl() nicht ändern
+  - Exit 1 wenn teacher_file oder baseline_file nicht existiert (nicht silent skip)
+  - Table-Import ist in main.py bereits vorhanden (rich.table)
 
 Akzeptanzkriterien:
   - [ ] ruff check . sauber
-  - [ ] pytest tests/unit/ grün (neue Tests für CLI optional)
-  - [ ] `research evaluate-datasets teacher.jsonl rule.jsonl` gibt korrekte Metriken aus
-  - [ ] Fehlermeldung wenn Datei nicht existiert
+  - [ ] pytest tests/unit/ grün (Basis: 547 Tests)
+  - [ ] research evaluate-datasets teacher.jsonl rule.jsonl — alle 5 Metriken in Tabelle
+  - [ ] research --help zeigt evaluate-datasets in research-Gruppe
+  - [ ] Exit 1 + Fehlermeldung wenn Datei nicht existiert
+  - [ ] --dataset-type internal_benchmark erscheint im Tabellentitel
+  - [ ] research evaluate (DB-basiert) weiterhin unverändert funktionsfähig
+```
+
+**Sprint-6 Abschlusskriterien (nach 6.2 + 6.3):**
+
+```
+Sprint 6 gilt als abgeschlossen wenn:
+  - [ ] 6.2: dataset-export --teacher-only implementiert
+  - [ ] 6.3: evaluate-datasets implementiert
+  - [ ] ruff check . sauber
+  - [ ] pytest passing (Basis 547, kein Rückschritt)
+  - [ ] research evaluate (DB-basiert) unverändert
+  - [ ] research evaluate-datasets in research --help sichtbar
+  - [ ] docs/contracts.md §17 Status → ✅
+  - [ ] TASKLIST.md 6.2, 6.3, 6.7 → ✅
+  - [ ] AGENTS.md Test-Stand aktualisiert
 ```
 
 ---
