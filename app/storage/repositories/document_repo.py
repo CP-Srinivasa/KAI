@@ -88,6 +88,7 @@ class DocumentRepository:
                 market_scope=result.market_scope.value if result.market_scope else None,
                 tags=result.tags,
                 tickers=result.affected_assets,
+                categories=result.affected_sectors,
                 status=DocumentStatus.ANALYZED.value,
                 is_duplicate=False,
                 is_analyzed=True,

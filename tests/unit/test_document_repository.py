@@ -120,6 +120,7 @@ async def test_update_analysis_sets_analyzed_status(session_factory) -> None:
             explanation_short="Test",
             explanation_long="Test long",
             tags=["macro"],
+            affected_sectors=["defi", "layer1"],
         )
         await repo.update_analysis(str(saved.id), analysis_result)
 
@@ -133,3 +134,4 @@ async def test_update_analysis_sets_analyzed_status(session_factory) -> None:
     assert stored.is_analyzed is True
     assert stored.sentiment_label == SentimentLabel.BULLISH
     assert stored.priority_score == analysis_result.recommended_priority
+    assert stored.categories == ["defi", "layer1"]

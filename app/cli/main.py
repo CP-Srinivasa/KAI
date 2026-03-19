@@ -170,19 +170,26 @@ def analyze_pending(
         pipeline = AnalysisPipeline(keyword_engine, provider_obj, run_llm=bool(provider_obj))
         session_factory = build_session_factory(settings.db)
 
+        # Phase 1: Read pending docs — session committed immediately after fetch
         async with session_factory.begin() as session:
             repo = DocumentRepository(session)
             docs = await repo.get_pending_documents(limit=limit)
 
-            if not docs:
-                console.print("[green]No pending documents to analyze.[/green]")
-                return
+        if not docs:
+            console.print("[green]No pending documents to analyze.[/green]")
+            return
 
-            console.print(f"[bold]Analyzing {len(docs)} documents...[/bold]")
-            results = await pipeline.run_batch(docs)
+        console.print(f"[bold]Analyzing {len(docs)} documents...[/bold]")
 
-            success_count = 0
-            error_count = 0
+        # Phase 2: Run analysis pipeline — LLM HTTP calls happen outside any DB session
+        results = await pipeline.run_batch(docs)
+
+        # Phase 3: Write results — new session, no LLM calls inside
+        success_count = 0
+        error_count = 0
+
+        async with session_factory.begin() as session:
+            repo = DocumentRepository(session)
 
             for res in results:
                 if not res.success:
@@ -207,10 +214,10 @@ def analyze_pending(
                     console.print(f"[red]Failed to save doc {res.document.id}:[/red] {e}")
                     error_count += 1
 
-            console.print(
-                f"[bold green]Analysis complete![/bold green] "
-                f"{success_count} success, {error_count} failed."
-            )
+        console.print(
+            f"[bold green]Analysis complete![/bold green] "
+            f"{success_count} success, {error_count} failed."
+        )
 
     asyncio.run(run())
 
