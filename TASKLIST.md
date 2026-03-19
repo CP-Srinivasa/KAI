@@ -385,6 +385,103 @@ Acceptance Criteria:
 
 ---
 
+## Sprint 5D — Distillation Corpus Safety + Evaluation Baseline
+
+**Ziel**: Teacher-Eligibility-Guardrail auf Funktionsebene. Sprint-6 kann direkt mit teacher-only Export und Evaluation-Metriken starten.
+
+**Contract-Basis**: `docs/contracts.md §16` (I-27/I-28)
+
+| # | Task | Agent | Status |
+|---|---|---|---|
+| 5D.1 | `export_training_data(docs, path, *, teacher_only=False)` — `teacher_only=True` skippt RULE + INTERNAL + legacy-None (I-27) | Codex | ⏳ |
+| 5D.2 | CLI `dataset-export --teacher-only` Flag → ruft Funktion mit `teacher_only=True` | Codex | ⏳ |
+| 5D.3 | Tests: Corpus-Safety-Suite in `test_datasets.py` (alle §16c-Fälle) | Codex | ⏳ |
+| 5D.4 | Verifikation: CLI-Lauf mit `--teacher-only`, DB-Durchlauf, Corpus-Integrität | Antigravity | ⏳ |
+| 5D.5 | Contract-Abnahme + Commit | Claude Code | ⏳ |
+
+**Codex-Spec:**
+
+```
+## Task: Sprint 5D — teacher_only Guardrail in export_training_data()
+
+Agent: Codex
+Phase: Sprint 5D
+Modul: app/research/datasets.py, app/cli/main.py, tests/unit/test_datasets.py
+Typ: safety-hardening (minimale Änderung, kein neues Feature)
+
+Spec-Referenz: docs/contracts.md §16 (I-27)
+
+Änderungen:
+
+1. app/research/datasets.py
+
+   Signatur:
+     def export_training_data(
+         documents: list[CanonicalDocument],
+         output_path: Path,
+         *,
+         teacher_only: bool = False,
+     ) -> int:
+
+   Skip-Logik (nach is_analyzed-Check, vor text_block-Check):
+     if teacher_only:
+         if doc.analysis_source != AnalysisSource.EXTERNAL_LLM:
+             continue
+         # Hinweis: doc.analysis_source (nicht effective_analysis_source) prüfen.
+         # Legacy-Rows ohne explizit gesetztes analysis_source (None) werden übersprungen.
+         # effective_analysis_source würde sie via provider-Fallback ggf. zulassen — zu riskant.
+
+   Import ergänzen: from app.core.enums import AnalysisSource (falls noch nicht vorhanden)
+
+2. app/cli/main.py — dataset-export Command
+
+   Neues Flag:
+     teacher_only: bool = typer.Option(False, "--teacher-only", help="Export only EXTERNAL_LLM docs (I-27 safety guardrail)")
+
+   Übergabe an Funktion:
+     count = export_training_data(docs, out_path, teacher_only=teacher_only)
+
+   WICHTIG: bestehender --source-type Filter BLEIBT. Beide Mechanismen arbeiten zusammen:
+   - --source-type filtert VOR dem Funktionsaufruf (DB-Query-Schicht)
+   - --teacher-only ist Guardrail IN der Funktion (kann nicht umgangen werden)
+
+3. tests/unit/test_datasets.py — Corpus-Safety-Suite
+
+   Neue Tests (§16c alle Fälle):
+
+   test_teacher_only_skips_rule_documents:
+     doc mit analysis_source=AnalysisSource.RULE, is_analyzed=True, raw_text vorhanden
+     export_training_data([doc], path, teacher_only=True) → count == 0
+
+   test_teacher_only_skips_internal_documents:
+     doc mit analysis_source=AnalysisSource.INTERNAL, is_analyzed=True, raw_text vorhanden
+     export_training_data([doc], path, teacher_only=True) → count == 0
+
+   test_teacher_only_skips_legacy_none_analysis_source:
+     doc mit analysis_source=None, provider="openai" (würde via effective→EXTERNAL_LLM)
+     export_training_data([doc], path, teacher_only=True) → count == 0
+     (Konservativ: explicit field required)
+
+   test_teacher_only_exports_external_llm_documents:
+     doc mit analysis_source=AnalysisSource.EXTERNAL_LLM, is_analyzed=True, raw_text
+     export_training_data([doc], path, teacher_only=True) → count == 1
+
+   test_teacher_only_false_exports_all_sources:
+     docs = [external_llm_doc, internal_doc, rule_doc] alle is_analyzed=True, mit text
+     export_training_data(docs, path, teacher_only=False) → count == 3
+
+Acceptance Criteria:
+  - ruff check . sauber
+  - pytest -q grün (alle bestehenden + 5 neue Tests)
+  - export_training_data([rule_doc], path, teacher_only=True) → count == 0
+  - export_training_data([openai_doc], path, teacher_only=True) → count == 1
+  - default teacher_only=False: identical behavior to pre-5D (kein Breaking Change)
+  - doc.analysis_source (nicht effective) wird für teacher_only geprüft (§16c letzte Zeile)
+  - Kein Scope-Drift: nur datasets.py, cli/main.py, test_datasets.py
+```
+
+---
+
 ## Sprint 5 — Intelligence Layer (Companion Model)
 
 > **Startet erst nach Sprint 4C-Abschluss.**

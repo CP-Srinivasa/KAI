@@ -1205,6 +1205,128 @@ This guarantees no consumer ever branches on `provider` for tier decisions.
 
 ---
 
+---
+
+### 16. Sprint-5D — Distillation Corpus Safety + Evaluation Baseline
+
+Defines the final hardening layer before Sprint 6 (teacher-only export, evaluation metrics, corpus integrity).
+
+---
+
+#### 16a. The Gap: Teacher-Eligibility Enforced Only at CLI Layer
+
+After Sprint-5C, `analysis_source=EXTERNAL_LLM` is written correctly for all new analyzed documents.
+
+**Current safety coverage:**
+
+| Call path | Teacher filter applied? |
+|---|---|
+| `research dataset-export --source-type external_llm` (CLI) | ✅ before calling `export_training_data()` |
+| `export_training_data(docs, path)` (direct API call) | ❌ no filter — caller must pre-filter |
+| `export_training_data(docs, path, teacher_only=True)` | ❌ parameter does not yet exist |
+
+The gap: any code that calls `export_training_data()` directly without pre-filtering receives the full set including RULE and INTERNAL documents. This violates the spirit of I-16/I-19 if a caller accidentally passes an unfiltered list.
+
+---
+
+#### 16b. Fix: `teacher_only` Parameter at Function Level (I-27)
+
+`export_training_data()` must enforce I-16/I-19 when called with `teacher_only=True`:
+
+```python
+def export_training_data(
+    documents: list[CanonicalDocument],
+    output_path: Path,
+    *,
+    teacher_only: bool = False,
+) -> int:
+    count = 0
+    with output_path.open("w", encoding="utf-8") as f:
+        for doc in documents:
+            if not doc.is_analyzed:
+                continue
+            # I-27: enforce teacher eligibility at function level
+            if teacher_only and doc.effective_analysis_source != AnalysisSource.EXTERNAL_LLM:
+                continue
+            ...
+```
+
+**Default `teacher_only=False`** — backward-compatible. Existing callers unaffected.
+
+**CLI integration**: `dataset-export --teacher-only` flag passes `teacher_only=True` to the function,
+replacing the current pre-filter pattern with the function's own guardrail.
+
+---
+
+#### 16c. Corpus Integrity Guarantee (post Sprint-5D)
+
+With `teacher_only=True`, the following must hold for any input:
+
+| Input document | Exported? |
+|---|---|
+| `analysis_source=EXTERNAL_LLM`, `is_analyzed=True`, has text | ✅ yes |
+| `analysis_source=INTERNAL`, `is_analyzed=True` | ❌ no |
+| `analysis_source=RULE`, `is_analyzed=True` | ❌ no |
+| `analysis_source=None` (legacy), `doc.provider="openai"` | ❌ no (conservative — explicit field required) |
+| `is_analyzed=False` | ❌ no (existing guard) |
+| no text | ❌ no (existing guard) |
+
+The last case is intentionally conservative: legacy rows without an explicit `analysis_source` field
+are NOT teacher-eligible even if their `provider` would imply `EXTERNAL_LLM`. Callers who need
+legacy rows must pre-filter using `effective_analysis_source` and pass `teacher_only=False`.
+
+This prevents silent corpus contamination from pre-5B rows.
+
+---
+
+#### 16d. Corpus Export Modes (Sprint-6 ready)
+
+Three distinct export modes serve three distinct purposes:
+
+| Mode | CLI flag | `teacher_only` | `source_type` filter | Purpose |
+|---|---|---|---|---|
+| Teacher corpus | `--teacher-only` | `True` | `external_llm` (enforced) | Companion fine-tuning |
+| Internal benchmark | (default) | `False` | `internal` | Evaluate companion vs rule baseline |
+| Rule baseline | (default) | `False` | `rule` | Floor metrics, spam/novelty calibration |
+
+The CLI `--source-type` filter and `--teacher-only` are separate concerns:
+- `--source-type` narrows WHICH documents are loaded from DB before calling the function
+- `--teacher-only` is an additional safety guardrail inside the function
+
+Both can be combined: `--source-type external_llm --teacher-only` = maximum safety.
+
+---
+
+#### 16e. Evaluation Baseline Contract (I-28)
+
+`research evaluate` (CLI) and `compare_outputs()` (evaluation.py) compare:
+- **Teacher scores** (`analysis_source=EXTERNAL_LLM`): ground truth per document
+- **Rule-baseline scores** (`AnalysisPipeline(run_llm=False)`): deterministic fallback re-run
+
+This establishes the **floor gap** — how far the rule-based fallback diverges from external LLM output.
+Sprint-6 will add a second comparison: rule-baseline vs companion model (real Ollama inference).
+
+`EvaluationResult` fields defined and stable — no changes needed for Sprint-5D.
+`compare_outputs()` signature is stable — no changes needed for Sprint-5D.
+
+The evaluation command MUST NOT call any external API. All inference in Sprint-5D is offline.
+
+---
+
+#### 16f. Sprint-5D Acceptance Criteria
+
+All must hold before Sprint-6 begins:
+
+1. `export_training_data(docs, path, teacher_only=True)` skips RULE and INTERNAL docs
+2. `export_training_data(docs, path)` (default, no flag) — unchanged behavior
+3. `export_training_data(docs, path, teacher_only=True)` with legacy row (`analysis_source=None`) → skipped
+4. CLI `dataset-export --teacher-only` → calls function with `teacher_only=True`
+5. `pytest` passes (all existing + new corpus-safety tests)
+6. `ruff check .` clean
+7. `compare_outputs()` and `research evaluate` CLI work without changes
+
+---
+
 ## Immutable Invariants
 
 These may never be broken without a new spec:
@@ -1237,3 +1359,5 @@ These may never be broken without a new spec:
 | I-24 | `_resolve_runtime_provider_name(provider)` resolves the winner name AFTER `analyze()` succeeds using duck-typed `active_provider_name`. `_resolve_analysis_source(winner_name)` then derives the tier. Neither is called in the error/fallback path — only `RULE` is valid when analysis failed. |
 | I-25 | `doc.provider` stores the **winning** provider name (e.g. `"openai"`, `"internal"`) — never the composite ensemble string. `doc.metadata["ensemble_chain"]` records the full ordered list for traceability. |
 | I-26 | Teacher eligibility is determined exclusively by `analysis_source=EXTERNAL_LLM`. `doc.provider`, `doc.metadata["ensemble_chain"]`, and all other metadata fields MUST NOT be used as teacher-eligibility criteria. No ensemble composition detail may bypass I-16 or I-19. |
+| I-27 | `export_training_data()` MUST enforce teacher-eligibility at the function level when `teacher_only=True`. CLI-layer pre-filtering is not sufficient — direct API callers must be protected by the same guardrail. |
+| I-28 | The `evaluate` CLI command compares teacher-labeled scores against rule-baseline scores (no LLM calls). This is the Sprint-6 baseline only — it does NOT represent companion-model accuracy until a real companion inference endpoint is configured. |
