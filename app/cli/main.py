@@ -24,6 +24,7 @@ query_app = typer.Typer(help="Query commands", no_args_is_help=True)
 ingest_app = typer.Typer(help="Ingestion commands", no_args_is_help=True)
 pipeline_app = typer.Typer(help="End-to-end pipeline commands", no_args_is_help=True)
 alerts_app = typer.Typer(help="Alert commands", no_args_is_help=True)
+research_app = typer.Typer(help="Research and signal generation commands", no_args_is_help=True)
 
 app.add_typer(sources_app, name="sources")
 app.add_typer(podcasts_app, name="podcasts")
@@ -32,6 +33,7 @@ app.add_typer(query_app, name="query")
 app.add_typer(ingest_app, name="ingest")
 app.add_typer(pipeline_app, name="pipeline")
 app.add_typer(alerts_app, name="alerts")
+app.add_typer(research_app, name="research")
 
 
 @app.callback()
@@ -221,27 +223,48 @@ def query_list(
     limit: int = typer.Option(20, help="Max documents to return"),
     min_priority: int = typer.Option(1, help="Minimum priority score filter (1-10)"),
     source_id: str = typer.Option(None, help="Filter by source ID"),
+    asset: str = typer.Option(None, help="Filter to specific asset/ticker (e.g. BTC)"),
+    watchlist: str = typer.Option(None, help="Filter using a named watchlist tag (e.g. defi)"),
 ) -> None:
     """List analyzed documents sorted by priority score (highest first)."""
     import asyncio
 
     async def run() -> None:
+        from app.research.watchlists import WatchlistRegistry
         from app.storage.db.session import build_session_factory
         from app.storage.repositories.document_repo import DocumentRepository
 
         settings = get_settings()
+        monitor_dir = Path(settings.monitor_dir)
         session_factory = build_session_factory(settings.db)
+
+        # Resolve watchlist symbols
+        allowed_assets = set()
+        if asset:
+            allowed_assets.add(asset.upper())
+        if watchlist:
+            registry = WatchlistRegistry.from_monitor_dir(monitor_dir)
+            allowed_assets.update(s.upper() for s in registry.get_watchlist(watchlist))
 
         async with session_factory.begin() as session:
             repo = DocumentRepository(session)
             docs = await repo.list(
                 is_analyzed=True,
                 source_id=source_id,
-                limit=limit,
+                limit=limit * 5 if allowed_assets else limit,  # Grab more if filtering in-memory
             )
 
         filtered = [d for d in docs if (d.priority_score or 0) >= min_priority]
+
+        if allowed_assets:
+            filtered = [
+                d
+                for d in filtered
+                if any(t.upper() in allowed_assets for t in (d.tickers + d.crypto_assets))
+            ]
+
         filtered.sort(key=lambda d: d.priority_score or 0, reverse=True)
+        filtered = filtered[:limit]
 
         if not filtered:
             console.print("[yellow]No analyzed documents found.[/yellow]")
@@ -546,6 +569,120 @@ def alerts_evaluate_pending(
         for r in results:
             status = "[green]✓ sent[/green]" if r.success else f"[red]✗ failed: {r.error}[/red]"
             console.print(f"  [{r.channel}] {status}")
+
+    asyncio.run(run())
+
+    asyncio.run(run())
+
+
+# ── research ──────────────────────────────────────────────────────────────────
+
+
+@research_app.command("brief")
+def research_brief(
+    watchlist: str = typer.Option(..., help="Watchlist/cluster to generate brief for (e.g. defi)"),
+    limit: int = typer.Option(100, help="Number of recent documents to process"),
+    output_format: str = typer.Option("md", "--format", help="Output format: md or json"),
+) -> None:
+    """Generate a Research Brief summarizing documents for a specific cluster."""
+    import asyncio
+    import json
+
+    async def run() -> None:
+        from app.research.briefs import ResearchBriefBuilder
+        from app.research.watchlists import WatchlistRegistry
+        from app.storage.db.session import build_session_factory
+        from app.storage.repositories.document_repo import DocumentRepository
+
+        settings = get_settings()
+        monitor_dir = Path(settings.monitor_dir)
+        session_factory = build_session_factory(settings.db)
+
+        registry = WatchlistRegistry.from_monitor_dir(monitor_dir)
+        symbols = [s.upper() for s in registry.get_watchlist(watchlist)]
+
+        if not symbols:
+            console.print(f"[yellow]Warning: Watchlist '{watchlist}' produced no symbols.[/yellow]")
+
+        async with session_factory.begin() as session:
+            repo = DocumentRepository(session)
+            # We fetch more than limit to ensure enough matches after symbol filtering
+            docs = await repo.list(is_analyzed=True, limit=limit * 5)
+
+        if symbols:
+            docs = [
+                d for d in docs if any(t.upper() in symbols for t in (d.tickers + d.crypto_assets))
+            ]
+
+        docs = docs[:limit]
+
+        builder = ResearchBriefBuilder(cluster_name=watchlist)
+        brief = builder.build(docs)
+
+        if output_format.lower() == "json":
+            console.print(json.dumps(brief.to_json_dict(), indent=2))
+        else:
+            console.print(brief.to_markdown())
+
+    asyncio.run(run())
+
+
+@research_app.command("signals")
+def research_signals(
+    limit: int = typer.Option(100, help="Number of recent documents to search"),
+    min_priority: int = typer.Option(8, help="Minimum priority score for signals"),
+) -> None:
+    """Extract and list strict Signal Candidates for automated trading."""
+    import asyncio
+
+    async def run() -> None:
+        from app.research.signals import extract_signal_candidates
+        from app.storage.db.session import build_session_factory
+        from app.storage.repositories.document_repo import DocumentRepository
+
+        settings = get_settings()
+        session_factory = build_session_factory(settings.db)
+
+        async with session_factory.begin() as session:
+            repo = DocumentRepository(session)
+            docs = await repo.list(is_analyzed=True, limit=limit)
+
+        signals = extract_signal_candidates(docs, min_priority=min_priority)
+
+        if not signals:
+            console.print(f"[yellow]No signal candidates found in the last {limit} docs.[/yellow]")
+            return
+
+        table = Table(show_header=True, header_style="bold cyan")
+        table.add_column("SigID", width=12)
+        table.add_column("Dir", width=4)
+        table.add_column("Pri", width=3)
+        table.add_column("Assets", width=15)
+        table.add_column("Title")
+
+        for sig in signals:
+            direction_color = (
+                "green"
+                if sig.action_direction == "buy"
+                else "red"
+                if sig.action_direction == "sell"
+                else "yellow"
+            )
+            dir_str = f"[{direction_color}]{sig.action_direction.upper()}[/{direction_color}]"
+            assets_str = ", ".join(sig.affected_assets[:3]) + (
+                "..." if len(sig.affected_assets) > 3 else ""
+            )
+
+            table.add_row(
+                sig.signal_id[:12],
+                dir_str,
+                str(sig.priority),
+                assets_str,
+                sig.title[:60] + ("..." if len(sig.title) > 60 else ""),
+            )
+
+        console.print(table)
+        console.print(f"\n[bold]{len(signals)} Actionable Signals[/bold] ready for execution.")
 
     asyncio.run(run())
 

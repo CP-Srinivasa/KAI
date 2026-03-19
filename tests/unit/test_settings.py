@@ -7,8 +7,9 @@ from app.core.settings import (
 )
 
 
-def test_app_settings_defaults():
-    settings = AppSettings()
+def test_app_settings_defaults(monkeypatch):
+    monkeypatch.delenv("APP_ENV", raising=False)
+    settings = AppSettings(_env_file=None)
     assert settings.env == "development"
     assert settings.log_level == "INFO"
     assert settings.monitor_dir == "monitor"
