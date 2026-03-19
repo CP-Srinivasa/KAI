@@ -50,13 +50,17 @@ class PipelineResult:
             return
 
         res = self.analysis_result
+        spam_prob = self.llm_output.spam_probability
         self.document.sentiment_label = res.sentiment_label
         self.document.sentiment_score = res.sentiment_score
         self.document.impact_score = res.impact_score
-        self.document.credibility_score = 1.0 - res.spam_probability
+        self.document.credibility_score = 1.0 - spam_prob
         self.document.novelty_score = res.novelty_score
-        self.document.spam_probability = res.spam_probability
-        self.document.market_scope = res.market_scope
+        self.document.spam_probability = spam_prob
+        if res.market_scope is not None:
+            self.document.market_scope = res.market_scope
+        else:
+            self.document.market_scope = self.llm_output.market_scope
 
         # Merge structured extras
         self.document.tags = list(set(self.document.tags + res.tags))
@@ -70,8 +74,10 @@ class PipelineResult:
         res.relevance_score = blended
 
         # Compute Priority
-        priority = compute_priority(res)
+        priority = compute_priority(res, spam_probability=spam_prob)
         self.document.priority_score = priority.priority
+        res.recommended_priority = priority.priority
+        res.spam_probability = spam_prob
 
 
 class AnalysisPipeline:
@@ -120,10 +126,21 @@ class AnalysisPipeline:
                     context=context,
                 )
                 analysis_result = AnalysisResult(
-                    document_id=doc.id,
-                    provider=self._provider.provider_name,
-                    model=self._provider.model,
-                    **llm_output.model_dump(),
+                    document_id=str(doc.id),
+                    sentiment_label=llm_output.sentiment_label,
+                    sentiment_score=llm_output.sentiment_score,
+                    relevance_score=llm_output.relevance_score,
+                    impact_score=llm_output.impact_score,
+                    confidence_score=llm_output.confidence_score,
+                    novelty_score=llm_output.novelty_score,
+                    market_scope=llm_output.market_scope,
+                    affected_assets=llm_output.affected_assets,
+                    affected_sectors=llm_output.affected_sectors,
+                    event_type=llm_output.event_type,
+                    explanation_short=llm_output.short_reasoning or "",
+                    explanation_long=llm_output.long_reasoning or "",
+                    actionable=llm_output.actionable,
+                    tags=llm_output.tags,
                 )
             except Exception as exc:
                 return PipelineResult(

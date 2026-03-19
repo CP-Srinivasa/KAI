@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import yaml
+import yaml  # type: ignore[import-untyped]
 
 from app.core.domain.events import EventAnalog, HistoricalEvent
 

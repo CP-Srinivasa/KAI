@@ -7,8 +7,8 @@ from datetime import datetime
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.domain.document import CanonicalDocument
-from app.core.enums import DocumentType, SourceType
+from app.core.domain.document import AnalysisResult, CanonicalDocument
+from app.core.enums import DocumentStatus, DocumentType, SourceType
 from app.core.errors import StorageError
 from app.storage.models.document import CanonicalDocumentModel
 
@@ -17,19 +17,110 @@ class DocumentRepository:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
-    async def save(self, doc: CanonicalDocument) -> CanonicalDocument:
-        """Insert or update a document. Uses content_hash for conflict detection."""
+    # ── Canonical interface ──────────────────────────────────────────────────
+
+    async def save_document(self, doc: CanonicalDocument) -> str:
+        """Persist a document. Returns the document ID. Idempotent on content_hash collision."""
         existing = await self.get_by_hash(doc.content_hash) if doc.content_hash else None
         if existing:
-            return existing
-
-        model = _to_model(doc)
+            return str(existing.id)
+        persisted_doc = doc.model_copy(
+            update={
+                "status": DocumentStatus.PERSISTED,
+                "is_duplicate": False,
+                "is_analyzed": False,
+            }
+        )
+        model = _to_model(persisted_doc)
         self._session.add(model)
         try:
             await self._session.flush()
         except Exception as e:
             raise StorageError(f"Failed to save document: {e}") from e
-        return doc
+        return str(persisted_doc.id)
+
+    async def get_pending_documents(self, limit: int = 50) -> list[CanonicalDocument]:
+        """Return documents that are persisted and waiting for analysis."""
+        stmt = (
+            select(CanonicalDocumentModel)
+            .where(CanonicalDocumentModel.is_analyzed == False)  # noqa: E712
+            .where(CanonicalDocumentModel.is_duplicate == False)  # noqa: E712
+            .order_by(CanonicalDocumentModel.published_at.desc())
+            .limit(limit)
+        )
+        result = await self._session.execute(stmt)
+        return [_from_model(m) for m in result.scalars().all()]
+
+    async def update_status(self, document_id: str, status: DocumentStatus) -> None:
+        """Explicitly advance a document to a new lifecycle status."""
+        values: dict = {"status": status.value}
+        if status == DocumentStatus.ANALYZED:
+            values["is_analyzed"] = True
+            values["is_duplicate"] = False
+        elif status == DocumentStatus.DUPLICATE:
+            values["is_duplicate"] = True
+            values["is_analyzed"] = False
+        elif status == DocumentStatus.FAILED:
+            values["is_duplicate"] = False
+            values["is_analyzed"] = False
+        await self._session.execute(
+            update(CanonicalDocumentModel)
+            .where(CanonicalDocumentModel.id == document_id)
+            .values(**values)
+        )
+        await self._session.flush()
+
+    async def update_analysis(self, document_id: str, result: AnalysisResult) -> None:
+        """Write analysis scores to the document and set status=ANALYZED."""
+        await self._session.execute(
+            update(CanonicalDocumentModel)
+            .where(CanonicalDocumentModel.id == document_id)
+            .values(
+                sentiment_label=result.sentiment_label.value,
+                sentiment_score=result.sentiment_score,
+                relevance_score=result.relevance_score,
+                impact_score=result.impact_score,
+                novelty_score=result.novelty_score,
+                credibility_score=1.0 - result.spam_probability,
+                spam_probability=result.spam_probability,
+                priority_score=result.recommended_priority,
+                market_scope=result.market_scope.value if result.market_scope else None,
+                tags=result.tags,
+                tickers=result.affected_assets,
+                status=DocumentStatus.ANALYZED.value,
+                is_duplicate=False,
+                is_analyzed=True,
+            )
+        )
+        await self._session.flush()
+
+    # ── Backward-compat aliases ──────────────────────────────────────────────
+
+    async def save(self, doc: CanonicalDocument) -> CanonicalDocument:
+        """Backward-compat alias for save_document(). Returns CanonicalDocument."""
+        existing = await self.get_by_hash(doc.content_hash) if doc.content_hash else None
+        if existing:
+            return existing
+        await self.save_document(doc)
+        persisted = doc.model_copy(
+            update={
+                "status": DocumentStatus.PERSISTED,
+                "is_duplicate": False,
+                "is_analyzed": False,
+            }
+        )
+        return persisted
+
+    async def mark_duplicate(self, doc_id: str) -> None:
+        await self.update_status(doc_id, DocumentStatus.DUPLICATE)
+
+    async def mark_failed(self, doc_id: str) -> None:
+        await self.update_status(doc_id, DocumentStatus.FAILED)
+
+    async def mark_analyzed(self, doc_id: str) -> None:
+        await self.update_status(doc_id, DocumentStatus.ANALYZED)
+
+    # ── Unchanged query methods ──────────────────────────────────────────────
 
     async def get_by_id(self, doc_id: str) -> CanonicalDocument | None:
         result = await self._session.execute(
@@ -90,51 +181,6 @@ class DocumentRepository:
         result = await self._session.execute(stmt)
         return [_from_model(m) for m in result.scalars().all()]
 
-    async def mark_duplicate(self, doc_id: str) -> None:
-        await self._session.execute(
-            update(CanonicalDocumentModel)
-            .where(CanonicalDocumentModel.id == doc_id)
-            .values(is_duplicate=True)
-        )
-        await self._session.flush()
-
-    async def mark_analyzed(self, doc_id: str) -> None:
-        await self._session.execute(
-            update(CanonicalDocumentModel)
-            .where(CanonicalDocumentModel.id == doc_id)
-            .values(is_analyzed=True)
-        )
-        await self._session.flush()
-
-    async def update_analysis(self, doc: CanonicalDocument) -> None:
-        """Update a document with analysis scores, entities, and priority. Sets is_analyzed=True."""
-        await self._session.execute(
-            update(CanonicalDocumentModel)
-            .where(CanonicalDocumentModel.id == str(doc.id))
-            .values(
-                sentiment_label=doc.sentiment_label.value if doc.sentiment_label else None,
-                sentiment_score=doc.sentiment_score,
-                relevance_score=doc.relevance_score,
-                impact_score=doc.impact_score,
-                credibility_score=doc.credibility_score,
-                novelty_score=doc.novelty_score,
-                spam_probability=doc.spam_probability,
-                priority_score=doc.priority_score,
-                market_scope=doc.market_scope.value,
-                entity_mentions=[e.model_dump() for e in doc.entity_mentions],
-                entities=doc.entities,
-                tickers=doc.tickers,
-                crypto_assets=doc.crypto_assets,
-                people=doc.people,
-                organizations=doc.organizations,
-                tags=doc.tags,
-                topics=doc.topics,
-                categories=doc.categories,
-                is_analyzed=True,
-            )
-        )
-        await self._session.flush()
-
 
 # ── Mapping helpers ───────────────────────────────────────────────────────────
 
@@ -167,6 +213,7 @@ def _to_model(doc: CanonicalDocument) -> CanonicalDocumentModel:
         credibility_score=doc.credibility_score,
         spam_probability=doc.spam_probability,
         priority_score=doc.priority_score,
+        status=doc.status.value,
         is_duplicate=doc.is_duplicate,
         is_analyzed=doc.is_analyzed,
         entity_mentions=[e.model_dump() for e in doc.entity_mentions],
@@ -227,6 +274,7 @@ def _from_model(model: CanonicalDocumentModel) -> CanonicalDocument:
         credibility_score=model.credibility_score,
         spam_probability=model.spam_probability,
         priority_score=model.priority_score,
+        status=DocumentStatus(model.status),
         is_duplicate=model.is_duplicate,
         is_analyzed=model.is_analyzed,
         entity_mentions=entity_mentions,

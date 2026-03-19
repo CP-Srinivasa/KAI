@@ -5,7 +5,8 @@ from typer.testing import CliRunner
 from app.cli import main as cli_main
 from app.cli.main import app
 from app.core.domain.document import CanonicalDocument
-from app.core.enums import SourceStatus, SourceType
+from app.core.enums import MarketScope, SentimentLabel, SourceStatus, SourceType
+from app.core.settings import AppSettings
 from app.ingestion.base.interfaces import FetchResult
 from app.ingestion.classifier import ClassificationResult
 from app.ingestion.resolvers.rss import RSSResolveResult
@@ -227,15 +228,15 @@ def test_query_analyze_pending() -> None:
     from app.analysis.pipeline import PipelineResult
     from tests.unit.factories import make_analysis_result, make_llm_output
 
-    async def fake_list(self, is_analyzed: bool, limit: int):
+    async def fake_list(self, limit: int = 50):
         return [
             CanonicalDocument(url="https://example.com/1", title="Doc 1"),
             CanonicalDocument(url="https://example.com/2", title="Doc 2"),
         ]
 
     updated_docs = []
-    async def fake_update(self, doc: CanonicalDocument) -> None:
-        updated_docs.append(doc)
+    async def fake_update(self, document_id: str, result) -> None:
+        updated_docs.append(document_id)
 
     async def fake_run_batch(self, docs):
         results = []
@@ -265,7 +266,7 @@ def test_query_analyze_pending() -> None:
 
     mp = MonkeyPatch()
     mp.setattr(db_session, "build_session_factory", lambda _settings: FakeSessionFactory())
-    mp.setattr(document_repo.DocumentRepository, "list", fake_list)
+    mp.setattr(document_repo.DocumentRepository, "get_pending_documents", fake_list)
     mp.setattr(document_repo.DocumentRepository, "update_analysis", fake_update)
     mp.setattr(pipeline.AnalysisPipeline, "run_batch", fake_run_batch)
     mp.setattr(kw_engine.KeywordEngine, "from_monitor_dir", lambda p: object())
@@ -281,7 +282,7 @@ def test_query_analyze_pending() -> None:
 
 
 def test_query_analyze_pending_empty() -> None:
-    async def fake_list(self, is_analyzed: bool, limit: int):
+    async def fake_list(self, limit: int = 50):
         return []
 
     class FakeSessionFactory:
@@ -299,7 +300,7 @@ def test_query_analyze_pending_empty() -> None:
 
     mp = MonkeyPatch()
     mp.setattr(db_session, "build_session_factory", lambda _settings: FakeSessionFactory())
-    mp.setattr(document_repo.DocumentRepository, "list", fake_list)
+    mp.setattr(document_repo.DocumentRepository, "get_pending_documents", fake_list)
     mp.setattr(kw_engine.KeywordEngine, "from_monitor_dir", lambda p: object())
 
     try:
@@ -308,3 +309,167 @@ def test_query_analyze_pending_empty() -> None:
         assert "No pending documents" in result.output
     finally:
         mp.undo()
+
+
+def test_ingest_rss_saved_documents_flow_into_analyze_pending(monkeypatch) -> None:
+    from app.analysis.keywords import engine as kw_engine
+    from app.integrations.openai import provider as openai_provider
+    from app.storage import document_ingest
+    from app.storage.db import session as db_session
+    from app.storage.repositories import document_repo
+    from tests.unit.factories import make_llm_output
+
+    settings = AppSettings()
+    settings.providers.openai_api_key = "test-openai-key"
+    stored_docs: list[CanonicalDocument] = []
+
+    docs = [
+        CanonicalDocument(
+            url="https://example.com/article-1?utm_source=rss",
+            title="Bitcoin ETF approved",
+            raw_text="Bitcoin ETF approval drives the market.",
+        ),
+        CanonicalDocument(
+            url="https://example.com/article-1",
+            title="Bitcoin ETF Approved",
+            raw_text="Bitcoin ETF approval drives the market.",
+        ),
+        CanonicalDocument(
+            url="https://example.com/article-2",
+            title="Ethereum upgrade ships",
+            raw_text="Ethereum ships its latest upgrade.",
+        ),
+    ]
+
+    async def fake_collect(url: str, *, source_id: str, source_name: str) -> RSSCollectedFeed:
+        return _collected_feed(url=url, docs=docs, resolved_url="https://example.com/feed.xml")
+
+    class FakeSessionFactory:
+        def begin(self):
+            class FakeSessionContext:
+                async def __aenter__(self):
+                    return object()
+
+                async def __aexit__(self, exc_type, exc, tb):
+                    return False
+
+            return FakeSessionContext()
+
+    class FakeDocumentRepository:
+        def __init__(self, session) -> None:
+            self._session = session
+
+        async def list(self, **kwargs) -> list[CanonicalDocument]:
+            docs_to_return = stored_docs
+            is_analyzed = kwargs.get("is_analyzed")
+            if is_analyzed is not None:
+                docs_to_return = [doc for doc in stored_docs if doc.is_analyzed is is_analyzed]
+            limit = kwargs.get("limit", len(docs_to_return))
+            return docs_to_return[:limit]
+
+        async def get_by_url(self, url: str):
+            return next((doc for doc in stored_docs if doc.url == url), None)
+
+        async def get_by_hash(self, content_hash: str):
+            return next((doc for doc in stored_docs if doc.content_hash == content_hash), None)
+
+        async def save_document(self, doc: CanonicalDocument) -> str:
+            stored_docs.append(doc)
+            return str(doc.id)
+
+        async def save(self, doc: CanonicalDocument) -> CanonicalDocument:
+            stored_docs.append(doc)
+            return doc
+
+        async def get_pending_documents(self, limit: int = 50):
+            docs_to_return = [
+                doc for doc in stored_docs
+                if not doc.is_analyzed and not doc.is_duplicate
+            ]
+            return docs_to_return[:limit]
+
+        async def update_analysis(self, document_id: str, result) -> None:
+            for index, existing in enumerate(stored_docs):
+                if str(existing.id) == document_id:
+                    stored_docs[index] = existing.model_copy(
+                        update={
+                            "is_analyzed": True,
+                            "priority_score": result.recommended_priority,
+                            "relevance_score": result.relevance_score,
+                            "tickers": result.affected_assets,
+                        }
+                    )
+                    return
+            raise AssertionError(
+                f"Document {document_id} was not persisted before analysis"
+            )
+
+    class FakeKeywordEngine:
+        def match(self, text: str) -> list[object]:
+            return []
+
+        def match_tickers(self, text: str) -> list[str]:
+            return ["BTC"] if "Bitcoin" in text else ["ETH"]
+
+    class FakeOpenAIProvider:
+        provider_name = "openai"
+        model = "test-model"
+
+        async def analyze(self, title: str, text: str, context=None):
+            return make_llm_output(
+                sentiment_label=SentimentLabel.BULLISH,
+                relevance_score=0.82,
+                impact_score=0.76,
+                novelty_score=0.64,
+                spam_probability=0.05,
+                market_scope=MarketScope.CRYPTO,
+                affected_assets=["BTC"] if "Bitcoin" in title else ["ETH"],
+                tags=["rss"],
+                actionable=True,
+            )
+
+    monkeypatch.setattr(cli_main, "_collect_rss_feed", fake_collect)
+    monkeypatch.setattr(cli_main, "get_settings", lambda: settings)
+    monkeypatch.setattr(cli_main, "build_session_factory", lambda _db: FakeSessionFactory())
+    monkeypatch.setattr(db_session, "build_session_factory", lambda _db: FakeSessionFactory())
+    monkeypatch.setattr(document_ingest, "DocumentRepository", FakeDocumentRepository)
+    monkeypatch.setattr(document_repo, "DocumentRepository", FakeDocumentRepository)
+    monkeypatch.setattr(
+        kw_engine.KeywordEngine,
+        "from_monitor_dir",
+        lambda _path: FakeKeywordEngine(),
+    )
+    monkeypatch.setattr(
+        openai_provider.OpenAIAnalysisProvider,
+        "from_settings",
+        lambda _providers: FakeOpenAIProvider(),
+    )
+
+    ingest_result = runner.invoke(
+        app,
+        ["ingest", "rss", "https://example.com/feed", "--persist"],
+    )
+
+    assert ingest_result.exit_code == 0
+    assert "Batch duplicates skipped: 1" in ingest_result.output
+    assert "Saved: 2" in ingest_result.output
+    assert len(stored_docs) == 2
+    assert all(not doc.is_analyzed for doc in stored_docs)
+
+    saved_doc_ids = {doc.id for doc in stored_docs}
+    saved_urls = {doc.url for doc in stored_docs}
+
+    analyze_result = runner.invoke(app, ["query", "analyze-pending", "--limit", "10"])
+
+    assert analyze_result.exit_code == 0
+    assert "Analyzing 2 documents" in analyze_result.output
+    assert "Analysis complete! 2 success, 0 failed." in analyze_result.output
+    assert {doc.id for doc in stored_docs} == saved_doc_ids
+    assert saved_urls == {
+        "https://example.com/article-1",
+        "https://example.com/article-2",
+    }
+    assert all(doc.is_analyzed for doc in stored_docs)
+    assert all(doc.priority_score is not None for doc in stored_docs)
+    assert all(doc.relevance_score is not None for doc in stored_docs)
+    assert {ticker for doc in stored_docs for ticker in doc.tickers} == {"BTC", "ETH"}

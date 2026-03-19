@@ -15,7 +15,7 @@ def test_app_settings_defaults():
 
 
 def test_db_settings_defaults():
-    settings = DBSettings()
+    settings = DBSettings(_env_file=None)
     assert "postgresql" in settings.url
     assert settings.pool_size > 0
 

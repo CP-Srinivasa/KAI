@@ -7,17 +7,18 @@ Fills reliably:
   relevance_score     — keyword hit rate (title weighted 3x)
   market_scope        — inferred from asset and keyword presence
   affected_assets     — detected crypto/equity tickers
-  spam_probability    — basic heuristics (too short, all caps, etc.)
   confidence_score    — always 1.0 (rules are deterministic)
   tags                — top matched keywords (max 20)
 
 Does NOT fill (needs LLM):
-  sentiment_label / sentiment_score
-  impact_score
-  novelty_score
-  short_reasoning / long_reasoning / bull_case / bear_case / neutral_case
-  historical_analogs
-  actionable
+  sentiment_label / sentiment_score (defaults to NEUTRAL / 0.0)
+  impact_score (defaults to 0.0)
+  novelty_score (defaults to 0.5)
+  explanation_short / explanation_long (defaults to placeholders)
+  actionable (defaults to False)
+
+Spam detection: compute_spam_probability() is available as a standalone function.
+Spam probability is not stored on AnalysisResult — pass it separately to compute_priority().
 """
 
 from __future__ import annotations
@@ -88,7 +89,7 @@ _ALL_CAPS_RE = re.compile(r"^[A-Z0-9\s!?.,]{10,}$")
 _EXCESSIVE_PUNCT_RE = re.compile(r"[!?]{3,}")
 
 
-def _spam_probability(title: str, text: str | None) -> float:
+def compute_spam_probability(title: str, text: str | None) -> float:
     score = 0.0
     combined = title + (text or "")
     word_count = len(combined.split())
@@ -157,8 +158,6 @@ class RuleAnalyzer:
     Requires a KeywordMatcher with keywords loaded from monitor/keywords.txt.
     """
 
-    PROVIDER = "rule"
-
     def __init__(self, keyword_matcher: KeywordMatcher) -> None:
         self._matcher = keyword_matcher
 
@@ -169,22 +168,18 @@ class RuleAnalyzer:
 
         relevance = _relevance_score(keyword_matches, self._matcher.keyword_count)
         scope = _market_scope(keyword_matches, asset_matches)
-        spam = _spam_probability(title, text)
 
         # Top 20 matched keyword strings → tags
         top_keywords = [m.keyword for m in keyword_matches[:20]]
 
         return AnalysisResult(
-            document_id=document_id,
-            provider=self.PROVIDER,
-            model=None,
+            document_id=str(document_id),
             # Sentiment: unknown at rule level → neutral defaults
             sentiment_label=SentimentLabel.NEUTRAL,
             sentiment_score=0.0,
             # Known from rules
             relevance_score=round(relevance, 4),
             confidence_score=1.0,  # rules are deterministic
-            spam_probability=round(spam, 4),
             # Unknown without LLM → conservative defaults
             impact_score=0.0,
             novelty_score=0.5,
@@ -192,23 +187,7 @@ class RuleAnalyzer:
             market_scope=scope,
             affected_assets=[m.canonical for m in asset_matches],
             tags=top_keywords,
-            raw_output={
-                "keyword_matches": [
-                    {
-                        "keyword": m.keyword,
-                        "in_title": m.in_title,
-                        "in_text": m.in_text,
-                        "count": m.count,
-                    }
-                    for m in keyword_matches
-                ],
-                "asset_matches": [
-                    {
-                        "canonical": m.canonical,
-                        "alias": m.alias,
-                        "in_title": m.in_title,
-                    }
-                    for m in asset_matches
-                ],
-            },
+            explanation_short="Rule-based analysis",
+            explanation_long="",
+            actionable=False,
         )

@@ -207,6 +207,9 @@ app/
     cryptopanic/     → CryptoPanicClient + Adapter (NEWS_API)
   api/               → FastAPI routers + shared deps                       [AGENTS.md ✅]
   cli/               → Typer commands                                      [AGENTS.md ✅]
+  alerts/            → Alert System: BaseAlertChannel, Telegram, Email, ThresholdEngine, DigestCollector, AlertService [AGENTS.md ✅]
+  pipeline/          → End-to-End Pipeline Service (Fetch → Persist → Analyze → Update)
+    service.py       → run_rss_pipeline() — einziger Entry-Point für vollständige Pipeline
   storage/           → DB models, repositories, migrations (PostgreSQL)
     models/          → CanonicalDocumentModel, HistoricalEventModel, SourceModel
     repositories/    → DocumentRepository, EventRepository, SourceRepository
@@ -234,6 +237,7 @@ tests/unit/          → pytest unit tests (340 passing — ruff clean)
 | `PipelineResult` | `app/analysis/pipeline.py` | Vollständiges Analyse-Ergebnis inkl. apply_to_document() |
 | `KeywordHit` | `app/analysis/keywords/engine.py` | Keyword-Match mit Kategorie und Vorkommen |
 | `PriorityScore` | `app/analysis/scoring.py` | Berechneter Priority-Score (1–10) mit Audit-Info |
+| `PipelineRunStats` | `app/pipeline/service.py` | Stats-Summary einer vollständigen Pipeline-Run (fetched/saved/analyzed/skipped/failed) |
 | `FetchResult` | `app/ingestion/base/interfaces.py` | Adapter-Fetch-Output |
 | `SourceMetadata` | `app/ingestion/base/interfaces.py` | Source-Deskriptor |
 | `AppSettings` | `app/core/settings.py` | Gesamte Konfiguration |
@@ -251,6 +255,7 @@ Jeder Agent darf nur in seinem Bereich schreiben. Grenzüberschreitungen erforde
 | **Ingestion → Storage** | Adapter liefert `FetchResult`. `persist_fetch_result()` in `app/storage/document_ingest.py` ist der einzige Einstiegspunkt für Persistierung nach Ingest. |
 | **Storage → Analysis** | `DocumentRepository.list(is_analyzed=False)` liefert die Analyse-Queue. Nie direkt ORM-Modelle an Pipeline übergeben. |
 | **Analysis → Storage** | `PipelineResult.apply_to_document()` mutiert `CanonicalDocument`. Danach `repo.update_analysis(doc)`. Kein anderer Pfad. |
+| **Pipeline Entry-Point** | `run_rss_pipeline()` in `app/pipeline/service.py` ist der kanonische End-to-End-Einstiegspunkt. CLI `pipeline run` und Scheduler rufen ausschließlich diese Funktion auf. |
 | **Analysis → Alerting** | `is_alert_worthy(result, min_priority)` ist das einzige Gate. Kein direkter Score-Zugriff in Alert-Code. |
 | **LLM Provider** | Immer über `BaseAnalysisProvider.analyze()`. Nie direkt `openai.ChatCompletions` im Business-Code aufrufen. |
 | **Domain Models** | `app/core/domain/` ist provider-agnostisch. Kein Import von `openai`, `anthropic`, etc. |
@@ -276,12 +281,12 @@ Jeder Agent darf nur in seinem Bereich schreiben. Grenzüberschreitungen erforde
 
 ---
 
-## 12. Aktueller Stand
+## 13. Aktueller Stand
 
-**Phase 1 — Foundation** ✅ abgeschlossen
-**Phase 2 — Ingestion Core** ✅ abgeschlossen
-**Phase 3 — Analysekern** ✅ abgeschlossen
-**Phase 4 — Alerting** 🔄 nächste Phase
+**Sprint 1 — Foundation & Contracts** ✅ abgeschlossen
+**Sprint 2 — Provider Consolidation** ✅ abgeschlossen
+**Sprint 3 — Alerting** ✅ abgeschlossen
+**Sprint 4 — Research & Signals** ⏳ nächste Phase
 
 | Phase | Status | Geliefert |
 |---|---|---|
@@ -289,17 +294,100 @@ Jeder Agent darf nur in seinem Bereich schreiben. Grenzüberschreitungen erforde
 | P2 Ingestion | ✅ | Source Registry, Classifier, RSS, CryptoPanic, CanonicalDocument, Dedup |
 | P3 Analysekern | ✅ | KeywordEngine, RuleAnalyzer, QueryExecutor, OpenAI Provider (structured), Pipeline, Historical Events, Validation |
 | P3.5 Contracts | ✅ | End-to-End Data Flow Contract, priority_score, spam_probability in DB, apply_to_document(), docs/data_flow.md |
-| P4 Alerting | 🔄 | Telegram, Email, Alert Rules — nächste Phase |
+| P3.6 Pipeline Loop | ✅ | run_rss_pipeline(), pipeline run CLI, query list CLI, test_pipeline_service.py — Kernpfad geschlossen |
+| P6 Audit | ✅ | 6 Architectural Invariants geprüft + behoben, tote Provider gelöscht, RSS-Guard, Security-Layer |
+| PA Hardening | ✅ | SSRF-Schutz, Bearer-Auth, Secrets-Validation, Pre-commit/Pre-push Hooks, CI-Security-Job, DocumentStatus-Enum, FetchResult-Contracts, docs/security.md |
+| PB Contracts | ✅ | docs/contracts.md, vollständige Error-Handling-Doku, Repository-Boundary-Doku |
+| PC Tests | ✅ | Test-Factory für AnalysisResult, kein Ad-hoc-Mocking mehr |
+| PD Provider | ✅ | Claude (Anthropic) + Gemini Provider-Implementierungen |
+| P7 Alerting | ✅ | app/alerts/ — Telegram, Email, ThresholdEngine, DigestCollector, AlertService, CLI alerts, API /alerts/test |
+
+**Test-Stand**: 445 passed, 0 failed, 0 xfailed
 
 Vollständige Task-Liste → [TASKLIST.md](./TASKLIST.md)
 
 ---
 
-## 13. Test & Quality Commands
+## 14. Dokument-Lebenszyklus (DocumentStatus)
+
+Jedes `CanonicalDocument` durchläuft einen klar definierten Lebenszyklus.
+**Ausschließlich** `document_ingest.py` und `document_repo.py` dürfen den Status setzen.
+
+```
+                    ┌──────────────────────────┐
+                    │       FETCH              │
+                    │  (adapter produces doc)  │
+                    └──────────┬───────────────┘
+                               │
+                               ▼
+                         [PENDING]            ← in-memory, not yet in DB
+                               │
+               ┌───────────────┼───────────────┐
+               │               │               │
+         batch dedup      batch dedup     (success)
+          duplicate         error              │
+               │               │               ▼
+               ▼               ▼         [PERSISTED]    ← saved to DB, is_analyzed=False
+          [DUPLICATE]      [FAILED]            │
+                                               │
+                                  ┌────────────┼────────────┐
+                                  │            │            │
+                             LLM-Fehler   DB-Fehler    (success)
+                                  │            │            │
+                                  ▼            ▼            ▼
+                              [FAILED]     [FAILED]    [ANALYZED]  ← is_analyzed=True
+```
+
+| Status | Wert | Bedeutung | Gesetzt von |
+|---|---|---|---|
+| `PENDING` | `"pending"` | In-Memory, noch nicht in DB | `prepare_ingested_document()` |
+| `PERSISTED` | `"persisted"` | In DB gespeichert, wartet auf Analyse | `DocumentRepository.save()` |
+| `ANALYZED` | `"analyzed"` | AnalysisResult geschrieben, Scores gesetzt | `DocumentRepository.update_analysis()` |
+| `FAILED` | `"failed"` | Nicht-behebbarer Fehler, für Audit aufbewahrt | `persist_fetch_result()` / Analyse-Fehler |
+| `DUPLICATE` | `"duplicate"` | Vom Dedup-Gate blockiert, nicht analysiert | `persist_fetch_result()` |
+
+**Konvenienz-Flags** (für ORM-Queries, bleiben in Sync mit `status`):
+- `is_duplicate=True` ↔ `status=DUPLICATE`
+- `is_analyzed=True` ↔ `status=ANALYZED`
+
+---
+
+## 15. Architektur-Invarianten (nicht verhandelbar)
+
+Diese 6 Regeln sind absolut. Jeder Agent, der sie bricht, muss sofort stoppen und zurückrollen.
+
+| # | Regel | Verletzung bedeutet |
+|---|---|---|
+| 1 | **Kein Agent darf direkt auf `master` arbeiten** | Push blocked by pre-push hook. PR required. |
+| 2 | **Keine Business-Logik im API-Layer** | Router ruft Service auf — nie direkt DB, Repo, LLM |
+| 3 | **Keine LLM-Logik direkt im Transport-Client** | Provider-Client ist HTTP-only; Prompts in `prompts.py` |
+| 4 | **Keine ungelösten Quellen stillschweigend als "ok" markieren** | `SourceStatus.UNRESOLVED` ist kein Fehler-Zustand, der versteckt wird |
+| 5 | **Keine Social-/Podcast-/YouTube-Quelle falsch als RSS behandeln** | Classification Guard in `collect_rss_feed()` prüft `_rss_compatible` |
+| 6 | **Keine Trading-Ausführung vor stabiler Analysepipeline** | `app/trading/` darf nicht vor Phase 8 existieren |
+
+---
+
+## 16. Security-First Regeln
+
+Vollständige Dokumentation → [docs/security.md](./docs/security.md)
+
+| Regel | Umsetzung |
+|---|---|
+| Kein Secret im Code | Pre-commit-Hook scannt nach `sk-`, Telegram-Tokens, AWS-IDs |
+| SSRF-Schutz | `app/security/ssrf.validate_url()` vor jedem HTTP-Request |
+| API-Auth | Bearer Token via `APP_API_KEY`, `secrets.compare_digest()` |
+| Startup-Validation | `validate_secrets()` in Lifespan — hard-fail in production |
+| `/health` immer public | Docker-Healthcheck nie blockieren |
+| Docs in production off | `docs_url=None` wenn `APP_ENV=production` |
+| CI Security Job | `pip-audit` + `bandit`, `continue-on-error: false` |
+
+---
+
+## 17. Test & Quality Commands
 
 ```bash
 # Tests + Lint (lokal)
-pytest                                    # 304+ Tests (alle)
+pytest                                    # 353+ Tests (alle)
 ruff check .                              # Lint (muss fehlerfrei sein)
 mypy app/                                 # Typ-Check (optional)
 
@@ -320,7 +408,7 @@ alembic revision --autogenerate -m "..."  # neue Migration erstellen
 
 ---
 
-## 14. Pflicht-Referenzdokumente
+## 18. Pflicht-Referenzdokumente
 
 | Dokument | Zweck |
 |---|---|

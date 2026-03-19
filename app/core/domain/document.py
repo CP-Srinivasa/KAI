@@ -20,7 +20,14 @@ from uuid import UUID, uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, computed_field, model_validator
 
-from app.core.enums import DocumentType, MarketScope, SentimentLabel, SortBy, SourceType
+from app.core.enums import (
+    DocumentStatus,
+    DocumentType,
+    MarketScope,
+    SentimentLabel,
+    SortBy,
+    SourceType,
+)
 
 # ── Entity Mention ────────────────────────────────────────────────────────────
 
@@ -140,7 +147,19 @@ class CanonicalDocument(BaseModel):
     ai_organizations: list[str] = Field(default_factory=list)
     related_events: list[str] = Field(default_factory=list)
 
-    # State flags
+    # Pipeline lifecycle status — managed exclusively by ingestion and storage layers.
+    # PENDING   → in-memory, not yet saved to DB
+    # PERSISTED → saved, waiting for analyze-pending
+    # ANALYZED  → AnalysisResult applied, scores written
+    # DUPLICATE → blocked at dedup gate, not analyzed
+    # FAILED    → non-recoverable error, kept for audit
+    status: DocumentStatus = DocumentStatus.PENDING
+
+    # Convenience flags — kept for backward-compat DB queries and ORM mapping.
+    # They MUST stay in sync with `status`:
+    #   is_duplicate=True  ↔  status=DUPLICATE
+    #   is_analyzed=True   ↔  status=ANALYZED
+    # Only document_ingest.py and document_repo.py may set these.
     is_duplicate: bool = False
     is_analyzed: bool = False
 
@@ -164,7 +183,7 @@ class CanonicalDocument(BaseModel):
         content = f"{self.url}|{self.title}|{self.raw_text or ''}"
         return hashlib.sha256(content.encode()).hexdigest()
 
-    @computed_field  # type: ignore[misc]
+    @computed_field  # type: ignore[prop-decorator]
     @property
     def word_count(self) -> int:
         text = self.cleaned_text or self.raw_text or ""
@@ -175,50 +194,42 @@ class CanonicalDocument(BaseModel):
 
 
 class AnalysisResult(BaseModel):
-    """Output of one LLM or rule-based analysis run on a CanonicalDocument.
+    """Structured output of one analysis run on a CanonicalDocument.
 
-    One document can have multiple AnalysisResults (one per provider/run).
-    Always links back to CanonicalDocument via document_id.
-    raw_output preserves the original LLM response for debugging and re-analysis.
+    Rules:
+    - Must be fully populated — no optional scores
+    - Must be schema-validated — all ranges enforced
+    - Must not contain provider-specific fields (no provider, model, raw_output)
+    - Must be deterministic where possible
+    Always links back to CanonicalDocument via document_id (str).
     """
 
-    # Required configuration for strict validation
     model_config = ConfigDict(strict=True, validate_assignment=True)
 
-    id: UUID = Field(default_factory=uuid4)
-    document_id: UUID
-    provider: str  # "openai" | "anthropic" | "rule"
-    model: str | None = None  # e.g. "gpt-4o"
-    analyzed_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    document_id: str
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 
-    # Core scores — all validated ranges
+    # Core scores — all required, validated ranges
     sentiment_label: SentimentLabel
     sentiment_score: float = Field(ge=-1.0, le=1.0)
     relevance_score: float = Field(ge=0.0, le=1.0)
     impact_score: float = Field(ge=0.0, le=1.0)
     confidence_score: float = Field(ge=0.0, le=1.0)
     novelty_score: float = Field(ge=0.0, le=1.0)
-    spam_probability: float = Field(ge=0.0, le=1.0)
 
-    market_scope: MarketScope = MarketScope.UNKNOWN
+    market_scope: MarketScope | None = None
     affected_assets: list[str] = Field(default_factory=list)
     affected_sectors: list[str] = Field(default_factory=list)
     event_type: str | None = None
 
-    # Reasoning (structured LLM output)
-    short_reasoning: str | None = None
-    long_reasoning: str | None = None
-    bull_case: str | None = None
-    bear_case: str | None = None
-    neutral_case: str | None = None
+    # Reasoning
+    explanation_short: str
+    explanation_long: str
 
-    historical_analogs: list[str] = Field(default_factory=list)
-    recommended_priority: int = Field(default=5, ge=1, le=10)
     actionable: bool = False
     tags: list[str] = Field(default_factory=list)
-
-    # Preserved for debugging / re-analysis
-    raw_output: dict[str, Any] = Field(default_factory=dict)
+    spam_probability: float = Field(default=0.0, ge=0.0, le=1.0)
+    recommended_priority: int | None = Field(default=None, ge=1, le=10)
 
 
 # ── Query DSL ─────────────────────────────────────────────────────────────────

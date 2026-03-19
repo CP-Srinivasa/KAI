@@ -1,4 +1,4 @@
-from enum import StrEnum
+from enum import Enum, StrEnum
 
 
 class SourceType(StrEnum):
@@ -64,3 +64,35 @@ class DocumentType(StrEnum):
     RESEARCH_REPORT = "research_report"
     REFERENCE = "reference"
     UNKNOWN = "unknown"
+
+
+class DocumentStatus(str, Enum):  # noqa: UP042
+    """Lifecycle status of a CanonicalDocument through the pipeline.
+
+    Rules:
+    - must always be explicit
+    - must not be implicit
+    - must be updated at each stage
+
+    Transitions (one-way, no rollback):
+
+        [adapter]         [ingest]          [analysis]
+        PENDING  ──────►  PERSISTED  ─────►  ANALYZED
+                                    │
+                                    ├──────► DUPLICATE   (dedup gate)
+                                    │
+                                    └──────► FAILED      (ingest or analysis error)
+
+    Owners:
+    - PENDING    → prepare_ingested_document()  in document_ingest.py
+    - PERSISTED  → DocumentRepository.save()   in document_repo.py
+    - ANALYZED   → DocumentRepository.update_analysis()  in document_repo.py
+    - DUPLICATE  → DocumentRepository.mark_duplicate()   in document_repo.py
+    - FAILED     → persist_fetch_result() error handler  in document_ingest.py
+    """
+
+    PENDING = "pending"
+    PERSISTED = "persisted"
+    ANALYZED = "analyzed"
+    FAILED = "failed"
+    DUPLICATE = "duplicate"

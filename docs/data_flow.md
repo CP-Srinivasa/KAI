@@ -1,339 +1,264 @@
-# Data Flow — End-to-End Contract
+# Data Flow Architecture
 
-> **Verbindliches Referenzdokument** für alle Agenten (Claude Code, Codex, Antigravity).
-> Vor jeder Interface-Änderung lesen. Kein Agent darf diesen Fluss ohne Spec brechen.
+## Purpose
+This document defines the exact end-to-end data flow of the system.
 
----
+It ensures that all agents (Codex, Claude Code, Antigravity) work on the same pipeline
+without ambiguity or architectural drift.
 
-## Overview
-
-```
-Source (RSS / API / ...)
-       │
-       ▼
- [1] FETCH          BaseSourceAdapter.fetch() → FetchResult
-       │
-       ▼
- [2] NORMALIZE      CanonicalDocument (auto content_hash, word_count)
-       │
-       ▼
- [3] DEDUPLICATE    Deduplicator.filter_scored() → batch duplicate check
-       │
-       ▼
- [4] PERSIST        DocumentRepository.save() → canonical_documents table
-       │
-       ▼
- [5] ANALYZE        AnalysisPipeline.run() → PipelineResult
-       │
-       ▼
- [6] APPLY          PipelineResult.apply_to_document() → scores on CanonicalDocument
-       │
-       ▼
- [7] UPDATE         DocumentRepository.update_analysis() → DB scores + is_analyzed=True
-       │
-       ▼
- [8] ALERT/QUERY    QueryExecutor / is_alert_worthy() / priority_score threshold
-```
+The guiding principles:
+- Simple but Powerful
+- Security First
 
 ---
 
-## Stage 1 — Fetch
+## High-Level Flow
 
-**Input**: `SourceMetadata` (source_id, source_type, url)
-**Output**: `FetchResult`
-
-```python
-@dataclass
-class FetchResult:
-    source_id: str
-    documents: list[CanonicalDocument]  # already normalized by the adapter
-    fetched_at: datetime
-    success: bool
-    error: str | None = None
-    metadata: dict[str, Any] = field(default_factory=dict)
+```
+Source → Ingestion → Persistence → Normalization → Analysis → Scoring → Storage → Downstream
 ```
 
-**Contract rules**:
-- Adapter is responsible for producing valid `CanonicalDocument` instances
-- `success=False` + populated `error` on any adapter-level failure
-- `documents` is empty on failure — never `None`
-- Adapter must set: `url`, `title`, `source_id`, `source_name`, `source_type`, `document_type`
-- `content_hash` is auto-computed by `CanonicalDocument.__init__` — never set manually
-
-**Owner**: `app/ingestion/base/interfaces.py` + adapter implementations
+Downstream: Alerts / Research / Signals
 
 ---
 
-## Stage 2 — Canonical Document
+## Step-by-Step Flow
 
-**Model**: `CanonicalDocument` (`app/core/domain/document.py`)
+### 1. Source Layer
 
-The central data unit. All pipeline stages read from and write to this model.
+Sources include:
+- RSS feeds
+- websites
+- news APIs
+- YouTube channels
+- podcasts
+- social APIs (future)
 
-### Fields by lifecycle phase
+Each source must be classified before use.
 
-| Field | Set by | Notes |
+Output:
+- Source metadata
+- Source type
+- Fetch configuration
+
+---
+
+### 2. Ingestion Layer
+
+Responsible for:
+- fetching raw data
+- handling retries and timeouts
+- returning structured fetch results
+
+Output object:
+- `FetchResult`
+
+Constraints:
+- no persistence
+- no analysis
+- no deduplication (only minimal metadata)
+
+---
+
+### 3. Persistence Layer
+
+Responsible for:
+- converting FetchResult into CanonicalDocument
+- storing documents
+- assigning lifecycle status
+
+Output object:
+- `CanonicalDocument`
+
+Document lifecycle starts here:
+- pending
+- persisted
+
+Security:
+- validate inputs
+- normalize URLs
+- enforce field limits
+
+---
+
+### 4. Normalization Layer
+
+Responsible for:
+- cleaning text
+- normalizing metadata
+- extracting base fields
+
+Examples:
+- remove HTML
+- normalize timestamps
+- unify language codes
+
+---
+
+### 5. Deduplication Layer
+
+Responsible for:
+- identifying duplicate content
+
+Methods:
+- normalized URL comparison
+- content hash
+- title similarity
+
+Output:
+- duplicate flag OR canonical merge decision
+
+Lifecycle update:
+- duplicate → skip analysis or merge
+
+---
+
+### 6. Analysis Layer
+
+Triggered via:
+- CLI (`analyze-pending`)
+- scheduler (future)
+
+Responsible for:
+- processing pending documents
+- generating structured analysis
+
+Input:
+- CanonicalDocument
+
+Output:
+- `AnalysisResult`
+
+---
+
+### 7. Scoring Layer
+
+Part of analysis pipeline.
+
+Responsible for:
+- computing:
+  - relevance
+  - impact
+  - novelty
+  - confidence
+
+Scoring must:
+- be deterministic where possible
+- be reproducible
+- not depend on external side effects
+
+---
+
+### 8. Storage of Analysis
+
+Responsible for:
+- storing AnalysisResult scores on the document
+- linking analysis back to document
+- updating lifecycle state
+
+Lifecycle:
+- analyzed
+- failed
+
+Implementation note:
+- `AnalysisResult` is in-memory only — no separate table
+- Scores are denormalized back to `canonical_documents` via `update_analysis()`
+- This is intentional: simple queries, no joins needed
+
+---
+
+### 9. Downstream Layers (Later Phases)
+
+Once core pipeline is stable:
+
+- Alerting (Phase 7)
+- Research generation
+- Signal candidates
+
+---
+
+## Document Lifecycle
+
+Every document MUST follow explicit states:
+
+```
+pending → persisted → analyzed
+         ↘ failed
+         ↘ duplicate
+```
+
+Rules:
+- no silent transitions
+- no implicit success
+- failures must be logged and traceable
+
+Implementation: `DocumentStatus` enum in `app/core/enums.py`
+
+| Status | Meaning | Set by |
 |---|---|---|
-| `id` | auto (uuid4) | Primary key |
-| `url` | adapter | Dedup key |
-| `content_hash` | auto (model_validator) | SHA-256 of url\|title\|raw_text |
-| `source_id`, `source_name`, `source_type` | adapter | Source registry |
-| `document_type` | adapter | article / youtube_video / podcast_episode / ... |
-| `title`, `raw_text`, `author`, `published_at` | adapter | Core content |
-| `language`, `country`, `region` | adapter or enrichment | Optional |
-| `is_duplicate` | Deduplicator | Set before persist |
-| `is_analyzed` | `update_analysis()` | Set after analysis |
-| `entity_mentions` | `apply_to_document()` | Structured entities |
-| `tickers`, `crypto_assets`, `tags`, etc. | `apply_to_document()` | Flat lists |
-| `sentiment_label`, `sentiment_score` | `apply_to_document()` | From LLM |
-| `relevance_score` | `apply_to_document()` | Blended: LLM + keyword |
-| `impact_score`, `novelty_score` | `apply_to_document()` | From LLM |
-| `spam_probability` | `apply_to_document()` | From LLM |
-| `credibility_score` | `apply_to_document()` | `1.0 - spam_probability` |
-| `market_scope` | `apply_to_document()` | From LLM |
-| `priority_score` | `apply_to_document()` | `compute_priority(analysis_result)` |
-
-**RULE**: `CanonicalDocument` is Pydantic, mutable (no `frozen`).
-Fields may only be mutated within the defined pipeline stages listed above.
+| `pending` | in-memory, not yet in DB | `prepare_ingested_document()` |
+| `persisted` | saved to DB, waiting for analysis | `DocumentRepository.save()` |
+| `analyzed` | analysis complete, scores written | `DocumentRepository.update_analysis()` |
+| `failed` | non-recoverable error, kept for audit | ingest or analysis error handler |
+| `duplicate` | blocked at dedup gate | `persist_fetch_result()` |
 
 ---
 
-## Stage 3 — Deduplication
+## Failure Handling
 
-**Input**: `list[CanonicalDocument]` from `FetchResult.documents`
-**Output**: `list[tuple[CanonicalDocument, DuplicateScore]]`
+At each step:
+- failure must not crash pipeline
+- failure must be isolated
+- status must reflect failure
 
-```python
-deduplicator = Deduplicator()
-scored = deduplicator.filter_scored(documents)
-new_docs = [doc for doc, score in scored if not score.is_duplicate]
-```
-
-- Batch-level dedup only (hash comparison within the fetch batch)
-- DB-level dedup happens in `DocumentRepository.save()` (url + hash check)
-- Sets `doc.is_duplicate = True` for intra-batch duplicates
-
-**Owner**: `app/enrichment/deduplication/deduplicator.py`
+Examples:
+- fetch fails → no document created
+- persist fails → retry or mark failed
+- analysis fails → mark failed, keep document
 
 ---
 
-## Stage 4 — Persist
+## Idempotency
 
-**Input**: `CanonicalDocument` (new, not duplicate)
-**Output**: stored row in `canonical_documents`
-
-```python
-async with session_factory.begin() as session:
-    repo = DocumentRepository(session)
-    saved = await repo.save(doc)  # no-op if url/hash already exists
-```
-
-`DocumentRepository.save()` contract:
-- Returns existing document if `content_hash` already in DB (idempotent)
-- Calls `session.flush()` — does NOT commit (caller controls transaction)
-- Raises `StorageError` on DB failures
-
-**Owner**: `app/storage/repositories/document_repo.py`
+All steps must be idempotent:
+- same RSS item should not create duplicates
+- same analysis should not create inconsistent states
 
 ---
 
-## Stage 5 — Analyze
+## Observability
 
-**Input**: `CanonicalDocument` (stored, `is_analyzed=False`)
-**Output**: `PipelineResult`
-
-```python
-pipeline = AnalysisPipeline(keyword_engine, provider, run_llm=True)
-result = await pipeline.run(doc)
-# or for batches:
-results = await pipeline.run_batch(docs)  # max 5 concurrent LLM calls
-```
-
-`PipelineResult` fields:
-
-```python
-@dataclass
-class PipelineResult:
-    document: CanonicalDocument        # original document (not yet mutated)
-    keyword_hits: list[KeywordHit]     # stage 1 output
-    entity_mentions: list[EntityMention]  # stage 2 output
-    llm_output: LLMAnalysisOutput | None  # stage 3 output (None if no provider)
-    analysis_result: AnalysisResult | None  # assembled from llm_output
-    error: str | None                  # non-None on LLM failure
-    success: bool                      # property: error is None
-```
-
-`LLMAnalysisOutput` is a Pydantic model validated directly from the OpenAI structured output.
-`AnalysisResult` wraps `LLMAnalysisOutput` with `document_id`, `provider`, `model`, `analyzed_at`.
-
-**Owner**: `app/analysis/pipeline.py`
+Each step should log:
+- input
+- output
+- errors
+- timing
 
 ---
 
-## Stage 6 — Apply
+## Key Rule
 
-**Input**: `PipelineResult`
-**Output**: `PipelineResult.document` mutated with analysis scores
+The pipeline must always be:
 
-```python
-result.apply_to_document()
-doc = result.document  # doc now has all scores + priority_score set
-```
+- deterministic
+- traceable
+- testable
 
-`apply_to_document()` does in order:
-1. Sets `doc.entity_mentions` from `result.entity_mentions`
-2. Syncs topic entities → `doc.topics`
-3. If `analysis_result` exists: copies all scores from `AnalysisResult` to `doc`
-4. Computes `relevance_score` = `calculate_final_relevance(llm_relevance, keyword_hits)`
-5. Computes `doc.priority_score` = `compute_priority(analysis_result).priority`
-
-**RULE**: This is the ONLY place that mutates analysis scores on `CanonicalDocument`.
-The CLI and API must not manually copy fields from `llm_output` to `doc`.
-
-**Owner**: `PipelineResult.apply_to_document()` in `app/analysis/pipeline.py`
-
----
-
-## Stage 7 — Update Storage
-
-**Input**: mutated `CanonicalDocument` (after `apply_to_document()`)
-**Output**: updated row in `canonical_documents`
-
-```python
-await repo.update_analysis(doc)
-```
-
-Fields written by `update_analysis()`:
-
-| Field | DB Column |
-|---|---|
-| `sentiment_label` | `sentiment_label` |
-| `sentiment_score` | `sentiment_score` |
-| `relevance_score` | `relevance_score` |
-| `impact_score` | `impact_score` |
-| `novelty_score` | `novelty_score` |
-| `credibility_score` | `credibility_score` |
-| `spam_probability` | `spam_probability` |
-| `priority_score` | `priority_score` (indexed) |
-| `market_scope` | `market_scope` |
-| `entity_mentions` | `entity_mentions` (JSON) |
-| `tickers`, `tags`, `categories`, etc. | JSON columns |
-| `is_analyzed` | `true` (always) |
-
-**Owner**: `app/storage/repositories/document_repo.py`
-
----
-
-## Stage 8 — Alert / Query
-
-```python
-# Priority threshold check (Phase 4 Alerting)
-from app.analysis.scoring import is_alert_worthy
-if is_alert_worthy(result.analysis_result, min_priority=7):
-    # → send alert
-
-# In-memory query filter (QuerySpec DSL)
-from app.analysis.query.executor import QueryExecutor
-matches = QueryExecutor().execute(spec, documents)
-```
-
-Priority scale:
-- **8–10**: High urgency — actionable, high impact
-- **6–7**: Notable — relevant, alert-worthy
-- **4–5**: Background — low urgency
-- **1–3**: Spam / noise (spam cap applies)
-
----
-
-## Key Invariants
-
-| Rule | Where enforced |
-|---|---|
-| `content_hash` auto-computed, never set manually | `CanonicalDocument.model_validator` |
-| `word_count` is never stored in DB | `@computed_field` property |
-| `save()` is idempotent on hash collision | `DocumentRepository.save()` |
-| `apply_to_document()` is the single mutation point for analysis scores | `PipelineResult` |
-| `update_analysis()` always sets `is_analyzed=True` | `DocumentRepository` |
-| LLM calls use structured outputs (`beta.chat.completions.parse`) | `OpenAIAnalysisProvider` |
-| All LLM failures wrapped in `ProviderError` | `BaseAnalysisProvider` contract |
-| No credentials in code | `.env` + `AppSettings` |
+If any step breaks these rules, it must be refactored.
 
 ---
 
 ## Module Ownership
 
-| Module | Owner Agent | Responsibility |
+| Layer | Module | Owner |
 |---|---|---|
-| `app/core/domain/` | **Claude Code** | Canonical models, enums, errors — no business logic |
-| `app/ingestion/` | **Codex** | Adapters, classifiers, resolvers, schedulers |
-| `app/enrichment/` | **Codex** | Deduplication, entity matching |
-| `app/analysis/` | **Claude Code** | Pipeline, keyword engine, scoring, historical |
-| `app/integrations/` | **Claude Code** | LLM providers (OpenAI, Anthropic) |
-| `app/storage/` | **Claude Code** | ORM, repositories, migrations |
-| `app/api/` | **Codex** | FastAPI routers, dependencies |
-| `app/cli/` | **Antigravity** | CLI commands orchestration |
-| `app/alerts/` | **Codex** | Telegram, email, alert rules (Phase 4) |
-| `monitor/` | **User** | Watchlists, sources, keywords (runtime config) |
-
----
-
-## AnalysisResult Schema
-
-```python
-class AnalysisResult(BaseModel):
-    id: UUID
-    document_id: UUID          # links to CanonicalDocument
-    provider: str              # "openai" | "anthropic" | "rule"
-    model: str | None          # e.g. "gpt-4o"
-    analyzed_at: datetime
-
-    # Scores (all validated ranges)
-    sentiment_label: SentimentLabel
-    sentiment_score: float     # -1.0 to 1.0
-    relevance_score: float     # 0.0 to 1.0 — blended after apply_to_document()
-    impact_score: float        # 0.0 to 1.0
-    confidence_score: float    # 0.0 to 1.0
-    novelty_score: float       # 0.0 to 1.0
-    spam_probability: float    # 0.0 to 1.0
-
-    market_scope: MarketScope
-    affected_assets: list[str]
-    affected_sectors: list[str]
-    event_type: str | None
-
-    # Reasoning
-    short_reasoning: str | None
-    bull_case: str | None
-    bear_case: str | None
-    historical_analogs: list[str]
-
-    recommended_priority: int  # 1–10 (LLM suggestion)
-    actionable: bool
-    tags: list[str]
-
-    raw_output: dict[str, Any]  # preserved for debugging
-```
-
-`AnalysisResult` is **in-memory only** — it is not persisted to its own table.
-Denormalized scores are written back to `canonical_documents` via `update_analysis()`.
-
----
-
-## FetchResult Schema
-
-```python
-@dataclass
-class FetchResult:
-    source_id: str
-    documents: list[CanonicalDocument]  # pre-normalized by adapter
-    fetched_at: datetime
-    success: bool
-    error: str | None = None           # always set if success=False
-    metadata: dict[str, Any] = field(default_factory=dict)
-```
-
-Adapters that implement `BaseSourceAdapter` must:
-1. Return `success=False, documents=[], error=<message>` on failure
-2. Never raise — wrap exceptions internally
-3. Each document must have `url` and `title` at minimum
-4. `source_id` on each document must match `FetchResult.source_id`
+| Ingestion | `app/ingestion/` | Codex |
+| Persistence | `app/storage/document_ingest.py` | Claude Code |
+| Normalization | `app/normalization/` | Codex |
+| Deduplication | `app/enrichment/deduplication/` | Codex |
+| Analysis | `app/analysis/` | Claude Code |
+| LLM Provider | `app/integrations/` | Claude Code |
+| Storage | `app/storage/repositories/` | Claude Code |
+| Pipeline orchestration | `app/pipeline/service.py` | Claude Code |
+| CLI / Scheduling | `app/cli/` | Antigravity |
+| Downstream (Alerts) | `app/alerts/` | Codex |

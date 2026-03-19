@@ -61,6 +61,12 @@ class CanonicalDocumentModel(Base):
     credibility_score: Mapped[float | None] = mapped_column(Float, nullable=True)
     spam_probability: Mapped[float | None] = mapped_column(Float, nullable=True)
     priority_score: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    status: Mapped[str] = mapped_column(
+        String(20),
+        nullable=False,
+        server_default="pending",
+        index=True,
+    )
 
     # State flags
     is_duplicate: Mapped[bool] = mapped_column(

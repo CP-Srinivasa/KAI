@@ -25,6 +25,11 @@ class AlertSettings(BaseSettings):
     email_from: str = Field(default="")
     email_to: str = Field(default="")
     dry_run: bool = Field(default=True)
+    # Minimum priority score (1–10) required to trigger an alert.
+    min_priority: int = Field(default=7)
+    # Digest mode: accumulate alerts and send as a batch instead of individually.
+    digest_enabled: bool = Field(default=False)
+    digest_interval_minutes: int = Field(default=60)
 
 
 class ProviderSettings(BaseSettings):
@@ -33,7 +38,15 @@ class ProviderSettings(BaseSettings):
     openai_api_key: str = Field(default="")
     openai_model: str = Field(default="gpt-4o")
     openai_timeout: int = Field(default=30)
+
     anthropic_api_key: str = Field(default="")
+    anthropic_model: str = Field(default="claude-3-7-sonnet-20250219")
+    anthropic_timeout: int = Field(default=30)
+
+    gemini_api_key: str = Field(default="")
+    gemini_model: str = Field(default="gemini-2.5-flash")
+    gemini_timeout: int = Field(default=30)
+
     youtube_api_key: str = Field(default="")
 
 

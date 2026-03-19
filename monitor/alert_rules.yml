@@ -1,0 +1,33 @@
+# KAI Alert Rules
+# User-editable alert configuration.
+#
+# Loaded by AlertService at startup (future: hot-reload support).
+# Changes here take effect on next service restart.
+#
+# min_priority: 1–10 — minimum priority score to trigger an alert
+#   1 = all documents (very noisy)
+#   7 = default — high-priority only
+#   9 = critical events only
+#
+# asset_overrides: per-asset threshold overrides
+#   lower threshold = more sensitive for that asset
+#
+# digest: controls bundled digest delivery
+#   enabled: false = every alert sent immediately
+#   enabled: true  = alerts accumulate, sent as digest every interval_minutes
+#   min_messages: digest is only sent if at least N messages accumulated
+
+min_priority: 7
+
+asset_overrides: {}
+# Uncomment to lower threshold for specific assets:
+# asset_overrides:
+#   BTC:
+#     min_priority: 5
+#   ETH:
+#     min_priority: 5
+
+digest:
+  enabled: false
+  interval_minutes: 60
+  min_messages: 3

@@ -16,7 +16,7 @@ from openai import AsyncOpenAI
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 from app.analysis.base.interfaces import BaseAnalysisProvider, LLMAnalysisOutput
-from app.integrations.openai.prompts import SYSTEM_PROMPT_V1, format_user_prompt
+from app.analysis.prompts import SYSTEM_PROMPT_V1, format_user_prompt
 
 _MAX_TEXT_CHARS = 6000  # ~1500 tokens — leaves room for prompt + response
 

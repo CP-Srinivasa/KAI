@@ -40,13 +40,18 @@ class PriorityScore:
     actionable_bonus_applied: bool
 
 
-def compute_priority(result: AnalysisResult) -> PriorityScore:
+def compute_priority(
+    result: AnalysisResult,
+    *,
+    spam_probability: float = 0.0,
+) -> PriorityScore:
     """Compute a priority score (1–10) from an AnalysisResult.
 
+    spam_probability must be passed separately — it is not stored on AnalysisResult.
     Returns a PriorityScore with the integer priority and audit info.
     """
     actionable_value = 1.0 if result.actionable else 0.0
-    quality = 1.0 - result.spam_probability
+    quality = 1.0 - spam_probability
 
     raw = (
         result.relevance_score * _W_RELEVANCE
@@ -65,7 +70,7 @@ def compute_priority(result: AnalysisResult) -> PriorityScore:
         priority = min(10, priority + 1)
 
     # Spam cap
-    spam_capped = result.spam_probability > _SPAM_CAP_THRESHOLD
+    spam_capped = spam_probability > _SPAM_CAP_THRESHOLD
     if spam_capped:
         priority = min(priority, _SPAM_PRIORITY_CAP)
 
@@ -77,14 +82,20 @@ def compute_priority(result: AnalysisResult) -> PriorityScore:
     )
 
 
-def is_alert_worthy(result: AnalysisResult, min_priority: int = 7) -> bool:
+def is_alert_worthy(
+    result: AnalysisResult,
+    min_priority: int = 7,
+    *,
+    spam_probability: float = 0.0,
+) -> bool:
     """Return True if document meets the minimum priority threshold for alerts.
 
+    spam_probability must be passed separately — it is not stored on AnalysisResult.
     Spam is always excluded regardless of min_priority.
     """
-    if result.spam_probability > _SPAM_CAP_THRESHOLD:
+    if spam_probability > _SPAM_CAP_THRESHOLD:
         return False
-    score = compute_priority(result)
+    score = compute_priority(result, spam_probability=spam_probability)
     return score.priority >= min_priority
 
 

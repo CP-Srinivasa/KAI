@@ -9,7 +9,7 @@ import pytest
 
 from app.analysis.rules.asset_detector import canonical_names, detect_assets
 from app.analysis.rules.keyword_matcher import KeywordMatcher
-from app.analysis.rules.rule_analyzer import RuleAnalyzer
+from app.analysis.rules.rule_analyzer import RuleAnalyzer, compute_spam_probability
 from app.analysis.scoring import PriorityScore, compute_priority, is_alert_worthy
 from app.core.domain.document import AnalysisResult
 from app.core.enums import MarketScope, SentimentLabel
@@ -165,9 +165,9 @@ def _doc_id() -> object:
 def test_rule_analyzer_basic(rule_analyzer: RuleAnalyzer) -> None:
     result = rule_analyzer.analyze(_doc_id(), "Bitcoin price hits ATH", "BTC surges.")
     assert isinstance(result, AnalysisResult)
-    assert result.provider == "rule"
     assert result.relevance_score > 0.0
     assert result.confidence_score == 1.0
+    assert isinstance(result.explanation_short, str)
     assert "Bitcoin" in result.affected_assets or result.relevance_score > 0
 
 
@@ -187,9 +187,9 @@ def test_rule_analyzer_irrelevant_doc(rule_analyzer: RuleAnalyzer) -> None:
     assert result.market_scope == MarketScope.UNKNOWN
 
 
-def test_rule_analyzer_spam_all_caps(rule_analyzer: RuleAnalyzer) -> None:
-    result = rule_analyzer.analyze(_doc_id(), "BITCOIN TO THE MOON!!!", None)
-    assert result.spam_probability > 0.0
+def test_rule_analyzer_spam_all_caps() -> None:
+    spam = compute_spam_probability("BITCOIN TO THE MOON!!!", None)
+    assert spam > 0.0
 
 
 def test_rule_analyzer_tags_from_keywords(rule_analyzer: RuleAnalyzer) -> None:
@@ -197,28 +197,21 @@ def test_rule_analyzer_tags_from_keywords(rule_analyzer: RuleAnalyzer) -> None:
     assert len(result.tags) > 0
 
 
-def test_rule_analyzer_raw_output(rule_analyzer: RuleAnalyzer) -> None:
-    result = rule_analyzer.analyze(_doc_id(), "Bitcoin rally", "BTC and ETH")
-    assert "keyword_matches" in result.raw_output
-    assert "asset_matches" in result.raw_output
-
-
 # ── Scoring ───────────────────────────────────────────────────────────────────
 
 
 def _make_result(**overrides: object) -> AnalysisResult:
     defaults: dict = {
-        "document_id": uuid4(),
-        "provider": "rule",
+        "document_id": str(uuid4()),
         "sentiment_label": SentimentLabel.NEUTRAL,
         "sentiment_score": 0.0,
         "relevance_score": 0.5,
         "impact_score": 0.5,
         "confidence_score": 1.0,
         "novelty_score": 0.5,
-        "spam_probability": 0.0,
-        "recommended_priority": 5,
         "actionable": False,
+        "explanation_short": "Test",
+        "explanation_long": "Test long",
     }
     defaults.update(overrides)
     return AnalysisResult(**defaults)
@@ -243,7 +236,8 @@ def test_priority_zero_scores_give_low_priority() -> None:
 
 def test_priority_spam_capped_at_3() -> None:
     spammy = compute_priority(
-        _make_result(relevance_score=1.0, impact_score=1.0, spam_probability=0.9)
+        _make_result(relevance_score=1.0, impact_score=1.0),
+        spam_probability=0.9,
     )
     assert spammy.priority <= 3
     assert spammy.is_spam_capped is True
@@ -272,7 +266,5 @@ def test_is_alert_worthy_below_threshold() -> None:
 
 
 def test_is_alert_worthy_rejects_spam() -> None:
-    spammy = _make_result(
-        relevance_score=1.0, impact_score=1.0, spam_probability=0.9, actionable=True
-    )
-    assert not is_alert_worthy(spammy)
+    spammy = _make_result(relevance_score=1.0, impact_score=1.0, actionable=True)
+    assert not is_alert_worthy(spammy, spam_probability=0.9)

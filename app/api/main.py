@@ -4,12 +4,15 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.routers import health, query, sources
+from app.api.routers import alerts, health, query, sources
 from app.core.logging import configure_logging
 from app.core.settings import get_settings
+from app.ingestion.base.interfaces import FetchResult
+from app.ingestion.schedulers.rss_scheduler import RSSScheduler
 from app.security.auth import setup_auth
 from app.security.secrets import validate_secrets
 from app.storage.db.session import build_session_factory
+from app.storage.document_ingest import persist_fetch_result
 
 
 @asynccontextmanager
@@ -19,7 +22,19 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     validate_secrets(settings)          # warn/fail on missing secrets at startup
     setup_auth(app, settings.api_key)   # attach bearer-token middleware if key is set
     app.state.session_factory = build_session_factory(settings.db)
-    yield
+
+    async def persist_result(result: FetchResult):
+        return await persist_fetch_result(app.state.session_factory, result)
+
+    app.state.rss_scheduler = RSSScheduler(
+        app.state.session_factory,
+        persist_result=persist_result,
+    )
+    app.state.rss_scheduler.start()
+    try:
+        yield
+    finally:
+        app.state.rss_scheduler.stop()
 
 
 def create_app() -> FastAPI:
@@ -49,6 +64,7 @@ def create_app() -> FastAPI:
     app.include_router(health.router)
     app.include_router(sources.router)
     app.include_router(query.router)
+    app.include_router(alerts.router)
     return app
 
 
