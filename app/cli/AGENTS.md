@@ -1,4 +1,4 @@
-# AGENTS.md — app/cli/
+# AGENTS.md - app/cli/
 
 ## Purpose
 Typer CLI for operator commands. Human and script-friendly interface.
@@ -17,13 +17,13 @@ python -m app.cli.main --help
 | `sources` | List/add/disable sources | planned Phase 2 |
 | `query` | Run DSL query against documents | planned Phase 2 |
 | `alerts` | Test alert delivery | planned Phase 4 |
-| `research` | Watchlists, briefs, signals, dataset export, offline dataset evaluation | active Sprint 4–6 |
+| `research` | Watchlists, briefs, signals, dataset export, offline dataset evaluation, companion benchmarking | active Sprint 4-6 |
 
 ## Constraints
 
 - CLI commands must not duplicate business logic from `app/core` or `app/ingestion`
 - Use Rich for output formatting (tables, progress bars)
-- No hardcoded config — use `AppSettings`
+- No hardcoded config - use `AppSettings`
 - Commands should be testable without side effects (use `--dry-run` where applicable)
 
 ## Tests

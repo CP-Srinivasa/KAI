@@ -13,6 +13,10 @@ All construction goes through ResearchBriefBuilder.build() and extract_signal_ca
 Sprint 6 additions:
 - EvaluationMetrics, EvaluationReport, compare_datasets(), load_jsonl() — offline JSONL evaluation
 - export_training_data(teacher_only=True) — enforces teacher-eligibility at function level (I-27)
+
+Sprint 7 additions:
+- PromotionValidation, validate_promotion() — companion promotion gate (I-34–I-39)
+- save_evaluation_report(), save_benchmark_artifact() — artifact persistence helpers
 """
 
 from app.research.briefs import BriefDocument, ResearchBrief, ResearchBriefBuilder
@@ -21,9 +25,13 @@ from app.research.evaluation import (
     EvaluationMetrics,
     EvaluationReport,
     EvaluationResult,
+    PromotionValidation,
     compare_datasets,
     compare_outputs,
     load_jsonl,
+    save_benchmark_artifact,
+    save_evaluation_report,
+    validate_promotion,
 )
 from app.research.signals import SignalCandidate, extract_signal_candidates
 from app.research.watchlists import WatchlistRegistry
@@ -33,6 +41,7 @@ __all__ = [
     "EvaluationMetrics",
     "EvaluationReport",
     "EvaluationResult",
+    "PromotionValidation",
     "ResearchBrief",
     "ResearchBriefBuilder",
     "SignalCandidate",
@@ -42,4 +51,7 @@ __all__ = [
     "export_training_data",
     "extract_signal_candidates",
     "load_jsonl",
+    "save_benchmark_artifact",
+    "save_evaluation_report",
+    "validate_promotion",
 ]

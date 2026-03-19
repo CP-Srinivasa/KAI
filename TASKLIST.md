@@ -502,6 +502,8 @@ Readiness-Regeln für Teacher/Benchmark/Baseline.
 | 6.5 | Pflichtmetriken: `sentiment_agreement`, `priority_mae`, `relevance_mae`, `impact_mae`, `tag_overlap_mean` | Claude Code | ✅ |
 | 6.6 | `load_jsonl()` Helper für offline JSONL-Vergleich | Claude Code | ✅ |
 | 6.7 | Contract-Abnahme + Commit | Claude Code | ✅ |
+| 6.8 | CLI: `research benchmark-companion` — Teacher-vs-Candidate Benchmark mit optionalem Report-/Artifact-Output | Codex | ✅ |
+| 6.9 | Benchmark-Artifact-Hooks — `save_evaluation_report()` + `save_benchmark_artifact()` | Codex | ✅ |
 
 **Codex-Spec für Sprint 6.2 — CLI-Erweiterung:**
 
@@ -725,6 +727,461 @@ Akzeptanzkriterien:
   - [ ] ruff check . sauber
   - [ ] Alembic-Migration läuft durch (alembic upgrade head)
   - [ ] Bestehende Tests weiterhin grün (keine Breaking Changes)
+```
+
+---
+
+## Sprint 7 — Companion Benchmark Harness, Promotion Gate, Artifact Contract
+
+> **Startet erst nach Sprint 6-Abschluss.** Sprint 6 ✅ (547 Tests, ruff clean)
+
+**Ziel**: Sprint-6 Evaluation-Stubs testen, in CLI verdrahten, Promotion-Gate als manuell
+prüfbaren Schritt sichtbar machen. Kein Training, keine neuen Provider, keine Auto-Promotion.
+
+**Contract-Basis**:
+- `docs/benchmark_promotion_contract.md` (neu, kanonische Sprint-7 Referenz)
+- `docs/contracts.md §18` (I-34–I-39)
+
+**Drei explizite Trennungen (nicht verhandelbar)**:
+- `Benchmark ≠ Training`
+- `Evaluation ≠ Promotion`
+- `Promotion = manueller Gate-Schritt, kein automatischer Trigger`
+
+| # | Task | Agent | Status |
+|---|---|---|---|
+| 7.1 | Tests: `validate_promotion()`, `save_evaluation_report()`, `save_benchmark_artifact()` — alle in `evaluation.py` vorhanden, aber null Test-Coverage | Codex | ✅ |
+| 7.2 | CLI: `evaluate-datasets --save-report <path> [--save-artifact <path>]` — optionale Persistence-Flags, kein Behavior-Change ohne Flags | Codex | ✅ |
+| 7.3 | CLI: `research check-promotion <report.json>` — liest gespeicherten Report, `validate_promotion()`, per-Gate-Tabelle, Exit 0/1 | Codex | ✅ |
+| 7.4 | `benchmark_promotion_contract.md` + `contracts.md §18` + I-34–I-39 | Claude Code | ✅ |
+| 7.5 | `intelligence_architecture.md` Sprint-7 Update | Claude Code | ✅ |
+| 7.6 | `dataset_evaluation_contract.md` Sprint-7 Pointer | Claude Code | ✅ |
+| 7.7 | Contract-Abnahme + Commit | Claude Code | ✅ |
+
+**Codex-Spec für 7.1 — Tests:**
+
+```
+## Task: Sprint 7.1 — Tests für Evaluation Stubs
+
+Agent: Codex
+Phase: Sprint 7
+Modul: tests/unit/test_evaluation.py (erweitern)
+Typ: test (keine Implementierungsänderung)
+
+Spec-Referenz: docs/benchmark_promotion_contract.md §Sprint-7 Acceptance Criteria 7.1
+
+Ziel: Test-Coverage für drei bereits implementierte Funktionen in evaluation.py,
+die bisher null Tests haben.
+
+Tests für validate_promotion():
+
+  test_validate_promotion_all_gates_pass:
+    metrics = EvaluationMetrics(sentiment_agreement=0.90, priority_mae=1.0,
+                                relevance_mae=0.10, impact_mae=0.15,
+                                tag_overlap_mean=0.40, sample_count=50, missing_pairs=0)
+    result = validate_promotion(metrics)
+    assert result.is_promotable is True
+    assert all([result.sentiment_pass, result.priority_pass, result.relevance_pass,
+                result.impact_pass, result.tag_overlap_pass])
+
+  test_validate_promotion_sentiment_fails:
+    metrics mit sentiment_agreement=0.80 (< 0.85)
+    assert result.sentiment_pass is False
+    assert result.is_promotable is False
+
+  test_validate_promotion_priority_fails:
+    metrics mit priority_mae=2.0 (> 1.5)
+    assert result.priority_pass is False
+
+  test_validate_promotion_relevance_fails:
+    metrics mit relevance_mae=0.20 (> 0.15)
+    assert result.relevance_pass is False
+
+  test_validate_promotion_impact_fails:
+    metrics mit impact_mae=0.25 (> 0.20)
+    assert result.impact_pass is False
+
+  test_validate_promotion_tag_overlap_fails:
+    metrics mit tag_overlap_mean=0.20 (< 0.30)
+    assert result.tag_overlap_pass is False
+
+  test_validate_promotion_boundary_values_are_passing:
+    metrics = EvaluationMetrics(sentiment_agreement=0.85, priority_mae=1.5,
+                                relevance_mae=0.15, impact_mae=0.20,
+                                tag_overlap_mean=0.30, sample_count=10, missing_pairs=0)
+    result = validate_promotion(metrics)
+    assert result.is_promotable is True  # boundary = pass (>=, <=)
+
+Tests für save_evaluation_report():
+
+  test_save_evaluation_report_creates_valid_json(tmp_path):
+    report = EvaluationReport(metrics=..., dataset_type="rule_baseline",
+                              teacher_count=10, baseline_count=10, paired_count=8)
+    path = save_evaluation_report(report, tmp_path / "report.json",
+                                  teacher_dataset="/a/teacher.jsonl",
+                                  candidate_dataset="/b/candidate.jsonl")
+    assert path.exists()
+    data = json.loads(path.read_text())
+    assert data["report_type"] == "dataset_evaluation"
+    assert "generated_at" in data
+    assert data["inputs"]["teacher_dataset"].endswith("teacher.jsonl")
+    assert data["metrics"]["sentiment_agreement"] == report.metrics.sentiment_agreement
+
+Tests für save_benchmark_artifact():
+
+  test_save_benchmark_artifact_benchmark_ready(tmp_path):
+    report mit paired_count=5
+    path = save_benchmark_artifact(tmp_path / "artifact.json", ...)
+    data = json.loads(path.read_text())
+    assert data["artifact_type"] == "companion_benchmark"
+    assert data["status"] == "benchmark_ready"
+
+  test_save_benchmark_artifact_needs_more_data(tmp_path):
+    report mit paired_count=0
+    data["status"] == "needs_more_data"
+
+Constraints:
+  - NICHT: validate_promotion(), save_evaluation_report(), save_benchmark_artifact() ändern
+  - NICHT: neue Module anlegen
+  - Nur tests/unit/test_evaluation.py erweitern
+
+Akzeptanzkriterien:
+  - [ ] ruff check . sauber
+  - [ ] pytest tests/unit/test_evaluation.py grün (alle neuen + bestehenden Tests)
+  - [ ] pytest tests/unit/ grün (547 Basis, kein Rückschritt)
+```
+
+**Codex-Spec für 7.2 — CLI `--save-report` / `--save-artifact`:**
+
+```
+## Task: Sprint 7.2 — evaluate-datasets Persistence-Flags
+
+Agent: Codex
+Phase: Sprint 7
+Modul: app/cli/main.py
+Typ: feature (additiv, kein Behavior-Change ohne Flags)
+
+Spec-Referenz: docs/benchmark_promotion_contract.md §CLI-Contract-7.2
+
+Änderungen in research_evaluate_datasets():
+
+  Neue optionale Parameter:
+    save_report: str | None = typer.Option(
+        None, "--save-report",
+        help="Persist EvaluationReport as JSON for audit trail and check-promotion",
+    )
+    save_artifact: str | None = typer.Option(
+        None, "--save-artifact",
+        help="Persist companion benchmark manifest JSON",
+    )
+
+  Nach console.print(table):
+    from app.research.evaluation import save_evaluation_report, save_benchmark_artifact
+
+    if save_report:
+        saved = save_evaluation_report(
+            report, save_report,
+            teacher_dataset=teacher_file,
+            candidate_dataset=candidate_file,
+        )
+        console.print(f"[dim]Evaluation report saved: {saved}[/dim]")
+
+    if save_artifact:
+        artifact = save_benchmark_artifact(
+            save_artifact,
+            teacher_dataset=teacher_file,
+            candidate_dataset=candidate_file,
+            report=report,
+            report_path=save_report,
+        )
+        console.print(f"[dim]Benchmark artifact saved: {artifact}[/dim]")
+
+Constraints:
+  - NICHT: save_evaluation_report() oder save_benchmark_artifact() ändern
+  - NICHT: bestehende Tabellen-/Metrik-Ausgabe ändern
+  - Ohne --save-report / --save-artifact: Verhalten identisch zu Sprint-6
+
+Akzeptanzkriterien:
+  - [ ] ruff check . sauber
+  - [ ] pytest grün (547 Basis)
+  - [ ] --save-report erstellt JSON-Datei mit allen EvaluationReport-Feldern
+  - [ ] --save-artifact erstellt Benchmark-Manifest mit artifact_type = "companion_benchmark"
+  - [ ] Beide Flags zusammen: beide Dateien erstellt
+  - [ ] Ohne Flags: Verhalten unverändert (kein Regression)
+```
+
+**Codex-Spec für 7.3 — CLI `research check-promotion`:**
+
+```
+## Task: Sprint 7.3 — research check-promotion CLI
+
+Agent: Codex
+Phase: Sprint 7
+Modul: app/cli/main.py
+Typ: feature
+
+Vollständige Implementierungslogik und Signatur:
+→ docs/benchmark_promotion_contract.md §CLI-Contract-7.3
+
+Typer-Signatur:
+  @research_app.command("check-promotion")
+  def research_check_promotion(
+      report_file: str = typer.Argument(
+          ..., help="Path to evaluation_report.json (from evaluate-datasets --save-report)"
+      ),
+  ) -> None:
+      """Check whether a saved evaluation report meets all companion promotion gates.
+
+      Exits 0 if all 5 quantitative gates pass.
+      Exits 1 if any gate fails or report cannot be parsed.
+
+      Gate I-34 (false-actionable rate) requires separate manual verification
+      via `research evaluate`. See docs/benchmark_promotion_contract.md.
+      """
+
+Implementierung: exakt wie in docs/benchmark_promotion_contract.md §CLI-Contract-7.3 spezifiziert.
+
+Constraints:
+  - NICHT: validate_promotion() oder EvaluationMetrics ändern
+  - KEIN DB-Aufruf, KEIN Model-Load, KEIN LLM-Call
+  - Exit 0 = promotable (alle 5 Gates pass)
+  - Exit 1 = nicht promotable ODER Datei nicht gefunden ODER Parse-Fehler
+  - I-34-Hinweis IMMER anzeigen, auch bei PASS
+
+Akzeptanzkriterien:
+  - [ ] ruff check . sauber
+  - [ ] pytest grün (547 Basis)
+  - [ ] Exit 0 wenn alle 5 Gates pass
+  - [ ] Exit 1 wenn mindestens 1 Gate fail
+  - [ ] Exit 1 + Fehlermeldung wenn Datei nicht gefunden
+  - [ ] Exit 1 + Fehlermeldung bei ungültigem JSON
+  - [ ] I-34-Hinweis in allen Fällen sichtbar
+  - [ ] research --help zeigt check-promotion in research-Gruppe
+```
+
+**Sprint-7 Abschlusskriterien:**
+
+```
+Sprint 7 gilt als abgeschlossen wenn:
+  - [x] 7.1: validate_promotion + save_* vollständig getestet
+  - [x] 7.2: --save-report / --save-artifact CLI-Flags verdrahtet
+  - [x] 7.3: check-promotion CLI implementiert
+  - [x] ruff check . sauber
+  - [x] pytest passing (561 Tests, kein Rückschritt)
+  - [x] evaluate-datasets (bestehend) unverändert funktionsfähig
+  - [x] evaluate (DB-basiert, Sprint 5) unverändert
+  - [x] docs/contracts.md §18 + I-34–I-39 ✅
+  - [x] TASKLIST.md Sprint-7 Tasks aktualisiert
+  - [x] AGENTS.md Test-Stand aktualisiert
+  - [x] benchmark_promotion_contract.md vollständig und konsistent
+```
+
+---
+
+## Sprint 8 — Controlled Companion Inference, Tuning Artifact Flow, Manual Promotion
+
+> **Startet erst nach Sprint 7-Abschluss.** Sprint 7 ⏳ (7.1–7.3 Codex pending, 7.7 sign-off pending)
+
+**Ziel**: Tuning-Artifact-Flow und manuellen Promotion-Record definieren und implementieren.
+Kein Training, kein automatischer Routing-Wechsel. Companion-Inferenz bleibt lokal und kontrolliert.
+
+**Contract-Basis**:
+- `docs/tuning_promotion_contract.md` (neu, kanonische Sprint-8 Referenz)
+- `docs/contracts.md §19` (I-40–I-45)
+
+**Vier explizite Trennungen (nicht verhandelbar)**:
+- `Benchmark ≠ Tuning`
+- `Tuning ≠ Training`
+- `Training ≠ Promotion`
+- `Promotion ≠ Deployment`
+
+| # | Task | Agent | Status |
+|---|---|---|---|
+| 8.1 | `app/research/tuning.py` — `TuningArtifact`, `PromotionRecord`, `save_tuning_artifact()`, `save_promotion_record()` + vollständige Tests | Codex | ⏳ |
+| 8.2 | CLI: `research prepare-tuning-artifact <teacher_file> <model_base>` — Tuning-Manifest erstellen | Codex | ⏳ |
+| 8.3 | CLI: `research record-promotion <report_file> <model_id> --endpoint <url> --operator-note <text>` — Promotion-Record schreiben | Codex | ⏳ |
+| 8.4 | `tuning_promotion_contract.md` + `contracts.md §19` + I-40–I-45 | Claude Code | ✅ |
+| 8.5 | `intelligence_architecture.md` Sprint-8 Update | Claude Code | ✅ |
+| 8.6 | Contract-Abnahme + Commit | Claude Code | ⏳ |
+
+**Codex-Spec für 8.1 — `app/research/tuning.py` + Tests:**
+
+```
+## Task: Sprint 8.1 — tuning.py + Tests
+
+Agent: Codex
+Phase: Sprint 8
+Modul: app/research/tuning.py (NEU), tests/unit/test_tuning.py (NEU)
+Typ: feature + test
+
+Spec-Referenz: docs/tuning_promotion_contract.md §NewModule + §AcceptanceCriteria-8.1
+
+Implementiere exakt nach der Spezifikation in docs/tuning_promotion_contract.md §NewModule:
+- TuningArtifact dataclass mit to_json_dict()
+- PromotionRecord dataclass mit to_json_dict()
+- save_tuning_artifact() — schreibt JSON, kein Training
+- save_promotion_record() — schreibt JSON, validiert operator_note und eval-report-Existenz
+
+Tests in tests/unit/test_tuning.py:
+  test_save_tuning_artifact_creates_valid_json(tmp_path):
+    path = save_tuning_artifact(tmp_path/"manifest.json",
+                                teacher_dataset="/a/teacher.jsonl",
+                                model_base="llama3.2:3b", row_count=50)
+    data = json.loads(path.read_text())
+    assert data["artifact_type"] == "tuning_manifest"
+    assert data["model_base"] == "llama3.2:3b"
+    assert data["training_format"] == "openai_chat"
+    assert data["row_count"] == 50
+    assert data["evaluation_report"] is None
+
+  test_save_tuning_artifact_with_eval_report(tmp_path):
+    eval_report = tmp_path/"report.json"
+    eval_report.write_text("{}")
+    path = save_tuning_artifact(tmp_path/"manifest.json",
+                                teacher_dataset="/a/teacher.jsonl",
+                                model_base="kai-v1", row_count=10,
+                                evaluation_report=eval_report)
+    data = json.loads(path.read_text())
+    assert data["evaluation_report"] is not None
+
+  test_save_promotion_record_creates_valid_json(tmp_path):
+    eval_report = tmp_path/"report.json"
+    eval_report.write_text("{}")
+    path = save_promotion_record(tmp_path/"promo.json",
+                                 promoted_model="kai-analyst-v1",
+                                 promoted_endpoint="http://localhost:11434",
+                                 evaluation_report=eval_report,
+                                 operator_note="Operator approved after review")
+    data = json.loads(path.read_text())
+    assert data["record_type"] == "companion_promotion"
+    assert "reversal_instructions" in data
+    assert data["tuning_artifact"] is None
+
+  test_save_promotion_record_blank_note_raises(tmp_path):
+    eval_report = tmp_path/"report.json"
+    eval_report.write_text("{}")
+    with pytest.raises(ValueError, match="operator_note"):
+        save_promotion_record(tmp_path/"promo.json",
+                              promoted_model="m", promoted_endpoint="http://localhost:11434",
+                              evaluation_report=eval_report, operator_note="   ")
+
+  test_save_promotion_record_missing_report_raises(tmp_path):
+    with pytest.raises(FileNotFoundError):
+        save_promotion_record(tmp_path/"promo.json",
+                              promoted_model="m", promoted_endpoint="http://localhost:11434",
+                              evaluation_report=tmp_path/"nonexistent.json",
+                              operator_note="ok")
+
+Constraints:
+  - NICHT: evaluation.py oder bestehende Module ändern
+  - tuning.py importiert NICHT aus evaluation.py
+  - Nur json, dataclasses, datetime, pathlib verwenden
+  - Kein httpx, kein asyncio, kein torch
+
+Akzeptanzkriterien:
+  - [ ] ruff check . sauber
+  - [ ] pytest tests/unit/test_tuning.py grün (alle Tests)
+  - [ ] pytest tests/unit/ grün (561 Basis, kein Rückschritt)
+```
+
+**Codex-Spec für 8.2 — CLI `prepare-tuning-artifact`:**
+
+```
+## Task: Sprint 8.2 — research prepare-tuning-artifact CLI
+
+Agent: Codex
+Phase: Sprint 8
+Modul: app/cli/main.py
+Typ: feature
+
+Vollständige Implementierungslogik und Signatur:
+→ docs/tuning_promotion_contract.md §CLI-Contract-8.2
+
+Typer-Signatur:
+  @research_app.command("prepare-tuning-artifact")
+  def research_prepare_tuning_artifact(
+      teacher_file: str = typer.Argument(...),
+      model_base: str = typer.Argument(...),
+      eval_report: str | None = typer.Option(None, "--eval-report"),
+      out: str = typer.Option("tuning_manifest.json", "--out"),
+  ) -> None:
+      """Record a training-ready manifest. Does NOT train a model."""
+
+Implementierung: exakt wie in docs/tuning_promotion_contract.md §CLI-Contract-8.2.
+
+Constraints:
+  - KEIN DB-Aufruf, KEIN Model-Load, KEIN LLM-Call
+  - KEIN Training-Trigger
+  - Exit 1 wenn teacher_file nicht gefunden
+  - Exit 1 wenn teacher_file leer
+  - Disclaimer immer drucken: "record only, run fine-tuning separately"
+
+Akzeptanzkriterien:
+  - [ ] ruff check . sauber
+  - [ ] pytest grün (561 Basis)
+  - [ ] --out erstellt tuning_manifest.json mit korrekten Feldern
+  - [ ] Exit 1 bei fehlendem/leerem teacher_file
+  - [ ] research --help zeigt prepare-tuning-artifact in research-Gruppe
+```
+
+**Codex-Spec für 8.3 — CLI `record-promotion`:**
+
+```
+## Task: Sprint 8.3 — research record-promotion CLI
+
+Agent: Codex
+Phase: Sprint 8
+Modul: app/cli/main.py
+Typ: feature
+
+Vollständige Implementierungslogik und Signatur:
+→ docs/tuning_promotion_contract.md §CLI-Contract-8.3
+
+Typer-Signatur:
+  @research_app.command("record-promotion")
+  def research_record_promotion(
+      report_file: str = typer.Argument(...),
+      model_id: str = typer.Argument(...),
+      endpoint: str = typer.Option(..., "--endpoint"),
+      operator_note: str = typer.Option(..., "--operator-note"),
+      tuning_artifact: str | None = typer.Option(None, "--tuning-artifact"),
+      out: str = typer.Option("promotion_record.json", "--out"),
+  ) -> None:
+      """Record a manual companion promotion decision. Does NOT change routing."""
+
+Implementierung: exakt wie in docs/tuning_promotion_contract.md §CLI-Contract-8.3.
+
+Constraints:
+  - Verifikation: validate_promotion() auf den gelesenen Report VOR dem Schreiben
+  - Exit 1 wenn Report nicht existiert oder Gates nicht bestehen
+  - Exit 1 bei leerem --operator-note (propagiert ValueError aus save_promotion_record)
+  - Druckt Aktivierungshinweis (APP_LLM_PROVIDER) + Reversierungshinweis
+  - KEIN DB-Aufruf, KEIN LLM-Call, KEIN Routing-Wechsel
+
+Akzeptanzkriterien:
+  - [ ] ruff check . sauber
+  - [ ] pytest grün (561 Basis)
+  - [ ] Exit 0 + promotion_record.json erstellt wenn Gates bestehen und note nicht leer
+  - [ ] Exit 1 wenn Report-Gates nicht bestehen
+  - [ ] Exit 1 wenn Report-Datei nicht gefunden
+  - [ ] Exit 1 bei leerem --operator-note
+  - [ ] Aktivierungs- und Reversierungshinweis ausgegeben
+  - [ ] research --help zeigt record-promotion in research-Gruppe
+```
+
+**Sprint-8 Abschlusskriterien:**
+
+```
+Sprint 8 gilt als abgeschlossen wenn:
+  - [ ] 8.1: tuning.py vollständig implementiert + getestet
+  - [ ] 8.2: prepare-tuning-artifact CLI implementiert + getestet
+  - [ ] 8.3: record-promotion CLI implementiert + getestet
+  - [ ] ruff check . sauber
+  - [ ] pytest passing (Basis 561, kein Rückschritt)
+  - [ ] check-promotion, benchmark-companion, evaluate-datasets unverändert
+  - [ ] docs/contracts.md §19 + I-40–I-45 ✅
+  - [ ] TASKLIST.md Sprint-8 Tasks aktualisiert
+  - [ ] AGENTS.md Test-Stand aktualisiert
+  - [ ] tuning_promotion_contract.md vollständig und konsistent
 ```
 
 ---

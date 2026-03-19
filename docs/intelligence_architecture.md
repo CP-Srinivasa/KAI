@@ -361,7 +361,8 @@ Sprint 6 first standardizes dataset roles, evaluation inputs, and minimal metric
 | 5B | Provenance in research outputs: briefs, signals, datasets | ✅ |
 | 5C | `EnsembleProvider` Winner-Traceability — post-analyze resolution | ✅ |
 | 5C | `doc.provider` = winner name; `doc.metadata["ensemble_chain"]` = full list | ✅ |
-| 6 | Dataset construction + evaluation harness + distillation readiness | 🔄 |
+| 6 | Dataset construction + evaluation harness + distillation readiness | ✅ |
+| 7 | Companion benchmark harness + promotion gate + artifact contract | ⏳ |
 
 ---
 

@@ -29,8 +29,10 @@ No new provider architecture, no new analysis schema, no training pipeline.
 | `compare_datasets()` | `app/research/evaluation.py` | ✅ done |
 | `EvaluationMetrics` / `EvaluationReport` | `app/research/evaluation.py` | ✅ done |
 | `load_jsonl()` | `app/research/evaluation.py` | ✅ done |
-| `dataset-export --teacher-only` CLI flag | `app/cli/main.py` | ⏳ task 6.2 |
-| `evaluate-datasets` CLI command | `app/cli/main.py` | ⏳ task 6.3 |
+| `save_evaluation_report()` / `save_benchmark_artifact()` | `app/research/evaluation.py` | ✅ done |
+| `dataset-export --teacher-only` CLI flag | `app/cli/main.py` | ✅ done |
+| `evaluate-datasets` CLI command | `app/cli/main.py` | ✅ done |
+| `benchmark-companion` CLI command | `app/cli/main.py` | ✅ done |
 
 ---
 
@@ -279,18 +281,31 @@ console.print(table)
 | 7 | `ruff check .` clean |
 | 8 | `pytest tests/unit/` passing (no regression) |
 
+### 6.4 — `research benchmark-companion`
+
+| # | Criterion |
+|---|-----------|
+| 1 | `research benchmark-companion teacher.jsonl candidate.jsonl` runs offline without DB access |
+| 2 | The command reuses `compare_datasets()` and does not introduce a second evaluation schema |
+| 3 | `--report-out` writes a structured JSON report via `save_evaluation_report()` |
+| 4 | `--artifact-out` writes a small benchmark manifest via `save_benchmark_artifact()` |
+| 5 | Empty or unmatched candidate datasets keep the command stable and produce `needs_more_data` artifacts |
+| 6 | Missing teacher or candidate files fail with exit code 1 and a clear message |
+
 ### Sprint-6 Final Sign-off Checklist
 
 ```
-- [ ] 6.2 implemented and tests passing
-- [ ] 6.3 implemented and tests passing
+- [x] 6.2 implemented and tests passing
+- [x] 6.3 implemented and tests passing
+- [x] 6.4 benchmark-companion implemented and tests passing
 - [ ] ruff check . clean
-- [ ] pytest passing (baseline: 542 tests)
+- [ ] pytest passing (full suite)
 - [ ] research evaluate (DB-based) still works unchanged
 - [ ] research evaluate-datasets (file-based) visible in `research --help`
+- [ ] research benchmark-companion visible in `research --help`
 - [ ] docs/contracts.md §17 status → ✅
-- [ ] TASKLIST.md 6.2, 6.3, 6.7 → ✅
-- [ ] AGENTS.md test count updated
+- [ ] TASKLIST.md benchmark/tuning basis updated
+- [ ] module AGENTS updated
 ```
 
 ---
@@ -355,3 +370,27 @@ All five gates must pass before companion promotion. No partial promotions.
 - JSONL files are read-only inputs — `json.loads()` only, no `eval()`, no pickle
 - File existence check before loading — no silent empty-dataset evaluation
 - `load_jsonl()` handles empty lines gracefully (skips blank lines)
+
+---
+
+## Sprint 7 — Next Steps
+
+Sprint 6 establishes the measurement infrastructure. Sprint 7 wires the already-implemented
+stubs into the CLI and adds the promotion gate.
+
+**Sprint-6 stubs already in `evaluation.py` (untested, unwired):**
+- `PromotionValidation`, `validate_promotion()` — 5-gate check
+- `save_evaluation_report()` — persist `EvaluationReport` as JSON
+- `save_benchmark_artifact()` — write benchmark manifest
+
+**Sprint-7 CLI additions (pending):**
+- `evaluate-datasets --save-report <path> [--save-artifact <path>]` — optional persistence
+- `research check-promotion <report.json>` — per-gate pass/fail table, exit 0/1
+
+**Full Sprint-7 spec**: `docs/benchmark_promotion_contract.md`
+**Invariants**: `docs/contracts.md §18`, I-34–I-39
+
+**Key separation** (enforced by contract, not by code):
+- Benchmark = run harness, produce report. NOT training.
+- Evaluation = measure gap. NOT a promotion decision.
+- Promotion = human-reviewed gate, all 5 quantitative gates + manual I-34 check. NOT automatic.

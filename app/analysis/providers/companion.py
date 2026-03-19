@@ -37,7 +37,7 @@ class InternalCompanionProvider(BaseAnalysisProvider):
         """Call the local endpoint to perform standardized JSON analysis."""
         prompt = (
             f"Analyze this financial document and return a JSON object containing:\n"
-            f"co_thought (str), sentiment_label (bullish/bearish/neutral), "
+            f"summary (str), sentiment_label (bullish/bearish/neutral), "
             f"sentiment_score (-1.0 to 1.0), relevance_score (0.0 to 1.0), "
             f"impact_score (0.0 to 1.0), priority_score (1 to 10), "
             f"market_scope (crypto/equities/macro/etf/mixed/unknown), "
@@ -80,6 +80,12 @@ class InternalCompanionProvider(BaseAnalysisProvider):
             # Cap the impact score at 0.8 per conservative fallback rule (I-17)
             impact = min(0.8, float(parsed.get("impact_score", 0.0)))
             priority = int(parsed.get("priority_score", 5))
+            summary = (
+                parsed.get("summary")
+                or parsed.get("short_reasoning")
+                or parsed.get("co_thought")
+                or "Local companion analysis."
+            )
 
             return LLMAnalysisOutput(
                 sentiment_label=SentimentLabel(parsed.get("sentiment_label", "neutral").lower()),
@@ -94,7 +100,7 @@ class InternalCompanionProvider(BaseAnalysisProvider):
                 affected_sectors=[],
                 actionable=(priority >= 7),
                 tags=parsed.get("tags", []),
-                short_reasoning=parsed.get("co_thought", "Local companion analysis."),
+                short_reasoning=str(summary),
                 recommended_priority=priority,
             )
 

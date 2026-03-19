@@ -929,3 +929,154 @@ def test_research_evaluate_datasets_reports_missing_pairs(tmp_path) -> None:
     assert "No overlapping document_id pairs found." in result.output
     assert "Missing Pairs" in result.output
     assert "rule_baseline" in result.output
+
+
+def test_research_benchmark_companion_saves_report_and_artifact(tmp_path) -> None:
+    teacher_file = tmp_path / "teacher.jsonl"
+    candidate_file = tmp_path / "candidate.jsonl"
+    report_file = tmp_path / "reports" / "benchmark_report.json"
+    artifact_file = tmp_path / "artifacts" / "benchmark_artifact.json"
+
+    _write_jsonl_rows(
+        teacher_file,
+        [_make_dataset_row(document_id="doc-1", analysis_source="external_llm")],
+    )
+    _write_jsonl_rows(
+        candidate_file,
+        [_make_dataset_row(document_id="doc-1", analysis_source="internal", provider="companion")],
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "research",
+            "benchmark-companion",
+            str(teacher_file),
+            str(candidate_file),
+            "--report-out",
+            str(report_file),
+            "--artifact-out",
+            str(artifact_file),
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "Companion Benchmark Metrics" in result.output
+    assert "Saved benchmark report to" in result.output
+    assert "Saved benchmark artifact to" in result.output
+
+    report_payload = json.loads(report_file.read_text(encoding="utf-8"))
+    assert report_payload["report_type"] == "dataset_evaluation"
+    assert report_payload["dataset_type"] == "internal_benchmark"
+    assert report_payload["inputs"]["teacher_dataset"] == str(teacher_file.resolve())
+    assert report_payload["inputs"]["candidate_dataset"] == str(candidate_file.resolve())
+    assert report_payload["metrics"]["sample_count"] == 1
+
+    artifact_payload = json.loads(artifact_file.read_text(encoding="utf-8"))
+    assert artifact_payload["artifact_type"] == "companion_benchmark"
+    assert artifact_payload["status"] == "benchmark_ready"
+    assert artifact_payload["dataset_type"] == "internal_benchmark"
+    assert artifact_payload["teacher_dataset"] == str(teacher_file.resolve())
+    assert artifact_payload["candidate_dataset"] == str(candidate_file.resolve())
+    assert artifact_payload["evaluation_report"] == str(report_file.resolve())
+    assert artifact_payload["paired_count"] == 1
+
+
+def test_research_benchmark_companion_handles_empty_candidate_dataset(tmp_path) -> None:
+    teacher_file = tmp_path / "teacher.jsonl"
+    candidate_file = tmp_path / "candidate_empty.jsonl"
+    artifact_file = tmp_path / "artifact.json"
+
+    _write_jsonl_rows(
+        teacher_file,
+        [_make_dataset_row(document_id="doc-1", analysis_source="external_llm")],
+    )
+    candidate_file.write_text("", encoding="utf-8")
+
+    result = runner.invoke(
+        app,
+        [
+            "research",
+            "benchmark-companion",
+            str(teacher_file),
+            str(candidate_file),
+            "--artifact-out",
+            str(artifact_file),
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "Candidate dataset is empty." in result.output
+    assert "No overlapping document_id pairs found." in result.output
+
+    artifact_payload = json.loads(artifact_file.read_text(encoding="utf-8"))
+    assert artifact_payload["status"] == "needs_more_data"
+    assert artifact_payload["paired_count"] == 0
+    assert artifact_payload["evaluation_report"] is None
+
+
+def test_research_benchmark_companion_missing_teacher_file_fails(tmp_path) -> None:
+    candidate_file = tmp_path / "candidate.jsonl"
+    _write_jsonl_rows(
+        candidate_file,
+        [_make_dataset_row(document_id="doc-1", analysis_source="internal")],
+    )
+
+    missing_teacher = tmp_path / "missing_teacher.jsonl"
+    result = runner.invoke(
+        app,
+        [
+            "research",
+            "benchmark-companion",
+            str(missing_teacher),
+            str(candidate_file),
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "Teacher dataset file not found" in result.output
+
+
+def test_research_benchmark_companion_missing_candidate_file_fails(tmp_path) -> None:
+    teacher_file = tmp_path / "teacher.jsonl"
+    _write_jsonl_rows(
+        teacher_file,
+        [_make_dataset_row(document_id="doc-1", analysis_source="external_llm")],
+    )
+
+    missing_candidate = tmp_path / "missing_candidate.jsonl"
+    result = runner.invoke(
+        app,
+        [
+            "research",
+            "benchmark-companion",
+            str(teacher_file),
+            str(missing_candidate),
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "Candidate dataset file not found" in result.output
+
+
+def test_research_benchmark_companion_invalid_jsonl_fails(tmp_path) -> None:
+    teacher_file = tmp_path / "teacher.jsonl"
+    candidate_file = tmp_path / "candidate_invalid.jsonl"
+    _write_jsonl_rows(
+        teacher_file,
+        [_make_dataset_row(document_id="doc-1", analysis_source="external_llm")],
+    )
+    candidate_file.write_text("{not-json}\n", encoding="utf-8")
+
+    result = runner.invoke(
+        app,
+        [
+            "research",
+            "benchmark-companion",
+            str(teacher_file),
+            str(candidate_file),
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "Invalid JSONL content in Candidate dataset" in result.output

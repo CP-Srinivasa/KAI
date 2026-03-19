@@ -1346,6 +1346,8 @@ Sprint 6 defines three dataset roles and one offline evaluation harness:
 - internal benchmark export (CLI `--source-type internal`) ✅
 - rule baseline export (CLI `--source-type rule`) ✅
 - dataset-to-dataset evaluation by `document_id` (`compare_datasets()` + `research evaluate-datasets`) ✅
+- companion benchmark CLI wrapper (`research benchmark-companion`) ✅
+- structured benchmark persistence hooks (`save_evaluation_report()` + `save_benchmark_artifact()`) ✅
 
 Mandatory role mapping:
 - `analysis_source=external_llm` → teacher-only dataset (fine-tuning eligible)
@@ -1359,6 +1361,12 @@ Mandatory metric set (all implemented in `EvaluationMetrics`):
 - `impact_mae` — mean absolute error on impact_score (0.0–1.0)
 - `tag_overlap_mean` — average Jaccard similarity of tags lists
 
+Operational benchmark hook:
+- `research benchmark-companion <teacher.jsonl> <candidate.jsonl>` reuses `compare_datasets()`
+  and may optionally persist a JSON report plus a small benchmark artifact manifest.
+- The benchmark artifact is a trace record only; it is not a model, not a checkpoint, and not a
+  second analysis schema.
+
 Sprint-6 guardrails (all enforced):
 - no training on `rule` as teacher (I-19, I-30)
 - no training on `internal` as teacher (I-30)
@@ -1366,6 +1374,85 @@ Sprint-6 guardrails (all enforced):
 - evaluation matches rows by `metadata["document_id"]` only (I-32)
 
 Remaining non-runtime task: contract acceptance / commit flow.
+
+---
+
+### 18. Sprint-7 — Companion Benchmark Harness, Promotion Gate, Artifact Contract
+
+**Status: ⏳ Sprint 7 — Contract defined, implementation pending**
+
+Full spec: [docs/benchmark_promotion_contract.md](./benchmark_promotion_contract.md)
+
+Runtime stubs already in `app/research/evaluation.py` (unverified, untested):
+- `PromotionValidation` — per-gate pass/fail dataclass
+- `validate_promotion(metrics)` — checks 5 promotion thresholds
+- `save_evaluation_report()` — persists `EvaluationReport` as structured JSON
+- `save_benchmark_artifact()` — writes companion benchmark manifest
+
+**Three explicit separations (non-negotiable):**
+
+| Concept | What it is | What it is NOT |
+|---------|-----------|----------------|
+| Benchmark | Run harness, produce report + artifact | Not training, not inference tuning |
+| Evaluation | Measure metric gap (MAE / agreement) | Not a promotion decision |
+| Promotion | Human-reviewed gate, all 5 quantitative + I-34 manual check | Not automatic, never pipeline-triggered |
+
+**Promotion gates (all five must pass, implemented in `validate_promotion()`):**
+
+| Gate | Metric | Threshold |
+|------|--------|-----------|
+| G1 | `sentiment_agreement` | ≥ 0.85 |
+| G2 | `priority_mae` | ≤ 1.5 |
+| G3 | `relevance_mae` | ≤ 0.15 |
+| G4 | `impact_mae` | ≤ 0.20 |
+| G5 | `tag_overlap_mean` | ≥ 0.30 |
+
+**I-34 (manual gate)**: False-actionable rate verified via `research evaluate`. Automated
+tracking deferred to Sprint-7B. See `docs/benchmark_promotion_contract.md §I-34`.
+
+**Sprint-7 deliverables:**
+1. Tests for `validate_promotion()`, `save_evaluation_report()`, `save_benchmark_artifact()` (task 7.1)
+2. CLI: `evaluate-datasets --save-report <path> [--save-artifact <path>]` (task 7.2)
+3. CLI: `research check-promotion <report.json>` — per-gate table, exit 0/1 (task 7.3)
+
+**Constraints (all sprint-7):**
+- No training pipeline, no fine-tuning, no weight updates
+- No new provider or analysis tier
+- No automatic promotion
+- Companion remains `analysis_source=INTERNAL` until operator promotion (I-39)
+
+---
+
+### 19. Sprint-8 — Controlled Companion Inference, Tuning Artifact Flow, Manual Promotion
+
+**Status: ⏳ Sprint 8 — Contract defined, implementation pending**
+
+Full spec: [docs/tuning_promotion_contract.md](./tuning_promotion_contract.md)
+
+New module: `app/research/tuning.py` — `TuningArtifact`, `PromotionRecord`,
+`save_tuning_artifact()`, `save_promotion_record()`.
+
+**Four explicit separations (non-negotiable):**
+
+| Concept | What it is | What it is NOT |
+|---------|-----------|----------------|
+| Benchmark | Run harness, produce EvaluationReport | Not tuning, not training |
+| Tuning | Record dataset + model base manifest | Not training, not weights |
+| Training | External gradient descent (operator runs) | Not in this platform |
+| Promotion | Immutable audit record of operator decision | Not automatic, not routing change |
+
+**Sprint-8 deliverables:**
+1. `app/research/tuning.py` — `TuningArtifact`, `PromotionRecord`, `save_tuning_artifact()`,
+   `save_promotion_record()` (task 8.1 + tests)
+2. CLI: `research prepare-tuning-artifact <teacher_file> <model_base>` (task 8.2)
+3. CLI: `research record-promotion <report_file> <model_id> --endpoint <url> --operator-note <text>` (task 8.3)
+
+**Constraints (all sprint-8):**
+- No training engine, no external training API calls
+- No new provider, no analysis tier change
+- No automatic promotion or routing change
+- Promotion is reversible by env var only (I-44)
+- `operator_note` required — operators must explicitly acknowledge (I-43)
 
 ---
 
@@ -1408,3 +1495,15 @@ These may never be broken without a new spec:
 | I-31 | Teacher-only filtering MUST use `doc.analysis_source` directly (strict mode, not `effective_analysis_source`) — never `provider`, `ensemble_chain`, source name, title, or URL. |
 | I-32 | `compare_datasets()` joins datasets by `metadata["document_id"]` only. No fuzzy matching by URL, title, or publish time is allowed. |
 | I-33 | The minimal Sprint-6 metric set is mandatory: `sentiment_agreement`, `priority_mae`, `relevance_mae`, `impact_mae`, and `tag_overlap_mean`. All are implemented in `EvaluationMetrics`. |
+| I-34 | Before companion promotion, the false-actionable rate MUST be verified manually via `research evaluate` (`EvaluationResult.actionable_accuracy`). Automated FP tracking deferred to Sprint-7B. See `docs/benchmark_promotion_contract.md`. |
+| I-35 | `research check-promotion` reads a saved `evaluation_report.json` only. It MUST NOT trigger analysis, DB reads, or model inference. |
+| I-36 | Promotion is never automatic. `check-promotion` exiting 0 does NOT change any system state. A human operator must act on the result explicitly. |
+| I-37 | `--save-report` / `--save-artifact` flags are audit-trail only. They do NOT change evaluation semantics or metric values. |
+| I-38 | Benchmark artifacts are read-only once written. A re-run MUST produce a new file, never overwrite in-place. |
+| I-39 | Companion remains `analysis_source=INTERNAL` until an operator explicitly reconfigures the provider. Passing promotion gates does NOT change provider routing. |
+| I-40 | No Sprint-8 code path trains a model, modifies weights, or calls an external training API. Training is exclusively an external operator process. |
+| I-41 | `promotion_record.json` is an audit artifact only — it does NOT change provider routing. Routing is controlled exclusively by env vars. |
+| I-42 | Provider routing is controlled exclusively by `APP_LLM_PROVIDER` and `companion_model_endpoint` env vars. No platform code writes to these. |
+| I-43 | `save_promotion_record()` requires a non-empty `operator_note`. Blank notes raise `ValueError`. Operators must acknowledge the promotion decision explicitly. |
+| I-44 | Promotion is reversible by setting `APP_LLM_PROVIDER` to the previous value. No migration or code change required. |
+| I-45 | `record-promotion` and `save_promotion_record()` require the evaluation report to exist and pass all 5 quantitative gates. Non-passing reports block record creation. |

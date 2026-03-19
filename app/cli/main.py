@@ -860,6 +860,127 @@ def research_dataset_export(
     asyncio.run(run())
 
 
+def _normalize_dataset_type(dataset_type: str) -> str:
+    normalized_type = dataset_type.strip().lower()
+    allowed_types = {"rule_baseline", "internal_benchmark", "custom"}
+    if normalized_type not in allowed_types:
+        console.print(
+            f"[red]Error:[/red] Unsupported dataset type '{dataset_type}'. "
+            "Use rule_baseline, internal_benchmark, or custom."
+        )
+        raise typer.Exit(1)
+    return normalized_type
+
+
+def _load_dataset_rows(label: str, path_str: str) -> list[dict[str, object]]:
+    import json
+
+    from app.research.evaluation import load_jsonl
+
+    try:
+        return load_jsonl(path_str)
+    except FileNotFoundError as err:
+        console.print(f"[red]Error:[/red] {label} dataset file not found: {path_str}")
+        raise typer.Exit(1) from err
+    except json.JSONDecodeError as err:
+        console.print(
+            f"[red]Error:[/red] Invalid JSONL content in {label} dataset "
+            f"'{path_str}': {err.msg}"
+        )
+        raise typer.Exit(1) from err
+    except OSError as err:
+        console.print(
+            f"[red]Error:[/red] Could not read {label} dataset '{path_str}': {err}"
+        )
+        raise typer.Exit(1) from err
+
+
+def _build_dataset_evaluation_table(title: str, report) -> Table:
+    metrics = report.metrics
+
+    table = Table(title=title)
+    table.add_column("Metric", style="cyan")
+    table.add_column("Value", style="green")
+
+    table.add_row("Dataset Type", report.dataset_type)
+    table.add_row("Teacher Rows", str(report.teacher_count))
+    table.add_row("Candidate Rows", str(report.baseline_count))
+    table.add_row("Paired Documents", str(report.paired_count))
+    table.add_row("Missing Pairs", str(metrics.missing_pairs))
+    table.add_row("Sentiment Agreement", f"{metrics.sentiment_agreement:.2%}")
+    table.add_row("Priority MAE", f"{metrics.priority_mae:.4f}")
+    table.add_row("Relevance MAE", f"{metrics.relevance_mae:.4f}")
+    table.add_row("Impact MAE", f"{metrics.impact_mae:.4f}")
+    table.add_row("Tag Overlap Mean", f"{metrics.tag_overlap_mean:.4f}")
+    return table
+
+
+def _print_dataset_warnings(
+    teacher_rows: list[dict[str, object]],
+    candidate_rows: list[dict[str, object]],
+    paired_count: int,
+) -> None:
+    if not teacher_rows:
+        console.print("[yellow]Teacher dataset is empty.[/yellow]")
+    if not candidate_rows:
+        console.print("[yellow]Candidate dataset is empty.[/yellow]")
+    if paired_count == 0:
+        console.print("[yellow]No overlapping document_id pairs found.[/yellow]")
+
+
+def _get_companion_provider(settings, endpoint_override: str | None = None):
+    from app.analysis.factory import create_provider
+    from app.core.settings import ProviderSettings
+
+    effective_settings = settings.model_copy(deep=True)
+    if endpoint_override:
+        validated = ProviderSettings(companion_model_endpoint=endpoint_override)
+        effective_settings.providers.companion_model_endpoint = validated.companion_model_endpoint
+
+    provider = create_provider("companion", effective_settings)
+    if provider is None:
+        console.print(
+            "[red]Error:[/red] No local companion endpoint configured. "
+            "Set COMPANION_MODEL_ENDPOINT or pass --endpoint."
+        )
+        raise typer.Exit(1)
+    return provider
+
+
+def _print_companion_promotion_readiness(report) -> None:
+    if report.dataset_type != "internal_benchmark" or report.paired_count == 0:
+        return
+
+    from app.research.evaluation import validate_promotion
+
+    promotion = validate_promotion(report.metrics)
+
+    prom_table = Table(title="Companion Promotion Readiness (Sprint 7 Gates)")
+    prom_table.add_column("Gate", style="cyan")
+    prom_table.add_column("Required", style="yellow")
+    prom_table.add_column("Status", style="bold")
+
+    def status_str(passed: bool) -> str:
+        return "[green]PASS[/green]" if passed else "[red]FAIL[/red]"
+
+    prom_table.add_row("Sentiment", ">= 0.85", status_str(promotion.sentiment_pass))
+    prom_table.add_row("Priority MAE", "<= 1.50", status_str(promotion.priority_pass))
+    prom_table.add_row("Relevance MAE", "<= 0.15", status_str(promotion.relevance_pass))
+    prom_table.add_row("Impact MAE", "<= 0.20", status_str(promotion.impact_pass))
+    prom_table.add_row("Tag Overlap", ">= 0.30", status_str(promotion.tag_overlap_pass))
+
+    console.print(prom_table)
+
+    if promotion.is_promotable:
+        console.print("\n[bold green]PROMOTABLE[/bold green] — quantitative gates passed.")
+    else:
+        console.print("\n[bold red]NOT PROMOTABLE[/bold red] — one or more gates failed.")
+
+    console.print(
+        "[dim]Manual I-34 verification remains required; no automatic promotion occurs.[/dim]"
+    )
+
+
 @research_app.command("evaluate-datasets")
 def research_evaluate_datasets(
     teacher_file: str = typer.Argument(..., help="Path to teacher JSONL file"),
@@ -868,6 +989,16 @@ def research_evaluate_datasets(
         "rule_baseline",
         "--dataset-type",
         help="Dataset comparison type: rule_baseline, internal_benchmark, custom",
+    ),
+    save_report: str | None = typer.Option(
+        None,
+        "--save-report",
+        help="Path to persist EvaluationReport as JSON (for check-promotion and audit trail)",
+    ),
+    save_artifact: str | None = typer.Option(
+        None,
+        "--save-artifact",
+        help="Path to persist companion benchmark manifest JSON",
     ),
 ) -> None:
     """Compare two exported JSONL datasets and print offline evaluation metrics."""
@@ -950,13 +1081,196 @@ def research_evaluate_datasets(
         prom_table.add_row("Relevance MAE", "<= 0.15", status_str(promotion.relevance_pass))
         prom_table.add_row("Impact MAE", "<= 0.20", status_str(promotion.impact_pass))
         prom_table.add_row("Tag Overlap", ">= 0.30", status_str(promotion.tag_overlap_pass))
-        
+
         console.print(prom_table)
-        
+
         if promotion.is_promotable:
-            console.print("\n[bold green]✅ Companion is READY for Production Promotion.[/bold green]")
+            console.print("\n[bold green]PROMOTABLE — all gates passed.[/bold green]")
         else:
-            console.print("\n[bold red]❌ Companion does NOT meet all criteria for promotion.[/bold red]")
+            console.print("\n[bold red]NOT PROMOTABLE — one or more gates failed.[/bold red]")
+
+    if save_report:
+        from app.research.evaluation import save_evaluation_report
+        saved = save_evaluation_report(
+            report,
+            save_report,
+            teacher_dataset=teacher_file,
+            candidate_dataset=candidate_file,
+        )
+        console.print(f"[dim]Evaluation report saved: {saved}[/dim]")
+
+    if save_artifact:
+        from app.research.evaluation import save_benchmark_artifact
+        artifact = save_benchmark_artifact(
+            save_artifact,
+            teacher_dataset=teacher_file,
+            candidate_dataset=candidate_file,
+            report=report,
+            report_path=save_report,
+        )
+        console.print(f"[dim]Benchmark artifact saved: {artifact}[/dim]")
+
+
+@research_app.command("benchmark-companion")
+def research_benchmark_companion(
+    teacher_file: str = typer.Argument(..., help="Path to teacher JSONL file"),
+    candidate_file: str = typer.Argument(..., help="Path to candidate/internal JSONL file"),
+    dataset_type: str = typer.Option(
+        "internal_benchmark",
+        "--dataset-type",
+        help="Dataset comparison type: internal_benchmark, rule_baseline, custom",
+    ),
+    report_out: str | None = typer.Option(
+        None,
+        "--report-out",
+        help="Optional path to save a structured benchmark report JSON",
+    ),
+    artifact_out: str | None = typer.Option(
+        None,
+        "--artifact-out",
+        help="Optional path to save a benchmark artifact manifest JSON",
+    ),
+) -> None:
+    """Benchmark companion outputs against teacher datasets and optionally save artifacts."""
+    from pathlib import Path
+
+    from app.research.evaluation import (
+        compare_datasets,
+        save_benchmark_artifact,
+        save_evaluation_report,
+    )
+
+    normalized_type = _normalize_dataset_type(dataset_type)
+    teacher_rows = _load_dataset_rows("Teacher", teacher_file)
+    candidate_rows = _load_dataset_rows("Candidate", candidate_file)
+
+    report = compare_datasets(teacher_rows, candidate_rows, dataset_type=normalized_type)
+    _print_dataset_warnings(teacher_rows, candidate_rows, report.paired_count)
+    console.print(_build_dataset_evaluation_table("Companion Benchmark Metrics", report))
+    _print_companion_promotion_readiness(report)
+
+    saved_report_path: Path | None = None
+    if report_out:
+        saved_report_path = save_evaluation_report(
+            report,
+            report_out,
+            teacher_dataset=teacher_file,
+            candidate_dataset=candidate_file,
+        )
+        console.print(f"[green]Saved benchmark report to {saved_report_path.resolve()}[/green]")
+
+    if artifact_out:
+        saved_artifact_path = save_benchmark_artifact(
+            artifact_out,
+            teacher_dataset=teacher_file,
+            candidate_dataset=candidate_file,
+            report=report,
+            report_path=saved_report_path,
+        )
+        console.print(
+            f"[green]Saved benchmark artifact to {saved_artifact_path.resolve()}[/green]"
+        )
+
+
+@research_app.command("check-promotion")
+def research_check_promotion(
+    report_file: str = typer.Argument(
+        ..., help="Path to evaluation_report.json produced by evaluate-datasets --save-report"
+    ),
+) -> None:
+    """Check whether a saved evaluation report meets companion promotion thresholds.
+
+    Exits 0 if all five quantitative gates pass (promotable).
+    Exits 1 if any gate fails — human review required.
+
+    Note: Gate I-34 (false-actionable rate) requires separate manual verification
+    via `research evaluate`. See docs/benchmark_promotion_contract.md.
+    """
+    import json
+    from pathlib import Path
+
+    from app.research.evaluation import EvaluationMetrics, validate_promotion
+
+    report_path = Path(report_file)
+    if not report_path.exists():
+        console.print(f"[red]Report file not found: {report_path}[/red]")
+        raise typer.Exit(1)
+
+    try:
+        data = json.loads(report_path.read_text(encoding="utf-8"))
+        m_raw = data["metrics"]
+        metrics = EvaluationMetrics(
+            sentiment_agreement=float(m_raw["sentiment_agreement"]),
+            priority_mae=float(m_raw["priority_mae"]),
+            relevance_mae=float(m_raw["relevance_mae"]),
+            impact_mae=float(m_raw["impact_mae"]),
+            tag_overlap_mean=float(m_raw["tag_overlap_mean"]),
+            sample_count=int(m_raw.get("sample_count", 0)),
+            missing_pairs=int(m_raw.get("missing_pairs", 0)),
+        )
+    except (KeyError, ValueError, json.JSONDecodeError) as e:
+        console.print(f"[red]Could not parse report file:[/red] {e}")
+        raise typer.Exit(1) from e
+
+    validation = validate_promotion(metrics)
+
+    gate_table = Table(title="Promotion Gate Check")
+    gate_table.add_column("Gate", style="cyan")
+    gate_table.add_column("Threshold", justify="right")
+    gate_table.add_column("Actual", justify="right")
+    gate_table.add_column("Status", justify="center")
+
+    def _gate_status(passed: bool) -> str:
+        return "[green]PASS[/green]" if passed else "[red]FAIL[/red]"
+
+    gate_table.add_row(
+        "Sentiment Agreement", ">= 0.850",
+        f"{metrics.sentiment_agreement:.3f}",
+        _gate_status(validation.sentiment_pass),
+    )
+    gate_table.add_row(
+        "Priority MAE", "<= 1.500",
+        f"{metrics.priority_mae:.3f}",
+        _gate_status(validation.priority_pass),
+    )
+    gate_table.add_row(
+        "Relevance MAE", "<= 0.150",
+        f"{metrics.relevance_mae:.3f}",
+        _gate_status(validation.relevance_pass),
+    )
+    gate_table.add_row(
+        "Impact MAE", "<= 0.200",
+        f"{metrics.impact_mae:.3f}",
+        _gate_status(validation.impact_pass),
+    )
+    gate_table.add_row(
+        "Tag Overlap", ">= 0.300",
+        f"{metrics.tag_overlap_mean:.3f}",
+        _gate_status(validation.tag_overlap_pass),
+    )
+
+    console.print(gate_table)
+    console.print(f"\nSamples evaluated: {metrics.sample_count}")
+    console.print(
+        "[yellow]Note: Gate I-34 (actionable false-positive rate) requires manual "
+        "verification via `research evaluate`. See benchmark_promotion_contract.md.[/yellow]"
+    )
+
+    if validation.is_promotable:
+        console.print("\n[bold green]PROMOTABLE[/bold green] - all quantitative gates passed.")
+        console.print(
+            "[dim]Reminder: Manual I-34 verification still required before promotion.[/dim]"
+        )
+    else:
+        failed = sum([
+            not validation.sentiment_pass,
+            not validation.priority_pass,
+            not validation.relevance_pass,
+            not validation.impact_pass,
+            not validation.tag_overlap_pass,
+        ])
+        console.print(f"\n[bold red]NOT PROMOTABLE[/bold red] - {failed} gate(s) failed.")
+        raise typer.Exit(1)
 
 
 @research_app.command("evaluate")

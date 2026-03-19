@@ -291,6 +291,7 @@ Jeder Agent darf nur in seinem Bereich schreiben. Grenzüberschreitungen erforde
 **Sprint 5C — Winner-Traceability** ✅ EnsembleProvider winner → doc.provider, ensemble_chain, I-23–25
 **Sprint 5D — Corpus Safety + Eval Baseline** ✅ teacher_only I-27, compare_datasets(), EvaluationMetrics, I-27–33
 **Sprint 6 — Dataset + Evaluation Harness** ✅ abgeschlossen — dataset-export --teacher-only, evaluate-datasets, 547 Tests
+**Sprint 7 — Companion Benchmark + Promotion Gate** ✅ abgeschlossen — validate_promotion tests, check-promotion CLI, --save-report/--save-artifact, 561 Tests
 
 | Phase | Status | Geliefert |
 |---|---|---|
@@ -312,8 +313,9 @@ Jeder Agent darf nur in seinem Bereich schreiben. Grenzüberschreitungen erforde
 | P9B Winner-Traceability | ✅ | _resolve_runtime_provider_name, active_provider_name, provider_chain, ensemble_chain, E2E-Tests, I-23–26 |
 | P9C Corpus Safety | ✅ | teacher_only in export_training_data (I-27), compare_datasets + EvaluationMetrics + EvaluationReport + load_jsonl, dataset_evaluation_contract.md, contracts.md §16–17, I-27–33 |
 | P10 Distillation Readiness | ✅ | dataset-export --teacher-only/--source-type, research evaluate-datasets JSONL harness, 5 Pflichtmetriken, contracts.md §17 ✅ |
+| P11 Benchmark + Promotion Gate | ✅ Sprint 7 | validate_promotion getestet (7 Tests), check-promotion CLI (Exit 0/1), --save-report/--save-artifact auf evaluate-datasets, benchmark-companion command, I-34–I-39 ✅ |
 
-**Test-Stand**: 547 passed, 0 failed, 0 xfailed
+**Test-Stand**: 561 passed, 0 failed, 0 xfailed
 
 Vollständige Task-Liste → [TASKLIST.md](./TASKLIST.md)
 

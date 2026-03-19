@@ -8,11 +8,13 @@ Contract reference: docs/contracts.md §16
 """
 
 import json
-from datetime import UTC, datetime
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from app.analysis.base.interfaces import LLMAnalysisOutput
 from app.core.domain.document import CanonicalDocument
 
 # ---------------------------------------------------------------------------
@@ -198,12 +200,134 @@ def load_jsonl(path: Path | str) -> list[dict[str, Any]]:
     return rows
 
 
+def save_jsonl_rows(rows: list[dict[str, Any]], output_path: Path | str) -> Path:
+    """Persist rows to JSONL for reproducible offline benchmarks."""
+    resolved_path = Path(output_path)
+    resolved_path.parent.mkdir(parents=True, exist_ok=True)
+
+    with resolved_path.open("w", encoding="utf-8") as handle:
+        for row in rows:
+            handle.write(json.dumps(row) + "\n")
+
+    return resolved_path
+
+
 def _extract_target(row: dict[str, Any]) -> dict[str, Any]:
     """Extract the assistant target dict from a JSONL row."""
     content = row["messages"][2]["content"]
     if isinstance(content, str):
         return json.loads(content)  # type: ignore[no-any-return]
     return dict(content)
+
+
+def extract_source_document(row: dict[str, Any]) -> tuple[str, str]:
+    """Extract title and content text from an exported dataset row."""
+    messages = row.get("messages")
+    if not isinstance(messages, list) or len(messages) < 2:
+        raise ValueError("Dataset row is missing the required user message.")
+
+    user_message = messages[1]
+    if not isinstance(user_message, dict):
+        raise ValueError("Dataset row user message is malformed.")
+
+    content = user_message.get("content")
+    if not isinstance(content, str) or not content.strip():
+        raise ValueError("Dataset row user content is empty.")
+
+    normalized = content.strip()
+    title = "Untitled"
+    for line in normalized.splitlines():
+        if line.startswith("Title:"):
+            extracted = line.split(":", 1)[1].strip()
+            if extracted:
+                title = extracted
+            break
+
+    if "Content:\n" in normalized:
+        text = normalized.split("Content:\n", 1)[1].strip()
+    elif "Content:" in normalized:
+        text = normalized.split("Content:", 1)[1].strip()
+    else:
+        text = normalized
+
+    return title, text or normalized
+
+
+def llm_output_to_dataset_target(output: LLMAnalysisOutput) -> dict[str, Any]:
+    """Convert provider output into the existing JSONL assistant target schema."""
+    return {
+        "affected_assets": [asset.strip() for asset in output.affected_assets if asset.strip()],
+        "impact_score": output.impact_score,
+        "market_scope": output.market_scope.value,
+        "novelty_score": output.novelty_score,
+        "priority_score": output.recommended_priority,
+        "relevance_score": output.relevance_score,
+        "sentiment_label": output.sentiment_label.value,
+        "sentiment_score": output.sentiment_score,
+        "spam_probability": output.spam_probability,
+        "summary": output.short_reasoning or output.long_reasoning or "",
+        "tags": [tag.strip() for tag in output.tags if tag.strip()],
+    }
+
+
+def build_candidate_dataset_row(
+    source_row: dict[str, Any],
+    output: LLMAnalysisOutput,
+    *,
+    provider_name: str,
+    analysis_source: str = "internal",
+) -> dict[str, Any]:
+    """Build an internal candidate row while preserving the existing dataset schema."""
+    messages = source_row.get("messages")
+    if not isinstance(messages, list) or len(messages) < 2:
+        raise ValueError("Dataset row is missing required messages.")
+
+    system_message = messages[0]
+    user_message = messages[1]
+    if not isinstance(system_message, dict) or not isinstance(user_message, dict):
+        raise ValueError("Dataset row messages must be mapping objects.")
+
+    metadata_raw = source_row.get("metadata")
+    metadata = dict(metadata_raw) if isinstance(metadata_raw, dict) else {}
+    metadata["provider"] = provider_name.strip() or "companion"
+    metadata["analysis_source"] = analysis_source
+
+    return {
+        "messages": [
+            dict(system_message),
+            dict(user_message),
+            {
+                "role": "assistant",
+                "content": json.dumps(llm_output_to_dataset_target(output), sort_keys=True),
+            },
+        ],
+        "metadata": metadata,
+    }
+
+
+async def build_candidate_dataset_rows(
+    teacher_rows: list[dict[str, Any]],
+    analyze: Callable[[str, str, dict[str, Any] | None], Awaitable[LLMAnalysisOutput]],
+    *,
+    provider_name: str,
+    analysis_source: str = "internal",
+) -> list[dict[str, Any]]:
+    """Generate internal candidate rows from teacher rows via a provider analyze callable."""
+    rows: list[dict[str, Any]] = []
+    for row in teacher_rows:
+        title, text = extract_source_document(row)
+        metadata = row.get("metadata")
+        context = dict(metadata) if isinstance(metadata, dict) else None
+        output = await analyze(title, text, context)
+        rows.append(
+            build_candidate_dataset_row(
+                row,
+                output,
+                provider_name=provider_name,
+                analysis_source=analysis_source,
+            )
+        )
+    return rows
 
 
 def _jaccard(a: list[str], b: list[str]) -> float:
