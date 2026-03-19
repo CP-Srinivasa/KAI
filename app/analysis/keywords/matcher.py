@@ -26,6 +26,7 @@ class KeywordMatcher:
     def __init__(self, keywords: set[str], alias_map: dict[str, str]):
         self.keywords = keywords
         self.alias_map = alias_map
+        self._pattern: re.Pattern[str] | None = None
 
         # We need a unified list of all target strings (keywords + alias keys)
         self._all_targets = set(self.keywords).union(set(self.alias_map.keys()))
@@ -44,8 +45,6 @@ class KeywordMatcher:
             # Use (?<!\w)(term)(?!\w) as a broader word boundary.
             pattern = r"(?<!\w)(" + "|".join(escaped_targets) + r")(?!\w)"
             self._pattern = re.compile(pattern, re.IGNORECASE)
-        else:
-            self._pattern = None
 
     def match(self, document: CanonicalDocument) -> KeywordMatchResult:
         """Scan a CanonicalDocument for all registered keywords and aliases."""

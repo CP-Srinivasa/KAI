@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from sqlalchemy import Boolean, DateTime, Float, Index, String, Text
+from sqlalchemy import Boolean, DateTime, Float, Index, Integer, String, Text
 from sqlalchemy.dialects.postgresql import JSON
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -57,7 +57,16 @@ class CanonicalDocumentModel(Base):
     sentiment_score: Mapped[float | None] = mapped_column(Float, nullable=True)
     relevance_score: Mapped[float | None] = mapped_column(Float, nullable=True)
     impact_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    novelty_score: Mapped[float | None] = mapped_column(Float, nullable=True)
     credibility_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    spam_probability: Mapped[float | None] = mapped_column(Float, nullable=True)
+    priority_score: Mapped[int | None] = mapped_column(Integer, nullable=True, index=True)
+    status: Mapped[str] = mapped_column(
+        String(20),
+        nullable=False,
+        server_default="pending",
+        index=True,
+    )
 
     # State flags
     is_duplicate: Mapped[bool] = mapped_column(
@@ -68,15 +77,17 @@ class CanonicalDocumentModel(Base):
     )
 
     # JSON columns — structured extras
-    entity_mentions: Mapped[list | None] = mapped_column(JSON, nullable=True)
-    entities: Mapped[list | None] = mapped_column(JSON, nullable=True)
-    tickers: Mapped[list | None] = mapped_column(JSON, nullable=True)
-    crypto_assets: Mapped[list | None] = mapped_column(JSON, nullable=True)
-    people: Mapped[list | None] = mapped_column(JSON, nullable=True)
-    organizations: Mapped[list | None] = mapped_column(JSON, nullable=True)
-    tags: Mapped[list | None] = mapped_column(JSON, nullable=True)
-    topics: Mapped[list | None] = mapped_column(JSON, nullable=True)
-    categories: Mapped[list | None] = mapped_column(JSON, nullable=True)
-    youtube_meta: Mapped[dict | None] = mapped_column(JSON, nullable=True)
-    podcast_meta: Mapped[dict | None] = mapped_column(JSON, nullable=True)
-    document_metadata: Mapped[dict | None] = mapped_column("metadata", JSON, nullable=True)
+    entity_mentions: Mapped[list[dict[str, str]] | None] = mapped_column(JSON, nullable=True)
+    entities: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
+    tickers: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
+    crypto_assets: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
+    people: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
+    organizations: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
+    tags: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
+    topics: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
+    categories: Mapped[list[str] | None] = mapped_column(JSON, nullable=True)
+    youtube_meta: Mapped[dict[str, str] | None] = mapped_column(JSON, nullable=True)
+    podcast_meta: Mapped[dict[str, str] | None] = mapped_column(JSON, nullable=True)
+    document_metadata: Mapped[dict[str, str] | None] = mapped_column(
+        "metadata", JSON, nullable=True
+    )

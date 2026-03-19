@@ -190,17 +190,13 @@ def test_validate_clean_output_no_warnings():
 
 
 def test_validate_bullish_negative_score():
-    output = _make_llm_output(
-        sentiment_label=SentimentLabel.BULLISH, sentiment_score=-0.5
-    )
+    output = _make_llm_output(sentiment_label=SentimentLabel.BULLISH, sentiment_score=-0.5)
     warnings = validate_llm_output(output)
     assert any("BULLISH" in w for w in warnings)
 
 
 def test_validate_bearish_positive_score():
-    output = _make_llm_output(
-        sentiment_label=SentimentLabel.BEARISH, sentiment_score=0.5
-    )
+    output = _make_llm_output(sentiment_label=SentimentLabel.BEARISH, sentiment_score=0.5)
     warnings = validate_llm_output(output)
     assert any("BEARISH" in w for w in warnings)
 

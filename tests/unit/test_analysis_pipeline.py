@@ -111,9 +111,40 @@ async def test_pipeline_with_llm_provider():
     assert result.llm_output.sentiment_label == SentimentLabel.BULLISH
     assert result.analysis_result is not None
     assert isinstance(result.analysis_result, AnalysisResult)
-    assert result.analysis_result.provider == "openai"
-    assert result.analysis_result.model == "gpt-4o"
-    assert result.analysis_result.document_id == result.document.id
+    assert result.analysis_result.document_id == str(result.document.id)
+    assert result.analysis_result.sentiment_label == SentimentLabel.BULLISH
+    assert isinstance(result.analysis_result.explanation_short, str)
+
+
+def test_apply_to_document_falls_back_to_llm_market_scope():
+    doc = CanonicalDocument(
+        url="https://example.com/market-scope",
+        title="Market scope fallback",
+        market_scope=MarketScope.UNKNOWN,
+    )
+    llm_output = _make_llm_output()
+    analysis_result = AnalysisResult(
+        document_id=str(doc.id),
+        sentiment_label=llm_output.sentiment_label,
+        sentiment_score=llm_output.sentiment_score,
+        relevance_score=llm_output.relevance_score,
+        impact_score=llm_output.impact_score,
+        confidence_score=llm_output.confidence_score,
+        novelty_score=llm_output.novelty_score,
+        market_scope=None,
+        affected_assets=llm_output.affected_assets,
+        affected_sectors=llm_output.affected_sectors,
+        event_type=llm_output.event_type,
+        explanation_short=llm_output.short_reasoning or "",
+        explanation_long=llm_output.long_reasoning or "",
+        actionable=llm_output.actionable,
+        tags=llm_output.tags,
+    )
+
+    result = PipelineResult(document=doc, llm_output=llm_output, analysis_result=analysis_result)
+    result.apply_to_document()
+
+    assert doc.market_scope == MarketScope.CRYPTO
 
 
 @pytest.mark.asyncio

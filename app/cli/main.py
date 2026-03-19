@@ -1,21 +1,18 @@
-from dataclasses import dataclass
 from pathlib import Path
 
 import typer
 from rich.console import Console
 from rich.table import Table
 
-from app.core.domain.document import CanonicalDocument
 from app.core.logging import configure_logging
 from app.core.settings import get_settings
-from app.enrichment.deduplication.deduplicator import Deduplicator
 from app.ingestion.base.interfaces import FetchResult
 from app.ingestion.classifier import classify_url
 from app.ingestion.resolvers.podcast import load_and_resolve_podcasts
 from app.ingestion.resolvers.youtube import load_youtube_channels
 from app.ingestion.rss.service import RSSCollectedFeed, collect_rss_feed
 from app.storage.db.session import build_session_factory
-from app.storage.repositories.document_repo import DocumentRepository
+from app.storage.document_ingest import IngestPersistStats, persist_fetch_result
 
 app = typer.Typer(name="trading-bot", help="AI Analyst Trading Bot CLI", no_args_is_help=True)
 console = Console()
@@ -25,22 +22,18 @@ podcasts_app = typer.Typer(help="Podcast resolution commands", no_args_is_help=T
 youtube_app = typer.Typer(help="YouTube resolution commands", no_args_is_help=True)
 query_app = typer.Typer(help="Query commands", no_args_is_help=True)
 ingest_app = typer.Typer(help="Ingestion commands", no_args_is_help=True)
+pipeline_app = typer.Typer(help="End-to-end pipeline commands", no_args_is_help=True)
+alerts_app = typer.Typer(help="Alert commands", no_args_is_help=True)
+research_app = typer.Typer(help="Research and signal generation commands", no_args_is_help=True)
 
 app.add_typer(sources_app, name="sources")
 app.add_typer(podcasts_app, name="podcasts")
 app.add_typer(youtube_app, name="youtube")
 app.add_typer(query_app, name="query")
 app.add_typer(ingest_app, name="ingest")
-
-
-@dataclass(frozen=True)
-class RSSIngestStats:
-    fetched_count: int
-    candidate_count: int
-    batch_duplicates: int
-    existing_duplicates: int
-    saved_count: int
-    preview_documents: list[CanonicalDocument]
+app.add_typer(pipeline_app, name="pipeline")
+app.add_typer(alerts_app, name="alerts")
+app.add_typer(research_app, name="research")
 
 
 @app.callback()
@@ -136,8 +129,9 @@ def query_validate(
 
 
 @query_app.command("analyze-pending")
-def query_analyze_pending(
-    limit: int = typer.Option(50, help="Max documents to process in this run"),
+def analyze_pending(
+    limit: int = typer.Option(50, help="Max documents to analyze"),
+    provider: str = typer.Option("openai", help="LLM Provider to use (openai, anthropic, gemini)"),
 ) -> None:
     """Run the analysis pipeline on all pending (unanalyzed) documents."""
     import asyncio
@@ -146,70 +140,165 @@ def query_analyze_pending(
         settings = get_settings()
         monitor_dir = Path(settings.monitor_dir)
 
+        from app.analysis.factory import create_provider
         from app.analysis.keywords.engine import KeywordEngine
         from app.analysis.pipeline import AnalysisPipeline
-        from app.integrations.openai.provider import OpenAIAnalysisProvider
+        from app.core.enums import DocumentStatus
         from app.storage.db.session import build_session_factory
         from app.storage.repositories.document_repo import DocumentRepository
 
         console.print("[bold]Initializing Analysis Engine...[/bold]")
         keyword_engine = KeywordEngine.from_monitor_dir(monitor_dir)
 
-        provider = None
-        if settings.providers.openai_api_key:
-            provider = OpenAIAnalysisProvider.from_settings(settings.providers)
+        try:
+            provider_obj = create_provider(provider, settings)
+        except ValueError as e:
+            console.print(f"[red]Error:[/red] {e}")
+            raise typer.Exit(1) from e
+
+        if not provider_obj:
+            console.print(
+                f"[yellow]Warning:[/yellow] No API key found for provider '{provider}'."
+                " LLM Analysis will be skipped."
+            )
         else:
             console.print(
-                "[yellow]Warning:[/yellow] No OpenAI API key found. LLM Analysis will be skipped."
+                f"[cyan]Using LLM Provider:[/cyan]"
+                f" {provider_obj.provider_name} ({provider_obj.model})"
             )
 
-        pipeline = AnalysisPipeline(keyword_engine, provider, run_llm=bool(provider))
+        pipeline = AnalysisPipeline(keyword_engine, provider_obj, run_llm=bool(provider_obj))
         session_factory = build_session_factory(settings.db)
+
+        # Phase 1: Read pending docs — session committed immediately after fetch
+        async with session_factory.begin() as session:
+            repo = DocumentRepository(session)
+            docs = await repo.get_pending_documents(limit=limit)
+
+        if not docs:
+            console.print("[green]No pending documents to analyze.[/green]")
+            return
+
+        console.print(f"[bold]Analyzing {len(docs)} documents...[/bold]")
+
+        # Phase 2: Run analysis pipeline — LLM HTTP calls happen outside any DB session
+        results = await pipeline.run_batch(docs)
+
+        # Phase 3: Write results — new session, no LLM calls inside
+        success_count = 0
+        error_count = 0
 
         async with session_factory.begin() as session:
             repo = DocumentRepository(session)
-            docs = await repo.list(is_analyzed=False, limit=limit)
-
-            if not docs:
-                console.print("[green]No pending documents to analyze.[/green]")
-                return
-
-            console.print(f"[bold]Analyzing {len(docs)} documents...[/bold]")
-            results = await pipeline.run_batch(docs)
-
-            success_count = 0
-            error_count = 0
 
             for res in results:
                 if not res.success:
                     console.print(f"[red]Failed doc {res.document.id}:[/red] {res.error}")
                     error_count += 1
+                    try:
+                        await repo.update_status(str(res.document.id), DocumentStatus.FAILED)
+                    except Exception:
+                        pass  # best-effort — do not mask the original error
                     continue
 
-                doc = res.document
-                doc.entity_mentions = res.entity_mentions
-
-                if res.llm_output:
-                    doc.sentiment_label = res.llm_output.sentiment_label
-                    doc.sentiment_score = res.llm_output.sentiment_score
-                    doc.relevance_score = res.llm_output.relevance_score
-                    doc.impact_score = res.llm_output.impact_score
-                    doc.market_scope = res.llm_output.market_scope
-                    doc.tags = list(set(doc.tags + res.llm_output.tags))
-                    doc.tickers = list(set(doc.tickers + res.llm_output.affected_assets))
-                    doc.categories = list(set(doc.categories + res.llm_output.affected_sectors))
+                # apply_to_document() merges entities + scores + priority onto doc
+                res.apply_to_document()
 
                 try:
-                    await repo.update_analysis(doc)
+                    if res.analysis_result is not None:
+                        await repo.update_analysis(str(res.document.id), res.analysis_result)
+                    else:
+                        await repo.update_status(str(res.document.id), DocumentStatus.ANALYZED)
                     success_count += 1
                 except Exception as e:
-                    console.print(f"[red]Failed to save doc {doc.id}:[/red] {e}")
+                    console.print(f"[red]Failed to save doc {res.document.id}:[/red] {e}")
                     error_count += 1
+                    try:
+                        await repo.update_status(str(res.document.id), DocumentStatus.FAILED)
+                    except Exception:
+                        pass  # best-effort — do not mask the original error
 
-            console.print(
-                f"[bold green]Analysis complete![/bold green] "
-                f"{success_count} success, {error_count} failed."
+        console.print(
+            f"[bold green]Analysis complete![/bold green] "
+            f"{success_count} success, {error_count} failed."
+        )
+
+    asyncio.run(run())
+
+
+# ── query list ────────────────────────────────────────────────────────────────
+
+
+@query_app.command("list")
+def query_list(
+    limit: int = typer.Option(20, help="Max documents to return"),
+    min_priority: int = typer.Option(1, help="Minimum priority score filter (1-10)"),
+    source_id: str = typer.Option(None, help="Filter by source ID"),
+    asset: str = typer.Option(None, help="Filter to specific asset/ticker (e.g. BTC)"),
+    watchlist: str = typer.Option(None, help="Filter using a named watchlist tag (e.g. defi)"),
+) -> None:
+    """List analyzed documents sorted by priority score (highest first)."""
+    import asyncio
+
+    async def run() -> None:
+        from app.research.watchlists import WatchlistRegistry
+        from app.storage.db.session import build_session_factory
+        from app.storage.repositories.document_repo import DocumentRepository
+
+        settings = get_settings()
+        monitor_dir = Path(settings.monitor_dir)
+        session_factory = build_session_factory(settings.db)
+
+        # Resolve watchlist symbols
+        allowed_assets = set()
+        if asset:
+            allowed_assets.add(asset.upper())
+        if watchlist:
+            registry = WatchlistRegistry.from_monitor_dir(monitor_dir)
+            allowed_assets.update(s.upper() for s in registry.get_watchlist(watchlist))
+
+        async with session_factory.begin() as session:
+            repo = DocumentRepository(session)
+            docs = await repo.list(
+                is_analyzed=True,
+                source_id=source_id,
+                limit=limit * 5 if allowed_assets else limit,  # Grab more if filtering in-memory
             )
+
+        filtered = [d for d in docs if (d.priority_score or 0) >= min_priority]
+
+        if allowed_assets:
+            filtered = [
+                d
+                for d in filtered
+                if any(t.upper() in allowed_assets for t in (d.tickers + d.crypto_assets))
+            ]
+
+        filtered.sort(key=lambda d: d.priority_score or 0, reverse=True)
+        filtered = filtered[:limit]
+
+        if not filtered:
+            console.print("[yellow]No analyzed documents found.[/yellow]")
+            return
+
+        table = Table(show_header=True, header_style="bold cyan")
+        table.add_column("Pri", style="bold", width=4)
+        table.add_column("Rel", width=5)
+        table.add_column("Imp", width=5)
+        table.add_column("Sentiment", width=10)
+        table.add_column("Source", width=10)
+        table.add_column("Title")
+
+        for doc in filtered:
+            pri = str(doc.priority_score or "–")
+            rel = f"{doc.relevance_score:.2f}" if doc.relevance_score is not None else "–"
+            imp = f"{doc.impact_score:.2f}" if doc.impact_score is not None else "–"
+            sentiment = doc.sentiment_label.value if doc.sentiment_label else "–"
+            source = (doc.source_id or "–")[:10]
+            table.add_row(pri, rel, imp, sentiment, source, doc.title or "–")
+
+        console.print(table)
+        console.print(f"\n[bold]{len(filtered)} documents[/bold] (min priority {min_priority})")
 
     asyncio.run(run())
 
@@ -222,7 +311,11 @@ def ingest_rss(
     url: str = typer.Argument(..., help="RSS feed URL to ingest"),
     source_id: str = typer.Option("manual", help="Source ID"),
     source_name: str = typer.Option("Manual Ingest", help="Source name"),
-    dry_run: bool = typer.Option(False, "--dry-run", help="Fetch and deduplicate without storing"),
+    persist: bool = typer.Option(
+        True,
+        "--persist/--dry-run",
+        help="Persist fetched documents; use --dry-run to skip storage",
+    ),
 ) -> None:
     """Classify, validate, fetch, deduplicate, and optionally store an RSS feed."""
     import asyncio
@@ -234,7 +327,7 @@ def ingest_rss(
             console.print(f"[red]Error:[/red] {result.error}")
             raise typer.Exit(1)
 
-        stats = await _persist_rss_documents(result, dry_run=dry_run)
+        stats = await _persist_rss_documents(result, dry_run=not persist)
 
         resolved_url = collected.resolved_feed.resolved_url or url
         console.print(f"[green]RSS feed validated:[/green] {resolved_url}")
@@ -250,7 +343,7 @@ def ingest_rss(
         console.print(f"[bold]Fetched:[/bold] {stats.fetched_count}")
         console.print(f"[bold]Batch duplicates skipped:[/bold] {stats.batch_duplicates}")
 
-        if dry_run:
+        if not persist:
             console.print(
                 f"[bold]Dry run:[/bold] would store up to {stats.candidate_count} documents"
             )
@@ -258,6 +351,8 @@ def ingest_rss(
         else:
             console.print(f"[bold]Existing duplicates skipped:[/bold] {stats.existing_duplicates}")
             console.print(f"[bold]Saved:[/bold] {stats.saved_count}")
+            if stats.failed_count:
+                console.print(f"[bold red]Save errors:[/bold red] {stats.failed_count}")
 
         if not stats.preview_documents:
             console.print("[yellow]No new document previews available.[/yellow]")
@@ -290,47 +385,317 @@ async def _collect_rss_feed(
     )
 
 
-async def _persist_rss_documents(result: FetchResult, *, dry_run: bool) -> RSSIngestStats:
-    deduplicator = Deduplicator()
-    scored_documents = deduplicator.filter_scored(result.documents)
-    preview_documents = [doc for doc, score in scored_documents if not score.is_duplicate]
-    batch_duplicates = sum(1 for _, score in scored_documents if score.is_duplicate)
-
+async def _persist_rss_documents(result: FetchResult, *, dry_run: bool) -> IngestPersistStats:
     if dry_run:
-        return RSSIngestStats(
-            fetched_count=len(result.documents),
-            candidate_count=len(preview_documents),
-            batch_duplicates=batch_duplicates,
-            existing_duplicates=0,
-            saved_count=0,
-            preview_documents=preview_documents,
-        )
+        return await persist_fetch_result(None, result, dry_run=True)
 
     settings = get_settings()
     session_factory = build_session_factory(settings.db)
-    saved_count = 0
-    existing_duplicates = 0
+    return await persist_fetch_result(session_factory, result, dry_run=dry_run)
 
-    async with session_factory.begin() as session:
-        repo = DocumentRepository(session)
-        for doc in preview_documents:
-            if await repo.get_by_url(doc.url):
-                existing_duplicates += 1
-                continue
-            if doc.content_hash and await repo.get_by_hash(doc.content_hash):
-                existing_duplicates += 1
-                continue
-            await repo.save(doc)
-            saved_count += 1
 
-    return RSSIngestStats(
-        fetched_count=len(result.documents),
-        candidate_count=len(preview_documents),
-        batch_duplicates=batch_duplicates,
-        existing_duplicates=existing_duplicates,
-        saved_count=saved_count,
-        preview_documents=preview_documents,
-    )
+# ── pipeline ──────────────────────────────────────────────────────────────────
+
+
+@pipeline_app.command("run")
+def pipeline_run(
+    url: str = typer.Argument(..., help="RSS feed URL to process end-to-end"),
+    source_id: str = typer.Option("manual", help="Source ID"),
+    source_name: str = typer.Option("Manual", help="Source name"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Skip DB writes; preview only"),
+    top_n: int = typer.Option(5, help="Top results to display by priority score"),
+) -> None:
+    """Fetch, persist, analyze, and score an RSS feed in one step."""
+    import asyncio
+
+    async def run() -> None:
+        from app.analysis.keywords.engine import KeywordEngine
+        from app.integrations.openai.provider import OpenAIAnalysisProvider
+        from app.pipeline.service import run_rss_pipeline
+
+        settings = get_settings()
+        monitor_dir = Path(settings.monitor_dir)
+
+        keyword_engine = KeywordEngine.from_monitor_dir(monitor_dir)
+
+        provider = None
+        if settings.providers.openai_api_key:
+            provider = OpenAIAnalysisProvider.from_settings(settings.providers)
+        else:
+            console.print("[yellow]Warning:[/yellow] No OpenAI API key — LLM analysis skipped.")
+
+        session_factory = build_session_factory(settings.db)
+
+        stats = await run_rss_pipeline(
+            url,
+            session_factory=session_factory,
+            keyword_engine=keyword_engine,
+            provider=provider,
+            source_id=source_id,
+            source_name=source_name,
+            monitor_dir=monitor_dir,
+            timeout=settings.sources.fetch_timeout,
+            max_retries=settings.sources.max_retries,
+            dry_run=dry_run,
+        )
+
+        console.print(f"\n[bold green]Pipeline complete:[/bold green] {url}")
+        console.print(f"  Fetched:   {stats.fetched_count}")
+        console.print(f"  Saved:     {stats.saved_count}")
+        console.print(f"  Analyzed:  {stats.analyzed_count}")
+        console.print(f"  Skipped:   {stats.skipped_count}")
+        if stats.failed_count:
+            console.print(f"  [red]Failed:  {stats.failed_count}[/red]")
+
+        if dry_run:
+            console.print("[dim](dry-run — no data written)[/dim]")
+
+        if not stats.top_results:
+            return
+
+        console.print(f"\n[bold]Top {min(top_n, len(stats.top_results))} results:[/bold]")
+        table = Table(show_header=True, header_style="bold cyan")
+        table.add_column("Pri", width=4)
+        table.add_column("Rel", width=5)
+        table.add_column("Imp", width=5)
+        table.add_column("Sentiment", width=10)
+        table.add_column("Title")
+
+        for res in stats.top_results[:top_n]:
+            doc = res.document
+            pri = str(doc.priority_score or "–")
+            rel = f"{doc.relevance_score:.2f}" if doc.relevance_score is not None else "–"
+            imp = f"{doc.impact_score:.2f}" if doc.impact_score is not None else "–"
+            sentiment = doc.sentiment_label.value if doc.sentiment_label else "–"
+            table.add_row(pri, rel, imp, sentiment, doc.title or "–")
+
+        console.print(table)
+
+    asyncio.run(run())
+
+
+# ── alerts ────────────────────────────────────────────────────────────────────
+
+
+@alerts_app.command("send-test")
+def alerts_send_test() -> None:
+    """Send a synthetic test alert through all configured channels (dry-run safe)."""
+    import asyncio
+    from datetime import UTC, datetime
+
+    from app.alerts.base.interfaces import AlertMessage
+    from app.alerts.service import AlertService
+
+    async def run() -> None:
+        settings = get_settings()
+        service = AlertService.from_settings(settings)
+        msg = AlertMessage(
+            document_id="test-000",
+            title="KAI Alert System — Test Message",
+            url="https://example.com/test",
+            priority=8,
+            sentiment_label="bullish",
+            actionable=True,
+            explanation=(
+                "This is a test alert from the KAI CLI. "
+                "If you see this, alerting is configured correctly."
+            ),
+            affected_assets=["BTC", "ETH"],
+            source_name="KAI Test",
+            tags=["test"],
+            published_at=datetime.now(UTC),
+        )
+        results = await service.send_digest([msg], "test")
+        if not results:
+            console.print(
+                "[yellow]No channels active. "
+                "Set ALERT_DRY_RUN=true or configure Telegram/Email.[/yellow]"
+            )
+            return
+        for r in results:
+            status = "[green]✓ sent[/green]" if r.success else f"[red]✗ failed: {r.error}[/red]"
+            console.print(f"  [{r.channel}] {status}")
+
+    asyncio.run(run())
+
+
+@alerts_app.command("evaluate-pending")
+def alerts_evaluate_pending(
+    limit: int = typer.Option(50, help="Max analyzed documents to evaluate"),
+    min_priority: int = typer.Option(0, help="Override minimum priority (0 = use settings)"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Preview only — do not send"),
+) -> None:
+    """Evaluate analyzed documents and dispatch alerts for those above the threshold."""
+    import asyncio
+
+    from app.alerts.base.interfaces import AlertMessage
+    from app.alerts.service import AlertService
+
+    async def run() -> None:
+        settings = get_settings()
+        effective_min = min_priority if min_priority > 0 else settings.alerts.min_priority
+
+        session_factory = build_session_factory(settings.db)
+        async with session_factory.begin() as session:
+            from app.storage.repositories.document_repo import DocumentRepository
+
+            repo = DocumentRepository(session)
+            docs = await repo.list(is_analyzed=True, limit=limit)
+
+        alert_worthy = [d for d in docs if (d.priority_score or 0) >= effective_min]
+        console.print(
+            f"[bold]{len(docs)} analyzed, "
+            f"{len(alert_worthy)} above threshold (>={effective_min})[/bold]"
+        )
+
+        if not alert_worthy:
+            console.print("[green]Nothing to alert.[/green]")
+            return
+
+        if dry_run:
+            for d in alert_worthy:
+                console.print(f"  [dim]P{d.priority_score}[/dim] {d.title or '—'}")
+            console.print(f"[dim](dry-run — {len(alert_worthy)} alerts not sent)[/dim]")
+            return
+
+        service = AlertService.from_settings(settings)
+        messages = []
+        for d in alert_worthy:
+            affected = list((d.tickers or []) + (d.crypto_assets or []))
+            msg = AlertMessage(
+                document_id=str(d.id),
+                title=d.title or "—",
+                url=d.url,
+                priority=d.priority_score or 1,
+                sentiment_label=d.sentiment_label.value if d.sentiment_label else "neutral",
+                actionable=(d.priority_score or 0) >= 7,
+                explanation=d.summary or d.title or "—",
+                affected_assets=affected,
+                published_at=d.published_at,
+                source_name=d.source_name,
+            )
+            messages.append(msg)
+
+        results = await service.send_digest(messages, f"{len(messages)} analyzed documents")
+        for r in results:
+            status = "[green]✓ sent[/green]" if r.success else f"[red]✗ failed: {r.error}[/red]"
+            console.print(f"  [{r.channel}] {status}")
+
+    asyncio.run(run())
+
+    asyncio.run(run())
+
+
+# ── research ──────────────────────────────────────────────────────────────────
+
+
+@research_app.command("brief")
+def research_brief(
+    watchlist: str = typer.Option(..., help="Watchlist/cluster to generate brief for (e.g. defi)"),
+    limit: int = typer.Option(100, help="Number of recent documents to process"),
+    output_format: str = typer.Option("md", "--format", help="Output format: md or json"),
+) -> None:
+    """Generate a Research Brief summarizing documents for a specific cluster."""
+    import asyncio
+    import json
+
+    async def run() -> None:
+        from app.research.briefs import ResearchBriefBuilder
+        from app.research.watchlists import WatchlistRegistry
+        from app.storage.db.session import build_session_factory
+        from app.storage.repositories.document_repo import DocumentRepository
+
+        settings = get_settings()
+        monitor_dir = Path(settings.monitor_dir)
+        session_factory = build_session_factory(settings.db)
+
+        registry = WatchlistRegistry.from_monitor_dir(monitor_dir)
+        symbols = [s.upper() for s in registry.get_watchlist(watchlist)]
+
+        if not symbols:
+            console.print(f"[yellow]Warning: Watchlist '{watchlist}' produced no symbols.[/yellow]")
+
+        async with session_factory.begin() as session:
+            repo = DocumentRepository(session)
+            # We fetch more than limit to ensure enough matches after symbol filtering
+            docs = await repo.list(is_analyzed=True, limit=limit * 5)
+
+        if symbols:
+            docs = [
+                d for d in docs if any(t.upper() in symbols for t in (d.tickers + d.crypto_assets))
+            ]
+
+        docs = docs[:limit]
+
+        builder = ResearchBriefBuilder(cluster_name=watchlist)
+        brief = builder.build(docs)
+
+        if output_format.lower() == "json":
+            console.print(json.dumps(brief.to_json_dict(), indent=2))
+        else:
+            console.print(brief.to_markdown())
+
+    asyncio.run(run())
+
+
+@research_app.command("signals")
+def research_signals(
+    limit: int = typer.Option(100, help="Number of recent documents to search"),
+    min_priority: int = typer.Option(8, help="Minimum priority score for signals"),
+) -> None:
+    """Extract and list strict Signal Candidates for automated trading."""
+    import asyncio
+
+    async def run() -> None:
+        from app.research.signals import extract_signal_candidates
+        from app.storage.db.session import build_session_factory
+        from app.storage.repositories.document_repo import DocumentRepository
+
+        settings = get_settings()
+        session_factory = build_session_factory(settings.db)
+
+        async with session_factory.begin() as session:
+            repo = DocumentRepository(session)
+            docs = await repo.list(is_analyzed=True, limit=limit)
+
+        signals = extract_signal_candidates(docs, min_priority=min_priority)
+
+        if not signals:
+            console.print(f"[yellow]No signal candidates found in the last {limit} docs.[/yellow]")
+            return
+
+        table = Table(show_header=True, header_style="bold cyan")
+        table.add_column("SigID", width=12)
+        table.add_column("Dir", width=4)
+        table.add_column("Pri", width=3)
+        table.add_column("Assets", width=15)
+        table.add_column("Title")
+
+        for sig in signals:
+            direction_color = (
+                "green"
+                if sig.action_direction == "buy"
+                else "red"
+                if sig.action_direction == "sell"
+                else "yellow"
+            )
+            dir_str = f"[{direction_color}]{sig.action_direction.upper()}[/{direction_color}]"
+            assets_str = ", ".join(sig.affected_assets[:3]) + (
+                "..." if len(sig.affected_assets) > 3 else ""
+            )
+
+            table.add_row(
+                sig.signal_id[:12],
+                dir_str,
+                str(sig.priority),
+                assets_str,
+                sig.title[:60] + ("..." if len(sig.title) > 60 else ""),
+            )
+
+        console.print(table)
+        console.print(f"\n[bold]{len(signals)} Actionable Signals[/bold] ready for execution.")
+
+    asyncio.run(run())
 
 
 if __name__ == "__main__":

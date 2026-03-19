@@ -3,12 +3,15 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.core.enums import MarketScope, SentimentLabel
 
 
 class LLMAnalysisOutput(BaseModel):
+    # Required configuration for strict validation
+    model_config = ConfigDict(strict=True, validate_assignment=True)
+
     sentiment_label: SentimentLabel
     sentiment_score: float = Field(ge=-1.0, le=1.0)
     relevance_score: float = Field(ge=0.0, le=1.0)

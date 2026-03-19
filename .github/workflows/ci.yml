@@ -63,6 +63,29 @@ jobs:
           file: ./coverage.xml
           fail_ci_if_error: false
 
+  security:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    needs: lint
+    continue-on-error: false  # security failures MUST block the build
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - run: pip install pip-audit bandit
+      - name: Dependency vulnerability scan (pip-audit)
+        run: pip-audit --requirement <(pip install -e ".[dev]" --dry-run -q 2>/dev/null | grep "^Requirement already" | awk '{print $3}' || true) || pip-audit
+      - name: Static security analysis (bandit)
+        run: |
+          bandit -r app/ \
+            --severity-level medium \
+            --confidence-level medium \
+            --skip B101,B601 \
+            --format txt
+        # B101 = assert statements in tests (allowed)
+        # B601 = shell injection in paramiko (not used here)
+
   type-check:
     name: Type Check
     runs-on: ubuntu-latest

@@ -149,37 +149,34 @@ class TestAnalysisResult:
 
         doc_id = uuid4()
         result = AnalysisResult(
-            document_id=doc_id,
-            provider="openai",
-            model="gpt-4o",
+            document_id=str(doc_id),
             sentiment_label=SentimentLabel.BULLISH,
             sentiment_score=0.8,
             relevance_score=0.9,
             impact_score=0.7,
             confidence_score=0.85,
             novelty_score=0.6,
-            spam_probability=0.02,
+            explanation_short="BTC hit ATH.",
+            explanation_long="Bitcoin reached a new all-time high driven by ETF inflows.",
         )
-        assert result.document_id == doc_id
-        assert result.provider == "openai"
+        assert result.document_id == str(doc_id)
         assert result.actionable is False
-        assert result.recommended_priority == 5
-        assert result.raw_output == {}
+        assert result.sentiment_label == SentimentLabel.BULLISH
 
     def test_score_ranges(self):
         from uuid import uuid4
 
         with pytest.raises(ValidationError):
             AnalysisResult(
-                document_id=uuid4(),
-                provider="test",
+                document_id=str(uuid4()),
                 sentiment_label=SentimentLabel.NEUTRAL,
                 sentiment_score=2.0,  # invalid
                 relevance_score=0.5,
                 impact_score=0.5,
                 confidence_score=0.5,
                 novelty_score=0.5,
-                spam_probability=0.0,
+                explanation_short="Test",
+                explanation_long="Test long",
             )
 
     def test_priority_bounds(self):
@@ -187,14 +184,14 @@ class TestAnalysisResult:
 
         with pytest.raises(ValidationError):
             AnalysisResult(
-                document_id=uuid4(),
-                provider="test",
+                document_id=str(uuid4()),
                 sentiment_label=SentimentLabel.NEUTRAL,
                 sentiment_score=0.0,
                 relevance_score=0.5,
                 impact_score=0.5,
                 confidence_score=0.5,
                 novelty_score=0.5,
-                spam_probability=0.0,
+                explanation_short="Test",
+                explanation_long="Test long",
                 recommended_priority=11,  # invalid
             )

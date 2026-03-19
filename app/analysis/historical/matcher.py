@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import yaml
+import yaml  # type: ignore[import-untyped]
 
 from app.core.domain.events import EventAnalog, HistoricalEvent
 
@@ -47,9 +47,7 @@ class EventAnalogMatcher:
 
         results: list[EventAnalog] = []
         for event in self._events:
-            score, shared_assets, shared_tags = _score_event(
-                event, asset_set, tag_set, event_type
-            )
+            score, shared_assets, shared_tags = _score_event(event, asset_set, tag_set, event_type)
             if score >= min_score:
                 results.append(
                     EventAnalog(

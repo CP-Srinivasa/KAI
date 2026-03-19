@@ -21,7 +21,11 @@ logs/
 *.log
 *.db
 *.sqlite3
+*.sqlite
 .DS_Store
+# Temp files (Word lock files)
+~$*
+~WRL*.tmp
 alembic/versions/*.py
 
 # API Keys & Secrets

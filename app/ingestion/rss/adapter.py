@@ -15,9 +15,15 @@ import httpx
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 from app.core.domain.document import CanonicalDocument
-from app.core.enums import SourceType
-from app.ingestion.base.interfaces import BaseSourceAdapter, FetchResult, SourceMetadata
+from app.ingestion.base.interfaces import (
+    BaseSourceAdapter,
+    FetchItem,
+    FetchResult,
+    SourceMetadata,
+    normalize_fetch_item,
+)
 from app.normalization.cleaner import clean_text
+from app.security.ssrf import validate_url
 
 _DEFAULT_HEADERS = {
     "User-Agent": "ai-analyst-bot/0.1 (feed reader)",
@@ -39,6 +45,7 @@ class RSSFeedAdapter(BaseSourceAdapter):
     async def fetch(self) -> FetchResult:
         fetched_at = datetime.now(UTC)
         try:
+            validate_url(self.metadata.url)  # SSRF guard before any network call
             raw = await self._fetch_raw()
             feed = feedparser.parse(raw)
             documents = [self._entry_to_doc(e, fetched_at) for e in feed.entries]
@@ -97,16 +104,23 @@ class RSSFeedAdapter(BaseSourceAdapter):
             except (ValueError, OverflowError, OSError):
                 published = None
 
-        return CanonicalDocument(
-            external_id=entry.get("id") or entry.get("link") or "",
+        item = FetchItem(
+            url=entry.get("link", ""),
+            external_id=entry.get("id") or entry.get("link"),
+            title=entry.get("title"),
+            content=text,
+            published_at=published,
+        )
+        document = normalize_fetch_item(
+            item,
             source_id=self.source_id,
             source_name=self.metadata.source_name,
-            source_type=SourceType.RSS_FEED,
-            url=entry.get("link", ""),
-            title=entry.get("title", ""),
-            author=entry.get("author"),
-            published_at=published,
-            fetched_at=fetched_at,
-            raw_text=clean_text(text),
-            summary=clean_text(entry.get("summary")),
+            source_type=self.metadata.source_type,  # honour actual type (e.g. PODCAST_FEED)
+        )
+        return document.model_copy(
+            update={
+                "author": entry.get("author"),
+                "fetched_at": fetched_at,
+                "summary": clean_text(entry.get("summary")),
+            }
         )
