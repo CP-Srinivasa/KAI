@@ -5,7 +5,7 @@ from typer.testing import CliRunner
 from app.cli import main as cli_main
 from app.cli.main import app
 from app.core.domain.document import CanonicalDocument
-from app.core.enums import MarketScope, SentimentLabel, SourceStatus, SourceType
+from app.core.enums import DocumentStatus, MarketScope, SentimentLabel, SourceStatus, SourceType
 from app.core.settings import AppSettings
 from app.ingestion.base.interfaces import FetchResult
 from app.ingestion.classifier import ClassificationResult
@@ -331,6 +331,7 @@ def test_ingest_rss_saved_documents_flow_into_analyze_pending(monkeypatch) -> No
     settings = AppSettings()
     settings.providers.openai_api_key = "test-openai-key"
     stored_docs: list[CanonicalDocument] = []
+    saved_pending_statuses: list[DocumentStatus] = []
 
     docs = [
         CanonicalDocument(
@@ -383,16 +384,36 @@ def test_ingest_rss_saved_documents_flow_into_analyze_pending(monkeypatch) -> No
             return next((doc for doc in stored_docs if doc.content_hash == content_hash), None)
 
         async def save_document(self, doc: CanonicalDocument) -> str:
-            stored_docs.append(doc)
+            saved_pending_statuses.append(doc.status)
+            stored_docs.append(
+                doc.model_copy(
+                    update={
+                        "status": DocumentStatus.PERSISTED,
+                        "is_duplicate": False,
+                        "is_analyzed": False,
+                    }
+                )
+            )
             return str(doc.id)
 
         async def save(self, doc: CanonicalDocument) -> CanonicalDocument:
-            stored_docs.append(doc)
-            return doc
+            persisted = doc.model_copy(
+                update={
+                    "status": DocumentStatus.PERSISTED,
+                    "is_duplicate": False,
+                    "is_analyzed": False,
+                }
+            )
+            stored_docs.append(persisted)
+            return persisted
 
         async def get_pending_documents(self, limit: int = 50):
             docs_to_return = [
-                doc for doc in stored_docs if not doc.is_analyzed and not doc.is_duplicate
+                doc
+                for doc in stored_docs
+                if doc.status == DocumentStatus.PERSISTED
+                and not doc.is_analyzed
+                and not doc.is_duplicate
             ]
             return docs_to_return[:limit]
 
@@ -401,7 +422,9 @@ def test_ingest_rss_saved_documents_flow_into_analyze_pending(monkeypatch) -> No
                 if str(existing.id) == document_id:
                     stored_docs[index] = existing.model_copy(
                         update={
+                            "status": DocumentStatus.ANALYZED,
                             "is_analyzed": True,
+                            "is_duplicate": False,
                             "priority_score": result.recommended_priority,
                             "relevance_score": result.relevance_score,
                             "tickers": result.affected_assets,
@@ -460,6 +483,8 @@ def test_ingest_rss_saved_documents_flow_into_analyze_pending(monkeypatch) -> No
     assert "Batch duplicates skipped: 1" in ingest_result.output
     assert "Saved: 2" in ingest_result.output
     assert len(stored_docs) == 2
+    assert saved_pending_statuses == [DocumentStatus.PENDING, DocumentStatus.PENDING]
+    assert all(doc.status == DocumentStatus.PERSISTED for doc in stored_docs)
     assert all(not doc.is_analyzed for doc in stored_docs)
 
     saved_doc_ids = {doc.id for doc in stored_docs}
@@ -475,6 +500,7 @@ def test_ingest_rss_saved_documents_flow_into_analyze_pending(monkeypatch) -> No
         "https://example.com/article-1",
         "https://example.com/article-2",
     }
+    assert all(doc.status == DocumentStatus.ANALYZED for doc in stored_docs)
     assert all(doc.is_analyzed for doc in stored_docs)
     assert all(doc.priority_score is not None for doc in stored_docs)
     assert all(doc.relevance_score is not None for doc in stored_docs)

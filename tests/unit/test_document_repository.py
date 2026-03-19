@@ -94,6 +94,48 @@ async def test_mark_analyzed_sets_analyzed_status(session_factory) -> None:
 
 
 @pytest.mark.asyncio
+async def test_get_pending_documents_returns_only_persisted_docs(session_factory) -> None:
+    async with session_factory.begin() as session:
+        repo = DocumentRepository(session)
+        pending = await repo.save(
+            CanonicalDocument(
+                url="https://example.com/article-pending",
+                title="Pending article",
+            )
+        )
+        duplicate = await repo.save(
+            CanonicalDocument(
+                url="https://example.com/article-duplicate",
+                title="Duplicate article",
+            )
+        )
+        failed = await repo.save(
+            CanonicalDocument(
+                url="https://example.com/article-failed",
+                title="Failed article",
+            )
+        )
+        analyzed = await repo.save(
+            CanonicalDocument(
+                url="https://example.com/article-analyzed",
+                title="Analyzed article",
+            )
+        )
+        await repo.mark_duplicate(str(duplicate.id))
+        await repo.mark_failed(str(failed.id))
+        await repo.mark_analyzed(str(analyzed.id))
+
+    async with session_factory() as session:
+        repo = DocumentRepository(session)
+        docs = await repo.get_pending_documents(limit=10)
+
+    assert [str(doc.id) for doc in docs] == [str(pending.id)]
+    assert docs[0].status == DocumentStatus.PERSISTED
+    assert docs[0].is_duplicate is False
+    assert docs[0].is_analyzed is False
+
+
+@pytest.mark.asyncio
 async def test_update_analysis_sets_analyzed_status(session_factory) -> None:
     published_at = datetime.now(UTC)
 
