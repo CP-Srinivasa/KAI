@@ -996,12 +996,12 @@ Kein Training, kein automatischer Routing-Wechsel. Companion-Inferenz bleibt lok
 
 | # | Task | Agent | Status |
 |---|---|---|---|
-| 8.1 | `app/research/tuning.py` — `TuningArtifact`, `PromotionRecord`, `save_tuning_artifact()`, `save_promotion_record()` + vollständige Tests | Codex | ⏳ |
-| 8.2 | CLI: `research prepare-tuning-artifact <teacher_file> <model_base>` — Tuning-Manifest erstellen | Codex | ⏳ |
-| 8.3 | CLI: `research record-promotion <report_file> <model_id> --endpoint <url> --operator-note <text>` — Promotion-Record schreiben | Codex | ⏳ |
+| 8.1 | `app/research/tuning.py` — `TuningArtifact`, `PromotionRecord`, `save_tuning_artifact()`, `save_promotion_record()` + vollständige Tests | Codex | ✅ |
+| 8.2 | CLI: `research prepare-tuning-artifact <teacher_file> <model_base>` — Tuning-Manifest erstellen | Codex | ✅ |
+| 8.3 | CLI: `research record-promotion <report_file> <model_id> --endpoint <url> --operator-note <text>` — Promotion-Record schreiben | Codex | ✅ |
 | 8.4 | `tuning_promotion_contract.md` + `contracts.md §19` + I-40–I-45 | Claude Code | ✅ |
 | 8.5 | `intelligence_architecture.md` Sprint-8 Update | Claude Code | ✅ |
-| 8.6 | Contract-Abnahme + Commit | Claude Code | ⏳ |
+| 8.6 | Contract-Abnahme + Commit | Claude Code | ✅ |
 
 **Codex-Spec für 8.1 — `app/research/tuning.py` + Tests:**
 
@@ -1172,16 +1172,16 @@ Akzeptanzkriterien:
 
 ```
 Sprint 8 gilt als abgeschlossen wenn:
-  - [ ] 8.1: tuning.py vollständig implementiert + getestet
-  - [ ] 8.2: prepare-tuning-artifact CLI implementiert + getestet
-  - [ ] 8.3: record-promotion CLI implementiert + getestet
-  - [ ] ruff check . sauber
-  - [ ] pytest passing (Basis 561, kein Rückschritt)
-  - [ ] check-promotion, benchmark-companion, evaluate-datasets unverändert
-  - [ ] docs/contracts.md §19 + I-40–I-45 ✅
-  - [ ] TASKLIST.md Sprint-8 Tasks aktualisiert
-  - [ ] AGENTS.md Test-Stand aktualisiert
-  - [ ] tuning_promotion_contract.md vollständig und konsistent
+  - [x] 8.1: tuning.py vollständig implementiert + getestet
+  - [x] 8.2: prepare-tuning-artifact CLI implementiert + getestet
+  - [x] 8.3: record-promotion CLI implementiert + getestet
+  - [x] ruff check . sauber
+  - [x] pytest passing (571 Tests, kein Rückschritt)
+  - [x] check-promotion, benchmark-companion, evaluate-datasets unverändert
+  - [x] docs/contracts.md §19 + I-40–I-45 ✅
+  - [x] TASKLIST.md Sprint-8 Tasks aktualisiert
+  - [x] AGENTS.md Test-Stand aktualisiert
+  - [x] tuning_promotion_contract.md vollständig und konsistent
 ```
 
 ---

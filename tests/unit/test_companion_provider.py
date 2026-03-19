@@ -80,6 +80,45 @@ async def test_companion_analyze_success():
         assert result.affected_assets == ["BTC"]
         assert result.market_scope.value == "macro"
 
+
+@pytest.mark.asyncio
+async def test_companion_analyze_prefers_summary_field() -> None:
+    provider = InternalCompanionProvider("http://localhost:11434", "kai-analyst-v1")
+
+    mock_response = {
+        "id": "chatcmpl-123",
+        "choices": [{
+            "message": {
+                "role": "assistant",
+                "content": json.dumps({
+                    "summary": "Structured summary.",
+                    "sentiment_label": "neutral",
+                    "sentiment_score": 0.1,
+                    "relevance_score": 0.6,
+                    "impact_score": 0.4,
+                    "priority_score": 6,
+                    "market_scope": "crypto",
+                    "affected_assets": ["ETH"],
+                    "tags": ["etf"],
+                })
+            }
+        }]
+    }
+
+    mock_post = AsyncMock()
+    mock_resp = MagicMock()
+    mock_resp.status_code = 200
+    mock_resp.json.return_value = mock_response
+    mock_post.return_value = mock_resp
+
+    with patch("httpx.AsyncClient.post", mock_post):
+        result = await provider.analyze("Test Title", "Test Text")
+
+    assert result.short_reasoning == "Structured summary."
+    assert result.affected_assets == ["ETH"]
+    assert result.market_scope.value == "crypto"
+
+
 @pytest.mark.asyncio
 async def test_companion_analyze_impact_capped():
     provider = InternalCompanionProvider("http://localhost:11434", "kai-analyst-v1")
@@ -105,3 +144,18 @@ async def test_companion_analyze_impact_capped():
     with patch("httpx.AsyncClient.post", mock_post):
         result = await provider.analyze("Test", "Text")
         assert result.impact_score == 0.8  # Capped limit (Invariant I-17)
+
+
+@pytest.mark.asyncio
+async def test_companion_analyze_http_error_raises_runtime_error() -> None:
+    provider = InternalCompanionProvider("http://localhost:11434", "kai-analyst-v1")
+
+    mock_post = AsyncMock()
+    mock_resp = MagicMock()
+    mock_resp.status_code = 503
+    mock_resp.text = "service unavailable"
+    mock_post.return_value = mock_resp
+
+    with patch("httpx.AsyncClient.post", mock_post):
+        with pytest.raises(RuntimeError, match="Companion model request failed"):
+            await provider.analyze("Test", "Text")

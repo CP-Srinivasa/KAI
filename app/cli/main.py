@@ -1172,6 +1172,125 @@ def research_benchmark_companion(
         )
 
 
+@research_app.command("benchmark-companion-run")
+def research_benchmark_companion_run(
+    teacher_file: str = typer.Argument(..., help="Path to teacher JSONL file"),
+    candidate_out: str = typer.Argument(
+        ..., help="Path to save the generated companion candidate JSONL"
+    ),
+    endpoint: str | None = typer.Option(
+        None,
+        "--endpoint",
+        help="Optional localhost companion endpoint override",
+    ),
+    dataset_type: str = typer.Option(
+        "internal_benchmark",
+        "--dataset-type",
+        help="Dataset comparison type: internal_benchmark, rule_baseline, custom",
+    ),
+    report_out: str | None = typer.Option(
+        None,
+        "--report-out",
+        help="Optional path to save a structured benchmark report JSON",
+    ),
+    artifact_out: str | None = typer.Option(
+        None,
+        "--artifact-out",
+        help="Optional path to save a benchmark artifact manifest JSON",
+    ),
+) -> None:
+    """Run local companion inference on a teacher dataset and benchmark the output."""
+    import asyncio
+    from pathlib import Path
+
+    async def run() -> None:
+        from app.research.evaluation import (
+            build_candidate_dataset_rows,
+            compare_datasets,
+            save_benchmark_artifact,
+            save_evaluation_report,
+            save_jsonl_rows,
+        )
+
+        normalized_type = _normalize_dataset_type(dataset_type)
+        settings = get_settings()
+        provider = _get_companion_provider(settings, endpoint)
+        teacher_rows = _load_dataset_rows("Teacher", teacher_file)
+
+        if not teacher_rows:
+            console.print("[yellow]Teacher dataset is empty.[/yellow]")
+            raise typer.Exit(1)
+
+        try:
+            candidate_rows = await build_candidate_dataset_rows(
+                teacher_rows,
+                provider.analyze,
+                provider_name=provider.provider_name,
+                analysis_source="internal",
+            )
+        except ValueError as err:
+            console.print(f"[red]Error:[/red] Invalid teacher dataset row: {err}")
+            raise typer.Exit(1) from err
+        except RuntimeError as err:
+            console.print(f"[red]Error:[/red] Companion inference failed: {err}")
+            raise typer.Exit(1) from err
+
+        try:
+            saved_candidate_path = save_jsonl_rows(candidate_rows, candidate_out)
+        except OSError as err:
+            console.print(
+                f"[red]Error:[/red] Could not write candidate dataset '{candidate_out}': {err}"
+            )
+            raise typer.Exit(1) from err
+
+        console.print(
+            f"[green]Saved generated companion dataset to {saved_candidate_path.resolve()}[/green]"
+        )
+
+        report = compare_datasets(teacher_rows, candidate_rows, dataset_type=normalized_type)
+        _print_dataset_warnings(teacher_rows, candidate_rows, report.paired_count)
+        console.print(_build_dataset_evaluation_table("Companion Benchmark Metrics", report))
+        _print_companion_promotion_readiness(report)
+
+        saved_report_path: Path | None = None
+        if report_out:
+            try:
+                saved_report_path = save_evaluation_report(
+                    report,
+                    report_out,
+                    teacher_dataset=teacher_file,
+                    candidate_dataset=saved_candidate_path,
+                )
+            except OSError as err:
+                console.print(
+                    f"[red]Error:[/red] Could not write benchmark report '{report_out}': {err}"
+                )
+                raise typer.Exit(1) from err
+            console.print(
+                f"[green]Saved benchmark report to {saved_report_path.resolve()}[/green]"
+            )
+
+        if artifact_out:
+            try:
+                saved_artifact_path = save_benchmark_artifact(
+                    artifact_out,
+                    teacher_dataset=teacher_file,
+                    candidate_dataset=saved_candidate_path,
+                    report=report,
+                    report_path=saved_report_path,
+                )
+            except OSError as err:
+                console.print(
+                    f"[red]Error:[/red] Could not write benchmark artifact '{artifact_out}': {err}"
+                )
+                raise typer.Exit(1) from err
+            console.print(
+                f"[green]Saved benchmark artifact to {saved_artifact_path.resolve()}[/green]"
+            )
+
+    asyncio.run(run())
+
+
 @research_app.command("check-promotion")
 def research_check_promotion(
     report_file: str = typer.Argument(
@@ -1271,6 +1390,163 @@ def research_check_promotion(
         ])
         console.print(f"\n[bold red]NOT PROMOTABLE[/bold red] - {failed} gate(s) failed.")
         raise typer.Exit(1)
+
+
+@research_app.command("prepare-tuning-artifact")
+def research_prepare_tuning_artifact(
+    teacher_file: str = typer.Argument(
+        ..., help="Path to teacher JSONL (produced by dataset-export --teacher-only)"
+    ),
+    model_base: str = typer.Argument(
+        ..., help="Target model base for fine-tuning, e.g. llama3.2:3b"
+    ),
+    eval_report: str | None = typer.Option(
+        None,
+        "--eval-report",
+        help="Path to evaluation_report.json confirming dataset quality (optional)",
+    ),
+    out: str = typer.Option(
+        "tuning_manifest.json",
+        "--out",
+        help="Output path for the tuning manifest JSON",
+    ),
+) -> None:
+    """Record a training-ready manifest for external fine-tuning.
+
+    Does NOT train a model. Does NOT call any external API.
+    Use this before handing the teacher dataset to an external training process.
+
+    Sprint-8 contract: docs/tuning_promotion_contract.md
+    """
+    from pathlib import Path
+
+    from app.research.evaluation import load_jsonl
+    from app.research.tuning import save_tuning_artifact
+
+    teacher_path = Path(teacher_file)
+    if not teacher_path.exists():
+        console.print(f"[red]Teacher file not found: {teacher_path}[/red]")
+        raise typer.Exit(1)
+
+    rows = load_jsonl(teacher_path)
+    if not rows:
+        console.print("[yellow]Teacher file is empty - tuning manifest requires data.[/yellow]")
+        raise typer.Exit(1)
+
+    artifact_path = save_tuning_artifact(
+        out,
+        teacher_dataset=teacher_path,
+        model_base=model_base,
+        row_count=len(rows),
+        evaluation_report=eval_report,
+    )
+
+    table = Table(title="Tuning Manifest")
+    table.add_column("Field", style="cyan")
+    table.add_column("Value")
+    table.add_row("Teacher Dataset", str(teacher_path.resolve()))
+    table.add_row("Model Base", model_base)
+    table.add_row("Training Format", "openai_chat")
+    table.add_row("Row Count", str(len(rows)))
+    table.add_row("Evaluation Report", eval_report or "not provided")
+    table.add_row("Manifest Path", str(artifact_path.resolve()))
+    console.print(table)
+    console.print(
+        "\n[dim]This manifest is a record only. "
+        "Run your fine-tuning process separately with the teacher dataset.[/dim]"
+    )
+
+
+@research_app.command("record-promotion")
+def research_record_promotion(
+    report_file: str = typer.Argument(
+        ..., help="Path to evaluation_report.json that passed check-promotion"
+    ),
+    model_id: str = typer.Argument(
+        ..., help="Companion model identifier (e.g. kai-analyst-v1)"
+    ),
+    endpoint: str = typer.Option(
+        ..., "--endpoint",
+        help="Companion model endpoint (must match companion_model_endpoint setting)",
+    ),
+    operator_note: str = typer.Option(
+        ..., "--operator-note",
+        help="Required: human-readable acknowledgement of the promotion decision",
+    ),
+    tuning_artifact: str | None = typer.Option(
+        None, "--tuning-artifact",
+        help="Path to tuning_manifest.json if fine-tuning was performed",
+    ),
+    out: str = typer.Option(
+        "promotion_record.json", "--out",
+        help="Output path for the promotion record JSON",
+    ),
+) -> None:
+    """Record a manual companion promotion decision as an immutable audit artifact.
+
+    Does NOT change provider routing. The operator must update APP_LLM_PROVIDER
+    and companion_model_endpoint separately after this step.
+
+    Reversal: set APP_LLM_PROVIDER to the previous value.
+
+    Sprint-8 contract: docs/tuning_promotion_contract.md
+    Invariants: I-40-I-45
+    """
+    import json
+    from pathlib import Path
+
+    from app.research.evaluation import EvaluationMetrics, validate_promotion
+    from app.research.tuning import save_promotion_record
+
+    report_path = Path(report_file)
+    if not report_path.exists():
+        console.print(f"[red]Report file not found: {report_path}[/red]")
+        raise typer.Exit(1)
+
+    try:
+        data = json.loads(report_path.read_text(encoding="utf-8"))
+        m_raw = data["metrics"]
+        metrics = EvaluationMetrics(
+            sentiment_agreement=float(m_raw["sentiment_agreement"]),
+            priority_mae=float(m_raw["priority_mae"]),
+            relevance_mae=float(m_raw["relevance_mae"]),
+            impact_mae=float(m_raw["impact_mae"]),
+            tag_overlap_mean=float(m_raw["tag_overlap_mean"]),
+            sample_count=int(m_raw.get("sample_count", 0)),
+            missing_pairs=int(m_raw.get("missing_pairs", 0)),
+        )
+    except (KeyError, ValueError, json.JSONDecodeError) as e:
+        console.print(f"[red]Could not parse report file:[/red] {e}")
+        raise typer.Exit(1) from e
+
+    validation = validate_promotion(metrics)
+    if not validation.is_promotable:
+        console.print(
+            "[red]Promotion blocked: evaluation report does not pass all gates.[/red]"
+        )
+        console.print("[dim]Run `research check-promotion` to see which gates failed.[/dim]")
+        raise typer.Exit(1)
+
+    try:
+        record_path = save_promotion_record(
+            out,
+            promoted_model=model_id,
+            promoted_endpoint=endpoint,
+            evaluation_report=report_path,
+            tuning_artifact=tuning_artifact,
+            operator_note=operator_note,
+        )
+    except ValueError as e:
+        console.print(f"[red]Promotion record error:[/red] {e}")
+        raise typer.Exit(1) from e
+
+    console.print(f"[green]Promotion record written to {record_path.resolve()}[/green]")
+    console.print(
+        "\n[bold yellow]IMPORTANT[/bold yellow]: Provider routing has NOT been changed.\n"
+        "To activate companion: set APP_LLM_PROVIDER=companion and\n"
+        f"companion_model_endpoint={endpoint} in your environment."
+    )
+    console.print("[dim]To reverse: set APP_LLM_PROVIDER to the previous value.[/dim]")
 
 
 @research_app.command("evaluate")

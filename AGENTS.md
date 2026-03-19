@@ -292,6 +292,7 @@ Jeder Agent darf nur in seinem Bereich schreiben. Grenzüberschreitungen erforde
 **Sprint 5D — Corpus Safety + Eval Baseline** ✅ teacher_only I-27, compare_datasets(), EvaluationMetrics, I-27–33
 **Sprint 6 — Dataset + Evaluation Harness** ✅ abgeschlossen — dataset-export --teacher-only, evaluate-datasets, 547 Tests
 **Sprint 7 — Companion Benchmark + Promotion Gate** ✅ abgeschlossen — validate_promotion tests, check-promotion CLI, --save-report/--save-artifact, 561 Tests
+**Sprint 8 — Controlled Companion Inference + Tuning Artifact Flow + Manual Promotion** ✅ abgeschlossen — tuning.py, prepare-tuning-artifact, record-promotion, 571 Tests
 
 | Phase | Status | Geliefert |
 |---|---|---|
@@ -314,8 +315,9 @@ Jeder Agent darf nur in seinem Bereich schreiben. Grenzüberschreitungen erforde
 | P9C Corpus Safety | ✅ | teacher_only in export_training_data (I-27), compare_datasets + EvaluationMetrics + EvaluationReport + load_jsonl, dataset_evaluation_contract.md, contracts.md §16–17, I-27–33 |
 | P10 Distillation Readiness | ✅ | dataset-export --teacher-only/--source-type, research evaluate-datasets JSONL harness, 5 Pflichtmetriken, contracts.md §17 ✅ |
 | P11 Benchmark + Promotion Gate | ✅ Sprint 7 | validate_promotion getestet (7 Tests), check-promotion CLI (Exit 0/1), --save-report/--save-artifact auf evaluate-datasets, benchmark-companion command, I-34–I-39 ✅ |
+| P12 Tuning + Promotion Record | ✅ Sprint 8 | TuningArtifact, PromotionRecord, save_tuning_artifact (I-40), save_promotion_record (I-43/I-45), prepare-tuning-artifact CLI, record-promotion CLI (gate-gated), I-40–I-45 ✅ |
 
-**Test-Stand**: 561 passed, 0 failed, 0 xfailed
+**Test-Stand**: 571 passed, 0 failed, 0 xfailed
 
 Vollständige Task-Liste → [TASKLIST.md](./TASKLIST.md)
 

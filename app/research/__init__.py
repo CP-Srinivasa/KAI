@@ -17,6 +17,10 @@ Sprint 6 additions:
 Sprint 7 additions:
 - PromotionValidation, validate_promotion() — companion promotion gate (I-34–I-39)
 - save_evaluation_report(), save_benchmark_artifact() — artifact persistence helpers
+
+Sprint 8 additions:
+- TuningArtifact, PromotionRecord — tuning manifest and promotion audit types
+- save_tuning_artifact(), save_promotion_record() — write-once artifact helpers (I-40–I-45)
 """
 
 from app.research.briefs import BriefDocument, ResearchBrief, ResearchBriefBuilder
@@ -34,6 +38,12 @@ from app.research.evaluation import (
     validate_promotion,
 )
 from app.research.signals import SignalCandidate, extract_signal_candidates
+from app.research.tuning import (
+    PromotionRecord,
+    TuningArtifact,
+    save_promotion_record,
+    save_tuning_artifact,
+)
 from app.research.watchlists import WatchlistRegistry
 
 __all__ = [
@@ -41,10 +51,12 @@ __all__ = [
     "EvaluationMetrics",
     "EvaluationReport",
     "EvaluationResult",
+    "PromotionRecord",
     "PromotionValidation",
     "ResearchBrief",
     "ResearchBriefBuilder",
     "SignalCandidate",
+    "TuningArtifact",
     "WatchlistRegistry",
     "compare_datasets",
     "compare_outputs",
@@ -53,5 +65,7 @@ __all__ = [
     "load_jsonl",
     "save_benchmark_artifact",
     "save_evaluation_report",
+    "save_promotion_record",
+    "save_tuning_artifact",
     "validate_promotion",
 ]
