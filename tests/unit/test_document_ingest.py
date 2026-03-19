@@ -2,10 +2,15 @@
 
 from __future__ import annotations
 
+import pytest
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
 from app.core.domain.document import CanonicalDocument
 from app.core.enums import DocumentStatus
 from app.ingestion.base.interfaces import FetchResult
 from app.storage import document_ingest
+from app.storage.db.session import Base
+from app.storage.repositories.document_repo import DocumentRepository
 
 
 def _result(*docs: CanonicalDocument, success: bool = True) -> FetchResult:
@@ -36,6 +41,19 @@ def _session_factory() -> object:
             return FakeSessionContext()
 
     return FakeSessionFactory()
+
+
+@pytest.fixture
+async def db_session_factory():
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:", echo=False)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
+    factory = async_sessionmaker(engine, expire_on_commit=False)
+    try:
+        yield factory
+    finally:
+        await engine.dispose()
 
 
 def test_prepare_ingested_document_normalizes_identity_fields() -> None:
@@ -287,3 +305,40 @@ async def test_persist_fetch_result_treats_save_idempotency_as_duplicate(monkeyp
     assert stats.duplicate_documents[0].metadata["duplicate_reasons"] == [
         "idempotent_hash_collision"
     ]
+
+
+@pytest.mark.asyncio
+async def test_persist_fetch_result_persists_documents_as_pending_queue_items(
+    db_session_factory,
+) -> None:
+    stats = await document_ingest.persist_fetch_result(
+        db_session_factory,
+        _result(
+            CanonicalDocument(
+                url="https://www.example.com/article-1?utm_source=rss",
+                title=" Bitcoin jumps ",
+                raw_text="<p>body</p>",
+            )
+        ),
+    )
+
+    assert stats.saved_count == 1
+    assert len(stats.preview_documents) == 1
+    assert stats.preview_documents[0].status == DocumentStatus.PERSISTED
+    assert stats.preview_documents[0].url == "https://example.com/article-1"
+    assert stats.preview_documents[0].raw_text == "body"
+    assert stats.preview_documents[0].is_duplicate is False
+    assert stats.preview_documents[0].is_analyzed is False
+
+    async with db_session_factory() as session:
+        repo = DocumentRepository(session)
+        stored = await repo.get_by_url("https://example.com/article-1")
+        pending_docs = await repo.get_pending_documents(limit=10)
+
+    assert stored is not None
+    assert stored.status == DocumentStatus.PERSISTED
+    assert stored.is_duplicate is False
+    assert stored.is_analyzed is False
+    assert stored.metadata["normalized_url"] == "https://example.com/article-1"
+    assert stored.metadata["normalized_title"] == "bitcoin jumps"
+    assert [doc.url for doc in pending_docs] == ["https://example.com/article-1"]

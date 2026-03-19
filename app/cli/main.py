@@ -592,6 +592,11 @@ def alerts_evaluate_pending(
 @research_app.command("brief")
 def research_brief(
     watchlist: str = typer.Option(..., help="Watchlist/cluster to generate brief for (e.g. defi)"),
+    watchlist_type: str = typer.Option(
+        "assets",
+        "--type",
+        help="Watchlist type: assets, persons, topics, sources",
+    ),
     limit: int = typer.Option(100, help="Number of recent documents to process"),
     output_format: str = typer.Option("md", "--format", help="Output format: md or json"),
 ) -> None:
@@ -601,7 +606,7 @@ def research_brief(
 
     async def run() -> None:
         from app.research.briefs import ResearchBriefBuilder
-        from app.research.watchlists import WatchlistRegistry
+        from app.research.watchlists import WatchlistRegistry, parse_watchlist_type
         from app.storage.db.session import build_session_factory
         from app.storage.repositories.document_repo import DocumentRepository
 
@@ -610,20 +615,26 @@ def research_brief(
         session_factory = build_session_factory(settings.db)
 
         registry = WatchlistRegistry.from_monitor_dir(monitor_dir)
-        symbols = [s.upper() for s in registry.get_watchlist(watchlist)]
+        try:
+            resolved_type = parse_watchlist_type(watchlist_type)
+        except ValueError as err:
+            console.print(f"[red]Error:[/red] {err}")
+            raise typer.Exit(1) from err
 
-        if not symbols:
-            console.print(f"[yellow]Warning: Watchlist '{watchlist}' produced no symbols.[/yellow]")
+        watchlist_items = registry.get_watchlist(watchlist, item_type=resolved_type)
+
+        if not watchlist_items:
+            console.print(
+                f"[yellow]Warning: Watchlist '{watchlist}' produced no {resolved_type}.[/yellow]"
+            )
 
         async with session_factory.begin() as session:
             repo = DocumentRepository(session)
             # We fetch more than limit to ensure enough matches after symbol filtering
             docs = await repo.list(is_analyzed=True, limit=limit * 5)
 
-        if symbols:
-            docs = [
-                d for d in docs if any(t.upper() in symbols for t in (d.tickers + d.crypto_assets))
-            ]
+        if watchlist_items:
+            docs = registry.filter_documents(docs, watchlist, item_type=resolved_type)
 
         docs = docs[:limit]
 
@@ -638,27 +649,104 @@ def research_brief(
     asyncio.run(run())
 
 
+@research_app.command("watchlists")
+def research_watchlists(
+    watchlist_type: str = typer.Option(
+        "assets",
+        "--type",
+        help="Watchlist type: assets, persons, topics, sources",
+    ),
+    watchlist: str | None = typer.Argument(None, help="Optional watchlist tag to inspect"),
+) -> None:
+    """List available research watchlists or show the members of one watchlist."""
+    from app.research.watchlists import WatchlistRegistry, parse_watchlist_type
+
+    settings = get_settings()
+    registry = WatchlistRegistry.from_monitor_dir(Path(settings.monitor_dir))
+
+    try:
+        resolved_type = parse_watchlist_type(watchlist_type)
+    except ValueError as err:
+        console.print(f"[red]Error:[/red] {err}")
+        raise typer.Exit(1) from err
+
+    if watchlist:
+        items = registry.get_watchlist(watchlist, item_type=resolved_type)
+        if not items:
+            console.print(
+                f"[yellow]No watchlist entries found for '{watchlist}' ({resolved_type}).[/yellow]"
+            )
+            return
+
+        console.print(
+            f"[bold]{watchlist}[/bold] "
+            f"([{resolved_type}] {len(items)} entries)"
+        )
+        for item in items:
+            console.print(f"  - {item}")
+        return
+
+    all_watchlists = registry.get_all_watchlists(item_type=resolved_type)
+    if not all_watchlists:
+        console.print(f"[yellow]No watchlists found for type '{resolved_type}'.[/yellow]")
+        return
+
+    table = Table(show_header=True, header_style="bold cyan")
+    table.add_column("Watchlist")
+    table.add_column("Count", justify="right")
+    table.add_column("Preview")
+
+    for name, items in sorted(all_watchlists.items()):
+        preview = ", ".join(items[:3])
+        if len(items) > 3:
+            preview += ", ..."
+        table.add_row(name, str(len(items)), preview)
+
+    console.print(table)
+    console.print(f"\n[bold]{len(all_watchlists)} watchlists[/bold] ({resolved_type})")
+
+
 @research_app.command("signals")
 def research_signals(
     limit: int = typer.Option(100, help="Number of recent documents to search"),
     min_priority: int = typer.Option(8, help="Minimum priority score for signals"),
+    watchlist: str = typer.Option(None, help="Watchlist name to boost priority of matching assets"),
 ) -> None:
     """Extract and list strict Signal Candidates for automated trading."""
     import asyncio
 
     async def run() -> None:
         from app.research.signals import extract_signal_candidates
+        from app.research.watchlists import WatchlistRegistry
         from app.storage.db.session import build_session_factory
         from app.storage.repositories.document_repo import DocumentRepository
 
         settings = get_settings()
+        monitor_dir = Path(settings.monitor_dir)
         session_factory = build_session_factory(settings.db)
+
+        # Resolve watchlist boosts
+        watchlist_boosts = {}
+        if watchlist:
+            registry = WatchlistRegistry.from_monitor_dir(monitor_dir)
+            symbols = registry.get_watchlist(watchlist)
+            if symbols:
+                # Flat boost of +2 for matching watchlist items
+                watchlist_boosts = {s.upper(): 2 for s in symbols}
+                console.print(
+                    f"[dim]Applying +2 priority boost to {len(symbols)} "
+                    f"assets from '{watchlist}'[/dim]"
+                )
 
         async with session_factory.begin() as session:
             repo = DocumentRepository(session)
             docs = await repo.list(is_analyzed=True, limit=limit)
 
-        signals = extract_signal_candidates(docs, min_priority=min_priority)
+        signals = extract_signal_candidates(
+            docs,
+            min_priority=min_priority,
+            watchlist_boosts=watchlist_boosts
+        )
 
         if not signals:
             console.print(f"[yellow]No signal candidates found in the last {limit} docs.[/yellow]")
@@ -666,30 +754,33 @@ def research_signals(
 
         table = Table(show_header=True, header_style="bold cyan")
         table.add_column("SigID", width=12)
-        table.add_column("Dir", width=4)
+        table.add_column("Dir", width=6)
         table.add_column("Pri", width=3)
-        table.add_column("Assets", width=15)
-        table.add_column("Title")
+        table.add_column("Asset", width=10)
+        table.add_column("Conf", width=5)
+        table.add_column("Evidence", width=60)
 
         for sig in signals:
             direction_color = (
                 "green"
-                if sig.action_direction == "buy"
+                if sig.direction_hint == "bullish"
                 else "red"
-                if sig.action_direction == "sell"
+                if sig.direction_hint == "bearish"
                 else "yellow"
             )
-            dir_str = f"[{direction_color}]{sig.action_direction.upper()}[/{direction_color}]"
-            assets_str = ", ".join(sig.affected_assets[:3]) + (
-                "..." if len(sig.affected_assets) > 3 else ""
-            )
+            dir_str = f"[{direction_color}]{sig.direction_hint.upper()}[/{direction_color}]"
+
+            # Truncate evidence text cleanly
+            evidence = sig.supporting_evidence.replace("\n", " ")
+            evidence = evidence[:60] + ("..." if len(evidence) > 60 else "")
 
             table.add_row(
                 sig.signal_id[:12],
                 dir_str,
                 str(sig.priority),
-                assets_str,
-                sig.title[:60] + ("..." if len(sig.title) > 60 else ""),
+                sig.target_asset,
+                f"{sig.confidence:.2f}",
+                evidence,
             )
 
         console.print(table)

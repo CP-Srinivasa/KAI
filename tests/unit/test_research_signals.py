@@ -15,6 +15,9 @@ def test_extract_signal_candidates_filters_priority():
             priority_score=9,
             sentiment_label=SentimentLabel.BULLISH,
             tickers=["BTC"],
+            relevance_score=0.9,
+            spam_probability=0.01,
+            credibility_score=0.99,
         ),
         make_document(
             is_analyzed=True,
@@ -30,8 +33,11 @@ def test_extract_signal_candidates_filters_priority():
     assert len(candidates) == 1
     assert candidates[0].priority == 9
     assert candidates[0].sentiment == SentimentLabel.BULLISH
-    assert candidates[0].action_direction == "buy"
+    assert candidates[0].direction_hint == "bullish"
     assert "BTC" in candidates[0].affected_assets
+    assert candidates[0].confidence == 0.9
+    assert candidates[0].source_quality == 0.99
+    assert candidates[0].target_asset == "BTC"
 
 
 def test_extract_signal_candidates_direction_mapping():
@@ -42,24 +48,58 @@ def test_extract_signal_candidates_direction_mapping():
     ]
     candidates = extract_signal_candidates(docs)
     assert len(candidates) == 3
-    # Order usually depends on priority, since priority is equal, stable sort preserves it
-    assert candidates[0].action_direction == "buy"
-    assert candidates[1].action_direction == "sell"
-    assert candidates[2].action_direction == "hold"
+    directions = {c.direction_hint for c in candidates}
+    assert directions == {"bullish", "bearish", "neutral"}
 
 
 def test_signal_candidate_strict_validation():
-    # Will raise ValidationError if priority < 8 due to Field(ge=8) if we directly instantiate
+    # Will raise ValidationError if priority < 8 due to Field(ge=8)
     with pytest.raises(ValidationError):
         SignalCandidate(
             signal_id="123",
-            document_id="doc_123",
-            title="Test",
-            summary="Test Summary",
-            priority=5,  # Invalid
+            document_id="doc-456",
+            target_asset="ETH",
+            direction_hint="neutral",
+            confidence=0.9,
+            supporting_evidence="Good news",
+            contradicting_evidence="None",
+            risk_notes="High vol",
+            source_quality=0.8,
+            recommended_next_step="Review ETH neutral signal — human decision required.",
+            priority=5,  # Invalid — below ge=8
             sentiment=SentimentLabel.BULLISH,
-            action_direction="buy",
             affected_assets=[],
             market_scope=MarketScope.UNKNOWN,
             published_at=None,
         )
+
+
+def test_extract_signal_candidates_watchlist_boost():
+    docs = [
+        make_document(
+            is_analyzed=True,
+            priority_score=7, # Fails min_priority=8 default
+            sentiment_label=SentimentLabel.BULLISH,
+            tickers=["DOGE"],
+        )
+    ]
+    # Without boost -> misses
+    assert len(extract_signal_candidates(docs, min_priority=8)) == 0
+
+    # With boost of 2 -> effective priority 9 -> succeeds
+    candidates = extract_signal_candidates(docs, min_priority=8, watchlist_boosts={"DOGE": 2})
+    assert len(candidates) == 1
+    assert candidates[0].priority == 9
+    assert candidates[0].target_asset == "DOGE"
+
+
+def test_extract_signal_candidates_document_id_traceability():
+    doc = make_document(
+        is_analyzed=True,
+        priority_score=8,
+        sentiment_label=SentimentLabel.BULLISH,
+    )
+    candidates = extract_signal_candidates([doc])
+    assert len(candidates) == 1
+    assert candidates[0].document_id == str(doc.id)
+    assert candidates[0].signal_id == f"sig_{doc.id}"

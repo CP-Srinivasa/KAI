@@ -1,5 +1,6 @@
 from datetime import UTC, datetime
 
+import yaml  # type: ignore[import-untyped]
 from typer.testing import CliRunner
 
 from app.cli import main as cli_main
@@ -505,3 +506,111 @@ def test_ingest_rss_saved_documents_flow_into_analyze_pending(monkeypatch) -> No
     assert all(doc.priority_score is not None for doc in stored_docs)
     assert all(doc.relevance_score is not None for doc in stored_docs)
     assert {ticker for doc in stored_docs for ticker in doc.tickers} == {"BTC", "ETH"}
+
+
+def test_research_watchlists_lists_requested_type(monkeypatch, tmp_path) -> None:
+    watchlists_path = tmp_path / "watchlists.yml"
+    watchlists_path.write_text(
+        yaml.safe_dump(
+            {
+                "persons": [
+                    {
+                        "name": "Gary Gensler",
+                        "aliases": ["gensler"],
+                        "tags": ["regulation"],
+                    },
+                    {
+                        "name": "Elizabeth Warren",
+                        "aliases": ["warren"],
+                        "tags": ["regulation"],
+                    },
+                ]
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+
+    settings = AppSettings()
+    settings.monitor_dir = str(tmp_path)
+    monkeypatch.setattr(cli_main, "get_settings", lambda: settings)
+
+    result = runner.invoke(app, ["research", "watchlists", "--type", "persons", "regulation"])
+
+    assert result.exit_code == 0
+    assert "regulation" in result.output
+    assert "Gary Gensler" in result.output
+    assert "Elizabeth Warren" in result.output
+
+
+def test_research_brief_filters_documents_by_watchlist_type(monkeypatch, tmp_path) -> None:
+    from app.storage.repositories import document_repo
+
+    watchlists_path = tmp_path / "watchlists.yml"
+    watchlists_path.write_text(
+        yaml.safe_dump(
+            {
+                "persons": [
+                    {
+                        "name": "Gary Gensler",
+                        "aliases": ["gensler"],
+                        "tags": ["regulation"],
+                    }
+                ]
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+
+    settings = AppSettings()
+    settings.monitor_dir = str(tmp_path)
+
+    class FakeSessionFactory:
+        def begin(self):
+            class FakeSessionContext:
+                async def __aenter__(self):
+                    return object()
+
+                async def __aexit__(self, exc_type, exc, tb):
+                    return False
+
+            return FakeSessionContext()
+
+    async def fake_list(self, **kwargs):
+        return [
+            CanonicalDocument(
+                url="https://example.com/gensler",
+                title="Gensler warns on crypto regulation",
+                is_analyzed=True,
+                priority_score=8,
+                summary="Regulatory pressure remains elevated.",
+                people=["Gary Gensler"],
+                entities=["Gary Gensler"],
+                sentiment_label=SentimentLabel.BEARISH,
+            ),
+            CanonicalDocument(
+                url="https://example.com/vitalik",
+                title="Vitalik discusses scaling",
+                is_analyzed=True,
+                priority_score=7,
+                summary="Ethereum roadmap update.",
+                people=["Vitalik Buterin"],
+                entities=["Vitalik Buterin"],
+                sentiment_label=SentimentLabel.BULLISH,
+            ),
+        ]
+
+    monkeypatch.setattr(cli_main, "get_settings", lambda: settings)
+    monkeypatch.setattr(cli_main, "build_session_factory", lambda _db: FakeSessionFactory())
+    monkeypatch.setattr(document_repo.DocumentRepository, "list", fake_list)
+
+    result = runner.invoke(
+        app,
+        ["research", "brief", "--watchlist", "regulation", "--type", "persons", "--format", "json"],
+    )
+
+    assert result.exit_code == 0
+    assert '"title": "Research Brief: regulation"' in result.output
+    assert "Gensler warns on crypto regulation" in result.output
+    assert "Vitalik discusses scaling" not in result.output

@@ -360,6 +360,133 @@ If any contract changes:
 
 ---
 
+### 11. Sprint 4 — Research & Signal Contracts
+
+These contracts define the Sprint 4 output layer. All three types are **in-memory only** —
+never written to DB. They consume `CanonicalDocument` objects that have `status=ANALYZED`.
+
+---
+
+#### 11a. WatchlistRegistry
+
+```python
+class WatchlistRegistry:
+    @classmethod
+    def from_monitor_dir(cls, monitor_dir: Path | str) -> WatchlistRegistry: ...
+
+    def get_watchlist(self, tag: str) -> list[str]: ...
+    def get_all_watchlists(self) -> Mapping[str, list[str]]: ...
+    def get_symbols_for_category(self, category: str) -> list[str]: ...
+    def find_by_text(self, text: str) -> list[WatchlistEntry]: ...
+```
+
+Rules:
+- Source: `monitor/watchlists.yml` — loaded via `WatchlistEntry` + `load_watchlist()`
+- Sections: `crypto`, `equities`, `etfs`, `macro`, `persons`, `topics`
+  (`domains` section is skipped — different schema, handled separately)
+- Tag lookup is case-insensitive
+- `find_by_text()` uses word-boundary regex — no substring false positives
+- `WatchlistRegistry` is read-only after construction — no mutations
+- `load_watchlist()` returns `[]` (not an error) if the file does not exist
+
+---
+
+#### 11b. ResearchBrief
+
+```python
+class BriefDocument(BaseModel):
+    document_id: str          # str(CanonicalDocument.id) — traceability
+    title: str
+    url: str
+    priority_score: int       # [1, 10]
+    sentiment_label: str      # SentimentLabel.value
+    summary: str
+    impact_score: float       # [0.0, 1.0]
+    actionable: bool          # priority_score >= _ACTIONABLE_PRIORITY_THRESHOLD (8)
+    published_at: datetime | None
+    source_name: str | None
+
+class ResearchBrief(BaseModel):
+    cluster_name: str
+    generated_at: datetime
+    document_count: int
+    average_priority: float
+    overall_sentiment: str    # dominant SentimentLabel.value
+    top_actionable_signals: list[BriefDocument]   # priority >= 8, sorted desc
+    key_documents: list[BriefDocument]             # priority < 8, capped at 20
+
+class ResearchBriefBuilder:
+    def build(self, documents: list[CanonicalDocument]) -> ResearchBrief: ...
+```
+
+Rules:
+- Input: `list[CanonicalDocument]` — only `is_analyzed=True` docs with `priority_score` are used
+- `ResearchBriefBuilder.build()` never raises — returns empty brief on empty/unanalyzed input
+- `_ACTIONABLE_PRIORITY_THRESHOLD = 8` — must stay in sync with `ThresholdEngine.min_priority`
+- `to_markdown()` and `to_json_dict()` are the only output serialization paths
+- `ResearchBrief` is in-memory only — no DB table, no persistence
+
+---
+
+#### 11c. SignalCandidate
+
+```python
+class SignalCandidate(BaseModel):
+    model_config = ConfigDict(strict=True, validate_assignment=True)
+
+    signal_id: str              # f"sig_{document_id}" — deterministic
+    document_id: str            # str(CanonicalDocument.id) — traceability
+
+    target_asset: str           # primary asset ("BTC", "ETH", "General Market")
+    direction_hint: str         # "bullish" | "bearish" | "neutral"
+                                # NEVER "buy" / "sell" / "hold" — not an execution instruction
+    confidence: float           # proxy: doc.relevance_score — [0.0, 1.0]
+    supporting_evidence: str    # doc.summary or doc.title
+    contradicting_evidence: str # static note — not extracted in primary scan
+    risk_notes: str             # spam_prob + market_scope metadata
+    source_quality: float       # doc.credibility_score — [0.0, 1.0]
+    recommended_next_step: str  # always ends with "— human decision required."
+
+    priority: int = Field(ge=8, le=10)   # enforced: only high-priority signals
+    sentiment: SentimentLabel
+    affected_assets: list[str]
+    market_scope: MarketScope
+    published_at: datetime | None
+    extracted_at: datetime
+
+def extract_signal_candidates(
+    documents: list[CanonicalDocument],
+    min_priority: int = 8,
+    watchlist_boosts: dict[str, int] | None = None,
+) -> list[SignalCandidate]: ...
+```
+
+Rules:
+- `priority >= 8` is a hard constraint — Pydantic `Field(ge=8)` enforced at construction
+- `direction_hint` is research language, NOT trading instruction — "bullish"/"bearish"/"neutral"
+- `signal_id` is deterministic: `f"sig_{document_id}"` — idempotent for same document
+- `watchlist_boosts`: `{"BTC": 1}` raises effective priority by 1 for watchlist assets;
+  capped at 10; never raises above 10
+- `confidence_score` from `AnalysisResult` is NOT persisted to DB — `relevance_score` is
+  used as the confidence proxy (available in DB)
+- `SignalCandidate` is in-memory only — no DB table, no persistence
+- `extract_signal_candidates()` never raises — returns `[]` if no candidates qualify
+
+---
+
+#### 11d. Research Layer Boundaries
+
+| Boundary | Rule |
+|---|---|
+| Input gate | Only `CanonicalDocument` with `is_analyzed=True` enters research layer |
+| No DB writes | `ResearchBrief` and `SignalCandidate` are always in-memory — never persisted |
+| No LLM calls | Research layer is pure computation — no provider calls, no external I/O |
+| Watchlist source | Always from `monitor/watchlists.yml` via `WatchlistRegistry.from_monitor_dir()` |
+| CLI entry point | `research` Typer subgroup — `watchlists`, `brief`, `signals` commands |
+| API entry point | `GET /research/briefs/{cluster}` and `GET /research/signals` (Sprint 4) |
+
+---
+
 ## Final Rule
 
 These contracts define the system.

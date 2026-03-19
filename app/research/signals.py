@@ -16,22 +16,26 @@ from app.core.enums import MarketScope, SentimentLabel
 
 
 class SignalCandidate(BaseModel):
-    """A strictly filtered, highly actionable setup extracted from analysis.
-
-    This is what the execution bot will eventually ingest.
-    """
+    """A strictly filtered, highly actionable setup extracted from analysis."""
 
     model_config = ConfigDict(strict=True, validate_assignment=True)
 
     signal_id: str
     document_id: str
-    title: str
-    summary: str
 
-    # Execution metrics
+    # Required heuristic signal fields
+    target_asset: str
+    direction_hint: str
+    confidence: float
+    supporting_evidence: str
+    contradicting_evidence: str
+    risk_notes: str
+    source_quality: float
+    recommended_next_step: str
+
+    # Research metrics - NOT execution instructions
     priority: int = Field(ge=8, le=10)
     sentiment: SentimentLabel
-    action_direction: str  # "buy", "sell", "hold" (derived from sentiment)
     affected_assets: list[str]
     market_scope: MarketScope
 
@@ -45,44 +49,64 @@ class SignalCandidate(BaseModel):
 def extract_signal_candidates(
     documents: list[CanonicalDocument],
     min_priority: int = 8,
+    watchlist_boosts: dict[str, int] | None = None,
 ) -> list[SignalCandidate]:
-    """Parse a batch of documents and return only the viable Signal Candidates."""
+    """Parse a batch of documents and return viable Signal Candidates.
+
+    Watchlists can be passed as a dictionary like {"BTC": 1} to artificially
+    boost priority for specific assets during signaling, allowing them to
+    clear the min_priority hurdle.
+    """
     candidates: list[SignalCandidate] = []
+    watchlist_boosts = watchlist_boosts or {}
 
     for doc in documents:
         if not doc.is_analyzed:
             continue
 
-        priority = doc.priority_score or 0
-        if priority < min_priority:
+        base_priority = doc.priority_score or 0
+        assets = list(set(doc.tickers + doc.crypto_assets))
+
+        boost = max([watchlist_boosts.get(asset.upper(), 0) for asset in assets] + [0])
+        effective_priority = min(10, base_priority + boost)
+
+        if effective_priority < min_priority:
             continue
 
-        # Optional: Additional signal restrictions (must be explicitly marked actionable by LLM)
-        # Note: Depending on scoring, min_priority=8 usually implies actionable anyway.
-
-        direction = "hold"
+        direction = "neutral"
         if doc.sentiment_label == SentimentLabel.BULLISH:
-            direction = "buy"
+            direction = "bullish"
         elif doc.sentiment_label == SentimentLabel.BEARISH:
-            direction = "sell"
+            direction = "bearish"
 
-        assets = list(set(doc.tickers + doc.crypto_assets))
+        primary_asset = assets[0] if assets else "General Market"
+        confidence_proxy = doc.relevance_score or 0.5
 
         candidates.append(
             SignalCandidate(
                 signal_id=f"sig_{doc.id}",
                 document_id=str(doc.id),
-                title=doc.title or "(No Title)",
-                summary=doc.summary or doc.title[:100] or "",
-                priority=priority,
+                target_asset=primary_asset,
+                direction_hint=direction,
+                confidence=confidence_proxy,
+                supporting_evidence=doc.summary or doc.title or "No summary available.",
+                contradicting_evidence="Contradicting evidence not extracted in primary scan.",
+                risk_notes=(
+                    f"spam_prob={doc.spam_probability or 0.0:.2f} "
+                    f"scope={doc.market_scope.value}"
+                ),
+                source_quality=doc.credibility_score or 0.5,
+                recommended_next_step=(
+                    f"Review {direction} signal for {primary_asset} "
+                    "- human decision required."
+                ),
+                priority=effective_priority,
                 sentiment=doc.sentiment_label or SentimentLabel.NEUTRAL,
-                action_direction=direction,
                 affected_assets=assets,
                 market_scope=doc.market_scope or MarketScope.UNKNOWN,
                 published_at=doc.published_at,
             )
         )
 
-    # Sort with highest priority first
-    candidates.sort(key=lambda s: s.priority, reverse=True)
+    candidates.sort(key=lambda signal: signal.priority, reverse=True)
     return candidates

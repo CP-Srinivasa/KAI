@@ -218,7 +218,7 @@ app/
 monitor/             → user-editable source lists, keywords, watchlists
   historical_events.yml → 13 Seed-Events für analog matching
 docker/              → Dockerfile (production), docker-compose.yml
-tests/unit/          → pytest unit tests (445 passing — ruff clean)
+tests/unit/          → pytest unit tests (474 passing — ruff clean)
 ```
 
 ---
@@ -301,8 +301,9 @@ Jeder Agent darf nur in seinem Bereich schreiben. Grenzüberschreitungen erforde
 | PC Tests | ✅ | Test-Factory für AnalysisResult, kein Ad-hoc-Mocking mehr |
 | PD Provider | ✅ | Claude (Anthropic) + Gemini Provider-Implementierungen |
 | P7 Alerting | ✅ | app/alerts/ — Telegram, Email, ThresholdEngine, DigestCollector, AlertService, CLI alerts, API /alerts/test |
+| P8 Research Models | ✅ | app/research/ — WatchlistRegistry, ResearchBrief, ResearchBriefBuilder, SignalCandidate, extract_signal_candidates(), contracts.md §11, TASKLIST.md Sprint 4A+4B Specs |
 
-**Test-Stand**: 461 passed, 0 failed, 0 xfailed
+**Test-Stand**: 474 passed, 0 failed, 0 xfailed
 
 Vollständige Task-Liste → [TASKLIST.md](./TASKLIST.md)
 
@@ -391,7 +392,7 @@ Vollständige Dokumentation → [docs/security.md](./docs/security.md)
 
 ```bash
 # Tests + Lint (lokal)
-pytest                                    # 445+ Tests (alle)
+pytest                                    # 474+ Tests (alle)
 ruff check .                              # Lint (muss fehlerfrei sein)
 mypy app/                                 # Typ-Check (optional)
 

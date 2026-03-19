@@ -1,12 +1,8 @@
-"""Research Briefs module.
-
-Aggregates multiple CanonicalDocument models into a structured report
-representing a specific Research Cluster (e.g. a Watchlist like 'DeFi' or asset 'BTC').
-"""
+"""Structured Research Brief generation from analyzed documents."""
 
 from __future__ import annotations
 
-import collections
+from collections import Counter
 from datetime import UTC, datetime
 from typing import Any
 
@@ -14,6 +10,13 @@ from pydantic import BaseModel, Field
 
 from app.core.domain.document import CanonicalDocument
 from app.core.enums import SentimentLabel
+
+
+class BriefFacet(BaseModel):
+    """Simple ranked facet used for top assets/entities in a brief."""
+
+    name: str
+    count: int
 
 
 class BriefDocument(BaseModel):
@@ -35,28 +38,54 @@ class ResearchBrief(BaseModel):
     """Aggregated research snapshot for a specific cluster."""
 
     cluster_name: str
+    title: str
+    summary: str
     generated_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
     document_count: int
     average_priority: float
     overall_sentiment: str
+    top_documents: list[BriefDocument]
+    top_assets: list[BriefFacet]
+    top_entities: list[BriefFacet]
     top_actionable_signals: list[BriefDocument]
     key_documents: list[BriefDocument]
 
     def to_markdown(self) -> str:
         """Render the brief as a Markdown document."""
         lines = [
-            f"# Research Brief: {self.cluster_name}",
+            f"# {self.title}",
             f"**Generated:** {self.generated_at.strftime('%Y-%m-%d %H:%M:%S UTC')}",
             "",
             "## Summary",
+            self.summary,
+            "",
             f"- **Documents Analyzed:** {self.document_count}",
             f"- **Average Priority:** {self.average_priority:.2f} / 10",
             f"- **Overall Sentiment:** {self.overall_sentiment.capitalize()}",
             "",
-            "## Actionable Signals",
-            "*(High priority alerts requiring attention)*",
-            "",
+            "## Top Assets",
         ]
+
+        if not self.top_assets:
+            lines.append("*No top assets detected.*")
+        else:
+            lines.extend(f"- **{facet.name}** ({facet.count})" for facet in self.top_assets)
+
+        lines.extend(["", "## Top Entities"])
+
+        if not self.top_entities:
+            lines.append("*No top entities detected.*")
+        else:
+            lines.extend(f"- **{facet.name}** ({facet.count})" for facet in self.top_entities)
+
+        lines.extend(
+            [
+                "",
+                "## Actionable Signals",
+                "*(High priority alerts requiring attention)*",
+                "",
+            ]
+        )
 
         if not self.top_actionable_signals:
             lines.append("*No highly actionable signals in this cluster currently.*")
@@ -64,25 +93,17 @@ class ResearchBrief(BaseModel):
             for doc in self.top_actionable_signals:
                 lines.extend(self._render_brief_doc_md(doc))
 
-        lines.extend(
-            [
-                "",
-                "## Key Documents",
-                "*(Ranked by priority)*",
-                "",
-            ]
-        )
+        lines.extend(["", "## Top Documents", "*(Ranked by priority)*", ""])
 
-        if not self.key_documents:
+        if not self.top_documents:
             lines.append("*No relevant documents found.*")
         else:
-            for doc in self.key_documents:
+            for doc in self.top_documents:
                 lines.extend(self._render_brief_doc_md(doc))
 
         return "\n".join(lines)
 
     def _render_brief_doc_md(self, doc: BriefDocument) -> list[str]:
-        """Render a single brief document as a markdown list item with details."""
         src = doc.source_name or "Unknown Source"
         date_str = doc.published_at.strftime("%Y-%m-%d") if doc.published_at else "---"
 
@@ -102,7 +123,6 @@ class ResearchBrief(BaseModel):
         ]
 
     def to_json_dict(self) -> dict[str, Any]:
-        """Return dict representation, safe for JSON serialization (by fastapi/pydantic)."""
         return self.model_dump(mode="json")
 
 
@@ -113,62 +133,119 @@ class ResearchBriefBuilder:
         self.cluster_name = cluster_name
 
     def build(self, documents: list[CanonicalDocument]) -> ResearchBrief:
-        # Filter for documents that have actually been analyzed (have priority scores)
-        valid_docs = [
-            d for d in documents if d.is_analyzed and getattr(d, "priority_score", None) is not None
-        ]
+        valid_docs = [document for document in documents if document.is_analyzed]
 
         if not valid_docs:
             return ResearchBrief(
                 cluster_name=self.cluster_name,
+                title=f"Research Brief: {self.cluster_name}",
+                summary="No analyzed documents available for this brief.",
                 document_count=0,
                 average_priority=0.0,
                 overall_sentiment=SentimentLabel.NEUTRAL.value,
+                top_documents=[],
+                top_assets=[],
+                top_entities=[],
                 top_actionable_signals=[],
                 key_documents=[],
             )
 
-        # Calculate metrics
-        total_priority = sum(d.priority_score or 0 for d in valid_docs)
-        avg_priority = total_priority / len(valid_docs)
+        briefs = [self._to_brief_document(document) for document in valid_docs]
+        briefs.sort(
+            key=lambda brief: (
+                brief.priority_score,
+                brief.impact_score,
+                brief.published_at or datetime.min.replace(tzinfo=UTC),
+            ),
+            reverse=True,
+        )
 
-        # Calculate dominant sentiment
-        sentiments = [d.sentiment_label.value for d in valid_docs if d.sentiment_label]
-        if sentiments:
-            counter = collections.Counter(sentiments)
-            dominant = counter.most_common(1)[0][0]
-        else:
-            dominant = SentimentLabel.NEUTRAL.value
+        average_priority = sum(brief.priority_score for brief in briefs) / len(briefs)
+        sentiments = [brief.sentiment_label for brief in briefs if brief.sentiment_label]
+        dominant_sentiment = (
+            Counter(sentiments).most_common(1)[0][0] if sentiments else SentimentLabel.NEUTRAL.value
+        )
 
-        # Map to brief documents
-        briefs: list[BriefDocument] = []
-        for d in valid_docs:
-            briefs.append(
-                BriefDocument(
-                    document_id=str(d.id),
-                    title=d.title or "(No Title)",
-                    url=d.url,
-                    priority_score=d.priority_score or 0,
-                    sentiment_label=d.sentiment_label.value if d.sentiment_label else "neutral",
-                    summary=d.summary or d.title[:100] or "",
-                    impact_score=d.impact_score or 0.0,
-                    actionable=bool(d.priority_score and d.priority_score >= 8),
-                    published_at=d.published_at,
-                    source_name=d.source_name,
-                )
-            )
+        top_assets = self._rank_terms(
+            value
+            for document in valid_docs
+            for value in (document.tickers + document.crypto_assets)
+        )
+        top_entities = self._rank_terms(
+            value
+            for document in valid_docs
+            for value in (document.entities + document.people + document.organizations)
+        )
 
-        # Sort by priority
-        briefs.sort(key=lambda b: b.priority_score, reverse=True)
-
-        actionable = [b for b in briefs if b.actionable]
-        non_actionable = [b for b in briefs if not b.actionable]
+        actionable = [brief for brief in briefs if brief.actionable]
+        non_actionable = [brief for brief in briefs if not brief.actionable]
 
         return ResearchBrief(
             cluster_name=self.cluster_name,
-            document_count=len(valid_docs),
-            average_priority=avg_priority,
-            overall_sentiment=dominant,
-            top_actionable_signals=actionable,
+            title=f"Research Brief: {self.cluster_name}",
+            summary=self._build_summary(
+                document_count=len(briefs),
+                average_priority=average_priority,
+                overall_sentiment=dominant_sentiment,
+                top_assets=top_assets,
+                top_entities=top_entities,
+            ),
+            document_count=len(briefs),
+            average_priority=average_priority,
+            overall_sentiment=dominant_sentiment,
+            top_documents=briefs[:10],
+            top_assets=top_assets,
+            top_entities=top_entities,
+            top_actionable_signals=actionable[:10],
             key_documents=non_actionable[:20],
         )
+
+    def _to_brief_document(self, document: CanonicalDocument) -> BriefDocument:
+        summary = (document.summary or document.title or "").strip()
+        if not summary:
+            summary = "No summary available."
+        return BriefDocument(
+            document_id=str(document.id),
+            title=document.title or "(No Title)",
+            url=document.url,
+            priority_score=document.priority_score or 0,
+            sentiment_label=(
+                document.sentiment_label.value
+                if document.sentiment_label
+                else SentimentLabel.NEUTRAL.value
+            ),
+            summary=summary,
+            impact_score=document.impact_score or 0.0,
+            actionable=bool((document.priority_score or 0) >= 8),
+            published_at=document.published_at,
+            source_name=document.source_name,
+        )
+
+    def _rank_terms(self, values: Any, *, limit: int = 5) -> list[BriefFacet]:
+        counter = Counter()
+        for value in values:
+            normalized = str(value).strip()
+            if normalized:
+                counter[normalized] += 1
+        ranked = sorted(counter.items(), key=lambda item: (-item[1], item[0].lower()))
+        return [BriefFacet(name=name, count=count) for name, count in ranked[:limit]]
+
+    def _build_summary(
+        self,
+        *,
+        document_count: int,
+        average_priority: float,
+        overall_sentiment: str,
+        top_assets: list[BriefFacet],
+        top_entities: list[BriefFacet],
+    ) -> str:
+        parts = [
+            f"{document_count} analyzed documents",
+            f"average priority {average_priority:.1f}/10",
+            f"overall sentiment {overall_sentiment}",
+        ]
+        if top_assets:
+            parts.append(f"top asset {top_assets[0].name}")
+        if top_entities:
+            parts.append(f"top entity {top_entities[0].name}")
+        return ", ".join(parts) + "."
