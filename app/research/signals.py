@@ -34,7 +34,7 @@ class SignalCandidate(BaseModel):
     recommended_next_step: str
 
     # Research metrics - NOT execution instructions
-    priority: int = Field(ge=8, le=10)
+    priority: int = Field(ge=0, le=10)
     sentiment: SentimentLabel
     affected_assets: list[str]
     market_scope: MarketScope

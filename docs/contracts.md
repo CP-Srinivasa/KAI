@@ -140,6 +140,8 @@ Rules:
 - Must be fully populated — all score fields are required (no optional scores)
 - Must be schema-validated — all ranges enforced by Pydantic
 - Must not contain provider-specific fields (`provider`, `model`, `raw_output` removed)
+- `AnalysisResult` is the provider-agnostic analysis contract for deterministic fallback,
+  internal companion analysis, and external provider analysis
 - `spam_probability` IS stored on `AnalysisResult` for audit — but scoring functions
   (`compute_priority`, `is_alert_worthy`) receive it as an **explicit separate parameter**
 - `recommended_priority` is set by `apply_to_document()` after `compute_priority()` runs — not by the LLM
@@ -249,6 +251,9 @@ Rules:
 - `run()` output is always `PipelineResult` — never raises (errors surfaced in `result.error`)
 - No direct DB writes inside `AnalysisPipeline` or `PipelineResult`
 - `apply_to_document()` is the only point where scores and entities are written back to the document
+- `llm_output` is optional; `analysis_result` is the required downstream contract for a successful run
+- absence or failure of an external provider must degrade to a valid fallback-compatible analysis result,
+  not an empty pipeline outcome
 - `run_batch()` is concurrency-bounded by `_MAX_CONCURRENT`
 
 ---
@@ -268,7 +273,8 @@ Rules:
 - `apply_to_document()` is the **only** score mutation point (Invariant I-4)
 - No code outside `PipelineResult.apply_to_document()` may set `relevance_score`, `impact_score`,
   `novelty_score`, `sentiment_label`, `priority_score`, or `spam_probability` on a document
-- Scoring is always downstream of LLM output — no standalone scoring without analysis context
+- Scoring is always downstream of `AnalysisResult`; `LLMAnalysisOutput` is optional enrichment,
+  not the canonical scoring dependency
 
 ---
 
@@ -373,32 +379,42 @@ never written to DB. They consume `CanonicalDocument` objects that have `status=
 class WatchlistRegistry:
     @classmethod
     def from_monitor_dir(cls, monitor_dir: Path | str) -> WatchlistRegistry: ...
+    @classmethod
+    def from_file(cls, path: Path | str) -> WatchlistRegistry: ...
 
-    def get_watchlist(self, tag: str) -> list[str]: ...
-    def get_all_watchlists(self) -> Mapping[str, list[str]]: ...
+    def get_watchlist(self, tag: str, *, item_type: WatchlistType = "assets") -> list[str]: ...
+    def get_watchlist_items(self, tag: str, *, item_type: WatchlistType = "assets") -> list[WatchlistItem]: ...
+    def get_all_watchlists(self, *, item_type: WatchlistType = "assets") -> Mapping[str, list[str]]: ...
     def get_symbols_for_category(self, category: str) -> list[str]: ...
-    def find_by_text(self, text: str) -> list[WatchlistEntry]: ...
+    def filter_documents(self, documents, tag, *, item_type: WatchlistType = "assets") -> list[CanonicalDocument]: ...
+    def save(self, path: Path | str) -> None: ...
 ```
+
+`WatchlistType` is one of: `"assets"`, `"persons"`, `"topics"`, `"sources"`
 
 Rules:
 - Source: `monitor/watchlists.yml` — loaded via `WatchlistEntry` + `load_watchlist()`
-- Sections: `crypto`, `equities`, `etfs`, `macro`, `persons`, `topics`
-  (`domains` section is skipped — different schema, handled separately)
+- Sections: `crypto`, `equities`, `etfs`, `macro`, `persons`, `topics`, `domains`
 - Tag lookup is case-insensitive
-- `find_by_text()` uses word-boundary regex — no substring false positives
-- `WatchlistRegistry` is read-only after construction — no mutations
+- `filter_documents()` is the primary document-to-watchlist matching path
+- `WatchlistRegistry` is read-only after construction — no mutations during runtime
 - `load_watchlist()` returns `[]` (not an error) if the file does not exist
+- `find_by_text()` — Sprint 4B planned, not yet implemented; use `filter_documents()` instead
 
 ---
 
 #### 11b. ResearchBrief
 
 ```python
+class BriefFacet(BaseModel):
+    name: str
+    count: int
+
 class BriefDocument(BaseModel):
     document_id: str          # str(CanonicalDocument.id) — traceability
     title: str
     url: str
-    priority_score: int       # [1, 10]
+    priority_score: int       # [1, 10] or 0 if unset
     sentiment_label: str      # SentimentLabel.value
     summary: str
     impact_score: float       # [0.0, 1.0]
@@ -408,21 +424,27 @@ class BriefDocument(BaseModel):
 
 class ResearchBrief(BaseModel):
     cluster_name: str
+    title: str                # auto-generated: "Research Brief: <cluster_name>"
+    summary: str              # auto-generated sentence from metrics + top_assets
     generated_at: datetime
     document_count: int
     average_priority: float
-    overall_sentiment: str    # dominant SentimentLabel.value
-    top_actionable_signals: list[BriefDocument]   # priority >= 8, sorted desc
-    key_documents: list[BriefDocument]             # priority < 8, capped at 20
+    overall_sentiment: str            # dominant SentimentLabel.value
+    top_documents: list[BriefDocument]           # top 10 by (priority, impact, date)
+    top_assets: list[BriefFacet]                 # top 5 most-mentioned asset symbols
+    top_entities: list[BriefFacet]               # top 5 most-mentioned entities
+    top_actionable_signals: list[BriefDocument]  # priority >= 8, max 10
+    key_documents: list[BriefDocument]           # priority < 8, max 20
 
 class ResearchBriefBuilder:
     def build(self, documents: list[CanonicalDocument]) -> ResearchBrief: ...
 ```
 
 Rules:
-- Input: `list[CanonicalDocument]` — only `is_analyzed=True` docs with `priority_score` are used
+- Input: `list[CanonicalDocument]` — only `is_analyzed=True` docs are used
 - `ResearchBriefBuilder.build()` never raises — returns empty brief on empty/unanalyzed input
 - `_ACTIONABLE_PRIORITY_THRESHOLD = 8` — must stay in sync with `ThresholdEngine.min_priority`
+- Sorted by (priority_score, impact_score, published_at) descending
 - `to_markdown()` and `to_json_dict()` are the only output serialization paths
 - `ResearchBrief` is in-memory only — no DB table, no persistence
 
@@ -483,7 +505,212 @@ Rules:
 | No LLM calls | Research layer is pure computation — no provider calls, no external I/O |
 | Watchlist source | Always from `monitor/watchlists.yml` via `WatchlistRegistry.from_monitor_dir()` |
 | CLI entry point | `research` Typer subgroup — `watchlists`, `brief`, `signals` commands |
-| API entry point | `GET /research/briefs/{cluster}` and `GET /research/signals` (Sprint 4) |
+| API entry point | `GET /research/brief` and `GET /research/signals` |
+
+---
+
+---
+
+### 12. Provider-Independent Intelligence Contract
+
+Defines the stable architecture for deterministic fallback analysis, the future internal
+companion model, and external provider analysis.
+
+Full architecture reference: [docs/intelligence_architecture.md](./intelligence_architecture.md)
+
+---
+
+#### 12a. Three Analysis Levels
+
+| Level | Dependency profile | Output at analysis boundary | Operational role |
+|---|---|---|---|
+| Deterministic fallback | No external services | `AnalysisResult` | Guaranteed baseline coverage |
+| Internal companion model | Local/internal runtime only | `AnalysisResult` or lossless normalization into it | Primary local enhancer |
+| External provider analysis | External API + credentials | `LLMAnalysisOutput` normalized into `AnalysisResult` | Optional premium enrichment |
+
+Rules:
+- the system must remain usable when external providers are unavailable
+- OpenAI, Claude, and Antigravity-compatible providers are amplifiers, not hard prerequisites
+- downstream layers consume `AnalysisResult` regardless of analysis source
+
+---
+
+#### 12b. Deterministic Fallback Contract
+
+The fallback layer is mandatory and already operational in the shared analysis pipeline.
+
+It may use only conservative, provider-independent inputs:
+- keyword hits
+- entity mentions
+- watchlist-aligned metadata already present on the document
+- source metadata and bounded heuristics
+
+Required behavior:
+- produce a valid `AnalysisResult` when no external provider is configured
+- produce a valid `AnalysisResult` when the provider is disabled
+- produce a valid fallback `AnalysisResult` when a provider call fails and the pipeline can degrade safely
+- keep explanations traceable as fallback-derived rather than pretending frontier-quality reasoning
+
+Fallback analysis is intentionally conservative:
+- it supports persistence, research briefs, and basic prioritization
+- it must not create a parallel scoring engine
+- it must not silently disappear from the pipeline because an external provider is missing
+
+---
+
+#### 12c. Internal Companion Model Compatibility
+
+The internal companion layer is a specialized local analyst, not an immediate full replacement
+for external frontier providers.
+
+Its first supported task set is:
+- sentiment
+- relevance
+- conservative impact estimation
+- tags/topics
+- short summary generation
+- signal preclassification
+
+Compatibility rules:
+- the companion layer must emit `AnalysisResult` directly or normalize into it without loss of downstream meaning
+- it must reuse the shared scoring path after `AnalysisResult` is created
+- signal preclassification is an upstream hint only; it must not bypass `extract_signal_candidates()`
+- no downstream consumer may require a separate companion-specific schema
+
+---
+
+#### 12d. External Provider Contract in the Intelligence Stack
+
+External providers remain optional enrichers behind `BaseAnalysisProvider`.
+
+They may improve:
+- summary quality
+- sentiment calibration
+- impact estimation
+- richer contextual tagging
+- ambiguity reduction
+
+They must not:
+- become the only path that makes research outputs usable
+- force the rest of the system to branch on provider family at the contract boundary
+
+---
+
+#### 12e. Distillation and Promotion Path
+
+The future companion layer is trained and promoted through a teacher-student process, not by
+changing runtime contracts.
+
+Teacher signals may come from:
+- external provider outputs
+- operator-reviewed corrections
+- historically validated analyzed documents
+
+The internal corpus should contain:
+- persisted analyzed documents
+- normalized `AnalysisResult`
+- teacher labels for supported companion tasks
+- provenance data in dataset tooling, not in the public runtime contract
+
+Promotion gates before the companion becomes an active default:
+- holdout evaluation on teacher-labeled data
+- regression checks against the deterministic fallback floor
+- calibration review for sentiment, relevance, and impact
+- brief-quality review on realistic analyzed-document samples
+- failure-mode review for noisy, empty, adversarial, and multilingual inputs
+
+---
+
+### 13. Intelligence Layer Extension Contracts (Sprint 5 — planned)
+
+Defines the exact extension points for introducing the companion model and `AnalysisSource` tracking.
+These are **stubs** — not yet implemented. Code must not reference them before Sprint 5.
+
+Full architecture reference: [docs/intelligence_architecture.md](./intelligence_architecture.md)
+
+---
+
+#### 13a. ProviderSettings Extension
+
+```python
+# app/core/settings.py — additions to ProviderSettings
+companion_model_endpoint: str | None = None      # e.g. "http://localhost:8080/v1"
+companion_model_name: str = "kai-analyst-v1"
+companion_model_timeout: int = 10                # seconds
+```
+
+Security constraint: `companion_model_endpoint` MUST be `localhost` or an explicitly allowlisted
+internal address. Validation must reject external URLs at settings load time (Sprint 5A).
+
+---
+
+#### 13b. Factory Extension
+
+```python
+# app/analysis/factory.py — new branch in create_provider()
+case "internal":
+    if not settings.companion_model_endpoint:
+        return None
+    from app.analysis.providers.companion import InternalCompanionProvider
+    return InternalCompanionProvider(
+        endpoint=settings.companion_model_endpoint,
+        model=settings.companion_model_name,
+        timeout=settings.companion_model_timeout,
+    )
+```
+
+The companion provider slot in `app/analysis/providers/` is reserved and empty until Sprint 5A.
+`APP_LLM_PROVIDER=internal` must not be set in production before Sprint 5A is complete.
+
+---
+
+#### 13c. AnalysisSource Enum
+
+```python
+# app/analysis/base/interfaces.py  (Sprint 5B addition)
+class AnalysisSource(str, Enum):
+    RULE = "rule"                  # Tier 1 — RuleAnalyzer
+    INTERNAL = "internal"          # Tier 2 — InternalCompanionProvider
+    EXTERNAL_LLM = "external_llm"  # Tier 3 — OpenAI / Anthropic / Gemini
+```
+
+`AnalysisResult` extension (Sprint 5B):
+```python
+analysis_source: AnalysisSource | None = None
+```
+
+DB migration required (Sprint 5B):
+```sql
+ALTER TABLE canonical_documents ADD COLUMN analysis_source VARCHAR(20);
+```
+
+Invariants:
+- `analysis_source` is set at result creation time — immutable after `apply_to_document()`
+- `analysis_source=RULE` documents NEVER serve as distillation teacher signal
+- Distillation corpus selects only `analysis_source=EXTERNAL_LLM` documents
+
+---
+
+#### 13d. Companion Model Output Scope
+
+The companion model produces a **subset** of `LLMAnalysisOutput` (same schema, subset of fields trained):
+
+| Field | Trained? | Sprint 5 default if not trained |
+|-------|----------|--------------------------------|
+| `sentiment_label` | ✅ | — |
+| `sentiment_score` | ✅ | — |
+| `relevance_score` | ✅ | — |
+| `impact_score` | ✅ (cap ≤ 0.8) | — |
+| `tags` | ✅ | — |
+| `actionable` | ✅ | — |
+| `market_scope` | ✅ | — |
+| `affected_assets` | ✅ | — |
+| `explanation_short` | ✅ | — |
+| `novelty_score` | ❌ | `0.5` |
+| `spam_probability` | ❌ | `0.0` |
+| `confidence_score` | ❌ | `0.7` |
+
+Companion model `impact_score` cap: ≤ 0.8 (conservative, not overconfident — Invariant I-17).
 
 ---
 
@@ -514,3 +741,11 @@ These may never be broken without a new spec:
 | I-9 | status transitions are one-way |
 | I-10 | `is_analyzed` and `status=analyzed` are set together, atomically |
 | I-11 | `AnalysisResult.confidence_score` is in-memory only — NOT written to DB. The DB column `credibility_score` is computed as `1.0 - spam_probability` inside `update_analysis()` |
+| I-12 | A document with `analysis_result=None` MUST NOT have `status=ANALYZED` set. `update_analysis(doc_id, None)` is a contract violation — caller must check for None and mark FAILED |
+| I-13 | Deterministic fallback analysis must remain conservative and must not bypass the shared signal thresholding path |
+| I-14 | `InternalCompanionProvider` implements `BaseAnalysisProvider` exactly — zero pipeline changes required for companion introduction |
+| I-15 | Companion model endpoint MUST be localhost or allowlisted internal address — no external inference calls |
+| I-16 | Distillation corpus uses only `analysis_source=EXTERNAL_LLM` documents as teacher signal |
+| I-17 | Companion model `impact_score` cap: ≤ 0.8 (conservative, not overconfident) |
+| I-18 | `AnalysisSource` is set at result creation time — immutable after `apply_to_document()` |
+| I-19 | Rule-only documents (`analysis_source=RULE`) NEVER serve as distillation teacher signal |

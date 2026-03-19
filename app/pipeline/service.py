@@ -159,7 +159,11 @@ async def run_rss_pipeline(
                     analyzed_count += 1
                     # Dispatch alert — only when analysis result is available
                     if res.analysis_result is not None:
-                        spam_prob = res.llm_output.spam_probability if res.llm_output else 0.0
+                        spam_prob = (
+                            res.llm_output.spam_probability
+                            if res.llm_output
+                            else res.analysis_result.spam_probability
+                        )
                         await alert_service.process_document(
                             res.document, res.analysis_result, spam_probability=spam_prob
                         )
@@ -181,7 +185,11 @@ async def run_rss_pipeline(
                 res.apply_to_document()
                 analyzed_count += 1
                 if res.analysis_result is not None:
-                    spam_prob = res.llm_output.spam_probability if res.llm_output else 0.0
+                    spam_prob = (
+                        res.llm_output.spam_probability
+                        if res.llm_output
+                        else res.analysis_result.spam_probability
+                    )
                     await alert_service.process_document(
                         res.document, res.analysis_result, spam_probability=spam_prob
                     )

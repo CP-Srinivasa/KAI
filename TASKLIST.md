@@ -198,6 +198,178 @@ Akzeptanzkriterien:
 
 ---
 
+---
+
+### Sprint 4 Phase C — Fallback Pipeline Guardrails ✅
+
+**Status**: ✅ abgeschlossen
+
+**Ziel**: Produktionssichere Analyse ohne LLM — kein harter Absturz, kein stilles Überspringen,
+klare Unterscheidung zwischen LLM-enriched und rule-based Ergebnissen.
+
+| # | Task | Agent | Status |
+|---|---|---|---|
+| 4.10 | `apply_to_document()` Fallback — Scores auch ohne `llm_output` schreiben | — | ✅ (war bereits korrekt) |
+| 4.11 | `analyze_pending` None-Guard — `analysis_result=None` → FAILED statt silent | — | ✅ |
+| 4.12 | Tests: `test_pipeline_fallback.py` — rule-only Pfad, kein Score-Verlust, I-12 guard | — | ✅ |
+
+**Codex-Spec für 4.10–4.12:**
+
+```
+## Task: Sprint 4C — Fallback Pipeline Guardrails
+
+Agent: Codex
+Phase: Sprint 4C
+Modul: app/analysis/pipeline.py, app/cli/main.py
+Typ: fix
+
+Beschreibung:
+  Sichert den Analyse-Pfad ohne LLM-Provider ab.
+  Zwei Kernprobleme beheben — keine neuen Features, nur Robustheit.
+
+Spec-Referenz: docs/contracts.md §12b, §12c, I-12, I-13
+
+Änderung 1 — app/analysis/pipeline.py (apply_to_document):
+  Aktuell: if not self.analysis_result or not self.llm_output: return
+  Neu:     if not self.analysis_result: return
+           # llm_output-abhängige Felder (spam_prob, credibility) nur setzen wenn llm_output da
+           spam_prob = self.llm_output.spam_probability if self.llm_output else 0.0
+           # credibility_score = 1.0 - spam_prob (schon korrekt)
+           # market_scope aus llm_output nur wenn vorhanden
+
+Änderung 2 — app/cli/main.py (analyze_pending):
+  Nach res.apply_to_document():
+  if res.analysis_result is None:
+      await repo.update_status(str(doc.id), DocumentStatus.FAILED)
+      console.print(f"[yellow]Skipped {doc.id} — no analysis result (no provider?)[/yellow]")
+      skip_count += 1
+      continue
+
+Constraints:
+  - NICHT: neue Provider-Logik oder Factory-Änderungen
+  - NICHT: RuleAnalyzer in AnalysisPipeline autowire — bleibt separater Pfad
+  - NICHT: Scoring-Formel ändern
+  - direction_hint-Invariante bleibt: "bullish"/"bearish"/"neutral"
+  - I-12 einhalten: analysis_result=None → NEVER update_analysis aufrufen
+
+Akzeptanzkriterien:
+  - [ ] ruff check . sauber
+  - [ ] pytest tests/unit/test_pipeline_fallback.py grün (neu)
+  - [ ] apply_to_document() schreibt Scores wenn analysis_result gesetzt, llm_output=None
+  - [ ] analyze_pending markiert FAILED wenn analysis_result=None (nie silent skip)
+  - [ ] Bestehende tests/unit/test_analysis_pipeline.py weiterhin grün
+```
+
+---
+
+## Sprint 5 — Intelligence Layer (Companion Model)
+
+> **Startet erst nach Sprint 4C-Abschluss.**
+
+**Ziel**: Lokale Analyse-Ebene ohne externe Provider — `InternalCompanionProvider` als eigenständige Option neben Tier 3.
+
+**Architektur-Basis**: `docs/intelligence_architecture.md`, `docs/contracts.md §13`
+
+| # | Task | Agent | Status |
+|---|---|---|---|
+| 5.1 | `InternalCompanionProvider` Skeleton — `app/analysis/providers/companion.py` | Codex | ⏳ |
+| 5.2 | `ProviderSettings` Extension — `companion_model_endpoint`, `companion_model_name`, `companion_model_timeout` | Codex | ⏳ |
+| 5.3 | Factory `"internal"` Branch — `create_provider()` | Codex | ⏳ |
+| 5.4 | `AnalysisSource` Enum — `app/analysis/base/interfaces.py` | Codex | ⏳ |
+| 5.5 | `AnalysisResult.analysis_source` Field + Alembic Migration | Codex | ⏳ |
+| 5.6 | Tests: Companion Provider, Factory, AnalysisSource | Codex | ⏳ |
+| 5.7 | Priority Fallback Chain — Tier 3 → Tier 2 → Tier 1 | Codex | ⏳ |
+
+**Codex-Spec für 5.1–5.3 (Sprint 5A — Skeleton + Factory):**
+
+```
+## Task: Sprint 5A — InternalCompanionProvider Skeleton
+
+Agent: Codex
+Phase: Sprint 5A
+Modul: app/analysis/providers/companion.py, app/analysis/factory.py, app/core/settings.py
+Typ: feature (stub/skeleton)
+
+Beschreibung:
+  Führe den InternalCompanionProvider als vollständige Skeleton-Implementierung ein.
+  Kein Training, kein echter Inference-Aufruf — nur sauberes Interface + HTTP-Stub.
+
+Spec-Referenz: docs/intelligence_architecture.md §Tier 2, docs/contracts.md §13a–13b
+
+Änderungen:
+  1. app/core/settings.py — ProviderSettings Extension:
+     companion_model_endpoint: str | None = None
+     companion_model_name: str = "kai-analyst-v1"
+     companion_model_timeout: int = 10
+
+  2. app/analysis/providers/companion.py (NEU):
+     class InternalCompanionProvider(BaseAnalysisProvider):
+         provider_name = "internal"
+         model: str
+         endpoint: str
+         timeout: int
+         async def analyze(title, text, context) -> LLMAnalysisOutput:
+             # Stub: POST to self.endpoint/analyze, return LLMAnalysisOutput
+             # Falls endpoint nicht erreichbar → raise RuntimeError (kein silentes Fallback)
+
+  3. app/analysis/factory.py — neuer case "internal":
+     if not settings.companion_model_endpoint: return None
+     return InternalCompanionProvider(...)
+
+Constraints:
+  - NICHT: echten Inference-Client bauen (HTTP-Stub reicht für Sprint 5A)
+  - NICHT: Scoring-Formel ändern
+  - NICHT: Pipeline ändern (BaseAnalysisProvider-Kompatibilität reicht)
+  - Security: companion_model_endpoint validation — nur localhost oder allowlisted hosts
+
+Akzeptanzkriterien:
+  - [ ] ruff check . sauber
+  - [ ] pytest tests/unit/test_companion_provider.py grün (neu)
+  - [ ] pytest tests/unit/test_factory.py weiterhin grün (neuer "internal"-Pfad abgedeckt)
+  - [ ] InternalCompanionProvider ist kein Breaking Change für bestehende Tests
+```
+
+**Codex-Spec für 5.4–5.5 (Sprint 5B — AnalysisSource + Migration):**
+
+```
+## Task: Sprint 5B — AnalysisSource Enum + DB Migration
+
+Agent: Codex
+Phase: Sprint 5B
+Modul: app/analysis/base/interfaces.py, app/storage/models.py, alembic/versions/
+Typ: feature
+
+Spec-Referenz: docs/contracts.md §13c, docs/intelligence_architecture.md §AnalysisSource
+
+Änderungen:
+  1. app/analysis/base/interfaces.py:
+     class AnalysisSource(str, Enum):
+         RULE = "rule"
+         INTERNAL = "internal"
+         EXTERNAL_LLM = "external_llm"
+
+     AnalysisResult + optional field:
+     analysis_source: AnalysisSource | None = None
+
+  2. app/storage/models.py:
+     canonical_documents.analysis_source: Mapped[str | None] = mapped_column(String(20), nullable=True)
+
+  3. Alembic Migration (neu):
+     ALTER TABLE canonical_documents ADD COLUMN analysis_source VARCHAR(20);
+
+Constraints:
+  - Invariant I-18: analysis_source ist nach apply_to_document() immutabel
+  - Invariant I-19: RULE-Dokumente dürfen NIEMALS als Distillation-Teacher dienen
+  - Nullable: bestehende Dokumente ohne analysis_source sind valid (vor Sprint 5)
+
+Akzeptanzkriterien:
+  - [ ] ruff check . sauber
+  - [ ] Alembic-Migration läuft durch (alembic upgrade head)
+  - [ ] Bestehende Tests weiterhin grün (keine Breaking Changes)
+```
+
+---
+
 ## Grundregel
 
 > Ein Sprint beginnt erst, wenn der vorherige **vollständig** abgeschlossen ist:

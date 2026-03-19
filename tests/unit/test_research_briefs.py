@@ -1,5 +1,10 @@
 """Tests for Research Briefs module."""
 
+import pytest
+
+from app.analysis.keywords.engine import KeywordEngine
+from app.analysis.keywords.watchlist import WatchlistEntry
+from app.analysis.pipeline import AnalysisPipeline
 from app.core.enums import SentimentLabel
 from app.research.briefs import ResearchBriefBuilder
 from tests.unit.factories import make_document
@@ -119,3 +124,38 @@ def test_research_brief_to_json():
     assert data["title"] == "Research Brief: JSON Test"
     assert data["document_count"] == 0
     assert isinstance(data["generated_at"], str)
+
+
+@pytest.mark.asyncio
+async def test_research_brief_builder_with_fallback_analyzed_document():
+    engine = KeywordEngine(
+        keywords=frozenset({"halving", "regulation"}),
+        watchlist_entries=[
+            WatchlistEntry(
+                symbol="BTC",
+                name="Bitcoin",
+                aliases=frozenset({"bitcoin"}),
+                tags=(),
+                category="crypto",
+            )
+        ],
+        entity_aliases=[],
+    )
+    pipeline = AnalysisPipeline(keyword_engine=engine, provider=None)
+    doc = make_document(
+        title="Bitcoin regulation update",
+        raw_text="BTC regulation and halving continue to drive discussion.",
+    )
+
+    result = await pipeline.run(doc)
+    assert result.analysis_result is not None
+
+    result.apply_to_document()
+    doc.is_analyzed = True
+
+    brief = ResearchBriefBuilder("Fallback").build([doc])
+
+    assert brief.document_count == 1
+    assert brief.summary.startswith("1 analyzed documents")
+    assert brief.top_documents[0].title == "Bitcoin regulation update"
+    assert brief.top_assets[0].name == "BTC"

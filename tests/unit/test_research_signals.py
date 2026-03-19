@@ -53,7 +53,7 @@ def test_extract_signal_candidates_direction_mapping():
 
 
 def test_signal_candidate_strict_validation():
-    # Will raise ValidationError if priority < 8 due to Field(ge=8)
+    # Will raise ValidationError if priority < 0 due to Field(ge=0)
     with pytest.raises(ValidationError):
         SignalCandidate(
             signal_id="123",
@@ -66,7 +66,7 @@ def test_signal_candidate_strict_validation():
             risk_notes="High vol",
             source_quality=0.8,
             recommended_next_step="Review ETH neutral signal — human decision required.",
-            priority=5,  # Invalid — below ge=8
+            priority=-1,  # Invalid — below ge=0
             sentiment=SentimentLabel.BULLISH,
             affected_assets=[],
             market_scope=MarketScope.UNKNOWN,
@@ -103,3 +103,33 @@ def test_extract_signal_candidates_document_id_traceability():
     assert len(candidates) == 1
     assert candidates[0].document_id == str(doc.id)
     assert candidates[0].signal_id == f"sig_{doc.id}"
+
+
+def test_extract_signal_candidates_fallback_compatible():
+    # A fallback-analyzed document might lack scores and sentiment entirely
+    fallback_doc = make_document(
+        is_analyzed=True,
+        priority_score=None,
+        sentiment_label=None,
+        relevance_score=None,
+        credibility_score=None,
+        spam_probability=None,
+        market_scope=MarketScope.UNKNOWN,
+        tickers=[],
+        crypto_assets=[]
+    )
+    # Give it a low min_priority to ensure it passes the filter
+    # despite having 0 priority
+    candidates = extract_signal_candidates([fallback_doc], min_priority=0)
+
+    assert len(candidates) == 1
+    sig = candidates[0]
+
+    assert sig.priority == 0
+    assert sig.direction_hint == "neutral"
+    assert sig.sentiment == SentimentLabel.NEUTRAL
+    assert sig.confidence == 0.5  # fallback default
+    assert sig.source_quality == 0.5  # fallback default
+    assert sig.target_asset == "General Market" # fallback primary asset
+    assert "spam_prob=0.00" in sig.risk_notes
+    assert "scope=unknown" in sig.risk_notes

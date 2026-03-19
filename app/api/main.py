@@ -65,6 +65,8 @@ def create_app() -> FastAPI:
     app.include_router(sources.router)
     app.include_router(query.router)
     app.include_router(alerts.router)
+    from app.api.routers import research
+    app.include_router(research.router, prefix="/research", tags=["research"])
     return app
 
 

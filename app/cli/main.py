@@ -204,11 +204,23 @@ def analyze_pending(
                 # apply_to_document() merges entities + scores + priority onto doc
                 res.apply_to_document()
 
+                # I-12: analysis_result=None MUST NOT produce status=ANALYZED
+                # In normal operation this is unreachable (fallback always builds a result),
+                # but defensive guard prevents silent data corruption on future code changes.
+                if res.analysis_result is None:
+                    console.print(
+                        f"[yellow]Skipped {res.document.id}:"
+                        " no analysis result (no provider configured?)[/yellow]"
+                    )
+                    error_count += 1
+                    try:
+                        await repo.update_status(str(res.document.id), DocumentStatus.FAILED)
+                    except Exception:
+                        pass
+                    continue
+
                 try:
-                    if res.analysis_result is not None:
-                        await repo.update_analysis(str(res.document.id), res.analysis_result)
-                    else:
-                        await repo.update_status(str(res.document.id), DocumentStatus.ANALYZED)
+                    await repo.update_analysis(str(res.document.id), res.analysis_result)
                     success_count += 1
                 except Exception as e:
                     console.print(f"[red]Failed to save doc {res.document.id}:[/red] {e}")
@@ -711,6 +723,7 @@ def research_signals(
     limit: int = typer.Option(100, help="Number of recent documents to search"),
     min_priority: int = typer.Option(8, help="Minimum priority score for signals"),
     watchlist: str = typer.Option(None, help="Watchlist name to boost priority of matching assets"),
+    provider: str = typer.Option(None, help="Filter by provider (e.g. openai, fallback)"),
 ) -> None:
     """Extract and list strict Signal Candidates for automated trading."""
     import asyncio
@@ -741,6 +754,9 @@ def research_signals(
         async with session_factory.begin() as session:
             repo = DocumentRepository(session)
             docs = await repo.list(is_analyzed=True, limit=limit)
+
+        if provider:
+            docs = [d for d in docs if d.provider == provider]
 
         signals = extract_signal_candidates(
             docs,
@@ -785,6 +801,110 @@ def research_signals(
 
         console.print(table)
         console.print(f"\n[bold]{len(signals)} Actionable Signals[/bold] ready for execution.")
+
+    asyncio.run(run())
+
+
+@research_app.command("dataset-export")
+def research_dataset_export(
+    output_file: str = typer.Argument(..., help="Path to output JSONL file"),
+    provider: str = typer.Option("openai", help="Filter by provider (e.g. openai)"),
+    limit: int = typer.Option(1000, help="Max documents to export"),
+) -> None:
+    """Export analyzed documents (Teacher Outputs) to JSONL for Companion Model tuning."""
+    import asyncio
+    from pathlib import Path
+
+    async def run() -> None:
+        from app.research.datasets import export_training_data
+        from app.storage.db.session import build_session_factory
+        from app.storage.repositories.document_repo import DocumentRepository
+
+        settings = get_settings()
+        session_factory = build_session_factory(settings.db)
+
+        async with session_factory.begin() as session:
+            repo = DocumentRepository(session)
+            docs = await repo.list(is_analyzed=True, limit=limit)
+
+        if provider and provider != "all":
+            docs = [d for d in docs if d.provider == provider]
+
+        if not docs:
+            console.print(f"[yellow]No analyzed documents found for provider {provider}.[/yellow]")
+            return
+
+        out_path = Path(output_file)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+
+        count = export_training_data(docs, out_path)
+        console.print(
+            f"[green]Successfully exported {count} documents to {out_path.absolute()}[/green]"
+        )
+
+    asyncio.run(run())
+
+
+@research_app.command("evaluate")
+def research_evaluate(
+    teacher_provider: str = typer.Option("openai", help="The baseline model provider"),
+    limit: int = typer.Option(50, help="Number of documents to evaluate over"),
+) -> None:
+    """Run the internal companion model against teacher outputs and print metrics."""
+    import asyncio
+
+    async def run() -> None:
+        from app.analysis.keywords.engine import KeywordEngine
+        from app.analysis.pipeline import AnalysisPipeline
+        from app.research.evaluation import compare_outputs
+        from app.storage.db.session import build_session_factory
+        from app.storage.repositories.document_repo import DocumentRepository
+
+        settings = get_settings()
+        monitor_dir = Path(settings.monitor_dir)
+        session_factory = build_session_factory(settings.db)
+
+        console.print(f"[bold]Loading {limit} teacher documents...[/bold]")
+        async with session_factory.begin() as session:
+            repo = DocumentRepository(session)
+            docs = await repo.list(is_analyzed=True, limit=limit)
+
+        teacher_docs = [d for d in docs if d.provider == teacher_provider]
+        if not teacher_docs:
+            console.print(f"[yellow]No documents analyzed by '{teacher_provider}' found.[/yellow]")
+            return
+
+        keyword_engine = KeywordEngine.from_monitor_dir(monitor_dir)
+        pipeline = AnalysisPipeline(keyword_engine, provider=None, run_llm=False)
+
+        companion_docs = []
+        for d in teacher_docs:
+            comp_doc = d.model_copy()
+            # Erase existing scores so we know we are running fresh
+            comp_doc.is_analyzed = False
+            comp_doc.sentiment_score = None
+            comp_doc.priority_score = None
+
+            res = await pipeline.run(comp_doc)
+            res.apply_to_document()
+            companion_docs.append(res.document)
+
+        console.print(f"[bold]Evaluating {len(teacher_docs)} outputs...[/bold]")
+        metrics = compare_outputs(teacher_docs, companion_docs)
+
+        from rich.table import Table
+        table = Table(title="Companion Evaluation Metrics")
+        table.add_column("Metric", style="cyan")
+        table.add_column("Value", justify="right")
+
+        table.add_row("Dataset Size", str(metrics.document_count))
+        table.add_row("Sentiment Match", f"{metrics.sentiment_accuracy:.1%}")
+        table.add_row("Actionable Match", f"{metrics.actionable_accuracy:.1%}")
+        table.add_row("Priority MSE", f"{metrics.priority_mse:.3f}")
+        table.add_row("Relevance MSE", f"{metrics.relevance_mse:.3f}")
+        table.add_row("Impact MSE", f"{metrics.impact_mse:.3f}")
+
+        console.print(table)
 
     asyncio.run(run())
 

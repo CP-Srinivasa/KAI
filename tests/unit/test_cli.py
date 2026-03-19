@@ -321,6 +321,70 @@ def test_query_analyze_pending_empty() -> None:
         mp.undo()
 
 
+def test_query_analyze_pending_without_openai_key_uses_fallback_analysis(monkeypatch) -> None:
+    from app.analysis.keywords import engine as kw_engine
+    from app.analysis.keywords.engine import KeywordHit
+    from app.storage.db import session as db_session
+    from app.storage.repositories import document_repo
+
+    settings = AppSettings()
+    settings.providers.openai_api_key = ""
+    captured_results = []
+
+    class FakeKeywordEngine:
+        def match(self, text: str) -> list[KeywordHit]:
+            return [
+                KeywordHit(canonical="BTC", category="crypto", occurrences=2),
+                KeywordHit(canonical="regulation", category="keyword", occurrences=1),
+            ]
+
+        def match_tickers(self, text: str) -> list[str]:
+            return ["BTC"]
+
+    class FakeSessionFactory:
+        def begin(self):
+            class FakeSessionContext:
+                async def __aenter__(self):
+                    return object()
+
+                async def __aexit__(self, exc_type, exc, tb):
+                    return False
+
+            return FakeSessionContext()
+
+    async def fake_list(self, limit: int = 50):
+        return [
+            CanonicalDocument(
+                url="https://example.com/fallback-doc",
+                title="Bitcoin regulation update",
+                raw_text="BTC regulation pressure remains elevated.",
+            )
+        ]
+
+    async def fake_update(self, document_id: str, result) -> None:
+        captured_results.append(result)
+
+    monkeypatch.setattr(cli_main, "get_settings", lambda: settings)
+    monkeypatch.setattr(db_session, "build_session_factory", lambda _settings: FakeSessionFactory())
+    monkeypatch.setattr(document_repo.DocumentRepository, "get_pending_documents", fake_list)
+    monkeypatch.setattr(document_repo.DocumentRepository, "update_analysis", fake_update)
+    monkeypatch.setattr(
+        kw_engine.KeywordEngine,
+        "from_monitor_dir",
+        lambda _path: FakeKeywordEngine(),
+    )
+
+    result = runner.invoke(app, ["query", "analyze-pending", "--limit", "1"])
+
+    assert result.exit_code == 0
+    assert "No API key found for provider 'openai'" in result.output
+    assert "Analysis complete! 1 success, 0 failed." in result.output
+    assert len(captured_results) == 1
+    assert captured_results[0].recommended_priority is not None
+    assert captured_results[0].affected_assets == ["BTC"]
+    assert captured_results[0].explanation_short.startswith("Rule-based fallback analysis")
+
+
 def test_ingest_rss_saved_documents_flow_into_analyze_pending(monkeypatch) -> None:
     from app.analysis.keywords import engine as kw_engine
     from app.integrations.openai import provider as openai_provider

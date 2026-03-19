@@ -1,5 +1,6 @@
-"""Tests for AnalysisPipeline — mocked LLM provider."""
+"""Tests for AnalysisPipeline â€” mocked LLM provider."""
 
+import asyncio
 from unittest.mock import AsyncMock
 
 import pytest
@@ -10,8 +11,6 @@ from app.analysis.keywords.watchlist import WatchlistEntry
 from app.analysis.pipeline import AnalysisPipeline, PipelineResult
 from app.core.domain.document import AnalysisResult, CanonicalDocument
 from app.core.enums import MarketScope, SentimentLabel
-
-# ── Fixtures ──────────────────────────────────────────────────────────────────
 
 
 def _btc_engine() -> KeywordEngine:
@@ -62,26 +61,30 @@ def _make_doc(
     return CanonicalDocument(url="https://example.com/1", title=title, raw_text=text)
 
 
-# ── Keyword-only pipeline (no LLM) ────────────────────────────────────────────
-
-
 @pytest.mark.asyncio
 async def test_pipeline_keyword_stage_no_provider():
     engine = _btc_engine()
     pipeline = AnalysisPipeline(keyword_engine=engine, provider=None)
+
     result = await pipeline.run(_make_doc("Bitcoin halving approaches", "BTC price analysis"))
+
     assert result.success
     assert any(h.canonical == "BTC" for h in result.keyword_hits)
     assert any(h.canonical == "halving" for h in result.keyword_hits)
     assert result.llm_output is None
-    assert result.analysis_result is None
+    assert result.analysis_result is not None
+    assert result.analysis_result.explanation_short.startswith("Rule-based fallback analysis")
+    assert result.analysis_result.affected_assets == ["BTC"]
+    assert result.analysis_result.spam_probability >= 0.0
 
 
 @pytest.mark.asyncio
 async def test_pipeline_entity_mentions_extracted():
     engine = _btc_engine()
     pipeline = AnalysisPipeline(keyword_engine=engine)
+
     result = await pipeline.run(_make_doc("Bitcoin news", "BTC and bitcoin mentioned"))
+
     assert any(m.name == "BTC" for m in result.entity_mentions)
 
 
@@ -89,12 +92,13 @@ async def test_pipeline_entity_mentions_extracted():
 async def test_pipeline_no_hits_on_irrelevant_text():
     engine = _btc_engine()
     pipeline = AnalysisPipeline(keyword_engine=engine)
+
     result = await pipeline.run(_make_doc("Weather forecast", "It will be sunny tomorrow"))
+
     assert result.keyword_hits == []
     assert result.entity_mentions == []
-
-
-# ── Full pipeline with LLM provider ───────────────────────────────────────────
+    assert result.analysis_result is not None
+    assert result.analysis_result.relevance_score == 0.0
 
 
 @pytest.mark.asyncio
@@ -139,6 +143,7 @@ def test_apply_to_document_falls_back_to_llm_market_scope():
         explanation_long=llm_output.long_reasoning or "",
         actionable=llm_output.actionable,
         tags=llm_output.tags,
+        spam_probability=llm_output.spam_probability,
     )
 
     result = PipelineResult(document=doc, llm_output=llm_output, analysis_result=analysis_result)
@@ -148,7 +153,7 @@ def test_apply_to_document_falls_back_to_llm_market_scope():
 
 
 @pytest.mark.asyncio
-async def test_pipeline_run_llm_false_skips_provider():
+async def test_pipeline_run_llm_false_uses_fallback_analysis():
     llm_out = _make_llm_output()
     provider = _mock_provider(llm_out)
     engine = _btc_engine()
@@ -158,11 +163,12 @@ async def test_pipeline_run_llm_false_skips_provider():
 
     provider.analyze.assert_not_called()
     assert result.llm_output is None
-    assert result.analysis_result is None
+    assert result.analysis_result is not None
+    assert "disabled" in result.analysis_result.explanation_short.lower()
 
 
 @pytest.mark.asyncio
-async def test_pipeline_llm_error_captured():
+async def test_pipeline_llm_error_uses_rule_fallback():
     provider = AsyncMock()
     provider.provider_name = "openai"
     provider.model = "gpt-4o"
@@ -172,14 +178,32 @@ async def test_pipeline_llm_error_captured():
 
     result = await pipeline.run(_make_doc())
 
-    assert not result.success
-    assert "API unavailable" in result.error
+    assert result.success
+    assert result.error is None
     assert result.llm_output is None
-    # keyword stage should still have run before the error
+    assert result.analysis_result is not None
+    assert "failed" in result.analysis_result.explanation_short.lower()
     assert result.keyword_hits is not None
 
 
-# ── run_batch ─────────────────────────────────────────────────────────────────
+def test_apply_to_document_with_fallback_analysis_sets_scores_and_entities():
+    engine = _btc_engine()
+    pipeline = AnalysisPipeline(keyword_engine=engine, provider=None)
+    doc = CanonicalDocument(
+        url="https://example.com/fallback",
+        title="Bitcoin regulation outlook",
+        raw_text="BTC regulation update with halving context.",
+    )
+
+    result = asyncio.run(pipeline.run(doc))
+    assert result.analysis_result is not None
+
+    result.apply_to_document()
+
+    assert doc.priority_score is not None
+    assert doc.relevance_score is not None
+    assert doc.credibility_score is not None
+    assert "BTC" in doc.tickers
 
 
 @pytest.mark.asyncio
@@ -187,14 +211,15 @@ async def test_run_batch_returns_all_results():
     engine = _btc_engine()
     pipeline = AnalysisPipeline(keyword_engine=engine)
     docs = [CanonicalDocument(url=f"https://example.com/{i}", title=f"Doc {i}") for i in range(5)]
+
     results = await pipeline.run_batch(docs)
+
     assert len(results) == 5
     assert all(isinstance(r, PipelineResult) for r in results)
 
 
 @pytest.mark.asyncio
 async def test_run_batch_concurrency():
-    """Verify all 8 docs complete even with semaphore(5) limit."""
     engine = _btc_engine()
     llm_out = _make_llm_output()
     provider = _mock_provider(llm_out)
@@ -202,6 +227,8 @@ async def test_run_batch_concurrency():
     docs = [
         CanonicalDocument(url=f"https://example.com/{i}", title=f"BTC doc {i}") for i in range(8)
     ]
+
     results = await pipeline.run_batch(docs)
+
     assert len(results) == 8
     assert provider.analyze.call_count == 8

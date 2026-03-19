@@ -218,7 +218,7 @@ app/
 monitor/             → user-editable source lists, keywords, watchlists
   historical_events.yml → 13 Seed-Events für analog matching
 docker/              → Dockerfile (production), docker-compose.yml
-tests/unit/          → pytest unit tests (474 passing — ruff clean)
+tests/unit/          → pytest unit tests (497 passing — ruff clean)
 ```
 
 ---
@@ -286,7 +286,8 @@ Jeder Agent darf nur in seinem Bereich schreiben. Grenzüberschreitungen erforde
 **Sprint 1 — Foundation & Contracts** ✅ abgeschlossen
 **Sprint 2 — Provider Consolidation** ✅ abgeschlossen
 **Sprint 3 — Alerting** ✅ abgeschlossen
-**Sprint 4 — Research & Signals** ⏳ nächste Phase
+**Sprint 4 — Research & Signals** ⏳ Phase C ausstehend
+**Sprint 5 — Intelligence Layer (Companion Model)** ⏳ geplant nach Sprint 4C
 
 | Phase | Status | Geliefert |
 |---|---|---|
@@ -301,9 +302,12 @@ Jeder Agent darf nur in seinem Bereich schreiben. Grenzüberschreitungen erforde
 | PC Tests | ✅ | Test-Factory für AnalysisResult, kein Ad-hoc-Mocking mehr |
 | PD Provider | ✅ | Claude (Anthropic) + Gemini Provider-Implementierungen |
 | P7 Alerting | ✅ | app/alerts/ — Telegram, Email, ThresholdEngine, DigestCollector, AlertService, CLI alerts, API /alerts/test |
-| P8 Research Models | ✅ | app/research/ — WatchlistRegistry, ResearchBrief, ResearchBriefBuilder, SignalCandidate, extract_signal_candidates(), contracts.md §11, TASKLIST.md Sprint 4A+4B Specs |
+| P8 Research Models | ✅ | app/research/ — WatchlistRegistry (multi-type: assets/persons/topics/sources), ResearchBrief+BriefFacet, ResearchBriefBuilder, SignalCandidate, extract_signal_candidates(), contracts.md §11, app/research/AGENTS.md |
+| P8 Research CLI | ✅ | app/cli/main.py — research brief, research watchlists, research signals commands |
+| P8 Intelligence Architecture | ✅ | docs/intelligence_architecture.md, docs/contracts.md §12–13, Drei-Tier-Stack definiert (Rule/Companion/External), AnalysisSource Enum, Distillation Path |
+| P9 Intelligence Layer | ⏳ Sprint 5 | InternalCompanionProvider, ProviderSettings Extension, Factory "internal" Branch, AnalysisSource DB Migration |
 
-**Test-Stand**: 474 passed, 0 failed, 0 xfailed
+**Test-Stand**: 497 passed, 0 failed, 0 xfailed
 
 Vollständige Task-Liste → [TASKLIST.md](./TASKLIST.md)
 
@@ -392,7 +396,7 @@ Vollständige Dokumentation → [docs/security.md](./docs/security.md)
 
 ```bash
 # Tests + Lint (lokal)
-pytest                                    # 474+ Tests (alle)
+pytest                                    # 497+ Tests (alle)
 ruff check .                              # Lint (muss fehlerfrei sein)
 mypy app/                                 # Typ-Check (optional)
 
