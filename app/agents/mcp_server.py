@@ -62,12 +62,16 @@ _ARTIFACT_SUFFIXES = frozenset({".json", ".jsonl"})
 _HANDOFF_ACK_DEFAULT_PATH = f"artifacts/{HANDOFF_ACK_JSONL_FILENAME}"
 _ALERT_AUDIT_DEFAULT_DIR = _ARTIFACTS_SUBDIR
 _REVIEW_JOURNAL_DEFAULT_PATH = "artifacts/operator_review_journal.jsonl"
+_PAPER_EXECUTION_AUDIT_DEFAULT_PATH = "artifacts/paper_execution_audit.jsonl"
 
 _CANONICAL_MCP_READ_TOOL_NAMES = (
     "get_watchlists",
     "get_research_brief",
     "get_signal_candidates",
     "get_market_data_quote",
+    "get_paper_portfolio_snapshot",
+    "get_paper_positions_summary",
+    "get_paper_exposure_summary",
     "get_narrative_clusters",
     "get_signals_for_execution",
     "get_distribution_classification_report",
@@ -847,6 +851,83 @@ async def get_market_data_quote(
         timeout_seconds=timeout_seconds,
     )
     return snapshot.to_json_dict()
+
+
+async def _build_paper_portfolio_snapshot(
+    *,
+    audit_path: str = _PAPER_EXECUTION_AUDIT_DEFAULT_PATH,
+    provider: str = "coingecko",
+    freshness_threshold_seconds: float = 120.0,
+    timeout_seconds: int = 10,
+) -> Any:
+    from app.execution.portfolio_read import build_portfolio_snapshot
+
+    resolved = _resolve_workspace_path(
+        audit_path,
+        label="Paper execution audit",
+        allowed_suffixes=frozenset({".jsonl"}),
+    )
+    return await build_portfolio_snapshot(
+        audit_path=resolved,
+        provider=provider,
+        freshness_threshold_seconds=freshness_threshold_seconds,
+        timeout_seconds=timeout_seconds,
+    )
+
+
+@mcp.tool()
+async def get_paper_portfolio_snapshot(
+    audit_path: str = _PAPER_EXECUTION_AUDIT_DEFAULT_PATH,
+    provider: str = "coingecko",
+    freshness_threshold_seconds: float = 120.0,
+    timeout_seconds: int = 10,
+) -> dict[str, Any]:
+    """Return canonical read-only paper portfolio snapshot from audit replay."""
+    snapshot = await _build_paper_portfolio_snapshot(
+        audit_path=audit_path,
+        provider=provider,
+        freshness_threshold_seconds=freshness_threshold_seconds,
+        timeout_seconds=timeout_seconds,
+    )
+    return snapshot.to_json_dict()  # type: ignore[no-any-return]
+
+
+@mcp.tool()
+async def get_paper_positions_summary(
+    audit_path: str = _PAPER_EXECUTION_AUDIT_DEFAULT_PATH,
+    provider: str = "coingecko",
+    freshness_threshold_seconds: float = 120.0,
+    timeout_seconds: int = 10,
+) -> dict[str, object]:
+    """Return positions-only slice from canonical paper portfolio snapshot."""
+    from app.execution.portfolio_read import build_positions_summary
+
+    snapshot = await _build_paper_portfolio_snapshot(
+        audit_path=audit_path,
+        provider=provider,
+        freshness_threshold_seconds=freshness_threshold_seconds,
+        timeout_seconds=timeout_seconds,
+    )
+    return build_positions_summary(snapshot)
+
+
+@mcp.tool()
+async def get_paper_exposure_summary(
+    audit_path: str = _PAPER_EXECUTION_AUDIT_DEFAULT_PATH,
+    provider: str = "coingecko",
+    freshness_threshold_seconds: float = 120.0,
+    timeout_seconds: int = 10,
+) -> dict[str, object]:
+    """Return exposure-only slice from canonical paper portfolio snapshot."""
+    from app.execution.portfolio_read import build_exposure_summary
+
+    snapshot = await _build_paper_portfolio_snapshot(
+        audit_path=audit_path,
+        provider=provider,
+        freshness_threshold_seconds=freshness_threshold_seconds,
+        timeout_seconds=timeout_seconds,
+    )
+    return build_exposure_summary(snapshot)
 
 
 @mcp.tool()

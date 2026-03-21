@@ -183,18 +183,37 @@ def test_telegram_command_inventory_references_registered_cli_research_commands(
         ),
         (
             "/positions",
-            "_get_handoff_collector_summary",
+            "_get_paper_positions_summary",
             {
-                "total_handoffs": 4,
-                "acknowledged_count": 1,
-                "pending_count": 3,
+                "position_count": 2,
+                "mark_to_market_status": "ok",
+                "positions": [{"symbol": "BTC/USDT"}],
+                "available": True,
                 "execution_enabled": False,
                 "write_back_allowed": False,
             },
             [
-                "*Positions (Collector Proxy, Read-Only)*",
-                "total_handoffs=`4`",
-                "Ref: `research handoff-collector-summary`",
+                "*Positions (Paper Portfolio Read-Only)*",
+                "position_count=`2`",
+                "Ref: `research paper-positions-summary`",
+            ],
+        ),
+        (
+            "/exposure",
+            "_get_paper_exposure_summary",
+            {
+                "mark_to_market_status": "degraded",
+                "gross_exposure_usd": 12000.0,
+                "net_exposure_usd": 12000.0,
+                "stale_position_count": 1,
+                "unavailable_price_count": 0,
+                "execution_enabled": False,
+                "write_back_allowed": False,
+            },
+            [
+                "*Exposure (Paper Portfolio Read-Only)*",
+                "mark_to_market_status=`degraded`",
+                "Ref: `research paper-exposure-summary`",
             ],
         ),
         (
@@ -559,5 +578,7 @@ async def test_help_lists_hardened_commands(tmp_path, monkeypatch):
     help_text = sent_messages[0]
     assert "/signals - Read-only signal handoff" in help_text
     assert "/journal - Review journal summary" in help_text
+    assert "/positions - Read-only paper positions" in help_text
+    assert "/exposure - Read-only paper exposure" in help_text
     assert "/approve <decision_ref> - Audit-only approval intent" in help_text
     assert "/incident <note> - Escalation summary + audit note" in help_text

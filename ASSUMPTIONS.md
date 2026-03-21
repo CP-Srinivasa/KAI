@@ -38,6 +38,25 @@ Last updated: 2026-03-21
 
 ---
 
+## Sprint 40 Addendum
+
+### A-040: Paper Portfolio Read Surface bleibt rein read-only
+**Assumption**: Portfolio-/Positions-/Exposure-Surfaces lesen ausschließlich aus append-only Audit- und Marktdaten-Read-Pfaden und mutieren keinen Execution- oder Broker-State.
+**Rationale**: Sprint 40 ist ein Operator-Read-Sprint ohne Trading-Erweiterung.
+**Impact**: Alle Responses bleiben mit `execution_enabled=False` und `write_back_allowed=False` gekennzeichnet.
+
+### A-041: Portfolio-State wird per Audit-Replay projiziert, nicht aus Live-Engine-Referenzen
+**Assumption**: Der kanonische Zustand wird aus `artifacts/paper_execution_audit.jsonl` rekonstruiert, nicht aus in-memory Engine-Objekten.
+**Rationale**: Auditierbarkeit und deterministische Reproduzierbarkeit sind wichtiger als implizite Runtime-Kopplung.
+**Impact**: Leeres/missing Audit ergibt leeres Portfolio; inkonsistente Audit-Zeilen führen fail-closed zu `available=False`.
+
+### A-042: Mark-to-Market ist optional und degradierbar
+**Assumption**: Mark-to-market wird über den bestehenden Market-Data-Read-Path angereichert; stale/unavailable Preise degradieren die Exposure-Auswertung statt Execution auszulösen.
+**Rationale**: Evidence before action und fail-closed bei unvollständiger Bewertungsgrundlage.
+**Impact**: Stale/fehlende Preise werden explizit markiert; vollständig unbepreiste offene Positionen setzen `available=False`.
+
+---
+
 ## Phase 1 Assumptions
 
 ### A-001: No Live Trading in Phase 1
@@ -326,3 +345,32 @@ Unknown errors → order rejected.
 **Rationale**: Kill-Switch-Autorität liegt beim RiskEngine, nicht beim Market-Data-Layer. Eine automatische Trading-Unterbrechung aufgrund eines Health-Checks wäre ein versteckter Execution-Pfad.
 **Impact**: `health_check()` → `False` wird geloggt. Es kann in MCP `get_provider_health()` surfaced werden. Es darf KEINEN RiskEngine-State ändern und KEINEN anderen Adapter aktivieren.
 **Override**: Nicht verhandelbar — die Konvergenz ist die Grundlage für zukünftige Execution-Erweiterungen.
+
+---
+
+## Sprint 40 — Paper Portfolio Read Surface Assumptions
+
+### A-040: PaperPortfolioSnapshot ist der einzige erlaubte Portfolio-Lesepfad nach aussen
+**Assumption**: `PaperPortfolio` (mutable) wird niemals direkt an Operator-Surfaces, MCP-Tools, CLI-Commands oder Telegram-Handler weitergegeben. Nur `PaperPortfolioSnapshot` (frozen) darf diese Grenze ueberschreiten.
+**Rationale**: Mutable State direkt in Operator-Surfaces zu exponieren erzeugt versteckte Kopplungen und potenzielle Mutation via Referenz. frozen + read-only ist die einzig sichere Grenze.
+**Impact**: Alle MCP-Tools und CLI-Commands, die Portfolio-State zeigen, gehen durch `build_paper_portfolio_snapshot_from_audit()`. Kein direkter Zugriff auf `PaperExecutionEngine._portfolio`.
+
+### A-041: Kanonische Source of Truth fuer Portfolio-State ist das Audit-JSONL
+**Assumption**: `artifacts/paper_execution_audit.jsonl` ist die einzige kanonische Quelle fuer Portfolio-State-Rekonstruktion. `build_paper_portfolio_snapshot_from_audit()` replayed `order_filled`-Events.
+**Rationale**: Die MCP-Schicht kann nicht auf laufende Engine-Instanzen zugreifen. Das JSONL ist persistent, append-only, auditierbar — identisch zum Pattern von DecisionRecord, SignalHandoff etc.
+**Impact**: Portfolio-State-Rekonstruktion ist deterministisch und idempotent. Kein Singleton, kein Shared Memory, kein Inter-Process-Zugriff noetig.
+
+### A-042: Mark-to-Market ist optional und fail-closed per Position
+**Assumption**: MtM-Bereicherung schlaegt fuer einzelne Positionen fail-closed: `is_stale=True` oder `available=False` → `is_mark_to_market=False`, Fallback auf `entry_price`. Der gesamte Snapshot bleibt verfuegbar.
+**Rationale**: Marktdaten koennen temporaer unavailable sein. Der Portfolio-Snapshot darf nie blockiert werden, nur weil ein Preis nicht abgerufen werden konnte. Observation muss immer moeglich sein.
+**Impact**: `PaperPortfolioSnapshot` kann mit und ohne MtM gebaut werden. `is_mark_to_market=False` signalisiert dem Operator, dass Preise veraltet oder unavailable sind.
+
+### A-043: ExposureSummary hat keinen eigenstaendigen Datenpfad
+**Assumption**: `ExposureSummary` ist ausschliesslich eine Projektion von `PaperPortfolioSnapshot`. Sie hat keine eigene JSONL, keinen eigenen Market-Data-Abruf, keinen eigenen Backend-Pfad.
+**Rationale**: Separate Datenpfade fuer denselben Zustand erzeugen Inkonsistenz und Architektur-Drift. Einheitlicher Datenpfad: JSONL → PaperPortfolioSnapshot → ExposureSummary.
+**Impact**: `get_portfolio_exposure_summary()` (MCP) und `research portfolio-exposure` (CLI) delegieren intern immer an den Portfolio-Snapshot-Builder.
+
+### A-044: /positions und /exposure sind kanonische MCP-Read-Surfaces nach Sprint 40
+**Assumption**: Nach Sprint 40 ist `get_handoff_collector_summary` nicht mehr das Backing fuer Telegram `/positions`. `/exposure` ist kein Stub mehr. Beide Commands sind vollstaendig MCP-gebackt.
+**Rationale**: A-032 (Sprint 38 Addendum) hatte den Handoff-Proxy als provisional deklariert. Sprint 40 ersetzt ihn durch den kanonischen Portfolio-Read-Surface.
+**Impact**: `TELEGRAM_CANONICAL_RESEARCH_REFS["positions"]` = `("research paper-portfolio-snapshot",)`. `TELEGRAM_CANONICAL_RESEARCH_REFS["exposure"]` = `("research portfolio-exposure",)`. `"exposure"` in `_READ_ONLY_COMMANDS`.

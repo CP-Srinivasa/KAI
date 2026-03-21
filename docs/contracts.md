@@ -3265,8 +3265,8 @@ Keine neuen Live-, Routing-, Promotion- oder Trading-Funktionen wurden eroeffnet
 |---|---|---|---|---|
 | `/status` | read_only | `get_operational_readiness_summary()` (MCP) | `research readiness-summary` | none |
 | `/health` | read_only | `get_provider_health()` (MCP) | `research provider-health` | none |
-| `/positions` | read_only | `get_handoff_collector_summary()` (MCP, provisional proxy) | `research handoff-collector-summary` | none; kein Live-Positions-Pfad |
-| `/exposure` | read_only | static stub | — | none |
+| `/positions` | read_only | `get_paper_positions_summary()` (MCP) | `research paper-positions-summary` | none; kein Live-Positions-Pfad |
+| `/exposure` | read_only | `get_paper_exposure_summary()` (MCP) | `research paper-exposure-summary` | none |
 | `/risk` | read_only | `get_protective_gate_summary()` (MCP) | `research gate-summary` | none |
 | `/signals` | read_only | `get_signals_for_execution(limit=5)` (MCP) | `research signal-handoff` | kein Routing, keine Execution, kein Promote |
 | `/journal` | read_only | `get_review_journal_summary()` (MCP) | `research review-journal-summary` | none |
@@ -3644,3 +3644,290 @@ Sprint 39 tests (implemented):
 - `tests/unit/test_market_data_coingecko.py`
 - `tests/unit/test_cli_market_data.py`
 - `tests/unit/test_mcp_market_data.py`
+
+---
+
+## §51 — Paper Portfolio Read Surface & Exposure Summary (Sprint 40)
+
+### Zweck
+
+Definiert den einzigen kanonischen read-only Portfolio-/Positions-/Exposure-Contract.
+Portfolio Surface = reine Zustandsansicht (Observation), kein Rebalancing, keine Order, keine Mutation.
+Mark-to-Market = Bewertung offener Positionen zum aktuellen Preis — keine Execution-Freigabe.
+Exposure = aggregierte Risikobeobachtung — kein Rebalancing-Trigger.
+
+---
+
+### §51.1 — Kanonisches Datenmodell: `PositionSnapshot`
+
+**Implementierung**: `app/research/portfolio_surface.py`
+
+```python
+@dataclass(frozen=True)
+class PositionSnapshot:
+    position_id: str          # "pos_" + sha1(symbol+opened_at)[:12] -- deterministisch
+    symbol: str               # Kanonisches Symbol (z.B. "BTC/USDT")
+    side: str                 # "long" | "short" (PaperEngine: derzeit nur "long")
+    quantity: float           # Gehaltene Menge
+    entry_price: float        # Durchschnittlicher Einstandspreis (avg_entry_price)
+    current_price: float | None      # Aktueller Preis aus MarketDataSnapshot; None = kein MtM
+    unrealized_pnl_usd: float | None # (current_price - entry_price) * quantity; None ohne MtM
+    position_value_usd: float        # quantity * (current_price or entry_price)
+    stop_loss: float | None
+    take_profit: float | None
+    opened_at: str            # UTC ISO -- Zeitpunkt des ersten Fills
+    as_of: str                # UTC ISO -- Zeitpunkt der Snapshot-Erstellung
+    market_data_source: str | None   # MarketDataSnapshot.provider ("coingecko", "mock", etc.)
+    is_mark_to_market: bool          # True wenn current_price verfuegbar und nicht stale
+    execution_enabled: bool = False
+    write_back_allowed: bool = False
+```
+
+**Invarianten**:
+- `frozen=True` -- unveraenderlich nach Erstellung
+- `execution_enabled=False` und `write_back_allowed=False` IMMER -- kein Override erlaubt
+- `position_id` ist deterministisch: sha1(symbol+opened_at)[:12], "pos_"-Prefix
+- `is_mark_to_market=False` wenn `current_price is None` oder `MarketDataSnapshot.is_stale=True`
+- `position_value_usd` faellt auf `quantity * entry_price` zurueck wenn kein MtM verfuegbar
+- `unrealized_pnl_usd=None` wenn kein MtM -- Consumer muss None-Fall behandeln
+
+---
+
+### §51.2 — Kanonisches Datenmodell: `PaperPortfolioSnapshot`
+
+**Implementierung**: `app/research/portfolio_surface.py`
+
+```python
+@dataclass(frozen=True)
+class PaperPortfolioSnapshot:
+    as_of: str                        # UTC ISO -- Zeitpunkt der Snapshot-Erstellung
+    initial_equity: float             # Startkapital bei Engine-Init
+    cash: float                       # Aktuell verfuegbares Cash (nach Fills)
+    cash_pct: float                   # cash / total_equity_usd * 100
+    open_position_count: int          # Anzahl offener Positionen
+    positions: tuple[PositionSnapshot, ...]  # Alle offenen Positionen (tuple = immutable)
+    total_equity_usd: float           # cash + sum(position_value_usd)
+    realized_pnl_usd: float           # Realisierter PnL gesamt
+    unrealized_pnl_usd: float | None  # Summe aller unrealized_pnl_usd; None wenn kein MtM
+    total_fees_usd: float             # Gesamte Gebuehren
+    trade_count: int                  # Anzahl abgeschlossener Fills
+    is_mark_to_market: bool           # True wenn mind. eine Position MtM-Preis hat
+    market_data_source: str | None    # Provider-Name (aus PositionSnapshots)
+    execution_enabled: bool = False
+    write_back_allowed: bool = False
+```
+
+**Invarianten**:
+- `frozen=True`
+- `positions` ist ein `tuple` (nicht `list`) -- Unveraenderlichkeit garantiert
+- `execution_enabled=False`, `write_back_allowed=False` IMMER
+- `cash_pct = 0.0` wenn `total_equity_usd <= 0` (Division-by-Zero-Schutz)
+- `unrealized_pnl_usd=None` wenn KEINE Position `is_mark_to_market=True`
+- `is_mark_to_market=True` genau dann, wenn mind. eine Position `is_mark_to_market=True`
+
+---
+
+### §51.3 — Kanonisches Datenmodell: `ExposureSummary`
+
+**Implementierung**: `app/research/portfolio_surface.py`
+
+```python
+@dataclass(frozen=True)
+class ExposureSummary:
+    as_of: str                         # UTC ISO
+    total_exposure_usd: float          # Summe aller position_value_usd
+    cash_usd: float                    # Verfuegbares Cash
+    total_equity_usd: float            # total_exposure_usd + cash_usd
+    cash_pct: float                    # cash_usd / total_equity_usd * 100
+    position_count: int                # Anzahl offener Positionen
+    largest_position_symbol: str | None  # Symbol mit groesstem position_value_usd
+    largest_position_pct: float | None   # groesste Position / total_equity_usd * 100
+    is_mark_to_market: bool
+    market_data_source: str | None
+    execution_enabled: bool = False
+    write_back_allowed: bool = False
+```
+
+**Invarianten**:
+- `frozen=True`
+- `execution_enabled=False`, `write_back_allowed=False` IMMER
+- `largest_position_symbol=None` wenn `position_count == 0`
+- `cash_pct = 100.0` wenn `position_count == 0`
+- `ExposureSummary` ist eine Projektion von `PaperPortfolioSnapshot` -- kein eigenstaendiger Backend-Pfad
+
+---
+
+### §51.4 — Research-Modul: `app/research/portfolio_surface.py`
+
+**Neue Datei** (Codex implementiert):
+
+```python
+def build_position_snapshot(
+    pos: PaperPosition,
+    *,
+    snapshot: MarketDataSnapshot | None = None,
+    as_of: str,
+) -> PositionSnapshot: ...
+
+def build_paper_portfolio_snapshot_from_audit(
+    audit_path: str | Path,
+    *,
+    market_data_snapshots: dict[str, MarketDataSnapshot] | None = None,
+) -> PaperPortfolioSnapshot: ...
+
+def build_exposure_summary(portfolio: PaperPortfolioSnapshot) -> ExposureSummary: ...
+```
+
+**Kanonische Source of Truth**: `artifacts/paper_execution_audit.jsonl`
+- `event_type == "order_filled"` Zeilen werden replayed, um aktuelle Positionen zu rekonstruieren
+- Identisch zum Pattern von `load_decision_records()`, `load_signal_handoffs()` etc.
+- Kein direkter Zugriff auf laufende `PaperExecutionEngine`-Instanz
+- Replay ist deterministisch und idempotent bei identischem JSONL-Inhalt
+- Audit-JSONL nicht vorhanden → leeres Portfolio (0 Positionen, cash=0)
+
+**Mark-to-Market (optional)**:
+- Wird aktiviert, wenn der Caller `provider` angibt (nicht "mock" bei echten Preisen)
+- Ruft `get_market_data_snapshot(symbol, provider)` pro gehaltener Position auf
+- `MarketDataSnapshot.is_stale=True` → MtM fuer diese Position verworfen (fail-closed)
+- `MarketDataSnapshot.available=False` → MtM fuer diese Position verworfen (fail-closed)
+- MtM-Fehler verhindert NICHT den Portfolio-Snapshot -- Fallback auf `entry_price`
+
+---
+
+### §51.5 — MCP Tools (Sprint 40 -- neu, canonical_read)
+
+**Implementierung**: `app/agents/mcp_server.py`
+
+**`get_paper_portfolio_snapshot`**:
+```python
+async def get_paper_portfolio_snapshot(
+    audit_log_path: str = "artifacts/paper_execution_audit.jsonl",
+    provider: str = "mock",
+    freshness_threshold_seconds: float = 120.0,
+) -> dict[str, object]: ...
+```
+- Liest Audit-JSONL, rekonstruiert Positionen per Fill-Replay
+- Optionale MtM-Bereicherung via `get_market_data_snapshot()` pro Position
+- Antwort enthaelt immer `execution_enabled=False`, `write_back_allowed=False`
+- In `_CANONICAL_MCP_READ_TOOL_NAMES` eingetragen
+
+**`get_portfolio_exposure_summary`**:
+```python
+async def get_portfolio_exposure_summary(
+    audit_log_path: str = "artifacts/paper_execution_audit.jsonl",
+    provider: str = "mock",
+    freshness_threshold_seconds: float = 120.0,
+) -> dict[str, object]: ...
+```
+- Delegiert intern an Portfolio-Snapshot, projiziert auf ExposureSummary
+- Antwort enthaelt immer `execution_enabled=False`, `write_back_allowed=False`
+- In `_CANONICAL_MCP_READ_TOOL_NAMES` eingetragen
+
+---
+
+### §51.6 — CLI Commands (Sprint 40 -- neu)
+
+```bash
+python -m app.cli.main research paper-portfolio-snapshot [--provider mock] [--audit-log ...]
+python -m app.cli.main research portfolio-exposure [--provider mock] [--audit-log ...]
+```
+
+- Beide read-only, kein State-Change
+- Registriert in `get_registered_research_command_names()`
+
+---
+
+### §51.7 — Telegram Surface Update (Sprint 40)
+
+| Command | Vor Sprint 40 | Nach Sprint 40 |
+|---|---|---|
+| `/positions` | `get_handoff_collector_summary` (Proxy) | `get_paper_portfolio_snapshot` (MCP canonical) |
+| `/exposure` | Stub (kein Backing) | `get_portfolio_exposure_summary` (MCP canonical) |
+
+**Aenderungen in `telegram_bot.py`** (Codex):
+- `"exposure"` wird zu `_READ_ONLY_COMMANDS` hinzugefuegt
+- `TELEGRAM_CANONICAL_RESEARCH_REFS["positions"]` = `("research paper-portfolio-snapshot",)`
+- `TELEGRAM_CANONICAL_RESEARCH_REFS["exposure"]` = `("research portfolio-exposure",)`
+- Neue `_get_paper_portfolio_snapshot()` und `_get_portfolio_exposure_summary()` Loader-Methoden
+- `_cmd_positions` nutzt `_get_paper_portfolio_snapshot` (ersetzt `_get_handoff_collector_summary`)
+- `_cmd_exposure` nutzt `_get_portfolio_exposure_summary` (ersetzt Stub)
+
+`get_handoff_collector_summary` bleibt als eigenstaendiges MCP-Tool erhalten (kein Breaking Change).
+
+---
+
+### §51.8 — Fail-Closed- und Degradations-Semantik
+
+| Szenario | Adapter-Verhalten | Consumer-Verhalten |
+|---|---|---|
+| Audit-JSONL nicht vorhanden | Leeres Portfolio (0 Pos., cash=0) | Anzeige: "no positions" |
+| Audit-JSONL malformed | Zeile ueberspringen + WARNING | Partielles Ergebnis |
+| MtM-Abruf schlaegt fehl | is_mark_to_market=False fuer Position | Fallback entry_price |
+| Stale MtM-Daten | is_mark_to_market=False fuer Position | Fallback entry_price |
+| Provider-Fehler | Kein MtM, Portfolio ohne Bewertung | Kein Fehler, kein Alarm |
+
+---
+
+### §51.9 — Sicherheitsinvarianten (nicht verhandelbar)
+
+- Portfolio Surface ist ausschliesslich read-only
+- `PaperPortfolio` (mutable) wird NIE direkt exposed -- nur `PaperPortfolioSnapshot` (frozen)
+- Kein Pfad von `/positions` oder `/exposure` zur Execution
+- Mark-to-Market ist Bewertung, keine Execution-Freigabe
+- Exposure-Zusammenfassung loest kein Rebalancing aus
+- Audit-JSONL ist append-only -- der Read-Layer schreibt NIE zurueck
+
+---
+
+### Assumptions Referenced
+
+- A-032 (Sprint 38 Addendum): Handoff-Collector-Proxy gilt bis Sprint 40 als provisional (abgeloest)
+- A-040--A-044 (Sprint 40) in `ASSUMPTIONS.md`
+
+### Intelligence Invariants
+
+- I-291--I-300 in `docs/intelligence_architecture.md` (Sprint 40)
+
+### Gelieferte Dateien (Sprint 40 -- Definition)
+
+- `docs/contracts.md §51` (dieses Dokument)
+- `docs/intelligence_architecture.md` I-291--I-300
+- `ASSUMPTIONS.md` A-040--A-044
+- `AGENTS.md` P46
+- `TASKLIST.md` Sprint-40-Block
+
+### §51.10 - Sprint 40C Runtime Consolidation (implemented)
+
+Der kanonische Runtime-Pfad ist als read-only Surface umgesetzt:
+
+- Backend-Projektion: `app/execution/portfolio_read.py`
+- Kanonische Modelle:
+  - `PortfolioSnapshot`
+  - `PositionSummary`
+  - `ExposureSummary`
+- Datenquelle: append-only `artifacts/paper_execution_audit.jsonl` (Replay, keine Mutation)
+- Optionale Mark-to-Market-Anreicherung: bestehender `app.market_data.service.get_market_data_snapshot()`
+
+Finale CLI-Surfaces:
+
+- `research paper-portfolio-snapshot`
+- `research paper-positions-summary`
+- `research paper-exposure-summary`
+
+Finale MCP-Surfaces:
+
+- `get_paper_portfolio_snapshot`
+- `get_paper_positions_summary`
+- `get_paper_exposure_summary`
+
+Finale Telegram-Bindings:
+
+- `/positions` -> kanonischer Positions-Read (`get_paper_positions_summary`)
+- `/exposure` -> kanonischer Exposure-Read (`get_paper_exposure_summary`)
+
+Sicherheitsgrenzen:
+
+- Read-only only, kein Broker/Order/Execution-Pfad
+- Kein Auto-Routing, kein Auto-Promote
+- `execution_enabled=False` und `write_back_allowed=False` in allen Responses
+- Fail-closed bei ungültigem Audit-Payload und vollständig fehlender MtM-Bewertung offener Positionen

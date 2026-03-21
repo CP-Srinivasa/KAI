@@ -39,6 +39,7 @@ _READ_ONLY_COMMANDS = frozenset(
         "status",
         "health",
         "positions",
+        "exposure",
         "risk",
         "signals",
         "journal",
@@ -50,7 +51,8 @@ _DECISION_REF_PATTERN = re.compile(r"^dec_[0-9a-f]{12}$")
 TELEGRAM_CANONICAL_RESEARCH_REFS: dict[str, tuple[str, ...]] = {
     "status": ("research readiness-summary",),
     "health": ("research provider-health",),
-    "positions": ("research handoff-collector-summary",),
+    "positions": ("research paper-positions-summary",),
+    "exposure": ("research paper-exposure-summary",),
     "risk": ("research gate-summary",),
     "signals": ("research signal-handoff",),
     "journal": ("research review-journal-summary",),
@@ -249,6 +251,16 @@ class TelegramOperatorBot:
 
         return await get_handoff_collector_summary()  # type: ignore[no-any-return]
 
+    async def _get_paper_positions_summary(self) -> dict[str, Any]:
+        from app.agents.mcp_server import get_paper_positions_summary
+
+        return await get_paper_positions_summary()  # type: ignore[no-any-return]
+
+    async def _get_paper_exposure_summary(self) -> dict[str, Any]:
+        from app.agents.mcp_server import get_paper_exposure_summary
+
+        return await get_paper_exposure_summary()  # type: ignore[no-any-return]
+
     async def _get_protective_gate_summary(self) -> dict[str, Any]:
         from app.agents.mcp_server import get_protective_gate_summary
 
@@ -320,15 +332,22 @@ class TelegramOperatorBot:
             chat_id=chat_id,
             surface_name="Positions",
             command="positions",
-            loader=self._get_handoff_collector_summary,
+            loader=self._get_paper_positions_summary,
         )
         if payload is None:
             return
+        raw_positions = payload.get("positions", [])
+        positions = raw_positions if isinstance(raw_positions, list) else []
+        top_symbol = "none"
+        if positions and isinstance(positions[0], dict):
+            top_symbol = self._inline(positions[0].get("symbol", "unknown"))
         msg = (
-            "*Positions (Collector Proxy, Read-Only)*\n"
-            f"total_handoffs=`{self._inline(payload.get('total_handoffs', 0))}`\n"
-            f"acknowledged_count=`{self._inline(payload.get('acknowledged_count', 0))}`\n"
-            f"pending_count=`{self._inline(payload.get('pending_count', 0))}`\n"
+            "*Positions (Paper Portfolio Read-Only)*\n"
+            f"position_count=`{self._inline(payload.get('position_count', 0))}`\n"
+            f"mark_to_market_status=`"
+            f"{self._inline(payload.get('mark_to_market_status', 'unknown'))}`\n"
+            f"top_symbol=`{top_symbol}`\n"
+            f"available=`{self._inline(payload.get('available', False))}`\n"
             f"execution_enabled=`{self._inline(payload.get('execution_enabled', False))}`\n"
             f"write_back_allowed=`{self._inline(payload.get('write_back_allowed', False))}`\n"
             "No direct trading position action is exposed via Telegram."
@@ -337,10 +356,27 @@ class TelegramOperatorBot:
         await self._send(chat_id, msg)
 
     async def _cmd_exposure(self, chat_id: int, *, args: str = "") -> None:
-        await self._send(
-            chat_id,
-            "*Exposure*\nRead-only stub active.\nNo portfolio exposure provider is connected yet.",
+        payload = await self._load_canonical_surface(
+            chat_id=chat_id,
+            surface_name="Exposure",
+            command="exposure",
+            loader=self._get_paper_exposure_summary,
         )
+        if payload is None:
+            return
+        msg = (
+            "*Exposure (Paper Portfolio Read-Only)*\n"
+            f"mark_to_market_status=`"
+            f"{self._inline(payload.get('mark_to_market_status', 'unknown'))}`\n"
+            f"gross_exposure_usd=`{self._inline(payload.get('gross_exposure_usd', 0.0))}`\n"
+            f"net_exposure_usd=`{self._inline(payload.get('net_exposure_usd', 0.0))}`\n"
+            f"stale_position_count=`{self._inline(payload.get('stale_position_count', 0))}`\n"
+            f"unavailable_price_count=`{self._inline(payload.get('unavailable_price_count', 0))}`\n"
+            f"execution_enabled=`{self._inline(payload.get('execution_enabled', False))}`\n"
+            f"write_back_allowed=`{self._inline(payload.get('write_back_allowed', False))}`"
+            f"{self._format_refs('exposure')}"
+        )
+        await self._send(chat_id, msg)
 
     async def _cmd_risk(self, chat_id: int, *, args: str = "") -> None:
         payload = await self._load_canonical_surface(
@@ -552,8 +588,8 @@ class TelegramOperatorBot:
             "*KAI Operator Commands*\n\n"
             "/status - Canonical readiness status\n"
             "/health - Canonical provider health\n"
-            "/positions - Read-only collector proxy\n"
-            "/exposure - Exposure surface\n"
+            "/positions - Read-only paper positions\n"
+            "/exposure - Read-only paper exposure\n"
             "/risk - Protective gate summary\n"
             "/signals - Read-only signal handoff\n"
             "/journal - Review journal summary\n"
