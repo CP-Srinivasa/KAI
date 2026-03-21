@@ -3008,6 +3008,9 @@ FINAL_RESEARCH_COMMAND_NAMES: tuple[str, ...] = (
     "resolution-summary",
     "market-data-quote",
     "market-data-snapshot",
+    "paper-portfolio-snapshot",
+    "paper-positions-summary",
+    "paper-exposure-summary",
 )
 
 RESEARCH_COMMAND_ALIASES: dict[str, str] = {
@@ -3386,6 +3389,179 @@ def research_market_data_snapshot(
         )
     )
     console.print(_json.dumps(snapshot.to_json_dict(), indent=2))
+
+    if not snapshot.available:
+        raise typer.Exit(1)
+
+
+@research_app.command("paper-portfolio-snapshot")
+def research_paper_portfolio_snapshot(
+    audit_path: str = typer.Option(
+        "artifacts/paper_execution_audit.jsonl",
+        "--audit-path",
+        help="Append-only paper execution audit JSONL path",
+    ),
+    provider: str = typer.Option(
+        "coingecko",
+        "--provider",
+        help="Read-only market data provider for mark-to-market",
+    ),
+    freshness_threshold_seconds: float = typer.Option(
+        120.0,
+        "--freshness-threshold-seconds",
+        help="Market data age threshold for stale flagging",
+    ),
+    timeout_seconds: int = typer.Option(
+        10,
+        "--timeout-seconds",
+        help="Provider request timeout in seconds",
+    ),
+) -> None:
+    """Print canonical read-only paper portfolio snapshot as JSON."""
+    import asyncio
+    import json as _json
+
+    from app.execution.portfolio_read import build_portfolio_snapshot
+
+    snapshot = asyncio.run(
+        build_portfolio_snapshot(
+            audit_path=audit_path,
+            provider=provider,
+            freshness_threshold_seconds=freshness_threshold_seconds,
+            timeout_seconds=timeout_seconds,
+        )
+    )
+    console.print(_json.dumps(snapshot.to_json_dict(), indent=2))
+
+    if not snapshot.available:
+        raise typer.Exit(1)
+
+
+@research_app.command("paper-positions-summary")
+def research_paper_positions_summary(
+    audit_path: str = typer.Option(
+        "artifacts/paper_execution_audit.jsonl",
+        "--audit-path",
+        help="Append-only paper execution audit JSONL path",
+    ),
+    provider: str = typer.Option(
+        "coingecko",
+        "--provider",
+        help="Read-only market data provider for mark-to-market",
+    ),
+    freshness_threshold_seconds: float = typer.Option(
+        120.0,
+        "--freshness-threshold-seconds",
+        help="Market data age threshold for stale flagging",
+    ),
+    timeout_seconds: int = typer.Option(
+        10,
+        "--timeout-seconds",
+        help="Provider request timeout in seconds",
+    ),
+) -> None:
+    """Print canonical read-only paper positions summary."""
+    import asyncio
+
+    from app.execution.portfolio_read import (
+        build_portfolio_snapshot,
+        build_positions_summary,
+    )
+
+    snapshot = asyncio.run(
+        build_portfolio_snapshot(
+            audit_path=audit_path,
+            provider=provider,
+            freshness_threshold_seconds=freshness_threshold_seconds,
+            timeout_seconds=timeout_seconds,
+        )
+    )
+    payload = build_positions_summary(snapshot)
+
+    console.print("[bold]Paper Positions Summary[/bold]")
+    console.print(f"position_count={payload['position_count']}")
+    console.print(f"mark_to_market_status={payload['mark_to_market_status']}")
+    console.print(f"available={payload['available']}")
+    console.print(f"error={payload['error']}")
+    console.print("execution_enabled=False")
+    console.print("write_back_allowed=False")
+
+    raw_positions = payload.get("positions", [])
+    positions = raw_positions if isinstance(raw_positions, list) else []
+    for position in positions:
+        if not isinstance(position, dict):
+            continue
+        console.print(
+            " | ".join(
+                [
+                    f"symbol={position.get('symbol')}",
+                    f"qty={position.get('quantity')}",
+                    f"avg={position.get('avg_entry_price')}",
+                    f"price={position.get('market_price')}",
+                    f"stale={position.get('market_data_is_stale')}",
+                    f"available={position.get('market_data_available')}",
+                ]
+            )
+        )
+
+    if not snapshot.available:
+        raise typer.Exit(1)
+
+
+@research_app.command("paper-exposure-summary")
+def research_paper_exposure_summary(
+    audit_path: str = typer.Option(
+        "artifacts/paper_execution_audit.jsonl",
+        "--audit-path",
+        help="Append-only paper execution audit JSONL path",
+    ),
+    provider: str = typer.Option(
+        "coingecko",
+        "--provider",
+        help="Read-only market data provider for mark-to-market",
+    ),
+    freshness_threshold_seconds: float = typer.Option(
+        120.0,
+        "--freshness-threshold-seconds",
+        help="Market data age threshold for stale flagging",
+    ),
+    timeout_seconds: int = typer.Option(
+        10,
+        "--timeout-seconds",
+        help="Provider request timeout in seconds",
+    ),
+) -> None:
+    """Print canonical read-only paper exposure summary."""
+    import asyncio
+
+    from app.execution.portfolio_read import (
+        build_exposure_summary,
+        build_portfolio_snapshot,
+    )
+
+    snapshot = asyncio.run(
+        build_portfolio_snapshot(
+            audit_path=audit_path,
+            provider=provider,
+            freshness_threshold_seconds=freshness_threshold_seconds,
+            timeout_seconds=timeout_seconds,
+        )
+    )
+    payload = build_exposure_summary(snapshot)
+
+    console.print("[bold]Paper Exposure Summary[/bold]")
+    console.print(f"mark_to_market_status={payload['mark_to_market_status']}")
+    console.print(f"gross_exposure_usd={payload['gross_exposure_usd']}")
+    console.print(f"net_exposure_usd={payload['net_exposure_usd']}")
+    console.print(f"priced_position_count={payload['priced_position_count']}")
+    console.print(f"stale_position_count={payload['stale_position_count']}")
+    console.print(f"unavailable_price_count={payload['unavailable_price_count']}")
+    console.print(f"largest_position_symbol={payload['largest_position_symbol']}")
+    console.print(f"largest_position_weight_pct={payload['largest_position_weight_pct']}")
+    console.print(f"available={payload['available']}")
+    console.print(f"error={payload['error']}")
+    console.print("execution_enabled=False")
+    console.print("write_back_allowed=False")
 
     if not snapshot.available:
         raise typer.Exit(1)
