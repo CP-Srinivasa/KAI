@@ -3208,3 +3208,122 @@ Telegram = Operator-Surface. Niemals Execution-Surface. Niemals Live-Bypass.
 - Kein Adapter-Aufruf innerhalb `BacktestEngine.run()`
 - Keine Änderung an SignalGenerator, RiskEngine oder TradingLoop-Logik (außer ggf. UTC-Fix)
 - Kein neues CLI-Command, kein neues MCP-Tool
+
+---
+
+## Sprint 40 — Paper Portfolio Read Surface & Exposure Summary
+
+**Status**: 🔵 Definition abgeschlossen — Implementierung ausstehend (Codex)
+**Datum**: 2026-03-21
+**Ziel**: Kanonischen read-only Portfolio-/Positions-/Exposure-Contract implementieren. /positions und /exposure auf echte MCP-Surfaces legen. Kein Mutations-Pfad, kein Execution-Feature.
+
+### Sprint 40 Nicht-Verhandelbar
+
+1. **Security First**: Portfolio Surface = read-only — kein Mutations-Pfad
+2. **Fail-Closed**: Audit-JSONL fehlt = leeres Portfolio. MtM-Fehler = Fallback entry_price
+3. **Live default-off**: Kein Provider-Wechsel ohne explizite Konfiguration
+4. **Kein neues Execution-Feature**: Kein Order-Trigger, kein Rebalancing
+5. **Kein eigenstaendiger ExposureSummary-Datenpfad**: Projektion von PaperPortfolioSnapshot
+
+### Sprint 40 Architektur-Tasks (Claude Code — abgeschlossen)
+
+- [x] 40.A: paper_engine.py + models.py gelesen (PaperPortfolio, PaperPosition)
+- [x] 40.B: market_data/models.py gelesen (MarketDataSnapshot existent)
+- [x] 40.C: coingecko_adapter.py + service.py gelesen (Sprint 39 impl. abgeschlossen)
+- [x] 40.D: telegram_bot.py gelesen (/positions=Proxy, /exposure=Stub identifiziert)
+- [x] 40.E: mcp_server.py gelesen (get_paper_portfolio_snapshot fehlt)
+- [x] 40.F: docs/contracts.md §51 geschrieben
+- [x] 40.G: docs/intelligence_architecture.md I-291–I-300 geschrieben
+- [x] 40.H: ASSUMPTIONS.md A-040–A-044 geschrieben
+- [x] 40.I: AGENTS.md P46 geschrieben
+- [x] 40.J: TASKLIST.md Sprint-40-Block geschrieben
+
+### Sprint 40 Implementierungs-Tasks (Codex — ausstehend)
+
+- [ ] **40.1**: `app/research/portfolio_surface.py` erstellen
+  - `PositionSnapshot` frozen dataclass (lt. contracts.md §51.1)
+  - `PaperPortfolioSnapshot` frozen dataclass (lt. §51.2)
+  - `ExposureSummary` frozen dataclass (lt. §51.3)
+  - `build_position_snapshot(pos, *, snapshot, as_of)`:
+    - position_id = "pos_" + hashlib.sha1(f"{symbol}{opened_at}".encode()).hexdigest()[:12]
+    - MtM fail-closed: stale/unavailable -> is_mark_to_market=False, current_price=None
+    - position_value_usd = qty * (current_price or entry_price)
+  - `build_paper_portfolio_snapshot_from_audit(audit_path, *, market_data_snapshots=None)`:
+    - Replay order_filled events, buy = add/average, sell = reduce/close
+    - Audit fehlt/leer = leerer PaperPortfolioSnapshot (cash=0, initial_equity=0)
+    - Malformed Zeile = ueberspringen + WARNING
+  - `build_exposure_summary(portfolio)`:
+    - largest_position = max(positions, key=position_value_usd)
+    - cash_pct = 100.0 wenn total_equity_usd <= 0
+
+- [ ] **40.2**: `app/agents/mcp_server.py` erweitern
+  - `get_paper_portfolio_snapshot` hinzufuegen (audit_log_path, provider, freshness_threshold_seconds)
+  - `get_portfolio_exposure_summary` hinzufuegen (delegiert intern an Portfolio-Snapshot)
+  - Beide in `_CANONICAL_MCP_READ_TOOL_NAMES` eintragen
+  - execution_enabled=False, write_back_allowed=False in allen Antworten
+
+- [ ] **40.3**: `app/cli/main.py` erweitern
+  - `research paper-portfolio-snapshot` Command
+  - `research portfolio-exposure` Command
+  - Beide in `get_registered_research_command_names()` registriert
+  - --provider (default: mock), --audit-log Parameter
+
+- [ ] **40.4**: `app/messaging/telegram_bot.py` aktualisieren
+  - "exposure" zu `_READ_ONLY_COMMANDS` hinzufuegen
+  - `TELEGRAM_CANONICAL_RESEARCH_REFS["positions"]` = ("research paper-portfolio-snapshot",)
+  - `TELEGRAM_CANONICAL_RESEARCH_REFS["exposure"]` = ("research portfolio-exposure",)
+  - `_get_paper_portfolio_snapshot()` Loader-Methode
+  - `_get_portfolio_exposure_summary()` Loader-Methode
+  - `_cmd_positions()` nutzt `_get_paper_portfolio_snapshot` (nicht mehr handoff_collector)
+  - `_cmd_exposure()` nutzt `_get_portfolio_exposure_summary` (Stub entfernen)
+
+- [ ] **40.5**: `tests/unit/test_portfolio_surface.py` erstellen (>= 12 Tests)
+  - PositionSnapshot frozen (FrozenInstanceError)
+  - PaperPortfolioSnapshot frozen, positions ist tuple
+  - ExposureSummary frozen
+  - execution_enabled=False + write_back_allowed=False aller drei Modelle
+  - build_position_snapshot() ohne MtM -> is_mark_to_market=False
+  - build_position_snapshot() mit validem MtM -> is_mark_to_market=True
+  - build_position_snapshot() mit stale MtM -> is_mark_to_market=False
+  - build_paper_portfolio_snapshot_from_audit() fehlende JSONL -> leerer Snapshot
+  - build_paper_portfolio_snapshot_from_audit() buy-fill replay -> Position korrekt
+  - build_paper_portfolio_snapshot_from_audit() buy+sell -> Position entfernt
+  - build_exposure_summary() 0 Positionen -> cash_pct=100.0
+  - build_exposure_summary() mit Positionen -> largest_position_symbol korrekt
+
+- [ ] **40.6**: `tests/unit/test_telegram_bot.py` aktualisieren
+  - Test: "exposure" in _READ_ONLY_COMMANDS
+  - Test: _cmd_positions nutzt get_paper_portfolio_snapshot (nicht handoff_collector)
+  - Test: _cmd_exposure ist nicht mehr Stub
+  - Bestehende 28 Tests weiterhin gruen
+
+- [ ] **40.7**: Ruff + vollstaendiger Test-Run
+  - python -m pytest -q -> alle Tests gruen (Ziel: Basisstand + >= 14 neue)
+  - python -m ruff check . -> clean
+
+### Sprint 40 Akzeptanz-Kriterien
+
+- app/research/portfolio_surface.py: 3 Modelle + 3 Builder-Funktionen 🔲
+- PositionSnapshot, PaperPortfolioSnapshot, ExposureSummary frozen, execution_enabled=False 🔲
+- build_paper_portfolio_snapshot_from_audit() Fill-Replay korrekt 🔲
+- MtM fail-closed per Position 🔲
+- get_paper_portfolio_snapshot + get_portfolio_exposure_summary in _CANONICAL_MCP_READ_TOOL_NAMES 🔲
+- research paper-portfolio-snapshot + research portfolio-exposure in CLI registriert 🔲
+- "exposure" in _READ_ONLY_COMMANDS 🔲
+- /positions -> get_paper_portfolio_snapshot (kein Handoff-Proxy mehr) 🔲
+- TELEGRAM_CANONICAL_RESEARCH_REFS korrekt aktualisiert 🔲
+- tests/unit/test_portfolio_surface.py >= 12 Tests gruen 🔲
+- test_telegram_bot.py 28+ Tests gruen 🔲
+- python -m pytest -q -> alles gruen 🔲
+- python -m ruff check . -> clean 🔲
+- Kein Trading, kein Rebalancing, keine Portfolio-Mutation, keine Live-Pfade
+
+### Sprint 40 Verbotene Seiteneffekte (nicht verhandelbar)
+
+- Kein Schreibzugriff auf PaperPortfolio-State via Portfolio-Surface
+- Kein direkter Zugriff auf laufende PaperExecutionEngine-Instanz
+- Kein Order-Trigger aus /positions oder /exposure
+- Kein Rebalancing-Signal aus ExposureSummary
+- Kein eigenstaendiger Datenpfad fuer ExposureSummary
+- Kein Breaking Change an get_handoff_collector_summary (bleibt erhalten)
+- Keine neuen Live-/Broker-/Routing-Features
