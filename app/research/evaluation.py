@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from app.analysis.base.interfaces import LLMAnalysisOutput
-from app.core.domain.document import CanonicalDocument
+from app.core.domain.document import AnalysisResult, CanonicalDocument
 
 # ---------------------------------------------------------------------------
 # Sprint 5 / evaluate CLI — live CanonicalDocument comparison (unchanged)
@@ -114,6 +114,8 @@ class EvaluationMetrics:
     tag_overlap_mean: float     # average Jaccard similarity of tags lists (0.0–1.0)
     sample_count: int           # number of rows successfully paired and evaluated
     missing_pairs: int          # baseline rows with no matching document_id in teacher set
+    actionable_accuracy: float = 0.0  # fraction where actionable status matches (backward-compat)
+    false_actionable_rate: float = 0.0  # candidate fires but teacher does not (G6 gate)
 
     def to_json_dict(self) -> dict[str, float | int]:
         return {
@@ -122,6 +124,8 @@ class EvaluationMetrics:
             "relevance_mae": self.relevance_mae,
             "impact_mae": self.impact_mae,
             "tag_overlap_mean": self.tag_overlap_mean,
+            "actionable_accuracy": self.actionable_accuracy,
+            "false_actionable_rate": self.false_actionable_rate,
             "sample_count": self.sample_count,
             "missing_pairs": self.missing_pairs,
         }
@@ -135,6 +139,7 @@ class PromotionValidation:
     relevance_pass: bool
     impact_pass: bool
     tag_overlap_pass: bool
+    false_actionable_pass: bool
 
     @property
     def is_promotable(self) -> bool:
@@ -144,6 +149,7 @@ class PromotionValidation:
             self.relevance_pass,
             self.impact_pass,
             self.tag_overlap_pass,
+            self.false_actionable_pass,
         ])
 
 
@@ -155,6 +161,7 @@ def validate_promotion(metrics: EvaluationMetrics) -> PromotionValidation:
         relevance_pass=metrics.relevance_mae <= 0.15,
         impact_pass=metrics.impact_mae <= 0.20,
         tag_overlap_pass=metrics.tag_overlap_mean >= 0.30,
+        false_actionable_pass=metrics.false_actionable_rate <= 0.05,
     )
 
 
@@ -186,6 +193,152 @@ class EvaluationReport:
         }
 
 
+@dataclass
+class CountComparison:
+    """Structured baseline-vs-candidate comparison for integer counts."""
+
+    baseline: int
+    candidate: int
+    delta: int
+
+    def to_json_dict(self) -> dict[str, int]:
+        return {
+            "baseline": self.baseline,
+            "candidate": self.candidate,
+            "delta": self.delta,
+        }
+
+
+@dataclass
+class MetricComparison:
+    """Structured baseline-vs-candidate comparison for float metrics."""
+
+    baseline: float
+    candidate: float
+    delta: float
+
+    def to_json_dict(self) -> dict[str, float]:
+        return {
+            "baseline": self.baseline,
+            "candidate": self.candidate,
+            "delta": self.delta,
+        }
+
+
+@dataclass
+class EvaluationMetricDeltas:
+    """Delta bundle for evaluation metrics."""
+
+    sentiment_agreement: MetricComparison
+    priority_mae: MetricComparison
+    relevance_mae: MetricComparison
+    impact_mae: MetricComparison
+    tag_overlap_mean: MetricComparison
+    actionable_accuracy: MetricComparison
+    false_actionable_rate: MetricComparison
+
+    def to_json_dict(self) -> dict[str, dict[str, float]]:
+        return {
+            "sentiment_agreement": self.sentiment_agreement.to_json_dict(),
+            "priority_mae": self.priority_mae.to_json_dict(),
+            "relevance_mae": self.relevance_mae.to_json_dict(),
+            "impact_mae": self.impact_mae.to_json_dict(),
+            "tag_overlap_mean": self.tag_overlap_mean.to_json_dict(),
+            "actionable_accuracy": self.actionable_accuracy.to_json_dict(),
+            "false_actionable_rate": self.false_actionable_rate.to_json_dict(),
+        }
+
+
+@dataclass
+class GateChange:
+    """Pass/fail transition of one promotion gate."""
+
+    baseline_pass: bool
+    candidate_pass: bool
+    changed: bool
+    regressed: bool
+    improved: bool
+
+    def to_json_dict(self) -> dict[str, bool]:
+        return {
+            "baseline_pass": self.baseline_pass,
+            "candidate_pass": self.candidate_pass,
+            "changed": self.changed,
+            "regressed": self.regressed,
+            "improved": self.improved,
+        }
+
+
+@dataclass
+class PromotionGateChanges:
+    """Gate-by-gate promotion transition summary."""
+
+    baseline_promotable: bool
+    candidate_promotable: bool
+    sentiment: GateChange
+    priority: GateChange
+    relevance: GateChange
+    impact: GateChange
+    tag_overlap: GateChange
+    false_actionable: GateChange
+
+    def to_json_dict(self) -> dict[str, object]:
+        return {
+            "baseline_promotable": self.baseline_promotable,
+            "candidate_promotable": self.candidate_promotable,
+            "sentiment": self.sentiment.to_json_dict(),
+            "priority": self.priority.to_json_dict(),
+            "relevance": self.relevance.to_json_dict(),
+            "impact": self.impact.to_json_dict(),
+            "tag_overlap": self.tag_overlap.to_json_dict(),
+            "false_actionable": self.false_actionable.to_json_dict(),
+        }
+
+
+@dataclass
+class RegressionSummary:
+    """High-level regression/improvement classification for a report comparison."""
+
+    has_regression: bool
+    regressed_metrics: list[str] = field(default_factory=list)
+    improved_metrics: list[str] = field(default_factory=list)
+    regressed_gates: list[str] = field(default_factory=list)
+    improved_gates: list[str] = field(default_factory=list)
+
+    def to_json_dict(self) -> dict[str, object]:
+        return {
+            "has_regression": self.has_regression,
+            "regressed_metrics": list(self.regressed_metrics),
+            "improved_metrics": list(self.improved_metrics),
+            "regressed_gates": list(self.regressed_gates),
+            "improved_gates": list(self.improved_gates),
+        }
+
+
+@dataclass
+class EvaluationComparisonReport:
+    """Structured comparison between two persisted evaluation reports."""
+
+    baseline_dataset_type: str
+    candidate_dataset_type: str
+    paired_count: CountComparison
+    metric_deltas: EvaluationMetricDeltas
+    pass_fail_changes: PromotionGateChanges
+    regression_summary: RegressionSummary
+    notes: list[str] = field(default_factory=list)
+
+    def to_json_dict(self) -> dict[str, object]:
+        return {
+            "baseline_dataset_type": self.baseline_dataset_type,
+            "candidate_dataset_type": self.candidate_dataset_type,
+            "paired_count": self.paired_count.to_json_dict(),
+            "metric_deltas": self.metric_deltas.to_json_dict(),
+            "pass_fail_changes": self.pass_fail_changes.to_json_dict(),
+            "regression_summary": self.regression_summary.to_json_dict(),
+            "notes": list(self.notes),
+        }
+
+
 def load_jsonl(path: Path | str) -> list[dict[str, Any]]:
     """Load a JSONL export file into a list of row dicts.
 
@@ -210,6 +363,398 @@ def save_jsonl_rows(rows: list[dict[str, Any]], output_path: Path | str) -> Path
             handle.write(json.dumps(row) + "\n")
 
     return resolved_path
+
+
+def load_saved_evaluation_report(path: Path | str) -> EvaluationReport:
+    """Load a persisted evaluation_report.json and validate its required structure."""
+    report_path = Path(path)
+    if not report_path.exists():
+        raise FileNotFoundError(f"Evaluation report not found: {report_path}")
+
+    try:
+        payload = json.loads(report_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as err:
+        raise ValueError(f"Evaluation report is not valid JSON: {report_path}") from err
+
+    if not isinstance(payload, dict):
+        raise ValueError("Evaluation report must be a JSON object.")
+
+    if payload.get("report_type") != "dataset_evaluation":
+        raise ValueError("Evaluation report must have report_type='dataset_evaluation'.")
+
+    inputs = payload.get("inputs")
+    if not isinstance(inputs, dict):
+        raise ValueError("Evaluation report is missing required inputs metadata.")
+
+    teacher_dataset = inputs.get("teacher_dataset")
+    if not isinstance(teacher_dataset, str) or not teacher_dataset.strip():
+        raise ValueError("Evaluation report inputs.teacher_dataset must be a non-empty string.")
+
+    candidate_dataset = inputs.get("candidate_dataset")
+    if not isinstance(candidate_dataset, str) or not candidate_dataset.strip():
+        raise ValueError(
+            "Evaluation report inputs.candidate_dataset must be a non-empty string."
+        )
+
+    dataset_type = payload.get("dataset_type")
+    if not isinstance(dataset_type, str) or not dataset_type.strip():
+        raise ValueError("Evaluation report dataset_type must be a non-empty string.")
+
+    notes_raw = payload.get("notes", [])
+    if not isinstance(notes_raw, list) or any(not isinstance(item, str) for item in notes_raw):
+        raise ValueError("Evaluation report notes must be a list[str].")
+
+    metrics = _parse_metrics_payload(payload.get("metrics"))
+    teacher_count = _parse_non_negative_int(payload.get("teacher_count"), "teacher_count")
+    baseline_count = _parse_non_negative_int(payload.get("baseline_count"), "baseline_count")
+    paired_count = _parse_non_negative_int(payload.get("paired_count"), "paired_count")
+
+    return EvaluationReport(
+        metrics=metrics,
+        dataset_type=dataset_type,
+        teacher_count=teacher_count,
+        baseline_count=baseline_count,
+        paired_count=paired_count,
+        notes=list(notes_raw),
+    )
+
+
+def compare_evaluation_reports(
+    baseline_report: EvaluationReport,
+    candidate_report: EvaluationReport,
+) -> EvaluationComparisonReport:
+    """Compare two persisted evaluation reports without rerunning evaluation."""
+    raw_deltas = compare_metrics(baseline_report.metrics, candidate_report.metrics)
+    metric_deltas = EvaluationMetricDeltas(
+        sentiment_agreement=_build_metric_comparison(
+            baseline_report.metrics.sentiment_agreement,
+            candidate_report.metrics.sentiment_agreement,
+            delta=raw_deltas.sentiment_agreement_delta,
+        ),
+        priority_mae=_build_metric_comparison(
+            baseline_report.metrics.priority_mae,
+            candidate_report.metrics.priority_mae,
+            delta=raw_deltas.priority_mae_delta,
+        ),
+        relevance_mae=_build_metric_comparison(
+            baseline_report.metrics.relevance_mae,
+            candidate_report.metrics.relevance_mae,
+            delta=raw_deltas.relevance_mae_delta,
+        ),
+        impact_mae=_build_metric_comparison(
+            baseline_report.metrics.impact_mae,
+            candidate_report.metrics.impact_mae,
+            delta=raw_deltas.impact_mae_delta,
+        ),
+        tag_overlap_mean=_build_metric_comparison(
+            baseline_report.metrics.tag_overlap_mean,
+            candidate_report.metrics.tag_overlap_mean,
+            delta=raw_deltas.tag_overlap_delta,
+        ),
+        actionable_accuracy=_build_metric_comparison(
+            baseline_report.metrics.actionable_accuracy,
+            candidate_report.metrics.actionable_accuracy,
+            delta=raw_deltas.actionable_accuracy_delta,
+        ),
+        false_actionable_rate=_build_metric_comparison(
+            baseline_report.metrics.false_actionable_rate,
+            candidate_report.metrics.false_actionable_rate,
+            delta=raw_deltas.false_actionable_rate_delta,
+        ),
+    )
+
+    baseline_validation = validate_promotion(baseline_report.metrics)
+    candidate_validation = validate_promotion(candidate_report.metrics)
+    pass_fail_changes = PromotionGateChanges(
+        baseline_promotable=baseline_validation.is_promotable,
+        candidate_promotable=candidate_validation.is_promotable,
+        sentiment=_build_gate_change(
+            baseline_validation.sentiment_pass,
+            candidate_validation.sentiment_pass,
+        ),
+        priority=_build_gate_change(
+            baseline_validation.priority_pass,
+            candidate_validation.priority_pass,
+        ),
+        relevance=_build_gate_change(
+            baseline_validation.relevance_pass,
+            candidate_validation.relevance_pass,
+        ),
+        impact=_build_gate_change(
+            baseline_validation.impact_pass,
+            candidate_validation.impact_pass,
+        ),
+        tag_overlap=_build_gate_change(
+            baseline_validation.tag_overlap_pass,
+            candidate_validation.tag_overlap_pass,
+        ),
+        false_actionable=_build_gate_change(
+            baseline_validation.false_actionable_pass,
+            candidate_validation.false_actionable_pass,
+        ),
+    )
+
+    regressed_metrics: list[str] = []
+    improved_metrics: list[str] = []
+    _track_metric_direction(
+        "paired_count",
+        float(baseline_report.paired_count),
+        float(candidate_report.paired_count),
+        higher_is_better=True,
+        regressed_metrics=regressed_metrics,
+        improved_metrics=improved_metrics,
+    )
+    _track_metric_direction(
+        "sentiment_agreement",
+        baseline_report.metrics.sentiment_agreement,
+        candidate_report.metrics.sentiment_agreement,
+        higher_is_better=True,
+        regressed_metrics=regressed_metrics,
+        improved_metrics=improved_metrics,
+    )
+    _track_metric_direction(
+        "priority_mae",
+        baseline_report.metrics.priority_mae,
+        candidate_report.metrics.priority_mae,
+        higher_is_better=False,
+        regressed_metrics=regressed_metrics,
+        improved_metrics=improved_metrics,
+    )
+    _track_metric_direction(
+        "relevance_mae",
+        baseline_report.metrics.relevance_mae,
+        candidate_report.metrics.relevance_mae,
+        higher_is_better=False,
+        regressed_metrics=regressed_metrics,
+        improved_metrics=improved_metrics,
+    )
+    _track_metric_direction(
+        "impact_mae",
+        baseline_report.metrics.impact_mae,
+        candidate_report.metrics.impact_mae,
+        higher_is_better=False,
+        regressed_metrics=regressed_metrics,
+        improved_metrics=improved_metrics,
+    )
+    _track_metric_direction(
+        "tag_overlap_mean",
+        baseline_report.metrics.tag_overlap_mean,
+        candidate_report.metrics.tag_overlap_mean,
+        higher_is_better=True,
+        regressed_metrics=regressed_metrics,
+        improved_metrics=improved_metrics,
+    )
+    _track_metric_direction(
+        "actionable_accuracy",
+        baseline_report.metrics.actionable_accuracy,
+        candidate_report.metrics.actionable_accuracy,
+        higher_is_better=True,
+        regressed_metrics=regressed_metrics,
+        improved_metrics=improved_metrics,
+    )
+    _track_metric_direction(
+        "false_actionable_rate",
+        baseline_report.metrics.false_actionable_rate,
+        candidate_report.metrics.false_actionable_rate,
+        higher_is_better=False,
+        regressed_metrics=regressed_metrics,
+        improved_metrics=improved_metrics,
+    )
+
+    regressed_gates, improved_gates = _collect_gate_changes(pass_fail_changes)
+    notes: list[str] = []
+    if baseline_report.dataset_type != candidate_report.dataset_type:
+        notes.append(
+            "dataset_type changed: "
+            f"{baseline_report.dataset_type} -> {candidate_report.dataset_type}"
+        )
+
+    return EvaluationComparisonReport(
+        baseline_dataset_type=baseline_report.dataset_type,
+        candidate_dataset_type=candidate_report.dataset_type,
+        paired_count=CountComparison(
+            baseline=baseline_report.paired_count,
+            candidate=candidate_report.paired_count,
+            delta=candidate_report.paired_count - baseline_report.paired_count,
+        ),
+        metric_deltas=metric_deltas,
+        pass_fail_changes=pass_fail_changes,
+        regression_summary=RegressionSummary(
+            has_regression=bool(regressed_metrics or regressed_gates),
+            regressed_metrics=regressed_metrics,
+            improved_metrics=improved_metrics,
+            regressed_gates=regressed_gates,
+            improved_gates=improved_gates,
+        ),
+        notes=notes,
+    )
+
+
+def save_evaluation_comparison_report(
+    report: EvaluationComparisonReport,
+    output_path: Path | str,
+    *,
+    baseline_report: Path | str,
+    candidate_report: Path | str,
+) -> Path:
+    """Persist a structured baseline-vs-candidate comparison report."""
+    resolved_path = Path(output_path)
+    resolved_path.parent.mkdir(parents=True, exist_ok=True)
+
+    payload = {
+        "report_type": "evaluation_report_comparison",
+        "generated_at": datetime.now(UTC).isoformat(),
+        "inputs": {
+            "baseline_report": str(Path(baseline_report).resolve()),
+            "candidate_report": str(Path(candidate_report).resolve()),
+        },
+        **report.to_json_dict(),
+    }
+    resolved_path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+    return resolved_path
+
+
+def _parse_non_negative_int(value: object, field_name: str) -> int:
+    if isinstance(value, bool):
+        raise ValueError(f"Evaluation report field '{field_name}' must be an integer.")
+    if isinstance(value, int):
+        parsed = value
+    elif isinstance(value, float):
+        if not value.is_integer():
+            raise ValueError(f"Evaluation report field '{field_name}' must be an integer.")
+        parsed = int(value)
+    elif isinstance(value, str):
+        try:
+            parsed = int(value)
+        except ValueError as err:
+            raise ValueError(
+                f"Evaluation report field '{field_name}' must be an integer."
+            ) from err
+    else:
+        raise ValueError(f"Evaluation report field '{field_name}' must be an integer.")
+
+    if parsed < 0:
+        raise ValueError(f"Evaluation report field '{field_name}' must be >= 0.")
+    return parsed
+
+
+def _parse_float(value: object, field_name: str) -> float:
+    if isinstance(value, bool):
+        raise ValueError(f"Evaluation report field '{field_name}' must be numeric.")
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        try:
+            return float(value)
+        except ValueError as err:
+            raise ValueError(
+                f"Evaluation report field '{field_name}' must be numeric."
+            ) from err
+    raise ValueError(f"Evaluation report field '{field_name}' must be numeric.")
+
+
+def _parse_metrics_payload(raw_metrics: object) -> EvaluationMetrics:
+    if not isinstance(raw_metrics, dict):
+        raise ValueError("Evaluation report is missing required metrics object.")
+
+    return EvaluationMetrics(
+        sentiment_agreement=_parse_float(
+            raw_metrics.get("sentiment_agreement"),
+            "metrics.sentiment_agreement",
+        ),
+        priority_mae=_parse_float(raw_metrics.get("priority_mae"), "metrics.priority_mae"),
+        relevance_mae=_parse_float(raw_metrics.get("relevance_mae"), "metrics.relevance_mae"),
+        impact_mae=_parse_float(raw_metrics.get("impact_mae"), "metrics.impact_mae"),
+        tag_overlap_mean=_parse_float(
+            raw_metrics.get("tag_overlap_mean"),
+            "metrics.tag_overlap_mean",
+        ),
+        actionable_accuracy=_parse_float(
+            raw_metrics.get("actionable_accuracy"),
+            "metrics.actionable_accuracy",
+        ),
+        false_actionable_rate=_parse_float(
+            raw_metrics.get("false_actionable_rate"),
+            "metrics.false_actionable_rate",
+        ),
+        sample_count=_parse_non_negative_int(
+            raw_metrics.get("sample_count"),
+            "metrics.sample_count",
+        ),
+        missing_pairs=_parse_non_negative_int(
+            raw_metrics.get("missing_pairs"),
+            "metrics.missing_pairs",
+        ),
+    )
+
+
+def _build_metric_comparison(
+    baseline: float,
+    candidate: float,
+    *,
+    delta: float | None = None,
+) -> MetricComparison:
+    return MetricComparison(
+        baseline=baseline,
+        candidate=candidate,
+        delta=(candidate - baseline) if delta is None else delta,
+    )
+
+
+def _build_gate_change(baseline_pass: bool, candidate_pass: bool) -> GateChange:
+    return GateChange(
+        baseline_pass=baseline_pass,
+        candidate_pass=candidate_pass,
+        changed=baseline_pass != candidate_pass,
+        regressed=baseline_pass and not candidate_pass,
+        improved=(not baseline_pass) and candidate_pass,
+    )
+
+
+def _track_metric_direction(
+    name: str,
+    baseline: float,
+    candidate: float,
+    *,
+    higher_is_better: bool,
+    regressed_metrics: list[str],
+    improved_metrics: list[str],
+) -> None:
+    if candidate == baseline:
+        return
+
+    if higher_is_better:
+        if candidate < baseline:
+            regressed_metrics.append(name)
+        else:
+            improved_metrics.append(name)
+        return
+
+    if candidate > baseline:
+        regressed_metrics.append(name)
+    else:
+        improved_metrics.append(name)
+
+
+def _collect_gate_changes(
+    changes: PromotionGateChanges,
+) -> tuple[list[str], list[str]]:
+    regressed: list[str] = []
+    improved: list[str] = []
+    gate_mapping = {
+        "sentiment": changes.sentiment,
+        "priority": changes.priority,
+        "relevance": changes.relevance,
+        "impact": changes.impact,
+        "tag_overlap": changes.tag_overlap,
+        "false_actionable": changes.false_actionable,
+    }
+    for gate_name, gate_change in gate_mapping.items():
+        if gate_change.regressed:
+            regressed.append(gate_name)
+        if gate_change.improved:
+            improved.append(gate_name)
+    return regressed, improved
 
 
 def _extract_target(row: dict[str, Any]) -> dict[str, Any]:
@@ -330,6 +875,81 @@ async def build_candidate_dataset_rows(
     return rows
 
 
+def build_shadow_run_record(
+    document: CanonicalDocument,
+    primary_result: AnalysisResult,
+    *,
+    primary_provider: str | None,
+    shadow_output: LLMAnalysisOutput | None,
+    shadow_provider: str | None,
+    shadow_error: str | None = None,
+) -> dict[str, Any]:
+    """Build a compact shadow-run audit record without changing the primary schema."""
+    primary_priority = int(primary_result.recommended_priority or document.priority_score or 1)
+    primary_summary = primary_result.explanation_short or primary_result.explanation_long or ""
+    primary_tags = [tag.strip() for tag in primary_result.tags if tag.strip()]
+
+    payload: dict[str, Any] = {
+        "record_type": "companion_shadow_run",
+        "generated_at": datetime.now(UTC).isoformat(),
+        "document_id": str(document.id),
+        "primary_provider": (
+            (primary_provider or document.provider or "fallback").strip()
+            or "fallback"
+        ),
+        "primary_analysis_source": (
+            primary_result.analysis_source.value
+            if primary_result.analysis_source is not None
+            else document.effective_analysis_source.value
+        ),
+        "primary": {
+            "summary": primary_summary,
+            "priority_score": primary_priority,
+            "relevance_score": primary_result.relevance_score,
+            "impact_score": primary_result.impact_score,
+            "sentiment_label": primary_result.sentiment_label.value,
+            "actionable": primary_result.actionable,
+            "tags": primary_tags,
+        },
+        "shadow_provider": (shadow_provider or "").strip() or None,
+        "shadow_analysis_source": "internal" if shadow_provider else None,
+        "shadow": None,
+        "deviations": None,
+        "shadow_error": shadow_error,
+    }
+
+    if shadow_output is None:
+        return payload
+
+    shadow_tags = [tag.strip() for tag in shadow_output.tags if tag.strip()]
+    shadow_summary = shadow_output.short_reasoning or shadow_output.long_reasoning or ""
+    shadow_priority = int(shadow_output.recommended_priority)
+
+    payload["shadow"] = {
+        "summary": shadow_summary,
+        "priority_score": shadow_priority,
+        "relevance_score": shadow_output.relevance_score,
+        "impact_score": shadow_output.impact_score,
+        "sentiment_label": shadow_output.sentiment_label.value,
+        "actionable": shadow_output.actionable,
+        "tags": shadow_tags,
+    }
+    payload["deviations"] = {
+        "priority_delta": abs(primary_priority - shadow_priority),
+        "relevance_delta": abs(primary_result.relevance_score - shadow_output.relevance_score),
+        "impact_delta": abs(primary_result.impact_score - shadow_output.impact_score),
+        "sentiment_match": primary_result.sentiment_label == shadow_output.sentiment_label,
+        "actionable_match": primary_result.actionable == shadow_output.actionable,
+        "tag_overlap": _jaccard(primary_tags, shadow_tags),
+    }
+    return payload
+
+
+def save_shadow_run_records(records: list[dict[str, Any]], output_path: Path | str) -> Path:
+    """Persist sidecar shadow-run audit rows as JSONL."""
+    return save_jsonl_rows(records, output_path)
+
+
 def _jaccard(a: list[str], b: list[str]) -> float:
     """Jaccard similarity between two tag lists. Both empty → 1.0."""
     sa, sb = set(a), set(b)
@@ -341,6 +961,23 @@ def _jaccard(a: list[str], b: list[str]) -> float:
 
 def _mean(vals: list[float]) -> float:
     return sum(vals) / len(vals) if vals else 0.0
+
+
+def _is_actionable(target: dict[str, Any]) -> bool:
+    """Resolve the actionable label from a structured target without fuzzy inference.
+
+    Preferred source is an explicit boolean `actionable` field when present.
+    If absent, fall back to the documented deterministic threshold `priority_score >= 7`.
+    """
+    explicit = target.get("actionable")
+    if isinstance(explicit, bool):
+        return explicit
+
+    try:
+        priority = float(target.get("priority_score", 1))
+    except (TypeError, ValueError):
+        return False
+    return priority >= 7.0
 
 
 def compare_datasets(
@@ -377,6 +1014,8 @@ def compare_datasets(
     relevance_errors: list[float] = []
     impact_errors: list[float] = []
     tag_overlaps: list[float] = []
+    actionable_matches = 0
+    false_actionables = 0
     missing = 0
     paired = 0
 
@@ -415,12 +1054,21 @@ def compare_datasets(
             _jaccard(teacher.get("tags", []), baseline.get("tags", []))
         )
 
+        t_act = _is_actionable(teacher)
+        b_act = _is_actionable(baseline)
+        if t_act == b_act:
+            actionable_matches += 1
+        elif b_act and not t_act:
+            false_actionables += 1
+
     metrics = EvaluationMetrics(
         sentiment_agreement=sentiment_matches / paired if paired else 0.0,
         priority_mae=_mean(priority_errors),
         relevance_mae=_mean(relevance_errors),
         impact_mae=_mean(impact_errors),
         tag_overlap_mean=_mean(tag_overlaps),
+        actionable_accuracy=actionable_matches / paired if paired else 0.0,
+        false_actionable_rate=false_actionables / paired if paired else 0.0,
         sample_count=paired,
         missing_pairs=missing,
     )
@@ -483,3 +1131,30 @@ def save_benchmark_artifact(
     }
     resolved_path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
     return resolved_path
+
+
+@dataclass
+class ComparisonMetrics:
+    """Stores the deltas between a candidate and baseline EvaluationMetrics."""
+    sentiment_agreement_delta: float
+    priority_mae_delta: float
+    relevance_mae_delta: float
+    impact_mae_delta: float
+    tag_overlap_delta: float
+    actionable_accuracy_delta: float
+    false_actionable_rate_delta: float
+
+
+def compare_metrics(baseline: EvaluationMetrics, candidate: EvaluationMetrics) -> ComparisonMetrics:
+    """Calculate the deltas. For MAE tracking, a negative delta is an improvement."""
+    return ComparisonMetrics(
+        sentiment_agreement_delta=candidate.sentiment_agreement - baseline.sentiment_agreement,
+        priority_mae_delta=candidate.priority_mae - baseline.priority_mae,
+        relevance_mae_delta=candidate.relevance_mae - baseline.relevance_mae,
+        impact_mae_delta=candidate.impact_mae - baseline.impact_mae,
+        tag_overlap_delta=candidate.tag_overlap_mean - baseline.tag_overlap_mean,
+        actionable_accuracy_delta=candidate.actionable_accuracy - baseline.actionable_accuracy,
+        false_actionable_rate_delta=(
+            candidate.false_actionable_rate - baseline.false_actionable_rate
+        ),
+    )

@@ -59,6 +59,18 @@ class DocumentRepository:
         result = await self._session.execute(stmt)
         return [_from_model(m) for m in result.scalars().all()]
 
+    async def count_pending_documents(self) -> int:
+        """Return the count of documents in status=PERSISTED waiting for analysis."""
+        from sqlalchemy import func
+        stmt = (
+            select(func.count(CanonicalDocumentModel.id))
+            .where(CanonicalDocumentModel.status == DocumentStatus.PERSISTED.value)
+            .where(CanonicalDocumentModel.is_analyzed == False)  # noqa: E712
+            .where(CanonicalDocumentModel.is_duplicate == False)  # noqa: E712
+        )
+        result = await self._session.execute(stmt)
+        return result.scalar_one()
+
     async def update_status(self, document_id: str, status: DocumentStatus) -> None:
         """Explicitly advance a document to a new lifecycle status."""
         values: dict[str, Any] = {"status": status.value}
@@ -190,6 +202,17 @@ class DocumentRepository:
             )
         )
         return result.scalar_one_or_none() is not None
+
+    async def get_recent_analyzed(self, limit: int = 20) -> list[CanonicalDocument]:
+        """Return the most recently analyzed documents for shadow run input (I-51)."""
+        stmt = (
+            select(CanonicalDocumentModel)
+            .where(CanonicalDocumentModel.status == DocumentStatus.ANALYZED.value)
+            .order_by(CanonicalDocumentModel.fetched_at.desc())
+            .limit(limit)
+        )
+        result = await self._session.execute(stmt)
+        return [_from_model(m) for m in result.scalars().all()]
 
     async def list(
         self,

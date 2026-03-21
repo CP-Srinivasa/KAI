@@ -1,7 +1,7 @@
 """Signal Candidates generation.
 
 Extracts strictly actionable documents from the analysis pipeline into
-a highly structured, rigid format aimed at trading execution layers.
+a highly structured, rigid format for controlled signal-consumption layers.
 """
 
 from __future__ import annotations

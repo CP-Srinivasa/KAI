@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections import Counter
+from collections.abc import Iterable
 from datetime import UTC, datetime
 from typing import Any
 
@@ -223,8 +224,8 @@ class ResearchBriefBuilder:
             analysis_source=document.effective_analysis_source.value,
         )
 
-    def _rank_terms(self, values: Any, *, limit: int = 5) -> list[BriefFacet]:
-        counter = Counter()
+    def _rank_terms(self, values: Iterable[object], *, limit: int = 5) -> list[BriefFacet]:
+        counter: Counter[str] = Counter()
         for value in values:
             normalized = str(value).strip()
             if normalized:

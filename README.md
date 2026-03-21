@@ -1,10 +1,32 @@
-# AI Analyst Trading Bot
+# KAI (Robotron)
 
 > **Leitmotiv: SIMPLE BUT POWERFUL**
 
 **Repository**: [https://github.com/CP-Srinivasa/KAI](https://github.com/CP-Srinivasa/KAI)
 
-Modulares, produktionsreifes AI-Analyse- und Trading-Bot-System für Krypto- und klassische Finanzmärkte.
+KAI ist ein modularer, sicherheitsorientierter AI-Analyse- und Entscheidungsstack für
+Krypto- und klassische Märkte. Der Kern ist standardmäßig research/paper-first,
+auditierbar, fail-closed und für kontrollierte agentische Erweiterung ausgelegt.
+
+## Sicherheitsbaseline
+
+- `paper` als Default-Betriebsmodus
+- `live` standardmäßig deaktiviert
+- keine ungeprüfte Modellausgabe im kritischen Pfad
+- Risk Engine und Kill Switch sind harte Gates
+- Operator-Surfaces sind read-only oder audit-only, solange keine explizite Freigabe existiert
+
+## Pflichtdokumente
+
+- [ARCHITECTURE.md](ARCHITECTURE.md)
+- [ASSUMPTIONS.md](ASSUMPTIONS.md)
+- [SECURITY.md](SECURITY.md)
+- [RISK_POLICY.md](RISK_POLICY.md)
+- [RUNBOOK.md](RUNBOOK.md)
+- [TELEGRAM_INTERFACE.md](TELEGRAM_INTERFACE.md)
+- [CONFIG_SCHEMA.json](CONFIG_SCHEMA.json)
+- [DECISION_SCHEMA.json](DECISION_SCHEMA.json)
+- [CHANGELOG.md](CHANGELOG.md)
 
 ## Features
 

@@ -1,0 +1,600 @@
+"""Telegram operator bot for safe runtime control of KAI.
+
+Handles:
+- /status
+- /health
+- /positions
+- /exposure
+- /risk
+- /signals
+- /journal
+- /approve
+- /reject
+- /pause
+- /resume
+- /kill
+- /daily_summary
+- /incident
+
+This bot is separate from outbound alert delivery. It is the inbound operator
+channel and remains fail-closed, admin-gated, and dry-run-safe by default.
+"""
+from __future__ import annotations
+
+import json
+import logging
+import re
+from collections.abc import Awaitable, Callable
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import Any
+
+import httpx
+
+logger = logging.getLogger(__name__)
+
+_TELEGRAM_API_BASE = "https://api.telegram.org"
+_READ_ONLY_COMMANDS = frozenset(
+    {
+        "status",
+        "health",
+        "positions",
+        "risk",
+        "signals",
+        "journal",
+        "daily_summary",
+    }
+)
+_GUARDED_AUDIT_COMMANDS = frozenset({"approve", "reject", "incident"})
+_DECISION_REF_PATTERN = re.compile(r"^dec_[0-9a-f]{12}$")
+TELEGRAM_CANONICAL_RESEARCH_REFS: dict[str, tuple[str, ...]] = {
+    "status": ("research readiness-summary",),
+    "health": ("research provider-health",),
+    "positions": ("research handoff-collector-summary",),
+    "risk": ("research gate-summary",),
+    "signals": ("research signal-handoff",),
+    "journal": ("research review-journal-summary",),
+    "daily_summary": ("research decision-pack-summary",),
+    "incident": ("research escalation-summary",),
+    "approve": ("research review-journal-append",),
+    "reject": ("research review-journal-append",),
+}
+
+
+def get_telegram_command_inventory() -> dict[str, object]:
+    """Return the canonical Telegram command inventory used by tests/contracts."""
+    return {
+        "read_only_commands": sorted(_READ_ONLY_COMMANDS),
+        "guarded_audit_commands": sorted(_GUARDED_AUDIT_COMMANDS),
+        "canonical_research_refs": {
+            command: list(refs)
+            for command, refs in TELEGRAM_CANONICAL_RESEARCH_REFS.items()
+        },
+    }
+
+
+class TelegramOperatorBot:
+    """Operator command handler for Telegram."""
+
+    def __init__(
+        self,
+        *,
+        bot_token: str,
+        admin_chat_ids: list[int],
+        audit_log_path: str = "artifacts/operator_commands.jsonl",
+        risk_engine: Any | None = None,
+        dry_run: bool = True,
+    ) -> None:
+        self._token = bot_token
+        self._admin_ids = set(admin_chat_ids)
+        self._audit_path = Path(audit_log_path)
+        self._audit_path.parent.mkdir(parents=True, exist_ok=True)
+        self._risk_engine = risk_engine
+        self._dry_run = dry_run
+        self._pending_confirm: dict[int, str] = {}
+        self._system_status = "operational"
+        self._invalid_command_refs = self._collect_invalid_command_refs()
+
+    @property
+    def is_configured(self) -> bool:
+        return bool(self._token) and bool(self._admin_ids)
+
+    def _collect_invalid_command_refs(self) -> tuple[str, ...]:
+        refs = [
+            ref
+            for command_refs in TELEGRAM_CANONICAL_RESEARCH_REFS.values()
+            for ref in command_refs
+        ]
+        try:
+            from app.cli.main import get_invalid_research_command_refs
+
+            invalid_refs = get_invalid_research_command_refs(refs)
+        except Exception as exc:  # noqa: BLE001
+            logger.error(
+                "[BOT] Failed to validate canonical command refs; failing closed: %s",
+                exc,
+            )
+            return tuple(sorted(set(refs)))
+        return tuple(sorted(set(invalid_refs)))
+
+    async def process_update(self, update: dict[str, Any]) -> None:
+        """Process a single Telegram update and ignore non-command traffic."""
+        try:
+            message = update.get("message") or update.get("edited_message")
+            if not message:
+                return
+
+            chat_id = message.get("chat", {}).get("id")
+            text = (message.get("text") or "").strip()
+            if not chat_id or not text.startswith("/"):
+                return
+
+            if chat_id not in self._admin_ids:
+                logger.warning(
+                    "[BOT] Unauthorized command from chat_id=%s: %s",
+                    chat_id,
+                    text,
+                )
+                await self._send(chat_id, "Unauthorized. This incident is logged.")
+                return
+
+            command_parts = text.split(maxsplit=1)
+            command = command_parts[0].lower().lstrip("/")
+            args = command_parts[1].strip() if len(command_parts) > 1 else ""
+            await self._dispatch(chat_id, command, args=args)
+        except Exception as exc:  # noqa: BLE001
+            logger.error("[BOT] Error processing update: %s", exc)
+
+    async def _dispatch(self, chat_id: int, command: str, *, args: str = "") -> None:
+        self._audit(chat_id, command, args=args)
+        handlers = {
+            "status": self._cmd_status,
+            "health": self._cmd_health,
+            "positions": self._cmd_positions,
+            "exposure": self._cmd_exposure,
+            "risk": self._cmd_risk,
+            "signals": self._cmd_signals,
+            "journal": self._cmd_journal,
+            "approve": self._cmd_approve,
+            "reject": self._cmd_reject,
+            "pause": self._cmd_pause,
+            "resume": self._cmd_resume,
+            "kill": self._cmd_kill,
+            "daily_summary": self._cmd_daily_summary,
+            "incident": self._cmd_incident,
+            "help": self._cmd_help,
+        }
+        handler = handlers.get(command)
+        if handler is None:
+            await self._send(chat_id, f"Unknown command: /{command}\nUse /help for list.")
+            return
+        if command in _READ_ONLY_COMMANDS and self._invalid_command_refs:
+            await self._send(
+                chat_id,
+                "*Operator Surface Misconfigured*\n"
+                "Canonical command references failed validation (fail-closed).\n"
+                "Please verify CLI command inventory before using Telegram read surfaces.",
+            )
+            return
+        await handler(chat_id, args=args)
+
+    @staticmethod
+    def _inline(value: object) -> str:
+        return str(value).replace("`", "'").replace("\n", " ").strip() or "unknown"
+
+    def _format_refs(self, command: str) -> str:
+        refs = TELEGRAM_CANONICAL_RESEARCH_REFS.get(command, ())
+        if not refs:
+            return ""
+        if len(refs) == 1:
+            return f"\nRef: `{refs[0]}`"
+        refs_text = ", ".join(f"`{ref}`" for ref in refs)
+        return f"\nRefs: {refs_text}"
+
+    @staticmethod
+    def _validate_decision_ref(value: str) -> str | None:
+        candidate = value.strip()
+        if not candidate:
+            return None
+        if not _DECISION_REF_PATTERN.fullmatch(candidate):
+            return None
+        return candidate
+
+    async def _load_canonical_surface(
+        self,
+        *,
+        chat_id: int,
+        surface_name: str,
+        command: str,
+        loader: Callable[[], Awaitable[dict[str, object]]],
+    ) -> dict[str, object] | None:
+        try:
+            payload = await loader()
+        except Exception as exc:  # noqa: BLE001
+            logger.error(
+                "[BOT] Canonical surface load failed for /%s (%s): %s",
+                command,
+                surface_name,
+                exc,
+            )
+            await self._send(
+                chat_id,
+                f"*{surface_name}*\n"
+                "Canonical read surface unavailable (fail-closed).\n"
+                "No execution side effect was performed.",
+            )
+            return None
+        if not isinstance(payload, dict):
+            await self._send(
+                chat_id,
+                f"*{surface_name}*\n"
+                "Invalid canonical payload (fail-closed).\n"
+                "No execution side effect was performed.",
+            )
+            return None
+        return payload
+
+    async def _get_operational_readiness_summary(self) -> dict[str, Any]:
+        from app.agents.mcp_server import get_operational_readiness_summary
+
+        return await get_operational_readiness_summary()  # type: ignore[no-any-return]
+
+    async def _get_provider_health(self) -> dict[str, Any]:
+        from app.agents.mcp_server import get_provider_health
+
+        return await get_provider_health()  # type: ignore[no-any-return]
+
+    async def _get_handoff_collector_summary(self) -> dict[str, Any]:
+        from app.agents.mcp_server import get_handoff_collector_summary
+
+        return await get_handoff_collector_summary()  # type: ignore[no-any-return]
+
+    async def _get_protective_gate_summary(self) -> dict[str, Any]:
+        from app.agents.mcp_server import get_protective_gate_summary
+
+        return await get_protective_gate_summary()  # type: ignore[no-any-return]
+
+    async def _get_signals_for_execution(self) -> dict[str, Any]:
+        from app.agents.mcp_server import get_signals_for_execution
+
+        return await get_signals_for_execution(limit=5)  # type: ignore[no-any-return]
+
+    async def _get_review_journal_summary(self) -> dict[str, Any]:
+        from app.agents.mcp_server import get_review_journal_summary
+
+        return await get_review_journal_summary()  # type: ignore[no-any-return]
+
+    async def _get_decision_pack_summary(self) -> dict[str, Any]:
+        from app.agents.mcp_server import get_decision_pack_summary
+
+        return await get_decision_pack_summary()  # type: ignore[no-any-return]
+
+    async def _get_escalation_summary(self) -> dict[str, Any]:
+        from app.agents.mcp_server import get_escalation_summary
+
+        return await get_escalation_summary()  # type: ignore[no-any-return]
+
+    async def _cmd_status(self, chat_id: int, *, args: str = "") -> None:
+        payload = await self._load_canonical_surface(
+            chat_id=chat_id,
+            surface_name="Status",
+            command="status",
+            loader=self._get_operational_readiness_summary,
+        )
+        if payload is None:
+            return
+        msg = (
+            "*Status (Canonical Readiness)*\n"
+            f"readiness_status=`{self._inline(payload.get('readiness_status', 'unknown'))}`\n"
+            f"highest_severity=`{self._inline(payload.get('highest_severity', 'unknown'))}`\n"
+            f"issue_count=`{self._inline(payload.get('issue_count', 0))}`\n"
+            f"execution_enabled=`{self._inline(payload.get('execution_enabled', False))}`\n"
+            f"write_back_allowed=`{self._inline(payload.get('write_back_allowed', False))}`"
+            f"{self._format_refs('status')}"
+        )
+        await self._send(chat_id, msg)
+
+    async def _cmd_health(self, chat_id: int, *, args: str = "") -> None:
+        payload = await self._load_canonical_surface(
+            chat_id=chat_id,
+            surface_name="Health",
+            command="health",
+            loader=self._get_provider_health,
+        )
+        if payload is None:
+            return
+        msg = (
+            "*Health (Provider Surface)*\n"
+            f"provider_count=`{self._inline(payload.get('provider_count', 0))}`\n"
+            f"healthy_count=`{self._inline(payload.get('healthy_count', 0))}`\n"
+            f"degraded_count=`{self._inline(payload.get('degraded_count', 0))}`\n"
+            f"unavailable_count=`{self._inline(payload.get('unavailable_count', 0))}`\n"
+            f"execution_enabled=`{self._inline(payload.get('execution_enabled', False))}`\n"
+            f"write_back_allowed=`{self._inline(payload.get('write_back_allowed', False))}`"
+            f"{self._format_refs('health')}"
+        )
+        await self._send(chat_id, msg)
+
+    async def _cmd_positions(self, chat_id: int, *, args: str = "") -> None:
+        payload = await self._load_canonical_surface(
+            chat_id=chat_id,
+            surface_name="Positions",
+            command="positions",
+            loader=self._get_handoff_collector_summary,
+        )
+        if payload is None:
+            return
+        msg = (
+            "*Positions (Collector Proxy, Read-Only)*\n"
+            f"total_handoffs=`{self._inline(payload.get('total_handoffs', 0))}`\n"
+            f"acknowledged_count=`{self._inline(payload.get('acknowledged_count', 0))}`\n"
+            f"pending_count=`{self._inline(payload.get('pending_count', 0))}`\n"
+            f"execution_enabled=`{self._inline(payload.get('execution_enabled', False))}`\n"
+            f"write_back_allowed=`{self._inline(payload.get('write_back_allowed', False))}`\n"
+            "No direct trading position action is exposed via Telegram."
+            f"{self._format_refs('positions')}"
+        )
+        await self._send(chat_id, msg)
+
+    async def _cmd_exposure(self, chat_id: int, *, args: str = "") -> None:
+        await self._send(
+            chat_id,
+            "*Exposure*\nRead-only stub active.\nNo portfolio exposure provider is connected yet.",
+        )
+
+    async def _cmd_risk(self, chat_id: int, *, args: str = "") -> None:
+        payload = await self._load_canonical_surface(
+            chat_id=chat_id,
+            surface_name="Risk",
+            command="risk",
+            loader=self._get_protective_gate_summary,
+        )
+        if payload is None:
+            return
+        msg = (
+            "*Risk (Protective Gate)*\n"
+            f"gate_status=`{self._inline(payload.get('gate_status', 'unknown'))}`\n"
+            f"blocking_count=`{self._inline(payload.get('blocking_count', 0))}`\n"
+            f"warning_count=`{self._inline(payload.get('warning_count', 0))}`\n"
+            f"advisory_count=`{self._inline(payload.get('advisory_count', 0))}`\n"
+            f"execution_enabled=`{self._inline(payload.get('execution_enabled', False))}`\n"
+            f"write_back_allowed=`{self._inline(payload.get('write_back_allowed', False))}`"
+            f"{self._format_refs('risk')}"
+        )
+        await self._send(chat_id, msg)
+
+    async def _cmd_signals(self, chat_id: int, *, args: str = "") -> None:
+        payload = await self._load_canonical_surface(
+            chat_id=chat_id,
+            surface_name="Signals",
+            command="signals",
+            loader=self._get_signals_for_execution,
+        )
+        if payload is None:
+            return
+        signals = payload.get("signals", [])
+        signal_preview = "none"
+        if isinstance(signals, list) and signals and isinstance(signals[0], dict):
+            first = signals[0]
+            signal_preview = (
+                f"{self._inline(first.get('target_asset', 'unknown'))} "
+                f"({self._inline(first.get('direction_hint', 'neutral'))}, "
+                f"priority={self._inline(first.get('priority', '?'))})"
+            )
+
+        msg = (
+            "*Signals (Read-Only Handoff)*\n"
+            f"signal_count=`{self._inline(payload.get('signal_count', 0))}`\n"
+            f"top_signal=`{signal_preview}`\n"
+            f"execution_enabled=`{self._inline(payload.get('execution_enabled', False))}`\n"
+            f"write_back_allowed=`{self._inline(payload.get('write_back_allowed', False))}`\n"
+            "Signals remain advisory only. No direct execution side effect."
+            f"{self._format_refs('signals')}"
+        )
+        await self._send(chat_id, msg)
+
+    async def _cmd_journal(self, chat_id: int, *, args: str = "") -> None:
+        payload = await self._load_canonical_surface(
+            chat_id=chat_id,
+            surface_name="Journal",
+            command="journal",
+            loader=self._get_review_journal_summary,
+        )
+        if payload is None:
+            return
+        msg = (
+            "*Operator Journal (Read-Only)*\n"
+            f"journal_status=`{self._inline(payload.get('journal_status', 'unknown'))}`\n"
+            f"total_count=`{self._inline(payload.get('total_count', 0))}`\n"
+            f"open_count=`{self._inline(payload.get('open_count', 0))}`\n"
+            f"resolved_count=`{self._inline(payload.get('resolved_count', 0))}`\n"
+            f"execution_enabled=`{self._inline(payload.get('execution_enabled', False))}`\n"
+            f"write_back_allowed=`{self._inline(payload.get('write_back_allowed', False))}`"
+            f"{self._format_refs('journal')}"
+        )
+        await self._send(chat_id, msg)
+
+    async def _cmd_approve(self, chat_id: int, *, args: str = "") -> None:
+        decision_ref = self._validate_decision_ref(args)
+        if decision_ref is None:
+            await self._send(
+                chat_id,
+                "*Approval Journal*\n"
+                "Invalid or missing `decision_ref`.\n"
+                "Expected format: `dec_<12 lowercase hex>`.\n"
+                "Fail-closed: approval intent rejected.\n"
+                "Audit-only. No execution side effect occurs."
+                f"{self._format_refs('approve')}",
+            )
+            return
+        await self._send(
+            chat_id,
+            "*Approval Journal*\n"
+            f"decision_ref=`{decision_ref}`\n"
+            "Approval intent is recorded in append-only command audit log only.\n"
+            "Audit-only. No execution side effect occurs."
+            f"{self._format_refs('approve')}"
+        )
+
+    async def _cmd_reject(self, chat_id: int, *, args: str = "") -> None:
+        decision_ref = self._validate_decision_ref(args)
+        if decision_ref is None:
+            await self._send(
+                chat_id,
+                "*Rejection Journal*\n"
+                "Invalid or missing `decision_ref`.\n"
+                "Expected format: `dec_<12 lowercase hex>`.\n"
+                "Fail-closed: rejection intent rejected.\n"
+                "Audit-only. No execution side effect occurs."
+                f"{self._format_refs('reject')}",
+            )
+            return
+        await self._send(
+            chat_id,
+            "*Rejection Journal*\n"
+            f"decision_ref=`{decision_ref}`\n"
+            "Rejection intent is recorded in append-only command audit log only.\n"
+            "Audit-only. No execution side effect occurs."
+            f"{self._format_refs('reject')}"
+        )
+
+    async def _cmd_pause(self, chat_id: int, *, args: str = "") -> None:
+        if self._dry_run:
+            await self._send(chat_id, "[DRY RUN] Would pause system. No action taken.")
+            return
+        if self._risk_engine:
+            self._risk_engine.pause()
+        self._system_status = "paused"
+        await self._send(chat_id, "*System PAUSED*. Use /resume to restart.")
+
+    async def _cmd_resume(self, chat_id: int, *, args: str = "") -> None:
+        if self._dry_run:
+            await self._send(chat_id, "[DRY RUN] Would resume system. No action taken.")
+            return
+        if self._risk_engine:
+            self._risk_engine.resume()
+        self._system_status = "operational"
+        await self._send(chat_id, "*System RESUMED*.")
+
+    async def _cmd_kill(self, chat_id: int, *, args: str = "") -> None:
+        if self._pending_confirm.get(chat_id) == "kill":
+            self._pending_confirm.pop(chat_id)
+            if self._dry_run:
+                await self._send(
+                    chat_id,
+                    "[DRY RUN] Would activate kill switch. No action taken.",
+                )
+                return
+            if self._risk_engine:
+                self._risk_engine.trigger_kill_switch()
+            self._system_status = "killed"
+            await self._send(
+                chat_id,
+                "*KILL SWITCH ACTIVATED*. All operations halted. Manual reset required.",
+            )
+            return
+
+        self._pending_confirm[chat_id] = "kill"
+        await self._send(
+            chat_id,
+            "*Confirm KILL*\nSend /kill again to confirm emergency stop.\n"
+            "This halts ALL operations immediately.",
+        )
+
+    async def _cmd_daily_summary(self, chat_id: int, *, args: str = "") -> None:
+        payload = await self._load_canonical_surface(
+            chat_id=chat_id,
+            surface_name="Daily Summary",
+            command="daily_summary",
+            loader=self._get_decision_pack_summary,
+        )
+        if payload is None:
+            return
+        msg = (
+            "*Daily Summary (Decision Pack)*\n"
+            f"overall_status=`{self._inline(payload.get('overall_status', 'unknown'))}`\n"
+            f"blocking_count=`{self._inline(payload.get('blocking_count', 0))}`\n"
+            f"review_required_count=`{self._inline(payload.get('review_required_count', 0))}`\n"
+            f"action_queue_count=`{self._inline(payload.get('action_queue_count', 0))}`\n"
+            f"execution_enabled=`{self._inline(payload.get('execution_enabled', False))}`\n"
+            f"write_back_allowed=`{self._inline(payload.get('write_back_allowed', False))}`"
+            f"{self._format_refs('daily_summary')}"
+        )
+        await self._send(chat_id, msg)
+
+    async def _cmd_incident(self, chat_id: int, *, args: str = "") -> None:
+        payload = await self._load_canonical_surface(
+            chat_id=chat_id,
+            surface_name="Incident",
+            command="incident",
+            loader=self._get_escalation_summary,
+        )
+        if payload is None:
+            return
+        incident_note = self._inline(args or "No incident note provided.")
+        msg = (
+            "*Incident (Escalation Surface)*\n"
+            f"note=`{incident_note}`\n"
+            f"escalation_status=`{self._inline(payload.get('escalation_status', 'unknown'))}`\n"
+            f"severity=`{self._inline(payload.get('severity', 'unknown'))}`\n"
+            f"blocking_count=`{self._inline(payload.get('blocking_count', 0))}`\n"
+            f"operator_action_count=`{self._inline(payload.get('operator_action_count', 0))}`\n"
+            f"execution_enabled=`{self._inline(payload.get('execution_enabled', False))}`\n"
+            f"write_back_allowed=`{self._inline(payload.get('write_back_allowed', False))}`\n"
+            "Incident note is captured in append-only command audit log only.\n"
+            "Audit-only. No auto-remediation and no execution side effect."
+            f"{self._format_refs('incident')}"
+        )
+        await self._send(chat_id, msg)
+
+    async def _cmd_help(self, chat_id: int, *, args: str = "") -> None:
+        msg = (
+            "*KAI Operator Commands*\n\n"
+            "/status - Canonical readiness status\n"
+            "/health - Canonical provider health\n"
+            "/positions - Read-only collector proxy\n"
+            "/exposure - Exposure surface\n"
+            "/risk - Protective gate summary\n"
+            "/signals - Read-only signal handoff\n"
+            "/journal - Review journal summary\n"
+            "/approve <decision_ref> - Audit-only approval intent\n"
+            "/reject <decision_ref> - Audit-only rejection intent\n"
+            "/pause - Pause all operations\n"
+            "/resume - Resume operations\n"
+            "/kill - Emergency stop (requires confirmation)\n"
+            "/daily_summary - Decision pack summary\n"
+            "/incident <note> - Escalation summary + audit note\n"
+            "/help - This message"
+        )
+        await self._send(chat_id, msg)
+
+    async def _send(self, chat_id: int, text: str) -> bool:
+        if self._dry_run:
+            logger.info("[BOT DRY RUN] To %s: %s", chat_id, text[:100])
+            return True
+        if not self._token:
+            return False
+
+        url = f"{_TELEGRAM_API_BASE}/bot{self._token}/sendMessage"
+        payload = {"chat_id": chat_id, "text": text, "parse_mode": "Markdown"}
+        try:
+            async with httpx.AsyncClient(timeout=10) as client:
+                response = await client.post(url, json=payload)
+            return response.status_code == 200
+        except Exception as exc:  # noqa: BLE001
+            logger.error("[BOT] Send failed to %s: %s", chat_id, exc)
+            return False
+
+    def _audit(self, chat_id: int, command: str, *, args: str = "") -> None:
+        record = {
+            "timestamp_utc": datetime.now(UTC).isoformat(),
+            "chat_id": chat_id,
+            "command": command,
+            "args": args,
+            "dry_run": self._dry_run,
+        }
+        try:
+            with self._audit_path.open("a", encoding="utf-8") as fh:
+                fh.write(json.dumps(record) + "\n")
+        except OSError as exc:
+            logger.error("[BOT] Audit log write failed: %s", exc)

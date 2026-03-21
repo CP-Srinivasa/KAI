@@ -1,7 +1,12 @@
 # Benchmark & Promotion Contract — Sprint 7
 
-> **Canonical reference** for Sprint-7 Companion Benchmarking, Promotion Readiness Gate,
+> **Historical reference** for Sprint-7 Companion Benchmarking, Promotion Readiness Gate,
 > and Artifact Path contract.
+>
+> **Sprint-8/9 UPDATE**: I-34 is no longer a manual gate. `false_actionable_rate` is the
+> automated 6th gate G6 (threshold <= 0.05), implemented in `validate_promotion()` as
+> `false_actionable_pass`. See `docs/sprint9_promotion_audit_contract.md` and I-46.
+> All manual-I-34 passages in this document are superseded by that change.
 >
 > Runtime stubs: `app/research/evaluation.py` — `PromotionValidation`, `validate_promotion()`,
 > `save_evaluation_report()`, `save_benchmark_artifact()`.
@@ -22,7 +27,7 @@ with a controlled, human-gated promotion readiness check.
 |---------|---------|----------------|
 | **Benchmark** | Run evaluation harness, produce `EvaluationReport` + artifacts | Not training, not inference tuning |
 | **Evaluation** | Measure metric gap (MAE / agreement) between candidate and teacher | Not a promotion decision |
-| **Promotion** | Human-reviewed gate: all 5 metric thresholds pass + manual FP check | Not automatic, not triggered by any pipeline |
+| **Promotion** | Human-reviewed gate: all 6 quantitative thresholds pass | Not automatic, not triggered by any pipeline |
 
 No code path in this sprint leads to training data modification, model weight updates,
 or automatic provider switching. Companion remains `analysis_source=INTERNAL` until
@@ -55,9 +60,9 @@ a human operator explicitly promotes it (a future sprint with its own separate g
 
 ---
 
-## Promotion Gate — Five Quantitative Criteria
+## Promotion Gate — Six Quantitative Criteria
 
-All five gates must pass. No partial promotion. No exceptions.
+All six gates must pass. No partial promotion. No exceptions.
 
 | Gate | Metric | Threshold | Direction | Notes |
 |------|--------|-----------|-----------|-------|
@@ -70,20 +75,26 @@ All five gates must pass. No partial promotion. No exceptions.
 Already implemented: `validate_promotion(metrics: EvaluationMetrics) → PromotionValidation`
 in `app/research/evaluation.py`.
 
-### Sixth Gate — False-Positive Actionable Rate (I-34, manual)
+### Sixth Gate — False-Positive Actionable Rate (I-34) — AUTOMATED since Sprint 8
 
-The quantitative gates do not capture actionable false positives. An automated metric
+> **SUPERSEDED (Sprint 8/9)**: I-34 is no longer a manual gate.
+>
+> `false_actionable_rate` was added to `EvaluationMetrics` by Codex during Sprint 8 and
+> is enforced automatically as Gate G6 (`false_actionable_rate <= 0.05`) in
+> `validate_promotion()` as `false_actionable_pass`. See I-46.
+>
+> The original Sprint-7 text below is kept for historical reference only:
+
+~~The quantitative gates do not capture actionable false positives. An automated metric
 would require tracking `actionable=True` on candidate where teacher had `actionable=False`.
-This is not yet in `EvaluationMetrics`.
+This is not yet in `EvaluationMetrics`.~~
 
-**Sprint-7 handling**: Documented as I-34 (human-verified). The operator must manually inspect
-`research evaluate` output (which includes `actionable_accuracy` in `EvaluationResult`) before
-executing any promotion decision. Sprint-7B will automate this metric.
+~~**Sprint-7 handling**: Documented as I-34 (human-verified). The operator must manually inspect
+`research evaluate` output before executing any promotion decision. Sprint-7B will automate this metric.~~
 
-> **I-34 (manual gate)**: Before promotion, the companion's false-actionable rate (predicted
-> `actionable=True` where teacher had `actionable=False`) MUST be verified manually via
-> `research evaluate`. If companion over-fires actionable signals relative to teacher, promotion
-> is blocked regardless of gate G1–G5 passing.
+**Current behavior (Sprint 8+)**: `compare_datasets()` computes `false_actionable_rate` on
+paired rows. `validate_promotion()` enforces `false_actionable_rate <= 0.05` as G6. A failing
+G6 blocks `check-promotion` (exit 1) and `record-promotion` (exit 1, no record written).
 
 ---
 
@@ -228,11 +239,11 @@ def research_check_promotion(
 ) -> None:
     """Check whether a saved evaluation report meets companion promotion thresholds.
 
-    Exits 0 if all five quantitative gates pass (promotable).
+    Exits 0 if all six quantitative gates pass (promotable).
     Exits 1 if any gate fails — human review required.
 
-    Note: Gate I-34 (false-actionable rate) requires separate manual verification
-    via `research evaluate`. See docs/benchmark_promotion_contract.md.
+    Note: G6 (false_actionable_rate <= 0.05) is automated via compare_datasets().
+    See docs/sprint9_promotion_audit_contract.md and I-46.
     """
 ```
 
@@ -293,12 +304,11 @@ table.add_row("Tag Overlap",         "≥ 0.300",
 
 console.print(table)
 console.print(f"\nSamples evaluated: {metrics.sample_count}")
-console.print("[yellow]Note: Gate I-34 (actionable false-positive rate) requires manual "
-              "verification via `research evaluate`. See benchmark_promotion_contract.md.[/yellow]")
+console.print("[dim]G6: false_actionable_rate enforced automatically (<= 0.05). See I-46.[/dim]")
 
 if validation.is_promotable:
     console.print("\n[bold green]PROMOTABLE[/bold green] — all quantitative gates passed.")
-    console.print("[dim]Reminder: Manual I-34 verification still required before promotion.[/dim]")
+    console.print("[dim]I-34 is enforced via false_actionable_rate on paired rows only; no automatic promotion occurs.[/dim]")
 else:
     failed = sum([
         not validation.sentiment_pass,
@@ -349,11 +359,11 @@ else:
 |---|-----------|
 | 1 | Loads saved `evaluation_report.json`, reconstructs `EvaluationMetrics` |
 | 2 | Prints per-gate pass/fail table with threshold + actual value |
-| 3 | Exit 0 when all 5 gates pass |
+| 3 | Exit 0 when all 6 quantitative gates pass |
 | 4 | Exit 1 when any gate fails |
 | 5 | Exit 1 + error message when report file not found |
 | 6 | Exit 1 + error message when JSON is malformed or missing required fields |
-| 7 | I-34 manual-verification reminder shown in all cases |
+| 7 | I-34 automation note shown in all cases |
 | 8 | `research --help` lists `check-promotion` in research group |
 | 9 | `ruff check .` clean |
 | 10 | `pytest tests/unit/` passing |
@@ -382,9 +392,9 @@ else:
 - No API keys, no model inference in the evaluation/promotion surface
 - File existence checked before read — no silent empty-report evaluation
 - Artifact paths are operator-specified — no hardcoded writes outside project dir
-- I-34 is a human gate by design: automated false-positive detection would require
-  tracking `actionable` ground truth from teacher, which is in `EvaluationResult`
-  (Sprint-5 surface) — cross-surface tracking deferred to Sprint-7B
+- **I-34 is now automated (Sprint 8/9)**: `false_actionable_rate` is computed by
+  `compare_datasets()` and enforced as G6 in `validate_promotion()`. Original
+  "human gate / deferred" rationale is superseded by I-46.
 
 ---
 
@@ -394,9 +404,11 @@ Full text in `docs/contracts.md §18`.
 
 | ID | Rule |
 |----|------|
-| I-34 | Before companion promotion, the false-actionable rate MUST be manually verified via `research evaluate`. Automated FP tracking deferred to Sprint-7B. |
+| I-34 | `false_actionable_rate` is Gate G6 (automated, `<= 0.05`). Computed by `compare_datasets()`, enforced by `validate_promotion()` as `false_actionable_pass`. Supersedes original "manual, deferred" Sprint-7 definition. See I-46. |
 | I-35 | `check-promotion` reads a saved `evaluation_report.json` — it MUST NOT trigger any new analysis, DB read, or model inference. |
 | I-36 | Promotion is not automatic. `check-promotion` exiting 0 does NOT change any system state. A human operator must act on the result. |
 | I-37 | `--save-report` / `--save-artifact` are audit trail only — they do NOT change evaluation semantics or metrics values. |
 | I-38 | Benchmark artifacts are read-only once written. No process may modify them in-place. A re-run must produce a new file. |
 | I-39 | Companion remains `analysis_source=INTERNAL` until an operator explicitly reconfigures the provider. Passing promotion gates does not change provider routing. |
+
+

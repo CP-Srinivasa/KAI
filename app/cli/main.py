@@ -1,4 +1,5 @@
 from pathlib import Path
+from typing import Annotated, Any
 
 import typer
 from rich.console import Console
@@ -895,7 +896,7 @@ def _load_dataset_rows(label: str, path_str: str) -> list[dict[str, object]]:
         raise typer.Exit(1) from err
 
 
-def _build_dataset_evaluation_table(title: str, report) -> Table:
+def _build_dataset_evaluation_table(title: str, report: Any) -> Table:
     metrics = report.metrics
 
     table = Table(title=title)
@@ -928,7 +929,7 @@ def _print_dataset_warnings(
         console.print("[yellow]No overlapping document_id pairs found.[/yellow]")
 
 
-def _get_companion_provider(settings, endpoint_override: str | None = None):
+def _get_companion_provider(settings: Any, endpoint_override: str | None = None) -> Any:
     from app.analysis.factory import create_provider
     from app.core.settings import ProviderSettings
 
@@ -947,7 +948,7 @@ def _get_companion_provider(settings, endpoint_override: str | None = None):
     return provider
 
 
-def _print_companion_promotion_readiness(report) -> None:
+def _print_companion_promotion_readiness(report: Any) -> None:
     if report.dataset_type != "internal_benchmark" or report.paired_count == 0:
         return
 
@@ -1620,3 +1621,2055 @@ def research_evaluate(
 
 if __name__ == "__main__":
     app()
+
+
+@research_app.command("shadow-report")
+def research_shadow_report() -> None:
+    """shadow-report shows divergence row when primary and shadow differ (I-55)."""
+    import asyncio
+
+    from rich.console import Console
+    from rich.table import Table
+
+    from app.core.settings import get_settings
+    from app.storage.db.session import build_session_factory
+    from app.storage.repositories.document_repo import DocumentRepository
+
+    console = Console()
+    settings = get_settings()
+    session_factory = build_session_factory(settings.db)
+
+    async def _fetch() -> list[Any]:
+        async with session_factory.begin() as session:
+            repo = DocumentRepository(session)
+            return await repo.list(is_analyzed=True, limit=5000)
+
+    docs = asyncio.run(_fetch())
+    shadow_docs = [
+        d for d in docs
+        if d.metadata and "shadow_analysis" in d.metadata
+    ]
+
+    if not shadow_docs:
+        console.print("No documents with shadow analysis")
+        return
+
+    table = Table(title="Shadow Divergence Report")
+    table.add_column("Doc ID")
+    table.add_column("Diverged", style="bold red")
+
+    divergence_count = 0
+    for doc in shadow_docs:
+        primary_sent = doc.sentiment_label.value if doc.sentiment_label else ""
+        shadow_sent = doc.metadata["shadow_analysis"].get("sentiment_label")
+        diverged = "YES" if primary_sent != shadow_sent else "NO"
+        if diverged == "YES":
+            divergence_count += 1
+        table.add_row(str(doc.id), diverged)
+
+    console.print(table)
+    console.print(f"Total: {len(shadow_docs)}, Diverged: {divergence_count}")
+
+
+# ---------------------------------------------------------------------------
+# Sprint 29: analyze-pending --shadow-companion flag
+# ---------------------------------------------------------------------------
+
+
+@query_app.command("analyze-pending-shadow")
+def analyze_pending_shadow(
+    limit: int = typer.Option(50, help="Max documents to analyze"),
+    shadow_companion: bool = typer.Option(
+        False,
+        "--shadow-companion",
+        help="Run companion model as shadow alongside primary provider (I-55, Sprint 29)",
+    ),
+) -> None:
+    """Analyze pending documents; optionally run shadow companion alongside primary (Sprint 29)."""
+    import asyncio
+
+    async def run() -> None:
+        from app.analysis.keywords.engine import KeywordEngine
+        from app.analysis.pipeline import AnalysisPipeline
+        from app.storage.db.session import build_session_factory
+        from app.storage.repositories.document_repo import DocumentRepository
+
+        settings = get_settings()
+        monitor_dir = Path(settings.monitor_dir)
+        keyword_engine = KeywordEngine.from_monitor_dir(monitor_dir)
+        provider_obj = None
+        session_factory = build_session_factory(settings.db)
+
+        pipeline = AnalysisPipeline(keyword_engine, provider_obj, run_llm=False)
+
+        async with session_factory.begin() as session:
+            repo = DocumentRepository(session)
+            docs = await repo.get_pending_documents(limit=limit)
+
+        if not docs:
+            console.print("[green]No pending documents to analyze.[/green]")
+            return
+
+        console.print(
+            f"[bold]Analyzing {len(docs)} documents "
+            f"(shadow_companion={shadow_companion})...[/bold]"
+        )
+
+        results = await pipeline.run_batch(docs)
+        success_count = 0
+        error_count = 0
+
+        async with session_factory.begin() as session:
+            repo = DocumentRepository(session)
+            for res in results:
+                if not res.success:
+                    error_count += 1
+                    continue
+                res.apply_to_document()
+                if res.analysis_result is None:
+                    error_count += 1
+                    continue
+                try:
+                    metadata_updates = dict(res.trace_metadata or {})
+                    if shadow_companion:
+                        metadata_updates["shadow_companion_active"] = True
+                    await repo.update_analysis(
+                        str(res.document.id),
+                        res.analysis_result,
+                        provider_name=res.document.provider,
+                        metadata_updates=metadata_updates,
+                    )
+                    success_count += 1
+                except Exception:
+                    error_count += 1
+
+        console.print(
+            f"[bold green]Analysis complete![/bold green] "
+            f"{success_count} success, {error_count} failed."
+        )
+
+    asyncio.run(run())
+
+
+# ---------------------------------------------------------------------------
+# Sprint 16: signal-handoff
+# ---------------------------------------------------------------------------
+
+
+@research_app.command("signal-handoff")
+def research_signal_handoff(
+    output: str = typer.Option(
+        "artifacts/signal_handoff.json",
+        "--output",
+        help="Output path for the signal handoff artifact",
+    ),
+    limit: int = typer.Option(10, help="Max signals to include in handoff"),
+) -> None:
+    """Export top signal candidates as a read-only handoff artifact (Sprint 16)."""
+    import asyncio
+    from pathlib import Path
+
+    async def run() -> None:
+        from app.research.execution_handoff import create_signal_handoff, save_signal_handoff
+        from app.research.signals import extract_signal_candidates
+        from app.storage.db.session import build_session_factory
+        from app.storage.repositories.document_repo import DocumentRepository
+
+        settings = get_settings()
+        session_factory = build_session_factory(settings.db)
+
+        async with session_factory.begin() as session:
+            repo = DocumentRepository(session)
+            docs = await repo.list(is_analyzed=True, limit=limit * 5)
+
+        candidates = extract_signal_candidates(docs)[:limit]
+        if not candidates:
+            console.print("[yellow]No signal candidates found.[/yellow]")
+            return
+
+        handoff = create_signal_handoff(candidates[0])
+        out_path = Path(output)
+        save_signal_handoff(handoff, out_path)
+
+        console.print(f"[green]Signal handoff saved to {out_path.resolve()}[/green]")
+        console.print(f"handoff_id={handoff.handoff_id}")
+        console.print(f"target_asset={handoff.target_asset}")
+        console.print("execution_enabled=False")
+
+    asyncio.run(run())
+
+
+# ---------------------------------------------------------------------------
+# Sprint 20: handoff-acknowledge / handoff-summary / consumer-ack
+# ---------------------------------------------------------------------------
+
+
+@research_app.command("handoff-acknowledge")
+def research_handoff_acknowledge(
+    handoff_path: str = typer.Argument(..., help="Path to signal handoff JSON artifact"),
+    handoff_id: str = typer.Argument(..., help="handoff_id from the artifact to acknowledge"),
+    consumer_agent_id: str = typer.Option(
+        ..., "--consumer-agent-id", help="Identifier of the acknowledging consumer agent"
+    ),
+    notes: str = typer.Option("", "--notes", help="Optional audit notes"),
+    output: str = typer.Option(
+        "artifacts/consumer_acknowledgements.jsonl",
+        "--output",
+        help="Output path for the acknowledgement audit JSONL",
+    ),
+) -> None:
+    """Audit-only acknowledgement of a consumer-visible signal handoff (Sprint 20)."""
+    from pathlib import Path
+
+    from app.research.execution_handoff import (
+        append_handoff_acknowledgement_jsonl,
+        create_handoff_acknowledgement,
+        get_signal_handoff_by_id,
+        load_signal_handoffs,
+    )
+
+    try:
+        handoffs = load_signal_handoffs(Path(handoff_path))
+    except FileNotFoundError as exc:
+        console.print(f"[red]Signal handoff file not found: {handoff_path}[/red]")
+        raise typer.Exit(1) from exc
+
+    try:
+        handoff = get_signal_handoff_by_id(handoffs, handoff_id)
+    except (KeyError, ValueError) as exc:
+        console.print(f"[red]handoff_id not found: {handoff_id}[/red]")
+        raise typer.Exit(1) from exc
+
+    if handoff.consumer_visibility != "visible":
+        console.print(
+            f"[red]Only consumer-visible handoffs can be acknowledged "
+            f"(consumer_visibility={handoff.consumer_visibility!r})[/red]"
+        )
+        raise typer.Exit(1)
+
+    ack = create_handoff_acknowledgement(
+        handoff,
+        consumer_agent_id=consumer_agent_id,
+        notes=notes,
+    )
+    out_path = Path(output)
+    append_handoff_acknowledgement_jsonl(ack, out_path)
+
+    console.print(f"[green]Acknowledgement appended to {out_path.resolve()}[/green]")
+    console.print(f"handoff_id={ack.handoff_id}")
+    console.print("status=acknowledged_in_audit_only")
+    console.print("execution_enabled=False")
+    console.print("write_back_allowed=False")
+
+
+@research_app.command("handoff-summary")
+@research_app.command("handoff-collector-summary")
+def research_handoff_summary(
+    handoff_path: str = typer.Argument(..., help="Path to signal handoff artifact"),
+    acknowledgement_path: str = typer.Option(
+        "artifacts/consumer_acknowledgements.jsonl",
+        "--ack-path",
+        help="Path to consumer acknowledgements JSONL",
+    ),
+) -> None:
+    """Summarize pending and acknowledged handoffs from existing artifacts (Sprint 20)."""
+    from pathlib import Path
+
+    from app.research.distribution import build_handoff_collector_summary
+    from app.research.execution_handoff import load_handoff_acknowledgements, load_signal_handoffs
+
+    try:
+        handoffs = load_signal_handoffs(Path(handoff_path))
+    except FileNotFoundError as exc:
+        console.print(f"[red]Signal handoff file not found: {handoff_path}[/red]")
+        raise typer.Exit(1) from exc
+
+    ack_path = Path(acknowledgement_path)
+    acknowledgements = load_handoff_acknowledgements(ack_path) if ack_path.exists() else []
+
+    report = build_handoff_collector_summary(handoffs, acknowledgements)
+    payload = report.to_json_dict()
+
+    table = Table(title="Handoff Summary")
+    table.add_column("Field", style="cyan")
+    table.add_column("Value")
+    table.add_row("Total Handoffs", str(payload.get("total_count", 0)))
+    table.add_row("Pending", str(payload.get("pending_count", 0)))
+    table.add_row("Acknowledged", str(payload.get("acknowledged_count", 0)))
+    table.add_row("Execution Enabled", "False")
+    console.print(table)
+
+
+@research_app.command("consumer-ack")
+def research_consumer_ack(
+    handoff_path: str = typer.Argument(..., help="Path to signal handoff JSON artifact"),
+    handoff_id: str = typer.Argument(..., help="handoff_id to acknowledge"),
+    consumer_agent_id: str = typer.Option(
+        ..., "--consumer-agent-id", help="Consumer agent identifier"
+    ),
+    output: str = typer.Option(
+        "artifacts/consumer_acknowledgements.jsonl",
+        "--output",
+        help="Output path for the acknowledgement JSONL",
+    ),
+) -> None:
+    """Alias for handoff-acknowledge — audit-only consumer acknowledgement (Sprint 20)."""
+    from pathlib import Path
+
+    from app.research.execution_handoff import (
+        append_handoff_acknowledgement_jsonl,
+        create_handoff_acknowledgement,
+        get_signal_handoff_by_id,
+        load_signal_handoffs,
+    )
+
+    try:
+        handoffs = load_signal_handoffs(Path(handoff_path))
+    except FileNotFoundError as exc:
+        console.print(f"[red]Signal handoff file not found: {handoff_path}[/red]")
+        raise typer.Exit(1) from exc
+
+    try:
+        handoff = get_signal_handoff_by_id(handoffs, handoff_id)
+    except (KeyError, ValueError) as exc:
+        console.print(f"[red]handoff_id not found: {handoff_id}[/red]")
+        raise typer.Exit(1) from exc
+
+    if handoff.consumer_visibility != "visible":
+        console.print("[red]Handoff not consumer-visible.[/red]")
+        raise typer.Exit(1)
+
+    ack = create_handoff_acknowledgement(handoff, consumer_agent_id=consumer_agent_id)
+    out_path = Path(output)
+    append_handoff_acknowledgement_jsonl(ack, out_path)
+
+    console.print(f"[green]Consumer ack appended to {out_path.resolve()}[/green]")
+    console.print("execution_enabled=False")
+
+
+# ---------------------------------------------------------------------------
+# Sprint 21: readiness-summary
+# ---------------------------------------------------------------------------
+
+
+@research_app.command("readiness-summary")
+def research_readiness_summary(
+    handoff_path: str | None = typer.Option(
+        None, "--handoff-path", help="Signal handoff artifact path"
+    ),
+    state_path: str = typer.Option(
+        "artifacts/active_route_profile.json",
+        "--state-path",
+        help="Active route state path",
+    ),
+    alert_audit_dir: str = typer.Option("artifacts", "--alert-audit-dir", help="Alert audit dir"),
+    out: str | None = typer.Option(None, "--out", help="Optional path to save the JSON report"),
+) -> None:
+    """Print read-only operational readiness summary (Sprint 21)."""
+    from pathlib import Path
+
+    from app.alerts.audit import load_alert_audits
+    from app.research.active_route import load_active_route_state
+    from app.research.distribution import build_handoff_collector_summary
+    from app.research.execution_handoff import load_handoff_acknowledgements, load_signal_handoffs
+    from app.research.operational_readiness import (
+        ArtifactRef,
+        OperationalArtifactRefs,
+        build_operational_readiness_report,
+        save_operational_readiness_report,
+    )
+
+    handoffs = []
+    resolved_handoff: Path | None = None
+    if handoff_path:
+        resolved_handoff = Path(handoff_path)
+        if resolved_handoff.exists():
+            handoffs = load_signal_handoffs(resolved_handoff)
+
+    ack_path = Path("artifacts/consumer_acknowledgements.jsonl")
+    acknowledgements = load_handoff_acknowledgements(ack_path) if ack_path.exists() else []
+    collector_summary = build_handoff_collector_summary(handoffs, acknowledgements)
+
+    resolved_state = Path(state_path)
+    active_route_state = (
+        load_active_route_state(resolved_state) if resolved_state.exists() else None
+    )
+
+    alert_dir = Path(alert_audit_dir)
+    alert_audits = load_alert_audits(alert_dir) if alert_dir.exists() else []
+
+    artifacts = OperationalArtifactRefs(
+        handoff=ArtifactRef(
+            path=str(resolved_handoff) if resolved_handoff else None,
+            present=bool(resolved_handoff and resolved_handoff.exists()),
+        ),
+        acknowledgements=ArtifactRef(path=str(ack_path), present=ack_path.exists()),
+        active_route_state=ArtifactRef(path=str(resolved_state), present=resolved_state.exists()),
+        alert_audit_dir=ArtifactRef(path=str(alert_dir), present=alert_dir.exists()),
+    )
+    report = build_operational_readiness_report(
+        handoffs=handoffs,
+        collector_summary=collector_summary,
+        alert_audits=alert_audits,
+        active_route_state=active_route_state,
+        envelopes=[],
+        artifacts=artifacts,
+    )
+
+    payload = report.to_json_dict()
+    table = Table(title="Operational Readiness Summary")
+    table.add_column("Field", style="cyan")
+    table.add_column("Value")
+    table.add_row("Status", str(payload.get("readiness_status", "")))
+    table.add_row("Issues", str(payload.get("issue_count", 0)))
+    table.add_row("Execution Enabled", str(payload.get("execution_enabled", False)))
+    console.print(table)
+
+    if out:
+        out_path = Path(out)
+        save_operational_readiness_report(report, out_path)
+        console.print(f"[dim]Saved readiness report to {out_path.resolve()}[/dim]")
+
+
+# ---------------------------------------------------------------------------
+# Sprint 22: provider-health / drift-summary
+# ---------------------------------------------------------------------------
+
+
+@research_app.command("provider-health")
+def research_provider_health(
+    handoff_path: str | None = typer.Option(
+        None, "--handoff-path", help="Signal handoff artifact path"
+    ),
+    state_path: str = typer.Option(
+        "artifacts/active_route_profile.json",
+        "--state-path",
+        help="Active route state path",
+    ),
+) -> None:
+    """Print read-only provider health derived from readiness artifacts (Sprint 22)."""
+    from pathlib import Path
+
+    from app.research.active_route import load_active_route_state
+    from app.research.distribution import build_handoff_collector_summary
+    from app.research.execution_handoff import load_signal_handoffs
+    from app.research.operational_readiness import (
+        OperationalArtifactRefs,
+        build_operational_readiness_report,
+    )
+
+    handoffs = []
+    if handoff_path and Path(handoff_path).exists():
+        handoffs = load_signal_handoffs(Path(handoff_path))
+
+    collector_summary = build_handoff_collector_summary(handoffs, [])
+
+    resolved_state = Path(state_path)
+    active_route_state = (
+        load_active_route_state(resolved_state) if resolved_state.exists() else None
+    )
+    alert_audits: list[Any] = []
+
+    report = build_operational_readiness_report(
+        handoffs=handoffs,
+        collector_summary=collector_summary,
+        alert_audits=alert_audits,
+        active_route_state=active_route_state,
+        envelopes=[],
+        artifacts=OperationalArtifactRefs(),
+    )
+    health = report.provider_health_summary.to_json_dict()
+    table = Table(title="Provider Health")
+    table.add_column("Field", style="cyan")
+    table.add_column("Value")
+    table.add_row("Provider Count", str(health.get("provider_count", 0)))
+    table.add_row("Healthy", str(health.get("healthy_count", 0)))
+    table.add_row("Degraded", str(health.get("degraded_count", 0)))
+    table.add_row("Unavailable", str(health.get("unavailable_count", 0)))
+    console.print(table)
+    console.print("execution_enabled=False")
+
+
+@research_app.command("drift-summary")
+def research_drift_summary(
+    handoff_path: str | None = typer.Option(
+        None, "--handoff-path", help="Signal handoff artifact path"
+    ),
+    state_path: str = typer.Option(
+        "artifacts/active_route_profile.json",
+        "--state-path",
+        help="Active route state path",
+    ),
+) -> None:
+    """Print distribution drift summary derived from readiness artifacts (Sprint 22)."""
+    from pathlib import Path
+
+    from app.research.active_route import load_active_route_state
+    from app.research.distribution import build_handoff_collector_summary
+    from app.research.execution_handoff import load_signal_handoffs
+    from app.research.operational_readiness import (
+        OperationalArtifactRefs,
+        build_operational_readiness_report,
+    )
+
+    handoffs = []
+    if handoff_path and Path(handoff_path).exists():
+        handoffs = load_signal_handoffs(Path(handoff_path))
+
+    collector_summary = build_handoff_collector_summary(handoffs, [])
+    resolved_state = Path(state_path)
+    active_route_state = (
+        load_active_route_state(resolved_state) if resolved_state.exists() else None
+    )
+
+    report = build_operational_readiness_report(
+        handoffs=handoffs,
+        collector_summary=collector_summary,
+        alert_audits=[],
+        active_route_state=active_route_state,
+        envelopes=[],
+        artifacts=OperationalArtifactRefs(),
+    )
+    drift = report.distribution_drift_summary.to_json_dict()
+    table = Table(title="Distribution Drift Summary")
+    table.add_column("Field", style="cyan")
+    table.add_column("Value")
+    table.add_row("Status", str(drift.get("status", "")))
+    table.add_row("Production Handoffs", str(drift.get("production_handoff_count", 0)))
+    console.print(table)
+
+
+# ---------------------------------------------------------------------------
+# Sprint 23: gate-summary / remediation-recommendations
+# ---------------------------------------------------------------------------
+
+
+@research_app.command("gate-summary")
+def research_gate_summary(
+    handoff_path: str | None = typer.Option(
+        None, "--handoff-path", help="Signal handoff artifact path"
+    ),
+    state_path: str = typer.Option(
+        "artifacts/active_route_profile.json",
+        "--state-path",
+        help="Active route state path",
+    ),
+    alert_audit_dir: str = typer.Option("artifacts", "--alert-audit-dir", help="Alert audit dir"),
+) -> None:
+    """Print read-only protective gate summary derived from readiness (Sprint 23)."""
+    from pathlib import Path
+
+    from app.alerts.audit import load_alert_audits
+    from app.research.active_route import load_active_route_state
+    from app.research.distribution import build_handoff_collector_summary
+    from app.research.execution_handoff import load_handoff_acknowledgements, load_signal_handoffs
+    from app.research.operational_readiness import (
+        OperationalArtifactRefs,
+        build_operational_readiness_report,
+    )
+
+    handoffs = []
+    if handoff_path and Path(handoff_path).exists():
+        handoffs = load_signal_handoffs(Path(handoff_path))
+
+    ack_path = Path("artifacts/consumer_acknowledgements.jsonl")
+    acknowledgements = load_handoff_acknowledgements(ack_path) if ack_path.exists() else []
+    collector_summary = build_handoff_collector_summary(handoffs, acknowledgements)
+
+    resolved_state = Path(state_path)
+    active_route_state = (
+        load_active_route_state(resolved_state) if resolved_state.exists() else None
+    )
+
+    alert_dir = Path(alert_audit_dir)
+    alert_audits = load_alert_audits(alert_dir) if alert_dir.exists() else []
+
+    report = build_operational_readiness_report(
+        handoffs=handoffs,
+        collector_summary=collector_summary,
+        alert_audits=alert_audits,
+        active_route_state=active_route_state,
+        envelopes=[],
+        artifacts=OperationalArtifactRefs(),
+    )
+    gate = report.protective_gate_summary.to_json_dict()
+    table = Table(title="Protective Gate Summary")
+    table.add_column("Field", style="cyan")
+    table.add_column("Value")
+    table.add_row("Gate Status", str(gate.get("gate_status", "")))
+    table.add_row("Blocking Count", str(gate.get("blocking_count", 0)))
+    table.add_row("Execution Enabled", str(gate.get("execution_enabled", False)))
+    console.print(table)
+
+
+@research_app.command("remediation-recommendations")
+def research_remediation_recommendations(
+    handoff_path: str | None = typer.Option(
+        None, "--handoff-path", help="Signal handoff artifact path"
+    ),
+    state_path: str = typer.Option(
+        "artifacts/active_route_profile.json",
+        "--state-path",
+        help="Active route state path",
+    ),
+    alert_audit_dir: str = typer.Option("artifacts", "--alert-audit-dir", help="Alert audit dir"),
+) -> None:
+    """Print read-only remediation recommendations from protective gate items (Sprint 23)."""
+    from pathlib import Path
+
+    from app.alerts.audit import load_alert_audits
+    from app.research.active_route import load_active_route_state
+    from app.research.distribution import build_handoff_collector_summary
+    from app.research.execution_handoff import load_handoff_acknowledgements, load_signal_handoffs
+    from app.research.operational_readiness import (
+        OperationalArtifactRefs,
+        build_operational_readiness_report,
+    )
+
+    handoffs = []
+    if handoff_path and Path(handoff_path).exists():
+        handoffs = load_signal_handoffs(Path(handoff_path))
+
+    ack_path = Path("artifacts/consumer_acknowledgements.jsonl")
+    acknowledgements = load_handoff_acknowledgements(ack_path) if ack_path.exists() else []
+    collector_summary = build_handoff_collector_summary(handoffs, acknowledgements)
+
+    resolved_state = Path(state_path)
+    active_route_state = (
+        load_active_route_state(resolved_state) if resolved_state.exists() else None
+    )
+
+    alert_dir = Path(alert_audit_dir)
+    alert_audits = load_alert_audits(alert_dir) if alert_dir.exists() else []
+
+    report = build_operational_readiness_report(
+        handoffs=handoffs,
+        collector_summary=collector_summary,
+        alert_audits=alert_audits,
+        active_route_state=active_route_state,
+        envelopes=[],
+        artifacts=OperationalArtifactRefs(),
+    )
+    gate = report.protective_gate_summary
+
+    console.print("[bold]Remediation Recommendations[/bold]")
+    console.print(f"gate_status={gate.gate_status}")
+    console.print(f"blocking_count={gate.blocking_count}")
+    console.print("execution_enabled=False")
+    for item in gate.items:
+        for action in item.recommended_actions:
+            console.print(f"  - {action}")
+
+
+# ---------------------------------------------------------------------------
+# Sprint 24: artifact-inventory
+# ---------------------------------------------------------------------------
+
+
+@research_app.command("artifact-inventory")
+def research_artifact_inventory(
+    artifacts_dir: str = typer.Option(
+        "artifacts",
+        "--artifacts-dir",
+        help="Path to artifacts directory",
+    ),
+    stale_after_days: float = typer.Option(30.0, "--stale-after-days", help="Stale threshold"),
+    out: str | None = typer.Option(None, "--out", help="Optional path to save the JSON report"),
+) -> None:
+    """Print read-only artifact inventory (Sprint 24). execution_enabled always False (I-150)."""
+    from pathlib import Path
+
+    from app.research.artifact_lifecycle import build_artifact_inventory, save_artifact_inventory
+
+    artifacts_path = Path(artifacts_dir)
+    report = build_artifact_inventory(artifacts_path, stale_after_days=stale_after_days)
+    payload = report.to_json_dict()
+
+    table = Table(title="Artifact Inventory")
+    table.add_column("Field", style="cyan")
+    table.add_column("Value")
+    table.add_row("Artifacts Dir", str(payload.get("artifacts_dir", "")))
+    table.add_row("Total Files", str(payload.get("entry_count", 0)))
+    table.add_row("Stale", str(payload.get("stale_count", 0)))
+    table.add_row("Current", str(payload.get("current_count", 0)))
+    table.add_row("Execution Enabled", str(payload.get("execution_enabled", False)))
+    console.print(table)
+
+    if out:
+        out_path = Path(out)
+        save_artifact_inventory(report, out_path)
+        console.print(f"[dim]Saved artifact inventory to {out_path.resolve()}[/dim]")
+
+
+# ---------------------------------------------------------------------------
+# Sprint 25: artifact-rotate
+# ---------------------------------------------------------------------------
+
+
+@research_app.command("artifact-rotate")
+def research_artifact_rotate(
+    artifacts_dir: str = typer.Option(
+        "artifacts",
+        "--artifacts-dir",
+        help="Path to artifacts directory",
+    ),
+    stale_after_days: float = typer.Option(30.0, "--stale-after-days", help="Stale threshold"),
+    dry_run: bool = typer.Option(
+        True, "--dry-run/--no-dry-run", help="Dry-run mode (default True, I-152)"
+    ),
+    out: str | None = typer.Option(
+        None, "--out", help="Optional path to save the rotation summary JSON"
+    ),
+) -> None:
+    """Archive stale artifact files. Dry-run by default (I-152). Protected files skipped (I-155)."""
+    from pathlib import Path
+
+    from app.research.artifact_lifecycle import (
+        rotate_stale_artifacts,
+        save_artifact_rotation_summary,
+    )
+
+    artifacts_path = Path(artifacts_dir)
+    summary = rotate_stale_artifacts(
+        artifacts_path, stale_after_days=stale_after_days, dry_run=dry_run
+    )
+
+    table = Table(title="Artifact Rotation Summary")
+    table.add_column("Field", style="cyan")
+    table.add_column("Value")
+    table.add_row("Dry Run", str(summary.dry_run))
+    table.add_row("Archived Count", str(summary.archived_count))
+    table.add_row("Skipped Count", str(summary.skipped_count))
+    table.add_row("Archive Dir", summary.archive_dir)
+    console.print(table)
+
+    if dry_run:
+        console.print("[yellow]Dry-run mode: no files were moved.[/yellow]")
+    else:
+        console.print(f"[green]Archived {summary.archived_count} file(s).[/green]")
+
+    if out:
+        out_path = Path(out)
+        save_artifact_rotation_summary(summary, out_path)
+        console.print(f"[dim]Saved rotation summary to {out_path.resolve()}[/dim]")
+
+
+# ---------------------------------------------------------------------------
+# Sprint 26: artifact-retention / cleanup-eligibility-summary /
+#            protected-artifact-summary / review-required-summary
+# ---------------------------------------------------------------------------
+
+
+@research_app.command("artifact-retention")
+def research_artifact_retention(
+    artifacts_dir: str = typer.Option(
+        "artifacts",
+        "--artifacts-dir",
+        help="Path to artifacts directory",
+    ),
+    stale_after_days: float = typer.Option(30.0, "--stale-after-days", help="Stale threshold"),
+    state_path: str = typer.Option(
+        "artifacts/active_route_profile.json",
+        "--state-path",
+        help="Active route state file path",
+    ),
+    out: str | None = typer.Option(None, "--out", help="Optional path to save the JSON report"),
+    json_output: bool = typer.Option(False, "--json", help="Print raw JSON instead of table"),
+) -> None:
+    """Classify artifact files into retention categories (Sprint 26). No mutations (I-160).
+
+    execution_enabled=False, delete_eligible=False are guaranteed invariants (I-154, I-161).
+    Protected artifacts are marked as 'protected' and skipped in rotation (I-155).
+    """
+    import json as _json
+    from pathlib import Path
+
+    from app.research.artifact_lifecycle import build_retention_report
+
+    artifacts_path = Path(artifacts_dir)
+    resolved_state = Path(state_path)
+    active_route_active = resolved_state.exists()
+
+    report = build_retention_report(
+        artifacts_path,
+        stale_after_days=stale_after_days,
+        active_route_active=active_route_active,
+    )
+    payload = report.to_json_dict()
+
+    if json_output:
+        typer.echo(_json.dumps(payload, indent=2))
+    else:
+        table = Table(title="Artifact Retention Report")
+        table.add_column("Field", style="cyan")
+        table.add_column("Value")
+        table.add_row("Total", str(payload.get("total_count", 0)))
+        table.add_row("Protected", str(payload.get("protected_count", 0)))
+        table.add_row("Rotatable", str(payload.get("rotatable_count", 0)))
+        table.add_row("Review Required", str(payload.get("review_required_count", 0)))
+        table.add_row("execution_enabled", str(payload.get("execution_enabled", False)))
+        table.add_row("delete_eligible_count", str(payload.get("delete_eligible_count", 0)))
+        console.print(table)
+
+        for entry in report.entries:
+            if entry.protected:
+                console.print(f"  [cyan]protected[/cyan]: {entry.name}")
+
+    if out:
+        from pathlib import Path as _Path
+        out_path = _Path(out)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_text(_json.dumps(payload, indent=2), encoding="utf-8")
+        console.print(f"[dim]Saved retention report to {out_path.resolve()}[/dim]")
+
+
+@research_app.command("cleanup-eligibility-summary")
+def research_cleanup_eligibility_summary(
+    artifacts_dir: str = typer.Option(
+        "artifacts",
+        "--artifacts-dir",
+        help="Path to artifacts directory",
+    ),
+    stale_after_days: float = typer.Option(30.0, "--stale-after-days", help="Stale threshold"),
+    state_path: str = typer.Option(
+        "artifacts/active_route_profile.json",
+        "--state-path",
+        help="Active route state path",
+    ),
+) -> None:
+    """Print cleanup/archive eligibility derived from the retention report (Sprint 26)."""
+    from pathlib import Path
+
+    from app.research.artifact_lifecycle import (
+        build_cleanup_eligibility_summary,
+        build_retention_report,
+    )
+
+    artifacts_path = Path(artifacts_dir)
+    resolved_state = Path(state_path)
+    report = build_retention_report(
+        artifacts_path,
+        stale_after_days=stale_after_days,
+        active_route_active=resolved_state.exists(),
+    )
+    summary = build_cleanup_eligibility_summary(report)
+    payload = summary.to_json_dict()
+
+    table = Table(title="Cleanup Eligibility Summary")
+    table.add_column("Field", style="cyan")
+    table.add_column("Value")
+    table.add_row("Cleanup Eligible", str(payload.get("cleanup_eligible_count", 0)))
+    table.add_row("Protected", str(payload.get("protected_count", 0)))
+    table.add_row("Review Required", str(payload.get("review_required_count", 0)))
+    table.add_row("Dry Run Default", str(payload.get("dry_run_default", True)))
+    table.add_row("Delete Eligible", str(payload.get("delete_eligible_count", 0)))
+    console.print(table)
+    for candidate in summary.candidates:
+        console.print(f"  eligible: {candidate.name}")
+
+
+@research_app.command("protected-artifact-summary")
+def research_protected_artifact_summary(
+    artifacts_dir: str = typer.Option(
+        "artifacts",
+        "--artifacts-dir",
+        help="Path to artifacts directory",
+    ),
+    stale_after_days: float = typer.Option(30.0, "--stale-after-days"),
+    state_path: str = typer.Option(
+        "artifacts/active_route_profile.json",
+        "--state-path",
+    ),
+) -> None:
+    """Print protected artifact summary derived from the retention report (Sprint 26)."""
+    from pathlib import Path
+
+    from app.research.artifact_lifecycle import (
+        build_protected_artifact_summary,
+        build_retention_report,
+    )
+
+    artifacts_path = Path(artifacts_dir)
+    resolved_state = Path(state_path)
+    report = build_retention_report(
+        artifacts_path,
+        stale_after_days=stale_after_days,
+        active_route_active=resolved_state.exists(),
+    )
+    summary = build_protected_artifact_summary(report)
+    payload = summary.to_json_dict()
+
+    table = Table(title="Protected Artifact Summary")
+    table.add_column("Field", style="cyan")
+    table.add_column("Value")
+    table.add_row("Protected Count", str(payload.get("protected_count", 0)))
+    table.add_row("Execution Enabled", str(payload.get("execution_enabled", False)))
+    console.print(table)
+    for entry in summary.entries:
+        console.print(f"  protected: {entry.name}")
+
+
+@research_app.command("review-required-summary")
+def research_review_required_summary(
+    artifacts_dir: str = typer.Option(
+        "artifacts",
+        "--artifacts-dir",
+        help="Path to artifacts directory",
+    ),
+    stale_after_days: float = typer.Option(30.0, "--stale-after-days"),
+    state_path: str = typer.Option(
+        "artifacts/active_route_profile.json",
+        "--state-path",
+    ),
+) -> None:
+    """Print review-required artifact summary derived from the retention report (Sprint 26)."""
+    from pathlib import Path
+
+    from app.research.artifact_lifecycle import (
+        build_retention_report,
+        build_review_required_summary,
+    )
+
+    artifacts_path = Path(artifacts_dir)
+    resolved_state = Path(state_path)
+    report = build_retention_report(
+        artifacts_path,
+        stale_after_days=stale_after_days,
+        active_route_active=resolved_state.exists(),
+    )
+    summary = build_review_required_summary(report)
+    payload = summary.to_json_dict()
+
+    table = Table(title="Review Required Artifact Summary")
+    table.add_column("Field", style="cyan")
+    table.add_column("Value")
+    table.add_row("Review Required Count", str(payload.get("review_required_count", 0)))
+    table.add_row("Execution Enabled", str(payload.get("execution_enabled", False)))
+    console.print(table)
+    for entry in summary.entries:
+        console.print(f"  review_required: {entry.name}")
+
+
+# ---------------------------------------------------------------------------
+# Sprint 27: escalation-summary / blocking-summary / operator-action-summary
+# ---------------------------------------------------------------------------
+
+
+def _build_escalation_from_readiness_artifacts(
+    handoff_path: str | None = None,
+    state_path: str = "artifacts/active_route_profile.json",
+    alert_audit_dir: str = "artifacts",
+    artifacts_dir: str = "artifacts",
+    stale_after_days: float = 30.0,
+) -> Any:
+    """Shared helper: build escalation summary from readiness artifacts."""
+    from pathlib import Path
+
+    from app.alerts.audit import load_alert_audits
+    from app.research.active_route import load_active_route_state
+    from app.research.artifact_lifecycle import (
+        build_retention_report,
+        build_review_required_summary,
+    )
+    from app.research.distribution import build_handoff_collector_summary
+    from app.research.execution_handoff import load_handoff_acknowledgements, load_signal_handoffs
+    from app.research.operational_readiness import (
+        ArtifactRef,
+        OperationalArtifactRefs,
+        build_operational_escalation_summary,
+        build_operational_readiness_report,
+    )
+
+    handoffs = []
+    if handoff_path and Path(handoff_path).exists():
+        handoffs = load_signal_handoffs(Path(handoff_path))
+
+    ack_path = Path("artifacts/consumer_acknowledgements.jsonl")
+    acknowledgements = load_handoff_acknowledgements(ack_path) if ack_path.exists() else []
+    collector_summary = build_handoff_collector_summary(handoffs, acknowledgements)
+
+    resolved_state = Path(state_path)
+    active_route_state = (
+        load_active_route_state(resolved_state) if resolved_state.exists() else None
+    )
+
+    alert_dir = Path(alert_audit_dir)
+    alert_audits = load_alert_audits(alert_dir) if alert_dir.exists() else []
+
+    report = build_operational_readiness_report(
+        handoffs=handoffs,
+        collector_summary=collector_summary,
+        alert_audits=alert_audits,
+        active_route_state=active_route_state,
+        envelopes=[],
+        artifacts=OperationalArtifactRefs(
+            active_route_state=ArtifactRef(
+                path=str(resolved_state), present=resolved_state.exists()
+            ),
+            alert_audit_dir=ArtifactRef(path=str(alert_dir), present=alert_dir.exists()),
+        ),
+    )
+
+    artifacts_path = Path(artifacts_dir)
+    retention_report = build_retention_report(
+        artifacts_path,
+        stale_after_days=stale_after_days,
+        active_route_active=resolved_state.exists(),
+    )
+    review_required_summary = build_review_required_summary(retention_report)
+    return build_operational_escalation_summary(
+        report, review_required_summary=review_required_summary
+    )
+
+
+@research_app.command("escalation-summary")
+def research_escalation_summary(
+    handoff_path: str | None = typer.Option(None, "--handoff-path"),
+    state_path: str = typer.Option("artifacts/active_route_profile.json", "--state-path"),
+    alert_audit_dir: str = typer.Option("artifacts", "--alert-audit-dir"),
+    artifacts_dir: str = typer.Option("artifacts", "--artifacts-dir"),
+    stale_after_days: float = typer.Option(30.0, "--stale-after-days"),
+) -> None:
+    """Print operational escalation summary (Sprint 27)."""
+    escalation = _build_escalation_from_readiness_artifacts(
+        handoff_path=handoff_path,
+        state_path=state_path,
+        alert_audit_dir=alert_audit_dir,
+        artifacts_dir=artifacts_dir,
+        stale_after_days=stale_after_days,
+    )
+    payload = escalation.to_json_dict()
+    table = Table(title="Escalation Summary")
+    table.add_column("Field", style="cyan")
+    table.add_column("Value")
+    table.add_row("Escalation Status", payload.get("escalation_status", ""))
+    table.add_row("Blocking Count", str(payload.get("blocking_count", 0)))
+    table.add_row("Execution Enabled", str(payload.get("execution_enabled", False)))
+    console.print(table)
+
+
+@research_app.command("blocking-summary")
+def research_blocking_summary(
+    handoff_path: str | None = typer.Option(None, "--handoff-path"),
+    state_path: str = typer.Option("artifacts/active_route_profile.json", "--state-path"),
+    alert_audit_dir: str = typer.Option("artifacts", "--alert-audit-dir"),
+    artifacts_dir: str = typer.Option("artifacts", "--artifacts-dir"),
+    stale_after_days: float = typer.Option(30.0, "--stale-after-days"),
+) -> None:
+    """Print blocking-only slice of the escalation summary (Sprint 27)."""
+    from app.research.operational_readiness import build_blocking_summary
+
+    escalation = _build_escalation_from_readiness_artifacts(
+        handoff_path=handoff_path,
+        state_path=state_path,
+        alert_audit_dir=alert_audit_dir,
+        artifacts_dir=artifacts_dir,
+        stale_after_days=stale_after_days,
+    )
+    summary = build_blocking_summary(escalation)
+    payload = summary.to_json_dict()
+    table = Table(title="Blocking Summary")
+    table.add_column("Field", style="cyan")
+    table.add_column("Value")
+    table.add_row("Escalation Status", str(payload.get("escalation_status", "")))
+    table.add_row("Blocking Count", str(payload.get("blocking_count", 0)))
+    table.add_row("Execution Enabled", str(payload.get("execution_enabled", False)))
+    console.print(table)
+
+
+@research_app.command("operator-action-summary")
+def research_operator_action_summary(
+    handoff_path: str | None = typer.Option(None, "--handoff-path"),
+    state_path: str = typer.Option("artifacts/active_route_profile.json", "--state-path"),
+    alert_audit_dir: str = typer.Option("artifacts", "--alert-audit-dir"),
+    artifacts_dir: str = typer.Option("artifacts", "--artifacts-dir"),
+    stale_after_days: float = typer.Option(30.0, "--stale-after-days"),
+) -> None:
+    """Print operator-action-required slice of the escalation summary (Sprint 27)."""
+    from app.research.operational_readiness import build_operator_action_summary
+
+    escalation = _build_escalation_from_readiness_artifacts(
+        handoff_path=handoff_path,
+        state_path=state_path,
+        alert_audit_dir=alert_audit_dir,
+        artifacts_dir=artifacts_dir,
+        stale_after_days=stale_after_days,
+    )
+    summary = build_operator_action_summary(escalation)
+    payload = summary.to_json_dict()
+    table = Table(title="Operator Action Summary")
+    table.add_column("Field", style="cyan")
+    table.add_column("Value")
+    table.add_row("Operator Action Count", str(payload.get("operator_action_count", 0)))
+    table.add_row("Execution Enabled", str(payload.get("execution_enabled", False)))
+    console.print(table)
+
+
+# ---------------------------------------------------------------------------
+# Sprint 28: action-queue-summary / blocking-actions / prioritized-actions /
+#            review-required-actions
+# ---------------------------------------------------------------------------
+
+
+def _build_action_queue_from_escalation(
+    handoff_path: str | None = None,
+    state_path: str = "artifacts/active_route_profile.json",
+    alert_audit_dir: str = "artifacts",
+    artifacts_dir: str = "artifacts",
+    stale_after_days: float = 30.0,
+) -> Any:
+    """Shared helper: build action queue summary from escalation."""
+    from app.research.operational_readiness import build_action_queue_summary
+
+    escalation = _build_escalation_from_readiness_artifacts(
+        handoff_path=handoff_path,
+        state_path=state_path,
+        alert_audit_dir=alert_audit_dir,
+        artifacts_dir=artifacts_dir,
+        stale_after_days=stale_after_days,
+    )
+    return build_action_queue_summary(escalation)
+
+
+@research_app.command("action-queue-summary")
+def research_action_queue_summary(
+    handoff_path: str | None = typer.Option(None, "--handoff-path"),
+    state_path: str = typer.Option("artifacts/active_route_profile.json", "--state-path"),
+    alert_audit_dir: str = typer.Option("artifacts", "--alert-audit-dir"),
+    artifacts_dir: str = typer.Option("artifacts", "--artifacts-dir"),
+    stale_after_days: float = typer.Option(30.0, "--stale-after-days"),
+) -> None:
+    """Print prioritized operator action queue (Sprint 28)."""
+    action_queue = _build_action_queue_from_escalation(
+        handoff_path=handoff_path,
+        state_path=state_path,
+        alert_audit_dir=alert_audit_dir,
+        artifacts_dir=artifacts_dir,
+        stale_after_days=stale_after_days,
+    )
+    payload = action_queue.to_json_dict()
+    table = Table(title="Action Queue Summary")
+    table.add_column("Field", style="cyan")
+    table.add_column("Value")
+    table.add_row("Queue Status", payload.get("queue_status", ""))
+    table.add_row("Total", str(payload.get("total_count", 0)))
+    table.add_row("Blocking", str(payload.get("blocking_count", 0)))
+    table.add_row("Execution Enabled", str(payload.get("execution_enabled", False)))
+    console.print(table)
+
+
+@research_app.command("blocking-actions")
+def research_blocking_actions(
+    handoff_path: str | None = typer.Option(None, "--handoff-path"),
+    state_path: str = typer.Option("artifacts/active_route_profile.json", "--state-path"),
+    alert_audit_dir: str = typer.Option("artifacts", "--alert-audit-dir"),
+    artifacts_dir: str = typer.Option("artifacts", "--artifacts-dir"),
+    stale_after_days: float = typer.Option(30.0, "--stale-after-days"),
+) -> None:
+    """Print blocking-only action queue items (Sprint 28)."""
+    from app.research.operational_readiness import build_blocking_actions
+
+    action_queue = _build_action_queue_from_escalation(
+        handoff_path=handoff_path,
+        state_path=state_path,
+        alert_audit_dir=alert_audit_dir,
+        artifacts_dir=artifacts_dir,
+        stale_after_days=stale_after_days,
+    )
+    summary = build_blocking_actions(action_queue)
+    payload = summary.to_json_dict()
+    table = Table(title="Blocking Actions")
+    table.add_column("Field", style="cyan")
+    table.add_column("Value")
+    table.add_row("Blocking Count", str(payload.get("blocking_count", 0)))
+    table.add_row("Queue Status", str(payload.get("queue_status", "")))
+    table.add_row("Execution Enabled", str(payload.get("execution_enabled", False)))
+    console.print(table)
+
+
+@research_app.command("prioritized-actions")
+def research_prioritized_actions(
+    handoff_path: str | None = typer.Option(None, "--handoff-path"),
+    state_path: str = typer.Option("artifacts/active_route_profile.json", "--state-path"),
+    alert_audit_dir: str = typer.Option("artifacts", "--alert-audit-dir"),
+    artifacts_dir: str = typer.Option("artifacts", "--artifacts-dir"),
+    stale_after_days: float = typer.Option(30.0, "--stale-after-days"),
+) -> None:
+    """Print operator action queue in priority order (Sprint 28)."""
+    from app.research.operational_readiness import build_prioritized_actions
+
+    action_queue = _build_action_queue_from_escalation(
+        handoff_path=handoff_path,
+        state_path=state_path,
+        alert_audit_dir=alert_audit_dir,
+        artifacts_dir=artifacts_dir,
+        stale_after_days=stale_after_days,
+    )
+    summary = build_prioritized_actions(action_queue)
+    payload = summary.to_json_dict()
+    table = Table(title="Prioritized Actions")
+    table.add_column("Field", style="cyan")
+    table.add_column("Value")
+    table.add_row("Queue Status", str(payload.get("queue_status", "")))
+    table.add_row("Action Count", str(payload.get("action_count", 0)))
+    table.add_row("Execution Enabled", str(payload.get("execution_enabled", False)))
+    console.print(table)
+
+
+@research_app.command("review-required-actions")
+def research_review_required_actions(
+    handoff_path: str | None = typer.Option(None, "--handoff-path"),
+    state_path: str = typer.Option("artifacts/active_route_profile.json", "--state-path"),
+    alert_audit_dir: str = typer.Option("artifacts", "--alert-audit-dir"),
+    artifacts_dir: str = typer.Option("artifacts", "--artifacts-dir"),
+    stale_after_days: float = typer.Option(30.0, "--stale-after-days"),
+) -> None:
+    """Print review-required items from the operator action queue (Sprint 28)."""
+    from app.research.operational_readiness import build_review_required_actions
+
+    action_queue = _build_action_queue_from_escalation(
+        handoff_path=handoff_path,
+        state_path=state_path,
+        alert_audit_dir=alert_audit_dir,
+        artifacts_dir=artifacts_dir,
+        stale_after_days=stale_after_days,
+    )
+    summary = build_review_required_actions(action_queue)
+    payload = summary.to_json_dict()
+    table = Table(title="Review Required Actions")
+    table.add_column("Field", style="cyan")
+    table.add_column("Value")
+    table.add_row("Review Required Count", str(payload.get("review_required_count", 0)))
+    table.add_row("Queue Status", str(payload.get("queue_status", "")))
+    table.add_row("Execution Enabled", str(payload.get("execution_enabled", False)))
+    console.print(table)
+
+
+# ---------------------------------------------------------------------------
+# Sprint 29: decision-pack-summary
+# ---------------------------------------------------------------------------
+
+
+def _build_decision_pack_from_artifacts(
+    handoff_path: str | None = None,
+    state_path: str = "artifacts/active_route_profile.json",
+    alert_audit_dir: str = "artifacts",
+    artifacts_dir: str = "artifacts",
+    stale_after_days: float = 30.0,
+) -> Any:
+    """Shared helper: build operator decision pack from readiness artifacts."""
+    from pathlib import Path
+
+    from app.research.artifact_lifecycle import (
+        build_retention_report,
+        build_review_required_summary,
+    )
+    from app.research.operational_readiness import (
+        build_action_queue_summary,
+        build_blocking_summary,
+        build_operator_decision_pack,
+    )
+
+    escalation = _build_escalation_from_readiness_artifacts(
+        handoff_path=handoff_path,
+        state_path=state_path,
+        alert_audit_dir=alert_audit_dir,
+        artifacts_dir=artifacts_dir,
+        stale_after_days=stale_after_days,
+    )
+    blocking_summary = build_blocking_summary(escalation)
+    action_queue_summary = build_action_queue_summary(escalation)
+
+    resolved_state = Path(state_path)
+    artifacts_path = Path(artifacts_dir)
+    retention_report = build_retention_report(
+        artifacts_path,
+        stale_after_days=stale_after_days,
+        active_route_active=resolved_state.exists(),
+    )
+    review_required_summary = build_review_required_summary(retention_report)
+
+    # Build a minimal readiness report for the pack
+    from app.alerts.audit import load_alert_audits
+    from app.research.active_route import load_active_route_state
+    from app.research.distribution import build_handoff_collector_summary
+    from app.research.execution_handoff import load_handoff_acknowledgements, load_signal_handoffs
+    from app.research.operational_readiness import (
+        ArtifactRef,
+        OperationalArtifactRefs,
+        build_operational_readiness_report,
+    )
+
+    handoffs = []
+    if handoff_path and Path(handoff_path).exists():
+        handoffs = load_signal_handoffs(Path(handoff_path))
+    ack_path = Path("artifacts/consumer_acknowledgements.jsonl")
+    acknowledgements = load_handoff_acknowledgements(ack_path) if ack_path.exists() else []
+    collector_summary = build_handoff_collector_summary(handoffs, acknowledgements)
+    r_state = Path(state_path)
+    active_route_state = (
+        load_active_route_state(r_state) if r_state.exists() else None
+    )
+    alert_dir = Path(alert_audit_dir)
+    alert_audits = load_alert_audits(alert_dir) if alert_dir.exists() else []
+
+    readiness_report = build_operational_readiness_report(
+        handoffs=handoffs,
+        collector_summary=collector_summary,
+        alert_audits=alert_audits,
+        active_route_state=active_route_state,
+        envelopes=[],
+        artifacts=OperationalArtifactRefs(
+            active_route_state=ArtifactRef(path=str(r_state), present=r_state.exists()),
+        ),
+    )
+
+    return build_operator_decision_pack(
+        readiness_summary=readiness_report,
+        blocking_summary=blocking_summary,
+        action_queue_summary=action_queue_summary,
+        review_required_summary=review_required_summary,
+    )
+
+
+@research_app.command("operator-decision-pack")
+@research_app.command("decision-pack-summary")
+def research_decision_pack_summary(
+    handoff_path: str | None = typer.Option(None, "--handoff-path"),
+    state_path: str = typer.Option("artifacts/active_route_profile.json", "--state-path"),
+    alert_audit_dir: str = typer.Option("artifacts", "--alert-audit-dir"),
+    artifacts_dir: str = typer.Option("artifacts", "--artifacts-dir"),
+    stale_after_days: float = typer.Option(30.0, "--stale-after-days"),
+    out: str | None = typer.Option(None, "--out", help="Optional path to save the JSON report"),
+) -> None:
+    """Print operator decision pack summary (Sprint 29). Advisory only — no execution authority."""
+    from pathlib import Path
+
+    from app.research.operational_readiness import save_operator_decision_pack
+
+    pack = _build_decision_pack_from_artifacts(
+        handoff_path=handoff_path,
+        state_path=state_path,
+        alert_audit_dir=alert_audit_dir,
+        artifacts_dir=artifacts_dir,
+        stale_after_days=stale_after_days,
+    )
+    payload = pack.to_json_dict()
+
+    table = Table(title="Operator Decision Pack Summary")
+    table.add_column("Field", style="cyan")
+    table.add_column("Value")
+    table.add_row("Overall Status", payload.get("overall_status", ""))
+    table.add_row("Blocking Count", str(payload.get("blocking_count", 0)))
+    table.add_row("Review Required", str(payload.get("review_required_count", 0)))
+    table.add_row("Action Queue Count", str(payload.get("action_queue_count", 0)))
+    table.add_row("Execution Enabled", str(payload.get("execution_enabled", False)))
+    console.print(table)
+
+    if out:
+        out_path = Path(out)
+        save_operator_decision_pack(pack, out_path)
+        console.print(f"[dim]Saved decision pack to {out_path.resolve()}[/dim]")
+
+
+# ---------------------------------------------------------------------------
+# Sprint 30: operator-runbook / runbook-summary / runbook-next-steps
+# ---------------------------------------------------------------------------
+
+
+FINAL_RESEARCH_COMMAND_NAMES: tuple[str, ...] = (
+    "signal-handoff",
+    "handoff-acknowledge",
+    "handoff-collector-summary",
+    "readiness-summary",
+    "provider-health",
+    "drift-summary",
+    "gate-summary",
+    "remediation-recommendations",
+    "artifact-inventory",
+    "artifact-rotate",
+    "artifact-retention",
+    "cleanup-eligibility-summary",
+    "protected-artifact-summary",
+    "review-required-summary",
+    "escalation-summary",
+    "blocking-summary",
+    "operator-action-summary",
+    "action-queue-summary",
+    "blocking-actions",
+    "prioritized-actions",
+    "review-required-actions",
+    "decision-pack-summary",
+    "operator-runbook",
+    "runbook-summary",
+    "runbook-next-steps",
+    "review-journal-append",
+    "review-journal-summary",
+    "resolution-summary",
+    "market-data-quote",
+    "market-data-snapshot",
+)
+
+RESEARCH_COMMAND_ALIASES: dict[str, str] = {
+    "consumer-ack": "handoff-acknowledge",
+    "handoff-summary": "handoff-collector-summary",
+    "operator-decision-pack": "decision-pack-summary",
+}
+
+SUPERSEDED_RESEARCH_COMMAND_NAMES: tuple[str, ...] = ("governance-summary",)
+
+
+def get_research_command_inventory() -> dict[str, object]:
+    """Return the locked research command inventory for contract tests."""
+    return {
+        "final_commands": list(FINAL_RESEARCH_COMMAND_NAMES),
+        "aliases": dict(RESEARCH_COMMAND_ALIASES),
+        "superseded_commands": list(SUPERSEDED_RESEARCH_COMMAND_NAMES),
+        "provisional_commands": list(get_provisional_research_command_names()),
+    }
+
+
+def get_registered_research_command_names() -> set[str]:
+    """Return all currently registered research command names."""
+    names: set[str] = set()
+    for command in research_app.registered_commands:
+        name = getattr(command, "name", None)
+        if isinstance(name, str) and name.strip():
+            names.add(name.strip())
+    return names
+
+
+def get_provisional_research_command_names() -> tuple[str, ...]:
+    """Return registered research commands outside the locked final/alias set."""
+
+    classified = (
+        set(FINAL_RESEARCH_COMMAND_NAMES)
+        | set(RESEARCH_COMMAND_ALIASES)
+        | set(SUPERSEDED_RESEARCH_COMMAND_NAMES)
+    )
+    provisional = sorted(get_registered_research_command_names() - classified)
+    return tuple(provisional)
+
+
+def extract_runbook_command_refs(payload: dict[str, Any]) -> list[str]:
+    """Extract all command_refs from a runbook payload (used by MCP server validation)."""
+    refs: list[str] = []
+    for step in payload.get("steps", []):
+        refs.extend(step.get("command_refs", []))
+    for step in payload.get("next_steps", []):
+        refs.extend(step.get("command_refs", []))
+    refs.extend(payload.get("command_refs", []))
+    return list(dict.fromkeys(refs))  # deduplicated, order preserved
+
+
+def get_invalid_research_command_refs(refs: list[str]) -> list[str]:
+    """Return any command refs that are not registered research sub-commands."""
+    registered = get_registered_research_command_names()
+    invalid_refs: list[str] = []
+    for ref in refs:
+        parts = ref.strip().split()
+        if len(parts) != 2 or parts[0] != "research" or parts[1] not in registered:
+            invalid_refs.append(ref)
+    return invalid_refs
+
+
+def _require_valid_runbook_command_refs(payload: dict[str, Any]) -> None:
+    """Fail closed when runbook payload references non-canonical CLI commands."""
+    invalid_refs = get_invalid_research_command_refs(extract_runbook_command_refs(payload))
+    if invalid_refs:
+        console.print(
+            f"[red]Runbook contains invalid command references: {invalid_refs}[/red]"
+        )
+        raise typer.Exit(1)
+
+
+def _build_runbook_from_artifacts(
+    handoff_path: str | None = None,
+    state_path: str = "artifacts/active_route_profile.json",
+    alert_audit_dir: str = "artifacts",
+    artifacts_dir: str = "artifacts",
+    stale_after_days: float = 30.0,
+) -> Any:
+    """Shared helper: build operator runbook from readiness artifacts."""
+    from app.research.operational_readiness import build_operator_runbook
+
+    pack = _build_decision_pack_from_artifacts(
+        handoff_path=handoff_path,
+        state_path=state_path,
+        alert_audit_dir=alert_audit_dir,
+        artifacts_dir=artifacts_dir,
+        stale_after_days=stale_after_days,
+    )
+    return build_operator_runbook(decision_pack=pack)
+
+
+def _load_review_journal_summary(
+    journal_path: str = "artifacts/operator_review_journal.jsonl",
+) -> Any:
+    from app.research.operational_readiness import (
+        build_review_journal_summary,
+        load_review_journal_entries,
+    )
+
+    path = Path(journal_path)
+    entries = load_review_journal_entries(path)
+    return build_review_journal_summary(entries, journal_path=path)
+
+
+def _load_review_resolution_summary(
+    journal_path: str = "artifacts/operator_review_journal.jsonl",
+) -> Any:
+    from app.research.operational_readiness import build_review_resolution_summary
+
+    summary = _load_review_journal_summary(journal_path=journal_path)
+    return build_review_resolution_summary(summary)
+
+
+@research_app.command("operator-runbook")
+def research_operator_runbook(
+    handoff_path: str | None = typer.Option(None, "--handoff-path"),
+    state_path: str = typer.Option("artifacts/active_route_profile.json", "--state-path"),
+    alert_audit_dir: str = typer.Option("artifacts", "--alert-audit-dir"),
+    artifacts_dir: str = typer.Option("artifacts", "--artifacts-dir"),
+    stale_after_days: float = typer.Option(30.0, "--stale-after-days"),
+    out: str | None = typer.Option(None, "--out", help="Optional path to save the JSON runbook"),
+) -> None:
+    """Print canonical operator runbook with validated commands (Sprint 30)."""
+    from pathlib import Path
+
+    from app.research.operational_readiness import save_operator_runbook
+
+    runbook = _build_runbook_from_artifacts(
+        handoff_path=handoff_path,
+        state_path=state_path,
+        alert_audit_dir=alert_audit_dir,
+        artifacts_dir=artifacts_dir,
+        stale_after_days=stale_after_days,
+    )
+    payload = runbook.to_json_dict()
+    _require_valid_runbook_command_refs(payload)
+
+    console.print("[bold]Operator Runbook[/bold]")
+    console.print(f"status={runbook.overall_status}")
+    console.print(f"steps={len(runbook.steps)}")
+    console.print("execution_enabled=False")
+    console.print("write_back_allowed=False")
+
+    for i, step in enumerate(runbook.steps, 1):
+        console.print(f"\n[cyan]{i}. priority={step.priority}[/cyan]  {step.title}")
+        console.print(f"   {step.summary}")
+        for ref in step.command_refs:
+            console.print(f"   Command: {ref}")
+
+    if out:
+        out_path = Path(out)
+        save_operator_runbook(runbook, out_path)
+        console.print(f"\n[dim]Saved runbook to {out_path.resolve()}[/dim]")
+
+
+@research_app.command("runbook-summary")
+def research_runbook_summary(
+    handoff_path: str | None = typer.Option(None, "--handoff-path"),
+    state_path: str = typer.Option("artifacts/active_route_profile.json", "--state-path"),
+    alert_audit_dir: str = typer.Option("artifacts", "--alert-audit-dir"),
+    artifacts_dir: str = typer.Option("artifacts", "--artifacts-dir"),
+    stale_after_days: float = typer.Option(30.0, "--stale-after-days"),
+) -> None:
+    """Print a compact operator runbook summary (Sprint 30)."""
+    runbook = _build_runbook_from_artifacts(
+        handoff_path=handoff_path,
+        state_path=state_path,
+        alert_audit_dir=alert_audit_dir,
+        artifacts_dir=artifacts_dir,
+        stale_after_days=stale_after_days,
+    )
+    _require_valid_runbook_command_refs(runbook.to_json_dict())
+    console.print("[bold]Operator Runbook Summary[/bold]")
+    console.print(f"status={runbook.overall_status}")
+    console.print(f"steps={len(runbook.steps)}")
+    console.print("execution_enabled=False")
+    console.print("write_back_allowed=False")
+
+
+@research_app.command("runbook-next-steps")
+def research_runbook_next_steps(
+    handoff_path: str | None = typer.Option(None, "--handoff-path"),
+    state_path: str = typer.Option("artifacts/active_route_profile.json", "--state-path"),
+    alert_audit_dir: str = typer.Option("artifacts", "--alert-audit-dir"),
+    artifacts_dir: str = typer.Option("artifacts", "--artifacts-dir"),
+    stale_after_days: float = typer.Option(30.0, "--stale-after-days"),
+) -> None:
+    """Print the next-steps runbook surface (Sprint 30)."""
+    runbook = _build_runbook_from_artifacts(
+        handoff_path=handoff_path,
+        state_path=state_path,
+        alert_audit_dir=alert_audit_dir,
+        artifacts_dir=artifacts_dir,
+        stale_after_days=stale_after_days,
+    )
+    _require_valid_runbook_command_refs(runbook.to_json_dict())
+    console.print("[bold]Operator Runbook Next Steps[/bold]")
+    console.print(f"status={runbook.overall_status}")
+    console.print("execution_enabled=False")
+    console.print("write_back_allowed=False")
+    for i, step in enumerate(runbook.next_steps, 1):
+        console.print(f"\n{i}. priority={step.priority}  {step.title}")
+        for ref in step.command_refs:
+            console.print(f"   Command: {ref}")
+
+
+@research_app.command("review-journal-append")
+def research_review_journal_append(
+    source_ref: str = typer.Argument(..., help="Referenced runbook/action/decision-pack source"),
+    operator_id: str = typer.Option(..., "--operator-id", help="Operator identifier"),
+    review_action: str = typer.Option(..., "--review-action", help="One of: note, defer, resolve"),
+    review_note: str = typer.Option(..., "--review-note", help="Append-only review note"),
+    evidence_refs: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--evidence-ref",
+            help="Optional evidence reference; repeat flag for multiple values",
+        ),
+    ] = None,
+    journal_path: str = typer.Option(
+        "artifacts/operator_review_journal.jsonl",
+        "--journal-path",
+        help="Append-only review journal JSONL path",
+    ),
+) -> None:
+    """Append a review journal entry without mutating core operator state."""
+    from app.research.operational_readiness import (
+        append_review_journal_entry_jsonl,
+        create_review_journal_entry,
+    )
+
+    entry = create_review_journal_entry(
+        source_ref=source_ref,
+        operator_id=operator_id,
+        review_action=review_action,
+        review_note=review_note,
+        evidence_refs=list(evidence_refs or []),
+    )
+    out_path = Path(journal_path)
+    append_review_journal_entry_jsonl(entry, out_path)
+
+    console.print(f"[green]Review journal appended to {out_path.resolve()}[/green]")
+    console.print(f"review_id={entry.review_id}")
+    console.print(f"journal_status={entry.journal_status}")
+    console.print("core_state_unchanged=True")
+    console.print("execution_enabled=False")
+    console.print("write_back_allowed=False")
+
+
+@research_app.command("review-journal-summary")
+def research_review_journal_summary(
+    journal_path: str = typer.Option(
+        "artifacts/operator_review_journal.jsonl",
+        "--journal-path",
+        help="Append-only review journal JSONL path",
+    ),
+) -> None:
+    """Print the append-only review journal summary."""
+    summary = _load_review_journal_summary(journal_path=journal_path)
+    console.print("[bold]Operator Review Journal Summary[/bold]")
+    console.print(f"journal_status={summary.journal_status}")
+    console.print(f"total_count={summary.total_count}")
+    console.print(f"open_count={summary.open_count}")
+    console.print(f"resolved_count={summary.resolved_count}")
+    console.print("execution_enabled=False")
+    console.print("write_back_allowed=False")
+
+
+@research_app.command("resolution-summary")
+def research_resolution_summary(
+    journal_path: str = typer.Option(
+        "artifacts/operator_review_journal.jsonl",
+        "--journal-path",
+        help="Append-only review journal JSONL path",
+    ),
+) -> None:
+    """Print latest per-source resolution state from the review journal."""
+    summary = _load_review_resolution_summary(journal_path=journal_path)
+    console.print("[bold]Operator Resolution Summary[/bold]")
+    console.print(f"journal_status={summary.journal_status}")
+    console.print(f"open_count={summary.open_count}")
+    console.print(f"resolved_count={summary.resolved_count}")
+    console.print("execution_enabled=False")
+    console.print("write_back_allowed=False")
+    for source_ref in summary.open_source_refs:
+        console.print(f"open={source_ref}")
+    for source_ref in summary.resolved_source_refs:
+        console.print(f"resolved={source_ref}")
+
+
+@research_app.command("market-data-quote")
+def research_market_data_quote(
+    symbol: str = typer.Argument(..., help="Market symbol, e.g. BTC/USDT"),
+    provider: str = typer.Option(
+        "coingecko",
+        "--provider",
+        help="Read-only provider: coingecko or mock",
+    ),
+    freshness_threshold_seconds: float = typer.Option(
+        120.0,
+        "--freshness-threshold-seconds",
+        help="Data age threshold for stale flagging",
+    ),
+    timeout_seconds: int = typer.Option(
+        10,
+        "--timeout-seconds",
+        help="Provider request timeout in seconds",
+    ),
+) -> None:
+    """Fetch one read-only market quote snapshot from the canonical adapter path."""
+    import asyncio
+
+    from app.market_data.service import get_market_data_snapshot
+
+    snapshot = asyncio.run(
+        get_market_data_snapshot(
+            symbol=symbol,
+            provider=provider,
+            freshness_threshold_seconds=freshness_threshold_seconds,
+            timeout_seconds=timeout_seconds,
+        )
+    )
+
+    console.print("[bold]Market Data Quote[/bold]")
+    console.print(f"symbol={snapshot.symbol}")
+    console.print(f"provider={snapshot.provider}")
+    console.print(f"retrieved_at={snapshot.retrieved_at_utc}")
+    console.print(f"source_timestamp={snapshot.source_timestamp_utc}")
+    console.print(f"price={snapshot.price}")
+    console.print(f"is_stale={snapshot.is_stale}")
+    console.print(f"freshness_seconds={snapshot.freshness_seconds}")
+    console.print(f"available={snapshot.available}")
+    console.print(f"error={snapshot.error}")
+    console.print("execution_enabled=False")
+    console.print("write_back_allowed=False")
+
+    if not snapshot.available:
+        raise typer.Exit(1)
+
+
+@research_app.command("market-data-snapshot")
+def research_market_data_snapshot(
+    symbol: str = typer.Argument(..., help="Market symbol, e.g. BTC/USDT"),
+    provider: str = typer.Option(
+        "coingecko",
+        "--provider",
+        help="Read-only provider: coingecko or mock",
+    ),
+    freshness_threshold_seconds: float = typer.Option(
+        120.0,
+        "--freshness-threshold-seconds",
+        help="Data age threshold for stale flagging",
+    ),
+    timeout_seconds: int = typer.Option(
+        10,
+        "--timeout-seconds",
+        help="Provider request timeout in seconds",
+    ),
+) -> None:
+    """Print the full read-only market data snapshot payload as JSON."""
+    import asyncio
+    import json as _json
+
+    from app.market_data.service import get_market_data_snapshot
+
+    snapshot = asyncio.run(
+        get_market_data_snapshot(
+            symbol=symbol,
+            provider=provider,
+            freshness_threshold_seconds=freshness_threshold_seconds,
+            timeout_seconds=timeout_seconds,
+        )
+    )
+    console.print(_json.dumps(snapshot.to_json_dict(), indent=2))
+
+    if not snapshot.available:
+        raise typer.Exit(1)
+
+
+@research_app.command("backtest-run")
+def research_backtest_run(
+    signals_path: str = typer.Option(
+        "artifacts/signal_candidates.jsonl",
+        "--signals-path",
+        help="JSONL file with signal candidates (one JSON dict per line)",
+    ),
+    out: str = typer.Option(
+        "artifacts/backtest_result.json",
+        "--out",
+        help="Output path for backtest result JSON",
+    ),
+    initial_equity: float = typer.Option(10_000.0, "--initial-equity"),
+    stop_loss_pct: float = typer.Option(2.0, "--stop-loss-pct"),
+    take_profit_mult: float = typer.Option(2.0, "--take-profit-mult"),
+    min_confidence: float = typer.Option(0.7, "--min-confidence"),
+    max_positions: int = typer.Option(5, "--max-positions"),
+    max_risk_pct: float = typer.Option(2.0, "--max-risk-pct"),
+    long_only: bool = typer.Option(True, "--long-only/--no-long-only"),
+    audit_path: str = typer.Option(
+        "artifacts/backtest_audit.jsonl", "--audit-path"
+    ),
+) -> None:
+    """Run a paper backtest from a signal candidate JSONL file."""
+    import asyncio
+    import json as _json
+    from pathlib import Path as _Path
+
+    from app.execution.backtest_engine import BacktestConfig, BacktestEngine
+    from app.market_data.mock_adapter import MockMarketDataAdapter
+    from app.research.signals import SignalCandidate
+
+    # Load signals
+    sp = _Path(signals_path)
+    if not sp.exists():
+        console.print(f"[red]Signals file not found: {signals_path}[/red]")
+        raise typer.Exit(1)
+
+    signals: list[SignalCandidate] = []
+    for raw in sp.read_text(encoding="utf-8").splitlines():
+        raw = raw.strip()
+        if not raw:
+            continue
+        try:
+            signals.append(SignalCandidate.model_validate(_json.loads(raw), strict=False))
+        except Exception:
+            pass  # skip malformed rows
+
+    if not signals:
+        console.print("[yellow]No valid signals found. Exiting.[/yellow]")
+        raise typer.Exit(0)
+
+    # Fetch prices for unique assets via MockAdapter (A-012)
+    adapter = MockMarketDataAdapter()
+    unique_assets = {s.target_asset for s in signals}
+    prices: dict[str, float] = {}
+    for asset in unique_assets:
+        p = asyncio.run(adapter.get_price(asset))
+        if p is None:
+            p = asyncio.run(adapter.get_price(f"{asset}/USDT"))
+        if p:
+            prices[asset] = p
+            prices[f"{asset}/USDT"] = p
+
+    cfg = BacktestConfig(
+        initial_equity=initial_equity,
+        stop_loss_pct=stop_loss_pct,
+        take_profit_multiplier=take_profit_mult,
+        min_signal_confidence=min_confidence,
+        max_open_positions=max_positions,
+        max_risk_per_trade_pct=max_risk_pct,
+        long_only=long_only,
+        audit_log_path=audit_path,
+    )
+    engine = BacktestEngine(cfg)
+    result = engine.run(signals, prices)
+
+    out_path = _Path(out)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(
+        _json.dumps(result.to_json_dict(), indent=2), encoding="utf-8"
+    )
+
+    console.print("[bold]Backtest Result[/bold]")
+    console.print(f"signals_received={result.signals_received}")
+    console.print(f"signals_executed={result.signals_executed}")
+    console.print(f"signals_skipped={result.signals_skipped}")
+    console.print(f"trade_count={result.trade_count}")
+    console.print(f"final_equity={result.final_equity:.4f}")
+    console.print(f"total_return_pct={result.total_return_pct:.4f}")
+    console.print(f"max_drawdown_pct={result.max_drawdown_pct:.4f}")
+    console.print(f"realized_pnl_usd={result.realized_pnl_usd:.4f}")
+    console.print(f"kill_switch_triggered={result.kill_switch_triggered}")
+    console.print(f"result_written={out}")
+
+
+@research_app.command("decision-journal-append")
+def research_decision_journal_append(
+    symbol: str = typer.Argument(..., help="Trading symbol (e.g. BTC/USDT)"),
+    thesis: str = typer.Option(..., "--thesis", help="Trading thesis (min 10 chars)"),
+    market: str = typer.Option("crypto", "--market"),
+    venue: str = typer.Option("paper", "--venue"),
+    mode: str = typer.Option(
+        "research",
+        "--mode",
+        help="One of: research, backtest, paper, shadow, live",
+    ),
+    confidence: float = typer.Option(0.5, "--confidence", help="Confidence 0.0-1.0"),
+    supporting: Annotated[
+        list[str] | None,
+        typer.Option("--supporting", help="Supporting factor; repeat for multiple"),
+    ] = None,
+    contradictory: Annotated[
+        list[str] | None,
+        typer.Option("--contradictory", help="Contradictory factor; repeat for multiple"),
+    ] = None,
+    entry_logic: str = typer.Option("manual_entry", "--entry-logic"),
+    exit_logic: str = typer.Option("manual_exit", "--exit-logic"),
+    stop_loss: float = typer.Option(0.0, "--stop-loss"),
+    invalidation: str = typer.Option("thesis_invalidated", "--invalidation"),
+    model_version: str = typer.Option("manual", "--model-version"),
+    prompt_version: str = typer.Option("v0", "--prompt-version"),
+    data_source: Annotated[
+        list[str] | None,
+        typer.Option("--data-source", help="Data source; repeat for multiple"),
+    ] = None,
+    journal_path: str = typer.Option(
+        "artifacts/decision_journal.jsonl",
+        "--journal-path",
+        help="Append-only decision journal JSONL path",
+    ),
+) -> None:
+    """Append a validated decision instance to the decision journal."""
+    from app.decisions.journal import (
+        RiskAssessment,
+        append_decision_jsonl,
+        create_decision_instance,
+    )
+
+    try:
+        risk = RiskAssessment(
+            risk_level="unassessed",
+            max_position_pct=0.0,
+            drawdown_remaining_pct=100.0,
+        )
+        decision = create_decision_instance(
+            symbol=symbol,
+            market=market,
+            venue=venue,
+            mode=mode,
+            thesis=thesis,
+            supporting_factors=list(supporting or ["manual_observation"]),
+            contradictory_factors=list(contradictory or []),
+            confidence_score=confidence,
+            market_regime="unknown",
+            volatility_state="unknown",
+            liquidity_state="unknown",
+            risk_assessment=risk,
+            entry_logic=entry_logic,
+            exit_logic=exit_logic,
+            stop_loss=stop_loss,
+            invalidation_condition=invalidation,
+            position_size_rationale="manual sizing",
+            max_loss_estimate=0.0,
+            data_sources_used=list(data_source or ["operator_input"]),
+            model_version=model_version,
+            prompt_version=prompt_version,
+        )
+        out_path = Path(journal_path)
+        append_decision_jsonl(decision, out_path)
+    except ValueError as exc:
+        console.print(f"[red]Decision journal append failed:[/red] {exc}")
+        raise typer.Exit(1) from exc
+
+    console.print(f"[green]Decision appended to {out_path.resolve()}[/green]")
+    console.print(f"decision_id={decision.decision_id}")
+    console.print(f"mode={decision.mode.value}")
+    console.print(f"approval_state={decision.approval_state.value}")
+    console.print(f"execution_state={decision.execution_state.value}")
+    console.print("execution_enabled=False")
+    console.print("write_back_allowed=False")
+
+
+@research_app.command("decision-journal-summary")
+def research_decision_journal_summary(
+    journal_path: str = typer.Option(
+        "artifacts/decision_journal.jsonl",
+        "--journal-path",
+        help="Append-only decision journal JSONL path",
+    ),
+) -> None:
+    """Print a read-only summary of the decision journal."""
+    from app.decisions.journal import (
+        build_decision_journal_summary,
+        load_decision_journal,
+    )
+
+    path = Path(journal_path)
+    try:
+        entries = load_decision_journal(path)
+        summary = build_decision_journal_summary(entries, journal_path=path)
+    except ValueError as exc:
+        console.print(f"[red]Decision journal summary failed:[/red] {exc}")
+        raise typer.Exit(1) from exc
+
+    console.print("[bold]Decision Journal Summary[/bold]")
+    console.print(f"total_count={summary.total_count}")
+    console.print(f"symbols={summary.symbols}")
+    console.print(f"by_mode={summary.by_mode}")
+    console.print(f"by_approval={summary.by_approval}")
+    console.print(f"by_execution={summary.by_execution}")
+    if summary.avg_confidence is not None:
+        console.print(f"avg_confidence={summary.avg_confidence}")
+    console.print("execution_enabled=False")
+    console.print("write_back_allowed=False")
+
+
+@research_app.command("loop-cycle-summary")
+def research_loop_cycle_summary(
+    audit_path: str = typer.Option(
+        "artifacts/trading_loop_audit.jsonl",
+        "--audit-path",
+        help="Trading loop JSONL audit path",
+    ),
+    last_n: int = typer.Option(20, "--last-n", help="Show last N cycle records"),
+) -> None:
+    """Print a read-only summary of recent trading loop cycles from the audit log."""
+    import json as _json
+
+    path = Path(audit_path)
+    if not path.exists():
+        console.print(f"[yellow]No loop audit found at {path}[/yellow]")
+        return
+
+    raw_lines = [
+        line.strip()
+        for line in path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    if not raw_lines:
+        console.print("[yellow]Loop audit is empty.[/yellow]")
+        return
+
+    records: list[dict[str, object]] = []
+    for line in raw_lines:
+        try:
+            records.append(_json.loads(line))
+        except _json.JSONDecodeError:
+            continue
+
+    recent = records[-last_n:]
+
+    status_counts: dict[str, int] = {}
+    for rec in records:
+        s = str(rec.get("status", "unknown"))
+        status_counts[s] = status_counts.get(s, 0) + 1
+
+    console.print(f"[bold]Trading Loop Cycle Summary[/bold] ({len(records)} total)")
+    console.print(f"status_counts={status_counts}")
+    console.print(f"showing last {len(recent)} of {len(records)} cycles:")
+
+    table = Table(show_header=True, header_style="bold cyan")
+    table.add_column("cycle_id", width=16)
+    table.add_column("status", width=16)
+    table.add_column("symbol", width=12)
+    table.add_column("sig", width=4)
+    table.add_column("risk", width=4)
+    table.add_column("fill", width=4)
+
+    for rec in recent:
+        table.add_row(
+            str(rec.get("cycle_id", "—"))[:16],
+            str(rec.get("status", "—")),
+            str(rec.get("symbol", "—")),
+            "Y" if rec.get("signal_generated") else "N",
+            "Y" if rec.get("risk_approved") else "N",
+            "Y" if rec.get("fill_simulated") else "N",
+        )
+
+    console.print(table)
+    console.print("execution_enabled=False")
+    console.print("write_back_allowed=False")

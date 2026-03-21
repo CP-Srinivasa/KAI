@@ -320,3 +320,107 @@ async def test_run_batch_concurrency():
 
     assert len(results) == 8
     assert provider.analyze.call_count == 8
+
+
+@pytest.mark.asyncio
+async def test_pipeline_with_shadow_provider_success():
+    llm_out = _make_llm_output()
+    provider = _mock_provider(llm_out)
+    shadow_out = _make_llm_output()
+    shadow_out.sentiment_label = SentimentLabel.BEARISH
+    shadow_out.recommended_priority = 3
+    shadow_provider = _mock_named_provider("companion", shadow_out)
+
+    engine = _btc_engine()
+    pipeline = AnalysisPipeline(
+        keyword_engine=engine,
+        provider=provider,
+        shadow_provider=shadow_provider,
+        run_llm=True
+    )
+
+    result = await pipeline.run(_make_doc())
+
+    assert result.success
+    assert result.llm_output is not None
+    assert result.llm_output.sentiment_label == SentimentLabel.BULLISH
+
+    # Check shadow output was captured natively on the result object
+    assert result.shadow_llm_output is not None
+    assert result.shadow_llm_output.sentiment_label == SentimentLabel.BEARISH
+    assert result.shadow_provider_name == "companion"
+
+    result.apply_to_document()
+
+    # I-51 Shadow Non-Mutation
+    assert result.document.provider == "openai"
+    assert result.document.analysis_source == AnalysisSource.EXTERNAL_LLM
+
+    # Shadow serialization
+    shadow_data = result.document.metadata.get("shadow_analysis")
+    assert shadow_data is not None
+    assert shadow_data["sentiment_label"] == "bearish"
+    assert shadow_data["recommended_priority"] == 3
+    assert result.document.metadata.get("shadow_provider") == "companion"
+
+
+@pytest.mark.asyncio
+async def test_pipeline_with_shadow_provider_error_does_not_fail_primary():
+    llm_out = _make_llm_output()
+    provider = _mock_provider(llm_out)
+
+    shadow_provider = AsyncMock()
+    shadow_provider.provider_name = "companion"
+    shadow_provider.model = "kai-v1"
+    shadow_provider.analyze = AsyncMock(side_effect=RuntimeError("Companion offline"))
+
+    engine = _btc_engine()
+    pipeline = AnalysisPipeline(
+        keyword_engine=engine,
+        provider=provider,
+        shadow_provider=shadow_provider,
+        run_llm=True
+    )
+
+    # I-52 Shadow Error Isolation
+    result = await pipeline.run(_make_doc())
+
+    assert result.success
+    assert result.llm_output is not None
+    assert result.shadow_llm_output is None
+    assert result.shadow_error == "Companion offline"
+
+    result.apply_to_document()
+    assert result.document.provider == "openai"
+    assert "shadow_analysis" not in result.document.metadata
+
+
+@pytest.mark.asyncio
+async def test_pipeline_shadow_provider_runs_with_rule_fallback_primary():
+    shadow_out = _make_llm_output()
+    shadow_out.short_reasoning = "Companion shadow summary."
+    shadow_provider = _mock_named_provider("companion", shadow_out)
+
+    engine = _btc_engine()
+    pipeline = AnalysisPipeline(
+        keyword_engine=engine,
+        provider=None,
+        shadow_provider=shadow_provider,
+        run_llm=False,
+    )
+
+    result = await pipeline.run(_make_doc("Bitcoin halving", "BTC outlook remains active"))
+
+    assert result.analysis_result is not None
+    assert result.analysis_result.analysis_source == AnalysisSource.RULE
+    assert result.provider_name == "fallback"
+    assert result.shadow_llm_output is not None
+    assert result.shadow_provider_name == "companion"
+
+    result.apply_to_document()
+
+    assert result.document.provider == "fallback"
+    assert result.document.analysis_source == AnalysisSource.RULE
+    assert result.document.metadata["shadow_analysis"]["short_reasoning"] == (
+        "Companion shadow summary."
+    )

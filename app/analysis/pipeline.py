@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
@@ -160,7 +161,7 @@ def _fallback_market_scope(
         return document.market_scope if document.market_scope != MarketScope.UNKNOWN else None
 
     ordered_scores = sorted(scores.values(), reverse=True)
-    top_scope = max(scores, key=scores.get)
+    top_scope, _ = max(scores.items(), key=lambda item: item[1])
     if ordered_scores[1] and ordered_scores[1] >= top_score * 0.75:
         return MarketScope.MIXED
     return top_scope
@@ -195,6 +196,9 @@ class PipelineResult:
     error: str | None = None
     provider_name: str | None = None
     trace_metadata: dict[str, object] = field(default_factory=dict)
+    shadow_llm_output: LLMAnalysisOutput | None = None
+    shadow_provider_name: str | None = None
+    shadow_error: str | None = None
 
     @property
     def success(self) -> bool:
@@ -206,6 +210,13 @@ class PipelineResult:
         self.document.provider = self.provider_name
         if self.trace_metadata:
             self.document.metadata.update(self.trace_metadata)
+
+        if self.shadow_llm_output is not None:
+            self.document.metadata["shadow_analysis"] = self.shadow_llm_output.model_dump(
+                mode="json", round_trip=True
+            )
+            self.document.metadata["shadow_provider"] = self.shadow_provider_name
+
         _sync_flat_entities(self.document, self.entity_mentions)
 
         if not self.analysis_result:
@@ -258,10 +269,44 @@ class AnalysisPipeline:
         keyword_engine: KeywordEngine,
         provider: BaseAnalysisProvider | None = None,
         run_llm: bool = True,
+        shadow_provider: BaseAnalysisProvider | None = None,
     ) -> None:
         self._keyword_engine = keyword_engine
         self._provider = provider
         self._run_llm = run_llm
+        self._shadow_provider = shadow_provider
+
+    async def _run_shadow_analysis(
+        self,
+        doc: CanonicalDocument,
+        *,
+        text: str,
+        context: dict[str, Any],
+    ) -> tuple[LLMAnalysisOutput | None, str | None, str | None]:
+        if self._shadow_provider is None:
+            return None, None, None
+
+        shadow_provider_name = (
+            _resolve_runtime_provider_name(self._shadow_provider)
+            or self._shadow_provider.provider_name
+        )
+        try:
+            output = await self._shadow_provider.analyze(
+                title=doc.title,
+                text=text,
+                context=context,
+            )
+        except Exception as exc:
+            error = str(exc)
+            logger.warning(
+                "shadow_provider_failed",
+                doc_id=str(doc.id),
+                provider=shadow_provider_name,
+                error=error,
+            )
+            return None, shadow_provider_name, error
+
+        return output, shadow_provider_name, None
 
     async def run(self, doc: CanonicalDocument) -> PipelineResult:
         """Analyze a single document."""
@@ -273,8 +318,15 @@ class AnalysisPipeline:
 
         llm_output: LLMAnalysisOutput | None = None
         analysis_result: AnalysisResult | None = None
+        shadow_llm_output: LLMAnalysisOutput | None = None
+        shadow_provider_name: str | None = None
+        shadow_error: str | None = None
         provider_name = "fallback"
         trace_metadata = _resolve_trace_metadata(self._provider)
+        context: dict[str, Any] = {
+            "tickers": self._keyword_engine.match_tickers(full_text),
+            "source_type": doc.source_type.value if doc.source_type else None,
+        }
 
         fallback_reason: str | None = None
         if self._provider is None:
@@ -290,17 +342,48 @@ class AnalysisPipeline:
                 entity_mentions,
                 fallback_reason=fallback_reason,
             )
-        elif self._provider is not None:
-            context: dict[str, Any] = {
-                "tickers": self._keyword_engine.match_tickers(full_text),
-                "source_type": doc.source_type.value if doc.source_type else None,
-            }
-            try:
-                llm_output = await self._provider.analyze(
-                    title=doc.title,
-                    text=text,
-                    context=context,
+            if self._shadow_provider is not None:
+                shadow_llm_output, shadow_provider_name, shadow_error = (
+                    await self._run_shadow_analysis(
+                        doc,
+                        text=text,
+                        context=context,
+                    )
                 )
+        elif self._provider is not None:
+            try:
+                primary_task = asyncio.create_task(
+                    self._provider.analyze(
+                        title=doc.title,
+                        text=text,
+                        context=context,
+                    )
+                )
+
+                shadow_task: asyncio.Task[
+                    tuple[LLMAnalysisOutput | None, str | None, str | None]
+                ] | None = None
+                if self._shadow_provider is not None:
+                    shadow_task = asyncio.create_task(
+                        self._run_shadow_analysis(
+                            doc,
+                            text=text,
+                            context=context,
+                        )
+                    )
+
+                try:
+                    primary_output = await primary_task
+                except Exception:
+                    if shadow_task is not None:
+                        with contextlib.suppress(Exception):
+                            await shadow_task
+                    raise
+
+                llm_output = primary_output
+                if shadow_task is not None:
+                    shadow_llm_output, shadow_provider_name, shadow_error = await shadow_task
+
                 provider_name = (
                     _resolve_runtime_provider_name(self._provider)
                     or self._provider.provider_name
@@ -310,21 +393,21 @@ class AnalysisPipeline:
                 analysis_result = AnalysisResult(
                     document_id=str(doc.id),
                     analysis_source=analysis_source,
-                    sentiment_label=llm_output.sentiment_label,
-                    sentiment_score=llm_output.sentiment_score,
-                    relevance_score=llm_output.relevance_score,
-                    impact_score=llm_output.impact_score,
-                    confidence_score=llm_output.confidence_score,
-                    novelty_score=llm_output.novelty_score,
-                    market_scope=llm_output.market_scope,
-                    affected_assets=llm_output.affected_assets,
-                    affected_sectors=llm_output.affected_sectors,
-                    event_type=llm_output.event_type,
-                    explanation_short=llm_output.short_reasoning or "",
-                    explanation_long=llm_output.long_reasoning or "",
-                    actionable=llm_output.actionable,
-                    tags=llm_output.tags,
-                    spam_probability=llm_output.spam_probability,
+                    sentiment_label=primary_output.sentiment_label,
+                    sentiment_score=primary_output.sentiment_score,
+                    relevance_score=primary_output.relevance_score,
+                    impact_score=primary_output.impact_score,
+                    confidence_score=primary_output.confidence_score,
+                    novelty_score=primary_output.novelty_score,
+                    market_scope=primary_output.market_scope,
+                    affected_assets=primary_output.affected_assets,
+                    affected_sectors=primary_output.affected_sectors,
+                    event_type=primary_output.event_type,
+                    explanation_short=primary_output.short_reasoning or "",
+                    explanation_long=primary_output.long_reasoning or "",
+                    actionable=primary_output.actionable,
+                    tags=primary_output.tags,
+                    spam_probability=primary_output.spam_probability,
                 )
             except Exception as exc:
                 logger.warning(
@@ -349,6 +432,9 @@ class AnalysisPipeline:
             analysis_result=analysis_result,
             provider_name=provider_name,
             trace_metadata=trace_metadata,
+            shadow_llm_output=shadow_llm_output,
+            shadow_provider_name=shadow_provider_name,
+            shadow_error=shadow_error,
         )
 
     def _build_fallback_analysis(

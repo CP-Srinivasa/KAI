@@ -21,6 +21,14 @@ class AnalysisSource(StrEnum):
     EXTERNAL_LLM = "external_llm"
 
 
+class ExecutionMode(StrEnum):
+    RESEARCH = "research"
+    BACKTEST = "backtest"
+    PAPER = "paper"
+    SHADOW = "shadow"
+    LIVE = "live"
+
+
 class SourceStatus(StrEnum):
     ACTIVE = "active"
     PLANNED = "planned"
@@ -35,6 +43,19 @@ class SentimentLabel(StrEnum):
     BEARISH = "bearish"
     NEUTRAL = "neutral"
     MIXED = "mixed"
+
+
+class NarrativeLabel(StrEnum):
+    INSTITUTIONAL_ADOPTION = "institutional_adoption"
+    REGULATORY_RISK = "regulatory_risk"
+    TECH_UPGRADE = "tech_upgrade"
+    MACRO_SHIFT = "macro_shift"
+    MARKET_CRASH = "market_crash"
+    LIQUIDITY_CRISIS = "liquidity_crisis"
+    HACK_EXPLOIT = "hack_exploit"
+    ECOSYSTEM_GROWTH = "ecosystem_growth"
+    WHALE_ACTIVITY = "whale_activity"
+    UNKNOWN = "unknown"
 
 
 class MarketScope(StrEnum):

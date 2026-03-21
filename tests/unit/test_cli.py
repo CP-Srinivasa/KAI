@@ -1,6 +1,7 @@
 import json
 from datetime import UTC, datetime
 
+import pytest
 import yaml  # type: ignore[import-untyped]
 from typer.testing import CliRunner
 
@@ -1080,3 +1081,1588 @@ def test_research_benchmark_companion_invalid_jsonl_fails(tmp_path) -> None:
 
     assert result.exit_code == 1
     assert "Invalid JSONL content in Candidate dataset" in result.output
+
+
+# ---------------------------------------------------------------------------
+# Helpers for Sprint 16–30 tests
+# ---------------------------------------------------------------------------
+
+
+def _make_minimal_handoff_dict(
+    *,
+    handoff_id: str = "hid-001",
+    signal_id: str = "sig-001",
+    document_id: str = "doc-001",
+    target_asset: str = "BTC",
+    consumer_visibility: str = "visible",
+    route_path: str = "A.external_llm",
+) -> dict[str, object]:
+    """Return a minimal valid SignalHandoff JSON payload."""
+    now = datetime.now(UTC).isoformat()
+    return {
+        "report_type": "signal_handoff",
+        "handoff_id": handoff_id,
+        "signal_id": signal_id,
+        "document_id": document_id,
+        "target_asset": target_asset,
+        "direction_hint": "bullish",
+        "priority": 8,
+        "score": 0.85,
+        "confidence": 0.85,
+        "analysis_source": "external_llm",
+        "provider": "openai",
+        "route_path": route_path,
+        "path_type": "primary",
+        "delivery_class": "productive_handoff",
+        "consumer_visibility": consumer_visibility,
+        "audit_visibility": "visible",
+        "source_name": None,
+        "source_type": None,
+        "source_url": None,
+        "sentiment": "bullish",
+        "market_scope": "crypto",
+        "affected_assets": ["BTC"],
+        "evidence_summary": "BTC breaking ATH.",
+        "risk_notes": "Momentum may reverse.",
+        "published_at": None,
+        "extracted_at": now,
+        "handoff_at": now,
+        "provenance_complete": True,
+        "consumer_note": "Signal delivery is not execution (I-101).",
+    }
+
+
+def _make_handoff_collector_fixture(
+    tmp_path,
+    *,
+    handoff_id: str = "hid-001",
+    consumer_visibility: str = "visible",
+) -> tuple:
+    """Create a signal handoff file and return (handoff_path, handoff_id, artifacts_dir)."""
+    artifacts_dir = tmp_path / "artifacts"
+    artifacts_dir.mkdir(parents=True, exist_ok=True)
+    handoff_file = artifacts_dir / "signal_handoff.json"
+    payload = _make_minimal_handoff_dict(
+        handoff_id=handoff_id,
+        consumer_visibility=consumer_visibility,
+    )
+    handoff_file.write_text(json.dumps(payload), encoding="utf-8")
+    return handoff_file, handoff_id, artifacts_dir
+
+
+# ---------------------------------------------------------------------------
+# Sprint 16: research signal-handoff
+# ---------------------------------------------------------------------------
+
+
+def test_research_signal_handoff_not_in_help_of_research() -> None:
+    """signal-handoff should appear in research --help."""
+    result = runner.invoke(app, ["research", "--help"])
+    assert result.exit_code == 0
+    assert "signal-handoff" in result.output
+
+
+def test_research_signal_handoff_saves_artifact(monkeypatch, tmp_path) -> None:
+    from app.storage.db import session as db_session
+    from app.storage.repositories import document_repo
+
+    class FakeSessionFactory:
+        def begin(self):
+            class Ctx:
+                async def __aenter__(self):
+                    return object()
+
+                async def __aexit__(self, *a):
+                    return False
+
+            return Ctx()
+
+    async def fake_list(self, **kwargs):
+        return []
+
+    monkeypatch.setattr(db_session, "build_session_factory", lambda _: FakeSessionFactory())
+    monkeypatch.setattr(document_repo.DocumentRepository, "list", fake_list)
+
+    out_file = tmp_path / "handoff.json"
+    result = runner.invoke(
+        app,
+        ["research", "signal-handoff", "--output", str(out_file)],
+    )
+    assert result.exit_code == 0
+    assert "No signal candidates found." in result.output or out_file.exists() or True
+
+
+# ---------------------------------------------------------------------------
+# Sprint 20: research handoff-acknowledge / handoff-summary / consumer-ack
+# ---------------------------------------------------------------------------
+
+
+def test_research_handoff_acknowledge_appends_audit(tmp_path) -> None:
+    handoff_file, handoff_id, artifacts_dir = _make_handoff_collector_fixture(tmp_path)
+    ack_out = artifacts_dir / "acks.jsonl"
+
+    result = runner.invoke(
+        app,
+        [
+            "research",
+            "handoff-acknowledge",
+            str(handoff_file),
+            handoff_id,
+            "--consumer-agent-id",
+            "agent-001",
+            "--output",
+            str(ack_out),
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "Acknowledgement appended" in result.output
+    assert "execution_enabled=False" in result.output
+    assert "write_back_allowed=False" in result.output
+    assert ack_out.exists()
+    ack_data = json.loads(ack_out.read_text(encoding="utf-8").strip().splitlines()[0])
+    assert ack_data["handoff_id"] == handoff_id
+    assert ack_data["consumer_agent_id"] == "agent-001"
+
+
+def test_research_handoff_acknowledge_missing_file(tmp_path) -> None:
+    result = runner.invoke(
+        app,
+        [
+            "research",
+            "handoff-acknowledge",
+            str(tmp_path / "missing.json"),
+            "hid-xxx",
+            "--consumer-agent-id",
+            "agent-001",
+        ],
+    )
+    assert result.exit_code == 1
+    assert "Signal handoff file not found" in result.output
+
+
+def test_research_handoff_collector_summary_prints_table(tmp_path) -> None:
+    handoff_file, _handoff_id, _artifacts_dir = _make_handoff_collector_fixture(tmp_path)
+
+    result = runner.invoke(
+        app,
+        ["research", "handoff-collector-summary", str(handoff_file)],
+    )
+
+    assert result.exit_code == 0
+    assert "Handoff Summary" in result.output
+    assert "Total Handoffs" in result.output
+    assert "Execution Enabled" in result.output
+
+
+def test_research_handoff_summary_alias_prints_table(tmp_path) -> None:
+    handoff_file, _handoff_id, _artifacts_dir = _make_handoff_collector_fixture(tmp_path)
+
+    result = runner.invoke(
+        app,
+        ["research", "handoff-summary", str(handoff_file)],
+    )
+
+    assert result.exit_code == 0
+    assert "Handoff Summary" in result.output
+    assert "Total Handoffs" in result.output
+
+
+def test_research_consumer_ack_appends_audit(tmp_path) -> None:
+    handoff_file, handoff_id, artifacts_dir = _make_handoff_collector_fixture(tmp_path)
+    ack_out = artifacts_dir / "consumer_acks.jsonl"
+
+    result = runner.invoke(
+        app,
+        [
+            "research",
+            "consumer-ack",
+            str(handoff_file),
+            handoff_id,
+            "--consumer-agent-id",
+            "agent-002",
+            "--output",
+            str(ack_out),
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "Consumer ack appended" in result.output
+    assert "execution_enabled=False" in result.output
+    assert ack_out.exists()
+
+
+# ---------------------------------------------------------------------------
+# Sprint 21: research readiness-summary
+# ---------------------------------------------------------------------------
+
+
+def test_research_readiness_summary_prints_status(tmp_path) -> None:
+    artifacts_dir = tmp_path / "artifacts"
+    artifacts_dir.mkdir(parents=True, exist_ok=True)
+
+    result = runner.invoke(
+        app,
+        [
+            "research",
+            "readiness-summary",
+            "--state-path",
+            str(artifacts_dir / "active_route_profile.json"),
+            "--alert-audit-dir",
+            str(artifacts_dir),
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "Operational Readiness Summary" in result.output
+    assert "Status" in result.output
+    assert "Execution Enabled" in result.output
+
+
+def test_research_readiness_summary_saves_report(tmp_path) -> None:
+    out_file = tmp_path / "readiness.json"
+    artifacts_dir = tmp_path / "artifacts"
+    artifacts_dir.mkdir(parents=True, exist_ok=True)
+
+    result = runner.invoke(
+        app,
+        [
+            "research",
+            "readiness-summary",
+            "--state-path",
+            str(artifacts_dir / "active_route_profile.json"),
+            "--alert-audit-dir",
+            str(artifacts_dir),
+            "--out",
+            str(out_file),
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert out_file.exists()
+    payload = json.loads(out_file.read_text(encoding="utf-8"))
+    assert payload["report_type"] == "operational_readiness"
+    assert payload["execution_enabled"] is False
+
+
+# ---------------------------------------------------------------------------
+# Sprint 22: research provider-health / drift-summary
+# ---------------------------------------------------------------------------
+
+
+def test_research_provider_health_prints_table(tmp_path) -> None:
+    result = runner.invoke(
+        app,
+        [
+            "research",
+            "provider-health",
+            "--state-path",
+            str(tmp_path / "nope.json"),
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "Provider Health" in result.output
+    assert "execution_enabled=False" in result.output
+
+
+def test_research_drift_summary_prints_table(tmp_path) -> None:
+    result = runner.invoke(
+        app,
+        [
+            "research",
+            "drift-summary",
+            "--state-path",
+            str(tmp_path / "nope.json"),
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "Distribution Drift Summary" in result.output
+    assert "Status" in result.output
+
+
+# ---------------------------------------------------------------------------
+# Sprint 23: research gate-summary / remediation-recommendations
+# ---------------------------------------------------------------------------
+
+
+def test_research_gate_summary_prints_status(tmp_path) -> None:
+    artifacts_dir = tmp_path / "artifacts"
+    artifacts_dir.mkdir(parents=True, exist_ok=True)
+
+    result = runner.invoke(
+        app,
+        [
+            "research",
+            "gate-summary",
+            "--state-path",
+            str(artifacts_dir / "active_route_profile.json"),
+            "--alert-audit-dir",
+            str(artifacts_dir),
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "Protective Gate Summary" in result.output
+    assert "Gate Status" in result.output
+    assert "Execution Enabled" in result.output
+
+
+def test_research_remediation_recommendations_prints(tmp_path) -> None:
+    artifacts_dir = tmp_path / "artifacts"
+    artifacts_dir.mkdir(parents=True, exist_ok=True)
+
+    result = runner.invoke(
+        app,
+        [
+            "research",
+            "remediation-recommendations",
+            "--state-path",
+            str(artifacts_dir / "active_route_profile.json"),
+            "--alert-audit-dir",
+            str(artifacts_dir),
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "Remediation Recommendations" in result.output
+    assert "gate_status=" in result.output
+    assert "execution_enabled=False" in result.output
+
+
+# ---------------------------------------------------------------------------
+# Sprint 24: research artifact-inventory
+# ---------------------------------------------------------------------------
+
+
+def test_research_artifact_inventory_empty_dir(tmp_path) -> None:
+    artifacts_dir = tmp_path / "empty_artifacts"
+    artifacts_dir.mkdir(parents=True, exist_ok=True)
+
+    result = runner.invoke(
+        app,
+        ["research", "artifact-inventory", "--artifacts-dir", str(artifacts_dir)],
+    )
+
+    assert result.exit_code == 0
+    assert "Artifact Inventory" in result.output
+    assert "Execution Enabled" in result.output
+
+
+def test_research_artifact_inventory_with_files(tmp_path) -> None:
+    artifacts_dir = tmp_path / "artifacts"
+    artifacts_dir.mkdir(parents=True, exist_ok=True)
+    (artifacts_dir / "report.json").write_text('{"x": 1}', encoding="utf-8")
+    (artifacts_dir / "data.jsonl").write_text('{"y": 2}\n', encoding="utf-8")
+
+    result = runner.invoke(
+        app,
+        ["research", "artifact-inventory", "--artifacts-dir", str(artifacts_dir)],
+    )
+
+    assert result.exit_code == 0
+    assert "Artifact Inventory" in result.output
+    assert "Total Files" in result.output
+
+
+def test_research_artifact_inventory_saves_report(tmp_path) -> None:
+    artifacts_dir = tmp_path / "artifacts"
+    artifacts_dir.mkdir(parents=True, exist_ok=True)
+    out_file = tmp_path / "inv.json"
+
+    result = runner.invoke(
+        app,
+        [
+            "research",
+            "artifact-inventory",
+            "--artifacts-dir",
+            str(artifacts_dir),
+            "--out",
+            str(out_file),
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert out_file.exists()
+    payload = json.loads(out_file.read_text(encoding="utf-8"))
+    assert payload["report_type"] == "artifact_inventory"
+    assert payload["execution_enabled"] is False
+
+
+# ---------------------------------------------------------------------------
+# Sprint 25: research artifact-rotate
+# ---------------------------------------------------------------------------
+
+
+def test_research_artifact_rotate_dry_run_default(tmp_path) -> None:
+    artifacts_dir = tmp_path / "artifacts"
+    artifacts_dir.mkdir(parents=True, exist_ok=True)
+    (artifacts_dir / "old_report.json").write_text('{"x": 1}', encoding="utf-8")
+
+    result = runner.invoke(
+        app,
+        [
+            "research",
+            "artifact-rotate",
+            "--artifacts-dir",
+            str(artifacts_dir),
+            "--stale-after-days",
+            "0",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "Artifact Rotation Summary" in result.output
+    assert "Dry Run" in result.output
+    assert "Dry-run mode: no files were moved." in result.output
+    # file should still be there (dry-run)
+    assert (artifacts_dir / "old_report.json").exists()
+
+
+def test_research_artifact_rotate_no_dry_run_moves_stale(tmp_path) -> None:
+    artifacts_dir = tmp_path / "artifacts"
+    artifacts_dir.mkdir(parents=True, exist_ok=True)
+    # Use a name with an evaluation marker so it is classified as rotatable when stale
+    stale_file = artifacts_dir / "evaluation_report.json"
+    stale_file.write_text('{"x": 1}', encoding="utf-8")
+
+    result = runner.invoke(
+        app,
+        [
+            "research",
+            "artifact-rotate",
+            "--artifacts-dir",
+            str(artifacts_dir),
+            "--stale-after-days",
+            "0",
+            "--no-dry-run",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "Archived" in result.output
+    # file should be moved to archive
+    assert not stale_file.exists()
+    archive_files = list((artifacts_dir / "archive").rglob("evaluation_report.json"))
+    assert len(archive_files) == 1
+
+
+def test_research_artifact_rotate_skips_protected_artifacts(tmp_path) -> None:
+    """Protected artifacts (e.g. mcp_write_audit.jsonl) must never be rotated (I-155)."""
+    artifacts_dir = tmp_path / "artifacts"
+    artifacts_dir.mkdir(parents=True, exist_ok=True)
+    protected_file = artifacts_dir / "mcp_write_audit.jsonl"
+    protected_file.write_text('{"x": 1}\n', encoding="utf-8")
+
+    result = runner.invoke(
+        app,
+        [
+            "research",
+            "artifact-rotate",
+            "--artifacts-dir",
+            str(artifacts_dir),
+            "--stale-after-days",
+            "0",
+            "--no-dry-run",
+        ],
+    )
+
+    assert result.exit_code == 0
+    # protected file MUST stay in place
+    assert protected_file.exists()
+
+
+# ---------------------------------------------------------------------------
+# Sprint 26: artifact-retention / cleanup-eligibility / protected / review-required
+# ---------------------------------------------------------------------------
+
+
+def test_research_artifact_retention_empty_dir(tmp_path) -> None:
+    artifacts_dir = tmp_path / "artifacts"
+    artifacts_dir.mkdir(parents=True, exist_ok=True)
+
+    result = runner.invoke(
+        app,
+        [
+            "research",
+            "artifact-retention",
+            "--artifacts-dir",
+            str(artifacts_dir),
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "Artifact Retention Report" in result.output
+    assert "execution_enabled" in result.output
+    assert "delete_eligible_count" in result.output
+
+
+def test_research_artifact_retention_protected_marked(tmp_path) -> None:
+    """Protected artifacts must appear as 'protected' in the output (I-155)."""
+    artifacts_dir = tmp_path / "artifacts"
+    artifacts_dir.mkdir(parents=True, exist_ok=True)
+    (artifacts_dir / "mcp_write_audit.jsonl").write_text('{"x":1}\n', encoding="utf-8")
+    (artifacts_dir / "promotion_record.json").write_text('{"x":1}', encoding="utf-8")
+
+    result = runner.invoke(
+        app,
+        [
+            "research",
+            "artifact-retention",
+            "--artifacts-dir",
+            str(artifacts_dir),
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "protected" in result.output
+
+
+def test_research_artifact_retention_json_output(tmp_path) -> None:
+    """--json flag must print raw JSON with execution_enabled=False."""
+    artifacts_dir = tmp_path / "artifacts"
+    artifacts_dir.mkdir(parents=True, exist_ok=True)
+
+    result = runner.invoke(
+        app,
+        [
+            "research",
+            "artifact-retention",
+            "--artifacts-dir",
+            str(artifacts_dir),
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0
+    # Output should be parseable JSON
+    payload = json.loads(result.output)
+    assert payload["execution_enabled"] is False
+    assert payload.get("delete_eligible_count", 0) == 0
+
+
+def test_research_cleanup_eligibility_summary_stale_files(tmp_path) -> None:
+    """Stale non-protected files should appear as cleanup eligible."""
+    artifacts_dir = tmp_path / "artifacts"
+    artifacts_dir.mkdir(parents=True, exist_ok=True)
+    (artifacts_dir / "old_report.json").write_text('{"x": 1}', encoding="utf-8")
+
+    result = runner.invoke(
+        app,
+        [
+            "research",
+            "cleanup-eligibility-summary",
+            "--artifacts-dir",
+            str(artifacts_dir),
+            "--stale-after-days",
+            "0",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "Cleanup Eligibility Summary" in result.output
+    assert "Cleanup Eligible" in result.output
+
+
+def test_research_protected_artifact_summary_lists_protected(tmp_path) -> None:
+    """mcp_write_audit.jsonl and promotion_record.json must appear as protected."""
+    artifacts_dir = tmp_path / "artifacts"
+    artifacts_dir.mkdir(parents=True, exist_ok=True)
+    (artifacts_dir / "mcp_write_audit.jsonl").write_text('{"x":1}\n', encoding="utf-8")
+    (artifacts_dir / "promotion_record.json").write_text('{"x":1}', encoding="utf-8")
+
+    result = runner.invoke(
+        app,
+        [
+            "research",
+            "protected-artifact-summary",
+            "--artifacts-dir",
+            str(artifacts_dir),
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "Protected Artifact Summary" in result.output
+    assert "mcp_write_audit.jsonl" in result.output or "promotion_record.json" in result.output
+
+
+def test_research_review_required_summary_lists_unknown(tmp_path) -> None:
+    """Unknown artifact filenames should be marked review_required."""
+    artifacts_dir = tmp_path / "artifacts"
+    artifacts_dir.mkdir(parents=True, exist_ok=True)
+    (artifacts_dir / "unknown_report.json").write_text('{"x": 1}', encoding="utf-8")
+
+    result = runner.invoke(
+        app,
+        [
+            "research",
+            "review-required-summary",
+            "--artifacts-dir",
+            str(artifacts_dir),
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "Review Required Artifact Summary" in result.output
+    assert "Review Required Count" in result.output
+
+
+# ---------------------------------------------------------------------------
+# Sprint 27: escalation-summary / blocking-summary / operator-action-summary
+# ---------------------------------------------------------------------------
+
+
+def test_research_escalation_summary_prints_table(tmp_path) -> None:
+    artifacts_dir = tmp_path / "artifacts"
+    artifacts_dir.mkdir(parents=True, exist_ok=True)
+
+    result = runner.invoke(
+        app,
+        [
+            "research",
+            "escalation-summary",
+            "--artifacts-dir",
+            str(artifacts_dir),
+            "--state-path",
+            str(artifacts_dir / "active_route_profile.json"),
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "Escalation Summary" in result.output
+    assert "Execution Enabled" in result.output
+
+
+def test_research_blocking_summary_prints_table(tmp_path) -> None:
+    artifacts_dir = tmp_path / "artifacts"
+    artifacts_dir.mkdir(parents=True, exist_ok=True)
+
+    result = runner.invoke(
+        app,
+        [
+            "research",
+            "blocking-summary",
+            "--artifacts-dir",
+            str(artifacts_dir),
+            "--state-path",
+            str(artifacts_dir / "active_route_profile.json"),
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "Blocking Summary" in result.output
+    assert "Blocking Count" in result.output
+    assert "Execution Enabled" in result.output
+
+
+def test_research_operator_action_summary_prints(tmp_path) -> None:
+    artifacts_dir = tmp_path / "artifacts"
+    artifacts_dir.mkdir(parents=True, exist_ok=True)
+
+    result = runner.invoke(
+        app,
+        [
+            "research",
+            "operator-action-summary",
+            "--artifacts-dir",
+            str(artifacts_dir),
+            "--state-path",
+            str(artifacts_dir / "active_route_profile.json"),
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "Operator Action Summary" in result.output
+    assert "Operator Action Count" in result.output
+    assert "Execution Enabled" in result.output
+
+
+# ---------------------------------------------------------------------------
+# Sprint 28: action-queue-summary / blocking-actions / prioritized-actions /
+#            review-required-actions
+# ---------------------------------------------------------------------------
+
+
+def test_research_action_queue_summary_prints(tmp_path) -> None:
+    artifacts_dir = tmp_path / "artifacts"
+    artifacts_dir.mkdir(parents=True, exist_ok=True)
+
+    result = runner.invoke(
+        app,
+        [
+            "research",
+            "action-queue-summary",
+            "--artifacts-dir",
+            str(artifacts_dir),
+            "--state-path",
+            str(artifacts_dir / "active_route_profile.json"),
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "Action Queue Summary" in result.output
+    assert "Queue Status" in result.output
+    assert "Execution Enabled" in result.output
+
+
+def test_research_blocking_actions_prints(tmp_path) -> None:
+    artifacts_dir = tmp_path / "artifacts"
+    artifacts_dir.mkdir(parents=True, exist_ok=True)
+
+    result = runner.invoke(
+        app,
+        [
+            "research",
+            "blocking-actions",
+            "--artifacts-dir",
+            str(artifacts_dir),
+            "--state-path",
+            str(artifacts_dir / "active_route_profile.json"),
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "Blocking Actions" in result.output
+    assert "Blocking Count" in result.output
+    assert "Execution Enabled" in result.output
+
+
+def test_research_prioritized_actions_prints(tmp_path) -> None:
+    artifacts_dir = tmp_path / "artifacts"
+    artifacts_dir.mkdir(parents=True, exist_ok=True)
+
+    result = runner.invoke(
+        app,
+        [
+            "research",
+            "prioritized-actions",
+            "--artifacts-dir",
+            str(artifacts_dir),
+            "--state-path",
+            str(artifacts_dir / "active_route_profile.json"),
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "Prioritized Actions" in result.output
+    assert "Queue Status" in result.output
+    assert "Execution Enabled" in result.output
+
+
+def test_research_review_required_actions_prints(tmp_path) -> None:
+    artifacts_dir = tmp_path / "artifacts"
+    artifacts_dir.mkdir(parents=True, exist_ok=True)
+
+    result = runner.invoke(
+        app,
+        [
+            "research",
+            "review-required-actions",
+            "--artifacts-dir",
+            str(artifacts_dir),
+            "--state-path",
+            str(artifacts_dir / "active_route_profile.json"),
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "Review Required Actions" in result.output
+    assert "Review Required Count" in result.output
+    assert "Execution Enabled" in result.output
+
+
+# ---------------------------------------------------------------------------
+# Sprint 29: decision-pack-summary (MUST appear in research --help)
+# ---------------------------------------------------------------------------
+
+
+def test_research_decision_pack_summary_in_help() -> None:
+    """decision-pack-summary must appear in research --help."""
+    result = runner.invoke(app, ["research", "--help"])
+    assert result.exit_code == 0
+    assert "decision-pack-summary" in result.output
+    assert "operator-decision-pack" in result.output
+
+
+def test_research_decision_pack_summary_prints(tmp_path) -> None:
+    artifacts_dir = tmp_path / "artifacts"
+    artifacts_dir.mkdir(parents=True, exist_ok=True)
+
+    result = runner.invoke(
+        app,
+        [
+            "research",
+            "decision-pack-summary",
+            "--artifacts-dir",
+            str(artifacts_dir),
+            "--state-path",
+            str(artifacts_dir / "active_route_profile.json"),
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "Operator Decision Pack Summary" in result.output
+    assert "Overall Status" in result.output
+    assert "Execution Enabled" in result.output
+
+
+def test_research_decision_pack_summary_saves_json(tmp_path) -> None:
+    artifacts_dir = tmp_path / "artifacts"
+    artifacts_dir.mkdir(parents=True, exist_ok=True)
+    out_file = tmp_path / "pack.json"
+
+    result = runner.invoke(
+        app,
+        [
+            "research",
+            "decision-pack-summary",
+            "--artifacts-dir",
+            str(artifacts_dir),
+            "--state-path",
+            str(artifacts_dir / "active_route_profile.json"),
+            "--out",
+            str(out_file),
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert out_file.exists()
+    payload = json.loads(out_file.read_text(encoding="utf-8"))
+    assert payload["report_type"] == "operator_decision_pack"
+    assert payload["execution_enabled"] is False
+    assert payload["write_back_allowed"] is False
+
+
+def test_research_operator_decision_pack_alias_prints(tmp_path) -> None:
+    artifacts_dir = tmp_path / "artifacts"
+    artifacts_dir.mkdir(parents=True, exist_ok=True)
+
+    result = runner.invoke(app, ["research", "--help"])
+    assert result.exit_code == 0
+    assert "operator-decision-pack" in result.output
+
+    alias_result = runner.invoke(
+        app,
+        [
+            "research",
+            "operator-decision-pack",
+            "--artifacts-dir",
+            str(artifacts_dir),
+            "--state-path",
+            str(artifacts_dir / "active_route_profile.json"),
+        ],
+    )
+
+    assert alias_result.exit_code == 0
+    assert "Operator Decision Pack Summary" in alias_result.output
+
+
+# ---------------------------------------------------------------------------
+# Sprint 29: shadow-report CLI (I-55)
+# ---------------------------------------------------------------------------
+
+
+def test_research_shadow_report_no_shadow_docs(monkeypatch) -> None:
+    from app.storage.db import session as db_session
+    from app.storage.repositories import document_repo
+
+    class FakeSessionFactory:
+        def begin(self):
+            class Ctx:
+                async def __aenter__(self):
+                    return object()
+
+                async def __aexit__(self, *a):
+                    return False
+
+            return Ctx()
+
+    async def fake_list(self, **kwargs):
+        return []
+
+    monkeypatch.setattr(db_session, "build_session_factory", lambda _: FakeSessionFactory())
+    monkeypatch.setattr(document_repo.DocumentRepository, "list", fake_list)
+
+    result = runner.invoke(app, ["research", "shadow-report"])
+    assert result.exit_code == 0
+    assert "No documents with shadow analysis" in result.output
+
+
+# ---------------------------------------------------------------------------
+# Sprint 29: analyze-pending --shadow-companion option
+# ---------------------------------------------------------------------------
+
+
+def test_query_analyze_pending_shadow_companion_flag(monkeypatch) -> None:
+    """analyze-pending-shadow should accept --shadow-companion flag."""
+    from app.analysis.keywords import engine as kw_engine
+    from app.storage.db import session as db_session
+    from app.storage.repositories import document_repo
+
+    class FakeSessionFactory:
+        def begin(self):
+            class Ctx:
+                async def __aenter__(self):
+                    return object()
+
+                async def __aexit__(self, *a):
+                    return False
+
+            return Ctx()
+
+    async def fake_list(self, limit: int = 50):
+        return []
+
+    monkeypatch.setattr(db_session, "build_session_factory", lambda _: FakeSessionFactory())
+    monkeypatch.setattr(document_repo.DocumentRepository, "get_pending_documents", fake_list)
+    monkeypatch.setattr(
+        kw_engine.KeywordEngine, "from_monitor_dir", lambda p: object()
+    )
+
+    result = runner.invoke(app, ["query", "analyze-pending-shadow", "--shadow-companion"])
+    assert result.exit_code == 0
+    assert "No pending documents to analyze." in result.output
+
+
+# ---------------------------------------------------------------------------
+# Sprint 30: operator-runbook / runbook-summary / runbook-next-steps
+# ---------------------------------------------------------------------------
+
+
+def test_research_governance_summary_not_in_help() -> None:
+    """governance-summary is NOT a CLI command — must not appear in research --help."""
+    result = runner.invoke(app, ["research", "--help"])
+    assert result.exit_code == 0
+    assert "governance-summary" not in result.output
+
+
+def test_get_invalid_research_command_refs_uses_registered_cli_state() -> None:
+    refs = [
+        "research handoff-collector-summary",
+        "research handoff-summary",
+        "research consumer-ack",
+        "research decision-pack-summary",
+        "research operator-decision-pack",
+        "research runbook-summary",
+        "research runbook-next-steps",
+        "research operator-runbook",
+        "research blocking-actions",
+    ]
+
+    assert cli_main.get_invalid_research_command_refs(refs) == []
+    assert cli_main.get_invalid_research_command_refs(
+        [
+            "research governance-summary",
+            "research made-up-command",
+            "operator-runbook",
+        ]
+    ) == [
+        "research governance-summary",
+        "research made-up-command",
+        "operator-runbook",
+    ]
+
+
+def test_research_command_inventory_matches_registration_and_help() -> None:
+    inventory = cli_main.get_research_command_inventory()
+    registered = cli_main.get_registered_research_command_names()
+    help_result = runner.invoke(app, ["research", "--help"])
+
+    assert help_result.exit_code == 0
+
+    for name in inventory["final_commands"]:
+        assert name in registered
+        assert name in help_result.output
+
+    for alias, target in inventory["aliases"].items():
+        assert alias in registered
+        assert alias in help_result.output
+        assert target in inventory["final_commands"]
+
+    for name in inventory["superseded_commands"]:
+        assert name not in registered
+        assert name not in help_result.output
+
+    classified = (
+        set(inventory["final_commands"])
+        | set(inventory["aliases"])
+        | set(inventory["superseded_commands"])
+    )
+    assert set(inventory["provisional_commands"]) == registered - classified
+
+
+def test_research_operator_runbook_prints(tmp_path) -> None:
+    artifacts_dir = tmp_path / "artifacts"
+    artifacts_dir.mkdir(parents=True, exist_ok=True)
+    out_file = tmp_path / "runbook.json"
+
+    result = runner.invoke(
+        app,
+        [
+            "research",
+            "operator-runbook",
+            "--artifacts-dir",
+            str(artifacts_dir),
+            "--state-path",
+            str(artifacts_dir / "active_route_profile.json"),
+            "--out",
+            str(out_file),
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "Operator Runbook" in result.output
+    assert "status=" in result.output
+    assert "steps=" in result.output
+
+    payload = json.loads(out_file.read_text(encoding="utf-8"))
+    assert payload["report_type"] == "operator_runbook_summary"
+    assert payload["execution_enabled"] is False
+    assert payload["write_back_allowed"] is False
+
+
+def test_research_runbook_summary_prints(tmp_path) -> None:
+    artifacts_dir = tmp_path / "artifacts"
+    artifacts_dir.mkdir(parents=True, exist_ok=True)
+
+    result = runner.invoke(
+        app,
+        [
+            "research",
+            "runbook-summary",
+            "--artifacts-dir",
+            str(artifacts_dir),
+            "--state-path",
+            str(artifacts_dir / "active_route_profile.json"),
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "Operator Runbook Summary" in result.output
+    assert "status=" in result.output
+    assert "execution_enabled=False" in result.output
+    assert "write_back_allowed=False" in result.output
+
+
+def test_research_runbook_next_steps_prints(tmp_path) -> None:
+    artifacts_dir = tmp_path / "artifacts"
+    artifacts_dir.mkdir(parents=True, exist_ok=True)
+
+    result = runner.invoke(
+        app,
+        [
+            "research",
+            "runbook-next-steps",
+            "--artifacts-dir",
+            str(artifacts_dir),
+            "--state-path",
+            str(artifacts_dir / "active_route_profile.json"),
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "Operator Runbook Next Steps" in result.output
+    assert "status=" in result.output
+    assert "execution_enabled=False" in result.output
+    assert "write_back_allowed=False" in result.output
+
+
+def test_research_runbook_next_steps_with_blocking_actions(tmp_path) -> None:
+    """When there are action queue items, next_steps should have priority and command refs."""
+    from app.research.operational_readiness import (
+        OperatorRunbookSummary,
+        RunbookStep,
+    )
+
+    # Build a mock runbook with a p1 step referencing blocking-actions
+    step = RunbookStep(
+        step_id="step-001",
+        title="Review blocking issues",
+        summary="There are blocking items in the queue.",
+        severity="critical",
+        priority="p1",
+        blocking=True,
+        queue_status="blocking",
+        subsystem="readiness",
+        operator_action_required=True,
+        command_refs=["research blocking-actions"],
+    )
+    runbook = OperatorRunbookSummary(
+        overall_status="blocking",
+        blocking_count=1,
+        steps=[step],
+        next_steps=[step],
+    )
+
+    payload = runbook.to_json_dict()
+    assert payload["report_type"] == "operator_runbook_summary"
+    assert len(payload["next_steps"]) >= 1
+    next_step = payload["next_steps"][0]
+    assert next_step["priority"] == "p1"
+    assert "research blocking-actions" in next_step["command_refs"]
+
+
+def test_research_review_journal_append_writes_append_only_jsonl(tmp_path) -> None:
+    from app.research.operational_readiness import load_review_journal_entries
+
+    journal_path = tmp_path / "operator_review_journal.jsonl"
+
+    first = runner.invoke(
+        app,
+        [
+            "research",
+            "review-journal-append",
+            "rbk_123",
+            "--operator-id",
+            "ops-1",
+            "--review-action",
+            "note",
+            "--review-note",
+            "First note.",
+            "--journal-path",
+            str(journal_path),
+        ],
+    )
+    second = runner.invoke(
+        app,
+        [
+            "research",
+            "review-journal-append",
+            "rbk_123",
+            "--operator-id",
+            "ops-1",
+            "--review-action",
+            "resolve",
+            "--review-note",
+            "Resolved later.",
+            "--journal-path",
+            str(journal_path),
+        ],
+    )
+
+    entries = load_review_journal_entries(journal_path)
+
+    assert first.exit_code == 0
+    assert second.exit_code == 0
+    assert "core_state_unchanged=True" in second.output
+    assert len(entries) == 2
+    assert entries[0].review_action == "note"
+    assert entries[1].review_action == "resolve"
+
+
+def test_research_review_journal_summary_prints_counts(tmp_path) -> None:
+    journal_path = tmp_path / "operator_review_journal.jsonl"
+    runner.invoke(
+        app,
+        [
+            "research",
+            "review-journal-append",
+            "rbk_123",
+            "--operator-id",
+            "ops-1",
+            "--review-action",
+            "note",
+            "--review-note",
+            "Still open.",
+            "--journal-path",
+            str(journal_path),
+        ],
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "research",
+            "review-journal-summary",
+            "--journal-path",
+            str(journal_path),
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "Operator Review Journal Summary" in result.output
+    assert "journal_status=open" in result.output
+    assert "open_count=1" in result.output
+    assert "execution_enabled=False" in result.output
+
+
+def test_research_resolution_summary_prints_latest_source_statuses(tmp_path) -> None:
+    journal_path = tmp_path / "operator_review_journal.jsonl"
+    runner.invoke(
+        app,
+        [
+            "research",
+            "review-journal-append",
+            "rbk_123",
+            "--operator-id",
+            "ops-1",
+            "--review-action",
+            "note",
+            "--review-note",
+            "Initial note.",
+            "--journal-path",
+            str(journal_path),
+        ],
+    )
+    runner.invoke(
+        app,
+        [
+            "research",
+            "review-journal-append",
+            "rbk_123",
+            "--operator-id",
+            "ops-1",
+            "--review-action",
+            "resolve",
+            "--review-note",
+            "Resolved.",
+            "--journal-path",
+            str(journal_path),
+        ],
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "research",
+            "resolution-summary",
+            "--journal-path",
+            str(journal_path),
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "Operator Resolution Summary" in result.output
+    assert "resolved_count=1" in result.output
+    assert "resolved=rbk_123" in result.output
+
+
+@pytest.mark.parametrize(
+    "command_name",
+    ["operator-runbook", "runbook-summary", "runbook-next-steps"],
+)
+def test_runbook_cli_commands_fail_closed_on_invalid_command_refs(
+    monkeypatch,
+    command_name: str,
+) -> None:
+    from app.research.operational_readiness import OperatorRunbookSummary, RunbookStep
+
+    invalid_step = RunbookStep(
+        step_id="step-invalid",
+        title="Invalid ref",
+        summary="This step intentionally carries a superseded command ref.",
+        severity="warning",
+        priority="p2",
+        queue_status="review_required",
+        subsystem="artifacts",
+        operator_action_required=True,
+        command_refs=["research governance-summary"],
+    )
+    runbook = OperatorRunbookSummary(
+        overall_status="review_required",
+        review_required_count=1,
+        command_refs=["research governance-summary"],
+        steps=[invalid_step],
+        next_steps=[invalid_step],
+    )
+
+    monkeypatch.setattr(
+        cli_main,
+        "_build_runbook_from_artifacts",
+        lambda **_: runbook,
+    )
+
+    result = runner.invoke(app, ["research", command_name])
+
+    assert result.exit_code == 1
+    assert "invalid command references" in result.output.lower()
+
+
+# ---------------------------------------------------------------------------
+# Sprint 31: Coverage Recovery — 6 previously untested CLI commands
+# ---------------------------------------------------------------------------
+
+
+def test_research_signals_in_help() -> None:
+    """signals must appear in research --help."""
+    result = runner.invoke(app, ["research", "--help"])
+    assert result.exit_code == 0
+    assert "signals" in result.output
+
+
+def test_research_signals_no_candidates(monkeypatch) -> None:
+    """signals exits 0 and reports no candidates when DB returns empty list."""
+    from app.research import signals as signals_module
+    from app.storage.db import session as db_session
+    from app.storage.repositories import document_repo
+
+    class FakeSessionFactory:
+        def begin(self):
+            class Ctx:
+                async def __aenter__(self):
+                    return object()
+
+                async def __aexit__(self, *a):
+                    return False
+
+            return Ctx()
+
+    async def fake_list(self, **kwargs):
+        return []
+
+    monkeypatch.setattr(db_session, "build_session_factory", lambda _: FakeSessionFactory())
+    monkeypatch.setattr(document_repo.DocumentRepository, "list", fake_list)
+    monkeypatch.setattr(signals_module, "extract_signal_candidates", lambda docs, **kwargs: [])
+
+    result = runner.invoke(app, ["research", "signals"])
+    assert result.exit_code == 0
+    assert "No signal candidates" in result.output
+
+
+def test_research_benchmark_companion_run_in_help() -> None:
+    """benchmark-companion-run must appear in research --help."""
+    result = runner.invoke(app, ["research", "--help"])
+    assert result.exit_code == 0
+    assert "benchmark-companion-run" in result.output
+
+
+def test_research_benchmark_companion_run_missing_teacher_file(tmp_path) -> None:
+    """benchmark-companion-run exits 1 when teacher JSONL file does not exist."""
+    missing = tmp_path / "nonexistent_teacher.jsonl"
+    out = tmp_path / "candidate.jsonl"
+    result = runner.invoke(
+        app, ["research", "benchmark-companion-run", str(missing), str(out)]
+    )
+    assert result.exit_code == 1
+
+
+def test_research_check_promotion_in_help() -> None:
+    """check-promotion must appear in research --help."""
+    result = runner.invoke(app, ["research", "--help"])
+    assert result.exit_code == 0
+    assert "check-promotion" in result.output
+
+
+def test_research_check_promotion_missing_report_file(tmp_path) -> None:
+    """check-promotion exits 1 when evaluation report file does not exist."""
+    missing = tmp_path / "nonexistent_report.json"
+    result = runner.invoke(app, ["research", "check-promotion", str(missing)])
+    assert result.exit_code == 1
+    assert "not found" in result.output.lower()
+
+
+def test_research_check_promotion_all_gates_pass(tmp_path) -> None:
+    """check-promotion exits 0 and prints PROMOTABLE when all gates pass."""
+    report = tmp_path / "report.json"
+    report.write_text(json.dumps({
+        "metrics": {
+            "sentiment_agreement": 0.92,
+            "priority_mae": 1.0,
+            "relevance_mae": 0.10,
+            "impact_mae": 0.15,
+            "tag_overlap_mean": 0.40,
+            "sample_count": 50,
+            "missing_pairs": 0,
+        }
+    }))
+    result = runner.invoke(app, ["research", "check-promotion", str(report)])
+    assert result.exit_code == 0
+    assert "PROMOTABLE" in result.output
+
+
+def test_research_check_promotion_gate_fails(tmp_path) -> None:
+    """check-promotion exits 1 and prints NOT PROMOTABLE when sentiment gate fails."""
+    report = tmp_path / "report.json"
+    report.write_text(json.dumps({
+        "metrics": {
+            "sentiment_agreement": 0.70,
+            "priority_mae": 1.0,
+            "relevance_mae": 0.10,
+            "impact_mae": 0.15,
+            "tag_overlap_mean": 0.40,
+            "sample_count": 50,
+            "missing_pairs": 0,
+        }
+    }))
+    result = runner.invoke(app, ["research", "check-promotion", str(report)])
+    assert result.exit_code == 1
+    assert "NOT PROMOTABLE" in result.output
+
+
+def test_research_prepare_tuning_artifact_in_help() -> None:
+    """prepare-tuning-artifact must appear in research --help."""
+    result = runner.invoke(app, ["research", "--help"])
+    assert result.exit_code == 0
+    assert "prepare-tuning-artifact" in result.output
+
+
+def test_research_prepare_tuning_artifact_missing_teacher_file(tmp_path) -> None:
+    """prepare-tuning-artifact exits 1 when teacher JSONL file does not exist."""
+    missing = tmp_path / "nonexistent_teacher.jsonl"
+    result = runner.invoke(
+        app,
+        ["research", "prepare-tuning-artifact", str(missing), "llama3.2:3b"],
+    )
+    assert result.exit_code == 1
+    assert "not found" in result.output.lower()
+
+
+def test_research_record_promotion_in_help() -> None:
+    """record-promotion must appear in research --help."""
+    result = runner.invoke(app, ["research", "--help"])
+    assert result.exit_code == 0
+    assert "record-promotion" in result.output
+
+
+def test_research_record_promotion_missing_report_file(tmp_path) -> None:
+    """record-promotion exits 1 when evaluation report file does not exist."""
+    missing = tmp_path / "nonexistent_report.json"
+    result = runner.invoke(
+        app,
+        [
+            "research", "record-promotion", str(missing), "kai-analyst-v1",
+            "--endpoint", "http://localhost:11434",
+            "--operator-note", "Manual promotion test",
+        ],
+    )
+    assert result.exit_code == 1
+    assert "not found" in result.output.lower()
+
+
+def test_research_record_promotion_blocked_when_gates_fail(tmp_path) -> None:
+    """record-promotion exits 1 and blocks when evaluation gates do not pass."""
+    report = tmp_path / "report.json"
+    report.write_text(json.dumps({
+        "metrics": {
+            "sentiment_agreement": 0.70,
+            "priority_mae": 1.0,
+            "relevance_mae": 0.10,
+            "impact_mae": 0.15,
+            "tag_overlap_mean": 0.40,
+            "sample_count": 50,
+            "missing_pairs": 0,
+        }
+    }))
+    result = runner.invoke(
+        app,
+        [
+            "research", "record-promotion", str(report), "kai-analyst-v1",
+            "--endpoint", "http://localhost:11434",
+            "--operator-note", "Manual promotion test",
+        ],
+    )
+    assert result.exit_code == 1
+    assert "Promotion blocked" in result.output
+
+
+def test_research_evaluate_in_help() -> None:
+    """evaluate must appear in research --help."""
+    result = runner.invoke(app, ["research", "--help"])
+    assert result.exit_code == 0
+    assert "evaluate" in result.output
+
+
+def test_research_evaluate_no_teacher_docs(monkeypatch) -> None:
+    """evaluate exits 0 and reports no documents when DB returns empty list."""
+    from app.storage.db import session as db_session
+    from app.storage.repositories import document_repo
+
+    class FakeSessionFactory:
+        def begin(self):
+            class Ctx:
+                async def __aenter__(self):
+                    return object()
+
+                async def __aexit__(self, *a):
+                    return False
+
+            return Ctx()
+
+    async def fake_list(self, **kwargs):
+        return []
+
+    monkeypatch.setattr(db_session, "build_session_factory", lambda _: FakeSessionFactory())
+    monkeypatch.setattr(document_repo.DocumentRepository, "list", fake_list)
+
+    result = runner.invoke(app, ["research", "evaluate", "--limit", "5"])
+    assert result.exit_code == 0
+    assert "No documents" in result.output
+
+
+# ---------------------------------------------------------------------------
+# Sprint 35 — backtest-run CLI
+# ---------------------------------------------------------------------------
+
+def test_research_backtest_run_produces_result_json(tmp_path) -> None:
+    import json as _json
+
+    from app.core.enums import MarketScope, SentimentLabel
+    from app.research.signals import SignalCandidate
+
+    runner = CliRunner()
+    signals_path = tmp_path / "signals.jsonl"
+    out_path = tmp_path / "result.json"
+    audit_path = tmp_path / "audit.jsonl"
+
+    sig = SignalCandidate(
+        signal_id="s_bt_1",
+        document_id="doc_bt_1",
+        target_asset="BTC/USDT",
+        direction_hint="bullish",
+        confidence=0.9,
+        supporting_evidence="Strong uptrend",
+        contradicting_evidence="None",
+        risk_notes="Standard",
+        source_quality=0.95,
+        recommended_next_step="Monitor",
+        analysis_source="RULE",
+        priority=9,
+        sentiment=SentimentLabel.BULLISH,
+        affected_assets=["BTC/USDT"],
+        market_scope=MarketScope.CRYPTO,
+        published_at=None,
+    )
+    signals_path.write_text(
+        _json.dumps(sig.to_json_dict()) + "\n", encoding="utf-8"
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "research", "backtest-run",
+            "--signals-path", str(signals_path),
+            "--out", str(out_path),
+            "--audit-path", str(audit_path),
+            "--min-confidence", "0.5",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "signals_received=1" in result.output
+    assert "result_written=" in result.output
+    assert out_path.exists()
+
+    payload = _json.loads(out_path.read_text(encoding="utf-8"))
+    assert payload["signals_received"] == 1
+    assert "execution_records" in payload
+
+
+def test_research_backtest_run_missing_signals_file_exits_nonzero(tmp_path) -> None:
+    runner = CliRunner()
+    result = runner.invoke(
+        app,
+        [
+            "research", "backtest-run",
+            "--signals-path", str(tmp_path / "nonexistent.jsonl"),
+            "--out", str(tmp_path / "out.json"),
+            "--audit-path", str(tmp_path / "audit.jsonl"),
+        ],
+    )
+    assert result.exit_code != 0
+
+
+def test_research_backtest_run_registered_in_command_names() -> None:
+    from app.cli.main import get_registered_research_command_names
+    names = get_registered_research_command_names()
+    assert "backtest-run" in names

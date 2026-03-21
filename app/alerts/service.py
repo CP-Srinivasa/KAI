@@ -19,8 +19,11 @@ from_settings():
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import structlog
 
+from app.alerts.audit import ALERT_AUDIT_JSONL_FILENAME, AlertAuditRecord, append_alert_audit
 from app.alerts.base.interfaces import AlertDeliveryResult, AlertMessage, BaseAlertChannel
 from app.alerts.channels.email import EmailAlertChannel
 from app.alerts.channels.telegram import TelegramAlertChannel
@@ -30,6 +33,8 @@ from app.core.domain.document import AnalysisResult, CanonicalDocument
 from app.core.settings import AppSettings
 
 log = structlog.get_logger(__name__)
+
+_WORKSPACE_ROOT = Path(__file__).resolve().parents[2]
 
 
 class AlertService:
@@ -96,7 +101,7 @@ class AlertService:
         results = []
         for channel in self._channels:
             delivery = await channel.send_digest(messages, period)
-            _log_result(delivery, digest=True)
+            _log_result(delivery, digest=True, document_id="multiple-digest")
             results.append(delivery)
         return results
 
@@ -104,7 +109,7 @@ class AlertService:
         results = []
         for channel in self._channels:
             delivery = await channel.send(message)
-            _log_result(delivery)
+            _log_result(delivery, document_id=message.document_id)
             results.append(delivery)
         return results
 
@@ -131,7 +136,12 @@ def _build_alert_message(
     )
 
 
-def _log_result(result: AlertDeliveryResult, *, digest: bool = False) -> None:
+def _log_result(
+    result: AlertDeliveryResult,
+    *,
+    digest: bool = False,
+    document_id: str | None = None,
+) -> None:
     kind = "digest" if digest else "alert"
     if result.success:
         log.info(
@@ -139,6 +149,16 @@ def _log_result(result: AlertDeliveryResult, *, digest: bool = False) -> None:
             channel=result.channel,
             message_id=result.message_id,
         )
+        # Sprint 21: Append audit trail for operational readiness
+        if document_id:
+            record = AlertAuditRecord(
+                document_id=document_id,
+                channel=result.channel,
+                message_id=result.message_id,
+                is_digest=digest,
+            )
+            audit_path = _WORKSPACE_ROOT / "artifacts" / ALERT_AUDIT_JSONL_FILENAME
+            append_alert_audit(record, audit_path)
     else:
         log.error(
             f"alert.{kind}.failed",

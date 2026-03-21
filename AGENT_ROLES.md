@@ -58,7 +58,7 @@
 
 **Arbeitsweise:**
 1. Vollständigen Modulkontext lesen (alle relevanten `AGENTS.md`)
-2. Änderung gegen `CLAUDE.litcoffee` Prinzipien prüfen
+2. Änderung gegen `CLAUDE.md` Prinzipien prüfen
 3. Interface zuerst definieren, dann Implementation
 4. Betroffene `AGENTS.md`-Dateien mitaktualisieren
 5. Report: Architekturentscheidung + Begründung + betroffene Dateien

@@ -8,6 +8,7 @@
 >
 > Upstream contracts: `docs/contracts.md §19`, invariants I-40–I-45.
 > Upstream Sprint-7: `docs/benchmark_promotion_contract.md`.
+> Additive Sprint-12 extension: `docs/sprint12_training_job_contract.md` (`training_job_record` audit linkage).
 
 ---
 
@@ -163,7 +164,16 @@ The `PromotionRecord` is proof that the operator made an informed, gate-verified
   "promoted_endpoint": "<companion_model_endpoint, e.g. http://localhost:11434>",
   "evaluation_report": "<absolute path to the evaluation_report.json that passed gates>",
   "tuning_artifact": "<absolute path to tuning_manifest.json | null>",
-  "operator_note": "<required — human-readable confirmation>",
+  "training_job_record": "<absolute path to training_job_record.json | null>",
+  "operator_note": "<required ??? human-readable confirmation>",
+  "gates_summary": {
+    "sentiment_pass": true,
+    "priority_pass": true,
+    "relevance_pass": true,
+    "impact_pass": true,
+    "tag_overlap_pass": true,
+    "false_actionable_pass": true
+  },
   "reversal_instructions": "Set APP_LLM_PROVIDER to previous value to revert companion"
 }
 ```
@@ -184,6 +194,7 @@ def save_promotion_record(
     evaluation_report: Path | str,
     tuning_artifact: Path | str | None = None,
     operator_note: str,
+    gates_summary: dict[str, bool] | None = None,
 ) -> Path:
     """Write an immutable promotion record for audit trail.
 
@@ -249,6 +260,7 @@ class PromotionRecord:
     evaluation_report: str
     operator_note: str
     tuning_artifact: str | None = None
+    training_job_record: str | None = None
 
     def to_json_dict(self) -> dict[str, object]:
         return {
@@ -301,7 +313,9 @@ def save_promotion_record(
     promoted_endpoint: str,
     evaluation_report: Path | str,
     tuning_artifact: Path | str | None = None,
+    training_job_record: Path | str | None = None,
     operator_note: str,
+    gates_summary: dict[str, bool] | None = None,
 ) -> Path:
     """Write an immutable promotion record. Does NOT change provider routing."""
     if not operator_note.strip():
@@ -470,6 +484,8 @@ try:
         relevance_mae=float(m_raw["relevance_mae"]),
         impact_mae=float(m_raw["impact_mae"]),
         tag_overlap_mean=float(m_raw["tag_overlap_mean"]),
+        actionable_accuracy=float(m_raw["actionable_accuracy"]),
+        false_actionable_rate=float(m_raw["false_actionable_rate"]),
         sample_count=int(m_raw.get("sample_count", 0)),
         missing_pairs=int(m_raw.get("missing_pairs", 0)),
     )
@@ -548,7 +564,7 @@ console.print(
 
 | # | Criterion |
 |---|-----------|
-| 1 | Verifies evaluation report passes all 5 gates before writing record |
+| 1 | Verifies evaluation report passes all 6 quantitative gates before writing record |
 | 2 | Exit 1 + error when evaluation report does not pass gates |
 | 3 | Exit 1 + error when evaluation report file not found |
 | 4 | Exit 1 + error when `--operator-note` is blank or whitespace-only |
@@ -600,4 +616,4 @@ Full text in `docs/contracts.md §19`.
 | I-42 | Provider routing is controlled exclusively by `APP_LLM_PROVIDER` and `companion_model_endpoint` env vars. No platform code writes to these. |
 | I-43 | `save_promotion_record()` requires a non-empty `operator_note`. Blank notes are a `ValueError`. Operators must acknowledge the promotion explicitly. |
 | I-44 | Promotion is reversible by changing `APP_LLM_PROVIDER` to the previous value. No database migration or code change required. |
-| I-45 | `record-promotion` and `save_promotion_record()` require the evaluation report file to exist and pass all 5 quantitative gates. Non-passing reports block record creation. |
+| I-45 | `record-promotion` and `save_promotion_record()` require the evaluation report file to exist and pass all 6 quantitative gates. Non-passing reports block record creation. |

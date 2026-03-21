@@ -53,6 +53,7 @@ async def run_rss_pipeline(
     session_factory: async_sessionmaker[AsyncSession],
     keyword_engine: KeywordEngine,
     provider: BaseAnalysisProvider | None = None,
+    shadow_provider: BaseAnalysisProvider | None = None,
     source_id: str = "manual",
     source_name: str = "Manual",
     monitor_dir: str | Path = "monitor",
@@ -126,6 +127,7 @@ async def run_rss_pipeline(
         keyword_engine=keyword_engine,
         provider=provider,
         run_llm=provider is not None,
+        shadow_provider=shadow_provider,
     )
     pipeline_results = await pipeline.run_batch(saved_docs)
 
@@ -157,7 +159,7 @@ async def run_rss_pipeline(
                             str(res.document.id),
                             res.analysis_result,
                             provider_name=res.document.provider,
-                            metadata_updates=res.trace_metadata,
+                            metadata_updates=res.document.metadata,
                         )
                     else:
                         await repo.update_status(str(res.document.id), DocumentStatus.ANALYZED)
