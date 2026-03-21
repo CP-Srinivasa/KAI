@@ -3811,9 +3811,21 @@ async def get_paper_portfolio_snapshot(
 - Antwort enthaelt immer `execution_enabled=False`, `write_back_allowed=False`
 - In `_CANONICAL_MCP_READ_TOOL_NAMES` eingetragen
 
-**`get_portfolio_exposure_summary`**:
+**`get_paper_positions_summary`**:
 ```python
-async def get_portfolio_exposure_summary(
+async def get_paper_positions_summary(
+    audit_log_path: str = "artifacts/paper_execution_audit.jsonl",
+    provider: str = "mock",
+    freshness_threshold_seconds: float = 120.0,
+) -> dict[str, object]: ...
+```
+- Delegiert intern an Portfolio-Snapshot, projiziert auf PositionSummary-Liste
+- Antwort enthaelt immer `execution_enabled=False`, `write_back_allowed=False`
+- In `_CANONICAL_MCP_READ_TOOL_NAMES` eingetragen
+
+**`get_paper_exposure_summary`**:
+```python
+async def get_paper_exposure_summary(
     audit_log_path: str = "artifacts/paper_execution_audit.jsonl",
     provider: str = "mock",
     freshness_threshold_seconds: float = 120.0,
@@ -3829,7 +3841,8 @@ async def get_portfolio_exposure_summary(
 
 ```bash
 python -m app.cli.main research paper-portfolio-snapshot [--provider mock] [--audit-log ...]
-python -m app.cli.main research portfolio-exposure [--provider mock] [--audit-log ...]
+python -m app.cli.main research paper-positions-summary [--provider mock] [--audit-log ...]
+python -m app.cli.main research paper-exposure-summary [--provider mock] [--audit-log ...]
 ```
 
 - Beide read-only, kein State-Change
@@ -3841,16 +3854,16 @@ python -m app.cli.main research portfolio-exposure [--provider mock] [--audit-lo
 
 | Command | Vor Sprint 40 | Nach Sprint 40 |
 |---|---|---|
-| `/positions` | `get_handoff_collector_summary` (Proxy) | `get_paper_portfolio_snapshot` (MCP canonical) |
-| `/exposure` | Stub (kein Backing) | `get_portfolio_exposure_summary` (MCP canonical) |
+| `/positions` | `get_handoff_collector_summary` (Proxy) | `get_paper_positions_summary` (MCP canonical) |
+| `/exposure` | Stub (kein Backing) | `get_paper_exposure_summary` (MCP canonical) |
 
 **Aenderungen in `telegram_bot.py`** (Codex):
 - `"exposure"` wird zu `_READ_ONLY_COMMANDS` hinzugefuegt
-- `TELEGRAM_CANONICAL_RESEARCH_REFS["positions"]` = `("research paper-portfolio-snapshot",)`
-- `TELEGRAM_CANONICAL_RESEARCH_REFS["exposure"]` = `("research portfolio-exposure",)`
-- Neue `_get_paper_portfolio_snapshot()` und `_get_portfolio_exposure_summary()` Loader-Methoden
-- `_cmd_positions` nutzt `_get_paper_portfolio_snapshot` (ersetzt `_get_handoff_collector_summary`)
-- `_cmd_exposure` nutzt `_get_portfolio_exposure_summary` (ersetzt Stub)
+- `TELEGRAM_CANONICAL_RESEARCH_REFS["positions"]` = `("research paper-positions-summary",)`
+- `TELEGRAM_CANONICAL_RESEARCH_REFS["exposure"]` = `("research paper-exposure-summary",)`
+- Neue `_get_paper_positions_summary()` und `_get_paper_exposure_summary()` Loader-Methoden
+- `_cmd_positions` nutzt `_get_paper_positions_summary` (ersetzt `_get_handoff_collector_summary`)
+- `_cmd_exposure` nutzt `_get_paper_exposure_summary` (ersetzt Stub)
 
 `get_handoff_collector_summary` bleibt als eigenstaendiges MCP-Tool erhalten (kein Breaking Change).
 
@@ -3861,10 +3874,10 @@ python -m app.cli.main research portfolio-exposure [--provider mock] [--audit-lo
 | Szenario | Adapter-Verhalten | Consumer-Verhalten |
 |---|---|---|
 | Audit-JSONL nicht vorhanden | Leeres Portfolio (0 Pos., cash=0) | Anzeige: "no positions" |
-| Audit-JSONL malformed | Zeile ueberspringen + WARNING | Partielles Ergebnis |
+| Audit-JSONL malformed | fail-closed (`available=False`) | Keine operative Nutzung des Snapshots |
 | MtM-Abruf schlaegt fehl | is_mark_to_market=False fuer Position | Fallback entry_price |
 | Stale MtM-Daten | is_mark_to_market=False fuer Position | Fallback entry_price |
-| Provider-Fehler | Kein MtM, Portfolio ohne Bewertung | Kein Fehler, kein Alarm |
+| Provider-Fehler | MtM degradiert oder fail-closed | Nur read-only Sicht, keine Execution-Freigabe |
 
 ---
 

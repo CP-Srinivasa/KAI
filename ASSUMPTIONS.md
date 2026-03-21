@@ -7,10 +7,10 @@ Last updated: 2026-03-21
 
 ## Sprint 38 Addendum
 
-### A-032: /positions verwendet den kanonischen Collector-Read-Proxy
-**Assumption**: Solange kein finaler Portfolio-Read-Surface kanonisiert ist, projiziert Telegram `/positions` auf `get_handoff_collector_summary()` als read-only Operator-Proxy.
-**Rationale**: Kein zweiter Positions- oder Trading-Stack, keine Semantik-Ausweitung, kein Architektur-Drift gegen MCP/CLI.
-**Impact**: `/positions` zeigt handoff/ack/backlog-Lage statt Broker-/Order-Positionen und bleibt strikt non-executing.
+### A-032: /positions verwendet den kanonischen Collector-Read-Proxy (superseded)
+**Assumption**: Diese Übergangsannahme galt bis zur Einführung des finalen Portfolio-Read-Surface in Sprint 40.
+**Rationale**: Kein zweiter Positions- oder Trading-Stack während der Übergangsphase.
+**Impact**: Ab Sprint 40 ersetzt durch A-040 bis A-042 (`get_paper_positions_summary` / `get_paper_exposure_summary`).
 
 ### A-033: /approve und /reject validieren decision_ref fail-closed
 **Assumption**: Telegram `/approve` und `/reject` akzeptieren nur `decision_ref` im Format `dec_<12 lowercase hex>`.
