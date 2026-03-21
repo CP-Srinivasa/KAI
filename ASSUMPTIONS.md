@@ -7,15 +7,17 @@ Last updated: 2026-03-21
 
 ## Sprint 38 Addendum
 
-### A-032: /positions verwendet den kanonischen Collector-Read-Proxy (superseded)
+### A-045: /positions verwendete den kanonischen Collector-Read-Proxy (superseded)
 **Assumption**: Diese Übergangsannahme galt bis zur Einführung des finalen Portfolio-Read-Surface in Sprint 40.
 **Rationale**: Kein zweiter Positions- oder Trading-Stack während der Übergangsphase.
 **Impact**: Ab Sprint 40 ersetzt durch A-040 bis A-042 (`get_paper_positions_summary` / `get_paper_exposure_summary`).
+**Hinweis**: Ursprünglich als A-032 nummeriert (hook-added Sprint 38); umbenannt in A-045 zur Konfliktauflösung mit Sprint-38-Sektion A-032.
 
-### A-033: /approve und /reject validieren decision_ref fail-closed
+### A-046: /approve und /reject validieren decision_ref fail-closed
 **Assumption**: Telegram `/approve` und `/reject` akzeptieren nur `decision_ref` im Format `dec_<12 lowercase hex>`.
 **Rationale**: Ein enges, kanonisches Referenzformat reduziert Mehrdeutigkeit und blockiert fehlerhafte oder unvollständige Operator-Eingaben auf dem Audit-Pfad.
-**Impact**: Fehlende oder ungÃ¼ltige `decision_ref` werden sauber abgewiesen (fail-closed); der Pfad bleibt append-only audit-only ohne Execution-Seiteneffekt.
+**Impact**: Fehlende oder ungültige `decision_ref` werden sauber abgewiesen (fail-closed); der Pfad bleibt append-only audit-only ohne Execution-Seiteneffekt.
+**Hinweis**: Ursprünglich als A-033 nummeriert (hook-added Sprint 38); umbenannt in A-046 zur Konfliktauflösung mit Sprint-38-Sektion A-033.
 
 ---
 
@@ -350,27 +352,52 @@ Unknown errors → order rejected.
 
 ## Sprint 40 — Paper Portfolio Read Surface Assumptions
 
-### A-040: PaperPortfolioSnapshot ist der einzige erlaubte Portfolio-Lesepfad nach aussen
-**Assumption**: `PaperPortfolio` (mutable) wird niemals direkt an Operator-Surfaces, MCP-Tools, CLI-Commands oder Telegram-Handler weitergegeben. Nur `PaperPortfolioSnapshot` (frozen) darf diese Grenze ueberschreiten.
-**Rationale**: Mutable State direkt in Operator-Surfaces zu exponieren erzeugt versteckte Kopplungen und potenzielle Mutation via Referenz. frozen + read-only ist die einzig sichere Grenze.
-**Impact**: Alle MCP-Tools und CLI-Commands, die Portfolio-State zeigen, gehen durch `build_paper_portfolio_snapshot_from_audit()`. Kein direkter Zugriff auf `PaperExecutionEngine._portfolio`.
+### A-040: PortfolioSnapshot ist der einzige erlaubte Portfolio-Lesepfad nach aussen
+**Assumption**: `PaperPortfolio` (mutable) wird niemals direkt an Operator-Surfaces, MCP-Tools, CLI-Commands oder Telegram-Handler weitergegeben. Nur `PortfolioSnapshot` (frozen, aus `app/execution/portfolio_read.py`) darf diese Grenze ueberschreiten. `app/execution/portfolio_surface.py` ist ein interner TradingLoop-Helper und kein Operator-Surface.
+**Rationale**: Mutable State in Operator-Surfaces erzeugt versteckte Kopplung. Der frozen `PortfolioSnapshot` mit `execution_enabled=False` ist die einzig sichere Grenze.
+**Impact**: Alle MCP-Tools und CLI-Commands, die Portfolio-State zeigen, gehen durch `build_portfolio_snapshot()` aus `portfolio_read.py`. Kein direkter Zugriff auf `PaperExecutionEngine._portfolio` von aussen.
 
 ### A-041: Kanonische Source of Truth fuer Portfolio-State ist das Audit-JSONL
-**Assumption**: `artifacts/paper_execution_audit.jsonl` ist die einzige kanonische Quelle fuer Portfolio-State-Rekonstruktion. `build_paper_portfolio_snapshot_from_audit()` replayed `order_filled`-Events.
+**Assumption**: `artifacts/paper_execution_audit.jsonl` ist die einzige kanonische Quelle fuer Portfolio-State-Rekonstruktion. `build_portfolio_snapshot()` in `app/execution/portfolio_read.py` replayed `order_filled`-Events.
 **Rationale**: Die MCP-Schicht kann nicht auf laufende Engine-Instanzen zugreifen. Das JSONL ist persistent, append-only, auditierbar — identisch zum Pattern von DecisionRecord, SignalHandoff etc.
 **Impact**: Portfolio-State-Rekonstruktion ist deterministisch und idempotent. Kein Singleton, kein Shared Memory, kein Inter-Process-Zugriff noetig.
 
-### A-042: Mark-to-Market ist optional und fail-closed per Position
-**Assumption**: MtM-Bereicherung schlaegt fuer einzelne Positionen fail-closed: `is_stale=True` oder `available=False` → `is_mark_to_market=False`, Fallback auf `entry_price`. Der gesamte Snapshot bleibt verfuegbar.
-**Rationale**: Marktdaten koennen temporaer unavailable sein. Der Portfolio-Snapshot darf nie blockiert werden, nur weil ein Preis nicht abgerufen werden konnte. Observation muss immer moeglich sein.
-**Impact**: `PaperPortfolioSnapshot` kann mit und ohne MtM gebaut werden. `is_mark_to_market=False` signalisiert dem Operator, dass Preise veraltet oder unavailable sind.
+### A-042: Mark-to-Market ist optional und fail-closed per Position (PositionSummary)
+**Assumption**: MtM-Bereicherung schlaegt fail-closed per `PositionSummary`: `market_data_available=False` oder `market_data_is_stale=True` → `market_price=None`, `market_value_usd=None`, `unrealized_pnl_usd=None`. Der gesamte `PortfolioSnapshot` bleibt verfuegbar.
+**Rationale**: Marktdaten koennen temporaer unavailable sein. Der Portfolio-Snapshot darf nie blockiert werden, nur weil ein Preis nicht abgerufen werden konnte.
+**Impact**: `PortfolioSnapshot.available=False` nur wenn ALLE Positionen unbepreist sind. Partiell bepreiste Snapshots haben `available=True` mit entsprechenden `PositionSummary`-Flags.
 
-### A-043: ExposureSummary hat keinen eigenstaendigen Datenpfad
-**Assumption**: `ExposureSummary` ist ausschliesslich eine Projektion von `PaperPortfolioSnapshot`. Sie hat keine eigene JSONL, keinen eigenen Market-Data-Abruf, keinen eigenen Backend-Pfad.
-**Rationale**: Separate Datenpfade fuer denselben Zustand erzeugen Inkonsistenz und Architektur-Drift. Einheitlicher Datenpfad: JSONL → PaperPortfolioSnapshot → ExposureSummary.
-**Impact**: `get_portfolio_exposure_summary()` (MCP) und `research portfolio-exposure` (CLI) delegieren intern immer an den Portfolio-Snapshot-Builder.
+### A-043: ExposureSummary (portfolio_read.py) hat keinen eigenstaendigen Datenpfad
+**Assumption**: `ExposureSummary` in `app/execution/portfolio_read.py` ist ausschliesslich eine Projektion von `PortfolioSnapshot`. `build_exposure_summary(snapshot)` nimmt einen `PortfolioSnapshot` entgegen und erzeugt kein eigenstaendiges Market-Data-Fetch.
+**Rationale**: Einheitlicher Datenpfad: JSONL → `build_portfolio_snapshot()` → `PortfolioSnapshot` → `build_exposure_summary()`. Kein paralleler Datenpfad.
+**Impact**: `get_paper_exposure_summary()` (MCP) und `research paper-exposure-summary` (CLI) delegieren intern an `build_portfolio_snapshot()` + `build_exposure_summary()`.
 
-### A-044: /positions und /exposure sind kanonische MCP-Read-Surfaces nach Sprint 40
-**Assumption**: Nach Sprint 40 ist `get_handoff_collector_summary` nicht mehr das Backing fuer Telegram `/positions`. `/exposure` ist kein Stub mehr. Beide Commands sind vollstaendig MCP-gebackt.
-**Rationale**: A-032 (Sprint 38 Addendum) hatte den Handoff-Proxy als provisional deklariert. Sprint 40 ersetzt ihn durch den kanonischen Portfolio-Read-Surface.
-**Impact**: `TELEGRAM_CANONICAL_RESEARCH_REFS["positions"]` = `("research paper-portfolio-snapshot",)`. `TELEGRAM_CANONICAL_RESEARCH_REFS["exposure"]` = `("research portfolio-exposure",)`. `"exposure"` in `_READ_ONLY_COMMANDS`.
+### A-047: LoopStatus ist eine rein read-only Projektion des JSONL-Audit-Logs (Sprint 41)
+**Assumption**: `LoopStatus` wird ausschliesslich aus `artifacts/trading_loop_audit.jsonl` projiziert — nie aus In-Memory-Engine-Instanzen. `loop_enabled=False` ist invariant (kein autonomer Loop). `live_allowed=False` ist invariant.
+**Rationale**: Operator-Surfaces dürfen keine laufenden Engine-Instanzen referenzieren. Das JSONL ist der einzige persistente, auditierbare Zustandsträger.
+**Impact**: `app/orchestrator/loop_read.py` → `read_loop_status(audit_path)` — synchron, pure, never-raise. Datei nicht vorhanden → leerer LoopStatus, kein Fehler.
+
+### A-048: run_paper_cycle nutzt MockMarketDataAdapter als Default (Sprint 41)
+**Assumption**: Der guarded-write Control-Plane-Aufruf `run_paper_cycle` verwendet `MockMarketDataAdapter` als Standard-Datenquelle. Kein realer externer Adapter wird ohne explizite Operator-Konfiguration und separaten Guarded-Mechanismus genutzt.
+**Rationale**: Deterministik, Netzwerkunabhängigkeit und Security — kein unbewachter externer API-Aufruf aus dem Paper-Cycle.
+**Impact**: Alle `run_paper_cycle`-Tests sind ohne Netzwerkzugang ausführbar. Ergebnisse sind deterministisch (MockAdapter: hash-basierte sinusoidale Preise).
+
+### A-049: mode-Validierung in run_paper_cycle ist fail-closed (Sprint 41)
+**Assumption**: `run_paper_cycle` akzeptiert ausschliesslich `mode="paper"` oder `mode="shadow"`. `mode="live"` und jeder andere Wert werden sofort fail-closed abgewiesen: kein Zyklus wird ausgeführt, `error`-Feld wird gesetzt.
+**Rationale**: Live-Execution ist in diesem Sprint explizit verboten. Fail-closed ist die einzige sichere Reaktion auf ungültige Modi.
+**Impact**: Ablehnung ohne Seiteneffekte. Output enthält: `execution_enabled=False`, `write_back_allowed=False`, `live_allowed=False`, `error="mode_rejected_not_paper_or_shadow"`.
+
+### A-050: Keine autonome Hintergrundschleife im Control Plane (Sprint 41)
+**Assumption**: Der TradingLoop hat keinen Daemon, keinen Scheduler, keine Hintergrundschleife und kein Auto-Retry. Jede Ausführung wird explizit vom Operator getriggert (MCP `run_paper_cycle` oder CLI `research run-paper-cycle`).
+**Rationale**: Autonome Ausführung wäre ein Security-Risiko und eine Scope-Verletzung. Sprint 41 ist ein Control-Plane-Sprint, kein Autopilot-Sprint.
+**Impact**: `LoopStatus.loop_enabled=False` ist strukturell invariant — kein konfigurierbarer Toggle.
+
+### A-051: trading_loop_audit.jsonl ist append-only, kein State außerhalb paper/shadow (Sprint 41)
+**Assumption**: `run_paper_cycle` appended genau einen `LoopCycle`-Record pro Aufruf in `artifacts/trading_loop_audit.jsonl`. Es schreibt NICHT in `paper_execution_audit.jsonl`. Das fresh-Portfolio von `run_paper_cycle` ist ephemer und wird nicht persistiert.
+**Rationale**: Audit-Log ist das einzige persistente Artefakt. Ephemere Isolation verhindert unbeabsichtigte Portfolio-State-Mutation.
+**Impact**: `run_paper_cycle` ist ein isolierter run-once-Aufruf ohne kumulative Portfolio-Seiteneffekte auf den produktiven Paper-Execution-State.
+
+### A-044: /positions und /exposure zeigen auf kanonische MCP-Read-Surfaces (Sprint 40)
+**Assumption**: Nach Sprint 40 sind `/positions` und `/exposure` vollstaendig MCP-gebackt. `get_handoff_collector_summary` als Backing fuer `/positions` ist superseded. Der `/exposure`-Stub ist ersetzt.
+**Rationale**: A-045 (ehemals A-032, Sprint 38 Addendum) hatte den Handoff-Proxy als provisional deklariert. Sprint 40 ersetzt ihn durch den kanonischen Portfolio-Read-Surface.
+**Impact**: `TELEGRAM_CANONICAL_RESEARCH_REFS["positions"]` = `("research paper-positions-summary",)`. `TELEGRAM_CANONICAL_RESEARCH_REFS["exposure"]` = `("research paper-exposure-summary",)`. `"exposure"` in `_READ_ONLY_COMMANDS`. Beides implementiert und gruen (1439 Tests, Sprint 40).

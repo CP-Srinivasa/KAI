@@ -3658,9 +3658,12 @@ Exposure = aggregierte Risikobeobachtung — kein Rebalancing-Trigger.
 
 ---
 
-### §51.1 — Kanonisches Datenmodell: `PositionSnapshot`
+### §51.1 — Kanonisches Datenmodell: `PositionSnapshot` *(Spec-Stand; superseded by §51.11)*
 
-**Implementierung**: `app/research/portfolio_surface.py`
+> **Achtung**: Diese Sektion beschreibt die ursprüngliche Spec. Implementierter Name: `PositionSummary`.
+> Kanonischer Pfad: `app/execution/portfolio_read.py`. Verbindlicher Stand: §51.11.
+
+**Implementierung**: ~~`app/research/portfolio_surface.py`~~ → `app/execution/portfolio_read.py` (§51.11)
 
 ```python
 @dataclass(frozen=True)
@@ -3693,9 +3696,12 @@ class PositionSnapshot:
 
 ---
 
-### §51.2 — Kanonisches Datenmodell: `PaperPortfolioSnapshot`
+### §51.2 — Kanonisches Datenmodell: `PaperPortfolioSnapshot` *(Spec-Stand; superseded by §51.11)*
 
-**Implementierung**: `app/research/portfolio_surface.py`
+> **Achtung**: Diese Sektion beschreibt die ursprüngliche Spec. Implementierter Name: `PortfolioSnapshot`.
+> Kanonischer Pfad: `app/execution/portfolio_read.py`. Verbindlicher Stand: §51.11.
+
+**Implementierung**: ~~`app/research/portfolio_surface.py`~~ → `app/execution/portfolio_read.py` (§51.11)
 
 ```python
 @dataclass(frozen=True)
@@ -3727,9 +3733,12 @@ class PaperPortfolioSnapshot:
 
 ---
 
-### §51.3 — Kanonisches Datenmodell: `ExposureSummary`
+### §51.3 — Kanonisches Datenmodell: `ExposureSummary` *(Spec-Stand; superseded by §51.11)*
 
-**Implementierung**: `app/research/portfolio_surface.py`
+> **Achtung**: Diese Sektion beschreibt die ursprüngliche Spec.
+> Kanonischer Pfad: `app/execution/portfolio_read.py`. Verbindlicher Stand: §51.11.
+
+**Implementierung**: ~~`app/research/portfolio_surface.py`~~ → `app/execution/portfolio_read.py` (§51.11)
 
 ```python
 @dataclass(frozen=True)
@@ -3757,9 +3766,13 @@ class ExposureSummary:
 
 ---
 
-### §51.4 — Research-Modul: `app/research/portfolio_surface.py`
+### §51.4 — ~~Research-Modul: `app/research/portfolio_surface.py`~~ *(Spec-Stand; superseded by §51.11)*
 
-**Neue Datei** (Codex implementiert):
+> **Achtung**: Diese Sektion beschreibt die ursprüngliche Spec. Tatsächliche Module: `app/execution/portfolio_read.py`
+> (Operator-Surface) und `app/execution/portfolio_surface.py` (interner TradingLoop-Helper).
+> Verbindlicher Stand: §51.11.
+
+**Kanonisches Modul** (tatsächlich implementiert): `app/execution/portfolio_read.py`
 
 ```python
 def build_position_snapshot(
@@ -3944,3 +3957,321 @@ Sicherheitsgrenzen:
 - Kein Auto-Routing, kein Auto-Promote
 - `execution_enabled=False` und `write_back_allowed=False` in allen Responses
 - Fail-closed bei ungültigem Audit-Payload und vollständig fehlender MtM-Bewertung offener Positionen
+
+---
+
+### §51.11 — Sprint 40C: Finaler Kanonischer Zustand (Consolidation)
+
+> **Diese Sektion ueberschreibt §51.1–§51.9 bei allen Namens- und Pfad-Konflikten.**
+> §51.1–§51.9 wurden vor der Implementierung geschrieben und verwendeten vorlaeuflge Namen.
+> §51.10 und §51.11 sind der verbindliche implementierte Stand.
+
+---
+
+#### Kanonisches Modul (Operator Surfaces)
+
+**`app/execution/portfolio_read.py`** — einzige kanonische Implementierung fuer MCP/CLI/Telegram
+
+| Model | Felder | Invariante |
+|---|---|---|
+| `PositionSummary` (frozen) | symbol, quantity, avg_entry_price, stop_loss, take_profit, market_price, market_value_usd, unrealized_pnl_usd, provider, market_data_retrieved_at_utc, market_data_source_timestamp_utc, market_data_is_stale, market_data_freshness_seconds, market_data_available, market_data_error | market_price/value/pnl = None wenn unavailable |
+| `ExposureSummary` (frozen) | priced_position_count, stale_position_count, unavailable_price_count, gross_exposure_usd, net_exposure_usd, largest_position_symbol, largest_position_weight_pct, mark_to_market_status, execution_enabled=False, write_back_allowed=False | execution_enabled=False IMMER |
+| `PortfolioSnapshot` (frozen) | generated_at_utc, source, audit_path, cash_usd, realized_pnl_usd, total_market_value_usd, total_equity_usd, position_count, positions: tuple[PositionSummary], exposure_summary, available, error, execution_enabled=False, write_back_allowed=False | execution_enabled=False IMMER |
+
+**Kanonische Funktionen**:
+- `build_portfolio_snapshot(audit_path, provider, freshness_threshold_seconds, timeout_seconds)` → async → `PortfolioSnapshot`
+- `build_positions_summary(snapshot)` → `dict` (positions-only projection)
+- `build_exposure_summary(snapshot)` → `dict` (exposure-only projection)
+
+---
+
+#### Internes Modul (TradingLoop-Seite)
+
+**`app/execution/portfolio_surface.py`** — NICHT fuer Operator Surfaces
+
+- `PortfolioSummary`, `PositionSnapshot`, `ExposureSummary` — frozen, aber OHNE `execution_enabled`/`write_back_allowed`
+- `build_portfolio_summary(portfolio, prices)` — arbeitet auf lebendem `PaperPortfolio`-Objekt
+- `build_exposure_summary(portfolio, prices)` — arbeitet auf lebendem `PaperPortfolio`-Objekt
+- Scope: TradingLoop-interne Formatierung (to_telegram_text, to_dict)
+- DARF NICHT von MCP-Tools, CLI-Commands oder Telegram-Handlern importiert werden
+
+---
+
+#### Finale MCP-Tool-Namen (in `_CANONICAL_MCP_READ_TOOL_NAMES`)
+
+| Tool | Delegiert an | Report-Type |
+|---|---|---|
+| `get_paper_portfolio_snapshot` | `build_portfolio_snapshot()` → `PortfolioSnapshot.to_json_dict()` | `paper_portfolio_snapshot` |
+| `get_paper_positions_summary` | `build_portfolio_snapshot()` → `build_positions_summary()` | `paper_positions_summary` |
+| `get_paper_exposure_summary` | `build_portfolio_snapshot()` → `build_exposure_summary()` | `paper_exposure_summary` |
+
+---
+
+#### Finale CLI-Command-Namen
+
+| Command | Parameter |
+|---|---|
+| `research paper-portfolio-snapshot` | `--audit-path`, `--provider`, `--freshness-threshold-seconds`, `--timeout-seconds` |
+| `research paper-positions-summary` | identisch |
+| `research paper-exposure-summary` | identisch |
+
+---
+
+#### Finale Telegram-Bindings
+
+| Command | `_READ_ONLY_COMMANDS` | MCP-Loader | `TELEGRAM_CANONICAL_RESEARCH_REFS` |
+|---|---|---|---|
+| `/positions` | ✅ | `_get_paper_positions_summary()` → `get_paper_positions_summary` | `("research paper-positions-summary",)` |
+| `/exposure` | ✅ (seit Sprint 40) | `_get_paper_exposure_summary()` → `get_paper_exposure_summary` | `("research paper-exposure-summary",)` |
+
+---
+
+#### Datenpfad (kanonisch, ein Pfad)
+
+```
+artifacts/paper_execution_audit.jsonl (append-only)
+    ↓ _replay_paper_audit() — order_created + order_filled replay
+    ↓ build_portfolio_snapshot() — async, MtM via get_market_data_snapshot()
+PortfolioSnapshot (frozen, execution_enabled=False)
+    ├── build_positions_summary() → JSON (paper_positions_summary)
+    └── build_exposure_summary() → JSON (paper_exposure_summary)
+         ↑ via ExposureSummary.to_json_dict()
+```
+
+---
+
+#### Fail-Closed-Semantik (final)
+
+| Szenario | `PortfolioSnapshot.available` | `PositionSummary.market_data_available` |
+|---|---|---|
+| Audit nicht vorhanden | True (leeres Portfolio) | n/a |
+| Audit malformed | False + error gesetzt | n/a |
+| sell ohne Position im Audit | False + error gesetzt | n/a |
+| MtM-Preis unavailable | True (Position bleibt) | False |
+| MtM-Preis stale | True (Position bleibt) | False, market_data_is_stale=True |
+| Alle Positionen unbepreist | False + error | False fuer alle |
+
+---
+
+#### Tests (Sprint 40 — implementiert)
+
+| Datei | Anzahl Tests | Scope |
+|---|---|---|
+| `tests/unit/test_portfolio_read.py` | Teil der 32 Portfolio-Tests | `portfolio_read.py` Modelle + Builder |
+| `tests/unit/test_portfolio_surface.py` | Teil der 32 Portfolio-Tests | `portfolio_surface.py` (intern) |
+| `tests/unit/test_mcp_portfolio_read.py` | Teil der 32 Portfolio-Tests | MCP-Tools |
+| `tests/unit/test_cli_portfolio_read.py` | Teil der 32 Portfolio-Tests | CLI-Commands |
+| **Gesamt Sprint 40** | **32 neue Tests** | Alle gruen |
+
+**Test-Stand**: 1426 passed, ruff clean (2026-03-21)
+
+---
+
+#### Annahmen und Invarianten (Sprint 40C — korrigiert)
+
+- `docs/intelligence_architecture.md` I-291–I-300 (Sprint 40C korrigiert)
+- `ASSUMPTIONS.md` A-040–A-044 (Sprint 40C korrigiert)
+- `AGENTS.md` P46 (Sprint 40C ✅ abgeschlossen)
+
+---
+
+## §52 Sprint 41 — TradingLoop Control Plane & Cycle Audit Surface
+
+### §52.1 Scope & Nicht-Verhandelbar
+
+Sprint 41 definiert einen einzigen kanonischen, sicheren Control-Plane-Surface für den vorhandenen `TradingLoop`. Der Sprint erweitert ausschliesslich paper- und shadow-Modus-Funktionalität. Alle Live-, Broker- und autonomen Execution-Pfade bleiben verboten.
+
+**Erlaubte Modi**: `"paper"` | `"shadow"`
+**Verbotene Modi**: `"live"` (immer fail-closed abgewiesen)
+**Control Plane = operator-triggered**: kein Daemon, kein Auto-Scheduler, keine Hintergrundschleife
+**run-once = paper/shadow only**: ein MCP/CLI-Aufruf = ein Zyklus, kein Auto-Retry, kein Batching
+
+### §52.2 Neue Modelle
+
+#### `LoopStatus` (neu, `app/orchestrator/models.py`)
+
+```python
+@dataclass(frozen=True)
+class LoopStatus:
+    """Read-only operational status projection derived from trading_loop_audit.jsonl."""
+    mode: str                              # "paper" | "shadow" | "unknown"
+    loop_enabled: bool                     # False — kein autonomer Hintergrund-Loop
+    last_cycle_id: str | None
+    last_cycle_status: str | None          # CycleStatus.value oder None
+    last_cycle_at_utc: str | None
+    last_cycle_symbol: str | None
+    total_cycles: int
+    status_counts: tuple[tuple[str, int], ...]  # sortiert: (status, count)-Paare
+    audit_path: str
+    generated_at_utc: str
+    execution_enabled: bool = False
+    write_back_allowed: bool = False
+    live_allowed: bool = False
+```
+
+Methode: `to_json_dict() -> dict[str, object]` — status_counts als `dict[str, int]` serialisiert.
+
+#### Bestehende Modelle (unverändert)
+
+- `LoopCycle` (frozen, `app/orchestrator/models.py`) — unveränderter Audit-Record
+- `CycleStatus` (StrEnum) — unveränderter Enum
+
+### §52.3 Neues Modul: `app/orchestrator/loop_read.py`
+
+Kanonisches Read-Only-Modul für den TradingLoop-Audit-Surface (spiegelt das Muster von `portfolio_read.py`).
+
+**Öffentliche Funktionen:**
+
+```python
+def read_loop_status(
+    audit_path: str | Path = "artifacts/trading_loop_audit.jsonl",
+    mode: str = "paper",
+) -> LoopStatus:
+    """Baut LoopStatus aus dem JSONL-Audit-Log. Keine Seiteneffekte."""
+```
+
+**Design-Invarianten:**
+- Rein synchron (kein async nötig, nur lesend)
+- Never-raise: Fehler → `loop_enabled=False`, `total_cycles=0`, leere `status_counts`
+- Existiert die Datei nicht → leerer LoopStatus (kein Fehler)
+- Liest ausschliesslich `artifacts/trading_loop_audit.jsonl`
+- Keine Engine-Instanzen, kein In-Memory-Zugriff
+
+### §52.4 Neue MCP Read-Only Surfaces
+
+#### `get_loop_status` (neu)
+
+```
+Klassifikation: canonical_read (in _CANONICAL_MCP_READ_TOOL_NAMES)
+Modul: app/agents/mcp_server.py
+Input:
+  audit_path: str = "artifacts/trading_loop_audit.jsonl"
+  mode: str = "paper"
+Output: LoopStatus.to_json_dict()
+Garantien: execution_enabled=False, write_back_allowed=False, live_allowed=False
+```
+
+#### `get_loop_cycle_summary` (bestehend, unverändert)
+
+Bereits in `_CANONICAL_MCP_READ_TOOL_NAMES`. Liest die letzten N Zyklen aus dem JSONL.
+Output-Felder (unveränderter Contract): `total_cycles`, `status_counts`, `recent_cycles`, `execution_enabled=False`, `write_back_allowed=False`.
+
+### §52.5 Neue CLI Read-Only Surfaces
+
+#### `research loop-status` (neu)
+
+```
+Befehl: python -m app.cli.main research loop-status
+Optionen: --audit-path, --mode
+Output: LoopStatus-Felder (Text-Tabelle)
+Garantien: execution_enabled=False, write_back_allowed=False, live_allowed=False
+```
+
+#### `research loop-cycle-summary` (bestehend, unverändert)
+
+Bereits implementiert. Kein Sprint-41-Änderungsbedarf.
+
+### §52.6 Neue Guarded-Write Surface: `run_paper_cycle`
+
+**Die einzige operator-triggerte Ausführungs-Surface dieses Sprints.**
+
+#### MCP Tool: `run_paper_cycle`
+
+```
+Klassifikation: guarded_write (in _GUARDED_MCP_WRITE_TOOL_NAMES)
+Modul: app/agents/mcp_server.py
+
+Input:
+  symbol: str                      — Trading-Symbol (z. B. "BTC/USDT")
+  thesis: str                      — Analyse-Begründung (Freitext)
+  sentiment: str                   — "bullish" | "bearish" | "neutral"
+  confidence_score: float          — [0.0, 1.0]
+  mode: str = "paper"              — MUSS "paper" oder "shadow" sein
+  audit_path: str = "artifacts/trading_loop_audit.jsonl"
+
+Output:
+  trigger_action: str = "run_paper_cycle"
+  audit_ref: str                   — cycle_id des ausgeführten LoopCycle
+  mode: str                        — validierter Modus ("paper" | "shadow")
+  cycle: dict                      — LoopCycle.to_json_dict()
+  execution_enabled: bool = False
+  write_back_allowed: bool = False
+  live_allowed: bool = False
+  error: str | None                — None bei Erfolg; Ablehnungsgrund bei fail-closed
+```
+
+**Security Contract (nicht verhandelbar):**
+
+| Bedingung | Reaktion |
+|---|---|
+| `mode == "live"` | Sofortige fail-closed Ablehnung, kein Zyklus, `error` gesetzt |
+| `mode` nicht in {"paper", "shadow"} | Sofortige fail-closed Ablehnung |
+| `confidence_score` außerhalb [0.0, 1.0] | Ablehnung, kein Zyklus |
+| `symbol` leer oder None | Ablehnung, kein Zyklus |
+| Interner Fehler | `LoopCycle(status=ERROR, notes=[...])` — nie raise |
+
+**Interne Ausführungs-Pipeline (paper-only):**
+
+1. Mode-Validierung (fail-closed auf "live")
+2. Konfigurations-Guard (execution_enabled=False, live_allowed=False bestätigen)
+3. `MockMarketDataAdapter` instanziieren (deterministisch, kein Netzwerk)
+4. `RiskEngine(RiskLimits(...))` mit Default-Limits
+5. `PaperExecutionEngine(live_enabled=False)` — fresh portfolio, kein Replay des paper_execution_audit.jsonl (run-once ist isoliert)
+6. `SignalGenerator(mode=mode, venue="paper")`
+7. Minimales `AnalysisResult` aus inline-Params konstruieren
+8. `TradingLoop.run_cycle(analysis, symbol)` awaiten
+9. `LoopCycle` zurückgeben mit Security-Flags
+
+**Isolation-Garantie**: `run_paper_cycle` verwendet ein frisches `PaperExecutionEngine`-Portfolio. Es schreibt NICHT in `paper_execution_audit.jsonl`. Die einzige Audit-Spur ist `trading_loop_audit.jsonl` (append-only).
+
+#### CLI Command: `research run-paper-cycle` (neu)
+
+```
+Befehl: python -m app.cli.main research run-paper-cycle
+Optionen:
+  --symbol TEXT
+  --thesis TEXT
+  --sentiment [bullish|bearish|neutral]
+  --confidence FLOAT
+  --mode [paper|shadow]  (default: paper)
+Output: LoopCycle-Felder (Text + Security-Flags)
+Garantien: identisch mit MCP-Tool
+```
+
+### §52.7 Read-Only vs. Guarded-Write Übersicht
+
+| Surface | Typ | Klassifikation |
+|---|---|---|
+| `get_loop_status` | MCP | canonical_read |
+| `get_loop_cycle_summary` | MCP | canonical_read (bestehend) |
+| `research loop-status` | CLI | read-only |
+| `research loop-cycle-summary` | CLI | read-only (bestehend) |
+| `run_paper_cycle` | MCP | guarded_write |
+| `research run-paper-cycle` | CLI | guarded_write |
+
+**Telegram**: Kein neuer Sprint-41-Telegram-Command. Erweiterung auf `/loop-status` ist als zukünftige Phase-B-Aufgabe vorgesehen (nach Stabilisierung).
+
+### §52.8 Artefakt-Contract
+
+| Artefakt | Zweck | Zugriffstyp |
+|---|---|---|
+| `artifacts/trading_loop_audit.jsonl` | LoopCycle-Audit-Log | append-only write + read |
+| `artifacts/paper_execution_audit.jsonl` | Paper-Execution-Audit | read-only aus `run_paper_cycle` |
+
+`run_paper_cycle` schreibt NICHT in `paper_execution_audit.jsonl`. Das fresh-Portfolio der run-once-Ausführung ist ephemer und wird nicht persistiert.
+
+### §52.9 Invarianten-Referenz
+
+- `docs/intelligence_architecture.md` I-301–I-310 (Sprint 41)
+- `ASSUMPTIONS.md` A-047–A-051 (Sprint 41)
+- `AGENTS.md` P47 (Sprint 41)
+
+### §52.10 Tests (Sprint 41 — Ziel)
+
+| Datei | Scope | Ziel |
+|---|---|---|
+| `tests/unit/test_loop_read.py` | `loop_read.py` — LoopStatus, read_loop_status | ≥ 8 Tests |
+| `tests/unit/test_loop_status_model.py` | LoopStatus Modell + to_json_dict | ≥ 5 Tests |
+| `tests/unit/test_mcp_loop_control.py` | MCP get_loop_status + run_paper_cycle | ≥ 8 Tests |
+| `tests/unit/test_cli_loop_control.py` | CLI loop-status + run-paper-cycle | ≥ 6 Tests |
+| **Gesamt Sprint 41** | **≥ 27 neue Tests** | Ziel: 1453+ passed |
