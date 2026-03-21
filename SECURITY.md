@@ -37,3 +37,32 @@
 - bei Unsicherheit: stoppen, alarmieren, Zustand einfrieren
 - Telegram `/kill` bleibt confirm-gated
 - Operator-Approve/Reject via Telegram ist aktuell audit-only und hat keine Live-Seiteneffekte
+
+## Befund E-1: Klartext-Secrets-Bereinigung (2026-03-21)
+
+**Status**: Technisch bereinigt — externer Rotationsnachweis offen
+
+Das lokale `APIs/`-Verzeichnis enthielt API-Keys als Klartext-Dateien und wurde vor dem
+Sprint-9–36-Catch-up-Commit aus dem Projektverzeichnis entfernt. Das Verzeichnis wurde
+**niemals** in das Git-Repository committed (`.gitignore`-Eintrag seit Projektbeginn vorhanden;
+explizit dokumentiert in `.gitignore` ab 2026-03-21).
+
+| Maßnahme | Status |
+|---|---|
+| Klartext-Dateien nicht mehr im Projektverzeichnis | ✅ |
+| `APIs/` in `.gitignore` eingetragen | ✅ |
+| Git-History enthält keine API-Key-Dateien | ✅ (verifiziert via `git log --all`) |
+| Externer Rotations-/Invalidierungsnachweis | ⚠️ NICHT BELEGBAR |
+
+**Betroffene Secret-Klassen** (soweit aus Projektstruktur ableitbar):
+- Telegram Bot Token
+- CoinGecko API Key
+- ggf. LLM-Provider-Keys (OpenAI / Anthropic / Google)
+
+**Offener Punkt**: Für Vollabnahme ist manuelles Rotieren/Invalidieren der betroffenen Keys
+beim jeweiligen Provider erforderlich. Rotationsdatum und betroffene Services hier eintragen,
+sobald abgeschlossen.
+
+**Warum keine Rotation dokumentierbar**: Keine Rotationsdokumentation in SECURITY.md,
+AGENTS.md, CHANGELOG.md oder Commit-Messages gefunden. Rotation kann nicht rückwirkend
+belegbar gemacht werden — nur vorwärts.
