@@ -294,7 +294,11 @@ async def test_get_loop_cycle_summary_blocks_path_outside_workspace(
 @pytest.mark.asyncio
 async def test_get_loop_cycle_summary_in_read_tools() -> None:
     inventory = get_mcp_tool_inventory()
-    assert "get_loop_cycle_summary" in inventory["canonical_read_tools"]
+    assert "get_recent_trading_cycles" in inventory["canonical_read_tools"]
+    assert "get_loop_cycle_summary" in inventory["aliases"]
+    assert inventory["aliases"]["get_loop_cycle_summary"]["canonical_tool"] == (
+        "get_recent_trading_cycles"
+    )
     assert "get_loop_cycle_summary" not in inventory["guarded_write_tools"]
 
 
@@ -305,7 +309,8 @@ async def test_get_loop_cycle_summary_in_read_tools() -> None:
 async def test_mcp_tool_inventory_includes_sprint36_tools() -> None:
     inventory = get_mcp_tool_inventory()
     assert "get_decision_journal_summary" in inventory["canonical_read_tools"]
-    assert "get_loop_cycle_summary" in inventory["canonical_read_tools"]
+    assert "get_recent_trading_cycles" in inventory["canonical_read_tools"]
+    assert "get_loop_cycle_summary" in inventory["aliases"]
     assert "append_decision_instance" in inventory["guarded_write_tools"]
 
 

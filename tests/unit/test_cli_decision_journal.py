@@ -215,7 +215,8 @@ def test_loop_cycle_summary_missing_file(tmp_path: Path) -> None:
         ["research", "loop-cycle-summary", "--audit-path", audit],
     )
     assert result.exit_code == 0
-    assert "No loop audit" in result.output
+    assert "Trading Loop Recent Cycles" in result.output
+    assert "0 total" in result.output
 
 
 def test_loop_cycle_summary_reads_records(tmp_path: Path) -> None:
