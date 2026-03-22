@@ -102,7 +102,8 @@ _CANONICAL_MCP_READ_TOOL_NAMES = (
     "get_review_journal_summary",
     "get_resolution_summary",
     "get_decision_journal_summary",
-    "get_loop_cycle_summary",
+    "get_trading_loop_status",
+    "get_recent_trading_cycles",
 )
 _GUARDED_MCP_WRITE_TOOL_NAMES = (
     "create_inference_profile",
@@ -111,6 +112,7 @@ _GUARDED_MCP_WRITE_TOOL_NAMES = (
     "acknowledge_signal_handoff",
     "append_review_journal_entry",
     "append_decision_instance",
+    "run_trading_loop_once",
 )
 _MCP_WORKFLOW_HELPER_NAMES = ("get_mcp_capabilities",)
 _MCP_TOOL_ALIASES = {
@@ -121,6 +123,11 @@ _MCP_TOOL_ALIASES = {
     },
     "get_operator_decision_pack": {
         "canonical_tool": "get_decision_pack_summary",
+        "tool_class": "read_only",
+        "status": "compatibility_alias",
+    },
+    "get_loop_cycle_summary": {
+        "canonical_tool": "get_recent_trading_cycles",
         "tool_class": "read_only",
         "status": "compatibility_alias",
     },
@@ -1391,6 +1398,7 @@ async def get_mcp_capabilities() -> str:
                 "No APP_LLM_PROVIDER mutation",
                 "No auto-routing or auto-promotion",
                 "No direct execution hook for signals",
+                "Trading loop control is explicit run-once only (no daemon/autopilot)",
                 "Acknowledgement is audit-only â€” not write-back or execution trigger (I-116)",
                 "Readiness summary is observational only â€” no auto-remediation",
                 "Protective Gates are entirely read-only and advisory (I-123)",
@@ -2193,55 +2201,131 @@ async def append_decision_instance(
 
 
 @mcp.tool()
-async def get_loop_cycle_summary(
+async def get_trading_loop_status(
     audit_path: str = _LOOP_AUDIT_DEFAULT_PATH,
-    last_n: int = 20,
+    mode: str = "paper",
 ) -> dict[str, object]:
-    """Return a read-only summary of recent trading loop cycles from the JSONL audit log.
-
-    execution_enabled and write_back_allowed are always False.
-    """
-    import json as _json
+    """Return read-only trading-loop status and run-once guard state."""
+    from app.orchestrator.trading_loop import build_loop_status_summary
 
     resolved = _resolve_workspace_path(
         audit_path,
         label="Loop audit",
         allowed_suffixes=frozenset({".jsonl"}),
     )
+    summary = build_loop_status_summary(audit_path=resolved, mode=mode)
+    return summary.to_json_dict()
 
-    if not resolved.exists():
-        return {
-            "total_cycles": 0,
-            "status_counts": {},
-            "recent_cycles": [],
-            "execution_enabled": False,
-            "write_back_allowed": False,
-        }
 
-    records: list[dict[str, object]] = []
-    for line in resolved.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            records.append(_json.loads(line))
-        except _json.JSONDecodeError:
-            continue
+@mcp.tool()
+async def get_recent_trading_cycles(
+    audit_path: str = _LOOP_AUDIT_DEFAULT_PATH,
+    last_n: int = 20,
+) -> dict[str, object]:
+    """Return read-only summary of recent trading-loop cycle audits."""
+    from app.orchestrator.trading_loop import build_recent_cycles_summary
 
-    status_counts: dict[str, int] = {}
-    for rec in records:
-        s = str(rec.get("status", "unknown"))
-        status_counts[s] = status_counts.get(s, 0) + 1
+    resolved = _resolve_workspace_path(
+        audit_path,
+        label="Loop audit",
+        allowed_suffixes=frozenset({".jsonl"}),
+    )
+    summary = build_recent_cycles_summary(audit_path=resolved, last_n=last_n)
+    return summary.to_json_dict()
 
-    recent = records[-last_n:]
+
+@mcp.tool()
+async def run_trading_loop_once(
+    symbol: str = "BTC/USDT",
+    mode: str = "paper",
+    provider: str = "mock",
+    analysis_profile: str = "conservative",
+    loop_audit_path: str = _LOOP_AUDIT_DEFAULT_PATH,
+    execution_audit_path: str = _PAPER_EXECUTION_AUDIT_DEFAULT_PATH,
+    freshness_threshold_seconds: float = 120.0,
+    timeout_seconds: int = 10,
+) -> dict[str, object]:
+    """Run one guarded paper/shadow cycle and append audit rows."""
+    from app.orchestrator.trading_loop import run_trading_loop_once as run_once_cycle
+
+    resolved_loop_audit = _resolve_workspace_path(
+        loop_audit_path,
+        label="Loop audit output",
+        allowed_suffixes=frozenset({".jsonl"}),
+    )
+    _require_artifacts_subpath(resolved_loop_audit, label="Loop audit output")
+
+    resolved_execution_audit = _resolve_workspace_path(
+        execution_audit_path,
+        label="Execution audit output",
+        allowed_suffixes=frozenset({".jsonl"}),
+    )
+    _require_artifacts_subpath(resolved_execution_audit, label="Execution audit output")
+
+    cycle = await run_once_cycle(
+        symbol=symbol,
+        mode=mode,
+        provider=provider,
+        analysis_profile=analysis_profile,
+        loop_audit_path=resolved_loop_audit,
+        execution_audit_path=resolved_execution_audit,
+        freshness_threshold_seconds=freshness_threshold_seconds,
+        timeout_seconds=timeout_seconds,
+    )
+
+    cycle_payload = {
+        "cycle_id": cycle.cycle_id,
+        "started_at": cycle.started_at,
+        "completed_at": cycle.completed_at,
+        "symbol": cycle.symbol,
+        "status": cycle.status.value,
+        "market_data_fetched": cycle.market_data_fetched,
+        "signal_generated": cycle.signal_generated,
+        "risk_approved": cycle.risk_approved,
+        "order_created": cycle.order_created,
+        "fill_simulated": cycle.fill_simulated,
+        "decision_id": cycle.decision_id,
+        "risk_check_id": cycle.risk_check_id,
+        "order_id": cycle.order_id,
+        "notes": list(cycle.notes),
+    }
+
+    _append_mcp_write_audit(
+        tool="run_trading_loop_once",
+        params={
+            "symbol": symbol,
+            "mode": mode,
+            "provider": provider,
+            "analysis_profile": analysis_profile,
+            "loop_audit_path": str(resolved_loop_audit),
+            "execution_audit_path": str(resolved_execution_audit),
+        },
+        result_summary=(
+            f"trading_loop cycle {cycle.cycle_id} completed with status={cycle.status.value}"
+        ),
+    )
 
     return {
-        "total_cycles": len(records),
-        "status_counts": status_counts,
-        "recent_cycles": recent,
+        "status": "cycle_completed",
+        "mode": mode,
+        "provider": provider,
+        "analysis_profile": analysis_profile,
+        "loop_audit_path": str(resolved_loop_audit),
+        "execution_audit_path": str(resolved_execution_audit),
+        "cycle": cycle_payload,
+        "auto_loop_enabled": False,
         "execution_enabled": False,
         "write_back_allowed": False,
     }
+
+
+@mcp.tool()
+async def get_loop_cycle_summary(
+    audit_path: str = _LOOP_AUDIT_DEFAULT_PATH,
+    last_n: int = 20,
+) -> dict[str, object]:
+    """Compatibility alias for get_recent_trading_cycles."""
+    return await get_recent_trading_cycles(audit_path=audit_path, last_n=last_n)  # type: ignore[no-any-return]
 
 
 if __name__ == "__main__":

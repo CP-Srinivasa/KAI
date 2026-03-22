@@ -3011,12 +3011,16 @@ FINAL_RESEARCH_COMMAND_NAMES: tuple[str, ...] = (
     "paper-portfolio-snapshot",
     "paper-positions-summary",
     "paper-exposure-summary",
+    "trading-loop-status",
+    "trading-loop-recent-cycles",
+    "trading-loop-run-once",
 )
 
 RESEARCH_COMMAND_ALIASES: dict[str, str] = {
     "consumer-ack": "handoff-acknowledge",
     "handoff-summary": "handoff-collector-summary",
     "operator-decision-pack": "decision-pack-summary",
+    "loop-cycle-summary": "trading-loop-recent-cycles",
 }
 
 SUPERSEDED_RESEARCH_COMMAND_NAMES: tuple[str, ...] = ("governance-summary",)
@@ -3784,8 +3788,47 @@ def research_decision_journal_summary(
     console.print("write_back_allowed=False")
 
 
+@research_app.command("trading-loop-status")
+def research_trading_loop_status(
+    audit_path: str = typer.Option(
+        "artifacts/trading_loop_audit.jsonl",
+        "--audit-path",
+        help="Trading loop JSONL audit path",
+    ),
+    mode: str = typer.Option(
+        "paper",
+        "--mode",
+        help="Execution mode hint for run-once guard evaluation",
+    ),
+) -> None:
+    """Print canonical read-only trading-loop status and run-once guard state."""
+    from app.orchestrator.trading_loop import build_loop_status_summary
+
+    try:
+        summary = build_loop_status_summary(audit_path=audit_path, mode=mode)
+    except ValueError as exc:
+        console.print(f"[red]Trading loop status failed:[/red] {exc}")
+        raise typer.Exit(1) from exc
+
+    payload = summary.to_json_dict()
+    console.print("[bold]Trading Loop Status[/bold]")
+    console.print(f"mode={payload['mode']}")
+    console.print(f"run_once_allowed={payload['run_once_allowed']}")
+    console.print(f"run_once_block_reason={payload['run_once_block_reason']}")
+    console.print(f"total_cycles={payload['total_cycles']}")
+    console.print(f"last_cycle_id={payload['last_cycle_id']}")
+    console.print(f"last_cycle_status={payload['last_cycle_status']}")
+    console.print(f"last_cycle_symbol={payload['last_cycle_symbol']}")
+    console.print(f"last_cycle_completed_at={payload['last_cycle_completed_at']}")
+    console.print(f"audit_path={payload['audit_path']}")
+    console.print("auto_loop_enabled=False")
+    console.print("execution_enabled=False")
+    console.print("write_back_allowed=False")
+
+
 @research_app.command("loop-cycle-summary")
-def research_loop_cycle_summary(
+@research_app.command("trading-loop-recent-cycles")
+def research_trading_loop_recent_cycles(
     audit_path: str = typer.Option(
         "artifacts/trading_loop_audit.jsonl",
         "--audit-path",
@@ -3793,40 +3836,20 @@ def research_loop_cycle_summary(
     ),
     last_n: int = typer.Option(20, "--last-n", help="Show last N cycle records"),
 ) -> None:
-    """Print a read-only summary of recent trading loop cycles from the audit log."""
-    import json as _json
+    """Print canonical read-only summary of recent trading loop cycles."""
+    from app.orchestrator.trading_loop import build_recent_cycles_summary
 
-    path = Path(audit_path)
-    if not path.exists():
-        console.print(f"[yellow]No loop audit found at {path}[/yellow]")
-        return
+    summary = build_recent_cycles_summary(audit_path=audit_path, last_n=last_n)
+    payload = summary.to_json_dict()
 
-    raw_lines = [
-        line.strip()
-        for line in path.read_text(encoding="utf-8").splitlines()
-        if line.strip()
-    ]
-    if not raw_lines:
-        console.print("[yellow]Loop audit is empty.[/yellow]")
-        return
-
-    records: list[dict[str, object]] = []
-    for line in raw_lines:
-        try:
-            records.append(_json.loads(line))
-        except _json.JSONDecodeError:
-            continue
-
-    recent = records[-last_n:]
-
-    status_counts: dict[str, int] = {}
-    for rec in records:
-        s = str(rec.get("status", "unknown"))
-        status_counts[s] = status_counts.get(s, 0) + 1
-
-    console.print(f"[bold]Trading Loop Cycle Summary[/bold] ({len(records)} total)")
-    console.print(f"status_counts={status_counts}")
-    console.print(f"showing last {len(recent)} of {len(records)} cycles:")
+    console.print(
+        f"[bold]Trading Loop Recent Cycles[/bold] ({payload['total_cycles']} total)"
+    )
+    console.print(f"status_counts={payload['status_counts']}")
+    console.print(
+        "showing last "
+        f"{len(payload['recent_cycles'])} of {payload['total_cycles']} cycles:"  # type: ignore[arg-type]
+    )
 
     table = Table(show_header=True, header_style="bold cyan")
     table.add_column("cycle_id", width=16)
@@ -3836,7 +3859,11 @@ def research_loop_cycle_summary(
     table.add_column("risk", width=4)
     table.add_column("fill", width=4)
 
-    for rec in recent:
+    raw_recent_cycles = payload.get("recent_cycles", [])
+    recent_cycles = raw_recent_cycles if isinstance(raw_recent_cycles, list) else []
+    for rec in recent_cycles:
+        if not isinstance(rec, dict):
+            continue
         table.add_row(
             str(rec.get("cycle_id", "—"))[:16],
             str(rec.get("status", "—")),
@@ -3847,5 +3874,86 @@ def research_loop_cycle_summary(
         )
 
     console.print(table)
+    console.print("audit_path=" + str(payload.get("audit_path")))
+    console.print("auto_loop_enabled=False")
+    console.print("execution_enabled=False")
+    console.print("write_back_allowed=False")
+
+
+@research_app.command("trading-loop-run-once")
+def research_trading_loop_run_once(
+    symbol: str = typer.Option("BTC/USDT", "--symbol", help="Trading symbol"),
+    mode: str = typer.Option(
+        "paper",
+        "--mode",
+        help="Allowed run modes: paper or shadow (live fails closed)",
+    ),
+    provider: str = typer.Option(
+        "mock",
+        "--provider",
+        help="Read-only market-data provider (mock recommended)",
+    ),
+    analysis_profile: str = typer.Option(
+        "conservative",
+        "--analysis-profile",
+        help="conservative, bullish, or bearish control profile",
+    ),
+    loop_audit_path: str = typer.Option(
+        "artifacts/trading_loop_audit.jsonl",
+        "--loop-audit-path",
+        help="Append-only loop cycle audit path",
+    ),
+    execution_audit_path: str = typer.Option(
+        "artifacts/paper_execution_audit.jsonl",
+        "--execution-audit-path",
+        help="Append-only paper execution audit path",
+    ),
+    freshness_threshold_seconds: float = typer.Option(
+        120.0,
+        "--freshness-threshold-seconds",
+        help="Market data stale threshold",
+    ),
+    timeout_seconds: int = typer.Option(
+        10,
+        "--timeout-seconds",
+        help="Market data request timeout",
+    ),
+) -> None:
+    """Run one guarded paper/shadow cycle and append cycle audit output."""
+    import asyncio
+
+    from app.orchestrator.trading_loop import run_trading_loop_once
+
+    try:
+        cycle = asyncio.run(
+            run_trading_loop_once(
+                symbol=symbol,
+                mode=mode,
+                provider=provider,
+                analysis_profile=analysis_profile,
+                loop_audit_path=loop_audit_path,
+                execution_audit_path=execution_audit_path,
+                freshness_threshold_seconds=freshness_threshold_seconds,
+                timeout_seconds=timeout_seconds,
+            )
+        )
+    except ValueError as exc:
+        console.print(f"[red]Trading loop run-once blocked:[/red] {exc}")
+        raise typer.Exit(1) from exc
+
+    console.print("[bold]Trading Loop Run Once[/bold]")
+    console.print(f"cycle_id={cycle.cycle_id}")
+    console.print(f"status={cycle.status.value}")
+    console.print(f"symbol={cycle.symbol}")
+    console.print(f"mode={mode}")
+    console.print(f"provider={provider}")
+    console.print(f"analysis_profile={analysis_profile}")
+    console.print(f"market_data_fetched={cycle.market_data_fetched}")
+    console.print(f"signal_generated={cycle.signal_generated}")
+    console.print(f"risk_approved={cycle.risk_approved}")
+    console.print(f"order_created={cycle.order_created}")
+    console.print(f"fill_simulated={cycle.fill_simulated}")
+    console.print(f"notes={list(cycle.notes)}")
+    console.print("auto_loop_enabled=False")
     console.print("execution_enabled=False")
     console.print("write_back_allowed=False")
