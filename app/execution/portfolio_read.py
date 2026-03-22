@@ -357,7 +357,13 @@ async def build_portfolio_snapshot(
             timeout_seconds=timeout_seconds,
         )
 
-        market_price = market_snapshot.price if market_snapshot.available else None
+        # Fail closed: stale snapshots are treated as not usable for mark-to-market.
+        can_use_market_price = (
+            market_snapshot.available
+            and not market_snapshot.is_stale
+            and market_snapshot.price is not None
+        )
+        market_price = market_snapshot.price if can_use_market_price else None
         market_value = (
             round(position.quantity * market_price, 8)
             if market_price is not None
@@ -384,8 +390,11 @@ async def build_portfolio_snapshot(
                 market_data_source_timestamp_utc=market_snapshot.source_timestamp_utc,
                 market_data_is_stale=market_snapshot.is_stale,
                 market_data_freshness_seconds=market_snapshot.freshness_seconds,
-                market_data_available=market_snapshot.available,
-                market_data_error=market_snapshot.error,
+                market_data_available=can_use_market_price,
+                market_data_error=(
+                    market_snapshot.error
+                    or ("stale_data" if market_snapshot.is_stale else None)
+                ),
             )
         )
 
@@ -442,4 +451,3 @@ def build_exposure_summary(snapshot: PortfolioSnapshot) -> dict[str, object]:
         }
     )
     return payload
-

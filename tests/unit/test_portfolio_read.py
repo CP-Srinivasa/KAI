@@ -186,11 +186,87 @@ async def test_build_portfolio_snapshot_marks_stale_market_data(
 
     snapshot = await build_portfolio_snapshot(audit_path=audit_path)
 
+    assert snapshot.available is False
+    assert snapshot.error == "market_data_unavailable_for_open_positions"
+    assert snapshot.exposure_summary.mark_to_market_status == "degraded"
+    assert snapshot.exposure_summary.stale_position_count == 1
+    assert snapshot.exposure_summary.unavailable_price_count == 1
+    assert snapshot.positions[0].market_price is None
+    assert snapshot.positions[0].market_data_is_stale is True
+    assert snapshot.positions[0].market_data_available is False
+    assert snapshot.positions[0].market_data_error == "stale_data"
+
+
+@pytest.mark.asyncio
+async def test_build_portfolio_snapshot_mixed_fresh_and_stale_prices_degrades_but_stays_available(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    audit_path = tmp_path / "paper_execution_audit.jsonl"
+    _write_audit(
+        audit_path,
+        [
+            {
+                "event_type": "order_filled",
+                "order_id": "ord_1",
+                "symbol": "BTC/USDT",
+                "side": "buy",
+                "quantity": 0.2,
+                "fill_price": 50000.0,
+                "filled_at": "2026-03-21T10:00:00+00:00",
+                "portfolio_cash": 9000.0,
+                "realized_pnl_usd": 0.0,
+            },
+            {
+                "event_type": "order_filled",
+                "order_id": "ord_2",
+                "symbol": "ETH/USDT",
+                "side": "buy",
+                "quantity": 1.0,
+                "fill_price": 3000.0,
+                "filled_at": "2026-03-21T10:01:00+00:00",
+                "portfolio_cash": 6000.0,
+                "realized_pnl_usd": 0.0,
+            },
+        ],
+    )
+
+    async def fake_market_data_snapshot(**kwargs):  # noqa: ANN003
+        if kwargs["symbol"] == "BTC/USDT":
+            return _market_snapshot(
+                symbol="BTC/USDT",
+                price=60000.0,
+                is_stale=False,
+                available=True,
+                error=None,
+            )
+        return _market_snapshot(
+            symbol="ETH/USDT",
+            price=3200.0,
+            is_stale=True,
+            available=True,
+            error="stale_data",
+        )
+
+    monkeypatch.setattr(
+        "app.execution.portfolio_read.get_market_data_snapshot",
+        fake_market_data_snapshot,
+    )
+
+    snapshot = await build_portfolio_snapshot(audit_path=audit_path)
+
     assert snapshot.available is True
     assert snapshot.error is None
     assert snapshot.exposure_summary.mark_to_market_status == "degraded"
+    assert snapshot.exposure_summary.priced_position_count == 1
     assert snapshot.exposure_summary.stale_position_count == 1
-    assert snapshot.positions[0].market_data_is_stale is True
+    assert snapshot.exposure_summary.unavailable_price_count == 1
+    btc = next(position for position in snapshot.positions if position.symbol == "BTC/USDT")
+    eth = next(position for position in snapshot.positions if position.symbol == "ETH/USDT")
+    assert btc.market_price == pytest.approx(60000.0)
+    assert eth.market_price is None
+    assert eth.market_data_is_stale is True
+    assert eth.market_data_available is False
 
 
 @pytest.mark.asyncio
