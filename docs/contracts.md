@@ -13,6 +13,11 @@ These contracts are the foundation for:
 
 No agent may modify these lightly.
 
+Sprint 44 implementation note (2026-03-21):
+- Operator API transport hardening is implemented in `app/api/routers/operator.py`.
+- Canonical verification is covered by `tests/unit/test_api_operator.py` (20 tests).
+- If any Sprint 44 section below still says "pending", treat code/tests above as source of truth.
+
 ---
 
 ## Core Contracts
@@ -4079,199 +4084,1034 @@ PortfolioSnapshot (frozen, execution_enabled=False)
 
 ### §52.1 Scope & Nicht-Verhandelbar
 
-Sprint 41 definiert einen einzigen kanonischen, sicheren Control-Plane-Surface für den vorhandenen `TradingLoop`. Der Sprint erweitert ausschliesslich paper- und shadow-Modus-Funktionalität. Alle Live-, Broker- und autonomen Execution-Pfade bleiben verboten.
+Sprint 41 definiert und konsolidiert den kanonischen Control-Plane-Surface für den vorhandenen `TradingLoop`. Der Sprint ergänzt paper- und shadow-only run-once-Execution-Funktionalität. Alle Live-, Broker- und autonomen Execution-Pfade bleiben verboten.
 
-**Erlaubte Modi**: `"paper"` | `"shadow"`
-**Verbotene Modi**: `"live"` (immer fail-closed abgewiesen)
+**Erlaubte Modi**: `"paper"` | `"shadow"` (`ExecutionMode.PAPER` | `ExecutionMode.SHADOW`)
+**Verbotene Modi**: `"live"` und alle anderen Werte — immer fail-closed abgewiesen
 **Control Plane = operator-triggered**: kein Daemon, kein Auto-Scheduler, keine Hintergrundschleife
 **run-once = paper/shadow only**: ein MCP/CLI-Aufruf = ein Zyklus, kein Auto-Retry, kein Batching
 
-### §52.2 Neue Modelle
+### §52.2 Kanonischer Modul-Pfad
 
-#### `LoopStatus` (neu, `app/orchestrator/models.py`)
+Alle Sprint-41-Kernfunktionen liegen in **`app/orchestrator/trading_loop.py`** (kein separates neues Modul).
+
+**Relevante Module:**
+- `app/orchestrator/trading_loop.py` — TradingLoop-Klasse + alle Control-Plane-Builder
+- `app/orchestrator/models.py` — LoopStatusSummary, RecentCyclesSummary, LoopCycle, CycleStatus
+- ~~`app/orchestrator/loop_surface.py`~~ — **ENTFERNT** (Sprint 41C). Älteres paralleles Modul (LoopStatusReport, CycleSummary, RecentCyclesReport). Kein Code auf dem Filesystem. Nicht referenzieren.
+
+### §52.3 Modelle (bereits implementiert)
+
+#### `LoopStatusSummary` (`app/orchestrator/models.py`) ✅
 
 ```python
 @dataclass(frozen=True)
-class LoopStatus:
-    """Read-only operational status projection derived from trading_loop_audit.jsonl."""
-    mode: str                              # "paper" | "shadow" | "unknown"
-    loop_enabled: bool                     # False — kein autonomer Hintergrund-Loop
-    last_cycle_id: str | None
-    last_cycle_status: str | None          # CycleStatus.value oder None
-    last_cycle_at_utc: str | None
-    last_cycle_symbol: str | None
+class LoopStatusSummary:
+    mode: str                     # "paper" | "shadow" (ExecutionMode.value)
+    run_once_allowed: bool        # True wenn mode in {paper, shadow}
+    run_once_block_reason: str | None  # Blockierungsgrund oder None
     total_cycles: int
-    status_counts: tuple[tuple[str, int], ...]  # sortiert: (status, count)-Paare
+    last_cycle_id: str | None
+    last_cycle_status: str | None     # CycleStatus.value oder None
+    last_cycle_symbol: str | None
+    last_cycle_completed_at: str | None
     audit_path: str
-    generated_at_utc: str
-    execution_enabled: bool = False
-    write_back_allowed: bool = False
-    live_allowed: bool = False
+    auto_loop_enabled: bool = False   # invariant — kein autonomer Loop
+    execution_enabled: bool = False   # invariant
+    write_back_allowed: bool = False  # invariant
 ```
 
-Methode: `to_json_dict() -> dict[str, object]` — status_counts als `dict[str, int]` serialisiert.
+`to_json_dict()` → `report_type: "trading_loop_status_summary"`
 
-#### Bestehende Modelle (unverändert)
-
-- `LoopCycle` (frozen, `app/orchestrator/models.py`) — unveränderter Audit-Record
-- `CycleStatus` (StrEnum) — unveränderter Enum
-
-### §52.3 Neues Modul: `app/orchestrator/loop_read.py`
-
-Kanonisches Read-Only-Modul für den TradingLoop-Audit-Surface (spiegelt das Muster von `portfolio_read.py`).
-
-**Öffentliche Funktionen:**
+#### `RecentCyclesSummary` (`app/orchestrator/models.py`) ✅
 
 ```python
-def read_loop_status(
-    audit_path: str | Path = "artifacts/trading_loop_audit.jsonl",
-    mode: str = "paper",
-) -> LoopStatus:
-    """Baut LoopStatus aus dem JSONL-Audit-Log. Keine Seiteneffekte."""
+@dataclass(frozen=True)
+class RecentCyclesSummary:
+    total_cycles: int
+    status_counts: dict[str, int]
+    recent_cycles: tuple[dict[str, object], ...]
+    last_n: int
+    audit_path: str
+    auto_loop_enabled: bool = False
+    execution_enabled: bool = False
+    write_back_allowed: bool = False
 ```
 
-**Design-Invarianten:**
-- Rein synchron (kein async nötig, nur lesend)
-- Never-raise: Fehler → `loop_enabled=False`, `total_cycles=0`, leere `status_counts`
-- Existiert die Datei nicht → leerer LoopStatus (kein Fehler)
-- Liest ausschliesslich `artifacts/trading_loop_audit.jsonl`
-- Keine Engine-Instanzen, kein In-Memory-Zugriff
+`to_json_dict()` → `report_type: "recent_trading_cycles_summary"`
 
-### §52.4 Neue MCP Read-Only Surfaces
+### §52.4 Builder-Funktionen (bereits implementiert, `app/orchestrator/trading_loop.py`)
 
-#### `get_loop_status` (neu)
+```python
+def build_loop_status_summary(
+    *, audit_path: str | Path = _AUDIT_LOG, mode: str | ExecutionMode = ExecutionMode.PAPER,
+) -> LoopStatusSummary:
+    """Read-only. Liest trading_loop_audit.jsonl. Never-raise."""
 
-```
-Klassifikation: canonical_read (in _CANONICAL_MCP_READ_TOOL_NAMES)
-Modul: app/agents/mcp_server.py
-Input:
-  audit_path: str = "artifacts/trading_loop_audit.jsonl"
-  mode: str = "paper"
-Output: LoopStatus.to_json_dict()
-Garantien: execution_enabled=False, write_back_allowed=False, live_allowed=False
-```
+def build_recent_cycles_summary(
+    *, audit_path: str | Path = _AUDIT_LOG, last_n: int = 20,
+) -> RecentCyclesSummary:
+    """Read-only. Liest trading_loop_audit.jsonl. Never-raise."""
 
-#### `get_loop_cycle_summary` (bestehend, unverändert)
-
-Bereits in `_CANONICAL_MCP_READ_TOOL_NAMES`. Liest die letzten N Zyklen aus dem JSONL.
-Output-Felder (unveränderter Contract): `total_cycles`, `status_counts`, `recent_cycles`, `execution_enabled=False`, `write_back_allowed=False`.
-
-### §52.5 Neue CLI Read-Only Surfaces
-
-#### `research loop-status` (neu)
-
-```
-Befehl: python -m app.cli.main research loop-status
-Optionen: --audit-path, --mode
-Output: LoopStatus-Felder (Text-Tabelle)
-Garantien: execution_enabled=False, write_back_allowed=False, live_allowed=False
+async def run_trading_loop_once(
+    *, symbol: str = "BTC/USDT", mode: str | ExecutionMode = ExecutionMode.PAPER,
+    provider: str = "mock", analysis_profile: str = "conservative",
+    loop_audit_path: str | Path = _AUDIT_LOG,
+    execution_audit_path: str | Path = _PAPER_EXECUTION_AUDIT_LOG,
+    freshness_threshold_seconds: float = 120.0, timeout_seconds: int = 10,
+) -> LoopCycle:
+    """Guarded. Fail-closed auf mode=live. Never-raise (Fehler im LoopCycle.status=ERROR)."""
 ```
 
-#### `research loop-cycle-summary` (bestehend, unverändert)
+`build_loop_trigger_analysis(symbol, analysis_profile)` — baut `AnalysisResult` aus Profil: `conservative` (kein actionable signal), `bullish`, `bearish`.
 
-Bereits implementiert. Kein Sprint-41-Änderungsbedarf.
-
-### §52.6 Neue Guarded-Write Surface: `run_paper_cycle`
-
-**Die einzige operator-triggerte Ausführungs-Surface dieses Sprints.**
-
-#### MCP Tool: `run_paper_cycle`
-
-```
-Klassifikation: guarded_write (in _GUARDED_MCP_WRITE_TOOL_NAMES)
-Modul: app/agents/mcp_server.py
-
-Input:
-  symbol: str                      — Trading-Symbol (z. B. "BTC/USDT")
-  thesis: str                      — Analyse-Begründung (Freitext)
-  sentiment: str                   — "bullish" | "bearish" | "neutral"
-  confidence_score: float          — [0.0, 1.0]
-  mode: str = "paper"              — MUSS "paper" oder "shadow" sein
-  audit_path: str = "artifacts/trading_loop_audit.jsonl"
-
-Output:
-  trigger_action: str = "run_paper_cycle"
-  audit_ref: str                   — cycle_id des ausgeführten LoopCycle
-  mode: str                        — validierter Modus ("paper" | "shadow")
-  cycle: dict                      — LoopCycle.to_json_dict()
-  execution_enabled: bool = False
-  write_back_allowed: bool = False
-  live_allowed: bool = False
-  error: str | None                — None bei Erfolg; Ablehnungsgrund bei fail-closed
-```
-
-**Security Contract (nicht verhandelbar):**
+### §52.5 Security Contract `run_trading_loop_once`
 
 | Bedingung | Reaktion |
 |---|---|
-| `mode == "live"` | Sofortige fail-closed Ablehnung, kein Zyklus, `error` gesetzt |
-| `mode` nicht in {"paper", "shadow"} | Sofortige fail-closed Ablehnung |
-| `confidence_score` außerhalb [0.0, 1.0] | Ablehnung, kein Zyklus |
-| `symbol` leer oder None | Ablehnung, kein Zyklus |
-| Interner Fehler | `LoopCycle(status=ERROR, notes=[...])` — nie raise |
+| `mode == "live"` | `_run_once_guard()` → `raise ValueError` (fail-closed) |
+| `mode` nicht in {"paper","shadow"} | `_normalize_loop_mode()` → `raise ValueError` |
+| `provider="mock"` (Default) | `MockMarketDataAdapter` — kein Netzwerk |
+| `analysis_profile="conservative"` (Default) | Kein actionable Signal → `CycleStatus.NO_SIGNAL` |
+| Interner Fehler | `LoopCycle(status=ERROR, notes=[...])` |
 
-**Interne Ausführungs-Pipeline (paper-only):**
+**Isolation**: `run_trading_loop_once` erstellt eine NEUE `PaperExecutionEngine` — kein Portfolio-Replay aus `paper_execution_audit.jsonl`. Wenn ein Trade simuliert wird (COMPLETED), schreibt die Engine den Fill in `paper_execution_audit.jsonl` (korrekt — entspricht dem Paper-Execution-Audit-Pattern).
 
-1. Mode-Validierung (fail-closed auf "live")
-2. Konfigurations-Guard (execution_enabled=False, live_allowed=False bestätigen)
-3. `MockMarketDataAdapter` instanziieren (deterministisch, kein Netzwerk)
-4. `RiskEngine(RiskLimits(...))` mit Default-Limits
-5. `PaperExecutionEngine(live_enabled=False)` — fresh portfolio, kein Replay des paper_execution_audit.jsonl (run-once ist isoliert)
-6. `SignalGenerator(mode=mode, venue="paper")`
-7. Minimales `AnalysisResult` aus inline-Params konstruieren
-8. `TradingLoop.run_cycle(analysis, symbol)` awaiten
-9. `LoopCycle` zurückgeben mit Security-Flags
+### §52.6 Read-Only MCP Surfaces
 
-**Isolation-Garantie**: `run_paper_cycle` verwendet ein frisches `PaperExecutionEngine`-Portfolio. Es schreibt NICHT in `paper_execution_audit.jsonl`. Die einzige Audit-Spur ist `trading_loop_audit.jsonl` (append-only).
-
-#### CLI Command: `research run-paper-cycle` (neu)
+#### `get_trading_loop_status` (neu — in `_CANONICAL_MCP_READ_TOOL_NAMES` deklariert, noch nicht implementiert 🔲)
 
 ```
-Befehl: python -m app.cli.main research run-paper-cycle
-Optionen:
-  --symbol TEXT
-  --thesis TEXT
-  --sentiment [bullish|bearish|neutral]
-  --confidence FLOAT
-  --mode [paper|shadow]  (default: paper)
-Output: LoopCycle-Felder (Text + Security-Flags)
-Garantien: identisch mit MCP-Tool
+Input: audit_path, mode
+Output: LoopStatusSummary.to_json_dict()
 ```
 
-### §52.7 Read-Only vs. Guarded-Write Übersicht
+#### `get_recent_trading_cycles` (neu — in `_CANONICAL_MCP_READ_TOOL_NAMES` deklariert, noch nicht implementiert 🔲)
 
-| Surface | Typ | Klassifikation |
+```
+Input: audit_path, last_n
+Output: RecentCyclesSummary.to_json_dict()
+```
+
+#### `get_loop_cycle_summary` (bestehend — Kompatibilitäts-Alias für `get_recent_trading_cycles`)
+
+### §52.7 Guarded-Write MCP Surface
+
+#### `run_trading_loop_once` (neu — in `_GUARDED_MCP_WRITE_TOOL_NAMES` deklariert, noch nicht implementiert 🔲)
+
+```
+Klassifikation: guarded_write
+Input: symbol, mode="paper", provider="mock", analysis_profile="conservative",
+       loop_audit_path, execution_audit_path
+Output: LoopCycle.to_json_dict() + auto_loop_enabled=False + execution_enabled=False +
+        write_back_allowed=False + error (None bei Erfolg, Ablehnungsgrund bei fail-closed)
+```
+
+### §52.8 CLI Surfaces
+
+| Command | Status | Backing |
 |---|---|---|
-| `get_loop_status` | MCP | canonical_read |
-| `get_loop_cycle_summary` | MCP | canonical_read (bestehend) |
-| `research loop-status` | CLI | read-only |
-| `research loop-cycle-summary` | CLI | read-only (bestehend) |
-| `run_paper_cycle` | MCP | guarded_write |
-| `research run-paper-cycle` | CLI | guarded_write |
+| `research trading-loop-status` | ✅ implementiert | `build_loop_status_summary()` |
+| `research trading-loop-recent-cycles` | ✅ implementiert | JSONL direkt |
+| `research loop-cycle-summary` | ✅ Alias für trading-loop-recent-cycles | — |
+| `research trading-loop-run-once` | 🔲 in FINAL_RESEARCH_COMMAND_NAMES, nicht registriert | `run_trading_loop_once()` |
 
-**Telegram**: Kein neuer Sprint-41-Telegram-Command. Erweiterung auf `/loop-status` ist als zukünftige Phase-B-Aufgabe vorgesehen (nach Stabilisierung).
+### §52.9 Erkannte Drift (Sprint 41 Befund)
 
-### §52.8 Artefakt-Contract
-
-| Artefakt | Zweck | Zugriffstyp |
-|---|---|---|
-| `artifacts/trading_loop_audit.jsonl` | LoopCycle-Audit-Log | append-only write + read |
-| `artifacts/paper_execution_audit.jsonl` | Paper-Execution-Audit | read-only aus `run_paper_cycle` |
-
-`run_paper_cycle` schreibt NICHT in `paper_execution_audit.jsonl`. Das fresh-Portfolio der run-once-Ausführung ist ephemer und wird nicht persistiert.
-
-### §52.9 Invarianten-Referenz
-
-- `docs/intelligence_architecture.md` I-301–I-310 (Sprint 41)
-- `ASSUMPTIONS.md` A-047–A-051 (Sprint 41)
-- `AGENTS.md` P47 (Sprint 41)
+1. **Frühe Arch-Definition** (diese Session, vor Implementierungs-Check) verwendete falsche Namen: `LoopStatus`, `loop_read.py`, `read_loop_status()`, `get_loop_status`, `run_paper_cycle`, `research loop-status`, `research run-paper-cycle` — alle superseded durch §52.
+2. **Failing Test**: `test_research_command_inventory_matches_registration_and_help` — `trading-loop-run-once` in FINAL list, nicht registriert → Pre-existing-Blocker, Sprint-41-Impl (Codex) muss CLI-Command registrieren.
+3. ~~**`loop_surface.py`**~~ (LoopStatusReport, CycleSummary) — **ENTFERNT** (Sprint 41C). Kein Code, keine Tests mehr auf dem Filesystem. `test_loop_surface.py` ebenfalls entfernt.
+4. **`get_loop_cycle_summary`** MCP — war früher direkte Implementierung, ist jetzt Kompatibilitäts-Alias für `get_recent_trading_cycles` (noch zu implementieren).
 
 ### §52.10 Tests (Sprint 41 — Ziel)
 
 | Datei | Scope | Ziel |
 |---|---|---|
-| `tests/unit/test_loop_read.py` | `loop_read.py` — LoopStatus, read_loop_status | ≥ 8 Tests |
-| `tests/unit/test_loop_status_model.py` | LoopStatus Modell + to_json_dict | ≥ 5 Tests |
-| `tests/unit/test_mcp_loop_control.py` | MCP get_loop_status + run_paper_cycle | ≥ 8 Tests |
-| `tests/unit/test_cli_loop_control.py` | CLI loop-status + run-paper-cycle | ≥ 6 Tests |
-| **Gesamt Sprint 41** | **≥ 27 neue Tests** | Ziel: 1453+ passed |
+| `tests/unit/test_mcp_loop_control.py` | `get_trading_loop_status` + `get_recent_trading_cycles` + `run_trading_loop_once` | ≥ 8 Tests |
+| `tests/unit/test_cli_loop_control.py` | CLI `trading-loop-run-once` + inventory fix | ≥ 5 Tests |
+| **Gesamt Sprint 41** | **≥ 13 neue Tests** | Ziel: 1456+ passed, 0 failed |
+
+**Baseline**: 1442 passed, 1 failed (pre-existing: `test_research_command_inventory_matches_registration_and_help`)
+
+### §52.11 Invarianten-Referenz
+
+- `docs/intelligence_architecture.md` I-301–I-310 (Sprint 41)
+- `ASSUMPTIONS.md` A-047–A-055 (Sprint 41)
+- `AGENTS.md` P47 (Sprint 41)
+
+### §52C Sprint 41C — Kanonisch Festziehen (Drift-Bereinigung)
+
+**Sprint 41C** (2026-03-21): Konsolidierung. Alle stalen Referenzen auf `loop_surface.py` und `test_loop_surface.py` bereinigt.
+
+#### §52C.1 Modulstatus (kanonisch)
+
+| Modul | Status |
+|---|---|
+| `app/orchestrator/trading_loop.py` | ✅ KANONISCH — einziger gültiger Control-Plane-Pfad |
+| `app/orchestrator/models.py` | ✅ KANONISCH — LoopStatusSummary, RecentCyclesSummary, LoopCycle |
+| ~~`app/orchestrator/loop_surface.py`~~ | ❌ ENTFERNT — kein Code auf dem Filesystem |
+| ~~`tests/unit/test_loop_surface.py`~~ | ❌ ENTFERNT — kein Code auf dem Filesystem |
+
+#### §52C.2 Bereinigter Drift (§52.9 Ergänzung)
+
+- **§52.2** (Modul-Pfad): `loop_surface.py` als ENTFERNT markiert ✅
+- **§52.9 Punkt 3**: `loop_surface.py`/`test_loop_surface.py` als ENTFERNT markiert ✅
+- **I-307** (intelligence_architecture.md): als REMOVED markiert ✅
+- **P47** (AGENTS.md): Testanzahl 46→43 korrigiert, Test-Stand auf 1444/41C ✅
+- **TASKLIST.md** Sprint 41: 41.C + test_loop_surface.py-Zeile als ENTFERNT markiert ✅
+
+#### §52C.3 Finaler Teststand
+
+| Kategorie | Stand |
+|---|---|
+| Gesamt Tests | 1444 passed, 0 failed |
+| Loop-Tests | 43 (6 Dateien, ohne loop_surface) |
+| ruff | clean |
+| Datum | 2026-03-21 |
+
+---
+
+## §53 Sprint 42 — Telegram Webhook Hardening
+
+**Datum**: 2026-03-21
+**Sprint**: 42
+**Status**: Historischer Entwurf (superseded durch §53C)
+
+> **Consolidation note (Sprint 42C):** Sections §53.1–§53.11 are kept as
+> historical design context only. The canonical, active runtime path is defined
+> in §53C (`app/messaging/telegram_bot.py`).
+
+### §53.1 Architektonische Grenzen
+
+**Webhook Layer = Transport Hardening — keine Business-Logik.**
+
+| Eigenschaft | Wert |
+|---|---|
+| Scope | Transport-Validierung: Secret-Check, Typ-Filter, Replay-Schutz, Audit |
+| NICHT in Scope | Business-Logik, neue Commands, neue MCP-Tools, neue CLI-Commands |
+| webhook ≠ | execution surface, approval engine, live path, scheduling surface |
+| Entwurfsmodul (historisch) | Separates Legacy-Webhook-Modul (nicht kanonisch; durch `app/messaging/telegram_bot.py` ersetzt) |
+| Downstream | `TelegramOperatorBot.process_update()` — unverändert, erhält nur validated updates |
+| Live | immer default-off; kein Live-Pfad in Sprint 42 |
+
+Der Webhook-Layer ist ein reiner Eingangsfilter vor `TelegramOperatorBot.process_update()`. Er prüft, dedupliziert und loggt — mehr nicht.
+
+### §53.2 Neue Settings
+
+`OperatorSettings` (`app/core/settings.py`) bekommt:
+
+```python
+telegram_webhook_secret: str = Field(default="")
+# Env-Var: OPERATOR_TELEGRAM_WEBHOOK_SECRET
+# Leer = Webhook-Endpoint fail-closed (HTTP 403 auf jeden Request)
+```
+
+**Invariante**: Kein Webhook ohne konfigurierten Secret. `webhook_signature_required: True` in Runtime-Config ist damit operational.
+
+### §53.3 WebhookValidatedUpdate (frozen dataclass)
+
+Kanonisches Output-Modell des Webhook-Layers:
+
+```python
+@dataclass(frozen=True)
+class WebhookValidatedUpdate:
+    update_id: int
+    chat_id: int
+    user_id: int
+    text: str
+    received_at_utc: str          # ISO 8601 UTC
+    source_verified: bool         # True wenn secret_token valid
+    is_duplicate: bool            # True wenn update_id bereits gesehen
+    audit_outcome: str            # siehe §53.7
+    raw_update: dict[str, object] # originales dict, unveränderlich
+    # Safety-Invarianten (immer False — nie aus Webhook gesetzt)
+    execution_enabled: bool = False
+    write_back_allowed: bool = False
+```
+
+`to_audit_dict()` → `report_type: "webhook_validated_update"`
+
+### §53.4 WebhookAuditRecord
+
+Format (`artifacts/webhook_audit.jsonl`):
+
+```json
+{
+  "report_type": "webhook_audit_record",
+  "timestamp_utc": "2026-03-21T10:00:00+00:00",
+  "update_id": 12345678,
+  "chat_id": 123456789,
+  "user_id": 123456789,
+  "text_preview": "/status",
+  "source_verified": true,
+  "is_duplicate": false,
+  "audit_outcome": "accepted",
+  "forwarded_to_bot": true
+}
+```
+
+Regeln:
+- Append-only — keine Zeile wird überschrieben oder gelöscht
+- Wird für **jeden** eingehenden Request geschrieben — unabhängig vom Outcome
+- Enthält keine Secrets, Tokens oder Credentials
+- `text_preview` auf 50 Zeichen begrenzt (kein vollständiger Message-Content im Audit)
+
+### §53.5 WebhookValidator
+
+```python
+class WebhookValidator:
+    def __init__(
+        self,
+        *,
+        secret_token: str,
+        allowed_update_types: frozenset[str] = frozenset({"message"}),
+        replay_window_size: int = 1000,
+        audit_log_path: str = "artifacts/webhook_audit.jsonl",
+    ) -> None: ...
+
+    def validate(
+        self,
+        body: dict[str, Any],
+        provided_secret: str,
+    ) -> WebhookValidatedUpdate:
+        """Prüft Secret, Typ, Replay. Schreibt Audit. Gibt WebhookValidatedUpdate zurück.
+        
+        Nie raise. Gibt bei jedem Fehler rejected_* outcome zurück.
+        """
+        ...
+
+    def is_replay(self, update_id: int) -> bool:
+        """Prüft ob update_id bereits im Replay-Buffer."""
+        ...
+
+    def mark_seen(self, update_id: int) -> None:
+        """Fügt update_id in Replay-Buffer ein (deque, maxlen=replay_window_size)."""
+        ...
+```
+
+**`validate()` ist niemals raise** — jede Fehlerklasse wird in `audit_outcome` kodiert und geloggt.
+
+### §53.6 Sicherheitsinvarianten (fail-closed)
+
+| Bedingung | audit_outcome | HTTP | dispatch |
+|---|---|---|---|
+| `secret_token == ""` (unkonfiguriert) | `rejected_no_secret` | 403 | Nein |
+| `provided_secret != secret_token` | `rejected_invalid_secret` | 403 | Nein |
+| body ohne `update_id` oder kein dict | `rejected_malformed` | 400 | Nein |
+| update_id bereits gesehen | `rejected_replay` | 200 | Nein |
+| kein erlaubter Update-Typ | `rejected_invalid_type` | 200 | Nein |
+| alle Checks bestanden | `accepted` | 200 | Ja |
+
+**Kernregel**: `process_update()` wird ausschliesslich mit `audit_outcome == "accepted"` aufgerufen. Kein rejected-Update erreicht den Command-Handler.
+
+### §53.7 Audit Outcomes (kanonisch)
+
+```python
+_VALID_AUDIT_OUTCOMES = frozenset({
+    "accepted",
+    "rejected_no_secret",
+    "rejected_invalid_secret",
+    "rejected_malformed",
+    "rejected_replay",
+    "rejected_invalid_type",
+})
+```
+
+### §53.8 Replay Protection
+
+- In-Memory Ring Buffer: `collections.deque(maxlen=1000)` — default 1000 update_ids
+- Kein persistenter State (kein JSONL für Replay-Buffer)
+- Bei Neustart: leerer Buffer (safe — Telegram-retransmits werden als `rejected_replay` behandelt, was idempotent korrekt ist)
+- Kein Thread-Locking erforderlich (single-threaded async handler)
+
+### §53.9 Erlaubte Update-Typen
+
+```python
+_ALLOWED_WEBHOOK_UPDATE_TYPES: frozenset[str] = frozenset({"message"})
+```
+
+Explizit NICHT erlaubt (→ `rejected_invalid_type`, silently dropped nach Audit):
+
+| Update-Typ | Grund |
+|---|---|
+| `edited_message` | Replay-Risiko, doppelte Command-Auslösung möglich |
+| `channel_post` / `edited_channel_post` | kein Operator-Kanal |
+| `inline_query` / `chosen_inline_result` | kein Inline-Interface |
+| `callback_query` | kein Inline-Button-Interface |
+| `shipping_query` / `pre_checkout_query` | kein Payment-Interface |
+| `poll` / `poll_answer` | kein Poll-Interface |
+| `my_chat_member` / `chat_member` | kein Membership-Event-Handler |
+
+### §53.10 Tests (Sprint 42 — Ziel)
+
+> **Legacy note:** The file names in this subsection describe the original
+> Sprint-42 draft test plan and are superseded by §53C.5 canonical tests.
+
+| Datei | Scope | Ziel |
+|---|---|---|
+| Separater Legacy-Webhook-Test | WebhookValidator: alle 6 outcomes + dispatch logic + audit | ≥ 10 Tests |
+
+Pflicht-Testfälle:
+1. valid secret + message → `accepted`, dispatched
+2. invalid secret → `rejected_invalid_secret`, nicht dispatched
+3. leer secret (unkonfiguriert) → `rejected_no_secret`, nicht dispatched
+4. kein `update_id` → `rejected_malformed`, nicht dispatched
+5. `edited_message` statt `message` → `rejected_invalid_type`, nicht dispatched
+6. gleiche `update_id` zweimal → zweiter: `rejected_replay`, nicht dispatched
+7. `accepted` → `process_update()` aufgerufen (mock)
+8. jedes rejected → `process_update()` NICHT aufgerufen (mock)
+9. `webhook_audit.jsonl` append bei `accepted`
+10. `webhook_audit.jsonl` append bei `rejected_invalid_secret`
+
+**Baseline**: 1444 passed, 0 failed | Ziel: 1454+ passed, 0 failed
+
+### §53.11 Invarianten-Referenz
+
+- `docs/intelligence_architecture.md` I-311–I-320 (Sprint 42)
+- `ASSUMPTIONS.md` A-056–A-062 (Sprint 42)
+- `AGENTS.md` P48 (Sprint 42)
+- `TELEGRAM_INTERFACE.md` — Abschnitt "Webhook Transport Layer"
+
+### §53C Sprint 42C — Kanonisch Festziehen (Drift-Bereinigung)
+
+**Sprint 42C** (2026-03-21): Konsolidierung. §53 verwendete falsche Modul-, Klassen- und Methodennamen. Die Implementierung (Codex) integrierte den Webhook-Guard direkt in `telegram_bot.py` — einfacher und korrekt.
+
+#### §53C.1 Implementierungs-Delta (§53 war falsch)
+
+| §53 Contract | Tatsächlich implementiert (kanonisch) |
+|---|---|
+| Neues separates Webhook-Modul | **Integriert in `app/messaging/telegram_bot.py`** (kein separates Modul) |
+| Klasse `WebhookValidator` | **Methoden in `TelegramOperatorBot`** |
+| Methode `validate()` | **`process_webhook_update()`** |
+| Resultat `WebhookValidatedUpdate` | **`TelegramWebhookProcessResult`** (frozen, `accepted`, `processed`, `rejection_reason`, `update_id`, `update_type`) |
+| Audit `artifacts/webhook_audit.jsonl` (alle Requests) | **`artifacts/telegram_webhook_rejections.jsonl`** (Rejections only) |
+| `edited_message` verboten | **`edited_message` erlaubt per Default** (konfigurierbar via `webhook_allowed_updates`) |
+| `deque(maxlen=1000)` | **`OrderedDict` FIFO, `maxlen=2048`** |
+| 6 abstrakte Rejection-Reasons | **12 spezifische Rejection-Reasons** |
+
+#### §53C.2 Kanonische Modulstruktur (final)
+
+```
+app/messaging/telegram_bot.py  ← EINZIGE Datei, kein separates Legacy-Webhook-Modul
+├── _WEBHOOK_ALLOWED_UPDATES_DEFAULT = ("message", "edited_message")
+├── _WEBHOOK_MAX_BODY_BYTES_DEFAULT = 64_000
+├── _WEBHOOK_MAX_SEEN_UPDATE_IDS_DEFAULT = 2_048
+├── _WEBHOOK_REJECTION_AUDIT_LOG_DEFAULT = "artifacts/telegram_webhook_rejections.jsonl"
+├── TelegramWebhookProcessResult (frozen dataclass)
+│   ├── accepted: bool
+│   ├── processed: bool
+│   ├── rejection_reason: str | None
+│   ├── update_id: int | None
+│   └── update_type: str | None
+└── TelegramOperatorBot
+    ├── __init__(webhook_secret_token, webhook_rejection_audit_log, webhook_allowed_updates,
+    │           webhook_max_body_bytes, webhook_max_seen_update_ids, ...)
+    ├── webhook_configured: bool (property)
+    ├── get_webhook_status_summary() → dict (read-only, execution_enabled=False)
+    ├── process_webhook_update(method, content_type, content_length,
+    │                          header_secret_token, update) → TelegramWebhookProcessResult
+    ├── _constant_time_secret_match(candidate) → bool  [hmac.compare_digest]
+    ├── _extract_allowed_update_type(update) → str | None
+    ├── _track_webhook_update_id(update_id) → None  [OrderedDict FIFO]
+    ├── _audit_webhook_rejection(...) → None  [telegram_webhook_rejections.jsonl]
+    └── _reject_webhook(...) → TelegramWebhookProcessResult  [never-raise]
+```
+
+#### §53C.3 Kanonische Rejection-Reasons (final, 12 Werte)
+
+| rejection_reason | Auslöser |
+|---|---|
+| `webhook_secret_not_configured` | `webhook_secret_token` leer/None — fail-closed |
+| `invalid_http_method` | Methode != POST |
+| `invalid_content_type` | Content-Type nicht `application/json` |
+| `missing_content_length` | Content-Length Header fehlt |
+| `invalid_content_length` | Content-Length ≤ 0 |
+| `payload_too_large` | Content-Length > `webhook_max_body_bytes` (64_000) |
+| `missing_secret_token_header` | `X-Telegram-Bot-Api-Secret-Token` Header leer/fehlt |
+| `invalid_secret_token` | Header-Token != konfigurierter Token (constant-time) |
+| `missing_or_invalid_update_body` | `update` ist kein dict |
+| `invalid_update_id` | `update_id` fehlt, ist kein int oder ist negativ |
+| `disallowed_update_type` | kein erlaubter Update-Typ im Body |
+| `duplicate_update_id` | `update_id` bereits im Replay-Buffer |
+
+**Erfolgspfad**: kein `rejection_reason` → `accepted=True`, `processed=True` → dispatch an `process_update()`
+
+#### §53C.4 `edited_message` — korrigierte Semantik
+
+**§53 war falsch**: `edited_message` als grundsätzlich verboten.
+**Tatsächlich**: `edited_message` ist im Default erlaubt (`_WEBHOOK_ALLOWED_UPDATES_DEFAULT`). Operatoren können es per `webhook_allowed_updates=("message",)` ausschliessen. Die Implementierung lässt `edited_message`-Commands durch `process_update()` zu — dies ist bewusst, da editierte Operator-Commands keine Sicherheitsrisiken darstellen, wenn Replay-Schutz (update_id-Deduplication) aktiv ist.
+
+#### §53C.5 Audit-Strategie (korrigiert)
+
+**§53 war falsch**: Audit für alle Requests.
+**Tatsächlich**: `artifacts/telegram_webhook_rejections.jsonl` — nur für abgewiesene Requests. Accepted requests werden via `artifacts/operator_commands.jsonl` (bestehender Bot-Layer-Audit) geloggt.
+
+Format eines Rejection-Audit-Eintrags:
+```json
+{
+  "timestamp_utc": "2026-03-21T10:00:00+00:00",
+  "event": "telegram_webhook_rejected",
+  "reason": "invalid_secret_token",
+  "method": "POST",
+  "content_type": "application/json",
+  "content_length": 64,
+  "update_id": null,
+  "update_type": null,
+  "allowed_updates": ["message", "edited_message"],
+  "execution_enabled": false,
+  "write_back_allowed": false
+}
+```
+
+#### §53C.6 Finaler Teststand
+
+| Kategorie | Stand |
+|---|---|
+| Gesamt Tests | 1456 passed, 0 failed |
+| Webhook-Tests in test_telegram_bot.py | 15 neue Tests (589–828) |
+| Gesamt test_telegram_bot.py | 43 Tests (war: 28) |
+| ruff | clean |
+| Datum | 2026-03-21 |
+
+Bereinigter Drift:
+- ~~Legacy Webhook Cache-Artefakt~~ — stale Cache-Datei (kein `.py` auf Filesystem; pytest lädt nur `.py`) — inaktiv, kein Handlungsbedarf
+- kein separates Legacy-Webhook-Modul (war nie erstellt — korrekt, da integriert)
+
+### §53D Sprint 42D — Finales Einfrieren (Documentation Freeze)
+
+**Sprint 42D** (2026-03-21): Alle Restdrift-Referenzen bereinigt. §53 + §53C + §53D bilden zusammen die vollständige kanonische Dokumentation des Telegram-Webhook-Hardening-Pfads.
+
+#### §53D.1 Einziger kanonischer Webhook-Transport-Pfad (eingefroren)
+
+```
+app/messaging/telegram_bot.py
+└── TelegramOperatorBot.process_webhook_update(
+        method, content_type, content_length,
+        header_secret_token, update
+    ) → TelegramWebhookProcessResult
+```
+
+**Keine weiteren Webhook-Module**: kein separates Legacy-Webhook-Modul, kein separates Guard-Modul.
+**§53.1–§53.11** = historische Entwurfs-Dokumentation, superseded durch §53C.
+**§53C** = kanonische Implementierungs-Dokumentation.
+**§53D** = finaler Einfrierungs-Nachweis.
+
+#### §53D.2 Bereinigter Drift (Sprint 42D)
+
+| Dokument | Drift | Fix |
+|---|---|---|
+| `ASSUMPTIONS.md` A-056 | separates Legacy-Webhook-Modul als Plan | → `telegram_bot.py` integriert |
+| `ASSUMPTIONS.md` A-057 | `OperatorSettings.telegram_webhook_secret` | → Konstruktor-Parameter |
+| `TASKLIST.md` Sprint 42 | `"pending (Codex)"` | → `✅ vollständig` |
+| `TASKLIST.md` Sprint 42 Scope | historischer Plan ohne Korrekturvermerk | → durchgestrichene Originalplanung |
+
+#### §53D.3 Finaler Teststand (eingefroren)
+
+| Metrik | Wert |
+|---|---|
+| Gesamt-Tests | 1456 passed, 0 failed |
+| Webhook-Tests | 15 in `test_telegram_bot.py` (Zeilen 589–828) |
+| ruff | clean |
+| Eingefroren | 2026-03-21 |
+
+---
+
+## §54 Sprint 43 — FastAPI Operator API Surface
+
+**Datum**: 2026-03-21  
+**Status**: Implementiert (kanonischer API-Expose-Layer auf bestehende Surfaces)
+
+### §54.1 Scope und Sicherheitsgrenzen
+
+- Keine neue Business-Logik im API-Layer.
+- Read-only Endpunkte exposen ausschliesslich bestehende kanonische Summaries.
+- Genau ein guarded Endpunkt: TradingLoop run-once (paper/shadow only via bestehende Guards).
+- Kein Live-/Broker-/Trading-Feature-Ausbau.
+
+### §54.2 Auth-/Guard-Kontrakt
+
+- `/operator/*` nutzt Bearer-Token-Guard auf Basis `APP_API_KEY`.
+- Fail-closed:
+  - `APP_API_KEY` leer/nicht gesetzt → `503`.
+  - fehlender/ungueltiger Authorization Header → `401`.
+  - falscher Token → `403`.
+- Tokenvergleich erfolgt constant-time via `secrets.compare_digest`.
+
+### §54.3 Kanonische Endpunkte
+
+Read-only:
+
+- `GET /operator/status` → `mcp_server.get_operational_readiness_summary()`
+- `GET /operator/readiness` → `mcp_server.get_operational_readiness_summary()`
+- `GET /operator/decision-pack` → `mcp_server.get_decision_pack_summary()`
+- `GET /operator/portfolio-snapshot` → `mcp_server.get_paper_portfolio_snapshot(...)`
+- `GET /operator/exposure-summary` → `mcp_server.get_paper_exposure_summary(...)`
+- `GET /operator/trading-loop/status` → `mcp_server.get_trading_loop_status(...)`
+- `GET /operator/trading-loop/recent-cycles` → `mcp_server.get_recent_trading_cycles(...)`
+
+Guarded:
+
+- `POST /operator/trading-loop/run-once` → `mcp_server.run_trading_loop_once(...)`
+
+### §54.4 Guarded run-once Invarianten
+
+- `mode` wird nicht lokal im Router erweitert oder interpretiert.
+- Alle Mode-Checks bleiben im kanonischen TradingLoop-Backbone.
+- `mode=live` bleibt fail-closed (kontrollierte Ablehnung, keine Seiteneffekte).
+- Kein Scheduler, kein Background-Worker, kein Auto-Loop.
+
+### §54.5 Testabdeckung (Sprint 43)
+
+`tests/unit/test_api_operator.py` verifiziert:
+
+- Auth fail-closed Verhalten (503/401/403).
+- Read-only Endpunkt-Mapping und Payload-Passthrough.
+- Guarded run-once fuer `paper` und `shadow`.
+- Live-Mode fail-closed am guarded Endpunkt.
+- Keine Broker-/Trading-Semantik auf den Read-Surfaces.
+
+---
+
+## §54 Sprint 43 — FastAPI Operator API Surface (Historischer Entwurf)
+
+> **Sprint 43C (2026-03-21):** Dieser Block war der ursprüngliche Sprint-43-Definitions-Entwurf. Er enthält falsche Endpunkt-Namen und dokumentiert Webhook-Endpoints (`POST /operator/webhook`, `GET /operator/webhook-status`) die in Sprint 43 NICHT implementiert wurden. Kanonischer Stand: §54C.
+
+**Datum**: 2026-03-21
+**Sprint**: 43
+**Status**: ~~Definition ✅ — Implementierung pending (Codex)~~ **Historischer Entwurf (superseded by §54C)**
+
+### §54.1 Architektonische Grenzen
+
+**API Surface = Exposition kanonischer Surfaces — keine neue Business-Logik.**
+
+| Eigenschaft | Wert |
+|---|---|
+| Scope | Exposition: read-only Operator-Status + guarded paper/shadow Webhook-Transport |
+| NICHT in Scope | Neue Business-Logik, UI, Scheduler, Remote Automation, Live-Trading |
+| API ≠ | live control plane, broker gateway, execution surface, approval engine |
+| Neues Modul | `app/api/routers/operator.py` |
+| Auth | Bearer-Token (`APP_API_KEY`) via bestehendes `app/security/auth.py` |
+| Webhook-Bypass | `POST /operator/webhook` von Bearer-Auth ausgenommen — Telegram-Secret-Token ist die eigene Auth |
+| Live | immer default-off; kein Live-Pfad in Sprint 43 |
+
+### §54.2 Auth-Modell
+
+| Endpoint | Bearer-Token | Telegram-Secret-Token |
+|---|---|---|
+| `GET /operator/status` | ✅ Pflicht (wenn `APP_API_KEY` gesetzt) | — |
+| `GET /operator/portfolio` | ✅ Pflicht | — |
+| `GET /operator/loop-status` | ✅ Pflicht | — |
+| `GET /operator/webhook-status` | ✅ Pflicht | — |
+| `POST /operator/webhook` | ❌ ausgenommen | ✅ via `TelegramOperatorBot.process_webhook_update()` |
+
+`POST /operator/webhook` MUSS in `app/security/auth.py` zur Bearer-Bypass-Liste hinzugefügt werden (analog `/health`).
+
+### §54.3 Endpoints (kanonisch, read-only)
+
+#### `GET /operator/status`
+- **Source of Truth**: `build_operational_readiness_report()` (`app/research/operational_readiness.py`)
+- **Fail-Closed**: Bei Exception → HTTP 200 mit `available=False, execution_enabled=False, write_back_allowed=False`
+- **Invarianten**: `execution_enabled=False`, `write_back_allowed=False` immer im Response
+
+#### `GET /operator/portfolio`
+- **Source of Truth**: `build_portfolio_snapshot()` (`app/execution/portfolio_read.py`)
+- **Fail-Closed**: Bei Exception → HTTP 200 mit `execution_enabled=False, write_back_allowed=False`
+- **Invarianten**: `execution_enabled=False`, `write_back_allowed=False` immer im Response
+
+#### `GET /operator/loop-status`
+- **Source of Truth**: `build_loop_status_summary()` (`app/orchestrator/trading_loop.py`)
+- **Fail-Closed**: Bei Exception → HTTP 200 mit `execution_enabled=False, write_back_allowed=False`
+- **Invarianten**: `execution_enabled=False`, `write_back_allowed=False`, `auto_loop_enabled=False` immer im Response
+
+#### `GET /operator/webhook-status`
+- **Source of Truth**: Statische Webhook-Konfiguration — `report_type="webhook_status"`, `secret_token_required=True`, `allowed_updates=["message"]`, `execution_enabled=False`, `write_back_allowed=False`
+- **Fail-Closed**: Kein Backing-System nötig — rein statisch
+- **Hinweis**: Kein Live-Zustand — zeigt Konfigurationsabsicht, nicht Laufzustand
+
+### §54.4 Endpoint (guarded — Telegram Webhook Transport)
+
+#### `POST /operator/webhook`
+- **Source of Truth**: `TelegramOperatorBot.process_webhook_update()` (`app/messaging/telegram_bot.py`)
+- **Voraussetzung**: `app.state.telegram_bot` muss gesetzt sein
+- **Inputs**: JSON-Body (Telegram Update), Header `X-Telegram-Bot-Api-Secret-Token`
+- **Kein Bot konfiguriert**: HTTP 503 `{"reason": "bot_not_configured"}`
+- **Ungültiges JSON**: HTTP 400 `{"reason": "invalid_json"}`
+- **Accepted**: HTTP 200 `{"status": "ok"}`
+- **Rejected** (invalid_secret_token etc.): HTTP 403 `{"reason": "<rejection_reason>"}`
+- **Verboten im Payload**: kein `execution_enabled=True`, keine Trading-Semantik
+- **Vollständige Rejection-Logik**: delegiert an `TelegramOperatorBot.process_webhook_update()` (Sprint 42D — 12 Rejection-Reasons)
+
+### §54.5 Sicherheitsinvarianten
+
+1. `execution_enabled=False` in JEDEM `/operator/*`-Response — ausnahmslos
+2. `write_back_allowed=False` in JEDEM `/operator/*`-Response — ausnahmslos
+3. Kein `/operator/trade`, `/operator/execute`, `/operator/order`, `/operator/fill`, `/operator/broker`, `/operator/live` — diese Pfade sind explizit verboten
+4. `POST /operator/webhook` delegiert Validierung vollständig an `TelegramOperatorBot.process_webhook_update()` — kein eigener Security-Check
+5. Alle read-only Endpoints sind fail-closed: Exceptions → HTTP 200 mit `available=False/execution_enabled=False`, nicht HTTP 500
+6. `auto_loop_enabled=False` in `/operator/loop-status` — invariant (aus `LoopStatusSummary`)
+7. `POST /operator/webhook` ist kein Trading-/Approval-/Execution-Gateway — es ist Transport-Delegation
+
+### §54.6 Failure Semantics
+
+| Endpoint | Exception | HTTP | Body |
+|---|---|---|---|
+| `GET /operator/status` | jede | 200 | `{available: false, execution_enabled: false, write_back_allowed: false}` |
+| `GET /operator/portfolio` | jede | 200 | `{execution_enabled: false, write_back_allowed: false}` |
+| `GET /operator/loop-status` | jede | 200 | `{execution_enabled: false, write_back_allowed: false}` |
+| `GET /operator/webhook-status` | n/a (statisch) | 200 | statisches Objekt |
+| `POST /operator/webhook` (kein Bot) | n/a | 503 | `{reason: "bot_not_configured"}` |
+| `POST /operator/webhook` (bad JSON) | JSON parse | 400 | `{reason: "invalid_json"}` |
+| `POST /operator/webhook` (rejected) | n/a | 403 | `{reason: "<rejection_reason>"}` |
+
+**Kein HTTP 500 von `/operator/*`-Endpoints nach außen.**
+
+### §54.7 Implementierungs-Tasks (Codex)
+
+1. `app/api/routers/operator.py` — neu erstellen mit Endpoints §54.3–§54.4
+2. `app/api/main.py` — `operator.router` einbinden + `app.state.telegram_bot` optional aus Settings befüllen
+3. `app/security/auth.py` — `/operator/webhook` und `/operator/webhook/` zur Bypass-Liste hinzufügen
+
+### §54.8 Tests (Sprint 43 — Ziel)
+
+| Datei | Scope | Stand |
+|---|---|---|
+| `tests/unit/test_operator_api.py` | 9 Tests: status fail-closed, portfolio fail-closed, loop-status fail-closed, webhook-status, webhook (no-bot/invalid-JSON/accepted/rejected), no-trading-routes | bereits geschrieben (Codex), 8 failing (router fehlt) |
+
+**Baseline**: 1457 passed, 8 failed | Ziel: 1465+ passed, 0 failed
+
+### §54.9 Invarianten-Referenz
+
+- `docs/intelligence_architecture.md` I-321–I-330 (Sprint 43)
+- `ASSUMPTIONS.md` A-066–A-072 (Sprint 43)
+- `AGENTS.md` P49 (Sprint 43)
+- Backing-Surfaces: §49 (Telegram), §50 (MarketData), §51 (Portfolio), §52 (TradingLoop), §53+D (Webhook)
+
+---
+
+## §54C Sprint 43 — FastAPI Operator API Surface (Konsolidierung — kanonisch)
+
+> **Sprint 43C (2026-03-21):** §54 (Historischer Entwurf) enthielt falsche Endpunkt-Namen und plante Webhook-Endpoints die nicht implementiert wurden. Dieser Block dokumentiert den tatsächlichen Implementierungsstand. §54 (erster Block, korrekt) und §54C sind zusammen die kanonische Referenz.
+
+**Datum**: 2026-03-21
+**Status**: ✅ vollständig implementiert + konsolidiert
+
+### §54C.1 Drift-Tabelle (§54-Entwurf → tatsächliche Implementierung)
+
+| §54-Entwurf | Tatsächliche Implementierung | Korrektur |
+|---|---|---|
+| `GET /operator/portfolio` | `GET /operator/portfolio-snapshot` | Endpunkt umbenannt |
+| `GET /operator/loop-status` | `GET /operator/trading-loop/status` | Pfad umstrukturiert |
+| `GET /operator/webhook-status` | **NICHT implementiert** (Sprint 43+) | Aus Scope entfernt |
+| `POST /operator/webhook` | **NICHT implementiert** (Sprint 43+) | Aus Scope entfernt |
+| Endpoint-Liste: 4 Endpoints | Endpoint-Liste: 8 Endpoints | +readiness, +decision-pack, +recent-cycles, +run-once |
+| Auth via `app/security/auth.py` Bearer-Middleware | Auth via `require_operator_api_token` (Router-Dependency, DI) | Anderer Auth-Pfad |
+| `test_operator_api.py` 9 Tests als Referenz | `test_api_operator.py` 13 Tests als kanonische Referenz | Andere Testdatei |
+
+### §54C.2 Kanonische Endpunkte (tatsächlich implementiert)
+
+| Endpunkt | MCP-Backing | Surface-Klasse |
+|---|---|---|
+| `GET /operator/status` | `get_operational_readiness_summary()` | read_only |
+| `GET /operator/readiness` | `get_operational_readiness_summary()` (Alias) | read_only |
+| `GET /operator/decision-pack` | `get_decision_pack_summary()` | read_only |
+| `GET /operator/portfolio-snapshot` | `get_paper_portfolio_snapshot(...)` | read_only |
+| `GET /operator/exposure-summary` | `get_paper_exposure_summary(...)` | read_only |
+| `GET /operator/trading-loop/status` | `get_trading_loop_status(...)` | read_only |
+| `GET /operator/trading-loop/recent-cycles` | `get_recent_trading_cycles(...)` | read_only |
+| `POST /operator/trading-loop/run-once` | `run_trading_loop_once(...)` | guarded_write |
+
+### §54C.3 Auth-Implementierung (tatsächlich)
+
+`require_operator_api_token` — FastAPI-Dependency-Funktion in `app/api/routers/operator.py`:
+- Leerer `APP_API_KEY` → HTTP 503 "fail-closed"
+- Kein Authorization-Header → HTTP 401 "Missing Authorization header"
+- Falsches Schema → HTTP 401 "Invalid Authorization scheme"
+- Falscher Token → HTTP 403 "Invalid API key"
+- Tokenvergleich: `secrets.compare_digest` (constant-time)
+- Dependency wird als `dependencies=[Depends(require_operator_api_token)]` auf dem gesamten Router gesetzt — kein separater Middleware-Bypass nötig
+
+### §54C.4 Bekannte Testdrift (Sprint 43 → Sprint 43+)
+
+`tests/unit/test_operator_api.py` (9 Tests, 8 failing):
+- Beschreibt Endpunkte aus dem §54-Entwurf (`/operator/portfolio`, `/operator/loop-status`, `/operator/webhook-status`, `POST /operator/webhook`)
+- Diese Endpunkte existieren nicht in der tatsächlichen Implementierung → 404/503 statt erwartetem Verhalten
+- `test_no_trading_routes` passiert (1 Test) — prüft nur, dass Verbots-Pfade nicht vorhanden sind
+
+`tests/unit/test_api_operator.py` (13 Tests, alle passing) = kanonische Implementierungsreferenz
+
+**Sprint 43+ Backlog**: Webhook-Delegation (`GET /operator/webhook-status`, `POST /operator/webhook`, `app.state.telegram_bot`) und Korrektur von `test_operator_api.py`.
+
+### §54C.5 Finaler Teststand (Sprint 43+43C)
+
+| Metrik | Wert |
+|---|---|
+| `test_api_operator.py` | 13 Tests, alle passing ✅ |
+| `test_operator_api.py` | 9 Tests, 8 failing (stale spec) ❌ |
+| Gesamt | **1470 passed, 8 failed** |
+| ruff | clean ✅ |
+| Implementiertes Modul | `app/api/routers/operator.py` |
+
+
+---
+
+## §55 Sprint 44 — Operator API Hardening & Request Governance (Historischer Entwurf)
+
+> **Sprint 44C (2026-03-22):** Dieser Block war der ursprüngliche Sprint-44-Definitions-Entwurf. Enthält Drift zur tatsächlichen Implementierung: falsches request_id-Format (UUID4 statt req_<hex>), optionale statt required Idempotency, falscher Header-Name (X-Idempotency-Key statt Idempotency-Key), flache statt verschachtelte Error-Shape, falscher Audit-Log-Name, fehlende Correlation-ID, fehlender Rate-Limiter. Kanonischer Stand: §55C.
+
+**Datum**: 2026-03-21
+**Sprint**: 44
+**Status**: ~~Definition ✅ — Implementierung pending (Codex)~~ **Historischer Entwurf (superseded by §55C)**
+
+### §55.1 Scope und Sicherheitsgrenzen
+
+**API Hardening = Transport-/Governance-Layer, keine neue Business-Logik.**
+
+| Eigenschaft | Wert |
+|---|---|
+| Scope | Request-Identity, Idempotency-Guard, Audit-Surface, Error-Shape-Standardisierung |
+| NICHT in Scope | Neue Endpoints, neue Business-Logik, UI, Scheduler, Live-Trading, Broker-Integration |
+| Hardening ≠ | Neue Execution-Pfade, Workflow-Engine, Rate-Limiting-Framework, Trading-Semantik |
+| Guarded POST ≠ | Trading Execution — mode=live bleibt fail-closed |
+| Idempotency ≠ | Scheduling — keine wiederholte Ausfuehrung, Schutz gegen Doppel-Submit |
+| Basis | app/api/routers/operator.py bleibt das einzige Operator-API-Modul |
+
+### §55.2 Request-Identity-Kontrakt
+
+Jeder /operator/*-Request traegt eine request_id:
+
+- **Server-generiert**: UUID4 via uuid.uuid4() — Standard, wenn kein Client-Header gesetzt
+- **Client-gesetzt**: Header X-Request-Id — akzeptiert wenn valide UUID4, sonst ignoriert und server-generiert
+- **Propagation**: request_id wird in JEDEM Response-Body zurueckgegeben als request_id-Feld auf Top-Level
+- **Response-Header**: X-Request-Id: <uuid> in jedem Response
+- **Constraint**: request_id darf niemals leer, None oder nicht-UUID sein
+
+### §55.3 Idempotency-Kontrakt (guarded POST)
+
+Gilt ausschliesslich fuer POST /operator/trading-loop/run-once:
+
+- **Optional Client-Header**: X-Idempotency-Key (max 128 Zeichen)
+- **Wenn gesetzt**: In-memory-Buffer prueft ob Key bereits gesehen — falls ja: HTTP 409 {error: duplicate_idempotency_key, detail: ..., request_id: <uuid>}
+- **Wenn nicht gesetzt**: Kein Idempotency-Check — normaler Ablauf
+- **Buffer**: In-memory OrderedDict mit FIFO-Eviction (maxlen=256) — NICHT persistent
+- **Restart**: Leerer Buffer — akzeptiert (analog Telegram Replay-Buffer)
+- **Idempotency != Scheduling**: Buffer verhindert Doppel-Submit, startet keine wiederholten Zyklen
+
+### §55.4 Operator API Audit Surface
+
+**Neues Audit-Log**: artifacts/operator_api_audit.jsonl — append-only.
+
+**Wann**: Fuer JEDEN /operator/*-Request der die Auth passiert hat (post-auth, pre-dispatch).
+
+**Kanonisches Audit-Format**:
+
+```json
+{
+  "timestamp_utc": "2026-03-21T10:00:00+00:00",
+  "request_id": "a1b2c3d4-...",
+  "method": "POST",
+  "path": "/operator/trading-loop/run-once",
+  "endpoint_class": "guarded_write",
+  "idempotency_key": "my-key-123",
+  "outcome": "ok",
+  "http_status": 200,
+  "execution_enabled": false,
+  "write_back_allowed": false
+}
+```
+
+**endpoint_class**: read_only (GET) oder guarded_write (POST run-once)
+**outcome**: ok (2xx) | error (4xx ausser 409) | blocked (409) | internal_error (5xx)
+
+Regeln: Append-only, keine Secrets/Tokens/Credentials, Audit-Fehler nicht fatal (log WARNING).
+Separates Log von operator_commands.jsonl (Telegram) und telegram_webhook_rejections.jsonl.
+
+### §55.5 Failure Contract / Error Shape
+
+**Kanonische Fehler-Shape fuer ALLE /operator/*-Fehler**:
+
+```json
+{
+  "error": "<error_code>",
+  "detail": "<human-readable-message>",
+  "request_id": "<uuid>"
+}
+```
+
+**Kanonische error_code-Werte**:
+
+| Code | HTTP | Trigger |
+|---|---|---|
+| api_key_not_configured | 503 | Leerer APP_API_KEY |
+| missing_auth_header | 401 | Kein Authorization-Header |
+| invalid_auth_scheme | 401 | Kein Bearer-Schema |
+| invalid_api_key | 403 | Falscher Token |
+| invalid_request | 400 | Pydantic-Validation oder ungueltige Params |
+| mode_not_allowed | 400 | mode=live (ValueError aus TradingLoop-Guard) |
+| duplicate_idempotency_key | 409 | Idempotency-Buffer-Hit |
+| internal_error | 500 | Unbehandelte Exception |
+
+Kein HTTP 500 ohne request_id. Jeder Fehler traegt error + detail + request_id.
+
+### §55.6 Sicherheitsinvarianten (Sprint 44 — kanonisch, nicht verhandelbar)
+
+| Nr | Invariante |
+|---|---|
+| 1 | Kein unkorrelierter guarded Request — jeder POST /operator/trading-loop/run-once hat request_id im Response |
+| 2 | Kein doppelter run-once auf gleichem X-Idempotency-Key ohne definierte Behandlung (HTTP 409) |
+| 3 | Keine ungeregelten Fehlerantworten — alle Fehler folgen der kanonischen Error-Shape (§55.5) |
+| 4 | Kein Live-Pfad — mode=live bleibt mode_not_allowed (HTTP 400) |
+| 5 | Keine Trading-Semantik in Audit, Error-Shape oder Request-Identity |
+| 6 | Audit-Log enthaelt keine Secrets, Tokens, Credentials oder Nutzlast-Details |
+| 7 | execution_enabled=False und write_back_allowed=False in JEDEM Response — invariant |
+| 8 | Idempotency-Buffer ist in-memory, nie persistent — Restart = leerer Buffer |
+| 9 | request_id im Response-Header X-Request-Id — immer gesetzt, nie leer |
+| 10 | operator_api_audit.jsonl ist von Telegram-Audits getrennt — kein Merge, kein Cross-Write |
+
+### §55.7 Kanonische Audit-Log-Felder (vollstaendig)
+
+| Feld | Typ | Pflicht | Beschreibung |
+|---|---|---|---|
+| timestamp_utc | ISO-8601 UTC | Ja | Zeitpunkt des Request-Eingangs |
+| request_id | UUID4-String | Ja | Server- oder Client-generiert |
+| method | String | Ja | HTTP-Methode (GET, POST) |
+| path | String | Ja | Endpoint-Pfad |
+| endpoint_class | String | Ja | read_only oder guarded_write |
+| idempotency_key | String oder null | Ja | Client-Header oder null |
+| outcome | String | Ja | ok / error / blocked / internal_error |
+| http_status | Integer | Ja | HTTP-Statuscode der Response |
+| execution_enabled | Boolean | Ja | Immer false |
+| write_back_allowed | Boolean | Ja | Immer false |
+
+### §55.8 Implementierungs-Tasks (Codex)
+
+1. **app/api/routers/operator.py** — get_request_id() Dependency:
+   - Liest X-Request-Id Header (validiert UUID4), sonst uuid.uuid4()
+   - Response-Header X-Request-Id wird gesetzt
+
+2. **app/api/routers/operator.py** — Idempotency-Buffer fuer POST /operator/trading-loop/run-once:
+   - Modul-Level _idempotency_seen: OrderedDict[str, None] maxlen=256 FIFO
+   - X-Idempotency-Key Header: wenn gesetzt und gesehen → HTTP 409 canonical error shape
+   - Nach erfolgreichem Call: Key in Buffer eintragen
+
+3. **app/api/routers/operator.py** — _audit_operator_request() Helper:
+   - Append-only nach artifacts/operator_api_audit.jsonl
+   - Felder aus §55.7 — never-raise (catch + log WARNING)
+   - Aufgerufen post-auth, pre-dispatch
+
+4. **app/api/routers/operator.py** — Standardisierte Error-Shapes:
+   - require_operator_api_token liefert strukturierte Fehler-Bodies gemaess §55.5
+   - ValueError-Handler nutzt error_code=mode_not_allowed
+   - Unbehandelte Exceptions → error_code=internal_error (HTTP 500, nie nackter Stacktrace)
+
+5. **tests/unit/test_operator_governance.py** — neue Testdatei:
+   - request_id in Response-Body und X-Request-Id-Header vorhanden
+   - Idempotency-409 bei Duplikat-Key
+   - Canonical Error-Shape fuer alle Fehlertypen
+   - Audit-Log-Eintrag bei erfolgreichem Request
+   - Keine Trading-Semantik in Error-Shapes
+
+### §55.9 Invarianten-Referenz
+
+- docs/intelligence_architecture.md I-331–I-340 (Sprint 44)
+- ASSUMPTIONS.md A-073–A-078 (Sprint 44)
+- AGENTS.md P50 (Sprint 44)
+- Basis: §54/§54C (Sprint 43), §53D (Sprint 42D)
+
+
+---
+
+## §55C Sprint 44 — Operator API Hardening & Request Governance (Konsolidierung — kanonisch)
+
+> **Sprint 44C (2026-03-22):** §55 (Historischer Entwurf) enthielt Drift zur tatsächlichen Implementierung durch Codex. Dieser Block dokumentiert den finalen, implementierten Stand. Tatsächliche Implementierung in `app/api/routers/operator.py` (597 Zeilen). Alle 1491 Tests passing.
+
+**Datum**: 2026-03-22
+**Status**: ✅ vollständig implementiert + konsolidiert
+
+### §55C.1 Drift-Tabelle (§55-Entwurf → tatsächliche Implementierung)
+
+| §55-Entwurf | Tatsächliche Implementierung | Korrektur |
+|---|---|---|
+| request_id = UUID4 | request_id = `req_<uuid4_hex>` (prefix-Format) | Anderes Format |
+| Header: `X-Request-Id` | Header: `X-Request-ID` (Gross-D) | Kapitalisierung |
+| Kein Correlation-ID | `X-Correlation-ID` Header (defaults auf request_id) | Hinzugekommen |
+| Idempotency: optional | Idempotency: **REQUIRED** — fehlt → 400 `missing_idempotency_key` | Semantik-Änderung |
+| Header: `X-Idempotency-Key` | Header: `Idempotency-Key` | Anderer Header-Name |
+| Idempotency: 409 bei Duplikat | Idempotency: **Replay** bei gleichem Key+Payload; 409 `idempotency_key_conflict` bei unterschiedlichem Payload | Anderes Verhalten |
+| Rate-Limiting: nicht definiert | Sliding-Window Rate-Limiter: 5 req/30s pro operator_subject (token-fingerprint) → 429 `guarded_rate_limited` | Hinzugekommen |
+| Error-Shape: `{error: "<code>", detail: "<msg>", request_id: "<uuid>"}` | Error-Shape: `{error: {code, message, request_id, correlation_id}, execution_enabled: false, write_back_allowed: false}` | Verschachtelt |
+| Audit-Log: `artifacts/operator_api_audit.jsonl` (alle Requests) | Audit-Log: `artifacts/operator_api_guarded_audit.jsonl` (nur guarded POST) | Anderer Name + Scope |
+| Auth-Code: `api_key_not_configured` | Auth-Code: `operator_api_disabled` | Anderer Error-Code |
+| Auth-Code: `missing_auth_header` | Auth-Code: `missing_authorization_header` | Anderer Error-Code |
+| Auth-Code: `invalid_auth_scheme` | Auth-Code: `invalid_authorization_scheme` | Anderer Error-Code |
+
+### §55C.2 Kanonische Request-Identity (tatsächlich implementiert)
+
+**Dependency**: `bind_operator_request_context` (Router-Level)
+- Liest `X-Request-ID` Header — validiert via `^[A-Za-z0-9._:-]{1,128}$`; sonst `_new_context_id("req")` = `req_<uuid4_hex>`
+- Liest `X-Correlation-ID` Header — wenn nicht gesetzt, default = request_id
+- Speichert in `request.state.operator_request_id` und `request.state.operator_correlation_id`
+- Response-Header: `X-Request-ID` und `X-Correlation-ID` via `_set_context_headers()`
+
+### §55C.3 Kanonische Error-Shape (tatsächlich implementiert)
+
+```json
+{
+  "error": {
+    "code": "<error_code>",
+    "message": "<human-readable>",
+    "request_id": "<req_hex>",
+    "correlation_id": "<corr_hex>"
+  },
+  "execution_enabled": false,
+  "write_back_allowed": false
+}
+```
+
+**Kanonische error_codes**: `operator_api_disabled` (503) / `missing_authorization_header` (401) / `invalid_authorization_scheme` (401) / `invalid_api_key` (403) / `missing_idempotency_key` (400) / `invalid_idempotency_key` (400) / `idempotency_key_conflict` (409) / `guarded_rate_limited` (429) / `guarded_request_rejected` (400) / `guarded_request_failed` (503) / endpoint-spezifische read-only codes (503).
+
+### §55C.4 Kanonischer Idempotency-Kontrakt (tatsächlich implementiert)
+
+- **Header**: `Idempotency-Key` (nicht `X-Idempotency-Key`)
+- **Pflicht** für `POST /operator/trading-loop/run-once` — fehlt → HTTP 400 `missing_idempotency_key`
+- **Validierung**: Regex `^[A-Za-z0-9._:-]{1,128}$` — ungültig → HTTP 400 `invalid_idempotency_key`
+- **Replay**: Gleicher Key + gleicher Payload (SHA256-Fingerprint) → gespeicherte Response mit `idempotency_replayed=True` zurückgegeben (HTTP 200, keine erneute Ausführung)
+- **Konflikt**: Gleicher Key + anderer Payload → HTTP 409 `idempotency_key_conflict`
+- **Buffer**: In-memory `OrderedDict[str, _IdempotencyRecord]`, maxlen=256, FIFO-Eviction, Thread-safe (Lock)
+- **Payload-Fingerprint**: `hashlib.sha256(json.dumps(payload.model_dump()).encode()).hexdigest()`
+
+### §55C.5 Kanonischer Rate-Limiter (tatsächlich implementiert)
+
+- **Scope**: Nur `POST /operator/trading-loop/run-once`
+- **Fenster**: 5 Requests pro 30 Sekunden pro `operator_subject` (= `token_<sha256[:16]>` des Bearer-Tokens)
+- **Implementierung**: Sliding-Window mit `deque[float]` (Timestamps), Thread-safe (Lock)
+- **Überschreitung**: HTTP 429 `guarded_rate_limited`
+- **Trigger-Reihenfolge**: Idempotency-Replay → Rate-Limit-Check (Replay zählt NICHT gegen Rate-Limit)
+- **In-memory**: Nicht persistent — Restart = leerer State
+
+### §55C.6 Kanonisches Audit-Log (tatsächlich implementiert)
+
+**Datei**: `artifacts/operator_api_guarded_audit.jsonl` (nur guarded POST, nicht alle Requests)
+**Felder**: `timestamp_utc`, `event="operator_guarded_request"`, `endpoint`, `request_id`, `correlation_id`, `idempotency_key`, `outcome` (accepted/rejected/failed/idempotency_replay), `error_code` (oder null), `idempotency_replayed`, `symbol`, `mode`, `provider`, `analysis_profile`, `execution_enabled=false`, `write_back_allowed=false`
+**Regeln**: Append-only, never-raise (OSError → silent return), keine Secrets/Tokens
+
+### §55C.7 Sicherheitsinvarianten (kanonisch, Sprint 44+44C)
+
+1. Kein unkorrelierter guarded Request — `X-Request-ID` und `X-Correlation-ID` immer in Response-Headers
+2. `Idempotency-Key` REQUIRED für `POST /operator/trading-loop/run-once` — fail-closed bei Fehlen
+3. Idempotency-Replay schützt vor Doppel-Execution — gleicher Key+Payload → cached Response, keine zweite Ausführung
+4. Rate-Limit schützt vor Overload — 5/30s pro token-fingerprint, 429 bei Überschreitung
+5. Alle Fehler folgen `{"error": {code, message, request_id, correlation_id}, execution_enabled: false, write_back_allowed: false}`
+6. Audit-Log enthält keine Secrets, Tokens, Bearer-Werte
+7. `execution_enabled=False`, `write_back_allowed=False` in JEDEM Response — invariant
+8. Kein Live-Pfad — `mode=live` → `guarded_request_rejected` (HTTP 400)
+
+### §55C.8 Finaler Teststand (Sprint 44+44C)
+
+| Metrik | Wert |
+|---|---|
+| `test_api_operator.py` | 20 Tests (inkl. Sprint-44-Tests), alle passing ✅ |
+| `test_operator_api.py` | 7 Tests (neu geschrieben), alle passing ✅ |
+| `test_operator_action_queue.py` | 5 Tests, alle passing ✅ |
+| Gesamt | **1491 passed, 0 failed** |
+| ruff | clean ✅ |
+| Implementiertes Modul | `app/api/routers/operator.py` (597 Zeilen) |

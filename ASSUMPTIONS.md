@@ -372,32 +372,239 @@ Unknown errors → order rejected.
 **Rationale**: Einheitlicher Datenpfad: JSONL → `build_portfolio_snapshot()` → `PortfolioSnapshot` → `build_exposure_summary()`. Kein paralleler Datenpfad.
 **Impact**: `get_paper_exposure_summary()` (MCP) und `research paper-exposure-summary` (CLI) delegieren intern an `build_portfolio_snapshot()` + `build_exposure_summary()`.
 
-### A-047: LoopStatus ist eine rein read-only Projektion des JSONL-Audit-Logs (Sprint 41)
-**Assumption**: `LoopStatus` wird ausschliesslich aus `artifacts/trading_loop_audit.jsonl` projiziert — nie aus In-Memory-Engine-Instanzen. `loop_enabled=False` ist invariant (kein autonomer Loop). `live_allowed=False` ist invariant.
-**Rationale**: Operator-Surfaces dürfen keine laufenden Engine-Instanzen referenzieren. Das JSONL ist der einzige persistente, auditierbare Zustandsträger.
-**Impact**: `app/orchestrator/loop_read.py` → `read_loop_status(audit_path)` — synchron, pure, never-raise. Datei nicht vorhanden → leerer LoopStatus, kein Fehler.
+### A-047: LoopStatusSummary ist eine read-only Projektion des TradingLoop-Audit-Logs (Sprint 41)
+**Assumption**: `LoopStatusSummary` wird ausschliesslich aus `artifacts/trading_loop_audit.jsonl` projiziert und nie aus In-Memory-Engine-Instanzen. `auto_loop_enabled=False` bleibt invariant.
+**Rationale**: Operator-Surfaces duerfen keine laufenden Engine-Instanzen referenzieren. Das JSONL ist der einzige persistente, auditierbare Zustandstraeger.
+**Impact**: `build_loop_status_summary(audit_path, mode)` in `app/orchestrator/trading_loop.py` ist der kanonische Status-Read-Pfad. Fehlende Audit-Datei fuehrt zu einem sicheren leeren Summary ohne Exceptions.
 
-### A-048: run_paper_cycle nutzt MockMarketDataAdapter als Default (Sprint 41)
-**Assumption**: Der guarded-write Control-Plane-Aufruf `run_paper_cycle` verwendet `MockMarketDataAdapter` als Standard-Datenquelle. Kein realer externer Adapter wird ohne explizite Operator-Konfiguration und separaten Guarded-Mechanismus genutzt.
-**Rationale**: Deterministik, Netzwerkunabhängigkeit und Security — kein unbewachter externer API-Aufruf aus dem Paper-Cycle.
-**Impact**: Alle `run_paper_cycle`-Tests sind ohne Netzwerkzugang ausführbar. Ergebnisse sind deterministisch (MockAdapter: hash-basierte sinusoidale Preise).
+### A-048: run_trading_loop_once nutzt MockMarketDataAdapter als sicheren Default (Sprint 41)
+**Assumption**: Der guarded-write Control-Plane-Aufruf `run_trading_loop_once` verwendet standardmaessig `provider="mock"` und damit `MockMarketDataAdapter`.
+**Rationale**: Deterministik, Netzwerkunabhaengigkeit und Security - kein unbeaufsichtigter externer API-Aufruf im Standardpfad.
+**Impact**: Guarded run-once Tests sind ohne Netzwerkzugang reproduzierbar.
 
-### A-049: mode-Validierung in run_paper_cycle ist fail-closed (Sprint 41)
-**Assumption**: `run_paper_cycle` akzeptiert ausschliesslich `mode="paper"` oder `mode="shadow"`. `mode="live"` und jeder andere Wert werden sofort fail-closed abgewiesen: kein Zyklus wird ausgeführt, `error`-Feld wird gesetzt.
-**Rationale**: Live-Execution ist in diesem Sprint explizit verboten. Fail-closed ist die einzige sichere Reaktion auf ungültige Modi.
-**Impact**: Ablehnung ohne Seiteneffekte. Output enthält: `execution_enabled=False`, `write_back_allowed=False`, `live_allowed=False`, `error="mode_rejected_not_paper_or_shadow"`.
+### A-049: mode-Validierung in run_trading_loop_once ist fail-closed (Sprint 41)
+**Assumption**: `run_trading_loop_once` akzeptiert ausschliesslich `mode="paper"` oder `mode="shadow"`. `live`, `research`, `backtest` und jeder andere Wert werden sofort fail-closed abgewiesen.
+**Rationale**: Sprint 41 eroeffnet keinen Live-Execution-Pfad. Fail-closed ist Pflicht fuer unzulaessige Modi.
+**Impact**: Bei unzulaessigem Modus wird kein Zyklus ausgefuehrt; der Aufruf endet mit kontrolliertem Fehler ohne Seiteneffekte.
 
 ### A-050: Keine autonome Hintergrundschleife im Control Plane (Sprint 41)
-**Assumption**: Der TradingLoop hat keinen Daemon, keinen Scheduler, keine Hintergrundschleife und kein Auto-Retry. Jede Ausführung wird explizit vom Operator getriggert (MCP `run_paper_cycle` oder CLI `research run-paper-cycle`).
-**Rationale**: Autonome Ausführung wäre ein Security-Risiko und eine Scope-Verletzung. Sprint 41 ist ein Control-Plane-Sprint, kein Autopilot-Sprint.
-**Impact**: `LoopStatus.loop_enabled=False` ist strukturell invariant — kein konfigurierbarer Toggle.
+**Assumption**: Der TradingLoop hat keinen Daemon, keinen Scheduler, keine Hintergrundschleife und kein Auto-Retry. Jeder Zyklus ist ein expliziter Operator-Trigger (CLI `research trading-loop-run-once` oder MCP `run_trading_loop_once`).
+**Rationale**: Autonome Ausfuehrung waere ein Security-Risiko und Scope-Verletzung.
+**Impact**: `auto_loop_enabled=False` bleibt in allen Sprint-41 Status-/Summary-Surfaces sichtbar und unveraenderlich.
 
-### A-051: trading_loop_audit.jsonl ist append-only, kein State außerhalb paper/shadow (Sprint 41)
-**Assumption**: `run_paper_cycle` appended genau einen `LoopCycle`-Record pro Aufruf in `artifacts/trading_loop_audit.jsonl`. Es schreibt NICHT in `paper_execution_audit.jsonl`. Das fresh-Portfolio von `run_paper_cycle` ist ephemer und wird nicht persistiert.
-**Rationale**: Audit-Log ist das einzige persistente Artefakt. Ephemere Isolation verhindert unbeabsichtigte Portfolio-State-Mutation.
-**Impact**: `run_paper_cycle` ist ein isolierter run-once-Aufruf ohne kumulative Portfolio-Seiteneffekte auf den produktiven Paper-Execution-State.
+### A-051: trading_loop_audit.jsonl ist append-only, run-once bleibt isoliert (Sprint 41)
+**Assumption**: `run_trading_loop_once` schreibt genau einen `LoopCycle`-Record pro Aufruf in `artifacts/trading_loop_audit.jsonl`. Der run-once Pfad erzeugt keine versteckten Live-/Broker-Seiteneffekte.
+**Rationale**: Audit-Log ist das einzige persistente Artefakt des Control-Plane-Zyklus.
+**Impact**: Der Cycle-Pfad ist voll auditierbar, single-shot und kompatibel mit read-only Status-/Recent-Cycles-Surfaces.
 
 ### A-044: /positions und /exposure zeigen auf kanonische MCP-Read-Surfaces (Sprint 40)
 **Assumption**: Nach Sprint 40 sind `/positions` und `/exposure` vollstaendig MCP-gebackt. `get_handoff_collector_summary` als Backing fuer `/positions` ist superseded. Der `/exposure`-Stub ist ersetzt.
 **Rationale**: A-045 (ehemals A-032, Sprint 38 Addendum) hatte den Handoff-Proxy als provisional deklariert. Sprint 40 ersetzt ihn durch den kanonischen Portfolio-Read-Surface.
 **Impact**: `TELEGRAM_CANONICAL_RESEARCH_REFS["positions"]` = `("research paper-positions-summary",)`. `TELEGRAM_CANONICAL_RESEARCH_REFS["exposure"]` = `("research paper-exposure-summary",)`. `"exposure"` in `_READ_ONLY_COMMANDS`. Beides implementiert und gruen (1439 Tests, Sprint 40).
+
+### A-052: Sprint-41 Surface-Namen sind trading-loop-*-kanonisch (Consolidation)
+**Assumption**: Die finalen Sprint-41-Namen sind `trading-loop-status`, `trading-loop-recent-cycles`, `trading-loop-run-once` (CLI) sowie `get_trading_loop_status`, `get_recent_trading_cycles`, `run_trading_loop_once` (MCP).
+**Rationale**: Fruehe Sprint-41-Planung nutzte provisional Namen (`loop-status`, `run-paper-cycle`). Fuer Contract-Lock wird ein eindeutiges kanonisches Naming benoetigt.
+**Impact**: `loop-cycle-summary` und `get_loop_cycle_summary` bleiben nur als Kompatibilitaetsaliase; neue Referenzen muessen die kanonischen Namen verwenden.
+
+### A-053: run_trading_loop_once bleibt paper/shadow-only und live-fail-closed
+**Assumption**: `run_trading_loop_once` akzeptiert nur `mode in {paper, shadow}`. `live`, `research` und `backtest` werden fail-closed abgewiesen.
+**Rationale**: Sprint 41 eroeffnet keinen Live-Execution-Pfad und keine Trading-Produktivfunktion.
+**Impact**: Bei unzulaessigem Modus entsteht kein Zyklus, kein Order-Pfad, keine versteckte Seiteneffekte.
+
+### A-054: run-once nutzt konservatives Default-Profil ohne Order-Folgeeffekt
+**Assumption**: Der Default `analysis_profile="conservative"` erzeugt absichtlich keine actionable Signal-Lage fuer den run-once-Pfad.
+**Rationale**: Control-Plane-Trigger sollen standardmaessig auditierbar und sicher sein, nicht implizit papier-exekutierend.
+**Impact**: Standardaufrufe erzeugen `no_signal`-Zyklen; paper execution audit bleibt dabei unveraendert.
+
+### A-055: Kein Autoloop, kein Scheduler, kein Daemon im TradingLoop-Control-Plane
+**Assumption**: Sprint 41 bleibt strikt single-cycle triggered. Es existiert kein Hintergrundprozess fuer wiederholte Zyklen.
+**Rationale**: Fail-closed und operator-kontrollierte Ausfuehrung haben Vorrang vor Automatisierung.
+**Impact**: `auto_loop_enabled=False` ist in allen neuen Status-/Summary-Surfaces explizit sichtbar.
+
+## Sprint 42 — Telegram Webhook Hardening Assumptions
+
+### A-056: Webhook-Layer ist reine Transport-Härtung, keine Business-Logik (Sprint 42D korrigiert)
+**Assumption**: `app/messaging/telegram_bot.py` enthält den vollständigen Webhook-Transport-Guard (integriert in `TelegramOperatorBot`). Keine separaten Webhook-Module. Transport-Logik (`process_webhook_update()`) ist strikt getrennt von Business-Logik (`process_update()`).
+**Rationale**: Sprint 42 plante fälschlicherweise ein separates Legacy-Webhook-Modul. Die Implementierung integrierte den Guard direkt — einfacher, weniger Drift-Risiko. A-063 dokumentiert dies detaillierter.
+**Impact**: `TelegramOperatorBot.process_update()` bleibt unverändert und wird nur bei `accepted=True` aufgerufen.
+
+### A-057: webhook_secret_token leer/None = Webhook fail-closed (Sprint 42D korrigiert)
+**Assumption**: Wenn `TelegramOperatorBot(webhook_secret_token=None/""...)` initialisiert wird, ist `webhook_configured == False`. Jeder `process_webhook_update()`-Aufruf → `rejection_reason="webhook_secret_not_configured"`. Kein Webhook-Request ohne konfigurierten Secret.
+**Rationale**: Sprint 42 plante fälschlicherweise `OperatorSettings.telegram_webhook_secret` (nicht in OperatorSettings). Der Secret wird als Konstruktor-Parameter übergeben; der Caller ist verantwortlich, ihn aus `OPERATOR_TELEGRAM_WEBHOOK_SECRET` zu lesen.
+**Impact**: `webhook_signature_required: True` in der Runtime-Config bleibt ein deklaratives Flag — die operative Durchsetzung liegt beim `webhook_secret_token`-Parameter.
+
+### A-058: Secret-Token-Vergleich muss constant-time sein (Sprint 42)
+**Assumption**: `hmac.compare_digest(provided_secret, configured_secret)` ist der einzig erlaubte Vergleich. Kein direktes `==` zwischen Secret-Strings.
+**Rationale**: Timing-Angriffe auf String-Vergleiche sind reell. Constant-time-Vergleich ist Standard für jede Secret-Validierung.
+**Impact**: Implementierung nutzt `hmac.compare_digest` aus der Python-Stdlib (kein externer Dependency).
+
+### A-059: edited_message ist per Default erlaubt — Replay-Schutz via update_id (Sprint 42C korrigiert)
+**Assumption**: `edited_message`-Updates sind in `_WEBHOOK_ALLOWED_UPDATES_DEFAULT = ("message", "edited_message")` enthalten und werden per Default zugelassen. Das Replay-Risiko wird durch update_id-Deduplication (A-060) mitigiert, nicht durch Typ-Filterung. Operatoren können `webhook_allowed_updates=("message",)` setzen, um `edited_message` auszuschliessen.
+**Rationale**: Sprint 42 definierte fälschlicherweise `edited_message` als generell verboten. Die Implementierung erlaubt es konfigurierbar. Update-ID-Deduplication ist das primäre Schutzinstrument gegen Doppel-Dispatch.
+**Impact**: Editierte Operator-Commands können durchkommen, sofern sie eine neue `update_id` tragen (was Telegram sicherstellt). Doppelter Dispatch derselben `update_id` wird durch den Replay-Buffer blockiert.
+
+### A-060: Replay-Schutz via OrderedDict-FIFO mit maxlen=2048 (Sprint 42C korrigiert)
+**Assumption**: `_webhook_seen_update_ids: OrderedDict[int, None]` mit FIFO-Eviction bei `maxlen=2048` ist der Replay-Buffer. Kein `deque`. Kein persistenter Storage. Bei Neustart: leerer Buffer.
+**Rationale**: Sprint 42 definierte fälschlicherweise `deque(maxlen=1000)`. Die Implementierung nutzt `OrderedDict` mit expliziter Eviction via `popitem(last=False)`. Funktional äquivalent, aber `maxlen=2048` (doppelte Kapazität). Restart-Risiko bleibt akzeptiert.
+**Impact**: `duplicate_update_id` ist der Rejection-Reason für Replay-Fälle (nicht `rejected_replay` wie im Sprint-42-Contract).
+
+### A-061: Webhook-Rejection-Audit in telegram_webhook_rejections.jsonl — nur Rejections (Sprint 42C korrigiert)
+**Assumption**: Nur abgewiesene Requests werden in `artifacts/telegram_webhook_rejections.jsonl` geloggt (via `_audit_webhook_rejection()`). Accepted Requests werden ausschliesslich in `artifacts/operator_commands.jsonl` (Bot-Layer-Audit) geloggt.
+**Rationale**: Sprint 42 definierte fälschlicherweise `webhook_audit.jsonl` für alle Requests. Die Implementierung trennt Transport-Rejections (security-relevant) von Command-Audits (operator-relevant) in separate Logs.
+**Impact**: Zwei getrennte Audit-Streams: `telegram_webhook_rejections.jsonl` (Transport-Security) + `operator_commands.jsonl` (Command-Operator-Surface).
+
+### A-062: TelegramWebhookProcessResult ist nicht das Execution-Gate (Sprint 42C korrigiert)
+**Assumption**: `TelegramWebhookProcessResult` mit `accepted=True` bedeutet "Transport-validiert", nicht "autorisiert zur Execution". Das Admin-Gating (`chat_id in _admin_ids`) bleibt in `TelegramOperatorBot.process_update()`. Kein `WebhookValidatedUpdate`-Modell (Sprint-42-Contract war falsch).
+**Rationale**: Zwei orthogonale Sicherheitsschichten: Transport-Layer prüft Herkunft (Telegram-Server via Secret-Token), Bot-Layer prüft Operator-Berechtigung (admin_chat_ids). Keine Schicht ersetzt die andere.
+**Impact**: Ein accepted Webhook-Update eines nicht-admin Users wird korrekt vom Bot-Layer mit "Unauthorized. This incident is logged." abgefangen.
+
+### A-063: Sprint-42 konsolidiert auf telegram_bot.py als einzigen Webhook-Transportpfad
+**Assumption**: Der kanonische Webhook-Transport-Gate ist `TelegramOperatorBot.process_webhook_update(...)` in `app/messaging/telegram_bot.py`; ein separater Webhook-Guard-Pfad bleibt nicht aktiv.
+**Rationale**: Kein Parallelpfad, klare Verantwortlichkeit, geringere Drift.
+**Impact**: Webhook-Haertung und Command-Dispatch bleiben im selben Telegram-Modul, aber als strikt getrennte Schritte (Transport zuerst, Command danach).
+
+### A-064: Webhook-Allowed-Updates Default ist message + edited_message
+**Assumption**: Der Default-Filter erlaubt `("message", "edited_message")`; disallowed Typen werden fail-closed mit `disallowed_update_type` verworfen.
+**Rationale**: Kompatibel mit bestehendem `process_update()`-Verhalten, ohne neue Business-Logik.
+**Impact**: Keine Inline-/Callback-/Channel-Events erreichen den Command-Handler.
+
+### A-065: Rejection-Audit ist auf abgelehnte Requests fokussiert
+**Assumption**: Webhook-Rejections werden append-only nach `artifacts/telegram_webhook_rejections.jsonl` geschrieben; accepted Updates erzeugen dort keinen Eintrag.
+**Rationale**: Security-first Sichtbarkeit auf echte Ablehnungsfaelle bei niedrigem Log-Noise.
+**Impact**: Rejection-Datensaetze enthalten Grund + Transport-Metadaten + `execution_enabled=False` und `write_back_allowed=False`.
+
+## Sprint 43 — FastAPI Operator API Surface Assumptions
+
+### A-066: Operator API nutzt APP_API_KEY als einzigen Token-Guard
+**Assumption**: Der FastAPI-Operator-Surface nutzt denselben `APP_API_KEY` wie der bestehende API-Bearer-Guard. Ohne gesetzten Key ist der gesamte `/operator/*`-Surface fail-closed deaktiviert.
+**Rationale**: Kein zweites Secret- oder RBAC-System in Sprint 43. Eine einzige Token-Quelle vermeidet Drift und reduziert Fehlkonfigurationen.
+**Impact**: Read-only und guarded Endpunkte verlangen `Authorization: Bearer <APP_API_KEY>`. Bei leerem Key liefert der Router kontrolliert `503`.
+
+### A-067: Guarded run-once bleibt reine Delegation auf kanonischen TradingLoop-Guard
+**Assumption**: `POST /operator/trading-loop/run-once` enthält keine eigene Mode- oder Trading-Logik, sondern delegiert vollständig an `mcp_server.run_trading_loop_once()` und damit an den kanonischen Guard in `app/orchestrator/trading_loop.py`.
+**Rationale**: Genau ein technischer Guard-Pfad für paper/shadow-only Ausführung; kein paralleler Kontrollpfad im API-Layer.
+**Impact**: `mode=live` bleibt fail-closed abgewiesen. Kein Broker-/Live-Execution-Pfad wird durch die API neu eröffnet.
+
+### A-068: require_operator_api_token ist Router-Dependency, nicht Bearer-Middleware
+**Assumption**: Der Operator-Router implementiert Auth via `require_operator_api_token` als FastAPI-Dependency auf Router-Ebene (`dependencies=[Depends(...)]`), nicht via `app/security/auth.py`-Bearer-Middleware. Dies erlaubt selektive Exemption einzelner Endpoints (z.B. Webhook) ohne globale Middleware-Änderungen.
+**Rationale**: Sprint 43 definierte fälschlicherweise "Bearer-Auth via bestehendes `app/security/auth.py`". Die tatsächliche Implementierung nutzt DI, was sauberer und testbarer ist.
+**Impact**: Kein Bypass-Eintrag in `app/security/auth.py` nötig. Auth-Verhalten ist vollständig im Router-Modul kapseliert.
+
+### A-069: /operator/status und /operator/readiness sind Aliases für dieselbe MCP-Funktion
+**Assumption**: Beide Endpoints rufen `mcp_server.get_operational_readiness_summary()` auf. Es gibt keinen inhaltlichen Unterschied. `/operator/readiness` ist der primäre Endpoint (test_api_operator.py nutzt ihn für Auth-Tests), `/operator/status` ist ein Alias.
+**Rationale**: Operator-facing tooling kann unterschiedliche Naming-Konventionen bevorzugen. Beide Wege auf dieselbe canonical Source vermeidet Divergenz.
+**Impact**: Response-Struktur ist identisch. Kein Routing-Unterschied. Tests für Auth-Verhalten nutzen `/operator/readiness`.
+
+### A-070: Operator-Endpoints sind pure Passthrough ohne Fallback-Handler im Router
+**Assumption**: Der Router enthält kein Try/Except um die MCP-Aufrufe (ausser `POST /operator/trading-loop/run-once` für ValueError). Alle read-only Endpunkte propagieren unhandled Exceptions direkt. Das fail-closed Verhalten (`execution_enabled=False`) kommt ausschliesslich aus den MCP-Backing-Funktionen selbst.
+**Rationale**: Kein redundanter Catch-All-Handler. Die MCP-Funktionen sind bereits fail-closed (never-raise oder return safe default). Der Router ist so dünn wie möglich.
+**Impact**: Bei unerwarteten Fehlern in MCP-Funktionen kann ein HTTP 500 entstehen. Akzeptiert für Sprint 43 — kein HTTP-500-Shield auf Router-Ebene nötig, da Backing-Surfaces bereits fail-closed sind.
+
+### A-071: ValueError aus run_trading_loop_once → HTTP 400 mit Detail-String
+**Assumption**: `POST /operator/trading-loop/run-once` fängt `ValueError` (z.B. bei `mode=live`) und gibt HTTP 400 mit `detail=str(exc)` zurück. Der Detail-String enthält den kanonischen Mode-Guard-Text ("allowed: paper, shadow").
+**Rationale**: HTTP 400 (Bad Request) ist semantisch korrekt für ungültige Mode-Werte. Der Aufrufer kann die Ablehnung von einem Server-Fehler unterscheiden. Der ValueError kommt vom kanonischen Guard in `run_once_guard()`.
+**Impact**: `test_operator_run_once_live_mode_is_fail_closed` verifiziert "allowed: paper, shadow" im Detail-String. Client muss für `mode=live` mit 400 rechnen.
+
+### A-072: Webhook-Delegation ist Sprint-43+-Backlog (nicht in Sprint-43-Implementierung)
+**Assumption**: `GET /operator/webhook-status` und `POST /operator/webhook` (mit `app.state.telegram_bot`-Delegation) sind im Sprint-43-Entwurf (§54) definiert aber in der tatsächlichen Implementierung **nicht vorhanden**. `test_operator_api.py` mit 8 failing Tests dokumentiert diese Lücke. Die Webhook-Endpoints werden in einem späteren Sprint implementiert.
+**Rationale**: Codex implementierte zuerst den schlanken Core-Surface ohne Webhook-Delegation. Die 8 failing Tests sind der Restdrift zwischen §54-Entwurf und tatsächlichem Stand.
+**Impact**: Bis zur Implementierung: `test_operator_api.py` bleibt mit 8 failing. Sprint 43+ muss Webhook-Endpoints und `test_operator_api.py`-Korrekturen umfassen.
+
+## Sprint 44 â€” Operator API Hardening & Request Governance Assumptions
+
+### A-073: Request- und Correlation-ID werden im Operator-Router kanonisch gebunden
+**Assumption**: `X-Request-ID` und `X-Correlation-ID` werden im Router normalisiert; bei fehlenden/ungueltigen Werten werden sichere IDs mit Prefix (`req_`, `corr_`) erzeugt.
+**Rationale**: Einheitliche, transportseitige Korrelation ohne zweite Middleware-Architektur.
+**Impact**: Jeder `/operator/*`-Response traegt beide Header, auch bei Fehlern.
+
+### A-074: Error-Payload ist fuer Operator-Fehler einheitlich und fail-closed
+**Assumption**: Auth-, Read- und Guarded-Fehler liefern eine einheitliche `detail.error`-Struktur inkl. request_id/correlation_id sowie `execution_enabled=False` und `write_back_allowed=False`.
+**Rationale**: Sicherheitsorientierte Fehlerbehandlung mit klarer Auditierbarkeit und ohne implizite Execution-Semantik.
+**Impact**: Clients koennen Fehlertypen stabil parsen; kein nackter, unstrukturierter Fehlerpfad.
+
+### A-075: Idempotency-Key ist fuer guarded run-once verpflichtend
+**Assumption**: `POST /operator/trading-loop/run-once` akzeptiert nur Requests mit gueltigem `Idempotency-Key`; identische Requests werden replayed, abweichende Payloads mit gleichem Key werden mit `409` blockiert.
+**Rationale**: Doppel-Submit-Schutz fuer den einzigen guarded Endpoint, ohne Queue/Scheduler.
+**Impact**: Kein unbeabsichtigter Mehrfach-Trigger desselben Control-Plane-Aufrufs.
+
+### A-076: Guarded Endpoint hat bewusst leichtes In-Memory-Rate-Limit
+**Assumption**: Ein kleines tokenbasiertes In-Memory-Limit schuetzt nur den guarded run-once Endpoint; read-only Endpoints bleiben ohne neues Rate-Limit-System.
+**Rationale**: Minimaler Transportschutz ohne Scope-Expansion in eine neue Infrastruktur.
+**Impact**: Burst-Requests auf guarded run-once werden mit `429` fail-closed geblockt.
+
+### A-077: Guarded Audit-Log ist append-only und getrennt von anderen Audit-Pfaden
+**Assumption**: Guarded Requests werden nach `artifacts/operator_api_guarded_audit.jsonl` geschrieben; Logging ist best-effort und darf den Request-Pfad nicht destabilisieren.
+**Rationale**: Security-first Nachvollziehbarkeit mit klarer Trennung zu Telegram-/Webhook-Audits.
+**Impact**: Outcomes (`accepted`, `idempotency_replay`, `rejected`, `failed`) sind transportseitig sichtbar.
+
+### A-078: Bestehende TradingLoop-Guards bleiben alleinige Business-Kontrolle
+**Assumption**: Der Router fuehrt keine neue Trading-Business-Logik ein; `paper/shadow`-Erlaubnis und `live`-Fail-Closed bleiben kanonisch im bestehenden TradingLoop-Pfad verankert.
+**Rationale**: Keine Parallel-Architektur, kein Business-Drift im API-Layer.
+**Impact**: Sprint 44 bleibt reines Transport-/Request-Hardening ohne Trading-Execution-Erweiterung.
+
+
+## Sprint 44 — Operator API Hardening & Request Governance Assumptions
+
+### A-073: request_id ist UUID4 — server-generiert oder client-gesetzt (validiert)
+**Assumption**: Der Server generiert standardmaessig ein UUID4 pro Request via `uuid.uuid4()`. Der Client kann `X-Request-Id` mit einem validen UUID4 senden — dann wird dieser Wert uebernommen. Ungueltige Werte (leer, nicht-UUID, zu lang) werden ignoriert und server-generiert.
+**Rationale**: Client-seitige Correlation (z.B. fuer Logging-Aggregation) ist ein Standard-Pattern. Validierung verhindert Injection oder Enumeration via Header.
+**Impact**: `get_request_id()` Dependency prueft UUID4-Regex. Jeder Response-Body enthaelt `request_id`. Response-Header `X-Request-Id` ist immer gesetzt.
+
+### A-074: Idempotency-Buffer ist in-memory, nicht persistent — Restart = akzeptiert
+**Assumption**: Der Idempotency-Buffer fuer `POST /operator/trading-loop/run-once` ist ein In-memory `OrderedDict` (maxlen=256, FIFO). Er wird nicht in die DB oder ein JSONL-Log persistiert. Ein Prozess-Neustart leert den Buffer.
+**Rationale**: Analog zum Telegram-Replay-Buffer (I-316, A-060). Einfachheit vor absoluter Durability. Das Risiko eines Doppel-Submits nach Neustart ist akzeptiert — run-once ist paper/shadow only, kein Live-Impact.
+**Impact**: Cluster-Deployments ohne Sticky Session koennen denselben Idempotency-Key auf unterschiedlichen Instanzen akzeptieren. Akzeptiert fuer Sprint 44.
+
+### A-075: Operator API Audit ist von Telegram-Audits streng getrennt
+**Assumption**: `artifacts/operator_api_audit.jsonl` (Sprint 44) ist ein separates Log von `artifacts/operator_commands.jsonl` (Telegram Commands) und `artifacts/telegram_webhook_rejections.jsonl` (Telegram Transport). Kein Cross-Write zwischen diesen drei Logs.
+**Rationale**: Jede Audit-Surface hat ihre eigene Verantwortlichkeit. Gemischte Logs erschweren Forensik und Monitoring.
+**Impact**: Drei getrennte Audit-Streams, drei getrennte JSONL-Dateien. Monitoring-Tools koennen gezielt nach Transport-Typ filtern.
+
+### A-076: HTTP 409 ist der kanonische Response bei Idempotency-Duplikat
+**Assumption**: Ein bereits gesehener `X-Idempotency-Key` → HTTP 409 mit `error="duplicate_idempotency_key"`. Kein HTTP 200 "accepted already". Kein HTTP 202. HTTP 409 ("Conflict") ist semantisch korrekt: Request ist strukturell valid, aber im aktuellen State nicht erlaubt.
+**Rationale**: HTTP 200/202 wuerde einen Erfolg signalisieren, der nicht eingetreten ist. HTTP 409 zwingt den Client zur expliziten Behandlung von Duplikaten.
+**Impact**: Clients muessen fuer `POST /operator/trading-loop/run-once` mit HTTP 409 rechnen wenn sie denselben Key wiederverwenden. Sprint-44-Tests verifizieren dieses Verhalten.
+
+### A-077: error_code ist machine-readable, detail ist human-readable — beide verpflichtend
+**Assumption**: Jedes Fehler-Objekt enthaelt `error` (machine-readable Code aus der kanonischen Liste §55.5) UND `detail` (human-readable Beschreibung) UND `request_id`. Kein Feld darf fehlen.
+**Rationale**: Machine-readable Codes erlauben automatisierte Alert-Klassifikation. Human-readable Detail erleichtert Operator-Debugging ohne Stack-Trace-Exposure.
+**Impact**: `require_operator_api_token` und alle Exception-Handler in `operator.py` muessen auf die strukturierte Form umgestellt werden (Codex-Task).
+
+### A-078: Audit-Log-Fehler sind nicht fatal — never-raise Kontrakt
+**Assumption**: Ein Fehler beim Schreiben des Audit-Logs (`artifacts/operator_api_audit.jsonl`) blockiert weder den Request noch den Response. Der Fehler wird auf WARNING-Ebene geloggt. Analog zum Telegram-Command-Audit (§55.4).
+**Rationale**: Audit-Log-Infrastruktur darf den Operator-Control-Path nicht degradieren. Besser ein Request ohne Audit als ein blockierter Request.
+**Impact**: `_audit_operator_request()` ist in einem try/except gekapselt. Monitoring sollte auf Audit-Write-Fehler alertieren.
+
+
+## Sprint 44C — Operator API Hardening Korrekturen (A-073C–A-078C)
+
+### A-073C: request_id Format ist req_<hex>, nicht UUID4 (Sprint 44C korrigiert)
+**Assumption**: `request_id` hat das Format `req_<uuid4_hex>` (z.B. `req_a1b2c3...`), generiert via `_new_context_id("req")`. Es ist kein reines UUID4. Client kann via `X-Request-ID` Header einen validen alphanumerischen Wert vorgeben (Regex `^[A-Za-z0-9._:-]{1,128}$`).
+**Rationale**: §55 definierte fälschlicherweise UUID4. Die Implementierung nutzt ein Prefix-Format für bessere Lesbarkeit in Logs.
+**Impact**: Tests prüfen `response.headers["X-Request-ID"].startswith("req_")` — kein UUID4-Format-Check.
+
+### A-074C: Idempotency ist REQUIRED und bietet Replay, nicht nur 409 (Sprint 44C korrigiert)
+**Assumption**: `Idempotency-Key` Header (nicht `X-Idempotency-Key`) ist PFLICHT für `POST /operator/trading-loop/run-once`. Fehlt er → 400 `missing_idempotency_key`. Bei gleichem Key + gleichem Payload-Fingerprint → gespeicherte Response zurück (kein zweiter API-Aufruf). Bei gleichem Key + anderem Payload → 409 `idempotency_key_conflict`.
+**Rationale**: §55 definierte optionale Idempotency mit einfachem 409. Die Implementierung bietet vollständiges Replay-Pattern mit SHA256-Payload-Fingerprinting.
+**Impact**: Clients MÜSSEN immer einen `Idempotency-Key` senden. Deterministische Keys erlauben sichere Retries ohne Doppel-Execution.
+
+### A-075C: Audit-Log ist operator_api_guarded_audit.jsonl, nur guarded POST (Sprint 44C korrigiert)
+**Assumption**: Das Audit-Log für Sprint 44 ist `artifacts/operator_api_guarded_audit.jsonl` — ausschliesslich für den guarded POST-Endpoint, NICHT für alle Operator-Requests. Read-only Endpoints werden NICHT in dieses Log geschrieben.
+**Rationale**: §55 definierte `artifacts/operator_api_audit.jsonl` für alle authentifizierten Requests. Die Implementierung auditiert gezielt den guarded Pfad — sicherheitsrelevanter und weniger Noise auf read-only.
+**Impact**: Drei separate Audit-Streams: `operator_commands.jsonl` (Telegram), `telegram_webhook_rejections.jsonl` (Transport), `operator_api_guarded_audit.jsonl` (guarded API POST).
+
+### A-076C: Error-Shape ist verschachtelt mit correlation_id (Sprint 44C korrigiert)
+**Assumption**: Die kanonische Error-Shape ist `{"error": {"code": "<code>", "message": "<msg>", "request_id": "<id>", "correlation_id": "<id>"}, "execution_enabled": false, "write_back_allowed": false}`. Sie ist verschachtelt (nicht flach wie §55 definierte) und enthält `correlation_id` als eigenes Feld.
+**Rationale**: §55 definierte flache Shape `{error: "<code>", detail: "<msg>", request_id: "<uuid>"}`. Die Implementierung ist strukturreicher und konsistenter mit API-Design-Standards.
+**Impact**: API-Clients müssen `response.json()["detail"]["error"]["code"]` lesen (FastAPI gibt HTTPException.detail als JSON zurück). Tests verifizieren via `_assert_error_payload()`.
+
+### A-077C: Rate-Limiter basiert auf token_fingerprint als operator_subject (Sprint 44C neu)
+**Assumption**: Der Rate-Limiter nutzt `operator_subject = "token_<sha256[:16]>"` als Bucket-Key — abgeleitet vom Bearer-Token-Wert (SHA256 der ersten 16 Hex-Zeichen). Dies ermöglicht token-basiertes Rate-Limiting ohne den Token-Wert zu loggen.
+**Rationale**: §55 definierte Rate-Limiting nicht. Die Implementierung fügt es als Schutzschicht für den guarded POST hinzu. Der token_fingerprint verhindert Token-Logging bei gleichzeitiger Eindeutigkeit.
+**Impact**: Verschiedene Bearer-Token haben separate Rate-Limit-Buckets. Wildcard-Token-Sharing teilt einen Bucket.
+
+### A-078C: _reset_operator_guard_state_for_tests() ist kanonische Test-Reset-Funktion (Sprint 44C neu)
+**Assumption**: `_reset_operator_guard_state_for_tests()` ist eine öffentliche Funktion in `operator.py` die `_IDEMPOTENCY_CACHE` und `_GUARDED_RATE_LIMIT_BUCKETS` leert. Sie wird in Test-Fixtures (`monkeypatch` + `tmp_path`) aufgerufen um determistische Tests zu gewährleisten.
+**Rationale**: In-memory State zwischen Tests isolieren ohne Prozess-Restart. Die Funktion ist "test surface" — nicht für Production-Use gedacht.
+**Impact**: Tests MÜSSEN `_reset_operator_guard_state_for_tests()` in `fixture(autouse=False)` aufrufen wenn sie Idempotency oder Rate-Limiting testen. `_WORKSPACE_ROOT` wird via `monkeypatch.setattr` umgeleitet auf `tmp_path`.
