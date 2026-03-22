@@ -21,10 +21,13 @@ channel and remains fail-closed, admin-gated, and dry-run-safe by default.
 """
 from __future__ import annotations
 
+import hmac
 import json
 import logging
 import re
+from collections import OrderedDict
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -48,6 +51,10 @@ _READ_ONLY_COMMANDS = frozenset(
 )
 _GUARDED_AUDIT_COMMANDS = frozenset({"approve", "reject", "incident"})
 _DECISION_REF_PATTERN = re.compile(r"^dec_[0-9a-f]{12}$")
+_WEBHOOK_ALLOWED_UPDATES_DEFAULT = ("message", "edited_message")
+_WEBHOOK_MAX_BODY_BYTES_DEFAULT = 64_000
+_WEBHOOK_MAX_SEEN_UPDATE_IDS_DEFAULT = 2_048
+_WEBHOOK_REJECTION_AUDIT_LOG_DEFAULT = "artifacts/telegram_webhook_rejections.jsonl"
 TELEGRAM_CANONICAL_RESEARCH_REFS: dict[str, tuple[str, ...]] = {
     "status": ("research readiness-summary",),
     "health": ("research provider-health",),
@@ -68,11 +75,26 @@ def get_telegram_command_inventory() -> dict[str, object]:
     return {
         "read_only_commands": sorted(_READ_ONLY_COMMANDS),
         "guarded_audit_commands": sorted(_GUARDED_AUDIT_COMMANDS),
+        "webhook_transport_defaults": {
+            "allowed_updates": list(_WEBHOOK_ALLOWED_UPDATES_DEFAULT),
+            "max_body_bytes": _WEBHOOK_MAX_BODY_BYTES_DEFAULT,
+        },
         "canonical_research_refs": {
             command: list(refs)
             for command, refs in TELEGRAM_CANONICAL_RESEARCH_REFS.items()
         },
     }
+
+
+@dataclass(frozen=True)
+class TelegramWebhookProcessResult:
+    """Outcome of transport-level webhook validation and dispatch."""
+
+    accepted: bool
+    processed: bool
+    rejection_reason: str | None = None
+    update_id: int | None = None
+    update_type: str | None = None
 
 
 class TelegramOperatorBot:
@@ -86,11 +108,39 @@ class TelegramOperatorBot:
         audit_log_path: str = "artifacts/operator_commands.jsonl",
         risk_engine: Any | None = None,
         dry_run: bool = True,
+        webhook_secret_token: str | None = None,
+        webhook_rejection_audit_log: str = _WEBHOOK_REJECTION_AUDIT_LOG_DEFAULT,
+        webhook_allowed_updates: tuple[str, ...] = _WEBHOOK_ALLOWED_UPDATES_DEFAULT,
+        webhook_max_body_bytes: int = _WEBHOOK_MAX_BODY_BYTES_DEFAULT,
+        webhook_max_seen_update_ids: int = _WEBHOOK_MAX_SEEN_UPDATE_IDS_DEFAULT,
     ) -> None:
+        normalized_updates = tuple(
+            dict.fromkeys(
+                update_type.strip().lower()
+                for update_type in webhook_allowed_updates
+                if update_type.strip()
+            )
+        )
+        if not normalized_updates:
+            raise ValueError(
+                "webhook_allowed_updates must contain at least one update type"
+            )
+        if webhook_max_body_bytes <= 0:
+            raise ValueError("webhook_max_body_bytes must be positive")
+        if webhook_max_seen_update_ids <= 0:
+            raise ValueError("webhook_max_seen_update_ids must be positive")
+
         self._token = bot_token
         self._admin_ids = set(admin_chat_ids)
         self._audit_path = Path(audit_log_path)
         self._audit_path.parent.mkdir(parents=True, exist_ok=True)
+        self._webhook_secret_token = (webhook_secret_token or "").strip()
+        self._webhook_rejection_audit_path = Path(webhook_rejection_audit_log)
+        self._webhook_rejection_audit_path.parent.mkdir(parents=True, exist_ok=True)
+        self._webhook_allowed_updates = normalized_updates
+        self._webhook_max_body_bytes = webhook_max_body_bytes
+        self._webhook_max_seen_update_ids = webhook_max_seen_update_ids
+        self._webhook_seen_update_ids: OrderedDict[int, None] = OrderedDict()
         self._risk_engine = risk_engine
         self._dry_run = dry_run
         self._pending_confirm: dict[int, str] = {}
@@ -100,6 +150,23 @@ class TelegramOperatorBot:
     @property
     def is_configured(self) -> bool:
         return bool(self._token) and bool(self._admin_ids)
+
+    @property
+    def webhook_configured(self) -> bool:
+        return bool(self._webhook_secret_token)
+
+    def get_webhook_status_summary(self) -> dict[str, object]:
+        """Return read-only webhook hardening configuration/status."""
+        return {
+            "report_type": "telegram_webhook_status_summary",
+            "webhook_configured": self.webhook_configured,
+            "allowed_updates": list(self._webhook_allowed_updates),
+            "max_body_bytes": self._webhook_max_body_bytes,
+            "seen_update_ids": len(self._webhook_seen_update_ids),
+            "max_seen_update_ids": self._webhook_max_seen_update_ids,
+            "execution_enabled": False,
+            "write_back_allowed": False,
+        }
 
     def _collect_invalid_command_refs(self) -> tuple[str, ...]:
         refs = [
@@ -118,6 +185,207 @@ class TelegramOperatorBot:
             )
             return tuple(sorted(set(refs)))
         return tuple(sorted(set(invalid_refs)))
+
+    def _constant_time_secret_match(self, candidate: str) -> bool:
+        if not self._webhook_secret_token:
+            return False
+        return hmac.compare_digest(candidate, self._webhook_secret_token)
+
+    def _extract_allowed_update_type(self, update: dict[str, Any]) -> str | None:
+        for update_type in self._webhook_allowed_updates:
+            if update.get(update_type) is not None:
+                return update_type
+        return None
+
+    def _track_webhook_update_id(self, update_id: int) -> None:
+        self._webhook_seen_update_ids[update_id] = None
+        if len(self._webhook_seen_update_ids) > self._webhook_max_seen_update_ids:
+            self._webhook_seen_update_ids.popitem(last=False)
+
+    def _audit_webhook_rejection(
+        self,
+        *,
+        reason: str,
+        method: str,
+        content_type: str | None,
+        content_length: int | None,
+        update_id: int | None = None,
+        update_type: str | None = None,
+    ) -> None:
+        record = {
+            "timestamp_utc": datetime.now(UTC).isoformat(),
+            "event": "telegram_webhook_rejected",
+            "reason": reason,
+            "method": method,
+            "content_type": content_type or "",
+            "content_length": content_length,
+            "update_id": update_id,
+            "update_type": update_type,
+            "allowed_updates": list(self._webhook_allowed_updates),
+            "execution_enabled": False,
+            "write_back_allowed": False,
+        }
+        try:
+            with self._webhook_rejection_audit_path.open("a", encoding="utf-8") as fh:
+                fh.write(json.dumps(record) + "\n")
+        except OSError as exc:
+            logger.error("[BOT] Webhook rejection audit write failed: %s", exc)
+
+    def _reject_webhook(
+        self,
+        *,
+        reason: str,
+        method: str,
+        content_type: str | None,
+        content_length: int | None,
+        update_id: int | None = None,
+        update_type: str | None = None,
+    ) -> TelegramWebhookProcessResult:
+        logger.warning(
+            (
+                "[BOT] Webhook rejected: reason=%s method=%s content_type=%s "
+                "content_length=%s update_id=%s update_type=%s"
+            ),
+            reason,
+            method,
+            content_type,
+            content_length,
+            update_id,
+            update_type,
+        )
+        self._audit_webhook_rejection(
+            reason=reason,
+            method=method,
+            content_type=content_type,
+            content_length=content_length,
+            update_id=update_id,
+            update_type=update_type,
+        )
+        return TelegramWebhookProcessResult(
+            accepted=False,
+            processed=False,
+            rejection_reason=reason,
+            update_id=update_id,
+            update_type=update_type,
+        )
+
+    async def process_webhook_update(
+        self,
+        *,
+        method: str,
+        content_type: str | None,
+        content_length: int | None,
+        header_secret_token: str | None,
+        update: dict[str, Any] | None,
+    ) -> TelegramWebhookProcessResult:
+        """Validate webhook transport and dispatch the update fail-closed."""
+        normalized_method = method.strip().upper()
+        if not self.webhook_configured:
+            return self._reject_webhook(
+                reason="webhook_secret_not_configured",
+                method=normalized_method,
+                content_type=content_type,
+                content_length=content_length,
+            )
+        if normalized_method != "POST":
+            return self._reject_webhook(
+                reason="invalid_http_method",
+                method=normalized_method,
+                content_type=content_type,
+                content_length=content_length,
+            )
+
+        normalized_content_type = (content_type or "").strip().lower()
+        if not normalized_content_type.startswith("application/json"):
+            return self._reject_webhook(
+                reason="invalid_content_type",
+                method=normalized_method,
+                content_type=content_type,
+                content_length=content_length,
+            )
+
+        if content_length is None:
+            return self._reject_webhook(
+                reason="missing_content_length",
+                method=normalized_method,
+                content_type=content_type,
+                content_length=content_length,
+            )
+        if content_length <= 0:
+            return self._reject_webhook(
+                reason="invalid_content_length",
+                method=normalized_method,
+                content_type=content_type,
+                content_length=content_length,
+            )
+        if content_length > self._webhook_max_body_bytes:
+            return self._reject_webhook(
+                reason="payload_too_large",
+                method=normalized_method,
+                content_type=content_type,
+                content_length=content_length,
+            )
+
+        candidate_token = (header_secret_token or "").strip()
+        if not candidate_token:
+            return self._reject_webhook(
+                reason="missing_secret_token_header",
+                method=normalized_method,
+                content_type=content_type,
+                content_length=content_length,
+            )
+        if not self._constant_time_secret_match(candidate_token):
+            return self._reject_webhook(
+                reason="invalid_secret_token",
+                method=normalized_method,
+                content_type=content_type,
+                content_length=content_length,
+            )
+
+        if not isinstance(update, dict):
+            return self._reject_webhook(
+                reason="missing_or_invalid_update_body",
+                method=normalized_method,
+                content_type=content_type,
+                content_length=content_length,
+            )
+
+        raw_update_id = update.get("update_id")
+        if not isinstance(raw_update_id, int) or raw_update_id < 0:
+            return self._reject_webhook(
+                reason="invalid_update_id",
+                method=normalized_method,
+                content_type=content_type,
+                content_length=content_length,
+            )
+        update_id = raw_update_id
+        update_type = self._extract_allowed_update_type(update)
+        if update_type is None:
+            return self._reject_webhook(
+                reason="disallowed_update_type",
+                method=normalized_method,
+                content_type=content_type,
+                content_length=content_length,
+                update_id=update_id,
+            )
+        if update_id in self._webhook_seen_update_ids:
+            return self._reject_webhook(
+                reason="duplicate_update_id",
+                method=normalized_method,
+                content_type=content_type,
+                content_length=content_length,
+                update_id=update_id,
+                update_type=update_type,
+            )
+
+        self._track_webhook_update_id(update_id)
+        await self.process_update(update)
+        return TelegramWebhookProcessResult(
+            accepted=True,
+            processed=True,
+            update_id=update_id,
+            update_type=update_type,
+        )
 
     async def process_update(self, update: dict[str, Any]) -> None:
         """Process a single Telegram update and ignore non-command traffic."""

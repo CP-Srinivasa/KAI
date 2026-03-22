@@ -157,3 +157,89 @@ Regeln:
 - Kein automatisches `/approve`, das eine Order ausloest
 - Kein automatisches Decision-State-Update ohne Operator-Confirm
 - Kein Auto-Remediation via `/incident`
+
+---
+
+## Webhook Transport Layer (Sprint 42+42C — kanonisch)
+
+> **Sprint 42C (2026-03-21):** Dieser Abschnitt wurde auf die tatsächliche Implementierung korrigiert. Sprint-42-Definition enthielt falsche Modul-/Klassennamen.
+
+### Architektonische Einordnung
+
+```
+[Telegram Server]
+      |
+      |  POST /webhook/telegram
+      |  Header: X-Telegram-Bot-Api-Secret-Token: <secret>
+      v
+[TelegramOperatorBot.process_webhook_update()]   ← app/messaging/telegram_bot.py
+  ① webhook_configured check    ← fail-closed bei leerem secret_token
+  ② POST + application/json     ← invalid_http_method / invalid_content_type
+  ③ Content-Length prüfen       ← missing/invalid/payload_too_large
+  ④ Secret-Token-Check          ← hmac.compare_digest (constant-time)
+  ⑤ update dict + update_id     ← missing_or_invalid_update_body / invalid_update_id
+  ⑥ Allowed-Update-Typ-Check    ← disallowed_update_type → rejected
+  ⑦ Replay-Check                ← duplicate_update_id → rejected
+  → Rejection: TelegramWebhookProcessResult(accepted=False)
+  → Rejection-Audit: artifacts/telegram_webhook_rejections.jsonl
+      |
+      | nur bei accepted=True
+      v
+[TelegramOperatorBot.process_update()]
+  - Admin-Chat-ID-Check         ← _admin_ids
+  - Command-Dispatch            ← _dispatch()
+  - Command-Audit               ← artifacts/operator_commands.jsonl
+  - Business-Logic              ← unverändert
+```
+
+**Einziges Modul**: `app/messaging/telegram_bot.py` — kein separates Legacy-Webhook-Modul
+**Zwei orthogonale Security-Layer**: Transport (Secret+Typ+Replay) und Operator (admin_chat_ids)
+
+### Webhook-Sicherheitsinvarianten (kanonisch, Sprint 42C)
+
+11. `webhook_secret_token=None/""` → `rejection_reason="webhook_secret_not_configured"` — fail-closed
+12. Secret-Vergleich via `hmac.compare_digest` (constant-time) — kein Timing-Angriff
+13. `edited_message` ist per Default **ERLAUBT** (`_WEBHOOK_ALLOWED_UPDATES_DEFAULT`); Replay-Schutz via update_id-Deduplication. Konfigurierbar auf `("message",)` für strikte Operator-Umgebungen.
+14. Abgewiesene Requests → `artifacts/telegram_webhook_rejections.jsonl` (append-only). Angenommene Requests → `artifacts/operator_commands.jsonl` (Bot-Layer-Audit).
+15. `process_update()` wird ausschliesslich bei `result.accepted is True` aufgerufen — keine ungeprüfte Weitergabe.
+
+### Erlaubte Update-Typen (Default)
+
+| Update-Typ | Default-Status |
+|---|---|
+| `message` | ✅ ERLAUBT |
+| `edited_message` | ✅ ERLAUBT (konfigurierbar auf ❌) |
+| `callback_query` | ❌ disallowed_update_type |
+| `channel_post` | ❌ disallowed_update_type |
+| `inline_query` | ❌ disallowed_update_type |
+| alle anderen | ❌ disallowed_update_type |
+
+### Konfiguration (Webhook-Transport-Parameter)
+
+| Parameter | Default | Bedeutung |
+|---|---|---|
+| `webhook_secret_token` | `None` / `""` | Leer = fail-closed. Aus `OPERATOR_TELEGRAM_WEBHOOK_SECRET` laden. |
+| `webhook_allowed_updates` | `("message", "edited_message")` | Erlaubte Update-Typen |
+| `webhook_max_body_bytes` | `64_000` | Max. Body-Grösse vor Secret-Check |
+| `webhook_max_seen_update_ids` | `2_048` | Replay-Buffer-Grösse (OrderedDict FIFO) |
+| `webhook_rejection_audit_log` | `"artifacts/telegram_webhook_rejections.jsonl"` | Rejection-Audit-Log |
+
+### Rejection-Audit-Log (`artifacts/telegram_webhook_rejections.jsonl`)
+
+```json
+{
+  "timestamp_utc": "2026-03-21T10:00:00+00:00",
+  "event": "telegram_webhook_rejected",
+  "reason": "invalid_secret_token",
+  "method": "POST",
+  "content_type": "application/json",
+  "content_length": 64,
+  "update_id": null,
+  "update_type": null,
+  "allowed_updates": ["message", "edited_message"],
+  "execution_enabled": false,
+  "write_back_allowed": false
+}
+```
+
+**Kanonische Rejection-Reasons (12)**: `webhook_secret_not_configured` / `invalid_http_method` / `invalid_content_type` / `missing_content_length` / `invalid_content_length` / `payload_too_large` / `missing_secret_token_header` / `invalid_secret_token` / `missing_or_invalid_update_body` / `invalid_update_id` / `disallowed_update_type` / `duplicate_update_id`

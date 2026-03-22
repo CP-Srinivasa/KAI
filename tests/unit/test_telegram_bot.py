@@ -32,13 +32,14 @@ def _limits() -> RiskLimits:
     )
 
 
-def _bot(tmp_path, risk_engine=None) -> TelegramOperatorBot:
+def _bot(tmp_path, risk_engine=None, **kwargs: Any) -> TelegramOperatorBot:
     return TelegramOperatorBot(
         bot_token="fake_token",
         admin_chat_ids=[12345],
         audit_log_path=str(tmp_path / "cmd_audit.jsonl"),
         risk_engine=risk_engine,
         dry_run=True,
+        **kwargs,
     )
 
 
@@ -582,3 +583,247 @@ async def test_help_lists_hardened_commands(tmp_path, monkeypatch):
     assert "/exposure - Read-only paper exposure" in help_text
     assert "/approve <decision_ref> - Audit-only approval intent" in help_text
     assert "/incident <note> - Escalation summary + audit note" in help_text
+
+
+@pytest.mark.asyncio
+async def test_webhook_valid_secret_method_content_type_size_dispatches_once(
+    tmp_path, monkeypatch
+):
+    bot = _bot(
+        tmp_path,
+        webhook_secret_token="secret-token",
+        webhook_rejection_audit_log=str(tmp_path / "webhook_rejections.jsonl"),
+    )
+    calls: list[tuple[int, str, str]] = []
+
+    async def fake_dispatch(chat_id: int, command: str, *, args: str = "") -> None:
+        calls.append((chat_id, command, args))
+
+    monkeypatch.setattr(bot, "_dispatch", fake_dispatch)
+
+    result = await bot.process_webhook_update(
+        method="POST",
+        content_type="application/json; charset=utf-8",
+        content_length=128,
+        header_secret_token="secret-token",
+        update={"update_id": 101, "message": {"chat": {"id": 12345}, "text": "/status"}},
+    )
+
+    assert result.accepted is True
+    assert result.processed is True
+    assert result.rejection_reason is None
+    assert result.update_id == 101
+    assert result.update_type == "message"
+    assert calls == [(12345, "status", "")]
+
+
+@pytest.mark.asyncio
+async def test_webhook_invalid_secret_is_rejected_and_has_no_command_side_effects(
+    tmp_path, monkeypatch
+):
+    bot = _bot(
+        tmp_path,
+        webhook_secret_token="secret-token",
+        webhook_rejection_audit_log=str(tmp_path / "webhook_rejections.jsonl"),
+    )
+
+    async def should_not_dispatch(*args: object, **kwargs: object) -> None:
+        raise AssertionError("dispatch must not run for rejected webhook")
+
+    monkeypatch.setattr(bot, "_dispatch", should_not_dispatch)
+
+    result = await bot.process_webhook_update(
+        method="POST",
+        content_type="application/json",
+        content_length=64,
+        header_secret_token="wrong-token",
+        update={"update_id": 11, "message": {"chat": {"id": 12345}, "text": "/status"}},
+    )
+
+    assert result.accepted is False
+    assert result.processed is False
+    assert result.rejection_reason == "invalid_secret_token"
+    assert not (tmp_path / "cmd_audit.jsonl").exists()
+
+    rejection_log = tmp_path / "webhook_rejections.jsonl"
+    lines = [json.loads(line) for line in rejection_log.read_text(encoding="utf-8").splitlines()]
+    assert lines[-1]["reason"] == "invalid_secret_token"
+    assert lines[-1]["execution_enabled"] is False
+    assert lines[-1]["write_back_allowed"] is False
+
+
+@pytest.mark.asyncio
+async def test_webhook_missing_secret_header_is_rejected_fail_closed(
+    tmp_path, monkeypatch
+):
+    bot = _bot(
+        tmp_path,
+        webhook_secret_token="secret-token",
+        webhook_rejection_audit_log=str(tmp_path / "webhook_rejections.jsonl"),
+    )
+
+    async def should_not_dispatch(*args: object, **kwargs: object) -> None:
+        raise AssertionError("dispatch must not run for rejected webhook")
+
+    monkeypatch.setattr(bot, "_dispatch", should_not_dispatch)
+
+    result = await bot.process_webhook_update(
+        method="POST",
+        content_type="application/json",
+        content_length=64,
+        header_secret_token=None,
+        update={"update_id": 12, "message": {"chat": {"id": 12345}, "text": "/status"}},
+    )
+
+    assert result.accepted is False
+    assert result.rejection_reason == "missing_secret_token_header"
+
+
+@pytest.mark.asyncio
+async def test_webhook_disallowed_update_type_is_rejected(tmp_path, monkeypatch):
+    bot = _bot(
+        tmp_path,
+        webhook_secret_token="secret-token",
+        webhook_rejection_audit_log=str(tmp_path / "webhook_rejections.jsonl"),
+    )
+
+    async def should_not_dispatch(*args: object, **kwargs: object) -> None:
+        raise AssertionError("dispatch must not run for rejected webhook")
+
+    monkeypatch.setattr(bot, "_dispatch", should_not_dispatch)
+
+    result = await bot.process_webhook_update(
+        method="POST",
+        content_type="application/json",
+        content_length=64,
+        header_secret_token="secret-token",
+        update={"update_id": 13, "callback_query": {"id": "cbq-1"}},
+    )
+
+    assert result.accepted is False
+    assert result.rejection_reason == "disallowed_update_type"
+
+
+@pytest.mark.asyncio
+async def test_webhook_duplicate_update_id_is_rejected_as_replay(tmp_path, monkeypatch):
+    bot = _bot(
+        tmp_path,
+        webhook_secret_token="secret-token",
+        webhook_rejection_audit_log=str(tmp_path / "webhook_rejections.jsonl"),
+    )
+    calls: list[tuple[int, str, str]] = []
+
+    async def fake_dispatch(chat_id: int, command: str, *, args: str = "") -> None:
+        calls.append((chat_id, command, args))
+
+    monkeypatch.setattr(bot, "_dispatch", fake_dispatch)
+
+    first = await bot.process_webhook_update(
+        method="POST",
+        content_type="application/json",
+        content_length=64,
+        header_secret_token="secret-token",
+        update={"update_id": 14, "message": {"chat": {"id": 12345}, "text": "/help"}},
+    )
+    second = await bot.process_webhook_update(
+        method="POST",
+        content_type="application/json",
+        content_length=64,
+        header_secret_token="secret-token",
+        update={"update_id": 14, "message": {"chat": {"id": 12345}, "text": "/help"}},
+    )
+
+    assert first.accepted is True
+    assert second.accepted is False
+    assert second.rejection_reason == "duplicate_update_id"
+    assert calls == [(12345, "help", "")]
+
+    rejection_log = tmp_path / "webhook_rejections.jsonl"
+    lines = [json.loads(line) for line in rejection_log.read_text(encoding="utf-8").splitlines()]
+    assert lines[-1]["reason"] == "duplicate_update_id"
+    assert lines[-1]["update_id"] == 14
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("method", "content_type", "content_length", "expected_reason"),
+    [
+        ("GET", "application/json", 32, "invalid_http_method"),
+        ("POST", "text/plain", 32, "invalid_content_type"),
+        ("POST", "application/json", None, "missing_content_length"),
+        ("POST", "application/json", 0, "invalid_content_length"),
+        ("POST", "application/json", 128_000, "payload_too_large"),
+    ],
+)
+async def test_webhook_transport_checks_fail_closed(
+    tmp_path,
+    monkeypatch,
+    method: str,
+    content_type: str,
+    content_length: int | None,
+    expected_reason: str,
+):
+    bot = _bot(
+        tmp_path,
+        webhook_secret_token="secret-token",
+        webhook_rejection_audit_log=str(tmp_path / "webhook_rejections.jsonl"),
+    )
+
+    async def should_not_dispatch(*args: object, **kwargs: object) -> None:
+        raise AssertionError("dispatch must not run for rejected webhook")
+
+    monkeypatch.setattr(bot, "_dispatch", should_not_dispatch)
+
+    result = await bot.process_webhook_update(
+        method=method,
+        content_type=content_type,
+        content_length=content_length,
+        header_secret_token="secret-token",
+        update={"update_id": 99, "message": {"chat": {"id": 12345}, "text": "/status"}},
+    )
+
+    assert result.accepted is False
+    assert result.processed is False
+    assert result.rejection_reason == expected_reason
+
+
+@pytest.mark.asyncio
+async def test_webhook_rejects_when_secret_not_configured_fail_closed(
+    tmp_path, monkeypatch
+):
+    bot = _bot(
+        tmp_path,
+        webhook_rejection_audit_log=str(tmp_path / "webhook_rejections.jsonl"),
+    )
+
+    async def should_not_dispatch(*args: object, **kwargs: object) -> None:
+        raise AssertionError("dispatch must not run for rejected webhook")
+
+    monkeypatch.setattr(bot, "_dispatch", should_not_dispatch)
+
+    result = await bot.process_webhook_update(
+        method="POST",
+        content_type="application/json",
+        content_length=64,
+        header_secret_token="secret-token",
+        update={"update_id": 55, "message": {"chat": {"id": 12345}, "text": "/status"}},
+    )
+
+    assert result.accepted is False
+    assert result.processed is False
+    assert result.rejection_reason == "webhook_secret_not_configured"
+
+
+def test_webhook_status_summary_is_read_only(tmp_path) -> None:
+    bot = _bot(
+        tmp_path,
+        webhook_secret_token="secret-token",
+        webhook_rejection_audit_log=str(tmp_path / "webhook_rejections.jsonl"),
+    )
+
+    status = bot.get_webhook_status_summary()
+
+    assert status["report_type"] == "telegram_webhook_status_summary"
+    assert status["webhook_configured"] is True
+    assert status["execution_enabled"] is False
+    assert status["write_back_allowed"] is False
