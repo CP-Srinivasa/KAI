@@ -4,7 +4,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.routers import alerts, health, query, sources
+from app.api.routers import alerts, health, operator, query, research, sources
 from app.core.logging import configure_logging
 from app.core.settings import get_settings
 from app.ingestion.base.interfaces import FetchResult
@@ -58,15 +58,21 @@ def create_app() -> FastAPI:
         allow_origins=["http://localhost:3000", "http://localhost:8000"],
         allow_credentials=False,
         allow_methods=["GET", "POST", "PATCH", "DELETE"],
-        allow_headers=["Authorization", "Content-Type"],
+        allow_headers=[
+            "Authorization",
+            "Content-Type",
+            "X-Request-ID",
+            "X-Correlation-ID",
+            "Idempotency-Key",
+        ],
     )
 
     app.include_router(health.router)
     app.include_router(sources.router)
     app.include_router(query.router)
     app.include_router(alerts.router)
-    from app.api.routers import research
     app.include_router(research.router, prefix="/research", tags=["research"])
+    app.include_router(operator.router)
     return app
 
 
