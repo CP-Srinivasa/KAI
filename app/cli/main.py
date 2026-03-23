@@ -5,7 +5,14 @@ from rich.console import Console
 from rich.table import Table
 
 from app.cli.commands.trading import trading_app
-from app.cli.research import research_app
+from app.cli.research import (
+    extract_runbook_command_refs,
+    get_invalid_research_command_refs,
+    get_provisional_research_command_names,
+    get_registered_research_command_names,
+    get_research_command_inventory,
+    research_app,
+)
 from app.core.logging import configure_logging
 from app.core.settings import get_settings
 from app.ingestion.base.interfaces import FetchResult
@@ -15,6 +22,15 @@ from app.ingestion.resolvers.youtube import load_youtube_channels
 from app.ingestion.rss.service import RSSCollectedFeed, collect_rss_feed
 from app.storage.db.session import build_session_factory
 from app.storage.document_ingest import IngestPersistStats, persist_fetch_result
+
+__all__ = [
+    "app",
+    "extract_runbook_command_refs",
+    "get_invalid_research_command_refs",
+    "get_provisional_research_command_names",
+    "get_registered_research_command_names",
+    "get_research_command_inventory",
+]
 
 app = typer.Typer(name="trading-bot", help="AI Analyst Trading Bot CLI", no_args_is_help=True)
 console = Console()
