@@ -17,7 +17,11 @@ from app.agents.mcp_server import (
 
 
 def _patch_workspace_root(monkeypatch: pytest.MonkeyPatch, root: Path) -> None:
-    monkeypatch.setattr(mcp_server_module, "_WORKSPACE_ROOT", root.resolve())
+    import app.agents.tools._helpers as _helpers_module
+
+    resolved = root.resolve()
+    monkeypatch.setattr(mcp_server_module, "_WORKSPACE_ROOT", resolved)
+    monkeypatch.setattr(_helpers_module, "WORKSPACE_ROOT", resolved)
 
 
 # ── get_decision_journal_summary ──────────────────────────────────────────────

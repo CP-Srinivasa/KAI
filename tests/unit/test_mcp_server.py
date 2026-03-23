@@ -79,7 +79,11 @@ from tests.unit.factories import make_document
 
 
 def _patch_workspace_root(monkeypatch: pytest.MonkeyPatch, root: Path) -> None:
-    monkeypatch.setattr(mcp_server_module, "_WORKSPACE_ROOT", root.resolve())
+    import app.agents.tools._helpers as _helpers_module
+
+    resolved = root.resolve()
+    monkeypatch.setattr(mcp_server_module, "_WORKSPACE_ROOT", resolved)
+    monkeypatch.setattr(_helpers_module, "WORKSPACE_ROOT", resolved)
 
 
 def _write_route_profile(
@@ -204,8 +208,8 @@ async def test_mcp_server_tools_registered() -> None:
 
 
 @pytest.mark.asyncio
-@patch("app.agents.mcp_server.get_settings")
-@patch("app.agents.mcp_server.WatchlistRegistry")
+@patch("app.agents.tools.canonical_read.get_settings")
+@patch("app.agents.tools.canonical_read.WatchlistRegistry")
 async def test_get_watchlists(mock_registry_cls: MagicMock, mock_settings: MagicMock) -> None:
     mock_settings.return_value = SimpleNamespace(monitor_dir="monitor")
     mock_registry = mock_registry_cls.from_monitor_dir.return_value
@@ -221,10 +225,10 @@ async def test_get_watchlists(mock_registry_cls: MagicMock, mock_settings: Magic
 
 
 @pytest.mark.asyncio
-@patch("app.agents.mcp_server.build_session_factory")
-@patch("app.agents.mcp_server.get_settings")
-@patch("app.agents.mcp_server.WatchlistRegistry")
-@patch("app.agents.mcp_server.ResearchBriefBuilder")
+@patch("app.agents.tools.canonical_read.build_session_factory")
+@patch("app.agents.tools.canonical_read.get_settings")
+@patch("app.agents.tools.canonical_read.WatchlistRegistry")
+@patch("app.agents.tools.canonical_read.ResearchBriefBuilder")
 async def test_get_research_brief(
     mock_builder_cls: MagicMock,
     mock_registry_cls: MagicMock,
@@ -246,7 +250,7 @@ async def test_get_research_brief(
         mock_session
     )
 
-    with patch("app.agents.mcp_server.DocumentRepository") as mock_repo_cls:
+    with patch("app.agents.tools.canonical_read.DocumentRepository") as mock_repo_cls:
         mock_repo = mock_repo_cls.return_value
         mock_repo.list = AsyncMock(return_value=[])
 
@@ -260,10 +264,10 @@ async def test_get_research_brief(
 
 
 @pytest.mark.asyncio
-@patch("app.agents.mcp_server.extract_signal_candidates")
-@patch("app.agents.mcp_server.build_session_factory")
-@patch("app.agents.mcp_server.get_settings")
-@patch("app.agents.mcp_server.WatchlistRegistry")
+@patch("app.agents.tools._helpers.extract_signal_candidates")
+@patch("app.agents.tools._helpers.build_session_factory")
+@patch("app.agents.tools._helpers.get_settings")
+@patch("app.agents.tools._helpers.WatchlistRegistry")
 async def test_get_signal_candidates(
     mock_registry_cls: MagicMock,
     mock_settings: MagicMock,
@@ -283,7 +287,7 @@ async def test_get_signal_candidates(
         mock_session
     )
 
-    with patch("app.agents.mcp_server.DocumentRepository") as mock_repo_cls:
+    with patch("app.agents.tools._helpers.DocumentRepository") as mock_repo_cls:
         mock_repo = mock_repo_cls.return_value
         mock_repo.list = AsyncMock(return_value=[])
 
@@ -298,8 +302,8 @@ async def test_get_signal_candidates(
 
 
 @pytest.mark.asyncio
-@patch("app.agents.mcp_server.build_session_factory")
-@patch("app.agents.mcp_server.get_settings")
+@patch("app.agents.tools.canonical_read.build_session_factory")
+@patch("app.agents.tools.canonical_read.get_settings")
 async def test_get_narrative_clusters_returns_read_only_cluster_report(
     mock_settings: MagicMock,
     mock_session_factory: MagicMock,
@@ -340,7 +344,7 @@ async def test_get_narrative_clusters_returns_read_only_cluster_report(
         ),
     ]
 
-    with patch("app.agents.mcp_server.DocumentRepository") as mock_repo_cls:
+    with patch("app.agents.tools.canonical_read.DocumentRepository") as mock_repo_cls:
         mock_repo = mock_repo_cls.return_value
         mock_repo.list = AsyncMock(return_value=docs)
 
@@ -360,9 +364,9 @@ async def test_get_narrative_clusters_returns_read_only_cluster_report(
 
 
 @pytest.mark.asyncio
-@patch("app.agents.mcp_server.build_session_factory")
-@patch("app.agents.mcp_server.get_settings")
-@patch("app.agents.mcp_server.WatchlistRegistry")
+@patch("app.agents.tools._helpers.build_session_factory")
+@patch("app.agents.tools._helpers.get_settings")
+@patch("app.agents.tools._helpers.WatchlistRegistry")
 async def test_get_signals_for_execution_returns_read_only_handoff(
     mock_registry_cls: MagicMock,
     mock_settings: MagicMock,
@@ -395,7 +399,7 @@ async def test_get_signals_for_execution_returns_read_only_handoff(
         mock_session
     )
 
-    with patch("app.agents.mcp_server.DocumentRepository") as mock_repo_cls:
+    with patch("app.agents.tools._helpers.DocumentRepository") as mock_repo_cls:
         mock_repo = mock_repo_cls.return_value
         mock_repo.list = AsyncMock(return_value=[document])
 
@@ -420,9 +424,9 @@ async def test_get_signals_for_execution_returns_read_only_handoff(
 
 
 @pytest.mark.asyncio
-@patch("app.agents.mcp_server.build_session_factory")
-@patch("app.agents.mcp_server.get_settings")
-@patch("app.agents.mcp_server.WatchlistRegistry")
+@patch("app.agents.tools._helpers.build_session_factory")
+@patch("app.agents.tools._helpers.get_settings")
+@patch("app.agents.tools._helpers.WatchlistRegistry")
 async def test_get_signals_for_execution_provider_filter_excludes_other_sources(
     mock_registry_cls: MagicMock,
     mock_settings: MagicMock,
@@ -456,7 +460,7 @@ async def test_get_signals_for_execution_provider_filter_excludes_other_sources(
         mock_session
     )
 
-    with patch("app.agents.mcp_server.DocumentRepository") as mock_repo_cls:
+    with patch("app.agents.tools._helpers.DocumentRepository") as mock_repo_cls:
         mock_repo = mock_repo_cls.return_value
         mock_repo.list = AsyncMock(return_value=[openai_document, rule_document])
 
@@ -467,9 +471,9 @@ async def test_get_signals_for_execution_provider_filter_excludes_other_sources(
 
 
 @pytest.mark.asyncio
-@patch("app.agents.mcp_server.build_session_factory")
-@patch("app.agents.mcp_server.get_settings")
-@patch("app.agents.mcp_server.WatchlistRegistry")
+@patch("app.agents.tools._helpers.build_session_factory")
+@patch("app.agents.tools._helpers.get_settings")
+@patch("app.agents.tools._helpers.WatchlistRegistry")
 async def test_get_distribution_classification_report_returns_read_only_split(
     mock_registry_cls: MagicMock,
     mock_settings: MagicMock,
@@ -506,7 +510,7 @@ async def test_get_distribution_classification_report_returns_read_only_split(
         mock_session
     )
 
-    with patch("app.agents.mcp_server.DocumentRepository") as mock_repo_cls:
+    with patch("app.agents.tools._helpers.DocumentRepository") as mock_repo_cls:
         mock_repo = mock_repo_cls.return_value
         mock_repo.list = AsyncMock(return_value=[document])
 
@@ -528,9 +532,9 @@ async def test_get_distribution_classification_report_returns_read_only_split(
 
 
 @pytest.mark.asyncio
-@patch("app.agents.mcp_server.build_route_profile", new_callable=AsyncMock)
-@patch("app.agents.mcp_server.build_session_factory")
-@patch("app.agents.mcp_server.get_settings")
+@patch("app.agents.tools.canonical_read.build_route_profile", new_callable=AsyncMock)
+@patch("app.agents.tools.canonical_read.build_session_factory")
+@patch("app.agents.tools.canonical_read.get_settings")
 async def test_get_route_profile_report(
     mock_settings: MagicMock,
     mock_session_factory: MagicMock,
@@ -548,7 +552,7 @@ async def test_get_route_profile_report(
     }
     mock_build_route_profile.return_value = mock_report
 
-    with patch("app.agents.mcp_server.DocumentRepository") as mock_repo_cls:
+    with patch("app.agents.tools.canonical_read.DocumentRepository") as mock_repo_cls:
         payload = await get_route_profile_report(limit=25)
 
     assert payload["report_type"] == "route_profile"
@@ -1221,7 +1225,7 @@ async def test_acknowledge_signal_handoff_no_db_write(
     def _fail_if_called(*_a: object, **_kw: object) -> None:
         called.append(True)
 
-    monkeypatch.setattr("app.agents.mcp_server.build_session_factory", _fail_if_called)
+    monkeypatch.setattr("app.agents.tools._helpers.build_session_factory", _fail_if_called)
 
     await acknowledge_signal_handoff(
         handoff_path=str(handoff_path),
@@ -1897,16 +1901,18 @@ async def test_get_daily_operator_summary_aggregates_canonical_surfaces(
             "open_count": 3,
         }
 
+    import app.agents.tools.canonical_read as _canonical_read_module
+
     monkeypatch.setattr(
-        mcp_server_module,
+        _canonical_read_module,
         "get_operational_readiness_summary",
         fake_readiness,
     )
-    monkeypatch.setattr(mcp_server_module, "get_recent_trading_cycles", fake_recent_cycles)
-    monkeypatch.setattr(mcp_server_module, "get_paper_portfolio_snapshot", fake_portfolio)
-    monkeypatch.setattr(mcp_server_module, "get_paper_exposure_summary", fake_exposure)
-    monkeypatch.setattr(mcp_server_module, "get_decision_pack_summary", fake_decision_pack)
-    monkeypatch.setattr(mcp_server_module, "get_review_journal_summary", fake_review_journal)
+    monkeypatch.setattr(_canonical_read_module, "get_recent_trading_cycles", fake_recent_cycles)
+    monkeypatch.setattr(_canonical_read_module, "get_paper_portfolio_snapshot", fake_portfolio)
+    monkeypatch.setattr(_canonical_read_module, "get_paper_exposure_summary", fake_exposure)
+    monkeypatch.setattr(_canonical_read_module, "get_decision_pack_summary", fake_decision_pack)
+    monkeypatch.setattr(_canonical_read_module, "get_review_journal_summary", fake_review_journal)
 
     payload = await get_daily_operator_summary()
 
@@ -1956,16 +1962,18 @@ async def test_get_daily_operator_summary_degrades_fail_closed_on_surface_error(
     async def fake_review_journal(**_kwargs: object) -> dict[str, object]:
         return {"open_count": 0}
 
+    import app.agents.tools.canonical_read as _canonical_read_module
+
     monkeypatch.setattr(
-        mcp_server_module,
+        _canonical_read_module,
         "get_operational_readiness_summary",
         failing_readiness,
     )
-    monkeypatch.setattr(mcp_server_module, "get_recent_trading_cycles", fake_recent_cycles)
-    monkeypatch.setattr(mcp_server_module, "get_paper_portfolio_snapshot", fake_portfolio)
-    monkeypatch.setattr(mcp_server_module, "get_paper_exposure_summary", fake_exposure)
-    monkeypatch.setattr(mcp_server_module, "get_decision_pack_summary", fake_decision_pack)
-    monkeypatch.setattr(mcp_server_module, "get_review_journal_summary", fake_review_journal)
+    monkeypatch.setattr(_canonical_read_module, "get_recent_trading_cycles", fake_recent_cycles)
+    monkeypatch.setattr(_canonical_read_module, "get_paper_portfolio_snapshot", fake_portfolio)
+    monkeypatch.setattr(_canonical_read_module, "get_paper_exposure_summary", fake_exposure)
+    monkeypatch.setattr(_canonical_read_module, "get_decision_pack_summary", fake_decision_pack)
+    monkeypatch.setattr(_canonical_read_module, "get_review_journal_summary", fake_review_journal)
 
     payload = await get_daily_operator_summary()
 
@@ -2252,8 +2260,8 @@ async def test_get_artifact_retention_report_blocks_path_outside_workspace(
 
 
 @pytest.mark.asyncio
-@patch("app.agents.mcp_server.build_session_factory")
-@patch("app.agents.mcp_server.get_settings")
+@patch("app.agents.tools.canonical_read.build_session_factory")
+@patch("app.agents.tools.canonical_read.get_settings")
 async def test_get_narrative_clusters_returns_read_only_report(
     mock_settings: MagicMock,
     mock_session_factory: MagicMock,
@@ -2264,7 +2272,7 @@ async def test_get_narrative_clusters_returns_read_only_report(
     mock_session = AsyncMock()
     mock_session_factory.return_value.begin.return_value.__aenter__.return_value = mock_session
 
-    with patch("app.agents.mcp_server.DocumentRepository") as mock_repo_cls:
+    with patch("app.agents.tools.canonical_read.DocumentRepository") as mock_repo_cls:
         mock_repo = mock_repo_cls.return_value
         mock_repo.list = AsyncMock(return_value=[])
 

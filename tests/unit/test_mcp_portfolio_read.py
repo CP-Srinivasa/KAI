@@ -88,7 +88,7 @@ async def test_get_paper_positions_summary_returns_read_only_payload(
         return _snapshot()
 
     monkeypatch.setattr(
-        "app.agents.mcp_server._build_paper_portfolio_snapshot",
+        "app.agents.tools.canonical_read.build_paper_portfolio_snapshot_helper",
         fake_snapshot_builder,
     )
 
@@ -109,7 +109,7 @@ async def test_get_paper_exposure_summary_returns_read_only_payload(
         return _snapshot()
 
     monkeypatch.setattr(
-        "app.agents.mcp_server._build_paper_portfolio_snapshot",
+        "app.agents.tools.canonical_read.build_paper_portfolio_snapshot_helper",
         fake_snapshot_builder,
     )
 
@@ -127,7 +127,11 @@ async def test_get_paper_portfolio_snapshot_blocks_path_outside_workspace(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(mcp_server_module, "_WORKSPACE_ROOT", tmp_path.resolve())
+    import app.agents.tools._helpers as _helpers_module
+
+    resolved = tmp_path.resolve()
+    monkeypatch.setattr(mcp_server_module, "_WORKSPACE_ROOT", resolved)
+    monkeypatch.setattr(_helpers_module, "WORKSPACE_ROOT", resolved)
     outside = tmp_path.parent / "outside.jsonl"
 
     with pytest.raises(ValueError, match="must stay within workspace"):
