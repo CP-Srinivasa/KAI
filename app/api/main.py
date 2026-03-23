@@ -51,10 +51,10 @@ def create_app() -> FastAPI:
         openapi_url=None if is_production else "/openapi.json",
     )
 
-    # CORS — restrict origins; extend via environment config if needed
+    # CORS — origins controlled via APP_CORS_ALLOWED_ORIGINS (comma-separated env var)
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["http://localhost:3000", "http://localhost:8000"],
+        allow_origins=settings.cors_allowed_origins,
         allow_credentials=False,
         allow_methods=["GET", "POST", "PATCH", "DELETE"],
         allow_headers=[

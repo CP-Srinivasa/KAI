@@ -5,31 +5,19 @@ Default runtime remains `paper`/`shadow` with fail-closed controls.
 
 ## Current Phase
 
-- phase: `PHASE 3 (active)`
-- current sprint: `S50_CANONICAL_CONSOLIDATION_BASELINE` (active)
-- next required step: `S50A_CANONICAL_PATH_INVENTORY`
-- technical reference: `1519 passed, ruff clean`
+- phase: `PHASE 4 (active)`
+- current sprint: `PH4E_SCORING_CALIBRATION_AUDIT`
+- next required step: `PH4E_EXECUTION_START`
+- technical baseline: `1519 passed, ruff clean`
 
-## Phase-3 Kickoff Focus
+## Phase-4 Focus
 
-Phase 2 is formally complete and accepted.
-Sprint 50 opens Phase 3 with consolidation-only scope:
+Phase 3 (canonical consolidation, S50) is formally complete.
+Phase 4 runs signal quality audits on the frozen PH4A–PH4D evidence arc:
 
-- canonical architecture and naming clarity
-- synchronized governance and operator docs
-- no new feature depth before consolidation acceptance
-- no second aggregation backbone and no new execution semantics
-
-Operator surfaces remain the accepted baseline across API, Dashboard, Telegram, and CLI.
-
-## S50A Focus
-
-S50A is inventory-first:
-
-- identify canonical runtime paths
-- classify aliases and superseded paths
-- keep provisional paths explicit for later review
-- avoid refactoring before inventory freeze
+- PH4A–PH4D arc closed: keyword expansion improved good-hit `13→18`, zero-hit `29→26`, no regressions
+- PH4E active: scoring divergence diagnostics on 69 paired documents (diagnostic-only, no runtime changes)
+- No new feature rollout during Phase 4 execution
 
 ## Core Principles
 
@@ -40,13 +28,45 @@ S50A is inventory-first:
 - no unverified critical execution
 - live default-off
 
+## Prerequisites
+
+- Python 3.12+
+- PostgreSQL (for DB-backed features; tests run without it)
+- `.env` file based on `.env.example`
+
 ## Quick Start
 
 ```bash
 pip install -e ".[dev]"
-python -m pytest
+cp .env.example .env        # edit as needed
+python -m pytest            # 1519 tests
 python -m ruff check .
 uvicorn app.api.main:app --reload
+```
+
+## Environment Variables (Key)
+
+| Variable | Default | Description |
+|---|---|---|
+| `APP_ENV` | `development` | Set to `production` to disable Swagger/ReDoc and tighten defaults |
+| `APP_API_KEY` | `` | Bearer token for API auth. Leave empty for local dev only. |
+| `APP_CORS_ALLOWED_ORIGINS` | `http://localhost:3000,http://localhost:8000` | Comma-separated allowed CORS origins. Set explicitly for production. |
+| `DB_URL` | `postgresql+asyncpg://...` | Database connection string |
+| `OPENAI_API_KEY` | — | Required for LLM analysis |
+| `OPERATOR_TELEGRAM_BOT_TOKEN` | — | Telegram operator bot token |
+| `OPERATOR_ADMIN_CHAT_IDS` | — | Comma-separated admin Telegram chat IDs |
+
+Full variable reference: `.env.example`
+
+## Production Notes
+
+Setting `APP_ENV=production` activates:
+- Swagger UI (`/docs`), ReDoc (`/redoc`), and OpenAPI schema (`/openapi.json`) are **disabled**
+- CORS origins should be set via `APP_CORS_ALLOWED_ORIGINS` (no wildcard by default)
+
+`APP_API_KEY` must be set to a strong random token in production:
+```bash
+python -c "import secrets; print(secrets.token_urlsafe(32))"
 ```
 
 ## Daily Operator Flow (Canonical)
@@ -70,25 +90,32 @@ trading-bot research alert-audit-summary
 trading-bot research trading-loop-run-once --mode paper --symbol BTC/USDT
 ```
 
-## Operator API Drilldown/History Read Endpoints
+## Operator API
 
-- `GET /operator/review-journal`
-- `GET /operator/resolution-summary`
-- `GET /operator/alert-audit`
+All `/operator/*` routes require Bearer auth (`APP_API_KEY`).
 
-These endpoints are read-only delegation surfaces and use the same fail-closed
-auth/error governance as all `/operator/*` routes.
+Key read endpoints:
+- `GET /operator/status` — system status
+- `GET /operator/health` — health check
+- `GET /operator/positions` — paper positions
+- `GET /operator/exposure` — exposure summary
+- `GET /operator/trading-loop/status` — trading loop state
+- `GET /operator/trading-loop/recent-cycles` — recent cycle history
+- `POST /operator/trading-loop/run-once` — guarded paper/shadow cycle (fail-closed on live)
+
+Dashboard: `GET /dashboard/` — read-only operator summary.
 
 ## Documentation Index
 
 - [PHASE_PLAN.md](PHASE_PLAN.md)
 - [SPRINT_LEDGER.md](SPRINT_LEDGER.md)
 - [DECISION_LOG.md](DECISION_LOG.md)
-- [RISK_REGISTER.md](RISK_REGISTER.md)
+- [RISK_REGISTER.md](RISK_REGISTER.md) — aktive technische Schulden und Risiken (V-1..V-9)
 - [SECURITY.md](SECURITY.md)
 - [RUNBOOK.md](RUNBOOK.md)
 - [ONBOARDING.md](ONBOARDING.md)
 - [ARCHITECTURE.md](ARCHITECTURE.md)
 - [CANONICAL_SURFACE_INVENTORY.md](CANONICAL_SURFACE_INVENTORY.md)
+- [KAI_AUDIT_TRAIL.md](KAI_AUDIT_TRAIL.md) — Audit-Verlauf und Befund-Abschluss
 - [ASSUMPTIONS.md](ASSUMPTIONS.md)
 - [CHANGELOG.md](CHANGELOG.md)

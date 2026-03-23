@@ -2,11 +2,12 @@
 
 ## Scope
 
-Canonical operator runbook for Phase-3 / S50.
-Phase 2 is formally closed (2026-03-22). Phase 3 is active.
-Current active sprint: `S50_CANONICAL_CONSOLIDATION_BASELINE`.
-Next required step: `S50A_CANONICAL_PATH_INVENTORY`.
-Scope in S50 is consolidation-only (no new feature rollout).
+Canonical operator runbook for Phase 4.
+Phase 3 (S50 canonical consolidation) is formally complete.
+Phase 4 is active: signal quality audit arc (PH4A–PH4E).
+Current active sprint: `PH4E_SCORING_CALIBRATION_AUDIT`.
+Next required step: `PH4E_EXECUTION_START`.
+Scope in Phase 4 is diagnostic-only (no new runtime feature rollout).
 
 ## 1. Baseline Quality Check
 

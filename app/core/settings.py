@@ -188,6 +188,11 @@ class AppSettings(BaseSettings):
     monitor_dir: str = Field(default="monitor")
     # Bearer token for API auth. Empty = auth disabled (dev only). Set in production.
     api_key: str = Field(default="")
+    # CORS allowed origins. Comma-separated list. Override in production.
+    # Example: APP_CORS_ALLOWED_ORIGINS=https://app.example.com,https://admin.example.com
+    cors_allowed_origins: list[str] = Field(
+        default=["http://localhost:3000", "http://localhost:8000"]
+    )
 
     db: DBSettings = Field(default_factory=DBSettings)
     alerts: AlertSettings = Field(default_factory=AlertSettings)

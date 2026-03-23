@@ -89,6 +89,30 @@ Kein Commit-Risiko. Regenerierbar. Bereinigung erfordert manuelle `rm -rf`-Ausf�
 
 ---
 
+---
+
+## V-Series (Phase-4 Validation Findings, 2026-03-23)
+
+Kanonische Registry: `RISK_REGISTER.md` → Abschnitt "Validation Findings V-1 .. V-9".
+
+Cross-Reference-Tabelle (Übersicht + Abschlussstatus):
+
+| ID | Titel | Status |
+|---|---|---|
+| V-1 | E-1 Carryover: Externe Key-Rotation offen | ⚠️ offen |
+| V-2 | Working Tree uncommitted | ✅ erledigt — Commit `204857c` |
+| V-3 | CORS hardcoded | ✅ erledigt — `APP_CORS_ALLOWED_ORIGINS` eingeführt |
+| V-4 | `.env.example` unvollständig | ✅ erledigt |
+| V-5 | README veraltet (Phase 3) | ✅ erledigt |
+| V-6 | RUNBOOK veraltet (Phase 3) | ✅ erledigt |
+| V-7 | D-7 Carryover: Cache-Verzeichnisse | ⚠️ offen (minor) |
+| V-8 | TELEGRAM_WEBHOOK_SECRET_TOKEN nicht in Settings | ⚠️ offen |
+| V-9 | APP_ENV=production Semantik undokumentiert | ⚠️ offen |
+
+Vollständige Beschreibungen, Auswirkungen und empfohlene Maßnahmen: `RISK_REGISTER.md`.
+
+---
+
 ## Typ-Ignore-Taxonomie (Sprint 40 Abschluss)
 
 | Datei | Anzahl | Error Code | Begründung |
