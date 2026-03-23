@@ -16,8 +16,8 @@
 | R-PH4-010 | Relaxing `I-13` too quickly may weaken fail-closed safety in rule-only mode. | high | medium | Route next step through PH4H policy review before any `I-13` change. | open |
 | R-PH4-011 | Keeping `I-13` unchanged may cap Tier-1 usefulness in fallback-heavy scenarios. | medium | medium | Evaluate policy options with explicit risk/benefit evidence in PH4H. | open |
 | R-PH4-012 | Repeated fallback interventions without policy clarity may create contradictory outcomes. | high | medium | Freeze policy-first sequence: close PH4G -> PH4H review -> then any intervention. | open |
-| R-PH4G-001 | PH4G may become too broad if too many fields are changed at once. | high | medium | Enforce narrow PH4G scope and limit first intervention pass to highest-leverage pathways. | resolved (PH4G closed D-69; scope held to 1 retained + 1 reverted intervention) |
-| R-PH4G-002 | Intervention without tight measurement could reduce interpretability. | medium | medium | Require before/after measurements on the same paired set and explicit pathway mapping. | resolved (PH4G execution produced clear before/after; I-13 documented as constraint) |
+| R-PH4G-001 | PH4G may become too broad if too many fields are changed at once. | high | medium | Enforce narrow PH4G scope and limit first intervention pass to highest-leverage pathways. | resolved (PH4G execution complete; scope held to 1 retained + 1 reverted intervention; formal closeout pending) |
+| R-PH4G-002 | Intervention without tight measurement could reduce interpretability. | medium | medium | Require before/after measurements on the same paired set and explicit pathway mapping. | resolved (PH4G execution produced clear before/after evidence; formal closeout pending) |
 
 ---
 
@@ -75,6 +75,16 @@ Pragmatic complexity audit — see README "Active vs. Experimental Features" tab
 - Kein Kafka/Message-Queue: nicht geplant.
 - Kein DB-Dual-Write jetzt: RF-4 Phase 2 bleibt pending — Risiko > Nutzen zum jetzigen Zeitpunkt.
 - Kein weiteres CLI-Splitting: research.py ist groß, aber bereits extrahiert. Weitere Unterteilung bringt jetzt keinen Wartungsgewinn.
+
+---
+
+## Strategic Alignment Audit (2026-03-23)
+
+| ID | Bereich | Befund | Maßnahme | Status |
+|---|---|---|---|---|
+| **SA-1** | Companion-ML-Infrastruktur | Vorhanden (Sprints 8–15), kein aktives Modell, kein kurzfristiger Aktivierungsplan. Infrastruktur zu früh für Produktivbetrieb. | Als `[EXPERIMENTAL — NO ACTIVE MODEL]` markiert in `shadow.py`, `evaluation.py` (neu). Distillation/training/upgrade_cycle bereits markiert. Kein Ausbau bis Aktivierungsvoraussetzungen erfüllt. | ✅ D-71 |
+| **SA-2** | Signalkern Freshness-Enforcement | TradingLoop maskierte stale Daten still als `NO_SIGNAL`. Adapter-Quelle war im Audit nicht sichtbar. | Expliziter `STALE_DATA` CycleStatus eingeführt. Stale → Zyklus-Skip mit WARNING-Log. Adapter-Quelle in Notes/Audit. | ✅ D-72 |
+| **SA-3** | Signalkern Strategie-Transparenz | SignalGenerator leitet Richtung ausschließlich aus LLM-Sentiment ab — kein technischer Indikator, kein Orderbook. Dieses Risiko war undokumentiert. | Docstring in `signals/generator.py` klärt aktuellen Stand und TODO vor Live-Einsatz. Keine neue Logik. | ✅ D-72 |
 
 ---
 

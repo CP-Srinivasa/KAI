@@ -36,3 +36,19 @@
 - Recommended next sprint: `PH4H_RULE_ONLY_CEILING_AND_ACTIONABILITY_POLICY_REVIEW`.
 - Constraint: no direct `I-13` change before PH4H policy review.
 - Next required step: `PH4G_CLOSE_AND_PH4H_POLICY_REVIEW`.
+
+### D-71 (2026-03-23): [STRATEGISCH] Companion-ML-Infrastruktur als EXPERIMENTAL geparkt
+- Befund: Companion-ML-Infrastruktur (Sprints 8–15) vorhanden, kein aktives Modell, kein kurzfristiger Aktivierungsplan.
+- Entscheidung: kein weiterer Ausbau; aus Default-Narrativ herausgenommen; als `[EXPERIMENTAL — NO ACTIVE MODEL]` markiert.
+- Betroffene Module: `app/research/shadow.py`, `app/research/evaluation.py` (EXPERIMENTAL-Marker ergänzt); `app/research/distillation.py`, `app/research/training.py`, `app/research/upgrade_cycle.py` bereits markiert.
+- Companion-CLI-Commands (`benchmark-companion`, `check-promotion`, `record-promotion`) bleiben erhalten, sind bereits als `[EXPERIMENTAL]` deklariert.
+- MCP-Tool `get_upgrade_cycle_status` bleibt erhalten (read-only, kein Default-Pfad-Impact).
+- Aktivierungsvoraussetzungen: trainiertes Model-Artifact + konfigurierter `companion_model_endpoint` + validierter Promotion-Workflow.
+
+### D-72 (2026-03-23): [STRATEGISCH] Signalkern-Ehrlichkeit und Freshness-Enforcement
+- Befund: TradingLoop maskierte stale Marktdaten still als `NO_SIGNAL`; Adapter-Quelle war im Audit nicht sichtbar.
+- Entscheidung: expliziter `STALE_DATA` CycleStatus eingeführt; stale Daten → Zyklus-Skip mit WARNING-Log + Audit-Eintrag.
+- Adapter-Quelle (`market_data_source:<name>`) wird jetzt in jedem Zyklus als Note mitgeschrieben.
+- CoinGecko bleibt Default (`APP_MARKET_DATA_PROVIDER=coingecko`); Mock nur explizit, mit WARNING-Log.
+- Signal-Generator: Docstring klargestellt — Richtung aus LLM-Sentiment, keine technischen Indikatoren (TODO vor Live-Einsatz).
+- Keine neue Strategie-Logik eingebaut — ehrlicher machen, nicht überbauen.

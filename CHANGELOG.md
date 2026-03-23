@@ -13,7 +13,7 @@
 
 ---
 
-## 2026-03-23 - PH4G formally closed (D-69); PH4H policy review opened (D-70)
+## 2026-03-23 - [superseded] Premature PH4G closeout/opening record
 
 - PH4G_FALLBACK_INPUT_ENRICHMENT_BASELINE formally closed.
 - §75 is now a frozen immutable anchor.
@@ -22,8 +22,8 @@
 - PH4H_RULE_ONLY_CEILING_AND_ACTIONABILITY_POLICY_REVIEW opened (D-70, §76).
 - PH4H is review-only: no code changes, no I-13 relaxation before policy decision.
 - Governance state advanced to:
-  - `current_sprint = PH4H_RULE_ONLY_CEILING_AND_ACTIONABILITY_POLICY_REVIEW (active — definition)`
-  - `next_required_step = PH4H_CONTRACT_AND_ACCEPTANCE_FREEZE`
+  - `current_sprint = PH4H_RULE_ONLY_CEILING_AND_ACTIONABILITY_POLICY_REVIEW (superseded draft state)`
+  - `next_required_step = PH4H_CONTRACT_AND_ACCEPTANCE_FREEZE (superseded draft state)`
 - Baseline confirmed: `1538 passed`, `ruff clean`.
 
 ---
