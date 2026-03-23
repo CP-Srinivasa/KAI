@@ -5,23 +5,23 @@
 | Field | Value |
 |---|---|
 | current_phase | `PHASE 4 (active)` |
-| current_sprint | `PH4H_RULE_ONLY_CEILING_AND_ACTIONABILITY_POLICY_REVIEW (active definition)` |
-| next_required_step | `PH4H_CONTRACT_AND_ACCEPTANCE_FREEZE` |
-| ph4e_status | `closed (D-67) â€” scoring calibration audit complete; Â§73 frozen anchor` |
-| ph4f_status | `closed (execution complete â€” D-69) â€” frozen intervention anchor` |
-| ph4g_status | `closed — relevance floor applied; actionable heuristic reverted (I-13); §75 frozen anchor` |
-| ph4h_status | `active (definition) — policy review on I-13 and fallback actionability; freeze pending` |
-| ph4i_status | `not active — reserved as possible follow-up after PH4H freeze` |
+| current_sprint | `PH4I_FALLBACK_MARKET_SCOPE_ENRICHMENT (active definition)` |
+| next_required_step | `PH4I_CONTRACT_AND_ACCEPTANCE_FREEZE` |
+| ph4e_status | `closed (D-67) — scoring calibration audit complete; §73 frozen anchor` |
+| ph4f_status | `closed — frozen intervention anchor; §74 frozen anchor` |
+| ph4g_status | `closed — relevance floor applied; actionable reverted (I-13); §75 frozen anchor` |
+| ph4h_status | `closed (D-75) — Option B: I-13 permanent; actionable LLM-only; §76 frozen anchor` |
+| ph4i_status | `active (definition — D-76) — market_scope enrichment; §77 contract` |
 | baseline | `1538 passed, ruff clean` |
-| ph4b_status | `closed (D-62) â€” sections 68 and 69 frozen anchors` |
-| ph4c_status | `closed â€” section 70 frozen audit anchor` |
-| ph4d_status | `closed â€” section 71 frozen anchor` |
-| ph4e_contract | `docs/contracts.md Â§73 (closed D-67)` |
-| ph4f_contract | `docs/contracts.md Â§74 (closed)` |
-| ph4g_contract | `docs/contracts.md Â§75 (closed; frozen anchor)` |
-| ph4h_contract | `docs/contracts.md §76 (active definition; freeze pending)` |
-| ph4i_contract | `docs/contracts.md §77 (reserved candidate; not active)` |
-| architecture_status | three-tier stack unchanged; PH4A–PH4G closed/frozen anchors (§67–§75); PH4H active in definition mode (§76) |
+| ph4b_status | `closed (D-62) — sections 68 and 69 frozen anchors` |
+| ph4c_status | `closed — section 70 frozen audit anchor` |
+| ph4d_status | `closed — section 71 frozen anchor` |
+| ph4e_contract | `docs/contracts.md §73 (closed D-67)` |
+| ph4f_contract | `docs/contracts.md §74 (closed)` |
+| ph4g_contract | `docs/contracts.md §75 (closed; frozen anchor)` |
+| ph4h_contract | `docs/contracts.md §76 (closed D-75 — frozen anchor)` |
+| ph4i_contract | `docs/contracts.md §77 (active definition — D-76)` |
+| architecture_status | three-tier stack unchanged; PH4A–PH4H closed/frozen anchors (§67–§76); PH4I active definition (§77) |
 
 ---
 
@@ -96,17 +96,21 @@
   - The +1 actionable bonus in `compute_priority()` would push priority to 7, breaching I-13
 - Baseline confirmed unchanged: `1538 passed, ruff clean`.
 
-## PH4H Active Definition Sprint (policy review)
+## PH4H Closed Policy Sprint (frozen anchor)
 
-- Sprint: `PH4H_RULE_ONLY_CEILING_AND_ACTIONABILITY_POLICY_REVIEW`. **Active in definition mode.**
-- Contract: `docs/contracts.md §76` (active definition; freeze pending).
-- Central question: `I-13` rule-only ceiling vs fallback actionability.
-- Policy options under review:
-  - Option 1: relax I-13 under explicit constraints.
-  - Option 2: keep actionable as LLM-only architectural boundary.
-  - Option 3: hybrid evidence gate with strict guardrails.
-- Current constraint: no direct `I-13` change before PH4H contract/acceptance freeze.
-- Follow-up sprint selection stays blocked until PH4H freeze and policy rationale are recorded.
+- Sprint: `PH4H_RULE_ONLY_CEILING_AND_ACTIONABILITY_POLICY_REVIEW`. **Formally closed.**
+- Contract: `docs/contracts.md §76` (closed; frozen anchor D-74/75).
+- Policy decision: **Option B**.
+- `I-13` remains in force as a permanent invariant.
+- `actionable` remains **LLM-only**; fallback stays conservative and non-actionable.
+
+## PH4I Active Definition Sprint (relevance/context enrichment)
+
+- Sprint: `PH4I_FALLBACK_MARKET_SCOPE_ENRICHMENT`. **Active in definition mode.**
+- Contract: `docs/contracts.md §77` (active definition).
+- Focus: enrich `market_scope` in the fallback path for better context without changing scoring or actionability.
+- Guardrails: no `I-13` change, no actionable expansion, no provider/model/source changes.
+- Next required step: `PH4I_CONTRACT_AND_ACCEPTANCE_FREEZE`.
 
 ## Design Principle
 

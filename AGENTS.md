@@ -1,29 +1,35 @@
-# AGENTS.md — KAI Platform
+# AGENTS.md -- KAI Platform
 
 ## Current State (2026-03-23)
 
 | Field | Value |
 |---|---|
 | current_phase | `PHASE 4 (active)` |
-| current_sprint | `PH4H_RULE_ONLY_CEILING_AND_ACTIONABILITY_POLICY_REVIEW (active definition)` |
-| next_required_step | `PH4H_CONTRACT_AND_ACCEPTANCE_FREEZE` |
-| ph4a_status | `closed (D-53) — immutable baseline anchor (§67)` |
-| ph4b_status | `closed (D-62) — paired_count=69; root cause: keyword coverage blindness` |
-| ph4c_status | `closed — rule-keyword gap audit; top-3 gaps: macro, regulatory, AI` |
-| ph4d_status | `closed (D-68) — 56 keywords added; zero-hit 42%->37.7%; §71 frozen anchor` |
-| ph4e_status | `closed (D-70) — relevance 41.2% of gap; root cause: defaults by design` |
-| ph4f_status | `closed (D-69) — fallback path identified; actionable missing 69/69; market_scope unknown 69/69` |
-| ph4g_status | `closed (D-68/69) — relevance floor applied; actionable reverted (I-13); §75 frozen anchor` |
-| ph4h_status | `active (definition) — policy review sprint for I-13 and fallback actionability; §76 freeze pending` |
-| ph4i_status | `not active — reserved follow-up candidate only` |
+| current_sprint | `PH4I_FALLBACK_MARKET_SCOPE_ENRICHMENT (active definition)` |
+| next_required_step | `PH4I_CONTRACT_AND_ACCEPTANCE_FREEZE` |
+| ph4a_status | `closed (D-53) -- immutable baseline anchor (S67)` |
+| ph4b_status | `closed (D-62) -- paired_count=69; root cause: keyword coverage blindness` |
+| ph4c_status | `closed -- rule-keyword gap audit; top-3 gaps: macro, regulatory, AI` |
+| ph4d_status | `closed (D-68) -- 56 keywords added; zero-hit 42%->37.7%; S71 frozen anchor` |
+| ph4e_status | `closed (D-70) -- relevance 41.2% of gap; root cause: defaults by design` |
+| ph4f_status | `closed (D-69) -- fallback path identified; actionable missing 69/69; market_scope unknown 69/69` |
+| ph4g_status | `closed (D-68/69) -- relevance floor applied; actionable reverted (I-13); S75 frozen anchor` |
+| ph4h_status | `closed (D-74/75) -- policy decision: actionable=LLM-only; I-13 confirmed permanent; S76 frozen anchor` |
+| ph4i_status | `active (definition — D-76) — market_scope enrichment; §77 contract` |
 | baseline | `1538 passed, ruff clean` |
 | cli_canonical_count | 53 |
 | provisional_cli_count | 0 |
 | phase3_status | `closed (2026-03-22) — GO` |
-| phase4_status | `active — PH4G closed; PH4H active definition; PH4I not active` |
+| phase4_status | `active — PH4G/PH4H closed (D-73/D-75); PH4I active definition (D-76)` |
 ---
 
-> **Verbindliches Betriebsdokument für alle Coding-Agenten.**
+> **Verbindliches Betriebsdokument fuer alle Coding-Agenten.**
+> Claude Code -- OpenAI Codex -- Google Antigravity
+> Dieses Dokument lesen, bevor eine einzige Zeile Code angefasst wird.
+
+---
+
+ Betriebsdokument für alle Coding-Agenten.**
 > Claude Code · OpenAI Codex · Google Antigravity
 > Dieses Dokument lesen, bevor eine einzige Zeile Code angefasst wird.
 

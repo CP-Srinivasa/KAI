@@ -1,15 +1,22 @@
-﻿# CHANGELOG.md
+# CHANGELOG.md
 
-## 2026-03-23 - [superseded draft] PH4H closeout + PH4I opening
+## 2026-03-23 - PH4H policy review complete; I-13 confirmed permanent; PH4I defined
 
-- This transition was drafted but is not canonical for the current governance state.
-- Canonical state remains:
-  - `current_sprint = PH4H_RULE_ONLY_CEILING_AND_ACTIONABILITY_POLICY_REVIEW (active definition)`
-  - `next_required_step = PH4H_CONTRACT_AND_ACCEPTANCE_FREEZE`
-- PH4I is not active in this state.
+- PH4H_RULE_ONLY_CEILING_AND_ACTIONABILITY_POLICY_REVIEW formally closed (D-74/D-75).
+- Policy decision (D-74): `actionable` is an LLM-exclusive semantic judgment -- Option B selected.
+  - Option 1 (relax I-13): rejected -- weakens fail-closed guarantee; no semantic basis.
+  - Option 3 (hybrid gate): rejected -- arbitrary threshold; complexity without evidence.
+- I-13 invariant confirmed as permanent: `test_rule_only_priority_ceiling_is_at_most_five`.
+- S76 frozen as immutable anchor.
+- PH4I defined (D-76): `PH4I_FALLBACK_MARKET_SCOPE_ENRICHMENT` -- market_scope unknown 69/69 (PH4F finding).
+- S77 opened as active-definition contract.
+- Governance state advanced to:
+  - `current_sprint = PH4I_FALLBACK_MARKET_SCOPE_ENRICHMENT (active definition)`
+  - `next_required_step = PH4I_CONTRACT_AND_ACCEPTANCE_FREEZE`
 - Baseline unchanged: `1538 passed`, `ruff clean`.
 
 ---
+
 ## 2026-03-23 - PH4G formally closed; PH4H opened in active definition mode
 
 - PH4G_FALLBACK_INPUT_ENRICHMENT_BASELINE formally closed and frozen as Â§75 anchor.

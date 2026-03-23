@@ -5,18 +5,18 @@
 | Field | Value |
 |---|---|
 | current_phase | `PHASE 4 (active)` |
-| current_sprint | `PH4H_RULE_ONLY_CEILING_AND_ACTIONABILITY_POLICY_REVIEW (active definition)` |
-| next_required_step | `PH4H_CONTRACT_AND_ACCEPTANCE_FREEZE` |
+| current_sprint | `PH4I_FALLBACK_MARKET_SCOPE_ENRICHMENT (active definition)` |
+| next_required_step | `PH4I_CONTRACT_AND_ACCEPTANCE_FREEZE` |
 | baseline | `1538 passed, ruff clean` |
-| active_contracts | §76 (PH4H, active definition) · §75–§67 (closed/frozen anchors) |
+| active_contracts | §77 (PH4I, active definition) · §76–§67 (closed/frozen anchors) |
 | cli_canonical_count | 53 (frozen §65) |
 
 ## Navigation
 
 | Section | Content | Status |
 |---|---|---|
-| [§77 PH4I Fallback Market Scope Enrichment](#s77-ph4i-fallback-market-scope-enrichment) | Enrich market_scope in fallback path (PH4F finding market_scope unknown 69/69) | candidate (not active) |
-| [§76 PH4H Rule-Only Ceiling & Actionability Policy Review](#s76-ph4h-rule-only-ceiling-and-actionability-policy-review) | Review-only policy sprint: I-13 ceiling vs actionability in fallback path | closed (frozen anchor D-73/74) |
+| [§77 PH4I Fallback Market Scope Enrichment](#s77-ph4i-fallback-market-scope-enrichment) | Enrich market_scope in fallback path (PH4F finding market_scope unknown 69/69) | active (definition — D-76) |
+| [§76 PH4H Rule-Only Ceiling & Actionability Policy Review](#s76-ph4h-rule-only-ceiling-and-actionability-policy-review) | Review-only policy sprint: I-13 ceiling vs actionability in fallback path | closed (D-75 — frozen anchor) |
 | [§75 PH4G Fallback Input Enrichment Baseline](#s75-ph4g-fallback-input-enrichment-baseline) | Narrow fallback-path enrichment for PH4F top-3 field gaps | closed (frozen anchor) |
 | [§74 PH4F Rule Input Completeness Audit](#s74-ph4f-rule-input-completeness-audit) | Diagnostic audit of missing rule-input fields on paired documents | closed (D-68) |
 | [§73 PH4E Scoring Calibration Audit](#s73-ph4e-scoring-calibration-audit) | Diagnostic per-field scoring audit; divergence cluster analysis | closed (D-67) |
@@ -7161,8 +7161,8 @@ Narrow, measurement-first fallback-path enrichment. PH4G closes the top-3 field 
 **Sprint**: `PH4H_RULE_ONLY_CEILING_AND_ACTIONABILITY_POLICY_REVIEW`
 **Phase**: 4
 **Opened**: 2026-03-23
-**Decision**: D-70
-**Status**: active (definition)
+**Decision**: D-74/D-75
+**Status**: closed (frozen anchor)
 
 ### Purpose
 Review-only policy sprint. No code changes permitted. PH4G revealed that `I-13` (rule-only priority ceiling ≤ 5) blocks actionability in fallback mode. PH4H decides the canonical policy before any further intervention.
@@ -7184,20 +7184,20 @@ Review-only policy sprint. No code changes permitted. PH4G revealed that `I-13` 
 
 ### Acceptance Criteria
 
-- [ ] Policy options enumerated with risk/benefit evidence
-- [ ] One policy option selected with explicit rationale (D-decision recorded)
-- [ ] I-13 status updated in governance docs based on decision
-- [ ] PH4I (next sprint) defined based on policy outcome
-- [ ] Baseline confirmed unchanged: 1538 passed, ruff clean
+- [x] Policy options enumerated with risk/benefit evidence
+- [x] One policy option selected with explicit rationale (D-74: Option B — I-13 retained; actionable LLM-only)
+- [x] I-13 status updated in governance docs based on decision (confirmed permanent invariant)
+- [x] PH4I (next sprint) defined based on policy outcome (D-76: PH4I_FALLBACK_MARKET_SCOPE_ENRICHMENT)
+- [x] Baseline confirmed unchanged: 1538 passed, ruff clean
 
 ### Freeze Gates (definition-to-execution)
 
 - [x] PH4G formally closed; §75 immutable anchor confirmed
 - [x] PH4H activated as next sprint in definition mode
-- [ ] Scope frozen to review-only (zero code changes)
-- [ ] Policy options enumerated before execution
+- [x] Scope frozen to review-only (zero code changes)
+- [x] Policy options enumerated before execution
 
-§76 status: **active definition (next step: PH4H_CONTRACT_AND_ACCEPTANCE_FREEZE)**
+§76 status: **closed (D-75) — frozen immutable anchor; no re-execution permitted**
 
 ---
 
@@ -7207,9 +7207,9 @@ Review-only policy sprint. No code changes permitted. PH4G revealed that `I-13` 
 
 **Sprint**: `PH4I_FALLBACK_MARKET_SCOPE_ENRICHMENT`
 **Phase**: 4
-**Opened**: 2026-03-23 (candidate)
-**Decision**: D-75
-**Status**: candidate (not active; opens after §77 freeze)
+**Opened**: 2026-03-23
+**Decision**: D-76
+**Status**: active (definition mode)
 
 ### Purpose
 
@@ -7237,13 +7237,14 @@ and creates no I-13 conflict.
 - [ ] Intervention outcome documented (before/after measurement)
 - [ ] PH4J defined as next sprint
 
-### Freeze Gates (candidate-to-definition)
+### Freeze Gates (definition-to-execution)
 
-- [ ] PH4H formally closed; §76 immutable anchor confirmed
-- [ ] PH4I activated as next sprint in definition mode
+- [x] PH4H formally closed; §76 immutable anchor confirmed (D-75)
+- [x] PH4I activated as next sprint in definition mode (D-76)
 - [ ] Scope frozen (market_scope only; no scoring changes)
+- [ ] Acceptance criteria reviewed and locked
 
-§77 status: **candidate (not active; awaiting PH4I definition sprint activation)**
+§77 status: **active (definition mode; next step: PH4I_CONTRACT_AND_ACCEPTANCE_FREEZE)**
 
 ---
 
