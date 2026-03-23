@@ -4,7 +4,7 @@
 
 - phase_4_status: `active`
 - active_sprint: `PH4I_FALLBACK_MARKET_SCOPE_ENRICHMENT (active definition)`
-- next_required_step: `PH4I_CONTRACT_AND_ACCEPTANCE_FREEZE`
+- next_required_step: `PH4I_EXECUTION`
 - baseline: `1538 passed, ruff clean`
 
 | Sprint | Date | Status | Outcome |
@@ -17,4 +17,4 @@
 | PH4F | 2026-03-23 | closed | Fallback path confirmed; top input gaps frozen as intervention anchor |
 | PH4G | 2026-03-23 | closed | Relevance floor applied; actionable heuristic reverted due I-13 ceiling policy |
 | PH4H | 2026-03-23 | closed | Policy decision: actionable=LLM-only (D-74); I-13 confirmed permanent invariant |
-| PH4I | 2026-03-23 | active (definition — D-76) | Market_scope enrichment in fallback path. §77 contract |
+| PH4I | 2026-03-23 | active (frozen — D-77) | §77 contract frozen; execution-ready |

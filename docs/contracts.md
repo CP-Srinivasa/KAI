@@ -6,16 +6,16 @@
 |---|---|
 | current_phase | `PHASE 4 (active)` |
 | current_sprint | `PH4I_FALLBACK_MARKET_SCOPE_ENRICHMENT (active definition)` |
-| next_required_step | `PH4I_CONTRACT_AND_ACCEPTANCE_FREEZE` |
+| next_required_step | `PH4I_EXECUTION` |
 | baseline | `1538 passed, ruff clean` |
-| active_contracts | §77 (PH4I, active definition) · §76–§67 (closed/frozen anchors) |
+| active_contracts | §77 (PH4I, frozen/execution-ready) · §76–§67 (closed/frozen anchors) |
 | cli_canonical_count | 53 (frozen §65) |
 
 ## Navigation
 
 | Section | Content | Status |
 |---|---|---|
-| [§77 PH4I Fallback Market Scope Enrichment](#s77-ph4i-fallback-market-scope-enrichment) | Enrich market_scope in fallback path (PH4F finding market_scope unknown 69/69) | active (definition — D-76) |
+| [§77 PH4I Fallback Market Scope Enrichment](#s77-ph4i-fallback-market-scope-enrichment) | Enrich market_scope in fallback path (PH4F finding market_scope unknown 69/69) | frozen (D-77; execution-ready) |
 | [§76 PH4H Rule-Only Ceiling & Actionability Policy Review](#s76-ph4h-rule-only-ceiling-and-actionability-policy-review) | Review-only policy sprint: I-13 ceiling vs actionability in fallback path | closed (D-75 — frozen anchor) |
 | [§75 PH4G Fallback Input Enrichment Baseline](#s75-ph4g-fallback-input-enrichment-baseline) | Narrow fallback-path enrichment for PH4F top-3 field gaps | closed (frozen anchor) |
 | [§74 PH4F Rule Input Completeness Audit](#s74-ph4f-rule-input-completeness-audit) | Diagnostic audit of missing rule-input fields on paired documents | closed (D-68) |
@@ -7209,7 +7209,7 @@ Review-only policy sprint. No code changes permitted. PH4G revealed that `I-13` 
 **Phase**: 4
 **Opened**: 2026-03-23
 **Decision**: D-76
-**Status**: active (definition mode)
+**Status**: frozen (D-77; execution-ready)
 
 ### Purpose
 
@@ -7241,10 +7241,10 @@ and creates no I-13 conflict.
 
 - [x] PH4H formally closed; §76 immutable anchor confirmed (D-75)
 - [x] PH4I activated as next sprint in definition mode (D-76)
-- [ ] Scope frozen (market_scope only; no scoring changes)
-- [ ] Acceptance criteria reviewed and locked
+- [x] Scope frozen (market_scope only; no scoring changes)
+- [x] Acceptance criteria reviewed and locked
 
-§77 status: **active (definition mode; next step: PH4I_CONTRACT_AND_ACCEPTANCE_FREEZE)**
+§77 status: **frozen (D-77) — execution-ready; next step: PH4I_EXECUTION**
 
 ---
 

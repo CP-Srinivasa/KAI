@@ -4,7 +4,7 @@
 
 - current_phase: `PHASE 4 (active)`
 - current_sprint: `PH4I_FALLBACK_MARKET_SCOPE_ENRICHMENT (active definition)`
-- next_required_step: `PH4I_CONTRACT_AND_ACCEPTANCE_FREEZE`
+- next_required_step: `PH4I_EXECUTION`
 - baseline: `1538 passed, ruff clean`
 
 ## Active Tasks
@@ -20,7 +20,7 @@
 ### PH4I_FALLBACK_MARKET_SCOPE_ENRICHMENT
 
 - [x] I1 Open PH4I in definition mode
-- [ ] I2 Freeze PH4I contract and acceptance criteria (§77)
+- [x] I2 Freeze PH4I contract and acceptance criteria (§77)
 - [ ] I3 Execute PH4I (relevance/context enrichment only; no actionability scope)
 - [ ] I4 Capture before/after quality evidence
 - [ ] I5 Close PH4I formally and record findings

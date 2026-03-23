@@ -3,7 +3,7 @@
 ## Current State (2026-03-23)
 
 - current_sprint: `PH4I_FALLBACK_MARKET_SCOPE_ENRICHMENT (active definition)`
-- next_required_step: `PH4I_CONTRACT_AND_ACCEPTANCE_FREEZE`
+- next_required_step: `PH4I_EXECUTION`
 - baseline: `1538 passed, ruff clean`
 
 ## Canonical Decisions
@@ -90,3 +90,12 @@ Entscheidung: Option B
 - Motivation: PH4F finding `market_scope unknown 69/69` ist policy-safe (kein Scoring-Einfluss, kein I-13-Konflikt).
 - Market-Scope-Anreicherung verbessert Operator-Kontext und Dokumentenkategorisierung.
 - NÃ¤chster Schritt: `PH4I_CONTRACT_AND_ACCEPTANCE_FREEZE`.
+
+### D-77 (2026-03-23): [PH4I] Contract freeze -- §77 execution-ready
+
+- §77 contract frozen; all definition gates checked.
+- Scope confirmed: market_scope enrichment only in `_build_fallback_analysis()`.
+- No scoring changes, no I-13 conflict, no actionable changes.
+- Acceptance criteria locked: market_scope > 0/69 populated; 1538+ passed; ruff clean.
+- PH4I ready for execution (I3).
+

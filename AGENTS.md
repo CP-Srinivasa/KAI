@@ -6,7 +6,7 @@
 |---|---|
 | current_phase | `PHASE 4 (active)` |
 | current_sprint | `PH4I_FALLBACK_MARKET_SCOPE_ENRICHMENT (active definition)` |
-| next_required_step | `PH4I_CONTRACT_AND_ACCEPTANCE_FREEZE` |
+| next_required_step | `PH4I_EXECUTION` |
 | ph4a_status | `closed (D-53) -- immutable baseline anchor (S67)` |
 | ph4b_status | `closed (D-62) -- paired_count=69; root cause: keyword coverage blindness` |
 | ph4c_status | `closed -- rule-keyword gap audit; top-3 gaps: macro, regulatory, AI` |

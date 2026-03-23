@@ -1,6 +1,6 @@
 # KNOWLEDGE_BASE.md - KAI Canonical Knowledge Index
 
-> Stand: 2026-03-23 | Phase 4 active | Sprint: PH4I_FALLBACK_MARKET_SCOPE_ENRICHMENT (active definition) | Next: PH4I_CONTRACT_AND_ACCEPTANCE_FREEZE | Baseline: 1538 passed, ruff clean
+> Stand: 2026-03-23 | Phase 4 active | Sprint: PH4I_FALLBACK_MARKET_SCOPE_ENRICHMENT (frozen D-77; execution-ready) | Next: PH4I_EXECUTION | Baseline: 1538 passed, ruff clean
 
 ## PH4H Frozen Policy Outcome
 
@@ -17,7 +17,7 @@
 
 ## Active Gate
 
-- current sprint: `PH4I_FALLBACK_MARKET_SCOPE_ENRICHMENT (active definition)`
-- next required step: `PH4I_CONTRACT_AND_ACCEPTANCE_FREEZE`
-- contract: `docs/contracts.md §77` (active definition; freeze pending)
+- current sprint: `PH4I_FALLBACK_MARKET_SCOPE_ENRICHMENT (frozen D-77; execution-ready)`
+- next required step: `PH4I_EXECUTION`
+- contract: `docs/contracts.md §77` (frozen D-77; execution-ready)
 - constraints: no direct `I-13` change, no fallback actionability expansion

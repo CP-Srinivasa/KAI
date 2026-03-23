@@ -1,5 +1,17 @@
 # CHANGELOG.md
 
+## 2026-03-23 - PH4I contract frozen (§77 D-77); execution-ready
+
+- §77 contract frozen: scope = market_scope enrichment only in `_build_fallback_analysis()`.
+- No scoring changes, no I-13 conflict, no actionable expansion.
+- Acceptance criteria locked: market_scope > 0/69; 1538+ passed; ruff clean.
+- Governance state advanced to:
+  - `current_sprint = PH4I_FALLBACK_MARKET_SCOPE_ENRICHMENT (execution-ready)`
+  - `next_required_step = PH4I_EXECUTION`
+- Baseline unchanged: `1538 passed`, `ruff clean`.
+
+---
+
 ## 2026-03-23 - PH4H policy review complete; I-13 confirmed permanent; PH4I defined
 
 - PH4H_RULE_ONLY_CEILING_AND_ACTIONABILITY_POLICY_REVIEW formally closed (D-74/D-75).

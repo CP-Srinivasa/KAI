@@ -4,7 +4,7 @@
 
 - current_phase: `PHASE 4 (active)`
 - current_sprint: `PH4I_FALLBACK_MARKET_SCOPE_ENRICHMENT (active definition)`
-- next_required_step: `PH4I_CONTRACT_AND_ACCEPTANCE_FREEZE`
+- next_required_step: `PH4I_EXECUTION`
 - ph4g_status: `closed (formal closeout recorded; S75 frozen anchor)`
 - ph4h_status: `closed (D-74/75; policy decision recorded; S76 frozen anchor)`
 - ph4i_status: `active (definition — D-76) — market_scope enrichment; §77 contract`
