@@ -3,8 +3,8 @@
 ## Canonical Sprint Ledger (2026-03-23)
 
 - phase_4_status: `active`
-- active_sprint: `PH4G_FALLBACK_INPUT_ENRICHMENT_BASELINE (ready to close)`
-- next_required_step: `PH4G_CLOSE_AND_PH4H_POLICY_REVIEW`
+- active_sprint: `PH4H_RULE_ONLY_CEILING_AND_ACTIONABILITY_POLICY_REVIEW (active definition)`
+- next_required_step: `PH4H_CONTRACT_AND_ACCEPTANCE_FREEZE`
 - baseline: `1538 passed, ruff clean`
 
 | Sprint | Date | Status | Outcome |
@@ -15,5 +15,5 @@
 | PH4D | 2026-03-23 | closed | 56 keywords. Zero-hit 42%->37.7%. Diminishing returns |
 | PH4E | 2026-03-23 | closed | relevance 41.2% of gap. Defaults by design |
 | PH4F | 2026-03-23 | closed | Fallback path confirmed; top input gaps frozen as intervention anchor |
-| PH4G | 2026-03-23 | active (ready to close) | Relevance floor applied; actionable heuristic reverted due I-13 ceiling policy |
-| PH4H | 2026-03-23 | candidate (not active) | Policy review candidate: rule-only ceiling and actionability policy |
+| PH4G | 2026-03-23 | closed | Relevance floor applied; actionable heuristic reverted due I-13 ceiling policy |
+| PH4H | 2026-03-23 | active (definition) | Policy review sprint: rule-only ceiling and fallback actionability policy |

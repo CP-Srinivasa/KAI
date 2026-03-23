@@ -3,13 +3,13 @@
 ## Current State (2026-03-23)
 
 - current_phase: `PHASE 4 (active)`
-- current_sprint: `PH4G_FALLBACK_INPUT_ENRICHMENT_BASELINE (ready to close)`
-- next_required_step: `PH4G_CLOSE_AND_PH4H_POLICY_REVIEW`
-- ph4g_status: `active (execution complete; ready to close)`
-- ph4h_status: `candidate only (policy review selected after PH4G closeout)`
+- current_sprint: `PH4H_RULE_ONLY_CEILING_AND_ACTIONABILITY_POLICY_REVIEW (active definition)`
+- next_required_step: `PH4H_CONTRACT_AND_ACCEPTANCE_FREEZE`
+- ph4g_status: `closed (formal closeout recorded; §75 frozen anchor)`
+- ph4h_status: `active (definition mode; policy review sprint before any I-13 intervention)`
 - baseline: `1538 passed, ruff clean`
 
-## Phase 4 Arc (PH4A-G)
+## Phase 4 Arc (PH4A-H)
 
 | Sprint | Layer | Result |
 |---|---|---|
@@ -20,6 +20,7 @@
 | PH4E | Scoring calibration | relevance 41.2% of gap |
 | PH4F | Input completeness | 65% weight hardcoded |
 | PH4G | Fallback enrichment | Relevance floor ✅, actionable ❌ (I-13) |
+| PH4H | Policy review | Active definition sprint (I-13 / fallback actionability) |
 
 ## I-13 Policy Question
 

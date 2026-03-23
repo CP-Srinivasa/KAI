@@ -5,18 +5,18 @@
 | Field | Value |
 |---|---|
 | current_phase | `PHASE 4 (active)` |
-| current_sprint | `PH4G_FALLBACK_INPUT_ENRICHMENT_BASELINE (ready to close)` |
-| next_required_step | `PH4G_CLOSE_AND_PH4H_POLICY_REVIEW` |
+| current_sprint | `PH4H_RULE_ONLY_CEILING_AND_ACTIONABILITY_POLICY_REVIEW (active definition)` |
+| next_required_step | `PH4H_CONTRACT_AND_ACCEPTANCE_FREEZE` |
 | baseline | `1538 passed, ruff clean` |
-| active_contracts | §75 (PH4G, execution complete; ready to close) · §74–§67 (closed) |
+| active_contracts | §76 (PH4H, active definition) · §75–§67 (closed/frozen anchors) |
 | cli_canonical_count | 53 (frozen §65) |
 
 ## Navigation
 
 | Section | Content | Status |
 |---|---|---|
-| [§76 PH4H Rule-Only Ceiling & Actionability Policy Review](#s76-ph4h-rule-only-ceiling-and-actionability-policy-review) | Review-only policy sprint: I-13 ceiling vs actionability in fallback path | candidate (not active) |
-| [§75 PH4G Fallback Input Enrichment Baseline](#s75-ph4g-fallback-input-enrichment-baseline) | Narrow fallback-path enrichment for PH4F top-3 field gaps | active (ready to close) |
+| [§76 PH4H Rule-Only Ceiling & Actionability Policy Review](#s76-ph4h-rule-only-ceiling-and-actionability-policy-review) | Review-only policy sprint: I-13 ceiling vs actionability in fallback path | active (definition) |
+| [§75 PH4G Fallback Input Enrichment Baseline](#s75-ph4g-fallback-input-enrichment-baseline) | Narrow fallback-path enrichment for PH4F top-3 field gaps | closed (frozen anchor) |
 | [§74 PH4F Rule Input Completeness Audit](#s74-ph4f-rule-input-completeness-audit) | Diagnostic audit of missing rule-input fields on paired documents | closed (D-68) |
 | [§73 PH4E Scoring Calibration Audit](#s73-ph4e-scoring-calibration-audit) | Diagnostic per-field scoring audit; divergence cluster analysis | closed (D-67) |
 | [§72 Phase 4 Interim Review](#s72-phase-4-interim-review) | Review PH4A–PH4D arc; select next Phase-4 sprint | closed (D-65/D-66) |
@@ -7096,7 +7096,7 @@ Diagnostic audit of rule-input completeness gaps that drive Tier-1 under-specifi
 **Phase**: 4
 **Opened**: 2026-03-23
 **Decision**: D-72
-**Status**: active (ready to close)
+**Status**: closed (frozen anchor)
 
 ### Purpose
 Narrow, measurement-first fallback-path enrichment. PH4G closes the top-3 field gaps identified in PH4F without broad rule reform. Each enrichment step is preceded by a baseline measurement and followed by MAE re-measurement so changes remain interpretable.
@@ -7149,7 +7149,7 @@ Narrow, measurement-first fallback-path enrichment. PH4G closes the top-3 field 
 - Invariant `I-13` remains active and prevents rule-only priority from exceeding `5`.
 - Remaining leverage is policy-governed (`I-13` / actionability), not broad fallback implementation depth.
 
-§75 status: **active (ready to close; next step PH4G_CLOSE_AND_PH4H_POLICY_REVIEW)**
+§75 status: **closed (frozen anchor; formal closeout recorded)**
 
 ---
 
@@ -7161,7 +7161,7 @@ Narrow, measurement-first fallback-path enrichment. PH4G closes the top-3 field 
 **Phase**: 4
 **Opened**: 2026-03-23
 **Decision**: D-70
-**Status**: candidate (not active)
+**Status**: active (definition)
 
 ### Purpose
 Review-only policy sprint. No code changes permitted. PH4G revealed that `I-13` (rule-only priority ceiling ≤ 5) blocks actionability in fallback mode. PH4H decides the canonical policy before any further intervention.
@@ -7189,12 +7189,12 @@ Review-only policy sprint. No code changes permitted. PH4G revealed that `I-13` 
 - [ ] Baseline confirmed unchanged: 1538 passed, ruff clean
 
 ### Freeze Gates (definition-to-execution)
-- [ ] PH4G formally closed; §75 immutable anchor confirmed
-- [ ] PH4H activated as next sprint in definition mode
+- [x] PH4G formally closed; §75 immutable anchor confirmed
+- [x] PH4H activated as next sprint in definition mode
 - [ ] Scope frozen to review-only (zero code changes)
 - [ ] Policy options enumerated before execution
 
-§76 status: **candidate only (not active; opens after PH4G formal closeout)**
+§76 status: **active definition (next step: PH4H_CONTRACT_AND_ACCEPTANCE_FREEZE)**
 
 ---
 

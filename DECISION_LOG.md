@@ -2,8 +2,8 @@
 
 ## Current State (2026-03-23)
 
-- current_sprint: `PH4G_FALLBACK_INPUT_ENRICHMENT_BASELINE (ready to close)`
-- next_required_step: `PH4G_CLOSE_AND_PH4H_POLICY_REVIEW`
+- current_sprint: `PH4H_RULE_ONLY_CEILING_AND_ACTIONABILITY_POLICY_REVIEW (active definition)`
+- next_required_step: `PH4H_CONTRACT_AND_ACCEPTANCE_FREEZE`
 - baseline: `1538 passed, ruff clean`
 
 ## Canonical Decisions
@@ -36,6 +36,12 @@
 - Recommended next sprint: `PH4H_RULE_ONLY_CEILING_AND_ACTIONABILITY_POLICY_REVIEW`.
 - Constraint: no direct `I-13` change before PH4H policy review.
 - Next required step: `PH4G_CLOSE_AND_PH4H_POLICY_REVIEW`.
+
+### D-73 (2026-03-23): PH4G formally closed; PH4H opened as active definition sprint
+- PH4G closeout recorded; §75 is now a frozen intervention anchor.
+- PH4H activated in definition mode as the active sprint.
+- Central policy question confirmed: `I-13` ceiling vs fallback actionability.
+- Next required step set to `PH4H_CONTRACT_AND_ACCEPTANCE_FREEZE`.
 
 ### D-71 (2026-03-23): [STRATEGISCH] Companion-ML-Infrastruktur als EXPERIMENTAL geparkt
 - Befund: Companion-ML-Infrastruktur (Sprints 8–15) vorhanden, kein aktives Modell, kein kurzfristiger Aktivierungsplan.

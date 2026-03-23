@@ -3,8 +3,8 @@
 ## Current State (2026-03-23)
 
 - current_phase: `PHASE 4 (active)`
-- current_sprint: `PH4G_FALLBACK_INPUT_ENRICHMENT_BASELINE (ready to close)`
-- next_required_step: `PH4G_CLOSE_AND_PH4H_POLICY_REVIEW`
+- current_sprint: `PH4H_RULE_ONLY_CEILING_AND_ACTIONABILITY_POLICY_REVIEW (active definition)`
+- next_required_step: `PH4H_CONTRACT_AND_ACCEPTANCE_FREEZE`
 - baseline: `1538 passed, ruff clean`
 
 ---
@@ -16,8 +16,8 @@
 | R-PH4-010 | Relaxing `I-13` too quickly may weaken fail-closed safety in rule-only mode. | high | medium | Route next step through PH4H policy review before any `I-13` change. | open |
 | R-PH4-011 | Keeping `I-13` unchanged may cap Tier-1 usefulness in fallback-heavy scenarios. | medium | medium | Evaluate policy options with explicit risk/benefit evidence in PH4H. | open |
 | R-PH4-012 | Repeated fallback interventions without policy clarity may create contradictory outcomes. | high | medium | Freeze policy-first sequence: close PH4G -> PH4H review -> then any intervention. | open |
-| R-PH4G-001 | PH4G may become too broad if too many fields are changed at once. | high | medium | Enforce narrow PH4G scope and limit first intervention pass to highest-leverage pathways. | resolved (PH4G execution complete; scope held to 1 retained + 1 reverted intervention; formal closeout pending) |
-| R-PH4G-002 | Intervention without tight measurement could reduce interpretability. | medium | medium | Require before/after measurements on the same paired set and explicit pathway mapping. | resolved (PH4G execution produced clear before/after evidence; formal closeout pending) |
+| R-PH4G-001 | PH4G may become too broad if too many fields are changed at once. | high | medium | Enforce narrow PH4G scope and limit first intervention pass to highest-leverage pathways. | resolved (PH4G closed; scope held to 1 retained + 1 reverted intervention) |
+| R-PH4G-002 | Intervention without tight measurement could reduce interpretability. | medium | medium | Require before/after measurements on the same paired set and explicit pathway mapping. | resolved (PH4G execution produced clear before/after evidence; closeout recorded) |
 
 ---
 
@@ -28,7 +28,7 @@
 - PH4D/PH4E governance conflict - resolved.
 - PH4E calibration ambiguity - resolved into PH4F diagnostic path.
 - PH4F closeout ambiguity - resolved (PH4F formally closed).
-- PH4G execution uncertainty - resolved (execution complete; closeout pending).
+- PH4G execution uncertainty - resolved (execution complete; closeout recorded).
 
 ---
 
