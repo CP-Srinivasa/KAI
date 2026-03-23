@@ -30,6 +30,32 @@
 
 ---
 
+## Refactoring Findings RF-1 .. RF-7 (2026-03-23)
+
+These findings were addressed in a dedicated refactoring session (2026-03-23).
+
+| ID | Titel | Status | Commit |
+|---|---|---|---|
+| **RF-1** | CLI/MCP monolith split | ✅ implemented | e2949d3, b8c0fad |
+| **RF-2** | Working Tree uncommitted | ✅ implemented | f32b147, cbcb34c, dea0ec8 |
+| **RF-3** | CORS hardcoded | ✅ implemented (prior) | 4d2cfdd |
+| **RF-4** | DB-based aggregation (models + migration) | ✅ partial | 25f84d4 |
+| **RF-5** | README/Docs Phase-4 update | ✅ implemented | a089ca7, e86e3aa |
+| **RF-6** | CoinGecko default + mock warning | ✅ implemented | faabd6c |
+| **RF-7** | Test-file splitting (cli/ + mcp/ submodules) | ✅ implemented | a05f1e7 |
+
+### RF-1 Detail
+- `app/cli/commands/trading.py`: new `trading_app` with market-data, paper-portfolio, trading-loop, backtest, decision-journal commands
+- `app/cli/research.py`: research commands fully extracted from main.py
+- `app/agents/tools/canonical_read.py` + `guarded_write.py`: MCP tool inventory modules
+- Backward-compatible: all `trading-bot research <cmd>` commands unchanged
+
+### RF-4 Detail (partial)
+Phase 1 complete: ORM models + Alembic migration (0007).
+Phase 2 (dual-write in run_cycle) and Phase 3 (DB-primary portfolio snapshot) are pending sprints.
+
+---
+
 ## Confirmed Context
 
 - PH4E is formally closed.
