@@ -565,8 +565,11 @@ def test_operator_run_once_light_rate_limit_blocks_after_threshold(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _set_operator_api_key(client.app, "operator-token")
-    monkeypatch.setattr(operator_router, "_GUARDED_RATE_LIMIT_MAX_REQUESTS", 1)
-    monkeypatch.setattr(operator_router, "_GUARDED_RATE_LIMIT_WINDOW_SECONDS", 3600.0)
+    # Replace the rate-limit store with a tight 1-request limit for this test.
+    # Patching the module-level constants no longer suffices since RateLimitStore
+    # is initialised once at import time — replace the store instance instead.
+    tight_store = operator_router.RateLimitStore(window_seconds=3600.0, max_requests=1)
+    monkeypatch.setattr(operator_router, "_RATE_LIMIT_STORE", tight_store)
 
     async def fake_run_once(**kwargs: object) -> dict[str, object]:
         return {

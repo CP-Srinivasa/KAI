@@ -37,10 +37,77 @@ _IDEMPOTENCY_CACHE_MAX = 256
 _GUARDED_RATE_LIMIT_WINDOW_SECONDS = 30.0
 _GUARDED_RATE_LIMIT_MAX_REQUESTS = 5
 
-_IDEMPOTENCY_LOCK = Lock()
-_IDEMPOTENCY_CACHE: OrderedDict[str, _IdempotencyRecord] = OrderedDict()
-_GUARDED_RATE_LIMIT_LOCK = Lock()
-_GUARDED_RATE_LIMIT_BUCKETS: dict[str, deque[float]] = {}
+class IdempotencyStore:
+    """In-memory idempotency cache for guarded operator requests.
+
+    WARNING: Single-instance only. In a multi-process or clustered deployment
+    each process maintains its own independent cache, so idempotency guarantees
+    are NOT preserved across instances. Replace with a shared backend (e.g. Redis)
+    before scaling beyond a single-process deployment.
+    """
+
+    def __init__(self, max_size: int = 256) -> None:
+        self._max_size = max_size
+        self._lock = Lock()
+        self._cache: OrderedDict[str, _IdempotencyRecord] = OrderedDict()
+
+    def get(self, key: str) -> _IdempotencyRecord | None:
+        with self._lock:
+            record = self._cache.get(key)
+            if record is not None:
+                self._cache.move_to_end(key)
+            return record
+
+    def set(self, key: str, record: _IdempotencyRecord) -> None:
+        with self._lock:
+            self._cache[key] = record
+            self._cache.move_to_end(key)
+            if len(self._cache) > self._max_size:
+                self._cache.popitem(last=False)
+
+    def clear(self) -> None:
+        with self._lock:
+            self._cache.clear()
+
+
+class RateLimitStore:
+    """In-memory sliding-window rate limiter for guarded operator endpoints.
+
+    WARNING: Single-instance only. Subject to the same cluster limitations as
+    IdempotencyStore — rate limits are not enforced across multiple processes.
+    Replace with a shared backend before scaling.
+    """
+
+    def __init__(self, window_seconds: float, max_requests: int) -> None:
+        self._window_seconds = window_seconds
+        self._max_requests = max_requests
+        self._lock = Lock()
+        self._buckets: dict[str, deque[float]] = {}
+
+    def check_and_record(self, subject: str) -> bool:
+        """Return True if the request is allowed, False if rate-limited."""
+        now = time.monotonic()
+        with self._lock:
+            bucket = self._buckets.setdefault(subject, deque())
+            cutoff = now - self._window_seconds
+            while bucket and bucket[0] < cutoff:
+                bucket.popleft()
+            if len(bucket) >= self._max_requests:
+                return False
+            bucket.append(now)
+            return True
+
+    def clear(self) -> None:
+        with self._lock:
+            self._buckets.clear()
+
+
+_IDEMPOTENCY_STORE = IdempotencyStore(max_size=_IDEMPOTENCY_CACHE_MAX)
+_RATE_LIMIT_STORE = RateLimitStore(
+    window_seconds=_GUARDED_RATE_LIMIT_WINDOW_SECONDS,
+    max_requests=_GUARDED_RATE_LIMIT_MAX_REQUESTS,
+)
+
 
 
 @dataclass(frozen=True)
@@ -234,11 +301,9 @@ def _load_idempotent_replay(
     idempotency_key: str,
     fingerprint: str,
 ) -> dict[str, object] | None:
-    with _IDEMPOTENCY_LOCK:
-        record = _IDEMPOTENCY_CACHE.get(idempotency_key)
-        if record is None:
-            return None
-        _IDEMPOTENCY_CACHE.move_to_end(idempotency_key)
+    record = _IDEMPOTENCY_STORE.get(idempotency_key)
+    if record is None:
+        return None
 
     if record.request_fingerprint != fingerprint:
         raise _operator_http_error(
@@ -259,34 +324,21 @@ def _store_idempotent_response(
     fingerprint: str,
     response_payload: dict[str, object],
 ) -> None:
-    with _IDEMPOTENCY_LOCK:
-        stored_payload = dict(response_payload)
-        stored_payload["idempotency_replayed"] = False
-        _IDEMPOTENCY_CACHE[idempotency_key] = _IdempotencyRecord(
+    stored_payload = dict(response_payload)
+    stored_payload["idempotency_replayed"] = False
+    _IDEMPOTENCY_STORE.set(
+        idempotency_key,
+        _IdempotencyRecord(
             request_fingerprint=fingerprint,
             response_payload=stored_payload,
-        )
-        _IDEMPOTENCY_CACHE.move_to_end(idempotency_key)
-        if len(_IDEMPOTENCY_CACHE) > _IDEMPOTENCY_CACHE_MAX:
-            _IDEMPOTENCY_CACHE.popitem(last=False)
+        ),
+    )
 
 
 def _enforce_guarded_rate_limit(request: Request) -> None:
     subject = getattr(request.state, "operator_subject", "operator_unknown")
-    now = time.monotonic()
-    blocked = False
-
-    with _GUARDED_RATE_LIMIT_LOCK:
-        bucket = _GUARDED_RATE_LIMIT_BUCKETS.setdefault(subject, deque())
-        cutoff = now - _GUARDED_RATE_LIMIT_WINDOW_SECONDS
-        while bucket and bucket[0] < cutoff:
-            bucket.popleft()
-        if len(bucket) >= _GUARDED_RATE_LIMIT_MAX_REQUESTS:
-            blocked = True
-        else:
-            bucket.append(now)
-
-    if blocked:
+    allowed = _RATE_LIMIT_STORE.check_and_record(subject)
+    if not allowed:
         raise _operator_http_error(
             request,
             status_code=429,
@@ -319,10 +371,8 @@ async def _resolve_read_payload(
 
 def _reset_operator_guard_state_for_tests() -> None:
     """Reset in-memory guard state for deterministic unit tests."""
-    with _IDEMPOTENCY_LOCK:
-        _IDEMPOTENCY_CACHE.clear()
-    with _GUARDED_RATE_LIMIT_LOCK:
-        _GUARDED_RATE_LIMIT_BUCKETS.clear()
+    _IDEMPOTENCY_STORE.clear()
+    _RATE_LIMIT_STORE.clear()
 
 
 def require_operator_api_token(
