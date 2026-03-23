@@ -1,9 +1,12 @@
-"""Distillation harness — readiness assessment for Sprint 11 (I-58–I-62).
+"""Distillation harness — companion model readiness assessment.
 
-Combines teacher/candidate evaluation, promotion gate check, and optional
-shadow coverage into a single DistillationReadinessReport JSON artifact.
+[EXPERIMENTAL — NO ACTIVE MODEL]
+Part of the companion model training pipeline. No companion model is currently
+trained or deployed. This module is research infrastructure only and is NOT
+in the default operator workflow. Activation requires COMPANION_MODEL_ENDPOINT
+to be set and explicit CLI invocation (benchmark-companion, check-promotion).
 
-NON-NEGOTIABLE:
+Invariants (I-58–I-62):
 - No DB reads, no LLM calls, no network I/O (I-62).
 - Shadow data is NEVER used as teacher or candidate input (I-59, I-60).
 - DistillationReadinessReport is informational only — not a promotion trigger (I-58).

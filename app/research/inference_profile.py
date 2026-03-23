@@ -1,7 +1,16 @@
 """Declarative inference route profiles for A/B/C path separation.
 
-Sprint 14 — route profiles are inert artifacts. Creating or saving a profile
-MUST NOT change APP_LLM_PROVIDER, DB state, or CLI defaults (I-80, I-84, I-89).
+Production default: primary_only (single external LLM path, no shadow/control).
+The active route profile file (artifacts/active_route_profile.json) controls
+which mode is active at runtime. Absence of the file = primary_only behavior.
+
+Multi-path modes (primary_with_shadow, primary_with_control,
+primary_with_shadow_and_control) are EXPERIMENTAL and require:
+- A deployed companion model at COMPANION_MODEL_ENDPOINT
+- Explicit operator activation via route-activate MCP tool
+
+Creating or saving a profile MUST NOT change APP_LLM_PROVIDER, DB state,
+or CLI defaults (I-80, I-84, I-89).
 """
 
 from __future__ import annotations

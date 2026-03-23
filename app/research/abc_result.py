@@ -1,6 +1,13 @@
 """A/B/C inference result envelope for audit-safe composition.
 
-Sprint 14 — ABCInferenceEnvelope is a pure composition artifact.
+[EXPERIMENTAL — ONLY ACTIVE IN SHADOW/CONTROL ROUTE MODES]
+ABCInferenceEnvelope is only instantiated when a multi-path route profile
+(primary_with_shadow, primary_with_control, or primary_with_shadow_and_control)
+is explicitly activated via the MCP route-activate tool. In the default
+primary_only production mode this module is never called during normal
+analyze-pending runs.
+
+ABCInferenceEnvelope is a pure composition artifact.
 Creating or saving an envelope MUST NOT call analyze(), apply_to_document(),
 update_analysis(), or any DB mutation (I-88).
 """

@@ -1,9 +1,11 @@
 """Training job and post-training evaluation artifacts.
 
-Sprint 12 - controlled training intent and evaluation linkage.
-Contract reference: docs/sprint12_training_job_contract.md
-Invariants: docs/contracts.md §23, I-63-I-69.
+[EXPERIMENTAL — NO ACTIVE MODEL]
+Part of the companion model training pipeline. No companion model is currently
+trained or deployed. This module records training intent and evaluation linkage
+for a future fine-tuning cycle. NOT in the default operator workflow.
 
+Invariants: docs/contracts.md §23, I-63-I-69.
 No training, no model inference, no external API calls.
 """
 

@@ -1,9 +1,12 @@
 """Tuning artifact and promotion record management.
 
-Sprint 8/9 - companion tuning flow and promotion audit trail.
-Contract reference: docs/tuning_promotion_contract.md
-Invariants: docs/contracts.md §19, I-40-I-49.
+[EXPERIMENTAL — NO ACTIVE MODEL]
+Part of the companion model training pipeline. Manages tuning artifacts and
+promotion audit trail for a future fine-tuning cycle. NOT in the default
+operator workflow. Activation requires an active companion model endpoint
+and explicit CLI invocation (prepare-tuning-artifact, record-promotion).
 
+Invariants: docs/contracts.md §19, I-40-I-49.
 No imports from evaluation.py. No circular dependencies.
 No training, no model inference, no external API calls.
 """

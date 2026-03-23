@@ -541,7 +541,10 @@ def research_benchmark_companion(
         help="Optional path to save a benchmark artifact manifest JSON",
     ),
 ) -> None:
-    """Benchmark companion outputs against teacher datasets and optionally save artifacts."""
+    """[EXPERIMENTAL] Benchmark companion outputs against teacher datasets.
+
+    Requires COMPANION_MODEL_ENDPOINT to be set. No companion model is currently deployed.
+    """
 
     from app.research.evaluation import (
         compare_datasets,
@@ -608,7 +611,10 @@ def research_benchmark_companion_run(
         help="Optional path to save a benchmark artifact manifest JSON",
     ),
 ) -> None:
-    """Run local companion inference on a teacher dataset and benchmark the output."""
+    """[EXPERIMENTAL] Run local companion inference on a teacher dataset and benchmark the output.
+
+    Requires COMPANION_MODEL_ENDPOINT to be set. No companion model is currently deployed.
+    """
     import asyncio
 
     async def run() -> None:
@@ -705,8 +711,10 @@ def research_check_promotion(
         ..., help="Path to evaluation_report.json produced by evaluate-datasets --save-report"
     ),
 ) -> None:
-    """Check whether a saved evaluation report meets companion promotion thresholds.
+    """[EXPERIMENTAL] Check whether a saved evaluation report meets companion promotion thresholds.
 
+    No companion model is currently deployed. This command is part of the future
+    companion model training pipeline.
     Exits 0 if all five quantitative gates pass (promotable).
     Exits 1 if any gate fails — human review required.
 
@@ -819,8 +827,9 @@ def research_prepare_tuning_artifact(
         help="Output path for the tuning manifest JSON",
     ),
 ) -> None:
-    """Record a training-ready manifest for external fine-tuning.
+    """[EXPERIMENTAL] Record a training-ready manifest for external fine-tuning.
 
+    Part of the companion model pipeline. No companion model is currently deployed.
     Does NOT train a model. Does NOT call any external API.
     Use this before handing the teacher dataset to an external training process.
 
@@ -890,8 +899,9 @@ def research_record_promotion(
         help="Output path for the promotion record JSON",
     ),
 ) -> None:
-    """Record a manual companion promotion decision as an immutable audit artifact.
+    """[EXPERIMENTAL] Record a manual companion promotion decision as an immutable audit artifact.
 
+    Part of the companion model pipeline. No companion model is currently deployed.
     Does NOT change provider routing. The operator must update APP_LLM_PROVIDER
     and companion_model_endpoint separately after this step.
 
@@ -962,7 +972,10 @@ def research_evaluate(
     teacher_source: str = typer.Option("external_llm", help="The baseline extraction source"),
     limit: int = typer.Option(50, help="Number of documents to evaluate over"),
 ) -> None:
-    """Run the internal companion model against teacher outputs and print metrics."""
+    """[EXPERIMENTAL] Run the internal companion model against teacher outputs and print metrics.
+
+    Requires COMPANION_MODEL_ENDPOINT to be set. No companion model is currently deployed.
+    """
     import asyncio
 
     async def run() -> None:

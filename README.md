@@ -106,6 +106,38 @@ Key read endpoints:
 
 Dashboard: `GET /dashboard/` — read-only operator summary.
 
+## Active vs. Experimental Features
+
+### Active (production default)
+
+| Feature | Status | Notes |
+|---|---|---|
+| Rule-based analysis pipeline | ✅ active | keyword scoring, signal generation |
+| CoinGecko market data | ✅ active | free tier, ~1min delayed, 10 symbols |
+| Paper trading loop | ✅ active | fail-closed, paper/shadow only |
+| Operator API (`/operator/*`) | ✅ active | Bearer auth required |
+| Telegram operator bot | ✅ active | HMAC-verified webhooks |
+| CLI `research` surface | ✅ active | daily-summary, readiness, positions etc. |
+| Alerting (Telegram/Email) | ✅ active | threshold-based, dry-run default |
+
+### Experimental (not in default operator workflow)
+
+| Feature | Status | Activation |
+|---|---|---|
+| Companion ML pipeline | 🔬 experimental | No model deployed. Requires `COMPANION_MODEL_ENDPOINT`. CLI: `benchmark-companion`, `check-promotion`, `record-promotion` |
+| Multi-path inference (A/B/C) | 🔬 experimental | Requires companion model + `route-activate` MCP tool |
+| ABCInferenceEnvelope | 🔬 experimental | Only active in `primary_with_shadow` / `control` route modes |
+| Shadow inference | 🔬 experimental | Needs active route profile with shadow paths |
+| Upgrade cycle / promotion | 🔬 experimental | Part of companion ML pipeline |
+
+### Not introduced (by design)
+
+- Event sourcing
+- Multi-tenant support
+- Kafka / message queue infrastructure
+
+These are not planned for the current phase.
+
 ## Documentation Index
 
 - [PHASE_PLAN.md](PHASE_PLAN.md)

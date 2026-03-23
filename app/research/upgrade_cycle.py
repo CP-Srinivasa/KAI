@@ -1,14 +1,14 @@
 """Companion upgrade cycle report orchestration.
 
-Sprint 13 Part 2 - controlled upgrade cycle status summary.
-Contract reference: docs/sprint13_comparison_contract.md Part 2
-Invariants: docs/contracts.md §25, I-75-I-79.
+[EXPERIMENTAL — NO ACTIVE MODEL]
+Part of the companion model training pipeline. Summarizes upgrade cycle
+status when a new companion model version is being evaluated for promotion.
+NOT in the default operator workflow — requires an active companion model
+and promotion artifacts to be meaningful.
 
-Pure read/summarize helpers only:
-- no training
-- no model inference
-- no routing changes
-- no external API calls
+Invariants: docs/contracts.md §25, I-75-I-79.
+Pure read/summarize helpers only — no training, no inference, no routing changes,
+no external API calls.
 """
 
 from __future__ import annotations
