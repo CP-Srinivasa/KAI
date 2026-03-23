@@ -1,4 +1,13 @@
-"""Signal generator — AnalysisResult + MarketDataPoint → SignalCandidate."""
+"""Signal generator — AnalysisResult + MarketDataPoint → SignalCandidate.
+
+SIGNAL-KERN: Aktuelle Implementierung leitet Richtung ausschließlich aus LLM-Sentiment ab
+(bullish→LONG, bearish→SHORT). Confluence-Score basiert auf Analyse-Metadaten (impact,
+relevance, novelty, assets, sentiment strength). Kein technischer Indikator, kein
+Orderbook-Input, kein Volatilitätsmodell.
+
+TODO (vor Live-Einsatz): Strategie durch echte Multi-Signal-Logik ersetzen — z.B.
+technische Indikatoren, Momentum, Volumen-Anomalien kombinieren.
+"""
 from __future__ import annotations
 
 import logging

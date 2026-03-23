@@ -1,8 +1,12 @@
 """Evaluation module for comparing models against a baseline.
 
+[EXPERIMENTAL — NO ACTIVE MODEL]
 Two evaluation surfaces:
 - compare_outputs(): live CanonicalDocument comparison (Sprint 5 / evaluate CLI)
 - compare_datasets(): offline JSONL export comparison (Sprint 6 / distillation readiness)
+
+Part of the companion model pipeline. No companion model is currently deployed.
+Voraussetzungen für echte Aktivierung: trainiertes Modell + konfigurierter Endpoint.
 
 Contract reference: docs/contracts.md §16
 """

@@ -5,8 +5,8 @@ Default runtime remains `paper`/`shadow` with fail-closed controls.
 
 ## Current Phase
 
-- phase: `PHASE 4 (active)` | sprint: `PH4F closed → PH4G in selection`
-- technical baseline: `1519 passed, ruff clean` | runtime: paper/shadow, fail-closed
+- phase: `PHASE 4 (active)` | sprint: `PH4G ready-to-close → PH4H in definition`
+- technical baseline: `1538 passed, ruff clean` | runtime: paper/shadow, fail-closed
 
 ## Phase-4 Focus
 
@@ -14,11 +14,13 @@ Phase 3 (canonical consolidation, S50) is formally complete.
 Phase 4 runs signal quality audits on the frozen PH4A–PH4D evidence arc:
 
 - PH4A–PH4D arc closed: keyword expansion improved good-hit `13→18`, zero-hit `29→26`, no regressions
-- PH4E closed (D-67): scoring divergence root cause = defaults-by-design (RuleAnalyzer leaves LLM fields to LLM)
-- PH4F closed (D-70): rule-input completeness diagnostic — field-level gap analysis complete, no runtime changes
-- PH4G: next sprint in selection — fallback input enrichment baseline
-- CoinGecko integration active as default market data provider (free tier, ~1min delayed)
+- PH4E closed (D-66): scoring divergence root cause = defaults-by-design (RuleAnalyzer leaves LLM fields to LLM)
+- PH4F closed (D-67): rule-input completeness diagnostic — field-level gap analysis complete, no runtime changes
+- PH4G ready-to-close (D-69): relevance-floor fallback intervention applied; actionable heuristic reverted (I-13 policy ceiling)
+- PH4H in definition (D-70): rule-only ceiling and actionability policy review
+- CoinGecko active as default market data provider (free tier, ~1min delayed, no API key required)
 - Paper-trading loop active: `run-once` command available, fail-closed on live
+- Freshness enforcement active: stale market data → cycle skipped with explicit STALE_DATA audit entry
 
 ## Core Principles
 
@@ -40,7 +42,7 @@ Phase 4 runs signal quality audits on the frozen PH4A–PH4D evidence arc:
 ```bash
 pip install -e ".[dev]"
 cp .env.example .env        # edit as needed
-python -m pytest            # 1519 tests
+python -m pytest            # 1538+ tests
 python -m ruff check .
 uvicorn app.api.main:app --reload
 ```
@@ -53,6 +55,7 @@ uvicorn app.api.main:app --reload
 | `APP_API_KEY` | `` | Bearer token for API auth. Leave empty for local dev only. |
 | `APP_CORS_ALLOWED_ORIGINS` | `http://localhost:3000,http://localhost:8000` | Comma-separated allowed CORS origins. Set explicitly for production. |
 | `DB_URL` | `postgresql+asyncpg://...` | Database connection string |
+| `APP_MARKET_DATA_PROVIDER` | `coingecko` | Market data source: `coingecko` (real, free-tier) or `mock` (dev/test only — logs WARNING) |
 | `OPENAI_API_KEY` | — | Required for LLM analysis |
 | `OPERATOR_TELEGRAM_BOT_TOKEN` | — | Telegram operator bot token |
 | `OPERATOR_ADMIN_CHAT_IDS` | — | Comma-separated admin Telegram chat IDs |
