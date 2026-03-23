@@ -470,7 +470,16 @@ class AnalysisPipeline:
             + document.tickers
             + document.crypto_assets
         )
-        fallback_tags = _unique_strings(
+        fallback_sectors = _unique_strings(document.categories)
+        spam_probability = compute_spam_probability(document.title, text)
+        relevance_score = _fallback_relevance(document, keyword_hits, entity_mentions)
+        impact_score = _fallback_impact(document, affected_assets)
+        novelty_score = _fallback_novelty(document)
+        confidence_score = _fallback_confidence(keyword_hits, entity_mentions)
+        market_scope = _fallback_market_scope(document, keyword_hits)
+
+        # PH4J: enriched fallback tags from all available signals
+        tag_sources: list[str] = (
             document.tags
             + document.topics
             + [hit.canonical for hit in keyword_hits]
@@ -479,14 +488,14 @@ class AnalysisPipeline:
                 for mention in entity_mentions
                 if mention.entity_type in {"topic", "person", "organization"}
             ]
-        )[:_FALLBACK_MAX_TERMS]
-        fallback_sectors = _unique_strings(document.categories)
-        spam_probability = compute_spam_probability(document.title, text)
-        relevance_score = _fallback_relevance(document, keyword_hits, entity_mentions)
-        impact_score = _fallback_impact(document, affected_assets)
-        novelty_score = _fallback_novelty(document)
-        confidence_score = _fallback_confidence(keyword_hits, entity_mentions)
-        market_scope = _fallback_market_scope(document, keyword_hits)
+            + document.categories
+            + affected_assets
+        )
+        if document.source_name:
+            tag_sources.append(document.source_name)
+        if market_scope is not None and market_scope != MarketScope.UNKNOWN:
+            tag_sources.append(market_scope.value)
+        fallback_tags = _unique_strings(tag_sources)[:_FALLBACK_MAX_TERMS]
 
         keyword_terms = ", ".join(hit.canonical for hit in keyword_hits[:5])
         entity_terms = ", ".join(mention.name for mention in entity_mentions[:5])
