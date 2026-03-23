@@ -6,6 +6,7 @@ import yaml  # type: ignore[import-untyped]
 from typer.testing import CliRunner
 
 from app.cli import main as cli_main
+from app.cli import research as cli_research
 from app.cli.main import app
 from app.core.domain.document import CanonicalDocument
 from app.core.enums import (
@@ -2437,7 +2438,7 @@ def test_runbook_cli_commands_fail_closed_on_invalid_command_refs(
     )
 
     monkeypatch.setattr(
-        cli_main,
+        cli_research,
         "_build_runbook_from_artifacts",
         lambda **_: runbook,
     )
