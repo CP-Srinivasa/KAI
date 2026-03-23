@@ -3,26 +3,25 @@
 ## Current State (2026-03-23)
 
 - current_phase: `PHASE 4 (active)`
-- current_sprint: `PH4I_FALLBACK_MARKET_SCOPE_ENRICHMENT (active definition)`
-- next_required_step: `PH4J_DEFINITION_AND_CONTRACT_FREEZE`
-- ph4g_status: `closed (formal closeout recorded; S75 frozen anchor)`
-- ph4h_status: `closed (D-74/75; policy decision recorded; S76 frozen anchor)`
-- ph4i_status: `active (definition — D-76) — market_scope enrichment; §77 contract`
+- current_sprint: `PH4K_TAG_SIGNAL_UTILITY_REVIEW (definition frozen)`
+- next_required_step: `PH4K_EXECUTION_START`
 - baseline: `1551 passed, ruff clean`
 
-## Phase 4 Arc (PH4A-I)
+## Phase 4 Complete Arc (PH4A-J)
 
-| Sprint | Layer | Result |
+| Sprint | Type | Result |
 |---|---|---|
-| PH4A | Baseline | 0% overlap, paired=0 |
-| PH4B | Overlap | paired=69, MAE 3.13 |
-| PH4C | Keyword audit | 42% zero-hit |
-| PH4D | Keyword expand | 42%->37.7%, diminishing |
-| PH4E | Scoring calibration | relevance 41.2% of gap |
-| PH4F | Input completeness | 65% weight hardcoded |
-| PH4G | Fallback enrichment | Relevance floor OK, actionable blocked (I-13) |
-| PH4H | Policy review | actionable=LLM-only confirmed; I-13 permanent |
-| PH4I | Market scope | market_scope enrichment in fallback path (PH4F finding) |
+| PH4A | Diagnostic | Baseline: paired=0 |
+| PH4B | Diagnostic | paired=69, MAE 3.13. Keyword blindness |
+| PH4C | Diagnostic | 42% zero-hit. Gaps: macro/regulatory/AI |
+| PH4D | Intervention | Keywords +56. Zero-hit 42%->37.7% |
+| PH4E | Diagnostic | relevance 41.2% of gap. Defaults by design |
+| PH4F | Diagnostic | Fallback path. 65% weight hardcoded |
+| PH4G | Intervention | Relevance floor applied. Actionable blocked (I-13) |
+| PH4H | Policy | Option B: I-13 permanent, actionable=LLM-only (S76) |
+| PH4I | Intervention | market_scope enrichment complete (S77) |
+| PH4J | Intervention | Closed: tags enrichment verified (keyword-hit 4->7, zero-hit 1->4, assets-only 0->4) |
+| PH4K | Utility Review | Definition frozen: diagnostic-only utility review; execution authorized |
 
 ## I-13 Policy Decision (D-74)
 
@@ -31,7 +30,8 @@ PH4H policy decision (Option B): `actionable` is an LLM-exclusive semantic judgm
 Rule-only fallback MUST set `actionable=False` -- this is correct by design, not a bug.
 I-13 is a permanent invariant. No relaxation planned.
 
-## PH4I Next Sprint
+## PH4K Freeze State
 
-`PH4I_FALLBACK_MARKET_SCOPE_ENRICHMENT` addresses `market_scope unknown 69/69` from PH4F.
-Policy-safe: market_scope is metadata, no scoring impact, no I-13 conflict.
+PH4J closeout gate is complete and PH4K contract is frozen.
+PH4K remains diagnostic-only (no scoring, threshold, provider, or actionability changes).
+Execution is authorized with the next step `PH4K_EXECUTION_START`.

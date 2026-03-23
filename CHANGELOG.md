@@ -1,5 +1,60 @@
 # CHANGELOG.md
 
+## 2026-03-23 - PH4K contract freeze completed; execution gate opened
+
+- Canonical state advanced to: `current_sprint = PH4K_TAG_SIGNAL_UTILITY_REVIEW (definition frozen)`.
+- Canonical next step set to: `PH4K_EXECUTION_START`.
+- PH4K remains diagnostic-only; no scoring/threshold/provider/actionability changes.
+- Acceptance criteria locked before execution.
+- DB failures remain on a separate track and are excluded from PH4K utility interpretation.
+
+---
+
+## 2026-03-23 - PH4J formally closed (D-81) — PH4K_TAG_SIGNAL_UTILITY_REVIEW opened as candidate
+
+- PH4J_CLOSE_AND_PH4K_DEFINITION sprint executed: governance sync complete.
+- PH4J formally closed; §78 is now a closed frozen anchor (D-81).
+- PH4K_TAG_SIGNAL_UTILITY_REVIEW opened as candidate; §79 contract candidate.
+- All 10 governance docs aligned: PH4J=closed, PH4K=candidate.
+- No PH4K execution before `PH4K_DEFINITION_AND_CONTRACT_FREEZE`.
+- Baseline unchanged: `1551 passed, ruff clean`.
+
+---
+
+## 2026-03-23 - PH4J governance state set to ready-to-close (pre-closeout gate)
+
+- Canonical state set to: `current_sprint = PH4J_FALLBACK_TAGS_ENRICHMENT (ready to close)`.
+- Canonical next step set to: `PH4J_CLOSE_AND_PH4K_DEFINITION`.
+- PH4J verification evidence remains unchanged: keyword-hit 4->7, zero-hit 1->4, assets-only 0->4, 29/29 tests, I-13 intact.
+- DB failures remain on a separate track and are excluded from PH4J closeout semantics.
+
+---
+
+## 2026-03-23 - PH4J formally closed (D-79/D-80) — PH4K_TAG_SIGNAL_UTILITY_REVIEW defined as next candidate
+
+- PH4J formally closed; §78 is now a frozen anchor.
+- Tag enrichment confirmed: keyword-hit 4→7, zero-hit 1→4, assets-only 0→4.
+- Next sprint: PH4K_TAG_SIGNAL_UTILITY_REVIEW — operator utility review, not more raw expansion.
+- DB test failures remain on a separate track.
+- Governance state: `current_sprint = PH4K_TAG_SIGNAL_UTILITY_REVIEW (candidate)`, `next_required_step = PH4K_DEFINITION_AND_CONTRACT_FREEZE`.
+
+---
+
+## 2026-03-23 - PH4J live verification passed; sprint moved to ready-to-close
+
+- `PH4J_FALLBACK_TAGS_ENRICHMENT` moved to `ready to close`.
+- Live verification passed.
+- Tag coverage improved in verified scenarios:
+  - keyword-hit: `4 -> 7`
+  - zero-hit: `1 -> 4`
+  - assets-only: `0 -> 4`
+- `29/29` pipeline tests passed.
+- `I-13` remained intact.
+- DB test failures are tracked separately from PH4J closeout.
+- Next required step set to `PH4J_CLOSE_AND_PH4K_DEFINITION`.
+
+---
+
 ## 2026-03-23 - PH4I formally closed (D-78); PH4J candidate defined
 
 - PH4I_FALLBACK_MARKET_SCOPE_ENRICHMENT formally closed.

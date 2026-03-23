@@ -5,13 +5,14 @@
 | Field | Value |
 |---|---|
 | current_phase | `PHASE 4 (active)` |
-| current_sprint | `PH4J_FALLBACK_TAGS_ENRICHMENT (candidate)` |
-| next_required_step | `PH4I_CONTRACT_AND_ACCEPTANCE_FREEZE` |
+| current_sprint | `PH4K_TAG_SIGNAL_UTILITY_REVIEW (definition frozen)` |
+| next_required_step | `PH4K_EXECUTION_START` |
 | ph4e_status | `closed (D-67) — scoring calibration audit complete; §73 frozen anchor` |
 | ph4f_status | `closed — frozen intervention anchor; §74 frozen anchor` |
 | ph4g_status | `closed — relevance floor applied; actionable reverted (I-13); §75 frozen anchor` |
 | ph4h_status | `closed (D-75) — Option B: I-13 permanent; actionable LLM-only; §76 frozen anchor` |
-| ph4i_status | `active (definition — D-76) — market_scope enrichment; §77 contract` |
+| ph4i_status | `closed (D-78) — market_scope enrichment; §77 frozen anchor` |
+| ph4j_status | `closed (D-81) — tags enrichment verified; §78 frozen anchor` |
 | baseline | `1551 passed, ruff clean` |
 | ph4b_status | `closed (D-62) — sections 68 and 69 frozen anchors` |
 | ph4c_status | `closed — section 70 frozen audit anchor` |
@@ -20,8 +21,11 @@
 | ph4f_contract | `docs/contracts.md §74 (closed)` |
 | ph4g_contract | `docs/contracts.md §75 (closed; frozen anchor)` |
 | ph4h_contract | `docs/contracts.md §76 (closed D-75 — frozen anchor)` |
-| ph4i_contract | `docs/contracts.md §77 (active definition — D-76)` |
-| architecture_status | three-tier stack unchanged; PH4A–PH4H closed/frozen anchors (§67–§76); PH4I active definition (§77) |
+| ph4i_contract | `docs/contracts.md §77 (closed D-78)` |
+| ph4j_contract | `docs/contracts.md §78 (closed D-81 — frozen anchor)` |
+| ph4k_status | `definition frozen — PH4K diagnostic-only utility review` |
+| ph4k_contract | `docs/contracts.md §79 (definition frozen)` |
+| architecture_status | three-tier stack unchanged; PH4A–PH4J closed/frozen anchors (§67–§78); PH4K frozen diagnostic contract (§79) |
 
 ---
 
@@ -104,13 +108,31 @@
 - `I-13` remains in force as a permanent invariant.
 - `actionable` remains **LLM-only**; fallback stays conservative and non-actionable.
 
-## PH4I Active Definition Sprint (relevance/context enrichment)
+## PH4I Closed Sprint (§77 frozen anchor)
 
-- Sprint: `PH4I_FALLBACK_MARKET_SCOPE_ENRICHMENT`. **Active in definition mode.**
-- Contract: `docs/contracts.md §77` (active definition).
-- Focus: enrich `market_scope` in the fallback path for better context without changing scoring or actionability.
-- Guardrails: no `I-13` change, no actionable expansion, no provider/model/source changes.
-- Next required step: `PH4I_CONTRACT_AND_ACCEPTANCE_FREEZE`.
+- Sprint: `PH4I_FALLBACK_MARKET_SCOPE_ENRICHMENT`. **Formally closed (D-78).**
+- Contract: `docs/contracts.md §77` (closed frozen anchor).
+- Outcome: `market_scope` enrichment in fallback path completed.
+
+## PH4J Closed Sprint (§78 frozen anchor — D-81)
+
+- Sprint: `PH4J_FALLBACK_TAGS_ENRICHMENT`. **Formally closed (D-81).**
+- Contract: `docs/contracts.md §78` (closed; frozen anchor).
+- Execution outcomes (locked):
+  - keyword-hit tags: `4 → 7`
+  - zero-hit tags: `1 → 4`
+  - assets-only tags: `0 → 4`
+  - pipeline tests: `29/29` pass
+  - `I-13` unchanged and intact
+- DB test failures tracked on a separate track; excluded from PH4J closeout.
+
+## PH4K Frozen Sprint Contract (§79)
+
+- Sprint: `PH4K_TAG_SIGNAL_UTILITY_REVIEW`. **Definition frozen.**
+- Contract: `docs/contracts.md §79` (definition frozen).
+- Focus: assess operator utility of PH4J-enriched tags; next lever is utility, not more expansion.
+- Guardrails: no scoring changes, no I-13 conflict, no actionability expansion.
+- Next required step: `PH4K_EXECUTION_START`.
 
 ## Design Principle
 

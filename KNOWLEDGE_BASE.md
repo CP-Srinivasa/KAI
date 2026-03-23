@@ -1,31 +1,38 @@
 # KNOWLEDGE_BASE.md - KAI Canonical Knowledge Index
 
-> Stand: 2026-03-23 | Phase 4 active | Sprint: PH4J_FALLBACK_TAGS_ENRICHMENT (candidate) | Next: PH4J_DEFINITION_AND_CONTRACT_FREEZE | Baseline: 1551 passed, ruff clean
+> Stand: 2026-03-23 | Phase 4 active | Sprint: PH4K_TAG_SIGNAL_UTILITY_REVIEW (definition frozen) | Next: PH4K_EXECUTION_START | Baseline: 1551 passed, ruff clean
 
-## PH4H Frozen Policy Outcome
+## Active Gate
+
+- current sprint: `PH4K_TAG_SIGNAL_UTILITY_REVIEW (definition frozen)`
+- next required step: `PH4K_EXECUTION_START`
+- contract: `docs/contracts.md section 79` (definition frozen)
+- constraints: no direct `I-13` change, no fallback actionability expansion
+
+## PH4H Policy Anchor
 
 - Policy choice: **Option B**
 - `I-13` remains enforced.
 - `actionable` remains **LLM-only**.
-- Simulated fallback actionability would push rule-only priority into the `6-9` range and is therefore not adopted.
 
-## Why This Matters
+## PH4J Verification Outcome
 
-- Tier-1 remains conservative and fail-closed.
-- Safety is prioritized over additional fallback aggressiveness.
-- The next quality lever is relevance/context enrichment, not actionability expansion.
+- PH4J live verification passed.
+- Fallback tags include: `categories`, `affected_assets`, `source_name`, `market_scope.value`.
+- Tag improvements: keyword-hit `4->7`, zero-hit `1->4`, assets-only `0->4`.
+- `29/29` pipeline tests passed.
+- `I-13` remained intact.
+- DB test failures remain on a separate track.
 
-## Active Gate
+## PH4K Contract Freeze Outcome
 
-- current sprint: `PH4J_FALLBACK_TAGS_ENRICHMENT (candidate)`
-- next required step: `PH4J_DEFINITION_AND_CONTRACT_FREEZE`
-- contract: `docs/contracts.md §78` (candidate for PH4J)
-- constraints: no direct `I-13` change, no fallback actionability expansion
+- Sprint: `PH4K_TAG_SIGNAL_UTILITY_REVIEW`
+- Focus: assess operator utility of PH4J-enriched tags.
+- Policy-safe: no scoring changes, no I-13 conflict, no actionability expansion.
+- Acceptance criteria are locked.
+- Execution is now authorized as the next step.
 
-## PH4I Outcome
+## PH4I Frozen Anchor
 
-- `_fallback_market_scope()` enriched with crypto_assets, tickers, title keyword signals.
-- Before: market_scope UNKNOWN 69/69. After: CRYPTO/EQUITIES resolved where asset signals present.
-- New baseline: 1551 passed (+13 tests), ruff clean.
-- §77 closed (D-78; frozen anchor).
-- Next: PH4J_FALLBACK_TAGS_ENRICHMENT (tags empty 69/69 from PH4F).
+- `_fallback_market_scope()` enrichment is closed and frozen (section 77, D-78).
+- Baseline remains `1551 passed, ruff clean`.

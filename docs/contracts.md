@@ -5,17 +5,18 @@
 | Field | Value |
 |---|---|
 | current_phase | `PHASE 4 (active)` |
-| current_sprint | `PH4J_FALLBACK_TAGS_ENRICHMENT (candidate)` |
-| next_required_step | `PH4J_DEFINITION_AND_CONTRACT_FREEZE` |
-| baseline | `1538 passed, ruff clean` |
-| active_contracts | §78 (PH4J, candidate) · §77–§67 (closed/frozen anchors) |
+| current_sprint | `PH4K_TAG_SIGNAL_UTILITY_REVIEW (definition frozen)` |
+| next_required_step | `PH4K_EXECUTION_START` |
+| baseline | `1551 passed, ruff clean` |
+| active_contracts | §79 (PH4K, definition frozen) · §78–§67 (closed/frozen anchors) |
 | cli_canonical_count | 53 (frozen §65) |
 
 ## Navigation
 
 | Section | Content | Status |
 |---|---|---|
-| [§78 PH4J Fallback Tags Enrichment](#s78-ph4j-fallback-tags-enrichment) | Enrich tags in fallback path (PH4F: tags empty 69/69) | candidate |
+| [§79 PH4K Tag Signal Utility Review](#s79-ph4k-tag-signal-utility-review) | Assess operator utility of PH4J-enriched tags | definition frozen |
+| [§78 PH4J Fallback Tags Enrichment](#s78-ph4j-fallback-tags-enrichment) | Enrich tags in fallback path (PH4F: tags empty 69/69) | closed (D-81 — frozen anchor) |
 | [§77 PH4I Fallback Market Scope Enrichment](#s77-ph4i-fallback-market-scope-enrichment) | Enrich market_scope in fallback path (PH4F finding market_scope unknown 69/69) | closed (D-78 — frozen anchor) |
 | [§76 PH4H Rule-Only Ceiling & Actionability Policy Review](#s76-ph4h-rule-only-ceiling-and-actionability-policy-review) | Review-only policy sprint: I-13 ceiling vs actionability in fallback path | closed (D-75 — frozen anchor) |
 | [§75 PH4G Fallback Input Enrichment Baseline](#s75-ph4g-fallback-input-enrichment-baseline) | Narrow fallback-path enrichment for PH4F top-3 field gaps | closed (frozen anchor) |
@@ -7256,8 +7257,8 @@ and creates no I-13 conflict.
 **Sprint**: `PH4J_FALLBACK_TAGS_ENRICHMENT`
 **Phase**: 4
 **Opened**: 2026-03-23
-**Decision**: D-78 (candidate)
-**Status**: candidate
+**Decision**: D-80
+**Status**: closed (D-81; frozen anchor)
 
 ### Purpose
 
@@ -7265,20 +7266,77 @@ Address the PH4F finding `tags empty 69/69` by enriching `tags` in the fallback
 analysis path. Tags enrichment is policy-safe: it is metadata-only, has no scoring
 impact, and creates no I-13 conflict.
 
-### Scope (candidate — not yet frozen)
+### Scope (implemented — in closeout review)
 
 - Enrich `tags` field in `_build_fallback_analysis()` in `app/analysis/pipeline.py`.
 - Use existing document signals (categories, topics, keyword hits, entity mentions).
-- Measure before/after on the same 69 paired documents.
+- Verified before/after behavior in live scenarios.
 
-### Non-Goals (hard freeze pending)
+### Non-Goals (still enforced)
 
 - No changes to priority scoring or I-13 invariant
 - No actionable flag changes
 - No market_scope changes (completed in PH4I/§77)
 - No LLM calls or external API changes
 
-§78 status: **candidate — awaiting PH4J definition sprint activation**
+### Verification Outcomes (closeout evidence)
+
+- PH4J live verification passed.
+- Tag population improved:
+  - keyword-hit scenario: `4 -> 7`
+  - zero-hit scenario: `1 -> 4`
+  - assets-only scenario: `0 -> 4`
+- `29/29` pipeline tests passed.
+- `I-13` remained intact.
+- DB test failures are tracked separately from PH4J closeout.
+
+§78 status: **closed (D-81 — frozen anchor)**
+
+---
+
+<a name="s79-ph4k-tag-signal-utility-review"></a>
+
+## §79 — PH4K_TAG_SIGNAL_UTILITY_REVIEW
+
+**Sprint**: `PH4K_TAG_SIGNAL_UTILITY_REVIEW`
+**Phase**: 4
+**Opened**: 2026-03-23
+**Decision**: D-82
+**Status**: definition frozen
+
+### Purpose
+
+Assess whether PH4J-enriched tags provide meaningful operator utility.
+PH4J tag quantity improved (keyword-hit 4→7, zero-hit 1→4, assets-only 0→4).
+The next useful question is whether increased tag density translates to operator value,
+not further raw expansion.
+
+### Scope (frozen)
+
+- Review tag signal quality and operator utility across the 69 paired documents.
+- Assess tag-to-signal mapping: do enriched tags correlate with higher-priority signals?
+- Measure tag overlap with operator watchlist/alert categories.
+
+### Non-Goals (frozen)
+
+- No changes to priority scoring or I-13 invariant
+- No actionable flag changes
+- No additional tag source expansion (scope is utility review only)
+- No market_scope changes (completed in PH4I/§77)
+
+### Acceptance Criteria (locked)
+
+- [x] PH4J outputs are compared without modifying PH4J enrichment logic.
+- [x] Utility review is limited to diagnostic evidence (no scoring/actionability/provider changes).
+- [x] DB-failure noise remains separated from PH4K utility interpretation.
+- [x] Operator-facing utility evidence format is defined before execution.
+
+### Freeze Result
+
+- PH4K contract is frozen.
+- Execution is authorized with next step `PH4K_EXECUTION_START`.
+
+§79 status: **definition frozen — next step PH4K_EXECUTION_START**
 
 ---
 
