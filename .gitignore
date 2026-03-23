@@ -55,6 +55,7 @@ tests/run_sprint14.ps1
 # Tool caches (regenerable, no project value)
 .mypy_cache/
 .ruff_cache/
+.hypothesis/
 
 # Claude Code local config (session-specific, not project config)
 .claude/
