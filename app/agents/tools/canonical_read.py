@@ -460,10 +460,26 @@ async def get_upgrade_cycle_status(
 
 
 async def get_handoff_collector_summary(
-    handoff_path: str,
+    handoff_path: str | None = None,
     acknowledgement_path: str = HANDOFF_ACK_DEFAULT_PATH,
 ) -> dict[str, object]:
-    """Summarize pending and acknowledged handoffs from existing audit artifacts only."""
+    """Summarize pending and acknowledged handoffs from existing audit artifacts only.
+
+    When *handoff_path* is omitted or None the function returns an empty collector
+    summary (no handoff file configured) without raising, consistent with the
+    None-safe behaviour of get_operational_readiness_summary.
+    """
+    if handoff_path is None:
+        return {
+            "report_type": "handoff_collector_summary",
+            "handoff_path": None,
+            "acknowledgement_path": acknowledgement_path,
+            "total_handoffs": 0,
+            "pending": 0,
+            "acknowledged": 0,
+            "handoffs": [],
+            "status": "no_handoff_path_configured",
+        }
     payload, _resolved_handoff, _resolved_ack = build_handoff_collector_report(
         handoff_path=handoff_path,
         acknowledgement_path=acknowledgement_path,

@@ -96,6 +96,71 @@ from app.agents.tools.guarded_write import (
 )
 from app.research.active_route import DEFAULT_ACTIVE_ROUTE_PATH as _DEFAULT_ACTIVE_ROUTE_PATH
 
+# Explicit re-export list — required so mypy accepts `from app.agents.mcp_server import X`
+# across modules that import these tool functions after the MCP-module-split (Sprint 43).
+__all__ = [
+    # canonical read tools
+    "get_action_queue_summary",
+    "get_active_route_status",
+    "get_alert_audit_summary",
+    "get_artifact_inventory",
+    "get_artifact_retention_report",
+    "get_blocking_actions",
+    "get_blocking_summary",
+    "get_cleanup_eligibility_summary",
+    "get_daily_operator_summary",
+    "get_decision_journal_summary",
+    "get_decision_pack_summary",
+    "get_distribution_classification_report",
+    "get_distribution_drift",
+    "get_escalation_summary",
+    "get_handoff_collector_summary",
+    "get_inference_route_profile",
+    "get_market_data_quote",
+    "get_narrative_clusters",
+    "get_operational_readiness_summary",
+    "get_operator_action_summary",
+    "get_operator_runbook",
+    "get_paper_exposure_summary",
+    "get_paper_portfolio_snapshot",
+    "get_paper_positions_summary",
+    "get_prioritized_actions",
+    "get_protected_artifact_summary",
+    "get_protective_gate_summary",
+    "get_provider_health",
+    "get_recent_trading_cycles",
+    "get_remediation_recommendations",
+    "get_research_brief",
+    "get_resolution_summary",
+    "get_review_journal_summary",
+    "get_review_required_actions",
+    "get_review_required_summary",
+    "get_route_profile_report",
+    "get_signal_candidates",
+    "get_signals_for_execution",
+    "get_trading_loop_status",
+    "get_upgrade_cycle_status",
+    "get_watchlists",
+    # guarded write tools
+    "acknowledge_signal_handoff",
+    "activate_route_profile",
+    "append_decision_instance",
+    "append_review_journal_entry",
+    "create_inference_profile",
+    "deactivate_route_profile",
+    "run_trading_loop_once",
+    # workflow helpers and inventory
+    "get_mcp_capabilities",
+    "get_mcp_tool_inventory",
+    # compatibility aliases (defined in this module)
+    "get_handoff_summary",
+    "get_loop_cycle_summary",
+    "get_operational_escalation_summary",
+    "get_operator_decision_pack",
+    # server instance
+    "mcp",
+]
+
 logger = logging.getLogger(__name__)
 
 _ACTIVE_ROUTE_PATH_STR = str(_DEFAULT_ACTIVE_ROUTE_PATH)

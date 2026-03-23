@@ -518,67 +518,67 @@ class TelegramOperatorBot:
     async def _get_operational_readiness_summary(self) -> dict[str, Any]:
         from app.agents.mcp_server import get_operational_readiness_summary
 
-        return await get_operational_readiness_summary()  # type: ignore[no-any-return]
+        return await get_operational_readiness_summary()
 
     async def _get_provider_health(self) -> dict[str, Any]:
         from app.agents.mcp_server import get_provider_health
 
-        return await get_provider_health()  # type: ignore[no-any-return]
+        return await get_provider_health()
 
     async def _get_handoff_collector_summary(self) -> dict[str, Any]:
         from app.agents.mcp_server import get_handoff_collector_summary
 
-        return await get_handoff_collector_summary()  # type: ignore[no-any-return]
+        return await get_handoff_collector_summary()
 
     async def _get_paper_positions_summary(self) -> dict[str, Any]:
         from app.agents.mcp_server import get_paper_positions_summary
 
-        return await get_paper_positions_summary()  # type: ignore[no-any-return]
+        return await get_paper_positions_summary()
 
     async def _get_paper_exposure_summary(self) -> dict[str, Any]:
         from app.agents.mcp_server import get_paper_exposure_summary
 
-        return await get_paper_exposure_summary()  # type: ignore[no-any-return]
+        return await get_paper_exposure_summary()
 
     async def _get_protective_gate_summary(self) -> dict[str, Any]:
         from app.agents.mcp_server import get_protective_gate_summary
 
-        return await get_protective_gate_summary()  # type: ignore[no-any-return]
+        return await get_protective_gate_summary()
 
     async def _get_signals_for_execution(self) -> dict[str, Any]:
         from app.agents.mcp_server import get_signals_for_execution
 
-        return await get_signals_for_execution(limit=5)  # type: ignore[no-any-return]
+        return await get_signals_for_execution(limit=5)
 
     async def _get_review_journal_summary(self) -> dict[str, Any]:
         from app.agents.mcp_server import get_review_journal_summary
 
-        return await get_review_journal_summary()  # type: ignore[no-any-return]
+        return await get_review_journal_summary()
 
     async def _get_alert_audit_summary(self) -> dict[str, Any]:
         from app.agents.mcp_server import get_alert_audit_summary
 
-        return await get_alert_audit_summary()  # type: ignore[no-any-return]
+        return await get_alert_audit_summary()
 
     async def _get_resolution_summary(self) -> dict[str, Any]:
         from app.agents.mcp_server import get_resolution_summary
 
-        return await get_resolution_summary()  # type: ignore[no-any-return]
+        return await get_resolution_summary()
 
     async def _get_decision_pack_summary(self) -> dict[str, Any]:
         from app.agents.mcp_server import get_decision_pack_summary
 
-        return await get_decision_pack_summary()  # type: ignore[no-any-return]
+        return await get_decision_pack_summary()
 
     async def _get_daily_operator_summary(self) -> dict[str, Any]:
         from app.agents.mcp_server import get_daily_operator_summary
 
-        return await get_daily_operator_summary()  # type: ignore[no-any-return]
+        return await get_daily_operator_summary()
 
     async def _get_escalation_summary(self) -> dict[str, Any]:
         from app.agents.mcp_server import get_escalation_summary
 
-        return await get_escalation_summary()  # type: ignore[no-any-return]
+        return await get_escalation_summary()
 
     async def _cmd_status(self, chat_id: int, *, args: str = "") -> None:
         payload = await self._load_canonical_surface(
