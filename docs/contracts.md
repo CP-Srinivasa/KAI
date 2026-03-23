@@ -5,17 +5,17 @@
 | Field | Value |
 |---|---|
 | current_phase | `PHASE 4 (active)` |
-| current_sprint | `PH4K_TAG_SIGNAL_UTILITY_REVIEW (definition frozen)` |
-| next_required_step | `PH4K_EXECUTION_START` |
+| current_sprint | `PH4K_TAG_SIGNAL_UTILITY_REVIEW` |
+| next_required_step | `PH4K_RESULTS_REVIEW_AND_CLOSE` |
 | baseline | `1554 passed, ruff clean` |
-| active_contracts | §79 (PH4K, definition frozen) · §78–§67 (closed/frozen anchors) |
+| active_contracts | §79 (PH4K, results-review mode) · §78–§67 (closed/frozen anchors) |
 | cli_canonical_count | 53 (frozen §65) |
 
 ## Navigation
 
 | Section | Content | Status |
 |---|---|---|
-| [§79 PH4K Tag Signal Utility Review](#s79-ph4k-tag-signal-utility-review) | Assess operator utility of PH4J-enriched tags | definition frozen |
+| [§79 PH4K Tag Signal Utility Review](#s79-ph4k-tag-signal-utility-review) | Assess operator utility of PH4J-enriched tags | results-review mode |
 | [§78 PH4J Fallback Tags Enrichment](#s78-ph4j-fallback-tags-enrichment) | Enrich tags in fallback path (PH4F: tags empty 69/69) | closed (D-81 — frozen anchor) |
 | [§77 PH4I Fallback Market Scope Enrichment](#s77-ph4i-fallback-market-scope-enrichment) | Enrich market_scope in fallback path (PH4F finding market_scope unknown 69/69) | closed (D-78 — frozen anchor) |
 | [§76 PH4H Rule-Only Ceiling & Actionability Policy Review](#s76-ph4h-rule-only-ceiling-and-actionability-policy-review) | Review-only policy sprint: I-13 ceiling vs actionability in fallback path | closed (D-75 — frozen anchor) |
@@ -7301,8 +7301,8 @@ impact, and creates no I-13 conflict.
 **Sprint**: `PH4K_TAG_SIGNAL_UTILITY_REVIEW`
 **Phase**: 4
 **Opened**: 2026-03-23
-**Decision**: D-82
-**Status**: definition frozen
+**Decision**: D-80/D-81
+**Status**: results-review mode
 
 ### Purpose
 
@@ -7331,12 +7331,87 @@ not further raw expansion.
 - [x] DB-failure noise remains separated from PH4K utility interpretation.
 - [x] Operator-facing utility evidence format is defined before execution.
 
-### Freeze Result
+### Execution Result (diagnostic)
 
-- PH4K contract is frozen.
-- Execution is authorized with next step `PH4K_EXECUTION_START`.
+- PH4K execution complete; utility artifacts produced (D-81).
+- fallback_tags_populated_docs: `69/69` (100%).
+- watchlist_overlap_docs: `36/69` (52.17%).
+- corr(tag_count, tier3_priority): `0.5564`.
+- mean_tier3_priority WITH watchlist overlap: `5.4444` vs. WITHOUT: `2.3333`.
+- No code changes (diagnostic-only sprint).
 
-§79 status: **definition frozen — next step PH4K_EXECUTION_START**
+§79 status: **results-review mode — next step PH4K_RESULTS_REVIEW_AND_CLOSE**
 
 ---
 
+
+
+---
+
+<a name="s80-sprint44-operator-api-hardening"></a>
+
+## §80 — SPRINT_44_OPERATOR_API_HARDENING
+
+**Sprint**: Sprint 44
+**Phase**: 6 (Audit / Hardening)
+**Opened**: 2026-03-23
+**Status**: closed
+
+### Purpose
+
+Harden the Operator API with production-grade request governance:
+request-ID enforcement, body-size limits, rate-limiting with Retry-After,
+idempotency window, structured error responses, and a complete audit trail.
+
+### Implemented (Sprint 44)
+
+**A. Request-ID Enforcement**
+- `RequestGovernanceMiddleware` wired into `app/api/main.py` (was defined but not registered)
+- Every request receives a `X-Request-ID` (generated if absent, reused if provided)
+- Response always mirrors `X-Request-ID` in headers
+- Audit JSONL records `request_id` on every entry
+
+**B. Body-Size Enforcement (HTTP 413)**
+- Configurable via `APP_MAX_REQUEST_BODY_BYTES` (default 64 KiB)
+- Oversized requests rejected before route handlers with structured error response
+- Error format: `{"error": {"code": "request_body_too_large", "message": "...", "request_id": "..."}}`
+
+**C. Rate-Limiting with Retry-After**
+- `RateLimitStore` sliding-window per authenticated subject
+- `HTTP 429` response includes `Retry-After: <seconds>` header
+- Configurable: `APP_RATE_LIMIT_PER_WINDOW` + `APP_RATE_LIMIT_WINDOW_SECONDS`
+
+**D. Idempotency Window**
+- `IdempotencyStore` caches responses for duplicate guarded requests
+- Duplicate → `HTTP 200` + `idempotency_replayed: true`
+- Configurable: `APP_IDEMPOTENCY_WINDOW_SECONDS` (default 300 s)
+
+**E. Structured Error Responses**
+- All Operator API errors: `{"error": {"code": "...", "message": "...", "request_id": "..."}, "execution_enabled": false, "write_back_allowed": false}`
+
+**F. Audit Trail**
+- `artifacts/api_request_audit.jsonl` — every request: method, path, status, request_id, duration_ms, client_ip
+- `artifacts/operator_api_guarded_audit.jsonl` — guarded endpoint: symbol, mode, outcome, idempotency_key
+
+### New AppSettings Fields
+
+| Setting | Default | Description |
+|---|---|---|
+| `APP_MAX_REQUEST_BODY_BYTES` | 65536 | Max body size in bytes |
+| `APP_RATE_LIMIT_PER_WINDOW` | 5 | Max guarded requests per window |
+| `APP_RATE_LIMIT_WINDOW_SECONDS` | 30.0 | Rate-limit window duration |
+| `APP_IDEMPOTENCY_WINDOW_SECONDS` | 300.0 | Idempotency replay window |
+
+### Changed Files
+
+- `app/api/main.py` — wire RequestGovernanceMiddleware
+- `app/api/middleware/request_governance.py` — body-size limit, client_ip, JSONResponse 413
+- `app/api/routers/operator.py` — Retry-After header, _build_guard_stores factory
+- `app/core/settings.py` — 4 new governance fields
+- `.env.example` — document new settings
+
+### Tests
+
+- `tests/unit/test_sprint44_operator_hardening.py` — 23 tests
+
+§80 status: **closed (2026-03-23)**

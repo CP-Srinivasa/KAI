@@ -2,8 +2,8 @@
 
 ## Current State (2026-03-23)
 
-- current_sprint: `PH4K_TAG_SIGNAL_UTILITY_REVIEW (definition frozen)`
-- next_required_step: `PH4K_EXECUTION_START`
+- current_sprint: `PH4K_TAG_SIGNAL_UTILITY_REVIEW`
+- next_required_step: `PH4K_RESULTS_REVIEW_AND_CLOSE`
 - baseline: `1554 passed, ruff clean`
 
 ## Canonical Decisions
@@ -21,33 +21,34 @@
 ### D-66: PH4E complete (defaults by design)
 ### D-67: PH4F complete (fallback path, 65% hardcoded)
 ### D-68: PH4G complete (relevance floor, actionable reverted I-13)
-### D-69: PH4H complete — Option B (I-13 permanent, actionable=LLM-only)
+### D-69: PH4H Option B (I-13 permanent, actionable=LLM-only)
 ### D-74/75: PH4H closed (S76)
 ### D-76/78: PH4I market_scope enrichment (S77)
+### D-79: PH4J closed (tags enrichment verified)
 
-### D-79 (2026-03-23): PH4J ready to close — tags enrichment verified
-- Intervention: Added categories, affected_assets, source_name, market_scope.value to fallback tags.
-- Reordered variable computation so market_scope is available before tags assembly.
-- Live test: keyword-hit 4->7 tags, zero-hit 1->4 tags, assets-only 0->4 tags.
-- 29/29 pipeline tests passed, I-13 intact.
-- Note: Code was externally reverted once during review; re-applied and verified.
+### D-80 (2026-03-23): PH4K execution complete
+- PH4K produced utility artifacts on the 69 paired documents.
+- fallback_tags_populated_docs: `69/69`.
+- watchlist_overlap_docs: `36/69 (52.17%)`.
+- corr(tag_count, tier3_priority): `0.5564`.
+- mean_tier3_priority with overlap vs without overlap: `5.4444` vs `2.3333`.
+- DB-failure track remains explicitly separated from PH4K interpretation.
 
-### D-80 (2026-03-23): PH4K_TAG_SIGNAL_UTILITY_REVIEW selected as next sprint candidate
-- PH4J is functionally successful and ready for formal closeout.
-- Next sprint: PH4K_TAG_SIGNAL_UTILITY_REVIEW — assess operator utility of enriched tags.
-- Rationale: tag quantity improved (4→7, 1→4, 0→4); next question is utility, not more expansion.
-- DB test failures remain on a separate track; not a PH4J or PH4K blocker.
-- Next step: `PH4K_DEFINITION_AND_CONTRACT_FREEZE`.
+### D-81 (2026-03-23): PH4K moved to results-review mode
+- PH4K remains active until review and closeout are completed.
+- No PH4L opening before PH4K review closes.
+- Next required step set to `PH4K_RESULTS_REVIEW_AND_CLOSE`.
 
-### D-81 (2026-03-23): Conservative transition state locked
-- Canonical transition state set to `PH4J_CLOSE_AND_PH4K_DEFINITION`.
-- PH4J is treated as closed in governance docs before PH4K activation.
-- PH4K remains candidate/definition only until `PH4K_DEFINITION_AND_CONTRACT_FREEZE`.
-- DB failures remain on a separate track and are excluded from PH4J functional assessment.
+### D-82 (2026-03-23): mypy 42 pre-existing errors resolved
+- Root cause: `app.agents.mcp_server` lacked `__all__` after MCP-module-split (Sprint 43).
+- Fix: explicit `__all__` added to `mcp_server.py` listing all re-exported symbols.
+- `get_handoff_collector_summary` `handoff_path` made optional (None-safe).
+- 13 unused `type: ignore` comments removed from `telegram_bot.py`.
+- Result: `mypy app/ --ignore-missing-imports` 0 errors.
 
-### D-82 (2026-03-23): PH4K contract and acceptance freeze completed
-- PH4K governance state accepted as canonical and contract freeze finalized.
-- PH4K remains diagnostic-only with strict non-goals (no scoring/threshold/provider/actionability changes).
-- Acceptance criteria are locked before execution start.
-- Execution remains gated to the PH4K scope and DB-failure noise stays separated.
-- Next step: `PH4K_EXECUTION_START`.
+### D-83 (2026-03-23): Sprint 44 — Operator API Hardening implemented
+- `RequestGovernanceMiddleware` wired into `app/api/main.py`.
+- Body-size limit (HTTP 413) enforced at middleware layer.
+- `Retry-After` header added to HTTP 429 responses.
+- 4 new `AppSettings` governance fields documented in `.env.example`.
+- 23 new tests added. `§80` contract added to `docs/contracts.md`.

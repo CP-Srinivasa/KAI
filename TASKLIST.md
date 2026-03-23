@@ -2,10 +2,10 @@
 
 ## Current State
 
-- current_phase: `PHASE 4 (active)`
-- current_sprint: `PH4K_TAG_SIGNAL_UTILITY_REVIEW (definition frozen)`
-- next_required_step: `PH4K_EXECUTION_START`
-- baseline: `1554 passed, ruff clean`
+- current_phase: `PHASE 4 (active) + Sprint 44 closed`
+- current_sprint: `PH4K_TAG_SIGNAL_UTILITY_REVIEW`
+- next_required_step: `PH4K_RESULTS_REVIEW_AND_CLOSE`
+- baseline: `1678 passed, ruff clean, mypy 0 errors`
 
 ## Active Tasks
 
@@ -21,12 +21,13 @@
 
 - [x] K1 Open PH4K in definition mode (candidate)
 - [x] K2 Freeze PH4K contract and acceptance criteria (section 79)
-- [ ] K3 Execute PH4K (utility review only; no tag expansion, no scoring changes)
-- [ ] K4 Capture utility evidence (tag-to-signal correlation, operator watchlist overlap)
-- [ ] K5 Close PH4K formally and record findings
+- [x] K3 Execute PH4K (utility review only; no tag expansion, no scoring changes)
+- [x] K4 Capture utility evidence: watchlist_overlap 36/69 (52.17%), corr(tag_count, tier3_priority)=0.5564, mean_priority with overlap 5.44 vs. without 2.33
+- [ ] K5 Run PH4K results review and close PH4K formally
 
 ## Closed Tasks (Summary)
 
+- SPRINT_44_OPERATOR_API_HARDENING - closed (2026-03-23, D-83, §80)
 - PH4J_FALLBACK_TAGS_ENRICHMENT - closed
 - PH4I_FALLBACK_MARKET_SCOPE_ENRICHMENT - closed
 - PH4H_RULE_ONLY_CEILING_AND_ACTIONABILITY_POLICY_REVIEW - closed
