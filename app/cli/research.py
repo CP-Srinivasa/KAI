@@ -13,6 +13,7 @@ from __future__ import annotations
 import typer
 from rich.console import Console
 
+import app.cli.commands.research_companion  # noqa: F401 — registers companion commands on research_core_app
 from app.cli.commands.research_core import research_core_app
 from app.cli.commands.research_operator import (
     FINAL_RESEARCH_COMMAND_NAMES,
