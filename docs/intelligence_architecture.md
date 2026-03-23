@@ -5,14 +5,14 @@
 | Field | Value |
 |---|---|
 | current_phase | `PHASE 4 (active)` |
-| current_sprint | `PH4I_FALLBACK_MARKET_SCOPE_ENRICHMENT (active definition)` |
+| current_sprint | `PH4J_FALLBACK_TAGS_ENRICHMENT (candidate)` |
 | next_required_step | `PH4I_CONTRACT_AND_ACCEPTANCE_FREEZE` |
 | ph4e_status | `closed (D-67) — scoring calibration audit complete; §73 frozen anchor` |
 | ph4f_status | `closed — frozen intervention anchor; §74 frozen anchor` |
 | ph4g_status | `closed — relevance floor applied; actionable reverted (I-13); §75 frozen anchor` |
 | ph4h_status | `closed (D-75) — Option B: I-13 permanent; actionable LLM-only; §76 frozen anchor` |
 | ph4i_status | `active (definition — D-76) — market_scope enrichment; §77 contract` |
-| baseline | `1538 passed, ruff clean` |
+| baseline | `1551 passed, ruff clean` |
 | ph4b_status | `closed (D-62) — sections 68 and 69 frozen anchors` |
 | ph4c_status | `closed — section 70 frozen audit anchor` |
 | ph4d_status | `closed — section 71 frozen anchor` |
@@ -94,7 +94,7 @@
   - Actionable heuristic intervention: **reverted** â€” violates I-13 invariant (rule-only priority ceiling max 5)
   - I-13 invariant: `test_rule_only_priority_ceiling_is_at_most_five` enforces priority â‰¤ 5 for rule-only analysis
   - The +1 actionable bonus in `compute_priority()` would push priority to 7, breaching I-13
-- Baseline confirmed unchanged: `1538 passed, ruff clean`.
+- Baseline confirmed unchanged: `1551 passed, ruff clean`.
 
 ## PH4H Closed Policy Sprint (frozen anchor)
 

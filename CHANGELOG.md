@@ -1,5 +1,17 @@
 # CHANGELOG.md
 
+## 2026-03-23 - PH4I formally closed (D-78); PH4J candidate defined
+
+- PH4I_FALLBACK_MARKET_SCOPE_ENRICHMENT formally closed.
+- S77 is now a frozen immutable anchor.
+- PH4J_FALLBACK_TAGS_ENRICHMENT defined as next sprint candidate (PH4F: tags empty 69/69).
+- New baseline: 1551 passed, ruff clean.
+- Governance state advanced to:
+  - current_sprint = PH4J_FALLBACK_TAGS_ENRICHMENT (candidate)
+  - next_required_step = PH4J_DEFINITION_AND_CONTRACT_FREEZE
+
+---
+
 ## 2026-03-23 - PH4I execution complete (I3+I4); market_scope enriched in fallback path
 
 - `_fallback_market_scope()` extended with PH4I enrichment signals:

@@ -3,9 +3,9 @@
 ## Current State (2026-03-23)
 
 - current_phase: `PHASE 4 (active)`
-- current_sprint: `PH4I_FALLBACK_MARKET_SCOPE_ENRICHMENT (active definition)`
-- next_required_step: `PH4I_EXECUTION`
-- baseline: `1538 passed, ruff clean`
+- current_sprint: `PH4J_FALLBACK_TAGS_ENRICHMENT (candidate)`
+- next_required_step: `PH4J_DEFINITION_AND_CONTRACT_FREEZE`
+- baseline: `1551 passed, ruff clean`
 
 ---
 
@@ -69,4 +69,5 @@ These findings were addressed in a dedicated refactoring session (2026-03-23).
 - PH4F paired-set findings: actionable missing `69/69`, market_scope unknown `69/69`, tags empty `69/69`, relevance default-floor `56/69`.
 - PH4G findings: relevance-floor retained; actionable reverted (I-13 ceiling policy).
 - PH4H findings: I-13 confirmed permanent; actionable=False in fallback is correct by design.
-- Technical baseline unchanged: `1538 passed`, `ruff clean`.
+- PH4I findings: _fallback_market_scope enriched; market_scope resolved for docs with crypto_assets/tickers/title keywords.
+- Technical baseline: `1551 passed`, `ruff clean`.

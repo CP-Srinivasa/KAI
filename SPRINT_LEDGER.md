@@ -3,9 +3,9 @@
 ## Canonical Sprint Ledger (2026-03-23)
 
 - phase_4_status: `active`
-- active_sprint: `PH4I_FALLBACK_MARKET_SCOPE_ENRICHMENT (active definition)`
-- next_required_step: `PH4I_EXECUTION`
-- baseline: `1538 passed, ruff clean`
+- active_sprint: `PH4J_FALLBACK_TAGS_ENRICHMENT (candidate)`
+- next_required_step: `PH4J_DEFINITION_AND_CONTRACT_FREEZE`
+- baseline: `1551 passed, ruff clean`
 
 | Sprint | Date | Status | Outcome |
 |---|---|---|---|
@@ -17,4 +17,5 @@
 | PH4F | 2026-03-23 | closed | Fallback path confirmed; top input gaps frozen as intervention anchor |
 | PH4G | 2026-03-23 | closed | Relevance floor applied; actionable heuristic reverted due I-13 ceiling policy |
 | PH4H | 2026-03-23 | closed | Policy decision: actionable=LLM-only (D-74); I-13 confirmed permanent invariant |
-| PH4I | 2026-03-23 | active (frozen — D-77) | §77 contract frozen; execution-ready |
+| PH4I | 2026-03-23 | closed (D-78) | market_scope enriched; 1551 passed; +13 tests |
+| PH4J | 2026-03-23 | candidate | Tags enrichment in fallback path (PH4F: tags empty 69/69) |

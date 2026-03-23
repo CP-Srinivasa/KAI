@@ -5,8 +5,8 @@
 | Field | Value |
 |---|---|
 | current_phase | `PHASE 4 (active)` |
-| current_sprint | `PH4I_FALLBACK_MARKET_SCOPE_ENRICHMENT (active definition)` |
-| next_required_step | `PH4I_EXECUTION` |
+| current_sprint | `PH4J_FALLBACK_TAGS_ENRICHMENT (candidate)` |
+| next_required_step | `PH4J_DEFINITION_AND_CONTRACT_FREEZE` |
 | ph4a_status | `closed (D-53) -- immutable baseline anchor (S67)` |
 | ph4b_status | `closed (D-62) -- paired_count=69; root cause: keyword coverage blindness` |
 | ph4c_status | `closed -- rule-keyword gap audit; top-3 gaps: macro, regulatory, AI` |
@@ -16,7 +16,7 @@
 | ph4g_status | `closed (D-68/69) -- relevance floor applied; actionable reverted (I-13); S75 frozen anchor` |
 | ph4h_status | `closed (D-74/75) -- policy decision: actionable=LLM-only; I-13 confirmed permanent; S76 frozen anchor` |
 | ph4i_status | `active (definition — D-76) — market_scope enrichment; §77 contract` |
-| baseline | `1538 passed, ruff clean` |
+| baseline | `1551 passed, ruff clean` |
 | cli_canonical_count | 53 |
 | provisional_cli_count | 0 |
 | phase3_status | `closed (2026-03-22) — GO` |

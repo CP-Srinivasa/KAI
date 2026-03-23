@@ -2,9 +2,9 @@
 
 ## Current State (2026-03-23)
 
-- current_sprint: `PH4I_FALLBACK_MARKET_SCOPE_ENRICHMENT (active definition)`
-- next_required_step: `PH4I_EXECUTION`
-- baseline: `1538 passed, ruff clean`
+- current_sprint: `PH4J_FALLBACK_TAGS_ENRICHMENT (candidate)`
+- next_required_step: `PH4J_DEFINITION_AND_CONTRACT_FREEZE`
+- baseline: `1551 passed, ruff clean`
 
 ## Canonical Decisions
 
@@ -98,4 +98,13 @@ Entscheidung: Option B
 - No scoring changes, no I-13 conflict, no actionable changes.
 - Acceptance criteria locked: market_scope > 0/69 populated; 1538+ passed; ruff clean.
 - PH4I ready for execution (I3).
+
+### D-78 (2026-03-23): PH4I formal geschlossen -- PH4J als naechster Kandidat
+
+- PH4I execution abgeschlossen; 1551 passed (+13 von 1538); ruff clean.
+- _fallback_market_scope() enriched: crypto_assets + tickers + title keyword scan.
+- market_scope UNKNOWN in fallback wird jetzt bei vorhandenen Asset-Signalen aufgeloest.
+- S77 ist ab jetzt geschlossener frozen anchor.
+- PH4J_FALLBACK_TAGS_ENRICHMENT als naechster Kandidat definiert (PH4F: tags empty 69/69).
+- Neue Baseline: 1551 passed, ruff clean.
 

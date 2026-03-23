@@ -4,11 +4,11 @@
 
 - current_phase: `PHASE 4 (active)`
 - current_sprint: `PH4I_FALLBACK_MARKET_SCOPE_ENRICHMENT (active definition)`
-- next_required_step: `PH4I_EXECUTION`
+- next_required_step: `PH4J_DEFINITION_AND_CONTRACT_FREEZE`
 - ph4g_status: `closed (formal closeout recorded; S75 frozen anchor)`
 - ph4h_status: `closed (D-74/75; policy decision recorded; S76 frozen anchor)`
 - ph4i_status: `active (definition — D-76) — market_scope enrichment; §77 contract`
-- baseline: `1538 passed, ruff clean`
+- baseline: `1551 passed, ruff clean`
 
 ## Phase 4 Arc (PH4A-I)
 

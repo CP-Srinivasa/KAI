@@ -5,17 +5,18 @@
 | Field | Value |
 |---|---|
 | current_phase | `PHASE 4 (active)` |
-| current_sprint | `PH4I_FALLBACK_MARKET_SCOPE_ENRICHMENT (active definition)` |
-| next_required_step | `PH4I_EXECUTION` |
+| current_sprint | `PH4J_FALLBACK_TAGS_ENRICHMENT (candidate)` |
+| next_required_step | `PH4J_DEFINITION_AND_CONTRACT_FREEZE` |
 | baseline | `1538 passed, ruff clean` |
-| active_contracts | §77 (PH4I, frozen/execution-ready) · §76–§67 (closed/frozen anchors) |
+| active_contracts | §78 (PH4J, candidate) · §77–§67 (closed/frozen anchors) |
 | cli_canonical_count | 53 (frozen §65) |
 
 ## Navigation
 
 | Section | Content | Status |
 |---|---|---|
-| [§77 PH4I Fallback Market Scope Enrichment](#s77-ph4i-fallback-market-scope-enrichment) | Enrich market_scope in fallback path (PH4F finding market_scope unknown 69/69) | frozen (D-77; execution-ready) |
+| [§78 PH4J Fallback Tags Enrichment](#s78-ph4j-fallback-tags-enrichment) | Enrich tags in fallback path (PH4F: tags empty 69/69) | candidate |
+| [§77 PH4I Fallback Market Scope Enrichment](#s77-ph4i-fallback-market-scope-enrichment) | Enrich market_scope in fallback path (PH4F finding market_scope unknown 69/69) | closed (D-78 — frozen anchor) |
 | [§76 PH4H Rule-Only Ceiling & Actionability Policy Review](#s76-ph4h-rule-only-ceiling-and-actionability-policy-review) | Review-only policy sprint: I-13 ceiling vs actionability in fallback path | closed (D-75 — frozen anchor) |
 | [§75 PH4G Fallback Input Enrichment Baseline](#s75-ph4g-fallback-input-enrichment-baseline) | Narrow fallback-path enrichment for PH4F top-3 field gaps | closed (frozen anchor) |
 | [§74 PH4F Rule Input Completeness Audit](#s74-ph4f-rule-input-completeness-audit) | Diagnostic audit of missing rule-input fields on paired documents | closed (D-68) |
@@ -7209,7 +7210,7 @@ Review-only policy sprint. No code changes permitted. PH4G revealed that `I-13` 
 **Phase**: 4
 **Opened**: 2026-03-23
 **Decision**: D-76
-**Status**: frozen (D-77; execution-ready)
+**Status**: closed (D-78; frozen anchor)
 
 ### Purpose
 
@@ -7244,7 +7245,40 @@ and creates no I-13 conflict.
 - [x] Scope frozen (market_scope only; no scoring changes)
 - [x] Acceptance criteria reviewed and locked
 
-§77 status: **frozen (D-77) — execution-ready; next step: PH4I_EXECUTION**
+§77 status: **closed (D-78) — frozen immutable anchor; no re-execution permitted**
+
+---
+
+<a name="s78-ph4j-fallback-tags-enrichment"></a>
+
+## §78 — PH4J_FALLBACK_TAGS_ENRICHMENT
+
+**Sprint**: `PH4J_FALLBACK_TAGS_ENRICHMENT`
+**Phase**: 4
+**Opened**: 2026-03-23
+**Decision**: D-78 (candidate)
+**Status**: candidate
+
+### Purpose
+
+Address the PH4F finding `tags empty 69/69` by enriching `tags` in the fallback
+analysis path. Tags enrichment is policy-safe: it is metadata-only, has no scoring
+impact, and creates no I-13 conflict.
+
+### Scope (candidate — not yet frozen)
+
+- Enrich `tags` field in `_build_fallback_analysis()` in `app/analysis/pipeline.py`.
+- Use existing document signals (categories, topics, keyword hits, entity mentions).
+- Measure before/after on the same 69 paired documents.
+
+### Non-Goals (hard freeze pending)
+
+- No changes to priority scoring or I-13 invariant
+- No actionable flag changes
+- No market_scope changes (completed in PH4I/§77)
+- No LLM calls or external API changes
+
+§78 status: **candidate — awaiting PH4J definition sprint activation**
 
 ---
 
