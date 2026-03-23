@@ -33,6 +33,18 @@
 
 ---
 
+## Refactoring Findings RF-8 .. RF-12 (Phase 4H Remediation, 2026-03-23)
+
+| ID | Bereich | Status | Commit |
+|---|---|---|---|
+| **RF-8** | research.py God-File (3424 Zeilen, 57 Commands) | implemented | 995eb3a — split into 4 Submodule |
+| **RF-9** | API auth guard fehlt in production | implemented | 144da3c — validate_secrets fail-fast |
+| **RF-10** | IdempotencyStore / RateLimitStore inline | implemented | 3262abb — Store-Klassen mit Single-Instance-Warnung |
+| **RF-11** | Property-Based Tests Risk-Engine fehlten | implemented | 3f69cf8 — 7 Hypothesis-Invarianten |
+| **RF-12** | Circular-import-Risiko nach CLI-Split | mitigated | lazy import in research_operator.py |
+
+---
+
 ## Refactoring Findings RF-1 .. RF-7 (2026-03-23)
 
 These findings were addressed in a dedicated refactoring session (2026-03-23).

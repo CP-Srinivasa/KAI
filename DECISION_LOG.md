@@ -108,3 +108,27 @@ Entscheidung: Option B
 - PH4J_FALLBACK_TAGS_ENRICHMENT als naechster Kandidat definiert (PH4F: tags empty 69/69).
 - Neue Baseline: 1551 passed, ruff clean.
 
+### D-79 (2026-03-23): Phase-4H Remediation -- Architekturverbesserungen implementiert
+
+Kontext: Remediation-Sprint parallel zu PH4J-Definition. Adressierte Befunde aus
+Security-Audit und Code-Quality-Review (RF-8 bis RF-12).
+
+Entscheidungen:
+
+| Entscheidung | Bereich | Resultat |
+|---|---|---|
+| D-79a | research.py CLI-Split | 4 Submodule via typer.add_typer(name="") -- CLI-Surface unveraendert |
+| D-79b | API production auth-guard | validate_secrets() fail-fast bei APP_API_KEY fehlt in production |
+| D-79c | IdempotencyStore | Klasse mit expliziter Single-Instance-Warnung; kein Redis (YAGNI) |
+| D-79d | Property-Based Tests | Hypothesis fuer 7 Risk-Engine-Invarianten; kein Test-Exzess |
+| D-79e | Circular-Import-Aufloesung | lazy import in research_operator fuer get_registered_research_command_names |
+
+Nicht umgesetzt (bewusst):
+- operational_readiness.py split: Datei liegt in app/research/ (kein God-File-Problem, 30K tokens OK)
+- JSONL DB-First: SQLAlchemy-Modelle vorhanden (TradingCycleRecord), aber DB-First-Pfad wuerde
+  Testing-Infrastruktur erfordern die den Sprint-Scope sprengt -- bleibt in Backlog
+- MCP mcp_server.py split: Vorarbeit (canonical_read.py + guarded_write.py) bereits implementiert;
+  eigentliche Function-Migration erfordert FastMCP-Constraints-Pruefung
+
+Neue Baseline: 1551 passed, ruff clean, mypy 0 errors (187 files).
+
