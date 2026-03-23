@@ -38,6 +38,9 @@ def validate_secrets(settings: AppSettings) -> None:
         ConfigurationError: in production when required secrets are missing.
     """
     is_production = settings.env.lower() == "production"
+    # Environments where missing secrets are hard errors (not just warnings).
+    strict_envs = frozenset({"production", "staging", "preview", "qa"})
+    is_strict = settings.env.lower() in strict_envs
     missing: list[str] = []
     warnings: list[str] = []
 
@@ -61,13 +64,14 @@ def validate_secrets(settings: AppSettings) -> None:
 
     # ── API auth token ────────────────────────────────────────────────────────
     if not settings.api_key:
-        msg = "APP_API_KEY is empty — API is unauthenticated (acceptable in development only)"
-        if is_production:
+        if is_strict:
             missing.append(
-                "APP_API_KEY is empty — all API endpoints are unprotected in production"
+                f"APP_API_KEY is empty — all API endpoints are unprotected in {settings.env}"
             )
         else:
-            warnings.append(msg)
+            warnings.append(
+                "APP_API_KEY is empty — API is unauthenticated (acceptable in development only)"
+            )
 
     # ── Alert channels — validate only when enabled ───────────────────────────
     if settings.alerts.telegram_enabled:

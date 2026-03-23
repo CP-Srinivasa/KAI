@@ -5,12 +5,14 @@ When APP_API_KEY is set, every request must include:
 
     Authorization: Bearer <APP_API_KEY>
 
-When APP_API_KEY is empty (default in development), authentication is disabled
-and a warning is logged once at startup.
+When APP_API_KEY is empty the behaviour depends on the environment:
+- development / dev / test / testing: auth disabled, warning logged once.
+- all other environments (staging, production, qa, preview, …): startup fails
+  with ConfigurationError — fail-closed by design.
 
 Usage (attached to FastAPI in app/api/main.py):
     from app.security.auth import setup_auth
-    setup_auth(app, settings)
+    setup_auth(app, settings.api_key, settings.env)
 """
 
 from __future__ import annotations
@@ -22,21 +24,36 @@ from collections.abc import Awaitable, Callable
 from fastapi import FastAPI, Request, Response
 from fastapi.responses import JSONResponse
 
+from app.core.errors import ConfigurationError
+
 logger = logging.getLogger(__name__)
+
+# Environments where an empty API key is acceptable (local dev / CI).
+_DEV_TEST_ENVS: frozenset[str] = frozenset({"development", "dev", "test", "testing"})
 
 _AUTH_DISABLED_WARNED = False
 
 
-def setup_auth(app: FastAPI, api_key: str) -> None:
+def setup_auth(app: FastAPI, api_key: str, env: str = "development") -> None:
     """Attach bearer-token middleware to the FastAPI app.
 
     Args:
         app:     FastAPI application instance.
-        api_key: Value of APP_API_KEY. If empty, auth is disabled (dev mode).
+        api_key: Value of APP_API_KEY.
+        env:     Value of APP_ENV (default: ``"development"``).
+
+    Raises:
+        ConfigurationError: if ``api_key`` is empty outside dev/test environments.
     """
     global _AUTH_DISABLED_WARNED
 
     if not api_key:
+        if env.lower() not in _DEV_TEST_ENVS:
+            raise ConfigurationError(
+                f"APP_API_KEY is required in env='{env}'. "
+                "Authentication cannot be disabled outside development/test contexts. "
+                "Set APP_API_KEY in your environment."
+            )
         if not _AUTH_DISABLED_WARNED:
             logger.warning(
                 "API authentication is DISABLED. "

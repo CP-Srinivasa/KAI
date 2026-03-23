@@ -65,7 +65,7 @@ def create_app() -> FastAPI:
             "Idempotency-Key",
         ],
     )
-    setup_auth(app, settings.api_key)  # attach bearer-token middleware before startup
+    setup_auth(app, settings.api_key, settings.env)  # attach bearer-token middleware before startup
 
     app.include_router(health.router)
     app.include_router(sources.router)

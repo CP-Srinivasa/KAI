@@ -31,7 +31,7 @@ def test_app_lifespan_starts_and_stops_rss_scheduler(monkeypatch) -> None:
     monkeypatch.setattr(api_main, "get_settings", lambda: AppSettings())
     monkeypatch.setattr(api_main, "configure_logging", lambda _level: None)
     monkeypatch.setattr(api_main, "validate_secrets", lambda _settings: None)
-    monkeypatch.setattr(api_main, "setup_auth", lambda _app, _api_key: None)
+    monkeypatch.setattr(api_main, "setup_auth", lambda _app, _api_key, _env="development": None)
     monkeypatch.setattr(api_main, "build_session_factory", lambda _db: "session-factory")
     monkeypatch.setattr(api_main, "RSSScheduler", FakeRSSScheduler)
 
