@@ -1,12 +1,12 @@
 ﻿# ASSUMPTIONS.md — KAI Platform
 
-## Current State (2026-03-22)
+## Current State (2026-03-23)
 
 | Field | Value |
 |---|---|
 | current_phase | `PHASE 4 (active)` |
-| current_sprint | `PH4E_SCORING_CALIBRATION_AUDIT` |
-| next_required_step | `PH4E_EXECUTION_START` |
+| current_sprint | `PH4F_RULE_INPUT_COMPLETENESS_AUDIT (ready to close)` |
+| next_required_step | `PH4F_RESULTS_REVIEW_AND_PH4G_SELECTION` |
 | baseline | `1519 passed, ruff clean` |
 
 Documented assumptions, constraints, and design decisions.
@@ -58,6 +58,16 @@ Last updated: 2026-03-23
 **Assumption**: In PH4F diagnostics, persistent rule floor/default patterns (for example `actionable` missing, `market_scope='unknown'`, empty `tags`, frequent floor values in relevance/impact/novelty) are counted as input-completeness deficits rather than immediate tuning targets.
 **Rationale**: PH4E established defaults-by-design as root-cause class; PH4F must isolate missing input pathways before any intervention sprint.
 **Impact**: PH4F output prioritizes field-level pathway evidence and keeps scoring/rule changes out of scope.
+
+### A-112: PH4F closeout must precede any PH4G activation
+**Assumption**: Even with PH4G as likely candidate, PH4G remains inactive until PH4F results review is completed and documented.
+**Rationale**: Starting intervention before closeout would weaken causal traceability from PH4F diagnostics.
+**Impact**: `next_required_step` stays `PH4F_RESULTS_REVIEW_AND_PH4G_SELECTION`; no PH4G execution in parallel.
+
+### A-113: PH4G should stay intervention-minimal if selected
+**Assumption**: If PH4G is activated, the first pass should be narrow and limited to highest-leverage fallback input pathways.
+**Rationale**: Broad multi-field intervention would reduce interpretability and make MAE movement harder to attribute.
+**Impact**: PH4G candidate scope remains tight and measurement-first.
 
 ---
 

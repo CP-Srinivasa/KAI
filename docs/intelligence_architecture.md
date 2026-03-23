@@ -5,19 +5,19 @@
 | Field | Value |
 |---|---|
 | current_phase | `PHASE 4 (active)` |
-| current_sprint | `PH4F_RULE_INPUT_COMPLETENESS_AUDIT (definition frozen)` |
-| next_required_step | `PH4F_EXECUTION_START` |
+| current_sprint | `PH4F_RULE_INPUT_COMPLETENESS_AUDIT (ready to close)` |
+| next_required_step | `PH4F_RESULTS_REVIEW_AND_PH4G_SELECTION` |
 | ph4e_status | `closed (D-67) — scoring calibration audit complete; §73 frozen anchor` |
-| ph4f_status | `closed (D-68) — actionable 69/69; market_scope 69/69; tags 69/69; relevance floor 56/69; §74 frozen anchor` |
-| ph4g_status | `active (definition — D-69) — fallback-path enrichment; contract §75; execution start pending` |
+| ph4f_status | `active (execution complete — D-69) — closeout review pending` |
+| ph4g_status | `candidate only — PH4G_FALLBACK_INPUT_ENRICHMENT_BASELINE (not active)` |
 | baseline | `1519 passed, ruff clean` |
 | ph4b_status | `closed (D-62) — sections 68 and 69 frozen anchors` |
 | ph4c_status | `closed — section 70 frozen audit anchor` |
 | ph4d_status | `closed — section 71 frozen anchor` |
 | ph4e_contract | `docs/contracts.md §73 (closed D-67)` |
-| ph4f_contract | `docs/contracts.md §74 (closed D-68)` |
-| ph4g_contract | `docs/contracts.md §75 (active definition frozen)` |
-| architecture_status | three-tier stack unchanged; PH4A–PH4F closed (§67–§74); PH4G fallback-path enrichment active (§75) |
+| ph4f_contract | `docs/contracts.md §74 (active; execution complete)` |
+| ph4g_contract | `docs/contracts.md §75 (candidate only)` |
+| architecture_status | three-tier stack unchanged; PH4A–PH4E closed (§67–§73); PH4F execution complete and in closeout review (§74) |
 
 ---
 
@@ -68,10 +68,10 @@
 - Classification: architectural input completeness gap, not score formula miscalibration.
 - Consequence: PH4F audits whether LLM layer is consistently triggered to fill these fields.
 
-## PH4F Closed Sprint (§74 frozen anchor — D-68)
+## PH4F Active Sprint (execution complete; ready to close — §74, D-69)
 
-- Sprint: `PH4F_RULE_INPUT_COMPLETENESS_AUDIT`. **Formally closed D-68.**
-- Contract: `docs/contracts.md §74` (immutable frozen anchor — no re-execution permitted).
+- Sprint: `PH4F_RULE_INPUT_COMPLETENESS_AUDIT`. **Execution complete; closeout review pending.**
+- Contract: `docs/contracts.md §74` (active contract; execution complete).
 - Execution findings (locked):
   - Production Tier-1 path = `_build_fallback_analysis()` in `pipeline.py` — NOT `RuleAnalyzer.analyze()`
   - `actionable`: missing 69/69 paired docs (hard False in all non-Tier-3 paths)
@@ -79,19 +79,19 @@
   - `tags`: empty 69/69 paired docs (no keyword hits → no tag output)
   - `relevance_score`: at default floor 56/69 docs (81.2%)
 - LLM-layer coverage verdict: no triggering gap; gap is `provider=None` → fallback → hard defaults.
-- Consequence: PH4G enriches fallback-path inputs; no scoring formula changes.
+- Consequence: closeout review must finalize PH4F and confirm/narrow PH4G activation.
 
-## PH4G Active Sprint (definition frozen — §75, D-69)
+## PH4G Candidate Sprint (not active)
 
-- Sprint: `PH4G_FALLBACK_INPUT_ENRICHMENT_BASELINE` (narrow fallback-path enrichment).
-- Contract: `docs/contracts.md §75` (active definition frozen — execution-ready).
+- Sprint candidate: `PH4G_FALLBACK_INPUT_ENRICHMENT_BASELINE` (narrow fallback-path enrichment).
+- Contract status: candidate-only; activation pending PH4F results review.
 - Scope: measurement-first enrichment of top-3 PH4F field gaps on fallback path:
   - actionable: add heuristic estimate (keyword-confluence threshold)
   - market_scope: improve inference for docs with no keyword matches
   - tags/relevance: add metadata-based floor when keyword hits are zero
 - Input slice: same 69 paired documents used in PH4E/PH4F.
-- Constraints: no scoring formula changes · no threshold changes · ≤3 fields per iteration.
-- Output: baseline measurement → enrichment → MAE re-measurement; PH4H recommendation.
+- Constraints (if activated): no scoring formula changes · no threshold changes · ≤3 fields per iteration.
+- Output target (if activated): baseline measurement → enrichment → MAE re-measurement; PH4H recommendation.
 
 ## Design Principle
 

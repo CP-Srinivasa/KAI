@@ -16,5 +16,5 @@
 | PH4C_RULE_KEYWORD_COVERAGE_AUDIT | 2026-03-23 | closed | 507 terms; 29 zero-hit and 27 low-hit docs identified. |
 | PH4D_TARGETED_KEYWORD_EXPANSION | 2026-03-23 | closed | Keyword index 507->555; zero-hit 29->26; no regressions. |
 | PH4E_SCORING_CALIBRATION_AUDIT | 2026-03-23 | closed (D-67) | defaults-by-design root cause confirmed; §73 frozen anchor. |
-| PH4F_RULE_INPUT_COMPLETENESS_AUDIT | 2026-03-23 | closed (D-68) | actionable=missing 69/69; market_scope=unknown 69/69; tags=empty 69/69; relevance=floor 56/69. LLM trigger gap: none. §74 frozen anchor. |
-| PH4G_FALLBACK_INPUT_ENRICHMENT_BASELINE | 2026-03-23 | active (definition — D-69) | Narrow fallback-path enrichment: actionable heuristic, market_scope inference, tags/relevance floor. ≤3 fields/iteration, measurement-first. Contract §75. |
+| PH4F_RULE_INPUT_COMPLETENESS_AUDIT | 2026-03-23 | active (execution complete; ready to close) | Production Tier-1 = fallback path; actionable missing 69/69; market_scope unknown 69/69; tags empty 69/69; relevance default-floor 56/69. |
+| PH4G_FALLBACK_INPUT_ENRICHMENT_BASELINE | 2026-03-23 | candidate (not active) | Narrow fallback-path enrichment candidate. Activation pending PH4F results review and formal selection. |

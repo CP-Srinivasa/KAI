@@ -7035,7 +7035,7 @@ Diagnostic audit of per-field scoring inputs to identify the root cause of prior
 **Phase**: 4
 **Opened**: 2026-03-23
 **Decision**: D-68
-**Status**: active (definition frozen; execution-ready)
+**Status**: active (execution complete; ready to close)
 
 ### Purpose
 Diagnostic audit of rule-input completeness gaps that drive Tier-1 under-specification. PH4F isolates missing input fields before any intervention sprint is allowed.
@@ -7067,13 +7067,23 @@ Diagnostic audit of rule-input completeness gaps that drive Tier-1 under-specifi
 - [x] Governance synchronization completed
 
 ### Acceptance Gates
-- [ ] Per-field completeness matrix produced for paired set
-- [ ] Top-3 missing input-field classes identified and ranked
-- [ ] Gap-to-divergence linkage documented with evidence refs
-- [ ] Operator-readable PH4F summary produced
-- [ ] PH4G recommendation documented
+- [x] Per-field completeness matrix produced for paired set
+- [x] Top-3 missing input-field classes identified and ranked
+- [x] Gap-to-divergence linkage documented with evidence refs
+- [x] Operator-readable PH4F summary produced
+- [x] PH4G candidate recommendation documented
+- [ ] PH4F formal closeout review completed
 
-§74 status: **closed (D-68 — 2026-03-23)**
+### Execution Findings (locked)
+
+- `RuleAnalyzer.analyze()` is not the production Tier-1 path.
+- Production Tier-1 path is fallback analysis in `app/analysis/pipeline.py`.
+- `actionable` missing in `69/69` paired docs.
+- `market_scope` unknown in `69/69` paired docs.
+- `tags` empty in `69/69` paired docs.
+- `relevance_score` default-floor in `56/69` paired docs.
+
+§74 status: **active (execution complete; next step PH4F_RESULTS_REVIEW_AND_PH4G_SELECTION)**
 
 ---
 
@@ -7085,7 +7095,7 @@ Diagnostic audit of rule-input completeness gaps that drive Tier-1 under-specifi
 **Phase**: 4
 **Opened**: 2026-03-23
 **Decision**: D-69
-**Status**: active (definition frozen; execution-ready)
+**Status**: candidate (not active)
 
 ### Purpose
 Narrow, measurement-first fallback-path enrichment. PH4G closes the top-3 field gaps identified in PH4F without broad rule reform. Each enrichment step must be accompanied by priority MAE re-measurement.
@@ -7109,22 +7119,22 @@ Narrow, measurement-first fallback-path enrichment. PH4G closes the top-3 field 
 - Frozen constraint: narrow (≤3 fields per iteration), measurement-first.
 - Frozen objective: reduce priority MAE from 3.13 via fallback-path enrichment only.
 
-### Freeze Gates (definition-to-execution)
+### Candidate Gates (pre-activation)
 
-- [x] Scope limited to fallback-path enrichment (not scoring formula)
-- [x] Input slice locked to PH4E/PH4F paired set
-- [x] Non-goals explicitly frozen
-- [x] Governance synchronization completed
+- [x] Candidate scope narrowed to fallback-path enrichment
+- [x] Input slice anchored to PH4E/PH4F paired set
+- [x] Non-goals listed explicitly
+- [ ] Activation approved via PH4F closeout review
 
-### Acceptance Gates
+### Acceptance Gates (inactive until activation)
 
 - [ ] Baseline measurement of all 5 gap fields on paired set produced
-- [ ] Enrichment applied to ≤3 fields in first iteration
+- [ ] Enrichment applied to <=3 fields in first iteration
 - [ ] Priority MAE re-measured after enrichment
 - [ ] No regressions (ruff clean, 1519+ passed)
 - [ ] PH4H scope recommendation documented
 
-§75 status: **active (definition frozen; next step PH4G_EXECUTION_START)**
+§75 status: **candidate only (not active; pending PH4F results review)**
 
 ---
 

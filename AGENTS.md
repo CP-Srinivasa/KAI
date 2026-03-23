@@ -16,13 +16,13 @@
 | ph4c_status | `closed — rule-keyword gap audit; top-3 gaps: macro, regulatory, AI` |
 | ph4d_status | `closed (D-68) — 56 keywords added; zero-hit 42%->37.7%; §71 frozen anchor` |
 | ph4e_status | `closed (D-70) — relevance 41.2% of gap; root cause: defaults by design` |
-| ph4f_status | `closed (D-68) — actionable 69/69; market_scope 69/69; tags 69/69; relevance floor 56/69; §74 frozen anchor` |
-| ph4g_status | `active (definition — D-69) — fallback-path enrichment; execution start pending` |
+| ph4f_status | `active (execution complete — D-69) — actionable missing 69/69; market_scope unknown 69/69; tags empty 69/69; relevance floor 56/69` |
+| ph4g_status | `candidate only — PH4G_FALLBACK_INPUT_ENRICHMENT_BASELINE (not active yet)` |
 | baseline | `1519 passed, ruff clean` |
 | cli_canonical_count | 53 |
 | provisional_cli_count | 0 |
 | phase3_status | `closed (2026-03-22) — GO` |
-| phase4_status | `active — PH4G fallback-path enrichment (definition D-69)` |
+| phase4_status | `active — PH4F ready to close; PH4G selection pending` |
 ---
 
 > **Verbindliches Betriebsdokument für alle Coding-Agenten.**

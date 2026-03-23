@@ -10,8 +10,8 @@
 - ph4c_status: `closed (D-61) - keyword coverage gaps identified`
 - ph4d_status: `closed (D-68) - targeted keyword expansion completed`
 - ph4e_status: `closed (D-67) - defaults-by-design root cause confirmed`
-- ph4f_status: `closed (D-68) — §74 frozen anchor`
-- ph4g_status: `active (definition — D-69) — fallback-path enrichment baseline`
+- ph4f_status: `active (execution complete; ready to close pending review)`
+- ph4g_status: `candidate only - PH4G_FALLBACK_INPUT_ENRICHMENT_BASELINE`
 - baseline: `1519 passed, ruff clean`
 
 ## PH4F Execution Findings (frozen inputs, 69 paired docs)
@@ -23,18 +23,8 @@
 - `tags` are empty in `69/69` paired docs.
 - `relevance_score` is default-floor in `56/69` paired docs.
 
-## PH4F Closeout (D-68 — §74 frozen anchor)
+## PH4F Closeout Gate
 
-- PH4F formally closed. Diagnostic-only — no rule/scoring/threshold changes made.
-- Per-field confirmed counts locked: actionable 69/69 · market_scope 69/69 · tags 69/69 · relevance floor 56/69.
-
-## PH4G Active Sprint (definition — D-69)
-
-- sprint: `PH4G_FALLBACK_INPUT_ENRICHMENT_BASELINE`
-- contract: `docs/contracts.md §75` (frozen)
-- scope: narrow fallback-path enrichment for top-3 PH4F field gaps
-  - actionable: add heuristic estimate to fallback path
-  - market_scope: improve inference for docs with no keyword matches
-  - tags/relevance: add metadata-based floor when keyword hits are zero
-- constraints: no scoring formula changes · no threshold changes · ≤3 fields per iteration · measurement-first
-- output: baseline measurement → enrichment → MAE re-measurement; PH4H recommendation
+- PH4F remains diagnostic-only (no scoring/rule/threshold/provider/source/model changes).
+- PH4F can be formally closed after results review.
+- Recommended next sprint candidate: `PH4G_FALLBACK_INPUT_ENRICHMENT_BASELINE` (narrow scope).
