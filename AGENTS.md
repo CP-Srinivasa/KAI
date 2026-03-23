@@ -5,20 +5,20 @@
 | Field | Value |
 |---|---|
 | current_phase | `PHASE 4 (active)` |
-| current_sprint | `PH4E_SCORING_CALIBRATION_AUDIT` |
-| next_required_step | `PH4E_EXECUTION_START` |
-| ph4e_status_canonical | `active definition frozen (D-70) - execution-ready, diagnostic-only` |
-| state_note | `canonical rows at top are authoritative for current gate state` |
+| current_sprint | `PH4F_RULE_INPUT_COMPLETENESS_AUDIT (closed)` |
+| next_required_step | `PH4G_SELECTION` |
 | ph4a_status | `closed (D-53) — immutable baseline anchor (§67)` |
 | ph4b_status | `closed (D-62) — paired_count=69; root cause: keyword coverage blindness` |
 | ph4c_status | `closed — rule-keyword gap audit; top-3 gaps: macro, regulatory, AI` |
-| ph4d_status | `closed (D-68) — 56 keywords added; zero-hit 42%→37.7%; §71 frozen anchor` |
-| ph4e_status | `active (definition frozen — D-70) — scoring calibration audit; execution start authorized` |
+| ph4d_status | `closed (D-68) — 56 keywords added; zero-hit 42%->37.7%; §71 frozen anchor` |
+| ph4e_status | `closed (D-70) — relevance 41.2% of gap; root cause: defaults by design` |
+| ph4f_status | `closed (D-68) — actionable 69/69; market_scope 69/69; tags 69/69; relevance floor 56/69; §74 frozen anchor` |
+| ph4g_status | `active (definition — D-69) — fallback-path enrichment; execution start pending` |
 | baseline | `1519 passed, ruff clean` |
 | cli_canonical_count | 53 |
 | provisional_cli_count | 0 |
 | phase3_status | `closed (2026-03-22) — GO` |
-| phase4_status | `active — PH4E scoring calibration audit (definition)` |
+| phase4_status | `active — PH4G fallback-path enrichment (definition D-69)` |
 ---
 
 > **Verbindliches Betriebsdokument für alle Coding-Agenten.**
