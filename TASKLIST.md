@@ -3,8 +3,8 @@
 ## Current State
 
 - current_phase: `PHASE 4 (active)`
-- current_sprint: `PH4F_RULE_INPUT_COMPLETENESS_AUDIT`
-- next_required_step: `PH4F_EXECUTION_START`
+- current_sprint: `PH4F_RULE_INPUT_COMPLETENESS_AUDIT (ready to close)`
+- next_required_step: `PH4F_RESULTS_REVIEW_AND_PH4G_SELECTION`
 - baseline: `1519 passed, ruff clean`
 
 ## Active Tasks
@@ -13,18 +13,10 @@
 
 - [x] F1 Open PH4F as diagnostic-only sprint
 - [x] F2 Freeze PH4F contract and acceptance criteria
-- [x] F3 Start PH4F execution
-- [x] F4 Measure rule-input completeness gaps on paired set
-- [x] F5 Produce PH4F results review and next sprint recommendation
-
-### PH4G_FALLBACK_INPUT_ENRICHMENT_BASELINE
-
-- [ ] G1 Open PH4G as narrow intervention sprint
-- [ ] G2 Freeze PH4G contract and acceptance criteria
-- [ ] G3 Establish baseline measurement (all 5 gap fields on paired set)
-- [ ] G4 Apply enrichment (≤3 fields, first iteration)
-- [ ] G5 Re-measure priority MAE; confirm regressions=0
-- [ ] G6 Produce PH4G results review and PH4H recommendation
+- [x] F3 Execute PH4F on frozen paired set
+- [x] F4 Measure missing/empty/default rule inputs per field
+- [ ] F5 Run PH4F results review and finalize PH4G sprint selection
+- [ ] F6 Formally close PH4F in governance docs
 
 ## Closed Tasks (Summary)
 

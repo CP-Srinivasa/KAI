@@ -5,18 +5,19 @@
 | Field | Value |
 |---|---|
 | current_phase | `PHASE 4 (active)` |
-| current_sprint | `PH4F_RULE_INPUT_COMPLETENESS_AUDIT` |
-| next_required_step | `PH4F_EXECUTION_START` |
+| current_sprint | `PH4F_RULE_INPUT_COMPLETENESS_AUDIT (ready to close)` |
+| next_required_step | `PH4F_RESULTS_REVIEW_AND_PH4G_SELECTION` |
 | baseline | `1519 passed, ruff clean` |
-| active_contracts | §74 (PH4F, active definition frozen) · §73 (PH4E, closed) · §72–§67 (closed) |
+| active_contracts | §74 (PH4F, execution complete; closeout review pending) · §73–§67 (closed) |
 | cli_canonical_count | 53 (frozen §65) |
 
 ## Navigation
 
 | Section | Content | Status |
 |---|---|---|
-| [§74 PH4F Rule Input Completeness Audit](#s74-ph4f-rule-input-completeness-audit) | Diagnostic audit of missing rule-input fields on paired documents | active (definition frozen; execution-ready) |
-| [§73 PH4E Scoring Calibration Audit](#s73-ph4e-scoring-calibration-audit) | Diagnostic per-field scoring audit; divergence cluster analysis | closed (results accepted) |
+| [§75 PH4G Fallback Input Enrichment Baseline](#s75-ph4g-fallback-input-enrichment-baseline) | Narrow fallback-path enrichment candidate for PH4F top-3 field gaps | candidate (not active; pending PH4F review) |
+| [§74 PH4F Rule Input Completeness Audit](#s74-ph4f-rule-input-completeness-audit) | Diagnostic audit of missing rule-input fields on paired documents | active (execution complete; ready to close) |
+| [§73 PH4E Scoring Calibration Audit](#s73-ph4e-scoring-calibration-audit) | Diagnostic per-field scoring audit; divergence cluster analysis | closed (D-67) |
 | [§72 Phase 4 Interim Review](#s72-phase-4-interim-review) | Review PH4A–PH4D arc; select next Phase-4 sprint | closed (D-65/D-66) |
 | [§71 PH4D Targeted Keyword Expansion Baseline](#s71-ph4d-targeted-keyword-expansion-baseline) | Targeted keyword expansion for 3 confirmed gap categories | closed (D-68) |
 | [§70 PH4C Rule Keyword Coverage Audit](#s70-ph4c-rule-keyword-coverage-audit) | Diagnostic keyword coverage audit contract | closed |
@@ -7072,7 +7073,58 @@ Diagnostic audit of rule-input completeness gaps that drive Tier-1 under-specifi
 - [ ] Operator-readable PH4F summary produced
 - [ ] PH4G recommendation documented
 
-§74 status: **active (definition frozen; next step PH4F_EXECUTION_START)**
+§74 status: **closed (D-68 — 2026-03-23)**
+
+---
+
+<a name="s75-ph4g-fallback-input-enrichment-baseline"></a>
+
+## §75 — PH4G_FALLBACK_INPUT_ENRICHMENT_BASELINE
+
+**Sprint**: `PH4G_FALLBACK_INPUT_ENRICHMENT_BASELINE`
+**Phase**: 4
+**Opened**: 2026-03-23
+**Decision**: D-69
+**Status**: active (definition frozen; execution-ready)
+
+### Purpose
+Narrow, measurement-first fallback-path enrichment. PH4G closes the top-3 field gaps identified in PH4F without broad rule reform. Each enrichment step must be accompanied by priority MAE re-measurement.
+
+### Scope
+- Establish baseline measurement of all 5 gap fields on paired set (fallback path only).
+- Apply targeted enrichment to fallback path for top-3 gaps: actionable heuristic, market_scope inference, tags/relevance metadata floor.
+- Re-measure priority MAE after each enrichment step to confirm leverage.
+- No changes to scoring formula or weights.
+
+### Non-Goals (hard freeze)
+- No changes to scoring formula or priority weights
+- No changes to LLM providers or their configuration
+- No changes to threshold values
+- No broad rule engine or pipeline refactor
+- No changes to more than 3 input fields per iteration
+
+### Contract Freeze Record (2026-03-23)
+
+- Frozen input slice: same 69 paired documents used in PH4E/PH4F.
+- Frozen constraint: narrow (≤3 fields per iteration), measurement-first.
+- Frozen objective: reduce priority MAE from 3.13 via fallback-path enrichment only.
+
+### Freeze Gates (definition-to-execution)
+
+- [x] Scope limited to fallback-path enrichment (not scoring formula)
+- [x] Input slice locked to PH4E/PH4F paired set
+- [x] Non-goals explicitly frozen
+- [x] Governance synchronization completed
+
+### Acceptance Gates
+
+- [ ] Baseline measurement of all 5 gap fields on paired set produced
+- [ ] Enrichment applied to ≤3 fields in first iteration
+- [ ] Priority MAE re-measured after enrichment
+- [ ] No regressions (ruff clean, 1519+ passed)
+- [ ] PH4H scope recommendation documented
+
+§75 status: **active (definition frozen; next step PH4G_EXECUTION_START)**
 
 ---
 

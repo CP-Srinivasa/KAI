@@ -5,8 +5,12 @@
 | Field | Value |
 |---|---|
 | current_phase | `PHASE 4 (active)` |
-| current_sprint | `PH4F_RULE_INPUT_COMPLETENESS_AUDIT (closed)` |
-| next_required_step | `PH4G_SELECTION` |
+| current_sprint | `PH4F_RULE_INPUT_COMPLETENESS_AUDIT (ready to close)` |
+| next_required_step | `PH4F_RESULTS_REVIEW_AND_PH4G_SELECTION` |
+| ph4f_status_canonical | `active (execution complete — D-69) — closeout review pending` |
+| ph4g_status_canonical | `candidate only — PH4G_FALLBACK_INPUT_ENRICHMENT_BASELINE (not active yet)` |
+| phase4_status_canonical | `active — PH4F ready to close; PH4G selection pending` |
+| state_note | `canonical rows at top are authoritative for current gate state` |
 | ph4a_status | `closed (D-53) — immutable baseline anchor (§67)` |
 | ph4b_status | `closed (D-62) — paired_count=69; root cause: keyword coverage blindness` |
 | ph4c_status | `closed — rule-keyword gap audit; top-3 gaps: macro, regulatory, AI` |

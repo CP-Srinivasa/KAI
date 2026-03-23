@@ -8,14 +8,16 @@
 | current_sprint | `PH4F_RULE_INPUT_COMPLETENESS_AUDIT (definition frozen)` |
 | next_required_step | `PH4F_EXECUTION_START` |
 | ph4e_status | `closed (D-67) — scoring calibration audit complete; §73 frozen anchor` |
-| ph4f_status | `active (definition frozen - D-68) - rule input completeness audit; execution-ready` |
+| ph4f_status | `closed (D-68) — actionable 69/69; market_scope 69/69; tags 69/69; relevance floor 56/69; §74 frozen anchor` |
+| ph4g_status | `active (definition — D-69) — fallback-path enrichment; contract §75; execution start pending` |
 | baseline | `1519 passed, ruff clean` |
 | ph4b_status | `closed (D-62) — sections 68 and 69 frozen anchors` |
 | ph4c_status | `closed — section 70 frozen audit anchor` |
-| ph4d_status | `closed (D-68) — section 71 frozen anchor` |
-| ph4e_contract | `docs/contracts.md §73 (closed)` |
-| ph4f_contract | `docs/contracts.md §74 (active definition frozen)` |
-| architecture_status | three-tier stack unchanged; PH4A–PH4E closed (§67–§73); PH4F input-completeness audit active (§74) |
+| ph4d_status | `closed — section 71 frozen anchor` |
+| ph4e_contract | `docs/contracts.md §73 (closed D-67)` |
+| ph4f_contract | `docs/contracts.md §74 (closed D-68)` |
+| ph4g_contract | `docs/contracts.md §75 (active definition frozen)` |
+| architecture_status | three-tier stack unchanged; PH4A–PH4F closed (§67–§74); PH4G fallback-path enrichment active (§75) |
 
 ---
 
@@ -66,14 +68,30 @@
 - Classification: architectural input completeness gap, not score formula miscalibration.
 - Consequence: PH4F audits whether LLM layer is consistently triggered to fill these fields.
 
-## PH4F Active Sprint (definition frozen — §74, D-68)
+## PH4F Closed Sprint (§74 frozen anchor — D-68)
 
-- Sprint: `PH4F_RULE_INPUT_COMPLETENESS_AUDIT` (diagnostic rule-input completeness audit).
-- Contract: `docs/contracts.md §74` (active definition frozen — execution-ready).
-- Scope: audit which rules fail to populate relevance_score, impact_score, actionable; audit whether LLM layer is consistently triggered when rule-path leaves these empty.
-- Input slice: same 69 paired documents used in PH4E.
-- Constraints: no rule changes · no scoring changes · no threshold changes.
-- Output: per-rule input gap map; LLM-layer coverage audit; PH4G scope recommendation.
+- Sprint: `PH4F_RULE_INPUT_COMPLETENESS_AUDIT`. **Formally closed D-68.**
+- Contract: `docs/contracts.md §74` (immutable frozen anchor — no re-execution permitted).
+- Execution findings (locked):
+  - Production Tier-1 path = `_build_fallback_analysis()` in `pipeline.py` — NOT `RuleAnalyzer.analyze()`
+  - `actionable`: missing 69/69 paired docs (hard False in all non-Tier-3 paths)
+  - `market_scope`: unknown 69/69 paired docs (no inference without keyword matches)
+  - `tags`: empty 69/69 paired docs (no keyword hits → no tag output)
+  - `relevance_score`: at default floor 56/69 docs (81.2%)
+- LLM-layer coverage verdict: no triggering gap; gap is `provider=None` → fallback → hard defaults.
+- Consequence: PH4G enriches fallback-path inputs; no scoring formula changes.
+
+## PH4G Active Sprint (definition frozen — §75, D-69)
+
+- Sprint: `PH4G_FALLBACK_INPUT_ENRICHMENT_BASELINE` (narrow fallback-path enrichment).
+- Contract: `docs/contracts.md §75` (active definition frozen — execution-ready).
+- Scope: measurement-first enrichment of top-3 PH4F field gaps on fallback path:
+  - actionable: add heuristic estimate (keyword-confluence threshold)
+  - market_scope: improve inference for docs with no keyword matches
+  - tags/relevance: add metadata-based floor when keyword hits are zero
+- Input slice: same 69 paired documents used in PH4E/PH4F.
+- Constraints: no scoring formula changes · no threshold changes · ≤3 fields per iteration.
+- Output: baseline measurement → enrichment → MAE re-measurement; PH4H recommendation.
 
 ## Design Principle
 
