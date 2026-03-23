@@ -5,21 +5,21 @@
 | Field | Value |
 |---|---|
 | current_phase | `PHASE 4 (active)` |
-| current_sprint | `PH4H_RULE_ONLY_CEILING_AND_ACTIONABILITY_POLICY_REVIEW (active — definition)` |
-| next_required_step | `PH4H_CONTRACT_AND_ACCEPTANCE_FREEZE` |
+| current_sprint | `PH4G_FALLBACK_INPUT_ENRICHMENT_BASELINE (ready to close)` |
+| next_required_step | `PH4G_CLOSE_AND_PH4H_POLICY_REVIEW` |
 | ph4e_status | `closed (D-67) — scoring calibration audit complete; §73 frozen anchor` |
 | ph4f_status | `closed (execution complete — D-69) — frozen intervention anchor` |
-| ph4g_status | `closed (D-69) — §75 frozen anchor; relevance floor applied; actionable reverted (I-13)` |
-| ph4h_status | `active (definition — D-70) — policy review; §76 contract` |
+| ph4g_status | `active (execution complete; ready to close) — relevance floor applied; actionable heuristic reverted (I-13)` |
+| ph4h_status | `candidate only — policy review after PH4G closeout` |
 | baseline | `1538 passed, ruff clean` |
 | ph4b_status | `closed (D-62) — sections 68 and 69 frozen anchors` |
 | ph4c_status | `closed — section 70 frozen audit anchor` |
 | ph4d_status | `closed — section 71 frozen anchor` |
 | ph4e_contract | `docs/contracts.md §73 (closed D-67)` |
 | ph4f_contract | `docs/contracts.md §74 (closed)` |
-| ph4g_contract | `docs/contracts.md §75 (closed D-69 — frozen anchor)` |
-| ph4h_contract | `docs/contracts.md §76 (active — definition)` |
-| architecture_status | three-tier stack unchanged; PH4A–PH4G closed anchors (§67–§75); PH4H policy review active (§76) |
+| ph4g_contract | `docs/contracts.md §75 (active; ready to close)` |
+| ph4h_contract | `docs/contracts.md §76 (candidate only)` |
+| architecture_status | three-tier stack unchanged; PH4A–PH4F closed anchors (§67–§74); PH4G execution complete and in closeout gate (§75) |
 
 ---
 
@@ -83,10 +83,10 @@
 - LLM-layer coverage verdict: no triggering gap; gap is `provider=None` → fallback → hard defaults.
 - Consequence: PH4G uses PH4F findings as frozen intervention anchor.
 
-## PH4G Closed Sprint (§75 frozen anchor — D-69)
+## PH4G Active Sprint (execution complete; ready to close)
 
-- Sprint: `PH4G_FALLBACK_INPUT_ENRICHMENT_BASELINE`. **Formally closed D-69.**
-- Contract: `docs/contracts.md §75` (closed immutable anchor).
+- Sprint: `PH4G_FALLBACK_INPUT_ENRICHMENT_BASELINE`. **Execution complete; formal closeout pending.**
+- Contract: `docs/contracts.md §75` (active; ready to close).
 - Execution findings (locked):
   - Relevance-floor fallback intervention: **retained** (applied successfully)
   - Actionable heuristic intervention: **reverted** — violates I-13 invariant (rule-only priority ceiling max 5)
@@ -94,11 +94,11 @@
   - The +1 actionable bonus in `compute_priority()` would push priority to 7, breaching I-13
 - Baseline confirmed unchanged: `1538 passed, ruff clean`.
 
-## PH4H Active Sprint (policy review — definition mode)
+## PH4H Candidate Sprint (policy review)
 
 - Sprint: `PH4H_RULE_ONLY_CEILING_AND_ACTIONABILITY_POLICY_REVIEW`.
-- Contract: `docs/contracts.md §76` (active — definition mode).
-- Decision: D-70.
+- Contract: `docs/contracts.md §76` (candidate only; not active).
+- Decision: next sprint candidate after PH4G closeout.
 - Purpose: review-only sprint — no code changes permitted. Policy decision required before any I-13 change.
 - Policy options under review:
   1. Relax I-13: allow rule-only priority > 5 under specific conditions

@@ -1,8 +1,16 @@
 """Shadow run module — offline companion audit (Sprint 10, I-51–I-55).
 
+[EXPERIMENTAL — NO ACTIVE MODEL]
 Runs InternalCompanionProvider in parallel audit mode against already-analyzed
 documents. NEVER calls apply_to_document(), update_analysis(), or any score
 mutation. Output is a standalone JSONL file only.
+
+Voraussetzungen für echte Aktivierung:
+- Trainiertes Companion-Modell (model artifact)
+- Konfigurierter companion_model_endpoint in Settings
+- Validierter Evaluation-/Promotion-Workflow
+
+Bis dahin: nicht in Default-Pfade integrieren.
 """
 
 from __future__ import annotations

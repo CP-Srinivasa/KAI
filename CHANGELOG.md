@@ -1,5 +1,18 @@
 # CHANGELOG.md
 
+## 2026-03-23 - PH4G execution complete and moved to ready-to-close gate
+
+- PH4G execution completed; sprint remains active in closeout mode.
+- Relevance-floor fallback intervention retained.
+- Actionable-heuristic intervention reverted due `I-13` ceiling constraint.
+- Governance state set to:
+  - `current_sprint = PH4G_FALLBACK_INPUT_ENRICHMENT_BASELINE (ready to close)`
+  - `next_required_step = PH4G_CLOSE_AND_PH4H_POLICY_REVIEW`
+- PH4H remains candidate-only until PH4G formal closeout is recorded.
+- Baseline reconfirmed: `1538 passed`, `ruff clean`.
+
+---
+
 ## 2026-03-23 - PH4G formally closed (D-69); PH4H policy review opened (D-70)
 
 - PH4G_FALLBACK_INPUT_ENRICHMENT_BASELINE formally closed.

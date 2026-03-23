@@ -98,6 +98,29 @@ class TradingLoop:
                 notes=notes + [f"no_market_data:{symbol}"],
             )
 
+        adapter_note = f"market_data_source:{market_data.source}"
+        notes.append(adapter_note)
+
+        # Freshness enforcement: stale data → skip cycle explicitly (never silently)
+        if market_data.is_stale:
+            logger.warning(
+                "[LOOP] SKIP cycle %s: market data stale (source=%s, freshness=%.1fs)",
+                symbol,
+                market_data.source,
+                market_data.freshness_seconds,
+            )
+            return self._build_cycle(
+                cycle_id,
+                started_at,
+                symbol,
+                CycleStatus.STALE_DATA,
+                market_data_fetched=True,
+                notes=notes + [
+                    f"stale_data_skip:{symbol}",
+                    f"freshness_seconds:{market_data.freshness_seconds:.1f}",
+                ],
+            )
+
         signal = None
         try:
             signal = self._signals.generate(analysis, market_data, symbol)
