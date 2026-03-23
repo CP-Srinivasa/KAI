@@ -59,6 +59,16 @@ def validate_secrets(settings: AppSettings) -> None:
         else:
             warnings.append(msg)
 
+    # ── API auth token ────────────────────────────────────────────────────────
+    if not settings.api_key:
+        msg = "APP_API_KEY is empty — API is unauthenticated (acceptable in development only)"
+        if is_production:
+            missing.append(
+                "APP_API_KEY is empty — all API endpoints are unprotected in production"
+            )
+        else:
+            warnings.append(msg)
+
     # ── Alert channels — validate only when enabled ───────────────────────────
     if settings.alerts.telegram_enabled:
         if not settings.alerts.telegram_token:
