@@ -4,6 +4,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.api.middleware.request_governance import RequestGovernanceMiddleware
 from app.api.routers import alerts, dashboard, health, operator, query, research, sources
 from app.core.logging import configure_logging
 from app.core.settings import get_settings
@@ -64,6 +65,12 @@ def create_app() -> FastAPI:
             "X-Correlation-ID",
             "Idempotency-Key",
         ],
+    )
+    # Request governance: request-ID propagation, body-size limit, audit JSONL.
+    # Must be added after CORS (middleware stack is LIFO — governance runs first).
+    app.add_middleware(
+        RequestGovernanceMiddleware,
+        max_body_bytes=settings.max_request_body_bytes,
     )
     setup_auth(app, settings.api_key, settings.env)  # attach bearer-token middleware before startup
 

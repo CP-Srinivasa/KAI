@@ -197,6 +197,18 @@ class AppSettings(BaseSettings):
     # Supported: coingecko (real, free-tier, delayed ~1min), mock (dev/test only).
     # CoinGecko free tier: ~30 req/min, spot price only, no auth required.
     market_data_provider: str = Field(default="coingecko")
+    # --- Request Governance (Sprint 44) ---
+    # Maximum request body size in bytes. Requests exceeding this limit are
+    # rejected with HTTP 413 before reaching route handlers. Default: 64 KiB.
+    max_request_body_bytes: int = Field(default=65_536, ge=1)
+    # Guarded-endpoint rate-limit: maximum requests per sliding window per subject.
+    # Window duration is APP_RATE_LIMIT_WINDOW_SECONDS.
+    rate_limit_per_window: int = Field(default=5, ge=1)
+    # Sliding-window duration in seconds for guarded-endpoint rate-limiting.
+    rate_limit_window_seconds: float = Field(default=30.0, gt=0.0)
+    # Idempotency replay window in seconds.  Responses cached for this duration.
+    # Default: 300 s (5 min). A value of 0 disables idempotency caching.
+    idempotency_window_seconds: float = Field(default=300.0, ge=0.0)
 
     db: DBSettings = Field(default_factory=DBSettings)
     alerts: AlertSettings = Field(default_factory=AlertSettings)

@@ -34,6 +34,8 @@ _GUARDED_AUDIT_PATH = Path("artifacts/operator_api_guarded_audit.jsonl")
 _REQUEST_ID_PATTERN = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
 _IDEMPOTENCY_KEY_PATTERN = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
 _IDEMPOTENCY_CACHE_MAX = 256
+# These constants are used as module-level defaults.  The actual rate-limit
+# values are overridden at startup from AppSettings (see _init_guard_state()).
 _GUARDED_RATE_LIMIT_WINDOW_SECONDS = 30.0
 _GUARDED_RATE_LIMIT_MAX_REQUESTS = 5
 
@@ -102,11 +104,22 @@ class RateLimitStore:
             self._buckets.clear()
 
 
-_IDEMPOTENCY_STORE = IdempotencyStore(max_size=_IDEMPOTENCY_CACHE_MAX)
-_RATE_LIMIT_STORE = RateLimitStore(
-    window_seconds=_GUARDED_RATE_LIMIT_WINDOW_SECONDS,
-    max_requests=_GUARDED_RATE_LIMIT_MAX_REQUESTS,
-)
+def _build_guard_stores(
+    *,
+    rate_limit_window_seconds: float = _GUARDED_RATE_LIMIT_WINDOW_SECONDS,
+    rate_limit_max_requests: int = _GUARDED_RATE_LIMIT_MAX_REQUESTS,
+    idempotency_cache_max: int = _IDEMPOTENCY_CACHE_MAX,
+) -> tuple[IdempotencyStore, RateLimitStore]:
+    return (
+        IdempotencyStore(max_size=idempotency_cache_max),
+        RateLimitStore(
+            window_seconds=rate_limit_window_seconds,
+            max_requests=rate_limit_max_requests,
+        ),
+    )
+
+
+_IDEMPOTENCY_STORE, _RATE_LIMIT_STORE = _build_guard_stores()
 
 
 
@@ -197,13 +210,16 @@ def _operator_http_error(
     code: str,
     message: str,
     include_www_authenticate: bool = False,
+    retry_after_seconds: int | None = None,
 ) -> HTTPException:
-    headers = {
+    headers: dict[str, str] = {
         "X-Request-ID": _get_request_id(request),
         "X-Correlation-ID": _get_correlation_id(request),
     }
     if include_www_authenticate:
         headers["WWW-Authenticate"] = "Bearer"
+    if retry_after_seconds is not None:
+        headers["Retry-After"] = str(retry_after_seconds)
     return HTTPException(
         status_code=status_code,
         detail=_build_error_payload(request, code=code, message=message),
@@ -339,14 +355,15 @@ def _enforce_guarded_rate_limit(request: Request) -> None:
     subject = getattr(request.state, "operator_subject", "operator_unknown")
     allowed = _RATE_LIMIT_STORE.check_and_record(subject)
     if not allowed:
+        retry_after = int(_RATE_LIMIT_STORE._window_seconds)
         raise _operator_http_error(
             request,
             status_code=429,
             code="guarded_rate_limited",
             message=(
-                "Too many guarded requests; retry after "
-                f"{int(_GUARDED_RATE_LIMIT_WINDOW_SECONDS)} seconds"
+                f"Too many guarded requests; retry after {retry_after} seconds"
             ),
+            retry_after_seconds=retry_after,
         )
 
 
