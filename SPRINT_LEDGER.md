@@ -2,17 +2,19 @@
 
 ## Canonical Sprint Ledger (2026-03-23)
 
+- phase_3_status: `closed`
 - phase_4_status: `active`
-- active_sprint: `PH4E_SCORING_CALIBRATION_AUDIT`
-- next_required_step: `PH4E_EXECUTION_START`
+- active_sprint: `PH4F_RULE_INPUT_COMPLETENESS_AUDIT (ready to close)`
+- next_required_step: `PH4F_RESULTS_REVIEW_AND_PH4G_SELECTION`
 - baseline: `1519 passed, ruff clean`
 
 | Sprint | Date | Status | Outcome |
 |---|---|---|---|
-| PH4A_SIGNAL_QUALITY_AUDIT_BASELINE | 2026-03-22 | closed | Baseline created. |
-| PH4B_TIER3_COVERAGE_EXPANSION | 2026-03-23 | closed | Tier overlap restored. |
-| PH4C_RULE_KEYWORD_COVERAGE_AUDIT | 2026-03-23 | closed | Top keyword gap categories identified. |
-| PH4D_TARGETED_KEYWORD_EXPANSION_BASELINE | 2026-03-23 | closed | zero-hit `29->26`, low-hit `27->25`, good-hit `13->18`, no regressions. |
-| PH4D_CLOSE_AND_PH4E_DEFINITION | 2026-03-23 | closed | PH4D/PH4E conflict resolved; PH4D closed and PH4E definition activated. |
-| PH4E_CONTRACT_AND_ACCEPTANCE_FREEZE | 2026-03-23 | closed | PH4E contract narrowed and frozen; execution authorized. |
-| PH4E_SCORING_CALIBRATION_AUDIT | 2026-03-23 | active | Diagnostic execution pending start (`PH4E_EXECUTION_START`). |
+| PHASE_4_DEFINITION | 2026-03-22 | closed | First narrow Phase-4 sprint selected. |
+| PH4A_SIGNAL_QUALITY_AUDIT_BASELINE | 2026-03-22 | closed | Baseline: 74 records, 6.76% Tier-3, paired_count=0, FAIL. |
+| PH4B_TIER3_COVERAGE_EXPANSION | 2026-03-23 | closed | paired_count 0->69, coverage 100%, SNR 5.80%. |
+| PH4C_RULE_KEYWORD_COVERAGE_AUDIT | 2026-03-23 | closed | 507 terms; 29 zero-hit and 27 low-hit docs identified. |
+| PH4D_TARGETED_KEYWORD_EXPANSION | 2026-03-23 | closed | Keyword index 507->555; zero-hit 29->26; no regressions. |
+| PH4E_SCORING_CALIBRATION_AUDIT | 2026-03-23 | closed (D-67) | defaults-by-design root cause confirmed; §73 frozen anchor. |
+| PH4F_RULE_INPUT_COMPLETENESS_AUDIT | 2026-03-23 | closed (D-68) | actionable=missing 69/69; market_scope=unknown 69/69; tags=empty 69/69; relevance=floor 56/69. LLM trigger gap: none. §74 frozen anchor. |
+| PH4G_FALLBACK_INPUT_ENRICHMENT_BASELINE | 2026-03-23 | active (definition — D-69) | Narrow fallback-path enrichment: actionable heuristic, market_scope inference, tags/relevance floor. ≤3 fields/iteration, measurement-first. Contract §75. |

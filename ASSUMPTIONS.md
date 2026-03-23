@@ -47,6 +47,20 @@ Last updated: 2026-03-23
 
 ---
 
+## PHASE 4 - PH4F execution assumptions (2026-03-23)
+
+### A-110: PH4F input completeness is measured on the frozen PH4E paired set only
+**Assumption**: PH4F execution uses only the existing paired intersection between `artifacts/ph4a/candidate_rule.jsonl` and `artifacts/ph4b/ph4b_tier3_shadow.jsonl` (69 docs), with no corpus expansion.
+**Rationale**: PH4F is a diagnostic continuation of PH4E and must preserve baseline comparability.
+**Impact**: PH4F artifacts remain directly comparable to PH4E findings and do not introduce provider/source drift.
+
+### A-111: Default-like rule outputs are treated as input-completeness gaps for diagnostics
+**Assumption**: In PH4F diagnostics, persistent rule floor/default patterns (for example `actionable` missing, `market_scope='unknown'`, empty `tags`, frequent floor values in relevance/impact/novelty) are counted as input-completeness deficits rather than immediate tuning targets.
+**Rationale**: PH4E established defaults-by-design as root-cause class; PH4F must isolate missing input pathways before any intervention sprint.
+**Impact**: PH4F output prioritizes field-level pathway evidence and keeps scoring/rule changes out of scope.
+
+---
+
 ## PHASE 3 — S50D assumptions (2026-03-22)
 
 ### A-101: Doc hygiene scope must stay structural â€” no content changes

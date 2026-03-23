@@ -3,8 +3,8 @@
 ## Current State (2026-03-23)
 
 - current_phase: `PHASE 4 (active)`
-- current_sprint: `PH4E_SCORING_CALIBRATION_AUDIT`
-- next_required_step: `PH4E_EXECUTION_START`
+- current_sprint: `PH4F_RULE_INPUT_COMPLETENESS_AUDIT`
+- next_required_step: `PH4F_EXECUTION_START`
 - baseline: `1519 passed, ruff clean`
 
 ---
@@ -54,9 +54,11 @@ aber `OperatorSettings` hat kein entsprechendes Feld. Initialisierung erfolgt au
 
 | Risk ID | Description | Severity | Likelihood | Mitigation | Status |
 |---|---|---|---|---|---|
-| R-PH4-010 | PH4E execution could drift from diagnostics into intervention. | high | medium | Enforce frozen non-goals in PH4E contract and keep execution audit-only. | open |
-| R-PH4-011 | PH4E acceptance interpretation could re-broaden scope after freeze. | high | medium | Keep acceptance criteria explicit and narrow in §73; reject out-of-scope outputs. | open |
-| R-PH4-012 | Divergence analysis could over-trust Tier-3 without contextual review. | medium | medium | Require root-cause classification (defaults/calibration/missing signal) before any follow-up sprint. | open |
+| R-PH4-010 | PH4F may drift from input-completeness diagnostics into direct rule changes. | high | medium | Enforce PH4F diagnostic-only non-goals and reject intervention edits in-sprint. | **resolved** — PH4F closed without any rule changes. |
+| R-PH4-011 | PH4F scope may blur field-input causes without strict separation. | high | medium | Keep PH4F outputs explicitly split by missing input field class. | **resolved** — per-field gap map produced; fields separated by evidence. |
+| R-PH4-012 | Root-cause confidence may be overstated without per-field evidence trace. | medium | medium | Require per-field evidence_refs and paired-set traceability in PH4F artifacts. | **resolved** — per-field counts locked (D-68): actionable 69/69, market_scope 69/69, tags 69/69, relevance 56/69. |
+| R-PH4G-001 | PH4G may become too broad if more than 3 fields are changed in one iteration. | high | medium | Enforce ≤3-fields-per-iteration constraint from §75; reject iteration reviews that change additional fields. | open |
+| R-PH4G-002 | Enrichment without tight measurement baseline could reduce interpretability of MAE changes. | medium | medium | Require baseline measurement of all gap fields before any enrichment step; MAE re-measurement required after each step. | open |
 
 ---
 
@@ -66,6 +68,7 @@ aber `OperatorSettings` hat kein entsprechendes Feld. Initialisierung erfolgt au
 - PH4D regression risk - resolved (`0` regressions).
 - PH4D/PH4E governance conflict - resolved.
 - PH4E pre-freeze governance ambiguity - resolved by contract freeze.
+- PH4E calibration ambiguity - resolved into PH4F rule-input completeness diagnostic path.
 - V-2 working tree snapshot - resolved (commit `204857c`).
 - V-3 CORS hardcoded - resolved (commit see below).
 - V-4 .env.example gaps - resolved.
@@ -78,4 +81,7 @@ aber `OperatorSettings` hat kein entsprechendes Feld. Initialisierung erfolgt au
 
 - PH4D metrics: zero-hit `29 -> 26`, low-hit `27 -> 25`, good-hit `13 -> 18`.
 - Remaining zero-hit docs: `26` (`5` true gaps, `21` low-value noise).
+- PH4E closed (D-67): relevance_score 41.2%, impact_score 32.6%, novelty_score 26.1% of priority gap.
+- Root cause: **defaults by design** — RuleAnalyzer explicitly leaves impact/novelty/actionable/sentiment to LLM; relevance_score=0 on keyword miss.
+- PH4F opened (D-68): diagnostic-only rule-input completeness audit; no scoring/rule/threshold changes in-sprint.
 - Technical baseline unchanged: `1519 passed`, `ruff clean`.

@@ -3,32 +3,38 @@
 ## Current State (2026-03-23)
 
 - current_phase: `PHASE 4 (active)`
-- current_sprint: `PH4E_SCORING_CALIBRATION_AUDIT`
-- next_required_step: `PH4E_EXECUTION_START`
-- ph4a_status: `closed (baseline anchor)`
-- ph4b_status: `closed (tier overlap restored)`
-- ph4c_status: `closed (rule-keyword gap audit complete)`
-- ph4d_status: `closed (formalized from execution evidence)`
-- ph4e_status: `active (contract frozen, execution-ready)`
+- current_sprint: `PH4F_RULE_INPUT_COMPLETENESS_AUDIT (ready to close)`
+- next_required_step: `PH4F_RESULTS_REVIEW_AND_PH4G_SELECTION`
+- ph4a_status: `closed (D-53) - immutable baseline anchor`
+- ph4b_status: `closed (D-62) - paired_count=69; overlap restored`
+- ph4c_status: `closed (D-61) - keyword coverage gaps identified`
+- ph4d_status: `closed (D-68) - targeted keyword expansion completed`
+- ph4e_status: `closed (D-67) - defaults-by-design root cause confirmed`
+- ph4f_status: `closed (D-68) — §74 frozen anchor`
+- ph4g_status: `active (definition — D-69) — fallback-path enrichment baseline`
 - baseline: `1519 passed, ruff clean`
 
-## PH4A-PH4D Arc (Frozen Evidence)
+## PH4F Execution Findings (frozen inputs, 69 paired docs)
 
-| Sprint | Result |
-|---|---|
-| PH4A | Baseline established (`74` records, tier3 coverage `6.76%`) |
-| PH4B | Overlap restored (`paired_count=69`, tier3 coverage `100.0%`) |
-| PH4C | Rule-keyword gaps identified and ranked |
-| PH4D | Targeted keyword expansion improved hit quality with no regressions |
+- `RuleAnalyzer.analyze()` is not the production Tier-1 path.
+- Production Tier-1 path is fallback analysis in `app/analysis/pipeline.py`.
+- `actionable` is missing in `69/69` paired docs.
+- `market_scope` is `unknown` in `69/69` paired docs.
+- `tags` are empty in `69/69` paired docs.
+- `relevance_score` is default-floor in `56/69` paired docs.
 
-## PH4E Freeze Outcome
+## PH4F Closeout (D-68 — §74 frozen anchor)
 
-- PH4E scope is locked to scoring divergence diagnostics on the paired set.
-- PH4E non-goals are frozen: no scoring/threshold/rule/provider/source/model/runtime changes.
-- PH4E acceptance criteria are explicitly narrowed before execution.
+- PH4F formally closed. Diagnostic-only — no rule/scoring/threshold changes made.
+- Per-field confirmed counts locked: actionable 69/69 · market_scope 69/69 · tags 69/69 · relevance floor 56/69.
 
-## Active Gate
+## PH4G Active Sprint (definition — D-69)
 
-1. Contract freeze is complete.
-2. Execution is authorized as diagnostic-only.
-3. Next required step: `PH4E_EXECUTION_START`.
+- sprint: `PH4G_FALLBACK_INPUT_ENRICHMENT_BASELINE`
+- contract: `docs/contracts.md §75` (frozen)
+- scope: narrow fallback-path enrichment for top-3 PH4F field gaps
+  - actionable: add heuristic estimate to fallback path
+  - market_scope: improve inference for docs with no keyword matches
+  - tags/relevance: add metadata-based floor when keyword hits are zero
+- constraints: no scoring formula changes · no threshold changes · ≤3 fields per iteration · measurement-first
+- output: baseline measurement → enrichment → MAE re-measurement; PH4H recommendation
