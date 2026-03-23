@@ -542,7 +542,6 @@ def research_benchmark_companion(
     ),
 ) -> None:
     """Benchmark companion outputs against teacher datasets and optionally save artifacts."""
-    from pathlib import Path
 
     from app.research.evaluation import (
         compare_datasets,
@@ -611,7 +610,6 @@ def research_benchmark_companion_run(
 ) -> None:
     """Run local companion inference on a teacher dataset and benchmark the output."""
     import asyncio
-    from pathlib import Path
 
     async def run() -> None:
         from app.research.evaluation import (

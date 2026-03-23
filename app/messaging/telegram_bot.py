@@ -183,7 +183,7 @@ class TelegramOperatorBot:
             for ref in command_refs
         ]
         try:
-            from app.cli.main import get_invalid_research_command_refs
+            from app.cli.research import get_invalid_research_command_refs
 
             invalid_refs = get_invalid_research_command_refs(refs)
         except Exception as exc:  # noqa: BLE001

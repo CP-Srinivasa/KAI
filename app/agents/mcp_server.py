@@ -1854,7 +1854,7 @@ def _build_operator_runbook_payload(
     artifacts_dir: str | Path = _ARTIFACTS_SUBDIR,
     retention_stale_after_days: float = 30.0,
 ) -> dict[str, object]:
-    from app.cli.main import (
+    from app.cli.research import (
         extract_runbook_command_refs,
         get_invalid_research_command_refs,
     )

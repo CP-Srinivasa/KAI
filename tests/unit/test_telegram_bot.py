@@ -6,7 +6,7 @@ from typing import Any
 
 import pytest
 
-from app.cli.main import get_invalid_research_command_refs
+from app.cli.research import get_invalid_research_command_refs
 from app.messaging.telegram_bot import (
     TelegramOperatorBot,
     get_telegram_command_inventory,

@@ -2067,16 +2067,16 @@ async def test_get_operator_runbook_fails_closed_on_invalid_command_refs(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from app.cli import main as cli_main
+    from app.cli import research as cli_research
 
     _patch_workspace_root(monkeypatch, tmp_path)
     monkeypatch.setattr(
-        cli_main,
+        cli_research,
         "extract_runbook_command_refs",
         lambda _payload: ["research governance-summary"],
     )
     monkeypatch.setattr(
-        cli_main,
+        cli_research,
         "get_invalid_research_command_refs",
         lambda refs: list(refs),
     )
