@@ -106,7 +106,7 @@ class PortfolioStateRecord(Base):
     gross_exposure_usd: Mapped[float | None] = mapped_column(Float, nullable=True)
 
     # Full position snapshot as JSON (mirrors paper_execution_audit row)
-    positions_json: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    positions_json: Mapped[dict[str, object] | None] = mapped_column(JSON, nullable=True)
 
     # Metadata
     snapshot_mode: Mapped[str] = mapped_column(
