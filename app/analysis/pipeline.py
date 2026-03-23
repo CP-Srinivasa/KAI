@@ -19,6 +19,12 @@ from app.enrichment.entities.matcher import hits_to_entity_mentions
 _MAX_CONCURRENT = 5  # max parallel LLM calls per run_batch()
 _ASSET_HIT_CATEGORIES = frozenset({"crypto", "equity", "etf"})
 _FALLBACK_MAX_TERMS = 20
+# PH4I: title-level crypto signal words for market_scope inference in fallback path
+_CRYPTO_TITLE_TERMS = frozenset({
+    "bitcoin", "ethereum", "crypto", "defi", "blockchain", "nft",
+    "altcoin", "stablecoin", "web3", "btc", "eth", "solana", "sol",
+    "binance", "coinbase", "token", "wallet", "ledger",
+})
 
 logger = get_logger(__name__)
 
@@ -159,6 +165,15 @@ def _fallback_market_scope(
 
     if document.market_scope in scores:
         scores[document.market_scope] += 1
+
+    # PH4I: enrich via structured asset fields and title keywords
+    if document.crypto_assets:
+        scores[MarketScope.CRYPTO] += len(document.crypto_assets)
+    if document.tickers:
+        scores[MarketScope.EQUITIES] += len(document.tickers)
+    title_lower = (document.title or "").lower()
+    if any(term in title_lower for term in _CRYPTO_TITLE_TERMS):
+        scores[MarketScope.CRYPTO] += 1
 
     top_score = max(scores.values())
     if top_score == 0:

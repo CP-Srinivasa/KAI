@@ -21,8 +21,8 @@
 
 - [x] I1 Open PH4I in definition mode
 - [x] I2 Freeze PH4I contract and acceptance criteria (§77)
-- [ ] I3 Execute PH4I (relevance/context enrichment only; no actionability scope)
-- [ ] I4 Capture before/after quality evidence
+- [x] I3 Execute PH4I (relevance/context enrichment only; no actionability scope)
+- [x] I4 Capture before/after quality evidence
 - [ ] I5 Close PH4I formally and record findings
 
 ## Closed Tasks (Summary)

@@ -1,5 +1,21 @@
 # CHANGELOG.md
 
+## 2026-03-23 - PH4I execution complete (I3+I4); market_scope enriched in fallback path
+
+- `_fallback_market_scope()` extended with PH4I enrichment signals:
+  - `document.crypto_assets` length -> CRYPTO votes
+  - `document.tickers` length -> EQUITIES votes
+  - Title keyword scan (bitcoin, ethereum, crypto, defi, etc.) -> CRYPTO signal
+- 13 new tests added (1551 total; +13 from 1538 baseline).
+- ruff clean confirmed.
+- Before: market_scope UNKNOWN 69/69 (PH4F finding).
+- After: crypto_assets/tickers/title keywords now resolve UNKNOWN to CRYPTO/EQUITIES where signals exist.
+- Governance state advanced to:
+  - `current_sprint = PH4I_FALLBACK_MARKET_SCOPE_ENRICHMENT (ready to close)`
+  - `next_required_step = PH4I_CLOSE_AND_PH4J_DEFINITION`
+
+---
+
 ## 2026-03-23 - PH4I contract frozen (§77 D-77); execution-ready
 
 - §77 contract frozen: scope = market_scope enrichment only in `_build_fallback_analysis()`.

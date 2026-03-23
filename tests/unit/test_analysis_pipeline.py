@@ -10,7 +10,7 @@ from app.analysis.ensemble.provider import EnsembleProvider
 from app.analysis.internal_model.provider import InternalModelProvider
 from app.analysis.keywords.engine import KeywordEngine
 from app.analysis.keywords.watchlist import WatchlistEntry
-from app.analysis.pipeline import AnalysisPipeline, PipelineResult
+from app.analysis.pipeline import AnalysisPipeline, PipelineResult, _fallback_market_scope
 from app.core.domain.document import AnalysisResult, CanonicalDocument
 from app.core.enums import AnalysisSource, MarketScope, SentimentLabel
 
@@ -424,3 +424,55 @@ async def test_pipeline_shadow_provider_runs_with_rule_fallback_primary():
     assert result.document.metadata["shadow_analysis"]["short_reasoning"] == (
         "Companion shadow summary."
     )
+
+
+# ---------------------------------------------------------------------------
+# PH4I: _fallback_market_scope enrichment tests
+# ---------------------------------------------------------------------------
+
+def _make_scope_doc(**kwargs) -> CanonicalDocument:
+    defaults = {"url": "https://example.com/doc", "title": "test"}
+    defaults.update(kwargs)
+    return CanonicalDocument(**defaults)
+
+
+def test_fallback_market_scope_via_crypto_assets():
+    """Documents with crypto_assets infer CRYPTO scope even without keyword hits."""
+    doc = _make_scope_doc(crypto_assets=["BTC", "ETH"])
+    result = _fallback_market_scope(doc, [])
+    assert result == MarketScope.CRYPTO
+
+
+def test_fallback_market_scope_via_tickers():
+    """Documents with equity tickers infer EQUITIES scope."""
+    doc = _make_scope_doc(tickers=["AAPL", "MSFT"])
+    result = _fallback_market_scope(doc, [])
+    assert result == MarketScope.EQUITIES
+
+
+def test_fallback_market_scope_via_title_crypto_term():
+    """Documents with crypto title keyword infer CRYPTO scope."""
+    doc = _make_scope_doc(title="Bitcoin ETF approval boosts market confidence")
+    result = _fallback_market_scope(doc, [])
+    assert result == MarketScope.CRYPTO
+
+
+def test_fallback_market_scope_unknown_stays_none_without_signals():
+    """Documents with no signals remain None (not UNKNOWN forced)."""
+    doc = _make_scope_doc(title="General market update")
+    result = _fallback_market_scope(doc, [])
+    assert result is None
+
+
+def test_fallback_market_scope_crypto_assets_beats_single_ticker():
+    """Multiple crypto assets should win over a single ticker."""
+    doc = _make_scope_doc(crypto_assets=["BTC", "ETH", "SOL"], tickers=["AAPL"])
+    result = _fallback_market_scope(doc, [])
+    assert result == MarketScope.CRYPTO
+
+
+def test_fallback_market_scope_existing_document_scope_adds_weight():
+    """A pre-set market_scope on the document adds one vote."""
+    doc = _make_scope_doc(market_scope=MarketScope.MACRO, title="Fed rate decision impact")
+    result = _fallback_market_scope(doc, [])
+    assert result == MarketScope.MACRO
