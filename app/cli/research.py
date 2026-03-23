@@ -541,7 +541,8 @@ def research_benchmark_companion(
         help="Optional path to save a benchmark artifact manifest JSON",
     ),
 ) -> None:
-    """[EXPERIMENTAL] Benchmark companion outputs against teacher datasets.
+    """[EXPERIMENTAL] Benchmark companion outputs
+    against teacher datasets.
 
     Requires COMPANION_MODEL_ENDPOINT to be set. No companion model is currently deployed.
     """
