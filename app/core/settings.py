@@ -193,6 +193,10 @@ class AppSettings(BaseSettings):
     cors_allowed_origins: list[str] = Field(
         default=["http://localhost:3000", "http://localhost:8000"]
     )
+    # Market data provider used by TradingLoop and operator surfaces.
+    # Supported: coingecko (real, free-tier, delayed ~1min), mock (dev/test only).
+    # CoinGecko free tier: ~30 req/min, spot price only, no auth required.
+    market_data_provider: str = Field(default="coingecko")
 
     db: DBSettings = Field(default_factory=DBSettings)
     alerts: AlertSettings = Field(default_factory=AlertSettings)

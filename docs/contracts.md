@@ -5,17 +5,18 @@
 | Field | Value |
 |---|---|
 | current_phase | `PHASE 4 (active)` |
-| current_sprint | `PH4E_SCORING_CALIBRATION_AUDIT` |
-| next_required_step | `PH4E_EXECUTION_START` |
+| current_sprint | `PH4F_RULE_INPUT_COMPLETENESS_AUDIT` |
+| next_required_step | `PH4F_EXECUTION_START` |
 | baseline | `1519 passed, ruff clean` |
-| active_contracts | §73 (PH4E, active definition frozen) · §72 (interim review, closed) · §71 (PH4D, closed D-68) · §70–§67 (closed) |
+| active_contracts | §74 (PH4F, active definition frozen) · §73 (PH4E, closed) · §72–§67 (closed) |
 | cli_canonical_count | 53 (frozen §65) |
 
 ## Navigation
 
 | Section | Content | Status |
 |---|---|---|
-| [§73 PH4E Scoring Calibration Audit](#s73-ph4e-scoring-calibration-audit) | Diagnostic per-field scoring audit; divergence cluster analysis | active (definition frozen; execution-ready) |
+| [§74 PH4F Rule Input Completeness Audit](#s74-ph4f-rule-input-completeness-audit) | Diagnostic audit of missing rule-input fields on paired documents | active (definition frozen; execution-ready) |
+| [§73 PH4E Scoring Calibration Audit](#s73-ph4e-scoring-calibration-audit) | Diagnostic per-field scoring audit; divergence cluster analysis | closed (results accepted) |
 | [§72 Phase 4 Interim Review](#s72-phase-4-interim-review) | Review PH4A–PH4D arc; select next Phase-4 sprint | closed (D-65/D-66) |
 | [§71 PH4D Targeted Keyword Expansion Baseline](#s71-ph4d-targeted-keyword-expansion-baseline) | Targeted keyword expansion for 3 confirmed gap categories | closed (D-68) |
 | [§70 PH4C Rule Keyword Coverage Audit](#s70-ph4c-rule-keyword-coverage-audit) | Diagnostic keyword coverage audit contract | closed |
@@ -6974,7 +6975,7 @@ Review the PH4A–PH4D evidence arc as a whole to determine the highest-leverage
 **Phase**: 4
 **Opened**: 2026-03-23
 **Decision**: D-70
-**Status**: active (definition frozen; execution-ready)
+**Status**: closed (execution complete; results accepted)
 
 ### Purpose
 Diagnostic audit of per-field scoring inputs to identify the root cause of priority_mae=3.13 (approximately 2× error threshold). Keyword expansion has reached diminishing returns; scoring calibration is the next highest-leverage quality lever.
@@ -7006,13 +7007,72 @@ Diagnostic audit of per-field scoring inputs to identify the root cause of prior
 - [x] Governance synchronization completed
 
 ### Acceptance Gates
-- [ ] Per-field score distribution analyzed across 69 paired documents
-- [ ] Top-3 scoring failure modes identified and ranked by divergence impact
-- [ ] Root cause classified (defaults / calibration / missing signals)
+- [x] Per-field score distribution analyzed across 69 paired documents
+- [x] Top-3 scoring failure modes identified and ranked by divergence impact
+- [x] Root cause classified (defaults / calibration / missing signals)
 - [x] Governance sync complete
-- [ ] PH4F scope recommendation documented
+- [x] PH4F scope recommendation documented
 
-§73 status: **active (definition frozen; next step PH4E_EXECUTION_START)**
+### Execution Findings (locked)
+
+- `relevance_score` contributes `41.2%` of the priority gap.
+- `impact_score` contributes `32.6%` of the priority gap.
+- `novelty_score` contributes `26.1%` of the priority gap.
+- Rule `relevance_score=0` in `81.2%` of paired documents.
+- Rule `actionable` is never set in the paired set.
+- Primary bottleneck: input completeness, not score calibration tuning.
+
+§73 status: **closed (next step completed via PH4E_CLOSE_AND_PH4F_DEFINITION)**
+
+---
+
+<a name="s74-ph4f-rule-input-completeness-audit"></a>
+
+## §74 — PH4F_RULE_INPUT_COMPLETENESS_AUDIT
+
+**Sprint**: `PH4F_RULE_INPUT_COMPLETENESS_AUDIT`
+**Phase**: 4
+**Opened**: 2026-03-23
+**Decision**: D-68
+**Status**: active (definition frozen; execution-ready)
+
+### Purpose
+Diagnostic audit of rule-input completeness gaps that drive Tier-1 under-specification. PH4F isolates missing input fields before any intervention sprint is allowed.
+
+### Scope
+- Analyze missing/empty rule input fields on the 69 paired documents.
+- Quantify per-field completeness and relation to priority divergence.
+- Cluster documents by input-gap pattern (not by score tuning outcome).
+- Produce ranked input-field gap list and evidence-linked operator summary.
+
+### Non-Goals (hard freeze)
+- No direct rule changes
+- No scoring formula or threshold changes
+- No provider/source/model expansion
+- No runtime behavior changes
+- No auto-remediation
+
+### Contract Freeze Record (2026-03-23)
+
+- Frozen input slice: same 69 paired documents used in PH4E.
+- Frozen objective: explain rule-input incompleteness as root-cause layer.
+- Frozen execution mode: diagnostic-only, read-only artifacts.
+
+### Freeze Gates (definition-to-execution)
+
+- [x] Scope limited to rule-input completeness diagnostics
+- [x] Input slice locked to PH4E paired set
+- [x] Non-goals explicitly frozen
+- [x] Governance synchronization completed
+
+### Acceptance Gates
+- [ ] Per-field completeness matrix produced for paired set
+- [ ] Top-3 missing input-field classes identified and ranked
+- [ ] Gap-to-divergence linkage documented with evidence refs
+- [ ] Operator-readable PH4F summary produced
+- [ ] PH4G recommendation documented
+
+§74 status: **active (definition frozen; next step PH4F_EXECUTION_START)**
 
 ---
 

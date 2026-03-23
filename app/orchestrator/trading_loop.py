@@ -400,19 +400,24 @@ def build_loop_trigger_analysis(
 def build_trading_loop(
     *,
     mode: str | ExecutionMode = ExecutionMode.PAPER,
-    provider: str = "mock",
+    provider: str | None = None,
     loop_audit_path: str | Path = _AUDIT_LOG,
     execution_audit_path: str | Path = _PAPER_EXECUTION_AUDIT_LOG,
     freshness_threshold_seconds: float = 120.0,
     timeout_seconds: int = 10,
 ) -> TradingLoop:
-    """Build the canonical trading loop for explicit paper/shadow run-once execution."""
+    """Build the canonical trading loop for explicit paper/shadow run-once execution.
+
+    provider: market data provider name. If None, reads from APP_MARKET_DATA_PROVIDER
+    (default: "coingecko"). Pass "mock" explicitly in tests.
+    """
     normalized_mode = _normalize_loop_mode(mode)
     allowed, reason = _run_once_guard(normalized_mode)
     if not allowed:
         raise ValueError(reason or "trading_loop_run_once blocked")
 
     settings = get_settings()
+    resolved_provider = provider if provider is not None else settings.market_data_provider
     risk_engine = RiskEngine(_build_risk_limits_from_settings())
     execution_engine = PaperExecutionEngine(
         initial_equity=settings.execution.paper_initial_equity,
@@ -422,7 +427,7 @@ def build_trading_loop(
         audit_log_path=str(execution_audit_path),
     )
     market_data_adapter = create_market_data_adapter(
-        provider=provider,
+        provider=resolved_provider,
         freshness_threshold_seconds=freshness_threshold_seconds,
         timeout_seconds=timeout_seconds,
     )
@@ -445,7 +450,7 @@ async def run_trading_loop_once(
     *,
     symbol: str = "BTC/USDT",
     mode: str | ExecutionMode = ExecutionMode.PAPER,
-    provider: str = "mock",
+    provider: str | None = None,
     analysis_profile: str = "conservative",
     loop_audit_path: str | Path = _AUDIT_LOG,
     execution_audit_path: str | Path = _PAPER_EXECUTION_AUDIT_LOG,

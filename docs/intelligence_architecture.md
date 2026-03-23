@@ -5,17 +5,17 @@
 | Field | Value |
 |---|---|
 | current_phase | `PHASE 4 (active)` |
-| current_sprint | `PH4E_SCORING_CALIBRATION_AUDIT` |
-| next_required_step | `PH4E_EXECUTION_START` |
-| ph4e_status_canonical | `active definition frozen (D-70) - execution-ready, diagnostic-only` |
-| state_note | `canonical rows are authoritative for current PH4 gate state` |
+| current_sprint | `PH4F_RULE_INPUT_COMPLETENESS_AUDIT (definition frozen)` |
+| next_required_step | `PH4F_EXECUTION_START` |
+| ph4e_status | `closed (D-67) — scoring calibration audit complete; §73 frozen anchor` |
+| ph4f_status | `active (definition frozen - D-68) - rule input completeness audit; execution-ready` |
 | baseline | `1519 passed, ruff clean` |
 | ph4b_status | `closed (D-62) — sections 68 and 69 frozen anchors` |
 | ph4c_status | `closed — section 70 frozen audit anchor` |
 | ph4d_status | `closed (D-68) — section 71 frozen anchor` |
-| ph4e_status | `active (definition frozen — D-70) — execution-ready, diagnostic-only` |
-| ph4e_contract | `docs/contracts.md §73 (active definition frozen)` |
-| architecture_status | three-tier stack unchanged; PH4A–PH4D closed (§67–§71); PH4E scoring calibration audit active (§73) |
+| ph4e_contract | `docs/contracts.md §73 (closed)` |
+| ph4f_contract | `docs/contracts.md §74 (active definition frozen)` |
+| architecture_status | three-tier stack unchanged; PH4A–PH4E closed (§67–§73); PH4F input-completeness audit active (§74) |
 
 ---
 
@@ -53,26 +53,27 @@
 - Decision: `PH4E_SCORING_CALIBRATION_AUDIT` selected as next sprint (D-66).
 - Contract: `docs/contracts.md §72` (frozen immutable anchor).
 
-## PH4E Active Sprint (definition frozen — §73, D-70)
+## PH4E Closed Sprint (§73 frozen anchor — D-67)
 
-- Sprint: `PH4E_SCORING_CALIBRATION_AUDIT` (diagnostic scoring audit).
-- Contract: `docs/contracts.md §73` (active definition frozen, D-70 — execution-ready).
-- Scope: per-field scoring input audit to identify root cause of priority_mae=3.13.
-  - Analyze: relevance, impact, novelty, actionable, sentiment fields across 69 paired docs.
-  - Classify: default value assignment vs calibration drift vs missing signal.
-- Constraints: no scoring formula changes · no threshold changes · no rule changes.
-- Output: divergence cluster analysis; top-3 scoring failure modes; PH4F scope recommendation.
+- Sprint: `PH4E_SCORING_CALIBRATION_AUDIT` (diagnostic scoring audit). **Formally closed D-67.**
+- Contract: `docs/contracts.md §73` (immutable frozen anchor — no re-execution permitted).
+- Execution findings (locked):
+  - relevance_score: 41.2% of priority gap; 81.2% of docs return 0.0 (no keyword match)
+  - impact_score: 32.6% of priority gap; always 0.0 by design (needs LLM)
+  - novelty_score: 26.1% of priority gap; always 0.5 by design (needs LLM)
+  - actionable: never set by rule path (needs LLM)
+- Root cause: **defaults by design** — RuleAnalyzer (`app/analysis/rules/rule_analyzer.py` lines 13-18) explicitly documents these as LLM-dependent fields.
+- Classification: architectural input completeness gap, not score formula miscalibration.
+- Consequence: PH4F audits whether LLM layer is consistently triggered to fill these fields.
 
----
+## PH4F Active Sprint (definition frozen — §74, D-68)
 
-## PH4E Canonical Freeze State (authoritative)
-
-- Sprint: `PH4E_SCORING_CALIBRATION_AUDIT`
-- Status: `active (definition frozen, execution-ready)`
-- Next required step: `PH4E_EXECUTION_START`
-- Contract anchor: `docs/contracts.md §73`
-- Scope lock: scoring-divergence diagnostics only on the 69 paired documents
-- Hard non-goals: no scoring/threshold/rule/provider/source/model/runtime changes
+- Sprint: `PH4F_RULE_INPUT_COMPLETENESS_AUDIT` (diagnostic rule-input completeness audit).
+- Contract: `docs/contracts.md §74` (active definition frozen — execution-ready).
+- Scope: audit which rules fail to populate relevance_score, impact_score, actionable; audit whether LLM layer is consistently triggered when rule-path leaves these empty.
+- Input slice: same 69 paired documents used in PH4E.
+- Constraints: no rule changes · no scoring changes · no threshold changes.
+- Output: per-rule input gap map; LLM-layer coverage audit; PH4G scope recommendation.
 
 ## Design Principle
 

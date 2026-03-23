@@ -4016,9 +4016,9 @@ def research_trading_loop_run_once(
         help="Allowed run modes: paper or shadow (live fails closed)",
     ),
     provider: str = typer.Option(
-        "mock",
+        "coingecko",
         "--provider",
-        help="Read-only market-data provider (mock recommended)",
+        help="Read-only market-data provider: coingecko (default, real data) or mock (dev/test)",
     ),
     analysis_profile: str = typer.Option(
         "conservative",
