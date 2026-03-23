@@ -3,9 +3,24 @@
 ## Current State (2026-03-23)
 
 - current_phase: `PHASE 4 (active)`
-- current_sprint: `PH4J_FALLBACK_TAGS_ENRICHMENT (candidate)`
-- next_required_step: `PH4J_DEFINITION_AND_CONTRACT_FREEZE`
-- baseline: `1551 passed, ruff clean`
+- current_sprint: `V-4 Phase 2 complete — DB-First Portfolio Snapshot`
+- next_required_step: `V-4 Phase 3 — PortfolioStateRecord write + full position DB-read`
+- baseline: `1566 passed (15 new), ruff clean, mypy 0 errors`
+
+### V-4 Phase 2 Completion Note (2026-03-23)
+
+**Dual-Write**: `TradingLoop.run_cycle()` now writes every cycle to `TradingCycleRecord` via
+optional `db_session: AsyncSession | None`. Non-fatal — DB errors never stop the loop.
+
+**DB-First**: `build_portfolio_snapshot(db_session=...)` checks DB first. If session is provided
+and records exist → returns `source="db_trading_cycles"` snapshot. Empty DB or no session →
+JSONL fallback (unchanged). Note: DB path returns cycle metadata only (no positions);
+full position state requires JSONL or V-4 Phase 3 (PortfolioStateRecord write).
+
+**Migration**: 0007 already contained both tables. No new migration needed.
+
+**Phase 3 open items**: Write `PortfolioStateRecord` after fill_simulated cycles;
+extend DB-first read to reconstruct full position state from `PortfolioStateRecord.positions_json`.
 
 ---
 
@@ -54,7 +69,7 @@ These findings were addressed in a dedicated refactoring session (2026-03-23).
 | **RF-1** | CLI/MCP monolith split | implemented | e2949d3, b8c0fad |
 | **RF-2** | Working Tree uncommitted | implemented | f32b147, cbcb34c, dea0ec8 |
 | **RF-3** | CORS hardcoded | implemented (prior) | 4d2cfdd |
-| **RF-4** | DB-based aggregation (models + migration) | partial | 25f84d4 |
+| **RF-4** | DB-based aggregation (models + migration) | phase-2-complete | 25f84d4, V-4-P2 |
 | **RF-5** | README/Docs Phase-4 update | implemented | a089ca7, e86e3aa |
 | **RF-6** | CoinGecko default + mock warning | implemented | faabd6c |
 | **RF-7** | Test-file splitting (cli/ + mcp/ submodules) | implemented | a05f1e7 |
