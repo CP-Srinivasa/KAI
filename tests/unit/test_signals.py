@@ -49,6 +49,7 @@ def _make_market_data(
     symbol: str = "BTC/USDT",
     price: float = 65000.0,
     change_pct_24h: float = 3.5,
+    volume_24h: float = 1_000_000.0,
     is_stale: bool = False,
     source: str = "mock",
 ) -> MarketDataPoint:
@@ -56,7 +57,7 @@ def _make_market_data(
         symbol=symbol,
         timestamp_utc="2026-03-21T10:00:00+00:00",
         price=price,
-        volume_24h=1_000_000.0,
+        volume_24h=volume_24h,
         change_pct_24h=change_pct_24h,
         source=source,
         is_stale=is_stale,
@@ -212,8 +213,8 @@ def test_returns_none_if_mixed_sentiment():
 
 
 def test_returns_none_if_confluence_too_low():
-    gen = _generator(min_confluence=2)
-    # Low impact, low relevance, low novelty, no assets, low sentiment → confluence=0
+    # Force all analysis dimensions to 0 AND flat market → confluence=0 < min=3
+    gen = _generator(min_confluence=3)
     analysis = _make_analysis(
         impact_score=0.3,
         relevance_score=0.4,
@@ -222,13 +223,16 @@ def test_returns_none_if_confluence_too_low():
         sentiment_score=0.3,
         sentiment_label=SentimentLabel.BULLISH,
     )
-    signal = gen.generate(analysis, _make_market_data(), "BTC/USDT")
+    # change=0.5% < 2% threshold → no momentum; volume=0 < threshold → no volume confirm
+    md = _make_market_data(change_pct_24h=0.5, volume_24h=0.0)
+    signal = gen.generate(analysis, md, "BTC/USDT")
     assert signal is None
 
 
 # ── Confluence calculation ────────────────────────────────────────────────────
 
-def test_confluence_max_5():
+def test_confluence_max_7():
+    """All 7 dimensions contribute: 5 analysis + price momentum + volume confirm."""
     gen = _generator()
     analysis = _make_analysis(
         impact_score=0.9,
@@ -237,7 +241,24 @@ def test_confluence_max_5():
         affected_assets=["BTC"],
         sentiment_score=0.9,
     )
-    md = _make_market_data()
+    # change=3.5% >= 2% (LONG direction) → momentum; volume=1M >= threshold → confirm
+    md = _make_market_data(change_pct_24h=3.5, volume_24h=1_000_000.0)
+    signal = gen.generate(analysis, md, "BTC/USDT")
+    assert signal is not None
+    assert signal.confluence_count == 7
+
+
+def test_confluence_max_5_analysis_only():
+    """5 analysis dimensions when market data contributes 0 (no momentum, no volume)."""
+    gen = _generator(volume_threshold_usd=10_000_000.0, price_momentum_threshold_pct=50.0)
+    analysis = _make_analysis(
+        impact_score=0.9,
+        relevance_score=0.9,
+        novelty_score=0.9,
+        affected_assets=["BTC"],
+        sentiment_score=0.9,
+    )
+    md = _make_market_data(change_pct_24h=1.0, volume_24h=500_000.0)
     signal = gen.generate(analysis, md, "BTC/USDT")
     assert signal is not None
     assert signal.confluence_count == 5
@@ -245,7 +266,7 @@ def test_confluence_max_5():
 
 def test_confluence_partial():
     gen = _generator(min_confluence=2)
-    # Only 2 points: high impact + asset match
+    # 2 analysis points: high impact + asset match; 0 market points
     analysis = _make_analysis(
         impact_score=0.7,
         relevance_score=0.5,  # below 0.7
@@ -253,7 +274,8 @@ def test_confluence_partial():
         affected_assets=["BTC"],
         sentiment_score=0.4,  # below 0.6 abs
     )
-    md = _make_market_data()
+    # no momentum, no volume
+    md = _make_market_data(change_pct_24h=0.5, volume_24h=0.0)
     signal = gen.generate(analysis, md, "BTC/USDT")
     assert signal is not None
     assert signal.confluence_count == 2
