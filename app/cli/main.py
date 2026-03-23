@@ -5,14 +5,7 @@ from rich.console import Console
 from rich.table import Table
 
 from app.cli.commands.trading import trading_app
-from app.cli.research import (
-    extract_runbook_command_refs,
-    get_invalid_research_command_refs,
-    get_provisional_research_command_names,
-    get_registered_research_command_names,
-    get_research_command_inventory,
-    research_app,
-)
+from app.cli.research import research_app
 from app.core.logging import configure_logging
 from app.core.settings import get_settings
 from app.ingestion.base.interfaces import FetchResult
