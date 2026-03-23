@@ -3,7 +3,10 @@ from __future__ import annotations
 
 import json
 import logging
+from datetime import UTC, datetime
 from pathlib import Path
+
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.domain.document import AnalysisResult
 from app.core.enums import ExecutionMode, SentimentLabel
@@ -24,6 +27,7 @@ from app.risk.engine import RiskEngine
 from app.risk.models import RiskLimits
 from app.signals.generator import SignalGenerator
 from app.signals.models import SignalDirection
+from app.storage.models.trading import TradingCycleRecord
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +55,7 @@ class TradingLoop:
         market_data_adapter: BaseMarketDataAdapter,
         signal_generator: SignalGenerator,
         audit_log_path: str | None = None,
+        db_session: AsyncSession | None = None,
     ) -> None:
         self._risk = risk_engine
         self._exec = execution_engine
@@ -58,6 +63,7 @@ class TradingLoop:
         self._signals = signal_generator
         self._audit_path = Path(audit_log_path or _AUDIT_LOG)
         self._audit_path.parent.mkdir(parents=True, exist_ok=True)
+        self._db_session = db_session
 
     @property
     def portfolio(self) -> PaperPortfolio:
@@ -90,13 +96,15 @@ class TradingLoop:
             notes.append(f"market_data_error:{exc}")
 
         if market_data is None:
-            return self._build_cycle(
+            cycle = self._build_cycle(
                 cycle_id,
                 started_at,
                 symbol,
                 CycleStatus.NO_MARKET_DATA,
                 notes=notes + [f"no_market_data:{symbol}"],
             )
+            await self._write_db(cycle)
+            return cycle
 
         adapter_note = f"market_data_source:{market_data.source}"
         notes.append(adapter_note)
@@ -109,7 +117,7 @@ class TradingLoop:
                 market_data.source,
                 market_data.freshness_seconds,
             )
-            return self._build_cycle(
+            cycle = self._build_cycle(
                 cycle_id,
                 started_at,
                 symbol,
@@ -120,6 +128,8 @@ class TradingLoop:
                     f"freshness_seconds:{market_data.freshness_seconds:.1f}",
                 ],
             )
+            await self._write_db(cycle)
+            return cycle
 
         signal = None
         try:
@@ -128,7 +138,7 @@ class TradingLoop:
             notes.append(f"signal_error:{exc}")
 
         if signal is None:
-            return self._build_cycle(
+            cycle = self._build_cycle(
                 cycle_id,
                 started_at,
                 symbol,
@@ -136,6 +146,8 @@ class TradingLoop:
                 market_data_fetched=True,
                 notes=notes + ["signal_filtered_or_not_generated"],
             )
+            await self._write_db(cycle)
+            return cycle
 
         order_side = "buy" if signal.direction == SignalDirection.LONG else "sell"
         current_positions = len(self._exec.portfolio.positions)
@@ -149,7 +161,7 @@ class TradingLoop:
         )
 
         if not risk_result.approved:
-            return self._build_cycle(
+            cycle = self._build_cycle(
                 cycle_id,
                 started_at,
                 symbol,
@@ -160,6 +172,8 @@ class TradingLoop:
                 risk_check_id=risk_result.check_id,
                 notes=notes + risk_result.violations,
             )
+            await self._write_db(cycle)
+            return cycle
 
         equity = self._exec.portfolio.cash
         size_result = self._risk.calculate_position_size(
@@ -170,7 +184,7 @@ class TradingLoop:
         )
 
         if not size_result.approved or size_result.position_size_units <= 0:
-            return self._build_cycle(
+            cycle = self._build_cycle(
                 cycle_id,
                 started_at,
                 symbol,
@@ -182,6 +196,8 @@ class TradingLoop:
                 risk_check_id=risk_result.check_id,
                 notes=notes + [size_result.rationale],
             )
+            await self._write_db(cycle)
+            return cycle
 
         order = None
         fill = None
@@ -199,7 +215,7 @@ class TradingLoop:
             fill = self._exec.fill_order(order, current_price=signal.entry_price)
         except Exception as exc:  # noqa: BLE001
             notes.append(f"execution_error:{exc}")
-            return self._build_cycle(
+            cycle = self._build_cycle(
                 cycle_id,
                 started_at,
                 symbol,
@@ -212,6 +228,8 @@ class TradingLoop:
                 order_id=order.order_id if order else None,
                 notes=notes,
             )
+            await self._write_db(cycle)
+            return cycle
 
         self._risk.update_daily_loss(
             realized_pnl_usd=self._exec.portfolio.realized_pnl_usd,
@@ -234,6 +252,7 @@ class TradingLoop:
             notes=notes,
         )
         self._write_audit(cycle)
+        await self._write_db(cycle)
         return cycle
 
     def _build_cycle(
@@ -295,6 +314,36 @@ class TradingLoop:
                 handle.write(json.dumps(record) + "\n")
         except Exception as exc:  # noqa: BLE001
             logger.error("[LOOP] Audit write failed: %s", exc)
+
+    async def _write_db(self, cycle: LoopCycle) -> None:
+        """Dual-write cycle to DB. Non-fatal: DB errors must never stop the loop."""
+        if self._db_session is None:
+            return
+        try:
+            db_record = TradingCycleRecord(
+                cycle_id=cycle.cycle_id,
+                symbol=cycle.symbol,
+                mode="paper",
+                provider="coingecko",
+                analysis_profile="conservative",
+                status=cycle.status.value,
+                market_data_fetched=cycle.market_data_fetched,
+                signal_generated=cycle.signal_generated,
+                risk_approved=cycle.risk_approved,
+                order_created=cycle.order_created,
+                fill_simulated=cycle.fill_simulated,
+                decision_id=cycle.decision_id,
+                risk_check_id=cycle.risk_check_id,
+                order_id=cycle.order_id,
+                started_at=cycle.started_at,
+                completed_at=cycle.completed_at,
+                notes=list(cycle.notes),
+                created_at=datetime.now(UTC),
+            )
+            self._db_session.add(db_record)
+            await self._db_session.flush()
+        except Exception as exc:  # noqa: BLE001
+            logger.error("[LOOP] DB dual-write failed (non-fatal): %s", exc)
 
 
 def _normalize_loop_mode(mode: str | ExecutionMode) -> ExecutionMode:
