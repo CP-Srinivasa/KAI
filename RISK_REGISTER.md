@@ -5,7 +5,7 @@
 - current_phase: `PHASE 4 (active)`
 - current_sprint: `PH4K_TAG_SIGNAL_UTILITY_REVIEW (definition frozen)`
 - next_required_step: `PH4K_EXECUTION_START`
-- baseline: `1551 passed, ruff clean`
+- baseline: `1554 passed, ruff clean`
 
 ### PH4K Freeze Note (2026-03-23)
 
@@ -93,4 +93,4 @@ These findings were addressed in a dedicated refactoring session (2026-03-23).
 - PH4I findings: _fallback_market_scope enriched; market_scope resolved for docs with crypto_assets/tickers/title keywords.
 - PH4J findings: fallback tags enriched with categories, affected_assets, source_name, market_scope.value; keyword-hit 4→7, zero-hit 1→4, assets-only 0→4; PH4J formally closed (D-80); §78 frozen anchor.
 - PH4K candidate: PH4K_TAG_SIGNAL_UTILITY_REVIEW — next lever is operator utility, not more raw expansion.
-- Technical baseline: `1551 passed`, `ruff clean`.
+- Technical baseline: `1554 passed`, `ruff clean`.

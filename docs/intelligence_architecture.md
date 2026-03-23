@@ -13,7 +13,7 @@
 | ph4h_status | `closed (D-75) — Option B: I-13 permanent; actionable LLM-only; §76 frozen anchor` |
 | ph4i_status | `closed (D-78) — market_scope enrichment; §77 frozen anchor` |
 | ph4j_status | `closed (D-81) — tags enrichment verified; §78 frozen anchor` |
-| baseline | `1551 passed, ruff clean` |
+| baseline | `1554 passed, ruff clean` |
 | ph4b_status | `closed (D-62) — sections 68 and 69 frozen anchors` |
 | ph4c_status | `closed — section 70 frozen audit anchor` |
 | ph4d_status | `closed — section 71 frozen anchor` |
@@ -98,7 +98,7 @@
   - Actionable heuristic intervention: **reverted** â€” violates I-13 invariant (rule-only priority ceiling max 5)
   - I-13 invariant: `test_rule_only_priority_ceiling_is_at_most_five` enforces priority â‰¤ 5 for rule-only analysis
   - The +1 actionable bonus in `compute_priority()` would push priority to 7, breaching I-13
-- Baseline confirmed unchanged: `1551 passed, ruff clean`.
+- Baseline confirmed unchanged: `1554 passed, ruff clean`.
 
 ## PH4H Closed Policy Sprint (frozen anchor)
 

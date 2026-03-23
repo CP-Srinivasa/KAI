@@ -17,7 +17,7 @@
 - PH4K_TAG_SIGNAL_UTILITY_REVIEW opened as candidate; §79 contract candidate.
 - All 10 governance docs aligned: PH4J=closed, PH4K=candidate.
 - No PH4K execution before `PH4K_DEFINITION_AND_CONTRACT_FREEZE`.
-- Baseline unchanged: `1551 passed, ruff clean`.
+- Baseline unchanged: `1554 passed, ruff clean`.
 
 ---
 
@@ -60,7 +60,7 @@
 - PH4I_FALLBACK_MARKET_SCOPE_ENRICHMENT formally closed.
 - S77 is now a frozen immutable anchor.
 - PH4J_FALLBACK_TAGS_ENRICHMENT defined as next sprint candidate (PH4F: tags empty 69/69).
-- New baseline: 1551 passed, ruff clean.
+- New baseline: 1554 passed, ruff clean.
 - Governance state advanced to:
   - current_sprint = PH4J_FALLBACK_TAGS_ENRICHMENT (candidate)
   - next_required_step = PH4J_DEFINITION_AND_CONTRACT_FREEZE

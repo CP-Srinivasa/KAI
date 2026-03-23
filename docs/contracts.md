@@ -7,7 +7,7 @@
 | current_phase | `PHASE 4 (active)` |
 | current_sprint | `PH4K_TAG_SIGNAL_UTILITY_REVIEW (definition frozen)` |
 | next_required_step | `PH4K_EXECUTION_START` |
-| baseline | `1551 passed, ruff clean` |
+| baseline | `1554 passed, ruff clean` |
 | active_contracts | §79 (PH4K, definition frozen) · §78–§67 (closed/frozen anchors) |
 | cli_canonical_count | 53 (frozen §65) |
 

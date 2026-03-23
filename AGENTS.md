@@ -18,7 +18,7 @@
 | ph4i_status | `closed (D-78) -- market_scope enrichment complete; S77 frozen anchor` |
 | ph4j_status | `closed -- tags enrichment: keyword-hit 4->7, zero-hit 1->4, assets-only 0->4` |
 | ph4k_status | `definition frozen -- diagnostic-only utility review; execution authorized` |
-| baseline | `1551 passed, ruff clean` |
+| baseline | `1554 passed, ruff clean` |
 | cli_canonical_count | 53 |
 | provisional_cli_count | 0 |
 | phase3_status | `closed (2026-03-22) -- GO` |
@@ -205,6 +205,7 @@ Jede Aufgabe gilt als **nicht abgeschlossen**, solange einer dieser Gates nicht 
 | **Spec-Konformität** | Implementierung entspricht der referenzierten Spec |
 | **AGENTS.md** | Aktualisiert, wenn Interface oder Modul geändert |
 | **Failure-Handling** | Fehlerszenarien explizit behandelt (kein `pass` in `except`) |
+| **Working Tree** | `git status` zeigt `0 uncommitted files` — Sprint ist erst abgeschlossen, wenn der Working Tree sauber ist. Governance-Docs, Tests und Code müssen im selben Commit stehen. |
 
 ---
 

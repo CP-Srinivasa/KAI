@@ -1,6 +1,6 @@
 # KNOWLEDGE_BASE.md - KAI Canonical Knowledge Index
 
-> Stand: 2026-03-23 | Phase 4 active | Sprint: PH4K_TAG_SIGNAL_UTILITY_REVIEW (definition frozen) | Next: PH4K_EXECUTION_START | Baseline: 1551 passed, ruff clean
+> Stand: 2026-03-23 | Phase 4 active | Sprint: PH4K_TAG_SIGNAL_UTILITY_REVIEW (definition frozen) | Next: PH4K_EXECUTION_START | Baseline: 1554 passed, ruff clean
 
 ## Active Gate
 
@@ -35,4 +35,4 @@
 ## PH4I Frozen Anchor
 
 - `_fallback_market_scope()` enrichment is closed and frozen (section 77, D-78).
-- Baseline remains `1551 passed, ruff clean`.
+- Baseline remains `1554 passed, ruff clean`.

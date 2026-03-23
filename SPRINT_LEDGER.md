@@ -5,7 +5,7 @@
 - phase_4_status: `active`
 - active_sprint: `PH4K_TAG_SIGNAL_UTILITY_REVIEW (definition frozen)`
 - next_required_step: `PH4K_EXECUTION_START`
-- baseline: `1551 passed, ruff clean`
+- baseline: `1554 passed, ruff clean`
 
 | Sprint | Date | Status | Outcome |
 |---|---|---|---|
@@ -20,3 +20,23 @@
 | PH4I | 2026-03-23 | closed | market_scope enrichment complete |
 | PH4J | 2026-03-23 | closed | Live verification passed; keyword-hit 4->7, zero-hit 1->4, assets-only 0->4; 29/29 pipeline tests; I-13 intact |
 | PH4K | 2026-03-23 | definition frozen | Tag signal utility review; execution authorized (diagnostic-only scope) |
+
+## Tech Sprints (nicht Phase-4-gebunden)
+
+| Sprint | Date | Status | Outcome |
+|---|---|---|---|
+| N-1 MCP-Split | 2026-03-23 | **closed** | mcp_server.py 2471 → 334 Zeilen; tools/ Submodule; tests grün |
+| N-2 gitignore | 2026-03-23 | **closed** | .hypothesis/ in .gitignore |
+| N-3 CLI-Test-Migration | tbd | open | test_cli.py (~2738 Zeilen) → tests/unit/cli/ migrieren |
+| N-4 Dual-Write Phase 3 | tbd | open | PortfolioStateRecord-Write-Pfad; erst nach DB/CI-Setup |
+| N-5 DoD-Gate | 2026-03-23 | **closed** | Working-Tree-Gate in AGENTS.md §8 verankert |
+
+## DoD-Gate (verbindlich ab sofort)
+
+Ein Sprint gilt als **nicht abgeschlossen**, solange:
+- `git status` uncommitted files zeigt
+- `pytest` fehlschlägt (außer pre-existing DB-Setup-Fehler)
+- `ruff check` Fehler meldet
+
+Governance-Docs, Code und Tests müssen im selben Commit committiert werden.
+Sprint-Closeout-Commits ohne sauberen Working Tree sind nicht zulässig.
