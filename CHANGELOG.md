@@ -1,22 +1,17 @@
 # CHANGELOG.md
 
-## 2026-03-21
+## 2026-03-23 - PH4E contract and acceptance freeze completed
 
-### Added
+### Applied
 
-- Typed `ExecutionMode` contract with fail-closed live mode validation
-- Append-only operator review journal and resolution tracking
-- Root platform documents: architecture, security, risk policy, runbook, Telegram interface
-- `CONFIG_SCHEMA.json` and `DECISION_SCHEMA.json`
-- Disabled-by-default persona, TTS, STT, and avatar interface stubs
-- Extended Telegram operator commands for exposure, signals, journal, approve/reject, daily summary, and incident intake
+- PH4E contract frozen as diagnostic-only.
+- PH4E acceptance criteria narrowed and locked before execution.
+- Governance state advanced to:
+  - `current_sprint = PH4E_SCORING_CALIBRATION_AUDIT`
+  - `next_required_step = PH4E_EXECUTION_START`
 
-### Changed
+### Guardrails
 
-- KAI assumptions hardened in `ASSUMPTIONS.md`
-- Telegram operator audit records now keep command arguments
-
-### Security
-
-- `live` requires explicit aligned settings and fails closed otherwise
-- operator approvals over Telegram remain audit-only unless a future explicit approval queue is connected
+- No scoring, threshold, provider, source, rule, or runtime behavior changes were introduced.
+- No product/runtime feature was opened in this governance sync.
+- Baseline remains `1519 passed`, `ruff clean`.

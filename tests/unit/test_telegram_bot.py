@@ -273,20 +273,56 @@ def test_telegram_command_inventory_references_registered_cli_research_commands(
             ],
         ),
         (
-            "/daily_summary",
-            "_get_decision_pack_summary",
+            "/resolution",
+            "_get_resolution_summary",
             {
-                "overall_status": "blocking",
-                "blocking_count": 1,
-                "review_required_count": 2,
-                "action_queue_count": 3,
+                "journal_status": "open",
+                "total_count": 6,
+                "open_count": 2,
+                "resolved_count": 4,
                 "execution_enabled": False,
                 "write_back_allowed": False,
             },
             [
-                "*Daily Summary (Decision Pack)*",
-                "overall_status=`blocking`",
+                "*Resolution (Read-Only)*",
+                "resolution_status=`open`",
+                "Ref: `research resolution-summary`",
+            ],
+        ),
+        (
+            "/decision_pack",
+            "_get_decision_pack_summary",
+            {
+                "overall_status": "blocking",
+                "blocking_count": 1,
+                "action_queue_summary": {"operator_action_count": 2},
+                "execution_enabled": False,
+                "write_back_allowed": False,
+            },
+            [
+                "*Decision Pack (Read-Only)*",
+                "decision_pack_status=`blocking`",
+                "operator_action_count=`2`",
                 "Ref: `research decision-pack-summary`",
+            ],
+        ),
+        (
+            "/daily_summary",
+            "_get_daily_operator_summary",
+            {
+                "readiness_status": "warning",
+                "cycle_count_today": 2,
+                "position_count": 1,
+                "total_exposure_pct": 18.5,
+                "decision_pack_status": "warning",
+                "open_incidents": 1,
+                "execution_enabled": False,
+                "write_back_allowed": False,
+            },
+            [
+                "*Daily Summary (Canonical Operator View)*",
+                "readiness_status=`warning`",
+                "Ref: `research daily-summary`",
             ],
         ),
         (
@@ -363,6 +399,109 @@ async def test_read_command_fail_closed_on_surface_error(tmp_path, monkeypatch):
     await bot.process_update({"message": {"chat": {"id": 12345}, "text": "/status"}})
 
     assert len(sent_messages) == 1
+    assert "fail-closed" in sent_messages[0].lower()
+    assert "No execution side effect was performed." in sent_messages[0]
+
+
+@pytest.mark.asyncio
+async def test_resolution_command_degrades_on_loader_error(tmp_path, monkeypatch):
+    bot = _bot(tmp_path)
+    sent_messages: list[str] = []
+
+    async def fake_send(_chat_id: int, text: str) -> bool:
+        sent_messages.append(text)
+        return True
+
+    async def failing_loader() -> dict[str, Any]:
+        raise RuntimeError("resolution unavailable")
+
+    monkeypatch.setattr(bot, "_send", fake_send)
+    monkeypatch.setattr(bot, "_get_resolution_summary", failing_loader)
+
+    await bot.process_update({"message": {"chat": {"id": 12345}, "text": "/resolution"}})
+
+    assert len(sent_messages) == 1
+    assert "Resolution" in sent_messages[0]
+    assert "fail-closed" in sent_messages[0].lower()
+    assert "No execution side effect was performed." in sent_messages[0]
+
+
+@pytest.mark.asyncio
+async def test_decision_pack_command_degrades_on_loader_error(tmp_path, monkeypatch):
+    bot = _bot(tmp_path)
+    sent_messages: list[str] = []
+
+    async def fake_send(_chat_id: int, text: str) -> bool:
+        sent_messages.append(text)
+        return True
+
+    async def failing_loader() -> dict[str, Any]:
+        raise RuntimeError("decision pack unavailable")
+
+    monkeypatch.setattr(bot, "_send", fake_send)
+    monkeypatch.setattr(bot, "_get_decision_pack_summary", failing_loader)
+
+    await bot.process_update(
+        {"message": {"chat": {"id": 12345}, "text": "/decision_pack"}}
+    )
+
+    assert len(sent_messages) == 1
+    assert "Decision Pack" in sent_messages[0]
+    assert "fail-closed" in sent_messages[0].lower()
+    assert "No execution side effect was performed." in sent_messages[0]
+
+
+@pytest.mark.asyncio
+async def test_alert_status_command_returns_read_only_payload(tmp_path, monkeypatch):
+    bot = _bot(tmp_path)
+    sent_messages: list[str] = []
+
+    async def fake_send(_chat_id: int, text: str) -> bool:
+        sent_messages.append(text)
+        return True
+
+    async def fake_loader() -> dict[str, Any]:
+        return {
+            "report_type": "alert_audit_summary",
+            "total_count": 3,
+            "digest_count": 1,
+            "by_channel": {"telegram": 3},
+            "latest_dispatched_at": "2026-03-22T10:00:00+00:00",
+            "execution_enabled": False,
+            "write_back_allowed": False,
+        }
+
+    monkeypatch.setattr(bot, "_send", fake_send)
+    monkeypatch.setattr(bot, "_get_alert_audit_summary", fake_loader)
+
+    await bot.process_update({"message": {"chat": {"id": 12345}, "text": "/alert_status"}})
+
+    assert len(sent_messages) == 1
+    assert "Alert Status" in sent_messages[0]
+    assert "total_count" in sent_messages[0]
+    assert "execution_enabled=`False`" in sent_messages[0]
+    assert "write_back_allowed=`False`" in sent_messages[0]
+
+
+@pytest.mark.asyncio
+async def test_alert_status_command_degrades_on_loader_error(tmp_path, monkeypatch):
+    bot = _bot(tmp_path)
+    sent_messages: list[str] = []
+
+    async def fake_send(_chat_id: int, text: str) -> bool:
+        sent_messages.append(text)
+        return True
+
+    async def failing_loader() -> dict[str, Any]:
+        raise RuntimeError("alert audit unavailable")
+
+    monkeypatch.setattr(bot, "_send", fake_send)
+    monkeypatch.setattr(bot, "_get_alert_audit_summary", failing_loader)
+
+    await bot.process_update({"message": {"chat": {"id": 12345}, "text": "/alert_status"}})
+
+    assert len(sent_messages) == 1
+    assert "Alert Status" in sent_messages[0]
     assert "fail-closed" in sent_messages[0].lower()
     assert "No execution side effect was performed." in sent_messages[0]
 
@@ -579,6 +718,8 @@ async def test_help_lists_hardened_commands(tmp_path, monkeypatch):
     help_text = sent_messages[0]
     assert "/signals - Read-only signal handoff" in help_text
     assert "/journal - Review journal summary" in help_text
+    assert "/resolution - Read-only resolution summary" in help_text
+    assert "/decision_pack - Read-only decision pack summary" in help_text
     assert "/positions - Read-only paper positions" in help_text
     assert "/exposure - Read-only paper exposure" in help_text
     assert "/approve <decision_ref> - Audit-only approval intent" in help_text

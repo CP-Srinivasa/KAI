@@ -414,6 +414,98 @@ async def get_operator_decision_pack(request: Request, response: Response) -> di
     )
 
 
+@router.get("/daily-summary")
+async def get_operator_daily_summary(
+    request: Request,
+    response: Response,
+    handoff_path: str | None = None,
+    state_path: str = "artifacts/active_route_profile.json",
+    alert_audit_dir: str = "artifacts",
+    artifacts_dir: str = "artifacts",
+    stale_after_hours: int = 24,
+    stale_after_days: float = 30.0,
+    loop_audit_path: str = "artifacts/trading_loop_audit.jsonl",
+    loop_last_n: int = 50,
+    portfolio_audit_path: str = "artifacts/paper_execution_audit.jsonl",
+    market_data_provider: str = "coingecko",
+    freshness_threshold_seconds: float = 120.0,
+    timeout_seconds: int = 10,
+    review_journal_path: str = "artifacts/operator_review_journal.jsonl",
+) -> dict[str, object]:
+    """Canonical operator daily summary surface (read-only)."""
+    return await _resolve_read_payload(
+        request,
+        response,
+        error_code="daily_summary_unavailable",
+        loader=lambda: mcp_server.get_daily_operator_summary(
+            handoff_path=handoff_path,
+            state_path=state_path,
+            alert_audit_dir=alert_audit_dir,
+            artifacts_dir=artifacts_dir,
+            stale_after_hours=stale_after_hours,
+            retention_stale_after_days=stale_after_days,
+            loop_audit_path=loop_audit_path,
+            loop_last_n=loop_last_n,
+            portfolio_audit_path=portfolio_audit_path,
+            market_data_provider=market_data_provider,
+            freshness_threshold_seconds=freshness_threshold_seconds,
+            timeout_seconds=timeout_seconds,
+            review_journal_path=review_journal_path,
+        ),
+    )
+
+
+@router.get("/review-journal")
+async def get_operator_review_journal(
+    request: Request,
+    response: Response,
+    journal_path: str = "artifacts/operator_review_journal.jsonl",
+) -> dict[str, object]:
+    """Canonical operator review-journal surface (read-only)."""
+    return await _resolve_read_payload(
+        request,
+        response,
+        error_code="review_journal_unavailable",
+        loader=lambda: mcp_server.get_review_journal_summary(
+            journal_path=journal_path,
+        ),
+    )
+
+
+@router.get("/resolution-summary")
+async def get_operator_resolution_summary(
+    request: Request,
+    response: Response,
+    journal_path: str = "artifacts/operator_review_journal.jsonl",
+) -> dict[str, object]:
+    """Canonical operator resolution summary surface (read-only)."""
+    return await _resolve_read_payload(
+        request,
+        response,
+        error_code="resolution_summary_unavailable",
+        loader=lambda: mcp_server.get_resolution_summary(
+            journal_path=journal_path,
+        ),
+    )
+
+
+@router.get("/alert-audit")
+async def get_operator_alert_audit(
+    request: Request,
+    response: Response,
+    audit_dir: str = "artifacts",
+) -> dict[str, object]:
+    """Canonical operator alert audit summary surface (read-only)."""
+    return await _resolve_read_payload(
+        request,
+        response,
+        error_code="alert_audit_unavailable",
+        loader=lambda: mcp_server.get_alert_audit_summary(
+            audit_dir=audit_dir,
+        ),
+    )
+
+
 @router.get("/portfolio-snapshot")
 async def get_operator_portfolio_snapshot(
     request: Request,

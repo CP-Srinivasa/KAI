@@ -1,5 +1,26 @@
 # AGENTS.md — KAI Platform
 
+## Current State (2026-03-23)
+
+| Field | Value |
+|---|---|
+| current_phase | `PHASE 4 (active)` |
+| current_sprint | `PH4E_SCORING_CALIBRATION_AUDIT` |
+| next_required_step | `PH4E_EXECUTION_START` |
+| ph4e_status_canonical | `active definition frozen (D-70) - execution-ready, diagnostic-only` |
+| state_note | `canonical rows at top are authoritative for current gate state` |
+| ph4a_status | `closed (D-53) — immutable baseline anchor (§67)` |
+| ph4b_status | `closed (D-62) — paired_count=69; root cause: keyword coverage blindness` |
+| ph4c_status | `closed — rule-keyword gap audit; top-3 gaps: macro, regulatory, AI` |
+| ph4d_status | `closed (D-68) — 56 keywords added; zero-hit 42%→37.7%; §71 frozen anchor` |
+| ph4e_status | `active (definition frozen — D-70) — scoring calibration audit; execution start authorized` |
+| baseline | `1519 passed, ruff clean` |
+| cli_canonical_count | 53 |
+| provisional_cli_count | 0 |
+| phase3_status | `closed (2026-03-22) — GO` |
+| phase4_status | `active — PH4E scoring calibration audit (definition)` |
+---
+
 > **Verbindliches Betriebsdokument für alle Coding-Agenten.**
 > Claude Code · OpenAI Codex · Google Antigravity
 > Dieses Dokument lesen, bevor eine einzige Zeile Code angefasst wird.
@@ -505,6 +526,71 @@ alembic revision --autogenerate -m "..."  # neue Migration erstellen
 
 **Test-Stand**: 1470 passed, 8 failed (stale spec — unveraendert bis Sprint 43+). Definition Sprint 44 abgeschlossen 2026-03-21.
 
-| P50 Operator API Hardening & Request Governance | ✅ Sprint 44+44C — implementiert und eingefroren | Transport-/Governance-Layer auf `app/api/routers/operator.py` (597 Zeilen). **Request-Identity**: `bind_operator_request_context` Dependency — `X-Request-ID` (Format: `req_<hex>`) + `X-Correlation-ID` (default = request_id). **Idempotency** (REQUIRED): `Idempotency-Key` Header Pflicht für guarded POST — Replay bei gleichem Key+Payload-SHA256, HTTP 409 `idempotency_key_conflict` bei Key-Konflikt, `OrderedDict` FIFO maxlen=256 Thread-safe. **Rate-Limiter**: Sliding-Window 5 req/30s pro `token_<sha256[:16]>` (operator_subject) → HTTP 429 `guarded_rate_limited`. **Error-Shape**: verschachtelt `{error: {code, message, request_id, correlation_id}, execution_enabled: false, write_back_allowed: false}`. **Audit**: `artifacts/operator_api_guarded_audit.jsonl` (nur guarded POST, never-raise, keine Secrets). **Auth-Codes**: `operator_api_disabled` / `missing_authorization_header` / `invalid_authorization_scheme` / `invalid_api_key`. **Test-Reset**: `_reset_operator_guard_state_for_tests()`. Sprint-44-Tests (20 in `test_api_operator.py`): Auth-fail-closed, request_id passthrough, correlation_id, read-error-shape, run-once idempotency required, modes, live fail-closed, idempotency replay, idempotency conflict, rate-limit. Gesamt: **1491 passed, 0 failed**. §55 (Historischer Entwurf) + §55C contracts.md, I-331–I-340+I-331C–I-340C intelligence_architecture.md, A-073–A-078+A-073C–A-078C ASSUMPTIONS.md. |
+| P50 Operator API Hardening & Request Governance | ✅ Sprint 44+44C — implementiert und eingefroren | Transport-/Governance-Layer auf `app/api/routers/operator.py` (597 Zeilen). **Request-Identity**: `bind_operator_request_context` Dependency — `X-Request-ID` (Format: `req_<hex>`) + `X-Correlation-ID` (default = request_id). **Idempotency** (REQUIRED): `Idempotency-Key` Header Pflicht für guarded POST — Replay bei gleichem Key+Payload-SHA256, HTTP 409 `idempotency_key_conflict` bei Key-Konflikt, `OrderedDict` FIFO maxlen=256 Thread-safe. **Rate-Limiter**: Sliding-Window 5 req/30s pro `token_<sha256[:16]>` (operator_subject) → HTTP 429 `guarded_rate_limited`. **Error-Shape**: verschachtelt `{error: {code, message, request_id, correlation_id}, execution_enabled: false, write_back_allowed: false}`. **Audit**: `artifacts/operator_api_guarded_audit.jsonl` (nur guarded POST, never-raise, keine Secrets). **Auth-Codes**: `operator_api_disabled` / `missing_authorization_header` / `invalid_authorization_scheme` / `invalid_api_key`. **Test-Reset**: `_reset_operator_guard_state_for_tests()`. Sprint-44-Tests (20 in `test_api_operator.py`): Auth-fail-closed, request_id passthrough, correlation_id, read-error-shape, run-once idempotency required, modes, live fail-closed, idempotency replay, idempotency conflict, rate-limit. Gesamt: **1498 passed, 0 failed** (kanonischer Referenzstand nach S45C Freeze). §55 (Historischer Entwurf) + §55C contracts.md, I-331–I-340+I-331C–I-340C intelligence_architecture.md, A-073–A-078+A-073C–A-078C ASSUMPTIONS.md. |
 
-**Test-Stand**: 1491 Tests passing, 0 failing, ruff clean (2026-03-22) — Vollvalidierung grün: alle Sprints 1-44+44C ✅
+**Test-Stand**: 1498 Tests passing, 0 failing, ruff clean (2026-03-22) — kanonischer Referenzstand nach S45C Freeze ✅
+
+
+| P51 Daily Operator View — S45_OPERATOR_USABILITY_BASELINE | ✅ Sprint 45 — implementiert (Codex) | Kanonischer Daily Operator View fuer Phase 2. **MCP**: `get_daily_operator_summary(...)` delegiert ausschliesslich an bestehende Read-Tools (`get_operational_readiness_summary`, `get_recent_trading_cycles`, `get_paper_portfolio_snapshot`, `get_paper_exposure_summary`, `get_decision_pack_summary`, `get_review_journal_summary`) mit best-effort Aggregation und `execution_enabled=false` / `write_back_allowed=false`. **CLI**: `trading-bot research daily-summary` (+ `--json`). **API**: `GET /operator/daily-summary` unter bestehenden Operator-Auth/Request-Governance-Guardrails. **Telegram**: `/daily_summary` delegiert auf denselben MCP-Daily-Pfad. Kein neuer Datenpfad, kein Live-Pfad, keine DB-Aenderung. §56 contracts.md, I-341–I-350 intelligence_architecture.md. |
+
+**Test-Stand**: Sprint 45 implementiert; Vollvalidierung siehe aktuelle pytest-/ruff-Laeufe.
+
+
+
+| P52 Operator Dashboard Baseline — S46_OPERATOR_DASHBOARD_BASELINE | ✅ Sprint 46 — implementiert (Codex) | Minimale visuelle Operator-Sicht via FastAPI HTMLResponse ist umgesetzt. **Route**: `GET /dashboard` in `app/api/routers/dashboard.py`. **Rendering**: f-string HTML mit Inline-CSS, kein Jinja2, kein JS, kein CSS-Framework, Auto-Refresh 60s. **Datenquelle**: ausschliesslich `mcp_server.get_daily_operator_summary()` — kein zweiter Aggregat-Pfad. **Auth-Modell**: fail-closed bei leerem APP_API_KEY (503 `dashboard_disabled`); Browser-Bearer nicht erforderlich fuer `/dashboard` (middleware whitelist + server-side rendering). **Degradation**: Fehler im Daily-Summary-Call liefern HTML-Statusseite `unavailable`, kein Stack-Trace. **Einbindung**: `app/api/main.py` includet `dashboard.router`; `app/security/auth.py` laesst `/dashboard` read-only zu. **Tests**: `tests/unit/test_api_dashboard.py` (5/5 passing). §57 contracts.md, I-351–I-360 intelligence_architecture.md. |
+
+**Test-Stand**: **1510 passed, ruff clean** (S47 baseline 2026-03-22). Kein `/static/dashboard.html` — einziger Pfad ist `GET /dashboard`. I-361..I-363 Freeze-Invarianten. §57C in `docs/contracts.md`.
+| P53 Operator Drilldown & History Baseline — S47_OPERATOR_DRILLDOWN_HISTORY_BASELINE | ✅ Sprint 47 — Codex-Implementierung geliefert | Zwei Operator-API-Endpoints als pure Delegation auf bestehende MCP-Tools: `GET /operator/review-journal` → `mcp_server.get_review_journal_summary()`, `GET /operator/resolution-summary` → `mcp_server.get_resolution_summary()`. Gleiche Error-Shape, gleiche Auth, gleiche Governance wie alle Operator-Endpoints. API-Coverage ergänzt (success + fail-closed je Endpoint) in `tests/unit/test_api_operator.py`. §59 contracts.md, I-364..I-368 intelligence_architecture.md. |
+
+**Test-Stand Sprint 47**: Codex-Scope geliefert (2026-03-22), Vollvalidierung grün: **1510 passed, ruff clean**.
+
+| P54 Operator Surface Completion — S48_OPERATOR_SURFACE_COMPLETION | ✅ Sprint 48 abgeschlossen | Umsetzung strikt gemäß §61 (kanonisch): Telegram `/resolution` und `/decision_pack` als delegation-only Read-Surfaces (`_load_canonical_surface`), Dashboard mit statischer Drilldown-Referenz (`/operator/readiness`, `/operator/decision-pack`, `/operator/trading-loop/recent-cycles`, `/operator/review-journal`, `/operator/resolution-summary`) ohne JS und ohne zweiten Backend-Call. Tests ergänzt: Telegram Mapping/Degradation/Help + Dashboard Drilldown-Referenz. Kein neuer Aggregatpfad, keine Trading-Semantik, keine Subpage-Architektur. |
+
+| P55 Operator Alerting / Digest Baseline — S49_OPERATOR_ALERTING_DIGEST_BASELINE | ✅ Sprint 49 abgeschlossen (2026-03-22) | MCP `get_alert_audit_summary()`, `GET /operator/alert-audit`, Telegram `/alert_status`, CLI `research alert-audit-summary`. Keine Pipeline-Änderung, kein neues Aggregat. §62 contracts.md, I-378–I-383 intelligence_architecture.md. |
+
+| P56 Phase-3 Canonical Consolidation — S50/S50A | ✅ S50A frozen (2026-03-22) | Phase 2 formal geschlossen. Phase 3 eröffnet mit S50_CANONICAL_CONSOLIDATION_BASELINE (umbrella). S50A: `CANONICAL_SURFACE_INVENTORY.md` erstellt und eingefroren. Claude Governance-Review: PASS. F-S50A-001 (15 provisional CLI) → S50B. Baseline: 1519 passed, ruff clean. §63 contracts.md. |
+
+| P57 Phase-3 CLI Governance — S50B | ✅ classification complete (2026-03-22) | S50B: alle 15 provisional CLI commands promoted to canonical (D-29). CLI canonical count: 38 → 53. F-S50A-001 resolved. Provisional set: 0. §64 contracts.md. Baseline unverändert: 1519 passed, ruff clean. |
+
+| P58 Phase-3 CLI Contract Freeze — S50C | ✅ closed (2026-03-22) | S50C: §65 CLI contract frozen. 53/53 canonical commands confirmed reachable. 0 provisional. Governance docs contradiction-free. Baseline: 1519 passed, ruff clean. |
+
+| P59 Phase-3 Doc Hygiene and Structure — S50D | ✅ closed (2026-03-22) | S50D: §66 rules applied to TASKLIST, AGENTS, ASSUMPTIONS, intelligence_architecture, DECISION_LOG. contracts.md split/trim plan applied (additive only). Baseline: 1519 passed, ruff clean. |
+
+**Test-Stand Phase 3 / S50D (2026-03-22)**: **1519 passed, ruff clean**.
+
+---
+
+## 19. Phase 3 Sprint Status (2026-03-22)
+
+- Current phase: `PHASE 3 (active)`
+- Umbrella sprint: `S50_CANONICAL_CONSOLIDATION_BASELINE`
+- Active sub-sprint: `TBD (Phase-3 next sprint definition required)`
+- Previous sub-sprint: `S50D_DOC_HYGIENE_AND_STRUCTURE` (**closed**, 2026-03-22)
+- Next required step: `PHASE3_NEXT_SPRINT_DEFINITION`
+- Canonical baseline: `1519 passed, ruff clean`
+- Classification status: **15/15 promoted to canonical** — F-S50A-001 resolved; §65 frozen
+
+### S50 Guardrails
+
+- No new product features in S50
+- No new execution or trading semantics
+- No second aggregation backbone
+- No broad CLI refactor before per-command classification decisions are recorded
+- Phase-4 gate blocked until Phase-3 consolidation accepted
+
+---
+
+## 20. S50B Closed — Provisional CLI Governance (2026-03-22)
+
+S50A is formally closed. S50B is now closed after sync/freeze completion.
+
+- `S50A_CANONICAL_PATH_INVENTORY` — **closed**
+- Claude governance review — **PASS** (2026-03-22)
+- Antigravity readability/onboarding review — **PASS** (2026-03-22)
+- `CANONICAL_SURFACE_INVENTORY.md` — frozen inventory artifact
+- `F-S50A-001` — **resolved** (2026-03-22); all 15 promoted to canonical
+- `S50B_PROVISIONAL_CLI_GOVERNANCE` — **closed** (sync/freeze completed)
+- Classification: 15/15 `promote_to_canonical`; CLI canonical count 38 → 53; provisional set 0
+- MCP rationale: 3/15 commands MCP-backed; 12/15 internal pipeline/governance commands where MCP is not required
+- `S50C_CLI_CONTRACT_FREEZE` — **closed** (2026-03-22); §65 frozen; 53/53 verified; 0 provisional
+- `S50D_DOC_HYGIENE_AND_STRUCTURE` — **closed** (2026-03-22); §66 rules applied to all target docs; 1519 passed, ruff clean; no product code changes

@@ -1,5 +1,79 @@
 # Intelligence Architecture
 
+## Current State (2026-03-23)
+
+| Field | Value |
+|---|---|
+| current_phase | `PHASE 4 (active)` |
+| current_sprint | `PH4E_SCORING_CALIBRATION_AUDIT` |
+| next_required_step | `PH4E_EXECUTION_START` |
+| ph4e_status_canonical | `active definition frozen (D-70) - execution-ready, diagnostic-only` |
+| state_note | `canonical rows are authoritative for current PH4 gate state` |
+| baseline | `1519 passed, ruff clean` |
+| ph4b_status | `closed (D-62) — sections 68 and 69 frozen anchors` |
+| ph4c_status | `closed — section 70 frozen audit anchor` |
+| ph4d_status | `closed (D-68) — section 71 frozen anchor` |
+| ph4e_status | `active (definition frozen — D-70) — execution-ready, diagnostic-only` |
+| ph4e_contract | `docs/contracts.md §73 (active definition frozen)` |
+| architecture_status | three-tier stack unchanged; PH4A–PH4D closed (§67–§71); PH4E scoring calibration audit active (§73) |
+
+---
+
+## PH4A/PH4B (closed — frozen anchors)
+
+- PH4A closed: `74` audited records, `6.76%` tier-3 coverage, `paired_count=0`. Primary bottleneck: zero tier overlap.
+- PH4B closed (D-62): `paired_count=69`, `tier3_coverage=100.0%`, `signal_to_noise=5.80%`, `priority_mae=3.13`.
+- PH4B review confirmed root cause: Tier-1 assigns default scores on keyword miss — structural keyword coverage blindness.
+- Divergence profile: `18` severe (|delta|>=5), `40` moderate, `11` minor; `0.00%` tag overlap.
+- PH4A (§67) and PH4B (§68, §69) are immutable comparison anchors. No re-execution permitted.
+
+## PH4C (closed — §70 frozen audit anchor, D-66)
+
+- Sprint: `PH4C_RULE_KEYWORD_COVERAGE_AUDIT` (diagnostic-only). Formally closed D-66.
+- Contract: `docs/contracts.md §70` (frozen immutable anchor).
+- Execution outcomes (frozen):
+  - KeywordEngine indexed terms: `507`
+  - hit buckets over 69 paired docs: `29` zero-hit, `27` low-hit, `13` good-hit
+  - low-hit documents carry largest average delta (`+3.4`)
+  - top missing categories: macro/finance, regulatory/legal, AI/technology
+
+## PH4D (closed — §71 frozen anchor, D-68)
+
+- Sprint: `PH4D_TARGETED_KEYWORD_EXPANSION_BASELINE` (targeted keyword expansion). Formally closed D-68.
+- Contract: `docs/contracts.md §71` (frozen immutable anchor).
+- Execution outcomes (frozen):
+  - scope applied: macro/finance (+24), regulatory/legal (+18), AI/technology (+14)
+  - re-measurement (69 paired docs): zero `29→26`, low `27→25`, good `13→18`, regressions `0`
+  - index growth: `507→555` (+48)
+- Zero-hit review (frozen): 26 remaining; 5 true rule gaps · 21 correctly low-value noise.
+
+## Phase 4 Interim Review (closed — §72, D-65/D-66)
+
+- Outcome: keyword expansion reached diminishing returns. Highest-leverage remaining lever: scoring calibration (priority_mae=3.13).
+- Decision: `PH4E_SCORING_CALIBRATION_AUDIT` selected as next sprint (D-66).
+- Contract: `docs/contracts.md §72` (frozen immutable anchor).
+
+## PH4E Active Sprint (definition frozen — §73, D-70)
+
+- Sprint: `PH4E_SCORING_CALIBRATION_AUDIT` (diagnostic scoring audit).
+- Contract: `docs/contracts.md §73` (active definition frozen, D-70 — execution-ready).
+- Scope: per-field scoring input audit to identify root cause of priority_mae=3.13.
+  - Analyze: relevance, impact, novelty, actionable, sentiment fields across 69 paired docs.
+  - Classify: default value assignment vs calibration drift vs missing signal.
+- Constraints: no scoring formula changes · no threshold changes · no rule changes.
+- Output: divergence cluster analysis; top-3 scoring failure modes; PH4F scope recommendation.
+
+---
+
+## PH4E Canonical Freeze State (authoritative)
+
+- Sprint: `PH4E_SCORING_CALIBRATION_AUDIT`
+- Status: `active (definition frozen, execution-ready)`
+- Next required step: `PH4E_EXECUTION_START`
+- Contract anchor: `docs/contracts.md §73`
+- Scope lock: scoring-divergence diagnostics only on the 69 paired documents
+- Hard non-goals: no scoring/threshold/rule/provider/source/model/runtime changes
+
 ## Design Principle
 
 **Reliability > Speed > Depth**
@@ -817,7 +891,7 @@ Canonical contract: [sprint14_inference_distribution_contract.md](./sprint14_inf
 | I-267 | `/approve` and `/reject` Telegram commands are audit-only journal actions. They MUST write an operator intent record to `artifacts/operator_commands.jsonl`. They MUST NOT call any execution engine, order submission path, or mutate the approval state of any live order. |
 | I-268 | `TelegramOperatorBot._cmd_risk()` MUST read exclusively from a public `RiskEngine.get_risk_snapshot()` method returning a typed `RiskSnapshot` model. Direct access to private attributes (`_limits`, `_kill_switch_active`, `_paused`, `_daily_loss_pct`, `_total_drawdown_pct`, `_open_position_count`) is forbidden. |
 | I-269 | `/signals` MUST read from `app/research/signals.extract_signal_candidates()` (canonical read surface). The response MUST NOT include execution instructions, routing decisions, or live order references. No side effect on signal state is permitted. |
-| I-270 | `/journal` and `/daily_summary` MUST read from `app/decisions/journal.build_decision_journal_summary()`. These handlers MUST NOT write to, delete from, or mutate any journal record. |
+| I-270 | `/journal` MUST read from `get_review_journal_summary()` and `/daily_summary` MUST read from `get_daily_operator_summary()`. Both handlers MUST remain read-only and MUST NOT write to, delete from, or mutate journal/core state. |
 | I-271 | `/pause`, `/resume`, and `/kill` are guarded_write commands. They MUST be dry_run-gated: when `dry_run=True` (default), they MUST return a "[DRY RUN] No action taken" response without mutating any state. No guarded_write command may bypass the dry_run gate. |
 | I-272 | `/kill` MUST require a two-step confirmation via the `_pending_confirm` pattern. A single `/kill` invocation MUST NOT activate the kill switch. The pending confirmation MUST be per-`chat_id` and MUST be consumed on confirm. |
 | I-273 | Every Telegram command MUST be audit-logged to `artifacts/operator_commands.jsonl` via `_audit()` BEFORE any handler logic runs. Audit-log write failure MUST be logged as error but MUST NOT prevent the command response from being sent. |
@@ -929,3 +1003,263 @@ Canonical contract: [sprint14_inference_distribution_contract.md](./sprint14_inf
 | I-338C | `_append_guarded_audit()` ist never-raise: `OSError` → silent `return`, keine Caller-sichtbare Exception. Der `_WORKSPACE_ROOT` Pfad ist via `Path(__file__).resolve().parents[3]` gesetzt — testbar via `monkeypatch.setattr(operator_router, "_WORKSPACE_ROOT", tmp_path)`. |
 | I-339C | `_resolve_read_payload()` ist der kanonische Wrapper für alle read-only Endpoints. Er setzt Context-Headers und fängt JEDE Exception → HTTP 503 mit endpoint-spezifischem Error-Code (z.B. `status_unavailable`, `portfolio_snapshot_unavailable`). |
 | I-340C | Sprint 44 oeffnet keinen neuen Live-, Broker- oder Execution-Pfad. `_reset_operator_guard_state_for_tests()` ist eine Test-Helper-Funktion — sie leert `_IDEMPOTENCY_CACHE` und `_GUARDED_RATE_LIMIT_BUCKETS` für deterministische Unit-Tests. |
+
+
+---
+
+## Sprint 45 — S45_OPERATOR_USABILITY_BASELINE (2026-03-22)
+
+| ID | Invariant |
+|---|---|
+| I-341 | `get_daily_operator_summary` ist ein reiner Aggregations-Tool. Er oeffnet keinen eigenen Datenpfad, keine externe API, keine DB-Verbindung. Alle Daten kommen ausschliesslich aus Delegation an bestehende MCP-Tools (`get_operational_readiness_summary`, `get_recent_trading_cycles`, `get_paper_portfolio_snapshot`, `get_paper_exposure_summary`, `get_decision_pack_summary`, `get_review_journal_summary`). |
+| I-342 | `execution_enabled=false` und `write_back_allowed=false` sind invariante Felder in JEDEM `daily_operator_summary`-Response — unabhaengig vom Aggregations-Ergebnis. |
+| I-343 | Aggregation ist best-effort: wenn ein Sub-Tool eine Exception wirft, gibt `get_daily_operator_summary` einen Response mit degradierten Feldern zurueck (Fallback-Werte). Es wird keine Exception propagiert. Das `sources`-Feld listet nur die Sub-Tools, die erfolgreich beigetragen haben. |
+| I-344 | `report_type` ist immer `"daily_operator_summary"`. Kein anderer Wert ist zulaessig. |
+| I-345 | Die CLI-Ausgabe von `trading-bot research daily-summary` ist menschenlesbar — kein JSON-Dump ohne expliziten `--json`-Flag. |
+| I-346 | `GET /operator/daily-summary` unterliegt denselben Auth- und Governance-Guardrails wie alle anderen `/operator/*`-Endpoints: Bearer-Token, fail-closed, X-Request-ID/X-Correlation-ID, kanonische Error-Shape. |
+| I-347 | Telegram `/daily_summary` delegiert an `get_daily_operator_summary`. Keine separate Aggregations-Logik in `telegram_bot.py`. Surface-Drift ist per Konstrukt ausgeschlossen. |
+| I-348 | Sprint 45 oeffnet keinen Live-, Broker- oder Execution-Pfad. `mode=live` bleibt fail-closed in allen vier neuen Surfaces. |
+| I-349 | Das `sources`-Feld im Response dokumentiert welche Sub-Tools zu diesem Aggregat beigetragen haben. Es ist eine Liste von Strings (Tool-Namen). Bei vollstaendigem Erfolg: alle 6 Tools. Bei Teilausfall: nur die erfolgreichen. |
+| I-350 | Sprint 45 fuegt keinen neuen Aggregations-Layer hinzu, der parallel zum bestehenden MCP-Tool-Layer existiert. Der Daily Operator View ist eine Aggregations-Fassung bestehender Tools — kein zweiter Stack. |
+
+
+
+---
+
+> **Sprint 45C (2026-03-22):** I-341–I-350 (oben) basieren auf dem §56-Entwurf.
+> Kanonische Korrekturen:
+
+| ID | Invariant (kanonisch, Sprint 45C) |
+|---|---|
+| I-341C | `get_daily_operator_summary` hat keinen eigenen Datenpfad. Es ruft 6 bestehende MCP-Tools via `_safe_daily_surface_load` auf und uebergibt die Ergebnisse an `build_daily_operator_summary` aus `app/research/operational_readiness.py`. |
+| I-342C | `execution_enabled=False` und `write_back_allowed=False` sind invariante Felder in `DailyOperatorSummary.to_json_dict()`. Der Dataclass-Default setzt beide. |
+| I-343C | Aggregation ist best-effort via `_safe_daily_surface_load`: Exception in einem Sub-Tool → `None` zurueck → `build_daily_operator_summary` erhaelt `None` fuer diese Sektion → Fallback-Werte. Das `sources`-Feld enthaelt nur Sub-Tool-Namen die erfolgreich `dict`-Payload geliefert haben. |
+| I-344C | `report_type` ist immer `"daily_operator_summary"`. `interface_mode` ist immer `"read_only"`. Beide sind Dataclass-Defaults und werden nie vom Caller ueberschrieben. |
+| I-345C | CLI `trading-bot research daily-summary` importiert `get_daily_operator_summary` aus `mcp_server` und gibt human-readable Tabellenformat aus. `--json` Flag gibt kanonisches JSON-Schema aus. |
+| I-346C | `GET /operator/daily-summary` delegiert via `_resolve_read_payload` an `mcp_server.get_daily_operator_summary` mit `error_code="daily_summary_unavailable"`. Gleiche Auth + Request-Governance wie alle anderen `/operator/*`-Endpoints. |
+| I-347C | Telegram `/daily_summary` delegiert an `self._get_daily_operator_summary` → `mcp_server.get_daily_operator_summary`. Format: Markdown mit `_inline`-escaped Werten. Kein JSON-Dump. Kein eigenstaendiger Aggregations-Pfad. |
+| I-348C | Sprint 45 oeffnet keinen Live-, Broker- oder Execution-Pfad. `execution_enabled=False` und `write_back_allowed=False` sind in allen vier Surfaces (MCP, CLI, API, Telegram) invariant. |
+| I-349C | `sources` ist eine Liste von Strings der Sub-Tool-Namen die `dict`-Payload geliefert haben: `"readiness_summary"`, `"recent_cycles"`, `"portfolio_snapshot"`, `"exposure_summary"`, `"decision_pack_summary"`, `"review_journal_summary"`. Source-Name ist `"recent_cycles"` (nicht `"recent_cycles_summary"`). |
+| I-350C | `build_daily_operator_summary` ist eine pure Funktion ohne I/O. Sie empfaengt nur `dict | None` Parameter. Die Testbarkeit ist dadurch direkt (kein Mock erforderlich fuer Unit-Tests der Aggregations-Logik). |
+
+
+
+---
+
+## Sprint 46 — S46_OPERATOR_DASHBOARD_BASELINE (2026-03-22)
+
+Status: implemented (Codex). Dashboard remains read-only and daily-summary-backed.
+
+| ID | Invariant |
+|---|---|
+| I-351 | `GET /dashboard` ist eine reine Praesentation-Surface. Sie ruft `mcp_server.get_daily_operator_summary()` auf und rendert das Ergebnis als HTML. Kein eigener Datenpfad, kein zweiter Aggregat-Layer. |
+| I-352 | Das Dashboard enthaelt keinen JavaScript-Code. Kein JS-Framework, keine fetch-Calls vom Browser, keine WebSockets. Nur statisches HTML mit Inline-CSS. |
+| I-353 | `execution_enabled` und `write_back_allowed` muessen im Dashboard-HTML sichtbar als `False` erscheinen. Sie sind Pflichtfelder der visuellen Ausgabe. |
+| I-354 | Fail-closed: leeres `APP_API_KEY` → HTTP 503. Das Dashboard erfordert keinen Bearer-Token vom Browser, prueft aber ob ein API-Key konfiguriert ist. |
+| I-355 | Auto-Refresh via `<meta http-equiv="refresh" content="60">`. Kein JavaScript-Polling. |
+| I-356 | Bei Exception in `get_daily_operator_summary` gibt das Dashboard eine HTML-Fehlerseite aus (Status "unavailable") — kein Python-Stack-Trace, kein HTTP 500 mit JSON-Body. |
+| I-357 | Keine neue externe Dependency (kein Jinja2, kein Chart-Lib, kein CSS-Framework). HTML via f-string Template in `app/api/routers/dashboard.py`. |
+| I-358 | Das Dashboard-Modul ist `app/api/routers/dashboard.py`. `app/api/main.py` includet den Router. Kein neues CLI-Command, kein neues Telegram-Command, kein neues MCP-Tool. |
+| I-359 | Farb-Konvention (CSS-only): `readiness_status == "ok"` gruen, `"warning"` orange, alles andere rot. Nur fuer visuelle Schnellorientierung — kein funktionaler Unterschied. |
+| I-360 | Sprint 46 oeffnet keinen Live-, Broker-, Execution- oder guarded-Action-Pfad. Dashboard ist ausschliesslich read-only und zeigt denselben Stand wie `GET /operator/daily-summary`. |
+
+## S46C — Dashboard Path Freeze (2026-03-22)
+
+### Canonical Runtime Path (einzig gültig)
+
+| Surface | Route | Implementation |
+|---|---|---|
+| Operator Dashboard | `GET /dashboard` | `app/api/routers/dashboard.py` |
+
+### Explizit NICHT implementiert
+
+- `/static/dashboard.html` — **existiert nicht**, wurde nie implementiert, ist S46 Out-of-Scope
+- `StaticFiles`-Mount — **nicht vorhanden** in `app/api/main.py`
+- Jinja2-Template — **nicht installiert**, nicht verwendet
+
+### Teststand-Drift Erklärung
+
+| Baseline | Wert | Bedeutung |
+|---|---|---|
+| S45C freeze reference | 1498 passed | Daily Operator Summary frozen |
+| S46 implementation | 1503 passed | +5 Dashboard-Tests |
+| S46C freeze | **1503 passed, ruff clean** | Einzige gültige Referenz ab jetzt |
+
+### S46C Invariant-Ergänzungen
+
+| # | Invariant |
+|---|---|
+| I-361 | Kein `/static/dashboard.html` und kein `StaticFiles`-Mount. Einziger Dashboard-Einstieg ist `GET /dashboard` via `app/api/routers/dashboard.py`. |
+| I-362 | Teststand 1503 (nicht 1498). 1498 war S45C-Baseline; 1503 ist S46-Baseline mit 5 neuen Dashboard-Tests in `tests/unit/test_api_dashboard.py`. |
+| I-363 | `app/security/auth.py` whitelistet `/dashboard` und `/dashboard/` ohne Bearer-Token — kein Browserzwang. Kein anderer Dashboard-Pfad ist whitelistet. |
+
+## S47 — Drilldown & History Invarianten (I-364..I-368)
+
+| # | Invariant |
+|---|---|
+| I-364 | `GET /operator/review-journal` delegiert ausschliesslich an `mcp_server.get_review_journal_summary()` |
+| I-365 | `GET /operator/resolution-summary` delegiert ausschliesslich an `mcp_server.get_resolution_summary()` |
+| I-366 | Beide Endpoints erfordern Bearer-Auth — kein Auth-Whitelist-Eintrag |
+| I-367 | `execution_enabled: false`, `write_back_allowed: false` in allen neuen Responses |
+| I-368 | Kanonische Drilldown-Kette (§59.5) ist implementiert — kein zweiter Daily-Aggregat-Pfad |
+
+### S47 Implementierungsstatus (Codex)
+
+- `app/api/routers/operator.py` exponiert:
+  - `GET /operator/review-journal` -> `mcp_server.get_review_journal_summary()`
+  - `GET /operator/resolution-summary` -> `mcp_server.get_resolution_summary()`
+- Beide Endpoints nutzen die bestehende Operator-Governance
+  (`Authorization`, `X-Request-ID`, `X-Correlation-ID`, fail-closed Error-Shape).
+- API-Coverage erweitert in `tests/unit/test_api_operator.py`
+  (je Endpoint success + failure shape).
+
+### Kanonische Drilldown-Kette (S47, normativ)
+
+```
+GET /operator/daily-summary      → Tageseinstieg
+GET /dashboard                   → Visueller Ueberblick
+  ↓
+GET /operator/readiness          → Issues-Liste
+GET /operator/decision-pack      → Blocking-Decisions
+GET /operator/trading-loop/status
+GET /operator/trading-loop/recent-cycles?last_n=N
+GET /operator/portfolio-snapshot
+GET /operator/exposure-summary
+  ↓ (neu S47)
+GET /operator/review-journal     → Review-Journal-Historie
+GET /operator/resolution-summary → Per-Source-Auflösungsstatus
+```
+
+## S48 — Operator Surface Completion Invarianten (I-369..I-373)
+
+Status: CLOSED (S48 completed, baseline 1515 passed / ruff clean).
+
+| # | Invariant |
+|---|---|
+| I-369 | `/resolution` Telegram delegiert an `mcp_server.get_resolution_summary()` — kein eigenes Aggregat |
+| I-370 | `/decision_pack` Telegram delegiert an `mcp_server.get_decision_pack_summary()` — kein eigenes Aggregat |
+| I-371 | Dashboard Drilldown-Referenz: statisches HTML, kein JS, kein zweiter Backend-Call |
+| I-372 | Alle neuen Telegram-Outputs: `execution_enabled=False`, `write_back_allowed=False` |
+| I-373 | Surface Completion Matrix (§61.2) ist autoritativ für Surface-Parität |
+
+### Surface Completion Matrix (normativ, S48-Ziel)
+
+| Surface | daily_summary | readiness | decision_pack | review_journal | resolution | portfolio | exposure | trading_loop |
+|---|---|---|---|---|---|---|---|---|
+| **API** | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| **CLI** | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
+| **Telegram** | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | n/a |
+| **Dashboard** | ✅ | ✅(visual) | ✅(status) | n/a | n/a | ✅ | ✅ | ✅(last) |
+
+## S48B — Scope-Freeze-Invarianten
+
+| # | Invariant |
+|---|---|
+| I-374 | §61 ist der einzige bindende S48-Contract. Kein früherer Entwurf (Dashboard-Subpages) ist für S48 gültig. |
+| I-375 | Dashboard-Subpages existieren nicht und werden in S48 nicht implementiert. |
+| I-376 | S48 liefert exakt 3 Deliverables: Telegram `/resolution`, Telegram `/decision_pack`, Dashboard Drilldown-Referenz. |
+| I-377 | Alle neuen Telegram-Commands folgen dem `_load_canonical_surface`-Pattern (kein direktes `mcp_server`-Calling). |
+
+## S49 — Alerting/Digest Baseline Invarianten (I-378..I-383)
+
+Status: ACTIVE.
+
+| # | Invariant |
+|---|---|
+| I-378 | `get_alert_audit_summary()` liest nur `alert_audit.jsonl` — kein neues Aggregat, keine Pipeline-Änderung |
+| I-379 | `GET /operator/alert-audit` erfordert Bearer-Auth — kein Whitelist-Eintrag |
+| I-380 | `execution_enabled=False`, `write_back_allowed=False` in allen S49-Responses |
+| I-381 | `ALERT_DRY_RUN=true` bleibt Standard — S49 verändert keine Alert-Trigger |
+| I-382 | `DailyOperatorSummary` und `build_daily_operator_summary` werden in S49 nicht verändert (frozen) |
+| I-383 | Kein Digest-Scheduling, kein Cron-Trigger, kein Auto-Dispatch in S49 |
+
+## S50A — Canonical Path Inventory Invarianten (I-384..I-389)
+
+Status: ACTIVE (inventory-first consolidation step).
+
+| # | Invariant |
+|---|---|
+| I-384 | S50A erweitert keine Produktiv-Business-Logik; Fokus ist Inventar und Governance-Klarheit. |
+| I-385 | Der kanonische technische Referenzstand bleibt `1519 passed` und `ruff clean`. |
+| I-386 | Für jede Operator-Surface wird eine eindeutige Klassifikation geführt: `canonical`, `alias`, `superseded`, `provisional`. |
+| I-387 | `CANONICAL_SURFACE_INVENTORY.md` ist die S50A-Source-of-Truth für Surface-Klassifikation und Implementierungsreferenzen. |
+| I-388 | Refactoring ist nachgelagert; vor Inventory-Freeze keine Pfad-Umbauten. |
+| I-389 | Dashboard bleibt Single-Path (`GET /dashboard`), `/static/dashboard.html` bleibt superseded/absent. |
+
+## S50A Final Review and Freeze Invarianten (I-390..I-392)
+
+| # | Invariant |
+|---|---|
+| I-390 | Vor S50B muss ein formaler Freeze-Record fuer S50A vorliegen (`S50A_FINAL_REVIEW_AND_FREEZE`). |
+| I-391 | Antigravity-Readability-Review und Claude-Governance-Review sind verpflichtende Gate-Pruefungen vor Freeze. |
+| I-392 | Das provisional CLI set ist als primärer Entscheidungsgegenstand fuer den Freeze zu behandeln. |
+
+### Alerting-Architektur (read-only Operator-Sicht, S49)
+
+```
+alert_audit.jsonl (append-only, geschrieben von AlertService)
+    ↓
+get_alert_audit_summary() [MCP-Tool, NEU S49]
+    ↓
+GET /operator/alert-audit [API, NEU S49]
+Telegram /alert_status   [NEU S49]
+```
+
+Bestehende Pipeline bleibt unverändert:
+```
+pipeline/service.py → AlertService.process_document() → alert_audit.jsonl
+                    → AlertService.send_digest() [manuell, via CLI/API/test]
+```
+
+
+---
+
+## Phase-3 / S50A — Architecture Stability Note (2026-03-22)
+
+The three-tier intelligence architecture (Rule → Local → External LLM) is stable and unchanged.
+Phase-3 Sprint S50 is a consolidation sprint. S50A is documentation-only (canonical path inventory).
+
+**No changes to this architecture file in S50A.**
+The inventory covers operator-facing runtime surfaces (MCP, API, CLI, Telegram, Dashboard) —
+not the analysis tier stack defined in this document.
+
+The intelligence architecture is classified as **canonical** in the S50A inventory:
+- Tier 1 (`RuleAnalyzer`): canonical, implemented, in use
+- Tier 2 (internal companion model): aspirational — Sprint 5 planned, not yet implemented
+- Tier 3 (external LLM providers): canonical, implemented, in use
+
+**S50A invariant I-384 applies**: zero code changes to `app/` in S50A.
+
+---
+
+## Phase-4 / PH4A — Signal Quality Audit Context (2026-03-22)
+
+Phase 4 opens with `PH4A_SIGNAL_QUALITY_AUDIT_BASELINE`. The three-tier stack is the primary subject of the audit.
+Contract and acceptance freeze is completed in `docs/contracts.md` §67; execution proceeds on the frozen metric/data-slice/output set only.
+
+### What PH4A Evaluates
+
+PH4A does not change the architecture. It audits the quality of outputs produced by the existing stack:
+
+| Tier | Audit Focus |
+|---|---|
+| Tier 1 (RuleAnalyzer) | Score distribution, keyword coverage, relevance precision |
+| Tier 3 (LLM provider) | Sentiment accuracy, novelty detection quality, actionability of narratives |
+| Cross-tier | Signal-to-noise ratio in research outputs; alert precision across tiers |
+
+### Architecture Stability Constraint
+
+- No new tiers, no new providers, no new analysis models are added during PH4A.
+- Tier 2 (internal companion model) remains aspirational — not a PH4A target.
+- The `AnalysisResult` contract boundary (I-384) is unchanged.
+
+### Quality Baseline Anchor
+
+PH4A will produce a **quality baseline record** covering:
+- Score distributions across real document samples
+- Top quality gaps ranked by operator impact
+- Signal-to-noise and alert precision metrics
+
+This record becomes the canonical reference for all Phase-4 expansion decisions (source additions, provider additions, Tier 2 implementation). No expansion sprint opens without referencing it.
+
+**PH4A invariants I-403, I-404, I-405 apply**: no source additions, no provider additions, quality metrics defined before expansion.

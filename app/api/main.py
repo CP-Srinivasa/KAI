@@ -4,7 +4,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api.routers import alerts, health, operator, query, research, sources
+from app.api.routers import alerts, dashboard, health, operator, query, research, sources
 from app.core.logging import configure_logging
 from app.core.settings import get_settings
 from app.ingestion.base.interfaces import FetchResult
@@ -20,7 +20,6 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     settings = get_settings()
     configure_logging(settings.log_level)
     validate_secrets(settings)  # warn/fail on missing secrets at startup
-    setup_auth(app, settings.api_key)  # attach bearer-token middleware if key is set
     app.state.session_factory = build_session_factory(settings.db)
 
     async def persist_result(result: FetchResult) -> None:
@@ -66,6 +65,7 @@ def create_app() -> FastAPI:
             "Idempotency-Key",
         ],
     )
+    setup_auth(app, settings.api_key)  # attach bearer-token middleware before startup
 
     app.include_router(health.router)
     app.include_router(sources.router)
@@ -73,6 +73,8 @@ def create_app() -> FastAPI:
     app.include_router(alerts.router)
     app.include_router(research.router, prefix="/research", tags=["research"])
     app.include_router(operator.router)
+    app.include_router(dashboard.router)
+
     return app
 
 

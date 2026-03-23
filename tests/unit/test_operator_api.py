@@ -90,6 +90,7 @@ def test_expected_routes_present() -> None:
         "/operator/status",
         "/operator/readiness",
         "/operator/decision-pack",
+        "/operator/daily-summary",
         "/operator/portfolio-snapshot",
         "/operator/exposure-summary",
         "/operator/trading-loop/status",

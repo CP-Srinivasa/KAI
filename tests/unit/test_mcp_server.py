@@ -1,6 +1,7 @@
 ﻿from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -22,6 +23,7 @@ from app.agents.mcp_server import (
     get_blocking_actions,
     get_blocking_summary,
     get_cleanup_eligibility_summary,
+    get_daily_operator_summary,
     get_decision_pack_summary,
     get_distribution_classification_report,
     get_distribution_drift,
@@ -747,6 +749,7 @@ async def test_get_mcp_capabilities_reports_guardrails() -> None:
     assert "get_review_required_actions" in payload["read_tools"]
     assert "get_review_journal_summary" in payload["read_tools"]
     assert "get_resolution_summary" in payload["read_tools"]
+    assert "get_daily_operator_summary" in payload["read_tools"]
     assert "get_artifact_inventory" in payload["read_tools"]
     assert "get_artifact_retention_report" in payload["read_tools"]
     assert "get_cleanup_eligibility_summary" in payload["read_tools"]
@@ -785,6 +788,7 @@ async def test_get_mcp_tool_inventory_classifies_canonical_alias_and_superseded_
     assert "get_narrative_clusters" in inventory["canonical_read_tools"]
     assert "get_review_journal_summary" in inventory["canonical_read_tools"]
     assert "get_resolution_summary" in inventory["canonical_read_tools"]
+    assert "get_daily_operator_summary" in inventory["canonical_read_tools"]
     assert "get_handoff_summary" not in inventory["canonical_read_tools"]
     assert "get_operator_decision_pack" not in inventory["canonical_read_tools"]
     assert "append_review_journal_entry" in inventory["guarded_write_tools"]
@@ -1847,6 +1851,133 @@ async def test_get_operator_decision_pack_alias_matches_canonical_summary(
 
 
 @pytest.mark.asyncio
+async def test_get_daily_operator_summary_aggregates_canonical_surfaces(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    now = datetime.now(UTC).isoformat()
+
+    async def fake_readiness(**_kwargs: object) -> dict[str, object]:
+        return {"readiness_status": "warning"}
+
+    async def fake_recent_cycles(**_kwargs: object) -> dict[str, object]:
+        return {
+            "report_type": "recent_trading_cycles_summary",
+            "recent_cycles": [
+                {
+                    "status": "no_signal",
+                    "symbol": "BTC/USDT",
+                    "completed_at": now,
+                }
+            ],
+        }
+
+    async def fake_portfolio(**_kwargs: object) -> dict[str, object]:
+        return {
+            "report_type": "paper_portfolio_snapshot",
+            "position_count": 2,
+            "total_equity_usd": 10_000.0,
+        }
+
+    async def fake_exposure(**_kwargs: object) -> dict[str, object]:
+        return {
+            "report_type": "paper_exposure_summary",
+            "gross_exposure_usd": 2_500.0,
+            "mark_to_market_status": "ok",
+        }
+
+    async def fake_decision_pack(**_kwargs: object) -> dict[str, object]:
+        return {
+            "report_type": "operator_decision_pack",
+            "overall_status": "warning",
+        }
+
+    async def fake_review_journal(**_kwargs: object) -> dict[str, object]:
+        return {
+            "report_type": "review_journal_summary",
+            "open_count": 3,
+        }
+
+    monkeypatch.setattr(
+        mcp_server_module,
+        "get_operational_readiness_summary",
+        fake_readiness,
+    )
+    monkeypatch.setattr(mcp_server_module, "get_recent_trading_cycles", fake_recent_cycles)
+    monkeypatch.setattr(mcp_server_module, "get_paper_portfolio_snapshot", fake_portfolio)
+    monkeypatch.setattr(mcp_server_module, "get_paper_exposure_summary", fake_exposure)
+    monkeypatch.setattr(mcp_server_module, "get_decision_pack_summary", fake_decision_pack)
+    monkeypatch.setattr(mcp_server_module, "get_review_journal_summary", fake_review_journal)
+
+    payload = await get_daily_operator_summary()
+
+    assert payload["report_type"] == "daily_operator_summary"
+    assert payload["readiness_status"] == "warning"
+    assert payload["cycle_count_today"] == 1
+    assert payload["last_cycle_status"] == "no_signal"
+    assert payload["last_cycle_symbol"] == "BTC/USDT"
+    assert payload["position_count"] == 2
+    assert payload["total_exposure_pct"] == 25.0
+    assert payload["mark_to_market_status"] == "ok"
+    assert payload["decision_pack_status"] == "warning"
+    assert payload["open_incidents"] == 3
+    assert payload["execution_enabled"] is False
+    assert payload["write_back_allowed"] is False
+    assert set(payload["sources"]) == {
+        "readiness_summary",
+        "recent_cycles",
+        "portfolio_snapshot",
+        "exposure_summary",
+        "decision_pack_summary",
+        "review_journal_summary",
+    }
+
+
+@pytest.mark.asyncio
+async def test_get_daily_operator_summary_degrades_fail_closed_on_surface_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    now = datetime.now(UTC).isoformat()
+
+    async def failing_readiness(**_kwargs: object) -> dict[str, object]:
+        raise RuntimeError("readiness unavailable")
+
+    async def fake_recent_cycles(**_kwargs: object) -> dict[str, object]:
+        return {"recent_cycles": [{"status": "no_signal", "completed_at": now}]}
+
+    async def fake_portfolio(**_kwargs: object) -> dict[str, object]:
+        return {"position_count": 0, "total_equity_usd": 0.0}
+
+    async def fake_exposure(**_kwargs: object) -> dict[str, object]:
+        return {"gross_exposure_usd": 0.0, "mark_to_market_status": "unknown"}
+
+    async def fake_decision_pack(**_kwargs: object) -> dict[str, object]:
+        return {"overall_status": "clear"}
+
+    async def fake_review_journal(**_kwargs: object) -> dict[str, object]:
+        return {"open_count": 0}
+
+    monkeypatch.setattr(
+        mcp_server_module,
+        "get_operational_readiness_summary",
+        failing_readiness,
+    )
+    monkeypatch.setattr(mcp_server_module, "get_recent_trading_cycles", fake_recent_cycles)
+    monkeypatch.setattr(mcp_server_module, "get_paper_portfolio_snapshot", fake_portfolio)
+    monkeypatch.setattr(mcp_server_module, "get_paper_exposure_summary", fake_exposure)
+    monkeypatch.setattr(mcp_server_module, "get_decision_pack_summary", fake_decision_pack)
+    monkeypatch.setattr(mcp_server_module, "get_review_journal_summary", fake_review_journal)
+
+    payload = await get_daily_operator_summary()
+
+    assert payload["report_type"] == "daily_operator_summary"
+    assert payload["readiness_status"] == "unknown"
+    assert payload["decision_pack_status"] == "clear"
+    assert "readiness_summary" not in payload["sources"]
+    assert payload["execution_enabled"] is False
+    assert payload["write_back_allowed"] is False
+
+
+@pytest.mark.asyncio
 async def test_mcp_and_cli_command_inventory_stay_consistent_for_locked_surfaces() -> None:
     from app.cli.main import get_research_command_inventory
 
@@ -1855,6 +1986,7 @@ async def test_mcp_and_cli_command_inventory_stay_consistent_for_locked_surfaces
 
     assert "get_handoff_collector_summary" in payload["read_tools"]
     assert "get_decision_pack_summary" in payload["read_tools"]
+    assert "get_daily_operator_summary" in payload["read_tools"]
     assert "get_operator_runbook" in payload["read_tools"]
     assert (
         payload["aliases"]["get_handoff_summary"]["canonical_tool"]

@@ -2973,6 +2973,105 @@ def research_decision_pack_summary(
 
 
 # ---------------------------------------------------------------------------
+# Sprint 45: daily-summary
+# ---------------------------------------------------------------------------
+
+
+@research_app.command("daily-summary")
+def research_daily_summary(
+    handoff_path: str | None = typer.Option(None, "--handoff-path"),
+    state_path: str = typer.Option("artifacts/active_route_profile.json", "--state-path"),
+    alert_audit_dir: str = typer.Option("artifacts", "--alert-audit-dir"),
+    artifacts_dir: str = typer.Option("artifacts", "--artifacts-dir"),
+    stale_after_hours: int = typer.Option(24, "--stale-after-hours"),
+    stale_after_days: float = typer.Option(30.0, "--stale-after-days"),
+    loop_audit_path: str = typer.Option(
+        "artifacts/trading_loop_audit.jsonl",
+        "--loop-audit-path",
+    ),
+    loop_last_n: int = typer.Option(50, "--loop-last-n"),
+    portfolio_audit_path: str = typer.Option(
+        "artifacts/paper_execution_audit.jsonl",
+        "--portfolio-audit-path",
+    ),
+    market_data_provider: str = typer.Option("coingecko", "--market-data-provider"),
+    freshness_threshold_seconds: float = typer.Option(
+        120.0,
+        "--freshness-threshold-seconds",
+    ),
+    timeout_seconds: int = typer.Option(10, "--timeout-seconds"),
+    review_journal_path: str = typer.Option(
+        "artifacts/operator_review_journal.jsonl",
+        "--review-journal-path",
+    ),
+    as_json: bool = typer.Option(False, "--json", help="Print canonical JSON payload"),
+) -> None:
+    """Print canonical daily operator summary derived from existing read-only surfaces."""
+    import asyncio
+    import json as _json
+
+    from app.agents.mcp_server import get_daily_operator_summary
+
+    payload = asyncio.run(
+        get_daily_operator_summary(
+            handoff_path=handoff_path,
+            state_path=state_path,
+            alert_audit_dir=alert_audit_dir,
+            artifacts_dir=artifacts_dir,
+            stale_after_hours=stale_after_hours,
+            retention_stale_after_days=stale_after_days,
+            loop_audit_path=loop_audit_path,
+            loop_last_n=loop_last_n,
+            portfolio_audit_path=portfolio_audit_path,
+            market_data_provider=market_data_provider,
+            freshness_threshold_seconds=freshness_threshold_seconds,
+            timeout_seconds=timeout_seconds,
+            review_journal_path=review_journal_path,
+        )
+    )
+
+    if as_json:
+        console.print(_json.dumps(payload, indent=2))
+        return
+
+    cycle_status = payload.get("last_cycle_status")
+    cycle_symbol = payload.get("last_cycle_symbol")
+    cycle_at = payload.get("last_cycle_at")
+    cycle_suffix = "last: none"
+    if isinstance(cycle_status, str) and cycle_status:
+        cycle_suffix = f"last: {cycle_status}"
+        if isinstance(cycle_symbol, str) and cycle_symbol:
+            cycle_suffix += f" | {cycle_symbol}"
+        if isinstance(cycle_at, str) and cycle_at:
+            cycle_suffix += f" | {cycle_at}"
+
+    exposure_pct = payload.get("total_exposure_pct", 0.0)
+    if isinstance(exposure_pct, (int, float)):
+        exposure_text = f"{float(exposure_pct):.2f}%"
+    else:
+        exposure_text = "0.00%"
+
+    console.print("[bold]Daily Operator View[/bold]")
+    console.print(f"Readiness:      {payload.get('readiness_status', 'unknown')}")
+    console.print(
+        f"Cycles today:   {payload.get('cycle_count_today', 0)}  ({cycle_suffix})"
+    )
+    console.print(
+        "Portfolio:      "
+        f"{payload.get('position_count', 0)} positions"
+        f" | {exposure_text} exposure"
+        f" | MTM: {payload.get('mark_to_market_status', 'unknown')}"
+    )
+    console.print(
+        f"Decision Pack:  {payload.get('decision_pack_status', 'unknown')}"
+    )
+    console.print(f"Incidents:      {payload.get('open_incidents', 0)} open")
+    console.print(f"Aggregated at:  {payload.get('aggregated_at', 'unknown')}")
+    console.print("execution_enabled=False")
+    console.print("write_back_allowed=False")
+
+
+# ---------------------------------------------------------------------------
 # Sprint 30: operator-runbook / runbook-summary / runbook-next-steps
 # ---------------------------------------------------------------------------
 
@@ -3000,6 +3099,7 @@ FINAL_RESEARCH_COMMAND_NAMES: tuple[str, ...] = (
     "prioritized-actions",
     "review-required-actions",
     "decision-pack-summary",
+    "daily-summary",
     "operator-runbook",
     "runbook-summary",
     "runbook-next-steps",
@@ -3014,6 +3114,7 @@ FINAL_RESEARCH_COMMAND_NAMES: tuple[str, ...] = (
     "trading-loop-status",
     "trading-loop-recent-cycles",
     "trading-loop-run-once",
+    "alert-audit-summary",
 )
 
 RESEARCH_COMMAND_ALIASES: dict[str, str] = {
@@ -3307,6 +3408,32 @@ def research_resolution_summary(
         console.print(f"open={source_ref}")
     for source_ref in summary.resolved_source_refs:
         console.print(f"resolved={source_ref}")
+
+
+@research_app.command("alert-audit-summary")
+def research_alert_audit_summary(
+    audit_dir: str = typer.Option(
+        "artifacts",
+        "--audit-dir",
+        help="Directory containing alert_audit.jsonl",
+    ),
+) -> None:
+    """Print operator-facing alert audit summary (read-only)."""
+    import asyncio
+
+    from app.agents.mcp_server import get_alert_audit_summary
+
+    result = asyncio.run(get_alert_audit_summary(audit_dir=audit_dir))
+    console.print("[bold]Operator Alert Audit Summary[/bold]")
+    console.print(f"total_count={result.get('total_count', 0)}")
+    console.print(f"digest_count={result.get('digest_count', 0)}")
+    console.print(f"latest_dispatched_at={result.get('latest_dispatched_at', 'none')}")
+    by_channel = result.get("by_channel", {})
+    if isinstance(by_channel, dict):
+        for channel, count in by_channel.items():
+            console.print(f"channel_{channel}={count}")
+    console.print("execution_enabled=False")
+    console.print("write_back_allowed=False")
 
 
 @research_app.command("market-data-quote")

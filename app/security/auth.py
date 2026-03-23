@@ -49,8 +49,10 @@ def setup_auth(app: FastAPI, api_key: str) -> None:
     async def _bearer_auth(
         request: Request, call_next: Callable[[Request], Awaitable[Response]]
     ) -> Response:
-        # Health endpoint is always public (needed for Docker healthchecks)
-        if request.url.path in ("/health", "/health/"):
+        # Public read-only endpoints:
+        # - /health for infra checks
+        # - /dashboard as local operator HTML view (Sprint 46 baseline)
+        if request.url.path in ("/health", "/health/", "/dashboard", "/dashboard/"):
             return await call_next(request)
 
         auth_header = request.headers.get("Authorization", "")

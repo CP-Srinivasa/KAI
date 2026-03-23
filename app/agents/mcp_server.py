@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import datetime
 import json
+import logging
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
 
@@ -54,6 +56,7 @@ from app.storage.db.session import build_session_factory
 from app.storage.repositories.document_repo import DocumentRepository
 
 mcp = FastMCP("KAI Analyst Trading Bot")
+logger = logging.getLogger(__name__)
 
 _WORKSPACE_ROOT = Path(__file__).resolve().parents[2]
 _ARTIFACTS_SUBDIR = "artifacts"
@@ -63,6 +66,8 @@ _HANDOFF_ACK_DEFAULT_PATH = f"artifacts/{HANDOFF_ACK_JSONL_FILENAME}"
 _ALERT_AUDIT_DEFAULT_DIR = _ARTIFACTS_SUBDIR
 _REVIEW_JOURNAL_DEFAULT_PATH = "artifacts/operator_review_journal.jsonl"
 _PAPER_EXECUTION_AUDIT_DEFAULT_PATH = "artifacts/paper_execution_audit.jsonl"
+_DECISION_JOURNAL_DEFAULT_PATH = "artifacts/decision_journal.jsonl"
+_LOOP_AUDIT_DEFAULT_PATH = "artifacts/trading_loop_audit.jsonl"
 
 _CANONICAL_MCP_READ_TOOL_NAMES = (
     "get_watchlists",
@@ -98,9 +103,11 @@ _CANONICAL_MCP_READ_TOOL_NAMES = (
     "get_prioritized_actions",
     "get_review_required_actions",
     "get_decision_pack_summary",
+    "get_daily_operator_summary",
     "get_operator_runbook",
     "get_review_journal_summary",
     "get_resolution_summary",
+    "get_alert_audit_summary",
     "get_decision_journal_summary",
     "get_trading_loop_status",
     "get_recent_trading_cycles",
@@ -1933,6 +1940,117 @@ async def get_decision_pack_summary(
     )
 
 
+async def _safe_daily_surface_load(
+    *,
+    source_name: str,
+    loader: Callable[[], Awaitable[dict[str, object]]],
+) -> dict[str, object] | None:
+    try:
+        payload = await loader()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "daily_operator_summary degraded: %s unavailable (%s)",
+            source_name,
+            exc.__class__.__name__,
+        )
+        return None
+    if not isinstance(payload, dict):
+        logger.warning(
+            "daily_operator_summary degraded: %s returned non-dict payload",
+            source_name,
+        )
+        return None
+    return payload
+
+
+@mcp.tool()
+async def get_daily_operator_summary(
+    handoff_path: str | None = None,
+    acknowledgement_path: str = _HANDOFF_ACK_DEFAULT_PATH,
+    state_path: str = str(DEFAULT_ACTIVE_ROUTE_PATH),
+    abc_output_path: str | None = None,
+    alert_audit_dir: str = _ALERT_AUDIT_DEFAULT_DIR,
+    stale_after_hours: int = 24,
+    artifacts_dir: str = _ARTIFACTS_SUBDIR,
+    retention_stale_after_days: float = 30.0,
+    loop_audit_path: str = _LOOP_AUDIT_DEFAULT_PATH,
+    loop_last_n: int = 50,
+    portfolio_audit_path: str = _PAPER_EXECUTION_AUDIT_DEFAULT_PATH,
+    market_data_provider: str = "coingecko",
+    freshness_threshold_seconds: float = 120.0,
+    timeout_seconds: int = 10,
+    review_journal_path: str = _REVIEW_JOURNAL_DEFAULT_PATH,
+) -> dict[str, object]:
+    """Return one canonical daily operator aggregate from existing read surfaces only."""
+    from app.research.operational_readiness import build_daily_operator_summary
+
+    readiness_summary = await _safe_daily_surface_load(
+        source_name="readiness_summary",
+        loader=lambda: get_operational_readiness_summary(
+            handoff_path=handoff_path,
+            acknowledgement_path=acknowledgement_path,
+            state_path=state_path,
+            abc_output_path=abc_output_path,
+            alert_audit_dir=alert_audit_dir,
+            stale_after_hours=stale_after_hours,
+        ),
+    )
+    recent_cycles_summary = await _safe_daily_surface_load(
+        source_name="recent_cycles",
+        loader=lambda: get_recent_trading_cycles(
+            audit_path=loop_audit_path,
+            last_n=loop_last_n,
+        ),
+    )
+    portfolio_snapshot = await _safe_daily_surface_load(
+        source_name="portfolio_snapshot",
+        loader=lambda: get_paper_portfolio_snapshot(
+            audit_path=portfolio_audit_path,
+            provider=market_data_provider,
+            freshness_threshold_seconds=freshness_threshold_seconds,
+            timeout_seconds=timeout_seconds,
+        ),
+    )
+    exposure_summary = await _safe_daily_surface_load(
+        source_name="exposure_summary",
+        loader=lambda: get_paper_exposure_summary(
+            audit_path=portfolio_audit_path,
+            provider=market_data_provider,
+            freshness_threshold_seconds=freshness_threshold_seconds,
+            timeout_seconds=timeout_seconds,
+        ),
+    )
+    decision_pack_summary = await _safe_daily_surface_load(
+        source_name="decision_pack_summary",
+        loader=lambda: get_decision_pack_summary(
+            handoff_path=handoff_path,
+            acknowledgement_path=acknowledgement_path,
+            state_path=state_path,
+            abc_output_path=abc_output_path,
+            alert_audit_dir=alert_audit_dir,
+            stale_after_hours=stale_after_hours,
+            artifacts_dir=artifacts_dir,
+            retention_stale_after_days=retention_stale_after_days,
+        ),
+    )
+    review_journal_summary = await _safe_daily_surface_load(
+        source_name="review_journal_summary",
+        loader=lambda: get_review_journal_summary(
+            journal_path=review_journal_path,
+        ),
+    )
+
+    summary = build_daily_operator_summary(
+        readiness_summary=readiness_summary,
+        recent_cycles_summary=recent_cycles_summary,
+        portfolio_snapshot=portfolio_snapshot,
+        exposure_summary=exposure_summary,
+        decision_pack_summary=decision_pack_summary,
+        review_journal_summary=review_journal_summary,
+    )
+    return summary.to_json_dict()
+
+
 @mcp.tool()
 async def get_operator_decision_pack(
     handoff_path: str | None = None,
@@ -2085,8 +2203,29 @@ async def get_resolution_summary(
     return build_review_resolution_summary(summary).to_json_dict()
 
 
-_DECISION_JOURNAL_DEFAULT_PATH = "artifacts/decision_journal.jsonl"
-_LOOP_AUDIT_DEFAULT_PATH = "artifacts/trading_loop_audit.jsonl"
+@mcp.tool()
+async def get_alert_audit_summary(
+    audit_dir: str = _ALERT_AUDIT_DEFAULT_DIR,
+) -> dict[str, object]:
+    """Return a read-only summary of dispatched alert audit records.
+
+    Reads from the alert audit JSONL trail and aggregates by channel.
+    execution_enabled and write_back_allowed are always False.
+    """
+    from app.research.operational_readiness import _build_alert_dispatch_summary
+
+    resolved = _resolve_workspace_dir(
+        audit_dir,
+        label="Alert audit directory",
+    )
+    audits = load_alert_audits(resolved)
+    dispatch_summary = _build_alert_dispatch_summary(audits)
+    return {
+        "report_type": "alert_audit_summary",
+        "execution_enabled": False,
+        "write_back_allowed": False,
+        **dispatch_summary.to_json_dict(),
+    }
 
 
 @mcp.tool()

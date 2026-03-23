@@ -1,150 +1,94 @@
 # KAI (Robotron)
 
-> **Leitmotiv: SIMPLE BUT POWERFUL**
+KAI is a modular, security-first, audit-first AI analysis and operator platform.
+Default runtime remains `paper`/`shadow` with fail-closed controls.
 
-**Repository**: [https://github.com/CP-Srinivasa/KAI](https://github.com/CP-Srinivasa/KAI)
+## Current Phase
 
-KAI ist ein modularer, sicherheitsorientierter AI-Analyse- und Entscheidungsstack für
-Krypto- und klassische Märkte. Der Kern ist standardmäßig research/paper-first,
-auditierbar, fail-closed und für kontrollierte agentische Erweiterung ausgelegt.
+- phase: `PHASE 3 (active)`
+- current sprint: `S50_CANONICAL_CONSOLIDATION_BASELINE` (active)
+- next required step: `S50A_CANONICAL_PATH_INVENTORY`
+- technical reference: `1519 passed, ruff clean`
 
-## Sicherheitsbaseline
+## Phase-3 Kickoff Focus
 
-- `paper` als Default-Betriebsmodus
-- `live` standardmäßig deaktiviert
-- keine ungeprüfte Modellausgabe im kritischen Pfad
-- Risk Engine und Kill Switch sind harte Gates
-- Operator-Surfaces sind read-only oder audit-only, solange keine explizite Freigabe existiert
+Phase 2 is formally complete and accepted.
+Sprint 50 opens Phase 3 with consolidation-only scope:
 
-## Pflichtdokumente
+- canonical architecture and naming clarity
+- synchronized governance and operator docs
+- no new feature depth before consolidation acceptance
+- no second aggregation backbone and no new execution semantics
 
-- [ARCHITECTURE.md](ARCHITECTURE.md)
-- [ASSUMPTIONS.md](ASSUMPTIONS.md)
-- [SECURITY.md](SECURITY.md)
-- [RISK_POLICY.md](RISK_POLICY.md)
-- [RUNBOOK.md](RUNBOOK.md)
-- [TELEGRAM_INTERFACE.md](TELEGRAM_INTERFACE.md)
-- [CONFIG_SCHEMA.json](CONFIG_SCHEMA.json)
-- [DECISION_SCHEMA.json](DECISION_SCHEMA.json)
-- [CHANGELOG.md](CHANGELOG.md)
+Operator surfaces remain the accepted baseline across API, Dashboard, Telegram, and CLI.
 
-## Features
+## S50A Focus
 
-- **Multi-Source Monitoring**: RSS, News APIs, YouTube, Podcasts, Social Media, Marktdaten
-- **Multi-Market**: Crypto + Aktien/ETFs + Makro/Forex
-- **Flexible Suche**: Boolean Query DSL, Feldsuche, Datum/Region/Sprache-Filter
-- **KI-Analyse**: Sentiment, Impact, Novelty, Credibility via OpenAI/ChatGPT
-- **Deduplication**: Hash + URL + Title-Similarity über Quellen hinweg
-- **Alerting**: Telegram, Email, Webhook mit konfigurierbaren Schwellenwerten
-- **Trading-Ready**: Signal-Kandidaten, Watchlists, Event-to-Asset-Mapping
+S50A is inventory-first:
+
+- identify canonical runtime paths
+- classify aliases and superseded paths
+- keep provisional paths explicit for later review
+- avoid refactoring before inventory freeze
+
+## Core Principles
+
+- simple but powerful
+- security first
+- fail closed, not fail open
+- no hidden side effects
+- no unverified critical execution
+- live default-off
 
 ## Quick Start
 
 ```bash
-# 1. Konfiguration
-cp .env.example .env
-# .env mit API-Keys befüllen
-
-# 2. Mit Docker starten
-docker-compose up -d
-
-# 3. Oder lokal
 pip install -e ".[dev]"
+python -m pytest
+python -m ruff check .
 uvicorn app.api.main:app --reload
-
-# 4. API-Docs
-open http://localhost:8000/docs
 ```
 
-## CLI
+## Daily Operator Flow (Canonical)
 
 ```bash
-# Query validieren
-trading-bot query validate "bitcoin AND (DeFi OR NFT) NOT scam"
-
-# Quellen klassifizieren
-trading-bot sources classify --file monitor/podcast_feeds_raw.txt
-
-# Ingestion starten
-trading-bot ingest run
-
-# Pending Dokumente analysieren
-trading-bot analyze pending --limit 50
-
-# Digest senden
-trading-bot alerts send-digest --channel telegram
+trading-bot research daily-summary
+trading-bot research readiness-summary
+trading-bot research decision-pack-summary
+trading-bot research paper-positions-summary
+trading-bot research paper-exposure-summary
+trading-bot research trading-loop-status
+trading-bot research trading-loop-recent-cycles
+trading-bot research review-journal-summary
+trading-bot research resolution-summary
+trading-bot research alert-audit-summary
 ```
 
-## Tech Stack
-
-| Komponente | Technologie |
-|-----------|-------------|
-| Sprache | Python 3.12+ |
-| API | FastAPI |
-| Validation | Pydantic v2 |
-| Datenbank | PostgreSQL + SQLAlchemy 2.x |
-| Migrations | Alembic |
-| HTTP | httpx (async) |
-| LLM | OpenAI (gpt-4o), Anthropic (optional) |
-| Scheduler | APScheduler |
-| CLI | Typer + Rich |
-| RSS | feedparser |
-| Logging | structlog (JSON) |
-| Tests | pytest + pytest-asyncio |
-| Linting | ruff |
-| Container | Docker + docker-compose |
-
-## Projektstruktur
-
-```
-ai_analyst_trading_bot/
-├── app/
-│   ├── api/            # FastAPI Routes
-│   ├── cli/            # Typer CLI
-│   ├── core/           # Settings, Logging, Errors, Domain, Query DSL
-│   ├── ingestion/      # Source Adapter (RSS, News, YouTube, etc.)
-│   ├── enrichment/     # Deduplication, Entity Extraction
-│   ├── analysis/       # Scoring, LLM-Analyse, Sentiment
-│   ├── alerts/         # Telegram, Email, Webhook
-│   ├── storage/        # DB Models, Repositories
-│   ├── trading/        # Signal-Vorbereitung
-│   └── integrations/   # OpenAI, Anthropic, YouTube, Reddit Adapter
-├── monitor/            # Keyword-, Channel-, Domain-Watchlists
-├── tests/              # Unit, Integration, E2E Tests
-├── docs/               # Architektur, Source Classification
-└── docker/             # Dockerfile
-```
-
-## Konfiguration
-
-Alle Settings via `.env`. Siehe `.env.example` für alle Optionen.
-
-Wichtigste Keys:
-- `OPENAI_API_KEY` — Für LLM-Analyse erforderlich
-- `DATABASE_URL` — PostgreSQL Connection String
-- `TELEGRAM_BOT_TOKEN` + `TELEGRAM_CHAT_ID` — Für Telegram-Alerts
-- `YOUTUBE_API_KEY` — Für YouTube-Kanal-Monitoring
-
-## Development
+## Optional Guarded Single Cycle (Paper/Shadow)
 
 ```bash
-pip install -e ".[dev]"
-pytest           # Tests ausführen
-ruff check app/  # Linting
-ruff format app/ # Formatierung
+trading-bot research trading-loop-run-once --mode paper --symbol BTC/USDT
 ```
 
-## Implementierungsphasen
+## Operator API Drilldown/History Read Endpoints
 
-| Phase | Status | Beschreibung |
-|-------|--------|-------------|
-| 1 – Foundation | ✅ | Repo, Settings, DB, Adapter, Query DSL, CI |
-| 2 – Ingestion Core | 🔄 | RSS-Scheduler, News APIs, Dedup-Pipeline |
-| 3 – Analysis Core | ⏳ | LLM-Pipeline, Keyword-Analyse, Scoring |
-| 4 – Alerting | ⏳ | Telegram, Email, Alert-Rules |
-| 5 – Research/Trading | ⏳ | Watchlists, Signal-Kandidaten |
-| 6 – Advanced | ⏳ | Transcripts, Narrative Clustering, MCP |
+- `GET /operator/review-journal`
+- `GET /operator/resolution-summary`
+- `GET /operator/alert-audit`
 
-## License
+These endpoints are read-only delegation surfaces and use the same fail-closed
+auth/error governance as all `/operator/*` routes.
 
-MIT
+## Documentation Index
+
+- [PHASE_PLAN.md](PHASE_PLAN.md)
+- [SPRINT_LEDGER.md](SPRINT_LEDGER.md)
+- [DECISION_LOG.md](DECISION_LOG.md)
+- [RISK_REGISTER.md](RISK_REGISTER.md)
+- [SECURITY.md](SECURITY.md)
+- [RUNBOOK.md](RUNBOOK.md)
+- [ONBOARDING.md](ONBOARDING.md)
+- [ARCHITECTURE.md](ARCHITECTURE.md)
+- [CANONICAL_SURFACE_INVENTORY.md](CANONICAL_SURFACE_INVENTORY.md)
+- [ASSUMPTIONS.md](ASSUMPTIONS.md)
+- [CHANGELOG.md](CHANGELOG.md)

@@ -8,6 +8,8 @@ Handles:
 - /risk
 - /signals
 - /journal
+- /resolution
+- /decision_pack
 - /approve
 - /reject
 - /pause
@@ -46,7 +48,10 @@ _READ_ONLY_COMMANDS = frozenset(
         "risk",
         "signals",
         "journal",
+        "resolution",
+        "decision_pack",
         "daily_summary",
+        "alert_status",
     }
 )
 _GUARDED_AUDIT_COMMANDS = frozenset({"approve", "reject", "incident"})
@@ -63,7 +68,10 @@ TELEGRAM_CANONICAL_RESEARCH_REFS: dict[str, tuple[str, ...]] = {
     "risk": ("research gate-summary",),
     "signals": ("research signal-handoff",),
     "journal": ("research review-journal-summary",),
-    "daily_summary": ("research decision-pack-summary",),
+    "resolution": ("research resolution-summary",),
+    "decision_pack": ("research decision-pack-summary",),
+    "daily_summary": ("research daily-summary",),
+    "alert_status": ("research alert-audit-summary",),
     "incident": ("research escalation-summary",),
     "approve": ("research review-journal-append",),
     "reject": ("research review-journal-append",),
@@ -425,6 +433,9 @@ class TelegramOperatorBot:
             "risk": self._cmd_risk,
             "signals": self._cmd_signals,
             "journal": self._cmd_journal,
+            "resolution": self._cmd_resolution,
+            "decision_pack": self._cmd_decision_pack,
+            "alert_status": self._cmd_alert_status,
             "approve": self._cmd_approve,
             "reject": self._cmd_reject,
             "pause": self._cmd_pause,
@@ -544,10 +555,25 @@ class TelegramOperatorBot:
 
         return await get_review_journal_summary()  # type: ignore[no-any-return]
 
+    async def _get_alert_audit_summary(self) -> dict[str, Any]:
+        from app.agents.mcp_server import get_alert_audit_summary
+
+        return await get_alert_audit_summary()  # type: ignore[no-any-return]
+
+    async def _get_resolution_summary(self) -> dict[str, Any]:
+        from app.agents.mcp_server import get_resolution_summary
+
+        return await get_resolution_summary()  # type: ignore[no-any-return]
+
     async def _get_decision_pack_summary(self) -> dict[str, Any]:
         from app.agents.mcp_server import get_decision_pack_summary
 
         return await get_decision_pack_summary()  # type: ignore[no-any-return]
+
+    async def _get_daily_operator_summary(self) -> dict[str, Any]:
+        from app.agents.mcp_server import get_daily_operator_summary
+
+        return await get_daily_operator_summary()  # type: ignore[no-any-return]
 
     async def _get_escalation_summary(self) -> dict[str, Any]:
         from app.agents.mcp_server import get_escalation_summary
@@ -718,6 +744,79 @@ class TelegramOperatorBot:
         )
         await self._send(chat_id, msg)
 
+    async def _cmd_resolution(self, chat_id: int, *, args: str = "") -> None:
+        payload = await self._load_canonical_surface(
+            chat_id=chat_id,
+            surface_name="Resolution",
+            command="resolution",
+            loader=self._get_resolution_summary,
+        )
+        if payload is None:
+            return
+        resolution_status = self._inline(
+            payload.get("resolution_status", payload.get("journal_status", "unknown"))
+        )
+        msg = (
+            "*Resolution (Read-Only)*\n"
+            f"resolution_status=`{resolution_status}`\n"
+            f"resolved_count=`{self._inline(payload.get('resolved_count', 0))}`\n"
+            f"open_count=`{self._inline(payload.get('open_count', 0))}`\n"
+            f"total_count=`{self._inline(payload.get('total_count', 0))}`\n"
+            f"execution_enabled=`{self._inline(payload.get('execution_enabled', False))}`\n"
+            f"write_back_allowed=`{self._inline(payload.get('write_back_allowed', False))}`"
+            f"{self._format_refs('resolution')}"
+        )
+        await self._send(chat_id, msg)
+
+    async def _cmd_decision_pack(self, chat_id: int, *, args: str = "") -> None:
+        payload = await self._load_canonical_surface(
+            chat_id=chat_id,
+            surface_name="Decision Pack",
+            command="decision_pack",
+            loader=self._get_decision_pack_summary,
+        )
+        if payload is None:
+            return
+        action_queue = payload.get("action_queue_summary")
+        operator_action_count: object = payload.get("operator_action_count")
+        if operator_action_count is None and isinstance(action_queue, dict):
+            operator_action_count = action_queue.get("operator_action_count")
+        if operator_action_count is None:
+            operator_action_count = payload.get("action_queue_count", 0)
+        decision_pack_status = self._inline(
+            payload.get("decision_pack_status", payload.get("overall_status", "unknown"))
+        )
+        msg = (
+            "*Decision Pack (Read-Only)*\n"
+            f"decision_pack_status=`{decision_pack_status}`\n"
+            f"blocking_count=`{self._inline(payload.get('blocking_count', 0))}`\n"
+            f"operator_action_count=`{self._inline(operator_action_count)}`\n"
+            f"execution_enabled=`{self._inline(payload.get('execution_enabled', False))}`\n"
+            f"write_back_allowed=`{self._inline(payload.get('write_back_allowed', False))}`"
+            f"{self._format_refs('decision_pack')}"
+        )
+        await self._send(chat_id, msg)
+
+    async def _cmd_alert_status(self, chat_id: int, *, args: str = "") -> None:
+        payload = await self._load_canonical_surface(
+            chat_id=chat_id,
+            surface_name="Alert Status",
+            command="alert_status",
+            loader=self._get_alert_audit_summary,
+        )
+        if payload is None:
+            return
+        msg = (
+            "*Alert Status (Read-Only)*\n"
+            f"total_count=`{self._inline(payload.get('total_count', 0))}`\n"
+            f"digest_count=`{self._inline(payload.get('digest_count', 0))}`\n"
+            f"latest_dispatched_at=`{self._inline(payload.get('latest_dispatched_at', 'none'))}`\n"
+            f"execution_enabled=`{self._inline(payload.get('execution_enabled', False))}`\n"
+            f"write_back_allowed=`{self._inline(payload.get('write_back_allowed', False))}`"
+            f"{self._format_refs('alert_status')}"
+        )
+        await self._send(chat_id, msg)
+
     async def _cmd_approve(self, chat_id: int, *, args: str = "") -> None:
         decision_ref = self._validate_decision_ref(args)
         if decision_ref is None:
@@ -810,16 +909,21 @@ class TelegramOperatorBot:
             chat_id=chat_id,
             surface_name="Daily Summary",
             command="daily_summary",
-            loader=self._get_decision_pack_summary,
+            loader=self._get_daily_operator_summary,
         )
         if payload is None:
             return
+        decision_pack_status = self._inline(
+            payload.get("decision_pack_status", "unknown")
+        )
         msg = (
-            "*Daily Summary (Decision Pack)*\n"
-            f"overall_status=`{self._inline(payload.get('overall_status', 'unknown'))}`\n"
-            f"blocking_count=`{self._inline(payload.get('blocking_count', 0))}`\n"
-            f"review_required_count=`{self._inline(payload.get('review_required_count', 0))}`\n"
-            f"action_queue_count=`{self._inline(payload.get('action_queue_count', 0))}`\n"
+            "*Daily Summary (Canonical Operator View)*\n"
+            f"readiness_status=`{self._inline(payload.get('readiness_status', 'unknown'))}`\n"
+            f"cycle_count_today=`{self._inline(payload.get('cycle_count_today', 0))}`\n"
+            f"position_count=`{self._inline(payload.get('position_count', 0))}`\n"
+            f"total_exposure_pct=`{self._inline(payload.get('total_exposure_pct', 0.0))}`\n"
+            f"decision_pack_status=`{decision_pack_status}`\n"
+            f"open_incidents=`{self._inline(payload.get('open_incidents', 0))}`\n"
             f"execution_enabled=`{self._inline(payload.get('execution_enabled', False))}`\n"
             f"write_back_allowed=`{self._inline(payload.get('write_back_allowed', False))}`"
             f"{self._format_refs('daily_summary')}"
@@ -861,12 +965,14 @@ class TelegramOperatorBot:
             "/risk - Protective gate summary\n"
             "/signals - Read-only signal handoff\n"
             "/journal - Review journal summary\n"
+            "/resolution - Read-only resolution summary\n"
+            "/decision_pack - Read-only decision pack summary\n"
             "/approve <decision_ref> - Audit-only approval intent\n"
             "/reject <decision_ref> - Audit-only rejection intent\n"
             "/pause - Pause all operations\n"
             "/resume - Resume operations\n"
             "/kill - Emergency stop (requires confirmation)\n"
-            "/daily_summary - Decision pack summary\n"
+            "/daily_summary - Daily operator view summary\n"
             "/incident <note> - Escalation summary + audit note\n"
             "/help - This message"
         )

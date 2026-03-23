@@ -1883,6 +1883,7 @@ def test_research_decision_pack_summary_in_help() -> None:
     assert result.exit_code == 0
     assert "decision-pack-summary" in result.output
     assert "operator-decision-pack" in result.output
+    assert "daily-summary" in result.output
 
 
 def test_research_decision_pack_summary_prints(tmp_path) -> None:
@@ -1956,6 +1957,73 @@ def test_research_operator_decision_pack_alias_prints(tmp_path) -> None:
 
     assert alias_result.exit_code == 0
     assert "Operator Decision Pack Summary" in alias_result.output
+
+
+def test_research_daily_summary_prints_human_readable_output(tmp_path, monkeypatch) -> None:
+    async def fake_daily_summary(**_kwargs: object) -> dict[str, object]:
+        return {
+            "report_type": "daily_operator_summary",
+            "readiness_status": "warning",
+            "cycle_count_today": 2,
+            "last_cycle_status": "no_signal",
+            "last_cycle_symbol": "BTC/USDT",
+            "last_cycle_at": "2026-03-22T08:15:00+00:00",
+            "position_count": 1,
+            "total_exposure_pct": 18.5,
+            "mark_to_market_status": "ok",
+            "decision_pack_status": "warning",
+            "open_incidents": 1,
+            "aggregated_at": "2026-03-22T08:30:00+00:00",
+            "execution_enabled": False,
+            "write_back_allowed": False,
+            "sources": ["readiness_summary"],
+        }
+
+    from app.agents import mcp_server
+
+    monkeypatch.setattr(mcp_server, "get_daily_operator_summary", fake_daily_summary)
+
+    result = runner.invoke(app, ["research", "daily-summary"])
+
+    assert result.exit_code == 0
+    assert "Daily Operator View" in result.output
+    assert "Readiness:" in result.output
+    assert "Cycles today:" in result.output
+    assert "Portfolio:" in result.output
+    assert "Decision Pack:" in result.output
+    assert "Incidents:" in result.output
+    assert "execution_enabled=False" in result.output
+    assert "write_back_allowed=False" in result.output
+    assert '"report_type": "daily_operator_summary"' not in result.output
+
+
+def test_research_daily_summary_json_flag_prints_canonical_payload(monkeypatch) -> None:
+    async def fake_daily_summary(**_kwargs: object) -> dict[str, object]:
+        return {
+            "report_type": "daily_operator_summary",
+            "readiness_status": "ok",
+            "cycle_count_today": 0,
+            "position_count": 0,
+            "total_exposure_pct": 0.0,
+            "mark_to_market_status": "unknown",
+            "decision_pack_status": "clear",
+            "open_incidents": 0,
+            "aggregated_at": "2026-03-22T08:30:00+00:00",
+            "execution_enabled": False,
+            "write_back_allowed": False,
+            "sources": [],
+        }
+
+    from app.agents import mcp_server
+
+    monkeypatch.setattr(mcp_server, "get_daily_operator_summary", fake_daily_summary)
+
+    result = runner.invoke(app, ["research", "daily-summary", "--json"])
+
+    assert result.exit_code == 0
+    assert '"report_type": "daily_operator_summary"' in result.output
+    assert '"execution_enabled": false' in result.output
+    assert '"write_back_allowed": false' in result.output
 
 
 # ---------------------------------------------------------------------------
@@ -2044,6 +2112,7 @@ def test_get_invalid_research_command_refs_uses_registered_cli_state() -> None:
         "research consumer-ack",
         "research decision-pack-summary",
         "research operator-decision-pack",
+        "research daily-summary",
         "research runbook-summary",
         "research runbook-next-steps",
         "research operator-runbook",

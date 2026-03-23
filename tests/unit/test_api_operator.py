@@ -140,6 +140,57 @@ def test_operator_endpoints_reject_invalid_bearer_token(client: TestClient) -> N
             },
         ),
         (
+            "/operator/daily-summary",
+            "get_daily_operator_summary",
+            {
+                "report_type": "daily_operator_summary",
+                "readiness_status": "warning",
+                "cycle_count_today": 2,
+                "position_count": 1,
+                "total_exposure_pct": 18.5,
+                "decision_pack_status": "warning",
+                "open_incidents": 1,
+                "execution_enabled": False,
+                "write_back_allowed": False,
+            },
+        ),
+        (
+            "/operator/review-journal",
+            "get_review_journal_summary",
+            {
+                "report_type": "review_journal_summary",
+                "journal_status": "open",
+                "total_count": 2,
+                "open_count": 1,
+                "resolved_count": 1,
+                "execution_enabled": False,
+                "write_back_allowed": False,
+            },
+        ),
+        (
+            "/operator/resolution-summary",
+            "get_resolution_summary",
+            {
+                "report_type": "review_resolution_summary",
+                "total_sources": 1,
+                "open_count": 0,
+                "resolved_count": 1,
+                "execution_enabled": False,
+                "write_back_allowed": False,
+            },
+        ),
+        (
+            "/operator/alert-audit",
+            "get_alert_audit_summary",
+            {
+                "report_type": "alert_audit_summary",
+                "total_count": 0,
+                "digest_count": 0,
+                "execution_enabled": False,
+                "write_back_allowed": False,
+            },
+        ),
+        (
             "/operator/portfolio-snapshot",
             "get_paper_portfolio_snapshot",
             {
@@ -280,6 +331,53 @@ def test_operator_read_error_payload_is_consistent(
         response,
         status_code=503,
         error_code="readiness_unavailable",
+    )
+    assert "RuntimeError" in detail["error"]["message"]
+
+
+@pytest.mark.parametrize(
+    ("path", "mcp_name", "error_code"),
+    [
+        (
+            "/operator/review-journal",
+            "get_review_journal_summary",
+            "review_journal_unavailable",
+        ),
+        (
+            "/operator/resolution-summary",
+            "get_resolution_summary",
+            "resolution_summary_unavailable",
+        ),
+        (
+            "/operator/alert-audit",
+            "get_alert_audit_summary",
+            "alert_audit_unavailable",
+        ),
+    ],
+)
+def test_operator_journal_read_endpoints_use_consistent_error_shape(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+    path: str,
+    mcp_name: str,
+    error_code: str,
+) -> None:
+    _set_operator_api_key(client.app, "operator-token")
+
+    async def failing_surface(**_kwargs: object) -> dict[str, object]:
+        raise RuntimeError("broken")
+
+    monkeypatch.setattr(
+        operator_router.mcp_server,
+        mcp_name,
+        failing_surface,
+    )
+
+    response = client.get(path, headers=_auth_headers())
+    detail = _assert_error_payload(
+        response,
+        status_code=503,
+        error_code=error_code,
     )
     assert "RuntimeError" in detail["error"]["message"]
 

@@ -729,6 +729,48 @@ class OperatorDecisionPack:
         }
 
 
+@dataclass(frozen=True)
+class DailyOperatorSummary:
+    """Canonical read-only daily operator aggregate across existing summaries only."""
+
+    readiness_status: str = "unknown"
+    cycle_count_today: int = 0
+    last_cycle_status: str | None = None
+    last_cycle_symbol: str | None = None
+    last_cycle_at: str | None = None
+    position_count: int = 0
+    total_exposure_pct: float = 0.0
+    mark_to_market_status: str = "unknown"
+    decision_pack_status: str = "unknown"
+    open_incidents: int = 0
+    aggregated_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
+    sources: list[str] = field(default_factory=list)
+    report_type: str = "daily_operator_summary"
+    interface_mode: str = "read_only"
+    execution_enabled: bool = False
+    write_back_allowed: bool = False
+
+    def to_json_dict(self) -> dict[str, object]:
+        return {
+            "report_type": self.report_type,
+            "readiness_status": self.readiness_status,
+            "cycle_count_today": self.cycle_count_today,
+            "last_cycle_status": self.last_cycle_status,
+            "last_cycle_symbol": self.last_cycle_symbol,
+            "last_cycle_at": self.last_cycle_at,
+            "position_count": self.position_count,
+            "total_exposure_pct": self.total_exposure_pct,
+            "mark_to_market_status": self.mark_to_market_status,
+            "decision_pack_status": self.decision_pack_status,
+            "open_incidents": self.open_incidents,
+            "aggregated_at": self.aggregated_at,
+            "sources": list(self.sources),
+            "interface_mode": self.interface_mode,
+            "execution_enabled": self.execution_enabled,
+            "write_back_allowed": self.write_back_allowed,
+        }
+
+
 @dataclass
 class _ObservedProviderStats:
     """Internal aggregation row for provider health derivation."""
@@ -2046,6 +2088,170 @@ def build_operator_decision_pack(
         action_queue_summary=action_queue_summary,
         review_required_summary=review_required_summary,
         generated_at=generated_at,
+    )
+
+
+def _daily_optional_str(value: object) -> str | None:
+    if isinstance(value, str):
+        normalized = value.strip()
+        if normalized:
+            return normalized
+    return None
+
+
+def _daily_int(value: object, default: int = 0) -> int:
+    if isinstance(value, bool):
+        return default
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value)
+    return default
+
+
+def _daily_float(value: object, default: float = 0.0) -> float:
+    if isinstance(value, bool):
+        return default
+    if isinstance(value, (int, float)):
+        return float(value)
+    return default
+
+
+def _daily_cycle_timestamp(row: dict[str, object]) -> datetime | None:
+    for key in ("completed_at", "started_at", "last_cycle_completed_at"):
+        parsed = _parse_iso_timestamp(_daily_optional_str(row.get(key)))
+        if parsed is not None:
+            return parsed
+    return None
+
+
+def _daily_cycle_count_today(
+    recent_cycles: list[dict[str, object]],
+    *,
+    now: datetime,
+) -> int:
+    count = 0
+    for row in recent_cycles:
+        parsed = _daily_cycle_timestamp(row)
+        if parsed is not None and parsed.date() == now.date():
+            count += 1
+    return count
+
+
+def _daily_sources(
+    *,
+    readiness_summary: dict[str, object] | None,
+    recent_cycles_summary: dict[str, object] | None,
+    portfolio_snapshot: dict[str, object] | None,
+    exposure_summary: dict[str, object] | None,
+    decision_pack_summary: dict[str, object] | None,
+    review_journal_summary: dict[str, object] | None,
+) -> list[str]:
+    sources: list[str] = []
+    if readiness_summary is not None:
+        sources.append("readiness_summary")
+    if recent_cycles_summary is not None:
+        sources.append("recent_cycles")
+    if portfolio_snapshot is not None:
+        sources.append("portfolio_snapshot")
+    if exposure_summary is not None:
+        sources.append("exposure_summary")
+    if decision_pack_summary is not None:
+        sources.append("decision_pack_summary")
+    if review_journal_summary is not None:
+        sources.append("review_journal_summary")
+    return sources
+
+
+def build_daily_operator_summary(
+    *,
+    readiness_summary: dict[str, object] | None = None,
+    recent_cycles_summary: dict[str, object] | None = None,
+    portfolio_snapshot: dict[str, object] | None = None,
+    exposure_summary: dict[str, object] | None = None,
+    decision_pack_summary: dict[str, object] | None = None,
+    review_journal_summary: dict[str, object] | None = None,
+    now_utc: str | None = None,
+) -> DailyOperatorSummary:
+    """Build one canonical daily operator aggregate from existing summaries only."""
+    now = _parse_iso_timestamp(now_utc) if now_utc is not None else None
+    if now is None:
+        now = datetime.now(UTC)
+
+    recent_rows: list[dict[str, object]] = []
+    if recent_cycles_summary is not None:
+        raw_recent_rows = recent_cycles_summary.get("recent_cycles")
+        if isinstance(raw_recent_rows, list):
+            recent_rows = [row for row in raw_recent_rows if isinstance(row, dict)]
+
+    last_cycle_status: str | None = None
+    last_cycle_symbol: str | None = None
+    last_cycle_at: str | None = None
+    if recent_rows:
+        last_row = recent_rows[-1]
+        last_cycle_status = _daily_optional_str(last_row.get("status"))
+        last_cycle_symbol = _daily_optional_str(last_row.get("symbol"))
+        last_cycle_at = _daily_optional_str(last_row.get("completed_at"))
+        if last_cycle_at is None:
+            last_cycle_at = _daily_optional_str(last_row.get("started_at"))
+
+    gross_exposure_usd = (
+        _daily_float(exposure_summary.get("gross_exposure_usd", 0.0))
+        if exposure_summary is not None
+        else 0.0
+    )
+    total_equity_usd = (
+        _daily_float(portfolio_snapshot.get("total_equity_usd", 0.0))
+        if portfolio_snapshot is not None
+        else 0.0
+    )
+    total_exposure_pct = 0.0
+    if total_equity_usd > 0.0:
+        total_exposure_pct = round((gross_exposure_usd / total_equity_usd) * 100.0, 4)
+
+    return DailyOperatorSummary(
+        readiness_status=(
+            _daily_optional_str(readiness_summary.get("readiness_status"))
+            if readiness_summary is not None
+            else None
+        )
+        or "unknown",
+        cycle_count_today=_daily_cycle_count_today(recent_rows, now=now),
+        last_cycle_status=last_cycle_status,
+        last_cycle_symbol=last_cycle_symbol,
+        last_cycle_at=last_cycle_at,
+        position_count=(
+            _daily_int(portfolio_snapshot.get("position_count", 0))
+            if portfolio_snapshot is not None
+            else 0
+        ),
+        total_exposure_pct=total_exposure_pct,
+        mark_to_market_status=(
+            _daily_optional_str(exposure_summary.get("mark_to_market_status"))
+            if exposure_summary is not None
+            else None
+        )
+        or "unknown",
+        decision_pack_status=(
+            _daily_optional_str(decision_pack_summary.get("overall_status"))
+            if decision_pack_summary is not None
+            else None
+        )
+        or "unknown",
+        open_incidents=(
+            _daily_int(review_journal_summary.get("open_count", 0))
+            if review_journal_summary is not None
+            else 0
+        ),
+        aggregated_at=now.isoformat(),
+        sources=_daily_sources(
+            readiness_summary=readiness_summary,
+            recent_cycles_summary=recent_cycles_summary,
+            portfolio_snapshot=portfolio_snapshot,
+            exposure_summary=exposure_summary,
+            decision_pack_summary=decision_pack_summary,
+            review_journal_summary=review_journal_summary,
+        ),
     )
 
 

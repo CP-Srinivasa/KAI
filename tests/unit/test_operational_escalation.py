@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import replace
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -35,6 +36,7 @@ from app.research.operational_readiness import (
     build_action_queue_summary,
     build_blocking_actions,
     build_blocking_summary,
+    build_daily_operator_summary,
     build_operational_escalation_summary,
     build_operational_readiness_report,
     build_operator_action_summary,
@@ -806,6 +808,58 @@ async def test_get_mcp_capabilities_lists_decision_pack_tool() -> None:
         payload["aliases"]["get_operator_decision_pack"]["canonical_tool"]
         == "get_decision_pack_summary"
     )
+
+
+def test_build_daily_operator_summary_projects_canonical_fields() -> None:
+    now = datetime.now(UTC)
+    today = now.isoformat()
+    yesterday = (now - timedelta(days=1)).isoformat()
+
+    summary = build_daily_operator_summary(
+        readiness_summary={"readiness_status": "warning"},
+        recent_cycles_summary={
+            "recent_cycles": [
+                {"status": "no_signal", "symbol": "ETH/USDT", "completed_at": yesterday},
+                {"status": "risk_rejected", "symbol": "BTC/USDT", "completed_at": today},
+            ]
+        },
+        portfolio_snapshot={"position_count": 2, "total_equity_usd": 10_000.0},
+        exposure_summary={"gross_exposure_usd": 2_500.0, "mark_to_market_status": "ok"},
+        decision_pack_summary={"overall_status": "warning"},
+        review_journal_summary={"open_count": 3},
+        now_utc=today,
+    )
+
+    payload = summary.to_json_dict()
+    assert payload["report_type"] == "daily_operator_summary"
+    assert payload["readiness_status"] == "warning"
+    assert payload["cycle_count_today"] == 1
+    assert payload["last_cycle_status"] == "risk_rejected"
+    assert payload["last_cycle_symbol"] == "BTC/USDT"
+    assert payload["position_count"] == 2
+    assert payload["total_exposure_pct"] == 25.0
+    assert payload["mark_to_market_status"] == "ok"
+    assert payload["decision_pack_status"] == "warning"
+    assert payload["open_incidents"] == 3
+    assert payload["execution_enabled"] is False
+    assert payload["write_back_allowed"] is False
+    assert "trading" not in str(payload).lower()
+
+
+def test_build_daily_operator_summary_fail_closed_on_partial_inputs() -> None:
+    summary = build_daily_operator_summary(
+        recent_cycles_summary={"recent_cycles": [{"status": "no_signal"}]},
+    )
+    payload = summary.to_json_dict()
+
+    assert payload["report_type"] == "daily_operator_summary"
+    assert payload["readiness_status"] == "unknown"
+    assert payload["position_count"] == 0
+    assert payload["total_exposure_pct"] == 0.0
+    assert payload["decision_pack_status"] == "unknown"
+    assert payload["open_incidents"] == 0
+    assert payload["execution_enabled"] is False
+    assert payload["write_back_allowed"] is False
 
 
 
