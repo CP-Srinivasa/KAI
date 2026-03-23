@@ -5,10 +5,8 @@ Default runtime remains `paper`/`shadow` with fail-closed controls.
 
 ## Current Phase
 
-- phase: `PHASE 4 (active)`
-- current sprint: `PH4E_SCORING_CALIBRATION_AUDIT`
-- next required step: `PH4E_EXECUTION_START`
-- technical baseline: `1519 passed, ruff clean`
+- phase: `PHASE 4 (active)` | sprint: `PH4F closed → PH4G in selection`
+- technical baseline: `1519 passed, ruff clean` | runtime: paper/shadow, fail-closed
 
 ## Phase-4 Focus
 
@@ -16,8 +14,11 @@ Phase 3 (canonical consolidation, S50) is formally complete.
 Phase 4 runs signal quality audits on the frozen PH4A–PH4D evidence arc:
 
 - PH4A–PH4D arc closed: keyword expansion improved good-hit `13→18`, zero-hit `29→26`, no regressions
-- PH4E active: scoring divergence diagnostics on 69 paired documents (diagnostic-only, no runtime changes)
-- No new feature rollout during Phase 4 execution
+- PH4E closed (D-67): scoring divergence root cause = defaults-by-design (RuleAnalyzer leaves LLM fields to LLM)
+- PH4F closed (D-70): rule-input completeness diagnostic — field-level gap analysis complete, no runtime changes
+- PH4G: next sprint in selection — fallback input enrichment baseline
+- CoinGecko integration active as default market data provider (free tier, ~1min delayed)
+- Paper-trading loop active: `run-once` command available, fail-closed on live
 
 ## Core Principles
 
