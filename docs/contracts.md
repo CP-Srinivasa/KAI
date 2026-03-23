@@ -15,7 +15,8 @@
 
 | Section | Content | Status |
 |---|---|---|
-| [§76 PH4H Rule-Only Ceiling & Actionability Policy Review](#s76-ph4h-rule-only-ceiling-and-actionability-policy-review) | Review-only policy sprint: I-13 ceiling vs actionability in fallback path | active (definition) |
+| [§77 PH4I Fallback Market Scope Enrichment](#s77-ph4i-fallback-market-scope-enrichment) | Enrich market_scope in fallback path (PH4F finding market_scope unknown 69/69) | candidate (not active) |
+| [§76 PH4H Rule-Only Ceiling & Actionability Policy Review](#s76-ph4h-rule-only-ceiling-and-actionability-policy-review) | Review-only policy sprint: I-13 ceiling vs actionability in fallback path | closed (frozen anchor D-73/74) |
 | [§75 PH4G Fallback Input Enrichment Baseline](#s75-ph4g-fallback-input-enrichment-baseline) | Narrow fallback-path enrichment for PH4F top-3 field gaps | closed (frozen anchor) |
 | [§74 PH4F Rule Input Completeness Audit](#s74-ph4f-rule-input-completeness-audit) | Diagnostic audit of missing rule-input fields on paired documents | closed (D-68) |
 | [§73 PH4E Scoring Calibration Audit](#s73-ph4e-scoring-calibration-audit) | Diagnostic per-field scoring audit; divergence cluster analysis | closed (D-67) |
@@ -7182,6 +7183,7 @@ Review-only policy sprint. No code changes permitted. PH4G revealed that `I-13` 
 - No new interventions on fallback fields
 
 ### Acceptance Criteria
+
 - [ ] Policy options enumerated with risk/benefit evidence
 - [ ] One policy option selected with explicit rationale (D-decision recorded)
 - [ ] I-13 status updated in governance docs based on decision
@@ -7189,12 +7191,59 @@ Review-only policy sprint. No code changes permitted. PH4G revealed that `I-13` 
 - [ ] Baseline confirmed unchanged: 1538 passed, ruff clean
 
 ### Freeze Gates (definition-to-execution)
+
 - [x] PH4G formally closed; §75 immutable anchor confirmed
 - [x] PH4H activated as next sprint in definition mode
 - [ ] Scope frozen to review-only (zero code changes)
 - [ ] Policy options enumerated before execution
 
 §76 status: **active definition (next step: PH4H_CONTRACT_AND_ACCEPTANCE_FREEZE)**
+
+---
+
+<a name="s77-ph4i-fallback-market-scope-enrichment"></a>
+
+## §77 — PH4I_FALLBACK_MARKET_SCOPE_ENRICHMENT
+
+**Sprint**: `PH4I_FALLBACK_MARKET_SCOPE_ENRICHMENT`
+**Phase**: 4
+**Opened**: 2026-03-23 (candidate)
+**Decision**: D-75
+**Status**: candidate (not active; opens after §77 freeze)
+
+### Purpose
+
+Address the PH4F finding `market_scope unknown 69/69` by enriching `market_scope` in the fallback
+analysis path. Market-scope enrichment is policy-safe: it is metadata-only, has no scoring impact,
+and creates no I-13 conflict.
+
+### Scope
+
+- Enrich `market_scope` field in `_build_fallback_analysis()` in `app/analysis/pipeline.py`.
+- Use existing document signals (asset names, source category, title keywords) to infer market_scope.
+- Measure before/after on the same 69 paired documents.
+
+### Non-Goals (hard freeze)
+
+- No changes to priority scoring or I-13 invariant
+- No actionable flag changes (I-13 policy confirmed by PH4H)
+- No tags enrichment in this sprint (future sprint)
+- No LLM calls or external API changes
+
+### Acceptance Criteria
+
+- [ ] market_scope populated for > 0/69 fallback docs (measurable improvement)
+- [ ] No regressions: ruff clean, 1538+ passed
+- [ ] Intervention outcome documented (before/after measurement)
+- [ ] PH4J defined as next sprint
+
+### Freeze Gates (candidate-to-definition)
+
+- [ ] PH4H formally closed; §76 immutable anchor confirmed
+- [ ] PH4I activated as next sprint in definition mode
+- [ ] Scope frozen (market_scope only; no scoring changes)
+
+§77 status: **candidate (not active; awaiting PH4I definition sprint activation)**
 
 ---
 

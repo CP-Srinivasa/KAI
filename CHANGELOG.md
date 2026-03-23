@@ -1,4 +1,26 @@
-# CHANGELOG.md
+﻿# CHANGELOG.md
+
+## 2026-03-23 - [superseded draft] PH4H closeout + PH4I opening
+
+- This transition was drafted but is not canonical for the current governance state.
+- Canonical state remains:
+  - `current_sprint = PH4H_RULE_ONLY_CEILING_AND_ACTIONABILITY_POLICY_REVIEW (active definition)`
+  - `next_required_step = PH4H_CONTRACT_AND_ACCEPTANCE_FREEZE`
+- PH4I is not active in this state.
+- Baseline unchanged: `1538 passed`, `ruff clean`.
+
+---
+## 2026-03-23 - PH4G formally closed; PH4H opened in active definition mode
+
+- PH4G_FALLBACK_INPUT_ENRICHMENT_BASELINE formally closed and frozen as Â§75 anchor.
+- PH4H_RULE_ONLY_CEILING_AND_ACTIONABILITY_POLICY_REVIEW opened as active definition sprint.
+- Governance state advanced to:
+  - `current_sprint = PH4H_RULE_ONLY_CEILING_AND_ACTIONABILITY_POLICY_REVIEW (active definition)`
+  - `next_required_step = PH4H_CONTRACT_AND_ACCEPTANCE_FREEZE`
+- Central policy question fixed for freeze: `I-13` rule-only ceiling vs fallback actionability.
+- Baseline reconfirmed: `1538 passed`, `ruff clean`.
+
+---
 
 ## 2026-03-23 - PH4G execution complete and moved to ready-to-close gate
 
@@ -16,10 +38,10 @@
 ## 2026-03-23 - [superseded] Premature PH4G closeout/opening record
 
 - PH4G_FALLBACK_INPUT_ENRICHMENT_BASELINE formally closed.
-- §75 is now a frozen immutable anchor.
+- Â§75 is now a frozen immutable anchor.
 - Retained: relevance-floor fallback intervention.
-- Reverted: actionable heuristic (I-13 constraint — rule-only priority ceiling ≤ 5).
-- PH4H_RULE_ONLY_CEILING_AND_ACTIONABILITY_POLICY_REVIEW opened (D-70, §76).
+- Reverted: actionable heuristic (I-13 constraint â€” rule-only priority ceiling â‰¤ 5).
+- PH4H_RULE_ONLY_CEILING_AND_ACTIONABILITY_POLICY_REVIEW opened (D-70, Â§76).
 - PH4H is review-only: no code changes, no I-13 relaxation before policy decision.
 - Governance state advanced to:
   - `current_sprint = PH4H_RULE_ONLY_CEILING_AND_ACTIONABILITY_POLICY_REVIEW (superseded draft state)`
@@ -103,3 +125,5 @@
 
 - PH4E scoring calibration audit formally closed (D-67).
 - PH4F (`RULE_INPUT_COMPLETENESS_AUDIT`) opened as diagnostic-only sprint (D-68).
+
+

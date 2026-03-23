@@ -16,13 +16,13 @@
 - Relevance-floor fallback intervention was applied successfully.
 - Actionable-heuristic intervention was reverted.
 - `I-13` keeps rule-only priority capped at `5`.
-- PH4G is formally closed and frozen as a policy-constrained intervention anchor.
+- PH4G is formally closed and frozen as §75 intervention anchor.
 
-## Interpretation
+## PH4H Definition Focus
 
-- PH4G delivered measurable fallback improvement and is now closed.
-- Further fallback enrichment is policy-constrained by I-13.
-- PH4H is the correct next sprint for policy clarification before any new intervention.
+- Central policy question: `I-13` rule-only ceiling vs fallback actionability.
+- PH4H is diagnostic/review-first and remains non-intervention until contract freeze.
+- No direct `I-13` change is allowed before freeze and explicit policy rationale.
 
 ## Active Gate
 

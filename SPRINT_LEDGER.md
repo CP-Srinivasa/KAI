@@ -16,4 +16,5 @@
 | PH4E | 2026-03-23 | closed | relevance 41.2% of gap. Defaults by design |
 | PH4F | 2026-03-23 | closed | Fallback path confirmed; top input gaps frozen as intervention anchor |
 | PH4G | 2026-03-23 | closed | Relevance floor applied; actionable heuristic reverted due I-13 ceiling policy |
-| PH4H | 2026-03-23 | active (definition) | Policy review sprint: rule-only ceiling and fallback actionability policy |
+| PH4H | 2026-03-23 | active (definition) | Policy review sprint: I-13 ceiling and fallback actionability |
+| PH4I | 2026-03-23 | not active | Reserved follow-up candidate; blocked until PH4H freeze/decision |

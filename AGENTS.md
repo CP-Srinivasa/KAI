@@ -13,13 +13,14 @@
 | ph4d_status | `closed (D-68) — 56 keywords added; zero-hit 42%->37.7%; §71 frozen anchor` |
 | ph4e_status | `closed (D-70) — relevance 41.2% of gap; root cause: defaults by design` |
 | ph4f_status | `closed (D-69) — fallback path identified; actionable missing 69/69; market_scope unknown 69/69` |
-| ph4g_status | `closed — relevance floor applied; actionable heuristic reverted (I-13); §75 frozen anchor` |
-| ph4h_status | `active (definition) — policy review sprint; §76 contract` |
+| ph4g_status | `closed (D-68/69) — relevance floor applied; actionable reverted (I-13); §75 frozen anchor` |
+| ph4h_status | `active (definition) — policy review sprint for I-13 and fallback actionability; §76 freeze pending` |
+| ph4i_status | `not active — reserved follow-up candidate only` |
 | baseline | `1538 passed, ruff clean` |
 | cli_canonical_count | 53 |
 | provisional_cli_count | 0 |
 | phase3_status | `closed (2026-03-22) — GO` |
-| phase4_status | `active — PH4G closed; PH4H policy review definition active` |
+| phase4_status | `active — PH4G closed; PH4H active definition; PH4I not active` |
 ---
 
 > **Verbindliches Betriebsdokument für alle Coding-Agenten.**

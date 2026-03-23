@@ -1,4 +1,4 @@
-# RISK_REGISTER.md
+﻿# RISK_REGISTER.md
 
 ## Current State (2026-03-23)
 
@@ -21,30 +21,19 @@
 
 ---
 
-## Resolved / Superseded
-
-- PH4B operational blocker (quota) - resolved.
-- PH4D regression risk - resolved (`0` regressions).
-- PH4D/PH4E governance conflict - resolved.
-- PH4E calibration ambiguity - resolved into PH4F diagnostic path.
-- PH4F closeout ambiguity - resolved (PH4F formally closed).
-- PH4G execution uncertainty - resolved (execution complete; closeout recorded).
-
----
-
 ## Refactoring Findings RF-1 .. RF-7 (2026-03-23)
 
 These findings were addressed in a dedicated refactoring session (2026-03-23).
 
 | ID | Titel | Status | Commit |
 |---|---|---|---|
-| **RF-1** | CLI/MCP monolith split | ✅ implemented | e2949d3, b8c0fad |
-| **RF-2** | Working Tree uncommitted | ✅ implemented | f32b147, cbcb34c, dea0ec8 |
-| **RF-3** | CORS hardcoded | ✅ implemented (prior) | 4d2cfdd |
-| **RF-4** | DB-based aggregation (models + migration) | ✅ partial | 25f84d4 |
-| **RF-5** | README/Docs Phase-4 update | ✅ implemented | a089ca7, e86e3aa |
-| **RF-6** | CoinGecko default + mock warning | ✅ implemented | faabd6c |
-| **RF-7** | Test-file splitting (cli/ + mcp/ submodules) | ✅ implemented | a05f1e7 |
+| **RF-1** | CLI/MCP monolith split | âœ… implemented | e2949d3, b8c0fad |
+| **RF-2** | Working Tree uncommitted | âœ… implemented | f32b147, cbcb34c, dea0ec8 |
+| **RF-3** | CORS hardcoded | âœ… implemented (prior) | 4d2cfdd |
+| **RF-4** | DB-based aggregation (models + migration) | âœ… partial | 25f84d4 |
+| **RF-5** | README/Docs Phase-4 update | âœ… implemented | a089ca7, e86e3aa |
+| **RF-6** | CoinGecko default + mock warning | âœ… implemented | faabd6c |
+| **RF-7** | Test-file splitting (cli/ + mcp/ submodules) | âœ… implemented | a05f1e7 |
 
 ### RF-1 Detail
 - `app/cli/commands/trading.py`: new `trading_app` with market-data, paper-portfolio, trading-loop, backtest, decision-journal commands
@@ -60,31 +49,31 @@ Phase 2 (dual-write in run_cycle) and Phase 3 (DB-primary portfolio snapshot) ar
 
 ## Complexity Findings CF-1 .. CF-3 (2026-03-23)
 
-Pragmatic complexity audit — see README "Active vs. Experimental Features" table.
+Pragmatic complexity audit â€” see README "Active vs. Experimental Features" table.
 
-| ID | Bereich | Entscheidung | Maßnahme |
+| ID | Bereich | Entscheidung | MaÃŸnahme |
 |---|---|---|---|
 | **CF-1** | Companion ML Pipeline (distillation, training, tuning, upgrade_cycle) | Experimental parken | `[EXPERIMENTAL]` Marker in Modul-Docstrings + CLI-Hilfetext. Kein Modell vorhanden, kein Default-Pfad-Einfluss. Code bleibt als Wiedereinstiegspunkt. |
-| **CF-2** | ABCInferenceEnvelope (abc_result.py, route_runner.py) | Experimental dokumentieren | Docstring klärt: nur aktiv in non-primary_only Route-Modi. Production default = primary_only → Modul wird nie aufgerufen. |
-| **CF-3** | Inference Route Profile multi-path | Experimental kennzeichnen | inference_profile.py Docstring klärt: production default = primary_only. Multi-path-Modi = experimental, benötigen Companion-Modell. |
+| **CF-2** | ABCInferenceEnvelope (abc_result.py, route_runner.py) | Experimental dokumentieren | Docstring klÃ¤rt: nur aktiv in non-primary_only Route-Modi. Production default = primary_only â†’ Modul wird nie aufgerufen. |
+| **CF-3** | Inference Route Profile multi-path | Experimental kennzeichnen | inference_profile.py Docstring klÃ¤rt: production default = primary_only. Multi-path-Modi = experimental, benÃ¶tigen Companion-Modell. |
 
-### Bewusst NICHT getan (mit Begründung)
-- Kein Code-Löschen: ML-Pipeline-Module haben Wiederverwendungswert sobald Modell existiert.
+### Bewusst NICHT getan (mit BegrÃ¼ndung)
+- Kein Code-LÃ¶schen: ML-Pipeline-Module haben Wiederverwendungswert sobald Modell existiert.
 - Kein Event-Sourcing: nicht geplant, nicht vorbereitet.
 - Kein Multi-Tenant: nicht geplant.
 - Kein Kafka/Message-Queue: nicht geplant.
-- Kein DB-Dual-Write jetzt: RF-4 Phase 2 bleibt pending — Risiko > Nutzen zum jetzigen Zeitpunkt.
-- Kein weiteres CLI-Splitting: research.py ist groß, aber bereits extrahiert. Weitere Unterteilung bringt jetzt keinen Wartungsgewinn.
+- Kein DB-Dual-Write jetzt: RF-4 Phase 2 bleibt pending â€” Risiko > Nutzen zum jetzigen Zeitpunkt.
+- Kein weiteres CLI-Splitting: research.py ist groÃŸ, aber bereits extrahiert. Weitere Unterteilung bringt jetzt keinen Wartungsgewinn.
 
 ---
 
 ## Strategic Alignment Audit (2026-03-23)
 
-| ID | Bereich | Befund | Maßnahme | Status |
+| ID | Bereich | Befund | MaÃŸnahme | Status |
 |---|---|---|---|---|
-| **SA-1** | Companion-ML-Infrastruktur | Vorhanden (Sprints 8–15), kein aktives Modell, kein kurzfristiger Aktivierungsplan. Infrastruktur zu früh für Produktivbetrieb. | Als `[EXPERIMENTAL — NO ACTIVE MODEL]` markiert in `shadow.py`, `evaluation.py` (neu). Distillation/training/upgrade_cycle bereits markiert. Kein Ausbau bis Aktivierungsvoraussetzungen erfüllt. | ✅ D-71 |
-| **SA-2** | Signalkern Freshness-Enforcement | TradingLoop maskierte stale Daten still als `NO_SIGNAL`. Adapter-Quelle war im Audit nicht sichtbar. | Expliziter `STALE_DATA` CycleStatus eingeführt. Stale → Zyklus-Skip mit WARNING-Log. Adapter-Quelle in Notes/Audit. | ✅ D-72 |
-| **SA-3** | Signalkern Strategie-Transparenz | SignalGenerator leitet Richtung ausschließlich aus LLM-Sentiment ab — kein technischer Indikator, kein Orderbook. Dieses Risiko war undokumentiert. | Docstring in `signals/generator.py` klärt aktuellen Stand und TODO vor Live-Einsatz. Keine neue Logik. | ✅ D-72 |
+| **SA-1** | Companion-ML-Infrastruktur | Vorhanden (Sprints 8â€“15), kein aktives Modell, kein kurzfristiger Aktivierungsplan. Infrastruktur zu frÃ¼h fÃ¼r Produktivbetrieb. | Als `[EXPERIMENTAL â€” NO ACTIVE MODEL]` markiert in `shadow.py`, `evaluation.py` (neu). Distillation/training/upgrade_cycle bereits markiert. Kein Ausbau bis Aktivierungsvoraussetzungen erfÃ¼llt. | âœ… D-71 |
+| **SA-2** | Signalkern Freshness-Enforcement | TradingLoop maskierte stale Daten still als `NO_SIGNAL`. Adapter-Quelle war im Audit nicht sichtbar. | Expliziter `STALE_DATA` CycleStatus eingefÃ¼hrt. Stale â†’ Zyklus-Skip mit WARNING-Log. Adapter-Quelle in Notes/Audit. | âœ… D-72 |
+| **SA-3** | Signalkern Strategie-Transparenz | SignalGenerator leitet Richtung ausschlieÃŸlich aus LLM-Sentiment ab â€” kein technischer Indikator, kein Orderbook. Dieses Risiko war undokumentiert. | Docstring in `signals/generator.py` klÃ¤rt aktuellen Stand und TODO vor Live-Einsatz. Keine neue Logik. | âœ… D-72 |
 
 ---
 
