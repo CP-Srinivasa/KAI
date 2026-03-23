@@ -1,12 +1,14 @@
 """Signal generator — AnalysisResult + MarketDataPoint → SignalCandidate.
 
-SIGNAL-KERN: Aktuelle Implementierung leitet Richtung ausschließlich aus LLM-Sentiment ab
-(bullish→LONG, bearish→SHORT). Confluence-Score basiert auf Analyse-Metadaten (impact,
-relevance, novelty, assets, sentiment strength). Kein technischer Indikator, kein
-Orderbook-Input, kein Volatilitätsmodell.
+SIGNAL-KERN: Richtung aus LLM-Sentiment (bullish→LONG, bearish→SHORT).
+Confluence-Score kombiniert Analyse-Metadaten (impact, relevance, novelty, assets,
+sentiment strength) MIT Marktdaten (price-momentum, volume-confirmation).
 
-TODO (vor Live-Einsatz): Strategie durch echte Multi-Signal-Logik ersetzen — z.B.
-technische Indikatoren, Momentum, Volumen-Anomalien kombinieren.
+Marktdaten-Dimensionen (wenn CoinGecko-Daten vorhanden):
+- price_momentum: change_pct_24h in Richtung des Signals (>= threshold)
+- volume_confirmation: volume_24h >= volume_threshold
+
+TODO (vor Live-Einsatz): ATR-basierter SL/TP, Orderbook-Input.
 """
 from __future__ import annotations
 
@@ -37,6 +39,10 @@ class SignalGenerator:
     - Confluence is computed from independent signal dimensions (max 5)
     """
 
+    # Thresholds for market-data confluence dimensions
+    _PRICE_MOMENTUM_THRESHOLD_PCT: float = 2.0   # |change_24h| >= 2% counts as momentum
+    _VOLUME_THRESHOLD_USD: float = 1_000_000.0   # volume_24h >= $1M counts as confirmed
+
     def __init__(
         self,
         *,
@@ -49,6 +55,8 @@ class SignalGenerator:
         mode: str = "paper",
         model_version: str = "unknown",
         prompt_version: str = "unknown",
+        price_momentum_threshold_pct: float | None = None,
+        volume_threshold_usd: float | None = None,
     ) -> None:
         self._min_confidence = min_confidence
         self._min_confluence = min_confluence
@@ -59,6 +67,16 @@ class SignalGenerator:
         self._mode = mode
         self._model_version = model_version
         self._prompt_version = prompt_version
+        self._price_momentum_threshold_pct = (
+            price_momentum_threshold_pct
+            if price_momentum_threshold_pct is not None
+            else self._PRICE_MOMENTUM_THRESHOLD_PCT
+        )
+        self._volume_threshold_usd = (
+            volume_threshold_usd
+            if volume_threshold_usd is not None
+            else self._VOLUME_THRESHOLD_USD
+        )
 
     def generate(
         self,
@@ -109,8 +127,8 @@ class SignalGenerator:
             )
             return None
 
-        # Filter 6: confluence check
-        confluence = self._calculate_confluence(analysis)
+        # Filter 6: confluence check (includes market-data dimensions)
+        confluence = self._calculate_confluence(analysis, market_data, direction)
         if confluence < self._min_confluence:
             logger.debug(
                 "[SIGNAL] Confluence too low for %s: %d < %d",
@@ -128,8 +146,8 @@ class SignalGenerator:
         stop_loss_price, take_profit_price = self._calculate_levels(entry_price, direction)
 
         # Build narrative factors
-        supporting = self._build_supporting_factors(analysis)
-        contradicting = self._build_contradicting_factors(analysis)
+        supporting = self._build_supporting_factors(analysis, market_data, direction)
+        contradicting = self._build_contradicting_factors(analysis, market_data, direction)
 
         # Invalidation
         sl_fmt = f"{stop_loss_price:.4f}"
@@ -185,16 +203,22 @@ class SignalGenerator:
             return SignalDirection.SHORT
         return None
 
-    @staticmethod
-    def _calculate_confluence(analysis: AnalysisResult) -> int:
+    def _calculate_confluence(
+        self,
+        analysis: AnalysisResult,
+        market_data: MarketDataPoint,
+        direction: SignalDirection,
+    ) -> int:
         """
         Count independent confirming signal dimensions.
-        Maximum 5 points:
-        - High impact   (impact_score >= 0.6)
-        - High relevance (relevance_score >= 0.7)
-        - Novel event   (novelty_score >= 0.5)
-        - Asset match   (affected_assets not empty)
-        - Strong sentiment (abs(sentiment_score) >= 0.6)
+        Maximum 7 points:
+        - High impact        (impact_score >= 0.6)
+        - High relevance     (relevance_score >= 0.7)
+        - Novel event        (novelty_score >= 0.5)
+        - Asset match        (affected_assets not empty)
+        - Strong sentiment   (abs(sentiment_score) >= 0.6)
+        - Price momentum     (change_pct_24h in signal direction >= threshold)  [market data]
+        - Volume confirm     (volume_24h >= threshold)                          [market data]
         """
         score = 0
         if analysis.impact_score >= 0.6:
@@ -207,7 +231,25 @@ class SignalGenerator:
             score += 1
         if abs(analysis.sentiment_score) >= 0.6:
             score += 1
+        # Market-data dimensions
+        score += self._price_momentum_score(market_data.change_pct_24h, direction)
+        score += self._volume_confirmation_score(market_data.volume_24h)
         return score
+
+    def _price_momentum_score(
+        self, change_pct_24h: float, direction: SignalDirection
+    ) -> int:
+        """Return 1 if 24h price movement confirms signal direction, else 0."""
+        threshold = self._price_momentum_threshold_pct
+        if direction == SignalDirection.LONG and change_pct_24h >= threshold:
+            return 1
+        if direction == SignalDirection.SHORT and change_pct_24h <= -threshold:
+            return 1
+        return 0
+
+    def _volume_confirmation_score(self, volume_24h: float) -> int:
+        """Return 1 if 24h volume meets the confirmation threshold, else 0."""
+        return 1 if volume_24h >= self._volume_threshold_usd else 0
 
     @staticmethod
     def _derive_market_regime(change_pct_24h: float) -> str:
@@ -241,8 +283,12 @@ class SignalGenerator:
             tp = entry_price * (1.0 - self._take_profit_factor)
         return sl, tp
 
-    @staticmethod
-    def _build_supporting_factors(analysis: AnalysisResult) -> list[str]:
+    def _build_supporting_factors(
+        self,
+        analysis: AnalysisResult,
+        market_data: MarketDataPoint,
+        direction: SignalDirection,
+    ) -> list[str]:
         factors: list[str] = []
         if analysis.impact_score >= 0.6:
             factors.append(f"High impact score: {analysis.impact_score:.2f}")
@@ -255,10 +301,23 @@ class SignalGenerator:
             factors.append(f"Affects: {assets}")
         if abs(analysis.sentiment_score) >= 0.6:
             factors.append(f"Strong sentiment signal: {analysis.sentiment_score:.2f}")
+        # Market-data supporting factors
+        if self._price_momentum_score(market_data.change_pct_24h, direction):
+            factors.append(
+                f"Price momentum confirms direction: {market_data.change_pct_24h:+.2f}% 24h"
+            )
+        if self._volume_confirmation_score(market_data.volume_24h):
+            factors.append(
+                f"Volume confirmation: ${market_data.volume_24h:,.0f} 24h"
+            )
         return factors or ["No specific supporting factors identified"]
 
-    @staticmethod
-    def _build_contradicting_factors(analysis: AnalysisResult) -> list[str]:
+    def _build_contradicting_factors(
+        self,
+        analysis: AnalysisResult,
+        market_data: MarketDataPoint,
+        direction: SignalDirection,
+    ) -> list[str]:
         factors: list[str] = []
         if analysis.spam_probability > 0.3:
             factors.append(f"Elevated spam probability: {analysis.spam_probability:.2f}")
@@ -266,4 +325,15 @@ class SignalGenerator:
             factors.append(f"Moderate confidence: {analysis.confidence_score:.2f}")
         if not analysis.tags:
             factors.append("No context tags available")
+        # Market-data contradicting: price moves against signal direction
+        if not self._price_momentum_score(market_data.change_pct_24h, direction):
+            if abs(market_data.change_pct_24h) >= self._price_momentum_threshold_pct:
+                factors.append(
+                    f"Price momentum opposes direction: {market_data.change_pct_24h:+.2f}% 24h"
+                )
+        if not self._volume_confirmation_score(market_data.volume_24h):
+            factors.append(
+                f"Low volume (${market_data.volume_24h:,.0f}"
+                f" < ${self._volume_threshold_usd:,.0f} threshold)"
+            )
         return factors or ["No significant contradicting factors"]
