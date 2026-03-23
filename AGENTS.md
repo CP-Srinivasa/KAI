@@ -5,24 +5,21 @@
 | Field | Value |
 |---|---|
 | current_phase | `PHASE 4 (active)` |
-| current_sprint | `PH4F_RULE_INPUT_COMPLETENESS_AUDIT (ready to close)` |
-| next_required_step | `PH4F_RESULTS_REVIEW_AND_PH4G_SELECTION` |
-| ph4f_status_canonical | `active (execution complete — D-69) — closeout review pending` |
-| ph4g_status_canonical | `candidate only — PH4G_FALLBACK_INPUT_ENRICHMENT_BASELINE (not active yet)` |
-| phase4_status_canonical | `active — PH4F ready to close; PH4G selection pending` |
-| state_note | `canonical rows at top are authoritative for current gate state` |
+| current_sprint | `PH4G_FALLBACK_INPUT_ENRICHMENT_BASELINE (ready to close)` |
+| next_required_step | `PH4G_CLOSE_AND_PH4H_POLICY_REVIEW` |
 | ph4a_status | `closed (D-53) — immutable baseline anchor (§67)` |
 | ph4b_status | `closed (D-62) — paired_count=69; root cause: keyword coverage blindness` |
 | ph4c_status | `closed — rule-keyword gap audit; top-3 gaps: macro, regulatory, AI` |
 | ph4d_status | `closed (D-68) — 56 keywords added; zero-hit 42%->37.7%; §71 frozen anchor` |
 | ph4e_status | `closed (D-70) — relevance 41.2% of gap; root cause: defaults by design` |
-| ph4f_status | `active (execution complete — D-69) — actionable missing 69/69; market_scope unknown 69/69; tags empty 69/69; relevance floor 56/69` |
-| ph4g_status | `candidate only — PH4G_FALLBACK_INPUT_ENRICHMENT_BASELINE (not active yet)` |
-| baseline | `1519 passed, ruff clean` |
+| ph4f_status | `closed (D-69) — fallback path identified; actionable missing 69/69; market_scope unknown 69/69` |
+| ph4g_status | `closed (D-69) — §75 frozen anchor; relevance floor applied; actionable reverted (I-13)` |
+| ph4h_status | `active (definition — D-70) — policy review sprint; §76 contract` |
+| baseline | `1538 passed, ruff clean` |
 | cli_canonical_count | 53 |
 | provisional_cli_count | 0 |
 | phase3_status | `closed (2026-03-22) — GO` |
-| phase4_status | `active — PH4F ready to close; PH4G selection pending` |
+| phase4_status | `active — PH4G closed (D-69); PH4H policy review active (D-70)` |
 ---
 
 > **Verbindliches Betriebsdokument für alle Coding-Agenten.**

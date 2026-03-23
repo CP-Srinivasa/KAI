@@ -5,9 +5,9 @@
 | Field | Value |
 |---|---|
 | current_phase | `PHASE 4 (active)` |
-| current_sprint | `PH4F_RULE_INPUT_COMPLETENESS_AUDIT (ready to close)` |
-| next_required_step | `PH4F_RESULTS_REVIEW_AND_PH4G_SELECTION` |
-| baseline | `1519 passed, ruff clean` |
+| current_sprint | `PH4G_FALLBACK_INPUT_ENRICHMENT_BASELINE (definition mode)` |
+| next_required_step | `PH4G_CONTRACT_AND_ACCEPTANCE_FREEZE` |
+| baseline | `1538 passed, ruff clean` |
 
 Documented assumptions, constraints, and design decisions.
 Last updated: 2026-03-23
@@ -68,6 +68,21 @@ Last updated: 2026-03-23
 **Assumption**: If PH4G is activated, the first pass should be narrow and limited to highest-leverage fallback input pathways.
 **Rationale**: Broad multi-field intervention would reduce interpretability and make MAE movement harder to attribute.
 **Impact**: PH4G candidate scope remains tight and measurement-first.
+
+### A-114: PH4G is the first intervention sprint after the PH4A-PH4F diagnostic arc
+**Assumption**: PH4G is intentionally the first intervention sprint, following a completed diagnostic sequence from PH4A through PH4F.
+**Rationale**: Starting intervention only after a frozen diagnostic arc preserves causal traceability.
+**Impact**: PH4G remains constrained to measured intervention rather than new diagnostics or broad feature work.
+
+### A-115: PH4G contract freeze must limit first pass to 1-3 intervention points
+**Assumption**: The first PH4G iteration must modify only `1-3` fallback input pathways.
+**Rationale**: Too many simultaneous edits would make outcome attribution unreliable.
+**Impact**: Contract/acceptance freeze must explicitly enforce narrow intervention count.
+
+### A-116: PH4G should prioritize actionable and relevance-related fallback enrichment first
+**Assumption**: Highest-leverage first pass is expected in actionable and relevance-related fallback inputs.
+**Rationale**: PH4F showed complete actionable absence and frequent relevance floor defaults.
+**Impact**: PH4G definition favors these pathways before broader fallback enrichment.
 
 ---
 

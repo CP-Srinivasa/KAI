@@ -1,5 +1,44 @@
 # CHANGELOG.md
 
+## 2026-03-23 - PH4G formally closed (D-69); PH4H policy review opened (D-70)
+
+- PH4G_FALLBACK_INPUT_ENRICHMENT_BASELINE formally closed.
+- §75 is now a frozen immutable anchor.
+- Retained: relevance-floor fallback intervention.
+- Reverted: actionable heuristic (I-13 constraint — rule-only priority ceiling ≤ 5).
+- PH4H_RULE_ONLY_CEILING_AND_ACTIONABILITY_POLICY_REVIEW opened (D-70, §76).
+- PH4H is review-only: no code changes, no I-13 relaxation before policy decision.
+- Governance state advanced to:
+  - `current_sprint = PH4H_RULE_ONLY_CEILING_AND_ACTIONABILITY_POLICY_REVIEW (active — definition)`
+  - `next_required_step = PH4H_CONTRACT_AND_ACCEPTANCE_FREEZE`
+- Baseline confirmed: `1538 passed`, `ruff clean`.
+
+---
+
+## 2026-03-23 - PH4G execution complete; moved to closeout and PH4H policy review gate
+
+- PH4G execution completed and sprint moved to `ready to close`.
+- Relevance-floor fallback intervention is retained.
+- Actionable-heuristic intervention was reverted.
+- `I-13` policy constraint remains active (`rule-only priority <= 5`).
+- Governance state advanced to:
+  - `current_sprint = PH4G_FALLBACK_INPUT_ENRICHMENT_BASELINE (ready to close)`
+  - `next_required_step = PH4G_CLOSE_AND_PH4H_POLICY_REVIEW`
+- Baseline reconfirmed: `1538 passed`, `ruff clean`.
+
+---
+
+## 2026-03-23 - PH4F closed and PH4G moved to contract-freeze definition
+
+- PH4F formally closed after results review; findings frozen as PH4G intervention anchor.
+- Governance state advanced to:
+  - `current_sprint = PH4G_FALLBACK_INPUT_ENRICHMENT_BASELINE`
+  - `next_required_step = PH4G_CONTRACT_AND_ACCEPTANCE_FREEZE`
+- PH4G remains definition-only pending contract/acceptance freeze.
+- Baseline updated and reconfirmed: `1538 passed`, `ruff clean`.
+
+---
+
 ## 2026-03-23 - Refactoring findings RF-1..RF-7 implemented
 
 ### RF-1 CLI/MCP Split

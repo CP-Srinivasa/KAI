@@ -2,43 +2,40 @@
 
 ## Current State (2026-03-23)
 
-- current_phase: `PHASE 4 (active)`
-- current_sprint: `PH4F_RULE_INPUT_COMPLETENESS_AUDIT (ready to close)`
-- next_required_step: `PH4F_RESULTS_REVIEW_AND_PH4G_SELECTION`
-- baseline: `1519 passed, ruff clean`
+- current_sprint: `PH4G (closed)`
+- next_required_step: `PH4H_POLICY_REVIEW`
+- baseline: `1538 passed, ruff clean`
 
 ## Canonical Decisions
 
-### D-53 (2026-03-22): PH4A formally closed
-### D-54 (2026-03-22): PH4B opened - overlap-first
-### D-55 (2026-03-22): PH4B contract frozen (§68)
-### D-56 (2026-03-23): OpenAI selected as single-provider
-### D-57 (2026-03-23): PH4B execution passed (paired=69, MAE=3.13)
-### D-58 (2026-03-23): Review-first continuation
-### D-59 (2026-03-23): Root cause: keyword coverage blindness
-### D-60 (2026-03-23): PH4B closed - PH4C opened
-### D-61 (2026-03-23): PH4C complete - 42% zero-hit confirmed
-### D-62 (2026-03-23): PH4C closed - PH4D opened
-### D-63 (2026-03-23): PH4D complete - targeted keyword expansion delivered
-### D-64 (2026-03-23): PH4D closed - diminishing returns
-### D-65 (2026-03-23): PH4E opened - scoring calibration audit
-### D-66 (2026-03-23): PH4E complete - defaults-by-design identified
-### D-67 (2026-03-23): PH4E formally closed
+### D-53: PH4A closed
+### D-54-D-56: PH4B definition/freeze/provider
+### D-57: PH4B passed (paired=69, MAE=3.13)
+### D-58-D-59: Review-first, root cause keyword blindness
+### D-60: PH4B closed, PH4C opened
+### D-61: PH4C complete (42% zero-hit)
+### D-62: PH4C closed, PH4D opened
+### D-63: PH4D complete (56 keywords, 42%->37.7%)
+### D-64: PH4D closed, diminishing returns
+### D-65: PH4E opened (scoring calibration)
+### D-66: PH4E complete (defaults by design)
+### D-67: PH4F complete (fallback path, 65% hardcoded)
 
-### D-68 (2026-03-23): PH4F opened - diagnostic-only input completeness audit
-- Constraint: no rule changes, no scoring changes, no threshold changes.
-- Contract: `docs/contracts.md §74`.
+### D-68 (2026-03-23): PH4G complete — relevance floor + I-13 blocker
+- Intervention 1 (relevance floor 0.08): Applied successfully.
+- Intervention 2 (actionable heuristic): Reverted — violates I-13 invariant (rule-only priority ceiling max 5). The +1 actionable bonus in `compute_priority()` pushed priority to 7.
+- Code comment at `pipeline.py:487-489` documents the constraint.
+- Consequence: `actionable` can never be True in fallback mode without relaxing I-13.
 
-### D-69 (2026-03-23): PH4F execution complete
-- Finding: `RuleAnalyzer.analyze()` is not the production Tier-1 path.
-- Finding: Production Tier-1 path is fallback analysis in `app/analysis/pipeline.py`.
-- Finding: `actionable` missing in `69/69` paired docs.
-- Finding: `market_scope` unknown in `69/69` paired docs.
-- Finding: `tags` empty in `69/69` paired docs.
-- Finding: `relevance_score` default-floor in `56/69` paired docs.
-- Consequence: PH4F enters closeout review mode; no intervention before review.
+### D-69 (2026-03-23): PH4G formally closed — §75 immutable anchor
+- PH4G_FALLBACK_INPUT_ENRICHMENT_BASELINE formally closed.
+- §75 is now an immutable frozen anchor. No re-execution permitted.
+- Retained: relevance-floor fallback intervention.
+- Reverted: actionable heuristic (blocked by I-13).
+- Baseline confirmed: 1538 passed, ruff clean.
 
-### D-70 (2026-03-23): PH4F ready to close; PH4G candidate selected
-- Decision: PH4F can be formally closed after results review.
-- Candidate next sprint: `PH4G_FALLBACK_INPUT_ENRICHMENT_BASELINE` (narrow and intervention-minimal).
-- Next required step: `PH4F_RESULTS_REVIEW_AND_PH4G_SELECTION`.
+### D-70 (2026-03-23): PH4H opened — policy review before any I-13 change
+- Sprint: `PH4H_RULE_ONLY_CEILING_AND_ACTIONABILITY_POLICY_REVIEW`.
+- Contract: `docs/contracts.md §76`.
+- Purpose: review-only sprint; no code changes, no I-13 relaxation permitted before policy decision.
+- Policy options under review: (a) relax I-13, (b) accept actionable as permanently LLM-only, (c) hybrid gate.

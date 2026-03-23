@@ -5,18 +5,19 @@
 | Field | Value |
 |---|---|
 | current_phase | `PHASE 4 (active)` |
-| current_sprint | `PH4F_RULE_INPUT_COMPLETENESS_AUDIT (ready to close)` |
-| next_required_step | `PH4F_RESULTS_REVIEW_AND_PH4G_SELECTION` |
-| baseline | `1519 passed, ruff clean` |
-| active_contracts | §74 (PH4F, execution complete; closeout review pending) · §73–§67 (closed) |
+| current_sprint | `PH4H_RULE_ONLY_CEILING_AND_ACTIONABILITY_POLICY_REVIEW (active — definition)` |
+| next_required_step | `PH4H_CONTRACT_AND_ACCEPTANCE_FREEZE` |
+| baseline | `1538 passed, ruff clean` |
+| active_contracts | §76 (PH4H, definition) · §75–§67 (closed) |
 | cli_canonical_count | 53 (frozen §65) |
 
 ## Navigation
 
 | Section | Content | Status |
 |---|---|---|
-| [§75 PH4G Fallback Input Enrichment Baseline](#s75-ph4g-fallback-input-enrichment-baseline) | Narrow fallback-path enrichment candidate for PH4F top-3 field gaps | candidate (not active; pending PH4F review) |
-| [§74 PH4F Rule Input Completeness Audit](#s74-ph4f-rule-input-completeness-audit) | Diagnostic audit of missing rule-input fields on paired documents | active (execution complete; ready to close) |
+| [§76 PH4H Rule-Only Ceiling & Actionability Policy Review](#s76-ph4h-rule-only-ceiling-and-actionability-policy-review) | Review-only policy sprint: I-13 ceiling vs actionability in fallback path | active (definition — D-70) |
+| [§75 PH4G Fallback Input Enrichment Baseline](#s75-ph4g-fallback-input-enrichment-baseline) | Narrow fallback-path enrichment for PH4F top-3 field gaps | closed (D-69) |
+| [§74 PH4F Rule Input Completeness Audit](#s74-ph4f-rule-input-completeness-audit) | Diagnostic audit of missing rule-input fields on paired documents | closed (D-68) |
 | [§73 PH4E Scoring Calibration Audit](#s73-ph4e-scoring-calibration-audit) | Diagnostic per-field scoring audit; divergence cluster analysis | closed (D-67) |
 | [§72 Phase 4 Interim Review](#s72-phase-4-interim-review) | Review PH4A–PH4D arc; select next Phase-4 sprint | closed (D-65/D-66) |
 | [§71 PH4D Targeted Keyword Expansion Baseline](#s71-ph4d-targeted-keyword-expansion-baseline) | Targeted keyword expansion for 3 confirmed gap categories | closed (D-68) |
@@ -7035,7 +7036,7 @@ Diagnostic audit of per-field scoring inputs to identify the root cause of prior
 **Phase**: 4
 **Opened**: 2026-03-23
 **Decision**: D-68
-**Status**: active (execution complete; ready to close)
+**Status**: closed
 
 ### Purpose
 Diagnostic audit of rule-input completeness gaps that drive Tier-1 under-specification. PH4F isolates missing input fields before any intervention sprint is allowed.
@@ -7072,7 +7073,7 @@ Diagnostic audit of rule-input completeness gaps that drive Tier-1 under-specifi
 - [x] Gap-to-divergence linkage documented with evidence refs
 - [x] Operator-readable PH4F summary produced
 - [x] PH4G candidate recommendation documented
-- [ ] PH4F formal closeout review completed
+- [x] PH4F formal closeout review completed
 
 ### Execution Findings (locked)
 
@@ -7083,7 +7084,7 @@ Diagnostic audit of rule-input completeness gaps that drive Tier-1 under-specifi
 - `tags` empty in `69/69` paired docs.
 - `relevance_score` default-floor in `56/69` paired docs.
 
-§74 status: **active (execution complete; next step PH4F_RESULTS_REVIEW_AND_PH4G_SELECTION)**
+§74 status: **closed (frozen diagnostic anchor for PH4G)**
 
 ---
 
@@ -7094,47 +7095,106 @@ Diagnostic audit of rule-input completeness gaps that drive Tier-1 under-specifi
 **Sprint**: `PH4G_FALLBACK_INPUT_ENRICHMENT_BASELINE`
 **Phase**: 4
 **Opened**: 2026-03-23
-**Decision**: D-69
-**Status**: candidate (not active)
+**Decision**: D-72
+**Status**: active (ready to close)
 
 ### Purpose
-Narrow, measurement-first fallback-path enrichment. PH4G closes the top-3 field gaps identified in PH4F without broad rule reform. Each enrichment step must be accompanied by priority MAE re-measurement.
+Narrow, measurement-first fallback-path enrichment. PH4G closes the top-3 field gaps identified in PH4F without broad rule reform. Each enrichment step is preceded by a baseline measurement and followed by MAE re-measurement so changes remain interpretable.
 
 ### Scope
-- Establish baseline measurement of all 5 gap fields on paired set (fallback path only).
-- Apply targeted enrichment to fallback path for top-3 gaps: actionable heuristic, market_scope inference, tags/relevance metadata floor.
-- Re-measure priority MAE after each enrichment step to confirm leverage.
-- No changes to scoring formula or weights.
+- Establish per-field baseline on 69 paired docs (fallback path): measure actionable, market_scope, tags, relevance_score, and priority MAE.
+- Apply targeted enrichment to fallback path at exactly `1-3` intervention points in first pass:
+  1. `actionable_not_populated` — add conservative actionable heuristic in fallback analysis.
+  2. `context_unknown_and_assetless` — improve market_scope/tag context inference for keyword-miss docs.
+  3. relevance-related fallback enrichment — reduce default-floor relevance dependence when context evidence exists.
+- Re-measure priority MAE after enrichment step to confirm improvement vs 3.13 baseline.
+- Defer broader impact/novelty interventions until after PH4G review.
 
 ### Non-Goals (hard freeze)
 - No changes to scoring formula or priority weights
 - No changes to LLM providers or their configuration
-- No changes to threshold values
+- No threshold changes
 - No broad rule engine or pipeline refactor
-- No changes to more than 3 input fields per iteration
+- No changes to more than 3 input fields in a single iteration
 
-### Contract Freeze Record (2026-03-23)
+### Contract Freeze Record (completed; 2026-03-23)
 
-- Frozen input slice: same 69 paired documents used in PH4E/PH4F.
-- Frozen constraint: narrow (≤3 fields per iteration), measurement-first.
-- Frozen objective: reduce priority MAE from 3.13 via fallback-path enrichment only.
+- Input slice locked: same 69 paired documents used in PH4E/PH4F.
+- MAE anchor locked: `3.13` (PH4B, unchanged through PH4F).
+- Test baseline anchor: `1538 passed, ruff clean`.
+- Frozen constraint: narrow (`1-3` interventions), measurement-first, no scoring formula changes.
+- Objective: fallback-path enrichment with policy-safe intervention traceability.
 
-### Candidate Gates (pre-activation)
+### Freeze Gates (definition-to-execution)
 
-- [x] Candidate scope narrowed to fallback-path enrichment
-- [x] Input slice anchored to PH4E/PH4F paired set
-- [x] Non-goals listed explicitly
-- [ ] Activation approved via PH4F closeout review
+- [x] PH4F formally closed; §74 immutable anchor confirmed
+- [x] PH4G activated as next sprint in definition mode
+- [x] Scope frozen to exactly `1-3` intervention points for first pass
+- [x] Non-goals explicitly frozen in all governance docs
+- [x] Input slice and MAE/test anchors locked
+- [x] Governance synchronization completed
 
-### Acceptance Gates (inactive until activation)
+### Acceptance Gates
 
-- [ ] Baseline measurement of all 5 gap fields on paired set produced
-- [ ] Enrichment applied to <=3 fields in first iteration
-- [ ] Priority MAE re-measured after enrichment
-- [ ] No regressions (ruff clean, 1519+ passed)
-- [ ] PH4H scope recommendation documented
+- [x] Per-field baseline measurement produced for 69 paired docs (all 5 gap fields)
+- [x] Enrichment applied to ≤3 fields with policy-safe rollback on blocked path
+- [x] Intervention outcome documented: relevance floor retained; actionable heuristic reverted
+- [x] No regressions: `ruff clean`, `1538+ passed`
+- [x] PH4H policy-review recommendation documented
 
-§75 status: **candidate only (not active; pending PH4F results review)**
+### Execution Findings (policy-constrained)
+
+- Relevance-floor fallback intervention was successfully applied.
+- Actionable-heuristic intervention was reverted after policy review in-sprint.
+- Invariant `I-13` remains active and prevents rule-only priority from exceeding `5`.
+- Remaining leverage is policy-governed (`I-13` / actionability), not broad fallback implementation depth.
+
+§75 status: **closed (D-69) — frozen immutable anchor; no re-execution permitted**
+
+---
+
+<a name="s76-ph4h-rule-only-ceiling-and-actionability-policy-review"></a>
+
+## §76 — PH4H_RULE_ONLY_CEILING_AND_ACTIONABILITY_POLICY_REVIEW
+
+**Sprint**: `PH4H_RULE_ONLY_CEILING_AND_ACTIONABILITY_POLICY_REVIEW`
+**Phase**: 4
+**Opened**: 2026-03-23
+**Decision**: D-70
+**Status**: active (definition mode)
+
+### Purpose
+Review-only policy sprint. No code changes permitted. PH4G revealed that `I-13` (rule-only priority ceiling ≤ 5) blocks actionability in fallback mode. PH4H decides the canonical policy before any further intervention.
+
+### Scope
+- Review policy options for the I-13 ceiling constraint:
+  1. Relax I-13: allow rule-only priority > 5 under specific conditions.
+  2. Accept actionable as permanently LLM-only: document as architectural constraint.
+  3. Hybrid gate: rule-only actionable allowed only with explicit keyword evidence threshold.
+- Document policy decision with rationale in DECISION_LOG.md.
+- Update I-13 invariant entry in intelligence_architecture.md.
+
+### Non-Goals (hard freeze)
+- No code changes of any kind during PH4H
+- No I-13 relaxation before policy decision is recorded
+- No scoring formula changes
+- No provider/source/model expansion
+- No new interventions on fallback fields
+
+### Acceptance Criteria
+- [ ] Policy options enumerated with risk/benefit evidence
+- [ ] One policy option selected with explicit rationale (D-decision recorded)
+- [ ] I-13 status updated in governance docs based on decision
+- [ ] PH4I (next sprint) defined based on policy outcome
+- [ ] Baseline confirmed unchanged: 1538 passed, ruff clean
+
+### Freeze Gates (definition-to-execution)
+- [ ] PH4G formally closed; §75 immutable anchor confirmed
+- [ ] PH4H activated as next sprint in definition mode
+- [ ] Scope frozen to review-only (zero code changes)
+- [ ] Policy options enumerated before execution
+
+§76 status: **active (definition mode; next step PH4H_CONTRACT_AND_ACCEPTANCE_FREEZE)**
 
 ---
 

@@ -5,19 +5,21 @@
 | Field | Value |
 |---|---|
 | current_phase | `PHASE 4 (active)` |
-| current_sprint | `PH4F_RULE_INPUT_COMPLETENESS_AUDIT (ready to close)` |
-| next_required_step | `PH4F_RESULTS_REVIEW_AND_PH4G_SELECTION` |
+| current_sprint | `PH4H_RULE_ONLY_CEILING_AND_ACTIONABILITY_POLICY_REVIEW (active — definition)` |
+| next_required_step | `PH4H_CONTRACT_AND_ACCEPTANCE_FREEZE` |
 | ph4e_status | `closed (D-67) — scoring calibration audit complete; §73 frozen anchor` |
-| ph4f_status | `active (execution complete — D-69) — closeout review pending` |
-| ph4g_status | `candidate only — PH4G_FALLBACK_INPUT_ENRICHMENT_BASELINE (not active)` |
-| baseline | `1519 passed, ruff clean` |
+| ph4f_status | `closed (execution complete — D-69) — frozen intervention anchor` |
+| ph4g_status | `closed (D-69) — §75 frozen anchor; relevance floor applied; actionable reverted (I-13)` |
+| ph4h_status | `active (definition — D-70) — policy review; §76 contract` |
+| baseline | `1538 passed, ruff clean` |
 | ph4b_status | `closed (D-62) — sections 68 and 69 frozen anchors` |
 | ph4c_status | `closed — section 70 frozen audit anchor` |
 | ph4d_status | `closed — section 71 frozen anchor` |
 | ph4e_contract | `docs/contracts.md §73 (closed D-67)` |
-| ph4f_contract | `docs/contracts.md §74 (active; execution complete)` |
-| ph4g_contract | `docs/contracts.md §75 (candidate only)` |
-| architecture_status | three-tier stack unchanged; PH4A–PH4E closed (§67–§73); PH4F execution complete and in closeout review (§74) |
+| ph4f_contract | `docs/contracts.md §74 (closed)` |
+| ph4g_contract | `docs/contracts.md §75 (closed D-69 — frozen anchor)` |
+| ph4h_contract | `docs/contracts.md §76 (active — definition)` |
+| architecture_status | three-tier stack unchanged; PH4A–PH4G closed anchors (§67–§75); PH4H policy review active (§76) |
 
 ---
 
@@ -68,10 +70,10 @@
 - Classification: architectural input completeness gap, not score formula miscalibration.
 - Consequence: PH4F audits whether LLM layer is consistently triggered to fill these fields.
 
-## PH4F Active Sprint (execution complete; ready to close — §74, D-69)
+## PH4F Closed Sprint (frozen anchor — §74, D-69)
 
-- Sprint: `PH4F_RULE_INPUT_COMPLETENESS_AUDIT`. **Execution complete; closeout review pending.**
-- Contract: `docs/contracts.md §74` (active contract; execution complete).
+- Sprint: `PH4F_RULE_INPUT_COMPLETENESS_AUDIT`. **Formally closed.**
+- Contract: `docs/contracts.md §74` (closed immutable anchor).
 - Execution findings (locked):
   - Production Tier-1 path = `_build_fallback_analysis()` in `pipeline.py` — NOT `RuleAnalyzer.analyze()`
   - `actionable`: missing 69/69 paired docs (hard False in all non-Tier-3 paths)
@@ -79,19 +81,30 @@
   - `tags`: empty 69/69 paired docs (no keyword hits → no tag output)
   - `relevance_score`: at default floor 56/69 docs (81.2%)
 - LLM-layer coverage verdict: no triggering gap; gap is `provider=None` → fallback → hard defaults.
-- Consequence: closeout review must finalize PH4F and confirm/narrow PH4G activation.
+- Consequence: PH4G uses PH4F findings as frozen intervention anchor.
 
-## PH4G Candidate Sprint (not active)
+## PH4G Closed Sprint (§75 frozen anchor — D-69)
 
-- Sprint candidate: `PH4G_FALLBACK_INPUT_ENRICHMENT_BASELINE` (narrow fallback-path enrichment).
-- Contract status: candidate-only; activation pending PH4F results review.
-- Scope: measurement-first enrichment of top-3 PH4F field gaps on fallback path:
-  - actionable: add heuristic estimate (keyword-confluence threshold)
-  - market_scope: improve inference for docs with no keyword matches
-  - tags/relevance: add metadata-based floor when keyword hits are zero
-- Input slice: same 69 paired documents used in PH4E/PH4F.
-- Constraints (if activated): no scoring formula changes · no threshold changes · ≤3 fields per iteration.
-- Output target (if activated): baseline measurement → enrichment → MAE re-measurement; PH4H recommendation.
+- Sprint: `PH4G_FALLBACK_INPUT_ENRICHMENT_BASELINE`. **Formally closed D-69.**
+- Contract: `docs/contracts.md §75` (closed immutable anchor).
+- Execution findings (locked):
+  - Relevance-floor fallback intervention: **retained** (applied successfully)
+  - Actionable heuristic intervention: **reverted** — violates I-13 invariant (rule-only priority ceiling max 5)
+  - I-13 invariant: `test_rule_only_priority_ceiling_is_at_most_five` enforces priority ≤ 5 for rule-only analysis
+  - The +1 actionable bonus in `compute_priority()` would push priority to 7, breaching I-13
+- Baseline confirmed unchanged: `1538 passed, ruff clean`.
+
+## PH4H Active Sprint (policy review — definition mode)
+
+- Sprint: `PH4H_RULE_ONLY_CEILING_AND_ACTIONABILITY_POLICY_REVIEW`.
+- Contract: `docs/contracts.md §76` (active — definition mode).
+- Decision: D-70.
+- Purpose: review-only sprint — no code changes permitted. Policy decision required before any I-13 change.
+- Policy options under review:
+  1. Relax I-13: allow rule-only priority > 5 under specific conditions
+  2. Accept actionable as permanently LLM-only (architectural constraint)
+  3. Hybrid gate: rule-only actionable with explicit keyword evidence threshold
+- Constraints: zero code changes · no I-13 relaxation before policy decision recorded · review-only scope.
 
 ## Design Principle
 

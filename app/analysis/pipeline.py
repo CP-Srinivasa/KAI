@@ -103,7 +103,11 @@ def _fallback_relevance(
         + document.organizations
     )
     metadata_signal = min(0.12, len(_unique_strings(metadata_values)) * 0.03)
-    return round(min(1.0, keyword_signal + entity_signal + metadata_signal), 4)
+    raw = keyword_signal + entity_signal + metadata_signal
+    # PH4G: minimum relevance floor for legitimate documents
+    has_basic_signals = bool(document.title and (document.source_name or document.published_at))
+    floor = 0.08 if has_basic_signals and raw == 0.0 else 0.0
+    return round(min(1.0, max(raw, floor)), 4)
 
 
 def _fallback_impact(document: CanonicalDocument, affected_assets: list[str]) -> float:
@@ -480,6 +484,10 @@ class AnalysisPipeline:
             details.append(f"assets: {', '.join(affected_assets[:5])}")
         if document.source_name:
             details.append(f"source: {document.source_name}")
+
+        # PH4G note: actionable remains False in fallback to respect I-13
+        # priority ceiling (max 5 for rule-only). Setting actionable=True would
+        # trigger the +1 bonus in compute_priority() and breach the ceiling.
 
         return AnalysisResult(
             document_id=str(document.id),
