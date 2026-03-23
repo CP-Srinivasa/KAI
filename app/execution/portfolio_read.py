@@ -2,12 +2,19 @@
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.execution.models import PaperPosition
 from app.market_data.service import get_market_data_snapshot
+from app.storage.models.trading import TradingCycleRecord
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -318,15 +325,76 @@ def _build_exposure_summary(positions: tuple[PositionSummary, ...]) -> ExposureS
     )
 
 
+async def _query_db_cycles(db_session: AsyncSession) -> list[TradingCycleRecord]:
+    """Query all TradingCycleRecords ordered by created_at ascending. Returns [] on error."""
+    try:
+        result = await db_session.execute(
+            select(TradingCycleRecord).order_by(TradingCycleRecord.created_at.asc())
+        )
+        return list(result.scalars().all())
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[PORTFOLIO] DB query failed, falling back to JSONL: %s", exc)
+        return []
+
+
+def _build_snapshot_from_db(
+    records: list[TradingCycleRecord],
+    generated_at: str,
+) -> PortfolioSnapshot:
+    """Build a minimal PortfolioSnapshot from DB TradingCycleRecords (positions not available).
+
+    TradingCycleRecord contains cycle-level data (signal, fill flags, notes) but does NOT
+    store full position state. The snapshot therefore reports cycle counts and last-cycle
+    metadata only, with zero open positions. For position-level data, use the JSONL path.
+    """
+    completed = [r for r in records if r.status == "completed" and r.fill_simulated]
+
+    source_note = f"db_cycle_records:{len(records)}_total:{len(completed)}_completed"
+    empty_exposure = _build_exposure_summary(())
+
+    return PortfolioSnapshot(
+        generated_at_utc=generated_at,
+        source="db_trading_cycles",
+        audit_path=source_note,
+        cash_usd=0.0,
+        realized_pnl_usd=0.0,
+        total_market_value_usd=0.0,
+        total_equity_usd=0.0,
+        position_count=0,
+        positions=(),
+        exposure_summary=empty_exposure,
+        available=True,
+        error=None,
+        execution_enabled=False,
+        write_back_allowed=False,
+    )
+
+
 async def build_portfolio_snapshot(
     *,
     audit_path: str | Path = "artifacts/paper_execution_audit.jsonl",
     provider: str = "coingecko",
     freshness_threshold_seconds: float = 120.0,
     timeout_seconds: int = 10,
+    db_session: AsyncSession | None = None,
 ) -> PortfolioSnapshot:
-    """Build canonical read-only portfolio snapshot from paper execution audit + market data."""
+    """Build canonical read-only portfolio snapshot from paper execution audit + market data.
+
+    If db_session is provided and the DB contains TradingCycleRecords, the snapshot
+    is sourced from the DB (DB-first path). Otherwise falls back to JSONL replay.
+
+    The DB path returns cycle-level metadata only (no open positions); the JSONL path
+    returns the full position state including mark-to-market prices.
+    """
     generated_at = datetime.now(UTC).isoformat()
+
+    # DB-first: if session provided, try DB
+    if db_session is not None:
+        db_records = await _query_db_cycles(db_session)
+        if db_records:
+            return _build_snapshot_from_db(db_records, generated_at)
+        # DB empty or query failed → fall through to JSONL
+
     resolved_path = Path(audit_path).resolve()
     replay = _replay_paper_audit(resolved_path)
 
