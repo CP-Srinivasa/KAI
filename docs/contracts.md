@@ -25,6 +25,8 @@
 - Hold release gate is operator-driven and requires both:
   1. clearly positive alert-precision evidence
   2. clearly positive paper-trading metric evidence
+- Documentation policy (D-99): no new standalone sprint-contract documents.
+  Decisions are recorded only as short code comments or compact 3-line entries in `DECISION_LOG.md`.
 - Until that gate is met, companion model infrastructure remains frozen and only governance/reporting updates are allowed.
 
 
@@ -1386,3 +1388,7 @@ No new sprint contracts (§86+) will be opened until the operator confirms:
 **Phase-5 sprints blocked:** PH5D and all subsequent sprints.
 
 Hold status: **active** — lifted only by operator decision.
+
+Documentation policy (D-99): no new standalone sprint-contract documents.
+Decisions are documented only as short code comments or compact 3-line
+entries in `DECISION_LOG.md`.

@@ -93,3 +93,10 @@
 
 > Dieses Dokument lesen, bevor eine einzige Zeile Code angefasst wird.
 
+## Documentation Policy (D-99, 2026-03-24)
+
+- Neue Sprint-Contract-Dokumente sind gestoppt (keine neuen `docs/sprint*_contract*.md` und keine neuen Sprint-Sections als Primärquelle).
+- Entscheidungen werden nur noch dokumentiert als:
+  - kurzer Code-Kommentar direkt am geänderten Verhalten, oder
+  - kompakter 3-Zeilen-Eintrag in `DECISION_LOG.md`.
+- `docs/contracts.md` und `docs/contracts_archive.md` bleiben rein historisch/kanonisch lesbar; keine neue Sprint-Doku dort eröffnen.

@@ -450,7 +450,7 @@
 - No standalone contract documents (docs/contracts.md, sprint-specific .md files) for new work.
 - Existing contract docs remain as historical reference but are not maintained.
 
-### D-99 (2026-03-24): AHR-1 Alert Hit Rate Infrastructure — CLOSED
+### D-100 (2026-03-24): AHR-1 Alert Hit Rate Infrastructure — CLOSED
 - Sprint AHR-1 delivered the missing outcome annotation layer.
 - Delivered:
     1. `app/alerts/audit.py`: AlertOutcomeAnnotation dataclass (hit/miss/inconclusive),
