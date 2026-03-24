@@ -5,8 +5,8 @@
 | Field | Value |
 |---|---|
 | current_phase | `PHASE 5 (active) -- Signal Reliability & Trust` |
-| current_sprint | `PH5A_BASELINE_RELIABILITY_AND_SIGNAL_TRUST -- CLOSED` |
-| next_required_step | `PH5B definition` |
+| current_sprint | `PH5B_LOW_SIGNAL_CLUSTER_ANALYSIS (active D-92, §84)` |
+| next_required_step | `PH5B_EXECUTION` |
 | ph4a_status | `closed (D-53) -- immutable baseline anchor (S67)` |
 | ph4b_status | `closed (D-62) -- paired_count=69; root cause: keyword coverage blindness` |
 | ph4c_status | `closed -- rule-keyword gap audit; top-3 gaps: macro, regulatory, AI` |
@@ -19,14 +19,15 @@
 | ph4j_status | `closed -- tags enrichment: keyword-hit 4->7, zero-hit 1->4, assets-only 0->4` |
 | ph4k_status | `closed (D-84) -- utility review complete; S79 frozen anchor` |
 | v4_dual_write_status | `closed (D-86) -- N-4 closed` |
-| baseline | `1609 passed, ruff clean` |
+| baseline | `1619 passed, ruff clean, CI green` |
 | working_tree | `clean` |
 | cli_canonical_count | 53 |
 | provisional_cli_count | 0 |
 | phase3_status | `closed (2026-03-22) -- GO` |
 | phase4_status | `CLOSED (D-87, 2026-03-24) -- 11 sprints PH4A-PH4K + V-4; canonical closeout complete` |
-| ph5a_status | `closed -- reliability baseline: LLM error proxy 27.5%, zero-hit 37.7%, actionable 0%` |
-| phase5_status | `active -- PH5A closed; PH5B definition next` |
+| ph5a_status | `closed (D-89) -- reliability baseline: LLM error proxy 27.5%, zero-hit 37.7%, actionable 0%` |
+| ph5b_status | `active (D-92, §84) -- low signal cluster analysis; 19 LLM-error-proxy docs` |
+| phase5_status | `active -- PH5A closed (D-89); PH5B active (D-92)` |
 ---
 
 > **Verbindliches Betriebsdokument fuer alle Coding-Agenten.**

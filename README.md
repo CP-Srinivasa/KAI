@@ -5,19 +5,18 @@ Default runtime remains `paper`/`shadow` with fail-closed controls.
 
 ## Current Phase
 
-- phase: `PHASE 4 (active)` | sprint: `PH4G ready-to-close → PH4H in definition`
-- technical baseline: `1538 passed, ruff clean` | runtime: paper/shadow, fail-closed
+- phase: `PHASE 5 (active) — Signal Reliability & Trust` | sprint: `PH5B_LOW_SIGNAL_CLUSTER_ANALYSIS (active)`
+- technical baseline: `1619 passed, ruff clean, CI green` | runtime: paper/shadow, fail-closed
 
-## Phase-4 Focus
+## Phase-5 Focus
 
-Phase 3 (canonical consolidation, S50) is formally complete.
-Phase 4 runs signal quality audits on the frozen PH4A–PH4D evidence arc:
+Phase 4 (signal quality calibration, 11 sprints PH4A-PH4K) is formally closed (D-87, 2026-03-24).
+Phase 5 investigates signal reliability and trust from the PH5A reliability baseline:
 
-- PH4A–PH4D arc closed: keyword expansion improved good-hit `13→18`, zero-hit `29→26`, no regressions
-- PH4E closed (D-66): scoring divergence root cause = defaults-by-design (RuleAnalyzer leaves LLM fields to LLM)
-- PH4F closed (D-67): rule-input completeness diagnostic — field-level gap analysis complete, no runtime changes
-- PH4G ready-to-close (D-69): relevance-floor fallback intervention applied; actionable heuristic reverted (I-13 policy ceiling)
-- PH4H in definition (D-70): rule-only ceiling and actionability policy review
+- PH5A closed (D-89): reliability baseline — LLM-error-proxy 27.5% (19/69), priority-mean 3.96, tag-fill 100%
+- PH5B active (D-92, §84): cluster the 19 LLM-error-proxy docs, classify root causes, recommend fixes
+- Alert Integration active: `analyze-pending` now dispatches alerts (Phase 4 of CLI pipeline) with `--no-alerts` flag
+- CI hardened: all 5 jobs green, `hypothesis` + `pytest-mock` in dev-deps, bandit B324 fixed
 - CoinGecko active as default market data provider (free tier, ~1min delayed, no API key required)
 - Paper-trading loop active: `run-once` command available, fail-closed on live
 - Freshness enforcement active: stale market data → cycle skipped with explicit STALE_DATA audit entry
@@ -42,7 +41,7 @@ Phase 4 runs signal quality audits on the frozen PH4A–PH4D evidence arc:
 ```bash
 pip install -e ".[dev]"
 cp .env.example .env        # edit as needed
-python -m pytest            # 1538+ tests
+python -m pytest            # 1619+ tests
 python -m ruff check .
 uvicorn app.api.main:app --reload
 ```

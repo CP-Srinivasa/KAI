@@ -1,5 +1,33 @@
 # CHANGELOG.md
 
+## 2026-03-24 - CI hardened (N-8); all 5 jobs green
+
+- `codecov/codecov-action@v4 → @v5` + `FORCE_JAVASCRIPT_ACTIONS_TO_NODE24=true` — Node 20 warnings eliminated.
+- `hypothesis>=6.0.0` + `pytest-mock>=3.14.0` added to `[dev]` extras (were installed locally but missing from CI).
+- `bandit B324` fixed: `hashlib.sha1()` in `operational_readiness.py` (3 calls) now passes `usedforsecurity=False` (non-security ID hashes — CWE-327 false positive resolved).
+- ruff format pass over 138 files (no logic changes).
+- Duplicate `asyncio.run(run())` in `send_digest` CLI command removed (pre-existing copy/paste bug).
+- Baseline: `1619 passed, ruff clean`. CI: 5/5 green.
+
+---
+
+## 2026-03-24 - Alert Integration wired into analyze-pending (N-7)
+
+- `app/cli/main.py`: Phase 4 added to `analyze_pending()` — after DB write, `AlertService.process_document()` is called per successful result. Fail-open: alert errors never abort analysis.
+- `--no-alerts` flag suppresses Phase 4 entirely.
+- `Alerts dispatched: N` printed when alerts fire.
+- 3 new tests: `tests/unit/cli/test_analyze_pending_alerts.py` (dispatch, --no-alerts suppression, fail-open).
+
+---
+
+## 2026-03-24 - MCP compat.py extraction complete (N-6)
+
+- Last 5 inline `@mcp.tool()` definitions extracted from `mcp_server.py` into `app/agents/tools/compat.py`.
+- `mcp_server.py`: 402 → 232 lines; 0 inline tool definitions.
+- `test_canonical_read.py` + `test_guarded_write.py` upgraded: trivial alias checks replaced with `mcp.list_tools()` registration verification.
+
+---
+
 ## 2026-03-24 - PH5A execution complete; results-review mode active
 
 - PH5A execution has completed and artifacts are ready for review.
