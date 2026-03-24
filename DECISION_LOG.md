@@ -481,7 +481,7 @@
 - actionable=0 is accepted as permanent state in Tier1/keyword-only fallback path.
 - Focus is on LLM-driven alerts with real signal quality, not Tier1 optimisation.
 
-### D-105 (2026-03-24): 30-Tage-Produktions-Gate für Trading-Signal-Arbeit
-- Nach 7-Tage-Ingestion-Lauf mit LLM-Analyse: <5 ausgelöste Alerts ODER Alert-Precision <30% → Stop.
-- Bei Stop: Fokus auf Datenqualität (Feeds, Keywords, Spam-Filter), keine neue Architektur.
-- Messdatum: 2026-04-23.
+### D-105 (2026-03-24): 30-day production gate for trading-signal work
+- Review date: 2026-04-23 (30 days from 2026-03-24).
+- After a real 7-day ingestion run with LLM analysis: if alert_audit.jsonl has <5 triggered alerts OR alert precision <30%, stop trading-signal work.
+- On stop: focus only on data quality (feeds, keywords, spam-filter) and do not introduce new architecture.

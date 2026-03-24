@@ -8,7 +8,7 @@
 | current_sprint | `PH5C_FILTER_BEFORE_LLM_BASELINE (closed D-97)` |
 | next_required_step | `STRATEGIC_HOLD_GATE_REVIEW — wait for clearly positive alert-precision + paper-trading metrics` |
 | baseline | `1449 passed, ruff clean, mypy 0 errors` |
-| archive | `docs/contracts_archive.md` (closed §§38—§82) |
+| archive | `docs/archive/contracts_archive.md` (closed §§38—§82) |
 
 ## Navigation
 
@@ -17,7 +17,7 @@
 | [Core Contracts](#core-contracts) | §0-§15: Domain models, invariants, intelligence stack |
 | [Immutable Invariants](#immutable-invariants) | Non-negotiable runtime rules |
 | [Strategic Hold](#strategic-hold-d-97) | Companion-ML freeze policy and gate conditions |
-| [Archive](contracts_archive.md) | Closed §§38—§82 (Phase 1—4) |
+| [Archive](archive/contracts_archive.md) | Closed §§38—§82 (Phase 1—4) |
 
 ## Strategic Hold (D-97)
 
@@ -553,7 +553,7 @@ Rules:
 Defines the stable architecture for deterministic fallback analysis, the future internal
 companion model, and external provider analysis.
 
-Full architecture reference: [docs/intelligence_architecture.md](./intelligence_architecture.md)
+Historical architecture reference: [docs/archive/intelligence_architecture.md](./archive/intelligence_architecture.md)
 
 ---
 
@@ -662,7 +662,7 @@ Promotion gates before the companion becomes an active default:
 
 Defines the architecture for the companion model and `AnalysisSource` tracking.
 
-Full architecture reference: [docs/intelligence_architecture.md](./intelligence_architecture.md)
+Historical architecture reference: [docs/archive/intelligence_architecture.md](./archive/intelligence_architecture.md)
 
 ---
 

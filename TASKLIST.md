@@ -16,6 +16,7 @@
 - [ ] Track paper-trading metrics until a clearly positive finding exists.
 - [ ] Enforce documentation policy: no new sprint-contract docs; decisions only via code comments or 3-line DECISION_LOG entries.
 - [ ] Monitor Priority MAE and LLM-Error-Proxy as production metrics only (D-101), without opening new internal diagnosis sprints.
+- [ ] Execute real 7-day ingestion run with LLM analysis before 2026-04-23 and evaluate D-105 gate.
 
 ## Recently Completed (2026-03-24)
 
@@ -57,3 +58,8 @@
 ## Tier1 Fallback Policy (D-104 / I-13)
 
 > `actionable=0` in Tier1/keyword fallback is permanent. Focus remains on LLM-driven alerts with real signal quality, not Tier1 optimisation.
+
+## 30-Day Production Gate (D-105)
+
+> Review date: **2026-04-23** (30 days from 2026-03-24). After a real 7-day ingestion run with LLM analysis:
+> if `alert_audit.jsonl` has fewer than 5 triggered alerts **or** alert precision is below 30%, stop trading-signal work and focus on data quality (feeds, keywords, spam-filter) with no new architecture.

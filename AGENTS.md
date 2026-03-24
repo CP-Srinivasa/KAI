@@ -91,6 +91,9 @@
 | tier1_fallback_policy | `D-104 -- I-13 remains permanent: actionable=0 in Tier1/keyword fallback; signal quality focus stays on LLM-driven alerts` |
 
 
+| thirty_day_gate | `D-105 -- review on 2026-04-23 after a real 7-day ingestion run with LLM analysis; if alert_audit.jsonl has <5 triggered alerts or alert precision <30%, stop trading-signal work and focus on data quality (feeds, keywords, spam-filter), no new architecture` |
+
+
 ---> **Verbindliches Betriebsdokument fuer alle Coding-Agenten.**
 
 
