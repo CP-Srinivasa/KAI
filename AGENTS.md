@@ -5,8 +5,8 @@
 | Field | Value |
 |---|---|
 | current_phase | `PHASE 5 (active) -- Signal Reliability & Trust` |
-| current_sprint | `PH5A_BASELINE_RELIABILITY_AND_SIGNAL_TRUST` |
-| next_required_step | `PH5A_EXECUTION` |
+| current_sprint | `PH5A_BASELINE_RELIABILITY_AND_SIGNAL_TRUST -- CLOSED` |
+| next_required_step | `PH5B definition` |
 | ph4a_status | `closed (D-53) -- immutable baseline anchor (S67)` |
 | ph4b_status | `closed (D-62) -- paired_count=69; root cause: keyword coverage blindness` |
 | ph4c_status | `closed -- rule-keyword gap audit; top-3 gaps: macro, regulatory, AI` |
@@ -25,7 +25,8 @@
 | provisional_cli_count | 0 |
 | phase3_status | `closed (2026-03-22) -- GO` |
 | phase4_status | `CLOSED (D-87, 2026-03-24) -- 11 sprints PH4A-PH4K + V-4; canonical closeout complete` |
-| phase5_status | `active -- PH5A frozen (§83); diagnostic baseline` |
+| ph5a_status | `closed -- reliability baseline: LLM error proxy 27.5%, zero-hit 37.7%, actionable 0%` |
+| phase5_status | `active -- PH5A closed; PH5B definition next` |
 ---
 
 > **Verbindliches Betriebsdokument fuer alle Coding-Agenten.**
