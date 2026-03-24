@@ -476,3 +476,7 @@
 ### D-103 (2026-03-24): CLI reduced to 5 core commands
 - Default CLI (`app`): ingest rss, pipeline run, query analyze-pending, alerts evaluate-pending, alerts send-test.
 - All other commands remain accessible via `full_app` for backward compatibility.
+
+### D-103 (2026-03-24): CLI auf 5 Core-Commands reduziert
+- Nur: ingest rss, pipeline run, query analyze-pending, alerts evaluate-pending, alerts send-test.
+- 884 → 336 LOC; 820 LOC entfernt; 37 obsolete Tests gelöscht.
