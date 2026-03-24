@@ -21,12 +21,12 @@ from pathlib import Path
 import pytest
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
+from app.alerts.service import AlertService
 from app.analysis.keywords.engine import KeywordEngine
 from app.analysis.pipeline import AnalysisPipeline
 from app.analysis.scoring import is_alert_worthy
-from app.alerts.service import AlertService
-from app.core.domain.document import AnalysisResult, CanonicalDocument
-from app.core.enums import DocumentStatus, MarketScope, SentimentLabel, SourceType
+from app.core.domain.document import CanonicalDocument
+from app.core.enums import DocumentStatus, SentimentLabel, SourceType
 from app.core.settings import AppSettings
 from app.storage.repositories.document_repo import DocumentRepository
 
@@ -321,6 +321,12 @@ async def test_deduplication_same_content_hash(session_factory: async_sessionmak
         id_a = await repo.save_document(doc_a)
         id_b = await repo.save_document(doc_b)
 
-    # Second save returns None (duplicate detected, not inserted)
+    # save_document() is idempotent on content_hash: returns the existing ID, no new row
     assert id_a is not None
-    assert id_b is None
+    assert id_b == id_a, "Duplicate content_hash must return the original document ID"
+
+    # Only one document in DB — the second save must not insert a new row
+    async with session_factory.begin() as session:
+        repo = DocumentRepository(session)
+        pending = await repo.get_pending_documents(limit=10)
+    assert len(pending) == 1
