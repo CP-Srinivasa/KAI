@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typer.testing import CliRunner
 
-from app.cli.main import app
+from app.cli.main import full_app as app
 from app.market_data.models import MarketDataSnapshot
 
 runner = CliRunner()

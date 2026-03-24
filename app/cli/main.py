@@ -5,56 +5,29 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
-from app.cli.commands.trading import trading_app
-from app.cli.research import (
-    extract_runbook_command_refs,
-    get_invalid_research_command_refs,
-    get_provisional_research_command_names,
-    get_registered_research_command_names,
-    get_research_command_inventory,
-    research_app,
-)
 from app.core.logging import configure_logging
 from app.core.settings import get_settings
 from app.ingestion.base.interfaces import FetchResult
-from app.ingestion.classifier import classify_url
-from app.ingestion.resolvers.podcast import load_and_resolve_podcasts
-from app.ingestion.resolvers.youtube import load_youtube_channels
 from app.ingestion.rss.service import RSSCollectedFeed, collect_rss_feed
 from app.storage.db.session import build_session_factory
 from app.storage.document_ingest import IngestPersistStats, persist_fetch_result
 
-__all__ = [
-    "app",
-    "extract_runbook_command_refs",
-    "get_invalid_research_command_refs",
-    "get_provisional_research_command_names",
-    "get_registered_research_command_names",
-    "get_research_command_inventory",
-]
+__all__ = ["app"]
 
 logger = logging.getLogger(__name__)
 
 app = typer.Typer(name="trading-bot", help="AI Analyst Trading Bot CLI", no_args_is_help=True)
 console = Console()
 
-sources_app = typer.Typer(help="Source management commands", no_args_is_help=True)
-podcasts_app = typer.Typer(help="Podcast resolution commands", no_args_is_help=True)
-youtube_app = typer.Typer(help="YouTube resolution commands", no_args_is_help=True)
-query_app = typer.Typer(help="Query commands", no_args_is_help=True)
 ingest_app = typer.Typer(help="Ingestion commands", no_args_is_help=True)
 pipeline_app = typer.Typer(help="End-to-end pipeline commands", no_args_is_help=True)
+query_app = typer.Typer(help="Query commands", no_args_is_help=True)
 alerts_app = typer.Typer(help="Alert commands", no_args_is_help=True)
 
-app.add_typer(sources_app, name="sources")
-app.add_typer(podcasts_app, name="podcasts")
-app.add_typer(youtube_app, name="youtube")
-app.add_typer(query_app, name="query")
 app.add_typer(ingest_app, name="ingest")
 app.add_typer(pipeline_app, name="pipeline")
+app.add_typer(query_app, name="query")
 app.add_typer(alerts_app, name="alerts")
-app.add_typer(research_app, name="research")
-app.add_typer(trading_app, name="trading")
 
 
 @app.callback()
@@ -63,309 +36,7 @@ def main() -> None:
     configure_logging(settings.log_level)
 
 
-# ── sources ──────────────────────────────────────────────────────────────────
-
-
-@sources_app.command("classify")
-def sources_classify(
-    url: str = typer.Argument(..., help="URL to classify"),
-) -> None:
-    """Classify a single URL into its SourceType."""
-    result = classify_url(url)
-    table = Table(show_header=True, header_style="bold cyan")
-    table.add_column("Field")
-    table.add_column("Value")
-    table.add_row("URL", url)
-    table.add_row("Source Type", result.source_type.value)
-    table.add_row("Status", result.status.value)
-    table.add_row("Notes", result.notes or "—")
-    console.print(table)
-
-
-# ── podcasts ─────────────────────────────────────────────────────────────────
-
-
-@podcasts_app.command("resolve")
-def podcasts_resolve() -> None:
-    """Resolve all podcast sources from monitor/podcast_feeds_raw.txt."""
-    settings = get_settings()
-    monitor_dir = Path(settings.monitor_dir)
-    resolved, unresolved = load_and_resolve_podcasts(monitor_dir)
-
-    console.print(f"\n[bold green]Resolved ({len(resolved)}):[/bold green]")
-    for src in resolved:
-        console.print(f"  [green]✓[/green] {src.resolved_url}")
-        if src.notes:
-            console.print(f"    [dim]{src.notes}[/dim]")
-
-    console.print(f"\n[bold yellow]Unresolved ({len(unresolved)}):[/bold yellow]")
-    for src in unresolved:
-        console.print(f"  [yellow]✗[/yellow] {src.raw_url} [{src.status.value}]")
-        if src.notes:
-            console.print(f"    [dim]{src.notes}[/dim]")
-
-
-# ── youtube ──────────────────────────────────────────────────────────────────
-
-
-@youtube_app.command("resolve")
-def youtube_resolve() -> None:
-    """Resolve and normalize YouTube channels from monitor/youtube_channels.txt."""
-    settings = get_settings()
-    monitor_dir = Path(settings.monitor_dir)
-    channels = load_youtube_channels(monitor_dir)
-
-    table = Table(show_header=True, header_style="bold cyan")
-    table.add_column("Handle")
-    table.add_column("Type")
-    table.add_column("Normalized URL")
-    table.add_column("Notes")
-
-    for ch in channels:
-        table.add_row(ch.handle or "?", ch.channel_type, ch.normalized_url, ch.notes or "")
-
-    console.print(table)
-    console.print(f"\n[bold]{len(channels)} channels[/bold] (deduplicated)")
-
-
-# ── query ─────────────────────────────────────────────────────────────────────
-
-
-@query_app.command("validate")
-def query_validate(
-    query: str = typer.Argument(..., help="Query string to validate"),
-) -> None:
-    """Validate a query string against the DSL parser."""
-    from app.core.query import QueryParser, QueryParserError
-
-    console.print(f"[bold green]Query received:[/bold green] {query}\n")
-    try:
-        parser = QueryParser(query)
-        ast = parser.parse()
-        console.print("[bold blue]✓ Valid Syntax! AST:[/bold blue]")
-        console.print(f"[cyan]{ast}[/cyan]")
-    except QueryParserError as err:
-        console.print(f"[bold red]✗ Syntax Error:[/bold red] {err}")
-        raise typer.Exit(1) from err
-
-
-@query_app.command("analyze-pending")
-def analyze_pending(
-    limit: int = typer.Option(50, help="Max documents to analyze"),
-    provider: str = typer.Option("openai", help="LLM Provider to use (openai, anthropic, gemini)"),
-    no_alerts: bool = typer.Option(False, "--no-alerts", help="Skip alert dispatch after analysis"),
-) -> None:
-    """Run the analysis pipeline on all pending (unanalyzed) documents."""
-    import asyncio
-
-    async def run() -> None:
-        settings = get_settings()
-        monitor_dir = Path(settings.monitor_dir)
-
-        from app.analysis.factory import create_provider
-        from app.analysis.keywords.engine import KeywordEngine
-        from app.analysis.pipeline import AnalysisPipeline
-        from app.core.enums import DocumentStatus
-        from app.storage.db.session import build_session_factory
-        from app.storage.repositories.document_repo import DocumentRepository
-
-        console.print("[bold]Initializing Analysis Engine...[/bold]")
-        keyword_engine = KeywordEngine.from_monitor_dir(monitor_dir)
-
-        try:
-            provider_obj = create_provider(provider, settings)
-        except ValueError as e:
-            console.print(f"[red]Error:[/red] {e}")
-            raise typer.Exit(1) from e
-
-        if not provider_obj:
-            console.print(
-                f"[yellow]Warning:[/yellow] No API key found for provider '{provider}'."
-                " LLM Analysis will be skipped."
-            )
-        else:
-            console.print(
-                f"[cyan]Using LLM Provider:[/cyan]"
-                f" {provider_obj.provider_name} ({provider_obj.model})"
-            )
-
-        pipeline = AnalysisPipeline(keyword_engine, provider_obj, run_llm=bool(provider_obj))
-        session_factory = build_session_factory(settings.db)
-
-        # Phase 1: Read pending docs — session committed immediately after fetch
-        async with session_factory.begin() as session:
-            repo = DocumentRepository(session)
-            docs = await repo.get_pending_documents(limit=limit)
-
-        if not docs:
-            console.print("[green]No pending documents to analyze.[/green]")
-            return
-
-        console.print(f"[bold]Analyzing {len(docs)} documents...[/bold]")
-
-        # Phase 2: Run analysis pipeline — LLM HTTP calls happen outside any DB session
-        results = await pipeline.run_batch(docs)
-
-        # Phase 3: Write results — new session, no LLM calls inside
-        success_count = 0
-        error_count = 0
-
-        async with session_factory.begin() as session:
-            repo = DocumentRepository(session)
-
-            for res in results:
-                if not res.success:
-                    console.print(f"[red]Failed doc {res.document.id}:[/red] {res.error}")
-                    error_count += 1
-                    try:
-                        await repo.update_status(str(res.document.id), DocumentStatus.FAILED)
-                    except Exception:
-                        pass  # best-effort — do not mask the original error
-                    continue
-
-                # apply_to_document() merges entities + scores + priority onto doc
-                res.apply_to_document()
-
-                # I-12: analysis_result=None MUST NOT produce status=ANALYZED
-                # In normal operation this is unreachable (fallback always builds a result),
-                # but defensive guard prevents silent data corruption on future code changes.
-                if res.analysis_result is None:
-                    console.print(
-                        f"[yellow]Skipped {res.document.id}:"
-                        " no analysis result (no provider configured?)[/yellow]"
-                    )
-                    error_count += 1
-                    try:
-                        await repo.update_status(str(res.document.id), DocumentStatus.FAILED)
-                    except Exception:
-                        pass
-                    continue
-
-                try:
-                    await repo.update_analysis(
-                        str(res.document.id),
-                        res.analysis_result,
-                        provider_name=res.document.provider,
-                        metadata_updates=res.trace_metadata,
-                    )
-                    success_count += 1
-                except Exception as e:
-                    console.print(f"[red]Failed to save doc {res.document.id}:[/red] {e}")
-                    error_count += 1
-                    try:
-                        await repo.update_status(str(res.document.id), DocumentStatus.FAILED)
-                    except Exception:
-                        pass  # best-effort — do not mask the original error
-
-        console.print(
-            f"[bold green]Analysis complete![/bold green] "
-            f"{success_count} success, {error_count} failed."
-        )
-
-        # Phase 4: Alert dispatch — outside DB session, fail-open
-        if not no_alerts and success_count > 0:
-            from app.alerts.service import AlertService
-
-            alert_service = AlertService.from_settings(settings)
-            alert_count = 0
-            for res in results:
-                if not res.success or res.analysis_result is None:
-                    continue
-                try:
-                    deliveries = await alert_service.process_document(
-                        res.document,
-                        res.analysis_result,
-                        spam_probability=res.document.spam_probability or 0.0,
-                    )
-                    if deliveries:
-                        alert_count += 1
-                except Exception as exc:
-                    logger.warning("Alert dispatch failed for doc %s: %s", res.document.id, exc)
-
-            if alert_count:
-                console.print(f"[cyan]Alerts dispatched: {alert_count}[/cyan]")
-
-    asyncio.run(run())
-
-
-# ── query list ────────────────────────────────────────────────────────────────
-
-
-@query_app.command("list")
-def query_list(
-    limit: int = typer.Option(20, help="Max documents to return"),
-    min_priority: int = typer.Option(1, help="Minimum priority score filter (1-10)"),
-    source_id: str = typer.Option(None, help="Filter by source ID"),
-    asset: str = typer.Option(None, help="Filter to specific asset/ticker (e.g. BTC)"),
-    watchlist: str = typer.Option(None, help="Filter using a named watchlist tag (e.g. defi)"),
-) -> None:
-    """List analyzed documents sorted by priority score (highest first)."""
-    import asyncio
-
-    async def run() -> None:
-        from app.core.watchlists import WatchlistRegistry
-        from app.storage.db.session import build_session_factory
-        from app.storage.repositories.document_repo import DocumentRepository
-
-        settings = get_settings()
-        monitor_dir = Path(settings.monitor_dir)
-        session_factory = build_session_factory(settings.db)
-
-        # Resolve watchlist symbols
-        allowed_assets = set()
-        if asset:
-            allowed_assets.add(asset.upper())
-        if watchlist:
-            registry = WatchlistRegistry.from_monitor_dir(monitor_dir)
-            allowed_assets.update(s.upper() for s in registry.get_watchlist(watchlist))
-
-        async with session_factory.begin() as session:
-            repo = DocumentRepository(session)
-            docs = await repo.list(
-                is_analyzed=True,
-                source_id=source_id,
-                limit=limit * 5 if allowed_assets else limit,  # Grab more if filtering in-memory
-            )
-
-        filtered = [d for d in docs if (d.priority_score or 0) >= min_priority]
-
-        if allowed_assets:
-            filtered = [
-                d
-                for d in filtered
-                if any(t.upper() in allowed_assets for t in (d.tickers + d.crypto_assets))
-            ]
-
-        filtered.sort(key=lambda d: d.priority_score or 0, reverse=True)
-        filtered = filtered[:limit]
-
-        if not filtered:
-            console.print("[yellow]No analyzed documents found.[/yellow]")
-            return
-
-        table = Table(show_header=True, header_style="bold cyan")
-        table.add_column("Pri", style="bold", width=4)
-        table.add_column("Rel", width=5)
-        table.add_column("Imp", width=5)
-        table.add_column("Sentiment", width=10)
-        table.add_column("Source", width=10)
-        table.add_column("Title")
-
-        for doc in filtered:
-            pri = str(doc.priority_score or "–")
-            rel = f"{doc.relevance_score:.2f}" if doc.relevance_score is not None else "–"
-            imp = f"{doc.impact_score:.2f}" if doc.impact_score is not None else "–"
-            sentiment = doc.sentiment_label.value if doc.sentiment_label else "–"
-            source = (doc.source_id or "–")[:10]
-            table.add_row(pri, rel, imp, sentiment, source, doc.title or "–")
-
-        console.print(table)
-        console.print(f"\n[bold]{len(filtered)} documents[/bold] (min priority {min_priority})")
-
-    asyncio.run(run())
-
-
-# ── ingest ────────────────────────────────────────────────────────────────────
+# ── ingest rss ────────────────────────────────────────────────────────────────
 
 
 @ingest_app.command("rss")
@@ -456,7 +127,7 @@ async def _persist_rss_documents(result: FetchResult, *, dry_run: bool) -> Inges
     return await persist_fetch_result(session_factory, result, dry_run=dry_run)
 
 
-# ── pipeline ──────────────────────────────────────────────────────────────────
+# ── pipeline run ──────────────────────────────────────────────────────────────
 
 
 @pipeline_app.command("run")
@@ -536,7 +207,141 @@ def pipeline_run(
     asyncio.run(run())
 
 
-# ── alerts ────────────────────────────────────────────────────────────────────
+# ── query analyze-pending ─────────────────────────────────────────────────────
+
+
+@query_app.command("analyze-pending")
+def analyze_pending(
+    limit: int = typer.Option(50, help="Max documents to analyze"),
+    provider: str = typer.Option("openai", help="LLM Provider to use (openai, anthropic, gemini)"),
+    no_alerts: bool = typer.Option(False, "--no-alerts", help="Skip alert dispatch after analysis"),
+) -> None:
+    """Run the analysis pipeline on all pending (unanalyzed) documents."""
+    import asyncio
+
+    async def run() -> None:
+        settings = get_settings()
+        monitor_dir = Path(settings.monitor_dir)
+
+        from app.analysis.factory import create_provider
+        from app.analysis.keywords.engine import KeywordEngine
+        from app.analysis.pipeline import AnalysisPipeline
+        from app.core.enums import DocumentStatus
+        from app.storage.repositories.document_repo import DocumentRepository
+
+        console.print("[bold]Initializing Analysis Engine...[/bold]")
+        keyword_engine = KeywordEngine.from_monitor_dir(monitor_dir)
+
+        try:
+            provider_obj = create_provider(provider, settings)
+        except ValueError as e:
+            console.print(f"[red]Error:[/red] {e}")
+            raise typer.Exit(1) from e
+
+        if not provider_obj:
+            console.print(
+                f"[yellow]Warning:[/yellow] No API key found for provider '{provider}'."
+                " LLM Analysis will be skipped."
+            )
+        else:
+            console.print(
+                f"[cyan]Using LLM Provider:[/cyan]"
+                f" {provider_obj.provider_name} ({provider_obj.model})"
+            )
+
+        pipeline = AnalysisPipeline(keyword_engine, provider_obj, run_llm=bool(provider_obj))
+        session_factory = build_session_factory(settings.db)
+
+        async with session_factory.begin() as session:
+            repo = DocumentRepository(session)
+            docs = await repo.get_pending_documents(limit=limit)
+
+        if not docs:
+            console.print("[green]No pending documents to analyze.[/green]")
+            return
+
+        console.print(f"[bold]Analyzing {len(docs)} documents...[/bold]")
+
+        results = await pipeline.run_batch(docs)
+
+        success_count = 0
+        error_count = 0
+
+        async with session_factory.begin() as session:
+            repo = DocumentRepository(session)
+
+            for res in results:
+                if not res.success:
+                    console.print(f"[red]Failed doc {res.document.id}:[/red] {res.error}")
+                    error_count += 1
+                    try:
+                        await repo.update_status(str(res.document.id), DocumentStatus.FAILED)
+                    except Exception:
+                        pass
+                    continue
+
+                res.apply_to_document()
+
+                # I-12: defensive guard — analysis_result=None MUST NOT produce status=ANALYZED
+                if res.analysis_result is None:
+                    console.print(
+                        f"[yellow]Skipped {res.document.id}:"
+                        " no analysis result (no provider configured?)[/yellow]"
+                    )
+                    error_count += 1
+                    try:
+                        await repo.update_status(str(res.document.id), DocumentStatus.FAILED)
+                    except Exception:
+                        pass
+                    continue
+
+                try:
+                    await repo.update_analysis(
+                        str(res.document.id),
+                        res.analysis_result,
+                        provider_name=res.document.provider,
+                        metadata_updates=res.trace_metadata,
+                    )
+                    success_count += 1
+                except Exception as e:
+                    console.print(f"[red]Failed to save doc {res.document.id}:[/red] {e}")
+                    error_count += 1
+                    try:
+                        await repo.update_status(str(res.document.id), DocumentStatus.FAILED)
+                    except Exception:
+                        pass
+
+        console.print(
+            f"[bold green]Analysis complete![/bold green] "
+            f"{success_count} success, {error_count} failed."
+        )
+
+        if not no_alerts and success_count > 0:
+            from app.alerts.service import AlertService
+
+            alert_service = AlertService.from_settings(settings)
+            alert_count = 0
+            for res in results:
+                if not res.success or res.analysis_result is None:
+                    continue
+                try:
+                    deliveries = await alert_service.process_document(
+                        res.document,
+                        res.analysis_result,
+                        spam_probability=res.document.spam_probability or 0.0,
+                    )
+                    if deliveries:
+                        alert_count += 1
+                except Exception as exc:
+                    logger.warning("Alert dispatch failed for doc %s: %s", res.document.id, exc)
+
+            if alert_count:
+                console.print(f"[cyan]Alerts dispatched: {alert_count}[/cyan]")
+
+    asyncio.run(run())
+
+
+# ── alerts send-test ──────────────────────────────────────────────────────────
 
 
 @alerts_app.command("send-test")
@@ -579,6 +384,9 @@ def alerts_send_test() -> None:
             console.print(f"  [{r.channel}] {status}")
 
     asyncio.run(run())
+
+
+# ── alerts evaluate-pending ───────────────────────────────────────────────────
 
 
 @alerts_app.command("evaluate-pending")
@@ -642,240 +450,6 @@ def alerts_evaluate_pending(
         for r in results:
             status = "[green]✓ sent[/green]" if r.success else f"[red]✗ failed: {r.error}[/red]"
             console.print(f"  [{r.channel}] {status}")
-
-    asyncio.run(run())
-
-
-@alerts_app.command("hit-rate")
-def alerts_hit_rate(
-    audit_path: str = typer.Option(
-        "",
-        help="Path to alert_audit.jsonl (default: artifacts/alert_audit.jsonl)",
-    ),
-    min_sample: int = typer.Option(
-        50,
-        help="Minimum resolved directional alerts required for gate readiness",
-    ),
-    enforce_feature_gate: bool = typer.Option(
-        False,
-        "--enforce-feature-gate",
-        help="Exit non-zero when sample is insufficient (for CI/policy enforcement)",
-    ),
-) -> None:
-    """Compute alert hit-rate from the audit trail.
-
-    Reads dispatched alert records with prediction data and reports
-    hit-rate statistics. Alerts without sentiment or affected assets
-    are excluded. Feature-work remains blocked until at least
-    ``min_sample`` resolved directional alerts are available.
-    """
-    from app.alerts.audit import load_alert_audits
-    from app.alerts.hit_rate import build_outcomes_from_records, compute_hit_rate
-
-    if not audit_path:
-        workspace = Path(__file__).resolve().parents[2]
-        audit_path = str(workspace / "artifacts" / "alert_audit.jsonl")
-
-    records = load_alert_audits(audit_path)
-    if not records:
-        console.print(f"[yellow]No audit records found at {audit_path}[/yellow]")
-        if enforce_feature_gate:
-            raise typer.Exit(2)
-        raise typer.Exit(0)
-
-    # Load manual outcome annotations (AHR-1)
-    from app.alerts.audit import load_outcome_annotations
-
-    outcomes_file = Path(audit_path).parent / "alert_outcomes.jsonl"
-    annotations = load_outcome_annotations(outcomes_file)
-
-    outcomes = build_outcomes_from_records(records, annotations=annotations)
-    report = compute_hit_rate(outcomes, min_sample=min_sample)
-
-    # Summary table
-    table = Table(title="Alert Hit-Rate Report", show_header=True, header_style="bold cyan")
-    table.add_column("Metric", style="bold")
-    table.add_column("Value")
-
-    table.add_row("Total audit records", str(len(records)))
-    table.add_row("Directional alerts", str(report.directional_alerts))
-    table.add_row("Resolved", str(report.resolved_count))
-    table.add_row("Unresolved", str(report.unresolved_count))
-    table.add_row("Hits", str(report.hit_count))
-    table.add_row("Misses", str(report.miss_count))
-
-    if report.hit_rate_pct is not None:
-        table.add_row("Hit rate", f"{report.hit_rate_pct:.2f}%")
-    else:
-        table.add_row("Hit rate", "n/a (no resolved alerts)")
-
-    sample_status = (
-        "[green]sufficient[/green]"
-        if report.sufficient_sample
-        else f"[yellow]need {min_sample} resolved directional alerts[/yellow]"
-    )
-    table.add_row("Sample status", sample_status)
-    table.add_row(
-        "Feature-work gate",
-        "[green]UNBLOCKED[/green]" if report.sufficient_sample else "[red]BLOCKED[/red]",
-    )
-    console.print(table)
-
-    # Per-sentiment breakdown
-    if report.by_sentiment:
-        st = Table(title="By Sentiment", show_header=True, header_style="bold cyan")
-        st.add_column("Sentiment")
-        st.add_column("Count")
-        st.add_column("Resolved")
-        st.add_column("Hits")
-        st.add_column("Hit Rate")
-        for label, bd in report.by_sentiment.items():
-            hr = f"{bd.hit_rate_pct:.2f}%" if bd.hit_rate_pct is not None else "n/a"
-            st.add_row(label, str(bd.count), str(bd.resolved), str(bd.hits), hr)
-        console.print(st)
-
-    # Per-asset breakdown
-    if report.by_asset:
-        at = Table(title="By Asset", show_header=True, header_style="bold cyan")
-        at.add_column("Asset")
-        at.add_column("Count")
-        at.add_column("Resolved")
-        at.add_column("Hits")
-        at.add_column("Hit Rate")
-        for asset, bd in report.by_asset.items():
-            hr = f"{bd.hit_rate_pct:.2f}%" if bd.hit_rate_pct is not None else "n/a"
-            at.add_row(asset, str(bd.count), str(bd.resolved), str(bd.hits), hr)
-        console.print(at)
-
-    if enforce_feature_gate and not report.sufficient_sample:
-        console.print(
-            "[red]Feature-work gate blocked:[/red] "
-            f"need at least {min_sample} resolved directional alerts."
-        )
-        raise typer.Exit(2)
-
-
-@alerts_app.command("annotate")
-def alerts_annotate(
-    document_id: str = typer.Option(..., help="Document ID to annotate"),
-    outcome: str = typer.Option(
-        ...,
-        help="Outcome label: hit, miss, or inconclusive",
-    ),
-    asset: str = typer.Option("", help="Asset symbol (optional, e.g. BTC)"),
-    note: str = typer.Option("", help="Free-text note (optional)"),
-    audit_path: str = typer.Option(
-        "",
-        help="Path to alert_audit.jsonl (used to derive outcomes file location)",
-    ),
-) -> None:
-    """Record an operator outcome annotation for a dispatched alert.
-
-    Appends a hit/miss/inconclusive label to alert_outcomes.jsonl so that
-    hit-rate can be computed without live price data (AHR-1).
-    """
-    from app.alerts.audit import AlertOutcomeAnnotation, append_outcome_annotation
-
-    valid_outcomes = {"hit", "miss", "inconclusive"}
-    if outcome not in valid_outcomes:
-        choices = ", ".join(sorted(valid_outcomes))
-        console.print(f"[red]Invalid outcome {outcome!r}. Must be one of: {choices}[/red]")
-        raise typer.Exit(1)
-
-    if not audit_path:
-        workspace = Path(__file__).resolve().parents[2]
-        audit_path = str(workspace / "artifacts" / "alert_audit.jsonl")
-
-    outcomes_file = Path(audit_path).parent / "alert_outcomes.jsonl"
-
-    annotation = AlertOutcomeAnnotation(
-        document_id=document_id,
-        outcome=outcome,  # type: ignore[arg-type]
-        asset=asset or None,
-        note=note or None,
-    )
-    append_outcome_annotation(annotation, outcomes_file)
-    console.print(
-        f"[green]Annotated[/green] {document_id} → [bold]{outcome}[/bold]"
-        + (f" ({asset})" if asset else "")
-    )
-
-
-# ---------------------------------------------------------------------------
-# Sprint 29: analyze-pending --shadow-companion flag
-# ---------------------------------------------------------------------------
-
-
-@query_app.command("analyze-pending-shadow")
-def analyze_pending_shadow(
-    limit: int = typer.Option(50, help="Max documents to analyze"),
-    shadow_companion: bool = typer.Option(
-        False,
-        "--shadow-companion",
-        help="Run companion model as shadow alongside primary provider (I-55, Sprint 29)",
-    ),
-) -> None:
-    """Analyze pending documents; optionally run shadow companion alongside primary (Sprint 29)."""
-    import asyncio
-
-    async def run() -> None:
-        from app.analysis.keywords.engine import KeywordEngine
-        from app.analysis.pipeline import AnalysisPipeline
-        from app.storage.db.session import build_session_factory
-        from app.storage.repositories.document_repo import DocumentRepository
-
-        settings = get_settings()
-        monitor_dir = Path(settings.monitor_dir)
-        keyword_engine = KeywordEngine.from_monitor_dir(monitor_dir)
-        provider_obj = None
-        session_factory = build_session_factory(settings.db)
-
-        pipeline = AnalysisPipeline(keyword_engine, provider_obj, run_llm=False)
-
-        async with session_factory.begin() as session:
-            repo = DocumentRepository(session)
-            docs = await repo.get_pending_documents(limit=limit)
-
-        if not docs:
-            console.print("[green]No pending documents to analyze.[/green]")
-            return
-
-        console.print(
-            f"[bold]Analyzing {len(docs)} documents (shadow_companion={shadow_companion})...[/bold]"
-        )
-
-        results = await pipeline.run_batch(docs)
-        success_count = 0
-        error_count = 0
-
-        async with session_factory.begin() as session:
-            repo = DocumentRepository(session)
-            for res in results:
-                if not res.success:
-                    error_count += 1
-                    continue
-                res.apply_to_document()
-                if res.analysis_result is None:
-                    error_count += 1
-                    continue
-                try:
-                    metadata_updates = dict(res.trace_metadata or {})
-                    if shadow_companion:
-                        metadata_updates["shadow_companion_active"] = True
-                    await repo.update_analysis(
-                        str(res.document.id),
-                        res.analysis_result,
-                        provider_name=res.document.provider,
-                        metadata_updates=metadata_updates,
-                    )
-                    success_count += 1
-                except Exception:
-                    error_count += 1
-
-        console.print(
-            f"[bold green]Analysis complete![/bold green] "
-            f"{success_count} success, {error_count} failed."
-        )
 
     asyncio.run(run())
 

@@ -472,3 +472,7 @@
 ### D-102 (2026-03-24): Persona/avatar/speech stubs extracted
 - app/persona/, app/messaging/avatar_*, app/messaging/speech_* confirmed fully removed.
 - Voice and avatar are not trading-signal product; no re-integration planned.
+
+### D-103 (2026-03-24): CLI reduced to 5 core commands
+- Default CLI (`app`): ingest rss, pipeline run, query analyze-pending, alerts evaluate-pending, alerts send-test.
+- All other commands remain accessible via `full_app` for backward compatibility.

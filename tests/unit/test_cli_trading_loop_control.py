@@ -6,7 +6,7 @@ from pathlib import Path
 
 from typer.testing import CliRunner
 
-from app.cli.main import app
+from app.cli.main import full_app as app
 
 runner = CliRunner()
 

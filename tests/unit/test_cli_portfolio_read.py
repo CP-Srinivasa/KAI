@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typer.testing import CliRunner
 
-from app.cli.main import app
+from app.cli.main import full_app as app
 from app.execution.portfolio_read import ExposureSummary, PortfolioSnapshot, PositionSummary
 
 runner = CliRunner()
