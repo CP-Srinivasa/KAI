@@ -1,17 +1,22 @@
 """Tests for the MCP guarded_write tool inventory module.
 
-Verifies that the inventory exported by app.agents.tools.guarded_write
-matches the authoritative list in app.agents.mcp_server.
+Verifies that every tool in GUARDED_WRITE_TOOL_NAMES is actually registered
+in the FastMCP server instance.
 """
 from __future__ import annotations
 
-from app.agents.mcp_server import _GUARDED_MCP_WRITE_TOOL_NAMES
+import pytest
+
+from app.agents.mcp_server import mcp
 from app.agents.tools.guarded_write import GUARDED_WRITE_TOOL_NAMES, get_guarded_write_tool_names
 
 
-def test_guarded_write_inventory_matches_mcp_server() -> None:
-    """GUARDED_WRITE_TOOL_NAMES must match _GUARDED_MCP_WRITE_TOOL_NAMES in mcp_server."""
-    assert set(GUARDED_WRITE_TOOL_NAMES) == set(_GUARDED_MCP_WRITE_TOOL_NAMES)
+@pytest.mark.asyncio
+async def test_guarded_write_tools_all_registered_in_mcp_server() -> None:
+    """Every name in GUARDED_WRITE_TOOL_NAMES must be registered in the MCP server."""
+    registered = {tool.name for tool in await mcp.list_tools()}
+    for name in GUARDED_WRITE_TOOL_NAMES:
+        assert name in registered, f"Guarded write tool not registered in MCP: {name}"
 
 
 def test_get_guarded_write_tool_names_returns_tuple() -> None:
