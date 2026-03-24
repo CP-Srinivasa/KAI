@@ -4,7 +4,7 @@
 
 - current_phase: `PHASE 4 (CLOSED D-87, 2026-03-24)`
 - current_sprint: `PHASE4_CLOSEOUT_AND_NEXT_PHASE_GATE`
-- next_required_step: `PHASE4_FINAL_CANONICAL_CLOSEOUT`
+- next_required_step: `Phase 5 definition`
 - baseline: `1609 passed, ruff clean`
 ## Canonical Decisions
 
@@ -86,5 +86,5 @@
 
 ### D-89 (2026-03-24): Final canonical closeout sync required before any Phase-5 opening
 - There is still a governance conflict between "Phase 4 closed" statements and "Phase 4 closeout gate active" statements.
-- Canonical conservative state remains active until `PHASE4_FINAL_CANONICAL_CLOSEOUT` is fully synced.
+- Phase 4 canonical closeout sync complete (D-87).
 - Phase 5 stays blocked until this conflict is resolved across all governance documents.

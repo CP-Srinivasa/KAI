@@ -14,7 +14,7 @@ Phase 4 has completed a full PH4A-PH4K arc. V-4 Dual-Write is closed, N-4 is clo
 ## Closeout Actions
 
 - Run final Phase 4 closeout sync.
-- Close the gate sprint everywhere (`PHASE4_FINAL_CANONICAL_CLOSEOUT`).
+- Phase 4 closeout gate closed everywhere (D-87).
 - Keep Phase 5 blocked until final closeout sync is complete.
 - Then start Phase 5 definition.
 ## Phase 4 Complete Arc (PH4A-K, 11 Sprints)

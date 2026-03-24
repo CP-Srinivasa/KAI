@@ -28,7 +28,7 @@
 
 ## Closeout Actions
 
-- Run final Phase 4 closeout sync (`PHASE4_FINAL_CANONICAL_CLOSEOUT`).
+- Phase 4 canonical closeout sync complete (D-87).
 - Close the gate sprint everywhere.
 - Then start Phase 5 definition.
 ## PH4H Policy Anchor

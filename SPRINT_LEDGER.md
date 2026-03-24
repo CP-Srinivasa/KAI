@@ -5,9 +5,9 @@
 - current_phase: `PHASE 4 (CLOSED D-87, 2026-03-24)`
 - phase_4_status: `active -- final canonical closeout sync`
 - current_sprint: `PHASE4_CLOSEOUT_AND_NEXT_PHASE_GATE`
-- next_required_step: `PHASE4_FINAL_CANONICAL_CLOSEOUT`
+- next_required_step: `Phase 5 definition`
 - baseline: `1609 passed, ruff clean`
-- phase5_status: `blocked until PHASE4_FINAL_CANONICAL_CLOSEOUT`
+- phase5_status: `unblocked (D-87)`
 | Sprint | Date | Status | Outcome |
 |---|---|---|---|
 | PH4A | 2026-03-22 | closed | Baseline: paired=0 |

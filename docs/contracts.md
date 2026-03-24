@@ -4,9 +4,9 @@
 
 | Field | Value |
 |---|---|
-| current_phase | `PHASE 4` |
+| current_phase | `PHASE 4 (CLOSED D-87, 2026-03-24)` |
 | current_sprint | `PHASE4_CLOSEOUT_AND_NEXT_PHASE_GATE` |
-| next_required_step | `PHASE4_FINAL_CANONICAL_CLOSEOUT` |
+| next_required_step | `Phase 5 definition` |
 | baseline | `1609 passed, ruff clean` |
 | active_contracts | §82 (Phase-4 closeout gate, active) · §81–§67 (closed/frozen anchors) |
 | cli_canonical_count | 53 (frozen §65) |
