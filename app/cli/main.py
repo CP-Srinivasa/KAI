@@ -683,7 +683,13 @@ def alerts_hit_rate(
             raise typer.Exit(2)
         raise typer.Exit(0)
 
-    outcomes = build_outcomes_from_records(records)
+    # Load manual outcome annotations (AHR-1)
+    from app.alerts.audit import load_outcome_annotations
+
+    outcomes_file = Path(audit_path).parent / "alert_outcomes.jsonl"
+    annotations = load_outcome_annotations(outcomes_file)
+
+    outcomes = build_outcomes_from_records(records, annotations=annotations)
     report = compute_hit_rate(outcomes, min_sample=min_sample)
 
     # Summary table
@@ -747,6 +753,52 @@ def alerts_hit_rate(
             f"need at least {min_sample} resolved directional alerts."
         )
         raise typer.Exit(2)
+
+
+@alerts_app.command("annotate")
+def alerts_annotate(
+    document_id: str = typer.Option(..., help="Document ID to annotate"),
+    outcome: str = typer.Option(
+        ...,
+        help="Outcome label: hit, miss, or inconclusive",
+    ),
+    asset: str = typer.Option("", help="Asset symbol (optional, e.g. BTC)"),
+    note: str = typer.Option("", help="Free-text note (optional)"),
+    audit_path: str = typer.Option(
+        "",
+        help="Path to alert_audit.jsonl (used to derive outcomes file location)",
+    ),
+) -> None:
+    """Record an operator outcome annotation for a dispatched alert.
+
+    Appends a hit/miss/inconclusive label to alert_outcomes.jsonl so that
+    hit-rate can be computed without live price data (AHR-1).
+    """
+    from app.alerts.audit import AlertOutcomeAnnotation, append_outcome_annotation
+
+    valid_outcomes = {"hit", "miss", "inconclusive"}
+    if outcome not in valid_outcomes:
+        choices = ", ".join(sorted(valid_outcomes))
+        console.print(f"[red]Invalid outcome {outcome!r}. Must be one of: {choices}[/red]")
+        raise typer.Exit(1)
+
+    if not audit_path:
+        workspace = Path(__file__).resolve().parents[2]
+        audit_path = str(workspace / "artifacts" / "alert_audit.jsonl")
+
+    outcomes_file = Path(audit_path).parent / "alert_outcomes.jsonl"
+
+    annotation = AlertOutcomeAnnotation(
+        document_id=document_id,
+        outcome=outcome,  # type: ignore[arg-type]
+        asset=asset or None,
+        note=note or None,
+    )
+    append_outcome_annotation(annotation, outcomes_file)
+    console.print(
+        f"[green]Annotated[/green] {document_id} → [bold]{outcome}[/bold]"
+        + (f" ({asset})" if asset else "")
+    )
 
 
 # ---------------------------------------------------------------------------

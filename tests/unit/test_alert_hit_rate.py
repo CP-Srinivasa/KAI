@@ -5,7 +5,16 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from app.alerts.audit import AlertAuditRecord, append_alert_audit, load_alert_audits
+import pytest
+
+from app.alerts.audit import (
+    AlertAuditRecord,
+    AlertOutcomeAnnotation,
+    append_alert_audit,
+    append_outcome_annotation,
+    load_alert_audits,
+    load_outcome_annotations,
+)
 from app.alerts.hit_rate import (
     AlertOutcome,
     build_outcomes_from_records,
@@ -258,3 +267,122 @@ def test_hit_rate_report_to_dict():
     assert d["total_alerts"] == 0
     assert d["sufficient_sample"] is False
     assert d["min_sample"] == 50
+
+
+# ── AHR-1: AlertOutcomeAnnotation ─────────────────────────────────────
+
+
+def test_outcome_annotation_serialization():
+    ann = AlertOutcomeAnnotation(
+        document_id="doc-1",
+        outcome="hit",
+        asset="BTC",
+        note="price moved up",
+    )
+    d = ann.to_json_dict()
+    assert d["document_id"] == "doc-1"
+    assert d["outcome"] == "hit"
+    assert d["asset"] == "BTC"
+    assert d["note"] == "price moved up"
+    assert "annotated_at" in d
+
+
+def test_outcome_annotation_optional_fields_omitted():
+    ann = AlertOutcomeAnnotation(document_id="doc-2", outcome="miss")
+    d = ann.to_json_dict()
+    assert "asset" not in d
+    assert "note" not in d
+
+
+def test_append_and_load_outcome_annotations(tmp_path: Path):
+    p = tmp_path / "outcomes.jsonl"
+    ann1 = AlertOutcomeAnnotation(document_id="doc-1", outcome="hit", asset="BTC")
+    ann2 = AlertOutcomeAnnotation(document_id="doc-2", outcome="miss")
+    ann3 = AlertOutcomeAnnotation(document_id="doc-3", outcome="inconclusive", note="unclear")
+    append_outcome_annotation(ann1, p)
+    append_outcome_annotation(ann2, p)
+    append_outcome_annotation(ann3, p)
+
+    loaded = load_outcome_annotations(p)
+    assert len(loaded) == 3
+    assert loaded[0].document_id == "doc-1"
+    assert loaded[0].outcome == "hit"
+    assert loaded[0].asset == "BTC"
+    assert loaded[1].outcome == "miss"
+    assert loaded[2].outcome == "inconclusive"
+    assert loaded[2].note == "unclear"
+
+
+def test_load_outcome_annotations_missing_file(tmp_path: Path):
+    result = load_outcome_annotations(tmp_path / "nonexistent.jsonl")
+    assert result == []
+
+
+def test_load_outcome_annotations_via_directory(tmp_path: Path):
+    ann = AlertOutcomeAnnotation(document_id="doc-1", outcome="hit")
+    append_outcome_annotation(ann, tmp_path)  # dir → writes alert_outcomes.jsonl
+    loaded = load_outcome_annotations(tmp_path)
+    assert len(loaded) == 1
+
+
+# ── AHR-1: build_outcomes_from_records with annotations ───────────────
+
+
+def test_build_outcomes_annotation_hit():
+    records = [_make_record(doc_id="doc-1", assets=["BTC"])]
+    annotations = [AlertOutcomeAnnotation(document_id="doc-1", outcome="hit")]
+    outcomes = build_outcomes_from_records(records, annotations=annotations)
+    assert len(outcomes) == 1
+    assert outcomes[0].is_hit is True
+    assert outcomes[0].price_at_alert is None  # no price data
+
+
+def test_build_outcomes_annotation_miss():
+    records = [_make_record(doc_id="doc-1", assets=["ETH"])]
+    annotations = [AlertOutcomeAnnotation(document_id="doc-1", outcome="miss")]
+    outcomes = build_outcomes_from_records(records, annotations=annotations)
+    assert outcomes[0].is_hit is False
+
+
+def test_build_outcomes_annotation_inconclusive_remains_unresolved():
+    records = [_make_record(doc_id="doc-1", assets=["BTC"])]
+    annotations = [AlertOutcomeAnnotation(document_id="doc-1", outcome="inconclusive")]
+    outcomes = build_outcomes_from_records(records, annotations=annotations)
+    assert outcomes[0].is_hit is None
+
+
+def test_build_outcomes_price_data_takes_precedence_over_annotation():
+    """When price data is available, use it; ignore annotation for same record."""
+    records = [_make_record(doc_id="doc-1", assets=["BTC"])]
+    lookup = {("BTC", "2026-01-01T12:00:00+00:00"): (40000.0, 42000.0, "2026-01-02T12:00:00+00:00")}
+    # Annotation says "miss" but price says hit
+    annotations = [AlertOutcomeAnnotation(document_id="doc-1", outcome="miss")]
+    outcomes = build_outcomes_from_records(records, price_lookup=lookup, annotations=annotations)
+    assert outcomes[0].is_hit is True  # price data wins
+
+
+def test_build_outcomes_annotation_no_match_stays_unresolved():
+    records = [_make_record(doc_id="doc-1", assets=["BTC"])]
+    annotations = [AlertOutcomeAnnotation(document_id="doc-99", outcome="hit")]  # different doc
+    outcomes = build_outcomes_from_records(records, annotations=annotations)
+    assert outcomes[0].is_hit is None
+
+
+def test_build_outcomes_compute_hit_rate_from_annotations():
+    """End-to-end: annotations feed into compute_hit_rate."""
+    records = [
+        _make_record(doc_id="doc-1", assets=["BTC"]),
+        _make_record(doc_id="doc-2", assets=["ETH"], sentiment="bearish"),
+        _make_record(doc_id="doc-3", assets=["BTC"]),
+    ]
+    annotations = [
+        AlertOutcomeAnnotation(document_id="doc-1", outcome="hit"),
+        AlertOutcomeAnnotation(document_id="doc-2", outcome="hit"),
+        AlertOutcomeAnnotation(document_id="doc-3", outcome="miss"),
+    ]
+    outcomes = build_outcomes_from_records(records, annotations=annotations)
+    report = compute_hit_rate(outcomes, min_sample=3)
+    assert report.resolved_count == 3
+    assert report.hit_count == 2
+    assert report.miss_count == 1
+    assert report.hit_rate_pct == pytest.approx(66.67)

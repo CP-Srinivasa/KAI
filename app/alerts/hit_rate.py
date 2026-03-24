@@ -108,6 +108,7 @@ class AssetBreakdown:
 
 
 _DIRECTIONAL = {"bullish", "bearish"}
+_SENTINEL = object()  # marker for "no annotation present"
 
 
 def classify_hit(
@@ -127,6 +128,7 @@ def classify_hit(
 def build_outcomes_from_records(
     records: list[object],
     price_lookup: dict[tuple[str, str], tuple[float, float, str]] | None = None,
+    annotations: list[object] | None = None,
 ) -> list[AlertOutcome]:
     """Build AlertOutcome list from AlertAuditRecords.
 
@@ -138,13 +140,30 @@ def build_outcomes_from_records(
         Optional mapping of ``(asset, dispatched_at)`` → ``(price_at_alert,
         price_at_resolution, resolved_at)``.  If ``None`` or key missing,
         outcome is unresolved.
+    annotations:
+        Optional list of ``AlertOutcomeAnnotation`` instances supplied by the
+        operator.  Used to resolve ``is_hit`` when no price data is available.
+        ``"hit"`` → ``True``, ``"miss"`` → ``False``,
+        ``"inconclusive"`` → ``None`` (left unresolved).
 
     Returns
     -------
     List of ``AlertOutcome`` — one per (record, asset) pair for directional
     alerts only.
     """
-    from app.alerts.audit import AlertAuditRecord
+    from app.alerts.audit import AlertAuditRecord, AlertOutcomeAnnotation
+
+    # Build annotation map: document_id → is_hit (True/False/None)
+    annotation_map: dict[str, bool | None] = {}
+    for ann in annotations or []:
+        if not isinstance(ann, AlertOutcomeAnnotation):
+            continue
+        if ann.outcome == "hit":
+            annotation_map[ann.document_id] = True
+        elif ann.outcome == "miss":
+            annotation_map[ann.document_id] = False
+        else:  # inconclusive
+            annotation_map[ann.document_id] = None
 
     outcomes: list[AlertOutcome] = []
     lookup = price_lookup or {}
@@ -173,16 +192,31 @@ def build_outcomes_from_records(
             key = (asset, rec.dispatched_at)
             prices = lookup.get(key)
             if prices is None:
-                outcomes.append(
-                    AlertOutcome(
-                        document_id=rec.document_id,
-                        asset=asset,
-                        sentiment_label=sentiment,
-                        dispatched_at=rec.dispatched_at,
-                        channel=rec.channel,
-                        priority=rec.priority,
+                # Fall back to manual annotation if available
+                ann_hit = annotation_map.get(rec.document_id, _SENTINEL)
+                if ann_hit is _SENTINEL:
+                    outcomes.append(
+                        AlertOutcome(
+                            document_id=rec.document_id,
+                            asset=asset,
+                            sentiment_label=sentiment,
+                            dispatched_at=rec.dispatched_at,
+                            channel=rec.channel,
+                            priority=rec.priority,
+                        )
                     )
-                )
+                else:
+                    outcomes.append(
+                        AlertOutcome(
+                            document_id=rec.document_id,
+                            asset=asset,
+                            sentiment_label=sentiment,
+                            dispatched_at=rec.dispatched_at,
+                            is_hit=ann_hit,
+                            channel=rec.channel,
+                            priority=rec.priority,
+                        )
+                    )
             else:
                 p_alert, p_res, resolved_at = prices
                 is_hit = classify_hit(sentiment, p_alert, p_res)
