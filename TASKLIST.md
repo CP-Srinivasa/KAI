@@ -1,11 +1,11 @@
-ï»¿# TASKLIST.md
+﻿ÃƒÂ¯Ã‚Â»Ã‚Â¿# TASKLIST.md
 
 ## Current State
 
 - current_phase: `PHASE 5 (active)`
-- current_sprint: `PH5C_FILTER_BEFORE_LLM_BASELINE (pending final freeze, D-95, §85)`
+- current_sprint: `PH5C_FILTER_BEFORE_LLM_BASELINE (pending final freeze)`
 - next_required_step: `PH5C_STATUS_FREEZE`
-- baseline: `1619 passed, ruff clean, mypy 0 errors`
+- baseline: `1609 passed, ruff clean`
 - working_tree: `clean`
 - branch: `claude/p6-audit/architectural-invariants`
 
@@ -26,5 +26,9 @@
 - [x] Phase 5 / PH5A (D-91) -- Reliability baseline established.
 - [x] Phase 5 / PH5B (accepted closeout) -- low-signal cluster root cause identified.
 - [x] Phase 4 (D-87, 2026-03-24) -- Signal Quality Calibration, full PH4A-PH4K arc.
-- [x] Phase 3 (2026-03-22) -- GO.
-
+- [x] Phase 3 (2026-03-22) -- GO.
+
+
+
+
+
