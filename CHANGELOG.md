@@ -1,10 +1,18 @@
 # CHANGELOG.md
 
+## 2026-03-24 - PH5B closed; PH5C defined (Â§85)
+
+- **PH5B closed (D-92)**: All 19 LLM-error-proxy docs are EMPTY_MANUAL cluster (8 bytes, placeholder content). Root cause: empty manual sources, not model failure.
+- **PH5C defined**: `FILTER_BEFORE_LLM_BASELINE` â pre-LLM stub detection to skip LLM for empty/placeholder docs. Contract Â§85 frozen.
+- Baseline: `1619 passed, ruff clean, CI green`.
+
+---
+
 ## 2026-03-24 - CI hardened (N-8); all 5 jobs green
 
-- `codecov/codecov-action@v4 → @v5` + `FORCE_JAVASCRIPT_ACTIONS_TO_NODE24=true` — Node 20 warnings eliminated.
+- `codecov/codecov-action@v4 â @v5` + `FORCE_JAVASCRIPT_ACTIONS_TO_NODE24=true` â Node 20 warnings eliminated.
 - `hypothesis>=6.0.0` + `pytest-mock>=3.14.0` added to `[dev]` extras (were installed locally but missing from CI).
-- `bandit B324` fixed: `hashlib.sha1()` in `operational_readiness.py` (3 calls) now passes `usedforsecurity=False` (non-security ID hashes — CWE-327 false positive resolved).
+- `bandit B324` fixed: `hashlib.sha1()` in `operational_readiness.py` (3 calls) now passes `usedforsecurity=False` (non-security ID hashes â CWE-327 false positive resolved).
 - ruff format pass over 138 files (no logic changes).
 - Duplicate `asyncio.run(run())` in `send_digest` CLI command removed (pre-existing copy/paste bug).
 - Baseline: `1619 passed, ruff clean`. CI: 5/5 green.
@@ -13,7 +21,7 @@
 
 ## 2026-03-24 - Alert Integration wired into analyze-pending (N-7)
 
-- `app/cli/main.py`: Phase 4 added to `analyze_pending()` — after DB write, `AlertService.process_document()` is called per successful result. Fail-open: alert errors never abort analysis.
+- `app/cli/main.py`: Phase 4 added to `analyze_pending()` â after DB write, `AlertService.process_document()` is called per successful result. Fail-open: alert errors never abort analysis.
 - `--no-alerts` flag suppresses Phase 4 entirely.
 - `Alerts dispatched: N` printed when alerts fire.
 - 3 new tests: `tests/unit/cli/test_analyze_pending_alerts.py` (dispatch, --no-alerts suppression, fail-open).
@@ -23,7 +31,7 @@
 ## 2026-03-24 - MCP compat.py extraction complete (N-6)
 
 - Last 5 inline `@mcp.tool()` definitions extracted from `mcp_server.py` into `app/agents/tools/compat.py`.
-- `mcp_server.py`: 402 → 232 lines; 0 inline tool definitions.
+- `mcp_server.py`: 402 â 232 lines; 0 inline tool definitions.
 - `test_canonical_read.py` + `test_guarded_write.py` upgraded: trivial alias checks replaced with `mcp.list_tools()` registration verification.
 
 ---
@@ -49,11 +57,11 @@
 
 ---
 
-## 2026-03-23 - PH4J formally closed (D-81) — PH4K_TAG_SIGNAL_UTILITY_REVIEW opened as candidate
+## 2026-03-23 - PH4J formally closed (D-81) â PH4K_TAG_SIGNAL_UTILITY_REVIEW opened as candidate
 
 - PH4J_CLOSE_AND_PH4K_DEFINITION sprint executed: governance sync complete.
-- PH4J formally closed; §78 is now a closed frozen anchor (D-81).
-- PH4K_TAG_SIGNAL_UTILITY_REVIEW opened as candidate; §79 contract candidate.
+- PH4J formally closed; Â§78 is now a closed frozen anchor (D-81).
+- PH4K_TAG_SIGNAL_UTILITY_REVIEW opened as candidate; Â§79 contract candidate.
 - All 10 governance docs aligned: PH4J=closed, PH4K=candidate.
 - No PH4K execution before `PH4K_DEFINITION_AND_CONTRACT_FREEZE`.
 - Baseline unchanged: `1554 passed, ruff clean`.
@@ -69,11 +77,11 @@
 
 ---
 
-## 2026-03-23 - PH4J formally closed (D-79/D-80) — PH4K_TAG_SIGNAL_UTILITY_REVIEW defined as next candidate
+## 2026-03-23 - PH4J formally closed (D-79/D-80) â PH4K_TAG_SIGNAL_UTILITY_REVIEW defined as next candidate
 
-- PH4J formally closed; §78 is now a frozen anchor.
-- Tag enrichment confirmed: keyword-hit 4→7, zero-hit 1→4, assets-only 0→4.
-- Next sprint: PH4K_TAG_SIGNAL_UTILITY_REVIEW — operator utility review, not more raw expansion.
+- PH4J formally closed; Â§78 is now a frozen anchor.
+- Tag enrichment confirmed: keyword-hit 4â7, zero-hit 1â4, assets-only 0â4.
+- Next sprint: PH4K_TAG_SIGNAL_UTILITY_REVIEW â operator utility review, not more raw expansion.
 - DB test failures remain on a separate track.
 - Governance state: `current_sprint = PH4K_TAG_SIGNAL_UTILITY_REVIEW (candidate)`, `next_required_step = PH4K_DEFINITION_AND_CONTRACT_FREEZE`.
 
@@ -122,9 +130,9 @@
 
 ---
 
-## 2026-03-23 - PH4I contract frozen (§77 D-77); execution-ready
+## 2026-03-23 - PH4I contract frozen (Â§77 D-77); execution-ready
 
-- §77 contract frozen: scope = market_scope enrichment only in `_build_fallback_analysis()`.
+- Â§77 contract frozen: scope = market_scope enrichment only in `_build_fallback_analysis()`.
 - No scoring changes, no I-13 conflict, no actionable expansion.
 - Acceptance criteria locked: market_scope > 0/69; 1538+ passed; ruff clean.
 - Governance state advanced to:
@@ -153,7 +161,7 @@
 
 ## 2026-03-23 - PH4G formally closed; PH4H opened in active definition mode
 
-- PH4G_FALLBACK_INPUT_ENRICHMENT_BASELINE formally closed and frozen as Â§75 anchor.
+- PH4G_FALLBACK_INPUT_ENRICHMENT_BASELINE formally closed and frozen as ÃÂ§75 anchor.
 - PH4H_RULE_ONLY_CEILING_AND_ACTIONABILITY_POLICY_REVIEW opened as active definition sprint.
 - Governance state advanced to:
   - `current_sprint = PH4H_RULE_ONLY_CEILING_AND_ACTIONABILITY_POLICY_REVIEW (active definition)`
@@ -179,10 +187,10 @@
 ## 2026-03-23 - [superseded] Premature PH4G closeout/opening record
 
 - PH4G_FALLBACK_INPUT_ENRICHMENT_BASELINE formally closed.
-- Â§75 is now a frozen immutable anchor.
+- ÃÂ§75 is now a frozen immutable anchor.
 - Retained: relevance-floor fallback intervention.
-- Reverted: actionable heuristic (I-13 constraint â€” rule-only priority ceiling â‰¤ 5).
-- PH4H_RULE_ONLY_CEILING_AND_ACTIONABILITY_POLICY_REVIEW opened (D-70, Â§76).
+- Reverted: actionable heuristic (I-13 constraint Ã¢â¬â rule-only priority ceiling Ã¢â°Â¤ 5).
+- PH4H_RULE_ONLY_CEILING_AND_ACTIONABILITY_POLICY_REVIEW opened (D-70, ÃÂ§76).
 - PH4H is review-only: no code changes, no I-13 relaxation before policy decision.
 - Governance state advanced to:
   - `current_sprint = PH4H_RULE_ONLY_CEILING_AND_ACTIONABILITY_POLICY_REVIEW (superseded draft state)`
@@ -292,13 +300,13 @@
 
 - PH5A diagnostic script executed against 69-doc paired set.
 - Key findings:
-  - Fallback rate: 0.0% (0/69) — pipeline fully functional
-  - LLM error proxy rate: 27.5% (19/69) — main reliability gap identified
-  - Priority mean: 3.96/10 (high≥7: 15, mid 4-6: 23, low≤3: 31)
+  - Fallback rate: 0.0% (0/69) â pipeline fully functional
+  - LLM error proxy rate: 27.5% (19/69) â main reliability gap identified
+  - Priority mean: 3.96/10 (highâ¥7: 15, mid 4-6: 23, lowâ¤3: 31)
   - Keyword coverage: 62.3% (43/69)
-  - Tag fill rate: 100.0% (69/69) — Phase 4 complete
+  - Tag fill rate: 100.0% (69/69) â Phase 4 complete
   - Watchlist overlap: 52.2% (36/69)
-  - Actionable rate (Tier3): 0.0% — I-13 confirmed
+  - Actionable rate (Tier3): 0.0% â I-13 confirmed
 - Artifacts: `artifacts/ph5a_reliability_baseline.json` + `artifacts/ph5a_operator_summary.md`
 - PH5A moved to results-review; PH5A-7 (governance closeout) pending.
 
@@ -307,3 +315,12 @@
 - This earlier closeout claim is superseded by the canonical review state.
 - PH5A remains in results-review mode until `PH5A_RESULTS_REVIEW_AND_CLOSE` is completed.
 - PH5B stays blocked until PH5A review is formally closed.
+
+## 2026-03-24 - PH5B closed; PH5C opened (D-94, D-95)
+
+- PH5B cluster analysis complete: all 19 LLM-error-proxy docs classified as EMPTY_MANUAL.
+- Root cause: source=Manual with content='Comments' (8 bytes placeholder) -- data quality gap.
+- LLM behaviour is correct; no model failure.
+- Recommendation: FILTER_BEFORE_LLM (skip LLM for stub documents).
+- PH5C sprint opened: PH5C_FILTER_BEFORE_LLM_BASELINE (D-95, par85).
+- Artifacts: artifacts/ph5b/ph5b_cluster_analysis.json + artifacts/ph5b/ph5b_operator_summary.md
