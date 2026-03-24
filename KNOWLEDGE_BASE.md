@@ -1,24 +1,34 @@
 # KNOWLEDGE_BASE.md - KAI Canonical Knowledge Index
 
-> Stand: 2026-03-24 | Phase 4 active (technical stabilization complete) | Last clean governance anchor: V4_DUAL_WRITE_AND_DB_PRIMARY_CLOSEOUT (D-86) | Baseline snapshot: 1609 passed, ruff clean
+> Stand: 2026-03-24 | current_phase: PHASE 4 | current_sprint: PHASE4_CLOSEOUT_AND_NEXT_PHASE_GATE | next_required_step: PHASE4_CLOSEOUT_AND_NEXT_PHASE_GATE | baseline: 1609 passed, ruff clean
 
 ## Active Gate
 
-- last closed sprint: `V4_DUAL_WRITE_AND_DB_PRIMARY_CLOSEOUT (closed D-86)`
-- current sprint: `choose PH4L definition or Phase 4 closeout`
-- next required step: `PH4L definition or Phase 4 closeout decision`
-- constraint: no direct `I-13` change, no fallback actionability expansion
+- current_phase: `PHASE 4`
+- current_sprint: `PHASE4_CLOSEOUT_AND_NEXT_PHASE_GATE`
+- next_required_step: `PHASE4_CLOSEOUT_AND_NEXT_PHASE_GATE`
+- guardrail: do not open PH4L before formal Phase-4 closeout unless a strong blocker requires it
 
-## Technical Stabilization Closeout (2026-03-24)
+## Newly Confirmed Facts
 
-- V-4 Phase 2+3 complete: `run_cycle()` dual-writes `TradingCycleRecord` + `PortfolioStateRecord`; non-fatal on DB error.
-- `build_portfolio_snapshot()` is DB-primary when `session_factory` provided; falls back to JSONL (no-record or DB error).
-- 14 new tests confirmed: 6 dual-write + 8 DB-primary.
-- 5 test warnings (coroutine mock) fixed: `AsyncMock` → `MagicMock` for `session.add()`.
-- RF-4 promoted to `phase-3-complete` in RISK_REGISTER.
-- Baseline: `1609 passed`, `ruff clean`.
-- Risk resolved: dual-write and DB-primary no longer half-open.
+- V-4 Dual-Write is closed.
+- N-4 is closed.
+- Working tree is clean.
+- Current technical baseline is `1609 passed` and `ruff clean`.
+- Phase 4 has completed a full PH4A-PH4K arc.
 
+## Current Assumptions and Decisions
+
+- Assumption: Phase 4 is complete enough to be formally closed.
+- Assumption: PH4L is not mandatory before closing Phase 4.
+- Decision: recommended next step is to close Phase 4 formally.
+- Decision: PH4L stays blocked until closeout, unless a strong blocker demands escalation.
+
+## Closeout Actions
+
+- Run Phase 4 closeout.
+- Document PH4A-PH4K outcomes.
+- Then choose the next phase or next top-level work block.
 ## PH4H Policy Anchor
 
 - Policy choice: Option B
@@ -47,4 +57,5 @@
 ## PH4I Frozen Anchor
 
 - `_fallback_market_scope()` enrichment is closed and frozen (`section 77`, `D-78`).
-- Baseline snapshot for this gate: `1590 passed, 5 failed (DB-pre-existing), ruff clean`.
+- Baseline snapshot for this gate: `1609 passed, ruff clean`.
+

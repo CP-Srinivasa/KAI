@@ -4,11 +4,10 @@
 
 | Field | Value |
 |---|---|
-| current_phase | `PHASE 6 (active) — V-4 Phase 3` |
-| current_sprint | `SPRINT_45_V4_DB_PRIMARY_PORTFOLIO_SNAPSHOT (active D-85, §81)` |
-| last_closed_sprint | `PH4K_TAG_SIGNAL_UTILITY_REVIEW (closed D-84, §79)` |
-| next_required_step | `SPRINT_45_CLOSE` |
-| baseline | `1609 passed, ruff clean, mypy 0 errors` |
+| current_phase | `PHASE 4 — **CLOSED** (D-87, 2026-03-24)` |
+| phase4_arc | `PH4A–PH4K (11 sprints, 2026-03-22 → 2026-03-24)` |
+| next_required_step | `Next phase definition` |
+| baseline | `1609 passed, ruff clean` |
 | ph4k_status | `closed (D-84) — utility review complete; §79 frozen anchor` |
 | ph4j_status | `closed (D-81) — tags enrichment verified; §78 frozen anchor` |
 | ph4i_status | `closed (D-78) — market_scope enrichment; §77 frozen anchor` |
@@ -16,7 +15,7 @@
 | ph4g_status | `closed — relevance floor applied; actionable reverted (I-13); §75 frozen anchor` |
 | ph4f_status | `closed — frozen intervention anchor; §74 frozen anchor` |
 | ph4e_status | `closed (D-67) — scoring calibration audit complete; §73 frozen anchor` |
-| architecture_status | three-tier stack unchanged; PH4A–PH4K closed/frozen anchors (§67–§79); Sprint 45 active (§81) |
+| architecture_status | three-tier stack unchanged; PH4A–PH4K closed/frozen anchors (§67–§79); Phase 4 CLOSED (D-87) |
 
 ---
 

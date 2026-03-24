@@ -1,12 +1,21 @@
 # PHASE_PLAN.md
 
-## Current State (2026-03-23)
+## Current State (2026-03-24)
 
-- current_phase: `PHASE 4 (active)`
-- last_closed_sprint: `PH4K_TAG_SIGNAL_UTILITY_REVIEW (closed D-84)`
-- next_required_step: `PH4L definition or Phase 4 closeout`
-- baseline: `1554 passed, ruff clean`
+- current_phase: `PHASE 4`
+- current_sprint: `PHASE4_CLOSEOUT_AND_NEXT_PHASE_GATE`
+- next_required_step: `PHASE4_CLOSEOUT_AND_NEXT_PHASE_GATE`
+- baseline: `1609 passed, ruff clean`
 
+## Phase 4 Closeout Gate (2026-03-24)
+
+Phase 4 has completed a full PH4A-PH4K arc. V-4 Dual-Write is closed, N-4 is closed, and the active gate is formal Phase-4 closeout before any PH4L opening.
+
+## Closeout Actions
+
+- Run formal Phase 4 closeout.
+- Document PH4A-PH4K outcomes.
+- Then choose the next phase or next top-level work block.
 ## Phase 4 Complete Arc (PH4A-K, 11 Sprints)
 
 | Sprint | Type | Result |
@@ -50,3 +59,4 @@
 ## I-13 Policy (Permanent)
 
 `actionable` is LLM-exclusive. Rule-only fallback: `actionable=False`. No relaxation.
+

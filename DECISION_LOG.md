@@ -2,12 +2,10 @@
 
 ## Current State (2026-03-24)
 
-- current_phase: `PHASE 4 (active, with technical stabilization needed)`
-- last_closed_sprint: `PH4K_TAG_SIGNAL_UTILITY_REVIEW (closed D-84)`
-- last_closed_tech_sprint: `V4_DUAL_WRITE_AND_DB_PRIMARY_CLOSEOUT (D-85/D-86)`
-- next_required_step: `PH4L definition or Phase 4 closeout`
+- current_phase: `PHASE 4`
+- current_sprint: `PHASE4_CLOSEOUT_AND_NEXT_PHASE_GATE`
+- next_required_step: `PHASE4_CLOSEOUT_AND_NEXT_PHASE_GATE`
 - baseline: `1609 passed, ruff clean`
-
 ## Canonical Decisions
 
 ### D-53: PH4A closed (baseline anchor)
@@ -71,3 +69,17 @@
 - 5 test warnings (coroutine mock) fixed: `AsyncMock` → `MagicMock` for `session.add()`.
 - N-4 formally closed in SPRINT_LEDGER.
 - Baseline: `1609 passed`, `ruff clean`.
+
+### D-87 (2026-03-24): Phase 4 formally closed
+- Full arc PH4A–PH4K (11 sprints) + V-4 Phase 1–3 complete.
+- Decision: Phase 4 is sufficiently complete; PH4L is not mandatory before closing.
+- Rationale: opening PH4L would weaken phase boundary clarity; cumulative impact is well-documented and utility-validated (PH4K).
+- Policy anchor preserved: I-13 permanent (`actionable` = LLM-only).
+- Next step: define next top-level phase.
+- Governance: PHASE_PLAN.md, SPRINT_LEDGER.md, AGENTS.md, TASKLIST.md, contracts.md §82, intelligence_architecture.md all updated.
+
+
+### D-88 (2026-03-24): Phase-4 closeout gate is now canonical next step
+- Recommended next step is to close Phase 4 formally.
+- PH4L must not be opened before Phase-4 closeout unless a strong blocker requires it.
+- Confirmed facts for this gate: V-4 Dual-Write closed, N-4 closed, working tree clean, baseline 1609 passed and ruff clean.

@@ -1,5 +1,15 @@
 # CHANGELOG.md
 
+## 2026-03-24 - **Phase 4 formally CLOSED** (D-87)
+
+- Phase 4 (Signal Quality Calibration) closed after 11 sprints (PH4A–PH4K).
+- Arc: PH4A baseline → PH4K utility review. Priority avg +28%, tags empty -62.3%, relevance=0 -43.5%.
+- V-4 (N-4) Dual-Write closed. All tech sprints (N-1..N-5, Sprint 44/45) closed.
+- Baseline: `1609 passed, ruff clean`.
+- All governance docs synced: AGENTS.md, PHASE_PLAN, SPRINT_LEDGER, TASKLIST, DECISION_LOG, RISK_REGISTER, KNOWLEDGE_BASE, intelligence_architecture.md.
+- Next: define next top-level phase.
+
+---
 ## 2026-03-24 - V-4 Dual-Write & DB-Primary closeout complete (D-85/D-86)
 
 - V-4 (N-4) tech sprint formally closed.
@@ -260,3 +270,13 @@
 - 6 new tests in `tests/unit/test_trading_loop_dual_write.py` (dual-write path).
 - 8 new tests in `tests/unit/test_portfolio_snapshot_db_primary.py` (DB-primary path).
 - RF-4 promoted to `phase-3-complete`. Baseline: 1604 passed, ruff clean, mypy 0 errors.
+
+## 2026-03-24 - Phase 4 formally closed (D-87)
+
+- Phase 4 arc PH4A–PH4K (11 sprints) + V-4 Phase 1–3 complete.
+- Cumulative signal quality improvements: priority +28%, tags empty -62.3%, relevance=0 -43.5%.
+- I-13 policy permanent: `actionable` = LLM-only, no rule-only fallback.
+- V-4 technical hardening complete: DB-primary portfolio snapshot, dual-write in run_cycle().
+- All governance docs updated to reflect Phase 4 closed status.
+- Next: define next top-level phase.
+

@@ -2,12 +2,12 @@
 
 ## Canonical Sprint Ledger (2026-03-24)
 
-- phase_4_status: `active (technical stabilization complete)`
-- current_sprint: `open — PH4L definition or Phase 4 closeout`
-- last_closed_sprint: `SPRINT_45_V4_DB_PRIMARY_PORTFOLIO_SNAPSHOT (closed D-86, §81)`
-- next_required_step: `PH4L definition or Phase 4 closeout decision`
-- baseline: `1604 passed, ruff clean, mypy 0 errors`
-
+- current_phase: `PHASE 4`
+- phase_4_status: `active -- closeout gate`
+- current_sprint: `PHASE4_CLOSEOUT_AND_NEXT_PHASE_GATE`
+- last_closed_sprint: `SPRINT_45_V4_DB_PRIMARY_PORTFOLIO_SNAPSHOT (N-4 closed)`
+- next_required_step: `PHASE4_CLOSEOUT_AND_NEXT_PHASE_GATE`
+- baseline: `1609 passed, ruff clean`
 | Sprint | Date | Status | Outcome |
 |---|---|---|---|
 | PH4A | 2026-03-22 | closed | Baseline: paired=0 |
@@ -29,7 +29,7 @@
 | N-1 MCP-Split | 2026-03-23 | **closed** | mcp_server.py 2471 → 334 Zeilen; tools/ Submodule; tests grün |
 | N-2 gitignore | 2026-03-23 | **closed** | .hypothesis/ in .gitignore |
 | N-3 MCP-Test-Migration | 2026-03-23 | **closed** | test_mcp_server.py 2447 + test_mcp_portfolio_read.py 138 → tests/unit/mcp/ (13 Module, 98 Tests, ruff clean) |
-| Sprint 45 / N-4 V-4 Phase 3 | 2026-03-24 | **closed** | session_factory refactor; PortfolioStateRecord dual-write + DB-primary snapshot; 14 neue Tests; 1604 passed |
+| Sprint 45 / N-4 V-4 Phase 3 | 2026-03-24 | **closed** | V-4 Dual-Write + DB-primary snapshot closed; baseline reconfirmed |
 | N-5 DoD-Gate | 2026-03-23 | **closed** | Working-Tree-Gate in AGENTS.md §8 verankert |
 
 ## DoD-Gate (verbindlich ab sofort)
@@ -41,3 +41,4 @@ Ein Sprint gilt als **nicht abgeschlossen**, solange:
 
 Governance-Docs, Code und Tests müssen im selben Commit committiert werden.
 Sprint-Closeout-Commits ohne sauberen Working Tree sind nicht zulässig.
+
