@@ -1,10 +1,19 @@
-ï»¿ÃÆÃÂ¯ÃâÃÂ»ÃâÃÂ¿# KNOWLEDGE_BASE.md - KAI Canonical Knowledge Index
+ï»¿ÃÂ¯ÃÂ»ÃÂ¿ÃÆÃÆÃâ ÃâÃÆÃâÃâÃÂ¯ÃÆÃÆÃÂ¢Ãâ¬ÃÅ¡ÃÆÃâÃâÃÂ»ÃÆÃÆÃÂ¢Ãâ¬ÃÅ¡ÃÆÃâÃâÃÂ¿# KNOWLEDGE_BASE.md - KAI Canonical Knowledge Index
 
 
 
 
 
-> Stand: 2026-03-24 | PHASE 5 (active) -- Signal Reliability & Trust | PH5C active (D-95, §85) | next_required_step: PH5C_STATUS_FREEZE | baseline: 1619 passed, ruff clean, mypy 0 errors
+
+
+
+
+
+
+> Stand: 2026-03-24 | PHASE 5 (active) -- Signal Reliability & Trust | PH5C pending final freeze (D-95, §85) | next_required_step: PH5C_STATUS_FREEZE | baseline: 1619 passed, ruff clean, mypy 0 errors
+
+
+
 
 
 
@@ -14,19 +23,43 @@
 
 
 
+
+
+
+
+
+
 - current_phase: `PHASE 5 (active)`
 
 
-- current_sprint: `PH5C_FILTER_BEFORE_LLM_BASELINE (active D-95, §85)`
+
+
+
+- current_sprint: `PH5C_FILTER_BEFORE_LLM_BASELINE (pending final freeze, D-95, §85)`
+
+
+
 
 
 - next_required_step: `PH5C_STATUS_FREEZE`
 
 
+
+
+
 - phase4_status: `CLOSED (D-87)`
 
 
+
+
+
 - phase5_guardrail: do not execute PH5C before `PH5C_STATUS_FREEZE`
+
+
+
+
+
+
 
 
 
@@ -38,16 +71,37 @@
 
 
 
+
+
+
+
+
+
 - PH5B findings are accepted.
+
+
+
 
 
 - `EMPTY_MANUAL` is the confirmed root cause of the PH5B low-signal cluster.
 
 
+
+
+
 - PH5C is the intended next sprint.
 
 
+
+
+
 - There is governance drift between PH5B-close and PH5C-active states.
+
+
+
+
+
+
 
 
 
@@ -59,16 +113,37 @@
 
 
 
+
+
+
+
+
+
 - Assumption: PH5B should remain closed.
+
+
+
 
 
 - Assumption: PH5C should not be rolled back to PH5B.
 
 
+
+
+
 - Decision: do not resync back to PH5B ready-to-close.
 
 
+
+
+
 - Decision: resolve governance drift in favor of PH5C as next sprint.
+
+
+
+
+
+
 
 
 
@@ -80,10 +155,22 @@
 
 
 
+
+
+
+
+
+
 - Harmonize PH5C status across all governance docs.
 
 
+
+
+
 - Unify baseline.
+
+
+
 
 
 - Then freeze or execute PH5C.
@@ -92,7 +179,27 @@
 
 
 
+
+
+
+
+
+
 ## PH4H Policy Anchor
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -113,6 +220,13 @@
 
 
 
+
+
+
+
+
+
+
 - `I-13` remains enforced.
 
 
@@ -120,7 +234,28 @@
 
 
 
+
+
+
+
+
+
+
 - `actionable` remains LLM-only.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -148,7 +283,28 @@
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 - PH4J live verification passed.
+
+
+
+
+
+
+
 
 
 
@@ -162,7 +318,21 @@
 
 
 
+
+
+
+
+
+
+
 - Tag improvements: keyword-hit `4->7`, zero-hit `1->4`, assets-only `0->4`.
+
+
+
+
+
+
+
 
 
 
@@ -176,6 +346,13 @@
 
 
 
+
+
+
+
+
+
+
 - `I-13` remained intact.
 
 
@@ -183,7 +360,28 @@
 
 
 
+
+
+
+
+
+
+
 - DB test failures remain on a separate track.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -211,7 +409,28 @@
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 - Sprint: `PH4K_TAG_SIGNAL_UTILITY_REVIEW`. **Formally closed (D-84).**
+
+
+
+
+
+
+
 
 
 
@@ -225,7 +444,21 @@
 
 
 
+
+
+
+
+
+
+
 - watchlist_overlap_docs: `36/69` (`52.17%`).
+
+
+
+
+
+
+
 
 
 
@@ -239,7 +472,21 @@
 
 
 
+
+
+
+
+
+
+
 - mean_tier3_priority with watchlist overlap: `5.4444`.
+
+
+
+
+
+
+
 
 
 
@@ -253,7 +500,28 @@
 
 
 
+
+
+
+
+
+
+
 - Result: strong utility signal confirmed; results review complete.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
@@ -281,6 +549,20 @@
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 - `_fallback_market_scope()` enrichment is closed and frozen (`section 77`, `D-78`).
 
 
@@ -288,7 +570,48 @@
 
 
 
+
+
+
+
+
+
+
 - Baseline snapshot for this gate: `1609 passed, ruff clean`.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
