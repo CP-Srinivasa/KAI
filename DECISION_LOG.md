@@ -464,3 +464,7 @@
 - Infrastructure prerequisites for D-98 are now satisfied.
 - Remaining gate: collect 50+ annotated alerts before feature-work resumes.
 - Status: CLOSED.
+
+### D-100 (2026-03-24): Keine neuen Sprint-Kontrakt-Dokumente
+- Entscheidungen werden als 3-Zeilen-Eintrag in DECISION_LOG oder als Code-Kommentar dokumentiert.
+- docs/contracts.md und eigenständige Kontrakt-Docs werden nicht mehr angelegt.
