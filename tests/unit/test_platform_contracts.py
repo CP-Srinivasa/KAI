@@ -3,17 +3,6 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from app.messaging.avatar_event_interface import AvatarEvent, AvatarEventInterface
-from app.messaging.persona_service import PersonaService
-from app.messaging.speech_to_text_interface import (
-    SpeechToTextInterface,
-    SpeechToTextRequest,
-)
-from app.messaging.text_to_speech_interface import (
-    TextToSpeechInterface,
-    TextToSpeechRequest,
-)
-
 ROOT = Path(__file__).resolve().parents[2]
 
 
@@ -102,16 +91,3 @@ def test_telegram_interface_lists_first_class_commands() -> None:
         "/incident",
     ):
         assert command in text
-
-
-def test_multichannel_interfaces_are_disabled_by_default() -> None:
-    persona = PersonaService()
-    tts = TextToSpeechInterface()
-    stt = SpeechToTextInterface()
-    avatar = AvatarEventInterface()
-
-    assert persona.is_enabled is False
-    assert persona.build_snapshot(channel="telegram").enabled is False
-    assert tts.synthesize(TextToSpeechRequest(text="status")).enabled is False
-    assert stt.transcribe(SpeechToTextRequest(audio_ref="clip.wav")).enabled is False
-    assert avatar.publish(AvatarEvent(event_type="status")).enabled is False

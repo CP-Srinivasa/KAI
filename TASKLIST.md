@@ -15,6 +15,7 @@
 - [ ] Track alert-hit-rate evidence until metric is calculable on >=50 resolved directional alerts.
 - [ ] Track paper-trading metrics until a clearly positive finding exists.
 - [ ] Enforce documentation policy: no new sprint-contract docs; decisions only via code comments or 3-line DECISION_LOG entries.
+- [ ] Monitor Priority MAE and LLM-Error-Proxy as production metrics only (D-101), without opening new internal diagnosis sprints.
 
 ## Recently Completed (2026-03-24)
 
@@ -43,8 +44,12 @@
 
 ## Strategic Hold (D-97)
 
-> No new companion-ML sprint, decision, or invariant until alert-precision and paper-trading metrics show clearly positive results.
+> No new companion-ML sprint, decision, or invariant until alert-hit-rate and paper-trading metrics show clearly positive results.
 
 ## Documentation Policy (D-99)
 
 > No new standalone sprint-contract documents. Record decisions as code comments or compact 3-line entries in `DECISION_LOG.md`.
+
+## Known Production Limits (D-101)
+
+> Priority MAE=3.13 and LLM-Error-Proxy=27.5% are accepted production limitations and are improved through operation and real data, not further internal diagnosis sprints.

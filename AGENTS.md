@@ -85,6 +85,9 @@
 | phase5_status | `HOLD -- PH5C closed (D-97); feature-work blocked until alert-hit-rate is calculable on >=50 resolved directional alerts` |
 
 
+| production_limits | `D-101 -- Priority MAE=3.13 and LLM-Error-Proxy=27.5% are accepted production metrics; improve via operation and real data, not internal sprints` |
+
+
 ---> **Verbindliches Betriebsdokument fuer alle Coding-Agenten.**
 
 
