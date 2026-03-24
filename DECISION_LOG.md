@@ -468,3 +468,7 @@
 ### D-100 (2026-03-24): Keine neuen Sprint-Kontrakt-Dokumente
 - Entscheidungen werden als 3-Zeilen-Eintrag in DECISION_LOG oder als Code-Kommentar dokumentiert.
 - docs/contracts.md und eigenständige Kontrakt-Docs werden nicht mehr angelegt.
+
+### D-101 (2026-03-24): Priority MAE=3.13 und LLM-Error-Proxy=27.5% als bekannte Limitation akzeptiert
+- Diese Metriken werden als Produktions-Baseline behandelt und durch Betrieb + echte Daten verbessert.
+- Keine weiteren internen Diagnose-Sprints zu diesen Werten.
