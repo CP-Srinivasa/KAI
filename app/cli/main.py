@@ -303,7 +303,7 @@ def query_list(
     import asyncio
 
     async def run() -> None:
-        from app.research.watchlists import WatchlistRegistry
+        from app.core.watchlists import WatchlistRegistry
         from app.storage.db.session import build_session_factory
         from app.storage.repositories.document_repo import DocumentRepository
 

@@ -25,9 +25,9 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
+from app.core.signals import SignalCandidate
 from app.execution.models import PaperFill
 from app.execution.paper_engine import PaperExecutionEngine
-from app.research.signals import SignalCandidate
 from app.risk.engine import RiskEngine
 from app.risk.models import RiskLimits
 

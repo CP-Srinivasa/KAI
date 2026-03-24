@@ -1,20 +1,23 @@
-"""Guarded write MCP tools: all 7 write-guarded tool implementations.
+"""Guarded write MCP tools.
 
 Design rules:
 - All tool functions are plain async functions (no @mcp.tool() decorator).
 - Registration is done in app.agents.mcp_server via mcp.add_tool().
 - All writes are restricted to workspace/artifacts/ (I-95 write guard).
 - All writes are audit-logged via mcp_write_audit.jsonl (I-94).
-- execution_enabled: False — no live trading orders are created.
-- write_back_allowed: False — no external state mutation beyond artifacts/.
+- execution_enabled: False -- no live trading orders are created.
+- write_back_allowed: False -- no external state mutation beyond artifacts/.
 - Never import from app.agents.mcp_server (circular-import guard).
+- Companion-ML tools (create_inference_profile, activate_route_profile,
+  deactivate_route_profile, acknowledge_signal_handoff, append_review_journal_entry)
+  return stubs: subsystem removed.
 
 Tool list:
-- create_inference_profile: Create a new InferenceRouteProfile artifact
-- activate_route_profile: Activate a route profile state file
-- deactivate_route_profile: Deactivate the active route profile
-- acknowledge_signal_handoff: Acknowledge a signal handoff record
-- append_review_journal_entry: Append an operator review journal entry
+- create_inference_profile: Stub (companion-ML removed)
+- activate_route_profile: Stub (companion-ML removed)
+- deactivate_route_profile: Stub (companion-ML removed)
+- acknowledge_signal_handoff: Stub (companion-ML removed)
+- append_review_journal_entry: Stub (companion-ML removed)
 - append_decision_instance: Append a validated decision instance to the journal
 - run_trading_loop_once: Run one guarded paper/shadow trading cycle
 """
@@ -22,34 +25,15 @@ Tool list:
 from __future__ import annotations
 
 from app.agents.tools._helpers import (
+    _COMPANION_ML_STUB,
     DECISION_JOURNAL_DEFAULT_PATH,
     HANDOFF_ACK_DEFAULT_PATH,
-    JSON_SUFFIXES,
     LOOP_AUDIT_DEFAULT_PATH,
     PAPER_EXECUTION_AUDIT_DEFAULT_PATH,
     REVIEW_JOURNAL_DEFAULT_PATH,
     append_mcp_write_audit,
     require_artifacts_subpath,
     resolve_workspace_path,
-)
-from app.research.active_route import (
-    DEFAULT_ACTIVE_ROUTE_PATH,
-)
-from app.research.active_route import (
-    activate_route_profile as persist_active_route_profile,
-)
-from app.research.active_route import (
-    deactivate_route_profile as clear_active_route_profile,
-)
-from app.research.execution_handoff import (
-    append_handoff_acknowledgement_jsonl,
-    create_handoff_acknowledgement,
-    get_signal_handoff_by_id,
-    load_signal_handoffs,
-)
-from app.research.inference_profile import (
-    InferenceRouteProfile,
-    save_inference_route_profile,
 )
 
 # ---------------------------------------------------------------------------
@@ -73,7 +57,7 @@ def get_guarded_write_tool_names() -> tuple[str, ...]:
 
 
 # ---------------------------------------------------------------------------
-# Tool implementations
+# Companion-ML stubs
 # ---------------------------------------------------------------------------
 
 
@@ -86,109 +70,24 @@ async def create_inference_profile(
     output_path: str = "inference_route_profile.json",
     notes: list[str] | None = None,
 ) -> dict[str, object]:
-    """Create an inference route profile JSON inside the workspace only."""
-    resolved_output = resolve_workspace_path(
-        output_path,
-        label="Inference route profile output",
-        allowed_suffixes=JSON_SUFFIXES,
-    )
-    require_artifacts_subpath(resolved_output, label="Inference route profile output")
-    profile = InferenceRouteProfile(
-        profile_name=profile_name,
-        route_profile=route_profile,
-        active_primary_path=primary_path,
-        enabled_shadow_paths=list(shadow_paths or []),
-        control_path=control_path,
-        notes=list(notes or []),
-    )
-    saved = save_inference_route_profile(profile, resolved_output)
-    append_mcp_write_audit(
-        tool="create_inference_profile",
-        params={
-            "profile_name": profile_name,
-            "route_profile": route_profile,
-            "output_path": str(saved),
-        },
-        result_summary=f"saved: {saved}",
-    )
-    return {
-        "output_path": str(saved),
-        "profile": profile.to_json_dict(),
-    }
+    """Stub: companion-ML subsystem removed."""
+    return {**_COMPANION_ML_STUB, "tool": "create_inference_profile"}
 
 
 async def activate_route_profile(
     profile_path: str,
-    state_path: str = str(DEFAULT_ACTIVE_ROUTE_PATH),
+    state_path: str = "artifacts/active_route_state.json",
     abc_envelope_output: str | None = None,
 ) -> dict[str, object]:
-    """Activate an existing route profile via ActiveRouteState only."""
-    resolved_profile = resolve_workspace_path(
-        profile_path,
-        label="Inference route profile",
-        must_exist=True,
-        allowed_suffixes=JSON_SUFFIXES,
-    )
-    resolved_state = resolve_workspace_path(
-        state_path,
-        label="Active route state output",
-        allowed_suffixes=JSON_SUFFIXES,
-    )
-    require_artifacts_subpath(resolved_state, label="Active route state output")
-    resolved_abc_output = (
-        resolve_workspace_path(
-            abc_envelope_output,
-            label="ABC envelope output",
-            allowed_suffixes=frozenset({".jsonl"}),
-        )
-        if abc_envelope_output is not None
-        else None
-    )
-    if resolved_abc_output is not None:
-        require_artifacts_subpath(resolved_abc_output, label="ABC envelope output")
-    state = persist_active_route_profile(
-        profile_path=resolved_profile,
-        state_path=resolved_state,
-        abc_envelope_output=(str(resolved_abc_output) if resolved_abc_output is not None else None),
-    )
-    append_mcp_write_audit(
-        tool="activate_route_profile",
-        params={
-            "profile_path": str(resolved_profile),
-            "state_path": str(resolved_state),
-            "abc_envelope_output": (
-                str(resolved_abc_output) if resolved_abc_output is not None else None
-            ),
-        },
-        result_summary=f"activated: {state.route_profile}",
-    )
-    return {
-        "state_path": str(resolved_state),
-        "state": state.to_dict(),
-        "app_llm_provider_unchanged": True,  # I-91, I-97
-    }
+    """Stub: companion-ML subsystem removed."""
+    return {**_COMPANION_ML_STUB, "tool": "activate_route_profile"}
 
 
 async def deactivate_route_profile(
-    state_path: str = str(DEFAULT_ACTIVE_ROUTE_PATH),
+    state_path: str = "artifacts/active_route_state.json",
 ) -> dict[str, object]:
-    """Deactivate the guarded route state file only."""
-    resolved_state = resolve_workspace_path(
-        state_path,
-        label="Active route state",
-        allowed_suffixes=JSON_SUFFIXES,
-    )
-    require_artifacts_subpath(resolved_state, label="Active route state")
-    removed = clear_active_route_profile(resolved_state)
-    append_mcp_write_audit(
-        tool="deactivate_route_profile",
-        params={"state_path": str(resolved_state)},
-        result_summary=f"deactivated: {removed}",
-    )
-    return {
-        "deactivated": removed,
-        "state_path": str(resolved_state),
-    }
+    """Stub: companion-ML subsystem removed."""
+    return {**_COMPANION_ML_STUB, "tool": "deactivate_route_profile"}
 
 
 async def acknowledge_signal_handoff(
@@ -198,67 +97,8 @@ async def acknowledge_signal_handoff(
     notes: str = "",
     acknowledgement_output_path: str = HANDOFF_ACK_DEFAULT_PATH,
 ) -> dict[str, object]:
-    """Append an audit-only acknowledgement for an existing visible SignalHandoff.
-
-    Acknowledgement is AUDIT ONLY — not an execution trigger, not an approval,
-    and not a routing decision (I-117, I-121, I-122).
-    No write-back to KAI core DB (I-118).
-    """
-    resolved_handoff = resolve_workspace_path(
-        handoff_path,
-        label="Signal handoff input",
-        must_exist=True,
-    )
-    resolved_ack = resolve_workspace_path(
-        acknowledgement_output_path,
-        label="Consumer acknowledgement audit",
-        allowed_suffixes=frozenset({".jsonl"}),
-    )
-    require_artifacts_subpath(
-        resolved_ack,
-        label="Consumer acknowledgement audit",
-    )
-    handoffs = load_signal_handoffs(resolved_handoff)
-    handoff = get_signal_handoff_by_id(handoffs, handoff_id)
-
-    if handoff.consumer_visibility != "visible":
-        raise PermissionError(
-            f"Only consumer-visible handoffs can be acknowledged — "
-            f"handoff {handoff.handoff_id!r} has "
-            f"consumer_visibility={handoff.consumer_visibility!r}."
-        )
-
-    ack = create_handoff_acknowledgement(
-        handoff,
-        consumer_agent_id=consumer_agent_id,
-        notes=notes,
-    )
-    append_handoff_acknowledgement_jsonl(ack, resolved_ack)
-
-    append_mcp_write_audit(
-        tool="acknowledge_signal_handoff",
-        params={
-            "handoff_path": str(resolved_handoff),
-            "handoff_id": handoff_id,
-            "consumer_agent_id": consumer_agent_id,
-            "notes": notes,
-            "acknowledgement_output_path": str(resolved_ack),
-        },
-        result_summary=f"acknowledged handoff {handoff_id} by {consumer_agent_id}",
-    )
-
-    return {
-        "status": "acknowledged_in_audit_only",
-        "handoff_id": ack.handoff_id,
-        "signal_id": ack.signal_id,
-        "consumer_agent_id": ack.consumer_agent_id,
-        "handoff_path": str(resolved_handoff),
-        "acknowledgement_path": str(resolved_ack),
-        "acknowledgement": ack.to_json_dict(),
-        "core_state_unchanged": True,
-        "execution_enabled": False,
-        "write_back_allowed": False,
-    }
+    """Stub: companion-ML subsystem removed."""
+    return {**_COMPANION_ML_STUB, "tool": "acknowledge_signal_handoff"}
 
 
 async def append_review_journal_entry(
@@ -269,50 +109,13 @@ async def append_review_journal_entry(
     evidence_refs: list[str] | None = None,
     journal_output_path: str = REVIEW_JOURNAL_DEFAULT_PATH,
 ) -> dict[str, object]:
-    """Append an operator review journal entry without mutating core operator state."""
-    from app.research.operational_readiness import (
-        append_review_journal_entry_jsonl,
-        create_review_journal_entry,
-    )
+    """Stub: companion-ML subsystem removed."""
+    return {**_COMPANION_ML_STUB, "tool": "append_review_journal_entry"}
 
-    resolved = resolve_workspace_path(
-        journal_output_path,
-        label="Review journal output",
-        allowed_suffixes=frozenset({".jsonl"}),
-    )
-    require_artifacts_subpath(resolved, label="Review journal output")
 
-    entry = create_review_journal_entry(
-        source_ref=source_ref,
-        operator_id=operator_id,
-        review_action=review_action,
-        review_note=review_note,
-        evidence_refs=evidence_refs,
-    )
-    append_review_journal_entry_jsonl(entry, resolved)
-
-    append_mcp_write_audit(
-        tool="append_review_journal_entry",
-        params={
-            "source_ref": source_ref,
-            "operator_id": operator_id,
-            "review_action": review_action,
-            "review_note": review_note,
-            "evidence_refs": list(evidence_refs or []),
-            "journal_output_path": str(resolved),
-        },
-        result_summary=f"review_journal entry {entry.review_id} appended",
-    )
-
-    return {
-        "status": "review_journal_appended",
-        "review_id": entry.review_id,
-        "journal_path": str(resolved),
-        "journal_entry": entry.to_json_dict(),
-        "core_state_unchanged": True,
-        "execution_enabled": False,
-        "write_back_allowed": False,
-    }
+# ---------------------------------------------------------------------------
+# Real implementations
+# ---------------------------------------------------------------------------
 
 
 async def append_decision_instance(

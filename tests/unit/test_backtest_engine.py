@@ -8,12 +8,12 @@ from pathlib import Path
 import pytest
 
 from app.core.enums import MarketScope, SentimentLabel
+from app.core.signals import SignalCandidate
 from app.execution.backtest_engine import (
     BacktestConfig,
     BacktestEngine,
     SignalExecutionRecord,
 )
-from app.research.signals import SignalCandidate
 
 # ---------------------------------------------------------------------------
 # Helpers

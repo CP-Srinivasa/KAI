@@ -8,10 +8,10 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.api.deps import get_document_repo
+from app.core.briefs import ResearchBrief, ResearchBriefBuilder
 from app.core.settings import AppSettings, get_settings
-from app.research.briefs import ResearchBrief, ResearchBriefBuilder
-from app.research.signals import extract_signal_candidates
-from app.research.watchlists import WatchlistRegistry, parse_watchlist_type
+from app.core.signals import extract_signal_candidates
+from app.core.watchlists import WatchlistRegistry, parse_watchlist_type
 from app.storage.repositories.document_repo import DocumentRepository
 
 router = APIRouter()

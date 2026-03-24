@@ -4,7 +4,7 @@ import pytest
 from pydantic import ValidationError
 
 from app.core.enums import MarketScope, SentimentLabel
-from app.research.signals import SignalCandidate, extract_signal_candidates
+from app.core.signals import SignalCandidate, extract_signal_candidates
 from tests.unit.factories import make_document
 
 

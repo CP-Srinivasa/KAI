@@ -305,9 +305,9 @@ def research_backtest_run(
     import json as _json
     from pathlib import Path as _Path
 
+    from app.core.signals import SignalCandidate
     from app.execution.backtest_engine import BacktestConfig, BacktestEngine
     from app.market_data.mock_adapter import MockMarketDataAdapter
-    from app.research.signals import SignalCandidate
 
     # Load signals
     sp = _Path(signals_path)

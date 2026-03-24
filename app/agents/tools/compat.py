@@ -33,9 +33,8 @@ from app.agents.tools.canonical_read import (
     get_recent_trading_cycles,
 )
 from app.agents.tools.guarded_write import GUARDED_WRITE_TOOL_NAMES
-from app.research.active_route import DEFAULT_ACTIVE_ROUTE_PATH
 
-_ACTIVE_ROUTE_PATH_STR = str(DEFAULT_ACTIVE_ROUTE_PATH)
+_ACTIVE_ROUTE_PATH_STR = "artifacts/active_route_state.json"
 
 # ---------------------------------------------------------------------------
 # Inventory metadata

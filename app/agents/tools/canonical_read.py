@@ -4,31 +4,35 @@ This module defines both the authoritative tool-name inventory and the
 actual async tool functions for all read-only MCP tools.
 
 Tools are registered in app.agents.mcp_server via mcp.add_tool().
-No @mcp.tool() decorator is used here — this module is framework-agnostic.
+No @mcp.tool() decorator is used here -- this module is framework-agnostic.
 
 Design invariants:
 - All functions are pure reads: no filesystem writes, no DB mutations.
 - No imports from app.agents.mcp_server (circular-import guard).
 - execution_enabled is always False.
 - write_back_allowed is always False.
+- Companion-ML subsystem removed: affected tools return stubs.
 
 Tool categories:
 - watchlist / research: get_watchlists, get_research_brief, get_signal_candidates
 - market data: get_market_data_quote
 - portfolio: get_paper_portfolio_snapshot, get_paper_positions_summary, get_paper_exposure_summary
 - narrative: get_narrative_clusters, get_signals_for_execution
-- distribution / route: get_distribution_classification_report, get_route_profile_report,
-  get_inference_route_profile, get_active_route_status, get_upgrade_cycle_status
-- handoff: get_handoff_collector_summary
-- readiness: get_operational_readiness_summary, get_provider_health,
-  get_distribution_drift, get_protective_gate_summary, get_remediation_recommendations
-- artifact lifecycle: get_artifact_inventory, get_artifact_retention_report,
-  get_cleanup_eligibility_summary, get_protected_artifact_summary, get_review_required_summary
-- escalation / actions: get_escalation_summary, get_blocking_summary,
-  get_operator_action_summary, get_action_queue_summary, get_blocking_actions,
-  get_prioritized_actions, get_review_required_actions
-- decision pack / daily: get_decision_pack_summary, get_daily_operator_summary,
-  get_operator_runbook, get_review_journal_summary, get_resolution_summary
+- distribution / route: get_distribution_classification_report (stub),
+  get_route_profile_report (stub), get_inference_route_profile (stub),
+  get_active_route_status (stub), get_upgrade_cycle_status (stub)
+- handoff: get_handoff_collector_summary (stub)
+- readiness: get_operational_readiness_summary (stub), get_provider_health (stub),
+  get_distribution_drift (stub), get_protective_gate_summary (stub),
+  get_remediation_recommendations (stub)
+- artifact lifecycle: get_artifact_inventory (stub), get_artifact_retention_report (stub),
+  get_cleanup_eligibility_summary (stub), get_protected_artifact_summary (stub),
+  get_review_required_summary (stub)
+- escalation / actions: get_escalation_summary (stub), get_blocking_summary (stub),
+  get_operator_action_summary (stub), get_action_queue_summary (stub), get_blocking_actions (stub),
+  get_prioritized_actions (stub), get_review_required_actions (stub)
+- decision pack / daily: get_decision_pack_summary (stub), get_daily_operator_summary (stub),
+  get_operator_runbook (stub), get_review_journal_summary (stub), get_resolution_summary (stub)
 - alerts / journal: get_alert_audit_summary, get_decision_journal_summary
 - trading loop: get_trading_loop_status, get_recent_trading_cycles
 """
@@ -40,11 +44,11 @@ from pathlib import Path
 from typing import Any
 
 from app.agents.tools._helpers import (
+    _COMPANION_ML_STUB,
     ALERT_AUDIT_DEFAULT_DIR,
     ARTIFACTS_SUBDIR,
     DECISION_JOURNAL_DEFAULT_PATH,
     HANDOFF_ACK_DEFAULT_PATH,
-    JSON_SUFFIXES,
     LOOP_AUDIT_DEFAULT_PATH,
     PAPER_EXECUTION_AUDIT_DEFAULT_PATH,
     REVIEW_JOURNAL_DEFAULT_PATH,
@@ -68,27 +72,16 @@ from app.agents.tools._helpers import (
     load_signal_candidates_and_documents,
     resolve_workspace_dir,
     resolve_workspace_path,
-    safe_daily_surface_load,
 )
+from app.core.briefs import ResearchBriefBuilder
 from app.core.settings import get_settings
-from app.research.abc_result import load_abc_inference_envelopes
-from app.research.active_route import DEFAULT_ACTIVE_ROUTE_PATH, load_active_route_state
-from app.research.briefs import ResearchBriefBuilder
-from app.research.distribution import (
-    build_distribution_classification_report,
-    build_execution_handoff_report,
-    build_route_profile,
-)
-from app.research.inference_profile import load_inference_route_profile
-from app.research.signals import extract_signal_candidates
-from app.research.upgrade_cycle import build_upgrade_cycle_report
-from app.research.watchlists import WatchlistRegistry, parse_watchlist_type
+from app.core.signals import extract_signal_candidates
+from app.core.watchlists import WatchlistRegistry, parse_watchlist_type
 from app.storage.db.session import build_session_factory
 from app.storage.repositories.document_repo import DocumentRepository
 
 # ---------------------------------------------------------------------------
-# Canonical inventory (authoritative list — mirrors _CANONICAL_MCP_READ_TOOL_NAMES
-# in mcp_server and is validated by contract tests)
+# Canonical inventory (authoritative list)
 # ---------------------------------------------------------------------------
 
 CANONICAL_READ_TOOL_NAMES: tuple[str, ...] = (
@@ -271,7 +264,7 @@ async def get_narrative_clusters(
 ) -> dict[str, object]:
     """Group active signal candidates into narrative clusters by asset Jaccard similarity.
 
-    Pure read-only projection — no DB writes, no routing changes (I-184).
+    Pure read-only projection -- no DB writes, no routing changes (I-184).
     Returns cluster summaries with velocity, acceleration, and dominant direction.
     """
     from app.analysis.narratives.cluster import ClusterConfig, NarrativeClusterEngine
@@ -318,14 +311,19 @@ async def get_signals_for_execution(
     provider: str | None = None,
 ) -> dict[str, object]:
     """Return a read-only external-consumption handoff for qualified signals."""
-    candidates, docs = await load_signal_candidates_and_documents(
+    candidates, _docs = await load_signal_candidates_and_documents(
         watchlist=watchlist,
         min_priority=min_priority,
         limit=limit,
         provider=provider,
     )
-    report = build_execution_handoff_report(candidates, docs)
-    return report.to_json_dict()
+    return {
+        "report_type": "execution_handoff_report",
+        "execution_enabled": False,
+        "write_back_allowed": False,
+        "candidate_count": len(candidates),
+        "candidates": [c.to_json_dict() for c in candidates],
+    }
 
 
 async def get_distribution_classification_report(
@@ -335,68 +333,37 @@ async def get_distribution_classification_report(
     limit: int = 50,
     provider: str | None = None,
 ) -> dict[str, object]:
-    """Read a route-aware distribution report from existing ABC audit envelopes only."""
-    resolved = resolve_workspace_path(
-        abc_output_path,
-        label="ABC envelope output",
-        must_exist=True,
-    )
-    envelopes = load_abc_inference_envelopes(resolved)
-    candidates, docs = await load_signal_candidates_and_documents(
-        watchlist=watchlist,
-        min_priority=min_priority,
-        limit=limit,
-        provider=provider,
-    )
-    report = build_distribution_classification_report(candidates, docs, envelopes)
-    payload = report.to_json_dict()
-    payload["abc_output_path"] = str(resolved)
-    return payload
+    """Stub: companion-ML subsystem removed."""
+    return {
+        **_COMPANION_ML_STUB,
+        "report_type": "distribution_classification_report",
+        "abc_output_path": abc_output_path,
+    }
 
 
 async def get_route_profile_report(limit: int = 1000) -> dict[str, object]:
-    """Build the current route/distribution report from stored analyzed documents."""
-    settings = get_settings()
-    session_factory = build_session_factory(settings.db)
-    async with session_factory.begin() as session:
-        repo = DocumentRepository(session)
-        report = await build_route_profile(repo, limit=limit)
-    return report.to_json_dict()
+    """Stub: companion-ML subsystem removed."""
+    return {**_COMPANION_ML_STUB, "report_type": "route_profile_report"}
 
 
 async def get_inference_route_profile(profile_path: str) -> dict[str, object]:
-    """Load a saved inference route profile from a workspace-local JSON file."""
-    resolved = resolve_workspace_path(
-        profile_path,
-        label="Inference route profile",
-        must_exist=True,
-        allowed_suffixes=JSON_SUFFIXES,
-    )
-    profile = load_inference_route_profile(resolved)
-    payload = profile.to_json_dict()
-    payload["path"] = str(resolved)
-    return payload
+    """Stub: companion-ML subsystem removed."""
+    return {
+        **_COMPANION_ML_STUB,
+        "report_type": "inference_route_profile",
+        "profile_path": profile_path,
+    }
 
 
 async def get_active_route_status(
-    state_path: str = str(DEFAULT_ACTIVE_ROUTE_PATH),
+    state_path: str = "artifacts/active_route_state.json",
 ) -> dict[str, object]:
-    """Read the current active route state without changing routing or providers."""
-    resolved = resolve_workspace_path(
-        state_path,
-        label="Active route state",
-        allowed_suffixes=JSON_SUFFIXES,
-    )
-    state = load_active_route_state(resolved)
-    if state is None:
-        return {
-            "active": False,
-            "state_path": str(resolved),
-        }
+    """Stub: companion-ML subsystem removed."""
     return {
-        "active": True,
-        "state_path": str(resolved),
-        "state": state.to_dict(),
+        **_COMPANION_ML_STUB,
+        "report_type": "active_route_status",
+        "active": False,
+        "state_path": state_path,
     }
 
 
@@ -407,57 +374,8 @@ async def get_upgrade_cycle_status(
     comparison_report_path: str | None = None,
     promotion_record_path: str | None = None,
 ) -> dict[str, object]:
-    """Summarize upgrade-cycle status from existing workspace-local artifacts only."""
-    teacher_path = resolve_workspace_path(
-        teacher_dataset_path,
-        label="Teacher dataset",
-        must_exist=True,
-    )
-    training_path = (
-        resolve_workspace_path(
-            training_job_record_path,
-            label="Training job record",
-            must_exist=True,
-        )
-        if training_job_record_path is not None
-        else None
-    )
-    evaluation_path = (
-        resolve_workspace_path(
-            evaluation_report_path,
-            label="Evaluation report",
-            must_exist=True,
-        )
-        if evaluation_report_path is not None
-        else None
-    )
-    comparison_path = (
-        resolve_workspace_path(
-            comparison_report_path,
-            label="Comparison report",
-            must_exist=True,
-        )
-        if comparison_report_path is not None
-        else None
-    )
-    promotion_path = (
-        resolve_workspace_path(
-            promotion_record_path,
-            label="Promotion record",
-            must_exist=True,
-        )
-        if promotion_record_path is not None
-        else None
-    )
-
-    report = build_upgrade_cycle_report(
-        teacher_path,
-        training_job_record_path=training_path,
-        evaluation_report_path=evaluation_path,
-        comparison_report_path=comparison_path,
-        promotion_record_path=promotion_path,
-    )
-    return report.to_json_dict()
+    """Stub: companion-ML subsystem removed."""
+    return {**_COMPANION_ML_STUB, "report_type": "upgrade_cycle_status"}
 
 
 async def get_handoff_collector_summary(
@@ -467,8 +385,7 @@ async def get_handoff_collector_summary(
     """Summarize pending and acknowledged handoffs from existing audit artifacts only.
 
     When *handoff_path* is omitted or None the function returns an empty collector
-    summary (no handoff file configured) without raising, consistent with the
-    None-safe behaviour of get_operational_readiness_summary.
+    summary (no handoff file configured) without raising.
     """
     if handoff_path is None:
         return {
@@ -491,12 +408,12 @@ async def get_handoff_collector_summary(
 async def get_operational_readiness_summary(
     handoff_path: str | None = None,
     acknowledgement_path: str = HANDOFF_ACK_DEFAULT_PATH,
-    state_path: str = str(DEFAULT_ACTIVE_ROUTE_PATH),
+    state_path: str = "artifacts/active_route_state.json",
     abc_output_path: str | None = None,
     alert_audit_dir: str = ALERT_AUDIT_DEFAULT_DIR,
     stale_after_hours: int = 24,
 ) -> dict[str, object]:
-    """Build a read-only operational readiness summary from existing artifacts only."""
+    """Stub: companion-ML subsystem removed."""
     return build_operational_readiness_payload(
         handoff_path=handoff_path,
         acknowledgement_path=acknowledgement_path,
@@ -509,14 +426,10 @@ async def get_operational_readiness_summary(
 
 async def get_provider_health(
     handoff_path: str | None = None,
-    state_path: str = str(DEFAULT_ACTIVE_ROUTE_PATH),
+    state_path: str = "artifacts/active_route_state.json",
     abc_output_path: str | None = None,
 ) -> dict[str, object]:
-    """Return the readiness-derived provider health slice only.
-
-    This is a bounded read view over the canonical operational readiness stack,
-    not a second monitoring implementation.
-    """
+    """Stub: companion-ML subsystem removed."""
     return build_provider_health_payload(
         handoff_path=handoff_path,
         state_path=state_path,
@@ -526,10 +439,10 @@ async def get_provider_health(
 
 async def get_distribution_drift(
     handoff_path: str | None = None,
-    state_path: str = str(DEFAULT_ACTIVE_ROUTE_PATH),
+    state_path: str = "artifacts/active_route_state.json",
     abc_output_path: str | None = None,
 ) -> dict[str, object]:
-    """Return the readiness-derived distribution drift slice only."""
+    """Stub: companion-ML subsystem removed."""
     return build_distribution_drift_payload(
         handoff_path=handoff_path,
         state_path=state_path,
@@ -540,12 +453,12 @@ async def get_distribution_drift(
 async def get_protective_gate_summary(
     handoff_path: str | None = None,
     acknowledgement_path: str = HANDOFF_ACK_DEFAULT_PATH,
-    state_path: str = str(DEFAULT_ACTIVE_ROUTE_PATH),
+    state_path: str = "artifacts/active_route_state.json",
     abc_output_path: str | None = None,
     alert_audit_dir: str = ALERT_AUDIT_DEFAULT_DIR,
     stale_after_hours: int = 24,
 ) -> dict[str, object]:
-    """Return the readiness-derived protective gate view only."""
+    """Stub: companion-ML subsystem removed."""
     return build_protective_gate_payload(
         handoff_path=handoff_path,
         acknowledgement_path=acknowledgement_path,
@@ -559,12 +472,12 @@ async def get_protective_gate_summary(
 async def get_remediation_recommendations(
     handoff_path: str | None = None,
     acknowledgement_path: str = HANDOFF_ACK_DEFAULT_PATH,
-    state_path: str = str(DEFAULT_ACTIVE_ROUTE_PATH),
+    state_path: str = "artifacts/active_route_state.json",
     abc_output_path: str | None = None,
     alert_audit_dir: str = ALERT_AUDIT_DEFAULT_DIR,
     stale_after_hours: int = 24,
 ) -> dict[str, object]:
-    """Return read-only remediation hints derived from protective gate items."""
+    """Stub: companion-ML subsystem removed."""
     return build_remediation_recommendation_payload(
         handoff_path=handoff_path,
         acknowledgement_path=acknowledgement_path,
@@ -579,117 +492,61 @@ async def get_artifact_inventory(
     artifacts_dir: str = ARTIFACTS_SUBDIR,
     stale_after_days: float = 30.0,
 ) -> dict[str, object]:
-    """Return a read-only inventory of managed artifact files (I-149).
-
-    Scans the artifacts directory and reports file age, size, and stale status.
-    execution_enabled is always False (I-150). No filesystem writes.
-    """
-    from app.research.artifact_lifecycle import build_artifact_inventory
-
-    resolved_dir = resolve_workspace_dir(artifacts_dir, label="artifacts_dir")
-    report = build_artifact_inventory(resolved_dir, stale_after_days=stale_after_days)
-    return report.to_json_dict()
+    """Stub: companion-ML subsystem removed."""
+    return {
+        **_COMPANION_ML_STUB,
+        "report_type": "artifact_inventory",
+        "artifacts_dir": artifacts_dir,
+    }
 
 
 async def get_artifact_retention_report(
     artifacts_dir: str = ARTIFACTS_SUBDIR,
     stale_after_days: float = 30.0,
-    state_path: str = str(DEFAULT_ACTIVE_ROUTE_PATH),
+    state_path: str = "artifacts/active_route_state.json",
 ) -> dict[str, object]:
-    """Return read-only artifact retention classification (I-153-I-161, Sprint 25).
-
-    Classifies each artifact as protected, rotatable, or review_required.
-    No filesystem mutations. execution_enabled and write_back_allowed are always False.
-    delete_eligible_count is always 0 - deletion is never platform-initiated (I-154).
-    """
-    from app.research.artifact_lifecycle import build_retention_report
-
-    resolved_dir = resolve_workspace_dir(artifacts_dir, label="artifacts_dir")
-    resolved_state = resolve_workspace_path(state_path, label="state_path")
-    active_route_active = resolved_state.exists()
-
-    report = build_retention_report(
-        resolved_dir,
-        stale_after_days=stale_after_days,
-        active_route_active=active_route_active,
-    )
-    return report.to_json_dict()
+    """Stub: companion-ML subsystem removed."""
+    return {**_COMPANION_ML_STUB, "report_type": "artifact_retention_report"}
 
 
 async def get_cleanup_eligibility_summary(
     artifacts_dir: str = ARTIFACTS_SUBDIR,
     stale_after_days: float = 30.0,
-    state_path: str = str(DEFAULT_ACTIVE_ROUTE_PATH),
+    state_path: str = "artifacts/active_route_state.json",
 ) -> dict[str, object]:
-    """Return cleanup/archive eligibility derived from the canonical retention report."""
-    from app.research.artifact_lifecycle import (
-        build_cleanup_eligibility_summary,
-        build_retention_report,
-    )
-
-    resolved_dir = resolve_workspace_dir(artifacts_dir, label="artifacts_dir")
-    resolved_state = resolve_workspace_path(state_path, label="state_path")
-    report = build_retention_report(
-        resolved_dir,
-        stale_after_days=stale_after_days,
-        active_route_active=resolved_state.exists(),
-    )
-    return build_cleanup_eligibility_summary(report).to_json_dict()
+    """Stub: companion-ML subsystem removed."""
+    return {**_COMPANION_ML_STUB, "report_type": "cleanup_eligibility_summary"}
 
 
 async def get_protected_artifact_summary(
     artifacts_dir: str = ARTIFACTS_SUBDIR,
     stale_after_days: float = 30.0,
-    state_path: str = str(DEFAULT_ACTIVE_ROUTE_PATH),
+    state_path: str = "artifacts/active_route_state.json",
 ) -> dict[str, object]:
-    """Return the protected-artifact slice derived from the canonical retention report."""
-    from app.research.artifact_lifecycle import (
-        build_protected_artifact_summary,
-        build_retention_report,
-    )
-
-    resolved_dir = resolve_workspace_dir(artifacts_dir, label="artifacts_dir")
-    resolved_state = resolve_workspace_path(state_path, label="state_path")
-    report = build_retention_report(
-        resolved_dir,
-        stale_after_days=stale_after_days,
-        active_route_active=resolved_state.exists(),
-    )
-    return build_protected_artifact_summary(report).to_json_dict()
+    """Stub: companion-ML subsystem removed."""
+    return {**_COMPANION_ML_STUB, "report_type": "protected_artifact_summary"}
 
 
 async def get_review_required_summary(
     artifacts_dir: str = ARTIFACTS_SUBDIR,
     stale_after_days: float = 30.0,
-    state_path: str = str(DEFAULT_ACTIVE_ROUTE_PATH),
+    state_path: str = "artifacts/active_route_state.json",
 ) -> dict[str, object]:
-    """Return the review-required slice derived from the canonical retention report (Sprint 26)."""
-    from app.research.artifact_lifecycle import (
-        build_retention_report,
-        build_review_required_summary,
-    )
-
-    resolved_dir = resolve_workspace_dir(artifacts_dir, label="artifacts_dir")
-    resolved_state = resolve_workspace_path(state_path, label="state_path")
-    report = build_retention_report(
-        resolved_dir,
-        stale_after_days=stale_after_days,
-        active_route_active=resolved_state.exists(),
-    )
-    return build_review_required_summary(report).to_json_dict()
+    """Stub: companion-ML subsystem removed."""
+    return {**_COMPANION_ML_STUB, "report_type": "review_required_summary"}
 
 
 async def get_escalation_summary(
     handoff_path: str | None = None,
     acknowledgement_path: str = HANDOFF_ACK_DEFAULT_PATH,
-    state_path: str = str(DEFAULT_ACTIVE_ROUTE_PATH),
+    state_path: str = "artifacts/active_route_state.json",
     abc_output_path: str | None = None,
     alert_audit_dir: str = ALERT_AUDIT_DEFAULT_DIR,
     stale_after_hours: int = 24,
     artifacts_dir: str = ARTIFACTS_SUBDIR,
     retention_stale_after_days: float = 30.0,
 ) -> dict[str, object]:
-    """Return the canonical safe operational escalation summary."""
+    """Stub: companion-ML subsystem removed."""
     return build_escalation_summary_payload(
         handoff_path=handoff_path,
         acknowledgement_path=acknowledgement_path,
@@ -705,14 +562,14 @@ async def get_escalation_summary(
 async def get_blocking_summary(
     handoff_path: str | None = None,
     acknowledgement_path: str = HANDOFF_ACK_DEFAULT_PATH,
-    state_path: str = str(DEFAULT_ACTIVE_ROUTE_PATH),
+    state_path: str = "artifacts/active_route_state.json",
     abc_output_path: str | None = None,
     alert_audit_dir: str = ALERT_AUDIT_DEFAULT_DIR,
     stale_after_hours: int = 24,
     artifacts_dir: str = ARTIFACTS_SUBDIR,
     retention_stale_after_days: float = 30.0,
 ) -> dict[str, object]:
-    """Return the blocking-only slice of the canonical escalation surface."""
+    """Stub: companion-ML subsystem removed."""
     return build_blocking_summary_payload(
         handoff_path=handoff_path,
         acknowledgement_path=acknowledgement_path,
@@ -728,14 +585,14 @@ async def get_blocking_summary(
 async def get_operator_action_summary(
     handoff_path: str | None = None,
     acknowledgement_path: str = HANDOFF_ACK_DEFAULT_PATH,
-    state_path: str = str(DEFAULT_ACTIVE_ROUTE_PATH),
+    state_path: str = "artifacts/active_route_state.json",
     abc_output_path: str | None = None,
     alert_audit_dir: str = ALERT_AUDIT_DEFAULT_DIR,
     stale_after_hours: int = 24,
     artifacts_dir: str = ARTIFACTS_SUBDIR,
     retention_stale_after_days: float = 30.0,
 ) -> dict[str, object]:
-    """Return the operator-action-required slice of the canonical escalation surface."""
+    """Stub: companion-ML subsystem removed."""
     return build_operator_action_summary_payload(
         handoff_path=handoff_path,
         acknowledgement_path=acknowledgement_path,
@@ -751,14 +608,14 @@ async def get_operator_action_summary(
 async def get_action_queue_summary(
     handoff_path: str | None = None,
     acknowledgement_path: str = HANDOFF_ACK_DEFAULT_PATH,
-    state_path: str = str(DEFAULT_ACTIVE_ROUTE_PATH),
+    state_path: str = "artifacts/active_route_state.json",
     abc_output_path: str | None = None,
     alert_audit_dir: str = ALERT_AUDIT_DEFAULT_DIR,
     stale_after_hours: int = 24,
     artifacts_dir: str = ARTIFACTS_SUBDIR,
     retention_stale_after_days: float = 30.0,
 ) -> dict[str, object]:
-    """Return the canonical safe operator action queue derived from escalation only."""
+    """Stub: companion-ML subsystem removed."""
     return build_action_queue_summary_payload(
         handoff_path=handoff_path,
         acknowledgement_path=acknowledgement_path,
@@ -774,14 +631,14 @@ async def get_action_queue_summary(
 async def get_blocking_actions(
     handoff_path: str | None = None,
     acknowledgement_path: str = HANDOFF_ACK_DEFAULT_PATH,
-    state_path: str = str(DEFAULT_ACTIVE_ROUTE_PATH),
+    state_path: str = "artifacts/active_route_state.json",
     abc_output_path: str | None = None,
     alert_audit_dir: str = ALERT_AUDIT_DEFAULT_DIR,
     stale_after_hours: int = 24,
     artifacts_dir: str = ARTIFACTS_SUBDIR,
     retention_stale_after_days: float = 30.0,
 ) -> dict[str, object]:
-    """Return the blocking-only slice of the canonical operator action queue."""
+    """Stub: companion-ML subsystem removed."""
     return build_blocking_actions_payload(
         handoff_path=handoff_path,
         acknowledgement_path=acknowledgement_path,
@@ -797,14 +654,14 @@ async def get_blocking_actions(
 async def get_prioritized_actions(
     handoff_path: str | None = None,
     acknowledgement_path: str = HANDOFF_ACK_DEFAULT_PATH,
-    state_path: str = str(DEFAULT_ACTIVE_ROUTE_PATH),
+    state_path: str = "artifacts/active_route_state.json",
     abc_output_path: str | None = None,
     alert_audit_dir: str = ALERT_AUDIT_DEFAULT_DIR,
     stale_after_hours: int = 24,
     artifacts_dir: str = ARTIFACTS_SUBDIR,
     retention_stale_after_days: float = 30.0,
 ) -> dict[str, object]:
-    """Return the operator action queue in derived priority order only."""
+    """Stub: companion-ML subsystem removed."""
     return build_prioritized_actions_payload(
         handoff_path=handoff_path,
         acknowledgement_path=acknowledgement_path,
@@ -820,14 +677,14 @@ async def get_prioritized_actions(
 async def get_review_required_actions(
     handoff_path: str | None = None,
     acknowledgement_path: str = HANDOFF_ACK_DEFAULT_PATH,
-    state_path: str = str(DEFAULT_ACTIVE_ROUTE_PATH),
+    state_path: str = "artifacts/active_route_state.json",
     abc_output_path: str | None = None,
     alert_audit_dir: str = ALERT_AUDIT_DEFAULT_DIR,
     stale_after_hours: int = 24,
     artifacts_dir: str = ARTIFACTS_SUBDIR,
     retention_stale_after_days: float = 30.0,
 ) -> dict[str, object]:
-    """Return review-required items from the canonical operator action queue only."""
+    """Stub: companion-ML subsystem removed."""
     return build_review_required_actions_payload(
         handoff_path=handoff_path,
         acknowledgement_path=acknowledgement_path,
@@ -843,20 +700,14 @@ async def get_review_required_actions(
 async def get_decision_pack_summary(
     handoff_path: str | None = None,
     acknowledgement_path: str = HANDOFF_ACK_DEFAULT_PATH,
-    state_path: str = str(DEFAULT_ACTIVE_ROUTE_PATH),
+    state_path: str = "artifacts/active_route_state.json",
     abc_output_path: str | None = None,
     alert_audit_dir: str = ALERT_AUDIT_DEFAULT_DIR,
     stale_after_hours: int = 24,
     artifacts_dir: str = ARTIFACTS_SUBDIR,
     retention_stale_after_days: float = 30.0,
 ) -> dict[str, object]:
-    """Return the canonical read-only operator decision pack summary.
-
-    Bundles readiness status, escalation, action queue, and governance snapshots
-    into a single situation-awareness surface. Advisory only - no execution
-    authority. Decision pack is a derived snapshot; sub-report surfaces remain
-    the source of truth. I-185-I-192.
-    """
+    """Stub: companion-ML subsystem removed."""
     return build_operator_decision_pack_payload(
         handoff_path=handoff_path,
         acknowledgement_path=acknowledgement_path,
@@ -872,7 +723,7 @@ async def get_decision_pack_summary(
 async def get_daily_operator_summary(
     handoff_path: str | None = None,
     acknowledgement_path: str = HANDOFF_ACK_DEFAULT_PATH,
-    state_path: str = str(DEFAULT_ACTIVE_ROUTE_PATH),
+    state_path: str = "artifacts/active_route_state.json",
     abc_output_path: str | None = None,
     alert_audit_dir: str = ALERT_AUDIT_DEFAULT_DIR,
     stale_after_hours: int = 24,
@@ -886,87 +737,24 @@ async def get_daily_operator_summary(
     timeout_seconds: int = 10,
     review_journal_path: str = REVIEW_JOURNAL_DEFAULT_PATH,
 ) -> dict[str, object]:
-    """Return one canonical daily operator aggregate from existing read surfaces only."""
-    from app.research.operational_readiness import build_daily_operator_summary
-
-    readiness_summary = await safe_daily_surface_load(
-        source_name="readiness_summary",
-        loader=lambda: get_operational_readiness_summary(
-            handoff_path=handoff_path,
-            acknowledgement_path=acknowledgement_path,
-            state_path=state_path,
-            abc_output_path=abc_output_path,
-            alert_audit_dir=alert_audit_dir,
-            stale_after_hours=stale_after_hours,
-        ),
-    )
-    recent_cycles_summary = await safe_daily_surface_load(
-        source_name="recent_cycles",
-        loader=lambda: get_recent_trading_cycles(
-            audit_path=loop_audit_path,
-            last_n=loop_last_n,
-        ),
-    )
-    portfolio_snapshot = await safe_daily_surface_load(
-        source_name="portfolio_snapshot",
-        loader=lambda: get_paper_portfolio_snapshot(
-            audit_path=portfolio_audit_path,
-            provider=market_data_provider,
-            freshness_threshold_seconds=freshness_threshold_seconds,
-            timeout_seconds=timeout_seconds,
-        ),
-    )
-    exposure_summary = await safe_daily_surface_load(
-        source_name="exposure_summary",
-        loader=lambda: get_paper_exposure_summary(
-            audit_path=portfolio_audit_path,
-            provider=market_data_provider,
-            freshness_threshold_seconds=freshness_threshold_seconds,
-            timeout_seconds=timeout_seconds,
-        ),
-    )
-    decision_pack_summary = await safe_daily_surface_load(
-        source_name="decision_pack_summary",
-        loader=lambda: get_decision_pack_summary(
-            handoff_path=handoff_path,
-            acknowledgement_path=acknowledgement_path,
-            state_path=state_path,
-            abc_output_path=abc_output_path,
-            alert_audit_dir=alert_audit_dir,
-            stale_after_hours=stale_after_hours,
-            artifacts_dir=artifacts_dir,
-            retention_stale_after_days=retention_stale_after_days,
-        ),
-    )
-    review_journal_summary = await safe_daily_surface_load(
-        source_name="review_journal_summary",
-        loader=lambda: get_review_journal_summary(
-            journal_path=review_journal_path,
-        ),
-    )
-
-    summary = build_daily_operator_summary(
-        readiness_summary=readiness_summary,
-        recent_cycles_summary=recent_cycles_summary,
-        portfolio_snapshot=portfolio_snapshot,
-        exposure_summary=exposure_summary,
-        decision_pack_summary=decision_pack_summary,
-        review_journal_summary=review_journal_summary,
-    )
-    return summary.to_json_dict()
+    """Stub: companion-ML subsystem removed (daily summary aggregate)."""
+    return {
+        **_COMPANION_ML_STUB,
+        "report_type": "daily_operator_summary",
+    }
 
 
 async def get_operator_runbook(
     handoff_path: str | None = None,
     acknowledgement_path: str = HANDOFF_ACK_DEFAULT_PATH,
-    state_path: str = str(DEFAULT_ACTIVE_ROUTE_PATH),
+    state_path: str = "artifacts/active_route_state.json",
     abc_output_path: str | None = None,
     alert_audit_dir: str = ALERT_AUDIT_DEFAULT_DIR,
     stale_after_hours: int = 24,
     artifacts_dir: str = ARTIFACTS_SUBDIR,
     retention_stale_after_days: float = 30.0,
 ) -> dict[str, object]:
-    """Return the canonical read-only operator runbook with validated commands."""
+    """Stub: companion-ML subsystem removed."""
     return build_operator_runbook_payload(
         handoff_path=handoff_path,
         acknowledgement_path=acknowledgement_path,
@@ -982,7 +770,7 @@ async def get_operator_runbook(
 async def get_review_journal_summary(
     journal_path: str = REVIEW_JOURNAL_DEFAULT_PATH,
 ) -> dict[str, object]:
-    """Return the append-only operator review journal summary."""
+    """Stub: companion-ML subsystem removed."""
     payload, _resolved = build_review_journal_summary_payload(journal_path=journal_path)
     return payload
 
@@ -990,18 +778,8 @@ async def get_review_journal_summary(
 async def get_resolution_summary(
     journal_path: str = REVIEW_JOURNAL_DEFAULT_PATH,
 ) -> dict[str, object]:
-    """Return the latest per-source resolution summary derived from the review journal."""
-    from app.research.operational_readiness import (
-        build_review_journal_summary,
-        build_review_resolution_summary,
-        load_review_journal_entries,
-    )
-
-    _, resolved = build_review_journal_summary_payload(journal_path=journal_path)
-
-    entries = load_review_journal_entries(resolved)
-    summary = build_review_journal_summary(entries, journal_path=resolved)
-    return build_review_resolution_summary(summary).to_json_dict()
+    """Stub: companion-ML subsystem removed."""
+    return {**_COMPANION_ML_STUB, "report_type": "resolution_summary"}
 
 
 async def get_alert_audit_summary(
@@ -1013,19 +791,18 @@ async def get_alert_audit_summary(
     execution_enabled and write_back_allowed are always False.
     """
     from app.alerts.audit import load_alert_audits
-    from app.research.operational_readiness import _build_alert_dispatch_summary
 
     resolved = resolve_workspace_dir(
         audit_dir,
         label="Alert audit directory",
     )
     audits = load_alert_audits(resolved)
-    dispatch_summary = _build_alert_dispatch_summary(audits)
     return {
         "report_type": "alert_audit_summary",
         "execution_enabled": False,
         "write_back_allowed": False,
-        **dispatch_summary.to_json_dict(),
+        "total_alerts": len(audits),
+        "alerts": [a.to_json_dict() for a in audits] if audits else [],
     }
 
 
