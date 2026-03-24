@@ -6,7 +6,7 @@ Default runtime remains `paper`/`shadow` with fail-closed controls.
 ## Current Phase
 
 - phase: `PHASE 5 (active) — Signal Reliability & Trust` | sprint: `PH5C_FILTER_BEFORE_LLM_BASELINE (results review)`
-- technical baseline: `1619 passed, ruff clean, mypy 0 errors` | runtime: paper/shadow, fail-closed
+- technical baseline: `1449 passed, ruff clean, mypy 0 errors` | runtime: paper/shadow, fail-closed
 
 ## Phase-5 Focus
 
@@ -42,7 +42,7 @@ Phase 5 investigates signal reliability and trust from the PH5A reliability base
 ```bash
 pip install -e ".[dev]"
 cp .env.example .env        # edit as needed
-python -m pytest            # 1619+ tests
+python -m pytest            # 1449+ tests
 python -m ruff check .
 uvicorn app.api.main:app --reload
 ```

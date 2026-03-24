@@ -7,8 +7,8 @@
 | current_phase | `PHASE 5 (active) — strategic hold on companion-ML infrastructure` |
 | current_sprint | `PH5C_FILTER_BEFORE_LLM_BASELINE (closed D-97)` |
 | next_required_step | `STRATEGIC_HOLD_GATE_REVIEW — wait for clearly positive alert-precision + paper-trading metrics` |
-| baseline | `1619 passed, ruff clean, mypy 0 errors` |
-| archive | `docs/contracts_archive.md` (closed §§38â€“§82) |
+| baseline | `1449 passed, ruff clean, mypy 0 errors` |
+| archive | `docs/contracts_archive.md` (closed §§38—§82) |
 
 ## Navigation
 
@@ -17,7 +17,7 @@
 | [Core Contracts](#core-contracts) | §0-§15: Domain models, invariants, intelligence stack |
 | [Immutable Invariants](#immutable-invariants) | Non-negotiable runtime rules |
 | [Strategic Hold](#strategic-hold-d-97) | Companion-ML freeze policy and gate conditions |
-| [Archive](contracts_archive.md) | Closed §§38â€“§82 (Phase 1â€“4) |
+| [Archive](contracts_archive.md) | Closed §§38—§82 (Phase 1—4) |
 
 ## Strategic Hold (D-97)
 
@@ -245,10 +245,10 @@ if actionable:
 Cap: if `spam_probability > 0.7` Ã¢â€ ’ `priority = min(priority, 3)` (applied after bonus)
 
 Scale:
-- 8Ã¢â‚¬â€œ10: high urgency, actionable
-- 6Ã¢â‚¬â€œ7: notable, alert-worthy
-- 4Ã¢â‚¬â€œ5: background, low urgency
-- 1Ã¢â‚¬â€œ3: noise or spam
+- 8Ã¢â‚¬“10: high urgency, actionable
+- 6Ã¢â‚¬“7: notable, alert-worthy
+- 4Ã¢â‚¬“5: background, low urgency
+- 1Ã¢â‚¬“3: noise or spam
 
 ---
 
@@ -1216,7 +1216,7 @@ Every downstream consumer relies on `doc.analysis_source` Ã¢â‚¬” never o
     brief_doc.analysis_source = effective_analysis_source.value  Ã¢â€ ’ "external_llm"
 ```
 
-**Consistency invariant**: All consumers in steps 9Ã¢â‚¬â€œ11 read `doc.effective_analysis_source`.
+**Consistency invariant**: All consumers in steps 9Ã¢â‚¬“11 read `doc.effective_analysis_source`.
 If `doc.analysis_source` is set (post-pipeline), that value is returned directly.
 If not set (legacy pre-5B row), the property derives from `doc.provider` conservatively.
 This guarantees no consumer ever branches on `provider` for tier decisions.
@@ -1291,7 +1291,7 @@ These may never be broken without a new spec:
 | I-42 | Provider routing is controlled exclusively by `APP_LLM_PROVIDER` and `companion_model_endpoint` env vars. No platform code writes to these. |
 | I-43 | `save_promotion_record()` requires a non-empty `operator_note`. Blank notes raise `ValueError`. Operators must acknowledge the promotion decision explicitly. |
 | I-44 | Promotion is reversible by setting `APP_LLM_PROVIDER` to the previous value. No migration or code change required. |
-| I-45 | `record-promotion` and `save_promotion_record()` require the evaluation report to exist and pass all 6 quantitative gates (G1Ã¢â‚¬â€œG6). Non-passing reports block record creation. |
+| I-45 | `record-promotion` and `save_promotion_record()` require the evaluation report to exist and pass all 6 quantitative gates (G1Ã¢â‚¬“G6). Non-passing reports block record creation. |
 | I-46 | `false_actionable_rate` is the 6th automated promotion gate (G6, threshold <= 0.05). Computed by `compare_datasets()`, enforced by `validate_promotion()` as `false_actionable_pass`. Supersedes the original I-34 "manual, deferred" note. |
 | I-47 | `PromotionRecord` MUST embed `gates_summary: dict[str, bool]` Ã¢â‚¬” a snapshot of all 6 gate pass/fail results at record creation time. A promotion record without gate evidence is incomplete. |
 | I-48 | `record-promotion` MUST call `validate_promotion()` and pass the result as `gates_summary` to `save_promotion_record()`. This makes the record self-documenting. |
@@ -1311,14 +1311,14 @@ These may never be broken without a new spec:
 | I-62 | `build_distillation_report()` is pure computation Ã¢â‚¬” no DB reads, no LLM calls, no network. All I/O is JSONL/JSON file reads via `load_jsonl()` and `json.loads()`. |
 | I-63 | `TrainingJobRecord` is a platform-side pre-training manifest only. No platform code runs training jobs, calls fine-tuning APIs, or modifies model weights. Training is exclusively an external operator process. |
 | I-64 | A `TrainingJobRecord` with `status="pending"` does not represent a trained model. The operator must run training externally before post-training evaluation can begin. |
-| I-65 | Post-training evaluation MUST use the same promotion gates G1Ã¢â‚¬â€œG6 as pre-promotion evaluation. `validate_promotion()` is the canonical gate Ã¢â‚¬” no Sprint-12 bypass is permitted. |
+| I-65 | Post-training evaluation MUST use the same promotion gates G1Ã¢â‚¬“G6 as pre-promotion evaluation. `validate_promotion()` is the canonical gate Ã¢â‚¬” no Sprint-12 bypass is permitted. |
 | I-66 | A trained model is not active until the operator reconfigures `APP_LLM_PROVIDER` and `companion_model_endpoint`. No Sprint-12 code changes routing (I-42 extends here). |
 | I-67 | The teacher dataset used in `TrainingJobRecord` MUST contain only `analysis_source=EXTERNAL_LLM` rows. `INTERNAL`, `RULE`, and Shadow records MUST NOT be used as training input (I-16, I-19, I-53 extend here). |
 | I-68 | `record-promotion` remains the sole promotion gate. `TrainingJobRecord` and `PostTrainingEvaluationSpec` are audit artifacts only Ã¢â‚¬” they do not trigger or substitute promotion. |
 | I-69 | Sprint-12 canonicalizes shadow JSONL schema: `shadow.py` MUST write `"deviations"` field (with `priority_delta`, `relevance_delta`, `impact_delta`) as canonical Ã¢â‚¬” matching `evaluation.py`. `"divergence"` remains as deprecated backward-compat alias. `compute_shadow_coverage()` continues to normalize both formats until old shadow files are migrated. |
-| I-70 | `EvaluationComparisonReport` is a comparison artifact only Ã¢â‚¬” no routing change, no promotion trigger, no G1Ã¢â‚¬â€œG6 gate bypass. |
+| I-70 | `EvaluationComparisonReport` is a comparison artifact only Ã¢â‚¬” no routing change, no promotion trigger, no G1Ã¢â‚¬“G6 gate bypass. |
 | I-71 | `compare_evaluation_reports(baseline_report, candidate_report)` takes `EvaluationReport` objects Ã¢â‚¬” it is pure computation. No DB reads, no LLM calls, no network. The CLI `compare-evaluations` handles file loading via `load_saved_evaluation_report()` before calling this function. (I-62 extends here.) |
-| I-72 | When `regression_summary.has_regression=True` in the comparison report and `--comparison` is provided to `record-promotion`, a prominent WARNING is printed. Promotion is NOT automatically blocked Ã¢â‚¬” the operator must explicitly decide to proceed. `PromotionRecord.comparison_report_path` is set for the audit trail. Hard regression per-metric thresholds (R1Ã¢â‚¬â€œR6) are deferred; `has_regression` (any worsening) is the current operative flag. |
+| I-72 | When `regression_summary.has_regression=True` in the comparison report and `--comparison` is provided to `record-promotion`, a prominent WARNING is printed. Promotion is NOT automatically blocked Ã¢â‚¬” the operator must explicitly decide to proceed. `PromotionRecord.comparison_report_path` is set for the audit trail. Hard regression per-metric thresholds (R1Ã¢â‚¬“R6) are deferred; `has_regression` (any worsening) is the current operative flag. |
 | I-73 | `compare-evaluations` exit code 0 does NOT imply the candidate is promotable. `check-promotion` on the candidate report remains required (I-36, I-65). The comparison is additional audit context only. |
 | I-74 | Baseline and candidate evaluation reports MUST share the same `dataset_type`. Different `dataset_type` values raise `ValueError` in `compare_evaluation_reports()`. |
 | I-75 | `UpgradeCycleReport` is a pure read/summarize artifact. `build_upgrade_cycle_report()` MUST NOT trigger training, evaluation reruns, promotions, or routing changes. The only I/O is JSON file reads via `json.loads()`. (I-62, I-70 extend here.) |
