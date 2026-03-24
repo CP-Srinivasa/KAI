@@ -3,8 +3,8 @@
 ## Canonical Sprint Ledger (2026-03-23)
 
 - phase_4_status: `active`
-- active_sprint: `PH4K_TAG_SIGNAL_UTILITY_REVIEW`
-- next_required_step: `PH4K_RESULTS_REVIEW_AND_CLOSE`
+- last_closed_sprint: `PH4K_TAG_SIGNAL_UTILITY_REVIEW (closed D-84)`
+- next_required_step: `PH4L definition or Phase 4 closeout`
 - baseline: `1554 passed, ruff clean`
 
 | Sprint | Date | Status | Outcome |
@@ -19,7 +19,7 @@
 | PH4H | 2026-03-23 | closed | Option B: I-13 permanent, actionable=LLM-only |
 | PH4I | 2026-03-23 | closed | market_scope enrichment complete |
 | PH4J | 2026-03-23 | closed | Tags enrichment: keyword-hit 4->7, zero-hit 1->4, assets-only 0->4 |
-| PH4K | 2026-03-23 | results-review | Execution artifacts produced; closeout review pending |
+| PH4K | 2026-03-24 | **closed** | Utility review: watchlist overlap 52%, corr=0.56, priority delta +3.1 |
 
 ## Tech Sprints (nicht Phase-4-gebunden)
 

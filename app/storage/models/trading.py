@@ -48,7 +48,8 @@ class TradingCycleRecord(Base):
     analysis_profile: Mapped[str] = mapped_column(
         String(40), nullable=False, server_default="conservative"
     )
-    status: Mapped[str] = mapped_column(String(40), nullable=False, index=True)
+    # Explicit index declared in __table_args__ to keep naming deterministic.
+    status: Mapped[str] = mapped_column(String(40), nullable=False)
 
     # Step flags
     market_data_fetched: Mapped[bool] = mapped_column(

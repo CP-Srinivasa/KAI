@@ -4,7 +4,8 @@
 
 - current_phase: `PHASE 4 (active) + Sprint 44 closed`
 - current_sprint: `PH4K_TAG_SIGNAL_UTILITY_REVIEW`
-- next_required_step: `PH4K_RESULTS_REVIEW_AND_CLOSE`
+- status: `closed (D-84)`
+- next_required_step: `PH4L definition or Phase 4 closeout`
 - baseline: `1678 passed, ruff clean, mypy 0 errors`
 
 ## Active Tasks
@@ -23,7 +24,7 @@
 - [x] K2 Freeze PH4K contract and acceptance criteria (section 79)
 - [x] K3 Execute PH4K (utility review only; no tag expansion, no scoring changes)
 - [x] K4 Capture utility evidence: watchlist_overlap 36/69 (52.17%), corr(tag_count, tier3_priority)=0.5564, mean_priority with overlap 5.44 vs. without 2.33
-- [ ] K5 Run PH4K results review and close PH4K formally
+- [x] K5 Run PH4K results review and close PH4K formally
 
 ## Closed Tasks (Summary)
 

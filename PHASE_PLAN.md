@@ -3,8 +3,8 @@
 ## Current State (2026-03-23)
 
 - current_phase: `PHASE 4 (active)`
-- current_sprint: `PH4K_TAG_SIGNAL_UTILITY_REVIEW`
-- next_required_step: `PH4K_RESULTS_REVIEW_AND_CLOSE`
+- last_closed_sprint: `PH4K_TAG_SIGNAL_UTILITY_REVIEW (closed D-84)`
+- next_required_step: `PH4L definition or Phase 4 closeout`
 - baseline: `1554 passed, ruff clean`
 
 ## Phase 4 Complete Arc (PH4A-K, 11 Sprints)
@@ -21,7 +21,7 @@
 | PH4H | Policy | Option B: I-13 permanent, actionable=LLM-only (S76) |
 | PH4I | Intervention | market_scope enrichment complete (S77) |
 | PH4J | Intervention | Tags enrichment: keyword-hit 4->7, zero-hit 1->4, assets-only 0->4 |
-| PH4K | Utility Review | Execution complete; results review and closeout pending |
+| PH4K | Utility Review | **Closed (D-84)**: watchlist overlap 52%, corr=0.56, priority delta +3.1 |
 
 ## PH4K Results Review Inputs (Cumulative Phase 4 Impact)
 

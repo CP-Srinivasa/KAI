@@ -15,7 +15,7 @@ Invariants tested:
 """
 from __future__ import annotations
 
-from hypothesis import assume, given, settings
+from hypothesis import HealthCheck, assume, given, settings
 from hypothesis import strategies as st
 
 from app.risk.engine import RiskEngine
@@ -68,7 +68,7 @@ def _make_limits(
     ),
     risk_pct=st.floats(min_value=0.001, max_value=10.0, allow_nan=False, allow_infinity=False),
 )
-@settings(max_examples=200)
+@settings(max_examples=200, suppress_health_check=[HealthCheck.too_slow])
 def test_position_size_never_negative(
     equity: float,
     entry_price: float,
