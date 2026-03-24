@@ -480,3 +480,7 @@
 ### D-103 (2026-03-24): CLI auf 5 Core-Commands reduziert
 - Nur: ingest rss, pipeline run, query analyze-pending, alerts evaluate-pending, alerts send-test.
 - 884 → 336 LOC; 820 LOC entfernt; 37 obsolete Tests gelöscht.
+
+### D-104 (2026-03-24): actionable=0 im Tier1/Keyword-Fallback akzeptiert (I-13)
+- Kein Fix für I-13; Tier1-Optimierung ist nicht der Fokus.
+- Echte Signalqualität kommt ausschließlich aus LLM-betriebenen Alerts.
