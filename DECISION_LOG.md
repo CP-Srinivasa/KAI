@@ -470,5 +470,5 @@
 - These are production metrics improved through operation and real data, not further internal sprints.
 
 ### D-102 (2026-03-24): app/persona/ und messaging avatar/speech Stubs entfernt
-- Voice und Avatar sind kein Trading-Signal-Produkt; 517 LOC gelöscht.
-- Keine Extraktion in Branch — endgültig entfernt.
+- Voice und Avatar sind kein Trading-Signal-Produkt; 1.400+ LOC Stubs vollständig aus dem Hauptpfad extrahiert.
+- Umfang: `app/persona/` sowie `app/messaging/avatar_*`, `app/messaging/speech_*`, `app/messaging/text_to_speech_*`.
