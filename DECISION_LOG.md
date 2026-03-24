@@ -469,6 +469,6 @@
 - Priority MAE=3.13 and LLM-Error-Proxy=27.5% are accepted as known limitations.
 - These are production metrics improved through operation and real data, not further internal sprints.
 
-### D-102 (2026-03-24): app/persona/ und messaging avatar/speech Stubs entfernt
-- Voice und Avatar sind kein Trading-Signal-Produkt; 1.400+ LOC Stubs vollständig aus dem Hauptpfad extrahiert.
-- Umfang: `app/persona/` sowie `app/messaging/avatar_*`, `app/messaging/speech_*`, `app/messaging/text_to_speech_*`.
+### D-102 (2026-03-24): Persona/avatar/speech stubs extracted
+- app/persona/, app/messaging/avatar_*, app/messaging/speech_* confirmed fully removed.
+- Voice and avatar are not trading-signal product; no re-integration planned.
