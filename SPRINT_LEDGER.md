@@ -4,9 +4,9 @@
 
 - current_phase: `PHASE 5 (active) -- Signal Reliability & Trust`
 - phase_4_status: `CLOSED (D-87, 2026-03-24)`
-- phase_5_status: `active -- PH5A closed; PH5B definition next`
-- current_sprint: `PH5A -- CLOSED`
-- next_required_step: `PH5B definition`
+- phase_5_status: `active -- PH5A execution complete; results-review mode`
+- current_sprint: `PH5A_BASELINE_RELIABILITY_AND_SIGNAL_TRUST`
+- next_required_step: `PH5A_RESULTS_REVIEW_AND_CLOSE`
 - baseline: `1609 passed, ruff clean`
 
 | Sprint | Date | Status | Outcome |

@@ -5,7 +5,7 @@
 ## Phase Status
 
 - current_phase: `PHASE 5 (active) -- Signal Reliability & Trust`
-- current_sprint: `PH5A_BASELINE_RELIABILITY_AND_SIGNAL_TRUST (results-review mode)`
+- current_sprint: `PH5A_BASELINE_RELIABILITY_AND_SIGNAL_TRUST`
 - next_required_step: `PH5A_RESULTS_REVIEW_AND_CLOSE`
 - phase4_status: `CLOSED (D-87)`
 - phase5_guardrail: do not open PH5B before PH5A review closes
@@ -29,11 +29,13 @@
 - Decision: treat PH5A as execution-complete.
 - Decision: move PH5A into results-review mode.
 - Decision: do not open PH5B before PH5A review closes.
+
 ## Review Actions
 
 - Review PH5A artifacts.
 - Summarize top reliability and signal-trust gaps.
 - Then define PH5B.
+
 ## PH4H Policy Anchor
 
 - Policy choice: Option B

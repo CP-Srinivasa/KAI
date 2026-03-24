@@ -3,8 +3,8 @@
 ## Current State (2026-03-24)
 
 - current_phase: `PHASE 5 (active) -- Signal Reliability & Trust`
-- current_sprint: `PH5A -- CLOSED`
-- next_required_step: `PH5B definition`
+- current_sprint: `PH5A_BASELINE_RELIABILITY_AND_SIGNAL_TRUST`
+- next_required_step: `PH5A_RESULTS_REVIEW_AND_CLOSE`
 - phase4_status: `CLOSED (D-87)`
 - baseline: `1609 passed, ruff clean`
 
@@ -61,5 +61,4 @@ Phase 4 has completed a full PH4A-PH4K arc. Canonical closeout is accepted (D-87
 ## I-13 Policy (Permanent)
 
 `actionable` is LLM-exclusive. Rule-only fallback: `actionable=False`. No relaxation.
-
 
