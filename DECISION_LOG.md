@@ -480,3 +480,8 @@
 ### D-104 (2026-03-24): actionable=0 permanent in Tier1/keyword fallback (I-13 reaffirmed)
 - actionable=0 is accepted as permanent state in Tier1/keyword-only fallback path.
 - Focus is on LLM-driven alerts with real signal quality, not Tier1 optimisation.
+
+### D-105 (2026-03-24): 30-Tage-Produktions-Gate für Trading-Signal-Arbeit
+- Nach 7-Tage-Ingestion-Lauf mit LLM-Analyse: <5 ausgelöste Alerts ODER Alert-Precision <30% → Stop.
+- Bei Stop: Fokus auf Datenqualität (Feeds, Keywords, Spam-Filter), keine neue Architektur.
+- Messdatum: 2026-04-23.
