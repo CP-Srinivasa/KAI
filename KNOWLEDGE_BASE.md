@@ -1,13 +1,13 @@
 # KNOWLEDGE_BASE.md - KAI Canonical Knowledge Index
 
-> Stand: 2026-03-24 | PHASE 4 CLOSED (D-87) | last_sprint: PHASE4_CLOSEOUT_AND_NEXT_PHASE_GATE (closed D-87) | next: Phase 5 definition | baseline: 1604 passed, ruff clean, mypy 0 errors
+> Stand: 2026-03-24 | PHASE 5 (active) -- Signal Reliability & Trust | PH5A frozen (§83) | baseline: 1609 passed, ruff clean
 
 ## Phase Status
 
-- current_phase: `PHASE 4 (CLOSED D-87, 2026-03-24)`
-- current_sprint: `PHASE4_CLOSEOUT_AND_NEXT_PHASE_GATE -- CLOSED`
-- next_required_step: `Phase 5 definition`
-- canonical closeout sync: complete
+- current_phase: `PHASE 5 (active) -- Signal Reliability & Trust`
+- current_sprint: `PH5A_BASELINE_RELIABILITY_AND_SIGNAL_TRUST (frozen §83)`
+- next_required_step: `PH5A_EXECUTION`
+- phase4_status: `CLOSED (D-87)`
 
 ## Newly Confirmed Facts
 
@@ -16,21 +16,22 @@
 - Working tree is clean.
 - Current technical baseline is `1609 passed` and `ruff clean`.
 - Phase 4 has completed a full PH4A-PH4K arc.
-- Governance conflict remains between "Phase 4 closed" and "Phase 4 closeout gate active".
+- Phase 4 canonical closeout is accepted.
+- Strong governance evidence accepted: 10-doc sync + closeout commit + clean working tree.
 
 ## Current Assumptions and Decisions
 
-- Assumption: Phase 4 is complete enough to be formally closed.
-- Assumption: PH4L is not mandatory before closing Phase 4.
-- Decision: recommended next step is to close Phase 4 formally.
-- Decision: PH4L stays blocked until closeout, unless a strong blocker demands escalation.
-- Decision: Phase 5 remains blocked until final canonical closeout sync is complete.
+- Assumption: Phase 5 should start narrowly.
+- Assumption: reliability and signal trust are the next highest-leverage product levers.
+- Decision: treat Phase 4 as canonically closed.
+- Decision: supersede the conservative closeout-gate report.
+- Decision: open Phase 5 definition next with PH5A baseline contract freeze.
 
 ## Closeout Actions
 
-- Phase 4 canonical closeout sync complete (D-87).
-- Close the gate sprint everywhere.
-- Then start Phase 5 definition.
+- Open Phase 5 definition.
+- Define `PH5A_BASELINE_RELIABILITY_AND_SIGNAL_TRUST`.
+- Freeze PH5A contract.
 ## PH4H Policy Anchor
 
 - Policy choice: Option B

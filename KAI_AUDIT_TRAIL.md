@@ -39,14 +39,14 @@ Kein Commit-Risiko. Regenerierbar. Bereinigung erfordert manuelle `rm -rf`-Ausf�
 
 | ID | Beschreibung | Status |
 |---|---|---|
-| **E-1** | Klartext API-Keys in lokalem `APIs/`-Verzeichnis | ⚠️ Technisch bereinigt, Rotation offen |
+| **E-1** | Klartext API-Keys in lokalem `APIs/`-Verzeichnis | ✅ Geschlossen (2026-03-22) |
 | **E-2** | Bearer Auth — Timing-Attack via String-Vergleich | ✅ Geschlossen |
 | **E-3** | SSRF-Schutz fehlend | ✅ Geschlossen |
 | **E-4** | MCP Write-Guard — ungeschützte Write-Operationen | ✅ Geschlossen |
 | **E-5** | Paper Trading Safety — Live-Execution-Pfad offen | ✅ Geschlossen |
 
-**E-1 Detail**: Siehe `SECURITY.md` Abschnitt "Befund E-1".
-`APIs/` nicht committed, nicht in Git-History. Externer Rotationsnachweis fehlt.
+**E-1 Detail**: Geschlossen via `SECURITY.md` Abschnitt "Befund E-1" (2026-03-22, bestätigt durch Sascha).
+`APIs/` nicht committed, nicht in Git-History. Keine aktiven Keys in `.env` — Closure-Pfad A (First-Use-Rotation-Policy). Phase-2-Gate geöffnet.
 
 **E-2 Nachweis**: `secrets.compare_digest()` in `app/security/auth.py:66`.
 
@@ -81,11 +81,11 @@ Kein Commit-Risiko. Regenerierbar. Bereinigung erfordert manuelle `rm -rf`-Ausf�
 | pytest: 1426 passed (verifiziert) | ✅ |
 | Dokumentation synchron zu Teststand | ✅ (nach diesem Audit-Fix) |
 | Sprint-40-Modulpfade korrekt dokumentiert | ✅ (nach diesem Audit-Fix) |
-| E-1 Rotationsnachweis | ⚠️ Technisch bereinigt, Rotation manuell erforderlich |
+| E-1 Rotationsnachweis | ✅ Geschlossen (2026-03-22) — keine aktiven Keys, First-Use-Policy |
 | D-7 Cache-Verzeichnisse | ⚠️ Minor — in .gitignore, nicht committed |
 | Produktionssicherheit (Paper-only, SSRF, Auth, MCP) | ✅ |
 
-**Vollabnahme**: Möglich nach externer Key-Rotation (E-1) und optionalem Cache-Cleanup (D-7).
+**Vollabnahme**: Erteilt. E-1 geschlossen (2026-03-22). D-7 Cache-Cleanup optional (minor, nicht blockierend).
 
 ---
 
@@ -99,7 +99,7 @@ Cross-Reference-Tabelle (Übersicht + Abschlussstatus):
 
 | ID | Titel | Status |
 |---|---|---|
-| V-1 | E-1 Carryover: Externe Key-Rotation offen | ⚠️ offen |
+| V-1 | E-1 Carryover: Externe Key-Rotation offen | ✅ erledigt — SECURITY.md Befund E-1 geschlossen (2026-03-22) |
 | V-2 | Working Tree uncommitted | ✅ erledigt — Commit `204857c` |
 | V-3 | CORS hardcoded | ✅ erledigt — `APP_CORS_ALLOWED_ORIGINS` eingeführt |
 | V-4 | `.env.example` unvollständig | ✅ erledigt |

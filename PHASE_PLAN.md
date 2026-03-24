@@ -2,21 +2,22 @@
 
 ## Current State (2026-03-24)
 
-- current_phase: `PHASE 4 (CLOSED D-87, 2026-03-24)`
-- current_sprint: `PHASE4_CLOSEOUT_AND_NEXT_PHASE_GATE (closed D-87)`
-- next_required_step: `Phase 5 definition`
+- current_phase: `PHASE 5 (active) -- Signal Reliability & Trust`
+- current_sprint: `PH5A_BASELINE_RELIABILITY_AND_SIGNAL_TRUST (frozen §83)`
+- next_required_step: `PH5A_EXECUTION`
+- phase4_status: `CLOSED (D-87)`
 - baseline: `1609 passed, ruff clean`
 
-## Phase 4 Closeout Gate (2026-03-24)
+## Phase 4 Closeout (Canonical, 2026-03-24)
 
-Phase 4 has completed a full PH4A-PH4K arc. V-4 Dual-Write is closed, N-4 is closed, and the active gate is formal Phase-4 closeout before any PH4L opening.
+Phase 4 has completed a full PH4A-PH4K arc. Canonical closeout is accepted (D-87), V-4 Dual-Write is closed, N-4 is closed, and Phase 5 is now unblocked.
 
-## Closeout Actions
+## Next Actions (Phase 5 Definition)
 
-- Run final Phase 4 closeout sync.
-- Phase 4 closeout gate closed everywhere (D-87).
-- Keep Phase 5 blocked until final closeout sync is complete.
-- Then start Phase 5 definition.
+- Open Phase 5 definition.
+- Define `PH5A_BASELINE_RELIABILITY_AND_SIGNAL_TRUST`.
+- Freeze PH5A contract.
+- Keep Phase 5 scope narrow: reliability and signal trust before further fallback micro-optimizations.
 ## Phase 4 Complete Arc (PH4A-K, 11 Sprints)
 
 | Sprint | Type | Result |

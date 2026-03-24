@@ -2,12 +2,12 @@
 
 ## Canonical Sprint Ledger (2026-03-24)
 
-- current_phase: `PHASE 4 (CLOSED D-87, 2026-03-24)`
-- phase_4_status: `active -- final canonical closeout sync`
-- current_sprint: `PHASE4_CLOSEOUT_AND_NEXT_PHASE_GATE`
-- next_required_step: `Phase 5 definition`
+- current_phase: `PHASE 5 (active) -- Signal Reliability & Trust`
+- phase_4_status: `CLOSED (D-87, 2026-03-24)`
+- phase_5_status: `active -- PH5A frozen (§83)`
+- current_sprint: `PH5A_BASELINE_RELIABILITY_AND_SIGNAL_TRUST`
+- next_required_step: `PH5A_EXECUTION`
 - baseline: `1609 passed, ruff clean`
-- phase5_status: `unblocked (D-87)`
 | Sprint | Date | Status | Outcome |
 |---|---|---|---|
 | PH4A | 2026-03-22 | closed | Baseline: paired=0 |

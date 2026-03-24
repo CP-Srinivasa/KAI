@@ -4,12 +4,13 @@
 
 | Field | Value |
 |---|---|
-| current_phase | `PHASE 4 (CLOSED D-87, 2026-03-24)` |
-| phase4_arc | `PH4A-PH4K (11 sprints, 2026-03-22 to 2026-03-24)` |
-| next_required_step | `Phase 5 definition` |
+| current_phase | `PHASE 5 (active) -- Signal Reliability & Trust` |
+| current_sprint | `PH5A_BASELINE_RELIABILITY_AND_SIGNAL_TRUST (frozen §83)` |
+| next_required_step | `PH5A_EXECUTION` |
 | baseline | `1609 passed, ruff clean` |
+| phase4_status | `CLOSED (D-87, 2026-03-24)` |
 | v4_dual_write_status | `closed (N-4 closed)` |
-| architecture_status | three-tier stack unchanged; PH4A-PH4K closed/frozen anchors; Phase 4 CLOSED (D-87); canonical closeout complete |
+| architecture_status | three-tier stack unchanged; Phase 4 closed; Phase 5 active (PH5A diagnostic baseline) |
 
 ---
 ## PH4A/PH4B (closed â€” frozen anchors)

@@ -2,9 +2,9 @@
 
 ## Current State (2026-03-24)
 
-- current_phase: `PHASE 4 (CLOSED D-87, 2026-03-24)`
-- current_sprint: `PHASE4_CLOSEOUT_AND_NEXT_PHASE_GATE`
-- next_required_step: `Phase 5 definition`
+- current_phase: `PHASE 5 (active) -- Signal Reliability & Trust`
+- current_sprint: `PH5A_BASELINE_RELIABILITY_AND_SIGNAL_TRUST (frozen §83)`
+- next_required_step: `PH5A_EXECUTION`
 - baseline: `1609 passed, ruff clean`
 ## Canonical Decisions
 
@@ -88,3 +88,12 @@
 - There is still a governance conflict between "Phase 4 closed" statements and "Phase 4 closeout gate active" statements.
 - Phase 4 canonical closeout sync complete (D-87).
 - Phase 5 stays blocked until this conflict is resolved across all governance documents.
+- This conservative gate state is superseded by D-90.
+
+### D-90 (2026-03-24): Phase-4 canonical closeout accepted; Phase-5 definition opened next
+- Phase 4 is treated as canonically closed: `PHASE 4 -- CLOSED (D-87)`.
+- `PHASE4_CLOSEOUT_AND_NEXT_PHASE_GATE` is treated as closed.
+- Stronger governance evidence accepted: 10-document sync + closeout commit + clean working tree.
+- Conservative closeout-gate report is superseded.
+- Next required step is now `PHASE5_DEFINITION`.
+- Phase 5 should start narrowly with `PH5A_BASELINE_RELIABILITY_AND_SIGNAL_TRUST`.

@@ -2,9 +2,9 @@
 
 ## Current State (2026-03-24)
 
-- current_phase: `PHASE 4 (CLOSED D-87, 2026-03-24)`
-- current_sprint: `PHASE4_CLOSEOUT_AND_NEXT_PHASE_GATE`
-- next_required_step: `Phase 5 definition`
+- current_phase: `PHASE 5 (active) -- Signal Reliability & Trust`
+- current_sprint: `PH5A_BASELINE_RELIABILITY_AND_SIGNAL_TRUST (frozen §83)`
+- next_required_step: `PH5A_EXECUTION`
 - baseline: `1609 passed, ruff clean`
 ### PH4K Execution Results Note (2026-03-23)
 
@@ -20,11 +20,20 @@ DB test failures remain on a separate track.
 - PH4A through PH4K are complete enough that PH4L is not urgent.
 - V-4 dual-write and DB-primary snapshot closeout are complete (N-4 closed).
 - Last explicitly referenced clean governance anchor: commit `c498ca4`.
-- Governance conflict remains: mixed wording between "Phase 4 closed" and "closeout gate active".
+- Governance conflict resolved via canonical closeout sync (D-87); Phase 5 is unblocked.
 
 ---
 
-## Active Phase-4 Risks
+## Active Phase-5 Risks
+
+| Risk ID | Description | Severity | Likelihood | Mitigation | Status |
+|---|---|---|---|---|---|
+| R-PH5-001 | Phase 5 could become too broad if not tightly scoped. | high | medium | Start with `PH5A_BASELINE_RELIABILITY_AND_SIGNAL_TRUST`; freeze contract before execution. | open |
+| R-PH5-002 | Reopening fallback micro-optimization too early could dilute Phase-4 value. | medium | medium | Prioritize reliability and signal-trust surfaces first; defer new fallback micro-tuning until PH5A baseline is accepted. | open |
+
+---
+
+## Phase-4 Risk Archive
 
 | Risk ID | Description | Severity | Likelihood | Mitigation | Status |
 |---|---|---|---|---|---|

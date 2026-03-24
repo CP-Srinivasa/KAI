@@ -1,13 +1,13 @@
 # CHANGELOG.md
 
-## 2026-03-24 - Phase 4 canonical closeout complete (D-87)
+## 2026-03-24 - Phase 5 opened: Signal Reliability & Trust (PH5A frozen §83)
 
-- **Phase 4 (Signal Quality Calibration) formally CLOSED** after 11 sprints (PH4A–PH4K).
-- Governance conflict resolved: all 10 docs synced to `PHASE 4 -- CLOSED (D-87)`.
-- V-4 Dual-Write closed, N-4 closed. All tech sprints closed.
-- Phase 4 arc: priority avg +28%, tags empty -62.3%, relevance=0 -43.5%, scope unknown -31.9%.
+- **Phase 4 canonically closed (D-87)**. 11 sprints (PH4A–PH4K), all tech sprints (N-1..N-5, Sprint 44/45) closed.
+- Phase 5 theme: Signal Reliability & Trust.
+- PH5A defined: `BASELINE_RELIABILITY_AND_SIGNAL_TRUST` (diagnostic only, contract §83).
+- PH5A metrics: fallback rate, LLM error rate, provider distribution, priority distribution, actionable rate, keyword coverage, tag fill rate.
+- All 10 governance docs synced to Phase 5 active.
 - Baseline: `1609 passed, ruff clean`.
-- Phase 5 definition unblocked.
 
 ---
 ## 2026-03-23 - PH4K contract freeze completed; execution gate opened

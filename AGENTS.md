@@ -4,9 +4,9 @@
 
 | Field | Value |
 |---|---|
-| current_phase | `PHASE 4 (CLOSED D-87, 2026-03-24)` |
-| current_sprint | `PHASE4_CLOSEOUT_AND_NEXT_PHASE_GATE (closed D-87)` |
-| next_required_step | `Phase 5 definition` |
+| current_phase | `PHASE 5 (active) -- Signal Reliability & Trust` |
+| current_sprint | `PH5A_BASELINE_RELIABILITY_AND_SIGNAL_TRUST` |
+| next_required_step | `PH5A_EXECUTION` |
 | ph4a_status | `closed (D-53) -- immutable baseline anchor (S67)` |
 | ph4b_status | `closed (D-62) -- paired_count=69; root cause: keyword coverage blindness` |
 | ph4c_status | `closed -- rule-keyword gap audit; top-3 gaps: macro, regulatory, AI` |
@@ -24,7 +24,8 @@
 | cli_canonical_count | 53 |
 | provisional_cli_count | 0 |
 | phase3_status | `closed (2026-03-22) -- GO` |
-| phase4_status | `active -- final closeout sync pending; PH4L/Phase 5 blocked until canonical closeout` |
+| phase4_status | `CLOSED (D-87, 2026-03-24) -- 11 sprints PH4A-PH4K + V-4; canonical closeout complete` |
+| phase5_status | `active -- PH5A frozen (§83); diagnostic baseline` |
 ---
 
 > **Verbindliches Betriebsdokument fuer alle Coding-Agenten.**

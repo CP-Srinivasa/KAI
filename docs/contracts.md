@@ -4,18 +4,18 @@
 
 | Field | Value |
 |---|---|
-| current_phase | `PHASE 4 (CLOSED D-87, 2026-03-24)` |
+| current_phase | `PHASE 4` |
 | current_sprint | `PHASE4_CLOSEOUT_AND_NEXT_PHASE_GATE` |
-| next_required_step | `Phase 5 definition` |
+| next_required_step | `PHASE4_FINAL_CANONICAL_CLOSEOUT` |
 | baseline | `1609 passed, ruff clean` |
-| active_contracts | §82 (Phase-4 closeout gate, active) · §81–§67 (closed/frozen anchors) |
+| active_contracts | §83 (PH5A, active) · §82 (Phase 4 Closeout, frozen anchor) · §81–§67 |
 | cli_canonical_count | 53 (frozen §65) |
 
 ## Navigation
 
 | Section | Content | Status |
 |---|---|---|
-| [§82 Phase 4 Closeout Gate](#s82-phase-4-closeout) | Formal closeout of Phase 4 arc PH4A-PH4K + V-4 | active gate |
+| [§82 Phase 4 Closeout Gate](#s82-phase-4-closeout) | Formal closeout of Phase 4 arc PH4A-PH4K + V-4 | frozen anchor (D-87) |
 | [§81 Sprint 45 V-4 Phase 3](#s81-sprint-45-v4-db-primary-portfolio-snapshot) | DB-primary portfolio snapshot via PortfolioStateRecord | closed (D-86) |
 | [§79 PH4K Tag Signal Utility Review](#s79-ph4k-tag-signal-utility-review) | Assess operator utility of PH4J-enriched tags | closed (D-84) |
 | [§78 PH4J Fallback Tags Enrichment](#s78-ph4j-fallback-tags-enrichment) | Enrich tags in fallback path (PH4F: tags empty 69/69) | closed (D-81 — frozen anchor) |
