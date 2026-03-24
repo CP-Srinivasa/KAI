@@ -12,7 +12,7 @@
 - next_required_step: `STRATEGIC_HOLD -- no new sprint until alert-precision + paper-trading positive`
 
 
-- baseline: `1449 passed, ruff clean, mypy 0 errors`
+- baseline: `1046 passed, ruff clean, mypy 0 errors`
 
 
 ## Canonical Decisions
@@ -172,7 +172,7 @@
 - N-4 formally closed in SPRINT_LEDGER.
 
 
-- baseline: `1449 passed, ruff clean, mypy 0 errors`
+- baseline: `1046 passed, ruff clean, mypy 0 errors`
 
 
 ### D-87 (2026-03-24): Phase-4 closeout draft prepared (superseded by D-88 gate)
@@ -282,7 +282,7 @@
 - Guardrail: PH5C must not be opened before PH5B review is closed.
 
 
-- baseline: `1449 passed, ruff clean, mypy 0 errors`
+- baseline: `1046 passed, ruff clean, mypy 0 errors`
 
 
 ### D-93 (2026-03-24): PH5B execution complete -- root cause identified

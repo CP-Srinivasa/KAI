@@ -55,7 +55,7 @@
 | v4_dual_write_status | `closed (D-86) -- N-4 closed` |
 
 
-| baseline | `1449 passed, ruff clean, mypy 0 errors` |
+| baseline | `1046 passed, ruff clean, mypy 0 errors` |
 
 
 | working_tree | `clean` |

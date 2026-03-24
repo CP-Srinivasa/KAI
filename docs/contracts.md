@@ -7,7 +7,7 @@
 | current_phase | `PHASE 5 (active) — strategic hold on companion-ML infrastructure` |
 | current_sprint | `PH5C_FILTER_BEFORE_LLM_BASELINE (closed D-97)` |
 | next_required_step | `STRATEGIC_HOLD_GATE_REVIEW — wait for clearly positive alert-precision + paper-trading metrics` |
-| baseline | `1449 passed, ruff clean, mypy 0 errors` |
+| baseline | `1046 passed, ruff clean, mypy 0 errors` |
 | archive | `docs/archive/contracts_archive.md` (closed §§38—§82) |
 
 ## Navigation

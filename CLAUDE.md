@@ -17,6 +17,101 @@ This repository is designed to support:
 The system must remain understandable, testable, modular, and safe.
 
 ---
+# KAI – Canonical Rules
+
+## Identity
+- KAI ist eine Produktplattform, kein Lernprojekt oder Demo.
+- Ziel: Analyse-, Signal- und perspektivisch kontrolliertes Realtime-Trading-System.
+- Fokus: Sicherheit, Nutzbarkeit, Nachvollziehbarkeit, kontrollierte Erweiterbarkeit.
+
+## Prioritäten (immer in dieser Reihenfolge)
+1. Security & Auditierbarkeit
+2. CI/CD & Testbarkeit
+3. E2E Paper-Workflow (real nachvollziehbar)
+4. Operator-Nutzen (Sascha zuerst)
+5. Lesbare Outputs (kein JSON-Spam)
+6. Minimal funktionierende UI
+7. Erst danach Architektur-Optimierung
+
+## Core Rules
+- Arbeite immer vom Produktziel rückwärts.
+- Bevorzuge den kleinsten sinnvollen, testbaren Schritt.
+- Kein Overengineering ohne echten Nutzen.
+- Kein Feature ohne klaren Operator-Mehrwert.
+- Keine kritischen Aktionen ohne Guardrails, Logs und Audit-Trail.
+- Keine stillen Annahmen – immer explizit markieren.
+- Keine Lösungen nur für KI-Agenten – immer für Menschen mitdenken.
+- Kein Provider-Lock-in.
+
+## Working Mode
+- Erst einordnen → dann entscheiden → dann umsetzen.
+- Wenn unklar: konservative Annahme treffen und kennzeichnen.
+- Änderungen klein, testbar, dokumentierbar und reversibel halten.
+- Nur das ändern, was wirklich betroffen ist.
+
+## Output Rules
+- Antworte strukturiert, klar und priorisiert.
+- Liefere immer:
+  - nächsten kleinsten Schritt
+  - Risiken / Annahmen
+  - konkrete Umsetzung oder Arbeitspaket
+- Vermeide theoretische Diskussion ohne direkten Umsetzungswert.
+
+## Red Flags (vermeiden)
+- Overengineering
+- Scope-Drift
+- UI/UX ignorieren
+- ungeprüfter Modelloutput → Aktion
+- große Umbauten ohne klaren Nutzen
+- reine Architektur-Arbeit ohne operativen Effekt
+
+## Definition of Done
+Ein Schritt ist nur fertig, wenn:
+- er das Produktziel stärkt
+- er testbar ist
+- er dokumentierbar ist
+- er nachvollziehbar ist
+- er echten Nutzen bringt
+
+## Hinweis
+Nutze für strategische Planung und strukturierte Arbeitspakete den Skill:
+kai-master-coding-regeln
+
+## Execution Behavior
+
+Bei jeder Aufgabe gilt:
+
+1. Prüfe zuerst:
+   - Ist das relevant für das Produktziel?
+   - Ist es der kleinste sinnvolle Schritt?
+   - Ist es jetzt dran oder später?
+
+2. Wenn strategisch / unklar:
+   → Nutze automatisch: kai-master-coding-regeln
+
+3. Wenn Implementierung:
+   - Arbeite in kleinen, testbaren Änderungen
+   - Keine Seiteneffekte außerhalb des Scopes
+   - Tests + Validierung berücksichtigen
+
+4. Wenn Entscheidung:
+   - Begründen
+   - Risiken nennen
+   - Auswirkungen auf nächsten Schritt klar machen
+
+5. Wenn mehrere Optionen:
+   - Wähle die mit:
+     - weniger Komplexität
+     - höherem Nutzen
+     - besserer Nachvollziehbarkeit
+
+6. Wenn Unsicherheit:
+   - konservative Annahme treffen
+   - explizit markieren
+
+7. Immer liefern:
+   - nächsten konkreten Schritt
+   - keine offenen Enden
 
 ## Core Principles
 
@@ -47,7 +142,149 @@ The system must remain understandable, testable, modular, and safe.
    - No unstable scraping-first architecture.
    - Respect source differences: feed, page, channel, API, unresolved source.
 
+
+## Deploy-Regeln (Kurzfassung)
+
+Deployments sind kontrollierte Eingriffe – niemals Routine.
+
+Vor jedem Deploy zwingend klären:
+- Was wird geändert und warum?
+- Welche Komponenten/Umgebungen sind betroffen?
+- Welche Risiken bestehen?
+- Sind Tests ausreichend?
+- Sind Konfigurationen & Secrets korrekt?
+- Gibt es Migrationen oder Seiteneffekte?
+- Ist ein Rollback klar definiert?
+- Gibt es Monitoring & Post-Deploy-Checks?
+
+Keine Freigabe bei:
+- unklarem Scope
+- fehlenden Tests
+- unsicheren Konfigurationen
+- unklaren Migrationen
+- fehlendem Rollback
+- Zeitdruck statt Sorgfalt
+
+Pflicht:
+- reproduzierbarer Build
+- klare Versionierung
+- saubere Reihenfolge beim Rollout
+- kleine, kontrollierte Schritte
+- Post-Deploy-Verifikation
+
+Grundsatz:
+Stabilität > Geschwindigkeit  
+Sicherheit > Bequemlichkeit  
+Klarheit > Annahmen
+
+## Testing-Regeln (Skill)
+
+Nutze den Skill `.claude/skill/Testing-Regeln` IMMER, wenn es um Tests, Qualitätssicherung oder Validierung von Änderungen geht.
+
+Grundprinzip:
+Tests dienen nicht der Formalität, sondern der echten Absicherung von Verhalten und Risiken.
+
+Pflichtregeln:
+
+- Teste Verhalten, nicht Implementierungsdetails
+- Keine falsche Sicherheit → Lücken klar benennen
+- Jeder Test braucht einen klaren Zweck
+- Qualität > Coverage
+- Stabilität > Komplexität
+- So viel wie nötig, nicht so viel wie möglich
+
+Bei jeder Änderung prüfen:
+
+1. Was wurde geändert?
+2. Welche Risiken entstehen?
+3. Welche Testebene ist sinnvoll? (Unit / Integration / E2E)
+4. Welche Fälle müssen getestet werden?
+   - Normalfall
+   - Randfälle
+   - Fehlerfälle
+5. Was bleibt ungetestet und warum?
+
+Testqualität muss sein:
+
+- strukturiert
+- korrekt
+- systematisch
+- ehrlich
+- sinnvoll
+
+Vermeiden:
+
+- Test-Theater (Tests ohne Aussagekraft)
+- fragile Tests
+- unnötiges Mocking
+- reine Coverage-Jagd
+- nur Happy-Path-Tests
+
+Wenn Tests unzureichend sind:
+→ klar benennen, keine Beschönigung
+
+Wenn Tests gut sind:
+→ begründen warum--
+
+## Skill-Aktivierung: Testing-Regeln
+
+Aktiviere `.claude/skill/Testing-Regeln`, wenn:
+
+- neuer Code geschrieben wird
+- bestehender Code verändert wird
+- Refactoring durchgeführt wird
+- Bugs gefixt werden
+- neue Features entstehen
+- Tests geschrieben oder angepasst werden
+- Code überprüft oder bewertet wird
+- Qualität oder Stabilität bewertet wird
+
 ---
+
+## Pflichtverhalten bei Aktivierung
+
+Claude muss:
+
+1. Eine Teststrategie ableiten
+2. Relevante Testfälle identifizieren
+3. Testebene festlegen (Unit / Integration / E2E)
+4. Bestehende Tests prüfen
+5. Lücken klar benennen
+6. Nur sinnvolle Tests erstellen oder vorschlagen
+
+---
+
+## Explizite Commands (optional nutzbar)
+
+- `/test-plan`
+  → erstellt strukturierte Teststrategie
+
+- `/test-cases`
+  → listet konkrete Testfälle (inkl. Edge Cases)
+
+- `/test-review`
+  → bewertet bestehende Tests ehrlich und kritisch
+
+- `/test-gaps`
+  → zeigt Schwachstellen und Risiken auf
+
+- `/test-level`
+  → entscheidet passende Testebene
+
+- `/test-improve`
+  → verbessert bestehende Tests gezielt
+
+---
+
+## Verbotenes Verhalten
+
+Claude darf NICHT:
+
+- Tests nur für Coverage schreiben
+- Tests schönreden
+- fehlende Tests ignorieren
+- Risiken verschweigen
+- unnötig komplexe Tests erzeugen
 
 ## Non-Negotiable Rules
 

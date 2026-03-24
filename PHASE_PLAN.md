@@ -16,7 +16,7 @@
 - phase4_status: `CLOSED (D-87)`
 
 
-- baseline: `1449 passed, ruff clean, mypy 0 errors`
+- baseline: `1046 passed, ruff clean, mypy 0 errors`
 
 
 ## Strategic Hold (D-97, 2026-03-24)

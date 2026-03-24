@@ -5,7 +5,7 @@
 - current_phase: `PHASE 5 (active)`
 - current_sprint: `PH5C_FILTER_BEFORE_LLM_BASELINE (closed D-97)`
 - next_required_step: `STRATEGIC_HOLD -- no new feature-work until alert-hit-rate is calculable on >=50 resolved directional alerts`
-- baseline: `1449 passed, ruff clean, mypy 0 errors`
+- baseline: `1046 passed, ruff clean, mypy 0 errors`
 - working_tree: `clean`
 - branch: `claude/p6-audit/architectural-invariants`
 

@@ -15,14 +15,14 @@
 - **Archived**: `companion-ml` branch preserves all extracted code.
 - **Scope**: 16 research modules, 4 CLI command modules, 5 agent tool modules, `mcp_server.py`, 2 API routers, 26+ test files.
 - **Keepers**: `signals.py`, `watchlists.py`, `briefs.py` in `app/core/`, re-exported via `app/research/__init__.py`.
-- Baseline: `1449 passed, ruff clean`.
+- Baseline: `1046 passed, ruff clean`.
 
 ---
 
 ## 2026-03-24 - PH5C executed; strategic hold active (D-97)
 
 - **Strategic hold imposed (D-97)**: No new companion-ML sprint, decision, or invariant until alert-precision + paper-trading metrics are clearly positive.
-- Baseline: `1449 passed, ruff clean`.
+- Baseline: `1046 passed, ruff clean`.
 
 ---
 

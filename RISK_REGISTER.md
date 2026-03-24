@@ -13,7 +13,7 @@
 - next_required_step: `STRATEGIC_HOLD -- no new sprint until alert-precision + paper-trading positive`
 
 
-- baseline: `1449 passed, ruff clean, mypy 0 errors`
+- baseline: `1046 passed, ruff clean, mypy 0 errors`
 
 
 ### PH4K Execution Results Note (2026-03-23)
