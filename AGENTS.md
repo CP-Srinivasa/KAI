@@ -1,11 +1,11 @@
-ï»¿# AGENTS.md -- KAI Platform
+# AGENTS.md -- KAI Platform
 
 ## Current State (2026-03-24)
 
 | Field | Value |
 |---|---|
 | current_phase | `PHASE 5 (active) -- Signal Reliability & Trust` |
-| current_sprint | `PH5C_FILTER_BEFORE_LLM_BASELINE (active D-95, par85)` |
+| current_sprint | `PH5C_FILTER_BEFORE_LLM_BASELINE (frozen §85)` |
 | next_required_step | `PH5C_EXECUTION` |
 | ph4a_status | `closed (D-53) -- immutable baseline anchor (S67)` |
 | ph4b_status | `closed (D-62) -- paired_count=69; root cause: keyword coverage blindness` |
@@ -19,21 +19,19 @@
 | ph4j_status | `closed -- tags enrichment: keyword-hit 4->7, zero-hit 1->4, assets-only 0->4` |
 | ph4k_status | `closed (D-84) -- utility review complete; S79 frozen anchor` |
 | v4_dual_write_status | `closed (D-86) -- N-4 closed` |
-| baseline | `1609 passed, ruff clean` |
+| baseline | `1619 passed, ruff clean, CI green` |
 | working_tree | `clean` |
 | cli_canonical_count | 53 |
 | provisional_cli_count | 0 |
 | phase3_status | `closed (2026-03-22) -- GO` |
 | phase4_status | `CLOSED (D-87, 2026-03-24) -- 11 sprints PH4A-PH4K + V-4; canonical closeout complete` |
-| ph5a_status | `closed (D-91) -- reliability baseline established` |
-| ph5b_status | `ready_to_close (D-94, Â§84) -- 19/19 EMPTY_MANUAL; root cause: placeholder content, not model failure` |
-| phase5_status | `active -- PH5B closed (D-94); PH5C active (D-95)` |
+| ph5a_status | `closed (D-89) -- reliability baseline: LLM error proxy 27.5%, zero-hit 37.7%, actionable 0%` |
+| ph5b_status | `closed (D-92) -- 19/19 EMPTY_MANUAL; root cause: placeholder content, not model failure` |
+| ph5c_status | `frozen (§85) -- FILTER_BEFORE_LLM_BASELINE; execution next` |
+| phase5_status | `active -- PH5A+PH5B closed; PH5C frozen, execution pending` |
 
----
-
-> **Verbindliches Betriebsdokument fuer alle Coding-Agenten.**
-> Claude Code -- OpenAI Codex -- Google Antigravity
-> Dieses Dokument lesen, bevor eine einzige Zeile Code angefasst wird.
-
-
-
+---
+
+> **Verbindliches Betriebsdokument fuer alle Coding-Agenten.**
+> Claude Code -- OpenAI Codex -- Google Antigravity
+> Dieses Dokument lesen, bevor eine einzige Zeile Code angefasst wird.

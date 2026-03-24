@@ -9,7 +9,9 @@
 - Guardrail: do not open broader model-quality work before PH5C is assessed.
 - Baseline: `1609 passed, ruff clean`.
 
----## 2026-03-24 - CI hardened (N-8); all 5 jobs green
+---
+
+## 2026-03-24 - CI hardened (N-8); all 5 jobs green
 
 - `codecov/codecov-action@v4 Ã¢Â†Â’ @v5` + `FORCE_JAVASCRIPT_ACTIONS_TO_NODE24=true` Ã¢Â€Â” Node 20 warnings eliminated.
 - `hypothesis>=6.0.0` + `pytest-mock>=3.14.0` added to `[dev]` extras (were installed locally but missing from CI).
@@ -325,4 +327,5 @@
 - Recommendation: FILTER_BEFORE_LLM (skip LLM for stub documents).
 - PH5C sprint opened: PH5C_FILTER_BEFORE_LLM_BASELINE (D-95, par85).
 - Artifacts: artifacts/ph5b/ph5b_cluster_analysis.json + artifacts/ph5b/ph5b_operator_summary.md
+
 
