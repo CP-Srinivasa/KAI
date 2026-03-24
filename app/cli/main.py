@@ -1,3 +1,4 @@
+import logging
 from pathlib import Path
 
 import typer
@@ -31,6 +32,8 @@ __all__ = [
     "get_registered_research_command_names",
     "get_research_command_inventory",
 ]
+
+logger = logging.getLogger(__name__)
 
 app = typer.Typer(name="trading-bot", help="AI Analyst Trading Bot CLI", no_args_is_help=True)
 console = Console()
@@ -150,6 +153,7 @@ def query_validate(
 def analyze_pending(
     limit: int = typer.Option(50, help="Max documents to analyze"),
     provider: str = typer.Option("openai", help="LLM Provider to use (openai, anthropic, gemini)"),
+    no_alerts: bool = typer.Option(False, "--no-alerts", help="Skip alert dispatch after analysis"),
 ) -> None:
     """Run the analysis pipeline on all pending (unanalyzed) documents."""
     import asyncio
@@ -257,6 +261,29 @@ def analyze_pending(
             f"[bold green]Analysis complete![/bold green] "
             f"{success_count} success, {error_count} failed."
         )
+
+        # Phase 4: Alert dispatch — outside DB session, fail-open
+        if not no_alerts and success_count > 0:
+            from app.alerts.service import AlertService
+
+            alert_service = AlertService.from_settings(settings)
+            alert_count = 0
+            for res in results:
+                if not res.success or res.analysis_result is None:
+                    continue
+                try:
+                    deliveries = await alert_service.process_document(
+                        res.document,
+                        res.analysis_result,
+                        spam_probability=res.document.spam_probability or 0.0,
+                    )
+                    if deliveries:
+                        alert_count += 1
+                except Exception as exc:
+                    logger.warning("Alert dispatch failed for doc %s: %s", res.document.id, exc)
+
+            if alert_count:
+                console.print(f"[cyan]Alerts dispatched: {alert_count}[/cyan]")
 
     asyncio.run(run())
 

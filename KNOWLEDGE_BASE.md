@@ -1,19 +1,22 @@
 # KNOWLEDGE_BASE.md - KAI Canonical Knowledge Index
 
-> Stand: 2026-03-24 | PHASE 5 (active) | PH5A CLOSED -- reliability baseline complete | baseline: 1609 passed, ruff clean
+> Stand: 2026-03-24 | PHASE 5 (active) -- Signal Reliability & Trust | PH5A results-review mode | next_required_step: PH5A_RESULTS_REVIEW_AND_CLOSE | baseline: 1609 passed, ruff clean
 
 ## Phase Status
 
 - current_phase: `PHASE 5 (active) -- Signal Reliability & Trust`
-- current_sprint: `PH5A -- CLOSED`
-- next_required_step: `PH5B definition`
+- current_sprint: `PH5A_BASELINE_RELIABILITY_AND_SIGNAL_TRUST (results-review mode)`
+- next_required_step: `PH5A_RESULTS_REVIEW_AND_CLOSE`
 - phase4_status: `CLOSED (D-87)`
+- phase5_guardrail: do not open PH5B before PH5A review closes
 
 ## Newly Confirmed Facts
 
 - V-4 Dual-Write is closed.
 - N-4 is closed.
 - Working tree is clean.
+- PH5A execution has already completed.
+- Status report is in-repo (`status_report.md`).
 - Current technical baseline is `1609 passed` and `ruff clean`.
 - Phase 4 has completed a full PH4A-PH4K arc.
 - Phase 4 canonical closeout is accepted.
@@ -21,17 +24,16 @@
 
 ## Current Assumptions and Decisions
 
-- Assumption: Phase 5 should start narrowly.
-- Assumption: reliability and signal trust are the next highest-leverage product levers.
-- Decision: treat Phase 4 as canonically closed.
-- Decision: supersede the conservative closeout-gate report.
-- Decision: open Phase 5 definition next with PH5A baseline contract freeze.
+- Assumption: PH5A artifacts are sufficient for a meaningful review.
+- Assumption: the next useful step is review, not another execution pass.
+- Decision: treat PH5A as execution-complete.
+- Decision: move PH5A into results-review mode.
+- Decision: do not open PH5B before PH5A review closes.
+## Review Actions
 
-## Closeout Actions
-
-- Open Phase 5 definition.
-- Define `PH5A_BASELINE_RELIABILITY_AND_SIGNAL_TRUST`.
-- Freeze PH5A contract.
+- Review PH5A artifacts.
+- Summarize top reliability and signal-trust gaps.
+- Then define PH5B.
 ## PH4H Policy Anchor
 
 - Policy choice: Option B
@@ -61,3 +63,5 @@
 
 - `_fallback_market_scope()` enrichment is closed and frozen (`section 77`, `D-78`).
 - Baseline snapshot for this gate: `1609 passed, ruff clean`.
+
+
