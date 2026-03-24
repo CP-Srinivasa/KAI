@@ -105,12 +105,23 @@
 - Next required step is `PH5A_RESULTS_REVIEW_AND_CLOSE`.
 - PH5B must not be opened before PH5A review is formally closed.
 
-### D-92 (2026-03-24): PH5A review complete; PH5B opened — Low Signal Cluster Analysis
+### D-92 (2026-03-24): PH5A review complete; PH5B opened ï¿½ Low Signal Cluster Analysis
 - PH5A results review accepted: reliability baseline established.
 - Key finding: LLM error proxy rate 27.5% (19/69 docs) is the main Phase-5 gap.
-- Signature: `priority=1 + relevance=0 + scope=unknown` — not a parse error but a quality gap.
+- Signature: `priority=1 + relevance=0 + scope=unknown` ï¿½ not a parse error but a quality gap.
 - PH5B sprint defined: `PH5B_LOW_SIGNAL_CLUSTER_ANALYSIS`.
 - Objective: cluster and classify the 19 LLM-error-proxy documents; identify root causes.
-- Contract: §84 added to docs/contracts.md.
+- Contract: ï¿½84 added to docs/contracts.md.
 - Guardrail: PH5C must not be opened before PH5B review is closed.
 - baseline: `1615 passed, ruff clean, mypy 0 errors`
+
+### D-93 (2026-03-24): PH5B execution complete -- root cause identified
+- PH5B cluster analysis script executed on 69-doc Tier3 dataset.
+- 19 proxy docs analysed; single dominant cluster: EMPTY_MANUAL (19/19, 100%).
+- Root cause: all 19 proxy docs are source=Manual with content="Comments" (8 bytes).
+- LLM response is correct -- no content to analyse; low priority/relevance/scope is correct output.
+- This is NOT a model failure; it is a data quality / ingestion gap.
+- Recommendation (high priority): FILTER_BEFORE_LLM -- skip LLM for empty Manual docs.
+- 11 additional non-proxy empty docs identified (content <=20 bytes, mixed priority scores).
+- Next step: PH5B results review -> close -> define PH5C (FILTER_BEFORE_LLM implementation).
+- Artifacts: artifacts/ph5b/ph5b_cluster_analysis.json, artifacts/ph5b/ph5b_operator_summary.md
