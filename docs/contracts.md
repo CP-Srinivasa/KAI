@@ -4,10 +4,10 @@
 
 | Field | Value |
 |---|---|
-| current_phase | `PHASE 4` |
-| current_sprint | `PHASE4_CLOSEOUT_AND_NEXT_PHASE_GATE` |
-| next_required_step | `PHASE4_FINAL_CANONICAL_CLOSEOUT` |
-| baseline | `1609 passed, ruff clean` |
+| current_phase | `PHASE 5 (active) -- Signal Reliability & Trust` |
+| current_sprint | `PH5A_BASELINE_RELIABILITY_AND_SIGNAL_TRUST (active D-89, §83)` |
+| next_required_step | `PH5A_EXECUTION` |
+| baseline | `1604 passed, ruff clean, mypy 0 errors` |
 | active_contracts | §83 (PH5A, active) · §82 (Phase 4 Closeout, frozen anchor) · §81–§67 |
 | cli_canonical_count | 53 (frozen §65) |
 
@@ -7512,3 +7512,62 @@ Resolve final governance conflict and close Phase 4 canonically after completing
 - [ ] Phase 5 definition opened only after closeout sync is complete
 
 §82 status: **active gate (final canonical closeout sync pending)**
+
+---
+
+## §83 — PH5A_BASELINE_RELIABILITY_AND_SIGNAL_TRUST
+
+**Sprint**: PH5A
+**Phase**: 5 (Signal Reliability & Trust)
+**Opened**: 2026-03-24
+**Decision**: D-89
+**Status**: active
+
+### Purpose
+
+Establish a quantitative reliability and signal-trust baseline for the KAI pipeline as the first diagnostic sprint of Phase 5.
+
+Phase 4 improved signal enrichment (tags, market_scope, relevance). Phase 5 asks: how reliably does the end-to-end pipeline produce trustworthy signals?
+
+Diagnostic-only sprint — no code changes to production paths. Measure, record, freeze.
+
+### Scope
+
+Compute and record the following baseline metrics from the existing `69`-document paired set:
+
+1. **Fallback rate** — fraction of documents taking the rule-only (fallback) path vs LLM path
+2. **LLM error rate** — fraction of LLM calls that resulted in error/fallback
+3. **Provider distribution** — which providers delivered results and in what proportion
+4. **Priority distribution** — histogram of final `tier3_priority` scores (0–10)
+5. **Actionable rate** — fraction of documents with `actionable=True`
+6. **Keyword coverage** — fraction of documents with at least one keyword match
+7. **Tag fill rate** — fraction of documents with at least one tag
+
+### Deliverables
+
+- `artifacts/ph5a_reliability_baseline.json` — machine-readable metrics
+- `artifacts/ph5a_operator_summary.md` — human-readable summary
+
+### Acceptance Criteria
+
+- [ ] PH5A-1 Write diagnostic script to measure reliability metrics
+- [ ] PH5A-2 Compute fallback rate, LLM error rate, provider distribution
+- [ ] PH5A-3 Compute priority distribution, actionable rate
+- [ ] PH5A-4 Compute keyword coverage and tag fill rate
+- [ ] PH5A-5 Generate `artifacts/ph5a_reliability_baseline.json`
+- [ ] PH5A-6 Generate `artifacts/ph5a_operator_summary.md`
+- [ ] PH5A-7 Review results and close sprint
+
+### Non-Goals
+
+- No production code changes
+- No new enrichment interventions
+- No LLM provider changes
+- No scoring formula changes
+
+### Constraints
+
+- I-13 permanent: `actionable` remains LLM-only; no fallback relaxation
+- Diagnostic sprint: measure-only, no side-effects on production paths
+
+§83 status: **active (D-89, 2026-03-24)**
