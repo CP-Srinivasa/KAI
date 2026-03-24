@@ -465,10 +465,10 @@
 - Remaining gate: collect 50+ annotated alerts before feature-work resumes.
 - Status: CLOSED.
 
-### D-100 (2026-03-24): Keine neuen Sprint-Kontrakt-Dokumente
-- Entscheidungen werden als 3-Zeilen-Eintrag in DECISION_LOG oder als Code-Kommentar dokumentiert.
-- docs/contracts.md und eigenständige Kontrakt-Docs werden nicht mehr angelegt.
+### D-101 (2026-03-24): Priority MAE and LLM-Error-Proxy accepted as production metrics
+- Priority MAE=3.13 and LLM-Error-Proxy=27.5% are accepted as known limitations.
+- These are production metrics improved through operation and real data, not further internal sprints.
 
-### D-101 (2026-03-24): Priority MAE=3.13 und LLM-Error-Proxy=27.5% als bekannte Limitation akzeptiert
-- Diese Metriken werden als Produktions-Baseline behandelt und durch Betrieb + echte Daten verbessert.
-- Keine weiteren internen Diagnose-Sprints zu diesen Werten.
+### D-102 (2026-03-24): app/persona/ und messaging avatar/speech Stubs entfernt
+- Voice und Avatar sind kein Trading-Signal-Produkt; 517 LOC gelöscht.
+- Keine Extraktion in Branch — endgültig entfernt.
