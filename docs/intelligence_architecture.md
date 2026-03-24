@@ -1,31 +1,22 @@
 # Intelligence Architecture
 
-## Current State (2026-03-23)
+## Current State (2026-03-24)
 
 | Field | Value |
 |---|---|
-| current_phase | `PHASE 4 (active)` |
-| last_closed_sprint | `PH4K_TAG_SIGNAL_UTILITY_REVIEW (closed D-84)` |
-| next_required_step | `PH4L definition or Phase 4 closeout` |
-| ph4e_status | `closed (D-67) — scoring calibration audit complete; §73 frozen anchor` |
-| ph4f_status | `closed — frozen intervention anchor; §74 frozen anchor` |
-| ph4g_status | `closed — relevance floor applied; actionable reverted (I-13); §75 frozen anchor` |
-| ph4h_status | `closed (D-75) — Option B: I-13 permanent; actionable LLM-only; §76 frozen anchor` |
-| ph4i_status | `closed (D-78) — market_scope enrichment; §77 frozen anchor` |
-| ph4j_status | `closed (D-81) — tags enrichment verified; §78 frozen anchor` |
-| baseline | `761 passed, ruff clean` |
-| ph4b_status | `closed (D-62) — sections 68 and 69 frozen anchors` |
-| ph4c_status | `closed — section 70 frozen audit anchor` |
-| ph4d_status | `closed — section 71 frozen anchor` |
-| ph4e_contract | `docs/contracts.md §73 (closed D-67)` |
-| ph4f_contract | `docs/contracts.md §74 (closed)` |
-| ph4g_contract | `docs/contracts.md §75 (closed; frozen anchor)` |
-| ph4h_contract | `docs/contracts.md §76 (closed D-75 — frozen anchor)` |
-| ph4i_contract | `docs/contracts.md §77 (closed D-78)` |
-| ph4j_contract | `docs/contracts.md §78 (closed D-81 — frozen anchor)` |
+| current_phase | `PHASE 6 (active) — V-4 Phase 3` |
+| current_sprint | `SPRINT_45_V4_DB_PRIMARY_PORTFOLIO_SNAPSHOT (active D-85, §81)` |
+| last_closed_sprint | `PH4K_TAG_SIGNAL_UTILITY_REVIEW (closed D-84, §79)` |
+| next_required_step | `SPRINT_45_CLOSE` |
+| baseline | `1609 passed, ruff clean, mypy 0 errors` |
 | ph4k_status | `closed (D-84) — utility review complete; §79 frozen anchor` |
-| ph4k_contract | `docs/contracts.md §79 (closed D-84 — frozen anchor)` |
-| architecture_status | three-tier stack unchanged; PH4A–PH4K closed/frozen anchors (§67–§79) |
+| ph4j_status | `closed (D-81) — tags enrichment verified; §78 frozen anchor` |
+| ph4i_status | `closed (D-78) — market_scope enrichment; §77 frozen anchor` |
+| ph4h_status | `closed (D-75) — Option B: I-13 permanent; actionable LLM-only; §76 frozen anchor` |
+| ph4g_status | `closed — relevance floor applied; actionable reverted (I-13); §75 frozen anchor` |
+| ph4f_status | `closed — frozen intervention anchor; §74 frozen anchor` |
+| ph4e_status | `closed (D-67) — scoring calibration audit complete; §73 frozen anchor` |
+| architecture_status | three-tier stack unchanged; PH4A–PH4K closed/frozen anchors (§67–§79); Sprint 45 active (§81) |
 
 ---
 
@@ -137,6 +128,18 @@
   - mean_tier3_priority WITH overlap: `5.4444` vs. WITHOUT: `2.3333` (delta: +3.1)
 - No code changes (diagnostic-only sprint).
 - Results review complete; sprint formally closed.
+
+## Sprint 45 — V-4 Phase 3: DB-primary Portfolio Snapshot (§81 active)
+
+- Sprint: `SPRINT_45_V4_DB_PRIMARY_PORTFOLIO_SNAPSHOT`. **Active (2026-03-24, D-85).**
+- Contract: `docs/contracts.md §81`.
+- Scope: Complete V-4 — session-factory refactor, PortfolioStateRecord write on fill, DB-primary read.
+- Key invariants:
+  - `TradingLoop` session-per-cycle (`async with session_factory()` per `_write_db()` call)
+  - `PortfolioStateRecord` written after every `fill_simulated=True` cycle
+  - `build_portfolio_snapshot()` queries latest `PortfolioStateRecord` (DB-primary)
+  - JSONL fallback when no DB record; DB errors non-fatal in both write and read paths
+- Test baseline: 1609 passed, ruff clean, mypy 0 errors (189 files)
 
 ## Design Principle
 

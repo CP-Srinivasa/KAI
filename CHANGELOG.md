@@ -1,5 +1,16 @@
 # CHANGELOG.md
 
+## 2026-03-24 - Governance update: V-4 dual-write / DB-primary closeout prioritized before PH4L (D-85)
+
+- Current phase remains active, with explicit technical stabilization needed before new Phase-4 scope.
+- Recommended next sprint set to `V4_DUAL_WRITE_AND_DB_PRIMARY_CLOSEOUT`.
+- Last explicitly referenced clean governance anchor recorded as commit `c498ca4` (PH4K closeout).
+- Confirmed focus area: `app/execution/portfolio_read.py`, `app/orchestrator/trading_loop.py`, and related tests.
+- Compact status reference captured: `1590 passed`, `5 failed (DB-pre-existing)`, `ruff clean`.
+- Next action sequence locked: close V-4 dual-write/DB-primary, reconfirm green baseline, then choose PH4L definition or full Phase-4 closeout.
+
+---
+
 ## 2026-03-23 - PH4K execution complete — utility artifacts confirm tag signal value (D-81)
 
 - PH4K_TAG_SIGNAL_UTILITY_REVIEW execution complete; moving to results review.
@@ -241,3 +252,11 @@
 - PH4F (`RULE_INPUT_COMPLETENESS_AUDIT`) opened as diagnostic-only sprint (D-68).
 
 
+
+## 2026-03-24 - V-4 Dual-Write + DB-primary closeout (D-86)
+
+- `app/orchestrator/trading_loop.py`: `run_cycle()` writes `TradingCycleRecord` + `PortfolioStateRecord` to DB via `session_factory`; DB error is non-fatal.
+- `app/execution/portfolio_read.py`: `build_portfolio_snapshot()` queries `PortfolioStateRecord` as primary source when `session_factory` provided; falls back to JSONL on no-record or DB error.
+- 6 new tests in `tests/unit/test_trading_loop_dual_write.py` (dual-write path).
+- 8 new tests in `tests/unit/test_portfolio_snapshot_db_primary.py` (DB-primary path).
+- RF-4 promoted to `phase-3-complete`. Baseline: 1604 passed, ruff clean, mypy 0 errors.

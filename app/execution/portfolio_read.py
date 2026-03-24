@@ -8,11 +8,11 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.execution.models import PaperPosition
 from app.market_data.service import get_market_data_snapshot
-from app.storage.models.trading import TradingCycleRecord
+from app.storage.models.trading import PortfolioStateRecord
 
 logger = logging.getLogger(__name__)
 
@@ -325,44 +325,80 @@ def _build_exposure_summary(positions: tuple[PositionSummary, ...]) -> ExposureS
     )
 
 
-async def _query_db_cycles(db_session: AsyncSession) -> list[TradingCycleRecord]:
-    """Query all TradingCycleRecords ordered by created_at ascending. Returns [] on error."""
+async def _query_db_latest_portfolio_state(
+    session: AsyncSession,
+) -> PortfolioStateRecord | None:
+    """Query the most recent PortfolioStateRecord. Returns None on error or empty table."""
     try:
-        result = await db_session.execute(
-            select(TradingCycleRecord).order_by(TradingCycleRecord.created_at.asc())
+        result = await session.execute(
+            select(PortfolioStateRecord)
+            .order_by(PortfolioStateRecord.created_at.desc())
+            .limit(1)
         )
-        return list(result.scalars().all())
+        return result.scalars().first()
     except Exception as exc:  # noqa: BLE001
-        logger.warning("[PORTFOLIO] DB query failed, falling back to JSONL: %s", exc)
-        return []
+        logger.warning("[PORTFOLIO] DB state query failed, falling back to JSONL: %s", exc)
+        return None
 
 
-def _build_snapshot_from_db(
-    records: list[TradingCycleRecord],
+def _build_snapshot_from_portfolio_state(
+    state: PortfolioStateRecord,
     generated_at: str,
 ) -> PortfolioSnapshot:
-    """Build a minimal PortfolioSnapshot from DB TradingCycleRecords (positions not available).
+    """Build a PortfolioSnapshot from a PortfolioStateRecord (DB-primary path).
 
-    TradingCycleRecord contains cycle-level data (signal, fill flags, notes) but does NOT
-    store full position state. The snapshot therefore reports cycle counts and last-cycle
-    metadata only, with zero open positions. For position-level data, use the JSONL path.
+    The positions_json field stores the full portfolio.to_dict() snapshot written
+    at fill-simulation time, enabling complete position reconstruction without JSONL.
     """
-    completed = [r for r in records if r.status == "completed" and r.fill_simulated]
+    positions_data: dict[str, object] = {}
+    cash_usd = 0.0
+    realized_pnl_usd = 0.0
 
-    source_note = f"db_cycle_records:{len(records)}_total:{len(completed)}_completed"
-    empty_exposure = _build_exposure_summary(())
+    raw = state.positions_json or {}
+    if isinstance(raw, dict):
+        positions_data = raw.get("positions", {})  # type: ignore[assignment]
+        cash_usd = float(raw.get("cash", 0.0))  # type: ignore[arg-type]
+
+    position_summaries: list[PositionSummary] = []
+    for sym, pos_raw in positions_data.items():
+        if not isinstance(pos_raw, dict):
+            continue
+        position_summaries.append(
+            PositionSummary(
+                symbol=sym,
+                quantity=float(pos_raw.get("quantity", 0.0)),
+                avg_entry_price=float(pos_raw.get("avg_entry_price", 0.0)),
+                stop_loss=pos_raw.get("stop_loss"),
+                take_profit=pos_raw.get("take_profit"),
+                market_price=None,
+                market_value_usd=None,
+                unrealized_pnl_usd=None,
+                provider="db_snapshot",
+                market_data_retrieved_at_utc=None,
+                market_data_source_timestamp_utc=None,
+                market_data_is_stale=True,
+                market_data_freshness_seconds=None,
+                market_data_available=False,
+                market_data_error="market_price_not_available_from_db_snapshot",
+            )
+        )
+
+    exposure = _build_exposure_summary(tuple(position_summaries))
+    total_market_value = sum(
+        p.quantity * p.avg_entry_price for p in position_summaries
+    )
 
     return PortfolioSnapshot(
         generated_at_utc=generated_at,
-        source="db_trading_cycles",
-        audit_path=source_note,
-        cash_usd=0.0,
-        realized_pnl_usd=0.0,
-        total_market_value_usd=0.0,
-        total_equity_usd=0.0,
-        position_count=0,
-        positions=(),
-        exposure_summary=empty_exposure,
+        source="db_portfolio_state",
+        audit_path=f"db_portfolio_states:cycle_id={state.cycle_id}",
+        cash_usd=cash_usd,
+        realized_pnl_usd=realized_pnl_usd,
+        total_market_value_usd=round(total_market_value, 8),
+        total_equity_usd=round(cash_usd + total_market_value, 8),
+        position_count=len(position_summaries),
+        positions=tuple(position_summaries),
+        exposure_summary=exposure,
         available=True,
         error=None,
         execution_enabled=False,
@@ -376,23 +412,28 @@ async def build_portfolio_snapshot(
     provider: str = "coingecko",
     freshness_threshold_seconds: float = 120.0,
     timeout_seconds: int = 10,
-    db_session: AsyncSession | None = None,
+    session_factory: async_sessionmaker[AsyncSession] | None = None,
 ) -> PortfolioSnapshot:
     """Build canonical read-only portfolio snapshot from paper execution audit + market data.
 
-    If db_session is provided and the DB contains TradingCycleRecords, the snapshot
-    is sourced from the DB (DB-first path). Otherwise falls back to JSONL replay.
+    If session_factory is provided and a PortfolioStateRecord exists in the DB, the snapshot
+    is sourced from the DB (DB-primary path). Otherwise falls back to JSONL replay.
 
-    The DB path returns cycle-level metadata only (no open positions); the JSONL path
-    returns the full position state including mark-to-market prices.
+    The DB path reconstructs full position state from the most recent PortfolioStateRecord
+    written by TradingLoop._write_db() after fill_simulated cycles. Market prices are not
+    available from the DB snapshot (no live price fetching on read).
     """
     generated_at = datetime.now(UTC).isoformat()
 
-    # DB-first: if session provided, try DB
-    if db_session is not None:
-        db_records = await _query_db_cycles(db_session)
-        if db_records:
-            return _build_snapshot_from_db(db_records, generated_at)
+    # DB-primary: open a scoped session, query latest portfolio state
+    if session_factory is not None:
+        try:
+            async with session_factory() as session:
+                state = await _query_db_latest_portfolio_state(session)
+            if state is not None:
+                return _build_snapshot_from_portfolio_state(state, generated_at)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("[PORTFOLIO] DB-primary path failed, falling back to JSONL: %s", exc)
         # DB empty or query failed → fall through to JSONL
 
     resolved_path = Path(audit_path).resolve()

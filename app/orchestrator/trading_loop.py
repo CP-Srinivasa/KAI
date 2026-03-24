@@ -6,7 +6,7 @@ import logging
 from datetime import UTC, datetime
 from pathlib import Path
 
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.domain.document import AnalysisResult
 from app.core.enums import ExecutionMode, SentimentLabel
@@ -27,7 +27,7 @@ from app.risk.engine import RiskEngine
 from app.risk.models import RiskLimits
 from app.signals.generator import SignalGenerator
 from app.signals.models import SignalDirection
-from app.storage.models.trading import TradingCycleRecord
+from app.storage.models.trading import PortfolioStateRecord, TradingCycleRecord
 
 logger = logging.getLogger(__name__)
 
@@ -55,7 +55,7 @@ class TradingLoop:
         market_data_adapter: BaseMarketDataAdapter,
         signal_generator: SignalGenerator,
         audit_log_path: str | None = None,
-        db_session: AsyncSession | None = None,
+        session_factory: async_sessionmaker[AsyncSession] | None = None,
     ) -> None:
         self._risk = risk_engine
         self._exec = execution_engine
@@ -63,7 +63,7 @@ class TradingLoop:
         self._signals = signal_generator
         self._audit_path = Path(audit_log_path or _AUDIT_LOG)
         self._audit_path.parent.mkdir(parents=True, exist_ok=True)
-        self._db_session = db_session
+        self._session_factory = session_factory
 
     @property
     def portfolio(self) -> PaperPortfolio:
@@ -316,32 +316,52 @@ class TradingLoop:
             logger.error("[LOOP] Audit write failed: %s", exc)
 
     async def _write_db(self, cycle: LoopCycle) -> None:
-        """Dual-write cycle to DB. Non-fatal: DB errors must never stop the loop."""
-        if self._db_session is None:
+        """Dual-write cycle to DB (session-per-cycle). Non-fatal: DB errors never stop the loop."""
+        if self._session_factory is None:
             return
         try:
-            db_record = TradingCycleRecord(
-                cycle_id=cycle.cycle_id,
-                symbol=cycle.symbol,
-                mode="paper",
-                provider="coingecko",
-                analysis_profile="conservative",
-                status=cycle.status.value,
-                market_data_fetched=cycle.market_data_fetched,
-                signal_generated=cycle.signal_generated,
-                risk_approved=cycle.risk_approved,
-                order_created=cycle.order_created,
-                fill_simulated=cycle.fill_simulated,
-                decision_id=cycle.decision_id,
-                risk_check_id=cycle.risk_check_id,
-                order_id=cycle.order_id,
-                started_at=cycle.started_at,
-                completed_at=cycle.completed_at,
-                notes=list(cycle.notes),
-                created_at=datetime.now(UTC),
-            )
-            self._db_session.add(db_record)
-            await self._db_session.flush()
+            async with self._session_factory() as session:
+                db_record = TradingCycleRecord(
+                    cycle_id=cycle.cycle_id,
+                    symbol=cycle.symbol,
+                    mode="paper",
+                    provider="coingecko",
+                    analysis_profile="conservative",
+                    status=cycle.status.value,
+                    market_data_fetched=cycle.market_data_fetched,
+                    signal_generated=cycle.signal_generated,
+                    risk_approved=cycle.risk_approved,
+                    order_created=cycle.order_created,
+                    fill_simulated=cycle.fill_simulated,
+                    decision_id=cycle.decision_id,
+                    risk_check_id=cycle.risk_check_id,
+                    order_id=cycle.order_id,
+                    started_at=cycle.started_at,
+                    completed_at=cycle.completed_at,
+                    notes=list(cycle.notes),
+                    created_at=datetime.now(UTC),
+                )
+                session.add(db_record)
+
+                if cycle.fill_simulated:
+                    portfolio = self._exec.portfolio
+                    exposure = sum(
+                        p.quantity * p.avg_entry_price
+                        for p in portfolio.positions.values()
+                    )
+                    state_record = PortfolioStateRecord(
+                        cycle_id=cycle.cycle_id,
+                        symbol=cycle.symbol,
+                        equity_usd=portfolio.cash + exposure,
+                        position_count=len(portfolio.positions),
+                        gross_exposure_usd=exposure,
+                        positions_json=portfolio.to_dict(),
+                        snapshot_mode="paper",
+                        created_at=datetime.now(UTC),
+                    )
+                    session.add(state_record)
+
+                await session.commit()
         except Exception as exc:  # noqa: BLE001
             logger.error("[LOOP] DB dual-write failed (non-fatal): %s", exc)
 

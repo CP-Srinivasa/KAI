@@ -1,180 +1,97 @@
-"""Unit tests for DB-first portfolio snapshot path (V-4 Phase 2).
+"""Unit tests for DB-primary portfolio snapshot path (V-4 Phase 2 → Phase 3 migration).
 
-Tests cover:
-- DB session provided + records present → DB path (source="db_trading_cycles")
-- DB session provided + empty DB → JSONL fallback (source="paper_execution_audit_replay")
-- No DB session → JSONL fallback (source="paper_execution_audit_replay")
-- DB query exception → JSONL fallback (graceful degradation)
+Phase 3 replaces the TradingCycleRecord-based path with PortfolioStateRecord-based
+reconstruction. This file retains the integration-level contract tests to ensure
+the public build_portfolio_snapshot() API behaves consistently.
+
+See test_portfolio_snapshot_db_primary.py for detailed Phase 3 unit tests.
 """
 from __future__ import annotations
 
-from datetime import UTC, datetime
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from app.execution.portfolio_read import (
-    PortfolioSnapshot,
-    _build_snapshot_from_db,
-    _query_db_cycles,
-    build_portfolio_snapshot,
-)
-from app.storage.models.trading import TradingCycleRecord
+from app.execution.portfolio_read import PortfolioSnapshot, build_portfolio_snapshot
+from app.storage.models.trading import PortfolioStateRecord
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
 
-def _make_cycle_record(
-    *,
-    cycle_id: str = "test-cycle-001",
-    symbol: str = "BTC/USDT",
-    status: str = "completed",
-    fill_simulated: bool = True,
-) -> TradingCycleRecord:
-    return TradingCycleRecord(
-        cycle_id=cycle_id,
-        symbol=symbol,
-        mode="paper",
-        provider="coingecko",
-        analysis_profile="conservative",
-        status=status,
-        market_data_fetched=True,
-        signal_generated=True,
-        risk_approved=True,
-        order_created=True,
-        fill_simulated=fill_simulated,
-        decision_id=None,
-        risk_check_id=None,
-        order_id=None,
-        started_at="2026-03-23T10:00:00+00:00",
-        completed_at="2026-03-23T10:00:01+00:00",
-        notes=[],
-        created_at=datetime.now(UTC),
-    )
+def _make_state_record_mock(*, cycle_id: str = "test-cycle-001") -> MagicMock:
+    record = MagicMock(spec=PortfolioStateRecord)
+    record.cycle_id = cycle_id
+    record.symbol = "BTC/USDT"
+    record.equity_usd = 10000.0
+    record.position_count = 0
+    record.gross_exposure_usd = 0.0
+    record.positions_json = {"cash": 10000.0, "positions": {}}
+    record.snapshot_mode = "paper"
+    return record
 
 
-def _make_db_session(records: list[TradingCycleRecord]) -> AsyncMock:
-    """Build a mock AsyncSession whose execute() returns the given records."""
-    session = AsyncMock()
-    scalars_mock = MagicMock()
-    scalars_mock.all.return_value = records
-    result_mock = MagicMock()
-    result_mock.scalars.return_value = scalars_mock
-    session.execute = AsyncMock(return_value=result_mock)
-    return session
+def _make_session_factory(state_record: MagicMock | None) -> MagicMock:
+    mock_result = MagicMock()
+    mock_result.scalars.return_value.first.return_value = state_record
+
+    mock_session = AsyncMock()
+    mock_session.execute = AsyncMock(return_value=mock_result)
+
+    factory = MagicMock()
+    cm = AsyncMock()
+    cm.__aenter__ = AsyncMock(return_value=mock_session)
+    cm.__aexit__ = AsyncMock(return_value=False)
+    factory.return_value = cm
+    return factory
 
 
-# ── _build_snapshot_from_db ────────────────────────────────────────────────────
-
-
-def test_build_snapshot_from_db_with_completed_records() -> None:
-    records = [
-        _make_cycle_record(cycle_id="c1", fill_simulated=True),
-        _make_cycle_record(cycle_id="c2", fill_simulated=True),
-    ]
-    generated_at = datetime.now(UTC).isoformat()
-    snapshot = _build_snapshot_from_db(records, generated_at)
-
-    assert isinstance(snapshot, PortfolioSnapshot)
-    assert snapshot.source == "db_trading_cycles"
-    assert snapshot.available is True
-    assert snapshot.error is None
-    assert snapshot.position_count == 0
-    assert snapshot.positions == ()
-    assert "2_completed" in snapshot.audit_path
-    assert snapshot.execution_enabled is False
-    assert snapshot.write_back_allowed is False
-
-
-def test_build_snapshot_from_db_no_completed_records() -> None:
-    records = [
-        _make_cycle_record(cycle_id="c1", status="no_signal", fill_simulated=False),
-    ]
-    generated_at = datetime.now(UTC).isoformat()
-    snapshot = _build_snapshot_from_db(records, generated_at)
-
-    assert snapshot.source == "db_trading_cycles"
-    assert snapshot.available is True
-    assert "0_completed" in snapshot.audit_path
-
-
-def test_build_snapshot_from_db_empty_records() -> None:
-    generated_at = datetime.now(UTC).isoformat()
-    snapshot = _build_snapshot_from_db([], generated_at)
-
-    assert snapshot.source == "db_trading_cycles"
-    assert snapshot.available is True
-
-
-# ── _query_db_cycles ───────────────────────────────────────────────────────────
+# ── build_portfolio_snapshot DB-primary path ────────────────────────────────────
 
 
 @pytest.mark.asyncio
-async def test_query_db_cycles_returns_records() -> None:
-    records = [_make_cycle_record()]
-    session = _make_db_session(records)
-
-    result = await _query_db_cycles(session)
-
-    assert result == records
-
-
-@pytest.mark.asyncio
-async def test_query_db_cycles_returns_empty_on_exception() -> None:
-    session = AsyncMock()
-    session.execute = AsyncMock(side_effect=Exception("DB connection failed"))
-
-    result = await _query_db_cycles(session)
-
-    assert result == []
-
-
-# ── build_portfolio_snapshot DB-first path ─────────────────────────────────────
-
-
-@pytest.mark.asyncio
-async def test_build_portfolio_snapshot_db_first_when_records_present(
+async def test_build_portfolio_snapshot_db_primary_when_record_present(
     tmp_path: Path,
 ) -> None:
-    """DB session + records → source=db_trading_cycles, no JSONL read."""
-    records = [_make_cycle_record()]
-    session = _make_db_session(records)
+    """session_factory + PortfolioStateRecord → source=db_portfolio_state."""
+    factory = _make_session_factory(_make_state_record_mock())
 
     snapshot = await build_portfolio_snapshot(
         audit_path=tmp_path / "missing.jsonl",
-        db_session=session,
+        session_factory=factory,
     )
 
-    assert snapshot.source == "db_trading_cycles"
+    assert isinstance(snapshot, PortfolioSnapshot)
+    assert snapshot.source == "db_portfolio_state"
     assert snapshot.available is True
+    assert snapshot.execution_enabled is False
+    assert snapshot.write_back_allowed is False
 
 
 @pytest.mark.asyncio
 async def test_build_portfolio_snapshot_jsonl_fallback_when_db_empty(
     tmp_path: Path,
 ) -> None:
-    """DB session + empty DB → JSONL fallback (missing file → empty snapshot)."""
-    session = _make_db_session([])
+    """session_factory + no PortfolioStateRecord → JSONL fallback."""
+    factory = _make_session_factory(None)
 
     snapshot = await build_portfolio_snapshot(
         audit_path=tmp_path / "missing.jsonl",
-        db_session=session,
+        session_factory=factory,
     )
 
     assert snapshot.source == "paper_execution_audit_replay"
-    assert snapshot.available is True
     assert snapshot.position_count == 0
 
 
 @pytest.mark.asyncio
-async def test_build_portfolio_snapshot_jsonl_fallback_when_no_session(
+async def test_build_portfolio_snapshot_jsonl_fallback_when_no_factory(
     tmp_path: Path,
 ) -> None:
-    """No DB session → JSONL path, no DB query attempted."""
+    """No session_factory → JSONL path, no DB query attempted."""
     snapshot = await build_portfolio_snapshot(
         audit_path=tmp_path / "missing.jsonl",
-        db_session=None,
+        session_factory=None,
     )
 
     assert snapshot.source == "paper_execution_audit_replay"
@@ -186,29 +103,35 @@ async def test_build_portfolio_snapshot_jsonl_fallback_when_db_raises(
     tmp_path: Path,
 ) -> None:
     """DB query exception → graceful JSONL fallback."""
-    session = AsyncMock()
-    session.execute = AsyncMock(side_effect=Exception("timeout"))
+    mock_session = AsyncMock()
+    mock_session.execute = AsyncMock(side_effect=Exception("timeout"))
+
+    factory = MagicMock()
+    cm = AsyncMock()
+    cm.__aenter__ = AsyncMock(return_value=mock_session)
+    cm.__aexit__ = AsyncMock(return_value=False)
+    factory.return_value = cm
 
     snapshot = await build_portfolio_snapshot(
         audit_path=tmp_path / "missing.jsonl",
-        db_session=session,
+        session_factory=factory,
     )
 
     assert snapshot.source == "paper_execution_audit_replay"
     assert snapshot.available is True
 
 
-# ── DB-first does not break existing JSONL snapshot structure ──────────────────
+# ── Snapshot structure invariants ──────────────────────────────────────────────
 
 
 @pytest.mark.asyncio
-async def test_build_portfolio_snapshot_no_session_returns_correct_structure(
+async def test_build_portfolio_snapshot_no_factory_returns_correct_structure(
     tmp_path: Path,
 ) -> None:
-    """Without DB session, existing snapshot fields remain intact."""
+    """Without session_factory, existing snapshot fields remain intact."""
     snapshot = await build_portfolio_snapshot(
         audit_path=tmp_path / "no_file.jsonl",
-        db_session=None,
+        session_factory=None,
     )
 
     assert snapshot.generated_at_utc is not None

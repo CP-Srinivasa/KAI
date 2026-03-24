@@ -1,10 +1,11 @@
 # DECISION_LOG.md
 
-## Current State (2026-03-23)
+## Current State (2026-03-24)
 
-- current_sprint: `PH4K_TAG_SIGNAL_UTILITY_REVIEW`
-- next_required_step: `PH4K_RESULTS_REVIEW_AND_CLOSE`
-- baseline: `1554 passed, ruff clean`
+- current_phase: `PHASE 4 (active, with technical stabilization needed)`
+- current_sprint: `V4_DUAL_WRITE_AND_DB_PRIMARY_CLOSEOUT (closed)`
+- next_required_step: `Choose PH4L definition or Phase 4 closeout`
+- baseline: `1604 passed, ruff clean, mypy 0 errors`
 
 ## Canonical Decisions
 
@@ -52,3 +53,20 @@
 - `Retry-After` header added to HTTP 429 responses.
 - 4 new `AppSettings` governance fields documented in `.env.example`.
 - 23 new tests added. `§80` contract added to `docs/contracts.md`.
+
+### D-84 (2026-03-24): PH4K formally closed as clean governance anchor
+- Commit `c498ca4` is treated as the last explicitly referenced clean governance anchor.
+- PH4A through PH4K are complete enough that PH4L is not urgent.
+- Immediate focus shifted from new Phase-4 scope to technical stabilization.
+
+### D-85 (2026-03-24): V-4 dual-write / DB-primary closeout prioritized before PH4L
+- Recommended next sprint: `V4_DUAL_WRITE_AND_DB_PRIMARY_CLOSEOUT`.
+- Confirmed technical WIP is concentrated in `app/execution/portfolio_read.py`, `app/orchestrator/trading_loop.py`, and related tests.
+- Decision rationale: opening PH4L before closing V-4 would mix product-quality work with technical instability and reduce auditability.
+
+### D-86 (2026-03-24): V-4 Dual-Write + DB-primary closeout complete
+- `app/orchestrator/trading_loop.py`: `run_cycle()` writes `TradingCycleRecord` + `PortfolioStateRecord` via `session_factory` (dual-write, non-fatal on DB error).
+- `app/execution/portfolio_read.py`: `build_portfolio_snapshot()` queries `PortfolioStateRecord` when `session_factory` provided; falls back to JSONL on no-record or DB error.
+- 14 new tests: 6 dual-write (`test_trading_loop_dual_write.py`) + 8 DB-primary (`test_portfolio_snapshot_db_primary.py`).
+- RF-4 promoted to `phase-3-complete` in RISK_REGISTER.
+- Baseline: `1604 passed`, `ruff clean`, `mypy 0 errors`.

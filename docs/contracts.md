@@ -1,21 +1,22 @@
 ﻿# Contracts and Core Data Models
 
-## Current State (2026-03-23)
+## Current State (2026-03-24)
 
 | Field | Value |
 |---|---|
-| current_phase | `PHASE 4 (active)` |
-| current_sprint | `PH4K_TAG_SIGNAL_UTILITY_REVIEW` |
-| next_required_step | `PH4K_RESULTS_REVIEW_AND_CLOSE` |
-| baseline | `1554 passed, ruff clean` |
-| active_contracts | §79 (PH4K, results-review mode) · §78–§67 (closed/frozen anchors) |
+| current_phase | `PHASE 6 (active) — V-4 Phase 3` |
+| current_sprint | `SPRINT_45_V4_DB_PRIMARY_PORTFOLIO_SNAPSHOT` |
+| next_required_step | `SPRINT_45_CLOSE` |
+| baseline | `1609 passed, ruff clean, mypy 0 errors` |
+| active_contracts | §81 (Sprint 45, active) · §80–§67 (closed/frozen anchors) |
 | cli_canonical_count | 53 (frozen §65) |
 
 ## Navigation
 
 | Section | Content | Status |
 |---|---|---|
-| [§79 PH4K Tag Signal Utility Review](#s79-ph4k-tag-signal-utility-review) | Assess operator utility of PH4J-enriched tags | results-review mode |
+| [§81 Sprint 45 V-4 Phase 3](#s81-sprint-45-v4-db-primary-portfolio-snapshot) | DB-primary portfolio snapshot via PortfolioStateRecord | active |
+| [§79 PH4K Tag Signal Utility Review](#s79-ph4k-tag-signal-utility-review) | Assess operator utility of PH4J-enriched tags | closed (D-84) |
 | [§78 PH4J Fallback Tags Enrichment](#s78-ph4j-fallback-tags-enrichment) | Enrich tags in fallback path (PH4F: tags empty 69/69) | closed (D-81 — frozen anchor) |
 | [§77 PH4I Fallback Market Scope Enrichment](#s77-ph4i-fallback-market-scope-enrichment) | Enrich market_scope in fallback path (PH4F finding market_scope unknown 69/69) | closed (D-78 — frozen anchor) |
 | [§76 PH4H Rule-Only Ceiling & Actionability Policy Review](#s76-ph4h-rule-only-ceiling-and-actionability-policy-review) | Review-only policy sprint: I-13 ceiling vs actionability in fallback path | closed (D-75 — frozen anchor) |
@@ -7415,3 +7416,58 @@ idempotency window, structured error responses, and a complete audit trail.
 - `tests/unit/test_sprint44_operator_hardening.py` — 23 tests
 
 §80 status: **closed (2026-03-23)**
+
+---
+
+<a name="s81-sprint-45-v4-db-primary-portfolio-snapshot"></a>
+
+## §81 — SPRINT_45_V4_DB_PRIMARY_PORTFOLIO_SNAPSHOT
+
+**Sprint**: Sprint 45
+**Phase**: 6 (Infrastructure Hardening)
+**Opened**: 2026-03-24
+**Decision**: D-85
+**Status**: active
+
+### Purpose
+
+Complete V-4 Phase 3: DB-primary portfolio snapshot using PortfolioStateRecord.
+
+Phase 1 (ORM models + Alembic 0007) and Phase 2 (TradingCycleRecord dual-write)
+were completed in previous sprints. Phase 3 closes the loop:
+- `TradingLoop._write_db()` now writes a `PortfolioStateRecord` after every
+  `fill_simulated=True` cycle, capturing the full `portfolio.to_dict()` snapshot.
+- `build_portfolio_snapshot()` now queries the most recent `PortfolioStateRecord`
+  (DB-primary) and reconstructs positions from `positions_json`.
+- `TradingLoop` accepts `session_factory: async_sessionmaker` (session-per-cycle)
+  instead of a long-lived `AsyncSession`.
+
+### Acceptance Criteria
+
+- [x] `TradingLoop` accepts `session_factory: async_sessionmaker | None` (replaces `db_session`)
+- [x] `_write_db()` opens a scoped session per cycle via `async with session_factory()`
+- [x] `fill_simulated=True` cycles also write `PortfolioStateRecord` with `positions_json`
+- [x] `build_portfolio_snapshot()` accepts `session_factory` (replaces `db_session`)
+- [x] DB-primary path queries latest `PortfolioStateRecord`, reconstructs positions
+- [x] JSONL fallback when no DB record or factory is None
+- [x] DB errors in both write and read path are non-fatal
+- [x] `test_trading_loop_dual_write.py` updated to mock `session_factory`
+- [x] `test_portfolio_snapshot_db_primary.py` new test file (8 tests)
+- [x] `test_db_first_portfolio_read.py` updated to use new session_factory API
+- [x] 1609 tests pass, ruff clean, mypy 0 errors
+
+### Files Changed
+
+- `app/orchestrator/trading_loop.py` — session_factory refactor, PortfolioStateRecord write
+- `app/execution/portfolio_read.py` — DB-primary snapshot via PortfolioStateRecord
+- `tests/unit/test_trading_loop_dual_write.py` — updated to session_factory mocks
+- `tests/unit/test_portfolio_snapshot_db_primary.py` — new (8 tests, Phase 3)
+- `tests/unit/test_db_first_portfolio_read.py` — updated API (session_factory)
+
+### Non-Goals
+
+- No Alembic migration (PortfolioStateRecord schema unchanged from Phase 1)
+- No CLI/MCP surface changes
+- No live market price fetching from DB snapshot (mark-to-market still requires JSONL)
+
+§81 status: **active (2026-03-24)**
