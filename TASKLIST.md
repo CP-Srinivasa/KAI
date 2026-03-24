@@ -53,3 +53,7 @@
 ## Known Production Limits (D-101)
 
 > Priority MAE=3.13 and LLM-Error-Proxy=27.5% are accepted production limitations and are improved through operation and real data, not further internal diagnosis sprints.
+
+## Tier1 Fallback Policy (D-104 / I-13)
+
+> `actionable=0` in Tier1/keyword fallback is permanent. Focus remains on LLM-driven alerts with real signal quality, not Tier1 optimisation.

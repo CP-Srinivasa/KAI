@@ -477,10 +477,6 @@
 - Default CLI (`app`): ingest rss, pipeline run, query analyze-pending, alerts evaluate-pending, alerts send-test.
 - All other commands remain accessible via `full_app` for backward compatibility.
 
-### D-103 (2026-03-24): CLI auf 5 Core-Commands reduziert
-- Nur: ingest rss, pipeline run, query analyze-pending, alerts evaluate-pending, alerts send-test.
-- 884 → 336 LOC; 820 LOC entfernt; 37 obsolete Tests gelöscht.
-
-### D-104 (2026-03-24): actionable=0 im Tier1/Keyword-Fallback akzeptiert (I-13)
-- Kein Fix für I-13; Tier1-Optimierung ist nicht der Fokus.
-- Echte Signalqualität kommt ausschließlich aus LLM-betriebenen Alerts.
+### D-104 (2026-03-24): actionable=0 permanent in Tier1/keyword fallback (I-13 reaffirmed)
+- actionable=0 is accepted as permanent state in Tier1/keyword-only fallback path.
+- Focus is on LLM-driven alerts with real signal quality, not Tier1 optimisation.

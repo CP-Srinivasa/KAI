@@ -88,6 +88,9 @@
 | production_limits | `D-101 -- Priority MAE=3.13 and LLM-Error-Proxy=27.5% are accepted production metrics; improve via operation and real data, not internal sprints` |
 
 
+| tier1_fallback_policy | `D-104 -- I-13 remains permanent: actionable=0 in Tier1/keyword fallback; signal quality focus stays on LLM-driven alerts` |
+
+
 ---> **Verbindliches Betriebsdokument fuer alle Coding-Agenten.**
 
 
