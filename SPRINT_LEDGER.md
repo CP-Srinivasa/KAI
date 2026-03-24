@@ -2,12 +2,12 @@
 
 ## Canonical Sprint Ledger (2026-03-24)
 
-- current_phase: `PHASE 4`
-- phase_4_status: `active -- closeout gate`
+- current_phase: `PHASE 4 (CLOSED D-87, 2026-03-24)`
+- phase_4_status: `active -- final canonical closeout sync`
 - current_sprint: `PHASE4_CLOSEOUT_AND_NEXT_PHASE_GATE`
-- last_closed_sprint: `SPRINT_45_V4_DB_PRIMARY_PORTFOLIO_SNAPSHOT (N-4 closed)`
-- next_required_step: `PHASE4_CLOSEOUT_AND_NEXT_PHASE_GATE`
+- next_required_step: `PHASE4_FINAL_CANONICAL_CLOSEOUT`
 - baseline: `1609 passed, ruff clean`
+- phase5_status: `blocked until PHASE4_FINAL_CANONICAL_CLOSEOUT`
 | Sprint | Date | Status | Outcome |
 |---|---|---|---|
 | PH4A | 2026-03-22 | closed | Baseline: paired=0 |
@@ -41,4 +41,3 @@ Ein Sprint gilt als **nicht abgeschlossen**, solange:
 
 Governance-Docs, Code und Tests müssen im selben Commit committiert werden.
 Sprint-Closeout-Commits ohne sauberen Working Tree sind nicht zulässig.
-

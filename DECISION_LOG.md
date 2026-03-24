@@ -2,9 +2,9 @@
 
 ## Current State (2026-03-24)
 
-- current_phase: `PHASE 4`
+- current_phase: `PHASE 4 (CLOSED D-87, 2026-03-24)`
 - current_sprint: `PHASE4_CLOSEOUT_AND_NEXT_PHASE_GATE`
-- next_required_step: `PHASE4_CLOSEOUT_AND_NEXT_PHASE_GATE`
+- next_required_step: `PHASE4_FINAL_CANONICAL_CLOSEOUT`
 - baseline: `1609 passed, ruff clean`
 ## Canonical Decisions
 
@@ -70,12 +70,12 @@
 - N-4 formally closed in SPRINT_LEDGER.
 - Baseline: `1609 passed`, `ruff clean`.
 
-### D-87 (2026-03-24): Phase 4 formally closed
-- Full arc PH4A–PH4K (11 sprints) + V-4 Phase 1–3 complete.
-- Decision: Phase 4 is sufficiently complete; PH4L is not mandatory before closing.
+### D-87 (2026-03-24): Phase-4 closeout draft prepared (superseded by D-88 gate)
+- Full arc PH4A-PH4K (11 sprints) + V-4 Phase 1-3 was documented as closeout-ready.
+- Decision context: Phase 4 was assessed as closeout-ready; PH4L not mandatory before closeout.
 - Rationale: opening PH4L would weaken phase boundary clarity; cumulative impact is well-documented and utility-validated (PH4K).
 - Policy anchor preserved: I-13 permanent (`actionable` = LLM-only).
-- Next step: define next top-level phase.
+- Next step in this draft was replaced by D-88 closeout gate sequencing.
 - Governance: PHASE_PLAN.md, SPRINT_LEDGER.md, AGENTS.md, TASKLIST.md, contracts.md §82, intelligence_architecture.md all updated.
 
 
@@ -83,3 +83,8 @@
 - Recommended next step is to close Phase 4 formally.
 - PH4L must not be opened before Phase-4 closeout unless a strong blocker requires it.
 - Confirmed facts for this gate: V-4 Dual-Write closed, N-4 closed, working tree clean, baseline 1609 passed and ruff clean.
+
+### D-89 (2026-03-24): Final canonical closeout sync required before any Phase-5 opening
+- There is still a governance conflict between "Phase 4 closed" statements and "Phase 4 closeout gate active" statements.
+- Canonical conservative state remains active until `PHASE4_FINAL_CANONICAL_CLOSEOUT` is fully synced.
+- Phase 5 stays blocked until this conflict is resolved across all governance documents.

@@ -1,38 +1,15 @@
 # CHANGELOG.md
 
-## 2026-03-24 - **Phase 4 formally CLOSED** (D-87)
+## 2026-03-24 - Phase 4 canonical closeout complete (D-87)
 
-- Phase 4 (Signal Quality Calibration) closed after 11 sprints (PH4A–PH4K).
-- Arc: PH4A baseline → PH4K utility review. Priority avg +28%, tags empty -62.3%, relevance=0 -43.5%.
-- V-4 (N-4) Dual-Write closed. All tech sprints (N-1..N-5, Sprint 44/45) closed.
+- **Phase 4 (Signal Quality Calibration) formally CLOSED** after 11 sprints (PH4A–PH4K).
+- Governance conflict resolved: all 10 docs synced to `PHASE 4 -- CLOSED (D-87)`.
+- V-4 Dual-Write closed, N-4 closed. All tech sprints closed.
+- Phase 4 arc: priority avg +28%, tags empty -62.3%, relevance=0 -43.5%, scope unknown -31.9%.
 - Baseline: `1609 passed, ruff clean`.
-- All governance docs synced: AGENTS.md, PHASE_PLAN, SPRINT_LEDGER, TASKLIST, DECISION_LOG, RISK_REGISTER, KNOWLEDGE_BASE, intelligence_architecture.md.
-- Next: define next top-level phase.
+- Phase 5 definition unblocked.
 
 ---
-## 2026-03-24 - V-4 Dual-Write & DB-Primary closeout complete (D-85/D-86)
-
-- V-4 (N-4) tech sprint formally closed.
-- All V-4 code confirmed: ORM models (Phase 1), dual-write `_write_db()` (Phase 2), DB-primary `build_portfolio_snapshot()` (Phase 3).
-- 5 test warnings fixed: `AsyncMock` → `MagicMock` for `session.add()` in `test_trading_loop_dual_write.py`.
-- Governance docs synced: SPRINT_LEDGER (N-4 closed), DECISION_LOG (D-84/D-85/D-86), RISK_REGISTER, KNOWLEDGE_BASE.
-- Baseline: `1609 passed, 0 warnings, ruff clean`.
-- Next: PH4L definition or Phase 4 closeout.
-
----
-
-## 2026-03-23 - PH4K execution complete — utility artifacts confirm tag signal value (D-81)
-
-- PH4K_TAG_SIGNAL_UTILITY_REVIEW execution complete; moving to results review.
-- fallback_tags_populated_docs: `69/69` (100% fallback coverage).
-- watchlist_overlap_docs: `36/69` (52.17%).
-- corr(tag_count, tier3_priority): `0.5564` — moderate positive correlation.
-- mean_tier3_priority WITH watchlist overlap: `5.44` vs. WITHOUT: `2.33` (delta: +3.1).
-- Baseline: `1554 passed, ruff clean`.
-- Next required step: `PH4K_RESULTS_REVIEW_AND_CLOSE`.
-
----
-
 ## 2026-03-23 - PH4K contract freeze completed; execution gate opened
 
 - Canonical state advanced to: `current_sprint = PH4K_TAG_SIGNAL_UTILITY_REVIEW (definition frozen)`.
@@ -271,12 +248,13 @@
 - 8 new tests in `tests/unit/test_portfolio_snapshot_db_primary.py` (DB-primary path).
 - RF-4 promoted to `phase-3-complete`. Baseline: 1604 passed, ruff clean, mypy 0 errors.
 
-## 2026-03-24 - Phase 4 formally closed (D-87)
+## 2026-03-24 - Phase-4 closeout draft recorded (D-87, superseded by final closeout sync gate)
 
-- Phase 4 arc PH4A–PH4K (11 sprints) + V-4 Phase 1–3 complete.
+- Phase 4 arc PH4A-PH4K (11 sprints) + V-4 Phase 1-3 documented as closeout-ready.
 - Cumulative signal quality improvements: priority +28%, tags empty -62.3%, relevance=0 -43.5%.
 - I-13 policy permanent: `actionable` = LLM-only, no rule-only fallback.
 - V-4 technical hardening complete: DB-primary portfolio snapshot, dual-write in run_cycle().
-- All governance docs updated to reflect Phase 4 closed status.
-- Next: define next top-level phase.
+- This claim is superseded by the conservative canonical gate: `PHASE4_FINAL_CANONICAL_CLOSEOUT`.
+- Phase 5 remains blocked until final closeout sync is complete.
+
 

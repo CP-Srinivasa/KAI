@@ -4,21 +4,14 @@
 
 | Field | Value |
 |---|---|
-| current_phase | `PHASE 4 — **CLOSED** (D-87, 2026-03-24)` |
-| phase4_arc | `PH4A–PH4K (11 sprints, 2026-03-22 → 2026-03-24)` |
-| next_required_step | `Next phase definition` |
+| current_phase | `PHASE 4 (CLOSED D-87, 2026-03-24)` |
+| phase4_arc | `PH4A-PH4K (11 sprints, 2026-03-22 to 2026-03-24)` |
+| next_required_step | `Phase 5 definition` |
 | baseline | `1609 passed, ruff clean` |
-| ph4k_status | `closed (D-84) — utility review complete; §79 frozen anchor` |
-| ph4j_status | `closed (D-81) — tags enrichment verified; §78 frozen anchor` |
-| ph4i_status | `closed (D-78) — market_scope enrichment; §77 frozen anchor` |
-| ph4h_status | `closed (D-75) — Option B: I-13 permanent; actionable LLM-only; §76 frozen anchor` |
-| ph4g_status | `closed — relevance floor applied; actionable reverted (I-13); §75 frozen anchor` |
-| ph4f_status | `closed — frozen intervention anchor; §74 frozen anchor` |
-| ph4e_status | `closed (D-67) — scoring calibration audit complete; §73 frozen anchor` |
-| architecture_status | three-tier stack unchanged; PH4A–PH4K closed/frozen anchors (§67–§79); Phase 4 CLOSED (D-87) |
+| v4_dual_write_status | `closed (N-4 closed)` |
+| architecture_status | three-tier stack unchanged; PH4A-PH4K closed/frozen anchors; Phase 4 CLOSED (D-87); canonical closeout complete |
 
 ---
-
 ## PH4A/PH4B (closed â€” frozen anchors)
 
 - PH4A closed: `74` audited records, `6.76%` tier-3 coverage, `paired_count=0`. Primary bottleneck: zero tier overlap.
@@ -128,9 +121,9 @@
 - No code changes (diagnostic-only sprint).
 - Results review complete; sprint formally closed.
 
-## Sprint 45 — V-4 Phase 3: DB-primary Portfolio Snapshot (§81 active)
+## Sprint 45 - V-4 Phase 3: DB-primary Portfolio Snapshot (Section 81 closed)
 
-- Sprint: `SPRINT_45_V4_DB_PRIMARY_PORTFOLIO_SNAPSHOT`. **Active (2026-03-24, D-85).**
+- Sprint: `SPRINT_45_V4_DB_PRIMARY_PORTFOLIO_SNAPSHOT`. **Closed (2026-03-24, D-86).**
 - Contract: `docs/contracts.md §81`.
 - Scope: Complete V-4 — session-factory refactor, PortfolioStateRecord write on fill, DB-primary read.
 - Key invariants:
@@ -1329,4 +1322,3 @@ PH4A will produce a **quality baseline record** covering:
 This record becomes the canonical reference for all Phase-4 expansion decisions (source additions, provider additions, Tier 2 implementation). No expansion sprint opens without referencing it.
 
 **PH4A invariants I-403, I-404, I-405 apply**: no source additions, no provider additions, quality metrics defined before expansion.
-

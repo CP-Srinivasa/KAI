@@ -4,18 +4,18 @@
 
 | Field | Value |
 |---|---|
-| current_phase | `PHASE 4 (CLOSED D-87, 2026-03-24)` |
-| current_sprint | `PHASE4_CLOSEOUT_AND_NEXT_PHASE_GATE (closed D-87)` |
-| next_required_step | `Define next top-level phase` |
-| baseline | `1604 passed, ruff clean, mypy 0 errors` |
-| active_contracts | §82 (Phase 4 Closeout, frozen anchor) · §81–§67 (closed/frozen anchors) |
+| current_phase | `PHASE 4` |
+| current_sprint | `PHASE4_CLOSEOUT_AND_NEXT_PHASE_GATE` |
+| next_required_step | `PHASE4_FINAL_CANONICAL_CLOSEOUT` |
+| baseline | `1609 passed, ruff clean` |
+| active_contracts | §82 (Phase-4 closeout gate, active) · §81–§67 (closed/frozen anchors) |
 | cli_canonical_count | 53 (frozen §65) |
 
 ## Navigation
 
 | Section | Content | Status |
 |---|---|---|
-| [§82 Phase 4 Closeout](#s82-phase-4-closeout) | Formal closeout of Phase 4 arc PH4A–PH4K + V-4 | frozen anchor (D-87) |
+| [§82 Phase 4 Closeout Gate](#s82-phase-4-closeout) | Formal closeout of Phase 4 arc PH4A-PH4K + V-4 | active gate |
 | [§81 Sprint 45 V-4 Phase 3](#s81-sprint-45-v4-db-primary-portfolio-snapshot) | DB-primary portfolio snapshot via PortfolioStateRecord | closed (D-86) |
 | [§79 PH4K Tag Signal Utility Review](#s79-ph4k-tag-signal-utility-review) | Assess operator utility of PH4J-enriched tags | closed (D-84) |
 | [§78 PH4J Fallback Tags Enrichment](#s78-ph4j-fallback-tags-enrichment) | Enrich tags in fallback path (PH4F: tags empty 69/69) | closed (D-81 — frozen anchor) |
@@ -7481,11 +7481,11 @@ were completed in previous sprints. Phase 3 closes the loop:
 **Phase**: 4 (final)
 **Opened**: 2026-03-24
 **Decision**: D-87
-**Status**: frozen anchor
+**Status**: active gate
 
 ### Purpose
 
-Formally close Phase 4 after completing the full arc PH4A–PH4K (11 sprints) plus V-4 technical stabilization (Phase 1–3).
+Resolve final governance conflict and close Phase 4 canonically after completing the full arc PH4A–PH4K (11 sprints) plus V-4 technical stabilization (Phase 1–3).
 
 ### Phase 4 Final State
 
@@ -7506,10 +7506,9 @@ Formally close Phase 4 after completing the full arc PH4A–PH4K (11 sprints) pl
 
 - [x] All PH4A–PH4K sprints closed and documented
 - [x] V-4 Phase 1–3 closed (RF-4 phase-3-complete)
-- [x] PHASE_PLAN.md, SPRINT_LEDGER.md, DECISION_LOG.md, RISK_REGISTER.md updated
-- [x] KNOWLEDGE_BASE.md, CHANGELOG.md, AGENTS.md, TASKLIST.md updated
-- [x] contracts.md §82 added; §81 status corrected to closed
-- [x] intelligence_architecture.md phase status updated
-- [x] 1604 tests pass, ruff clean, mypy 0 errors, working tree clean
+- [x] 1609 tests pass, ruff clean, working tree clean
+- [ ] Final status conflict resolved across all governance docs ("closed" vs "closeout gate active")
+- [ ] Formal Phase-4 closeout record finalized
+- [ ] Phase 5 definition opened only after closeout sync is complete
 
-§82 status: **frozen anchor (D-87, 2026-03-24)**
+§82 status: **active gate (final canonical closeout sync pending)**

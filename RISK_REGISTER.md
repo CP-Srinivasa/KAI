@@ -4,9 +4,8 @@
 
 - current_phase: `PHASE 4`
 - current_sprint: `PHASE4_CLOSEOUT_AND_NEXT_PHASE_GATE`
-- next_required_step: `PHASE4_CLOSEOUT_AND_NEXT_PHASE_GATE`
-- technical_baseline: `1609 passed, ruff clean`
-- working_tree: `clean`
+- next_required_step: `PHASE4_FINAL_CANONICAL_CLOSEOUT`
+- baseline: `1609 passed, ruff clean`
 ### PH4K Execution Results Note (2026-03-23)
 
 PH4K execution complete; utility artifacts produced. Moving to results review.
@@ -19,8 +18,9 @@ DB test failures remain on a separate track.
 ### Technical Stabilization Note (2026-03-24)
 
 - PH4A through PH4K are complete enough that PH4L is not urgent.
-- Highest-leverage technical action is to finish dual-write and DB-primary snapshot closeout.
+- V-4 dual-write and DB-primary snapshot closeout are complete (N-4 closed).
 - Last explicitly referenced clean governance anchor: commit `c498ca4`.
+- Governance conflict remains: mixed wording between "Phase 4 closed" and "closeout gate active".
 
 ---
 
@@ -31,8 +31,8 @@ DB test failures remain on a separate track.
 | R-PH4J-001 | Higher tag quantity may not automatically improve operator utility. | medium | medium | Run PH4K utility review before additional enrichment scope. | in_review (PH4K execution evidence is positive; formal closeout review still pending) |
 | R-PH4J-002 | Workspace reverts can create closeout confusion if not documented. | low | medium | Keep closeout evidence and revert notes explicit in changelog/decision log. | resolved (D-81: revert noted in changelog/decision log; PH4J formally closed) |
 | R-PH4J-003 | DB failures may pollute PH4J interpretation if mixed into same gate. | medium | medium | Keep DB failures on separate track with separate ownership. | resolved (PH4J closed; DB failures remain on separate track; not blocking PH4K) |
-| R-PH4-013 | Skipping formal Phase-4 closeout may leave the phase artificially open. | high | medium | Run PHASE4_CLOSEOUT_AND_NEXT_PHASE_GATE before opening any PH4L scope. | open |
-| R-PH4-014 | Opening PH4L too early may weaken phase-boundary clarity and governance traceability. | high | medium | Keep PH4L blocked until Phase-4 closeout is documented, unless a strong blocker forces exception handling. | open |
+| R-PH4-013 | Skipping formal Phase-4 closeout may leave the phase artificially open. | high | medium | Phase 4 formally closed (D-87). | resolved (D-87) |
+| R-PH4-014 | Opening Phase 5 too early may weaken phase-boundary clarity and governance traceability. | high | medium | Phase 4 closeout fully synced (D-87); Phase 5 unblocked. | resolved (D-87) |
 | R-PH4-010 | Relaxing `I-13` too quickly may weaken fail-closed safety in rule-only mode. | high | medium | Route next step through PH4H policy review before any `I-13` change. | resolved (PH4H D-74: I-13 confirmed permanent; Option B chosen -- no relaxation) |
 | R-PH4-011 | Keeping `I-13` unchanged may cap Tier-1 usefulness in fallback-heavy scenarios. | medium | medium | Evaluate policy options with explicit risk/benefit evidence in PH4H. | resolved (PH4H D-74: accepted as architectural constraint; fallback actionable=False by design; next lever = market_scope enrichment in PH4I) |
 | R-PH4-012 | Repeated fallback interventions without policy clarity may create contradictory outcomes. | high | medium | Freeze policy-first sequence: close PH4G -> PH4H review -> then any intervention. | resolved (PH4H completed; policy-first sequence executed; PH4I is next policy-safe intervention) |
@@ -105,4 +105,3 @@ These findings were addressed in a dedicated refactoring session (2026-03-23).
 - PH4J findings: fallback tags enriched with categories, affected_assets, source_name, market_scope.value; keyword-hit 4→7, zero-hit 1→4, assets-only 0→4; PH4J formally closed (D-80); §78 frozen anchor.
 - PH4K execution (D-81): fallback_tags_populated 69/69; watchlist_overlap 36/69 (52.17%); corr(tag_count, tier3_priority)=0.5564; mean_priority with overlap 5.44 vs. without 2.33; utility signal observed, closeout review pending.
 - Technical baseline: `1609 passed`, `ruff clean`.
-

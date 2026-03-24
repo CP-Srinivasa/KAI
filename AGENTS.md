@@ -4,9 +4,9 @@
 
 | Field | Value |
 |---|---|
-| current_phase | `PHASE 4` |
-| current_sprint | `PHASE4_CLOSEOUT_AND_NEXT_PHASE_GATE` |
-| next_required_step | `PHASE4_CLOSEOUT_AND_NEXT_PHASE_GATE` |
+| current_phase | `PHASE 4 (CLOSED D-87, 2026-03-24)` |
+| current_sprint | `PHASE4_CLOSEOUT_AND_NEXT_PHASE_GATE (closed D-87)` |
+| next_required_step | `Phase 5 definition` |
 | ph4a_status | `closed (D-53) -- immutable baseline anchor (S67)` |
 | ph4b_status | `closed (D-62) -- paired_count=69; root cause: keyword coverage blindness` |
 | ph4c_status | `closed -- rule-keyword gap audit; top-3 gaps: macro, regulatory, AI` |
@@ -24,10 +24,9 @@
 | cli_canonical_count | 53 |
 | provisional_cli_count | 0 |
 | phase3_status | `closed (2026-03-22) -- GO` |
-| phase4_status | `active -- closeout gate running; PH4L blocked unless strong blocker` |
+| phase4_status | `active -- final closeout sync pending; PH4L/Phase 5 blocked until canonical closeout` |
 ---
 
 > **Verbindliches Betriebsdokument fuer alle Coding-Agenten.**
 > Claude Code -- OpenAI Codex -- Google Antigravity
 > Dieses Dokument lesen, bevor eine einzige Zeile Code angefasst wird.
-

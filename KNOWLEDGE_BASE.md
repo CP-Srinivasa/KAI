@@ -1,13 +1,13 @@
 # KNOWLEDGE_BASE.md - KAI Canonical Knowledge Index
 
-> Stand: 2026-03-24 | current_phase: PHASE 4 | current_sprint: PHASE4_CLOSEOUT_AND_NEXT_PHASE_GATE | next_required_step: PHASE4_CLOSEOUT_AND_NEXT_PHASE_GATE | baseline: 1609 passed, ruff clean
+> Stand: 2026-03-24 | PHASE 4 CLOSED (D-87) | last_sprint: PHASE4_CLOSEOUT_AND_NEXT_PHASE_GATE (closed D-87) | next: Phase 5 definition | baseline: 1604 passed, ruff clean, mypy 0 errors
 
-## Active Gate
+## Phase Status
 
-- current_phase: `PHASE 4`
-- current_sprint: `PHASE4_CLOSEOUT_AND_NEXT_PHASE_GATE`
-- next_required_step: `PHASE4_CLOSEOUT_AND_NEXT_PHASE_GATE`
-- guardrail: do not open PH4L before formal Phase-4 closeout unless a strong blocker requires it
+- current_phase: `PHASE 4 (CLOSED D-87, 2026-03-24)`
+- current_sprint: `PHASE4_CLOSEOUT_AND_NEXT_PHASE_GATE -- CLOSED`
+- next_required_step: `Phase 5 definition`
+- canonical closeout sync: complete
 
 ## Newly Confirmed Facts
 
@@ -16,6 +16,7 @@
 - Working tree is clean.
 - Current technical baseline is `1609 passed` and `ruff clean`.
 - Phase 4 has completed a full PH4A-PH4K arc.
+- Governance conflict remains between "Phase 4 closed" and "Phase 4 closeout gate active".
 
 ## Current Assumptions and Decisions
 
@@ -23,12 +24,13 @@
 - Assumption: PH4L is not mandatory before closing Phase 4.
 - Decision: recommended next step is to close Phase 4 formally.
 - Decision: PH4L stays blocked until closeout, unless a strong blocker demands escalation.
+- Decision: Phase 5 remains blocked until final canonical closeout sync is complete.
 
 ## Closeout Actions
 
-- Run Phase 4 closeout.
-- Document PH4A-PH4K outcomes.
-- Then choose the next phase or next top-level work block.
+- Run final Phase 4 closeout sync (`PHASE4_FINAL_CANONICAL_CLOSEOUT`).
+- Close the gate sprint everywhere.
+- Then start Phase 5 definition.
 ## PH4H Policy Anchor
 
 - Policy choice: Option B
@@ -58,4 +60,3 @@
 
 - `_fallback_market_scope()` enrichment is closed and frozen (`section 77`, `D-78`).
 - Baseline snapshot for this gate: `1609 passed, ruff clean`.
-

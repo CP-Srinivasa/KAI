@@ -2,9 +2,9 @@
 
 ## Current State (2026-03-24)
 
-- current_phase: `PHASE 4`
-- current_sprint: `PHASE4_CLOSEOUT_AND_NEXT_PHASE_GATE`
-- next_required_step: `PHASE4_CLOSEOUT_AND_NEXT_PHASE_GATE`
+- current_phase: `PHASE 4 (CLOSED D-87, 2026-03-24)`
+- current_sprint: `PHASE4_CLOSEOUT_AND_NEXT_PHASE_GATE (closed D-87)`
+- next_required_step: `Phase 5 definition`
 - baseline: `1609 passed, ruff clean`
 
 ## Phase 4 Closeout Gate (2026-03-24)
@@ -13,9 +13,10 @@ Phase 4 has completed a full PH4A-PH4K arc. V-4 Dual-Write is closed, N-4 is clo
 
 ## Closeout Actions
 
-- Run formal Phase 4 closeout.
-- Document PH4A-PH4K outcomes.
-- Then choose the next phase or next top-level work block.
+- Run final Phase 4 closeout sync.
+- Close the gate sprint everywhere (`PHASE4_FINAL_CANONICAL_CLOSEOUT`).
+- Keep Phase 5 blocked until final closeout sync is complete.
+- Then start Phase 5 definition.
 ## Phase 4 Complete Arc (PH4A-K, 11 Sprints)
 
 | Sprint | Type | Result |
@@ -59,4 +60,3 @@ Phase 4 has completed a full PH4A-PH4K arc. V-4 Dual-Write is closed, N-4 is clo
 ## I-13 Policy (Permanent)
 
 `actionable` is LLM-exclusive. Rule-only fallback: `actionable=False`. No relaxation.
-
