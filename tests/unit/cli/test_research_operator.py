@@ -1,6 +1,7 @@
 """Tests for research operator commands: escalation, blocking, action-queue,
 decision-pack, daily-summary, operator-runbook variants, backtest-run.
 """
+
 from __future__ import annotations
 
 import json
@@ -364,18 +365,21 @@ def test_research_backtest_run_produces_result_json(tmp_path) -> None:
         market_scope=MarketScope.CRYPTO,
         published_at=None,
     )
-    signals_path.write_text(
-        _json.dumps(sig.to_json_dict()) + "\n", encoding="utf-8"
-    )
+    signals_path.write_text(_json.dumps(sig.to_json_dict()) + "\n", encoding="utf-8")
 
     result = _runner.invoke(
         app,
         [
-            "research", "backtest-run",
-            "--signals-path", str(signals_path),
-            "--out", str(out_path),
-            "--audit-path", str(audit_path),
-            "--min-confidence", "0.5",
+            "research",
+            "backtest-run",
+            "--signals-path",
+            str(signals_path),
+            "--out",
+            str(out_path),
+            "--audit-path",
+            str(audit_path),
+            "--min-confidence",
+            "0.5",
         ],
     )
 
@@ -394,10 +398,14 @@ def test_research_backtest_run_missing_signals_file_exits_nonzero(tmp_path) -> N
     result = _runner.invoke(
         app,
         [
-            "research", "backtest-run",
-            "--signals-path", str(tmp_path / "nonexistent.jsonl"),
-            "--out", str(tmp_path / "out.json"),
-            "--audit-path", str(tmp_path / "audit.jsonl"),
+            "research",
+            "backtest-run",
+            "--signals-path",
+            str(tmp_path / "nonexistent.jsonl"),
+            "--out",
+            str(tmp_path / "out.json"),
+            "--audit-path",
+            str(tmp_path / "audit.jsonl"),
         ],
     )
     assert result.exit_code != 0
@@ -405,5 +413,6 @@ def test_research_backtest_run_missing_signals_file_exits_nonzero(tmp_path) -> N
 
 def test_research_backtest_run_registered_in_command_names() -> None:
     from app.cli.main import get_registered_research_command_names
+
     names = get_registered_research_command_names()
     assert "backtest-run" in names

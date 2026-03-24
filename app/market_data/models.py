@@ -1,4 +1,5 @@
 """Market data typed models."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -7,9 +8,10 @@ from dataclasses import dataclass, field
 @dataclass(frozen=True)
 class OHLCV:
     """Single OHLCV candle."""
+
     symbol: str
     timestamp_utc: str
-    timeframe: str    # "1m" | "5m" | "1h" | "4h" | "1d"
+    timeframe: str  # "1m" | "5m" | "1h" | "4h" | "1d"
     open: float
     high: float
     low: float
@@ -20,6 +22,7 @@ class OHLCV:
 @dataclass(frozen=True)
 class Ticker:
     """Current bid/ask/last for a symbol."""
+
     symbol: str
     timestamp_utc: str
     bid: float
@@ -32,6 +35,7 @@ class Ticker:
 @dataclass(frozen=True)
 class OrderBook:
     """Simplified order book snapshot."""
+
     symbol: str
     timestamp_utc: str
     bids: list[tuple[float, float]] = field(default_factory=list)  # (price, qty)
@@ -42,12 +46,13 @@ class OrderBook:
 @dataclass(frozen=True)
 class MarketDataPoint:
     """Single market data observation used in analysis."""
+
     symbol: str
     timestamp_utc: str
     price: float
     volume_24h: float
     change_pct_24h: float
-    source: str       # "mock" | "binance" | "coinbase" | etc.
+    source: str  # "mock" | "binance" | "coinbase" | etc.
     is_stale: bool = False
     freshness_seconds: float = 0.0
 

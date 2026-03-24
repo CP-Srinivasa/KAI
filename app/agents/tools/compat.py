@@ -8,6 +8,7 @@ Tool classes:
   superseded           — older tool names kept for external callers, route to replacement
   workflow_helper      — meta / capability discovery tools
 """
+
 from __future__ import annotations
 
 import json
@@ -84,13 +85,9 @@ def get_mcp_tool_inventory() -> dict[str, object]:
         "canonical_read_tools": list(CANONICAL_READ_TOOL_NAMES),
         "guarded_write_tools": list(GUARDED_WRITE_TOOL_NAMES),
         "workflow_helpers": list(_MCP_WORKFLOW_HELPER_NAMES),
-        "aliases": {
-            tool_name: dict(metadata)
-            for tool_name, metadata in _MCP_TOOL_ALIASES.items()
-        },
+        "aliases": {tool_name: dict(metadata) for tool_name, metadata in _MCP_TOOL_ALIASES.items()},
         "superseded_tools": {
-            tool_name: dict(metadata)
-            for tool_name, metadata in _SUPERSEDED_MCP_TOOLS.items()
+            tool_name: dict(metadata) for tool_name, metadata in _SUPERSEDED_MCP_TOOLS.items()
         },
     }
 

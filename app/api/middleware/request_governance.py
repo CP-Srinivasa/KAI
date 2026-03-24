@@ -92,7 +92,8 @@ class RequestGovernanceMiddleware(BaseHTTPMiddleware):
         super().__init__(app)
         self._audit_path = Path(audit_log_path)
         self._audit_path.parent.mkdir(
-            parents=True, exist_ok=True,
+            parents=True,
+            exist_ok=True,
         )
         self._max_body_bytes = max_body_bytes
 
@@ -102,10 +103,7 @@ class RequestGovernanceMiddleware(BaseHTTPMiddleware):
         call_next: RequestResponseEndpoint,
     ) -> Response:
         # Generate or reuse request ID
-        request_id = (
-            request.headers.get(_REQUEST_ID_HEADER)
-            or f"req_{uuid.uuid4().hex[:12]}"
-        )
+        request_id = request.headers.get(_REQUEST_ID_HEADER) or f"req_{uuid.uuid4().hex[:12]}"
         request.state.request_id = request_id
         client_ip = _extract_client_ip(request)
 
@@ -147,7 +145,8 @@ class RequestGovernanceMiddleware(BaseHTTPMiddleware):
         start = time.monotonic()
         response = await call_next(request)
         duration_ms = round(
-            (time.monotonic() - start) * 1000, 2,
+            (time.monotonic() - start) * 1000,
+            2,
         )
 
         # Propagate request ID in response
@@ -186,10 +185,12 @@ class RequestGovernanceMiddleware(BaseHTTPMiddleware):
         }
         try:
             with self._audit_path.open(
-                "a", encoding="utf-8",
+                "a",
+                encoding="utf-8",
             ) as fh:
                 fh.write(json.dumps(record) + "\n")
         except OSError as exc:
             logger.warning(
-                "[API AUDIT] Write failed: %s", exc,
+                "[API AUDIT] Write failed: %s",
+                exc,
             )

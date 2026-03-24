@@ -53,8 +53,7 @@ class InternalCompanionProvider(BaseAnalysisProvider):
                 {
                     "role": "system",
                     "content": (
-                        "You are a highly precise financial AI analyst. "
-                        "Always return valid JSON."
+                        "You are a highly precise financial AI analyst. Always return valid JSON."
                     ),
                 },
                 {"role": "user", "content": prompt},

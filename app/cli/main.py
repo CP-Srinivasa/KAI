@@ -645,10 +645,6 @@ def alerts_evaluate_pending(
 
     asyncio.run(run())
 
-    asyncio.run(run())
-
-
-
 
 # ---------------------------------------------------------------------------
 # Sprint 29: analyze-pending --shadow-companion flag
@@ -690,8 +686,7 @@ def analyze_pending_shadow(
             return
 
         console.print(
-            f"[bold]Analyzing {len(docs)} documents "
-            f"(shadow_companion={shadow_companion})...[/bold]"
+            f"[bold]Analyzing {len(docs)} documents (shadow_companion={shadow_companion})...[/bold]"
         )
 
         results = await pipeline.run_batch(docs)
@@ -728,7 +723,6 @@ def analyze_pending_shadow(
         )
 
     asyncio.run(run())
-
 
 
 if __name__ == "__main__":

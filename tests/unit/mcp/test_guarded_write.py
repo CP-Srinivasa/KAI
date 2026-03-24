@@ -3,6 +3,7 @@
 Verifies that every tool in GUARDED_WRITE_TOOL_NAMES is actually registered
 in the FastMCP server instance.
 """
+
 from __future__ import annotations
 
 import pytest

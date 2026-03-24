@@ -2,6 +2,7 @@
 artifact inventory/rotation/retention, cleanup, escalation, runbook,
 review-journal, resolution, command inventory.
 """
+
 from __future__ import annotations
 
 import json

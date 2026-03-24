@@ -1,4 +1,5 @@
 """Unit tests for the read-only CoinGecko market data adapter."""
+
 from __future__ import annotations
 
 from datetime import UTC, datetime

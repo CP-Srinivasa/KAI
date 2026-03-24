@@ -652,10 +652,15 @@ def classify_artifact_retention(
 
     lowered_name = name.lower()
 
-    if name in _PROTECTED_AUDIT_FILENAMES or lowered_name in {
-        "handoff.json",
-        "handoffs.jsonl",
-    } or any(marker in lowered_name for marker in _PROTECTED_AUDIT_NAME_MARKERS):
+    if (
+        name in _PROTECTED_AUDIT_FILENAMES
+        or lowered_name
+        in {
+            "handoff.json",
+            "handoffs.jsonl",
+        }
+        or any(marker in lowered_name for marker in _PROTECTED_AUDIT_NAME_MARKERS)
+    ):
         # I-156: audit trails are always protected
         return _protected_entry(
             entry,

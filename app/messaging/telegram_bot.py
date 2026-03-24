@@ -21,6 +21,7 @@ Handles:
 This bot is separate from outbound alert delivery. It is the inbound operator
 channel and remains fail-closed, admin-gated, and dry-run-safe by default.
 """
+
 from __future__ import annotations
 
 import hmac
@@ -88,8 +89,7 @@ def get_telegram_command_inventory() -> dict[str, object]:
             "max_body_bytes": _WEBHOOK_MAX_BODY_BYTES_DEFAULT,
         },
         "canonical_research_refs": {
-            command: list(refs)
-            for command, refs in TELEGRAM_CANONICAL_RESEARCH_REFS.items()
+            command: list(refs) for command, refs in TELEGRAM_CANONICAL_RESEARCH_REFS.items()
         },
     }
 
@@ -130,9 +130,7 @@ class TelegramOperatorBot:
             )
         )
         if not normalized_updates:
-            raise ValueError(
-                "webhook_allowed_updates must contain at least one update type"
-            )
+            raise ValueError("webhook_allowed_updates must contain at least one update type")
         if webhook_max_body_bytes <= 0:
             raise ValueError("webhook_max_body_bytes must be positive")
         if webhook_max_seen_update_ids <= 0:
@@ -836,7 +834,7 @@ class TelegramOperatorBot:
             f"decision_ref=`{decision_ref}`\n"
             "Approval intent is recorded in append-only command audit log only.\n"
             "Audit-only. No execution side effect occurs."
-            f"{self._format_refs('approve')}"
+            f"{self._format_refs('approve')}",
         )
 
     async def _cmd_reject(self, chat_id: int, *, args: str = "") -> None:
@@ -858,7 +856,7 @@ class TelegramOperatorBot:
             f"decision_ref=`{decision_ref}`\n"
             "Rejection intent is recorded in append-only command audit log only.\n"
             "Audit-only. No execution side effect occurs."
-            f"{self._format_refs('reject')}"
+            f"{self._format_refs('reject')}",
         )
 
     async def _cmd_pause(self, chat_id: int, *, args: str = "") -> None:
@@ -913,9 +911,7 @@ class TelegramOperatorBot:
         )
         if payload is None:
             return
-        decision_pack_status = self._inline(
-            payload.get("decision_pack_status", "unknown")
-        )
+        decision_pack_status = self._inline(payload.get("decision_pack_status", "unknown"))
         msg = (
             "*Daily Summary (Canonical Operator View)*\n"
             f"readiness_status=`{self._inline(payload.get('readiness_status', 'unknown'))}`\n"

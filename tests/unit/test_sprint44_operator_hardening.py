@@ -169,9 +169,7 @@ def test_audit_log_uses_x_forwarded_for_if_present(tmp_path: Path) -> None:
     app, audit_path = _governance_app(tmp_path)
     c = TestClient(app)
     c.get("/ping", headers={"X-Forwarded-For": "203.0.113.5, 10.0.0.1"})
-    record = json.loads(
-        audit_path.read_text(encoding="utf-8").strip().splitlines()[0]
-    )
+    record = json.loads(audit_path.read_text(encoding="utf-8").strip().splitlines()[0])
     assert record["client_ip"] == "203.0.113.5"
 
 

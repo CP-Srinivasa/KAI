@@ -8,6 +8,7 @@ Design rules:
 - No FastMCP imports — helpers are framework-agnostic.
 - All path helpers enforce workspace / artifacts/ invariants (I-94, I-95).
 """
+
 from __future__ import annotations
 
 import datetime
@@ -862,9 +863,7 @@ def build_operator_runbook_payload(
         review_required_summary=review_required_summary,
     )
     payload = build_operator_runbook(decision_pack=decision_pack).to_json_dict()
-    invalid_refs = get_invalid_research_command_refs(
-        extract_runbook_command_refs(payload)
-    )
+    invalid_refs = get_invalid_research_command_refs(extract_runbook_command_refs(payload))
     if invalid_refs:
         raise ValueError(
             "Operator runbook contains invalid research command references: "

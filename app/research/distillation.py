@@ -209,6 +209,7 @@ def build_distillation_report(inputs: DistillationInputs) -> DistillationReadine
             raise FileNotFoundError(f"Eval report not found: {report_path}")
         raw = json.loads(report_path.read_text(encoding="utf-8"))
         from app.research.evaluation import EvaluationMetrics
+
         metrics_raw = raw.get("metrics", {})
         metrics = EvaluationMetrics(
             sentiment_agreement=metrics_raw.get("sentiment_agreement", 0.0),

@@ -103,14 +103,16 @@ def _make_eval_report_dict(
 
 def _make_dataset_row(doc_id: str, analysis_source: str) -> dict:
     """Build a JSONL dataset row in the format expected by compare_datasets()."""
-    target = json.dumps({
-        "sentiment_label": "bullish",
-        "priority_score": 7,
-        "relevance_score": 0.8,
-        "impact_score": 0.6,
-        "actionable": True,
-        "tags": ["crypto"],
-    })
+    target = json.dumps(
+        {
+            "sentiment_label": "bullish",
+            "priority_score": 7,
+            "relevance_score": 0.8,
+            "impact_score": 0.6,
+            "actionable": True,
+            "tags": ["crypto"],
+        }
+    )
     return {
         "metadata": {
             "document_id": doc_id,
@@ -162,10 +164,13 @@ def test_compute_shadow_coverage_live_format(tmp_path: Path) -> None:
 def test_compute_shadow_coverage_mixed_formats(tmp_path: Path) -> None:
     """Handles a JSONL file containing both batch and live format records."""
     f = tmp_path / "shadow.jsonl"
-    _write_jsonl(f, [
-        _batch_shadow_line(priority_diff=4, sentiment_match=True),
-        _live_shadow_line(priority_delta=2, sentiment_match=False),
-    ])
+    _write_jsonl(
+        f,
+        [
+            _batch_shadow_line(priority_diff=4, sentiment_match=True),
+            _live_shadow_line(priority_delta=2, sentiment_match=False),
+        ],
+    )
     report = compute_shadow_coverage(f)
     assert report.total_records == 2
     assert report.valid_records == 2

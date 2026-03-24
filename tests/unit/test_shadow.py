@@ -103,10 +103,22 @@ def _make_record(
 
 def test_compute_divergence_identical_results() -> None:
     """All scores identical → all match, all diffs = 0."""
-    doc = _make_doc(sentiment=SentimentLabel.BULLISH, priority=7, relevance=0.8, impact=0.6,
-                    actionable=True, tags=["crypto", "btc"])
-    output = _make_output(sentiment=SentimentLabel.BULLISH, priority=7, relevance=0.8, impact=0.6,
-                          actionable=True, tags=["crypto", "btc"])
+    doc = _make_doc(
+        sentiment=SentimentLabel.BULLISH,
+        priority=7,
+        relevance=0.8,
+        impact=0.6,
+        actionable=True,
+        tags=["crypto", "btc"],
+    )
+    output = _make_output(
+        sentiment=SentimentLabel.BULLISH,
+        priority=7,
+        relevance=0.8,
+        impact=0.6,
+        actionable=True,
+        tags=["crypto", "btc"],
+    )
     div = compute_divergence(doc, output)
     assert div.sentiment_match is True
     assert div.priority_diff == 0
@@ -118,10 +130,22 @@ def test_compute_divergence_identical_results() -> None:
 
 def test_compute_divergence_full_mismatch() -> None:
     """All scores different → nothing matches, all diffs > 0."""
-    doc = _make_doc(sentiment=SentimentLabel.BULLISH, priority=9, relevance=0.9, impact=0.8,
-                    actionable=True, tags=["crypto"])
-    output = _make_output(sentiment=SentimentLabel.BEARISH, priority=2, relevance=0.1, impact=0.1,
-                          actionable=False, tags=["equities"])
+    doc = _make_doc(
+        sentiment=SentimentLabel.BULLISH,
+        priority=9,
+        relevance=0.9,
+        impact=0.8,
+        actionable=True,
+        tags=["crypto"],
+    )
+    output = _make_output(
+        sentiment=SentimentLabel.BEARISH,
+        priority=2,
+        relevance=0.1,
+        impact=0.1,
+        actionable=False,
+        tags=["equities"],
+    )
     div = compute_divergence(doc, output)
     assert div.sentiment_match is False
     assert div.priority_diff == 7

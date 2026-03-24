@@ -1,4 +1,5 @@
 """Risk Engine — hard pre-gate before any order. Never bypass. (Security First)."""
+
 from __future__ import annotations
 
 import logging
@@ -80,7 +81,8 @@ class RiskEngine:
                 kill_triggered = True
             logger.error(
                 "[RISK] Daily loss limit breached: %.2f%% (limit=%.2f%%)",
-                loss_pct, -abs(self._limits.max_daily_loss_pct)
+                loss_pct,
+                -abs(self._limits.max_daily_loss_pct),
             )
 
         return DailyLossState(
@@ -98,7 +100,8 @@ class RiskEngine:
                 self.trigger_kill_switch()
             logger.error(
                 "[RISK] Max drawdown breached: %.2f%% (limit=%.2f%%)",
-                drawdown_pct, self._limits.max_total_drawdown_pct
+                drawdown_pct,
+                self._limits.max_total_drawdown_pct,
             )
             return True
         return False
@@ -214,7 +217,10 @@ class RiskEngine:
         else:
             logger.warning(
                 "[RISK] Order REJECTED: %s %s violations=%s (check_id=%s)",
-                side, symbol, violations, check_id
+                side,
+                symbol,
+                violations,
+                check_id,
             )
 
         return result

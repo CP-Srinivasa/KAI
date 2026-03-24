@@ -1,4 +1,5 @@
 """CLI tests: research decision-journal-append, decision-journal-summary, loop-cycle-summary."""
+
 from __future__ import annotations
 
 import json
@@ -240,9 +241,7 @@ def test_loop_cycle_summary_reads_records(tmp_path: Path) -> None:
         }
         for i in range(3)
     ]
-    audit_path.write_text(
-        "\n".join(json.dumps(r) for r in records) + "\n", encoding="utf-8"
-    )
+    audit_path.write_text("\n".join(json.dumps(r) for r in records) + "\n", encoding="utf-8")
     result = runner.invoke(
         app,
         ["research", "loop-cycle-summary", "--audit-path", str(audit_path)],
@@ -255,14 +254,17 @@ def test_loop_cycle_summary_reads_records(tmp_path: Path) -> None:
 def test_loop_cycle_summary_shows_safety_flags(tmp_path: Path) -> None:
     audit_path = tmp_path / "loop_audit.jsonl"
     audit_path.write_text(
-        json.dumps({
-            "cycle_id": "cyc_001",
-            "status": "no_signal",
-            "symbol": "BTC/USDT",
-            "signal_generated": False,
-            "risk_approved": False,
-            "fill_simulated": False,
-        }) + "\n",
+        json.dumps(
+            {
+                "cycle_id": "cyc_001",
+                "status": "no_signal",
+                "symbol": "BTC/USDT",
+                "signal_generated": False,
+                "risk_approved": False,
+                "fill_simulated": False,
+            }
+        )
+        + "\n",
         encoding="utf-8",
     )
     result = runner.invoke(

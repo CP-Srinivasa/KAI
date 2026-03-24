@@ -1,4 +1,5 @@
 """Legacy shim tests for superseded execution portfolio_surface module."""
+
 from __future__ import annotations
 
 import pytest

@@ -622,8 +622,8 @@ def test_save_cleanup_protected_and_review_summaries_write_json(tmp_path: Path) 
     # readiness_report.json stale -> rotatable (operational class)
     stale_report = _make_artifact(tmp_path, "readiness_report.json")
     _age_file(stale_report, 35.0)
-    _make_artifact(tmp_path, "mcp_write_audit.jsonl")   # protected
-    _make_artifact(tmp_path, "unknown_custom.json")      # unknown -> review_required
+    _make_artifact(tmp_path, "mcp_write_audit.jsonl")  # protected
+    _make_artifact(tmp_path, "unknown_custom.json")  # unknown -> review_required
     report = build_retention_report(tmp_path, stale_after_days=30.0)
 
     cleanup_out = tmp_path / "cleanup.json"
@@ -656,4 +656,3 @@ def test_save_cleanup_protected_and_review_summaries_write_json(tmp_path: Path) 
     assert review_data["review_required_count"] == 1
     assert review_data["entries"][0]["retention_rationale"]
     assert review_data["entries"][0]["operator_guidance"]
-

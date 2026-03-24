@@ -32,6 +32,7 @@ Tool categories:
 - alerts / journal: get_alert_audit_summary, get_decision_journal_summary
 - trading loop: get_trading_loop_status, get_recent_trading_cycles
 """
+
 from __future__ import annotations
 
 import json

@@ -22,6 +22,7 @@ if TYPE_CHECKING:
     from app.analysis.base.interfaces import BaseAnalysisProvider
     from app.core.domain.document import CanonicalDocument
 
+
 def map_path_to_provider_name(path_id: str) -> str:
     """Extract provider name from a path_id string.
 
@@ -181,13 +182,9 @@ def build_abc_envelope(
     control_result: PathResultEnvelope | None = None
     if control_outcome is not None:
         c_path_id, c_provider, c_llm, c_error = control_outcome
-        control_result = build_path_result_from_llm_output(
-            c_path_id, c_provider, c_llm, c_error
-        )
+        control_result = build_path_result_from_llm_output(c_path_id, c_provider, c_llm, c_error)
 
-    comparison_summary = build_comparison_summaries(
-        primary_result, shadow_results, control_result
-    )
+    comparison_summary = build_comparison_summaries(primary_result, shadow_results, control_result)
 
     distribution_metadata = DistributionMetadata(
         route_profile=route_state.route_profile,

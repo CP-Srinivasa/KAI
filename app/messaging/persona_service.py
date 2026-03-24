@@ -1,4 +1,5 @@
 """Disabled-by-default persona surface for future multichannel KAI outputs."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -12,9 +13,7 @@ class PersonaSnapshot:
     channel: str = "text"
     enabled: bool = False
     style: str = "calm_precise_security_first"
-    identity_statement: str = (
-        "KAI remains calm, precise, disciplined, and security-first."
-    )
+    identity_statement: str = "KAI remains calm, precise, disciplined, and security-first."
 
 
 class PersonaService:

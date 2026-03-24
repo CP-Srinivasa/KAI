@@ -1,4 +1,5 @@
 """Mock market data adapter — deterministic, zero-dependency, for testing/paper trading."""
+
 from __future__ import annotations
 
 import math
@@ -19,7 +20,12 @@ _BASE_PRICES: dict[str, float] = {
 }
 
 _TIMEFRAME_MINUTES: dict[str, int] = {
-    "1m": 1, "5m": 5, "15m": 15, "1h": 60, "4h": 240, "1d": 1440,
+    "1m": 1,
+    "5m": 5,
+    "15m": 15,
+    "1h": 60,
+    "4h": 240,
+    "1d": 1440,
 }
 
 
@@ -78,9 +84,7 @@ class MockMarketDataAdapter(BaseMarketDataAdapter):
             change_pct_24h=round(change_pct, 4),
         )
 
-    async def get_ohlcv(
-        self, symbol: str, timeframe: str = "1h", limit: int = 100
-    ) -> list[OHLCV]:
+    async def get_ohlcv(self, symbol: str, timeframe: str = "1h", limit: int = 100) -> list[OHLCV]:
         minutes_per_candle = _TIMEFRAME_MINUTES.get(timeframe, 60)
         candles: list[OHLCV] = []
         now = datetime.now(UTC)
@@ -99,16 +103,18 @@ class MockMarketDataAdapter(BaseMarketDataAdapter):
             volume = (
                 self._volume_base / (1440 / minutes_per_candle) * (0.8 + 0.4 * abs(math.sin(i)))
             )
-            candles.append(OHLCV(
-                symbol=symbol,
-                timestamp_utc=ts.isoformat(),
-                timeframe=timeframe,
-                open=round(open_p, 4),
-                high=round(high_p, 4),
-                low=round(low_p, 4),
-                close=round(close_p, 4),
-                volume=round(volume, 2),
-            ))
+            candles.append(
+                OHLCV(
+                    symbol=symbol,
+                    timestamp_utc=ts.isoformat(),
+                    timeframe=timeframe,
+                    open=round(open_p, 4),
+                    high=round(high_p, 4),
+                    low=round(low_p, 4),
+                    close=round(close_p, 4),
+                    volume=round(volume, 2),
+                )
+            )
         return candles
 
     async def get_market_data_point(self, symbol: str) -> MarketDataPoint | None:

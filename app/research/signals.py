@@ -93,13 +93,11 @@ def extract_signal_candidates(
                 supporting_evidence=doc.summary or doc.title or "No summary available.",
                 contradicting_evidence="Contradicting evidence not extracted in primary scan.",
                 risk_notes=(
-                    f"spam_prob={doc.spam_probability or 0.0:.2f} "
-                    f"scope={doc.market_scope.value}"
+                    f"spam_prob={doc.spam_probability or 0.0:.2f} scope={doc.market_scope.value}"
                 ),
                 source_quality=doc.credibility_score or 0.5,
                 recommended_next_step=(
-                    f"Review {direction} signal for {primary_asset} "
-                    "- human decision required."
+                    f"Review {direction} signal for {primary_asset} - human decision required."
                 ),
                 analysis_source=doc.effective_analysis_source.value,
                 priority=effective_priority,

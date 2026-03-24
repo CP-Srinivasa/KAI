@@ -1,4 +1,5 @@
 """MCP tests for Sprint 36: get_decision_journal_summary, append_decision_instance, get_loop_cycle_summary."""  # noqa: E501
+
 from __future__ import annotations
 
 import json
@@ -235,12 +236,9 @@ async def test_get_loop_cycle_summary_reads_records(
     audit_path = tmp_path / "artifacts" / "trading_loop_audit.jsonl"
     audit_path.parent.mkdir(parents=True, exist_ok=True)
     records = [
-        {"cycle_id": f"cyc_{i}", "status": "completed", "symbol": "BTC/USDT"}
-        for i in range(5)
+        {"cycle_id": f"cyc_{i}", "status": "completed", "symbol": "BTC/USDT"} for i in range(5)
     ]
-    audit_path.write_text(
-        "\n".join(json.dumps(r) for r in records) + "\n", encoding="utf-8"
-    )
+    audit_path.write_text("\n".join(json.dumps(r) for r in records) + "\n", encoding="utf-8")
     result = await get_loop_cycle_summary()
     assert result["total_cycles"] == 5
     assert result["status_counts"] == {"completed": 5}
@@ -256,9 +254,7 @@ async def test_get_loop_cycle_summary_last_n_limit(
     audit_path = tmp_path / "artifacts" / "trading_loop_audit.jsonl"
     audit_path.parent.mkdir(parents=True, exist_ok=True)
     records = [{"cycle_id": f"c{i}", "status": "completed"} for i in range(30)]
-    audit_path.write_text(
-        "\n".join(json.dumps(r) for r in records) + "\n", encoding="utf-8"
-    )
+    audit_path.write_text("\n".join(json.dumps(r) for r in records) + "\n", encoding="utf-8")
     result = await get_loop_cycle_summary(last_n=5)
     assert result["total_cycles"] == 30
     assert len(result["recent_cycles"]) == 5
@@ -275,9 +271,7 @@ async def test_get_loop_cycle_summary_mixed_statuses(
     audit_path.parent.mkdir(parents=True, exist_ok=True)
     statuses = ["completed", "completed", "no_signal", "risk_rejected", "no_signal"]
     records = [{"cycle_id": f"c{i}", "status": s} for i, s in enumerate(statuses)]
-    audit_path.write_text(
-        "\n".join(json.dumps(r) for r in records) + "\n", encoding="utf-8"
-    )
+    audit_path.write_text("\n".join(json.dumps(r) for r in records) + "\n", encoding="utf-8")
     result = await get_loop_cycle_summary()
     assert result["status_counts"]["completed"] == 2
     assert result["status_counts"]["no_signal"] == 2

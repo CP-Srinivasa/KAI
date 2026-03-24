@@ -39,6 +39,7 @@ _IDEMPOTENCY_CACHE_MAX = 256
 _GUARDED_RATE_LIMIT_WINDOW_SECONDS = 30.0
 _GUARDED_RATE_LIMIT_MAX_REQUESTS = 5
 
+
 class IdempotencyStore:
     """In-memory idempotency cache for guarded operator requests.
 
@@ -120,7 +121,6 @@ def _build_guard_stores(
 
 
 _IDEMPOTENCY_STORE, _RATE_LIMIT_STORE = _build_guard_stores()
-
 
 
 @dataclass(frozen=True)
@@ -360,9 +360,7 @@ def _enforce_guarded_rate_limit(request: Request) -> None:
             request,
             status_code=429,
             code="guarded_rate_limited",
-            message=(
-                f"Too many guarded requests; retry after {retry_after} seconds"
-            ),
+            message=(f"Too many guarded requests; retry after {retry_after} seconds"),
             retry_after_seconds=retry_after,
         )
 

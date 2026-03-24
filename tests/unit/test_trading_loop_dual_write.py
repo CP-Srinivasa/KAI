@@ -7,6 +7,7 @@ Tests verify:
 - _write_db is called for non-COMPLETED cycles too
 - fill_simulated cycles also write PortfolioStateRecord
 """
+
 from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock
@@ -56,7 +57,9 @@ def _make_session_factory(mock_session: AsyncMock) -> MagicMock:
     return factory
 
 
-def _make_loop(tmp_path: object, session_factory: object = None, **limit_overrides: object) -> TradingLoop:  # noqa: E501
+def _make_loop(
+    tmp_path: object, session_factory: object = None, **limit_overrides: object
+) -> TradingLoop:  # noqa: E501
     risk = RiskEngine(_default_limits(**limit_overrides))
     exec_eng = PaperExecutionEngine(
         initial_equity=10000.0,
@@ -226,7 +229,8 @@ async def test_fill_simulated_cycle_writes_portfolio_state(tmp_path: object) -> 
         assert TradingCycleRecord in added_types
         assert PortfolioStateRecord in added_types
         state_record = next(
-            a[0][0] for a in mock_session.add.call_args_list
+            a[0][0]
+            for a in mock_session.add.call_args_list
             if isinstance(a[0][0], PortfolioStateRecord)
         )
         assert state_record.cycle_id == cycle.cycle_id

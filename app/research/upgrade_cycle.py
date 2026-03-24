@@ -267,8 +267,7 @@ def _build_comparison_note(path: Path) -> str:
     report_type = payload.get("report_type")
     if report_type not in {"evaluation_report_comparison", "evaluation_comparison"}:
         raise ValueError(
-            "Comparison report must have report_type "
-            f"'evaluation_report_comparison': {path}"
+            f"Comparison report must have report_type 'evaluation_report_comparison': {path}"
         )
 
     regression_summary = payload.get("regression_summary")
@@ -287,29 +286,25 @@ def _build_comparison_note(path: Path) -> str:
         not isinstance(item, str) for item in regressed_metrics
     ):
         raise ValueError(
-            "Comparison report regression_summary.regressed_metrics must be list[str]: "
-            f"{path}"
+            f"Comparison report regression_summary.regressed_metrics must be list[str]: {path}"
         )
     if not isinstance(improved_metrics, list) or any(
         not isinstance(item, str) for item in improved_metrics
     ):
         raise ValueError(
-            "Comparison report regression_summary.improved_metrics must be list[str]: "
-            f"{path}"
+            f"Comparison report regression_summary.improved_metrics must be list[str]: {path}"
         )
     if not isinstance(regressed_gates, list) or any(
         not isinstance(item, str) for item in regressed_gates
     ):
         raise ValueError(
-            "Comparison report regression_summary.regressed_gates must be list[str]: "
-            f"{path}"
+            f"Comparison report regression_summary.regressed_gates must be list[str]: {path}"
         )
     if not isinstance(improved_gates, list) or any(
         not isinstance(item, str) for item in improved_gates
     ):
         raise ValueError(
-            "Comparison report regression_summary.improved_gates must be list[str]: "
-            f"{path}"
+            f"Comparison report regression_summary.improved_gates must be list[str]: {path}"
         )
 
     metric_fragment = ", ".join(regressed_metrics) if regressed_metrics else "none"
@@ -352,7 +347,4 @@ def _build_status_note(
             "Result summary: training job record is present. "
             "A post-training evaluation artifact has not been supplied yet."
         )
-    return (
-        "Result summary: teacher dataset is present. "
-        "Training intent has not been recorded yet."
-    )
+    return "Result summary: teacher dataset is present. Training intent has not been recorded yet."

@@ -1,4 +1,5 @@
 """Paper execution engine typed models."""
+
 from __future__ import annotations
 
 import json
@@ -21,11 +22,12 @@ logger = logging.getLogger(__name__)
 @dataclass(frozen=True)
 class PaperOrder:
     """Immutable order record. Never mutated after creation."""
+
     order_id: str
     symbol: str
-    side: str           # "buy" | "sell"
+    side: str  # "buy" | "sell"
     quantity: float
-    order_type: str     # "market" | "limit"
+    order_type: str  # "market" | "limit"
     limit_price: float | None
     stop_loss: float | None
     take_profit: float | None
@@ -38,6 +40,7 @@ class PaperOrder:
 @dataclass(frozen=True)
 class PaperFill:
     """Immutable fill record."""
+
     fill_id: str
     order_id: str
     symbol: str
@@ -52,6 +55,7 @@ class PaperFill:
 @dataclass
 class PaperPosition:
     """Mutable position (updated on fills)."""
+
     symbol: str
     quantity: float
     avg_entry_price: float
@@ -78,6 +82,7 @@ class PaperPosition:
 @dataclass
 class PaperPortfolio:
     """Portfolio state for paper trading."""
+
     initial_equity: float
     cash: float
     positions: dict[str, PaperPosition] = field(default_factory=dict)
@@ -91,8 +96,7 @@ class PaperPortfolio:
 
     def total_equity(self, prices: dict[str, float]) -> float:
         position_value = sum(
-            p.quantity * prices.get(sym, p.avg_entry_price)
-            for sym, p in self.positions.items()
+            p.quantity * prices.get(sym, p.avg_entry_price) for sym, p in self.positions.items()
         )
         return self.cash + position_value
 
@@ -117,9 +121,10 @@ class PaperPortfolio:
             "trade_count": self.trade_count,
             "open_positions": len(self.positions),
             "positions": {sym: pos.to_dict() for sym, pos in self.positions.items()},
-            "total_equity": self.total_equity(p) if p else self.cash + sum(
-                pos.quantity * pos.avg_entry_price for pos in self.positions.values()
-            ),
+            "total_equity": self.total_equity(p)
+            if p
+            else self.cash
+            + sum(pos.quantity * pos.avg_entry_price for pos in self.positions.values()),
         }
 
 
@@ -232,9 +237,7 @@ class DecisionRecord(BaseModel):
             DecisionExecutionState.READY,
             DecisionExecutionState.EXECUTED,
         }:
-            raise ValueError(
-                "Research decisions must remain non-executable or blocked."
-            )
+            raise ValueError("Research decisions must remain non-executable or blocked.")
         if self.mode == ExecutionMode.LIVE and self.approval_state != ApprovalState.APPROVED:
             raise ValueError("Live decisions require explicit approved state.")
         if self.mode == ExecutionMode.LIVE and self.execution_state in {
@@ -295,9 +298,7 @@ def load_decision_records(input_path: str | Path) -> list[DecisionRecord]:
                     line_number,
                     exc,
                 )
-                raise ValueError(
-                    f"Invalid decision record JSON at line {line_number}"
-                ) from exc
+                raise ValueError(f"Invalid decision record JSON at line {line_number}") from exc
             try:
                 records.append(validate_decision_record_payload(payload))
             except ValueError as exc:
@@ -307,7 +308,5 @@ def load_decision_records(input_path: str | Path) -> list[DecisionRecord]:
                     line_number,
                     exc,
                 )
-                raise ValueError(
-                    f"Invalid decision record payload at line {line_number}"
-                ) from exc
+                raise ValueError(f"Invalid decision record payload at line {line_number}") from exc
     return records

@@ -181,6 +181,7 @@ def test_load_consumer_acknowledgements_skips_malformed_lines(tmp_path: Path) ->
 
 # --- Audit Summary ---
 
+
 def test_build_consumer_audit_summary_empty() -> None:
     summary = build_consumer_audit_summary([], [])
     assert summary.total_handoffs == 0
@@ -208,16 +209,17 @@ def test_build_consumer_audit_summary_counts_by_signal() -> None:
     class MockHandoff:
         signal_id: str
         handoff_id: str
+
         def __init__(self, sid: str, hid: str):
             self.signal_id = sid
             self.handoff_id = hid
 
-    handoffs = [ MockHandoff("s1", "h1"), MockHandoff("s2", "h2") ] # type: ignore
+    handoffs = [MockHandoff("s1", "h1"), MockHandoff("s2", "h2")]  # type: ignore
     acks = [
         create_consumer_acknowledgement("hx", "s1", "c1"),
         create_consumer_acknowledgement("hy", "s1", "c2"),
     ]
-    summary = build_consumer_audit_summary(handoffs, acks) # type: ignore
+    summary = build_consumer_audit_summary(handoffs, acks)  # type: ignore
     assert summary.total_handoffs == 2
     assert summary.acknowledged_count == 2
     assert summary.pending_count == 2

@@ -1,4 +1,5 @@
 """Unit tests for TelegramOperatorBot."""
+
 from __future__ import annotations
 
 import json
@@ -441,9 +442,7 @@ async def test_decision_pack_command_degrades_on_loader_error(tmp_path, monkeypa
     monkeypatch.setattr(bot, "_send", fake_send)
     monkeypatch.setattr(bot, "_get_decision_pack_summary", failing_loader)
 
-    await bot.process_update(
-        {"message": {"chat": {"id": 12345}, "text": "/decision_pack"}}
-    )
+    await bot.process_update({"message": {"chat": {"id": 12345}, "text": "/decision_pack"}})
 
     assert len(sent_messages) == 1
     assert "Decision Pack" in sent_messages[0]
@@ -727,9 +726,7 @@ async def test_help_lists_hardened_commands(tmp_path, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_webhook_valid_secret_method_content_type_size_dispatches_once(
-    tmp_path, monkeypatch
-):
+async def test_webhook_valid_secret_method_content_type_size_dispatches_once(tmp_path, monkeypatch):
     bot = _bot(
         tmp_path,
         webhook_secret_token="secret-token",
@@ -794,9 +791,7 @@ async def test_webhook_invalid_secret_is_rejected_and_has_no_command_side_effect
 
 
 @pytest.mark.asyncio
-async def test_webhook_missing_secret_header_is_rejected_fail_closed(
-    tmp_path, monkeypatch
-):
+async def test_webhook_missing_secret_header_is_rejected_fail_closed(tmp_path, monkeypatch):
     bot = _bot(
         tmp_path,
         webhook_secret_token="secret-token",
@@ -929,9 +924,7 @@ async def test_webhook_transport_checks_fail_closed(
 
 
 @pytest.mark.asyncio
-async def test_webhook_rejects_when_secret_not_configured_fail_closed(
-    tmp_path, monkeypatch
-):
+async def test_webhook_rejects_when_secret_not_configured_fail_closed(tmp_path, monkeypatch):
     bot = _bot(
         tmp_path,
         webhook_rejection_audit_log=str(tmp_path / "webhook_rejections.jsonl"),

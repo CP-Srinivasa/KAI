@@ -268,7 +268,7 @@ def test_load_abc_inference_envelopes_reads_jsonl(tmp_path) -> None:
 
 def test_load_abc_inference_envelopes_rejects_invalid_row(tmp_path) -> None:
     path = tmp_path / "invalid.jsonl"
-    path.write_text("{\"report_type\": \"abc_inference_envelope\"}\n", encoding="utf-8")
+    path.write_text('{"report_type": "abc_inference_envelope"}\n', encoding="utf-8")
 
     with pytest.raises(ValueError):
         load_abc_inference_envelopes(path)

@@ -112,12 +112,12 @@ class EvaluationMetrics:
     """
 
     sentiment_agreement: float  # fraction of rows where sentiment_label matches (0.0–1.0)
-    priority_mae: float         # mean absolute error on priority_score (1–10 scale)
-    relevance_mae: float        # mean absolute error on relevance_score (0.0–1.0)
-    impact_mae: float           # mean absolute error on impact_score (0.0–1.0)
-    tag_overlap_mean: float     # average Jaccard similarity of tags lists (0.0–1.0)
-    sample_count: int           # number of rows successfully paired and evaluated
-    missing_pairs: int          # baseline rows with no matching document_id in teacher set
+    priority_mae: float  # mean absolute error on priority_score (1–10 scale)
+    relevance_mae: float  # mean absolute error on relevance_score (0.0–1.0)
+    impact_mae: float  # mean absolute error on impact_score (0.0–1.0)
+    tag_overlap_mean: float  # average Jaccard similarity of tags lists (0.0–1.0)
+    sample_count: int  # number of rows successfully paired and evaluated
+    missing_pairs: int  # baseline rows with no matching document_id in teacher set
     actionable_accuracy: float = 0.0  # fraction where actionable status matches (backward-compat)
     false_actionable_rate: float = 0.0  # candidate fires but teacher does not (G6 gate)
 
@@ -138,6 +138,7 @@ class EvaluationMetrics:
 @dataclass
 class PromotionValidation:
     """Evaluates whether metrics meet the Sprint 7 companion promotion thresholds."""
+
     sentiment_pass: bool
     priority_pass: bool
     relevance_pass: bool
@@ -147,14 +148,16 @@ class PromotionValidation:
 
     @property
     def is_promotable(self) -> bool:
-        return all([
-            self.sentiment_pass,
-            self.priority_pass,
-            self.relevance_pass,
-            self.impact_pass,
-            self.tag_overlap_pass,
-            self.false_actionable_pass,
-        ])
+        return all(
+            [
+                self.sentiment_pass,
+                self.priority_pass,
+                self.relevance_pass,
+                self.impact_pass,
+                self.tag_overlap_pass,
+                self.false_actionable_pass,
+            ]
+        )
 
 
 def validate_promotion(metrics: EvaluationMetrics) -> PromotionValidation:
@@ -396,9 +399,7 @@ def load_saved_evaluation_report(path: Path | str) -> EvaluationReport:
 
     candidate_dataset = inputs.get("candidate_dataset")
     if not isinstance(candidate_dataset, str) or not candidate_dataset.strip():
-        raise ValueError(
-            "Evaluation report inputs.candidate_dataset must be a non-empty string."
-        )
+        raise ValueError("Evaluation report inputs.candidate_dataset must be a non-empty string.")
 
     dataset_type = payload.get("dataset_type")
     if not isinstance(dataset_type, str) or not dataset_type.strip():
@@ -631,9 +632,7 @@ def _parse_non_negative_int(value: object, field_name: str) -> int:
         try:
             parsed = int(value)
         except ValueError as err:
-            raise ValueError(
-                f"Evaluation report field '{field_name}' must be an integer."
-            ) from err
+            raise ValueError(f"Evaluation report field '{field_name}' must be an integer.") from err
     else:
         raise ValueError(f"Evaluation report field '{field_name}' must be an integer.")
 
@@ -651,9 +650,7 @@ def _parse_float(value: object, field_name: str) -> float:
         try:
             return float(value)
         except ValueError as err:
-            raise ValueError(
-                f"Evaluation report field '{field_name}' must be numeric."
-            ) from err
+            raise ValueError(f"Evaluation report field '{field_name}' must be numeric.") from err
     raise ValueError(f"Evaluation report field '{field_name}' must be numeric.")
 
 
@@ -898,8 +895,7 @@ def build_shadow_run_record(
         "generated_at": datetime.now(UTC).isoformat(),
         "document_id": str(document.id),
         "primary_provider": (
-            (primary_provider or document.provider or "fallback").strip()
-            or "fallback"
+            (primary_provider or document.provider or "fallback").strip() or "fallback"
         ),
         "primary_analysis_source": (
             primary_result.analysis_source.value
@@ -1037,10 +1033,7 @@ def compare_datasets(
             sentiment_matches += 1
 
         priority_errors.append(
-            abs(
-                float(teacher.get("priority_score", 1))
-                - float(baseline.get("priority_score", 1))
-            )
+            abs(float(teacher.get("priority_score", 1)) - float(baseline.get("priority_score", 1)))
         )
         relevance_errors.append(
             abs(
@@ -1049,14 +1042,9 @@ def compare_datasets(
             )
         )
         impact_errors.append(
-            abs(
-                float(teacher.get("impact_score", 0.0))
-                - float(baseline.get("impact_score", 0.0))
-            )
+            abs(float(teacher.get("impact_score", 0.0)) - float(baseline.get("impact_score", 0.0)))
         )
-        tag_overlaps.append(
-            _jaccard(teacher.get("tags", []), baseline.get("tags", []))
-        )
+        tag_overlaps.append(_jaccard(teacher.get("tags", []), baseline.get("tags", [])))
 
         t_act = _is_actionable(teacher)
         b_act = _is_actionable(baseline)
@@ -1140,6 +1128,7 @@ def save_benchmark_artifact(
 @dataclass
 class ComparisonMetrics:
     """Stores the deltas between a candidate and baseline EvaluationMetrics."""
+
     sentiment_agreement_delta: float
     priority_mae_delta: float
     relevance_mae_delta: float

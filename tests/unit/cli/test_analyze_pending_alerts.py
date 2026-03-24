@@ -1,4 +1,5 @@
 """Tests for Phase 4 alert dispatch in the analyze-pending CLI command."""
+
 from __future__ import annotations
 
 from typer.testing import CliRunner
@@ -57,6 +58,7 @@ def _patch_analysis_infra(monkeypatch, docs, *, priority_score: int = 9):
     monkeypatch.setattr(document_repo.DocumentRepository, "get_pending_documents", fake_get_pending)
     monkeypatch.setattr(document_repo.DocumentRepository, "update_analysis", fake_update_analysis)
     from app.analysis import pipeline as pipeline_mod
+
     monkeypatch.setattr(pipeline_mod.AnalysisPipeline, "run_batch", fake_run_batch)
     monkeypatch.setattr(kw_engine.KeywordEngine, "from_monitor_dir", lambda _p: object())
 
@@ -75,6 +77,7 @@ def test_analyze_pending_dispatches_alerts_for_high_priority_docs(monkeypatch) -
         return [object()]  # non-empty → alert fired
 
     from app.alerts import service as alert_service_mod
+
     monkeypatch.setattr(alert_service_mod.AlertService, "process_document", fake_process_document)
 
     result = runner.invoke(app, ["query", "analyze-pending", "--limit", "1"])
@@ -97,6 +100,7 @@ def test_analyze_pending_no_alerts_flag_suppresses_dispatch(monkeypatch) -> None
         return [object()]
 
     from app.alerts import service as alert_service_mod
+
     monkeypatch.setattr(alert_service_mod.AlertService, "process_document", fake_process_document)
 
     result = runner.invoke(app, ["query", "analyze-pending", "--no-alerts", "--limit", "1"])
@@ -119,6 +123,7 @@ def test_analyze_pending_alert_failure_does_not_abort_analysis(monkeypatch) -> N
         raise RuntimeError("Telegram timeout")
 
     from app.alerts import service as alert_service_mod
+
     monkeypatch.setattr(
         alert_service_mod.AlertService, "process_document", exploding_process_document
     )

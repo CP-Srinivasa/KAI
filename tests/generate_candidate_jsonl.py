@@ -20,5 +20,6 @@ def main():
         for row in rows:
             f.write(json.dumps(row) + "\n")
 
+
 if __name__ == "__main__":
     main()

@@ -1,4 +1,5 @@
 """Trading loop models and read-only control-plane summaries."""
+
 from __future__ import annotations
 
 import uuid
@@ -10,7 +11,7 @@ from enum import StrEnum
 class CycleStatus(StrEnum):
     COMPLETED = "completed"
     NO_MARKET_DATA = "no_market_data"
-    STALE_DATA = "stale_data"       # market data received but freshness threshold exceeded
+    STALE_DATA = "stale_data"  # market data received but freshness threshold exceeded
     NO_SIGNAL = "no_signal"
     RISK_REJECTED = "risk_rejected"
     SIZE_REJECTED = "size_rejected"

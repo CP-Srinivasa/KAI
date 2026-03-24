@@ -9,6 +9,7 @@ Commands: evaluate-datasets, benchmark-companion, benchmark-companion-run,
 
 All commands register on research_core_app imported from research_core.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -48,14 +49,11 @@ def _load_dataset_rows(label: str, path_str: str) -> list[dict[str, object]]:
         raise typer.Exit(1) from err
     except json.JSONDecodeError as err:
         console.print(
-            f"[red]Error:[/red] Invalid JSONL content in {label} dataset "
-            f"'{path_str}': {err.msg}"
+            f"[red]Error:[/red] Invalid JSONL content in {label} dataset '{path_str}': {err.msg}"
         )
         raise typer.Exit(1) from err
     except OSError as err:
-        console.print(
-            f"[red]Error:[/red] Could not read {label} dataset '{path_str}': {err}"
-        )
+        console.print(f"[red]Error:[/red] Could not read {label} dataset '{path_str}': {err}")
         raise typer.Exit(1) from err
 
 
@@ -192,9 +190,7 @@ def research_evaluate_datasets(
             )
             raise typer.Exit(1) from err
         except OSError as err:
-            console.print(
-                f"[red]Error:[/red] Could not read {label} dataset '{path_str}': {err}"
-            )
+            console.print(f"[red]Error:[/red] Could not read {label} dataset '{path_str}': {err}")
             raise typer.Exit(1) from err
 
     teacher_rows = load_rows("Teacher", teacher_file)
@@ -230,6 +226,7 @@ def research_evaluate_datasets(
 
     if report.dataset_type == "internal_benchmark" and report.paired_count > 0:
         from app.research.evaluation import validate_promotion
+
         promotion = validate_promotion(metrics)
 
         prom_table = Table(title="Companion Promotion Readiness (Sprint 7 Gates)")
@@ -255,6 +252,7 @@ def research_evaluate_datasets(
 
     if save_report:
         from app.research.evaluation import save_evaluation_report
+
         saved = save_evaluation_report(
             report,
             save_report,
@@ -265,6 +263,7 @@ def research_evaluate_datasets(
 
     if save_artifact:
         from app.research.evaluation import save_benchmark_artifact
+
         artifact = save_benchmark_artifact(
             save_artifact,
             teacher_dataset=teacher_file,
@@ -334,9 +333,7 @@ def research_benchmark_companion(
             report=report,
             report_path=saved_report_path,
         )
-        console.print(
-            f"[green]Saved benchmark artifact to {saved_artifact_path.resolve()}[/green]"
-        )
+        console.print(f"[green]Saved benchmark artifact to {saved_artifact_path.resolve()}[/green]")
 
 
 @research_core_app.command("benchmark-companion-run")
@@ -435,9 +432,7 @@ def research_benchmark_companion_run(
                     f"[red]Error:[/red] Could not write benchmark report '{report_out}': {err}"
                 )
                 raise typer.Exit(1) from err
-            console.print(
-                f"[green]Saved benchmark report to {saved_report_path.resolve()}[/green]"
-            )
+            console.print(f"[green]Saved benchmark report to {saved_report_path.resolve()}[/green]")
 
         if artifact_out:
             try:
@@ -514,27 +509,32 @@ def research_check_promotion(
         return "[green]PASS[/green]" if passed else "[red]FAIL[/red]"
 
     gate_table.add_row(
-        "Sentiment Agreement", ">= 0.850",
+        "Sentiment Agreement",
+        ">= 0.850",
         f"{metrics.sentiment_agreement:.3f}",
         _gate_status(validation.sentiment_pass),
     )
     gate_table.add_row(
-        "Priority MAE", "<= 1.500",
+        "Priority MAE",
+        "<= 1.500",
         f"{metrics.priority_mae:.3f}",
         _gate_status(validation.priority_pass),
     )
     gate_table.add_row(
-        "Relevance MAE", "<= 0.150",
+        "Relevance MAE",
+        "<= 0.150",
         f"{metrics.relevance_mae:.3f}",
         _gate_status(validation.relevance_pass),
     )
     gate_table.add_row(
-        "Impact MAE", "<= 0.200",
+        "Impact MAE",
+        "<= 0.200",
         f"{metrics.impact_mae:.3f}",
         _gate_status(validation.impact_pass),
     )
     gate_table.add_row(
-        "Tag Overlap", ">= 0.300",
+        "Tag Overlap",
+        ">= 0.300",
         f"{metrics.tag_overlap_mean:.3f}",
         _gate_status(validation.tag_overlap_pass),
     )
@@ -552,13 +552,15 @@ def research_check_promotion(
             "[dim]Reminder: Manual I-34 verification still required before promotion.[/dim]"
         )
     else:
-        failed = sum([
-            not validation.sentiment_pass,
-            not validation.priority_pass,
-            not validation.relevance_pass,
-            not validation.impact_pass,
-            not validation.tag_overlap_pass,
-        ])
+        failed = sum(
+            [
+                not validation.sentiment_pass,
+                not validation.priority_pass,
+                not validation.relevance_pass,
+                not validation.impact_pass,
+                not validation.tag_overlap_pass,
+            ]
+        )
         console.print(f"\n[bold red]NOT PROMOTABLE[/bold red] - {failed} gate(s) failed.")
         raise typer.Exit(1)
 
@@ -634,23 +636,25 @@ def research_record_promotion(
     report_file: str = typer.Argument(
         ..., help="Path to evaluation_report.json that passed check-promotion"
     ),
-    model_id: str = typer.Argument(
-        ..., help="Companion model identifier (e.g. kai-analyst-v1)"
-    ),
+    model_id: str = typer.Argument(..., help="Companion model identifier (e.g. kai-analyst-v1)"),
     endpoint: str = typer.Option(
-        ..., "--endpoint",
+        ...,
+        "--endpoint",
         help="Companion model endpoint (must match companion_model_endpoint setting)",
     ),
     operator_note: str = typer.Option(
-        ..., "--operator-note",
+        ...,
+        "--operator-note",
         help="Required: human-readable acknowledgement of the promotion decision",
     ),
     tuning_artifact: str | None = typer.Option(
-        None, "--tuning-artifact",
+        None,
+        "--tuning-artifact",
         help="Path to tuning_manifest.json if fine-tuning was performed",
     ),
     out: str = typer.Option(
-        "promotion_record.json", "--out",
+        "promotion_record.json",
+        "--out",
         help="Output path for the promotion record JSON",
     ),
 ) -> None:
@@ -694,9 +698,7 @@ def research_record_promotion(
 
     validation = validate_promotion(metrics)
     if not validation.is_promotable:
-        console.print(
-            "[red]Promotion blocked: evaluation report does not pass all gates.[/red]"
-        )
+        console.print("[red]Promotion blocked: evaluation report does not pass all gates.[/red]")
         console.print("[dim]Run `research check-promotion` to see which gates failed.[/dim]")
         raise typer.Exit(1)
 
@@ -775,6 +777,7 @@ def research_evaluate(
         metrics = compare_outputs(teacher_docs, companion_docs)
 
         from rich.table import Table
+
         table = Table(title="Companion Evaluation Metrics")
         table.add_column("Metric", style="cyan")
         table.add_column("Value", style="green", justify="right")
@@ -792,7 +795,6 @@ def research_evaluate(
         console.print(table)
 
     asyncio.run(run())
-
 
 
 @research_core_app.command("shadow-report")
@@ -817,10 +819,7 @@ def research_shadow_report() -> None:
             return await repo.list(is_analyzed=True, limit=5000)
 
     docs = asyncio.run(_fetch())
-    shadow_docs = [
-        d for d in docs
-        if d.metadata and "shadow_analysis" in d.metadata
-    ]
+    shadow_docs = [d for d in docs if d.metadata and "shadow_analysis" in d.metadata]
 
     if not shadow_docs:
         console.print("No documents with shadow analysis")
@@ -841,5 +840,3 @@ def research_shadow_report() -> None:
 
     console.print(table)
     console.print(f"Total: {len(shadow_docs)}, Diverged: {divergence_count}")
-
-

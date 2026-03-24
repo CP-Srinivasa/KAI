@@ -1,4 +1,5 @@
 """Market data package exports."""
+
 from app.market_data.base import BaseMarketDataAdapter
 from app.market_data.coingecko_adapter import CoinGeckoAdapter
 from app.market_data.mock_adapter import MockMarketDataAdapter

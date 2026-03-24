@@ -1,4 +1,5 @@
 """Unit tests for market data adapters."""
+
 from __future__ import annotations
 
 import pytest

@@ -231,8 +231,10 @@ def test_shadow_report_cli_shows_divergence(monkeypatch) -> None:
     from app.storage.repositories import document_repo
 
     divergent_doc = _make_shadow_doc(
-        priority=3, shadow_priority=9,
-        sentiment=SentimentLabel.BEARISH, shadow_sentiment="bullish",
+        priority=3,
+        shadow_priority=9,
+        sentiment=SentimentLabel.BEARISH,
+        shadow_sentiment="bullish",
     )
 
     async def fake_list(self, *, is_analyzed: bool = True, limit: int = 100, **kwargs):

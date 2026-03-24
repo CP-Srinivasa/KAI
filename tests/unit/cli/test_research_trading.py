@@ -1,6 +1,7 @@
 """Tests for research trading/handoff CLI commands:
 signal-handoff, handoff-acknowledge, handoff-summary, consumer-ack.
 """
+
 from __future__ import annotations
 
 import json

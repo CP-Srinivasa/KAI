@@ -1,4 +1,5 @@
 """Artifact inventory + retention + cleanup + protected artifact tests (Sprint 25)."""
+
 from __future__ import annotations
 
 import os
@@ -57,9 +58,9 @@ async def test_get_artifact_retention_report_read_only_invariants(
     result = await get_artifact_retention_report(artifacts_dir="artifacts")
 
     assert result["report_type"] == "artifact_retention_report"
-    assert result["execution_enabled"] is False        # I-161
-    assert result["write_back_allowed"] is False       # I-161
-    assert result["delete_eligible_count"] == 0        # I-154
+    assert result["execution_enabled"] is False  # I-161
+    assert result["write_back_allowed"] is False  # I-161
+    assert result["delete_eligible_count"] == 0  # I-154
     assert result["total_count"] == 2
 
 

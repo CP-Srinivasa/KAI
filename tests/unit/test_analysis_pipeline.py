@@ -170,6 +170,7 @@ async def test_ensemble_openai_wins_sets_external_llm_source():
     assert result.document.provider == "openai"
     assert result.document.metadata.get("ensemble_chain") == ["openai", "internal"]
 
+
 @pytest.mark.asyncio
 async def test_ensemble_internal_fallback_sets_internal_source():
     openai_provider = AsyncMock()
@@ -333,10 +334,7 @@ async def test_pipeline_with_shadow_provider_success():
 
     engine = _btc_engine()
     pipeline = AnalysisPipeline(
-        keyword_engine=engine,
-        provider=provider,
-        shadow_provider=shadow_provider,
-        run_llm=True
+        keyword_engine=engine, provider=provider, shadow_provider=shadow_provider, run_llm=True
     )
 
     result = await pipeline.run(_make_doc())
@@ -376,10 +374,7 @@ async def test_pipeline_with_shadow_provider_error_does_not_fail_primary():
 
     engine = _btc_engine()
     pipeline = AnalysisPipeline(
-        keyword_engine=engine,
-        provider=provider,
-        shadow_provider=shadow_provider,
-        run_llm=True
+        keyword_engine=engine, provider=provider, shadow_provider=shadow_provider, run_llm=True
     )
 
     # I-52 Shadow Error Isolation
@@ -429,6 +424,7 @@ async def test_pipeline_shadow_provider_runs_with_rule_fallback_primary():
 # ---------------------------------------------------------------------------
 # PH4I: _fallback_market_scope enrichment tests
 # ---------------------------------------------------------------------------
+
 
 def _make_scope_doc(**kwargs) -> CanonicalDocument:
     defaults = {"url": "https://example.com/doc", "title": "test"}

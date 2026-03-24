@@ -16,6 +16,7 @@ Design principles:
 
 Assumptions documented in ASSUMPTIONS.md (A-012–A-015).
 """
+
 from __future__ import annotations
 
 import json
@@ -43,9 +44,9 @@ class BacktestConfig:
     """Immutable backtest configuration. All defaults are conservative."""
 
     initial_equity: float = 10_000.0
-    fee_pct: float = 0.1             # % charged per fill
-    slippage_pct: float = 0.05       # % adverse slippage per fill
-    stop_loss_pct: float = 2.0       # SL distance = entry * stop_loss_pct/100
+    fee_pct: float = 0.1  # % charged per fill
+    slippage_pct: float = 0.05  # % adverse slippage per fill
+    stop_loss_pct: float = 2.0  # SL distance = entry * stop_loss_pct/100
     take_profit_multiplier: float = 2.0  # TP = SL_distance * multiplier
     min_signal_confidence: float = 0.7
     min_signal_confluence_count: int = 1  # A-015: single-signal backtest count
@@ -57,7 +58,7 @@ class BacktestConfig:
     allow_averaging_down: bool = False
     allow_martingale: bool = False
     kill_switch_enabled: bool = True
-    long_only: bool = True           # A-012: bearish signals skipped by default
+    long_only: bool = True  # A-012: bearish signals skipped by default
     audit_log_path: str = _BACKTEST_AUDIT_LOG
 
 
@@ -158,7 +159,7 @@ class BacktestEngine:
             max_daily_loss_pct=cfg.max_daily_loss_pct,
             max_total_drawdown_pct=cfg.max_total_drawdown_pct,
             max_open_positions=cfg.max_open_positions,
-            max_leverage=1.0,   # always 1x for paper/backtest (A-013)
+            max_leverage=1.0,  # always 1x for paper/backtest (A-013)
             require_stop_loss=cfg.require_stop_loss,
             allow_averaging_down=cfg.allow_averaging_down,
             allow_martingale=cfg.allow_martingale,
@@ -167,17 +168,13 @@ class BacktestEngine:
             min_signal_confluence_count=cfg.min_signal_confluence_count,
         )
 
-    def _resolve_price(
-        self, target_asset: str, prices: dict[str, float]
-    ) -> float | None:
+    def _resolve_price(self, target_asset: str, prices: dict[str, float]) -> float | None:
         """Try target_asset directly, then target_asset/USDT (A-012)."""
         if target_asset in prices:
             return prices[target_asset]
         return prices.get(f"{target_asset}/USDT")
 
-    def _compute_sl_tp(
-        self, entry: float, side: str
-    ) -> tuple[float, float]:
+    def _compute_sl_tp(self, entry: float, side: str) -> tuple[float, float]:
         """Compute stop-loss and take-profit from config. (A-014)"""
         sl_dist = entry * (self._config.stop_loss_pct / 100)
         tp_dist = sl_dist * self._config.take_profit_multiplier
@@ -392,9 +389,7 @@ class BacktestEngine:
         # Final portfolio metrics
         portfolio_final = paper_engine.portfolio
         final_equity = portfolio_final.total_equity(prices)
-        total_return_pct = (
-            (final_equity - cfg.initial_equity) / cfg.initial_equity
-        ) * 100
+        total_return_pct = ((final_equity - cfg.initial_equity) / cfg.initial_equity) * 100
         max_drawdown_pct = portfolio_final.drawdown_pct(prices)
 
         executed = [r for r in records if r.outcome == "filled"]

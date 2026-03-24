@@ -1,4 +1,5 @@
 """Core research commands: briefs, watchlists, signals, datasets, companion eval, signal handoff."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -11,6 +12,7 @@ from app.core.settings import get_settings
 
 console = Console()
 research_core_app = typer.Typer()
+
 
 @research_core_app.command("brief")
 def research_brief(
@@ -101,10 +103,7 @@ def research_watchlists(
             )
             return
 
-        console.print(
-            f"[bold]{watchlist}[/bold] "
-            f"([{resolved_type}] {len(items)} entries)"
-        )
+        console.print(f"[bold]{watchlist}[/bold] ([{resolved_type}] {len(items)} entries)")
         for item in items:
             console.print(f"  - {item}")
         return
@@ -170,9 +169,7 @@ def research_signals(
             docs = [d for d in docs if d.provider == provider]
 
         signals = extract_signal_candidates(
-            docs,
-            min_priority=min_priority,
-            watchlist_boosts=watchlist_boosts
+            docs, min_priority=min_priority, watchlist_boosts=watchlist_boosts
         )
 
         if not signals:
@@ -465,5 +462,3 @@ def research_consumer_ack(
 # ---------------------------------------------------------------------------
 # Sprint 21: readiness-summary
 # ---------------------------------------------------------------------------
-
-

@@ -3,6 +3,7 @@
 Covers: escalation, blocking, actions, decision-pack, daily summary,
 runbook, review journal, resolution, and alert audit.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -16,6 +17,7 @@ from app.cli.commands.research_readiness import _build_escalation_from_readiness
 
 console = Console()
 research_operator_app = typer.Typer()
+
 
 @research_operator_app.command("escalation-summary")
 def research_escalation_summary(
@@ -302,9 +304,7 @@ def _build_decision_pack_from_artifacts(
     acknowledgements = load_handoff_acknowledgements(ack_path) if ack_path.exists() else []
     collector_summary = build_handoff_collector_summary(handoffs, acknowledgements)
     r_state = Path(state_path)
-    active_route_state = (
-        load_active_route_state(r_state) if r_state.exists() else None
-    )
+    active_route_state = load_active_route_state(r_state) if r_state.exists() else None
     alert_dir = Path(alert_audit_dir)
     alert_audits = load_alert_audits(alert_dir) if alert_dir.exists() else []
 
@@ -448,18 +448,14 @@ def research_daily_summary(
 
     console.print("[bold]Daily Operator View[/bold]")
     console.print(f"Readiness:      {payload.get('readiness_status', 'unknown')}")
-    console.print(
-        f"Cycles today:   {payload.get('cycle_count_today', 0)}  ({cycle_suffix})"
-    )
+    console.print(f"Cycles today:   {payload.get('cycle_count_today', 0)}  ({cycle_suffix})")
     console.print(
         "Portfolio:      "
         f"{payload.get('position_count', 0)} positions"
         f" | {exposure_text} exposure"
         f" | MTM: {payload.get('mark_to_market_status', 'unknown')}"
     )
-    console.print(
-        f"Decision Pack:  {payload.get('decision_pack_status', 'unknown')}"
-    )
+    console.print(f"Decision Pack:  {payload.get('decision_pack_status', 'unknown')}")
     console.print(f"Incidents:      {payload.get('open_incidents', 0)} open")
     console.print(f"Aggregated at:  {payload.get('aggregated_at', 'unknown')}")
     console.print("execution_enabled=False")
@@ -555,9 +551,7 @@ def _require_valid_runbook_command_refs(payload: dict[str, Any]) -> None:
     """Fail closed when runbook payload references non-canonical CLI commands."""
     invalid_refs = get_invalid_research_command_refs(extract_runbook_command_refs(payload))
     if invalid_refs:
-        console.print(
-            f"[red]Runbook contains invalid command references: {invalid_refs}[/red]"
-        )
+        console.print(f"[red]Runbook contains invalid command references: {invalid_refs}[/red]")
         raise typer.Exit(1)
 
 
@@ -804,5 +798,3 @@ def research_alert_audit_summary(
             console.print(f"channel_{channel}={count}")
     console.print("execution_enabled=False")
     console.print("write_back_allowed=False")
-
-

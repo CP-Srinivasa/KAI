@@ -13,6 +13,7 @@ What is proven here:
   6. AlertService (dry_run, no channels) processes a document without error
   7. Deduplication: same content_hash is not re-inserted
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -283,9 +284,12 @@ async def test_alert_service_processes_analyzed_document(
     settings.alerts.dry_run = True
     settings.alerts.telegram_enabled = False
     settings.alerts.email_enabled = False
-    alert_service = AlertService(channels=[], threshold=__import__(
-        "app.alerts.threshold", fromlist=["ThresholdEngine"]
-    ).ThresholdEngine(min_priority=7))
+    alert_service = AlertService(
+        channels=[],
+        threshold=__import__("app.alerts.threshold", fromlist=["ThresholdEngine"]).ThresholdEngine(
+            min_priority=7
+        ),
+    )
 
     delivery_results = await alert_service.process_document(
         analyzed_doc,

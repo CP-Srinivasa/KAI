@@ -382,9 +382,6 @@ def test_load_signal_handoffs_roundtrip_jsonl(tmp_path: Path) -> None:
     assert loaded[0].handoff_id == handoff.handoff_id
 
 
-
-
-
 def test_get_signal_handoff_by_id_raises_on_missing() -> None:
     handoff = create_signal_handoff(_make_candidate())
 

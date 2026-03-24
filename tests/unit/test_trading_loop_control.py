@@ -1,4 +1,5 @@
 """Tests for Sprint 41 trading-loop control-plane and cycle-audit surfaces."""
+
 from __future__ import annotations
 
 import asyncio

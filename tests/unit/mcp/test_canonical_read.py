@@ -3,6 +3,7 @@
 Verifies that every tool in CANONICAL_READ_TOOL_NAMES is actually registered
 in the FastMCP server instance.
 """
+
 from __future__ import annotations
 
 import pytest

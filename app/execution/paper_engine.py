@@ -7,6 +7,7 @@ Design invariants:
 - Position sizing comes from Risk Engine — never self-calculated
 - No mutation of immutable order records
 """
+
 from __future__ import annotations
 
 import json
@@ -124,7 +125,9 @@ class PaperExecutionEngine:
             if self._portfolio.cash < cost + fee:
                 logger.warning(
                     "[PAPER] Insufficient cash for order %s: need=%.2f have=%.2f",
-                    order.order_id, cost + fee, self._portfolio.cash
+                    order.order_id,
+                    cost + fee,
+                    self._portfolio.cash,
                 )
                 return None
             self._portfolio.cash -= cost + fee
@@ -194,15 +197,22 @@ class PaperExecutionEngine:
             slippage_pct=self._slippage_pct * 100,
         )
 
-        self._append_audit("order_filled", {
-            **fill.__dict__,
-            "portfolio_cash": self._portfolio.cash,
-            "realized_pnl_usd": self._portfolio.realized_pnl_usd,
-        })
+        self._append_audit(
+            "order_filled",
+            {
+                **fill.__dict__,
+                "portfolio_cash": self._portfolio.cash,
+                "realized_pnl_usd": self._portfolio.realized_pnl_usd,
+            },
+        )
         logger.info(
             "[PAPER] Fill: %s %s %.4f @ %.2f (fee=%.4f pnl_impact=%.2f)",
-            order.side, order.symbol, order.quantity, fill_price, fee,
-            self._portfolio.realized_pnl_usd
+            order.side,
+            order.symbol,
+            order.quantity,
+            fill_price,
+            fee,
+            self._portfolio.realized_pnl_usd,
         )
         return fill
 
@@ -214,13 +224,17 @@ class PaperExecutionEngine:
         if pos.stop_loss and current_price <= pos.stop_loss:
             logger.warning(
                 "[PAPER] Stop-loss triggered: %s price=%.2f sl=%.2f",
-                symbol, current_price, pos.stop_loss,
+                symbol,
+                current_price,
+                pos.stop_loss,
             )
             return "stop"
         if pos.take_profit and current_price >= pos.take_profit:
             logger.info(
                 "[PAPER] Take-profit triggered: %s price=%.2f tp=%.2f",
-                symbol, current_price, pos.take_profit,
+                symbol,
+                current_price,
+                pos.take_profit,
             )
             return "take"
         return None

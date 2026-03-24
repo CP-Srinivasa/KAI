@@ -593,8 +593,6 @@ def test_ingest_rss_saved_documents_flow_into_analyze_pending(monkeypatch) -> No
     assert {ticker for doc in stored_docs for ticker in doc.tickers} == {"BTC", "ETH"}
 
 
-
-
 # NOTE: Research command tests have been migrated to tests/unit/cli/:
 #   test_research_core.py     — watchlists, brief, dataset-export, signals
 #   test_research_companion.py — evaluate-datasets, benchmark-companion, companion pipeline

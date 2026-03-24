@@ -133,9 +133,7 @@ def _dominant_from_weighted(
 def _compute_velocity(candidates: list[SignalCandidate], now: datetime) -> float:
     """Docs per hour published in last 24 hours."""
     cutoff = now - timedelta(hours=24)
-    recent = sum(
-        1 for c in candidates if c.published_at is not None and c.published_at >= cutoff
-    )
+    recent = sum(1 for c in candidates if c.published_at is not None and c.published_at >= cutoff)
     return round(recent / 24.0, 4)
 
 
@@ -148,11 +146,11 @@ def _compute_is_accelerating(
     last_cutoff = now - timedelta(hours=window_hours)
     prev_cutoff = now - timedelta(hours=window_hours * 2)
     last_count = sum(
-        1 for c in candidates
-        if c.published_at is not None and c.published_at >= last_cutoff
+        1 for c in candidates if c.published_at is not None and c.published_at >= last_cutoff
     )
     prev_count = sum(
-        1 for c in candidates
+        1
+        for c in candidates
         if c.published_at is not None and prev_cutoff <= c.published_at < last_cutoff
     )
     return last_count > prev_count and last_count >= 2

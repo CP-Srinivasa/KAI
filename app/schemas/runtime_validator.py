@@ -35,13 +35,9 @@ def load_schema_document(schema_filename: str) -> dict[str, object]:
     try:
         payload = json.loads(schema_path.read_text(encoding="utf-8"))
     except json.JSONDecodeError as exc:
-        raise SchemaValidationError(
-            f"Schema file is malformed: {schema_path}: {exc}"
-        ) from exc
+        raise SchemaValidationError(f"Schema file is malformed: {schema_path}: {exc}") from exc
     if not isinstance(payload, dict):
-        raise SchemaValidationError(
-            f"{schema_filename} must contain a JSON object schema"
-        )
+        raise SchemaValidationError(f"{schema_filename} must contain a JSON object schema")
     return payload
 
 

@@ -1,4 +1,5 @@
 """CoinGecko read-only market data adapter."""
+
 from __future__ import annotations
 
 import logging
@@ -269,9 +270,7 @@ class CoinGeckoAdapter(BaseMarketDataAdapter):
             source_timestamp_utc=ticker.timestamp_utc,
             price=ticker.last,
             is_stale=is_stale,
-            freshness_seconds=(
-                round(age_seconds, 2) if age_seconds is not None else None
-            ),
+            freshness_seconds=(round(age_seconds, 2) if age_seconds is not None else None),
             available=True,
             error=("stale_data" if is_stale else None),
         )

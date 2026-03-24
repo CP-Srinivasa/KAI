@@ -37,6 +37,7 @@ _DELIVERY_CLASS_CONTROL_AUDIT = "control_audit"
 @dataclass
 class TierProfile:
     """Summary of performance for a given tier/source."""
+
     document_count: int = 0
     signal_count: int = 0
     spam_count: int = 0
@@ -162,9 +163,7 @@ class DistributionClassificationReport:
 
     def to_json_dict(self) -> dict[str, object]:
         shadow_count = sum(1 for output in self.audit_outputs if output.path_type == "shadow")
-        control_count = sum(
-            1 for output in self.audit_outputs if output.path_type == "control"
-        )
+        control_count = sum(1 for output in self.audit_outputs if output.path_type == "control")
         return {
             "report_type": "distribution_classification_report",
             "generated_at": self.generated_at,
@@ -243,9 +242,7 @@ class HandoffCollectorSummaryReport:
             "ack_event_count": self.ack_event_count,
             "orphaned_ack_count": self.orphaned_ack_count,
             "consumers": dict(self.consumers),
-            "acknowledged_handoffs": [
-                entry.to_json_dict() for entry in self.acknowledged_handoffs
-            ],
+            "acknowledged_handoffs": [entry.to_json_dict() for entry in self.acknowledged_handoffs],
             "pending_handoffs": [entry.to_json_dict() for entry in self.pending_handoffs],
         }
 
@@ -254,9 +251,7 @@ async def build_route_profile(repo: DocumentRepository, limit: int = 1000) -> Ro
     """Build a distribution summary mapping out the A/B/C pathways."""
     documents = await repo.get_recent_analyzed(limit=limit)
 
-    tier_metrics: collections.defaultdict[str, TierProfile] = collections.defaultdict(
-        TierProfile
-    )
+    tier_metrics: collections.defaultdict[str, TierProfile] = collections.defaultdict(TierProfile)
     shadow_count = 0
 
     for doc in documents:
@@ -264,9 +259,7 @@ async def build_route_profile(repo: DocumentRepository, limit: int = 1000) -> Ro
             shadow_count += 1
 
         source = (
-            doc.analysis_source.value
-            if doc.analysis_source
-            else AnalysisSource.EXTERNAL_LLM.value
+            doc.analysis_source.value if doc.analysis_source else AnalysisSource.EXTERNAL_LLM.value
         )
         profile = tier_metrics[source]
 
@@ -386,6 +379,7 @@ def build_distribution_classification_report(
         route_profiles=route_profiles,
         active_primary_paths=active_primary_paths,
     )
+
 
 # ---------------------------------------------------------------------------
 # Sprint 19 — route-aware delivery classification
@@ -535,12 +529,8 @@ def build_handoff_collector_summary(
             delivery_class=handoff.delivery_class,
             consumer_visibility=handoff.consumer_visibility,
             audit_visibility=handoff.audit_visibility,
-            consumer_agent_id=(
-                latest_ack.consumer_agent_id if latest_ack is not None else None
-            ),
-            acknowledged_at=(
-                latest_ack.acknowledged_at if latest_ack is not None else None
-            ),
+            consumer_agent_id=(latest_ack.consumer_agent_id if latest_ack is not None else None),
+            acknowledged_at=(latest_ack.acknowledged_at if latest_ack is not None else None),
             ack_event_count=ack_counts_by_handoff.get(handoff.handoff_id, 0),
         )
         if latest_ack is not None:

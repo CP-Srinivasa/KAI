@@ -1,4 +1,5 @@
 """Unit tests for canonical read-only paper portfolio surfaces (Sprint 40)."""
+
 from __future__ import annotations
 
 import json

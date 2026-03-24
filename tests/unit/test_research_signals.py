@@ -94,7 +94,7 @@ def test_extract_signal_candidates_watchlist_boost():
     docs = [
         make_document(
             is_analyzed=True,
-            priority_score=7, # Fails min_priority=8 default
+            priority_score=7,  # Fails min_priority=8 default
             sentiment_label=SentimentLabel.BULLISH,
             tickers=["DOGE"],
         )
@@ -132,7 +132,7 @@ def test_extract_signal_candidates_fallback_compatible():
         spam_probability=None,
         market_scope=MarketScope.UNKNOWN,
         tickers=[],
-        crypto_assets=[]
+        crypto_assets=[],
     )
     # Give it a low min_priority to ensure it passes the filter
     # despite having 0 priority
@@ -146,7 +146,7 @@ def test_extract_signal_candidates_fallback_compatible():
     assert sig.sentiment == SentimentLabel.NEUTRAL
     assert sig.confidence == 0.5  # fallback default
     assert sig.source_quality == 0.5  # fallback default
-    assert sig.target_asset == "General Market" # fallback primary asset
+    assert sig.target_asset == "General Market"  # fallback primary asset
     assert sig.analysis_source == "rule"
     assert "spam_prob=0.00" in sig.risk_notes
     assert "scope=unknown" in sig.risk_notes

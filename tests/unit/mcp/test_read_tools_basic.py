@@ -1,4 +1,5 @@
 """Basic read-tool tests: watchlists, research brief, signals, narrative, distribution, route."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -63,9 +64,7 @@ async def test_get_research_brief(
     mock_builder.build.return_value = mock_brief
 
     mock_session = AsyncMock()
-    mock_session_factory.return_value.begin.return_value.__aenter__.return_value = (
-        mock_session
-    )
+    mock_session_factory.return_value.begin.return_value.__aenter__.return_value = mock_session
 
     with patch("app.agents.tools.canonical_read.DocumentRepository") as mock_repo_cls:
         mock_repo = mock_repo_cls.return_value
@@ -100,9 +99,7 @@ async def test_get_signal_candidates(
     mock_extract.return_value = [mock_candidate]
 
     mock_session = AsyncMock()
-    mock_session_factory.return_value.begin.return_value.__aenter__.return_value = (
-        mock_session
-    )
+    mock_session_factory.return_value.begin.return_value.__aenter__.return_value = mock_session
 
     with patch("app.agents.tools._helpers.DocumentRepository") as mock_repo_cls:
         mock_repo = mock_repo_cls.return_value
@@ -127,9 +124,7 @@ async def test_get_narrative_clusters_returns_read_only_cluster_report(
 ) -> None:
     mock_settings.return_value = SimpleNamespace(db=MagicMock())
     mock_session = AsyncMock()
-    mock_session_factory.return_value.begin.return_value.__aenter__.return_value = (
-        mock_session
-    )
+    mock_session_factory.return_value.begin.return_value.__aenter__.return_value = mock_session
     docs = [
         make_document(
             is_analyzed=True,
@@ -212,9 +207,7 @@ async def test_get_signals_for_execution_returns_read_only_handoff(
     )
 
     mock_session = AsyncMock()
-    mock_session_factory.return_value.begin.return_value.__aenter__.return_value = (
-        mock_session
-    )
+    mock_session_factory.return_value.begin.return_value.__aenter__.return_value = mock_session
 
     with patch("app.agents.tools._helpers.DocumentRepository") as mock_repo_cls:
         mock_repo = mock_repo_cls.return_value
@@ -273,9 +266,7 @@ async def test_get_signals_for_execution_provider_filter_excludes_other_sources(
     )
 
     mock_session = AsyncMock()
-    mock_session_factory.return_value.begin.return_value.__aenter__.return_value = (
-        mock_session
-    )
+    mock_session_factory.return_value.begin.return_value.__aenter__.return_value = mock_session
 
     with patch("app.agents.tools._helpers.DocumentRepository") as mock_repo_cls:
         mock_repo = mock_repo_cls.return_value
@@ -323,9 +314,7 @@ async def test_get_distribution_classification_report_returns_read_only_split(
     )
 
     mock_session = AsyncMock()
-    mock_session_factory.return_value.begin.return_value.__aenter__.return_value = (
-        mock_session
-    )
+    mock_session_factory.return_value.begin.return_value.__aenter__.return_value = mock_session
 
     with patch("app.agents.tools._helpers.DocumentRepository") as mock_repo_cls:
         mock_repo = mock_repo_cls.return_value
@@ -359,9 +348,7 @@ async def test_get_route_profile_report(
 ) -> None:
     mock_settings.return_value = SimpleNamespace(db=MagicMock())
     mock_session = AsyncMock()
-    mock_session_factory.return_value.begin.return_value.__aenter__.return_value = (
-        mock_session
-    )
+    mock_session_factory.return_value.begin.return_value.__aenter__.return_value = mock_session
     mock_report = MagicMock()
     mock_report.to_json_dict.return_value = {
         "report_type": "route_profile",

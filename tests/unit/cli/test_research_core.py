@@ -1,4 +1,5 @@
 """Tests for research core commands: watchlists, brief, dataset-export, signals."""
+
 from __future__ import annotations
 
 import json

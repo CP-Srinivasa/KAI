@@ -1,4 +1,5 @@
 """Action queue tests: blocking/operator/decision-pack/runbook surfaces."""
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -30,9 +31,7 @@ async def test_get_blocking_summary_filters_blocking_items(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _patch_workspace_root(monkeypatch, tmp_path)
-    handoff_path, _payload = _write_signal_handoff_batch(
-        tmp_path / "artifacts" / "handoffs.jsonl"
-    )
+    handoff_path, _payload = _write_signal_handoff_batch(tmp_path / "artifacts" / "handoffs.jsonl")
     profile_path = _write_route_profile(
         tmp_path,
         route_profile="primary_with_shadow_and_control",
@@ -64,9 +63,7 @@ async def test_get_operator_action_summary_includes_review_required_items(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _patch_workspace_root(monkeypatch, tmp_path)
-    handoff_path, _payload = _write_signal_handoff_batch(
-        tmp_path / "artifacts" / "handoffs.jsonl"
-    )
+    handoff_path, _payload = _write_signal_handoff_batch(tmp_path / "artifacts" / "handoffs.jsonl")
     (tmp_path / "artifacts" / "manual_review_blob.json").write_text(
         "{}",
         encoding="utf-8",
@@ -90,9 +87,7 @@ async def test_get_action_queue_summary_returns_prioritized_read_only_surface(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _patch_workspace_root(monkeypatch, tmp_path)
-    handoff_path, _payload = _write_signal_handoff_batch(
-        tmp_path / "artifacts" / "handoffs.jsonl"
-    )
+    handoff_path, _payload = _write_signal_handoff_batch(tmp_path / "artifacts" / "handoffs.jsonl")
     profile_path = _write_route_profile(
         tmp_path,
         route_profile="primary_with_shadow_and_control",
@@ -133,9 +128,7 @@ async def test_get_blocking_actions_filters_only_blocking_queue_items(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _patch_workspace_root(monkeypatch, tmp_path)
-    handoff_path, _payload = _write_signal_handoff_batch(
-        tmp_path / "artifacts" / "handoffs.jsonl"
-    )
+    handoff_path, _payload = _write_signal_handoff_batch(tmp_path / "artifacts" / "handoffs.jsonl")
     profile_path = _write_route_profile(
         tmp_path,
         route_profile="primary_with_shadow_and_control",
@@ -167,9 +160,7 @@ async def test_get_prioritized_actions_returns_priority_order(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _patch_workspace_root(monkeypatch, tmp_path)
-    handoff_path, _payload = _write_signal_handoff_batch(
-        tmp_path / "artifacts" / "handoffs.jsonl"
-    )
+    handoff_path, _payload = _write_signal_handoff_batch(tmp_path / "artifacts" / "handoffs.jsonl")
     (tmp_path / "artifacts" / "manual_review_blob.json").write_text(
         "{}",
         encoding="utf-8",
@@ -195,9 +186,7 @@ async def test_get_review_required_actions_filters_review_required_queue_items(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _patch_workspace_root(monkeypatch, tmp_path)
-    handoff_path, _payload = _write_signal_handoff_batch(
-        tmp_path / "artifacts" / "handoffs.jsonl"
-    )
+    handoff_path, _payload = _write_signal_handoff_batch(tmp_path / "artifacts" / "handoffs.jsonl")
     (tmp_path / "artifacts" / "manual_review_blob.json").write_text(
         "{}",
         encoding="utf-8",
@@ -223,9 +212,7 @@ async def test_get_decision_pack_summary_returns_canonical_bundle(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _patch_workspace_root(monkeypatch, tmp_path)
-    handoff_path, _payload = _write_signal_handoff_batch(
-        tmp_path / "artifacts" / "handoffs.jsonl"
-    )
+    handoff_path, _payload = _write_signal_handoff_batch(tmp_path / "artifacts" / "handoffs.jsonl")
     profile_path = _write_route_profile(
         tmp_path / "artifacts",
         route_profile="primary_with_shadow_and_control",
@@ -259,10 +246,7 @@ async def test_get_decision_pack_summary_returns_canonical_bundle(
     assert result["readiness_summary"]["report_type"] == "operational_readiness"
     assert result["blocking_summary"]["report_type"] == "blocking_summary"
     assert result["action_queue_summary"]["report_type"] == "action_queue_summary"
-    assert (
-        result["review_required_summary"]["report_type"]
-        == "review_required_artifact_summary"
-    )
+    assert result["review_required_summary"]["report_type"] == "review_required_artifact_summary"
 
 
 @pytest.mark.asyncio
@@ -271,9 +255,7 @@ async def test_get_operator_decision_pack_alias_matches_canonical_summary(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _patch_workspace_root(monkeypatch, tmp_path)
-    handoff_path, _payload = _write_signal_handoff_batch(
-        tmp_path / "artifacts" / "handoffs.jsonl"
-    )
+    handoff_path, _payload = _write_signal_handoff_batch(tmp_path / "artifacts" / "handoffs.jsonl")
     (tmp_path / "artifacts" / "manual_review_blob.json").write_text(
         "{}",
         encoding="utf-8",
@@ -304,9 +286,7 @@ async def test_get_operator_runbook_returns_validated_read_only_steps(
     from app.research.active_route import activate_route_profile
 
     _patch_workspace_root(monkeypatch, tmp_path)
-    handoff_path, _payload = _write_signal_handoff_batch(
-        tmp_path / "artifacts" / "handoffs.jsonl"
-    )
+    handoff_path, _payload = _write_signal_handoff_batch(tmp_path / "artifacts" / "handoffs.jsonl")
     profile_path = _write_route_profile(
         tmp_path / "artifacts",
         route_profile="primary_with_shadow_and_control",
@@ -394,9 +374,7 @@ async def test_mcp_and_cli_command_inventory_stay_consistent_for_locked_surfaces
         == "get_decision_pack_summary"
     )
     assert (
-        payload["superseded_tools"]["get_operational_escalation_summary"][
-            "replacement_tool"
-        ]
+        payload["superseded_tools"]["get_operational_escalation_summary"]["replacement_tool"]
         == "get_escalation_summary"
     )
 

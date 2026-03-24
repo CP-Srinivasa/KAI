@@ -1,4 +1,5 @@
 """Unit tests for BacktestEngine (Sprint 35, I-231–I-240)."""
+
 from __future__ import annotations
 
 import json
@@ -17,6 +18,7 @@ from app.research.signals import SignalCandidate
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _signal(
     signal_id: str = "sig_001",
@@ -56,6 +58,7 @@ def _cfg(**kwargs) -> BacktestConfig:
 # Immutability
 # ---------------------------------------------------------------------------
 
+
 def test_backtest_config_is_frozen() -> None:
     cfg = BacktestConfig()
     with pytest.raises((AttributeError, TypeError)):
@@ -86,6 +89,7 @@ def test_signal_execution_record_is_frozen() -> None:
 # Empty signals
 # ---------------------------------------------------------------------------
 
+
 def test_backtest_empty_signals_returns_empty_result(tmp_path: Path) -> None:
     engine = BacktestEngine(_cfg(audit_log_path=str(tmp_path / "a.jsonl")))
     result = engine.run([], _DEFAULT_PRICES)
@@ -102,6 +106,7 @@ def test_backtest_empty_signals_returns_empty_result(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 # Direction filtering (I-236)
 # ---------------------------------------------------------------------------
+
 
 def test_neutral_signal_is_skipped(tmp_path: Path) -> None:
     engine = BacktestEngine(_cfg(audit_log_path=str(tmp_path / "a.jsonl")))
@@ -137,6 +142,7 @@ def test_bearish_signal_fills_when_not_long_only(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 # Happy path — bullish fill
 # ---------------------------------------------------------------------------
+
 
 def test_bullish_high_confidence_fills(tmp_path: Path) -> None:
     engine = BacktestEngine(
@@ -184,6 +190,7 @@ def test_fill_records_stop_loss_and_take_profit(tmp_path: Path) -> None:
 # Risk gate rejection (I-232)
 # ---------------------------------------------------------------------------
 
+
 def test_low_confidence_signal_is_risk_rejected(tmp_path: Path) -> None:
     engine = BacktestEngine(
         _cfg(
@@ -224,6 +231,7 @@ def test_max_open_positions_blocks_new_order(tmp_path: Path) -> None:
 # No price (I-234)
 # ---------------------------------------------------------------------------
 
+
 def test_signal_with_unknown_price_is_skipped(tmp_path: Path) -> None:
     engine = BacktestEngine(_cfg(audit_log_path=str(tmp_path / "a.jsonl")))
     result = engine.run([_signal(target_asset="UNKNOWN_XYZ")], _DEFAULT_PRICES)
@@ -246,6 +254,7 @@ def test_price_lookup_normalizes_usdt_suffix(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 # Kill switch (I-237, I-238)
 # ---------------------------------------------------------------------------
+
 
 def test_kill_switch_halts_remaining_signals(tmp_path: Path) -> None:
     """Use max_total_drawdown_pct=0.001 so first fill triggers kill switch."""
@@ -284,6 +293,7 @@ def test_kill_switch_not_triggered_on_clean_run(tmp_path: Path) -> None:
 # Idempotency (I-235)
 # ---------------------------------------------------------------------------
 
+
 def test_duplicate_signal_id_idempotency_key_is_fill_rejected(tmp_path: Path) -> None:
     """Same signal_id submitted twice → second fill rejected by idempotency."""
     engine = BacktestEngine(
@@ -306,6 +316,7 @@ def test_duplicate_signal_id_idempotency_key_is_fill_rejected(tmp_path: Path) ->
 # ---------------------------------------------------------------------------
 # Serialization (I-239)
 # ---------------------------------------------------------------------------
+
 
 def test_backtest_result_to_json_dict_is_serializable(tmp_path: Path) -> None:
     engine = BacktestEngine(
@@ -340,6 +351,7 @@ def test_backtest_result_no_trading_execution_fields(tmp_path: Path) -> None:
 # Audit trail (I-240)
 # ---------------------------------------------------------------------------
 
+
 def test_backtest_audit_written_to_jsonl(tmp_path: Path) -> None:
     audit_path = tmp_path / "backtest_audit.jsonl"
     engine = BacktestEngine(_cfg(audit_log_path=str(audit_path)))
@@ -366,6 +378,7 @@ def test_backtest_audit_is_append_only(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 # Accounting
 # ---------------------------------------------------------------------------
+
 
 def test_backtest_signals_received_equals_list_length(tmp_path: Path) -> None:
     engine = BacktestEngine(

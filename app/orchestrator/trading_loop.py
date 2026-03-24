@@ -1,4 +1,5 @@
 """Core trading loop and control-plane helper surfaces."""
+
 from __future__ import annotations
 
 import json
@@ -123,7 +124,8 @@ class TradingLoop:
                 symbol,
                 CycleStatus.STALE_DATA,
                 market_data_fetched=True,
-                notes=notes + [
+                notes=notes
+                + [
                     f"stale_data_skip:{symbol}",
                     f"freshness_seconds:{market_data.freshness_seconds:.1f}",
                 ],
@@ -346,8 +348,7 @@ class TradingLoop:
                 if cycle.fill_simulated:
                     portfolio = self._exec.portfolio
                     exposure = sum(
-                        p.quantity * p.avg_entry_price
-                        for p in portfolio.positions.values()
+                        p.quantity * p.avg_entry_price for p in portfolio.positions.values()
                     )
                     state_record = PortfolioStateRecord(
                         cycle_id=cycle.cycle_id,
@@ -484,8 +485,7 @@ def build_loop_trigger_analysis(
         )
 
     raise ValueError(
-        "unsupported_analysis_profile:"
-        f"{analysis_profile} (allowed: conservative, bullish, bearish)"
+        f"unsupported_analysis_profile:{analysis_profile} (allowed: conservative, bullish, bearish)"
     )
 
 

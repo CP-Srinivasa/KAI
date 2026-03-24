@@ -1,4 +1,5 @@
 """Read-only market data service helpers for CLI/MCP surfaces."""
+
 from __future__ import annotations
 
 import logging

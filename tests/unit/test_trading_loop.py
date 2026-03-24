@@ -1,4 +1,5 @@
 """Unit tests for the Core Trading Loop (TradingLoop + LoopCycle)."""
+
 from __future__ import annotations
 
 import json
@@ -16,6 +17,7 @@ from app.risk.models import RiskLimits
 from app.signals.generator import SignalGenerator
 
 # ── Factories ─────────────────────────────────────────────────────────────────
+
 
 def _default_limits(**overrides) -> RiskLimits:
     defaults = {
@@ -101,6 +103,7 @@ def _weak_analysis() -> AnalysisResult:
 
 # ── LoopCycle model ───────────────────────────────────────────────────────────
 
+
 def test_loop_cycle_is_frozen():
     cycle = LoopCycle(
         cycle_id="cyc_test",
@@ -128,6 +131,7 @@ def test_cycle_defaults():
 
 
 # ── Full cycle — happy path ───────────────────────────────────────────────────
+
 
 @pytest.mark.asyncio
 async def test_run_cycle_full_success(tmp_path):
@@ -181,6 +185,7 @@ async def test_run_cycle_cycle_id_starts_with_cyc(tmp_path):
 
 # ── No signal path ────────────────────────────────────────────────────────────
 
+
 @pytest.mark.asyncio
 async def test_run_cycle_no_signal_returns_no_signal_status(tmp_path):
     loop = _loop(tmp_path)
@@ -203,6 +208,7 @@ async def test_run_cycle_no_signal_audit_written(tmp_path):
 
 
 # ── Risk rejected path ────────────────────────────────────────────────────────
+
 
 @pytest.mark.asyncio
 async def test_run_cycle_risk_rejected_by_kill_switch(tmp_path):
@@ -240,6 +246,7 @@ async def test_run_cycle_risk_rejected_by_position_limit(tmp_path):
 
 # ── Idempotency ───────────────────────────────────────────────────────────────
 
+
 @pytest.mark.asyncio
 async def test_run_cycle_idempotency_prevents_duplicate_fill(tmp_path):
     """Same decision_id (from same analysis doc) should not fill twice."""
@@ -260,6 +267,7 @@ async def test_run_cycle_idempotency_prevents_duplicate_fill(tmp_path):
 
 # ── No market data path (MockAdapter always returns data) ─────────────────────
 
+
 @pytest.mark.asyncio
 async def test_run_cycle_completes_with_mock_adapter(tmp_path):
     """MockMarketDataAdapter always returns valid data — confirm no NO_MARKET_DATA."""
@@ -270,6 +278,7 @@ async def test_run_cycle_completes_with_mock_adapter(tmp_path):
 
 
 # ── Portfolio exposure ────────────────────────────────────────────────────────
+
 
 @pytest.mark.asyncio
 async def test_portfolio_property_accessible(tmp_path):

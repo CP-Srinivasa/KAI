@@ -126,11 +126,23 @@ def test_narrative_cluster_to_json_dict_structure():
     d = clusters[0].to_json_dict()
 
     required_keys = {
-        "cluster_id", "label", "title", "assets", "entities",
-        "sources", "candidate_ids", "doc_count", "first_seen",
-        "last_seen", "velocity", "dominant_direction",
-        "avg_confidence", "max_impact", "is_accelerating",
-        "is_cross_source", "execution_enabled",
+        "cluster_id",
+        "label",
+        "title",
+        "assets",
+        "entities",
+        "sources",
+        "candidate_ids",
+        "doc_count",
+        "first_seen",
+        "last_seen",
+        "velocity",
+        "dominant_direction",
+        "avg_confidence",
+        "max_impact",
+        "is_accelerating",
+        "is_cross_source",
+        "execution_enabled",
     }
     assert required_keys <= set(d.keys())
     assert d["execution_enabled"] is False  # I-180
@@ -238,8 +250,7 @@ def test_engine_max_clusters_cap():
     """No more than max_clusters returned."""
     engine = NarrativeClusterEngine(ClusterConfig(min_cluster_size=1, max_clusters=2))
     candidates = [
-        _make_candidate(f"s{i}", f"ASSET{i}", affected_assets=[f"ASSET{i}"])
-        for i in range(10)
+        _make_candidate(f"s{i}", f"ASSET{i}", affected_assets=[f"ASSET{i}"]) for i in range(10)
     ]
     clusters = engine.cluster(candidates, now=_NOW)
     assert len(clusters) <= 2
@@ -274,9 +285,7 @@ def test_engine_velocity_counts_last_24h():
 
 def test_engine_is_accelerating_true():
     """is_accelerating=True when last window has more docs than prior (I-183)."""
-    engine = NarrativeClusterEngine(
-        ClusterConfig(min_cluster_size=1, acceleration_window_hours=6)
-    )
+    engine = NarrativeClusterEngine(ClusterConfig(min_cluster_size=1, acceleration_window_hours=6))
     # 2 docs in last 6h, 0 in prior 6h → accelerating
     c1 = _make_candidate(
         "s1",
@@ -296,9 +305,7 @@ def test_engine_is_accelerating_true():
 
 def test_engine_is_accelerating_false_when_old():
     """is_accelerating=False when no recent docs."""
-    engine = NarrativeClusterEngine(
-        ClusterConfig(min_cluster_size=1, acceleration_window_hours=6)
-    )
+    engine = NarrativeClusterEngine(ClusterConfig(min_cluster_size=1, acceleration_window_hours=6))
     c1 = _make_candidate(
         "s1",
         "BTC",

@@ -1,4 +1,5 @@
 """CLI tests for Sprint 39 read-only market data surfaces."""
+
 from __future__ import annotations
 
 from typer.testing import CliRunner

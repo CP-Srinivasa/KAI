@@ -3,6 +3,7 @@
 Covers: market data quotes, portfolio snapshots, backtesting,
 decision journal, trading loop status and control.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -14,6 +15,7 @@ from rich.table import Table
 
 console = Console()
 research_trading_app = typer.Typer()
+
 
 @research_trading_app.command("market-data-quote")
 def research_market_data_quote(
@@ -296,9 +298,7 @@ def research_backtest_run(
     max_positions: int = typer.Option(5, "--max-positions"),
     max_risk_pct: float = typer.Option(2.0, "--max-risk-pct"),
     long_only: bool = typer.Option(True, "--long-only/--no-long-only"),
-    audit_path: str = typer.Option(
-        "artifacts/backtest_audit.jsonl", "--audit-path"
-    ),
+    audit_path: str = typer.Option("artifacts/backtest_audit.jsonl", "--audit-path"),
 ) -> None:
     """Run a paper backtest from a signal candidate JSONL file."""
     import asyncio
@@ -356,9 +356,7 @@ def research_backtest_run(
 
     out_path = _Path(out)
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    out_path.write_text(
-        _json.dumps(result.to_json_dict(), indent=2), encoding="utf-8"
-    )
+    out_path.write_text(_json.dumps(result.to_json_dict(), indent=2), encoding="utf-8")
 
     console.print("[bold]Backtest Result[/bold]")
     console.print(f"signals_received={result.signals_received}")
@@ -548,13 +546,10 @@ def research_trading_loop_recent_cycles(
     summary = build_recent_cycles_summary(audit_path=audit_path, last_n=last_n)
     payload = summary.to_json_dict()
 
-    console.print(
-        f"[bold]Trading Loop Recent Cycles[/bold] ({payload['total_cycles']} total)"
-    )
+    console.print(f"[bold]Trading Loop Recent Cycles[/bold] ({payload['total_cycles']} total)")
     console.print(f"status_counts={payload['status_counts']}")
     console.print(
-        "showing last "
-        f"{len(payload['recent_cycles'])} of {payload['total_cycles']} cycles:"  # type: ignore[arg-type]
+        f"showing last {len(payload['recent_cycles'])} of {payload['total_cycles']} cycles:"  # type: ignore[arg-type]
     )
 
     table = Table(show_header=True, header_style="bold cyan")

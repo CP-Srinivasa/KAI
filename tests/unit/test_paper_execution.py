@@ -1,4 +1,5 @@
 """Unit tests for the Paper Execution Engine."""
+
 from __future__ import annotations
 
 import pytest
@@ -32,8 +33,7 @@ def test_initial_portfolio(tmp_path):
 def test_buy_order_fills_and_updates_portfolio(tmp_path):
     eng = _engine(tmp_path)
     order = eng.create_order(
-        symbol="BTC/USDT", side="buy", quantity=0.1,
-        stop_loss=60000.0, idempotency_key="test_buy_1"
+        symbol="BTC/USDT", side="buy", quantity=0.1, stop_loss=60000.0, idempotency_key="test_buy_1"
     )
     fill = eng.fill_order(order, current_price=65000.0)
     assert fill is not None
@@ -83,7 +83,9 @@ def test_idempotency_prevents_duplicate_fills(tmp_path):
 def test_insufficient_cash_blocks_buy(tmp_path):
     eng = _engine(tmp_path, initial_equity=100.0)
     order = eng.create_order(
-        symbol="BTC/USDT", side="buy", quantity=10.0  # would cost ~650k
+        symbol="BTC/USDT",
+        side="buy",
+        quantity=10.0,  # would cost ~650k
     )
     fill = eng.fill_order(order, current_price=65000.0)
     assert fill is None
@@ -91,9 +93,7 @@ def test_insufficient_cash_blocks_buy(tmp_path):
 
 def test_stop_loss_detection(tmp_path):
     eng = _engine(tmp_path)
-    order = eng.create_order(
-        symbol="BTC/USDT", side="buy", quantity=0.01, stop_loss=60000.0
-    )
+    order = eng.create_order(symbol="BTC/USDT", side="buy", quantity=0.01, stop_loss=60000.0)
     eng.fill_order(order, current_price=65000.0)
 
     # Price drops below stop loss
@@ -103,9 +103,7 @@ def test_stop_loss_detection(tmp_path):
 
 def test_take_profit_detection(tmp_path):
     eng = _engine(tmp_path)
-    order = eng.create_order(
-        symbol="ETH/USDT", side="buy", quantity=1.0, take_profit=3500.0
-    )
+    order = eng.create_order(symbol="ETH/USDT", side="buy", quantity=1.0, take_profit=3500.0)
     eng.fill_order(order, current_price=3200.0)
 
     trigger = eng.check_stop_take("ETH/USDT", current_price=3600.0)

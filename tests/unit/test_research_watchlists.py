@@ -246,9 +246,9 @@ def test_watchlist_registry_filters_documents_by_supported_types(tmp_path: Path)
     assert [
         doc.title for doc in registry.filter_documents(docs, "security", item_type="topics")
     ] == ["Regulation update"]
-    assert [
-        doc.title for doc in registry.filter_documents(docs, "macro", item_type="sources")
-    ] == ["Reuters macro article"]
+    assert [doc.title for doc in registry.filter_documents(docs, "macro", item_type="sources")] == [
+        "Reuters macro article"
+    ]
 
 
 def test_parse_watchlist_type_rejects_unknown_type() -> None:

@@ -10,6 +10,7 @@ Marktdaten-Dimensionen (wenn CoinGecko-Daten vorhanden):
 
 TODO (vor Live-Einsatz): ATR-basierter SL/TP, Orderbook-Input.
 """
+
 from __future__ import annotations
 
 import logging
@@ -40,15 +41,15 @@ class SignalGenerator:
     """
 
     # Thresholds for market-data confluence dimensions
-    _PRICE_MOMENTUM_THRESHOLD_PCT: float = 2.0   # |change_24h| >= 2% counts as momentum
-    _VOLUME_THRESHOLD_USD: float = 1_000_000.0   # volume_24h >= $1M counts as confirmed
+    _PRICE_MOMENTUM_THRESHOLD_PCT: float = 2.0  # |change_24h| >= 2% counts as momentum
+    _VOLUME_THRESHOLD_USD: float = 1_000_000.0  # volume_24h >= $1M counts as confirmed
 
     def __init__(
         self,
         *,
         min_confidence: float = 0.75,
         min_confluence: int = 2,
-        stop_loss_pct: float = 2.5,    # percent below entry for LONG
+        stop_loss_pct: float = 2.5,  # percent below entry for LONG
         take_profit_pct: float = 5.0,  # percent above entry for LONG (2:1 R/R)
         market: str = "crypto",
         venue: str = "paper",
@@ -73,9 +74,7 @@ class SignalGenerator:
             else self._PRICE_MOMENTUM_THRESHOLD_PCT
         )
         self._volume_threshold_usd = (
-            volume_threshold_usd
-            if volume_threshold_usd is not None
-            else self._VOLUME_THRESHOLD_USD
+            volume_threshold_usd if volume_threshold_usd is not None else self._VOLUME_THRESHOLD_USD
         )
 
     def generate(
@@ -96,7 +95,8 @@ class SignalGenerator:
         if market_data.price <= 0:
             logger.debug(
                 "[SIGNAL] Invalid price for %s: %.4f — skipping",
-                symbol, market_data.price,
+                symbol,
+                market_data.price,
             )
             return None
 
@@ -109,7 +109,9 @@ class SignalGenerator:
         if analysis.confidence_score < self._min_confidence:
             logger.debug(
                 "[SIGNAL] Confidence too low for %s: %.2f < %.2f",
-                symbol, analysis.confidence_score, self._min_confidence,
+                symbol,
+                analysis.confidence_score,
+                self._min_confidence,
             )
             return None
 
@@ -123,7 +125,8 @@ class SignalGenerator:
         if direction is None:
             logger.debug(
                 "[SIGNAL] Neutral/mixed sentiment for %s (%s) — no signal",
-                symbol, analysis.sentiment_label,
+                symbol,
+                analysis.sentiment_label,
             )
             return None
 
@@ -132,7 +135,9 @@ class SignalGenerator:
         if confluence < self._min_confluence:
             logger.debug(
                 "[SIGNAL] Confluence too low for %s: %d < %d",
-                symbol, confluence, self._min_confluence,
+                symbol,
+                confluence,
+                self._min_confluence,
             )
             return None
 
@@ -236,9 +241,7 @@ class SignalGenerator:
         score += self._volume_confirmation_score(market_data.volume_24h)
         return score
 
-    def _price_momentum_score(
-        self, change_pct_24h: float, direction: SignalDirection
-    ) -> int:
+    def _price_momentum_score(self, change_pct_24h: float, direction: SignalDirection) -> int:
         """Return 1 if 24h price movement confirms signal direction, else 0."""
         threshold = self._price_momentum_threshold_pct
         if direction == SignalDirection.LONG and change_pct_24h >= threshold:
@@ -307,9 +310,7 @@ class SignalGenerator:
                 f"Price momentum confirms direction: {market_data.change_pct_24h:+.2f}% 24h"
             )
         if self._volume_confirmation_score(market_data.volume_24h):
-            factors.append(
-                f"Volume confirmation: ${market_data.volume_24h:,.0f} 24h"
-            )
+            factors.append(f"Volume confirmation: ${market_data.volume_24h:,.0f} 24h")
         return factors or ["No specific supporting factors identified"]
 
     def _build_contradicting_factors(

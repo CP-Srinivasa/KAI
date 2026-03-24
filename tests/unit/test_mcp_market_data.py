@@ -1,4 +1,5 @@
 """MCP tests for Sprint 39 market data read-only surface."""
+
 from __future__ import annotations
 
 import json

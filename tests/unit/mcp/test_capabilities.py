@@ -1,4 +1,5 @@
 """MCP capabilities + inventory + sprint-32 coverage tests."""
+
 from __future__ import annotations
 
 import json
@@ -57,9 +58,7 @@ async def test_get_mcp_capabilities_reports_guardrails() -> None:
         == "get_decision_pack_summary"
     )
     assert (
-        payload["superseded_tools"]["get_operational_escalation_summary"][
-            "replacement_tool"
-        ]
+        payload["superseded_tools"]["get_operational_escalation_summary"]["replacement_tool"]
         == "get_escalation_summary"
     )
     assert "No direct execution hook for signals" in payload["guardrails"]
@@ -89,20 +88,14 @@ async def test_get_mcp_tool_inventory_classifies_canonical_alias_and_superseded_
         == "get_decision_pack_summary"
     )
     assert (
-        inventory["superseded_tools"]["get_operational_escalation_summary"][
-            "replacement_tool"
-        ]
+        inventory["superseded_tools"]["get_operational_escalation_summary"]["replacement_tool"]
         == "get_escalation_summary"
     )
     assert (
-        inventory["superseded_tools"]["get_operational_escalation_summary"][
-            "tool_class"
-        ]
+        inventory["superseded_tools"]["get_operational_escalation_summary"]["tool_class"]
         == "read_only"
     )
-    assert set(inventory["canonical_read_tools"]).isdisjoint(
-        inventory["guarded_write_tools"]
-    )
+    assert set(inventory["canonical_read_tools"]).isdisjoint(inventory["guarded_write_tools"])
 
 
 @pytest.mark.asyncio

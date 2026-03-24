@@ -1,4 +1,5 @@
 """Base interface for market data adapters."""
+
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
@@ -29,9 +30,7 @@ class BaseMarketDataAdapter(ABC):
         ...
 
     @abstractmethod
-    async def get_ohlcv(
-        self, symbol: str, timeframe: str = "1h", limit: int = 100
-    ) -> list[OHLCV]:
+    async def get_ohlcv(self, symbol: str, timeframe: str = "1h", limit: int = 100) -> list[OHLCV]:
         """Get OHLCV candles. Returns empty list on error."""
         ...
 

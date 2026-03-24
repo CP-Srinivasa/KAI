@@ -8,6 +8,7 @@ Tests verify:
 - DB error → falls back to JSONL (non-fatal)
 - session_factory=None → JSONL path (no DB query)
 """
+
 from __future__ import annotations
 
 from datetime import UTC, datetime

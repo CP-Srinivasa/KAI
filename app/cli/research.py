@@ -8,6 +8,7 @@ Each submodule owns a coherent domain of commands:
 - research_operator : escalation, blocking, actions, decision-pack, runbook, review journal
 - research_trading  : market data, portfolio, backtesting, decision journal, trading loop
 """
+
 from __future__ import annotations
 
 import typer

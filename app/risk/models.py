@@ -1,4 +1,5 @@
 """Risk Engine typed models — all frozen, immutable, auditable."""
+
 from __future__ import annotations
 
 import uuid
@@ -9,6 +10,7 @@ from datetime import UTC, datetime
 @dataclass(frozen=True)
 class RiskLimits:
     """Hard limits enforced by the Risk Engine. Non-negotiable."""
+
     initial_equity: float
     max_risk_per_trade_pct: float
     max_daily_loss_pct: float
@@ -26,6 +28,7 @@ class RiskLimits:
 @dataclass(frozen=True)
 class RiskCheckResult:
     """Result of a single risk gate check."""
+
     approved: bool
     check_id: str
     timestamp_utc: str
@@ -39,9 +42,10 @@ class RiskCheckResult:
 @dataclass(frozen=True)
 class PositionSizeResult:
     """Result of position sizing calculation."""
+
     approved: bool
     symbol: str
-    position_size_pct: float   # % of equity
+    position_size_pct: float  # % of equity
     position_size_units: float
     entry_price: float
     stop_loss_price: float | None
@@ -53,9 +57,10 @@ class PositionSizeResult:
 @dataclass(frozen=True)
 class DailyLossState:
     """Tracks daily loss for kill-switch logic."""
+
     date_utc: str
     realized_pnl_usd: float
-    loss_pct: float          # negative means loss
+    loss_pct: float  # negative means loss
     kill_switch_triggered: bool
 
 

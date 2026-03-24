@@ -44,22 +44,26 @@ async def test_companion_analyze_success():
 
     mock_response = {
         "id": "chatcmpl-123",
-        "choices": [{
-            "message": {
-                "role": "assistant",
-                "content": json.dumps({
-                    "co_thought": "Test reasoning.",
-                    "sentiment_label": "bullish",
-                    "sentiment_score": 0.8,
-                    "relevance_score": 0.9,
-                    "impact_score": 0.7,
-                    "priority_score": 8,
-                    "market_scope": "macro",
-                    "affected_assets": ["BTC"],
-                    "tags": ["crypto"]
-                })
+        "choices": [
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": json.dumps(
+                        {
+                            "co_thought": "Test reasoning.",
+                            "sentiment_label": "bullish",
+                            "sentiment_score": 0.8,
+                            "relevance_score": 0.9,
+                            "impact_score": 0.7,
+                            "priority_score": 8,
+                            "market_scope": "macro",
+                            "affected_assets": ["BTC"],
+                            "tags": ["crypto"],
+                        }
+                    ),
+                }
             }
-        }]
+        ],
     }
 
     mock_post = AsyncMock()
@@ -87,22 +91,26 @@ async def test_companion_analyze_prefers_summary_field() -> None:
 
     mock_response = {
         "id": "chatcmpl-123",
-        "choices": [{
-            "message": {
-                "role": "assistant",
-                "content": json.dumps({
-                    "summary": "Structured summary.",
-                    "sentiment_label": "neutral",
-                    "sentiment_score": 0.1,
-                    "relevance_score": 0.6,
-                    "impact_score": 0.4,
-                    "priority_score": 6,
-                    "market_scope": "crypto",
-                    "affected_assets": ["ETH"],
-                    "tags": ["etf"],
-                })
+        "choices": [
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": json.dumps(
+                        {
+                            "summary": "Structured summary.",
+                            "sentiment_label": "neutral",
+                            "sentiment_score": 0.1,
+                            "relevance_score": 0.6,
+                            "impact_score": 0.4,
+                            "priority_score": 6,
+                            "market_scope": "crypto",
+                            "affected_assets": ["ETH"],
+                            "tags": ["etf"],
+                        }
+                    ),
+                }
             }
-        }]
+        ],
     }
 
     mock_post = AsyncMock()
@@ -125,14 +133,18 @@ async def test_companion_analyze_impact_capped():
 
     mock_response = {
         "id": "chatcmpl-123",
-        "choices": [{
-            "message": {
-                "role": "assistant",
-                "content": json.dumps({
-                    "impact_score": 1.0,  # Should be capped at 0.8 locally
-                })
+        "choices": [
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": json.dumps(
+                        {
+                            "impact_score": 1.0,  # Should be capped at 0.8 locally
+                        }
+                    ),
+                }
             }
-        }]
+        ],
     }
 
     mock_post = AsyncMock()

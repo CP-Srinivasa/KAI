@@ -1,4 +1,5 @@
 """conftest.py for tests/unit/mcp — re-exports helpers for pytest discovery."""
+
 from __future__ import annotations
 
 # All shared helpers live in _helpers.py and can be imported directly.

@@ -13,6 +13,7 @@ Revision ID: 0007
 Revises: 0006
 Create Date: 2026-03-23
 """
+
 import sqlalchemy as sa
 from alembic import op
 
@@ -31,8 +32,9 @@ def upgrade() -> None:
         sa.Column("symbol", sa.String(length=32), nullable=False),
         sa.Column("mode", sa.String(length=20), nullable=False, server_default="paper"),
         sa.Column("provider", sa.String(length=40), nullable=False, server_default="coingecko"),
-        sa.Column("analysis_profile", sa.String(length=40), nullable=False,
-                  server_default="conservative"),
+        sa.Column(
+            "analysis_profile", sa.String(length=40), nullable=False, server_default="conservative"
+        ),
         sa.Column("status", sa.String(length=40), nullable=False),
         sa.Column("market_data_fetched", sa.Boolean(), nullable=False, server_default="false"),
         sa.Column("signal_generated", sa.Boolean(), nullable=False, server_default="false"),

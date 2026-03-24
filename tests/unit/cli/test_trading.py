@@ -5,6 +5,7 @@ by V-1 CLI split. The existing `trading-bot research <cmd>` surface is
 tested in tests/unit/test_cli_market_data.py, test_cli_portfolio_read.py,
 test_cli_trading_loop_control.py, and test_cli_decision_journal.py.
 """
+
 from __future__ import annotations
 
 from typer.testing import CliRunner

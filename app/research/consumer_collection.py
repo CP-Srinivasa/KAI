@@ -40,12 +40,12 @@ class ConsumerAcknowledgement:
     acknowledged receipt.  This is a receipt, NOT an approval or execution trigger.
     """
 
-    ack_id: str              # UUID generated at creation — unique per acknowledgement (I-118)
-    handoff_id: str          # refs SignalHandoff.handoff_id
-    signal_id: str           # refs SignalHandoff.signal_id
-    consumer_agent_id: str   # opaque identifier of the acknowledging consumer
-    visibility_class: str    # from SignalHandoff.delivery_class (I-110)
-    acknowledged_at: str     # ISO 8601 timestamp
+    ack_id: str  # UUID generated at creation — unique per acknowledgement (I-118)
+    handoff_id: str  # refs SignalHandoff.handoff_id
+    signal_id: str  # refs SignalHandoff.signal_id
+    consumer_agent_id: str  # opaque identifier of the acknowledging consumer
+    visibility_class: str  # from SignalHandoff.delivery_class (I-110)
+    acknowledged_at: str  # ISO 8601 timestamp
     is_acknowledged: bool = True  # always True — presence means receipt (I-119)
     audit_note: str = field(default=_ACK_AUDIT_NOTE)
 
@@ -133,6 +133,7 @@ class ConsumerAuditSummary:
     interface_mode="read_only" to guarantee no structural implications of
     approval, execution, or routing.
     """
+
     total_handoffs: int
     acknowledged_count: int
     pending_count: int
@@ -171,12 +172,14 @@ def build_consumer_audit_summary(
         signal = ack.signal_id
         counts_by_signal[signal] = counts_by_signal.get(signal, 0) + 1
 
-        acknowledged_list.append({
-            "handoff_id": ack.handoff_id,
-            "signal_id": ack.signal_id,
-            "consumer_agent_id": ack.consumer_agent_id,
-            "acknowledged_at": ack.acknowledged_at,
-        })
+        acknowledged_list.append(
+            {
+                "handoff_id": ack.handoff_id,
+                "signal_id": ack.signal_id,
+                "consumer_agent_id": ack.consumer_agent_id,
+                "acknowledged_at": ack.acknowledged_at,
+            }
+        )
 
     recognized_count = len(acknowledgements)
     # Acknowledgements are append-only audit receipts and do not close handoffs.
@@ -191,10 +194,10 @@ def build_consumer_audit_summary(
         acknowledged_handoffs=acknowledged_list,
     )
 
+
 def build_handoff_collector_summary(
     handoffs: list[object],
     acknowledgements: list[ConsumerAcknowledgement],
 ) -> ConsumerAuditSummary:
     """Alias for backwards compatibility with tests and CLI."""
     return build_consumer_audit_summary(handoffs, acknowledgements)
-

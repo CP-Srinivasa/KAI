@@ -18,6 +18,7 @@ Tool list:
 - append_decision_instance: Append a validated decision instance to the journal
 - run_trading_loop_once: Run one guarded paper/shadow trading cycle
 """
+
 from __future__ import annotations
 
 from app.agents.tools._helpers import (

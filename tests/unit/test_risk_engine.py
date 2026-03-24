@@ -1,4 +1,5 @@
 """Unit tests for the Risk Engine."""
+
 from __future__ import annotations
 
 from app.risk.engine import RiskEngine
@@ -30,13 +31,17 @@ def _default_engine(**limit_overrides) -> RiskEngine:
 
 # --- kill switch ---
 
+
 def test_kill_switch_blocks_all_orders():
     engine = _default_engine()
     engine.trigger_kill_switch()
     result = engine.check_order(
-        symbol="BTC/USDT", side="buy",
-        signal_confidence=0.9, signal_confluence_count=3,
-        stop_loss_price=60000.0, current_open_positions=0,
+        symbol="BTC/USDT",
+        side="buy",
+        signal_confidence=0.9,
+        signal_confluence_count=3,
+        stop_loss_price=60000.0,
+        current_open_positions=0,
     )
     assert not result.approved
     assert "kill_switch_active" in result.violations
@@ -54,9 +59,12 @@ def test_pause_blocks_orders():
     engine = _default_engine()
     engine.pause()
     result = engine.check_order(
-        symbol="ETH/USDT", side="buy",
-        signal_confidence=0.9, signal_confluence_count=3,
-        stop_loss_price=3000.0, current_open_positions=0,
+        symbol="ETH/USDT",
+        side="buy",
+        signal_confidence=0.9,
+        signal_confluence_count=3,
+        stop_loss_price=3000.0,
+        current_open_positions=0,
     )
     assert not result.approved
     assert "system_paused" in result.violations
@@ -78,13 +86,16 @@ def test_resume_fails_when_kill_switch_active():
 
 # --- signal quality gates ---
 
+
 def test_low_confidence_rejected():
     engine = _default_engine()
     result = engine.check_order(
-        symbol="BTC/USDT", side="buy",
+        symbol="BTC/USDT",
+        side="buy",
         signal_confidence=0.5,  # below 0.75
         signal_confluence_count=3,
-        stop_loss_price=60000.0, current_open_positions=0,
+        stop_loss_price=60000.0,
+        current_open_positions=0,
     )
     assert not result.approved
     assert any("signal_confidence_too_low" in v for v in result.violations)
@@ -93,10 +104,12 @@ def test_low_confidence_rejected():
 def test_low_confluence_rejected():
     engine = _default_engine()
     result = engine.check_order(
-        symbol="BTC/USDT", side="buy",
+        symbol="BTC/USDT",
+        side="buy",
         signal_confidence=0.9,
         signal_confluence_count=1,  # below 2
-        stop_loss_price=60000.0, current_open_positions=0,
+        stop_loss_price=60000.0,
+        current_open_positions=0,
     )
     assert not result.approved
     assert any("signal_confluence_too_low" in v for v in result.violations)
@@ -104,11 +117,14 @@ def test_low_confluence_rejected():
 
 # --- stop loss required ---
 
+
 def test_missing_stop_loss_rejected_when_required():
     engine = _default_engine(require_stop_loss=True)
     result = engine.check_order(
-        symbol="BTC/USDT", side="buy",
-        signal_confidence=0.9, signal_confluence_count=3,
+        symbol="BTC/USDT",
+        side="buy",
+        signal_confidence=0.9,
+        signal_confluence_count=3,
         stop_loss_price=None,  # missing
         current_open_positions=0,
     )
@@ -119,8 +135,10 @@ def test_missing_stop_loss_rejected_when_required():
 def test_no_stop_loss_ok_when_not_required():
     engine = _default_engine(require_stop_loss=False)
     result = engine.check_order(
-        symbol="BTC/USDT", side="buy",
-        signal_confidence=0.9, signal_confluence_count=3,
+        symbol="BTC/USDT",
+        side="buy",
+        signal_confidence=0.9,
+        signal_confluence_count=3,
         stop_loss_price=None,
         current_open_positions=0,
     )
@@ -129,18 +147,23 @@ def test_no_stop_loss_ok_when_not_required():
 
 # --- max open positions ---
 
+
 def test_max_positions_rejected():
     engine = _default_engine(max_open_positions=3)
     result = engine.check_order(
-        symbol="SOL/USDT", side="buy",
-        signal_confidence=0.9, signal_confluence_count=3,
-        stop_loss_price=140.0, current_open_positions=3,  # at limit
+        symbol="SOL/USDT",
+        side="buy",
+        signal_confidence=0.9,
+        signal_confluence_count=3,
+        stop_loss_price=140.0,
+        current_open_positions=3,  # at limit
     )
     assert not result.approved
     assert any("max_open_positions_reached" in v for v in result.violations)
 
 
 # --- daily loss kill switch ---
+
 
 def test_daily_loss_triggers_kill_switch():
     engine = _default_engine(max_daily_loss_pct=1.0, kill_switch_enabled=True)
@@ -158,12 +181,13 @@ def test_daily_loss_within_limit_ok():
 
 # --- position sizing ---
 
+
 def test_position_size_with_stop_loss():
     engine = _default_engine(max_risk_per_trade_pct=0.25)
     result = engine.calculate_position_size(
         symbol="BTC/USDT",
         entry_price=65000.0,
-        stop_loss_price=64000.0,   # $1000 risk per unit
+        stop_loss_price=64000.0,  # $1000 risk per unit
         equity=10000.0,
     )
     assert result.approved
@@ -186,10 +210,12 @@ def test_position_size_invalid_price():
 
 # --- full approved order ---
 
+
 def test_approved_order():
     engine = _default_engine()
     result = engine.check_order(
-        symbol="BTC/USDT", side="buy",
+        symbol="BTC/USDT",
+        side="buy",
         signal_confidence=0.85,
         signal_confluence_count=3,
         stop_loss_price=60000.0,

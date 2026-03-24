@@ -87,11 +87,7 @@ def test_audit_log_written(tmp_path: Path) -> None:
     c = TestClient(app)
     c.get("/test")
     assert audit_path.exists()
-    lines = (
-        audit_path.read_text(encoding="utf-8")
-        .strip()
-        .splitlines()
-    )
+    lines = audit_path.read_text(encoding="utf-8").strip().splitlines()
     assert len(lines) == 1
     record = json.loads(lines[0])
     assert record["method"] == "GET"
@@ -110,11 +106,7 @@ def test_audit_log_multiple_requests(
     c.get("/test")
     c.get("/test")
     c.get("/nonexistent")
-    lines = (
-        audit_path.read_text(encoding="utf-8")
-        .strip()
-        .splitlines()
-    )
+    lines = audit_path.read_text(encoding="utf-8").strip().splitlines()
     assert len(lines) == 3
 
 

@@ -1,4 +1,5 @@
 """Operational readiness + provider health + drift + protective gate + escalation tests."""
+
 from __future__ import annotations
 
 import json
@@ -31,9 +32,7 @@ async def test_get_operational_readiness_summary_reports_canonical_backlog_and_r
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _patch_workspace_root(monkeypatch, tmp_path)
-    handoff_path, payload = _write_signal_handoff_batch(
-        tmp_path / "artifacts" / "handoffs.jsonl"
-    )
+    handoff_path, payload = _write_signal_handoff_batch(tmp_path / "artifacts" / "handoffs.jsonl")
     profile_path = _write_route_profile(
         tmp_path / "artifacts",
         route_profile="primary_with_shadow_and_control",
@@ -78,9 +77,7 @@ async def test_get_operational_readiness_summary_detects_distribution_drift_in_h
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _patch_workspace_root(monkeypatch, tmp_path)
-    handoff_path, payload = _write_signal_handoff_batch(
-        tmp_path / "artifacts" / "handoffs.jsonl"
-    )
+    handoff_path, payload = _write_signal_handoff_batch(tmp_path / "artifacts" / "handoffs.jsonl")
     tampered_payload = dict(payload)
     tampered_payload["path_type"] = "shadow"
     tampered_payload["delivery_class"] = "audit_only"
@@ -104,9 +101,7 @@ async def test_get_provider_health_returns_readiness_derived_summary(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _patch_workspace_root(monkeypatch, tmp_path)
-    handoff_path, payload = _write_signal_handoff_batch(
-        tmp_path / "artifacts" / "handoffs.jsonl"
-    )
+    handoff_path, payload = _write_signal_handoff_batch(tmp_path / "artifacts" / "handoffs.jsonl")
     profile_path = _write_route_profile(
         tmp_path,
         route_profile="primary_with_shadow_and_control",
@@ -148,9 +143,7 @@ async def test_get_provider_health_flags_unavailable_expected_paths(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _patch_workspace_root(monkeypatch, tmp_path)
-    handoff_path, _payload = _write_signal_handoff_batch(
-        tmp_path / "artifacts" / "handoffs.jsonl"
-    )
+    handoff_path, _payload = _write_signal_handoff_batch(tmp_path / "artifacts" / "handoffs.jsonl")
     profile_path = _write_route_profile(
         tmp_path,
         route_profile="primary_with_shadow_and_control",
@@ -192,9 +185,7 @@ async def test_get_distribution_drift_returns_readiness_derived_summary(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _patch_workspace_root(monkeypatch, tmp_path)
-    handoff_path, payload = _write_signal_handoff_batch(
-        tmp_path / "artifacts" / "handoffs.jsonl"
-    )
+    handoff_path, payload = _write_signal_handoff_batch(tmp_path / "artifacts" / "handoffs.jsonl")
     profile_path = _write_route_profile(
         tmp_path,
         route_profile="primary_with_shadow_and_control",
@@ -231,9 +222,7 @@ async def test_get_distribution_drift_detects_classification_mismatch(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _patch_workspace_root(monkeypatch, tmp_path)
-    handoff_path, _payload = _write_signal_handoff_batch(
-        tmp_path / "artifacts" / "handoffs.jsonl"
-    )
+    handoff_path, _payload = _write_signal_handoff_batch(tmp_path / "artifacts" / "handoffs.jsonl")
     rows = [
         json.loads(line)
         for line in handoff_path.read_text(encoding="utf-8").splitlines()
@@ -252,10 +241,7 @@ async def test_get_distribution_drift_detects_classification_mismatch(
     assert result["status"] == "critical"
     assert result["classification_mismatch_count"] == 1
     assert result["visibility_mismatch_count"] == 1
-    assert any(
-        issue["category"] == "distribution_drift"
-        for issue in result["issues"]
-    )
+    assert any(issue["category"] == "distribution_drift" for issue in result["issues"])
 
 
 @pytest.mark.asyncio
@@ -276,9 +262,7 @@ async def test_get_protective_gate_summary_returns_readiness_derived_gate_view(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _patch_workspace_root(monkeypatch, tmp_path)
-    handoff_path, _payload = _write_signal_handoff_batch(
-        tmp_path / "artifacts" / "handoffs.jsonl"
-    )
+    handoff_path, _payload = _write_signal_handoff_batch(tmp_path / "artifacts" / "handoffs.jsonl")
     profile_path = _write_route_profile(
         tmp_path,
         route_profile="primary_with_shadow_and_control",
@@ -323,9 +307,7 @@ async def test_get_remediation_recommendations_returns_read_only_recommendations
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _patch_workspace_root(monkeypatch, tmp_path)
-    handoff_path, _payload = _write_signal_handoff_batch(
-        tmp_path / "artifacts" / "handoffs.jsonl"
-    )
+    handoff_path, _payload = _write_signal_handoff_batch(tmp_path / "artifacts" / "handoffs.jsonl")
     profile_path = _write_route_profile(
         tmp_path,
         route_profile="primary_with_shadow_and_control",
@@ -361,9 +343,7 @@ async def test_get_escalation_summary_returns_read_only_review_aware_surface(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _patch_workspace_root(monkeypatch, tmp_path)
-    handoff_path, _payload = _write_signal_handoff_batch(
-        tmp_path / "artifacts" / "handoffs.jsonl"
-    )
+    handoff_path, _payload = _write_signal_handoff_batch(tmp_path / "artifacts" / "handoffs.jsonl")
     profile_path = _write_route_profile(
         tmp_path,
         route_profile="primary_with_shadow_and_control",
@@ -403,9 +383,7 @@ async def test_get_operational_escalation_summary_alias_matches_canonical_summar
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _patch_workspace_root(monkeypatch, tmp_path)
-    handoff_path, _payload = _write_signal_handoff_batch(
-        tmp_path / "artifacts" / "handoffs.jsonl"
-    )
+    handoff_path, _payload = _write_signal_handoff_batch(tmp_path / "artifacts" / "handoffs.jsonl")
     profile_path = _write_route_profile(
         tmp_path,
         route_profile="primary_with_shadow_and_control",

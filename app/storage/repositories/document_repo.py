@@ -62,6 +62,7 @@ class DocumentRepository:
     async def count_pending_documents(self) -> int:
         """Return the count of documents in status=PERSISTED waiting for analysis."""
         from sqlalchemy import func
+
         stmt = (
             select(func.count(CanonicalDocumentModel.id))
             .where(CanonicalDocumentModel.status == DocumentStatus.PERSISTED.value)
@@ -312,9 +313,7 @@ def _from_model(model: CanonicalDocumentModel) -> CanonicalDocument:
         source_type=SourceType(model.source_type) if model.source_type else None,
         document_type=DocumentType(model.document_type),
         provider=model.provider,
-        analysis_source=(
-            AnalysisSource(model.analysis_source) if model.analysis_source else None
-        ),
+        analysis_source=(AnalysisSource(model.analysis_source) if model.analysis_source else None),
         url=model.url,
         title=model.title,
         author=model.author,

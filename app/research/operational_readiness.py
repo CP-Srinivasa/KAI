@@ -105,6 +105,7 @@ VALID_REVIEW_ACTIONS = frozenset(
 )
 DEFAULT_REVIEW_JOURNAL_PATH = f"artifacts/{REVIEW_JOURNAL_JSONL_FILENAME}"
 
+
 def _parse_iso_timestamp(value: str | None) -> datetime | None:
     if not value:
         return None
@@ -211,9 +212,7 @@ class RouteReadinessSummary:
             "missing_shadow_paths": list(self.missing_shadow_paths),
             "missing_control_result": self.missing_control_result,
             "state_age_hours": (
-                round(self.state_age_hours, 2)
-                if self.state_age_hours is not None
-                else None
+                round(self.state_age_hours, 2) if self.state_age_hours is not None else None
             ),
         }
 
@@ -712,9 +711,7 @@ class OperatorDecisionPack:
                 else None
             ),
             "blocking_summary": (
-                self.blocking_summary.to_json_dict()
-                if self.blocking_summary is not None
-                else None
+                self.blocking_summary.to_json_dict() if self.blocking_summary is not None else None
             ),
             "action_queue_summary": (
                 self.action_queue_summary.to_json_dict()
@@ -797,9 +794,7 @@ class OperationalReadinessReport:
     provider_health_summary: ProviderHealthSummary
     distribution_drift_summary: DistributionDriftSummary
     issues: list[ReadinessIssue]
-    protective_gate_summary: ProtectiveGateSummary = field(
-        default_factory=ProtectiveGateSummary
-    )
+    protective_gate_summary: ProtectiveGateSummary = field(default_factory=ProtectiveGateSummary)
     artifacts: OperationalArtifactRefs = field(default_factory=OperationalArtifactRefs)
     generated_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
     interface_mode: str = "read_only"
@@ -941,16 +936,11 @@ def _build_provider_health_summary(
         status = (
             PROVIDER_STATUS_UNAVAILABLE
             if sample_count == 0
-            else (
-                PROVIDER_STATUS_DEGRADED
-                if failure_count > 0
-                else PROVIDER_STATUS_HEALTHY
-            )
+            else (PROVIDER_STATUS_DEGRADED if failure_count > 0 else PROVIDER_STATUS_HEALTHY)
         )
-        provider = (
-            ", ".join(sorted(name for name in stats.provider_names if name))
-            or _default_provider_name(path_id)
-        )
+        provider = ", ".join(
+            sorted(name for name in stats.provider_names if name)
+        ) or _default_provider_name(path_id)
         entries.append(
             ProviderHealthEntry(
                 provider=provider,
@@ -975,11 +965,7 @@ def _build_provider_health_summary(
                 or _default_provider_name(path_id),
                 path_id=path_id,
                 path_type=classification.path_type,
-                status=(
-                    PROVIDER_STATUS_DEGRADED
-                    if failure_count > 0
-                    else PROVIDER_STATUS_HEALTHY
-                ),
+                status=(PROVIDER_STATUS_DEGRADED if failure_count > 0 else PROVIDER_STATUS_HEALTHY),
                 sample_count=sample_count,
                 success_count=max(0, sample_count - failure_count),
                 failure_count=failure_count,
@@ -988,12 +974,8 @@ def _build_provider_health_summary(
         )
 
     healthy_count = sum(1 for entry in entries if entry.status == PROVIDER_STATUS_HEALTHY)
-    degraded_count = sum(
-        1 for entry in entries if entry.status == PROVIDER_STATUS_DEGRADED
-    )
-    unavailable_count = sum(
-        1 for entry in entries if entry.status == PROVIDER_STATUS_UNAVAILABLE
-    )
+    degraded_count = sum(1 for entry in entries if entry.status == PROVIDER_STATUS_DEGRADED)
+    unavailable_count = sum(1 for entry in entries if entry.status == PROVIDER_STATUS_UNAVAILABLE)
     provider_names = {
         entry.provider
         for entry in entries
@@ -1066,14 +1048,10 @@ def _build_distribution_drift_summary(
                 observed_control_paths.add(envelope.control_result.path_id)
 
     expected_shadow_path_count = (
-        len(active_route_state.enabled_shadow_paths)
-        if active_route_state is not None
-        else 0
+        len(active_route_state.enabled_shadow_paths) if active_route_state is not None else 0
     )
     expected_control_count = (
-        1
-        if active_route_state is not None and active_route_state.control_path is not None
-        else 0
+        1 if active_route_state is not None and active_route_state.control_path is not None else 0
     )
     observed_shadow_path_count = len(observed_shadow_paths)
     observed_control_count = len(observed_control_paths)
@@ -1122,21 +1100,12 @@ def _build_route_summary(
             abc_output_available=artifacts.abc_output.present,
         )
 
-    seen_shadow_paths = {
-        path.path_id
-        for envelope in envelopes
-        for path in envelope.shadow_results
-    }
+    seen_shadow_paths = {path.path_id for envelope in envelopes for path in envelope.shadow_results}
     control_results = [
-        envelope.control_result
-        for envelope in envelopes
-        if envelope.control_result is not None
+        envelope.control_result for envelope in envelopes if envelope.control_result is not None
     ]
     shadow_failure_count = sum(
-        1
-        for envelope in envelopes
-        for path in envelope.shadow_results
-        if _path_failed(path)
+        1 for envelope in envelopes for path in envelope.shadow_results if _path_failed(path)
     )
     control_failure_count = sum(1 for path in control_results if _path_failed(path))
     missing_shadow_paths = (
@@ -1337,8 +1306,6 @@ def _build_protective_gate_summary(
     )
 
 
-
-
 def build_operational_readiness_report(
     *,
     handoffs: list[SignalHandoff],
@@ -1414,8 +1381,7 @@ def build_operational_readiness_report(
                 severity=SEVERITY_WARNING,
                 category=CATEGORY_STALE_STATE,
                 summary=(
-                    f"{stale_pending_count} pending handoff(s) are older than "
-                    f"{stale_after_hours}h."
+                    f"{stale_pending_count} pending handoff(s) are older than {stale_after_hours}h."
                 ),
                 source_ref=resolved_artifacts.handoff.path,
             )
@@ -1434,10 +1400,7 @@ def build_operational_readiness_report(
             )
         )
 
-    if (
-        provider_health_summary.degraded_count > 0
-        or provider_health_summary.unavailable_count > 0
-    ):
+    if provider_health_summary.degraded_count > 0 or provider_health_summary.unavailable_count > 0:
         issues.append(
             ReadinessIssue(
                 severity=SEVERITY_WARNING,
@@ -1488,10 +1451,7 @@ def build_operational_readiness_report(
                     f"unexpected_visible_audit="
                     f"{distribution_drift_summary.unexpected_visible_audit_count})."
                 ),
-                source_ref=(
-                    resolved_artifacts.handoff.path
-                    or resolved_artifacts.abc_output.path
-                ),
+                source_ref=(resolved_artifacts.handoff.path or resolved_artifacts.abc_output.path),
             )
         )
 
@@ -1501,9 +1461,7 @@ def build_operational_readiness_report(
                 ReadinessIssue(
                     severity=SEVERITY_WARNING,
                     category=CATEGORY_STALE_STATE,
-                    summary=(
-                        f"Active route state is {route_summary.state_age_hours:.1f}h old."
-                    ),
+                    summary=(f"Active route state is {route_summary.state_age_hours:.1f}h old."),
                     source_ref=resolved_artifacts.active_route_state.path,
                 )
             )
@@ -1662,15 +1620,9 @@ def build_operational_escalation_summary(
         readiness_report.protective_gate_summary
     ) + _build_review_required_escalation_items(review_required_summary)
     blocking_count = sum(1 for item in items if item.blocking)
-    warning_count = sum(
-        1 for item in items if item.escalation_status == GATE_STATUS_WARNING
-    )
-    advisory_count = sum(
-        1 for item in items if item.escalation_status == GATE_STATUS_ADVISORY
-    )
-    review_required_count = sum(
-        1 for item in items if item.category == CATEGORY_REVIEW_REQUIRED
-    )
+    warning_count = sum(1 for item in items if item.escalation_status == GATE_STATUS_WARNING)
+    advisory_count = sum(1 for item in items if item.escalation_status == GATE_STATUS_ADVISORY)
+    review_required_count = sum(1 for item in items if item.category == CATEGORY_REVIEW_REQUIRED)
     operator_action_count = sum(1 for item in items if item.operator_action_required)
 
     return OperationalEscalationSummary(
@@ -1683,12 +1635,8 @@ def build_operational_escalation_summary(
         review_required_count=review_required_count,
         operator_action_count=operator_action_count,
         items=items,
-        evidence_refs=_unique_strings(
-            [ref for item in items for ref in item.evidence_refs]
-        ),
-        advisory_notes=_unique_strings(
-            [note for item in items for note in item.advisory_notes]
-        ),
+        evidence_refs=_unique_strings([ref for item in items for ref in item.evidence_refs]),
+        advisory_notes=_unique_strings([note for item in items for note in item.advisory_notes]),
         generated_at=readiness_report.generated_at,
     )
 
@@ -1703,9 +1651,7 @@ def build_blocking_summary(summary: OperationalEscalationSummary) -> BlockingSum
         blocking_count=len(items),
         items=items,
         evidence_refs=_unique_strings([ref for item in items for ref in item.evidence_refs]),
-        advisory_notes=_unique_strings(
-            [note for item in items for note in item.advisory_notes]
-        ),
+        advisory_notes=_unique_strings([note for item in items for note in item.advisory_notes]),
     )
 
 
@@ -1801,10 +1747,7 @@ def _operator_decision_pack_status(
         and action_queue_summary.queue_status != ACTION_QUEUE_STATUS_CLEAR
     ):
         return action_queue_summary.queue_status
-    if (
-        review_required_summary is not None
-        and review_required_summary.review_required_count > 0
-    ):
+    if review_required_summary is not None and review_required_summary.review_required_count > 0:
         return ACTION_QUEUE_STATUS_REVIEW_REQUIRED
     if readiness_summary is not None:
         gate_status = readiness_summary.protective_gate_summary.gate_status
@@ -1827,11 +1770,7 @@ def _readiness_pack_evidence_refs(
             for item in readiness_summary.protective_gate_summary.items
             for ref in item.evidence_refs
         ]
-        + [
-            issue.source_ref
-            for issue in readiness_summary.issues
-            if issue.source_ref is not None
-        ]
+        + [issue.source_ref for issue in readiness_summary.issues if issue.source_ref is not None]
     )
 
 
@@ -1893,10 +1832,7 @@ def _pack_affected_subsystems(
         subsystems.extend(
             item.subsystem for item in readiness_summary.protective_gate_summary.items
         )
-    if (
-        review_required_summary is not None
-        and review_required_summary.review_required_count > 0
-    ):
+    if review_required_summary is not None and review_required_summary.review_required_count > 0:
         subsystems.append("artifacts")
     return _unique_strings(subsystems)
 
@@ -1910,22 +1846,16 @@ def build_action_queue_summary(
     return ActionQueueSummary(
         queue_status=_queue_status_from_action_items(queue_items),
         total_count=len(queue_items),
-        open_count=sum(
-            1 for item in queue_items if item.queue_status == ACTION_QUEUE_STATUS_OPEN
-        ),
+        open_count=sum(1 for item in queue_items if item.queue_status == ACTION_QUEUE_STATUS_OPEN),
         blocking_count=sum(
             1 for item in queue_items if item.queue_status == ACTION_QUEUE_STATUS_BLOCKING
         ),
         review_required_count=sum(
-            1
-            for item in queue_items
-            if item.queue_status == ACTION_QUEUE_STATUS_REVIEW_REQUIRED
+            1 for item in queue_items if item.queue_status == ACTION_QUEUE_STATUS_REVIEW_REQUIRED
         ),
         highest_priority=_highest_action_priority(queue_items),
         items=queue_items,
-        evidence_refs=_unique_strings(
-            [ref for item in queue_items for ref in item.evidence_refs]
-        ),
+        evidence_refs=_unique_strings([ref for item in queue_items for ref in item.evidence_refs]),
         advisory_notes=_unique_strings(
             [note for item in queue_items for note in item.advisory_notes]
         ),
@@ -1943,35 +1873,23 @@ def build_operator_action_summary(
         severity=_highest_escalation_severity(items),
         blocking=any(item.blocking for item in items),
         operator_action_count=len(items),
-        review_required_count=sum(
-            1 for item in items if item.category == CATEGORY_REVIEW_REQUIRED
-        ),
+        review_required_count=sum(1 for item in items if item.category == CATEGORY_REVIEW_REQUIRED),
         items=items,
         evidence_refs=_unique_strings([ref for item in items for ref in item.evidence_refs]),
-        advisory_notes=_unique_strings(
-            [note for item in items for note in item.advisory_notes]
-        ),
+        advisory_notes=_unique_strings([note for item in items for note in item.advisory_notes]),
     )
 
 
 def build_blocking_actions(summary: ActionQueueSummary) -> BlockingActionsSummary:
     """Project blocking action queue rows only from the canonical action queue."""
-    items = [
-        item
-        for item in summary.items
-        if item.queue_status == ACTION_QUEUE_STATUS_BLOCKING
-    ]
+    items = [item for item in summary.items if item.queue_status == ACTION_QUEUE_STATUS_BLOCKING]
     return BlockingActionsSummary(
-        queue_status=(
-            ACTION_QUEUE_STATUS_BLOCKING if items else ACTION_QUEUE_STATUS_CLEAR
-        ),
+        queue_status=(ACTION_QUEUE_STATUS_BLOCKING if items else ACTION_QUEUE_STATUS_CLEAR),
         blocking_count=len(items),
         highest_priority=_highest_action_priority(items),
         items=items,
         evidence_refs=_unique_strings([ref for item in items for ref in item.evidence_refs]),
-        advisory_notes=_unique_strings(
-            [note for item in items for note in item.advisory_notes]
-        ),
+        advisory_notes=_unique_strings([note for item in items for note in item.advisory_notes]),
     )
 
 
@@ -1994,22 +1912,14 @@ def build_review_required_actions(
 ) -> ReviewRequiredActionsSummary:
     """Project review-required action queue rows only from the canonical queue."""
     items = [
-        item
-        for item in summary.items
-        if item.queue_status == ACTION_QUEUE_STATUS_REVIEW_REQUIRED
+        item for item in summary.items if item.queue_status == ACTION_QUEUE_STATUS_REVIEW_REQUIRED
     ]
     return ReviewRequiredActionsSummary(
-        queue_status=(
-            ACTION_QUEUE_STATUS_REVIEW_REQUIRED
-            if items
-            else ACTION_QUEUE_STATUS_CLEAR
-        ),
+        queue_status=(ACTION_QUEUE_STATUS_REVIEW_REQUIRED if items else ACTION_QUEUE_STATUS_CLEAR),
         review_required_count=len(items),
         highest_priority=_highest_action_priority(items),
         items=items,
-        advisory_notes=_unique_strings(
-            [note for item in items for note in item.advisory_notes]
-        ),
+        advisory_notes=_unique_strings([note for item in items for note in item.advisory_notes]),
     )
 
 
@@ -2041,9 +1951,7 @@ def build_operator_decision_pack(
             review_required_summary.review_required_count,
         )
 
-    action_queue_count = (
-        action_queue_summary.total_count if action_queue_summary is not None else 0
-    )
+    action_queue_count = action_queue_summary.total_count if action_queue_summary is not None else 0
     evidence_refs = _unique_strings(
         (blocking_summary.evidence_refs if blocking_summary is not None else [])
         + (action_queue_summary.evidence_refs if action_queue_summary is not None else [])
@@ -2505,16 +2413,12 @@ def build_operator_runbook(
 
     next_steps = steps[:3] if len(steps) > 1 else list(steps)
 
-    command_refs = _unique_strings(
-        [ref for step in steps for ref in step.command_refs]
-    )
+    command_refs = _unique_strings([ref for step in steps for ref in step.command_refs])
     evidence_refs = _unique_strings(
-        list(decision_pack.evidence_refs)
-        + [ref for step in steps for ref in step.evidence_refs]
+        list(decision_pack.evidence_refs) + [ref for step in steps for ref in step.evidence_refs]
     )
     affected_subsystems = _unique_strings(
-        list(decision_pack.affected_subsystems)
-        + [step.subsystem for step in steps]
+        list(decision_pack.affected_subsystems) + [step.subsystem for step in steps]
     )
     operator_guidance = _unique_strings(list(decision_pack.operator_guidance))
 
@@ -2824,9 +2728,7 @@ def _latest_review_entries_by_source(
     latest_by_source: dict[str, ReviewJournalEntry] = {}
     for entry in entries:
         existing = latest_by_source.get(entry.source_ref)
-        if existing is None or _review_entry_timestamp(entry) >= _review_entry_timestamp(
-            existing
-        ):
+        if existing is None or _review_entry_timestamp(entry) >= _review_entry_timestamp(existing):
             latest_by_source[entry.source_ref] = entry
     return sorted(
         latest_by_source.values(),
@@ -2842,9 +2744,7 @@ def build_review_journal_summary(
 ) -> ReviewJournalSummary:
     """Build a read-only journal summary from append-only review entries."""
     latest_entries = _latest_review_entries_by_source(entries)
-    open_count = sum(
-        1 for entry in latest_entries if entry.journal_status == JOURNAL_STATUS_OPEN
-    )
+    open_count = sum(1 for entry in latest_entries if entry.journal_status == JOURNAL_STATUS_OPEN)
     resolved_count = sum(
         1 for entry in latest_entries if entry.journal_status == JOURNAL_STATUS_RESOLVED
     )
@@ -2855,9 +2755,7 @@ def build_review_journal_summary(
     else:
         journal_status = JOURNAL_STATUS_EMPTY
 
-    latest_created_at = (
-        max(entries, key=_review_entry_timestamp).created_at if entries else None
-    )
+    latest_created_at = max(entries, key=_review_entry_timestamp).created_at if entries else None
 
     return ReviewJournalSummary(
         generated_at=datetime.now(UTC).isoformat(),
@@ -2899,9 +2797,3 @@ def build_review_resolution_summary(
         open_source_refs=open_source_refs,
         resolved_source_refs=resolved_source_refs,
     )
-
-
-
-
-
-

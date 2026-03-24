@@ -36,23 +36,28 @@ DECISION_SCHEMA_FILENAME = "DECISION_SCHEMA.json"
 # Safety-critical fields that MUST have "const" constraints in CONFIG_SCHEMA
 _CONFIG_SAFETY_CONSTS: dict[str, dict[str, object]] = {
     "risk.require_stop_loss": {
-        "section": "risk", "field": "require_stop_loss",
+        "section": "risk",
+        "field": "require_stop_loss",
         "expected": True,
     },
     "risk.allow_averaging_down": {
-        "section": "risk", "field": "allow_averaging_down",
+        "section": "risk",
+        "field": "allow_averaging_down",
         "expected": False,
     },
     "risk.allow_martingale": {
-        "section": "risk", "field": "allow_martingale",
+        "section": "risk",
+        "field": "allow_martingale",
         "expected": False,
     },
     "risk.allow_unbounded_loss": {
-        "section": "risk", "field": "allow_unbounded_loss",
+        "section": "risk",
+        "field": "allow_unbounded_loss",
         "expected": False,
     },
     "risk.kill_switch_enabled": {
-        "section": "risk", "field": "kill_switch_enabled",
+        "section": "risk",
+        "field": "kill_switch_enabled",
         "expected": True,
     },
     "execution.live_execution_enabled": {
@@ -83,11 +88,19 @@ _CONFIG_SAFETY_CONSTS: dict[str, dict[str, object]] = {
 }
 
 # Required top-level sections in CONFIG_SCHEMA
-_CONFIG_REQUIRED_SECTIONS = frozenset({
-    "system_runtime", "llm_agent", "market_data", "risk",
-    "strategy_decision", "execution", "memory_learning",
-    "security", "messaging_ux",
-})
+_CONFIG_REQUIRED_SECTIONS = frozenset(
+    {
+        "system_runtime",
+        "llm_agent",
+        "market_data",
+        "risk",
+        "strategy_decision",
+        "execution",
+        "memory_learning",
+        "security",
+        "messaging_ux",
+    }
+)
 
 
 # ---------------------------------------------------------------------------
@@ -189,9 +202,7 @@ def validate_config_schema(
             errors.append(f"Field '{label}' has no const constraint")
             safety_checks.append(f"FAIL: {label} — no const")
         elif const_val != expected_val:
-            errors.append(
-                f"Field '{label}' const={const_val}, expected={expected_val}"
-            )
+            errors.append(f"Field '{label}' const={const_val}, expected={expected_val}")
             safety_checks.append(f"FAIL: {label} — wrong const")
         else:
             safety_checks.append(f"PASS: {label} = {expected_val}")
@@ -224,9 +235,7 @@ def validate_decision_schema(
 
     required_fields = list(schema.get("required", []))  # type: ignore[call-overload]
     if len(required_fields) < 26:
-        errors.append(
-            f"DECISION_SCHEMA requires at least 26 fields, found {len(required_fields)}"
-        )
+        errors.append(f"DECISION_SCHEMA requires at least 26 fields, found {len(required_fields)}")
 
     # Check mode enum includes all valid modes
     props = schema.get("properties", {})
@@ -274,9 +283,7 @@ def validate_decision_schema_alignment(
     # Schema fields that are NOT in the model
     schema_only = schema_required - model_fields
     if schema_only:
-        errors.append(
-            f"Schema requires fields not in DecisionRecord: {sorted(schema_only)}"
-        )
+        errors.append(f"Schema requires fields not in DecisionRecord: {sorted(schema_only)}")
 
     # Model fields that are NOT required by schema
     model_only = model_fields - schema_required
@@ -308,8 +315,6 @@ def run_all_schema_validations(
     ]
     failures = [r for r in results if not r.valid]
     if failures:
-        error_details = "; ".join(
-            f"{r.schema_path}: {r.errors}" for r in failures
-        )
+        error_details = "; ".join(f"{r.schema_path}: {r.errors}" for r in failures)
         logger.error("Schema validation failures: %s", error_details)
     return results

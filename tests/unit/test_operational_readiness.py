@@ -128,10 +128,7 @@ def test_build_operational_readiness_report_detects_pending_and_orphaned_acknowl
     assert report.protective_gate_summary.blocking_count == 0
     assert report.protective_gate_summary.warning_count == 1
     assert report.protective_gate_summary.advisory_count == 1
-    subsystems = {
-        item.category: item.subsystem
-        for item in report.protective_gate_summary.items
-    }
+    subsystems = {item.category: item.subsystem for item in report.protective_gate_summary.items}
     assert subsystems[CATEGORY_HANDOFF_BACKLOG] == "handoff"
     assert subsystems[CATEGORY_ACKNOWLEDGEMENT_AUDIT] == "handoff"
 
@@ -211,13 +208,8 @@ def test_build_operational_readiness_report_detects_missing_route_artifact_and_f
     assert report.protective_gate_summary.gate_status == "blocking"
     assert report.protective_gate_summary.blocking_count == 1
     assert report.protective_gate_summary.warning_count >= 4
-    assert all(
-        item.recommended_actions
-        for item in report.protective_gate_summary.items
-    )
-    statuses = {
-        entry.path_id: entry.status for entry in report.provider_health_summary.entries
-    }
+    assert all(item.recommended_actions for item in report.protective_gate_summary.items)
+    statuses = {entry.path_id: entry.status for entry in report.provider_health_summary.entries}
     assert statuses["B.companion"] == "degraded"
     assert statuses["C.rule"] == "degraded"
 
@@ -383,8 +375,7 @@ def test_build_operational_escalation_summary_from_report(tmp_path: Path) -> Non
     assert escalation.execution_enabled is False
     assert escalation.write_back_allowed is False
     assert any(
-        item.category == CATEGORY_ARTIFACT_STATE and item.blocking
-        for item in escalation.items
+        item.category == CATEGORY_ARTIFACT_STATE and item.blocking for item in escalation.items
     )
     assert any(
         item.category == CATEGORY_REVIEW_REQUIRED and item.operator_action_required
@@ -399,10 +390,7 @@ def test_build_operational_escalation_summary_from_report(tmp_path: Path) -> Non
 
     assert operator_action_summary.operator_action_count >= 2
     assert operator_action_summary.review_required_count == 1
-    assert any(
-        item.category == CATEGORY_REVIEW_REQUIRED
-        for item in operator_action_summary.items
-    )
+    assert any(item.category == CATEGORY_REVIEW_REQUIRED for item in operator_action_summary.items)
 
 
 def test_build_operational_escalation_summary_clean() -> None:

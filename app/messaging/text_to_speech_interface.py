@@ -1,4 +1,5 @@
 """Disabled-by-default text-to-speech interface stub for future KAI channels."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass

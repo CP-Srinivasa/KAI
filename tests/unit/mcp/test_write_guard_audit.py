@@ -1,4 +1,5 @@
 """Sprint 18: path guards + write audit tests (I-94, I-95)."""
+
 from __future__ import annotations
 
 import json

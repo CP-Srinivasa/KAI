@@ -5,6 +5,7 @@ They test benchmark-companion, evaluate-datasets, check-promotion,
 prepare-tuning-artifact, record-promotion, benchmark-companion-run,
 shadow-report, evaluate.
 """
+
 from __future__ import annotations
 
 import json
@@ -355,9 +356,7 @@ def test_research_benchmark_companion_run_missing_teacher_file(tmp_path) -> None
     """benchmark-companion-run exits 1 when teacher JSONL file does not exist."""
     missing = tmp_path / "nonexistent_teacher.jsonl"
     out = tmp_path / "candidate.jsonl"
-    result = runner.invoke(
-        app, ["research", "benchmark-companion-run", str(missing), str(out)]
-    )
+    result = runner.invoke(app, ["research", "benchmark-companion-run", str(missing), str(out)])
     assert result.exit_code == 1
 
 
@@ -379,17 +378,21 @@ def test_research_check_promotion_missing_report_file(tmp_path) -> None:
 def test_research_check_promotion_all_gates_pass(tmp_path) -> None:
     """check-promotion exits 0 and prints PROMOTABLE when all gates pass."""
     report = tmp_path / "report.json"
-    report.write_text(json.dumps({
-        "metrics": {
-            "sentiment_agreement": 0.92,
-            "priority_mae": 1.0,
-            "relevance_mae": 0.10,
-            "impact_mae": 0.15,
-            "tag_overlap_mean": 0.40,
-            "sample_count": 50,
-            "missing_pairs": 0,
-        }
-    }))
+    report.write_text(
+        json.dumps(
+            {
+                "metrics": {
+                    "sentiment_agreement": 0.92,
+                    "priority_mae": 1.0,
+                    "relevance_mae": 0.10,
+                    "impact_mae": 0.15,
+                    "tag_overlap_mean": 0.40,
+                    "sample_count": 50,
+                    "missing_pairs": 0,
+                }
+            }
+        )
+    )
     result = runner.invoke(app, ["research", "check-promotion", str(report)])
     assert result.exit_code == 0
     assert "PROMOTABLE" in result.output
@@ -398,17 +401,21 @@ def test_research_check_promotion_all_gates_pass(tmp_path) -> None:
 def test_research_check_promotion_gate_fails(tmp_path) -> None:
     """check-promotion exits 1 and prints NOT PROMOTABLE when sentiment gate fails."""
     report = tmp_path / "report.json"
-    report.write_text(json.dumps({
-        "metrics": {
-            "sentiment_agreement": 0.70,
-            "priority_mae": 1.0,
-            "relevance_mae": 0.10,
-            "impact_mae": 0.15,
-            "tag_overlap_mean": 0.40,
-            "sample_count": 50,
-            "missing_pairs": 0,
-        }
-    }))
+    report.write_text(
+        json.dumps(
+            {
+                "metrics": {
+                    "sentiment_agreement": 0.70,
+                    "priority_mae": 1.0,
+                    "relevance_mae": 0.10,
+                    "impact_mae": 0.15,
+                    "tag_overlap_mean": 0.40,
+                    "sample_count": 50,
+                    "missing_pairs": 0,
+                }
+            }
+        )
+    )
     result = runner.invoke(app, ["research", "check-promotion", str(report)])
     assert result.exit_code == 1
     assert "NOT PROMOTABLE" in result.output
@@ -445,9 +452,14 @@ def test_research_record_promotion_missing_report_file(tmp_path) -> None:
     result = runner.invoke(
         app,
         [
-            "research", "record-promotion", str(missing), "kai-analyst-v1",
-            "--endpoint", "http://localhost:11434",
-            "--operator-note", "Manual promotion test",
+            "research",
+            "record-promotion",
+            str(missing),
+            "kai-analyst-v1",
+            "--endpoint",
+            "http://localhost:11434",
+            "--operator-note",
+            "Manual promotion test",
         ],
     )
     assert result.exit_code == 1
@@ -457,23 +469,32 @@ def test_research_record_promotion_missing_report_file(tmp_path) -> None:
 def test_research_record_promotion_blocked_when_gates_fail(tmp_path) -> None:
     """record-promotion exits 1 and blocks when evaluation gates do not pass."""
     report = tmp_path / "report.json"
-    report.write_text(json.dumps({
-        "metrics": {
-            "sentiment_agreement": 0.70,
-            "priority_mae": 1.0,
-            "relevance_mae": 0.10,
-            "impact_mae": 0.15,
-            "tag_overlap_mean": 0.40,
-            "sample_count": 50,
-            "missing_pairs": 0,
-        }
-    }))
+    report.write_text(
+        json.dumps(
+            {
+                "metrics": {
+                    "sentiment_agreement": 0.70,
+                    "priority_mae": 1.0,
+                    "relevance_mae": 0.10,
+                    "impact_mae": 0.15,
+                    "tag_overlap_mean": 0.40,
+                    "sample_count": 50,
+                    "missing_pairs": 0,
+                }
+            }
+        )
+    )
     result = runner.invoke(
         app,
         [
-            "research", "record-promotion", str(report), "kai-analyst-v1",
-            "--endpoint", "http://localhost:11434",
-            "--operator-note", "Manual promotion test",
+            "research",
+            "record-promotion",
+            str(report),
+            "kai-analyst-v1",
+            "--endpoint",
+            "http://localhost:11434",
+            "--operator-note",
+            "Manual promotion test",
         ],
     )
     assert result.exit_code == 1

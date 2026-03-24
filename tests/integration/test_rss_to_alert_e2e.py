@@ -15,6 +15,7 @@ Stages covered:
   5. repo.update_analysis()  → scores written, status → ANALYZED
   6. TelegramAlertChannel.send() dry_run → AlertDeliveryResult(success=True)
 """
+
 from __future__ import annotations
 
 from pathlib import Path

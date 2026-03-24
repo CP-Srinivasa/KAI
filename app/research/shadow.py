@@ -50,14 +50,14 @@ class ShadowRunRecord:
     """One audit record per document — written as a single JSONL line."""
 
     document_id: str
-    run_at: str                    # ISO 8601 UTC
+    run_at: str  # ISO 8601 UTC
     primary_provider: str
     primary_analysis_source: str
     companion_endpoint: str
     companion_model: str
     primary_result: dict[str, object]
     companion_result: dict[str, object] | None  # None on companion error
-    divergence: dict[str, object] | None        # None on companion error
+    divergence: dict[str, object] | None  # None on companion error
 
     def to_dict(self) -> dict[str, object]:
         return dataclasses.asdict(self)

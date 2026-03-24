@@ -14,6 +14,7 @@ Tool implementations live in:
   app/agents/tools/compat.py          - aliases, superseded tools, workflow helpers
   app/agents/tools/_helpers.py        - shared path/report helpers
 """
+
 from __future__ import annotations
 
 import logging

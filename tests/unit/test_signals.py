@@ -1,4 +1,5 @@
 """Unit tests for the Signal Engine (SignalGenerator + SignalCandidate)."""
+
 from __future__ import annotations
 
 import pytest
@@ -10,6 +11,7 @@ from app.signals.generator import SignalGenerator
 from app.signals.models import SignalDirection, SignalState
 
 # ── Fixtures / factories ──────────────────────────────────────────────────────
+
 
 def _make_analysis(
     *,
@@ -76,6 +78,7 @@ def _generator(**kwargs) -> SignalGenerator:
 
 
 # ── Happy path ────────────────────────────────────────────────────────────────
+
 
 def test_bullish_analysis_produces_long_signal():
     gen = _generator()
@@ -166,6 +169,7 @@ def test_approval_and_execution_state_default_pending():
 
 # ── Filter: returns None ──────────────────────────────────────────────────────
 
+
 def test_returns_none_if_no_market_data():
     gen = _generator()
     signal = gen.generate(_make_analysis(), None, "BTC/USDT")
@@ -231,6 +235,7 @@ def test_returns_none_if_confluence_too_low():
 
 # ── Confluence calculation ────────────────────────────────────────────────────
 
+
 def test_confluence_max_7():
     """All 7 dimensions contribute: 5 analysis + price momentum + volume confirm."""
     gen = _generator()
@@ -270,7 +275,7 @@ def test_confluence_partial():
     analysis = _make_analysis(
         impact_score=0.7,
         relevance_score=0.5,  # below 0.7
-        novelty_score=0.3,    # below 0.5
+        novelty_score=0.3,  # below 0.5
         affected_assets=["BTC"],
         sentiment_score=0.4,  # below 0.6 abs
     )
@@ -282,6 +287,7 @@ def test_confluence_partial():
 
 
 # ── Market regime / volatility ────────────────────────────────────────────────
+
 
 def test_market_regime_volatile_on_large_change():
     gen = _generator()

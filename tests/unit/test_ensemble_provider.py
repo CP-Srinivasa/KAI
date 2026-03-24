@@ -52,9 +52,7 @@ def _mock_provider(name: str, output: LLMAnalysisOutput | None = None, fail: boo
 def _btc_engine() -> KeywordEngine:
     return KeywordEngine(
         keywords=frozenset({"halving", "etf"}),
-        watchlist_entries=[
-            WatchlistEntry("BTC", "Bitcoin", frozenset({"bitcoin"}), (), "crypto")
-        ],
+        watchlist_entries=[WatchlistEntry("BTC", "Bitcoin", frozenset({"bitcoin"}), (), "crypto")],
         entity_aliases=[],
     )
 

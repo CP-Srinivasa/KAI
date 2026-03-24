@@ -105,8 +105,10 @@ async def test_get_price_unknown_symbol() -> None:
 async def test_get_price_fail_closed_on_http_error() -> None:
     adapter = _adapter()
     with patch.object(
-        adapter, "_get_json",
-        new_callable=AsyncMock, return_value=None,
+        adapter,
+        "_get_json",
+        new_callable=AsyncMock,
+        return_value=None,
     ):
         price = await adapter.get_price("BTC/USDT")
     assert price is None
@@ -116,7 +118,8 @@ async def test_get_price_fail_closed_on_http_error() -> None:
 async def test_get_price_fail_closed_on_zero() -> None:
     adapter = _adapter()
     with patch.object(
-        adapter, "_get_json",
+        adapter,
+        "_get_json",
         new_callable=AsyncMock,
         return_value=_mock_price_response(price=0.0),
     ):
@@ -128,7 +131,8 @@ async def test_get_price_fail_closed_on_zero() -> None:
 async def test_get_price_fail_closed_on_negative() -> None:
     adapter = _adapter()
     with patch.object(
-        adapter, "_get_json",
+        adapter,
+        "_get_json",
         new_callable=AsyncMock,
         return_value=_mock_price_response(price=-100.0),
     ):
@@ -145,7 +149,8 @@ async def test_get_price_fail_closed_on_negative() -> None:
 async def test_get_ticker_success() -> None:
     adapter = _adapter()
     with patch.object(
-        adapter, "_get_json",
+        adapter,
+        "_get_json",
         new_callable=AsyncMock,
         return_value=_mock_price_response(),
     ):
@@ -172,7 +177,8 @@ async def test_get_ticker_unknown_symbol() -> None:
 async def test_get_ohlcv_success() -> None:
     adapter = _adapter()
     with patch.object(
-        adapter, "_get_json",
+        adapter,
+        "_get_json",
         new_callable=AsyncMock,
         return_value=_mock_ohlc_response(),
     ):
@@ -186,8 +192,10 @@ async def test_get_ohlcv_success() -> None:
 async def test_get_ohlcv_empty_on_error() -> None:
     adapter = _adapter()
     with patch.object(
-        adapter, "_get_json",
-        new_callable=AsyncMock, return_value=None,
+        adapter,
+        "_get_json",
+        new_callable=AsyncMock,
+        return_value=None,
     ):
         candles = await adapter.get_ohlcv("BTC/USDT")
     assert candles == []
@@ -210,7 +218,8 @@ async def test_market_data_point_fresh() -> None:
     adapter = _adapter()
     now = int(time.time())
     with patch.object(
-        adapter, "_get_json",
+        adapter,
+        "_get_json",
         new_callable=AsyncMock,
         return_value=_mock_price_response(last_updated=now),
     ):
@@ -226,7 +235,8 @@ async def test_market_data_point_stale() -> None:
     adapter = CoinGeckoAdapter(freshness_threshold_seconds=10.0)
     old_ts = int(time.time()) - 300  # 5 minutes old
     with patch.object(
-        adapter, "_get_json",
+        adapter,
+        "_get_json",
         new_callable=AsyncMock,
         return_value=_mock_price_response(last_updated=old_ts),
     ):
@@ -240,8 +250,10 @@ async def test_market_data_point_stale() -> None:
 async def test_market_data_point_none_on_error() -> None:
     adapter = _adapter()
     with patch.object(
-        adapter, "_get_json",
-        new_callable=AsyncMock, return_value=None,
+        adapter,
+        "_get_json",
+        new_callable=AsyncMock,
+        return_value=None,
     ):
         mdp = await adapter.get_market_data_point("BTC/USDT")
     assert mdp is None
@@ -256,7 +268,8 @@ async def test_market_data_point_none_on_error() -> None:
 async def test_health_check_success() -> None:
     adapter = _adapter()
     with patch.object(
-        adapter, "_get_json",
+        adapter,
+        "_get_json",
         new_callable=AsyncMock,
         return_value=_mock_price_response(),
     ):
@@ -268,8 +281,10 @@ async def test_health_check_success() -> None:
 async def test_health_check_failure() -> None:
     adapter = _adapter()
     with patch.object(
-        adapter, "_get_json",
-        new_callable=AsyncMock, return_value=None,
+        adapter,
+        "_get_json",
+        new_callable=AsyncMock,
+        return_value=None,
     ):
         ok = await adapter.health_check()
     assert ok is False
@@ -305,13 +320,16 @@ def test_no_write_methods() -> None:
     """CoinGeckoAdapter must have no write, trade, or execute methods."""
     adapter = _adapter()
     forbidden = [
-        "place_order", "create_order", "submit_order",
-        "cancel_order", "execute", "trade", "write",
+        "place_order",
+        "create_order",
+        "submit_order",
+        "cancel_order",
+        "execute",
+        "trade",
+        "write",
     ]
     for name in forbidden:
-        assert not hasattr(adapter, name), (
-            f"CoinGeckoAdapter has forbidden method: {name}"
-        )
+        assert not hasattr(adapter, name), f"CoinGeckoAdapter has forbidden method: {name}"
 
 
 # ---------------------------------------------------------------------------

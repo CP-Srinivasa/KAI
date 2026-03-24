@@ -384,9 +384,7 @@ def _normalize_legacy_decision_payload(payload: dict[str, object]) -> dict[str, 
     mode = _coerce_mode(str(normalized.get("mode", "research")))
     normalized["mode"] = mode.value
 
-    approval_raw = str(
-        normalized.get("approval_state", ApprovalState.AUDIT_ONLY.value)
-    )
+    approval_raw = str(normalized.get("approval_state", ApprovalState.AUDIT_ONLY.value))
     normalized["approval_state"] = _coerce_approval_state(approval_raw).value
 
     execution_raw = normalized.get("execution_state")
@@ -435,9 +433,7 @@ def load_decision_journal(path: Path | str) -> list[DecisionInstance]:
                 line_number,
                 exc,
             )
-            raise ValueError(
-                f"Invalid decision journal JSON at line {line_number}"
-            ) from exc
+            raise ValueError(f"Invalid decision journal JSON at line {line_number}") from exc
         if not isinstance(payload, dict):
             raise ValueError(f"Invalid decision journal payload at line {line_number}")
         try:
@@ -450,9 +446,7 @@ def load_decision_journal(path: Path | str) -> list[DecisionInstance]:
                 line_number,
                 exc,
             )
-            raise ValueError(
-                f"Invalid decision journal payload at line {line_number}"
-            ) from exc
+            raise ValueError(f"Invalid decision journal payload at line {line_number}") from exc
     return entries
 
 

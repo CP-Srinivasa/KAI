@@ -1,4 +1,5 @@
 """Read-only paper portfolio projections for CLI/MCP/Telegram surfaces."""
+
 from __future__ import annotations
 
 import json
@@ -253,9 +254,7 @@ def _replay_paper_audit(audit_path: Path) -> _AuditReplayResult:
                     quantity=total_qty,
                     avg_entry_price=avg_entry,
                     stop_loss=stop_loss if stop_loss is not None else existing.stop_loss,
-                    take_profit=(
-                        take_profit if take_profit is not None else existing.take_profit
-                    ),
+                    take_profit=(take_profit if take_profit is not None else existing.take_profit),
                     opened_at=existing.opened_at,
                     realized_pnl_usd=existing.realized_pnl_usd,
                 )
@@ -331,9 +330,7 @@ async def _query_db_latest_portfolio_state(
     """Query the most recent PortfolioStateRecord. Returns None on error or empty table."""
     try:
         result = await session.execute(
-            select(PortfolioStateRecord)
-            .order_by(PortfolioStateRecord.created_at.desc())
-            .limit(1)
+            select(PortfolioStateRecord).order_by(PortfolioStateRecord.created_at.desc()).limit(1)
         )
         return result.scalars().first()
     except Exception as exc:  # noqa: BLE001
@@ -384,9 +381,7 @@ def _build_snapshot_from_portfolio_state(
         )
 
     exposure = _build_exposure_summary(tuple(position_summaries))
-    total_market_value = sum(
-        p.quantity * p.avg_entry_price for p in position_summaries
-    )
+    total_market_value = sum(p.quantity * p.avg_entry_price for p in position_summaries)
 
     return PortfolioSnapshot(
         generated_at_utc=generated_at,
@@ -474,9 +469,7 @@ async def build_portfolio_snapshot(
         )
         market_price = market_snapshot.price if can_use_market_price else None
         market_value = (
-            round(position.quantity * market_price, 8)
-            if market_price is not None
-            else None
+            round(position.quantity * market_price, 8) if market_price is not None else None
         )
         unrealized_pnl = (
             round((market_price - position.avg_entry_price) * position.quantity, 8)
@@ -501,8 +494,7 @@ async def build_portfolio_snapshot(
                 market_data_freshness_seconds=market_snapshot.freshness_seconds,
                 market_data_available=can_use_market_price,
                 market_data_error=(
-                    market_snapshot.error
-                    or ("stale_data" if market_snapshot.is_stale else None)
+                    market_snapshot.error or ("stale_data" if market_snapshot.is_stale else None)
                 ),
             )
         )

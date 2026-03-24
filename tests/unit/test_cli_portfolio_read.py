@@ -1,4 +1,5 @@
 """CLI tests for Sprint 40 paper portfolio read-only surfaces."""
+
 from __future__ import annotations
 
 from typer.testing import CliRunner

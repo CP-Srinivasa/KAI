@@ -321,8 +321,6 @@ async def test_get_mcp_capabilities_lists_canonical_escalation_tools() -> None:
     assert "get_operator_action_summary" in payload["read_tools"]
 
 
-
-
 def _make_blocking_escalation():
     """Escalation summary with one blocking + one review-required item."""
     readiness_report = replace(
@@ -584,8 +582,6 @@ async def test_get_mcp_capabilities_lists_canonical_action_queue_tools() -> None
     assert "get_review_required_actions" in payload["read_tools"]
 
 
-
-
 def _make_decision_pack_pair():
     """Return canonical summaries for decision-pack tests."""
     readiness_report = replace(
@@ -701,9 +697,7 @@ def test_build_operator_decision_pack_consolidates_guidance_and_evidence() -> No
         assert ref in pack.evidence_refs
     assert review_required.entries[0].path in pack.evidence_refs
     assert any("Review pending handoffs" in note for note in pack.operator_guidance)
-    assert any(
-        "Confirm the artifact type" in note for note in pack.operator_guidance
-    )
+    assert any("Confirm the artifact type" in note for note in pack.operator_guidance)
 
 
 def test_build_operator_decision_pack_to_json_dict_invariants() -> None:
@@ -729,10 +723,7 @@ def test_build_operator_decision_pack_to_json_dict_invariants() -> None:
     assert payload["readiness_summary"]["report_type"] == "operational_readiness"
     assert payload["blocking_summary"]["report_type"] == "blocking_summary"
     assert payload["action_queue_summary"]["report_type"] == "action_queue_summary"
-    assert (
-        payload["review_required_summary"]["report_type"]
-        == "review_required_artifact_summary"
-    )
+    assert payload["review_required_summary"]["report_type"] == "review_required_artifact_summary"
     assert "pack_status" not in payload
     assert "action_items" not in payload
 
@@ -860,22 +851,6 @@ def test_build_daily_operator_summary_fail_closed_on_partial_inputs() -> None:
     assert payload["open_incidents"] == 0
     assert payload["execution_enabled"] is False
     assert payload["write_back_allowed"] is False
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 
 
 @pytest.mark.asyncio
@@ -1058,5 +1033,3 @@ def test_research_help_exposes_operator_runbook_command() -> None:
     assert "runbook-summary" in result.output
     assert "runbook-next-steps" in result.output
     assert "operator-runbook" in result.output
-
-

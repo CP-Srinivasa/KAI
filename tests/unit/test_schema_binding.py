@@ -104,9 +104,15 @@ def test_config_schema_missing_safety_const(tmp_path: Path) -> None:
     """Config schema without const on risk.require_stop_loss must fail."""
     minimal = {
         "required": [
-            "system_runtime", "llm_agent", "market_data", "risk",
-            "strategy_decision", "execution", "memory_learning",
-            "security", "messaging_ux",
+            "system_runtime",
+            "llm_agent",
+            "market_data",
+            "risk",
+            "strategy_decision",
+            "execution",
+            "memory_learning",
+            "security",
+            "messaging_ux",
         ],
         "properties": {
             "system_runtime": {"properties": {}},
@@ -177,13 +183,32 @@ def test_decision_schema_too_few_required(tmp_path: Path) -> None:
 def test_decision_schema_missing_mode_values(tmp_path: Path) -> None:
     # 26 required fields but mode enum is incomplete
     required = [
-        "decision_id", "timestamp_utc", "symbol", "market", "venue",
-        "mode", "thesis", "supporting_factors", "contradictory_factors",
-        "confidence_score", "market_regime", "volatility_state",
-        "liquidity_state", "risk_assessment", "entry_logic", "exit_logic",
-        "stop_loss", "take_profit", "invalidation_condition",
-        "position_size_rationale", "max_loss_estimate", "data_sources_used",
-        "model_version", "prompt_version", "approval_state", "execution_state",
+        "decision_id",
+        "timestamp_utc",
+        "symbol",
+        "market",
+        "venue",
+        "mode",
+        "thesis",
+        "supporting_factors",
+        "contradictory_factors",
+        "confidence_score",
+        "market_regime",
+        "volatility_state",
+        "liquidity_state",
+        "risk_assessment",
+        "entry_logic",
+        "exit_logic",
+        "stop_loss",
+        "take_profit",
+        "invalidation_condition",
+        "position_size_rationale",
+        "max_loss_estimate",
+        "data_sources_used",
+        "model_version",
+        "prompt_version",
+        "approval_state",
+        "execution_state",
     ]
     schema = {
         "required": required,
@@ -205,7 +230,10 @@ def test_decision_schema_missing_mode_values(tmp_path: Path) -> None:
 
 def test_schema_validation_result_frozen() -> None:
     r = SchemaValidationResult(
-        schema_path="test", valid=True, required_fields=(), errors=(),
+        schema_path="test",
+        valid=True,
+        required_fields=(),
+        errors=(),
     )
     with pytest.raises(AttributeError):
         r.valid = False  # type: ignore[misc]
@@ -218,8 +246,10 @@ def test_schema_validation_result_frozen() -> None:
 
 def test_result_to_json_dict() -> None:
     r = SchemaValidationResult(
-        schema_path="x.json", valid=True,
-        required_fields=("a", "b"), errors=(),
+        schema_path="x.json",
+        valid=True,
+        required_fields=("a", "b"),
+        errors=(),
         safety_const_checks=("PASS: test",),
     )
     d = r.to_json_dict()

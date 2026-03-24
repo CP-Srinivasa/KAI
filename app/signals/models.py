@@ -1,4 +1,5 @@
 """Signal candidate models — immutable, fully typed. (Security First)."""
+
 from __future__ import annotations
 
 import uuid
@@ -46,22 +47,22 @@ class SignalCandidate:
     decision_id: str
     timestamp_utc: str
     symbol: str
-    market: str            # "crypto" | "equities" | "forex" | "unknown"
-    venue: str             # "paper" | exchange name
-    mode: str              # "paper" | "live"
+    market: str  # "crypto" | "equities" | "forex" | "unknown"
+    venue: str  # "paper" | exchange name
+    mode: str  # "paper" | "live"
     direction: SignalDirection
 
     # Mandatory decision fields (KAI Decision Schema)
     thesis: str
     supporting_factors: tuple[str, ...]
     contradictory_factors: tuple[str, ...]
-    confidence_score: float        # [0.0, 1.0]
+    confidence_score: float  # [0.0, 1.0]
     confluence_count: int
 
     # Market context
-    market_regime: str             # "trending" | "ranging" | "volatile" | "unknown"
-    volatility_state: str          # "low" | "normal" | "high" | "extreme"
-    liquidity_state: str           # "adequate" | "low" | "critical"
+    market_regime: str  # "trending" | "ranging" | "volatile" | "unknown"
+    volatility_state: str  # "low" | "normal" | "high" | "extreme"
+    liquidity_state: str  # "adequate" | "low" | "critical"
 
     # Entry / exit
     entry_price: float

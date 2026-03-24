@@ -104,9 +104,9 @@ class RiskSettings(BaseSettings):
 
     # Capital limits
     initial_equity: float = Field(default=10000.0)
-    max_risk_per_trade_pct: float = Field(default=0.25)   # max 0.25% per trade
-    max_daily_loss_pct: float = Field(default=1.0)        # max 1% daily loss
-    max_total_drawdown_pct: float = Field(default=5.0)    # max 5% drawdown
+    max_risk_per_trade_pct: float = Field(default=0.25)  # max 0.25% per trade
+    max_daily_loss_pct: float = Field(default=1.0)  # max 1% daily loss
+    max_total_drawdown_pct: float = Field(default=5.0)  # max 5% drawdown
     max_open_positions: int = Field(default=3)
     max_leverage: float = Field(default=1.0)
 
@@ -136,7 +136,7 @@ class ExecutionSettings(BaseSettings):
 
     # Paper trading
     paper_initial_equity: float = Field(default=10000.0)
-    paper_fee_pct: float = Field(default=0.1)    # 0.1% fee
+    paper_fee_pct: float = Field(default=0.1)  # 0.1% fee
     paper_slippage_pct: float = Field(default=0.05)  # 0.05% slippage
 
     # Order parameters
@@ -147,22 +147,14 @@ class ExecutionSettings(BaseSettings):
     @model_validator(mode="after")
     def validate_mode_guardrails(self) -> "ExecutionSettings":
         if self.live_enabled and self.mode is not ExecutionMode.LIVE:
-            raise ValueError(
-                "EXECUTION_LIVE_ENABLED=true requires EXECUTION_MODE=live."
-            )
+            raise ValueError("EXECUTION_LIVE_ENABLED=true requires EXECUTION_MODE=live.")
         if self.mode is ExecutionMode.LIVE:
             if not self.live_enabled:
-                raise ValueError(
-                    "EXECUTION_MODE=live requires EXECUTION_LIVE_ENABLED=true."
-                )
+                raise ValueError("EXECUTION_MODE=live requires EXECUTION_LIVE_ENABLED=true.")
             if self.dry_run:
-                raise ValueError(
-                    "EXECUTION_MODE=live requires EXECUTION_DRY_RUN=false."
-                )
+                raise ValueError("EXECUTION_MODE=live requires EXECUTION_DRY_RUN=false.")
             if not self.approval_required:
-                raise ValueError(
-                    "EXECUTION_MODE=live requires EXECUTION_APPROVAL_REQUIRED=true."
-                )
+                raise ValueError("EXECUTION_MODE=live requires EXECUTION_APPROVAL_REQUIRED=true.")
         return self
 
 
@@ -232,9 +224,7 @@ def build_runtime_config_payload(settings: AppSettings) -> dict[str, object]:
 
     primary_model = settings.providers.openai_model or "gpt-4o"
     fallback_model = (
-        settings.providers.anthropic_model
-        or settings.providers.gemini_model
-        or primary_model
+        settings.providers.anthropic_model or settings.providers.gemini_model or primary_model
     )
     return {
         "system_runtime": {

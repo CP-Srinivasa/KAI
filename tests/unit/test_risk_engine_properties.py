@@ -13,6 +13,7 @@ Invariants tested:
 7. max_loss_usd is never greater than position value (cannot exceed 100% loss)
 8. Order approval is deterministic (same inputs = same result)
 """
+
 from __future__ import annotations
 
 from hypothesis import HealthCheck, assume, given, settings
@@ -57,6 +58,7 @@ def _make_limits(
 # Invariant 1: Position size is never negative
 # ---------------------------------------------------------------------------
 
+
 @given(
     equity=st.floats(min_value=100.0, max_value=1_000_000.0, allow_nan=False, allow_infinity=False),
     entry_price=st.floats(
@@ -87,17 +89,14 @@ def test_position_size_never_negative(
         f"position_size_units={result.position_size_units} is negative "
         f"(entry={entry_price}, stop={stop_loss_price}, equity={equity}, risk_pct={risk_pct})"
     )
-    assert result.max_loss_usd >= 0.0, (
-        f"max_loss_usd={result.max_loss_usd} is negative"
-    )
-    assert result.max_loss_pct >= 0.0, (
-        f"max_loss_pct={result.max_loss_pct} is negative"
-    )
+    assert result.max_loss_usd >= 0.0, f"max_loss_usd={result.max_loss_usd} is negative"
+    assert result.max_loss_pct >= 0.0, f"max_loss_pct={result.max_loss_pct} is negative"
 
 
 # ---------------------------------------------------------------------------
 # Invariant 2: max_loss_usd never exceeds risk cap
 # ---------------------------------------------------------------------------
+
 
 @given(
     equity=st.floats(min_value=100.0, max_value=1_000_000.0, allow_nan=False, allow_infinity=False),
@@ -133,6 +132,7 @@ def test_max_loss_never_exceeds_risk_cap(
 # Invariant 3: Kill switch always blocks regardless of signal quality
 # ---------------------------------------------------------------------------
 
+
 @given(
     confidence=st.floats(min_value=0.0, max_value=1.0, allow_nan=False),
     confluence=st.integers(min_value=0, max_value=10),
@@ -145,12 +145,14 @@ def test_kill_switch_always_blocks(
     open_positions: int,
 ) -> None:
     """Active kill switch blocks ALL orders regardless of signal quality."""
-    engine = RiskEngine(_make_limits(
-        require_stop_loss=False,
-        min_signal_confidence=0.0,
-        min_signal_confluence_count=0,
-        max_open_positions=100,
-    ))
+    engine = RiskEngine(
+        _make_limits(
+            require_stop_loss=False,
+            min_signal_confidence=0.0,
+            min_signal_confluence_count=0,
+            max_open_positions=100,
+        )
+    )
     engine.trigger_kill_switch()
     result = engine.check_order(
         symbol="BTC/USDT",
@@ -171,6 +173,7 @@ def test_kill_switch_always_blocks(
 # Invariant 4: Daily loss above limit auto-triggers kill switch
 # ---------------------------------------------------------------------------
 
+
 @given(
     equity=st.floats(
         min_value=1000.0, max_value=1_000_000.0, allow_nan=False, allow_infinity=False
@@ -189,11 +192,13 @@ def test_daily_loss_above_limit_triggers_kill_switch(
     # loss_pct is the amount we lose as a percentage of equity
     assume(loss_pct > limit_pct)  # ensure we breach the limit
 
-    engine = RiskEngine(_make_limits(
-        initial_equity=equity,
-        max_daily_loss_pct=limit_pct,
-        kill_switch_enabled=True,
-    ))
+    engine = RiskEngine(
+        _make_limits(
+            initial_equity=equity,
+            max_daily_loss_pct=limit_pct,
+            kill_switch_enabled=True,
+        )
+    )
     realized_pnl = -equity * (loss_pct / 100.0)  # negative = loss
     state = engine.update_daily_loss(realized_pnl, equity=equity)
 
@@ -207,6 +212,7 @@ def test_daily_loss_above_limit_triggers_kill_switch(
 # Invariant 5: Drawdown above limit triggers kill switch
 # ---------------------------------------------------------------------------
 
+
 @given(
     drawdown_pct=st.floats(min_value=0.001, max_value=100.0, allow_nan=False, allow_infinity=False),
     limit_pct=st.floats(min_value=0.001, max_value=50.0, allow_nan=False, allow_infinity=False),
@@ -219,10 +225,12 @@ def test_drawdown_above_limit_triggers_kill_switch(
     """Drawdown exceeding max_total_drawdown_pct must trigger kill switch."""
     assume(drawdown_pct > limit_pct)
 
-    engine = RiskEngine(_make_limits(
-        max_total_drawdown_pct=limit_pct,
-        kill_switch_enabled=True,
-    ))
+    engine = RiskEngine(
+        _make_limits(
+            max_total_drawdown_pct=limit_pct,
+            kill_switch_enabled=True,
+        )
+    )
     triggered = engine.update_drawdown(drawdown_pct)
 
     assert triggered, (
@@ -235,6 +243,7 @@ def test_drawdown_above_limit_triggers_kill_switch(
 # Invariant 6: Averaging-down always rejected when disallowed
 # ---------------------------------------------------------------------------
 
+
 @given(
     confidence=st.floats(min_value=0.8, max_value=1.0, allow_nan=False),
     confluence=st.integers(min_value=3, max_value=10),
@@ -245,13 +254,15 @@ def test_averaging_down_always_rejected_when_disallowed(
     confluence: int,
 ) -> None:
     """is_averaging_down=True must always produce a violation when allow_averaging_down=False."""
-    engine = RiskEngine(_make_limits(
-        allow_averaging_down=False,
-        require_stop_loss=False,
-        min_signal_confidence=0.0,
-        min_signal_confluence_count=0,
-        max_open_positions=100,
-    ))
+    engine = RiskEngine(
+        _make_limits(
+            allow_averaging_down=False,
+            require_stop_loss=False,
+            min_signal_confidence=0.0,
+            min_signal_confluence_count=0,
+            max_open_positions=100,
+        )
+    )
     result = engine.check_order(
         symbol="ETH/USDT",
         side="buy",
@@ -270,6 +281,7 @@ def test_averaging_down_always_rejected_when_disallowed(
 # ---------------------------------------------------------------------------
 # Invariant 7: Order approval is deterministic
 # ---------------------------------------------------------------------------
+
 
 @given(
     confidence=st.floats(min_value=0.0, max_value=1.0, allow_nan=False),

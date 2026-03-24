@@ -1,4 +1,5 @@
 """MCP tests for Sprint 41 trading-loop control-plane surfaces."""
+
 from __future__ import annotations
 
 import json

@@ -1,4 +1,5 @@
 """Tests for app.security.auth — bearer-token middleware and env-gating."""
+
 from __future__ import annotations
 
 import pytest

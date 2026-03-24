@@ -1,4 +1,5 @@
 """Sprint 19: handoff acknowledgement tests (I-101–I-104, I-116, I-118)."""
+
 from __future__ import annotations
 
 import json
@@ -30,9 +31,7 @@ async def test_acknowledge_signal_handoff_writes_audit_record(
 ) -> None:
     """Signal acknowledgement writes a canonical handoff audit record (I-116)."""
     _patch_workspace_root(monkeypatch, tmp_path)
-    handoff_path, payload = _write_signal_handoff_batch(
-        tmp_path / "artifacts" / "handoffs.jsonl"
-    )
+    handoff_path, payload = _write_signal_handoff_batch(tmp_path / "artifacts" / "handoffs.jsonl")
 
     result = await acknowledge_signal_handoff(
         handoff_path=str(handoff_path),
@@ -62,9 +61,7 @@ async def test_acknowledge_signal_handoff_appends_mcp_write_audit(
 ) -> None:
     """Audit acknowledgements must create an MCP write audit entry (I-94)."""
     _patch_workspace_root(monkeypatch, tmp_path)
-    handoff_path, payload = _write_signal_handoff_batch(
-        tmp_path / "artifacts" / "handoffs.jsonl"
-    )
+    handoff_path, payload = _write_signal_handoff_batch(tmp_path / "artifacts" / "handoffs.jsonl")
 
     await acknowledge_signal_handoff(
         handoff_path=str(handoff_path),
@@ -84,9 +81,7 @@ async def test_get_handoff_collector_summary_returns_pending_when_no_audit_file(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _patch_workspace_root(monkeypatch, tmp_path)
-    handoff_path, _payload = _write_signal_handoff_batch(
-        tmp_path / "artifacts" / "handoffs.jsonl"
-    )
+    handoff_path, _payload = _write_signal_handoff_batch(tmp_path / "artifacts" / "handoffs.jsonl")
 
     result = await get_handoff_collector_summary(handoff_path=str(handoff_path))
 
@@ -102,9 +97,7 @@ async def test_get_handoff_summary_reads_consumer_acknowledgements(
 ) -> None:
     """get_handoff_summary is a compatibility alias for the collector summary."""
     _patch_workspace_root(monkeypatch, tmp_path)
-    handoff_path, payload = _write_signal_handoff_batch(
-        tmp_path / "artifacts" / "handoffs.jsonl"
-    )
+    handoff_path, payload = _write_signal_handoff_batch(tmp_path / "artifacts" / "handoffs.jsonl")
     handoff = load_signal_handoffs(handoff_path)[0]
     ack_path = tmp_path / "artifacts" / HANDOFF_ACK_JSONL_FILENAME
     ack_path.parent.mkdir(parents=True, exist_ok=True)
@@ -133,9 +126,7 @@ async def test_acknowledge_signal_handoff_rejects_hidden_handoff(
 ) -> None:
     """Shadow/control handoffs stay audit-only and cannot be externally acknowledged."""
     _patch_workspace_root(monkeypatch, tmp_path)
-    handoff_path, payload = _write_signal_handoff_batch(
-        tmp_path / "artifacts" / "handoffs.jsonl"
-    )
+    handoff_path, payload = _write_signal_handoff_batch(tmp_path / "artifacts" / "handoffs.jsonl")
     hidden_payload = dict(payload)
     hidden_payload["route_path"] = "B.companion"
     hidden_payload["path_type"] = "shadow"
@@ -158,9 +149,7 @@ async def test_acknowledge_signal_handoff_no_db_write(
 ) -> None:
     """acknowledge_signal_handoff MUST NOT touch the KAI-Core DB (I-118)."""
     _patch_workspace_root(monkeypatch, tmp_path)
-    handoff_path, payload = _write_signal_handoff_batch(
-        tmp_path / "artifacts" / "handoffs.jsonl"
-    )
+    handoff_path, payload = _write_signal_handoff_batch(tmp_path / "artifacts" / "handoffs.jsonl")
 
     called = []
 

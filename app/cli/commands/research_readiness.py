@@ -2,6 +2,7 @@
 
 Covers: operational readiness, provider health, drift, gates, artifact lifecycle.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -13,6 +14,7 @@ from rich.table import Table
 
 console = Console()
 research_readiness_app = typer.Typer()
+
 
 @research_readiness_app.command("readiness-summary")
 def research_readiness_summary(
@@ -479,6 +481,7 @@ def research_artifact_retention(
 
     if out:
         from pathlib import Path as _Path
+
         out_path = _Path(out)
         out_path.parent.mkdir(parents=True, exist_ok=True)
         out_path.write_text(_json.dumps(payload, indent=2), encoding="utf-8")
@@ -682,5 +685,3 @@ def _build_escalation_from_readiness_artifacts(
     return build_operational_escalation_summary(
         report, review_required_summary=review_required_summary
     )
-
-

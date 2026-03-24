@@ -4,6 +4,7 @@ All integration tests use a real SQLite in-memory database.
 StaticPool ensures every async session shares the same connection,
 so data written in one session is visible in the next.
 """
+
 from __future__ import annotations
 
 import pytest

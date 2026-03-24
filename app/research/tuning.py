@@ -75,9 +75,7 @@ class PromotionRecord:
             ),
             "training_job_record": self.training_job_record,
             "comparison_report_path": self.comparison_report_path,
-            "reversal_instructions": (
-                "Set APP_LLM_PROVIDER to previous value to revert companion"
-            ),
+            "reversal_instructions": ("Set APP_LLM_PROVIDER to previous value to revert companion"),
         }
 
 
@@ -102,9 +100,7 @@ def save_tuning_artifact(
         model_base=model_base,
         training_format="openai_chat",
         row_count=row_count,
-        evaluation_report=(
-            str(Path(evaluation_report).resolve()) if evaluation_report else None
-        ),
+        evaluation_report=(str(Path(evaluation_report).resolve()) if evaluation_report else None),
         notes=list(notes or []),
     )
     resolved = Path(output_path)
@@ -148,8 +144,7 @@ def save_promotion_record(
     eval_path = Path(evaluation_report)
     if not eval_path.exists():
         raise FileNotFoundError(
-            f"Evaluation report not found: {eval_path} "
-            "- promotion requires a valid report (I-45)"
+            f"Evaluation report not found: {eval_path} - promotion requires a valid report (I-45)"
         )
 
     resolved_eval_path = eval_path.resolve()
@@ -198,14 +193,10 @@ def _resolve_tuning_artifact_linkage(
     try:
         artifact_payload = json.loads(artifact_path.read_text(encoding="utf-8"))
     except json.JSONDecodeError as err:
-        raise ValueError(
-            f"Tuning artifact is not valid JSON: {artifact_path} (I-49)"
-        ) from err
+        raise ValueError(f"Tuning artifact is not valid JSON: {artifact_path} (I-49)") from err
 
     if not isinstance(artifact_payload, dict):
-        raise ValueError(
-            f"Tuning artifact must be a JSON object: {artifact_path} (I-49)"
-        )
+        raise ValueError(f"Tuning artifact must be a JSON object: {artifact_path} (I-49)")
 
     artifact_report = artifact_payload.get("evaluation_report")
     if not isinstance(artifact_report, str) or not artifact_report.strip():
@@ -253,9 +244,7 @@ def _resolve_comparison_report(comparison_report: Path | str | None) -> str | No
     try:
         payload = json.loads(comparison_path.read_text(encoding="utf-8"))
     except json.JSONDecodeError as err:
-        raise ValueError(
-            f"Comparison report is not valid JSON: {comparison_path}"
-        ) from err
+        raise ValueError(f"Comparison report is not valid JSON: {comparison_path}") from err
 
     if not isinstance(payload, dict):
         raise ValueError(f"Comparison report must be a JSON object: {comparison_path}")

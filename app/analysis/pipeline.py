@@ -20,11 +20,28 @@ _MAX_CONCURRENT = 5  # max parallel LLM calls per run_batch()
 _ASSET_HIT_CATEGORIES = frozenset({"crypto", "equity", "etf"})
 _FALLBACK_MAX_TERMS = 20
 # PH4I: title-level crypto signal words for market_scope inference in fallback path
-_CRYPTO_TITLE_TERMS = frozenset({
-    "bitcoin", "ethereum", "crypto", "defi", "blockchain", "nft",
-    "altcoin", "stablecoin", "web3", "btc", "eth", "solana", "sol",
-    "binance", "coinbase", "token", "wallet", "ledger",
-})
+_CRYPTO_TITLE_TERMS = frozenset(
+    {
+        "bitcoin",
+        "ethereum",
+        "crypto",
+        "defi",
+        "blockchain",
+        "nft",
+        "altcoin",
+        "stablecoin",
+        "web3",
+        "btc",
+        "eth",
+        "solana",
+        "sol",
+        "binance",
+        "coinbase",
+        "token",
+        "wallet",
+        "ledger",
+    }
+)
 
 logger = get_logger(__name__)
 
@@ -362,12 +379,14 @@ class AnalysisPipeline:
                 fallback_reason=fallback_reason,
             )
             if self._shadow_provider is not None:
-                shadow_llm_output, shadow_provider_name, shadow_error = (
-                    await self._run_shadow_analysis(
-                        doc,
-                        text=text,
-                        context=context,
-                    )
+                (
+                    shadow_llm_output,
+                    shadow_provider_name,
+                    shadow_error,
+                ) = await self._run_shadow_analysis(
+                    doc,
+                    text=text,
+                    context=context,
                 )
         elif self._provider is not None:
             try:
@@ -379,9 +398,9 @@ class AnalysisPipeline:
                     )
                 )
 
-                shadow_task: asyncio.Task[
-                    tuple[LLMAnalysisOutput | None, str | None, str | None]
-                ] | None = None
+                shadow_task: (
+                    asyncio.Task[tuple[LLMAnalysisOutput | None, str | None, str | None]] | None
+                ) = None
                 if self._shadow_provider is not None:
                     shadow_task = asyncio.create_task(
                         self._run_shadow_analysis(
@@ -404,8 +423,7 @@ class AnalysisPipeline:
                     shadow_llm_output, shadow_provider_name, shadow_error = await shadow_task
 
                 provider_name = (
-                    _resolve_runtime_provider_name(self._provider)
-                    or self._provider.provider_name
+                    _resolve_runtime_provider_name(self._provider) or self._provider.provider_name
                 )
                 analysis_source = _resolve_analysis_source(provider_name)
 

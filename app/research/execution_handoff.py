@@ -229,9 +229,7 @@ def create_signal_handoff(
     evidence = (candidate.supporting_evidence or "")[:_MAX_EVIDENCE_CHARS]
 
     published_at = (
-        candidate.published_at.isoformat()
-        if candidate.published_at is not None
-        else None
+        candidate.published_at.isoformat() if candidate.published_at is not None else None
     )
 
     sentiment_val = (
@@ -367,9 +365,7 @@ def signal_handoff_from_dict(payload: dict[str, object]) -> SignalHandoff:
         handoff_id=_require_non_empty_string(payload.get("handoff_id"), label="handoff_id"),
         signal_id=_require_non_empty_string(payload.get("signal_id"), label="signal_id"),
         document_id=_require_non_empty_string(payload.get("document_id"), label="document_id"),
-        target_asset=_require_non_empty_string(
-            payload.get("target_asset"), label="target_asset"
-        ),
+        target_asset=_require_non_empty_string(payload.get("target_asset"), label="target_asset"),
         direction_hint=_require_non_empty_string(
             payload.get("direction_hint"), label="direction_hint"
         ),
@@ -404,9 +400,7 @@ def signal_handoff_from_dict(payload: dict[str, object]) -> SignalHandoff:
         ),
         risk_notes=_optional_string(payload.get("risk_notes"), label="risk_notes") or "",
         published_at=_optional_string(payload.get("published_at"), label="published_at"),
-        extracted_at=_require_non_empty_string(
-            payload.get("extracted_at"), label="extracted_at"
-        ),
+        extracted_at=_require_non_empty_string(payload.get("extracted_at"), label="extracted_at"),
         handoff_at=_require_non_empty_string(payload.get("handoff_at"), label="handoff_at"),
         provenance_complete=_required_bool(
             payload.get("provenance_complete"), label="provenance_complete"
@@ -430,17 +424,13 @@ def handoff_acknowledgement_from_dict(
             payload.get("acknowledged_at"), label="acknowledged_at"
         ),
         path_type=_optional_string(payload.get("path_type"), label="path_type") or "primary",
-        delivery_class=_optional_string(
-            payload.get("delivery_class"), label="delivery_class"
-        )
+        delivery_class=_optional_string(payload.get("delivery_class"), label="delivery_class")
         or "productive_handoff",
         consumer_visibility=_optional_string(
             payload.get("consumer_visibility"), label="consumer_visibility"
         )
         or "visible",
-        audit_visibility=_optional_string(
-            payload.get("audit_visibility"), label="audit_visibility"
-        )
+        audit_visibility=_optional_string(payload.get("audit_visibility"), label="audit_visibility")
         or "visible",
         notes=_optional_string(payload.get("notes"), label="notes") or "",
         status=_optional_string(payload.get("status"), label="status") or "acknowledged",
@@ -504,13 +494,10 @@ def save_signal_handoff_batch_jsonl(
     """
     p = Path(path)
     p.parent.mkdir(parents=True, exist_ok=True)
-    content = (
-        "\n".join(json.dumps(h.to_json_dict()) for h in handoffs) + "\n"
-        if handoffs
-        else ""
-    )
+    content = "\n".join(json.dumps(h.to_json_dict()) for h in handoffs) + "\n" if handoffs else ""
     p.write_text(content, encoding="utf-8")
     return p
+
 
 def get_signal_handoff_by_id(
     handoffs: list[SignalHandoff],

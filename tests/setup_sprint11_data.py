@@ -53,7 +53,7 @@ async def setup():
             impact_score=0.60,
             sentiment_label=SentimentLabel.BEARISH,
             analysis_source=AnalysisSource.EXTERNAL_LLM,
-        )
+        ),
     ]
 
     async with session_factory.begin() as session:
@@ -63,6 +63,7 @@ async def setup():
             await repo.save_document(d)
         print("Created Teacher Documents (AnalysisSource.EXTERNAL_LLM)")
         return [d.id for d in docs]
+
 
 async def update_to_candidate(doc_ids):
     settings = get_settings()
@@ -83,19 +84,21 @@ async def update_to_candidate(doc_ids):
                     impact_score = :i
                 WHERE id = :id
                 """),
-                {"p": new_prom, "i": new_impact, "id": doc_id}
+                {"p": new_prom, "i": new_impact, "id": doc_id},
             )
         print("Updated Documents to Candidate (AnalysisSource.INTERNAL)")
 
+
 if __name__ == "__main__":
     import sys
-    mode = sys.argv[1] if len(sys.argv) > 1 else 'setup'
-    if mode == 'setup':
+
+    mode = sys.argv[1] if len(sys.argv) > 1 else "setup"
+    if mode == "setup":
         doc_ids = asyncio.run(setup())
-        with open('.test_doc_ids', 'w') as f:
+        with open(".test_doc_ids", "w") as f:
             for d in doc_ids:
                 f.write(f"{d}\n")
-    elif mode == 'candidate':
-        with open('.test_doc_ids') as f:
+    elif mode == "candidate":
+        with open(".test_doc_ids") as f:
             doc_ids = [line.strip() for line in f if line.strip()]
         asyncio.run(update_to_candidate(doc_ids))

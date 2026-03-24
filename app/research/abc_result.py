@@ -100,9 +100,7 @@ class ABCInferenceEnvelope:
             "route_profile": self.route_profile,
             "primary_result": _envelope(self.primary_result),
             "shadow_results": [_envelope(s) for s in self.shadow_results],
-            "control_result": (
-                _envelope(self.control_result) if self.control_result else None
-            ),
+            "control_result": (_envelope(self.control_result) if self.control_result else None),
             "comparison_summary": [_comparison(c) for c in self.comparison_summary],
             "distribution_metadata": (
                 {
@@ -203,9 +201,7 @@ def _parse_comparison_summary(value: object, *, label: str) -> PathComparisonSum
     if not isinstance(value, dict):
         raise ValueError(f"{label} must be an object")
     return PathComparisonSummary(
-        compared_path=_require_str(
-            value.get("compared_path"), label=f"{label}.compared_path"
-        ),
+        compared_path=_require_str(value.get("compared_path"), label=f"{label}.compared_path"),
         sentiment_match=_optional_bool(
             value.get("sentiment_match"), label=f"{label}.sentiment_match"
         ),
@@ -238,9 +234,7 @@ def _parse_distribution_metadata(
         distribution_targets=_as_string_list(
             value.get("distribution_targets"), label=f"{label}.distribution_targets"
         ),
-        decision_owner=_optional_str(
-            value.get("decision_owner"), label=f"{label}.decision_owner"
-        )
+        decision_owner=_optional_str(value.get("decision_owner"), label=f"{label}.decision_owner")
         or "operator",
         activation_state=_optional_str(
             value.get("activation_state"), label=f"{label}.activation_state"
@@ -260,8 +254,7 @@ def abc_inference_envelope_from_dict(payload: dict[str, object]) -> ABCInference
         shadow_results: list[PathResultEnvelope] = []
     elif isinstance(shadow_payload, list):
         shadow_results = [
-            _parse_path_result_envelope(item, label="shadow_results[]")
-            for item in shadow_payload
+            _parse_path_result_envelope(item, label="shadow_results[]") for item in shadow_payload
         ]
     else:
         raise ValueError("shadow_results must be a list")
@@ -280,9 +273,7 @@ def abc_inference_envelope_from_dict(payload: dict[str, object]) -> ABCInference
     return ABCInferenceEnvelope(
         document_id=_require_str(payload.get("document_id"), label="document_id"),
         route_profile=_require_str(payload.get("route_profile"), label="route_profile"),
-        primary_result=_parse_path_result_envelope(
-            primary_payload, label="primary_result"
-        ),
+        primary_result=_parse_path_result_envelope(primary_payload, label="primary_result"),
         shadow_results=shadow_results,
         control_result=_parse_path_result_envelope(
             payload.get("control_result"), label="control_result"
@@ -335,9 +326,7 @@ def save_abc_inference_envelope(
     """Write a single ABCInferenceEnvelope to JSON. Does NOT write to the DB (I-88)."""
     out = Path(output_path)
     out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(
-        json.dumps(envelope.to_json_dict(), indent=2, sort_keys=True), encoding="utf-8"
-    )
+    out.write_text(json.dumps(envelope.to_json_dict(), indent=2, sort_keys=True), encoding="utf-8")
     return out
 
 

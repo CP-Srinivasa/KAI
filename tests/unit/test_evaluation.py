@@ -30,7 +30,7 @@ def test_compare_outputs_identical_documents():
         sentiment_label=SentimentLabel.BULLISH,
         relevance_score=0.9,
         impact_score=0.8,
-        novelty_score=0.7
+        novelty_score=0.7,
     )
     doc2 = doc1.model_copy()
 
@@ -42,6 +42,7 @@ def test_compare_outputs_identical_documents():
     assert result.priority_mse == 0.0
     assert result.relevance_mse == 0.0
 
+
 def test_compare_outputs_different_documents():
     doc1 = make_document(
         is_analyzed=True,
@@ -49,7 +50,7 @@ def test_compare_outputs_different_documents():
         sentiment_label=SentimentLabel.BULLISH,
         relevance_score=0.8,
         impact_score=0.8,
-        novelty_score=0.8
+        novelty_score=0.8,
     )
 
     doc2 = doc1.model_copy()
@@ -64,6 +65,7 @@ def test_compare_outputs_different_documents():
     assert result.actionable_accuracy == 0.0  # doc1 is 8 (actionable), doc2 is 6 (not)
     assert result.priority_mse == 4.0  # (8-6)^2
     assert result.relevance_mse == pytest.approx(0.16)  # (0.8-0.4)^2
+
 
 def test_compare_outputs_mismatched_ids():
     doc1 = make_document()
@@ -376,14 +378,16 @@ def test_validate_promotion_boundary_values_are_passing() -> None:
     result = validate_promotion(metrics)
 
     assert result.is_promotable is True
-    assert all([
-        result.sentiment_pass,
-        result.priority_pass,
-        result.relevance_pass,
-        result.impact_pass,
-        result.tag_overlap_pass,
-        result.false_actionable_pass,
-    ])
+    assert all(
+        [
+            result.sentiment_pass,
+            result.priority_pass,
+            result.relevance_pass,
+            result.impact_pass,
+            result.tag_overlap_pass,
+            result.false_actionable_pass,
+        ]
+    )
 
 
 # ---------------------------------------------------------------------------

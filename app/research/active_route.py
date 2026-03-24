@@ -39,9 +39,7 @@ class ActiveRouteState:
     active_primary_path: str
     enabled_shadow_paths: list[str]
     control_path: str | None
-    activated_at: str = field(
-        default_factory=lambda: datetime.now(UTC).isoformat()
-    )
+    activated_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
     abc_envelope_output: str = "artifacts/abc_envelopes/envelopes.jsonl"
 
     @property
@@ -110,9 +108,7 @@ def activate_route_profile(
 
     state_file = Path(state_path)
     state_file.parent.mkdir(parents=True, exist_ok=True)
-    state_file.write_text(
-        json.dumps(state.to_dict(), indent=2, sort_keys=True), encoding="utf-8"
-    )
+    state_file.write_text(json.dumps(state.to_dict(), indent=2, sort_keys=True), encoding="utf-8")
     return state
 
 

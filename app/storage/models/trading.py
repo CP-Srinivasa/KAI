@@ -12,6 +12,7 @@ Transition path:
 Both models use append-only semantics — records are never updated, only inserted.
 Corrections are expressed as new records with higher created_at timestamps.
 """
+
 from __future__ import annotations
 
 from datetime import UTC, datetime
@@ -91,9 +92,7 @@ class PortfolioStateRecord(Base):
     """
 
     __tablename__ = "portfolio_states"
-    __table_args__ = (
-        Index("ix_portfolio_states_symbol_created", "symbol", "created_at"),
-    )
+    __table_args__ = (Index("ix_portfolio_states_symbol_created", "symbol", "created_at"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
 
@@ -110,9 +109,7 @@ class PortfolioStateRecord(Base):
     positions_json: Mapped[dict[str, object] | None] = mapped_column(JSON, nullable=True)
 
     # Metadata
-    snapshot_mode: Mapped[str] = mapped_column(
-        String(20), nullable=False, server_default="paper"
-    )
+    snapshot_mode: Mapped[str] = mapped_column(String(20), nullable=False, server_default="paper")
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,

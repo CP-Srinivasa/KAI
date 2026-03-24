@@ -128,16 +128,12 @@ def test_valid_decision_payload_all_modes() -> None:
 
 def test_invalid_approval_state_raises_schema_error() -> None:
     with pytest.raises(SchemaValidationError):
-        validate_decision_payload(
-            _valid_decision_payload(approval_state="auto_approved_paper")
-        )
+        validate_decision_payload(_valid_decision_payload(approval_state="auto_approved_paper"))
 
 
 def test_invalid_execution_state_raises_schema_error() -> None:
     with pytest.raises(SchemaValidationError):
-        validate_decision_payload(
-            _valid_decision_payload(execution_state="submitted")
-        )
+        validate_decision_payload(_valid_decision_payload(execution_state="submitted"))
 
 
 def test_invalid_mode_raises_schema_error() -> None:
@@ -154,9 +150,7 @@ def test_missing_required_field_raises_schema_error() -> None:
 
 def test_wrong_type_confidence_score_raises_schema_error() -> None:
     with pytest.raises(SchemaValidationError):
-        validate_decision_payload(
-            _valid_decision_payload(confidence_score="not-a-number")
-        )
+        validate_decision_payload(_valid_decision_payload(confidence_score="not-a-number"))
 
 
 def test_confidence_score_out_of_range_raises_schema_error() -> None:
@@ -224,17 +218,13 @@ def test_config_schema_file_exists() -> None:
 def test_legacy_auto_approved_paper_not_in_schema() -> None:
     """auto_approved_paper was removed in Sprint 37 — schema rejects it."""
     with pytest.raises(SchemaValidationError):
-        validate_decision_payload(
-            _valid_decision_payload(approval_state="auto_approved_paper")
-        )
+        validate_decision_payload(_valid_decision_payload(approval_state="auto_approved_paper"))
 
 
 def test_legacy_submitted_not_in_schema() -> None:
     """submitted was removed in Sprint 37 — schema rejects it."""
     with pytest.raises(SchemaValidationError):
-        validate_decision_payload(
-            _valid_decision_payload(execution_state="submitted")
-        )
+        validate_decision_payload(_valid_decision_payload(execution_state="submitted"))
 
 
 def test_legacy_filled_not_in_schema() -> None:

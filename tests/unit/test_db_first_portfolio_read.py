@@ -6,6 +6,7 @@ the public build_portfolio_snapshot() API behaves consistently.
 
 See test_portfolio_snapshot_db_primary.py for detailed Phase 3 unit tests.
 """
+
 from __future__ import annotations
 
 from pathlib import Path

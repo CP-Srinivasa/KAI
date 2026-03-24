@@ -133,9 +133,7 @@ def save_inference_route_profile(
     _validate_route_profile(profile)
     out = Path(output_path)
     out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(
-        json.dumps(profile.to_json_dict(), indent=2, sort_keys=True), encoding="utf-8"
-    )
+    out.write_text(json.dumps(profile.to_json_dict(), indent=2, sort_keys=True), encoding="utf-8")
     return out
 
 
