@@ -297,6 +297,68 @@ Trendumkehrpunkte
 Widerstandslinie
 Unterstützungslinie
 
+# --- PH4D: Macro / Finance (2026-03-23) ---
+Recession
+GDP
+Unemployment
+Treasury
+Bond
+Yield
+Dollar
+Gold
+Silver
+Commodity
+Commodities
+Tariff
+Tariffs
+Sanctions
+Deficits
+Deficit
+Downturn
+Rally
+Correction
+Bear
+Bull
+Hawkish
+Dovish
+Liquidity
+
+# --- PH4D: Regulatory / Legal (2026-03-23) ---
+SEC
+CFTC
+Lawsuit
+Enforcement
+Subpoena
+Indictment
+Settlement
+Fine
+Penalty
+Regulatory
+Congress
+Senate
+Bipartisan
+Compliance
+Prosecution
+Injunction
+Investigation
+Crackdown
+
+# --- PH4D: AI / Technology (2026-03-23) ---
+AI
+Artificial Intelligence
+Machine Learning
+Neural Network
+Generative
+Semiconductor
+Semiconductors
+Compute
+Automation
+Robotics
+AGI
+LLM
+Transformer
+Autonomous
+
 # --- Key People / Influencers ---
 Chris Larsen
 Changpeng Zhao

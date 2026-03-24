@@ -20,7 +20,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-import yaml
+import yaml  # type: ignore[import-untyped]
 
 
 @dataclass(frozen=True)
@@ -42,19 +42,25 @@ def load_watchlist(path: str | Path) -> list[WatchlistEntry]:
         data: dict[str, Any] = yaml.safe_load(f) or {}
 
     entries: list[WatchlistEntry] = []
+    # Sections with symbol+name fields (tickers / equities / ETFs / macro)
+    # Sections without a symbol field use name as the symbol (persons / topics)
+    # The "domains" section has a different schema — skipped here (not WatchlistEntry compatible)
     category_map = {
         "crypto": "crypto",
         "equities": "equity",
         "etfs": "etf",
         "macro": "macro",
+        "persons": "person",
+        "topics": "topic",
     }
 
     for section, category in category_map.items():
         for item in data.get(section) or []:
             if not isinstance(item, dict):
                 continue
-            symbol = str(item.get("symbol", "")).strip()
-            name = str(item.get("name", "")).strip()
+            # persons/topics use "name" as the primary identifier (no "symbol" field)
+            symbol = str(item.get("symbol") or item.get("name", "")).strip()
+            name = str(item.get("name", "") or item.get("symbol", "")).strip()
             if not symbol:
                 continue
             raw_aliases: list[str] = [str(a) for a in (item.get("aliases") or [])]

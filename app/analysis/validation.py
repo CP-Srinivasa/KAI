@@ -37,9 +37,7 @@ def validate_llm_output(output: LLMAnalysisOutput) -> list[str]:
 
     # Actionable with low relevance is inconsistent
     if output.actionable and output.relevance_score < 0.3:
-        warnings.append(
-            f"actionable=True but relevance_score={output.relevance_score:.2f} is low"
-        )
+        warnings.append(f"actionable=True but relevance_score={output.relevance_score:.2f} is low")
 
     # High priority without reasoning
     if output.recommended_priority >= 8 and not output.short_reasoning:

@@ -6,70 +6,177 @@ potential trading opportunity.
 > ⚠ **Signal Candidates are NOT trade orders.**
 > They are research artifacts for informed human decision-making.
 > No positions are sized or executed automatically.
+> The system has no broker integration and cannot place orders.
 
 ---
 
-## What is a Signal Candidate?
+## Implementation Status
 
-A SignalCandidate is generated when:
-1. A document passes the analysis pipeline with sufficient impact score (≥ 0.30 by default)
-2. At least one tradeable asset can be mapped to the document
-3. The asset mapping confidence exceeds the minimum threshold (≥ 0.55 by default)
-
-Each candidate is tied to **one asset** and **one source document**.
-A single document with high impact can generate multiple candidates (one per mapped asset).
+| Section | Status |
+|---------|--------|
+| Core model (`SignalCandidate`) | ✅ Sprint 4A — implemented |
+| `extract_signal_candidates()` | ✅ Sprint 4A — implemented |
+| Watchlist boost priority | ✅ Sprint 4A — implemented |
+| CLI `research signals` | ✅ Sprint 4A — implemented |
+| REST API endpoint `GET /research/signals` | ✅ Sprint 4B — implemented |
+| Provider-independent signal path | ✅ Sprint 4C — operational |
+| Extended model fields (urgency, narrative) | ⏳ Sprint 4B — planned |
 
 ---
 
-## Fields
+## Current Model (Sprint 4A)
+
+Defined in `app/research/signals.py`. Produced by `extract_signal_candidates()`.
+
+### Fields
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `id` | UUID | Unique candidate identifier |
-| `document_id` | str | Source document ID |
-| `asset` | str | Symbol (BTC, ETH, NVDA, etc.) |
-| `direction_hint` | enum | bullish / bearish / neutral / mixed |
-| `confidence` | float (0–1) | Signal confidence score |
-| `supporting_evidence` | list[str] | Bull case, asset link reason |
-| `contradicting_evidence` | list[str] | Bear case, counter-arguments |
-| `risk_notes` | list[str] | Data quality flags |
-| `source_quality` | float (0–1) | Source credibility score |
-| `historical_context` | str | Similar past event reference |
-| `narrative_label` | enum | Thematic classification |
-| `urgency` | enum | Time horizon of the signal |
-| `severity` | enum | Document priority level |
-| `recommended_next_step` | str | Plain-language research action |
-| `title` | str | Source document title |
-| `url` | str | Source URL |
+| `signal_id` | str | Unique identifier (`sig_<document_uuid>`) |
+| `document_id` | str | Source `CanonicalDocument.id` — traceability |
+| `target_asset` | str | Primary asset symbol (e.g. `"BTC"`, `"ETH"`) |
+| `direction_hint` | str | `"bullish"` / `"bearish"` / `"neutral"` |
+| `confidence` | float (0–1) | Proxied from `relevance_score` (LLM `confidence_score` is not persisted to DB) |
+| `supporting_evidence` | str | Document summary or title — bull-case context |
+| `contradicting_evidence` | str | Static placeholder in Sprint 4A |
+| `risk_notes` | str | `spam_prob=<x> scope=<y>` from document metadata |
+| `source_quality` | float (0–1) | Proxied from `credibility_score` |
+| `recommended_next_step` | str | Plain-language research action (no execution language) |
+| `priority` | int (8–10) | Effective priority after watchlist boost; enforced by `Field(ge=8, le=10)` |
+| `sentiment` | SentimentLabel | `BULLISH` / `BEARISH` / `NEUTRAL` |
+| `affected_assets` | list[str] | All tickers + crypto_assets from the source document |
+| `market_scope` | MarketScope | Market scope from source document |
+| `published_at` | datetime \| None | Source document publication timestamp |
+| `extracted_at` | datetime | Extraction timestamp (UTC, auto-set) |
 
----
-
-## Direction Hints
+### Direction Hints
 
 | Value | Meaning |
 |-------|---------|
-| `bullish` | Positive sentiment ≥ 0.30, predominantly positive |
-| `bearish` | Negative sentiment ≤ -0.30, predominantly negative |
-| `neutral` | Sentiment close to zero (|score| < 0.15) |
-| `mixed` | Conflicting signals — no clear majority |
+| `bullish` | `SentimentLabel.BULLISH` on source document |
+| `bearish` | `SentimentLabel.BEARISH` on source document |
+| `neutral` | All other cases (including `NEUTRAL`, `MIXED`, or unset) |
+
+`"buy"`, `"sell"`, `"hold"`, `"mixed"` are **never valid** — see R-3 in `app/research/AGENTS.md`.
+
+### Confidence (Sprint 4A proxy)
+
+In Sprint 4A, `confidence` is a proxy for `relevance_score`:
+
+```
+confidence = document.relevance_score or 0.5
+```
+
+`AnalysisResult.confidence_score` is NOT persisted to DB (Invariant I-11 in `docs/contracts.md`).
+The DB stores `credibility_score = 1.0 - spam_probability`, which is used as `source_quality`.
+
+### Watchlist Boost
+
+`extract_signal_candidates()` accepts `watchlist_boosts: dict[str, int] | None`:
+
+```python
+# Boost assets on watchlist by +2 priority points
+boosts = {"BTC": 2, "ETH": 1}
+candidates = extract_signal_candidates(docs, min_priority=8, watchlist_boosts=boosts)
+```
+
+The boost is applied to effective priority only — it never modifies the underlying document score.
+Documents with `effective_priority < min_priority` are silently dropped.
+
+### CLI Usage (Sprint 4A)
+
+```bash
+# Extract signals from the last 100 analyzed documents
+python -m app.cli research signals
+
+# Custom threshold and limit
+python -m app.cli research signals --min-priority 9 --limit 200
+
+# Boost a watchlist
+python -m app.cli research signals --watchlist defi
+```
 
 ---
 
-## Urgency Levels
+## Extraction Contract
 
-| Level | Horizon | When assigned |
-|-------|---------|---------------|
-| `immediate` | Hours | CRITICAL priority + BREAKING alert type |
-| `short_term` | 1–7 days | HIGH priority or BREAKING/WATCHLIST_HIT |
-| `medium_term` | 1–4 weeks | MEDIUM priority |
-| `long_term` | Months | LOW priority |
-| `monitor` | Ongoing | No clear timeframe |
+```python
+from app.research.signals import extract_signal_candidates
+
+candidates = extract_signal_candidates(
+    documents,          # list[CanonicalDocument] — only is_analyzed=True are used
+    min_priority=8,     # default — documents below this are dropped
+    watchlist_boosts=None,  # optional dict[str, int]
+)
+# Returns: list[SignalCandidate] sorted by priority (highest first)
+```
+
+**Invariants enforced by `extract_signal_candidates()`:**
+- Only `is_analyzed=True` documents enter the pipeline
+- `effective_priority = min(10, base_priority + max_boost)`
+- `direction_hint` is always one of `"bullish"`, `"bearish"`, `"neutral"`
+- `document_id = str(doc.id)` — never null
+- No DB reads or writes
 
 ---
 
-## Narrative Labels
+## Provider-Independent Signal Path
 
-Narratives classify the thematic context of the signal:
+Signal extraction stays provider-agnostic at the document boundary.
+
+All supported analysis sources feed the same downstream path:
+- deterministic fallback analysis
+- future internal companion analysis
+- external provider analysis
+
+Shared rule:
+- `extract_signal_candidates()` only consumes analyzed `CanonicalDocument` objects and does not
+  branch on provider family
+
+This keeps one signal path:
+
+```
+analysis layer -> AnalysisResult -> apply_to_document() -> CanonicalDocument
+               -> extract_signal_candidates() -> SignalCandidate
+```
+
+The future companion layer may add `signal preclassification`, but only as an upstream hint.
+It must not replace or bypass the existing threshold gate inside `extract_signal_candidates()`.
+
+---
+
+## Example Output
+
+```
+┏━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━┳━━━━━┳━━━━━━━━━━┳━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃ Signal       ┃ Direction    ┃ Pri ┃ Asset    ┃ Conf ┃ Evidence                                                   ┃
+┡━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━╇━━━━━╇━━━━━━━━━━╇━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┩
+│ sig_abc123   │ BULLISH      │ 9   │ BTC      │ 0.87 │ Bitcoin ETF sees record inflows as institutional...        │
+│ sig_def456   │ BEARISH      │ 8   │ ETH      │ 0.71 │ SEC opens investigation into major DeFi protocol...        │
+│ sig_ghi789   │ NEUTRAL      │ 8   │ SOL      │ 0.62 │ Solana foundation announces new developer grants...        │
+└──────────────┴──────────────┴─────┴──────────┴──────┴────────────────────────────────────────────────────────────┘
+
+Note: Signal candidates are for research purposes only. No orders are placed automatically.
+```
+
+---
+
+## Sprint 4B Extensions (Planned)
+
+The following fields and features are **not yet implemented**. They are planned for Sprint 4B.
+
+### Extended Fields (planned)
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `narrative_label` | enum | Thematic classification (regulatory_risk, institutional_adoption, …) |
+| `urgency` | enum | Time horizon: immediate / short_term / medium_term / long_term / monitor |
+| `severity` | enum | Based on priority level |
+| `historical_context` | str \| None | Similar past event reference (from HistoricalEvent matching) |
+| `title` | str | Source document title (denormalized for convenience) |
+| `url` | str | Source document URL (denormalized for convenience) |
+
+### Narrative Labels (planned)
 
 | Label | Example triggers |
 |-------|----------------|
@@ -84,138 +191,67 @@ Narratives classify the thematic context of the signal:
 | `sentiment_shift` | Social media trend, fear index |
 | `hack_exploit` | Smart contract exploit, exchange hack |
 
----
+### Confidence Formula (Sprint 4B)
 
-## Risk Notes
+Sprint 4B will compute a proper composite confidence score:
 
-Risk notes are automatically added when:
-- Source credibility < 60%: `"Low source credibility (55%)"`
-- Spam probability > 30%: `"Elevated spam probability (35%)"`
-- Novelty score < 40%: `"Low novelty — may be recycled news"`
-- Thematic mapping (indirect link): `"Indirect asset link via thematic mapping (confidence 68%)"`
-
----
-
-## Confidence Score
-
-Confidence is a composite of:
-- **Asset mapping confidence** (how certain the asset link is: 0.55–0.90)
-- **Document impact score** (how impactful the underlying document is: 0–1)
-
-Formula:
 ```
-confidence = asset_mapping_confidence * impact_score * 0.5 + asset_mapping_confidence * 0.5
+confidence = asset_mapping_confidence × impact_score × 0.5
+           + asset_mapping_confidence × 0.5
 ```
 
-This ensures that even a high-confidence asset mapping is tempered by a low-impact document.
+Until then, `relevance_score` is used as a proxy.
 
-### Confidence thresholds
+### REST API
 
-| Range | Interpretation |
-|-------|---------------|
-| ≥ 0.70 | High confidence — strong asset link and impact |
-| 0.55–0.70 | Moderate confidence — actionable for research |
-| 0.40–0.55 | Low confidence — background context only |
-| < 0.40 | Filtered out by default |
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/research/signals` | List signal candidates, optionally filtered or watchlist-boosted |
+| `GET` | `/research/signals/{asset}` | Planned convenience route for one asset |
 
 ---
 
-## Trading Relevance Score
+## Fallback Compatibility
 
-The `TradingRelevanceRanker` assigns a composite score for ranking:
+### Context
 
-| Factor | Weight |
-|--------|--------|
-| Signal confidence | 30% |
-| Urgency | 25% |
-| Document impact | 25% |
-| Source quality | 12% |
-| Novelty | 8% |
+When no external provider is configured, the provider is disabled, or the provider call fails,
+the system degrades to deterministic fallback analysis and still writes a valid analyzed document.
 
-Higher score = more relevant for near-term research focus.
+### Signal Eligibility
 
----
+Fallback-analyzed documents use the same threshold gate as every other analyzed document.
 
-## Recommended Next Steps
+Because fallback analysis is conservative, those documents are typically less likely to cross the
+signal threshold. That is expected. The important contract is:
+- no special-case bypass for fallback results
+- no second signal engine
+- no silent disappearance from the analyzed-document pipeline
 
-The `recommended_next_step` field provides plain-language guidance:
+### Watchlist Boost and Fallback
 
-- **IMMEDIATE**: `"Review latest BTC order book depth and on-chain flows immediately."`
-- **SHORT_TERM bullish**: `"Monitor BTC for follow-through confirmation over next 1–3 days before any position sizing."`
-- **BEARISH**: `"Assess BTC downside exposure; review stop levels and sector correlation."`
-- **MONITOR**: `"Continue monitoring BTC — insufficient confidence for near-term action."`
+Watchlist boosts are applied to effective priority, not to the underlying document score.
+If a fallback-analyzed document crosses threshold after normal scoring and an explicit boost,
+it is still processed through the same canonical signal path.
 
----
+### Fallback `direction_hint`
 
-## API Usage
+Fallback analysis is expected to produce more conservative sentiment outputs than richer provider
+paths. If a fallback-analyzed document crosses threshold, `direction_hint` is still derived from
+the document's normalized sentiment fields in the same way as every other candidate.
 
-### Evaluate a document
+### Research Briefs with Fallback Docs
 
-```bash
-POST /signals/evaluate
-```
+Fallback-analyzed documents can appear in Research Briefs and may feed the signal extractor.
+In practice they are expected to populate lower-confidence research more often than high-priority
+signals, but that is an outcome of shared scoring rather than a separate fallback-only rule.
 
-```json
-{
-  "title": "SEC Opens Investigation Into Major DeFi Protocol",
-  "sentiment_label": "negative",
-  "sentiment_score": -0.70,
-  "impact_score": 0.75,
-  "credibility_score": 0.83,
-  "priority": "high",
-  "matched_entities": ["SEC"],
-  "affected_assets": ["ETH"],
-  "bear_case": "Enforcement risk could suppress DeFi activity."
-}
-```
+### Identifying a Fallback Document
 
-Response includes `candidates` sorted by trading relevance score.
-
-### List candidates
-
-```bash
-GET /signals/candidates?min_confidence=0.60&limit=20
-```
-
-### Historical analogues
-
-```bash
-GET /signals/historical/BTC?event_type=regulatory&sentiment=negative
-```
-
----
-
-## CLI Usage
-
-```bash
-# Generate and rank signal candidates from sample data
-python -m app.cli signals generate
-
-# Filter by confidence
-python -m app.cli signals generate --min-confidence 0.60 --top 5
-
-# Find historical analogues for BTC
-python -m app.cli signals historical BTC
-
-# Filter analogues by event type
-python -m app.cli signals historical ETH --event-type hack_exploit --sentiment negative
-```
-
----
-
-## Example Output
-
-```
-┏━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
-┃ Asset  ┃ Direction  ┃ Confidence ┃ Urgency    ┃ Next Step                                            ┃
-┡━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┩
-│ BTC    │ bullish    │ 85%        │ short_term │ Monitor BTC for follow-through confirmation.          │
-│ IBIT   │ bullish    │ 76%        │ short_term │ Monitor IBIT for follow-through confirmation.         │
-│ ETH    │ neutral    │ 62%        │ medium_term│ Add ETH to watch list for medium-term thesis.         │
-└────────┴────────────┴────────────┴────────────┴──────────────────────────────────────────────────────┘
-
-Note: Signal candidates are for research purposes only. No orders are placed automatically.
-```
+A fallback-origin result should remain identifiable through conservative explanations and
+pipeline provenance, without requiring a separate signal schema. See
+[docs/intelligence_architecture.md](./intelligence_architecture.md) for the longer-term
+fallback / companion / external layering model.
 
 ---
 
@@ -223,6 +259,7 @@ Note: Signal candidates are for research purposes only. No orders are placed aut
 
 1. **Not predictive** — Signal candidates reflect current information, not future price movements
 2. **No position sizing** — Candidates carry no recommended trade size
-3. **No execution** — The system cannot place orders (by design)
-4. **Historical context is illustrative** — Past analogues are background context, not forecasts
+3. **No execution** — The system cannot place orders, has no broker integration, and will not gain it before Phase 11
+4. **Historical context is illustrative** — Past analogues are background context, not forecasts (Sprint 4B)
 5. **Source quality varies** — Always check `source_quality` and `risk_notes` before acting on a signal
+6. **Confidence is a proxy** — In Sprint 4A, confidence equals `relevance_score`, not a composite score

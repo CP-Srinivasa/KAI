@@ -36,3 +36,7 @@ class ValidationError(AppError):
 
 class AlertError(AppError):
     """Error during alert delivery."""
+
+
+class SecurityError(AppError):
+    """Security violation — SSRF, invalid secrets, auth failure, etc."""

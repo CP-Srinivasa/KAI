@@ -1,9 +1,13 @@
+from pathlib import Path
+from typing import Any
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.api.deps import get_source_repo
 from app.core.enums import SourceStatus, SourceType
 from app.core.errors import StorageError
-from app.ingestion.classifier import ClassificationResult, classify_url
+from app.core.settings import get_settings
+from app.ingestion.classifier import ClassificationResult, SourceClassifier
 from app.storage.repositories.source_repo import SourceRepository
 from app.storage.schemas.source import SourceCreate, SourceRead, SourceUpdate
 
@@ -18,7 +22,10 @@ async def create_source(
     try:
         return await repo.create(data)
     except StorageError as e:
-        raise HTTPException(status_code=409, detail=str(e)) from e
+        # Do not expose internal DB error details to the caller
+        raise HTTPException(
+            status_code=409, detail="Source already exists or constraint violated"
+        ) from e
 
 
 @router.get("", response_model=list[SourceRead])
@@ -34,8 +41,10 @@ async def list_sources(
 @router.get("/classify")
 async def classify_source(
     url: str = Query(..., description="URL to classify"),  # noqa: B008
-) -> dict:
-    result: ClassificationResult = classify_url(url)
+) -> dict[str, Any]:
+    settings = get_settings()
+    classifier = SourceClassifier.from_monitor_dir(Path(settings.monitor_dir))
+    result: ClassificationResult = classifier.classify(url)
     return {
         "url": url,
         "source_type": result.source_type.value,
@@ -60,7 +69,7 @@ async def update_source(
     source_id: str,
     data: SourceUpdate,
     repo: SourceRepository = Depends(get_source_repo),  # noqa: B008
-) -> SourceRepository:
+) -> SourceRead:
     source = await repo.update(source_id, data)
     if not source:
         raise HTTPException(status_code=404, detail=f"Source {source_id} not found")

@@ -1,128 +1,156 @@
-# AI Analyst Trading Bot
+# KAI (Robotron)
 
-> **Leitmotiv: SIMPLE BUT POWERFUL**
+KAI is a modular, security-first, audit-first AI analysis and operator platform.
+Default runtime remains `paper`/`shadow` with fail-closed controls.
 
-**Repository**: [https://github.com/CP-Srinivasa/KAI](https://github.com/CP-Srinivasa/KAI)
+## Current Phase
 
-Modulares, produktionsreifes AI-Analyse- und Trading-Bot-System für Krypto- und klassische Finanzmärkte.
+- phase: `PHASE 5 (active) — Signal Reliability & Trust` | sprint: `PH5B_LOW_SIGNAL_CLUSTER_ANALYSIS (active)`
+- technical baseline: `1619 passed, ruff clean, CI green` | runtime: paper/shadow, fail-closed
 
-## Features
+## Phase-5 Focus
 
-- **Multi-Source Monitoring**: RSS, News APIs, YouTube, Podcasts, Social Media, Marktdaten
-- **Multi-Market**: Crypto + Aktien/ETFs + Makro/Forex
-- **Flexible Suche**: Boolean Query DSL, Feldsuche, Datum/Region/Sprache-Filter
-- **KI-Analyse**: Sentiment, Impact, Novelty, Credibility via OpenAI/ChatGPT
-- **Deduplication**: Hash + URL + Title-Similarity über Quellen hinweg
-- **Alerting**: Telegram, Email, Webhook mit konfigurierbaren Schwellenwerten
-- **Trading-Ready**: Signal-Kandidaten, Watchlists, Event-to-Asset-Mapping
+Phase 4 (signal quality calibration, 11 sprints PH4A-PH4K) is formally closed (D-87, 2026-03-24).
+Phase 5 investigates signal reliability and trust from the PH5A reliability baseline:
+
+- PH5A closed (D-89): reliability baseline — LLM-error-proxy 27.5% (19/69), priority-mean 3.96, tag-fill 100%
+- PH5B active (D-92, §84): cluster the 19 LLM-error-proxy docs, classify root causes, recommend fixes
+- Alert Integration active: `analyze-pending` now dispatches alerts (Phase 4 of CLI pipeline) with `--no-alerts` flag
+- CI hardened: all 5 jobs green, `hypothesis` + `pytest-mock` in dev-deps, bandit B324 fixed
+- CoinGecko active as default market data provider (free tier, ~1min delayed, no API key required)
+- Paper-trading loop active: `run-once` command available, fail-closed on live
+- Freshness enforcement active: stale market data → cycle skipped with explicit STALE_DATA audit entry
+
+## Core Principles
+
+- simple but powerful
+- security first
+- fail closed, not fail open
+- no hidden side effects
+- no unverified critical execution
+- live default-off
+
+## Prerequisites
+
+- Python 3.12+
+- PostgreSQL (for DB-backed features; tests run without it)
+- `.env` file based on `.env.example`
 
 ## Quick Start
 
 ```bash
-# 1. Konfiguration
-cp .env.example .env
-# .env mit API-Keys befüllen
-
-# 2. Mit Docker starten
-docker-compose up -d
-
-# 3. Oder lokal
 pip install -e ".[dev]"
+cp .env.example .env        # edit as needed
+python -m pytest            # 1619+ tests
+python -m ruff check .
 uvicorn app.api.main:app --reload
-
-# 4. API-Docs
-open http://localhost:8000/docs
 ```
 
-## CLI
+## Environment Variables (Key)
+
+| Variable | Default | Description |
+|---|---|---|
+| `APP_ENV` | `development` | Set to `production` to disable Swagger/ReDoc and tighten defaults |
+| `APP_API_KEY` | `` | Bearer token for API auth. Leave empty for local dev only. |
+| `APP_CORS_ALLOWED_ORIGINS` | `http://localhost:3000,http://localhost:8000` | Comma-separated allowed CORS origins. Set explicitly for production. |
+| `DB_URL` | `postgresql+asyncpg://...` | Database connection string |
+| `APP_MARKET_DATA_PROVIDER` | `coingecko` | Market data source: `coingecko` (real, free-tier) or `mock` (dev/test only — logs WARNING) |
+| `OPENAI_API_KEY` | — | Required for LLM analysis |
+| `OPERATOR_TELEGRAM_BOT_TOKEN` | — | Telegram operator bot token |
+| `OPERATOR_ADMIN_CHAT_IDS` | — | Comma-separated admin Telegram chat IDs |
+
+Full variable reference: `.env.example`
+
+## Production Notes
+
+Setting `APP_ENV=production` activates:
+- Swagger UI (`/docs`), ReDoc (`/redoc`), and OpenAPI schema (`/openapi.json`) are **disabled**
+- CORS origins should be set via `APP_CORS_ALLOWED_ORIGINS` (no wildcard by default)
+
+`APP_API_KEY` must be set to a strong random token in production:
+```bash
+python -c "import secrets; print(secrets.token_urlsafe(32))"
+```
+
+## Daily Operator Flow (Canonical)
 
 ```bash
-# Query validieren
-trading-bot query validate "bitcoin AND (DeFi OR NFT) NOT scam"
-
-# Quellen klassifizieren
-trading-bot sources classify --file monitor/podcast_feeds_raw.txt
-
-# Ingestion starten
-trading-bot ingest run
-
-# Pending Dokumente analysieren
-trading-bot analyze pending --limit 50
-
-# Digest senden
-trading-bot alerts send-digest --channel telegram
+trading-bot research daily-summary
+trading-bot research readiness-summary
+trading-bot research decision-pack-summary
+trading-bot research paper-positions-summary
+trading-bot research paper-exposure-summary
+trading-bot research trading-loop-status
+trading-bot research trading-loop-recent-cycles
+trading-bot research review-journal-summary
+trading-bot research resolution-summary
+trading-bot research alert-audit-summary
 ```
 
-## Tech Stack
-
-| Komponente | Technologie |
-|-----------|-------------|
-| Sprache | Python 3.12+ |
-| API | FastAPI |
-| Validation | Pydantic v2 |
-| Datenbank | PostgreSQL + SQLAlchemy 2.x |
-| Migrations | Alembic |
-| HTTP | httpx (async) |
-| LLM | OpenAI (gpt-4o), Anthropic (optional) |
-| Scheduler | APScheduler |
-| CLI | Typer + Rich |
-| RSS | feedparser |
-| Logging | structlog (JSON) |
-| Tests | pytest + pytest-asyncio |
-| Linting | ruff |
-| Container | Docker + docker-compose |
-
-## Projektstruktur
-
-```
-ai_analyst_trading_bot/
-├── app/
-│   ├── api/            # FastAPI Routes
-│   ├── cli/            # Typer CLI
-│   ├── core/           # Settings, Logging, Errors, Domain, Query DSL
-│   ├── ingestion/      # Source Adapter (RSS, News, YouTube, etc.)
-│   ├── enrichment/     # Deduplication, Entity Extraction
-│   ├── analysis/       # Scoring, LLM-Analyse, Sentiment
-│   ├── alerts/         # Telegram, Email, Webhook
-│   ├── storage/        # DB Models, Repositories
-│   ├── trading/        # Signal-Vorbereitung
-│   └── integrations/   # OpenAI, Anthropic, YouTube, Reddit Adapter
-├── monitor/            # Keyword-, Channel-, Domain-Watchlists
-├── tests/              # Unit, Integration, E2E Tests
-├── docs/               # Architektur, Source Classification
-└── docker/             # Dockerfile
-```
-
-## Konfiguration
-
-Alle Settings via `.env`. Siehe `.env.example` für alle Optionen.
-
-Wichtigste Keys:
-- `OPENAI_API_KEY` — Für LLM-Analyse erforderlich
-- `DATABASE_URL` — PostgreSQL Connection String
-- `TELEGRAM_BOT_TOKEN` + `TELEGRAM_CHAT_ID` — Für Telegram-Alerts
-- `YOUTUBE_API_KEY` — Für YouTube-Kanal-Monitoring
-
-## Development
+## Optional Guarded Single Cycle (Paper/Shadow)
 
 ```bash
-pip install -e ".[dev]"
-pytest           # Tests ausführen
-ruff check app/  # Linting
-ruff format app/ # Formatierung
+trading-bot research trading-loop-run-once --mode paper --symbol BTC/USDT
 ```
 
-## Implementierungsphasen
+## Operator API
 
-| Phase | Status | Beschreibung |
-|-------|--------|-------------|
-| 1 – Foundation | ✅ | Repo, Settings, DB, Adapter, Query DSL, CI |
-| 2 – Ingestion Core | 🔄 | RSS-Scheduler, News APIs, Dedup-Pipeline |
-| 3 – Analysis Core | ⏳ | LLM-Pipeline, Keyword-Analyse, Scoring |
-| 4 – Alerting | ⏳ | Telegram, Email, Alert-Rules |
-| 5 – Research/Trading | ⏳ | Watchlists, Signal-Kandidaten |
-| 6 – Advanced | ⏳ | Transcripts, Narrative Clustering, MCP |
+All `/operator/*` routes require Bearer auth (`APP_API_KEY`).
 
-## License
+Key read endpoints:
+- `GET /operator/status` — system status
+- `GET /operator/health` — health check
+- `GET /operator/positions` — paper positions
+- `GET /operator/exposure` — exposure summary
+- `GET /operator/trading-loop/status` — trading loop state
+- `GET /operator/trading-loop/recent-cycles` — recent cycle history
+- `POST /operator/trading-loop/run-once` — guarded paper/shadow cycle (fail-closed on live)
 
-MIT
+Dashboard: `GET /dashboard/` — read-only operator summary.
+
+## Active vs. Experimental Features
+
+### Active (production default)
+
+| Feature | Status | Notes |
+|---|---|---|
+| Rule-based analysis pipeline | ✅ active | keyword scoring, signal generation |
+| CoinGecko market data | ✅ active | free tier, ~1min delayed, 10 symbols |
+| Paper trading loop | ✅ active | fail-closed, paper/shadow only |
+| Operator API (`/operator/*`) | ✅ active | Bearer auth required |
+| Telegram operator bot | ✅ active | HMAC-verified webhooks |
+| CLI `research` surface | ✅ active | daily-summary, readiness, positions etc. |
+| Alerting (Telegram/Email) | ✅ active | threshold-based, dry-run default |
+
+### Experimental (not in default operator workflow)
+
+| Feature | Status | Activation |
+|---|---|---|
+| Companion ML pipeline | 🔬 experimental | No model deployed. Requires `COMPANION_MODEL_ENDPOINT`. CLI: `benchmark-companion`, `check-promotion`, `record-promotion` |
+| Multi-path inference (A/B/C) | 🔬 experimental | Requires companion model + `route-activate` MCP tool |
+| ABCInferenceEnvelope | 🔬 experimental | Only active in `primary_with_shadow` / `control` route modes |
+| Shadow inference | 🔬 experimental | Needs active route profile with shadow paths |
+| Upgrade cycle / promotion | 🔬 experimental | Part of companion ML pipeline |
+
+### Not introduced (by design)
+
+- Event sourcing
+- Multi-tenant support
+- Kafka / message queue infrastructure
+
+These are not planned for the current phase.
+
+## Documentation Index
+
+- [PHASE_PLAN.md](PHASE_PLAN.md)
+- [SPRINT_LEDGER.md](SPRINT_LEDGER.md)
+- [DECISION_LOG.md](DECISION_LOG.md)
+- [RISK_REGISTER.md](RISK_REGISTER.md) — aktive technische Schulden und Risiken (V-1..V-9)
+- [SECURITY.md](SECURITY.md)
+- [RUNBOOK.md](RUNBOOK.md)
+- [ONBOARDING.md](ONBOARDING.md)
+- [ARCHITECTURE.md](ARCHITECTURE.md)
+- [CANONICAL_SURFACE_INVENTORY.md](CANONICAL_SURFACE_INVENTORY.md)
+- [KAI_AUDIT_TRAIL.md](KAI_AUDIT_TRAIL.md) — Audit-Verlauf und Befund-Abschluss
+- [ASSUMPTIONS.md](ASSUMPTIONS.md)
+- [CHANGELOG.md](CHANGELOG.md)

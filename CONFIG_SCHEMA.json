@@ -1,0 +1,325 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kai.local/schemas/config.schema.json",
+  "title": "KAI Platform Configuration Schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "system_runtime",
+    "llm_agent",
+    "market_data",
+    "risk",
+    "strategy_decision",
+    "execution",
+    "memory_learning",
+    "security",
+    "messaging_ux"
+  ],
+  "properties": {
+    "system_runtime": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "app_name",
+        "environment",
+        "mode",
+        "timezone_internal",
+        "timezone_display",
+        "log_level",
+        "debug",
+        "dry_run",
+        "safe_mode",
+        "maintenance_mode",
+        "service_version"
+      ],
+      "properties": {
+        "app_name": { "type": "string" },
+        "environment": { "type": "string" },
+        "mode": { "type": "string", "enum": ["research", "backtest", "paper", "shadow", "live"] },
+        "timezone_internal": { "type": "string" },
+        "timezone_display": { "type": "string" },
+        "log_level": { "type": "string" },
+        "debug": { "type": "boolean" },
+        "dry_run": { "type": "boolean" },
+        "safe_mode": { "type": "boolean" },
+        "maintenance_mode": { "type": "boolean" },
+        "service_version": { "type": "string" }
+      }
+    },
+    "llm_agent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "primary_model",
+        "fallback_model",
+        "max_tokens",
+        "temperature",
+        "timeout_seconds",
+        "retry_count",
+        "max_tool_calls",
+        "max_plan_steps",
+        "reasoning_budget",
+        "response_schema_version",
+        "prompt_version",
+        "planner_model",
+        "executor_model",
+        "validator_model",
+        "reflection_enabled",
+        "self_critique_enabled"
+      ],
+      "properties": {
+        "primary_model": { "type": "string" },
+        "fallback_model": { "type": "string" },
+        "max_tokens": { "type": "integer", "minimum": 1 },
+        "temperature": { "type": "number", "minimum": 0.0 },
+        "timeout_seconds": { "type": "integer", "minimum": 1 },
+        "retry_count": { "type": "integer", "minimum": 0 },
+        "max_tool_calls": { "type": "integer", "minimum": 0 },
+        "max_plan_steps": { "type": "integer", "minimum": 1 },
+        "reasoning_budget": { "type": "integer", "minimum": 0 },
+        "response_schema_version": { "type": "string" },
+        "prompt_version": { "type": "string" },
+        "planner_model": { "type": "string" },
+        "executor_model": { "type": "string" },
+        "validator_model": { "type": "string" },
+        "reflection_enabled": { "type": "boolean" },
+        "self_critique_enabled": { "type": "boolean" }
+      }
+    },
+    "market_data": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "enabled_data_sources",
+        "symbols_whitelist",
+        "exchanges_whitelist",
+        "timeframes",
+        "data_freshness_threshold_seconds",
+        "candle_gap_tolerance",
+        "max_news_age_minutes",
+        "sentiment_source_weights",
+        "macro_source_weights",
+        "orderbook_depth_required",
+        "stale_data_fail_policy",
+        "min_source_count_for_decision"
+      ],
+      "properties": {
+        "enabled_data_sources": { "type": "array", "items": { "type": "string" } },
+        "symbols_whitelist": { "type": "array", "items": { "type": "string" } },
+        "exchanges_whitelist": { "type": "array", "items": { "type": "string" } },
+        "timeframes": { "type": "array", "items": { "type": "string" } },
+        "data_freshness_threshold_seconds": { "type": "integer", "minimum": 1 },
+        "candle_gap_tolerance": { "type": "integer", "minimum": 0 },
+        "max_news_age_minutes": { "type": "integer", "minimum": 0 },
+        "sentiment_source_weights": {
+          "type": "object",
+          "additionalProperties": { "type": "number", "minimum": 0.0 }
+        },
+        "macro_source_weights": {
+          "type": "object",
+          "additionalProperties": { "type": "number", "minimum": 0.0 }
+        },
+        "orderbook_depth_required": { "type": "number", "minimum": 0.0 },
+        "stale_data_fail_policy": { "type": "string" },
+        "min_source_count_for_decision": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "risk": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "initial_equity_reference",
+        "max_risk_per_trade_pct",
+        "max_daily_loss_pct",
+        "max_total_drawdown_pct",
+        "max_open_positions",
+        "max_sector_or_theme_exposure_pct",
+        "max_correlated_exposure_pct",
+        "max_leverage",
+        "require_stop_loss",
+        "allow_averaging_down",
+        "allow_martingale",
+        "allow_unbounded_loss",
+        "slippage_limit_bps",
+        "fee_buffer_bps",
+        "min_liquidity_threshold",
+        "kill_switch_enabled",
+        "max_position_holding_time",
+        "cooldown_after_loss_minutes",
+        "cooldown_after_error_minutes"
+      ],
+      "properties": {
+        "initial_equity_reference": { "type": "number", "minimum": 0.0 },
+        "max_risk_per_trade_pct": { "type": "number", "minimum": 0.0, "maximum": 0.25 },
+        "max_daily_loss_pct": { "type": "number", "minimum": 0.0, "maximum": 1.0 },
+        "max_total_drawdown_pct": { "type": "number", "minimum": 0.0, "maximum": 5.0 },
+        "max_open_positions": { "type": "integer", "minimum": 0, "maximum": 3 },
+        "max_sector_or_theme_exposure_pct": { "type": "number", "minimum": 0.0 },
+        "max_correlated_exposure_pct": { "type": "number", "minimum": 0.0 },
+        "max_leverage": { "type": "number", "minimum": 0.0, "maximum": 1.0 },
+        "require_stop_loss": { "type": "boolean", "const": true },
+        "allow_averaging_down": { "type": "boolean", "const": false },
+        "allow_martingale": { "type": "boolean", "const": false },
+        "allow_unbounded_loss": { "type": "boolean", "const": false },
+        "slippage_limit_bps": { "type": "integer", "minimum": 0 },
+        "fee_buffer_bps": { "type": "integer", "minimum": 0 },
+        "min_liquidity_threshold": { "type": "number", "minimum": 0.0 },
+        "kill_switch_enabled": { "type": "boolean", "const": true },
+        "max_position_holding_time": { "type": "string" },
+        "cooldown_after_loss_minutes": { "type": "integer", "minimum": 0 },
+        "cooldown_after_error_minutes": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "strategy_decision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "min_signal_confidence",
+        "min_signal_confluence_count",
+        "regime_filter_enabled",
+        "volatility_filter_enabled",
+        "liquidity_filter_enabled",
+        "news_risk_filter_enabled",
+        "macro_event_filter_enabled",
+        "invalidation_rule_required",
+        "thesis_required",
+        "contradiction_check_required",
+        "scenario_analysis_required"
+      ],
+      "properties": {
+        "min_signal_confidence": { "type": "number", "minimum": 0.75, "maximum": 1.0 },
+        "min_signal_confluence_count": { "type": "integer", "minimum": 2 },
+        "regime_filter_enabled": { "type": "boolean" },
+        "volatility_filter_enabled": { "type": "boolean" },
+        "liquidity_filter_enabled": { "type": "boolean" },
+        "news_risk_filter_enabled": { "type": "boolean" },
+        "macro_event_filter_enabled": { "type": "boolean" },
+        "invalidation_rule_required": { "type": "boolean", "const": true },
+        "thesis_required": { "type": "boolean", "const": true },
+        "contradiction_check_required": { "type": "boolean", "const": true },
+        "scenario_analysis_required": { "type": "boolean", "const": true }
+      }
+    },
+    "execution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "order_type_policy",
+        "order_ttl_seconds",
+        "max_order_retries",
+        "idempotency_key_required",
+        "execution_timeout_seconds",
+        "partial_fill_policy",
+        "reconciliation_interval_seconds",
+        "exchange_heartbeat_timeout_seconds",
+        "broker_failover_policy",
+        "live_execution_enabled",
+        "approval_required_for_live_actions"
+      ],
+      "properties": {
+        "order_type_policy": { "type": "string" },
+        "order_ttl_seconds": { "type": "integer", "minimum": 1 },
+        "max_order_retries": { "type": "integer", "minimum": 0 },
+        "idempotency_key_required": { "type": "boolean", "const": true },
+        "execution_timeout_seconds": { "type": "integer", "minimum": 1 },
+        "partial_fill_policy": { "type": "string" },
+        "reconciliation_interval_seconds": { "type": "integer", "minimum": 1 },
+        "exchange_heartbeat_timeout_seconds": { "type": "integer", "minimum": 1 },
+        "broker_failover_policy": { "type": "string" },
+        "live_execution_enabled": { "type": "boolean", "const": false },
+        "approval_required_for_live_actions": { "type": "boolean", "const": true }
+      }
+    },
+    "memory_learning": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "memory_enabled",
+        "episodic_memory_ttl_days",
+        "strategy_journal_enabled",
+        "operator_feedback_enabled",
+        "self_improvement_enabled",
+        "self_modification_in_production",
+        "learning_review_required",
+        "knowledge_source_trust_ranking",
+        "model_eval_threshold",
+        "drift_detection_enabled",
+        "rollback_required_for_learning_updates",
+        "memory_compaction_policy",
+        "memory_retention_policy"
+      ],
+      "properties": {
+        "memory_enabled": { "type": "boolean" },
+        "episodic_memory_ttl_days": { "type": "integer", "minimum": 0 },
+        "strategy_journal_enabled": { "type": "boolean" },
+        "operator_feedback_enabled": { "type": "boolean" },
+        "self_improvement_enabled": { "type": "boolean" },
+        "self_modification_in_production": { "type": "boolean", "const": false },
+        "learning_review_required": { "type": "boolean", "const": true },
+        "knowledge_source_trust_ranking": {
+          "type": "object",
+          "additionalProperties": { "type": "number", "minimum": 0.0 }
+        },
+        "model_eval_threshold": { "type": "number", "minimum": 0.0 },
+        "drift_detection_enabled": { "type": "boolean" },
+        "rollback_required_for_learning_updates": { "type": "boolean", "const": true },
+        "memory_compaction_policy": { "type": "string" },
+        "memory_retention_policy": { "type": "string" }
+      }
+    },
+    "security": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "secret_backend",
+        "allowed_hosts",
+        "webhook_signature_required",
+        "api_auth_required",
+        "RBAC_enabled",
+        "audit_log_immutable",
+        "encryption_at_rest_required",
+        "encryption_in_transit_required",
+        "prompt_injection_filter_enabled",
+        "sandbox_required_for_code_execution",
+        "dependency_scan_required",
+        "secret_scan_required"
+      ],
+      "properties": {
+        "secret_backend": { "type": "string" },
+        "allowed_hosts": { "type": "array", "items": { "type": "string" } },
+        "webhook_signature_required": { "type": "boolean", "const": true },
+        "api_auth_required": { "type": "boolean", "const": true },
+        "RBAC_enabled": { "type": "boolean", "const": true },
+        "audit_log_immutable": { "type": "boolean", "const": true },
+        "encryption_at_rest_required": { "type": "boolean", "const": true },
+        "encryption_in_transit_required": { "type": "boolean", "const": true },
+        "prompt_injection_filter_enabled": { "type": "boolean", "const": true },
+        "sandbox_required_for_code_execution": { "type": "boolean", "const": true },
+        "dependency_scan_required": { "type": "boolean", "const": true },
+        "secret_scan_required": { "type": "boolean", "const": true }
+      }
+    },
+    "messaging_ux": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "telegram_enabled",
+        "telegram_admin_chat_ids",
+        "alert_severity_threshold",
+        "summary_schedule",
+        "voice_interface_enabled",
+        "avatar_interface_enabled",
+        "operator_approval_required_for_critical_actions"
+      ],
+      "properties": {
+        "telegram_enabled": { "type": "boolean" },
+        "telegram_admin_chat_ids": { "type": "array", "items": { "type": "integer" } },
+        "alert_severity_threshold": { "type": "string" },
+        "summary_schedule": { "type": "string" },
+        "voice_interface_enabled": { "type": "boolean", "const": false },
+        "avatar_interface_enabled": { "type": "boolean", "const": false },
+        "operator_approval_required_for_critical_actions": { "type": "boolean", "const": true }
+      }
+    }
+  }
+}

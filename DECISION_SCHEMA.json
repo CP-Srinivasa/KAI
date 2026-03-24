@@ -1,0 +1,87 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kai.local/schemas/decision.schema.json",
+  "title": "KAI Decision Instance Schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "decision_id",
+    "timestamp_utc",
+    "symbol",
+    "market",
+    "venue",
+    "mode",
+    "thesis",
+    "supporting_factors",
+    "contradictory_factors",
+    "confidence_score",
+    "market_regime",
+    "volatility_state",
+    "liquidity_state",
+    "risk_assessment",
+    "entry_logic",
+    "exit_logic",
+    "stop_loss",
+    "take_profit",
+    "invalidation_condition",
+    "position_size_rationale",
+    "max_loss_estimate",
+    "data_sources_used",
+    "model_version",
+    "prompt_version",
+    "approval_state",
+    "execution_state"
+  ],
+  "properties": {
+    "report_type": { "type": "string" },
+    "decision_id": { "type": "string", "minLength": 1 },
+    "timestamp_utc": { "type": "string", "format": "date-time" },
+    "symbol": { "type": "string", "minLength": 1 },
+    "market": { "type": "string", "minLength": 1 },
+    "venue": { "type": "string", "minLength": 1 },
+    "mode": { "type": "string", "enum": ["research", "backtest", "paper", "shadow", "live"] },
+    "thesis": { "type": "string", "minLength": 1 },
+    "supporting_factors": { "type": "array", "items": { "type": "string" } },
+    "contradictory_factors": { "type": "array", "items": { "type": "string" } },
+    "confidence_score": { "type": "number", "minimum": 0.0, "maximum": 1.0 },
+    "market_regime": { "type": "string" },
+    "volatility_state": { "type": "string" },
+    "liquidity_state": { "type": "string" },
+    "risk_assessment": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["summary", "risk_level"],
+      "properties": {
+        "summary": { "type": "string" },
+        "risk_level": { "type": "string" }
+      }
+    },
+    "entry_logic": { "type": "object", "additionalProperties": true },
+    "exit_logic": { "type": "object", "additionalProperties": true },
+    "stop_loss": { "type": ["number", "object", "null"] },
+    "take_profit": { "type": ["number", "object", "null"] },
+    "invalidation_condition": { "type": "string", "minLength": 1 },
+    "position_size_rationale": { "type": "string", "minLength": 1 },
+    "max_loss_estimate": { "type": ["number", "object"] },
+    "data_sources_used": { "type": "array", "items": { "type": "string" } },
+    "model_version": { "type": "string", "minLength": 1 },
+    "prompt_version": { "type": "string", "minLength": 1 },
+    "approval_state": {
+      "type": "string",
+      "enum": ["pending", "approved", "rejected", "not_required", "audit_only"]
+    },
+    "execution_state": {
+      "type": "string",
+      "enum": [
+        "not_executable",
+        "queued",
+        "paper_only",
+        "shadow_only",
+        "ready",
+        "blocked",
+        "executed",
+        "failed"
+      ]
+    }
+  }
+}

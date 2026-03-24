@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from typing import Any
 
 from app.core.domain.document import CanonicalDocument
 from app.core.enums import DocumentType, SourceType
@@ -56,7 +57,7 @@ class CryptoPanicAdapter(BaseSourceAdapter):
         except Exception:
             return False
 
-    def _post_to_doc(self, post, fetched_at: datetime) -> CanonicalDocument:
+    def _post_to_doc(self, post: Any, fetched_at: datetime) -> CanonicalDocument:
         from app.integrations.cryptopanic.client import CryptoPanicPost
 
         p: CryptoPanicPost = post

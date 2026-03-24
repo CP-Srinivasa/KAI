@@ -17,6 +17,7 @@ Spam penalty: if spam_probability > 0.7 → priority capped at 3.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
 from app.core.domain.document import AnalysisResult
 
@@ -39,13 +40,21 @@ class PriorityScore:
     actionable_bonus_applied: bool
 
 
-def compute_priority(result: AnalysisResult) -> PriorityScore:
+def compute_priority(
+    result: AnalysisResult,
+    *,
+    spam_probability: float = 0.0,
+) -> PriorityScore:
     """Compute a priority score (1–10) from an AnalysisResult.
 
+    spam_probability MUST be passed as an explicit parameter — even though
+    AnalysisResult carries a spam_probability field, callers must supply it
+    separately to make the scoring input auditable and independent of result
+    mutation order (apply_to_document() may update result fields in-place).
     Returns a PriorityScore with the integer priority and audit info.
     """
     actionable_value = 1.0 if result.actionable else 0.0
-    quality = 1.0 - result.spam_probability
+    quality = 1.0 - spam_probability
 
     raw = (
         result.relevance_score * _W_RELEVANCE
@@ -64,7 +73,7 @@ def compute_priority(result: AnalysisResult) -> PriorityScore:
         priority = min(10, priority + 1)
 
     # Spam cap
-    spam_capped = result.spam_probability > _SPAM_CAP_THRESHOLD
+    spam_capped = spam_probability > _SPAM_CAP_THRESHOLD
     if spam_capped:
         priority = min(priority, _SPAM_PRIORITY_CAP)
 
@@ -76,12 +85,34 @@ def compute_priority(result: AnalysisResult) -> PriorityScore:
     )
 
 
-def is_alert_worthy(result: AnalysisResult, min_priority: int = 7) -> bool:
+def is_alert_worthy(
+    result: AnalysisResult,
+    min_priority: int = 7,
+    *,
+    spam_probability: float = 0.0,
+) -> bool:
     """Return True if document meets the minimum priority threshold for alerts.
 
+    spam_probability must be passed separately — it is not stored on AnalysisResult.
     Spam is always excluded regardless of min_priority.
     """
-    if result.spam_probability > _SPAM_CAP_THRESHOLD:
+    if spam_probability > _SPAM_CAP_THRESHOLD:
         return False
-    score = compute_priority(result)
+    score = compute_priority(result, spam_probability=spam_probability)
     return score.priority >= min_priority
+
+
+def calculate_final_relevance(llm_relevance: float, keyword_hits: list[Any]) -> float:
+    """Blend LLM relevance score with keyword hit multipliers.
+
+    If document has strong keyword hits, it boosts the LLM base score.
+    """
+    if not keyword_hits:
+        return llm_relevance
+
+    # Calculate keyword density/weight
+    # Simple approach: each hit adds 0.05, max +0.3 boost
+    boost = min(0.3, len(keyword_hits) * 0.05)
+
+    final_score = llm_relevance + boost
+    return min(1.0, final_score)
