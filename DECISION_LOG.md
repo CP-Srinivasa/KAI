@@ -1751,8 +1751,9 @@
 
 
 
-### D-97 (2026-03-24): PH5C pending final freeze is canonical top state
-- This decision supersedes D-96 as top-state reference.`r`n- PH5B remains closed and accepted.
+### D-97 (2026-03-24, superseded): PH5C pending final freeze top state
+- Historical note only: this interim top-state was later superseded by D-97 strategic hold.
+- PH5B remains closed and accepted.
 - PH5C is the intended next sprint.
 - There is still a governance conflict between PH5C execution-ready and PH5C status-freeze states.
 - Do not start PH5C execution yet.

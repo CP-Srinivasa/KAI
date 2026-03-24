@@ -392,11 +392,11 @@ DB test failures remain on a separate track.
 
 | Risk ID | Description | Severity | Likelihood | Mitigation | Status |
 |---|---|---|---|---|---|
-| R-PH5-001 | Rolling back to PH5B would create artificial governance churn. | high | medium | Keep PH5B closed and resolve drift in favor of PH5C reconciliation. | open |
-| R-PH5-002 | Running PH5C execution before status freeze would create new governance drift. | high | medium | Complete `PH5C_STATUS_FREEZE` across all governance docs before execution. | open |
-| R-PH5-003 | Stub detection may become too broad and exclude valid short manual documents. | high | medium | Scope filter to explicit placeholders first; add allowlist tests for valid short manual docs. | open |
+| R-PH5-001 | Rolling back to PH5B would create artificial governance churn. | high | medium | Keep PH5B closed; strategic hold (D-97) is canonical top state. | closed (D-97) |
+| R-PH5-002 | Running PH5C execution before status freeze would create new governance drift. | high | medium | Strategic hold blocks PH5C execution and any new companion sprint until gate metrics are clearly positive. | closed (D-97) |
+| R-PH5-003 | Stub detection may become too broad and exclude valid short manual documents. | high | medium | Deferred under strategic hold; reassess scope risk only after hold is lifted. | monitoring (hold) |
 | R-PH5-005 | Continued infrastructure sprint without positive signal metrics wastes engineering bandwidth. | high | high | Strategic hold imposed (D-97) -- no new sprints until alert-precision + paper-trading positive. | closed (D-97) |
-| R-PH5-004 | PH5C may drift into broad reliability refactoring if scope is not frozen. | high | medium | Freeze PH5C scope contract before execution and defer broader model-quality work. | open |
+| R-PH5-004 | PH5C may drift into broad reliability refactoring if scope is not frozen. | high | medium | Strategic hold active; no PH5C implementation work proceeds before metric gate is clearly positive. | closed (D-97) |
 
 ---
 
