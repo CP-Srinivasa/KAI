@@ -485,3 +485,7 @@
 - Review date: 2026-04-23 (30 days from 2026-03-24).
 - After a real 7-day ingestion run with LLM analysis: if alert_audit.jsonl has <5 triggered alerts OR alert precision <30%, stop trading-signal work.
 - On stop: focus only on data quality (feeds, keywords, spam-filter) and do not introduce new architecture.
+
+### D-106 (2026-03-24): docs/ auf lebende Architektur reduziert
+- Lebend: CLAUDE.md + docs/contracts.md. Alles andere → docs/archive/ (34 Dateien, inkl. intelligence_architecture.md).
+- Keine historischen Docs mehr im aktiven Pfad.
