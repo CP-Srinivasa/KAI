@@ -66,10 +66,11 @@
 
 | Prerequisite | Status |
 |---|---|
-| Structured alert log (alert_id, asset, direction, priority, timestamp) | ☐ |
-| Outcome annotation store (hit / miss / inconclusive per alert) | ☐ |
-| Metric script: `scripts/alert_hit_rate.py` | ☐ |
-| 50+ annotated alerts collected | ☐ |
+| Structured alert log (alert_id, asset, direction, priority, timestamp) | ✅ `app/alerts/audit.py` — AlertAuditRecord |
+| Outcome annotation store (hit / miss / inconclusive per alert) | ✅ `app/alerts/audit.py` — AlertOutcomeAnnotation (AHR-1) |
+| Metric computation — `alerts hit-rate` CLI + `build_outcomes_from_records()` | ✅ `app/alerts/hit_rate.py` (AHR-1) |
+| Operator annotation — `alerts annotate` CLI command | ✅ `app/cli/main.py` (AHR-1) |
+| 50+ annotated alerts collected | ☐ (data collection in progress) |
 
 ## Strategic Hold (D-97)
 

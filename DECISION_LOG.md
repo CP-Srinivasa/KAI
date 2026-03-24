@@ -444,3 +444,23 @@
 - This decision supersedes D-97 in priority order: D-98 defines the condition
   under which feature work may resume.
 - Next sprint (when authorised): AHR-1 -- Alert Hit Rate Infrastructure.
+
+### D-99 (2026-03-24): No new sprint contract documents
+- Decisions are documented as short code comments or 3-line entries in DECISION_LOG.
+- No standalone contract documents (docs/contracts.md, sprint-specific .md files) for new work.
+- Existing contract docs remain as historical reference but are not maintained.
+
+### D-99 (2026-03-24): AHR-1 Alert Hit Rate Infrastructure — CLOSED
+- Sprint AHR-1 delivered the missing outcome annotation layer.
+- Delivered:
+    1. `app/alerts/audit.py`: AlertOutcomeAnnotation dataclass (hit/miss/inconclusive),
+       append_outcome_annotation(), load_outcome_annotations().
+    2. `app/alerts/hit_rate.py`: build_outcomes_from_records() gains annotations param;
+       manual annotations resolve is_hit without live price data;
+       price data takes precedence when both are present.
+    3. `app/cli/main.py`: `alerts annotate` command for operator annotation;
+       `alerts hit-rate` auto-loads alert_outcomes.jsonl.
+    4. 14 new tests (1098 total pass).
+- Infrastructure prerequisites for D-98 are now satisfied.
+- Remaining gate: collect 50+ annotated alerts before feature-work resumes.
+- Status: CLOSED.
