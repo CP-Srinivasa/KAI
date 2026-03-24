@@ -384,7 +384,7 @@
 - Governance drift between PH5B-close and PH5C-active states must be resolved in favor of PH5C.
 
 
-- Current sprint is set to `PH5C_FILTER_BEFORE_LLM_BASELINE (frozen Ã�85)`.
+- Current sprint is set to `PH5C_FILTER_BEFORE_LLM_BASELINE (frozen ÃÂï¿½85)`.
 
 
 - Next required step is `PH5C_STATUS_FREEZE`.
@@ -429,3 +429,18 @@
   BLOCKED until the hold is lifted by the operator.
 - Phase 5 status: HOLD.
 - This decision is not reversible by the AI; only the operator can lift the hold.
+
+### D-98 (2026-03-24): Alert Hit Rate prioritised as first quality metric
+- No new feature work until Alert Hit Rate is computable for 50+ alerts.
+- Definition: Alert Hit Rate = alerts where predicted signal materialised / total alerts sent.
+- An 'alert' is any document dispatched via the alert pipeline (Telegram / email).
+- A 'hit' requires post-hoc annotation: operator confirms signal outcome within a defined window.
+- Minimum dataset: 50 annotated alerts required before the metric is meaningful.
+- Prerequisite infrastructure:
+    1. Structured alert log (alert_id, document_id, timestamp, asset, direction, priority).
+    2. Outcome annotation store (alert_id, outcome: hit|miss|inconclusive, annotated_at).
+    3. Metric computation script: alert_hit_rate = hits / (hits + misses).
+- All companion-ML / Phase-5 feature work remains on hold (D-97).
+- This decision supersedes D-97 in priority order: D-98 defines the condition
+  under which feature work may resume.
+- Next sprint (when authorised): AHR-1 -- Alert Hit Rate Infrastructure.

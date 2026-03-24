@@ -60,6 +60,17 @@
 
 - [x] Phase 3 (2026-03-22) -- GO.
 
+## Quality Gate: Alert Hit Rate (D-98)
+
+> **Blocker:** No new feature work until Alert Hit Rate is computable for 50+ alerts.
+
+| Prerequisite | Status |
+|---|---|
+| Structured alert log (alert_id, asset, direction, priority, timestamp) | ☐ |
+| Outcome annotation store (hit / miss / inconclusive per alert) | ☐ |
+| Metric script: `scripts/alert_hit_rate.py` | ☐ |
+| 50+ annotated alerts collected | ☐ |
+
 ## Strategic Hold (D-97)
 
 > No new companion-ML sprint, decision, or invariant until alert-precision and paper-trading metrics show clearly positive results.
