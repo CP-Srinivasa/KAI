@@ -1681,7 +1681,8 @@ def _build_action_id(item: OperationalEscalationItem) -> str:
                 item.blocking_reason or "",
                 ",".join(item.evidence_refs),
             ]
-        ).encode("utf-8")
+        ).encode("utf-8"),
+        usedforsecurity=False,
     ).hexdigest()
     return f"act_{digest[:12]}"
 
@@ -2202,7 +2203,7 @@ def save_operator_decision_pack(
 
 
 def _runbook_step_id(*parts: str) -> str:
-    digest = hashlib.sha1("|".join(parts).encode("utf-8")).hexdigest()
+    digest = hashlib.sha1("|".join(parts).encode("utf-8"), usedforsecurity=False).hexdigest()
     return f"rbk_{digest[:12]}"
 
 
@@ -2473,7 +2474,8 @@ def _review_id(
                 created_at,
                 review_note,
             ]
-        ).encode("utf-8")
+        ).encode("utf-8"),
+        usedforsecurity=False,
     ).hexdigest()
     return f"rvw_{digest[:12]}"
 
