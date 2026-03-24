@@ -109,7 +109,7 @@ class AlertService:
         results = []
         for channel in self._channels:
             delivery = await channel.send(message)
-            _log_result(delivery, document_id=message.document_id)
+            _log_result(delivery, message=message)
             results.append(delivery)
         return results
 
@@ -140,9 +140,11 @@ def _log_result(
     result: AlertDeliveryResult,
     *,
     digest: bool = False,
+    message: AlertMessage | None = None,
     document_id: str | None = None,
 ) -> None:
     kind = "digest" if digest else "alert"
+    doc_id = document_id or (message.document_id if message else None)
     if result.success:
         log.info(
             f"alert.{kind}.sent",
@@ -150,14 +152,22 @@ def _log_result(
             message_id=result.message_id,
         )
         # Sprint 21: Append audit trail for operational readiness
-        if document_id:
+        if doc_id:
             record = AlertAuditRecord(
-                document_id=document_id,
+                document_id=doc_id,
                 channel=result.channel,
                 message_id=result.message_id,
                 is_digest=digest,
+                sentiment_label=message.sentiment_label if message else None,
+                affected_assets=(
+                    list(message.affected_assets) if message else []
+                ),
+                priority=message.priority if message else None,
+                actionable=message.actionable if message else None,
             )
-            audit_path = _WORKSPACE_ROOT / "artifacts" / ALERT_AUDIT_JSONL_FILENAME
+            audit_path = (
+                _WORKSPACE_ROOT / "artifacts" / ALERT_AUDIT_JSONL_FILENAME
+            )
             append_alert_audit(record, audit_path)
     else:
         log.error(

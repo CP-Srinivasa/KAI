@@ -646,6 +646,88 @@ def alerts_evaluate_pending(
     asyncio.run(run())
 
 
+@alerts_app.command("hit-rate")
+def alerts_hit_rate(
+    audit_path: str = typer.Option(
+        "",
+        help="Path to alert_audit.jsonl (default: artifacts/alert_audit.jsonl)",
+    ),
+    min_sample: int = typer.Option(50, help="Minimum directional alerts for sufficient sample"),
+) -> None:
+    """Compute alert hit-rate from the audit trail.
+
+    Reads dispatched alert records with prediction data and reports
+    hit-rate statistics. Alerts without sentiment or affected assets
+    are excluded. Currently reports only sample counts and readiness;
+    outcome resolution requires market price data.
+    """
+    from app.alerts.audit import load_alert_audits
+    from app.alerts.hit_rate import build_outcomes_from_records, compute_hit_rate
+
+    if not audit_path:
+        workspace = Path(__file__).resolve().parents[1]
+        audit_path = str(workspace / "artifacts" / "alert_audit.jsonl")
+
+    records = load_alert_audits(audit_path)
+    if not records:
+        console.print(f"[yellow]No audit records found at {audit_path}[/yellow]")
+        raise typer.Exit(0)
+
+    outcomes = build_outcomes_from_records(records)
+    report = compute_hit_rate(outcomes, min_sample=min_sample)
+
+    # Summary table
+    table = Table(title="Alert Hit-Rate Report", show_header=True, header_style="bold cyan")
+    table.add_column("Metric", style="bold")
+    table.add_column("Value")
+
+    table.add_row("Total audit records", str(len(records)))
+    table.add_row("Directional alerts", str(report.directional_alerts))
+    table.add_row("Resolved", str(report.resolved_count))
+    table.add_row("Unresolved", str(report.unresolved_count))
+    table.add_row("Hits", str(report.hit_count))
+    table.add_row("Misses", str(report.miss_count))
+
+    if report.hit_rate_pct is not None:
+        table.add_row("Hit rate", f"{report.hit_rate_pct:.2f}%")
+    else:
+        table.add_row("Hit rate", "n/a (no resolved alerts)")
+
+    sample_status = (
+        "[green]✓ sufficient[/green]"
+        if report.sufficient_sample
+        else f"[yellow]✗ need {min_sample} directional alerts[/yellow]"
+    )
+    table.add_row("Sample status", sample_status)
+    console.print(table)
+
+    # Per-sentiment breakdown
+    if report.by_sentiment:
+        st = Table(title="By Sentiment", show_header=True, header_style="bold cyan")
+        st.add_column("Sentiment")
+        st.add_column("Count")
+        st.add_column("Resolved")
+        st.add_column("Hits")
+        st.add_column("Hit Rate")
+        for label, bd in report.by_sentiment.items():
+            hr = f"{bd.hit_rate_pct:.2f}%" if bd.hit_rate_pct is not None else "n/a"
+            st.add_row(label, str(bd.count), str(bd.resolved), str(bd.hits), hr)
+        console.print(st)
+
+    # Per-asset breakdown
+    if report.by_asset:
+        at = Table(title="By Asset", show_header=True, header_style="bold cyan")
+        at.add_column("Asset")
+        at.add_column("Count")
+        at.add_column("Resolved")
+        at.add_column("Hits")
+        at.add_column("Hit Rate")
+        for asset, bd in report.by_asset.items():
+            hr = f"{bd.hit_rate_pct:.2f}%" if bd.hit_rate_pct is not None else "n/a"
+            at.add_row(asset, str(bd.count), str(bd.resolved), str(bd.hits), hr)
+        console.print(at)
+
+
 # ---------------------------------------------------------------------------
 # Sprint 29: analyze-pending --shadow-companion flag
 # ---------------------------------------------------------------------------
