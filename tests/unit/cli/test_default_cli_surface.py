@@ -18,7 +18,7 @@ def test_default_root_help_exposes_only_core_groups() -> None:
     assert "podcasts" not in result.output
     assert "youtube" not in result.output
     assert "research" not in result.output
-    assert "trading" not in result.output
+    assert "trading  " not in result.output  # "trading-bot" in app name is fine; subcommand would have trailing spaces
 
 
 def test_default_query_help_only_exposes_analyze_pending() -> None:
