@@ -16,7 +16,7 @@
 | current_sprint | `PH5C_FILTER_BEFORE_LLM_BASELINE (closed D-97)` |
 
 
-| next_required_step | `STRATEGIC_HOLD -- no new sprint until alert-precision + paper-trading positive` |
+| next_required_step | `STRATEGIC_HOLD -- no new feature-work until alert-hit-rate is calculable on >=50 resolved directional alerts` |
 
 
 | ph4a_status | `closed (D-53) -- immutable baseline anchor (S67)` |
@@ -82,7 +82,7 @@
 | ph5c_status | `closed (D-97) -- strategic hold active; no new companion-ML sprint/decision/invariant` |
 
 
-| phase5_status | `HOLD -- PH5C closed (D-97); further sprints blocked until signal metrics positive` |
+| phase5_status | `HOLD -- PH5C closed (D-97); feature-work blocked until alert-hit-rate is calculable on >=50 resolved directional alerts` |
 
 
 ---> **Verbindliches Betriebsdokument fuer alle Coding-Agenten.**
@@ -92,5 +92,4 @@
 
 
 > Dieses Dokument lesen, bevor eine einzige Zeile Code angefasst wird.
-
 

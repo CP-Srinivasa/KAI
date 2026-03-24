@@ -652,25 +652,35 @@ def alerts_hit_rate(
         "",
         help="Path to alert_audit.jsonl (default: artifacts/alert_audit.jsonl)",
     ),
-    min_sample: int = typer.Option(50, help="Minimum directional alerts for sufficient sample"),
+    min_sample: int = typer.Option(
+        50,
+        help="Minimum resolved directional alerts required for gate readiness",
+    ),
+    enforce_feature_gate: bool = typer.Option(
+        False,
+        "--enforce-feature-gate",
+        help="Exit non-zero when sample is insufficient (for CI/policy enforcement)",
+    ),
 ) -> None:
     """Compute alert hit-rate from the audit trail.
 
     Reads dispatched alert records with prediction data and reports
     hit-rate statistics. Alerts without sentiment or affected assets
-    are excluded. Currently reports only sample counts and readiness;
-    outcome resolution requires market price data.
+    are excluded. Feature-work remains blocked until at least
+    ``min_sample`` resolved directional alerts are available.
     """
     from app.alerts.audit import load_alert_audits
     from app.alerts.hit_rate import build_outcomes_from_records, compute_hit_rate
 
     if not audit_path:
-        workspace = Path(__file__).resolve().parents[1]
+        workspace = Path(__file__).resolve().parents[2]
         audit_path = str(workspace / "artifacts" / "alert_audit.jsonl")
 
     records = load_alert_audits(audit_path)
     if not records:
         console.print(f"[yellow]No audit records found at {audit_path}[/yellow]")
+        if enforce_feature_gate:
+            raise typer.Exit(2)
         raise typer.Exit(0)
 
     outcomes = build_outcomes_from_records(records)
@@ -694,11 +704,15 @@ def alerts_hit_rate(
         table.add_row("Hit rate", "n/a (no resolved alerts)")
 
     sample_status = (
-        "[green]✓ sufficient[/green]"
+        "[green]sufficient[/green]"
         if report.sufficient_sample
-        else f"[yellow]✗ need {min_sample} directional alerts[/yellow]"
+        else f"[yellow]need {min_sample} resolved directional alerts[/yellow]"
     )
     table.add_row("Sample status", sample_status)
+    table.add_row(
+        "Feature-work gate",
+        "[green]UNBLOCKED[/green]" if report.sufficient_sample else "[red]BLOCKED[/red]",
+    )
     console.print(table)
 
     # Per-sentiment breakdown
@@ -726,6 +740,13 @@ def alerts_hit_rate(
             hr = f"{bd.hit_rate_pct:.2f}%" if bd.hit_rate_pct is not None else "n/a"
             at.add_row(asset, str(bd.count), str(bd.resolved), str(bd.hits), hr)
         console.print(at)
+
+    if enforce_feature_gate and not report.sufficient_sample:
+        console.print(
+            "[red]Feature-work gate blocked:[/red] "
+            f"need at least {min_sample} resolved directional alerts."
+        )
+        raise typer.Exit(2)
 
 
 # ---------------------------------------------------------------------------

@@ -1,4 +1,14 @@
 
+## 2026-03-24 - Alert hit-rate metric (first quality metric)
+
+- **Enriched** `AlertAuditRecord` with prediction fields (sentiment_label, affected_assets, priority, actionable)
+- **Created** `app/alerts/hit_rate.py`: AlertOutcome, classify_hit, build_outcomes_from_records, compute_hit_rate
+- **Added** CLI command: `kai alerts hit-rate` with per-sentiment/per-asset breakdowns
+- **Tests**: 20 new tests in `test_alert_hit_rate.py`
+- Baseline: `1079 passed, ruff clean`
+
+---
+
 ## 2026-03-24 - Companion code extraction to companion-ml branch
 
 - **Extracted**: ~80 companion-only files removed from main dev path.
