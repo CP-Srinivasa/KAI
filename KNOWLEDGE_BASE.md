@@ -1,6 +1,6 @@
 # KNOWLEDGE_BASE.md - KAI Canonical Knowledge Index
 
-> Stand: 2026-03-24 | Phase 4 active (technical stabilization complete) | Last clean governance anchor: V4_DUAL_WRITE_AND_DB_PRIMARY_CLOSEOUT (D-86) | Baseline snapshot: 1604 passed, ruff clean, mypy 0 errors
+> Stand: 2026-03-24 | Phase 4 active (technical stabilization complete) | Last clean governance anchor: V4_DUAL_WRITE_AND_DB_PRIMARY_CLOSEOUT (D-86) | Baseline snapshot: 1609 passed, ruff clean
 
 ## Active Gate
 
@@ -14,9 +14,10 @@
 - V-4 Phase 2+3 complete: `run_cycle()` dual-writes `TradingCycleRecord` + `PortfolioStateRecord`; non-fatal on DB error.
 - `build_portfolio_snapshot()` is DB-primary when `session_factory` provided; falls back to JSONL (no-record or DB error).
 - 14 new tests confirmed: 6 dual-write + 8 DB-primary.
+- 5 test warnings (coroutine mock) fixed: `AsyncMock` → `MagicMock` for `session.add()`.
 - RF-4 promoted to `phase-3-complete` in RISK_REGISTER.
-- Baseline: `1604 passed`, `ruff clean`, `mypy 0 errors`.
-- Risk: leaving dual-write and DB-primary half-open weakens later auditability.
+- Baseline: `1609 passed`, `ruff clean`.
+- Risk resolved: dual-write and DB-primary no longer half-open.
 
 ## PH4H Policy Anchor
 

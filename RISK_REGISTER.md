@@ -5,7 +5,7 @@
 - current_phase: `PHASE 4 (active, technical stabilization complete)`
 - current_sprint: `V4_DUAL_WRITE_AND_DB_PRIMARY_CLOSEOUT (closed)`
 - next_required_step: `Choose PH4L definition or Phase 4 closeout`
-- baseline: `1604 passed, ruff clean, mypy 0 errors`
+- Technical baseline: `1609 passed`, `ruff clean`.
 
 ### PH4K Execution Results Note (2026-03-23)
 

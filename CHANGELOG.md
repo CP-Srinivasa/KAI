@@ -1,13 +1,13 @@
 # CHANGELOG.md
 
-## 2026-03-24 - Governance update: V-4 dual-write / DB-primary closeout prioritized before PH4L (D-85)
+## 2026-03-24 - V-4 Dual-Write & DB-Primary closeout complete (D-85/D-86)
 
-- Current phase remains active, with explicit technical stabilization needed before new Phase-4 scope.
-- Recommended next sprint set to `V4_DUAL_WRITE_AND_DB_PRIMARY_CLOSEOUT`.
-- Last explicitly referenced clean governance anchor recorded as commit `c498ca4` (PH4K closeout).
-- Confirmed focus area: `app/execution/portfolio_read.py`, `app/orchestrator/trading_loop.py`, and related tests.
-- Compact status reference captured: `1590 passed`, `5 failed (DB-pre-existing)`, `ruff clean`.
-- Next action sequence locked: close V-4 dual-write/DB-primary, reconfirm green baseline, then choose PH4L definition or full Phase-4 closeout.
+- V-4 (N-4) tech sprint formally closed.
+- All V-4 code confirmed: ORM models (Phase 1), dual-write `_write_db()` (Phase 2), DB-primary `build_portfolio_snapshot()` (Phase 3).
+- 5 test warnings fixed: `AsyncMock` → `MagicMock` for `session.add()` in `test_trading_loop_dual_write.py`.
+- Governance docs synced: SPRINT_LEDGER (N-4 closed), DECISION_LOG (D-84/D-85/D-86), RISK_REGISTER, KNOWLEDGE_BASE.
+- Baseline: `1609 passed, 0 warnings, ruff clean`.
+- Next: PH4L definition or Phase 4 closeout.
 
 ---
 
