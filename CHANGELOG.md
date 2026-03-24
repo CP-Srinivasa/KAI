@@ -258,3 +258,17 @@
 - Phase 5 remains blocked until final closeout sync is complete.
 
 
+
+## 2026-03-24 - PH5A execution complete (D-89)
+
+- PH5A diagnostic script executed against 69-doc paired set.
+- Key findings:
+  - Fallback rate: 0.0% (0/69) — pipeline fully functional
+  - LLM error proxy rate: 27.5% (19/69) — main reliability gap identified
+  - Priority mean: 3.96/10 (high≥7: 15, mid 4-6: 23, low≤3: 31)
+  - Keyword coverage: 62.3% (43/69)
+  - Tag fill rate: 100.0% (69/69) — Phase 4 complete
+  - Watchlist overlap: 52.2% (36/69)
+  - Actionable rate (Tier3): 0.0% — I-13 confirmed
+- Artifacts: `artifacts/ph5a_reliability_baseline.json` + `artifacts/ph5a_operator_summary.md`
+- PH5A moved to results-review; PH5A-7 (governance closeout) pending.

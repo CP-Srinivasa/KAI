@@ -4,10 +4,10 @@
 
 - current_phase: `PHASE 5 (active) -- Signal Reliability & Trust`
 - phase_4_status: `CLOSED (D-87, 2026-03-24)`
-- phase_5_status: `active -- PH5A frozen (§83)`
-- current_sprint: `PH5A_BASELINE_RELIABILITY_AND_SIGNAL_TRUST`
-- next_required_step: `PH5A_EXECUTION`
-- baseline: `1609 passed, ruff clean`
+- phase_5_status: `active -- PH5A closed (2026-03-24)`
+- current_sprint: `(none — awaiting PH5B definition)`
+- baseline: `1615 passed, ruff clean`
+
 | Sprint | Date | Status | Outcome |
 |---|---|---|---|
 | PH4A | 2026-03-22 | closed | Baseline: paired=0 |
@@ -21,6 +21,7 @@
 | PH4I | 2026-03-23 | closed | market_scope enrichment complete |
 | PH4J | 2026-03-23 | closed | Tags enrichment: keyword-hit 4->7, zero-hit 1->4, assets-only 0->4 |
 | PH4K | 2026-03-24 | **closed** | Utility review: watchlist overlap 52%, corr=0.56, priority delta +3.1 |
+| PH5A | 2026-03-24 | **closed** | Reliability baseline: fallback=0%, LLM-proxy=27.5%, tag=100%, kw-cov=62.3%, watchlist=52.2% |
 
 ## Tech Sprints (nicht Phase-4-gebunden)
 

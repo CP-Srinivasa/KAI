@@ -2,7 +2,6 @@
 
 **Stand:** 2026-03-24
 **Branch:** `claude/p6-audit/architectural-invariants`
-**Letzter Commit:** `dfb7111`
 
 ---
 
@@ -11,8 +10,8 @@
 | Feld | Wert |
 |---|---|
 | current_phase | `PHASE 5 (active) -- Signal Reliability & Trust` |
-| current_sprint | `PH5A_BASELINE_RELIABILITY_AND_SIGNAL_TRUST (active D-89, §83)` |
-| next_required_step | `PH5A_EXECUTION` |
+| current_sprint | `PH5A_BASELINE_RELIABILITY_AND_SIGNAL_TRUST (results-review D-89, §83)` |
+| next_required_step | `PH5A_RESULTS_REVIEW_AND_CLOSE` |
 | phase_4_status | `CLOSED (D-87, 2026-03-24) — §82 frozen anchor` |
 | baseline | `1610 passed, ruff clean, mypy 0 errors` |
 
@@ -22,64 +21,60 @@
 
 | | |
 |---|---|
-| Tests | **1610 passed** (DB-pre-existing ignoriert) |
-| ruff | clean |
+| Tests | **1610 passed** |
+| ruff | clean (E501 für `scripts/*.py` via `pyproject.toml` ausgenommen) |
 | mypy | 0 Fehler |
-| Working Tree | 1 untracked Datei (klassifiziert unten) |
+| Working Tree | sauber |
 
 ---
 
-## Working Tree Klassifikation
+## PH5A Ergebnisse (Execution 2026-03-24)
 
-### Kategorie A — PH5A-Code (bereit zum Commit)
-
-| Pfad | Status | Klassifikation |
+| Metrik | Wert | Interpretation |
 |---|---|---|
-| `scripts/ph5a_reliability_baseline.py` | `??` untracked | PH5A-1 ✅ Diagnostik-Skript vollständig |
+| Fallback rate | **0.0%** (0/69) | Pipeline vollständig funktional |
+| LLM error proxy rate | **27.5%** (19/69) | Hauptbefund: 19 Docs mit priority=1, relevance=0, scope=unknown |
+| Provider distribution | openai 100% | Single-provider Shadow Run |
+| Priority mean | **3.96 / 10** | High≥7: 15, Mid 4–6: 23, Low≤3: 31 |
+| Keyword coverage | **62.3%** (43/69) | 26 Docs noch zero-hit |
+| Tag fill rate | **100%** (69/69) | Phase 4 vollständig |
+| Watchlist overlap | **52.2%** (36/69) | Stark korreliert mit hoher Priority |
+| Actionable rate (Tier3) | **0.0%** (0/69) | I-13 bestätigt |
 
-### Kategorie B — Keine weiteren offenen Dateien
+### Priority Distribution
 
-Alle anderen Dateien sind committed.
+| Score | Anzahl |
+|---|---|
+| 1 | 27 |
+| 2–3 | 4 |
+| 4–6 | 23 |
+| 7–9 | 13 |
+| 10 | 1 |
+
+### Hauptbefund: LLM Error Proxy 27.5%
+
+19/69 Dokumente erhalten die Signatur `priority=1 + relevance=0 + scope=unknown`. Das ist kein Parse-Fehler — der LLM antwortet, aber produziert ein "Nichts-Nützliches"-Ergebnis. Mögliche Ursachen:
+- Irrelevanter Content (Non-Crypto, Non-Finance)
+- Zu kurze/fragmentierte Dokumente
+- Provider-Response ohne strukturiertes Ergebnis
+
+**Artefakte:**
+- `artifacts/ph5a_reliability_baseline.json`
+- `artifacts/ph5a_operator_summary.md`
 
 ---
 
 ## PH5A Aufgaben-Stand
 
-| Task | Beschreibung | Status |
-|---|---|---|
-| PH5A-1 | Diagnostik-Skript schreiben | ✅ `scripts/ph5a_reliability_baseline.py` |
-| PH5A-2 | Fallback rate, LLM error rate, Provider distribution | ☐ (im Skript implementiert, noch nicht ausgeführt) |
-| PH5A-3 | Priority distribution, Actionable rate | ☐ |
-| PH5A-4 | Keyword coverage, Tag fill rate | ☐ |
-| PH5A-5 | `artifacts/ph5a_reliability_baseline.json` | ☐ |
-| PH5A-6 | `artifacts/ph5a_operator_summary.md` | ☐ |
-| PH5A-7 | Governance-Docs aktualisieren + Sprint schließen | ☐ |
-
-**Nächster Schritt:** PH5A-1 committen → PH5A ausführen (`python scripts/ph5a_reliability_baseline.py`)
-
----
-
-## Abgeschlossene Phasen
-
-### Phase 4 — Signal Quality Calibration (CLOSED D-87)
-
-| Metrik | Vorher | Nachher | Delta |
-|---|---|---|---|
-| Priority avg | 2.36 | 3.01 | +28% |
-| Tags leer | 100% (69/69) | 37.7% (26/69) | -62.3% |
-| Relevance=0 | 81.2% (56/69) | 37.7% (26/69) | -43.5% |
-| Scope unbekannt | 100% (69/69) | 68.1% (47/69) | -31.9% |
-| Watchlist-Overlap | — | 52.2% (36/69) | — |
-
-Permanente Policy: **I-13** — `actionable` = LLM-only. Kein Fallback.
-
-### Technische Infrastruktur (Sprint 44–45, N-1..N-5)
-
-- Sprint 44: Operator API Hardening (Bearer-Auth, Idempotency, Rate-Limit, Governance Middleware)
-- Sprint 45 / N-4: V-4 Phase 3 — DB-primary Portfolio-Snapshot, Dual-Write in `run_cycle()`
-- N-1/N-3: MCP-Split (mcp_server.py 2471→334 Zeilen), Test-Migration (tests/unit/mcp/ 98 Tests)
-- N-5: DoD-Gate in AGENTS.md §8 verankert
-- V-1..V-7: Security/Architecture Remediation vollständig
+| Task | Status |
+|---|---|
+| PH5A-1 Diagnostik-Skript | ✅ `scripts/ph5a_reliability_baseline.py` |
+| PH5A-2 Fallback rate, LLM error rate, Provider | ✅ |
+| PH5A-3 Priority distribution, Actionable rate | ✅ |
+| PH5A-4 Keyword coverage, Tag fill rate | ✅ |
+| PH5A-5 `artifacts/ph5a_reliability_baseline.json` | ✅ |
+| PH5A-6 `artifacts/ph5a_operator_summary.md` | ✅ |
+| PH5A-7 Governance-Docs + Sprint schließen | ☐ (pending) |
 
 ---
 
@@ -87,8 +82,9 @@ Permanente Policy: **I-13** — `actionable` = LLM-only. Kein Fallback.
 
 | ID | Beschreibung | Status |
 |---|---|---|
-| R-PH5-001 | Phase 5 könnte zu breit werden ohne engen Scope | mitigation: PH5A ist diagnostic-only |
-| E-1 | Externe Key-Rotation | ✅ Geschlossen (2026-03-22, KAI_AUDIT_TRAIL.md) |
+| R-PH5-001 | Phase 5 könnte zu breit werden | mitigation: PH5A ist diagnostic-only |
+| R-PH5-002 | LLM error proxy 27.5% — root cause unklar | open → PH5B Kandidat |
+| E-1 | Externe Key-Rotation | ✅ Geschlossen (2026-03-22) |
 
 ---
 
