@@ -4,10 +4,10 @@
 
 - current_phase: `PHASE 5 (active) -- Signal Reliability & Trust`
 - phase_4_status: `CLOSED (D-87, 2026-03-24)`
-- phase_5_status: `active -- PH5A execution complete; results-review mode`
-- current_sprint: `PH5A_BASELINE_RELIABILITY_AND_SIGNAL_TRUST`
-- next_required_step: `PH5A_RESULTS_REVIEW_AND_CLOSE`
-- baseline: `1609 passed, ruff clean`
+- phase_5_status: `active -- PH5A closed (D-92); PH5B active`
+- current_sprint: `PH5B_LOW_SIGNAL_CLUSTER_ANALYSIS (active D-92, §84)`
+- next_required_step: `PH5B_EXECUTION`
+- baseline: `1615 passed, ruff clean`
 
 | Sprint | Date | Status | Outcome |
 |---|---|---|---|
@@ -22,7 +22,8 @@
 | PH4I | 2026-03-23 | closed | market_scope enrichment complete |
 | PH4J | 2026-03-23 | closed | Tags enrichment: keyword-hit 4->7, zero-hit 1->4, assets-only 0->4 |
 | PH4K | 2026-03-24 | **closed** | Utility review: watchlist overlap 52%, corr=0.56, priority delta +3.1 |
-| PH5A | 2026-03-24 | **results-review** | Execution complete; reliability baseline ready for review and closeout |
+| PH5A | 2026-03-24 | closed | Reliability baseline: fallback=0%, LLM-error-proxy=27.5%, tag-fill=100%, keyword-cov=62.3% |
+| PH5B | 2026-03-24 | **active** | Low Signal Cluster Analysis — root cause 27.5% LLM error proxy (D-92, §84) |
 
 ## Tech Sprints (nicht Phase-4-gebunden)
 

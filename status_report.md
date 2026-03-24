@@ -2,6 +2,7 @@
 
 **Stand:** 2026-03-24
 **Branch:** `claude/p6-audit/architectural-invariants`
+**Sprint:** PH5B_LOW_SIGNAL_CLUSTER_ANALYSIS (active D-92, §84)
 
 ---
 
@@ -10,10 +11,10 @@
 | Feld | Wert |
 |---|---|
 | current_phase | `PHASE 5 (active) -- Signal Reliability & Trust` |
-| current_sprint | `PH5A_BASELINE_RELIABILITY_AND_SIGNAL_TRUST (results-review D-89, §83)` |
-| next_required_step | `PH5A_RESULTS_REVIEW_AND_CLOSE` |
+| current_sprint | `PH5B_LOW_SIGNAL_CLUSTER_ANALYSIS (active D-92, §84)` |
+| next_required_step | `PH5B_EXECUTION` |
 | phase_4_status | `CLOSED (D-87, 2026-03-24) — §82 frozen anchor` |
-| baseline | `1610 passed, ruff clean, mypy 0 errors` |
+| baseline | `1615 passed, ruff clean, mypy 0 errors` |
 
 ---
 
@@ -21,7 +22,7 @@
 
 | | |
 |---|---|
-| Tests | **1610 passed** |
+| Tests | **1615 passed** |
 | ruff | clean (E501 für `scripts/*.py` via `pyproject.toml` ausgenommen) |
 | mypy | 0 Fehler |
 | Working Tree | sauber |

@@ -3,8 +3,8 @@
 ## Current State (2026-03-24)
 
 - current_phase: `PHASE 5 (active) -- Signal Reliability & Trust`
-- current_sprint: `PH5A_BASELINE_RELIABILITY_AND_SIGNAL_TRUST`
-- next_required_step: `PH5A_RESULTS_REVIEW_AND_CLOSE`
+- current_sprint: `PH5B_LOW_SIGNAL_CLUSTER_ANALYSIS (active D-92, §84)`
+- next_required_step: `PH5B_EXECUTION`
 - phase4_status: `CLOSED (D-87)`
 - baseline: `1609 passed, ruff clean`
 
@@ -12,12 +12,12 @@
 
 Phase 4 has completed a full PH4A-PH4K arc. Canonical closeout is accepted (D-87), V-4 Dual-Write is closed, N-4 is closed, and Phase 5 is now unblocked.
 
-## Next Actions (PH5A Results Review)
+## PH5B Active (D-92, §84)
 
-- Review PH5A artifacts.
-- Summarize top reliability and signal-trust gaps.
-- Close PH5A review gate (`PH5A_RESULTS_REVIEW_AND_CLOSE`).
-- Define PH5B only after PH5A review is formally closed.
+- PH5A closed: reliability baseline established.
+- PH5B focus: cluster the 19 LLM-error-proxy docs (priority=1, relevance=0, scope=unknown).
+- Script: `scripts/ph5b_cluster_analysis.py`.
+- Goal: classify root causes and recommend targeted fixes.
 ## Phase 4 Complete Arc (PH4A-K, 11 Sprints)
 
 | Sprint | Type | Result |

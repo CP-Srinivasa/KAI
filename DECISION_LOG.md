@@ -104,3 +104,13 @@
 - Canonical baseline remains `1609 passed` and `ruff clean`.
 - Next required step is `PH5A_RESULTS_REVIEW_AND_CLOSE`.
 - PH5B must not be opened before PH5A review is formally closed.
+
+### D-92 (2026-03-24): PH5A review complete; PH5B opened — Low Signal Cluster Analysis
+- PH5A results review accepted: reliability baseline established.
+- Key finding: LLM error proxy rate 27.5% (19/69 docs) is the main Phase-5 gap.
+- Signature: `priority=1 + relevance=0 + scope=unknown` — not a parse error but a quality gap.
+- PH5B sprint defined: `PH5B_LOW_SIGNAL_CLUSTER_ANALYSIS`.
+- Objective: cluster and classify the 19 LLM-error-proxy documents; identify root causes.
+- Contract: §84 added to docs/contracts.md.
+- Guardrail: PH5C must not be opened before PH5B review is closed.
+- baseline: `1615 passed, ruff clean, mypy 0 errors`

@@ -1407,3 +1407,45 @@ Compute and record the following baseline metrics from the existing `69`-documen
 - Diagnostic sprint: measure-only, no side-effects on production paths
 
 §83 status: **closed (D-90, 2026-03-24)**
+
+---
+
+## §84 — Sprint: PH5B_LOW_SIGNAL_CLUSTER_ANALYSIS (D-92, 2026-03-24)
+
+### Objective
+
+Classify the 19 LLM-error-proxy documents identified in PH5A (signature: `priority=1, relevance=0, scope=unknown`). Determine root causes and define targeted remediation candidates for PH5C.
+
+### Background
+
+PH5A established the reliability baseline for the 69-doc paired dataset:
+- Fallback rate: 0.0% — pipeline parse errors resolved
+- LLM error proxy rate: **27.5%** (19/69) — main gap
+- Keyword coverage: 62.3% — improvement possible
+- Tag fill rate: 100% — Phase 4 complete
+- Actionable rate (Tier3): 0.0% — I-13 invariant confirmed
+
+The 27.5% proxy rate is not a parse failure but a quality gap: LLM responds but produces a low-signal output. Root causes may include irrelevant content, too-short documents, or non-crypto/non-finance topics.
+
+### Deliverables
+
+- [ ] PH5B-1 Cluster script: `scripts/ph5b_cluster_analysis.py`
+- [ ] PH5B-2 Cluster the 19 proxy docs by content type / length / topic signal
+- [ ] PH5B-3 Identify top-N root cause patterns
+- [ ] PH5B-4 Artifact: `artifacts/ph5b_cluster_analysis.json`
+- [ ] PH5B-5 Artifact: `artifacts/ph5b_operator_summary.md`
+- [ ] PH5B-6 Governance docs + sprint close
+
+### Non-Goals
+
+- No production code changes in PH5B
+- No keyword or scoring formula changes
+- No LLM prompt changes (diagnostic only)
+
+### Constraints
+
+- I-13 permanent: `actionable` remains LLM-only
+- Diagnostic sprint: classify and report only; no side-effects on production paths
+- PH5C must not be opened before PH5B review is closed
+
+§84 status: **active (D-92, 2026-03-24)**

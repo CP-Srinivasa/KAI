@@ -3,8 +3,8 @@
 ## Current State (2026-03-24)
 
 - current_phase: `PHASE 5 (active) -- Signal Reliability & Trust`
-- current_sprint: `PH5A_BASELINE_RELIABILITY_AND_SIGNAL_TRUST`
-- next_required_step: `PH5A_RESULTS_REVIEW_AND_CLOSE`
+- current_sprint: `PH5B_LOW_SIGNAL_CLUSTER_ANALYSIS (active D-92, §84)`
+- next_required_step: `PH5B_EXECUTION`
 - baseline: `1609 passed, ruff clean`
 ### PH4K Execution Results Note (2026-03-23)
 
@@ -28,8 +28,8 @@ DB test failures remain on a separate track.
 
 | Risk ID | Description | Severity | Likelihood | Mitigation | Status |
 |---|---|---|---|---|---|
-| R-PH5-001 | Skipping PH5A review would weaken Phase-5 prioritization. | high | medium | Complete `PH5A_RESULTS_REVIEW_AND_CLOSE` before opening PH5B. | open |
-| R-PH5-002 | Opening PH5B too early may dilute reliability findings from PH5A. | high | medium | Keep PH5B blocked until PH5A review is formally closed and top gaps are summarized. | open |
+| R-PH5-001 | PH5A review skipped weakens Phase-5 prioritization. | high | medium | Closed — PH5A review completed (D-92). | closed |
+| R-PH5-002 | LLM error proxy 27.5% — root cause unknown. | high | medium | PH5B active to classify root causes. | open (PH5B) |
 
 ---
 
