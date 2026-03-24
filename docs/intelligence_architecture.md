@@ -1,19 +1,19 @@
-﻿# Intelligence Architecture
+# Intelligence Architecture
 
 ## Current State (2026-03-23)
 
 | Field | Value |
 |---|---|
 | current_phase | `PHASE 4 (active)` |
-| current_sprint | `PH4K_TAG_SIGNAL_UTILITY_REVIEW` |
-| next_required_step | `PH4K_RESULTS_REVIEW_AND_CLOSE` |
+| last_closed_sprint | `PH4K_TAG_SIGNAL_UTILITY_REVIEW (closed D-84)` |
+| next_required_step | `PH4L definition or Phase 4 closeout` |
 | ph4e_status | `closed (D-67) — scoring calibration audit complete; §73 frozen anchor` |
 | ph4f_status | `closed — frozen intervention anchor; §74 frozen anchor` |
 | ph4g_status | `closed — relevance floor applied; actionable reverted (I-13); §75 frozen anchor` |
 | ph4h_status | `closed (D-75) — Option B: I-13 permanent; actionable LLM-only; §76 frozen anchor` |
 | ph4i_status | `closed (D-78) — market_scope enrichment; §77 frozen anchor` |
 | ph4j_status | `closed (D-81) — tags enrichment verified; §78 frozen anchor` |
-| baseline | `1554 passed, ruff clean` |
+| baseline | `761 passed, ruff clean` |
 | ph4b_status | `closed (D-62) — sections 68 and 69 frozen anchors` |
 | ph4c_status | `closed — section 70 frozen audit anchor` |
 | ph4d_status | `closed — section 71 frozen anchor` |
@@ -23,9 +23,9 @@
 | ph4h_contract | `docs/contracts.md §76 (closed D-75 — frozen anchor)` |
 | ph4i_contract | `docs/contracts.md §77 (closed D-78)` |
 | ph4j_contract | `docs/contracts.md §78 (closed D-81 — frozen anchor)` |
-| ph4k_status | `results-review mode — utility artifacts produced; closeout pending` |
-| ph4k_contract | `docs/contracts.md §79 (results-review mode)` |
-| architecture_status | three-tier stack unchanged; PH4A–PH4J closed/frozen anchors (§67–§78); PH4K in results-review mode (§79) |
+| ph4k_status | `closed (D-84) — utility review complete; §79 frozen anchor` |
+| ph4k_contract | `docs/contracts.md §79 (closed D-84 — frozen anchor)` |
+| architecture_status | three-tier stack unchanged; PH4A–PH4K closed/frozen anchors (§67–§79) |
 
 ---
 
@@ -126,17 +126,17 @@
   - `I-13` unchanged and intact
 - DB test failures tracked on a separate track; excluded from PH4J closeout.
 
-## PH4K Results-Review Gate (§79)
+## PH4K Closed Sprint (§79 frozen anchor — D-84)
 
-- Sprint: `PH4K_TAG_SIGNAL_UTILITY_REVIEW`. **Execution complete; sprint remains active in review mode.**
-- Contract: `docs/contracts.md §79` (results-review mode).
+- Sprint: `PH4K_TAG_SIGNAL_UTILITY_REVIEW`. **Formally closed (D-84).**
+- Contract: `docs/contracts.md §79` (closed; frozen anchor).
 - Utility artifacts (locked):
   - fallback_tags_populated_docs: `69/69` (100%)
   - watchlist_overlap_docs: `36/69` (52.17%)
   - corr(tag_count, tier3_priority): `0.5564`
   - mean_tier3_priority WITH overlap: `5.4444` vs. WITHOUT: `2.3333` (delta: +3.1)
 - No code changes (diagnostic-only sprint).
-- Next required step: `PH4K_RESULTS_REVIEW_AND_CLOSE`.
+- Results review complete; sprint formally closed.
 
 ## Design Principle
 
