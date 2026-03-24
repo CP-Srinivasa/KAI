@@ -19,7 +19,7 @@
 - next_required_step: `STRATEGIC_HOLD -- no new sprint until alert-precision + paper-trading positive`
 
 
-- baseline: `1615 passed, ruff clean, mypy 0 errors`
+- baseline: `1442 passed, ruff clean, mypy 0 errors`
 
 
 - working_tree: `clean`
