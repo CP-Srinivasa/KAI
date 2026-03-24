@@ -19,7 +19,7 @@ Dieser Prompt wird VOR jeder Code-Arbeit im KAI-Repository geladen. Er definiert
 1. `CLAUDE.md` — Non-Negotiable Architecture Rules
 2. `AGENTS.md` (Root) — Sprint-Stand und Architektur-Entscheidungen
 3. `docs/contracts.md` — Kanonische Datenmodelle und Surface-Contracts
-4. `docs/intelligence_architecture.md` — I-Invarianten (I-1 bis I-250+)
+4. `docs/archive/intelligence_architecture.md` — Historisches Invarianten-Artefakt (nicht aktive Architekturquelle)
 5. `ASSUMPTIONS.md` — Dokumentierte Annahmen A-001 bis A-020+
 6. Betroffenes Modul `AGENTS.md` (z.B. `app/risk/AGENTS.md`)
 7. `KAI_SYSTEM_PROMPT.md` — Identität und absolute Grenzen
@@ -99,7 +99,7 @@ app/api/           → FastAPI Endpoints
 2. Dateien geändert: [Liste]
 3. Tests: [N passed, ruff clean / Fehler]
 4. Annahmen: [neue Assumptions in ASSUMPTIONS.md?]
-5. Invarianten: [neue I-Nummern in intelligence_architecture.md?]
+5. Invarianten: [keine neue Pflege in intelligence_architecture.md; aktive Architektur nur in CLAUDE.md + docs/contracts.md]
 6. Offene Risiken / TODOs
 ```
 

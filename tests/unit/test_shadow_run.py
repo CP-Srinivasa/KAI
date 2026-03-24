@@ -1,7 +1,7 @@
 """Tests for AnalysisPipeline shadow run behaviour (I-51–I-57).
 
 Sprint 10 — Companion Shadow Run.
-Contract reference: docs/sprint10_shadow_run_contract.md
+Contract reference: docs/archive/sprint10_shadow_run_contract.md
 Invariants: I-51–I-57.
 
 Tests cover:

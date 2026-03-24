@@ -73,12 +73,12 @@ KAI ist **nicht**:
 | `AGENTS.md` | Sprint-Protokoll P1–P42 | ✅ Aktuell |
 | `AGENT_ROLES.md` | Rollenmodell (Codex/Claude/Antigravity) | ✅ Aktuell |
 | `docs/contracts.md` | Datenmodelle §1–§47 | ✅ Aktuell |
-| `docs/intelligence_architecture.md` | I-1 bis I-250 | ✅ Aktuell |
+| `docs/archive/intelligence_architecture.md` | I-1 bis I-250 | historisch (archiviert) |
 | `ASSUMPTIONS.md` | A-001 bis A-020 | ✅ Aktuell |
 | `RISK_POLICY.md` | Risikoparameter | ✅ Aktuell |
 | `SECURITY.md` | Sicherheitsbaseline | ✅ Aktuell |
 | `TELEGRAM_INTERFACE.md` | Operator-Befehle | ✅ Aktuell |
-| `docs/kai_identity.md` | KAI-Identität | ⚠️ Zähler veraltet (1158 statt 1315) |
+| `docs/archive/kai_identity.md` | KAI-Identität | historisch (archiviert) |
 | `KAI_SYSTEM_PROMPT.md` | System-Prompt | ✅ NEU v1 |
 | `KAI_DEVELOPER_PROMPT.md` | Developer-Prompt | ✅ NEU v1 |
 | `KAI_EXECUTION_PROMPT.md` | Execution-Prompt | ✅ NEU v1 |
@@ -157,7 +157,7 @@ noch nicht durch einen offiziellen Sprint-Review gegangen):
 
 | Nr. | Inkonsistenz | Datei | Handlung |
 |---|---|---|---|
-| IC-001 | `docs/kai_identity.md` zeigt "1158 Tests", "Sprint 33", "41 MCP Tools" — veraltet | `docs/kai_identity.md` | Zähler aktualisieren: 1315 Tests, Sprint 36, 46 MCP Tools |
+| IC-001 | `docs/archive/kai_identity.md` zeigt "1158 Tests", "Sprint 33", "41 MCP Tools" — historisch veraltet | `docs/archive/kai_identity.md` | Kein aktiver Fix erforderlich (Archiv) |
 | IC-002 | `AGENT_ROLES.md` referenziert `CLAUDE.litcoffee` statt `CLAUDE.md` | `AGENT_ROLES.md:62` | Korrigieren auf `CLAUDE.md` |
 | IC-003 | `TASKLIST.md` Kopfzeile sagt "Last Updated: 2026-03-20" | `TASKLIST.md` | Auf 2026-03-21 aktualisieren |
 
@@ -170,7 +170,7 @@ noch nicht durch einen offiziellen Sprint-Review gegangen):
 | R-001 | Kein formaler Review-Prozess für Sprint-Deliverables durch separate Person | Mittel | Review-Checkliste in TASKLIST.md |
 | R-002 | `loop-cycle-summary` CLI zeigt rohe JSONL-Records ohne Schema-Validierung | Niedrig | Akzeptiert (read-only, advisory) |
 | R-003 | Telegram `/approve` hat noch keinen Execution-Effekt — Operator könnte Fehlverhalten annehmen | Mittel | A-017 dokumentiert, Telegram-Interface aktualisiert |
-| R-004 | `docs/kai_identity.md` veraltete Test/Sprint/Tool-Zähler könnte Agenten verwirren | Mittel | IC-001 beheben |
+| R-004 | Historische Zähler in `docs/archive/kai_identity.md` könnten Agenten verwirren | Mittel | Auf aktive Quellen `CLAUDE.md` + `docs/contracts.md` verweisen |
 | R-005 | Kein automatisches Audit-Log-Rotation implementiert (A-005 Hinweis) | Niedrig | Manuelle Rotation, dokumentiert |
 
 ---

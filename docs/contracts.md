@@ -29,6 +29,11 @@
   Decisions are recorded only as short code comments or compact 3-line entries in `DECISION_LOG.md`.
 - Until that gate is met, companion model infrastructure remains frozen and only governance/reporting updates are allowed.
 
+## Living Architecture Scope
+
+- Active architecture sources are `CLAUDE.md` and this file (`docs/contracts.md`).
+- All other architecture documents under `docs/` are historical artifacts in `docs/archive/`.
+
 
 ---
 

@@ -63,3 +63,7 @@
 
 > Review date: **2026-04-23** (30 days from 2026-03-24). After a real 7-day ingestion run with LLM analysis:
 > if `alert_audit.jsonl` has fewer than 5 triggered alerts **or** alert precision is below 30%, stop trading-signal work and focus on data quality (feeds, keywords, spam-filter) with no new architecture.
+
+## Living Architecture (D-106)
+
+> Active architecture sources are only `CLAUDE.md` and `docs/contracts.md`. All other `docs/*.md` are historical artifacts in `docs/archive/`.

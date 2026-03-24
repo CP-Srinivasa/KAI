@@ -94,6 +94,9 @@
 | thirty_day_gate | `D-105 -- review on 2026-04-23 after a real 7-day ingestion run with LLM analysis; if alert_audit.jsonl has <5 triggered alerts or alert precision <30%, stop trading-signal work and focus on data quality (feeds, keywords, spam-filter), no new architecture` |
 
 
+| living_architecture | `D-106 -- active architecture is CLAUDE.md + docs/contracts.md (slim); all other docs are historical in docs/archive/` |
+
+
 ---> **Verbindliches Betriebsdokument fuer alle Coding-Agenten.**
 
 
@@ -108,4 +111,4 @@
 - Entscheidungen werden nur noch dokumentiert als:
   - kurzer Code-Kommentar direkt am geänderten Verhalten, oder
   - kompakter 3-Zeilen-Eintrag in `DECISION_LOG.md`.
-- `docs/contracts.md` und `docs/contracts_archive.md` bleiben rein historisch/kanonisch lesbar; keine neue Sprint-Doku dort eröffnen.
+- `docs/contracts.md` bleibt kanonisch; historische Vertragsdoku liegt unter `docs/archive/contracts_archive.md`.

@@ -8,7 +8,7 @@ Purpose: technical source of truth for the current KAI repo state before further
 This rebaseline is based on:
 
 1. `AGENTS.md`
-2. `docs/kai_identity.md`
+2. `docs/archive/kai_identity.md`
 3. live inventory helpers in `app/cli/main.py` and `app/agents/mcp_server.py`
 4. current registered CLI commands, MCP tools, and test-validated module behavior
 
@@ -19,7 +19,7 @@ When historical sprint text and current code differ, this file is authoritative.
 | Source | Role | Status |
 |---|---|---|
 | `AGENTS.md` | operator and coding-agent governance | canonical |
-| `docs/kai_identity.md` | identity, mission, safety posture | canonical |
+| `docs/archive/kai_identity.md` | identity, mission, safety posture | historical |
 
 ## Master-Prompt Baseline Checks
 
@@ -201,7 +201,7 @@ These commands are currently registered and tested, but they are not part of the
 
 ## Recognized Inconsistencies
 
-1. `docs/kai_identity.md` had stale counts before rebaseline; it now points to this matrix.
+1. `docs/archive/kai_identity.md` had stale counts before rebaseline; it remains historical.
 2. `TASKLIST.md` is historical and contains older counts; this matrix supersedes count drift.
 3. The locked CLI final inventory contains 28 commands, while 47 research commands are actually registered.
 4. `DecisionRecord` exists in `app/execution/models.py`, but decision-journal CLI/MCP surfaces still use `app/decisions/journal.py`.

@@ -486,6 +486,6 @@
 - After a real 7-day ingestion run with LLM analysis: if alert_audit.jsonl has <5 triggered alerts OR alert precision <30%, stop trading-signal work.
 - On stop: focus only on data quality (feeds, keywords, spam-filter) and do not introduce new architecture.
 
-### D-106 (2026-03-24): docs/ auf lebende Architektur reduziert
-- Lebend: CLAUDE.md + docs/contracts.md. Alles andere → docs/archive/ (34 Dateien, inkl. intelligence_architecture.md).
-- Keine historischen Docs mehr im aktiven Pfad.
+### D-106 (2026-03-24): docs/intelligence_architecture.md archived; living architecture slimmed
+- `docs/intelligence_architecture.md` is treated as historical and moved to `docs/archive/intelligence_architecture.md`.
+- Active architecture sources are `CLAUDE.md` and `docs/contracts.md` only; all other `docs/*.md` moved to `docs/archive/`.
