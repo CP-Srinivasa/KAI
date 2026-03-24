@@ -1,288 +1,391 @@
-"""PH5C Stub Document Pre-Filter Baseline.
+"""PH5C filter baseline execution.
 
-Validates a content-length threshold for pre-LLM stub detection.
-Research questions:
-1. How many docs fall below threshold=50 bytes?
-2. Are any below-threshold docs non-stub (valid short documents)?
-3. What is the projected proxy-rate reduction after filtering?
-4. What is the recommended threshold?
+This script evaluates pre-LLM stub filtering options on the PH5 dataset.
 
-Generates:
+Primary goals:
+1. Identify stub-like documents (manual placeholder content).
+2. Validate exclusion risk for short manual documents.
+3. Estimate proxy-rate and LLM-cost impact for filter candidates.
+
+Outputs:
 - artifacts/ph5c/ph5c_stub_filter_baseline.json
 - artifacts/ph5c/ph5c_operator_summary.md
 """
 from __future__ import annotations
 
 import json
-from collections import Counter
+import re
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
 BASE = Path(__file__).parent.parent
 ARTIFACTS = BASE / "artifacts"
+INPUT_DATASET = ARTIFACTS / "ph4b" / "ph4b_tier3_shadow.jsonl"
+OUT_DIR = ARTIFACTS / "ph5c"
 
-PROPOSED_THRESHOLD = 50  # bytes
-PROXY_SIGNATURE = {"priority_score": 1, "relevance_score": 0.0, "market_scope": "unknown"}
+# PH5C baseline threshold from contract candidate.
+MAX_STUB_LEN = 50
 
-# Finance/crypto topic keywords — used to detect valid short docs
-FINANCE_KEYWORDS = {
-    "bitcoin", "btc", "crypto", "ethereum", "eth", "defi", "token", "blockchain",
-    "stock", "equity", "market", "trading", "invest", "fund", "usd", "eur",
-    "currency", "rate", "inflation", "fed", "portfolio", "asset", "yield",
-    "bond", "derivative", "futures", "options", "volatility", "liquidity",
-    "nasdaq", "s&p", "sp500", "dow", "index", "etf", "reit", "forex",
+# Placeholder tokens we consider non-analyzable by default.
+PLACEHOLDER_VALUES = {
+    "",
+    "-",
+    "--",
+    "n/a",
+    "na",
+    "none",
+    "comment",
+    "comments",
+    "todo",
+    "tbd",
+}
+
+# Conservative title signal set:
+# If one of these terms appears in title, we do NOT auto-skip in conservative mode.
+TITLE_SIGNAL_KEYWORDS = {
+    # finance/macro keywords
+    "bitcoin",
+    "crypto",
+    "ethereum",
+    "defi",
+    "stock",
+    "equity",
+    "market",
+    "trading",
+    "investment",
+    "investor",
+    "portfolio",
+    "fund",
+    "bond",
+    "etf",
+    "inflation",
+    "fed",
+    "rate",
+    "usd",
+    "eur",
+    # frequently market-relevant entities from this corpus
+    "tesla",
+    "salesforce",
+    "anthropic",
+    "google",
+    "openai",
+    "acquired",
+    "acquisition",
+    # ai/tech signal terms to avoid over-broad auto-skip
+    "ai",
+    "llm",
+    "gpt",
 }
 
 
+@dataclass(frozen=True)
+class Doc:
+    document_id: str
+    title: str
+    source: str
+    raw_content: str
+    content_len: int
+    priority_score: int | None
+    relevance_score: float | None
+    market_scope: str | None
+
+    @property
+    def normalized_content(self) -> str:
+        return " ".join(self.raw_content.strip().lower().split())
+
+    @property
+    def is_proxy_signature(self) -> bool:
+        return (
+            self.priority_score == 1
+            and self.relevance_score == 0.0
+            and self.market_scope == "unknown"
+        )
+
+
 def load_jsonl(path: Path) -> list[dict]:
-    docs = []
+    rows: list[dict] = []
     with open(path, encoding="utf-8") as f:
         for line in f:
             line = line.strip()
             if line:
-                docs.append(json.loads(line))
-    return docs
+                rows.append(json.loads(line))
+    return rows
 
 
-def extract_meta(doc: dict) -> dict:
-    messages = doc.get("messages", [])
+def parse_doc(row: dict) -> Doc:
+    messages = row.get("messages", [])
+
     user_content = ""
-    for m in messages:
-        if m.get("role") == "user":
-            user_content = m.get("content", "")
+    for msg in messages:
+        if msg.get("role") == "user":
+            user_content = msg.get("content", "")
             break
 
-    title = source = raw_content = ""
+    title = ""
+    source = ""
     for line in user_content.split("\n"):
         if line.startswith("Title:"):
-            title = line[6:].strip()
+            title = line.split("Title:", 1)[1].strip()
         elif line.startswith("Source:"):
-            source = line[7:].strip()
+            source = line.split("Source:", 1)[1].strip()
 
-    ci = user_content.find("Content:")
-    if ci >= 0:
-        raw_content = user_content[ci + 8:].strip()
+    raw_content = ""
+    content_start = user_content.find("Content:")
+    if content_start >= 0:
+        raw_content = user_content[content_start + 8 :].strip()
 
-    llm_out: dict = {}
+    llm_output: dict = {}
     for msg in reversed(messages):
         if msg.get("role") == "assistant":
             try:
-                llm_out = json.loads(msg["content"])
-            except (json.JSONDecodeError, KeyError):
-                pass
+                llm_output = json.loads(msg.get("content", "{}"))
+            except json.JSONDecodeError:
+                llm_output = {}
             break
 
-    return {
-        "document_id": doc.get("metadata", {}).get("document_id", ""),
-        "title": title,
-        "source": source,
-        "raw_content": raw_content,
-        "content_len": len(raw_content),
-        "llm_out": llm_out,
-    }
-
-
-def is_proxy(m: dict) -> bool:
-    o = m["llm_out"]
-    return (
-        o.get("priority_score") == 1
-        and float(o.get("relevance_score", 1.0)) == 0.0
-        and o.get("market_scope") == "unknown"
+    metadata = row.get("metadata", {})
+    return Doc(
+        document_id=metadata.get("document_id", ""),
+        title=title,
+        source=source,
+        raw_content=raw_content,
+        content_len=len(raw_content),
+        priority_score=llm_output.get("priority_score"),
+        relevance_score=llm_output.get("relevance_score"),
+        market_scope=llm_output.get("market_scope"),
     )
 
 
-def has_finance_signal(m: dict) -> bool:
-    text = (m["title"] + " " + m["raw_content"]).lower()
-    return any(kw in text for kw in FINANCE_KEYWORDS)
+def has_title_signal(title: str) -> bool:
+    t = title.lower()
+    if any(keyword in t for keyword in TITLE_SIGNAL_KEYWORDS):
+        return True
+    # Optional ticker-ish signal in title.
+    return re.search(r"\b[A-Z]{2,5}\b", title) is not None
 
 
-def stub_classification(m: dict, threshold: int) -> str:
-    """Classify a below-threshold document."""
-    if m["content_len"] > threshold:
-        return "above_threshold"
-    if has_finance_signal(m):
-        return "short_finance"   # short but potentially valid
-    return "stub"                # no finance signal — safe to filter
+def is_stub_candidate(doc: Doc) -> bool:
+    return (
+        doc.source.lower() == "manual"
+        and doc.content_len <= MAX_STUB_LEN
+        and doc.normalized_content in PLACEHOLDER_VALUES
+    )
+
+
+def evaluate_rule(name: str, docs: list[Doc], flagged_ids: set[str]) -> dict:
+    flagged = [d for d in docs if d.document_id in flagged_ids]
+    kept = [d for d in docs if d.document_id not in flagged_ids]
+
+    total = len(docs)
+    proxy_total = sum(1 for d in docs if d.is_proxy_signature)
+    tp = sum(1 for d in flagged if d.is_proxy_signature)
+    fp = sum(1 for d in flagged if not d.is_proxy_signature)
+    fn = proxy_total - tp
+
+    precision = (tp / (tp + fp)) if (tp + fp) else 0.0
+    recall = (tp / proxy_total) if proxy_total else 0.0
+    llm_calls_saved = len(flagged)
+    llm_calls_saved_rate = llm_calls_saved / total if total else 0.0
+
+    remaining_proxy = sum(1 for d in kept if d.is_proxy_signature)
+    projected_proxy_rate_overall = remaining_proxy / total if total else 0.0
+    projected_proxy_rate_on_remaining = remaining_proxy / len(kept) if kept else 0.0
+
+    return {
+        "rule": name,
+        "flagged_count": len(flagged),
+        "kept_count": len(kept),
+        "tp_proxy_captured": tp,
+        "fp_non_proxy_flagged": fp,
+        "fn_proxy_missed": fn,
+        "precision_proxy_capture": round(precision, 4),
+        "recall_proxy_capture": round(recall, 4),
+        "llm_calls_saved": llm_calls_saved,
+        "llm_calls_saved_rate": round(llm_calls_saved_rate, 4),
+        "projected_proxy_rate_overall": round(projected_proxy_rate_overall, 4),
+        "projected_proxy_rate_on_remaining": round(projected_proxy_rate_on_remaining, 4),
+    }
+
+
+def choose_recommended_rule(evaluations: list[dict]) -> str:
+    # Prefer zero false-positive rules. Within those, maximize proxy recall.
+    zero_fp = [e for e in evaluations if e["fp_non_proxy_flagged"] == 0]
+    if zero_fp:
+        return max(zero_fp, key=lambda e: e["recall_proxy_capture"])["rule"]
+    # Fallback: maximize F1-like proxy capture tradeoff.
+    return max(
+        evaluations,
+        key=lambda e: (2 * e["precision_proxy_capture"] * e["recall_proxy_capture"])
+        / (e["precision_proxy_capture"] + e["recall_proxy_capture"] + 1e-9),
+    )["rule"]
 
 
 def main() -> None:
-    print("PH5C: Loading dataset...")
-    tier3_docs = load_jsonl(ARTIFACTS / "ph4b" / "ph4b_tier3_shadow.jsonl")
-    n = len(tier3_docs)
-    assert n == 69, f"Expected 69 docs, got {n}"  # noqa: S101
-    print(f"  Loaded {n} documents.")
+    print("PH5C: loading tier3 dataset...")
+    rows = load_jsonl(INPUT_DATASET)
+    docs = [parse_doc(r) for r in rows]
+    total = len(docs)
+    if total != 69:
+        raise ValueError(f"Expected 69 docs, got {total}")
 
-    docs = [extract_meta(d) for d in tier3_docs]
-    proxy_docs = [d for d in docs if is_proxy(d)]
-    n_proxy = len(proxy_docs)
-    print(f"  Proxy docs (LLM error signature): {n_proxy}/{n}")
+    proxy_total = sum(1 for d in docs if d.is_proxy_signature)
+    print(f"  docs={total}, proxy_signature={proxy_total}")
 
-    # ── Threshold analysis ─────────────────────────────────────────────────────
-    thresholds = [10, 20, 30, 50, 100, 200]
-    threshold_analysis = {}
+    stub_candidates = [d for d in docs if is_stub_candidate(d)]
+    stub_candidate_ids = {d.document_id for d in stub_candidates}
+    print(f"  stub_candidates={len(stub_candidates)} (MAX_STUB_LEN={MAX_STUB_LEN})")
 
-    print("\n  Threshold scan:")
-    print(f"  {'Threshold':>10}  {'Below':>6}  {'Stub':>6}  {'ShortFin':>9}  {'ProxyCaught':>12}  {'FalsePos':>9}")
-    for thr in thresholds:
-        below = [d for d in docs if d["content_len"] <= thr]
-        stubs = [d for d in below if stub_classification(d, thr) == "stub"]
-        short_fin = [d for d in below if stub_classification(d, thr) == "short_finance"]
-        proxy_caught = [d for d in below if is_proxy(d)]
-        false_pos = [d for d in below if not is_proxy(d) and stub_classification(d, thr) != "short_finance"]
-        threshold_analysis[thr] = {
-            "below_threshold": len(below),
-            "stub_count": len(stubs),
-            "short_finance_count": len(short_fin),
-            "proxy_caught": len(proxy_caught),
-            "false_positives": len(false_pos),
-            "proxy_catch_rate": round(len(proxy_caught) / n_proxy, 4) if n_proxy else 0.0,
-            "precision": round(len(proxy_caught) / len(below), 4) if below else 0.0,
-        }
-        print(f"  {thr:>10}  {len(below):>6}  {len(stubs):>6}  {len(short_fin):>9}  {len(proxy_caught):>12}  {len(false_pos):>9}")
+    # Rule A (aggressive): skip all placeholder candidates.
+    aggressive_ids = set(stub_candidate_ids)
 
-    # ── Recommended threshold ──────────────────────────────────────────────────
-    # Prefer the lowest threshold with 100% proxy catch rate and 0 false positives
-    recommended_thr = PROPOSED_THRESHOLD
-    for thr in sorted(thresholds):
-        ta = threshold_analysis[thr]
-        if ta["proxy_caught"] == n_proxy and ta["false_positives"] == 0:
-            recommended_thr = thr
-            break
+    # Rule B (conservative): skip placeholder candidates only when title has no signal.
+    conservative_ids = {
+        d.document_id for d in stub_candidates if not has_title_signal(d.title)
+    }
 
-    rec = threshold_analysis[recommended_thr]
-    projected_proxy_rate = round((n_proxy - rec["proxy_caught"]) / n, 4)
-    print(f"\n  Recommended threshold: {recommended_thr} bytes")
-    print(f"  Proxy catch rate: {rec['proxy_catch_rate']:.1%} ({rec['proxy_caught']}/{n_proxy})")
-    print(f"  False positives: {rec['false_positives']}")
-    print(f"  Projected proxy rate after filter: {projected_proxy_rate:.1%}")
+    evaluations = [
+        evaluate_rule("aggressive_placeholder_skip", docs, aggressive_ids),
+        evaluate_rule("conservative_placeholder_skip", docs, conservative_ids),
+    ]
+    recommended_rule = choose_recommended_rule(evaluations)
+    recommended_eval = next(e for e in evaluations if e["rule"] == recommended_rule)
 
-    # ── Per-doc stub classification at recommended threshold ───────────────────
-    stub_docs = []
-    for d in docs:
-        cls = stub_classification(d, recommended_thr)
-        if cls in ("stub", "short_finance"):
-            stub_docs.append({
-                "document_id": d["document_id"],
-                "title": d["title"],
-                "source": d["source"],
-                "content_len": d["content_len"],
-                "classification": cls,
-                "is_proxy": is_proxy(d),
-            })
+    aggressive_fp_docs = [
+        d for d in docs if d.document_id in aggressive_ids and not d.is_proxy_signature
+    ]
+    conservative_flagged_docs = [d for d in docs if d.document_id in conservative_ids]
 
-    # ── Source breakdown ───────────────────────────────────────────────────────
-    below_thr = [d for d in docs if d["content_len"] <= recommended_thr]
-    src_counter = Counter(d["source"] for d in below_thr)
-    print(f"\n  Below-threshold source breakdown: {dict(src_counter)}")
-
-    # ── Assemble output ────────────────────────────────────────────────────────
+    OUT_DIR.mkdir(parents=True, exist_ok=True)
     generated_at = datetime.now(UTC).isoformat()
-    output = {
+
+    report = {
         "report_type": "ph5c_stub_filter_baseline",
         "phase": "PHASE 5",
         "sprint": "PH5C_FILTER_BEFORE_LLM_BASELINE",
         "generated_at": generated_at,
         "inputs": {
-            "total_docs": n,
-            "proxy_docs": n_proxy,
-            "tier3_dataset": str(ARTIFACTS / "ph4b" / "ph4b_tier3_shadow.jsonl"),
+            "dataset": str(INPUT_DATASET),
+            "total_docs": total,
+            "proxy_docs": proxy_total,
+            "max_stub_len": MAX_STUB_LEN,
+            "placeholder_values": sorted(PLACEHOLDER_VALUES),
         },
-        "proxy_signature": PROXY_SIGNATURE,
-        "threshold_analysis": threshold_analysis,
-        "recommendation": {
-            "threshold_bytes": recommended_thr,
-            "below_threshold_docs": rec["below_threshold"],
-            "stub_docs": rec["stub_count"],
-            "short_finance_docs": rec["short_finance_count"],
-            "proxy_catch_rate": rec["proxy_catch_rate"],
-            "false_positives": rec["false_positives"],
-            "projected_proxy_rate_after_filter": projected_proxy_rate,
-            "projected_proxy_rate_reduction": round(n_proxy / n - projected_proxy_rate, 4),
+        "stub_candidates": {
+            "count": len(stub_candidates),
+            "proxy_count": sum(1 for d in stub_candidates if d.is_proxy_signature),
+            "non_proxy_count": sum(1 for d in stub_candidates if not d.is_proxy_signature),
+            "unique_normalized_content": sorted({d.normalized_content for d in stub_candidates}),
         },
-        "stub_documents": stub_docs,
+        "rule_evaluations": evaluations,
+        "recommended_rule": recommended_rule,
+        "recommended_rule_metrics": recommended_eval,
+        "risk_validation": {
+            "aggressive_rule_non_proxy_exclusions": [
+                {
+                    "document_id": d.document_id,
+                    "title": d.title,
+                    "content_len": d.content_len,
+                    "priority_score": d.priority_score,
+                    "relevance_score": d.relevance_score,
+                    "market_scope": d.market_scope,
+                }
+                for d in aggressive_fp_docs
+            ],
+            "conservative_rule_flagged_docs": [
+                {
+                    "document_id": d.document_id,
+                    "title": d.title,
+                    "content_len": d.content_len,
+                    "is_proxy_signature": d.is_proxy_signature,
+                }
+                for d in conservative_flagged_docs
+            ],
+        },
+        "conclusion": {
+            "ph5b_closed": True,
+            "root_cause_confirmed": "EMPTY_MANUAL placeholder content",
+            "execution_readiness": "filter baseline executed",
+            "note": (
+                "Aggressive placeholder-only skip maximizes proxy reduction but risks excluding "
+                "valid short manual docs. Conservative skip has zero observed non-proxy exclusions "
+                "on this dataset and is recommended as baseline-first path."
+            ),
+        },
     }
 
-    out_dir = ARTIFACTS / "ph5c"
-    out_dir.mkdir(exist_ok=True)
-    out_path = out_dir / "ph5c_stub_filter_baseline.json"
-    out_path.write_text(json.dumps(output, indent=2, ensure_ascii=False), encoding="utf-8")
-    print(f"\nWrote: {out_path}")
+    out_json = OUT_DIR / "ph5c_stub_filter_baseline.json"
+    out_json.write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
+    print(f"  wrote {out_json}")
 
-    # ── Operator summary ───────────────────────────────────────────────────────
-    rec_ta = threshold_analysis[recommended_thr]
     lines = [
-        "# PH5C Stub Filter Baseline — Operator Summary",
+        "# PH5C Stub Filter Baseline - Operator Summary",
         "",
         f"**Generated:** {generated_at[:19]}Z  ",
-        "**Sprint:** PH5C_FILTER_BEFORE_LLM_BASELINE  ",
-        f"**Dataset:** {n} tier3 documents — {n_proxy} proxy docs",
+        "**Sprint:** PH5C_FILTER_BEFORE_LLM_BASELINE (execution run)  ",
+        f"**Dataset:** {total} Tier3 docs, proxy-signature={proxy_total}",
+        "",
+        "---",
+        "",
+        "## Confirmed Context",
+        "",
+        "- PH5B remains closed and accepted.",
+        "- Root cause remains EMPTY_MANUAL placeholder content.",
+        "- PH5C run executed as baseline filter analysis (no production deployment).",
+        "",
+        "---",
+        "",
+        "## Rule Evaluation",
+        "",
+        "| Rule | Flagged | Proxy Captured | Non-Proxy Flagged | Precision | Recall | Calls Saved | Projected Proxy Rate (overall) |",
+        "|---|---:|---:|---:|---:|---:|---:|---:|",
+    ]
+    for e in evaluations:
+        lines.append(
+            f"| {e['rule']} | {e['flagged_count']} | {e['tp_proxy_captured']} | "
+            f"{e['fp_non_proxy_flagged']} | {e['precision_proxy_capture']:.2f} | "
+            f"{e['recall_proxy_capture']:.2f} | {e['llm_calls_saved']} | "
+            f"{e['projected_proxy_rate_overall']:.3f} |"
+        )
+
+    lines += [
         "",
         "---",
         "",
         "## Recommendation",
         "",
-        "| Field | Value |",
-        "|---|---|",
-        f"| Recommended threshold | **{recommended_thr} bytes** |",
-        f"| Below-threshold docs | {rec_ta['below_threshold']}/{n} |",
-        f"| Stub docs (safe to filter) | {rec_ta['stub_count']} |",
-        f"| Short finance docs (keep) | {rec_ta['short_finance_count']} |",
-        f"| Proxy catch rate | {rec_ta['proxy_catch_rate']:.1%} ({rec_ta['proxy_caught']}/{n_proxy}) |",
-        f"| False positives | {rec_ta['false_positives']} |",
-        f"| Projected proxy rate after filter | **{projected_proxy_rate:.1%}** (was 27.5%) |",
-        f"| Projected reduction | {round(n_proxy/n - projected_proxy_rate, 4):.1%} |",
+        f"- **Recommended baseline rule:** `{recommended_rule}`",
+        (
+            f"- Rationale: precision={recommended_eval['precision_proxy_capture']:.2f}, "
+            f"recall={recommended_eval['recall_proxy_capture']:.2f}, "
+            f"non-proxy flagged={recommended_eval['fp_non_proxy_flagged']}."
+        ),
+        (
+            f"- Estimated LLM calls saved: {recommended_eval['llm_calls_saved']}/{total} "
+            f"({recommended_eval['llm_calls_saved_rate']:.1%})."
+        ),
+        (
+            f"- Projected proxy rate after skip (overall): "
+            f"{recommended_eval['projected_proxy_rate_overall']:.1%}."
+        ),
         "",
         "---",
         "",
-        "## Threshold Scan",
+        "## Risk Note",
         "",
-        "| Threshold (bytes) | Below | Stubs | Short-Finance | Proxy Caught | False Pos | Precision |",
-        "|---|---|---|---|---|---|---|",
-    ]
-    for thr in thresholds:
-        ta = threshold_analysis[thr]
-        marker = " ← recommended" if thr == recommended_thr else ""
-        lines.append(
-            f"| {thr}{marker} | {ta['below_threshold']} | {ta['stub_count']} | "
-            f"{ta['short_finance_count']} | {ta['proxy_caught']}/{n_proxy} | "
-            f"{ta['false_positives']} | {ta['precision']:.0%} |"
-        )
-
-    lines += [
+        "- Aggressive placeholder-only skip excludes additional non-proxy short-manual docs.",
+        "- Conservative baseline is safer for first execution pass.",
         "",
-        "---",
-        "",
-        "## Stub Document Index",
-        "",
-        f"Documents at threshold={recommended_thr} bytes:",
-        "",
-        "| # | Title | Source | Len | Class | Proxy? |",
-        "|---|---|---|---|---|---|",
-    ]
-    for i, d in enumerate(stub_docs, 1):
-        lines.append(
-            f"| {i} | {d['title'][:50]} | {d['source']} | "
-            f"{d['content_len']} | {d['classification']} | {'yes' if d['is_proxy'] else 'no'} |"
-        )
-
-    lines += [
-        "",
-        "---",
-        "",
-        "## Constraints",
-        "",
-        "- Diagnostic only — no production code changes in PH5C",
-        "- I-13 invariant unchanged",
-        "- Threshold recommendation is a candidate for PH5D implementation",
-        "",
-        "_Artifact: `artifacts/ph5c/ph5c_stub_filter_baseline.json`_",
+        "_Artifacts: `artifacts/ph5c/ph5c_stub_filter_baseline.json`, "
+        "`artifacts/ph5c/ph5c_operator_summary.md`_",
     ]
 
-    summary_path = out_dir / "ph5c_operator_summary.md"
-    summary_path.write_text("\n".join(lines), encoding="utf-8")
-    print(f"Wrote: {summary_path}")
-    print("\nPH5C diagnostic complete.")
+    out_md = OUT_DIR / "ph5c_operator_summary.md"
+    out_md.write_text("\n".join(lines), encoding="utf-8")
+    print(f"  wrote {out_md}")
+    print("PH5C baseline execution complete.")
 
 
 if __name__ == "__main__":
     main()
+

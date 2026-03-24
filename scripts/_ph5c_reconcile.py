@@ -17,7 +17,6 @@ D-number canonical sequence:
 from __future__ import annotations
 
 import re
-from pathlib import Path
 
 
 def read(p: str) -> str:

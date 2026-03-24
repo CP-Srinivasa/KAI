@@ -86,7 +86,10 @@ def test_full_system_e2e_flow(monkeypatch):
                     id=uuid.uuid4(),
                     url="https://example.com/e2e-article-1",
                     title="System Test Article about Bitcoin",
-                    raw_text="Bitcoin adoption grows. This is a crucial update.",
+                    raw_text=(
+                        "Bitcoin adoption grows rapidly worldwide."
+                        " This is a crucial market update for investors."
+                    ),
                     published_at=datetime.datetime.now(datetime.UTC),
                 )
             ]
@@ -310,14 +313,20 @@ def test_ensemble_winner_trace_e2e_cli_db_and_dataset_filtering(tmp_path, monkey
                 CanonicalDocument(
                     url="https://example.com/ensemble-openai",
                     title="Bitcoin ETF ensemble winner test",
-                    raw_text="Bitcoin ETF demand stays strong.",
+                    raw_text=(
+                        "Bitcoin ETF demand stays strong amid"
+                        " growing institutional interest globally."
+                    ),
                 )
             )
             internal = await repo.save(
                 CanonicalDocument(
                     url="https://example.com/internal-teacher",
                     title="Internal-only analysis row",
-                    raw_text="Macro liquidity remains stable for BTC.",
+                    raw_text=(
+                        "Macro liquidity remains stable for BTC"
+                        " with supportive monetary conditions."
+                    ),
                 )
             )
             await repo.update_analysis(
@@ -489,7 +498,10 @@ def test_legacy_analysis_source_fallback_remains_stable_for_research_consumers(t
                     CanonicalDocument(
                         url="https://example.com/legacy-openai",
                         title="Legacy OpenAI analyzed document",
-                        raw_text="Macro policy and bitcoin liquidity update.",
+                        raw_text=(
+                            "Macro policy and bitcoin liquidity"
+                            " update with central bank implications."
+                        ),
                         provider="openai",
                     )
                 )

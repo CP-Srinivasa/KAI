@@ -44,7 +44,10 @@ def _empty_engine() -> KeywordEngine:
     )
 
 
-def _make_doc(title: str = "BTC rally", text: str = "Bitcoin surged today.") -> CanonicalDocument:
+def _make_doc(
+    title: str = "BTC rally",
+    text: str = "Bitcoin surged today amid renewed institutional demand for digital assets.",
+) -> CanonicalDocument:
     return CanonicalDocument(url="https://example.com/btc", title=title, raw_text=text)
 
 

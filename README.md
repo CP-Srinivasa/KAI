@@ -5,8 +5,8 @@ Default runtime remains `paper`/`shadow` with fail-closed controls.
 
 ## Current Phase
 
-- phase: `PHASE 5 (active) — Signal Reliability & Trust` | sprint: `PH5B_LOW_SIGNAL_CLUSTER_ANALYSIS (active)`
-- technical baseline: `1619 passed, ruff clean, CI green` | runtime: paper/shadow, fail-closed
+- phase: `PHASE 5 (active) — Signal Reliability & Trust` | sprint: `PH5C_FILTER_BEFORE_LLM_BASELINE (results review)`
+- technical baseline: `1619 passed, ruff clean, mypy 0 errors` | runtime: paper/shadow, fail-closed
 
 ## Phase-5 Focus
 
@@ -14,7 +14,8 @@ Phase 4 (signal quality calibration, 11 sprints PH4A-PH4K) is formally closed (D
 Phase 5 investigates signal reliability and trust from the PH5A reliability baseline:
 
 - PH5A closed (D-89): reliability baseline — LLM-error-proxy 27.5% (19/69), priority-mean 3.96, tag-fill 100%
-- PH5B active (D-92, §84): cluster the 19 LLM-error-proxy docs, classify root causes, recommend fixes
+- PH5B closed (D-94, §84): root cause confirmed — 19/19 low-signal docs are `EMPTY_MANUAL` (no ingested content)
+- PH5C execution complete (D-96, §85): stub-document pre-filter baseline established; pending results review and close
 - Alert Integration active: `analyze-pending` now dispatches alerts (Phase 4 of CLI pipeline) with `--no-alerts` flag
 - CI hardened: all 5 jobs green, `hypothesis` + `pytest-mock` in dev-deps, bandit B324 fixed
 - CoinGecko active as default market data provider (free tier, ~1min delayed, no API key required)
@@ -106,7 +107,7 @@ Key read endpoints:
 - `GET /operator/trading-loop/recent-cycles` — recent cycle history
 - `POST /operator/trading-loop/run-once` — guarded paper/shadow cycle (fail-closed on live)
 
-Dashboard: `GET /dashboard/` — read-only operator summary.
+Dashboard: `GET /dashboard` — read-only operator summary (HTML, no auth required).
 
 ## Active vs. Experimental Features
 

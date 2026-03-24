@@ -1,5 +1,4 @@
 """Temporary governance update script for PH5B close / PH5C open."""
-from pathlib import Path
 
 
 def read(p: str) -> str:

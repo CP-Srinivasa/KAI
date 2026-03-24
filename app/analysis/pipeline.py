@@ -19,6 +19,7 @@ from app.enrichment.entities.matcher import hits_to_entity_mentions
 _MAX_CONCURRENT = 5  # max parallel LLM calls per run_batch()
 _ASSET_HIT_CATEGORIES = frozenset({"crypto", "equity", "etf"})
 _FALLBACK_MAX_TERMS = 20
+_STUB_CONTENT_THRESHOLD = 50  # PH5C: skip LLM for docs with body ≤ 50 bytes
 # PH4I: title-level crypto signal words for market_scope inference in fallback path
 _CRYPTO_TITLE_TERMS = frozenset(
     {
@@ -369,6 +370,15 @@ class AnalysisPipeline:
             fallback_reason = "LLM provider unavailable."
         elif not self._run_llm:
             fallback_reason = "LLM provider disabled."
+        elif len(text) <= _STUB_CONTENT_THRESHOLD:
+            # PH5C: skip LLM for stub/placeholder documents
+            fallback_reason = "stub_document: content below threshold."
+            logger.info(
+                "stub_document_skipped_llm",
+                doc_id=str(doc.id),
+                content_len=len(text),
+                threshold=_STUB_CONTENT_THRESHOLD,
+            )
 
         if fallback_reason is not None:
             analysis_result = self._build_fallback_analysis(
@@ -514,6 +524,11 @@ class AnalysisPipeline:
         if market_scope is not None and market_scope != MarketScope.UNKNOWN:
             tag_sources.append(market_scope.value)
         fallback_tags = _unique_strings(tag_sources)[:_FALLBACK_MAX_TERMS]
+        # PH5C: inject stub_document tag for stub/placeholder documents
+        if "stub_document" in fallback_reason.lower() and "stub_document" not in [
+            t.lower() for t in fallback_tags
+        ]:
+            fallback_tags.insert(0, "stub_document")
 
         keyword_terms = ", ".join(hit.canonical for hit in keyword_hits[:5])
         entity_terms = ", ".join(mention.name for mention in entity_mentions[:5])

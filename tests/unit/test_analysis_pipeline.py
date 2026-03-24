@@ -66,7 +66,10 @@ def _make_llm_output() -> LLMAnalysisOutput:
 
 def _make_doc(
     title: str = "Bitcoin ETF rally",
-    text: str = "BTC hits new high",
+    text: str = (
+        "BTC hits new high amid growing institutional demand"
+        " for crypto exchange-traded funds globally"
+    ),
 ) -> CanonicalDocument:
     return CanonicalDocument(url="https://example.com/1", title=title, raw_text=text)
 
@@ -182,7 +185,13 @@ async def test_ensemble_internal_fallback_sets_internal_source():
 
     engine = _btc_engine()
     pipeline = AnalysisPipeline(keyword_engine=engine, provider=ensemble, run_llm=True)
-    result = await pipeline.run(_make_doc("Bitcoin halving", "BTC halving outlook"))
+    result = await pipeline.run(
+        _make_doc(
+            "Bitcoin halving",
+            "BTC halving outlook with significant market"
+            " implications for the broader crypto ecosystem",
+        )
+    )
 
     assert result.analysis_result is not None
     assert result.provider_name == "internal"
@@ -314,7 +323,12 @@ async def test_run_batch_concurrency():
     provider = _mock_provider(llm_out)
     pipeline = AnalysisPipeline(keyword_engine=engine, provider=provider)
     docs = [
-        CanonicalDocument(url=f"https://example.com/{i}", title=f"BTC doc {i}") for i in range(8)
+        CanonicalDocument(
+            url=f"https://example.com/{i}",
+            title=f"BTC doc {i}",
+            raw_text="Bitcoin market analysis with significant institutional demand signals",
+        )
+        for i in range(8)
     ]
 
     results = await pipeline.run_batch(docs)

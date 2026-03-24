@@ -411,17 +411,26 @@ def test_ingest_rss_saved_documents_flow_into_analyze_pending(monkeypatch) -> No
         CanonicalDocument(
             url="https://example.com/article-1?utm_source=rss",
             title="Bitcoin ETF approved",
-            raw_text="Bitcoin ETF approval drives the market.",
+            raw_text=(
+                "Bitcoin ETF approval drives the market"
+                " with strong institutional demand signals."
+            ),
         ),
         CanonicalDocument(
             url="https://example.com/article-1",
             title="Bitcoin ETF Approved",
-            raw_text="Bitcoin ETF approval drives the market.",
+            raw_text=(
+                "Bitcoin ETF approval drives the market"
+                " with strong institutional demand signals."
+            ),
         ),
         CanonicalDocument(
             url="https://example.com/article-2",
             title="Ethereum upgrade ships",
-            raw_text="Ethereum ships its latest upgrade.",
+            raw_text=(
+                "Ethereum ships its latest upgrade"
+                " with significant network improvements."
+            ),
         ),
     ]
 
