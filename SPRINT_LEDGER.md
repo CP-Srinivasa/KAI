@@ -2,11 +2,11 @@
 
 ## Canonical Sprint Ledger (2026-03-24)
 
-- phase_6_status: `active — V-4 Phase 3 (Sprint 45)`
-- current_sprint: `SPRINT_45_V4_DB_PRIMARY_PORTFOLIO_SNAPSHOT (active D-85, §81)`
-- last_closed_sprint: `PH4K_TAG_SIGNAL_UTILITY_REVIEW (closed D-84, §79)`
-- next_required_step: `SPRINT_45_CLOSE — commit and update ledger`
-- baseline: `1609 passed, ruff clean, mypy 0 errors (189 files)`
+- phase_4_status: `active (technical stabilization complete)`
+- current_sprint: `open — PH4L definition or Phase 4 closeout`
+- last_closed_sprint: `SPRINT_45_V4_DB_PRIMARY_PORTFOLIO_SNAPSHOT (closed D-86, §81)`
+- next_required_step: `PH4L definition or Phase 4 closeout decision`
+- baseline: `1604 passed, ruff clean, mypy 0 errors`
 
 | Sprint | Date | Status | Outcome |
 |---|---|---|---|
@@ -29,7 +29,7 @@
 | N-1 MCP-Split | 2026-03-23 | **closed** | mcp_server.py 2471 → 334 Zeilen; tools/ Submodule; tests grün |
 | N-2 gitignore | 2026-03-23 | **closed** | .hypothesis/ in .gitignore |
 | N-3 MCP-Test-Migration | 2026-03-23 | **closed** | test_mcp_server.py 2447 + test_mcp_portfolio_read.py 138 → tests/unit/mcp/ (13 Module, 98 Tests, ruff clean) |
-| Sprint 45 V-4 Phase 3 | 2026-03-24 | **closed** | session_factory refactor; PortfolioStateRecord write on fill; DB-primary build_portfolio_snapshot(); 22 Tests; 1609 passed |
+| Sprint 45 / N-4 V-4 Phase 3 | 2026-03-24 | **closed** | session_factory refactor; PortfolioStateRecord dual-write + DB-primary snapshot; 14 neue Tests; 1604 passed |
 | N-5 DoD-Gate | 2026-03-23 | **closed** | Working-Tree-Gate in AGENTS.md §8 verankert |
 
 ## DoD-Gate (verbindlich ab sofort)
