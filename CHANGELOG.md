@@ -1,5 +1,17 @@
 # CHANGELOG.md
 
+## 2026-03-24 - PH5A closed: Reliability baseline complete
+
+- **PH5A diagnostic sprint closed.** 7 metrics computed on 69-doc paired set.
+- Top-3 reliability gaps identified:
+  1. **LLM error proxy rate: 27.5%** (19/69 docs return priority=1, relevance=0, scope=unknown)
+  2. **Keyword zero-hit: 37.7%** (26/69 docs still have no keyword matches)
+  3. **Actionable rate: 0%** (even Tier3 shadow produced 0 actionable signals)
+- Strengths: fallback rate 0%, tag fill 100%, watchlist overlap 52.2%.
+- Artifacts: `artifacts/ph5a_reliability_baseline.json`, `artifacts/ph5a_operator_summary.md`.
+
+---
+
 ## 2026-03-24 - Phase 5 opened: Signal Reliability & Trust (PH5A frozen §83)
 
 - **Phase 4 canonically closed (D-87)**. 11 sprints (PH4A–PH4K), all tech sprints (N-1..N-5, Sprint 44/45) closed.
@@ -272,3 +284,11 @@
   - Actionable rate (Tier3): 0.0% — I-13 confirmed
 - Artifacts: `artifacts/ph5a_reliability_baseline.json` + `artifacts/ph5a_operator_summary.md`
 - PH5A moved to results-review; PH5A-7 (governance closeout) pending.
+
+## 2026-03-24 - PH5A results review complete — closed (D-90)
+
+- PH5A formally closed after review of reliability baseline artifacts.
+- Main gap confirmed: LLM error proxy 27.5% (19/69 docs).
+- Priority bimodality: 27 docs at score=1, remainder clustering 5-7.
+- Phase 4 gains stable: tag fill 100%, watchlist overlap 52.2%.
+- Next sprint: PH5B — diagnostic cluster analysis of 19 low-signal docs.

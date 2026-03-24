@@ -3,8 +3,8 @@
 ## Current State (2026-03-24)
 
 - current_phase: `PHASE 5 (active) -- Signal Reliability & Trust`
-- current_sprint: `PH5A_BASELINE_RELIABILITY_AND_SIGNAL_TRUST (frozen §83)`
-- next_required_step: `PH5A_EXECUTION`
+- current_sprint: `PH5A -- CLOSED`
+- next_required_step: `PH5B definition`
 - phase4_status: `CLOSED (D-87)`
 - baseline: `1609 passed, ruff clean`
 
@@ -12,12 +12,12 @@
 
 Phase 4 has completed a full PH4A-PH4K arc. Canonical closeout is accepted (D-87), V-4 Dual-Write is closed, N-4 is closed, and Phase 5 is now unblocked.
 
-## Next Actions (Phase 5 Definition)
+## Next Actions (PH5A Results Review)
 
-- Open Phase 5 definition.
-- Define `PH5A_BASELINE_RELIABILITY_AND_SIGNAL_TRUST`.
-- Freeze PH5A contract.
-- Keep Phase 5 scope narrow: reliability and signal trust before further fallback micro-optimizations.
+- Review PH5A artifacts.
+- Summarize top reliability and signal-trust gaps.
+- Close PH5A review gate (`PH5A_RESULTS_REVIEW_AND_CLOSE`).
+- Define PH5B only after PH5A review is formally closed.
 ## Phase 4 Complete Arc (PH4A-K, 11 Sprints)
 
 | Sprint | Type | Result |
@@ -61,3 +61,5 @@ Phase 4 has completed a full PH4A-PH4K arc. Canonical closeout is accepted (D-87
 ## I-13 Policy (Permanent)
 
 `actionable` is LLM-exclusive. Rule-only fallback: `actionable=False`. No relaxation.
+
+

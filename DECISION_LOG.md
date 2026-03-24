@@ -3,8 +3,8 @@
 ## Current State (2026-03-24)
 
 - current_phase: `PHASE 5 (active) -- Signal Reliability & Trust`
-- current_sprint: `PH5A_BASELINE_RELIABILITY_AND_SIGNAL_TRUST (frozen §83)`
-- next_required_step: `PH5A_EXECUTION`
+- current_sprint: `PH5A_BASELINE_RELIABILITY_AND_SIGNAL_TRUST (results-review mode)`
+- next_required_step: `PH5A_RESULTS_REVIEW_AND_CLOSE`
 - baseline: `1609 passed, ruff clean`
 ## Canonical Decisions
 
@@ -68,7 +68,7 @@
 - `app/execution/portfolio_read.py`: `build_portfolio_snapshot()` queries `PortfolioStateRecord` when `session_factory` provided; falls back to JSONL on no-record or DB error.
 - 5 test warnings (coroutine mock) fixed: `AsyncMock` → `MagicMock` for `session.add()`.
 - N-4 formally closed in SPRINT_LEDGER.
-- Baseline: `1609 passed`, `ruff clean`.
+- baseline: `1609 passed, ruff clean`
 
 ### D-87 (2026-03-24): Phase-4 closeout draft prepared (superseded by D-88 gate)
 - Full arc PH4A-PH4K (11 sprints) + V-4 Phase 1-3 was documented as closeout-ready.
@@ -97,3 +97,10 @@
 - Conservative closeout-gate report is superseded.
 - Next required step is now `PHASE5_DEFINITION`.
 - Phase 5 should start narrowly with `PH5A_BASELINE_RELIABILITY_AND_SIGNAL_TRUST`.
+
+### D-91 (2026-03-24): PH5A execution completed; sprint moved to results-review mode
+- PH5A execution is treated as complete and artifacts are sufficient for a meaningful review.
+- Working tree is clean and status report is available in-repo (`status_report.md`).
+- Canonical baseline remains `1609 passed` and `ruff clean`.
+- Next required step is `PH5A_RESULTS_REVIEW_AND_CLOSE`.
+- PH5B must not be opened before PH5A review is formally closed.

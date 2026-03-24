@@ -3,8 +3,8 @@
 ## Current State (2026-03-24)
 
 - current_phase: `PHASE 5 (active) -- Signal Reliability & Trust`
-- current_sprint: `PH5A_BASELINE_RELIABILITY_AND_SIGNAL_TRUST (frozen §83)`
-- next_required_step: `PH5A_EXECUTION`
+- current_sprint: `PH5A_BASELINE_RELIABILITY_AND_SIGNAL_TRUST (results-review mode)`
+- next_required_step: `PH5A_RESULTS_REVIEW_AND_CLOSE`
 - baseline: `1609 passed, ruff clean`
 ### PH4K Execution Results Note (2026-03-23)
 
@@ -15,12 +15,12 @@ PH4K execution complete; utility artifacts produced. Moving to results review.
 - mean_tier3_priority with overlap: 5.4444 vs. without: 2.3333 (delta +3.1)
 DB test failures remain on a separate track.
 
-### Technical Stabilization Note (2026-03-24)
+### PH5A Execution Note (2026-03-24)
 
-- PH4A through PH4K are complete enough that PH4L is not urgent.
-- V-4 dual-write and DB-primary snapshot closeout are complete (N-4 closed).
-- Last explicitly referenced clean governance anchor: commit `c498ca4`.
-- Governance conflict resolved via canonical closeout sync (D-87); Phase 5 is unblocked.
+- PH5A execution has completed and artifacts are available for review.
+- Status report exists in-repo (`status_report.md`).
+- Working tree is clean.
+- Baseline remains `1609 passed` and `ruff clean`.
 
 ---
 
@@ -28,8 +28,8 @@ DB test failures remain on a separate track.
 
 | Risk ID | Description | Severity | Likelihood | Mitigation | Status |
 |---|---|---|---|---|---|
-| R-PH5-001 | Phase 5 could become too broad if not tightly scoped. | high | medium | Start with `PH5A_BASELINE_RELIABILITY_AND_SIGNAL_TRUST`; freeze contract before execution. | open |
-| R-PH5-002 | Reopening fallback micro-optimization too early could dilute Phase-4 value. | medium | medium | Prioritize reliability and signal-trust surfaces first; defer new fallback micro-tuning until PH5A baseline is accepted. | open |
+| R-PH5-001 | Skipping PH5A review would weaken Phase-5 prioritization. | high | medium | Complete `PH5A_RESULTS_REVIEW_AND_CLOSE` before opening PH5B. | open |
+| R-PH5-002 | Opening PH5B too early may dilute reliability findings from PH5A. | high | medium | Keep PH5B blocked until PH5A review is formally closed and top gaps are summarized. | open |
 
 ---
 
@@ -114,3 +114,5 @@ These findings were addressed in a dedicated refactoring session (2026-03-23).
 - PH4J findings: fallback tags enriched with categories, affected_assets, source_name, market_scope.value; keyword-hit 4→7, zero-hit 1→4, assets-only 0→4; PH4J formally closed (D-80); §78 frozen anchor.
 - PH4K execution (D-81): fallback_tags_populated 69/69; watchlist_overlap 36/69 (52.17%); corr(tag_count, tier3_priority)=0.5564; mean_priority with overlap 5.44 vs. without 2.33; utility signal observed, closeout review pending.
 - Technical baseline: `1609 passed`, `ruff clean`.
+
+

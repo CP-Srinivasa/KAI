@@ -1406,4 +1406,4 @@ Compute and record the following baseline metrics from the existing `69`-documen
 - I-13 permanent: `actionable` remains LLM-only; no fallback relaxation
 - Diagnostic sprint: measure-only, no side-effects on production paths
 
-§83 status: **active (D-89, 2026-03-24)**
+§83 status: **closed (D-90, 2026-03-24)**

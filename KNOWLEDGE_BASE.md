@@ -1,12 +1,12 @@
 # KNOWLEDGE_BASE.md - KAI Canonical Knowledge Index
 
-> Stand: 2026-03-24 | PHASE 5 (active) -- Signal Reliability & Trust | PH5A frozen (§83) | baseline: 1609 passed, ruff clean
+> Stand: 2026-03-24 | PHASE 5 (active) | PH5A CLOSED -- reliability baseline complete | baseline: 1609 passed, ruff clean
 
 ## Phase Status
 
 - current_phase: `PHASE 5 (active) -- Signal Reliability & Trust`
-- current_sprint: `PH5A_BASELINE_RELIABILITY_AND_SIGNAL_TRUST (frozen §83)`
-- next_required_step: `PH5A_EXECUTION`
+- current_sprint: `PH5A -- CLOSED`
+- next_required_step: `PH5B definition`
 - phase4_status: `CLOSED (D-87)`
 
 ## Newly Confirmed Facts
