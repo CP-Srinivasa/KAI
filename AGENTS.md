@@ -5,8 +5,8 @@
 | Field | Value |
 |---|---|
 | current_phase | `PHASE 5 (active) -- Signal Reliability & Trust` |
-| current_sprint | `PH5B_LOW_SIGNAL_CLUSTER_ANALYSIS (active D-92, §84)` |
-| next_required_step | `PH5B_EXECUTION` |
+| current_sprint | `PH5C_FILTER_BEFORE_LLM_BASELINE (frozen §85)` |
+| next_required_step | `PH5C_EXECUTION` |
 | ph4a_status | `closed (D-53) -- immutable baseline anchor (S67)` |
 | ph4b_status | `closed (D-62) -- paired_count=69; root cause: keyword coverage blindness` |
 | ph4c_status | `closed -- rule-keyword gap audit; top-3 gaps: macro, regulatory, AI` |
@@ -26,8 +26,10 @@
 | phase3_status | `closed (2026-03-22) -- GO` |
 | phase4_status | `CLOSED (D-87, 2026-03-24) -- 11 sprints PH4A-PH4K + V-4; canonical closeout complete` |
 | ph5a_status | `closed (D-89) -- reliability baseline: LLM error proxy 27.5%, zero-hit 37.7%, actionable 0%` |
-| ph5b_status | `active (D-92, §84) -- low signal cluster analysis; 19 LLM-error-proxy docs` |
-| phase5_status | `active -- PH5A closed (D-89); PH5B active (D-92)` |
+| ph5b_status | `closed (D-92) -- 19/19 EMPTY_MANUAL; root cause: placeholder content, not model failure` |
+| ph5c_status | `frozen (§85) -- FILTER_BEFORE_LLM_BASELINE; execution next` |
+| phase5_status | `active -- PH5A+PH5B closed; PH5C frozen, execution pending` |
+
 ---
 
 > **Verbindliches Betriebsdokument fuer alle Coding-Agenten.**

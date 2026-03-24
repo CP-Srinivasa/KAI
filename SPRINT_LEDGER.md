@@ -4,9 +4,9 @@
 
 - current_phase: `PHASE 5 (active) -- Signal Reliability & Trust`
 - phase_4_status: `CLOSED (D-87, 2026-03-24)`
-- phase_5_status: `active -- PH5B execution complete (D-93); results-review next`
-- current_sprint: `PH5B_LOW_SIGNAL_CLUSTER_ANALYSIS (active D-92, §84)`
-- next_required_step: `PH5B_RESULTS_REVIEW_AND_CLOSE`
+- phase_5_status: `active -- PH5A closed (D-89); PH5B closed (D-92); PH5C frozen (§85)`
+- current_sprint: `PH5C_FILTER_BEFORE_LLM_BASELINE (frozen §85)`
+- next_required_step: `PH5C_EXECUTION`
 - baseline: `1619 passed, ruff clean, CI green`
 
 | Sprint | Date | Status | Outcome |
@@ -23,7 +23,7 @@
 | PH4J | 2026-03-23 | closed | Tags enrichment: keyword-hit 4->7, zero-hit 1->4, assets-only 0->4 |
 | PH4K | 2026-03-24 | **closed** | Utility review: watchlist overlap 52%, corr=0.56, priority delta +3.1 |
 | PH5A | 2026-03-24 | closed | Reliability baseline: fallback=0%, LLM-error-proxy=27.5%, tag-fill=100%, keyword-cov=62.3% |
-| PH5B | 2026-03-24 | **active** | Low Signal Cluster Analysis — root cause 27.5% LLM error proxy (D-92, §84) |
+| PH5B | 2026-03-24 | **closed** | 19/19 proxy cases = EMPTY_MANUAL; root cause: placeholder content, not model failure |
 
 ## Tech Sprints (nicht Phase-4-gebunden)
 
@@ -34,8 +34,8 @@
 | N-3 MCP-Test-Migration | 2026-03-23 | **closed** | test_mcp_server.py 2447 + test_mcp_portfolio_read.py 138 → tests/unit/mcp/ (13 Module, 98 Tests, ruff clean) |
 | Sprint 45 / N-4 V-4 Phase 3 | 2026-03-24 | **closed** | V-4 Dual-Write + DB-primary snapshot closed; baseline reconfirmed |
 | N-5 DoD-Gate | 2026-03-23 | **closed** | Working-Tree-Gate in AGENTS.md §8 verankert |
-| N-6 MCP-Compat-Extract | 2026-03-24 | **closed** | `compat.py` aus `mcp_server.py` extrahiert; 0 inline @mcp.tool(); test_canonical_read + test_guarded_write auf mcp.list_tools() umgestellt |
-| N-7 Alert-Integration | 2026-03-24 | **closed** | `analyze-pending` Phase 4: AlertService.process_document() + `--no-alerts` Flag + 3 Tests; fail-open |
+| N-6 MCP-Compat-Extract | 2026-03-24 | **closed** | compat.py aus mcp_server.py extrahiert; 0 inline @mcp.tool(); test_canonical_read + test_guarded_write auf mcp.list_tools() umgestellt |
+| N-7 Alert-Integration | 2026-03-24 | **closed** | analyze-pending Phase 4: AlertService.process_document() + --no-alerts Flag + 3 Tests; fail-open |
 | N-8 CI-Hardening | 2026-03-24 | **closed** | hypothesis + pytest-mock in dev-deps; bandit B324 (SHA1 usedforsecurity=False); codecov@v5; FORCE_NODE24; ruff format; doppeltes asyncio.run entfernt |
 
 ## DoD-Gate (verbindlich ab sofort)
