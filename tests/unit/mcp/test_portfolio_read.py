@@ -14,51 +14,7 @@ from app.agents.mcp_server import (
     get_paper_portfolio_snapshot,
     get_paper_positions_summary,
 )
-from app.execution.portfolio_read import ExposureSummary, PortfolioSnapshot, PositionSummary
-
-
-def _snapshot(*, available: bool = True, error: str | None = None) -> PortfolioSnapshot:
-    return PortfolioSnapshot(
-        generated_at_utc="2026-03-21T12:00:00+00:00",
-        source="paper_execution_audit_replay",
-        audit_path="artifacts/paper_execution_audit.jsonl",
-        cash_usd=5800.0,
-        realized_pnl_usd=0.0,
-        total_market_value_usd=12000.0,
-        total_equity_usd=17800.0,
-        position_count=1,
-        positions=(
-            PositionSummary(
-                symbol="BTC/USDT",
-                quantity=0.2,
-                avg_entry_price=50000.0,
-                stop_loss=48000.0,
-                take_profit=70000.0,
-                market_price=60000.0,
-                market_value_usd=12000.0,
-                unrealized_pnl_usd=2000.0,
-                provider="coingecko",
-                market_data_retrieved_at_utc="2026-03-21T12:00:00+00:00",
-                market_data_source_timestamp_utc="2026-03-21T11:59:00+00:00",
-                market_data_is_stale=False,
-                market_data_freshness_seconds=60.0,
-                market_data_available=True,
-                market_data_error=None,
-            ),
-        ),
-        exposure_summary=ExposureSummary(
-            priced_position_count=1,
-            stale_position_count=0,
-            unavailable_price_count=0,
-            gross_exposure_usd=12000.0,
-            net_exposure_usd=12000.0,
-            largest_position_symbol="BTC/USDT",
-            largest_position_weight_pct=100.0,
-            mark_to_market_status="ok",
-        ),
-        available=available,
-        error=error,
-    )
+from tests.unit.mcp._helpers import _snapshot
 
 
 @pytest.mark.asyncio

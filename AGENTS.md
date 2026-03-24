@@ -5,8 +5,8 @@
 | Field | Value |
 |---|---|
 | current_phase | `PHASE 4 (active)` |
-| current_sprint | `PH4K_TAG_SIGNAL_UTILITY_REVIEW (definition frozen)` |
-| next_required_step | `PH4K_EXECUTION_START` |
+| current_sprint | `PH4K_TAG_SIGNAL_UTILITY_REVIEW` |
+| next_required_step | `PH4K_RESULTS_REVIEW_AND_CLOSE` |
 | ph4a_status | `closed (D-53) -- immutable baseline anchor (S67)` |
 | ph4b_status | `closed (D-62) -- paired_count=69; root cause: keyword coverage blindness` |
 | ph4c_status | `closed -- rule-keyword gap audit; top-3 gaps: macro, regulatory, AI` |
@@ -17,12 +17,12 @@
 | ph4h_status | `closed (D-74/75) -- policy decision: actionable=LLM-only; I-13 confirmed permanent; S76 frozen anchor` |
 | ph4i_status | `closed (D-78) -- market_scope enrichment complete; S77 frozen anchor` |
 | ph4j_status | `closed -- tags enrichment: keyword-hit 4->7, zero-hit 1->4, assets-only 0->4` |
-| ph4k_status | `definition frozen -- diagnostic-only utility review; execution authorized` |
+| ph4k_status | `results-review mode -- execution artifacts ready; closeout pending` |
 | baseline | `1554 passed, ruff clean` |
 | cli_canonical_count | 53 |
 | provisional_cli_count | 0 |
 | phase3_status | `closed (2026-03-22) -- GO` |
-| phase4_status | `active -- PH4K contract freeze complete; execution may start within frozen scope` |
+| phase4_status | `active -- PH4K in results-review mode; closeout pending before PH4L` |
 ---
 
 > **Verbindliches Betriebsdokument fuer alle Coding-Agenten.**

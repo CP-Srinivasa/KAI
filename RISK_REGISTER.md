@@ -3,15 +3,18 @@
 ## Current State (2026-03-23)
 
 - current_phase: `PHASE 4 (active)`
-- current_sprint: `PH4K_TAG_SIGNAL_UTILITY_REVIEW (definition frozen)`
-- next_required_step: `PH4K_EXECUTION_START`
+- current_sprint: `PH4K_TAG_SIGNAL_UTILITY_REVIEW`
+- next_required_step: `PH4K_RESULTS_REVIEW_AND_CLOSE`
 - baseline: `1554 passed, ruff clean`
 
-### PH4K Freeze Note (2026-03-23)
+### PH4K Execution Results Note (2026-03-23)
 
-PH4K contract and acceptance criteria are frozen.
-PH4J verification baseline remains valid: keyword-hit 4->7, zero-hit 1->4, assets-only 0->4. 29/29 tests, I-13 intact.
-DB test failures remain on a separate track and are not attributed to PH4K.
+PH4K execution complete; utility artifacts produced. Moving to results review.
+- fallback_tags_populated_docs: 69/69 (100%)
+- watchlist_overlap_docs: 36/69 (52.17%)
+- corr(tag_count, tier3_priority): 0.5564
+- mean_tier3_priority with overlap: 5.4444 vs. without: 2.3333 (delta +3.1)
+DB test failures remain on a separate track.
 
 ---
 
@@ -19,7 +22,7 @@ DB test failures remain on a separate track and are not attributed to PH4K.
 
 | Risk ID | Description | Severity | Likelihood | Mitigation | Status |
 |---|---|---|---|---|---|
-| R-PH4J-001 | Higher tag quantity may not automatically improve operator utility. | medium | medium | Run PH4K utility review before additional enrichment scope. | open |
+| R-PH4J-001 | Higher tag quantity may not automatically improve operator utility. | medium | medium | Run PH4K utility review before additional enrichment scope. | in_review (PH4K execution evidence is positive; formal closeout review still pending) |
 | R-PH4J-002 | Workspace reverts can create closeout confusion if not documented. | low | medium | Keep closeout evidence and revert notes explicit in changelog/decision log. | resolved (D-81: revert noted in changelog/decision log; PH4J formally closed) |
 | R-PH4J-003 | DB failures may pollute PH4J interpretation if mixed into same gate. | medium | medium | Keep DB failures on separate track with separate ownership. | resolved (PH4J closed; DB failures remain on separate track; not blocking PH4K) |
 | R-PH4-010 | Relaxing `I-13` too quickly may weaken fail-closed safety in rule-only mode. | high | medium | Route next step through PH4H policy review before any `I-13` change. | resolved (PH4H D-74: I-13 confirmed permanent; Option B chosen -- no relaxation) |
@@ -92,5 +95,5 @@ These findings were addressed in a dedicated refactoring session (2026-03-23).
 - PH4H findings: I-13 confirmed permanent; actionable=False in fallback is correct by design.
 - PH4I findings: _fallback_market_scope enriched; market_scope resolved for docs with crypto_assets/tickers/title keywords.
 - PH4J findings: fallback tags enriched with categories, affected_assets, source_name, market_scope.value; keyword-hit 4→7, zero-hit 1→4, assets-only 0→4; PH4J formally closed (D-80); §78 frozen anchor.
-- PH4K candidate: PH4K_TAG_SIGNAL_UTILITY_REVIEW — next lever is operator utility, not more raw expansion.
+- PH4K execution (D-81): fallback_tags_populated 69/69; watchlist_overlap 36/69 (52.17%); corr(tag_count, tier3_priority)=0.5564; mean_priority with overlap 5.44 vs. without 2.33; utility signal observed, closeout review pending.
 - Technical baseline: `1554 passed`, `ruff clean`.

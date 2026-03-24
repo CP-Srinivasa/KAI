@@ -1,5 +1,17 @@
 # CHANGELOG.md
 
+## 2026-03-23 - PH4K execution complete — utility artifacts confirm tag signal value (D-81)
+
+- PH4K_TAG_SIGNAL_UTILITY_REVIEW execution complete; moving to results review.
+- fallback_tags_populated_docs: `69/69` (100% fallback coverage).
+- watchlist_overlap_docs: `36/69` (52.17%).
+- corr(tag_count, tier3_priority): `0.5564` — moderate positive correlation.
+- mean_tier3_priority WITH watchlist overlap: `5.44` vs. WITHOUT: `2.33` (delta: +3.1).
+- Baseline: `1554 passed, ruff clean`.
+- Next required step: `PH4K_RESULTS_REVIEW_AND_CLOSE`.
+
+---
+
 ## 2026-03-23 - PH4K contract freeze completed; execution gate opened
 
 - Canonical state advanced to: `current_sprint = PH4K_TAG_SIGNAL_UTILITY_REVIEW (definition frozen)`.

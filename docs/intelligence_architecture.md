@@ -5,8 +5,8 @@
 | Field | Value |
 |---|---|
 | current_phase | `PHASE 4 (active)` |
-| current_sprint | `PH4K_TAG_SIGNAL_UTILITY_REVIEW (definition frozen)` |
-| next_required_step | `PH4K_EXECUTION_START` |
+| current_sprint | `PH4K_TAG_SIGNAL_UTILITY_REVIEW` |
+| next_required_step | `PH4K_RESULTS_REVIEW_AND_CLOSE` |
 | ph4e_status | `closed (D-67) — scoring calibration audit complete; §73 frozen anchor` |
 | ph4f_status | `closed — frozen intervention anchor; §74 frozen anchor` |
 | ph4g_status | `closed — relevance floor applied; actionable reverted (I-13); §75 frozen anchor` |
@@ -23,9 +23,9 @@
 | ph4h_contract | `docs/contracts.md §76 (closed D-75 — frozen anchor)` |
 | ph4i_contract | `docs/contracts.md §77 (closed D-78)` |
 | ph4j_contract | `docs/contracts.md §78 (closed D-81 — frozen anchor)` |
-| ph4k_status | `definition frozen — PH4K diagnostic-only utility review` |
-| ph4k_contract | `docs/contracts.md §79 (definition frozen)` |
-| architecture_status | three-tier stack unchanged; PH4A–PH4J closed/frozen anchors (§67–§78); PH4K frozen diagnostic contract (§79) |
+| ph4k_status | `results-review mode — utility artifacts produced; closeout pending` |
+| ph4k_contract | `docs/contracts.md §79 (results-review mode)` |
+| architecture_status | three-tier stack unchanged; PH4A–PH4J closed/frozen anchors (§67–§78); PH4K in results-review mode (§79) |
 
 ---
 
@@ -126,13 +126,17 @@
   - `I-13` unchanged and intact
 - DB test failures tracked on a separate track; excluded from PH4J closeout.
 
-## PH4K Frozen Sprint Contract (§79)
+## PH4K Results-Review Gate (§79)
 
-- Sprint: `PH4K_TAG_SIGNAL_UTILITY_REVIEW`. **Definition frozen.**
-- Contract: `docs/contracts.md §79` (definition frozen).
-- Focus: assess operator utility of PH4J-enriched tags; next lever is utility, not more expansion.
-- Guardrails: no scoring changes, no I-13 conflict, no actionability expansion.
-- Next required step: `PH4K_EXECUTION_START`.
+- Sprint: `PH4K_TAG_SIGNAL_UTILITY_REVIEW`. **Execution complete; sprint remains active in review mode.**
+- Contract: `docs/contracts.md §79` (results-review mode).
+- Utility artifacts (locked):
+  - fallback_tags_populated_docs: `69/69` (100%)
+  - watchlist_overlap_docs: `36/69` (52.17%)
+  - corr(tag_count, tier3_priority): `0.5564`
+  - mean_tier3_priority WITH overlap: `5.4444` vs. WITHOUT: `2.3333` (delta: +3.1)
+- No code changes (diagnostic-only sprint).
+- Next required step: `PH4K_RESULTS_REVIEW_AND_CLOSE`.
 
 ## Design Principle
 

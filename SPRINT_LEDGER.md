@@ -3,8 +3,8 @@
 ## Canonical Sprint Ledger (2026-03-23)
 
 - phase_4_status: `active`
-- active_sprint: `PH4K_TAG_SIGNAL_UTILITY_REVIEW (definition frozen)`
-- next_required_step: `PH4K_EXECUTION_START`
+- active_sprint: `PH4K_TAG_SIGNAL_UTILITY_REVIEW`
+- next_required_step: `PH4K_RESULTS_REVIEW_AND_CLOSE`
 - baseline: `1554 passed, ruff clean`
 
 | Sprint | Date | Status | Outcome |
@@ -18,8 +18,8 @@
 | PH4G | 2026-03-23 | closed | Relevance floor applied. Actionable blocked (I-13) |
 | PH4H | 2026-03-23 | closed | Option B: I-13 permanent, actionable=LLM-only |
 | PH4I | 2026-03-23 | closed | market_scope enrichment complete |
-| PH4J | 2026-03-23 | closed | Live verification passed; keyword-hit 4->7, zero-hit 1->4, assets-only 0->4; 29/29 pipeline tests; I-13 intact |
-| PH4K | 2026-03-23 | definition frozen | Tag signal utility review; execution authorized (diagnostic-only scope) |
+| PH4J | 2026-03-23 | closed | Tags enrichment: keyword-hit 4->7, zero-hit 1->4, assets-only 0->4 |
+| PH4K | 2026-03-23 | results-review | Execution artifacts produced; closeout review pending |
 
 ## Tech Sprints (nicht Phase-4-gebunden)
 
@@ -27,7 +27,7 @@
 |---|---|---|---|
 | N-1 MCP-Split | 2026-03-23 | **closed** | mcp_server.py 2471 → 334 Zeilen; tools/ Submodule; tests grün |
 | N-2 gitignore | 2026-03-23 | **closed** | .hypothesis/ in .gitignore |
-| N-3 CLI-Test-Migration | tbd | open | test_cli.py (~2738 Zeilen) → tests/unit/cli/ migrieren |
+| N-3 MCP-Test-Migration | 2026-03-23 | **closed** | test_mcp_server.py 2447 + test_mcp_portfolio_read.py 138 → tests/unit/mcp/ (13 Module, 98 Tests, ruff clean) |
 | N-4 Dual-Write Phase 3 | tbd | open | PortfolioStateRecord-Write-Pfad; erst nach DB/CI-Setup |
 | N-5 DoD-Gate | 2026-03-23 | **closed** | Working-Tree-Gate in AGENTS.md §8 verankert |
 
