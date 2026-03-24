@@ -1,4 +1,4 @@
-Ã¯Â»Â¿# CHANGELOG.md
+﻿ÃƒÂ¯Ã‚Â»Ã‚Â¿# CHANGELOG.md
 
 ## 2026-03-24 - PH5C governance reconciliation opened; status-freeze required next
 
@@ -9,19 +9,21 @@
 - Governance drift between PH5B-close and PH5C-active states is resolved in favor of PH5C.
 - Baseline unified to `1609 passed, ruff clean`.
 
----## 2026-03-24 - PH5B closed (D-92); PH5C frozen (ÃÂ§85)
+---
+
+## 2026-03-24 - PH5B closed (D-92); PH5C frozen (ÃƒÂƒÃ‚Â‚Â§85)
 
-- **PH5B closed (D-92, ÃÂ§84)**: Low signal cluster analysis complete. 19/19 EMPTY_MANUAL. Root cause: placeholder content, not model failure.
-- **PH5C defined**: `FILTER_BEFORE_LLM_BASELINE` ÃÂ¢Ã¢ÂÂ¬Ã¢ÂÂ pre-LLM stub detection for empty/placeholder docs. Contract ÃÂ§85 frozen.
-- Baseline: `1619 passed, ruff clean, CI green`.
+- **PH5B closed (D-92, ÃƒÂƒÃ‚Â‚Â§84)**: Low signal cluster analysis complete. 19/19 EMPTY_MANUAL. Root cause: placeholder content, not model failure.
+- **PH5C defined**: `FILTER_BEFORE_LLM_BASELINE` ÃƒÂƒÃ‚Â¢ÃƒÂ¢Ã‚Â‚Ã‚Â¬ÃƒÂ¢Ã‚Â€Ã‚Â pre-LLM stub detection for empty/placeholder docs. Contract ÃƒÂƒÃ‚Â‚Â§85 frozen.
+- Baseline: `1609 passed, ruff clean`.
 
 ---
 
 ## 2026-03-24 - CI hardened (N-8); all 5 jobs green
 
-- `codecov/codecov-action@v4 ÃÂÃÂÃÂÃÂ¢ÃÂÃ¢ÂÂÃÂ¢Ã¢ÂÂ¬ÃÂ ÃÂÃ¢ÂÂÃÂ¢Ã¢ÂÂ¬Ã¢ÂÂ¢ @v5` + `FORCE_JAVASCRIPT_ACTIONS_TO_NODE24=true` ÃÂÃÂÃÂÃÂ¢ÃÂÃ¢ÂÂÃÂ¢Ã¢ÂÂÃÂ¬ÃÂÃ¢ÂÂÃÂ¢Ã¢ÂÂ¬ÃÂ Node 20 warnings eliminated.
+- `codecov/codecov-action@v4 ÃƒÂƒÃ‚ÂƒÃƒÂ†Ã‚Â’ÃƒÂƒÃ‚Â‚ÃƒÂ‚Ã‚Â¢ÃƒÂƒÃ‚ÂƒÃƒÂ¢Ã‚Â€Ã‚ÂšÃƒÂƒÃ‚Â¢ÃƒÂ¢Ã‚Â‚Ã‚Â¬ÃƒÂ‚Ã‚Â ÃƒÂƒÃ‚ÂƒÃƒÂ¢Ã‚Â€Ã‚ÂšÃƒÂƒÃ‚Â¢ÃƒÂ¢Ã‚Â‚Ã‚Â¬ÃƒÂ¢Ã‚Â„Ã‚Â¢ @v5` + `FORCE_JAVASCRIPT_ACTIONS_TO_NODE24=true` ÃƒÂƒÃ‚ÂƒÃƒÂ†Ã‚Â’ÃƒÂƒÃ‚Â‚ÃƒÂ‚Ã‚Â¢ÃƒÂƒÃ‚ÂƒÃƒÂ¢Ã‚Â€Ã‚ÂšÃƒÂƒÃ‚Â¢ÃƒÂ¢Ã‚Â€Ã‚ÂšÃƒÂ‚Ã‚Â¬ÃƒÂƒÃ‚ÂƒÃƒÂ¢Ã‚Â€Ã‚ÂšÃƒÂƒÃ‚Â¢ÃƒÂ¢Ã‚Â‚Ã‚Â¬ÃƒÂ‚Ã‚Â Node 20 warnings eliminated.
 - `hypothesis>=6.0.0` + `pytest-mock>=3.14.0` added to `[dev]` extras (were installed locally but missing from CI).
-- `bandit B324` fixed: `hashlib.sha1()` in `operational_readiness.py` (3 calls) now passes `usedforsecurity=False` (non-security ID hashes ÃÂÃÂÃÂÃÂ¢ÃÂÃ¢ÂÂÃÂ¢Ã¢ÂÂÃÂ¬ÃÂÃ¢ÂÂÃÂ¢Ã¢ÂÂ¬ÃÂ CWE-327 false positive resolved).
+- `bandit B324` fixed: `hashlib.sha1()` in `operational_readiness.py` (3 calls) now passes `usedforsecurity=False` (non-security ID hashes ÃƒÂƒÃ‚ÂƒÃƒÂ†Ã‚Â’ÃƒÂƒÃ‚Â‚ÃƒÂ‚Ã‚Â¢ÃƒÂƒÃ‚ÂƒÃƒÂ¢Ã‚Â€Ã‚ÂšÃƒÂƒÃ‚Â¢ÃƒÂ¢Ã‚Â€Ã‚ÂšÃƒÂ‚Ã‚Â¬ÃƒÂƒÃ‚ÂƒÃƒÂ¢Ã‚Â€Ã‚ÂšÃƒÂƒÃ‚Â¢ÃƒÂ¢Ã‚Â‚Ã‚Â¬ÃƒÂ‚Ã‚Â CWE-327 false positive resolved).
 - ruff format pass over 138 files (no logic changes).
 - Duplicate `asyncio.run(run())` in `send_digest` CLI command removed (pre-existing copy/paste bug).
 - Baseline: `1609 passed, ruff clean`. CI: 5/5 green.
@@ -30,7 +32,7 @@
 
 ## 2026-03-24 - Alert Integration wired into analyze-pending (N-7)
 
-- `app/cli/main.py`: Phase 4 added to `analyze_pending()` ÃÂÃÂÃÂÃÂ¢ÃÂÃ¢ÂÂÃÂ¢Ã¢ÂÂÃÂ¬ÃÂÃ¢ÂÂÃÂ¢Ã¢ÂÂ¬ÃÂ after DB write, `AlertService.process_document()` is called per successful result. Fail-open: alert errors never abort analysis.
+- `app/cli/main.py`: Phase 4 added to `analyze_pending()` ÃƒÂƒÃ‚ÂƒÃƒÂ†Ã‚Â’ÃƒÂƒÃ‚Â‚ÃƒÂ‚Ã‚Â¢ÃƒÂƒÃ‚ÂƒÃƒÂ¢Ã‚Â€Ã‚ÂšÃƒÂƒÃ‚Â¢ÃƒÂ¢Ã‚Â€Ã‚ÂšÃƒÂ‚Ã‚Â¬ÃƒÂƒÃ‚ÂƒÃƒÂ¢Ã‚Â€Ã‚ÂšÃƒÂƒÃ‚Â¢ÃƒÂ¢Ã‚Â‚Ã‚Â¬ÃƒÂ‚Ã‚Â after DB write, `AlertService.process_document()` is called per successful result. Fail-open: alert errors never abort analysis.
 - `--no-alerts` flag suppresses Phase 4 entirely.
 - `Alerts dispatched: N` printed when alerts fire.
 - 3 new tests: `tests/unit/cli/test_analyze_pending_alerts.py` (dispatch, --no-alerts suppression, fail-open).
@@ -40,7 +42,7 @@
 ## 2026-03-24 - MCP compat.py extraction complete (N-6)
 
 - Last 5 inline `@mcp.tool()` definitions extracted from `mcp_server.py` into `app/agents/tools/compat.py`.
-- `mcp_server.py`: 402 ÃÂÃÂÃÂÃÂ¢ÃÂÃ¢ÂÂÃÂ¢Ã¢ÂÂ¬ÃÂ ÃÂÃ¢ÂÂÃÂ¢Ã¢ÂÂ¬Ã¢ÂÂ¢ 232 lines; 0 inline tool definitions.
+- `mcp_server.py`: 402 ÃƒÂƒÃ‚ÂƒÃƒÂ†Ã‚Â’ÃƒÂƒÃ‚Â‚ÃƒÂ‚Ã‚Â¢ÃƒÂƒÃ‚ÂƒÃƒÂ¢Ã‚Â€Ã‚ÂšÃƒÂƒÃ‚Â¢ÃƒÂ¢Ã‚Â‚Ã‚Â¬ÃƒÂ‚Ã‚Â ÃƒÂƒÃ‚ÂƒÃƒÂ¢Ã‚Â€Ã‚ÂšÃƒÂƒÃ‚Â¢ÃƒÂ¢Ã‚Â‚Ã‚Â¬ÃƒÂ¢Ã‚Â„Ã‚Â¢ 232 lines; 0 inline tool definitions.
 - `test_canonical_read.py` + `test_guarded_write.py` upgraded: trivial alias checks replaced with `mcp.list_tools()` registration verification.
 
 ---
@@ -66,11 +68,11 @@
 
 ---
 
-## 2026-03-23 - PH4J formally closed (D-81) ÃÂÃÂÃÂÃÂ¢ÃÂÃ¢ÂÂÃÂ¢Ã¢ÂÂÃÂ¬ÃÂÃ¢ÂÂÃÂ¢Ã¢ÂÂ¬ÃÂ PH4K_TAG_SIGNAL_UTILITY_REVIEW opened as candidate
+## 2026-03-23 - PH4J formally closed (D-81) ÃƒÂƒÃ‚ÂƒÃƒÂ†Ã‚Â’ÃƒÂƒÃ‚Â‚ÃƒÂ‚Ã‚Â¢ÃƒÂƒÃ‚ÂƒÃƒÂ¢Ã‚Â€Ã‚ÂšÃƒÂƒÃ‚Â¢ÃƒÂ¢Ã‚Â€Ã‚ÂšÃƒÂ‚Ã‚Â¬ÃƒÂƒÃ‚ÂƒÃƒÂ¢Ã‚Â€Ã‚ÂšÃƒÂƒÃ‚Â¢ÃƒÂ¢Ã‚Â‚Ã‚Â¬ÃƒÂ‚Ã‚Â PH4K_TAG_SIGNAL_UTILITY_REVIEW opened as candidate
 
 - PH4J_CLOSE_AND_PH4K_DEFINITION sprint executed: governance sync complete.
-- PH4J formally closed; ÃÂÃÂÃÂ¢Ã¢ÂÂ¬ÃÂ¡ÃÂÃ¢ÂÂÃÂ§78 is now a closed frozen anchor (D-81).
-- PH4K_TAG_SIGNAL_UTILITY_REVIEW opened as candidate; ÃÂÃÂÃÂ¢Ã¢ÂÂ¬ÃÂ¡ÃÂÃ¢ÂÂÃÂ§79 contract candidate.
+- PH4J formally closed; ÃƒÂƒÃ‚ÂƒÃƒÂ†Ã‚Â’ÃƒÂƒÃ‚Â¢ÃƒÂ¢Ã‚Â‚Ã‚Â¬ÃƒÂ…Ã‚Â¡ÃƒÂƒÃ‚ÂƒÃƒÂ¢Ã‚Â€Ã‚ÂšÃƒÂƒÃ‚Â‚Â§78 is now a closed frozen anchor (D-81).
+- PH4K_TAG_SIGNAL_UTILITY_REVIEW opened as candidate; ÃƒÂƒÃ‚ÂƒÃƒÂ†Ã‚Â’ÃƒÂƒÃ‚Â¢ÃƒÂ¢Ã‚Â‚Ã‚Â¬ÃƒÂ…Ã‚Â¡ÃƒÂƒÃ‚ÂƒÃƒÂ¢Ã‚Â€Ã‚ÂšÃƒÂƒÃ‚Â‚Â§79 contract candidate.
 - All 10 governance docs aligned: PH4J=closed, PH4K=candidate.
 - No PH4K execution before `PH4K_DEFINITION_AND_CONTRACT_FREEZE`.
 - Baseline unchanged: `1554 passed, ruff clean`.
@@ -86,11 +88,11 @@
 
 ---
 
-## 2026-03-23 - PH4J formally closed (D-79/D-80) ÃÂÃÂÃÂÃÂ¢ÃÂÃ¢ÂÂÃÂ¢Ã¢ÂÂÃÂ¬ÃÂÃ¢ÂÂÃÂ¢Ã¢ÂÂ¬ÃÂ PH4K_TAG_SIGNAL_UTILITY_REVIEW defined as next candidate
+## 2026-03-23 - PH4J formally closed (D-79/D-80) ÃƒÂƒÃ‚ÂƒÃƒÂ†Ã‚Â’ÃƒÂƒÃ‚Â‚ÃƒÂ‚Ã‚Â¢ÃƒÂƒÃ‚ÂƒÃƒÂ¢Ã‚Â€Ã‚ÂšÃƒÂƒÃ‚Â¢ÃƒÂ¢Ã‚Â€Ã‚ÂšÃƒÂ‚Ã‚Â¬ÃƒÂƒÃ‚ÂƒÃƒÂ¢Ã‚Â€Ã‚ÂšÃƒÂƒÃ‚Â¢ÃƒÂ¢Ã‚Â‚Ã‚Â¬ÃƒÂ‚Ã‚Â PH4K_TAG_SIGNAL_UTILITY_REVIEW defined as next candidate
 
-- PH4J formally closed; ÃÂÃÂÃÂ¢Ã¢ÂÂ¬ÃÂ¡ÃÂÃ¢ÂÂÃÂ§78 is now a frozen anchor.
-- Tag enrichment confirmed: keyword-hit 4ÃÂÃÂÃÂÃÂ¢ÃÂÃ¢ÂÂÃÂ¢Ã¢ÂÂ¬ÃÂ ÃÂÃ¢ÂÂÃÂ¢Ã¢ÂÂ¬Ã¢ÂÂ¢7, zero-hit 1ÃÂÃÂÃÂÃÂ¢ÃÂÃ¢ÂÂÃÂ¢Ã¢ÂÂ¬ÃÂ ÃÂÃ¢ÂÂÃÂ¢Ã¢ÂÂ¬Ã¢ÂÂ¢4, assets-only 0ÃÂÃÂÃÂÃÂ¢ÃÂÃ¢ÂÂÃÂ¢Ã¢ÂÂ¬ÃÂ ÃÂÃ¢ÂÂÃÂ¢Ã¢ÂÂ¬Ã¢ÂÂ¢4.
-- Next sprint: PH4K_TAG_SIGNAL_UTILITY_REVIEW ÃÂÃÂÃÂÃÂ¢ÃÂÃ¢ÂÂÃÂ¢Ã¢ÂÂÃÂ¬ÃÂÃ¢ÂÂÃÂ¢Ã¢ÂÂ¬ÃÂ operator utility review, not more raw expansion.
+- PH4J formally closed; ÃƒÂƒÃ‚ÂƒÃƒÂ†Ã‚Â’ÃƒÂƒÃ‚Â¢ÃƒÂ¢Ã‚Â‚Ã‚Â¬ÃƒÂ…Ã‚Â¡ÃƒÂƒÃ‚ÂƒÃƒÂ¢Ã‚Â€Ã‚ÂšÃƒÂƒÃ‚Â‚Â§78 is now a frozen anchor.
+- Tag enrichment confirmed: keyword-hit 4ÃƒÂƒÃ‚ÂƒÃƒÂ†Ã‚Â’ÃƒÂƒÃ‚Â‚ÃƒÂ‚Ã‚Â¢ÃƒÂƒÃ‚ÂƒÃƒÂ¢Ã‚Â€Ã‚ÂšÃƒÂƒÃ‚Â¢ÃƒÂ¢Ã‚Â‚Ã‚Â¬ÃƒÂ‚Ã‚Â ÃƒÂƒÃ‚ÂƒÃƒÂ¢Ã‚Â€Ã‚ÂšÃƒÂƒÃ‚Â¢ÃƒÂ¢Ã‚Â‚Ã‚Â¬ÃƒÂ¢Ã‚Â„Ã‚Â¢7, zero-hit 1ÃƒÂƒÃ‚ÂƒÃƒÂ†Ã‚Â’ÃƒÂƒÃ‚Â‚ÃƒÂ‚Ã‚Â¢ÃƒÂƒÃ‚ÂƒÃƒÂ¢Ã‚Â€Ã‚ÂšÃƒÂƒÃ‚Â¢ÃƒÂ¢Ã‚Â‚Ã‚Â¬ÃƒÂ‚Ã‚Â ÃƒÂƒÃ‚ÂƒÃƒÂ¢Ã‚Â€Ã‚ÂšÃƒÂƒÃ‚Â¢ÃƒÂ¢Ã‚Â‚Ã‚Â¬ÃƒÂ¢Ã‚Â„Ã‚Â¢4, assets-only 0ÃƒÂƒÃ‚ÂƒÃƒÂ†Ã‚Â’ÃƒÂƒÃ‚Â‚ÃƒÂ‚Ã‚Â¢ÃƒÂƒÃ‚ÂƒÃƒÂ¢Ã‚Â€Ã‚ÂšÃƒÂƒÃ‚Â¢ÃƒÂ¢Ã‚Â‚Ã‚Â¬ÃƒÂ‚Ã‚Â ÃƒÂƒÃ‚ÂƒÃƒÂ¢Ã‚Â€Ã‚ÂšÃƒÂƒÃ‚Â¢ÃƒÂ¢Ã‚Â‚Ã‚Â¬ÃƒÂ¢Ã‚Â„Ã‚Â¢4.
+- Next sprint: PH4K_TAG_SIGNAL_UTILITY_REVIEW ÃƒÂƒÃ‚ÂƒÃƒÂ†Ã‚Â’ÃƒÂƒÃ‚Â‚ÃƒÂ‚Ã‚Â¢ÃƒÂƒÃ‚ÂƒÃƒÂ¢Ã‚Â€Ã‚ÂšÃƒÂƒÃ‚Â¢ÃƒÂ¢Ã‚Â€Ã‚ÂšÃƒÂ‚Ã‚Â¬ÃƒÂƒÃ‚ÂƒÃƒÂ¢Ã‚Â€Ã‚ÂšÃƒÂƒÃ‚Â¢ÃƒÂ¢Ã‚Â‚Ã‚Â¬ÃƒÂ‚Ã‚Â operator utility review, not more raw expansion.
 - DB test failures remain on a separate track.
 - Governance state: `current_sprint = PH4K_TAG_SIGNAL_UTILITY_REVIEW (candidate)`, `next_required_step = PH4K_DEFINITION_AND_CONTRACT_FREEZE`.
 
@@ -139,9 +141,9 @@
 
 ---
 
-## 2026-03-23 - PH4I contract frozen (ÃÂÃÂÃÂ¢Ã¢ÂÂ¬ÃÂ¡ÃÂÃ¢ÂÂÃÂ§77 D-77); execution-ready
+## 2026-03-23 - PH4I contract frozen (ÃƒÂƒÃ‚ÂƒÃƒÂ†Ã‚Â’ÃƒÂƒÃ‚Â¢ÃƒÂ¢Ã‚Â‚Ã‚Â¬ÃƒÂ…Ã‚Â¡ÃƒÂƒÃ‚ÂƒÃƒÂ¢Ã‚Â€Ã‚ÂšÃƒÂƒÃ‚Â‚Â§77 D-77); execution-ready
 
-- ÃÂÃÂÃÂ¢Ã¢ÂÂ¬ÃÂ¡ÃÂÃ¢ÂÂÃÂ§77 contract frozen: scope = market_scope enrichment only in `_build_fallback_analysis()`.
+- ÃƒÂƒÃ‚ÂƒÃƒÂ†Ã‚Â’ÃƒÂƒÃ‚Â¢ÃƒÂ¢Ã‚Â‚Ã‚Â¬ÃƒÂ…Ã‚Â¡ÃƒÂƒÃ‚ÂƒÃƒÂ¢Ã‚Â€Ã‚ÂšÃƒÂƒÃ‚Â‚Â§77 contract frozen: scope = market_scope enrichment only in `_build_fallback_analysis()`.
 - No scoring changes, no I-13 conflict, no actionable expansion.
 - Acceptance criteria locked: market_scope > 0/69; 1538+ passed; ruff clean.
 - Governance state advanced to:
@@ -170,7 +172,7 @@
 
 ## 2026-03-23 - PH4G formally closed; PH4H opened in active definition mode
 
-- PH4G_FALLBACK_INPUT_ENRICHMENT_BASELINE formally closed and frozen as ÃÂÃÂÃÂÃ¢ÂÂÃÂÃ¢ÂÂÃÂ¢Ã¢ÂÂ¬ÃÂ¡ÃÂÃÂÃÂ¢Ã¢ÂÂ¬ÃÂ¡ÃÂÃ¢ÂÂÃÂ§75 anchor.
+- PH4G_FALLBACK_INPUT_ENRICHMENT_BASELINE formally closed and frozen as ÃƒÂƒÃ‚ÂƒÃƒÂ†Ã‚Â’ÃƒÂƒÃ‚Â†ÃƒÂ¢Ã‚Â€Ã‚Â™ÃƒÂƒÃ‚ÂƒÃƒÂ¢Ã‚Â€Ã‚ÂšÃƒÂƒÃ‚Â¢ÃƒÂ¢Ã‚Â‚Ã‚Â¬ÃƒÂ…Ã‚Â¡ÃƒÂƒÃ‚ÂƒÃƒÂ†Ã‚Â’ÃƒÂƒÃ‚Â¢ÃƒÂ¢Ã‚Â‚Ã‚Â¬ÃƒÂ…Ã‚Â¡ÃƒÂƒÃ‚ÂƒÃƒÂ¢Ã‚Â€Ã‚ÂšÃƒÂƒÃ‚Â‚Â§75 anchor.
 - PH4H_RULE_ONLY_CEILING_AND_ACTIONABILITY_POLICY_REVIEW opened as active definition sprint.
 - Governance state advanced to:
   - `current_sprint = PH4H_RULE_ONLY_CEILING_AND_ACTIONABILITY_POLICY_REVIEW (active definition)`
@@ -196,10 +198,10 @@
 ## 2026-03-23 - [superseded] Premature PH4G closeout/opening record
 
 - PH4G_FALLBACK_INPUT_ENRICHMENT_BASELINE formally closed.
-- ÃÂÃÂÃÂÃ¢ÂÂÃÂÃ¢ÂÂÃÂ¢Ã¢ÂÂ¬ÃÂ¡ÃÂÃÂÃÂ¢Ã¢ÂÂ¬ÃÂ¡ÃÂÃ¢ÂÂÃÂ§75 is now a frozen immutable anchor.
+- ÃƒÂƒÃ‚ÂƒÃƒÂ†Ã‚Â’ÃƒÂƒÃ‚Â†ÃƒÂ¢Ã‚Â€Ã‚Â™ÃƒÂƒÃ‚ÂƒÃƒÂ¢Ã‚Â€Ã‚ÂšÃƒÂƒÃ‚Â¢ÃƒÂ¢Ã‚Â‚Ã‚Â¬ÃƒÂ…Ã‚Â¡ÃƒÂƒÃ‚ÂƒÃƒÂ†Ã‚Â’ÃƒÂƒÃ‚Â¢ÃƒÂ¢Ã‚Â‚Ã‚Â¬ÃƒÂ…Ã‚Â¡ÃƒÂƒÃ‚ÂƒÃƒÂ¢Ã‚Â€Ã‚ÂšÃƒÂƒÃ‚Â‚Â§75 is now a frozen immutable anchor.
 - Retained: relevance-floor fallback intervention.
-- Reverted: actionable heuristic (I-13 constraint ÃÂÃÂÃÂÃ¢ÂÂÃÂÃ¢ÂÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂ¢ÃÂÃ¢ÂÂÃÂ¢Ã¢ÂÂ¬ÃÂ¡ÃÂÃ¢ÂÂÃÂÃÂ¬ÃÂÃÂÃÂÃÂ¢ÃÂÃ¢ÂÂÃÂ¢Ã¢ÂÂÃÂ¬ÃÂÃ¢ÂÂÃÂÃÂ rule-only priority ceiling ÃÂÃÂÃÂÃ¢ÂÂÃÂÃ¢ÂÂÃÂÃÂ¢ÃÂÃÂÃÂÃÂ¢ÃÂÃ¢ÂÂÃÂ¢Ã¢ÂÂÃÂ¬ÃÂÃ¢ÂÂÃÂÃÂ°ÃÂÃÂÃÂ¢Ã¢ÂÂ¬ÃÂ¡ÃÂÃ¢ÂÂÃÂÃÂ¤ 5).
-- PH4H_RULE_ONLY_CEILING_AND_ACTIONABILITY_POLICY_REVIEW opened (D-70, ÃÂÃÂÃÂÃ¢ÂÂÃÂÃ¢ÂÂÃÂ¢Ã¢ÂÂ¬ÃÂ¡ÃÂÃÂÃÂ¢Ã¢ÂÂ¬ÃÂ¡ÃÂÃ¢ÂÂÃÂ§76).
+- Reverted: actionable heuristic (I-13 constraint ÃƒÂƒÃ‚ÂƒÃƒÂ†Ã‚Â’ÃƒÂƒÃ‚Â†ÃƒÂ¢Ã‚Â€Ã‚Â™ÃƒÂƒÃ‚ÂƒÃƒÂ¢Ã‚Â€Ã‚ÂšÃƒÂƒÃ‚Â‚ÃƒÂ‚Ã‚Â¢ÃƒÂƒÃ‚ÂƒÃƒÂ†Ã‚Â’ÃƒÂƒÃ‚Â‚ÃƒÂ‚Ã‚Â¢ÃƒÂƒÃ‚ÂƒÃƒÂ¢Ã‚Â€Ã‚ÂšÃƒÂƒÃ‚Â¢ÃƒÂ¢Ã‚Â‚Ã‚Â¬ÃƒÂ…Ã‚Â¡ÃƒÂƒÃ‚ÂƒÃƒÂ¢Ã‚Â€Ã‚ÂšÃƒÂƒÃ‚Â‚ÃƒÂ‚Ã‚Â¬ÃƒÂƒÃ‚ÂƒÃƒÂ†Ã‚Â’ÃƒÂƒÃ‚Â‚ÃƒÂ‚Ã‚Â¢ÃƒÂƒÃ‚ÂƒÃƒÂ¢Ã‚Â€Ã‚ÂšÃƒÂƒÃ‚Â¢ÃƒÂ¢Ã‚Â€Ã‚ÂšÃƒÂ‚Ã‚Â¬ÃƒÂƒÃ‚ÂƒÃƒÂ¢Ã‚Â€Ã‚ÂšÃƒÂƒÃ‚Â‚ÃƒÂ‚Ã‚Â rule-only priority ceiling ÃƒÂƒÃ‚ÂƒÃƒÂ†Ã‚Â’ÃƒÂƒÃ‚Â†ÃƒÂ¢Ã‚Â€Ã‚Â™ÃƒÂƒÃ‚ÂƒÃƒÂ¢Ã‚Â€Ã‚ÂšÃƒÂƒÃ‚Â‚ÃƒÂ‚Ã‚Â¢ÃƒÂƒÃ‚ÂƒÃƒÂ†Ã‚Â’ÃƒÂƒÃ‚Â‚ÃƒÂ‚Ã‚Â¢ÃƒÂƒÃ‚ÂƒÃƒÂ¢Ã‚Â€Ã‚ÂšÃƒÂƒÃ‚Â¢ÃƒÂ¢Ã‚Â€Ã‚ÂšÃƒÂ‚Ã‚Â¬ÃƒÂƒÃ‚ÂƒÃƒÂ¢Ã‚Â€Ã‚ÂšÃƒÂƒÃ‚Â‚ÃƒÂ‚Ã‚Â°ÃƒÂƒÃ‚ÂƒÃƒÂ†Ã‚Â’ÃƒÂƒÃ‚Â¢ÃƒÂ¢Ã‚Â‚Ã‚Â¬ÃƒÂ…Ã‚Â¡ÃƒÂƒÃ‚ÂƒÃƒÂ¢Ã‚Â€Ã‚ÂšÃƒÂƒÃ‚Â‚ÃƒÂ‚Ã‚Â¤ 5).
+- PH4H_RULE_ONLY_CEILING_AND_ACTIONABILITY_POLICY_REVIEW opened (D-70, ÃƒÂƒÃ‚ÂƒÃƒÂ†Ã‚Â’ÃƒÂƒÃ‚Â†ÃƒÂ¢Ã‚Â€Ã‚Â™ÃƒÂƒÃ‚ÂƒÃƒÂ¢Ã‚Â€Ã‚ÂšÃƒÂƒÃ‚Â¢ÃƒÂ¢Ã‚Â‚Ã‚Â¬ÃƒÂ…Ã‚Â¡ÃƒÂƒÃ‚ÂƒÃƒÂ†Ã‚Â’ÃƒÂƒÃ‚Â¢ÃƒÂ¢Ã‚Â‚Ã‚Â¬ÃƒÂ…Ã‚Â¡ÃƒÂƒÃ‚ÂƒÃƒÂ¢Ã‚Â€Ã‚ÂšÃƒÂƒÃ‚Â‚Â§76).
 - PH4H is review-only: no code changes, no I-13 relaxation before policy decision.
 - Governance state advanced to:
   - `current_sprint = PH4H_RULE_ONLY_CEILING_AND_ACTIONABILITY_POLICY_REVIEW (superseded draft state)`
@@ -309,13 +311,13 @@
 
 - PH5A diagnostic script executed against 69-doc paired set.
 - Key findings:
-  - Fallback rate: 0.0% (0/69) ÃÂÃÂÃÂÃÂ¢ÃÂÃ¢ÂÂÃÂ¢Ã¢ÂÂÃÂ¬ÃÂÃ¢ÂÂÃÂ¢Ã¢ÂÂ¬ÃÂ pipeline fully functional
-  - LLM error proxy rate: 27.5% (19/69) ÃÂÃÂÃÂÃÂ¢ÃÂÃ¢ÂÂÃÂ¢Ã¢ÂÂÃÂ¬ÃÂÃ¢ÂÂÃÂ¢Ã¢ÂÂ¬ÃÂ main reliability gap identified
-  - Priority mean: 3.96/10 (highÃÂÃÂÃÂÃÂ¢ÃÂÃ¢ÂÂÃÂ¢Ã¢ÂÂ¬ÃÂ°ÃÂÃ¢ÂÂÃÂÃÂ¥7: 15, mid 4-6: 23, lowÃÂÃÂÃÂÃÂ¢ÃÂÃ¢ÂÂÃÂ¢Ã¢ÂÂ¬ÃÂ°ÃÂÃ¢ÂÂÃÂÃÂ¤3: 31)
+  - Fallback rate: 0.0% (0/69) ÃƒÂƒÃ‚ÂƒÃƒÂ†Ã‚Â’ÃƒÂƒÃ‚Â‚ÃƒÂ‚Ã‚Â¢ÃƒÂƒÃ‚ÂƒÃƒÂ¢Ã‚Â€Ã‚ÂšÃƒÂƒÃ‚Â¢ÃƒÂ¢Ã‚Â€Ã‚ÂšÃƒÂ‚Ã‚Â¬ÃƒÂƒÃ‚ÂƒÃƒÂ¢Ã‚Â€Ã‚ÂšÃƒÂƒÃ‚Â¢ÃƒÂ¢Ã‚Â‚Ã‚Â¬ÃƒÂ‚Ã‚Â pipeline fully functional
+  - LLM error proxy rate: 27.5% (19/69) ÃƒÂƒÃ‚ÂƒÃƒÂ†Ã‚Â’ÃƒÂƒÃ‚Â‚ÃƒÂ‚Ã‚Â¢ÃƒÂƒÃ‚ÂƒÃƒÂ¢Ã‚Â€Ã‚ÂšÃƒÂƒÃ‚Â¢ÃƒÂ¢Ã‚Â€Ã‚ÂšÃƒÂ‚Ã‚Â¬ÃƒÂƒÃ‚ÂƒÃƒÂ¢Ã‚Â€Ã‚ÂšÃƒÂƒÃ‚Â¢ÃƒÂ¢Ã‚Â‚Ã‚Â¬ÃƒÂ‚Ã‚Â main reliability gap identified
+  - Priority mean: 3.96/10 (highÃƒÂƒÃ‚ÂƒÃƒÂ†Ã‚Â’ÃƒÂƒÃ‚Â‚ÃƒÂ‚Ã‚Â¢ÃƒÂƒÃ‚ÂƒÃƒÂ¢Ã‚Â€Ã‚ÂšÃƒÂƒÃ‚Â¢ÃƒÂ¢Ã‚Â‚Ã‚Â¬ÃƒÂ‚Ã‚Â°ÃƒÂƒÃ‚ÂƒÃƒÂ¢Ã‚Â€Ã‚ÂšÃƒÂƒÃ‚Â‚ÃƒÂ‚Ã‚Â¥7: 15, mid 4-6: 23, lowÃƒÂƒÃ‚ÂƒÃƒÂ†Ã‚Â’ÃƒÂƒÃ‚Â‚ÃƒÂ‚Ã‚Â¢ÃƒÂƒÃ‚ÂƒÃƒÂ¢Ã‚Â€Ã‚ÂšÃƒÂƒÃ‚Â¢ÃƒÂ¢Ã‚Â‚Ã‚Â¬ÃƒÂ‚Ã‚Â°ÃƒÂƒÃ‚ÂƒÃƒÂ¢Ã‚Â€Ã‚ÂšÃƒÂƒÃ‚Â‚ÃƒÂ‚Ã‚Â¤3: 31)
   - Keyword coverage: 62.3% (43/69)
-  - Tag fill rate: 100.0% (69/69) ÃÂÃÂÃÂÃÂ¢ÃÂÃ¢ÂÂÃÂ¢Ã¢ÂÂÃÂ¬ÃÂÃ¢ÂÂÃÂ¢Ã¢ÂÂ¬ÃÂ Phase 4 complete
+  - Tag fill rate: 100.0% (69/69) ÃƒÂƒÃ‚ÂƒÃƒÂ†Ã‚Â’ÃƒÂƒÃ‚Â‚ÃƒÂ‚Ã‚Â¢ÃƒÂƒÃ‚ÂƒÃƒÂ¢Ã‚Â€Ã‚ÂšÃƒÂƒÃ‚Â¢ÃƒÂ¢Ã‚Â€Ã‚ÂšÃƒÂ‚Ã‚Â¬ÃƒÂƒÃ‚ÂƒÃƒÂ¢Ã‚Â€Ã‚ÂšÃƒÂƒÃ‚Â¢ÃƒÂ¢Ã‚Â‚Ã‚Â¬ÃƒÂ‚Ã‚Â Phase 4 complete
   - Watchlist overlap: 52.2% (36/69)
-  - Actionable rate (Tier3): 0.0% ÃÂÃÂÃÂÃÂ¢ÃÂÃ¢ÂÂÃÂ¢Ã¢ÂÂÃÂ¬ÃÂÃ¢ÂÂÃÂ¢Ã¢ÂÂ¬ÃÂ I-13 confirmed
+  - Actionable rate (Tier3): 0.0% ÃƒÂƒÃ‚ÂƒÃƒÂ†Ã‚Â’ÃƒÂƒÃ‚Â‚ÃƒÂ‚Ã‚Â¢ÃƒÂƒÃ‚ÂƒÃƒÂ¢Ã‚Â€Ã‚ÂšÃƒÂƒÃ‚Â¢ÃƒÂ¢Ã‚Â€Ã‚ÂšÃƒÂ‚Ã‚Â¬ÃƒÂƒÃ‚ÂƒÃƒÂ¢Ã‚Â€Ã‚ÂšÃƒÂƒÃ‚Â¢ÃƒÂ¢Ã‚Â‚Ã‚Â¬ÃƒÂ‚Ã‚Â I-13 confirmed
 - Artifacts: `artifacts/ph5a_reliability_baseline.json` + `artifacts/ph5a_operator_summary.md`
 - PH5A moved to results-review; PH5A-7 (governance closeout) pending.
 
@@ -336,3 +338,6 @@
 
 
 
+
+
+

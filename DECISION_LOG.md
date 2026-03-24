@@ -1,4 +1,4 @@
-Ã¯Â»Â¿# DECISION_LOG.md
+﻿ÃƒÂ¯Ã‚Â»Ã‚Â¿# DECISION_LOG.md
 
 
 
@@ -18,10 +18,10 @@
 
 
 
-- current_sprint: `PH5C_FILTER_BEFORE_LLM_BASELINE (active D-95, �85)`
+- current_sprint: `PH5C_GOVERNANCE_RECONCILIATION`
 
 
-- next_required_step: `PH5C_EXECUTION`
+- next_required_step: `PH5C_STATUS_FREEZE`
 
 
 - baseline: `1609 passed, ruff clean`
@@ -187,7 +187,7 @@
 
 
 
-### D-83 (2026-03-23): Sprint 44 ÃÂÃÂ¢ÃÂÃ¢ÂÂ¬ÃÂÃ¢ÂÂ Operator API Hardening implemented
+### D-83 (2026-03-23): Sprint 44 ÃƒÂƒÃ‚ÂƒÃƒÂ‚Ã‚Â¢ÃƒÂƒÃ‚Â‚ÃƒÂ¢Ã‚Â‚Ã‚Â¬ÃƒÂƒÃ‚Â‚ÃƒÂ¢Ã‚Â€Ã‚Â Operator API Hardening implemented
 
 
 
@@ -207,7 +207,7 @@
 
 
 
-- 23 new tests added. `ÃÂÃ¢ÂÂÃÂ§80` contract added to `docs/contracts.md`.
+- 23 new tests added. `ÃƒÂƒÃ‚ÂƒÃƒÂ¢Ã‚Â€Ã‚ÂšÃƒÂƒÃ‚Â‚Â§80` contract added to `docs/contracts.md`.
 
 
 
@@ -215,11 +215,11 @@
 
 
 
-### D-84 (2026-03-24): PH4K formally closed ÃÂÃÂ¢ÃÂÃ¢ÂÂ¬ÃÂÃ¢ÂÂ utility review complete
+### D-84 (2026-03-24): PH4K formally closed ÃƒÂƒÃ‚ÂƒÃƒÂ‚Ã‚Â¢ÃƒÂƒÃ‚Â‚ÃƒÂ¢Ã‚Â‚Ã‚Â¬ÃƒÂƒÃ‚Â‚ÃƒÂ¢Ã‚Â€Ã‚Â utility review complete
 
 
 
-- PH4K_TAG_SIGNAL_UTILITY_REVIEW formally closed; ÃÂÃ¢ÂÂÃÂ§79 is frozen anchor.
+- PH4K_TAG_SIGNAL_UTILITY_REVIEW formally closed; ÃƒÂƒÃ‚ÂƒÃƒÂ¢Ã‚Â€Ã‚ÂšÃƒÂƒÃ‚Â‚Â§79 is frozen anchor.
 
 
 
@@ -267,7 +267,7 @@
 
 
 
-- 5 test warnings (coroutine mock) fixed: `AsyncMock` ÃÂÃÂ¢ÃÂÃ¢ÂÂ ÃÂÃ¢ÂÂ `MagicMock` for `session.add()`.
+- 5 test warnings (coroutine mock) fixed: `AsyncMock` ÃƒÂƒÃ‚ÂƒÃƒÂ‚Ã‚Â¢ÃƒÂƒÃ‚Â‚ÃƒÂ¢Ã‚Â€Ã‚Â ÃƒÂƒÃ‚Â‚ÃƒÂ¢Ã‚Â€Ã‚Â™ `MagicMock` for `session.add()`.
 
 
 
@@ -306,7 +306,7 @@
 
 
 
-- Governance: PHASE_PLAN.md, SPRINT_LEDGER.md, AGENTS.md, TASKLIST.md, contracts.md ÃÂÃ¢ÂÂÃÂ§82, intelligence_architecture.md all updated.
+- Governance: PHASE_PLAN.md, SPRINT_LEDGER.md, AGENTS.md, TASKLIST.md, contracts.md ÃƒÂƒÃ‚ÂƒÃƒÂ¢Ã‚Â€Ã‚ÂšÃƒÂƒÃ‚Â‚Â§82, intelligence_architecture.md all updated.
 
 
 
@@ -422,7 +422,7 @@
 
 
 
-### D-92 (2026-03-24): PH5A review complete; PH5B opened ÃÂÃÂ¯ÃÂÃÂ¿ÃÂÃÂ½ Low Signal Cluster Analysis
+### D-92 (2026-03-24): PH5A review complete; PH5B opened ÃƒÂƒÃ‚ÂƒÃƒÂ‚Ã‚Â¯ÃƒÂƒÃ‚Â‚ÃƒÂ‚Ã‚Â¿ÃƒÂƒÃ‚Â‚ÃƒÂ‚Ã‚Â½ Low Signal Cluster Analysis
 
 
 
@@ -434,7 +434,7 @@
 
 
 
-- Signature: `priority=1 + relevance=0 + scope=unknown` ÃÂÃÂ¯ÃÂÃÂ¿ÃÂÃÂ½ not a parse error but a quality gap.
+- Signature: `priority=1 + relevance=0 + scope=unknown` ÃƒÂƒÃ‚ÂƒÃƒÂ‚Ã‚Â¯ÃƒÂƒÃ‚Â‚ÃƒÂ‚Ã‚Â¿ÃƒÂƒÃ‚Â‚ÃƒÂ‚Ã‚Â½ not a parse error but a quality gap.
 
 
 
@@ -446,7 +446,7 @@
 
 
 
-- Contract: ÃÂÃÂ¯ÃÂÃÂ¿ÃÂÃÂ½84 added to docs/contracts.md.
+- Contract: ÃƒÂƒÃ‚ÂƒÃƒÂ‚Ã‚Â¯ÃƒÂƒÃ‚Â‚ÃƒÂ‚Ã‚Â¿ÃƒÂƒÃ‚Â‚ÃƒÂ‚Ã‚Â½84 added to docs/contracts.md.
 
 
 
@@ -495,7 +495,7 @@
 
 
 
-- Next required step is PH5C_EXECUTION.
+- Next required step is PH5C_STATUS_FREEZE.
 
 
 
@@ -572,11 +572,12 @@
 
 - Governance drift between PH5B-close and PH5C-active states must be resolved in favor of PH5C.
 
-- Current sprint is set to `PH5C_FILTER_BEFORE_LLM_BASELINE (active D-95, �85)`.
+- Current sprint is set to `PH5C_GOVERNANCE_RECONCILIATION`.
 
-- Next required step is `PH5C_EXECUTION`.
+- Next required step is `PH5C_STATUS_FREEZE`.
 
 - Baseline unified to `1609 passed, ruff clean`.
 
 
 
+
