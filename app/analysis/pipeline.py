@@ -19,7 +19,8 @@ from app.normalization.entities import hits_to_entity_mentions
 _MAX_CONCURRENT = 5  # max parallel LLM calls per run_batch()
 _ASSET_HIT_CATEGORIES = frozenset({"crypto", "equity", "etf"})
 _FALLBACK_MAX_TERMS = 20
-_STUB_CONTENT_THRESHOLD = 50  # PH5C: skip LLM for docs with body â‰¤ 50 bytes
+_STUB_CONTENT_THRESHOLD = 50  # PH5C: skip LLM for docs with body Ã¢â€°Â¤ 50 bytes
+_MIN_RULE_RELEVANCE_FOR_LLM = 0.10  # D-110: skip LLM for very low rule relevance
 # PH4I: title-level crypto signal words for market_scope inference in fallback path
 _CRYPTO_TITLE_TERMS = frozenset(
     {
@@ -364,6 +365,7 @@ class AnalysisPipeline:
             "tickers": self._keyword_engine.match_tickers(full_text),
             "source_type": doc.source_type.value if doc.source_type else None,
         }
+        pre_llm_relevance = _fallback_relevance(doc, keyword_hits, entity_mentions)
 
         fallback_reason: str | None = None
         if self._provider is None:
@@ -380,17 +382,21 @@ class AnalysisPipeline:
                 threshold=_STUB_CONTENT_THRESHOLD,
             )
         elif (
-            not keyword_hits
+            pre_llm_relevance < _MIN_RULE_RELEVANCE_FOR_LLM
             and not doc.tickers
             and not doc.crypto_assets
         ):
-            # D-109: relevance gate -- skip LLM for off-topic documents
-            # that match zero keywords and have no pre-existing asset metadata.
-            # These typically produce priority=1/relevance=0/scope=unknown.
-            fallback_reason = "zero_relevance: no keyword or asset signals."
+            # D-110: low-relevance gate -- skip LLM for likely off-topic documents.
+            # This keeps token budget focused on documents with meaningful rule signals.
+            fallback_reason = (
+                "low_relevance_gate: "
+                f"pre_llm_relevance={pre_llm_relevance:.3f} "
+                f"< {_MIN_RULE_RELEVANCE_FOR_LLM:.2f}"
+            )
             logger.info(
-                "zero_relevance_gate_skipped_llm",
+                "low_relevance_gate_skipped_llm",
                 doc_id=str(doc.id),
+                pre_llm_relevance=pre_llm_relevance,
                 title=doc.title[:80] if doc.title else "",
             )
 
@@ -591,3 +597,4 @@ class AnalysisPipeline:
                 return await self.run(doc)
 
         return list(await asyncio.gather(*[_bounded(d) for d in documents]))
+
