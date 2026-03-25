@@ -3,9 +3,6 @@
 Provides the ``trading`` command group (``trading-bot trading <cmd>``).
 All commands are read-only or guarded-write (paper/shadow only).
 
-These commands mirror the equivalent ``trading-bot research <cmd>`` commands
-for discoverability — both entry points invoke the same backend functions.
-The ``research`` group remains the canonical surface for backward compatibility.
 """
 
 from __future__ import annotations
@@ -26,7 +23,28 @@ trading_app = typer.Typer(
 )
 
 
-# ── market-data ───────────────────────────────────────────────────────────────
+def get_registered_trading_command_names() -> set[str]:
+    """Return all registered trading sub-command names."""
+    names: set[str] = set()
+    for command in trading_app.registered_commands:
+        name = getattr(command, "name", None)
+        if isinstance(name, str) and name.strip():
+            names.add(name.strip())
+    return names
+
+
+def get_invalid_trading_command_refs(refs: list[str]) -> list[str]:
+    """Return command refs that are not valid `trading <command>` entries."""
+    registered = get_registered_trading_command_names()
+    invalid_refs: list[str] = []
+    for ref in refs:
+        parts = ref.strip().split()
+        if len(parts) != 2 or parts[0] != "trading" or parts[1] not in registered:
+            invalid_refs.append(ref)
+    return invalid_refs
+
+
+# -- market-data --
 
 
 @trading_app.command("market-data-quote")
@@ -118,7 +136,7 @@ def trading_market_data_snapshot(
         raise typer.Exit(1)
 
 
-# ── paper-portfolio ───────────────────────────────────────────────────────────
+# -- paper-portfolio --
 
 
 @trading_app.command("paper-portfolio-snapshot")
@@ -294,7 +312,19 @@ def trading_paper_exposure_summary(
         raise typer.Exit(1)
 
 
-# ── trading-loop ──────────────────────────────────────────────────────────────
+@trading_app.command("signals")
+def trading_signals(
+    watchlist: str | None = typer.Option(None, "--watchlist", help="Filter by watchlist"),
+    min_priority: int = typer.Option(8, "--min-priority", help="Minimum priority"),
+    limit: int = typer.Option(50, "--limit", help="Max results"),
+) -> None:
+    """Generate actionable signal candidates (read-only)."""
+    from app.cli.commands.research_core import research_signals
+
+    research_signals(watchlist=watchlist, min_priority=min_priority, limit=limit)
+
+
+# -- trading-loop --
 
 
 @trading_app.command("loop-status")
@@ -370,9 +400,9 @@ def trading_recent_cycles(
         if not isinstance(rec, dict):
             continue
         table.add_row(
-            str(rec.get("cycle_id", "—"))[:16],
-            str(rec.get("status", "—")),
-            str(rec.get("symbol", "—")),
+            str(rec.get("cycle_id", "-"))[:16],
+            str(rec.get("status", "-")),
+            str(rec.get("symbol", "-")),
             "Y" if rec.get("signal_generated") else "N",
             "Y" if rec.get("risk_approved") else "N",
             "Y" if rec.get("fill_simulated") else "N",
@@ -464,7 +494,7 @@ def trading_run_once(
     console.print("write_back_allowed=False")
 
 
-# ── backtest ──────────────────────────────────────────────────────────────────
+# -- backtest --
 
 
 @trading_app.command("backtest-run")
@@ -557,7 +587,7 @@ def trading_backtest_run(
     console.print(f"result_written={out}")
 
 
-# ── decision-journal ──────────────────────────────────────────────────────────
+# -- decision-journal --
 
 
 @trading_app.command("decision-journal-append")
@@ -679,3 +709,4 @@ def trading_decision_journal_summary(
         console.print(f"avg_confidence={summary.avg_confidence}")
     console.print("execution_enabled=False")
     console.print("write_back_allowed=False")
+

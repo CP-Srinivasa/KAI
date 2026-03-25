@@ -7,7 +7,7 @@ from typing import Any
 
 import pytest
 
-from app.cli.research import get_invalid_research_command_refs
+from app.cli.commands.trading import get_invalid_trading_command_refs
 from app.messaging.telegram_bot import (
     TelegramOperatorBot,
     get_telegram_command_inventory,
@@ -135,14 +135,14 @@ async def test_is_not_configured_without_token():
     assert not bot.is_configured
 
 
-def test_telegram_command_inventory_references_registered_cli_research_commands() -> None:
+def test_telegram_command_inventory_references_registered_cli_trading_commands() -> None:
     inventory = get_telegram_command_inventory()
     refs = [
         ref
-        for command_refs in inventory["canonical_research_refs"].values()
+        for command_refs in inventory["canonical_command_refs"].values()
         for ref in command_refs
     ]
-    assert get_invalid_research_command_refs(refs) == []
+    assert get_invalid_trading_command_refs(refs) == []
 
 
 @pytest.mark.asyncio
@@ -195,7 +195,7 @@ def test_telegram_command_inventory_references_registered_cli_research_commands(
             [
                 "*Positions (Paper Portfolio Read-Only)*",
                 "position_count=`2`",
-                "Ref: `research paper-positions-summary`",
+                "Ref: `trading paper-positions-summary`",
             ],
         ),
         (
@@ -213,7 +213,7 @@ def test_telegram_command_inventory_references_registered_cli_research_commands(
             [
                 "*Exposure (Paper Portfolio Read-Only)*",
                 "mark_to_market_status=`degraded`",
-                "Ref: `research paper-exposure-summary`",
+                "Ref: `trading paper-exposure-summary`",
             ],
         ),
         (
@@ -250,7 +250,7 @@ def test_telegram_command_inventory_references_registered_cli_research_commands(
             [
                 "*Signals (Read-Only Handoff)*",
                 "signal_count=`1`",
-                "Ref: `research signals`",
+                "Ref: `trading signals`",
             ],
         ),
         (
@@ -267,7 +267,7 @@ def test_telegram_command_inventory_references_registered_cli_research_commands(
             [
                 "*Operator Journal (Read-Only)*",
                 "journal_status=`open`",
-                "Ref: `research decision-journal-summary`",
+                "Ref: `trading decision-journal-summary`",
             ],
         ),
         (

@@ -61,13 +61,13 @@ _WEBHOOK_ALLOWED_UPDATES_DEFAULT = ("message", "edited_message")
 _WEBHOOK_MAX_BODY_BYTES_DEFAULT = 64_000
 _WEBHOOK_MAX_SEEN_UPDATE_IDS_DEFAULT = 2_048
 _WEBHOOK_REJECTION_AUDIT_LOG_DEFAULT = "artifacts/telegram_webhook_rejections.jsonl"
-TELEGRAM_CANONICAL_RESEARCH_REFS: dict[str, tuple[str, ...]] = {
-    "positions": ("research paper-positions-summary",),
-    "exposure": ("research paper-exposure-summary",),
-    "signals": ("research signals",),
-    "journal": ("research decision-journal-summary",),
-    "approve": ("research decision-journal-append",),
-    "reject": ("research decision-journal-append",),
+TELEGRAM_CANONICAL_COMMAND_REFS: dict[str, tuple[str, ...]] = {
+    "positions": ("trading paper-positions-summary",),
+    "exposure": ("trading paper-exposure-summary",),
+    "signals": ("trading signals",),
+    "journal": ("trading decision-journal-summary",),
+    "approve": ("trading decision-journal-append",),
+    "reject": ("trading decision-journal-append",),
 }
 
 
@@ -80,8 +80,12 @@ def get_telegram_command_inventory() -> dict[str, object]:
             "allowed_updates": list(_WEBHOOK_ALLOWED_UPDATES_DEFAULT),
             "max_body_bytes": _WEBHOOK_MAX_BODY_BYTES_DEFAULT,
         },
+        "canonical_command_refs": {
+            command: list(refs) for command, refs in TELEGRAM_CANONICAL_COMMAND_REFS.items()
+        },
+        # Backward-compatible key for existing consumers.
         "canonical_research_refs": {
-            command: list(refs) for command, refs in TELEGRAM_CANONICAL_RESEARCH_REFS.items()
+            command: list(refs) for command, refs in TELEGRAM_CANONICAL_COMMAND_REFS.items()
         },
     }
 
@@ -169,13 +173,13 @@ class TelegramOperatorBot:
     def _collect_invalid_command_refs(self) -> tuple[str, ...]:
         refs = [
             ref
-            for command_refs in TELEGRAM_CANONICAL_RESEARCH_REFS.values()
+            for command_refs in TELEGRAM_CANONICAL_COMMAND_REFS.values()
             for ref in command_refs
         ]
         try:
-            from app.cli.research import get_invalid_research_command_refs
+            from app.cli.commands.trading import get_invalid_trading_command_refs
 
-            invalid_refs = get_invalid_research_command_refs(refs)
+            invalid_refs = get_invalid_trading_command_refs(refs)
         except Exception as exc:  # noqa: BLE001
             logger.error(
                 "[BOT] Failed to validate canonical command refs; failing closed: %s",
@@ -454,7 +458,7 @@ class TelegramOperatorBot:
         return str(value).replace("`", "'").replace("\n", " ").strip() or "unknown"
 
     def _format_refs(self, command: str) -> str:
-        refs = TELEGRAM_CANONICAL_RESEARCH_REFS.get(command, ())
+        refs = TELEGRAM_CANONICAL_COMMAND_REFS.get(command, ())
         if not refs:
             return ""
         if len(refs) == 1:

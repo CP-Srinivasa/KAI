@@ -8,13 +8,11 @@ import typer
 from rich.console import Console
 
 from app.cli.commands.research_core import research_core_app
-from app.cli.commands.research_trading import research_trading_app
 
 console = Console()
 research_app = typer.Typer(help="Research and signal generation commands", no_args_is_help=True)
 
 research_app.add_typer(research_core_app, name="")
-research_app.add_typer(research_trading_app, name="")
 
 # ---------------------------------------------------------------------------
 # Command inventory constants (kept for telegram bot contract tests)
@@ -53,13 +51,12 @@ def get_invalid_research_command_refs(refs: list[str]) -> list[str]:
 
 
 def get_registered_research_command_names() -> set[str]:
-    """Return all currently registered research command names across all sub-apps."""
+    """Return all currently registered research command names."""
     names: set[str] = set()
-    for sub_app in (research_core_app, research_trading_app):
-        for command in sub_app.registered_commands:
-            name = getattr(command, "name", None)
-            if isinstance(name, str) and name.strip():
-                names.add(name.strip())
+    for command in research_core_app.registered_commands:
+        name = getattr(command, "name", None)
+        if isinstance(name, str) and name.strip():
+            names.add(name.strip())
     return names
 
 
@@ -92,4 +89,5 @@ __all__ = [
     "extract_runbook_command_refs",
     "get_invalid_research_command_refs",
 ]
+
 
