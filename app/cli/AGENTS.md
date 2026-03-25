@@ -1,8 +1,9 @@
 # AGENTS.md - app/cli/
 
 ## Purpose
-Typer CLI for operator commands. Human and script-friendly interface.
-Mirrors API capabilities but for terminal use.
+
+Typer CLI for the production-facing operator path.
+Keep command surface small, explicit, and testable.
 
 ## Public Interface
 
@@ -12,24 +13,39 @@ python -m app.cli.main --help
 
 | Command group | Purpose | Status |
 |---|---|---|
-| `ingest` | Trigger source ingestion manually | planned Phase 2 |
-| `analyze` | Run analysis on pending documents | planned Phase 3 |
-| `sources` | List/add/disable sources | planned Phase 2 |
-| `query` | Run DSL query against documents | planned Phase 2 |
-| `alerts` | Test alert delivery | planned Phase 4 |
-| `research` | Watchlists, briefs, signals, signal handoff, handoff collector/ack audit, operational readiness summary with provider health, distribution drift, protective gate summary, remediation recommendations, escalation/blocking/operator-action summaries, action-queue/blocking-actions/prioritized-actions/review-required-actions, operator decision-pack summary plus compatibility alias, operator runbook summary and next steps, artifact inventory/rotation, artifact retention, cleanup eligibility, protected artifact and review-required summaries, dataset export, offline evaluation, saved-report comparison, companion benchmarking, tuning artifacts, training job records, promotion records, upgrade-cycle orchestration | active Sprint 4-31 |
+| `pipeline-run` | Canonical single-call end-to-end run | active |
+| `ingest` | Manual RSS ingest entrypoint | active |
+| `analyze` | Analyze pending documents | active |
+| `signals` | Extract signal candidates from analyzed documents | active |
+| `alerts` | Alert dispatch + PH5 hold metrics/annotation ops | active |
+
+Compatibility aliases (hidden from default help):
+- `pipeline run`
+- `query analyze-pending`
+
+Current `analyze` commands:
+- `pending`
+
+Current `signals` commands:
+- `extract`
+
+Current `alerts` commands:
+- `send-test`
+- `evaluate-pending`
+- `hold-report`
+- `pending-annotations`
+- `annotate`
 
 ## Constraints
 
-- CLI commands must not duplicate business logic from `app/core` or `app/ingestion`
-- Use Rich for output formatting (tables, progress bars)
-- No hardcoded config - use `AppSettings`
-- Commands should be testable without side effects (use `--dry-run` where applicable)
-- Runbook-facing command references must resolve to actually registered canonical `research` commands only
-- Research command inventory drift must be locked by tests for final names, compatibility aliases, and superseded names
+- CLI commands must not duplicate business logic from `app/core`, `app/pipeline`, or `app/alerts`
+- Use Rich output for operator-facing summaries
+- No hardcoded config values; always use `AppSettings` and explicit flags
+- Commands must be safe by default (`dry-run` where applicable)
+- Keep canonical CLI focused on the production path; avoid reintroducing research-only orchestration surface
 
 ## Tests
 
 ```bash
-pytest tests/unit/test_cli.py
+python -m pytest tests/unit/cli
 ```

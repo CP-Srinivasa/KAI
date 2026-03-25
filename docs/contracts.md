@@ -1,23 +1,23 @@
 # Contracts and Core Data Models
 
-## Current State (2026-03-24)
+## Current State (2026-03-25)
 
 | Field | Value |
 |---|---|
-| current_phase | `PHASE 5 (active) — strategic hold on companion-ML infrastructure` |
+| current_phase | `PHASE 5 (active) -- strategic hold on companion-ML infrastructure` |
 | current_sprint | `PH5C_FILTER_BEFORE_LLM_BASELINE (closed D-97)` |
-| next_required_step | `STRATEGIC_HOLD_GATE_REVIEW — wait for clearly positive alert-precision + paper-trading metrics` |
-| baseline | `1046 passed, ruff clean, mypy 0 errors` |
-| archive | `docs/archive/contracts_archive.md` (closed §§38—§82) |
+| next_required_step | `STRATEGIC_HOLD -- continue daily pipeline runs and resolve >=50 directional alerts (hit/miss)` |
+| baseline | `See CI/local checks; do not treat static pass-count as a contract` |
+| archive | `docs/archive/contracts_archive.md` (closed sections 38-82) |
 
 ## Navigation
 
 | Section | Content |
 |---|---|
-| [Core Contracts](#core-contracts) | §0-§15: Domain models, invariants, intelligence stack |
+| [Core Contracts](#core-contracts) | Sections 0-15: Domain models, invariants, intelligence stack |
 | [Immutable Invariants](#immutable-invariants) | Non-negotiable runtime rules |
 | [Strategic Hold](#strategic-hold-d-97) | Companion-ML freeze policy and gate conditions |
-| [Archive](archive/contracts_archive.md) | Closed §§38—§82 (Phase 1—4) |
+| [Archive](archive/contracts_archive.md) | Closed sections 38-82 (Phase 1-4) |
 
 ## Strategic Hold (D-97)
 
@@ -28,11 +28,53 @@
 - Documentation policy (D-99): no new standalone sprint-contract documents.
   Decisions are recorded only as short code comments or compact 3-line entries in `DECISION_LOG.md`.
 - Until that gate is met, companion model infrastructure remains frozen and only governance/reporting updates are allowed.
+- Operational unblock condition: at least 50 directional alerts must be resolved as `hit` or `miss`.
 
 ## Living Architecture Scope
 
 - Active architecture sources are `CLAUDE.md` and this file (`docs/contracts.md`).
 - All other architecture documents under `docs/` are historical artifacts in `docs/archive/`.
+
+## Core-Path Target Architecture (D-109, 2026-03-25)
+
+Target structure for active product development:
+
+```text
+app/
+├── core/           # settings, domain, enums, errors, logging, schema runtime
+├── ingestion/      # RSS adapters, scheduler, classifier, resolver
+├── normalization/  # cleaners, deduplication, entity normalization helpers
+├── analysis/       # pipeline, keywords, scoring, providers, narratives, briefs, watchlists
+├── signals/        # signal generator, candidates, signal models
+├── alerts/         # alert service, thresholding, channels
+├── pipeline/       # orchestration entrypoint (fetch -> persist -> analyze -> alert)
+├── storage/        # DB models, repositories, migrations
+├── api/            # FastAPI routers
+├── cli/            # canonical operator CLI surface
+├── orchestrator/   # trading loop and orchestration-level journals
+├── execution/      # paper/backtest engines and portfolio read
+├── risk/           # risk engine
+├── market_data/    # market-data adapters
+└── security/       # SSRF and validation utilities
+```
+
+Convergence actions accepted in D-109:
+- `enrichment` logic is consolidated into `normalization` (compatibility shims remain).
+- runtime schema validation is consolidated into `core` (compatibility shims remain).
+- decision journal implementation is consolidated into `orchestrator` (compatibility shims remain).
+
+Boundary rules:
+- `pipeline/` is the only module that directly calls `collect_rss_feed()`.
+- `signals/` must not depend on `alerts/` or `storage/`.
+- `alerts/` must not depend on ingestion adapters or provider integrations.
+- `analysis/` must not depend on `alerts/` or `execution/`.
+
+Measurability requirements per pipeline run:
+- fetched documents
+- persisted documents
+- analyzed documents
+- priority distribution
+- alerts fired
 
 
 ---
@@ -50,10 +92,9 @@ These contracts are the foundation for:
 
 No agent may modify these lightly.
 
-Sprint 44 implementation note (2026-03-21):
-- Operator API transport hardening is implemented in `app/api/routers/operator.py`.
-- Canonical verification is covered by `tests/unit/test_api_operator.py` (20 tests).
-- If any Sprint 44 section below still says "pending", treat code/tests above as source of truth.
+Implementation note:
+- Runtime code and tests are the source of truth for behavior.
+- Historical sprint wording in this file is informational only.
 
 ---
 
@@ -408,151 +449,15 @@ If any contract changes:
 
 ---
 
-### 11. Sprint 4 Ã¢â‚¬” Research & Signal Contracts
+### 11. Research and Signal Utility Contracts (archived)
 
-These contracts define the Sprint 4 output layer. All three types are **in-memory only** Ã¢â‚¬”
-never written to DB. They consume `CanonicalDocument` objects that have `status=ANALYZED`.
+Detailed legacy utility-contract text was moved to [contracts_archive.md](archive/contracts_archive.md) (D-109, 2026-03-25).
 
----
-
-#### 11a. WatchlistRegistry
-
-```python
-class WatchlistRegistry:
-    @classmethod
-    def from_monitor_dir(cls, monitor_dir: Path | str) -> WatchlistRegistry: ...
-    @classmethod
-    def from_file(cls, path: Path | str) -> WatchlistRegistry: ...
-
-    def get_watchlist(self, tag: str, *, item_type: WatchlistType = "assets") -> list[str]: ...
-    def get_watchlist_items(self, tag: str, *, item_type: WatchlistType = "assets") -> list[WatchlistItem]: ...
-    def get_all_watchlists(self, *, item_type: WatchlistType = "assets") -> Mapping[str, list[str]]: ...
-    def get_symbols_for_category(self, category: str) -> list[str]: ...
-    def filter_documents(self, documents, tag, *, item_type: WatchlistType = "assets") -> list[CanonicalDocument]: ...
-    def save(self, path: Path | str) -> None: ...
-```
-
-`WatchlistType` is one of: `"assets"`, `"persons"`, `"topics"`, `"sources"`
-
-Rules:
-- Source: `monitor/watchlists.yml` Ã¢â‚¬” loaded via `WatchlistEntry` + `load_watchlist()`
-- Sections: `crypto`, `equities`, `etfs`, `macro`, `persons`, `topics`, `domains`
-- Tag lookup is case-insensitive
-- `filter_documents()` is the primary document-to-watchlist matching path
-- `WatchlistRegistry` is read-only after construction Ã¢â‚¬” no mutations during runtime
-- `load_watchlist()` returns `[]` (not an error) if the file does not exist
-- `find_by_text()` Ã¢â‚¬” Sprint 4B planned, not yet implemented; use `filter_documents()` instead
-
----
-
-#### 11b. ResearchBrief
-
-```python
-class BriefFacet(BaseModel):
-    name: str
-    count: int
-
-class BriefDocument(BaseModel):
-    document_id: str          # str(CanonicalDocument.id) Ã¢â‚¬” traceability
-    title: str
-    url: str
-    priority_score: int       # [1, 10] or 0 if unset
-    sentiment_label: str      # SentimentLabel.value
-    summary: str
-    impact_score: float       # [0.0, 1.0]
-    actionable: bool          # priority_score >= _ACTIONABLE_PRIORITY_THRESHOLD (8)
-    published_at: datetime | None
-    source_name: str | None
-
-class ResearchBrief(BaseModel):
-    cluster_name: str
-    title: str                # auto-generated: "Research Brief: <cluster_name>"
-    summary: str              # auto-generated sentence from metrics + top_assets
-    generated_at: datetime
-    document_count: int
-    average_priority: float
-    overall_sentiment: str            # dominant SentimentLabel.value
-    top_documents: list[BriefDocument]           # top 10 by (priority, impact, date)
-    top_assets: list[BriefFacet]                 # top 5 most-mentioned asset symbols
-    top_entities: list[BriefFacet]               # top 5 most-mentioned entities
-    top_actionable_signals: list[BriefDocument]  # priority >= 8, max 10
-    key_documents: list[BriefDocument]           # priority < 8, max 20
-
-class ResearchBriefBuilder:
-    def build(self, documents: list[CanonicalDocument]) -> ResearchBrief: ...
-```
-
-Rules:
-- Input: `list[CanonicalDocument]` Ã¢â‚¬” only `is_analyzed=True` docs are used
-- `ResearchBriefBuilder.build()` never raises Ã¢â‚¬” returns empty brief on empty/unanalyzed input
-- `_ACTIONABLE_PRIORITY_THRESHOLD = 8` Ã¢â‚¬” must stay in sync with `ThresholdEngine.min_priority`
-- Sorted by (priority_score, impact_score, published_at) descending
-- `to_markdown()` and `to_json_dict()` are the only output serialization paths
-- `ResearchBrief` is in-memory only Ã¢â‚¬” no DB table, no persistence
-
----
-
-#### 11c. SignalCandidate
-
-```python
-class SignalCandidate(BaseModel):
-    model_config = ConfigDict(strict=True, validate_assignment=True)
-
-    signal_id: str              # f"sig_{document_id}" Ã¢â‚¬” deterministic
-    document_id: str            # str(CanonicalDocument.id) Ã¢â‚¬” traceability
-
-    target_asset: str           # primary asset ("BTC", "ETH", "General Market")
-    direction_hint: str         # "bullish" | "bearish" | "neutral"
-                                # NEVER "buy" / "sell" / "hold" Ã¢â‚¬” not an execution instruction
-    confidence: float           # proxy: doc.relevance_score Ã¢â‚¬” [0.0, 1.0]
-    supporting_evidence: str    # doc.summary or doc.title
-    contradicting_evidence: str # static note Ã¢â‚¬” not extracted in primary scan
-    risk_notes: str             # spam_prob + market_scope metadata
-    source_quality: float       # doc.credibility_score Ã¢â‚¬” [0.0, 1.0]
-    recommended_next_step: str  # always ends with "Ã¢â‚¬” human decision required."
-
-    priority: int = Field(ge=8, le=10)   # enforced: only high-priority signals
-    sentiment: SentimentLabel
-    affected_assets: list[str]
-    market_scope: MarketScope
-    published_at: datetime | None
-    extracted_at: datetime
-
-def extract_signal_candidates(
-    documents: list[CanonicalDocument],
-    min_priority: int = 8,
-    watchlist_boosts: dict[str, int] | None = None,
-) -> list[SignalCandidate]: ...
-```
-
-Rules:
-- `priority >= 8` is a hard constraint Ã¢â‚¬” Pydantic `Field(ge=8)` enforced at construction
-- `direction_hint` is research language, NOT trading instruction Ã¢â‚¬” "bullish"/"bearish"/"neutral"
-- `signal_id` is deterministic: `f"sig_{document_id}"` Ã¢â‚¬” idempotent for same document
-- `watchlist_boosts`: `{"BTC": 1}` raises effective priority by 1 for watchlist assets;
-  capped at 10; never raises above 10
-- `confidence_score` from `AnalysisResult` is NOT persisted to DB Ã¢â‚¬” `relevance_score` is
-  used as the confidence proxy (available in DB)
-- `SignalCandidate` is in-memory only Ã¢â‚¬” no DB table, no persistence
-- `extract_signal_candidates()` never raises Ã¢â‚¬” returns `[]` if no candidates qualify
-
----
-
-#### 11d. Research Layer Boundaries
-
-| Boundary | Rule |
-|---|---|
-| Input gate | Only `CanonicalDocument` with `is_analyzed=True` enters research layer |
-| No DB writes | `ResearchBrief` and `SignalCandidate` are always in-memory Ã¢â‚¬” never persisted |
-| No LLM calls | Research layer is pure computation Ã¢â‚¬” no provider calls, no external I/O |
-| Watchlist source | Always from `monitor/watchlists.yml` via `WatchlistRegistry.from_monitor_dir()` |
-| CLI entry point | `research` Typer subgroup Ã¢â‚¬” `watchlists`, `brief`, `signals` commands |
-| API entry point | `GET /research/brief` and `GET /research/signals` |
-
----
-
----
-
+Active runtime scope for this layer:
+- Watchlist source remains `monitor/watchlists.yml`.
+- Signal extraction remains in `app/core/signals.py` and `app/signals/*`.
+- Read-only API endpoints remain `GET /research/brief` and `GET /research/signals`.
+- No canonical `research` CLI subgroup exists in the active surface.
 
 ---
 

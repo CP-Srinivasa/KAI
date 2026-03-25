@@ -7,7 +7,7 @@ param(
 )
 
 Write-Host "[1/3] Running pipeline..." -ForegroundColor Cyan
-python -m app.cli.main pipeline run $FeedUrl --source-id $SourceId --source-name $SourceName --top-n $TopN
+python -m app.cli.main pipeline-run $FeedUrl --source-id $SourceId --source-name $SourceName --top-n $TopN
 if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
 Write-Host "[2/3] Writing PH5 hold report..." -ForegroundColor Cyan

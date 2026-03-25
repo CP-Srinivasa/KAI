@@ -16,6 +16,13 @@ from app.alerts.audit import load_alert_audits, load_outcome_annotations
 MIN_RESOLVED_DIRECTIONAL_ALERTS = 50
 MIN_PAPER_CYCLES = 10
 MIN_PAPER_FILLS = 3
+PRIORITY_MAE_BASELINE = 3.13
+PRIORITY_MAE_BASELINE_DATE = "2026-03-23"
+PRIORITY_MAE_BASELINE_DECISION = "D-57"
+LLM_ERROR_PROXY_BASELINE_PCT = 27.5
+LLM_ERROR_PROXY_BASELINE_SAMPLE = "19/69"
+LLM_ERROR_PROXY_BASELINE_DATE = "2026-03-24"
+LLM_ERROR_PROXY_BASELINE_DECISION = "D-101"
 
 HOLD_REPORT_JSON = "ph5_hold_metrics_report.json"
 HOLD_REPORT_MD = "ph5_hold_operator_summary.md"
@@ -82,6 +89,12 @@ def build_hold_metrics_report(
     for ann in annotations:
         latest_ann_by_doc[ann.document_id] = ann.outcome
 
+    latest_directional_by_doc: dict[str, Any] = {}
+    for rec in directional:
+        prev = latest_directional_by_doc.get(rec.document_id)
+        if prev is None or rec.dispatched_at > prev.dispatched_at:
+            latest_directional_by_doc[rec.document_id] = rec
+
     labeled_directional_docs = {
         doc_id
         for doc_id in directional_doc_ids
@@ -103,10 +116,30 @@ def build_hold_metrics_report(
         for doc_id in directional_doc_ids
         if latest_ann_by_doc.get(doc_id) == "inconclusive"
     }
+    actionable_directional_docs = {
+        doc_id
+        for doc_id, rec in latest_directional_by_doc.items()
+        if rec.actionable is True
+    }
+    actionable_unknown_directional_docs = {
+        doc_id
+        for doc_id, rec in latest_directional_by_doc.items()
+        if rec.actionable is None
+    }
     hit_rate = (
         round(len(hit_docs) / len(resolved_docs) * 100.0, 2)
         if resolved_docs
         else None
+    )
+    actionable_rate = (
+        round(len(actionable_directional_docs) / len(directional_doc_ids) * 100.0, 2)
+        if directional_doc_ids
+        else None
+    )
+    resolved_coverage_ratio = (
+        round(len(resolved_docs) / len(directional_doc_ids), 4)
+        if directional_doc_ids
+        else 0.0
     )
 
     loop_rows = _load_jsonl(trading_loop_audit_path)
@@ -123,6 +156,26 @@ def build_hold_metrics_report(
     fill_simulated_count = sum(
         1 for row in loop_rows if bool(row.get("fill_simulated"))
     )
+    market_data_source_counts: Counter[str] = Counter()
+    latest_real_price_cycle_completed_at = None
+    for row in loop_rows:
+        notes = row.get("notes")
+        if not isinstance(notes, list):
+            continue
+        completed_at = row.get("completed_at")
+        for note in notes:
+            if not isinstance(note, str) or not note.startswith("market_data_source:"):
+                continue
+            source = note.split(":", 1)[1].strip().lower() or "unknown"
+            market_data_source_counts[source] += 1
+            if source == "coingecko" and isinstance(completed_at, str):
+                if (
+                    latest_real_price_cycle_completed_at is None
+                    or completed_at > latest_real_price_cycle_completed_at
+                ):
+                    latest_real_price_cycle_completed_at = completed_at
+    real_price_cycle_count = market_data_source_counts.get("coingecko", 0)
+    mock_price_cycle_count = market_data_source_counts.get("mock", 0)
 
     exec_rows = _load_jsonl(paper_execution_audit_path)
     exec_event_counts = Counter(
@@ -163,6 +216,16 @@ def build_hold_metrics_report(
         if non_digest
         else 0.0
     )
+    validation_gaps: list[str] = []
+    if len(resolved_docs) < MIN_RESOLVED_DIRECTIONAL_ALERTS:
+        validation_gaps.append("resolved_directional_below_gate")
+    if real_price_cycle_count == 0:
+        validation_gaps.append("no_real_price_paper_cycles")
+    if order_filled_count == 0:
+        validation_gaps.append("no_filled_paper_orders")
+    # Recall requires a ground-truth negative universe that is not captured in
+    # alert_audit/outcomes artifacts (only triggered-alert outcomes are stored).
+    validation_gaps.append("recall_not_computable_without_negative_ground_truth")
 
     generated_at = datetime.now(UTC).isoformat()
     unique_alerted_docs = len({r.document_id for r in non_digest})
@@ -199,6 +262,28 @@ def build_hold_metrics_report(
             "alert_misses": len(miss_docs),
             "alert_hit_rate": hit_rate,
             "calculable_for_gate": alert_hit_rate_condition_met,
+        },
+        "signal_quality_validation": {
+            "directional_actionable_documents": len(actionable_directional_docs),
+            "directional_actionable_unknown_documents": len(actionable_unknown_directional_docs),
+            "directional_actionable_rate_pct": actionable_rate,
+            "resolved_precision_pct": hit_rate,
+            "resolved_recall_pct": None,
+            "recall_computable": False,
+            "feedback_loop_labeled_ratio": coverage_ratio,
+            "feedback_loop_resolved_ratio": resolved_coverage_ratio,
+            "paper_market_data_source_counts": dict(market_data_source_counts),
+            "paper_real_price_cycle_count": real_price_cycle_count,
+            "paper_mock_price_cycle_count": mock_price_cycle_count,
+            "latest_real_price_cycle_completed_at": latest_real_price_cycle_completed_at,
+            "priority_mae_tier1_vs_teacher_baseline": PRIORITY_MAE_BASELINE,
+            "priority_mae_baseline_date": PRIORITY_MAE_BASELINE_DATE,
+            "priority_mae_baseline_decision": PRIORITY_MAE_BASELINE_DECISION,
+            "llm_error_proxy_baseline_pct": LLM_ERROR_PROXY_BASELINE_PCT,
+            "llm_error_proxy_baseline_sample": LLM_ERROR_PROXY_BASELINE_SAMPLE,
+            "llm_error_proxy_baseline_date": LLM_ERROR_PROXY_BASELINE_DATE,
+            "llm_error_proxy_baseline_decision": LLM_ERROR_PROXY_BASELINE_DECISION,
+            "validation_gaps": validation_gaps,
         },
         "alert_precision_evidence": {
             "finding": "partial",
@@ -283,6 +368,7 @@ def write_hold_metrics_report(
 def _write_operator_summary(report: dict[str, Any], output_path: Path) -> None:
     gate = report["hold_gate_evaluation"]
     hit = report["alert_hit_rate_evidence"]
+    quality = report["signal_quality_validation"]
     prec = report["alert_precision_evidence"]
     paper = report["paper_trading_evidence"]
     lines = [
@@ -306,6 +392,18 @@ def _write_operator_summary(report: dict[str, Any], output_path: Path) -> None:
         f"{hit['minimum_resolved_directional_alerts_for_gate']}",
         f"- alert_hit_rate: {hit['alert_hit_rate']}",
         "",
+        "## Signal-Quality Validation",
+        "",
+        f"- directional_actionable_rate_pct: {quality['directional_actionable_rate_pct']}",
+        f"- resolved_precision_pct: {quality['resolved_precision_pct']}",
+        f"- resolved_recall_pct: {quality['resolved_recall_pct']}",
+        f"- feedback_loop_resolved_ratio: {quality['feedback_loop_resolved_ratio']}",
+        f"- paper_real_price_cycle_count: {quality['paper_real_price_cycle_count']}",
+        "- priority_mae_tier1_vs_teacher_baseline: "
+        f"{quality['priority_mae_tier1_vs_teacher_baseline']}",
+        f"- llm_error_proxy_baseline_pct: {quality['llm_error_proxy_baseline_pct']}",
+        "- validation_gaps: `" + ", ".join(quality["validation_gaps"]) + "`",
+        "",
         "## Alert Precision Proxy",
         "",
         f"- known_priority_documents: {prec['known_priority_documents']}",
@@ -326,4 +424,3 @@ def _write_operator_summary(report: dict[str, Any], output_path: Path) -> None:
         "- This report is evidence-tracking only and never lifts hold automatically.",
     ]
     output_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-

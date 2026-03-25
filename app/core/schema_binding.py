@@ -22,7 +22,7 @@ import logging
 from dataclasses import dataclass
 from pathlib import Path
 
-from app.schemas.runtime_validator import load_schema_document
+from app.core.schema_runtime import load_schema_document
 
 logger = logging.getLogger(__name__)
 

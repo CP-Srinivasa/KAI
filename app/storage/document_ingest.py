@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.domain.document import CanonicalDocument
 from app.core.enums import DocumentStatus
-from app.enrichment.deduplication.deduplicator import Deduplicator
+from app.normalization.deduplication import Deduplicator
 from app.ingestion.base.interfaces import FetchResult
 from app.normalization.cleaner import clean_text, content_hash, normalize_title, normalize_url
 from app.storage.repositories.document_repo import DocumentRepository

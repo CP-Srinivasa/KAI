@@ -121,6 +121,8 @@ async def test_run_rss_pipeline_returns_early_on_fetch_failure(monkeypatch) -> N
     assert stats.saved_count == 0
     assert stats.analyzed_count == 0
     assert stats.failed_count == 1
+    assert stats.alerts_fired_count == 0
+    assert stats.priority_distribution == {}
     assert stats.top_results == []
 
 
@@ -161,6 +163,8 @@ async def test_run_rss_pipeline_returns_early_when_no_saved_docs(monkeypatch) ->
     assert stats.saved_count == 0
     assert stats.analyzed_count == 0
     assert stats.skipped_count == 1
+    assert stats.alerts_fired_count == 0
+    assert stats.priority_distribution == {}
     assert stats.top_results == []
 
 
@@ -223,6 +227,7 @@ async def test_run_rss_pipeline_full_chain(monkeypatch) -> None:
     assert stats.failed_count == 0
     assert stats.skipped_count == 0
     assert len(stats.top_results) == 2
+    assert stats.priority_distribution
 
     # Both docs should have priority scores applied
     for res in stats.top_results:
@@ -301,6 +306,7 @@ async def test_run_rss_pipeline_dry_run_skips_db_writes(monkeypatch) -> None:
     # Analysis still ran (scores applied for preview)
     assert stats.analyzed_count == 1
     assert stats.top_results[0].document.priority_score is not None
+    assert stats.priority_distribution
 
 
 # ── stats counts ───────────────────────────────────────────────────────────────

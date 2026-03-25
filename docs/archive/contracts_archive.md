@@ -6957,3 +6957,159 @@ This guarantees no consumer ever branches on `provider` for tier decisions.
 | I-91 | `route-activate` and `route-deactivate` do NOT change `APP_LLM_PROVIDER`. Primary provider selection remains the operator's sole responsibility. |
 | I-92 | When `analyze-pending` runs with an active shadow route, primary results are written to DB only. Shadow and control outputs go to audit JSONL only (I-51, I-82). |
 | I-93 | `ABCInferenceEnvelope` produced during a shadow-enabled analyze-pending run is written per-document to audit JSONL only Ã¢â‚¬” no DB writes, no routing changes. |
+
+## Archived from contracts.md (D-109, 2026-03-25)
+
+> Legacy utility contracts from active docs moved here during core-path architecture cleanup.
+> Keep section numbering stable in this archive; do not renumber historical entries.
+
+### 11. Research and Signal Contracts (legacy utility layer)
+
+These contracts define the Sprint 4 output layer. All three types are **in-memory only** Ã¢â‚¬”
+never written to DB. They consume `CanonicalDocument` objects that have `status=ANALYZED`.
+
+---
+
+#### 11a. WatchlistRegistry
+
+```python
+class WatchlistRegistry:
+    @classmethod
+    def from_monitor_dir(cls, monitor_dir: Path | str) -> WatchlistRegistry: ...
+    @classmethod
+    def from_file(cls, path: Path | str) -> WatchlistRegistry: ...
+
+    def get_watchlist(self, tag: str, *, item_type: WatchlistType = "assets") -> list[str]: ...
+    def get_watchlist_items(self, tag: str, *, item_type: WatchlistType = "assets") -> list[WatchlistItem]: ...
+    def get_all_watchlists(self, *, item_type: WatchlistType = "assets") -> Mapping[str, list[str]]: ...
+    def get_symbols_for_category(self, category: str) -> list[str]: ...
+    def filter_documents(self, documents, tag, *, item_type: WatchlistType = "assets") -> list[CanonicalDocument]: ...
+    def save(self, path: Path | str) -> None: ...
+```
+
+`WatchlistType` is one of: `"assets"`, `"persons"`, `"topics"`, `"sources"`
+
+Rules:
+- Source: `monitor/watchlists.yml` Ã¢â‚¬” loaded via `WatchlistEntry` + `load_watchlist()`
+- Sections: `crypto`, `equities`, `etfs`, `macro`, `persons`, `topics`, `domains`
+- Tag lookup is case-insensitive
+- `filter_documents()` is the primary document-to-watchlist matching path
+- `WatchlistRegistry` is read-only after construction Ã¢â‚¬” no mutations during runtime
+- `load_watchlist()` returns `[]` (not an error) if the file does not exist
+- `find_by_text()` Ã¢â‚¬” Sprint 4B planned, not yet implemented; use `filter_documents()` instead
+
+---
+
+#### 11b. ResearchBrief
+
+```python
+class BriefFacet(BaseModel):
+    name: str
+    count: int
+
+class BriefDocument(BaseModel):
+    document_id: str          # str(CanonicalDocument.id) Ã¢â‚¬” traceability
+    title: str
+    url: str
+    priority_score: int       # [1, 10] or 0 if unset
+    sentiment_label: str      # SentimentLabel.value
+    summary: str
+    impact_score: float       # [0.0, 1.0]
+    actionable: bool          # priority_score >= _ACTIONABLE_PRIORITY_THRESHOLD (8)
+    published_at: datetime | None
+    source_name: str | None
+
+class ResearchBrief(BaseModel):
+    cluster_name: str
+    title: str                # auto-generated: "Research Brief: <cluster_name>"
+    summary: str              # auto-generated sentence from metrics + top_assets
+    generated_at: datetime
+    document_count: int
+    average_priority: float
+    overall_sentiment: str            # dominant SentimentLabel.value
+    top_documents: list[BriefDocument]           # top 10 by (priority, impact, date)
+    top_assets: list[BriefFacet]                 # top 5 most-mentioned asset symbols
+    top_entities: list[BriefFacet]               # top 5 most-mentioned entities
+    top_actionable_signals: list[BriefDocument]  # priority >= 8, max 10
+    key_documents: list[BriefDocument]           # priority < 8, max 20
+
+class ResearchBriefBuilder:
+    def build(self, documents: list[CanonicalDocument]) -> ResearchBrief: ...
+```
+
+Rules:
+- Input: `list[CanonicalDocument]` Ã¢â‚¬” only `is_analyzed=True` docs are used
+- `ResearchBriefBuilder.build()` never raises Ã¢â‚¬” returns empty brief on empty/unanalyzed input
+- `_ACTIONABLE_PRIORITY_THRESHOLD = 8` Ã¢â‚¬” must stay in sync with `ThresholdEngine.min_priority`
+- Sorted by (priority_score, impact_score, published_at) descending
+- `to_markdown()` and `to_json_dict()` are the only output serialization paths
+- `ResearchBrief` is in-memory only Ã¢â‚¬” no DB table, no persistence
+
+---
+
+#### 11c. SignalCandidate
+
+```python
+class SignalCandidate(BaseModel):
+    model_config = ConfigDict(strict=True, validate_assignment=True)
+
+    signal_id: str              # f"sig_{document_id}" Ã¢â‚¬” deterministic
+    document_id: str            # str(CanonicalDocument.id) Ã¢â‚¬” traceability
+
+    target_asset: str           # primary asset ("BTC", "ETH", "General Market")
+    direction_hint: str         # "bullish" | "bearish" | "neutral"
+                                # NEVER "buy" / "sell" / "hold" Ã¢â‚¬” not an execution instruction
+    confidence: float           # proxy: doc.relevance_score Ã¢â‚¬” [0.0, 1.0]
+    supporting_evidence: str    # doc.summary or doc.title
+    contradicting_evidence: str # static note Ã¢â‚¬” not extracted in primary scan
+    risk_notes: str             # spam_prob + market_scope metadata
+    source_quality: float       # doc.credibility_score Ã¢â‚¬” [0.0, 1.0]
+    recommended_next_step: str  # always ends with "Ã¢â‚¬” human decision required."
+
+    priority: int = Field(ge=8, le=10)   # enforced: only high-priority signals
+    sentiment: SentimentLabel
+    affected_assets: list[str]
+    market_scope: MarketScope
+    published_at: datetime | None
+    extracted_at: datetime
+
+def extract_signal_candidates(
+    documents: list[CanonicalDocument],
+    min_priority: int = 8,
+    watchlist_boosts: dict[str, int] | None = None,
+) -> list[SignalCandidate]: ...
+```
+
+Rules:
+- `priority >= 8` is a hard constraint Ã¢â‚¬” Pydantic `Field(ge=8)` enforced at construction
+- `direction_hint` is research language, NOT trading instruction Ã¢â‚¬” "bullish"/"bearish"/"neutral"
+- `signal_id` is deterministic: `f"sig_{document_id}"` Ã¢â‚¬” idempotent for same document
+- `watchlist_boosts`: `{"BTC": 1}` raises effective priority by 1 for watchlist assets;
+  capped at 10; never raises above 10
+- `confidence_score` from `AnalysisResult` is NOT persisted to DB Ã¢â‚¬” `relevance_score` is
+  used as the confidence proxy (available in DB)
+- `SignalCandidate` is in-memory only Ã¢â‚¬” no DB table, no persistence
+- `extract_signal_candidates()` never raises Ã¢â‚¬” returns `[]` if no candidates qualify
+
+---
+
+#### 11d. Research Layer Boundaries
+
+| Boundary | Rule |
+|---|---|
+| Input gate | Only `CanonicalDocument` with `is_analyzed=True` enters research layer |
+| No DB writes | `ResearchBrief` and `SignalCandidate` are always in-memory Ã¢â‚¬” never persisted |
+| No LLM calls | Research layer is pure computation Ã¢â‚¬” no provider calls, no external I/O |
+| Watchlist source | Always from `monitor/watchlists.yml` via `WatchlistRegistry.from_monitor_dir()` |
+| CLI entry point | No canonical `research` subgroup in active CLI; use `app.core.*` modules or API endpoints |
+| API entry point | `GET /research/brief` and `GET /research/signals` |
+
+---
+
+---
+
+
+---
+
+---
+

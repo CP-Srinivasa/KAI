@@ -1,19 +1,22 @@
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.analysis.factory import create_provider
+from app.analysis.keywords.engine import KeywordEngine
 from app.api.middleware.request_governance import RequestGovernanceMiddleware
 from app.api.routers import alerts, dashboard, health, operator, query, research, sources
-from app.core.logging import configure_logging
+from app.core.logging import configure_logging, get_logger
 from app.core.settings import get_settings
-from app.ingestion.base.interfaces import FetchResult
 from app.ingestion.schedulers.rss_scheduler import RSSScheduler
 from app.security.auth import setup_auth
 from app.security.secrets import validate_secrets
 from app.storage.db.session import build_session_factory
-from app.storage.document_ingest import persist_fetch_result
+
+_logger = get_logger(__name__)
 
 
 @asynccontextmanager
@@ -23,12 +26,29 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     validate_secrets(settings)  # warn/fail on missing secrets at startup
     app.state.session_factory = build_session_factory(settings.db)
 
-    async def persist_result(result: FetchResult) -> None:
-        await persist_fetch_result(app.state.session_factory, result)
+    # Build analysis components for full-pipeline mode
+    keyword_engine = KeywordEngine.from_monitor_dir(Path(settings.monitor_dir))
+    provider = None
+    if settings.pipeline_provider:
+        provider = create_provider(settings.pipeline_provider, settings)
+        if provider is None:
+            _logger.warning(
+                "pipeline_provider_unavailable",
+                provider=settings.pipeline_provider,
+                hint="API key missing? Falling back to rule-based analysis only.",
+            )
+        else:
+            _logger.info(
+                "pipeline_provider_ready",
+                provider=settings.pipeline_provider,
+                cls=type(provider).__name__,
+            )
 
     app.state.rss_scheduler = RSSScheduler(
         app.state.session_factory,
-        persist_result=persist_result,
+        interval_minutes=settings.pipeline_interval_minutes,
+        keyword_engine=keyword_engine,
+        provider=provider,
     )
     app.state.rss_scheduler.start()
     try:

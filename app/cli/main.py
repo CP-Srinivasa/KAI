@@ -1,13 +1,14 @@
 import logging
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
 import typer
 from rich.console import Console
 from rich.table import Table
 
 from app.alerts.audit import (
+    AlertAuditRecord,
     AlertOutcomeAnnotation,
     OutcomeLabel,
     append_outcome_annotation,
@@ -18,7 +19,7 @@ from app.alerts.hold_metrics import build_hold_metrics_report, write_hold_metric
 from app.core.logging import configure_logging
 from app.core.settings import get_settings
 from app.ingestion.base.interfaces import FetchResult
-from app.ingestion.rss.service import RSSCollectedFeed, collect_rss_feed
+from app.ingestion.rss.service import RSSCollectedFeed
 from app.storage.db.session import build_session_factory
 from app.storage.document_ingest import IngestPersistStats, persist_fetch_result
 
@@ -31,12 +32,16 @@ console = Console()
 
 ingest_app = typer.Typer(help="Ingestion commands", no_args_is_help=True)
 pipeline_app = typer.Typer(help="End-to-end pipeline commands", no_args_is_help=True)
-query_app = typer.Typer(help="Query commands", no_args_is_help=True)
+analyze_app = typer.Typer(help="Analysis commands", no_args_is_help=True)
+signals_app = typer.Typer(help="Signal commands", no_args_is_help=True)
+query_app = typer.Typer(help="Compatibility alias for analysis commands", no_args_is_help=True)
 alerts_app = typer.Typer(help="Alert commands", no_args_is_help=True)
 
 app.add_typer(ingest_app, name="ingest")
-app.add_typer(pipeline_app, name="pipeline")
-app.add_typer(query_app, name="query")
+app.add_typer(pipeline_app, name="pipeline", hidden=True)
+app.add_typer(analyze_app, name="analyze")
+app.add_typer(signals_app, name="signals")
+app.add_typer(query_app, name="query", hidden=True)
 app.add_typer(alerts_app, name="alerts")
 
 
@@ -118,7 +123,9 @@ async def _collect_rss_feed(
     source_name: str,
 ) -> RSSCollectedFeed:
     settings = get_settings()
-    return await collect_rss_feed(
+    from app.pipeline.service import collect_feed_for_pipeline
+
+    return await collect_feed_for_pipeline(
         url=url,
         source_id=source_id,
         source_name=source_name,
@@ -186,9 +193,15 @@ def pipeline_run(
         console.print(f"  Fetched:   {stats.fetched_count}")
         console.print(f"  Saved:     {stats.saved_count}")
         console.print(f"  Analyzed:  {stats.analyzed_count}")
+        console.print(f"  Alerts:    {stats.alerts_fired_count}")
         console.print(f"  Skipped:   {stats.skipped_count}")
         if stats.failed_count:
             console.print(f"  [red]Failed:  {stats.failed_count}[/red]")
+        if stats.priority_distribution:
+            dist = ", ".join(
+                f"P{score}:{count}" for score, count in sorted(stats.priority_distribution.items())
+            )
+            console.print(f"  Priority:  {dist}")
 
         if dry_run:
             console.print("[dim](dry-run — no data written)[/dim]")
@@ -220,6 +233,25 @@ def pipeline_run(
 # ── query analyze-pending ─────────────────────────────────────────────────────
 
 
+@app.command("pipeline-run")
+def pipeline_run_alias(
+    url: str = typer.Argument(..., help="RSS feed URL to process end-to-end"),
+    source_id: str = typer.Option("manual", help="Source ID"),
+    source_name: str = typer.Option("Manual", help="Source name"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Skip DB writes; preview only"),
+    top_n: int = typer.Option(5, help="Top results to display by priority score"),
+) -> None:
+    """Top-level alias for `pipeline run`."""
+    pipeline_run(
+        url=url,
+        source_id=source_id,
+        source_name=source_name,
+        dry_run=dry_run,
+        top_n=top_n,
+    )
+
+
+@analyze_app.command("pending")
 @query_app.command("analyze-pending")
 def analyze_pending(
     limit: int = typer.Option(50, help="Max documents to analyze"),
@@ -354,6 +386,55 @@ def analyze_pending(
 # ── alerts send-test ──────────────────────────────────────────────────────────
 
 
+@signals_app.command("extract")
+def signals_extract(
+    limit: int = typer.Option(50, help="Max signal candidates to display"),
+    min_priority: int = typer.Option(8, help="Minimum effective priority"),
+) -> None:
+    """Extract signal candidates from analyzed documents."""
+    import asyncio
+
+    async def run() -> None:
+        from app.core.signals import extract_signal_candidates
+        from app.storage.repositories.document_repo import DocumentRepository
+
+        settings = get_settings()
+        session_factory = build_session_factory(settings.db)
+        fetch_limit = max(limit * 5, limit)
+
+        async with session_factory.begin() as session:
+            repo = DocumentRepository(session)
+            docs = await repo.list(is_analyzed=True, limit=fetch_limit)
+
+        candidates = extract_signal_candidates(docs, min_priority=min_priority)
+        console.print(
+            f"[bold]{len(candidates)} signal candidates[/bold] "
+            f"(from {len(docs)} analyzed docs, min_priority={min_priority})"
+        )
+        if not candidates:
+            console.print("[yellow]No signal candidates found.[/yellow]")
+            return
+
+        table = Table(show_header=True, header_style="bold cyan")
+        table.add_column("Priority", width=8)
+        table.add_column("Direction", width=10)
+        table.add_column("Asset", width=12)
+        table.add_column("Confidence", width=10)
+        table.add_column("Document ID")
+
+        for c in candidates[:limit]:
+            table.add_row(
+                str(c.priority),
+                c.direction_hint,
+                c.target_asset,
+                f"{c.confidence:.2f}",
+                c.document_id,
+            )
+        console.print(table)
+
+    asyncio.run(run())
+
+
 @alerts_app.command("send-test")
 def alerts_send_test() -> None:
     """Send a synthetic test alert through all configured channels (dry-run safe)."""
@@ -483,6 +564,7 @@ def alerts_hold_report(
 
     gate = report["hold_gate_evaluation"]
     hit = report["alert_hit_rate_evidence"]
+    quality = report["signal_quality_validation"]
     paper = report["paper_trading_evidence"]
     console.print(f"[green]Report written:[/green] {json_out}")
     console.print(f"[green]Summary written:[/green] {md_out}")
@@ -491,6 +573,15 @@ def alerts_hold_report(
         f"resolved directional {hit['resolved_directional_documents']}/"
         f"{hit['minimum_resolved_directional_alerts_for_gate']} | "
         f"paper cycles {paper['loop_metrics']['total_cycles']}"
+    )
+    console.print(
+        "[bold]Quality:[/bold] "
+        f"actionable_rate={quality['directional_actionable_rate_pct']}% | "
+        f"precision={quality['resolved_precision_pct']}% | "
+        f"real_price_cycles={quality['paper_real_price_cycle_count']}"
+    )
+    console.print(
+        "[bold]Validation gaps:[/bold] " + ", ".join(quality["validation_gaps"])
     )
 
 
@@ -507,7 +598,7 @@ def alerts_pending_annotations(
     annotations = load_outcome_annotations(Path(artifacts_dir))
     latest_ann_by_doc = {a.document_id: a.outcome for a in annotations}
 
-    latest_directional_by_doc = {}
+    latest_directional_by_doc: dict[str, Any] = {}
     for rec in records:
         sentiment = (rec.sentiment_label or "").lower()
         if rec.is_digest or sentiment not in {"bullish", "bearish"}:
@@ -524,7 +615,7 @@ def alerts_pending_annotations(
     if min_age_hours > 0:
         now = datetime.now(UTC)
 
-        def _is_old_enough(rec) -> bool:
+        def _is_old_enough(rec: Any) -> bool:
             try:
                 ts = datetime.fromisoformat(rec.dispatched_at.replace("Z", "+00:00"))
             except ValueError:
@@ -607,6 +698,125 @@ def alerts_annotate(
         "[green]Annotation written.[/green] "
         f"document_id={document_id} outcome={normalized}"
     )
+
+
+@alerts_app.command("auto-check")
+def alerts_auto_check(
+    threshold_pct: float = typer.Option(
+        5.0, "--threshold-pct", help="Min absolute price change (%) for hit/miss"
+    ),
+    dry_run: bool = typer.Option(
+        True, "--dry-run/--apply", help="Preview only (default) or apply annotations"
+    ),
+    artifacts_dir: str = typer.Option("artifacts", help="Artifacts directory"),
+    timeout_seconds: int = typer.Option(10, help="CoinGecko request timeout"),
+) -> None:
+    """Check pending directional alerts against CoinGecko 24h price moves.
+
+    Fetches current 24h price change for each alert's affected assets and
+    suggests hit/miss/inconclusive based on sentiment direction. Best run
+    within ~48h of alert dispatch for meaningful results.
+    """
+    import asyncio
+
+    from app.alerts.price_check import check_alert_price_moves
+
+    records = load_alert_audits(Path(artifacts_dir))
+    annotations = load_outcome_annotations(Path(artifacts_dir))
+    annotated_ids = {a.document_id for a in annotations}
+
+    # Filter to pending directional alerts (deduplicated by document_id)
+    latest_by_doc: dict[str, AlertAuditRecord] = {}
+    for rec in records:
+        sentiment = (rec.sentiment_label or "").lower()
+        if rec.is_digest or sentiment not in {"bullish", "bearish"}:
+            continue
+        if rec.document_id in annotated_ids:
+            continue
+        prev = latest_by_doc.get(rec.document_id)
+        if prev is None or rec.dispatched_at > prev.dispatched_at:
+            latest_by_doc[rec.document_id] = rec
+
+    pending = list(latest_by_doc.values())
+    if not pending:
+        console.print("[green]No pending directional alerts to check.[/green]")
+        return
+
+    console.print(
+        f"[bold]Checking {len(pending)} pending directional alerts "
+        f"(threshold={threshold_pct}%)...[/bold]"
+    )
+
+    results = asyncio.run(
+        check_alert_price_moves(
+            pending,
+            threshold_pct=threshold_pct,
+            timeout_seconds=timeout_seconds,
+        )
+    )
+
+    if not results:
+        console.print("[yellow]No price data available for any alerts.[/yellow]")
+        return
+
+    # Display results table
+    table = Table(show_header=True, header_style="bold cyan")
+    table.add_column("Document ID", width=20)
+    table.add_column("Asset", width=8)
+    table.add_column("Sentiment", width=10)
+    table.add_column("Price", width=12)
+    table.add_column("24h %", width=8)
+    table.add_column("Suggestion", width=14)
+    table.add_column("Reason")
+
+    for r in results:
+        price_str = f"${r.current_price:,.2f}" if r.current_price else "-"
+        change_str = f"{r.change_pct_24h:+.1f}%" if r.change_pct_24h is not None else "-"
+        style = {"hit": "green", "miss": "red", "inconclusive": "yellow"}.get(
+            r.suggested_outcome, ""
+        )
+        table.add_row(
+            r.document_id[:20],
+            r.asset,
+            r.sentiment_label,
+            price_str,
+            change_str,
+            f"[{style}]{r.suggested_outcome}[/{style}]",
+            r.reason,
+        )
+    console.print(table)
+
+    # Summary
+    hits = sum(1 for r in results if r.suggested_outcome == "hit")
+    misses = sum(1 for r in results if r.suggested_outcome == "miss")
+    inconc = sum(1 for r in results if r.suggested_outcome == "inconclusive")
+    console.print(
+        f"\n[bold]Summary:[/bold] {hits} hits, {misses} misses, {inconc} inconclusive"
+    )
+
+    if dry_run:
+        console.print(
+            "[dim](dry-run -- use --apply to write annotations)[/dim]"
+        )
+        return
+
+    # Apply: deduplicate by document_id, use first result per doc
+    seen_docs: set[str] = set()
+    applied = 0
+    for r in results:
+        if r.document_id in seen_docs:
+            continue
+        seen_docs.add(r.document_id)
+        annotation = AlertOutcomeAnnotation(
+            document_id=r.document_id,
+            outcome=r.suggested_outcome,
+            asset=r.asset,
+            note=f"auto-check: {r.reason}",
+        )
+        append_outcome_annotation(annotation, Path(artifacts_dir))
+        applied += 1
+
+    console.print(f"[green]{applied} annotations written.[/green]")
 
 
 if __name__ == "__main__":

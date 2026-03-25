@@ -14,7 +14,7 @@ from pathlib import Path
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.core.enums import ExecutionMode
-from app.schemas.runtime_validator import validate_decision_schema_payload
+from app.core.schema_runtime import validate_decision_schema_payload
 
 logger = logging.getLogger(__name__)
 

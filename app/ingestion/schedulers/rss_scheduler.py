@@ -3,8 +3,14 @@
 Polls all active RSS_FEED sources from the source registry at a
 configurable interval using APScheduler.
 
+Two modes:
+  - **Full pipeline** (keyword_engine provided): Fetch -> Persist -> Analyze -> Alert
+    via ``run_rss_pipeline()``.
+  - **Fetch-only** (keyword_engine is None): Fetch -> Persist only, analysis
+    must be triggered separately via CLI.
+
 Usage (attach to FastAPI lifespan):
-    scheduler = RSSScheduler(session_factory, interval_minutes=15)
+    scheduler = RSSScheduler(session_factory, keyword_engine=kw, provider=llm)
     scheduler.start()
     ...
     scheduler.stop()
@@ -19,11 +25,13 @@ from pathlib import Path
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.analysis.base.interfaces import BaseAnalysisProvider
+from app.analysis.keywords.engine import KeywordEngine
 from app.core.enums import SourceStatus, SourceType
 from app.core.logging import get_logger
 from app.core.settings import get_settings
 from app.ingestion.base.interfaces import FetchResult
-from app.ingestion.rss.service import collect_rss_feed
+from app.pipeline.service import collect_feed_for_pipeline, run_rss_pipeline
 from app.storage.document_ingest import IngestPersistStats, persist_fetch_result
 from app.storage.repositories.source_repo import SourceRepository
 from app.storage.schemas.source import SourceRead
@@ -46,14 +54,20 @@ class RSSScheduler:
         interval_minutes: int = 15,
         persist_result: PersistResultCallback | None = None,
         on_result: ResultCallback | None = None,
+        *,
+        keyword_engine: KeywordEngine | None = None,
+        provider: BaseAnalysisProvider | None = None,
     ) -> None:
         self._session_factory = session_factory
         self._interval_minutes = interval_minutes
         self._persist_result_callback = persist_result or self._persist_via_storage
         self._on_result = on_result
+        self._keyword_engine = keyword_engine
+        self._provider = provider
         self._scheduler = AsyncIOScheduler()
 
     def start(self) -> None:
+        mode = "full_pipeline" if self._keyword_engine is not None else "fetch_only"
         self._scheduler.add_job(
             self._poll_all,
             trigger="interval",
@@ -66,6 +80,8 @@ class RSSScheduler:
         logger.info(
             "rss_scheduler_started",
             interval_minutes=self._interval_minutes,
+            mode=mode,
+            provider=type(self._provider).__name__ if self._provider else "none",
         )
 
     def stop(self) -> None:
@@ -86,9 +102,59 @@ class RSSScheduler:
             await self._poll_one(source)
 
     async def _poll_one(self, source: SourceRead) -> None:
+        """Process a single source — full pipeline or fetch-only."""
+        if self._keyword_engine is not None:
+            await self._run_pipeline(source)
+        else:
+            await self._fetch_and_persist(source)
+
+    # -- Full Pipeline Mode ------------------------------------------------
+
+    async def _run_pipeline(self, source: SourceRead) -> None:
+        """Fetch -> Persist -> Analyze -> Alert in one shot."""
+        if self._keyword_engine is None:
+            # Defensive guard for static typing + runtime safety.
+            raise RuntimeError("keyword_engine is required for full pipeline mode")
+
         url = source.normalized_url or source.original_url
         settings = get_settings()
-        collected = await collect_rss_feed(
+        try:
+            stats = await run_rss_pipeline(
+                url,
+                session_factory=self._session_factory,
+                keyword_engine=self._keyword_engine,
+                provider=self._provider,
+                source_id=source.source_id,
+                source_name=source.provider or source.original_url,
+                monitor_dir=settings.monitor_dir,
+                timeout=settings.sources.fetch_timeout,
+                max_retries=settings.sources.max_retries,
+            )
+            logger.info(
+                "rss_pipeline_complete",
+                source_id=source.source_id,
+                url=url,
+                fetched=stats.fetched_count,
+                saved=stats.saved_count,
+                analyzed=stats.analyzed_count,
+                alerts_fired=stats.alerts_fired_count,
+                priority_distribution=stats.priority_distribution,
+            )
+        except Exception as err:
+            logger.error(
+                "rss_pipeline_error",
+                source_id=source.source_id,
+                url=url,
+                error=str(err),
+            )
+
+    # -- Fetch-Only Mode (legacy) ------------------------------------------
+
+    async def _fetch_and_persist(self, source: SourceRead) -> None:
+        """Fetch and persist only — no analysis, no alerts."""
+        url = source.normalized_url or source.original_url
+        settings = get_settings()
+        collected = await collect_feed_for_pipeline(
             url=url,
             source_id=source.source_id,
             source_name=source.provider or source.original_url,

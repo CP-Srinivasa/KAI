@@ -4,10 +4,10 @@ from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from app.core.enums import ExecutionMode
-from app.schemas.runtime_validator import (
+from app.core.schema_runtime import (
     validate_json_schema_payload as _validate_json_schema_payload,
 )
-from app.schemas.runtime_validator import (
+from app.core.schema_runtime import (
     validate_runtime_config_payload as _validate_runtime_config_payload,
 )
 
@@ -175,6 +175,13 @@ class AppSettings(BaseSettings):
     # Supported: coingecko (real, free-tier, delayed ~1min), mock (dev/test only).
     # CoinGecko free tier: ~30 req/min, spot price only, no auth required.
     market_data_provider: str = Field(default="coingecko")
+    # --- Pipeline Automation ---
+    # Analysis provider for automated pipeline runs (openai, anthropic, gemini, internal).
+    # Set to "" to disable LLM analysis in the scheduler (rule-based only).
+    pipeline_provider: str = Field(default="openai")
+    # Polling interval for the RSS scheduler in minutes.
+    pipeline_interval_minutes: int = Field(default=15, ge=1)
+
     # --- Request Governance (Sprint 44) ---
     # Maximum request body size in bytes. Requests exceeding this limit are
     # rejected with HTTP 413 before reaching route handlers. Default: 64 KiB.

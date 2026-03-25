@@ -2,112 +2,56 @@
 
 ## Scope
 
-Canonical operator runbook for Phase 4.
-Phase 3 (S50 canonical consolidation) is formally complete.
-Phase 4 is active: signal quality audit arc (PH4A–PH4E).
-Current active sprint: `PH4E_SCORING_CALIBRATION_AUDIT`.
-Next required step: `PH4E_EXECUTION_START`.
-Scope in Phase 4 is diagnostic-only (no new runtime feature rollout).
+Canonical operator runbook for the active PH5 hold period.
+Goal: run the pipeline daily, collect directional alerts, and annotate outcomes until the gate is met.
 
-## 1. Baseline Quality Check
+Gate: no new feature work until at least 50 directional alerts are resolved (`hit` or `miss`).
+
+## 1. Baseline Check
 
 ```bash
 python -m pytest
 python -m ruff check .
 ```
 
-Current validated baseline: `1519 passed`, `ruff clean`.
+## 2. Daily Core Routine
 
-## 2. Daily Operator Entry (CLI)
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/ph5_daily_ops.ps1
+python scripts/ph5_hold_metrics_report.py
+```
+
+The routine does:
+- `pipeline run`
+- `alerts hold-report`
+- `alerts pending-annotations`
+
+## 3. Manual Operator Commands
 
 ```bash
-research daily-summary
-research readiness-summary
-research decision-pack-summary
-research trading-loop-status
-research trading-loop-recent-cycles
-research paper-positions-summary
-research paper-exposure-summary
+python -m app.cli.main pipeline-run <feed_url> --source-id <id> --source-name <name> --top-n 5
+python -m app.cli.main analyze pending --limit 50
+python -m app.cli.main signals extract --limit 20 --min-priority 8
+python -m app.cli.main alerts evaluate-pending
+python -m app.cli.main alerts hold-report
+python -m app.cli.main alerts pending-annotations --limit 20 --min-age-hours 24
+python -m app.cli.main alerts annotate <document_id> <hit|miss|inconclusive>
 ```
 
-## 3. Drilldown and History (CLI)
+## 4. Hold Gate Review
 
-```bash
-research review-journal-summary
-research resolution-summary
-research alert-audit-summary
-```
+Use the generated report under `artifacts/ph5_hold/`.
 
-## 4. Dashboard
+Primary checks:
+- resolved directional alerts (`hit` + `miss`) >= 50
+- alert precision from resolved outcomes
+- paper-trading evidence present
 
-```text
-http://localhost:8000/dashboard
-```
+If the gate is not met, continue daily operation and annotation only.
 
-- canonical path: `GET /dashboard`
-- no `/static/dashboard.html`
-- no second aggregate path
+## 5. Guardrails
 
-## 5. Operator API Chain
-
-```text
-GET /operator/daily-summary
-GET /dashboard
-GET /operator/readiness
-GET /operator/decision-pack
-GET /operator/trading-loop/status
-GET /operator/trading-loop/recent-cycles
-GET /operator/portfolio-snapshot
-GET /operator/exposure-summary
-GET /operator/review-journal
-GET /operator/resolution-summary
-GET /operator/alert-audit
-```
-
-## 6. Guardrails
-
-- auth required: `Authorization: Bearer <APP_API_KEY>`
-- guarded endpoint requires: `Idempotency-Key`
-- `mode=live` is fail-closed
-- no unverified model output on critical actions
-- no second aggregation backbone
-
-## 7. Final Acceptance (2026-03-22)
-
-| Kanal | Status |
-|---|---|
-| API 12/12 | PASS |
-| Dashboard | PASS |
-| Telegram 11/11 | PASS |
-| CLI daily baseline (7) | PASS |
-| CLI `review-journal-summary` | PASS |
-| CLI `resolution-summary` | PASS |
-| CLI `alert-audit-summary` | PASS |
-
-## 8. Phase-2 Final Acceptance Record
-
-Executed and validated:
-
-```bash
-research review-journal-summary
-research resolution-summary
-research alert-audit-summary
-```
-
-No unhandled exception, `execution_enabled=False` present, no technical defect.
-Go/No-Go: **GO**.
-Phase 2: **formally closed**.
-
-## 9. Phase-3 S50 Working Mode
-
-- keep the operator flow unchanged and stable
-- resolve documentation and naming drift only
-- no new trading, broker, or live execution features
-
-## 10. S50A Inventory Checklist
-
-- confirm canonical runtime paths for API, dashboard, telegram, CLI, and MCP
-- confirm alias mappings and superseded names
-- mark provisional paths explicitly
-- do not start refactoring before inventory freeze
-- canonical inventory artifact: `CANONICAL_SURFACE_INVENTORY.md`
+- Keep execution in paper/shadow-safe mode (no live execution)
+- Do not add new sprint-contract documents
+- Do not add new companion-ML feature work while hold is active
+- Record decisions compactly in `DECISION_LOG.md`

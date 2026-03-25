@@ -16,11 +16,13 @@ def test_app_lifespan_starts_and_stops_rss_scheduler(monkeypatch) -> None:
     events: list[tuple[str, object | bool | None]] = []
 
     class FakeRSSScheduler:
-        def __init__(self, session_factory, persist_result=None) -> None:
+        def __init__(self, session_factory, *, interval_minutes=15,
+                     keyword_engine=None, provider=None, **kwargs) -> None:
             self.session_factory = session_factory
-            self.persist_result = persist_result
+            self.keyword_engine = keyword_engine
+            self.provider = provider
             events.append(("init", session_factory))
-            events.append(("persist_callback", callable(persist_result)))
+            events.append(("keyword_engine", keyword_engine is not None))
 
         def start(self) -> None:
             events.append(("start", None))
@@ -34,6 +36,10 @@ def test_app_lifespan_starts_and_stops_rss_scheduler(monkeypatch) -> None:
     monkeypatch.setattr(api_main, "setup_auth", lambda _app, _api_key, _env="development": None)
     monkeypatch.setattr(api_main, "build_session_factory", lambda _db: "session-factory")
     monkeypatch.setattr(api_main, "RSSScheduler", FakeRSSScheduler)
+    monkeypatch.setattr(api_main, "KeywordEngine", type("FakeKE", (), {
+        "from_monitor_dir": staticmethod(lambda _path: "fake-keyword-engine"),
+    }))
+    monkeypatch.setattr(api_main, "create_provider", lambda _p, _s: None)
 
     test_app = api_main.create_app()
 
@@ -42,11 +48,11 @@ def test_app_lifespan_starts_and_stops_rss_scheduler(monkeypatch) -> None:
         assert response.status_code == 200
         assert test_app.state.session_factory == "session-factory"
         assert test_app.state.rss_scheduler.session_factory == "session-factory"
-        assert callable(test_app.state.rss_scheduler.persist_result)
+        assert test_app.state.rss_scheduler.keyword_engine is not None
 
     assert events == [
         ("init", "session-factory"),
-        ("persist_callback", True),
+        ("keyword_engine", True),
         ("start", None),
         ("stop", None),
     ]
@@ -54,9 +60,8 @@ def test_app_lifespan_starts_and_stops_rss_scheduler(monkeypatch) -> None:
 
 def test_app_with_api_key_starts_and_auth_middleware_is_active(monkeypatch) -> None:
     class FakeRSSScheduler:
-        def __init__(self, session_factory, persist_result=None) -> None:
+        def __init__(self, session_factory, **kwargs) -> None:
             self.session_factory = session_factory
-            self.persist_result = persist_result
 
         def start(self) -> None:
             return
@@ -71,6 +76,10 @@ def test_app_with_api_key_starts_and_auth_middleware_is_active(monkeypatch) -> N
     monkeypatch.setattr(api_main, "validate_secrets", lambda _settings: None)
     monkeypatch.setattr(api_main, "build_session_factory", lambda _db: "session-factory")
     monkeypatch.setattr(api_main, "RSSScheduler", FakeRSSScheduler)
+    monkeypatch.setattr(api_main, "KeywordEngine", type("FakeKE", (), {
+        "from_monitor_dir": staticmethod(lambda _path: "fake-keyword-engine"),
+    }))
+    monkeypatch.setattr(api_main, "create_provider", lambda _p, _s: None)
 
     test_app = api_main.create_app()
 

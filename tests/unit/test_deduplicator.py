@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 
 from app.core.domain.document import CanonicalDocument
-from app.enrichment.deduplication.deduplicator import Deduplicator
+from app.normalization.deduplication import Deduplicator
 
 
 def _doc(

@@ -14,7 +14,7 @@ from app.analysis.rules.rule_analyzer import compute_spam_probability
 from app.core.domain.document import AnalysisResult, CanonicalDocument, EntityMention
 from app.core.enums import AnalysisSource, MarketScope, SentimentLabel
 from app.core.logging import get_logger
-from app.enrichment.entities.matcher import hits_to_entity_mentions
+from app.normalization.entities import hits_to_entity_mentions
 
 _MAX_CONCURRENT = 5  # max parallel LLM calls per run_batch()
 _ASSET_HIT_CATEGORIES = frozenset({"crypto", "equity", "etf"})

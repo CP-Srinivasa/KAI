@@ -1,1 +1,2 @@
-# app/schemas — Runtime JSON Schema validation (Sprint 37)
+# app/schemas — compatibility namespace.
+# Canonical runtime schema validation lives in app/core/schema_runtime.py.

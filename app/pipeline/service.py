@@ -22,11 +22,11 @@ from app.alerts.service import AlertService
 from app.analysis.base.interfaces import BaseAnalysisProvider
 from app.analysis.keywords.engine import KeywordEngine
 from app.analysis.pipeline import AnalysisPipeline, PipelineResult
-from app.core.enums import DocumentStatus
+from app.core.enums import DocumentStatus, SourceStatus
 from app.core.errors import StorageError
 from app.core.logging import get_logger
 from app.core.settings import get_settings
-from app.ingestion.rss.service import collect_rss_feed
+from app.ingestion.rss.service import RSSCollectedFeed, collect_rss_feed
 from app.storage.document_ingest import persist_fetch_result
 from app.storage.repositories.document_repo import DocumentRepository
 
@@ -44,7 +44,33 @@ class PipelineRunStats:
     analyzed_count: int
     failed_count: int
     skipped_count: int  # batch + existing duplicates
+    alerts_fired_count: int = 0
+    priority_distribution: dict[int, int] = field(default_factory=dict)
     top_results: list[PipelineResult] = field(default_factory=list)
+
+
+async def collect_feed_for_pipeline(
+    *,
+    url: str,
+    source_id: str,
+    source_name: str,
+    monitor_dir: str | Path,
+    timeout: int,
+    max_retries: int,
+    status: SourceStatus = SourceStatus.ACTIVE,
+    provider: str | None = None,
+) -> RSSCollectedFeed:
+    """Canonical feed collection entrypoint for pipeline-facing callers."""
+    return await collect_rss_feed(
+        url=url,
+        source_id=source_id,
+        source_name=source_name,
+        monitor_dir=Path(monitor_dir),
+        timeout=timeout,
+        max_retries=max_retries,
+        status=status,
+        provider=provider,
+    )
 
 
 async def run_rss_pipeline(
@@ -71,7 +97,7 @@ async def run_rss_pipeline(
     monitor_dir = Path(monitor_dir)
 
     # ── Stage 1: Fetch ──────────────────────────────────────────────────────
-    collected = await collect_rss_feed(
+    collected = await collect_feed_for_pipeline(
         url=url,
         source_id=source_id,
         source_name=source_name,
@@ -91,6 +117,8 @@ async def run_rss_pipeline(
             analyzed_count=0,
             failed_count=1,
             skipped_count=0,
+            alerts_fired_count=0,
+            priority_distribution={},
         )
 
     # ── Stage 2: Persist ────────────────────────────────────────────────────
@@ -120,6 +148,8 @@ async def run_rss_pipeline(
             analyzed_count=0,
             failed_count=ingest_stats.failed_count,
             skipped_count=skipped,
+            alerts_fired_count=0,
+            priority_distribution={},
         )
 
     # ── Stage 3: Analyze ────────────────────────────────────────────────────
@@ -134,6 +164,7 @@ async def run_rss_pipeline(
     # ── Stage 4+5: Apply + Update ───────────────────────────────────────────
     analyzed_count = 0
     failed_count = ingest_stats.failed_count
+    alerts_fired_count = 0
     alert_service = AlertService.from_settings(get_settings())
 
     if not dry_run:
@@ -171,9 +202,11 @@ async def run_rss_pipeline(
                             if res.llm_output
                             else res.analysis_result.spam_probability
                         )
-                        await alert_service.process_document(
+                        deliveries = await alert_service.process_document(
                             res.document, res.analysis_result, spam_probability=spam_prob
                         )
+                        if deliveries:
+                            alerts_fired_count += 1
                 except StorageError as exc:
                     logger.warning(
                         "pipeline_update_failed",
@@ -197,9 +230,20 @@ async def run_rss_pipeline(
                         if res.llm_output
                         else res.analysis_result.spam_probability
                     )
-                    await alert_service.process_document(
+                    deliveries = await alert_service.process_document(
                         res.document, res.analysis_result, spam_probability=spam_prob
                     )
+                    if deliveries:
+                        alerts_fired_count += 1
+
+    priority_distribution: dict[int, int] = {}
+    for res in pipeline_results:
+        if not res.success:
+            continue
+        score = res.document.priority_score
+        if score is None:
+            continue
+        priority_distribution[score] = priority_distribution.get(score, 0) + 1
 
     logger.info(
         "pipeline_complete",
@@ -208,6 +252,8 @@ async def run_rss_pipeline(
         saved=ingest_stats.saved_count,
         analyzed=analyzed_count,
         failed=failed_count,
+        alerts_fired=alerts_fired_count,
+        priority_distribution=priority_distribution,
     )
 
     top_results = sorted(
@@ -224,5 +270,7 @@ async def run_rss_pipeline(
         analyzed_count=analyzed_count,
         failed_count=failed_count,
         skipped_count=skipped,
+        alerts_fired_count=alerts_fired_count,
+        priority_distribution=priority_distribution,
         top_results=top_results,
     )
