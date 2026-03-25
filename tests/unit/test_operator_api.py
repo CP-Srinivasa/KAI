@@ -61,12 +61,12 @@ def test_valid_token_passes_auth() -> None:
     with patch.object(
         __import__(
             "app.agents.mcp_server",
-            fromlist=["get_operational_readiness_summary"],
+            fromlist=["get_daily_operator_summary"],
         ),
-        "get_operational_readiness_summary",
+        "get_daily_operator_summary",
         new_callable=AsyncMock,
         return_value={
-            "report_type": "readiness",
+            "report_type": "daily_operator_summary",
             "execution_enabled": False,
         },
     ):

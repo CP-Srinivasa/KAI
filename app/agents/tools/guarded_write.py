@@ -8,16 +8,9 @@ Design rules:
 - execution_enabled: False -- no live trading orders are created.
 - write_back_allowed: False -- no external state mutation beyond artifacts/.
 - Never import from app.agents.mcp_server (circular-import guard).
-- Companion-ML tools (create_inference_profile, activate_route_profile,
-  deactivate_route_profile, acknowledge_signal_handoff, append_review_journal_entry)
-  return stubs: subsystem removed.
+- Companion-ML subsystem removed (D-107).
 
 Tool list:
-- create_inference_profile: Stub (companion-ML removed)
-- activate_route_profile: Stub (companion-ML removed)
-- deactivate_route_profile: Stub (companion-ML removed)
-- acknowledge_signal_handoff: Stub (companion-ML removed)
-- append_review_journal_entry: Stub (companion-ML removed)
 - append_decision_instance: Append a validated decision instance to the journal
 - run_trading_loop_once: Run one guarded paper/shadow trading cycle
 """
@@ -25,12 +18,9 @@ Tool list:
 from __future__ import annotations
 
 from app.agents.tools._helpers import (
-    _COMPANION_ML_STUB,
     DECISION_JOURNAL_DEFAULT_PATH,
-    HANDOFF_ACK_DEFAULT_PATH,
     LOOP_AUDIT_DEFAULT_PATH,
     PAPER_EXECUTION_AUDIT_DEFAULT_PATH,
-    REVIEW_JOURNAL_DEFAULT_PATH,
     append_mcp_write_audit,
     require_artifacts_subpath,
     resolve_workspace_path,
@@ -41,11 +31,6 @@ from app.agents.tools._helpers import (
 # ---------------------------------------------------------------------------
 
 GUARDED_WRITE_TOOL_NAMES: tuple[str, ...] = (
-    "create_inference_profile",
-    "activate_route_profile",
-    "deactivate_route_profile",
-    "acknowledge_signal_handoff",
-    "append_review_journal_entry",
     "append_decision_instance",
     "run_trading_loop_once",
 )
@@ -54,63 +39,6 @@ GUARDED_WRITE_TOOL_NAMES: tuple[str, ...] = (
 def get_guarded_write_tool_names() -> tuple[str, ...]:
     """Return the locked guarded-write tool name tuple."""
     return GUARDED_WRITE_TOOL_NAMES
-
-
-# ---------------------------------------------------------------------------
-# Companion-ML stubs
-# ---------------------------------------------------------------------------
-
-
-async def create_inference_profile(
-    profile_name: str,
-    route_profile: str,
-    primary_path: str = "A.external_llm",
-    shadow_paths: list[str] | None = None,
-    control_path: str | None = None,
-    output_path: str = "inference_route_profile.json",
-    notes: list[str] | None = None,
-) -> dict[str, object]:
-    """Stub: companion-ML subsystem removed."""
-    return {**_COMPANION_ML_STUB, "tool": "create_inference_profile"}
-
-
-async def activate_route_profile(
-    profile_path: str,
-    state_path: str = "artifacts/active_route_state.json",
-    abc_envelope_output: str | None = None,
-) -> dict[str, object]:
-    """Stub: companion-ML subsystem removed."""
-    return {**_COMPANION_ML_STUB, "tool": "activate_route_profile"}
-
-
-async def deactivate_route_profile(
-    state_path: str = "artifacts/active_route_state.json",
-) -> dict[str, object]:
-    """Stub: companion-ML subsystem removed."""
-    return {**_COMPANION_ML_STUB, "tool": "deactivate_route_profile"}
-
-
-async def acknowledge_signal_handoff(
-    handoff_path: str,
-    handoff_id: str,
-    consumer_agent_id: str,
-    notes: str = "",
-    acknowledgement_output_path: str = HANDOFF_ACK_DEFAULT_PATH,
-) -> dict[str, object]:
-    """Stub: companion-ML subsystem removed."""
-    return {**_COMPANION_ML_STUB, "tool": "acknowledge_signal_handoff"}
-
-
-async def append_review_journal_entry(
-    source_ref: str,
-    operator_id: str,
-    review_action: str,
-    review_note: str,
-    evidence_refs: list[str] | None = None,
-    journal_output_path: str = REVIEW_JOURNAL_DEFAULT_PATH,
-) -> dict[str, object]:
-    """Stub: companion-ML subsystem removed."""
-    return {**_COMPANION_ML_STUB, "tool": "append_review_journal_entry"}
 
 
 # ---------------------------------------------------------------------------

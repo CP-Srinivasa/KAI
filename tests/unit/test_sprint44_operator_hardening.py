@@ -209,7 +209,7 @@ def test_rate_limit_429_after_exceeding_window(tmp_path: Path) -> None:
         app = _operator_app()
         c = TestClient(app, raise_server_exceptions=False)
         with patch(
-            "app.agents.mcp_server.get_operational_readiness_summary",
+            "app.agents.mcp_server.get_daily_operator_summary",
             new=AsyncMock(return_value={"status": "ok"}),
         ):
             # First two calls succeed

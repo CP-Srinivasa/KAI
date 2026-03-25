@@ -448,12 +448,12 @@ router = APIRouter(
 
 @router.get("/status")
 async def get_operator_status(request: Request, response: Response) -> dict[str, object]:
-    """Canonical operator status surface (read-only readiness projection)."""
+    """Canonical operator status surface (read-only)."""
     return await _resolve_read_payload(
         request,
         response,
         error_code="status_unavailable",
-        loader=mcp_server.get_operational_readiness_summary,
+        loader=mcp_server.get_daily_operator_summary,
     )
 
 
@@ -464,7 +464,7 @@ async def get_operator_readiness(request: Request, response: Response) -> dict[s
         request,
         response,
         error_code="readiness_unavailable",
-        loader=mcp_server.get_operational_readiness_summary,
+        loader=mcp_server.get_daily_operator_summary,
     )
 
 
@@ -475,7 +475,7 @@ async def get_operator_decision_pack(request: Request, response: Response) -> di
         request,
         response,
         error_code="decision_pack_unavailable",
-        loader=mcp_server.get_decision_pack_summary,
+        loader=mcp_server.get_daily_operator_summary,
     )
 
 
@@ -483,40 +483,13 @@ async def get_operator_decision_pack(request: Request, response: Response) -> di
 async def get_operator_daily_summary(
     request: Request,
     response: Response,
-    handoff_path: str | None = None,
-    state_path: str = "artifacts/active_route_profile.json",
-    alert_audit_dir: str = "artifacts",
-    artifacts_dir: str = "artifacts",
-    stale_after_hours: int = 24,
-    stale_after_days: float = 30.0,
-    loop_audit_path: str = "artifacts/trading_loop_audit.jsonl",
-    loop_last_n: int = 50,
-    portfolio_audit_path: str = "artifacts/paper_execution_audit.jsonl",
-    market_data_provider: str = "coingecko",
-    freshness_threshold_seconds: float = 120.0,
-    timeout_seconds: int = 10,
-    review_journal_path: str = "artifacts/operator_review_journal.jsonl",
 ) -> dict[str, object]:
     """Canonical operator daily summary surface (read-only)."""
     return await _resolve_read_payload(
         request,
         response,
         error_code="daily_summary_unavailable",
-        loader=lambda: mcp_server.get_daily_operator_summary(
-            handoff_path=handoff_path,
-            state_path=state_path,
-            alert_audit_dir=alert_audit_dir,
-            artifacts_dir=artifacts_dir,
-            stale_after_hours=stale_after_hours,
-            retention_stale_after_days=stale_after_days,
-            loop_audit_path=loop_audit_path,
-            loop_last_n=loop_last_n,
-            portfolio_audit_path=portfolio_audit_path,
-            market_data_provider=market_data_provider,
-            freshness_threshold_seconds=freshness_threshold_seconds,
-            timeout_seconds=timeout_seconds,
-            review_journal_path=review_journal_path,
-        ),
+        loader=mcp_server.get_daily_operator_summary,
     )
 
 
@@ -531,9 +504,7 @@ async def get_operator_review_journal(
         request,
         response,
         error_code="review_journal_unavailable",
-        loader=lambda: mcp_server.get_review_journal_summary(
-            journal_path=journal_path,
-        ),
+        loader=mcp_server.get_daily_operator_summary,
     )
 
 
@@ -548,9 +519,7 @@ async def get_operator_resolution_summary(
         request,
         response,
         error_code="resolution_summary_unavailable",
-        loader=lambda: mcp_server.get_resolution_summary(
-            journal_path=journal_path,
-        ),
+        loader=mcp_server.get_daily_operator_summary,
     )
 
 

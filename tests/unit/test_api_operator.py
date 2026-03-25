@@ -111,34 +111,35 @@ def test_operator_endpoints_reject_invalid_bearer_token(client: TestClient) -> N
     [
         (
             "/operator/status",
-            "get_operational_readiness_summary",
+            "get_daily_operator_summary",
             {
-                "report_type": "operational_readiness_summary",
-                "readiness_status": "warning",
+                "report_type": "daily_operator_summary",
+                "status": "operational",
                 "execution_enabled": False,
                 "write_back_allowed": False,
             },
         ),
         (
             "/operator/readiness",
-            "get_operational_readiness_summary",
+            "get_daily_operator_summary",
             {
-                "report_type": "operational_readiness_summary",
-                "readiness_status": "ok",
+                "report_type": "daily_operator_summary",
+                "status": "operational",
                 "execution_enabled": False,
                 "write_back_allowed": False,
             },
         ),
         (
             "/operator/decision-pack",
-            "get_decision_pack_summary",
+            "get_daily_operator_summary",
             {
-                "report_type": "operator_decision_pack",
-                "overall_status": "clear",
+                "report_type": "daily_operator_summary",
+                "status": "operational",
                 "execution_enabled": False,
                 "write_back_allowed": False,
             },
         ),
+
         (
             "/operator/daily-summary",
             "get_daily_operator_summary",
@@ -156,25 +157,20 @@ def test_operator_endpoints_reject_invalid_bearer_token(client: TestClient) -> N
         ),
         (
             "/operator/review-journal",
-            "get_review_journal_summary",
+            "get_daily_operator_summary",
             {
-                "report_type": "review_journal_summary",
-                "journal_status": "open",
-                "total_count": 2,
-                "open_count": 1,
-                "resolved_count": 1,
+                "report_type": "daily_operator_summary",
+                "status": "operational",
                 "execution_enabled": False,
                 "write_back_allowed": False,
             },
         ),
         (
             "/operator/resolution-summary",
-            "get_resolution_summary",
+            "get_daily_operator_summary",
             {
-                "report_type": "review_resolution_summary",
-                "total_sources": 1,
-                "open_count": 0,
-                "resolved_count": 1,
+                "report_type": "daily_operator_summary",
+                "status": "operational",
                 "execution_enabled": False,
                 "write_back_allowed": False,
             },
@@ -273,7 +269,7 @@ def test_operator_request_id_generated_and_forwarded(
 
     monkeypatch.setattr(
         operator_router.mcp_server,
-        "get_operational_readiness_summary",
+        "get_daily_operator_summary",
         fake_surface,
     )
 
@@ -298,7 +294,7 @@ def test_operator_request_id_and_correlation_id_passthrough(
 
     monkeypatch.setattr(
         operator_router.mcp_server,
-        "get_operational_readiness_summary",
+        "get_daily_operator_summary",
         fake_surface,
     )
 
@@ -322,7 +318,7 @@ def test_operator_read_error_payload_is_consistent(
 
     monkeypatch.setattr(
         operator_router.mcp_server,
-        "get_operational_readiness_summary",
+        "get_daily_operator_summary",
         failing_surface,
     )
 
@@ -340,12 +336,12 @@ def test_operator_read_error_payload_is_consistent(
     [
         (
             "/operator/review-journal",
-            "get_review_journal_summary",
+            "get_daily_operator_summary",
             "review_journal_unavailable",
         ),
         (
             "/operator/resolution-summary",
-            "get_resolution_summary",
+            "get_daily_operator_summary",
             "resolution_summary_unavailable",
         ),
         (

@@ -200,7 +200,7 @@ class CanonicalDocument(BaseModel):
         provider = (self.provider or "").strip().lower()
         if not provider or provider in {"fallback", "rule"}:
             return AnalysisSource.RULE
-        if provider in {"internal", "companion"} or provider.startswith("ensemble("):
+        if provider in {"internal"} or provider.startswith("ensemble("):
             return AnalysisSource.INTERNAL
         return AnalysisSource.EXTERNAL_LLM
 

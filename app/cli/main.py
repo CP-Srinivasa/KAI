@@ -1,4 +1,5 @@
 import logging
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import cast
 
@@ -389,7 +390,7 @@ def alerts_send_test() -> None:
             )
             return
         for r in results:
-            status = "[green]✓ sent[/green]" if r.success else f"[red]✗ failed: {r.error}[/red]"
+            status = "[green]OK sent[/green]" if r.success else f"[red]FAIL: {r.error}[/red]"
             console.print(f"  [{r.channel}] {status}")
 
     asyncio.run(run())
@@ -457,7 +458,7 @@ def alerts_evaluate_pending(
 
         results = await service.send_digest(messages, f"{len(messages)} analyzed documents")
         for r in results:
-            status = "[green]✓ sent[/green]" if r.success else f"[red]✗ failed: {r.error}[/red]"
+            status = "[green]OK sent[/green]" if r.success else f"[red]FAIL: {r.error}[/red]"
             console.print(f"  [{r.channel}] {status}")
 
     asyncio.run(run())
@@ -496,6 +497,9 @@ def alerts_hold_report(
 @alerts_app.command("pending-annotations")
 def alerts_pending_annotations(
     limit: int = typer.Option(20, help="Max rows to print"),
+    min_age_hours: float = typer.Option(
+        0.0, help="Only include alerts at least this many hours old"
+    ),
     artifacts_dir: str = typer.Option("artifacts", help="Artifacts directory"),
 ) -> None:
     """List directional alerts without outcome annotation (deduped by document_id)."""
@@ -517,11 +521,25 @@ def alerts_pending_annotations(
         for rec in latest_directional_by_doc.values()
         if rec.document_id not in latest_ann_by_doc
     ]
+    if min_age_hours > 0:
+        now = datetime.now(UTC)
+
+        def _is_old_enough(rec) -> bool:
+            try:
+                ts = datetime.fromisoformat(rec.dispatched_at.replace("Z", "+00:00"))
+            except ValueError:
+                return False
+            age_h = (now - ts).total_seconds() / 3600.0
+            return age_h >= min_age_hours
+
+        pending = [rec for rec in pending if _is_old_enough(rec)]
+
     pending.sort(key=lambda r: r.dispatched_at, reverse=True)
 
     console.print(
         f"[bold]{len(pending)} pending directional alerts[/bold] "
-        f"(limit={limit}, total directional={len(latest_directional_by_doc)})"
+        f"(limit={limit}, total directional={len(latest_directional_by_doc)}, "
+        f"min_age_hours={min_age_hours:g})"
     )
     if not pending:
         console.print("[green]No pending annotations.[/green]")
@@ -530,13 +548,22 @@ def alerts_pending_annotations(
     table = Table(show_header=True, header_style="bold cyan")
     table.add_column("Document ID")
     table.add_column("Dispatched At")
+    table.add_column("Age(h)", width=8)
     table.add_column("Sentiment", width=10)
     table.add_column("Priority", width=8)
     table.add_column("Assets")
+    now = datetime.now(UTC)
     for rec in pending[:limit]:
+        age_h = "-"
+        try:
+            ts = datetime.fromisoformat(rec.dispatched_at.replace("Z", "+00:00"))
+            age_h = f"{((now - ts).total_seconds() / 3600.0):.1f}"
+        except ValueError:
+            pass
         table.add_row(
             rec.document_id,
             rec.dispatched_at,
+            age_h,
             rec.sentiment_label or "-",
             str(rec.priority) if rec.priority is not None else "-",
             ", ".join(rec.affected_assets) if rec.affected_assets else "-",
