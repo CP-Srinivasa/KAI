@@ -19,7 +19,7 @@ from app.normalization.entities import hits_to_entity_mentions
 _MAX_CONCURRENT = 5  # max parallel LLM calls per run_batch()
 _ASSET_HIT_CATEGORIES = frozenset({"crypto", "equity", "etf"})
 _FALLBACK_MAX_TERMS = 20
-_STUB_CONTENT_THRESHOLD = 50  # PH5C: skip LLM for docs with body ≤ 50 bytes
+_STUB_CONTENT_THRESHOLD = 50  # PH5C: skip LLM for docs with body â‰¤ 50 bytes
 # PH4I: title-level crypto signal words for market_scope inference in fallback path
 _CRYPTO_TITLE_TERMS = frozenset(
     {
@@ -378,6 +378,20 @@ class AnalysisPipeline:
                 doc_id=str(doc.id),
                 content_len=len(text),
                 threshold=_STUB_CONTENT_THRESHOLD,
+            )
+        elif (
+            not keyword_hits
+            and not doc.tickers
+            and not doc.crypto_assets
+        ):
+            # D-109: relevance gate -- skip LLM for off-topic documents
+            # that match zero keywords and have no pre-existing asset metadata.
+            # These typically produce priority=1/relevance=0/scope=unknown.
+            fallback_reason = "zero_relevance: no keyword or asset signals."
+            logger.info(
+                "zero_relevance_gate_skipped_llm",
+                doc_id=str(doc.id),
+                title=doc.title[:80] if doc.title else "",
             )
 
         if fallback_reason is not None:

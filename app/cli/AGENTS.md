@@ -35,6 +35,7 @@ Current `alerts` commands:
 - `hold-report`
 - `pending-annotations`
 - `annotate`
+- `auto-check`
 
 ## Constraints
 

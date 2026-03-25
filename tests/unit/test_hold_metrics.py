@@ -71,6 +71,12 @@ def test_hold_metrics_reports_signal_quality_validation_fields(tmp_path: Path) -
     quality = report["signal_quality_validation"]
     assert quality["directional_actionable_rate_pct"] == 50.0
     assert quality["resolved_precision_pct"] == 50.0
+    assert quality["resolved_false_positive_rate_pct"] == 50.0
+    assert quality["priority_calibration_finding"] == "insufficient_sample"
+    assert quality["priority_hit_correlation"] == 1.0
+    assert quality["priority_hit_correlation_sample"] == 2
+    assert quality["high_priority_hit_rate_pct"] == 100.0
+    assert quality["low_priority_hit_rate_pct"] == 0.0
     assert quality["paper_real_price_cycle_count"] == 0
     assert "no_real_price_paper_cycles" in quality["validation_gaps"]
     assert "recall_not_computable_without_negative_ground_truth" in quality["validation_gaps"]

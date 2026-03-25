@@ -16,14 +16,20 @@ from app.cli.main import app
 runner = CliRunner()
 
 
-def _write_directional_alert(artifacts_dir: Path, *, doc_id: str, sentiment: str) -> None:
+def _write_directional_alert(
+    artifacts_dir: Path,
+    *,
+    doc_id: str,
+    sentiment: str,
+    dispatched_at: str = "2026-03-25T10:00:00+00:00",
+) -> None:
     append_alert_audit(
         AlertAuditRecord(
             document_id=doc_id,
             channel="telegram",
             message_id="dry_run",
             is_digest=False,
-            dispatched_at="2026-03-25T10:00:00+00:00",
+            dispatched_at=dispatched_at,
             sentiment_label=sentiment,
             affected_assets=["BTC"],
             priority=8,
@@ -119,3 +125,27 @@ def test_alerts_pending_annotations_lists_unannotated_only(tmp_path: Path) -> No
     assert result.exit_code == 0, result.output
     assert "doc-1" in result.output
     assert "doc-2" not in result.output
+
+
+def test_alerts_auto_check_skips_too_fresh_alerts_by_default(tmp_path: Path) -> None:
+    artifacts_dir = tmp_path / "artifacts"
+    artifacts_dir.mkdir(parents=True)
+    _write_directional_alert(
+        artifacts_dir,
+        doc_id="doc-future",
+        sentiment="bullish",
+        dispatched_at="2999-01-01T00:00:00+00:00",
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "alerts",
+            "auto-check",
+            "--artifacts-dir",
+            str(artifacts_dir),
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "No pending directional alerts to check." in result.output

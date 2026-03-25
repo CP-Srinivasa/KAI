@@ -7,6 +7,7 @@ from uuid import uuid4
 
 import pytest
 
+from app.analysis.keywords.engine import KeywordHit
 from app.analysis.pipeline import _STUB_CONTENT_THRESHOLD, AnalysisPipeline
 from app.core.enums import AnalysisSource
 
@@ -23,11 +24,20 @@ def _make_doc(*, raw_text: str = "", title: str = "Test Title"):
     )
 
 
-def _make_pipeline(*, provider: MagicMock | None = None) -> AnalysisPipeline:
+# D-109: default keyword hit ensures the zero-relevance gate does not fire
+# for normal-length docs — these tests are specifically for the stub filter.
+_DEFAULT_KEYWORD_HIT = KeywordHit(canonical="BTC", category="crypto", occurrences=1)
+
+
+def _make_pipeline(
+    *, provider: MagicMock | None = None, keyword_hits: list[KeywordHit] | None = None
+) -> AnalysisPipeline:
     """Create a pipeline with a mock keyword engine and optional mock provider."""
     keyword_engine = MagicMock()
-    keyword_engine.match.return_value = []
-    keyword_engine.match_tickers.return_value = []
+    keyword_engine.match.return_value = (
+        keyword_hits if keyword_hits is not None else [_DEFAULT_KEYWORD_HIT]
+    )
+    keyword_engine.match_tickers.return_value = ["BTC"]
     return AnalysisPipeline(
         keyword_engine=keyword_engine,
         provider=provider,
@@ -45,7 +55,7 @@ class TestStubDocumentFilter:
         provider.provider_name = "openai"
         provider.analyze = AsyncMock()
 
-        pipeline = _make_pipeline(provider=provider)
+        pipeline = _make_pipeline(provider=provider, keyword_hits=[])
         doc = _make_doc(raw_text="Comments")  # 8 bytes, like PH5B proxy docs
 
         result = await pipeline.run(doc)
@@ -125,7 +135,7 @@ class TestStubDocumentFilter:
         provider_at = MagicMock()
         provider_at.provider_name = "openai"
         provider_at.analyze = AsyncMock()
-        pipeline_at = _make_pipeline(provider=provider_at)
+        pipeline_at = _make_pipeline(provider=provider_at, keyword_hits=[])
         doc_at = _make_doc(raw_text="A" * _STUB_CONTENT_THRESHOLD)
 
         result_at = await pipeline_at.run(doc_at)

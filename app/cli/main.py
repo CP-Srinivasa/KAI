@@ -578,6 +578,8 @@ def alerts_hold_report(
         "[bold]Quality:[/bold] "
         f"actionable_rate={quality['directional_actionable_rate_pct']}% | "
         f"precision={quality['resolved_precision_pct']}% | "
+        f"false_positive={quality['resolved_false_positive_rate_pct']}% | "
+        f"priority_corr={quality['priority_hit_correlation']} | "
         f"real_price_cycles={quality['paper_real_price_cycle_count']}"
     )
     console.print(
@@ -705,6 +707,11 @@ def alerts_auto_check(
     threshold_pct: float = typer.Option(
         5.0, "--threshold-pct", help="Min absolute price change (%) for hit/miss"
     ),
+    min_age_hours: float = typer.Option(
+        24.0,
+        "--min-age-hours",
+        help="Only check alerts at least this many hours old (default: 24h window)",
+    ),
     dry_run: bool = typer.Option(
         True, "--dry-run/--apply", help="Preview only (default) or apply annotations"
     ),
@@ -738,13 +745,26 @@ def alerts_auto_check(
             latest_by_doc[rec.document_id] = rec
 
     pending = list(latest_by_doc.values())
+    if min_age_hours > 0:
+        now = datetime.now(UTC)
+        age_filtered: list[AlertAuditRecord] = []
+        for rec in pending:
+            try:
+                ts = datetime.fromisoformat(rec.dispatched_at.replace("Z", "+00:00"))
+            except ValueError:
+                continue
+            age_h = (now - ts).total_seconds() / 3600.0
+            if age_h >= min_age_hours:
+                age_filtered.append(rec)
+        pending = age_filtered
+
     if not pending:
         console.print("[green]No pending directional alerts to check.[/green]")
         return
 
     console.print(
         f"[bold]Checking {len(pending)} pending directional alerts "
-        f"(threshold={threshold_pct}%)...[/bold]"
+        f"(threshold={threshold_pct}%, min_age_hours={min_age_hours:g})...[/bold]"
     )
 
     results = asyncio.run(

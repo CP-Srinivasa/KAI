@@ -6,6 +6,7 @@ This module computes and writes evidence snapshots used by the Phase-5 hold gate
 from __future__ import annotations
 
 import json
+import math
 from collections import Counter
 from datetime import UTC, datetime
 from pathlib import Path
@@ -53,6 +54,26 @@ def _latest_value(rows: list[dict[str, Any]], key: str) -> str | None:
         if key in row and isinstance(row[key], str) and row[key].strip()
     ]
     return max(values) if values else None
+
+
+def _rate_pct(numerator: int, denominator: int) -> float | None:
+    if denominator <= 0:
+        return None
+    return round(numerator / denominator * 100.0, 2)
+
+
+def _pearson_correlation(xs: list[float], ys: list[float]) -> float | None:
+    """Return Pearson correlation or None when it is not computable."""
+    if len(xs) != len(ys) or len(xs) < 2:
+        return None
+    mean_x = sum(xs) / len(xs)
+    mean_y = sum(ys) / len(ys)
+    num = sum((x - mean_x) * (y - mean_y) for x, y in zip(xs, ys, strict=False))
+    den_x = math.sqrt(sum((x - mean_x) ** 2 for x in xs))
+    den_y = math.sqrt(sum((y - mean_y) ** 2 for y in ys))
+    if den_x == 0.0 or den_y == 0.0:
+        return None
+    return round(num / (den_x * den_y), 4)
 
 
 def build_hold_metrics_report(
@@ -126,11 +147,8 @@ def build_hold_metrics_report(
         for doc_id, rec in latest_directional_by_doc.items()
         if rec.actionable is None
     }
-    hit_rate = (
-        round(len(hit_docs) / len(resolved_docs) * 100.0, 2)
-        if resolved_docs
-        else None
-    )
+    hit_rate = _rate_pct(len(hit_docs), len(resolved_docs))
+    false_positive_rate = _rate_pct(len(miss_docs), len(resolved_docs))
     actionable_rate = (
         round(len(actionable_directional_docs) / len(directional_doc_ids) * 100.0, 2)
         if directional_doc_ids
@@ -229,6 +247,46 @@ def build_hold_metrics_report(
 
     generated_at = datetime.now(UTC).isoformat()
     unique_alerted_docs = len({r.document_id for r in non_digest})
+
+    high_priority_threshold = 7
+    priority_hits_pairs: list[tuple[float, float]] = []
+    high_priority_resolved_docs: set[str] = set()
+    low_priority_resolved_docs: set[str] = set()
+    for doc_id in resolved_docs:
+        latest_record = latest_directional_by_doc.get(doc_id)
+        if latest_record is None or latest_record.priority is None:
+            continue
+        priority_hits_pairs.append(
+            (float(latest_record.priority), 1.0 if doc_id in hit_docs else 0.0)
+        )
+        if latest_record.priority >= high_priority_threshold:
+            high_priority_resolved_docs.add(doc_id)
+        else:
+            low_priority_resolved_docs.add(doc_id)
+
+    priority_corr = _pearson_correlation(
+        [p for p, _ in priority_hits_pairs],
+        [h for _, h in priority_hits_pairs],
+    )
+    high_priority_hit_rate = _rate_pct(
+        sum(1 for d in high_priority_resolved_docs if d in hit_docs),
+        len(high_priority_resolved_docs),
+    )
+    low_priority_hit_rate = _rate_pct(
+        sum(1 for d in low_priority_resolved_docs if d in hit_docs),
+        len(low_priority_resolved_docs),
+    )
+    if len(priority_hits_pairs) < 10:
+        priority_calibration_finding = "insufficient_sample"
+    elif priority_corr is None:
+        priority_calibration_finding = "not_computable"
+    elif priority_corr >= 0.2:
+        priority_calibration_finding = "positive_correlation"
+    elif priority_corr <= -0.2:
+        priority_calibration_finding = "inverse_correlation"
+    else:
+        priority_calibration_finding = "weak_correlation"
+
     return {
         "report_type": "ph5_hold_metrics_report",
         "phase": "PHASE 5",
@@ -268,10 +326,19 @@ def build_hold_metrics_report(
             "directional_actionable_unknown_documents": len(actionable_unknown_directional_docs),
             "directional_actionable_rate_pct": actionable_rate,
             "resolved_precision_pct": hit_rate,
+            "resolved_false_positive_rate_pct": false_positive_rate,
             "resolved_recall_pct": None,
             "recall_computable": False,
             "feedback_loop_labeled_ratio": coverage_ratio,
             "feedback_loop_resolved_ratio": resolved_coverage_ratio,
+            "priority_calibration_finding": priority_calibration_finding,
+            "priority_hit_correlation": priority_corr,
+            "priority_hit_correlation_sample": len(priority_hits_pairs),
+            "high_priority_threshold": high_priority_threshold,
+            "high_priority_resolved_documents": len(high_priority_resolved_docs),
+            "high_priority_hit_rate_pct": high_priority_hit_rate,
+            "low_priority_resolved_documents": len(low_priority_resolved_docs),
+            "low_priority_hit_rate_pct": low_priority_hit_rate,
             "paper_market_data_source_counts": dict(market_data_source_counts),
             "paper_real_price_cycle_count": real_price_cycle_count,
             "paper_mock_price_cycle_count": mock_price_cycle_count,
@@ -396,8 +463,14 @@ def _write_operator_summary(report: dict[str, Any], output_path: Path) -> None:
         "",
         f"- directional_actionable_rate_pct: {quality['directional_actionable_rate_pct']}",
         f"- resolved_precision_pct: {quality['resolved_precision_pct']}",
+        f"- resolved_false_positive_rate_pct: {quality['resolved_false_positive_rate_pct']}",
         f"- resolved_recall_pct: {quality['resolved_recall_pct']}",
         f"- feedback_loop_resolved_ratio: {quality['feedback_loop_resolved_ratio']}",
+        f"- priority_calibration_finding: {quality['priority_calibration_finding']}",
+        f"- priority_hit_correlation: {quality['priority_hit_correlation']}",
+        f"- priority_hit_correlation_sample: {quality['priority_hit_correlation_sample']}",
+        f"- high_priority_hit_rate_pct: {quality['high_priority_hit_rate_pct']}",
+        f"- low_priority_hit_rate_pct: {quality['low_priority_hit_rate_pct']}",
         f"- paper_real_price_cycle_count: {quality['paper_real_price_cycle_count']}",
         "- priority_mae_tier1_vs_teacher_baseline: "
         f"{quality['priority_mae_tier1_vs_teacher_baseline']}",

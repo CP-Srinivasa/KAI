@@ -480,7 +480,14 @@ def test_ingest_rss_saved_documents_flow_into_analyze_pending(monkeypatch) -> No
 
     class FakeKeywordEngine:
         def match(self, text: str) -> list[object]:
-            return []
+            from app.analysis.keywords.engine import KeywordHit
+
+            hits: list[object] = []
+            if "Bitcoin" in text or "BTC" in text:
+                hits.append(KeywordHit(canonical="BTC", category="crypto", occurrences=1))
+            if "Ethereum" in text or "ETH" in text:
+                hits.append(KeywordHit(canonical="ETH", category="crypto", occurrences=1))
+            return hits
 
         def match_tickers(self, text: str) -> list[str]:
             return ["BTC"] if "Bitcoin" in text else ["ETH"]
