@@ -163,7 +163,6 @@ def test_telegram_command_inventory_references_registered_cli_research_commands(
                 "*Status (Canonical Readiness)*",
                 "readiness_status=`warning`",
                 "issue_count=`2`",
-                "Ref: `research readiness-summary`",
             ],
         ),
         (
@@ -180,7 +179,6 @@ def test_telegram_command_inventory_references_registered_cli_research_commands(
             [
                 "*Health (Provider Surface)*",
                 "provider_count=`3`",
-                "Ref: `research provider-health`",
             ],
         ),
         (
@@ -232,7 +230,6 @@ def test_telegram_command_inventory_references_registered_cli_research_commands(
             [
                 "*Risk (Protective Gate)*",
                 "gate_status=`blocking`",
-                "Ref: `research gate-summary`",
             ],
         ),
         (
@@ -253,7 +250,7 @@ def test_telegram_command_inventory_references_registered_cli_research_commands(
             [
                 "*Signals (Read-Only Handoff)*",
                 "signal_count=`1`",
-                "Ref: `research signal-handoff`",
+                "Ref: `research signals`",
             ],
         ),
         (
@@ -270,7 +267,7 @@ def test_telegram_command_inventory_references_registered_cli_research_commands(
             [
                 "*Operator Journal (Read-Only)*",
                 "journal_status=`open`",
-                "Ref: `research review-journal-summary`",
+                "Ref: `research decision-journal-summary`",
             ],
         ),
         (
@@ -287,7 +284,6 @@ def test_telegram_command_inventory_references_registered_cli_research_commands(
             [
                 "*Resolution (Read-Only)*",
                 "resolution_status=`open`",
-                "Ref: `research resolution-summary`",
             ],
         ),
         (
@@ -304,7 +300,6 @@ def test_telegram_command_inventory_references_registered_cli_research_commands(
                 "*Decision Pack (Read-Only)*",
                 "decision_pack_status=`blocking`",
                 "operator_action_count=`2`",
-                "Ref: `research decision-pack-summary`",
             ],
         ),
         (
@@ -323,7 +318,6 @@ def test_telegram_command_inventory_references_registered_cli_research_commands(
             [
                 "*Daily Summary (Canonical Operator View)*",
                 "readiness_status=`warning`",
-                "Ref: `research daily-summary`",
             ],
         ),
         (
@@ -341,7 +335,6 @@ def test_telegram_command_inventory_references_registered_cli_research_commands(
                 "*Incident (Escalation Surface)*",
                 "note=`latency spike`",
                 "Audit-only. No auto-remediation and no execution side effect.",
-                "Ref: `research escalation-summary`",
             ],
         ),
     ],

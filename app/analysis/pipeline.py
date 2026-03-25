@@ -67,7 +67,7 @@ def _resolve_analysis_source(provider_name: str | None) -> AnalysisSource:
     provider_name = provider_name.strip().lower()
     if provider_name in {"fallback", "rule"}:
         return AnalysisSource.RULE
-    if provider_name in {"internal", "companion"}:
+    if provider_name in {"internal"}:
         return AnalysisSource.INTERNAL
     return AnalysisSource.EXTERNAL_LLM
 

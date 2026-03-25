@@ -62,20 +62,12 @@ _WEBHOOK_MAX_BODY_BYTES_DEFAULT = 64_000
 _WEBHOOK_MAX_SEEN_UPDATE_IDS_DEFAULT = 2_048
 _WEBHOOK_REJECTION_AUDIT_LOG_DEFAULT = "artifacts/telegram_webhook_rejections.jsonl"
 TELEGRAM_CANONICAL_RESEARCH_REFS: dict[str, tuple[str, ...]] = {
-    "status": ("research readiness-summary",),
-    "health": ("research provider-health",),
     "positions": ("research paper-positions-summary",),
     "exposure": ("research paper-exposure-summary",),
-    "risk": ("research gate-summary",),
-    "signals": ("research signal-handoff",),
-    "journal": ("research review-journal-summary",),
-    "resolution": ("research resolution-summary",),
-    "decision_pack": ("research decision-pack-summary",),
-    "daily_summary": ("research daily-summary",),
-    "alert_status": ("research alert-audit-summary",),
-    "incident": ("research escalation-summary",),
-    "approve": ("research review-journal-append",),
-    "reject": ("research review-journal-append",),
+    "signals": ("research signals",),
+    "journal": ("research decision-journal-summary",),
+    "approve": ("research decision-journal-append",),
+    "reject": ("research decision-journal-append",),
 }
 
 

@@ -7,17 +7,17 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 def test_required_platform_docs_exist() -> None:
+    # D-107: living architecture is AGENTS.md, CLAUDE.md, CHANGELOG.md,
+    # DECISION_LOG.md, README.md, RUNBOOK.md.  All others are archived.
     required = [
         "README.md",
-        "ARCHITECTURE.md",
-        "ASSUMPTIONS.md",
-        "SECURITY.md",
-        "RISK_POLICY.md",
+        "AGENTS.md",
+        "CLAUDE.md",
+        "CHANGELOG.md",
+        "DECISION_LOG.md",
+        "RUNBOOK.md",
         "DECISION_SCHEMA.json",
         "CONFIG_SCHEMA.json",
-        "RUNBOOK.md",
-        "TELEGRAM_INTERFACE.md",
-        "CHANGELOG.md",
     ]
     for name in required:
         assert (ROOT / name).exists(), name
@@ -73,7 +73,7 @@ def test_decision_schema_requires_core_fields() -> None:
 
 
 def test_telegram_interface_lists_first_class_commands() -> None:
-    text = (ROOT / "TELEGRAM_INTERFACE.md").read_text(encoding="utf-8")
+    text = (ROOT / "docs" / "archive" / "TELEGRAM_INTERFACE.md").read_text(encoding="utf-8")
     for command in (
         "/status",
         "/health",
@@ -91,3 +91,4 @@ def test_telegram_interface_lists_first_class_commands() -> None:
         "/incident",
     ):
         assert command in text
+

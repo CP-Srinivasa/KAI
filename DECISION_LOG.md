@@ -12,7 +12,7 @@
 - next_required_step: `STRATEGIC_HOLD -- no new sprint until alert-precision + paper-trading positive`
 
 
-- baseline: `1046 passed, ruff clean, mypy 0 errors`
+- baseline: `1039 passed, ruff clean, mypy 0 errors`
 
 
 ## Canonical Decisions
@@ -489,3 +489,12 @@
 ### D-106 (2026-03-24): docs/intelligence_architecture.md archived; living architecture slimmed
 - `docs/intelligence_architecture.md` is treated as historical and moved to `docs/archive/intelligence_architecture.md`.
 - Active architecture sources are `CLAUDE.md` and `docs/contracts.md` only; all other `docs/*.md` moved to `docs/archive/`.
+
+### D-107 (2026-03-25): Companion-ML extraction + governance doc pruning
+- Deleted `app/research/` module (dead re-export shim, zero imports).
+- Deleted companion provider (`app/analysis/providers/companion.py`) + factory wiring + settings fields.
+- Deleted 3 stub CLI modules: `research_companion.py`, `research_readiness.py`, `research_operator.py`.
+- Deleted `test_companion_provider.py`; fixed 3 test files with companion references.
+- Moved 24 root `.md` files to `docs/archive/`; living root = AGENTS, CLAUDE, CHANGELOG, DECISION_LOG, README, RUNBOOK (6 files).
+- Deleted `docs/archive/intelligence_architecture.md` (97 MB).
+- Baseline: 1039 passed, ruff clean.

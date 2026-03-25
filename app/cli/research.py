@@ -2,32 +2,60 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import typer
 from rich.console import Console
 
 from app.cli.commands.research_core import research_core_app
-from app.cli.commands.research_operator import (
-    FINAL_RESEARCH_COMMAND_NAMES,
-    RESEARCH_COMMAND_ALIASES,
-    SUPERSEDED_RESEARCH_COMMAND_NAMES,
-    extract_runbook_command_refs,
-    get_invalid_research_command_refs,
-    research_operator_app,
-)
 from app.cli.commands.research_trading import research_trading_app
 
 console = Console()
 research_app = typer.Typer(help="Research and signal generation commands", no_args_is_help=True)
 
 research_app.add_typer(research_core_app, name="")
-research_app.add_typer(research_operator_app, name="")
 research_app.add_typer(research_trading_app, name="")
+
+# ---------------------------------------------------------------------------
+# Command inventory constants (kept for telegram bot contract tests)
+# ---------------------------------------------------------------------------
+
+FINAL_RESEARCH_COMMAND_NAMES: tuple[str, ...] = (
+    "brief",
+    "watchlists",
+    "signals",
+)
+
+RESEARCH_COMMAND_ALIASES: dict[str, str] = {}
+SUPERSEDED_RESEARCH_COMMAND_NAMES: tuple[str, ...] = ()
+
+
+def extract_runbook_command_refs(payload: dict[str, Any]) -> list[str]:
+    """Extract all command_refs from a runbook payload."""
+    refs: list[str] = []
+    for step in payload.get("steps", []):
+        refs.extend(step.get("command_refs", []))
+    for step in payload.get("next_steps", []):
+        refs.extend(step.get("command_refs", []))
+    refs.extend(payload.get("command_refs", []))
+    return list(dict.fromkeys(refs))
+
+
+def get_invalid_research_command_refs(refs: list[str]) -> list[str]:
+    """Return any command refs that are not registered research sub-commands."""
+    registered = get_registered_research_command_names()
+    invalid_refs: list[str] = []
+    for ref in refs:
+        parts = ref.strip().split()
+        if len(parts) != 2 or parts[0] != "research" or parts[1] not in registered:
+            invalid_refs.append(ref)
+    return invalid_refs
 
 
 def get_registered_research_command_names() -> set[str]:
     """Return all currently registered research command names across all sub-apps."""
     names: set[str] = set()
-    for sub_app in (research_core_app, research_operator_app, research_trading_app):
+    for sub_app in (research_core_app, research_trading_app):
         for command in sub_app.registered_commands:
             name = getattr(command, "name", None)
             if isinstance(name, str) and name.strip():
@@ -64,3 +92,4 @@ __all__ = [
     "extract_runbook_command_refs",
     "get_invalid_research_command_refs",
 ]
+

@@ -1,83 +1,100 @@
-# Architecture — AI Analyst Trading Bot
+# ARCHITECTURE.md
 
-## Overview
+## Intent
 
-Modular, production-oriented AI-powered market intelligence platform.  
-**Motto: Simple but Powerful**
+KAI is a modular, security-first analysis and operator system.
+Architecture prioritizes deterministic behavior, auditability, and fail-closed controls.
 
-## High-Level Flow
+## Canonical Runtime Backbone
 
-```
-Source Registry
-   ↓
-Source Classification / Resolution
-   ↓
-Ingestion
-   ↓
-Normalization / Canonicalization
-   ↓
-Deduplication / Enrichment
-   ↓
-Rule-Based Analysis
-   ↓
-LLM Analysis
-   ↓
-Scoring / Ranking / Historical Linking
-   ↓
-Alerts / Research / Signal Candidates
-```
+| Layer | Canonical Path | Role |
+|---|---|---|
+| Settings and runtime policy | `app/core/settings.py` | Typed config and safety defaults |
+| Decision backbone | `app/execution/models.py`, `app/decisions/journal.py` | Canonical decision record and journal projection |
+| Market data read-only | `app/market_data/` | External quote/snapshot data, no trading side effects |
+| Paper portfolio read | `app/execution/portfolio_read.py` | Canonical positions/exposure projections |
+| Trading loop control/audit | `app/orchestrator/trading_loop.py` | Paper/shadow run-once + cycle audit visibility |
+| Operator API | `app/api/routers/operator.py` | Read-only and guarded operator HTTP surface |
+| Operator messaging | `app/messaging/telegram_bot.py` | Read/audit command interface with webhook hardening |
+| MCP surface | `app/agents/mcp_server.py` | Canonical read and guarded tools |
+| CLI surface | `app/cli/main.py` | Canonical operator commands |
 
-## Module Map
+## Operator Surface Model
 
-| Module | Responsibility |
-|--------|---------------|
-| `app/core/` | Settings, logging, domain types, enums, errors |
-| `app/ingestion/` | Source adapters, resolvers, schedulers |
-| `app/normalization/` | Content cleaning, metadata alignment (Phase 2) |
-| `app/enrichment/` | Entities, tags, dedup helpers (Phase 2) |
-| `app/analysis/` | Keyword logic, scoring, LLM pipeline (Phase 3) |
-| `app/integrations/` | Provider-specific clients (Phase 3) |
-| `app/alerts/` | Telegram, email, alert rules (Phase 4) |
-| `app/research/` | Briefs, summaries, watchlists (Phase 5) |
-| `app/trading/` | Signal candidates (Phase 5) |
-| `app/api/` | FastAPI endpoints |
-| `app/cli/` | Typer commands |
-| `app/storage/` | DB models, repositories, migrations |
-| `monitor/` | User-editable source lists and watchlists |
+- Read-only:
+  - readiness, decision pack, portfolio, exposure, loop status, recent cycles
+- Guarded:
+  - run trading loop once (`paper`/`shadow` only)
+- Audit-only:
+  - review and decision intent journaling paths
 
-## Source Taxonomy
+## Request Governance (Operator API)
 
-Every source is classified as one of:
-- `rss_feed` — validated RSS/Atom feed
-- `website` — monitored website
-- `news_api` — API-based news provider
-- `youtube_channel` — YouTube channel
-- `podcast_feed` — resolved podcast RSS
-- `podcast_page` — podcast landing page (not a feed)
-- `reference_page` — educational/reference resource
-- `social_api` — social media API source
-- `manual_source` — manually curated content
-- `unresolved_source` — URL not yet classified
+- request and correlation ID propagation
+- unified fail-closed error payload
+- idempotency key enforcement on guarded run-once
+- append-only guarded audit log
+- light rate limiting on guarded endpoint
 
-## Source Status Lifecycle
+## Phase-2 Usability and Dashboard Baseline (S45 -> S46)
 
-`active` → `disabled` | `requires_api` | `manual_resolution` | `unresolved`
+S45 introduced no new business architecture and froze one Daily backbone.
+S46 continues on that foundation with a minimal visual operator baseline:
 
-## Key Design Rules
+- daily operator view as canonical read-flow anchor
+- readability-first alignment across Telegram, CLI, and API
+- dashboard projection from existing summaries only (no second aggregate path)
 
-1. Classify first, resolve second, ingest third
-2. Never fake RSS feeds
-3. No business logic in adapters or controllers
-4. LLM output always validated against `LLMAnalysisOutput` schema
-5. All secrets via environment variables — never hardcoded
+## S47 Drilldown and History Baseline
 
-## Delivery Phases
+S47 extends operator usability depth without extending architecture:
 
-| Phase | Content |
-|-------|---------|
-| 1 | Foundation: settings, logging, models, API, CLI, Docker, CI |
-| 2 | Ingestion: RSS, podcasts, YouTube, websites, dedup |
-| 3 | Analysis: query DSL, keywords, LLM, scoring |
-| 4 | Alerting: Telegram, email, rules |
-| 5 | Research & signals: watchlists, briefs, signal candidates |
-| 6 | Advanced: transcripts, social connectors, narrative clustering |
+- `GET /operator/review-journal` delegates to `mcp_server.get_review_journal_summary()`
+- `GET /operator/resolution-summary` delegates to `mcp_server.get_resolution_summary()`
+- no new aggregation model, no new storage path, no new control semantics
+
+## S48 Telegram Surface Completion
+
+S48 completes operator surface parity across channels without new architecture:
+
+- Telegram `/resolution` and `/decision_pack` added as read-only delegation surfaces
+- dashboard drilldown reference section added (static path list, no nav or auth bypass)
+- all surfaces remain read-only delegation to canonical MCP tools
+
+## S49 Alert Audit Surface Baseline
+
+S49 adds the alert audit read surface without new aggregation:
+
+- `get_alert_audit_summary()` MCP tool — reads `artifacts/alert_audit.jsonl` via `load_alert_audits()` + `_build_alert_dispatch_summary()`
+- `GET /operator/alert-audit` — pure delegation, bearer auth, same fail-closed governance as other operator endpoints
+- Telegram `/alert_status` — read-only, same pattern as `/resolution`
+- CLI `research alert-audit-summary` — canonical read command, registered in `RESEARCH_COMMAND_NAMES`
+- no new aggregation backbone, no write-back, `execution_enabled=False` on all surfaces
+
+## Phase-3 Canonical Consolidation Baseline (S50)
+
+Phase 2 is formally closed. Phase 3 starts with consolidation only:
+
+- one canonical runtime truth across API, dashboard, telegram, CLI, and MCP
+- no new business features in S50
+- focus on architecture clarity, naming consistency, and team-usable documentation
+- no new execution semantics, no live-mode broadening
+
+## S50A Canonical Path Inventory Principle
+
+Path ownership in S50A is classified explicitly:
+
+- `canonical`: actively used source-of-truth path
+- `alias`: compatibility entry that resolves to canonical path
+- `superseded`: intentionally replaced path kept only for history/tests
+- `provisional`: registered but outside locked final inventory, requires review
+
+S50A forbids refactoring before this classification is documented and synchronized.
+The current inventory artifact is `CANONICAL_SURFACE_INVENTORY.md`.
+
+## Safety Invariants
+
+- `live` remains default-off and fail-closed
+- no direct broker/live execution path from operator surfaces
+- no critical action without logging and traceability
+- no parallel architecture for equivalent runtime concerns

@@ -135,23 +135,6 @@ async def test_pipeline_with_llm_provider():
     assert result.analysis_result.analysis_source == AnalysisSource.EXTERNAL_LLM
 
 
-@pytest.mark.asyncio
-async def test_pipeline_with_companion_provider_marks_internal_analysis_source():
-    llm_out = _make_llm_output()
-    provider = _mock_named_provider("companion", llm_out)
-    engine = _btc_engine()
-    pipeline = AnalysisPipeline(keyword_engine=engine, provider=provider, run_llm=True)
-
-    result = await pipeline.run(_make_doc())
-
-    assert result.analysis_result is not None
-    assert result.analysis_result.analysis_source == AnalysisSource.INTERNAL
-
-    result.apply_to_document()
-
-    assert result.document.analysis_source == AnalysisSource.INTERNAL
-    assert result.document.provider == "companion"
-
 
 @pytest.mark.asyncio
 async def test_ensemble_openai_wins_sets_external_llm_source():

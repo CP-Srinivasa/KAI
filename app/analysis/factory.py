@@ -2,9 +2,8 @@
 
 Provider tiers:
   Tier 1 (rule-based)  — embedded in AnalysisPipeline._build_fallback_analysis()
-  Tier 2a (internal)   — InternalModelProvider — rule heuristics, zero deps, always available
-  Tier 2b (companion)  — InternalCompanionProvider — HTTP to local model (localhost only)
-  Tier 3 (external)    — OpenAI, Anthropic, Gemini — premium LLM, needs API key
+  Tier 2  (internal)   — InternalModelProvider — rule heuristics, zero deps, always available
+  Tier 3  (external)   — OpenAI, Anthropic, Gemini — premium LLM, needs API key
 """
 
 from typing import Any
@@ -18,7 +17,6 @@ def create_provider(provider_type: str, settings: Any) -> BaseAnalysisProvider |
     Args:
         provider_type:
             'internal'  — InternalModelProvider (rule heuristics, no API key, always available)
-            'companion' — InternalCompanionProvider (HTTP to localhost model endpoint)
             'openai'    — OpenAI GPT provider
             'anthropic' / 'claude' — Anthropic Claude provider
             'gemini'    — Google Gemini provider
@@ -39,18 +37,6 @@ def create_provider(provider_type: str, settings: Any) -> BaseAnalysisProvider |
 
         keyword_engine = KeywordEngine.from_monitor_dir(Path(settings.monitor_dir))
         return InternalModelProvider(keyword_engine)
-
-    if provider_type == "companion":
-        endpoint = getattr(settings.providers, "companion_model_endpoint", None)
-        if not endpoint:
-            return None
-        from app.analysis.providers.companion import InternalCompanionProvider
-
-        return InternalCompanionProvider(
-            endpoint=endpoint,
-            model=getattr(settings.providers, "companion_model_name", "local-model"),
-            timeout=getattr(settings.providers, "companion_model_timeout", 10),
-        )
 
     if provider_type == "openai":
         if not settings.providers.openai_api_key:
@@ -84,10 +70,6 @@ def create_provider(provider_type: str, settings: Any) -> BaseAnalysisProvider |
             providers.append(create_provider("anthropic", settings))
         if getattr(settings.providers, "gemini_api_key", None):
             providers.append(create_provider("gemini", settings))
-
-        companion = create_provider("companion", settings)
-        if companion:
-            providers.append(companion)
 
         # Internal model must be last (guaranteed fallback)
         internal = create_provider("internal", settings)

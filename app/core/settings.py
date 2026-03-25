@@ -1,6 +1,6 @@
 from collections.abc import Mapping
 
-from pydantic import Field, field_validator, model_validator
+from pydantic import Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from app.core.enums import ExecutionMode
@@ -72,23 +72,9 @@ class ProviderSettings(BaseSettings):
     gemini_model: str = Field(default="gemini-2.5-flash")
     gemini_timeout: int = Field(default=30)
 
-    companion_model_endpoint: str | None = Field(default=None)
-    companion_model_name: str = Field(default="kai-analyst-v1")
-    companion_model_timeout: int = Field(default=10)
 
     youtube_api_key: str = Field(default="")
     newsdata_api_key: str = Field(default="")
-
-    @field_validator("companion_model_endpoint")
-    @classmethod
-    def check_local_endpoint(cls, v: str | None) -> str | None:
-        if v is None:
-            return v
-        v_lower = v.lower()
-        allowed = ("localhost", "127.0.0.1", "host.docker.internal")
-        if not any(a in v_lower for a in allowed):
-            raise ValueError("Companion model endpoint MUST be localhost or internal.")
-        return v
 
 
 class SourceSettings(BaseSettings):

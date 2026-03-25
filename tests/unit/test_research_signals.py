@@ -56,7 +56,7 @@ def test_extract_signal_candidates_direction_mapping():
 def test_signal_candidate_analysis_source_propagation():
     docs = [
         make_document(is_analyzed=True, priority_score=10, provider="openai"),
-        make_document(is_analyzed=True, priority_score=10, provider="companion"),
+        make_document(is_analyzed=True, priority_score=10, provider="internal"),
         make_document(is_analyzed=True, priority_score=10, provider="rule"),
         make_document(is_analyzed=True, priority_score=10, provider=None),
     ]
