@@ -147,15 +147,77 @@ class ExecutionSettings(BaseSettings):
 class OperatorSettings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="OPERATOR_", env_file=".env", extra="ignore")
 
+    telegram_polling_enabled: bool = Field(default=False)
+    telegram_dry_run: bool = Field(default=True)
+    telegram_poll_interval_seconds: float = Field(default=1.0, gt=0.0)
+    telegram_long_poll_timeout_seconds: int = Field(default=20, ge=1)
     telegram_bot_token: str = Field(default="")
     admin_chat_ids: str = Field(default="")  # Comma-separated chat IDs
     command_audit_log: str = Field(default="artifacts/operator_commands.jsonl")
+    signal_handoff_log: str = Field(default="artifacts/telegram_signal_handoff.jsonl")
+    signal_exchange_outbox_log: str = Field(default="artifacts/telegram_exchange_outbox.jsonl")
+    signal_append_decision_enabled: bool = Field(default=False)
+    signal_auto_run_enabled: bool = Field(default=False)
+    signal_auto_run_mode: str = Field(default="paper")
+    signal_auto_run_provider: str = Field(default="coingecko")
+    signal_forward_to_exchange_enabled: bool = Field(default=False)
+    signal_exchange_relay_endpoint: str = Field(default="")
+    signal_exchange_relay_api_key: str = Field(default="")
+    signal_exchange_relay_timeout_seconds: int = Field(default=10, ge=1)
+    signal_exchange_relay_max_attempts: int = Field(default=3, ge=1)
+    signal_exchange_sent_log: str = Field(default="artifacts/telegram_exchange_sent.jsonl")
+    signal_exchange_dead_letter_log: str = Field(
+        default="artifacts/telegram_exchange_dead_letter.jsonl"
+    )
 
     @property
     def admin_chat_id_list(self) -> list[int]:
         if not self.admin_chat_ids:
             return []
         return [int(x.strip()) for x in self.admin_chat_ids.split(",") if x.strip()]
+
+    @model_validator(mode="after")
+    def validate_signal_handoff_mode(self) -> "OperatorSettings":
+        normalized_mode = self.signal_auto_run_mode.strip().lower()
+        if normalized_mode not in {"paper", "shadow"}:
+            raise ValueError(
+                "OPERATOR_SIGNAL_AUTO_RUN_MODE must be one of: paper, shadow."
+            )
+        self.signal_auto_run_mode = normalized_mode
+        return self
+
+
+class ExchangeSettings(BaseSettings):
+    """Exchange adapter configuration.
+
+    Set API keys via .env:
+        EXCHANGE_BINANCE_API_KEY=...
+        EXCHANGE_BINANCE_SECRET=...
+        EXCHANGE_BYBIT_API_KEY=...
+        EXCHANGE_BYBIT_SECRET=...
+
+    Safety defaults: dry_run=True, testnet=True.
+    """
+
+    model_config = SettingsConfigDict(env_prefix="EXCHANGE_", env_file=".env", extra="ignore")
+
+    # Global flags
+    dry_run: bool = Field(default=True)
+    testnet: bool = Field(default=True)
+    default_exchange: str = Field(default="binance")  # binance | bybit
+    whitelist: list[str] = Field(default_factory=list)  # allowed symbols
+
+    # Binance
+    binance_api_key: str = Field(default="")
+    binance_secret: str = Field(default="")
+
+    # Bybit
+    bybit_api_key: str = Field(default="")
+    bybit_secret: str = Field(default="")
+    bybit_category: str = Field(default="spot")  # spot | linear | inverse
+
+    # Timeouts
+    timeout_seconds: float = Field(default=15.0, gt=0.0)
 
 
 class AppSettings(BaseSettings):
