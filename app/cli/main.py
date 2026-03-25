@@ -1,10 +1,19 @@
 import logging
 from pathlib import Path
+from typing import cast
 
 import typer
 from rich.console import Console
 from rich.table import Table
 
+from app.alerts.audit import (
+    AlertOutcomeAnnotation,
+    OutcomeLabel,
+    append_outcome_annotation,
+    load_alert_audits,
+    load_outcome_annotations,
+)
+from app.alerts.hold_metrics import build_hold_metrics_report, write_hold_metrics_report
 from app.core.logging import configure_logging
 from app.core.settings import get_settings
 from app.ingestion.base.interfaces import FetchResult
@@ -452,6 +461,125 @@ def alerts_evaluate_pending(
             console.print(f"  [{r.channel}] {status}")
 
     asyncio.run(run())
+
+
+@alerts_app.command("hold-report")
+def alerts_hold_report(
+    artifacts_dir: str = typer.Option("artifacts", help="Artifacts directory"),
+    output_dir: str = typer.Option(
+        "artifacts/ph5_hold", help="Output directory for hold report artifacts"
+    ),
+) -> None:
+    """Build and write PH5 hold metrics report from local artifact files."""
+    artifacts_path = Path(artifacts_dir)
+    report = build_hold_metrics_report(
+        alert_audit_path=artifacts_path / "alert_audit.jsonl",
+        alert_outcomes_path=artifacts_path / "alert_outcomes.jsonl",
+        trading_loop_audit_path=artifacts_path / "trading_loop_audit.jsonl",
+        paper_execution_audit_path=artifacts_path / "paper_execution_audit.jsonl",
+    )
+    json_out, md_out = write_hold_metrics_report(report, output_dir=Path(output_dir))
+
+    gate = report["hold_gate_evaluation"]
+    hit = report["alert_hit_rate_evidence"]
+    paper = report["paper_trading_evidence"]
+    console.print(f"[green]Report written:[/green] {json_out}")
+    console.print(f"[green]Summary written:[/green] {md_out}")
+    console.print(
+        f"[bold]Gate:[/bold] {gate['overall_status']} | "
+        f"resolved directional {hit['resolved_directional_documents']}/"
+        f"{hit['minimum_resolved_directional_alerts_for_gate']} | "
+        f"paper cycles {paper['loop_metrics']['total_cycles']}"
+    )
+
+
+@alerts_app.command("pending-annotations")
+def alerts_pending_annotations(
+    limit: int = typer.Option(20, help="Max rows to print"),
+    artifacts_dir: str = typer.Option("artifacts", help="Artifacts directory"),
+) -> None:
+    """List directional alerts without outcome annotation (deduped by document_id)."""
+    records = load_alert_audits(Path(artifacts_dir))
+    annotations = load_outcome_annotations(Path(artifacts_dir))
+    latest_ann_by_doc = {a.document_id: a.outcome for a in annotations}
+
+    latest_directional_by_doc = {}
+    for rec in records:
+        sentiment = (rec.sentiment_label or "").lower()
+        if rec.is_digest or sentiment not in {"bullish", "bearish"}:
+            continue
+        prev = latest_directional_by_doc.get(rec.document_id)
+        if prev is None or rec.dispatched_at > prev.dispatched_at:
+            latest_directional_by_doc[rec.document_id] = rec
+
+    pending = [
+        rec
+        for rec in latest_directional_by_doc.values()
+        if rec.document_id not in latest_ann_by_doc
+    ]
+    pending.sort(key=lambda r: r.dispatched_at, reverse=True)
+
+    console.print(
+        f"[bold]{len(pending)} pending directional alerts[/bold] "
+        f"(limit={limit}, total directional={len(latest_directional_by_doc)})"
+    )
+    if not pending:
+        console.print("[green]No pending annotations.[/green]")
+        return
+
+    table = Table(show_header=True, header_style="bold cyan")
+    table.add_column("Document ID")
+    table.add_column("Dispatched At")
+    table.add_column("Sentiment", width=10)
+    table.add_column("Priority", width=8)
+    table.add_column("Assets")
+    for rec in pending[:limit]:
+        table.add_row(
+            rec.document_id,
+            rec.dispatched_at,
+            rec.sentiment_label or "-",
+            str(rec.priority) if rec.priority is not None else "-",
+            ", ".join(rec.affected_assets) if rec.affected_assets else "-",
+        )
+    console.print(table)
+
+
+@alerts_app.command("annotate")
+def alerts_annotate(
+    document_id: str = typer.Argument(..., help="Document ID from alert_audit"),
+    outcome: str = typer.Argument(..., help="One of: hit, miss, inconclusive"),
+    asset: str | None = typer.Option(None, help="Optional asset symbol"),
+    note: str | None = typer.Option(None, help="Optional operator note"),
+    artifacts_dir: str = typer.Option("artifacts", help="Artifacts directory"),
+) -> None:
+    """Append an outcome annotation for a directional alert document."""
+    normalized = outcome.strip().lower()
+    if normalized not in {"hit", "miss", "inconclusive"}:
+        console.print(
+            "[red]Invalid outcome.[/red] Use one of: hit, miss, inconclusive."
+        )
+        raise typer.Exit(2)
+
+    existing = [
+        a for a in load_outcome_annotations(Path(artifacts_dir)) if a.document_id == document_id
+    ]
+    if existing:
+        console.print(
+            "[yellow]Existing annotation found for this document. "
+            "A new append-only entry will be used as latest value.[/yellow]"
+        )
+
+    annotation = AlertOutcomeAnnotation(
+        document_id=document_id,
+        outcome=cast(OutcomeLabel, normalized),
+        asset=asset,
+        note=note,
+    )
+    append_outcome_annotation(annotation, Path(artifacts_dir))
+    console.print(
+        "[green]Annotation written.[/green] "
+        f"document_id={document_id} outcome={normalized}"
+    )
 
 
 if __name__ == "__main__":

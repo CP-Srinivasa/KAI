@@ -31,11 +31,12 @@ def test_default_query_help_only_exposes_analyze_pending() -> None:
     assert "analyze-pending-shadow" not in result.output
 
 
-def test_default_alerts_help_only_exposes_evaluate_and_send_test() -> None:
+def test_default_alerts_help_exposes_core_hold_ops() -> None:
     result = runner.invoke(app, ["alerts", "--help"])
     assert result.exit_code == 0
     assert "evaluate-pending" in result.output
     assert "send-test" in result.output
+    assert "hold-report" in result.output
+    assert "pending-annotations" in result.output
+    assert "annotate" in result.output
     assert "hit-rate" not in result.output
-    assert "annotate" not in result.output
-
