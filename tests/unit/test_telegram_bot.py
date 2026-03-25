@@ -106,7 +106,7 @@ async def test_resume_in_dry_run(tmp_path):
 @pytest.mark.asyncio
 async def test_audit_log_written(tmp_path):
     bot = _bot(tmp_path)
-    update = {"message": {"chat": {"id": 12345}, "text": "/health"}}
+    update = {"message": {"chat": {"id": 12345}, "text": "/status"}}
     await bot.process_update(update)
 
     audit_file = tmp_path / "cmd_audit.jsonl"
@@ -114,7 +114,7 @@ async def test_audit_log_written(tmp_path):
     lines = audit_file.read_text(encoding="utf-8").strip().splitlines()
     assert len(lines) >= 1
     record = json.loads(lines[0])
-    assert record["command"] == "health"
+    assert record["command"] == "status"
     assert record["chat_id"] == 12345
 
 
@@ -151,34 +151,18 @@ def test_telegram_command_inventory_references_registered_cli_trading_commands()
     [
         (
             "/status",
-            "_get_operational_readiness_summary",
+            "_get_daily_operator_summary",
             {
                 "readiness_status": "warning",
-                "highest_severity": "critical",
-                "issue_count": 2,
+                "cycle_count_today": 2,
+                "position_count": 1,
                 "execution_enabled": False,
                 "write_back_allowed": False,
             },
             [
-                "*Status (Canonical Readiness)*",
+                "*Status (Operator Summary)*",
                 "readiness_status=`warning`",
-                "issue_count=`2`",
-            ],
-        ),
-        (
-            "/health",
-            "_get_provider_health",
-            {
-                "provider_count": 3,
-                "healthy_count": 2,
-                "degraded_count": 1,
-                "unavailable_count": 0,
-                "execution_enabled": False,
-                "write_back_allowed": False,
-            },
-            [
-                "*Health (Provider Surface)*",
-                "provider_count=`3`",
+                "cycle_count_today=`2`",
             ],
         ),
         (
@@ -217,22 +201,6 @@ def test_telegram_command_inventory_references_registered_cli_trading_commands()
             ],
         ),
         (
-            "/risk",
-            "_get_protective_gate_summary",
-            {
-                "gate_status": "blocking",
-                "blocking_count": 1,
-                "warning_count": 1,
-                "advisory_count": 0,
-                "execution_enabled": False,
-                "write_back_allowed": False,
-            },
-            [
-                "*Risk (Protective Gate)*",
-                "gate_status=`blocking`",
-            ],
-        ),
-        (
             "/signals",
             "_get_signals_for_execution",
             {
@@ -254,55 +222,6 @@ def test_telegram_command_inventory_references_registered_cli_trading_commands()
             ],
         ),
         (
-            "/journal",
-            "_get_review_journal_summary",
-            {
-                "journal_status": "open",
-                "total_count": 5,
-                "open_count": 2,
-                "resolved_count": 3,
-                "execution_enabled": False,
-                "write_back_allowed": False,
-            },
-            [
-                "*Operator Journal (Read-Only)*",
-                "journal_status=`open`",
-                "Ref: `trading decision-journal-summary`",
-            ],
-        ),
-        (
-            "/resolution",
-            "_get_resolution_summary",
-            {
-                "journal_status": "open",
-                "total_count": 6,
-                "open_count": 2,
-                "resolved_count": 4,
-                "execution_enabled": False,
-                "write_back_allowed": False,
-            },
-            [
-                "*Resolution (Read-Only)*",
-                "resolution_status=`open`",
-            ],
-        ),
-        (
-            "/decision_pack",
-            "_get_decision_pack_summary",
-            {
-                "overall_status": "blocking",
-                "blocking_count": 1,
-                "action_queue_summary": {"operator_action_count": 2},
-                "execution_enabled": False,
-                "write_back_allowed": False,
-            },
-            [
-                "*Decision Pack (Read-Only)*",
-                "decision_pack_status=`blocking`",
-                "operator_action_count=`2`",
-            ],
-        ),
-        (
             "/daily_summary",
             "_get_daily_operator_summary",
             {
@@ -318,23 +237,6 @@ def test_telegram_command_inventory_references_registered_cli_trading_commands()
             [
                 "*Daily Summary (Canonical Operator View)*",
                 "readiness_status=`warning`",
-            ],
-        ),
-        (
-            "/incident latency spike",
-            "_get_escalation_summary",
-            {
-                "escalation_status": "blocking",
-                "severity": "critical",
-                "blocking_count": 2,
-                "operator_action_count": 2,
-                "execution_enabled": False,
-                "write_back_allowed": False,
-            },
-            [
-                "*Incident (Escalation Surface)*",
-                "note=`latency spike`",
-                "Audit-only. No auto-remediation and no execution side effect.",
             ],
         ),
     ],
@@ -388,57 +290,11 @@ async def test_read_command_fail_closed_on_surface_error(tmp_path, monkeypatch):
         raise RuntimeError("surface unavailable")
 
     monkeypatch.setattr(bot, "_send", fake_send)
-    monkeypatch.setattr(bot, "_get_operational_readiness_summary", failing_loader)
+    monkeypatch.setattr(bot, "_get_daily_operator_summary", failing_loader)
 
     await bot.process_update({"message": {"chat": {"id": 12345}, "text": "/status"}})
 
     assert len(sent_messages) == 1
-    assert "fail-closed" in sent_messages[0].lower()
-    assert "No execution side effect was performed." in sent_messages[0]
-
-
-@pytest.mark.asyncio
-async def test_resolution_command_degrades_on_loader_error(tmp_path, monkeypatch):
-    bot = _bot(tmp_path)
-    sent_messages: list[str] = []
-
-    async def fake_send(_chat_id: int, text: str) -> bool:
-        sent_messages.append(text)
-        return True
-
-    async def failing_loader() -> dict[str, Any]:
-        raise RuntimeError("resolution unavailable")
-
-    monkeypatch.setattr(bot, "_send", fake_send)
-    monkeypatch.setattr(bot, "_get_resolution_summary", failing_loader)
-
-    await bot.process_update({"message": {"chat": {"id": 12345}, "text": "/resolution"}})
-
-    assert len(sent_messages) == 1
-    assert "Resolution" in sent_messages[0]
-    assert "fail-closed" in sent_messages[0].lower()
-    assert "No execution side effect was performed." in sent_messages[0]
-
-
-@pytest.mark.asyncio
-async def test_decision_pack_command_degrades_on_loader_error(tmp_path, monkeypatch):
-    bot = _bot(tmp_path)
-    sent_messages: list[str] = []
-
-    async def fake_send(_chat_id: int, text: str) -> bool:
-        sent_messages.append(text)
-        return True
-
-    async def failing_loader() -> dict[str, Any]:
-        raise RuntimeError("decision pack unavailable")
-
-    monkeypatch.setattr(bot, "_send", fake_send)
-    monkeypatch.setattr(bot, "_get_decision_pack_summary", failing_loader)
-
-    await bot.process_update({"message": {"chat": {"id": 12345}, "text": "/decision_pack"}})
-
-    assert len(sent_messages) == 1
-    assert "Decision Pack" in sent_messages[0]
     assert "fail-closed" in sent_messages[0].lower()
     assert "No execution side effect was performed." in sent_messages[0]
 
@@ -511,9 +367,9 @@ async def test_read_command_fail_closed_on_invalid_payload_shape(tmp_path, monke
         return ["invalid", "payload"]
 
     monkeypatch.setattr(bot, "_send", fake_send)
-    monkeypatch.setattr(bot, "_get_provider_health", invalid_loader)
+    monkeypatch.setattr(bot, "_get_paper_positions_summary", invalid_loader)
 
-    await bot.process_update({"message": {"chat": {"id": 12345}, "text": "/health"}})
+    await bot.process_update({"message": {"chat": {"id": 12345}, "text": "/positions"}})
 
     assert len(sent_messages) == 1
     assert "Invalid canonical payload (fail-closed)." in sent_messages[0]
@@ -534,7 +390,7 @@ async def test_read_command_fail_closed_when_command_refs_invalid(tmp_path, monk
         raise AssertionError("read surface must not run when refs are invalid")
 
     monkeypatch.setattr(bot, "_send", fake_send)
-    monkeypatch.setattr(bot, "_get_operational_readiness_summary", should_not_run)
+    monkeypatch.setattr(bot, "_get_daily_operator_summary", should_not_run)
 
     await bot.process_update({"message": {"chat": {"id": 12345}, "text": "/status"}})
 
@@ -612,39 +468,6 @@ async def test_approve_reject_fail_closed_on_invalid_decision_ref(
 
 
 @pytest.mark.asyncio
-async def test_incident_is_append_only_audit_only(tmp_path, monkeypatch):
-    bot = _bot(tmp_path)
-    sent_messages: list[str] = []
-
-    async def fake_send(_chat_id: int, text: str) -> bool:
-        sent_messages.append(text)
-        return True
-
-    async def fake_loader() -> dict[str, Any]:
-        return {
-            "escalation_status": "review_required",
-            "severity": "warning",
-            "blocking_count": 0,
-            "operator_action_count": 1,
-            "execution_enabled": False,
-            "write_back_allowed": False,
-        }
-
-    monkeypatch.setattr(bot, "_send", fake_send)
-    monkeypatch.setattr(bot, "_get_escalation_summary", fake_loader)
-
-    await bot.process_update({"message": {"chat": {"id": 12345}, "text": "/incident packet loss"}})
-
-    assert len(sent_messages) == 1
-    assert "Audit-only. No auto-remediation and no execution side effect." in sent_messages[0]
-    audit_file = tmp_path / "cmd_audit.jsonl"
-    lines = [json.loads(line) for line in audit_file.read_text(encoding="utf-8").splitlines()]
-    assert lines[-1]["command"] == "incident"
-    assert lines[-1]["args"] == "packet loss"
-    assert sorted(path.name for path in tmp_path.iterdir()) == ["cmd_audit.jsonl"]
-
-
-@pytest.mark.asyncio
 async def test_kill_confirmation_is_consumed_after_second_call(tmp_path):
     bot = _bot(tmp_path)
     update = {"message": {"chat": {"id": 12345}, "text": "/kill"}}
@@ -677,16 +500,15 @@ async def test_read_only_commands_do_not_mutate_runtime_state(tmp_path, monkeypa
         return {
             "execution_enabled": False,
             "write_back_allowed": False,
-            "gate_status": "clear",
-            "blocking_count": 0,
-            "warning_count": 0,
-            "advisory_count": 0,
+            "readiness_status": "operational",
+            "cycle_count_today": 0,
+            "position_count": 0,
         }
 
     monkeypatch.setattr(bot, "_send", fake_send)
-    monkeypatch.setattr(bot, "_get_protective_gate_summary", fake_payload)
+    monkeypatch.setattr(bot, "_get_daily_operator_summary", fake_payload)
 
-    await bot.process_update({"message": {"chat": {"id": 12345}, "text": "/risk"}})
+    await bot.process_update({"message": {"chat": {"id": 12345}, "text": "/status"}})
 
     assert bot._system_status == "operational"
     assert not risk_engine._paused
@@ -709,13 +531,13 @@ async def test_help_lists_hardened_commands(tmp_path, monkeypatch):
     assert len(sent_messages) == 1
     help_text = sent_messages[0]
     assert "/signals - Read-only signal handoff" in help_text
-    assert "/journal - Review journal summary" in help_text
-    assert "/resolution - Read-only resolution summary" in help_text
-    assert "/decision_pack - Read-only decision pack summary" in help_text
     assert "/positions - Read-only paper positions" in help_text
     assert "/exposure - Read-only paper exposure" in help_text
     assert "/approve <decision_ref> - Audit-only approval intent" in help_text
-    assert "/incident <note> - Escalation summary + audit note" in help_text
+    assert "/journal" not in help_text
+    assert "/resolution" not in help_text
+    assert "/decision_pack" not in help_text
+    assert "/incident" not in help_text
 
 
 @pytest.mark.asyncio
