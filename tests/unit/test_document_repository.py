@@ -168,8 +168,8 @@ async def test_update_analysis_sets_analyzed_status(session_factory) -> None:
         await repo.update_analysis(
             str(saved.id),
             analysis_result,
-            provider_name="companion",
-            metadata_updates={"ensemble_chain": ["openai", "companion"]},
+            provider_name="shadow",
+            metadata_updates={"ensemble_chain": ["openai", "shadow"]},
         )
 
     async with session_factory() as session:
@@ -180,10 +180,10 @@ async def test_update_analysis_sets_analyzed_status(session_factory) -> None:
     assert stored.status == DocumentStatus.ANALYZED
     assert stored.is_duplicate is False
     assert stored.is_analyzed is True
-    assert stored.provider == "companion"
+    assert stored.provider == "shadow"
     assert stored.analysis_source == AnalysisSource.INTERNAL
     assert stored.effective_analysis_source == AnalysisSource.INTERNAL
-    assert stored.metadata["ensemble_chain"] == ["openai", "companion"]
+    assert stored.metadata["ensemble_chain"] == ["openai", "shadow"]
     assert stored.sentiment_label == SentimentLabel.BULLISH
     assert stored.priority_score == analysis_result.recommended_priority
     assert stored.categories == ["defi", "layer1"]

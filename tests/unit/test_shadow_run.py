@@ -1,15 +1,12 @@
-"""Tests for AnalysisPipeline shadow run behaviour (I-51–I-57).
+"""Tests for AnalysisPipeline shadow-run behavior (I-51-I-57).
 
-Sprint 10 — Companion Shadow Run.
-Contract reference: docs/archive/sprint10_shadow_run_contract.md
-Invariants: I-51–I-57.
+Historical reference: docs/archive/sprint10_shadow_run_contract.md
 
-Tests cover:
-- Shadow output stored in document.metadata (live inline path)
-- Primary result unchanged when shadow runs
-- Shadow failure non-blocking
-- No shadow fields when shadow_provider=None
-- shadow-report CLI: divergence display and empty case
+These tests verify:
+- shadow output is stored in document.metadata
+- primary analysis is unchanged when shadow runs
+- shadow failure is non-blocking
+- no shadow fields when shadow_provider=None
 """
 
 from __future__ import annotations
@@ -25,7 +22,7 @@ from app.analysis.pipeline import AnalysisPipeline
 from app.core.domain.document import CanonicalDocument
 from app.core.enums import MarketScope, SentimentLabel
 
-# ── helpers ───────────────────────────────────────────────────────────────────
+# -- helpers --
 
 
 def _empty_engine() -> KeywordEngine:
@@ -82,7 +79,7 @@ def _mock_provider(
     return provider
 
 
-# ── I-56 + I-57: live shadow stores output in document.metadata ───────────────
+# -- I-56 + I-57: shadow output stored in metadata --
 
 
 @pytest.mark.asyncio
@@ -124,7 +121,7 @@ async def test_shadow_run_does_not_affect_primary_result() -> None:
     assert result.analysis_result.sentiment_label == SentimentLabel.BEARISH
 
 
-# ── I-56: shadow failure is non-blocking ──────────────────────────────────────
+# -- I-56: shadow failure is non-blocking --
 
 
 @pytest.mark.asyncio
@@ -132,7 +129,7 @@ async def test_shadow_failure_is_non_blocking() -> None:
     """Shadow exception leaves primary result intact (I-52, I-56)."""
     primary = _mock_provider("openai", sentiment=SentimentLabel.BULLISH, priority=7)
     shadow = AsyncMock()
-    shadow.provider_name = "companion"
+    shadow.provider_name = "shadow"
     shadow.model = "kai-v1"
     shadow.analyze = AsyncMock(side_effect=RuntimeError("Shadow endpoint unreachable"))
 
@@ -154,7 +151,7 @@ async def test_shadow_failure_is_non_blocking() -> None:
     assert "shadow_analysis" not in result.document.metadata
 
 
-# ── I-56: no shadow run when shadow_provider is None ──────────────────────────
+# -- I-56: no shadow run when shadow_provider is None --
 
 
 @pytest.mark.asyncio
@@ -175,7 +172,7 @@ async def test_no_shadow_run_when_shadow_provider_is_none() -> None:
     assert "shadow_provider" not in result.document.metadata
 
 
-# ── I-57: shadow persistence fix — document.metadata reaches DB ──────────────
+# -- I-57: shadow persistence to document.metadata --
 
 
 @pytest.mark.asyncio
@@ -186,7 +183,7 @@ async def test_shadow_data_present_in_document_metadata_for_db_write() -> None:
     so shadow data reaches the DB. This test confirms the data is IN doc.metadata post-apply.
     """
     primary = _mock_provider("openai")
-    shadow = _mock_provider("companion", "kai-v1")
+    shadow = _mock_provider("shadow", "kai-v1")
 
     pipeline = AnalysisPipeline(_empty_engine(), primary, shadow_provider=shadow)
     doc = _make_doc()
@@ -200,7 +197,7 @@ async def test_shadow_data_present_in_document_metadata_for_db_write() -> None:
     assert "shadow_analysis" not in result.trace_metadata
 
 
-# ── CLI: shadow-report ────────────────────────────────────────────────────────
+# -- CLI: shadow-report --
 
 
 def _make_shadow_doc(
@@ -220,10 +217,10 @@ def _make_shadow_doc(
                 "recommended_priority": shadow_priority,
                 "sentiment_label": shadow_sentiment,
             },
-            "shadow_provider": "companion/kai-v1",
+            "shadow_provider": "shadow/kai-v1",
         },
     )
     return doc
 
 
-# shadow-report CLI command was removed with companion-ML subsystem.
+# shadow-report CLI command was removed with the legacy shadow subsystem.

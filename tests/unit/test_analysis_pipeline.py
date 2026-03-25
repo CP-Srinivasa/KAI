@@ -1,4 +1,4 @@
-"""Tests for AnalysisPipeline â€” mocked LLM provider."""
+"""Tests for AnalysisPipeline with mocked LLM providers."""
 
 import asyncio
 from unittest.mock import AsyncMock
@@ -327,7 +327,7 @@ async def test_pipeline_with_shadow_provider_success():
     shadow_out = _make_llm_output()
     shadow_out.sentiment_label = SentimentLabel.BEARISH
     shadow_out.recommended_priority = 3
-    shadow_provider = _mock_named_provider("companion", shadow_out)
+    shadow_provider = _mock_named_provider("shadow", shadow_out)
 
     engine = _btc_engine()
     pipeline = AnalysisPipeline(
@@ -343,7 +343,7 @@ async def test_pipeline_with_shadow_provider_success():
     # Check shadow output was captured natively on the result object
     assert result.shadow_llm_output is not None
     assert result.shadow_llm_output.sentiment_label == SentimentLabel.BEARISH
-    assert result.shadow_provider_name == "companion"
+    assert result.shadow_provider_name == "shadow"
 
     result.apply_to_document()
 
@@ -356,7 +356,7 @@ async def test_pipeline_with_shadow_provider_success():
     assert shadow_data is not None
     assert shadow_data["sentiment_label"] == "bearish"
     assert shadow_data["recommended_priority"] == 3
-    assert result.document.metadata.get("shadow_provider") == "companion"
+    assert result.document.metadata.get("shadow_provider") == "shadow"
 
 
 @pytest.mark.asyncio
@@ -365,9 +365,9 @@ async def test_pipeline_with_shadow_provider_error_does_not_fail_primary():
     provider = _mock_provider(llm_out)
 
     shadow_provider = AsyncMock()
-    shadow_provider.provider_name = "companion"
+    shadow_provider.provider_name = "shadow"
     shadow_provider.model = "kai-v1"
-    shadow_provider.analyze = AsyncMock(side_effect=RuntimeError("Companion offline"))
+    shadow_provider.analyze = AsyncMock(side_effect=RuntimeError("Shadow provider offline"))
 
     engine = _btc_engine()
     pipeline = AnalysisPipeline(
@@ -380,7 +380,7 @@ async def test_pipeline_with_shadow_provider_error_does_not_fail_primary():
     assert result.success
     assert result.llm_output is not None
     assert result.shadow_llm_output is None
-    assert result.shadow_error == "Companion offline"
+    assert result.shadow_error == "Shadow provider offline"
 
     result.apply_to_document()
     assert result.document.provider == "openai"
@@ -390,8 +390,8 @@ async def test_pipeline_with_shadow_provider_error_does_not_fail_primary():
 @pytest.mark.asyncio
 async def test_pipeline_shadow_provider_runs_with_rule_fallback_primary():
     shadow_out = _make_llm_output()
-    shadow_out.short_reasoning = "Companion shadow summary."
-    shadow_provider = _mock_named_provider("companion", shadow_out)
+    shadow_out.short_reasoning = "Shadow provider summary."
+    shadow_provider = _mock_named_provider("shadow", shadow_out)
 
     engine = _btc_engine()
     pipeline = AnalysisPipeline(
@@ -407,14 +407,14 @@ async def test_pipeline_shadow_provider_runs_with_rule_fallback_primary():
     assert result.analysis_result.analysis_source == AnalysisSource.RULE
     assert result.provider_name == "fallback"
     assert result.shadow_llm_output is not None
-    assert result.shadow_provider_name == "companion"
+    assert result.shadow_provider_name == "shadow"
 
     result.apply_to_document()
 
     assert result.document.provider == "fallback"
     assert result.document.analysis_source == AnalysisSource.RULE
     assert result.document.metadata["shadow_analysis"]["short_reasoning"] == (
-        "Companion shadow summary."
+        "Shadow provider summary."
     )
 
 
