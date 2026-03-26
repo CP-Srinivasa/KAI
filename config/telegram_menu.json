@@ -1,60 +1,136 @@
 {
   "menus": {
     "main": {
-      "text": "⬡ *KAI Trading Intelligence*\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━\nWaehle eine Kategorie:",
+      "text": "*KAI Trading Intelligence*\n----------------------------\nWaehle eine Kategorie.",
       "keyboard": [
-        [{"text": "📊 System-Status", "callback_data": "cmd:status"}],
         [
-          {"text": "📈 Trading", "callback_data": "menu:trading"},
-          {"text": "📡 Signale", "callback_data": "menu:signals"}
+          {
+            "text": "System-Status",
+            "callback_data": "cmd:status"
+          }
         ],
         [
-          {"text": "🔔 Alerts", "callback_data": "cmd:alertstatus"},
-          {"text": "📋 Tagesbericht", "callback_data": "cmd:tagesbericht"}
+          {
+            "text": "Trading",
+            "callback_data": "menu:trading"
+          },
+          {
+            "text": "Signale",
+            "callback_data": "menu:signals"
+          }
         ],
-        [{"text": "📨 Signal senden", "callback_data": "menu:signal_send"}],
         [
-          {"text": "⚙️ Steuerung", "callback_data": "menu:control"},
-          {"text": "❓ Hilfe", "callback_data": "cmd:hilfe"}
+          {
+            "text": "Alerts",
+            "callback_data": "cmd:alertstatus"
+          },
+          {
+            "text": "Tagesbericht",
+            "callback_data": "cmd:tagesbericht"
+          }
+        ],
+        [
+          {
+            "text": "Signal senden",
+            "callback_data": "menu:signal_send"
+          }
+        ],
+        [
+          {
+            "text": "Steuerung",
+            "callback_data": "menu:control"
+          },
+          {
+            "text": "Hilfe",
+            "callback_data": "cmd:hilfe"
+          }
         ]
       ]
     },
     "trading": {
-      "text": "📈 *Trading*\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━\nPositionen, Exposure und Portfolio.",
+      "text": "*Trading*\n----------------------------\nPositionen, Exposure und Portfolio.",
       "keyboard": [
         [
-          {"text": "💼 Positionen", "callback_data": "cmd:positions"},
-          {"text": "🛡️ Exposure", "callback_data": "cmd:exposure"}
+          {
+            "text": "Positionen",
+            "callback_data": "cmd:positions"
+          },
+          {
+            "text": "Exposure",
+            "callback_data": "cmd:exposure"
+          }
         ],
-        [{"text": "⬅️ Hauptmenue", "callback_data": "menu:main"}]
+        [
+          {
+            "text": "Hauptmenue",
+            "callback_data": "menu:main"
+          }
+        ]
       ]
     },
     "signals": {
-      "text": "📡 *Signale*\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━\nAktive Signale und Pipeline-Status.",
+      "text": "*Signale*\n----------------------------\nAktive Signale und Pipeline-Status.",
       "keyboard": [
         [
-          {"text": "📡 Aktive Signale", "callback_data": "cmd:signals"},
-          {"text": "🔄 Pipeline", "callback_data": "cmd:signalstatus"}
+          {
+            "text": "Aktive Signale",
+            "callback_data": "cmd:signals"
+          },
+          {
+            "text": "Signal-Pipeline",
+            "callback_data": "cmd:signalstatus"
+          }
         ],
-        [{"text": "⬅️ Hauptmenue", "callback_data": "menu:main"}]
+        [
+          {
+            "text": "Hauptmenue",
+            "callback_data": "menu:main"
+          }
+        ]
       ]
     },
     "signal_send": {
-      "text": "📨 *Signal senden*\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n*Kurzformat:*\n`/signal BUY BTC 65000 SL=62000 TP=70000`\n\n*Strukturiert:*\n`[SIGNAL]`\n`Symbol: BTC/USDT`\n`Side: BUY`\n`Direction: LONG`\n`Entry Rule: BELOW 65000`\n`Targets: 70000`\n`Stop Loss: 62000`\n`Leverage: 10x`\n\nOder sprich ein Signal als Sprachnachricht ein.\n\n📰 *News senden:*\n`[NEWS]`\n`Source: Quelle`\n`Title: Titel`\n`Priority: High`",
+      "text": "*Signal senden (3-Typen Standard)*\n----------------------------\nTelegram ist Anzeige, JSON ist Wahrheit.\nBei SIGNAL gilt fail-closed: ohne Pflichtfelder keine Weiterleitung.\n\n*SIGNAL (Trade):*\n`[SIGNAL]`\n`Signal ID: SIG-20260325-BTCUSDT-001`\n`Source: Premium Signals`\n`Exchange Scope: binance_futures, bybit`\n`Market Type: Futures`\n`Symbol: BTC/USDT`\n`Side: BUY`\n`Direction: LONG`\n`Entry Rule: BELOW 65000`\n`Targets: 70000`\n`Stop Loss: 62000`\n`Leverage: 10x`\n`Status: NEW`\n`Timestamp: 2026-03-25T18:31:00Z`\n\n*NEWS (Info only):*\n`[NEWS]`\n`Source: Quelle`\n`Title: Titel`\n`Priority: High`\n\n*EXCHANGE_RESPONSE (Status):*\n`[EXCHANGE_RESPONSE]`\n`Related Signal ID: SIG-...`\n`Exchange: bybit`\n`Action: ORDER_CREATED`\n`Status: SUCCESS`",
       "keyboard": [
-        [{"text": "⬅️ Hauptmenue", "callback_data": "menu:main"}]
+        [
+          {
+            "text": "Hauptmenue",
+            "callback_data": "menu:main"
+          }
+        ]
       ]
     },
     "control": {
-      "text": "⚙️ *Steuerung*\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━\nSystem-Kontrolle und Notfall-Aktionen.",
+      "text": "*Steuerung*\n----------------------------\nSystem-Kontrolle und Notfall-Aktionen.",
       "keyboard": [
         [
-          {"text": "⏸️ Pause", "callback_data": "cmd:pause"},
-          {"text": "▶️ Resume", "callback_data": "cmd:resume"}
+          {
+            "text": "Pause",
+            "callback_data": "cmd:pause"
+          },
+          {
+            "text": "Resume",
+            "callback_data": "cmd:resume"
+          }
         ],
-        [{"text": "⛔ Notfall-Stopp", "callback_data": "cmd:kill"}],
-        [{"text": "♻️ Menue neu laden", "callback_data": "cmd:menu_reload"}],
-        [{"text": "⬅️ Hauptmenue", "callback_data": "menu:main"}]
+        [
+          {
+            "text": "Notfall-Stopp",
+            "callback_data": "cmd:kill"
+          }
+        ],
+        [
+          {
+            "text": "Menue neu laden",
+            "callback_data": "cmd:menu_reload"
+          }
+        ],
+        [
+          {
+            "text": "Hauptmenue",
+            "callback_data": "menu:main"
+          }
+        ]
       ]
     }
   }

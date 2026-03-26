@@ -40,6 +40,10 @@ def _bot(tmp_path, risk_engine=None, **kwargs: Any) -> TelegramOperatorBot:
     kwargs.setdefault("signal_exchange_outbox_log_path", str(tmp_path / "exchange_outbox.jsonl"))
     kwargs.setdefault("signal_exchange_sent_log_path", str(tmp_path / "exchange_sent.jsonl"))
     kwargs.setdefault(
+        "message_envelope_log_path",
+        str(tmp_path / "message_envelope.jsonl"),
+    )
+    kwargs.setdefault(
         "signal_exchange_dead_letter_log_path",
         str(tmp_path / "exchange_dead_letter.jsonl"),
     )
@@ -1258,8 +1262,8 @@ async def test_structured_signal_fail_closed_on_missing_required_fields(tmp_path
     await bot.process_update(update)
 
     assert len(sent) == 1
-    assert "Signal blockiert" in sent[0]
-    assert "missing_source" in sent[0]
+    assert "Signal blockiert" in sent[0] or "Structured-Schema Fehler" in sent[0]
+    assert "missing_" in sent[0] or "should be non-empty" in sent[0]
 
 
 @pytest.mark.asyncio
@@ -1330,6 +1334,7 @@ async def test_structured_exchange_response_is_displayed_without_text_processor(
             "chat": {"id": 12345},
             "text": (
                 "[EXCHANGE_RESPONSE]\n"
+                "Related Signal ID: SIG-20260325-BTCUSDT-001\n"
                 "Exchange: Bybit\n"
                 "Symbol: BTC/USDT\n"
                 "Action: ORDER_CREATED\n"
@@ -1342,6 +1347,79 @@ async def test_structured_exchange_response_is_displayed_without_text_processor(
     assert len(sent) == 1
     assert "EXCHANGE RESPONSE" in sent[0]
     assert "Bybit" in sent[0]
+
+
+@pytest.mark.asyncio
+async def test_structured_news_writes_message_envelope_audit(tmp_path, monkeypatch):
+    bot = _bot(tmp_path)
+    sent: list[str] = []
+
+    async def fake_send(_cid: int, text: str) -> bool:
+        sent.append(text)
+        return True
+
+    monkeypatch.setattr(bot, "_send", fake_send)
+
+    update = {
+        "message": {
+            "chat": {"id": 12345},
+            "text": (
+                "[NEWS]\n"
+                "Source: Premium Signals\n"
+                "Title: Macro pressure remains elevated\n"
+                "Priority: Medium\n"
+                "Timestamp: 2026-03-25T18:31:00Z\n"
+            ),
+        }
+    }
+    await bot.process_update(update)
+
+    assert len(sent) == 1
+    envelope = tmp_path / "message_envelope.jsonl"
+    assert envelope.exists()
+    rows = [json.loads(line) for line in envelope.read_text(encoding="utf-8").splitlines()]
+    assert any(
+        row["message_type"] == "news"
+        and row["stage"] == "accepted"
+        and row["status"] == "ok"
+        for row in rows
+    )
+
+
+@pytest.mark.asyncio
+async def test_structured_signal_schema_error_writes_envelope_rejection(tmp_path, monkeypatch):
+    bot = _bot(tmp_path)
+    sent: list[str] = []
+
+    async def fake_send(_cid: int, text: str) -> bool:
+        sent.append(text)
+        return True
+
+    monkeypatch.setattr(bot, "_send", fake_send)
+
+    update = {
+        "message": {
+            "chat": {"id": 12345},
+            "text": (
+                "[SIGNAL]\n"
+                "Symbol: BTC/USDT\n"
+                "Direction: LONG\n"
+                "Targets: 72800\n"
+                "Stop Loss: 76600\n"
+            ),
+        }
+    }
+    await bot.process_update(update)
+
+    assert len(sent) == 1
+    assert "Signal blockiert" in sent[0] or "Structured-Schema Fehler" in sent[0]
+    envelope = tmp_path / "message_envelope.jsonl"
+    rows = [json.loads(line) for line in envelope.read_text(encoding="utf-8").splitlines()]
+    assert any(
+        row["message_type"] == "signal"
+        and row["status"] in ("rejected", "blocked")
+        for row in rows
+    )
 
 
 @pytest.mark.asyncio
@@ -1409,6 +1487,7 @@ async def test_freetext_signal_handoff_pipeline_with_optional_routes(tmp_path, m
     )
     handoff_log = tmp_path / "signal_handoff.jsonl"
     outbox_log = tmp_path / "exchange_outbox.jsonl"
+    envelope_log = tmp_path / "message_envelope.jsonl"
     bot = _bot(
         tmp_path,
         text_processor=proc,
@@ -1463,6 +1542,22 @@ async def test_freetext_signal_handoff_pipeline_with_optional_routes(tmp_path, m
     assert len(outbox_rows) == 1
     assert outbox_rows[0]["event"] == "telegram_signal_exchange_forward_queued"
     assert outbox_rows[0]["symbol"] == "BTC/USDT"
+
+    envelope_rows = [
+        json.loads(line) for line in envelope_log.read_text(encoding="utf-8").splitlines()
+    ]
+    assert any(
+        row["message_type"] == "signal"
+        and row["stage"] == "handoff_received"
+        and row["status"] == "ok"
+        for row in envelope_rows
+    )
+    assert any(
+        row["message_type"] == "signal"
+        and row["stage"] == "handoff_completed"
+        and row["status"] == "ok"
+        for row in envelope_rows
+    )
 
 
 @pytest.mark.asyncio

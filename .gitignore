@@ -65,3 +65,9 @@ APIs/
 
 # data/ directory — dev database files
 data/
+
+# Runtime PID files
+.server.pid
+
+# E2E test database (root-level)
+test_e2e.db

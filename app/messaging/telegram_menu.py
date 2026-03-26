@@ -1,17 +1,9 @@
-"""KAI Telegram Inline-Keyboard Menu System.
+"""KAI Telegram inline-keyboard menu system.
 
-Modular, konfigurierbar, erweiterbar. Jede Sektion ist ein dict mit
-Text-Header und Button-Rows. Buttons verweisen per callback_data auf
-Commands oder Submenu-IDs.
-
-Designprinzipien (D-110):
-- Maximal 2 Buttons pro Zeile (Lesbarkeit auf Mobilgeraeten)
-- Primaere Aktionen volle Breite
-- Emojis sparsam, funktional (nicht dekorativ)
-- Deutsche Labels, kurz und klar
-- Jedes Submenu hat einen Zurueck-Button
-- Trading / Analyse / Steuerung klar getrennt
-- Premium dark-mode Aesthetik
+Modular and configurable:
+- defaults live in this file
+- optional JSON overrides live in `config/telegram_menu.json`
+- partial overrides merge by menu id
 """
 
 from __future__ import annotations
@@ -32,147 +24,127 @@ _cache_path: Path | None = None
 _cache_mtime_ns: int | None = None
 _cache_menus: dict[str, dict[str, Any]] | None = None
 
-# ---------------------------------------------------------------------------
-# Button helper
-# ---------------------------------------------------------------------------
 
 def _btn(text: str, callback_data: str) -> dict[str, str]:
-    """Create one InlineKeyboardButton dict."""
     return {"text": text, "callback_data": callback_data}
 
 
 def _url_btn(text: str, url: str) -> dict[str, str]:
-    """Create one InlineKeyboardButton with URL."""
     return {"text": text, "url": url}
 
 
 def _row(*buttons: dict[str, str]) -> list[dict[str, str]]:
-    """Create one keyboard row."""
     return list(buttons)
 
 
-# ---------------------------------------------------------------------------
-# Menu definitions — Premium Trading Layout
-# ---------------------------------------------------------------------------
-
-# callback_data prefixes:
-#   cmd:<command>   -> dispatch to existing _cmd_* handler
-#   menu:<menu_id>  -> show submenu
-#   noop            -> do nothing (placeholder)
-
-# ── MAIN MENU ──────────────────────────────────────────────────────────────
-
 DEFAULT_MENU_MAIN: dict[str, Any] = {
     "text": (
-        "⬡ *KAI Trading Intelligence*\n"
-        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        "Waehle eine Kategorie:"
+        "*KAI Trading Intelligence*\n"
+        "----------------------------\n"
+        "Waehle eine Kategorie."
     ),
     "keyboard": [
-        # Primary action — full width
-        _row(_btn("📊 System-Status", "cmd:status")),
-        # Core sections — 2 per row
+        _row(_btn("System-Status", "cmd:status")),
         _row(
-            _btn("📈 Trading", "menu:trading"),
-            _btn("📡 Signale", "menu:signals"),
+            _btn("Trading", "menu:trading"),
+            _btn("Signale", "menu:signals"),
         ),
         _row(
-            _btn("🔔 Alerts", "cmd:alertstatus"),
-            _btn("📋 Tagesbericht", "cmd:tagesbericht"),
+            _btn("Alerts", "cmd:alertstatus"),
+            _btn("Tagesbericht", "cmd:tagesbericht"),
         ),
-        # Signal input — full width (important action)
-        _row(_btn("📨 Signal senden", "menu:signal_send")),
-        # Secondary
+        _row(_btn("Signal senden", "menu:signal_send")),
         _row(
-            _btn("⚙️ Steuerung", "menu:control"),
-            _btn("❓ Hilfe", "cmd:hilfe"),
+            _btn("Steuerung", "menu:control"),
+            _btn("Hilfe", "cmd:hilfe"),
         ),
     ],
 }
 
-# ── TRADING ────────────────────────────────────────────────────────────────
-
 DEFAULT_MENU_TRADING: dict[str, Any] = {
     "text": (
-        "📈 *Trading*\n"
-        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        "*Trading*\n"
+        "----------------------------\n"
         "Positionen, Exposure und Portfolio."
     ),
     "keyboard": [
         _row(
-            _btn("💼 Positionen", "cmd:positions"),
-            _btn("🛡️ Exposure", "cmd:exposure"),
+            _btn("Positionen", "cmd:positions"),
+            _btn("Exposure", "cmd:exposure"),
         ),
-        _row(_btn("⬅️ Hauptmenue", "menu:main")),
+        _row(_btn("Hauptmenue", "menu:main")),
     ],
 }
 
-# ── SIGNALS ────────────────────────────────────────────────────────────────
-
 DEFAULT_MENU_SIGNALS: dict[str, Any] = {
     "text": (
-        "📡 *Signale*\n"
-        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        "*Signale*\n"
+        "----------------------------\n"
         "Aktive Signale und Pipeline-Status."
     ),
     "keyboard": [
         _row(
-            _btn("📡 Aktive Signale", "cmd:signals"),
-            _btn("🔄 Pipeline", "cmd:signalstatus"),
+            _btn("Aktive Signale", "cmd:signals"),
+            _btn("Signal-Pipeline", "cmd:signalstatus"),
         ),
-        _row(_btn("⬅️ Hauptmenue", "menu:main")),
+        _row(_btn("Hauptmenue", "menu:main")),
     ],
 }
 
-# ── SIGNAL SEND ────────────────────────────────────────────────────────────
-
 DEFAULT_MENU_SIGNAL_SEND: dict[str, Any] = {
     "text": (
-        "📨 *Signal senden*\n"
-        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-        "*Kurzformat:*\n"
-        "`/signal BUY BTC 65000 SL=62000 TP=70000`\n\n"
-        "*Strukturiert:*\n"
+        "*Signal senden (3-Typen Standard)*\n"
+        "----------------------------\n"
+        "Telegram ist Anzeige, JSON ist Wahrheit.\n"
+        "Bei SIGNAL gilt fail-closed: ohne Pflichtfelder keine Weiterleitung.\n\n"
+        "*SIGNAL (Trade):*\n"
         "`[SIGNAL]`\n"
+        "`Signal ID: SIG-20260325-BTCUSDT-001`\n"
+        "`Source: Premium Signals`\n"
+        "`Exchange Scope: binance_futures, bybit`\n"
+        "`Market Type: Futures`\n"
         "`Symbol: BTC/USDT`\n"
         "`Side: BUY`\n"
         "`Direction: LONG`\n"
         "`Entry Rule: BELOW 65000`\n"
         "`Targets: 70000`\n"
         "`Stop Loss: 62000`\n"
-        "`Leverage: 10x`\n\n"
-        "Oder sprich ein Signal als Sprachnachricht ein.\n\n"
-        "📰 *News senden:*\n"
+        "`Leverage: 10x`\n"
+        "`Status: NEW`\n"
+        "`Timestamp: 2026-03-25T18:31:00Z`\n\n"
+        "*NEWS (Info only):*\n"
         "`[NEWS]`\n"
         "`Source: Quelle`\n"
         "`Title: Titel`\n"
-        "`Priority: High`"
+        "`Priority: High`\n\n"
+        "*EXCHANGE_RESPONSE (Status):*\n"
+        "`[EXCHANGE_RESPONSE]`\n"
+        "`Related Signal ID: SIG-...`\n"
+        "`Exchange: bybit`\n"
+        "`Action: ORDER_CREATED`\n"
+        "`Status: SUCCESS`"
     ),
     "keyboard": [
-        _row(_btn("⬅️ Hauptmenue", "menu:main")),
+        _row(_btn("Hauptmenue", "menu:main")),
     ],
 }
 
-# ── CONTROL ────────────────────────────────────────────────────────────────
-
 DEFAULT_MENU_CONTROL: dict[str, Any] = {
     "text": (
-        "⚙️ *Steuerung*\n"
-        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        "*Steuerung*\n"
+        "----------------------------\n"
         "System-Kontrolle und Notfall-Aktionen."
     ),
     "keyboard": [
         _row(
-            _btn("⏸️ Pause", "cmd:pause"),
-            _btn("▶️ Resume", "cmd:resume"),
+            _btn("Pause", "cmd:pause"),
+            _btn("Resume", "cmd:resume"),
         ),
-        _row(_btn("⛔ Notfall-Stopp", "cmd:kill")),
-        _row(_btn("♻️ Menue neu laden", "cmd:menu_reload")),
-        _row(_btn("⬅️ Hauptmenue", "menu:main")),
+        _row(_btn("Notfall-Stopp", "cmd:kill")),
+        _row(_btn("Menue neu laden", "cmd:menu_reload")),
+        _row(_btn("Hauptmenue", "menu:main")),
     ],
 }
-
-# ── REGISTRY ───────────────────────────────────────────────────────────────
 
 DEFAULT_MENUS: dict[str, dict[str, Any]] = {
     "main": DEFAULT_MENU_MAIN,
@@ -185,10 +157,6 @@ DEFAULT_MENUS: dict[str, dict[str, Any]] = {
 # Backward-compatible alias
 MENUS = DEFAULT_MENUS
 
-
-# ---------------------------------------------------------------------------
-# JSON config loader with caching
-# ---------------------------------------------------------------------------
 
 def _resolve_menu_config_path() -> Path:
     configured = os.getenv(_MENU_CONFIG_PATH_ENV, "").strip()
@@ -308,7 +276,7 @@ def _read_effective_menus() -> dict[str, dict[str, Any]]:
     menus = copy.deepcopy(DEFAULT_MENUS)
     external_menus = _load_menus_from_json(path)
     if external_menus:
-        # Merge-by-id so a partial JSON can override only selected menus.
+        # Merge-by-id so partial JSON can override selected menus.
         menus.update(external_menus)
 
     _cache_path = path
@@ -326,7 +294,7 @@ def clear_menu_cache() -> None:
 
 
 def get_menu(menu_id: str) -> dict[str, Any] | None:
-    """Return menu definition by ID, or None if not found."""
+    """Return one menu definition by id."""
     menus = _read_effective_menus()
     menu = menus.get(menu_id)
     if menu is None:
@@ -335,34 +303,53 @@ def get_menu(menu_id: str) -> dict[str, Any] | None:
 
 
 def build_inline_keyboard(menu_id: str) -> dict[str, Any] | None:
-    """Build Telegram InlineKeyboardMarkup payload for a menu."""
+    """Build Telegram InlineKeyboardMarkup payload for one menu."""
     menu = get_menu(menu_id)
     if menu is None:
         return None
-    return {
-        "inline_keyboard": menu["keyboard"],
-    }
+    return {"inline_keyboard": menu["keyboard"]}
 
 
 def validate_menu_config() -> dict[str, object]:
-    """Validate the current menu configuration and return a status report."""
-    menus = _load_menus()
+    """Validate current effective menu configuration and return diagnostics."""
+    menus = _read_effective_menus()
     config_path = _resolve_menu_config_path()
     source = "json" if config_path.exists() else "default"
     warnings: list[str] = []
     errors: list[str] = []
 
     for menu_id, menu in menus.items():
-        if "text" not in menu:
-            errors.append(f"{menu_id}: missing 'text'")
-        if "keyboard" not in menu:
-            errors.append(f"{menu_id}: missing 'keyboard'")
-        elif not isinstance(menu["keyboard"], list):
-            errors.append(f"{menu_id}: 'keyboard' is not a list")
-        else:
-            for row_idx, row in enumerate(menu["keyboard"]):
-                if not isinstance(row, list) or not row:
-                    warnings.append(f"{menu_id}: row {row_idx} is empty or invalid")
+        text = menu.get("text")
+        keyboard = menu.get("keyboard")
+        if not isinstance(text, str) or not text.strip():
+            errors.append(f"{menu_id}: missing or invalid 'text'")
+        if not isinstance(keyboard, list) or not keyboard:
+            errors.append(f"{menu_id}: missing or invalid 'keyboard'")
+            continue
+
+        for row_idx, row in enumerate(keyboard):
+            if not isinstance(row, list) or not row:
+                warnings.append(f"{menu_id}: row {row_idx} is empty or invalid")
+                continue
+            if len(row) > 3:
+                warnings.append(f"{menu_id}: row {row_idx} has >3 buttons")
+
+            for button_idx, button in enumerate(row):
+                if not isinstance(button, dict):
+                    errors.append(f"{menu_id}: row {row_idx} button {button_idx} invalid")
+                    continue
+                text_value = button.get("text")
+                callback_data = button.get("callback_data")
+                url = button.get("url")
+                if not isinstance(text_value, str) or not text_value.strip():
+                    errors.append(f"{menu_id}: row {row_idx} button {button_idx} missing text")
+                if not (
+                    (isinstance(callback_data, str) and callback_data.strip())
+                    or (isinstance(url, str) and url.strip())
+                ):
+                    errors.append(
+                        f"{menu_id}: row {row_idx} button {button_idx} needs callback_data or url"
+                    )
 
     return {
         "path": str(config_path),
@@ -374,3 +361,4 @@ def validate_menu_config() -> dict[str, object]:
         "warnings": warnings,
         "errors": errors,
     }
+

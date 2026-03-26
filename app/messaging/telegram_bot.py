@@ -25,7 +25,7 @@ import json
 import logging
 import re
 from collections import OrderedDict
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -135,6 +135,7 @@ class TelegramOperatorBot:
         context_provider: Callable[[], Awaitable[str]] | None = None,
         signal_handoff_log_path: str = "artifacts/telegram_signal_handoff.jsonl",
         signal_exchange_outbox_log_path: str = "artifacts/telegram_exchange_outbox.jsonl",
+        message_envelope_log_path: str = "artifacts/telegram_message_envelope.jsonl",
         signal_append_decision_enabled: bool = False,
         signal_auto_run_enabled: bool = False,
         signal_auto_run_mode: str = "paper",
@@ -168,6 +169,8 @@ class TelegramOperatorBot:
         self._signal_handoff_log_path.parent.mkdir(parents=True, exist_ok=True)
         self._signal_exchange_outbox_log_path = Path(signal_exchange_outbox_log_path)
         self._signal_exchange_outbox_log_path.parent.mkdir(parents=True, exist_ok=True)
+        self._message_envelope_log_path = Path(message_envelope_log_path)
+        self._message_envelope_log_path.parent.mkdir(parents=True, exist_ok=True)
         self._signal_exchange_sent_log_path = Path(signal_exchange_sent_log_path)
         self._signal_exchange_sent_log_path.parent.mkdir(parents=True, exist_ok=True)
         self._signal_exchange_dead_letter_log_path = Path(signal_exchange_dead_letter_log_path)
@@ -561,13 +564,31 @@ class TelegramOperatorBot:
         from app.messaging.message_models import (
             TradingSignal as MsgTradingSignal,
         )
-        from app.messaging.signal_parser import SignalParseError, parse_structured_message
+        from app.messaging.message_schema import (
+            MessageSchemaValidationError,
+            validate_message_model,
+        )
+        from app.messaging.signal_parser import (
+            SignalParseError,
+            detect_message_type,
+            parse_structured_message,
+        )
 
         self._audit(chat_id, "_structured_input", args=text[:500])
+        detected_type = detect_message_type(text) or "unknown"
 
         try:
             parsed = parse_structured_message(text)
         except SignalParseError as exc:
+            self._audit_message_envelope(
+                chat_id=chat_id,
+                message_type=detected_type,
+                stage="parse",
+                status="rejected",
+                source=source,
+                payload={"text_preview": text[:300]},
+                errors=[self._inline(exc)],
+            )
             await self._send(
                 chat_id,
                 "*Structured-Format Fehler*\n"
@@ -576,8 +597,38 @@ class TelegramOperatorBot:
             )
             return
 
+        try:
+            schema_payload = validate_message_model(parsed)
+        except MessageSchemaValidationError as exc:
+            error_lines = exc.errors or [self._inline(exc)]
+            self._audit_message_envelope(
+                chat_id=chat_id,
+                message_type=detected_type,
+                stage="schema_validation",
+                status="rejected",
+                source=source,
+                payload={"text_preview": text[:300]},
+                errors=error_lines,
+            )
+            details = "\n".join(f"- `{self._inline(item)}`" for item in error_lines[:8])
+            await self._send(
+                chat_id,
+                "*Structured-Schema Fehler (fail-closed)*\n"
+                "Die Nachricht verletzt den 3-Typen-Standard:\n"
+                f"{details}",
+            )
+            return
+
         if isinstance(parsed, MsgNewsMessage):
             formatted = format_news_telegram(parsed)
+            self._audit_message_envelope(
+                chat_id=chat_id,
+                message_type="news",
+                stage="accepted",
+                status="ok",
+                source=source,
+                payload=schema_payload,
+            )
             await self._send(
                 chat_id,
                 f"{formatted}\n\n"
@@ -590,6 +641,15 @@ class TelegramOperatorBot:
             formatted = format_signal_telegram(parsed)
             validation_errors = parsed.validation_errors
             if validation_errors:
+                self._audit_message_envelope(
+                    chat_id=chat_id,
+                    message_type="signal",
+                    stage="execution_gate",
+                    status="blocked",
+                    source=source,
+                    payload=schema_payload,
+                    errors=validation_errors,
+                )
                 error_lines = "\n".join(
                     f"- `{self._inline(error)}`" for error in validation_errors[:8]
                 )
@@ -614,6 +674,14 @@ class TelegramOperatorBot:
                     "reasoning": parsed.notes or f"structured_signal:{parsed.signal_id}",
                 }
             )
+            self._audit_message_envelope(
+                chat_id=chat_id,
+                message_type="signal",
+                stage="accepted",
+                status="ok",
+                source=source,
+                payload=schema_payload,
+            )
             await self._handle_signal_input(
                 chat_id=chat_id,
                 signal=signal_dict,
@@ -624,6 +692,14 @@ class TelegramOperatorBot:
 
         if isinstance(parsed, MsgExchangeResponse):
             formatted = format_exchange_response_telegram(parsed)
+            self._audit_message_envelope(
+                chat_id=chat_id,
+                message_type="exchange_response",
+                stage="accepted",
+                status="ok",
+                source=source,
+                payload=schema_payload,
+            )
             await self._send(chat_id, formatted)
             logger.info("[BOT] Structured EXCHANGE_RESPONSE received from %s", chat_id)
             return
@@ -663,6 +739,15 @@ class TelegramOperatorBot:
     ) -> None:
         normalized = self._normalize_signal_payload(signal)
         if normalized is None:
+            self._audit_message_envelope(
+                chat_id=chat_id,
+                message_type="signal",
+                stage="normalize",
+                status="rejected",
+                source=source,
+                payload={"raw_signal": dict(signal)},
+                errors=["signal_payload_normalization_failed"],
+            )
             await self._send(
                 chat_id,
                 "Signal konnte nicht normalisiert werden. "
@@ -675,6 +760,19 @@ class TelegramOperatorBot:
 
         # Use structured signal_id if present, otherwise generate
         signal_id = str(signal.get("signal_id", "")) or f"sig_{uuid4().hex[:12]}"
+        self._audit_message_envelope(
+            chat_id=chat_id,
+            message_type="signal",
+            stage="handoff_received",
+            status="ok",
+            source=source,
+            payload={
+                "signal_id": signal_id,
+                "asset": asset,
+                "symbol": symbol,
+                "direction": direction,
+            },
+        )
 
         # Preserve structured signal data if available (from parse_structured_message)
         structured_data: dict[str, object] = {}
@@ -719,10 +817,22 @@ class TelegramOperatorBot:
             direction=direction_map.get(direction, MsgDirection.NEUTRAL),
             notes=reasoning,
             # Carry over structured fields if present
-            stop_loss=signal.get("stop_loss") if isinstance(signal.get("stop_loss"), (int, float)) else None,
-            targets=signal.get("targets", []) if isinstance(signal.get("targets"), list) else [],
+            stop_loss=(
+                signal.get("stop_loss")
+                if isinstance(signal.get("stop_loss"), (int, float))
+                else None
+            ),
+            targets=(
+                signal.get("targets", [])
+                if isinstance(signal.get("targets"), list)
+                else []
+            ),
             leverage=int(signal.get("leverage", 1)) if signal.get("leverage") else 1,
-            entry_value=signal.get("entry_value") if isinstance(signal.get("entry_value"), (int, float)) else None,
+            entry_value=(
+                signal.get("entry_value")
+                if isinstance(signal.get("entry_value"), (int, float))
+                else None
+            ),
         )
         msg_lines = [format_signal_telegram(sig_obj), ""]
 
@@ -820,6 +930,22 @@ class TelegramOperatorBot:
         if response:
             msg_lines.append("")
             msg_lines.append(response)
+        self._audit_message_envelope(
+            chat_id=chat_id,
+            message_type="signal",
+            stage="handoff_completed",
+            status="ok",
+            source=source,
+            payload={
+                "signal_id": signal_id,
+                "asset": asset,
+                "symbol": symbol,
+                "direction": direction,
+                "decision_append_status": str(handoff_record.get("decision_append_status", "")),
+                "signal_auto_run_status": str(handoff_record.get("signal_auto_run_status", "")),
+                "exchange_forward_status": str(handoff_record.get("exchange_forward_status", "")),
+            },
+        )
         await self._send(chat_id, "\n".join(msg_lines))
 
         # Send formatted exchange response as separate message
@@ -1013,6 +1139,40 @@ class TelegramOperatorBot:
     def _append_jsonl(path: Path, record: dict[str, object]) -> None:
         with path.open("a", encoding="utf-8") as fh:
             fh.write(json.dumps(record) + "\n")
+
+    def _audit_message_envelope(
+        self,
+        *,
+        chat_id: int,
+        message_type: str,
+        stage: str,
+        status: str,
+        source: str,
+        payload: Mapping[str, object] | None = None,
+        errors: list[str] | None = None,
+        metadata: Mapping[str, object] | None = None,
+    ) -> None:
+        record: dict[str, object] = {
+            "timestamp_utc": datetime.now(UTC).isoformat(),
+            "event": "telegram_message_envelope",
+            "chat_id": chat_id,
+            "message_type": message_type,
+            "stage": stage,
+            "status": status,
+            "source": source,
+            "execution_enabled": False,
+            "write_back_allowed": False,
+        }
+        if payload:
+            record["payload"] = dict(payload)
+        if errors:
+            record["errors"] = list(errors)
+        if metadata:
+            record["metadata"] = dict(metadata)
+        try:
+            self._append_jsonl(self._message_envelope_log_path, record)
+        except OSError as exc:
+            logger.error("[BOT] Message envelope audit write failed: %s", exc)
 
     async def _dispatch(self, chat_id: int, command: str, *, args: str = "") -> None:
         self._audit(chat_id, command, args=args)
@@ -1453,11 +1613,26 @@ class TelegramOperatorBot:
         if not args.strip():
             await self._send(
                 chat_id,
-                "*Signal-Format:*\n"
+                "*Signal-Format (3-Typen-Standard)*\n"
+                "Empfohlen als strukturierte Nachricht:\n"
+                "`[SIGNAL]`\n"
+                "`Signal ID: SIG-20260325-BTCUSDT-001`\n"
+                "`Source: Premium Signals`\n"
+                "`Exchange Scope: binance_futures, bybit`\n"
+                "`Market Type: Futures`\n"
+                "`Symbol: BTC/USDT`\n"
+                "`Side: SELL`\n"
+                "`Direction: SHORT`\n"
+                "`Entry Rule: BELOW 74700`\n"
+                "`Targets: 72800`\n"
+                "`Stop Loss: 76600`\n"
+                "`Leverage: 10x`\n"
+                "`Status: NEW`\n"
+                "`Timestamp: 2026-03-25T18:31:00Z`\n\n"
+                "Legacy Kurzformat (weiterhin unterstuetzt):\n"
                 "`/signal BUY BTC 65000 SL=62000 TP=70000`\n"
                 "`/signal SELL ETH 3400`\n"
-                "`/signal LONG SOL SL=120 TP=200 SIZE=0.5`\n\n"
-                "Richtung: BUY/SELL/LONG/SHORT/KAUFEN/VERKAUFEN",
+                "`/signal LONG SOL SL=120 TP=200 SIZE=0.5`",
             )
             return
 
@@ -1512,6 +1687,12 @@ class TelegramOperatorBot:
             "/pause - Alles pausieren\n"
             "/resume - Fortsetzen\n"
             "/kill - Notfall-Stopp\n\n"
+            "*Nachrichtentypen (hart getrennt):*\n"
+            "[NEWS] - Info/Analyse, niemals Orderausfuehrung\n"
+            "[SIGNAL] - konkrete Handelsanweisung, schema-validiert\n"
+            "[EXCHANGE_RESPONSE] - technischer Ausfuehrungsstatus\n\n"
+            "Regel: Telegram ist Anzeige, JSON ist Wahrheit.\n"
+            "SIGNAL ohne Pflichtfelder wird fail-closed blockiert.\n\n"
             "/menu - Interaktives Menue\n"
             "/menu_reload - Menue neu laden\n"
             "/menu_validate - Menue pruefen\n"

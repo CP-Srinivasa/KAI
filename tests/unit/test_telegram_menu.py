@@ -132,6 +132,7 @@ def test_signal_send_menu_shows_structured_format() -> None:
     assert "[SIGNAL]" in menu["text"]
     assert "BUY" in menu["text"]
     assert "[NEWS]" in menu["text"]
+    assert "[EXCHANGE_RESPONSE]" in menu["text"]
 
 
 def test_trading_menu_exists() -> None:
