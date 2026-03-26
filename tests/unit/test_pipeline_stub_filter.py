@@ -12,7 +12,7 @@ from app.analysis.pipeline import _STUB_CONTENT_THRESHOLD, AnalysisPipeline
 from app.core.enums import AnalysisSource
 
 
-def _make_doc(*, raw_text: str = "", title: str = "Test Title"):
+def _make_doc(*, raw_text: str = "", title: str = "Test Title", **kwargs):
     """Create a minimal CanonicalDocument-like object for pipeline testing."""
     from app.core.domain.document import CanonicalDocument
 
@@ -21,6 +21,7 @@ def _make_doc(*, raw_text: str = "", title: str = "Test Title"):
         url=f"https://example.com/{uuid4()}",
         title=title,
         raw_text=raw_text,
+        **kwargs,
     )
 
 
@@ -153,3 +154,64 @@ class TestStubDocumentFilter:
 
         await pipeline_above.run(doc_above)
         provider_above.analyze.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_low_relevance_gate_skips_llm_for_offtopic_document(self):
+        """Long off-topic doc with weak rule relevance should skip LLM."""
+        provider = MagicMock()
+        provider.provider_name = "openai"
+        provider.analyze = AsyncMock()
+
+        pipeline = _make_pipeline(provider=provider, keyword_hits=[])
+        doc = _make_doc(
+            title="General productivity roundup",
+            raw_text="A" * 300,
+        )
+
+        result = await pipeline.run(doc)
+
+        provider.analyze.assert_not_called()
+        assert result.analysis_result is not None
+        assert result.analysis_result.analysis_source == AnalysisSource.RULE
+        assert "low_relevance_gate" in result.analysis_result.explanation_short
+
+    @pytest.mark.asyncio
+    async def test_low_relevance_gate_allows_docs_with_asset_metadata(self):
+        """Docs with pre-known assets bypass low-relevance gate and call LLM."""
+        from app.analysis.base.interfaces import LLMAnalysisOutput
+        from app.core.enums import MarketScope, SentimentLabel
+
+        llm_output = LLMAnalysisOutput(
+            sentiment_label=SentimentLabel.NEUTRAL,
+            sentiment_score=0.0,
+            relevance_score=0.5,
+            impact_score=0.3,
+            confidence_score=0.7,
+            novelty_score=0.5,
+            market_scope=MarketScope.CRYPTO,
+            affected_assets=["BTC"],
+            affected_sectors=[],
+            event_type=None,
+            short_reasoning="test",
+            long_reasoning="test long",
+            actionable=False,
+            tags=["crypto"],
+            spam_probability=0.0,
+        )
+
+        provider = MagicMock()
+        provider.provider_name = "openai"
+        provider.model = "gpt-4"
+        provider.analyze = AsyncMock(return_value=llm_output)
+
+        pipeline = _make_pipeline(provider=provider, keyword_hits=[])
+        doc = _make_doc(
+            title="General update",
+            raw_text="A" * 300,
+            crypto_assets=["BTC"],
+        )
+
+        result = await pipeline.run(doc)
+
+        provider.analyze.assert_called_once()
+        assert result.llm_output is not None

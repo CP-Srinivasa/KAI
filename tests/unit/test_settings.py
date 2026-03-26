@@ -6,6 +6,7 @@ from app.core.settings import (
     AppSettings,
     DBSettings,
     ExecutionSettings,
+    OperatorSettings,
     ProviderSettings,
     RiskSettings,
     SourceSettings,
@@ -29,7 +30,7 @@ def test_db_settings_defaults():
 
 
 def test_alert_settings_defaults():
-    settings = AlertSettings()
+    settings = AlertSettings(_env_file=None)
     assert settings.dry_run is True
     assert settings.telegram_enabled is False
     assert settings.email_enabled is False
@@ -45,6 +46,22 @@ def test_source_settings_defaults():
     settings = SourceSettings()
     assert settings.fetch_timeout > 0
     assert settings.max_retries > 0
+
+
+def test_operator_settings_defaults_are_fail_closed():
+    settings = OperatorSettings(_env_file=None)
+    assert settings.telegram_polling_enabled is False
+    assert settings.telegram_dry_run is True
+    assert settings.admin_chat_id_list == []
+    assert settings.signal_append_decision_enabled is False
+    assert settings.signal_auto_run_enabled is False
+    assert settings.signal_auto_run_mode == "paper"
+    assert settings.signal_forward_to_exchange_enabled is False
+
+
+def test_operator_settings_rejects_invalid_signal_auto_run_mode() -> None:
+    with pytest.raises(ValueError, match="OPERATOR_SIGNAL_AUTO_RUN_MODE"):
+        OperatorSettings(signal_auto_run_mode="live", _env_file=None)
 
 
 def test_execution_settings_defaults_are_safe_and_typed():

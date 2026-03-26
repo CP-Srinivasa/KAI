@@ -25,8 +25,13 @@ class TestTelegramPollerLifecycle:
     def test_start_creates_task_when_configured(self) -> None:
         bot = _make_bot(configured=True)
         poller = TelegramPoller(bot)
+        mock_task_obj = MagicMock()
 
-        with patch.object(asyncio, "create_task", return_value=MagicMock()) as mock_task:
+        def _fake_create_task(coro):
+            coro.close()
+            return mock_task_obj
+
+        with patch.object(asyncio, "create_task", side_effect=_fake_create_task) as mock_task:
             poller.start()
 
         assert poller._running is True
@@ -99,11 +104,13 @@ class TestTelegramPollerPollLoop:
             call_count += 1
             if call_count == 1:
                 resp = MagicMock()
+                resp.status_code = 200
                 resp.json.return_value = {"result": updates}
                 return resp
             # Second call: stop the loop
             poller._running = False
             resp = MagicMock()
+            resp.status_code = 200
             resp.json.return_value = {"result": []}
             return resp
 
@@ -133,6 +140,7 @@ class TestTelegramPollerPollLoop:
             call_count += 1
             if call_count == 1:
                 resp = MagicMock()
+                resp.status_code = 200
                 resp.json.return_value = {
                     "result": [
                         {"update_id": 200, "message": {"chat": {"id": 12345}, "text": "/status"}}
@@ -141,6 +149,7 @@ class TestTelegramPollerPollLoop:
                 return resp
             poller._running = False
             resp = MagicMock()
+            resp.status_code = 200
             resp.json.return_value = {"result": []}
             return resp
 
@@ -189,6 +198,7 @@ class TestTelegramPollerPollLoop:
                 raise ConnectionError("network down")
             poller._running = False
             resp = MagicMock()
+            resp.status_code = 200
             resp.json.return_value = {"result": []}
             return resp
 
@@ -203,6 +213,98 @@ class TestTelegramPollerPollLoop:
             await poller._poll_loop()  # should not raise, should retry
 
         assert call_count == 2  # first failed, second stopped loop
+
+    @pytest.mark.asyncio
+    async def test_poll_loop_retries_on_429_with_retry_after(self, monkeypatch) -> None:
+        bot = _make_bot()
+        poller = TelegramPoller(bot, poll_interval=0.01, long_poll_timeout=1)
+        sleeps: list[float] = []
+        call_count = 0
+
+        class _Resp:
+            def __init__(
+                self,
+                status_code: int,
+                payload: dict[str, object],
+                text: str = "",
+            ) -> None:
+                self.status_code = status_code
+                self._payload = payload
+                self.text = text
+
+            def json(self) -> dict[str, object]:
+                return self._payload
+
+        async def _fake_sleep(seconds: float) -> None:
+            sleeps.append(seconds)
+
+        async def fake_get(url, params=None):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return _Resp(429, {"ok": False, "parameters": {"retry_after": 2}})
+            poller._running = False
+            return _Resp(200, {"ok": True, "result": []})
+
+        monkeypatch.setattr("app.messaging.telegram_bot.asyncio.sleep", _fake_sleep)
+        with patch("httpx.AsyncClient") as mock_client_cls:
+            mock_client = AsyncMock()
+            mock_client.get = fake_get
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=False)
+            mock_client_cls.return_value = mock_client
+
+            poller._running = True
+            await poller._poll_loop()
+
+        assert call_count == 2
+        assert sleeps == [2]
+
+    @pytest.mark.asyncio
+    async def test_poll_loop_backoffs_on_non_200_response(self, monkeypatch) -> None:
+        bot = _make_bot()
+        poller = TelegramPoller(bot, poll_interval=0.01, long_poll_timeout=1)
+        sleeps: list[float] = []
+        call_count = 0
+
+        class _Resp:
+            def __init__(
+                self,
+                status_code: int,
+                payload: dict[str, object],
+                text: str = "",
+            ) -> None:
+                self.status_code = status_code
+                self._payload = payload
+                self.text = text
+
+            def json(self) -> dict[str, object]:
+                return self._payload
+
+        async def _fake_sleep(seconds: float) -> None:
+            sleeps.append(seconds)
+
+        async def fake_get(url, params=None):
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                return _Resp(500, {"ok": False}, text="server error")
+            poller._running = False
+            return _Resp(200, {"ok": True, "result": []})
+
+        monkeypatch.setattr("app.messaging.telegram_bot.asyncio.sleep", _fake_sleep)
+        with patch("httpx.AsyncClient") as mock_client_cls:
+            mock_client = AsyncMock()
+            mock_client.get = fake_get
+            mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+            mock_client.__aexit__ = AsyncMock(return_value=False)
+            mock_client_cls.return_value = mock_client
+
+            poller._running = True
+            await poller._poll_loop()
+
+        assert call_count == 2
+        assert sleeps == [pytest.approx(0.03)]
 
 
 class TestTelegramPollerConfiguration:

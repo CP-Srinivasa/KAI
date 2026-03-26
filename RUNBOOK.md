@@ -22,7 +22,8 @@ python scripts/ph5_hold_metrics_report.py
 ```
 
 The routine does:
-- `pipeline run`
+- `pipeline-run`
+- `alerts auto-check` (historical horizon check, default dry-run)
 - `alerts hold-report`
 - `alerts pending-annotations`
 
@@ -33,9 +34,12 @@ python -m app.cli.main pipeline-run <feed_url> --source-id <id> --source-name <n
 python -m app.cli.main analyze pending --limit 50
 python -m app.cli.main signals extract --limit 20 --min-priority 8
 python -m app.cli.main alerts evaluate-pending
+python -m app.cli.main alerts auto-check --threshold-pct 5 --horizon-hours 24 --min-age-hours 24 --dry-run
 python -m app.cli.main alerts hold-report
+python -m app.cli.main alerts baseline-report --input-path artifacts/ph4b_tier3_shadow.jsonl
 python -m app.cli.main alerts pending-annotations --limit 20 --min-age-hours 24
 python -m app.cli.main alerts annotate <document_id> <hit|miss|inconclusive>
+python scripts/ph5_keyword_coverage_audit.py --limit 300 --target-coverage 80 --suggestions 30
 ```
 
 ## 4. Hold Gate Review

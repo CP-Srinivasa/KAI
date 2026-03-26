@@ -17,6 +17,7 @@ from __future__ import annotations
 import uuid
 from datetime import UTC, datetime
 
+import httpx
 import pytest
 
 from app.alerts.base.interfaces import AlertDeliveryResult, AlertMessage, BaseAlertChannel
@@ -87,6 +88,13 @@ def _dry_run_settings(**overrides) -> AlertSettings:
     defaults = {
         "dry_run": True,
         "min_priority": 7,
+        "telegram_enabled": False,
+        "telegram_token": "",
+        "telegram_chat_id": "",
+        "email_enabled": False,
+        "email_host": "",
+        "email_from": "",
+        "email_to": "",
     }
     defaults.update(overrides)
     return AlertSettings(**defaults)
@@ -342,6 +350,88 @@ async def test_telegram_dry_run_digest():
     result = await ch.send_digest([_make_alert_msg()], "last hour")
     assert result.success is True
     assert result.message_id == "dry_run"
+
+
+@pytest.mark.asyncio
+async def test_telegram_non_dry_run_splits_long_messages(monkeypatch):
+    settings = _dry_run_settings(
+        dry_run=False,
+        telegram_enabled=True,
+        telegram_token="tok",
+        telegram_chat_id="123",
+    )
+    ch = TelegramAlertChannel(settings)
+    posted_texts: list[str] = []
+    request = httpx.Request("POST", "https://api.telegram.org")
+    response = httpx.Response(200, json={"result": {"message_id": 42}}, request=request)
+
+    class _FakeClient:
+        def __init__(self, *, timeout: int):
+            self.timeout = timeout
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def post(self, _url: str, json: dict[str, object]):
+            posted_texts.append(str(json["text"]))
+            return response
+
+    monkeypatch.setattr("app.alerts.channels.telegram.httpx.AsyncClient", _FakeClient)
+
+    long_explanation = "X" * 9000
+    result = await ch.send(_make_alert_msg(explanation=long_explanation))
+
+    assert result.success is True
+    assert len(posted_texts) >= 2
+    assert all(len(chunk) <= 4096 for chunk in posted_texts)
+
+
+@pytest.mark.asyncio
+async def test_telegram_non_dry_run_retries_on_429(monkeypatch):
+    settings = _dry_run_settings(
+        dry_run=False,
+        telegram_enabled=True,
+        telegram_token="tok",
+        telegram_chat_id="123",
+    )
+    ch = TelegramAlertChannel(settings)
+    request = httpx.Request("POST", "https://api.telegram.org")
+    responses = [
+        httpx.Response(
+            429,
+            json={"ok": False, "parameters": {"retry_after": 1}},
+            request=request,
+        ),
+        httpx.Response(200, json={"result": {"message_id": 99}}, request=request),
+    ]
+    sleeps: list[float] = []
+
+    class _FakeClient:
+        def __init__(self, *, timeout: int):
+            self.timeout = timeout
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def post(self, _url: str, json: dict[str, object]):
+            return responses.pop(0)
+
+    async def _fake_sleep(seconds: float):
+        sleeps.append(seconds)
+
+    monkeypatch.setattr("app.alerts.channels.telegram.httpx.AsyncClient", _FakeClient)
+    monkeypatch.setattr("app.alerts.channels.telegram.asyncio.sleep", _fake_sleep)
+
+    result = await ch.send(_make_alert_msg())
+
+    assert result.success is True
+    assert sleeps == [1]
 
 
 def test_telegram_is_enabled_false_by_default():

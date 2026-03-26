@@ -33,6 +33,7 @@ Current `alerts` commands:
 - `send-test`
 - `evaluate-pending`
 - `hold-report`
+- `baseline-report`
 - `pending-annotations`
 - `annotate`
 - `auto-check`

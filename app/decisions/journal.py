@@ -6,8 +6,8 @@ Canonical implementation now lives in `app.orchestrator.decision_journal`.
 from __future__ import annotations
 
 from app.orchestrator.decision_journal import (  # noqa: F401
-    DEFAULT_DECISION_JOURNAL_PATH,
     DECISION_JOURNAL_JSONL_FILENAME,
+    DEFAULT_DECISION_JOURNAL_PATH,
     DecisionInstance,
     DecisionJournalSummary,
     RiskAssessment,

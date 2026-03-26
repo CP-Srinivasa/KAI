@@ -67,6 +67,23 @@ def _mock_ohlc_response() -> list:
     ]
 
 
+def _mock_range_response(
+    *,
+    start_ts: datetime,
+    end_ts: datetime,
+    start_price: float = 100.0,
+    end_price: float = 110.0,
+) -> dict[str, list[list[float]]]:
+    start_ms = int(start_ts.timestamp() * 1000)
+    end_ms = int(end_ts.timestamp() * 1000)
+    return {
+        "prices": [
+            [start_ms, start_price],
+            [end_ms, end_price],
+        ]
+    }
+
+
 # ---------------------------------------------------------------------------
 # Identity
 # ---------------------------------------------------------------------------
@@ -206,6 +223,73 @@ async def test_get_ohlcv_unknown_symbol() -> None:
     adapter = _adapter()
     candles = await adapter.get_ohlcv("UNKNOWN/PAIR")
     assert candles == []
+
+
+# ---------------------------------------------------------------------------
+# get_price_change_between
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_get_price_change_between_success() -> None:
+    adapter = _adapter()
+    start = datetime(2026, 3, 20, 12, 0, tzinfo=UTC)
+    end = datetime(2026, 3, 21, 12, 0, tzinfo=UTC)
+
+    with patch.object(
+        adapter,
+        "_get_json",
+        new_callable=AsyncMock,
+        return_value=_mock_range_response(start_ts=start, end_ts=end),
+    ):
+        move = await adapter.get_price_change_between(
+            "BTC/USDT",
+            start_utc=start,
+            end_utc=end,
+        )
+
+    assert move is not None
+    p0, p1, pct = move
+    assert p0 == 100.0
+    assert p1 == 110.0
+    assert pct == 10.0
+
+
+@pytest.mark.asyncio
+async def test_get_price_change_between_unknown_symbol() -> None:
+    adapter = _adapter()
+    start = datetime(2026, 3, 20, 12, 0, tzinfo=UTC)
+    end = datetime(2026, 3, 21, 12, 0, tzinfo=UTC)
+    move = await adapter.get_price_change_between(
+        "UNKNOWN/PAIR",
+        start_utc=start,
+        end_utc=end,
+    )
+    assert move is None
+
+
+@pytest.mark.asyncio
+async def test_get_price_change_between_returns_none_when_points_too_far() -> None:
+    adapter = _adapter()
+    start = datetime(2026, 3, 20, 12, 0, tzinfo=UTC)
+    end = datetime(2026, 3, 21, 12, 0, tzinfo=UTC)
+    far_start = datetime(2026, 3, 18, 12, 0, tzinfo=UTC)
+    far_end = datetime(2026, 3, 23, 12, 0, tzinfo=UTC)
+
+    with patch.object(
+        adapter,
+        "_get_json",
+        new_callable=AsyncMock,
+        return_value=_mock_range_response(start_ts=far_start, end_ts=far_end),
+    ):
+        move = await adapter.get_price_change_between(
+            "BTC/USDT",
+            start_utc=start,
+            end_utc=end,
+            max_point_gap_seconds=300,
+        )
+
+    assert move is None
 
 
 # ---------------------------------------------------------------------------

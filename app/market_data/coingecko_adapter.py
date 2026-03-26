@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 import time
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import httpx
 
@@ -81,6 +81,30 @@ def _timeframe_to_days(timeframe: str, limit: int) -> int:
     total_minutes = max(minutes * limit, 1)
     days = max(1, total_minutes // 1440)
     return min(days, 365)
+
+
+def _to_unix_seconds(dt: datetime) -> int:
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=UTC)
+    return int(dt.timestamp())
+
+
+def _nearest_price(
+    prices: list[tuple[int, float]],
+    target_unix_seconds: int,
+    *,
+    max_gap_seconds: int,
+) -> float | None:
+    if not prices:
+        return None
+
+    best_ts, best_price = min(
+        prices,
+        key=lambda row: abs(row[0] - target_unix_seconds),
+    )
+    if abs(best_ts - target_unix_seconds) > max_gap_seconds:
+        return None
+    return best_price
 
 
 class CoinGeckoAdapter(BaseMarketDataAdapter):
@@ -218,6 +242,86 @@ class CoinGeckoAdapter(BaseMarketDataAdapter):
         else:
             self._clear_error()
         return candles
+
+    async def get_price_change_between(
+        self,
+        symbol: str,
+        *,
+        start_utc: datetime,
+        end_utc: datetime,
+        max_point_gap_seconds: int = 3 * 3600,
+        padding_seconds: int = 2 * 3600,
+    ) -> tuple[float, float, float] | None:
+        """Resolve historical move between two timestamps via nearest sampled prices.
+
+        Returns:
+            (price_at_start, price_at_end, move_pct) or None when unavailable.
+        """
+        if end_utc <= start_utc:
+            self._set_error("invalid_time_range")
+            return None
+
+        resolved = _resolve_symbol(symbol)
+        if resolved is None:
+            self._set_error("unsupported_symbol")
+            return None
+        _normalized_symbol, coin_id = resolved
+
+        query_from = _to_unix_seconds(start_utc - timedelta(seconds=padding_seconds))
+        query_to = _to_unix_seconds(end_utc + timedelta(seconds=padding_seconds))
+        if query_to <= query_from:
+            self._set_error("invalid_time_range")
+            return None
+
+        data = await self._get_json(
+            f"{_COINGECKO_BASE}/coins/{coin_id}/market_chart/range",
+            params={
+                "vs_currency": "usd",
+                "from": str(query_from),
+                "to": str(query_to),
+            },
+        )
+        if not isinstance(data, dict):
+            self._set_error("invalid_range_payload")
+            return None
+
+        raw_prices = data.get("prices")
+        if not isinstance(raw_prices, list):
+            self._set_error("missing_range_prices")
+            return None
+
+        points: list[tuple[int, float]] = []
+        for row in raw_prices:
+            if not isinstance(row, list) or len(row) < 2:
+                continue
+            ts_ms, price = row[0], row[1]
+            if not isinstance(ts_ms, (int, float)):
+                continue
+            if not isinstance(price, (int, float)) or price <= 0:
+                continue
+            points.append((int(ts_ms / 1000), float(price)))
+
+        if not points:
+            self._set_error("empty_range_prices")
+            return None
+
+        start_price = _nearest_price(
+            points,
+            _to_unix_seconds(start_utc),
+            max_gap_seconds=max_point_gap_seconds,
+        )
+        end_price = _nearest_price(
+            points,
+            _to_unix_seconds(end_utc),
+            max_gap_seconds=max_point_gap_seconds,
+        )
+        if start_price is None or end_price is None:
+            self._set_error("missing_nearby_price_point")
+            return None
+
+        move_pct = (end_price - start_price) / start_price * 100.0
+        self._clear_error()
+        return (start_price, end_price, round(move_pct, 4))
 
     async def get_market_data_point(self, symbol: str) -> MarketDataPoint | None:
         snapshot = await self.get_market_data_snapshot(symbol)

@@ -50,6 +50,7 @@ _READ_ONLY_COMMANDS = frozenset(
         "positions",
         "exposure",
         "signals",
+        "signal_status",
         "daily_summary",
         "alert_status",
     }
@@ -131,6 +132,7 @@ class TelegramOperatorBot:
         webhook_max_seen_update_ids: int = _WEBHOOK_MAX_SEEN_UPDATE_IDS_DEFAULT,
         text_processor: TextIntentProcessor | None = None,
         voice_transcriber: VoiceTranscriber | None = None,
+        context_provider: Callable[[], Awaitable[str]] | None = None,
         signal_handoff_log_path: str = "artifacts/telegram_signal_handoff.jsonl",
         signal_exchange_outbox_log_path: str = "artifacts/telegram_exchange_outbox.jsonl",
         signal_append_decision_enabled: bool = False,
@@ -138,6 +140,8 @@ class TelegramOperatorBot:
         signal_auto_run_mode: str = "paper",
         signal_auto_run_provider: str = "coingecko",
         signal_forward_to_exchange_enabled: bool = False,
+        signal_exchange_sent_log_path: str = "artifacts/telegram_exchange_sent.jsonl",
+        signal_exchange_dead_letter_log_path: str = "artifacts/telegram_exchange_dead_letter.jsonl",
     ) -> None:
         normalized_updates = tuple(
             dict.fromkeys(
@@ -164,6 +168,10 @@ class TelegramOperatorBot:
         self._signal_handoff_log_path.parent.mkdir(parents=True, exist_ok=True)
         self._signal_exchange_outbox_log_path = Path(signal_exchange_outbox_log_path)
         self._signal_exchange_outbox_log_path.parent.mkdir(parents=True, exist_ok=True)
+        self._signal_exchange_sent_log_path = Path(signal_exchange_sent_log_path)
+        self._signal_exchange_sent_log_path.parent.mkdir(parents=True, exist_ok=True)
+        self._signal_exchange_dead_letter_log_path = Path(signal_exchange_dead_letter_log_path)
+        self._signal_exchange_dead_letter_log_path.parent.mkdir(parents=True, exist_ok=True)
         self._webhook_secret_token = (webhook_secret_token or "").strip()
         self._webhook_rejection_audit_path = Path(webhook_rejection_audit_log)
         self._webhook_rejection_audit_path.parent.mkdir(parents=True, exist_ok=True)
@@ -175,6 +183,7 @@ class TelegramOperatorBot:
         self._dry_run = dry_run
         self._text_processor = text_processor
         self._voice_transcriber = voice_transcriber
+        self._context_provider = context_provider
         self._signal_append_decision_enabled = signal_append_decision_enabled
         self._signal_auto_run_enabled = signal_auto_run_enabled
         self._signal_auto_run_mode = normalized_signal_mode
@@ -477,7 +486,16 @@ class TelegramOperatorBot:
             return
 
         self._audit(chat_id, "_text", args=text)
-        result = await self._text_processor.process(text)
+
+        # Inject current analysis context if available
+        context = ""
+        if self._context_provider is not None:
+            try:
+                context = await self._context_provider()
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("[BOT] Context provider failed: %s", exc)
+
+        result = await self._text_processor.process(text, context=context)
         logger.info(
             "[BOT] Text intent=%s mapped_command=%s signal=%s",
             result.intent,
@@ -729,6 +747,7 @@ class TelegramOperatorBot:
             "direction": direction,
             "reasoning": reasoning,
             "status": "queued",
+            "attempt_count": 0,
             "execution_enabled": False,
             "write_back_allowed": False,
         }
@@ -787,17 +806,26 @@ class TelegramOperatorBot:
         handlers = {
             "status": self._cmd_status,
             "positions": self._cmd_positions,
+            "positionen": self._cmd_positions,
+            "positionspapier": self._cmd_positions,
             "exposure": self._cmd_exposure,
+            "risiko": self._cmd_exposure,
             "signals": self._cmd_signals,
+            "signale": self._cmd_signals,
+            "signal_status": self._cmd_signal_status,
+            "signalstatus": self._cmd_signal_status,
             "alert_status": self._cmd_alert_status,
+            "alertstatus": self._cmd_alert_status,
             "approve": self._cmd_approve,
             "reject": self._cmd_reject,
             "pause": self._cmd_pause,
             "resume": self._cmd_resume,
             "kill": self._cmd_kill,
             "daily_summary": self._cmd_daily_summary,
+            "tagesbericht": self._cmd_daily_summary,
             "signal": self._cmd_signal,
             "help": self._cmd_help,
+            "hilfe": self._cmd_help,
         }
         handler = handlers.get(command)
         if handler is None:
@@ -909,21 +937,27 @@ class TelegramOperatorBot:
         )
         if payload is None:
             return
+        readiness = self._inline(payload.get("readiness_status", "unknown"))
+        cycles = payload.get("cycle_count_today", 0)
+        pos_count = payload.get("position_count", 0)
+        backlog = self._inline(payload.get("ingestion_backlog_documents", "?"))
+        alert_rate = self._inline(
+            payload.get("alert_fire_rate_docs_per_hour_24h", "?")
+        )
+        llm_fail = self._inline(
+            payload.get("llm_provider_failure_rate_24h", "?")
+        )
+        latency = self._inline(
+            payload.get("rss_to_alert_latency_p95_seconds_24h", "?")
+        )
         msg = (
-            "*Status (Operator Summary)*\n"
-            f"readiness_status=`{self._inline(payload.get('readiness_status', 'unknown'))}`\n"
-            f"cycle_count_today=`{self._inline(payload.get('cycle_count_today', 0))}`\n"
-            f"position_count=`{self._inline(payload.get('position_count', 0))}`\n"
-            f"ingestion_backlog_documents=`"
-            f"{self._inline(payload.get('ingestion_backlog_documents', 'unknown'))}`\n"
-            f"alert_fire_rate_docs_per_hour_24h=`"
-            f"{self._inline(payload.get('alert_fire_rate_docs_per_hour_24h', 'unknown'))}`\n"
-            f"llm_provider_failure_rate_24h=`"
-            f"{self._inline(payload.get('llm_provider_failure_rate_24h', 'unknown'))}`\n"
-            f"rss_to_alert_latency_p95_seconds_24h=`"
-            f"{self._inline(payload.get('rss_to_alert_latency_p95_seconds_24h', 'unknown'))}`\n"
-            f"execution_enabled=`{self._inline(payload.get('execution_enabled', False))}`\n"
-            f"write_back_allowed=`{self._inline(payload.get('write_back_allowed', False))}`"
+            f"*KAI Status*\n"
+            f"Readiness: {readiness}\n"
+            f"Zyklen heute: {cycles} | Positionen: {pos_count}\n"
+            f"Backlog: {backlog} Docs\n"
+            f"Alert-Rate (24h): {alert_rate}/h\n"
+            f"LLM-Fehler (24h): {llm_fail}\n"
+            f"Latenz p95 (24h): {latency}s"
         )
         await self._send(chat_id, msg)
 
@@ -938,22 +972,24 @@ class TelegramOperatorBot:
             return
         raw_positions = payload.get("positions", [])
         positions = raw_positions if isinstance(raw_positions, list) else []
-        top_symbol = "none"
-        if positions and isinstance(positions[0], dict):
-            top_symbol = self._inline(positions[0].get("symbol", "unknown"))
-        msg = (
-            "*Positions (Paper Portfolio Read-Only)*\n"
-            f"position_count=`{self._inline(payload.get('position_count', 0))}`\n"
-            f"mark_to_market_status=`"
-            f"{self._inline(payload.get('mark_to_market_status', 'unknown'))}`\n"
-            f"top_symbol=`{top_symbol}`\n"
-            f"available=`{self._inline(payload.get('available', False))}`\n"
-            f"execution_enabled=`{self._inline(payload.get('execution_enabled', False))}`\n"
-            f"write_back_allowed=`{self._inline(payload.get('write_back_allowed', False))}`\n"
-            "No direct trading position action is exposed via Telegram."
-            f"{self._format_refs('positions')}"
-        )
-        await self._send(chat_id, msg)
+        count = payload.get("position_count", 0)
+        mtm = self._inline(payload.get("mark_to_market_status", "unknown"))
+
+        lines = ["*Positions* (Paper, read-only)", f"Anzahl: {count} | MtM: {mtm}"]
+        if positions:
+            for pos in positions[:5]:
+                if not isinstance(pos, dict):
+                    continue
+                sym = self._inline(pos.get("symbol", "?"))
+                qty = pos.get("quantity", 0)
+                entry = pos.get("avg_entry_price", 0)
+                pnl = pos.get("unrealized_pnl_usd")
+                pnl_str = f"{pnl:+.2f} USD" if pnl is not None else "n/a"
+                lines.append(f"  {sym}: {qty} @ {entry} | PnL: {pnl_str}")
+        else:
+            lines.append("Keine offenen Positionen.")
+        lines.append("Nur Lesezugriff via Telegram.")
+        await self._send(chat_id, "\n".join(lines))
 
     async def _cmd_exposure(self, chat_id: int, *, args: str = "") -> None:
         payload = await self._load_canonical_surface(
@@ -964,17 +1000,16 @@ class TelegramOperatorBot:
         )
         if payload is None:
             return
+        mtm = self._inline(payload.get("mark_to_market_status", "unknown"))
+        gross = payload.get("gross_exposure_usd", 0.0)
+        net = payload.get("net_exposure_usd", 0.0)
+        stale = payload.get("stale_position_count", 0)
+        unpriced = payload.get("unavailable_price_count", 0)
         msg = (
-            "*Exposure (Paper Portfolio Read-Only)*\n"
-            f"mark_to_market_status=`"
-            f"{self._inline(payload.get('mark_to_market_status', 'unknown'))}`\n"
-            f"gross_exposure_usd=`{self._inline(payload.get('gross_exposure_usd', 0.0))}`\n"
-            f"net_exposure_usd=`{self._inline(payload.get('net_exposure_usd', 0.0))}`\n"
-            f"stale_position_count=`{self._inline(payload.get('stale_position_count', 0))}`\n"
-            f"unavailable_price_count=`{self._inline(payload.get('unavailable_price_count', 0))}`\n"
-            f"execution_enabled=`{self._inline(payload.get('execution_enabled', False))}`\n"
-            f"write_back_allowed=`{self._inline(payload.get('write_back_allowed', False))}`"
-            f"{self._format_refs('exposure')}"
+            f"*Exposure* (Paper, read-only)\n"
+            f"Brutto: {gross:.2f} USD | Netto: {net:.2f} USD\n"
+            f"MtM: {mtm} | Stale: {stale} | Ohne Preis: {unpriced}\n"
+            f"Nur Lesezugriff via Telegram."
         )
         await self._send(chat_id, msg)
 
@@ -988,23 +1023,57 @@ class TelegramOperatorBot:
         if payload is None:
             return
         signals = payload.get("signals", [])
-        signal_preview = "none"
-        if isinstance(signals, list) and signals and isinstance(signals[0], dict):
-            first = signals[0]
-            signal_preview = (
-                f"{self._inline(first.get('target_asset', 'unknown'))} "
-                f"({self._inline(first.get('direction_hint', 'neutral'))}, "
-                f"priority={self._inline(first.get('priority', '?'))})"
-            )
+        count = payload.get("signal_count", 0)
 
+        lines = ["*Signale* (read-only)", f"Anzahl: {count}"]
+        if isinstance(signals, list) and signals:
+            for sig in signals[:5]:
+                if not isinstance(sig, dict):
+                    continue
+                asset = self._inline(sig.get("target_asset", "?"))
+                direction = self._inline(sig.get("direction_hint", "neutral"))
+                prio = sig.get("priority", "?")
+                lines.append(f"  {asset} | {direction} | Prio: {prio}")
+        else:
+            lines.append("Keine aktiven Signale.")
+        lines.append("Signale sind nur beratend. Kein automatischer Trade.")
+        msg = "\n".join(lines)
+        await self._send(chat_id, msg)
+
+    async def _cmd_signal_status(self, chat_id: int, *, args: str = "") -> None:
+        try:
+            from app.messaging.exchange_relay import build_signal_pipeline_status
+
+            payload = build_signal_pipeline_status(
+                handoff_log_path=self._signal_handoff_log_path,
+                outbox_log_path=self._signal_exchange_outbox_log_path,
+                sent_log_path=self._signal_exchange_sent_log_path,
+                dead_letter_log_path=self._signal_exchange_dead_letter_log_path,
+                lookback_hours=24,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.error("[BOT] Signal status load failed: %s", exc)
+            await self._send(
+                chat_id,
+                "*Signal Status*\n"
+                "Signal pipeline status unavailable (fail-closed).\n"
+                "No execution side effect was performed.",
+            )
+            return
+
+        handoff = payload.get("handoff_total", 0)
+        handoff_24h = payload.get("handoff_lookback", 0)
+        outbox = payload.get("outbox_queued_total", 0)
+        sent = payload.get("exchange_sent_total", 0)
+        sent_24h = payload.get("exchange_sent_lookback", 0)
+        dead = payload.get("exchange_dead_letter_total", 0)
+        dead_24h = payload.get("exchange_dead_letter_lookback", 0)
         msg = (
-            "*Signals (Read-Only Handoff)*\n"
-            f"signal_count=`{self._inline(payload.get('signal_count', 0))}`\n"
-            f"top_signal=`{signal_preview}`\n"
-            f"execution_enabled=`{self._inline(payload.get('execution_enabled', False))}`\n"
-            f"write_back_allowed=`{self._inline(payload.get('write_back_allowed', False))}`\n"
-            "Signals remain advisory only. No direct execution side effect."
-            f"{self._format_refs('signals')}"
+            f"*Signal Status* (read-only)\n"
+            f"Handoff: {handoff} gesamt, {handoff_24h} letzte 24h\n"
+            f"Outbox: {outbox} wartend\n"
+            f"Gesendet: {sent} gesamt, {sent_24h} letzte 24h\n"
+            f"Fehlgeschlagen: {dead} gesamt, {dead_24h} letzte 24h"
         )
         await self._send(chat_id, msg)
 
@@ -1017,14 +1086,13 @@ class TelegramOperatorBot:
         )
         if payload is None:
             return
+        total = payload.get("total_count", 0)
+        digest = payload.get("digest_count", 0)
+        latest = self._inline(payload.get("latest_dispatched_at", "keine"))
         msg = (
-            "*Alert Status (Read-Only)*\n"
-            f"total_count=`{self._inline(payload.get('total_count', 0))}`\n"
-            f"digest_count=`{self._inline(payload.get('digest_count', 0))}`\n"
-            f"latest_dispatched_at=`{self._inline(payload.get('latest_dispatched_at', 'none'))}`\n"
-            f"execution_enabled=`{self._inline(payload.get('execution_enabled', False))}`\n"
-            f"write_back_allowed=`{self._inline(payload.get('write_back_allowed', False))}`"
-            f"{self._format_refs('alert_status')}"
+            f"*Alert Status* (read-only)\n"
+            f"Gesamt: {total} | Digest: {digest}\n"
+            f"Letzter Versand: {latest}"
         )
         await self._send(chat_id, msg)
 
@@ -1124,30 +1192,37 @@ class TelegramOperatorBot:
         )
         if payload is None:
             return
-        decision_pack_status = self._inline(payload.get("decision_pack_status", "unknown"))
+        readiness = self._inline(payload.get("readiness_status", "?"))
+        cycles = payload.get("cycle_count_today", 0)
+        pos_count = payload.get("position_count", 0)
+        exposure = payload.get("total_exposure_pct", 0.0)
+        backlog = self._inline(payload.get("ingestion_backlog_documents", "?"))
+        dir_alerts = self._inline(
+            payload.get("directional_alert_documents_24h", "?")
+        )
+        alert_rate = self._inline(
+            payload.get("alert_fire_rate_docs_per_hour_24h", "?")
+        )
+        latency = self._inline(
+            payload.get("rss_to_alert_latency_p50_seconds_24h", "?")
+        )
+        llm_fail = self._inline(
+            payload.get("llm_provider_failure_rate_24h", "?")
+        )
+        decision_status = self._inline(
+            payload.get("decision_pack_status", "?")
+        )
+        incidents = payload.get("open_incidents", 0)
         msg = (
-            "*Daily Summary (Canonical Operator View)*\n"
-            f"readiness_status=`{self._inline(payload.get('readiness_status', 'unknown'))}`\n"
-            f"cycle_count_today=`{self._inline(payload.get('cycle_count_today', 0))}`\n"
-            f"position_count=`{self._inline(payload.get('position_count', 0))}`\n"
-            f"total_exposure_pct=`{self._inline(payload.get('total_exposure_pct', 0.0))}`\n"
-            f"ingestion_backlog_documents=`"
-            f"{self._inline(payload.get('ingestion_backlog_documents', 'unknown'))}`\n"
-            f"directional_alert_documents_24h=`"
-            f"{self._inline(payload.get('directional_alert_documents_24h', 'unknown'))}`\n"
-            f"alert_fire_rate_docs_per_hour_24h=`"
-            f"{self._inline(payload.get('alert_fire_rate_docs_per_hour_24h', 'unknown'))}`\n"
-            f"rss_to_alert_latency_p50_seconds_24h=`"
-            f"{self._inline(payload.get('rss_to_alert_latency_p50_seconds_24h', 'unknown'))}`\n"
-            f"llm_provider_failure_rate_24h=`"
-            f"{self._inline(payload.get('llm_provider_failure_rate_24h', 'unknown'))}`\n"
-            f"llm_error_proxy_rate_7d=`"
-            f"{self._inline(payload.get('llm_error_proxy_rate_7d', 'unknown'))}`\n"
-            f"decision_pack_status=`{decision_pack_status}`\n"
-            f"open_incidents=`{self._inline(payload.get('open_incidents', 0))}`\n"
-            f"execution_enabled=`{self._inline(payload.get('execution_enabled', False))}`\n"
-            f"write_back_allowed=`{self._inline(payload.get('write_back_allowed', False))}`"
-            f"{self._format_refs('daily_summary')}"
+            f"*Tagesbericht*\n"
+            f"Readiness: {readiness}\n"
+            f"Zyklen: {cycles} | Positionen: {pos_count}\n"
+            f"Exposure: {exposure}%\n"
+            f"Backlog: {backlog} | Alerts (24h): {dir_alerts}\n"
+            f"Alert-Rate: {alert_rate}/h | Latenz p50: {latency}s\n"
+            f"LLM-Fehler: {llm_fail}\n"
+            f"Entscheidungen: {decision_status}\n"
+            f"Offene Vorfaelle: {incidents}"
         )
         await self._send(chat_id, msg)
 
@@ -1202,19 +1277,22 @@ class TelegramOperatorBot:
     async def _cmd_help(self, chat_id: int, *, args: str = "") -> None:
         msg = (
             "*KAI Operator Commands*\n\n"
-            "/status - Operator status summary\n"
-            "/positions - Read-only paper positions\n"
-            "/exposure - Read-only paper exposure\n"
-            "/signals - Read-only signal handoff\n"
-            "/daily\\_summary - Daily operator view\n"
-            "/alert\\_status - Alert audit summary\n"
-            "/approve <decision_ref> - Audit-only approval intent\n"
-            "/reject <decision_ref> - Audit-only rejection intent\n"
-            "/pause - Pause all operations\n"
-            "/resume - Resume operations\n"
-            "/kill - Emergency stop (requires confirmation)\n"
-            "/signal <direction> <asset> [price] [SL=x] [TP=x] - Trading signal\n"
-            "/help - This message"
+            "*Uebersicht:*\n"
+            "/status - KAI Status\n"
+            "/positions - Paper-Positionen\n"
+            "/exposure - Paper-Exposure/Risiko\n"
+            "/signals - Aktive Signale\n"
+            "/signalstatus - Signal-Pipeline\n"
+            "/tagesbericht - Tagesbericht\n"
+            "/alertstatus - Alert-Status\n\n"
+            "*Aktionen:*\n"
+            "/signal BUY BTC 65000 - Trading-Signal\n"
+            "/approve dec\\_xxx - Freigabe\n"
+            "/reject dec\\_xxx - Ablehnung\n"
+            "/pause - Alles pausieren\n"
+            "/resume - Fortsetzen\n"
+            "/kill - Notfall-Stopp\n"
+            "/hilfe - Diese Nachricht"
         )
         await self._send(chat_id, msg)
 
@@ -1235,8 +1313,19 @@ class TelegramOperatorBot:
             }
             success = await self._send_payload_with_retry(url, payload)
             if not success:
-                logger.error("[BOT] Send failed to %s at chunk %s", chat_id, idx)
-                return False
+                # Markdown may have been rejected by Telegram (e.g. unescaped
+                # underscores).  Fall back to plain text so the operator always
+                # receives the response even if formatting is lost.
+                plain_payload = {
+                    "chat_id": chat_id,
+                    "text": chunk,
+                    "disable_web_page_preview": True,
+                }
+                success = await self._send_payload_with_retry(url, plain_payload)
+                if not success:
+                    logger.error("[BOT] Send failed to %s at chunk %s", chat_id, idx)
+                    return False
+                logger.info("[BOT] Markdown fallback to plain text for chunk %s", idx)
         return True
 
     async def _send_payload_with_retry(

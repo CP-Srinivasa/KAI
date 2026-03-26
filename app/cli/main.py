@@ -16,10 +16,18 @@ from app.alerts.audit import (
     load_outcome_annotations,
 )
 from app.alerts.hold_metrics import build_hold_metrics_report, write_hold_metrics_report
+from app.alerts.offline_baseline import (
+    build_offline_baseline_report,
+    write_offline_baseline_report,
+)
 from app.core.logging import configure_logging
 from app.core.settings import get_settings
 from app.ingestion.base.interfaces import FetchResult
 from app.ingestion.rss.service import RSSCollectedFeed
+from app.messaging.exchange_relay import (
+    build_signal_pipeline_status,
+    relay_exchange_outbox_once,
+)
 from app.storage.db.session import build_session_factory
 from app.storage.document_ingest import IngestPersistStats, persist_fetch_result
 
@@ -587,6 +595,45 @@ def alerts_hold_report(
     )
 
 
+@alerts_app.command("baseline-report")
+def alerts_baseline_report(
+    input_path: str = typer.Option(
+        "artifacts/ph4b_tier3_shadow.jsonl", help="Input JSONL dataset path"
+    ),
+    output_dir: str = typer.Option(
+        "artifacts/ph5_baseline", help="Output directory for baseline artifacts"
+    ),
+    threshold_pct: float = typer.Option(5.0, help="Absolute move threshold (percent)"),
+    horizon_hours: int = typer.Option(24, help="Evaluation horizon in hours"),
+    timeout_seconds: int = typer.Option(10, help="CoinGecko request timeout"),
+    max_rows: int | None = typer.Option(None, help="Optional cap on candidate rows"),
+) -> None:
+    """Build offline baseline report from historical CoinGecko move data."""
+    import asyncio
+
+    report = asyncio.run(
+        build_offline_baseline_report(
+            input_path=Path(input_path),
+            threshold_pct=threshold_pct,
+            horizon_hours=horizon_hours,
+            timeout_seconds=timeout_seconds,
+            max_rows=max_rows,
+        )
+    )
+    json_out, md_out = write_offline_baseline_report(
+        report,
+        output_dir=Path(output_dir),
+    )
+
+    console.print(f"[green]Baseline report written:[/green] {json_out}")
+    console.print(f"[green]Baseline summary written:[/green] {md_out}")
+    console.print(
+        f"[bold]Status:[/bold] {report.get('status')} | "
+        f"resolved={report.get('resolved_candidates')} | "
+        f"priority_abs_corr={report.get('priority_abs_move_correlation')}"
+    )
+
+
 @alerts_app.command("pending-annotations")
 def alerts_pending_annotations(
     limit: int = typer.Option(20, help="Max rows to print"),
@@ -707,6 +754,9 @@ def alerts_auto_check(
     threshold_pct: float = typer.Option(
         5.0, "--threshold-pct", help="Min absolute price change (%) for hit/miss"
     ),
+    horizon_hours: int = typer.Option(
+        24, "--horizon-hours", help="Evaluation window in hours from alert dispatch"
+    ),
     min_age_hours: float = typer.Option(
         24.0,
         "--min-age-hours",
@@ -718,11 +768,10 @@ def alerts_auto_check(
     artifacts_dir: str = typer.Option("artifacts", help="Artifacts directory"),
     timeout_seconds: int = typer.Option(10, help="CoinGecko request timeout"),
 ) -> None:
-    """Check pending directional alerts against CoinGecko 24h price moves.
+    """Check pending directional alerts against CoinGecko price moves.
 
-    Fetches current 24h price change for each alert's affected assets and
-    suggests hit/miss/inconclusive based on sentiment direction. Best run
-    within ~48h of alert dispatch for meaningful results.
+    Preferred path: compare historical price at dispatch vs dispatch+horizon.
+    Fallback path: use ticker 24h move when historical range data is unavailable.
     """
     import asyncio
 
@@ -764,13 +813,15 @@ def alerts_auto_check(
 
     console.print(
         f"[bold]Checking {len(pending)} pending directional alerts "
-        f"(threshold={threshold_pct}%, min_age_hours={min_age_hours:g})...[/bold]"
+        f"(threshold={threshold_pct}%, horizon={horizon_hours}h, "
+        f"min_age_hours={min_age_hours:g})...[/bold]"
     )
 
     results = asyncio.run(
         check_alert_price_moves(
             pending,
             threshold_pct=threshold_pct,
+            horizon_hours=horizon_hours,
             timeout_seconds=timeout_seconds,
         )
     )
@@ -784,8 +835,9 @@ def alerts_auto_check(
     table.add_column("Document ID", width=20)
     table.add_column("Asset", width=8)
     table.add_column("Sentiment", width=10)
-    table.add_column("Price", width=12)
-    table.add_column("24h %", width=8)
+    table.add_column("Price(T+h)", width=12)
+    table.add_column("Move %", width=8)
+    table.add_column("Mode", width=20)
     table.add_column("Suggestion", width=14)
     table.add_column("Reason")
 
@@ -801,6 +853,7 @@ def alerts_auto_check(
             r.sentiment_label,
             price_str,
             change_str,
+            r.evaluation_mode,
             f"[{style}]{r.suggested_outcome}[/{style}]",
             r.reason,
         )
@@ -820,23 +873,137 @@ def alerts_auto_check(
         )
         return
 
-    # Apply: deduplicate by document_id, use first result per doc
-    seen_docs: set[str] = set()
-    applied = 0
+    # Apply: deduplicate by document_id, prefer strongest absolute move evidence
+    best_by_doc: dict[str, Any] = {}
     for r in results:
-        if r.document_id in seen_docs:
+        prev = best_by_doc.get(r.document_id)
+        if prev is None:
+            best_by_doc[r.document_id] = r
             continue
-        seen_docs.add(r.document_id)
+        prev_abs = abs(prev.observed_move_pct or 0.0)
+        curr_abs = abs(r.observed_move_pct or 0.0)
+        if curr_abs > prev_abs:
+            best_by_doc[r.document_id] = r
+
+    applied = 0
+    for r in best_by_doc.values():
         annotation = AlertOutcomeAnnotation(
             document_id=r.document_id,
             outcome=r.suggested_outcome,
             asset=r.asset,
-            note=f"auto-check: {r.reason}",
+            note=f"auto-check ({r.evaluation_mode}, horizon={horizon_hours}h): {r.reason}",
         )
         append_outcome_annotation(annotation, Path(artifacts_dir))
         applied += 1
 
     console.print(f"[green]{applied} annotations written.[/green]")
+
+
+@alerts_app.command("signal-status")
+def alerts_signal_status(
+    lookback_hours: int = typer.Option(24, help="Lookback window for rolling counters"),
+    handoff_log_path: str | None = typer.Option(
+        None, help="Optional override path for Telegram signal handoff log"
+    ),
+    outbox_log_path: str | None = typer.Option(
+        None, help="Optional override path for exchange relay outbox log"
+    ),
+    sent_log_path: str | None = typer.Option(
+        None, help="Optional override path for exchange relay sent log"
+    ),
+    dead_letter_log_path: str | None = typer.Option(
+        None, help="Optional override path for exchange relay dead-letter log"
+    ),
+) -> None:
+    """Show read-only status for Telegram signal handoff and exchange relay pipeline."""
+    settings = get_settings()
+    op = settings.operator
+
+    payload = build_signal_pipeline_status(
+        handoff_log_path=handoff_log_path or op.signal_handoff_log,
+        outbox_log_path=outbox_log_path or op.signal_exchange_outbox_log,
+        sent_log_path=sent_log_path or op.signal_exchange_sent_log,
+        dead_letter_log_path=dead_letter_log_path or op.signal_exchange_dead_letter_log,
+        lookback_hours=lookback_hours,
+    )
+    console.print("[bold]Signal Pipeline Status[/bold]")
+    console.print(f"lookback_hours={payload['lookback_hours']}")
+    console.print(f"handoff_total={payload['handoff_total']}")
+    console.print(f"handoff_lookback={payload['handoff_lookback']}")
+    console.print(f"outbox_queued_total={payload['outbox_queued_total']}")
+    console.print(f"exchange_sent_total={payload['exchange_sent_total']}")
+    console.print(f"exchange_sent_lookback={payload['exchange_sent_lookback']}")
+    console.print(f"exchange_dead_letter_total={payload['exchange_dead_letter_total']}")
+    console.print(
+        f"exchange_dead_letter_lookback={payload['exchange_dead_letter_lookback']}"
+    )
+    console.print(f"execution_enabled={payload['execution_enabled']}")
+    console.print(f"write_back_allowed={payload['write_back_allowed']}")
+
+
+@alerts_app.command("exchange-relay")
+def alerts_exchange_relay(
+    endpoint: str | None = typer.Option(
+        None, help="Optional override endpoint for signal relay target"
+    ),
+    batch_size: int = typer.Option(100, help="Max queued rows to process per run"),
+    timeout_seconds: int | None = typer.Option(
+        None, help="Optional override relay timeout in seconds"
+    ),
+    max_attempts: int | None = typer.Option(
+        None, help="Optional override max retry attempts before dead-letter"
+    ),
+    outbox_log_path: str | None = typer.Option(
+        None, help="Optional override path for exchange relay outbox log"
+    ),
+    sent_log_path: str | None = typer.Option(
+        None, help="Optional override path for exchange relay sent log"
+    ),
+    dead_letter_log_path: str | None = typer.Option(
+        None, help="Optional override path for exchange relay dead-letter log"
+    ),
+) -> None:
+    """Relay queued Telegram signal rows to configured exchange/API endpoint."""
+    import asyncio
+
+    settings = get_settings()
+    op = settings.operator
+
+    effective_endpoint = (endpoint or op.signal_exchange_relay_endpoint).strip()
+    effective_timeout = timeout_seconds or op.signal_exchange_relay_timeout_seconds
+    effective_attempts = max_attempts or op.signal_exchange_relay_max_attempts
+    effective_outbox = outbox_log_path or op.signal_exchange_outbox_log
+    effective_sent = sent_log_path or op.signal_exchange_sent_log
+    effective_dead = dead_letter_log_path or op.signal_exchange_dead_letter_log
+
+    if not effective_endpoint:
+        console.print(
+            "[yellow]Relay endpoint not configured; rows will be retried/dead-lettered "
+            "based on max_attempts.[/yellow]"
+        )
+
+    stats = asyncio.run(
+        relay_exchange_outbox_once(
+            outbox_path=effective_outbox,
+            sent_log_path=effective_sent,
+            dead_letter_log_path=effective_dead,
+            endpoint=effective_endpoint,
+            api_key=op.signal_exchange_relay_api_key,
+            timeout_seconds=effective_timeout,
+            max_attempts=effective_attempts,
+            batch_size=batch_size,
+        )
+    )
+
+    payload = stats.to_json_dict()
+    console.print("[bold]Exchange Relay Run[/bold]")
+    console.print(f"processed={payload['processed']}")
+    console.print(f"sent={payload['sent']}")
+    console.print(f"requeued={payload['requeued']}")
+    console.print(f"dead_lettered={payload['dead_lettered']}")
+    console.print(f"skipped={payload['skipped']}")
+    console.print(f"execution_enabled={payload['execution_enabled']}")
+    console.print(f"write_back_allowed={payload['write_back_allowed']}")
 
 
 if __name__ == "__main__":
