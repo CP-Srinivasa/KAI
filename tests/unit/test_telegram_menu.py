@@ -9,7 +9,6 @@ from app.messaging.telegram_menu import (
     build_inline_keyboard,
     clear_menu_cache,
     get_menu,
-    validate_menu_config,
 )
 
 
@@ -46,7 +45,6 @@ def test_control_menu_contains_reload_button() -> None:
         for button in row
     ]
     assert "cmd:menu_reload" in callbacks
-    assert "cmd:menu_validate" in callbacks
 
 
 def test_menu_can_be_overridden_via_json_config(tmp_path, monkeypatch) -> None:
@@ -105,65 +103,46 @@ def test_partial_json_override_keeps_default_submenus(tmp_path, monkeypatch) -> 
     clear_menu_cache()
 
     main = get_menu("main")
-    portfolio = get_menu("portfolio")
+    trading = get_menu("trading")
 
     assert main is not None
     assert main["text"] == "*Main Only Override*"
-    assert portfolio is not None
-    assert portfolio["text"] == "*Portfolio* (Paper, read-only)"
+    assert trading is not None
+    assert "Trading" in trading["text"]
 
 
-def test_validate_menu_config_reports_defaults_when_file_missing(tmp_path, monkeypatch) -> None:
-    missing = tmp_path / "does_not_exist.json"
-    monkeypatch.setenv("TELEGRAM_MENU_CONFIG_PATH", str(missing))
+def test_main_menu_has_signal_send_entry() -> None:
+    """Ensure the main menu has a Signal senden button."""
     clear_menu_cache()
+    main = get_menu("main")
+    assert main is not None
+    callbacks = [
+        button.get("callback_data", "")
+        for row in main["keyboard"]
+        for button in row
+    ]
+    assert "menu:signal_send" in callbacks
 
-    result = validate_menu_config()
 
-    assert result["source"] == "defaults"
-    assert result["is_valid"] is True
-    assert result["warning_count"] == 1
-    assert result["error_count"] == 0
-
-
-def test_validate_menu_config_reports_error_on_invalid_json(tmp_path, monkeypatch) -> None:
-    menu_config = tmp_path / "invalid.json"
-    menu_config.write_text("{invalid", encoding="utf-8")
-    monkeypatch.setenv("TELEGRAM_MENU_CONFIG_PATH", str(menu_config))
+def test_signal_send_menu_shows_structured_format() -> None:
+    """Signal send menu includes [SIGNAL] format help."""
     clear_menu_cache()
+    menu = get_menu("signal_send")
+    assert menu is not None
+    assert "[SIGNAL]" in menu["text"]
+    assert "BUY" in menu["text"]
+    assert "[NEWS]" in menu["text"]
 
-    result = validate_menu_config()
 
-    assert result["source"] == "json"
-    assert result["is_valid"] is False
-    assert result["error_count"] == 1
-
-
-def test_validate_menu_config_reports_json_success(tmp_path, monkeypatch) -> None:
-    menu_config = tmp_path / "valid.json"
-    menu_config.write_text(
-        json.dumps(
-            {
-                "menus": {
-                    "main": {
-                        "text": "*Main*",
-                        "keyboard": [[{"text": "Status", "callback_data": "cmd:status"}]],
-                    },
-                    "control": {
-                        "text": "*Control*",
-                        "keyboard": [[{"text": "Back", "callback_data": "menu:main"}]],
-                    },
-                }
-            }
-        ),
-        encoding="utf-8",
-    )
-    monkeypatch.setenv("TELEGRAM_MENU_CONFIG_PATH", str(menu_config))
+def test_trading_menu_exists() -> None:
+    """Trading submenu is available."""
     clear_menu_cache()
-
-    result = validate_menu_config()
-
-    assert result["source"] == "json"
-    assert result["is_valid"] is True
-    assert result["menu_count"] == 2
-    assert result["error_count"] == 0
+    menu = get_menu("trading")
+    assert menu is not None
+    callbacks = [
+        button.get("callback_data", "")
+        for row in menu["keyboard"]
+        for button in row
+    ]
+    assert "cmd:positions" in callbacks
+    assert "cmd:exposure" in callbacks

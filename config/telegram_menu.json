@@ -1,140 +1,60 @@
 {
   "menus": {
     "main": {
-      "text": "*KAI Trading Intelligence*\nWaehle eine Kategorie:",
+      "text": "⬡ *KAI Trading Intelligence*\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━\nWaehle eine Kategorie:",
       "keyboard": [
+        [{"text": "📊 System-Status", "callback_data": "cmd:status"}],
         [
-          {
-            "text": "\ud83d\udcca Status",
-            "callback_data": "cmd:status"
-          }
+          {"text": "📈 Trading", "callback_data": "menu:trading"},
+          {"text": "📡 Signale", "callback_data": "menu:signals"}
         ],
         [
-          {
-            "text": "\ud83d\udcbc Portfolio",
-            "callback_data": "menu:portfolio"
-          },
-          {
-            "text": "\ud83d\udce1 Signale",
-            "callback_data": "menu:signals"
-          }
+          {"text": "🔔 Alerts", "callback_data": "cmd:alertstatus"},
+          {"text": "📋 Tagesbericht", "callback_data": "cmd:tagesbericht"}
         ],
+        [{"text": "📨 Signal senden", "callback_data": "menu:signal_send"}],
         [
-          {
-            "text": "\ud83d\udd14 Alerts",
-            "callback_data": "cmd:alertstatus"
-          },
-          {
-            "text": "\ud83d\udccb Tagesbericht",
-            "callback_data": "cmd:tagesbericht"
-          }
-        ],
-        [
-          {
-            "text": "\ud83d\udce8 Signal senden",
-            "callback_data": "menu:signal_send"
-          }
-        ],
-        [
-          {
-            "text": "\u2699\ufe0f Steuerung",
-            "callback_data": "menu:control"
-          },
-          {
-            "text": "\u2753 Hilfe",
-            "callback_data": "cmd:hilfe"
-          }
+          {"text": "⚙️ Steuerung", "callback_data": "menu:control"},
+          {"text": "❓ Hilfe", "callback_data": "cmd:hilfe"}
         ]
       ]
     },
-    "portfolio": {
-      "text": "*Portfolio* (Paper, read-only)",
+    "trading": {
+      "text": "📈 *Trading*\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━\nPositionen, Exposure und Portfolio.",
       "keyboard": [
         [
-          {
-            "text": "\ud83d\udcc8 Positionen",
-            "callback_data": "cmd:positions"
-          },
-          {
-            "text": "\ud83d\udee1\ufe0f Exposure",
-            "callback_data": "cmd:exposure"
-          }
+          {"text": "💼 Positionen", "callback_data": "cmd:positions"},
+          {"text": "🛡️ Exposure", "callback_data": "cmd:exposure"}
         ],
-        [
-          {
-            "text": "\u2b05\ufe0f Hauptmenue",
-            "callback_data": "menu:main"
-          }
-        ]
+        [{"text": "⬅️ Hauptmenue", "callback_data": "menu:main"}]
       ]
     },
     "signals": {
-      "text": "*Signale*",
+      "text": "📡 *Signale*\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━\nAktive Signale und Pipeline-Status.",
       "keyboard": [
         [
-          {
-            "text": "\ud83d\udce1 Aktive Signale",
-            "callback_data": "cmd:signals"
-          },
-          {
-            "text": "\ud83d\udd04 Pipeline",
-            "callback_data": "cmd:signalstatus"
-          }
+          {"text": "📡 Aktive Signale", "callback_data": "cmd:signals"},
+          {"text": "🔄 Pipeline", "callback_data": "cmd:signalstatus"}
         ],
-        [
-          {
-            "text": "\u2b05\ufe0f Hauptmenue",
-            "callback_data": "menu:main"
-          }
-        ]
+        [{"text": "⬅️ Hauptmenue", "callback_data": "menu:main"}]
       ]
     },
     "signal_send": {
-      "text": "*Signal senden*\n\nSende ein Trading-Signal als Textnachricht:\n`/signal BUY BTC 65000 SL=62000 TP=70000`\n`/signal SELL ETH 3400`\n\nOder sprich ein Signal als Sprachnachricht ein.",
+      "text": "📨 *Signal senden*\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n*Kurzformat:*\n`/signal BUY BTC 65000 SL=62000 TP=70000`\n\n*Strukturiert:*\n`[SIGNAL]`\n`Symbol: BTC/USDT`\n`Side: BUY`\n`Direction: LONG`\n`Entry Rule: BELOW 65000`\n`Targets: 70000`\n`Stop Loss: 62000`\n`Leverage: 10x`\n\nOder sprich ein Signal als Sprachnachricht ein.\n\n📰 *News senden:*\n`[NEWS]`\n`Source: Quelle`\n`Title: Titel`\n`Priority: High`",
       "keyboard": [
-        [
-          {
-            "text": "\u2b05\ufe0f Hauptmenue",
-            "callback_data": "menu:main"
-          }
-        ]
+        [{"text": "⬅️ Hauptmenue", "callback_data": "menu:main"}]
       ]
     },
     "control": {
-      "text": "*Steuerung*",
+      "text": "⚙️ *Steuerung*\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━\nSystem-Kontrolle und Notfall-Aktionen.",
       "keyboard": [
         [
-          {
-            "text": "\u23f8\ufe0f Pause",
-            "callback_data": "cmd:pause"
-          },
-          {
-            "text": "\u25b6\ufe0f Resume",
-            "callback_data": "cmd:resume"
-          }
+          {"text": "⏸️ Pause", "callback_data": "cmd:pause"},
+          {"text": "▶️ Resume", "callback_data": "cmd:resume"}
         ],
-        [
-          {
-            "text": "\u26d4 Notfall-Stopp",
-            "callback_data": "cmd:kill"
-          }
-        ],
-        [
-          {
-            "text": "\u267b\ufe0f Menue neu laden",
-            "callback_data": "cmd:menu_reload"
-          },
-          {
-            "text": "\u2705 Menue pruefen",
-            "callback_data": "cmd:menu_validate"
-          }
-        ],
-        [
-          {
-            "text": "\u2b05\ufe0f Hauptmenue",
-            "callback_data": "menu:main"
-          }
-        ]
+        [{"text": "⛔ Notfall-Stopp", "callback_data": "cmd:kill"}],
+        [{"text": "♻️ Menue neu laden", "callback_data": "cmd:menu_reload"}],
+        [{"text": "⬅️ Hauptmenue", "callback_data": "menu:main"}]
       ]
     }
   }

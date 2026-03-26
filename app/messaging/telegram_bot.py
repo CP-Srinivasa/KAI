@@ -673,7 +673,18 @@ class TelegramOperatorBot:
         asset, symbol, direction, reasoning = normalized
         self._audit(chat_id, "_signal_input", args=json.dumps(signal))
 
-        signal_id = f"sig_{uuid4().hex[:12]}"
+        # Use structured signal_id if present, otherwise generate
+        signal_id = str(signal.get("signal_id", "")) or f"sig_{uuid4().hex[:12]}"
+
+        # Preserve structured signal data if available (from parse_structured_message)
+        structured_data: dict[str, object] = {}
+        if "message_type" in signal:
+            # Full TradingSignal dict — preserve all fields
+            structured_data = {
+                k: v for k, v in signal.items()
+                if k not in {"asset", "direction", "reasoning"}
+            }
+
         handoff_record: dict[str, object] = {
             "timestamp_utc": datetime.now(UTC).isoformat(),
             "event": "telegram_signal_handoff",
@@ -688,6 +699,8 @@ class TelegramOperatorBot:
             "execution_enabled": False,
             "write_back_allowed": False,
         }
+        if structured_data:
+            handoff_record["structured_signal"] = structured_data
 
         # Build formatted signal confirmation via TradingSignal model
         from app.messaging.message_formatter import format_signal_telegram
@@ -705,6 +718,11 @@ class TelegramOperatorBot:
             side=side_map.get(direction, MsgSide.BUY),
             direction=direction_map.get(direction, MsgDirection.NEUTRAL),
             notes=reasoning,
+            # Carry over structured fields if present
+            stop_loss=signal.get("stop_loss") if isinstance(signal.get("stop_loss"), (int, float)) else None,
+            targets=signal.get("targets", []) if isinstance(signal.get("targets"), list) else [],
+            leverage=int(signal.get("leverage", 1)) if signal.get("leverage") else 1,
+            entry_value=signal.get("entry_value") if isinstance(signal.get("entry_value"), (int, float)) else None,
         )
         msg_lines = [format_signal_telegram(sig_obj), ""]
 
@@ -732,6 +750,7 @@ class TelegramOperatorBot:
             handoff_record["decision_append_status"] = "disabled"
             msg_lines.append("Decision-Journal: `disabled`")
 
+        exchange_response_msg: str | None = None
         if self._signal_auto_run_enabled:
             try:
                 cycle_payload = await self._run_signal_cycle(
@@ -753,6 +772,13 @@ class TelegramOperatorBot:
                 handoff_record["signal_auto_run_cycle_status"] = cycle_status
                 handoff_record["signal_auto_run_cycle_id"] = cycle_id
                 msg_lines.append(f"KAI-Run: `ok ({cycle_status})`")
+
+                # Build formatted exchange response from cycle result
+                exchange_response_msg = self._build_exchange_response_from_cycle(
+                    signal_id=signal_id,
+                    symbol=symbol,
+                    cycle=cycle if isinstance(cycle, dict) else {},
+                )
             except Exception as exc:  # noqa: BLE001
                 logger.error("[BOT] Signal auto-run failed: %s", exc)
                 handoff_record["signal_auto_run_status"] = "failed"
@@ -772,6 +798,7 @@ class TelegramOperatorBot:
                     symbol=symbol,
                     direction=direction,
                     reasoning=reasoning,
+                    structured_signal=structured_data or None,
                 )
                 handoff_record["exchange_forward_status"] = "queued"
                 msg_lines.append("Exchange-Forward: `queued`")
@@ -794,6 +821,69 @@ class TelegramOperatorBot:
             msg_lines.append("")
             msg_lines.append(response)
         await self._send(chat_id, "\n".join(msg_lines))
+
+        # Send formatted exchange response as separate message
+        if exchange_response_msg:
+            await self._send(chat_id, exchange_response_msg)
+
+    def _build_exchange_response_from_cycle(
+        self,
+        *,
+        signal_id: str,
+        symbol: str,
+        cycle: dict[str, object],
+    ) -> str | None:
+        """Convert a trading loop cycle result into a formatted exchange response."""
+        from app.messaging.message_formatter import format_exchange_response_telegram
+        from app.messaging.message_models import (
+            ExchangeAction,
+            ExchangeResponse,
+            ResponseStatus,
+        )
+
+        cycle_status = str(cycle.get("status", ""))
+        order_created = cycle.get("order_created", False)
+        fill_simulated = cycle.get("fill_simulated", False)
+        order_id = str(cycle.get("order_id", "")) or ""
+        cycle_id = str(cycle.get("cycle_id", "")) or ""
+
+        # Map cycle status to exchange action + response status
+        if cycle_status == "completed" and fill_simulated:
+            action = ExchangeAction.FILLED
+            status = ResponseStatus.SUCCESS
+        elif cycle_status == "completed" and order_created:
+            action = ExchangeAction.ORDER_CREATED
+            status = ResponseStatus.SUCCESS
+        elif cycle_status == "order_failed":
+            action = ExchangeAction.REJECTED
+            status = ResponseStatus.ERROR
+        elif cycle_status in {"risk_rejected", "size_rejected"}:
+            action = ExchangeAction.REJECTED
+            status = ResponseStatus.ERROR
+        elif cycle_status in {"no_signal", "no_market_data", "stale_data"}:
+            # No trade attempted — no exchange response needed
+            return None
+        elif cycle_status == "error":
+            action = ExchangeAction.ERROR
+            status = ResponseStatus.ERROR
+        else:
+            return None
+
+        notes: list[str] = []
+        if isinstance(cycle.get("notes"), (list, tuple)):
+            notes = [str(n) for n in cycle["notes"]]
+
+        resp = ExchangeResponse(
+            response_id=cycle_id,
+            related_signal_id=signal_id,
+            exchange="kai_paper",
+            symbol=symbol,
+            action=action,
+            status=status,
+            exchange_order_id=order_id,
+            message="; ".join(notes[:3]) if notes else cycle_status,
+        )
+        return format_exchange_response_telegram(resp)
 
     async def _append_decision_from_signal(
         self,
@@ -855,8 +945,9 @@ class TelegramOperatorBot:
         symbol: str,
         direction: str,
         reasoning: str,
+        structured_signal: dict[str, object] | None = None,
     ) -> None:
-        record = {
+        record: dict[str, object] = {
             "timestamp_utc": datetime.now(UTC).isoformat(),
             "event": "telegram_signal_exchange_forward_queued",
             "signal_id": signal_id,
@@ -871,6 +962,8 @@ class TelegramOperatorBot:
             "execution_enabled": False,
             "write_back_allowed": False,
         }
+        if structured_signal:
+            record["structured_signal"] = structured_signal
         self._append_jsonl(self._signal_exchange_outbox_log_path, record)
 
     @staticmethod
