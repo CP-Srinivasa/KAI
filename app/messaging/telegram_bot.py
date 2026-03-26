@@ -57,7 +57,7 @@ _READ_ONLY_COMMANDS = frozenset(
 )
 _GUARDED_AUDIT_COMMANDS = frozenset({"approve", "reject"})
 _DECISION_REF_PATTERN = re.compile(r"^dec_[0-9a-f]{12}$")
-_WEBHOOK_ALLOWED_UPDATES_DEFAULT = ("message", "edited_message")
+_WEBHOOK_ALLOWED_UPDATES_DEFAULT = ("message", "edited_message", "callback_query")
 _WEBHOOK_MAX_BODY_BYTES_DEFAULT = 64_000
 _WEBHOOK_MAX_SEEN_UPDATE_IDS_DEFAULT = 2_048
 _WEBHOOK_REJECTION_AUDIT_LOG_DEFAULT = "artifacts/telegram_webhook_rejections.jsonl"
@@ -434,8 +434,14 @@ class TelegramOperatorBot:
         )
 
     async def process_update(self, update: dict[str, Any]) -> None:
-        """Process a single Telegram update (commands, free text, voice)."""
+        """Process a single Telegram update (commands, free text, voice, callbacks)."""
         try:
+            # Inline keyboard callback queries
+            callback_query = update.get("callback_query")
+            if callback_query:
+                await self._handle_callback_query(callback_query)
+                return
+
             message = update.get("message") or update.get("edited_message")
             if not message:
                 return
@@ -476,7 +482,19 @@ class TelegramOperatorBot:
             logger.error("[BOT] Error processing update: %s", exc)
 
     async def _handle_text(self, chat_id: int, text: str, *, source: str = "text") -> None:
-        """Process free-text messages via LLM intent classification."""
+        """Process free-text messages via LLM intent classification.
+
+        Structured messages with [SIGNAL], [NEWS], or [EXCHANGE_RESPONSE]
+        headers are parsed directly without LLM round-trip.
+        """
+        # Fast path: detect structured message format before LLM
+        from app.messaging.signal_parser import detect_message_type
+
+        msg_type = detect_message_type(text)
+        if msg_type is not None:
+            await self._handle_structured_message(chat_id, text, source=source)
+            return
+
         if self._text_processor is None:
             await self._send(
                 chat_id,
@@ -520,6 +538,95 @@ class TelegramOperatorBot:
 
         # Query or chat Ã¢â€ â€™ direct response
         await self._send(chat_id, result.response)
+
+    async def _handle_structured_message(
+        self,
+        chat_id: int,
+        text: str,
+        *,
+        source: str = "text",
+    ) -> None:
+        """Parse and handle a structured [SIGNAL] / [NEWS] / [EXCHANGE_RESPONSE] message."""
+        from app.messaging.message_formatter import (
+            format_exchange_response_telegram,
+            format_news_telegram,
+            format_signal_telegram,
+        )
+        from app.messaging.message_models import (
+            ExchangeResponse as MsgExchangeResponse,
+        )
+        from app.messaging.message_models import (
+            NewsMessage as MsgNewsMessage,
+        )
+        from app.messaging.message_models import (
+            TradingSignal as MsgTradingSignal,
+        )
+        from app.messaging.signal_parser import SignalParseError, parse_structured_message
+
+        self._audit(chat_id, "_structured_input", args=text[:500])
+
+        try:
+            parsed = parse_structured_message(text)
+        except SignalParseError as exc:
+            await self._send(
+                chat_id,
+                "*Structured-Format Fehler*\n"
+                f"{self._inline(exc)}\n"
+                "Erwartet wird [NEWS], [SIGNAL] oder [EXCHANGE_RESPONSE] mit Feldzeilen.",
+            )
+            return
+
+        if isinstance(parsed, MsgNewsMessage):
+            formatted = format_news_telegram(parsed)
+            await self._send(
+                chat_id,
+                f"{formatted}\n\n"
+                "Analyse-only. NEWS fuehrt nie zu einer Order-Ausfuehrung.",
+            )
+            logger.info("[BOT] Structured NEWS received from %s", chat_id)
+            return
+
+        if isinstance(parsed, MsgTradingSignal):
+            formatted = format_signal_telegram(parsed)
+            validation_errors = parsed.validation_errors
+            if validation_errors:
+                error_lines = "\n".join(
+                    f"- `{self._inline(error)}`" for error in validation_errors[:8]
+                )
+                await self._send(
+                    chat_id,
+                    f"{formatted}\n\n"
+                    "*Signal blockiert (fail-closed)*\n"
+                    "Pflichtfelder fehlen oder sind ungueltig:\n"
+                    f"{error_lines}",
+                )
+                return
+
+            display_symbol = parsed.display_symbol or parsed.symbol
+            asset = display_symbol.split("/", 1)[0] if "/" in display_symbol else display_symbol
+            direction_hint_map = {"long": "bullish", "short": "bearish", "neutral": "neutral"}
+            direction_hint = direction_hint_map.get(parsed.direction.value, "neutral")
+            signal_dict = parsed.to_dict()
+            signal_dict.update(
+                {
+                    "asset": asset,
+                    "direction": direction_hint,
+                    "reasoning": parsed.notes or f"structured_signal:{parsed.signal_id}",
+                }
+            )
+            await self._handle_signal_input(
+                chat_id=chat_id,
+                signal=signal_dict,
+                source=f"structured_{source}",
+                response="",
+            )
+            return
+
+        if isinstance(parsed, MsgExchangeResponse):
+            formatted = format_exchange_response_telegram(parsed)
+            await self._send(chat_id, formatted)
+            logger.info("[BOT] Structured EXCHANGE_RESPONSE received from %s", chat_id)
+            return
 
     async def _handle_voice(self, chat_id: int, voice: dict[str, Any]) -> None:
         """Transcribe a voice message via Whisper, then process as text."""
@@ -582,14 +689,27 @@ class TelegramOperatorBot:
             "write_back_allowed": False,
         }
 
-        msg_lines = [
-            "*Signal empfangen*",
-            f"Asset: `{asset}`",
-            f"Symbol: `{symbol}`",
-            f"Richtung: `{direction}`",
-        ]
-        if reasoning:
-            msg_lines.append(f"Begruendung: {reasoning}")
+        # Build formatted signal confirmation via TradingSignal model
+        from app.messaging.message_formatter import format_signal_telegram
+        from app.messaging.message_models import Direction as MsgDirection
+        from app.messaging.message_models import Side as MsgSide
+        from app.messaging.message_models import TradingSignal as MsgTradingSignal
+
+        direction_map = {"bullish": MsgDirection.LONG, "bearish": MsgDirection.SHORT}
+        side_map = {"bullish": MsgSide.BUY, "bearish": MsgSide.SELL}
+        sig_obj = MsgTradingSignal(
+            signal_id=signal_id,
+            source=source,
+            symbol=symbol.replace("/", ""),
+            display_symbol=symbol,
+            side=side_map.get(direction, MsgSide.BUY),
+            direction=direction_map.get(direction, MsgDirection.NEUTRAL),
+            notes=reasoning,
+        )
+        msg_lines = [format_signal_telegram(sig_obj), ""]
+
+        # Pipeline status lines
+        msg_lines.append("*Pipeline*")
 
         if self._signal_append_decision_enabled:
             try:
@@ -826,6 +946,13 @@ class TelegramOperatorBot:
             "signal": self._cmd_signal,
             "help": self._cmd_help,
             "hilfe": self._cmd_help,
+            "start": self._cmd_menu,
+            "menu": self._cmd_menu,
+            "menue": self._cmd_menu,
+            "menu_reload": self._cmd_menu_reload,
+            "menue_reload": self._cmd_menu_reload,
+            "menu_validate": self._cmd_menu_validate,
+            "menue_validate": self._cmd_menu_validate,
         }
         handler = handlers.get(command)
         if handler is None:
@@ -1291,10 +1418,165 @@ class TelegramOperatorBot:
             "/reject dec\\_xxx - Ablehnung\n"
             "/pause - Alles pausieren\n"
             "/resume - Fortsetzen\n"
-            "/kill - Notfall-Stopp\n"
+            "/kill - Notfall-Stopp\n\n"
+            "/menu - Interaktives Menue\n"
+            "/menu_reload - Menue neu laden\n"
+            "/menu_validate - Menue pruefen\n"
             "/hilfe - Diese Nachricht"
         )
         await self._send(chat_id, msg)
+
+    async def _cmd_menu(self, chat_id: int, *, args: str = "") -> None:
+        """Show the interactive inline keyboard main menu."""
+        await self._send_menu(chat_id, "main")
+
+    async def _cmd_menu_reload(self, chat_id: int, *, args: str = "") -> None:
+        """Clear menu cache and reload menu config from disk."""
+        from app.messaging.telegram_menu import clear_menu_cache
+
+        clear_menu_cache()
+        await self._send(
+            chat_id,
+            "*Menue neu geladen.*\n"
+            "Die Konfiguration wurde aus der Datei neu eingelesen.",
+        )
+
+    async def _cmd_menu_validate(self, chat_id: int, *, args: str = "") -> None:
+        """Validate menu config file and report diagnostics."""
+        from app.messaging.telegram_menu import validate_menu_config
+
+        validation = validate_menu_config()
+        status = "OK" if validation.get("is_valid") else "FEHLER"
+        source = self._inline(validation.get("source", "unknown"))
+        menu_count = self._inline(validation.get("menu_count", 0))
+        error_count = self._inline(validation.get("error_count", 0))
+        warning_count = self._inline(validation.get("warning_count", 0))
+        path = self._inline(validation.get("path", "unknown"))
+
+        lines = [
+            "*Menue-Validierung*",
+            f"Status: `{status}`",
+            f"Quelle: `{source}`",
+            f"Menues: `{menu_count}`",
+            f"Warnungen: `{warning_count}` | Fehler: `{error_count}`",
+            f"Pfad: `{path}`",
+        ]
+
+        warnings_raw = validation.get("warnings", [])
+        warnings = warnings_raw if isinstance(warnings_raw, list) else []
+        if warnings:
+            lines.append("")
+            lines.append("*Warnungen:*")
+            for warning in warnings[:5]:
+                lines.append(f"- {self._inline(warning)}")
+            if len(warnings) > 5:
+                lines.append(f"- ... +{len(warnings) - 5} weitere")
+
+        errors_raw = validation.get("errors", [])
+        errors = errors_raw if isinstance(errors_raw, list) else []
+        if errors:
+            lines.append("")
+            lines.append("*Fehler:*")
+            for error in errors[:5]:
+                lines.append(f"- {self._inline(error)}")
+            if len(errors) > 5:
+                lines.append(f"- ... +{len(errors) - 5} weitere")
+
+        await self._send(chat_id, "\n".join(lines))
+
+    # ------------------------------------------------------------------
+    # Inline keyboard menu system
+    # ------------------------------------------------------------------
+
+    async def _send_menu(
+        self,
+        chat_id: int,
+        menu_id: str,
+        *,
+        message_id: int | None = None,
+    ) -> bool:
+        """Send or edit a menu message with inline keyboard buttons."""
+        from app.messaging.telegram_menu import build_inline_keyboard, get_menu
+
+        menu = get_menu(menu_id)
+        if menu is None:
+            logger.warning("[BOT] Unknown menu: %s", menu_id)
+            return False
+
+        keyboard = build_inline_keyboard(menu_id)
+        if self._dry_run:
+            logger.info("[BOT DRY RUN] Menu %s to %s", menu_id, chat_id)
+            return True
+        if not self._token:
+            return False
+
+        if message_id:
+            # Edit existing message to show new menu (no flicker)
+            url = f"{_TELEGRAM_API_BASE}/bot{self._token}/editMessageText"
+            payload: dict[str, Any] = {
+                "chat_id": chat_id,
+                "message_id": message_id,
+                "text": menu["text"],
+                "parse_mode": "Markdown",
+                "reply_markup": keyboard,
+            }
+        else:
+            # Send new message with menu
+            url = f"{_TELEGRAM_API_BASE}/bot{self._token}/sendMessage"
+            payload = {
+                "chat_id": chat_id,
+                "text": menu["text"],
+                "parse_mode": "Markdown",
+                "reply_markup": keyboard,
+            }
+
+        return await self._send_payload_with_retry(url, payload)
+
+    async def _handle_callback_query(self, callback_query: dict[str, Any]) -> None:
+        """Handle inline keyboard button presses."""
+        query_id = callback_query.get("id", "")
+        data = callback_query.get("data", "")
+        user = callback_query.get("from", {})
+        chat_id = user.get("id")
+        message = callback_query.get("message", {})
+        message_id = message.get("message_id")
+
+        if not chat_id or not data:
+            await self._answer_callback_query(query_id)
+            return
+
+        # Auth gate
+        if chat_id not in self._admin_ids:
+            await self._answer_callback_query(query_id, text="Nicht autorisiert.")
+            return
+
+        self._audit(chat_id, "_callback", args=data)
+
+        if data.startswith("menu:"):
+            menu_id = data[5:]
+            await self._send_menu(chat_id, menu_id, message_id=message_id)
+            await self._answer_callback_query(query_id)
+        elif data.startswith("cmd:"):
+            command = data[4:]
+            await self._answer_callback_query(query_id)
+            await self._dispatch(chat_id, command)
+        else:
+            await self._answer_callback_query(query_id, text="Unbekannte Aktion.")
+
+    async def _answer_callback_query(
+        self,
+        callback_query_id: str,
+        *,
+        text: str | None = None,
+    ) -> bool:
+        """Acknowledge a callback query (removes loading indicator)."""
+        if self._dry_run or not self._token:
+            return True
+        url = f"{_TELEGRAM_API_BASE}/bot{self._token}/answerCallbackQuery"
+        payload: dict[str, Any] = {"callback_query_id": callback_query_id}
+        if text:
+            payload["text"] = text
+        return await self._send_payload_with_retry(url, payload)
 
     async def _send(self, chat_id: int, text: str) -> bool:
         if self._dry_run:
@@ -1417,11 +1699,16 @@ class TelegramPoller:
         async with httpx.AsyncClient(timeout=self._long_poll_timeout + 10) as client:
             while self._running:
                 try:
-                    resp = await client.get(
+                    resp = await client.post(
                         url,
-                        params={
+                        json={
                             "offset": self._offset,
                             "timeout": self._long_poll_timeout,
+                            "allowed_updates": [
+                                "message",
+                                "edited_message",
+                                "callback_query",
+                            ],
                         },
                     )
                     if resp.status_code != 200:

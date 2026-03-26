@@ -135,6 +135,250 @@ async def test_unknown_command(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_menu_command_routes_to_main_menu(tmp_path, monkeypatch):
+    bot = _bot(tmp_path)
+    calls: list[tuple[int, str, int | None]] = []
+
+    async def fake_send_menu(chat_id: int, menu_id: str, *, message_id: int | None = None) -> bool:
+        calls.append((chat_id, menu_id, message_id))
+        return True
+
+    monkeypatch.setattr(bot, "_send_menu", fake_send_menu)
+
+    await bot.process_update({"message": {"chat": {"id": 12345}, "text": "/menu"}})
+
+    assert calls == [(12345, "main", None)]
+
+
+@pytest.mark.asyncio
+async def test_menu_alias_menue_routes_to_main_menu(tmp_path, monkeypatch):
+    bot = _bot(tmp_path)
+    calls: list[tuple[int, str, int | None]] = []
+
+    async def fake_send_menu(chat_id: int, menu_id: str, *, message_id: int | None = None) -> bool:
+        calls.append((chat_id, menu_id, message_id))
+        return True
+
+    monkeypatch.setattr(bot, "_send_menu", fake_send_menu)
+
+    await bot.process_update({"message": {"chat": {"id": 12345}, "text": "/menue"}})
+
+    assert calls == [(12345, "main", None)]
+
+
+@pytest.mark.asyncio
+async def test_menu_reload_command_clears_cache_and_confirms(tmp_path, monkeypatch):
+    bot = _bot(tmp_path)
+    sent_messages: list[str] = []
+    clear_calls = 0
+
+    def fake_clear_menu_cache() -> None:
+        nonlocal clear_calls
+        clear_calls += 1
+
+    async def fake_send(_chat_id: int, text: str) -> bool:
+        sent_messages.append(text)
+        return True
+
+    monkeypatch.setattr("app.messaging.telegram_menu.clear_menu_cache", fake_clear_menu_cache)
+    monkeypatch.setattr(bot, "_send", fake_send)
+
+    await bot.process_update({"message": {"chat": {"id": 12345}, "text": "/menu_reload"}})
+
+    assert clear_calls == 1
+    assert len(sent_messages) == 1
+    assert "Menue neu geladen" in sent_messages[0]
+
+
+@pytest.mark.asyncio
+async def test_menu_reload_alias_menue_reload_clears_cache(tmp_path, monkeypatch):
+    bot = _bot(tmp_path)
+    clear_calls = 0
+
+    def fake_clear_menu_cache() -> None:
+        nonlocal clear_calls
+        clear_calls += 1
+
+    async def fake_send(_chat_id: int, _text: str) -> bool:
+        return True
+
+    monkeypatch.setattr("app.messaging.telegram_menu.clear_menu_cache", fake_clear_menu_cache)
+    monkeypatch.setattr(bot, "_send", fake_send)
+
+    await bot.process_update({"message": {"chat": {"id": 12345}, "text": "/menue_reload"}})
+
+    assert clear_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_menu_validate_command_reports_status(tmp_path, monkeypatch):
+    bot = _bot(tmp_path)
+    sent_messages: list[str] = []
+
+    def fake_validate_menu_config() -> dict[str, object]:
+        return {
+            "path": "config/telegram_menu.json",
+            "source": "json",
+            "is_valid": True,
+            "menu_count": 5,
+            "warning_count": 0,
+            "error_count": 0,
+            "warnings": [],
+            "errors": [],
+        }
+
+    async def fake_send(_chat_id: int, text: str) -> bool:
+        sent_messages.append(text)
+        return True
+
+    monkeypatch.setattr(
+        "app.messaging.telegram_menu.validate_menu_config",
+        fake_validate_menu_config,
+    )
+    monkeypatch.setattr(bot, "_send", fake_send)
+
+    await bot.process_update({"message": {"chat": {"id": 12345}, "text": "/menu_validate"}})
+
+    assert len(sent_messages) == 1
+    assert "Menue-Validierung" in sent_messages[0]
+    assert "Status: `OK`" in sent_messages[0]
+    assert "Menues: `5`" in sent_messages[0]
+
+
+@pytest.mark.asyncio
+async def test_menu_validate_alias_menue_validate_routes_to_validator(tmp_path, monkeypatch):
+    bot = _bot(tmp_path)
+    validate_calls = 0
+
+    def fake_validate_menu_config() -> dict[str, object]:
+        nonlocal validate_calls
+        validate_calls += 1
+        return {
+            "path": "config/telegram_menu.json",
+            "source": "json",
+            "is_valid": False,
+            "menu_count": 0,
+            "warning_count": 0,
+            "error_count": 1,
+            "warnings": [],
+            "errors": ["menu_config_read_failed"],
+        }
+
+    async def fake_send(_chat_id: int, _text: str) -> bool:
+        return True
+
+    monkeypatch.setattr(
+        "app.messaging.telegram_menu.validate_menu_config",
+        fake_validate_menu_config,
+    )
+    monkeypatch.setattr(bot, "_send", fake_send)
+
+    await bot.process_update({"message": {"chat": {"id": 12345}, "text": "/menue_validate"}})
+
+    assert validate_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_callback_menu_navigation_edits_existing_menu(tmp_path, monkeypatch):
+    bot = _bot(tmp_path)
+    menu_calls: list[tuple[int, str, int | None]] = []
+    ack_calls: list[tuple[str, str | None]] = []
+
+    async def fake_send_menu(chat_id: int, menu_id: str, *, message_id: int | None = None) -> bool:
+        menu_calls.append((chat_id, menu_id, message_id))
+        return True
+
+    async def fake_answer_callback_query(
+        callback_query_id: str, *, text: str | None = None
+    ) -> bool:
+        ack_calls.append((callback_query_id, text))
+        return True
+
+    monkeypatch.setattr(bot, "_send_menu", fake_send_menu)
+    monkeypatch.setattr(bot, "_answer_callback_query", fake_answer_callback_query)
+
+    await bot.process_update(
+        {
+            "callback_query": {
+                "id": "cbq-menu-1",
+                "from": {"id": 12345},
+                "data": "menu:signals",
+                "message": {"message_id": 77},
+            }
+        }
+    )
+
+    assert menu_calls == [(12345, "signals", 77)]
+    assert ack_calls == [("cbq-menu-1", None)]
+
+
+@pytest.mark.asyncio
+async def test_callback_command_dispatches_and_acks(tmp_path, monkeypatch):
+    bot = _bot(tmp_path)
+    dispatch_calls: list[tuple[int, str, str]] = []
+    ack_calls: list[tuple[str, str | None]] = []
+
+    async def fake_dispatch(chat_id: int, command: str, *, args: str = "") -> None:
+        dispatch_calls.append((chat_id, command, args))
+
+    async def fake_answer_callback_query(
+        callback_query_id: str, *, text: str | None = None
+    ) -> bool:
+        ack_calls.append((callback_query_id, text))
+        return True
+
+    monkeypatch.setattr(bot, "_dispatch", fake_dispatch)
+    monkeypatch.setattr(bot, "_answer_callback_query", fake_answer_callback_query)
+
+    await bot.process_update(
+        {
+            "callback_query": {
+                "id": "cbq-cmd-1",
+                "from": {"id": 12345},
+                "data": "cmd:status",
+                "message": {"message_id": 88},
+            }
+        }
+    )
+
+    assert dispatch_calls == [(12345, "status", "")]
+    assert ack_calls == [("cbq-cmd-1", None)]
+
+
+@pytest.mark.asyncio
+async def test_callback_query_rejects_unauthorized_user(tmp_path, monkeypatch):
+    bot = _bot(tmp_path)
+    ack_calls: list[tuple[str, str | None]] = []
+    dispatch_calls: list[tuple[int, str]] = []
+
+    async def fake_answer_callback_query(
+        callback_query_id: str, *, text: str | None = None
+    ) -> bool:
+        ack_calls.append((callback_query_id, text))
+        return True
+
+    async def fake_dispatch(chat_id: int, command: str, *, args: str = "") -> None:
+        dispatch_calls.append((chat_id, command))
+
+    monkeypatch.setattr(bot, "_answer_callback_query", fake_answer_callback_query)
+    monkeypatch.setattr(bot, "_dispatch", fake_dispatch)
+
+    await bot.process_update(
+        {
+            "callback_query": {
+                "id": "cbq-unauth-1",
+                "from": {"id": 99999},
+                "data": "cmd:status",
+                "message": {"message_id": 99},
+            }
+        }
+    )
+
+    assert ack_calls == [("cbq-unauth-1", "Nicht autorisiert.")]
+    assert dispatch_calls == []
+
+
+@pytest.mark.asyncio
 async def test_is_not_configured_without_token():
     bot = TelegramOperatorBot(
         bot_token="",
@@ -773,11 +1017,50 @@ async def test_webhook_disallowed_update_type_is_rejected(tmp_path, monkeypatch)
         content_type="application/json",
         content_length=64,
         header_secret_token="secret-token",
-        update={"update_id": 13, "callback_query": {"id": "cbq-1"}},
+        update={
+            "update_id": 13,
+            "channel_post": {"chat": {"id": 12345}, "text": "/status"},
+        },
     )
 
     assert result.accepted is False
     assert result.rejection_reason == "disallowed_update_type"
+
+
+@pytest.mark.asyncio
+async def test_webhook_callback_query_is_accepted_when_allowed(tmp_path, monkeypatch):
+    bot = _bot(
+        tmp_path,
+        webhook_secret_token="secret-token",
+        webhook_rejection_audit_log=str(tmp_path / "webhook_rejections.jsonl"),
+    )
+    callback_calls: list[dict[str, Any]] = []
+
+    async def fake_handle_callback_query(callback_query: dict[str, Any]) -> None:
+        callback_calls.append(callback_query)
+
+    monkeypatch.setattr(bot, "_handle_callback_query", fake_handle_callback_query)
+
+    result = await bot.process_webhook_update(
+        method="POST",
+        content_type="application/json",
+        content_length=64,
+        header_secret_token="secret-token",
+        update={
+            "update_id": 14,
+            "callback_query": {
+                "id": "cbq-1",
+                "from": {"id": 12345},
+                "data": "cmd:status",
+                "message": {"message_id": 77},
+            },
+        },
+    )
+
+    assert result.accepted is True
+    assert result.processed is True
+    assert result.update_type == "callback_query"
+    assert callback_calls[0]["id"] == "cbq-1"
 
 
 @pytest.mark.asyncio
@@ -923,6 +1206,145 @@ class _FakeTextProcessor:
 
 
 @pytest.mark.asyncio
+async def test_structured_news_is_handled_without_text_processor(tmp_path, monkeypatch):
+    bot = _bot(tmp_path)
+    sent: list[str] = []
+
+    async def fake_send(_cid: int, text: str) -> bool:
+        sent.append(text)
+        return True
+
+    monkeypatch.setattr(bot, "_send", fake_send)
+
+    update = {
+        "message": {
+            "chat": {"id": 12345},
+            "text": (
+                "[NEWS]\n"
+                "Source: Premium Signals\n"
+                "Title: Macro pressure remains elevated\n"
+                "Message: No execution signal.\n"
+            ),
+        }
+    }
+    await bot.process_update(update)
+
+    assert len(sent) == 1
+    assert "NEWS" in sent[0]
+    assert "Analyse-only" in sent[0]
+
+
+@pytest.mark.asyncio
+async def test_structured_signal_fail_closed_on_missing_required_fields(tmp_path, monkeypatch):
+    bot = _bot(tmp_path)
+    sent: list[str] = []
+
+    async def fake_send(_cid: int, text: str) -> bool:
+        sent.append(text)
+        return True
+
+    async def should_not_handoff(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("invalid structured signal must not be handed off")
+
+    monkeypatch.setattr(bot, "_send", fake_send)
+    monkeypatch.setattr(bot, "_handle_signal_input", should_not_handoff)
+
+    update = {
+        "message": {
+            "chat": {"id": 12345},
+            "text": "[SIGNAL]\nSymbol: BTC/USDT\nDirection: LONG\n",
+        }
+    }
+    await bot.process_update(update)
+
+    assert len(sent) == 1
+    assert "Signal blockiert" in sent[0]
+    assert "missing_source" in sent[0]
+
+
+@pytest.mark.asyncio
+async def test_structured_signal_is_handed_off_when_valid(tmp_path, monkeypatch):
+    bot = _bot(tmp_path)
+    handoff_calls: list[dict[str, object]] = []
+
+    async def fake_handoff(
+        *,
+        chat_id: int,
+        signal: dict[str, object],
+        source: str,
+        response: str,
+    ) -> None:
+        handoff_calls.append(
+            {
+                "chat_id": chat_id,
+                "signal": signal,
+                "source": source,
+                "response": response,
+            }
+        )
+
+    monkeypatch.setattr(bot, "_handle_signal_input", fake_handoff)
+
+    update = {
+        "message": {
+            "chat": {"id": 12345},
+            "text": (
+                "[SIGNAL]\n"
+                "Source: Premium Signals\n"
+                "Exchange Scope: Binance Futures, Bybit\n"
+                "Symbol: BTC/USDT\n"
+                "Direction: LONG\n"
+                "Targets: 72800\n"
+                "Stop Loss: 76600\n"
+                "Entry Rule: BELOW 74700\n"
+            ),
+        }
+    }
+    await bot.process_update(update)
+
+    assert len(handoff_calls) == 1
+    payload = handoff_calls[0]
+    assert payload["chat_id"] == 12345
+    assert payload["source"] == "structured_text"
+    signal_payload = payload["signal"]
+    assert isinstance(signal_payload, dict)
+    assert signal_payload["asset"] == "BTC"
+    assert signal_payload["direction"] == "bullish"
+
+
+@pytest.mark.asyncio
+async def test_structured_exchange_response_is_displayed_without_text_processor(
+    tmp_path, monkeypatch
+):
+    bot = _bot(tmp_path)
+    sent: list[str] = []
+
+    async def fake_send(_cid: int, text: str) -> bool:
+        sent.append(text)
+        return True
+
+    monkeypatch.setattr(bot, "_send", fake_send)
+
+    update = {
+        "message": {
+            "chat": {"id": 12345},
+            "text": (
+                "[EXCHANGE_RESPONSE]\n"
+                "Exchange: Bybit\n"
+                "Symbol: BTC/USDT\n"
+                "Action: ORDER_CREATED\n"
+                "Status: SUCCESS\n"
+            ),
+        }
+    }
+    await bot.process_update(update)
+
+    assert len(sent) == 1
+    assert "EXCHANGE RESPONSE" in sent[0]
+    assert "Bybit" in sent[0]
+
+
+@pytest.mark.asyncio
 async def test_freetext_without_processor_gives_fallback(tmp_path, monkeypatch):
     """Bot without text_processor should tell user to use /help."""
     bot = _bot(tmp_path)  # no text_processor
@@ -965,9 +1387,9 @@ async def test_freetext_signal_is_audited_and_confirmed(tmp_path, monkeypatch):
 
     assert proc.calls == ["Signal: BTC bullish"]
     assert len(sent) == 1
-    assert "Signal empfangen" in sent[0]
+    assert "SIGNAL" in sent[0]
     assert "BTC" in sent[0]
-    assert "bullish" in sent[0]
+    assert "Pipeline" in sent[0]
 
     # Audit log should have both _text and _signal_input entries
     audit = (tmp_path / "cmd_audit.jsonl").read_text(encoding="utf-8").splitlines()
@@ -1229,7 +1651,7 @@ async def test_voice_signal_handoff_marks_source_voice(tmp_path, monkeypatch):
 
     assert len(sent) == 2
     assert "Transkript:" in sent[0]
-    assert "Signal empfangen" in sent[1]
+    assert "SIGNAL" in sent[1]
 
     handoff_rows = [
         json.loads(line)

@@ -66,6 +66,40 @@ async def test_run_trading_loop_once_shadow_mode_is_allowed(tmp_path: Path) -> N
 
 
 @pytest.mark.asyncio
+async def test_run_trading_loop_once_bearish_without_position_is_order_failed(
+    tmp_path: Path,
+) -> None:
+    loop_audit = tmp_path / "loop_bearish.jsonl"
+    execution_audit = tmp_path / "execution_bearish.jsonl"
+
+    cycle = await run_trading_loop_once(
+        symbol="ETH/USDT",
+        mode="paper",
+        provider="mock",
+        analysis_profile="bearish",
+        loop_audit_path=loop_audit,
+        execution_audit_path=execution_audit,
+    )
+
+    assert cycle.status == CycleStatus.ORDER_FAILED
+    assert cycle.market_data_fetched is True
+    assert cycle.signal_generated is True
+    assert cycle.risk_approved is True
+    assert cycle.order_created is True
+    assert cycle.fill_simulated is False
+    assert "fill_not_simulated" in cycle.notes
+
+    assert execution_audit.exists()
+    exec_rows = [
+        json.loads(line)
+        for line in execution_audit.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    assert len(exec_rows) == 1
+    assert exec_rows[0]["event_type"] == "order_created"
+
+
+@pytest.mark.asyncio
 async def test_run_trading_loop_once_rejects_live_mode_fail_closed(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="allowed: paper, shadow"):
         await run_trading_loop_once(

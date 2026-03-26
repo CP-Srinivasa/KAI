@@ -101,6 +101,25 @@ def _weak_analysis() -> AnalysisResult:
     )
 
 
+def _strong_bearish_analysis(document_id: str = "doc_bear_001") -> AnalysisResult:
+    """Bearish analysis that passes filters and attempts a short/sell order."""
+    return AnalysisResult(
+        document_id=document_id,
+        sentiment_label=SentimentLabel.BEARISH,
+        sentiment_score=-0.85,
+        relevance_score=0.90,
+        impact_score=0.80,
+        confidence_score=0.85,
+        novelty_score=0.70,
+        actionable=True,
+        affected_assets=["ETH", "ETH/USDT"],
+        tags=["bearish", "risk-off"],
+        spam_probability=0.02,
+        explanation_short="Bearish macro pressure on ETH.",
+        explanation_long="Detailed bearish reasoning.",
+    )
+
+
 # ── LoopCycle model ───────────────────────────────────────────────────────────
 
 
@@ -174,6 +193,26 @@ async def test_run_cycle_audit_written(tmp_path):
     assert record["cycle_id"] == cycle.cycle_id
     assert record["symbol"] == "BTC/USDT"
     assert record["status"] == CycleStatus.COMPLETED.value
+
+
+@pytest.mark.asyncio
+async def test_run_cycle_unfilled_order_is_order_failed(tmp_path):
+    loop = _loop(tmp_path)
+    cycle = await loop.run_cycle(_strong_bearish_analysis(), "ETH/USDT")
+
+    assert cycle.status == CycleStatus.ORDER_FAILED
+    assert cycle.market_data_fetched
+    assert cycle.signal_generated
+    assert cycle.risk_approved
+    assert cycle.order_created
+    assert not cycle.fill_simulated
+    assert cycle.order_id is not None
+    assert "fill_not_simulated" in cycle.notes
+    assert loop.portfolio.trade_count == 0
+
+    audit_path = tmp_path / "loop_audit.jsonl"
+    record = json.loads(audit_path.read_text().strip().splitlines()[-1])
+    assert record["status"] == CycleStatus.ORDER_FAILED.value
 
 
 @pytest.mark.asyncio

@@ -233,6 +233,27 @@ class TradingLoop:
             await self._write_db(cycle)
             return cycle
 
+        # Fail-closed: an unfilled order must not be reported as completed.
+        if fill is None:
+            notes.append("fill_not_simulated")
+            cycle = self._build_cycle(
+                cycle_id,
+                started_at,
+                symbol,
+                CycleStatus.ORDER_FAILED,
+                market_data_fetched=True,
+                signal_generated=True,
+                risk_approved=True,
+                order_created=order is not None,
+                fill_simulated=False,
+                decision_id=signal.decision_id,
+                risk_check_id=risk_result.check_id,
+                order_id=order.order_id if order else None,
+                notes=notes,
+            )
+            await self._write_db(cycle)
+            return cycle
+
         self._risk.update_daily_loss(
             realized_pnl_usd=self._exec.portfolio.realized_pnl_usd,
             equity=equity,

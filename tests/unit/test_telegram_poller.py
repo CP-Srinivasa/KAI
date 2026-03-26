@@ -99,7 +99,7 @@ class TestTelegramPollerPollLoop:
 
         call_count = 0
 
-        async def fake_get(url, params=None):
+        async def fake_post(url, json=None):
             nonlocal call_count
             call_count += 1
             if call_count == 1:
@@ -116,7 +116,7 @@ class TestTelegramPollerPollLoop:
 
         with patch("httpx.AsyncClient") as mock_client_cls:
             mock_client = AsyncMock()
-            mock_client.get = fake_get
+            mock_client.post = fake_post
             mock_client.__aenter__ = AsyncMock(return_value=mock_client)
             mock_client.__aexit__ = AsyncMock(return_value=False)
             mock_client_cls.return_value = mock_client
@@ -135,7 +135,7 @@ class TestTelegramPollerPollLoop:
 
         call_count = 0
 
-        async def fake_get(url, params=None):
+        async def fake_post(url, json=None):
             nonlocal call_count
             call_count += 1
             if call_count == 1:
@@ -155,7 +155,7 @@ class TestTelegramPollerPollLoop:
 
         with patch("httpx.AsyncClient") as mock_client_cls:
             mock_client = AsyncMock()
-            mock_client.get = fake_get
+            mock_client.post = fake_post
             mock_client.__aenter__ = AsyncMock(return_value=mock_client)
             mock_client.__aexit__ = AsyncMock(return_value=False)
             mock_client_cls.return_value = mock_client
@@ -171,12 +171,12 @@ class TestTelegramPollerPollLoop:
         bot = _make_bot()
         poller = TelegramPoller(bot, poll_interval=0.01, long_poll_timeout=1)
 
-        async def fake_get(url, params=None):
+        async def fake_post(url, json=None):
             raise asyncio.CancelledError()
 
         with patch("httpx.AsyncClient") as mock_client_cls:
             mock_client = AsyncMock()
-            mock_client.get = fake_get
+            mock_client.post = fake_post
             mock_client.__aenter__ = AsyncMock(return_value=mock_client)
             mock_client.__aexit__ = AsyncMock(return_value=False)
             mock_client_cls.return_value = mock_client
@@ -191,7 +191,7 @@ class TestTelegramPollerPollLoop:
 
         call_count = 0
 
-        async def fake_get(url, params=None):
+        async def fake_post(url, json=None):
             nonlocal call_count
             call_count += 1
             if call_count == 1:
@@ -204,7 +204,7 @@ class TestTelegramPollerPollLoop:
 
         with patch("httpx.AsyncClient") as mock_client_cls:
             mock_client = AsyncMock()
-            mock_client.get = fake_get
+            mock_client.post = fake_post
             mock_client.__aenter__ = AsyncMock(return_value=mock_client)
             mock_client.__aexit__ = AsyncMock(return_value=False)
             mock_client_cls.return_value = mock_client
@@ -238,7 +238,7 @@ class TestTelegramPollerPollLoop:
         async def _fake_sleep(seconds: float) -> None:
             sleeps.append(seconds)
 
-        async def fake_get(url, params=None):
+        async def fake_post(url, json=None):
             nonlocal call_count
             call_count += 1
             if call_count == 1:
@@ -249,7 +249,7 @@ class TestTelegramPollerPollLoop:
         monkeypatch.setattr("app.messaging.telegram_bot.asyncio.sleep", _fake_sleep)
         with patch("httpx.AsyncClient") as mock_client_cls:
             mock_client = AsyncMock()
-            mock_client.get = fake_get
+            mock_client.post = fake_post
             mock_client.__aenter__ = AsyncMock(return_value=mock_client)
             mock_client.__aexit__ = AsyncMock(return_value=False)
             mock_client_cls.return_value = mock_client
@@ -284,7 +284,7 @@ class TestTelegramPollerPollLoop:
         async def _fake_sleep(seconds: float) -> None:
             sleeps.append(seconds)
 
-        async def fake_get(url, params=None):
+        async def fake_post(url, json=None):
             nonlocal call_count
             call_count += 1
             if call_count == 1:
@@ -295,7 +295,7 @@ class TestTelegramPollerPollLoop:
         monkeypatch.setattr("app.messaging.telegram_bot.asyncio.sleep", _fake_sleep)
         with patch("httpx.AsyncClient") as mock_client_cls:
             mock_client = AsyncMock()
-            mock_client.get = fake_get
+            mock_client.post = fake_post
             mock_client.__aenter__ = AsyncMock(return_value=mock_client)
             mock_client.__aexit__ = AsyncMock(return_value=False)
             mock_client_cls.return_value = mock_client
