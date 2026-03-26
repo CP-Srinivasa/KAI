@@ -1345,8 +1345,8 @@ async def test_structured_exchange_response_is_displayed_without_text_processor(
     await bot.process_update(update)
 
     assert len(sent) == 1
-    assert "EXCHANGE RESPONSE" in sent[0]
-    assert "Bybit" in sent[0]
+    assert "Ausgef\u00fchrt" in sent[0]
+    assert "BTC/USDT" in sent[0]
 
 
 @pytest.mark.asyncio
@@ -1464,10 +1464,8 @@ async def test_freetext_signal_is_audited_and_confirmed(tmp_path, monkeypatch):
     await bot.process_update(update)
 
     assert proc.calls == ["Signal: BTC bullish"]
-    assert len(sent) == 1
-    assert "SIGNAL" in sent[0]
-    assert "BTC" in sent[0]
-    assert "Pipeline" in sent[0]
+    # With auto_run disabled, no Telegram message is sent (pipeline only logged)
+    assert len(sent) == 0
 
     # Audit log should have both _text and _signal_input entries
     audit = (tmp_path / "cmd_audit.jsonl").read_text(encoding="utf-8").splitlines()
@@ -1521,10 +1519,9 @@ async def test_freetext_signal_handoff_pipeline_with_optional_routes(tmp_path, m
     update = {"message": {"chat": {"id": 12345}, "text": "Signal: BTC long"}}
     await bot.process_update(update)
 
+    # Cycle returns no_signal → no exchange response → failure confirmation
     assert len(sent) == 1
-    assert "Decision-Journal: `ok (dec_123456abcdef)`" in sent[0]
-    assert "KAI-Run: `ok (no_signal)`" in sent[0]
-    assert "Exchange-Forward: `queued`" in sent[0]
+    assert "Nicht Ausgef\u00fchrt" in sent[0]
 
     handoff_rows = [
         json.loads(line)
@@ -1744,9 +1741,9 @@ async def test_voice_signal_handoff_marks_source_voice(tmp_path, monkeypatch):
     }
     await bot.process_update(update)
 
-    assert len(sent) == 2
+    # Voice: transcript message only, no pipeline report (auto_run disabled)
+    assert len(sent) == 1
     assert "Transkript:" in sent[0]
-    assert "SIGNAL" in sent[1]
 
     handoff_rows = [
         json.loads(line)

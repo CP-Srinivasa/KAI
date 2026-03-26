@@ -33,72 +33,72 @@ def format_news_telegram(msg: NewsMessage) -> str:
 
 
 def format_signal_telegram(sig: TradingSignal) -> str:
-    lines = ["\U0001F4E1 *SIGNAL*", ""]
-    lines.append(f"ID: `{sig.signal_id}`")
-    lines.append(f"Type: {sig.market_type.value.capitalize()}")
-    lines.append(f"Symbol: `{sig.display_symbol or sig.symbol}`")
-    lines.append(f"Side: {sig.side.value.upper()}")
-    lines.append(f"Direction: {sig.direction.value.upper()}")
-    lines.append("")
+    """Minimal, exchange-taugliches Signal-Format."""
+    symbol = sig.display_symbol or sig.symbol
+    lines = [f"\U0001F4E1 *SIGNAL* \u2014 `{symbol}`", ""]
 
+    # Side & Direction auf einer Zeile
+    lines.append(f"{sig.side.value.upper()} {sig.direction.value.upper()}")
+
+    # Entry
     if sig.entry_type.value == "range" and sig.entry_min is not None and sig.entry_max is not None:
-        lines.append(f"Entry Rule: RANGE {sig.entry_min} - {sig.entry_max}")
+        lines.append(f"Entry: {sig.entry_min} \u2013 {sig.entry_max}")
     elif sig.entry_value is not None:
-        lines.append(f"Entry Rule: {sig.entry_type.value.upper()} {sig.entry_value}")
+        lines.append(f"Entry: {sig.entry_value}")
     else:
-        lines.append(f"Entry Rule: {sig.entry_type.value.upper()}")
+        lines.append("Entry: MARKET")
 
+    # Targets
     if sig.targets:
-        lines.append(f"Targets: {', '.join(str(target) for target in sig.targets)}")
+        lines.append(f"Targets: {', '.join(str(t) for t in sig.targets)}")
+
+    # Stop Loss
     if sig.stop_loss is not None:
         lines.append(f"Stop Loss: {sig.stop_loss}")
+
+    # Leverage
     if sig.leverage > 1:
         lines.append(f"Leverage: {sig.leverage}x")
-    lines.append("")
-
-    if sig.exchange_scope:
-        scope = ", ".join(_exchange_display_name(exchange) for exchange in sig.exchange_scope)
-        lines.append(f"Exchange Scope: {scope}")
-    lines.append(f"Status: {sig.status.value.upper()}")
-
-    if sig.notes:
-        lines.append(f"Note: {_escape_md(sig.notes)}")
 
     return "\n".join(lines)
 
 
 def format_exchange_response_telegram(resp: ExchangeResponse) -> str:
+    """Compact operator confirmation — no report, no signal echo."""
+    symbol = resp.symbol or "\u2014"
+    if resp.status == ResponseStatus.SUCCESS:
+        return f"\u2705 *Ausgef\u00fchrt* \u2014 `{symbol}`"
+    return f"\u26D4 *Nicht Ausgef\u00fchrt* \u2014 `{symbol}`"
+
+
+def format_exchange_response_internal(resp: ExchangeResponse) -> str:
+    """Verbose Exchange-Response for internal logs and reports."""
     emoji = _response_emoji(resp.action, resp.status)
-    lines = [f"{emoji} *EXCHANGE RESPONSE*", ""]
-    if resp.related_signal_id:
-        lines.append(f"Related Signal ID: `{resp.related_signal_id}`")
-    lines.append(f"Exchange: {_exchange_display_name(resp.exchange)}")
-    lines.append(f"Symbol: `{resp.symbol}`")
-    lines.append(f"Action: {resp.action.value.upper()}")
-    lines.append(f"Status: {resp.status.value.upper()}")
-    lines.append("")
+    symbol = resp.symbol or "\u2014"
+    lines = [f"{emoji} *RESPONSE* \u2014 `{symbol}`", ""]
+
+    lines.append(f"{resp.action.value.upper()} | {resp.status.value.upper()}")
 
     if resp.entry_price is not None:
-        lines.append(f"Entry Price: {resp.entry_price}")
-    if resp.quantity is not None:
-        lines.append(f"Quantity: {resp.quantity}")
-    if resp.leverage is not None:
-        lines.append(f"Leverage: {resp.leverage}x")
+        lines.append(f"Entry: {resp.entry_price}")
     if resp.stop_loss is not None:
         lines.append(f"Stop Loss: {resp.stop_loss}")
-    if resp.take_profit is not None:
-        lines.append(f"Take Profit: {resp.take_profit}")
-    if resp.exchange_order_id:
-        lines.append(f"Order ID: `{resp.exchange_order_id}`")
+    if resp.leverage is not None:
+        lines.append(f"Leverage: {resp.leverage}x")
+
+    if resp.exchange:
+        lines.append(f"Exchange: {_exchange_display_name(resp.exchange)}")
+    if resp.related_signal_id:
+        lines.append(f"Signal: `{resp.related_signal_id}`")
 
     if resp.result:
         lines.append(f"Result: {resp.result}")
     if resp.realized_profit:
-        lines.append(f"Realized Profit: {resp.realized_profit}")
+        lines.append(f"Profit: {resp.realized_profit}")
     if resp.error_code:
-        lines.append(f"Error Code: {resp.error_code}")
+        lines.append(f"Error: {resp.error_code}")
     if resp.message:
-        lines.append(f"Message: {_escape_md(resp.message)}")
+        lines.append(f"Info: {_escape_md(resp.message)}")
 
     return "\n".join(lines)
 

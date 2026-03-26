@@ -62,15 +62,13 @@ class TestFormatSignalTelegram:
         )
         text = format_signal_telegram(sig)
         assert "SIGNAL" in text
-        assert "SIG-20260325-BTCUSDT-001" in text
         assert "BTC/USDT" in text
         assert "SELL" in text
         assert "SHORT" in text
-        assert "BELOW 74700" in text
+        assert "74700" in text
         assert "72800" in text
         assert "76600" in text
         assert "10x" in text
-        assert "Binance Futures" in text
 
     def test_range_entry(self) -> None:
         sig = TradingSignal(
@@ -81,7 +79,7 @@ class TestFormatSignalTelegram:
             entry_max=1128,
         )
         text = format_signal_telegram(sig)
-        assert "RANGE 1120" in text
+        assert "1120" in text
         assert "1128" in text
 
     def test_no_leverage_display_when_1(self) -> None:
@@ -105,11 +103,8 @@ class TestFormatExchangeResponseTelegram:
             exchange_order_id="883726182",
         )
         text = format_exchange_response_telegram(resp)
-        assert "EXCHANGE RESPONSE" in text
-        assert "SIG-001" in text
-        assert "Bybit" in text
-        assert "74695" in text
-        assert "883726182" in text
+        assert "Ausgef\u00fchrt" in text
+        assert "BTC/USDT" in text
 
     def test_error_response(self) -> None:
         resp = ExchangeResponse(
@@ -121,7 +116,7 @@ class TestFormatExchangeResponseTelegram:
             message="Symbol not supported",
         )
         text = format_exchange_response_telegram(resp)
-        assert "INVALID_SYMBOL" in text
+        assert "Nicht Ausgef\u00fchrt" in text
 
     def test_tp_hit(self) -> None:
         resp = ExchangeResponse(
@@ -131,8 +126,26 @@ class TestFormatExchangeResponseTelegram:
             realized_profit="63%",
         )
         text = format_exchange_response_telegram(resp)
-        assert "ALL_TARGETS_HIT" in text
-        assert "63%" in text
+        assert "Ausgef\u00fchrt" in text
+
+    def test_internal_format_verbose(self) -> None:
+        from app.messaging.message_formatter import format_exchange_response_internal
+
+        resp = ExchangeResponse(
+            response_id="EXR-001",
+            related_signal_id="SIG-001",
+            exchange="bybit",
+            symbol="BTC/USDT",
+            action=ExchangeAction.ORDER_CREATED,
+            status=ResponseStatus.SUCCESS,
+            entry_price=74695,
+            error_code="INVALID_SYMBOL",
+        )
+        text = format_exchange_response_internal(resp)
+        assert "RESPONSE" in text
+        assert "SIG-001" in text
+        assert "Bybit" in text
+        assert "74695" in text
 
 
 class TestFormatAsJson:

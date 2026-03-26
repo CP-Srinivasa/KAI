@@ -834,10 +834,9 @@ class TelegramOperatorBot:
                 else None
             ),
         )
-        msg_lines = [format_signal_telegram(sig_obj), ""]
-
-        # Pipeline status lines
-        msg_lines.append("*Pipeline*")
+        # Internal log lines (not sent to Telegram)
+        log_lines = [format_signal_telegram(sig_obj), ""]
+        log_lines.append("*Pipeline*")
 
         if self._signal_append_decision_enabled:
             try:
@@ -850,17 +849,18 @@ class TelegramOperatorBot:
                 decision_id = str(decision_payload.get("decision_id", "unknown"))
                 handoff_record["decision_append_status"] = "ok"
                 handoff_record["decision_id"] = decision_id
-                msg_lines.append(f"Decision-Journal: `ok ({decision_id})`")
+                log_lines.append(f"Decision-Journal: `ok ({decision_id})`")
             except Exception as exc:  # noqa: BLE001
                 logger.error("[BOT] Signal decision append failed: %s", exc)
                 handoff_record["decision_append_status"] = "failed"
                 handoff_record["decision_error"] = str(exc)
-                msg_lines.append("Decision-Journal: `failed`")
+                log_lines.append("Decision-Journal: `failed`")
         else:
             handoff_record["decision_append_status"] = "disabled"
-            msg_lines.append("Decision-Journal: `disabled`")
+            log_lines.append("Decision-Journal: `disabled`")
 
         exchange_response_msg: str | None = None
+        execution_success: bool = False
         if self._signal_auto_run_enabled:
             try:
                 cycle_payload = await self._run_signal_cycle(
@@ -881,22 +881,24 @@ class TelegramOperatorBot:
                 handoff_record["signal_auto_run_status"] = "ok"
                 handoff_record["signal_auto_run_cycle_status"] = cycle_status
                 handoff_record["signal_auto_run_cycle_id"] = cycle_id
-                msg_lines.append(f"KAI-Run: `ok ({cycle_status})`")
+                log_lines.append(f"KAI-Run: `ok ({cycle_status})`")
 
                 # Build formatted exchange response from cycle result
                 exchange_response_msg = self._build_exchange_response_from_cycle(
                     signal_id=signal_id,
                     symbol=symbol,
                     cycle=cycle if isinstance(cycle, dict) else {},
+                    signal=signal,
                 )
+                execution_success = exchange_response_msg is not None
             except Exception as exc:  # noqa: BLE001
                 logger.error("[BOT] Signal auto-run failed: %s", exc)
                 handoff_record["signal_auto_run_status"] = "failed"
                 handoff_record["signal_auto_run_error"] = str(exc)
-                msg_lines.append("KAI-Run: `failed`")
+                log_lines.append("KAI-Run: `failed`")
         else:
             handoff_record["signal_auto_run_status"] = "disabled"
-            msg_lines.append("KAI-Run: `disabled`")
+            log_lines.append("KAI-Run: `disabled`")
 
         if self._signal_forward_to_exchange_enabled:
             try:
@@ -911,25 +913,29 @@ class TelegramOperatorBot:
                     structured_signal=structured_data or None,
                 )
                 handoff_record["exchange_forward_status"] = "queued"
-                msg_lines.append("Exchange-Forward: `queued`")
+                log_lines.append("Exchange-Forward: `queued`")
             except OSError as exc:
                 logger.error("[BOT] Exchange outbox queue failed: %s", exc)
                 handoff_record["exchange_forward_status"] = "failed"
                 handoff_record["exchange_forward_error"] = str(exc)
-                msg_lines.append("Exchange-Forward: `failed`")
+                log_lines.append("Exchange-Forward: `failed`")
         else:
             handoff_record["exchange_forward_status"] = "disabled"
-            msg_lines.append("Exchange-Forward: `disabled`")
+            log_lines.append("Exchange-Forward: `disabled`")
 
         try:
             self._append_jsonl(self._signal_handoff_log_path, handoff_record)
         except OSError as exc:
             logger.error("[BOT] Signal handoff audit write failed: %s", exc)
-            msg_lines.append("Signal-Handoff-Log: `failed`")
+            log_lines.append("Signal-Handoff-Log: `failed`")
 
         if response:
-            msg_lines.append("")
-            msg_lines.append(response)
+            log_lines.append("")
+            log_lines.append(response)
+
+        # Log full pipeline report internally (not sent to Telegram)
+        logger.info("[BOT] Signal pipeline report:\n%s", "\n".join(log_lines))
+
         self._audit_message_envelope(
             chat_id=chat_id,
             message_type="signal",
@@ -946,11 +952,13 @@ class TelegramOperatorBot:
                 "exchange_forward_status": str(handoff_record.get("exchange_forward_status", "")),
             },
         )
-        await self._send(chat_id, "\n".join(msg_lines))
 
-        # Send formatted exchange response as separate message
+        # Telegram: only compact confirmation (no signal echo, no pipeline report)
         if exchange_response_msg:
             await self._send(chat_id, exchange_response_msg)
+        elif execution_success is False and self._signal_auto_run_enabled:
+            display = sig_obj.display_symbol or sig_obj.symbol
+            await self._send(chat_id, f"\u26D4 *Nicht Ausgef\u00fchrt* \u2014 `{display}`")
 
     def _build_exchange_response_from_cycle(
         self,
@@ -958,6 +966,7 @@ class TelegramOperatorBot:
         signal_id: str,
         symbol: str,
         cycle: dict[str, object],
+        signal: dict[str, object] | None = None,
     ) -> str | None:
         """Convert a trading loop cycle result into a formatted exchange response."""
         from app.messaging.message_formatter import format_exchange_response_telegram
@@ -987,7 +996,6 @@ class TelegramOperatorBot:
             action = ExchangeAction.REJECTED
             status = ResponseStatus.ERROR
         elif cycle_status in {"no_signal", "no_market_data", "stale_data"}:
-            # No trade attempted — no exchange response needed
             return None
         elif cycle_status == "error":
             action = ExchangeAction.ERROR
@@ -999,6 +1007,32 @@ class TelegramOperatorBot:
         if isinstance(cycle.get("notes"), (list, tuple)):
             notes = [str(n) for n in cycle["notes"]]
 
+        # Extract trade details from signal
+        sig = signal or {}
+        entry_price = None
+        stop_loss = None
+        leverage = None
+        for key in ("entry_value", "entry_price"):
+            val = sig.get(key)
+            if val is not None:
+                try:
+                    entry_price = float(val)
+                except (ValueError, TypeError):
+                    pass
+                break
+        val = sig.get("stop_loss")
+        if val is not None:
+            try:
+                stop_loss = float(val)
+            except (ValueError, TypeError):
+                pass
+        val = sig.get("leverage")
+        if val is not None:
+            try:
+                leverage = int(val)
+            except (ValueError, TypeError):
+                pass
+
         resp = ExchangeResponse(
             response_id=cycle_id,
             related_signal_id=signal_id,
@@ -1007,6 +1041,9 @@ class TelegramOperatorBot:
             action=action,
             status=status,
             exchange_order_id=order_id,
+            entry_price=entry_price,
+            stop_loss=stop_loss,
+            leverage=leverage,
             message="; ".join(notes[:3]) if notes else cycle_status,
         )
         return format_exchange_response_telegram(resp)
