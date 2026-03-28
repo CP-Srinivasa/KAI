@@ -16,10 +16,12 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime
+from pathlib import Path
 
 import httpx
 import pytest
 
+from app.alerts.audit import load_alert_audits
 from app.alerts.base.interfaces import AlertDeliveryResult, AlertMessage, BaseAlertChannel
 from app.alerts.channels.email import EmailAlertChannel
 from app.alerts.channels.telegram import TelegramAlertChannel
@@ -32,7 +34,7 @@ from app.alerts.formatters import (
     format_telegram_digest,
     format_telegram_message,
 )
-from app.alerts.service import AlertService, _build_alert_message
+from app.alerts.service import AlertService, _build_alert_message, _log_result
 from app.alerts.threshold import ThresholdEngine
 from app.core.domain.document import AnalysisResult, CanonicalDocument
 from app.core.enums import MarketScope, SentimentLabel
@@ -598,6 +600,42 @@ def test_build_alert_message_priority_matches_score():
     result = _make_high_result()
     msg = _build_alert_message(doc, result, spam_probability=0.0)
     assert 7 <= msg.priority <= 10
+
+
+def test_log_result_marks_directional_crypto_assets_eligible(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    monkeypatch.setattr("app.alerts.service._WORKSPACE_ROOT", tmp_path)
+    msg = _make_alert_msg(sentiment_label="bullish", affected_assets=["BTC"])
+    delivery = AlertDeliveryResult(channel="telegram", success=True, message_id="1")
+
+    _log_result(delivery, message=msg)
+
+    records = load_alert_audits(tmp_path / "artifacts")
+    assert len(records) == 1
+    assert records[0].directional_eligible is True
+    assert records[0].affected_assets == ["BTC/USDT"]
+    assert records[0].directional_block_reason is None
+
+
+def test_log_result_blocks_non_crypto_directional_assets(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    monkeypatch.setattr("app.alerts.service._WORKSPACE_ROOT", tmp_path)
+    msg = _make_alert_msg(
+        sentiment_label="bearish",
+        affected_assets=["OpenAI", "Disney", "Sora"],
+    )
+    delivery = AlertDeliveryResult(channel="telegram", success=True, message_id="2")
+
+    _log_result(delivery, message=msg)
+
+    records = load_alert_audits(tmp_path / "artifacts")
+    assert len(records) == 1
+    assert records[0].directional_eligible is False
+    assert records[0].affected_assets == []
+    assert records[0].directional_block_reason == "unsupported_or_non_crypto_assets"
+    assert records[0].directional_blocked_assets == ["OPENAI", "DISNEY", "SORA"]
 
 
 # ── BaseAlertChannel ABC ──────────────────────────────────────────────────────

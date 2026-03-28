@@ -48,6 +48,9 @@ class AlertAuditRecord:
     affected_assets: list[str] = field(default_factory=list)
     priority: int | None = None
     actionable: bool | None = None
+    directional_eligible: bool | None = None
+    directional_block_reason: str | None = None
+    directional_blocked_assets: list[str] = field(default_factory=list)
 
     def to_json_dict(self) -> dict[str, object]:
         d: dict[str, object] = {
@@ -65,6 +68,12 @@ class AlertAuditRecord:
             d["priority"] = self.priority
         if self.actionable is not None:
             d["actionable"] = self.actionable
+        if self.directional_eligible is not None:
+            d["directional_eligible"] = self.directional_eligible
+        if self.directional_block_reason is not None:
+            d["directional_block_reason"] = self.directional_block_reason
+        if self.directional_blocked_assets:
+            d["directional_blocked_assets"] = self.directional_blocked_assets
         return d
 
 
@@ -183,6 +192,11 @@ def load_alert_audits(input_path: str | Path) -> list[AlertAuditRecord]:
                 affected_assets=data.get("affected_assets", []),
                 priority=data.get("priority"),
                 actionable=data.get("actionable"),
+                directional_eligible=data.get("directional_eligible"),
+                directional_block_reason=data.get("directional_block_reason"),
+                directional_blocked_assets=data.get(
+                    "directional_blocked_assets", []
+                ),
             )
             records.append(record)
         except (json.JSONDecodeError, KeyError):

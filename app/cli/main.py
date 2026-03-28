@@ -15,6 +15,7 @@ from app.alerts.audit import (
     load_alert_audits,
     load_outcome_annotations,
 )
+from app.alerts.eligibility import evaluate_directional_eligibility
 from app.alerts.hold_metrics import build_hold_metrics_report, write_hold_metrics_report
 from app.alerts.offline_baseline import (
     build_offline_baseline_report,
@@ -652,6 +653,15 @@ def alerts_pending_annotations(
         sentiment = (rec.sentiment_label or "").lower()
         if rec.is_digest or sentiment not in {"bullish", "bearish"}:
             continue
+        if rec.directional_eligible is False:
+            continue
+        if rec.directional_eligible is None:
+            legacy_check = evaluate_directional_eligibility(
+                sentiment_label=rec.sentiment_label,
+                affected_assets=list(rec.affected_assets or []),
+            )
+            if legacy_check.directional_eligible is not True:
+                continue
         prev = latest_directional_by_doc.get(rec.document_id)
         if prev is None or rec.dispatched_at > prev.dispatched_at:
             latest_directional_by_doc[rec.document_id] = rec
@@ -787,6 +797,15 @@ def alerts_auto_check(
         sentiment = (rec.sentiment_label or "").lower()
         if rec.is_digest or sentiment not in {"bullish", "bearish"}:
             continue
+        if rec.directional_eligible is False:
+            continue
+        if rec.directional_eligible is None:
+            legacy_check = evaluate_directional_eligibility(
+                sentiment_label=rec.sentiment_label,
+                affected_assets=list(rec.affected_assets or []),
+            )
+            if legacy_check.directional_eligible is not True:
+                continue
         if rec.document_id in annotated_ids:
             continue
         prev = latest_by_doc.get(rec.document_id)

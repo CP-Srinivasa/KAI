@@ -28,6 +28,7 @@ def test_hold_metrics_reports_signal_quality_validation_fields(tmp_path: Path) -
                 "is_digest": False,
                 "dispatched_at": "2026-03-25T10:00:00+00:00",
                 "sentiment_label": "bullish",
+                "affected_assets": ["BTC"],
                 "priority": 8,
                 "actionable": True,
             },
@@ -38,6 +39,7 @@ def test_hold_metrics_reports_signal_quality_validation_fields(tmp_path: Path) -
                 "is_digest": False,
                 "dispatched_at": "2026-03-25T10:01:00+00:00",
                 "sentiment_label": "bearish",
+                "affected_assets": ["ETH"],
                 "priority": 6,
                 "actionable": False,
             },
@@ -123,3 +125,76 @@ def test_hold_metrics_detects_real_price_cycle_source(tmp_path: Path) -> None:
     assert quality["paper_market_data_source_counts"]["coingecko"] == 1
     assert quality["priority_mae_tier1_vs_teacher_baseline"] == 3.13
     assert quality["llm_error_proxy_baseline_pct"] == 27.5
+
+
+def test_hold_metrics_excludes_blocked_directional_alerts(tmp_path: Path) -> None:
+    alert_audit = tmp_path / "alert_audit.jsonl"
+    alert_outcomes = tmp_path / "alert_outcomes.jsonl"
+    trading_loop_audit = tmp_path / "trading_loop_audit.jsonl"
+    paper_execution_audit = tmp_path / "paper_execution_audit.jsonl"
+
+    _write_jsonl(
+        alert_audit,
+        [
+            {
+                "document_id": "doc-crypto",
+                "channel": "telegram",
+                "message_id": "dry_run",
+                "is_digest": False,
+                "dispatched_at": "2026-03-25T10:00:00+00:00",
+                "sentiment_label": "bullish",
+                "affected_assets": ["BTC/USDT"],
+                "priority": 8,
+                "actionable": True,
+                "directional_eligible": True,
+            },
+            {
+                "document_id": "doc-non-crypto",
+                "channel": "telegram",
+                "message_id": "dry_run",
+                "is_digest": False,
+                "dispatched_at": "2026-03-25T10:01:00+00:00",
+                "sentiment_label": "bearish",
+                "affected_assets": [],
+                "priority": 8,
+                "actionable": True,
+                "directional_eligible": False,
+                "directional_block_reason": "unsupported_or_non_crypto_assets",
+                "directional_blocked_assets": ["OPENAI"],
+            },
+        ],
+    )
+    _write_jsonl(
+        alert_outcomes,
+        [
+            {
+                "document_id": "doc-crypto",
+                "outcome": "hit",
+                "annotated_at": "2026-03-25T11:00:00+00:00",
+            },
+            {
+                "document_id": "doc-non-crypto",
+                "outcome": "miss",
+                "annotated_at": "2026-03-25T11:05:00+00:00",
+            },
+        ],
+    )
+    _write_jsonl(trading_loop_audit, [])
+    _write_jsonl(paper_execution_audit, [])
+
+    report = build_hold_metrics_report(
+        alert_audit_path=alert_audit,
+        alert_outcomes_path=alert_outcomes,
+        trading_loop_audit_path=trading_loop_audit,
+        paper_execution_audit_path=paper_execution_audit,
+    )
+
+    hit = report["alert_hit_rate_evidence"]
+    quality = report["signal_quality_validation"]
+    assert hit["directional_alert_documents"] == 1
+    assert hit["blocked_directional_documents"] == 1
+    assert hit["blocked_directional_by_reason"] == {
+        "unsupported_or_non_crypto_assets": 1
+    }
+    assert hit["resolved_directional_documents"] == 1
+    assert quality["resolved_precision_pct"] == 100.0

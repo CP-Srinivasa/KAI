@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from app.alerts.audit import load_alert_audits, load_outcome_annotations
+from app.alerts.eligibility import evaluate_directional_eligibility
 
 MIN_RESOLVED_DIRECTIONAL_ALERTS = 50
 MIN_PAPER_CYCLES = 10
@@ -88,11 +89,36 @@ def build_hold_metrics_report(
     annotations = load_outcome_annotations(alert_outcomes_path)
 
     non_digest = [r for r in audits if not r.is_digest]
-    directional = [
-        r
-        for r in non_digest
-        if (r.sentiment_label or "").lower() in {"bullish", "bearish"}
-    ]
+    directional: list[Any] = []
+    blocked_directional: list[Any] = []
+    blocked_directional_reasons: list[str] = []
+    for rec in non_digest:
+        sentiment = (rec.sentiment_label or "").lower()
+        if sentiment not in {"bullish", "bearish"}:
+            continue
+        if rec.directional_eligible is False:
+            blocked_directional.append(rec)
+            blocked_directional_reasons.append(
+                rec.directional_block_reason or "unknown"
+            )
+            continue
+        if rec.directional_eligible is True:
+            directional.append(rec)
+            continue
+
+        legacy_check = evaluate_directional_eligibility(
+            sentiment_label=rec.sentiment_label,
+            affected_assets=list(rec.affected_assets or []),
+        )
+        if legacy_check.directional_eligible is True:
+            directional.append(rec)
+        else:
+            blocked_directional.append(rec)
+            blocked_directional_reasons.append(
+                legacy_check.directional_block_reason or "unknown"
+            )
+
+    blocked_directional_reason_counts = Counter(blocked_directional_reasons)
     directional_doc_ids = {r.document_id for r in directional}
 
     # Alert audits are channel-level (email + telegram). For gate evidence we
@@ -312,6 +338,10 @@ def build_hold_metrics_report(
             ),
             "minimum_resolved_directional_alerts_for_gate": MIN_RESOLVED_DIRECTIONAL_ALERTS,
             "directional_alert_documents": len(directional_doc_ids),
+            "blocked_directional_documents": len(
+                {r.document_id for r in blocked_directional}
+            ),
+            "blocked_directional_by_reason": dict(blocked_directional_reason_counts),
             "labeled_directional_documents": len(labeled_directional_docs),
             "resolved_directional_documents": len(resolved_docs),
             "inconclusive_directional_documents": len(inconclusive_docs),

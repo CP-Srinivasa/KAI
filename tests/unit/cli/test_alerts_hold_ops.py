@@ -181,6 +181,41 @@ def test_alerts_auto_check_skips_too_fresh_alerts_by_default(tmp_path: Path) -> 
     assert "No pending directional alerts to check." in result.output
 
 
+def test_alerts_auto_check_skips_blocked_directional_alerts(tmp_path: Path) -> None:
+    artifacts_dir = tmp_path / "artifacts"
+    artifacts_dir.mkdir(parents=True)
+    append_alert_audit(
+        AlertAuditRecord(
+            document_id="doc-blocked",
+            channel="telegram",
+            message_id="dry_run",
+            is_digest=False,
+            dispatched_at="2026-03-25T10:00:00+00:00",
+            sentiment_label="bullish",
+            affected_assets=[],
+            priority=8,
+            actionable=True,
+            directional_eligible=False,
+            directional_block_reason="unsupported_or_non_crypto_assets",
+            directional_blocked_assets=["OPENAI"],
+        ),
+        artifacts_dir,
+    )
+
+    result = runner.invoke(
+        app,
+        [
+            "alerts",
+            "auto-check",
+            "--artifacts-dir",
+            str(artifacts_dir),
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "No pending directional alerts to check." in result.output
+
+
 def test_alerts_signal_status_reports_pipeline_counts(tmp_path: Path) -> None:
     handoff = tmp_path / "handoff.jsonl"
     outbox = tmp_path / "outbox.jsonl"

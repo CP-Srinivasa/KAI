@@ -27,6 +27,7 @@ from app.alerts.audit import ALERT_AUDIT_JSONL_FILENAME, AlertAuditRecord, appen
 from app.alerts.base.interfaces import AlertDeliveryResult, AlertMessage, BaseAlertChannel
 from app.alerts.channels.email import EmailAlertChannel
 from app.alerts.channels.telegram import TelegramAlertChannel
+from app.alerts.eligibility import evaluate_directional_eligibility
 from app.alerts.threshold import ThresholdEngine
 from app.analysis.scoring import compute_priority
 from app.core.domain.document import AnalysisResult, CanonicalDocument
@@ -153,17 +154,44 @@ def _log_result(
         )
         # Sprint 21: Append audit trail for operational readiness
         if doc_id:
+            sentiment_label = message.sentiment_label if message else None
+            affected_assets = list(message.affected_assets) if message else []
+            directional_eligible: bool | None = None
+            directional_block_reason: str | None = None
+            directional_blocked_assets: list[str] = []
+
+            if message is not None:
+                eligibility = evaluate_directional_eligibility(
+                    sentiment_label=message.sentiment_label,
+                    affected_assets=list(message.affected_assets),
+                )
+                directional_eligible = eligibility.directional_eligible
+                directional_block_reason = eligibility.directional_block_reason
+                directional_blocked_assets = list(eligibility.blocked_assets)
+                if eligibility.is_directional:
+                    # Keep only tradeable/supported assets for directional evidence.
+                    affected_assets = list(eligibility.eligible_assets)
+                    if eligibility.directional_eligible is False:
+                        log.info(
+                            "alert.directional.blocked",
+                            document_id=doc_id,
+                            sentiment=message.sentiment_label,
+                            block_reason=eligibility.directional_block_reason,
+                            blocked_assets=eligibility.blocked_assets,
+                        )
+
             record = AlertAuditRecord(
                 document_id=doc_id,
                 channel=result.channel,
                 message_id=result.message_id,
                 is_digest=digest,
-                sentiment_label=message.sentiment_label if message else None,
-                affected_assets=(
-                    list(message.affected_assets) if message else []
-                ),
+                sentiment_label=sentiment_label,
+                affected_assets=affected_assets,
                 priority=message.priority if message else None,
                 actionable=message.actionable if message else None,
+                directional_eligible=directional_eligible,
+                directional_block_reason=directional_block_reason,
+                directional_blocked_assets=directional_blocked_assets,
             )
             audit_path = (
                 _WORKSPACE_ROOT / "artifacts" / ALERT_AUDIT_JSONL_FILENAME

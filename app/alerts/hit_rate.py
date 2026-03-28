@@ -14,6 +14,9 @@ Definition
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import cast
+
+from app.alerts.eligibility import evaluate_directional_eligibility
 
 
 @dataclass(frozen=True)
@@ -137,23 +140,23 @@ def build_outcomes_from_records(
     records:
         List of ``AlertAuditRecord`` instances with enriched prediction fields.
     price_lookup:
-        Optional mapping of ``(asset, dispatched_at)`` → ``(price_at_alert,
+        Optional mapping of ``(asset, dispatched_at)`` -> ``(price_at_alert,
         price_at_resolution, resolved_at)``.  If ``None`` or key missing,
         outcome is unresolved.
     annotations:
         Optional list of ``AlertOutcomeAnnotation`` instances supplied by the
         operator.  Used to resolve ``is_hit`` when no price data is available.
-        ``"hit"`` → ``True``, ``"miss"`` → ``False``,
-        ``"inconclusive"`` → ``None`` (left unresolved).
+        ``"hit"`` -> ``True``, ``"miss"`` -> ``False``,
+        ``"inconclusive"`` -> ``None`` (left unresolved).
 
     Returns
     -------
-    List of ``AlertOutcome`` — one per (record, asset) pair for directional
+    List of ``AlertOutcome`` - one per (record, asset) pair for directional
     alerts only.
     """
     from app.alerts.audit import AlertAuditRecord, AlertOutcomeAnnotation
 
-    # Build annotation map: document_id → is_hit (True/False/None)
+    # Build annotation map: document_id -> is_hit (True/False/None)
     annotation_map: dict[str, bool | None] = {}
     for ann in annotations or []:
         if not isinstance(ann, AlertOutcomeAnnotation):
@@ -174,19 +177,34 @@ def build_outcomes_from_records(
         sentiment = (rec.sentiment_label or "").lower()
         if sentiment not in _DIRECTIONAL:
             continue
-        assets = rec.affected_assets or []
-        if not assets:
-            # No asset → cannot resolve, but still count
-            outcomes.append(
-                AlertOutcome(
-                    document_id=rec.document_id,
-                    asset="unknown",
-                    sentiment_label=sentiment,
-                    dispatched_at=rec.dispatched_at,
-                    channel=rec.channel,
-                    priority=rec.priority,
-                )
+        assets = list(rec.affected_assets or [])
+        if rec.directional_eligible is False:
+            # Fail-closed: blocked directional alerts are excluded from metrics.
+            continue
+        if rec.directional_eligible is None:
+            legacy_check = evaluate_directional_eligibility(
+                sentiment_label=rec.sentiment_label,
+                affected_assets=assets,
             )
+            if legacy_check.directional_eligible is False:
+                continue
+            if legacy_check.is_directional:
+                filtered_assets: list[str] = []
+                seen_assets: set[str] = set()
+                for asset in assets:
+                    asset_check = evaluate_directional_eligibility(
+                        sentiment_label=rec.sentiment_label,
+                        affected_assets=[asset],
+                    )
+                    if asset_check.directional_eligible is not True:
+                        continue
+                    if asset in seen_assets:
+                        continue
+                    filtered_assets.append(asset)
+                    seen_assets.add(asset)
+                assets = filtered_assets
+        if not assets:
+            # Fail-closed: directional evidence requires a resolvable asset.
             continue
         for asset in assets:
             key = (asset, rec.dispatched_at)
@@ -206,13 +224,14 @@ def build_outcomes_from_records(
                         )
                     )
                 else:
+                    ann_hit_value = cast(bool | None, ann_hit)
                     outcomes.append(
                         AlertOutcome(
                             document_id=rec.document_id,
                             asset=asset,
                             sentiment_label=sentiment,
                             dispatched_at=rec.dispatched_at,
-                            is_hit=ann_hit,
+                            is_hit=ann_hit_value,
                             channel=rec.channel,
                             priority=rec.priority,
                         )
@@ -306,3 +325,4 @@ def compute_hit_rate(
         by_sentiment=by_sentiment,
         by_asset=by_asset,
     )
+

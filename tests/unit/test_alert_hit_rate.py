@@ -121,8 +121,41 @@ def test_build_outcomes_no_assets():
         actionable=True,
     )
     outcomes = build_outcomes_from_records([record])
-    assert len(outcomes) == 1
-    assert outcomes[0].asset == "unknown"
+    assert outcomes == []
+
+
+def test_build_outcomes_blocks_explicitly_ineligible_directional_record():
+    record = AlertAuditRecord(
+        document_id="doc-1",
+        channel="telegram",
+        message_id="msg-1",
+        is_digest=False,
+        dispatched_at="2026-01-01T12:00:00+00:00",
+        sentiment_label="bullish",
+        affected_assets=["OPENAI"],
+        priority=8,
+        actionable=True,
+        directional_eligible=False,
+        directional_block_reason="unsupported_or_non_crypto_assets",
+    )
+    outcomes = build_outcomes_from_records([record])
+    assert outcomes == []
+
+
+def test_build_outcomes_legacy_non_crypto_asset_fail_closed():
+    record = AlertAuditRecord(
+        document_id="doc-1",
+        channel="telegram",
+        message_id="msg-1",
+        is_digest=False,
+        dispatched_at="2026-01-01T12:00:00+00:00",
+        sentiment_label="bullish",
+        affected_assets=["DISNEY"],
+        priority=8,
+        actionable=True,
+    )
+    outcomes = build_outcomes_from_records([record])
+    assert outcomes == []
 
 
 # ── compute_hit_rate ──────────────────────────────────────────────────
@@ -242,6 +275,29 @@ def test_audit_record_enriched_serialization(tmp_path: Path):
     assert raw["actionable"] is True
 
 
+def test_audit_record_serializes_directional_guard_fields(tmp_path: Path):
+    record = AlertAuditRecord(
+        document_id="doc-guard",
+        channel="telegram",
+        message_id="msg-guard",
+        is_digest=False,
+        dispatched_at="2026-01-01T12:00:00+00:00",
+        sentiment_label="bearish",
+        affected_assets=[],
+        priority=7,
+        actionable=False,
+        directional_eligible=False,
+        directional_block_reason="unsupported_or_non_crypto_assets",
+        directional_blocked_assets=["OPENAI", "DISNEY"],
+    )
+    p = tmp_path / "audit.jsonl"
+    append_alert_audit(record, p)
+    raw = json.loads(p.read_text(encoding="utf-8").strip())
+    assert raw["directional_eligible"] is False
+    assert raw["directional_block_reason"] == "unsupported_or_non_crypto_assets"
+    assert raw["directional_blocked_assets"] == ["OPENAI", "DISNEY"]
+
+
 def test_audit_record_backward_compatible_load(tmp_path: Path):
     """Old-format records (no prediction fields) load with defaults."""
     p = tmp_path / "audit.jsonl"
@@ -259,6 +315,9 @@ def test_audit_record_backward_compatible_load(tmp_path: Path):
     assert records[0].affected_assets == []
     assert records[0].priority is None
     assert records[0].actionable is None
+    assert records[0].directional_eligible is None
+    assert records[0].directional_block_reason is None
+    assert records[0].directional_blocked_assets == []
 
 
 def test_hit_rate_report_to_dict():
