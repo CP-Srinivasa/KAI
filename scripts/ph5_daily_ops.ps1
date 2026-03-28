@@ -110,13 +110,7 @@ async def main() -> None:
             continue
         source_id = (row.provider or row.source_id or 'rss_feed').strip()
         source_name = (row.provider or 'RSS Feed').strip()
-        result.append(
-            {
-                "url": url,
-                "source_id": source_id,
-                "source_name": source_name,
-            }
-        )
+        result.append(dict(url=url, source_id=source_id, source_name=source_name))
     print(json.dumps(result))
 
 asyncio.run(main())
