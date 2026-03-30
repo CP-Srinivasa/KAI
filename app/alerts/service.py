@@ -134,6 +134,8 @@ def _build_alert_message(
         published_at=doc.published_at,
         source_name=doc.source_name,
         tags=list(result.tags),
+        sentiment_score=result.sentiment_score,
+        impact_score=result.impact_score,
     )
 
 
@@ -164,6 +166,8 @@ def _log_result(
                 eligibility = evaluate_directional_eligibility(
                     sentiment_label=message.sentiment_label,
                     affected_assets=list(message.affected_assets),
+                    sentiment_score=message.sentiment_score,
+                    impact_score=message.impact_score,
                 )
                 directional_eligible = eligibility.directional_eligible
                 directional_block_reason = eligibility.directional_block_reason

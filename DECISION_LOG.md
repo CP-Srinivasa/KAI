@@ -68,3 +68,8 @@ Full historical decision narrative moved to `docs/archive/decision_log_archive.m
 Core-path target architecture was formalized in `docs/contracts.md` and aligned in code.
 `enrichment`/`schemas`/`decisions` were consolidated into `normalization`/`core`/`orchestrator` with compatibility shims.
 Pipeline run metrics now include fetched, persisted, analyzed, priority distribution, and alerts fired.
+
+### D-111 (2026-03-30)
+Directional eligibility now requires score-strength gates: `|sentiment_score| >= 0.55` and `impact_score >= 0.55`.
+Weak signals are blocked with reason `weak_directional_signal` to reduce false-positive pollution in hit-rate tracking.
+Precision was 7.53% with 92.47% false positives; gates filter ~26% of current directional alerts (the weakest signals).
