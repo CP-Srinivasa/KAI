@@ -29,7 +29,11 @@ from app.risk.models import RiskLimits
 from app.signals.generator import SignalGenerator
 from app.signals.models import SignalDirection
 from app.storage.models.trading import PortfolioStateRecord, TradingCycleRecord
-from app.trading.signal_consensus import SignalConsensusValidator
+from app.trading.signal_consensus import (
+    GEMINI_OPENAI_BASE_URL,
+    SignalConsensusValidator,
+    ValidatorConfig,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -154,14 +158,20 @@ class TradingLoop:
             await self._write_db(cycle)
             return cycle
 
-        # Consensus gate — second LLM validates the signal direction.
+        # Consensus gate — all validator LLMs must agree.
         if self._consensus is not None:
             consensus = await self._consensus.validate(signal, market_data)
             notes.append(
                 f"consensus:{consensus.agreed}|"
                 f"conf:{consensus.confidence:.2f}|"
-                f"model:{consensus.validator_model}"
+                f"models:{consensus.validator_model}"
             )
+            for vr in consensus.validator_results:
+                notes.append(
+                    f"validator:{vr.label}|"
+                    f"agreed:{vr.agreed}|"
+                    f"conf:{vr.confidence:.2f}"
+                )
             if not consensus.agreed:
                 cycle = self._build_cycle(
                     cycle_id,
@@ -536,6 +546,47 @@ def build_loop_trigger_analysis(
     )
 
 
+def _build_consensus_validator(
+    enable: bool,
+    consensus_model: str,
+    settings: object,
+) -> SignalConsensusValidator | None:
+    """Build consensus validator with all available LLM backends."""
+    if not enable:
+        return None
+
+    configs: list[ValidatorConfig] = []
+
+    openai_key = getattr(
+        getattr(settings, "providers", None), "openai_api_key", "",
+    )
+    if openai_key:
+        configs.append(ValidatorConfig(
+            api_key=openai_key,
+            model=consensus_model,
+            label="openai",
+        ))
+
+    gemini_key = getattr(
+        getattr(settings, "providers", None), "gemini_api_key", "",
+    )
+    gemini_model = getattr(
+        getattr(settings, "providers", None), "gemini_model", "",
+    ) or "gemini-2.5-flash"
+    if gemini_key:
+        configs.append(ValidatorConfig(
+            api_key=gemini_key,
+            model=gemini_model,
+            label="gemini",
+            base_url=GEMINI_OPENAI_BASE_URL,
+        ))
+
+    if not configs:
+        return None
+
+    return SignalConsensusValidator(configs=configs)
+
+
 def build_trading_loop(
     *,
     mode: str | ExecutionMode = ExecutionMode.PAPER,
@@ -578,12 +629,9 @@ def build_trading_loop(
         mode=normalized_mode.value,
         venue="paper",
     )
-    consensus_validator = None
-    if enable_consensus and settings.providers.openai_api_key:
-        consensus_validator = SignalConsensusValidator(
-            api_key=settings.providers.openai_api_key,
-            model=consensus_model,
-        )
+    consensus_validator = _build_consensus_validator(
+        enable_consensus, consensus_model, settings,
+    )
     return TradingLoop(
         risk_engine=risk_engine,
         execution_engine=execution_engine,

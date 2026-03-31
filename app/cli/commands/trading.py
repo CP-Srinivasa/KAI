@@ -456,7 +456,7 @@ def trading_run_once(
     consensus: bool = typer.Option(
         False,
         "--consensus",
-        help="Enable multi-model consensus gate (requires OpenAI API key)",
+        help="Enable multi-model consensus gate (uses all configured LLM keys)",
     ),
     consensus_model: str = typer.Option(
         "gpt-4o-mini",

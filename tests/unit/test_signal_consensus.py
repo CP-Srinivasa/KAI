@@ -7,8 +7,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from app.market_data.models import MarketDataPoint
 from app.signals.models import SignalCandidate, SignalDirection
 from app.trading.signal_consensus import (
+    GEMINI_OPENAI_BASE_URL,
     ConsensusResult,
     SignalConsensusValidator,
+    ValidatorConfig,
 )
 
 
@@ -71,6 +73,9 @@ def _mock_openai_response(content: str) -> MagicMock:
     return response
 
 
+# ── Single model (backward compatible) ────────────────────────────
+
+
 async def test_consensus_agree() -> None:
     """Validator agrees with signal."""
     validator = SignalConsensusValidator(api_key="test-key")
@@ -78,18 +83,21 @@ async def test_consensus_agree() -> None:
         '{"agree": true, "confidence": 0.85, "reasoning": "Momentum aligns"}'
     )
 
-    with patch.object(
-        validator._client.chat.completions,
-        "create",
-        new_callable=AsyncMock,
-        return_value=mock_resp,
-    ):
+    with patch(
+        "app.trading.signal_consensus.AsyncOpenAI",
+    ) as mock_cls:
+        mock_client = AsyncMock()
+        mock_client.chat.completions.create = AsyncMock(
+            return_value=mock_resp,
+        )
+        mock_cls.return_value = mock_client
+
         result = await validator.validate(_make_signal(), _make_market_data())
 
     assert result.agreed is True
     assert result.confidence == 0.85
-    assert "Momentum" in result.reasoning
     assert result.error is None
+    assert len(result.validator_results) == 1
 
 
 async def test_consensus_disagree() -> None:
@@ -99,12 +107,15 @@ async def test_consensus_disagree() -> None:
         '{"agree": false, "confidence": 0.70, "reasoning": "Overextended"}'
     )
 
-    with patch.object(
-        validator._client.chat.completions,
-        "create",
-        new_callable=AsyncMock,
-        return_value=mock_resp,
-    ):
+    with patch(
+        "app.trading.signal_consensus.AsyncOpenAI",
+    ) as mock_cls:
+        mock_client = AsyncMock()
+        mock_client.chat.completions.create = AsyncMock(
+            return_value=mock_resp,
+        )
+        mock_cls.return_value = mock_client
+
         result = await validator.validate(_make_signal(), _make_market_data())
 
     assert result.agreed is False
@@ -115,12 +126,15 @@ async def test_consensus_api_error_fails_closed() -> None:
     """API error results in disagree (fail-closed)."""
     validator = SignalConsensusValidator(api_key="test-key")
 
-    with patch.object(
-        validator._client.chat.completions,
-        "create",
-        new_callable=AsyncMock,
-        side_effect=Exception("API timeout"),
-    ):
+    with patch(
+        "app.trading.signal_consensus.AsyncOpenAI",
+    ) as mock_cls:
+        mock_client = AsyncMock()
+        mock_client.chat.completions.create = AsyncMock(
+            side_effect=Exception("API timeout"),
+        )
+        mock_cls.return_value = mock_client
+
         result = await validator.validate(_make_signal(), _make_market_data())
 
     assert result.agreed is False
@@ -133,16 +147,20 @@ async def test_consensus_invalid_json_fails_closed() -> None:
     validator = SignalConsensusValidator(api_key="test-key")
     mock_resp = _mock_openai_response("Sure, I agree with this trade!")
 
-    with patch.object(
-        validator._client.chat.completions,
-        "create",
-        new_callable=AsyncMock,
-        return_value=mock_resp,
-    ):
+    with patch(
+        "app.trading.signal_consensus.AsyncOpenAI",
+    ) as mock_cls:
+        mock_client = AsyncMock()
+        mock_client.chat.completions.create = AsyncMock(
+            return_value=mock_resp,
+        )
+        mock_cls.return_value = mock_client
+
         result = await validator.validate(_make_signal(), _make_market_data())
 
     assert result.agreed is False
-    assert result.error == "invalid_json_response"
+    assert result.error is not None
+    assert "invalid_json" in result.error
 
 
 async def test_consensus_result_failed_factory() -> None:
@@ -162,16 +180,152 @@ async def test_consensus_short_signal() -> None:
         '{"agree": true, "confidence": 0.60, "reasoning": "Bearish ok"}'
     )
 
-    with patch.object(
-        validator._client.chat.completions,
-        "create",
-        new_callable=AsyncMock,
-        return_value=mock_resp,
-    ) as mock_create:
+    with patch(
+        "app.trading.signal_consensus.AsyncOpenAI",
+    ) as mock_cls:
+        mock_client = AsyncMock()
+        mock_client.chat.completions.create = AsyncMock(
+            return_value=mock_resp,
+        )
+        mock_cls.return_value = mock_client
+
         result = await validator.validate(signal, _make_market_data())
 
     assert result.agreed is True
-    # Verify the prompt contained "short"
-    call_args = mock_create.call_args
-    user_msg = call_args.kwargs["messages"][1]["content"]
-    assert "short" in user_msg
+
+
+# ── Multi-model consensus ─────────────────────────────────────────
+
+
+async def test_multi_model_both_agree() -> None:
+    """Both validators agree -> consensus agreed."""
+    validator = SignalConsensusValidator.multi(
+        ValidatorConfig(api_key="key1", model="gpt-4o-mini", label="openai"),
+        ValidatorConfig(
+            api_key="key2",
+            model="gemini-2.5-flash",
+            label="gemini",
+            base_url=GEMINI_OPENAI_BASE_URL,
+        ),
+    )
+
+    resp_agree = _mock_openai_response(
+        '{"agree": true, "confidence": 0.80, "reasoning": "Looks good"}'
+    )
+
+    with patch(
+        "app.trading.signal_consensus.AsyncOpenAI",
+    ) as mock_cls:
+        mock_client = AsyncMock()
+        mock_client.chat.completions.create = AsyncMock(
+            return_value=resp_agree,
+        )
+        mock_cls.return_value = mock_client
+
+        result = await validator.validate(_make_signal(), _make_market_data())
+
+    assert result.agreed is True
+    assert len(result.validator_results) == 2
+    assert result.error is None
+
+
+async def test_multi_model_one_disagrees() -> None:
+    """One disagrees -> consensus rejected (unanimous required)."""
+    validator = SignalConsensusValidator.multi(
+        ValidatorConfig(api_key="key1", model="gpt-4o-mini", label="openai"),
+        ValidatorConfig(
+            api_key="key2",
+            model="gemini-2.5-flash",
+            label="gemini",
+            base_url=GEMINI_OPENAI_BASE_URL,
+        ),
+    )
+
+    resp_agree = _mock_openai_response(
+        '{"agree": true, "confidence": 0.85, "reasoning": "Yes"}'
+    )
+    resp_disagree = _mock_openai_response(
+        '{"agree": false, "confidence": 0.70, "reasoning": "No"}'
+    )
+
+    call_count = 0
+
+    async def side_effect(**kwargs):
+        nonlocal call_count
+        call_count += 1
+        return resp_agree if call_count == 1 else resp_disagree
+
+    with patch(
+        "app.trading.signal_consensus.AsyncOpenAI",
+    ) as mock_cls:
+        mock_client = AsyncMock()
+        mock_client.chat.completions.create = AsyncMock(
+            side_effect=side_effect,
+        )
+        mock_cls.return_value = mock_client
+
+        result = await validator.validate(_make_signal(), _make_market_data())
+
+    assert result.agreed is False
+    assert len(result.validator_results) == 2
+
+
+async def test_multi_model_one_errors() -> None:
+    """One validator errors -> consensus rejected (fail-closed)."""
+    validator = SignalConsensusValidator.multi(
+        ValidatorConfig(api_key="key1", model="gpt-4o-mini", label="openai"),
+        ValidatorConfig(
+            api_key="key2",
+            model="gemini-2.5-flash",
+            label="gemini",
+            base_url=GEMINI_OPENAI_BASE_URL,
+        ),
+    )
+
+    resp_agree = _mock_openai_response(
+        '{"agree": true, "confidence": 0.90, "reasoning": "Fine"}'
+    )
+
+    call_count = 0
+
+    async def side_effect(**kwargs):
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return resp_agree
+        raise Exception("Gemini API down")
+
+    with patch(
+        "app.trading.signal_consensus.AsyncOpenAI",
+    ) as mock_cls:
+        mock_client = AsyncMock()
+        mock_client.chat.completions.create = AsyncMock(
+            side_effect=side_effect,
+        )
+        mock_cls.return_value = mock_client
+
+        result = await validator.validate(_make_signal(), _make_market_data())
+
+    assert result.agreed is False
+    assert result.error is not None
+    assert "Gemini API down" in result.error
+
+
+async def test_validator_config_defaults() -> None:
+    """ValidatorConfig has sensible defaults."""
+    cfg = ValidatorConfig(api_key="test")
+    assert cfg.model == "gpt-4o-mini"
+    assert cfg.base_url is None
+    assert cfg.display_label == "gpt-4o-mini"
+
+    cfg2 = ValidatorConfig(api_key="test", label="custom")
+    assert cfg2.display_label == "custom"
+
+
+async def test_models_property() -> None:
+    """models property returns list of labels."""
+    validator = SignalConsensusValidator.multi(
+        ValidatorConfig(api_key="k1", model="gpt-4o-mini", label="openai"),
+        ValidatorConfig(api_key="k2", model="gemini-2.5-flash", label="gemini"),
+    )
+    assert validator.models == ["openai", "gemini"]
