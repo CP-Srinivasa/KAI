@@ -168,6 +168,7 @@ def _log_result(
                     affected_assets=list(message.affected_assets),
                     sentiment_score=message.sentiment_score,
                     impact_score=message.impact_score,
+                    title=message.title,
                 )
                 directional_eligible = eligibility.directional_eligible
                 directional_block_reason = eligibility.directional_block_reason
