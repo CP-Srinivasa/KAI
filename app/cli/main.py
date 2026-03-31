@@ -923,6 +923,53 @@ def alerts_auto_check(
     console.print(f"[green]{applied} annotations written.[/green]")
 
 
+@alerts_app.command("auto-annotate")
+def alerts_auto_annotate(
+    min_age_hours: float = typer.Option(
+        6.0, help="Only annotate alerts older than this (hours)",
+    ),
+    move_threshold: float = typer.Option(
+        1.0, help="Price move threshold in percent (1.0 = 1%%)",
+    ),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Preview without writing annotations",
+    ),
+) -> None:
+    """Auto-annotate directional alerts based on price movement."""
+    import asyncio
+
+    from app.alerts.auto_annotator import auto_annotate_pending
+
+    artifacts_dir = Path("artifacts")
+
+    results = asyncio.run(
+        auto_annotate_pending(
+            audit_dir=artifacts_dir,
+            min_age_hours=min_age_hours,
+            move_threshold=move_threshold,
+            dry_run=dry_run,
+        )
+    )
+
+    if not results:
+        console.print("[yellow]No pending directional alerts to annotate.[/yellow]")
+        return
+
+    hits = sum(1 for a in results if a.outcome == "hit")
+    misses = sum(1 for a in results if a.outcome == "miss")
+    inconclusive = sum(1 for a in results if a.outcome == "inconclusive")
+
+    for a in results:
+        color = {"hit": "green", "miss": "red", "inconclusive": "yellow"}[a.outcome]
+        console.print(f"[{color}]{a.outcome:>13}[/{color}]  {a.asset}  {a.note}")
+
+    mode = " [dim](dry-run)[/dim]" if dry_run else ""
+    console.print(
+        f"\n[bold]{len(results)} annotated{mode}:[/bold]"
+        f" {hits} hit, {misses} miss, {inconclusive} inconclusive"
+    )
+
+
 @alerts_app.command("signal-status")
 def alerts_signal_status(
     lookback_hours: int = typer.Option(24, help="Lookback window for rolling counters"),
