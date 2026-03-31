@@ -15,6 +15,7 @@ class CycleStatus(StrEnum):
     NO_SIGNAL = "no_signal"
     RISK_REJECTED = "risk_rejected"
     SIZE_REJECTED = "size_rejected"
+    CONSENSUS_REJECTED = "consensus_rejected"
     ORDER_FAILED = "order_failed"
     ERROR = "error"
 

@@ -453,6 +453,16 @@ def trading_run_once(
         "--timeout-seconds",
         help="Market data request timeout",
     ),
+    consensus: bool = typer.Option(
+        False,
+        "--consensus",
+        help="Enable multi-model consensus gate (requires OpenAI API key)",
+    ),
+    consensus_model: str = typer.Option(
+        "gpt-4o-mini",
+        "--consensus-model",
+        help="LLM model for consensus validation",
+    ),
 ) -> None:
     """Run one guarded paper/shadow cycle and append cycle audit output."""
     import asyncio
@@ -470,6 +480,8 @@ def trading_run_once(
                 execution_audit_path=execution_audit_path,
                 freshness_threshold_seconds=freshness_threshold_seconds,
                 timeout_seconds=timeout_seconds,
+                enable_consensus=consensus,
+                consensus_model=consensus_model,
             )
         )
     except ValueError as exc:

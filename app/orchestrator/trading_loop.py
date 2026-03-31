@@ -29,6 +29,7 @@ from app.risk.models import RiskLimits
 from app.signals.generator import SignalGenerator
 from app.signals.models import SignalDirection
 from app.storage.models.trading import PortfolioStateRecord, TradingCycleRecord
+from app.trading.signal_consensus import SignalConsensusValidator
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +56,7 @@ class TradingLoop:
         execution_engine: PaperExecutionEngine,
         market_data_adapter: BaseMarketDataAdapter,
         signal_generator: SignalGenerator,
+        consensus_validator: SignalConsensusValidator | None = None,
         audit_log_path: str | None = None,
         session_factory: async_sessionmaker[AsyncSession] | None = None,
     ) -> None:
@@ -62,6 +64,7 @@ class TradingLoop:
         self._exec = execution_engine
         self._market_data = market_data_adapter
         self._signals = signal_generator
+        self._consensus = consensus_validator
         self._audit_path = Path(audit_log_path or _AUDIT_LOG)
         self._audit_path.parent.mkdir(parents=True, exist_ok=True)
         self._session_factory = session_factory
@@ -150,6 +153,29 @@ class TradingLoop:
             )
             await self._write_db(cycle)
             return cycle
+
+        # Consensus gate — second LLM validates the signal direction.
+        if self._consensus is not None:
+            consensus = await self._consensus.validate(signal, market_data)
+            notes.append(
+                f"consensus:{consensus.agreed}|"
+                f"conf:{consensus.confidence:.2f}|"
+                f"model:{consensus.validator_model}"
+            )
+            if not consensus.agreed:
+                cycle = self._build_cycle(
+                    cycle_id,
+                    started_at,
+                    symbol,
+                    CycleStatus.CONSENSUS_REJECTED,
+                    market_data_fetched=True,
+                    signal_generated=True,
+                    notes=notes + [
+                        f"consensus_reason:{consensus.reasoning}",
+                    ],
+                )
+                await self._write_db(cycle)
+                return cycle
 
         order_side = "buy" if signal.direction == SignalDirection.LONG else "sell"
         current_positions = len(self._exec.portfolio.positions)
@@ -518,6 +544,8 @@ def build_trading_loop(
     execution_audit_path: str | Path = _PAPER_EXECUTION_AUDIT_LOG,
     freshness_threshold_seconds: float = 120.0,
     timeout_seconds: int = 10,
+    enable_consensus: bool = False,
+    consensus_model: str = "gpt-4o-mini",
 ) -> TradingLoop:
     """Build the canonical trading loop for explicit paper/shadow run-once execution.
 
@@ -550,11 +578,18 @@ def build_trading_loop(
         mode=normalized_mode.value,
         venue="paper",
     )
+    consensus_validator = None
+    if enable_consensus and settings.providers.openai_api_key:
+        consensus_validator = SignalConsensusValidator(
+            api_key=settings.providers.openai_api_key,
+            model=consensus_model,
+        )
     return TradingLoop(
         risk_engine=risk_engine,
         execution_engine=execution_engine,
         market_data_adapter=market_data_adapter,
         signal_generator=signal_generator,
+        consensus_validator=consensus_validator,
         audit_log_path=str(loop_audit_path),
     )
 
@@ -567,6 +602,8 @@ async def run_trading_loop_once(
     analysis_profile: str = "conservative",
     loop_audit_path: str | Path = _AUDIT_LOG,
     execution_audit_path: str | Path = _PAPER_EXECUTION_AUDIT_LOG,
+    enable_consensus: bool = False,
+    consensus_model: str = "gpt-4o-mini",
     freshness_threshold_seconds: float = 120.0,
     timeout_seconds: int = 10,
 ) -> LoopCycle:
@@ -583,6 +620,8 @@ async def run_trading_loop_once(
         execution_audit_path=execution_audit_path,
         freshness_threshold_seconds=freshness_threshold_seconds,
         timeout_seconds=timeout_seconds,
+        enable_consensus=enable_consensus,
+        consensus_model=consensus_model,
     )
     analysis = build_loop_trigger_analysis(
         symbol=symbol,
