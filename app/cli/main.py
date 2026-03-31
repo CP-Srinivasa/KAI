@@ -53,6 +53,11 @@ app.add_typer(signals_app, name="signals")
 app.add_typer(query_app, name="query", hidden=True)
 app.add_typer(alerts_app, name="alerts")
 
+# Lazy import to avoid heavy trading deps at top-level
+from app.cli.commands.trading import trading_app  # noqa: E402
+
+app.add_typer(trading_app, name="trading")
+
 
 @app.callback()
 def main() -> None:
