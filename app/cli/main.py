@@ -988,8 +988,13 @@ def alerts_health_check(
     lookback_hours: int = typer.Option(
         24, help="Lookback window in hours",
     ),
+    notify: bool = typer.Option(
+        False, help="Send issues via Telegram to operator",
+    ),
 ) -> None:
     """Run system health checks and report issues."""
+    import asyncio
+
     from app.alerts.health_check import run_health_check
 
     issues = run_health_check(lookback_hours=lookback_hours)
@@ -1010,6 +1015,98 @@ def alerts_health_check(
     console.print(
         f"\n[bold]{len(issues)} issues:[/bold]"
         f" {critical} critical, {warnings} warnings"
+    )
+
+    if notify and issues:
+        from app.alerts.notify import send_operator_notification
+
+        lines = ["KAI Health Alert"]
+        for issue in issues:
+            tag = "CRITICAL" if issue.severity == "critical" else "WARNING"
+            lines.append(f"[{tag}] {issue.component}: {issue.message}")
+        text = "\n".join(lines)
+        ok = asyncio.run(send_operator_notification(text))
+        if ok:
+            console.print("[green]Telegram notification sent.[/green]")
+        else:
+            console.print(
+                "[yellow]Telegram not configured or send failed.[/yellow]"
+            )
+
+
+@alerts_app.command("ops-status")
+def alerts_ops_status(
+    lookback_hours: int = typer.Option(
+        24, help="Lookback window in hours",
+    ),
+) -> None:
+    """Quick operator dashboard — health, cycles, precision at a glance."""
+    from datetime import UTC, datetime
+    from pathlib import Path
+
+    from app.alerts.daily_briefing import build_daily_briefing
+    from app.alerts.health_check import run_health_check
+
+    artifacts = Path("artifacts")
+    now = datetime.now(UTC)
+
+    # Health check
+    issues = run_health_check(
+        artifacts_dir=artifacts,
+        lookback_hours=lookback_hours,
+    )
+    if issues:
+        health_str = ", ".join(
+            f"{i.component}({i.severity[0].upper()})"
+            for i in issues
+        )
+    else:
+        health_str = "OK"
+
+    # Briefing data
+    data = build_daily_briefing(
+        artifacts_dir=artifacts,
+        lookback_hours=lookback_hours,
+    )
+
+    # Last cron run
+    log_path = artifacts / "paper_trading_cron.log"
+    last_cron = "unknown"
+    if log_path.exists():
+        with log_path.open(encoding="utf-8", errors="replace") as f:
+            for line in f:
+                if "cron start" in line:
+                    last_cron = line[:19].strip()
+
+    console.print(
+        f"[bold]KAI System Status[/bold] "
+        f"({now.strftime('%Y-%m-%d %H:%M')} UTC)"
+    )
+    console.print(f"  Health:       {health_str}")
+    console.print(f"  Last Cron:    {last_cron}")
+    console.print(
+        f"  Cycles {lookback_hours}h:   "
+        f"{data.cycles_total} total, "
+        f"{data.cycles_completed} completed, "
+        f"{data.fills} fills"
+    )
+    if data.precision_pct is not None:
+        console.print(
+            f"  Precision:    {data.precision_pct:.1f}% "
+            f"({data.hits}h / {data.misses}m)"
+        )
+    else:
+        console.print(
+            f"  Precision:    n/a ({data.hits}h / {data.misses}m)"
+        )
+    console.print(
+        f"  Alerts {lookback_hours}h:   "
+        f"{data.alerts_dispatched} dispatched, "
+        f"{data.alerts_directional} directional"
+    )
+    console.print(
+        f"  Annotations:  {data.total_annotations} total, "
+        f"{data.inconclusive} inconclusive"
     )
 
 

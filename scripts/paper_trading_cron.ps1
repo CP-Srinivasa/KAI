@@ -106,7 +106,7 @@ if ($hour -ge 8 -and $lastBriefing -ne $today) {
     try {
         $briefing = & $Python -m app.cli.main alerts daily-briefing 2>&1 | Out-String
         Write-Log "briefing:`n$briefing"
-        $health = & $Python -m app.cli.main alerts health-check 2>&1 | Out-String
+        $health = & $Python -m app.cli.main alerts health-check --notify 2>&1 | Out-String
         Write-Log "health-check: $($health.Trim())"
     } catch {
         Write-Log "daily-briefing ERROR: $_"
