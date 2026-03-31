@@ -76,4 +76,23 @@ Write-Log "--- cron start ---"
 Run-Cycle "BTC/USDT"
 Start-Sleep -Seconds 15
 Run-Cycle "ETH/USDT"
+
+# Auto-annotate pending directional alerts (every 6th run = ~hourly)
+$marker = Join-Path $ProjectRoot "artifacts\.annotate_counter"
+$counter = 0
+if (Test-Path $marker) { $counter = [int](Get-Content $marker -ErrorAction SilentlyContinue) }
+$counter++
+if ($counter -ge 6) {
+    $counter = 0
+    Write-Log "auto-annotate starting"
+    try {
+        $output = & $Python -m app.cli.main alerts auto-annotate 2>&1 | Out-String
+        $annotated = if ($output -match "(\d+) annotated") { $Matches[1] } else { "0" }
+        Write-Log "auto-annotate done: $annotated annotations"
+    } catch {
+        Write-Log "auto-annotate ERROR: $_"
+    }
+}
+$counter | Out-File -Encoding utf8 $marker
+
 Write-Log "--- cron end ---"
