@@ -95,4 +95,23 @@ if ($counter -ge 6) {
 }
 $counter | Out-File -Encoding utf8 $marker
 
+# Daily briefing + health check (once per day, first run after 07:50)
+$hour = (Get-Date).Hour
+$minute = (Get-Date).Minute
+$briefingMarker = Join-Path $ProjectRoot "artifacts\.briefing_date"
+$today = Get-Date -Format "yyyy-MM-dd"
+$lastBriefing = if (Test-Path $briefingMarker) { Get-Content $briefingMarker -ErrorAction SilentlyContinue } else { "" }
+if ($hour -ge 8 -and $lastBriefing -ne $today) {
+    Write-Log "daily-briefing starting"
+    try {
+        $briefing = & $Python -m app.cli.main alerts daily-briefing 2>&1 | Out-String
+        Write-Log "briefing:`n$briefing"
+        $health = & $Python -m app.cli.main alerts health-check 2>&1 | Out-String
+        Write-Log "health-check: $($health.Trim())"
+    } catch {
+        Write-Log "daily-briefing ERROR: $_"
+    }
+    $today | Out-File -Encoding utf8 $briefingMarker
+}
+
 Write-Log "--- cron end ---"

@@ -970,6 +970,49 @@ def alerts_auto_annotate(
     )
 
 
+@alerts_app.command("daily-briefing")
+def alerts_daily_briefing(
+    lookback_hours: int = typer.Option(
+        24, help="Lookback window in hours",
+    ),
+) -> None:
+    """Generate a daily operator briefing from all audit trails."""
+    from app.alerts.daily_briefing import build_daily_briefing
+
+    data = build_daily_briefing(lookback_hours=lookback_hours)
+    console.print(data.to_text())
+
+
+@alerts_app.command("health-check")
+def alerts_health_check(
+    lookback_hours: int = typer.Option(
+        24, help="Lookback window in hours",
+    ),
+) -> None:
+    """Run system health checks and report issues."""
+    from app.alerts.health_check import run_health_check
+
+    issues = run_health_check(lookback_hours=lookback_hours)
+
+    if not issues:
+        console.print("[bold green]All systems healthy.[/bold green]")
+        return
+
+    for issue in issues:
+        color = "red" if issue.severity == "critical" else "yellow"
+        console.print(
+            f"[{color}][{issue.severity.upper()}][/{color}] "
+            f"{issue.component}: {issue.message}"
+        )
+
+    critical = sum(1 for i in issues if i.severity == "critical")
+    warnings = sum(1 for i in issues if i.severity == "warning")
+    console.print(
+        f"\n[bold]{len(issues)} issues:[/bold]"
+        f" {critical} critical, {warnings} warnings"
+    )
+
+
 @alerts_app.command("signal-status")
 def alerts_signal_status(
     lookback_hours: int = typer.Option(24, help="Lookback window for rolling counters"),
