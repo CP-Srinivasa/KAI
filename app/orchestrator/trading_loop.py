@@ -579,6 +579,8 @@ def _build_consensus_validator(
             model=gemini_model,
             label="gemini",
             base_url=GEMINI_OPENAI_BASE_URL,
+            max_tokens=1024,
+            timeout=30,
         ))
 
     if not configs:
