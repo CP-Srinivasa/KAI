@@ -81,6 +81,7 @@ def pipeline(keyword_engine: KeywordEngine) -> AnalysisPipeline:
 async def test_rss_to_alert_full_e2e(
     session_factory: async_sessionmaker,
     pipeline: AnalysisPipeline,
+    tmp_path: Path,
 ) -> None:
     """Single E2E pass: RSS feed bytes → persisted doc → analysis → dry-run alert.
 
@@ -179,6 +180,7 @@ async def test_rss_to_alert_full_e2e(
     alert_service = AlertService(
         channels=[telegram],
         threshold=ThresholdEngine(min_priority=1),
+        audit_dir=tmp_path,
     )
 
     delivery_results = await alert_service.process_document(

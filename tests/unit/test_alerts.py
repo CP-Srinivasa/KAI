@@ -532,8 +532,8 @@ async def test_process_document_below_threshold_returns_empty():
     assert deliveries == []
 
 
-async def test_process_document_above_threshold_dispatches():
-    service = AlertService.from_settings(_app_settings_dry_run())
+async def test_process_document_above_threshold_dispatches(tmp_path: Path):
+    service = _make_isolated_service(tmp_path)
     doc = CanonicalDocument(url="https://example.com/high", title="High priority doc")
     result = _make_high_result()
     deliveries = await service.process_document(doc, result)
@@ -542,8 +542,8 @@ async def test_process_document_above_threshold_dispatches():
     assert all(d.success for d in deliveries)
 
 
-async def test_process_document_spam_excluded():
-    service = AlertService.from_settings(_app_settings_dry_run())
+async def test_process_document_spam_excluded(tmp_path: Path):
+    service = _make_isolated_service(tmp_path)
     doc = CanonicalDocument(url="https://example.com/spam", title="Spam doc")
     result = _make_high_result()
     deliveries = await service.process_document(doc, result, spam_probability=0.99)
@@ -600,8 +600,12 @@ async def test_different_titles_both_dispatched(tmp_path: Path):
     service = _make_isolated_service(tmp_path)
     result = _make_high_result()
 
-    doc1 = CanonicalDocument(url="https://a.com/1", title="Unique dedup test title alpha")
-    doc2 = CanonicalDocument(url="https://b.com/2", title="Unique dedup test title beta")
+    doc1 = CanonicalDocument(
+        url="https://a.com/1", title="Ethereum staking rewards restructured",
+    )
+    doc2 = CanonicalDocument(
+        url="https://b.com/2", title="Federal Reserve holds rates unchanged",
+    )
 
     deliveries1 = await service.process_document(doc1, result)
     deliveries2 = await service.process_document(doc2, result)
@@ -654,6 +658,73 @@ async def test_cross_run_dedup_via_audit_trail(tmp_path: Path):
     doc2 = CanonicalDocument(url="https://b.com/2", title="Cross run dedup test title")
     deliveries2 = await service2.process_document(doc2, result)
     assert deliveries2 == []
+
+
+# ── D-114: Fuzzy dedup (Jaccard word-overlap) ──────────────────────────────
+
+
+async def test_fuzzy_dedup_catches_reworded_story(tmp_path: Path):
+    """Near-duplicate cross-source titles are caught by Jaccard overlap."""
+    service = _make_isolated_service(tmp_path)
+    result = _make_high_result()
+
+    doc1 = CanonicalDocument(
+        url="https://a.com/1",
+        title="Morgan Stanley sets spot bitcoin ETF fee at 0.14 percent undercutting rivals",
+    )
+    doc2 = CanonicalDocument(
+        url="https://b.com/2",
+        title="Morgan Stanley sets 0.14 percent Bitcoin ETF fee lowest in market",
+    )
+
+    deliveries1 = await service.process_document(doc1, result)
+    deliveries2 = await service.process_document(doc2, result)
+
+    assert len(deliveries1) == 2
+    assert deliveries2 == []  # fuzzy match
+
+
+async def test_fuzzy_dedup_allows_genuinely_different_stories(tmp_path: Path):
+    """Different stories with low word overlap are not deduped."""
+    service = _make_isolated_service(tmp_path)
+    result = _make_high_result()
+
+    doc1 = CanonicalDocument(
+        url="https://a.com/1",
+        title="Tether convinces Big Four firm to handle first full audit of USDT",
+    )
+    doc2 = CanonicalDocument(
+        url="https://b.com/2",
+        title="Ripple joins Singapore sandbox to test RLUSD in trade finance",
+    )
+
+    deliveries1 = await service.process_document(doc1, result)
+    deliveries2 = await service.process_document(doc2, result)
+
+    assert len(deliveries1) == 2
+    assert len(deliveries2) == 2  # different stories, both dispatched
+
+
+async def test_fuzzy_dedup_cross_run_via_normalized_title(tmp_path: Path):
+    """Fuzzy dedup persists via normalized_title in audit trail."""
+    result = _make_high_result()
+
+    # Run 1
+    service1 = _make_isolated_service(tmp_path)
+    doc1 = CanonicalDocument(
+        url="https://a.com/1",
+        title="CFTC chief launches innovation task force focused on crypto framework",
+    )
+    await service1.process_document(doc1, result)
+
+    # Run 2 — reworded version of same story
+    service2 = _make_isolated_service(tmp_path)
+    doc2 = CanonicalDocument(
+        url="https://b.com/2",
+        title="CFTC unveils innovation task force focused on crypto AI prediction markets",
+    )
+    deliveries2 = await service2.process_document(doc2, result)
+    assert deliveries2 == []  # fuzzy match from audit trail
 
 
 # ── AlertService.send_digest ──────────────────────────────────────────────────

@@ -39,7 +39,7 @@ from app.alerts.threshold import ThresholdEngine
 from app.analysis.scoring import compute_priority
 from app.core.domain.document import AnalysisResult, CanonicalDocument
 from app.core.settings import AppSettings
-from app.normalization.cleaner import title_hash
+from app.normalization.cleaner import normalize_title, title_hash
 
 log = structlog.get_logger(__name__)
 
@@ -47,6 +47,10 @@ _WORKSPACE_ROOT = Path(__file__).resolve().parents[2]
 
 # D-114: Title-based alert deduplication window.
 _DEDUP_LOOKBACK_HOURS = 24
+# D-114: Fuzzy dedup — Jaccard word-overlap threshold.
+# 0.4 catches cross-source rewrites of the same story while avoiding
+# false merges of genuinely different articles.
+_FUZZY_JACCARD_THRESHOLD = 0.4
 
 
 class AlertService:
@@ -64,39 +68,64 @@ class AlertService:
         self._threshold = threshold
         self._dedup_lookback_hours = dedup_lookback_hours
         self._audit_dir = audit_dir or (_WORKSPACE_ROOT / "artifacts")
-        # In-memory fast path: session-scoped title hashes
+        # In-memory fast path: session-scoped title hashes (exact match)
         self._seen_title_hashes: set[str] = set()
+        # Normalized word-sets for fuzzy matching
+        self._seen_title_words: list[tuple[str, set[str]]] = []
         # Load recent hashes from audit trail for cross-run dedup
         self._load_recent_title_hashes()
 
     def _load_recent_title_hashes(self) -> None:
-        """Seed in-memory set from recent audit records (cross-run dedup)."""
+        """Seed in-memory sets from recent audit records (cross-run dedup)."""
         try:
             records = load_alert_audits(self._audit_dir)
         except Exception:
             return
         cutoff = datetime.now(UTC) - timedelta(hours=self._dedup_lookback_hours)
         for rec in records:
-            if rec.title_hash is None:
-                continue
             try:
                 ts = datetime.fromisoformat(rec.dispatched_at.replace("Z", "+00:00"))
             except (ValueError, AttributeError):
                 continue
-            if ts >= cutoff:
+            if ts < cutoff:
+                continue
+            if rec.title_hash is not None:
                 self._seen_title_hashes.add(rec.title_hash)
+                # Reconstruct word-set from title_hash is not possible,
+                # so fuzzy dedup within a run relies on _register_title only.
+                # Cross-run fuzzy is seeded from normalized_title stored below.
+            if rec.normalized_title:
+                words = set(rec.normalized_title.split())
+                if words:
+                    self._seen_title_words.append((rec.normalized_title, words))
 
     def _is_duplicate_title(self, doc_title: str) -> bool:
-        """Return True if a similar title was already alerted recently."""
+        """Return True if an exact or fuzzy-similar title was already alerted."""
         if not doc_title:
             return False
         th = title_hash(doc_title)
-        return th in self._seen_title_hashes
+        if th in self._seen_title_hashes:
+            return True
+        # Fuzzy: Jaccard word-overlap on normalized title
+        norm = normalize_title(doc_title)
+        words = set(norm.split())
+        if not words:
+            return False
+        for _seen_norm, seen_words in self._seen_title_words:
+            intersection = len(words & seen_words)
+            union = len(words | seen_words)
+            if union > 0 and intersection / union >= _FUZZY_JACCARD_THRESHOLD:
+                return True
+        return False
 
     def _register_title(self, doc_title: str) -> None:
-        """Register a title hash after successful dispatch."""
+        """Register a title after successful dispatch (exact + fuzzy)."""
         if doc_title:
             self._seen_title_hashes.add(title_hash(doc_title))
+            norm = normalize_title(doc_title)
+            words = set(norm.split())
+            if words:
+                self._seen_title_words.append((norm, words))
 
     @classmethod
     def from_settings(cls, settings: AppSettings) -> AlertService:
@@ -263,6 +292,7 @@ def _log_result(
                 directional_block_reason=directional_block_reason,
                 directional_blocked_assets=directional_blocked_assets,
                 title_hash=title_hash(message.title) if message else None,
+                normalized_title=normalize_title(message.title) if message else None,
             )
             effective_path = audit_path or (
                 _WORKSPACE_ROOT / "artifacts" / ALERT_AUDIT_JSONL_FILENAME
