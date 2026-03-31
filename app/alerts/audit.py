@@ -51,6 +51,7 @@ class AlertAuditRecord:
     directional_eligible: bool | None = None
     directional_block_reason: str | None = None
     directional_blocked_assets: list[str] = field(default_factory=list)
+    title_hash: str | None = None
 
     def to_json_dict(self) -> dict[str, object]:
         d: dict[str, object] = {
@@ -74,6 +75,8 @@ class AlertAuditRecord:
             d["directional_block_reason"] = self.directional_block_reason
         if self.directional_blocked_assets:
             d["directional_blocked_assets"] = self.directional_blocked_assets
+        if self.title_hash is not None:
+            d["title_hash"] = self.title_hash
         return d
 
 
@@ -197,6 +200,7 @@ def load_alert_audits(input_path: str | Path) -> list[AlertAuditRecord]:
                 directional_blocked_assets=data.get(
                     "directional_blocked_assets", []
                 ),
+                title_hash=data.get("title_hash"),
             )
             records.append(record)
         except (json.JSONDecodeError, KeyError):

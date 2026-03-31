@@ -551,6 +551,111 @@ async def test_process_document_spam_excluded():
     assert deliveries == []
 
 
+# ── D-114: Title-based dedup ────────────────────────────────────────────────
+
+
+def _make_isolated_service(tmp_path: Path) -> AlertService:
+    """Build AlertService with isolated audit dir (no cross-contamination)."""
+    s = _dry_run_settings()
+    channels: list[BaseAlertChannel] = [
+        TelegramAlertChannel(s),
+        EmailAlertChannel(s),
+    ]
+    threshold = ThresholdEngine(min_priority=s.min_priority)
+    return AlertService(channels=channels, threshold=threshold, audit_dir=tmp_path)
+
+
+async def test_duplicate_title_skipped_within_session(tmp_path: Path):
+    """Second document with identical title is skipped (session dedup)."""
+    service = _make_isolated_service(tmp_path)
+    result = _make_high_result()
+
+    doc1 = CanonicalDocument(url="https://a.com/1", title="Unique title for dedup test A")
+    doc2 = CanonicalDocument(url="https://b.com/2", title="Unique title for dedup test A")
+
+    deliveries1 = await service.process_document(doc1, result)
+    deliveries2 = await service.process_document(doc2, result)
+
+    assert len(deliveries1) == 2  # dispatched
+    assert deliveries2 == []  # duplicate, skipped
+
+
+async def test_duplicate_title_normalized_match(tmp_path: Path):
+    """Title normalization catches case/punctuation variants."""
+    service = _make_isolated_service(tmp_path)
+    result = _make_high_result()
+
+    doc1 = CanonicalDocument(url="https://a.com/1", title="Unique Dedup Normalized Test!")
+    doc2 = CanonicalDocument(url="https://b.com/2", title="unique dedup normalized test")
+
+    deliveries1 = await service.process_document(doc1, result)
+    deliveries2 = await service.process_document(doc2, result)
+
+    assert len(deliveries1) == 2
+    assert deliveries2 == []
+
+
+async def test_different_titles_both_dispatched(tmp_path: Path):
+    """Different titles are not deduped."""
+    service = _make_isolated_service(tmp_path)
+    result = _make_high_result()
+
+    doc1 = CanonicalDocument(url="https://a.com/1", title="Unique dedup test title alpha")
+    doc2 = CanonicalDocument(url="https://b.com/2", title="Unique dedup test title beta")
+
+    deliveries1 = await service.process_document(doc1, result)
+    deliveries2 = await service.process_document(doc2, result)
+
+    assert len(deliveries1) == 2
+    assert len(deliveries2) == 2
+
+
+async def test_empty_title_not_deduped(tmp_path: Path):
+    """Documents with empty titles are never treated as duplicates."""
+    service = _make_isolated_service(tmp_path)
+    result = _make_high_result()
+
+    doc1 = CanonicalDocument(url="https://a.com/1", title="")
+    doc2 = CanonicalDocument(url="https://b.com/2", title="")
+
+    deliveries1 = await service.process_document(doc1, result)
+    deliveries2 = await service.process_document(doc2, result)
+
+    assert len(deliveries1) == 2
+    assert len(deliveries2) == 2
+
+
+async def test_audit_record_contains_title_hash(tmp_path: Path):
+    """Audit records include title_hash for cross-run dedup."""
+    service = _make_isolated_service(tmp_path)
+    doc = CanonicalDocument(url="https://example.com/th", title="Test Title Hash Unique")
+    result = _make_high_result()
+    await service.process_document(doc, result)
+
+    from app.normalization.cleaner import title_hash as compute_title_hash
+
+    records = load_alert_audits(tmp_path)
+    matching = [r for r in records if r.document_id == str(doc.id)]
+    assert any(r.title_hash == compute_title_hash("Test Title Hash Unique") for r in matching)
+
+
+async def test_cross_run_dedup_via_audit_trail(tmp_path: Path):
+    """Title hashes persist in audit JSONL and block duplicates across runs."""
+    result = _make_high_result()
+
+    # Run 1: dispatch an alert
+    service1 = _make_isolated_service(tmp_path)
+    doc1 = CanonicalDocument(url="https://a.com/1", title="Cross run dedup test title")
+    deliveries1 = await service1.process_document(doc1, result)
+    assert len(deliveries1) == 2
+
+    # Run 2: new service instance, same audit dir — should load hash from trail
+    service2 = _make_isolated_service(tmp_path)
+    doc2 = CanonicalDocument(url="https://b.com/2", title="Cross run dedup test title")
+    deliveries2 = await service2.process_document(doc2, result)
+    assert deliveries2 == []
+
+
 # ── AlertService.send_digest ──────────────────────────────────────────────────
 
 

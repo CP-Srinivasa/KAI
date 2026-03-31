@@ -6,7 +6,8 @@ Usage:
 
 process_document():
   - Evaluates threshold (ThresholdEngine)
-  - Returns [] if document does not meet threshold
+  - Checks title-based dedup (D-114, cross-run via audit trail)
+  - Returns [] if document does not meet threshold or is a duplicate
   - Builds AlertMessage and dispatches to all active channels
 
 send_digest():
@@ -19,11 +20,17 @@ from_settings():
 
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import structlog
 
-from app.alerts.audit import ALERT_AUDIT_JSONL_FILENAME, AlertAuditRecord, append_alert_audit
+from app.alerts.audit import (
+    ALERT_AUDIT_JSONL_FILENAME,
+    AlertAuditRecord,
+    append_alert_audit,
+    load_alert_audits,
+)
 from app.alerts.base.interfaces import AlertDeliveryResult, AlertMessage, BaseAlertChannel
 from app.alerts.channels.email import EmailAlertChannel
 from app.alerts.channels.telegram import TelegramAlertChannel
@@ -32,10 +39,14 @@ from app.alerts.threshold import ThresholdEngine
 from app.analysis.scoring import compute_priority
 from app.core.domain.document import AnalysisResult, CanonicalDocument
 from app.core.settings import AppSettings
+from app.normalization.cleaner import title_hash
 
 log = structlog.get_logger(__name__)
 
 _WORKSPACE_ROOT = Path(__file__).resolve().parents[2]
+
+# D-114: Title-based alert deduplication window.
+_DEDUP_LOOKBACK_HOURS = 24
 
 
 class AlertService:
@@ -45,9 +56,47 @@ class AlertService:
         self,
         channels: list[BaseAlertChannel],
         threshold: ThresholdEngine,
+        *,
+        dedup_lookback_hours: int = _DEDUP_LOOKBACK_HOURS,
+        audit_dir: Path | None = None,
     ) -> None:
         self._channels = channels
         self._threshold = threshold
+        self._dedup_lookback_hours = dedup_lookback_hours
+        self._audit_dir = audit_dir or (_WORKSPACE_ROOT / "artifacts")
+        # In-memory fast path: session-scoped title hashes
+        self._seen_title_hashes: set[str] = set()
+        # Load recent hashes from audit trail for cross-run dedup
+        self._load_recent_title_hashes()
+
+    def _load_recent_title_hashes(self) -> None:
+        """Seed in-memory set from recent audit records (cross-run dedup)."""
+        try:
+            records = load_alert_audits(self._audit_dir)
+        except Exception:
+            return
+        cutoff = datetime.now(UTC) - timedelta(hours=self._dedup_lookback_hours)
+        for rec in records:
+            if rec.title_hash is None:
+                continue
+            try:
+                ts = datetime.fromisoformat(rec.dispatched_at.replace("Z", "+00:00"))
+            except (ValueError, AttributeError):
+                continue
+            if ts >= cutoff:
+                self._seen_title_hashes.add(rec.title_hash)
+
+    def _is_duplicate_title(self, doc_title: str) -> bool:
+        """Return True if a similar title was already alerted recently."""
+        if not doc_title:
+            return False
+        th = title_hash(doc_title)
+        return th in self._seen_title_hashes
+
+    def _register_title(self, doc_title: str) -> None:
+        """Register a title hash after successful dispatch."""
+        if doc_title:
+            self._seen_title_hashes.add(title_hash(doc_title))
 
     @classmethod
     def from_settings(cls, settings: AppSettings) -> AlertService:
@@ -80,13 +129,26 @@ class AlertService:
 
         Returns:
             List of AlertDeliveryResult — one per active channel.
-            Empty list if the document does not meet the alert threshold.
+            Empty list if the document does not meet the alert threshold
+            or has a duplicate title within the dedup window.
         """
         if not self._threshold.should_alert(result, spam_probability=spam_probability):
             return []
 
+        # D-114: Title-based dedup — skip if same story already alerted
+        if self._is_duplicate_title(doc.title):
+            log.info(
+                "alert.skipped_duplicate_title",
+                document_id=str(doc.id),
+                title_hash=title_hash(doc.title),
+            )
+            return []
+
         message = _build_alert_message(doc, result, spam_probability)
-        return await self._dispatch(message)
+        deliveries = await self._dispatch(message)
+        # Register after dispatch so subsequent docs in same run are caught
+        self._register_title(doc.title)
+        return deliveries
 
     async def send_digest(
         self,
@@ -100,17 +162,19 @@ class AlertService:
         if not messages:
             return []
         results = []
+        audit_path = self._audit_dir / ALERT_AUDIT_JSONL_FILENAME
         for channel in self._channels:
             delivery = await channel.send_digest(messages, period)
-            _log_result(delivery, digest=True, document_id="multiple-digest")
+            _log_result(delivery, digest=True, document_id="multiple-digest", audit_path=audit_path)
             results.append(delivery)
         return results
 
     async def _dispatch(self, message: AlertMessage) -> list[AlertDeliveryResult]:
         results = []
+        audit_path = self._audit_dir / ALERT_AUDIT_JSONL_FILENAME
         for channel in self._channels:
             delivery = await channel.send(message)
-            _log_result(delivery, message=message)
+            _log_result(delivery, message=message, audit_path=audit_path)
             results.append(delivery)
         return results
 
@@ -145,6 +209,7 @@ def _log_result(
     digest: bool = False,
     message: AlertMessage | None = None,
     document_id: str | None = None,
+    audit_path: Path | None = None,
 ) -> None:
     kind = "digest" if digest else "alert"
     doc_id = document_id or (message.document_id if message else None)
@@ -197,11 +262,12 @@ def _log_result(
                 directional_eligible=directional_eligible,
                 directional_block_reason=directional_block_reason,
                 directional_blocked_assets=directional_blocked_assets,
+                title_hash=title_hash(message.title) if message else None,
             )
-            audit_path = (
+            effective_path = audit_path or (
                 _WORKSPACE_ROOT / "artifacts" / ALERT_AUDIT_JSONL_FILENAME
             )
-            append_alert_audit(record, audit_path)
+            append_alert_audit(record, effective_path)
     else:
         log.error(
             f"alert.{kind}.failed",
