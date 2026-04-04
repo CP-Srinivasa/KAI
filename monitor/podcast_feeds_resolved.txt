@@ -7,10 +7,10 @@
 sascha_huber|https://saschahuber.podigee.io/feed/mp3|Sascha Huber Podcast|active
 
 # Epicenter: known RSS
-epicenter_tv|https://epicenter.tv/feed/podcast/|Epicenter Podcast|needs_verification
+epicenter_tv|https://epicenter.tv/feed/podcast/|Epicenter Podcast|disabled_404
 
 # WiWo Börsenwoche
-wiwo_boersenwoche|https://www.wiwo.de/podcast/boersenwoche/rss|WirtschaftsWoche Börsenwoche|needs_verification
+wiwo_boersenwoche|https://www.wiwo.de/podcast/boersenwoche/rss|WirtschaftsWoche Börsenwoche|disabled_404
 
-# CoinTelegraph Hashing It Out
+# CoinTelegraph Hashing It Out (feed works but returns 0 items)
 cointelegraph_hashing|https://feeds.buzzsprout.com/1275785.rss|Hashing It Out|needs_verification

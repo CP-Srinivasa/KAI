@@ -218,8 +218,8 @@ def test_actor_action_bearish_title_allowed(title: str) -> None:
     assert decision.directional_eligible is True
 
 
-def test_reactive_filter_only_applies_to_bearish() -> None:
-    """Bullish alerts with reactive-sounding words are not blocked."""
+def test_reactive_bearish_filter_only_applies_to_bearish() -> None:
+    """Bullish alerts with bearish reactive words are not blocked."""
     decision = evaluate_directional_eligibility(
         sentiment_label="bullish",
         affected_assets=["ETH"],
@@ -227,6 +227,57 @@ def test_reactive_filter_only_applies_to_bearish() -> None:
         impact_score=0.70,
         title="Ethereum drops to key support then bounces hard",
     )
+    assert decision.directional_eligible is True
+
+
+@pytest.mark.parametrize(
+    "title",
+    [
+        "Bitcoin surges past $100K on ETF optimism",
+        "ETH rallies 15% in surprise breakout session",
+        "Crypto market soars as Fed signals rate cuts",
+        "Bitcoin jumps to monthly high after whale buying",
+        "BTC spikes above resistance on massive volume",
+        "Bitcoin rockets through key level as bulls take control",
+        "Ethereum price exploding as DeFi TVL hits new ATH",
+        "Bitcoin hits new all-time high above $120K",
+        "Massive ETF inflows push BTC higher",
+        "SOL breaking out as Solana ecosystem surges",
+    ],
+)
+def test_reactive_bullish_title_blocked(title: str) -> None:
+    """Bullish alert with reactive price-movement title is blocked (D-115)."""
+    decision = evaluate_directional_eligibility(
+        sentiment_label="bullish",
+        affected_assets=["BTC"],
+        sentiment_score=0.80,
+        impact_score=0.70,
+        title=title,
+    )
+    assert decision.is_directional is True
+    assert decision.directional_eligible is False
+    assert decision.directional_block_reason == "reactive_price_narrative"
+
+
+@pytest.mark.parametrize(
+    "title",
+    [
+        "MicroStrategy buys $500M of Bitcoin in latest purchase",
+        "BlackRock files for Ethereum ETF approval",
+        "Google warns quantum computing may break bitcoin earlier than thought",
+        "Fidelity adds Bitcoin to retirement accounts",
+    ],
+)
+def test_actor_action_bullish_title_allowed(title: str) -> None:
+    """Bullish alert with actor-action title passes reactive filter."""
+    decision = evaluate_directional_eligibility(
+        sentiment_label="bullish",
+        affected_assets=["BTC"],
+        sentiment_score=0.80,
+        impact_score=0.70,
+        title=title,
+    )
+    assert decision.is_directional is True
     assert decision.directional_eligible is True
 
 
@@ -247,6 +298,17 @@ def test_is_reactive_bearish_helper() -> None:
     assert _is_reactive_bearish("Bitcoin drops below $60K") is True
     assert _is_reactive_bearish("Price slides to two-week low") is True
     assert _is_reactive_bearish("Extreme fear grips the market") is True
+
+
+def test_is_reactive_bullish_helper() -> None:
+    """Direct test of the bullish pattern matcher."""
+    from app.alerts.eligibility import _is_reactive_bullish
+
+    assert _is_reactive_bullish("Bitcoin surges past $100K") is True
+    assert _is_reactive_bullish("ETH rallies on ETF news") is True
+    assert _is_reactive_bullish("BTC hits all-time high") is True
+    assert _is_reactive_bullish("MicroStrategy buys more Bitcoin") is False
+    assert _is_reactive_bullish("Fed cuts rates") is False
     assert _is_reactive_bearish("Bitfarms sells all BTC holdings") is False
     assert _is_reactive_bearish("SEC approves new ETF application") is False
 

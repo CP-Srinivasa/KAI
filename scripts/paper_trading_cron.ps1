@@ -26,20 +26,33 @@ if ($Install) {
     # Delete existing task if present
     schtasks /Delete /TN "KAI-PaperTrading" /F 2>$null
 
-    # Create: every 10 minutes, indefinitely, start now
+    # Create: every 10 minutes, run whether user is logged on or not.
+    # /RL HIGHEST = run with highest privileges (needed for wake-from-sleep)
+    # /RU requires the current user's password (prompted by schtasks).
+    $currentUser = [System.Security.Principal.WindowsIdentity]::GetCurrent().Name
     schtasks /Create `
         /TN "KAI-PaperTrading" `
         /TR $action `
         /SC MINUTE /MO 10 `
         /ST (Get-Date -Format "HH:mm") `
+        /RU $currentUser `
+        /RL HIGHEST `
         /F
 
     if ($LASTEXITCODE -eq 0) {
-        Write-Host "Task 'KAI-PaperTrading' installed (every 10 min)."
+        Write-Host "Task 'KAI-PaperTrading' installed (every 10 min, runs whether logged on or not)."
+        Write-Host ""
+        Write-Host "IMPORTANT: To enable wake-from-sleep, open Task Scheduler GUI:"
+        Write-Host "  1. Open taskschd.msc"
+        Write-Host "  2. Find KAI-PaperTrading"
+        Write-Host "  3. Properties > Conditions > check 'Wake the computer to run this task'"
+        Write-Host "  4. Properties > Settings > check 'Run task as soon as possible after a scheduled start is missed'"
+        Write-Host ""
         Write-Host "View:   schtasks /Query /TN KAI-PaperTrading"
         Write-Host "Delete: schtasks /Delete /TN KAI-PaperTrading /F"
     } else {
         Write-Host "ERROR: Failed to create scheduled task." -ForegroundColor Red
+        Write-Host "Try running this script as Administrator." -ForegroundColor Yellow
     }
     exit
 }
@@ -69,10 +82,45 @@ function Run-Cycle($symbol) {
     }
 }
 
+# ── Server watchdog ─────────────────────────────────────────────────────────
+function Ensure-Server {
+    try {
+        $health = Invoke-WebRequest -Uri "http://127.0.0.1:8000/health" `
+            -TimeoutSec 5 -UseBasicParsing -ErrorAction Stop
+        if ($health.StatusCode -eq 200) { return }
+    } catch {}
+
+    # Server is down — restart it.
+    Write-Log "SERVER DOWN — restarting uvicorn"
+    $serverLog = Join-Path $ProjectRoot "logs\server.log"
+    Start-Process -NoNewWindow -FilePath $Python `
+        -ArgumentList "-m", "uvicorn", "app.api.main:app", `
+            "--host", "127.0.0.1", "--port", "8000", "--log-level", "info" `
+        -RedirectStandardOutput $serverLog `
+        -RedirectStandardError (Join-Path $ProjectRoot "logs\server.err.log")
+
+    Start-Sleep -Seconds 5
+    try {
+        $health = Invoke-WebRequest -Uri "http://127.0.0.1:8000/health" `
+            -TimeoutSec 5 -UseBasicParsing -ErrorAction Stop
+        if ($health.StatusCode -eq 200) {
+            Write-Log "SERVER restarted OK"
+        } else {
+            Write-Log "SERVER restart FAILED (status $($health.StatusCode))"
+        }
+    } catch {
+        Write-Log "SERVER restart FAILED: $_"
+    }
+}
+
 # ── Main ─────────────────────────────────────────────────────────────────────
 Set-Location $ProjectRoot
 
 Write-Log "--- cron start ---"
+
+# Ensure the FastAPI server (+ Telegram bot poller) is running.
+Ensure-Server
+
 Run-Cycle "BTC/USDT"
 Start-Sleep -Seconds 15
 Run-Cycle "ETH/USDT"
@@ -104,7 +152,7 @@ $lastBriefing = if (Test-Path $briefingMarker) { Get-Content $briefingMarker -Er
 if ($hour -ge 8 -and $lastBriefing -ne $today) {
     Write-Log "daily-briefing starting"
     try {
-        $briefing = & $Python -m app.cli.main alerts daily-briefing 2>&1 | Out-String
+        $briefing = & $Python -m app.cli.main alerts daily-briefing --notify 2>&1 | Out-String
         Write-Log "briefing:`n$briefing"
         $health = & $Python -m app.cli.main alerts health-check --notify 2>&1 | Out-String
         Write-Log "health-check: $($health.Trim())"

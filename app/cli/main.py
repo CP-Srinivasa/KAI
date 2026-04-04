@@ -244,6 +244,170 @@ def pipeline_run(
     asyncio.run(run())
 
 
+@pipeline_app.command("youtube")
+def pipeline_youtube(
+    channel_url: str = typer.Argument(..., help="YouTube channel URL (e.g. https://youtube.com/@Bankless)"),
+    source_id: str = typer.Option("youtube", help="Source ID"),
+    source_name: str = typer.Option("YouTube", help="Source name"),
+    max_results: int = typer.Option(5, help="Max videos to fetch per channel"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Skip DB writes"),
+    top_n: int = typer.Option(5, help="Top results to display"),
+) -> None:
+    """Fetch YouTube channel videos, extract transcripts, analyze, and alert."""
+    import asyncio
+
+    async def run() -> None:
+        from app.analysis.keywords.engine import KeywordEngine
+        from app.integrations.openai.provider import OpenAIAnalysisProvider
+        from app.pipeline.service import run_youtube_pipeline
+
+        settings = get_settings()
+        monitor_dir = Path(settings.monitor_dir)
+
+        if not settings.providers.youtube_api_key:
+            console.print("[red]Error:[/red] YOUTUBE_API_KEY not set in .env")
+            raise typer.Exit(1)
+
+        keyword_engine = KeywordEngine.from_monitor_dir(monitor_dir)
+
+        provider = None
+        if settings.providers.openai_api_key:
+            provider = OpenAIAnalysisProvider.from_settings(settings.providers)
+
+        session_factory = build_session_factory(settings.db)
+
+        stats = await run_youtube_pipeline(
+            channel_url,
+            session_factory=session_factory,
+            keyword_engine=keyword_engine,
+            provider=provider,
+            api_key=settings.providers.youtube_api_key,
+            source_id=source_id,
+            source_name=source_name,
+            max_results=max_results,
+            dry_run=dry_run,
+        )
+
+        console.print(f"\n[bold green]YouTube pipeline complete:[/bold green] {channel_url}")
+        console.print(f"  Fetched:   {stats.fetched_count}")
+        console.print(f"  Saved:     {stats.saved_count}")
+        console.print(f"  Analyzed:  {stats.analyzed_count}")
+        console.print(f"  Alerts:    {stats.alerts_fired_count}")
+        console.print(f"  Skipped:   {stats.skipped_count}")
+        if stats.priority_distribution:
+            dist = ", ".join(
+                f"P{score}:{count}" for score, count in sorted(stats.priority_distribution.items())
+            )
+            console.print(f"  Priority:  {dist}")
+
+        if not stats.top_results:
+            return
+
+        console.print(f"\n[bold]Top {min(top_n, len(stats.top_results))} results:[/bold]")
+        table = Table(show_header=True, header_style="bold cyan")
+        table.add_column("Pri", width=4)
+        table.add_column("Rel", width=5)
+        table.add_column("Imp", width=5)
+        table.add_column("Sentiment", width=10)
+        table.add_column("Title")
+
+        for res in stats.top_results[:top_n]:
+            doc = res.document
+            pri = str(doc.priority_score or "–")
+            rel = f"{doc.relevance_score:.2f}" if doc.relevance_score is not None else "–"
+            imp = f"{doc.impact_score:.2f}" if doc.impact_score is not None else "–"
+            sentiment = doc.sentiment_label.value if doc.sentiment_label else "–"
+            table.add_row(pri, rel, imp, sentiment, doc.title or "–")
+
+        console.print(table)
+
+    asyncio.run(run())
+
+
+@pipeline_app.command("newsdata")
+def pipeline_newsdata(
+    query: str = typer.Argument(..., help="Search query (e.g. 'crypto bitcoin ethereum')"),
+    source_id: str = typer.Option("newsdata", help="Source ID"),
+    source_name: str = typer.Option("NewsData.io", help="Source name"),
+    language: str = typer.Option("en", help="Language code (en, de, etc.)"),
+    category: str = typer.Option("business", help="Category filter (business, technology, etc.)"),
+    size: int = typer.Option(10, help="Number of articles to fetch"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Skip DB writes"),
+    top_n: int = typer.Option(5, help="Top results to display"),
+) -> None:
+    """Fetch articles from NewsData.io API, analyze, and alert."""
+    import asyncio
+
+    async def run() -> None:
+        from app.analysis.keywords.engine import KeywordEngine
+        from app.integrations.openai.provider import OpenAIAnalysisProvider
+        from app.pipeline.service import run_newsdata_pipeline
+
+        settings = get_settings()
+        monitor_dir = Path(settings.monitor_dir)
+
+        if not settings.providers.newsdata_api_key:
+            console.print("[red]Error:[/red] NEWSDATA_API_KEY not set in .env")
+            raise typer.Exit(1)
+
+        keyword_engine = KeywordEngine.from_monitor_dir(monitor_dir)
+
+        provider = None
+        if settings.providers.openai_api_key:
+            provider = OpenAIAnalysisProvider.from_settings(settings.providers)
+
+        session_factory = build_session_factory(settings.db)
+
+        stats = await run_newsdata_pipeline(
+            query,
+            session_factory=session_factory,
+            keyword_engine=keyword_engine,
+            provider=provider,
+            api_key=settings.providers.newsdata_api_key,
+            source_id=source_id,
+            source_name=source_name,
+            language=language,
+            category=category,
+            size=size,
+            dry_run=dry_run,
+        )
+
+        console.print(f"\n[bold green]NewsData.io pipeline complete:[/bold green] query='{query}'")
+        console.print(f"  Fetched:   {stats.fetched_count}")
+        console.print(f"  Saved:     {stats.saved_count}")
+        console.print(f"  Analyzed:  {stats.analyzed_count}")
+        console.print(f"  Alerts:    {stats.alerts_fired_count}")
+        console.print(f"  Skipped:   {stats.skipped_count}")
+        if stats.priority_distribution:
+            dist = ", ".join(
+                f"P{score}:{count}" for score, count in sorted(stats.priority_distribution.items())
+            )
+            console.print(f"  Priority:  {dist}")
+
+        if not stats.top_results:
+            return
+
+        console.print(f"\n[bold]Top {min(top_n, len(stats.top_results))} results:[/bold]")
+        table = Table(show_header=True, header_style="bold cyan")
+        table.add_column("Pri", width=4)
+        table.add_column("Rel", width=5)
+        table.add_column("Imp", width=5)
+        table.add_column("Sentiment", width=10)
+        table.add_column("Title")
+
+        for res in stats.top_results[:top_n]:
+            doc = res.document
+            pri = str(doc.priority_score or "–")
+            rel = f"{doc.relevance_score:.2f}" if doc.relevance_score is not None else "–"
+            imp = f"{doc.impact_score:.2f}" if doc.impact_score is not None else "–"
+            sentiment = doc.sentiment_label.value if doc.sentiment_label else "–"
+            table.add_row(pri, rel, imp, sentiment, doc.title or "–")
+
+        console.print(table)
+
+    asyncio.run(run())
+
+
 # ── query analyze-pending ─────────────────────────────────────────────────────
 
 
@@ -975,12 +1139,25 @@ def alerts_daily_briefing(
     lookback_hours: int = typer.Option(
         24, help="Lookback window in hours",
     ),
+    notify: bool = typer.Option(
+        False, help="Send briefing via Telegram to operator",
+    ),
 ) -> None:
     """Generate a daily operator briefing from all audit trails."""
+    import asyncio
+
     from app.alerts.daily_briefing import build_daily_briefing
 
     data = build_daily_briefing(lookback_hours=lookback_hours)
-    console.print(data.to_text())
+    text = data.to_text()
+    console.print(text)
+
+    if notify:
+        from app.alerts.notify import send_operator_notification
+
+        ok = asyncio.run(send_operator_notification(text))
+        if ok:
+            console.print("[green]Telegram notification sent.[/green]")
 
 
 @alerts_app.command("health-check")
@@ -1001,6 +1178,14 @@ def alerts_health_check(
 
     if not issues:
         console.print("[bold green]All systems healthy.[/bold green]")
+        if notify:
+            from app.alerts.notify import send_operator_notification
+
+            ok = asyncio.run(
+                send_operator_notification("KAI Health Check: All systems healthy.")
+            )
+            if ok:
+                console.print("[green]Telegram notification sent.[/green]")
         return
 
     for issue in issues:
@@ -1017,7 +1202,7 @@ def alerts_health_check(
         f" {critical} critical, {warnings} warnings"
     )
 
-    if notify and issues:
+    if notify:
         from app.alerts.notify import send_operator_notification
 
         lines = ["KAI Health Alert"]

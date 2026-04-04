@@ -100,7 +100,8 @@
 ---> **Verbindliches Betriebsdokument fuer alle Coding-Agenten.**
 
 
-> Claude Code -- OpenAI Codex -- Google Antigravity
+> Aktiver Agent: Claude Code (Architekt + Implementierer)
+> Multi-Agent-Modell (Codex, Antigravity) pausiert bis 30-Day-Gate (2026-04-23) — siehe docs/archive/AGENT_ROLES.md
 
 
 > Dieses Dokument lesen, bevor eine einzige Zeile Code angefasst wird.

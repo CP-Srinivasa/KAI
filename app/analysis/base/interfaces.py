@@ -31,6 +31,9 @@ class LLMAnalysisOutput(BaseModel):
     bear_case: str | None = None
     neutral_case: str | None = None
 
+    directional_confidence: float = Field(default=0.0, ge=0.0, le=1.0)
+    event_timing: str | None = None
+
     historical_analogs: list[str] = Field(default_factory=list)
     recommended_priority: int = Field(default=5, ge=1, le=10)
     actionable: bool = False

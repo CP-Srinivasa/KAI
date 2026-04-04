@@ -33,11 +33,29 @@ log = structlog.get_logger(__name__)
 # Minimum age before we evaluate an alert (hours).
 _DEFAULT_MIN_AGE_HOURS = 6.0
 
+# Maximum age — alerts older than this are too stale for reliable evaluation.
+_DEFAULT_MAX_AGE_HOURS = 48.0
+
 # Price-move threshold in percent (adapter returns pct, e.g. 2.0 = 2%).
-_DEFAULT_MOVE_THRESHOLD = 1.0  # 1 %
+# Scales with evaluation window to compensate for natural BTC volatility:
+#   ≤12h → 1.0%,  ≤24h → 2.0%,  ≤48h → 3.0%
+_DEFAULT_MOVE_THRESHOLD = 1.0  # base threshold for ≤12h
 
 # Delay between CoinGecko API calls to respect rate limits.
 _API_DELAY_SECONDS = 12
+
+
+def _scaled_threshold(elapsed_hours: float, base_threshold: float) -> float:
+    """Return a move threshold that scales with evaluation window.
+
+    Longer windows need higher thresholds because normal BTC volatility
+    will exceed small thresholds over days.
+    """
+    if elapsed_hours <= 12.0:
+        return base_threshold
+    if elapsed_hours <= 24.0:
+        return base_threshold * 2.0
+    return base_threshold * 3.0
 
 
 def _parse_dispatch_time(record: AlertAuditRecord) -> datetime | None:
@@ -68,6 +86,7 @@ async def auto_annotate_pending(
     audit_dir: Path,
     *,
     min_age_hours: float = _DEFAULT_MIN_AGE_HOURS,
+    max_age_hours: float = _DEFAULT_MAX_AGE_HOURS,
     move_threshold: float = _DEFAULT_MOVE_THRESHOLD,
     dry_run: bool = False,
 ) -> list[AlertOutcomeAnnotation]:
@@ -80,13 +99,12 @@ async def auto_annotate_pending(
     audits = load_alert_audits(audit_dir)
     existing = load_outcome_annotations(audit_dir)
 
-    # Build set of (document_id, asset) pairs already annotated.
-    annotated_keys: set[tuple[str, str | None]] = {
-        (a.document_id, a.asset) for a in existing
-    }
+    # Build set of document_ids already annotated (any asset).
+    annotated_doc_ids: set[str] = {a.document_id for a in existing}
 
     now = datetime.now(UTC)
-    cutoff = now - timedelta(hours=min_age_hours)
+    min_cutoff = now - timedelta(hours=min_age_hours)
+    max_cutoff = now - timedelta(hours=max_age_hours)
 
     # Filter to actionable candidates.
     pending: list[tuple[AlertAuditRecord, datetime]] = []
@@ -94,10 +112,12 @@ async def auto_annotate_pending(
         if rec.directional_eligible is not True:
             continue
         dt = _parse_dispatch_time(rec)
-        if dt is None or dt > cutoff:
+        if dt is None or dt > min_cutoff:
             continue
-        symbol = _primary_symbol(rec)
-        if (rec.document_id, symbol) in annotated_keys:
+        # Skip alerts that are too old — evaluation window too stale.
+        if dt < max_cutoff:
+            continue
+        if rec.document_id in annotated_doc_ids:
             continue
         # Deduplicate by document_id (multiple channels produce
         # multiple audit rows for the same document).
@@ -139,15 +159,19 @@ async def auto_annotate_pending(
         start_price, end_price, pct_change = price_data
         elapsed_h = (now - dispatch_time).total_seconds() / 3600
 
+        # Scale threshold with evaluation window to reduce FP from
+        # normal volatility at longer horizons.
+        threshold = _scaled_threshold(elapsed_h, move_threshold)
+
         # Determine outcome.
         sentiment = (rec.sentiment_label or "").lower()
-        if sentiment == "bullish" and pct_change >= move_threshold:
+        if sentiment == "bullish" and pct_change >= threshold:
             outcome: str = "hit"
-        elif sentiment == "bearish" and pct_change <= -move_threshold:
+        elif sentiment == "bearish" and pct_change <= -threshold:
             outcome = "hit"
-        elif sentiment == "bullish" and pct_change <= -move_threshold:
+        elif sentiment == "bullish" and pct_change <= -threshold:
             outcome = "miss"
-        elif sentiment == "bearish" and pct_change >= move_threshold:
+        elif sentiment == "bearish" and pct_change >= threshold:
             outcome = "miss"
         else:
             outcome = "inconclusive"

@@ -475,6 +475,8 @@ class AnalysisPipeline:
                     actionable=primary_output.actionable,
                     tags=primary_output.tags,
                     spam_probability=primary_output.spam_probability,
+                    directional_confidence=primary_output.directional_confidence,
+                    event_timing=primary_output.event_timing,
                 )
             except Exception as exc:
                 logger.warning(

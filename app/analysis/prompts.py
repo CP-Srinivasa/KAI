@@ -45,8 +45,10 @@ spam_probability:
   1.0 = spam, clickbait, or extremely low quality
 
 affected_assets:
-  List specific tickers or names (e.g. ["BTC", "ETH", "MSTR", "BlackRock"]).
-  Only include what is directly discussed.
+  List specific tradeable crypto pairs (e.g. ["BTC/USDT", "ETH/USDT", "SOL/USDT"]).
+  Use /USDT suffix for all crypto assets. Only include assets that are DIRECTLY
+  affected by the event. Do NOT include equity tickers (COIN, MSTR, IBIT, HOOD,
+  MARA) — only crypto assets tradeable on exchanges.
 
 affected_sectors:
   E.g. ["DeFi", "Layer1", "CeFi", "Regulation", "Mining", "ETF", "Macro", "Banking"].
@@ -62,12 +64,35 @@ short_reasoning:
 bull_case / bear_case / neutral_case:
   Optional scenario analysis. Only provide if meaningful.
 
+directional_confidence:
+  0.0 = no directional signal at all
+  1.0 = extremely strong, concrete directional catalyst
+  Calibrate carefully:
+  - 0.8-1.0: Concrete institutional action (ETF launch, major acquisition, protocol exploit)
+  - 0.5-0.7: Plausible directional catalyst but uncertain timing/magnitude
+  - 0.2-0.4: Vague narrative, opinion piece, or already-priced-in information
+  - 0.0-0.1: Pure reporting of past events, no forward-looking signal
+
+event_timing:
+  Classify the temporal nature of the information:
+  - forward_catalyst: Announces a NEW event that hasn't been priced in yet
+    (e.g. "Morgan Stanley to launch Bitcoin ETF next week")
+  - backward_report: Reports on something that ALREADY happened and is likely
+    priced in (e.g. "Bitcoin ETFs drew $2.5B last month", "Crypto rallied 9%")
+  - ongoing_trend: Describes a continuing development without a clear catalyst
+    (e.g. "Institutional adoption continues to grow")
+  - speculative: Opinion, prediction, or hype without concrete event basis
+    (e.g. "Bitcoin could reach $100K", "Crypto starts 2026 STRONG!")
+
 recommended_priority:
   1 = low priority, 10 = immediate review required.
   Use 8-10 only for breaking news or major structural events.
+  IMPORTANT: A high priority requires BOTH high impact AND forward_catalyst timing.
+  Backward reports and speculation should never exceed priority 6.
 
 actionable:
   true only if this warrants immediate consideration for trading/position review.
+  Backward reports and speculative articles are NOT actionable.
 
 tags:
   Thematic tags (e.g. ["bitcoin", "etf", "sec", "regulation", "institutional"]).

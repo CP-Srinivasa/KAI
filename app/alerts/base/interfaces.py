@@ -31,6 +31,9 @@ class AlertMessage:
     # Score context for directional eligibility evaluation (D-111)
     sentiment_score: float | None = None
     impact_score: float | None = None
+    # D-116: LLM directional signal quality fields
+    directional_confidence: float | None = None
+    event_timing: str | None = None
 
 
 @dataclass(frozen=True)

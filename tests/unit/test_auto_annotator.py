@@ -200,3 +200,68 @@ async def test_dry_run_does_not_write(tmp_path: Path) -> None:
     assert len(results) == 1
     outcomes_path = tmp_path / ALERT_OUTCOMES_JSONL_FILENAME
     assert not outcomes_path.exists()
+
+
+async def test_skips_too_old(tmp_path: Path) -> None:
+    """Alert older than max_age_hours is skipped (stale window)."""
+    _write_audit(tmp_path, _make_audit(hours_ago=100.0))
+
+    with patch(
+        "app.alerts.auto_annotator.CoinGeckoAdapter"
+    ) as mock_cls:
+        adapter = mock_cls.return_value
+        adapter.get_price_change_between = AsyncMock()
+
+        results = await auto_annotate_pending(
+            tmp_path, min_age_hours=6, max_age_hours=48,
+        )
+
+    assert results == []
+    adapter.get_price_change_between.assert_not_called()
+
+
+async def test_scaled_threshold_long_window(tmp_path: Path) -> None:
+    """At 30h evaluation window, threshold scales to 2% — +1.5% is inconclusive."""
+    _write_audit(tmp_path, _make_audit(sentiment="bullish", hours_ago=30.0))
+
+    with patch(
+        "app.alerts.auto_annotator.CoinGeckoAdapter"
+    ) as mock_cls:
+        adapter = mock_cls.return_value
+        # +1.5% over 30h — below scaled threshold of 2%
+        adapter.get_price_change_between = AsyncMock(
+            return_value=(65000.0, 65975.0, 1.5)
+        )
+
+        results = await auto_annotate_pending(tmp_path, min_age_hours=6)
+
+    assert len(results) == 1
+    assert results[0].outcome == "inconclusive"
+
+
+async def test_dedup_by_document_id_ignores_asset(tmp_path: Path) -> None:
+    """Already-annotated document_id is skipped even with different asset."""
+    _write_audit(tmp_path, _make_audit(doc_id="dup-doc", assets=["ETH/USDT"]))
+
+    # Existing annotation for same doc_id but asset=BTC/USDT
+    outcomes_path = tmp_path / ALERT_OUTCOMES_JSONL_FILENAME
+    annotation = {
+        "document_id": "dup-doc",
+        "outcome": "hit",
+        "annotated_at": "2026-03-30T12:00:00+00:00",
+        "asset": "BTC/USDT",
+    }
+    outcomes_path.write_text(
+        json.dumps(annotation) + "\n", encoding="utf-8",
+    )
+
+    with patch(
+        "app.alerts.auto_annotator.CoinGeckoAdapter"
+    ) as mock_cls:
+        adapter = mock_cls.return_value
+        adapter.get_price_change_between = AsyncMock()
+
+        results = await auto_annotate_pending(tmp_path, min_age_hours=6)
+
+    assert results == []
+    adapter.get_price_change_between.assert_not_called()

@@ -73,3 +73,17 @@ Pipeline run metrics now include fetched, persisted, analyzed, priority distribu
 Directional eligibility now requires score-strength gates: `|sentiment_score| >= 0.55` and `impact_score >= 0.55`.
 Weak signals are blocked with reason `weak_directional_signal` to reduce false-positive pollution in hit-rate tracking.
 Precision was 7.53% with 92.47% false positives; gates filter ~26% of current directional alerts (the weakest signals).
+
+### D-117 (2026-04-04)
+Multi-Agent-Modell (Codex als Signal Validator, Antigravity als Watchdog) pausiert — keiner der beiden liefert aktuell Mehrwert.
+Nur Claude Code ist operativ aktiv. Reaktivierung prüfen am 30-Day-Gate (2026-04-23) nach Precision-Evaluation.
+
+### D-118 (2026-04-04)
+Price Trend Divergence Gate: Directional alerts werden nur dispatcht wenn der 24h-Preistrend die Sentiment-Richtung bestätigt.
+Bullish + Preis steigt = pass. Bearish + Preis fällt = pass. Gegenteilig = block (BLOCK_REASON_PRICE_TREND_DIVERGENCE).
+Begründung: 89% der historischen Misses (49/55) hatten korrektes Sentiment aber gegenläufigen Markt. Fail-open bei API-Fehler.
+
+### D-119 (2026-04-04)
+Pipeline-to-Paper-Trade bridge: Nach erfolgreichem directional Alert-Dispatch wird automatisch ein Paper-Trade-Cycle getriggert.
+Nutzt bestehenden `run_trading_loop_once()` mit `OPERATOR_SIGNAL_AUTO_RUN_MODE=paper`. Fail-open: Fehler werden geloggt, blockieren aber nie die Pipeline.
+Schliesst den Feedback-Loop: Pipeline → Alert → Paper-Trade → PnL-Messung (Phase B Deliverable 1+2).

@@ -247,6 +247,10 @@ class AnalysisResult(BaseModel):
     spam_probability: float = Field(default=0.0, ge=0.0, le=1.0)
     recommended_priority: int | None = Field(default=None, ge=1, le=10)
 
+    # D-116: Directional signal quality fields
+    directional_confidence: float = Field(default=0.0, ge=0.0, le=1.0)
+    event_timing: str | None = None
+
 
 # ── Query DSL ─────────────────────────────────────────────────────────────────
 

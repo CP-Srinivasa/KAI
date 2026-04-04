@@ -34,7 +34,10 @@ from app.alerts.audit import (
 from app.alerts.base.interfaces import AlertDeliveryResult, AlertMessage, BaseAlertChannel
 from app.alerts.channels.email import EmailAlertChannel
 from app.alerts.channels.telegram import TelegramAlertChannel
-from app.alerts.eligibility import evaluate_directional_eligibility
+from app.alerts.eligibility import (
+    check_price_trend_alignment,
+    evaluate_directional_eligibility,
+)
 from app.alerts.threshold import ThresholdEngine
 from app.analysis.scoring import compute_priority
 from app.core.domain.document import AnalysisResult, CanonicalDocument
@@ -174,6 +177,21 @@ class AlertService:
             return []
 
         message = _build_alert_message(doc, result, spam_probability)
+
+        # D-118: Price trend divergence gate.
+        # If directional-eligible, verify the market trend confirms the
+        # sentiment direction before dispatching.  89% of historical misses
+        # had correct sentiment but opposite market movement.
+        if message.sentiment_label and message.sentiment_label.lower() in (
+            "bullish",
+            "bearish",
+        ):
+            trend_blocked = await self._check_price_trend_divergence(
+                message, str(doc.id)
+            )
+            if trend_blocked:
+                return []
+
         deliveries = await self._dispatch(message)
         # Register after dispatch so subsequent docs in same run are caught
         self._register_title(doc.title)
@@ -197,6 +215,53 @@ class AlertService:
             _log_result(delivery, digest=True, document_id="multiple-digest", audit_path=audit_path)
             results.append(delivery)
         return results
+
+    async def _check_price_trend_divergence(
+        self,
+        message: AlertMessage,
+        doc_id: str,
+    ) -> bool:
+        """Return True if price trend diverges from sentiment (= should block).
+
+        Fail-open: returns False (don't block) if market data is unavailable.
+        """
+        eligible_assets = list(message.affected_assets)
+        if not eligible_assets:
+            return False
+        try:
+            from app.market_data.coingecko_adapter import (
+                CoinGeckoAdapter,
+                _resolve_symbol,
+            )
+
+            # Check the first eligible asset
+            resolved = _resolve_symbol(eligible_assets[0])
+            if resolved is None:
+                return False
+            adapter = CoinGeckoAdapter()
+            ticker = await adapter.get_ticker(eligible_assets[0])
+            if ticker is None:
+                return False
+            aligned = check_price_trend_alignment(
+                message.sentiment_label or "",
+                ticker.change_pct_24h,
+            )
+            if not aligned:
+                log.info(
+                    "alert.directional.price_divergence",
+                    document_id=doc_id,
+                    sentiment=message.sentiment_label,
+                    asset=eligible_assets[0],
+                    change_pct_24h=ticker.change_pct_24h,
+                )
+                return True
+        except Exception as exc:
+            log.warning(
+                "alert.directional.price_check_failed",
+                document_id=doc_id,
+                error=str(exc),
+            )
+        return False
 
     async def _dispatch(self, message: AlertMessage) -> list[AlertDeliveryResult]:
         results = []
@@ -229,6 +294,8 @@ def _build_alert_message(
         tags=list(result.tags),
         sentiment_score=result.sentiment_score,
         impact_score=result.impact_score,
+        directional_confidence=result.directional_confidence,
+        event_timing=result.event_timing,
     )
 
 
@@ -263,6 +330,8 @@ def _log_result(
                     sentiment_score=message.sentiment_score,
                     impact_score=message.impact_score,
                     title=message.title,
+                    directional_confidence=message.directional_confidence,
+                    event_timing=message.event_timing,
                 )
                 directional_eligible = eligibility.directional_eligible
                 directional_block_reason = eligibility.directional_block_reason
@@ -278,6 +347,7 @@ def _log_result(
                             block_reason=eligibility.directional_block_reason,
                             blocked_assets=eligibility.blocked_assets,
                         )
+
 
             record = AlertAuditRecord(
                 document_id=doc_id,

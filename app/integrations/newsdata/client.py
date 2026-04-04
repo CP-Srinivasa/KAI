@@ -95,6 +95,8 @@ class NewsdataClient:
         pub_raw = raw.get("pubDate") or ""
         try:
             published_at = datetime.fromisoformat(pub_raw.replace(" ", "T"))
+            if published_at.tzinfo is None:
+                published_at = published_at.replace(tzinfo=UTC)
         except (ValueError, AttributeError):
             published_at = datetime.now(UTC)
 
