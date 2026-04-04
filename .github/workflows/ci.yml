@@ -90,6 +90,172 @@ jobs:
         # B101 = assert statements in tests (allowed)
         # B601 = shell injection in paramiko (not used here)
 
+  hygiene:
+    name: Repo Hygiene & Secret Guard
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Secrets in tracked files
+        run: |
+          echo "=== Checking for leaked secrets in tracked files ==="
+          FAIL=0
+
+          # Pattern-based secret detection in all tracked files
+          PATTERNS=(
+            'sk-proj-[A-Za-z0-9_-]{20,}'    # OpenAI keys
+            'sk-[A-Za-z0-9]{40,}'            # OpenAI legacy keys
+            'AIzaSy[A-Za-z0-9_-]{33}'        # Google API keys
+            'pub_[a-f0-9]{20,}'              # NewsData.io keys
+            'xoxb-[0-9]{10,}'               # Slack bot tokens
+            'ghp_[A-Za-z0-9]{36}'            # GitHub PATs
+            'AKIA[A-Z0-9]{16}'              # AWS access keys
+          )
+
+          for pat in "${PATTERNS[@]}"; do
+            HITS=$(git grep -lP "$pat" -- ':!.github/workflows/ci.yml' 2>/dev/null || true)
+            if [ -n "$HITS" ]; then
+              echo "FAIL: Pattern '$pat' found in: $HITS"
+              FAIL=1
+            fi
+          done
+
+          # Check no .env files are tracked (allow .env.example as template)
+          ENV_FILES=$(git ls-files '.env' '.env.local' '.env.*.local' '.env.production' '.env.staging' 2>/dev/null || true)
+          if [ -n "$ENV_FILES" ]; then
+            echo "FAIL: .env files tracked in git: $ENV_FILES"
+            FAIL=1
+          fi
+
+          if [ "$FAIL" -eq 1 ]; then
+            echo "::error::Secrets or .env files detected in repository!"
+            exit 1
+          fi
+          echo "OK: No secrets found in tracked files."
+
+      - name: Gitignore completeness
+        run: |
+          echo "=== Checking .gitignore covers required patterns ==="
+          FAIL=0
+          REQUIRED=(
+            '.env'
+            '*.db'
+            'artifacts/'
+            '__pycache__/'
+            '.mypy_cache/'
+            '.ruff_cache/'
+            'data/'
+            '*.key'
+            '.coverage'
+          )
+          GITIGNORE=$(cat .gitignore 2>/dev/null || echo "")
+
+          for pattern in "${REQUIRED[@]}"; do
+            if ! echo "$GITIGNORE" | grep -qF "$pattern"; then
+              echo "FAIL: .gitignore missing required pattern: $pattern"
+              FAIL=1
+            fi
+          done
+
+          if [ "$FAIL" -eq 1 ]; then
+            echo "::error::.gitignore is incomplete — required patterns missing!"
+            exit 1
+          fi
+          echo "OK: .gitignore covers all required patterns."
+
+      - name: No debug artifacts in repo
+        run: |
+          echo "=== Checking for debug/dev artifacts that should not be committed ==="
+          FAIL=0
+
+          # Database files
+          DB_FILES=$(git ls-files '*.db' '*.sqlite' '*.sqlite3' 2>/dev/null || true)
+          if [ -n "$DB_FILES" ]; then
+            echo "FAIL: Database files in repo: $DB_FILES"
+            FAIL=1
+          fi
+
+          # JSONL runtime artifacts
+          JSONL_FILES=$(git ls-files 'artifacts/*.jsonl' '*.jsonl' 2>/dev/null || true)
+          if [ -n "$JSONL_FILES" ]; then
+            echo "FAIL: JSONL artifacts in repo: $JSONL_FILES"
+            FAIL=1
+          fi
+
+          # Python sourcemaps / debug symbols
+          PYC_FILES=$(git ls-files '*.pyc' '*.pyo' '*.pyd' 2>/dev/null || true)
+          if [ -n "$PYC_FILES" ]; then
+            echo "FAIL: Compiled Python files in repo: $PYC_FILES"
+            FAIL=1
+          fi
+
+          # Coverage / profiling artifacts
+          COV_FILES=$(git ls-files '.coverage' 'coverage.xml' 'htmlcov/*' '*.prof' 2>/dev/null || true)
+          if [ -n "$COV_FILES" ]; then
+            echo "FAIL: Coverage/profiling files in repo: $COV_FILES"
+            FAIL=1
+          fi
+
+          # Sourcemap files (JS/CSS - should never appear)
+          MAP_FILES=$(git ls-files '*.map' '*.js.map' '*.css.map' 2>/dev/null || true)
+          if [ -n "$MAP_FILES" ]; then
+            echo "FAIL: Sourcemap files in repo: $MAP_FILES"
+            FAIL=1
+          fi
+
+          # Log files
+          LOG_FILES=$(git ls-files '*.log' 'logs/*' 2>/dev/null || true)
+          if [ -n "$LOG_FILES" ]; then
+            echo "FAIL: Log files in repo: $LOG_FILES"
+            FAIL=1
+          fi
+
+          if [ "$FAIL" -eq 1 ]; then
+            echo "::error::Debug artifacts detected in repository!"
+            exit 1
+          fi
+          echo "OK: No debug artifacts found in tracked files."
+
+      - name: pyproject.toml integrity
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Validate pyproject.toml and check for pinning
+        run: |
+          python3 - <<'PYEOF'
+          import sys, tomllib
+          with open("pyproject.toml", "rb") as f:
+              data = tomllib.load(f)
+
+          project = data.get("project", {})
+          deps = project.get("dependencies", [])
+          errors = []
+
+          if not project.get("name"):
+              errors.append("project.name is missing")
+          if not project.get("version"):
+              errors.append("project.version is missing")
+          if not project.get("requires-python"):
+              errors.append("project.requires-python is missing")
+          if not deps:
+              errors.append("project.dependencies is empty")
+
+          # Check no dependency uses == (exact pin) without reason
+          # Exact pins cause upgrade friction; prefer >= with upper bounds
+          for dep in deps:
+              if "==" in dep and ";" not in dep:
+                  errors.append(f"Exact pin detected: {dep} (prefer >= with upper bound)")
+
+          if errors:
+              print("pyproject.toml issues:")
+              for e in errors:
+                  print(f"  - {e}")
+              sys.exit(1)
+          print(f"OK: pyproject.toml valid ({len(deps)} dependencies, no exact pins)")
+          PYEOF
+
   type-check:
     name: Type Check
     runs-on: ubuntu-latest

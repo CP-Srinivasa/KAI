@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 from fastapi.testclient import TestClient
 
-from app.api.main import app
+from app.api.main import create_app
 from app.api.routers import research as research_router
 from app.core.domain.document import CanonicalDocument
 from app.core.enums import SentimentLabel
@@ -21,13 +21,18 @@ class FakeDocumentRepository:
 
 
 @pytest.fixture
-def client() -> TestClient:
-    with TestClient(app) as test_client:
-        yield test_client
-    app.dependency_overrides.clear()
+def research_app(monkeypatch: pytest.MonkeyPatch):
+    """Create a fresh FastAPI app with auth disabled, return (app, client)."""
+    monkeypatch.setenv("APP_ENV", "testing")
+    monkeypatch.setenv("APP_API_KEY", "")
+    _app = create_app()
+    with TestClient(_app) as test_client:
+        yield _app, test_client
+    _app.dependency_overrides.clear()
 
 
 def _override_research_dependencies(
+    app,
     *,
     settings: AppSettings,
     repo: FakeDocumentRepository,
@@ -36,7 +41,8 @@ def _override_research_dependencies(
     app.dependency_overrides[research_router.get_document_repo] = lambda: repo
 
 
-def test_api_research_brief_valid(client: TestClient, tmp_path) -> None:
+def test_api_research_brief_valid(research_app, tmp_path) -> None:
+    app, client = research_app
     watchlists_path = tmp_path / "watchlists.yml"
     watchlists_path.write_text(
         """
@@ -76,7 +82,7 @@ persons:
             ),
         ]
     )
-    _override_research_dependencies(settings=settings, repo=repo)
+    _override_research_dependencies(app, settings=settings, repo=repo)
 
     response = client.get(
         "/research/brief",
@@ -99,9 +105,10 @@ persons:
 
 
 def test_api_research_brief_returns_empty_brief_for_no_matches(
-    client: TestClient,
+    research_app,
     tmp_path,
 ) -> None:
+    app, client = research_app
     watchlists_path = tmp_path / "watchlists.yml"
     watchlists_path.write_text(
         """
@@ -128,7 +135,7 @@ topics:
             )
         ]
     )
-    _override_research_dependencies(settings=settings, repo=repo)
+    _override_research_dependencies(app, settings=settings, repo=repo)
 
     response = client.get(
         "/research/brief",
@@ -145,7 +152,8 @@ topics:
     assert data["summary"] == "No analyzed documents available for this brief."
 
 
-def test_api_research_brief_empty_watchlist(client: TestClient, tmp_path) -> None:
+def test_api_research_brief_empty_watchlist(research_app, tmp_path) -> None:
+    app, client = research_app
     watchlists_path = tmp_path / "watchlists.yml"
     watchlists_path.write_text(
         """
@@ -161,7 +169,7 @@ crypto:
     settings = AppSettings()
     settings.monitor_dir = str(tmp_path)
     repo = FakeDocumentRepository([])
-    _override_research_dependencies(settings=settings, repo=repo)
+    _override_research_dependencies(app, settings=settings, repo=repo)
 
     response = client.get(
         "/research/brief",
@@ -175,7 +183,8 @@ crypto:
     assert "does not exist" in response.json()["detail"]
 
 
-def test_api_research_brief_invalid_type(client: TestClient, tmp_path) -> None:
+def test_api_research_brief_invalid_type(research_app, tmp_path) -> None:
+    app, client = research_app
     watchlists_path = tmp_path / "watchlists.yml"
     watchlists_path.write_text(
         """
@@ -191,7 +200,7 @@ crypto:
     settings = AppSettings()
     settings.monitor_dir = str(tmp_path)
     repo = FakeDocumentRepository([])
-    _override_research_dependencies(settings=settings, repo=repo)
+    _override_research_dependencies(app, settings=settings, repo=repo)
 
     response = client.get(
         "/research/brief",
@@ -205,7 +214,8 @@ crypto:
     assert "Unsupported watchlist type" in response.json()["detail"]
 
 
-def test_api_research_signals_returns_candidates(client: TestClient, tmp_path) -> None:
+def test_api_research_signals_returns_candidates(research_app, tmp_path) -> None:
+    app, client = research_app
     watchlists_path = tmp_path / "watchlists.yml"
     watchlists_path.write_text(
         """
@@ -242,7 +252,7 @@ crypto:
             ),
         ]
     )
-    _override_research_dependencies(settings=settings, repo=repo)
+    _override_research_dependencies(app, settings=settings, repo=repo)
 
     response = client.get("/research/signals", params={"min_priority": 8})
 
@@ -255,7 +265,8 @@ crypto:
     assert "document_id" in data[0]
 
 
-def test_api_research_signals_with_watchlist_boost(client: TestClient, tmp_path) -> None:
+def test_api_research_signals_with_watchlist_boost(research_app, tmp_path) -> None:
+    app, client = research_app
     watchlists_path = tmp_path / "watchlists.yml"
     watchlists_path.write_text(
         """
@@ -284,7 +295,7 @@ crypto:
             ),
         ]
     )
-    _override_research_dependencies(settings=settings, repo=repo)
+    _override_research_dependencies(app, settings=settings, repo=repo)
 
     # Without boost — below threshold
     response = client.get("/research/signals", params={"min_priority": 8})
@@ -303,11 +314,12 @@ crypto:
     assert data[0]["priority"] == 9
 
 
-def test_api_research_signals_invalid_watchlist_type(client: TestClient, tmp_path) -> None:
+def test_api_research_signals_invalid_watchlist_type(research_app, tmp_path) -> None:
+    app, client = research_app
     settings = AppSettings()
     settings.monitor_dir = str(tmp_path)
     repo = FakeDocumentRepository([])
-    _override_research_dependencies(settings=settings, repo=repo)
+    _override_research_dependencies(app, settings=settings, repo=repo)
 
     response = client.get(
         "/research/signals",
