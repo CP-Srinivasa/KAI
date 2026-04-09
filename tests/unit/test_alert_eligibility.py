@@ -5,11 +5,14 @@ from __future__ import annotations
 import pytest
 
 from app.alerts.eligibility import (
+    BLOCK_REASON_LOW_PRIORITY,
     BLOCK_REASON_MISSING_ASSETS,
+    BLOCK_REASON_NOT_ACTIONABLE,
     BLOCK_REASON_REACTIVE_NARRATIVE,
     BLOCK_REASON_UNSUPPORTED_ASSETS,
     BLOCK_REASON_WEAK_SIGNAL,
-    MIN_IMPACT_SCORE,
+    MIN_IMPACT_SCORE_BEARISH,
+    MIN_IMPACT_SCORE_BULLISH,
     MIN_SENTIMENT_MAGNITUDE,
     _is_reactive_bearish,
     evaluate_directional_eligibility,
@@ -91,7 +94,7 @@ def test_strong_sentiment_passes_gate() -> None:
         sentiment_label="bearish",
         affected_assets=["BTC"],
         sentiment_score=-0.80,
-        impact_score=0.70,
+        impact_score=0.80,
     )
     assert decision.is_directional is True
     assert decision.directional_eligible is True
@@ -117,9 +120,30 @@ def test_scores_at_exact_threshold_pass() -> None:
         sentiment_label="bearish",
         affected_assets=["BTC"],
         sentiment_score=-MIN_SENTIMENT_MAGNITUDE,
-        impact_score=MIN_IMPACT_SCORE,
+        impact_score=MIN_IMPACT_SCORE_BEARISH,
     )
     assert decision.directional_eligible is True
+
+
+def test_bullish_lower_impact_threshold_passes() -> None:
+    """D-121: Bullish uses lower impact threshold than bearish."""
+    # Impact at bullish threshold (0.60) passes for bullish...
+    decision = evaluate_directional_eligibility(
+        sentiment_label="bullish",
+        affected_assets=["BTC"],
+        sentiment_score=0.7,
+        impact_score=MIN_IMPACT_SCORE_BULLISH,
+    )
+    assert decision.directional_eligible is True
+    # ...but same score blocks bearish (needs 0.75)
+    decision = evaluate_directional_eligibility(
+        sentiment_label="bearish",
+        affected_assets=["BTC"],
+        sentiment_score=-0.7,
+        impact_score=MIN_IMPACT_SCORE_BULLISH,
+    )
+    assert decision.directional_eligible is False
+    assert decision.directional_block_reason == BLOCK_REASON_WEAK_SIGNAL
 
 
 def test_none_scores_skip_gates() -> None:
@@ -186,7 +210,7 @@ def test_reactive_bearish_title_blocked(title: str) -> None:
         sentiment_label="bearish",
         affected_assets=["BTC"],
         sentiment_score=-0.80,
-        impact_score=0.70,
+        impact_score=0.80,
         title=title,
     )
     assert decision.is_directional is True
@@ -211,7 +235,7 @@ def test_actor_action_bearish_title_allowed(title: str) -> None:
         sentiment_label="bearish",
         affected_assets=["BTC"],
         sentiment_score=-0.80,
-        impact_score=0.70,
+        impact_score=0.80,
         title=title,
     )
     assert decision.is_directional is True
@@ -287,7 +311,7 @@ def test_reactive_filter_skipped_when_title_is_none() -> None:
         sentiment_label="bearish",
         affected_assets=["BTC"],
         sentiment_score=-0.80,
-        impact_score=0.70,
+        impact_score=0.80,
         title=None,
     )
     assert decision.directional_eligible is True
@@ -326,3 +350,85 @@ def test_reactive_filter_fires_before_asset_resolution() -> None:
     assert decision.directional_block_reason == BLOCK_REASON_REACTIVE_NARRATIVE
     # No asset resolution happened — gate fires early
     assert decision.eligible_assets == []
+
+
+# ── D-122: Actionable gate ──────────────────────────────────────────────────
+
+
+def test_not_actionable_blocks_directional() -> None:
+    """Non-actionable alerts are blocked from directional tracking (D-122)."""
+    decision = evaluate_directional_eligibility(
+        sentiment_label="bullish",
+        affected_assets=["BTC"],
+        actionable=False,
+    )
+    assert decision.is_directional is True
+    assert decision.directional_eligible is False
+    assert decision.directional_block_reason == BLOCK_REASON_NOT_ACTIONABLE
+
+
+def test_actionable_true_passes_gate() -> None:
+    """Actionable alerts pass the actionable gate."""
+    decision = evaluate_directional_eligibility(
+        sentiment_label="bullish",
+        affected_assets=["BTC"],
+        actionable=True,
+    )
+    assert decision.directional_eligible is True
+
+
+def test_actionable_none_skips_gate() -> None:
+    """Legacy data without actionable field skips the gate."""
+    decision = evaluate_directional_eligibility(
+        sentiment_label="bullish",
+        affected_assets=["BTC"],
+        actionable=None,
+    )
+    assert decision.directional_eligible is True
+
+
+# ── D-122: Low priority gate ────────────────────────────────────────────────
+
+
+def test_low_priority_blocks_directional() -> None:
+    """Priority <= 7 is blocked from directional tracking (D-122)."""
+    for pri in (3, 5, 7):
+        decision = evaluate_directional_eligibility(
+            sentiment_label="bullish",
+            affected_assets=["BTC"],
+            priority=pri,
+        )
+        assert decision.is_directional is True
+        assert decision.directional_eligible is False
+        assert decision.directional_block_reason == BLOCK_REASON_LOW_PRIORITY
+
+
+def test_priority_8_passes_gate() -> None:
+    """Priority 8 passes the minimum threshold."""
+    decision = evaluate_directional_eligibility(
+        sentiment_label="bullish",
+        affected_assets=["BTC"],
+        priority=8,
+    )
+    assert decision.directional_eligible is True
+
+
+def test_high_priority_passes_gate() -> None:
+    """Priority 9 and 10 pass the minimum threshold."""
+    for pri in (9, 10):
+        decision = evaluate_directional_eligibility(
+            sentiment_label="bullish",
+            affected_assets=["BTC"],
+            priority=pri,
+        )
+        assert decision.directional_eligible is True
+
+
+def test_priority_none_skips_gate() -> None:
+    """Legacy data without priority field skips the gate."""
+    decision = evaluate_directional_eligibility(
+        sentiment_label="bullish",
+        affected_assets=["BTC"],
+        priority=None,
+    )
+    assert decision.directional_eligible is True

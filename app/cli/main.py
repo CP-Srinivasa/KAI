@@ -931,7 +931,7 @@ def alerts_annotate(
 @alerts_app.command("auto-check")
 def alerts_auto_check(
     threshold_pct: float = typer.Option(
-        5.0, "--threshold-pct", help="Min absolute price change (%) for hit/miss"
+        2.0, "--threshold-pct", help="Min absolute price change (%) for hit/miss"
     ),
     horizon_hours: int = typer.Option(
         24, "--horizon-hours", help="Evaluation window in hours from alert dispatch"

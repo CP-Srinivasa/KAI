@@ -147,38 +147,39 @@ class CoinGeckoAdapter(BaseMarketDataAdapter):
             return None
         normalized_symbol, coin_id = resolved
 
+        # D-120: Use /coins/markets instead of /simple/price to get both
+        # 24h and 7d price change in a single API call.
         data = await self._get_json(
-            f"{_COINGECKO_BASE}/simple/price",
+            f"{_COINGECKO_BASE}/coins/markets",
             params={
+                "vs_currency": "usd",
                 "ids": coin_id,
-                "vs_currencies": "usd",
-                "include_24hr_vol": "true",
-                "include_24hr_change": "true",
-                "include_last_updated_at": "true",
+                "price_change_percentage": "7d",
             },
         )
-        if not isinstance(data, dict):
-            self._set_error("invalid_payload_type")
+        if not isinstance(data, list) or len(data) == 0:
+            self._set_error("missing_coin_payload")
             return None
 
-        coin_payload = data.get(coin_id)
+        coin_payload = data[0]
         if not isinstance(coin_payload, dict):
             self._set_error("missing_coin_payload")
             return None
 
-        price = coin_payload.get("usd")
+        price = coin_payload.get("current_price")
         if not isinstance(price, (int, float)) or price <= 0:
             self._set_error("missing_or_invalid_price")
             return None
 
-        source_ts = coin_payload.get("last_updated_at")
-        if isinstance(source_ts, (int, float)) and source_ts > 0:
-            timestamp_utc = datetime.fromtimestamp(float(source_ts), tz=UTC).isoformat()
+        last_updated = coin_payload.get("last_updated")
+        if isinstance(last_updated, str) and last_updated:
+            timestamp_utc = last_updated
         else:
             timestamp_utc = datetime.now(UTC).isoformat()
 
-        volume = coin_payload.get("usd_24h_vol")
-        change = coin_payload.get("usd_24h_change")
+        volume = coin_payload.get("total_volume")
+        change_24h = coin_payload.get("price_change_percentage_24h")
+        change_7d = coin_payload.get("price_change_percentage_7d_in_currency")
 
         self._clear_error()
         return Ticker(
@@ -188,7 +189,8 @@ class CoinGeckoAdapter(BaseMarketDataAdapter):
             ask=float(price),
             last=float(price),
             volume_24h=float(volume) if isinstance(volume, (int, float)) else 0.0,
-            change_pct_24h=float(change) if isinstance(change, (int, float)) else 0.0,
+            change_pct_24h=float(change_24h) if isinstance(change_24h, (int, float)) else 0.0,
+            change_pct_7d=float(change_7d) if isinstance(change_7d, (int, float)) else 0.0,
         )
 
     async def get_ohlcv(

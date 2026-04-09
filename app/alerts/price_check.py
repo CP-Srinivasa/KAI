@@ -66,7 +66,7 @@ def _suggest_outcome(
 async def check_alert_price_moves(
     records: list[AlertAuditRecord],
     *,
-    threshold_pct: float = 5.0,
+    threshold_pct: float = 2.0,
     horizon_hours: int = 24,
     max_point_gap_seconds: int = 3 * 3600,
     timeout_seconds: int = 10,

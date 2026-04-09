@@ -87,3 +87,25 @@ Begründung: 89% der historischen Misses (49/55) hatten korrektes Sentiment aber
 Pipeline-to-Paper-Trade bridge: Nach erfolgreichem directional Alert-Dispatch wird automatisch ein Paper-Trade-Cycle getriggert.
 Nutzt bestehenden `run_trading_loop_once()` mit `OPERATOR_SIGNAL_AUTO_RUN_MODE=paper`. Fail-open: Fehler werden geloggt, blockieren aber nie die Pipeline.
 Schliesst den Feedback-Loop: Pipeline → Alert → Paper-Trade → PnL-Messung (Phase B Deliverable 1+2).
+
+### D-120 (2026-04-06)
+7d-Regime-Gate: Directional Alerts werden geblockt wenn der 7d-Preistrend stark gegenläufig zum Sentiment ist (>3%).
+Bearish in 7d-Bullmarkt = block. Bullish in 7d-Bearmarkt = block. CoinGecko-Adapter auf `/coins/markets` umgestellt (liefert 24h+7d in einem Call).
+Begründung: Bearish-Precision 4% (1/25), Bullish-Precision 75% (18/24). Bearish-Misses waren systematisch Regime-Rauschen, kein Modell-Bug.
+
+### D-121 (2026-04-08)
+Asymmetrische Signal-Filter: Bearish-Thresholds verschärft basierend auf 92 resolved Outcomes (bearish 4% vs bullish 75%).
+Confidence: bearish 0.92 (war 0.8), bullish bleibt 0.8. Impact: bearish 0.75 (war 0.60), bullish bleibt 0.60.
+7d-Regime: bearish 1.5% (war 3.0%), bullish bleibt 3.0%. Nur hochkonviktive bearish Events (Hacks, Bans) passieren noch.
+
+### D-122 (2026-04-08)
+Full-Text-Fallback für RSS-Feeds mit leeren Bodies (trafilatura).
+CoinDesk-Feed liefert 25 Artikel/Run mit content_len=0 — alle wurden als Stubs übersprungen.
+Adapter holt jetzt bei leeren Entries den Volltext von der Artikel-URL.
+PowerShell-Cron-Script (paper_trading_cron.ps1) Unicode-Parse-Bug gefixt (U+2500/U+2014 → ASCII).
+
+### D-123 (2026-04-09)
+Drei Precision-Filter für directional eligibility basierend auf 331 resolved Outcomes (40% Precision gesamt).
+1. `actionable=false` → block (22% vs 52% Precision). 2. Bearish-Thresholds verschärft: Confidence 0.92→0.95, Impact 0.75→0.80.
+3. `priority<=7` → block (21% Precision). Combo actionable+bullish erreicht 62% Precision.
+Legacy-Aufrufer unberührt (neue Params optional mit Default None).

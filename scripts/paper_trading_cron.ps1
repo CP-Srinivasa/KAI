@@ -1,5 +1,5 @@
 <#
-  Paper Trading Cron — runs BTC/USDT + ETH/USDT cycles every invocation.
+  Paper Trading Cron - runs BTC/USDT + ETH/USDT cycles every invocation.
   Scheduled via Windows Task Scheduler (every 10 minutes).
 
   Usage (manual):  powershell -ExecutionPolicy Bypass -File scripts\paper_trading_cron.ps1
@@ -18,7 +18,7 @@ $ProjectRoot = "C:\Users\sasch\.local\bin\ai_analyst_trading_bot"
 $LogFile = Join-Path $ProjectRoot "artifacts\paper_trading_cron.log"
 $Python = "python"
 
-# ── Install mode ─────────────────────────────────────────────────────────────
+# -- Install mode -------------------------------------------------------------
 if ($Install) {
     $scriptPath = Join-Path $ProjectRoot "scripts\paper_trading_cron.ps1"
     $action = "powershell.exe -ExecutionPolicy Bypass -WindowStyle Hidden -File `"$scriptPath`""
@@ -57,7 +57,7 @@ if ($Install) {
     exit
 }
 
-# ── Helpers ──────────────────────────────────────────────────────────────────
+# -- Helpers ------------------------------------------------------------------
 function Write-Log($msg) {
     $ts = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
     "$ts  $msg" | Out-File -Append -Encoding utf8 $LogFile
@@ -82,7 +82,7 @@ function Run-Cycle($symbol) {
     }
 }
 
-# ── Server watchdog ─────────────────────────────────────────────────────────
+# -- Server watchdog ---------------------------------------------------------
 function Ensure-Server {
     try {
         $health = Invoke-WebRequest -Uri "http://127.0.0.1:8000/health" `
@@ -90,8 +90,8 @@ function Ensure-Server {
         if ($health.StatusCode -eq 200) { return }
     } catch {}
 
-    # Server is down — restart it.
-    Write-Log "SERVER DOWN — restarting uvicorn"
+    # Server is down - restart it.
+    Write-Log "SERVER DOWN - restarting uvicorn"
     $serverLog = Join-Path $ProjectRoot "logs\server.log"
     Start-Process -NoNewWindow -FilePath $Python `
         -ArgumentList "-m", "uvicorn", "app.api.main:app", `
@@ -113,7 +113,7 @@ function Ensure-Server {
     }
 }
 
-# ── Main ─────────────────────────────────────────────────────────────────────
+# -- Main ---------------------------------------------------------------------
 Set-Location $ProjectRoot
 
 Write-Log "--- cron start ---"

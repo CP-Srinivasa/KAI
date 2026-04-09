@@ -30,6 +30,7 @@ class Ticker:
     last: float
     volume_24h: float
     change_pct_24h: float = 0.0
+    change_pct_7d: float = 0.0
 
 
 @dataclass(frozen=True)

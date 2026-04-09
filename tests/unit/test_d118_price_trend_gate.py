@@ -65,6 +65,64 @@ class TestCheckPriceTrendAlignment:
         assert check_price_trend_alignment("Bullish", 1.0) is True
 
 
+# ── D-120: 7d regime gate ────────────────────────────────────────────────────
+
+
+class TestCheckPriceTrendAlignment7dRegime:
+    """D-120: 7d regime overrides 24h alignment when strongly counter-trend."""
+
+    def test_bearish_blocked_in_7d_bull_regime(self) -> None:
+        """Bearish + 24h falling BUT 7d strongly bullish -> block."""
+        assert check_price_trend_alignment("bearish", -1.0, change_pct_7d=5.0) is False
+
+    def test_bullish_blocked_in_7d_bear_regime(self) -> None:
+        """Bullish + 24h rising BUT 7d strongly bearish -> block."""
+        assert check_price_trend_alignment("bullish", 2.0, change_pct_7d=-5.0) is False
+
+    def test_bearish_passes_when_7d_below_threshold(self) -> None:
+        """Bearish + 24h falling + 7d mildly bullish (below 1.5%) -> pass."""
+        assert check_price_trend_alignment("bearish", -2.0, change_pct_7d=1.0) is True
+
+    def test_bullish_passes_when_7d_above_negative_threshold(self) -> None:
+        """Bullish + 24h rising + 7d mildly bearish (above -3%) -> pass."""
+        assert check_price_trend_alignment("bullish", 1.0, change_pct_7d=-2.0) is True
+
+    def test_bearish_blocked_at_exact_threshold(self) -> None:
+        """D-121: Bearish + 7d at exactly +1.5% -> NOT blocked (> required, not >=)."""
+        assert check_price_trend_alignment("bearish", -1.0, change_pct_7d=1.5) is True
+
+    def test_bearish_blocked_just_above_threshold(self) -> None:
+        """D-121: Bearish + 7d at +1.51% -> blocked."""
+        assert check_price_trend_alignment("bearish", -1.0, change_pct_7d=1.51) is False
+
+    def test_neutral_ignores_7d(self) -> None:
+        """Neutral sentiment is never blocked by 7d regime."""
+        assert check_price_trend_alignment("neutral", 0.0, change_pct_7d=10.0) is True
+
+    def test_zero_7d_no_regime_block(self) -> None:
+        """Default 7d=0.0 triggers no regime block (backward compatible)."""
+        assert check_price_trend_alignment("bearish", -1.0, change_pct_7d=0.0) is True
+        assert check_price_trend_alignment("bullish", 1.0, change_pct_7d=0.0) is True
+
+    def test_custom_regime_threshold(self) -> None:
+        """Custom threshold overrides the defaults."""
+        # 5% 7d change, but bearish threshold is 10% -> no regime block
+        assert check_price_trend_alignment(
+            "bearish", -1.0, change_pct_7d=5.0, regime_threshold_7d_bearish=10.0
+        ) is True
+        # Same change, bearish threshold lowered to 2% -> blocked
+        assert check_price_trend_alignment(
+            "bearish", -1.0, change_pct_7d=5.0, regime_threshold_7d_bearish=2.0
+        ) is False
+
+    def test_asymmetric_bearish_regime_default(self) -> None:
+        """D-121: Bearish default threshold (1.5%) is tighter than bullish (3.0%)."""
+        # 2% 7d rise: blocks bearish (> 1.5%) but not bullish
+        assert check_price_trend_alignment("bearish", -1.0, change_pct_7d=2.0) is False
+        # 2% 7d drop: does NOT block bullish (threshold is 3.0%)
+        assert check_price_trend_alignment("bullish", 1.0, change_pct_7d=-2.0) is True
+
+
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
 
@@ -292,3 +350,91 @@ async def test_no_affected_assets_skips_price_check(tmp_path: Path) -> None:
     # because there are no assets to check
     deliveries = await service.process_document(doc, result)
     assert len(deliveries) >= 1
+
+
+# ── D-120: 7d regime in service integration ──────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_bearish_blocked_by_7d_bull_regime(tmp_path: Path) -> None:
+    """D-120: Bearish alert + 24h falling + 7d strongly bullish = block."""
+    doc = _make_doc(title="Whale dumps 10k BTC in OTC deal")
+    result = _make_result(
+        str(doc.id),
+        sentiment_label=SentimentLabel.BEARISH,
+        sentiment_score=-0.85,
+    )
+
+    # 24h is falling (-2%), but 7d is strongly bullish (+5%) → regime block
+    ticker = Ticker(
+        symbol="BTC/USDT",
+        timestamp_utc="2026-04-06T12:00:00+00:00",
+        bid=68000.0,
+        ask=68000.0,
+        last=68000.0,
+        volume_24h=1000.0,
+        change_pct_24h=-2.0,
+        change_pct_7d=5.0,
+    )
+
+    service = AlertService(
+        channels=[_DryRunChannel()],  # type: ignore[list-item]
+        threshold=ThresholdEngine(min_priority=1),
+        audit_dir=tmp_path,
+    )
+
+    with (
+        patch(
+            "app.market_data.coingecko_adapter._resolve_symbol",
+            return_value=("BTC/USDT", "bitcoin"),
+        ),
+        patch(
+            "app.market_data.coingecko_adapter.CoinGeckoAdapter.get_ticker",
+            new=AsyncMock(return_value=ticker),
+        ),
+    ):
+        deliveries = await service.process_document(doc, result)
+
+    assert deliveries == [], "7d bull regime should block bearish alert"
+
+
+@pytest.mark.asyncio
+async def test_bearish_passes_when_7d_also_bearish(tmp_path: Path) -> None:
+    """D-120: Bearish alert + 24h falling + 7d also falling = dispatch OK."""
+    doc = _make_doc(title="Market crash deepens amid regulation fears")
+    result = _make_result(
+        str(doc.id),
+        sentiment_label=SentimentLabel.BEARISH,
+        sentiment_score=-0.85,
+    )
+
+    ticker = Ticker(
+        symbol="BTC/USDT",
+        timestamp_utc="2026-04-06T12:00:00+00:00",
+        bid=58000.0,
+        ask=58000.0,
+        last=58000.0,
+        volume_24h=1000.0,
+        change_pct_24h=-3.0,
+        change_pct_7d=-6.0,  # 7d also bearish → no regime conflict
+    )
+
+    service = AlertService(
+        channels=[_DryRunChannel()],  # type: ignore[list-item]
+        threshold=ThresholdEngine(min_priority=1),
+        audit_dir=tmp_path,
+    )
+
+    with (
+        patch(
+            "app.market_data.coingecko_adapter._resolve_symbol",
+            return_value=("BTC/USDT", "bitcoin"),
+        ),
+        patch(
+            "app.market_data.coingecko_adapter.CoinGeckoAdapter.get_ticker",
+            new=AsyncMock(return_value=ticker),
+        ),
+    ):
+        deliveries = await service.process_document(doc, result)
+
+    assert len(deliveries) >= 1, "Aligned 7d regime should allow dispatch"

@@ -24,15 +24,26 @@ BLOCK_REASON_REACTIVE_NARRATIVE = "reactive_price_narrative"
 BLOCK_REASON_MAJORITY_NON_CRYPTO = "majority_non_crypto_assets"
 BLOCK_REASON_LOW_DIRECTIONAL_CONFIDENCE = "low_directional_confidence"
 BLOCK_REASON_PRICE_TREND_DIVERGENCE = "price_trend_divergence"
+BLOCK_REASON_NOT_ACTIONABLE = "not_actionable"
+BLOCK_REASON_LOW_PRIORITY = "low_priority"
 
-# D-116: Minimum directional confidence from LLM analysis.
-# Below this threshold the signal is too speculative for directional tracking.
-MIN_DIRECTIONAL_CONFIDENCE = 0.7
+# D-116 / D-119: Minimum directional confidence from LLM analysis.
+# Asymmetric thresholds (D-121): bearish alerts had 4% precision (1/25)
+# vs bullish 75% (18/24).  Bearish requires near-certain catalyst events
+# (hacks, bans, exploits); bullish threshold stays at proven level.
+# D-122: Bearish confidence raised from 0.92→0.95 based on 22% precision
+# (vs bullish 50%).  Only near-certain adverse events pass.
+MIN_DIRECTIONAL_CONFIDENCE_BULLISH = 0.8
+MIN_DIRECTIONAL_CONFIDENCE_BEARISH = 0.95
 
 # Directional strength thresholds — alerts below these are excluded from
 # directional hit-rate tracking to reduce false-positive pollution.
+# D-119: Impact raised from 0.55 to 0.60.  Empirical: low-impact
+# directional signals (P7/P10 cluster) had <25% precision.
+# D-122: Bearish impact raised from 0.75→0.80 based on 22% precision.
 MIN_SENTIMENT_MAGNITUDE = 0.55
-MIN_IMPACT_SCORE = 0.55
+MIN_IMPACT_SCORE_BULLISH = 0.60
+MIN_IMPACT_SCORE_BEARISH = 0.80
 
 # D-113: Reactive price narrative patterns.
 # Bearish alerts whose titles match these describe *past* price moves,
@@ -103,6 +114,10 @@ def _is_reactive_bullish(title: str) -> bool:
 def check_price_trend_alignment(
     sentiment: str,
     change_pct_24h: float,
+    change_pct_7d: float = 0.0,
+    *,
+    regime_threshold_7d_bullish: float = 3.0,
+    regime_threshold_7d_bearish: float = 1.5,
 ) -> bool:
     """Return True if the price trend confirms the sentiment direction.
 
@@ -110,12 +125,27 @@ def check_price_trend_alignment(
     actually moving in the predicted direction.  89% of historical misses
     were correct-sentiment but wrong-market-context.
 
+    D-120 / D-121: 7d regime gate with asymmetric thresholds.
+    Bearish uses a tighter threshold (1.5%) because bearish signals in even
+    mildly bullish regimes had 4% precision (1/25).
+    Bullish threshold stays at 3.0%.
+
     Rules:
-      - bullish + price rising (change > 0)  → aligned
-      - bearish + price falling (change < 0) → aligned
-      - otherwise                            → divergent (block)
+      - bearish + 7d change > +threshold_bearish → divergent (block)
+      - bullish + 7d change < −threshold_bullish → divergent (block)
+      - bullish + price rising (24h > 0)  → aligned
+      - bearish + price falling (24h < 0) → aligned
+      - otherwise                         → divergent (block)
     """
     sentiment_lower = sentiment.strip().lower()
+
+    # D-120 / D-121: 7d regime override — asymmetric thresholds.
+    if sentiment_lower == "bearish" and change_pct_7d > regime_threshold_7d_bearish:
+        return False
+    if sentiment_lower == "bullish" and change_pct_7d < -regime_threshold_7d_bullish:
+        return False
+
+    # D-118: 24h directional alignment.
     if sentiment_lower == "bullish":
         return change_pct_24h > 0.0
     if sentiment_lower == "bearish":
@@ -143,6 +173,8 @@ def evaluate_directional_eligibility(
     title: str | None = None,
     directional_confidence: float | None = None,
     event_timing: str | None = None,
+    actionable: bool | None = None,
+    priority: int | None = None,
 ) -> DirectionalEligibilityDecision:
     """Return directional eligibility for operational metrics.
 
@@ -158,6 +190,24 @@ def evaluate_directional_eligibility(
             directional_eligible=None,
         )
 
+    # D-122: Non-actionable alerts are noise for directional tracking.
+    # Empirical: actionable=false had 22% precision vs 52% for actionable=true.
+    if actionable is False:
+        return DirectionalEligibilityDecision(
+            is_directional=True,
+            directional_eligible=False,
+            directional_block_reason=BLOCK_REASON_NOT_ACTIONABLE,
+        )
+
+    # D-122: Low-priority alerts lack predictive value for directional tracking.
+    # Empirical: P7 had 21% precision.  Minimum P8 required.
+    if priority is not None and priority <= 7:
+        return DirectionalEligibilityDecision(
+            is_directional=True,
+            directional_eligible=False,
+            directional_block_reason=BLOCK_REASON_LOW_PRIORITY,
+        )
+
     # Score-strength gates (D-111): block weak directional signals early.
     if sentiment_score is not None and abs(sentiment_score) < MIN_SENTIMENT_MAGNITUDE:
         return DirectionalEligibilityDecision(
@@ -165,7 +215,11 @@ def evaluate_directional_eligibility(
             directional_eligible=False,
             directional_block_reason=BLOCK_REASON_WEAK_SIGNAL,
         )
-    if impact_score is not None and impact_score < MIN_IMPACT_SCORE:
+    # D-121: Asymmetric impact threshold — bearish needs higher impact.
+    min_impact = (
+        MIN_IMPACT_SCORE_BEARISH if sentiment == "bearish" else MIN_IMPACT_SCORE_BULLISH
+    )
+    if impact_score is not None and impact_score < min_impact:
         return DirectionalEligibilityDecision(
             is_directional=True,
             directional_eligible=False,
@@ -189,12 +243,16 @@ def evaluate_directional_eligibility(
             directional_block_reason=BLOCK_REASON_REACTIVE_NARRATIVE,
         )
 
-    # D-116: Directional confidence gate.
-    # LLM must express ≥0.7 confidence that the event is a forward-looking
-    # catalyst, not a reactive report or speculation.
+    # D-116 / D-121: Asymmetric directional confidence gate.
+    # Bearish requires ≥0.92 (only concrete adverse events); bullish ≥0.8.
+    min_confidence = (
+        MIN_DIRECTIONAL_CONFIDENCE_BEARISH
+        if sentiment == "bearish"
+        else MIN_DIRECTIONAL_CONFIDENCE_BULLISH
+    )
     if (
         directional_confidence is not None
-        and directional_confidence < MIN_DIRECTIONAL_CONFIDENCE
+        and directional_confidence < min_confidence
     ):
         return DirectionalEligibilityDecision(
             is_directional=True,

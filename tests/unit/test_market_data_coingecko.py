@@ -18,17 +18,19 @@ async def test_coingecko_snapshot_success(monkeypatch: pytest.MonkeyPatch) -> No
 
     async def fake_get_json(
         _url: str, *, params: dict[str, str] | None = None
-    ) -> dict[str, object]:
+    ) -> list[dict[str, object]]:
         assert params is not None
         assert params["ids"] == "bitcoin"
-        return {
-            "bitcoin": {
-                "usd": 65000.0,
-                "usd_24h_vol": 123456.0,
-                "usd_24h_change": 2.5,
-                "last_updated_at": now_epoch,
+        return [
+            {
+                "id": "bitcoin",
+                "current_price": 65000.0,
+                "total_volume": 123456.0,
+                "price_change_percentage_24h": 2.5,
+                "price_change_percentage_7d_in_currency": 4.0,
+                "last_updated": datetime.fromtimestamp(now_epoch, tz=UTC).isoformat(),
             }
-        }
+        ]
 
     monkeypatch.setattr(adapter, "_get_json", fake_get_json)
 
@@ -51,14 +53,18 @@ async def test_coingecko_snapshot_marks_stale_data(monkeypatch: pytest.MonkeyPat
 
     async def fake_get_json(
         _url: str, *, params: dict[str, str] | None = None
-    ) -> dict[str, object]:
+    ) -> list[dict[str, object]]:
         assert params is not None
-        return {
-            "bitcoin": {
-                "usd": 64000.0,
-                "last_updated_at": old_epoch,
+        return [
+            {
+                "id": "bitcoin",
+                "current_price": 64000.0,
+                "total_volume": 0.0,
+                "price_change_percentage_24h": 0.0,
+                "price_change_percentage_7d_in_currency": 0.0,
+                "last_updated": datetime.fromtimestamp(old_epoch, tz=UTC).isoformat(),
             }
-        }
+        ]
 
     monkeypatch.setattr(adapter, "_get_json", fake_get_json)
 
@@ -79,9 +85,9 @@ async def test_coingecko_snapshot_fail_closed_on_missing_price(
 
     async def fake_get_json(
         _url: str, *, params: dict[str, str] | None = None
-    ) -> dict[str, object]:
+    ) -> list[dict[str, object]]:
         assert params is not None
-        return {"bitcoin": {"usd_24h_vol": 1000.0}}
+        return [{"id": "bitcoin", "total_volume": 1000.0}]
 
     monkeypatch.setattr(adapter, "_get_json", fake_get_json)
 

@@ -16,7 +16,7 @@ Covers:
 from __future__ import annotations
 
 import time
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -45,17 +45,21 @@ def _mock_price_response(
     price: float = 65000.0,
     volume: float = 1e9,
     change: float = 2.5,
-    last_updated: int | None = None,
-) -> dict:
-    updated = last_updated or int(time.time())
-    return {
-        cg_id: {
-            "usd": price,
-            "usd_24h_vol": volume,
-            "usd_24h_change": change,
-            "last_updated_at": updated,
+    change_7d: float = 4.0,
+    last_updated: str | None = None,
+) -> list[dict]:
+    """Mock /coins/markets response (D-120: includes 7d change)."""
+    updated = last_updated or datetime.now(UTC).isoformat()
+    return [
+        {
+            "id": cg_id,
+            "current_price": price,
+            "total_volume": volume,
+            "price_change_percentage_24h": change,
+            "price_change_percentage_7d_in_currency": change_7d,
+            "last_updated": updated,
         }
-    }
+    ]
 
 
 def _mock_ohlc_response() -> list:
@@ -317,7 +321,7 @@ async def test_market_data_point_fresh() -> None:
 @pytest.mark.asyncio
 async def test_market_data_point_stale() -> None:
     adapter = CoinGeckoAdapter(freshness_threshold_seconds=10.0)
-    old_ts = int(time.time()) - 300  # 5 minutes old
+    old_ts = (datetime.now(UTC) - timedelta(seconds=300)).isoformat()
     with patch.object(
         adapter,
         "_get_json",

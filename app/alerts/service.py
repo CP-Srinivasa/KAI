@@ -55,6 +55,12 @@ _DEDUP_LOOKBACK_HOURS = 24
 # false merges of genuinely different articles.
 _FUZZY_JACCARD_THRESHOLD = 0.4
 
+# D-119: Directional asset rate-limit window.
+# Max 1 directional alert per asset+sentiment direction per window.
+# Prevents cluster-misses where 17 BTC-bullish alerts fire in the same hour
+# and all miss because the market context is identical.
+_ASSET_RATE_LIMIT_HOURS = 6
+
 
 class AlertService:
     """Orchestrates threshold evaluation and multi-channel alert delivery."""
@@ -75,6 +81,8 @@ class AlertService:
         self._seen_title_hashes: set[str] = set()
         # Normalized word-sets for fuzzy matching
         self._seen_title_words: list[tuple[str, set[str]]] = []
+        # D-119: Asset rate-limit — tracks (asset, sentiment) → last dispatch time
+        self._asset_rate_limit: dict[tuple[str, str], datetime] = {}
         # Load recent hashes from audit trail for cross-run dedup
         self._load_recent_title_hashes()
 
@@ -85,6 +93,7 @@ class AlertService:
         except Exception:
             return
         cutoff = datetime.now(UTC) - timedelta(hours=self._dedup_lookback_hours)
+        rate_cutoff = datetime.now(UTC) - timedelta(hours=_ASSET_RATE_LIMIT_HOURS)
         for rec in records:
             try:
                 ts = datetime.fromisoformat(rec.dispatched_at.replace("Z", "+00:00"))
@@ -101,6 +110,18 @@ class AlertService:
                 words = set(rec.normalized_title.split())
                 if words:
                     self._seen_title_words.append((rec.normalized_title, words))
+            # D-119: Seed asset rate-limit from recent directional alerts.
+            if (
+                ts >= rate_cutoff
+                and rec.directional_eligible is True
+                and rec.sentiment_label
+            ):
+                sentiment = rec.sentiment_label.lower()
+                for asset in rec.affected_assets:
+                    key = (asset.upper(), sentiment)
+                    existing = self._asset_rate_limit.get(key)
+                    if existing is None or ts > existing:
+                        self._asset_rate_limit[key] = ts
 
     def _is_duplicate_title(self, doc_title: str) -> bool:
         """Return True if an exact or fuzzy-similar title was already alerted."""
@@ -129,6 +150,37 @@ class AlertService:
             words = set(norm.split())
             if words:
                 self._seen_title_words.append((norm, words))
+
+    def _is_asset_rate_limited(self, message: AlertMessage) -> bool:
+        """D-119: Return True if a directional alert for the same asset+sentiment
+        was already dispatched within the rate-limit window.
+
+        Prevents cluster-misses where many articles about the same market event
+        generate redundant directional alerts in the same time window.
+        """
+        sentiment = (message.sentiment_label or "").lower()
+        if sentiment not in ("bullish", "bearish"):
+            return False
+        if not message.affected_assets:
+            return False
+        now = datetime.now(UTC)
+        cutoff = now - timedelta(hours=_ASSET_RATE_LIMIT_HOURS)
+        for asset in message.affected_assets:
+            key = (asset.upper(), sentiment)
+            last_dispatch = self._asset_rate_limit.get(key)
+            if last_dispatch is not None and last_dispatch > cutoff:
+                return True
+        return False
+
+    def _register_asset_rate_limit(self, message: AlertMessage) -> None:
+        """D-119: Record dispatch time for asset rate-limit tracking."""
+        sentiment = (message.sentiment_label or "").lower()
+        if sentiment not in ("bullish", "bearish"):
+            return
+        now = datetime.now(UTC)
+        for asset in message.affected_assets:
+            key = (asset.upper(), sentiment)
+            self._asset_rate_limit[key] = now
 
     @classmethod
     def from_settings(cls, settings: AppSettings) -> AlertService:
@@ -178,6 +230,17 @@ class AlertService:
 
         message = _build_alert_message(doc, result, spam_probability)
 
+        # D-119: Asset rate-limit — max 1 directional alert per asset+sentiment
+        # per window to prevent cluster-misses from correlated news events.
+        if self._is_asset_rate_limited(message):
+            log.info(
+                "alert.skipped_asset_rate_limit",
+                document_id=str(doc.id),
+                sentiment=message.sentiment_label,
+                assets=message.affected_assets,
+            )
+            return []
+
         # D-118: Price trend divergence gate.
         # If directional-eligible, verify the market trend confirms the
         # sentiment direction before dispatching.  89% of historical misses
@@ -195,6 +258,7 @@ class AlertService:
         deliveries = await self._dispatch(message)
         # Register after dispatch so subsequent docs in same run are caught
         self._register_title(doc.title)
+        self._register_asset_rate_limit(message)
         return deliveries
 
     async def send_digest(
@@ -245,6 +309,7 @@ class AlertService:
             aligned = check_price_trend_alignment(
                 message.sentiment_label or "",
                 ticker.change_pct_24h,
+                ticker.change_pct_7d,
             )
             if not aligned:
                 log.info(
@@ -253,6 +318,7 @@ class AlertService:
                     sentiment=message.sentiment_label,
                     asset=eligible_assets[0],
                     change_pct_24h=ticker.change_pct_24h,
+                    change_pct_7d=ticker.change_pct_7d,
                 )
                 return True
         except Exception as exc:
@@ -332,6 +398,8 @@ def _log_result(
                     title=message.title,
                     directional_confidence=message.directional_confidence,
                     event_timing=message.event_timing,
+                    actionable=message.actionable,
+                    priority=message.priority,
                 )
                 directional_eligible = eligibility.directional_eligible
                 directional_block_reason = eligibility.directional_block_reason
