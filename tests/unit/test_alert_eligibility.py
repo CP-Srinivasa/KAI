@@ -441,9 +441,15 @@ def test_bullish_still_eligible_after_d127() -> None:
 # ── D-133: Source-level precision gate ────────────────────────────────────
 
 
-@pytest.mark.parametrize("source", ["decrypt", "bitcoin_magazine"])
+@pytest.mark.parametrize("source", ["decrypt", "bitcoin_magazine", "unknown"])
 def test_low_precision_source_blocks_directional(source: str) -> None:
-    """D-133: Known low-precision sources are blocked."""
+    """D-133/D-139: Known low-precision sources are blocked.
+
+    D-139 adds ``unknown`` — the fallback used by ``_load_doc_metadata``
+    for records whose source cannot be resolved from DB (legacy or purged
+    documents).  Empirical precision on unknown: 17.50% (14/66 of 80
+    resolved) vs the 60% quality bar.
+    """
     decision = evaluate_directional_eligibility(
         sentiment_label="bullish",
         affected_assets=["BTC"],

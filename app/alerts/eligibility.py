@@ -29,15 +29,22 @@ BLOCK_REASON_LOW_PRIORITY = "low_priority"
 BLOCK_REASON_BEARISH_DISABLED = "bearish_directional_disabled"
 BLOCK_REASON_LOW_PRECISION_SOURCE = "low_precision_source"
 
-# D-133: Sources with persistently low directional precision.
-# Based on 98 resolved directional outcomes (2026-04-14):
-#   decrypt:          11.76% precision (2 hit / 15 miss, 17 resolved)
-#   bitcoin_magazine: 21.43% precision (3 hit / 11 miss, 14 resolved)
-# Both well below the 60% quality bar.  Block from directional eligibility
-# until source-specific signal quality improves.
+# D-133/D-139: Sources with persistently low directional precision.
+# Based on 229 resolved directional outcomes (2026-04-14 after D-138 backfill):
+#   decrypt:          28.57% precision (10 hit / 25 miss, 35 resolved)
+#   bitcoin_magazine: 47.83% precision (11 hit / 12 miss, 23 resolved)
+#   unknown:          17.50% precision (14 hit / 66 miss, 80 resolved)
+# The ``unknown`` token is the lower-cased fallback used by _load_doc_metadata
+# when both source_name and provider columns are null in the DB — typically
+# legacy records dispatched before source attribution was wired up, or records
+# originating from pipelines that never set source_name.  Their signal quality
+# is indistinguishable from noise (17.5% ≈ random with bullish bias).
+# Block from directional eligibility until source-specific signal quality
+# improves or the record can be re-attributed.
 _LOW_PRECISION_SOURCES: frozenset[str] = frozenset({
     "decrypt",
     "bitcoin_magazine",
+    "unknown",
 })
 
 # D-127: Bearish directional disabled based on 50 eligible resolved outcomes.

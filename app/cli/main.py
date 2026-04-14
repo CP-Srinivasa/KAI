@@ -871,6 +871,15 @@ def _load_doc_metadata(
             for row in rows
             if row[3]
         }
+        # D-139: doc_ids present in the audit but missing from the
+        # CanonicalDocumentModel table (e.g. purged test batches or
+        # records from legacy pipelines that never persisted the
+        # document) are treated as ``unknown`` source so the forward
+        # simulation's source gate can block them.  Without this,
+        # ``rec.source_name or source_by_doc.get(doc_id)`` returns
+        # ``None`` and the source gate silently passes.
+        for doc_id in directional_doc_ids:
+            sources.setdefault(doc_id, "unknown")
         return sources, titles
 
     try:
