@@ -424,3 +424,117 @@ async def test_skips_hit_miss_reeval(tmp_path: Path) -> None:
 
     assert results == []
     adapter.get_price_change_between.assert_not_called()
+
+
+# ── D-138: Stale inconclusive backfill ──────────────────────────────────
+
+
+async def test_stale_inconclusive_is_backfilled(tmp_path: Path) -> None:
+    """Inconclusives older than 72h are re-evaluated with fixed 7d window."""
+    # Alert dispatched 10 days ago — well beyond the 72h max_age.
+    _write_audit(
+        tmp_path,
+        _make_audit(doc_id="stale-doc", hours_ago=240.0),
+    )
+
+    # Pre-existing inconclusive annotation.
+    outcomes_path = tmp_path / ALERT_OUTCOMES_JSONL_FILENAME
+    outcomes_path.write_text(
+        json.dumps({
+            "document_id": "stale-doc",
+            "outcome": "inconclusive",
+            "annotated_at": (
+                datetime.now(UTC) - timedelta(hours=200)
+            ).isoformat(),
+        }) + "\n",
+        encoding="utf-8",
+    )
+
+    with patch(
+        "app.alerts.auto_annotator.CoinGeckoAdapter",
+    ) as mock_cls:
+        adapter = mock_cls.return_value
+        adapter.get_ticker = AsyncMock(return_value=None)
+        # 5% up within the 7d window → hit for bullish.
+        adapter.get_price_change_between = AsyncMock(
+            return_value=(60000.0, 63000.0, 5.0),
+        )
+
+        results = await auto_annotate_pending(
+            tmp_path, min_age_hours=4, backfill_batch=10,
+        )
+
+    assert len(results) == 1
+    assert results[0].outcome == "hit"
+    assert "backfill" in (results[0].note or "")
+
+    # Verify eval window is fixed 7d, not dispatch → now.
+    call_args = adapter.get_price_change_between.call_args
+    (_symbol,) = call_args.args
+    end_utc = call_args.kwargs["end_utc"]
+    start_utc = call_args.kwargs["start_utc"]
+    window_h = (end_utc - start_utc).total_seconds() / 3600
+    assert 167 < window_h < 169  # ~168h = 7 days
+
+
+async def test_stale_backfill_respects_batch_limit(tmp_path: Path) -> None:
+    """Batch limit prevents processing too many stale inconclusives."""
+    # 5 stale inconclusives.
+    outcomes_lines = []
+    for i in range(5):
+        _write_audit(
+            tmp_path,
+            _make_audit(doc_id=f"stale-{i}", hours_ago=200.0 + i),
+        )
+        outcomes_lines.append(json.dumps({
+            "document_id": f"stale-{i}",
+            "outcome": "inconclusive",
+            "annotated_at": (
+                datetime.now(UTC) - timedelta(hours=150)
+            ).isoformat(),
+        }))
+
+    outcomes_path = tmp_path / ALERT_OUTCOMES_JSONL_FILENAME
+    outcomes_path.write_text(
+        "\n".join(outcomes_lines) + "\n",
+        encoding="utf-8",
+    )
+
+    with patch(
+        "app.alerts.auto_annotator.CoinGeckoAdapter",
+    ) as mock_cls:
+        adapter = mock_cls.return_value
+        adapter.get_ticker = AsyncMock(return_value=None)
+        adapter.get_price_change_between = AsyncMock(
+            return_value=(60000.0, 63000.0, 5.0),
+        )
+
+        results = await auto_annotate_pending(
+            tmp_path, min_age_hours=4, backfill_batch=2,
+        )
+
+    # Only 2 of 5 stale inconclusives processed.
+    assert len(results) == 2
+
+
+async def test_never_annotated_beyond_max_age_skipped(tmp_path: Path) -> None:
+    """Never-annotated alerts beyond 72h are NOT backfilled (only inconclusives)."""
+    _write_audit(
+        tmp_path,
+        _make_audit(doc_id="old-fresh", hours_ago=200.0),
+    )
+    # No outcome annotation at all.
+
+    with patch(
+        "app.alerts.auto_annotator.CoinGeckoAdapter",
+    ) as mock_cls:
+        adapter = mock_cls.return_value
+        adapter.get_ticker = AsyncMock(return_value=None)
+        adapter.get_price_change_between = AsyncMock()
+
+        results = await auto_annotate_pending(
+            tmp_path, min_age_hours=4, backfill_batch=10,
+        )
+
+    assert results == []
+    adapter.get_price_change_between.assert_not_called()

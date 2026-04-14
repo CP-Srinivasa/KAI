@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from datetime import UTC, datetime, timedelta
@@ -387,21 +388,54 @@ class CoinGeckoAdapter(BaseMarketDataAdapter):
         *,
         params: dict[str, str] | None = None,
     ) -> dict[str, object] | list[object] | None:
-        try:
-            async with httpx.AsyncClient(timeout=self._timeout) as client:
-                response = await client.get(url, params=params)
-            if response.status_code != 200:
+        # 429-aware retry: CoinGecko free tier is bursty (~10-30 req/min)
+        # and often throttles after a few quick calls.  Respect Retry-After
+        # when present, otherwise use exponential backoff (15s, 30s, 60s).
+        max_attempts = 4
+        backoff_schedule = [15.0, 30.0, 60.0]
+
+        for attempt in range(max_attempts):
+            try:
+                async with httpx.AsyncClient(timeout=self._timeout) as client:
+                    response = await client.get(url, params=params)
+
+                if response.status_code == 200:
+                    payload: dict[str, object] | list[object] = response.json()
+                    self._clear_error()
+                    return payload
+
+                if response.status_code == 429 and attempt < max_attempts - 1:
+                    retry_after_header = response.headers.get("Retry-After")
+                    try:
+                        wait_s = float(retry_after_header) if retry_after_header else backoff_schedule[attempt]
+                    except (TypeError, ValueError):
+                        wait_s = backoff_schedule[attempt]
+                    # Cap at 120s to avoid multi-minute stalls.
+                    wait_s = min(max(wait_s, 1.0), 120.0)
+                    logger.warning(
+                        "[CoinGecko] HTTP 429 (attempt %d/%d) — backing off %.1fs for %s",
+                        attempt + 1, max_attempts, wait_s, url,
+                    )
+                    await asyncio.sleep(wait_s)
+                    continue
+
                 self._set_error(f"http_{response.status_code}")
                 logger.error("[CoinGecko] HTTP %s for %s", response.status_code, url)
                 return None
-            payload: dict[str, object] | list[object] = response.json()
-            self._clear_error()
-            return payload
-        except httpx.TimeoutException:
-            self._set_error("timeout")
-            logger.error("[CoinGecko] Timeout for %s", url)
-            return None
-        except Exception as exc:  # noqa: BLE001
-            self._set_error(f"request_error:{exc}")
-            logger.error("[CoinGecko] Request error for %s: %s", url, exc)
-            return None
+
+            except httpx.TimeoutException:
+                if attempt < max_attempts - 1:
+                    await asyncio.sleep(backoff_schedule[attempt])
+                    continue
+                self._set_error("timeout")
+                logger.error("[CoinGecko] Timeout for %s", url)
+                return None
+            except Exception as exc:  # noqa: BLE001
+                self._set_error(f"request_error:{exc}")
+                logger.error("[CoinGecko] Request error for %s: %s", url, exc)
+                return None
+
+        # Exhausted retries on 429.
+        self._set_error("http_429_exhausted")
+        logger.error("[CoinGecko] Rate limited (429) — exhausted retries for %s", url)
+        return None

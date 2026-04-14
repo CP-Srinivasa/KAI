@@ -421,6 +421,111 @@ def test_no_write_methods() -> None:
 
 
 # ---------------------------------------------------------------------------
+# _get_json 429 retry (D-138)
+# ---------------------------------------------------------------------------
+
+
+class _StubResponse:
+    def __init__(
+        self,
+        status_code: int,
+        payload: object | None = None,
+        retry_after: str | None = None,
+    ) -> None:
+        self.status_code = status_code
+        self._payload = payload or []
+        self.headers: dict[str, str] = {}
+        if retry_after is not None:
+            self.headers["Retry-After"] = retry_after
+
+    def json(self) -> object:
+        return self._payload
+
+
+class _StubClient:
+    """Minimal async-context-manager client returning queued responses."""
+
+    def __init__(self, responses: list[_StubResponse]) -> None:
+        self._responses = list(responses)
+        self.calls = 0
+
+    async def __aenter__(self) -> "_StubClient":
+        return self
+
+    async def __aexit__(self, *args: object) -> None:
+        return None
+
+    async def get(self, url: str, params: dict | None = None) -> _StubResponse:
+        self.calls += 1
+        return self._responses.pop(0)
+
+
+@pytest.mark.asyncio
+async def test_get_json_retries_on_429_then_succeeds(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """429 on attempt 1, 200 on attempt 2 → returns payload."""
+    adapter = _adapter()
+    client = _StubClient(
+        [
+            _StubResponse(429, retry_after="0"),  # retry immediately
+            _StubResponse(200, payload={"ok": True}),
+        ],
+    )
+    monkeypatch.setattr(
+        "app.market_data.coingecko_adapter.httpx.AsyncClient",
+        lambda *_a, **_kw: client,
+    )
+    # Zero the real sleep so test is fast.
+    monkeypatch.setattr(
+        "app.market_data.coingecko_adapter.asyncio.sleep",
+        AsyncMock(),
+    )
+
+    result = await adapter._get_json("https://example/api")
+    assert result == {"ok": True}
+    assert client.calls == 2
+
+
+@pytest.mark.asyncio
+async def test_get_json_exhausts_retries_on_persistent_429(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """All 4 attempts return 429 → returns None and sets error."""
+    adapter = _adapter()
+    client = _StubClient([_StubResponse(429, retry_after="0") for _ in range(4)])
+    monkeypatch.setattr(
+        "app.market_data.coingecko_adapter.httpx.AsyncClient",
+        lambda *_a, **_kw: client,
+    )
+    monkeypatch.setattr(
+        "app.market_data.coingecko_adapter.asyncio.sleep",
+        AsyncMock(),
+    )
+
+    result = await adapter._get_json("https://example/api")
+    assert result is None
+    assert client.calls == 4
+
+
+@pytest.mark.asyncio
+async def test_get_json_other_http_error_not_retried(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """500 → single call, no retry."""
+    adapter = _adapter()
+    client = _StubClient([_StubResponse(500)])
+    monkeypatch.setattr(
+        "app.market_data.coingecko_adapter.httpx.AsyncClient",
+        lambda *_a, **_kw: client,
+    )
+
+    result = await adapter._get_json("https://example/api")
+    assert result is None
+    assert client.calls == 1
+
+
+# ---------------------------------------------------------------------------
 # Frozen models
 # ---------------------------------------------------------------------------
 

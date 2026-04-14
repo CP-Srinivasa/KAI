@@ -155,3 +155,7 @@ Erwarteter Impact: 30-40% weniger Inconclusives, mehr resolved Datenpunkte fuer 
 Source-Level Precision Gate: decrypt (11.76%, 2/17) und bitcoin_magazine (21.43%, 3/14) aus directional eligibility geblockt.
 Neuer Parameter `source_name` in `evaluate_directional_eligibility()`, BLOCK_REASON_LOW_PRECISION_SOURCE. Case-insensitive Matching.
 Service.py reicht `message.source_name` durch. Legacy-Aufrufer (CLI, hit_rate, Telegram) unberuehrt (default None = Gate skip). 5 neue Unit-Tests (50 gesamt).
+
+### D-138 (2026-04-14)
+Stale-Inconclusive Backfill + CoinGecko 429-Retry. Auto-Annotator re-evaluiert jetzt auch inconclusives jenseits des 72h-Max-Windows mit fester 7d-Attributions-Range (dispatch → dispatch+7d), batch-limitiert via `--backfill-batch` (default 30). Legacy-Records mit `directional_eligible=None` werden via `evaluate_directional_eligibility()` nachrecomputed statt verworfen. Root-Cause fuer "5/30 processed": CoinGecko 429-Rate-Limiting — Adapter `_get_json` hatte keinerlei Retry, drittes Request ab haengte. Fix: 4-Attempt-Retry mit `Retry-After`-Header-Respekt + exponential backoff (15/30/60s, cap 120s).
+Ergebnis: Full-Backfill batch=200 → 196 annotated (40 hit, 78 miss, 78 inconclusive, 4 price_unavailable). Resolved directional 93 → 166. 3 neue Auto-Annotator-Tests + 3 CoinGecko-429-Retry-Tests. 3h Laufzeit durch Free-Tier-Throttling.

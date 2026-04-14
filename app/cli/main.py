@@ -1286,6 +1286,11 @@ def alerts_auto_annotate(
         False, "--no-reeval",
         help="Skip re-evaluation of prior inconclusive annotations",
     ),
+    backfill_batch: int = typer.Option(
+        30,
+        "--backfill-batch",
+        help="Max stale (>72h) inconclusives to re-evaluate per run (0=skip)",
+    ),
     dry_run: bool = typer.Option(
         False, "--dry-run", help="Preview without writing annotations",
     ),
@@ -1293,6 +1298,7 @@ def alerts_auto_annotate(
     """Auto-annotate directional alerts based on price movement.
 
     D-132: volatility-adaptive thresholds, inconclusive re-evaluation.
+    D-138: stale inconclusives backfilled with fixed 7d attribution window.
     """
     import asyncio
 
@@ -1306,6 +1312,7 @@ def alerts_auto_annotate(
             min_age_hours=min_age_hours,
             move_threshold=move_threshold,
             reeval_inconclusive=not no_reeval,
+            backfill_batch=backfill_batch,
             dry_run=dry_run,
         )
     )

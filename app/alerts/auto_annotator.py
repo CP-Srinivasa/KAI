@@ -9,13 +9,20 @@ Tuning (D-132):
 - Volatility-adaptive thresholds scale with 24h market volatility
 - Re-evaluates prior inconclusive annotations after 24h
 - API delay reduced to 5s (CoinGecko free tier ~10/min)
-- Window: min 4h, max 72h
+- Window: min 4h, max 72h for fresh alerts
+
+D-138: Stale inconclusive re-evaluation
+- Inconclusives older than 72h are re-evaluated with a fixed 7-day
+  attribution window (dispatch_time → dispatch_time + 7d).
+- No max_age limit for inconclusive re-evaluation.
+- Batch-size limit prevents CoinGecko rate exhaustion in cron.
 
 Usage (programmatic):
     results = await auto_annotate_pending(audit_dir)
 
 Usage (CLI):
     python -m app.cli.main alerts auto-annotate
+    python -m app.cli.main alerts auto-annotate --backfill-batch 200
 """
 
 from __future__ import annotations
@@ -32,6 +39,7 @@ from app.alerts.audit import (
     load_alert_audits,
     load_outcome_annotations,
 )
+from app.alerts.eligibility import evaluate_directional_eligibility
 from app.market_data.coingecko_adapter import CoinGeckoAdapter
 
 log = structlog.get_logger(__name__)
@@ -52,6 +60,16 @@ _API_DELAY_SECONDS = 5
 
 # Re-evaluate inconclusive annotations older than this many hours.
 _REEVAL_MIN_AGE_HOURS = 24.0
+
+# Fixed attribution window for stale inconclusive re-evaluation.
+# Alerts older than max_age use dispatch_time + this window instead
+# of dispatch_time → now.  7 days is the longest reasonable window
+# for attributing a price move to a specific news event.
+_STALE_REEVAL_WINDOW_HOURS = 168.0  # 7 days
+
+# Default batch size for stale inconclusive backfill.
+# Limits API calls per run to avoid rate exhaustion in cron.
+_DEFAULT_BACKFILL_BATCH = 30
 
 
 def _scaled_threshold(
@@ -130,14 +148,20 @@ async def auto_annotate_pending(
     max_age_hours: float = _DEFAULT_MAX_AGE_HOURS,
     move_threshold: float = _DEFAULT_MOVE_THRESHOLD,
     reeval_inconclusive: bool = True,
+    backfill_batch: int = _DEFAULT_BACKFILL_BATCH,
     dry_run: bool = False,
 ) -> list[AlertOutcomeAnnotation]:
     """Annotate all eligible directional alerts that are old enough.
 
     When ``reeval_inconclusive`` is True, alerts that were previously
-    annotated as ``inconclusive`` and are now older than 24h get
-    re-evaluated — the new annotation supersedes the old one
-    (append-only, latest wins).
+    annotated as ``inconclusive`` get re-evaluated:
+    - Within the normal window (4h–72h): compared to current price.
+    - Beyond the normal window (>72h): compared to dispatch + 7d price
+      using a fixed attribution window. No max_age limit — even very
+      old inconclusives are re-evaluated (D-138).
+
+    ``backfill_batch`` limits how many stale (>72h) inconclusives are
+    processed per run to avoid CoinGecko rate exhaustion.
 
     Returns the list of newly created annotations.
     """
@@ -157,39 +181,61 @@ async def auto_annotate_pending(
     reeval_cutoff = now - timedelta(hours=_REEVAL_MIN_AGE_HOURS)
 
     # Filter to actionable candidates.
-    pending: list[tuple[AlertAuditRecord, datetime]] = []
+    # Two pools: fresh (within normal window) and stale (beyond, inconclusives only).
+    pending: list[tuple[AlertAuditRecord, datetime, bool]] = []  # (rec, dt, is_stale)
     seen_doc_ids: set[str] = set()
+    stale_count = 0
     for rec in audits:
-        if rec.directional_eligible is not True:
+        if rec.directional_eligible is False:
             continue
+        if rec.directional_eligible is None:
+            # Legacy record without eligibility field — recompute.
+            legacy = evaluate_directional_eligibility(
+                sentiment_label=rec.sentiment_label,
+                affected_assets=list(rec.affected_assets or []),
+            )
+            if legacy.directional_eligible is not True:
+                continue
         dt = _parse_dispatch_time(rec)
         if dt is None or dt > min_cutoff:
-            continue
-        if dt < max_cutoff:
             continue
         if rec.document_id in seen_doc_ids:
             continue
 
         current_outcome = latest_by_doc.get(rec.document_id)
+        is_stale = dt < max_cutoff
+
         if current_outcome is None:
-            # Never annotated — include.
-            pass
+            # Never annotated — only within normal window.
+            if is_stale:
+                continue
         elif current_outcome == "inconclusive" and reeval_inconclusive:
             # Re-evaluate if old enough (24h+ since dispatch).
             if dt > reeval_cutoff:
-                continue  # Not old enough for re-evaluation yet.
+                continue
+            # D-138: stale inconclusives use fixed 7d window, batch-limited.
+            if is_stale and stale_count >= backfill_batch:
+                continue
         else:
             # Already annotated with hit/miss — skip.
             continue
 
         seen_doc_ids.add(rec.document_id)
-        pending.append((rec, dt))
+        if is_stale:
+            stale_count += 1
+        pending.append((rec, dt, is_stale))
 
     if not pending:
         log.info("auto_annotate.nothing_pending")
         return []
 
-    log.info("auto_annotate.start", pending_count=len(pending))
+    fresh_count = sum(1 for _, _, s in pending if not s)
+    log.info(
+        "auto_annotate.start",
+        pending_count=len(pending),
+        fresh=fresh_count,
+        stale_backfill=stale_count,
+    )
 
     adapter = CoinGeckoAdapter(timeout_seconds=15)
 
@@ -208,15 +254,25 @@ async def auto_annotate_pending(
 
     results: list[AlertOutcomeAnnotation] = []
 
-    for rec, dispatch_time in pending:
+    for rec, dispatch_time, is_stale_reeval in pending:
         symbol = _primary_symbol(rec)
         if symbol is None:
             continue
 
+        # D-138: Stale inconclusives use a fixed 7d attribution window
+        # instead of dispatch → now (which would be weeks/months and
+        # destroy any causal attribution to the news event).
+        if is_stale_reeval:
+            eval_end = dispatch_time + timedelta(hours=_STALE_REEVAL_WINDOW_HOURS)
+            if eval_end > now:
+                eval_end = now
+        else:
+            eval_end = now
+
         price_data = await adapter.get_price_change_between(
             symbol,
             start_utc=dispatch_time,
-            end_utc=now,
+            end_utc=eval_end,
         )
 
         if price_data is None:
@@ -224,12 +280,13 @@ async def auto_annotate_pending(
                 "auto_annotate.price_unavailable",
                 document_id=rec.document_id,
                 symbol=symbol,
+                stale=is_stale_reeval,
             )
             await asyncio.sleep(_API_DELAY_SECONDS)
             continue
 
         start_price, end_price, pct_change = price_data
-        elapsed_h = (now - dispatch_time).total_seconds() / 3600
+        elapsed_h = (eval_end - dispatch_time).total_seconds() / 3600
 
         threshold = _scaled_threshold(
             elapsed_h, move_threshold, volatility_24h,
@@ -248,7 +305,7 @@ async def auto_annotate_pending(
             outcome = "inconclusive"
 
         is_reeval = rec.document_id in latest_by_doc
-        tag = "reeval" if is_reeval else "auto"
+        tag = "backfill" if is_stale_reeval else ("reeval" if is_reeval else "auto")
         note = (
             f"{tag}: {sentiment} {symbol} "
             f"${start_price:,.2f}->${end_price:,.2f} "
