@@ -432,6 +432,7 @@ def _log_result(
                 directional_blocked_assets=directional_blocked_assets,
                 title_hash=title_hash(message.title) if message else None,
                 normalized_title=normalize_title(message.title) if message else None,
+                source_name=message.source_name if message else None,
             )
             effective_path = audit_path or (
                 _WORKSPACE_ROOT / "artifacts" / ALERT_AUDIT_JSONL_FILENAME

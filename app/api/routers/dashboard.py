@@ -96,6 +96,8 @@ async def dashboard_quality_api() -> JSONResponse:
         s = r.get("status", "unknown")
         status_counts[s] = status_counts.get(s, 0) + 1
 
+    fwd = report.get("forward_simulation", {})
+
     return JSONResponse({
         "precision_pct": quality.get("resolved_precision_pct"),
         "false_positive_pct": quality.get("resolved_false_positive_rate_pct"),
@@ -104,6 +106,10 @@ async def dashboard_quality_api() -> JSONResponse:
         "hits": hit_rate.get("alert_hits", 0),
         "misses": hit_rate.get("alert_misses", 0),
         "priority_corr": quality.get("priority_hit_correlation"),
+        "forward_precision_pct": fwd.get("precision_pct"),
+        "forward_resolved": fwd.get("resolved", 0),
+        "forward_hits": fwd.get("hits", 0),
+        "forward_miss": fwd.get("miss", 0),
         "paper_fills": len(fills),
         "paper_cycles": paper.get("loop_metrics", {}).get("total_cycles", 0),
         "real_price_cycles": quality.get("paper_real_price_cycle_count", 0),
@@ -300,6 +306,10 @@ function render(d) {
     .join('');
 
   const pp = d.precision_pct;
+  const fp = d.forward_precision_pct;
+  const fr = d.forward_resolved;
+  const fh = d.forward_hits;
+  const fm = d.forward_miss;
   const pc = d.priority_corr;
   const pcVal = pc != null ? pc.toFixed(4) : '--';
   const pcPct = pc != null ? pc * 100 : 0;
@@ -323,10 +333,18 @@ function render(d) {
           ${gateLabel}</span></h2>
       <div class="metrics-row">
         <div class="metric">
-          <div class="label">Precision</div>
+          <div class="label">Forward Precision</div>
+          <div class="value" style="${cls(fp, 60, 40)}">
+            ${pct(fp)}</div>
+          <div class="sub">${fh} hits / ${fm} miss (${fr} resolved)</div>
+          ${progressBar(fp, 60,
+            fp >= 60 ? 'var(--ok)' : 'var(--warn)')}
+        </div>
+        <div class="metric">
+          <div class="label">Raw Precision</div>
           <div class="value" style="${cls(pp, 60, 40)}">
             ${pct(pp)}</div>
-          <div class="sub">Ziel: &ge;60%</div>
+          <div class="sub">Alle ${rc} resolved</div>
           ${progressBar(pp, 60, precColor())}
         </div>
         <div class="metric">

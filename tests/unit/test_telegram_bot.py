@@ -1885,7 +1885,7 @@ async def test_quality_command_shows_metrics(tmp_path, monkeypatch):
     msg = sent[0]
     assert "Quality Bar" in msg
     assert "52.5%" in msg
-    assert "59/50" in msg
+    assert "59 res" in msg
     assert "hold_releasable" in msg
 
 

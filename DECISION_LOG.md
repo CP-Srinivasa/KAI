@@ -164,3 +164,17 @@ Ergebnis: Full-Backfill batch=200 → 196 annotated (40 hit, 78 miss, 78 inconcl
 `pipeline run-all` CLI: Verarbeitet alle aktiven RSS-Feeds aus der DB in einem Lauf (fetch, persist, analyze, score, alert).
 Laedt active+rss_feed Sources, ruft `run_rss_pipeline()` fuer jede, zeigt Fortschritt + Top-Results. Aggregierte Totals am Ende.
 Cron-Integration: Laeuft jeden 4. Cron-Cycle (~40 min), separate Counter-Datei `.pipeline_counter`. Pipeline-Luecke geschlossen — vorher musste jeder Feed einzeln per URL aufgerufen werden.
+
+### D-134 (2026-04-14)
+Forward-Precision-Simulation durchgaengig integriert: `analyze-resolved` CLI (82.76% mit Source-Filter), Hold-Metrics-Report (65.0% ohne Source), Dashboard (neues Forward-Precision-Panel), Telegram `/quality` (Forward-Zeile), Operator-Summary-MD.
+Hold-Report: `forward_simulation` Sektion re-evaluiert resolved Outcomes mit priority+actionable+bearish Gates (Source nicht in Audit-Records). Dashboard zeigt Forward- und Raw-Precision nebeneinander.
+Ergebnis: Quality-Bar (>=60%) von Forward-Precision klar uebertroffen — 65-83% je nach Gate-Umfang. Raw bleibt bei 38-52% wegen historischer Pre-Filter-Outcomes.
+`_forward_eligible()` in feature_analysis.py, Forward-Section in hold_metrics.py. 5 neue Feature-Analysis-Tests (13 gesamt). Telegram/Dashboard-Tests angepasst.
+
+### D-136 (2026-04-14)
+Source-Name in AlertAuditRecord + Hold-Metrics Forward-Simulation. `source_name` als Feld in AlertAuditRecord (JSONL backward-compatible). Hold-Metrics Forward-Simulation nutzt jetzt Source-Gate (D-133) mit Fallback: `rec.source_name` || `source_by_doc[doc_id]` (DB-Lookup). CLI `hold-report` laedt Source-Map aus DB fuer historische Records. CLI `analyze-resolved` refactored auf gemeinsame `_load_source_by_doc()` Hilfsfunktion.
+Ergebnis: Hold-Report Forward-Precision von 65.0% auf 82.76% korrigiert (11 decrypt/bitcoin_magazine Outcomes rausgefiltert). Luecke zwischen Hold-Report und CLI `analyze-resolved` geschlossen. Priority-Inversion p10 (66.7%) < p9 (90.0%) bleibt bei n=9/20 — statistisch nicht signifikant. 2 neue Unit-Tests (5 gesamt).
+
+### D-137 (2026-04-14)
+Title in Forward-Simulation: Reactive-Narrative-Filter (D-113/D-115) wird jetzt auch in Forward-Precision angewendet. `title` Parameter an `evaluate_directional_eligibility()` durchgereicht via `rec.normalized_title` (Audit-Record) mit Fallback auf `title_by_doc` (DB-Lookup fuer alte Records). `_load_doc_metadata()` ersetzt `_load_source_by_doc()` und liefert Source+Title in einem DB-Call.
+Ergebnis: Forward-Precision 82.76% → 88.89% (+6.13pp). 2 reactive Misses gefiltert: "surging past $100B" (bullish reactive p10) und "eyes breakout" (bullish reactive p9). Forward-Resolved 29→27. Priority-Verteilung: p9 94.7% (18/19), p10 75.0% (6/8). 3 neue Tests (feature_analysis 15, hold_metrics 6).

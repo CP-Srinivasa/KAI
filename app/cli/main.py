@@ -825,6 +825,63 @@ def alerts_evaluate_pending(
     asyncio.run(run())
 
 
+def _load_doc_metadata(
+    audits: list[AlertAuditRecord],
+) -> tuple[dict[str, str], dict[str, str]]:
+    """Load source and title maps from DB for directional audit docs.
+
+    Returns ``(source_by_doc, title_by_doc)`` — both may be empty dicts on
+    error or when no directional docs are found. Source names are lower-cased.
+    """
+    import asyncio
+
+    directional_doc_ids: set[str] = set()
+    for rec in audits:
+        sentiment = (rec.sentiment_label or "").lower()
+        if rec.is_digest or sentiment not in {"bullish", "bearish"}:
+            continue
+        directional_doc_ids.add(rec.document_id)
+
+    if not directional_doc_ids:
+        return {}, {}
+
+    async def _query() -> tuple[dict[str, str], dict[str, str]]:
+        from sqlalchemy import select
+
+        from app.storage.models.document import CanonicalDocumentModel
+
+        settings = get_settings()
+        session_factory = build_session_factory(settings.db)
+        async with session_factory.begin() as session:
+            stmt = select(
+                CanonicalDocumentModel.id,
+                CanonicalDocumentModel.source_name,
+                CanonicalDocumentModel.provider,
+                CanonicalDocumentModel.title,
+            ).where(CanonicalDocumentModel.id.in_(directional_doc_ids))
+            rows = (await session.execute(stmt)).all()
+        sources = {
+            str(row[0]): (
+                (row[1] or row[2] or "unknown").strip().lower()
+            )
+            for row in rows
+        }
+        titles = {
+            str(row[0]): row[3]
+            for row in rows
+            if row[3]
+        }
+        return sources, titles
+
+    try:
+        return asyncio.run(_query())
+    except Exception as exc:
+        console.print(
+            f"[yellow]Doc metadata lookup failed:[/yellow] {exc}"
+        )
+        return {}, {}
+
+
 @alerts_app.command("hold-report")
 def alerts_hold_report(
     artifacts_dir: str = typer.Option("artifacts", help="Artifacts directory"),
@@ -834,11 +891,15 @@ def alerts_hold_report(
 ) -> None:
     """Build and write PH5 hold metrics report from local artifact files."""
     artifacts_path = Path(artifacts_dir)
+    audits = load_alert_audits(artifacts_path)
+    source_map, title_map = _load_doc_metadata(audits)
     report = build_hold_metrics_report(
         alert_audit_path=artifacts_path / "alert_audit.jsonl",
         alert_outcomes_path=artifacts_path / "alert_outcomes.jsonl",
         trading_loop_audit_path=artifacts_path / "trading_loop_audit.jsonl",
         paper_execution_audit_path=artifacts_path / "paper_execution_audit.jsonl",
+        source_by_doc=source_map or None,
+        title_by_doc=title_map or None,
     )
     json_out, md_out = write_hold_metrics_report(report, output_dir=Path(output_dir))
 
@@ -905,7 +966,6 @@ def alerts_analyze_resolved(
     threshold mutation. Use to locate precision hot/cold spots before
     tuning.
     """
-    import asyncio
     import json as _json
 
     from app.alerts.feature_analysis import build_feature_analysis
@@ -923,54 +983,19 @@ def alerts_analyze_resolved(
     audits = load_alert_audits(artifacts_path)
     annotations = load_outcome_annotations(artifacts_path)
 
-    source_by_doc: dict[str, str] | None = None
     if include_source:
-        directional_doc_ids: set[str] = set()
-        for rec in audits:
-            sentiment = (rec.sentiment_label or "").lower()
-            if rec.is_digest or sentiment not in {"bullish", "bearish"}:
-                continue
-            directional_doc_ids.add(rec.document_id)
-
-        if directional_doc_ids:
-            async def _load_sources() -> dict[str, str]:
-                from sqlalchemy import select
-
-                from app.storage.models.document import CanonicalDocumentModel
-
-                settings = get_settings()
-                session_factory = build_session_factory(settings.db)
-                async with session_factory.begin() as session:
-                    stmt = select(
-                        CanonicalDocumentModel.id,
-                        CanonicalDocumentModel.source_name,
-                        CanonicalDocumentModel.provider,
-                    ).where(CanonicalDocumentModel.id.in_(directional_doc_ids))
-                    rows = (await session.execute(stmt)).all()
-                # Case-normalise to prevent split buckets where the same
-                # publisher is stored under both display name ("CoinTelegraph")
-                # and provider key ("cointelegraph"). Display casing is lost —
-                # acceptable for an aggregate analysis view.
-                return {
-                    str(row[0]): (
-                        (row[1] or row[2] or "unknown").strip().lower()
-                    )
-                    for row in rows
-                }
-
-            try:
-                source_by_doc = asyncio.run(_load_sources())
-            except Exception as exc:
-                console.print(
-                    f"[yellow]Source lookup failed, omitting by_source "
-                    f"bucket:[/yellow] {exc}"
-                )
-                source_by_doc = None
+        source_by_doc, title_by_doc = _load_doc_metadata(audits)
+        source_by_doc = source_by_doc or None
+        title_by_doc = title_by_doc or None
+    else:
+        source_by_doc = None
+        title_by_doc = None
 
     report = build_feature_analysis(
         audits=audits,
         annotations=annotations,
         source_by_doc=source_by_doc,
+        title_by_doc=title_by_doc,
         min_bucket_size=min_bucket_size,
     )
 
@@ -988,6 +1013,18 @@ def alerts_analyze_resolved(
         "a single alert contributes to each of its affected assets — "
         "bucket totals may sum to more than unique resolved.[/dim]"
     )
+
+    fwd = report.get("forward_simulation")
+    if fwd and fwd["resolved"] > 0:
+        fwd_prec = fwd["precision_pct"]
+        color = "green" if (fwd_prec or 0) >= 60 else "yellow"
+        console.print(
+            f"[bold {color}]Forward simulation[/bold {color}]: "
+            f"{fwd['resolved']} resolved "
+            f"(hits={fwd['hits']} miss={fwd['miss']}) | "
+            f"precision={fwd_prec}% | "
+            f"filtered_out={fwd['filtered_out']}"
+        )
 
     def _render_bucket(title: str, key: str) -> None:
         rows = report["buckets"].get(key, [])

@@ -83,6 +83,8 @@ def build_hold_metrics_report(
     alert_outcomes_path: Path,
     trading_loop_audit_path: Path,
     paper_execution_audit_path: Path,
+    source_by_doc: dict[str, str] | None = None,
+    title_by_doc: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """Build an in-memory PH5 hold metrics report from artifact paths."""
     audits = load_alert_audits(alert_audit_path)
@@ -315,6 +317,44 @@ def build_hold_metrics_report(
     else:
         priority_calibration_finding = "weak_correlation"
 
+    # D-134: Forward-precision simulation using all audit record fields.
+    # Re-evaluates each resolved alert with current gates (priority,
+    # actionable, bearish, source).
+    fwd_hit_docs: set[str] = set()
+    fwd_miss_docs: set[str] = set()
+    fwd_priority_pairs: list[tuple[float, float]] = []
+    for doc_id in resolved_docs:
+        rec = latest_directional_by_doc.get(doc_id)
+        if rec is None:
+            continue
+        # Prefer fields from audit record; fall back to DB lookup
+        src = rec.source_name or (source_by_doc or {}).get(doc_id)
+        ttl = rec.normalized_title or (title_by_doc or {}).get(doc_id)
+        fwd_check = evaluate_directional_eligibility(
+            sentiment_label=rec.sentiment_label,
+            affected_assets=list(rec.affected_assets or []),
+            priority=rec.priority,
+            actionable=rec.actionable,
+            source_name=src,
+            title=ttl,
+        )
+        if fwd_check.directional_eligible is True:
+            is_hit = doc_id in hit_docs
+            if is_hit:
+                fwd_hit_docs.add(doc_id)
+            else:
+                fwd_miss_docs.add(doc_id)
+            if rec.priority is not None:
+                fwd_priority_pairs.append(
+                    (float(rec.priority), 1.0 if is_hit else 0.0),
+                )
+    fwd_resolved = len(fwd_hit_docs) + len(fwd_miss_docs)
+    fwd_precision = _rate_pct(len(fwd_hit_docs), fwd_resolved)
+    fwd_priority_corr = _pearson_correlation(
+        [p for p, _ in fwd_priority_pairs],
+        [h for _, h in fwd_priority_pairs],
+    )
+
     return {
         "report_type": "ph5_hold_metrics_report",
         "phase": "PHASE 5",
@@ -352,6 +392,19 @@ def build_hold_metrics_report(
             "alert_misses": len(miss_docs),
             "alert_hit_rate": hit_rate,
             "calculable_for_gate": alert_hit_rate_condition_met,
+        },
+        "forward_simulation": {
+            "description": (
+                "Re-evaluates resolved outcomes with current gates "
+                "(priority, actionable, bearish, source)."
+            ),
+            "hits": len(fwd_hit_docs),
+            "miss": len(fwd_miss_docs),
+            "resolved": fwd_resolved,
+            "filtered_out": len(resolved_docs) - fwd_resolved,
+            "precision_pct": fwd_precision,
+            "priority_hit_correlation": fwd_priority_corr,
+            "priority_sample": len(fwd_priority_pairs),
         },
         "signal_quality_validation": {
             "directional_actionable_documents": len(actionable_directional_docs),
@@ -467,6 +520,7 @@ def write_hold_metrics_report(
 def _write_operator_summary(report: dict[str, Any], output_path: Path) -> None:
     gate = report["hold_gate_evaluation"]
     hit = report["alert_hit_rate_evidence"]
+    fwd = report.get("forward_simulation", {})
     quality = report["signal_quality_validation"]
     prec = report["alert_precision_evidence"]
     paper = report["paper_trading_evidence"]
@@ -490,6 +544,15 @@ def _write_operator_summary(report: dict[str, Any], output_path: Path) -> None:
         "- minimum_resolved_directional_alerts_for_gate: "
         f"{hit['minimum_resolved_directional_alerts_for_gate']}",
         f"- alert_hit_rate: {hit['alert_hit_rate']}",
+        "",
+        "## Forward Precision Simulation",
+        "",
+        f"- forward_precision_pct: {fwd.get('precision_pct')}",
+        f"- forward_resolved: {fwd.get('resolved', 0)}",
+        f"- forward_hits: {fwd.get('hits', 0)}",
+        f"- forward_miss: {fwd.get('miss', 0)}",
+        f"- filtered_out: {fwd.get('filtered_out', 0)}",
+        f"- forward_priority_corr: {fwd.get('priority_hit_correlation')}",
         "",
         "## Signal-Quality Validation",
         "",

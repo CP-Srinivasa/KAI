@@ -1529,10 +1529,15 @@ class TelegramOperatorBot:
 
         sq = data.get("signal_quality_validation", {})
         hr = data.get("alert_hit_rate_evidence", {})
+        fwd = data.get("forward_simulation", {})
         paper = data.get("paper_trading_evidence", {})
         gate = data.get("hold_gate_evaluation", {})
 
         prec = sq.get("resolved_precision_pct")
+        fwd_prec = fwd.get("precision_pct")
+        fwd_res = fwd.get("resolved", 0)
+        fwd_h = fwd.get("hits", 0)
+        fwd_m = fwd.get("miss", 0)
         resolved = hr.get("resolved_directional_documents", 0)
         hits = hr.get("alert_hits", 0)
         misses = hr.get("alert_misses", 0)
@@ -1542,14 +1547,15 @@ class TelegramOperatorBot:
         status = gate.get("overall_status", "unknown")
 
         prec_s = f"{prec:.1f}%" if prec is not None else "--"
+        fwd_s = f"{fwd_prec:.1f}%" if fwd_prec is not None else "--"
         corr_s = f"{corr:.4f}" if corr is not None else "--"
         icon = "+" if status == "hold_releasable" else "!"
 
         msg = (
             f"*Quality Bar* [{icon}]\n"
             f"Gate: `{status}`\n\n"
-            f"Precision: {prec_s} (Ziel: >=60%)\n"
-            f"Resolved: {resolved}/50 ({hits}h/{misses}m)\n"
+            f"Forward Prec: {fwd_s} ({fwd_h}h/{fwd_m}m, {fwd_res} res)\n"
+            f"Raw Precision: {prec_s} ({hits}h/{misses}m, {resolved} res)\n"
             f"Priority-Hit Korr: {corr_s} (Ziel: >=0.40)\n"
             f"Paper Cycles: {cycles}\n"
             f"Real-Price Cycles: {fills_count}\n\n"

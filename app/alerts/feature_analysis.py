@@ -126,10 +126,33 @@ def _build_buckets(
     return buckets
 
 
+def _forward_eligible(
+    rec: AlertAuditRecord,
+    source_name: str | None = None,
+    title: str | None = None,
+) -> bool:
+    """Re-evaluate a resolved alert through ALL current eligibility gates.
+
+    Uses only fields available in the audit record (no scores/confidence).
+    Returns True if the alert would still be directional-eligible under
+    today's rules.
+    """
+    check = evaluate_directional_eligibility(
+        sentiment_label=rec.sentiment_label,
+        affected_assets=list(rec.affected_assets or []),
+        priority=rec.priority,
+        actionable=rec.actionable,
+        source_name=source_name,
+        title=title,
+    )
+    return check.directional_eligible is True
+
+
 def build_feature_analysis(
     audits: list[AlertAuditRecord],
     annotations: list[AlertOutcomeAnnotation],
     source_by_doc: dict[str, str] | None = None,
+    title_by_doc: dict[str, str] | None = None,
     min_bucket_size: int = 3,
 ) -> dict[str, Any]:
     """Compute bucketed hit/miss/precision over resolved directional alerts.
@@ -144,6 +167,10 @@ def build_feature_analysis(
         Optional ``document_id -> source_name`` map for the ``by_source``
         bucket. Omit to skip the source breakdown entirely (e.g. in unit
         tests or when no DB is available).
+    title_by_doc:
+        Optional ``document_id -> title`` map for the reactive-narrative
+        gate in forward simulation. Falls back to audit record
+        ``normalized_title`` when omitted or missing for a doc.
     min_bucket_size:
         Minimum resolved-count a label must reach to show up in a bucket.
         Default 3 to suppress single-observation noise.
@@ -201,6 +228,30 @@ def build_feature_analysis(
 
     precision_overall = _rate_pct(len(hit_docs), len(resolved_docs))
 
+    # Forward simulation: re-evaluate resolved alerts through current gates
+    def _fwd_title(doc_id: str) -> str | None:
+        rec = latest_directional[doc_id]
+        return rec.normalized_title or (title_by_doc or {}).get(doc_id)
+
+    fwd_hits = {
+        d for d in hit_docs
+        if _forward_eligible(
+            latest_directional[d],
+            (source_by_doc or {}).get(d),
+            _fwd_title(d),
+        )
+    }
+    fwd_misses = {
+        d for d in miss_docs
+        if _forward_eligible(
+            latest_directional[d],
+            (source_by_doc or {}).get(d),
+            _fwd_title(d),
+        )
+    }
+    fwd_resolved = len(fwd_hits) + len(fwd_misses)
+    fwd_filtered_out = len(resolved_docs) - fwd_resolved
+
     report: dict[str, Any] = {
         "report_type": "ph5_feature_analysis",
         "generated_at": datetime.now(UTC).isoformat(),
@@ -213,6 +264,13 @@ def build_feature_analysis(
             "inconclusive": len(inconclusive_docs),
             "unlabeled": len(directional_doc_ids - resolved_docs - inconclusive_docs),
             "precision_pct": precision_overall,
+        },
+        "forward_simulation": {
+            "hits": len(fwd_hits),
+            "miss": len(fwd_misses),
+            "resolved": fwd_resolved,
+            "filtered_out": fwd_filtered_out,
+            "precision_pct": _rate_pct(len(fwd_hits), fwd_resolved),
         },
         "buckets": {
             "by_sentiment": [b.to_json_dict() for b in by_sentiment],

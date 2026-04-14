@@ -53,6 +53,7 @@ class AlertAuditRecord:
     directional_blocked_assets: list[str] = field(default_factory=list)
     title_hash: str | None = None
     normalized_title: str | None = None
+    source_name: str | None = None
 
     def to_json_dict(self) -> dict[str, object]:
         d: dict[str, object] = {
@@ -80,6 +81,8 @@ class AlertAuditRecord:
             d["title_hash"] = self.title_hash
         if self.normalized_title is not None:
             d["normalized_title"] = self.normalized_title
+        if self.source_name is not None:
+            d["source_name"] = self.source_name
         return d
 
 
@@ -205,6 +208,7 @@ def load_alert_audits(input_path: str | Path) -> list[AlertAuditRecord]:
                 ),
                 title_hash=data.get("title_hash"),
                 normalized_title=data.get("normalized_title"),
+                source_name=data.get("source_name"),
             )
             records.append(record)
         except (json.JSONDecodeError, KeyError):

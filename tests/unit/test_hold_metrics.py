@@ -201,3 +201,194 @@ def test_hold_metrics_excludes_blocked_directional_alerts(tmp_path: Path) -> Non
     }
     assert hit["resolved_directional_documents"] == 1
     assert quality["resolved_precision_pct"] == 100.0
+
+
+def test_forward_simulation_uses_source_by_doc(tmp_path: Path) -> None:
+    """source_by_doc filters low-precision sources in forward simulation."""
+    alert_audit = tmp_path / "alert_audit.jsonl"
+    alert_outcomes = tmp_path / "alert_outcomes.jsonl"
+    trading_loop_audit = tmp_path / "trading_loop_audit.jsonl"
+    paper_execution_audit = tmp_path / "paper_execution_audit.jsonl"
+
+    _write_jsonl(
+        alert_audit,
+        [
+            {
+                "document_id": "doc-good",
+                "channel": "telegram",
+                "message_id": "dry_run",
+                "is_digest": False,
+                "dispatched_at": "2026-04-14T10:00:00+00:00",
+                "sentiment_label": "bullish",
+                "affected_assets": ["BTC"],
+                "priority": 9,
+                "actionable": True,
+                "directional_eligible": True,
+            },
+            {
+                "document_id": "doc-decrypt",
+                "channel": "telegram",
+                "message_id": "dry_run",
+                "is_digest": False,
+                "dispatched_at": "2026-04-14T10:01:00+00:00",
+                "sentiment_label": "bullish",
+                "affected_assets": ["BTC"],
+                "priority": 9,
+                "actionable": True,
+                "directional_eligible": True,
+            },
+        ],
+    )
+    _write_jsonl(
+        alert_outcomes,
+        [
+            {"document_id": "doc-good", "outcome": "hit",
+             "annotated_at": "2026-04-14T11:00:00+00:00"},
+            {"document_id": "doc-decrypt", "outcome": "miss",
+             "annotated_at": "2026-04-14T11:01:00+00:00"},
+        ],
+    )
+    _write_jsonl(trading_loop_audit, [])
+    _write_jsonl(paper_execution_audit, [])
+
+    # Without source_by_doc: both docs are forward-eligible
+    report_no_src = build_hold_metrics_report(
+        alert_audit_path=alert_audit,
+        alert_outcomes_path=alert_outcomes,
+        trading_loop_audit_path=trading_loop_audit,
+        paper_execution_audit_path=paper_execution_audit,
+    )
+    fwd_no = report_no_src["forward_simulation"]
+    assert fwd_no["resolved"] == 2
+    assert fwd_no["hits"] == 1
+    assert fwd_no["miss"] == 1
+
+    # With source_by_doc: decrypt miss gets filtered
+    report_src = build_hold_metrics_report(
+        alert_audit_path=alert_audit,
+        alert_outcomes_path=alert_outcomes,
+        trading_loop_audit_path=trading_loop_audit,
+        paper_execution_audit_path=paper_execution_audit,
+        source_by_doc={"doc-good": "cointelegraph", "doc-decrypt": "decrypt"},
+    )
+    fwd_src = report_src["forward_simulation"]
+    assert fwd_src["resolved"] == 1
+    assert fwd_src["hits"] == 1
+    assert fwd_src["miss"] == 0
+    assert fwd_src["filtered_out"] == 1
+    assert fwd_src["precision_pct"] == 100.0
+
+
+def test_forward_simulation_prefers_audit_source_name(tmp_path: Path) -> None:
+    """source_name from audit record takes precedence over source_by_doc."""
+    alert_audit = tmp_path / "alert_audit.jsonl"
+    alert_outcomes = tmp_path / "alert_outcomes.jsonl"
+    trading_loop_audit = tmp_path / "trading_loop_audit.jsonl"
+    paper_execution_audit = tmp_path / "paper_execution_audit.jsonl"
+
+    _write_jsonl(
+        alert_audit,
+        [
+            {
+                "document_id": "doc-1",
+                "channel": "telegram",
+                "message_id": "dry_run",
+                "is_digest": False,
+                "dispatched_at": "2026-04-14T10:00:00+00:00",
+                "sentiment_label": "bullish",
+                "affected_assets": ["BTC"],
+                "priority": 9,
+                "actionable": True,
+                "directional_eligible": True,
+                "source_name": "cointelegraph",
+            },
+        ],
+    )
+    _write_jsonl(
+        alert_outcomes,
+        [
+            {"document_id": "doc-1", "outcome": "hit",
+             "annotated_at": "2026-04-14T11:00:00+00:00"},
+        ],
+    )
+    _write_jsonl(trading_loop_audit, [])
+    _write_jsonl(paper_execution_audit, [])
+
+    # source_by_doc says "decrypt" but audit record says "cointelegraph" — audit wins
+    report = build_hold_metrics_report(
+        alert_audit_path=alert_audit,
+        alert_outcomes_path=alert_outcomes,
+        trading_loop_audit_path=trading_loop_audit,
+        paper_execution_audit_path=paper_execution_audit,
+        source_by_doc={"doc-1": "decrypt"},
+    )
+    fwd = report["forward_simulation"]
+    assert fwd["resolved"] == 1
+    assert fwd["hits"] == 1
+
+
+def test_forward_simulation_filters_reactive_title(tmp_path: Path) -> None:
+    """Reactive bullish titles are filtered in forward simulation."""
+    alert_audit = tmp_path / "alert_audit.jsonl"
+    alert_outcomes = tmp_path / "alert_outcomes.jsonl"
+    trading_loop_audit = tmp_path / "trading_loop_audit.jsonl"
+    paper_execution_audit = tmp_path / "paper_execution_audit.jsonl"
+
+    _write_jsonl(
+        alert_audit,
+        [
+            {
+                "document_id": "doc-hit",
+                "channel": "telegram",
+                "message_id": "dry_run",
+                "is_digest": False,
+                "dispatched_at": "2026-04-14T10:00:00+00:00",
+                "sentiment_label": "bullish",
+                "affected_assets": ["BTC"],
+                "priority": 9,
+                "actionable": True,
+                "directional_eligible": True,
+            },
+            {
+                "document_id": "doc-reactive",
+                "channel": "telegram",
+                "message_id": "dry_run",
+                "is_digest": False,
+                "dispatched_at": "2026-04-14T10:01:00+00:00",
+                "sentiment_label": "bullish",
+                "affected_assets": ["BTC"],
+                "priority": 10,
+                "actionable": True,
+                "directional_eligible": True,
+            },
+        ],
+    )
+    _write_jsonl(
+        alert_outcomes,
+        [
+            {"document_id": "doc-hit", "outcome": "hit",
+             "annotated_at": "2026-04-14T11:00:00+00:00"},
+            {"document_id": "doc-reactive", "outcome": "miss",
+             "annotated_at": "2026-04-14T11:01:00+00:00"},
+        ],
+    )
+    _write_jsonl(trading_loop_audit, [])
+    _write_jsonl(paper_execution_audit, [])
+
+    # title_by_doc provides reactive title for doc-reactive
+    report = build_hold_metrics_report(
+        alert_audit_path=alert_audit,
+        alert_outcomes_path=alert_outcomes,
+        trading_loop_audit_path=trading_loop_audit,
+        paper_execution_audit_path=paper_execution_audit,
+        title_by_doc={
+            "doc-hit": "Charles Schwab opens bitcoin trading",
+            "doc-reactive": "ETF empire surging past $100 billion",
+        },
+    )
+    fwd = report["forward_simulation"]
+    # doc-reactive "surging" → reactive bullish → filtered
+    assert fwd["resolved"] == 1
+    assert fwd["hits"] == 1
+    assert fwd["miss"] == 0
+    assert fwd["filtered_out"] == 1
