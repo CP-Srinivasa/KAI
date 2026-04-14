@@ -162,4 +162,21 @@ if ($hour -ge 8 -and $lastBriefing -ne $today) {
     $today | Out-File -Encoding utf8 $briefingMarker
 }
 
+# Pipeline run-all (every 4th run = ~40 min, ingests all active RSS feeds)
+$pipelineMarker = Join-Path $ProjectRoot "artifacts\.pipeline_counter"
+$pipelineCounter = 0
+if (Test-Path $pipelineMarker) { $pipelineCounter = [int](Get-Content $pipelineMarker -ErrorAction SilentlyContinue) }
+$pipelineCounter++
+if ($pipelineCounter -ge 4) {
+    $pipelineCounter = 0
+    Write-Log "pipeline run-all starting"
+    try {
+        $output = & $Python -m app.cli.main pipeline run-all --top-n 1 2>&1 | Out-String
+        Write-Log "pipeline run-all done"
+    } catch {
+        Write-Log "pipeline run-all ERROR: $_"
+    }
+}
+$pipelineCounter | Out-File -Encoding utf8 $pipelineMarker
+
 Write-Log "--- cron end ---"

@@ -159,3 +159,8 @@ Service.py reicht `message.source_name` durch. Legacy-Aufrufer (CLI, hit_rate, T
 ### D-138 (2026-04-14)
 Stale-Inconclusive Backfill + CoinGecko 429-Retry. Auto-Annotator re-evaluiert jetzt auch inconclusives jenseits des 72h-Max-Windows mit fester 7d-Attributions-Range (dispatch → dispatch+7d), batch-limitiert via `--backfill-batch` (default 30). Legacy-Records mit `directional_eligible=None` werden via `evaluate_directional_eligibility()` nachrecomputed statt verworfen. Root-Cause fuer "5/30 processed": CoinGecko 429-Rate-Limiting — Adapter `_get_json` hatte keinerlei Retry, drittes Request ab haengte. Fix: 4-Attempt-Retry mit `Retry-After`-Header-Respekt + exponential backoff (15/30/60s, cap 120s).
 Ergebnis: Full-Backfill batch=200 → 196 annotated (40 hit, 78 miss, 78 inconclusive, 4 price_unavailable). Resolved directional 93 → 166. 3 neue Auto-Annotator-Tests + 3 CoinGecko-429-Retry-Tests. 3h Laufzeit durch Free-Tier-Throttling.
+
+### D-135 (2026-04-14)
+`pipeline run-all` CLI: Verarbeitet alle aktiven RSS-Feeds aus der DB in einem Lauf (fetch, persist, analyze, score, alert).
+Laedt active+rss_feed Sources, ruft `run_rss_pipeline()` fuer jede, zeigt Fortschritt + Top-Results. Aggregierte Totals am Ende.
+Cron-Integration: Laeuft jeden 4. Cron-Cycle (~40 min), separate Counter-Datei `.pipeline_counter`. Pipeline-Luecke geschlossen — vorher musste jeder Feed einzeln per URL aufgerufen werden.

@@ -244,6 +244,100 @@ def pipeline_run(
     asyncio.run(run())
 
 
+@pipeline_app.command("run-all")
+def pipeline_run_all(
+    dry_run: bool = typer.Option(False, "--dry-run", help="Skip DB writes; preview only"),
+    top_n: int = typer.Option(3, help="Top results per feed"),
+) -> None:
+    """Fetch, persist, analyze, and score ALL active RSS feeds."""
+    import asyncio
+
+    async def run() -> None:
+        from sqlalchemy import select
+
+        from app.analysis.keywords.engine import KeywordEngine
+        from app.integrations.openai.provider import OpenAIAnalysisProvider
+        from app.pipeline.service import run_rss_pipeline
+        from app.storage.models.source import SourceModel
+
+        settings = get_settings()
+        monitor_dir = Path(settings.monitor_dir)
+        keyword_engine = KeywordEngine.from_monitor_dir(monitor_dir)
+
+        provider = None
+        if settings.providers.openai_api_key:
+            provider = OpenAIAnalysisProvider.from_settings(settings.providers)
+        else:
+            console.print("[yellow]Warning:[/yellow] No OpenAI API key — LLM analysis skipped.")
+            return
+
+        session_factory = build_session_factory(settings.db)
+
+        # Load active RSS feeds from DB
+        async with session_factory.begin() as session:
+            rows = (await session.execute(
+                select(
+                    SourceModel.source_id,
+                    SourceModel.provider,
+                    SourceModel.original_url,
+                ).where(
+                    SourceModel.status == "active",
+                    SourceModel.source_type == "rss_feed",
+                )
+            )).all()
+
+        feeds = [(r[0], r[1] or "unknown", r[2]) for r in rows]
+        console.print(f"[bold]Active RSS feeds:[/bold] {len(feeds)}")
+
+        totals = {
+            "fetched": 0, "saved": 0, "analyzed": 0,
+            "alerts": 0, "skipped": 0, "failed": 0,
+        }
+        for source_id, source_name, url in feeds:
+            console.print(f"\n[bold cyan]{source_name}[/bold cyan] ({url[:50]}...)")
+            try:
+                stats = await run_rss_pipeline(
+                    url,
+                    session_factory=session_factory,
+                    keyword_engine=keyword_engine,
+                    provider=provider,
+                    source_id=source_id,
+                    source_name=source_name,
+                    monitor_dir=monitor_dir,
+                    timeout=settings.sources.fetch_timeout,
+                    max_retries=settings.sources.max_retries,
+                    dry_run=dry_run,
+                )
+                totals["fetched"] += stats.fetched_count
+                totals["saved"] += stats.saved_count
+                totals["analyzed"] += stats.analyzed_count
+                totals["alerts"] += stats.alerts_fired_count
+                totals["skipped"] += stats.skipped_count
+                totals["failed"] += stats.failed_count
+                console.print(
+                    f"  fetched={stats.fetched_count} saved={stats.saved_count} "
+                    f"analyzed={stats.analyzed_count} alerts={stats.alerts_fired_count}"
+                )
+                if stats.top_results and top_n > 0:
+                    for res in stats.top_results[:top_n]:
+                        doc = res.document
+                        pri = doc.priority_score or 0
+                        sent = doc.sentiment_label.value if doc.sentiment_label else "–"
+                        console.print(f"    P{pri} {sent:8s} {(doc.title or '–')[:60]}")
+            except Exception as exc:  # noqa: BLE001
+                console.print(f"  [red]ERROR:[/red] {exc}")
+                totals["failed"] += 1
+
+        console.print("\n[bold green]All feeds done.[/bold green]")
+        console.print(
+            f"  Fetched: {totals['fetched']}  Saved: {totals['saved']}  "
+            f"Analyzed: {totals['analyzed']}  Alerts: {totals['alerts']}  "
+            f"Failed: {totals['failed']}"
+        )
+
+    asyncio.run(run())
+
+
 @pipeline_app.command("youtube")
 def pipeline_youtube(
     channel_url: str = typer.Argument(..., help="YouTube channel URL (e.g. https://youtube.com/@Bankless)"),
