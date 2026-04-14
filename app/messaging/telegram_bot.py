@@ -1,17 +1,11 @@
 """Telegram operator bot for safe runtime control of KAI.
 
 Handles:
-- /status
-- /positions
-- /exposure
-- /signals
-- /daily_summary
-- /alert_status
-- /approve
-- /reject
-- /pause
-- /resume
-- /kill
+- /status, /positions, /exposure, /signals, /daily_summary, /alert_status
+- /quality — quality-bar metrics from hold report
+- /annotate — pending alert annotation with inline buttons
+- /approve, /reject — decision journal
+- /pause, /resume, /kill — runtime control
 
 This bot is separate from outbound alert delivery. It is the inbound operator
 channel and remains fail-closed, admin-gated, and dry-run-safe by default.
@@ -53,9 +47,12 @@ _READ_ONLY_COMMANDS = frozenset(
         "signal_status",
         "daily_summary",
         "alert_status",
+        "quality",
+        "annotate",
     }
 )
 _GUARDED_AUDIT_COMMANDS = frozenset({"approve", "reject"})
+_VALID_OUTCOMES = frozenset({"hit", "miss", "inconclusive"})
 _DECISION_REF_PATTERN = re.compile(r"^dec_[0-9a-f]{12}$")
 _WEBHOOK_ALLOWED_UPDATES_DEFAULT = ("message", "edited_message", "callback_query")
 _WEBHOOK_MAX_BODY_BYTES_DEFAULT = 64_000
@@ -1226,6 +1223,9 @@ class TelegramOperatorBot:
             "signalstatus": self._cmd_signal_status,
             "alert_status": self._cmd_alert_status,
             "alertstatus": self._cmd_alert_status,
+            "quality": self._cmd_quality,
+            "qualitaet": self._cmd_quality,
+            "annotate": self._cmd_annotate,
             "approve": self._cmd_approve,
             "reject": self._cmd_reject,
             "pause": self._cmd_pause,
@@ -1513,6 +1513,212 @@ class TelegramOperatorBot:
         )
         await self._send(chat_id, msg)
 
+    async def _cmd_quality(
+        self, chat_id: int, *, args: str = "",
+    ) -> None:
+        """Show quality-bar metrics from hold report."""
+        report_path = Path("artifacts/ph5_hold/ph5_hold_metrics_report.json")
+        if not report_path.exists():
+            await self._send(chat_id, "*Quality Bar*\nKein Hold-Report vorhanden.")
+            return
+        try:
+            data = json.loads(report_path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError) as exc:
+            await self._send(chat_id, f"*Quality Bar*\nReport-Fehler: {exc}")
+            return
+
+        sq = data.get("signal_quality_validation", {})
+        hr = data.get("alert_hit_rate_evidence", {})
+        paper = data.get("paper_trading_evidence", {})
+        gate = data.get("hold_gate_evaluation", {})
+
+        prec = sq.get("resolved_precision_pct")
+        resolved = hr.get("resolved_directional_documents", 0)
+        hits = hr.get("alert_hits", 0)
+        misses = hr.get("alert_misses", 0)
+        corr = sq.get("priority_hit_correlation")
+        cycles = paper.get("loop_metrics", {}).get("total_cycles", 0)
+        fills_count = sq.get("paper_real_price_cycle_count", 0)
+        status = gate.get("overall_status", "unknown")
+
+        prec_s = f"{prec:.1f}%" if prec is not None else "--"
+        corr_s = f"{corr:.4f}" if corr is not None else "--"
+        icon = "+" if status == "hold_releasable" else "!"
+
+        msg = (
+            f"*Quality Bar* [{icon}]\n"
+            f"Gate: `{status}`\n\n"
+            f"Precision: {prec_s} (Ziel: >=60%)\n"
+            f"Resolved: {resolved}/50 ({hits}h/{misses}m)\n"
+            f"Priority-Hit Korr: {corr_s} (Ziel: >=0.40)\n"
+            f"Paper Cycles: {cycles}\n"
+            f"Real-Price Cycles: {fills_count}\n\n"
+            f"Report: {data.get('generated_at', '?')[:16]}"
+        )
+        await self._send(chat_id, msg)
+
+    async def _cmd_annotate(
+        self, chat_id: int, *, args: str = "",
+    ) -> None:
+        """Show pending alerts for annotation or annotate directly.
+
+        Usage:
+          /annotate           -- list pending alerts with buttons
+          /annotate <id> hit  -- annotate directly via text
+        """
+        parts = args.strip().split()
+        if len(parts) >= 2:
+            await self._annotate_direct(chat_id, parts[0], parts[1])
+            return
+
+        from app.alerts.audit import (
+            load_alert_audits,
+            load_outcome_annotations,
+        )
+        from app.alerts.eligibility import evaluate_directional_eligibility
+
+        artifacts = Path("artifacts")
+        records = load_alert_audits(artifacts)
+        annotations = load_outcome_annotations(artifacts)
+        annotated = {a.document_id for a in annotations}
+
+        latest_by_doc: dict[str, Any] = {}
+        for rec in records:
+            sent = (rec.sentiment_label or "").lower()
+            if rec.is_digest or sent not in {"bullish", "bearish"}:
+                continue
+            check = evaluate_directional_eligibility(
+                sentiment_label=rec.sentiment_label,
+                affected_assets=list(rec.affected_assets or []),
+            )
+            if check.directional_eligible is not True:
+                continue
+            if rec.directional_eligible is False:
+                continue
+            prev = latest_by_doc.get(rec.document_id)
+            if prev is None or rec.dispatched_at > prev.dispatched_at:
+                latest_by_doc[rec.document_id] = rec
+
+        pending = [
+            r for r in latest_by_doc.values()
+            if r.document_id not in annotated
+        ]
+        pending.sort(key=lambda r: r.dispatched_at, reverse=True)
+
+        if not pending:
+            await self._send(
+                chat_id,
+                "*Annotation*\nKeine offenen Alerts. Alles annotiert!",
+            )
+            return
+
+        batch = pending[:5]
+        now = datetime.now(UTC)
+        lines = [f"*Annotation* ({len(pending)} offen)\n"]
+        buttons: list[list[dict[str, str]]] = []
+        for rec in batch:
+            doc_short = rec.document_id[:12]
+            age_h = "--"
+            try:
+                ts = datetime.fromisoformat(
+                    rec.dispatched_at.replace("Z", "+00:00"),
+                )
+                age_h = f"{(now - ts).total_seconds() / 3600:.0f}h"
+            except ValueError:
+                pass
+            sent = rec.sentiment_label or "?"
+            prio = rec.priority if rec.priority else "?"
+            assets_s = ", ".join(
+                rec.affected_assets[:2],
+            ) if rec.affected_assets else "--"
+            lines.append(
+                f"`{doc_short}` {sent} P{prio} {assets_s} ({age_h})",
+            )
+            row = [
+                {
+                    "text": f"Hit {doc_short}",
+                    "callback_data": f"ann:{rec.document_id}:hit",
+                },
+                {
+                    "text": f"Miss {doc_short}",
+                    "callback_data": f"ann:{rec.document_id}:miss",
+                },
+                {
+                    "text": "?",
+                    "callback_data": (
+                        f"ann:{rec.document_id}:inconclusive"
+                    ),
+                },
+            ]
+            buttons.append(row)
+
+        text = "\n".join(lines)
+        keyboard = json.dumps({"inline_keyboard": buttons})
+        await self._send_with_keyboard(chat_id, text, keyboard)
+
+    async def _send_with_keyboard(
+        self,
+        chat_id: int,
+        text: str,
+        reply_markup: str,
+    ) -> bool:
+        """Send a message with an inline keyboard."""
+        if self._dry_run:
+            logger.info(
+                "[BOT DRY RUN] Keyboard to %s: %s", chat_id, text[:80],
+            )
+            return True
+        if not self._token:
+            return False
+        url = (
+            f"{_TELEGRAM_API_BASE}/bot{self._token}/sendMessage"
+        )
+        payload = {
+            "chat_id": chat_id,
+            "text": text,
+            "parse_mode": "Markdown",
+            "disable_web_page_preview": True,
+            "reply_markup": reply_markup,
+        }
+        return await self._send_payload_with_retry(url, payload)
+
+    async def _annotate_direct(
+        self, chat_id: int, doc_id: str, outcome: str,
+    ) -> None:
+        """Annotate a document directly via text command."""
+        normalized = outcome.strip().lower()
+        if normalized not in _VALID_OUTCOMES:
+            await self._send(
+                chat_id,
+                "*Annotation*\n"
+                f"Ungueltiges Outcome: `{outcome}`\n"
+                "Erlaubt: hit, miss, inconclusive",
+            )
+            return
+        from app.alerts.audit import (
+            AlertOutcomeAnnotation,
+            append_outcome_annotation,
+        )
+
+        annotation = AlertOutcomeAnnotation(
+            document_id=doc_id,
+            outcome=normalized,  # type: ignore[arg-type]
+            note="via Telegram",
+        )
+        try:
+            append_outcome_annotation(annotation, Path("artifacts"))
+        except OSError as exc:
+            await self._send(
+                chat_id,
+                f"*Annotation*\nSchreibfehler: {exc}",
+            )
+            return
+        await self._send(
+            chat_id,
+            f"*Annotation gespeichert*\n"
+            f"`{doc_id[:12]}` -> {normalized}",
+        )
+
     async def _cmd_approve(self, chat_id: int, *, args: str = "") -> None:
         decision_ref = self._validate_decision_ref(args)
         if decision_ref is None:
@@ -1716,7 +1922,9 @@ class TelegramOperatorBot:
             "/signals - Aktive Signale\n"
             "/signalstatus - Signal-Pipeline\n"
             "/tagesbericht - Tagesbericht\n"
-            "/alertstatus - Alert-Status\n\n"
+            "/alertstatus - Alert-Status\n"
+            "/quality - Quality-Bar Metriken\n"
+            "/annotate - Alerts annotieren (Buttons)\n\n"
             "*Aktionen:*\n"
             "/signal BUY BTC 65000 - Trading-Signal\n"
             "/approve dec\\_xxx - Freigabe\n"
@@ -1871,6 +2079,10 @@ class TelegramOperatorBot:
             command = data[4:]
             await self._answer_callback_query(query_id)
             await self._dispatch(chat_id, command)
+        elif data.startswith("ann:"):
+            await self._handle_annotation_callback(
+                chat_id, query_id, data,
+            )
         else:
             await self._answer_callback_query(query_id, text="Unbekannte Aktion.")
 
@@ -1888,6 +2100,21 @@ class TelegramOperatorBot:
         if text:
             payload["text"] = text
         return await self._send_payload_with_retry(url, payload)
+
+    async def _handle_annotation_callback(
+        self, chat_id: int, query_id: str, data: str,
+    ) -> None:
+        """Process ann:<doc_id>:<outcome> callback from inline button."""
+        parts = data.split(":", 2)
+        if len(parts) != 3 or parts[2] not in _VALID_OUTCOMES:
+            await self._answer_callback_query(
+                query_id, text="Ungueltiges Format.",
+            )
+            return
+        doc_id = parts[1]
+        outcome = parts[2]
+        await self._answer_callback_query(query_id, text=f"{outcome}!")
+        await self._annotate_direct(chat_id, doc_id, outcome)
 
     async def _send(self, chat_id: int, text: str) -> bool:
         if self._dry_run:

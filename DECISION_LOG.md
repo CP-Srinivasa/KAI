@@ -141,3 +141,7 @@ Datengrundlage: 50 eligible resolved outcomes — bearish 4% Precision (1 hit / 
 ### D-130 (2026-04-14)
 Operator Dashboard komplett neu gebaut: Quality-Bar (Precision, Resolved, Priority-Hit-Korr, Paper Fills) mit Progress-Bars und Farb-Ampel, Signal-Qualitat/Paper-Trading/Loop-Status Panels, Alerts-Tabelle mit Outcome-Badges.
 Tech: Inline HTML+JS+Chart.js CDN, JSON-API `/dashboard/api/quality` liest direkt aus JSONL-Artifacts. Auth-Middleware `/dashboard/*` komplett exempt (read-only operator view). 14 Unit-Tests. Kein Template-Engine, kein Build-Step.
+
+### D-131 (2026-04-14)
+Telegram Bot: `/quality` (Quality-Bar aus Hold-Report) und `/annotate` (Pending-Alerts mit Inline-Buttons fuer hit/miss/inconclusive) implementiert.
+`/annotate` unterstuetzt Text-Modus (`/annotate <id> hit`) und Button-Modus (5 aelteste Pending mit 3-Button-Reihen). Callback-Handler `ann:<doc_id>:<outcome>` schreibt in alert_outcomes.jsonl. 7 Unit-Tests. Deutsch-Aliase: `/qualitaet`.

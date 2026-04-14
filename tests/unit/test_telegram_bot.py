@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -1830,3 +1831,226 @@ async def test_voice_from_unauthorized_user_is_rejected(tmp_path, monkeypatch):
 
     assert voice_t.calls == []
     assert "Unauthorized" in sent[0]
+
+
+# ---------------------------------------------------------------------------
+# /quality command (D-131)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_quality_command_shows_metrics(tmp_path, monkeypatch):
+    """Quality command reads hold report and shows quality-bar."""
+    bot = _bot(tmp_path)
+    sent: list[str] = []
+
+    async def fake_send(_cid: int, text: str) -> bool:
+        sent.append(text)
+        return True
+
+    monkeypatch.setattr(bot, "_send", fake_send)
+
+    report = {
+        "generated_at": "2026-04-14T10:00:00+00:00",
+        "signal_quality_validation": {
+            "resolved_precision_pct": 52.54,
+            "priority_hit_correlation": 0.2897,
+            "paper_real_price_cycle_count": 179,
+        },
+        "alert_hit_rate_evidence": {
+            "resolved_directional_documents": 59,
+            "alert_hits": 31,
+            "alert_misses": 28,
+        },
+        "paper_trading_evidence": {
+            "loop_metrics": {"total_cycles": 255},
+        },
+        "hold_gate_evaluation": {
+            "overall_status": "hold_releasable",
+        },
+    }
+    report_dir = tmp_path / "artifacts" / "ph5_hold"
+    report_dir.mkdir(parents=True)
+    rp = report_dir / "ph5_hold_metrics_report.json"
+    rp.write_text(json.dumps(report), encoding="utf-8")
+
+    monkeypatch.setattr(
+        "app.messaging.telegram_bot.Path",
+        lambda p: tmp_path / p if "artifacts" in str(p) else Path(p),
+    )
+
+    await bot._cmd_quality(12345)
+
+    assert len(sent) == 1
+    msg = sent[0]
+    assert "Quality Bar" in msg
+    assert "52.5%" in msg
+    assert "59/50" in msg
+    assert "hold_releasable" in msg
+
+
+@pytest.mark.asyncio
+async def test_quality_command_handles_missing_report(
+    tmp_path, monkeypatch,
+):
+    """Quality command degrades gracefully when report is missing."""
+    bot = _bot(tmp_path)
+    sent: list[str] = []
+
+    async def fake_send(_cid: int, text: str) -> bool:
+        sent.append(text)
+        return True
+
+    monkeypatch.setattr(bot, "_send", fake_send)
+
+    from unittest.mock import patch as mock_patch
+
+    fake_path = tmp_path / "nonexistent" / "report.json"
+    with mock_patch(
+        "app.messaging.telegram_bot.Path",
+        return_value=fake_path,
+    ):
+        await bot._cmd_quality(12345)
+
+    assert len(sent) == 1
+    assert "Kein Hold-Report" in sent[0]
+
+
+# ---------------------------------------------------------------------------
+# /annotate command (D-131)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_annotate_direct_writes_outcome(tmp_path, monkeypatch):
+    """Direct annotation via /annotate <id> <outcome> writes to JSONL."""
+    bot = _bot(tmp_path)
+    sent: list[str] = []
+
+    async def fake_send(_cid: int, text: str) -> bool:
+        sent.append(text)
+        return True
+
+    monkeypatch.setattr(bot, "_send", fake_send)
+
+    # Patch Path("artifacts") to tmp_path
+    artifacts = tmp_path / "artifacts"
+    artifacts.mkdir()
+
+    from unittest.mock import patch as mock_patch
+
+    with mock_patch(
+        "app.messaging.telegram_bot.Path",
+        side_effect=lambda p: tmp_path / p if p == "artifacts" else Path(p),
+    ):
+        await bot._annotate_direct(12345, "doc-abc123", "hit")
+
+    assert len(sent) == 1
+    assert "gespeichert" in sent[0].lower()
+    assert "hit" in sent[0]
+
+    # Verify JSONL written
+    outcome_file = artifacts / "alert_outcomes.jsonl"
+    assert outcome_file.exists()
+    data = json.loads(
+        outcome_file.read_text(encoding="utf-8").strip(),
+    )
+    assert data["document_id"] == "doc-abc123"
+    assert data["outcome"] == "hit"
+    assert data["note"] == "via Telegram"
+
+
+@pytest.mark.asyncio
+async def test_annotate_direct_rejects_invalid_outcome(
+    tmp_path, monkeypatch,
+):
+    """Direct annotation rejects invalid outcome values."""
+    bot = _bot(tmp_path)
+    sent: list[str] = []
+
+    async def fake_send(_cid: int, text: str) -> bool:
+        sent.append(text)
+        return True
+
+    monkeypatch.setattr(bot, "_send", fake_send)
+    await bot._annotate_direct(12345, "doc-abc123", "maybe")
+
+    assert len(sent) == 1
+    assert "Ungueltiges Outcome" in sent[0]
+
+
+@pytest.mark.asyncio
+async def test_annotate_no_pending_shows_all_done(
+    tmp_path, monkeypatch,
+):
+    """Annotate with no pending alerts shows completion message."""
+    bot = _bot(tmp_path)
+    sent: list[str] = []
+
+    async def fake_send(_cid: int, text: str) -> bool:
+        sent.append(text)
+        return True
+
+    monkeypatch.setattr(bot, "_send", fake_send)
+
+    from unittest.mock import patch as mock_patch
+
+    with (
+        mock_patch(
+            "app.alerts.audit.load_alert_audits", return_value=[],
+        ),
+        mock_patch(
+            "app.alerts.audit.load_outcome_annotations",
+            return_value=[],
+        ),
+    ):
+        await bot._cmd_annotate(12345)
+
+    assert len(sent) == 1
+    assert "Alles annotiert" in sent[0]
+
+
+@pytest.mark.asyncio
+async def test_annotation_callback_handler(tmp_path, monkeypatch):
+    """Callback handler for ann: prefix calls _annotate_direct."""
+    bot = _bot(tmp_path)
+    annotated: list[tuple[int, str, str]] = []
+
+    async def fake_annotate(cid, doc, out):
+        annotated.append((cid, doc, out))
+
+    async def fake_answer(qid, *, text=None):
+        return True
+
+    monkeypatch.setattr(bot, "_annotate_direct", fake_annotate)
+    monkeypatch.setattr(bot, "_answer_callback_query", fake_answer)
+
+    await bot._handle_annotation_callback(
+        12345, "query-1", "ann:doc-xyz:miss",
+    )
+
+    assert len(annotated) == 1
+    assert annotated[0] == (12345, "doc-xyz", "miss")
+
+
+@pytest.mark.asyncio
+async def test_annotation_callback_rejects_invalid_outcome(
+    tmp_path, monkeypatch,
+):
+    """Callback handler rejects invalid outcome in ann: data."""
+    bot = _bot(tmp_path)
+    answers: list[str] = []
+
+    async def fake_answer(qid, *, text=None):
+        if text:
+            answers.append(text)
+        return True
+
+    monkeypatch.setattr(bot, "_answer_callback_query", fake_answer)
+
+    await bot._handle_annotation_callback(
+        12345, "query-1", "ann:doc-xyz:invalid",
+    )
+
+    assert len(answers) == 1
+    assert "Ungueltig" in answers[0]
