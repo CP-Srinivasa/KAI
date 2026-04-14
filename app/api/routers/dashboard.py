@@ -1,276 +1,420 @@
-"""Minimal read-only operator dashboard surface (Sprint 46).
+"""Operator dashboard with quality-bar tracking, alerts, and paper-trading views.
 
-Security and scope invariants:
-- No business logic: reads canonical daily summary only.
-- No second aggregate path.
-- No guarded actions, no trading semantics.
-- No JavaScript and no external template dependency.
+Reads directly from JSONL artifacts and the hold metrics report.
+No external template dependencies — pure inline HTML + vanilla JS + Chart.js CDN.
+Auto-refreshes every 60 seconds.
 """
 
 from __future__ import annotations
 
+import json
 from html import escape
+from pathlib import Path
+from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException
-from fastapi.responses import HTMLResponse
-
-from app.agents import mcp_server
-from app.core.settings import AppSettings, get_settings
+from fastapi import APIRouter
+from fastapi.responses import HTMLResponse, JSONResponse
 
 router = APIRouter(tags=["dashboard"])
 
-
-def _dashboard_error_payload(*, code: str, message: str) -> dict[str, object]:
-    return {
-        "error": {
-            "code": code,
-            "message": message,
-        },
-        "execution_enabled": False,
-        "write_back_allowed": False,
-    }
+_ARTIFACTS = Path("artifacts")
+_HOLD_REPORT = _ARTIFACTS / "ph5_hold" / "ph5_hold_metrics_report.json"
+_ALERT_AUDIT = _ARTIFACTS / "alert_audit.jsonl"
+_ALERT_OUTCOMES = _ARTIFACTS / "alert_outcomes.jsonl"
+_TRADING_LOOP_AUDIT = _ARTIFACTS / "trading_loop_audit.jsonl"
+_PAPER_EXECUTION_AUDIT = _ARTIFACTS / "paper_execution_audit.jsonl"
 
 
-def _safe_text(value: object, *, default: str = "unknown") -> str:
+def _safe(value: object, default: str = "—") -> str:
     if value is None:
         return default
     text = str(value).strip()
-    if not text:
-        return default
-    return escape(text, quote=True)
+    return escape(text, quote=True) if text else default
 
 
-def _readiness_class(readiness_status: str) -> str:
-    if readiness_status == "ok":
-        return "status-ok"
-    if readiness_status == "warning":
-        return "status-warning"
-    return "status-error"
+def _load_jsonl(path: Path, tail: int = 0) -> list[dict[str, Any]]:
+    if not path.exists():
+        return []
+    rows: list[dict[str, Any]] = []
+    for raw in path.read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        try:
+            obj = json.loads(line)
+            if isinstance(obj, dict):
+                rows.append(obj)
+        except json.JSONDecodeError:
+            continue
+    return rows[-tail:] if tail else rows
 
 
-def _render_dashboard_html(summary_payload: dict[str, object]) -> str:
-    readiness_status = _safe_text(summary_payload.get("readiness_status"))
-    cycle_count_today = _safe_text(summary_payload.get("cycle_count_today", 0), default="0")
-    last_cycle_status = _safe_text(summary_payload.get("last_cycle_status"), default="n/a")
-    last_cycle_symbol = _safe_text(summary_payload.get("last_cycle_symbol"), default="n/a")
-    last_cycle_at = _safe_text(summary_payload.get("last_cycle_at"), default="n/a")
-    position_count = _safe_text(summary_payload.get("position_count", 0), default="0")
-    total_exposure_pct = _safe_text(summary_payload.get("total_exposure_pct", 0.0), default="0.0")
-    mark_to_market_status = _safe_text(
-        summary_payload.get("mark_to_market_status"),
-        default="unknown",
-    )
-    decision_pack_status = _safe_text(
-        summary_payload.get("decision_pack_status"),
-        default="unknown",
-    )
-    open_incidents = _safe_text(summary_payload.get("open_incidents", 0), default="0")
-    execution_enabled = _safe_text(summary_payload.get("execution_enabled", False), default="False")
-    write_back_allowed = _safe_text(
-        summary_payload.get("write_back_allowed", False),
-        default="False",
-    )
-    aggregated_at = _safe_text(summary_payload.get("aggregated_at"), default="unknown")
+def _load_hold_report() -> dict[str, Any] | None:
+    if not _HOLD_REPORT.exists():
+        return None
+    try:
+        return json.loads(_HOLD_REPORT.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return None
 
-    return f"""<!doctype html>
-<html lang="en">
+
+# ---------------------------------------------------------------------------
+# JSON API endpoint for dashboard data
+# ---------------------------------------------------------------------------
+
+@router.get("/dashboard/api/quality", tags=["dashboard"])
+async def dashboard_quality_api() -> JSONResponse:
+    """Return quality-bar metrics as JSON for the dashboard."""
+    report = _load_hold_report()
+    if report is None:
+        return JSONResponse({"error": "hold_report_not_found"}, status_code=404)
+
+    quality = report.get("signal_quality_validation", {})
+    hit_rate = report.get("alert_hit_rate_evidence", {})
+    paper = report.get("paper_trading_evidence", {})
+    gate = report.get("hold_gate_evaluation", {})
+
+    # Paper fills with PnL
+    exec_rows = _load_jsonl(_PAPER_EXECUTION_AUDIT)
+    fills = [r for r in exec_rows if r.get("event_type") == "order_filled"]
+
+    # Recent alerts (last 20 non-digest)
+    audit_rows = _load_jsonl(_ALERT_AUDIT)
+    non_digest = [r for r in audit_rows if not r.get("is_digest")]
+    recent_alerts = non_digest[-20:]
+
+    # Outcome map
+    outcome_rows = _load_jsonl(_ALERT_OUTCOMES)
+    outcomes_by_doc: dict[str, str] = {}
+    for o in outcome_rows:
+        outcomes_by_doc[o.get("document_id", "")] = o.get("outcome", "")
+
+    # Trading loop status counts
+    loop_rows = _load_jsonl(_TRADING_LOOP_AUDIT)
+    status_counts: dict[str, int] = {}
+    for r in loop_rows:
+        s = r.get("status", "unknown")
+        status_counts[s] = status_counts.get(s, 0) + 1
+
+    return JSONResponse({
+        "precision_pct": quality.get("resolved_precision_pct"),
+        "false_positive_pct": quality.get("resolved_false_positive_rate_pct"),
+        "resolved_count": hit_rate.get("resolved_directional_documents", 0),
+        "directional_count": hit_rate.get("directional_alert_documents", 0),
+        "hits": hit_rate.get("alert_hits", 0),
+        "misses": hit_rate.get("alert_misses", 0),
+        "priority_corr": quality.get("priority_hit_correlation"),
+        "paper_fills": len(fills),
+        "paper_cycles": paper.get("loop_metrics", {}).get("total_cycles", 0),
+        "real_price_cycles": quality.get("paper_real_price_cycle_count", 0),
+        "gate_status": gate.get("overall_status"),
+        "blocking_reasons": gate.get("blocking_reasons", []),
+        "actionable_rate_pct": quality.get("directional_actionable_rate_pct"),
+        "high_priority_hit_rate_pct": quality.get("high_priority_hit_rate_pct"),
+        "low_priority_hit_rate_pct": quality.get("low_priority_hit_rate_pct"),
+        "loop_status_counts": status_counts,
+        "recent_alerts": [
+            {
+                "doc_id": r.get("document_id", "")[:12],
+                "sentiment": r.get("sentiment_label", ""),
+                "priority": r.get("priority"),
+                "assets": r.get("affected_assets", []),
+                "dispatched_at": r.get("dispatched_at", "")[:16],
+                "outcome": outcomes_by_doc.get(r.get("document_id", ""), ""),
+            }
+            for r in reversed(recent_alerts)
+        ],
+        "generated_at": report.get("generated_at", ""),
+    })
+
+
+# ---------------------------------------------------------------------------
+# HTML Dashboard
+# ---------------------------------------------------------------------------
+
+_DASHBOARD_HTML = """\
+<!doctype html>
+<html lang="de">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta http-equiv="refresh" content="60">
   <title>KAI Operator Dashboard</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
   <style>
-    :root {{
-      --bg: #f4f7fb;
-      --panel: #ffffff;
-      --ink: #1a2a3a;
-      --muted: #5b6c7c;
-      --ok: #1f8a4c;
-      --warn: #b36b00;
-      --err: #b32121;
-      --border: #d6e0ea;
-    }}
-    body {{
-      margin: 0;
-      font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
-      background: linear-gradient(145deg, #eef4fa, var(--bg));
-      color: var(--ink);
-    }}
-    main {{
-      max-width: 960px;
-      margin: 24px auto;
-      padding: 0 16px 24px;
-    }}
-    .header {{
-      background: var(--panel);
-      border: 1px solid var(--border);
-      border-radius: 12px;
-      padding: 16px;
-      margin-bottom: 16px;
-    }}
-    .grid {{
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-      gap: 12px;
-    }}
-    .card {{
-      background: var(--panel);
-      border: 1px solid var(--border);
-      border-radius: 12px;
-      padding: 14px;
-    }}
-    .label {{
-      color: var(--muted);
-      font-size: 12px;
-      text-transform: uppercase;
-      letter-spacing: 0.04em;
-    }}
-    .value {{
-      margin-top: 6px;
-      font-size: 20px;
-      font-weight: 700;
-    }}
-    .status-ok {{ color: var(--ok); }}
-    .status-warning {{ color: var(--warn); }}
-    .status-error {{ color: var(--err); }}
-    .mono {{
-      font-family: Consolas, "SFMono-Regular", Menlo, monospace;
-      font-size: 13px;
-      color: var(--muted);
-    }}
-    .drilldown-ref {{
-      margin-top: 12px;
-    }}
-    .drilldown-ref ul {{
-      margin: 8px 0 0 18px;
-      padding: 0;
-    }}
-    .drilldown-ref li {{
-      margin: 2px 0;
-    }}
+    :root {
+      --bg: #0f1923; --panel: #1a2736; --ink: #e0e8f0; --muted: #7a8fa3;
+      --accent: #3b82f6; --ok: #22c55e; --warn: #f59e0b; --err: #ef4444;
+      --border: #2a3a4d;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: "Segoe UI", system-ui, sans-serif;
+      background: var(--bg); color: var(--ink);
+    }
+    header {
+      background: var(--panel); border-bottom: 1px solid var(--border);
+      padding: 12px 24px; display: flex; align-items: center; gap: 16px;
+    }
+    header h1 { font-size: 18px; font-weight: 600; }
+    header .meta { color: var(--muted); font-size: 12px; margin-left: auto; }
+    main { max-width: 1200px; margin: 0 auto; padding: 20px; }
+
+    .quality-bar {
+      background: var(--panel); border: 1px solid var(--border);
+      border-radius: 12px; padding: 20px; margin-bottom: 16px;
+    }
+    .quality-bar h2 { font-size: 14px; color: var(--muted); text-transform: uppercase;
+      letter-spacing: 0.05em; margin-bottom: 16px; }
+    .metrics-row { display: flex; gap: 16px; flex-wrap: wrap; }
+    .metric {
+      flex: 1; min-width: 140px; background: var(--bg);
+      border-radius: 8px; padding: 14px; text-align: center;
+    }
+    .metric .label { font-size: 11px; color: var(--muted); text-transform: uppercase; }
+    .metric .value { font-size: 28px; font-weight: 700; margin-top: 4px; }
+    .metric .sub { font-size: 11px; color: var(--muted); margin-top: 2px; }
+
+    .progress-track {
+      background: var(--bg); border-radius: 6px; height: 10px;
+      margin-top: 12px; overflow: hidden;
+    }
+    .progress-fill {
+      height: 100%; border-radius: 6px;
+      transition: width 0.5s ease;
+    }
+    .progress-label {
+      display: flex; justify-content: space-between;
+      font-size: 11px; color: var(--muted); margin-top: 4px;
+    }
+
+    .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px; }
+    .grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; margin-bottom: 16px; }
+    @media (max-width: 768px) {
+      .grid-2, .grid-3 { grid-template-columns: 1fr; }
+    }
+
+    .card {
+      background: var(--panel); border: 1px solid var(--border);
+      border-radius: 12px; padding: 16px;
+    }
+    .card h3 { font-size: 13px; color: var(--muted); text-transform: uppercase;
+      letter-spacing: 0.05em; margin-bottom: 12px; }
+
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    th { text-align: left; color: var(--muted); font-size: 11px;
+      text-transform: uppercase; padding: 6px 8px; border-bottom: 1px solid var(--border); }
+    td { padding: 6px 8px; border-bottom: 1px solid var(--border); }
+    tr:last-child td { border-bottom: none; }
+
+    .badge {
+      display: inline-block; padding: 2px 8px; border-radius: 4px;
+      font-size: 11px; font-weight: 600;
+    }
+    .badge-hit { background: #16382a; color: var(--ok); }
+    .badge-miss { background: #3b1a1a; color: var(--err); }
+    .badge-bullish { background: #1a3328; color: var(--ok); }
+    .badge-bearish { background: #331a1a; color: var(--err); }
+    .badge-pending { background: #2a2a1a; color: var(--warn); }
+
+    .gate-status {
+      display: inline-block; padding: 4px 12px; border-radius: 6px;
+      font-weight: 700; font-size: 13px;
+    }
+    .gate-hold { background: #3b1a1a; color: var(--err); }
+    .gate-releasable { background: #16382a; color: var(--ok); }
+
+    .stat-row { display: flex; justify-content: space-between; padding: 4px 0;
+      font-size: 13px; }
+    .stat-row .k { color: var(--muted); }
+    .stat-row .v { font-weight: 600; }
+
+    #loading { text-align: center; padding: 60px; color: var(--muted); }
+    .refresh-hint { color: var(--muted); font-size: 11px; }
   </style>
 </head>
 <body>
-  <main>
-    <section class="header">
-      <h1>KAI Operator Dashboard</h1>
-      <p class="mono">canonical source: get_daily_operator_summary</p>
-      <p class="mono">aggregated_at={aggregated_at}</p>
-    </section>
-    <section class="grid">
-      <article class="card">
-        <div class="label">Readiness</div>
-        <div class="value {_readiness_class(readiness_status)}">{readiness_status}</div>
-      </article>
-      <article class="card">
-        <div class="label">Cycles Today</div>
-        <div class="value">{cycle_count_today}</div>
-        <div class="mono">last={last_cycle_status} | {last_cycle_symbol} | {last_cycle_at}</div>
-      </article>
-      <article class="card">
-        <div class="label">Portfolio</div>
-        <div class="value">{position_count} positions</div>
-        <div class="mono">exposure={total_exposure_pct}% | mtm={mark_to_market_status}</div>
-      </article>
-      <article class="card">
-        <div class="label">Decision Pack</div>
-        <div class="value">{decision_pack_status}</div>
-      </article>
-      <article class="card">
-        <div class="label">Open Incidents</div>
-        <div class="value">{open_incidents}</div>
-      </article>
-      <article class="card">
-        <div class="label">Safety Flags</div>
-        <div class="mono">execution_enabled={execution_enabled}</div>
-        <div class="mono">write_back_allowed={write_back_allowed}</div>
-      </article>
-    </section>
-    <section class="card drilldown-ref">
-      <div class="label">Drilldown (Bearer required)</div>
-      <ul class="mono">
-        <li>/operator/readiness</li>
-        <li>/operator/decision-pack</li>
-        <li>/operator/trading-loop/recent-cycles</li>
-        <li>/operator/review-journal</li>
-        <li>/operator/resolution-summary</li>
-      </ul>
-    </section>
+  <header>
+    <h1>KAI Operator Dashboard</h1>
+    <span class="refresh-hint">Auto-refresh 60s</span>
+    <span class="meta" id="meta"></span>
+  </header>
+  <main id="app">
+    <div id="loading">Lade Dashboard-Daten...</div>
   </main>
-</body>
-</html>
-"""
 
+<script>
+const $ = s => document.querySelector(s);
+const API = '/dashboard/api/quality';
 
-def _render_unavailable_html(reason: str) -> str:
-    safe_reason = _safe_text(reason, default="unknown")
-    return f"""<!doctype html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta http-equiv="refresh" content="60">
-  <title>KAI Operator Dashboard - unavailable</title>
-  <style>
-    body {{
-      margin: 0;
-      padding: 24px;
-      font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
-      background: #f9f1f1;
-      color: #4a1b1b;
-    }}
-    .panel {{
-      max-width: 720px;
-      margin: 0 auto;
-      background: #ffffff;
-      border: 1px solid #f0c9c9;
-      border-radius: 12px;
-      padding: 18px;
-    }}
-    .mono {{
-      font-family: Consolas, "SFMono-Regular", Menlo, monospace;
-      color: #7c3a3a;
-    }}
-  </style>
-</head>
-<body>
-  <section class="panel">
-    <h1>Dashboard unavailable</h1>
-    <p>daily summary source is temporarily unavailable.</p>
-    <p class="mono">reason={safe_reason}</p>
-    <p class="mono">status=unavailable</p>
-    <p class="mono">execution_enabled=False | write_back_allowed=False</p>
-  </section>
+function pct(v) { return v != null ? v.toFixed(1) + '%' : '--'; }
+function num(v) { return v != null ? v : '--'; }
+function cls(v, good, bad) {
+  if (v == null) return '';
+  return v >= good ? 'color:var(--ok)' : v <= bad ? 'color:var(--err)' : 'color:var(--warn)';
+}
+
+function progressBar(value, target, color) {
+  const pctVal = value != null ? Math.min((value / target) * 100, 100) : 0;
+  return `
+    <div class="progress-track">
+      <div class="progress-fill" style="width:${pctVal}%;background:${color}"></div>
+    </div>
+    <div class="progress-label">
+      <span>${value != null ? value.toFixed(1) + '%' : '--'}</span>
+      <span>Ziel: ${target}%</span>
+    </div>`;
+}
+
+function sentimentBadge(s) {
+  if (!s) return '';
+  const c = s === 'bullish' ? 'badge-bullish' : s === 'bearish' ? 'badge-bearish' : '';
+  return `<span class="badge ${c}">${s}</span>`;
+}
+
+function outcomeBadge(o) {
+  if (!o) return '<span class="badge badge-pending">pending</span>';
+  const c = o === 'hit' ? 'badge-hit' : o === 'miss' ? 'badge-miss' : 'badge-pending';
+  return `<span class="badge ${c}">${o}</span>`;
+}
+
+function render(d) {
+  const isReleasable = d.gate_status === 'hold_releasable';
+  const gateClass = isReleasable ? 'gate-releasable' : 'gate-hold';
+  const gateLabel = isReleasable ? 'RELEASABLE' : 'HOLD ACTIVE';
+
+  const alertRows = (d.recent_alerts || []).map(a => `
+    <tr>
+      <td style="font-family:monospace;font-size:11px">${a.doc_id}</td>
+      <td>${sentimentBadge(a.sentiment)}</td>
+      <td style="text-align:center">${a.priority || '--'}</td>
+      <td style="font-size:11px">${(a.assets || []).join(', ')}</td>
+      <td style="font-size:11px">${a.dispatched_at}</td>
+      <td>${outcomeBadge(a.outcome)}</td>
+    </tr>`).join('');
+
+  const loopEntries = Object.entries(d.loop_status_counts || {})
+    .sort((a,b) => b[1] - a[1])
+    .map(([k,v]) => '<div class="stat-row">' +
+      '<span class="k">'+k+'</span>' +
+      '<span class="v">'+v+'</span></div>')
+    .join('');
+
+  const pp = d.precision_pct;
+  const pc = d.priority_corr;
+  const pcVal = pc != null ? pc.toFixed(4) : '--';
+  const pcPct = pc != null ? pc * 100 : 0;
+  const pf = d.paper_fills;
+  const rc = d.resolved_count;
+  const fpS = cls(100-(d.false_positive_pct||0), 60, 40);
+  function precColor() {
+    if (pp >= 60) return 'var(--ok)';
+    return pp >= 50 ? 'var(--warn)' : 'var(--err)';
+  }
+  function sr(k, v, s) {
+    const st = s ? ' style="'+s+'"' : '';
+    return '<div class="stat-row"><span class="k">'
+      +k+'</span><span class="v"'+st+'>'+v+'</span></div>';
+  }
+
+  $('#app').innerHTML = `
+    <div class="quality-bar">
+      <h2>Quality Bar &mdash;
+        <span class="${gateClass} gate-status">
+          ${gateLabel}</span></h2>
+      <div class="metrics-row">
+        <div class="metric">
+          <div class="label">Precision</div>
+          <div class="value" style="${cls(pp, 60, 40)}">
+            ${pct(pp)}</div>
+          <div class="sub">Ziel: &ge;60%</div>
+          ${progressBar(pp, 60, precColor())}
+        </div>
+        <div class="metric">
+          <div class="label">Resolved</div>
+          <div class="value" style="${cls(rc, 50, 20)}">
+            ${num(rc)}</div>
+          <div class="sub">${d.hits} hits / ${d.misses} misses</div>
+          ${progressBar(rc, 50,
+            rc >= 50 ? 'var(--ok)' : 'var(--warn)')}
+        </div>
+        <div class="metric">
+          <div class="label">Priority-Hit Korr.</div>
+          <div class="value" style="${cls(pc, 0.4, 0.1)}">
+            ${pcVal}</div>
+          <div class="sub">Ziel: &ge;0.40</div>
+          ${progressBar(pcPct, 40,
+            pc >= 0.4 ? 'var(--ok)' : 'var(--warn)')}
+        </div>
+        <div class="metric">
+          <div class="label">Paper Fills</div>
+          <div class="value" style="${cls(pf, 10, 3)}">
+            ${num(pf)}</div>
+          <div class="sub">Ziel: &ge;10</div>
+          ${progressBar(pf, 10,
+            pf >= 10 ? 'var(--ok)' : 'var(--warn)')}
+        </div>
+      </div>
+    </div>
+
+    <div class="grid-3">
+      <div class="card">
+        <h3>Signal-Qualitat</h3>
+        ${sr('Actionable Rate', pct(d.actionable_rate_pct))}
+        ${sr('False Positive', pct(d.false_positive_pct), fpS)}
+        ${sr('High-P Hit Rate', pct(d.high_priority_hit_rate_pct))}
+        ${sr('Low-P Hit Rate', pct(d.low_priority_hit_rate_pct))}
+        ${sr('Directional Docs', num(d.directional_count))}
+      </div>
+      <div class="card">
+        <h3>Paper Trading</h3>
+        ${sr('Total Cycles', num(d.paper_cycles))}
+        ${sr('Real-Price Cycles', num(d.real_price_cycles))}
+        ${sr('Fills', num(pf), cls(pf, 10, 3))}
+      </div>
+      <div class="card">
+        <h3>Trading Loop Status</h3>
+        ${loopEntries || '<div class="stat-row"><span class="k">Keine Daten</span></div>'}
+      </div>
+    </div>
+
+    <div class="card" style="margin-bottom:16px">
+      <h3>Letzte Directional Alerts</h3>
+      <table>
+        <thead><tr>
+          <th>Doc ID</th><th>Sentiment</th><th>P</th>
+          <th>Assets</th><th>Dispatched</th><th>Outcome</th>
+        </tr></thead>
+        <tbody>${alertRows || '<tr><td colspan="6"' +
+          ' style="color:var(--muted)">Keine Alerts</td></tr>'
+        }</tbody>
+      </table>
+    </div>
+  `;
+
+  $('#meta').textContent = 'Report: ' + (d.generated_at || '').substring(0, 19);
+}
+
+async function load() {
+  try {
+    const r = await fetch(API);
+    if (!r.ok) throw new Error(r.status);
+    render(await r.json());
+  } catch(e) {
+    $('#app').innerHTML = '<div id="loading" ' +
+      'style="color:var(--err)">Fehler: ' +
+      e.message + '</div>';
+  }
+}
+
+load();
+setInterval(load, 60000);
+</script>
 </body>
 </html>
 """
 
 
 @router.get("/dashboard", response_class=HTMLResponse)
-async def get_dashboard(
-    settings: AppSettings = Depends(get_settings),  # noqa: B008
-) -> HTMLResponse:
-    """Render the minimal read-only operator dashboard from canonical daily summary."""
-    if not (settings.api_key or "").strip():
-        raise HTTPException(
-            status_code=503,
-            detail=_dashboard_error_payload(
-                code="dashboard_disabled",
-                message="Dashboard is disabled until APP_API_KEY is configured (fail-closed)",
-            ),
-        )
-
-    try:
-        payload = await mcp_server.get_daily_operator_summary()
-    except Exception as exc:
-        return HTMLResponse(
-            content=_render_unavailable_html(exc.__class__.__name__),
-            status_code=200,
-        )
-
-    if not isinstance(payload, dict):
-        return HTMLResponse(
-            content=_render_unavailable_html("invalid_summary_payload"),
-            status_code=200,
-        )
-    return HTMLResponse(content=_render_dashboard_html(payload), status_code=200)
+async def get_dashboard() -> HTMLResponse:
+    """Render the operator dashboard with quality-bar tracking."""
+    return HTMLResponse(content=_DASHBOARD_HTML, status_code=200)

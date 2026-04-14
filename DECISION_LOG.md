@@ -137,3 +137,7 @@ Fail-open: Bei CoinGecko-Fehler wird ohne Markt-Kontext analysiert. Einmal pro B
 ### D-127 (2026-04-14)
 Bearish directional eligibility komplett deaktiviert (`BEARISH_DIRECTIONAL_DISABLED=True`).
 Datengrundlage: 50 eligible resolved outcomes — bearish 4% Precision (1 hit / 24 miss), bullish 76% (19/25). Bearish-Signale aus RSS-News sind in Aufwärtstrends nicht preis-prädiktiv; selbst actor-action-Titel (Hacks, Sells) und hohe Confidence (0.95+) verhindern Misses nicht. Bearish-Block allein hebt simulierte Forward-Precision auf ~76%. Re-enable geplant, sobald Markt-Kontext-Analyse (Regime-Detection, Echtzeit-Sentiment) bearish-Signale validieren kann. Alerts werden weiterhin dispatched (Telegram/Email), nur die directional-Eligibility für Precision-Tracking ist blockiert.
+
+### D-130 (2026-04-14)
+Operator Dashboard komplett neu gebaut: Quality-Bar (Precision, Resolved, Priority-Hit-Korr, Paper Fills) mit Progress-Bars und Farb-Ampel, Signal-Qualitat/Paper-Trading/Loop-Status Panels, Alerts-Tabelle mit Outcome-Badges.
+Tech: Inline HTML+JS+Chart.js CDN, JSON-API `/dashboard/api/quality` liest direkt aus JSONL-Artifacts. Auth-Middleware `/dashboard/*` komplett exempt (read-only operator view). 14 Unit-Tests. Kein Template-Engine, kein Build-Step.

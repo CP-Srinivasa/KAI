@@ -1,204 +1,313 @@
+"""Tests for the operator dashboard (app.api.routers.dashboard).
+
+Covers:
+- GET /dashboard returns HTML with quality-bar markup
+- GET /dashboard/api/quality returns structured JSON from artifacts
+- 404 when hold report is missing
+- Auth middleware exempts all /dashboard/* paths
+- JSONL loading helper edge cases
+"""
+
 from __future__ import annotations
 
-from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+import json
+from collections.abc import Generator
+from contextlib import contextmanager
+from pathlib import Path
+from typing import Any
+from unittest.mock import patch
 
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from app.api.main import create_app
-from app.api.routers import dashboard as dashboard_router
-from app.api.routers import operator as operator_router
-from app.core.settings import get_settings
+from app.api.routers import dashboard as dashboard_mod
+from app.api.routers.dashboard import (
+    _load_hold_report,
+    _load_jsonl,
+    router,
+)
 from app.security.auth import setup_auth
 
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
 
-def _make_dashboard_app(*, api_key: str, attach_auth_middleware: bool) -> FastAPI:
+
+def _make_app(*, api_key: str = "") -> FastAPI:
+    """Minimal app with dashboard router and optional auth."""
     app = FastAPI()
-    app.include_router(dashboard_router.router)
-    app.dependency_overrides[get_settings] = lambda: SimpleNamespace(api_key=api_key)
-    if attach_auth_middleware:
-        setup_auth(app, api_key)
+    app.include_router(router)
+    if api_key:
+        setup_auth(app, api_key=api_key, env="production")
     return app
 
 
-def _daily_payload() -> dict[str, object]:
+def _sample_hold_report() -> dict[str, Any]:
     return {
-        "report_type": "daily_operator_summary",
-        "readiness_status": "warning",
-        "cycle_count_today": 2,
-        "last_cycle_status": "no_signal",
-        "last_cycle_symbol": "BTC/USDT",
-        "last_cycle_at": "2026-03-22T12:00:00+00:00",
-        "position_count": 1,
-        "total_exposure_pct": 12.5,
-        "mark_to_market_status": "ok",
-        "decision_pack_status": "warning",
-        "open_incidents": 1,
-        "aggregated_at": "2026-03-22T12:05:00+00:00",
-        "execution_enabled": False,
-        "write_back_allowed": False,
+        "generated_at": "2026-04-14T10:00:00+00:00",
+        "signal_quality_validation": {
+            "resolved_precision_pct": 52.54,
+            "resolved_false_positive_rate_pct": 47.46,
+            "priority_hit_correlation": 0.29,
+            "directional_actionable_rate_pct": 83.0,
+            "high_priority_hit_rate_pct": 52.54,
+            "low_priority_hit_rate_pct": None,
+            "paper_real_price_cycle_count": 179,
+        },
+        "alert_hit_rate_evidence": {
+            "resolved_directional_documents": 59,
+            "directional_alert_documents": 261,
+            "alert_hits": 31,
+            "alert_misses": 28,
+        },
+        "paper_trading_evidence": {
+            "loop_metrics": {"total_cycles": 255},
+        },
+        "hold_gate_evaluation": {
+            "overall_status": "hold_releasable",
+            "blocking_reasons": [],
+        },
     }
 
 
-def test_dashboard_disabled_when_api_key_missing() -> None:
-    app = _make_dashboard_app(api_key="", attach_auth_middleware=False)
+@contextmanager
+def _patch_artifacts(
+    d: Path,
+) -> Generator[None, None, None]:
+    """Patch all artifact path constants to point at tmp dir."""
+    report = d / "ph5_hold" / "ph5_hold_metrics_report.json"
+    with (
+        patch.object(dashboard_mod, "_ARTIFACTS", d),
+        patch.object(dashboard_mod, "_HOLD_REPORT", report),
+        patch.object(
+            dashboard_mod, "_ALERT_AUDIT",
+            d / "alert_audit.jsonl",
+        ),
+        patch.object(
+            dashboard_mod, "_ALERT_OUTCOMES",
+            d / "alert_outcomes.jsonl",
+        ),
+        patch.object(
+            dashboard_mod, "_TRADING_LOOP_AUDIT",
+            d / "trading_loop_audit.jsonl",
+        ),
+        patch.object(
+            dashboard_mod, "_PAPER_EXECUTION_AUDIT",
+            d / "paper_execution_audit.jsonl",
+        ),
+    ):
+        yield
+
+
+@pytest.fixture()
+def artifacts_dir(tmp_path: Path) -> Path:
+    """Temp artifacts directory with sample data."""
+    ph5 = tmp_path / "ph5_hold"
+    ph5.mkdir()
+    report = ph5 / "ph5_hold_metrics_report.json"
+    report.write_text(
+        json.dumps(_sample_hold_report()), encoding="utf-8",
+    )
+
+    (tmp_path / "alert_audit.jsonl").write_text(
+        json.dumps({
+            "document_id": "abc12345-dead-beef",
+            "sentiment_label": "bullish",
+            "priority": 9,
+            "affected_assets": ["BTC/USDT"],
+            "dispatched_at": "2026-04-14T10:00:00",
+            "is_digest": False,
+        }) + "\n",
+        encoding="utf-8",
+    )
+
+    (tmp_path / "alert_outcomes.jsonl").write_text(
+        json.dumps({
+            "document_id": "abc12345-dead-beef",
+            "outcome": "hit",
+        }) + "\n",
+        encoding="utf-8",
+    )
+
+    (tmp_path / "trading_loop_audit.jsonl").write_text(
+        json.dumps({"status": "no_signal"}) + "\n"
+        + json.dumps({"status": "no_signal"}) + "\n"
+        + json.dumps({"status": "completed"}) + "\n",
+        encoding="utf-8",
+    )
+
+    (tmp_path / "paper_execution_audit.jsonl").write_text(
+        json.dumps({"event_type": "order_filled", "side": "buy"})
+        + "\n"
+        + json.dumps({"event_type": "cycle_start"}) + "\n",
+        encoding="utf-8",
+    )
+    return tmp_path
+
+
+# ---------------------------------------------------------------------------
+# GET /dashboard -- HTML
+# ---------------------------------------------------------------------------
+
+
+def test_dashboard_returns_html() -> None:
+    app = _make_app()
     with TestClient(app) as client:
-        response = client.get("/dashboard")
-
-    assert response.status_code == 503
-    body = response.json()
-    assert body["detail"]["error"]["code"] == "dashboard_disabled"
-    assert body["detail"]["execution_enabled"] is False
-    assert body["detail"]["write_back_allowed"] is False
+        r = client.get("/dashboard")
+    assert r.status_code == 200
+    assert r.headers["content-type"].startswith("text/html")
+    assert "KAI Operator Dashboard" in r.text
 
 
-def test_dashboard_returns_html_response() -> None:
-    app = _make_dashboard_app(api_key="test-key", attach_auth_middleware=True)
+def test_dashboard_html_contains_quality_bar() -> None:
+    app = _make_app()
+    with TestClient(app) as client:
+        r = client.get("/dashboard")
+    assert "quality-bar" in r.text
+    assert "Precision" in r.text
+    assert "/dashboard/api/quality" in r.text
+
+
+def test_dashboard_html_has_auto_refresh() -> None:
+    app = _make_app()
+    with TestClient(app) as client:
+        r = client.get("/dashboard")
+    assert "setInterval(load, 60000)" in r.text
+
+
+# ---------------------------------------------------------------------------
+# GET /dashboard/api/quality -- JSON API
+# ---------------------------------------------------------------------------
+
+
+def test_quality_api_returns_metrics(
+    artifacts_dir: Path,
+) -> None:
+    app = _make_app()
+    with _patch_artifacts(artifacts_dir):
+        with TestClient(app) as client:
+            r = client.get("/dashboard/api/quality")
+
+    assert r.status_code == 200
+    data = r.json()
+    assert data["precision_pct"] == 52.54
+    assert data["resolved_count"] == 59
+    assert data["hits"] == 31
+    assert data["misses"] == 28
+    assert data["priority_corr"] == 0.29
+    assert data["paper_fills"] == 1
+    assert data["paper_cycles"] == 255
+    assert data["gate_status"] == "hold_releasable"
+    assert data["loop_status_counts"]["no_signal"] == 2
+    assert data["loop_status_counts"]["completed"] == 1
+
+
+def test_quality_api_includes_alerts_with_outcomes(
+    artifacts_dir: Path,
+) -> None:
+    app = _make_app()
+    with _patch_artifacts(artifacts_dir):
+        with TestClient(app) as client:
+            r = client.get("/dashboard/api/quality")
+
+    alerts = r.json()["recent_alerts"]
+    assert len(alerts) == 1
+    assert alerts[0]["doc_id"] == "abc12345-dea"
+    assert alerts[0]["sentiment"] == "bullish"
+    assert alerts[0]["outcome"] == "hit"
+
+
+def test_quality_api_404_without_hold_report() -> None:
+    app = _make_app()
     with patch.object(
-        dashboard_router.mcp_server,
-        "get_daily_operator_summary",
-        new_callable=AsyncMock,
-        return_value=_daily_payload(),
+        dashboard_mod, "_HOLD_REPORT",
+        Path("/nonexistent/report.json"),
     ):
         with TestClient(app) as client:
-            response = client.get("/dashboard")
+            r = client.get("/dashboard/api/quality")
 
-    assert response.status_code == 200
-    assert response.headers["content-type"].startswith("text/html")
-    assert '<meta http-equiv="refresh" content="60">' in response.text
+    assert r.status_code == 404
+    assert r.json()["error"] == "hold_report_not_found"
 
 
-def test_dashboard_shows_readiness_status() -> None:
-    app = _make_dashboard_app(api_key="test-key", attach_auth_middleware=True)
-    with patch.object(
-        dashboard_router.mcp_server,
-        "get_daily_operator_summary",
-        new_callable=AsyncMock,
-        return_value=_daily_payload(),
-    ):
+# ---------------------------------------------------------------------------
+# Auth exemption: /dashboard/* paths pass without bearer
+# ---------------------------------------------------------------------------
+
+
+def test_dashboard_exempt_from_auth() -> None:
+    app = _make_app(api_key="secret-key")
+    with TestClient(app) as client:
+        r = client.get("/dashboard")
+    assert r.status_code == 200
+
+
+def test_dashboard_api_exempt_from_auth(
+    artifacts_dir: Path,
+) -> None:
+    app = _make_app(api_key="secret-key")
+    with _patch_artifacts(artifacts_dir):
         with TestClient(app) as client:
-            response = client.get("/dashboard")
-
-    assert response.status_code == 200
-    assert "readiness" in response.text.lower()
-    assert "warning" in response.text.lower()
+            r = client.get("/dashboard/api/quality")
+    assert r.status_code == 200
 
 
-def test_dashboard_shows_execution_disabled() -> None:
-    app = _make_dashboard_app(api_key="test-key", attach_auth_middleware=True)
-    payload = _daily_payload()
-    payload["execution_enabled"] = False
-    payload["write_back_allowed"] = False
+# ---------------------------------------------------------------------------
+# _load_jsonl helper
+# ---------------------------------------------------------------------------
+
+
+def test_load_jsonl_empty_for_missing_file() -> None:
+    assert _load_jsonl(Path("/does/not/exist.jsonl")) == []
+
+
+def test_load_jsonl_skips_invalid_lines(tmp_path: Path) -> None:
+    f = tmp_path / "test.jsonl"
+    f.write_text(
+        '{"a":1}\nnot-json\n{"b":2}\n', encoding="utf-8",
+    )
+    rows = _load_jsonl(f)
+    assert len(rows) == 2
+    assert rows[0] == {"a": 1}
+    assert rows[1] == {"b": 2}
+
+
+def test_load_jsonl_tail(tmp_path: Path) -> None:
+    f = tmp_path / "test.jsonl"
+    lines = [json.dumps({"i": i}) for i in range(10)]
+    f.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    rows = _load_jsonl(f, tail=3)
+    assert len(rows) == 3
+    assert rows[0]["i"] == 7
+
+
+def test_load_hold_report_none_for_missing() -> None:
     with patch.object(
-        dashboard_router.mcp_server,
-        "get_daily_operator_summary",
-        new_callable=AsyncMock,
-        return_value=payload,
+        dashboard_mod, "_HOLD_REPORT",
+        Path("/does/not/exist.json"),
     ):
-        with TestClient(app) as client:
-            response = client.get("/dashboard")
-
-    assert response.status_code == 200
-    assert "execution_enabled=False" in response.text
-    assert "write_back_allowed=False" in response.text
+        assert _load_hold_report() is None
 
 
-def test_dashboard_degrades_on_summary_error() -> None:
-    app = _make_dashboard_app(api_key="test-key", attach_auth_middleware=True)
-    with patch.object(
-        dashboard_router.mcp_server,
-        "get_daily_operator_summary",
-        new_callable=AsyncMock,
-        side_effect=RuntimeError("down"),
-    ):
-        with TestClient(app) as client:
-            response = client.get("/dashboard")
-
-    assert response.status_code == 200
-    assert "dashboard unavailable" in response.text.lower()
-    assert "status=unavailable" in response.text.lower()
-    assert "traceback" not in response.text.lower()
+def test_load_hold_report_none_for_bad_json(
+    tmp_path: Path,
+) -> None:
+    f = tmp_path / "bad.json"
+    f.write_text("not json at all", encoding="utf-8")
+    with patch.object(dashboard_mod, "_HOLD_REPORT", f):
+        assert _load_hold_report() is None
 
 
-def test_dashboard_truth_matches_operator_daily_summary_payload() -> None:
-    payload = _daily_payload()
-    payload["readiness_status"] = "error"
-    payload["cycle_count_today"] = 9
-    payload["last_cycle_status"] = "executed"
-    payload["last_cycle_symbol"] = "ETH/USDT"
-    payload["last_cycle_at"] = "2026-03-22T15:15:00+00:00"
-    payload["position_count"] = 3
-    payload["total_exposure_pct"] = 27.75
-    payload["mark_to_market_status"] = "stale"
-    payload["decision_pack_status"] = "blocked"
-    payload["open_incidents"] = 4
-    payload["aggregated_at"] = "2026-03-22T15:16:00+00:00"
-
-    app = FastAPI()
-    app.include_router(dashboard_router.router)
-    app.include_router(operator_router.router)
-    app.dependency_overrides[get_settings] = lambda: SimpleNamespace(api_key="test-key")
-
-    with patch.object(
-        dashboard_router.mcp_server,
-        "get_daily_operator_summary",
-        new_callable=AsyncMock,
-        return_value=payload,
-    ):
-        with TestClient(app) as client:
-            operator_response = client.get(
-                "/operator/daily-summary",
-                headers={"Authorization": "Bearer test-key"},
-            )
-            dashboard_response = client.get("/dashboard")
-
-    assert operator_response.status_code == 200
-    assert operator_response.json() == payload
-    assert dashboard_response.status_code == 200
-
-    html = dashboard_response.text
-    assert "canonical source: get_daily_operator_summary" in html
-    assert str(payload["readiness_status"]) in html
-    assert str(payload["cycle_count_today"]) in html
-    assert str(payload["last_cycle_status"]) in html
-    assert str(payload["last_cycle_symbol"]) in html
-    assert str(payload["last_cycle_at"]) in html
-    assert f"{payload['position_count']} positions" in html
-    assert f"{payload['total_exposure_pct']}%" in html
-    assert str(payload["mark_to_market_status"]) in html
-    assert str(payload["decision_pack_status"]) in html
-    assert str(payload["open_incidents"]) in html
-    assert f"aggregated_at={payload['aggregated_at']}" in html
-    assert "execution_enabled=False" in html
-    assert "write_back_allowed=False" in html
+# ---------------------------------------------------------------------------
+# Route inventory in main app
+# ---------------------------------------------------------------------------
 
 
-def test_dashboard_contains_static_drilldown_reference_section() -> None:
-    app = _make_dashboard_app(api_key="test-key", attach_auth_middleware=True)
-    with patch.object(
-        dashboard_router.mcp_server,
-        "get_daily_operator_summary",
-        new_callable=AsyncMock,
-        return_value=_daily_payload(),
-    ):
-        with TestClient(app) as client:
-            response = client.get("/dashboard")
+def test_dashboard_routes_in_main_app() -> None:
+    from app.api.main import create_app
 
-    assert response.status_code == 200
-    html = response.text
-    assert "Drilldown (Bearer required)" in html
-    assert "/operator/readiness" in html
-    assert "/operator/decision-pack" in html
-    assert "/operator/trading-loop/recent-cycles" in html
-    assert "/operator/review-journal" in html
-    assert "/operator/resolution-summary" in html
-    assert "<script" not in html.lower()
-
-
-def test_dashboard_route_inventory_is_canonical_in_main_app() -> None:
     app = create_app()
     paths = {route.path for route in app.routes}
-
     assert "/dashboard" in paths
-    assert "/static/dashboard.html" not in paths
+    assert "/dashboard/api/quality" in paths

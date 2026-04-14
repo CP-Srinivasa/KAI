@@ -68,8 +68,9 @@ def setup_auth(app: FastAPI, api_key: str, env: str = "development") -> None:
     ) -> Response:
         # Public read-only endpoints:
         # - /health for infra checks
-        # - /dashboard as local operator HTML view (Sprint 46 baseline)
-        if request.url.path in ("/health", "/health/", "/dashboard", "/dashboard/"):
+        # - /dashboard/* as local operator HTML + API views (D-124 dashboard)
+        path = request.url.path.rstrip("/")
+        if path in ("/health",) or path.startswith("/dashboard"):
             return await call_next(request)
 
         auth_header = request.headers.get("Authorization", "")
