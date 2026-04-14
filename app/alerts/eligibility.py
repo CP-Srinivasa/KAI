@@ -27,6 +27,18 @@ BLOCK_REASON_PRICE_TREND_DIVERGENCE = "price_trend_divergence"
 BLOCK_REASON_NOT_ACTIONABLE = "not_actionable"
 BLOCK_REASON_LOW_PRIORITY = "low_priority"
 BLOCK_REASON_BEARISH_DISABLED = "bearish_directional_disabled"
+BLOCK_REASON_LOW_PRECISION_SOURCE = "low_precision_source"
+
+# D-133: Sources with persistently low directional precision.
+# Based on 98 resolved directional outcomes (2026-04-14):
+#   decrypt:          11.76% precision (2 hit / 15 miss, 17 resolved)
+#   bitcoin_magazine: 21.43% precision (3 hit / 11 miss, 14 resolved)
+# Both well below the 60% quality bar.  Block from directional eligibility
+# until source-specific signal quality improves.
+_LOW_PRECISION_SOURCES: frozenset[str] = frozenset({
+    "decrypt",
+    "bitcoin_magazine",
+})
 
 # D-127: Bearish directional disabled based on 50 eligible resolved outcomes.
 # Bearish precision: 4% (1 hit / 24 miss). Bullish precision: 76% (19/25).
@@ -184,6 +196,7 @@ def evaluate_directional_eligibility(
     event_timing: str | None = None,
     actionable: bool | None = None,
     priority: int | None = None,
+    source_name: str | None = None,
 ) -> DirectionalEligibilityDecision:
     """Return directional eligibility for operational metrics.
 
@@ -225,6 +238,15 @@ def evaluate_directional_eligibility(
             is_directional=True,
             directional_eligible=False,
             directional_block_reason=BLOCK_REASON_LOW_PRIORITY,
+        )
+
+    # D-133: Source-level precision gate.
+    # Sources with persistently low directional precision are blocked.
+    if source_name and source_name.lower() in _LOW_PRECISION_SOURCES:
+        return DirectionalEligibilityDecision(
+            is_directional=True,
+            directional_eligible=False,
+            directional_block_reason=BLOCK_REASON_LOW_PRECISION_SOURCE,
         )
 
     # Score-strength gates (D-111): block weak directional signals early.

@@ -150,3 +150,8 @@ Telegram Bot: `/quality` (Quality-Bar aus Hold-Report) und `/annotate` (Pending-
 Auto-Annotator Tuning: Volatility-adaptive Thresholds (BTC 24h-Change als Proxy), kuerzere Fenster (min 4h statt 6h, <=8h mit 0.7x), laengere Max-Fenster (72h statt 48h).
 Re-Evaluation: Inconclusive-Annotations werden nach 24h nochmal geprueft (append-only, latest wins). API-Delay 12s->5s. 11 neue Unit-Tests (22 gesamt).
 Erwarteter Impact: 30-40% weniger Inconclusives, mehr resolved Datenpunkte fuer Precision-Berechnung.
+
+### D-133 (2026-04-14)
+Source-Level Precision Gate: decrypt (11.76%, 2/17) und bitcoin_magazine (21.43%, 3/14) aus directional eligibility geblockt.
+Neuer Parameter `source_name` in `evaluate_directional_eligibility()`, BLOCK_REASON_LOW_PRECISION_SOURCE. Case-insensitive Matching.
+Service.py reicht `message.source_name` durch. Legacy-Aufrufer (CLI, hit_rate, Telegram) unberuehrt (default None = Gate skip). 5 neue Unit-Tests (50 gesamt).

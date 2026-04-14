@@ -400,6 +400,7 @@ def _log_result(
                     event_timing=message.event_timing,
                     actionable=message.actionable,
                     priority=message.priority,
+                    source_name=message.source_name,
                 )
                 directional_eligible = eligibility.directional_eligible
                 directional_block_reason = eligibility.directional_block_reason

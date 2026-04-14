@@ -6,6 +6,7 @@ import pytest
 
 from app.alerts.eligibility import (
     BLOCK_REASON_BEARISH_DISABLED,
+    BLOCK_REASON_LOW_PRECISION_SOURCE,
     BLOCK_REASON_LOW_PRIORITY,
     BLOCK_REASON_MISSING_ASSETS,
     BLOCK_REASON_NOT_ACTIONABLE,
@@ -435,3 +436,59 @@ def test_bullish_still_eligible_after_d127() -> None:
     assert decision.is_directional is True
     assert decision.directional_eligible is True
     assert "BTC/USDT" in decision.eligible_assets
+
+
+# ── D-133: Source-level precision gate ────────────────────────────────────
+
+
+@pytest.mark.parametrize("source", ["decrypt", "bitcoin_magazine"])
+def test_low_precision_source_blocks_directional(source: str) -> None:
+    """D-133: Known low-precision sources are blocked."""
+    decision = evaluate_directional_eligibility(
+        sentiment_label="bullish",
+        affected_assets=["BTC"],
+        sentiment_score=0.80,
+        impact_score=0.70,
+        priority=9,
+        actionable=True,
+        title="BlackRock files for new Bitcoin ETF",
+        source_name=source,
+    )
+    assert decision.is_directional is True
+    assert decision.directional_eligible is False
+    assert decision.directional_block_reason == BLOCK_REASON_LOW_PRECISION_SOURCE
+
+
+def test_low_precision_source_case_insensitive() -> None:
+    """D-133: Source name matching is case-insensitive."""
+    decision = evaluate_directional_eligibility(
+        sentiment_label="bullish",
+        affected_assets=["BTC"],
+        source_name="Decrypt",
+    )
+    assert decision.directional_eligible is False
+    assert decision.directional_block_reason == BLOCK_REASON_LOW_PRECISION_SOURCE
+
+
+def test_good_source_passes_gate() -> None:
+    """D-133: Sources not in the blocklist pass the gate."""
+    decision = evaluate_directional_eligibility(
+        sentiment_label="bullish",
+        affected_assets=["BTC"],
+        sentiment_score=0.80,
+        impact_score=0.70,
+        priority=9,
+        actionable=True,
+        source_name="cointelegraph",
+    )
+    assert decision.directional_eligible is True
+
+
+def test_source_none_skips_gate() -> None:
+    """D-133: No source_name (legacy data) skips the gate."""
+    decision = evaluate_directional_eligibility(
+        sentiment_label="bullish",
+        affected_assets=["BTC"],
+        source_name=None,
+    )
+    assert decision.directional_eligible is True
