@@ -8,10 +8,24 @@ cd "$(dirname "$0")/.."
 PID_FILE=".server.pid"
 LOG_FILE="logs/server.log"
 
+# Cross-platform PID probe: kill -0 doesn't see native Windows processes
+# from MSYS/Git-Bash, so fall back to tasklist on Windows.
+is_pid_running() {
+    local pid=$1
+    case "$(uname -s)" in
+        MINGW*|MSYS*|CYGWIN*)
+            tasklist //FO CSV //NH //FI "PID eq $pid" 2>/dev/null | grep -q "\"$pid\""
+            ;;
+        *)
+            kill -0 "$pid" 2>/dev/null
+            ;;
+    esac
+}
+
 # Check if already running
 if [ -f "$PID_FILE" ]; then
     OLD_PID=$(cat "$PID_FILE")
-    if kill -0 "$OLD_PID" 2>/dev/null; then
+    if is_pid_running "$OLD_PID"; then
         echo "Server already running (PID $OLD_PID)"
         echo "Use: bash scripts/server_stop.sh"
         exit 1
@@ -34,7 +48,7 @@ nohup python -m uvicorn app.api.main:app \
 echo $! > "$PID_FILE"
 sleep 3
 
-if kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
+if is_pid_running "$(cat "$PID_FILE")"; then
     echo "Server started (PID $(cat "$PID_FILE"))"
     echo "Log: $LOG_FILE"
     echo "Health: http://127.0.0.1:8000/health"

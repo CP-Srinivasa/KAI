@@ -98,6 +98,14 @@ tags:
   Thematic tags (e.g. ["bitcoin", "etf", "sec", "regulation", "institutional"]).
   Keep to 2-6 relevant tags.
 
+already_priced_in:
+  If current market context is provided below, assess whether the news is likely
+  ALREADY reflected in the current price (backward_report, well-known trend) or
+  whether it represents a GENUINE NEW catalyst not yet priced in.
+  Consider the 24h and 7d price changes — if the asset already moved significantly
+  in the direction the news suggests, the information may be stale.
+  Set directional_confidence LOW (< 0.3) for already-priced-in information.
+
 Be objective. Do not let brand familiarity bias your scores.
 Avoid extreme values unless clearly justified by the content.
 """
@@ -111,6 +119,33 @@ Document Title: {title}
 
 Analyze this document and return the structured analysis.
 """
+
+
+def _format_market_context(market_context: dict[str, Any]) -> str:
+    """Render market context dict into a human-readable prompt section."""
+    lines = ["Current Market Context:"]
+    assets: list[dict[str, Any]] = market_context.get("assets", [])
+    for asset in assets:
+        symbol = asset.get("symbol", "?")
+        price = asset.get("price")
+        chg_24h = asset.get("change_pct_24h")
+        chg_7d = asset.get("change_pct_7d")
+        parts = [f"  {symbol}:"]
+        if price is not None:
+            parts.append(f"${price:,.2f}")
+        if chg_24h is not None:
+            parts.append(f"24h {chg_24h:+.1f}%")
+        if chg_7d is not None:
+            parts.append(f"7d {chg_7d:+.1f}%")
+        lines.append(" | ".join(parts))
+    regime = market_context.get("regime")
+    if regime:
+        lines.append(f"  Market regime: {regime}")
+    lines.append(
+        "  Consider: Is the news above ALREADY reflected in these price moves, "
+        "or is it a genuinely new catalyst?"
+    )
+    return "\n".join(lines)
 
 
 def format_user_prompt(
@@ -129,6 +164,10 @@ def format_user_prompt(
         source_type = context.get("source_type")
         if source_type:
             context_parts.append(f"Source type: {source_type}")
+
+        market_context = context.get("market_context")
+        if isinstance(market_context, dict) and market_context:
+            context_parts.append(_format_market_context(market_context))
     context_section = "\n".join(context_parts) if context_parts else ""
     return USER_PROMPT_V1.format(
         title=title,

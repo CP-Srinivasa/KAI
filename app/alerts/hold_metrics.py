@@ -96,26 +96,28 @@ def build_hold_metrics_report(
         sentiment = (rec.sentiment_label or "").lower()
         if sentiment not in {"bullish", "bearish"}:
             continue
-        if rec.directional_eligible is False:
-            blocked_directional.append(rec)
-            blocked_directional_reasons.append(
-                rec.directional_block_reason or "unknown"
-            )
-            continue
-        if rec.directional_eligible is True:
-            directional.append(rec)
-            continue
 
-        legacy_check = evaluate_directional_eligibility(
+        # D-127: Always re-evaluate eligibility against current rules.
+        # Historical audit records may have directional_eligible=True under
+        # older, weaker filters.  Re-checking ensures the hold report
+        # reflects the current filter configuration (e.g. bearish disabled).
+        current_check = evaluate_directional_eligibility(
             sentiment_label=rec.sentiment_label,
             affected_assets=list(rec.affected_assets or []),
         )
-        if legacy_check.directional_eligible is True:
-            directional.append(rec)
+        if current_check.directional_eligible is True:
+            # Also honour the original decision if it was False (stricter).
+            if rec.directional_eligible is False:
+                blocked_directional.append(rec)
+                blocked_directional_reasons.append(
+                    rec.directional_block_reason or "unknown"
+                )
+            else:
+                directional.append(rec)
         else:
             blocked_directional.append(rec)
             blocked_directional_reasons.append(
-                legacy_check.directional_block_reason or "unknown"
+                current_check.directional_block_reason or "unknown"
             )
 
     blocked_directional_reason_counts = Counter(blocked_directional_reasons)

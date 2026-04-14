@@ -634,6 +634,11 @@ def build_trading_loop(
     consensus_validator = _build_consensus_validator(
         enable_consensus, consensus_model, settings,
     )
+
+    from app.storage.db.session import build_session_factory
+
+    session_factory = build_session_factory(settings.db)
+
     return TradingLoop(
         risk_engine=risk_engine,
         execution_engine=execution_engine,
@@ -641,6 +646,7 @@ def build_trading_loop(
         signal_generator=signal_generator,
         consensus_validator=consensus_validator,
         audit_log_path=str(loop_audit_path),
+        session_factory=session_factory,
     )
 
 
@@ -650,6 +656,7 @@ async def run_trading_loop_once(
     mode: str | ExecutionMode = ExecutionMode.PAPER,
     provider: str | None = None,
     analysis_profile: str = "conservative",
+    analysis_result: AnalysisResult | None = None,
     loop_audit_path: str | Path = _AUDIT_LOG,
     execution_audit_path: str | Path = _PAPER_EXECUTION_AUDIT_LOG,
     enable_consensus: bool = False,
@@ -657,7 +664,12 @@ async def run_trading_loop_once(
     freshness_threshold_seconds: float = 120.0,
     timeout_seconds: int = 10,
 ) -> LoopCycle:
-    """Run exactly one explicit paper/shadow cycle with fail-closed mode guard."""
+    """Run exactly one explicit paper/shadow cycle with fail-closed mode guard.
+
+    If *analysis_result* is provided (e.g. from the D-119 alert bridge), it is
+    used directly instead of building a synthetic trigger analysis.  This allows
+    real LLM-generated analyses to drive paper-trade fills.
+    """
     normalized_mode = _normalize_loop_mode(mode)
     allowed, reason = _run_once_guard(normalized_mode)
     if not allowed:
@@ -673,7 +685,7 @@ async def run_trading_loop_once(
         enable_consensus=enable_consensus,
         consensus_model=consensus_model,
     )
-    analysis = build_loop_trigger_analysis(
+    analysis = analysis_result or build_loop_trigger_analysis(
         symbol=symbol,
         analysis_profile=analysis_profile,
     )

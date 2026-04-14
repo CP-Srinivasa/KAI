@@ -62,14 +62,27 @@ class APIErrorResponse:
         }
 
 
-def _extract_client_ip(request: Request) -> str:
-    """Return the best-effort client IP address from the request."""
-    forwarded_for = request.headers.get("X-Forwarded-For")
-    if forwarded_for:
-        return forwarded_for.split(",")[0].strip()
+def _extract_client_ip(
+    request: Request,
+    *,
+    trusted_proxies: frozenset[str] = frozenset(),
+) -> str:
+    """Return the client IP address from the request.
+
+    Only trusts X-Forwarded-For when the direct peer is in *trusted_proxies*.
+    This prevents IP spoofing via forged headers from untrusted clients.
+    """
     if request.client is not None:
-        return request.client.host
-    return "unknown"
+        peer_ip = request.client.host
+    else:
+        return "unknown"
+
+    if trusted_proxies and peer_ip in trusted_proxies:
+        forwarded_for = request.headers.get("X-Forwarded-For")
+        if forwarded_for:
+            return forwarded_for.split(",")[0].strip()
+
+    return peer_ip
 
 
 class RequestGovernanceMiddleware(BaseHTTPMiddleware):

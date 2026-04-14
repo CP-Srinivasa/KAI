@@ -431,7 +431,7 @@ def test_build_outcomes_compute_hit_rate_from_annotations():
     """End-to-end: annotations feed into compute_hit_rate."""
     records = [
         _make_record(doc_id="doc-1", assets=["BTC"]),
-        _make_record(doc_id="doc-2", assets=["ETH"], sentiment="bearish"),
+        _make_record(doc_id="doc-2", assets=["ETH"], sentiment="bullish"),
         _make_record(doc_id="doc-3", assets=["BTC"]),
     ]
     annotations = [

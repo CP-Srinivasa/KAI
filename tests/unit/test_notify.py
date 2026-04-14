@@ -53,7 +53,7 @@ def test_notify_sends_when_configured() -> None:
 
         result = asyncio.run(send_operator_notification("hello"))
         assert result is True
-        channel._post_message.assert_awaited_once_with("hello")
+        channel._post_message.assert_awaited_once_with("hello", parse_mode=None)
 
 
 def test_notify_returns_false_on_failure() -> None:

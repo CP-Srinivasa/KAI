@@ -29,7 +29,7 @@ def test_hold_metrics_reports_signal_quality_validation_fields(tmp_path: Path) -
                 "dispatched_at": "2026-03-25T10:00:00+00:00",
                 "sentiment_label": "bullish",
                 "affected_assets": ["BTC"],
-                "priority": 8,
+                "priority": 9,
                 "actionable": True,
             },
             {
@@ -38,10 +38,11 @@ def test_hold_metrics_reports_signal_quality_validation_fields(tmp_path: Path) -
                 "message_id": "dry_run",
                 "is_digest": False,
                 "dispatched_at": "2026-03-25T10:01:00+00:00",
-                "sentiment_label": "bearish",
+                "sentiment_label": "bullish",
                 "affected_assets": ["ETH"],
-                "priority": 6,
+                "priority": 8,
                 "actionable": False,
+                "directional_eligible": True,
             },
         ],
     )
@@ -77,8 +78,9 @@ def test_hold_metrics_reports_signal_quality_validation_fields(tmp_path: Path) -
     assert quality["priority_calibration_finding"] == "insufficient_sample"
     assert quality["priority_hit_correlation"] == 1.0
     assert quality["priority_hit_correlation_sample"] == 2
-    assert quality["high_priority_hit_rate_pct"] == 100.0
-    assert quality["low_priority_hit_rate_pct"] == 0.0
+    # Both docs are high priority (P8, P9 ≥ threshold 7): 1 hit, 1 miss
+    assert quality["high_priority_hit_rate_pct"] == 50.0
+    assert quality["low_priority_hit_rate_pct"] is None
     assert quality["paper_real_price_cycle_count"] == 0
     assert "no_real_price_paper_cycles" in quality["validation_gaps"]
     assert "recall_not_computable_without_negative_ground_truth" in quality["validation_gaps"]
@@ -193,8 +195,9 @@ def test_hold_metrics_excludes_blocked_directional_alerts(tmp_path: Path) -> Non
     quality = report["signal_quality_validation"]
     assert hit["directional_alert_documents"] == 1
     assert hit["blocked_directional_documents"] == 1
+    # D-127: bearish is blocked before asset resolution in current re-evaluation
     assert hit["blocked_directional_by_reason"] == {
-        "unsupported_or_non_crypto_assets": 1
+        "bearish_directional_disabled": 1
     }
     assert hit["resolved_directional_documents"] == 1
     assert quality["resolved_precision_pct"] == 100.0

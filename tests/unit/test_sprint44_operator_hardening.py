@@ -165,21 +165,35 @@ def test_audit_log_contains_client_ip(tmp_path: Path) -> None:
     assert isinstance(record["client_ip"], str)
 
 
-def test_audit_log_uses_x_forwarded_for_if_present(tmp_path: Path) -> None:
+def test_audit_log_ignores_x_forwarded_for_without_trusted_proxy(tmp_path: Path) -> None:
+    """X-Forwarded-For is ignored when peer is not a trusted proxy (security hardening)."""
     app, audit_path = _governance_app(tmp_path)
     c = TestClient(app)
     c.get("/ping", headers={"X-Forwarded-For": "203.0.113.5, 10.0.0.1"})
     record = json.loads(audit_path.read_text(encoding="utf-8").strip().splitlines()[0])
-    assert record["client_ip"] == "203.0.113.5"
+    # Should use the direct peer IP, not the spoofable X-Forwarded-For
+    assert record["client_ip"] != "203.0.113.5"
 
 
-def test_extract_client_ip_from_x_forwarded_for() -> None:
-    """Unit-test _extract_client_ip using a mock request object."""
+def test_extract_client_ip_ignores_xff_without_trusted_proxy() -> None:
+    """X-Forwarded-For is ignored when no trusted_proxies are configured."""
     mock_request = MagicMock()
     mock_request.headers = {"X-Forwarded-For": "1.2.3.4, 5.6.7.8"}
-    mock_request.client = None  # ensure fallback is not used
+    mock_request.client.host = "10.0.0.1"
 
     result = _extract_client_ip(mock_request)  # type: ignore[arg-type]
+    assert result == "10.0.0.1"
+
+
+def test_extract_client_ip_uses_xff_with_trusted_proxy() -> None:
+    """X-Forwarded-For is used when the direct peer is a trusted proxy."""
+    mock_request = MagicMock()
+    mock_request.headers = {"X-Forwarded-For": "1.2.3.4, 5.6.7.8"}
+    mock_request.client.host = "10.0.0.1"
+
+    result = _extract_client_ip(  # type: ignore[arg-type]
+        mock_request, trusted_proxies=frozenset({"10.0.0.1"}),
+    )
     assert result == "1.2.3.4"
 
 

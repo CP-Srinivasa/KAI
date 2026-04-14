@@ -26,6 +26,15 @@ BLOCK_REASON_LOW_DIRECTIONAL_CONFIDENCE = "low_directional_confidence"
 BLOCK_REASON_PRICE_TREND_DIVERGENCE = "price_trend_divergence"
 BLOCK_REASON_NOT_ACTIONABLE = "not_actionable"
 BLOCK_REASON_LOW_PRIORITY = "low_priority"
+BLOCK_REASON_BEARISH_DISABLED = "bearish_directional_disabled"
+
+# D-127: Bearish directional disabled based on 50 eligible resolved outcomes.
+# Bearish precision: 4% (1 hit / 24 miss). Bullish precision: 76% (19/25).
+# Bearish news in trending markets is almost never price-predictive — reactive
+# narratives describe past moves, and even actor-action bearish titles fail.
+# Disable bearish directional tracking entirely until market-context-aware
+# analysis (regime detection, real-time sentiment) can make bearish viable.
+BEARISH_DIRECTIONAL_DISABLED = True
 
 # D-116 / D-119: Minimum directional confidence from LLM analysis.
 # Asymmetric thresholds (D-121): bearish alerts had 4% precision (1/25)
@@ -197,6 +206,16 @@ def evaluate_directional_eligibility(
             is_directional=True,
             directional_eligible=False,
             directional_block_reason=BLOCK_REASON_NOT_ACTIONABLE,
+        )
+
+    # D-127: Bearish directional disabled — 4% precision (1/24) on eligible
+    # resolved outcomes.  Bearish news is not price-predictive in current
+    # market conditions.  Re-enable when market-context analysis is added.
+    if BEARISH_DIRECTIONAL_DISABLED and sentiment == "bearish":
+        return DirectionalEligibilityDecision(
+            is_directional=True,
+            directional_eligible=False,
+            directional_block_reason=BLOCK_REASON_BEARISH_DISABLED,
         )
 
     # D-122: Low-priority alerts lack predictive value for directional tracking.

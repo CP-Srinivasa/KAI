@@ -469,3 +469,162 @@ def test_fallback_market_scope_existing_document_scope_adds_weight():
     doc = _make_scope_doc(market_scope=MarketScope.MACRO, title="Fed rate decision impact")
     result = _fallback_market_scope(doc, [])
     assert result == MarketScope.MACRO
+
+
+# ---------------------------------------------------------------------------
+# Market context integration tests
+# ---------------------------------------------------------------------------
+
+from app.analysis.pipeline import _derive_market_regime
+from app.analysis.prompts import _format_market_context
+
+
+def test_derive_market_regime_strong_uptrend():
+    assets = [{"change_pct_7d": 8.0}, {"change_pct_7d": 6.0}]
+    assert _derive_market_regime(assets) == "strong_uptrend"
+
+
+def test_derive_market_regime_mild_uptrend():
+    assets = [{"change_pct_7d": 3.0}, {"change_pct_7d": 2.0}]
+    assert _derive_market_regime(assets) == "mild_uptrend"
+
+
+def test_derive_market_regime_sideways():
+    assets = [{"change_pct_7d": 0.5}, {"change_pct_7d": -0.5}]
+    assert _derive_market_regime(assets) == "sideways"
+
+
+def test_derive_market_regime_strong_downtrend():
+    assets = [{"change_pct_7d": -7.0}, {"change_pct_7d": -6.0}]
+    assert _derive_market_regime(assets) == "strong_downtrend"
+
+
+def test_derive_market_regime_mild_downtrend():
+    assets = [{"change_pct_7d": -2.0}, {"change_pct_7d": -3.0}]
+    assert _derive_market_regime(assets) == "mild_downtrend"
+
+
+def test_derive_market_regime_unknown_without_data():
+    assets = [{"change_pct_7d": None}]
+    assert _derive_market_regime(assets) == "unknown"
+
+
+def test_format_market_context_renders_prices():
+    ctx = {
+        "assets": [
+            {"symbol": "BTC", "price": 67500.0, "change_pct_24h": 2.1, "change_pct_7d": 5.3},
+            {"symbol": "ETH", "price": 3200.0, "change_pct_24h": -1.2, "change_pct_7d": 3.1},
+        ],
+        "regime": "mild_uptrend",
+    }
+    text = _format_market_context(ctx)
+    assert "BTC" in text
+    assert "$67,500.00" in text
+    assert "+2.1%" in text
+    assert "+5.3%" in text
+    assert "ETH" in text
+    assert "-1.2%" in text
+    assert "mild_uptrend" in text
+    assert "already priced in" in text.lower() or "ALREADY reflected" in text
+
+
+def test_format_user_prompt_includes_market_context():
+    from app.analysis.prompts import format_user_prompt
+
+    prompt = format_user_prompt(
+        "BTC News",
+        "Bitcoin reaches new high.",
+        context={
+            "tickers": ["BTC"],
+            "source_type": "rss_feed",
+            "market_context": {
+                "assets": [
+                    {
+                        "symbol": "BTC",
+                        "price": 67500.0,
+                        "change_pct_24h": 2.1,
+                        "change_pct_7d": 5.3,
+                    },
+                ],
+                "regime": "mild_uptrend",
+            },
+        },
+    )
+    assert "$67,500.00" in prompt
+    assert "mild_uptrend" in prompt
+    assert "rss_feed" in prompt
+
+
+def test_format_user_prompt_without_market_context_unchanged():
+    from app.analysis.prompts import format_user_prompt
+
+    prompt = format_user_prompt(
+        "BTC News",
+        "Bitcoin reaches new high.",
+        context={"tickers": ["BTC"], "source_type": "rss_feed"},
+    )
+    assert "Market Context" not in prompt
+    assert "rss_feed" in prompt
+
+
+@pytest.mark.asyncio
+async def test_pipeline_run_batch_fetches_market_context():
+    """run_batch() fetches market context once and injects into each document's context."""
+    from app.market_data.models import Ticker
+
+    mock_adapter = AsyncMock()
+    mock_adapter.get_ticker = AsyncMock(
+        side_effect=lambda s: Ticker(
+            symbol=s,
+            timestamp_utc="2026-04-14T10:00:00+00:00",
+            bid=67500.0 if "BTC" in s else 3200.0,
+            ask=67500.0 if "BTC" in s else 3200.0,
+            last=67500.0 if "BTC" in s else 3200.0,
+            volume_24h=1e9,
+            change_pct_24h=2.1 if "BTC" in s else -1.2,
+            change_pct_7d=5.3 if "BTC" in s else 3.1,
+        )
+    )
+
+    engine = _btc_engine()
+    pipeline = AnalysisPipeline(
+        keyword_engine=engine,
+        provider=None,
+        run_llm=False,
+        market_data_adapter=mock_adapter,
+    )
+
+    docs = [_make_doc(), _make_doc(title="ETH update", text="Ethereum upgrades")]
+    results = await pipeline.run_batch(docs)
+
+    assert len(results) == 2
+    # Adapter called exactly 2 times (BTC + ETH), not 2*2
+    assert mock_adapter.get_ticker.call_count == 2
+    # Market context cached internally
+    assert pipeline._cached_market_context is not None
+    assert len(pipeline._cached_market_context["assets"]) == 2
+    assert pipeline._cached_market_context["regime"] in (
+        "mild_uptrend",
+        "strong_uptrend",
+        "sideways",
+    )
+
+
+@pytest.mark.asyncio
+async def test_pipeline_market_context_fail_open():
+    """If market data fetch fails, pipeline proceeds without market context."""
+    mock_adapter = AsyncMock()
+    mock_adapter.get_ticker = AsyncMock(return_value=None)
+
+    engine = _btc_engine()
+    pipeline = AnalysisPipeline(
+        keyword_engine=engine,
+        provider=None,
+        run_llm=False,
+        market_data_adapter=mock_adapter,
+    )
+
+    results = await pipeline.run_batch([_make_doc()])
+    assert len(results) == 1
+    assert results[0].success
+    assert pipeline._cached_market_context is None

@@ -112,6 +112,7 @@ jobs:
             'xoxb-[0-9]{10,}'               # Slack bot tokens
             'ghp_[A-Za-z0-9]{36}'            # GitHub PATs
             'AKIA[A-Z0-9]{16}'              # AWS access keys
+            '[0-9]{8,10}:[A-Za-z0-9_-]{35}'  # Telegram bot tokens
           )
 
           for pat in "${PATTERNS[@]}"; do

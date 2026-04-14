@@ -57,7 +57,9 @@ class TelegramAlertChannel(BaseAlertChannel):
         text = format_telegram_digest(messages, period)
         return await self._post_message(text)
 
-    async def _post_message(self, text: str) -> AlertDeliveryResult:
+    async def _post_message(
+        self, text: str, *, parse_mode: str | None = "Markdown",
+    ) -> AlertDeliveryResult:
         url = f"{_TELEGRAM_API_BASE}/bot{self._settings.telegram_token}/sendMessage"
         chunks = _split_telegram_text(text)
         last_message_id = ""
@@ -65,9 +67,10 @@ class TelegramAlertChannel(BaseAlertChannel):
             payload: dict[str, str | bool] = {
                 "chat_id": self._settings.telegram_chat_id,
                 "text": chunk,
-                "parse_mode": "Markdown",
                 "disable_web_page_preview": True,
             }
+            if parse_mode is not None:
+                payload["parse_mode"] = parse_mode
             result = await self._post_payload_with_retry(url, payload)
             if not result.success:
                 return AlertDeliveryResult(

@@ -28,6 +28,7 @@ from app.core.errors import StorageError
 from app.core.logging import get_logger
 from app.core.settings import get_settings
 from app.ingestion.rss.service import RSSCollectedFeed, collect_rss_feed
+from app.market_data.service import create_market_data_adapter
 from app.storage.document_ingest import persist_fetch_result
 from app.storage.repositories.document_repo import DocumentRepository
 
@@ -80,6 +81,8 @@ async def _maybe_trigger_paper_trade(
         cycle = await run_trading_loop_once(
             symbol=symbol,
             mode=settings.operator.signal_auto_run_mode,
+            analysis_result=analysis_result,
+            freshness_threshold_seconds=300.0,
         )
         logger.info(
             "pipeline_paper_trade_triggered",
@@ -222,11 +225,13 @@ async def run_rss_pipeline(
         )
 
     # ── Stage 3: Analyze ────────────────────────────────────────────────────
+    market_adapter = create_market_data_adapter(provider="coingecko")
     pipeline = AnalysisPipeline(
         keyword_engine=keyword_engine,
         provider=provider,
         run_llm=provider is not None,
         shadow_provider=shadow_provider,
+        market_data_adapter=market_adapter,
     )
     pipeline_results = await pipeline.run_batch(saved_docs)
 
@@ -423,10 +428,12 @@ async def run_youtube_pipeline(
         )
 
     # Stage 3-5: Analyze + Alert (identical to RSS pipeline)
+    market_adapter = create_market_data_adapter(provider="coingecko")
     pipeline = AnalysisPipeline(
         keyword_engine=keyword_engine,
         provider=provider,
         run_llm=provider is not None,
+        market_data_adapter=market_adapter,
     )
     pipeline_results = await pipeline.run_batch(saved_docs)
 
@@ -642,10 +649,12 @@ async def run_newsdata_pipeline(
         )
 
     # Stage 3-5: Analyze + Alert
+    market_adapter = create_market_data_adapter(provider="coingecko")
     pipeline = AnalysisPipeline(
         keyword_engine=keyword_engine,
         provider=provider,
         run_llm=provider is not None,
+        market_data_adapter=market_adapter,
     )
     pipeline_results = await pipeline.run_batch(saved_docs)
 

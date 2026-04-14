@@ -25,5 +25,5 @@ async def send_operator_notification(text: str) -> bool:
     if not channel.is_enabled:
         return False
 
-    result = await channel._post_message(text)
+    result = await channel._post_message(text, parse_mode=None)
     return result.success

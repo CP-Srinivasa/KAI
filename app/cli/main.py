@@ -469,7 +469,15 @@ def analyze_pending(
                 f" {provider_obj.provider_name} ({provider_obj.model})"
             )
 
-        pipeline = AnalysisPipeline(keyword_engine, provider_obj, run_llm=bool(provider_obj))
+        from app.market_data.service import create_market_data_adapter
+
+        market_adapter = create_market_data_adapter(provider="coingecko")
+        pipeline = AnalysisPipeline(
+            keyword_engine,
+            provider_obj,
+            run_llm=bool(provider_obj),
+            market_data_adapter=market_adapter,
+        )
         session_factory = build_session_factory(settings.db)
 
         async with session_factory.begin() as session:
@@ -765,6 +773,185 @@ def alerts_hold_report(
     )
 
 
+@alerts_app.command("analyze-resolved")
+def alerts_analyze_resolved(
+    by: str = typer.Option(
+        "all",
+        "--by",
+        help=(
+            "Bucket dimension: all | sentiment | priority | priority-group "
+            "| asset | source"
+        ),
+    ),
+    min_bucket_size: int = typer.Option(
+        3,
+        "--min-bucket-size",
+        help="Hide buckets with fewer resolved alerts than this (noise filter).",
+    ),
+    artifacts_dir: str = typer.Option("artifacts", help="Artifacts directory"),
+    json_out: str | None = typer.Option(
+        None,
+        "--json-out",
+        help="Optional path to write the full feature-analysis report as JSON.",
+    ),
+    include_source: bool = typer.Option(
+        True,
+        "--include-source/--no-source",
+        help=(
+            "Join alert document_ids against canonical_documents.source_name "
+            "for the by-source breakdown. Disable to run offline without DB."
+        ),
+    ),
+) -> None:
+    """Break down resolved directional outcomes by feature bucket (D-126).
+
+    Answers: when label X (asset, sentiment, priority, source) was present,
+    how often did the predicted direction materialise? Read-only analysis
+    over ``alert_audit.jsonl`` + ``alert_outcomes.jsonl`` — no signal or
+    threshold mutation. Use to locate precision hot/cold spots before
+    tuning.
+    """
+    import asyncio
+    import json as _json
+
+    from app.alerts.feature_analysis import build_feature_analysis
+
+    valid_by = {"all", "sentiment", "priority", "priority-group", "asset", "source"}
+    by_normalized = by.strip().lower()
+    if by_normalized not in valid_by:
+        console.print(
+            f"[red]Invalid --by value[/red]: {by!r}. "
+            f"Expected one of: {', '.join(sorted(valid_by))}."
+        )
+        raise typer.Exit(2)
+
+    artifacts_path = Path(artifacts_dir)
+    audits = load_alert_audits(artifacts_path)
+    annotations = load_outcome_annotations(artifacts_path)
+
+    source_by_doc: dict[str, str] | None = None
+    if include_source:
+        directional_doc_ids: set[str] = set()
+        for rec in audits:
+            sentiment = (rec.sentiment_label or "").lower()
+            if rec.is_digest or sentiment not in {"bullish", "bearish"}:
+                continue
+            directional_doc_ids.add(rec.document_id)
+
+        if directional_doc_ids:
+            async def _load_sources() -> dict[str, str]:
+                from sqlalchemy import select
+
+                from app.storage.models.document import CanonicalDocumentModel
+
+                settings = get_settings()
+                session_factory = build_session_factory(settings.db)
+                async with session_factory.begin() as session:
+                    stmt = select(
+                        CanonicalDocumentModel.id,
+                        CanonicalDocumentModel.source_name,
+                        CanonicalDocumentModel.provider,
+                    ).where(CanonicalDocumentModel.id.in_(directional_doc_ids))
+                    rows = (await session.execute(stmt)).all()
+                # Case-normalise to prevent split buckets where the same
+                # publisher is stored under both display name ("CoinTelegraph")
+                # and provider key ("cointelegraph"). Display casing is lost —
+                # acceptable for an aggregate analysis view.
+                return {
+                    str(row[0]): (
+                        (row[1] or row[2] or "unknown").strip().lower()
+                    )
+                    for row in rows
+                }
+
+            try:
+                source_by_doc = asyncio.run(_load_sources())
+            except Exception as exc:
+                console.print(
+                    f"[yellow]Source lookup failed, omitting by_source "
+                    f"bucket:[/yellow] {exc}"
+                )
+                source_by_doc = None
+
+    report = build_feature_analysis(
+        audits=audits,
+        annotations=annotations,
+        source_by_doc=source_by_doc,
+        min_bucket_size=min_bucket_size,
+    )
+
+    totals = report["totals"]
+    console.print(
+        f"[bold]Resolved directional alerts[/bold]: {totals['resolved']} "
+        f"(hits={totals['hits']} miss={totals['miss']}) | "
+        f"precision={totals['precision_pct']}% | "
+        f"directional_total={totals['directional_alerts']} "
+        f"inconclusive={totals['inconclusive']} "
+        f"unlabeled={totals['unlabeled']}"
+    )
+    console.print(
+        f"[dim]min_bucket_size={report['min_bucket_size']}; "
+        "a single alert contributes to each of its affected assets — "
+        "bucket totals may sum to more than unique resolved.[/dim]"
+    )
+
+    def _render_bucket(title: str, key: str) -> None:
+        rows = report["buckets"].get(key, [])
+        table = Table(title=title, show_header=True, header_style="bold cyan")
+        table.add_column("Label")
+        table.add_column("Resolved", justify="right")
+        table.add_column("Hits", justify="right")
+        table.add_column("Miss", justify="right")
+        table.add_column("Precision", justify="right")
+        if not rows:
+            table.add_row(
+                "[dim](no buckets meet min size)[/dim]", "-", "-", "-", "-"
+            )
+        for row in rows:
+            prec = row["precision_pct"]
+            prec_str = "-" if prec is None else f"{prec:.2f}%"
+            table.add_row(
+                str(row["label"]),
+                str(row["resolved"]),
+                str(row["hits"]),
+                str(row["miss"]),
+                prec_str,
+            )
+        console.print(table)
+
+    render_map = {
+        "sentiment": ("By Sentiment", "by_sentiment"),
+        "priority": ("By Priority (exact)", "by_priority"),
+        "priority-group": ("By Priority Group", "by_priority_group"),
+        "asset": ("By Asset", "by_asset"),
+        "source": ("By Source", "by_source"),
+    }
+
+    if by_normalized == "all":
+        for key in ["sentiment", "priority-group", "priority", "asset", "source"]:
+            title, report_key = render_map[key]
+            if key == "source" and "by_source" not in report["buckets"]:
+                continue
+            _render_bucket(title, report_key)
+    else:
+        title, report_key = render_map[by_normalized]
+        if report_key not in report["buckets"]:
+            console.print(
+                f"[yellow]Bucket '{by_normalized}' not available "
+                "(source lookup disabled?).[/yellow]"
+            )
+        else:
+            _render_bucket(title, report_key)
+
+    if json_out:
+        out_path = Path(json_out)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_text(
+            _json.dumps(report, indent=2, sort_keys=True), encoding="utf-8"
+        )
+        console.print(f"[green]Report written:[/green] {out_path}")
+
+
 @alerts_app.command("baseline-report")
 def alerts_baseline_report(
     input_path: str = typer.Option(
@@ -822,15 +1009,15 @@ def alerts_pending_annotations(
         sentiment = (rec.sentiment_label or "").lower()
         if rec.is_digest or sentiment not in {"bullish", "bearish"}:
             continue
+        # D-127: Always re-evaluate against current eligibility rules.
+        current_check = evaluate_directional_eligibility(
+            sentiment_label=rec.sentiment_label,
+            affected_assets=list(rec.affected_assets or []),
+        )
+        if current_check.directional_eligible is not True:
+            continue
         if rec.directional_eligible is False:
             continue
-        if rec.directional_eligible is None:
-            legacy_check = evaluate_directional_eligibility(
-                sentiment_label=rec.sentiment_label,
-                affected_assets=list(rec.affected_assets or []),
-            )
-            if legacy_check.directional_eligible is not True:
-                continue
         prev = latest_directional_by_doc.get(rec.document_id)
         if prev is None or rec.dispatched_at > prev.dispatched_at:
             latest_directional_by_doc[rec.document_id] = rec

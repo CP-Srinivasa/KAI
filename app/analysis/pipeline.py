@@ -14,6 +14,7 @@ from app.analysis.rules.rule_analyzer import compute_spam_probability
 from app.core.domain.document import AnalysisResult, CanonicalDocument, EntityMention
 from app.core.enums import AnalysisSource, MarketScope, SentimentLabel
 from app.core.logging import get_logger
+from app.market_data.base import BaseMarketDataAdapter
 from app.normalization.entities import hits_to_entity_mentions
 
 _MAX_CONCURRENT = 5  # max parallel LLM calls per run_batch()
@@ -22,6 +23,23 @@ _FALLBACK_MAX_TERMS = 20
 _STUB_CONTENT_THRESHOLD = 50  # PH5C: skip LLM for docs with body Ã¢â€°Â¤ 50 bytes
 _MIN_RULE_RELEVANCE_FOR_LLM = 0.10  # D-110: skip LLM for very low rule relevance
 # PH4I: title-level crypto signal words for market_scope inference in fallback path
+def _derive_market_regime(assets: list[dict[str, Any]]) -> str:
+    """Derive a simple market regime label from BTC/ETH 7d changes."""
+    changes_7d = [a["change_pct_7d"] for a in assets if a.get("change_pct_7d") is not None]
+    if not changes_7d:
+        return "unknown"
+    avg_7d = sum(changes_7d) / len(changes_7d)
+    if avg_7d > 5.0:
+        return "strong_uptrend"
+    if avg_7d > 1.5:
+        return "mild_uptrend"
+    if avg_7d < -5.0:
+        return "strong_downtrend"
+    if avg_7d < -1.5:
+        return "mild_downtrend"
+    return "sideways"
+
+
 _CRYPTO_TITLE_TERMS = frozenset(
     {
         "bitcoin",
@@ -308,11 +326,14 @@ class AnalysisPipeline:
         provider: BaseAnalysisProvider | None = None,
         run_llm: bool = True,
         shadow_provider: BaseAnalysisProvider | None = None,
+        market_data_adapter: BaseMarketDataAdapter | None = None,
     ) -> None:
         self._keyword_engine = keyword_engine
         self._provider = provider
         self._run_llm = run_llm
         self._shadow_provider = shadow_provider
+        self._market_data_adapter = market_data_adapter
+        self._cached_market_context: dict[str, Any] | None = None
 
     async def _run_shadow_analysis(
         self,
@@ -365,6 +386,8 @@ class AnalysisPipeline:
             "tickers": self._keyword_engine.match_tickers(full_text),
             "source_type": doc.source_type.value if doc.source_type else None,
         }
+        if self._cached_market_context is not None:
+            context["market_context"] = self._cached_market_context
         pre_llm_relevance = _fallback_relevance(doc, keyword_hits, entity_mentions)
 
         fallback_reason: str | None = None
@@ -587,11 +610,52 @@ class AnalysisPipeline:
             spam_probability=spam_probability,
         )
 
+    async def _fetch_market_context(self) -> dict[str, Any] | None:
+        """Fetch BTC/ETH market data once per batch. Fail-open: returns None on error."""
+        if self._market_data_adapter is None:
+            return None
+        if self._cached_market_context is not None:
+            return self._cached_market_context
+
+        assets: list[dict[str, Any]] = []
+        for symbol in ("BTC/USDT", "ETH/USDT"):
+            try:
+                ticker = await self._market_data_adapter.get_ticker(symbol)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("market_context_fetch_failed", symbol=symbol, error=str(exc))
+                continue
+            if ticker is None:
+                continue
+            assets.append(
+                {
+                    "symbol": symbol.split("/")[0],
+                    "price": ticker.last,
+                    "change_pct_24h": ticker.change_pct_24h,
+                    "change_pct_7d": ticker.change_pct_7d,
+                }
+            )
+
+        if not assets:
+            logger.warning("market_context_empty", reason="no_ticker_data")
+            return None
+
+        regime = _derive_market_regime(assets)
+        self._cached_market_context = {"assets": assets, "regime": regime}
+        logger.info(
+            "market_context_loaded",
+            asset_count=len(assets),
+            regime=regime,
+        )
+        return self._cached_market_context
+
     async def run_batch(
         self,
         documents: list[CanonicalDocument],
     ) -> list[PipelineResult]:
         """Analyze multiple documents with bounded concurrency."""
+        # Pre-fetch market context once for the entire batch
+        await self._fetch_market_context()
+
         semaphore = asyncio.Semaphore(_MAX_CONCURRENT)
 
         async def _bounded(doc: CanonicalDocument) -> PipelineResult:

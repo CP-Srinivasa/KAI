@@ -810,8 +810,8 @@ def test_log_result_blocks_non_crypto_directional_assets(
     assert len(records) == 1
     assert records[0].directional_eligible is False
     assert records[0].affected_assets == []
-    assert records[0].directional_block_reason == "unsupported_or_non_crypto_assets"
-    assert records[0].directional_blocked_assets == ["OPENAI", "DISNEY", "SORA"]
+    # D-127: bearish is blocked before asset resolution is reached
+    assert records[0].directional_block_reason == "bearish_directional_disabled"
 
 
 # ── BaseAlertChannel ABC ──────────────────────────────────────────────────────
