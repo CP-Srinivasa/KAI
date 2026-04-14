@@ -145,3 +145,8 @@ Tech: Inline HTML+JS+Chart.js CDN, JSON-API `/dashboard/api/quality` liest direk
 ### D-131 (2026-04-14)
 Telegram Bot: `/quality` (Quality-Bar aus Hold-Report) und `/annotate` (Pending-Alerts mit Inline-Buttons fuer hit/miss/inconclusive) implementiert.
 `/annotate` unterstuetzt Text-Modus (`/annotate <id> hit`) und Button-Modus (5 aelteste Pending mit 3-Button-Reihen). Callback-Handler `ann:<doc_id>:<outcome>` schreibt in alert_outcomes.jsonl. 7 Unit-Tests. Deutsch-Aliase: `/qualitaet`.
+
+### D-132 (2026-04-14)
+Auto-Annotator Tuning: Volatility-adaptive Thresholds (BTC 24h-Change als Proxy), kuerzere Fenster (min 4h statt 6h, <=8h mit 0.7x), laengere Max-Fenster (72h statt 48h).
+Re-Evaluation: Inconclusive-Annotations werden nach 24h nochmal geprueft (append-only, latest wins). API-Delay 12s->5s. 11 neue Unit-Tests (22 gesamt).
+Erwarteter Impact: 30-40% weniger Inconclusives, mehr resolved Datenpunkte fuer Precision-Berechnung.

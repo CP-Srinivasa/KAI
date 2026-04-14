@@ -13,7 +13,10 @@ from app.alerts.audit import (
     AlertAuditRecord,
     append_alert_audit,
 )
-from app.alerts.auto_annotator import auto_annotate_pending
+from app.alerts.auto_annotator import (
+    _scaled_threshold,
+    auto_annotate_pending,
+)
 
 
 def _write_audit(tmp_path: Path, record: AlertAuditRecord) -> None:
@@ -262,6 +265,162 @@ async def test_dedup_by_document_id_ignores_asset(tmp_path: Path) -> None:
         adapter.get_price_change_between = AsyncMock()
 
         results = await auto_annotate_pending(tmp_path, min_age_hours=6)
+
+    assert results == []
+    adapter.get_price_change_between.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# D-132: Volatility-adaptive thresholds
+# ---------------------------------------------------------------------------
+
+
+def test_scaled_threshold_short_window() -> None:
+    """Short window (<=8h) uses 0.7x base."""
+    assert _scaled_threshold(6.0, 1.0) == 0.7
+
+
+def test_scaled_threshold_medium_window() -> None:
+    """12h window uses 1.0x base."""
+    assert _scaled_threshold(12.0, 1.0) == 1.0
+
+
+def test_scaled_threshold_24h_window() -> None:
+    """24h window uses 1.5x base."""
+    assert _scaled_threshold(24.0, 1.0) == 1.5
+
+
+def test_scaled_threshold_48h_window() -> None:
+    """48h window uses 2.0x base."""
+    assert _scaled_threshold(48.0, 1.0) == 2.0
+
+
+def test_scaled_threshold_72h_window() -> None:
+    """72h window uses 2.5x base."""
+    assert _scaled_threshold(72.0, 1.0) == 2.5
+
+
+def test_scaled_threshold_low_volatility() -> None:
+    """Low volatility (<1%) scales threshold down to 0.6x."""
+    result = _scaled_threshold(12.0, 1.0, volatility_24h=0.5)
+    assert abs(result - 0.6) < 0.01
+
+
+def test_scaled_threshold_high_volatility() -> None:
+    """High volatility (>3%) scales threshold up."""
+    result = _scaled_threshold(12.0, 1.0, volatility_24h=5.0)
+    assert result > 1.0
+    assert result <= 1.5
+
+
+def test_scaled_threshold_floor() -> None:
+    """Threshold never goes below 0.3%."""
+    result = _scaled_threshold(6.0, 0.1, volatility_24h=0.1)
+    assert result >= 0.3
+
+
+# ---------------------------------------------------------------------------
+# D-132: Re-evaluation of inconclusive annotations
+# ---------------------------------------------------------------------------
+
+
+async def test_reevals_inconclusive_after_24h(tmp_path: Path) -> None:
+    """Inconclusive annotation re-evaluated when alert >24h old."""
+    _write_audit(
+        tmp_path,
+        _make_audit(doc_id="reeval-doc", hours_ago=30.0),
+    )
+
+    outcomes_path = tmp_path / ALERT_OUTCOMES_JSONL_FILENAME
+    outcomes_path.write_text(
+        json.dumps({
+            "document_id": "reeval-doc",
+            "outcome": "inconclusive",
+            "annotated_at": (
+                datetime.now(UTC) - timedelta(hours=20)
+            ).isoformat(),
+        }) + "\n",
+        encoding="utf-8",
+    )
+
+    with patch(
+        "app.alerts.auto_annotator.CoinGeckoAdapter",
+    ) as mock_cls:
+        adapter = mock_cls.return_value
+        adapter.get_ticker = AsyncMock(return_value=None)
+        adapter.get_price_change_between = AsyncMock(
+            return_value=(65000.0, 67000.0, 3.1),
+        )
+
+        results = await auto_annotate_pending(
+            tmp_path, min_age_hours=4,
+        )
+
+    assert len(results) == 1
+    assert results[0].outcome == "hit"
+    assert "reeval" in (results[0].note or "")
+
+
+async def test_skips_reeval_if_disabled(tmp_path: Path) -> None:
+    """With reeval_inconclusive=False, inconclusives not retried."""
+    _write_audit(
+        tmp_path,
+        _make_audit(doc_id="no-reeval", hours_ago=30.0),
+    )
+
+    outcomes_path = tmp_path / ALERT_OUTCOMES_JSONL_FILENAME
+    outcomes_path.write_text(
+        json.dumps({
+            "document_id": "no-reeval",
+            "outcome": "inconclusive",
+            "annotated_at": datetime.now(UTC).isoformat(),
+        }) + "\n",
+        encoding="utf-8",
+    )
+
+    with patch(
+        "app.alerts.auto_annotator.CoinGeckoAdapter",
+    ) as mock_cls:
+        adapter = mock_cls.return_value
+        adapter.get_ticker = AsyncMock(return_value=None)
+        adapter.get_price_change_between = AsyncMock()
+
+        results = await auto_annotate_pending(
+            tmp_path,
+            min_age_hours=4,
+            reeval_inconclusive=False,
+        )
+
+    assert results == []
+
+
+async def test_skips_hit_miss_reeval(tmp_path: Path) -> None:
+    """Hit/miss annotations are never re-evaluated."""
+    _write_audit(
+        tmp_path,
+        _make_audit(doc_id="final-doc", hours_ago=30.0),
+    )
+
+    outcomes_path = tmp_path / ALERT_OUTCOMES_JSONL_FILENAME
+    outcomes_path.write_text(
+        json.dumps({
+            "document_id": "final-doc",
+            "outcome": "hit",
+            "annotated_at": datetime.now(UTC).isoformat(),
+        }) + "\n",
+        encoding="utf-8",
+    )
+
+    with patch(
+        "app.alerts.auto_annotator.CoinGeckoAdapter",
+    ) as mock_cls:
+        adapter = mock_cls.return_value
+        adapter.get_ticker = AsyncMock(return_value=None)
+        adapter.get_price_change_between = AsyncMock()
+
+        results = await auto_annotate_pending(
+            tmp_path, min_age_hours=4,
+        )
 
     assert results == []
     adapter.get_price_change_between.assert_not_called()

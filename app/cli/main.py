@@ -1277,16 +1277,23 @@ def alerts_auto_check(
 @alerts_app.command("auto-annotate")
 def alerts_auto_annotate(
     min_age_hours: float = typer.Option(
-        6.0, help="Only annotate alerts older than this (hours)",
+        4.0, help="Only annotate alerts older than this (hours)",
     ),
     move_threshold: float = typer.Option(
         1.0, help="Price move threshold in percent (1.0 = 1%%)",
+    ),
+    no_reeval: bool = typer.Option(
+        False, "--no-reeval",
+        help="Skip re-evaluation of prior inconclusive annotations",
     ),
     dry_run: bool = typer.Option(
         False, "--dry-run", help="Preview without writing annotations",
     ),
 ) -> None:
-    """Auto-annotate directional alerts based on price movement."""
+    """Auto-annotate directional alerts based on price movement.
+
+    D-132: volatility-adaptive thresholds, inconclusive re-evaluation.
+    """
     import asyncio
 
     from app.alerts.auto_annotator import auto_annotate_pending
@@ -1298,6 +1305,7 @@ def alerts_auto_annotate(
             audit_dir=artifacts_dir,
             min_age_hours=min_age_hours,
             move_threshold=move_threshold,
+            reeval_inconclusive=not no_reeval,
             dry_run=dry_run,
         )
     )
