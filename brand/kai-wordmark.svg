@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 320 96" width="320" height="96" role="img" aria-label="KAI">
+  <title>KAI</title>
+  <g fill="currentColor" fill-rule="evenodd">
+    <!-- K -->
+    <rect x="14" y="10" width="14" height="76" rx="1.5"/>
+    <path d="M28 48 L78 4 L90 16 L40 60 Z"/>
+    <path d="M28 48 L70 90 L56 90 L22 56 Z"/>
+    <!-- A: left leg, right leg, crossbar, apex cap -->
+    <polygon points="128,90 142,90 166,18 152,18"/>
+    <polygon points="162,18 176,18 200,90 186,90"/>
+    <rect x="144" y="54" width="40" height="10"/>
+    <polygon points="152,18 176,18 164,6"/>
+    <!-- I -->
+    <rect x="222" y="10" width="14" height="76" rx="1.5"/>
+  </g>
+</svg>

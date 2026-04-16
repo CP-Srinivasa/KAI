@@ -169,6 +169,7 @@ class OperatorSettings(BaseSettings):
     signal_exchange_dead_letter_log: str = Field(
         default="artifacts/telegram_exchange_dead_letter.jsonl"
     )
+    telegram_dashboard_url: str = Field(default="")
 
     @property
     def admin_chat_id_list(self) -> list[int]:

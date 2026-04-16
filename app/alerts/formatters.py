@@ -43,28 +43,28 @@ def format_telegram_message(msg: AlertMessage) -> str:
     emoji = _SENTIMENT_EMOJI.get(msg.sentiment_label.lower(), "⚪")
     label = _priority_label(msg.priority)
     assets = ", ".join(msg.affected_assets) if msg.affected_assets else "—"
-    actionable_str = "✅ Actionable" if msg.actionable else "ℹ️ Informational"
+    actionable_str = "Actionable" if msg.actionable else "Informational"
 
     lines = [
         f"{emoji} *Priority {msg.priority}/10 — {label}*",
         f"*{_escape_md(msg.title)}*",
         "",
-        f"💬 {_escape_md(msg.explanation)}",
+        _escape_md(msg.explanation),
         "",
-        f"📌 Assets: {_escape_md(assets)}",
-        f"🎯 {actionable_str}",
+        f"Assets: {_escape_md(assets)}",
+        actionable_str,
         "",
         f"[Read more]({msg.url})",
     ]
     if msg.source_name:
-        lines.append(f"📰 Source: {_escape_md(msg.source_name)}")
+        lines.append(f"Source: {_escape_md(msg.source_name)}")
     return "\n".join(lines)
 
 
 def format_telegram_digest(messages: list[AlertMessage], period: str) -> str:
     """Format a digest of multiple alerts as Telegram Markdown v1 text."""
     header = [
-        f"📊 *Alert Digest — {_escape_md(period)}*",
+        f"*Alert Digest — {_escape_md(period)}*",
         f"_{len(messages)} alert(s)_",
         "",
     ]

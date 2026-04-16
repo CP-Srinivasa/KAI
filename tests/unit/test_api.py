@@ -127,6 +127,7 @@ def test_app_lifespan_telegram_poller_is_fail_closed_by_default(monkeypatch) -> 
                      signal_forward_to_exchange_enabled: bool = False,
                      signal_exchange_sent_log_path: str = "",
                      signal_exchange_dead_letter_log_path: str = "",
+                     dashboard_url: str = "",
                      context_provider: object | None = None) -> None:
             self.is_configured = bool(bot_token) and bool(admin_chat_ids)
             events.append(("bot_dry_run", dry_run))
@@ -223,6 +224,7 @@ def test_app_lifespan_telegram_poller_starts_when_enabled(monkeypatch) -> None:
                      signal_forward_to_exchange_enabled: bool = False,
                      signal_exchange_sent_log_path: str = "",
                      signal_exchange_dead_letter_log_path: str = "",
+                     dashboard_url: str = "",
                      context_provider: object | None = None) -> None:
             self.is_configured = bool(bot_token) and bool(admin_chat_ids)
             events.append(("bot_token", bot_token))

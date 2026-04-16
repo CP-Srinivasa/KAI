@@ -11,10 +11,13 @@ Design invariants:
 
 from __future__ import annotations
 
+import hashlib
+import json
 import re
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
+from typing import Any
 
 # ---------------------------------------------------------------------------
 # Enums
@@ -387,4 +390,110 @@ class ExchangeResponse:
             d["error_code"] = self.error_code
         if self.message:
             d["message"] = self.message
+        return d
+
+
+# ---------------------------------------------------------------------------
+# ENVELOPE (v2 routing wrapper)
+# ---------------------------------------------------------------------------
+
+class SourceChannel(StrEnum):
+    """Where a message entered the system."""
+
+    TELEGRAM = "telegram"
+    DASHBOARD = "dashboard"
+    API = "api"
+    VOICE = "voice"
+    UNKNOWN = "unknown"
+
+
+MessagePayload = NewsMessage | TradingSignal | ExchangeResponse
+
+
+def _canonical_idempotency_key(payload_dict: dict[str, object]) -> str:
+    """Deterministic key over canonical JSON — duplicate payloads collapse."""
+    blob = json.dumps(payload_dict, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(blob).hexdigest()[:32]
+
+
+def _generate_envelope_id(received_ts: str) -> str:
+    """ENV-YYYYMMDDHHMMSS-<hex8> — sortable + unique enough per message."""
+    stamp = "".join(ch for ch in received_ts if ch.isdigit())[:14]
+    suffix = hashlib.sha256(received_ts.encode("utf-8")).hexdigest()[:8]
+    return f"ENV-{stamp}-{suffix}"
+
+
+@dataclass(frozen=True)
+class MessageEnvelope:
+    """Canonical routing wrapper around a NEWS/SIGNAL/EXCHANGE_RESPONSE payload.
+
+    The envelope is the unit of record for routing and de-duplication.
+    `idempotency_key` is deterministic over the payload, so the same
+    structured block received twice (Telegram restart, dashboard re-submit)
+    collapses to the same key and can be short-circuited by consumers.
+    """
+
+    envelope_id: str
+    received_ts: str
+    source_channel: SourceChannel
+    payload_type: MessageType
+    payload: dict[str, Any]
+    idempotency_key: str
+    chat_id: int | None = None
+    operator_user_id: str | None = None
+    trace_id: str | None = None
+
+    @classmethod
+    def wrap(
+        cls,
+        payload: MessagePayload,
+        *,
+        source_channel: SourceChannel | str,
+        chat_id: int | None = None,
+        operator_user_id: str | None = None,
+        trace_id: str | None = None,
+        received_ts: str | None = None,
+    ) -> MessageEnvelope:
+        """Wrap a 3-type payload into a canonical envelope.
+
+        `received_ts` defaults to now(UTC). `idempotency_key` is derived
+        from the payload's canonical dict (sort_keys) — deterministic.
+        """
+        if isinstance(source_channel, str):
+            try:
+                source_channel = SourceChannel(source_channel)
+            except ValueError:
+                source_channel = SourceChannel.UNKNOWN
+
+        ts = received_ts or datetime.now(UTC).isoformat()
+        payload_dict = payload.to_dict()
+        idem = _canonical_idempotency_key(payload_dict)
+        return cls(
+            envelope_id=_generate_envelope_id(ts),
+            received_ts=ts,
+            source_channel=source_channel,
+            payload_type=payload.message_type,
+            payload=payload_dict,
+            idempotency_key=idem,
+            chat_id=chat_id,
+            operator_user_id=operator_user_id,
+            trace_id=trace_id,
+        )
+
+    def to_dict(self) -> dict[str, object]:
+        """Canonical JSON representation for envelope audit logs."""
+        d: dict[str, object] = {
+            "envelope_id": self.envelope_id,
+            "received_ts": self.received_ts,
+            "source_channel": self.source_channel.value,
+            "payload_type": self.payload_type.value,
+            "idempotency_key": self.idempotency_key,
+            "payload": dict(self.payload),
+        }
+        if self.chat_id is not None:
+            d["chat_id"] = self.chat_id
+        if self.operator_user_id:
+            d["operator_user_id"] = self.operator_user_id
+        if self.trace_id:
+            d["trace_id"] = self.trace_id
         return d

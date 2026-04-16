@@ -4,17 +4,21 @@ from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import RedirectResponse
+from fastapi.staticfiles import StaticFiles
 
 from app.analysis.factory import create_provider
 from app.analysis.keywords.engine import KeywordEngine
 from app.api.middleware.request_governance import RequestGovernanceMiddleware
 from app.api.routers import (
+    agents,
     alerts,
     dashboard,
     health,
     operator,
     query,
     research,
+    signals,
     sources,
     tradingview,
 )
@@ -104,6 +108,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         signal_forward_to_exchange_enabled=op.signal_forward_to_exchange_enabled,
         signal_exchange_sent_log_path=op.signal_exchange_sent_log,
         signal_exchange_dead_letter_log_path=op.signal_exchange_dead_letter_log,
+        dashboard_url=op.telegram_dashboard_url,
     )
     poller = TelegramPoller(
         bot,
@@ -171,14 +176,37 @@ def create_app() -> FastAPI:
     )
     setup_auth(app, settings.api_key, settings.env)  # attach bearer-token middleware before startup
 
+    @app.get("/", include_in_schema=False)
+    async def _root_redirect() -> RedirectResponse:
+        return RedirectResponse(url="/dashboard/", status_code=307)
+
     app.include_router(health.router)
     app.include_router(sources.router)
     app.include_router(query.router)
     app.include_router(alerts.router)
     app.include_router(research.router, prefix="/research", tags=["research"])
     app.include_router(operator.router)
-    app.include_router(dashboard.router)
+    app.include_router(agents.router)
+    app.include_router(signals.router)
     app.include_router(tradingview.router)
+    app.include_router(dashboard.router)
+
+    # React-SPA (Vite-Build) unter /dashboard. JSON-Route /dashboard/api/quality
+    # wurde oben über include_router zuerst registriert und hat dadurch Vorrang
+    # vor diesem Catch-all-Mount.
+    _spa_dir = Path("web/dist")
+    if _spa_dir.is_dir():
+        app.mount(
+            "/dashboard",
+            StaticFiles(directory=str(_spa_dir), html=True),
+            name="dashboard_spa",
+        )
+    else:
+        _logger.warning(
+            "dashboard_spa_build_missing",
+            path=str(_spa_dir),
+            hint="Run `npm run build` in web/ to produce the SPA bundle.",
+        )
 
     return app
 

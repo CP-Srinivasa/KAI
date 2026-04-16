@@ -140,35 +140,197 @@ async def test_unknown_command(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_menu_command_routes_to_main_menu(tmp_path, monkeypatch):
+async def test_menu_command_docks_keyboard_and_shows_inline_main(tmp_path, monkeypatch):
     bot = _bot(tmp_path)
-    calls: list[tuple[int, str, int | None]] = []
+    sent: list[str] = []
+    inline_calls: list[tuple[str, int | None]] = []
 
-    async def fake_send_menu(chat_id: int, menu_id: str, *, message_id: int | None = None) -> bool:
-        calls.append((chat_id, menu_id, message_id))
+    async def fake_send(_chat_id: int, text: str) -> bool:
+        sent.append(text)
         return True
 
+    async def fake_send_menu(chat_id: int, menu_id: str, *, message_id: int | None = None) -> bool:
+        inline_calls.append((menu_id, message_id))
+        return True
+
+    monkeypatch.setattr(bot, "_send", fake_send)
     monkeypatch.setattr(bot, "_send_menu", fake_send_menu)
 
     await bot.process_update({"message": {"chat": {"id": 12345}, "text": "/menu"}})
 
-    assert calls == [(12345, "main", None)]
+    assert len(sent) == 1
+    assert "Navigation ready" in sent[0]
+    assert inline_calls == [("main", None)]
 
 
 @pytest.mark.asyncio
-async def test_menu_alias_menue_routes_to_main_menu(tmp_path, monkeypatch):
+async def test_send_attaches_persistent_reply_keyboard(tmp_path, monkeypatch):
     bot = _bot(tmp_path)
-    calls: list[tuple[int, str, int | None]] = []
+    bot._dry_run = False
+    captured: list[dict[str, Any]] = []
 
-    async def fake_send_menu(chat_id: int, menu_id: str, *, message_id: int | None = None) -> bool:
-        calls.append((chat_id, menu_id, message_id))
+    async def fake_capture(url: str, payload: dict[str, Any]) -> dict[str, Any]:
+        captured.append(payload)
+        return {"ok": True, "result": {"message_id": 42}}
+
+    monkeypatch.setattr(bot, "_send_payload_capture_response", fake_capture)
+
+    assert await bot._send(12345, "hello") is True
+    assert len(captured) == 1
+    markup = captured[0]["reply_markup"]
+    assert markup["is_persistent"] is True
+    assert markup["resize_keyboard"] is True
+    flat = [btn["text"] for row in markup["keyboard"] for btn in row]
+    assert {
+        "Status", "Help", "Portfolio", "Signals",
+        "Trades", "Alerts", "Quality", "Daily",
+    }.issubset(set(flat))
+
+
+@pytest.mark.asyncio
+async def test_ephemeral_menu_outputs_ringbuffer_deletes_oldest(tmp_path, monkeypatch):
+    bot = _bot(tmp_path)
+    bot._dry_run = False
+    ids = iter([101, 102, 103, 104, 105])
+
+    async def fake_capture(url: str, payload: dict[str, Any]) -> dict[str, Any]:
+        return {"ok": True, "result": {"message_id": next(ids)}}
+
+    deleted: list[tuple[int, int]] = []
+
+    async def fake_delete(chat_id: int, message_id: int) -> bool:
+        deleted.append((chat_id, message_id))
         return True
 
+    monkeypatch.setattr(bot, "_send_payload_capture_response", fake_capture)
+    monkeypatch.setattr(bot, "_delete_message", fake_delete)
+
+    bot._track_ephemeral_reply = True
+    for i in range(4):
+        await bot._send(12345, f"out {i}")
+
+    assert deleted == [(12345, 101)]
+    assert list(bot._menu_history[12345]) == [102, 103, 104]
+
+
+@pytest.mark.asyncio
+async def test_permanent_messages_are_not_tracked(tmp_path, monkeypatch):
+    bot = _bot(tmp_path)
+    bot._dry_run = False
+
+    async def fake_capture(url: str, payload: dict[str, Any]) -> dict[str, Any]:
+        return {"ok": True, "result": {"message_id": 777}}
+
+    async def fake_delete(chat_id: int, message_id: int) -> bool:
+        raise AssertionError("delete must not be called for permanent messages")
+
+    monkeypatch.setattr(bot, "_send_payload_capture_response", fake_capture)
+    monkeypatch.setattr(bot, "_delete_message", fake_delete)
+
+    bot._track_ephemeral_reply = False
+    for _ in range(10):
+        await bot._send(12345, "permanent alert")
+
+    assert 12345 not in bot._menu_history
+
+
+@pytest.mark.asyncio
+async def test_submenu_callback_posts_new_message_not_edit(tmp_path, monkeypatch):
+    bot = _bot(tmp_path)
+    calls: list[tuple[str, int | None]] = []
+
+    async def fake_send_menu(chat_id: int, menu_id: str, *, message_id: int | None = None) -> bool:
+        calls.append((menu_id, message_id))
+        return True
+
+    async def fake_answer(_query_id: str, *, text: str = "") -> bool:
+        return True
+
+    monkeypatch.setattr(bot, "_send_menu", fake_send_menu)
+    monkeypatch.setattr(bot, "_answer_callback_query", fake_answer)
+
+    update = {
+        "callback_query": {
+            "id": "q1",
+            "data": "menu:portfolio",
+            "from": {"id": 12345},
+            "message": {"message_id": 5000},
+        }
+    }
+    await bot.process_update(update)
+
+    assert calls == [("portfolio", None)]
+
+
+@pytest.mark.asyncio
+async def test_bootstrap_bot_menu_uses_web_app_when_dashboard_url_set(tmp_path, monkeypatch):
+    bot = _bot(tmp_path, dashboard_url="https://dash.example.com/")
+    bot._dry_run = False
+    captured: list[tuple[str, dict[str, Any]]] = []
+
+    async def fake_retry(url: str, payload: dict[str, Any]) -> bool:
+        captured.append((url, payload))
+        return True
+
+    monkeypatch.setattr(bot, "_send_payload_with_retry", fake_retry)
+
+    assert await bot.bootstrap_bot_menu() is True
+    button_payload = next(p for u, p in captured if u.endswith("setChatMenuButton"))
+    assert button_payload["menu_button"]["type"] == "web_app"
+    assert button_payload["menu_button"]["text"] == "KAI"
+    assert button_payload["menu_button"]["web_app"]["url"] == "https://dash.example.com/"
+
+
+@pytest.mark.asyncio
+async def test_bootstrap_bot_menu_falls_back_to_commands_without_url(tmp_path, monkeypatch):
+    bot = _bot(tmp_path)
+    bot._dry_run = False
+    captured: list[tuple[str, dict[str, Any]]] = []
+
+    async def fake_retry(url: str, payload: dict[str, Any]) -> bool:
+        captured.append((url, payload))
+        return True
+
+    monkeypatch.setattr(bot, "_send_payload_with_retry", fake_retry)
+
+    assert await bot.bootstrap_bot_menu() is True
+    button_payload = next(p for u, p in captured if u.endswith("setChatMenuButton"))
+    assert button_payload["menu_button"]["type"] == "commands"
+
+
+@pytest.mark.asyncio
+async def test_label_tap_routes_to_command(tmp_path, monkeypatch):
+    bot = _bot(tmp_path)
+    dispatched: list[tuple[int, str, str]] = []
+
+    async def fake_dispatch(chat_id: int, command: str, *, args: str = "") -> None:
+        dispatched.append((chat_id, command, args))
+
+    monkeypatch.setattr(bot, "_dispatch", fake_dispatch)
+
+    await bot.process_update({"message": {"chat": {"id": 12345}, "text": "Portfolio"}})
+
+    assert dispatched == [(12345, "positions", "")]
+
+
+@pytest.mark.asyncio
+async def test_menu_alias_menue_also_shows_inline_main(tmp_path, monkeypatch):
+    bot = _bot(tmp_path)
+    inline_calls: list[tuple[str, int | None]] = []
+
+    async def fake_send(_chat_id: int, text: str) -> bool:
+        return True
+
+    async def fake_send_menu(chat_id: int, menu_id: str, *, message_id: int | None = None) -> bool:
+        inline_calls.append((menu_id, message_id))
+        return True
+
+    monkeypatch.setattr(bot, "_send", fake_send)
     monkeypatch.setattr(bot, "_send_menu", fake_send_menu)
 
     await bot.process_update({"message": {"chat": {"id": 12345}, "text": "/menue"}})
 
-    assert calls == [(12345, "main", None)]
+    assert inline_calls == [("main", None)]
 
 
 @pytest.mark.asyncio
@@ -192,7 +354,7 @@ async def test_menu_reload_command_clears_cache_and_confirms(tmp_path, monkeypat
 
     assert clear_calls == 1
     assert len(sent_messages) == 1
-    assert "Menue neu geladen" in sent_messages[0]
+    assert "Menu reloaded" in sent_messages[0]
 
 
 @pytest.mark.asyncio
@@ -245,9 +407,9 @@ async def test_menu_validate_command_reports_status(tmp_path, monkeypatch):
     await bot.process_update({"message": {"chat": {"id": 12345}, "text": "/menu_validate"}})
 
     assert len(sent_messages) == 1
-    assert "Menue-Validierung" in sent_messages[0]
+    assert "Menu Validation" in sent_messages[0]
     assert "Status: `OK`" in sent_messages[0]
-    assert "Menues: `5`" in sent_messages[0]
+    assert "Menus: `5`" in sent_messages[0]
 
 
 @pytest.mark.asyncio
@@ -284,7 +446,9 @@ async def test_menu_validate_alias_menue_validate_routes_to_validator(tmp_path, 
 
 
 @pytest.mark.asyncio
-async def test_callback_menu_navigation_edits_existing_menu(tmp_path, monkeypatch):
+async def test_callback_menu_navigation_posts_new_message(tmp_path, monkeypatch):
+    """Submenu selections append a new card instead of editing in place so
+    the active selection always sits at the bottom of the chat scroll."""
     bot = _bot(tmp_path)
     menu_calls: list[tuple[int, str, int | None]] = []
     ack_calls: list[tuple[str, str | None]] = []
@@ -313,7 +477,7 @@ async def test_callback_menu_navigation_edits_existing_menu(tmp_path, monkeypatc
         }
     )
 
-    assert menu_calls == [(12345, "signals", 77)]
+    assert menu_calls == [(12345, "signals", None)]
     assert ack_calls == [("cbq-menu-1", None)]
 
 
@@ -499,7 +663,7 @@ def test_telegram_command_inventory_references_registered_cli_trading_commands()
             [
                 "*KAI Status*",
                 "Readiness: warning",
-                "Zyklen heute: 2",
+                "Cycles today: 2",
             ],
         ),
         (
@@ -515,7 +679,7 @@ def test_telegram_command_inventory_references_registered_cli_trading_commands()
             },
             [
                 "*Positions*",
-                "Anzahl: 2",
+                "Total: 2",
                 "BTC/USDT",
             ],
         ),
@@ -533,7 +697,7 @@ def test_telegram_command_inventory_references_registered_cli_trading_commands()
             },
             [
                 "*Exposure*",
-                "Brutto: 12000.00 USD",
+                "Gross: 12000.00 USD",
                 "Stale: 1",
             ],
         ),
@@ -553,8 +717,8 @@ def test_telegram_command_inventory_references_registered_cli_trading_commands()
                 "write_back_allowed": False,
             },
             [
-                "*Signale*",
-                "Anzahl: 1",
+                "*Signals*",
+                "Count: 1",
                 "BTC",
                 "bullish",
             ],
@@ -573,9 +737,9 @@ def test_telegram_command_inventory_references_registered_cli_trading_commands()
                 "write_back_allowed": False,
             },
             [
-                "*Tagesbericht*",
+                "*Daily Report*",
                 "Readiness: warning",
-                "Offene Vorfaelle: 1",
+                "Open incidents: 1",
             ],
         ),
     ],
@@ -663,7 +827,7 @@ async def test_alert_status_command_returns_read_only_payload(tmp_path, monkeypa
 
     assert len(sent_messages) == 1
     assert "Alert Status" in sent_messages[0]
-    assert "Gesamt: 3" in sent_messages[0]
+    assert "Total: 3" in sent_messages[0]
 
 
 @pytest.mark.asyncio
@@ -722,9 +886,9 @@ async def test_signal_status_command_returns_read_only_payload(tmp_path, monkeyp
     await bot.process_update({"message": {"chat": {"id": 12345}, "text": "/signal_status"}})
 
     assert len(sent_messages) == 1
-    assert "Signal Status" in sent_messages[0]
-    assert "Handoff: 7 gesamt" in sent_messages[0]
-    assert "Outbox: 3 wartend" in sent_messages[0]
+    assert "Signal Pipeline" in sent_messages[0]
+    assert "Handoff: 7 total" in sent_messages[0]
+    assert "Outbox: 3 queued" in sent_messages[0]
 
 
 @pytest.mark.asyncio
@@ -1346,7 +1510,7 @@ async def test_structured_exchange_response_is_displayed_without_text_processor(
     await bot.process_update(update)
 
     assert len(sent) == 1
-    assert "Ausgef\u00fchrt" in sent[0]
+    assert "*Executed*" in sent[0]
     assert "BTC/USDT" in sent[0]
 
 
@@ -1522,7 +1686,7 @@ async def test_freetext_signal_handoff_pipeline_with_optional_routes(tmp_path, m
 
     # Cycle returns no_signal → no exchange response → failure confirmation
     assert len(sent) == 1
-    assert "Nicht Ausgef\u00fchrt" in sent[0]
+    assert "*Not Executed*" in sent[0]
 
     handoff_rows = [
         json.loads(line)
@@ -1585,7 +1749,7 @@ async def test_freetext_signal_with_invalid_asset_is_rejected(tmp_path, monkeypa
     await bot.process_update(update)
 
     assert len(sent) == 1
-    assert "konnte nicht normalisiert" in sent[0]
+    assert "could not be normalized" in sent[0]
     assert not handoff_log.exists()
 
 
@@ -1609,7 +1773,7 @@ async def test_freetext_command_dispatches_to_handler(tmp_path, monkeypatch):
 
     assert proc.calls == ["Zeig mir die Hilfe"]
     assert len(sent) == 1
-    assert "KAI Operator Commands" in sent[0]
+    assert "KAI Help & Support" in sent[0]
 
 
 @pytest.mark.asyncio
@@ -1742,9 +1906,14 @@ async def test_voice_signal_handoff_marks_source_voice(tmp_path, monkeypatch):
     }
     await bot.process_update(update)
 
-    # Voice: transcript message only, no pipeline report (auto_run disabled)
-    assert len(sent) == 1
-    assert "Transkript:" in sent[0]
+    # Voice-Confirm-Gate: transcript + draft preview, NO handoff yet
+    assert any("Transkript:" in msg for msg in sent)
+    assert any("Voice Signal — Draft" in msg for msg in sent)
+    assert 12345 in bot._pending_signal_draft
+    assert not handoff_log.exists()
+
+    # Operator bestätigt → handoff läuft mit source=voice
+    await bot.process_update({"message": {"chat": {"id": 12345}, "text": "/ok"}})
 
     handoff_rows = [
         json.loads(line)
@@ -1913,7 +2082,7 @@ async def test_quality_command_handles_missing_report(
         await bot._cmd_quality(12345)
 
     assert len(sent) == 1
-    assert "Kein Hold-Report" in sent[0]
+    assert "No hold report available" in sent[0]
 
 
 # ---------------------------------------------------------------------------
@@ -2054,3 +2223,275 @@ async def test_annotation_callback_rejects_invalid_outcome(
 
     assert len(answers) == 1
     assert "Ungueltig" in answers[0]
+
+
+# ---------------------------------------------------------------------------
+# v2 envelope + idempotency gate
+# ---------------------------------------------------------------------------
+
+_SIGNAL_TEXT = (
+    "[SIGNAL]\n"
+    "Signal ID: SIG-20260415-BTCUSDT-777\n"
+    "Source: Premium Signals\n"
+    "Exchange Scope: binance_futures, bybit\n"
+    "Symbol: BTC/USDT\n"
+    "Side: BUY\n"
+    "Direction: LONG\n"
+    "Entry Rule: BELOW 65000\n"
+    "Targets: 70000\n"
+    "Stop Loss: 62000\n"
+    "Leverage: 10x\n"
+    "Status: NEW\n"
+    "Timestamp: 2026-04-15T10:00:00Z\n"
+)
+
+
+def _envelope_rows(tmp_path):
+    envelope = tmp_path / "message_envelope.jsonl"
+    if not envelope.exists():
+        return []
+    return [
+        json.loads(line)
+        for line in envelope.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+
+
+@pytest.mark.asyncio
+async def test_accepted_signal_audit_has_envelope_id_and_idempotency_key(
+    tmp_path, monkeypatch,
+):
+    bot = _bot(tmp_path)
+
+    async def fake_handoff(**_kwargs):
+        return None
+
+    monkeypatch.setattr(bot, "_handle_signal_input", fake_handoff)
+    monkeypatch.setattr(bot, "_send", _AsyncNoop())
+
+    await bot.process_update({"message": {"chat": {"id": 12345}, "text": _SIGNAL_TEXT}})
+
+    rows = _envelope_rows(tmp_path)
+    accepted = [
+        r for r in rows
+        if r.get("stage") == "accepted" and r.get("message_type") == "signal"
+    ]
+    assert len(accepted) == 1
+    assert accepted[0]["envelope_id"].startswith("ENV-")
+    assert len(accepted[0]["idempotency_key"]) == 32
+
+
+@pytest.mark.asyncio
+async def test_duplicate_signal_is_blocked_by_idempotency_gate(tmp_path, monkeypatch):
+    bot = _bot(tmp_path)
+    handoff_calls: list[dict] = []
+
+    async def fake_handoff(**kwargs):
+        handoff_calls.append(dict(kwargs))
+
+    monkeypatch.setattr(bot, "_handle_signal_input", fake_handoff)
+    monkeypatch.setattr(bot, "_send", _AsyncNoop())
+
+    update = {"message": {"chat": {"id": 12345}, "text": _SIGNAL_TEXT}}
+    await bot.process_update(update)
+    await bot.process_update(update)
+
+    assert len(handoff_calls) == 1  # second call blocked
+
+    rows = _envelope_rows(tmp_path)
+    accepted = [r for r in rows if r.get("stage") == "accepted"]
+    duplicates = [r for r in rows if r.get("stage") == "idempotency_gate"]
+    assert len(accepted) == 1
+    assert len(duplicates) == 1
+    assert duplicates[0]["status"] == "duplicate"
+    assert accepted[0]["idempotency_key"] == duplicates[0]["idempotency_key"]
+
+
+class _AsyncNoop:
+    async def __call__(self, *_args, **_kwargs):
+        return True
+
+
+# --------------------------------------------------------------------------- #
+# P3: Voice-Confirm-Gate                                                      #
+# --------------------------------------------------------------------------- #
+
+_VOICE_SIGNAL_INTENT = IntentResult(
+    intent="signal",
+    response="Signal erfasst: BTC bullish.",
+    signal={"asset": "BTC", "direction": "bullish", "reasoning": "Breakout ueber 65k."},
+)
+
+
+def _bot_with_voice_processor(tmp_path) -> TelegramOperatorBot:
+    bot = _bot(tmp_path)
+    bot._text_processor = _FakeTextProcessor(_VOICE_SIGNAL_INTENT)
+    return bot
+
+
+@pytest.mark.asyncio
+async def test_voice_signal_is_stashed_as_draft_and_not_executed(
+    tmp_path, monkeypatch,
+):
+    bot = _bot_with_voice_processor(tmp_path)
+    handoff_calls: list[dict] = []
+    sent: list[str] = []
+
+    async def fake_handoff(**kwargs):
+        handoff_calls.append(dict(kwargs))
+
+    async def fake_send(_cid: int, text: str) -> bool:
+        sent.append(text)
+        return True
+
+    monkeypatch.setattr(bot, "_handle_signal_input", fake_handoff)
+    monkeypatch.setattr(bot, "_send", fake_send)
+
+    await bot._handle_text(12345, "BTC bullish breakout", source="voice")
+
+    assert handoff_calls == []
+    assert 12345 in bot._pending_signal_draft
+    draft = bot._pending_signal_draft[12345]
+    assert draft["symbol"] == "BTC/USDT"
+    assert draft["direction"] == "bullish"
+    assert any("Voice Signal — Draft" in msg for msg in sent)
+    assert any("/ok" in msg and "/cancel" in msg for msg in sent)
+
+
+@pytest.mark.asyncio
+async def test_text_intent_signal_still_executes_directly(tmp_path, monkeypatch):
+    """Voice-gate must only gate voice source — typed text signals still execute."""
+    bot = _bot_with_voice_processor(tmp_path)
+    handoff_calls: list[dict] = []
+
+    async def fake_handoff(**kwargs):
+        handoff_calls.append(dict(kwargs))
+
+    monkeypatch.setattr(bot, "_handle_signal_input", fake_handoff)
+    monkeypatch.setattr(bot, "_send", _AsyncNoop())
+
+    await bot._handle_text(12345, "BTC bullish", source="text")
+
+    assert len(handoff_calls) == 1
+    assert 12345 not in bot._pending_signal_draft
+
+
+@pytest.mark.asyncio
+async def test_ok_confirms_pending_voice_draft_and_triggers_handoff(
+    tmp_path, monkeypatch,
+):
+    bot = _bot_with_voice_processor(tmp_path)
+    handoff_calls: list[dict] = []
+
+    async def fake_handoff(**kwargs):
+        handoff_calls.append(dict(kwargs))
+
+    monkeypatch.setattr(bot, "_handle_signal_input", fake_handoff)
+    monkeypatch.setattr(bot, "_send", _AsyncNoop())
+
+    await bot._handle_text(12345, "BTC bullish breakout", source="voice")
+    assert 12345 in bot._pending_signal_draft
+
+    await bot.process_update({"message": {"chat": {"id": 12345}, "text": "/ok"}})
+
+    assert len(handoff_calls) == 1
+    assert handoff_calls[0]["source"] == "voice"
+    assert handoff_calls[0]["signal"]["asset"] == "BTC"
+    assert 12345 not in bot._pending_signal_draft
+
+    rows = _envelope_rows(tmp_path)
+    stages = [
+        r.get("status") for r in rows
+        if r.get("stage") == "voice_confirm_gate"
+    ]
+    assert "draft_pending" in stages
+    assert "confirmed" in stages
+
+
+@pytest.mark.asyncio
+async def test_cancel_drops_pending_voice_draft_without_handoff(
+    tmp_path, monkeypatch,
+):
+    bot = _bot_with_voice_processor(tmp_path)
+    handoff_calls: list[dict] = []
+    sent: list[str] = []
+
+    async def fake_handoff(**kwargs):
+        handoff_calls.append(dict(kwargs))
+
+    async def fake_send(_cid: int, text: str) -> bool:
+        sent.append(text)
+        return True
+
+    monkeypatch.setattr(bot, "_handle_signal_input", fake_handoff)
+    monkeypatch.setattr(bot, "_send", fake_send)
+
+    await bot._handle_text(12345, "BTC bullish breakout", source="voice")
+    await bot.process_update({"message": {"chat": {"id": 12345}, "text": "/cancel"}})
+
+    assert handoff_calls == []
+    assert 12345 not in bot._pending_signal_draft
+    assert any("discarded" in msg.lower() for msg in sent)
+
+    rows = _envelope_rows(tmp_path)
+    cancelled = [
+        r for r in rows
+        if r.get("stage") == "voice_confirm_gate" and r.get("status") == "cancelled"
+    ]
+    assert len(cancelled) == 1
+
+
+@pytest.mark.asyncio
+async def test_ok_without_pending_draft_responds_gracefully(tmp_path, monkeypatch):
+    bot = _bot(tmp_path)
+    handoff_calls: list[dict] = []
+    sent: list[str] = []
+
+    async def fake_handoff(**kwargs):
+        handoff_calls.append(dict(kwargs))
+
+    async def fake_send(_cid: int, text: str) -> bool:
+        sent.append(text)
+        return True
+
+    monkeypatch.setattr(bot, "_handle_signal_input", fake_handoff)
+    monkeypatch.setattr(bot, "_send", fake_send)
+
+    await bot.process_update({"message": {"chat": {"id": 12345}, "text": "/ok"}})
+
+    assert handoff_calls == []
+    assert any("No pending voice signal" in msg for msg in sent)
+
+
+@pytest.mark.asyncio
+async def test_expired_voice_draft_is_pruned_on_ok(tmp_path, monkeypatch):
+    bot = _bot_with_voice_processor(tmp_path)
+    handoff_calls: list[dict] = []
+    sent: list[str] = []
+
+    async def fake_handoff(**kwargs):
+        handoff_calls.append(dict(kwargs))
+
+    async def fake_send(_cid: int, text: str) -> bool:
+        sent.append(text)
+        return True
+
+    monkeypatch.setattr(bot, "_handle_signal_input", fake_handoff)
+    monkeypatch.setattr(bot, "_send", fake_send)
+
+    await bot._handle_text(12345, "BTC bullish breakout", source="voice")
+    # Force expiry by backdating the created timestamp
+    bot._pending_signal_draft[12345]["created_ts_epoch"] = 0.0
+
+    await bot.process_update({"message": {"chat": {"id": 12345}, "text": "/ok"}})
+
+    assert handoff_calls == []
+    assert 12345 not in bot._pending_signal_draft
+    assert any("No pending voice signal" in msg for msg in sent)
+
+    rows = _envelope_rows(tmp_path)
+    expired = [
+        r for r in rows
+        if r.get("stage") == "voice_confirm_gate" and r.get("status") == "expired"
+    ]
+    assert len(expired) == 1

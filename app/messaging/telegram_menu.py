@@ -37,69 +37,246 @@ def _row(*buttons: dict[str, str]) -> list[dict[str, str]]:
     return list(buttons)
 
 
+def _nav_row(parent: str | None = "main") -> list[dict[str, str]]:
+    """Standardized footer: optional Back + always Main Menu.
+
+    Pass parent=None on `main` menu itself (no nav row needed there).
+    """
+    if parent is None or parent == "main":
+        return _row(_btn("Main Menu", "menu:main"))
+    return _row(
+        _btn("Back", f"menu:{parent}"),
+        _btn("Main Menu", "menu:main"),
+    )
+
+
 DEFAULT_MENU_MAIN: dict[str, Any] = {
     "text": (
-        "*KAI Trading Intelligence*\n"
-        "----------------------------\n"
-        "Waehle eine Kategorie."
+        "*KAI Control Center*\n"
+        "\n"
+        "Operate signals, portfolio, automation and agents from one place."
     ),
     "keyboard": [
-        _row(_btn("System-Status", "cmd:status")),
+        _row(_btn("System Status", "cmd:status")),
         _row(
-            _btn("Trading", "menu:trading"),
-            _btn("Signale", "menu:signals"),
+            _btn("Portfolio", "menu:portfolio"),
+            _btn("Signals", "menu:signals"),
         ),
         _row(
-            _btn("Alerts", "cmd:alertstatus"),
-            _btn("Tagesbericht", "cmd:tagesbericht"),
+            _btn("Trades", "menu:trading"),
+            _btn("Alerts", "menu:alerts"),
         ),
-        _row(_btn("Signal senden", "menu:signal_send")),
         _row(
-            _btn("Steuerung", "menu:control"),
-            _btn("Hilfe", "cmd:hilfe"),
+            _btn("Auto Trading", "menu:autotrading"),
+            _btn("Agents", "menu:agents"),
+        ),
+        _row(
+            _btn("Exchanges", "menu:exchanges"),
+            _btn("Insights", "menu:insights"),
+        ),
+        _row(
+            _btn("Operations", "menu:ops"),
+            _btn("Help", "cmd:hilfe"),
         ),
     ],
 }
 
 DEFAULT_MENU_TRADING: dict[str, Any] = {
     "text": (
-        "*Trading*\n"
-        "----------------------------\n"
-        "Positionen, Exposure und Portfolio."
+        "*Trades*\n"
+        "\n"
+        "Live positions and exposure across the paper portfolio."
     ),
     "keyboard": [
         _row(
-            _btn("Positionen", "cmd:positions"),
+            _btn("Open Positions", "cmd:positions"),
             _btn("Exposure", "cmd:exposure"),
         ),
-        _row(_btn("Hauptmenue", "menu:main")),
+        _nav_row("main"),
+    ],
+}
+
+DEFAULT_MENU_PORTFOLIO: dict[str, Any] = {
+    "text": (
+        "*Portfolio*\n"
+        "\n"
+        "Paper portfolio snapshot with realized and unrealized PnL."
+    ),
+    "keyboard": [
+        _row(
+            _btn("Open Positions", "cmd:positions"),
+            _btn("Exposure", "cmd:exposure"),
+        ),
+        _row(_btn("Daily Report", "cmd:tagesbericht")),
+        _nav_row("main"),
     ],
 }
 
 DEFAULT_MENU_SIGNALS: dict[str, Any] = {
     "text": (
-        "*Signale*\n"
-        "----------------------------\n"
-        "Aktive Signale und Pipeline-Status."
+        "*Signals*\n"
+        "\n"
+        "Review active signals or submit a new one through the paste flow."
     ),
     "keyboard": [
         _row(
-            _btn("Aktive Signale", "cmd:signals"),
-            _btn("Signal-Pipeline", "cmd:signalstatus"),
+            _btn("Active Signals", "cmd:signals"),
+            _btn("Pipeline Status", "cmd:signalstatus"),
         ),
-        _row(_btn("Hauptmenue", "menu:main")),
+        _row(_btn("Submit New Signal", "menu:signal_send")),
+        _nav_row("main"),
+    ],
+}
+
+DEFAULT_MENU_ALERTS: dict[str, Any] = {
+    "text": (
+        "*Alerts*\n"
+        "\n"
+        "Delivery status, precision metrics and the daily summary."
+    ),
+    "keyboard": [
+        _row(
+            _btn("Alert Status", "cmd:alertstatus"),
+            _btn("Quality Metrics", "cmd:qualitaet"),
+        ),
+        _row(_btn("Daily Report", "cmd:tagesbericht")),
+        _nav_row("main"),
+    ],
+}
+
+DEFAULT_MENU_AGENTS: dict[str, Any] = {
+    "text": (
+        "*Agents*\n"
+        "\n"
+        "Supervised assistants for security, health and architecture."
+    ),
+    "keyboard": [
+        _row(_btn("SENTR — Security", "menu:agents_sentr")),
+        _row(_btn("Watchdog — Health", "menu:agents_watchdog")),
+        _row(_btn("Architect — Review", "menu:agents_architect")),
+        _nav_row("main"),
+    ],
+}
+
+DEFAULT_MENU_AGENTS_SENTR: dict[str, Any] = {
+    "text": (
+        "*SENTR — Security*\n"
+        "\n"
+        "Security inspections and incident reports.\n"
+        "Free-form chat: `/sentr <message>`."
+    ),
+    "keyboard": [
+        _row(_btn("Open Chat", "cmd:sentr")),
+        _row(
+            _btn("Run Inspection", "cmd:sentr !inspect"),
+            _btn("Build Report", "cmd:sentr !report"),
+        ),
+        _nav_row("agents"),
+    ],
+}
+
+DEFAULT_MENU_AGENTS_WATCHDOG: dict[str, Any] = {
+    "text": (
+        "*Watchdog — Health*\n"
+        "\n"
+        "Health and drift monitoring.\n"
+        "Free-form chat: `/watchdog <message>`."
+    ),
+    "keyboard": [
+        _row(_btn("Open Chat", "cmd:watchdog")),
+        _row(
+            _btn("Run Health Check", "cmd:watchdog !check"),
+            _btn("Build Report", "cmd:watchdog !report"),
+        ),
+        _nav_row("agents"),
+    ],
+}
+
+DEFAULT_MENU_AGENTS_ARCHITECT: dict[str, Any] = {
+    "text": (
+        "*Architect — Review*\n"
+        "\n"
+        "Architecture review and change proposals.\n"
+        "Free-form chat: `/architect <message>`."
+    ),
+    "keyboard": [
+        _row(_btn("Open Chat", "cmd:architect")),
+        _row(
+            _btn("Run Review", "cmd:architect !review"),
+            _btn("Propose Change", "cmd:architect !propose"),
+        ),
+        _nav_row("agents"),
+    ],
+}
+
+DEFAULT_MENU_EXCHANGES: dict[str, Any] = {
+    "text": (
+        "*Exchanges*\n"
+        "\n"
+        "Exchange adapters and order routing.\n"
+        "Live integration is scheduled for Phase 2 — today this view is read-only."
+    ),
+    "keyboard": [
+        _nav_row("main"),
+    ],
+}
+
+DEFAULT_MENU_AUTOTRADING: dict[str, Any] = {
+    "text": (
+        "*Auto Trading*\n"
+        "\n"
+        "Automated forwarding of accepted signals to exchange routing.\n"
+        "Activation requires the Quality Bar — Precision ≥ 60% or verified real paper fills."
+    ),
+    "keyboard": [
+        _nav_row("main"),
+    ],
+}
+
+DEFAULT_MENU_INSIGHTS: dict[str, Any] = {
+    "text": (
+        "*Insights*\n"
+        "\n"
+        "Feature analytics, precision trend and priority correlation.\n"
+        "Full analytics live in the dashboard — mobile summaries are on the roadmap."
+    ),
+    "keyboard": [
+        _nav_row("main"),
+    ],
+}
+
+DEFAULT_MENU_OPS: dict[str, Any] = {
+    "text": (
+        "*Operations*\n"
+        "\n"
+        "System control, pause and resume, plus maintenance actions."
+    ),
+    "keyboard": [
+        _row(_btn("System Status", "cmd:status")),
+        _row(
+            _btn("Pause", "cmd:pause"),
+            _btn("Resume", "cmd:resume"),
+        ),
+        _row(_btn("Emergency Stop", "cmd:kill")),
+        _row(
+            _btn("Reload Menu", "cmd:menu_reload"),
+            _btn("Validate Menu", "cmd:menu_validate"),
+        ),
+        _nav_row("main"),
     ],
 }
 
 DEFAULT_MENU_SIGNAL_SEND: dict[str, Any] = {
     "text": (
-        "*Signal senden (3-Typen Standard)*\n"
-        "----------------------------\n"
-        "Telegram ist Anzeige, JSON ist Wahrheit.\n"
-        "Bei SIGNAL gilt fail-closed: ohne Pflichtfelder keine Weiterleitung.\n\n"
-        "*SIGNAL (Trade):*\n"
+        "*Submit Signal*\n"
+        "\n"
+        "Paste a structured block below. Telegram renders it, "
+        "the JSON envelope is the source of truth.\n"
+        "SIGNAL entries fail closed — missing required fields are not forwarded.\n"
+        "\n"
+        "*SIGNAL — trade:*\n"
         "`[SIGNAL]`\n"
-        "`Signal ID: SIG-20260325-BTCUSDT-001`\n"
+        "`Signal ID: SIG-20260415-BTCUSDT-001`\n"
         "`Source: Premium Signals`\n"
         "`Exchange Scope: binance_futures, bybit`\n"
         "`Market Type: Futures`\n"
@@ -111,13 +288,15 @@ DEFAULT_MENU_SIGNAL_SEND: dict[str, Any] = {
         "`Stop Loss: 62000`\n"
         "`Leverage: 10x`\n"
         "`Status: NEW`\n"
-        "`Timestamp: 2026-03-25T18:31:00Z`\n\n"
-        "*NEWS (Info only):*\n"
+        "`Timestamp: 2026-04-15T10:00:00Z`\n"
+        "\n"
+        "*NEWS — information:*\n"
         "`[NEWS]`\n"
-        "`Source: Quelle`\n"
-        "`Title: Titel`\n"
-        "`Priority: High`\n\n"
-        "*EXCHANGE_RESPONSE (Status):*\n"
+        "`Source: Outlet`\n"
+        "`Title: Headline`\n"
+        "`Priority: High`\n"
+        "\n"
+        "*EXCHANGE_RESPONSE — status:*\n"
         "`[EXCHANGE_RESPONSE]`\n"
         "`Related Signal ID: SIG-...`\n"
         "`Exchange: bybit`\n"
@@ -125,32 +304,42 @@ DEFAULT_MENU_SIGNAL_SEND: dict[str, Any] = {
         "`Status: SUCCESS`"
     ),
     "keyboard": [
-        _row(_btn("Hauptmenue", "menu:main")),
+        _nav_row("signals"),
     ],
 }
 
 DEFAULT_MENU_CONTROL: dict[str, Any] = {
     "text": (
-        "*Steuerung*\n"
-        "----------------------------\n"
-        "System-Kontrolle und Notfall-Aktionen."
+        "*Controls*\n"
+        "\n"
+        "System control and emergency actions."
     ),
     "keyboard": [
         _row(
             _btn("Pause", "cmd:pause"),
             _btn("Resume", "cmd:resume"),
         ),
-        _row(_btn("Notfall-Stopp", "cmd:kill")),
-        _row(_btn("Menue neu laden", "cmd:menu_reload")),
-        _row(_btn("Hauptmenue", "menu:main")),
+        _row(_btn("Emergency Stop", "cmd:kill")),
+        _row(_btn("Reload Menu", "cmd:menu_reload")),
+        _nav_row("main"),
     ],
 }
 
 DEFAULT_MENUS: dict[str, dict[str, Any]] = {
     "main": DEFAULT_MENU_MAIN,
     "trading": DEFAULT_MENU_TRADING,
+    "portfolio": DEFAULT_MENU_PORTFOLIO,
     "signals": DEFAULT_MENU_SIGNALS,
     "signal_send": DEFAULT_MENU_SIGNAL_SEND,
+    "alerts": DEFAULT_MENU_ALERTS,
+    "agents": DEFAULT_MENU_AGENTS,
+    "agents_sentr": DEFAULT_MENU_AGENTS_SENTR,
+    "agents_watchdog": DEFAULT_MENU_AGENTS_WATCHDOG,
+    "agents_architect": DEFAULT_MENU_AGENTS_ARCHITECT,
+    "exchanges": DEFAULT_MENU_EXCHANGES,
+    "autotrading": DEFAULT_MENU_AUTOTRADING,
+    "insights": DEFAULT_MENU_INSIGHTS,
+    "ops": DEFAULT_MENU_OPS,
     "control": DEFAULT_MENU_CONTROL,
 }
 

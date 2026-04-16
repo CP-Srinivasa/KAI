@@ -103,7 +103,7 @@ class TestFormatExchangeResponseTelegram:
             exchange_order_id="883726182",
         )
         text = format_exchange_response_telegram(resp)
-        assert "Ausgef\u00fchrt" in text
+        assert "*Executed*" in text
         assert "BTC/USDT" in text
 
     def test_error_response(self) -> None:
@@ -116,7 +116,7 @@ class TestFormatExchangeResponseTelegram:
             message="Symbol not supported",
         )
         text = format_exchange_response_telegram(resp)
-        assert "Nicht Ausgef\u00fchrt" in text
+        assert "*Not Executed*" in text
 
     def test_tp_hit(self) -> None:
         resp = ExchangeResponse(
@@ -126,7 +126,7 @@ class TestFormatExchangeResponseTelegram:
             realized_profit="63%",
         )
         text = format_exchange_response_telegram(resp)
-        assert "Ausgef\u00fchrt" in text
+        assert "*Executed*" in text
 
     def test_internal_format_verbose(self) -> None:
         from app.messaging.message_formatter import format_exchange_response_internal
@@ -142,7 +142,7 @@ class TestFormatExchangeResponseTelegram:
             error_code="INVALID_SYMBOL",
         )
         text = format_exchange_response_internal(resp)
-        assert "RESPONSE" in text
+        assert "Exchange Response" in text
         assert "SIG-001" in text
         assert "Bybit" in text
         assert "74695" in text

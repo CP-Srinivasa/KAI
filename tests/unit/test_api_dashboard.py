@@ -147,37 +147,10 @@ def artifacts_dir(tmp_path: Path) -> Path:
 
 
 # ---------------------------------------------------------------------------
-# GET /dashboard -- HTML
-# ---------------------------------------------------------------------------
-
-
-def test_dashboard_returns_html() -> None:
-    app = _make_app()
-    with TestClient(app) as client:
-        r = client.get("/dashboard")
-    assert r.status_code == 200
-    assert r.headers["content-type"].startswith("text/html")
-    assert "KAI Operator Dashboard" in r.text
-
-
-def test_dashboard_html_contains_quality_bar() -> None:
-    app = _make_app()
-    with TestClient(app) as client:
-        r = client.get("/dashboard")
-    assert "quality-bar" in r.text
-    assert "Precision" in r.text
-    assert "/dashboard/api/quality" in r.text
-
-
-def test_dashboard_html_has_auto_refresh() -> None:
-    app = _make_app()
-    with TestClient(app) as client:
-        r = client.get("/dashboard")
-    assert "setInterval(load, 60000)" in r.text
-
-
-# ---------------------------------------------------------------------------
 # GET /dashboard/api/quality -- JSON API
+#
+# Note: The /dashboard HTML shell is served by the React SPA mount in
+# app/api/main.py (web/dist/). This router only exposes the JSON API.
 # ---------------------------------------------------------------------------
 
 
@@ -234,13 +207,6 @@ def test_quality_api_404_without_hold_report() -> None:
 # ---------------------------------------------------------------------------
 # Auth exemption: /dashboard/* paths pass without bearer
 # ---------------------------------------------------------------------------
-
-
-def test_dashboard_exempt_from_auth() -> None:
-    app = _make_app(api_key="secret-key")
-    with TestClient(app) as client:
-        r = client.get("/dashboard")
-    assert r.status_code == 200
 
 
 def test_dashboard_api_exempt_from_auth(

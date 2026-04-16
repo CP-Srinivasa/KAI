@@ -81,7 +81,7 @@ def test_invalid_json_falls_back_to_defaults(tmp_path, monkeypatch) -> None:
     menu = get_menu("main")
 
     assert menu is not None
-    assert "KAI Trading Intelligence" in menu["text"]
+    assert "KAI Control Center" in menu["text"]
 
 
 def test_partial_json_override_keeps_default_submenus(tmp_path, monkeypatch) -> None:
@@ -108,20 +108,28 @@ def test_partial_json_override_keeps_default_submenus(tmp_path, monkeypatch) -> 
     assert main is not None
     assert main["text"] == "*Main Only Override*"
     assert trading is not None
-    assert "Trading" in trading["text"]
+    assert "Trades" in trading["text"]
 
 
-def test_main_menu_has_signal_send_entry() -> None:
-    """Ensure the main menu has a Signal senden button."""
+def test_signal_send_is_reachable_from_main_via_signals() -> None:
+    """Main menu exposes Signals, and Signals exposes Submit New Signal."""
     clear_menu_cache()
     main = get_menu("main")
-    assert main is not None
-    callbacks = [
+    signals = get_menu("signals")
+    assert main is not None and signals is not None
+
+    main_callbacks = [
         button.get("callback_data", "")
         for row in main["keyboard"]
         for button in row
     ]
-    assert "menu:signal_send" in callbacks
+    signals_callbacks = [
+        button.get("callback_data", "")
+        for row in signals["keyboard"]
+        for button in row
+    ]
+    assert "menu:signals" in main_callbacks
+    assert "menu:signal_send" in signals_callbacks
 
 
 def test_signal_send_menu_shows_structured_format() -> None:

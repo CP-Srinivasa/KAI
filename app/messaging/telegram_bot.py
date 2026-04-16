@@ -18,7 +18,7 @@ import hmac
 import json
 import logging
 import re
-from collections import OrderedDict
+from collections import OrderedDict, deque
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -58,6 +58,35 @@ _WEBHOOK_ALLOWED_UPDATES_DEFAULT = ("message", "edited_message", "callback_query
 _WEBHOOK_MAX_BODY_BYTES_DEFAULT = 64_000
 _WEBHOOK_MAX_SEEN_UPDATE_IDS_DEFAULT = 2_048
 _WEBHOOK_REJECTION_AUDIT_LOG_DEFAULT = "artifacts/telegram_webhook_rejections.jsonl"
+
+# Ephemeral menu commands: their output is tracked per chat in a ring buffer
+# of size 3. The 4th such output deletes the oldest, keeping the chat focused
+# on the most recent operator view. Signal / voice / exchange-response
+# messages stay permanent — they carry audit value.
+_EPHEMERAL_MENU_COMMANDS = frozenset(
+    {
+        "status",
+        "positions",
+        "exposure",
+        "signals",
+        "signalstatus",
+        "signal_status",
+        "alertstatus",
+        "alert_status",
+        "quality",
+        "qualitaet",
+        "daily_summary",
+        "tagesbericht",
+        "help",
+        "hilfe",
+        "menu_reload",
+        "menue_reload",
+        "menu_validate",
+        "menue_validate",
+    }
+)
+_EPHEMERAL_MENU_HISTORY_DEPTH = 3
+_VOICE_DRAFT_TTL_SECONDS = 600  # voice-transkribierte Signale verfallen nach 10 Minuten ohne /ok
 _SIGNAL_AUTO_RUN_ALLOWED_MODES = frozenset({"paper", "shadow"})
 _SIGNAL_DIRECTION_MAP = {
     "bullish": "bullish",
@@ -140,6 +169,7 @@ class TelegramOperatorBot:
         signal_forward_to_exchange_enabled: bool = False,
         signal_exchange_sent_log_path: str = "artifacts/telegram_exchange_sent.jsonl",
         signal_exchange_dead_letter_log_path: str = "artifacts/telegram_exchange_dead_letter.jsonl",
+        dashboard_url: str = "",
     ) -> None:
         normalized_updates = tuple(
             dict.fromkeys(
@@ -160,6 +190,7 @@ class TelegramOperatorBot:
 
         self._token = bot_token
         self._admin_ids = set(admin_chat_ids)
+        self._dashboard_url = (dashboard_url or "").strip()
         self._audit_path = Path(audit_log_path)
         self._audit_path.parent.mkdir(parents=True, exist_ok=True)
         self._signal_handoff_log_path = Path(signal_handoff_log_path)
@@ -190,8 +221,15 @@ class TelegramOperatorBot:
         self._signal_auto_run_provider = signal_auto_run_provider.strip()
         self._signal_forward_to_exchange_enabled = signal_forward_to_exchange_enabled
         self._pending_confirm: dict[int, str] = {}
+        # Voice-Confirm-Gate: voice-transkribierte Signale parken hier, bis /ok oder /cancel
+        self._pending_signal_draft: dict[int, dict[str, Any]] = {}
         self._system_status = "operational"
         self._invalid_command_refs = self._collect_invalid_command_refs()
+        # Ring buffer of ephemeral menu message IDs per chat. On overflow the
+        # oldest ID is deleted via Telegram's deleteMessage API (fail-soft).
+        self._menu_history: dict[int, deque[int]] = {}
+        # Set during _dispatch for ephemeral commands so _send can track IDs.
+        self._track_ephemeral_reply = False
 
     @property
     def is_configured(self) -> bool:
@@ -476,8 +514,19 @@ class TelegramOperatorBot:
                 command = command_parts[0].lower().lstrip("/")
                 args = command_parts[1].strip() if len(command_parts) > 1 else ""
                 await self._dispatch(chat_id, command, args=args)
-            else:
-                await self._handle_text(chat_id, text, source="text")
+                return
+
+            # Persistent reply-keyboard taps arrive as plain text labels.
+            # Route them to the matching command before the LLM text path.
+            from app.messaging.telegram_persistent_keyboard import (
+                match_label_to_command,
+            )
+            mapped = match_label_to_command(text)
+            if mapped is not None:
+                await self._dispatch(chat_id, mapped)
+                return
+
+            await self._handle_text(chat_id, text, source="text")
         except Exception as exc:  # noqa: BLE001
             logger.error("[BOT] Error processing update: %s", exc)
 
@@ -528,6 +577,17 @@ class TelegramOperatorBot:
 
         # Signal input -> structured KAI handoff + optional guarded follow-up.
         if result.intent == "signal" and result.signal:
+            # Voice-Confirm-Gate: voice-transkribierte Signale werden NICHT direkt
+            # ausgeführt, sondern als Draft geparkt. Operator bestätigt mit /ok
+            # oder verwirft mit /cancel. Text-Eingaben laufen weiter direkt durch.
+            if source == "voice":
+                await self._stash_voice_signal_draft(
+                    chat_id=chat_id,
+                    signal=result.signal,
+                    source=source,
+                    response=result.response,
+                )
+                return
             await self._handle_signal_input(
                 chat_id=chat_id,
                 signal=result.signal,
@@ -625,6 +685,7 @@ class TelegramOperatorBot:
                 status="ok",
                 source=source,
                 payload=schema_payload,
+                parsed_payload=parsed,
             )
             await self._send(
                 chat_id,
@@ -671,6 +732,25 @@ class TelegramOperatorBot:
                     "reasoning": parsed.notes or f"structured_signal:{parsed.signal_id}",
                 }
             )
+            idempotency_key = self._compute_idempotency_key(parsed)
+            if idempotency_key and self._is_duplicate_envelope(idempotency_key):
+                self._audit_message_envelope(
+                    chat_id=chat_id,
+                    message_type="signal",
+                    stage="idempotency_gate",
+                    status="duplicate",
+                    source=source,
+                    payload=schema_payload,
+                    parsed_payload=parsed,
+                    metadata={"idempotency_key": idempotency_key},
+                )
+                await self._send(
+                    chat_id,
+                    f"{formatted}\n\n"
+                    "*Signal als Duplikat erkannt - keine erneute Weiterleitung* "
+                    f"(`idem={idempotency_key[:12]}`).",
+                )
+                return
             self._audit_message_envelope(
                 chat_id=chat_id,
                 message_type="signal",
@@ -678,6 +758,7 @@ class TelegramOperatorBot:
                 status="ok",
                 source=source,
                 payload=schema_payload,
+                parsed_payload=parsed,
             )
             await self._handle_signal_input(
                 chat_id=chat_id,
@@ -696,6 +777,7 @@ class TelegramOperatorBot:
                 status="ok",
                 source=source,
                 payload=schema_payload,
+                parsed_payload=parsed,
             )
             await self._send(chat_id, formatted)
             logger.info("[BOT] Structured EXCHANGE_RESPONSE received from %s", chat_id)
@@ -726,6 +808,148 @@ class TelegramOperatorBot:
         await self._send(chat_id, f"Transkript: _{transcript}_")
         await self._handle_text(chat_id, transcript, source="voice")
 
+    def _prune_expired_signal_draft(self, chat_id: int) -> dict[str, Any] | None:
+        """Return the non-expired draft for chat_id, else drop and return None."""
+        draft = self._pending_signal_draft.get(chat_id)
+        if draft is None:
+            return None
+        created = draft.get("created_ts_epoch", 0.0)
+        if not isinstance(created, (int, float)):
+            created = 0.0
+        age = datetime.now(UTC).timestamp() - float(created)
+        if age > _VOICE_DRAFT_TTL_SECONDS:
+            self._pending_signal_draft.pop(chat_id, None)
+            self._audit_message_envelope(
+                chat_id=chat_id,
+                message_type="signal",
+                stage="voice_confirm_gate",
+                status="expired",
+                source="voice",
+                payload={"raw_signal": dict(draft.get("signal", {}))},
+            )
+            return None
+        return draft
+
+    async def _stash_voice_signal_draft(
+        self,
+        *,
+        chat_id: int,
+        signal: dict[str, Any],
+        source: str,
+        response: str,
+    ) -> None:
+        """Park a voice-transcribed signal and ask the operator to /ok or /cancel."""
+        normalized = self._normalize_signal_payload(signal)
+        if normalized is None:
+            self._audit_message_envelope(
+                chat_id=chat_id,
+                message_type="signal",
+                stage="voice_confirm_gate",
+                status="rejected",
+                source=source,
+                payload={"raw_signal": dict(signal)},
+                errors=["signal_payload_normalization_failed"],
+            )
+            await self._send(
+                chat_id,
+                "*Voice signal could not be interpreted*\n"
+                "Please state the asset and direction clearly — for example "
+                "\"BTC bullish\".",
+            )
+            return
+
+        asset, symbol, direction, reasoning = normalized
+        self._pending_signal_draft[chat_id] = {
+            "signal": dict(signal),
+            "source": source,
+            "response": response,
+            "created_ts_epoch": datetime.now(UTC).timestamp(),
+            "asset": asset,
+            "symbol": symbol,
+            "direction": direction,
+        }
+        self._audit_message_envelope(
+            chat_id=chat_id,
+            message_type="signal",
+            stage="voice_confirm_gate",
+            status="draft_pending",
+            source=source,
+            payload={
+                "asset": asset,
+                "symbol": symbol,
+                "direction": direction,
+                "reasoning": reasoning,
+            },
+        )
+        preview_lines = [
+            "*Voice Signal — Draft*",
+            "Review before confirming.",
+            "",
+            f"Asset: `{symbol}`",
+            f"Direction: `{direction}`",
+        ]
+        if reasoning:
+            preview_lines.append(f"Reasoning: _{reasoning}_")
+        preview_lines.append("")
+        preview_lines.append("Confirm with /ok · Discard with /cancel")
+        preview_lines.append(
+            f"Expires automatically after {_VOICE_DRAFT_TTL_SECONDS // 60} minutes."
+        )
+        await self._send(chat_id, "\n".join(preview_lines))
+
+    async def _cmd_ok(self, chat_id: int, *, args: str = "") -> None:
+        """Confirm a pending voice-signal draft → route through signal handoff."""
+        draft = self._prune_expired_signal_draft(chat_id)
+        if draft is None:
+            await self._send(
+                chat_id,
+                "No pending voice signal. /ok is only valid after a voice message.",
+            )
+            return
+        self._pending_signal_draft.pop(chat_id, None)
+        self._audit_message_envelope(
+            chat_id=chat_id,
+            message_type="signal",
+            stage="voice_confirm_gate",
+            status="confirmed",
+            source=str(draft.get("source", "voice")),
+            payload={
+                "asset": draft.get("asset"),
+                "symbol": draft.get("symbol"),
+                "direction": draft.get("direction"),
+            },
+        )
+        await self._handle_signal_input(
+            chat_id=chat_id,
+            signal=dict(draft.get("signal", {})),
+            source=str(draft.get("source", "voice")),
+            response=str(draft.get("response", "")),
+        )
+
+    async def _cmd_cancel(self, chat_id: int, *, args: str = "") -> None:
+        """Drop a pending voice-signal draft without executing."""
+        draft = self._prune_expired_signal_draft(chat_id)
+        if draft is None:
+            await self._send(
+                chat_id,
+                "No pending voice signal — nothing to discard.",
+            )
+            return
+        self._pending_signal_draft.pop(chat_id, None)
+        self._audit_message_envelope(
+            chat_id=chat_id,
+            message_type="signal",
+            stage="voice_confirm_gate",
+            status="cancelled",
+            source=str(draft.get("source", "voice")),
+            payload={
+                "asset": draft.get("asset"),
+                "symbol": draft.get("symbol"),
+                "direction": draft.get("direction"),
+            },
+        )
+        await self._send(chat_id, "Voice signal draft discarded.")
+
     async def _handle_signal_input(
         self,
         *,
@@ -747,8 +971,9 @@ class TelegramOperatorBot:
             )
             await self._send(
                 chat_id,
-                "Signal konnte nicht normalisiert werden. "
-                "Bitte Asset und Richtung klar angeben (z. B. BTC bullish).",
+                "*Signal could not be normalized*\n"
+                "Please state the asset and direction clearly — for example "
+                "\"BTC bullish\".",
             )
             return
 
@@ -955,7 +1180,7 @@ class TelegramOperatorBot:
             await self._send(chat_id, exchange_response_msg)
         elif execution_success is False and self._signal_auto_run_enabled:
             display = sig_obj.display_symbol or sig_obj.symbol
-            await self._send(chat_id, f"\u26D4 *Nicht Ausgef\u00fchrt* \u2014 `{display}`")
+            await self._send(chat_id, f"*Not Executed* \u2014 `{display}`")
 
     def _build_exchange_response_from_cycle(
         self,
@@ -1174,6 +1399,55 @@ class TelegramOperatorBot:
         with path.open("a", encoding="utf-8") as fh:
             fh.write(json.dumps(record) + "\n")
 
+    def _compute_idempotency_key(self, parsed_payload: Any) -> str | None:
+        """Return the canonical idempotency key for a typed payload, or None."""
+        from app.messaging.message_models import MessageEnvelope, SourceChannel
+        try:
+            env = MessageEnvelope.wrap(
+                parsed_payload, source_channel=SourceChannel.TELEGRAM,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("[BOT] Idempotency compute failed: %s", exc)
+            return None
+        return env.idempotency_key
+
+    def _is_duplicate_envelope(
+        self,
+        idempotency_key: str,
+        *,
+        lookback: int = 500,
+    ) -> bool:
+        """Return True when a previous accepted envelope shares this key.
+
+        Walks the tail of the envelope log (bounded by `lookback`) and
+        checks for any prior record with stage=accepted/idempotency_gate
+        and the same idempotency_key. Deliberately file-based: survives
+        process restarts without an in-memory table.
+        """
+        path = self._message_envelope_log_path
+        if not path.exists():
+            return False
+        try:
+            with path.open("r", encoding="utf-8") as fh:
+                lines = fh.readlines()
+        except OSError as exc:
+            logger.warning("[BOT] Envelope log read failed: %s", exc)
+            return False
+        for line in reversed(lines[-lookback:]):
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                rec = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if rec.get("idempotency_key") != idempotency_key:
+                continue
+            stage = rec.get("stage")
+            if stage in {"accepted", "idempotency_gate"}:
+                return True
+        return False
+
     def _audit_message_envelope(
         self,
         *,
@@ -1185,7 +1459,21 @@ class TelegramOperatorBot:
         payload: Mapping[str, object] | None = None,
         errors: list[str] | None = None,
         metadata: Mapping[str, object] | None = None,
-    ) -> None:
+        parsed_payload: Any | None = None,
+    ) -> str | None:
+        """Append one envelope audit record and return the idempotency_key, if any.
+
+        When `parsed_payload` is a typed NEWS/SIGNAL/EXCHANGE_RESPONSE object,
+        a canonical MessageEnvelope is built so the JSONL carries
+        envelope_id + idempotency_key for v2 routing/de-duplication.
+        Legacy raw `payload` dicts are still accepted for parse/reject stages
+        where no typed payload is available.
+        """
+        from app.messaging.message_models import (
+            MessageEnvelope,
+            SourceChannel,
+        )
+
         record: dict[str, object] = {
             "timestamp_utc": datetime.now(UTC).isoformat(),
             "event": "telegram_message_envelope",
@@ -1197,7 +1485,24 @@ class TelegramOperatorBot:
             "execution_enabled": False,
             "write_back_allowed": False,
         }
-        if payload:
+        idempotency_key: str | None = None
+        if parsed_payload is not None:
+            try:
+                channel = SourceChannel.VOICE if source == "voice" else SourceChannel.TELEGRAM
+                envelope = MessageEnvelope.wrap(
+                    parsed_payload,
+                    source_channel=channel,
+                    chat_id=chat_id,
+                )
+                record["envelope_id"] = envelope.envelope_id
+                record["idempotency_key"] = envelope.idempotency_key
+                record["payload"] = dict(envelope.payload)
+                idempotency_key = envelope.idempotency_key
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("[BOT] Envelope wrap failed (fallback to raw): %s", exc)
+                if payload:
+                    record["payload"] = dict(payload)
+        elif payload:
             record["payload"] = dict(payload)
         if errors:
             record["errors"] = list(errors)
@@ -1207,6 +1512,7 @@ class TelegramOperatorBot:
             self._append_jsonl(self._message_envelope_log_path, record)
         except OSError as exc:
             logger.error("[BOT] Message envelope audit write failed: %s", exc)
+        return idempotency_key
 
     async def _dispatch(self, chat_id: int, command: str, *, args: str = "") -> None:
         self._audit(chat_id, command, args=args)
@@ -1243,6 +1549,15 @@ class TelegramOperatorBot:
             "menue_reload": self._cmd_menu_reload,
             "menu_validate": self._cmd_menu_validate,
             "menue_validate": self._cmd_menu_validate,
+            "sentr": self._cmd_agent_sentr,
+            "watchdog": self._cmd_agent_watchdog,
+            "architect": self._cmd_agent_architect,
+            "ok": self._cmd_ok,
+            "bestaetigen": self._cmd_ok,
+            "confirm": self._cmd_ok,
+            "cancel": self._cmd_cancel,
+            "abbrechen": self._cmd_cancel,
+            "verwerfen": self._cmd_cancel,
         }
         handler = handlers.get(command)
         if handler is None:
@@ -1256,7 +1571,13 @@ class TelegramOperatorBot:
                 "Please verify CLI command inventory before using Telegram read surfaces.",
             )
             return
-        await handler(chat_id, args=args)
+        track = command in _EPHEMERAL_MENU_COMMANDS
+        previous_track = self._track_ephemeral_reply
+        self._track_ephemeral_reply = track
+        try:
+            await handler(chat_id, args=args)
+        finally:
+            self._track_ephemeral_reply = previous_track
 
     @staticmethod
     def _inline(value: object) -> str:
@@ -1345,6 +1666,119 @@ class TelegramOperatorBot:
         return await get_daily_operator_summary()
 
 
+    async def _cmd_agent(
+        self,
+        chat_id: int,
+        slug: str,
+        *,
+        args: str = "",
+    ) -> None:
+        """Bridge Telegram -> Agent conversation (SENTR / Watchdog / Architect).
+
+        Usage:
+          /{slug}              -> last 5 events from conversation.jsonl
+          /{slug} <text>       -> operator message appended to conversation
+          /{slug} !<mode> [note] -> command enqueued (same as dashboard button)
+
+        Conversation is single source of truth — dashboard and telegram see
+        identical history because both write to artifacts/agents/{slug}/.
+        """
+        from app.api.routers.agents import (
+            _AGENTS,
+            _agent_dir,
+            _load_conversation,
+            append_conversation_event,
+        )
+
+        defn = _AGENTS.get(slug)
+        if defn is None:
+            await self._send(chat_id, f"Unknown agent: {slug}")
+            return
+
+        text = args.strip()
+
+        if not text:
+            events = _load_conversation(slug, tail=5, since=None)
+            if not events:
+                await self._send(
+                    chat_id,
+                    f"*{defn.name}* — noch kein Conversation-Log.\n"
+                    f"Schreibe `/{slug} <text>` um zu starten.",
+                )
+                return
+            lines = [f"*{defn.name}* — letzte {len(events)} Events"]
+            for ev in events:
+                ts = str(ev.get("ts", ""))[11:19]  # HH:MM:SS
+                src = ev.get("source", "?")
+                role = ev.get("role", "?")
+                kind = ev.get("kind", "message")
+                content = str(ev.get("content", "")).replace("`", "'")
+                if len(content) > 180:
+                    content = content[:177] + "..."
+                tag = f"{src}/{role}" + (f"/{kind}" if kind != "message" else "")
+                lines.append(f"`{ts}` [{tag}] {content}")
+            await self._send(chat_id, "\n".join(lines))
+            return
+
+        if text.startswith("!"):
+            parts = text[1:].split(maxsplit=1)
+            mode = parts[0].lower()
+            note = parts[1].strip() if len(parts) > 1 else None
+            if mode not in defn.modes:
+                await self._send(
+                    chat_id,
+                    f"*{defn.name}* unterstützt keinen Modus `{mode}`.\n"
+                    f"Verfügbar: {', '.join(defn.modes)}",
+                )
+                return
+            d = _agent_dir(slug)
+            d.mkdir(parents=True, exist_ok=True)
+            cmd_id = uuid4().hex
+            entry = {
+                "id": cmd_id,
+                "ts": datetime.now(UTC).isoformat(),
+                "agent": slug,
+                "mode": mode,
+                "note": note,
+                "status": "queued",
+            }
+            with (d / "commands.jsonl").open("a", encoding="utf-8") as f:
+                f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+            append_conversation_event(
+                slug,
+                source="telegram",
+                role="operator",
+                content=f"[mode:{mode}] {note or ''}".strip(),
+                kind="command",
+                meta={"command_id": cmd_id, "mode": mode},
+            )
+            await self._send(
+                chat_id,
+                f"*{defn.name}* — Kommando `{mode}` eingereiht (`{cmd_id[:8]}`).",
+            )
+            return
+
+        event = append_conversation_event(
+            slug,
+            source="telegram",
+            role="operator",
+            content=text,
+            kind="message",
+        )
+        await self._send(
+            chat_id,
+            f"*{defn.name}* — Nachricht gespeichert (`{str(event['id'])[:8]}`).",
+        )
+
+    async def _cmd_agent_sentr(self, chat_id: int, *, args: str = "") -> None:
+        await self._cmd_agent(chat_id, "sentr", args=args)
+
+    async def _cmd_agent_watchdog(self, chat_id: int, *, args: str = "") -> None:
+        await self._cmd_agent(chat_id, "watchdog", args=args)
+
+    async def _cmd_agent_architect(self, chat_id: int, *, args: str = "") -> None:
+        await self._cmd_agent(chat_id, "architect", args=args)
+
     async def _cmd_status(self, chat_id: int, *, args: str = "") -> None:
         payload = await self._load_canonical_surface(
             chat_id=chat_id,
@@ -1370,11 +1804,11 @@ class TelegramOperatorBot:
         msg = (
             f"*KAI Status*\n"
             f"Readiness: {readiness}\n"
-            f"Zyklen heute: {cycles} | Positionen: {pos_count}\n"
-            f"Backlog: {backlog} Docs\n"
-            f"Alert-Rate (24h): {alert_rate}/h\n"
-            f"LLM-Fehler (24h): {llm_fail}\n"
-            f"Latenz p95 (24h): {latency}s"
+            f"Cycles today: {cycles} · Positions: {pos_count}\n"
+            f"Ingestion backlog: {backlog} docs\n"
+            f"Alert rate (24h): {alert_rate}/h\n"
+            f"LLM failures (24h): {llm_fail}\n"
+            f"Latency p95 (24h): {latency}s"
         )
         await self._send(chat_id, msg)
 
@@ -1392,7 +1826,12 @@ class TelegramOperatorBot:
         count = payload.get("position_count", 0)
         mtm = self._inline(payload.get("mark_to_market_status", "unknown"))
 
-        lines = ["*Positions* (Paper, read-only)", f"Anzahl: {count} | MtM: {mtm}"]
+        lines = [
+            "*Positions*",
+            "Paper portfolio · read-only",
+            "",
+            f"Total: {count} · Mark-to-market: {mtm}",
+        ]
         if positions:
             for pos in positions[:5]:
                 if not isinstance(pos, dict):
@@ -1402,10 +1841,11 @@ class TelegramOperatorBot:
                 entry = pos.get("avg_entry_price", 0)
                 pnl = pos.get("unrealized_pnl_usd")
                 pnl_str = f"{pnl:+.2f} USD" if pnl is not None else "n/a"
-                lines.append(f"  {sym}: {qty} @ {entry} | PnL: {pnl_str}")
+                lines.append(f"  {sym}: {qty} @ {entry} · PnL {pnl_str}")
         else:
-            lines.append("Keine offenen Positionen.")
-        lines.append("Nur Lesezugriff via Telegram.")
+            lines.append("No open positions.")
+        lines.append("")
+        lines.append("Telegram is view-only; execution runs server-side.")
         await self._send(chat_id, "\n".join(lines))
 
     async def _cmd_exposure(self, chat_id: int, *, args: str = "") -> None:
@@ -1423,10 +1863,11 @@ class TelegramOperatorBot:
         stale = payload.get("stale_position_count", 0)
         unpriced = payload.get("unavailable_price_count", 0)
         msg = (
-            f"*Exposure* (Paper, read-only)\n"
-            f"Brutto: {gross:.2f} USD | Netto: {net:.2f} USD\n"
-            f"MtM: {mtm} | Stale: {stale} | Ohne Preis: {unpriced}\n"
-            f"Nur Lesezugriff via Telegram."
+            f"*Exposure*\n"
+            f"Paper portfolio · read-only\n"
+            f"\n"
+            f"Gross: {gross:.2f} USD · Net: {net:.2f} USD\n"
+            f"Mark-to-market: {mtm} · Stale: {stale} · Missing price: {unpriced}"
         )
         await self._send(chat_id, msg)
 
@@ -1442,7 +1883,12 @@ class TelegramOperatorBot:
         signals = payload.get("signals", [])
         count = payload.get("signal_count", 0)
 
-        lines = ["*Signale* (read-only)", f"Anzahl: {count}"]
+        lines = [
+            "*Signals*",
+            "Active · read-only",
+            "",
+            f"Count: {count}",
+        ]
         if isinstance(signals, list) and signals:
             for sig in signals[:5]:
                 if not isinstance(sig, dict):
@@ -1450,10 +1896,11 @@ class TelegramOperatorBot:
                 asset = self._inline(sig.get("target_asset", "?"))
                 direction = self._inline(sig.get("direction_hint", "neutral"))
                 prio = sig.get("priority", "?")
-                lines.append(f"  {asset} | {direction} | Prio: {prio}")
+                lines.append(f"  {asset} · {direction} · priority {prio}")
         else:
-            lines.append("Keine aktiven Signale.")
-        lines.append("Signale sind nur beratend. Kein automatischer Trade.")
+            lines.append("No active signals.")
+        lines.append("")
+        lines.append("Signals are advisory; no automatic trade.")
         msg = "\n".join(lines)
         await self._send(chat_id, msg)
 
@@ -1486,11 +1933,13 @@ class TelegramOperatorBot:
         dead = payload.get("exchange_dead_letter_total", 0)
         dead_24h = payload.get("exchange_dead_letter_lookback", 0)
         msg = (
-            f"*Signal Status* (read-only)\n"
-            f"Handoff: {handoff} gesamt, {handoff_24h} letzte 24h\n"
-            f"Outbox: {outbox} wartend\n"
-            f"Gesendet: {sent} gesamt, {sent_24h} letzte 24h\n"
-            f"Fehlgeschlagen: {dead} gesamt, {dead_24h} letzte 24h"
+            f"*Signal Pipeline*\n"
+            f"Read-only · last 24h window\n"
+            f"\n"
+            f"Handoff: {handoff} total · {handoff_24h} last 24h\n"
+            f"Outbox: {outbox} queued\n"
+            f"Sent: {sent} total · {sent_24h} last 24h\n"
+            f"Dead-letter: {dead} total · {dead_24h} last 24h"
         )
         await self._send(chat_id, msg)
 
@@ -1507,9 +1956,11 @@ class TelegramOperatorBot:
         digest = payload.get("digest_count", 0)
         latest = self._inline(payload.get("latest_dispatched_at", "keine"))
         msg = (
-            f"*Alert Status* (read-only)\n"
-            f"Gesamt: {total} | Digest: {digest}\n"
-            f"Letzter Versand: {latest}"
+            f"*Alert Status*\n"
+            f"Read-only\n"
+            f"\n"
+            f"Total: {total} · Digest: {digest}\n"
+            f"Last dispatch: {latest}"
         )
         await self._send(chat_id, msg)
 
@@ -1519,12 +1970,12 @@ class TelegramOperatorBot:
         """Show quality-bar metrics from hold report."""
         report_path = Path("artifacts/ph5_hold/ph5_hold_metrics_report.json")
         if not report_path.exists():
-            await self._send(chat_id, "*Quality Bar*\nKein Hold-Report vorhanden.")
+            await self._send(chat_id, "*Quality Bar*\nNo hold report available yet.")
             return
         try:
             data = json.loads(report_path.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError) as exc:
-            await self._send(chat_id, f"*Quality Bar*\nReport-Fehler: {exc}")
+            await self._send(chat_id, f"*Quality Bar*\nReport error: {exc}")
             return
 
         sq = data.get("signal_quality_validation", {})
@@ -1553,12 +2004,14 @@ class TelegramOperatorBot:
 
         msg = (
             f"*Quality Bar* [{icon}]\n"
-            f"Gate: `{status}`\n\n"
-            f"Forward Prec: {fwd_s} ({fwd_h}h/{fwd_m}m, {fwd_res} res)\n"
-            f"Raw Precision: {prec_s} ({hits}h/{misses}m, {resolved} res)\n"
-            f"Priority-Hit Korr: {corr_s} (Ziel: >=0.40)\n"
-            f"Paper Cycles: {cycles}\n"
-            f"Real-Price Cycles: {fills_count}\n\n"
+            f"Gate: `{status}`\n"
+            f"\n"
+            f"Forward precision: {fwd_s} ({fwd_h}h / {fwd_m}m · {fwd_res} resolved)\n"
+            f"Raw precision: {prec_s} ({hits}h / {misses}m · {resolved} resolved)\n"
+            f"Priority/hit correlation: {corr_s} (target ≥ 0.40)\n"
+            f"Paper cycles: {cycles}\n"
+            f"Real-price cycles: {fills_count}\n"
+            f"\n"
             f"Report: {data.get('generated_at', '?')[:16]}"
         )
         await self._send(chat_id, msg)
@@ -1843,15 +2296,15 @@ class TelegramOperatorBot:
         )
         incidents = payload.get("open_incidents", 0)
         msg = (
-            f"*Tagesbericht*\n"
+            f"*Daily Report*\n"
             f"Readiness: {readiness}\n"
-            f"Zyklen: {cycles} | Positionen: {pos_count}\n"
+            f"Cycles: {cycles} · Positions: {pos_count}\n"
             f"Exposure: {exposure}%\n"
-            f"Backlog: {backlog} | Alerts (24h): {dir_alerts}\n"
-            f"Alert-Rate: {alert_rate}/h | Latenz p50: {latency}s\n"
-            f"LLM-Fehler: {llm_fail}\n"
-            f"Entscheidungen: {decision_status}\n"
-            f"Offene Vorfaelle: {incidents}"
+            f"Ingestion backlog: {backlog} · Directional alerts (24h): {dir_alerts}\n"
+            f"Alert rate: {alert_rate}/h · Latency p50: {latency}s\n"
+            f"LLM failures: {llm_fail}\n"
+            f"Decision pack: {decision_status}\n"
+            f"Open incidents: {incidents}"
         )
         await self._send(chat_id, msg)
 
@@ -1862,10 +2315,10 @@ class TelegramOperatorBot:
         if not args.strip():
             await self._send(
                 chat_id,
-                "*Signal-Format (3-Typen-Standard)*\n"
-                "Empfohlen als strukturierte Nachricht:\n"
+                "*Signal Format*\n"
+                "Preferred — structured block:\n"
                 "`[SIGNAL]`\n"
-                "`Signal ID: SIG-20260325-BTCUSDT-001`\n"
+                "`Signal ID: SIG-20260415-BTCUSDT-001`\n"
                 "`Source: Premium Signals`\n"
                 "`Exchange Scope: binance_futures, bybit`\n"
                 "`Market Type: Futures`\n"
@@ -1877,8 +2330,9 @@ class TelegramOperatorBot:
                 "`Stop Loss: 76600`\n"
                 "`Leverage: 10x`\n"
                 "`Status: NEW`\n"
-                "`Timestamp: 2026-03-25T18:31:00Z`\n\n"
-                "Legacy Kurzformat (weiterhin unterstuetzt):\n"
+                "`Timestamp: 2026-04-15T10:00:00Z`\n"
+                "\n"
+                "Legacy short form (still supported):\n"
                 "`/signal BUY BTC 65000 SL=62000 TP=70000`\n"
                 "`/signal SELL ETH 3400`\n"
                 "`/signal LONG SOL SL=120 TP=200 SIZE=0.5`",
@@ -1888,7 +2342,7 @@ class TelegramOperatorBot:
         try:
             signal = parse_signal_message(args)
         except SignalParseError as exc:
-            await self._send(chat_id, f"*Signal-Fehler:* {exc}")
+            await self._send(chat_id, f"*Signal error:* {exc}")
             return
 
         self._audit(chat_id, "_signal_parsed", args=json.dumps({
@@ -1900,59 +2354,76 @@ class TelegramOperatorBot:
             "size": signal.size,
         }))
 
-        price_line = f"Preis: `{signal.price}`" if signal.price else "Preis: `Market`"
+        price_line = f"Price: `{signal.price}`" if signal.price else "Price: `Market`"
         sl_line = f"Stop-Loss: `{signal.stop_loss}`" if signal.stop_loss else ""
         tp_line = f"Take-Profit: `{signal.take_profit}`" if signal.take_profit else ""
         size_line = f"Size: `{signal.size}`" if signal.size else ""
 
         lines = [
-            "*Signal empfangen (structured)*\n",
-            f"Richtung: `{signal.direction.upper()}`",
+            "*Signal Received*",
+            "Structured · audit-only",
+            "",
+            f"Direction: `{signal.direction.upper()}`",
             f"Asset: `{signal.asset}`",
             price_line,
         ]
         for extra in [sl_line, tp_line, size_line]:
             if extra:
                 lines.append(extra)
-        lines.append("\nAudit-only. Kein Trade ausgefuehrt.")
+        lines.append("")
+        lines.append("No order dispatched.")
 
         await self._send(chat_id, "\n".join(lines))
 
     async def _cmd_help(self, chat_id: int, *, args: str = "") -> None:
         msg = (
-            "*KAI Operator Commands*\n\n"
-            "*Uebersicht:*\n"
-            "/status - KAI Status\n"
-            "/positions - Paper-Positionen\n"
-            "/exposure - Paper-Exposure/Risiko\n"
-            "/signals - Aktive Signale\n"
-            "/signalstatus - Signal-Pipeline\n"
-            "/tagesbericht - Tagesbericht\n"
-            "/alertstatus - Alert-Status\n"
-            "/quality - Quality-Bar Metriken\n"
-            "/annotate - Alerts annotieren (Buttons)\n\n"
-            "*Aktionen:*\n"
-            "/signal BUY BTC 65000 - Trading-Signal\n"
-            "/approve dec\\_xxx - Freigabe\n"
-            "/reject dec\\_xxx - Ablehnung\n"
-            "/pause - Alles pausieren\n"
-            "/resume - Fortsetzen\n"
-            "/kill - Notfall-Stopp\n\n"
-            "*Nachrichtentypen (hart getrennt):*\n"
-            "[NEWS] - Info/Analyse, niemals Orderausfuehrung\n"
-            "[SIGNAL] - konkrete Handelsanweisung, schema-validiert\n"
-            "[EXCHANGE_RESPONSE] - technischer Ausfuehrungsstatus\n\n"
-            "Regel: Telegram ist Anzeige, JSON ist Wahrheit.\n"
-            "SIGNAL ohne Pflichtfelder wird fail-closed blockiert.\n\n"
-            "/menu - Interaktives Menue\n"
-            "/menu_reload - Menue neu laden\n"
-            "/menu_validate - Menue pruefen\n"
-            "/hilfe - Diese Nachricht"
+            "*KAI Help & Support*\n"
+            "\n"
+            "*Read-only views*\n"
+            "/status — system status\n"
+            "/positions — paper positions\n"
+            "/exposure — paper exposure and risk\n"
+            "/signals — active signals\n"
+            "/signalstatus — signal pipeline\n"
+            "/tagesbericht — daily report\n"
+            "/alertstatus — alert delivery status\n"
+            "/quality — quality-bar metrics\n"
+            "/annotate — annotate alerts\n"
+            "\n"
+            "*Actions*\n"
+            "/signal BUY BTC 65000 — submit a trading signal\n"
+            "/approve dec\\_xxx — approve a decision\n"
+            "/reject dec\\_xxx — reject a decision\n"
+            "/pause — pause the system\n"
+            "/resume — resume the system\n"
+            "/kill — emergency stop\n"
+            "\n"
+            "*Message types*\n"
+            "[NEWS] — information only, never triggers execution\n"
+            "[SIGNAL] — structured trade instruction, schema-validated\n"
+            "[EXCHANGE_RESPONSE] — execution status update\n"
+            "\n"
+            "Telegram is view-only; the JSON envelope is the source of truth. "
+            "SIGNAL entries without required fields fail closed.\n"
+            "\n"
+            "*Navigation*\n"
+            "/menu — open the main menu\n"
+            "/menu\\_reload — reload menu config\n"
+            "/menu\\_validate — validate menu config\n"
+            "/hilfe — show this help"
         )
         await self._send(chat_id, msg)
 
     async def _cmd_menu(self, chat_id: int, *, args: str = "") -> None:
-        """Show the interactive inline keyboard main menu."""
+        """Show the main inline menu. Also re-docks the persistent keyboard.
+
+        The preceding _send attaches the persistent reply-keyboard under the
+        text input. The inline menu card follows so the operator can drill
+        into sub-menus. Callback handler posts sub-menus as **new** messages
+        at the bottom of the chat (never editing in place) so the active
+        selection is always at the end of the scroll.
+        """
+        await self._send(chat_id, "_Navigation ready._")
         await self._send_menu(chat_id, "main")
 
     async def _cmd_menu_reload(self, chat_id: int, *, args: str = "") -> None:
@@ -1962,8 +2433,8 @@ class TelegramOperatorBot:
         clear_menu_cache()
         await self._send(
             chat_id,
-            "*Menue neu geladen.*\n"
-            "Die Konfiguration wurde aus der Datei neu eingelesen.",
+            "*Menu reloaded*\n"
+            "Configuration re-read from disk.",
         )
 
     async def _cmd_menu_validate(self, chat_id: int, *, args: str = "") -> None:
@@ -1971,7 +2442,7 @@ class TelegramOperatorBot:
         from app.messaging.telegram_menu import validate_menu_config
 
         validation = validate_menu_config()
-        status = "OK" if validation.get("is_valid") else "FEHLER"
+        status = "OK" if validation.get("is_valid") else "ERROR"
         source = self._inline(validation.get("source", "unknown"))
         menu_count = self._inline(validation.get("menu_count", 0))
         error_count = self._inline(validation.get("error_count", 0))
@@ -1979,39 +2450,103 @@ class TelegramOperatorBot:
         path = self._inline(validation.get("path", "unknown"))
 
         lines = [
-            "*Menue-Validierung*",
+            "*Menu Validation*",
             f"Status: `{status}`",
-            f"Quelle: `{source}`",
-            f"Menues: `{menu_count}`",
-            f"Warnungen: `{warning_count}` | Fehler: `{error_count}`",
-            f"Pfad: `{path}`",
+            f"Source: `{source}`",
+            f"Menus: `{menu_count}`",
+            f"Warnings: `{warning_count}` · Errors: `{error_count}`",
+            f"Path: `{path}`",
         ]
 
         warnings_raw = validation.get("warnings", [])
         warnings = warnings_raw if isinstance(warnings_raw, list) else []
         if warnings:
             lines.append("")
-            lines.append("*Warnungen:*")
+            lines.append("*Warnings*")
             for warning in warnings[:5]:
                 lines.append(f"- {self._inline(warning)}")
             if len(warnings) > 5:
-                lines.append(f"- ... +{len(warnings) - 5} weitere")
+                lines.append(f"- … +{len(warnings) - 5} more")
 
         errors_raw = validation.get("errors", [])
         errors = errors_raw if isinstance(errors_raw, list) else []
         if errors:
             lines.append("")
-            lines.append("*Fehler:*")
+            lines.append("*Errors*")
             for error in errors[:5]:
                 lines.append(f"- {self._inline(error)}")
             if len(errors) > 5:
-                lines.append(f"- ... +{len(errors) - 5} weitere")
+                lines.append(f"- … +{len(errors) - 5} more")
 
         await self._send(chat_id, "\n".join(lines))
 
     # ------------------------------------------------------------------
     # Inline keyboard menu system
     # ------------------------------------------------------------------
+
+    async def bootstrap_bot_menu(self) -> bool:
+        """Register the curated slash-command list with Telegram.
+
+        Idempotent; safe to call on every startup. Registers setMyCommands
+        so the Telegram UI shows a typeable list. setChatMenuButton flips
+        the left-of-input button to "commands" (default), ensuring the list
+        is always one tap away.
+
+        Skipped in dry-run and when no token is configured.
+        """
+        if self._dry_run or not self._token:
+            return False
+
+        commands = [
+            {"command": "start", "description": "Main Menu öffnen"},
+        ]
+
+        # Telegram resolves commands by most-specific scope. A leftover
+        # registration in `all_private_chats` or a per-chat scope overrides
+        # `default`, so we must clear those scopes explicitly and re-set the
+        # reduced list at every scope the operator may actually see.
+        scopes: list[dict[str, Any]] = [
+            {"type": "default"},
+            {"type": "all_private_chats"},
+            {"type": "all_group_chats"},
+            {"type": "all_chat_administrators"},
+        ]
+        for chat_id in self._admin_ids:
+            scopes.append({"type": "chat", "chat_id": chat_id})
+
+        ok_cmds = True
+        for scope in scopes:
+            ok_delete = await self._send_payload_with_retry(
+                f"{_TELEGRAM_API_BASE}/bot{self._token}/deleteMyCommands",
+                {"scope": scope},
+            )
+            ok_set = await self._send_payload_with_retry(
+                f"{_TELEGRAM_API_BASE}/bot{self._token}/setMyCommands",
+                {"commands": commands, "scope": scope},
+            )
+            if not (ok_delete and ok_set):
+                logger.warning("[BOT] Command scope sync incomplete: %s", scope)
+                ok_cmds = False
+        if self._dashboard_url:
+            menu_button: dict[str, Any] = {
+                "type": "web_app",
+                "text": "KAI",
+                "web_app": {"url": self._dashboard_url},
+            }
+        else:
+            menu_button = {"type": "commands"}
+        ok_btn = await self._send_payload_with_retry(
+            f"{_TELEGRAM_API_BASE}/bot{self._token}/setChatMenuButton",
+            {"menu_button": menu_button},
+        )
+        if ok_cmds and ok_btn:
+            logger.info("[BOT] Telegram bot menu bootstrapped (%d commands)", len(commands))
+        else:
+            logger.warning(
+                "[BOT] Bot menu bootstrap incomplete (commands=%s, button=%s)",
+                ok_cmds, ok_btn,
+            )
+        return ok_cmds and ok_btn
 
     async def _send_menu(
         self,
@@ -2063,8 +2598,6 @@ class TelegramOperatorBot:
         data = callback_query.get("data", "")
         user = callback_query.get("from", {})
         chat_id = user.get("id")
-        message = callback_query.get("message", {})
-        message_id = message.get("message_id")
 
         if not chat_id or not data:
             await self._answer_callback_query(query_id)
@@ -2079,12 +2612,21 @@ class TelegramOperatorBot:
 
         if data.startswith("menu:"):
             menu_id = data[5:]
-            await self._send_menu(chat_id, menu_id, message_id=message_id)
+            # Always post the sub-menu as a new message at the bottom of the
+            # chat. Editing the source message in place would hide the user's
+            # selection path — keeping each step as a new card preserves the
+            # trail and puts the active choice at the end of the scroll.
+            await self._send_menu(chat_id, menu_id, message_id=None)
             await self._answer_callback_query(query_id)
         elif data.startswith("cmd:"):
-            command = data[4:]
+            payload = data[4:].strip()
             await self._answer_callback_query(query_id)
-            await self._dispatch(chat_id, command)
+            if not payload:
+                return
+            parts = payload.split(maxsplit=1)
+            command = parts[0]
+            cmd_args = parts[1] if len(parts) > 1 else ""
+            await self._dispatch(chat_id, command, args=cmd_args)
         elif data.startswith("ann:"):
             await self._handle_annotation_callback(
                 chat_id, query_id, data,
@@ -2123,22 +2665,28 @@ class TelegramOperatorBot:
         await self._annotate_direct(chat_id, doc_id, outcome)
 
     async def _send(self, chat_id: int, text: str) -> bool:
+        from app.messaging.telegram_persistent_keyboard import PERSISTENT_KEYBOARD
+
         if self._dry_run:
             logger.info("[BOT DRY RUN] To %s: %s", chat_id, text[:100])
             return True
         if not self._token:
             return False
 
+        track = self._track_ephemeral_reply
         url = f"{_TELEGRAM_API_BASE}/bot{self._token}/sendMessage"
-        for idx, chunk in enumerate(_split_telegram_text(text), start=1):
-            payload = {
+        chunks = list(_split_telegram_text(text))
+        last_message_id: int | None = None
+        for idx, chunk in enumerate(chunks, start=1):
+            payload: dict[str, Any] = {
                 "chat_id": chat_id,
                 "text": chunk,
                 "parse_mode": "Markdown",
                 "disable_web_page_preview": True,
+                "reply_markup": PERSISTENT_KEYBOARD,
             }
-            success = await self._send_payload_with_retry(url, payload)
-            if not success:
+            response_json = await self._send_payload_capture_response(url, payload)
+            if response_json is None:
                 # Markdown may have been rejected by Telegram (e.g. unescaped
                 # underscores).  Fall back to plain text so the operator always
                 # receives the response even if formatting is lost.
@@ -2146,25 +2694,77 @@ class TelegramOperatorBot:
                     "chat_id": chat_id,
                     "text": chunk,
                     "disable_web_page_preview": True,
+                    "reply_markup": PERSISTENT_KEYBOARD,
                 }
-                success = await self._send_payload_with_retry(url, plain_payload)
-                if not success:
+                response_json = await self._send_payload_capture_response(url, plain_payload)
+                if response_json is None:
                     logger.error("[BOT] Send failed to %s at chunk %s", chat_id, idx)
                     return False
                 logger.info("[BOT] Markdown fallback to plain text for chunk %s", idx)
+            message_id = (
+                response_json.get("result", {}).get("message_id")
+                if isinstance(response_json, dict)
+                else None
+            )
+            if isinstance(message_id, int):
+                last_message_id = message_id
+        if track and last_message_id is not None:
+            await self._track_and_prune_ephemeral(chat_id, last_message_id)
         return True
+
+    async def _track_and_prune_ephemeral(self, chat_id: int, message_id: int) -> None:
+        """Append message_id to the per-chat ring buffer; delete oldest on overflow."""
+        history = self._menu_history.setdefault(
+            chat_id, deque(maxlen=_EPHEMERAL_MENU_HISTORY_DEPTH)
+        )
+        evicted: int | None = None
+        if len(history) == history.maxlen:
+            evicted = history[0]
+        history.append(message_id)
+        if evicted is not None:
+            await self._delete_message(chat_id, evicted)
+
+    async def _delete_message(self, chat_id: int, message_id: int) -> bool:
+        """Best-effort delete of an old menu output. Never raises."""
+        if self._dry_run or not self._token:
+            return False
+        url = f"{_TELEGRAM_API_BASE}/bot{self._token}/deleteMessage"
+        payload = {"chat_id": chat_id, "message_id": message_id}
+        try:
+            async with httpx.AsyncClient(timeout=10) as client:
+                response = await client.post(url, json=payload)
+            if response.status_code == 200:
+                return True
+            logger.info(
+                "[BOT] deleteMessage skipped chat=%s mid=%s status=%s",
+                chat_id, message_id, response.status_code,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.info("[BOT] deleteMessage error chat=%s mid=%s: %s", chat_id, message_id, exc)
+        return False
 
     async def _send_payload_with_retry(
         self,
         url: str,
         payload: dict[str, Any],
     ) -> bool:
+        response_json = await self._send_payload_capture_response(url, payload)
+        return response_json is not None
+
+    async def _send_payload_capture_response(
+        self,
+        url: str,
+        payload: dict[str, Any],
+    ) -> dict[str, Any] | None:
         for attempt in range(1, _TELEGRAM_MAX_RETRIES + 1):
             try:
                 async with httpx.AsyncClient(timeout=10) as client:
                     response = await client.post(url, json=payload)
                 if response.status_code == 200:
-                    return True
+                    try:
+                        return response.json()
+                    except ValueError:
+                        return {}
                 if response.status_code == 429 and attempt < _TELEGRAM_MAX_RETRIES:
                     retry_after = _extract_retry_after_seconds(response)
                     await asyncio.sleep(min(retry_after, _TELEGRAM_MAX_RETRY_SLEEP_SECONDS))
@@ -2174,14 +2774,14 @@ class TelegramOperatorBot:
                     response.status_code,
                     response.text[:200],
                 )
-                return False
+                return None
             except Exception as exc:  # noqa: BLE001
                 if attempt < _TELEGRAM_MAX_RETRIES:
                     await asyncio.sleep(1)
                     continue
                 logger.error("[BOT] Send failed: %s", exc)
-                return False
-        return False
+                return None
+        return None
 
     def _audit(self, chat_id: int, command: str, *, args: str = "") -> None:
         record = {
@@ -2240,6 +2840,10 @@ class TelegramPoller:
 
     async def _poll_loop(self) -> None:
         url = f"{_TELEGRAM_API_BASE}/bot{self._bot._token}/getUpdates"
+        try:
+            await self._bot.bootstrap_bot_menu()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("[POLLER] Bot menu bootstrap failed: %s", exc)
         async with httpx.AsyncClient(timeout=self._long_poll_timeout + 10) as client:
             while self._running:
                 try:

@@ -1,135 +1,225 @@
 {
   "menus": {
     "main": {
-      "text": "*KAI Trading Intelligence*\n----------------------------\nWaehle eine Kategorie.",
+      "text": "*KAI Control Center*\n\nOperate signals, portfolio, automation and agents from one place.",
       "keyboard": [
         [
-          {
-            "text": "System-Status",
-            "callback_data": "cmd:status"
-          }
+          { "text": "System Status", "callback_data": "cmd:status" }
         ],
         [
-          {
-            "text": "Trading",
-            "callback_data": "menu:trading"
-          },
-          {
-            "text": "Signale",
-            "callback_data": "menu:signals"
-          }
+          { "text": "Portfolio", "callback_data": "menu:portfolio" },
+          { "text": "Signals", "callback_data": "menu:signals" }
         ],
         [
-          {
-            "text": "Alerts",
-            "callback_data": "cmd:alertstatus"
-          },
-          {
-            "text": "Tagesbericht",
-            "callback_data": "cmd:tagesbericht"
-          }
+          { "text": "Trades", "callback_data": "menu:trading" },
+          { "text": "Alerts", "callback_data": "menu:alerts" }
         ],
         [
-          {
-            "text": "Signal senden",
-            "callback_data": "menu:signal_send"
-          }
+          { "text": "Auto Trading", "callback_data": "menu:autotrading" },
+          { "text": "Agents", "callback_data": "menu:agents" }
         ],
         [
-          {
-            "text": "Steuerung",
-            "callback_data": "menu:control"
-          },
-          {
-            "text": "Hilfe",
-            "callback_data": "cmd:hilfe"
-          }
+          { "text": "Exchanges", "callback_data": "menu:exchanges" },
+          { "text": "Insights", "callback_data": "menu:insights" }
+        ],
+        [
+          { "text": "Operations", "callback_data": "menu:ops" },
+          { "text": "Help", "callback_data": "cmd:hilfe" }
         ]
       ]
     },
     "trading": {
-      "text": "*Trading*\n----------------------------\nPositionen, Exposure und Portfolio.",
+      "text": "*Trades*\n\nLive positions and exposure across the paper portfolio.",
       "keyboard": [
         [
-          {
-            "text": "Positionen",
-            "callback_data": "cmd:positions"
-          },
-          {
-            "text": "Exposure",
-            "callback_data": "cmd:exposure"
-          }
+          { "text": "Open Positions", "callback_data": "cmd:positions" },
+          { "text": "Exposure", "callback_data": "cmd:exposure" }
         ],
         [
-          {
-            "text": "Hauptmenue",
-            "callback_data": "menu:main"
-          }
+          { "text": "Main Menu", "callback_data": "menu:main" }
+        ]
+      ]
+    },
+    "portfolio": {
+      "text": "*Portfolio*\n\nPaper portfolio snapshot with realized and unrealized PnL.",
+      "keyboard": [
+        [
+          { "text": "Open Positions", "callback_data": "cmd:positions" },
+          { "text": "Exposure", "callback_data": "cmd:exposure" }
+        ],
+        [
+          { "text": "Daily Report", "callback_data": "cmd:tagesbericht" }
+        ],
+        [
+          { "text": "Main Menu", "callback_data": "menu:main" }
         ]
       ]
     },
     "signals": {
-      "text": "*Signale*\n----------------------------\nAktive Signale und Pipeline-Status.",
+      "text": "*Signals*\n\nReview active signals or submit a new one through the paste flow.",
       "keyboard": [
         [
-          {
-            "text": "Aktive Signale",
-            "callback_data": "cmd:signals"
-          },
-          {
-            "text": "Signal-Pipeline",
-            "callback_data": "cmd:signalstatus"
-          }
+          { "text": "Active Signals", "callback_data": "cmd:signals" },
+          { "text": "Pipeline Status", "callback_data": "cmd:signalstatus" }
         ],
         [
-          {
-            "text": "Hauptmenue",
-            "callback_data": "menu:main"
-          }
+          { "text": "Submit New Signal", "callback_data": "menu:signal_send" }
+        ],
+        [
+          { "text": "Main Menu", "callback_data": "menu:main" }
         ]
       ]
     },
     "signal_send": {
-      "text": "*Signal senden (3-Typen Standard)*\n----------------------------\nTelegram ist Anzeige, JSON ist Wahrheit.\nBei SIGNAL gilt fail-closed: ohne Pflichtfelder keine Weiterleitung.\n\n*SIGNAL (Trade):*\n`[SIGNAL]`\n`Signal ID: SIG-20260325-BTCUSDT-001`\n`Source: Premium Signals`\n`Exchange Scope: binance_futures, bybit`\n`Market Type: Futures`\n`Symbol: BTC/USDT`\n`Side: BUY`\n`Direction: LONG`\n`Entry Rule: BELOW 65000`\n`Targets: 70000`\n`Stop Loss: 62000`\n`Leverage: 10x`\n`Status: NEW`\n`Timestamp: 2026-03-25T18:31:00Z`\n\n*NEWS (Info only):*\n`[NEWS]`\n`Source: Quelle`\n`Title: Titel`\n`Priority: High`\n\n*EXCHANGE_RESPONSE (Status):*\n`[EXCHANGE_RESPONSE]`\n`Related Signal ID: SIG-...`\n`Exchange: bybit`\n`Action: ORDER_CREATED`\n`Status: SUCCESS`",
+      "text": "*Submit Signal*\n\nPaste a structured block below. Telegram renders it, the JSON envelope is the source of truth.\nSIGNAL entries fail closed — missing required fields are not forwarded.\n\n*SIGNAL — trade:*\n`[SIGNAL]`\n`Signal ID: SIG-20260415-BTCUSDT-001`\n`Source: Premium Signals`\n`Exchange Scope: binance_futures, bybit`\n`Market Type: Futures`\n`Symbol: BTC/USDT`\n`Side: BUY`\n`Direction: LONG`\n`Entry Rule: BELOW 65000`\n`Targets: 70000`\n`Stop Loss: 62000`\n`Leverage: 10x`\n`Status: NEW`\n`Timestamp: 2026-04-15T10:00:00Z`\n\n*NEWS — information:*\n`[NEWS]`\n`Source: Outlet`\n`Title: Headline`\n`Priority: High`\n\n*EXCHANGE_RESPONSE — status:*\n`[EXCHANGE_RESPONSE]`\n`Related Signal ID: SIG-...`\n`Exchange: bybit`\n`Action: ORDER_CREATED`\n`Status: SUCCESS`",
       "keyboard": [
         [
-          {
-            "text": "Hauptmenue",
-            "callback_data": "menu:main"
-          }
+          { "text": "Back", "callback_data": "menu:signals" },
+          { "text": "Main Menu", "callback_data": "menu:main" }
+        ]
+      ]
+    },
+    "alerts": {
+      "text": "*Alerts*\n\nDelivery status, precision metrics and the daily summary.",
+      "keyboard": [
+        [
+          { "text": "Alert Status", "callback_data": "cmd:alertstatus" },
+          { "text": "Quality Metrics", "callback_data": "cmd:qualitaet" }
+        ],
+        [
+          { "text": "Daily Report", "callback_data": "cmd:tagesbericht" }
+        ],
+        [
+          { "text": "Main Menu", "callback_data": "menu:main" }
+        ]
+      ]
+    },
+    "agents": {
+      "text": "*Agents*\n\nSupervised assistants for security, health and architecture.",
+      "keyboard": [
+        [
+          { "text": "SENTR — Security", "callback_data": "menu:agents_sentr" }
+        ],
+        [
+          { "text": "Watchdog — Health", "callback_data": "menu:agents_watchdog" }
+        ],
+        [
+          { "text": "Architect — Review", "callback_data": "menu:agents_architect" }
+        ],
+        [
+          { "text": "Main Menu", "callback_data": "menu:main" }
+        ]
+      ]
+    },
+    "agents_sentr": {
+      "text": "*SENTR — Security*\n\nSecurity inspections and incident reports.\nFree-form chat: `/sentr <message>`.",
+      "keyboard": [
+        [
+          { "text": "Open Chat", "callback_data": "cmd:sentr" }
+        ],
+        [
+          { "text": "Run Inspection", "callback_data": "cmd:sentr !inspect" },
+          { "text": "Build Report", "callback_data": "cmd:sentr !report" }
+        ],
+        [
+          { "text": "Back", "callback_data": "menu:agents" },
+          { "text": "Main Menu", "callback_data": "menu:main" }
+        ]
+      ]
+    },
+    "agents_watchdog": {
+      "text": "*Watchdog — Health*\n\nHealth and drift monitoring.\nFree-form chat: `/watchdog <message>`.",
+      "keyboard": [
+        [
+          { "text": "Open Chat", "callback_data": "cmd:watchdog" }
+        ],
+        [
+          { "text": "Run Health Check", "callback_data": "cmd:watchdog !check" },
+          { "text": "Build Report", "callback_data": "cmd:watchdog !report" }
+        ],
+        [
+          { "text": "Back", "callback_data": "menu:agents" },
+          { "text": "Main Menu", "callback_data": "menu:main" }
+        ]
+      ]
+    },
+    "agents_architect": {
+      "text": "*Architect — Review*\n\nArchitecture review and change proposals.\nFree-form chat: `/architect <message>`.",
+      "keyboard": [
+        [
+          { "text": "Open Chat", "callback_data": "cmd:architect" }
+        ],
+        [
+          { "text": "Run Review", "callback_data": "cmd:architect !review" },
+          { "text": "Propose Change", "callback_data": "cmd:architect !propose" }
+        ],
+        [
+          { "text": "Back", "callback_data": "menu:agents" },
+          { "text": "Main Menu", "callback_data": "menu:main" }
+        ]
+      ]
+    },
+    "exchanges": {
+      "text": "*Exchanges*\n\nExchange adapters and order routing.\nLive integration is scheduled for Phase 2 — today this view is read-only.",
+      "keyboard": [
+        [
+          { "text": "Main Menu", "callback_data": "menu:main" }
+        ]
+      ]
+    },
+    "autotrading": {
+      "text": "*Auto Trading*\n\nAutomated forwarding of accepted signals to exchange routing.\nActivation requires the Quality Bar — Precision ≥ 60% or verified real paper fills.",
+      "keyboard": [
+        [
+          { "text": "Main Menu", "callback_data": "menu:main" }
+        ]
+      ]
+    },
+    "insights": {
+      "text": "*Insights*\n\nFeature analytics, precision trend and priority correlation.\nFull analytics live in the dashboard — mobile summaries are on the roadmap.",
+      "keyboard": [
+        [
+          { "text": "Main Menu", "callback_data": "menu:main" }
+        ]
+      ]
+    },
+    "ops": {
+      "text": "*Operations*\n\nSystem control, pause and resume, plus maintenance actions.",
+      "keyboard": [
+        [
+          { "text": "System Status", "callback_data": "cmd:status" }
+        ],
+        [
+          { "text": "Pause", "callback_data": "cmd:pause" },
+          { "text": "Resume", "callback_data": "cmd:resume" }
+        ],
+        [
+          { "text": "Emergency Stop", "callback_data": "cmd:kill" }
+        ],
+        [
+          { "text": "Reload Menu", "callback_data": "cmd:menu_reload" },
+          { "text": "Validate Menu", "callback_data": "cmd:menu_validate" }
+        ],
+        [
+          { "text": "Main Menu", "callback_data": "menu:main" }
         ]
       ]
     },
     "control": {
-      "text": "*Steuerung*\n----------------------------\nSystem-Kontrolle und Notfall-Aktionen.",
+      "text": "*Controls*\n\nSystem control and emergency actions.",
       "keyboard": [
         [
-          {
-            "text": "Pause",
-            "callback_data": "cmd:pause"
-          },
-          {
-            "text": "Resume",
-            "callback_data": "cmd:resume"
-          }
+          { "text": "Pause", "callback_data": "cmd:pause" },
+          { "text": "Resume", "callback_data": "cmd:resume" }
         ],
         [
-          {
-            "text": "Notfall-Stopp",
-            "callback_data": "cmd:kill"
-          }
+          { "text": "Emergency Stop", "callback_data": "cmd:kill" }
         ],
         [
-          {
-            "text": "Menue neu laden",
-            "callback_data": "cmd:menu_reload"
-          }
+          { "text": "Reload Menu", "callback_data": "cmd:menu_reload" }
         ],
         [
-          {
-            "text": "Hauptmenue",
-            "callback_data": "menu:main"
-          }
+          { "text": "Main Menu", "callback_data": "menu:main" }
         ]
       ]
     }

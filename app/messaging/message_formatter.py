@@ -8,7 +8,6 @@ from __future__ import annotations
 import json
 
 from app.messaging.message_models import (
-    ExchangeAction,
     ExchangeResponse,
     NewsMessage,
     ResponseStatus,
@@ -17,7 +16,7 @@ from app.messaging.message_models import (
 
 
 def format_news_telegram(msg: NewsMessage) -> str:
-    lines = ["\U0001F4F0 *NEWS*", ""]
+    lines = ["*NEWS*", ""]
     if msg.source:
         lines.append(f"Source: {msg.source}")
     if msg.market:
@@ -35,7 +34,7 @@ def format_news_telegram(msg: NewsMessage) -> str:
 def format_signal_telegram(sig: TradingSignal) -> str:
     """Minimal, exchange-taugliches Signal-Format."""
     symbol = sig.display_symbol or sig.symbol
-    lines = [f"\U0001F4E1 *SIGNAL* \u2014 `{symbol}`", ""]
+    lines = [f"*SIGNAL* \u2014 `{symbol}`", ""]
 
     # Side & Direction auf einer Zeile
     lines.append(f"{sig.side.value.upper()} {sig.direction.value.upper()}")
@@ -67,15 +66,14 @@ def format_exchange_response_telegram(resp: ExchangeResponse) -> str:
     """Compact operator confirmation — no report, no signal echo."""
     symbol = resp.symbol or "\u2014"
     if resp.status == ResponseStatus.SUCCESS:
-        return f"\u2705 *Ausgef\u00fchrt* \u2014 `{symbol}`"
-    return f"\u26D4 *Nicht Ausgef\u00fchrt* \u2014 `{symbol}`"
+        return f"*Executed* \u2014 `{symbol}`"
+    return f"*Not Executed* \u2014 `{symbol}`"
 
 
 def format_exchange_response_internal(resp: ExchangeResponse) -> str:
     """Verbose Exchange-Response for internal logs and reports."""
-    emoji = _response_emoji(resp.action, resp.status)
     symbol = resp.symbol or "\u2014"
-    lines = [f"{emoji} *RESPONSE* \u2014 `{symbol}`", ""]
+    lines = [f"*Exchange Response* \u2014 `{symbol}`", ""]
 
     lines.append(f"{resp.action.value.upper()} | {resp.status.value.upper()}")
 
@@ -127,15 +125,3 @@ def _exchange_display_name(exchange_id: str) -> str:
     return _EXCHANGE_DISPLAY_NAMES.get(exchange_id.lower(), exchange_id)
 
 
-def _response_emoji(action: ExchangeAction, status: ResponseStatus) -> str:
-    if status == ResponseStatus.ERROR:
-        return "\u274C"
-    if action in {ExchangeAction.TAKE_PROFIT_HIT, ExchangeAction.POSITION_CLOSED}:
-        return "\U0001F3AF"
-    if action == ExchangeAction.STOP_LOSS_HIT:
-        return "\U0001F6D1"
-    if action in {ExchangeAction.FILLED, ExchangeAction.ORDER_CREATED}:
-        return "\u2705"
-    if action == ExchangeAction.REJECTED:
-        return "\u26D4"
-    return "\U0001F4CB"
