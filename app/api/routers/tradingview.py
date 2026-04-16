@@ -39,6 +39,12 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Request
 
 from app.core.logging import get_logger
 from app.core.settings import AppSettings, TradingViewSettings, get_settings
+from app.signals.tradingview_event import (
+    NormalizationError,
+    TradingViewSignalEvent,
+    append_pending_signal,
+    normalize_tradingview_payload,
+)
 
 _logger = get_logger(__name__)
 
@@ -189,6 +195,28 @@ def reset_audit_writer() -> None:
     _audit_writer = _default_audit_writer
 
 
+PendingSignalWriter = Callable[[Path, TradingViewSignalEvent], None]
+"""Injection hook for the pending-signal writer — tests replace this."""
+
+
+def _default_pending_writer(path: Path, event: TradingViewSignalEvent) -> None:
+    append_pending_signal(path, event)
+
+
+_pending_writer: PendingSignalWriter = _default_pending_writer
+
+
+def set_pending_signal_writer(writer: PendingSignalWriter) -> None:
+    """Replace the pending-signal writer (test-only hook)."""
+    global _pending_writer
+    _pending_writer = writer
+
+
+def reset_pending_signal_writer() -> None:
+    global _pending_writer
+    _pending_writer = _default_pending_writer
+
+
 def _settings_gate(settings: AppSettings) -> TradingViewSettings:
     """Return TV-settings if endpoint is fully configured; otherwise 404.
 
@@ -278,6 +306,36 @@ async def tradingview_webhook(
         _logger.warning("tradingview_webhook_malformed", **entry)
         raise HTTPException(status_code=400, detail="Malformed payload") from None
 
+    routing_outcome: dict[str, object] = {"enabled": tv.webhook_signal_routing_enabled}
+    pipeline_event: TradingViewSignalEvent | None = None
+    if tv.webhook_signal_routing_enabled:
+        try:
+            pipeline_event = normalize_tradingview_payload(
+                parsed_payload if isinstance(parsed_payload, dict) else {},
+                request_id=request_id,
+                payload_hash=payload_hash,
+                received_at=common_log["received_at"],  # type: ignore[arg-type]
+            )
+        except NormalizationError as exc:
+            routing_outcome["status"] = "normalize_failed"
+            routing_outcome["reason"] = str(exc)[:200]
+        else:
+            try:
+                _pending_writer(Path(tv.webhook_pending_signals_log), pipeline_event)
+            except OSError as exc:
+                routing_outcome["status"] = "emit_failed"
+                routing_outcome["reason"] = str(exc)[:200]
+                pipeline_event = None
+            else:
+                routing_outcome["status"] = "emitted"
+                routing_outcome["event_id"] = pipeline_event.event_id
+                routing_outcome["signal_path_id"] = pipeline_event.provenance.signal_path_id
+    else:
+        routing_outcome["status"] = "disabled"
+
+    signal_path_id = (
+        pipeline_event.provenance.signal_path_id if pipeline_event is not None else None
+    )
     entry = {
         **common_log,
         "outcome": "accepted",
@@ -285,10 +343,11 @@ async def tradingview_webhook(
         "payload": parsed_payload,
         "provenance": {
             "source": "tradingview_webhook",
-            "version": "tv-1",
-            "signal_path_id": None,  # TV-1: audit only, no pipeline routing
+            "version": "tv-3" if pipeline_event is not None else "tv-1",
+            "signal_path_id": signal_path_id,
             "auth_method": auth_method,
         },
+        "routing": routing_outcome,
     }
     _audit_writer(audit_path, entry)
     _logger.info(
@@ -296,9 +355,14 @@ async def tradingview_webhook(
         request_id=request_id,
         payload_hash=payload_hash,
         body_bytes=len(raw_body),
+        routing_status=routing_outcome.get("status"),
     )
-    return {
+    response: dict[str, object] = {
         "status": "accepted",
         "request_id": request_id,
         "received_at": entry["received_at"],
     }
+    if pipeline_event is not None:
+        response["event_id"] = pipeline_event.event_id
+        response["signal_path_id"] = pipeline_event.provenance.signal_path_id
+    return response

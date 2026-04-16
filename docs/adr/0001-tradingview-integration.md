@@ -35,19 +35,28 @@ via separaten Adapter), sowie lokale Indikatoren.
 
 **Gewählt:** A + D für TV-1. B/C sind durch **externe Lizenzanträge geblockt** und nicht selbst auflösbar.
 
-## Datenfluss (TV-1)
+## Datenfluss (TV-1 → TV-3)
 
 ```
 TradingView (Browser) ──[Widget Script]──> <TradingViewChart/>  (read-only Visualisierung)
 
 TradingView (Alerts)  ──[HTTPS POST]────>  POST /tradingview/webhook
-                                              ├── HMAC-SHA256 verify (shared secret)
+                                              ├── Auth (HMAC | shared_token | hmac_or_token)
                                               ├── Body ≤ 64 KiB, JSON parse
-                                              ├── Idempotency via payload hash
+                                              ├── Replay-cache via payload hash
                                               ├── Persist → artifacts/tradingview_webhook_audit.jsonl
+                                              └── IF webhook_signal_routing_enabled (TV-3):
+                                                   normalize → TradingViewSignalEvent
+                                                   append  → artifacts/tradingview_pending_signals.jsonl
+                                                   (Operator-Approval erforderlich; kein Auto-Trade)
                                               └── Return 202 Accepted
-                                           NO signal-pipeline wiring in TV-1.
 ```
+
+TV-3-Grenze: Pending-Events werden **nicht** automatisch zu `SignalCandidate`
+promoted. Die Promotion ist ein separater, operatorgesteuerter Schritt.
+Rationale: TV-Alerts enthalten nicht die vom KAI Decision-Schema geforderten
+Felder (thesis, confluence, risk assessment). Synthetische Defaults würden die
+Datenbasis der späteren Quality-Bar-Messung verfälschen.
 
 ## Sicherheitsmodell
 
@@ -72,14 +81,37 @@ TradingView (Alerts)  ──[HTTPS POST]────>  POST /tradingview/webhook
 | `TRADINGVIEW_WEBHOOK_SHARED_TOKEN` | `""` | Pflicht in `shared_token` / `hmac_or_token` Modus. Leer → Endpoint 404 bzw. Settings-Validation-Fehler. |
 | `VITE_TRADINGVIEW_ENABLED` | `false` | Frontend-Komponente zeigt Disabled-Placeholder. |
 | `BINANCE_ENABLED` | `false` | TV-2 OHLCV-Adapter. Adapter wird nur konstruiert wenn `true`. CoinGecko bleibt Default-Provider. |
+| `TRADINGVIEW_WEBHOOK_SIGNAL_ROUTING_ENABLED` | `false` | TV-3: akzeptierte Payloads werden normalisiert und in die Pending-Queue geschrieben. Default off ⇒ TV-1/TV-2-Verhalten (audit-only). |
+| `TRADINGVIEW_WEBHOOK_PENDING_SIGNALS_LOG` | `artifacts/tradingview_pending_signals.jsonl` | Pfad zur Pending-Queue (append-only JSONL). |
 
-## LLM-Datenfluss (Vorbereitung, nicht TV-1)
+## TV-3: Signal-Routing (Webhook → Pending-Queue)
 
-TV-1 persistiert Webhook-Payloads mit vollständigem Audit-Trail. In TV-2/TV-3 werden diese
-Events in normalisierte Signal-Events übersetzt und mit Provenienz-Tags (`source`, `version`,
-`signal_path_id`) in die Signal-Pipeline eingebracht.
+Wenn `TRADINGVIEW_WEBHOOK_SIGNAL_ROUTING_ENABLED=true`, wird jedes **akzeptierte**
+Webhook-Payload durch `app/signals/tradingview_event.py` normalisiert:
 
-**In TV-1 keine LLM-Anbindung** — der Webhook ist reiner Audit-Endpoint.
+- **Pflichtfelder:** `ticker`, `action ∈ {buy, sell, close}`. Fehlt oder ungültig → Audit markiert `routing.status=normalize_failed`, **kein** Event in der Pending-Queue. 202 bleibt erhalten (Webhook ist angekommen), aber kein Signal-Path-Id in der Response.
+- **Optional:** `price` (positiv, numerisch oder numerischer String), `note`, `strategy`.
+- **Output:** `TradingViewSignalEvent(event_id, received_at, ticker, action, price, note, strategy, source_request_id, source_payload_hash, provenance)` mit `provenance.signal_path_id=tvpath_<hex>` für spätere Quality-Bar-Attribution.
+- **Persistenz:** One-line-JSON je Event, append-only in `artifacts/tradingview_pending_signals.jsonl`.
+
+**Kein Auto-Trade in TV-3.** Events warten in der Pending-Queue bis Operator
+sie in einem späteren Schritt (TV-4+) promotet. Die Promotion befüllt die
+vom KAI Decision-Schema geforderten Felder (thesis, confluence, risk) — der
+TV-Alert allein reicht dafür nicht.
+
+**Bedrohungsmodell:** Bei aktivem `shared_token`-Modus + aktivem Signal-Routing
+kann ein Angreifer mit Token-Kenntnis beliebige Events in die Pending-Queue
+einspeisen. Approval-Gate vor Promotion macht das für TV-3 aushaltbar; für
+Live-Trading nicht ausreichend. Daher bleibt Live-Trading off und jede
+Promotion ist manuell.
+
+## LLM-Datenfluss (Vorbereitung, nicht TV-3)
+
+TV-1 persistiert Webhook-Payloads mit Audit-Trail. TV-2 erweitert OHLCV +
+RSI als Signal-Zutaten. TV-3 erzeugt Pending-Events mit Provenienz-Tags
+(`source`, `version`, `signal_path_id`). Erst in einer späteren Phase
+werden Pending-Events operatorgesteuert in `SignalCandidate`-Objekte
+promoted — inkl. LLM-/Rule-Augmentation der fehlenden Decision-Felder.
 
 ## Betriebsmodell
 

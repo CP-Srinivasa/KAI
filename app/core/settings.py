@@ -243,6 +243,14 @@ class TradingViewSettings(BaseSettings):
     # shared_token (no body integrity) | hmac_or_token (accept either).
     webhook_auth_mode: str = Field(default="hmac")
     webhook_shared_token: str = Field(default="")
+    # TV-3: when true, accepted payloads are normalized to a
+    # TradingViewSignalEvent and appended to the pending-signals JSONL.
+    # Default false (fail-closed). No auto-execution — events wait for
+    # operator approval. Normalizer failures leave audit intact.
+    webhook_signal_routing_enabled: bool = Field(default=False)
+    webhook_pending_signals_log: str = Field(
+        default="artifacts/tradingview_pending_signals.jsonl"
+    )
 
     @model_validator(mode="after")
     def validate_auth_mode(self) -> "TradingViewSettings":
