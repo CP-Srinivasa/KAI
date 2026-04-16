@@ -260,6 +260,14 @@ class TradingViewSettings(BaseSettings):
     promoted_signals_log: str = Field(
         default="artifacts/tradingview_promoted_signals.jsonl"
     )
+    # TV-4 prep: measurement-only consumer. When disabled (default),
+    # the consumer is a no-op — no file is written, no state changes.
+    # When enabled, each promoted row is appended once (by decision_id)
+    # to the signal-audit JSONL. No trading-loop side effects.
+    promoted_consumer_enabled: bool = Field(default=False)
+    promoted_signal_audit_log: str = Field(
+        default="artifacts/tradingview_signal_audit.jsonl"
+    )
 
     @model_validator(mode="after")
     def validate_auth_mode(self) -> "TradingViewSettings":
