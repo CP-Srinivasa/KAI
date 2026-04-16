@@ -12,6 +12,9 @@
 
 ## Compact Decision Log
 
+### D-126 (2026-04-16)
+TV-2 + TV-2.1 landed: Binance public-REST OHLCV adapter (gated by `BINANCE_ENABLED`, CoinGecko remains default) + Wilder RSI(14) indicator + `SignalProvenance(source, version, signal_path_id)` attached optionally to `SignalCandidate` (non-breaking). TV-2.1 adds a shared-token webhook auth mode (`X-KAI-Token`) because TradingView's native webhook cannot produce body-HMACs; modes are `hmac` (default, unchanged), `shared_token` (weaker — no body integrity), and `hmac_or_token` (HMAC preferred). All webhook paths record `auth_method` in the audit log for later Bar-phase attribution. Live-trading stays off; fail-closed semantics unchanged; no signal-pipeline wiring yet (TV-3).
+
 ### D-125 (2026-04-16)
 PHASE 5 quality-bar work suspended for 30 days.
 Rationale: 93 resolved alerts has 95%-CI of ±10pp — any precision delta within that band is noise. Tuning on this sample is overfitting.

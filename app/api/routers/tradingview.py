@@ -44,6 +44,7 @@ _logger = get_logger(__name__)
 
 _SIGNATURE_HEADER = "X-KAI-Signature"
 _SIGNATURE_PREFIX = "sha256="
+_TOKEN_HEADER = "X-KAI-Token"
 
 
 def _utcnow_iso() -> str:
@@ -115,6 +116,44 @@ def _verify_signature(raw_body: bytes, signature_header: str | None, secret: str
     return hmac.compare_digest(provided, expected)
 
 
+def _verify_shared_token(provided_token: str | None, expected_token: str) -> bool:
+    """Constant-time equality check for the shared-token auth mode (TV-2.1).
+
+    NOTE: shared-token mode does NOT verify body integrity — only that the
+    caller knows the secret. Use HMAC mode whenever the client can compute it.
+    """
+    if not provided_token or not expected_token:
+        return False
+    return hmac.compare_digest(provided_token.strip(), expected_token)
+
+
+def _authorize_request(
+    raw_body: bytes,
+    signature_header: str | None,
+    token_header: str | None,
+    settings: TradingViewSettings,
+) -> tuple[bool, str]:
+    """Return (accepted, auth_method_used).
+
+    On failure, auth_method_used carries the rejection reason instead.
+    """
+    mode = settings.webhook_auth_mode
+    if mode == "hmac":
+        if _verify_signature(raw_body, signature_header, settings.webhook_secret):
+            return True, "hmac"
+        return False, "invalid_signature"
+    if mode == "shared_token":
+        if _verify_shared_token(token_header, settings.webhook_shared_token):
+            return True, "shared_token"
+        return False, "invalid_shared_token"
+    # hmac_or_token: try HMAC first (stronger), then fall back.
+    if _verify_signature(raw_body, signature_header, settings.webhook_secret):
+        return True, "hmac"
+    if _verify_shared_token(token_header, settings.webhook_shared_token):
+        return True, "shared_token"
+    return False, "invalid_credentials"
+
+
 def _payload_hash(raw_body: bytes) -> str:
     return hashlib.sha256(raw_body).hexdigest()
 
@@ -154,10 +193,22 @@ def _settings_gate(settings: AppSettings) -> TradingViewSettings:
     """Return TV-settings if endpoint is fully configured; otherwise 404.
 
     Fail-closed: an unconfigured or disabled webhook is indistinguishable
-    from a non-existent endpoint.
+    from a non-existent endpoint. Required credentials depend on auth mode:
+        hmac           -> webhook_secret
+        shared_token   -> webhook_shared_token
+        hmac_or_token  -> at least one of the two
     """
     tv = settings.tradingview
-    if not tv.webhook_enabled or not tv.webhook_secret:
+    if not tv.webhook_enabled:
+        raise HTTPException(status_code=404, detail="Not Found")
+    mode = tv.webhook_auth_mode
+    has_secret = bool(tv.webhook_secret)
+    has_token = bool(tv.webhook_shared_token)
+    if mode == "hmac" and not has_secret:
+        raise HTTPException(status_code=404, detail="Not Found")
+    if mode == "shared_token" and not has_token:
+        raise HTTPException(status_code=404, detail="Not Found")
+    if mode == "hmac_or_token" and not (has_secret or has_token):
         raise HTTPException(status_code=404, detail="Not Found")
     return tv
 
@@ -173,11 +224,12 @@ async def tradingview_webhook(
     request: Request,
     tv: Annotated[TradingViewSettings, Depends(_require_tradingview_settings)],
     x_kai_signature: Annotated[str | None, Header(alias=_SIGNATURE_HEADER)] = None,
+    x_kai_token: Annotated[str | None, Header(alias=_TOKEN_HEADER)] = None,
 ) -> dict[str, object]:
-    """Accept a signed TradingView alert payload.
+    """Accept a signed (or token-authenticated) TradingView alert payload.
 
     Returns 202 Accepted for valid, new payloads.
-    401 for bad signatures. 409 for replayed payloads. 400 for malformed JSON.
+    401 for bad credentials. 409 for replayed payloads. 400 for malformed JSON.
     """
     request_id = _new_request_id()
     audit_path = Path(tv.webhook_audit_log)
@@ -188,13 +240,16 @@ async def tradingview_webhook(
         "received_at": _utcnow_iso(),
         "source_ip": request.client.host if request.client else None,
         "body_bytes": len(raw_body),
+        "auth_mode": tv.webhook_auth_mode,
     }
 
-    if not _verify_signature(raw_body, x_kai_signature, tv.webhook_secret):
-        entry = {**common_log, "outcome": "rejected", "reason": "invalid_signature"}
+    accepted, auth_method = _authorize_request(raw_body, x_kai_signature, x_kai_token, tv)
+    if not accepted:
+        entry = {**common_log, "outcome": "rejected", "reason": auth_method}
         _audit_writer(audit_path, entry)
         _logger.warning("tradingview_webhook_rejected", **entry)
-        raise HTTPException(status_code=401, detail="Invalid signature")
+        raise HTTPException(status_code=401, detail="Invalid credentials")
+    common_log["auth_method"] = auth_method
 
     payload_hash = _payload_hash(raw_body)
     cache = _get_replay_cache(tv)
@@ -232,6 +287,7 @@ async def tradingview_webhook(
             "source": "tradingview_webhook",
             "version": "tv-1",
             "signal_path_id": None,  # TV-1: audit only, no pipeline routing
+            "auth_method": auth_method,
         },
     }
     _audit_writer(audit_path, entry)

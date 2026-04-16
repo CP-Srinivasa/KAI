@@ -21,6 +21,21 @@ class SignalState(StrEnum):
     CANCELLED = "cancelled"
 
 
+@dataclass(frozen=True)
+class SignalProvenance:
+    """Origin tag for any signal feeding downstream pipelines.
+
+    D-125 invariant: every TradingView-pivot signal must carry provenance so
+    the later quality-bar phase can attribute precision deltas to the right
+    signal path (RSS pipeline vs. tradingview_webhook vs. binance_ohlcv_rsi).
+    `signal_path_id` is None for audit-only stages (e.g. TV-1 webhook ingest).
+    """
+
+    source: str  # e.g. "rss", "tradingview_webhook", "binance_ohlcv_rsi"
+    version: str  # pivot stage tag, e.g. "tv-1", "tv-2", "tv-3"
+    signal_path_id: str | None = None  # set when routed to a concrete pipeline
+
+
 def _new_decision_id() -> str:
     return f"dec_{uuid.uuid4().hex[:12]}"
 
@@ -84,3 +99,6 @@ class SignalCandidate:
     # State (default: pending)
     approval_state: SignalState = SignalState.PENDING
     execution_state: SignalState = SignalState.PENDING
+
+    # D-125 provenance: optional, fail-open (None = legacy/RSS path).
+    provenance: SignalProvenance | None = None

@@ -238,6 +238,45 @@ class TradingViewSettings(BaseSettings):
     )
     webhook_replay_cache_size: int = Field(default=256, ge=1)
     webhook_replay_window_seconds: float = Field(default=300.0, gt=0.0)
+    # TV-2.1: shared-token fallback for TradingView's native webhook which
+    # cannot produce body-HMACs. Modes: hmac (default, strongest) |
+    # shared_token (no body integrity) | hmac_or_token (accept either).
+    webhook_auth_mode: str = Field(default="hmac")
+    webhook_shared_token: str = Field(default="")
+
+    @model_validator(mode="after")
+    def validate_auth_mode(self) -> "TradingViewSettings":
+        normalized = self.webhook_auth_mode.strip().lower()
+        if normalized not in {"hmac", "shared_token", "hmac_or_token"}:
+            raise ValueError(
+                "TRADINGVIEW_WEBHOOK_AUTH_MODE must be one of "
+                "hmac, shared_token, hmac_or_token."
+            )
+        if normalized in {"shared_token", "hmac_or_token"} and not self.webhook_shared_token:
+            raise ValueError(
+                "TRADINGVIEW_WEBHOOK_SHARED_TOKEN must be set when "
+                "TRADINGVIEW_WEBHOOK_AUTH_MODE is shared_token or hmac_or_token."
+            )
+        self.webhook_auth_mode = normalized
+        return self
+
+
+class BinanceMarketDataSettings(BaseSettings):
+    """TV-2 OHLCV adapter — Binance public REST (no auth).
+
+    Gated by BINANCE_ENABLED. Used only as a supplementary market-data
+    provider when explicitly enabled; CoinGecko remains the default.
+    """
+
+    model_config = SettingsConfigDict(
+        env_prefix="BINANCE_", env_file=".env", extra="ignore"
+    )
+
+    enabled: bool = Field(default=False)
+    base_url: str = Field(default="https://api.binance.com")
+    timeout_seconds: int = Field(default=10, ge=1)
+    max_retries: int = Field(default=3, ge=1)
+    freshness_threshold_seconds: float = Field(default=120.0, gt=0.0)
 
 
 class AppSettings(BaseSettings):
@@ -285,6 +324,7 @@ class AppSettings(BaseSettings):
     execution: ExecutionSettings = Field(default_factory=ExecutionSettings)
     operator: OperatorSettings = Field(default_factory=OperatorSettings)
     tradingview: TradingViewSettings = Field(default_factory=TradingViewSettings)
+    binance: BinanceMarketDataSettings = Field(default_factory=BinanceMarketDataSettings)
 
     @model_validator(mode="after")
     def validate_runtime_contract(self) -> "AppSettings":

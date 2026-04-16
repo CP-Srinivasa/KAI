@@ -52,8 +52,12 @@ TradingView (Alerts)  ──[HTTPS POST]────>  POST /tradingview/webhook
 ## Sicherheitsmodell
 
 - **Transport:** HTTPS only (Cloudflare Tunnel, bestehend). HTTP-Ingress wird auf Edge abgelehnt.
-- **Authentifikation:** HMAC-SHA256 über Raw-Body, Header `X-KAI-Signature: sha256=<hex>`. Secret in `TRADINGVIEW_WEBHOOK_SECRET`, mindestens 32 Zeichen.
-- **Autorisierung:** Nur Alerts mit gültiger Signatur werden persistiert. Ungültige Signaturen → 401, Audit-Log-Eintrag mit Rejection-Grund.
+- **Authentifikation:** Drei Modi (TV-2.1), default unverändert HMAC:
+  - `hmac` (default): HMAC-SHA256 über Raw-Body, Header `X-KAI-Signature: sha256=<hex>`. Secret in `TRADINGVIEW_WEBHOOK_SECRET`, mindestens 32 Zeichen. Body-Integrität verifiziert.
+  - `shared_token` (TV-2.1): Statisches Token im Header `X-KAI-Token: <secret>`. Constant-time Vergleich gegen `TRADINGVIEW_WEBHOOK_SHARED_TOKEN`. **Schwächer als HMAC** — keine Body-Integrität. Notwendig, weil TradingView's nativer Webhook keine Body-HMACs erzeugen kann.
+  - `hmac_or_token` (TV-2.1): Beide Header werden akzeptiert; HMAC wird zuerst geprüft (stärker). Nutzt man, wenn parallel ein Relay HMAC erzeugt und ein Direkt-Pfad das Shared-Token verwendet.
+  Auth-Methode wird im Audit-Log unter `auth_method` und `provenance.auth_method` festgehalten.
+- **Autorisierung:** Nur Alerts mit gültiger Auth werden persistiert. Ungültige Credentials → 401, Audit-Log-Eintrag mit Rejection-Grund.
 - **Rate-Limit / Body-Size:** Bestehende `RequestGovernanceMiddleware` erzwingt `APP_MAX_REQUEST_BODY_BYTES`. Zusätzliche Idempotency-Cache-Größe 256 Einträge.
 - **Replay-Schutz:** Payload-Hash wird im In-Memory-LRU für 5 Minuten gecacht. Doppelte Einreichungen werden als Replay markiert und ignoriert.
 - **Secret-Rotation:** Operator-Task. Beim Rotieren: Env umsetzen, Server-Neustart, TradingView-Alert-Templates anpassen.
@@ -63,8 +67,11 @@ TradingView (Alerts)  ──[HTTPS POST]────>  POST /tradingview/webhook
 | Flag | Default | Wirkung |
 |---|---|---|
 | `TRADINGVIEW_WEBHOOK_ENABLED` | `false` | Router liefert 404 wenn `false`. Kein Listener. |
-| `TRADINGVIEW_WEBHOOK_SECRET` | `""` | Bei `""` + `ENABLED=true` → Startup-Warnung, alle Requests fail-closed. |
+| `TRADINGVIEW_WEBHOOK_SECRET` | `""` | Pflicht in `hmac` / `hmac_or_token` Modus. Leer → Endpoint 404. |
+| `TRADINGVIEW_WEBHOOK_AUTH_MODE` | `hmac` | `hmac` \| `shared_token` \| `hmac_or_token`. |
+| `TRADINGVIEW_WEBHOOK_SHARED_TOKEN` | `""` | Pflicht in `shared_token` / `hmac_or_token` Modus. Leer → Endpoint 404 bzw. Settings-Validation-Fehler. |
 | `VITE_TRADINGVIEW_ENABLED` | `false` | Frontend-Komponente zeigt Disabled-Placeholder. |
+| `BINANCE_ENABLED` | `false` | TV-2 OHLCV-Adapter. Adapter wird nur konstruiert wenn `true`. CoinGecko bleibt Default-Provider. |
 
 ## LLM-Datenfluss (Vorbereitung, nicht TV-1)
 
