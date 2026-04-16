@@ -70,6 +70,10 @@ data/
 
 # Runtime PID files
 .server.pid
+.agent_worker.pid
+
+# Frontend build artifacts (regenerable)
+web/tsconfig.tsbuildinfo
 
 # E2E test database (root-level)
 test_e2e.db
