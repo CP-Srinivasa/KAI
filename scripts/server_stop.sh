@@ -63,3 +63,8 @@ else
 fi
 
 rm -f "$PID_FILE"
+
+# Also stop the agent-worker (idempotent, silent if not running).
+if [ -x "$(dirname "$0")/agent_worker_stop.sh" ] || [ -f "$(dirname "$0")/agent_worker_stop.sh" ]; then
+    bash "$(dirname "$0")/agent_worker_stop.sh" || true
+fi

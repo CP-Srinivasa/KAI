@@ -286,6 +286,18 @@ Claude darf NICHT:
 - Risiken verschweigen
 - unnötig komplexe Tests erzeugen
 
+## Agent Roster (Claude-Code-only)
+
+Drei operative Agenten — alle ausschließlich von Claude Code ausführbar, niemals durch Codex/Antigravity/externe LLMs:
+
+- **SENTR** (`a708ac129e9cf2569`) — Security & Inspection. Modi: `inspect`, `report`.
+- **Watchdog** — Health & Drift Monitor. Modi: `check`, `report`.
+- **Architect** (`a14a2b53ba50ebadd`) — Architektur-Review & Propose. Modi: `review`, `propose`.
+
+Permissions: read + report; write nur über `app/agents/tools/guarded_write.py` mit Audit-Trail.
+Dropbox: `artifacts/agents/{sentr,watchdog,architect}/*.jsonl` (Status `live`/`prepared`/`unavailable`).
+Volle Definition: siehe `AGENTS.md` § Agent Roster.
+
 ## Non-Negotiable Rules
 
 ### Architecture

@@ -106,6 +106,25 @@
 
 > Dieses Dokument lesen, bevor eine einzige Zeile Code angefasst wird.
 
+## Agent Roster (D-141, 2026-04-15)
+
+Alle drei Agenten werden **ausschließlich von Claude Code** ausgeführt — nicht von Codex,
+nicht von Antigravity, nicht von externen LLMs. Permissions-Boundary: read + report;
+write nur über `app/agents/tools/guarded_write.py` mit Audit-Trail.
+
+| Agent | ID | Modi | Rolle |
+|---|---|---|---|
+| **SENTR** | `a708ac129e9cf2569` | inspect, report | Security/Inspection — prüft Code, Configs, Secrets, Auditierbarkeit |
+| **Watchdog** | — | `check`, `report` | Health/Drift-Monitor — verifiziert Pipeline-Outputs, Quality-Bar, Regressionen |
+| **Architect** | `a14a2b53ba50ebadd` | review, propose | Architektur/Struktur — bewertet Module, Abhängigkeiten, Refactor-Vorschläge |
+
+**Dropbox-Pattern (honest by design):**
+- Findings/Reports: `artifacts/agents/{sentr,watchdog,architect}/*.jsonl`
+- Status `live` = JSONL in den letzten 24h; `prepared` = Verzeichnis existiert, leer; `unavailable` = kein Verzeichnis
+- Kein Fake-Heartbeat, keine Mock-Daten
+
+**Master-Rules** (gelten für alle drei): CLAUDE.md Core Rules + Deploy-Regeln + Testing-Regeln.
+
 ## Documentation Policy (D-99, 2026-03-24)
 
 - Neue Sprint-Contract-Dokumente sind gestoppt (keine neuen `docs/sprint*_contract*.md` und keine neuen Sprint-Sections als Primärquelle).
