@@ -220,6 +220,26 @@ class ExchangeSettings(BaseSettings):
     timeout_seconds: float = Field(default=15.0, gt=0.0)
 
 
+class TradingViewSettings(BaseSettings):
+    """TradingView integration settings — TV-1 webhook ingest only.
+
+    All defaults fail-closed: webhook is unmounted (404) unless both
+    enabled=true AND a non-empty secret are configured.
+    """
+
+    model_config = SettingsConfigDict(
+        env_prefix="TRADINGVIEW_", env_file=".env", extra="ignore"
+    )
+
+    webhook_enabled: bool = Field(default=False)
+    webhook_secret: str = Field(default="")
+    webhook_audit_log: str = Field(
+        default="artifacts/tradingview_webhook_audit.jsonl"
+    )
+    webhook_replay_cache_size: int = Field(default=256, ge=1)
+    webhook_replay_window_seconds: float = Field(default=300.0, gt=0.0)
+
+
 class AppSettings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="APP_", env_file=".env", extra="ignore")
 
@@ -264,6 +284,7 @@ class AppSettings(BaseSettings):
     risk: RiskSettings = Field(default_factory=RiskSettings)
     execution: ExecutionSettings = Field(default_factory=ExecutionSettings)
     operator: OperatorSettings = Field(default_factory=OperatorSettings)
+    tradingview: TradingViewSettings = Field(default_factory=TradingViewSettings)
 
     @model_validator(mode="after")
     def validate_runtime_contract(self) -> "AppSettings":

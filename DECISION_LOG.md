@@ -1,15 +1,21 @@
 # DECISION_LOG.md
 
-## Current State (2026-04-10)
+## Current State (2026-04-16)
 
 - phase: `PHASE 5`
-- status: `SPLIT-RELEASE` (D-124, formerly HOLD since D-98)
-- unblocked: `non-signal-critical work (docs, source taxonomy, observability, tests, refactors, paper-engine tooling, precision-improvement work)`
-- still blocked: `signal-critical work (new signal consumers, live exchange relay, companion-ML reactivation) until quality bar met`
-- quality bar for full release: `precision >= 60% on >= 50 resolved alerts OR (precision >= 50% AND priority/hit corr >= 0.40 AND >= 10 real paper fills with PnL tracking)`
-- policy: `Operate pipeline daily, annotate outcomes, prioritize precision-improving work`
+- status: `SUSPENDED` (D-125 TradingView-Pivot, 2026-04-16)
+- reason: `n=93 resolved alerts has 95%-CI ±10pp — optimization on this sample size is statistical noise, not signal`
+- active workstream: `TradingView integration (TV-1..TV-4) — provider-agnostic, fail-closed, gated`
+- still blocked: `signal-critical work tied to D-105/D-124 quality bar (live exchange relay, companion-ML reactivation, ML-driven precision tuning)`
+- re-entry to PHASE 5 quality-bar work: `not before 2026-05-16 AND (>=200 resolved alerts OR >=10 real paper fills with PnL)`
+- policy: `Operate pipeline daily for data accumulation; build TradingView audit + chart capabilities; no premature precision tuning`
 
 ## Compact Decision Log
+
+### D-125 (2026-04-16)
+PHASE 5 quality-bar work suspended for 30 days.
+Rationale: 93 resolved alerts has 95%-CI of ±10pp — any precision delta within that band is noise. Tuning on this sample is overfitting.
+Active workstream pivots to TradingView integration (TV-1..TV-4): webhook ingest with HMAC + audit-log, official widget chart, OHLCV adapter + RSI(14) gated behind provenance tags, prepared paper-trading hook. All TV signals carry `provenance.{source, version, signal_path_id}` so future quality-bar measurement can differentiate TV-vs-RSS contribution. Live trading remains off; widget chart license-free; advanced-charts and trading-platform modes typed but not implemented (require external license application). Re-entry to quality-bar work is gated on data, not calendar: ≥200 resolved alerts OR ≥10 real paper fills with PnL, not before 2026-05-16.
 
 ### D-97 (2026-03-24)
 Strategic hold activated for companion-ML and feature expansion.

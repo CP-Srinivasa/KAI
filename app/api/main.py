@@ -8,7 +8,16 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.analysis.factory import create_provider
 from app.analysis.keywords.engine import KeywordEngine
 from app.api.middleware.request_governance import RequestGovernanceMiddleware
-from app.api.routers import alerts, dashboard, health, operator, query, research, sources
+from app.api.routers import (
+    alerts,
+    dashboard,
+    health,
+    operator,
+    query,
+    research,
+    sources,
+    tradingview,
+)
 from app.core.logging import configure_logging, get_logger
 from app.core.settings import get_settings
 from app.ingestion.schedulers.rss_scheduler import RSSScheduler
@@ -169,6 +178,7 @@ def create_app() -> FastAPI:
     app.include_router(research.router, prefix="/research", tags=["research"])
     app.include_router(operator.router)
     app.include_router(dashboard.router)
+    app.include_router(tradingview.router)
 
     return app
 

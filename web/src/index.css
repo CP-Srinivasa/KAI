@@ -1,0 +1,120 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  /* Light theme — elegant, sachlich */
+  --bg-0: 247 248 250;
+  --bg-1: 255 255 255;
+  --bg-2: 252 252 253;
+  --bg-3: 244 245 247;
+  --line-subtle: 235 237 240;
+  --line: 224 227 231;
+  --line-strong: 208 212 218;
+  --fg: 18 23 32;
+  --fg-muted: 92 102 118;
+  --fg-subtle: 140 150 165;
+  --accent: 96 99 255;
+  --accent-soft: 232 233 255;
+  --pos: 22 163 110;
+  --neg: 220 54 68;
+  --warn: 201 133 10;
+  --info: 20 141 186;
+  --ai: 128 96 220;
+}
+
+.dark {
+  /* Dark theme — ruhig, tief, nicht tot */
+  --bg-0: 11 14 20;
+  --bg-1: 17 21 29;
+  --bg-2: 22 27 37;
+  --bg-3: 28 34 45;
+  --line-subtle: 30 36 48;
+  --line: 40 47 62;
+  --line-strong: 56 65 84;
+  --fg: 232 236 243;
+  --fg-muted: 156 165 184;
+  --fg-subtle: 109 119 138;
+  --accent: 130 135 255;
+  --accent-soft: 36 38 70;
+  --pos: 52 199 140;
+  --neg: 245 103 118;
+  --warn: 230 170 50;
+  --info: 80 186 225;
+  --ai: 170 140 255;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+body {
+  @apply bg-bg-0 text-fg font-sans antialiased;
+  font-feature-settings: "ss01", "cv11", "tnum";
+}
+
+/* Scrollbars */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgb(var(--line-strong)) transparent;
+}
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+*::-webkit-scrollbar-thumb {
+  background: rgb(var(--line-strong));
+  border-radius: 8px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* Subtle fade-in for panels */
+@keyframes kai-fade {
+  from {
+    opacity: 0;
+    transform: translateY(2px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+.kai-fade {
+  animation: kai-fade 280ms ease-out both;
+}
+
+/* Recharts overrides */
+.recharts-tooltip-wrapper {
+  outline: none !important;
+}
+.recharts-default-tooltip {
+  background: rgb(var(--bg-2)) !important;
+  border: 1px solid rgb(var(--line)) !important;
+  border-radius: 8px !important;
+  color: rgb(var(--fg)) !important;
+  box-shadow:
+    0 8px 24px -8px rgb(0 0 0 / 0.25),
+    0 2px 6px -2px rgb(0 0 0 / 0.1) !important;
+  padding: 8px 10px !important;
+}
+.recharts-tooltip-label {
+  color: rgb(var(--fg-muted)) !important;
+  font-size: 11px !important;
+  margin-bottom: 4px !important;
+}
+.recharts-tooltip-item {
+  color: rgb(var(--fg)) !important;
+  font-size: 12px !important;
+}
+.recharts-cartesian-axis-tick-value {
+  fill: rgb(var(--fg-subtle)) !important;
+  font-size: 11px !important;
+}
+.recharts-cartesian-grid line {
+  stroke: rgb(var(--line-subtle)) !important;
+}
