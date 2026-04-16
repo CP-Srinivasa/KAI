@@ -58,6 +58,9 @@ def _make_client(
         webhook_audit_log=str(audit_path),
         webhook_signal_routing_enabled=routing_enabled,
         webhook_pending_signals_log=str(pending_path),
+        # Pin auth_mode so an ambient .env cannot flip this HMAC fixture.
+        webhook_auth_mode="hmac",
+        webhook_shared_token="",
     )
     app.dependency_overrides[tv_router.get_settings] = lambda: settings
     with TestClient(app) as client:

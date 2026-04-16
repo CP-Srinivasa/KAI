@@ -69,8 +69,14 @@ def setup_auth(app: FastAPI, api_key: str, env: str = "development") -> None:
         # Public read-only endpoints:
         # - /health for infra checks
         # - /dashboard/* as local operator HTML + API views (D-124 dashboard)
+        # - /tradingview/webhook (D-125 TV-1+): external webhook sender
+        #   (TradingView) cannot attach a Bearer header; the endpoint has
+        #   its own HMAC / shared-token auth + fail-closed 404 gating.
         path = request.url.path.rstrip("/")
-        if path in ("/health",) or path.startswith("/dashboard"):
+        if (
+            path in ("", "/health", "/tradingview/webhook")
+            or path.startswith("/dashboard")
+        ):
             return await call_next(request)
 
         auth_header = request.headers.get("Authorization", "")

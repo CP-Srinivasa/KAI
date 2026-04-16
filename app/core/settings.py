@@ -251,6 +251,14 @@ class TradingViewSettings(BaseSettings):
     webhook_pending_signals_log: str = Field(
         default="artifacts/tradingview_pending_signals.jsonl"
     )
+    # TV-3.1: append-only operator decision log (promote / reject) and
+    # promoted-candidate sink. Re-deciding an event is rejected by the CLI.
+    pending_decisions_log: str = Field(
+        default="artifacts/tradingview_pending_decisions.jsonl"
+    )
+    promoted_signals_log: str = Field(
+        default="artifacts/tradingview_promoted_signals.jsonl"
+    )
 
     @model_validator(mode="after")
     def validate_auth_mode(self) -> "TradingViewSettings":

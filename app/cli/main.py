@@ -55,8 +55,10 @@ app.add_typer(alerts_app, name="alerts")
 
 # Lazy import to avoid heavy trading deps at top-level
 from app.cli.commands.trading import trading_app  # noqa: E402
+from app.cli.commands.tradingview import tradingview_app  # noqa: E402
 
 app.add_typer(trading_app, name="trading")
+app.add_typer(tradingview_app, name="tradingview")
 
 
 @app.callback()

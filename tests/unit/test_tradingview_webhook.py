@@ -35,6 +35,10 @@ def _settings_factory(
         webhook_enabled=enabled,
         webhook_secret=secret,
         webhook_audit_log=str(audit_path),
+        # Pin auth_mode so an ambient .env (TRADINGVIEW_WEBHOOK_AUTH_MODE=shared_token)
+        # cannot flip these HMAC tests into a shared-token state.
+        webhook_auth_mode="hmac",
+        webhook_shared_token="",
     )
     return settings
 
