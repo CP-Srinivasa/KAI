@@ -33,7 +33,7 @@ def test_directional_eligibility_allows_supported_btc_asset() -> None:
 
 
 def test_directional_eligibility_blocks_non_crypto_story_assets() -> None:
-    """D-127: bearish is blocked before asset resolution is reached."""
+    """D-142: bearish is blocked before asset resolution is reached."""
     decision = evaluate_directional_eligibility(
         sentiment_label="bearish",
         affected_assets=["OpenAI", "Disney", "Sora"],
@@ -67,7 +67,7 @@ def test_directional_eligibility_fail_closed_for_unmapped_assets() -> None:
 
 
 def test_weak_sentiment_blocks_directional() -> None:
-    """D-127: Bearish blocked before score gate; weak bullish uses score gate."""
+    """D-142: Bearish blocked before score gate; weak bullish uses score gate."""
     decision = evaluate_directional_eligibility(
         sentiment_label="bearish",
         affected_assets=["BTC"],
@@ -137,7 +137,7 @@ def test_bullish_lower_impact_threshold_passes() -> None:
         impact_score=MIN_IMPACT_SCORE_BULLISH,
     )
     assert decision.directional_eligible is True
-    # D-127: bearish is now blocked entirely before impact gate is reached
+    # D-142: bearish is now blocked entirely before impact gate is reached
     decision = evaluate_directional_eligibility(
         sentiment_label="bearish",
         affected_assets=["BTC"],
@@ -160,7 +160,7 @@ def test_none_scores_skip_gates() -> None:
 
 
 def test_sentiment_gate_checked_before_asset_resolution() -> None:
-    """D-127: Bearish blocked before expensive CoinGecko resolution."""
+    """D-142: Bearish blocked before expensive CoinGecko resolution."""
     decision = evaluate_directional_eligibility(
         sentiment_label="bearish",
         affected_assets=["BTC", "ETH", "SOL"],
@@ -197,7 +197,7 @@ def test_neutral_sentiment_unaffected_by_scores() -> None:
     ],
 )
 def test_bearish_blocked_by_d127_before_reactive_filter(title: str) -> None:
-    """D-127: All bearish directional is blocked regardless of title pattern."""
+    """D-142: All bearish directional is blocked regardless of title pattern."""
     decision = evaluate_directional_eligibility(
         sentiment_label="bearish",
         affected_assets=["BTC"],
@@ -306,7 +306,7 @@ def test_is_reactive_bullish_helper() -> None:
 
 
 def test_bearish_blocked_before_asset_resolution() -> None:
-    """D-127: Bearish blocked before expensive CoinGecko symbol resolution."""
+    """D-142: Bearish blocked before expensive CoinGecko symbol resolution."""
     decision = evaluate_directional_eligibility(
         sentiment_label="bearish",
         affected_assets=["BTC", "ETH", "SOL", "XRP"],
@@ -402,11 +402,11 @@ def test_priority_none_skips_gate() -> None:
     assert decision.directional_eligible is True
 
 
-# ── D-127: Bearish directional disabled ────────────────────────────────────
+# ── D-142: Bearish directional disabled ────────────────────────────────────
 
 
 def test_bearish_directional_disabled() -> None:
-    """D-127: Bearish is blocked from directional tracking entirely."""
+    """D-142: Bearish is blocked from directional tracking entirely."""
     decision = evaluate_directional_eligibility(
         sentiment_label="bearish",
         affected_assets=["BTC"],
@@ -423,7 +423,7 @@ def test_bearish_directional_disabled() -> None:
 
 
 def test_bullish_still_eligible_after_d127() -> None:
-    """D-127: Bullish signals are unaffected by bearish block."""
+    """D-142: Bullish signals are unaffected by bearish block."""
     decision = evaluate_directional_eligibility(
         sentiment_label="bullish",
         affected_assets=["BTC"],

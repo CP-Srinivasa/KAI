@@ -99,7 +99,7 @@ def build_hold_metrics_report(
         if sentiment not in {"bullish", "bearish"}:
             continue
 
-        # D-127: Always re-evaluate eligibility against current rules.
+        # D-142: Always re-evaluate eligibility against current rules.
         # Historical audit records may have directional_eligible=True under
         # older, weaker filters.  Re-checking ensures the hold report
         # reflects the current filter configuration (e.g. bearish disabled).

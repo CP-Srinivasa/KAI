@@ -47,7 +47,7 @@ _LOW_PRECISION_SOURCES: frozenset[str] = frozenset({
     "unknown",
 })
 
-# D-127: Bearish directional disabled based on 50 eligible resolved outcomes.
+# D-142: Bearish directional disabled based on 50 eligible resolved outcomes.
 # Bearish precision: 4% (1 hit / 24 miss). Bullish precision: 76% (19/25).
 # Bearish news in trending markets is almost never price-predictive — reactive
 # narratives describe past moves, and even actor-action bearish titles fail.
@@ -228,7 +228,7 @@ def evaluate_directional_eligibility(
             directional_block_reason=BLOCK_REASON_NOT_ACTIONABLE,
         )
 
-    # D-127: Bearish directional disabled — 4% precision (1/24) on eligible
+    # D-142: Bearish directional disabled — 4% precision (1/24) on eligible
     # resolved outcomes.  Bearish news is not price-predictive in current
     # market conditions.  Re-enable when market-context analysis is added.
     if BEARISH_DIRECTIONAL_DISABLED and sentiment == "bearish":

@@ -1,4 +1,4 @@
-"""Feature-level breakdown of resolved directional alert outcomes (D-126).
+"""Feature-level breakdown of resolved directional alert outcomes (D-141).
 
 Aggregates hit/miss counts per bucket (asset, sentiment, priority, source) from
 ``alert_audit.jsonl`` + ``alert_outcomes.jsonl`` so the operator can see *where*

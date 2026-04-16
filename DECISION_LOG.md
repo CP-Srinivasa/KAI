@@ -132,10 +132,10 @@ D-98 Hold → Split-Release: nicht-signalkritische Arbeit freigegeben (Docs, Sou
 Quality-Bar für Voll-Release: Precision ≥60% auf ≥50 resolved alerts ODER (Precision ≥50% UND Priority/Hit-Korrelation ≥0.40 UND ≥10 real paper fills mit PnL-Tracking).
 Begründung: Formalgate erfüllt (93/50 resolved directional, 160 paper cycles, `hold_releasable`), aber Precision 41.94%, Priority-Hit-Corr 0.2556, nur 3 Paper-Fills mit realized PnL=0.0 — für signal-sensitive Freigaben unreif. Recall nicht berechenbar (kein negative ground truth).
 
-### D-125 (2026-04-11)
+### D-140 (2026-04-11, was D-125 — renumbered 2026-04-16 to resolve TV-pivot ID collision)
 theblock.co (source_id 68daff98) status: active → disabled. Feed liefert persistent HTTP 403 (Cloudflare/anti-bot), analog zu cryptoslate (D-124). Notes um Datum + Grund ergänzt, RSS-Header unverändert. Aktive RSS-Feeds: 11 → 10. Revisit, sobald UA-/Header-Workaround getestet werden kann (signal-critical, aktuell blockiert).
 
-### D-126 (2026-04-11)
+### D-141 (2026-04-11, was D-126 — renumbered 2026-04-16 to resolve TV-pivot ID collision)
 Neues read-only CLI `alerts analyze-resolved` (non-signal-critical) bricht resolved directional outcomes nach Asset / Sentiment / Priority / Priority-Group / Source auf. Pure Funktion `app/alerts/feature_analysis.py` + Rich-Table-Rendering + `--json-out`. 8 Unit-Tests. Erste Befunde an den 93 resolved (Stand 2026-04-11, Precision 41.94%): bearish 23.53% vs bullish 52.54%; priority p7=22.22% (36 resolved, größter+schlechtester Bucket); decrypt 20.00% (20 resolved) + bitcoin_magazine 21.43% (14 resolved) als schwächste signifikante Quellen; 161 von 616 directional doc_ids (26%) nicht mehr in canonical_documents (Retention-Artefakt, 12 davon im resolved Sample als "unknown"-Bucket, alle hits → Bias minimal aber erkennbar). Dient als Grundlage für Precision-Improvement-Arbeit, kein Fix.
 
 ### D-129 (2026-04-14)
@@ -144,12 +144,12 @@ Vorher: Bridge rief `run_trading_loop_once()` auf, das intern `build_loop_trigge
 Nachher: `run_trading_loop_once(analysis_result=...)` akzeptiert optional eine echte AnalysisResult. Bridge übergibt die Alert-Analyse direkt → Signal-Generator sieht echte Scores (confidence ~0.85, actionable=True, impact ~0.7) → Fills möglich.
 Freshness-Threshold von 120s auf 300s für Bridge-Aufrufe erhöht (CoinGecko Free-Tier-Kompatibilität).
 
-### D-128 (2026-04-14)
+### D-143 (2026-04-14, was D-128 — renumbered 2026-04-16 to resolve TV-pivot ID collision)
 Markt-Kontext in LLM-Analyse-Prompt injiziert. BTC/ETH Preis, 24h/7d Change und Markt-Regime werden vor jedem Batch via CoinGecko geholt und dem LLM als Kontext übergeben.
 System-Prompt erweitert um `already_priced_in`-Guidance: LLM soll bewerten ob News bereits eingepreist ist und `directional_confidence` entsprechend senken.
 Fail-open: Bei CoinGecko-Fehler wird ohne Markt-Kontext analysiert. Einmal pro Batch gecacht (nicht pro Dokument).
 
-### D-127 (2026-04-14)
+### D-142 (2026-04-14, was D-127 — renumbered 2026-04-16 to resolve TV-pivot ID collision)
 Bearish directional eligibility komplett deaktiviert (`BEARISH_DIRECTIONAL_DISABLED=True`).
 Datengrundlage: 50 eligible resolved outcomes — bearish 4% Precision (1 hit / 24 miss), bullish 76% (19/25). Bearish-Signale aus RSS-News sind in Aufwärtstrends nicht preis-prädiktiv; selbst actor-action-Titel (Hacks, Sells) und hohe Confidence (0.95+) verhindern Misses nicht. Bearish-Block allein hebt simulierte Forward-Precision auf ~76%. Re-enable geplant, sobald Markt-Kontext-Analyse (Regime-Detection, Echtzeit-Sentiment) bearish-Signale validieren kann. Alerts werden weiterhin dispatched (Telegram/Email), nur die directional-Eligibility für Precision-Tracking ist blockiert.
 

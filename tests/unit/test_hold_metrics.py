@@ -195,7 +195,7 @@ def test_hold_metrics_excludes_blocked_directional_alerts(tmp_path: Path) -> Non
     quality = report["signal_quality_validation"]
     assert hit["directional_alert_documents"] == 1
     assert hit["blocked_directional_documents"] == 1
-    # D-127: bearish is blocked before asset resolution in current re-evaluation
+    # D-142: bearish is blocked before asset resolution in current re-evaluation
     assert hit["blocked_directional_by_reason"] == {
         "bearish_directional_disabled": 1
     }

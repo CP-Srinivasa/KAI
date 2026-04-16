@@ -205,7 +205,7 @@ def test_source_bucket_optional_and_present_when_provided() -> None:
 
 
 def test_forward_simulation_filters_bearish() -> None:
-    """D-127 bearish block reduces resolved count in forward sim."""
+    """D-142 bearish block reduces resolved count in forward sim."""
     audits = [
         _audit("d1", "bullish", ["BTC"], 8),
         _audit("d2", "bearish", ["BTC"], 8),

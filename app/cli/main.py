@@ -969,7 +969,7 @@ def alerts_analyze_resolved(
         ),
     ),
 ) -> None:
-    """Break down resolved directional outcomes by feature bucket (D-126).
+    """Break down resolved directional outcomes by feature bucket (D-141).
 
     Answers: when label X (asset, sentiment, priority, source) was present,
     how often did the predicted direction materialise? Read-only analysis
@@ -1151,7 +1151,7 @@ def alerts_pending_annotations(
         sentiment = (rec.sentiment_label or "").lower()
         if rec.is_digest or sentiment not in {"bullish", "bearish"}:
             continue
-        # D-127: Always re-evaluate against current eligibility rules.
+        # D-142: Always re-evaluate against current eligibility rules.
         current_check = evaluate_directional_eligibility(
             sentiment_label=rec.sentiment_label,
             affected_assets=list(rec.affected_assets or []),
