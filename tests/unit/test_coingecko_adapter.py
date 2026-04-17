@@ -455,7 +455,12 @@ class _StubClient:
     async def __aexit__(self, *args: object) -> None:
         return None
 
-    async def get(self, url: str, params: dict | None = None) -> _StubResponse:
+    async def get(
+        self,
+        url: str,
+        params: dict | None = None,
+        headers: dict | None = None,
+    ) -> _StubResponse:
         self.calls += 1
         return self._responses.pop(0)
 

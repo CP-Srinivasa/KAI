@@ -237,7 +237,12 @@ async def auto_annotate_pending(
         stale_backfill=stale_count,
     )
 
-    adapter = CoinGeckoAdapter(timeout_seconds=15)
+    from app.core.settings import get_settings
+
+    adapter = CoinGeckoAdapter(
+        timeout_seconds=15,
+        api_key=get_settings().coingecko_api_key or None,
+    )
 
     # Fetch current volatility for threshold scaling.
     volatility_24h: float | None = None

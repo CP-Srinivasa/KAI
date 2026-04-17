@@ -20,12 +20,14 @@ logger = logging.getLogger(__name__)
 
 # Global cap for the parallel mark-to-market fan-out. Prevents a stuck
 # provider from blocking the caller (e.g. daily briefing) indefinitely.
-_PORTFOLIO_MARK_TO_MARKET_OVERALL_TIMEOUT_SECONDS = 45.0
+# Paid CoinGecko tier rarely 429s and recovers in seconds, so 20s is
+# enough headroom even with a full retry cycle.
+_PORTFOLIO_MARK_TO_MARKET_OVERALL_TIMEOUT_SECONDS = 20.0
 
-# Per-run concurrency cap for outbound market-data requests. Keeps us
-# under free-tier rate limits (CoinGecko ~30/min) while still benefiting
-# from parallelism for portfolios with many open positions.
-_PORTFOLIO_MARK_TO_MARKET_MAX_CONCURRENCY = 2
+# Per-run concurrency cap for outbound market-data requests. Sized for
+# paid CoinGecko tier (250 req/min). Free-tier (~30 req/min) callers
+# should lower this via env or wrap the call with a tighter semaphore.
+_PORTFOLIO_MARK_TO_MARKET_MAX_CONCURRENCY = 10
 
 
 @dataclass(frozen=True)

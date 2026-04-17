@@ -195,7 +195,12 @@ async def build_offline_baseline_report(
             latest_by_doc[cand.document_id] = cand
     parsed_candidates = list(latest_by_doc.values())
 
-    adapter = CoinGeckoAdapter(timeout_seconds=timeout_seconds)
+    from app.core.settings import get_settings
+
+    adapter = CoinGeckoAdapter(
+        timeout_seconds=timeout_seconds,
+        api_key=get_settings().coingecko_api_key or None,
+    )
     cache: dict[tuple[str, str, int], tuple[float, float, float] | None] = {}
     resolved_rows: list[dict[str, Any]] = []
     unresolved = 0

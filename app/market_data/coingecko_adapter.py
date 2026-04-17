@@ -14,10 +14,17 @@ from app.market_data.models import OHLCV, MarketDataPoint, MarketDataSnapshot, T
 
 logger = logging.getLogger(__name__)
 
-_COINGECKO_BASE = "https://api.coingecko.com/api/v3"
+_COINGECKO_FREE_BASE = "https://api.coingecko.com/api/v3"
+_COINGECKO_PRO_BASE = "https://pro-api.coingecko.com/api/v3"
 _DEFAULT_FRESHNESS_SECONDS = 120.0
 _DEFAULT_TIMEOUT_SECONDS = 10
 _SUPPORTED_QUOTES = frozenset({"USD", "USDT"})
+
+# Backoff profiles. Free-tier is bursty and often throttles for 30-60s;
+# paid-tier (pro-api with x-cg-pro-api-key, 250-500 req/min) very rarely 429s
+# and recovers in seconds, so the schedule is much tighter.
+_BACKOFF_SCHEDULE_FREE = [15.0, 30.0, 60.0]
+_BACKOFF_SCHEDULE_PRO = [2.0, 5.0, 10.0]
 
 _BASE_ASSET_TO_COINGECKO: dict[str, str] = {
     "BTC": "bitcoin",
@@ -28,7 +35,11 @@ _BASE_ASSET_TO_COINGECKO: dict[str, str] = {
     "XRP": "ripple",
     "DOT": "polkadot",
     "AVAX": "avalanche-2",
-    "MATIC": "matic-network",
+    # Polygon rebrand (Sept 2024): MATIC migrated to POL. The legacy
+    # matic-network id still resolves on CoinGecko but returns price=None.
+    # Both symbols map to the active polygon-ecosystem-token.
+    "POL": "polygon-ecosystem-token",
+    "MATIC": "polygon-ecosystem-token",
     "LINK": "chainlink",
 }
 
@@ -116,10 +127,27 @@ class CoinGeckoAdapter(BaseMarketDataAdapter):
         *,
         freshness_threshold_seconds: float = _DEFAULT_FRESHNESS_SECONDS,
         timeout_seconds: int = _DEFAULT_TIMEOUT_SECONDS,
+        api_key: str | None = None,
     ) -> None:
         self._freshness_threshold = freshness_threshold_seconds
         self._timeout = timeout_seconds
         self._last_error: str | None = None
+
+        resolved_key = (api_key or "").strip() or None
+        self._api_key: str | None = resolved_key
+        self._base_url = _COINGECKO_PRO_BASE if resolved_key else _COINGECKO_FREE_BASE
+        self._backoff_schedule = (
+            _BACKOFF_SCHEDULE_PRO if resolved_key else _BACKOFF_SCHEDULE_FREE
+        )
+
+    @property
+    def base_url(self) -> str:
+        """Expose the active endpoint for tests/observability."""
+        return self._base_url
+
+    @property
+    def is_pro_tier(self) -> bool:
+        return self._api_key is not None
 
     @property
     def adapter_name(self) -> str:
@@ -151,7 +179,7 @@ class CoinGeckoAdapter(BaseMarketDataAdapter):
         # D-120: Use /coins/markets instead of /simple/price to get both
         # 24h and 7d price change in a single API call.
         data = await self._get_json(
-            f"{_COINGECKO_BASE}/coins/markets",
+            f"{self._base_url}/coins/markets",
             params={
                 "vs_currency": "usd",
                 "ids": coin_id,
@@ -208,7 +236,7 @@ class CoinGeckoAdapter(BaseMarketDataAdapter):
         days = _timeframe_to_days(timeframe, limit)
 
         data = await self._get_json(
-            f"{_COINGECKO_BASE}/coins/{coin_id}/ohlc",
+            f"{self._base_url}/coins/{coin_id}/ohlc",
             params={"vs_currency": "usd", "days": str(days)},
         )
         if not isinstance(data, list):
@@ -277,7 +305,7 @@ class CoinGeckoAdapter(BaseMarketDataAdapter):
             return None
 
         data = await self._get_json(
-            f"{_COINGECKO_BASE}/coins/{coin_id}/market_chart/range",
+            f"{self._base_url}/coins/{coin_id}/market_chart/range",
             params={
                 "vs_currency": "usd",
                 "from": str(query_from),
@@ -388,16 +416,19 @@ class CoinGeckoAdapter(BaseMarketDataAdapter):
         *,
         params: dict[str, str] | None = None,
     ) -> dict[str, object] | list[object] | None:
-        # 429-aware retry: CoinGecko free tier is bursty (~10-30 req/min)
-        # and often throttles after a few quick calls.  Respect Retry-After
-        # when present, otherwise use exponential backoff (15s, 30s, 60s).
+        # 429-aware retry. Free tier: 15s/30s/60s backoff (bursty, slow to
+        # recover). Paid tier: 2s/5s/10s (rare and transient). Retry-After
+        # from the server is honoured when present.
         max_attempts = 4
-        backoff_schedule = [15.0, 30.0, 60.0]
+        backoff_schedule = self._backoff_schedule
+        headers: dict[str, str] | None = None
+        if self._api_key:
+            headers = {"x-cg-pro-api-key": self._api_key}
 
         for attempt in range(max_attempts):
             try:
                 async with httpx.AsyncClient(timeout=self._timeout) as client:
-                    response = await client.get(url, params=params)
+                    response = await client.get(url, params=params, headers=headers)
 
                 if response.status_code == 200:
                     payload: dict[str, object] | list[object] = response.json()

@@ -64,11 +64,14 @@ async def test_parallel_fetch_returns_all_symbols() -> None:
 
 
 @pytest.mark.asyncio
-async def test_semaphore_caps_concurrency_to_two() -> None:
-    """Only 2 fetches may be in-flight at any moment, regardless of symbol count."""
+async def test_semaphore_caps_concurrency_to_configured_limit() -> None:
+    """Semaphore caps concurrent fetches at the module's concurrency constant,
+    regardless of symbol count. Patches the constant so the test is decoupled
+    from the default (which tracks the active CoinGecko tier)."""
     active = 0
     peak = 0
     lock = asyncio.Lock()
+    cap = 2
 
     async def fake(symbol: str, **_: object) -> MarketDataSnapshot:
         nonlocal active, peak
@@ -82,6 +85,9 @@ async def test_semaphore_caps_concurrency_to_two() -> None:
 
     with patch(
         "app.execution.portfolio_read.get_market_data_snapshot", side_effect=fake
+    ), patch(
+        "app.execution.portfolio_read._PORTFOLIO_MARK_TO_MARKET_MAX_CONCURRENCY",
+        cap,
     ):
         await _gather_market_snapshots(
             symbols=["A", "B", "C", "D", "E"],
@@ -90,7 +96,7 @@ async def test_semaphore_caps_concurrency_to_two() -> None:
             timeout_seconds=10,
         )
 
-    assert peak == 2, f"Semaphore should cap at 2 concurrent calls, saw {peak}"
+    assert peak == cap, f"Semaphore should cap at {cap} concurrent calls, saw {peak}"
 
 
 @pytest.mark.asyncio

@@ -88,7 +88,12 @@ async def check_alert_price_moves(
     Returns:
         List of PriceCheckResult, one per (record, asset) pair.
     """
-    adapter = CoinGeckoAdapter(timeout_seconds=timeout_seconds)
+    from app.core.settings import get_settings
+
+    adapter = CoinGeckoAdapter(
+        timeout_seconds=timeout_seconds,
+        api_key=get_settings().coingecko_api_key or None,
+    )
     results: list[PriceCheckResult] = []
     now = datetime.now(UTC)
 

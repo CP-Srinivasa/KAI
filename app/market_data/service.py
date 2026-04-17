@@ -18,17 +18,25 @@ def create_market_data_adapter(
     provider: str,
     freshness_threshold_seconds: float = 120.0,
     timeout_seconds: int = 10,
+    api_key: str | None = None,
 ) -> BaseMarketDataAdapter:
     """Create a market data adapter by provider name.
 
-    Default provider is 'coingecko' (free tier, ~1min delayed, no API key required).
+    For 'coingecko': when `api_key` is omitted, falls back to
+    `AppSettings.coingecko_api_key`. A non-empty key activates the paid
+    pro-api endpoint (250 req/min, 100k/mo); empty key = free tier.
     Using 'mock' is only appropriate for tests/dev — a WARNING is logged.
     """
     normalized = provider.strip().lower()
     if normalized == "coingecko":
+        if api_key is None:
+            from app.core.settings import get_settings
+
+            api_key = get_settings().coingecko_api_key
         return CoinGeckoAdapter(
             freshness_threshold_seconds=freshness_threshold_seconds,
             timeout_seconds=timeout_seconds,
+            api_key=api_key or None,
         )
     if normalized == "mock":
         logger.warning(

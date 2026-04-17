@@ -323,6 +323,7 @@ class AlertService:
         if not eligible_assets:
             return False
         try:
+            from app.core.settings import get_settings
             from app.market_data.coingecko_adapter import (
                 CoinGeckoAdapter,
                 _resolve_symbol,
@@ -332,7 +333,9 @@ class AlertService:
             resolved = _resolve_symbol(eligible_assets[0])
             if resolved is None:
                 return False
-            adapter = CoinGeckoAdapter()
+            adapter = CoinGeckoAdapter(
+                api_key=get_settings().coingecko_api_key or None,
+            )
             ticker = await adapter.get_ticker(eligible_assets[0])
             if ticker is None:
                 return False

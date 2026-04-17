@@ -115,7 +115,7 @@ async def test_coingecko_get_json_timeout_returns_none(
         async def __aexit__(self, exc_type, exc, tb) -> bool:  # noqa: ANN001
             return False
 
-        async def get(self, _url: str, params=None):  # noqa: ANN001
+        async def get(self, _url: str, params=None, headers=None):  # noqa: ANN001
             raise httpx.TimeoutException("timeout")
 
     monkeypatch.setattr("app.market_data.coingecko_adapter.httpx.AsyncClient", _TimeoutClient)

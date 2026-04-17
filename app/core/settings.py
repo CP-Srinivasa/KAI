@@ -1,6 +1,6 @@
 from collections.abc import Mapping
 
-from pydantic import Field, model_validator
+from pydantic import AliasChoices, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from app.core.enums import ExecutionMode
@@ -130,6 +130,12 @@ class ExecutionSettings(BaseSettings):
     order_ttl_seconds: int = Field(default=300)
     max_order_retries: int = Field(default=3)
     execution_timeout_seconds: int = Field(default=30)
+
+    # Position-monitor scheduler — periodic SL/TP check on open paper
+    # positions.  Without this the loop only opens positions and never
+    # closes them, leaving realized_pnl at 0.0.
+    position_monitor_enabled: bool = Field(default=True)
+    position_monitor_interval_seconds: int = Field(default=60, ge=10)
 
     @model_validator(mode="after")
     def validate_mode_guardrails(self) -> "ExecutionSettings":
@@ -319,9 +325,22 @@ class AppSettings(BaseSettings):
         default=["http://localhost:3000", "http://localhost:8000"]
     )
     # Market data provider used by TradingLoop and operator surfaces.
-    # Supported: coingecko (real, free-tier, delayed ~1min), mock (dev/test only).
-    # CoinGecko free tier: ~30 req/min, spot price only, no auth required.
+    # Supported: coingecko (real, free or paid), mock (dev/test only).
+    # Without API key: free tier, ~30 req/min.
+    # With API key (x-cg-pro-api-key): paid tier via pro-api.coingecko.com.
     market_data_provider: str = Field(default="coingecko")
+    # Optional CoinGecko Pro/Lite API key. When set, the adapter switches to
+    # the pro-api.coingecko.com endpoint and sends the key via the
+    # x-cg-pro-api-key header. Leave empty for free-tier.
+    # Accepts both APP_COINGECKO_API_KEY (app-prefixed) and the bare
+    # COINGECKO_API_KEY form already used by existing .env files.
+    coingecko_api_key: str = Field(
+        default="",
+        validation_alias=AliasChoices(
+            "APP_COINGECKO_API_KEY",
+            "COINGECKO_API_KEY",
+        ),
+    )
     # --- Pipeline Automation ---
     # Analysis provider for automated pipeline runs (openai, anthropic, gemini, internal).
     # Set to "" to disable LLM analysis in the scheduler (rule-based only).
