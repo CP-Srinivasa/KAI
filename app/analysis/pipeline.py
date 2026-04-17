@@ -335,6 +335,20 @@ class AnalysisPipeline:
         self._market_data_adapter = market_data_adapter
         self._cached_market_context: dict[str, Any] | None = None
 
+    def _shadow_overlaps_ensemble(self) -> bool:
+        """True if the primary is an Ensemble that contains the shadow provider.
+
+        When the primary ensemble falls back to the same provider configured as
+        shadow, running the shadow call would duplicate the request and burn
+        quota for no new information. Caller uses this to gate the shadow call.
+        """
+        if self._shadow_provider is None or self._provider is None:
+            return False
+        chain = getattr(self._provider, "provider_chain", None)
+        if not isinstance(chain, list):
+            return False
+        return self._shadow_provider.provider_name in chain
+
     async def _run_shadow_analysis(
         self,
         doc: CanonicalDocument,
@@ -451,10 +465,11 @@ class AnalysisPipeline:
                     )
                 )
 
+                shadow_may_overlap = self._shadow_overlaps_ensemble()
                 shadow_task: (
                     asyncio.Task[tuple[LLMAnalysisOutput | None, str | None, str | None]] | None
                 ) = None
-                if self._shadow_provider is not None:
+                if self._shadow_provider is not None and not shadow_may_overlap:
                     shadow_task = asyncio.create_task(
                         self._run_shadow_analysis(
                             doc,
@@ -474,6 +489,32 @@ class AnalysisPipeline:
                 llm_output = primary_output
                 if shadow_task is not None:
                     shadow_llm_output, shadow_provider_name, shadow_error = await shadow_task
+                elif shadow_may_overlap and self._shadow_provider is not None:
+                    # Overlap risk: only fire shadow if primary ensemble picked
+                    # a different provider than the shadow. If they match, skip
+                    # the shadow call entirely to save quota.
+                    primary_runtime_name = (
+                        _resolve_runtime_provider_name(self._provider)
+                        or self._provider.provider_name
+                    )
+                    shadow_name = self._shadow_provider.provider_name
+                    if primary_runtime_name != shadow_name:
+                        (
+                            shadow_llm_output,
+                            shadow_provider_name,
+                            shadow_error,
+                        ) = await self._run_shadow_analysis(
+                            doc,
+                            text=text,
+                            context=context,
+                        )
+                    else:
+                        logger.info(
+                            "shadow_skipped_ensemble_overlap",
+                            doc_id=str(doc.id),
+                            primary_runtime=primary_runtime_name,
+                            shadow=shadow_name,
+                        )
 
                 provider_name = (
                     _resolve_runtime_provider_name(self._provider) or self._provider.provider_name
