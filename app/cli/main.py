@@ -1055,6 +1055,63 @@ def alerts_hold_report(
     )
 
 
+@alerts_app.command("tv4-quality-bar")
+def alerts_tv4_quality_bar(
+    artifacts_dir: str = typer.Option("artifacts", help="Artifacts directory"),
+    output_path: str = typer.Option(
+        "artifacts/tv4_quality_bar_report.json",
+        help="Output path for the provenance-split JSON report",
+    ),
+) -> None:
+    """TV-4 Quality-Bar — per-source precision with Wilson 95% CI.
+
+    Splits resolved directional alerts by signal source (rss,
+    tradingview_webhook, ...) and reports per-source hit-rate + confidence
+    interval. Surfaces whether the TV-pivot measurably improves, degrades,
+    or leaves precision unchanged. Read-only projection.
+    """
+    from app.alerts.provenance_metrics import (
+        build_provenance_split_report,
+        write_provenance_report,
+    )
+
+    artifacts_path = Path(artifacts_dir)
+    audits = load_alert_audits(artifacts_path)
+    source_map, _title_map = _load_doc_metadata(audits)
+    report = build_provenance_split_report(
+        alert_audit_path=artifacts_path / "alert_audit.jsonl",
+        alert_outcomes_path=artifacts_path / "alert_outcomes.jsonl",
+        tradingview_pending_signals_path=artifacts_path
+        / "tradingview_pending_signals.jsonl",
+        source_by_doc=source_map or None,
+    )
+    out = write_provenance_report(report, Path(output_path))
+    console.print(f"[green]TV-4 quality-bar written:[/green] {out}")
+    console.print(
+        f"[bold]Overall:[/bold] resolved={report.overall.resolved} "
+        f"hits={report.overall.hits} "
+        f"hit_rate={report.overall.hit_rate_pct}% "
+        f"CI=[{report.overall.ci_low_pct}%, {report.overall.ci_high_pct}%]"
+    )
+    for metrics in report.by_source:
+        console.print(
+            f"  source={metrics.source} resolved={metrics.resolved} "
+            f"hits={metrics.hits} "
+            f"rate={metrics.hit_rate_pct}% "
+            f"CI=[{metrics.ci_low_pct}%, {metrics.ci_high_pct}%] "
+            f"sufficient={metrics.sample_sufficient}"
+        )
+    tv = report.tradingview_pipeline
+    console.print(
+        f"[bold]TV pipeline:[/bold] pending={tv.pending_events} "
+        f"smoke={tv.smoke_test_events} real={tv.real_events} "
+        f"unique_paths={tv.unique_signal_path_ids}"
+    )
+    console.print(f"[bold]Verdict:[/bold] {report.verdict}")
+    for note in report.notes:
+        console.print(f"  - {note}")
+
+
 @alerts_app.command("analyze-resolved")
 def alerts_analyze_resolved(
     by: str = typer.Option(
