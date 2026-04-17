@@ -27,7 +27,7 @@ from app.orchestrator.models import (
 from app.risk.engine import RiskEngine
 from app.risk.models import RiskLimits
 from app.signals.generator import SignalGenerator
-from app.signals.models import SignalDirection
+from app.signals.models import SignalCandidate, SignalDirection
 from app.storage.models.trading import PortfolioStateRecord, TradingCycleRecord
 from app.trading.signal_consensus import (
     GEMINI_OPENAI_BASE_URL,
@@ -40,6 +40,19 @@ logger = logging.getLogger(__name__)
 _AUDIT_LOG = Path("artifacts/trading_loop_audit.jsonl")
 _PAPER_EXECUTION_AUDIT_LOG = Path("artifacts/paper_execution_audit.jsonl")
 _ALLOWED_CONTROL_MODES = frozenset({ExecutionMode.PAPER, ExecutionMode.SHADOW})
+
+_TV_QUOTE_SUFFIXES = ("USDT", "USDC", "BUSD", "USD", "EUR", "BTC", "ETH")
+
+
+def _normalize_tv_symbol(raw: str) -> str:
+    """Convert TV-style ticker (BTCUSDT) to KAI canonical (BTC/USDT)."""
+    s = raw.strip().upper()
+    if "/" in s:
+        return s
+    for quote in _TV_QUOTE_SUFFIXES:
+        if s.endswith(quote) and len(s) > len(quote):
+            return f"{s[:-len(quote)]}/{quote}"
+    return f"{s}/USDT"
 
 
 class TradingLoop:
@@ -304,6 +317,174 @@ class TradingLoop:
             signal_generated=True,
             risk_approved=True,
             order_created=order is not None,
+            fill_simulated=fill is not None,
+            decision_id=signal.decision_id,
+            risk_check_id=risk_result.check_id,
+            order_id=order.order_id if order else None,
+            notes=notes,
+        )
+        self._write_audit(cycle)
+        await self._write_db(cycle)
+        return cycle
+
+    async def run_promoted_signal(
+        self,
+        signal: SignalCandidate,
+    ) -> LoopCycle:
+        """Execute one cycle for a pre-approved promoted TV signal.
+
+        Skips SignalGenerator (signal already exists) but still fetches
+        fresh market data, runs risk check, position sizing, and paper
+        execution.  Entry price is updated to the live market price.
+        """
+        cycle_id = _new_cycle_id()
+        started_at = _now_utc()
+        notes: list[str] = [
+            f"source:tv_promoted|decision_id:{signal.decision_id}",
+        ]
+        if signal.provenance:
+            notes.append(
+                f"provenance:{signal.provenance.source}|{signal.provenance.version}"
+            )
+
+        symbol = _normalize_tv_symbol(signal.symbol)
+
+        market_data = None
+        try:
+            market_data = await self._market_data.get_market_data_point(symbol)
+        except Exception as exc:  # noqa: BLE001
+            notes.append(f"market_data_error:{exc}")
+
+        if market_data is None:
+            cycle = self._build_cycle(
+                cycle_id, started_at, symbol, CycleStatus.NO_MARKET_DATA,
+                notes=notes + [f"no_market_data:{symbol}"],
+            )
+            await self._write_db(cycle)
+            return cycle
+
+        notes.append(f"market_data_source:{market_data.source}")
+
+        if market_data.is_stale:
+            cycle = self._build_cycle(
+                cycle_id, started_at, symbol, CycleStatus.STALE_DATA,
+                market_data_fetched=True,
+                notes=notes + [f"stale_data_skip:{symbol}"],
+            )
+            await self._write_db(cycle)
+            return cycle
+
+        live_price = market_data.price
+
+        if self._consensus is not None:
+            consensus = await self._consensus.validate(signal, market_data)
+            notes.append(
+                f"consensus:{consensus.agreed}|conf:{consensus.confidence:.2f}"
+            )
+            if not consensus.agreed:
+                cycle = self._build_cycle(
+                    cycle_id, started_at, symbol,
+                    CycleStatus.CONSENSUS_REJECTED,
+                    market_data_fetched=True, signal_generated=True,
+                    notes=notes + [f"consensus_reason:{consensus.reasoning}"],
+                )
+                await self._write_db(cycle)
+                return cycle
+
+        order_side = "buy" if signal.direction == SignalDirection.LONG else "sell"
+        current_positions = len(self._exec.portfolio.positions)
+        risk_result = self._risk.check_order(
+            symbol=symbol,
+            side=order_side,
+            signal_confidence=signal.confidence_score,
+            signal_confluence_count=signal.confluence_count,
+            stop_loss_price=signal.stop_loss_price,
+            current_open_positions=current_positions,
+        )
+
+        if not risk_result.approved:
+            cycle = self._build_cycle(
+                cycle_id, started_at, symbol, CycleStatus.RISK_REJECTED,
+                market_data_fetched=True, signal_generated=True,
+                decision_id=signal.decision_id,
+                risk_check_id=risk_result.check_id,
+                notes=notes + risk_result.violations,
+            )
+            await self._write_db(cycle)
+            return cycle
+
+        equity = self._exec.portfolio.cash
+        size_result = self._risk.calculate_position_size(
+            symbol=symbol,
+            entry_price=live_price,
+            stop_loss_price=signal.stop_loss_price,
+            equity=equity,
+        )
+
+        if not size_result.approved or size_result.position_size_units <= 0:
+            cycle = self._build_cycle(
+                cycle_id, started_at, symbol, CycleStatus.SIZE_REJECTED,
+                market_data_fetched=True, signal_generated=True,
+                risk_approved=True,
+                decision_id=signal.decision_id,
+                risk_check_id=risk_result.check_id,
+                notes=notes + [size_result.rationale],
+            )
+            await self._write_db(cycle)
+            return cycle
+
+        order = None
+        fill = None
+        try:
+            order = self._exec.create_order(
+                symbol=symbol,
+                side=order_side,
+                quantity=size_result.position_size_units,
+                order_type="market",
+                stop_loss=signal.stop_loss_price,
+                take_profit=signal.take_profit_price,
+                idempotency_key=signal.decision_id,
+                risk_check_id=risk_result.check_id,
+            )
+            fill = self._exec.fill_order(order, current_price=live_price)
+        except Exception as exc:  # noqa: BLE001
+            notes.append(f"execution_error:{exc}")
+            cycle = self._build_cycle(
+                cycle_id, started_at, symbol, CycleStatus.ORDER_FAILED,
+                market_data_fetched=True, signal_generated=True,
+                risk_approved=True,
+                decision_id=signal.decision_id,
+                risk_check_id=risk_result.check_id,
+                order_id=order.order_id if order else None,
+                notes=notes,
+            )
+            await self._write_db(cycle)
+            return cycle
+
+        if fill is None:
+            notes.append("fill_not_simulated")
+            cycle = self._build_cycle(
+                cycle_id, started_at, symbol, CycleStatus.ORDER_FAILED,
+                market_data_fetched=True, signal_generated=True,
+                risk_approved=True, order_created=order is not None,
+                fill_simulated=False,
+                decision_id=signal.decision_id,
+                risk_check_id=risk_result.check_id,
+                order_id=order.order_id if order else None,
+                notes=notes,
+            )
+            await self._write_db(cycle)
+            return cycle
+
+        self._risk.update_daily_loss(
+            realized_pnl_usd=self._exec.portfolio.realized_pnl_usd,
+            equity=equity,
+        )
+
+        cycle = self._build_cycle(
+            cycle_id, started_at, symbol, CycleStatus.COMPLETED,
+            market_data_fetched=True, signal_generated=True,
+            risk_approved=True, order_created=order is not None,
             fill_simulated=fill is not None,
             decision_id=signal.decision_id,
             risk_check_id=risk_result.check_id,
@@ -778,3 +959,52 @@ def build_loop_status_summary(
         last_cycle_completed_at=last_cycle_completed_at,
         audit_path=str(Path(audit_path)),
     )
+
+
+async def run_promoted_signals_once(
+    *,
+    provider: str | None = None,
+    loop_audit_path: str | Path = _AUDIT_LOG,
+    execution_audit_path: str | Path = _PAPER_EXECUTION_AUDIT_LOG,
+    freshness_threshold_seconds: float = 120.0,
+    timeout_seconds: int = 10,
+    enable_consensus: bool = False,
+    consensus_model: str = "gpt-4o-mini",
+) -> list[LoopCycle]:
+    """Load all pending promoted TV signals and run each through the paper loop.
+
+    Returns one LoopCycle per signal. Consumed IDs are marked after each
+    successful processing (regardless of cycle outcome — consumed means
+    the signal was attempted, not that it filled).
+    """
+    from app.signals.tv_consumer import load_pending_promoted, mark_consumed
+
+    candidates = load_pending_promoted()
+    if not candidates:
+        logger.info("[TV-4] No pending promoted signals to process.")
+        return []
+
+    loop = build_trading_loop(
+        mode=ExecutionMode.PAPER,
+        provider=provider,
+        loop_audit_path=loop_audit_path,
+        execution_audit_path=execution_audit_path,
+        freshness_threshold_seconds=freshness_threshold_seconds,
+        timeout_seconds=timeout_seconds,
+        enable_consensus=enable_consensus,
+        consensus_model=consensus_model,
+    )
+
+    cycles: list[LoopCycle] = []
+    for candidate in candidates:
+        cycle = await loop.run_promoted_signal(candidate)
+        mark_consumed(candidate.decision_id)
+        cycles.append(cycle)
+        logger.info(
+            "[TV-4] Processed %s → %s (%s)",
+            candidate.decision_id,
+            cycle.status.value,
+            _normalize_tv_symbol(candidate.symbol),
+        )
+
+    return cycles
