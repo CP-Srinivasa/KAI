@@ -75,6 +75,7 @@ class ProviderSettings(BaseSettings):
 
     youtube_api_key: str = Field(default="")
     newsdata_api_key: str = Field(default="")
+    x_bearer_token: str = Field(default="")
 
 
 class SourceSettings(BaseSettings):

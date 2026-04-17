@@ -1,4 +1,5 @@
 import logging
+import sys
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, cast
@@ -38,6 +39,49 @@ logger = logging.getLogger(__name__)
 
 app = typer.Typer(name="trading-bot", help="AI Analyst Trading Bot CLI", no_args_is_help=True)
 console = Console()
+
+
+def _safe_text(text: str) -> str:
+    """Replace characters unencodable by the Windows legacy console (cp1252)."""
+    if sys.platform != "win32":
+        return text
+    try:
+        text.encode(sys.stdout.encoding or "utf-8")
+        return text
+    except (UnicodeEncodeError, LookupError):
+        return text.encode(sys.stdout.encoding or "cp1252", errors="replace").decode(
+            sys.stdout.encoding or "cp1252"
+        )
+
+def _build_primary_provider() -> Any:
+    """Build an Ensemble (OpenAI -> Gemini) provider with automatic fallback.
+
+    Returns None if no API keys are configured.
+    """
+    settings = get_settings()
+    providers: list[Any] = []
+    if settings.providers.openai_api_key:
+        from app.integrations.openai.provider import OpenAIAnalysisProvider
+        providers.append(OpenAIAnalysisProvider.from_settings(settings.providers))
+    if settings.providers.gemini_api_key:
+        from app.integrations.gemini.provider import GeminiAnalysisProvider
+        providers.append(GeminiAnalysisProvider.from_settings(settings.providers))
+    if not providers:
+        return None
+    if len(providers) == 1:
+        return providers[0]
+    from app.analysis.ensemble.provider import EnsembleProvider
+    return EnsembleProvider(providers)
+
+
+def _maybe_gemini_shadow() -> Any:
+    """Return a GeminiAnalysisProvider if GEMINI_API_KEY is configured, else None."""
+    settings = get_settings()
+    if not settings.providers.gemini_api_key:
+        return None
+    from app.integrations.gemini.provider import GeminiAnalysisProvider
+    return GeminiAnalysisProvider.from_settings(settings.providers)
+
 
 ingest_app = typer.Typer(help="Ingestion commands", no_args_is_help=True)
 pipeline_app = typer.Typer(help="End-to-end pipeline commands", no_args_is_help=True)
@@ -176,27 +220,26 @@ def pipeline_run(
 
     async def run() -> None:
         from app.analysis.keywords.engine import KeywordEngine
-        from app.integrations.openai.provider import OpenAIAnalysisProvider
         from app.pipeline.service import run_rss_pipeline
 
         settings = get_settings()
         monitor_dir = Path(settings.monitor_dir)
 
         keyword_engine = KeywordEngine.from_monitor_dir(monitor_dir)
-
-        provider = None
-        if settings.providers.openai_api_key:
-            provider = OpenAIAnalysisProvider.from_settings(settings.providers)
-        else:
-            console.print("[yellow]Warning:[/yellow] No OpenAI API key — LLM analysis skipped.")
+        provider = _build_primary_provider()
+        if provider is None:
+            console.print("[yellow]Warning:[/yellow] No LLM API key — analysis skipped.")
 
         session_factory = build_session_factory(settings.db)
+
+        shadow = _maybe_gemini_shadow()
 
         stats = await run_rss_pipeline(
             url,
             session_factory=session_factory,
             keyword_engine=keyword_engine,
             provider=provider,
+            shadow_provider=shadow,
             source_id=source_id,
             source_name=source_name,
             monitor_dir=monitor_dir,
@@ -239,7 +282,7 @@ def pipeline_run(
             rel = f"{doc.relevance_score:.2f}" if doc.relevance_score is not None else "–"
             imp = f"{doc.impact_score:.2f}" if doc.impact_score is not None else "–"
             sentiment = doc.sentiment_label.value if doc.sentiment_label else "–"
-            table.add_row(pri, rel, imp, sentiment, doc.title or "–")
+            table.add_row(pri, rel, imp, sentiment, _safe_text(doc.title or "–"))
 
         console.print(table)
 
@@ -258,7 +301,6 @@ def pipeline_run_all(
         from sqlalchemy import select
 
         from app.analysis.keywords.engine import KeywordEngine
-        from app.integrations.openai.provider import OpenAIAnalysisProvider
         from app.pipeline.service import run_rss_pipeline
         from app.storage.models.source import SourceModel
 
@@ -266,13 +308,12 @@ def pipeline_run_all(
         monitor_dir = Path(settings.monitor_dir)
         keyword_engine = KeywordEngine.from_monitor_dir(monitor_dir)
 
-        provider = None
-        if settings.providers.openai_api_key:
-            provider = OpenAIAnalysisProvider.from_settings(settings.providers)
-        else:
-            console.print("[yellow]Warning:[/yellow] No OpenAI API key — LLM analysis skipped.")
+        provider = _build_primary_provider()
+        if provider is None:
+            console.print("[yellow]Warning:[/yellow] No LLM API key — analysis skipped.")
             return
 
+        shadow = _maybe_gemini_shadow()
         session_factory = build_session_factory(settings.db)
 
         # Load active RSS feeds from DB
@@ -303,6 +344,7 @@ def pipeline_run_all(
                     session_factory=session_factory,
                     keyword_engine=keyword_engine,
                     provider=provider,
+                    shadow_provider=shadow,
                     source_id=source_id,
                     source_name=source_name,
                     monitor_dir=monitor_dir,
@@ -354,7 +396,6 @@ def pipeline_youtube(
 
     async def run() -> None:
         from app.analysis.keywords.engine import KeywordEngine
-        from app.integrations.openai.provider import OpenAIAnalysisProvider
         from app.pipeline.service import run_youtube_pipeline
 
         settings = get_settings()
@@ -365,18 +406,18 @@ def pipeline_youtube(
             raise typer.Exit(1)
 
         keyword_engine = KeywordEngine.from_monitor_dir(monitor_dir)
-
-        provider = None
-        if settings.providers.openai_api_key:
-            provider = OpenAIAnalysisProvider.from_settings(settings.providers)
+        provider = _build_primary_provider()
 
         session_factory = build_session_factory(settings.db)
+
+        shadow = _maybe_gemini_shadow()
 
         stats = await run_youtube_pipeline(
             channel_url,
             session_factory=session_factory,
             keyword_engine=keyword_engine,
             provider=provider,
+            shadow_provider=shadow,
             api_key=settings.providers.youtube_api_key,
             source_id=source_id,
             source_name=source_name,
@@ -413,7 +454,83 @@ def pipeline_youtube(
             rel = f"{doc.relevance_score:.2f}" if doc.relevance_score is not None else "–"
             imp = f"{doc.impact_score:.2f}" if doc.impact_score is not None else "–"
             sentiment = doc.sentiment_label.value if doc.sentiment_label else "–"
-            table.add_row(pri, rel, imp, sentiment, doc.title or "–")
+            table.add_row(pri, rel, imp, sentiment, _safe_text(doc.title or "–"))
+
+        console.print(table)
+
+    asyncio.run(run())
+
+
+@pipeline_app.command("twitter")
+def pipeline_twitter(
+    max_per_user: int = typer.Option(5, help="Max tweets per user"),
+    source_id: str = typer.Option("twitter", help="Source ID"),
+    source_name: str = typer.Option("X/Twitter", help="Source name"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Skip DB writes"),
+    top_n: int = typer.Option(5, help="Top results to display"),
+) -> None:
+    """Fetch tweets from watchlist accounts, analyze, and alert."""
+    import asyncio
+
+    async def run() -> None:
+        from app.analysis.keywords.engine import KeywordEngine
+        from app.pipeline.service import run_twitter_pipeline
+
+        settings = get_settings()
+        monitor_dir = Path(settings.monitor_dir)
+
+        if not settings.providers.x_bearer_token:
+            console.print("[red]Error:[/red] X_BEARER_TOKEN not set in .env")
+            raise typer.Exit(1)
+
+        keyword_engine = KeywordEngine.from_monitor_dir(monitor_dir)
+        provider = _build_primary_provider()
+
+        session_factory = build_session_factory(settings.db)
+
+        shadow = _maybe_gemini_shadow()
+
+        stats = await run_twitter_pipeline(
+            session_factory=session_factory,
+            keyword_engine=keyword_engine,
+            provider=provider,
+            shadow_provider=shadow,
+            bearer_token=settings.providers.x_bearer_token,
+            max_per_user=max_per_user,
+            source_id=source_id,
+            source_name=source_name,
+            dry_run=dry_run,
+        )
+
+        console.print("\n[bold green]Twitter pipeline complete[/bold green]")
+        console.print(f"  Fetched:   {stats.fetched_count}")
+        console.print(f"  Saved:     {stats.saved_count}")
+        console.print(f"  Analyzed:  {stats.analyzed_count}")
+        console.print(f"  Alerts:    {stats.alerts_fired_count}")
+        console.print(f"  Skipped:   {stats.skipped_count}")
+        if stats.priority_distribution:
+            dist = ", ".join(
+                f"P{score}:{count}" for score, count in sorted(stats.priority_distribution.items())
+            )
+            console.print(f"  Priority:  {dist}")
+
+        if not stats.top_results:
+            return
+
+        console.print(f"\n[bold]Top {min(top_n, len(stats.top_results))} results:[/bold]")
+        table = Table(show_header=True, header_style="bold cyan")
+        table.add_column("Pri", width=4)
+        table.add_column("Sentiment", width=10)
+        table.add_column("Author", width=20)
+        table.add_column("Tweet")
+
+        for res in stats.top_results[:top_n]:
+            doc = res.document
+            pri = str(doc.priority_score or "–")
+            sentiment = doc.sentiment_label.value if doc.sentiment_label else "–"
+            table.add_row(
+                pri, sentiment, _safe_text(doc.author or "–"), _safe_text((doc.title or "–")[:60]),
+            )
 
         console.print(table)
 
@@ -436,7 +553,6 @@ def pipeline_newsdata(
 
     async def run() -> None:
         from app.analysis.keywords.engine import KeywordEngine
-        from app.integrations.openai.provider import OpenAIAnalysisProvider
         from app.pipeline.service import run_newsdata_pipeline
 
         settings = get_settings()
@@ -447,18 +563,18 @@ def pipeline_newsdata(
             raise typer.Exit(1)
 
         keyword_engine = KeywordEngine.from_monitor_dir(monitor_dir)
-
-        provider = None
-        if settings.providers.openai_api_key:
-            provider = OpenAIAnalysisProvider.from_settings(settings.providers)
+        provider = _build_primary_provider()
 
         session_factory = build_session_factory(settings.db)
+
+        shadow = _maybe_gemini_shadow()
 
         stats = await run_newsdata_pipeline(
             query,
             session_factory=session_factory,
             keyword_engine=keyword_engine,
             provider=provider,
+            shadow_provider=shadow,
             api_key=settings.providers.newsdata_api_key,
             source_id=source_id,
             source_name=source_name,
@@ -497,7 +613,7 @@ def pipeline_newsdata(
             rel = f"{doc.relevance_score:.2f}" if doc.relevance_score is not None else "–"
             imp = f"{doc.impact_score:.2f}" if doc.impact_score is not None else "–"
             sentiment = doc.sentiment_label.value if doc.sentiment_label else "–"
-            table.add_row(pri, rel, imp, sentiment, doc.title or "–")
+            table.add_row(pri, rel, imp, sentiment, _safe_text(doc.title or "–"))
 
         console.print(table)
 
@@ -1490,9 +1606,9 @@ def alerts_daily_briefing(
     """Generate a daily operator briefing from all audit trails."""
     import asyncio
 
-    from app.alerts.daily_briefing import build_daily_briefing
+    from app.alerts.daily_briefing import build_daily_briefing_with_portfolio
 
-    data = build_daily_briefing(lookback_hours=lookback_hours)
+    data = asyncio.run(build_daily_briefing_with_portfolio(lookback_hours=lookback_hours))
     text = data.to_text()
     console.print(text)
 

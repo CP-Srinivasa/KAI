@@ -480,3 +480,86 @@ Disruption
 Shortage
 Bottleneck
 Inventory
+
+# --- Social Media / Trading Slang (2026-04-17) ---
+Pump
+Pumping
+Dump
+Dumping
+Sell-off
+Selloff
+Breakout
+Breakdown
+Bullish
+Bearish
+Divergence
+Accumulation
+Distribution
+Whale Alert
+Liquidation
+Liquidated
+Delisting
+Listing
+Airdrop
+Rug Pull
+Rugpull
+WAGMI
+NGMI
+Rekt
+Flipping
+Mooning
+Degen
+Alpha
+Bags
+Ape
+Apeing
+
+# --- Exchanges / Platforms (2026-04-17) ---
+Binance
+Kraken
+Coinbase
+Bitfinex
+Gemini Exchange
+OKX
+Bybit
+KuCoin
+Uniswap
+Aave
+Curve
+Lido
+MakerDAO
+Compound
+dYdX
+
+# --- Additional Tickers (2026-04-17) ---
+SOL
+Solana
+ADA
+Cardano
+DOGE
+Dogecoin
+AVAX
+Avalanche
+DOT
+Polkadot
+MATIC
+Polygon
+LINK
+Chainlink
+ATOM
+Cosmos
+UNI
+AAVE
+LTC
+Litecoin
+NEAR
+Aptos
+APT
+SUI
+ARB
+Arbitrum
+OP
+Optimism
+PEPE
+SHIB
+Shiba Inu
