@@ -179,4 +179,74 @@ if ($pipelineCounter -ge 4) {
 }
 $pipelineCounter | Out-File -Encoding utf8 $pipelineMarker
 
+# NewsData.io fetch (every 3rd run = ~30 min)
+$newsdataMarker = Join-Path $ProjectRoot "artifacts\.newsdata_counter"
+$newsdataCounter = 0
+if (Test-Path $newsdataMarker) { $newsdataCounter = [int](Get-Content $newsdataMarker -ErrorAction SilentlyContinue) }
+$newsdataCounter++
+if ($newsdataCounter -ge 3) {
+    $newsdataCounter = 0
+    Write-Log "newsdata fetch starting"
+    try {
+        $output = & $Python -m app.cli.main pipeline newsdata "crypto bitcoin ethereum solana" `
+            --language en --category business --size 10 --top-n 3 2>&1 | Out-String
+        Write-Log "newsdata done"
+    } catch {
+        Write-Log "newsdata ERROR: $_"
+    }
+}
+$newsdataCounter | Out-File -Encoding utf8 $newsdataMarker
+
+# YouTube channel ingestion (every 12th run = ~2h)
+$youtubeMarker = Join-Path $ProjectRoot "artifacts\.youtube_counter"
+$youtubeCounter = 0
+if (Test-Path $youtubeMarker) { $youtubeCounter = [int](Get-Content $youtubeMarker -ErrorAction SilentlyContinue) }
+$youtubeCounter++
+if ($youtubeCounter -ge 12) {
+    $youtubeCounter = 0
+    $channelFile = Join-Path $ProjectRoot "monitor\youtube_channels.txt"
+    if (Test-Path $channelFile) {
+        $channels = Get-Content $channelFile | Where-Object { $_ -match "^https" }
+        $ytTotal = 0
+        foreach ($ch in $channels) {
+            try {
+                $output = & $Python -m app.cli.main pipeline youtube $ch `
+                    --max-results 3 --top-n 1 2>&1 | Out-String
+                $ytTotal++
+            } catch {
+                Write-Log "youtube ERROR for $($ch): $_"
+            }
+        }
+        Write-Log "youtube done: $ytTotal channels processed"
+    }
+}
+$youtubeCounter | Out-File -Encoding utf8 $youtubeMarker
+
+# TV-4 bridge: process promoted TradingView signals (every run)
+try {
+    $tvOutput = & $Python -m app.cli.main tradingview run 2>&1 | Out-String
+    if ($tvOutput -match "(\d+) signals processed") {
+        Write-Log "tv4-bridge: $($Matches[1]) signals processed"
+    }
+} catch {
+    Write-Log "tv4-bridge ERROR: $_"
+}
+
+# X/Twitter social feed (every 6th run = ~hourly)
+$twitterMarker = Join-Path $ProjectRoot "artifacts\.twitter_counter"
+$twitterCounter = 0
+if (Test-Path $twitterMarker) { $twitterCounter = [int](Get-Content $twitterMarker -ErrorAction SilentlyContinue) }
+$twitterCounter++
+if ($twitterCounter -ge 6) {
+    $twitterCounter = 0
+    Write-Log "twitter fetch starting"
+    try {
+        $output = & $Python -m app.cli.main pipeline twitter --top-n 5 2>&1 | Out-String
+        Write-Log "twitter done"
+    } catch {
+        Write-Log "twitter ERROR: $_"
+    }
+}
+$twitterCounter | Out-File -Encoding utf8 $twitterMarker
+
 Write-Log "--- cron end ---"
