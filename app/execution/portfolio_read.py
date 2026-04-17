@@ -280,7 +280,6 @@ async def _gather_market_snapshots(
     if not symbols:
         return {}
 
-    retrieved_at_fallback = datetime.now(UTC).isoformat()
     semaphore = asyncio.Semaphore(_PORTFOLIO_MARK_TO_MARKET_MAX_CONCURRENCY)
 
     async def _fetch(symbol: str) -> tuple[str, MarketDataSnapshot]:
@@ -316,11 +315,26 @@ async def _gather_market_snapshots(
         if isinstance(outcome, tuple):
             fetched_symbol, snapshot = outcome
             finished_by_symbol[fetched_symbol] = snapshot
+        elif isinstance(outcome, asyncio.CancelledError):
+            # Cancelled as a direct consequence of the overall-timeout path —
+            # label it accordingly so downstream can distinguish "we timed out"
+            # from "the adapter raised".
+            finished_by_symbol[symbol] = MarketDataSnapshot(
+                symbol=symbol,
+                provider=provider,
+                retrieved_at_utc=datetime.now(UTC).isoformat(),
+                source_timestamp_utc=None,
+                price=None,
+                is_stale=True,
+                freshness_seconds=None,
+                available=False,
+                error="snapshot_gather_timeout",
+            )
         elif isinstance(outcome, BaseException):
             finished_by_symbol[symbol] = MarketDataSnapshot(
                 symbol=symbol,
                 provider=provider,
-                retrieved_at_utc=retrieved_at_fallback,
+                retrieved_at_utc=datetime.now(UTC).isoformat(),
                 source_timestamp_utc=None,
                 price=None,
                 is_stale=True,
@@ -335,7 +349,7 @@ async def _gather_market_snapshots(
             MarketDataSnapshot(
                 symbol=symbol,
                 provider=provider,
-                retrieved_at_utc=retrieved_at_fallback,
+                retrieved_at_utc=datetime.now(UTC).isoformat(),
                 source_timestamp_utc=None,
                 price=None,
                 is_stale=True,
