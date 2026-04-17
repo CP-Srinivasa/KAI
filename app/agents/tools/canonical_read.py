@@ -26,6 +26,7 @@ Tool categories:
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -265,17 +266,117 @@ async def get_signals_for_execution(
     }
 
 
-async def get_daily_operator_summary() -> dict[str, object]:
-    """Return a minimal daily operator status summary.
+def _parse_iso_utc(value: object) -> datetime | None:
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
 
-    Aggregation for the daily dashboard / telegram surface.
+
+async def get_daily_operator_summary(
+    *,
+    alert_audit_dir: str = ALERT_AUDIT_DEFAULT_DIR,
+    loop_audit_path: str = LOOP_AUDIT_DEFAULT_PATH,
+    paper_execution_audit_path: str = PAPER_EXECUTION_AUDIT_DEFAULT_PATH,
+    now: datetime | None = None,
+) -> dict[str, object]:
+    """Return a daily operator status snapshot for /status and dashboards.
+
+    Reads live state from canonical sources (paper execution audit, alert
+    audit, loop audit, document repo). Fields that are not yet measured
+    (LLM failure rate, RSS→alert latency) return the literal string
+    "not_implemented" so consumers see an explicit gap rather than a
+    fabricated zero.
+
     execution_enabled and write_back_allowed are always False.
     """
+    from app.alerts.audit import load_alert_audits
+    from app.orchestrator.trading_loop import load_trading_loop_cycles
+
+    now_utc = (now or datetime.now(UTC)).astimezone(UTC)
+    cutoff_24h = now_utc - timedelta(hours=24)
+    today_date = now_utc.date()
+
+    degraded = False
+
+    # Positions — read from the paper execution audit (no DB dependency).
+    try:
+        exposure = await get_paper_exposure_summary(audit_path=paper_execution_audit_path)
+        raw_position_count = exposure.get("position_count", 0)
+        position_count: int | None = (
+            int(raw_position_count) if isinstance(raw_position_count, int) else 0
+        )
+    except Exception:
+        position_count = None
+        degraded = True
+
+    # Ingestion backlog — documents persisted but not yet analyzed.
+    try:
+        settings = get_settings()
+        session_factory = build_session_factory(settings.db)
+        async with session_factory.begin() as session:
+            repo = DocumentRepository(session)
+            ingestion_backlog: int | None = await repo.count_pending_documents()
+    except Exception:
+        ingestion_backlog = None
+        degraded = True
+
+    # Alert fire rate — count audits dispatched in the last 24h, divide by 24.
+    try:
+        audit_dir = resolve_workspace_dir(alert_audit_dir, label="Alert audit directory")
+        audits = load_alert_audits(audit_dir)
+        recent_alerts = 0
+        for record in audits:
+            dispatched = _parse_iso_utc(record.dispatched_at)
+            if dispatched is not None and dispatched >= cutoff_24h:
+                recent_alerts += 1
+        alert_rate_24h: float | None = round(recent_alerts / 24.0, 2)
+    except Exception:
+        alert_rate_24h = None
+        degraded = True
+
+    # Cycles today — count loop audit rows whose started_at is on today's UTC date.
+    try:
+        loop_path = resolve_workspace_path(
+            loop_audit_path,
+            label="Loop audit",
+            allowed_suffixes=frozenset({".jsonl"}),
+        )
+        cycles = load_trading_loop_cycles(loop_path)
+        cycle_count_today: int | None = 0
+        for row in cycles:
+            started = _parse_iso_utc(row.get("started_at"))
+            if started is not None and started.date() == today_date:
+                cycle_count_today += 1
+    except Exception:
+        cycle_count_today = None
+        degraded = True
+
+    def _or_unknown(value: int | float | None) -> object:
+        return value if value is not None else "?"
+
     return {
         "report_type": "daily_operator_summary",
         "execution_enabled": False,
         "write_back_allowed": False,
-        "status": "operational",
+        "status": "degraded" if degraded else "operational",
+        "readiness_status": "degraded" if degraded else "operational",
+        "position_count": _or_unknown(position_count),
+        "ingestion_backlog_documents": _or_unknown(ingestion_backlog),
+        "alert_fire_rate_docs_per_hour_24h": _or_unknown(alert_rate_24h),
+        "cycle_count_today": _or_unknown(cycle_count_today),
+        # Explicit not-measured markers: /status consumers must NOT treat a
+        # missing field as zero. Wire these up once the underlying telemetry
+        # exists (LLM call success/failure per provider, per-doc RSS→alert
+        # latency join).
+        "llm_provider_failure_rate_24h": "not_implemented",
+        "rss_to_alert_latency_p95_seconds_24h": "not_implemented",
+        "generated_at_utc": now_utc.isoformat(),
     }
 
 

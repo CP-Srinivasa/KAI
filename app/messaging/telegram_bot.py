@@ -1795,20 +1795,23 @@ class TelegramOperatorBot:
         alert_rate = self._inline(
             payload.get("alert_fire_rate_docs_per_hour_24h", "?")
         )
-        llm_fail = self._inline(
-            payload.get("llm_provider_failure_rate_24h", "?")
-        )
-        latency = self._inline(
-            payload.get("rss_to_alert_latency_p95_seconds_24h", "?")
-        )
+        # "not_implemented" is a canonical sentinel emitted by the summary
+        # builder for telemetry that doesn't exist yet — display as "n/a"
+        # and drop trailing unit characters so the line reads clean.
+        def _metric(key: str, suffix: str = "") -> str:
+            raw = payload.get(key, "?")
+            if raw == "not_implemented":
+                return "n/a"
+            return f"{self._inline(raw)}{suffix}"
+
         msg = (
             f"*KAI Status*\n"
             f"Readiness: {readiness}\n"
             f"Cycles today: {cycles} · Positions: {pos_count}\n"
             f"Ingestion backlog: {backlog} docs\n"
             f"Alert rate (24h): {alert_rate}/h\n"
-            f"LLM failures (24h): {llm_fail}\n"
-            f"Latency p95 (24h): {latency}s"
+            f"LLM failures (24h): {_metric('llm_provider_failure_rate_24h')}\n"
+            f"Latency p95 (24h): {_metric('rss_to_alert_latency_p95_seconds_24h', 's')}"
         )
         await self._send(chat_id, msg)
 
