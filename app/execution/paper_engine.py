@@ -131,6 +131,52 @@ class PaperExecutionEngine:
             )
             return None
 
+        # Defense-in-depth against inverted stops — the Risk Engine owns the
+        # primary geometry gate, but if it is ever bypassed we still refuse to
+        # fill a long with SL above or TP below current price. Short/close
+        # orders carry no SL/TP so the check is scoped to buys.
+        if order.side == "buy":
+            if order.stop_loss is not None and order.stop_loss >= current_price:
+                logger.error(
+                    "[PAPER] Rejected fill — long SL at or above current price: "
+                    "%s sl=%.4f price=%.4f",
+                    order.symbol,
+                    order.stop_loss,
+                    current_price,
+                )
+                self._append_audit(
+                    "order_rejected_invalid_sl",
+                    {
+                        "order_id": order.order_id,
+                        "symbol": order.symbol,
+                        "side": order.side,
+                        "stop_loss": order.stop_loss,
+                        "current_price": current_price,
+                        "reason": "long_sl_at_or_above_price",
+                    },
+                )
+                return None
+            if order.take_profit is not None and order.take_profit <= current_price:
+                logger.error(
+                    "[PAPER] Rejected fill — long TP at or below current price: "
+                    "%s tp=%.4f price=%.4f",
+                    order.symbol,
+                    order.take_profit,
+                    current_price,
+                )
+                self._append_audit(
+                    "order_rejected_invalid_tp",
+                    {
+                        "order_id": order.order_id,
+                        "symbol": order.symbol,
+                        "side": order.side,
+                        "take_profit": order.take_profit,
+                        "current_price": current_price,
+                        "reason": "long_tp_at_or_below_price",
+                    },
+                )
+                return None
+
         # Apply slippage (adverse for buyer, favorable for seller)
         if order.side == "buy":
             fill_price = current_price * (1 + self._slippage_pct)

@@ -185,9 +185,10 @@ def test_close_position_writes_position_closed_audit(tmp_path):
     eng.close_position("SOL/USDT", current_price=175.0, reason="take")
     import json
     lines = (tmp_path / "audit.jsonl").read_text(encoding="utf-8").strip().splitlines()
-    events = [json.loads(line)["event_type"] for line in lines]
+    records = [json.loads(line) for line in lines]
+    events = [rec["event_type"] for rec in records]
     assert events.count("position_closed") == 1
-    closed = next(json.loads(line) for line in lines if json.loads(line)["event_type"] == "position_closed")
+    closed = next(rec for rec in records if rec["event_type"] == "position_closed")
     assert closed["symbol"] == "SOL/USDT"
     assert closed["reason"] == "take"
     assert closed["quantity"] == 10.0
@@ -240,3 +241,65 @@ def test_monitor_positions_rejects_non_positive_prices(tmp_path):
     assert eng.monitor_positions({"BTC/USDT": 0.0}) == []
     assert eng.monitor_positions({"BTC/USDT": -100.0}) == []
     assert "BTC/USDT" in eng.portfolio.positions
+
+
+# --- Defense-in-depth: reject fills with inverted SL/TP geometry ---
+
+
+def test_fill_long_with_sl_above_price_rejected(tmp_path):
+    eng = _engine(tmp_path)
+    order = eng.create_order(
+        symbol="BTC/USDT",
+        side="buy",
+        quantity=0.01,
+        stop_loss=73718.0,  # above current price → inverted
+        idempotency_key="inv_sl",
+    )
+    fill = eng.fill_order(order, current_price=65000.0)
+    assert fill is None
+    assert "BTC/USDT" not in eng.portfolio.positions
+    # Audit contains a rejection event
+    import json
+    lines = (tmp_path / "audit.jsonl").read_text(encoding="utf-8").strip().splitlines()
+    events = [json.loads(line)["event_type"] for line in lines]
+    assert "order_rejected_invalid_sl" in events
+
+
+def test_fill_long_with_tp_below_price_rejected(tmp_path):
+    eng = _engine(tmp_path)
+    order = eng.create_order(
+        symbol="ETH/USDT",
+        side="buy",
+        quantity=1.0,
+        take_profit=2800.0,  # below current price → inverted
+        idempotency_key="inv_tp",
+    )
+    fill = eng.fill_order(order, current_price=3000.0)
+    assert fill is None
+    import json
+    lines = (tmp_path / "audit.jsonl").read_text(encoding="utf-8").strip().splitlines()
+    events = [json.loads(line)["event_type"] for line in lines]
+    assert "order_rejected_invalid_tp" in events
+
+
+def test_fill_long_with_valid_geometry_accepted(tmp_path):
+    eng = _engine(tmp_path)
+    order = eng.create_order(
+        symbol="BTC/USDT",
+        side="buy",
+        quantity=0.01,
+        stop_loss=60000.0,
+        take_profit=72000.0,
+    )
+    fill = eng.fill_order(order, current_price=65000.0)
+    assert fill is not None
+    assert "BTC/USDT" in eng.portfolio.positions
+
+
+def test_close_position_not_blocked_by_geometry_check(tmp_path):
+    """Close-orders (sell side) carry no SL/TP — defense check must not block them."""
+    eng = _engine(tmp_path)
+    _open_long(eng, "BTC/USDT", 0.01, 65000.0, sl=60000.0, tp=72000.0)
+    fill = eng.close_position("BTC/USDT", current_price=71000.0, reason="take")
+    assert fill is not None
+    assert "BTC/USDT" not in eng.portfolio.positions

@@ -209,6 +209,8 @@ class TradingLoop:
             signal_confluence_count=signal.confluence_count,
             stop_loss_price=signal.stop_loss_price,
             current_open_positions=current_positions,
+            entry_price=signal.entry_price,
+            take_profit_price=signal.take_profit_price,
         )
 
         if not risk_result.approved:
@@ -452,6 +454,8 @@ class TradingLoop:
             signal_confluence_count=signal.confluence_count,
             stop_loss_price=signal.stop_loss_price,
             current_open_positions=current_positions,
+            entry_price=signal.entry_price,
+            take_profit_price=signal.take_profit_price,
         )
 
         if not risk_result.approved:

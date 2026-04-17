@@ -224,3 +224,148 @@ def test_approved_order():
     assert result.approved
     assert result.violations == []
     assert result.check_id.startswith("rck_")
+
+
+# --- SL/TP geometry gate (defense against inverted stops) ---
+
+
+def test_long_sl_above_entry_rejected():
+    engine = _default_engine()
+    result = engine.check_order(
+        symbol="BTC/USDT",
+        side="buy",
+        signal_confidence=0.85,
+        signal_confluence_count=3,
+        stop_loss_price=73718.0,
+        current_open_positions=0,
+        entry_price=73238.0,
+        take_profit_price=79000.0,
+    )
+    assert not result.approved
+    assert any("sl_geometry_invalid:long_sl_at_or_above_entry" in v for v in result.violations)
+
+
+def test_long_sl_equal_to_entry_rejected():
+    engine = _default_engine()
+    result = engine.check_order(
+        symbol="BTC/USDT",
+        side="buy",
+        signal_confidence=0.85,
+        signal_confluence_count=3,
+        stop_loss_price=73238.0,
+        current_open_positions=0,
+        entry_price=73238.0,
+    )
+    assert not result.approved
+    assert any("sl_geometry_invalid:long_sl_at_or_above_entry" in v for v in result.violations)
+
+
+def test_long_tp_below_entry_rejected():
+    engine = _default_engine()
+    result = engine.check_order(
+        symbol="BTC/USDT",
+        side="buy",
+        signal_confidence=0.85,
+        signal_confluence_count=3,
+        stop_loss_price=60000.0,
+        current_open_positions=0,
+        entry_price=65000.0,
+        take_profit_price=64000.0,
+    )
+    assert not result.approved
+    assert any("tp_geometry_invalid:long_tp_at_or_below_entry" in v for v in result.violations)
+
+
+def test_short_sl_below_entry_rejected():
+    engine = _default_engine()
+    result = engine.check_order(
+        symbol="BTC/USDT",
+        side="sell",
+        signal_confidence=0.85,
+        signal_confluence_count=3,
+        stop_loss_price=64000.0,
+        current_open_positions=0,
+        entry_price=65000.0,
+        take_profit_price=60000.0,
+    )
+    assert not result.approved
+    assert any("sl_geometry_invalid:short_sl_at_or_below_entry" in v for v in result.violations)
+
+
+def test_short_tp_above_entry_rejected():
+    engine = _default_engine()
+    result = engine.check_order(
+        symbol="BTC/USDT",
+        side="sell",
+        signal_confidence=0.85,
+        signal_confluence_count=3,
+        stop_loss_price=70000.0,
+        current_open_positions=0,
+        entry_price=65000.0,
+        take_profit_price=66000.0,
+    )
+    assert not result.approved
+    assert any("tp_geometry_invalid:short_tp_at_or_above_entry" in v for v in result.violations)
+
+
+def test_long_valid_geometry_approved():
+    engine = _default_engine()
+    result = engine.check_order(
+        symbol="BTC/USDT",
+        side="buy",
+        signal_confidence=0.85,
+        signal_confluence_count=3,
+        stop_loss_price=60000.0,
+        current_open_positions=0,
+        entry_price=65000.0,
+        take_profit_price=72000.0,
+    )
+    assert result.approved
+    assert result.violations == []
+
+
+def test_short_valid_geometry_approved():
+    engine = _default_engine()
+    result = engine.check_order(
+        symbol="BTC/USDT",
+        side="sell",
+        signal_confidence=0.85,
+        signal_confluence_count=3,
+        stop_loss_price=70000.0,
+        current_open_positions=0,
+        entry_price=65000.0,
+        take_profit_price=60000.0,
+    )
+    assert result.approved
+    assert result.violations == []
+
+
+def test_geometry_check_skipped_when_entry_price_omitted():
+    """Backwards-compat: no entry_price → no geometry validation (legacy callers)."""
+    engine = _default_engine()
+    result = engine.check_order(
+        symbol="BTC/USDT",
+        side="buy",
+        signal_confidence=0.85,
+        signal_confluence_count=3,
+        stop_loss_price=73718.0,  # would be inverted if entry were 73238
+        current_open_positions=0,
+    )
+    assert result.approved
+    assert not any("geometry_invalid" in v for v in result.violations)
+
+
+def test_geometry_check_skipped_when_sl_omitted():
+    engine = _default_engine(require_stop_loss=False)
+    result = engine.check_order(
+        symbol="BTC/USDT",
+        side="buy",
+        signal_confidence=0.85,
+        signal_confluence_count=3,
+        stop_loss_price=None,
+        current_open_positions=0,
+        entry_price=65000.0,
+        take_profit_price=72000.0,
+    )
+    assert result.approved
+    assert result.violations == []

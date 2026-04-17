@@ -116,6 +116,8 @@ class RiskEngine:
         stop_loss_price: float | None,
         current_open_positions: int,
         is_averaging_down: bool = False,
+        entry_price: float | None = None,
+        take_profit_price: float | None = None,
     ) -> RiskCheckResult:
         """
         Pre-order risk gate. Must return approved=True before any order is sent.
@@ -158,6 +160,35 @@ class RiskEngine:
         # Gate 3: Stop loss required
         if self._limits.require_stop_loss and stop_loss_price is None:
             violations.append("stop_loss_required_but_missing")
+
+        # Gate 3b: SL/TP geometry — prevent inverted stops (long with sl>=entry,
+        # short with sl<=entry) and mirror-inverted take-profits. Triggered only
+        # when entry_price is provided AND the respective level is set; skips
+        # validation when the caller omits entry_price (backwards compatible).
+        normalized_side = side.lower()
+        if entry_price is not None and entry_price > 0:
+            if normalized_side == "buy":
+                if stop_loss_price is not None and stop_loss_price >= entry_price:
+                    violations.append(
+                        f"sl_geometry_invalid:long_sl_at_or_above_entry|"
+                        f"entry={entry_price}|sl={stop_loss_price}"
+                    )
+                if take_profit_price is not None and take_profit_price <= entry_price:
+                    violations.append(
+                        f"tp_geometry_invalid:long_tp_at_or_below_entry|"
+                        f"entry={entry_price}|tp={take_profit_price}"
+                    )
+            elif normalized_side == "sell":
+                if stop_loss_price is not None and stop_loss_price <= entry_price:
+                    violations.append(
+                        f"sl_geometry_invalid:short_sl_at_or_below_entry|"
+                        f"entry={entry_price}|sl={stop_loss_price}"
+                    )
+                if take_profit_price is not None and take_profit_price >= entry_price:
+                    violations.append(
+                        f"tp_geometry_invalid:short_tp_at_or_above_entry|"
+                        f"entry={entry_price}|tp={take_profit_price}"
+                    )
 
         # Gate 4: Signal confidence
         if signal_confidence < self._limits.min_signal_confidence:
