@@ -271,7 +271,18 @@ async def tradingview_webhook(
         "auth_mode": tv.webhook_auth_mode,
     }
 
-    accepted, auth_method = _authorize_request(raw_body, x_kai_signature, x_kai_token, tv)
+    # TradingView cannot send custom HTTP headers in webhook alerts.
+    # Fall back to extracting the token from the JSON body "token" field.
+    body_token = x_kai_token
+    if not body_token:
+        try:
+            body_obj = json.loads(raw_body.decode("utf-8")) if raw_body else {}
+            if isinstance(body_obj, dict):
+                body_token = body_obj.get("token") or body_obj.get("_token")
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            pass
+
+    accepted, auth_method = _authorize_request(raw_body, x_kai_signature, body_token, tv)
     if not accepted:
         entry = {**common_log, "outcome": "rejected", "reason": auth_method}
         _audit_writer(audit_path, entry)
@@ -305,6 +316,11 @@ async def tradingview_webhook(
         _audit_writer(audit_path, entry)
         _logger.warning("tradingview_webhook_malformed", **entry)
         raise HTTPException(status_code=400, detail="Malformed payload") from None
+
+    # Strip auth token from payload before routing/logging (never persist secrets).
+    if isinstance(parsed_payload, dict):
+        parsed_payload.pop("token", None)
+        parsed_payload.pop("_token", None)
 
     routing_outcome: dict[str, object] = {"enabled": tv.webhook_signal_routing_enabled}
     pipeline_event: TradingViewSignalEvent | None = None

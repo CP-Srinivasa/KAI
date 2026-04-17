@@ -260,6 +260,66 @@ def tradingview_reject(
     console.print(f"[yellow]Rejected[/yellow] {event_id} — {reason}")
 
 
+@tradingview_app.command("run")
+def tradingview_run(
+    provider: str = typer.Option(
+        "coingecko", "--provider", help="Market data provider (coingecko, mock)."
+    ),
+    freshness_threshold_seconds: float = typer.Option(
+        120.0, "--freshness", help="Market data stale threshold."
+    ),
+    timeout_seconds: int = typer.Option(
+        10, "--timeout", help="Market data request timeout."
+    ),
+    consensus: bool = typer.Option(
+        False, "--consensus", help="Enable multi-model consensus gate."
+    ),
+    consensus_model: str = typer.Option(
+        "gpt-4o-mini", "--consensus-model", help="LLM model for consensus."
+    ),
+) -> None:
+    """TV-4 bridge: run all pending promoted TV signals through the paper loop."""
+    import asyncio
+
+    from app.orchestrator.trading_loop import run_promoted_signals_once
+
+    cycles = asyncio.run(
+        run_promoted_signals_once(
+            provider=provider,
+            freshness_threshold_seconds=freshness_threshold_seconds,
+            timeout_seconds=timeout_seconds,
+            enable_consensus=consensus,
+            consensus_model=consensus_model,
+        )
+    )
+
+    if not cycles:
+        console.print("[yellow]No pending promoted TV signals to process.[/yellow]")
+        return
+
+    table = Table(show_header=True, header_style="bold cyan")
+    table.add_column("Decision ID", width=18)
+    table.add_column("Symbol", width=12)
+    table.add_column("Status", width=18)
+    table.add_column("Fill", width=4)
+
+    for cycle in cycles:
+        fill = "Y" if cycle.fill_simulated else "N"
+        status_color = "green" if cycle.status.value == "completed" else "yellow"
+        table.add_row(
+            cycle.decision_id or "-",
+            cycle.symbol,
+            f"[{status_color}]{cycle.status.value}[/{status_color}]",
+            fill,
+        )
+
+    console.print(table)
+    completed = sum(1 for c in cycles if c.status.value == "completed")
+    console.print(
+        f"[bold]{len(cycles)} signals processed, {completed} completed (filled).[/bold]"
+    )
+
+
 def _format_event_dict(event_dict: dict) -> str:
     """Stable JSON formatting for tests/diagnostics."""
     return json.dumps(event_dict, sort_keys=True, indent=2)
