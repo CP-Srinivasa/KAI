@@ -7,6 +7,8 @@ cd "$(dirname "$0")/.."
 
 PID_FILE=".server.pid"
 LOG_FILE="logs/server.log"
+TUNNEL_PID_FILE=".tunnel.pid"
+TUNNEL_LOG_FILE="logs/tunnel.log"
 
 # Cross-platform PID probe: kill -0 doesn't see native Windows processes
 # from MSYS/Git-Bash, so fall back to tasklist on Windows.
@@ -101,4 +103,55 @@ fi
 # auto-replies alive across server restarts without a separate action.
 if [ "${KAI_AGENT_WORKER:-1}" != "0" ]; then
     bash "$(dirname "$0")/agent_worker_start.sh" || echo "WARN: agent-worker failed to start"
+fi
+
+# Start Cloudflare Named Tunnel unless opt-out is set.
+# Exposes the local server as https://kai-trader.org via Cloudflare.
+if [ "${KAI_TUNNEL:-1}" != "0" ] && command -v cloudflared &>/dev/null; then
+    if [ -f "$TUNNEL_PID_FILE" ]; then
+        OLD_TPID=$(cat "$TUNNEL_PID_FILE")
+        if is_pid_running "$OLD_TPID"; then
+            echo "Tunnel already running (PID $OLD_TPID)"
+        else
+            rm -f "$TUNNEL_PID_FILE"
+        fi
+    fi
+
+    if [ ! -f "$TUNNEL_PID_FILE" ]; then
+        echo "Starting Cloudflare Tunnel (kai-trader.org)..."
+        nohup cloudflared tunnel --config "$HOME/.cloudflared/config.yml" run kai \
+            > "$TUNNEL_LOG_FILE" 2>&1 &
+        TUNNEL_SHELL_PID=$!
+
+        resolve_tunnel_pid() {
+            local fallback=$1
+            case "$(uname -s)" in
+                MINGW*|MSYS*|CYGWIN*)
+                    for _ in 1 2 3 4 5; do
+                        local pid
+                        pid=$(tasklist //FO CSV //NH //FI "IMAGENAME eq cloudflared.exe" 2>/dev/null \
+                            | head -1 | awk -F'","' '{gsub(/"/, "", $2); print $2}')
+                        if [ -n "$pid" ] && [ "$pid" != "0" ]; then echo "$pid"; return 0; fi
+                        sleep 1
+                    done
+                    echo "$fallback"
+                    ;;
+                *) echo "$fallback" ;;
+            esac
+        }
+
+        TUNNEL_REAL_PID=$(resolve_tunnel_pid "$TUNNEL_SHELL_PID")
+        echo "$TUNNEL_REAL_PID" > "$TUNNEL_PID_FILE"
+        sleep 3
+        if is_pid_running "$(cat "$TUNNEL_PID_FILE")"; then
+            echo "Tunnel started (PID $(cat "$TUNNEL_PID_FILE"))"
+            echo "Public URL: https://kai-trader.org"
+        else
+            echo "WARN: Tunnel failed to start. Check $TUNNEL_LOG_FILE"
+        fi
+    fi
+else
+    if [ "${KAI_TUNNEL:-1}" != "0" ]; then
+        echo "WARN: cloudflared not found — tunnel not started"
+    fi
 fi

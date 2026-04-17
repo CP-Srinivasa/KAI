@@ -68,3 +68,16 @@ rm -f "$PID_FILE"
 if [ -x "$(dirname "$0")/agent_worker_stop.sh" ] || [ -f "$(dirname "$0")/agent_worker_stop.sh" ]; then
     bash "$(dirname "$0")/agent_worker_stop.sh" || true
 fi
+
+# Stop Cloudflare Tunnel if running.
+TUNNEL_PID_FILE=".tunnel.pid"
+if [ -f "$TUNNEL_PID_FILE" ]; then
+    TPID=$(cat "$TUNNEL_PID_FILE")
+    if is_pid_running "$TPID"; then
+        stop_pid "$TPID" 1
+        echo "Tunnel stopped (PID $TPID)"
+    else
+        echo "Tunnel was not running (stale PID $TPID)"
+    fi
+    rm -f "$TUNNEL_PID_FILE"
+fi
