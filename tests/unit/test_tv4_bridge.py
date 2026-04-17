@@ -11,16 +11,12 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-import pytest
-
 from app.orchestrator.trading_loop import _normalize_tv_symbol
 from app.signals.models import (
     SignalCandidate,
     SignalDirection,
-    SignalProvenance,
-    SignalState,
 )
-from app.signals.tv_consumer import load_pending_promoted, mark_consumed
+from app.signals.tv_consumer import load_pending_promoted
 
 
 class TestNormalizeTvSymbol:
@@ -91,7 +87,6 @@ class TestTvConsumerRoundTrip:
             + json.dumps(_make_promoted_row("dec_b", symbol="ETHUSDT")) + "\n",
             encoding="utf-8",
         )
-        consumed_path = tmp_path / "consumed.json"
 
         candidates = load_pending_promoted(promoted)
         assert len(candidates) == 2
