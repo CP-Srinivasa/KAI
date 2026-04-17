@@ -71,6 +71,7 @@ data/
 # Runtime PID files
 .server.pid
 .agent_worker.pid
+.tunnel.pid
 
 # Frontend build artifacts (regenerable)
 web/tsconfig.tsbuildinfo

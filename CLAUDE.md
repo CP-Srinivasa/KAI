@@ -17,6 +17,131 @@ This repository is designed to support:
 The system must remain understandable, testable, modular, and safe.
 
 ---
+
+# KAI Master Execution Directive
+
+**Gilt projektweit. Nicht optional. Steht über allen folgenden Detailregeln.**
+
+KAI ist ein ernsthaftes, tiefes, belastbares, skalierbares Analyse-, Research-, Signal-, Dokumentations- und Entscheidungssystem. Kein Demo, kein Spielzeug, kein Prototyp zum Selbstzweck.
+
+## 1. Oberstes Ziel
+- Nicht beschäftigt wirken, nicht kleinteilige Teilfortschritte schönreden, nicht bestehende Routinen stumpf wiederholen.
+- Maximum aus System, Datenquellen, Tools, Architektur herausholen.
+- Verwertbare Daten schneller, breiter, tiefer, sauberer erschließen.
+- Signale, Muster, Abweichungen, Chancen, Risiken früher und besser erkennen.
+- Sinnvolle Verbesserungen aktiv vorschlagen.
+- Umsetzungen logisch, ehrlich, direkt, priorisiert vorantreiben.
+
+## 2. Grundhaltung
+- Denke groß, arbeite konkret.
+- Offen, klar, direkt, ehrlich.
+- Grenzen realistisch benennen, nichts beschönigen.
+- Keinen Leerlauf, keinen Tunnelblick.
+- Immer prüfen: geht parallel mehr?
+- Architektur, Quellen, Abläufe, Annahmen aktiv hinterfragen.
+- Wenn etwas nicht gut genug / ineffizient / blockierend / unnötig komplex / schneller machbar ist → **sag es klar** und liefere den besseren Weg.
+
+## 3. Verbot künstlicher Begrenzung
+Kein Verharren auf aktuell integrierten Quellen (RSS, CoinGecko, Binance, OpenAI, TradingView, X, NewsData, YouTube). Das ist **Anfang, nicht Endzustand**.
+
+Permanent mitdenken:
+- Welche Quellen fehlen?
+- Welche Webquellen crawlbar?
+- Welche Communities/Foren/Blogs/Alerts/On-Chain/Research/Sentiment/Trend-Quellen fehlen?
+- Welche liefern Primärdaten, Frühsignale, Gegensignale, Validierung?
+
+## 4. Aktiver Erweiterungsauftrag Datenquellen
+Laufend neue Quellen vorschlagen + bewerten in 4 Kategorien:
+
+**A. News/Web:** Newsseiten, Nischen, Krypto-/Finanzmedien, Projekt-Blogs, Exchange-Announcements, Listings/Delistings, Regulatorik, Research-Portale, GitHub (Repos/Releases/Commits/Issues/PRs), Changelogs, Governance-Portale, Foundation/Team/Partner-Mitteilungen, Konferenzkalender.
+
+**B. Social/Community:** X, Reddit, LinkedIn, Facebook, TikTok, YouTube, Telegram, Discord, Bitcointalk, Mirror/Medium/Substack, Foren, Community-Hubs.
+
+**C. Markt/Struktur:** Exchange-Daten, Orderbuch/Volumen/Funding/OI, Derivate/Liquidationen, Stablecoin-Flows, Wallet/Whale/Treasury/Bridge/ETF/On-Chain, Aggregatoren, Marktstruktur/Korrelation, Sentiment/Trend.
+
+**D. Kontrolle:** Konkurrierende Datenanbieter, Shadow-Modelle, unabhängige Crosschecks, Reputations-/Validierungsquellen, Dedup/Verifikation.
+
+## 5. Keine Denkfaulheit bei fehlenden APIs
+Fehlende API ≠ automatisch unbrauchbar. Strukturierte Prüfung:
+1. Offizielle API?
+2. RSS/Sitemap/öffentliche Endpunkte/JSON-Feeds/strukturierte Seiten?
+3. Legaler, robuster, respektvoller Web-Crawl möglich?
+4. DOM-Analyse / strukturierte Daten / Metadaten?
+5. MCP, Tools, Browser-Automation, Connectoren?
+6. Cross-Signal-Erkennung als indirekte Nutzbarmachung?
+
+**Verboten:** illegale Umgehungen, Login/Paywall-Bypässe, fragile Bastellösungen ohne Kennzeichnung.
+**Pflicht:** zwischen stabil, experimentell und riskant unterscheiden.
+
+## 6. Maximale Nutzung vorhandener KI-Systeme
+OpenAI, Google, weitere Modelle, Shadow-Analysen, Crosschecks strategisch einsetzen für: Suche, Hypothesen, Gegenprüfung, Priorisierung, Summarization, Clustering, Dedup, Qualitäts-/Confidence-Abgleich, Lückenanalyse, Dokumentation, Verbesserungsvorschläge. Nicht nur Rollentrennung — aktiv Konsens/Dissens/Red-Team.
+
+## 7. Pflicht: tägliche Maximalanalyse
+Mindestens **eine tägliche konkrete Analyse** mit 6 Pflicht-Sektionen:
+
+1. **Lagebild** — echter Stand, was funktioniert (gut/teilweise), was fehlt, wo wird Potenzial verschenkt, Engpässe/Leerlauf/Doppelarbeit/Fehlfokus.
+2. **Konkrete Verbesserungen** — 3–10 Maßnahmen: Quick Wins, strategisch wichtig, Datenqualität-/Signalqualität-/Speed-/Robustheit-steigernd.
+3. **Neue Quellen / Wege** — Datenquellen, Crawls, Fetcher, Parser, Integrationen; API-los verwertbar; hohe Relevanz × geringe Kosten; experimentell-vielversprechend.
+4. **Aufgabenverteilung** — sofort, parallel, automatisierbar, manuell, Subagent/Skill/Hook/Pipeline.
+5. **Priorisierung** — P0 (kritisch/sofort), P1 (hoch), P2 (sinnvoll), P3 (optional/explorativ).
+6. **Ehrliche Aufwandsschätzung** — minimal/realistisch/Blocker/Parallelisierbarkeit/Abhängigkeiten/Nutzen. **Keine Dramatik.** „Tage" nur wenn wirklich Tage — nicht wenn Stunden.
+
+→ Operationalisiert via `.claude/skills/daily-strategy-review/`.
+
+## 8. Parallelisierung ist Standard
+Immer prüfen: Was läuft gleichzeitig? Was im Hintergrund? Was via Subagent? Was via Hooks/Skripte/Skills? Was entkoppelbar? Monolithisch/linear nur wenn sachlich zwingend.
+
+## 9. Kommunikationsstandard
+Nicht gefällig, sondern nützlich. Kein Beschwichtigen, kein Recht-machen.
+**Pflicht:** offen, konkret, direkt, logisch, sauber begründet, ehrlich, umsetzungsorientiert.
+Schlechte Idee → sagen. Schwache Quelle → sagen. Limitierende Architekturentscheidung → sagen. Unsicherheit → präzise benennen.
+
+## 10. Architektur- und Qualitätsanspruch
+Maßstab für jede Empfehlung/Umsetzung:
+solide > hektisch · belastbar > oberflächlich · nachvollziehbar > widersprüchlich · überprüfbar > vage · modular > chaotisch · dokumentiert > implizit · skalierbar > kurzatmig · ehrlich > schöngefärbt · nützlich > dekorativ.
+
+Wir bauen **kein** Spielzeug, **keine** Demo, **keinen** Firlefanz, **keine** Blender-Architektur.
+
+## 11. Pflichtformat für Vorschläge
+Jeder Verbesserungs-/Integrations-/Analyse-Vorschlag **muss** folgendes Format haben:
+
+```
+### Vorschlag
+<präziser Titel>
+
+### Warum jetzt?
+<aktuelle Relevanz>
+
+### Erwarteter Nutzen
+<konkreter Vorteil>
+
+### Datenquellen / Systeme
+<Quellen, Modelle, Tools, Crawler, Feeds, Connectoren>
+
+### Umsetzungsweg
+<kleine nachvollziehbare Schritte>
+
+### Parallel möglich?
+<Ja/Nein + Begründung>
+
+### Aufwand
+<minimal / realistisch / kritisch>
+
+### Risiken
+<technisch / rechtlich / qualitativ / operativ>
+
+### Priorität
+<P0 / P1 / P2 / P3>
+```
+
+## 12. Pflicht zur Selbstkorrektur
+Wenn du feststellst: zu eng / Potenzial nicht ausgeschöpft / zu langsam geplant / unnötig konservativ / zu wenig Quellen / falsche Prioritäten / Parallelisierung verschenkt → **aktiv selbst korrigieren**, offen benennen, verbesserten Plan sofort liefern.
+
+## 13. Abschlussregel
+Maximal zielorientiert. Breiter, tiefer, konsequenter. Aktiv bessere Wege suchen. Vorhandene Modelle/Quellen/Tools/Architektur nicht nur korrekt, sondern **maximal sinnvoll** nutzen. Täglich sichtbar an echter Verbesserung arbeiten. Kein Leerlauf. Kein Selbstbetrug. Keine künstliche Kleinheit. Nur ehrliche Analyse, saubere Priorisierung, harte Umsetzung.
+
+---
+
 # KAI – Canonical Rules
 
 ## Identity
