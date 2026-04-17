@@ -108,7 +108,11 @@ def _watchdog_check(note: str | None) -> tuple[str, str]:
     targets = [
         ("alert_audit", REPO_ROOT / "artifacts" / "alert_audit.jsonl", 6.0),
         ("trading_loop_audit", REPO_ROOT / "artifacts" / "trading_loop_audit.jsonl", 6.0),
-        ("hold_report", REPO_ROOT / "artifacts" / "ph5_hold" / "hold_report.json", 48.0),
+        (
+            "hold_report",
+            REPO_ROOT / "artifacts" / "ph5_hold" / "ph5_hold_metrics_report.json",
+            48.0,
+        ),
     ]
     for label, path, warn_h in targets:
         h = _hours_since(path)
