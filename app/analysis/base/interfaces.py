@@ -39,6 +39,11 @@ class LLMAnalysisOutput(BaseModel):
     actionable: bool = False
     tags: list[str] = Field(default_factory=list)
 
+    # Set by ensemble/fallback wrappers to identify which underlying provider
+    # actually produced this output. Per-call, so it survives parallel runs
+    # where a shared provider instance would otherwise race on mutable state.
+    provider_used: str | None = None
+
 
 class BaseAnalysisProvider(ABC):
     """Base interface for all LLM analysis providers."""

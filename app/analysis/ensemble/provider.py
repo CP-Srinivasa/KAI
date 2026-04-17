@@ -73,6 +73,12 @@ class EnsembleProvider(BaseAnalysisProvider):
         for provider in self._providers:
             try:
                 result = await provider.analyze(title, text, context)
+                # Per-call annotation survives concurrent dispatch where the
+                # shared _active_provider_name would race. Keep the instance
+                # state updated for back-compat callers, but the Pipeline uses
+                # result.provider_used as the source of truth.
+                if result.provider_used is None:
+                    result.provider_used = provider.provider_name
                 self._active_provider_name = provider.provider_name
                 logger.debug(
                     "ensemble_provider_selected",

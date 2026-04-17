@@ -224,3 +224,140 @@ def _make_shadow_doc(
 
 
 # shadow-report CLI command was removed with the legacy shadow subsystem.
+
+
+# -- Overlap detection + ensemble-race fixes --
+
+
+@pytest.mark.asyncio
+async def test_shadow_skipped_when_ensemble_winner_matches_shadow() -> None:
+    """If the ensemble falls back to the same provider configured as shadow,
+    the shadow call must be skipped (no quota-duplicated request)."""
+    from app.analysis.ensemble.provider import EnsembleProvider
+
+    openai = _mock_provider("openai", sentiment=SentimentLabel.BULLISH)
+    openai.analyze = AsyncMock(side_effect=RuntimeError("openai down"))
+
+    gemini_primary = _mock_provider("gemini", sentiment=SentimentLabel.BULLISH)
+    gemini_shadow = _mock_provider("gemini", sentiment=SentimentLabel.BEARISH)
+
+    ensemble = EnsembleProvider(providers=[openai, gemini_primary])
+
+    pipeline = AnalysisPipeline(
+        _empty_engine(), ensemble, shadow_provider=gemini_shadow
+    )
+    result = await pipeline.run(_make_doc())
+
+    # Primary ensemble resolved to gemini; shadow (also gemini) must NOT be called.
+    assert gemini_shadow.analyze.await_count == 0
+    assert result.shadow_llm_output is None
+    assert result.shadow_provider_name is None
+
+
+@pytest.mark.asyncio
+async def test_shadow_called_serially_when_ensemble_winner_is_not_shadow() -> None:
+    """If the ensemble winner is a DIFFERENT provider than the shadow, the
+    shadow is still called (serially) and its result captured."""
+    from app.analysis.ensemble.provider import EnsembleProvider
+
+    openai_primary = _mock_provider("openai", sentiment=SentimentLabel.BULLISH)
+    gemini_in_chain = _mock_provider("gemini", sentiment=SentimentLabel.NEUTRAL)
+    gemini_shadow = _mock_provider("gemini", sentiment=SentimentLabel.BEARISH)
+
+    ensemble = EnsembleProvider(providers=[openai_primary, gemini_in_chain])
+
+    pipeline = AnalysisPipeline(
+        _empty_engine(), ensemble, shadow_provider=gemini_shadow
+    )
+    result = await pipeline.run(_make_doc())
+
+    # openai wins → gemini shadow still runs (overlap existed but didn't realize)
+    assert gemini_shadow.analyze.await_count == 1
+    assert result.shadow_llm_output is not None
+    assert result.shadow_llm_output.sentiment_label == SentimentLabel.BEARISH
+
+
+@pytest.mark.asyncio
+async def test_overlap_detection_accepts_tuple_chain() -> None:
+    """provider_chain as a tuple (not list) must still trigger overlap detection."""
+
+    class TupleChainEnsemble:
+        provider_name = "ensemble(openai,gemini)"
+        model = "gemini"
+        provider_chain = ("openai", "gemini")  # tuple, not list
+
+        def __init__(self, inner: AsyncMock) -> None:
+            self._inner = inner
+            self.active_provider_name = "gemini"
+
+        async def analyze(
+            self, title: str, text: str, context: dict | None = None
+        ) -> LLMAnalysisOutput:
+            result = await self._inner.analyze(title, text, context)
+            result.provider_used = "gemini"
+            return result
+
+    inner = _mock_provider("gemini", sentiment=SentimentLabel.BULLISH)
+    ensemble = TupleChainEnsemble(inner)
+    gemini_shadow = _mock_provider("gemini", sentiment=SentimentLabel.BEARISH)
+
+    pipeline = AnalysisPipeline(
+        _empty_engine(), ensemble, shadow_provider=gemini_shadow  # type: ignore[arg-type]
+    )
+    result = await pipeline.run(_make_doc())
+
+    assert gemini_shadow.analyze.await_count == 0
+    assert result.shadow_llm_output is None
+
+
+@pytest.mark.asyncio
+async def test_shadow_output_preserved_on_primary_exception() -> None:
+    """When primary raises after shadow task started, shadow output must be
+    captured into the PipelineResult (not silently dropped)."""
+    primary = _mock_provider("openai", sentiment=SentimentLabel.BULLISH)
+    primary.analyze = AsyncMock(side_effect=RuntimeError("primary blew up"))
+
+    shadow = _mock_provider("anthropic", sentiment=SentimentLabel.BEARISH)
+
+    pipeline = AnalysisPipeline(_empty_engine(), primary, shadow_provider=shadow)
+    result = await pipeline.run(_make_doc())
+
+    # Primary failed → fallback analysis_result, but shadow output survives
+    assert result.analysis_result is not None
+    assert result.shadow_llm_output is not None
+    assert result.shadow_llm_output.sentiment_label == SentimentLabel.BEARISH
+    assert result.shadow_provider_name == "anthropic"
+
+
+def test_overlap_detection_flags_redundant_shadow() -> None:
+    """When shadow is in the ensemble chain, _shadow_overlaps_ensemble() is True.
+
+    This is the condition that triggers the CLAUDE.md §6 red-team warning at
+    construction time and gates the runtime shadow-skip logic.
+    """
+    from app.analysis.ensemble.provider import EnsembleProvider
+
+    p1 = _mock_provider("openai")
+    p2 = _mock_provider("gemini")
+    ensemble = EnsembleProvider(providers=[p1, p2])
+    shadow_gemini = _mock_provider("gemini")
+
+    pipeline = AnalysisPipeline(
+        _empty_engine(), ensemble, shadow_provider=shadow_gemini
+    )
+    assert pipeline._shadow_overlaps_ensemble() is True
+
+
+def test_overlap_detection_false_for_distinct_shadow() -> None:
+    """A shadow that is NOT in the ensemble chain must not flag as overlap."""
+    from app.analysis.ensemble.provider import EnsembleProvider
+
+    p1 = _mock_provider("openai")
+    p2 = _mock_provider("gemini")
+    ensemble = EnsembleProvider(providers=[p1, p2])
+    shadow_anthropic = _mock_provider("anthropic")
+
+    pipeline = AnalysisPipeline(
+        _empty_engine(), ensemble, shadow_provider=shadow_anthropic
+    )
+    assert pipeline._shadow_overlaps_ensemble() is False

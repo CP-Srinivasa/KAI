@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-import contextlib
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
@@ -91,7 +90,18 @@ def _resolve_analysis_source(provider_name: str | None) -> AnalysisSource:
     return AnalysisSource.EXTERNAL_LLM
 
 
-def _resolve_runtime_provider_name(provider: BaseAnalysisProvider | None) -> str | None:
+def _resolve_runtime_provider_name(
+    provider: BaseAnalysisProvider | None,
+    output: LLMAnalysisOutput | None = None,
+) -> str | None:
+    # Preferred: the output annotates which provider actually ran. This is
+    # per-call and cannot race, so it trumps any instance-level state on an
+    # ensemble wrapper shared across concurrent pipelines.
+    if output is not None and isinstance(output.provider_used, str):
+        winner = output.provider_used.strip()
+        if winner:
+            return winner
+
     if provider is None:
         return None
 
@@ -335,6 +345,23 @@ class AnalysisPipeline:
         self._market_data_adapter = market_data_adapter
         self._cached_market_context: dict[str, Any] | None = None
 
+        if self._shadow_overlaps_ensemble() and shadow_provider is not None:
+            # CLAUDE.md §6 requires Konsens/Dissens/Red-Team. A shadow that
+            # overlaps with the primary ensemble chain degenerates to an echo
+            # whenever the ensemble falls back to it — no red-team signal.
+            # Warn at construction time so operators see the misconfiguration
+            # once, rather than burying it in per-document debug logs.
+            logger.warning(
+                "shadow_redundant_configuration",
+                shadow=shadow_provider.provider_name,
+                primary_chain=getattr(provider, "provider_chain", None),
+                hint=(
+                    "Shadow provider is also in the primary ensemble chain. "
+                    "Red-team value is lost when ensemble falls back to this "
+                    "provider. Consider a distinct shadow (e.g. Anthropic)."
+                ),
+            )
+
     def _shadow_overlaps_ensemble(self) -> bool:
         """True if the primary is an Ensemble that contains the shadow provider.
 
@@ -345,9 +372,13 @@ class AnalysisPipeline:
         if self._shadow_provider is None or self._provider is None:
             return False
         chain = getattr(self._provider, "provider_chain", None)
-        if not isinstance(chain, list):
+        if not isinstance(chain, (list, tuple)):
             return False
-        return self._shadow_provider.provider_name in chain
+        shadow_name = self._shadow_provider.provider_name.strip().lower()
+        return any(
+            isinstance(name, str) and name.strip().lower() == shadow_name
+            for name in chain
+        )
 
     async def _run_shadow_analysis(
         self,
@@ -481,9 +512,19 @@ class AnalysisPipeline:
                 try:
                     primary_output = await primary_task
                 except Exception:
+                    # Primary failed: still harvest the shadow result so the
+                    # red-team signal (or a quota-wasted error) is preserved
+                    # for the fallback PipelineResult instead of silently
+                    # dropped. Only the shadow's OWN exception is swallowed.
                     if shadow_task is not None:
-                        with contextlib.suppress(Exception):
-                            await shadow_task
+                        try:
+                            (
+                                shadow_llm_output,
+                                shadow_provider_name,
+                                shadow_error,
+                            ) = await shadow_task
+                        except Exception:
+                            pass
                     raise
 
                 llm_output = primary_output
@@ -494,11 +535,11 @@ class AnalysisPipeline:
                     # a different provider than the shadow. If they match, skip
                     # the shadow call entirely to save quota.
                     primary_runtime_name = (
-                        _resolve_runtime_provider_name(self._provider)
+                        _resolve_runtime_provider_name(self._provider, primary_output)
                         or self._provider.provider_name
                     )
                     shadow_name = self._shadow_provider.provider_name
-                    if primary_runtime_name != shadow_name:
+                    if primary_runtime_name.strip().lower() != shadow_name.strip().lower():
                         (
                             shadow_llm_output,
                             shadow_provider_name,
@@ -517,7 +558,8 @@ class AnalysisPipeline:
                         )
 
                 provider_name = (
-                    _resolve_runtime_provider_name(self._provider) or self._provider.provider_name
+                    _resolve_runtime_provider_name(self._provider, primary_output)
+                    or self._provider.provider_name
                 )
                 analysis_source = _resolve_analysis_source(provider_name)
 
