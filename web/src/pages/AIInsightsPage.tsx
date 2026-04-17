@@ -51,7 +51,7 @@ export function AIInsightsPage() {
             }
           />
           {q.data.blocking_reasons.length > 0 ? (
-            <ul className="text-xs text-fg-muted space-y-1 font-mono">
+            <ul className="text-xs text-fg-muted space-y-1 font-mono break-words">
               {q.data.blocking_reasons.map((r, i) => (
                 <li key={i}>· {r}</li>
               ))}

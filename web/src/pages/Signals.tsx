@@ -176,10 +176,10 @@ function ErrorCard({ kind, message, path }: { kind: string; message: string; pat
     <Card padded className="border-neg/30 bg-neg/5">
       <div className="flex items-start gap-3 text-xs text-neg">
         <AlertCircle size={16} className="mt-0.5 shrink-0" />
-        <div>
+        <div className="min-w-0">
           <div className="font-semibold">Endpoint nicht erreichbar</div>
-          <div className="text-fg-muted mt-1">{kind} · {message}</div>
-          <div className="text-2xs text-fg-subtle mt-1 font-mono">{path}</div>
+          <div className="text-fg-muted mt-1 break-words">{kind} · {message}</div>
+          <div className="text-2xs text-fg-subtle mt-1 font-mono break-all">{path}</div>
         </div>
       </div>
     </Card>

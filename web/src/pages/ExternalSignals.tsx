@@ -348,7 +348,7 @@ function AuditLogPanel({ state }: AuditPanelProps) {
         </div>
       )}
       {state.state === "error" && (
-        <div className="rounded-sm border border-neg/30 bg-neg/5 p-3 text-xs text-neg">
+        <div className="rounded-sm border border-neg/30 bg-neg/5 p-3 text-xs text-neg break-words">
           Fehler: {state.error.kind} ({state.error.status}) — {state.error.message}
         </div>
       )}

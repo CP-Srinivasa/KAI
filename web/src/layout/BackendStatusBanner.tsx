@@ -41,8 +41,8 @@ export function BackendStatusBanner() {
       role="status"
       aria-live="polite"
     >
-      <span className={`inline-block h-1.5 w-1.5 rounded-full ${dot}`} />
-      <span className="font-mono">{label}</span>
+      <span className={`inline-block h-1.5 w-1.5 rounded-full shrink-0 ${dot}`} />
+      <span className="font-mono min-w-0 truncate">{label}</span>
       <div className="ml-auto flex items-center gap-2">
         {editing ? (
           <form onSubmit={saveToken} className="flex items-center gap-1.5">

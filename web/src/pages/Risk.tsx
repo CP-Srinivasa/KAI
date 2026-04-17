@@ -88,11 +88,11 @@ export function RiskPage() {
 
 function KV({ k, v, tone }: { k: string; v: string; tone?: "pos" | "neg" | "warn" | "muted" }) {
   return (
-    <div className="flex items-center justify-between border-b border-line-subtle/50 py-1">
-      <span className="font-mono text-2xs text-fg-subtle">{k}</span>
+    <div className="flex items-center justify-between gap-2 overflow-hidden border-b border-line-subtle/50 py-1">
+      <span className="min-w-0 truncate font-mono text-2xs text-fg-subtle">{k}</span>
       <span
         className={cn(
-          "font-mono",
+          "shrink-0 font-mono text-right",
           tone === "pos" && "text-pos",
           tone === "neg" && "text-neg",
           tone === "warn" && "text-warn",

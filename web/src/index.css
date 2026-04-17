@@ -88,6 +88,21 @@ body {
   animation: kai-fade 280ms ease-out both;
 }
 
+/* TradingView embed copyright — match dashboard theme */
+.tradingview-widget-copyright {
+  font-size: 11px !important;
+  line-height: 32px !important;
+  text-align: center !important;
+  color: rgb(var(--fg-subtle)) !important;
+}
+.tradingview-widget-copyright a {
+  color: rgb(var(--fg-subtle)) !important;
+  text-decoration: none !important;
+}
+.tradingview-widget-copyright a:hover {
+  color: rgb(var(--fg-muted)) !important;
+}
+
 /* Recharts overrides */
 .recharts-tooltip-wrapper {
   outline: none !important;

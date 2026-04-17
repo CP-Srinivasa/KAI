@@ -58,12 +58,12 @@ export function Dashboard() {
         <Card padded className="border-neg/30 bg-neg/5">
           <div className="flex items-start gap-3 text-xs text-neg">
             <AlertCircle size={16} className="mt-0.5 shrink-0" />
-            <div>
+            <div className="min-w-0">
               <div className="font-semibold">Quality-Endpoint unerreichbar</div>
-              <div className="text-fg-muted mt-1">
+              <div className="text-fg-muted mt-1 break-words">
                 {q.error.kind} · {q.error.message}
               </div>
-              <div className="text-2xs text-fg-subtle mt-1 font-mono">GET /dashboard/api/quality</div>
+              <div className="text-2xs text-fg-subtle mt-1 font-mono break-all">GET /dashboard/api/quality</div>
             </div>
           </div>
         </Card>

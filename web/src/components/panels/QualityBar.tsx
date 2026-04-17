@@ -68,12 +68,12 @@ export function QualityBarPanel({ data }: { data: DashboardQuality | null }) {
           const ok = hasValue && r.value! >= r.target;
           return (
             <div key={r.label}>
-              <div className="flex items-baseline justify-between text-xs">
-                <div className="flex items-center gap-2">
-                  <span className="text-fg font-medium">{r.label}</span>
-                  {r.hint && <span className="text-2xs text-fg-subtle">{r.hint}</span>}
+              <div className="flex items-baseline justify-between gap-3 text-xs">
+                <div className="flex items-center gap-2 min-w-0">
+                  <span className="text-fg font-medium truncate">{r.label}</span>
+                  {r.hint && <span className="text-2xs text-fg-subtle shrink-0">{r.hint}</span>}
                 </div>
-                <div className="flex items-center gap-1.5 font-mono">
+                <div className="flex items-center gap-1.5 font-mono shrink-0">
                   <span className={cn("text-sm font-semibold", ok ? "text-pos" : "text-fg")}>
                     {hasValue ? r.format(r.value!) : "—"}
                   </span>

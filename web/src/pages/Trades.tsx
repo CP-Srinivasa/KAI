@@ -6,6 +6,7 @@ import { useApi } from "@/lib/useApi";
 import { fetchTradingLoopStatus, fetchRecentCycles, type TradingCycle } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { PreparedPanel } from "@/components/panels/PreparedPanel";
+import { modeTone, type TradingMode } from "@/state/AppState";
 
 export function TradesPage() {
   const { t } = useT();
@@ -31,7 +32,7 @@ export function TradesPage() {
       {status.state === "error" && <ErrorCard kind={status.error.kind} message={status.error.message} path="/operator/trading-loop/status" />}
 
       <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
-        <Kpi label="Mode" value={status.state === "ready" ? status.data.mode : "—"} tone="info" />
+        <Kpi label="Mode" value={status.state === "ready" ? status.data.mode : "—"} tone={status.state === "ready" ? modeTone(status.data.mode as TradingMode) : "muted"} />
         <Kpi label="Total Cycles" value={status.state === "ready" ? String(status.data.total_cycles) : "—"} />
         <Kpi
           label="Last Status"
@@ -178,10 +179,10 @@ function Kpi({ label, value, tone = "neutral" }: {
 
 function RowKV({ k, v, tone }: { k: string; v: string; tone?: "pos" | "neg" | "warn" | "muted" }) {
   return (
-    <div className="flex items-center justify-between border-b border-line-subtle/50 py-1">
-      <span className="font-mono text-2xs text-fg-subtle">{k}</span>
+    <div className="flex items-center justify-between gap-2 overflow-hidden border-b border-line-subtle/50 py-1">
+      <span className="min-w-0 truncate font-mono text-2xs text-fg-subtle">{k}</span>
       <span className={cn(
-        "font-mono",
+        "shrink-0 font-mono text-right",
         tone === "pos" && "text-pos",
         tone === "neg" && "text-neg",
         tone === "warn" && "text-warn",
@@ -196,10 +197,10 @@ function ErrorCard({ kind, message, path }: { kind: string; message: string; pat
     <Card padded className="border-neg/30 bg-neg/5">
       <div className="flex items-start gap-3 text-xs text-neg">
         <AlertCircle size={16} className="mt-0.5 shrink-0" />
-        <div>
+        <div className="min-w-0">
           <div className="font-semibold">Endpoint nicht erreichbar</div>
-          <div className="text-fg-muted mt-1">{kind} · {message}</div>
-          <div className="text-2xs text-fg-subtle mt-1 font-mono">{path}</div>
+          <div className="text-fg-muted mt-1 break-words">{kind} · {message}</div>
+          <div className="text-2xs text-fg-subtle mt-1 font-mono break-all">{path}</div>
         </div>
       </div>
     </Card>

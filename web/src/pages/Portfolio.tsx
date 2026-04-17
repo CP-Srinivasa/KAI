@@ -168,10 +168,10 @@ function Kpi({ label, value, tone = "neutral" }: {
 
 function RowKV({ k, v, tone }: { k: string; v: string; tone?: "pos" | "neg" | "warn" | "muted" }) {
   return (
-    <div className="flex items-center justify-between border-b border-line-subtle/50 py-1">
-      <span className="font-mono text-2xs text-fg-subtle">{k}</span>
+    <div className="flex items-center justify-between gap-2 overflow-hidden border-b border-line-subtle/50 py-1">
+      <span className="min-w-0 truncate font-mono text-2xs text-fg-subtle">{k}</span>
       <span className={cn(
-        "font-mono",
+        "shrink-0 font-mono text-right",
         tone === "pos" && "text-pos",
         tone === "neg" && "text-neg",
         tone === "warn" && "text-warn",
@@ -186,10 +186,10 @@ function ErrorCard({ kind, message, path }: { kind: string; message: string; pat
     <Card padded className="border-neg/30 bg-neg/5">
       <div className="flex items-start gap-3 text-xs text-neg">
         <AlertCircle size={16} className="mt-0.5 shrink-0" />
-        <div>
+        <div className="min-w-0">
           <div className="font-semibold">Endpoint nicht erreichbar</div>
-          <div className="text-fg-muted mt-1">{kind} · {message}</div>
-          <div className="text-2xs text-fg-subtle mt-1 font-mono">{path}</div>
+          <div className="text-fg-muted mt-1 break-words">{kind} · {message}</div>
+          <div className="text-2xs text-fg-subtle mt-1 font-mono break-all">{path}</div>
         </div>
       </div>
     </Card>

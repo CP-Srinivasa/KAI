@@ -94,9 +94,9 @@ function IntegrationRow({ label, provider, status, note }: { label: string; prov
   const { t } = useT();
   return (
     <div className="flex items-center justify-between gap-4 rounded-sm border border-line-subtle bg-bg-2 p-3">
-      <div>
-        <div className="text-sm font-semibold text-fg">{label}</div>
-        <div className="text-2xs text-fg-subtle mt-0.5 font-mono">{provider} · {note}</div>
+      <div className="min-w-0">
+        <div className="text-sm font-semibold text-fg truncate">{label}</div>
+        <div className="text-2xs text-fg-subtle mt-0.5 font-mono break-words">{provider} · {note}</div>
       </div>
       <Badge tone={status === "ok" ? "pos" : status === "warn" ? "warn" : "muted"} dot>
         {status === "ok" ? t("pages.settings.integrations_tab.state_active") : status === "warn" ? t("pages.settings.integrations_tab.state_warn") : t("pages.settings.integrations_tab.state_prepared")}

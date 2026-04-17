@@ -97,10 +97,10 @@ export function AgentsPage() {
             <AlertTriangle size={16} className="text-warn mt-0.5 shrink-0" />
             <div className="min-w-0">
               <h3 className="text-sm font-semibold text-fg">Fehler beim Laden</h3>
-              <p className="mt-1 text-xs text-fg-muted">
+              <p className="mt-1 text-xs text-fg-muted break-words">
                 {list.error.kind} ({list.error.status}): {list.error.message}
               </p>
-              <p className="mt-2 text-2xs text-fg-subtle font-mono">GET /operator/agents</p>
+              <p className="mt-2 text-2xs text-fg-subtle font-mono break-all">GET /operator/agents</p>
               <button
                 onClick={list.reload}
                 className="mt-3 inline-flex items-center gap-1.5 h-7 px-2.5 rounded-sm border border-line-subtle bg-bg-2 text-xs hover:bg-bg-3"
