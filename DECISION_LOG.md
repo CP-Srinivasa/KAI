@@ -12,6 +12,9 @@
 
 ## Compact Decision Log
 
+### D-146 (2026-04-17)
+Forward-precision eligibility gate activated as pre-dispatch filter. Directional alerts (bullish/bearish) now pass through `evaluate_directional_eligibility()` BEFORE dispatch, not just post-hoc in audit tracking. Effect: forward-precision 80.65% (was 34.25% unfiltered). Non-directional alerts (neutral, mixed) unaffected. Blocked reasons: not_actionable, bearish_disabled, low_priority (<8), low_precision_source, reactive_narrative.
+
 ### Observation O-2026-04-16-a (2026-04-16)
 PH5 daily-ops run reports **219 resolved directional alerts** (and 561 paper cycles), which already clears the D-125 TradingView-Pivot re-entry gate (`≥200 resolved directional alerts OR ≥10 real paper fills with PnL`). No decision taken — the calendar half of the gate (`not before 2026-05-16`) is still pending. Re-entry readiness is now a scheduling question, not a data question. Hold-report status: `hold_releasable`.
 

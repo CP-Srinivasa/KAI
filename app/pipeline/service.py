@@ -359,6 +359,7 @@ async def run_youtube_pipeline(
     session_factory: async_sessionmaker[AsyncSession],
     keyword_engine: KeywordEngine,
     provider: BaseAnalysisProvider | None = None,
+    shadow_provider: BaseAnalysisProvider | None = None,
     api_key: str,
     source_id: str = "youtube",
     source_name: str = "YouTube",
@@ -433,6 +434,7 @@ async def run_youtube_pipeline(
         keyword_engine=keyword_engine,
         provider=provider,
         run_llm=provider is not None,
+        shadow_provider=shadow_provider,
         market_data_adapter=market_adapter,
     )
     pipeline_results = await pipeline.run_batch(saved_docs)
@@ -538,6 +540,7 @@ async def run_newsdata_pipeline(
     session_factory: async_sessionmaker[AsyncSession],
     keyword_engine: KeywordEngine,
     provider: BaseAnalysisProvider | None = None,
+    shadow_provider: BaseAnalysisProvider | None = None,
     api_key: str,
     source_id: str = "newsdata",
     source_name: str = "NewsData.io",
@@ -654,6 +657,7 @@ async def run_newsdata_pipeline(
         keyword_engine=keyword_engine,
         provider=provider,
         run_llm=provider is not None,
+        shadow_provider=shadow_provider,
         market_data_adapter=market_adapter,
     )
     pipeline_results = await pipeline.run_batch(saved_docs)
@@ -751,3 +755,208 @@ async def run_newsdata_pipeline(
         priority_distribution=priority_distribution,
         top_results=top_results,
     )
+
+
+async def run_twitter_pipeline(
+    *,
+    session_factory: async_sessionmaker[AsyncSession],
+    keyword_engine: KeywordEngine,
+    provider: BaseAnalysisProvider | None = None,
+    shadow_provider: BaseAnalysisProvider | None = None,
+    bearer_token: str,
+    handles: list[str] | None = None,
+    monitor_path: str = "monitor/social_accounts.txt",
+    max_per_user: int = 5,
+    source_id: str = "twitter",
+    source_name: str = "X/Twitter",
+    dry_run: bool = False,
+) -> PipelineRunStats:
+    """Fetch tweets from watchlist handles, persist, analyze, and alert.
+
+    If *handles* is None, reads from monitor/social_accounts.txt.
+    """
+    from app.integrations.twitter.client import TwitterClient
+
+    if handles is None:
+        handles = _load_twitter_handles(monitor_path)
+    if not handles:
+        return PipelineRunStats(
+            source_id=source_id, url="twitter:watchlist",
+            fetched_count=0, saved_count=0, analyzed_count=0,
+            failed_count=0, skipped_count=0, alerts_fired_count=0,
+            priority_distribution={},
+        )
+
+    client = TwitterClient(bearer_token=bearer_token)
+    try:
+        tweets = await client.fetch_watchlist_tweets(handles, max_per_user=max_per_user)
+    except Exception as exc:
+        logger.warning("twitter_pipeline_fetch_failed", error=str(exc))
+        return PipelineRunStats(
+            source_id=source_id, url="twitter:watchlist",
+            fetched_count=0, saved_count=0, analyzed_count=0,
+            failed_count=1, skipped_count=0, alerts_fired_count=0,
+            priority_distribution={},
+        )
+
+    from datetime import UTC, datetime
+
+    from app.core.enums import DocumentType, SourceType
+    from app.ingestion.base.interfaces import FetchResult
+
+    documents: list[CanonicalDocument] = []
+    for tweet in tweets:
+        text = tweet.text
+        title = f"@{tweet.author_username}: {text[:80]}{'...' if len(text) > 80 else ''}"
+        documents.append(
+            CanonicalDocument(
+                external_id=tweet.tweet_id,
+                source_id=source_id,
+                source_name=source_name,
+                source_type=SourceType.SOCIAL_API,
+                document_type=DocumentType.ARTICLE,
+                provider="twitter",
+                url=f"https://x.com/{tweet.author_username}/status/{tweet.tweet_id}",
+                title=title,
+                raw_text=text,
+                published_at=tweet.created_at,
+                fetched_at=datetime.now(UTC),
+                author=f"@{tweet.author_username} ({tweet.author_name})",
+                metadata={
+                    "tweet_id": tweet.tweet_id,
+                    "author_id": tweet.author_id,
+                    "lang": tweet.lang,
+                    "like_count": tweet.like_count,
+                    "retweet_count": tweet.retweet_count,
+                    "reply_count": tweet.reply_count,
+                    "quote_count": tweet.quote_count,
+                    "impression_count": tweet.impression_count,
+                    "hashtags": tweet.hashtags,
+                    "cashtags": tweet.cashtags,
+                },
+            )
+        )
+
+    fetch_result = FetchResult(
+        source_id=source_id,
+        documents=documents,
+        fetched_at=datetime.now(UTC),
+        success=True,
+    )
+    logger.info("twitter_pipeline_fetched", handles=len(handles), tweets=len(tweets))
+
+    ingest_stats = await persist_fetch_result(session_factory, fetch_result, dry_run=dry_run)
+    saved_docs = ingest_stats.preview_documents
+    skipped = ingest_stats.batch_duplicates + ingest_stats.existing_duplicates
+
+    if not saved_docs:
+        return PipelineRunStats(
+            source_id=source_id, url="twitter:watchlist",
+            fetched_count=ingest_stats.fetched_count,
+            saved_count=ingest_stats.saved_count,
+            analyzed_count=0, failed_count=ingest_stats.failed_count,
+            skipped_count=skipped, alerts_fired_count=0,
+            priority_distribution={},
+        )
+
+    market_adapter = create_market_data_adapter(provider="coingecko")
+    pipeline = AnalysisPipeline(
+        keyword_engine=keyword_engine,
+        provider=provider,
+        run_llm=provider is not None,
+        shadow_provider=shadow_provider,
+        market_data_adapter=market_adapter,
+    )
+    pipeline_results = await pipeline.run_batch(saved_docs)
+
+    analyzed_count = 0
+    failed_count = ingest_stats.failed_count
+    alerts_fired_count = 0
+    alert_service = AlertService.from_settings(get_settings())
+
+    if not dry_run:
+        async with session_factory.begin() as session:
+            repo = DocumentRepository(session)
+            for res in pipeline_results:
+                if not res.success:
+                    failed_count += 1
+                    try:
+                        await repo.update_status(str(res.document.id), DocumentStatus.FAILED)
+                    except StorageError:
+                        pass
+                    continue
+                res.apply_to_document()
+                try:
+                    if res.analysis_result is not None:
+                        await repo.update_analysis(
+                            str(res.document.id), res.analysis_result,
+                            provider_name=res.document.provider,
+                            metadata_updates=res.document.metadata,
+                        )
+                    else:
+                        await repo.update_status(str(res.document.id), DocumentStatus.ANALYZED)
+                    analyzed_count += 1
+                    if res.analysis_result is not None:
+                        spam_prob = (
+                            res.llm_output.spam_probability
+                            if res.llm_output else res.analysis_result.spam_probability
+                        )
+                        deliveries = await alert_service.process_document(
+                            res.document, res.analysis_result, spam_probability=spam_prob,
+                        )
+                        if deliveries:
+                            alerts_fired_count += 1
+                            await _maybe_trigger_paper_trade(res.document, res.analysis_result)
+                except StorageError as exc:
+                    logger.warning("twitter_pipeline_update_failed",
+                                   doc_id=str(res.document.id), error=str(exc))
+                    failed_count += 1
+    else:
+        for res in pipeline_results:
+            if res.success:
+                res.apply_to_document()
+                analyzed_count += 1
+
+    priority_distribution: dict[int, int] = {}
+    for res in pipeline_results:
+        if not res.success:
+            continue
+        score = res.document.priority_score
+        if score is not None:
+            priority_distribution[score] = priority_distribution.get(score, 0) + 1
+
+    top_results = sorted(
+        pipeline_results,
+        key=lambda r: r.document.priority_score or 0,
+        reverse=True,
+    )
+
+    return PipelineRunStats(
+        source_id=source_id, url="twitter:watchlist",
+        fetched_count=ingest_stats.fetched_count,
+        saved_count=ingest_stats.saved_count,
+        analyzed_count=analyzed_count, failed_count=failed_count,
+        skipped_count=skipped, alerts_fired_count=alerts_fired_count,
+        priority_distribution=priority_distribution,
+        top_results=top_results,
+    )
+
+
+def _load_twitter_handles(path: str) -> list[str]:
+    """Read @handles from monitor/social_accounts.txt (twitter lines only)."""
+    from pathlib import Path as _Path
+
+    p = _Path(path)
+    if not p.exists():
+        return []
+    handles: list[str] = []
+    for line in p.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        parts = line.split("|")
+        if len(parts) >= 2 and parts[0].strip().lower() == "twitter":
+            handle = parts[1].strip().lstrip("@")
+            if handle:
+                handles.append(handle)
+    return handles

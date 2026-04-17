@@ -230,6 +230,36 @@ class AlertService:
 
         message = _build_alert_message(doc, result, spam_probability)
 
+        # D-146: Directional eligibility gate — suppress directional alerts
+        # that fail the forward-precision filter (actionable, priority >= 8,
+        # no low-precision source, no bearish, no reactive narrative).
+        # Forward-precision with this filter: 80.65% vs 34.25% without.
+        # Non-directional alerts (neutral, mixed) pass through unchanged.
+        if message.sentiment_label and message.sentiment_label.lower() in (
+            "bullish",
+            "bearish",
+        ):
+            eligibility = evaluate_directional_eligibility(
+                sentiment_label=message.sentiment_label,
+                affected_assets=list(message.affected_assets),
+                sentiment_score=message.sentiment_score,
+                impact_score=message.impact_score,
+                title=message.title,
+                directional_confidence=message.directional_confidence,
+                event_timing=message.event_timing,
+                actionable=message.actionable,
+                priority=message.priority,
+                source_name=message.source_name,
+            )
+            if eligibility.directional_eligible is False:
+                log.info(
+                    "alert.directional.pre_dispatch_blocked",
+                    document_id=str(doc.id),
+                    sentiment=message.sentiment_label,
+                    block_reason=eligibility.directional_block_reason,
+                )
+                return []
+
         # D-119: Asset rate-limit — max 1 directional alert per asset+sentiment
         # per window to prevent cluster-misses from correlated news events.
         if self._is_asset_rate_limited(message):

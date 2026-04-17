@@ -146,6 +146,7 @@ def _make_result(doc_id: str, **overrides) -> AnalysisResult:
         "novelty_score": 0.8,
         "market_scope": MarketScope.CRYPTO,
         "actionable": True,
+        "directional_confidence": 0.9,
         "explanation_short": "Strong buy signal",
         "explanation_long": "Detailed explanation",
         "affected_assets": ["BTC"],
@@ -208,23 +209,14 @@ async def test_bullish_alert_blocked_when_price_falling(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_bearish_alert_passes_when_price_falling(tmp_path: Path) -> None:
-    """Bearish sentiment + falling price = aligned = dispatch OK."""
+async def test_bearish_alert_blocked_by_eligibility_gate(tmp_path: Path) -> None:
+    """D-146/D-142: Bearish directional alerts are blocked pre-dispatch
+    regardless of price alignment while BEARISH_DIRECTIONAL_DISABLED=True."""
     doc = _make_doc(title="BTC selloff deepens as macro fears mount")
     result = _make_result(
         str(doc.id),
         sentiment_label=SentimentLabel.BEARISH,
         sentiment_score=-0.85,
-    )
-
-    ticker = Ticker(
-        symbol="BTC/USDT",
-        timestamp_utc="2026-04-04T12:00:00+00:00",
-        bid=62000.0,
-        ask=62000.0,
-        last=62000.0,
-        volume_24h=1000.0,
-        change_pct_24h=-5.0,  # falling = aligned with bearish
     )
 
     service = AlertService(
@@ -233,20 +225,9 @@ async def test_bearish_alert_passes_when_price_falling(tmp_path: Path) -> None:
         audit_dir=tmp_path,
     )
 
-    with (
-        patch(
-            "app.market_data.coingecko_adapter._resolve_symbol",
-            return_value=("BTC/USDT", "bitcoin"),
-        ),
-        patch(
-            "app.market_data.coingecko_adapter.CoinGeckoAdapter.get_ticker",
-            new=AsyncMock(return_value=ticker),
-        ),
-    ):
-        deliveries = await service.process_document(doc, result)
+    deliveries = await service.process_document(doc, result)
 
-    assert len(deliveries) >= 1, "Aligned trend should allow dispatch"
-    assert deliveries[0].success is True
+    assert deliveries == [], "Bearish alerts blocked by D-146 eligibility gate"
 
 
 @pytest.mark.asyncio
@@ -331,8 +312,8 @@ async def test_neutral_sentiment_skips_price_check(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_no_affected_assets_skips_price_check(tmp_path: Path) -> None:
-    """Bullish alert without affected_assets = no price check possible."""
+async def test_no_affected_assets_blocked_by_eligibility_gate(tmp_path: Path) -> None:
+    """D-146: Bullish alert without affected_assets is blocked by eligibility gate."""
     doc = _make_doc()
     result = _make_result(
         str(doc.id),
@@ -346,10 +327,8 @@ async def test_no_affected_assets_skips_price_check(tmp_path: Path) -> None:
         audit_dir=tmp_path,
     )
 
-    # _check_price_trend_divergence should return False (don't block)
-    # because there are no assets to check
     deliveries = await service.process_document(doc, result)
-    assert len(deliveries) >= 1
+    assert len(deliveries) == 0, "missing_affected_assets → blocked by D-146"
 
 
 # ── D-120: 7d regime in service integration ──────────────────────────────────
@@ -399,24 +378,13 @@ async def test_bearish_blocked_by_7d_bull_regime(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
-async def test_bearish_passes_when_7d_also_bearish(tmp_path: Path) -> None:
-    """D-120: Bearish alert + 24h falling + 7d also falling = dispatch OK."""
+async def test_bearish_blocked_by_eligibility_gate_even_with_aligned_7d(tmp_path: Path) -> None:
+    """D-146: Bearish alerts are blocked by eligibility gate regardless of 7d regime."""
     doc = _make_doc(title="Market crash deepens amid regulation fears")
     result = _make_result(
         str(doc.id),
         sentiment_label=SentimentLabel.BEARISH,
         sentiment_score=-0.85,
-    )
-
-    ticker = Ticker(
-        symbol="BTC/USDT",
-        timestamp_utc="2026-04-06T12:00:00+00:00",
-        bid=58000.0,
-        ask=58000.0,
-        last=58000.0,
-        volume_24h=1000.0,
-        change_pct_24h=-3.0,
-        change_pct_7d=-6.0,  # 7d also bearish → no regime conflict
     )
 
     service = AlertService(
@@ -425,16 +393,5 @@ async def test_bearish_passes_when_7d_also_bearish(tmp_path: Path) -> None:
         audit_dir=tmp_path,
     )
 
-    with (
-        patch(
-            "app.market_data.coingecko_adapter._resolve_symbol",
-            return_value=("BTC/USDT", "bitcoin"),
-        ),
-        patch(
-            "app.market_data.coingecko_adapter.CoinGeckoAdapter.get_ticker",
-            new=AsyncMock(return_value=ticker),
-        ),
-    ):
-        deliveries = await service.process_document(doc, result)
-
-    assert len(deliveries) >= 1, "Aligned 7d regime should allow dispatch"
+    deliveries = await service.process_document(doc, result)
+    assert len(deliveries) == 0, "bearish_directional_disabled → blocked by D-146"
