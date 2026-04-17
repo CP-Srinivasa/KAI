@@ -9,6 +9,15 @@ def configure_logging(log_level: str = "INFO") -> None:
         format="%(message)s",
         level=level,
     )
+
+    # httpx's default INFO-level log prints "HTTP Request: POST <full_url>",
+    # and Telegram bot URLs carry the bot token as a path segment
+    # (https://api.telegram.org/bot<TOKEN>/…). At INFO that token ends up
+    # in logs/server.log in plaintext. Lift httpx/httpcore to WARNING so
+    # tokens never reach the log sink while real errors still surface.
+    for noisy in ("httpx", "httpcore"):
+        logging.getLogger(noisy).setLevel(logging.WARNING)
+
     structlog.configure(
         processors=[
             structlog.contextvars.merge_contextvars,
