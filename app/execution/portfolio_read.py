@@ -22,6 +22,11 @@ logger = logging.getLogger(__name__)
 # provider from blocking the caller (e.g. daily briefing) indefinitely.
 _PORTFOLIO_MARK_TO_MARKET_OVERALL_TIMEOUT_SECONDS = 45.0
 
+# Per-run concurrency cap for outbound market-data requests. Keeps us
+# under free-tier rate limits (CoinGecko ~30/min) while still benefiting
+# from parallelism for portfolios with many open positions.
+_PORTFOLIO_MARK_TO_MARKET_MAX_CONCURRENCY = 2
+
 
 @dataclass(frozen=True)
 class PositionSummary:
@@ -276,14 +281,16 @@ async def _gather_market_snapshots(
         return {}
 
     retrieved_at_fallback = datetime.now(UTC).isoformat()
+    semaphore = asyncio.Semaphore(_PORTFOLIO_MARK_TO_MARKET_MAX_CONCURRENCY)
 
     async def _fetch(symbol: str) -> tuple[str, MarketDataSnapshot]:
-        snapshot = await get_market_data_snapshot(
-            symbol=symbol,
-            provider=provider,
-            freshness_threshold_seconds=freshness_threshold_seconds,
-            timeout_seconds=timeout_seconds,
-        )
+        async with semaphore:
+            snapshot = await get_market_data_snapshot(
+                symbol=symbol,
+                provider=provider,
+                freshness_threshold_seconds=freshness_threshold_seconds,
+                timeout_seconds=timeout_seconds,
+            )
         return symbol, snapshot
 
     tasks = [asyncio.create_task(_fetch(symbol)) for symbol in symbols]
