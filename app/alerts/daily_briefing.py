@@ -51,6 +51,16 @@ class BriefingData:
     cycles_no_market_data: int = 0
     fills: int = 0
 
+    # Portfolio (live mark-to-market)
+    portfolio_available: bool = False
+    portfolio_cash_usd: float = 0.0
+    portfolio_market_value_usd: float = 0.0
+    portfolio_equity_usd: float = 0.0
+    portfolio_unrealized_pnl_usd: float = 0.0
+    portfolio_realized_pnl_usd: float = 0.0
+    portfolio_position_count: int = 0
+    portfolio_positions: list[dict[str, object]] = field(default_factory=list)
+
     # System health
     generated_at: str = ""
     lookback_hours: int = 24
@@ -102,6 +112,31 @@ class BriefingData:
             lines.append(f"  Risk rej:     {self.cycles_risk_rejected}")
         if self.cycles_no_market_data:
             lines.append(f"  No mkt data:  {self.cycles_no_market_data}")
+
+        # Portfolio
+        lines.append("")
+        if self.portfolio_available:
+            lines.append("Paper Portfolio (live)")
+            lines.append(f"  Equity:       ${self.portfolio_equity_usd:,.2f}")
+            lines.append(f"  Positions:    {self.portfolio_position_count}")
+            lines.append(f"  Market Value: ${self.portfolio_market_value_usd:,.2f}")
+            lines.append(f"  Cash:         ${self.portfolio_cash_usd:,.2f}")
+            pnl = self.portfolio_unrealized_pnl_usd
+            sign = "+" if pnl >= 0 else ""
+            lines.append(f"  Unrealized:   {sign}${pnl:,.2f}")
+            if self.portfolio_realized_pnl_usd != 0.0:
+                rpnl = self.portfolio_realized_pnl_usd
+                rsign = "+" if rpnl >= 0 else ""
+                lines.append(f"  Realized:     {rsign}${rpnl:,.2f}")
+            for pos in self.portfolio_positions:
+                sym = pos.get("symbol", "?")
+                pnl_pos = pos.get("unrealized_pnl_usd")
+                price = pos.get("market_price")
+                if pnl_pos is not None and price is not None:
+                    s = "+" if float(pnl_pos) >= 0 else ""
+                    lines.append(f"    {sym}: ${float(price):,.2f} ({s}${float(pnl_pos):,.2f})")
+        else:
+            lines.append("Paper Portfolio: nicht verfuegbar")
 
         return "\n".join(lines)
 
@@ -200,5 +235,34 @@ def build_daily_briefing(
 
         if c.get("fill_simulated"):
             data.fills += 1
+
+    return data
+
+
+async def build_daily_briefing_with_portfolio(
+    artifacts_dir: Path | None = None,
+    lookback_hours: int = 24,
+) -> BriefingData:
+    """Build daily briefing including live portfolio snapshot (async)."""
+    data = build_daily_briefing(artifacts_dir=artifacts_dir, lookback_hours=lookback_hours)
+
+    try:
+        from app.execution.portfolio_read import build_portfolio_snapshot
+
+        snapshot = await build_portfolio_snapshot()
+        if snapshot.available:
+            data.portfolio_available = True
+            data.portfolio_cash_usd = snapshot.cash_usd
+            data.portfolio_market_value_usd = snapshot.total_market_value_usd
+            data.portfolio_equity_usd = snapshot.total_equity_usd
+            data.portfolio_realized_pnl_usd = snapshot.realized_pnl_usd
+            data.portfolio_position_count = snapshot.position_count
+            data.portfolio_unrealized_pnl_usd = sum(
+                p.unrealized_pnl_usd or 0.0 for p in snapshot.positions
+            )
+            data.portfolio_positions = [p.to_json_dict() for p in snapshot.positions]
+    except Exception as exc:
+        import logging
+        logging.getLogger(__name__).warning("portfolio_snapshot_failed: %s", exc)
 
     return data
