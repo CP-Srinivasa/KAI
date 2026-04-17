@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import json
+import asyncio
 import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -11,11 +11,16 @@ from pathlib import Path
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.execution.models import PaperPosition
+from app.execution.audit_replay import AuditReplayResult, replay_paper_audit
+from app.market_data.base import MarketDataSnapshot
 from app.market_data.service import get_market_data_snapshot
 from app.storage.models.trading import PortfolioStateRecord
 
 logger = logging.getLogger(__name__)
+
+# Global cap for the parallel mark-to-market fan-out. Prevents a stuck
+# provider from blocking the caller (e.g. daily briefing) indefinitely.
+_PORTFOLIO_MARK_TO_MARKET_OVERALL_TIMEOUT_SECONDS = 45.0
 
 
 @dataclass(frozen=True)
@@ -128,13 +133,7 @@ class PortfolioSnapshot:
         }
 
 
-@dataclass(frozen=True)
-class _AuditReplayResult:
-    positions: dict[str, PaperPosition]
-    cash_usd: float
-    realized_pnl_usd: float
-    available: bool
-    error: str | None = None
+_AuditReplayResult = AuditReplayResult  # backwards-compat alias for internal callers
 
 
 def _coerce_float(value: object) -> float | None:
@@ -149,152 +148,8 @@ def _coerce_str(value: object) -> str | None:
     return None
 
 
-def _replay_paper_audit(audit_path: Path) -> _AuditReplayResult:
-    if not audit_path.exists():
-        return _AuditReplayResult(
-            positions={},
-            cash_usd=0.0,
-            realized_pnl_usd=0.0,
-            available=True,
-            error=None,
-        )
-
-    positions: dict[str, PaperPosition] = {}
-    order_meta: dict[str, tuple[float | None, float | None]] = {}
-    cash_usd = 0.0
-    realized_pnl_usd = 0.0
-
-    for line_number, raw_line in enumerate(
-        audit_path.read_text(encoding="utf-8").splitlines(),
-        start=1,
-    ):
-        line = raw_line.strip()
-        if not line:
-            continue
-        try:
-            payload = json.loads(line)
-        except json.JSONDecodeError:
-            return _AuditReplayResult(
-                positions={},
-                cash_usd=0.0,
-                realized_pnl_usd=0.0,
-                available=False,
-                error=f"audit_json_decode_error_line_{line_number}",
-            )
-
-        if not isinstance(payload, dict):
-            return _AuditReplayResult(
-                positions={},
-                cash_usd=0.0,
-                realized_pnl_usd=0.0,
-                available=False,
-                error=f"audit_payload_type_error_line_{line_number}",
-            )
-
-        event_type = _coerce_str(payload.get("event_type"))
-        if event_type == "order_created":
-            order_id = _coerce_str(payload.get("order_id"))
-            if order_id is not None:
-                order_meta[order_id] = (
-                    _coerce_float(payload.get("stop_loss")),
-                    _coerce_float(payload.get("take_profit")),
-                )
-            continue
-
-        if event_type != "order_filled":
-            continue
-
-        symbol = _coerce_str(payload.get("symbol"))
-        side = _coerce_str(payload.get("side"))
-        quantity = _coerce_float(payload.get("quantity"))
-        fill_price = _coerce_float(payload.get("fill_price"))
-        order_id = _coerce_str(payload.get("order_id"))
-        filled_at = _coerce_str(payload.get("filled_at")) or datetime.now(UTC).isoformat()
-
-        if (
-            symbol is None
-            or side not in {"buy", "sell"}
-            or quantity is None
-            or fill_price is None
-            or quantity <= 0.0
-            or fill_price <= 0.0
-        ):
-            return _AuditReplayResult(
-                positions={},
-                cash_usd=0.0,
-                realized_pnl_usd=0.0,
-                available=False,
-                error=f"audit_fill_validation_error_line_{line_number}",
-            )
-
-        stop_loss: float | None = None
-        take_profit: float | None = None
-        if order_id is not None:
-            stop_loss, take_profit = order_meta.get(order_id, (None, None))
-
-        existing = positions.get(symbol)
-        if side == "buy":
-            if existing is None:
-                positions[symbol] = PaperPosition(
-                    symbol=symbol,
-                    quantity=quantity,
-                    avg_entry_price=fill_price,
-                    stop_loss=stop_loss,
-                    take_profit=take_profit,
-                    opened_at=filled_at,
-                    realized_pnl_usd=0.0,
-                )
-            else:
-                total_qty = existing.quantity + quantity
-                avg_entry = (
-                    (existing.avg_entry_price * existing.quantity) + (fill_price * quantity)
-                ) / total_qty
-                positions[symbol] = PaperPosition(
-                    symbol=symbol,
-                    quantity=total_qty,
-                    avg_entry_price=avg_entry,
-                    stop_loss=stop_loss if stop_loss is not None else existing.stop_loss,
-                    take_profit=(take_profit if take_profit is not None else existing.take_profit),
-                    opened_at=existing.opened_at,
-                    realized_pnl_usd=existing.realized_pnl_usd,
-                )
-        else:
-            if existing is None or existing.quantity + 1e-9 < quantity:
-                return _AuditReplayResult(
-                    positions={},
-                    cash_usd=0.0,
-                    realized_pnl_usd=0.0,
-                    available=False,
-                    error=f"audit_sell_without_position_line_{line_number}",
-                )
-            remaining = existing.quantity - quantity
-            if remaining <= 1e-8:
-                del positions[symbol]
-            else:
-                positions[symbol] = PaperPosition(
-                    symbol=symbol,
-                    quantity=remaining,
-                    avg_entry_price=existing.avg_entry_price,
-                    stop_loss=existing.stop_loss,
-                    take_profit=existing.take_profit,
-                    opened_at=existing.opened_at,
-                    realized_pnl_usd=existing.realized_pnl_usd,
-                )
-
-        portfolio_cash = _coerce_float(payload.get("portfolio_cash"))
-        if portfolio_cash is not None:
-            cash_usd = portfolio_cash
-        realized = _coerce_float(payload.get("realized_pnl_usd"))
-        if realized is not None:
-            realized_pnl_usd = realized
-
-    return _AuditReplayResult(
-        positions=positions,
-        cash_usd=cash_usd,
-        realized_pnl_usd=realized_pnl_usd,
-        available=True,
-        error=None,
-    )
+def _replay_paper_audit(audit_path: Path) -> AuditReplayResult:
+    return replay_paper_audit(audit_path)
 
 
 def _build_exposure_summary(positions: tuple[PositionSummary, ...]) -> ExposureSummary:
@@ -401,6 +256,90 @@ def _build_snapshot_from_portfolio_state(
     )
 
 
+async def _gather_market_snapshots(
+    *,
+    symbols: list[str],
+    provider: str,
+    freshness_threshold_seconds: float,
+    timeout_seconds: int,
+) -> dict[str, MarketDataSnapshot]:
+    """Fetch mark-to-market snapshots for every symbol in parallel.
+
+    Ensures a failing/throttled provider cannot serialize the whole snapshot —
+    a single request may back off, but sibling symbols proceed concurrently.
+    An overall timeout guarantees the caller (CLI, briefing, cron) can never
+    block indefinitely; timed-out symbols degrade to `available=False` with a
+    clear error tag, matching the semantics the adapter itself emits on
+    failure.
+    """
+    if not symbols:
+        return {}
+
+    retrieved_at_fallback = datetime.now(UTC).isoformat()
+
+    async def _fetch(symbol: str) -> tuple[str, MarketDataSnapshot]:
+        snapshot = await get_market_data_snapshot(
+            symbol=symbol,
+            provider=provider,
+            freshness_threshold_seconds=freshness_threshold_seconds,
+            timeout_seconds=timeout_seconds,
+        )
+        return symbol, snapshot
+
+    tasks = [asyncio.create_task(_fetch(symbol)) for symbol in symbols]
+    results: dict[str, MarketDataSnapshot] = {}
+    try:
+        finished = await asyncio.wait_for(
+            asyncio.gather(*tasks, return_exceptions=True),
+            timeout=_PORTFOLIO_MARK_TO_MARKET_OVERALL_TIMEOUT_SECONDS,
+        )
+    except TimeoutError:
+        logger.warning(
+            "[PORTFOLIO] parallel mark-to-market fan-out exceeded %.1fs timeout; "
+            "degrading remaining symbols",
+            _PORTFOLIO_MARK_TO_MARKET_OVERALL_TIMEOUT_SECONDS,
+        )
+        for task in tasks:
+            task.cancel()
+        finished = await asyncio.gather(*tasks, return_exceptions=True)
+
+    finished_by_symbol: dict[str, MarketDataSnapshot] = {}
+    for idx, outcome in enumerate(finished):
+        symbol = symbols[idx]
+        if isinstance(outcome, tuple):
+            fetched_symbol, snapshot = outcome
+            finished_by_symbol[fetched_symbol] = snapshot
+        elif isinstance(outcome, BaseException):
+            finished_by_symbol[symbol] = MarketDataSnapshot(
+                symbol=symbol,
+                provider=provider,
+                retrieved_at_utc=retrieved_at_fallback,
+                source_timestamp_utc=None,
+                price=None,
+                is_stale=True,
+                freshness_seconds=None,
+                available=False,
+                error=f"snapshot_gather_failed:{outcome.__class__.__name__}",
+            )
+
+    for symbol in symbols:
+        results[symbol] = finished_by_symbol.get(
+            symbol,
+            MarketDataSnapshot(
+                symbol=symbol,
+                provider=provider,
+                retrieved_at_utc=retrieved_at_fallback,
+                source_timestamp_utc=None,
+                price=None,
+                is_stale=True,
+                freshness_seconds=None,
+                available=False,
+                error="snapshot_gather_timeout",
+            ),
+        )
+    return results
+
+
 async def build_portfolio_snapshot(
     *,
     audit_path: str | Path = "artifacts/paper_execution_audit.jsonl",
@@ -451,15 +390,18 @@ async def build_portfolio_snapshot(
             error=replay.error,
         )
 
+    sorted_symbols = sorted(replay.positions)
+    snapshots_by_symbol = await _gather_market_snapshots(
+        symbols=sorted_symbols,
+        provider=provider,
+        freshness_threshold_seconds=freshness_threshold_seconds,
+        timeout_seconds=timeout_seconds,
+    )
+
     position_summaries: list[PositionSummary] = []
-    for symbol in sorted(replay.positions):
+    for symbol in sorted_symbols:
         position = replay.positions[symbol]
-        market_snapshot = await get_market_data_snapshot(
-            symbol=symbol,
-            provider=provider,
-            freshness_threshold_seconds=freshness_threshold_seconds,
-            timeout_seconds=timeout_seconds,
-        )
+        market_snapshot = snapshots_by_symbol[symbol]
 
         # Fail closed: stale snapshots are treated as not usable for mark-to-market.
         can_use_market_price = (

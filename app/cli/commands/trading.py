@@ -506,6 +506,78 @@ def trading_run_once(
     console.print("write_back_allowed=False")
 
 
+@trading_app.command("monitor-positions")
+def trading_monitor_positions(
+    provider: str = typer.Option(
+        "coingecko",
+        "--provider",
+        help="Read-only market-data provider for SL/TP price checks",
+    ),
+    loop_audit_path: str = typer.Option(
+        "artifacts/trading_loop_audit.jsonl",
+        "--loop-audit-path",
+        help="Trading-loop audit JSONL path",
+    ),
+    execution_audit_path: str = typer.Option(
+        "artifacts/paper_execution_audit.jsonl",
+        "--execution-audit-path",
+        help="Paper execution audit JSONL path (used for portfolio rehydration)",
+    ),
+    freshness_threshold_seconds: float = typer.Option(
+        120.0,
+        "--freshness-threshold-seconds",
+        help="Stale-data threshold; stale prices are skipped, not force-closed",
+    ),
+    timeout_seconds: int = typer.Option(
+        10,
+        "--timeout-seconds",
+        help="Market data request timeout",
+    ),
+) -> None:
+    """Check SL/TP on every open paper position and close those that triggered.
+
+    Designed for cron invocation. Rehydrates the paper engine from the audit
+    JSONL, fetches a live price per open symbol, and closes positions whose
+    stop-loss or take-profit level was crossed. Positions with stale or missing
+    market data are skipped — never force-closed on bad data.
+    """
+    import asyncio
+
+    from app.orchestrator.trading_loop import run_position_monitor_once
+
+    summary = asyncio.run(
+        run_position_monitor_once(
+            provider=provider,
+            loop_audit_path=loop_audit_path,
+            execution_audit_path=execution_audit_path,
+            freshness_threshold_seconds=freshness_threshold_seconds,
+            timeout_seconds=timeout_seconds,
+        )
+    )
+
+    console.print("[bold]Paper Position Monitor[/bold]")
+    console.print(f"checked={summary.get('checked')}")
+    console.print(f"no_market_data={summary.get('no_market_data')}")
+    console.print(f"triggered={summary.get('triggered')}")
+    closes = summary.get("closes")
+    if isinstance(closes, list):
+        for close in closes:
+            if not isinstance(close, dict):
+                continue
+            console.print(
+                " | ".join(
+                    [
+                        f"symbol={close.get('symbol')}",
+                        f"qty={close.get('quantity')}",
+                        f"fill_price={close.get('fill_price')}",
+                        f"realized_pnl_usd={close.get('realized_pnl_usd')}",
+                    ]
+                )
+            )
+    console.print("execution_enabled=False")
+    console.print("write_back_allowed=False")
+
+
 # -- backtest --
 
 

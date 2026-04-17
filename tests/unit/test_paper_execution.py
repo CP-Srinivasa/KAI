@@ -128,3 +128,115 @@ def test_portfolio_drawdown(tmp_path):
     # Buy then check drawdown — initially 0
     drawdown = eng.portfolio.drawdown_pct({})
     assert drawdown == 0.0
+
+
+def _open_long(eng, symbol, qty, entry, *, sl=None, tp=None, idem=None):
+    order = eng.create_order(
+        symbol=symbol,
+        side="buy",
+        quantity=qty,
+        stop_loss=sl,
+        take_profit=tp,
+        idempotency_key=idem or f"open_{symbol}",
+    )
+    return eng.fill_order(order, current_price=entry)
+
+
+def test_close_position_full_exit_realizes_pnl(tmp_path):
+    eng = _engine(tmp_path)
+    _open_long(eng, "BTC/USDT", 0.1, 65000.0, sl=60000.0, tp=70000.0)
+    assert "BTC/USDT" in eng.portfolio.positions
+
+    fill = eng.close_position("BTC/USDT", current_price=71000.0, reason="take")
+    assert fill is not None
+    assert fill.side == "sell"
+    assert fill.quantity == 0.1
+    assert "BTC/USDT" not in eng.portfolio.positions
+    assert eng.portfolio.realized_pnl_usd > 0
+
+
+def test_close_position_no_position_returns_none(tmp_path):
+    eng = _engine(tmp_path)
+    assert eng.close_position("BTC/USDT", current_price=65000.0, reason="stop") is None
+
+
+def test_close_position_invalid_price_returns_none(tmp_path):
+    eng = _engine(tmp_path)
+    _open_long(eng, "BTC/USDT", 0.1, 65000.0, sl=60000.0)
+    assert eng.close_position("BTC/USDT", current_price=0.0, reason="stop") is None
+    assert eng.close_position("BTC/USDT", current_price=-5.0, reason="stop") is None
+    assert "BTC/USDT" in eng.portfolio.positions
+
+
+def test_close_position_is_idempotent(tmp_path):
+    eng = _engine(tmp_path)
+    _open_long(eng, "ETH/USDT", 1.0, 3000.0, sl=2800.0)
+    f1 = eng.close_position("ETH/USDT", current_price=2790.0, reason="stop")
+    assert f1 is not None
+    # Same reason on a now-empty slot returns None; a fresh position would
+    # have a new opened_at and therefore a new idempotency key.
+    f2 = eng.close_position("ETH/USDT", current_price=2790.0, reason="stop")
+    assert f2 is None
+
+
+def test_close_position_writes_position_closed_audit(tmp_path):
+    eng = _engine(tmp_path)
+    _open_long(eng, "SOL/USDT", 10.0, 150.0, tp=170.0)
+    eng.close_position("SOL/USDT", current_price=175.0, reason="take")
+    import json
+    lines = (tmp_path / "audit.jsonl").read_text(encoding="utf-8").strip().splitlines()
+    events = [json.loads(line)["event_type"] for line in lines]
+    assert events.count("position_closed") == 1
+    closed = next(json.loads(line) for line in lines if json.loads(line)["event_type"] == "position_closed")
+    assert closed["symbol"] == "SOL/USDT"
+    assert closed["reason"] == "take"
+    assert closed["quantity"] == 10.0
+    assert "entry_price" in closed
+    assert "exit_price" in closed
+    assert closed["realized_pnl_usd"] != 0.0
+
+
+def test_monitor_positions_triggers_stop_loss(tmp_path):
+    eng = _engine(tmp_path)
+    _open_long(eng, "BTC/USDT", 0.1, 65000.0, sl=60000.0, tp=70000.0)
+    fills = eng.monitor_positions({"BTC/USDT": 59500.0})
+    assert len(fills) == 1
+    assert fills[0].side == "sell"
+    assert "BTC/USDT" not in eng.portfolio.positions
+    assert eng.portfolio.realized_pnl_usd < 0  # loss from stop
+
+
+def test_monitor_positions_triggers_take_profit(tmp_path):
+    eng = _engine(tmp_path)
+    _open_long(eng, "ETH/USDT", 1.0, 3000.0, tp=3200.0)
+    fills = eng.monitor_positions({"ETH/USDT": 3250.0})
+    assert len(fills) == 1
+    assert eng.portfolio.realized_pnl_usd > 0
+
+
+def test_monitor_positions_skips_symbols_without_price(tmp_path):
+    eng = _engine(tmp_path)
+    _open_long(eng, "BTC/USDT", 0.1, 65000.0, sl=60000.0)
+    _open_long(eng, "ETH/USDT", 1.0, 3000.0, sl=2800.0, idem="open_ETH/USDT")
+    # Only BTC gets a price; ETH is absent — must not be closed.
+    fills = eng.monitor_positions({"BTC/USDT": 58000.0})
+    assert len(fills) == 1
+    assert fills[0].symbol == "BTC/USDT"
+    assert "ETH/USDT" in eng.portfolio.positions
+
+
+def test_monitor_positions_no_trigger_keeps_positions(tmp_path):
+    eng = _engine(tmp_path)
+    _open_long(eng, "BTC/USDT", 0.1, 65000.0, sl=60000.0, tp=70000.0)
+    # Price stays within SL/TP range.
+    fills = eng.monitor_positions({"BTC/USDT": 66000.0})
+    assert fills == []
+    assert "BTC/USDT" in eng.portfolio.positions
+
+
+def test_monitor_positions_rejects_non_positive_prices(tmp_path):
+    eng = _engine(tmp_path)
+    _open_long(eng, "BTC/USDT", 0.1, 65000.0, sl=60000.0)
+    assert eng.monitor_positions({"BTC/USDT": 0.0}) == []
+    assert eng.monitor_positions({"BTC/USDT": -100.0}) == []
+    assert "BTC/USDT" in eng.portfolio.positions

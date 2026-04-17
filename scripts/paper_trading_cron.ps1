@@ -82,6 +82,19 @@ function Run-Cycle($symbol) {
     }
 }
 
+function Monitor-Positions {
+    try {
+        $output = & $Python -m app.cli.main trading monitor-positions `
+            --provider coingecko 2>&1 | Out-String
+        $checked   = if ($output -match "checked=(\S+)")        { $Matches[1] } else { "0" }
+        $triggered = if ($output -match "triggered=(\S+)")      { $Matches[1] } else { "0" }
+        $nomd      = if ($output -match "no_market_data=(\S+)") { $Matches[1] } else { "0" }
+        Write-Log "monitor  checked=$checked  triggered=$triggered  no_market_data=$nomd"
+    } catch {
+        Write-Log "monitor  ERROR: $_"
+    }
+}
+
 # -- Server watchdog ---------------------------------------------------------
 function Ensure-Server {
     try {
@@ -120,6 +133,9 @@ Write-Log "--- cron start ---"
 
 # Ensure the FastAPI server (+ Telegram bot poller) is running.
 Ensure-Server
+
+# Close SL/TP-triggered positions first so new cycles don't compete for slots.
+Monitor-Positions
 
 Run-Cycle "BTC/USDT"
 Start-Sleep -Seconds 15

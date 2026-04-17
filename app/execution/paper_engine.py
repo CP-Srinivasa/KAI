@@ -14,6 +14,7 @@ import json
 import logging
 from pathlib import Path
 
+from app.execution.audit_replay import replay_paper_audit
 from app.execution.models import (
     PaperFill,
     PaperOrder,
@@ -65,6 +66,24 @@ class PaperExecutionEngine:
     @property
     def portfolio(self) -> PaperPortfolio:
         return self._portfolio
+
+    def rehydrate_from_audit(self, audit_path: str | Path | None = None) -> bool:
+        """Replay the audit JSONL and replace in-memory portfolio state.
+
+        Necessary for cross-process continuity (e.g. cron-driven runs) where
+        a fresh engine must observe previously opened positions. Returns True
+        on success, False on replay error (engine state left unchanged).
+        """
+        path = Path(audit_path) if audit_path is not None else self._audit_path
+        result = replay_paper_audit(path)
+        if not result.available:
+            logger.warning("[PAPER] audit replay failed: %s", result.error)
+            return False
+        self._portfolio.positions = dict(result.positions)
+        if result.cash_usd:
+            self._portfolio.cash = result.cash_usd
+        self._portfolio.realized_pnl_usd = result.realized_pnl_usd
+        return True
 
     def create_order(
         self,
@@ -238,6 +257,95 @@ class PaperExecutionEngine:
             )
             return "take"
         return None
+
+    def close_position(
+        self,
+        symbol: str,
+        current_price: float,
+        reason: str = "manual",
+    ) -> PaperFill | None:
+        """Close a full open position at current_price.
+
+        Emits the standard order_created + order_filled pair (via create_order /
+        fill_order), followed by a dedicated position_closed audit event that
+        distinguishes exits from entry-side sells (short entries).
+
+        Returns the fill, or None if there is no open position / price invalid
+        / idempotency dedup. Idempotency key is derived from the position's
+        open timestamp + reason so repeated calls within the same trigger do
+        not double-close.
+        """
+        pos = self._portfolio.positions.get(symbol)
+        if not pos:
+            return None
+        if current_price <= 0:
+            return None
+
+        idem_key = f"close_{symbol}_{pos.opened_at}_{reason}"
+        if idem_key in self._filled_keys:
+            return None
+
+        entry_price = pos.avg_entry_price
+        quantity = pos.quantity
+        order = self.create_order(
+            symbol=symbol,
+            side="sell",
+            quantity=quantity,
+            idempotency_key=idem_key,
+            risk_check_id=f"auto_close:{reason}",
+        )
+        fill = self.fill_order(order, current_price)
+        if fill is None:
+            return None
+
+        self._append_audit(
+            "position_closed",
+            {
+                "symbol": symbol,
+                "reason": reason,
+                "quantity": quantity,
+                "entry_price": entry_price,
+                "exit_price": fill.fill_price,
+                "fill_id": fill.fill_id,
+                "order_id": fill.order_id,
+                "realized_pnl_usd": self._portfolio.realized_pnl_usd,
+            },
+        )
+        logger.info(
+            "[PAPER] Close: %s qty=%.4f entry=%.2f exit=%.2f reason=%s pnl=%.2f",
+            symbol,
+            quantity,
+            entry_price,
+            fill.fill_price,
+            reason,
+            self._portfolio.realized_pnl_usd,
+        )
+        return fill
+
+    def monitor_positions(
+        self,
+        prices_by_symbol: dict[str, float],
+    ) -> list[PaperFill]:
+        """Check SL/TP for all open positions, close those triggered.
+
+        Takes a price map so callers fetch market data once and drive exits
+        deterministically. Returns the list of fills produced (empty when no
+        trigger fires). Positions whose symbol is missing from the price map
+        are skipped — this is intentional, so a partial price feed cannot
+        force a close at a zero or stale price.
+        """
+        fills: list[PaperFill] = []
+        for symbol in list(self._portfolio.positions.keys()):
+            price = prices_by_symbol.get(symbol)
+            if price is None or price <= 0:
+                continue
+            trigger = self.check_stop_take(symbol, price)
+            if trigger is None:
+                continue
+            fill = self.close_position(symbol, price, reason=trigger)
+            if fill:
+                fills.append(fill)
+        return fills
 
     def _append_audit(self, event_type: str, data: dict[str, object]) -> None:
         record = {"event_type": event_type, "timestamp_utc": _now_utc(), **data}

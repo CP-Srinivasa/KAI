@@ -326,3 +326,153 @@ async def test_portfolio_property_accessible(tmp_path):
     assert portfolio.initial_equity == 10000.0
     assert portfolio.cash == 10000.0
     assert len(portfolio.positions) == 0
+
+
+# ── Position monitor (V2 SL/TP exits) ────────────────────────────────────────
+
+
+from app.market_data.base import BaseMarketDataAdapter  # noqa: E402
+from app.market_data.models import MarketDataPoint  # noqa: E402
+
+
+class _PriceStubAdapter(BaseMarketDataAdapter):
+    """Deterministic adapter: returns pre-set prices per symbol."""
+
+    def __init__(self, prices: dict[str, float | None]) -> None:
+        self._prices = prices
+
+    @property
+    def adapter_name(self) -> str:
+        return "stub"
+
+    async def get_price(self, symbol):  # pragma: no cover — unused by monitor
+        return self._prices.get(symbol)
+
+    async def get_ticker(self, symbol):  # pragma: no cover
+        return None
+
+    async def get_ohlcv(self, symbol, timeframe="1h", limit=100):  # pragma: no cover
+        return []
+
+    async def get_order_book(self, symbol, depth=10):  # pragma: no cover
+        return None
+
+    async def get_market_data_point(self, symbol: str):
+        price = self._prices.get(symbol)
+        if price is None:
+            return None
+        return MarketDataPoint(
+            symbol=symbol,
+            timestamp_utc="2026-04-17T12:00:00+00:00",
+            price=price,
+            volume_24h=1_000_000.0,
+            change_pct_24h=0.0,
+            source="stub",
+            is_stale=False,
+            freshness_seconds=0.0,
+        )
+
+
+def _loop_with_prices(tmp_path, prices: dict[str, float | None]) -> TradingLoop:
+    risk = RiskEngine(_default_limits())
+    exec_eng = PaperExecutionEngine(
+        initial_equity=10000.0,
+        fee_pct=0.1,
+        slippage_pct=0.05,
+        live_enabled=False,
+        audit_log_path=str(tmp_path / "exec_audit.jsonl"),
+    )
+    gen = SignalGenerator(
+        min_confidence=0.75, min_confluence=2, stop_loss_pct=2.5, take_profit_pct=5.0
+    )
+    return TradingLoop(
+        risk_engine=risk,
+        execution_engine=exec_eng,
+        market_data_adapter=_PriceStubAdapter(prices),
+        signal_generator=gen,
+        audit_log_path=str(tmp_path / "loop_audit.jsonl"),
+    )
+
+
+@pytest.mark.asyncio
+async def test_run_position_monitor_no_positions(tmp_path):
+    loop = _loop_with_prices(tmp_path, {})
+    summary = await loop.run_position_monitor()
+    assert summary["checked"] == 0
+    assert summary["triggered"] == 0
+    assert summary["closes"] == []
+
+
+@pytest.mark.asyncio
+async def test_run_position_monitor_triggers_stop(tmp_path):
+    loop = _loop_with_prices(tmp_path, {"BTC/USDT": 59000.0})
+    order = loop._exec.create_order(
+        symbol="BTC/USDT",
+        side="buy",
+        quantity=0.1,
+        stop_loss=60000.0,
+        take_profit=70000.0,
+        idempotency_key="entry_btc",
+    )
+    loop._exec.fill_order(order, current_price=65000.0)
+
+    summary = await loop.run_position_monitor()
+    assert summary["triggered"] == 1
+    assert summary["checked"] == 1
+    assert "BTC/USDT" not in loop.portfolio.positions
+    assert loop.portfolio.realized_pnl_usd < 0
+
+
+@pytest.mark.asyncio
+async def test_run_position_monitor_triggers_take_profit(tmp_path):
+    loop = _loop_with_prices(tmp_path, {"ETH/USDT": 3300.0})
+    order = loop._exec.create_order(
+        symbol="ETH/USDT",
+        side="buy",
+        quantity=1.0,
+        stop_loss=2800.0,
+        take_profit=3200.0,
+        idempotency_key="entry_eth",
+    )
+    loop._exec.fill_order(order, current_price=3000.0)
+
+    summary = await loop.run_position_monitor()
+    assert summary["triggered"] == 1
+    assert loop.portfolio.realized_pnl_usd > 0
+
+
+@pytest.mark.asyncio
+async def test_run_position_monitor_skips_missing_market_data(tmp_path):
+    # None-valued symbol → adapter returns None → counted as no_market_data
+    loop = _loop_with_prices(tmp_path, {"BTC/USDT": None})
+    order = loop._exec.create_order(
+        symbol="BTC/USDT",
+        side="buy",
+        quantity=0.1,
+        stop_loss=60000.0,
+        idempotency_key="entry_btc",
+    )
+    loop._exec.fill_order(order, current_price=65000.0)
+
+    summary = await loop.run_position_monitor()
+    assert summary["no_market_data"] == 1
+    assert summary["triggered"] == 0
+    assert "BTC/USDT" in loop.portfolio.positions
+
+
+@pytest.mark.asyncio
+async def test_run_position_monitor_price_within_range(tmp_path):
+    loop = _loop_with_prices(tmp_path, {"BTC/USDT": 66000.0})
+    order = loop._exec.create_order(
+        symbol="BTC/USDT",
+        side="buy",
+        quantity=0.1,
+        stop_loss=60000.0,
+        take_profit=70000.0,
+        idempotency_key="entry_btc",
+    )
+    loop._exec.fill_order(order, current_price=65000.0)
+
+    summary = await loop.run_position_monitor()
+    assert summary["triggered"] == 0
+    assert "BTC/USDT" in loop.portfolio.positions

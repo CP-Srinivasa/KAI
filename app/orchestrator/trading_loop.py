@@ -327,6 +327,58 @@ class TradingLoop:
         await self._write_db(cycle)
         return cycle
 
+    async def run_position_monitor(self) -> dict[str, object]:
+        """Check SL/TP on every open position and close those that triggered.
+
+        Fetches fresh market data once per open-position symbol, passes the
+        price map to the paper engine, and returns a small summary dict
+        suitable for logging / cron output.
+        """
+        portfolio = self._exec.portfolio
+        open_symbols = list(portfolio.positions.keys())
+        summary: dict[str, object] = {
+            "checked": 0,
+            "no_market_data": 0,
+            "triggered": 0,
+            "closes": [],
+        }
+        if not open_symbols:
+            return summary
+
+        prices: dict[str, float] = {}
+        for symbol in open_symbols:
+            try:
+                md = await self._market_data.get_market_data_point(symbol)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("[LOOP] monitor: market data error for %s: %s", symbol, exc)
+                md = None
+            if md is None or md.is_stale:
+                summary["no_market_data"] = int(summary["no_market_data"]) + 1
+                continue
+            prices[symbol] = md.price
+            summary["checked"] = int(summary["checked"]) + 1
+
+        fills = self._exec.monitor_positions(prices)
+        for fill in fills:
+            summary["triggered"] = int(summary["triggered"]) + 1
+            assert isinstance(summary["closes"], list)
+            summary["closes"].append(
+                {
+                    "symbol": fill.symbol,
+                    "quantity": fill.quantity,
+                    "fill_price": fill.fill_price,
+                    "realized_pnl_usd": self._exec.portfolio.realized_pnl_usd,
+                }
+            )
+
+        if fills:
+            self._risk.update_daily_loss(
+                realized_pnl_usd=self._exec.portfolio.realized_pnl_usd,
+                equity=self._exec.portfolio.cash,
+            )
+
+        return summary
+
     async def run_promoted_signal(
         self,
         signal: SignalCandidate,
@@ -780,11 +832,16 @@ def build_trading_loop(
     timeout_seconds: int = 10,
     enable_consensus: bool = False,
     consensus_model: str = "gpt-4o-mini",
+    rehydrate_from_audit: bool = True,
 ) -> TradingLoop:
     """Build the canonical trading loop for explicit paper/shadow run-once execution.
 
     provider: market data provider name. If None, reads from APP_MARKET_DATA_PROVIDER
     (default: "coingecko"). Pass "mock" explicitly in tests.
+
+    rehydrate_from_audit: when True (default), replay the execution audit JSONL
+    into the fresh engine so previously opened positions are observable across
+    process invocations (required for cron-driven SL/TP monitoring).
     """
     normalized_mode = _normalize_loop_mode(mode)
     allowed, reason = _run_once_guard(normalized_mode)
@@ -801,6 +858,8 @@ def build_trading_loop(
         live_enabled=False,
         audit_log_path=str(execution_audit_path),
     )
+    if rehydrate_from_audit:
+        execution_engine.rehydrate_from_audit()
     market_data_adapter = create_market_data_adapter(
         provider=resolved_provider,
         freshness_threshold_seconds=freshness_threshold_seconds,
@@ -871,6 +930,31 @@ async def run_trading_loop_once(
         analysis_profile=analysis_profile,
     )
     return await loop.run_cycle(analysis, symbol)
+
+
+async def run_position_monitor_once(
+    *,
+    provider: str | None = None,
+    loop_audit_path: str | Path = _AUDIT_LOG,
+    execution_audit_path: str | Path = _PAPER_EXECUTION_AUDIT_LOG,
+    freshness_threshold_seconds: float = 120.0,
+    timeout_seconds: int = 10,
+) -> dict[str, object]:
+    """Build a paper-mode loop (rehydrated from audit) and run one SL/TP monitor pass.
+
+    Intended for cron invocation: fetches live prices for every open position,
+    closes any position whose SL/TP fired, returns a summary dict.
+    """
+    loop = build_trading_loop(
+        mode=ExecutionMode.PAPER,
+        provider=provider,
+        loop_audit_path=loop_audit_path,
+        execution_audit_path=execution_audit_path,
+        freshness_threshold_seconds=freshness_threshold_seconds,
+        timeout_seconds=timeout_seconds,
+        enable_consensus=False,
+    )
+    return await loop.run_position_monitor()
 
 
 def load_trading_loop_cycles(audit_path: str | Path = _AUDIT_LOG) -> list[dict[str, object]]:
