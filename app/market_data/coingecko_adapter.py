@@ -407,7 +407,11 @@ class CoinGeckoAdapter(BaseMarketDataAdapter):
                 if response.status_code == 429 and attempt < max_attempts - 1:
                     retry_after_header = response.headers.get("Retry-After")
                     try:
-                        wait_s = float(retry_after_header) if retry_after_header else backoff_schedule[attempt]
+                        wait_s = (
+                            float(retry_after_header)
+                            if retry_after_header
+                            else backoff_schedule[attempt]
+                        )
                     except (TypeError, ValueError):
                         wait_s = backoff_schedule[attempt]
                     # Cap at 120s to avoid multi-minute stalls.
