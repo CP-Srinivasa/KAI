@@ -64,7 +64,13 @@ export function ModeSelector({ compact = false }: { compact?: boolean }) {
         {open && (
           <>
             <div className="fixed inset-0 z-30" onClick={() => setOpen(false)} />
-            <div className="absolute right-0 top-full mt-1.5 z-40 w-[260px] rounded-md border border-line bg-bg-1 shadow-raised p-1">
+            <div
+              className={cn(
+                "z-40 rounded-md border border-line bg-bg-1 shadow-raised p-1",
+                "fixed top-[3.875rem] inset-x-2 w-auto",
+                "sm:absolute sm:top-full sm:mt-1.5 sm:inset-x-auto sm:right-0 sm:w-[260px]",
+              )}
+            >
               <div className="px-2 py-1.5 text-2xs font-semibold uppercase tracking-[0.08em] text-fg-subtle">
                 {t("topbar.mode_switch")}
               </div>

@@ -86,7 +86,11 @@ export function NotificationsBell() {
         <div
           role="dialog"
           aria-label="Notifications"
-          className="absolute right-0 top-full mt-1.5 z-40 w-[360px] max-w-[90vw] rounded-md border border-line bg-bg-1 shadow-raised overflow-hidden"
+          className={cn(
+            "z-40 rounded-md border border-line bg-bg-1 shadow-raised overflow-hidden",
+            "fixed top-[3.875rem] inset-x-2 w-auto",
+            "sm:absolute sm:top-full sm:mt-1.5 sm:inset-x-auto sm:right-0 sm:w-[360px] sm:max-w-[90vw]",
+          )}
         >
           <div className="flex items-center justify-between px-3 py-2 border-b border-line-subtle">
             <span className="text-xs font-semibold tracking-tight text-fg">
