@@ -441,6 +441,15 @@ class AppSettings(BaseSettings):
     # touching middleware code.
     security_headers_extra_csp_script_src: str = Field(default="")
 
+    # --- Auth brute-force guard (SENTR-F-003) ---
+    # In-memory sliding-window counter per client IP. Once the threshold is
+    # reached within the window, further auth attempts return 429 with
+    # Retry-After until the oldest failure ages out. Set threshold to 0 to
+    # disable the guard entirely (e.g., for integration smokes that hammer
+    # /dashboard/* intentionally).
+    auth_rate_limit_threshold: int = Field(default=5, ge=0)
+    auth_rate_limit_window_seconds: float = Field(default=300.0, gt=0.0)
+
     # --- Request Governance (Sprint 44) ---
     # Maximum request body size in bytes. Requests exceeding this limit are
     # rejected with HTTP 413 before reaching route handlers. Default: 64 KiB.

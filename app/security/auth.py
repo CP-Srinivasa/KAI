@@ -34,7 +34,9 @@ from __future__ import annotations
 import hashlib
 import logging
 import secrets
+import time
 from collections.abc import Awaitable, Callable, Iterable
+from threading import Lock
 
 from fastapi import FastAPI, Request, Response
 from fastapi.responses import JSONResponse
@@ -42,6 +44,76 @@ from fastapi.responses import JSONResponse
 from app.core.errors import ConfigurationError
 
 logger = logging.getLogger(__name__)
+
+
+# SENTR-F-003: in-memory brute-force guard per client IP. Sliding window of
+# failure timestamps; once >= threshold failures occur within the window,
+# further requests from that IP are rejected with 429 until the window
+# expires. Reset on any successful auth from the same IP.
+#
+# Scope: lives in-process. A restart clears the map — intentional, since
+# prod restarts are rare and an attacker who can trigger a restart already
+# owns more than the rate-limiter can defend against. Shared-nothing; no
+# Redis/DB dependency.
+_AUTH_FAILURES: dict[str, list[float]] = {}
+_AUTH_FAILURES_LOCK = Lock()
+
+
+def _prune_failures(ip: str, window: float, now: float) -> list[float]:
+    """Drop failure timestamps older than ``window`` seconds. Returns kept."""
+    cutoff = now - window
+    with _AUTH_FAILURES_LOCK:
+        kept = [ts for ts in _AUTH_FAILURES.get(ip, []) if ts >= cutoff]
+        if kept:
+            _AUTH_FAILURES[ip] = kept
+        else:
+            _AUTH_FAILURES.pop(ip, None)
+    return kept
+
+
+def _record_auth_failure(ip: str, window: float, now: float) -> int:
+    """Append a failure for ``ip`` and return the in-window count."""
+    if not ip:
+        return 0
+    with _AUTH_FAILURES_LOCK:
+        bucket = _AUTH_FAILURES.setdefault(ip, [])
+        cutoff = now - window
+        bucket[:] = [ts for ts in bucket if ts >= cutoff]
+        bucket.append(now)
+        return len(bucket)
+
+
+def _reset_auth_failures(ip: str) -> None:
+    """Clear all failures for ``ip`` — called on successful auth."""
+    if not ip:
+        return
+    with _AUTH_FAILURES_LOCK:
+        _AUTH_FAILURES.pop(ip, None)
+
+
+def _is_rate_limited(
+    ip: str, threshold: int, window: float, now: float
+) -> tuple[bool, int]:
+    """Return (locked, retry_after_seconds).
+
+    Locked when ``len(in-window failures) >= threshold``. ``retry_after``
+    is the remaining time until the oldest in-window failure ages out —
+    once it does, ``len`` drops below threshold and the IP can retry.
+    """
+    if not ip or threshold <= 0:
+        return False, 0
+    kept = _prune_failures(ip, window, now)
+    if len(kept) < threshold:
+        return False, 0
+    oldest = kept[0]
+    retry_after = max(1, int(oldest + window - now) + 1)
+    return True, retry_after
+
+
+def _reset_rate_limit_registry_for_tests() -> None:
+    """Test-only helper — clears the module-level failure registry."""
+    with _AUTH_FAILURES_LOCK:
+        _AUTH_FAILURES.clear()
 
 
 def _hash_email(email: str) -> str:
@@ -102,6 +174,8 @@ def setup_auth(
     env: str = "development",
     cf_allowed_emails: Iterable[str] = (),
     tv_webhook_enabled: bool = False,
+    rate_limit_threshold: int = 5,
+    rate_limit_window_seconds: float = 300.0,
 ) -> None:
     """Attach auth middleware (CF-Access + Bearer) to the FastAPI app.
 
@@ -117,6 +191,12 @@ def setup_auth(
                             (SENTR-F-002) mirroring the router-level 404 gate
                             so an accidental router-gate removal cannot open
                             the endpoint.
+        rate_limit_threshold: SENTR-F-003. Maximum in-window failed-auth
+                              attempts per client IP before 429 responses
+                              begin.  Set to 0 to disable.
+        rate_limit_window_seconds: Sliding-window duration for the failure
+                                   counter.  Once the oldest in-window
+                                   failure ages out, the IP can retry.
 
     Raises:
         ConfigurationError: if ``api_key`` is empty outside dev/test environments.
@@ -169,6 +249,27 @@ def setup_auth(
             _audit_access(decision="granted", reason="public", request=request)
             return await call_next(request)
 
+        # SENTR-F-003: brute-force guard. Check BEFORE any auth decision so a
+        # locked IP cannot continue to generate failure counts or probe timing
+        # differences. Public paths above are exempt (no auth → no failures).
+        client_ip = _client_ip(request)
+        now = time.monotonic()
+        locked, retry_after = _is_rate_limited(
+            client_ip, rate_limit_threshold, rate_limit_window_seconds, now
+        )
+        if locked:
+            _audit_access(
+                decision="denied",
+                reason="rate_limited",
+                request=request,
+                status_code=429,
+            )
+            return JSONResponse(
+                status_code=429,
+                content={"detail": "Too many failed authentication attempts"},
+                headers={"Retry-After": str(retry_after)},
+            )
+
         # /dashboard/* (D-124 dashboard HTML + /dashboard/api/*):
         # Defense-in-Depth (D-156d). The primary gate is Cloudflare Access
         # at the edge — but a CF-Access policy misconfiguration would
@@ -186,6 +287,7 @@ def setup_auth(
         # dashboard-defense-in-depth policy instead of Bearer auth.
         if path == "/dashboard" or path.startswith("/dashboard/"):
             if not cf_allowed or not request.headers.get("Cf-Ray"):
+                _reset_auth_failures(client_ip)
                 _audit_access(
                     decision="granted", reason="dashboard_local", request=request
                 )
@@ -198,6 +300,7 @@ def setup_auth(
             # cloudflared → Tailscale Funnel migration) surfaces as 401 at
             # monitoring rather than as a silently-downgraded trust boundary.
             if not request.headers.get("Cf-Connecting-IP"):
+                _record_auth_failure(client_ip, rate_limit_window_seconds, now)
                 _audit_access(
                     decision="denied",
                     reason="dashboard_cf_ray_orphan",
@@ -214,6 +317,7 @@ def setup_auth(
                 .lower()
             )
             if cf_email and cf_email in cf_allowed:
+                _reset_auth_failures(client_ip)
                 _audit_access(
                     decision="granted",
                     reason="dashboard_cf_access",
@@ -221,6 +325,7 @@ def setup_auth(
                     email=cf_email,
                 )
                 return await call_next(request)
+            _record_auth_failure(client_ip, rate_limit_window_seconds, now)
             _audit_access(
                 decision="denied",
                 reason="dashboard_cf_access_missing",
@@ -237,6 +342,7 @@ def setup_auth(
         if cf_allowed:
             cf_email = request.headers.get("Cf-Access-Authenticated-User-Email", "").strip().lower()
             if cf_email and cf_email in cf_allowed:
+                _reset_auth_failures(client_ip)
                 _audit_access(
                     decision="granted",
                     reason="cf_access",
@@ -250,8 +356,10 @@ def setup_auth(
         if auth_header.startswith("Bearer "):
             token = auth_header[len("Bearer ") :]
             if secrets.compare_digest(token, api_key):
+                _reset_auth_failures(client_ip)
                 _audit_access(decision="granted", reason="bearer", request=request)
                 return await call_next(request)
+            _record_auth_failure(client_ip, rate_limit_window_seconds, now)
             _audit_access(
                 decision="denied",
                 reason="bearer_invalid",
@@ -263,6 +371,7 @@ def setup_auth(
                 content={"detail": "Invalid API key"},
             )
 
+        _record_auth_failure(client_ip, rate_limit_window_seconds, now)
         _audit_access(
             decision="denied",
             reason="missing_authorization",
