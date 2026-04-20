@@ -455,6 +455,11 @@ class AppSettings(BaseSettings):
     # the default 'self'. Useful if a future CDN or widget is added without
     # touching middleware code.
     security_headers_extra_csp_script_src: str = Field(default="")
+    # When True, the CSP allows the TradingView embedded-chart widget
+    # (script/frame/connect/img from *.tradingview.com plus inline scripts
+    # the widget injects). Default True so the Märkte page works out of the
+    # box; set False for hardened deployments that disabled the widget.
+    security_headers_allow_tradingview: bool = Field(default=True)
 
     # --- Auth brute-force guard (SENTR-F-003) ---
     # In-memory sliding-window counter per client IP. Once the threshold is

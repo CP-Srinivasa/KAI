@@ -86,6 +86,24 @@ def test_extra_script_src_propagates_through_setup() -> None:
     assert "https://telegram.org" in response.headers["Content-Security-Policy"]
 
 
+def test_tradingview_opt_in_allowlists_origins() -> None:
+    csp = build_default_csp(allow_tradingview=True)
+    assert "https://s3.tradingview.com" in csp
+    assert "frame-src https://s.tradingview.com" in csp
+    assert "wss://*.tradingview.com" in csp
+    # Default (no opt-in) must remain tight.
+    default_csp = build_default_csp()
+    assert "tradingview" not in default_csp
+
+
+def test_tradingview_flag_propagates_through_setup() -> None:
+    client = TestClient(_app_with_policy(allow_tradingview=True))
+    response = client.get("/ping")
+    csp = response.headers["Content-Security-Policy"]
+    assert "https://s3.tradingview.com" in csp
+    assert "frame-src https://s.tradingview.com" in csp
+
+
 def test_middleware_does_not_overwrite_preexisting_header() -> None:
     # Defense against a downstream layer that already sets a custom policy.
     app = FastAPI()

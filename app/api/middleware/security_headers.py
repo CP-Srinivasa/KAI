@@ -46,30 +46,65 @@ class SecurityHeadersPolicy:
     permissions_policy: str
 
 
-def build_default_csp(extra_script_src: str = "") -> str:
+_TRADINGVIEW_SCRIPT_SRC = (
+    "https://s3.tradingview.com https://s.tradingview.com "
+    "https://www.tradingview.com"
+)
+_TRADINGVIEW_FRAME_SRC = (
+    "https://s.tradingview.com https://www.tradingview.com"
+)
+_TRADINGVIEW_CONNECT_SRC = (
+    "https://www.tradingview.com https://*.tradingview.com "
+    "wss://*.tradingview.com"
+)
+_TRADINGVIEW_IMG_SRC = "https://*.tradingview.com"
+
+
+def build_default_csp(
+    extra_script_src: str = "", *, allow_tradingview: bool = False
+) -> str:
     """Return the default CSP string used when no override is configured.
 
     The policy is tight: self-only scripts/connects, inline styles allowed
     (required by Tailwind + inline SVG), data: URIs for images and fonts,
     no framing, no object/embed, no base-tag hijack.
+
+    When ``allow_tradingview`` is True, the embedded-chart widget is
+    allowlisted via explicit tradingview.com origins on script/frame/
+    connect/img (and the inline-script the widget generates for its
+    JSON config). This keeps the default strict for deployments that do
+    not use the widget.
     """
 
-    script_src = "'self'"
+    script_parts = ["'self'"]
+    frame_src = ""
+    connect_parts = ["'self'"]
+    img_parts = ["'self'", "data:", "blob:"]
+
     extra = extra_script_src.strip()
     if extra:
-        script_src = f"'self' {extra}"
+        script_parts.append(extra)
+
+    if allow_tradingview:
+        script_parts.extend(["'unsafe-inline'", _TRADINGVIEW_SCRIPT_SRC])
+        frame_src = _TRADINGVIEW_FRAME_SRC
+        connect_parts.append(_TRADINGVIEW_CONNECT_SRC)
+        img_parts.append(_TRADINGVIEW_IMG_SRC)
+
     directives = [
         "default-src 'self'",
-        f"script-src {script_src}",
+        f"script-src {' '.join(script_parts)}",
         "style-src 'self' 'unsafe-inline'",
-        "img-src 'self' data: blob:",
+        f"img-src {' '.join(img_parts)}",
         "font-src 'self' data:",
-        "connect-src 'self'",
+        f"connect-src {' '.join(connect_parts)}",
         "frame-ancestors 'none'",
         "base-uri 'self'",
         "form-action 'self'",
         "object-src 'none'",
     ]
+    if frame_src:
+        directives.insert(-3, f"frame-src {frame_src}")
     return "; ".join(directives)
 
 
@@ -116,6 +151,7 @@ def setup_security_headers(
         "camera=(), microphone=(), geolocation=(), payment=(), usb=()"
     ),
     extra_csp_script_src: str = "",
+    allow_tradingview: bool = False,
 ) -> None:
     """Attach SecurityHeadersMiddleware when ``enabled`` is True.
 
@@ -126,7 +162,11 @@ def setup_security_headers(
     if not enabled:
         return
     policy = SecurityHeadersPolicy(
-        csp=csp if csp is not None else build_default_csp(extra_csp_script_src),
+        csp=csp
+        if csp is not None
+        else build_default_csp(
+            extra_csp_script_src, allow_tradingview=allow_tradingview
+        ),
         csp_report_only=csp_report_only,
         hsts_max_age=hsts_max_age,
         frame_options=frame_options,

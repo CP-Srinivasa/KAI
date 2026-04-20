@@ -253,7 +253,8 @@ function PreparedSection() {
             Vorbereitet
           </h2>
           <span className="text-2xs text-fg-subtle font-mono shrink-0">
-            {PREPARED_PANELS.length} Bereiche · Integration ausstehend
+            {PREPARED_PANELS.length}
+            <span className="hidden sm:inline"> Bereiche · Integration ausstehend</span>
           </span>
           {!expanded && (
             <div className="hidden md:flex items-center gap-1.5 flex-wrap min-w-0 overflow-hidden">

@@ -31,8 +31,8 @@ export function PreparedPanel({
       <div className="flex items-start gap-3 text-xs text-fg-muted leading-relaxed">
         <Wrench size={14} className="mt-0.5 text-fg-subtle shrink-0" aria-hidden />
         <div className="min-w-0 space-y-1.5">
-          <p>{reason ?? "Diese Funktion ist UI-seitig vorbereitet, aber noch nicht an das Backend angebunden."}</p>
-          {detail && <div className="text-2xs text-fg-subtle">{detail}</div>}
+          <p className="break-words">{reason ?? "Diese Funktion ist UI-seitig vorbereitet, aber noch nicht an das Backend angebunden."}</p>
+          {detail && <div className="text-2xs text-fg-subtle break-words">{detail}</div>}
           {action && <div className="pt-1">{action}</div>}
         </div>
       </div>

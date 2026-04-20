@@ -228,6 +228,7 @@ def create_app() -> FastAPI:
         csp_report_only=settings.security_headers_csp_report_only,
         hsts_max_age=settings.security_headers_hsts_max_age,
         extra_csp_script_src=settings.security_headers_extra_csp_script_src,
+        allow_tradingview=settings.security_headers_allow_tradingview,
     )
 
     @app.get("/", include_in_schema=False)
