@@ -365,6 +365,14 @@ class AppSettings(BaseSettings):
     monitor_dir: str = Field(default="monitor")
     # Bearer token for API auth. Empty = auth disabled (dev only). Set in production.
     api_key: str = Field(default="", repr=False)
+    # SENTR-F-008: zero-downtime rotation. When set, requests with Bearer
+    # <api_key_next> are also accepted. Rollover flow:
+    #   1. operator sets APP_API_KEY_NEXT=<new>, redeploys — both keys valid.
+    #   2. clients migrate to the new key at their own pace.
+    #   3. operator promotes APP_API_KEY=<new>, clears APP_API_KEY_NEXT — single
+    #      key again, old key is dead.
+    # Empty string = disabled (single-key mode, no behaviour change).
+    api_key_next: str = Field(default="", repr=False)
     # Cloudflare Access — emails allowed to pass via Cf-Access-Authenticated-User-Email
     # header. Comma-separated string ("a@x.de,b@y.de"). Empty = CF-Access trust disabled.
     # Accepts both APP_CF_ACCESS_ALLOWED_EMAILS (prefixed) and bare CF_ACCESS_ALLOWED_EMAILS.
@@ -473,9 +481,9 @@ class AppSettings(BaseSettings):
     tradingview: TradingViewSettings = Field(default_factory=TradingViewSettings)
     binance: BinanceMarketDataSettings = Field(default_factory=BinanceMarketDataSettings)
 
-    _strip_secrets = field_validator("api_key", "coingecko_api_key", mode="before")(
-        _strip_secret
-    )
+    _strip_secrets = field_validator(
+        "api_key", "api_key_next", "coingecko_api_key", mode="before"
+    )(_strip_secret)
 
     @model_validator(mode="after")
     def validate_bind_host_against_env(self) -> "AppSettings":

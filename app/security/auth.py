@@ -176,6 +176,7 @@ def setup_auth(
     tv_webhook_enabled: bool = False,
     rate_limit_threshold: int = 5,
     rate_limit_window_seconds: float = 300.0,
+    api_key_next: str = "",
 ) -> None:
     """Attach auth middleware (CF-Access + Bearer) to the FastAPI app.
 
@@ -197,6 +198,8 @@ def setup_auth(
         rate_limit_window_seconds: Sliding-window duration for the failure
                                    counter.  Once the oldest in-window
                                    failure ages out, the IP can retry.
+        api_key_next: SENTR-F-008. Optional second Bearer accepted during
+                      zero-downtime rotation. Empty string = single-key mode.
 
     Raises:
         ConfigurationError: if ``api_key`` is empty outside dev/test environments.
@@ -219,6 +222,10 @@ def setup_auth(
         return  # no middleware attached
 
     cf_allowed = frozenset(e.strip().lower() for e in cf_allowed_emails if e and e.strip())
+    # SENTR-F-008: rotation window. Both keys are checked with compare_digest.
+    # Empty next-key stays empty — compare_digest on "" never succeeds, so the
+    # single-key case requires no branching.
+    next_key = api_key_next or ""
 
     @app.middleware("http")
     async def _auth_middleware(
@@ -359,6 +366,12 @@ def setup_auth(
                 _reset_auth_failures(client_ip)
                 _audit_access(decision="granted", reason="bearer", request=request)
                 return await call_next(request)
+            if next_key and secrets.compare_digest(token, next_key):
+                _reset_auth_failures(client_ip)
+                _audit_access(
+                    decision="granted", reason="bearer_next", request=request
+                )
+                return await call_next(request)
             _record_auth_failure(client_ip, rate_limit_window_seconds, now)
             _audit_access(
                 decision="denied",
@@ -384,10 +397,14 @@ def setup_auth(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
+    rotation_suffix = " + rotation-next" if next_key else ""
     if cf_allowed:
         logger.info(
-            "API authentication enabled — CF-Access (emails=%d) + Bearer token",
+            "API authentication enabled — CF-Access (emails=%d) + Bearer token%s",
             len(cf_allowed),
+            rotation_suffix,
         )
     else:
-        logger.info("API authentication enabled — Bearer token required")
+        logger.info(
+            "API authentication enabled — Bearer token required%s", rotation_suffix
+        )

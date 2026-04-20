@@ -216,6 +216,7 @@ def create_app() -> FastAPI:
         tv_webhook_enabled=settings.tradingview.webhook_enabled,
         rate_limit_threshold=settings.auth_rate_limit_threshold,
         rate_limit_window_seconds=settings.auth_rate_limit_window_seconds,
+        api_key_next=settings.api_key_next,
     )  # attach auth middleware (CF-Access + Bearer) before startup
 
     # Security headers (SENTR-F-007). Added last so the headers wrap all
