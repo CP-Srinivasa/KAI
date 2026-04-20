@@ -37,7 +37,7 @@ export function Topbar({ onMobileMenuToggle }: TopbarProps = {}) {
   const [langOpen, setLangOpen] = useState(false);
 
   return (
-    <header className="h-14 border-b border-line-subtle bg-bg-1/80 backdrop-blur flex items-center gap-2 sm:gap-3 px-3 sm:px-5 sticky top-0 z-20">
+    <header className="h-14 border-b border-line-subtle bg-bg-1/80 backdrop-blur flex items-center gap-1.5 sm:gap-2 md:gap-3 px-2 sm:px-3 md:px-5 sticky top-0 z-20">
       {onMobileMenuToggle && (
         <button
           onClick={onMobileMenuToggle}
@@ -67,7 +67,7 @@ export function Topbar({ onMobileMenuToggle }: TopbarProps = {}) {
         </kbd>
       </div>
 
-      <div className="ml-auto flex items-center gap-2">
+      <div className="ml-auto flex items-center gap-1 sm:gap-2">
         <div className="hidden lg:flex items-center rounded-sm border border-line-subtle bg-bg-2 p-0.5" role="group" aria-label={t("topbar.timeframe")}>
           {TIMEFRAMES.map((tf) => (
             <button
@@ -92,12 +92,13 @@ export function Topbar({ onMobileMenuToggle }: TopbarProps = {}) {
               key={c}
               onClick={() => setCurrency(c as Currency)}
               className={cn(
-                "h-7 px-2.5 rounded-xs text-2xs font-semibold font-mono",
+                "h-7 px-2 sm:px-2.5 rounded-xs text-2xs font-semibold font-mono",
                 currency === c ? "bg-bg-1 text-fg shadow-panel" : "text-fg-muted hover:text-fg",
               )}
               aria-pressed={currency === c}
             >
-              {c === "EUR" ? "€ EUR" : "$ USD"}
+              <span className="hidden sm:inline">{c === "EUR" ? "€ EUR" : "$ USD"}</span>
+              <span className="sm:hidden">{c === "EUR" ? "€" : "$"}</span>
             </button>
           ))}
         </div>
@@ -154,11 +155,11 @@ export function Topbar({ onMobileMenuToggle }: TopbarProps = {}) {
           <span className="text-2xs text-fg-subtle font-mono">D-137</span>
         </div>
 
-        <button className="flex items-center gap-2 h-8 pl-1 pr-2.5 rounded-sm border border-line-subtle bg-bg-2 hover:bg-bg-3 transition-colors">
+        <button className="flex items-center gap-2 h-8 pl-1 pr-1 sm:pr-2.5 rounded-sm border border-line-subtle bg-bg-2 hover:bg-bg-3 transition-colors">
           <div className="h-6 w-6 rounded-xs bg-gradient-to-br from-accent to-ai grid place-items-center text-[10px] font-semibold text-white">
             SK
           </div>
-          <span className="text-xs font-medium">Sascha</span>
+          <span className="hidden sm:inline text-xs font-medium">Sascha</span>
         </button>
       </div>
     </header>

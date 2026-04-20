@@ -42,7 +42,7 @@ export function ModeSelector({ compact = false }: { compact?: boolean }) {
         <button
           onClick={() => setOpen((v) => !v)}
           className={cn(
-            "h-8 inline-flex items-center gap-2 rounded-sm border bg-bg-2 px-2.5 text-xs transition-colors",
+            "h-8 inline-flex items-center gap-1.5 sm:gap-2 rounded-sm border bg-bg-2 px-2 sm:px-2.5 text-xs transition-colors",
             tone === "neg"
               ? "border-neg/40 text-neg bg-neg/5 hover:bg-neg/10"
               : tone === "info"
@@ -51,13 +51,14 @@ export function ModeSelector({ compact = false }: { compact?: boolean }) {
           )}
           aria-haspopup="listbox"
           aria-expanded={open}
+          aria-label={t("topbar.mode_switch")}
         >
           <StatusDot tone={tone} pulse={mode === "live"} />
           <Icon size={13} />
-          <span className="font-semibold">
+          <span className="hidden sm:inline font-semibold">
             {mode === "paper" ? t("topbar.mode_paper") : mode === "live" ? t("topbar.mode_live") : t("topbar.mode_sim")}
           </span>
-          {!compact && <ChevronDown size={12} className="opacity-70" />}
+          {!compact && <ChevronDown size={12} className="hidden sm:inline opacity-70" />}
         </button>
 
         {open && (
