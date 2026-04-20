@@ -14,6 +14,7 @@ import {
   type SignalCompletionFields,
   type SignalPasteResponse,
   type SignalPasteStatus,
+  type SignalSummary,
 } from "@/lib/api";
 
 const SAMPLE = `[SIGNAL]
@@ -65,11 +66,80 @@ const KNOWN_EXCHANGES = [
 
 function envelopeTone(rec: EnvelopeRecord): Tone {
   const { status, stage } = rec;
-  if (status === "ok" || stage === "accepted") return "pos";
   if (status === "duplicate") return "warn";
+  if (status === "ok" || stage === "accepted") return "pos";
   if (status === "rejected" || status === "blocked") return "neg";
   if (stage === "voice_confirm_gate" && status === "draft_pending") return "info";
   return "neutral";
+}
+
+function statusHeadline(rec: EnvelopeRecord): string {
+  if (rec.status === "duplicate") return "Duplikat verhindert";
+  if (rec.status === "ok" || rec.stage === "accepted") return "Sauber raus — OK";
+  if (rec.status === "rejected" || rec.status === "blocked") return "Abgelehnt";
+  if (rec.stage === "voice_confirm_gate") return "Wartet auf Bestätigung";
+  return rec.status ?? "—";
+}
+
+function formatNumber(value: number | null | undefined): string {
+  if (value == null || !Number.isFinite(value)) return "—";
+  // Keep up to 8 significant digits, trim trailing zeros (SOL prices vs BTC prices).
+  return value
+    .toLocaleString("de-DE", { maximumFractionDigits: 8, useGrouping: false });
+}
+
+function formatEntryRule(signal: SignalSummary): string {
+  if (signal.entry_value == null) return "—";
+  const price = formatNumber(signal.entry_value);
+  switch ((signal.entry_type ?? "").toLowerCase()) {
+    case "below":
+      return `BELOW ${price}`;
+    case "above":
+      return `ABOVE ${price}`;
+    case "at":
+      return `AT ${price}`;
+    default:
+      return price;
+  }
+}
+
+function formatLeverage(value: number | null): string {
+  if (value == null) return "—";
+  if (value <= 1) return "1x (spot / kein Leverage)";
+  return `${value}x`;
+}
+
+function formatDirection(signal: SignalSummary): string {
+  const dir = (signal.direction ?? "").toUpperCase();
+  const side = (signal.side ?? "").toUpperCase();
+  if (dir && side && dir !== side) return `${dir} / ${side}`;
+  return dir || side || "—";
+}
+
+function signalHeadline(signal: SignalSummary): string {
+  const parts: string[] = [];
+  const symbol = signal.symbol ?? "—";
+  const dir = formatDirection(signal);
+  parts.push(dir && dir !== "—" ? `${symbol} ${dir}` : symbol);
+  if (signal.entry_value != null) {
+    parts.push(`@ ${formatEntryRule(signal)}`);
+  }
+  if (signal.targets.length > 0) {
+    const tgt = signal.targets.slice(0, 3).map(formatNumber).join(" · ");
+    const tail = signal.targets.length > 3 ? ` +${signal.targets.length - 3}` : "";
+    parts.push(`🎯 ${tgt}${tail}`);
+  }
+  if (signal.stop_loss != null) {
+    parts.push(`SL ${formatNumber(signal.stop_loss)}`);
+  }
+  if (signal.leverage != null && signal.leverage > 1) {
+    parts.push(`${signal.leverage}x`);
+  }
+  const exCount = signal.exchange_scope.length;
+  if (exCount > 0) {
+    parts.push(exCount === 1 ? signal.exchange_scope[0] : `${exCount} Exchanges`);
+  }
+  return parts.join(" · ");
 }
 
 const TONE_ACCENT: Record<Tone, string> = {
@@ -457,8 +527,62 @@ function SignalPasteForm({ onPasted }: SignalPasteFormProps) {
   );
 }
 
+function SignalDetailRow({ label, value, mono = false }: { label: string; value: string; mono?: boolean }) {
+  return (
+    <div className="flex gap-2 min-w-0">
+      <span className="text-2xs uppercase tracking-wider text-fg-subtle shrink-0 w-[110px] pt-0.5">
+        {label}
+      </span>
+      <span className={cn("text-xs text-fg break-words min-w-0", mono && "font-mono")}>
+        {value}
+      </span>
+    </div>
+  );
+}
+
+function SignalDetails({ signal, duplicate }: { signal: SignalSummary; duplicate: boolean }) {
+  const exchanges = signal.exchange_scope.length > 0 ? signal.exchange_scope.join(", ") : "—";
+  const targets =
+    signal.targets.length > 0 ? signal.targets.map(formatNumber).join(", ") : "—";
+  const statusLabel = (signal.signal_status ?? "—").toUpperCase();
+  const duplicateLabel = duplicate ? "Ja — Wiederholung blockiert" : "Nein";
+
+  return (
+    <div className="rounded-sm border border-line-subtle bg-bg-2/40 p-3 space-y-2">
+      <div className="flex items-center justify-between gap-2">
+        <div className="text-2xs uppercase tracking-wider text-fg-subtle font-semibold">
+          Signal-Details
+        </div>
+        {signal.signal_id && (
+          <span className="text-2xs font-mono text-fg-subtle break-all">
+            {signal.signal_id}
+          </span>
+        )}
+      </div>
+      <div className="grid gap-x-4 gap-y-1.5 sm:grid-cols-2">
+        <SignalDetailRow label="Symbol" value={signal.symbol ?? "—"} mono />
+        <SignalDetailRow label="Direction" value={formatDirection(signal)} />
+        <SignalDetailRow label="Exchange" value={exchanges} mono />
+        <SignalDetailRow label="Market" value={signal.market_type ?? "—"} />
+        <SignalDetailRow label="Entry Rule" value={formatEntryRule(signal)} mono />
+        <SignalDetailRow label="Targets" value={targets} mono />
+        <SignalDetailRow label="Stop Loss" value={formatNumber(signal.stop_loss)} mono />
+        <SignalDetailRow label="Leverage" value={formatLeverage(signal.leverage)} />
+        <SignalDetailRow label="Status" value={statusLabel} />
+        <SignalDetailRow
+          label="Timestamp"
+          value={signal.signal_timestamp ? formatTs(signal.signal_timestamp) : "—"}
+          mono
+        />
+        <SignalDetailRow label="Duplikat" value={duplicateLabel} />
+      </div>
+    </div>
+  );
+}
+
 function EnvelopeCard({ rec }: { rec: EnvelopeRecord }) {
   const tone = envelopeTone(rec);
+  const isDuplicate = rec.status === "duplicate";
   return (
     <div
       className={cn(
@@ -469,7 +593,13 @@ function EnvelopeCard({ rec }: { rec: EnvelopeRecord }) {
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="flex items-center gap-2.5 min-w-0">
           <span className="shrink-0">{TONE_ICON[tone]}</span>
-          <div className="min-w-0">
+          <div className="min-w-0 space-y-1">
+            <div className="text-sm font-semibold text-fg">{statusHeadline(rec)}</div>
+            {rec.signal && (
+              <div className="text-sm font-mono text-fg break-words">
+                {signalHeadline(rec.signal)}
+              </div>
+            )}
             <div className="flex flex-wrap items-center gap-2">
               <Badge tone={tone === "neutral" ? "muted" : tone} dot>
                 {rec.status ?? "—"}
@@ -496,28 +626,20 @@ function EnvelopeCard({ rec }: { rec: EnvelopeRecord }) {
         </div>
       </div>
 
-      <div className="grid gap-3 sm:grid-cols-2">
-        {rec.envelope_id && (
-          <div>
-            <div className="text-2xs uppercase tracking-wider text-fg-subtle mb-0.5">
-              Envelope-ID
-            </div>
-            <div className="font-mono text-xs text-fg break-all">
-              {rec.envelope_id}
-            </div>
-          </div>
-        )}
-        {rec.idempotency_key && (
-          <div>
-            <div className="text-2xs uppercase tracking-wider text-fg-subtle mb-0.5">
-              Idempotency-Key
-            </div>
-            <div className="font-mono text-2xs text-fg-muted break-all">
-              {rec.idempotency_key}
-            </div>
-          </div>
-        )}
-      </div>
+      {rec.raw_text_preview && (
+        <details className="rounded-sm border border-line-subtle bg-bg-2/40 group" open>
+          <summary className="cursor-pointer list-none px-3 py-2 text-2xs uppercase tracking-wider text-fg-subtle font-semibold flex items-center justify-between">
+            <span>Original-Paste</span>
+            <span className="text-2xs text-fg-subtle group-open:hidden">(klicken zum Öffnen)</span>
+            <span className="text-2xs text-fg-subtle hidden group-open:inline">(klicken zum Schließen)</span>
+          </summary>
+          <pre className="px-3 pb-3 pt-1 font-mono text-2xs text-fg-muted whitespace-pre-wrap break-words leading-relaxed">
+{rec.raw_text_preview}
+          </pre>
+        </details>
+      )}
+
+      {rec.signal && <SignalDetails signal={rec.signal} duplicate={isDuplicate} />}
 
       {rec.errors.length > 0 && (
         <div className="rounded-sm border border-neg/20 bg-neg/5 p-2.5">
@@ -529,6 +651,21 @@ function EnvelopeCard({ rec }: { rec: EnvelopeRecord }) {
               <li key={i}>{err}</li>
             ))}
           </ul>
+        </div>
+      )}
+
+      {(rec.envelope_id || rec.idempotency_key) && (
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 pt-1 border-t border-line-subtle text-2xs text-fg-subtle font-mono">
+          {rec.envelope_id && (
+            <span className="break-all">
+              <span className="opacity-70">env:</span> {rec.envelope_id}
+            </span>
+          )}
+          {rec.idempotency_key && (
+            <span className="break-all">
+              <span className="opacity-70">idem:</span> {rec.idempotency_key}
+            </span>
+          )}
         </div>
       )}
     </div>

@@ -280,3 +280,43 @@ def test_recent_envelopes_rejects_wrong_bearer(client: TestClient) -> None:
         headers={"Authorization": "Bearer wrong"},
     )
     assert resp.status_code == 403
+
+
+# --------------------------------------------------------------------------- #
+# F-027: payload → signal projection                                          #
+# --------------------------------------------------------------------------- #
+
+
+def test_recent_envelopes_projects_signal_payload(client: TestClient) -> None:
+    resp = client.post("/signals/paste", json={"text": _SIGNAL_TEXT}, headers=_hdr())
+    assert resp.status_code == 200
+
+    listing = client.get("/signals/envelope/recent", headers=_hdr())
+    assert listing.status_code == 200
+    record = listing.json()["records"][0]
+    assert record["message_type"] == "signal"
+    signal = record["signal"]
+    assert signal is not None
+    assert signal["signal_id"] == "SIG-20260415-BTCUSDT-999"
+    assert signal["symbol"] == "BTC/USDT"
+    assert signal["direction"] == "long"
+    assert signal["side"] == "buy"
+    assert signal["exchange_scope"] == ["binance_futures"]
+    assert signal["entry_type"] == "below"
+    assert signal["entry_value"] == 65000.0
+    assert signal["targets"] == [70000.0]
+    assert signal["stop_loss"] == 62000.0
+    assert signal["leverage"] == 10
+    assert signal["signal_status"] == "new"
+    assert signal["signal_timestamp"] is not None
+
+
+def test_recent_envelopes_signal_null_for_news(client: TestClient) -> None:
+    resp = client.post("/signals/paste", json={"text": _NEWS_TEXT}, headers=_hdr())
+    assert resp.status_code == 200
+
+    listing = client.get("/signals/envelope/recent", headers=_hdr())
+    assert listing.status_code == 200
+    record = listing.json()["records"][0]
+    assert record["message_type"] == "news"
+    assert record["signal"] is None

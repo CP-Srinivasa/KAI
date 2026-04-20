@@ -480,6 +480,22 @@ export function postSignalPaste(
   return apiPost<SignalPasteResponse>("/signals/paste", { text, ...extra });
 }
 
+export type SignalSummary = {
+  signal_id: string | null;
+  symbol: string | null;
+  direction: string | null;
+  side: string | null;
+  exchange_scope: string[];
+  market_type: string | null;
+  entry_type: string | null;
+  entry_value: number | null;
+  targets: number[];
+  stop_loss: number | null;
+  leverage: number | null;
+  signal_status: string | null;
+  signal_timestamp: string | null;
+};
+
 export type EnvelopeRecord = {
   timestamp_utc: string | null;
   event: string | null;
@@ -490,6 +506,8 @@ export type EnvelopeRecord = {
   envelope_id: string | null;
   idempotency_key: string | null;
   errors: string[];
+  signal: SignalSummary | null;
+  raw_text_preview: string | null;
 };
 
 export type EnvelopeRecentResponse = {

@@ -43,10 +43,10 @@ def _nav_row(parent: str | None = "main") -> list[dict[str, str]]:
     Pass parent=None on `main` menu itself (no nav row needed there).
     """
     if parent is None or parent == "main":
-        return _row(_btn("Main Menu", "menu:main"))
+        return _row(_btn("Hauptmenü", "menu:main"))
     return _row(
-        _btn("Back", f"menu:{parent}"),
-        _btn("Main Menu", "menu:main"),
+        _btn("Zurück", f"menu:{parent}"),
+        _btn("Hauptmenü", "menu:main"),
     )
 
 
@@ -54,29 +54,29 @@ DEFAULT_MENU_MAIN: dict[str, Any] = {
     "text": (
         "*KAI Control Center*\n"
         "\n"
-        "Operate signals, portfolio, automation and agents from one place."
+        "Signale, Portfolio, Automation und Agenten zentral steuern."
     ),
     "keyboard": [
-        _row(_btn("System Status", "cmd:status")),
+        _row(_btn("System-Status", "cmd:status")),
         _row(
             _btn("Portfolio", "menu:portfolio"),
-            _btn("Signals", "menu:signals"),
+            _btn("Signale", "menu:signals"),
         ),
         _row(
             _btn("Trades", "menu:trading"),
             _btn("Alerts", "menu:alerts"),
         ),
         _row(
-            _btn("Auto Trading", "menu:autotrading"),
-            _btn("Agents", "menu:agents"),
+            _btn("Auto-Trading", "menu:autotrading"),
+            _btn("Agenten", "menu:agents"),
         ),
         _row(
-            _btn("Exchanges", "menu:exchanges"),
+            _btn("Börsen", "menu:exchanges"),
             _btn("Insights", "menu:insights"),
         ),
         _row(
-            _btn("Operations", "menu:ops"),
-            _btn("Help", "cmd:hilfe"),
+            _btn("Betrieb", "menu:ops"),
+            _btn("Hilfe", "cmd:hilfe"),
         ),
     ],
 }
@@ -85,11 +85,11 @@ DEFAULT_MENU_TRADING: dict[str, Any] = {
     "text": (
         "*Trades*\n"
         "\n"
-        "Live positions and exposure across the paper portfolio."
+        "Live-Positionen und Exposure im Paper-Portfolio."
     ),
     "keyboard": [
         _row(
-            _btn("Open Positions", "cmd:positions"),
+            _btn("Offene Positionen", "cmd:positions"),
             _btn("Exposure", "cmd:exposure"),
         ),
         _nav_row("main"),
@@ -100,30 +100,30 @@ DEFAULT_MENU_PORTFOLIO: dict[str, Any] = {
     "text": (
         "*Portfolio*\n"
         "\n"
-        "Paper portfolio snapshot with realized and unrealized PnL."
+        "Paper-Portfolio-Snapshot mit realisiertem und unrealisiertem PnL."
     ),
     "keyboard": [
         _row(
-            _btn("Open Positions", "cmd:positions"),
+            _btn("Offene Positionen", "cmd:positions"),
             _btn("Exposure", "cmd:exposure"),
         ),
-        _row(_btn("Daily Report", "cmd:tagesbericht")),
+        _row(_btn("Tagesbericht", "cmd:tagesbericht")),
         _nav_row("main"),
     ],
 }
 
 DEFAULT_MENU_SIGNALS: dict[str, Any] = {
     "text": (
-        "*Signals*\n"
+        "*Signale*\n"
         "\n"
-        "Review active signals or submit a new one through the paste flow."
+        "Aktive Signale prüfen oder ein neues über den Paste-Flow einreichen."
     ),
     "keyboard": [
         _row(
-            _btn("Active Signals", "cmd:signals"),
-            _btn("Pipeline Status", "cmd:signalstatus"),
+            _btn("Aktive Signale", "cmd:signals"),
+            _btn("Pipeline-Status", "cmd:signalstatus"),
         ),
-        _row(_btn("Submit New Signal", "menu:signal_send")),
+        _row(_btn("Neues Signal senden", "menu:signal_send")),
         _nav_row("main"),
     ],
 }
@@ -132,26 +132,26 @@ DEFAULT_MENU_ALERTS: dict[str, Any] = {
     "text": (
         "*Alerts*\n"
         "\n"
-        "Delivery status, precision metrics and the daily summary."
+        "Zustellstatus, Precision-Metriken und Tageszusammenfassung."
     ),
     "keyboard": [
         _row(
-            _btn("Alert Status", "cmd:alertstatus"),
-            _btn("Quality Metrics", "cmd:qualitaet"),
+            _btn("Alert-Status", "cmd:alertstatus"),
+            _btn("Qualitäts-Metriken", "cmd:qualitaet"),
         ),
-        _row(_btn("Daily Report", "cmd:tagesbericht")),
+        _row(_btn("Tagesbericht", "cmd:tagesbericht")),
         _nav_row("main"),
     ],
 }
 
 DEFAULT_MENU_AGENTS: dict[str, Any] = {
     "text": (
-        "*Agents*\n"
+        "*Agenten*\n"
         "\n"
-        "Supervised assistants for security, health, architecture and design."
+        "Beaufsichtigte Assistenten für Sicherheit, Health, Architektur und Design."
     ),
     "keyboard": [
-        _row(_btn("SENTR — Security", "menu:agents_sentr")),
+        _row(_btn("SENTR — Sicherheit", "menu:agents_sentr")),
         _row(_btn("Watchdog — Health", "menu:agents_watchdog")),
         _row(_btn("Architect — Review", "menu:agents_architect")),
         _row(_btn("DALI — Design", "menu:agents_dali")),
@@ -161,16 +161,16 @@ DEFAULT_MENU_AGENTS: dict[str, Any] = {
 
 DEFAULT_MENU_AGENTS_SENTR: dict[str, Any] = {
     "text": (
-        "*SENTR — Security*\n"
+        "*SENTR — Sicherheit*\n"
         "\n"
-        "Security inspections and incident reports.\n"
-        "Free-form chat: `/sentr <message>`."
+        "Sicherheits-Inspektionen und Vorfallsberichte.\n"
+        "Freitext-Chat: `/sentr <nachricht>`."
     ),
     "keyboard": [
-        _row(_btn("Open Chat", "cmd:sentr")),
+        _row(_btn("Chat öffnen", "cmd:sentr")),
         _row(
-            _btn("Run Inspection", "cmd:sentr !inspect"),
-            _btn("Build Report", "cmd:sentr !report"),
+            _btn("Inspektion starten", "cmd:sentr !inspect"),
+            _btn("Bericht erstellen", "cmd:sentr !report"),
         ),
         _nav_row("agents"),
     ],
@@ -180,14 +180,14 @@ DEFAULT_MENU_AGENTS_WATCHDOG: dict[str, Any] = {
     "text": (
         "*Watchdog — Health*\n"
         "\n"
-        "Health and drift monitoring.\n"
-        "Free-form chat: `/watchdog <message>`."
+        "Health- und Drift-Monitoring.\n"
+        "Freitext-Chat: `/watchdog <nachricht>`."
     ),
     "keyboard": [
-        _row(_btn("Open Chat", "cmd:watchdog")),
+        _row(_btn("Chat öffnen", "cmd:watchdog")),
         _row(
-            _btn("Run Health Check", "cmd:watchdog !check"),
-            _btn("Build Report", "cmd:watchdog !report"),
+            _btn("Health-Check starten", "cmd:watchdog !check"),
+            _btn("Bericht erstellen", "cmd:watchdog !report"),
         ),
         _nav_row("agents"),
     ],
@@ -197,14 +197,14 @@ DEFAULT_MENU_AGENTS_ARCHITECT: dict[str, Any] = {
     "text": (
         "*Architect — Review*\n"
         "\n"
-        "Architecture review and change proposals.\n"
-        "Free-form chat: `/architect <message>`."
+        "Architektur-Review und Änderungsvorschläge.\n"
+        "Freitext-Chat: `/architect <nachricht>`."
     ),
     "keyboard": [
-        _row(_btn("Open Chat", "cmd:architect")),
+        _row(_btn("Chat öffnen", "cmd:architect")),
         _row(
-            _btn("Run Review", "cmd:architect !review"),
-            _btn("Propose Change", "cmd:architect !propose"),
+            _btn("Review starten", "cmd:architect !review"),
+            _btn("Änderung vorschlagen", "cmd:architect !propose"),
         ),
         _nav_row("agents"),
     ],
@@ -214,27 +214,27 @@ DEFAULT_MENU_AGENTS_DALI: dict[str, Any] = {
     "text": (
         "*DALI — Design*\n"
         "\n"
-        "UI/UX audit, redesign concepts and patch proposals for dashboard, "
-        "telegram UI and the visual system.\n"
-        "Free-form chat: `/dali <message>`."
+        "UI/UX-Audit, Redesign-Konzepte und Patch-Vorschläge für Dashboard, "
+        "Telegram-UI und das visuelle System.\n"
+        "Freitext-Chat: `/dali <nachricht>`."
     ),
     "keyboard": [
-        _row(_btn("Open Chat", "cmd:dali")),
+        _row(_btn("Chat öffnen", "cmd:dali")),
         _row(
-            _btn("Run Audit", "cmd:dali !audit"),
-            _btn("Propose Redesign", "cmd:dali !propose"),
+            _btn("Audit starten", "cmd:dali !audit"),
+            _btn("Redesign vorschlagen", "cmd:dali !propose"),
         ),
-        _row(_btn("Draft Patch", "cmd:dali !implement")),
+        _row(_btn("Patch entwerfen", "cmd:dali !implement")),
         _nav_row("agents"),
     ],
 }
 
 DEFAULT_MENU_EXCHANGES: dict[str, Any] = {
     "text": (
-        "*Exchanges*\n"
+        "*Börsen*\n"
         "\n"
-        "Exchange adapters and order routing.\n"
-        "Live integration is scheduled for Phase 2 — today this view is read-only."
+        "Exchange-Adapter und Order-Routing.\n"
+        "Live-Integration geplant für Phase 2 — aktuell nur Read-only-Ansicht."
     ),
     "keyboard": [
         _nav_row("main"),
@@ -243,10 +243,11 @@ DEFAULT_MENU_EXCHANGES: dict[str, Any] = {
 
 DEFAULT_MENU_AUTOTRADING: dict[str, Any] = {
     "text": (
-        "*Auto Trading*\n"
+        "*Auto-Trading*\n"
         "\n"
-        "Automated forwarding of accepted signals to exchange routing.\n"
-        "Activation requires the Quality Bar — Precision ≥ 60% or verified real paper fills."
+        "Automatische Weiterleitung akzeptierter Signale an das Exchange-Routing.\n"
+        "Aktivierung benötigt die Quality-Bar — Precision ≥ 60% "
+        "oder verifizierte echte Paper-Fills."
     ),
     "keyboard": [
         _nav_row("main"),
@@ -257,8 +258,8 @@ DEFAULT_MENU_INSIGHTS: dict[str, Any] = {
     "text": (
         "*Insights*\n"
         "\n"
-        "Feature analytics, precision trend and priority correlation.\n"
-        "Full analytics live in the dashboard — mobile summaries are on the roadmap."
+        "Feature-Analytics, Precision-Trend und Priority-Korrelation.\n"
+        "Volle Analytics im Dashboard — mobile Zusammenfassungen auf der Roadmap."
     ),
     "keyboard": [
         _nav_row("main"),
@@ -267,20 +268,20 @@ DEFAULT_MENU_INSIGHTS: dict[str, Any] = {
 
 DEFAULT_MENU_OPS: dict[str, Any] = {
     "text": (
-        "*Operations*\n"
+        "*Betrieb*\n"
         "\n"
-        "System control, pause and resume, plus maintenance actions."
+        "System-Steuerung, Pause und Fortsetzen sowie Wartungsaktionen."
     ),
     "keyboard": [
-        _row(_btn("System Status", "cmd:status")),
+        _row(_btn("System-Status", "cmd:status")),
         _row(
             _btn("Pause", "cmd:pause"),
-            _btn("Resume", "cmd:resume"),
+            _btn("Fortsetzen", "cmd:resume"),
         ),
-        _row(_btn("Emergency Stop", "cmd:kill")),
+        _row(_btn("Not-Stopp", "cmd:kill")),
         _row(
-            _btn("Reload Menu", "cmd:menu_reload"),
-            _btn("Validate Menu", "cmd:menu_validate"),
+            _btn("Menü neu laden", "cmd:menu_reload"),
+            _btn("Menü validieren", "cmd:menu_validate"),
         ),
         _nav_row("main"),
     ],
@@ -288,13 +289,13 @@ DEFAULT_MENU_OPS: dict[str, Any] = {
 
 DEFAULT_MENU_SIGNAL_SEND: dict[str, Any] = {
     "text": (
-        "*Submit Signal*\n"
+        "*Signal einreichen*\n"
         "\n"
-        "Paste a structured block below. Telegram renders it, "
-        "the JSON envelope is the source of truth.\n"
-        "SIGNAL entries fail closed — missing required fields are not forwarded.\n"
+        "Füge unten einen strukturierten Block ein. Telegram rendert ihn, "
+        "das JSON-Envelope ist die Quelle der Wahrheit.\n"
+        "SIGNAL-Einträge sind fail-closed — fehlende Pflichtfelder werden nicht weitergeleitet.\n"
         "\n"
-        "*SIGNAL — trade:*\n"
+        "*SIGNAL — Trade:*\n"
         "`[SIGNAL]`\n"
         "`Signal ID: SIG-20260415-BTCUSDT-001`\n"
         "`Source: Premium Signals`\n"
@@ -310,13 +311,13 @@ DEFAULT_MENU_SIGNAL_SEND: dict[str, Any] = {
         "`Status: NEW`\n"
         "`Timestamp: 2026-04-15T10:00:00Z`\n"
         "\n"
-        "*NEWS — information:*\n"
+        "*NEWS — Information:*\n"
         "`[NEWS]`\n"
         "`Source: Outlet`\n"
         "`Title: Headline`\n"
         "`Priority: High`\n"
         "\n"
-        "*EXCHANGE_RESPONSE — status:*\n"
+        "*EXCHANGE_RESPONSE — Status:*\n"
         "`[EXCHANGE_RESPONSE]`\n"
         "`Related Signal ID: SIG-...`\n"
         "`Exchange: bybit`\n"
@@ -330,17 +331,17 @@ DEFAULT_MENU_SIGNAL_SEND: dict[str, Any] = {
 
 DEFAULT_MENU_CONTROL: dict[str, Any] = {
     "text": (
-        "*Controls*\n"
+        "*Steuerung*\n"
         "\n"
-        "System control and emergency actions."
+        "System-Steuerung und Notaktionen."
     ),
     "keyboard": [
         _row(
             _btn("Pause", "cmd:pause"),
-            _btn("Resume", "cmd:resume"),
+            _btn("Fortsetzen", "cmd:resume"),
         ),
-        _row(_btn("Emergency Stop", "cmd:kill")),
-        _row(_btn("Reload Menu", "cmd:menu_reload")),
+        _row(_btn("Not-Stopp", "cmd:kill")),
+        _row(_btn("Menü neu laden", "cmd:menu_reload")),
         _nav_row("main"),
     ],
 }

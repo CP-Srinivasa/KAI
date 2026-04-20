@@ -302,6 +302,7 @@ async def paste_signal(
             rec["envelope_id"] = envelope.envelope_id
             rec["idempotency_key"] = envelope.idempotency_key
             rec["payload"] = dict(envelope.payload)
+            rec["raw_text_preview"] = text[:500]
             rec["errors"] = list(validation_errors)
             rec["missing_fields"] = list(completable)
             _append_audit(rec)
@@ -331,6 +332,7 @@ async def paste_signal(
         rec["envelope_id"] = envelope.envelope_id
         rec["idempotency_key"] = envelope.idempotency_key
         rec["payload"] = dict(envelope.payload)
+        rec["raw_text_preview"] = text[:500]
         _append_audit(rec)
         return SignalPasteResponse(
             status="duplicate", stage="idempotency_gate",
@@ -346,6 +348,7 @@ async def paste_signal(
     rec["envelope_id"] = envelope.envelope_id
     rec["idempotency_key"] = envelope.idempotency_key
     rec["payload"] = dict(envelope.payload)
+    rec["raw_text_preview"] = text[:500]
     rec["schema_payload_keys"] = sorted(schema_payload.keys())
     _append_audit(rec)
 
@@ -362,6 +365,28 @@ async def paste_signal(
     )
 
 
+class SignalSummary(BaseModel):
+    """Trade-relevant fields projected from a signal envelope payload.
+
+    Populated only when `EnvelopeRecord.message_type == "signal"`. Lets the
+    dashboard show WHAT was accepted without re-fetching the raw audit file.
+    """
+
+    signal_id: str | None = None
+    symbol: str | None = None
+    direction: str | None = None
+    side: str | None = None
+    exchange_scope: list[str] = Field(default_factory=list)
+    market_type: str | None = None
+    entry_type: str | None = None
+    entry_value: float | None = None
+    targets: list[float] = Field(default_factory=list)
+    stop_loss: float | None = None
+    leverage: int | None = None
+    signal_status: str | None = None
+    signal_timestamp: str | None = None
+
+
 class EnvelopeRecord(BaseModel):
     timestamp_utc: str | None = None
     event: str | None = None
@@ -372,6 +397,8 @@ class EnvelopeRecord(BaseModel):
     envelope_id: str | None = None
     idempotency_key: str | None = None
     errors: list[str] = Field(default_factory=list)
+    signal: SignalSummary | None = None
+    raw_text_preview: str | None = None
 
 
 class EnvelopeRecentResponse(BaseModel):
@@ -382,16 +409,47 @@ class EnvelopeRecentResponse(BaseModel):
 def _project_record(raw: dict[str, object]) -> EnvelopeRecord:
     errors = raw.get("errors")
     errors_list = [str(e) for e in errors] if isinstance(errors, list) else []
+    message_type = _as_str(raw.get("message_type"))
+    signal: SignalSummary | None = None
+    if message_type == "signal":
+        payload = raw.get("payload")
+        if isinstance(payload, dict):
+            signal = _project_signal(payload)
+    raw_text_preview = _as_str(raw.get("raw_text_preview"))
+    if raw_text_preview is None:
+        payload = raw.get("payload")
+        if isinstance(payload, dict):
+            raw_text_preview = _as_str(payload.get("text_preview"))
     return EnvelopeRecord(
         timestamp_utc=_as_str(raw.get("timestamp_utc")),
         event=_as_str(raw.get("event")),
         source=_as_str(raw.get("source")),
         stage=_as_str(raw.get("stage")),
         status=_as_str(raw.get("status")),
-        message_type=_as_str(raw.get("message_type")),
+        message_type=message_type,
         envelope_id=_as_str(raw.get("envelope_id")),
         idempotency_key=_as_str(raw.get("idempotency_key")),
         errors=errors_list,
+        signal=signal,
+        raw_text_preview=raw_text_preview,
+    )
+
+
+def _project_signal(payload: dict[str, object]) -> SignalSummary:
+    return SignalSummary(
+        signal_id=_as_str(payload.get("signal_id")),
+        symbol=_as_str(payload.get("display_symbol")) or _as_str(payload.get("symbol")),
+        direction=_as_str(payload.get("direction")),
+        side=_as_str(payload.get("side")),
+        exchange_scope=_as_str_list(payload.get("exchange_scope")),
+        market_type=_as_str(payload.get("market_type")),
+        entry_type=_as_str(payload.get("entry_type")),
+        entry_value=_as_float(payload.get("entry_value")),
+        targets=_as_float_list(payload.get("targets")),
+        stop_loss=_as_float(payload.get("stop_loss")),
+        leverage=_as_int(payload.get("leverage")),
+        signal_status=_as_str(payload.get("status")),
+        signal_timestamp=_as_str(payload.get("timestamp_utc")),
     )
 
 
@@ -399,6 +457,42 @@ def _as_str(value: object) -> str | None:
     if value is None:
         return None
     return str(value)
+
+
+def _as_str_list(value: object) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [str(x) for x in value if x is not None]
+
+
+def _as_float(value: object) -> float | None:
+    if value is None:
+        return None
+    try:
+        return float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+
+
+def _as_float_list(value: object) -> list[float]:
+    if not isinstance(value, list):
+        return []
+    out: list[float] = []
+    for x in value:
+        try:
+            out.append(float(x))  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            continue
+    return out
+
+
+def _as_int(value: object) -> int | None:
+    if value is None:
+        return None
+    try:
+        return int(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
 
 
 @router.get("/envelope/recent", response_model=EnvelopeRecentResponse)
