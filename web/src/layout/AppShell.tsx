@@ -2,6 +2,7 @@ import { useState, lazy, Suspense } from "react";
 import { Sidebar } from "./Sidebar";
 import { Topbar } from "./Topbar";
 import { BackendStatusBanner } from "./BackendStatusBanner";
+import { CommandPalette } from "@/components/CommandPalette";
 import { useRouter } from "@/state/Router";
 import { Dashboard } from "@/pages/Dashboard";
 import { useAppState } from "@/state/AppState";
@@ -57,6 +58,7 @@ export function AppShell() {
           <Suspense fallback={<RouteFallback />}>{renderRoute(route)}</Suspense>
         </main>
       </div>
+      <CommandPalette />
     </div>
   );
 }

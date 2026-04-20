@@ -3,6 +3,9 @@ import { Radio, Target, ShieldAlert, CheckCircle2, Activity, AlertCircle, Inbox,
 import { KpiCard } from "@/components/kpi/KpiCard";
 import { QualityBarPanel } from "@/components/panels/QualityBar";
 import { PreparedPanel } from "@/components/panels/PreparedPanel";
+import { SignalHeatmapPanel } from "@/components/panels/SignalHeatmap";
+import { AgentsStatusCard } from "@/components/panels/AgentsStatusCard";
+import { TradingViewChart, isTradingViewEnabled } from "@/components/trading/tradingview";
 import { Card, CardHeader, Badge } from "@/components/ui/Primitives";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { useT } from "@/i18n/I18nProvider";
@@ -183,6 +186,28 @@ export function Dashboard() {
           <TradingLoopCard data={data} />
         </div>
       </div>
+
+      {/* Signal-Matrix + Market-Snapshot */}
+      <div className="grid grid-cols-12 gap-4">
+        <div className="col-span-12 lg:col-span-7">
+          <SignalHeatmapPanel />
+        </div>
+        <div className="col-span-12 lg:col-span-5">
+          {isTradingViewEnabled() ? (
+            <TradingViewChart heightClass="h-[320px]" title="Markt-Snapshot" />
+          ) : (
+            <Card padded>
+              <CardHeader title="Markt-Snapshot" right={<Badge tone="muted">offline</Badge>} />
+              <div className="py-8 text-center text-xs text-fg-subtle">
+                TradingView deaktiviert — Chart unter „Märkte" verfügbar.
+              </div>
+            </Card>
+          )}
+        </div>
+      </div>
+
+      {/* Agent Roster */}
+      <AgentsStatusCard />
 
       {/* Recent Alerts */}
       <RecentAlertsCard data={data} />

@@ -4,6 +4,7 @@ import { AppStateProvider } from "@/state/AppState";
 import { CurrencyProvider } from "@/state/CurrencyProvider";
 import { RouterProvider } from "@/state/Router";
 import { AppShell } from "@/layout/AppShell";
+import { ToastProvider } from "@/components/Toast";
 
 export default function App() {
   return (
@@ -12,7 +13,9 @@ export default function App() {
         <CurrencyProvider>
           <AppStateProvider>
             <RouterProvider>
-              <AppShell />
+              <ToastProvider>
+                <AppShell />
+              </ToastProvider>
             </RouterProvider>
           </AppStateProvider>
         </CurrencyProvider>

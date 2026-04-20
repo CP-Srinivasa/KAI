@@ -55,17 +55,18 @@ export function Topbar({ onMobileMenuToggle }: TopbarProps = {}) {
         <span className="text-sm font-semibold tracking-tight text-fg truncate">{t(CONTEXT[route])}</span>
       </div>
 
-      <div className="relative hidden md:flex items-center ml-4 flex-1 max-w-md">
+      <button
+        type="button"
+        onClick={() => window.dispatchEvent(new CustomEvent("kai:command-palette:open"))}
+        className="relative hidden md:flex items-center ml-4 flex-1 max-w-md h-8 pl-8 pr-16 rounded-sm border border-line-subtle bg-bg-2 text-xs text-fg-subtle hover:bg-bg-1 hover:border-line-strong transition-colors text-left"
+        aria-label={t("topbar.search")}
+      >
         <Search size={14} className="absolute left-2.5 text-fg-subtle" />
-        <input
-          type="text"
-          placeholder={t("topbar.search")}
-          className="w-full h-8 pl-8 pr-16 rounded-sm border border-line-subtle bg-bg-2 text-xs placeholder:text-fg-subtle focus:outline-none focus:border-line-strong focus:bg-bg-1 transition-colors"
-        />
-        <kbd className="absolute right-2 text-[10px] font-mono text-fg-subtle border border-line-subtle bg-bg-1 rounded-xs px-1 py-0.5">
+        <span className="truncate">{t("topbar.search")}</span>
+        <kbd className="absolute right-2 text-2xs font-mono text-fg-subtle border border-line-subtle bg-bg-1 rounded-xs px-1 py-0.5">
           ⌘K
         </kbd>
-      </div>
+      </button>
 
       <div className="ml-auto flex items-center gap-1 sm:gap-2">
         <div className="hidden lg:flex items-center rounded-sm border border-line-subtle bg-bg-2 p-0.5" role="group" aria-label={t("topbar.timeframe")}>
