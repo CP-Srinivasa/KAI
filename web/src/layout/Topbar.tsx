@@ -115,7 +115,13 @@ export function Topbar({ onMobileMenuToggle }: TopbarProps = {}) {
           {langOpen && (
             <>
               <div className="fixed inset-0 z-30" onClick={() => setLangOpen(false)} />
-              <div className="absolute right-0 top-full mt-1.5 z-40 w-[160px] rounded-md border border-line bg-bg-1 shadow-raised p-1">
+              <div
+                className={cn(
+                  "z-40 rounded-md border border-line bg-bg-1 shadow-raised p-1",
+                  "fixed top-[3.875rem] inset-x-2 w-auto",
+                  "sm:absolute sm:top-full sm:mt-1.5 sm:inset-x-auto sm:right-0 sm:w-[160px]",
+                )}
+              >
                 {(["de", "en"] as const).map((l) => (
                   <button
                     key={l}

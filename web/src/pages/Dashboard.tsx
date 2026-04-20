@@ -261,7 +261,7 @@ function PreparedSection() {
               {PREPARED_PANELS.map((p) => (
                 <span
                   key={p.title}
-                  className="inline-flex items-center gap-1 rounded-xs border border-dashed border-line px-1.5 py-0.5 text-[10px] font-medium text-fg-subtle bg-bg-1"
+                  className="inline-flex items-center gap-1 rounded-xs border border-dashed border-line px-1.5 py-0.5 text-2xs font-medium text-fg-subtle bg-bg-1"
                 >
                   <span className="h-1 w-1 rounded-full bg-fg-subtle/60" aria-hidden />
                   {p.title}
