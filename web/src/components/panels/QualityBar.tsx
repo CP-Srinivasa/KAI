@@ -44,6 +44,20 @@ export function QualityBarPanel({ data }: { data: DashboardQuality | null }) {
       value: data?.paper_fills ?? null,
       target: 10,
       format: (n) => `${n}`,
+      hint:
+        data?.paper_fills_with_pnl != null
+          ? `PnL-Fills: ${data.paper_fills_with_pnl}`
+          : undefined,
+    },
+    {
+      label: "Paper Fills (PnL) — Re-Entry-Gate",
+      value: data?.paper_fills_with_pnl ?? null,
+      target: 10,
+      format: (n) => `${n}`,
+      hint:
+        data?.paper_realized_pnl_usd != null
+          ? `Σ realized: $${data.paper_realized_pnl_usd.toFixed(0)}`
+          : undefined,
     },
   ];
 
@@ -110,6 +124,23 @@ export function QualityBarPanel({ data }: { data: DashboardQuality | null }) {
             Forward: <span className="font-mono">{data.forward_hits}</span> hits /{" "}
             <span className="font-mono">{data.forward_miss}</span> miss (
             <span className="font-mono">{data.forward_resolved}</span> resolved)
+          </span>
+          <span>
+            Paper:{" "}
+            <span className="font-mono">{data.paper_fills_with_pnl}</span>/10 PnL-Fills ·{" "}
+            <span className="font-mono">{data.paper_positions_closed}</span> closed · Σ{" "}
+            <span
+              className={cn(
+                "font-mono",
+                data.paper_realized_pnl_usd > 0
+                  ? "text-pos"
+                  : data.paper_realized_pnl_usd < 0
+                    ? "text-neg"
+                    : "text-fg-muted",
+              )}
+            >
+              ${data.paper_realized_pnl_usd.toFixed(0)}
+            </span>
           </span>
           {data.generated_at && (
             <span className="ml-auto font-mono">

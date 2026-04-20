@@ -2,7 +2,9 @@ import { useState } from "react";
 import { Radio, Target, ShieldAlert, CheckCircle2, Activity, AlertCircle, Inbox, ChevronDown, ChevronUp, Wrench } from "lucide-react";
 import { KpiCard } from "@/components/kpi/KpiCard";
 import { QualityBarPanel } from "@/components/panels/QualityBar";
+import { ActivePrecisionCard } from "@/components/panels/ActivePrecisionCard";
 import { PreparedPanel } from "@/components/panels/PreparedPanel";
+import { ReentryGatePanel } from "@/components/panels/ReentryGatePanel";
 import { SignalHeatmapPanel } from "@/components/panels/SignalHeatmap";
 import { AgentsStatusCard } from "@/components/panels/AgentsStatusCard";
 import { TradingViewChart, isTradingViewEnabled } from "@/components/trading/tradingview";
@@ -10,6 +12,7 @@ import { Card, CardHeader, Badge } from "@/components/ui/Primitives";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { useT } from "@/i18n/I18nProvider";
 import { useDashboardQuality } from "@/lib/useDashboardQuality";
+import { useDashboardProvenance } from "@/lib/useDashboardProvenance";
 import { formatAbsolute, formatRelative } from "@/lib/time";
 import { cn } from "@/lib/utils";
 import { useRouter, type Route } from "@/state/Router";
@@ -51,6 +54,8 @@ export function Dashboard() {
   const { t } = useT();
   const q = useDashboardQuality();
   const data = q.state === "ready" ? q.data : null;
+  const p = useDashboardProvenance();
+  const provenance = p.state === "ready" ? p.data : null;
 
   const fp = data?.forward_precision_pct ?? null;
   const rc = data?.resolved_count ?? null;
@@ -176,6 +181,9 @@ export function Dashboard() {
         />
       </div>
 
+      {/* Re-Entry-Gate (TV-Pivot D-125 · Stichtag 2026-05-16) */}
+      <ReentryGatePanel quality={data} provenance={provenance} />
+
       {/* Aktiver Analytics-Grid */}
       <div className="grid grid-cols-12 gap-4">
         <div className="col-span-12 lg:col-span-8">
@@ -184,6 +192,13 @@ export function Dashboard() {
         <div className="col-span-12 lg:col-span-4 space-y-4">
           <SignalQualityCard data={data} />
           <TradingLoopCard data={data} />
+        </div>
+      </div>
+
+      {/* Active-Precision-Split (Source-Breakdown mit Wilson-CI) */}
+      <div className="grid grid-cols-12 gap-4">
+        <div className="col-span-12">
+          <ActivePrecisionCard data={provenance} />
         </div>
       </div>
 

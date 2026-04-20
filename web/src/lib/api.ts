@@ -128,6 +128,9 @@ export type DashboardQuality = {
   forward_hits: number;
   forward_miss: number;
   paper_fills: number;
+  paper_fills_with_pnl: number;
+  paper_realized_pnl_usd: number;
+  paper_positions_closed: number;
   paper_cycles: number;
   real_price_cycles: number;
   gate_status: string | null;
@@ -149,6 +152,40 @@ export type DashboardQuality = {
 
 export function fetchDashboardQuality(signal?: AbortSignal): Promise<DashboardQuality> {
   return apiGet<DashboardQuality>("/dashboard/api/quality", { signal });
+}
+
+export type ProvenanceMetrics = {
+  source: string;
+  resolved: number;
+  hits: number;
+  misses: number;
+  hit_rate_pct: number | null;
+  ci_low_pct: number | null;
+  ci_high_pct: number | null;
+  ci_width_pct: number | null;
+  sample_sufficient: boolean;
+  inconclusive: number;
+};
+
+export type DashboardProvenance = {
+  generated_at: string;
+  overall: ProvenanceMetrics;
+  by_source: ProvenanceMetrics[];
+  tradingview_pipeline: {
+    pending_events: number;
+    smoke_test_events: number;
+    real_events: number;
+    unique_signal_path_ids: number;
+  };
+  verdict: string;
+  notes: string[];
+  min_sample_for_judgment: number;
+};
+
+export function fetchDashboardProvenance(
+  signal?: AbortSignal,
+): Promise<DashboardProvenance> {
+  return apiGet<DashboardProvenance>("/dashboard/api/provenance", { signal });
 }
 
 // ---------------- Operator surfaces ----------------

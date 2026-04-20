@@ -30,6 +30,7 @@ _ALERT_AUDIT = _ARTIFACTS / "alert_audit.jsonl"
 _ALERT_OUTCOMES = _ARTIFACTS / "alert_outcomes.jsonl"
 _TRADING_LOOP_AUDIT = _ARTIFACTS / "trading_loop_audit.jsonl"
 _PAPER_EXECUTION_AUDIT = _ARTIFACTS / "paper_execution_audit.jsonl"
+_TV_PENDING = _ARTIFACTS / "tradingview_pending_signals.jsonl"
 
 # Frankfurter: ECB reference rates, no API key, daily refresh (~16:00 CET).
 # 1-hour TTL is generous — the underlying rate updates once per business day.
@@ -45,6 +46,11 @@ _fx_cache: dict[str, Any] = {"at": 0.0, "payload": None}
 # same data, a 30 s cache absorbs bursts without hiding fresh ticks.
 _HOLD_CACHE_TTL_S = 30.0
 _hold_cache: dict[str, Any] = {"at": 0.0, "report": None}
+
+# Same rationale as _hold_cache: the provenance report reads the same
+# alert-audit + outcomes files plus the TV pending log. 30 s TTL.
+_PROVENANCE_CACHE_TTL_S = 30.0
+_provenance_cache: dict[str, Any] = {"at": 0.0, "payload": None}
 
 # Source-by-doc map (for the active-precision legacy split). Loading it means
 # one DB query over directional doc-ids — not hot-path safe without a cache.
@@ -217,6 +223,20 @@ async def dashboard_quality_api() -> JSONResponse:
 
     exec_rows = _load_jsonl(_PAPER_EXECUTION_AUDIT)
     fills = [r for r in exec_rows if r.get("event_type") == "order_filled"]
+    # Gate-relevante Zählung: nur fills die eine Position geschlossen haben
+    # produzieren realized_pnl_usd != 0 (buy-side ist immer 0). Der Re-Entry-
+    # Gate (2026-05-16) verlangt ≥10 solcher PnL-tragenden Fills.
+    pnl_fills = [
+        r for r in fills
+        if isinstance(r.get("realized_pnl_usd"), (int, float))
+        and r["realized_pnl_usd"] != 0.0
+    ]
+    realized_pnl_usd = round(
+        sum(float(r.get("realized_pnl_usd", 0.0)) for r in pnl_fills), 2,
+    )
+    positions_closed = sum(
+        1 for r in exec_rows if r.get("event_type") == "position_closed"
+    )
 
     audit_rows = _load_jsonl(_ALERT_AUDIT)
     non_digest = [r for r in audit_rows if not r.get("is_digest")]
@@ -256,6 +276,9 @@ async def dashboard_quality_api() -> JSONResponse:
         "forward_hits": fwd.get("hits", 0),
         "forward_miss": fwd.get("miss", 0),
         "paper_fills": len(fills),
+        "paper_fills_with_pnl": len(pnl_fills),
+        "paper_realized_pnl_usd": realized_pnl_usd,
+        "paper_positions_closed": positions_closed,
         "paper_cycles": paper.get("loop_metrics", {}).get("total_cycles", 0),
         "real_price_cycles": quality.get("paper_real_price_cycle_count", 0),
         "gate_status": gate.get("overall_status"),
@@ -277,3 +300,56 @@ async def dashboard_quality_api() -> JSONResponse:
         ],
         "generated_at": report.get("generated_at", ""),
     }, headers={"Cache-Control": "no-store, max-age=0"})
+
+
+@router.get("/dashboard/api/provenance", tags=["dashboard"])
+async def dashboard_provenance_api() -> JSONResponse:
+    """Per-source active-precision split (Wilson 95% CI) for the dashboard SPA.
+
+    Joins alert_audit × alert_outcomes × CanonicalDocument.source_name and
+    returns hit-rate + CI per source. Drives the re-entry verdict at the
+    2026-05-16 gate: only sources with sample_sufficient (≥30 resolved) are
+    judgment-ready.
+    """
+    from dataclasses import asdict
+
+    from app.alerts.provenance_metrics import build_provenance_split_report
+
+    now = time.monotonic()
+    cached = _provenance_cache.get("payload")
+    if cached is not None and (now - _provenance_cache["at"]) < _PROVENANCE_CACHE_TTL_S:
+        return JSONResponse(
+            content=cached,
+            headers={"Cache-Control": "no-store, max-age=0"},
+        )
+
+    source_map = await _load_source_by_doc()
+    try:
+        report = build_provenance_split_report(
+            alert_audit_path=_ALERT_AUDIT,
+            alert_outcomes_path=_ALERT_OUTCOMES,
+            tradingview_pending_signals_path=_TV_PENDING,
+            source_by_doc=source_map or None,
+        )
+    except Exception as exc:
+        logger.warning("provenance_report_failed: %s", exc)
+        return JSONResponse(
+            content={"error": "provenance_unavailable", "detail": str(exc)},
+            status_code=503,
+        )
+
+    payload = {
+        "generated_at": report.generated_at,
+        "overall": asdict(report.overall),
+        "by_source": [asdict(m) for m in report.by_source],
+        "tradingview_pipeline": asdict(report.tradingview_pipeline),
+        "verdict": report.verdict,
+        "notes": list(report.notes),
+        "min_sample_for_judgment": 30,
+    }
+    _provenance_cache["payload"] = payload
+    _provenance_cache["at"] = now
+    return JSONResponse(
+        content=payload,
+        headers={"Cache-Control": "no-store, max-age=0"},
+    )
