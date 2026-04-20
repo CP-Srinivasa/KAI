@@ -154,7 +154,10 @@ def test_dashboard_local_traffic_no_cfray_still_open() -> None:
 def test_dashboard_tunnel_traffic_without_cf_email_rejected() -> None:
     app = _app_with_dashboard("secret", cf_allowed=["ops@example.com"])
     with TestClient(app) as client:
-        response = client.get("/dashboard/api/ping", headers={"Cf-Ray": "abc-FRA"})
+        response = client.get(
+            "/dashboard/api/ping",
+            headers={"Cf-Ray": "abc-FRA", "Cf-Connecting-IP": "203.0.113.7"},
+        )
     assert response.status_code == 401
     assert "Cloudflare Access" in response.json()["detail"]
 
@@ -166,6 +169,7 @@ def test_dashboard_tunnel_traffic_with_wrong_cf_email_rejected() -> None:
             "/dashboard/api/ping",
             headers={
                 "Cf-Ray": "abc-FRA",
+                "Cf-Connecting-IP": "203.0.113.7",
                 "Cf-Access-Authenticated-User-Email": "attacker@evil.test",
             },
         )
@@ -179,6 +183,7 @@ def test_dashboard_tunnel_traffic_with_allowed_cf_email_accepted() -> None:
             "/dashboard/api/ping",
             headers={
                 "Cf-Ray": "abc-FRA",
+                "Cf-Connecting-IP": "203.0.113.7",
                 "Cf-Access-Authenticated-User-Email": "ops@example.com",
             },
         )
@@ -191,6 +196,45 @@ def test_dashboard_no_cf_allowlist_configured_stays_open() -> None:
     with TestClient(app) as client:
         response = client.get("/dashboard/api/ping", headers={"Cf-Ray": "abc-FRA"})
     assert response.status_code == 200
+
+
+# ---------------------------------------------------------------------------
+# NEO-P-001 (A): Cf-Ray without Cf-Connecting-IP is rejected as orphan
+# ---------------------------------------------------------------------------
+
+
+def test_dashboard_cf_ray_without_connecting_ip_rejected() -> None:
+    """A non-CF reverse proxy that forwards Cf-Ray alone must be rejected.
+
+    Cloudflare sets Cf-Ray AND Cf-Connecting-IP on every edge-authenticated
+    request. Missing Cf-Connecting-IP = not from the real CF edge.
+    """
+    app = _app_with_dashboard("secret", cf_allowed=["ops@example.com"])
+    with TestClient(app) as client:
+        response = client.get(
+            "/dashboard/api/ping",
+            headers={
+                "Cf-Ray": "abc-FRA",
+                "Cf-Access-Authenticated-User-Email": "ops@example.com",
+            },
+        )
+    assert response.status_code == 401
+    assert "Cloudflare Access" in response.json()["detail"]
+
+
+def test_dashboard_cf_ray_orphan_rejected_even_with_allowed_email() -> None:
+    """Even an allowlisted email does not rescue an orphan Cf-Ray request."""
+    app = _app_with_dashboard("secret", cf_allowed=["ops@example.com"])
+    with TestClient(app) as client:
+        response = client.get(
+            "/dashboard/api/ping",
+            headers={
+                "Cf-Ray": "abc-FRA",
+                # Cf-Connecting-IP deliberately missing
+                "Cf-Access-Authenticated-User-Email": "ops@example.com",
+            },
+        )
+    assert response.status_code == 401
 
 
 def test_dashboard_like_path_falls_under_bearer_not_defense_in_depth() -> None:

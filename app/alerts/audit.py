@@ -8,10 +8,55 @@ a separate JSONL file so hit-rate can be computed without live price data.
 """
 
 import json
+import time
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
+
+# NEO-P-002 (D): delay before re-reading a JSONL file when the LAST line
+# failed to decode — gives the writer time to finish flushing an append.
+_LAST_LINE_RETRY_SLEEP_S = 0.1
+
+
+def _read_jsonl_tolerant(path: Path) -> list[dict]:
+    """Read all JSON objects from a JSONL file.
+
+    Policy:
+    - Middle-of-file ``JSONDecodeError`` is skipped silently (legacy behaviour;
+      mid-file corruption is rare with append-only writes).
+    - If the **last** non-empty line fails to decode, sleep briefly and re-read
+      the whole file once (NEO-P-002 D). append_alert_audit uses plain
+      ``'a'``-mode without flock; on Windows POSIX append-atomicity is not
+      guaranteed, so a reader racing with a writer can observe a partial last
+      line. 100 ms of patience makes that race statistically invisible without
+      introducing a file-lock dependency (deferred to Pi-migration).
+    - If the last line is still unparsable after retry, it is dropped.
+    """
+    if not path.exists():
+        return []
+
+    def _parse(text: str) -> tuple[list[dict], bool]:
+        lines = [ln for ln in text.splitlines() if ln.strip()]
+        if not lines:
+            return [], False
+        records: list[dict] = []
+        last_idx = len(lines) - 1
+        last_failed = False
+        for idx, line in enumerate(lines):
+            try:
+                records.append(json.loads(line))
+            except json.JSONDecodeError:
+                if idx == last_idx:
+                    last_failed = True
+                # mid-file decode errors are skipped silently (legacy policy)
+        return records, last_failed
+
+    records, last_failed = _parse(path.read_text(encoding="utf-8"))
+    if last_failed:
+        time.sleep(_LAST_LINE_RETRY_SLEEP_S)
+        records, _ = _parse(path.read_text(encoding="utf-8"))
+    return records
 
 # Default JSONL filename for alert audits
 ALERT_AUDIT_JSONL_FILENAME = "alert_audit.jsonl"
@@ -137,15 +182,9 @@ def load_outcome_annotations(
 ) -> list[AlertOutcomeAnnotation]:
     """Load operator outcome annotations from the outcomes JSONL file."""
     p = _resolve_outcomes_path(Path(input_path))
-    if not p.exists():
-        return []
-
     annotations: list[AlertOutcomeAnnotation] = []
-    for line in p.read_text(encoding="utf-8").strip().splitlines():
-        if not line.strip():
-            continue
+    for data in _read_jsonl_tolerant(p):
         try:
-            data = json.loads(line)
             annotations.append(
                 AlertOutcomeAnnotation(
                     document_id=data["document_id"],
@@ -157,7 +196,7 @@ def load_outcome_annotations(
                     note=data.get("note"),
                 )
             )
-        except (json.JSONDecodeError, KeyError):
+        except KeyError:
             continue
     return annotations
 
@@ -179,24 +218,15 @@ def iter_alert_audit_document_ids(input_path: str | Path) -> set[str]:
 
     ~10x cheaper than ``load_alert_audits`` when callers only need dedup-keys
     (tv-bridge idempotency-check, alerts ingestion guards). Malformed lines
-    are skipped silently — same policy as ``load_alert_audits``.
+    are skipped silently — same policy as ``load_alert_audits``; half-written
+    last lines are retried once (NEO-P-002 D) via ``_read_jsonl_tolerant``.
     """
     p = _resolve_audit_path(Path(input_path))
-    if not p.exists():
-        return set()
     ids: set[str] = set()
-    with p.open("r", encoding="utf-8") as f:
-        for raw in f:
-            line = raw.strip()
-            if not line:
-                continue
-            try:
-                data = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            doc_id = data.get("document_id") if isinstance(data, dict) else None
-            if isinstance(doc_id, str):
-                ids.add(doc_id)
+    for data in _read_jsonl_tolerant(p):
+        doc_id = data.get("document_id") if isinstance(data, dict) else None
+        if isinstance(doc_id, str):
+            ids.add(doc_id)
     return ids
 
 
@@ -207,16 +237,9 @@ def load_alert_audits(input_path: str | Path) -> list[AlertAuditRecord]:
     ``<dir>/ALERT_AUDIT_JSONL_FILENAME``) or a full file path.
     """
     p = _resolve_audit_path(Path(input_path))
-    if not p.exists():
-        return []
-
     records: list[AlertAuditRecord] = []
-    lines = p.read_text(encoding="utf-8").strip().splitlines()
-    for line in lines:
-        if not line.strip():
-            continue
+    for data in _read_jsonl_tolerant(p):
         try:
-            data = json.loads(line)
             record = AlertAuditRecord(
                 document_id=data["document_id"],
                 channel=data["channel"],
@@ -237,6 +260,6 @@ def load_alert_audits(input_path: str | Path) -> list[AlertAuditRecord]:
                 source_name=data.get("source_name"),
             )
             records.append(record)
-        except (json.JSONDecodeError, KeyError):
+        except KeyError:
             continue
     return records

@@ -1,6 +1,7 @@
 import pytest
 
 from app.core.enums import ExecutionMode
+from app.core.errors import ConfigurationError
 from app.core.settings import (
     AlertSettings,
     AppSettings,
@@ -165,3 +166,44 @@ def test_app_settings_runtime_contract_rejects_invalid_risk_baseline() -> None:
             risk=RiskSettings(max_risk_per_trade_pct=0.5, _env_file=None),
             _env_file=None,
         )
+
+
+# ---------------------------------------------------------------------------
+# NEO-P-001 (B): bind-address validator — production rejects non-loopback
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("env", ["production", "prod", "live", "PRODUCTION"])
+def test_bind_host_rejects_non_loopback_in_production(env: str) -> None:
+    with pytest.raises(ConfigurationError, match="APP_API_BIND_HOST"):
+        AppSettings(env=env, api_bind_host="0.0.0.0", _env_file=None)
+
+
+@pytest.mark.parametrize("host", ["127.0.0.1", "localhost", "::1"])
+def test_bind_host_accepts_loopback_in_production(host: str) -> None:
+    settings = AppSettings(env="production", api_bind_host=host, _env_file=None)
+    assert settings.api_bind_host == host
+
+
+def test_bind_host_non_loopback_accepted_in_dev() -> None:
+    """Dev can bind 0.0.0.0 freely — exposure there is an operator choice."""
+    settings = AppSettings(env="development", api_bind_host="0.0.0.0", _env_file=None)
+    assert settings.api_bind_host == "0.0.0.0"
+
+
+def test_bind_host_non_loopback_accepted_with_opt_out() -> None:
+    """Opt-out flag lets Docker/containerised prod deployments keep 0.0.0.0."""
+    settings = AppSettings(
+        env="production",
+        api_bind_host="0.0.0.0",
+        allow_non_loopback_bind=True,
+        _env_file=None,
+    )
+    assert settings.api_bind_host == "0.0.0.0"
+    assert settings.allow_non_loopback_bind is True
+
+
+def test_bind_host_default_is_loopback() -> None:
+    settings = AppSettings(_env_file=None)
+    assert settings.api_bind_host == "127.0.0.1"
+    assert settings.allow_non_loopback_bind is False

@@ -40,10 +40,15 @@ if [ -f "$LOG_FILE" ] && [ $(stat -c%s "$LOG_FILE" 2>/dev/null || echo 0) -gt 10
     mv "$LOG_FILE" "${LOG_FILE}.$(date +%Y%m%d_%H%M%S).bak"
 fi
 
-# LAN binding is opt-in: KAI_BIND_LAN=1 → 0.0.0.0 (reachable in local network),
-# otherwise loopback-only (default, safer). Firewall inbound rule for TCP/8000
-# must be set separately on Windows (private profile).
-BIND_HOST="127.0.0.1"
+# Bind-host resolution (NEO-P-001 B):
+# 1. APP_API_BIND_HOST (new canonical source — also validated by AppSettings)
+# 2. KAI_BIND_LAN=1 → 0.0.0.0 (legacy operator override, unchanged behaviour)
+# 3. 127.0.0.1 (default, safer — tunnel ingress only)
+# In production envs a non-loopback bind is rejected by the AppSettings
+# validator unless APP_ALLOW_NON_LOOPBACK_BIND=1 is set.
+# Firewall inbound rule for TCP/8000 must be set separately on Windows
+# (private profile) when exposing beyond loopback.
+BIND_HOST="${APP_API_BIND_HOST:-127.0.0.1}"
 if [ "${KAI_BIND_LAN:-0}" = "1" ]; then
     BIND_HOST="0.0.0.0"
 fi

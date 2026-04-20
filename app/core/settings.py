@@ -4,6 +4,7 @@ from pydantic import AliasChoices, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from app.core.enums import ExecutionMode
+from app.core.errors import ConfigurationError
 from app.core.schema_runtime import (
     validate_json_schema_payload as _validate_json_schema_payload,
 )
@@ -352,7 +353,12 @@ class BinanceMarketDataSettings(BaseSettings):
 
 
 class AppSettings(BaseSettings):
-    model_config = SettingsConfigDict(env_prefix="APP_", env_file=".env", extra="ignore")
+    model_config = SettingsConfigDict(
+        env_prefix="APP_",
+        env_file=".env",
+        extra="ignore",
+        populate_by_name=True,
+    )
 
     env: str = Field(default="development")
     log_level: str = Field(default="INFO")
@@ -368,6 +374,26 @@ class AppSettings(BaseSettings):
             "APP_CF_ACCESS_ALLOWED_EMAILS",
             "CF_ACCESS_ALLOWED_EMAILS",
         ),
+    )
+    # --- NEO-P-001 (B): Bind-address validator ---
+    # The uvicorn --host value the operator expects the server to bind to.
+    # Read by scripts/server_start.sh as the primary source; the legacy
+    # KAI_BIND_LAN=1 flag still works as a backwards-compatible override.
+    # In production environments, a non-loopback bind (0.0.0.0, ::, *) is
+    # rejected unless APP_ALLOW_NON_LOOPBACK_BIND=1 is set explicitly —
+    # forces operators to make the exposure decision consciously instead
+    # of inheriting it silently from a migration (e.g. Docker, reverse
+    # proxy change, Pi deployment). See validate_bind_host_against_env().
+    api_bind_host: str = Field(
+        default="127.0.0.1",
+        validation_alias=AliasChoices("APP_API_BIND_HOST", "API_BIND_HOST"),
+    )
+    # Opt-out for the bind-address validator. Set to True only when a
+    # downstream layer (reverse proxy firewall, container network policy)
+    # provides equivalent loopback-scope protection.
+    allow_non_loopback_bind: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("APP_ALLOW_NON_LOOPBACK_BIND"),
     )
     # CORS allowed origins. Comma-separated list. Override in production.
     # Example: APP_CORS_ALLOWED_ORIGINS=https://app.example.com,https://admin.example.com
@@ -441,6 +467,33 @@ class AppSettings(BaseSettings):
     _strip_secrets = field_validator("api_key", "coingecko_api_key", mode="before")(
         _strip_secret
     )
+
+    @model_validator(mode="after")
+    def validate_bind_host_against_env(self) -> "AppSettings":
+        """NEO-P-001 (B): reject non-loopback bind in production envs.
+
+        A 0.0.0.0 / :: / * bind directly exposes the API to whatever
+        network the host sits on — which is fine locally, catastrophic
+        in production where the Cloudflare tunnel is the single intended
+        ingress. Opt-out via APP_ALLOW_NON_LOOPBACK_BIND=1 for container
+        setups that rely on a downstream firewall.
+        """
+        prod_envs = {"production", "prod", "live"}
+        loopback = {"127.0.0.1", "localhost", "::1"}
+        host = (self.api_bind_host or "").strip().lower()
+        if (
+            self.env.lower() in prod_envs
+            and host not in loopback
+            and not self.allow_non_loopback_bind
+        ):
+            raise ConfigurationError(
+                f"APP_API_BIND_HOST='{self.api_bind_host}' is not loopback but "
+                f"APP_ENV='{self.env}'. A non-loopback bind exposes the API "
+                "beyond the Cloudflare tunnel. Either set APP_API_BIND_HOST=127.0.0.1 "
+                "or — if a downstream firewall protects the host — set "
+                "APP_ALLOW_NON_LOOPBACK_BIND=1 explicitly."
+            )
+        return self
 
     @model_validator(mode="after")
     def validate_runtime_contract(self) -> "AppSettings":

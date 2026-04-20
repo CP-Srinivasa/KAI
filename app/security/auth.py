@@ -190,6 +190,24 @@ def setup_auth(
                     decision="granted", reason="dashboard_local", request=request
                 )
                 return await call_next(request)
+            # NEO-P-001 (A): Cloudflare sets both Cf-Ray AND Cf-Connecting-IP
+            # on every edge-authenticated request. A non-CF reverse proxy that
+            # only forwards Cf-Ray (without Cf-Connecting-IP) is suspicious —
+            # either a misconfigured front-end or an attempted spoof. Fail
+            # closed so a future deployment change (nginx/caddy in front,
+            # cloudflared → Tailscale Funnel migration) surfaces as 401 at
+            # monitoring rather than as a silently-downgraded trust boundary.
+            if not request.headers.get("Cf-Connecting-IP"):
+                _audit_access(
+                    decision="denied",
+                    reason="dashboard_cf_ray_orphan",
+                    request=request,
+                    status_code=401,
+                )
+                return JSONResponse(
+                    status_code=401,
+                    content={"detail": "Cloudflare Access authentication required"},
+                )
             cf_email = (
                 request.headers.get("Cf-Access-Authenticated-User-Email", "")
                 .strip()
