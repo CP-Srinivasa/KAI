@@ -159,7 +159,7 @@ function AgentCard({
           agent.agent_id ? (
             <span className="font-mono text-2xs">{agent.agent_id}</span>
           ) : (
-            <span className="text-2xs italic">interner Prozess (keine Agent-ID)</span>
+            <span className="text-xs italic">interner Prozess (keine Agent-ID)</span>
           )
         }
         right={
@@ -171,7 +171,7 @@ function AgentCard({
 
       <p className="text-xs text-fg-muted leading-relaxed">{agent.role}</p>
 
-      <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-2xs">
+      <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs">
         <KV k="last_seen" v={agent.last_seen ? formatTs(agent.last_seen) : "—"} />
         <KV k="findings" v={String(agent.findings_count)} />
         <KV k="runs" v={String(agent.runs_count)} />
@@ -372,7 +372,7 @@ function AgentChat({ slug, onSent }: { slug: string; onSent: () => void }) {
         </p>
       )}
 
-      <div className="flex items-center justify-between text-2xs text-fg-subtle">
+      <div className="flex items-center justify-between text-xs text-fg-subtle">
         <span>{draft.length}/4000 Zeichen · Auto-Refresh alle 5s</span>
         <button
           onClick={() => msg.reload()}
@@ -399,7 +399,7 @@ function ChatBubble({ event }: { event: AgentEvent }) {
             : "bg-ai/5 border-ai/20 text-fg",
         )}
       >
-        <div className="flex items-center gap-1.5 mb-1 text-2xs">
+        <div className="flex items-center gap-1.5 mb-1 text-xs">
           <span className={cn("inline-flex items-center gap-1 font-mono", src.tone)}>
             {src.icon}
             {src.label}
@@ -462,7 +462,7 @@ function CommandComposer({
         maxLength={500}
         className="w-full rounded-sm border border-line-subtle bg-bg-2 text-xs text-fg p-2 font-mono placeholder:text-fg-subtle/70 focus:outline-none focus:border-line-strong focus:bg-bg-1 transition-colors resize-y min-h-[52px]"
       />
-      <div className="flex items-center justify-between gap-2 text-2xs text-fg-subtle">
+      <div className="flex items-center justify-between gap-2 text-xs text-fg-subtle">
         <span>{note.length}/500 Zeichen</span>
         <span className="font-mono">POST → /operator/agents/{slug}/commands</span>
       </div>
@@ -492,7 +492,7 @@ function CommandComposer({
       {result && (
         <div
           className={cn(
-            "flex items-start gap-2 rounded-sm border px-2.5 py-1.5 text-2xs",
+            "flex items-start gap-2 rounded-sm border px-2.5 py-1.5 text-xs",
             result.kind === "ok"
               ? "border-pos/30 bg-pos/10 text-pos"
               : "border-neg/30 bg-neg/10 text-neg",
@@ -522,7 +522,7 @@ function AgentDetailSection({ slug, reloadKey }: { slug: string; reloadKey: numb
   return (
     <div className="mt-4 pt-4 border-t border-line-subtle space-y-3">
       <div className="flex items-center justify-between">
-        <span className="text-2xs text-fg-subtle">
+        <span className="text-xs text-fg-subtle">
           Auto-Refresh alle 10s
           {detail.state === "ready" && (
             <span className="ml-2 font-mono">· {detail.data.recent_findings.length} findings · {detail.data.recent_runs.length} runs</span>
@@ -531,7 +531,7 @@ function AgentDetailSection({ slug, reloadKey }: { slug: string; reloadKey: numb
         <button
           onClick={() => detail.reload()}
           disabled={detail.state === "loading"}
-          className="inline-flex items-center gap-1 h-6 px-2 rounded-sm border border-line-subtle bg-bg-2 text-2xs text-fg-muted hover:bg-bg-3 hover:text-fg disabled:opacity-50"
+          className="inline-flex items-center gap-1 h-6 px-2 rounded-sm border border-line-subtle bg-bg-2 text-xs text-fg-muted hover:bg-bg-3 hover:text-fg disabled:opacity-50"
         >
           <RefreshCw size={10} className={cn(detail.state === "loading" && "animate-spin")} />
           Neu laden
@@ -591,7 +591,7 @@ function DetailList({
       ) : (
         <ul className="space-y-1">
           {[...rows].reverse().slice(0, 12).map((r, i) => (
-            <li key={i} className="flex items-start gap-2 text-2xs">
+            <li key={i} className="flex items-start gap-2 text-xs">
               <span className="font-mono text-fg-subtle shrink-0 w-[120px] truncate">
                 {r.ts ? formatTs(r.ts) : "—"}
               </span>

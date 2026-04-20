@@ -59,7 +59,7 @@ export function AIInsightsPage() {
       )}
 
       {q.state === "ready" && (
-        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-2xs text-fg-subtle font-mono -mt-2">
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-fg-subtle font-mono -mt-2">
           <span className="inline-flex items-center gap-1.5">
             <span className="h-1.5 w-1.5 rounded-full bg-pos inline-block" /> ok ≥ 60%
           </span>
@@ -85,7 +85,7 @@ export function AIInsightsPage() {
               <div className="text-lg text-fg-muted">
                 {formatPct(q.data.precision_pct)}
               </div>
-              <div className="text-2xs text-fg-subtle mt-1">
+              <div className="text-xs text-fg-subtle mt-1">
                 {q.data.hits}H / {q.data.misses}M · n={q.data.resolved_count}
               </div>
             </div>
@@ -102,7 +102,7 @@ export function AIInsightsPage() {
               >
                 {formatPct(q.data.active_precision_pct)}
               </div>
-              <div className="text-2xs text-fg-subtle mt-1">
+              <div className="text-xs text-fg-subtle mt-1">
                 {q.data.active_hits}H / {q.data.active_misses}M · n={q.data.active_resolved_count}
               </div>
             </div>
