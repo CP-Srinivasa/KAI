@@ -51,6 +51,10 @@ export function CardHeader({
 
 /* ---------- Badge ---------- */
 
+// text-2xs (11px) Konvention (DALI-F-009):
+// erlaubt für: font-mono Identifier/Timestamps, einzelne Badge-Labels,
+// uppercase-tracked Micro-Labels. NICHT für mehrzeiligen Body-/Helper-Text
+// oder Tabellen-Zellen — dort text-xs (12px) verwenden.
 type BadgeTone = "neutral" | "pos" | "neg" | "warn" | "info" | "ai" | "muted";
 
 export function Badge({

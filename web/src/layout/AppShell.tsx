@@ -1,22 +1,43 @@
-import { useState } from "react";
+import { useState, lazy, Suspense } from "react";
 import { Sidebar } from "./Sidebar";
 import { Topbar } from "./Topbar";
 import { BackendStatusBanner } from "./BackendStatusBanner";
 import { useRouter } from "@/state/Router";
 import { Dashboard } from "@/pages/Dashboard";
-import { SignalsPage } from "@/pages/Signals";
-import { MarketsPage } from "@/pages/Markets";
-import { TradesPage } from "@/pages/Trades";
-import { PortfolioPage } from "@/pages/Portfolio";
-import { RiskPage } from "@/pages/Risk";
-import { AIInsightsPage } from "@/pages/AIInsightsPage";
-import { AlertsPage } from "@/pages/Alerts";
-import { NewsPage } from "@/pages/News";
-import { BacktestPage } from "@/pages/Backtesting";
-import { ExternalSignalsPage } from "@/pages/ExternalSignals";
-import { AgentsPage } from "@/pages/Agents";
-import { SettingsPage } from "@/pages/Settings";
 import { useAppState } from "@/state/AppState";
+
+// Dashboard bleibt eager (Default-Route, First-Paint).
+// Alle anderen Routen werden on-demand geladen → kleinerer Initial-Bundle.
+const SignalsPage = lazy(() => import("@/pages/Signals").then((m) => ({ default: m.SignalsPage })));
+const MarketsPage = lazy(() => import("@/pages/Markets").then((m) => ({ default: m.MarketsPage })));
+const TradesPage = lazy(() => import("@/pages/Trades").then((m) => ({ default: m.TradesPage })));
+const PortfolioPage = lazy(() =>
+  import("@/pages/Portfolio").then((m) => ({ default: m.PortfolioPage })),
+);
+const RiskPage = lazy(() => import("@/pages/Risk").then((m) => ({ default: m.RiskPage })));
+const AIInsightsPage = lazy(() =>
+  import("@/pages/AIInsightsPage").then((m) => ({ default: m.AIInsightsPage })),
+);
+const AlertsPage = lazy(() => import("@/pages/Alerts").then((m) => ({ default: m.AlertsPage })));
+const NewsPage = lazy(() => import("@/pages/News").then((m) => ({ default: m.NewsPage })));
+const BacktestPage = lazy(() =>
+  import("@/pages/Backtesting").then((m) => ({ default: m.BacktestPage })),
+);
+const ExternalSignalsPage = lazy(() =>
+  import("@/pages/ExternalSignals").then((m) => ({ default: m.ExternalSignalsPage })),
+);
+const AgentsPage = lazy(() => import("@/pages/Agents").then((m) => ({ default: m.AgentsPage })));
+const SettingsPage = lazy(() =>
+  import("@/pages/Settings").then((m) => ({ default: m.SettingsPage })),
+);
+
+function RouteFallback() {
+  return (
+    <div className="p-6 text-sm text-fg-muted" role="status" aria-live="polite">
+      Lade Modul …
+    </div>
+  );
+}
 
 export function AppShell() {
   const { route } = useRouter();
@@ -33,7 +54,7 @@ export function AppShell() {
         <BackendStatusBanner />
         <Topbar onMobileMenuToggle={() => setMobileNavOpen((v) => !v)} />
         <main className="flex-1 min-w-0 overflow-x-hidden" key={route}>
-          {renderRoute(route)}
+          <Suspense fallback={<RouteFallback />}>{renderRoute(route)}</Suspense>
         </main>
       </div>
     </div>

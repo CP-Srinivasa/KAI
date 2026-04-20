@@ -1,7 +1,8 @@
 import { useMemo, useState } from "react";
-import { AlertCircle, RefreshCw, CheckCircle2, XCircle, Clock, Ban } from "lucide-react";
+import { AlertCircle, RefreshCw, CheckCircle2, XCircle, Clock, Ban, Activity } from "lucide-react";
 import { useT } from "@/i18n/I18nProvider";
 import { Badge, Button, Card } from "@/components/ui/Primitives";
+import { EmptyState } from "@/components/ui/EmptyState";
 import { PageHeader } from "@/layout/PageHeader";
 import { useApi } from "@/lib/useApi";
 import {
@@ -61,23 +62,36 @@ export function SignalsPage() {
       )}
 
       <Card padded={false}>
-        <div className="flex items-center justify-between gap-3 px-4 py-3 border-b border-line-subtle flex-wrap">
-          <div className="flex items-center gap-1 flex-wrap">
-            {tabs.map((tb) => (
-              <button
-                key={tb.id}
-                onClick={() => setTab(tb.id)}
-                className={cn(
-                  "h-8 px-3 rounded-sm text-xs font-medium inline-flex items-center gap-2",
-                  tab === tb.id ? "bg-bg-3 text-fg" : "text-fg-muted hover:bg-bg-2 hover:text-fg",
-                )}
-              >
-                {tb.label}
-                <span className="text-2xs font-mono text-fg-subtle">{tb.count}</span>
-              </button>
-            ))}
+        <div className="flex items-center justify-between gap-3 px-4 pt-3 border-b border-line-subtle flex-wrap">
+          <div className="flex items-center gap-0 flex-wrap -mb-px">
+            {tabs.map((tb) => {
+              const active = tab === tb.id;
+              return (
+                <button
+                  key={tb.id}
+                  onClick={() => setTab(tb.id)}
+                  className={cn(
+                    "h-9 px-3 text-xs font-medium inline-flex items-center gap-2 border-b-2 transition-colors",
+                    active
+                      ? "border-accent text-fg"
+                      : "border-transparent text-fg-muted hover:text-fg hover:border-line",
+                  )}
+                  aria-pressed={active}
+                >
+                  {tb.label}
+                  <span
+                    className={cn(
+                      "text-2xs font-mono rounded-xs px-1",
+                      active ? "bg-accent-soft text-accent" : "text-fg-subtle",
+                    )}
+                  >
+                    {tb.count}
+                  </span>
+                </button>
+              );
+            })}
           </div>
-          <div className="text-2xs text-fg-subtle font-mono">
+          <div className="text-2xs text-fg-subtle font-mono pb-2">
             {cycles.state === "ready" ? `${cycles.data.total_cycles} cycles insgesamt` : ""}
           </div>
         </div>
@@ -104,7 +118,25 @@ export function SignalsPage() {
               )}
               {cycles.state === "ready" && filtered.length === 0 && (
                 <tr>
-                  <td colSpan={8} className="px-4 py-6 text-center text-fg-subtle">{t("common.no_data")}</td>
+                  <td colSpan={8}>
+                    <EmptyState
+                      icon={<Activity size={18} />}
+                      title={tab === "all" ? "Keine Cycles in diesem Zeitfenster" : `Keine Cycles mit Status '${tabs.find((x) => x.id === tab)?.label}'`}
+                      hint={
+                        tab === "all"
+                          ? "Die Trading-Loop hat in der aktuellen Window-Größe keine Cycles produziert. Quality-Report /dashboard/api/quality refreshed alle 30s."
+                          : "Kein Cycle hat diesen Status. Zurück auf 'Alle' für vollen Verlauf."
+                      }
+                      action={
+                        tab === "all" ? undefined : (
+                          <Button onClick={() => setTab("all")} variant="outline" size="sm">
+                            Alle Cycles zeigen
+                          </Button>
+                        )
+                      }
+                      className="m-4"
+                    />
+                  </td>
                 </tr>
               )}
               {filtered.slice().reverse().map((c) => (

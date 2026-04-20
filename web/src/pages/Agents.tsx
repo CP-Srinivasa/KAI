@@ -4,6 +4,7 @@ import {
   Shield,
   Activity,
   Wrench,
+  Palette,
   AlertTriangle,
   CheckCircle2,
   RefreshCw,
@@ -17,6 +18,7 @@ import {
 } from "lucide-react";
 import { PageHeader } from "@/layout/PageHeader";
 import { Card, CardHeader, Badge } from "@/components/ui/Primitives";
+import { EmptyState } from "@/components/ui/EmptyState";
 import { useApi } from "@/lib/useApi";
 import {
   fetchAgents,
@@ -55,6 +57,7 @@ const ICON_BY_SLUG: Record<string, JSX.Element> = {
   sentr: <Shield size={16} />,
   watchdog: <Activity size={16} />,
   architect: <Wrench size={16} />,
+  dali: <Palette size={16} />,
 };
 
 export function AgentsPage() {
@@ -65,7 +68,7 @@ export function AgentsPage() {
     <div className="p-4 sm:p-5 xl:p-6 space-y-5 max-w-[1680px] mx-auto">
       <PageHeader
         title="Agenten"
-        sub="SENTR · Watchdog · Architect — alle ausschließlich von Claude Code ausgeführt"
+        sub="SENTR · Watchdog · Architect · DALI — alle ausschließlich von Claude Code ausgeführt"
       />
 
       <Card padded>
@@ -77,7 +80,7 @@ export function AgentsPage() {
               abgeleitet — keine gefakten Heartbeats. Kommandos werden in eine Queue geschrieben
               und vom Agentenprozess out-of-band konsumiert.
             </p>
-            <p className="text-2xs text-fg-subtle">
+            <p className="text-xs text-fg-subtle">
               Permissions heute: <strong>read + report</strong>. Schreibende Aktionen laufen
               ausschließlich über <code className="font-mono">guarded_write</code> mit Audit-Trail.
             </p>
@@ -168,25 +171,29 @@ function AgentCard({
 
       <p className="text-xs text-fg-muted leading-relaxed">{agent.role}</p>
 
-      <div className="mt-4 grid grid-cols-2 gap-3 text-2xs">
+      <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-2xs">
         <KV k="last_seen" v={agent.last_seen ? formatTs(agent.last_seen) : "—"} />
         <KV k="findings" v={String(agent.findings_count)} />
         <KV k="runs" v={String(agent.runs_count)} />
         <KV k="modes" v={agent.modes.join(", ")} />
       </div>
 
-      <div className="mt-3 flex flex-wrap gap-1.5">
-        {agent.permissions.map((p) => (
-          <span
-            key={p}
-            className="inline-flex items-center rounded-xs border border-line-subtle bg-bg-2 px-1.5 py-0.5 font-mono text-[10px] text-fg-subtle"
-          >
-            {p}
-          </span>
-        ))}
-      </div>
+      {!isDefaultPermissions(agent.permissions) && (
+        <div className="mt-2 flex flex-wrap gap-1.5">
+          {agent.permissions.map((p) => (
+            <span
+              key={p}
+              className="inline-flex items-center rounded-xs border border-line-subtle bg-bg-2 px-1.5 py-0.5 font-mono text-[10px] text-fg-subtle"
+            >
+              {p}
+            </span>
+          ))}
+        </div>
+      )}
 
-      <div className="mt-3 text-2xs text-fg-subtle italic">{STATUS_HINT[agent.status]}</div>
+      {agent.status !== "live" && (
+        <div className="mt-2 text-xs text-fg-subtle italic">{STATUS_HINT[agent.status]}</div>
+      )}
 
       <div className="mt-4 flex items-center gap-1 border-b border-line-subtle">
         <TabButton active={tab === "chat"} onClick={() => setTab("chat")} icon={<MessageSquare size={12} />}>
@@ -311,15 +318,18 @@ function AgentChat({ slug, onSent }: { slug: string; onSent: () => void }) {
         className="border border-line-subtle rounded-sm bg-bg-0/50 h-[280px] overflow-y-auto p-2 space-y-2"
       >
         {msg.state === "loading" && (
-          <p className="text-2xs text-fg-subtle italic">Lade Verlauf…</p>
+          <p className="text-xs text-fg-subtle italic">Lade Verlauf…</p>
         )}
         {msg.state === "error" && (
-          <p className="text-2xs text-warn">Fehler: {msg.error.kind} ({msg.error.status})</p>
+          <p className="text-xs text-warn">Fehler: {msg.error.kind} ({msg.error.status})</p>
         )}
         {msg.state === "ready" && events.length === 0 && (
-          <p className="text-2xs text-fg-subtle italic">
-            Noch keine Nachrichten. Schreibe etwas — der Agent antwortet asynchron (Dashboard + Telegram teilen denselben Verlauf).
-          </p>
+          <EmptyState
+            icon={<MessageSquare size={16} />}
+            title="Noch keine Nachrichten"
+            hint="Schreibe etwas — der Agent antwortet asynchron. Dashboard und Telegram teilen denselben Verlauf."
+            className="py-6"
+          />
         )}
         {events.map((e) => (
           <ChatBubble key={e.id} event={e} />
@@ -356,7 +366,7 @@ function AgentChat({ slug, onSent }: { slug: string; onSent: () => void }) {
       </div>
 
       {sendError && (
-        <p className="text-2xs text-neg">
+        <p className="text-xs text-neg">
           <AlertTriangle size={10} className="inline mr-1" />
           {sendError}
         </p>
@@ -528,10 +538,10 @@ function AgentDetailSection({ slug, reloadKey }: { slug: string; reloadKey: numb
         </button>
       </div>
 
-      {detail.state === "loading" && <p className="text-2xs text-fg-subtle">Lade Detail…</p>}
+      {detail.state === "loading" && <p className="text-xs text-fg-subtle">Lade Detail…</p>}
 
       {detail.state === "error" && (
-        <p className="text-2xs text-warn">
+        <p className="text-xs text-warn">
           Detail-Fehler: {detail.error.kind} ({detail.error.status})
         </p>
       )}
@@ -577,7 +587,7 @@ function DetailList({
         {label}
       </div>
       {rows.length === 0 ? (
-        <p className="text-2xs text-fg-subtle italic">{empty}</p>
+        <p className="text-xs text-fg-subtle italic">{empty}</p>
       ) : (
         <ul className="space-y-1">
           {[...rows].reverse().slice(0, 12).map((r, i) => (
@@ -597,11 +607,17 @@ function DetailList({
 
 function KV({ k, v }: { k: string; v: string }) {
   return (
-    <div className="flex items-center justify-between border-b border-line-subtle/50 py-1">
+    <span className="inline-flex items-baseline gap-1 min-w-0">
       <span className="font-mono text-fg-subtle">{k}</span>
-      <span className="font-mono text-fg truncate ml-2">{v}</span>
-    </div>
+      <span className="font-mono text-fg truncate">{v}</span>
+    </span>
   );
+}
+
+function isDefaultPermissions(perms: readonly string[]): boolean {
+  if (perms.length !== 2) return false;
+  const sorted = [...perms].sort();
+  return sorted[0] === "read" && sorted[1] === "report";
 }
 
 function formatTs(ts: string): string {

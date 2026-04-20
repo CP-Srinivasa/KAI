@@ -413,15 +413,38 @@ Claude darf NICHT:
 
 ## Agent Roster (Claude-Code-only)
 
-Drei operative Agenten — alle ausschließlich von Claude Code ausführbar, niemals durch Codex/Antigravity/externe LLMs:
+Sechs operative Agenten — alle ausschließlich von Claude Code ausführbar, niemals durch Codex/Antigravity/externe LLMs:
 
 - **SENTR** (`a708ac129e9cf2569`) — Security & Inspection. Modi: `inspect`, `report`.
 - **Watchdog** — Health & Drift Monitor. Modi: `check`, `report`.
 - **Architect** (`a14a2b53ba50ebadd`) — Architektur-Review & Propose. Modi: `review`, `propose`.
+- **DALI** — Design/UI-Audit & UI-Propose. Modi: `audit`, `propose`, `implement`. `implement` schreibt nie direkt — Patch-Proposal landet in `artifacts/agents/dali/proposals.jsonl`, Operator-Apply via regulären Dev-Flow.
+- **Neo** — Code-Tiefenanalyse, Root-Cause-Debugging, Refactor mit Risikoabwägung. Modi: `analyze`, `propose`, `implement`. `implement` nur bei explizitem Operator-Auftrag mit `proposal_id`. Audit-Spur in `artifacts/agents/neo/{findings,proposals,implementations}.jsonl`.
+- **SATOSHI** — Kryptographie, Wallet/Custody/Key-Material, Smart-Contract-Review, kryptographische Verifikation (Signaturen, HMAC, Webhooks), Tokenomics-vs-Onchain-Konsistenz, forensische Doc-/Provenance-Analyse, Threat-Models. Modi: `crypto-review`, `forensic`, `threat-model`, `propose`, `implement`. `implement` nur bei explizitem Operator-Auftrag; Krypto-Pfade/Key-Material/Approval-Mode niemals stillschweigend ändern.
 
-Permissions: read + report; write nur über `app/agents/tools/guarded_write.py` mit Audit-Trail.
-Dropbox: `artifacts/agents/{sentr,watchdog,architect}/*.jsonl` (Status `live`/`prepared`/`unavailable`).
+Permissions: read + report; write nur über `app/agents/tools/guarded_write.py` mit Audit-Trail (Trading/Decision-Writes, artifacts-only).
+Dropbox: `artifacts/agents/{sentr,watchdog,architect,dali,neo,satoshi}/*.jsonl` (Status `live`/`prepared`/`unavailable`).
 Volle Definition: siehe `AGENTS.md` § Agent Roster.
+
+### Auto-Routing-Pflicht (verbindlich)
+
+Claude Code MUSS bei den folgenden Trigger-Topics den passenden Subagent über das Agent-Tool aktivieren — automatisch, ohne dass der User explizit darum bitten muss. Mehrfach-Aktivierung ist Pflicht, wenn ein Topic mehrere Domänen berührt (z.B. Crypto-Bug → SATOSHI + Neo parallel).
+
+| Topic / Trigger | Primär-Agent | Parallel/Folge |
+|---|---|---|
+| Security, Secrets, Credentials, Permissions, Audit-Trail, Key-Rotation | **SENTR** | + SATOSHI bei Krypto-Bezug |
+| Pipeline-Health, Drift, Regression, Quality-Bar, Backlog-Verdacht | **Watchdog** | + Architect bei Modul-Folge |
+| Modul-Struktur, Coupling, Abhängigkeit, Refactor-Architektur | **Architect** | + Architecture-Red-Team bei Pivot |
+| Architektur-Entscheidung, Design-Pivot, P0-Merge, irreversibler Eingriff | **Architecture-Red-Team** | + Architect für Strukturmetriken |
+| UI, UX, Dashboard, Telegram-Menü, Microcopy, Visual, A11y | **DALI** | + Neo bei Frontend-Logik |
+| Bug, Crash, Race-Condition, Concurrency, Performance, Root-Cause, Refactor-Code | **Neo** | + SATOSHI bei Krypto-Pfad, + DALI bei UI-Bug |
+| Crypto, HMAC, Webhook-Signatur, Wallet, Custody, Smart-Contract, Tokenomics, Whitepaper, Provenance, Replay-Schutz | **SATOSHI** | + Neo bei Code-Pfad, + SENTR bei Secret-Bezug |
+| Datenschema, Pydantic, Dedup, Validierung, Type-Konsistenz, JSONL-Schema | **data-quality-inspector** | + Architect bei Strukturfolge |
+| Neue Datenquelle, RSS, API-Quelle, Quell-Recherche, Feed-Bewertung | **source-scout** | + data-quality-inspector vor Integration |
+
+**Cross-Referenz-Pflicht:** Wenn ein Subagent ein Finding in seiner JSONL ablegt (`finding_id`/`report_id`/`proposal_id`), übergibt der Hauptagent diese ID beim Folge-Aufruf an den nächsten Subagent. Der referenziert sie im eigenen Output über das Feld `cross_ref: ["NEO-F-001", "SAT-C-014"]`. Subagents reden nicht direkt miteinander — der Hauptagent ist Dispatcher und Moderator. Siehe `AGENTS.md` § Cross-Reference-Pattern.
+
+**Limit ehrlich:** Die Aktivierung erfolgt durch den Hauptagent (Claude Code), nicht durch System-Hooks. Ein vergessener Trigger ist eine Pflicht-Verletzung dieser Regel, kein Tool-Bug.
 
 ## Non-Negotiable Rules
 

@@ -1,6 +1,8 @@
 // Zentraler API-Client für das KAI-Dashboard.
 // - Same-origin im Prod-Build (unter /dashboard), im Dev via Vite-Proxy auf :8000.
-// - Bearer-Token aus localStorage("kai-api-key") ODER VITE_KAI_API_KEY (Build-Zeit).
+// - Authentifizierung läuft über Cloudflare Access vor dem Tunnel — der
+//   Browser sendet KEINEN Bearer-Token mehr. CF setzt den Identity-Header
+//   (Cf-Access-Authenticated-User-Email), den die Server-Middleware prüft.
 // - Einheitliches Error-Objekt, damit Pages konsistent reagieren können.
 
 export type ApiErrorKind =
@@ -24,36 +26,8 @@ export class ApiError extends Error {
   }
 }
 
-const TOKEN_KEY = "kai-api-key";
-
-function readToken(): string {
-  try {
-    const ls = localStorage.getItem(TOKEN_KEY);
-    if (ls) return ls;
-  } catch {
-    // localStorage nicht erreichbar (SSR / privater Modus) — fällt auf env zurück
-  }
-  // Vite ersetzt import.meta.env zur Build-Zeit. Leerer String = kein Token.
-  return (import.meta.env?.VITE_KAI_API_KEY as string | undefined) ?? "";
-}
-
-export function setApiToken(token: string): void {
-  try {
-    if (token) localStorage.setItem(TOKEN_KEY, token);
-    else localStorage.removeItem(TOKEN_KEY);
-  } catch {
-    // no-op
-  }
-}
-
-export function hasApiToken(): boolean {
-  return readToken().length > 0;
-}
-
 function buildHeaders(extra?: HeadersInit): HeadersInit {
   const headers: Record<string, string> = { Accept: "application/json" };
-  const token = readToken();
-  if (token) headers["Authorization"] = `Bearer ${token}`;
   if (extra) Object.assign(headers, extra as Record<string, string>);
   return headers;
 }
@@ -142,6 +116,12 @@ export type DashboardQuality = {
   directional_count: number;
   hits: number;
   misses: number;
+  active_precision_pct: number | null;
+  active_resolved_count: number;
+  active_hits: number;
+  active_misses: number;
+  legacy_resolved_count: number;
+  legacy_unknown_cutoff: string | null;
   priority_corr: number | null;
   forward_precision_pct: number | null;
   forward_resolved: number;
@@ -192,12 +172,17 @@ export function fetchOperatorDecisionPack(signal?: AbortSignal): Promise<Operato
   return apiGet<OperatorStatus>("/operator/decision-pack", { signal });
 }
 
+export type AlertOutcome = "hit" | "miss" | "inconclusive";
+
 export type AlertAuditEntry = {
   document_id: string;
   channel: string;
   message_id: string | null;
   is_digest: boolean;
   dispatched_at: string;
+  outcome?: AlertOutcome;
+  resolved_at?: string;
+  resolved_after_seconds?: number;
 };
 
 export type AlertAuditSummary = {
@@ -205,6 +190,7 @@ export type AlertAuditSummary = {
   execution_enabled: boolean;
   write_back_allowed: boolean;
   total_alerts: number;
+  total_resolved?: number;
   alerts: AlertAuditEntry[];
 };
 
@@ -451,13 +437,26 @@ export function postAgentMessage(
 
 // ---------------- Signals Paste (Dashboard ↔ Envelope-Pipeline) ----------------
 
-export type SignalPasteStatus = "accepted" | "duplicate" | "rejected";
+export type SignalPasteStatus =
+  | "accepted"
+  | "duplicate"
+  | "rejected"
+  | "needs_completion";
 export type SignalPasteStage =
   | "accepted"
   | "idempotency_gate"
   | "parse"
   | "schema_validation"
-  | "execution_gate";
+  | "execution_gate"
+  | "completion_gate";
+
+export type SignalCompletionFields = {
+  exchange_scope?: string[];
+  stop_loss?: number;
+  targets?: number[];
+  leverage?: number;
+  source?: string;
+};
 
 export type SignalPasteResponse = {
   status: SignalPasteStatus;
@@ -466,11 +465,17 @@ export type SignalPasteResponse = {
   envelope_id: string | null;
   idempotency_key: string | null;
   errors: string[];
+  missing_fields: string[];
+  parsed_preview: Record<string, unknown> | null;
 };
 
 export function postSignalPaste(
   text: string,
-  extra?: { operator_user_id?: string; trace_id?: string },
+  extra?: {
+    operator_user_id?: string;
+    trace_id?: string;
+    completion_fields?: SignalCompletionFields;
+  },
 ): Promise<SignalPasteResponse> {
   return apiPost<SignalPasteResponse>("/signals/paste", { text, ...extra });
 }

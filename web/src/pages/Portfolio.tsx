@@ -10,12 +10,13 @@ import {
 } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { PreparedPanel } from "@/components/panels/PreparedPanel";
-
-const fmt$ = (v: number | null | undefined, digits = 2) =>
-  v == null ? "—" : `$${v.toLocaleString("en-US", { minimumFractionDigits: digits, maximumFractionDigits: digits })}`;
+import { useCurrency } from "@/state/CurrencyProvider";
 
 export function PortfolioPage() {
   const { t } = useT();
+  const { fmt } = useCurrency();
+  const fmt$ = (v: number | null | undefined, digits = 2) =>
+    v == null ? "—" : fmt(v, undefined, digits);
   const snap = useApi(fetchPortfolioSnapshot, 30_000);
   const exposure = useApi(fetchExposureSummary, 30_000);
 
@@ -91,8 +92,9 @@ export function PortfolioPage() {
             {snap.state === "ready" ? `${snap.data.position_count} Positionen` : ""}
           </div>
         </div>
-        <div className="overflow-x-auto">
-          <table className="w-full text-xs">
+        <div className="relative">
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
             <thead>
               <tr className="text-fg-subtle text-2xs uppercase tracking-wider">
                 <th className="text-left font-semibold px-4 py-2">Symbol</th>
@@ -132,6 +134,11 @@ export function PortfolioPage() {
               ))}
             </tbody>
           </table>
+          </div>
+          <div
+            className="pointer-events-none absolute inset-y-0 right-0 w-8 bg-gradient-to-l from-bg-1 to-transparent md:hidden"
+            aria-hidden
+          />
         </div>
       </Card>
 
@@ -168,14 +175,15 @@ function Kpi({ label, value, tone = "neutral" }: {
 
 function RowKV({ k, v, tone }: { k: string; v: string; tone?: "pos" | "neg" | "warn" | "muted" }) {
   return (
-    <div className="flex items-center justify-between gap-2 overflow-hidden border-b border-line-subtle/50 py-1">
-      <span className="min-w-0 truncate font-mono text-2xs text-fg-subtle">{k}</span>
+    <div className="flex items-baseline justify-between gap-2 overflow-hidden border-b border-line-subtle/50 py-1">
+      <span className="min-w-0 truncate font-mono text-2xs uppercase tracking-wide text-fg-subtle">{k}</span>
       <span className={cn(
-        "shrink-0 font-mono text-right",
+        "shrink-0 font-mono font-medium text-sm text-right",
         tone === "pos" && "text-pos",
         tone === "neg" && "text-neg",
         tone === "warn" && "text-warn",
         tone === "muted" && "text-fg-muted",
+        !tone && "text-fg",
       )}>{v}</span>
     </div>
   );

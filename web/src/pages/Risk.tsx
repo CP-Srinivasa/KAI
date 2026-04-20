@@ -1,3 +1,4 @@
+import { Info } from "lucide-react";
 import { useT } from "@/i18n/I18nProvider";
 import { PageHeader } from "@/layout/PageHeader";
 import { PreparedPanel } from "@/components/panels/PreparedPanel";
@@ -5,12 +6,27 @@ import { Card, CardHeader } from "@/components/ui/Primitives";
 import { useApi } from "@/lib/useApi";
 import { fetchExposureSummary, fetchOperatorReadiness } from "@/lib/api";
 import { cn } from "@/lib/utils";
+import { useCurrency } from "@/state/CurrencyProvider";
 
-const fmt$ = (v: number | null | undefined, d = 2) =>
-  v == null ? "—" : `$${v.toLocaleString("en-US", { minimumFractionDigits: d, maximumFractionDigits: d })}`;
+const METRIC_HINT: Record<string, string> = {
+  gross_exposure: "Summe aller absoluten Positionswerte in USD. Höher = mehr Kapital im Markt.",
+  net_exposure: "Long minus Short in USD. Richtungsbias des Portfolios.",
+  priced_positions: "Positionen mit frischem Marktpreis (Freshness-Gate bestanden).",
+  stale_positions: "Positionen mit altem Preis — Mark-to-Market ist ungenau.",
+  unavailable_price: "Positionen ohne verfügbaren Preis (Provider-Ausfall oder Symbol-Mismatch).",
+  mark_to_market: "Qualität der aktuellen Portfolio-Bewertung (fresh / degraded / unavailable).",
+  largest_position: "Größte Einzelposition als Konzentrations-Indikator.",
+  status: "Readiness-Gesamtstatus aus Trading-Loop, Risk-Gate und Approval-Mode.",
+  execution_enabled: "Aktiviert echte Order-Execution. In KAI fail-closed: immer off bis explizit freigegeben.",
+  write_back_allowed: "Erlaubt Write-Operationen auf Trading-Journal. Nur im Paper-Mode true.",
+  report_type: "Report-Typ-Kennung des Endpoints (intern).",
+};
 
 export function RiskPage() {
   const { t } = useT();
+  const { fmt } = useCurrency();
+  const fmt$ = (v: number | null | undefined, d = 2) =>
+    v == null ? "—" : fmt(v, undefined, d);
   const exposure = useApi(fetchExposureSummary, 30_000);
   const readiness = useApi(fetchOperatorReadiness, 60_000);
 
@@ -87,9 +103,22 @@ export function RiskPage() {
 }
 
 function KV({ k, v, tone }: { k: string; v: string; tone?: "pos" | "neg" | "warn" | "muted" }) {
+  const hint = METRIC_HINT[k];
   return (
     <div className="flex items-center justify-between gap-2 overflow-hidden border-b border-line-subtle/50 py-1">
-      <span className="min-w-0 truncate font-mono text-2xs text-fg-subtle">{k}</span>
+      <span className="min-w-0 inline-flex items-center gap-1">
+        <span className="truncate font-mono text-2xs text-fg-subtle">{k}</span>
+        {hint && (
+          <span
+            tabIndex={0}
+            title={hint}
+            className="inline-flex text-fg-subtle/70 hover:text-fg-subtle focus:text-fg-subtle cursor-help"
+            aria-label={`${k}: ${hint}`}
+          >
+            <Info size={11} />
+          </span>
+        )}
+      </span>
       <span
         className={cn(
           "shrink-0 font-mono text-right",

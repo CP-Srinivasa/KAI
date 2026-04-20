@@ -14,6 +14,9 @@ type Props = {
   spark?: { x: number; y: number }[];
   tone?: "pos" | "neg" | "neutral" | "warn" | "info" | "ai";
   icon?: ReactNode;
+  target?: number;
+  valueNumeric?: number;
+  gapUnit?: string;
 };
 
 export function KpiCard({
@@ -26,9 +29,20 @@ export function KpiCard({
   spark,
   tone = "neutral",
   icon,
+  target,
+  valueNumeric,
+  gapUnit = "",
 }: Props) {
   const deltaTone = delta === undefined ? "neutral" : delta > 0 ? "pos" : delta < 0 ? "neg" : "neutral";
   const stroke = strokeFor(tone);
+
+  const hasGap = target !== undefined && valueNumeric !== undefined && Number.isFinite(valueNumeric);
+  const gap = hasGap ? (valueNumeric as number) - (target as number) : undefined;
+  const progressPct = hasGap && (target as number) !== 0
+    ? Math.max(0, Math.min(100, ((valueNumeric as number) / (target as number)) * 100))
+    : undefined;
+  const gapTone: "pos" | "neg" | "warn" =
+    gap === undefined ? "warn" : gap >= 0 ? "pos" : "neg";
 
   return (
     <Card className="relative overflow-hidden" padded>
@@ -44,8 +58,8 @@ export function KpiCard({
             </span>
             {unit && <span className="text-xs text-fg-muted font-medium">{unit}</span>}
           </div>
-          {(delta !== undefined || deltaLabel) && (
-            <div className="mt-1.5 flex items-center gap-1.5 text-xs">
+          {(delta !== undefined || deltaLabel || hasGap) && (
+            <div className="mt-1.5 flex items-center gap-1.5 text-xs flex-wrap">
               {delta !== undefined && (
                 <span
                   className={cn(
@@ -62,7 +76,24 @@ export function KpiCard({
                   {deltaLabel ? "%" : ""}
                 </span>
               )}
-              {deltaLabel && <span className="text-fg-subtle">{deltaLabel}</span>}
+              {hasGap && gap !== undefined && (
+                <span
+                  className={cn(
+                    "inline-flex items-center gap-0.5 rounded-xs px-1.5 py-0.5 font-mono text-2xs",
+                    gapTone === "pos" && "bg-pos/10 text-pos",
+                    gapTone === "neg" && "bg-neg/10 text-neg",
+                  )}
+                  title={`Ziel: ${(target as number).toLocaleString("de-DE")}${gapUnit}`}
+                >
+                  {gap >= 0 ? "+" : ""}
+                  {formatGap(gap)}
+                  {gapUnit}
+                  <span className="ml-0.5 text-fg-subtle/80">
+                    {gap >= 0 ? "über" : "bis"} Ziel
+                  </span>
+                </span>
+              )}
+              {deltaLabel && !hasGap && <span className="text-fg-subtle">{deltaLabel}</span>}
             </div>
           )}
         </div>
@@ -86,11 +117,31 @@ export function KpiCard({
         )}
       </div>
 
+      {progressPct !== undefined && (
+        <div className="mt-3 h-1 rounded-full bg-bg-3 overflow-hidden" aria-hidden>
+          <div
+            className={cn(
+              "h-full transition-[width] duration-300",
+              gapTone === "pos" && "bg-pos",
+              gapTone === "neg" && "bg-neg",
+            )}
+            style={{ width: `${progressPct}%` }}
+          />
+        </div>
+      )}
+
       {helper && (
         <div className="mt-3 pt-3 border-t border-line-subtle text-2xs text-fg-muted">{helper}</div>
       )}
     </Card>
   );
+}
+
+function formatGap(gap: number): string {
+  const abs = Math.abs(gap);
+  if (abs >= 100) return gap.toFixed(0);
+  if (abs >= 10) return gap.toFixed(1);
+  return gap.toFixed(2);
 }
 
 function strokeFor(tone: Props["tone"]): string {

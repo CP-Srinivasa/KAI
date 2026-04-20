@@ -64,6 +64,7 @@ export default {
       },
       fontSize: {
         "2xs": ["11px", { lineHeight: "14px" }],
+        display: ["28px", { lineHeight: "32px", letterSpacing: "-0.02em", fontWeight: "700" }],
       },
     },
   },

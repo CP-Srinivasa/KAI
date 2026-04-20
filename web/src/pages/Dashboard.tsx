@@ -1,11 +1,48 @@
-import { Radio, Target, ShieldAlert, CheckCircle2, Activity, AlertCircle } from "lucide-react";
+import { useState } from "react";
+import { Radio, Target, ShieldAlert, CheckCircle2, Activity, AlertCircle, Inbox, ChevronDown, ChevronUp, Wrench } from "lucide-react";
 import { KpiCard } from "@/components/kpi/KpiCard";
 import { QualityBarPanel } from "@/components/panels/QualityBar";
 import { PreparedPanel } from "@/components/panels/PreparedPanel";
 import { Card, CardHeader, Badge } from "@/components/ui/Primitives";
+import { EmptyState } from "@/components/ui/EmptyState";
 import { useT } from "@/i18n/I18nProvider";
 import { useDashboardQuality } from "@/lib/useDashboardQuality";
+import { formatAbsolute, formatRelative } from "@/lib/time";
 import { cn } from "@/lib/utils";
+import { useRouter, type Route } from "@/state/Router";
+
+const PREPARED_PANELS: Array<{ title: string; reason: string; detail: string }> = [
+  {
+    title: "Portfolio Snapshot",
+    reason: "Paper-Portfolio-Snapshot mit Mark-to-Market und Exposure-Summary.",
+    detail: "Backend: GET /operator/portfolio-snapshot — wird in Phase 2 angebunden.",
+  },
+  {
+    title: "Risk Meter",
+    reason: "Risiko-Score aus Exposure, Correlation und Paper-PnL-Drawdown.",
+    detail: "Ableitung aus /operator/exposure-summary — Phase 2.",
+  },
+  {
+    title: "Equity / PnL Kurve",
+    reason: "Equity-Kurve aus Paper-Execution-Audit (Ledger).",
+    detail: "Quelle: artifacts/paper_execution_audit.jsonl — Aggregation in Phase 2.",
+  },
+  {
+    title: "Sentiment Stream",
+    reason: "Rolling Sentiment aus analysierten Dokumenten.",
+    detail: "Erfordert neuen Aggregations-Endpoint — Phase 2.",
+  },
+  {
+    title: "Allocation",
+    reason: "Asset-Allokation aus Portfolio-Snapshot.",
+    detail: "Phase 2.",
+  },
+  {
+    title: "AI Insights",
+    reason: "LLM-generierte Markt-Zusammenfassung mit Provider-Metadaten.",
+    detail: "Erfordert neuen Insight-Endpoint — Phase 3.",
+  },
+];
 
 export function Dashboard() {
   const { t } = useT();
@@ -21,7 +58,7 @@ export function Dashboard() {
     <div className="p-5 xl:p-6 space-y-5 xl:space-y-6 max-w-[1680px] mx-auto">
       <header className="flex items-center justify-between flex-wrap gap-3">
         <div>
-          <h1 className="text-xl font-semibold tracking-tight text-fg">
+          <h1 className="text-display text-fg">
             {t("pages.dashboard.title")}
           </h1>
           <p className="text-xs text-fg-muted mt-1">
@@ -30,7 +67,7 @@ export function Dashboard() {
                   p: (fp ?? 0).toFixed(2),
                   n: String(data.forward_resolved),
                 })
-              : "Live-Daten vom Backend, Auto-Refresh alle 60 s."}
+              : "Live-Daten vom Backend, Auto-Refresh alle 30 s."}
           </p>
         </div>
         <div className="flex items-center gap-2 text-2xs font-mono text-fg-subtle">
@@ -75,6 +112,9 @@ export function Dashboard() {
           label={t("primitives.forward_precision")}
           value={fp != null ? fp.toFixed(1) : "—"}
           unit="%"
+          target={60}
+          valueNumeric={fp ?? undefined}
+          gapUnit="pp"
           deltaLabel={data ? `Ziel: ≥60%` : "—"}
           tone={fp != null && fp >= 60 ? "pos" : "warn"}
           icon={<Target size={12} />}
@@ -91,6 +131,8 @@ export function Dashboard() {
         <KpiCard
           label={t("primitives.resolved_alerts")}
           value={rc != null ? String(rc) : "—"}
+          target={50}
+          valueNumeric={rc ?? undefined}
           deltaLabel="Ziel: ≥50"
           tone={rc != null && rc >= 50 ? "pos" : "warn"}
           icon={<CheckCircle2 size={12} />}
@@ -106,6 +148,8 @@ export function Dashboard() {
         <KpiCard
           label={t("primitives.priority_hit_corr")}
           value={pc != null ? pc.toFixed(3) : "—"}
+          target={0.4}
+          valueNumeric={pc ?? undefined}
           deltaLabel="Ziel: ≥0.40"
           tone={pc != null && pc >= 0.4 ? "pos" : "warn"}
           icon={<Radio size={12} />}
@@ -113,6 +157,8 @@ export function Dashboard() {
         <KpiCard
           label={t("primitives.paper_fills_real")}
           value={pf != null ? String(pf) : "—"}
+          target={10}
+          valueNumeric={pf ?? undefined}
           deltaLabel="Ziel: ≥10"
           tone={pf != null && pf >= 10 ? "pos" : "warn"}
           icon={<ShieldAlert size={12} />}
@@ -141,55 +187,100 @@ export function Dashboard() {
       {/* Recent Alerts */}
       <RecentAlertsCard data={data} />
 
-      {/* Vorbereitete Bereiche — ehrlich gekennzeichnet, keine Mock-Zahlen */}
-      <section className="space-y-3">
-        <div className="flex items-center justify-between">
-          <h2 className="text-sm font-semibold tracking-tight text-fg-muted uppercase">
-            Vorbereitet · Integration ausstehend
-          </h2>
-          <span className="text-2xs text-fg-subtle font-mono">
-            Werden in Phase 2 an echte Endpoints angebunden
-          </span>
-        </div>
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-          <PreparedPanel
-            title="Portfolio Snapshot"
-            reason="Paper-Portfolio-Snapshot mit Mark-to-Market und Exposure-Summary."
-            detail="Backend: GET /operator/portfolio-snapshot — wird in Phase 2 angebunden."
-          />
-          <PreparedPanel
-            title="Risk Meter"
-            reason="Risiko-Score aus Exposure, Correlation und Paper-PnL-Drawdown."
-            detail="Ableitung aus /operator/exposure-summary — Phase 2."
-          />
-          <PreparedPanel
-            title="Equity / PnL Kurve"
-            reason="Equity-Kurve aus Paper-Execution-Audit (Ledger)."
-            detail="Quelle: artifacts/paper_execution_audit.jsonl — Aggregation in Phase 2."
-          />
-          <PreparedPanel
-            title="Sentiment Stream"
-            reason="Rolling Sentiment aus analysierten Dokumenten."
-            detail="Erfordert neuen Aggregations-Endpoint — Phase 2."
-          />
-          <PreparedPanel
-            title="Allocation"
-            reason="Asset-Allokation aus Portfolio-Snapshot."
-            detail="Phase 2."
-          />
-          <PreparedPanel
-            title="AI Insights"
-            reason="LLM-generierte Markt-Zusammenfassung mit Provider-Metadaten."
-            detail="Erfordert neuen Insight-Endpoint — Phase 3."
-          />
-        </div>
-      </section>
+      {/* Vorbereitete Bereiche — default collapsed Ribbon, expandable zu vollem Grid */}
+      <PreparedSection />
 
-      <footer className="pt-4 pb-2 text-2xs text-fg-subtle font-mono flex items-center justify-between">
-        <span>{t("dashboard.footer_version")}</span>
-        <span>{t("dashboard.footer_phase")}</span>
-      </footer>
+      <DashboardFooter />
     </div>
+  );
+}
+
+function DashboardFooter() {
+  const { t } = useT();
+  const { navigate } = useRouter();
+  const buildMode = import.meta.env.MODE;
+  const buildHash = (import.meta.env.VITE_BUILD_HASH as string | undefined) ?? "dev";
+  const buildTooltip = t("dashboard.footer_build_tooltip", { mode: buildMode, hash: buildHash });
+
+  const navItems: Array<{ route: Route; key: string }> = [
+    { route: "agents", key: "footer_nav_agents" },
+    { route: "alerts", key: "footer_nav_alerts" },
+    { route: "settings", key: "footer_nav_settings" },
+  ];
+
+  return (
+    <footer
+      className="pt-4 pb-2 text-2xs text-fg-subtle font-mono flex flex-wrap items-center gap-x-3 gap-y-1 justify-between"
+      role="contentinfo"
+    >
+      <span>{t("dashboard.footer_version")}</span>
+      <nav aria-label="Footer-Navigation" className="flex items-center gap-x-3">
+        {navItems.map((it) => (
+          <button
+            key={it.route}
+            type="button"
+            onClick={() => navigate(it.route)}
+            className="hover:text-fg focus:text-fg focus:outline-none focus-visible:underline underline-offset-2"
+          >
+            {t(`dashboard.${it.key}`)}
+          </button>
+        ))}
+        <span
+          className="text-fg-muted"
+          title={buildTooltip}
+          aria-label={buildTooltip}
+        >
+          {t("dashboard.footer_build_label")} {buildHash}
+        </span>
+      </nav>
+      <span>{t("dashboard.footer_phase")}</span>
+    </footer>
+  );
+}
+
+function PreparedSection() {
+  const [expanded, setExpanded] = useState(false);
+  return (
+    <section className="space-y-3">
+      <button
+        onClick={() => setExpanded((e) => !e)}
+        aria-expanded={expanded}
+        className="w-full flex items-center justify-between gap-3 rounded-sm border border-line-subtle bg-bg-2 hover:bg-bg-3 transition-colors px-4 py-2.5 text-left"
+      >
+        <div className="flex items-center gap-3 min-w-0 flex-1">
+          <Wrench size={14} className="text-fg-subtle shrink-0" aria-hidden />
+          <h2 className="text-sm font-semibold tracking-tight text-fg-muted uppercase shrink-0">
+            Vorbereitet
+          </h2>
+          <span className="text-2xs text-fg-subtle font-mono shrink-0">
+            {PREPARED_PANELS.length} Bereiche · Integration ausstehend
+          </span>
+          {!expanded && (
+            <div className="hidden md:flex items-center gap-1.5 flex-wrap min-w-0 overflow-hidden">
+              {PREPARED_PANELS.map((p) => (
+                <span
+                  key={p.title}
+                  className="inline-flex items-center gap-1 rounded-xs border border-dashed border-line px-1.5 py-0.5 text-[10px] font-medium text-fg-subtle bg-bg-1"
+                >
+                  <span className="h-1 w-1 rounded-full bg-fg-subtle/60" aria-hidden />
+                  {p.title}
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
+        <span className="text-fg-subtle shrink-0">
+          {expanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+        </span>
+      </button>
+      {expanded && (
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+          {PREPARED_PANELS.map((p) => (
+            <PreparedPanel key={p.title} title={p.title} reason={p.reason} detail={p.detail} />
+          ))}
+        </div>
+      )}
+    </section>
   );
 }
 
@@ -233,20 +324,42 @@ function SignalQualityCard({ data }: { data: ReturnType<typeof useDashboardQuali
           ))}
         </div>
       ) : (
-        <div className="text-xs text-fg-subtle">Keine Daten</div>
+        <div className="py-4 text-center text-xs text-fg-subtle">
+          Quality-Report lädt …
+        </div>
       )}
     </Card>
   );
 }
 
+const LOOP_STATUS_TONE: Record<string, "pos" | "neg" | "warn" | "muted" | "info"> = {
+  completed: "pos",
+  no_signal: "muted",
+  no_market_data: "warn",
+  stale_data: "warn",
+  risk_rejected: "warn",
+  consensus_rejected: "neg",
+  order_failed: "neg",
+};
+
+const TONE_BG: Record<string, string> = {
+  pos: "bg-pos",
+  neg: "bg-neg",
+  warn: "bg-warn",
+  muted: "bg-fg-subtle/40",
+  info: "bg-info",
+};
+
 function TradingLoopCard({ data }: { data: ReturnType<typeof useDashboardQuality>["data"] }) {
   const entries = data
     ? Object.entries(data.loop_status_counts).sort((a, b) => b[1] - a[1])
     : [];
+  const total = entries.reduce((acc, [, v]) => acc + v, 0);
   return (
     <Card padded>
       <CardHeader
         title="Trading Loop Status"
+        subtitle={total > 0 ? `${total} Cycles im Fenster` : undefined}
         right={
           <Badge tone="muted">
             <Activity size={10} />
@@ -255,16 +368,49 @@ function TradingLoopCard({ data }: { data: ReturnType<typeof useDashboardQuality
         }
       />
       {entries.length > 0 ? (
-        <div className="space-y-1.5">
-          {entries.map(([k, v]) => (
-            <div key={k} className="flex items-center justify-between text-xs">
-              <span className="text-fg-muted font-mono">{k}</span>
-              <span className="font-mono font-semibold">{v}</span>
-            </div>
-          ))}
+        <div className="space-y-2">
+          <div
+            className="h-2 w-full rounded-sm overflow-hidden flex bg-bg-3"
+            role="img"
+            aria-label={`Loop-Status-Verteilung: ${entries.map(([k, v]) => `${k} ${v}`).join(", ")}`}
+          >
+            {entries.map(([k, v]) => {
+              const tone = LOOP_STATUS_TONE[k] ?? "muted";
+              const pct = total > 0 ? (v / total) * 100 : 0;
+              if (pct <= 0) return null;
+              return (
+                <div
+                  key={k}
+                  className={TONE_BG[tone]}
+                  style={{ width: `${pct}%` }}
+                  title={`${k}: ${v} (${pct.toFixed(1)}%)`}
+                />
+              );
+            })}
+          </div>
+          <div className="space-y-1 pt-1">
+            {entries.map(([k, v]) => {
+              const tone = LOOP_STATUS_TONE[k] ?? "muted";
+              const pct = total > 0 ? (v / total) * 100 : 0;
+              return (
+                <div key={k} className="flex items-center justify-between text-xs">
+                  <span className="inline-flex items-center gap-2 text-fg-muted font-mono">
+                    <span className={cn("inline-block h-2 w-2 rounded-xs", TONE_BG[tone])} aria-hidden />
+                    {k}
+                  </span>
+                  <span className="font-mono font-semibold tabular-nums">
+                    {v}
+                    <span className="ml-1.5 text-2xs text-fg-subtle font-normal">{pct.toFixed(0)}%</span>
+                  </span>
+                </div>
+              );
+            })}
+          </div>
         </div>
       ) : (
-        <div className="text-xs text-fg-subtle">Keine Cycles aufgezeichnet</div>
+        <div className="py-4 text-center text-xs text-fg-subtle">
+          Noch keine Cycles im aktuellen Fenster
+        </div>
       )}
     </Card>
   );
@@ -284,7 +430,12 @@ function RecentAlertsCard({ data }: { data: ReturnType<typeof useDashboardQualit
         }
       />
       {rows.length === 0 ? (
-        <div className="text-xs text-fg-subtle py-6 text-center">Keine Alerts</div>
+        <EmptyState
+          icon={<Inbox size={18} />}
+          title="Noch keine Alerts in diesem Fenster"
+          hint="Directional Alerts erscheinen hier in Echtzeit, sobald die Pipeline sie dispatched. Quality-Report refreshed alle 30s."
+          className="my-2"
+        />
       ) : (
         <div className="overflow-x-auto">
           <table className="w-full text-xs">
@@ -309,7 +460,9 @@ function RecentAlertsCard({ data }: { data: ReturnType<typeof useDashboardQualit
                   <td className="py-2 pr-3 font-mono text-2xs text-fg-muted">
                     {a.assets.length ? a.assets.join(", ") : "—"}
                   </td>
-                  <td className="py-2 pr-3 font-mono text-2xs text-fg-subtle">{a.dispatched_at}</td>
+                  <td className="py-2 pr-3 text-xs text-fg-muted" title={formatAbsolute(a.dispatched_at)}>
+                    {formatRelative(a.dispatched_at)}
+                  </td>
                   <td className="py-2 pr-3">
                     <OutcomeBadge o={a.outcome} />
                   </td>

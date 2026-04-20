@@ -26,19 +26,25 @@ export function SettingsPage() {
     <div className="p-5 xl:p-6 space-y-5 max-w-[1680px] mx-auto">
       <PageHeader title={t("pages.settings.title")} sub={t("pages.settings.sub")} />
 
-      <div className="inline-flex items-center rounded-sm border border-line-subtle bg-bg-2 p-0.5 gap-0.5 overflow-x-auto">
-        {tabs.map((tb) => (
-          <button
-            key={tb.id}
-            onClick={() => setTab(tb.id)}
-            className={cn(
-              "h-7 px-3 text-2xs font-medium rounded-xs whitespace-nowrap",
-              tab === tb.id ? "bg-bg-1 text-fg shadow-panel" : "text-fg-muted hover:text-fg hover:bg-bg-3",
-            )}
-          >
-            {tb.label}
-          </button>
-        ))}
+      <div className="relative max-w-full">
+        <div className="inline-flex items-center rounded-sm border border-line-subtle bg-bg-2 p-0.5 gap-0.5 overflow-x-auto max-w-full">
+          {tabs.map((tb) => (
+            <button
+              key={tb.id}
+              onClick={() => setTab(tb.id)}
+              className={cn(
+                "h-7 px-3 text-2xs font-medium rounded-xs whitespace-nowrap",
+                tab === tb.id ? "bg-bg-1 text-fg shadow-panel" : "text-fg-muted hover:text-fg hover:bg-bg-3",
+              )}
+            >
+              {tb.label}
+            </button>
+          ))}
+        </div>
+        <div
+          className="pointer-events-none absolute inset-y-0 right-0 w-6 bg-gradient-to-l from-bg-1 to-transparent rounded-sm sm:hidden"
+          aria-hidden
+        />
       </div>
 
       {tab === "general" && <GeneralTab />}
@@ -56,7 +62,7 @@ function GeneralTab() {
     <Card>
       <CardHeader title={t("pages.settings.general.profile")} subtitle={t("pages.settings.general.profile_sub")} />
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-        <Field label={t("pages.settings.general.operator")}><Input defaultValue="Sascha" /></Field>
+        <Field label={t("pages.settings.general.operator")}><Input defaultValue="Operator" placeholder="Operator" /></Field>
         <Field label={t("pages.settings.general.role")}><Input defaultValue="Principal Engineer" /></Field>
         <Field label={t("pages.settings.general.timezone")}><Input defaultValue="Europe/Berlin" /></Field>
         <Field label={t("pages.settings.general.email")}><Input defaultValue="ops@example.local" /></Field>

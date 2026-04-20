@@ -117,13 +117,41 @@ write nur über `app/agents/tools/guarded_write.py` mit Audit-Trail.
 | **SENTR** | `a708ac129e9cf2569` | inspect, report | Security/Inspection — prüft Code, Configs, Secrets, Auditierbarkeit |
 | **Watchdog** | — | `check`, `report` | Health/Drift-Monitor — verifiziert Pipeline-Outputs, Quality-Bar, Regressionen |
 | **Architect** | `a14a2b53ba50ebadd` | review, propose | Architektur/Struktur — bewertet Module, Abhängigkeiten, Refactor-Vorschläge |
+| **DALI** | — | `audit`, `propose`, `implement` | Design/UI — UI/UX-Audit, Redesign-Konzepte, Patch-Proposals für Dashboard, Telegram, Visual System |
+| **Neo** | — | `analyze`, `propose`, `implement` | Code-Tiefenanalyse — Root-Cause-Debugging, Concurrency, Datenfluss, Performance, Refactor mit Risikoabwägung |
+| **SATOSHI** | — | `crypto-review`, `forensic`, `threat-model`, `propose`, `implement` | Kryptographie/Wallet/Smart-Contract/Forensik — Signaturen, HMAC, Webhooks, Key-Material, Tokenomics-vs-Onchain, Doc-vs-Code-Konsistenz, Provenance, Threat-Models |
 
 **Dropbox-Pattern (honest by design):**
-- Findings/Reports: `artifacts/agents/{sentr,watchdog,architect}/*.jsonl`
+- Findings/Reports: `artifacts/agents/{sentr,watchdog,architect,dali,neo,satoshi}/*.jsonl`
 - Status `live` = JSONL in den letzten 24h; `prepared` = Verzeichnis existiert, leer; `unavailable` = kein Verzeichnis
 - Kein Fake-Heartbeat, keine Mock-Daten
 
-**Master-Rules** (gelten für alle drei): CLAUDE.md Core Rules + Deploy-Regeln + Testing-Regeln.
+**DALI Patch-Proposals (D-152):**
+- `implement`-Modus schreibt **nie direkt** in Code. Output landet als strukturierter Diff-Proposal in `artifacts/agents/dali/proposals.jsonl` (Felder: `target_path`, `diff`, `rationale`, `scope`, `risk`).
+- Operator/Claude Code reviewt und wendet an — kein Auto-Apply.
+- Scope-Allowlist (empfohlen, vom Operator verifiziert): `web/src/**`, `app/messaging/telegram_menu.py`, `web/tailwind.config.js`, `web/src/theme/**`, `.claude/agents/**`.
+- Proposals außerhalb der Allowlist werden im `risk`-Feld als `out_of_scope` markiert und müssen explizit freigegeben werden.
+
+**Master-Rules** (gelten für alle Agenten): CLAUDE.md Core Rules + Deploy-Regeln + Testing-Regeln.
+
+## Cross-Reference-Pattern (Gedankenaustausch)
+
+Subagents kommunizieren NICHT direkt miteinander — Architektur-Limit von Claude Code. Jeder Subagent läuft isoliert, gibt einen Report an den Hauptagent zurück. **Der Hauptagent (Claude Code) ist Dispatcher und Moderator.**
+
+Gedankenaustausch zwischen Agenten erfolgt über das **Artifact-Cross-Ref-Pattern**:
+
+1. Subagent A schreibt Finding mit eindeutiger ID (`finding_id`/`report_id`/`proposal_id`/`tm_id`/`impl_id`) in `artifacts/agents/{a}/{kind}.jsonl`.
+2. Hauptagent liest, übergibt die ID beim Folgeaufruf an Subagent B im Prompt: *"siehe NEO-F-014 in artifacts/agents/neo/findings.jsonl, prüfe Krypto-Pfad-Implikationen"*.
+3. Subagent B liest die Quelle, antwortet, schreibt eigenes Artifact mit `cross_ref`-Feld:
+   ```json
+   {"ts":"...","finding_id":"SAT-C-031","cross_ref":["NEO-F-014"],"category":"...","detail":"..."}
+   ```
+4. Hauptagent moderiert iterativ, hält die Kette nachvollziehbar.
+
+**Vorteil:** Auditierbare Spur, kein impliziter State, jede Cross-Bewertung rekonstruierbar.
+**Limit:** Latenz höher als bei direktem Crosstalk; Hauptagent muss aktiv routen.
+
+Auto-Routing-Pflicht (welcher Agent bei welchem Topic, inkl. Parallel-Aktivierung) ist in **CLAUDE.md § Auto-Routing-Pflicht** definiert.
 
 ## Documentation Policy (D-99, 2026-03-24)
 

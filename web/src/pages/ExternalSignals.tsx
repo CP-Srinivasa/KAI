@@ -1,5 +1,5 @@
-import { useState } from "react";
-import { Send, Loader2, RefreshCw, Inbox, CheckCircle2, AlertTriangle, XCircle, Clock } from "lucide-react";
+import { useEffect, useState } from "react";
+import { Send, Loader2, RefreshCw, Inbox, CheckCircle2, AlertTriangle, XCircle, Clock, HelpCircle } from "lucide-react";
 import { useT } from "@/i18n/I18nProvider";
 import { PageHeader } from "@/layout/PageHeader";
 import { Badge, Button, Card, CardHeader } from "@/components/ui/Primitives";
@@ -11,6 +11,7 @@ import {
   postSignalPaste,
   type EnvelopeRecentResponse,
   type EnvelopeRecord,
+  type SignalCompletionFields,
   type SignalPasteResponse,
   type SignalPasteStatus,
 } from "@/lib/api";
@@ -30,13 +31,37 @@ Status: NEW
 Timestamp: 2026-04-15T10:00:00Z
 `;
 
+const SAMPLE_FREEFORM = `🟢 #BTC/USDT LONG/BUY
+Entry Zone: 70565 – 70590
+Targets:
+🎯 70965
+🎯 71200
+🎯 71400
+Stop Loss: 70400
+Leverage: 10x
+`;
+
 type Tone = "pos" | "warn" | "neg" | "info" | "neutral";
 
-function statusTone(status: SignalPasteStatus): "pos" | "warn" | "neg" {
+function statusTone(status: SignalPasteStatus): "pos" | "warn" | "neg" | "info" {
   if (status === "accepted") return "pos";
   if (status === "duplicate") return "warn";
+  if (status === "needs_completion") return "info";
   return "neg";
 }
+
+const KNOWN_EXCHANGES = [
+  "binance_futures",
+  "bybit",
+  "okx",
+  "bitget",
+  "kucoin",
+  "mexc",
+  "deribit",
+  "bingx",
+  "blofin",
+  "huobi",
+] as const;
 
 function envelopeTone(rec: EnvelopeRecord): Tone {
   const { status, stage } = rec;
@@ -89,15 +114,52 @@ function SignalPasteForm({ onPasted }: SignalPasteFormProps) {
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<SignalPasteResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [exchangeChoice, setExchangeChoice] = useState<string>("");
+  const [stopLossInput, setStopLossInput] = useState<string>("");
+  const [targetsInput, setTargetsInput] = useState<string>("");
+  const [leverageInput, setLeverageInput] = useState<string>("");
 
-  async function submit() {
+  // Prefill the verify-and-submit form from the parsed preview whenever the
+  // backend returns needs_completion. Missing fields stay empty (forcing the
+  // operator to fill them); parsed fields show up pre-filled so the operator
+  // can cross-check and correct misparses before committing.
+  useEffect(() => {
+    if (!result || result.status !== "needs_completion") return;
+    const preview = result.parsed_preview ?? {};
+    const ex = preview.exchange_scope;
+    if (Array.isArray(ex) && ex.length > 0 && typeof ex[0] === "string") {
+      setExchangeChoice(ex[0] as string);
+    } else {
+      setExchangeChoice("");
+    }
+    const sl = preview.stop_loss;
+    setStopLossInput(typeof sl === "number" ? String(sl) : "");
+    const tg = preview.targets;
+    setTargetsInput(
+      Array.isArray(tg) && tg.length > 0
+        ? tg.filter((v) => typeof v === "number").join(", ")
+        : "",
+    );
+    const lev = preview.leverage;
+    setLeverageInput(typeof lev === "number" && lev > 1 ? String(lev) : "");
+  }, [result]);
+
+  async function submit(extra?: SignalCompletionFields) {
     if (!text.trim()) return;
     setBusy(true);
     setError(null);
-    setResult(null);
     try {
-      const res = await postSignalPaste(text);
+      const res = await postSignalPaste(
+        text,
+        extra ? { completion_fields: extra } : undefined,
+      );
       setResult(res);
+      if (res.status === "accepted" || res.status === "duplicate") {
+        setExchangeChoice("");
+        setStopLossInput("");
+        setTargetsInput("");
+        setLeverageInput("");
+      }
       onPasted();
     } catch (e) {
       if (e instanceof ApiError) setError(`${e.kind} (${e.status}): ${e.message}`);
@@ -107,11 +169,35 @@ function SignalPasteForm({ onPasted }: SignalPasteFormProps) {
     }
   }
 
+  function submitWithCompletion() {
+    if (!result || result.status !== "needs_completion") return;
+    const completion: SignalCompletionFields = {};
+    if (exchangeChoice.trim()) {
+      completion.exchange_scope = [exchangeChoice.trim()];
+    }
+    if (stopLossInput.trim()) {
+      const v = Number(stopLossInput.replace(",", "."));
+      if (Number.isFinite(v) && v > 0) completion.stop_loss = v;
+    }
+    if (targetsInput.trim()) {
+      const parts = targetsInput
+        .split(/[\s,;]+/)
+        .map((p) => Number(p.replace(",", ".")))
+        .filter((v) => Number.isFinite(v) && v > 0);
+      if (parts.length > 0) completion.targets = parts;
+    }
+    if (leverageInput.trim()) {
+      const v = Number(leverageInput);
+      if (Number.isInteger(v) && v >= 1) completion.leverage = v;
+    }
+    submit(completion);
+  }
+
   return (
     <Card>
       <CardHeader
         title="Signal-Paste"
-        subtitle="Strukturierter Block ([SIGNAL] / [NEWS] / [EXCHANGE_RESPONSE]) läuft durch die Envelope-Pipeline: parse → schema → idempotency → audit."
+        subtitle="Akzeptiert strukturierte Blöcke ([SIGNAL] / [NEWS] / [EXCHANGE_RESPONSE]) UND freie Telegram-Formate (Paar + LONG/SHORT, z. B. 🟢 #BTC/USDT LONG/BUY …). Pipeline: parse → schema → idempotency → audit."
         right={
           <Badge tone="info" dot>
             POST /signals/paste
@@ -132,7 +218,7 @@ function SignalPasteForm({ onPasted }: SignalPasteFormProps) {
             <Button
               variant="primary"
               size="md"
-              onClick={submit}
+              onClick={() => submit()}
               disabled={busy || !text.trim()}
             >
               {busy ? (
@@ -160,7 +246,15 @@ function SignalPasteForm({ onPasted }: SignalPasteFormProps) {
               onClick={() => setText(SAMPLE)}
               disabled={busy}
             >
-              Beispiel einfügen
+              Beispiel [SIGNAL]
+            </Button>
+            <Button
+              variant="ghost"
+              size="md"
+              onClick={() => setText(SAMPLE_FREEFORM)}
+              disabled={busy}
+            >
+              Beispiel freies Format
             </Button>
           </div>
         </div>
@@ -183,9 +277,8 @@ function SignalPasteForm({ onPasted }: SignalPasteFormProps) {
           {result && (
             <div
               className={cn(
-                "rounded-sm border bg-bg-0 p-3 text-xs space-y-2 border-l-4",
+                "rounded-sm border border-line bg-bg-0 p-3 text-xs space-y-2 border-l-4",
                 TONE_ACCENT[statusTone(result.status)],
-                "border-line-subtle",
               )}
             >
               <div className="flex flex-wrap items-center gap-2">
@@ -197,6 +290,133 @@ function SignalPasteForm({ onPasted }: SignalPasteFormProps) {
                   <Badge tone="info">{result.message_type}</Badge>
                 )}
               </div>
+              {result.status === "needs_completion" && (
+                <div className="space-y-3 rounded-sm border border-info/30 bg-info/5 p-3">
+                  <div className="flex items-start gap-2 text-info">
+                    <HelpCircle className="h-4 w-4 shrink-0 mt-0.5" />
+                    <div className="text-xs">
+                      <div className="font-semibold">
+                        Ergänzen, gegenprüfen, absenden
+                      </div>
+                      <div className="text-fg-muted">
+                        KAI hat den Paste heuristisch geparst. Bitte jetzt
+                        gegenprüfen — fehlende Felder ergänzen, falsch
+                        erkannte Felder korrigieren. Ohne vollständige Angaben
+                        setzt KAI keine stillen Defaults.
+                      </div>
+                    </div>
+                  </div>
+                  {result.parsed_preview && (
+                    <div className="rounded-sm border border-line bg-bg-0 p-2 space-y-0.5">
+                      <div className="text-2xs uppercase tracking-wider text-fg-subtle mb-1">
+                        Geparst (read-only Übersicht)
+                      </div>
+                      <div className="font-mono text-2xs text-fg-muted space-y-0.5">
+                        {Object.entries(result.parsed_preview).map(([k, v]) => (
+                          <div key={k} className="flex gap-2">
+                            <span className="text-fg-subtle">{k}:</span>
+                            <span className="break-all">
+                              {Array.isArray(v)
+                                ? v.length === 0
+                                  ? "—"
+                                  : v.join(", ")
+                                : v === null
+                                ? "—"
+                                : String(v)}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                  <div className="space-y-2">
+                    <div className="text-2xs uppercase tracking-wider text-fg-subtle">
+                      Verifizieren & korrigieren
+                    </div>
+                    <label className="block space-y-1">
+                      <span className="text-2xs uppercase tracking-wider text-fg-subtle flex items-center gap-1">
+                        Exchange
+                        {result.missing_fields.includes("exchange_scope") && (
+                          <Badge tone="warn">erforderlich</Badge>
+                        )}
+                      </span>
+                      <select
+                        value={exchangeChoice}
+                        onChange={(e) => setExchangeChoice(e.target.value)}
+                        className="w-full rounded-sm border border-line bg-bg-0 px-2 py-1 text-xs text-fg focus:outline-none focus:ring-2 focus:ring-accent/40"
+                      >
+                        <option value="">— bitte wählen —</option>
+                        {KNOWN_EXCHANGES.map((ex) => (
+                          <option key={ex} value={ex}>
+                            {ex}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label className="block space-y-1">
+                      <span className="text-2xs uppercase tracking-wider text-fg-subtle flex items-center gap-1">
+                        Stop Loss
+                        {result.missing_fields.includes("stop_loss") && (
+                          <Badge tone="warn">erforderlich</Badge>
+                        )}
+                      </span>
+                      <input
+                        type="text"
+                        inputMode="decimal"
+                        value={stopLossInput}
+                        onChange={(e) => setStopLossInput(e.target.value)}
+                        placeholder="z. B. 70400"
+                        className="w-full rounded-sm border border-line bg-bg-0 px-2 py-1 font-mono text-xs text-fg focus:outline-none focus:ring-2 focus:ring-accent/40"
+                      />
+                    </label>
+                    <label className="block space-y-1">
+                      <span className="text-2xs uppercase tracking-wider text-fg-subtle flex items-center gap-1">
+                        Targets (kommagetrennt)
+                        {result.missing_fields.includes("targets") && (
+                          <Badge tone="warn">erforderlich</Badge>
+                        )}
+                      </span>
+                      <input
+                        type="text"
+                        value={targetsInput}
+                        onChange={(e) => setTargetsInput(e.target.value)}
+                        placeholder="z. B. 70965, 71200, 71400"
+                        className="w-full rounded-sm border border-line bg-bg-0 px-2 py-1 font-mono text-xs text-fg focus:outline-none focus:ring-2 focus:ring-accent/40"
+                      />
+                    </label>
+                    <label className="block space-y-1">
+                      <span className="text-2xs uppercase tracking-wider text-fg-subtle flex items-center gap-1">
+                        Leverage (x)
+                        {result.missing_fields.includes("leverage") && (
+                          <Badge tone="warn">erforderlich</Badge>
+                        )}
+                      </span>
+                      <input
+                        type="number"
+                        min={1}
+                        max={125}
+                        value={leverageInput}
+                        onChange={(e) => setLeverageInput(e.target.value)}
+                        placeholder="z. B. 10"
+                        className="w-full rounded-sm border border-line bg-bg-0 px-2 py-1 font-mono text-xs text-fg focus:outline-none focus:ring-2 focus:ring-accent/40"
+                      />
+                    </label>
+                  </div>
+                  <Button
+                    variant="primary"
+                    size="sm"
+                    onClick={submitWithCompletion}
+                    disabled={busy}
+                  >
+                    {busy ? (
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    ) : (
+                      <Send className="h-3.5 w-3.5" />
+                    )}
+                    Gegenprüfen & absenden
+                  </Button>
+                </div>
+              )}
               {result.envelope_id && (
                 <div className="space-y-0.5">
                   <div className="text-2xs uppercase tracking-wider text-fg-subtle">
@@ -242,7 +462,7 @@ function EnvelopeCard({ rec }: { rec: EnvelopeRecord }) {
   return (
     <div
       className={cn(
-        "rounded-sm border border-line-subtle bg-bg-0 p-4 border-l-4 space-y-3 transition-colors hover:bg-bg-2/40",
+        "rounded-sm border border-line bg-bg-0 p-4 border-l-4 space-y-3 transition-colors hover:bg-bg-2/40",
         TONE_ACCENT[tone],
       )}
     >

@@ -6,7 +6,7 @@ export type QualityState =
   | { state: "ready"; data: DashboardQuality; error: null }
   | { state: "error"; data: null; error: { kind: string; message: string } };
 
-export function useDashboardQuality(refreshMs: number = 60_000): QualityState {
+export function useDashboardQuality(refreshMs: number = 30_000): QualityState {
   const [state, setState] = useState<QualityState>({ state: "loading", data: null, error: null });
   const abortRef = useRef<AbortController | null>(null);
 

@@ -20,7 +20,7 @@ export function TradesPage() {
         sub={
           status.state === "ready"
             ? `Mode: ${status.data.mode} · ${status.data.total_cycles} cycles · last: ${status.data.last_cycle_status ?? "—"}`
-            : "Paper-Trading Loop Status"
+            : "Was wurde zuletzt ausgeführt und mit welchem Ergebnis."
         }
         right={
           <Button onClick={() => { status.reload(); cycles.reload(); }} variant="outline" size="sm">

@@ -26,6 +26,16 @@ export default defineConfig(({ mode }) => {
       outDir: "dist",
       emptyOutDir: true,
       sourcemap: false,
+      rollupOptions: {
+        output: {
+          // Vendor-Splitting: hält Initial-Bundle klein, cached Vendor-Chunks separat.
+          manualChunks: {
+            "vendor-react": ["react", "react-dom"],
+            "vendor-charts": ["recharts"],
+            "vendor-icons": ["lucide-react"],
+          },
+        },
+      },
     },
     server: {
       host: true,

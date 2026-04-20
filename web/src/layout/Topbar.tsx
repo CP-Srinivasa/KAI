@@ -1,4 +1,4 @@
-import { Bell, Moon, Search, Sun, Languages, Menu } from "lucide-react";
+import { Moon, Search, Sun, Languages, Menu } from "lucide-react";
 import { useState } from "react";
 import { useTheme } from "@/theme/ThemeProvider";
 import { Badge } from "@/components/ui/Primitives";
@@ -8,6 +8,7 @@ import { useCurrency, type Currency } from "@/state/CurrencyProvider";
 import { useAppState, TIMEFRAMES } from "@/state/AppState";
 import { useRouter, type Route } from "@/state/Router";
 import { cn } from "@/lib/utils";
+import { NotificationsBell } from "./NotificationsBell";
 
 const CONTEXT: Record<Route, string> = {
   dashboard: "nav.dashboard",
@@ -144,13 +145,7 @@ export function Topbar({ onMobileMenuToggle }: TopbarProps = {}) {
           {theme === "dark" ? <Sun size={14} /> : <Moon size={14} />}
         </button>
 
-        <button
-          className="relative h-8 w-8 grid place-items-center rounded-sm border border-line-subtle bg-bg-2 text-fg-muted hover:text-fg hover:bg-bg-3 transition-colors"
-          aria-label="Notifications"
-        >
-          <Bell size={14} />
-          <span className="absolute top-1.5 right-1.5 h-1.5 w-1.5 rounded-full bg-neg ring-2 ring-bg-2" />
-        </button>
+        <NotificationsBell />
 
         <div className="hidden xl:flex items-center gap-2 rounded-sm border border-line-subtle bg-bg-2 px-2.5 h-8">
           <Badge tone="warn" dot>
