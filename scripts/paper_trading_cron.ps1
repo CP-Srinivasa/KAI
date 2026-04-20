@@ -178,6 +178,23 @@ if ($hour -ge 8 -and $lastBriefing -ne $today) {
     $today | Out-File -Encoding utf8 $briefingMarker
 }
 
+# Daily strategy review skeleton (once per day, first run after 08:00).
+# Writes artifacts/daily_strategy/<today>.md with live metrics + empty
+# Pflicht-Sektionen, plus a Telegram ping. Idempotent — second call same
+# day is a no-op. See feedback_daily_strategy_session_start.md memory.
+$strategyMarker = Join-Path $ProjectRoot "artifacts\.daily_strategy_date"
+$lastStrategy = if (Test-Path $strategyMarker) { Get-Content $strategyMarker -ErrorAction SilentlyContinue } else { "" }
+if ($hour -ge 8 -and $lastStrategy -ne $today) {
+    Write-Log "daily-strategy bootstrap starting"
+    try {
+        $stratOutput = & $Python -m app.cli.main daily-strategy bootstrap 2>&1 | Out-String
+        Write-Log "daily-strategy: $($stratOutput.Trim())"
+    } catch {
+        Write-Log "daily-strategy ERROR: $_"
+    }
+    $today | Out-File -Encoding utf8 $strategyMarker
+}
+
 # Pipeline run-all (every 4th run = ~40 min, ingests all active RSS feeds)
 $pipelineMarker = Join-Path $ProjectRoot "artifacts\.pipeline_counter"
 $pipelineCounter = 0
