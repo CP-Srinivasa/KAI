@@ -1092,19 +1092,24 @@ def alerts_tv_bridge(
     Operator flow: ``tv-bridge`` → ``auto-annotate`` → ``tv4-quality-bar``.
     """
     from app.alerts.tv_bridge import persist_tv_events_as_alert_audits
+    from app.core.settings import get_settings
 
     artifacts_path = Path(artifacts_dir)
+    tv_settings = get_settings().tradingview
     counts = persist_tv_events_as_alert_audits(
         tv_pending_path=artifacts_path / "tradingview_pending_signals.jsonl",
         alert_audit_path=artifacts_path / "alert_audit.jsonl",
         include_smoke=include_smoke,
+        hmac_secret=tv_settings.bridge_hmac_secret,
     )
     console.print(
         f"[green]TV-Bridge:[/green] written={counts['written']} "
         f"skipped_existing={counts['skipped_existing']} "
         f"skipped_smoke={counts['skipped_smoke']} "
         f"skipped_unsupported={counts['skipped_unsupported']} "
-        f"skipped_invalid={counts['skipped_invalid']}"
+        f"skipped_invalid={counts['skipped_invalid']} "
+        f"skipped_unsigned={counts['skipped_unsigned']} "
+        f"skipped_tampered={counts['skipped_tampered']}"
     )
 
 

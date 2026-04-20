@@ -40,10 +40,12 @@ class TVBridgeScheduler:
         interval_seconds: int,
         artifacts_dir: str | Path = "artifacts",
         include_smoke: bool = False,
+        hmac_secret: str = "",
     ) -> None:
         self._interval_seconds = interval_seconds
         self._artifacts_dir = Path(artifacts_dir)
         self._include_smoke = include_smoke
+        self._hmac_secret = hmac_secret
         self._scheduler = AsyncIOScheduler()
 
     def start(self) -> None:
@@ -80,6 +82,7 @@ class TVBridgeScheduler:
                 tv_pending_path=self._artifacts_dir / "tradingview_pending_signals.jsonl",
                 alert_audit_path=self._artifacts_dir / "alert_audit.jsonl",
                 include_smoke=self._include_smoke,
+                hmac_secret=self._hmac_secret,
             )
         except Exception as exc:  # noqa: BLE001
             logger.error("tv_bridge_tick_failed", error=str(exc))

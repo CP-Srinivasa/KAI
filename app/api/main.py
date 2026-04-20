@@ -85,6 +85,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         app.state.tv_bridge_scheduler = TVBridgeScheduler(
             interval_seconds=settings.tradingview.bridge_scheduler_interval_seconds,
             include_smoke=settings.tradingview.bridge_scheduler_include_smoke,
+            hmac_secret=settings.tradingview.bridge_hmac_secret,
         )
         app.state.tv_bridge_scheduler.start()
 

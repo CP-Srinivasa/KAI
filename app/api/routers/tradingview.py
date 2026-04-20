@@ -200,7 +200,10 @@ PendingSignalWriter = Callable[[Path, TradingViewSignalEvent], None]
 
 
 def _default_pending_writer(path: Path, event: TradingViewSignalEvent) -> None:
-    append_pending_signal(path, event)
+    # SENTR-F-004: resolve the HMAC secret at write-time so operator
+    # rotation via env-reload takes effect without router restart.
+    secret = get_settings().tradingview.bridge_hmac_secret
+    append_pending_signal(path, event, hmac_secret=secret)
 
 
 _pending_writer: PendingSignalWriter = _default_pending_writer

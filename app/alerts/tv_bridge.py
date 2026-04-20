@@ -34,6 +34,7 @@ from app.alerts.audit import (
     iter_alert_audit_document_ids,
 )
 from app.market_data.coingecko_adapter import _BASE_ASSET_TO_COINGECKO
+from app.signals.tradingview_event import TV_ROW_HMAC_FIELD, verify_row_hmac
 
 log = structlog.get_logger(__name__)
 
@@ -88,6 +89,7 @@ def persist_tv_events_as_alert_audits(
     alert_audit_path: Path,
     include_smoke: bool = False,
     max_events_per_tick: int = _DEFAULT_MAX_EVENTS_PER_TICK,
+    hmac_secret: str = "",
 ) -> dict[str, int]:
     """Append synthetic AlertAuditRecords for TV-webhook events. Idempotent.
 
@@ -101,11 +103,20 @@ def persist_tv_events_as_alert_audits(
     (SENTR-F-005). When reached, remaining events contribute to
     ``skipped_overflow`` and wait for the next tick. Default 500.
 
+    When ``hmac_secret`` is non-empty (SENTR-F-004), each pending row must
+    carry a valid ``_sig`` HMAC-SHA256 over its canonical JSON. Rows with no
+    ``_sig`` are counted as ``skipped_unsigned``; rows whose ``_sig`` fails
+    verification are counted as ``skipped_tampered``. Both are logged and
+    not bridged into the audit — protecting the hit-rate metric from a
+    local attacker who can write the file but does not hold the secret.
+    Empty ``hmac_secret`` disables verification (legacy behaviour).
+
     Returns counts: ``written``, ``skipped_existing`` (already bridged),
     ``skipped_unsupported`` (base asset not in CoinGecko map or ticker
     unparseable), ``skipped_invalid`` (missing required event fields),
     ``skipped_smoke`` (filtered by smoke heuristic), ``skipped_overflow``
-    (deferred to next tick by per-tick cap).
+    (deferred to next tick by per-tick cap), ``skipped_unsigned`` (missing
+    HMAC when secret active), ``skipped_tampered`` (HMAC mismatch).
     """
     counts = {
         "written": 0,
@@ -114,6 +125,8 @@ def persist_tv_events_as_alert_audits(
         "skipped_invalid": 0,
         "skipped_smoke": 0,
         "skipped_overflow": 0,
+        "skipped_unsigned": 0,
+        "skipped_tampered": 0,
     }
     if not tv_pending_path.exists():
         return counts
@@ -131,6 +144,25 @@ def persist_tv_events_as_alert_audits(
         except json.JSONDecodeError:
             counts["skipped_invalid"] += 1
             continue
+
+        # SENTR-F-004: HMAC verification. Only enforced when a secret is
+        # configured — keeps legacy deployments working and makes the
+        # feature opt-in per-deployment.
+        if hmac_secret:
+            if TV_ROW_HMAC_FIELD not in event:
+                counts["skipped_unsigned"] += 1
+                log.warning(
+                    "tv_bridge.skip_unsigned",
+                    event_id=_sanitize_for_log(event.get("event_id")),
+                )
+                continue
+            if not verify_row_hmac(event, hmac_secret):
+                counts["skipped_tampered"] += 1
+                log.warning(
+                    "tv_bridge.skip_tampered",
+                    event_id=_sanitize_for_log(event.get("event_id")),
+                )
+                continue
 
         event_id = event.get("event_id")
         ticker = event.get("ticker")

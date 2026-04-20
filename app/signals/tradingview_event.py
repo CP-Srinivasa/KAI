@@ -19,6 +19,8 @@ See: docs/adr/0001-tradingview-integration.md
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import json
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -26,6 +28,11 @@ from typing import Any, Literal
 from uuid import uuid4
 
 from app.signals.models import SignalProvenance
+
+# SENTR-F-004: key under which the row-HMAC is stored inside each JSONL row.
+# Leading underscore keeps it visually grouped with metadata (not a payload
+# field) while remaining a valid JSON key.
+TV_ROW_HMAC_FIELD = "_sig"
 
 TradingViewAction = Literal["buy", "sell", "close", "unknown"]
 _VALID_ACTIONS: set[str] = {"buy", "sell", "close"}
@@ -162,11 +169,52 @@ def event_to_jsonl_dict(event: TradingViewSignalEvent) -> dict[str, Any]:
     return asdict(event)
 
 
-def append_pending_signal(path: Path, event: TradingViewSignalEvent) -> None:
-    """Append one event to the pending-signals JSONL (append-only)."""
+def _canonical_payload_bytes(payload: dict[str, Any]) -> bytes:
+    """Canonical JSON for HMAC input — sorted keys, no whitespace, no HMAC field.
+
+    The signature is computed over the payload *without* its own ``_sig``
+    field so verification is symmetric: stripping the field and re-signing
+    must reproduce the stored digest.
+    """
+    filtered = {k: v for k, v in payload.items() if k != TV_ROW_HMAC_FIELD}
+    return json.dumps(
+        filtered, ensure_ascii=False, separators=(",", ":"), sort_keys=True
+    ).encode("utf-8")
+
+
+def compute_row_hmac(payload: dict[str, Any], secret: str) -> str:
+    """Return hex HMAC-SHA256 over the canonical payload."""
+    return hmac.new(
+        secret.encode("utf-8"),
+        _canonical_payload_bytes(payload),
+        hashlib.sha256,
+    ).hexdigest()
+
+
+def verify_row_hmac(payload: dict[str, Any], secret: str) -> bool:
+    """Constant-time verify the ``_sig`` field against the recomputed HMAC."""
+    stored = payload.get(TV_ROW_HMAC_FIELD)
+    if not isinstance(stored, str) or not stored:
+        return False
+    expected = compute_row_hmac(payload, secret)
+    return hmac.compare_digest(stored, expected)
+
+
+def append_pending_signal(
+    path: Path, event: TradingViewSignalEvent, *, hmac_secret: str = ""
+) -> None:
+    """Append one event to the pending-signals JSONL (append-only).
+
+    When ``hmac_secret`` is non-empty (SENTR-F-004), an HMAC-SHA256 of the
+    row's canonical JSON is written into the ``_sig`` field. The reader
+    (tv_bridge) verifies this signature and skips tampered or unsigned
+    rows when the same secret is configured on its side.
+    """
+    payload = event_to_jsonl_dict(event)
+    if hmac_secret:
+        payload[TV_ROW_HMAC_FIELD] = compute_row_hmac(payload, hmac_secret)
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a", encoding="utf-8") as fh:
         fh.write(
-            json.dumps(event_to_jsonl_dict(event), ensure_ascii=False, separators=(",", ":"))
-            + "\n"
+            json.dumps(payload, ensure_ascii=False, separators=(",", ":")) + "\n"
         )

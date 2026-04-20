@@ -312,9 +312,16 @@ class TradingViewSettings(BaseSettings):
     bridge_scheduler_enabled: bool = Field(default=False)
     bridge_scheduler_interval_seconds: int = Field(default=300, ge=30)
     bridge_scheduler_include_smoke: bool = Field(default=False)
+    # SENTR-F-004: HMAC tamper-detection on tradingview_pending_signals.jsonl.
+    # When set, the router signs each appended row and the bridge verifies
+    # the signature before promoting the event into alert_audit.jsonl.
+    # Empty = feature disabled (legacy single-trust-boundary mode).
+    # Rows without _sig are counted as skipped_unsigned when the secret is
+    # active — tampered (bad _sig) rows are counted as skipped_tampered.
+    bridge_hmac_secret: str = Field(default="", repr=False)
 
     _strip_secrets = field_validator(
-        "webhook_secret", "webhook_shared_token", mode="before"
+        "webhook_secret", "webhook_shared_token", "bridge_hmac_secret", mode="before"
     )(_strip_secret)
 
     @model_validator(mode="after")
