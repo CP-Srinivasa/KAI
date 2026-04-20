@@ -399,6 +399,22 @@ class AppSettings(BaseSettings):
     # Polling interval for the RSS scheduler in minutes.
     pipeline_interval_minutes: int = Field(default=15, ge=1)
 
+    # --- Security Headers (SENTR-F-007) ---
+    # Defense-in-depth for direct-path setups where the Cloudflare edge does
+    # not terminate TLS or add security headers. Default enabled — disabling
+    # only makes sense if a downstream reverse proxy already injects them.
+    security_headers_enabled: bool = Field(default=True)
+    # HSTS max-age. Default one year; set to 0 to disable the header.
+    security_headers_hsts_max_age: int = Field(default=31_536_000, ge=0)
+    # When True, the CSP is emitted as Content-Security-Policy-Report-Only
+    # instead of enforcing. Used for a safe rollout before flipping to
+    # enforce mode.
+    security_headers_csp_report_only: bool = Field(default=False)
+    # Additional script-src origins (space-separated) allowlisted on top of
+    # the default 'self'. Useful if a future CDN or widget is added without
+    # touching middleware code.
+    security_headers_extra_csp_script_src: str = Field(default="")
+
     # --- Request Governance (Sprint 44) ---
     # Maximum request body size in bytes. Requests exceeding this limit are
     # rejected with HTTP 413 before reaching route handlers. Default: 64 KiB.

@@ -10,6 +10,7 @@ from fastapi.staticfiles import StaticFiles
 from app.analysis.factory import create_provider
 from app.analysis.keywords.engine import KeywordEngine
 from app.api.middleware.request_governance import RequestGovernanceMiddleware
+from app.api.middleware.security_headers import setup_security_headers
 from app.api.routers import (
     agents,
     alerts,
@@ -214,6 +215,16 @@ def create_app() -> FastAPI:
         ],
         tv_webhook_enabled=settings.tradingview.webhook_enabled,
     )  # attach auth middleware (CF-Access + Bearer) before startup
+
+    # Security headers (SENTR-F-007). Added last so the headers wrap all
+    # downstream responses including static SPA and router JSON.
+    setup_security_headers(
+        app,
+        enabled=settings.security_headers_enabled,
+        csp_report_only=settings.security_headers_csp_report_only,
+        hsts_max_age=settings.security_headers_hsts_max_age,
+        extra_csp_script_src=settings.security_headers_extra_csp_script_src,
+    )
 
     @app.get("/", include_in_schema=False)
     async def _root_redirect() -> RedirectResponse:
