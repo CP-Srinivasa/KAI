@@ -307,6 +307,57 @@ def test_format_email_subject_contains_priority():
     assert "KAI Alert" in subject
 
 
+# ── D-150: P10 high-conviction tier markers ──────────────────────────────────
+
+
+def test_format_telegram_message_p10_prefix():
+    """Priority=10 alerts prepend the HIGH-CONVICTION marker line."""
+    msg = _make_alert_msg(priority=10, title="BTC Break")
+    text = format_telegram_message(msg)
+    assert "HIGH-CONVICTION" in text
+    assert "🔥" in text
+    # Prefix must come before the priority line
+    assert text.index("HIGH-CONVICTION") < text.index("Priority 10/10")
+
+
+def test_format_telegram_message_p9_no_prefix():
+    """Priority=9 (critical but sub-threshold) does NOT trigger the marker."""
+    msg = _make_alert_msg(priority=9, title="ETH Surge")
+    text = format_telegram_message(msg)
+    assert "HIGH-CONVICTION" not in text
+
+
+def test_format_telegram_digest_p10_item_prefix():
+    """P10 entries in the digest are prefixed with 🔥."""
+    msgs = [
+        _make_alert_msg(priority=7, title="Regular alert"),
+        _make_alert_msg(priority=10, title="Conviction alert"),
+    ]
+    text = format_telegram_digest(msgs, "last hour")
+    conviction_line = next(
+        line for line in text.splitlines() if "Conviction alert" in line
+    )
+    regular_line = next(
+        line for line in text.splitlines() if "Regular alert" in line
+    )
+    assert conviction_line.startswith("🔥")
+    assert not regular_line.startswith("🔥")
+
+
+def test_format_email_subject_p10_tag():
+    """P10 email subjects include [HIGH-CONVICTION] tag."""
+    msg = _make_alert_msg(priority=10, title="Deep-conviction event")
+    subject = format_email_subject(msg)
+    assert "[HIGH-CONVICTION]" in subject
+    assert "P10" in subject
+
+
+def test_format_email_subject_p9_no_tag():
+    msg = _make_alert_msg(priority=9, title="Normal high-priority")
+    subject = format_email_subject(msg)
+    assert "HIGH-CONVICTION" not in subject
+
+
 def test_format_email_body_contains_title():
     msg = _make_alert_msg(title="Test Title", explanation="Important event.")
     body = format_email_body(msg)

@@ -65,6 +65,17 @@ _AGENTS: dict[str, AgentDefinition] = {
         modes=["review", "propose"],
         permissions=["read", "report"],
     ),
+    "dali": AgentDefinition(
+        slug="dali",
+        name="DALI",
+        agent_id=None,
+        role=(
+            "Design-Audit & UI-Propose — Dashboard, Telegram-UI, Visual System, "
+            "Microcopy, Informationsarchitektur"
+        ),
+        modes=["audit", "propose", "implement"],
+        permissions=["read", "report"],
+    ),
 }
 
 
@@ -157,7 +168,7 @@ async def get_agent(slug: str) -> dict[str, Any]:
 
 
 class CommandRequest(BaseModel):
-    mode: Literal["check", "report", "inspect", "review", "propose"]
+    mode: Literal["check", "report", "inspect", "review", "propose", "audit", "implement"]
     note: str | None = Field(default=None, max_length=500)
 
 

@@ -24,7 +24,7 @@ def _make_app(api_key: str = "") -> FastAPI:
     app.include_router(router)
 
     def _override_settings() -> SimpleNamespace:
-        return SimpleNamespace(api_key=api_key)
+        return SimpleNamespace(api_key=api_key, cf_access_allowed_emails="")
 
     app.dependency_overrides[get_settings] = _override_settings
     return app

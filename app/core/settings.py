@@ -1,6 +1,6 @@
 from collections.abc import Mapping
 
-from pydantic import AliasChoices, Field, model_validator
+from pydantic import AliasChoices, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from app.core.enums import ExecutionMode
@@ -10,6 +10,14 @@ from app.core.schema_runtime import (
 from app.core.schema_runtime import (
     validate_runtime_config_payload as _validate_runtime_config_payload,
 )
+
+
+def _strip_secret(value: object) -> object:
+    # SAT-C-006: trailing newline / BOM aus copy-paste killt sonst Signaturen
+    # ohne klaren Fehler ("invalid_signature" sieht wie Angriff aus, ist aber Bug).
+    if isinstance(value, str):
+        return value.strip().lstrip("\ufeff")
+    return value
 
 
 def validate_json_schema_payload(
@@ -40,13 +48,13 @@ class AlertSettings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="ALERT_", env_file=".env", extra="ignore")
 
     telegram_enabled: bool = Field(default=False)
-    telegram_token: str = Field(default="")
+    telegram_token: str = Field(default="", repr=False)
     telegram_chat_id: str = Field(default="")
     email_enabled: bool = Field(default=False)
     email_host: str = Field(default="")
     email_port: int = Field(default=587)
     email_user: str = Field(default="")
-    email_password: str = Field(default="")
+    email_password: str = Field(default="", repr=False)
     email_from: str = Field(default="")
     email_to: str = Field(default="")
     dry_run: bool = Field(default=True)
@@ -56,26 +64,40 @@ class AlertSettings(BaseSettings):
     digest_enabled: bool = Field(default=False)
     digest_interval_minutes: int = Field(default=60)
 
+    _strip_secrets = field_validator("telegram_token", "email_password", mode="before")(
+        _strip_secret
+    )
+
 
 class ProviderSettings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="", env_file=".env", extra="ignore")
 
-    openai_api_key: str = Field(default="")
+    openai_api_key: str = Field(default="", repr=False)
     openai_model: str = Field(default="gpt-4o")
     openai_timeout: int = Field(default=30)
 
-    anthropic_api_key: str = Field(default="")
+    anthropic_api_key: str = Field(default="", repr=False)
     anthropic_model: str = Field(default="claude-3-7-sonnet-20250219")
     anthropic_timeout: int = Field(default=30)
 
-    gemini_api_key: str = Field(default="")
+    gemini_api_key: str = Field(default="", repr=False)
     gemini_model: str = Field(default="gemini-2.5-flash")
     gemini_timeout: int = Field(default=30)
 
 
-    youtube_api_key: str = Field(default="")
-    newsdata_api_key: str = Field(default="")
-    x_bearer_token: str = Field(default="")
+    youtube_api_key: str = Field(default="", repr=False)
+    newsdata_api_key: str = Field(default="", repr=False)
+    x_bearer_token: str = Field(default="", repr=False)
+
+    _strip_secrets = field_validator(
+        "openai_api_key",
+        "anthropic_api_key",
+        "gemini_api_key",
+        "youtube_api_key",
+        "newsdata_api_key",
+        "x_bearer_token",
+        mode="before",
+    )(_strip_secret)
 
 
 class SourceSettings(BaseSettings):
@@ -158,7 +180,7 @@ class OperatorSettings(BaseSettings):
     telegram_dry_run: bool = Field(default=True)
     telegram_poll_interval_seconds: float = Field(default=1.0, gt=0.0)
     telegram_long_poll_timeout_seconds: int = Field(default=20, ge=1)
-    telegram_bot_token: str = Field(default="")
+    telegram_bot_token: str = Field(default="", repr=False)
     admin_chat_ids: str = Field(default="")  # Comma-separated chat IDs
     command_audit_log: str = Field(default="artifacts/operator_commands.jsonl")
     signal_handoff_log: str = Field(default="artifacts/telegram_signal_handoff.jsonl")
@@ -169,7 +191,7 @@ class OperatorSettings(BaseSettings):
     signal_auto_run_provider: str = Field(default="coingecko")
     signal_forward_to_exchange_enabled: bool = Field(default=False)
     signal_exchange_relay_endpoint: str = Field(default="")
-    signal_exchange_relay_api_key: str = Field(default="")
+    signal_exchange_relay_api_key: str = Field(default="", repr=False)
     signal_exchange_relay_timeout_seconds: int = Field(default=10, ge=1)
     signal_exchange_relay_max_attempts: int = Field(default=3, ge=1)
     signal_exchange_sent_log: str = Field(default="artifacts/telegram_exchange_sent.jsonl")
@@ -183,6 +205,10 @@ class OperatorSettings(BaseSettings):
         if not self.admin_chat_ids:
             return []
         return [int(x.strip()) for x in self.admin_chat_ids.split(",") if x.strip()]
+
+    _strip_secrets = field_validator(
+        "telegram_bot_token", "signal_exchange_relay_api_key", mode="before"
+    )(_strip_secret)
 
     @model_validator(mode="after")
     def validate_signal_handoff_mode(self) -> "OperatorSettings":
@@ -216,16 +242,20 @@ class ExchangeSettings(BaseSettings):
     whitelist: list[str] = Field(default_factory=list)  # allowed symbols
 
     # Binance
-    binance_api_key: str = Field(default="")
-    binance_secret: str = Field(default="")
+    binance_api_key: str = Field(default="", repr=False)
+    binance_secret: str = Field(default="", repr=False)
 
     # Bybit
-    bybit_api_key: str = Field(default="")
-    bybit_secret: str = Field(default="")
+    bybit_api_key: str = Field(default="", repr=False)
+    bybit_secret: str = Field(default="", repr=False)
     bybit_category: str = Field(default="spot")  # spot | linear | inverse
 
     # Timeouts
     timeout_seconds: float = Field(default=15.0, gt=0.0)
+
+    _strip_secrets = field_validator(
+        "binance_api_key", "binance_secret", "bybit_api_key", "bybit_secret", mode="before"
+    )(_strip_secret)
 
 
 class TradingViewSettings(BaseSettings):
@@ -240,7 +270,7 @@ class TradingViewSettings(BaseSettings):
     )
 
     webhook_enabled: bool = Field(default=False)
-    webhook_secret: str = Field(default="")
+    webhook_secret: str = Field(default="", repr=False)
     webhook_audit_log: str = Field(
         default="artifacts/tradingview_webhook_audit.jsonl"
     )
@@ -250,7 +280,7 @@ class TradingViewSettings(BaseSettings):
     # cannot produce body-HMACs. Modes: hmac (default, strongest) |
     # shared_token (no body integrity) | hmac_or_token (accept either).
     webhook_auth_mode: str = Field(default="hmac")
-    webhook_shared_token: str = Field(default="")
+    webhook_shared_token: str = Field(default="", repr=False)
     # TV-3: when true, accepted payloads are normalized to a
     # TradingViewSignalEvent and appended to the pending-signals JSONL.
     # Default false (fail-closed). No auto-execution — events wait for
@@ -275,6 +305,16 @@ class TradingViewSettings(BaseSettings):
     promoted_signal_audit_log: str = Field(
         default="artifacts/tradingview_signal_audit.jsonl"
     )
+    # D-156c: periodic bridge from pending TV events into alert_audit so
+    # the auto-annotator can score them for the TV-4 Quality-Bar. Default
+    # off — operator opts in explicitly once the bridge is trusted.
+    bridge_scheduler_enabled: bool = Field(default=False)
+    bridge_scheduler_interval_seconds: int = Field(default=300, ge=30)
+    bridge_scheduler_include_smoke: bool = Field(default=False)
+
+    _strip_secrets = field_validator(
+        "webhook_secret", "webhook_shared_token", mode="before"
+    )(_strip_secret)
 
     @model_validator(mode="after")
     def validate_auth_mode(self) -> "TradingViewSettings":
@@ -318,7 +358,17 @@ class AppSettings(BaseSettings):
     log_level: str = Field(default="INFO")
     monitor_dir: str = Field(default="monitor")
     # Bearer token for API auth. Empty = auth disabled (dev only). Set in production.
-    api_key: str = Field(default="")
+    api_key: str = Field(default="", repr=False)
+    # Cloudflare Access — emails allowed to pass via Cf-Access-Authenticated-User-Email
+    # header. Comma-separated string ("a@x.de,b@y.de"). Empty = CF-Access trust disabled.
+    # Accepts both APP_CF_ACCESS_ALLOWED_EMAILS (prefixed) and bare CF_ACCESS_ALLOWED_EMAILS.
+    cf_access_allowed_emails: str = Field(
+        default="",
+        validation_alias=AliasChoices(
+            "APP_CF_ACCESS_ALLOWED_EMAILS",
+            "CF_ACCESS_ALLOWED_EMAILS",
+        ),
+    )
     # CORS allowed origins. Comma-separated list. Override in production.
     # Example: APP_CORS_ALLOWED_ORIGINS=https://app.example.com,https://admin.example.com
     cors_allowed_origins: list[str] = Field(
@@ -336,6 +386,7 @@ class AppSettings(BaseSettings):
     # COINGECKO_API_KEY form already used by existing .env files.
     coingecko_api_key: str = Field(
         default="",
+        repr=False,
         validation_alias=AliasChoices(
             "APP_COINGECKO_API_KEY",
             "COINGECKO_API_KEY",
@@ -370,6 +421,10 @@ class AppSettings(BaseSettings):
     operator: OperatorSettings = Field(default_factory=OperatorSettings)
     tradingview: TradingViewSettings = Field(default_factory=TradingViewSettings)
     binance: BinanceMarketDataSettings = Field(default_factory=BinanceMarketDataSettings)
+
+    _strip_secrets = field_validator("api_key", "coingecko_api_key", mode="before")(
+        _strip_secret
+    )
 
     @model_validator(mode="after")
     def validate_runtime_contract(self) -> "AppSettings":

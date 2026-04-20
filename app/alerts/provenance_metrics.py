@@ -26,7 +26,14 @@ DEFAULT_SOURCE = "unknown"
 
 @dataclass(frozen=True)
 class ProvenanceMetrics:
-    """Per-source quality metrics with 95% Wilson confidence interval."""
+    """Per-source quality metrics with 95% Wilson confidence interval.
+
+    ``resolved`` = hits + misses (inconclusive excluded — only hit/miss
+    feeds Wilson-CI). ``inconclusive`` is surfaced separately so that a
+    source that has received events but not yet produced definitive
+    outcomes (e.g. TV-webhook directly after first bridge run) still
+    appears in ``by_source`` with its traffic visible.
+    """
 
     source: str
     resolved: int
@@ -37,6 +44,7 @@ class ProvenanceMetrics:
     ci_high_pct: float | None
     ci_width_pct: float | None
     sample_sufficient: bool
+    inconclusive: int
 
 
 @dataclass(frozen=True)
@@ -76,7 +84,9 @@ def wilson_ci(hits: int, total: int, z: float = 1.96) -> tuple[float, float] | N
     return low, high
 
 
-def _compute_metrics(source: str, hits: int, misses: int) -> ProvenanceMetrics:
+def _compute_metrics(
+    source: str, hits: int, misses: int, inconclusive: int = 0,
+) -> ProvenanceMetrics:
     resolved = hits + misses
     if resolved == 0:
         return ProvenanceMetrics(
@@ -89,6 +99,7 @@ def _compute_metrics(source: str, hits: int, misses: int) -> ProvenanceMetrics:
             ci_high_pct=None,
             ci_width_pct=None,
             sample_sufficient=False,
+            inconclusive=inconclusive,
         )
     ci = wilson_ci(hits, resolved)
     low, high = ci if ci is not None else (None, None)
@@ -106,6 +117,7 @@ def _compute_metrics(source: str, hits: int, misses: int) -> ProvenanceMetrics:
             else None
         ),
         sample_sufficient=resolved >= MIN_SAMPLE_FOR_JUDGMENT,
+        inconclusive=inconclusive,
     )
 
 
@@ -216,29 +228,39 @@ def build_provenance_split_report(
 
     total_hits = 0
     total_misses = 0
+    total_inconclusive = 0
     per_source_hits: dict[str, int] = {}
     per_source_misses: dict[str, int] = {}
+    per_source_inconclusive: dict[str, int] = {}
 
     for doc_id in directional_docs:
         outcome = latest_outcome.get(doc_id)
-        if outcome not in {"hit", "miss"}:
+        if outcome not in {"hit", "miss", "inconclusive"}:
             continue
         source = (source_lookup.get(doc_id) or DEFAULT_SOURCE).strip().lower()
         if outcome == "hit":
             total_hits += 1
             per_source_hits[source] = per_source_hits.get(source, 0) + 1
-        else:
+        elif outcome == "miss":
             total_misses += 1
             per_source_misses[source] = per_source_misses.get(source, 0) + 1
+        else:
+            total_inconclusive += 1
+            per_source_inconclusive[source] = per_source_inconclusive.get(source, 0) + 1
 
-    overall = _compute_metrics("__overall__", total_hits, total_misses)
+    overall = _compute_metrics(
+        "__overall__", total_hits, total_misses, total_inconclusive,
+    )
 
-    all_sources = sorted(set(per_source_hits) | set(per_source_misses))
+    all_sources = sorted(
+        set(per_source_hits) | set(per_source_misses) | set(per_source_inconclusive)
+    )
     by_source = [
         _compute_metrics(
             src,
             per_source_hits.get(src, 0),
             per_source_misses.get(src, 0),
+            per_source_inconclusive.get(src, 0),
         )
         for src in all_sources
     ]

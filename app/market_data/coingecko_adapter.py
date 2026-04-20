@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from collections import deque
 from datetime import UTC, datetime, timedelta
 
 import httpx
@@ -25,6 +26,43 @@ _SUPPORTED_QUOTES = frozenset({"USD", "USDT"})
 # and recovers in seconds, so the schedule is much tighter.
 _BACKOFF_SCHEDULE_FREE = [15.0, 30.0, 60.0]
 _BACKOFF_SCHEDULE_PRO = [2.0, 5.0, 10.0]
+
+# Process-wide rolling-window request counter.  Gives us early warning
+# before we approach the 250 rpm Pro ceiling — Monitor + Briefing +
+# TradingLoop + Alerts all share this budget without any cross-call
+# awareness otherwise.  The counter does not throttle; it only observes.
+_REQUEST_WINDOW_SECONDS = 60.0
+_REQUEST_TIMESTAMPS: deque[float] = deque(maxlen=2000)
+_RATE_WARN_THRESHOLD_RPM = 200
+_RATE_WARN_MIN_INTERVAL_SECONDS = 60.0
+_last_rate_warn_ts: float = 0.0
+
+
+def _record_request_and_maybe_warn() -> int:
+    """Append 'now' to the rolling window, prune old entries, emit a WARN
+    when the window count crosses the threshold.  Returns current rpm."""
+    global _last_rate_warn_ts
+    now = time.monotonic()
+    _REQUEST_TIMESTAMPS.append(now)
+    cutoff = now - _REQUEST_WINDOW_SECONDS
+    while _REQUEST_TIMESTAMPS and _REQUEST_TIMESTAMPS[0] < cutoff:
+        _REQUEST_TIMESTAMPS.popleft()
+    rpm = len(_REQUEST_TIMESTAMPS)
+    if (
+        rpm >= _RATE_WARN_THRESHOLD_RPM
+        and (now - _last_rate_warn_ts) >= _RATE_WARN_MIN_INTERVAL_SECONDS
+    ):
+        _last_rate_warn_ts = now
+        # Monthly projection at current rate: rpm * 60 min * 24 h * 30 d
+        projected_monthly_k = rpm * 60 * 24 * 30 / 1000
+        logger.warning(
+            "[CoinGecko] rolling rpm=%d crossed warn threshold (%d). "
+            "Projected monthly budget at this rate: %.0fk calls",
+            rpm,
+            _RATE_WARN_THRESHOLD_RPM,
+            projected_monthly_k,
+        )
+    return rpm
 
 _BASE_ASSET_TO_COINGECKO: dict[str, str] = {
     "BTC": "bitcoin",
@@ -427,6 +465,7 @@ class CoinGeckoAdapter(BaseMarketDataAdapter):
 
         for attempt in range(max_attempts):
             try:
+                _record_request_and_maybe_warn()
                 async with httpx.AsyncClient(timeout=self._timeout) as client:
                     response = await client.get(url, params=params, headers=headers)
 

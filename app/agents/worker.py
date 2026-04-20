@@ -108,10 +108,14 @@ def _watchdog_check(note: str | None) -> tuple[str, str]:
     targets = [
         ("alert_audit", REPO_ROOT / "artifacts" / "alert_audit.jsonl", 6.0),
         ("trading_loop_audit", REPO_ROOT / "artifacts" / "trading_loop_audit.jsonl", 6.0),
+        # Dashboard freshness self-test runs every 10 min via paper_trading_cron.
+        # If this file is older than 30 min, the cron stopped firing (and the
+        # dashboard quality bar — which is now built live, not from a snapshot
+        # file — has no independent freshness probe).
         (
-            "hold_report",
-            REPO_ROOT / "artifacts" / "ph5_hold" / "ph5_hold_metrics_report.json",
-            48.0,
+            "freshness_status",
+            REPO_ROOT / "artifacts" / "freshness_status.json",
+            0.5,
         ),
     ]
     for label, path, warn_h in targets:
@@ -216,12 +220,25 @@ def _sentr_inspect(note: str | None) -> tuple[str, str]:
         except OSError:
             continue
 
+    # Use `git check-ignore` as the source of truth — a literal grep for ".env"
+    # produces a false negative when the rule is a glob like ".env*". Falls
+    # back to a textual scan if git is unavailable (e.g. shallow worktree).
     env_in_gitignore = False
-    gi = REPO_ROOT / ".gitignore"
-    if gi.exists():
-        env_in_gitignore = any(
-            line.strip() == ".env" for line in gi.read_text(encoding="utf-8").splitlines()
+    try:
+        check = subprocess.run(
+            ["git", "check-ignore", "-q", ".env"],
+            cwd=REPO_ROOT,
+            capture_output=True,
+            timeout=5,
         )
+        env_in_gitignore = check.returncode == 0
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        gi = REPO_ROOT / ".gitignore"
+        if gi.exists():
+            env_in_gitignore = any(
+                line.strip() in {".env", ".env*", ".env.*"}
+                for line in gi.read_text(encoding="utf-8").splitlines()
+            )
 
     _append_finding(
         "sentr",

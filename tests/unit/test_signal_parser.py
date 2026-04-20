@@ -89,6 +89,15 @@ class TestDetectMessageType:
     def test_no_header(self) -> None:
         assert detect_message_type("BUY BTC 65000") is None
 
+    def test_heuristic_signal_detection(self) -> None:
+        # Symbol + direction in free-form text → detected as "signal"
+        assert detect_message_type("🟢 #BTC/USDT LONG/BUY\nEntry Zone: 70565 – 70590") == "signal"
+        assert detect_message_type("Long/Buy  #ENJ/USDT\nEntry Point - 7570") == "signal"
+        assert detect_message_type("#SOL/USDT Long/BUY - 84.20\nTargets : 85.08") == "signal"
+        # Missing either symbol or direction → still None
+        assert detect_message_type("Entry Zone: 70565 – 70590") is None
+        assert detect_message_type("#BTC/USDT price check") is None
+
 
 class TestParseStructuredSignal:
     def test_full_short_signal(self) -> None:
@@ -210,5 +219,90 @@ Message: Symbol not supported.
         assert resp.error_code == "INVALID_SYMBOL"
 
     def test_no_header_raises(self) -> None:
-        with pytest.raises(SignalParseError, match="No message type"):
+        # "BUY BTC 65000" — no symbol with a recognized quote, no heuristic match.
+        with pytest.raises(SignalParseError, match="Kein Signal erkannt"):
             parse_structured_message("BUY BTC 65000")
+
+
+class TestHeuristicSignalParsing:
+    """Free-form Telegram-group pastes without [SIGNAL] header."""
+
+    def test_btc_long_with_entry_zone_and_emoji_targets(self) -> None:
+        text = (
+            "🟢 #BTC/USDT LONG/BUY\n"
+            "Entry Zone: 70565 – 70590\n"
+            "Targets:\n"
+            "🎯 70965\n"
+            "🎯 71200\n"
+            "🎯 71400\n"
+            "Stop Loss: 70400\n"
+            "Leverage: 10x (Recommended)15\n"
+        )
+        sig = parse_structured_message(text)
+        assert sig.message_type.value == "signal"
+        assert sig.symbol == "BTCUSDT"
+        assert sig.display_symbol == "BTC/USDT"
+        assert sig.side.value == "buy"
+        assert sig.direction.value == "long"
+        assert sig.entry_type.value == "range"
+        assert sig.entry_min == 70565
+        assert sig.entry_max == 70590
+        assert sig.targets == [70965, 71200, 71400]
+        assert sig.stop_loss == 70400
+        # Leverage: "10x (Recommended)15" — first number after "Leverage" is 10
+        assert sig.leverage == 10
+        # No exchange named in text → parser leaves scope empty. The API
+        # layer must ask the operator instead of silently defaulting.
+        assert sig.exchange_scope == []
+        assert "missing_exchange_scope" in sig.validation_errors
+
+    def test_enj_long_dash_separator_targets(self) -> None:
+        text = (
+            "Long/Buy  #ENJ/USDT  \n\n"
+            "Entry Point - 7570\n\n"
+            "Targets: 7605 - 7645 - 7685 - 7720\n\n"
+            "Leverage - 10x\n\n"
+            "Stop Loss - 7265\n"
+        )
+        sig = parse_structured_message(text)
+        assert sig.symbol == "ENJUSDT"
+        assert sig.side.value == "buy"
+        assert sig.direction.value == "long"
+        assert sig.entry_type.value == "at"
+        assert sig.entry_value == 7570
+        assert sig.targets == [7605, 7645, 7685, 7720]
+        assert sig.stop_loss == 7265
+        assert sig.leverage == 10
+        # No exchange in text → scope stays empty; operator must supply.
+        assert sig.exchange_scope == []
+        assert "missing_exchange_scope" in sig.validation_errors
+
+    def test_sol_with_exchange_prefix_and_inline_price(self) -> None:
+        text = (
+            "Binance Futures, OKX, Deribit, BitGET, BybitUSDT, "
+            "KuCoin, Huobi, Blofin, Bingx Futures\n\n"
+            "#SOL/USDT Long/BUY - 84.20\n"
+            "Targets : 85.08\n"
+            "Stop Loss : 83.78 \n"
+            "Leverage - 10x\n"
+        )
+        sig = parse_structured_message(text)
+        assert sig.symbol == "SOLUSDT"
+        assert sig.direction.value == "long"
+        assert sig.entry_type.value == "at"
+        assert sig.entry_value == 84.20
+        assert sig.targets == [85.08]
+        assert sig.stop_loss == 83.78
+        assert sig.leverage == 10
+        # Exchange scope picked up from preamble line
+        assert "binance_futures" in sig.exchange_scope or "binance" in sig.exchange_scope
+        assert "okx" in sig.exchange_scope
+        assert "bybit" in sig.exchange_scope
+
+    def test_heuristic_short_sell(self) -> None:
+        sig = parse_structured_message(
+            "#ETH/USDT SHORT/SELL\nEntry Point: 3400\nTargets: 3300\nStop Loss: 3450\n"
+        )
+        assert sig.side.value == "sell"
+        assert sig.direction.value == "short"
+        assert sig.entry_value == 3400

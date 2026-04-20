@@ -278,6 +278,52 @@ def _parse_iso_utc(value: object) -> datetime | None:
     return parsed.astimezone(UTC)
 
 
+def _summarize_tradingview_webhook_auth_24h(
+    audit_path: str, *, cutoff_24h: datetime
+) -> dict[str, object] | None:
+    # SAT-C-002: Auth-Method-Counter macht silenten hmac→shared_token Downgrade sichtbar.
+    # Liest tradingview_webhook_audit.jsonl, zaehlt accepted-Eintraege per auth_method
+    # + rejected per reason. Fehlende/leere Datei → None (Endpoint inaktiv).
+    path = Path(audit_path)
+    if not path.is_absolute():
+        path = Path.cwd() / path
+    if not path.exists():
+        return None
+    accepted: dict[str, int] = {}
+    rejected: dict[str, int] = {}
+    total = 0
+    try:
+        with path.open("r", encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    entry = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                received = _parse_iso_utc(entry.get("received_at"))
+                if received is None or received < cutoff_24h:
+                    continue
+                total += 1
+                outcome = entry.get("outcome")
+                if outcome == "accepted":
+                    method = str(entry.get("auth_method") or "unknown")
+                    accepted[method] = accepted.get(method, 0) + 1
+                elif outcome == "rejected":
+                    reason = str(entry.get("reason") or "unknown")
+                    rejected[reason] = rejected.get(reason, 0) + 1
+    except OSError:
+        return None
+    return {
+        "total": total,
+        "accepted": accepted,
+        "rejected": rejected,
+        # Echo current configured mode so consumer can compare expected vs observed.
+        # Downgrade-Verdacht: configured_mode='hmac_or_token' UND accepted.shared_token > 0.
+    }
+
+
 async def get_daily_operator_summary(
     *,
     alert_audit_dir: str = ALERT_AUDIT_DEFAULT_DIR,
@@ -341,6 +387,7 @@ async def get_daily_operator_summary(
         degraded = True
 
     # Cycles today — count loop audit rows whose started_at is on today's UTC date.
+    cycle_count_today: int | None
     try:
         loop_path = resolve_workspace_path(
             loop_audit_path,
@@ -348,14 +395,28 @@ async def get_daily_operator_summary(
             allowed_suffixes=frozenset({".jsonl"}),
         )
         cycles = load_trading_loop_cycles(loop_path)
-        cycle_count_today: int | None = 0
+        cycle_count_today_int = 0
         for row in cycles:
             started = _parse_iso_utc(row.get("started_at"))
             if started is not None and started.date() == today_date:
-                cycle_count_today += 1
+                cycle_count_today_int += 1
+        cycle_count_today = cycle_count_today_int
     except Exception:
         cycle_count_today = None
         degraded = True
+
+    # SAT-C-002: TV-Webhook auth-method counter (24h). Silent hmac→shared_token
+    # downgrade sichtbar machen. None wenn Audit-Log fehlt/leer.
+    tv_auth_summary: dict[str, object] | None
+    tv_configured_mode: str = "unknown"
+    try:
+        tv_settings = get_settings().tradingview
+        tv_configured_mode = tv_settings.webhook_auth_mode
+        tv_auth_summary = _summarize_tradingview_webhook_auth_24h(
+            tv_settings.webhook_audit_log, cutoff_24h=cutoff_24h
+        )
+    except Exception:
+        tv_auth_summary = None
 
     def _or_unknown(value: int | float | None) -> object:
         return value if value is not None else "?"
@@ -370,6 +431,10 @@ async def get_daily_operator_summary(
         "ingestion_backlog_documents": _or_unknown(ingestion_backlog),
         "alert_fire_rate_docs_per_hour_24h": _or_unknown(alert_rate_24h),
         "cycle_count_today": _or_unknown(cycle_count_today),
+        "tv_webhook_auth_24h": {
+            "configured_mode": tv_configured_mode,
+            "summary": tv_auth_summary if tv_auth_summary is not None else "no_audit_log",
+        },
         # Explicit not-measured markers: /status consumers must NOT treat a
         # missing field as zero. Wire these up once the underlying telemetry
         # exists (LLM call success/failure per provider, per-doc RSS→alert
@@ -386,21 +451,62 @@ async def get_alert_audit_summary(
     """Return a read-only summary of dispatched alert audit records.
 
     Reads from the alert audit JSONL trail and aggregates by channel.
+    Enriches each alert with outcome annotation fields when available
+    (``resolved_at``, ``resolved_after_seconds``, ``outcome``) from the
+    operator-annotated alert_outcomes.jsonl.
     execution_enabled and write_back_allowed are always False.
     """
-    from app.alerts.audit import load_alert_audits
+    from datetime import datetime
+
+    from app.alerts.audit import load_alert_audits, load_outcome_annotations
 
     resolved = resolve_workspace_dir(
         audit_dir,
         label="Alert audit directory",
     )
     audits = load_alert_audits(resolved)
+    outcomes = load_outcome_annotations(resolved)
+
+    # Latest annotation wins when an operator re-annotates the same document.
+    outcome_by_doc: dict[str, dict[str, object]] = {}
+    for ann in outcomes:
+        prev = outcome_by_doc.get(ann.document_id)
+        if prev is None or str(prev.get("annotated_at", "")) <= ann.annotated_at:
+            outcome_by_doc[ann.document_id] = {
+                "outcome": ann.outcome,
+                "resolved_at": ann.annotated_at,
+            }
+
+    def _seconds_between(dispatched: str, resolved: str) -> float | None:
+        try:
+            d = datetime.fromisoformat(dispatched.replace("Z", "+00:00"))
+            r = datetime.fromisoformat(resolved.replace("Z", "+00:00"))
+        except (ValueError, AttributeError):
+            return None
+        delta = (r - d).total_seconds()
+        return delta if delta >= 0 else None
+
+    enriched: list[dict[str, object]] = []
+    for audit in audits:
+        row = audit.to_json_dict()
+        outcome_entry = outcome_by_doc.get(audit.document_id)
+        if outcome_entry is not None:
+            row["outcome"] = outcome_entry["outcome"]
+            row["resolved_at"] = outcome_entry["resolved_at"]
+            sec = _seconds_between(
+                audit.dispatched_at, str(outcome_entry["resolved_at"])
+            )
+            if sec is not None:
+                row["resolved_after_seconds"] = sec
+        enriched.append(row)
+
     return {
         "report_type": "alert_audit_summary",
         "execution_enabled": False,
         "write_back_allowed": False,
         "total_alerts": len(audits),
-        "alerts": [a.to_json_dict() for a in audits] if audits else [],
+        "total_resolved": len(outcome_by_doc),
+        "alerts": enriched,
     }
 
 

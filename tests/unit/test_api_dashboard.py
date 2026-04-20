@@ -1,9 +1,7 @@
 """Tests for the operator dashboard (app.api.routers.dashboard).
 
 Covers:
-- GET /dashboard returns HTML with quality-bar markup
-- GET /dashboard/api/quality returns structured JSON from artifacts
-- 404 when hold report is missing
+- GET /dashboard/api/quality returns structured JSON built live from audit files
 - Auth middleware exempts all /dashboard/* paths
 - JSONL loading helper edge cases
 """
@@ -22,11 +20,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from app.api.routers import dashboard as dashboard_mod
-from app.api.routers.dashboard import (
-    _load_hold_report,
-    _load_jsonl,
-    router,
-)
+from app.api.routers.dashboard import _load_jsonl, router
 from app.security.auth import setup_auth
 
 # ---------------------------------------------------------------------------
@@ -43,43 +37,13 @@ def _make_app(*, api_key: str = "") -> FastAPI:
     return app
 
 
-def _sample_hold_report() -> dict[str, Any]:
-    return {
-        "generated_at": "2026-04-14T10:00:00+00:00",
-        "signal_quality_validation": {
-            "resolved_precision_pct": 52.54,
-            "resolved_false_positive_rate_pct": 47.46,
-            "priority_hit_correlation": 0.29,
-            "directional_actionable_rate_pct": 83.0,
-            "high_priority_hit_rate_pct": 52.54,
-            "low_priority_hit_rate_pct": None,
-            "paper_real_price_cycle_count": 179,
-        },
-        "alert_hit_rate_evidence": {
-            "resolved_directional_documents": 59,
-            "directional_alert_documents": 261,
-            "alert_hits": 31,
-            "alert_misses": 28,
-        },
-        "paper_trading_evidence": {
-            "loop_metrics": {"total_cycles": 255},
-        },
-        "hold_gate_evaluation": {
-            "overall_status": "hold_releasable",
-            "blocking_reasons": [],
-        },
-    }
-
-
 @contextmanager
 def _patch_artifacts(
     d: Path,
 ) -> Generator[None, None, None]:
     """Patch all artifact path constants to point at tmp dir."""
-    report = d / "ph5_hold" / "ph5_hold_metrics_report.json"
     with (
         patch.object(dashboard_mod, "_ARTIFACTS", d),
-        patch.object(dashboard_mod, "_HOLD_REPORT", report),
         patch.object(
             dashboard_mod, "_ALERT_AUDIT",
             d / "alert_audit.jsonl",
@@ -96,20 +60,18 @@ def _patch_artifacts(
             dashboard_mod, "_PAPER_EXECUTION_AUDIT",
             d / "paper_execution_audit.jsonl",
         ),
+        patch.dict(dashboard_mod._hold_cache, {"report": None, "at": 0.0}),
     ):
         yield
 
 
 @pytest.fixture()
 def artifacts_dir(tmp_path: Path) -> Path:
-    """Temp artifacts directory with sample data."""
-    ph5 = tmp_path / "ph5_hold"
-    ph5.mkdir()
-    report = ph5 / "ph5_hold_metrics_report.json"
-    report.write_text(
-        json.dumps(_sample_hold_report()), encoding="utf-8",
-    )
+    """Temp artifacts directory with sample data.
 
+    The dashboard builds the hold-metrics report live from these audit JSONLs
+    via build_hold_metrics_report — there is no pre-computed snapshot file.
+    """
     (tmp_path / "alert_audit.jsonl").write_text(
         json.dumps({
             "document_id": "abc12345-dead-beef",
@@ -164,16 +126,16 @@ def test_quality_api_returns_metrics(
 
     assert r.status_code == 200
     data = r.json()
-    assert data["precision_pct"] == 52.54
-    assert data["resolved_count"] == 59
-    assert data["hits"] == 31
-    assert data["misses"] == 28
-    assert data["priority_corr"] == 0.29
+    # Live build aggregates from audit JSONLs (not a snapshot file).
+    # Fixture is sparse (1 alert older than recency window) → no resolved precision.
+    assert data["precision_pct"] is None
     assert data["paper_fills"] == 1
-    assert data["paper_cycles"] == 255
-    assert data["gate_status"] == "hold_releasable"
+    assert data["paper_cycles"] == 3
     assert data["loop_status_counts"]["no_signal"] == 2
     assert data["loop_status_counts"]["completed"] == 1
+    # Sparse fixture → gate stays active with documented blocking reasons.
+    assert data["gate_status"] == "hold_remains_active"
+    assert "resolved_directional_below_200" in data["blocking_reasons"]
 
 
 def test_quality_api_includes_alerts_with_outcomes(
@@ -189,19 +151,6 @@ def test_quality_api_includes_alerts_with_outcomes(
     assert alerts[0]["doc_id"] == "abc12345-dea"
     assert alerts[0]["sentiment"] == "bullish"
     assert alerts[0]["outcome"] == "hit"
-
-
-def test_quality_api_404_without_hold_report() -> None:
-    app = _make_app()
-    with patch.object(
-        dashboard_mod, "_HOLD_REPORT",
-        Path("/nonexistent/report.json"),
-    ):
-        with TestClient(app) as client:
-            r = client.get("/dashboard/api/quality")
-
-    assert r.status_code == 404
-    assert r.json()["error"] == "hold_report_not_found"
 
 
 # ---------------------------------------------------------------------------
@@ -246,23 +195,6 @@ def test_load_jsonl_tail(tmp_path: Path) -> None:
     rows = _load_jsonl(f, tail=3)
     assert len(rows) == 3
     assert rows[0]["i"] == 7
-
-
-def test_load_hold_report_none_for_missing() -> None:
-    with patch.object(
-        dashboard_mod, "_HOLD_REPORT",
-        Path("/does/not/exist.json"),
-    ):
-        assert _load_hold_report() is None
-
-
-def test_load_hold_report_none_for_bad_json(
-    tmp_path: Path,
-) -> None:
-    f = tmp_path / "bad.json"
-    f.write_text("not json at all", encoding="utf-8")
-    with patch.object(dashboard_mod, "_HOLD_REPORT", f):
-        assert _load_hold_report() is None
 
 
 # ---------------------------------------------------------------------------

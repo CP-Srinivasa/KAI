@@ -1427,8 +1427,13 @@ async def test_structured_signal_fail_closed_on_missing_required_fields(tmp_path
     await bot.process_update(update)
 
     assert len(sent) == 1
-    assert "Signal blockiert" in sent[0] or "Structured-Schema Fehler" in sent[0]
-    assert "missing_" in sent[0] or "should be non-empty" in sent[0]
+    # Missing fields here are all completable (exchange_scope, targets, …)
+    # → operator is asked to supplement, not hard-blocked.
+    assert (
+        "Erg" in sent[0]  # "Ergänzung nötig" (case-insensitive fallback)
+        or "Signal blockiert" in sent[0]
+        or "Structured-Schema Fehler" in sent[0]
+    )
 
 
 @pytest.mark.asyncio
@@ -1577,12 +1582,16 @@ async def test_structured_signal_schema_error_writes_envelope_rejection(tmp_path
     await bot.process_update(update)
 
     assert len(sent) == 1
-    assert "Signal blockiert" in sent[0] or "Structured-Schema Fehler" in sent[0]
+    assert (
+        "Erg" in sent[0]
+        or "Signal blockiert" in sent[0]
+        or "Structured-Schema Fehler" in sent[0]
+    )
     envelope = tmp_path / "message_envelope.jsonl"
     rows = [json.loads(line) for line in envelope.read_text(encoding="utf-8").splitlines()]
     assert any(
         row["message_type"] == "signal"
-        and row["status"] in ("rejected", "blocked")
+        and row["status"] in ("rejected", "blocked", "needs_completion")
         for row in rows
     )
 

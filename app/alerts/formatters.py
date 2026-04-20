@@ -22,6 +22,16 @@ _PRIORITY_RANGES: list[tuple[range, str]] = [
     (range(9, 11), "Critical"),
 ]
 
+# D-149/D-150: priority=10 qualifies as high-conviction tier based on live
+# hit-rate evidence (P10=69.57% precision on n=46, CI95=[55.19,80.92] vs
+# P7-P9=27.87% on n=183).  Marker is visual-only — routing/gating unchanged.
+_HIGH_CONVICTION_THRESHOLD = 10
+_HIGH_CONVICTION_PREFIX = "🔥 HIGH-CONVICTION"
+
+
+def _is_high_conviction(priority: int) -> bool:
+    return priority >= _HIGH_CONVICTION_THRESHOLD
+
 
 def _priority_label(priority: int) -> str:
     for r, label in _PRIORITY_RANGES:
@@ -45,7 +55,10 @@ def format_telegram_message(msg: AlertMessage) -> str:
     assets = ", ".join(msg.affected_assets) if msg.affected_assets else "—"
     actionable_str = "Actionable" if msg.actionable else "Informational"
 
-    lines = [
+    lines = []
+    if _is_high_conviction(msg.priority):
+        lines.append(f"*{_HIGH_CONVICTION_PREFIX}*")
+    lines += [
         f"{emoji} *Priority {msg.priority}/10 — {label}*",
         f"*{_escape_md(msg.title)}*",
         "",
@@ -72,7 +85,11 @@ def format_telegram_digest(messages: list[AlertMessage], period: str) -> str:
     for msg in messages:
         emoji = _SENTIMENT_EMOJI.get(msg.sentiment_label.lower(), "⚪")
         short_title = msg.title[:60] + ("…" if len(msg.title) > 60 else "")
-        items.append(f"{emoji} P{msg.priority} [{_escape_md(short_title)}]({msg.url})")
+        hc_marker = "🔥 " if _is_high_conviction(msg.priority) else ""
+        items.append(
+            f"{hc_marker}{emoji} P{msg.priority} "
+            f"[{_escape_md(short_title)}]({msg.url})"
+        )
     return "\n".join(header + items)
 
 
@@ -82,7 +99,8 @@ def format_telegram_digest(messages: list[AlertMessage], period: str) -> str:
 def format_email_subject(msg: AlertMessage) -> str:
     label = _priority_label(msg.priority)
     title_truncated = msg.title[:80]
-    return f"[KAI Alert] {label} P{msg.priority}: {title_truncated}"
+    hc_tag = "[HIGH-CONVICTION] " if _is_high_conviction(msg.priority) else ""
+    return f"[KAI Alert] {hc_tag}{label} P{msg.priority}: {title_truncated}"
 
 
 def format_email_body(msg: AlertMessage) -> str:

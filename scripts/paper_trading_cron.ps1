@@ -265,4 +265,22 @@ if ($twitterCounter -ge 6) {
 }
 $twitterCounter | Out-File -Encoding utf8 $twitterMarker
 
+# Dashboard freshness self-test (cheap loopback probes, no DB writes).
+# Logs to artifacts/freshness_status.json + logs/freshness_check.log.
+try {
+    $output = & $Python "$ProjectRoot\scripts\freshness_check.py" 2>&1 | Out-String
+    $overall = if ($output -match "KAI Freshness \((\w+)\)") { $Matches[1] } else { "?" }
+    Write-Log "freshness: $overall"
+    if ($overall -eq "CRIT" -or $overall -eq "WARN") {
+        # Capture the per-probe lines so the cron log shows what drifted.
+        foreach ($line in ($output -split "`n")) {
+            if ($line -match "^\s*\[(WARN|CRIT|DOWN)\]") {
+                Write-Log "  $($line.Trim())"
+            }
+        }
+    }
+} catch {
+    Write-Log "freshness ERROR: $_"
+}
+
 Write-Log "--- cron end ---"

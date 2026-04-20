@@ -1,14 +1,28 @@
 """API authentication middleware.
 
-Implements a simple Bearer token check via the APP_API_KEY environment variable.
-When APP_API_KEY is set, every request must include:
+Two accepted auth mechanisms (checked in order):
 
-    Authorization: Bearer <APP_API_KEY>
+1. **Cloudflare Access** — browser traffic via the public tunnel. CF Access
+   authenticates the user at the edge and forwards the request with the header
+   ``Cf-Access-Authenticated-User-Email``. If that header's value appears in
+   ``CF_ACCESS_ALLOWED_EMAILS`` (comma-separated), the request is trusted.
 
-When APP_API_KEY is empty the behaviour depends on the environment:
+2. **Bearer token** — local scripts / cron / freshness-probe via ``127.0.0.1``.
+   Must include ``Authorization: Bearer <APP_API_KEY>``.
+
+When ``APP_API_KEY`` is empty the behaviour depends on the environment:
 - development / dev / test / testing: auth disabled, warning logged once.
-- all other environments (staging, production, qa, preview, …): startup fails
-  with ConfigurationError — fail-closed by design.
+- all other environments: startup fails with ConfigurationError — fail-closed.
+
+Threat model (why header-trust is sufficient, no JWT validation):
+- Server binds ``127.0.0.1`` only; external traffic arrives exclusively via
+  the cloudflared tunnel, which sits behind the CF Access policy.
+- The CF-Access header cannot be spoofed by an external attacker — CF strips
+  and re-sets it on every authenticated request.
+- A local process could set the header, but a local process can also read
+  ``.env`` directly; no additional attack surface is gained.
+- Upgrade path to JWT-validation (via CF JWKS + AUD tag): validate
+  ``Cf-Access-Jwt-Assertion`` against ``https://<team>.cloudflareaccess.com/cdn-cgi/access/certs``.
 
 Usage (attached to FastAPI in app/api/main.py):
     from app.security.auth import setup_auth
@@ -17,9 +31,10 @@ Usage (attached to FastAPI in app/api/main.py):
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import secrets
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Iterable
 
 from fastapi import FastAPI, Request, Response
 from fastapi.responses import JSONResponse
@@ -28,19 +43,80 @@ from app.core.errors import ConfigurationError
 
 logger = logging.getLogger(__name__)
 
+
+def _hash_email(email: str) -> str:
+    """Return a short hash of the email — audit trail without persisting PII."""
+    if not email:
+        return ""
+    return hashlib.sha256(email.encode("utf-8")).hexdigest()[:12]
+
+
+def _client_ip(request: Request) -> str:
+    """Best-effort client IP. Cf-Connecting-IP (tunnel), X-Forwarded-For, peer."""
+    cf = request.headers.get("Cf-Connecting-IP", "").strip()
+    if cf:
+        return cf
+    xff = request.headers.get("X-Forwarded-For", "").strip()
+    if xff:
+        return xff.split(",")[0].strip()
+    if request.client is not None:
+        return request.client.host
+    return ""
+
+
+def _audit_access(
+    *,
+    decision: str,
+    reason: str,
+    request: Request,
+    email: str = "",
+    status_code: int | None = None,
+) -> None:
+    """Write one structured access-audit line (SENTR-F-001).
+
+    ``decision`` is ``granted`` or ``denied``. Email is hashed to a short
+    fingerprint — enough for correlation across requests, never the full PII.
+    """
+    logger.info(
+        "auth_access",
+        extra={
+            "decision": decision,
+            "reason": reason,
+            "path": request.url.path,
+            "method": request.method,
+            "client_ip": _client_ip(request),
+            "email_hash": _hash_email(email),
+            "status_code": status_code,
+        },
+    )
+
 # Environments where an empty API key is acceptable (local dev / CI).
 _DEV_TEST_ENVS: frozenset[str] = frozenset({"development", "dev", "test", "testing"})
 
 _AUTH_DISABLED_WARNED = False
 
 
-def setup_auth(app: FastAPI, api_key: str, env: str = "development") -> None:
-    """Attach bearer-token middleware to the FastAPI app.
+def setup_auth(
+    app: FastAPI,
+    api_key: str,
+    env: str = "development",
+    cf_allowed_emails: Iterable[str] = (),
+    tv_webhook_enabled: bool = False,
+) -> None:
+    """Attach auth middleware (CF-Access + Bearer) to the FastAPI app.
 
     Args:
-        app:     FastAPI application instance.
-        api_key: Value of APP_API_KEY.
-        env:     Value of APP_ENV (default: ``"development"``).
+        app:                FastAPI application instance.
+        api_key:            Value of APP_API_KEY.
+        env:                Value of APP_ENV (default: ``"development"``).
+        cf_allowed_emails:  Iterable of emails allowed to pass via the
+                            ``Cf-Access-Authenticated-User-Email`` header.
+        tv_webhook_enabled: Whether the TradingView webhook is configured.
+                            When False, ``/tradingview/webhook`` is rejected
+                            at the middleware layer as well — Defense-in-Depth
+                            (SENTR-F-002) mirroring the router-level 404 gate
+                            so an accidental router-gate removal cannot open
+                            the endpoint.
 
     Raises:
         ConfigurationError: if ``api_key`` is empty outside dev/test environments.
@@ -62,39 +138,129 @@ def setup_auth(app: FastAPI, api_key: str, env: str = "development") -> None:
             _AUTH_DISABLED_WARNED = True
         return  # no middleware attached
 
+    cf_allowed = frozenset(e.strip().lower() for e in cf_allowed_emails if e and e.strip())
+
     @app.middleware("http")
-    async def _bearer_auth(
+    async def _auth_middleware(
         request: Request, call_next: Callable[[Request], Awaitable[Response]]
     ) -> Response:
         # Public read-only endpoints:
         # - /health for infra checks
-        # - /dashboard/* as local operator HTML + API views (D-124 dashboard)
         # - /tradingview/webhook (D-125 TV-1+): external webhook sender
         #   (TradingView) cannot attach a Bearer header; the endpoint has
         #   its own HMAC / shared-token auth + fail-closed 404 gating.
         path = request.url.path.rstrip("/")
-        if (
-            path in ("", "/health", "/tradingview/webhook")
-            or path.startswith("/dashboard")
-        ):
+
+        # SENTR-F-002: Defense-in-Depth — middleware mirrors the router
+        # 404-gate for /tradingview/webhook when the feature is disabled.
+        # The router already returns 404 via _settings_gate; this is a
+        # second ring so a future accidental removal (or a new router
+        # that forgets the gate) cannot open the endpoint silently.
+        if path == "/tradingview/webhook" and not tv_webhook_enabled:
+            _audit_access(
+                decision="denied",
+                reason="tv_webhook_disabled",
+                request=request,
+                status_code=404,
+            )
+            return JSONResponse(status_code=404, content={"detail": "Not Found"})
+
+        if path in ("", "/health", "/tradingview/webhook"):
+            _audit_access(decision="granted", reason="public", request=request)
             return await call_next(request)
 
-        auth_header = request.headers.get("Authorization", "")
-        if not auth_header.startswith("Bearer "):
+        # /dashboard/* (D-124 dashboard HTML + /dashboard/api/*):
+        # Defense-in-Depth (D-156d). The primary gate is Cloudflare Access
+        # at the edge — but a CF-Access policy misconfiguration would
+        # leave /dashboard/* wide-open on kai-trader.org otherwise.
+        #
+        # Rule: tunnel traffic (Cf-Ray header present, set by Cloudflare
+        # edge, un-spoofable from outside because the server binds to
+        # 127.0.0.1 only) MUST additionally carry an allowlisted
+        # Cf-Access-Authenticated-User-Email. Local traffic (no Cf-Ray)
+        # stays open for operator scripts / Vite dev proxy / cron probes.
+        # Dev environments without a cf_allowed list also stay open —
+        # otherwise the operator would lock themselves out locally.
+        # NEO-F-004: exact "/dashboard" or "/dashboard/*" only — prevent a
+        # future "/dashboardv2"-style route from silently inheriting the
+        # dashboard-defense-in-depth policy instead of Bearer auth.
+        if path == "/dashboard" or path.startswith("/dashboard/"):
+            if not cf_allowed or not request.headers.get("Cf-Ray"):
+                _audit_access(
+                    decision="granted", reason="dashboard_local", request=request
+                )
+                return await call_next(request)
+            cf_email = (
+                request.headers.get("Cf-Access-Authenticated-User-Email", "")
+                .strip()
+                .lower()
+            )
+            if cf_email and cf_email in cf_allowed:
+                _audit_access(
+                    decision="granted",
+                    reason="dashboard_cf_access",
+                    request=request,
+                    email=cf_email,
+                )
+                return await call_next(request)
+            _audit_access(
+                decision="denied",
+                reason="dashboard_cf_access_missing",
+                request=request,
+                email=cf_email,
+                status_code=401,
+            )
             return JSONResponse(
                 status_code=401,
-                content={"detail": "Missing Authorization header"},
-                headers={"WWW-Authenticate": "Bearer"},
+                content={"detail": "Cloudflare Access authentication required"},
             )
 
-        token = auth_header[len("Bearer ") :]
-        # Use constant-time comparison to prevent timing attacks
-        if not secrets.compare_digest(token, api_key):
+        # (1) Cloudflare Access: trust if email header matches allowlist.
+        if cf_allowed:
+            cf_email = request.headers.get("Cf-Access-Authenticated-User-Email", "").strip().lower()
+            if cf_email and cf_email in cf_allowed:
+                _audit_access(
+                    decision="granted",
+                    reason="cf_access",
+                    request=request,
+                    email=cf_email,
+                )
+                return await call_next(request)
+
+        # (2) Bearer token: required for local scripts/cron.
+        auth_header = request.headers.get("Authorization", "")
+        if auth_header.startswith("Bearer "):
+            token = auth_header[len("Bearer ") :]
+            if secrets.compare_digest(token, api_key):
+                _audit_access(decision="granted", reason="bearer", request=request)
+                return await call_next(request)
+            _audit_access(
+                decision="denied",
+                reason="bearer_invalid",
+                request=request,
+                status_code=403,
+            )
             return JSONResponse(
                 status_code=403,
                 content={"detail": "Invalid API key"},
             )
 
-        return await call_next(request)
+        _audit_access(
+            decision="denied",
+            reason="missing_authorization",
+            request=request,
+            status_code=401,
+        )
+        return JSONResponse(
+            status_code=401,
+            content={"detail": "Missing Authorization header"},
+            headers={"WWW-Authenticate": "Bearer"},
+        )
 
-    logger.info("API authentication enabled — Bearer token required for all endpoints")
+    if cf_allowed:
+        logger.info(
+            "API authentication enabled — CF-Access (emails=%d) + Bearer token",
+            len(cf_allowed),
+        )
+    else:
+        logger.info("API authentication enabled — Bearer token required")

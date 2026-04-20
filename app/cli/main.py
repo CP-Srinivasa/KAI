@@ -954,11 +954,16 @@ def _load_doc_metadata(
     import asyncio
 
     directional_doc_ids: set[str] = set()
+    audit_source_fallback: dict[str, str] = {}
     for rec in audits:
         sentiment = (rec.sentiment_label or "").lower()
         if rec.is_digest or sentiment not in {"bullish", "bearish"}:
             continue
         directional_doc_ids.add(rec.document_id)
+        if rec.source_name:
+            audit_source_fallback[rec.document_id] = (
+                rec.source_name.strip().lower()
+            )
 
     if not directional_doc_ids:
         return {}, {}
@@ -996,8 +1001,14 @@ def _load_doc_metadata(
         # simulation's source gate can block them.  Without this,
         # ``rec.source_name or source_by_doc.get(doc_id)`` returns
         # ``None`` and the source gate silently passes.
+        # D-156: Prefer audit's own ``source_name`` over ``unknown`` when
+        # the DB has no row — TV-bridge rows (``tv:<event_id>``) never
+        # land in CanonicalDocumentModel but self-declare
+        # ``source_name="tradingview_webhook"``.
         for doc_id in directional_doc_ids:
-            sources.setdefault(doc_id, "unknown")
+            sources.setdefault(
+                doc_id, audit_source_fallback.get(doc_id, "unknown"),
+            )
         return sources, titles
 
     try:
@@ -1036,12 +1047,19 @@ def alerts_hold_report(
     paper = report["paper_trading_evidence"]
     console.print(f"[green]Report written:[/green] {json_out}")
     console.print(f"[green]Summary written:[/green] {md_out}")
+    active_prec = quality.get("active_precision_pct")
+    min_active = gate.get("minimum_active_precision_pct_for_gate")
     console.print(
         f"[bold]Gate:[/bold] {gate['overall_status']} | "
         f"resolved directional {hit['resolved_directional_documents']}/"
         f"{hit['minimum_resolved_directional_alerts_for_gate']} | "
+        f"active precision {active_prec}% / min {min_active}% | "
         f"paper cycles {paper['loop_metrics']['total_cycles']}"
     )
+    if gate.get("blocking_reasons"):
+        console.print(
+            "[yellow]Blocking:[/yellow] " + ", ".join(gate["blocking_reasons"])
+        )
     console.print(
         "[bold]Quality:[/bold] "
         f"actionable_rate={quality['directional_actionable_rate_pct']}% | "
@@ -1052,6 +1070,41 @@ def alerts_hold_report(
     )
     console.print(
         "[bold]Validation gaps:[/bold] " + ", ".join(quality["validation_gaps"])
+    )
+
+
+@alerts_app.command("tv-bridge")
+def alerts_tv_bridge(
+    artifacts_dir: str = typer.Option("artifacts", help="Artifacts directory"),
+    include_smoke: bool = typer.Option(
+        False, "--include-smoke",
+        help="Include smoke/test events (default: filtered out)",
+    ),
+) -> None:
+    """Bridge TradingView webhook events into alert_audit.jsonl (D-156).
+
+    Appends synthetic ``AlertAuditRecord`` rows with
+    ``document_id=f"tv:{event_id}"`` so the auto-annotator can resolve
+    TV events as hit/miss. Idempotent — re-runs skip existing rows.
+    Smoke-test events are filtered by default (same heuristic as
+    ``provenance_metrics._summarize_tv_pipeline``).
+
+    Operator flow: ``tv-bridge`` → ``auto-annotate`` → ``tv4-quality-bar``.
+    """
+    from app.alerts.tv_bridge import persist_tv_events_as_alert_audits
+
+    artifacts_path = Path(artifacts_dir)
+    counts = persist_tv_events_as_alert_audits(
+        tv_pending_path=artifacts_path / "tradingview_pending_signals.jsonl",
+        alert_audit_path=artifacts_path / "alert_audit.jsonl",
+        include_smoke=include_smoke,
+    )
+    console.print(
+        f"[green]TV-Bridge:[/green] written={counts['written']} "
+        f"skipped_existing={counts['skipped_existing']} "
+        f"skipped_smoke={counts['skipped_smoke']} "
+        f"skipped_unsupported={counts['skipped_unsupported']} "
+        f"skipped_invalid={counts['skipped_invalid']}"
     )
 
 
@@ -1097,6 +1150,7 @@ def alerts_tv4_quality_bar(
         console.print(
             f"  source={metrics.source} resolved={metrics.resolved} "
             f"hits={metrics.hits} "
+            f"inconclusive={metrics.inconclusive} "
             f"rate={metrics.hit_rate_pct}% "
             f"CI=[{metrics.ci_low_pct}%, {metrics.ci_high_pct}%] "
             f"sufficient={metrics.sample_sufficient}"
@@ -1648,6 +1702,71 @@ def alerts_auto_annotate(
     console.print(
         f"\n[bold]{len(results)} annotated{mode}:[/bold]"
         f" {hits} hit, {misses} miss, {inconclusive} inconclusive"
+    )
+
+
+@alerts_app.command("auto-annotate-blocked")
+def alerts_auto_annotate_blocked(
+    min_age_hours: float = typer.Option(
+        4.0, help="Only annotate blocked alerts older than this (hours)",
+    ),
+    move_threshold: float = typer.Option(
+        1.0, help="Price move threshold in percent (1.0 = 1%%)",
+    ),
+    no_reeval: bool = typer.Option(
+        False, "--no-reeval",
+        help="Skip re-evaluation of prior inconclusive annotations",
+    ),
+    backfill_batch: int = typer.Option(
+        30,
+        "--backfill-batch",
+        help="Max stale (>72h) inconclusives to re-evaluate per run (0=skip)",
+    ),
+    dry_run: bool = typer.Option(
+        False, "--dry-run", help="Preview without writing annotations",
+    ),
+) -> None:
+    """Resolve would-have-been outcomes for blocked directional alerts.
+
+    D-148: Blocked-Alert Recall Proxy. Same threshold/window logic as
+    ``alerts auto-annotate`` but runs against ``blocked_alerts.jsonl`` and
+    writes ``blocked_outcomes.jsonl``.  Used to measure recall loss caused
+    by the directional eligibility gate.
+    """
+    import asyncio
+
+    from app.alerts.blocked_annotator import auto_annotate_blocked
+
+    artifacts_dir = Path("artifacts")
+
+    results = asyncio.run(
+        auto_annotate_blocked(
+            audit_dir=artifacts_dir,
+            min_age_hours=min_age_hours,
+            move_threshold=move_threshold,
+            reeval_inconclusive=not no_reeval,
+            backfill_batch=backfill_batch,
+            dry_run=dry_run,
+        )
+    )
+
+    if not results:
+        console.print("[yellow]No pending blocked alerts to annotate.[/yellow]")
+        return
+
+    hits = sum(1 for a in results if a.outcome == "hit")
+    misses = sum(1 for a in results if a.outcome == "miss")
+    inconclusive = sum(1 for a in results if a.outcome == "inconclusive")
+
+    for a in results:
+        color = {"hit": "red", "miss": "green", "inconclusive": "yellow"}[a.outcome]
+        console.print(f"[{color}]{a.outcome:>13}[/{color}]  {a.asset}  {a.note}")
+
+    mode = " [dim](dry-run)[/dim]" if dry_run else ""
+    console.print(
+        f"\n[bold]{len(results)} blocked-alert outcomes{mode}:[/bold]"
+        f" {hits} would-have-hit (recall loss), {misses} correctly blocked, "
+        f"{inconclusive} inconclusive"
     )
 
 

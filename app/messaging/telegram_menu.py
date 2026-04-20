@@ -148,12 +148,13 @@ DEFAULT_MENU_AGENTS: dict[str, Any] = {
     "text": (
         "*Agents*\n"
         "\n"
-        "Supervised assistants for security, health and architecture."
+        "Supervised assistants for security, health, architecture and design."
     ),
     "keyboard": [
         _row(_btn("SENTR — Security", "menu:agents_sentr")),
         _row(_btn("Watchdog — Health", "menu:agents_watchdog")),
         _row(_btn("Architect — Review", "menu:agents_architect")),
+        _row(_btn("DALI — Design", "menu:agents_dali")),
         _nav_row("main"),
     ],
 }
@@ -205,6 +206,25 @@ DEFAULT_MENU_AGENTS_ARCHITECT: dict[str, Any] = {
             _btn("Run Review", "cmd:architect !review"),
             _btn("Propose Change", "cmd:architect !propose"),
         ),
+        _nav_row("agents"),
+    ],
+}
+
+DEFAULT_MENU_AGENTS_DALI: dict[str, Any] = {
+    "text": (
+        "*DALI — Design*\n"
+        "\n"
+        "UI/UX audit, redesign concepts and patch proposals for dashboard, "
+        "telegram UI and the visual system.\n"
+        "Free-form chat: `/dali <message>`."
+    ),
+    "keyboard": [
+        _row(_btn("Open Chat", "cmd:dali")),
+        _row(
+            _btn("Run Audit", "cmd:dali !audit"),
+            _btn("Propose Redesign", "cmd:dali !propose"),
+        ),
+        _row(_btn("Draft Patch", "cmd:dali !implement")),
         _nav_row("agents"),
     ],
 }
@@ -336,6 +356,7 @@ DEFAULT_MENUS: dict[str, dict[str, Any]] = {
     "agents_sentr": DEFAULT_MENU_AGENTS_SENTR,
     "agents_watchdog": DEFAULT_MENU_AGENTS_WATCHDOG,
     "agents_architect": DEFAULT_MENU_AGENTS_ARCHITECT,
+    "agents_dali": DEFAULT_MENU_AGENTS_DALI,
     "exchanges": DEFAULT_MENU_EXCHANGES,
     "autotrading": DEFAULT_MENU_AUTOTRADING,
     "insights": DEFAULT_MENU_INSIGHTS,

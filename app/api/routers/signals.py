@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import logging
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated
@@ -41,6 +42,7 @@ from app.messaging.message_schema import (
 from app.messaging.signal_parser import (
     SignalParseError,
     parse_structured_message,
+    split_validation_errors,
 )
 
 logger = logging.getLogger(__name__)
@@ -51,19 +53,42 @@ _LOOKBACK = 500
 router = APIRouter(prefix="/signals", tags=["signals"])
 
 
+class SignalCompletionFields(BaseModel):
+    """Operator-provided completions for fields the heuristic parser could
+    not infer from free-form text (e.g. no exchange named in the paste).
+
+    No silent defaults — every execution-relevant field must be supplied
+    explicitly by the operator before the signal is accepted.
+    """
+
+    exchange_scope: list[str] | None = Field(default=None, max_length=10)
+    stop_loss: float | None = Field(default=None, gt=0)
+    targets: list[float] | None = Field(default=None, max_length=10)
+    leverage: int | None = Field(default=None, ge=1, le=125)
+    source: str | None = Field(default=None, max_length=128)
+
+
 class SignalPasteRequest(BaseModel):
     text: str = Field(min_length=1, max_length=8000)
     operator_user_id: str | None = Field(default=None, max_length=128)
     trace_id: str | None = Field(default=None, max_length=128)
+    completion_fields: SignalCompletionFields | None = Field(default=None)
 
 
 class SignalPasteResponse(BaseModel):
-    status: str  # accepted | duplicate | rejected
-    stage: str   # accepted | idempotency_gate | parse | schema_validation | execution_gate
+    # accepted | duplicate | rejected | needs_completion
+    status: str
+    # accepted | idempotency_gate | parse | schema_validation | execution_gate | completion_gate
+    stage: str
     message_type: str | None = None
     envelope_id: str | None = None
     idempotency_key: str | None = None
     errors: list[str] = Field(default_factory=list)
+    # When status=needs_completion, list of fields the operator must supply.
+    missing_fields: list[str] = Field(default_factory=list)
+    # Echo back what the parser already has so the UI can render a
+    # prefilled completion form.
+    parsed_preview: dict[str, object] | None = None
 
 
 def _audit_path() -> Path:
@@ -104,6 +129,67 @@ def _is_duplicate(idempotency_key: str) -> bool:
         if rec.get("stage") in {"accepted", "idempotency_gate"}:
             return True
     return False
+
+
+def _apply_completions(
+    signal: TradingSignal,
+    completions: SignalCompletionFields | None,
+) -> TradingSignal:
+    """Merge operator-supplied completions into a parsed signal.
+
+    When the operator explicitly passes a value in ``completion_fields``, it
+    overrides whatever the heuristic parsed. This is intentional — the
+    operator reviewed the ``parsed_preview`` and is submitting the verified
+    final values. Fields omitted from ``completion_fields`` keep their
+    parsed values. Returns a new TradingSignal.
+    """
+    if completions is None:
+        return signal
+    changes: dict[str, object] = {}
+    if completions.exchange_scope:
+        normalized = [
+            v.strip().lower().replace(" ", "_")
+            for v in completions.exchange_scope
+            if v.strip()
+        ]
+        if normalized:
+            changes["exchange_scope"] = normalized
+    if completions.stop_loss is not None:
+        changes["stop_loss"] = completions.stop_loss
+    if completions.targets:
+        cleaned = [t for t in completions.targets if t > 0]
+        if cleaned:
+            changes["targets"] = cleaned
+    if completions.leverage is not None:
+        changes["leverage"] = completions.leverage
+    if completions.source:
+        changes["source"] = completions.source
+    if not changes:
+        return signal
+    return replace(signal, **changes)
+
+
+def _signal_preview(signal: TradingSignal) -> dict[str, object]:
+    """Compact preview of what the parser already extracted — used to
+    prefill the operator's completion form in the UI."""
+    preview: dict[str, object] = {
+        "symbol": signal.display_symbol or signal.symbol,
+        "side": signal.side.value,
+        "direction": signal.direction.value,
+        "entry_type": signal.entry_type.value,
+        "targets": list(signal.targets),
+        "stop_loss": signal.stop_loss,
+        "leverage": signal.leverage,
+        "exchange_scope": list(signal.exchange_scope),
+        "source": signal.source,
+    }
+    if signal.entry_value is not None:
+        preview["entry_value"] = signal.entry_value
+    if signal.entry_min is not None:
+        preview["entry_min"] = signal.entry_min
+    if signal.entry_max is not None:
+        preview["entry_max"] = signal.entry_max
+    return preview
 
 
 def _record_base(
@@ -172,8 +258,37 @@ async def paste_signal(
         )
 
     if isinstance(parsed, TradingSignal):
+        # Merge operator-supplied completions (if any) before validation so
+        # the second round-trip from the UI can fill missing fields like
+        # exchange_scope — no silent defaults are applied.
+        parsed = _apply_completions(parsed, payload.completion_fields)
+
         validation_errors = parsed.validation_errors
         if validation_errors:
+            completable, blocking = split_validation_errors(validation_errors)
+            preview = _signal_preview(parsed)
+
+            # Soft path: only completable fields are missing. Don't wrap an
+            # envelope yet — we're waiting on the operator to supply them.
+            if completable and not blocking:
+                rec = _record_base(
+                    "completion_gate", "needs_completion", "signal",
+                    payload.operator_user_id, payload.trace_id,
+                )
+                rec["missing_fields"] = list(completable)
+                rec["payload"] = preview
+                _append_audit(rec)
+                return SignalPasteResponse(
+                    status="needs_completion",
+                    stage="completion_gate",
+                    message_type="signal",
+                    missing_fields=list(completable),
+                    parsed_preview=preview,
+                )
+
+            # Hard block: non-completable error (e.g. missing entry, bad
+            # direction). Wrap an envelope so it shows up in the audit log,
+            # but mark it rejected at execution_gate.
             envelope = MessageEnvelope.wrap(
                 parsed,
                 source_channel=SourceChannel.DASHBOARD,
@@ -188,6 +303,7 @@ async def paste_signal(
             rec["idempotency_key"] = envelope.idempotency_key
             rec["payload"] = dict(envelope.payload)
             rec["errors"] = list(validation_errors)
+            rec["missing_fields"] = list(completable)
             _append_audit(rec)
             return SignalPasteResponse(
                 status="rejected", stage="execution_gate",
@@ -195,6 +311,8 @@ async def paste_signal(
                 envelope_id=envelope.envelope_id,
                 idempotency_key=envelope.idempotency_key,
                 errors=list(validation_errors),
+                missing_fields=list(completable),
+                parsed_preview=preview,
             )
 
     envelope = MessageEnvelope.wrap(

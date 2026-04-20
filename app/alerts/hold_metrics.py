@@ -14,10 +14,28 @@ from typing import Any
 
 from app.alerts.audit import load_alert_audits, load_outcome_annotations
 from app.alerts.eligibility import evaluate_directional_eligibility
+from app.alerts.provenance_metrics import wilson_ci
 
-MIN_RESOLVED_DIRECTIONAL_ALERTS = 50
+# D-151 (2026-04-18): Gate now enforces sample-size AND active-precision.
+# Raised from 50 to 200 to match the sprint-plan re-entry rule and to get the
+# CI width under ~±7pp.  Precision threshold 60% reflects D-146 active-split
+# (61.47% at snapshot) — any regression below this means the eligibility gate
+# is losing ground and PHASE 5 work must stay on hold.  "Active" excludes
+# pre-D-139 legacy_unknown docs (see LEGACY_UNKNOWN_CUTOFF below).
+MIN_RESOLVED_DIRECTIONAL_ALERTS = 200
+MIN_ACTIVE_PRECISION_PCT = 60.0
 MIN_PAPER_CYCLES = 10
 MIN_PAPER_FILLS = 3
+
+# D-139 fix (2026-03-28) stopped the bug that left directional docs without a
+# persisted CanonicalDocument row — provenance buckets those as
+# ``source=unknown``. They inflate the miss column without reflecting current
+# pipeline behaviour. "Active" precision excludes this bucket when a
+# source_by_doc lookup is provided; if no lookup is available we fall back to
+# a dispatched_at cutoff so the dashboard still gets *some* signal without a
+# DB hop.
+LEGACY_UNKNOWN_SOURCE = "unknown"
+LEGACY_UNKNOWN_CUTOFF = "2026-03-29"
 PRIORITY_MAE_BASELINE = 3.13
 PRIORITY_MAE_BASELINE_DATE = "2026-03-23"
 PRIORITY_MAE_BASELINE_DECISION = "D-57"
@@ -179,6 +197,30 @@ def build_hold_metrics_report(
     }
     hit_rate = _rate_pct(len(hit_docs), len(resolved_docs))
     false_positive_rate = _rate_pct(len(miss_docs), len(resolved_docs))
+
+    # Active-subset: excludes legacy-unknown docs (directional docs that have
+    # no persisted CanonicalDocument row, a pre-D-139 artefact). When a
+    # source_by_doc lookup is provided we filter exactly on source=unknown;
+    # without a lookup we fall back to a conservative date cutoff.
+    _source_lookup = source_by_doc or {}
+
+    def _is_active(doc_id: str) -> bool:
+        if _source_lookup:
+            src = (_source_lookup.get(doc_id) or LEGACY_UNKNOWN_SOURCE).strip().lower()
+            return src != LEGACY_UNKNOWN_SOURCE
+        rec = latest_directional_by_doc.get(doc_id)
+        if rec is None or not rec.dispatched_at:
+            return False
+        return rec.dispatched_at >= LEGACY_UNKNOWN_CUTOFF
+
+    active_hit_docs = {d for d in hit_docs if _is_active(d)}
+    active_miss_docs = {d for d in miss_docs if _is_active(d)}
+    active_resolved_docs = active_hit_docs | active_miss_docs
+    active_hit_rate = _rate_pct(len(active_hit_docs), len(active_resolved_docs))
+    active_false_positive_rate = _rate_pct(
+        len(active_miss_docs), len(active_resolved_docs)
+    )
+    legacy_resolved_count = len(resolved_docs) - len(active_resolved_docs)
     actionable_rate = (
         round(len(actionable_directional_docs) / len(directional_doc_ids) * 100.0, 2)
         if directional_doc_ids
@@ -245,6 +287,14 @@ def build_hold_metrics_report(
         len(resolved_docs) >= MIN_RESOLVED_DIRECTIONAL_ALERTS
     )
 
+    # D-151: active-precision gate — excludes pre-D-139 legacy_unknown docs so
+    # the Altlasten-bucket cannot suppress the measurement.  None counts as
+    # unmet (no active sample yet).
+    active_precision_condition_met = (
+        active_hit_rate is not None
+        and active_hit_rate >= MIN_ACTIVE_PRECISION_PCT
+    )
+
     # Conservative evidence condition: enough cycles + fills and non-negative
     # realized PnL when available.
     paper_trading_condition_met = (
@@ -282,6 +332,13 @@ def build_hold_metrics_report(
     priority_hits_pairs: list[tuple[float, float]] = []
     high_priority_resolved_docs: set[str] = set()
     low_priority_resolved_docs: set[str] = set()
+    # D-149: Priority tier analysis (P10 vs P7-P9) replaces linear correlation
+    # as the primary priority-calibration signal.  Rationale: within the
+    # post-gate P7-P10 band, hit-rate is non-monotonic (P7≈35%, P9≈22%,
+    # P10≈54%), so Pearson ≈ 0 even though P10 carries real signal.
+    high_conviction_tier_threshold = 10
+    high_conviction_resolved_docs: set[str] = set()
+    standard_tier_resolved_docs: set[str] = set()
     for doc_id in resolved_docs:
         latest_record = latest_directional_by_doc.get(doc_id)
         if latest_record is None or latest_record.priority is None:
@@ -293,6 +350,10 @@ def build_hold_metrics_report(
             high_priority_resolved_docs.add(doc_id)
         else:
             low_priority_resolved_docs.add(doc_id)
+        if latest_record.priority >= high_conviction_tier_threshold:
+            high_conviction_resolved_docs.add(doc_id)
+        elif latest_record.priority >= high_priority_threshold:
+            standard_tier_resolved_docs.add(doc_id)
 
     priority_corr = _pearson_correlation(
         [p for p, _ in priority_hits_pairs],
@@ -306,6 +367,38 @@ def build_hold_metrics_report(
         sum(1 for d in low_priority_resolved_docs if d in hit_docs),
         len(low_priority_resolved_docs),
     )
+
+    # D-149: tier precision + Wilson 95% CI per tier.
+    def _tier_stats(docs: set[str]) -> dict[str, Any]:
+        hits = sum(1 for d in docs if d in hit_docs)
+        n = len(docs)
+        ci = wilson_ci(hits, n) if n > 0 else None
+        return {
+            "resolved": n,
+            "hits": hits,
+            "hit_rate_pct": _rate_pct(hits, n),
+            "ci_low_pct": round(ci[0] * 100.0, 2) if ci is not None else None,
+            "ci_high_pct": round(ci[1] * 100.0, 2) if ci is not None else None,
+        }
+
+    high_conviction_stats = _tier_stats(high_conviction_resolved_docs)
+    standard_tier_stats = _tier_stats(standard_tier_resolved_docs)
+    priority_tier_lift_pct: float | None = None
+    if (
+        high_conviction_stats["hit_rate_pct"] is not None
+        and standard_tier_stats["hit_rate_pct"] is not None
+    ):
+        priority_tier_lift_pct = round(
+            high_conviction_stats["hit_rate_pct"]
+            - standard_tier_stats["hit_rate_pct"],
+            2,
+        )
+
+    # D-149: `priority_calibration_finding` + `priority_hit_correlation` are
+    # retained for backwards-compat but deprecated as a tuning signal.  Pearson
+    # linear correlation is not the right statistic inside the narrow P7-P10
+    # post-gate band; use priority_tier_* fields instead.  The finding value
+    # below remains computed so existing callers don't break.
     if len(priority_hits_pairs) < 10:
         priority_calibration_finding = "insufficient_sample"
     elif priority_corr is None:
@@ -316,6 +409,9 @@ def build_hold_metrics_report(
         priority_calibration_finding = "inverse_correlation"
     else:
         priority_calibration_finding = "weak_correlation"
+    priority_hit_correlation_deprecated_reason = (
+        "non_monotonic_within_p7_p10_band_see_d149"
+    )
 
     # D-134: Forward-precision simulation using all audit record fields.
     # Re-evaluates each resolved alert with current gates (priority,
@@ -392,6 +488,11 @@ def build_hold_metrics_report(
             "alert_misses": len(miss_docs),
             "alert_hit_rate": hit_rate,
             "calculable_for_gate": alert_hit_rate_condition_met,
+            "legacy_unknown_cutoff": LEGACY_UNKNOWN_CUTOFF,
+            "active_resolved_directional_documents": len(active_resolved_docs),
+            "active_alert_hits": len(active_hit_docs),
+            "active_alert_misses": len(active_miss_docs),
+            "legacy_resolved_documents": legacy_resolved_count,
         },
         "forward_simulation": {
             "description": (
@@ -412,6 +513,8 @@ def build_hold_metrics_report(
             "directional_actionable_rate_pct": actionable_rate,
             "resolved_precision_pct": hit_rate,
             "resolved_false_positive_rate_pct": false_positive_rate,
+            "active_precision_pct": active_hit_rate,
+            "active_false_positive_rate_pct": active_false_positive_rate,
             "resolved_recall_pct": None,
             "recall_computable": False,
             "feedback_loop_labeled_ratio": coverage_ratio,
@@ -419,11 +522,25 @@ def build_hold_metrics_report(
             "priority_calibration_finding": priority_calibration_finding,
             "priority_hit_correlation": priority_corr,
             "priority_hit_correlation_sample": len(priority_hits_pairs),
+            "priority_hit_correlation_deprecated_reason": (
+                priority_hit_correlation_deprecated_reason
+            ),
             "high_priority_threshold": high_priority_threshold,
             "high_priority_resolved_documents": len(high_priority_resolved_docs),
             "high_priority_hit_rate_pct": high_priority_hit_rate,
             "low_priority_resolved_documents": len(low_priority_resolved_docs),
             "low_priority_hit_rate_pct": low_priority_hit_rate,
+            # D-149: tier-based priority calibration (preferred over correlation)
+            "priority_tier_high_conviction_threshold": high_conviction_tier_threshold,
+            "priority_tier_high_conviction_resolved": high_conviction_stats["resolved"],
+            "priority_tier_high_conviction_hit_rate_pct": high_conviction_stats["hit_rate_pct"],
+            "priority_tier_high_conviction_ci_low_pct": high_conviction_stats["ci_low_pct"],
+            "priority_tier_high_conviction_ci_high_pct": high_conviction_stats["ci_high_pct"],
+            "priority_tier_standard_resolved": standard_tier_stats["resolved"],
+            "priority_tier_standard_hit_rate_pct": standard_tier_stats["hit_rate_pct"],
+            "priority_tier_standard_ci_low_pct": standard_tier_stats["ci_low_pct"],
+            "priority_tier_standard_ci_high_pct": standard_tier_stats["ci_high_pct"],
+            "priority_tier_lift_pct": priority_tier_lift_pct,
             "paper_market_data_source_counts": dict(market_data_source_counts),
             "paper_real_price_cycle_count": real_price_cycle_count,
             "paper_mock_price_cycle_count": mock_price_cycle_count,
@@ -475,21 +592,36 @@ def build_hold_metrics_report(
         },
         "hold_gate_evaluation": {
             "alert_hit_rate_condition_met": alert_hit_rate_condition_met,
+            "active_precision_condition_met": active_precision_condition_met,
             "paper_trading_condition_met": paper_trading_condition_met,
+            "minimum_resolved_directional_alerts_for_gate": (
+                MIN_RESOLVED_DIRECTIONAL_ALERTS
+            ),
+            "minimum_active_precision_pct_for_gate": MIN_ACTIVE_PRECISION_PCT,
             "feature_work_unblocked": (
-                alert_hit_rate_condition_met and paper_trading_condition_met
+                alert_hit_rate_condition_met
+                and active_precision_condition_met
+                and paper_trading_condition_met
             ),
             "overall_status": (
                 "hold_releasable"
-                if (alert_hit_rate_condition_met and paper_trading_condition_met)
+                if (
+                    alert_hit_rate_condition_met
+                    and active_precision_condition_met
+                    and paper_trading_condition_met
+                )
                 else "hold_remains_active"
             ),
             "blocking_reasons": [
                 reason
                 for reason, is_blocking in [
                     (
-                        "alert_hit_rate_not_calculable_50_plus",
+                        f"resolved_directional_below_{MIN_RESOLVED_DIRECTIONAL_ALERTS}",
                         not alert_hit_rate_condition_met,
+                    ),
+                    (
+                        f"active_precision_below_{int(MIN_ACTIVE_PRECISION_PCT)}_pct",
+                        not active_precision_condition_met,
                     ),
                     (
                         "paper_trading_not_clearly_positive",
@@ -533,6 +665,11 @@ def _write_operator_summary(report: dict[str, Any], output_path: Path) -> None:
         "",
         f"- overall_status: `{gate['overall_status']}`",
         f"- feature_work_unblocked: `{gate['feature_work_unblocked']}`",
+        f"- alert_hit_rate_condition_met: `{gate['alert_hit_rate_condition_met']}` "
+        f"(min resolved={gate['minimum_resolved_directional_alerts_for_gate']})",
+        f"- active_precision_condition_met: `{gate['active_precision_condition_met']}` "
+        f"(min active precision={gate['minimum_active_precision_pct_for_gate']}%)",
+        f"- paper_trading_condition_met: `{gate['paper_trading_condition_met']}`",
         "- blocking_reasons: `" + ", ".join(gate["blocking_reasons"]) + "`",
         "",
         "## Alert Hit-Rate Evidence",
@@ -561,11 +698,29 @@ def _write_operator_summary(report: dict[str, Any], output_path: Path) -> None:
         f"- resolved_false_positive_rate_pct: {quality['resolved_false_positive_rate_pct']}",
         f"- resolved_recall_pct: {quality['resolved_recall_pct']}",
         f"- feedback_loop_resolved_ratio: {quality['feedback_loop_resolved_ratio']}",
-        f"- priority_calibration_finding: {quality['priority_calibration_finding']}",
-        f"- priority_hit_correlation: {quality['priority_hit_correlation']}",
-        f"- priority_hit_correlation_sample: {quality['priority_hit_correlation_sample']}",
+        "- priority_calibration_finding (DEPRECATED, see D-149): "
+        f"`{quality['priority_calibration_finding']}`",
+        "- priority_hit_correlation (DEPRECATED, non-monotonic): "
+        f"{quality['priority_hit_correlation']} "
+        f"(n={quality['priority_hit_correlation_sample']})",
         f"- high_priority_hit_rate_pct: {quality['high_priority_hit_rate_pct']}",
         f"- low_priority_hit_rate_pct: {quality['low_priority_hit_rate_pct']}",
+        "### Priority Tier Calibration (D-149, preferred)",
+        "- priority_tier_high_conviction "
+        f"(P>={quality['priority_tier_high_conviction_threshold']}): "
+        f"n={quality['priority_tier_high_conviction_resolved']} "
+        f"hit_rate={quality['priority_tier_high_conviction_hit_rate_pct']}% "
+        f"CI95=["
+        f"{quality['priority_tier_high_conviction_ci_low_pct']}, "
+        f"{quality['priority_tier_high_conviction_ci_high_pct']}]",
+        "- priority_tier_standard (P7-P9): "
+        f"n={quality['priority_tier_standard_resolved']} "
+        f"hit_rate={quality['priority_tier_standard_hit_rate_pct']}% "
+        f"CI95=["
+        f"{quality['priority_tier_standard_ci_low_pct']}, "
+        f"{quality['priority_tier_standard_ci_high_pct']}]",
+        f"- priority_tier_lift_pct: {quality['priority_tier_lift_pct']} "
+        "(P10 minus P7-P9 hit-rate)",
         f"- paper_real_price_cycle_count: {quality['paper_real_price_cycle_count']}",
         "- priority_mae_tier1_vs_teacher_baseline: "
         f"{quality['priority_mae_tier1_vs_teacher_baseline']}",

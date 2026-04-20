@@ -32,6 +32,11 @@ from app.alerts.audit import (
     load_alert_audits,
 )
 from app.alerts.base.interfaces import AlertDeliveryResult, AlertMessage, BaseAlertChannel
+from app.alerts.blocked_audit import (
+    BLOCKED_ALERTS_JSONL_FILENAME,
+    BlockedAlertRecord,
+    append_blocked_alert,
+)
 from app.alerts.channels.email import EmailAlertChannel
 from app.alerts.channels.telegram import TelegramAlertChannel
 from app.alerts.eligibility import (
@@ -258,6 +263,30 @@ class AlertService:
                     sentiment=message.sentiment_label,
                     block_reason=eligibility.directional_block_reason,
                 )
+                # D-148: Persist blocked directional alerts so their
+                # would-have-been outcomes can be resolved later (recall proxy).
+                try:
+                    blocked_record = BlockedAlertRecord(
+                        document_id=str(doc.id),
+                        block_reason=eligibility.directional_block_reason or "unknown",
+                        sentiment_label=message.sentiment_label,
+                        blocked_assets=list(eligibility.blocked_assets),
+                        priority=message.priority,
+                        actionable=message.actionable,
+                        title_hash=title_hash(message.title),
+                        normalized_title=normalize_title(message.title),
+                        source_name=message.source_name,
+                    )
+                    append_blocked_alert(
+                        blocked_record,
+                        self._audit_dir / BLOCKED_ALERTS_JSONL_FILENAME,
+                    )
+                except Exception as exc:  # noqa: BLE001 — audit must never crash dispatch
+                    log.warning(
+                        "alert.directional.blocked_audit_failed",
+                        document_id=str(doc.id),
+                        error=str(exc),
+                    )
                 return []
 
         # D-119: Asset rate-limit — max 1 directional alert per asset+sentiment

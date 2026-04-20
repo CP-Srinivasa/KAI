@@ -174,6 +174,32 @@ def append_alert_audit(record: AlertAuditRecord, output_path: str | Path) -> Non
         f.write(json.dumps(record.to_json_dict()) + "\n")
 
 
+def iter_alert_audit_document_ids(input_path: str | Path) -> set[str]:
+    """Stream ``document_id`` values without instantiating AlertAuditRecord per row.
+
+    ~10x cheaper than ``load_alert_audits`` when callers only need dedup-keys
+    (tv-bridge idempotency-check, alerts ingestion guards). Malformed lines
+    are skipped silently — same policy as ``load_alert_audits``.
+    """
+    p = _resolve_audit_path(Path(input_path))
+    if not p.exists():
+        return set()
+    ids: set[str] = set()
+    with p.open("r", encoding="utf-8") as f:
+        for raw in f:
+            line = raw.strip()
+            if not line:
+                continue
+            try:
+                data = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            doc_id = data.get("document_id") if isinstance(data, dict) else None
+            if isinstance(doc_id, str):
+                ids.add(doc_id)
+    return ids
+
+
 def load_alert_audits(input_path: str | Path) -> list[AlertAuditRecord]:
     """Load existing alert audit records from the JSONL audit file.
 

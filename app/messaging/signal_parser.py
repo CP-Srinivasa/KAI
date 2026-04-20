@@ -39,6 +39,51 @@ _DIRECTION_MAP: dict[str, SignalDirection] = {
 _KV_PATTERN = re.compile(r"(SL|TP|SIZE|STOP|TAKE)\s*=\s*([\d.,]+)", re.IGNORECASE)
 _FIELD_PATTERN = re.compile(r"^([A-Za-z][A-Za-z0-9_ ]*?)\s*:\s*(.+)$", re.MULTILINE)
 
+# Heuristic crypto-signal detection (free-form pastes from Telegram groups etc.).
+# Matches symbols like "#BTC/USDT", "BTC/USDT", "BTC-USDT" (quote ∈ known set).
+_HEURISTIC_SYMBOL_PATTERN = re.compile(
+    r"#?\s*([A-Za-z][A-Za-z0-9]{1,9})\s*[/\-]\s*(USDT|USDC|USD|EUR|BTC|ETH|BUSD|DAI|FDUSD)\b",
+    re.IGNORECASE,
+)
+_HEURISTIC_DIRECTION_PATTERN = re.compile(
+    r"\b(LONG\s*/\s*BUY|BUY\s*/\s*LONG|SHORT\s*/\s*SELL|SELL\s*/\s*SHORT|LONG|SHORT|BUY|SELL)\b",
+    re.IGNORECASE,
+)
+_HEURISTIC_NUM = r"\d+(?:[.,]\d+)?"
+
+_HEURISTIC_EXCHANGES = (
+    "binance_futures", "binance", "bybit", "okx", "deribit", "bitget",
+    "kucoin", "huobi", "blofin", "bingx", "mexc", "gate", "gateio",
+)
+
+# Validation errors the operator can fix by supplying a single field.
+# Anything outside this map is a hard structural problem (missing symbol,
+# invalid direction, bad entry) that requires re-pasting the signal.
+COMPLETABLE_FIELD_FOR_ERROR: dict[str, str] = {
+    "missing_exchange_scope": "exchange_scope",
+    "missing_stop_loss": "stop_loss",
+    "missing_targets": "targets",
+    "missing_source": "source",
+    "invalid_leverage": "leverage",
+}
+
+
+def split_validation_errors(errors: list[str]) -> tuple[list[str], list[str]]:
+    """Split validation errors into (completable_fields, blocking_errors).
+
+    Completable errors map to fields the operator can supply without
+    re-pasting the whole signal. Blocking errors require a new paste.
+    """
+    completable: list[str] = []
+    blocking: list[str] = []
+    for err in errors:
+        field = COMPLETABLE_FIELD_FOR_ERROR.get(err)
+        if field and field not in completable:
+            completable.append(field)
+        elif not field:
+            blocking.append(err)
+    return completable, blocking
+
 
 @dataclass(frozen=True)
 class ParsedSignal:
@@ -126,7 +171,7 @@ def parse_signal_message(text: str) -> ParsedSignal:
     )
 
 
-def detect_message_type(text: str) -> str | None:
+def _detect_bracket_header(text: str) -> str | None:
     """Detect explicit structured header from the first non-empty line."""
     first_line = ""
     for line in text.splitlines():
@@ -155,6 +200,33 @@ def detect_message_type(text: str) -> str | None:
     ):
         return "exchange_response"
 
+    return None
+
+
+def _looks_like_crypto_signal(text: str) -> bool:
+    """Heuristic: free-form text is treated as a SIGNAL if it contains both
+    a crypto pair symbol (e.g. BTC/USDT) and a direction keyword (LONG/BUY/…).
+    """
+    if not text:
+        return False
+    return bool(
+        _HEURISTIC_SYMBOL_PATTERN.search(text)
+        and _HEURISTIC_DIRECTION_PATTERN.search(text)
+    )
+
+
+def detect_message_type(text: str) -> str | None:
+    """Detect message type.
+
+    1. Explicit bracket header (`[SIGNAL]` / `📡 SIGNAL` / …) wins.
+    2. Fallback: if the body contains a crypto pair + direction keyword,
+       treat as "signal" (covers free-form Telegram-group pastes).
+    """
+    bracket = _detect_bracket_header(text)
+    if bracket is not None:
+        return bracket
+    if _looks_like_crypto_signal(text):
+        return "signal"
     return None
 
 
@@ -349,6 +421,179 @@ def _enum_or_default(enum_cls: type, value: str, default: object = None) -> obje
     return default
 
 
+def _extract_heuristic_signal(text: str) -> dict[str, object] | None:
+    """Extract signal fields from free-form text (no explicit header).
+
+    Handles common Telegram-group formats:
+    - "🟢 #BTC/USDT LONG/BUY" with "Entry Zone: 70565 – 70590", "🎯 …"
+    - "Long/Buy #ENJ/USDT" with "Entry Point - 7570", "Targets: X - Y - Z"
+    - "#SOL/USDT Long/BUY - 84.20" with "Targets : X", "Stop Loss : Y"
+    """
+    sym_match = _HEURISTIC_SYMBOL_PATTERN.search(text)
+    if sym_match is None:
+        return None
+
+    base = sym_match.group(1).upper()
+    quote = sym_match.group(2).upper()
+    internal_symbol = f"{base}{quote}"
+    display_symbol = f"{base}/{quote}"
+
+    # Direction: prefer the token on the same line as the symbol.
+    direction_str: str | None = None
+    side_str: str | None = None
+    symbol_line: str | None = None
+    for line in text.splitlines():
+        if _HEURISTIC_SYMBOL_PATTERN.search(line):
+            symbol_line = line
+            dmatch = _HEURISTIC_DIRECTION_PATTERN.search(line)
+            if dmatch:
+                token = dmatch.group(1).upper().replace(" ", "")
+                if "LONG" in token or "BUY" in token:
+                    direction_str, side_str = "long", "buy"
+                else:
+                    direction_str, side_str = "short", "sell"
+            break
+    if direction_str is None:
+        dmatch = _HEURISTIC_DIRECTION_PATTERN.search(text)
+        if dmatch is None:
+            return None
+        token = dmatch.group(1).upper().replace(" ", "")
+        if "LONG" in token or "BUY" in token:
+            direction_str, side_str = "long", "buy"
+        else:
+            direction_str, side_str = "short", "sell"
+
+    # Entry — range ("Entry Zone: 70565 – 70590") or single price.
+    entry_type_str = "market"
+    entry_value: float | None = None
+    entry_min: float | None = None
+    entry_max: float | None = None
+
+    range_match = re.search(
+        rf"entry[\s_]*(?:zone|range)?\s*[:\-]\s*({_HEURISTIC_NUM})\s*[–\-]\s*({_HEURISTIC_NUM})",
+        text,
+        re.IGNORECASE,
+    )
+    if range_match:
+        lo = _parse_float(range_match.group(1))
+        hi = _parse_float(range_match.group(2))
+        if lo is not None and hi is not None:
+            if lo > hi:
+                lo, hi = hi, lo
+            entry_min, entry_max = lo, hi
+            entry_type_str = "range"
+
+    if entry_type_str == "market":
+        point_match = re.search(
+            rf"entry(?:\s*point|\s*price)?\s*[:\-]\s*({_HEURISTIC_NUM})",
+            text,
+            re.IGNORECASE,
+        )
+        if point_match:
+            val = _parse_float(point_match.group(1))
+            if val is not None:
+                entry_value = val
+                entry_type_str = "at"
+
+    # Inline direction + price on symbol line, e.g. "#SOL/USDT Long/BUY - 84.20".
+    if entry_type_str == "market" and symbol_line:
+        dmatch = _HEURISTIC_DIRECTION_PATTERN.search(symbol_line)
+        if dmatch:
+            tail = symbol_line[dmatch.end():]
+            tail_match = re.search(rf"[-–:]\s*({_HEURISTIC_NUM})", tail)
+            if tail_match:
+                val = _parse_float(tail_match.group(1))
+                if val is not None:
+                    entry_value = val
+                    entry_type_str = "at"
+
+    # Targets: emoji bullets first, then labelled line ("Targets: X - Y - Z").
+    targets: list[float] = []
+    for line in text.splitlines():
+        tmatch = re.search(rf"🎯\s*({_HEURISTIC_NUM})", line)
+        if tmatch:
+            val = _parse_float(tmatch.group(1))
+            if val is not None:
+                targets.append(val)
+
+    if not targets:
+        label_match = re.search(
+            r"targets?\s*[:\-]\s*([^\n]+)",
+            text,
+            re.IGNORECASE,
+        )
+        if label_match:
+            chunk = label_match.group(1)
+            for token in re.findall(_HEURISTIC_NUM, chunk):
+                val = _parse_float(token)
+                if val is not None:
+                    targets.append(val)
+
+    # Stop loss.
+    stop_loss: float | None = None
+    sl_match = re.search(
+        rf"(?:stop\s*loss|stoploss|\bsl\b|\bstop\b)\s*[:\-]\s*({_HEURISTIC_NUM})",
+        text,
+        re.IGNORECASE,
+    )
+    if sl_match:
+        stop_loss = _parse_float(sl_match.group(1))
+
+    # Leverage — first integer after "Leverage", ignores trailing noise
+    # like "10x (Recommended)15".
+    leverage = 1
+    lev_match = re.search(
+        r"leverage\s*[:\-]?\s*(\d{1,3})",
+        text,
+        re.IGNORECASE,
+    )
+    if lev_match:
+        try:
+            parsed_lev = int(lev_match.group(1))
+            if 1 <= parsed_lev <= 125:
+                leverage = parsed_lev
+        except ValueError:
+            pass
+
+    # Exchange scope — scan for known venue names (first 5 lines typical).
+    # Match "binance futures" → binance_futures before plain "binance".
+    exchange_scope: list[str] = []
+    seen: set[str] = set()
+    joined = " ".join(text.splitlines()[:5]).lower()
+    for venue in _HEURISTIC_EXCHANGES:
+        token = venue.replace("_", " ")  # "binance_futures" → "binance futures"
+        if token in joined and venue not in seen:
+            exchange_scope.append(venue)
+            seen.add(venue)
+    # If specific "X_futures" already captured, drop the plain "X" duplicate.
+    for venue in list(exchange_scope):
+        if venue.endswith("_futures"):
+            plain = venue[: -len("_futures")]
+            if plain in seen:
+                exchange_scope.remove(plain)
+                seen.discard(plain)
+
+    # Kein stiller Exchange-Default: wenn kein Venue im Text erkannt wurde,
+    # bleibt exchange_scope leer. Der API-/Telegram-Handler muss beim
+    # Operator explizit nachfragen, bevor das Signal akzeptiert/übertragen
+    # wird. Silent defaults für ausführungsrelevante Felder sind verboten.
+
+    return {
+        "internal_symbol": internal_symbol,
+        "display_symbol": display_symbol,
+        "side": side_str,
+        "direction": direction_str,
+        "entry_type": entry_type_str,
+        "entry_value": entry_value,
+        "entry_min": entry_min,
+        "entry_max": entry_max,
+        "targets": targets,
+        "stop_loss": stop_loss,
+        "leverage": leverage,
+        "exchange_scope": exchange_scope,
+    }
+
+
 def parse_structured_message(
     text: str,
 ) -> NewsMessage | TradingSignal | ExchangeResponse:
@@ -373,7 +618,43 @@ def parse_structured_message(
     msg_type = detect_message_type(text)
     if msg_type is None:
         raise SignalParseError(
-            "No message type header found. Expected [NEWS], [SIGNAL], or [EXCHANGE_RESPONSE]."
+            "Kein Signal erkannt. Erwartet: Header [NEWS] / [SIGNAL] / "
+            "[EXCHANGE_RESPONSE] ODER freier Text mit Paar (z. B. BTC/USDT) "
+            "und Richtung (LONG/SHORT/BUY/SELL)."
+        )
+
+    # Free-form signal without bracket header → heuristic path.
+    if msg_type == "signal" and _detect_bracket_header(text) is None:
+        heur = _extract_heuristic_signal(text)
+        if heur is None:
+            raise SignalParseError(
+                "Signal-Heuristik konnte Paar/Richtung nicht extrahieren."
+            )
+        signal_id = _generate_signal_id(str(heur["internal_symbol"]) or "UNKNOWN")
+        return TradingSignal(
+            signal_id=signal_id,
+            source="external_paste",
+            exchange_scope=list(heur["exchange_scope"]),  # type: ignore[arg-type]
+            market_type=MarketType.FUTURES,
+            symbol=str(heur["internal_symbol"]),
+            display_symbol=str(heur["display_symbol"]),
+            side=_enum_or_default(Side, str(heur["side"] or "buy"), Side.BUY),
+            direction=_enum_or_default(
+                Direction, str(heur["direction"] or "long"), Direction.LONG
+            ),
+            entry_type=_enum_or_default(
+                EntryType, str(heur["entry_type"]), EntryType.MARKET
+            ),
+            entry_value=heur["entry_value"],  # type: ignore[arg-type]
+            entry_min=heur["entry_min"],  # type: ignore[arg-type]
+            entry_max=heur["entry_max"],  # type: ignore[arg-type]
+            targets=list(heur["targets"]),  # type: ignore[arg-type]
+            stop_loss=heur["stop_loss"],  # type: ignore[arg-type]
+            leverage=int(heur["leverage"]) if heur["leverage"] else 1,
+            risk_mode=RiskMode.ISOLATED,
+            status=SignalStatus.NEW,
+            timestamp_utc=datetime.now(UTC).isoformat(),
+            notes="heuristic_parse",
         )
 
     fields = _parse_fields(text)

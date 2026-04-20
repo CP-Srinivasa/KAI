@@ -29,6 +29,8 @@ from app.messaging.context_builder import make_context_provider
 from app.messaging.telegram_bot import TelegramOperatorBot, TelegramPoller
 from app.messaging.text_intent import TextIntentProcessor
 from app.messaging.voice_transcriber import VoiceTranscriber
+from app.orchestrator.position_monitor_scheduler import PositionMonitorScheduler
+from app.orchestrator.tv_bridge_scheduler import TVBridgeScheduler
 from app.security.auth import setup_auth
 from app.security.secrets import validate_secrets
 from app.storage.db.session import build_session_factory
@@ -68,6 +70,22 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         provider=provider,
     )
     app.state.rss_scheduler.start()
+
+    app.state.position_monitor_scheduler = None
+    if settings.execution.position_monitor_enabled:
+        app.state.position_monitor_scheduler = PositionMonitorScheduler(
+            interval_seconds=settings.execution.position_monitor_interval_seconds,
+            provider=settings.market_data_provider,
+        )
+        app.state.position_monitor_scheduler.start()
+
+    app.state.tv_bridge_scheduler = None
+    if settings.tradingview.bridge_scheduler_enabled:
+        app.state.tv_bridge_scheduler = TVBridgeScheduler(
+            interval_seconds=settings.tradingview.bridge_scheduler_interval_seconds,
+            include_smoke=settings.tradingview.bridge_scheduler_include_smoke,
+        )
+        app.state.tv_bridge_scheduler.start()
 
     # Telegram operator bot — receives commands and free text via long-polling
     op = settings.operator
@@ -135,8 +153,21 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     try:
         yield
     finally:
-        poller.stop()
-        app.state.rss_scheduler.stop()
+        # NEO-F-001: getattr-based teardown so a start()-exception earlier in
+        # lifespan (before a later attribute is ever assigned) does not mask
+        # the original error with a misleading AttributeError in finally.
+        _poller = getattr(app.state, "telegram_poller", None)
+        if _poller is not None:
+            _poller.stop()
+        _rss = getattr(app.state, "rss_scheduler", None)
+        if _rss is not None:
+            _rss.stop()
+        _pm = getattr(app.state, "position_monitor_scheduler", None)
+        if _pm is not None:
+            _pm.stop()
+        _tvb = getattr(app.state, "tv_bridge_scheduler", None)
+        if _tvb is not None:
+            _tvb.stop()
 
 
 def create_app() -> FastAPI:
@@ -174,7 +205,15 @@ def create_app() -> FastAPI:
         RequestGovernanceMiddleware,
         max_body_bytes=settings.max_request_body_bytes,
     )
-    setup_auth(app, settings.api_key, settings.env)  # attach bearer-token middleware before startup
+    setup_auth(
+        app,
+        settings.api_key,
+        settings.env,
+        cf_allowed_emails=[
+            e.strip() for e in settings.cf_access_allowed_emails.split(",") if e.strip()
+        ],
+        tv_webhook_enabled=settings.tradingview.webhook_enabled,
+    )  # attach auth middleware (CF-Access + Bearer) before startup
 
     @app.get("/", include_in_schema=False)
     async def _root_redirect() -> RedirectResponse:

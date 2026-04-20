@@ -119,6 +119,78 @@ def test_briefing_to_text(tmp_path: Path) -> None:
     assert "Dispatched:" in text
 
 
+# ── D-150: P10 high-conviction tier metrics ─────────────────────────
+
+
+def test_briefing_counts_p10_dispatched_24h(tmp_path: Path) -> None:
+    """24h window counts P10 dispatches separately from standard tier."""
+    _write_audit(tmp_path, document_id="p10a", priority=10)
+    _write_audit(tmp_path, document_id="p10b", priority=10)
+    _write_audit(tmp_path, document_id="p7", priority=7)
+    _write_audit(tmp_path, document_id="p9", priority=9)
+
+    data = build_daily_briefing(tmp_path, lookback_hours=24)
+    assert data.alerts_dispatched == 4
+    assert data.p10_dispatched == 2
+
+
+def test_briefing_p10_7d_precision(tmp_path: Path) -> None:
+    """P10 7d precision joins dispatched-P10 docs with outcomes."""
+    # 3 P10 dispatches in last 7 days
+    _write_audit(tmp_path, document_id="p10-hit1", priority=10)
+    _write_audit(tmp_path, document_id="p10-hit2", priority=10)
+    _write_audit(tmp_path, document_id="p10-miss", priority=10)
+    # 1 P8 dispatch — must not affect P10 tier
+    _write_audit(tmp_path, document_id="p8-hit", priority=8)
+
+    _write_outcome(tmp_path, "p10-hit1", "hit")
+    _write_outcome(tmp_path, "p10-hit2", "hit")
+    _write_outcome(tmp_path, "p10-miss", "miss")
+    _write_outcome(tmp_path, "p8-hit", "hit")
+
+    data = build_daily_briefing(tmp_path)
+    assert data.p10_resolved_7d == 3
+    assert data.p10_hits_7d == 2
+    assert data.p10_precision_pct_7d is not None
+    assert abs(data.p10_precision_pct_7d - 66.67) < 0.1
+
+
+def test_briefing_p10_excludes_old_dispatches(tmp_path: Path) -> None:
+    """Dispatches >7d old are excluded from P10 7d window."""
+    old_ts = (datetime.now(UTC) - timedelta(days=10)).isoformat()
+    _write_audit(
+        tmp_path, document_id="p10-old", priority=10, dispatched_at=old_ts,
+    )
+    _write_outcome(tmp_path, "p10-old", "hit")
+
+    data = build_daily_briefing(tmp_path)
+    assert data.p10_resolved_7d == 0
+    assert data.p10_hits_7d == 0
+    assert data.p10_precision_pct_7d is None
+
+
+def test_briefing_p10_inconclusive_not_in_denominator(tmp_path: Path) -> None:
+    """Inconclusive outcomes don't count in P10 precision denominator."""
+    _write_audit(tmp_path, document_id="p10-inc", priority=10)
+    _write_audit(tmp_path, document_id="p10-hit", priority=10)
+    _write_outcome(tmp_path, "p10-inc", "inconclusive")
+    _write_outcome(tmp_path, "p10-hit", "hit")
+
+    data = build_daily_briefing(tmp_path)
+    assert data.p10_resolved_7d == 1
+    assert data.p10_hits_7d == 1
+    assert data.p10_precision_pct_7d == 100.0
+
+
+def test_briefing_to_text_includes_p10_section(tmp_path: Path) -> None:
+    _write_audit(tmp_path, document_id="p10-a", priority=10)
+    _write_outcome(tmp_path, "p10-a", "hit")
+    data = build_daily_briefing(tmp_path)
+    text = data.to_text()
+    assert "P10 tier" in text
+    assert "P10 7d" in text
+
+
 # ── Health Check ────────────────────────────────────────────────────
 
 

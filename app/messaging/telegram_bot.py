@@ -629,6 +629,7 @@ class TelegramOperatorBot:
             SignalParseError,
             detect_message_type,
             parse_structured_message,
+            split_validation_errors,
         )
 
         self._audit(chat_id, "_structured_input", args=text[:500])
@@ -699,6 +700,35 @@ class TelegramOperatorBot:
             formatted = format_signal_telegram(parsed)
             validation_errors = parsed.validation_errors
             if validation_errors:
+                completable, blocking = split_validation_errors(validation_errors)
+                # Soft path: operator can fix by re-pasting with the missing
+                # fields added. Don't record as "blocked" — record as
+                # completion_gate so audit stays honest.
+                if completable and not blocking:
+                    self._audit_message_envelope(
+                        chat_id=chat_id,
+                        message_type="signal",
+                        stage="completion_gate",
+                        status="needs_completion",
+                        source=source,
+                        payload=schema_payload,
+                        errors=validation_errors,
+                        metadata={"missing_fields": completable},
+                    )
+                    ask_lines = "\n".join(f"- `{f}`" for f in completable)
+                    await self._send(
+                        chat_id,
+                        f"{formatted}\n\n"
+                        "*Ergänzung nötig — bitte nachreichen*\n"
+                        "Folgende Felder fehlen noch, damit ich dieses "
+                        "Signal sauber weiterreichen kann:\n"
+                        f"{ask_lines}\n\n"
+                        "Bitte poste das Signal erneut mit den Angaben "
+                        "(z. B. `Exchange: binance_futures`, "
+                        "`Stop Loss: 4160`). Keine stillen Defaults.",
+                    )
+                    return
+                # Hard block: structural problem that re-paste must fix.
                 self._audit_message_envelope(
                     chat_id=chat_id,
                     message_type="signal",

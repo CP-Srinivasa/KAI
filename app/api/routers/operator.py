@@ -393,9 +393,17 @@ def _reset_operator_guard_state_for_tests() -> None:
 def require_operator_api_token(
     request: Request,
     authorization: Annotated[str | None, Header(alias="Authorization")] = None,
+    cf_access_email: Annotated[
+        str | None, Header(alias="Cf-Access-Authenticated-User-Email")
+    ] = None,
     settings: AppSettings = Depends(get_settings),  # noqa: B008
 ) -> None:
-    """Require a configured APP_API_KEY and a matching Bearer token."""
+    """Require either a CF-Access identity (allowlisted email) or a Bearer APP_API_KEY.
+
+    See ``app.security.auth`` for the global middleware that applies the same
+    two-mechanism check. Per-route enforcement here mirrors it so operator
+    endpoints stay independently fail-closed.
+    """
     api_key = (settings.api_key or "").strip()
     if not api_key:
         raise _operator_http_error(
@@ -405,6 +413,19 @@ def require_operator_api_token(
             message="Operator API is disabled until APP_API_KEY is configured (fail-closed)",
         )
 
+    # (1) Cloudflare Access — trusted email forwarded by the tunnel.
+    cf_allowed = {
+        e.strip().lower()
+        for e in (settings.cf_access_allowed_emails or "").split(",")
+        if e.strip()
+    }
+    if cf_allowed and cf_access_email:
+        email = cf_access_email.strip().lower()
+        if email in cf_allowed:
+            request.state.operator_subject = f"cf_{email}"
+            return
+
+    # (2) Bearer token — local scripts / cron / freshness probe.
     if not authorization:
         raise _operator_http_error(
             request,

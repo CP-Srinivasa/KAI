@@ -9,20 +9,48 @@ JSON-Daten.
 from __future__ import annotations
 
 import json
+import logging
+import time
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+import httpx
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
+
+from app.alerts.hold_metrics import build_hold_metrics_report
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["dashboard"])
 
 _ARTIFACTS = Path("artifacts")
-_HOLD_REPORT = _ARTIFACTS / "ph5_hold" / "ph5_hold_metrics_report.json"
 _ALERT_AUDIT = _ARTIFACTS / "alert_audit.jsonl"
 _ALERT_OUTCOMES = _ARTIFACTS / "alert_outcomes.jsonl"
 _TRADING_LOOP_AUDIT = _ARTIFACTS / "trading_loop_audit.jsonl"
 _PAPER_EXECUTION_AUDIT = _ARTIFACTS / "paper_execution_audit.jsonl"
+
+# Frankfurter: ECB reference rates, no API key, daily refresh (~16:00 CET).
+# 1-hour TTL is generous — the underlying rate updates once per business day.
+# .app domain redirects to .dev/v1 since the 2026 migration; we hit /v1 directly.
+_FX_URL = "https://api.frankfurter.dev/v1/latest"
+_FX_CACHE_TTL_S = 3600.0
+_FX_FALLBACK_EUR_PER_USD = 0.921  # mirrors web/src/state/CurrencyProvider.tsx
+_fx_cache: dict[str, Any] = {"at": 0.0, "payload": None}
+
+# In-process TTL cache for the hold report. build_hold_metrics_report touches
+# four jsonl files (~2 MB total) and runs in ~400 ms. With the dashboard
+# polling every 60 s and other consumers (telegram, agent_worker) reading the
+# same data, a 30 s cache absorbs bursts without hiding fresh ticks.
+_HOLD_CACHE_TTL_S = 30.0
+_hold_cache: dict[str, Any] = {"at": 0.0, "report": None}
+
+# Source-by-doc map (for the active-precision legacy split). Loading it means
+# one DB query over directional doc-ids — not hot-path safe without a cache.
+# 5 min TTL: docs are rarely re-classified, and the map is additive.
+_SOURCE_MAP_TTL_S = 300.0
+_source_map_cache: dict[str, Any] = {"at": 0.0, "map": None}
 
 
 def _load_jsonl(path: Path, tail: int = 0) -> list[dict[str, Any]]:
@@ -42,21 +70,145 @@ def _load_jsonl(path: Path, tail: int = 0) -> list[dict[str, Any]]:
     return rows[-tail:] if tail else rows
 
 
-def _load_hold_report() -> dict[str, Any] | None:
-    if not _HOLD_REPORT.exists():
-        return None
+async def _load_source_by_doc() -> dict[str, str]:
+    """Resolve directional doc-ids → source_name from the DB.
+
+    Used so the hold-report's active-precision metric can filter the
+    legacy-unknown bucket (docs that have no CanonicalDocument row, a
+    pre-D-139 artefact). On any failure returns an empty map — hold_metrics
+    falls back to its date-based cutoff.
+    """
+    now = time.monotonic()
+    cached = _source_map_cache.get("map")
+    if cached is not None and (now - _source_map_cache["at"]) < _SOURCE_MAP_TTL_S:
+        return cached
+
     try:
-        return json.loads(_HOLD_REPORT.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
+        from sqlalchemy import select
+
+        from app.alerts.audit import load_alert_audits
+        from app.core.settings import get_settings
+        from app.storage.db.session import build_session_factory
+        from app.storage.models.document import CanonicalDocumentModel
+
+        audits = load_alert_audits(_ALERT_AUDIT)
+        doc_ids: set[str] = set()
+        for rec in audits:
+            sentiment = (rec.sentiment_label or "").lower()
+            if rec.is_digest or sentiment not in {"bullish", "bearish"}:
+                continue
+            doc_ids.add(rec.document_id)
+        if not doc_ids:
+            _source_map_cache["map"] = {}
+            _source_map_cache["at"] = now
+            return {}
+
+        session_factory = build_session_factory(get_settings().db)
+        async with session_factory.begin() as session:
+            stmt = select(
+                CanonicalDocumentModel.id,
+                CanonicalDocumentModel.source_name,
+                CanonicalDocumentModel.provider,
+            ).where(CanonicalDocumentModel.id.in_(doc_ids))
+            rows = (await session.execute(stmt)).all()
+        source_map = {
+            str(row[0]): ((row[1] or row[2] or "unknown").strip().lower())
+            for row in rows
+        }
+        # doc_ids present in audits but absent from DB → legacy-unknown
+        for doc_id in doc_ids:
+            source_map.setdefault(doc_id, "unknown")
+        _source_map_cache["map"] = source_map
+        _source_map_cache["at"] = now
+        return source_map
+    except Exception as exc:
+        logger.warning("source_map_load_failed: %s", exc)
+        return cached or {}
+
+
+async def _live_hold_report() -> dict[str, Any]:
+    """Build the hold-metrics report on demand from the live audit files.
+
+    Replaces the previous behaviour of reading a pre-computed snapshot file
+    that was only refreshed by an out-of-band script run — that snapshot was
+    sometimes 24 h+ stale, making the dashboard quality-bar feel frozen.
+    """
+    now = time.monotonic()
+    if _hold_cache["report"] is not None and (now - _hold_cache["at"]) < _HOLD_CACHE_TTL_S:
+        return _hold_cache["report"]
+    source_map = await _load_source_by_doc()
+    report = build_hold_metrics_report(
+        alert_audit_path=_ALERT_AUDIT,
+        alert_outcomes_path=_ALERT_OUTCOMES,
+        trading_loop_audit_path=_TRADING_LOOP_AUDIT,
+        paper_execution_audit_path=_PAPER_EXECUTION_AUDIT,
+        source_by_doc=source_map or None,
+    )
+    _hold_cache["report"] = report
+    _hold_cache["at"] = now
+    return report
+
+
+async def _fetch_fx_live() -> dict[str, Any] | None:
+    """Fetch USD->EUR from Frankfurter (ECB ref). Returns None on any failure."""
+    try:
+        async with httpx.AsyncClient(timeout=5.0, follow_redirects=True) as client:
+            r = await client.get(_FX_URL, params={"base": "USD", "symbols": "EUR"})
+            r.raise_for_status()
+            data = r.json()
+            eur = float(data["rates"]["EUR"])
+            return {
+                "base": "USD",
+                "rates": {"USD": 1.0, "EUR": eur},
+                "source": "frankfurter.app (ECB ref)",
+                "as_of": data.get("date", ""),
+                "fetched_at": datetime.now(UTC).isoformat(),
+                "live": True,
+            }
+    except Exception as exc:
+        logger.warning("fx_fetch_failed: %s", exc)
         return None
+
+
+@router.get("/dashboard/api/fx", tags=["dashboard"])
+async def dashboard_fx_api() -> JSONResponse:
+    """USD-base FX rates for dashboard display formatting.
+
+    Live-source: Frankfurter.app (ECB reference rates, daily). Cached 1 h.
+    On any failure (network, parse, schema) returns the static fallback rate
+    so the UI never breaks — flagged with ``live=false`` so the client can
+    show a hint if desired.
+    """
+    now = time.monotonic()
+    if _fx_cache["payload"] is not None and (now - _fx_cache["at"]) < _FX_CACHE_TTL_S:
+        return JSONResponse(
+            content=_fx_cache["payload"],
+            headers={"Cache-Control": "public, max-age=1800"},
+        )
+
+    payload = await _fetch_fx_live()
+    if payload is None:
+        payload = {
+            "base": "USD",
+            "rates": {"USD": 1.0, "EUR": _FX_FALLBACK_EUR_PER_USD},
+            "source": "fallback (static)",
+            "as_of": "",
+            "fetched_at": datetime.now(UTC).isoformat(),
+            "live": False,
+        }
+
+    _fx_cache["payload"] = payload
+    _fx_cache["at"] = now
+    return JSONResponse(
+        content=payload,
+        headers={"Cache-Control": "public, max-age=1800"},
+    )
 
 
 @router.get("/dashboard/api/quality", tags=["dashboard"])
 async def dashboard_quality_api() -> JSONResponse:
     """Return quality-bar metrics as JSON for the dashboard SPA."""
-    report = _load_hold_report()
-    if report is None:
-        return JSONResponse({"error": "hold_report_not_found"}, status_code=404)
+    report = await _live_hold_report()
 
     quality = report.get("signal_quality_validation", {})
     hit_rate = report.get("alert_hit_rate_evidence", {})
@@ -83,13 +235,21 @@ async def dashboard_quality_api() -> JSONResponse:
 
     fwd = report.get("forward_simulation", {})
 
-    return JSONResponse({
+    return JSONResponse(content={
         "precision_pct": quality.get("resolved_precision_pct"),
         "false_positive_pct": quality.get("resolved_false_positive_rate_pct"),
         "resolved_count": hit_rate.get("resolved_directional_documents", 0),
         "directional_count": hit_rate.get("directional_alert_documents", 0),
         "hits": hit_rate.get("alert_hits", 0),
         "misses": hit_rate.get("alert_misses", 0),
+        "active_precision_pct": quality.get("active_precision_pct"),
+        "active_resolved_count": hit_rate.get(
+            "active_resolved_directional_documents", 0
+        ),
+        "active_hits": hit_rate.get("active_alert_hits", 0),
+        "active_misses": hit_rate.get("active_alert_misses", 0),
+        "legacy_resolved_count": hit_rate.get("legacy_resolved_documents", 0),
+        "legacy_unknown_cutoff": hit_rate.get("legacy_unknown_cutoff"),
         "priority_corr": quality.get("priority_hit_correlation"),
         "forward_precision_pct": fwd.get("precision_pct"),
         "forward_resolved": fwd.get("resolved", 0),
@@ -116,4 +276,4 @@ async def dashboard_quality_api() -> JSONResponse:
             for r in reversed(recent_alerts)
         ],
         "generated_at": report.get("generated_at", ""),
-    })
+    }, headers={"Cache-Control": "no-store, max-age=0"})

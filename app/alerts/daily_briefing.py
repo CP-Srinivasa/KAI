@@ -34,6 +34,9 @@ class BriefingData:
     alerts_blocked: int = 0
     block_reasons: dict[str, int] = field(default_factory=dict)
     top_assets: list[str] = field(default_factory=list)
+    # D-150: P10 high-conviction tier — surfaced separately based on D-149
+    # evidence (P10 precision 69.57% vs P7-P9 27.87%).
+    p10_dispatched: int = 0
 
     # Outcome annotation stats (all time)
     total_annotations: int = 0
@@ -41,6 +44,10 @@ class BriefingData:
     misses: int = 0
     inconclusive: int = 0
     precision_pct: float | None = None
+    # D-150: P10-tier precision over a 7-day window.
+    p10_resolved_7d: int = 0
+    p10_hits_7d: int = 0
+    p10_precision_pct_7d: float | None = None
 
     # Trading loop stats (24h window)
     cycles_total: int = 0
@@ -86,6 +93,7 @@ class BriefingData:
                 lines.append(f"    {reason}: {count}")
         if self.top_assets:
             lines.append(f"  Top assets:   {', '.join(self.top_assets[:5])}")
+        lines.append(f"  🔥 P10 tier:  {self.p10_dispatched}")
 
         # Precision
         lines.append("")
@@ -96,6 +104,13 @@ class BriefingData:
         lines.append(f"  Inconclusive: {self.inconclusive}")
         if self.precision_pct is not None:
             lines.append(f"  Precision:    {self.precision_pct:.1f}%")
+        if self.p10_resolved_7d > 0:
+            p10_pct = self.p10_precision_pct_7d
+            pct_str = f"{p10_pct:.1f}%" if p10_pct is not None else "n/a"
+            lines.append(
+                f"  🔥 P10 7d:    {self.p10_hits_7d}/{self.p10_resolved_7d} "
+                f"({pct_str})"
+            )
 
         # Trading loop
         lines.append("")
@@ -161,6 +176,9 @@ def build_daily_briefing(
         audits = []
 
     asset_counter: dict[str, int] = {}
+    # D-150: track P10 dispatched-docs (24h) + 7d precision window.
+    cutoff_p10_7d = now - timedelta(days=7)
+    p10_docs_7d: set[str] = set()
     for rec in audits:
         try:
             ts = datetime.fromisoformat(
@@ -168,10 +186,15 @@ def build_daily_briefing(
             )
         except (ValueError, AttributeError):
             continue
+        # P10 7d window — widen scope before the lookback filter.
+        if ts >= cutoff_p10_7d and rec.priority is not None and rec.priority >= 10:
+            p10_docs_7d.add(rec.document_id)
         if ts < cutoff:
             continue
 
         data.alerts_dispatched += 1
+        if rec.priority is not None and rec.priority >= 10:
+            data.p10_dispatched += 1
         if rec.directional_eligible is True:
             data.alerts_directional += 1
         if rec.directional_eligible is False:
@@ -202,6 +225,24 @@ def build_daily_briefing(
     resolved = data.hits + data.misses
     if resolved > 0:
         data.precision_pct = data.hits / resolved * 100
+
+    # D-150: P10-tier 7d precision — restrict to dispatched-P10 docs from
+    # the last 7 days and join with outcomes.  Inconclusive excluded from
+    # precision denominator (consistent with all-time definition).
+    p10_hits_7d = 0
+    p10_misses_7d = 0
+    for ann in annotations:
+        if ann.document_id not in p10_docs_7d:
+            continue
+        if ann.outcome == "hit":
+            p10_hits_7d += 1
+        elif ann.outcome == "miss":
+            p10_misses_7d += 1
+    p10_resolved_7d = p10_hits_7d + p10_misses_7d
+    data.p10_hits_7d = p10_hits_7d
+    data.p10_resolved_7d = p10_resolved_7d
+    if p10_resolved_7d > 0:
+        data.p10_precision_pct_7d = p10_hits_7d / p10_resolved_7d * 100
 
     # ── Trading loop cycles ──────────────────────────────────────────
     try:

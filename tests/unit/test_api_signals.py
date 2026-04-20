@@ -137,7 +137,9 @@ def test_second_identical_signal_is_flagged_duplicate(client: TestClient) -> Non
     assert sum(1 for r in rows if r["stage"] == "idempotency_gate") == 1
 
 
-def test_missing_required_signal_fields_blocked_at_execution_gate(client: TestClient) -> None:
+def test_missing_required_signal_fields_goes_to_completion_gate(client: TestClient) -> None:
+    # Only completable fields missing (exchange_scope, stop_loss, leverage)
+    # → status should be needs_completion, NOT rejected.
     incomplete = (
         "[SIGNAL]\n"
         "Source: Dashboard\n"
@@ -149,10 +151,61 @@ def test_missing_required_signal_fields_blocked_at_execution_gate(client: TestCl
     resp = client.post("/signals/paste", json={"text": incomplete}, headers=_hdr())
     assert resp.status_code == 200
     body = resp.json()
-    assert body["status"] == "rejected"
-    # Either execution_gate (missing stop_loss/exchange_scope) or schema_validation
-    assert body["stage"] in {"execution_gate", "schema_validation"}
-    assert body["errors"]
+    assert body["status"] == "needs_completion"
+    assert body["stage"] == "completion_gate"
+    assert body["envelope_id"] is None  # no envelope yet — operator must complete
+    assert "exchange_scope" in body["missing_fields"]
+    assert "stop_loss" in body["missing_fields"]
+    assert body["parsed_preview"]["symbol"] in {"BTC/USDT", "BTCUSDT"}
+
+
+def test_freeform_signal_without_exchange_asks_for_completion(client: TestClient) -> None:
+    # Free-form Telegram-group paste, no exchange named.
+    text = (
+        "Long/Buy #USELESS/USDT\n"
+        "Entry Point - 4340\n"
+        "Targets: 4360 - 4385 - 4405 - 4425\n"
+        "Leverage - 10x\n"
+        "Stop Loss - 4160\n"
+    )
+    resp = client.post("/signals/paste", json={"text": text}, headers=_hdr())
+    body = resp.json()
+    assert body["status"] == "needs_completion"
+    assert body["stage"] == "completion_gate"
+    assert body["missing_fields"] == ["exchange_scope"]
+    preview = body["parsed_preview"]
+    assert preview["symbol"] == "USELESS/USDT"
+    assert preview["stop_loss"] == 4160
+    assert preview["leverage"] == 10
+    assert preview["targets"] == [4360, 4385, 4405, 4425]
+    assert preview["exchange_scope"] == []
+
+
+def test_freeform_signal_with_completion_fields_accepted(client: TestClient) -> None:
+    # Same paste — this time the operator supplies the exchange.
+    text = (
+        "Long/Buy #USELESS/USDT\n"
+        "Entry Point - 4340\n"
+        "Targets: 4360 - 4385 - 4405 - 4425\n"
+        "Leverage - 10x\n"
+        "Stop Loss - 4160\n"
+    )
+    resp = client.post(
+        "/signals/paste",
+        json={
+            "text": text,
+            "completion_fields": {"exchange_scope": ["Binance Futures"]},
+        },
+        headers=_hdr(),
+    )
+    body = resp.json()
+    assert body["status"] == "accepted"
+    assert body["stage"] == "accepted"
+    assert body["message_type"] == "signal"
+    assert body["envelope_id"].startswith("ENV-")
+    rows = _audit_rows(client)
+    payload = rows[-1]["payload"]
+    assert payload["exchange_scope"] == ["binance_futures"]
 
 
 def test_requires_bearer_token(client: TestClient) -> None:
