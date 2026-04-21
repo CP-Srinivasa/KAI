@@ -1,4 +1,5 @@
-import { Card, CardHeader, Badge } from "@/components/ui/Primitives";
+import { memo, useMemo } from "react";
+import { Card, CardHeader, Badge, ProgressBar } from "@/components/ui/Primitives";
 import { cn } from "@/lib/utils";
 import type { DashboardProvenance, ProvenanceMetrics } from "@/lib/api";
 
@@ -36,11 +37,16 @@ function verdictText(v: string): string {
   return map[v] ?? v;
 }
 
-export function ActivePrecisionCard({
+function ActivePrecisionCardImpl({
   data,
 }: {
   data: DashboardProvenance | null;
 }) {
+  const sourcesByResolvedDesc = useMemo(
+    () => (data ? [...data.by_source].sort((a, b) => b.resolved - a.resolved) : []),
+    [data],
+  );
+
   if (!data) {
     return (
       <Card padded>
@@ -51,10 +57,6 @@ export function ActivePrecisionCard({
       </Card>
     );
   }
-
-  const sourcesByResolvedDesc = [...data.by_source].sort(
-    (a, b) => b.resolved - a.resolved,
-  );
 
   const tvPipe = data.tradingview_pipeline;
 
@@ -97,10 +99,18 @@ export function ActivePrecisionCard({
         )}
         {sourcesByResolvedDesc.map((m) => {
           const hasValue = m.hit_rate_pct != null;
-          const pct = hasValue ? Math.min(100, m.hit_rate_pct!) : 0;
           const green = hasValue && m.sample_sufficient && m.hit_rate_pct! >= 60;
           const orange =
             hasValue && m.sample_sufficient && m.hit_rate_pct! >= 40 && !green;
+          // Per-Source-Thresholds sind domänenspezifisch (60 = Re-Entry-Gate,
+          // 40 = Unterschwelle) — deswegen explizite tone statt auto-map.
+          const sourceTone: "pos" | "warn" | "neg" | "muted" = !m.sample_sufficient
+            ? "muted"
+            : green
+              ? "pos"
+              : orange
+                ? "warn"
+                : "neg";
           return (
             <div key={m.source}>
               <div className="flex items-baseline justify-between gap-3 text-xs">
@@ -129,21 +139,15 @@ export function ActivePrecisionCard({
                   </span>
                 </div>
               </div>
-              <div className="mt-1 h-1 rounded-full bg-bg-3 overflow-hidden">
-                <div
-                  className={cn(
-                    "h-full rounded-full transition-all",
-                    !hasValue
-                      ? "bg-bg-3"
-                      : green
-                        ? "bg-pos"
-                        : orange
-                          ? "bg-warn"
-                          : "bg-neg",
-                  )}
-                  style={{ width: `${pct}%` }}
-                />
-              </div>
+              <ProgressBar
+                value={m.hit_rate_pct}
+                target={100}
+                tone={sourceTone}
+                size="sm"
+                label={`Precision ${m.source}: ${fmtPct(m.hit_rate_pct)}`}
+                sufficientSample={m.sample_sufficient}
+                className="mt-1"
+              />
             </div>
           );
         })}
@@ -186,3 +190,5 @@ export function ActivePrecisionCard({
     </Card>
   );
 }
+
+export const ActivePrecisionCard = memo(ActivePrecisionCardImpl);

@@ -211,6 +211,30 @@ def append_alert_audit(record: AlertAuditRecord, output_path: str | Path) -> Non
     p.parent.mkdir(parents=True, exist_ok=True)
     with p.open("a", encoding="utf-8") as f:
         f.write(json.dumps(record.to_json_dict()) + "\n")
+    _publish_alert_fired(record)
+
+
+def _publish_alert_fired(record: AlertAuditRecord) -> None:
+    # NEO-P-005: fire-and-forget SSE publish. Import lazy to avoid a cycle
+    # between app.alerts and app.api, and to keep audit usable in contexts
+    # where the FastAPI app is never built (CLI, tests).
+    try:
+        from app.api.event_hub import get_default_event_hub
+
+        get_default_event_hub().publish(
+            "alert_fired",
+            {
+                "document_id": record.document_id,
+                "channel": record.channel,
+                "is_digest": record.is_digest,
+                "sentiment": record.sentiment_label,
+                "priority": record.priority,
+                "assets": record.affected_assets,
+                "dispatched_at": record.dispatched_at,
+            },
+        )
+    except Exception:  # noqa: BLE001 — audit must never fail on a broadcast issue
+        pass
 
 
 def iter_alert_audit_document_ids(input_path: str | Path) -> set[str]:

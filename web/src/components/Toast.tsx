@@ -11,6 +11,8 @@ import {
 import { AlertCircle, CheckCircle2, Info, Radio, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useDashboardQuality } from "@/lib/useDashboardQuality";
+import { useSeenSet } from "@/lib/useSeenSet";
+import { useServerEvents, type ServerEventPayload } from "@/lib/useServerEvents";
 
 export type ToastTone = "pos" | "neg" | "warn" | "info" | "neutral";
 
@@ -148,11 +150,15 @@ function defaultIcon(tone: ToastTone): ReactNode {
   }
 }
 
+const LIVE_EVENTS = ["alert_fired", "fill_settled", "position_closed"] as const;
+
 function LiveEventWatcher() {
   const q = useDashboardQuality(30_000);
   const { toast } = useToast();
-  const seenRef = useRef<Set<string>>(new Set());
+  const seen = useSeenSet<string>(500);
   const initializedRef = useRef(false);
+  const toastRef = useRef(toast);
+  toastRef.current = toast;
 
   useEffect(() => {
     if (q.state !== "ready") return;
@@ -160,15 +166,15 @@ function LiveEventWatcher() {
     const ids = alerts.map((a) => `${a.doc_id}|${a.dispatched_at}`);
 
     if (!initializedRef.current) {
-      seenRef.current = new Set(ids);
+      seen.seed(ids);
       initializedRef.current = true;
       return;
     }
 
     alerts.forEach((a) => {
       const key = `${a.doc_id}|${a.dispatched_at}`;
-      if (seenRef.current.has(key)) return;
-      seenRef.current.add(key);
+      if (seen.has(key)) return;
+      seen.add(key);
       const tone: ToastTone =
         a.sentiment === "bullish" ? "pos" : a.sentiment === "bearish" ? "neg" : "info";
       const assets = a.assets?.length ? a.assets.join(", ") : a.doc_id;
@@ -180,7 +186,66 @@ function LiveEventWatcher() {
         ttlMs: 7_000,
       });
     });
-  }, [q, toast]);
+  }, [q, toast, seen]);
+
+  const handleServerEvent = useCallback(
+    (evt: ServerEventPayload) => {
+      if (evt.event === "alert_fired") {
+        const docId = String(evt.document_id ?? "");
+        const dispatchedAt = String(evt.dispatched_at ?? evt.ts);
+        const key = `${docId}|${dispatchedAt}`;
+        if (!docId || seen.has(key)) return;
+        seen.add(key);
+        const sentiment = typeof evt.sentiment === "string" ? evt.sentiment : null;
+        const priority = evt.priority ?? "—";
+        const assetsArr = Array.isArray(evt.assets) ? (evt.assets as string[]) : [];
+        const tone: ToastTone =
+          sentiment === "bullish" ? "pos" : sentiment === "bearish" ? "neg" : "info";
+        const assets = assetsArr.length ? assetsArr.join(", ") : docId;
+        toastRef.current({
+          tone,
+          title: `Neuer Alert · ${assets}`,
+          detail: `${sentiment || "—"} · prio ${priority} · live`,
+          icon: <Radio size={14} />,
+          ttlMs: 7_000,
+        });
+        return;
+      }
+      if (evt.event === "fill_settled") {
+        const symbol = String(evt.symbol ?? "");
+        const side = String(evt.side ?? "").toUpperCase();
+        const qty = typeof evt.quantity === "number" ? evt.quantity : null;
+        const price = typeof evt.fill_price === "number" ? evt.fill_price : null;
+        toastRef.current({
+          tone: "info",
+          title: `Paper-Fill · ${symbol || "—"}`,
+          detail: `${side}${qty !== null ? ` ${qty}` : ""}${price !== null ? ` @ ${price}` : ""}`,
+          icon: <Radio size={14} />,
+          ttlMs: 7_000,
+        });
+        return;
+      }
+      if (evt.event === "position_closed") {
+        const symbol = String(evt.symbol ?? "");
+        const reason = String(evt.reason ?? "");
+        const pnl =
+          typeof evt.realized_pnl_usd === "number" ? evt.realized_pnl_usd : null;
+        const tone: ToastTone = pnl === null ? "info" : pnl >= 0 ? "pos" : "neg";
+        toastRef.current({
+          tone,
+          title: `Position geschlossen · ${symbol || "—"}`,
+          detail: `${reason || "—"}${pnl !== null ? ` · pnl ${pnl.toFixed(2)} USD` : ""}`,
+          icon: <Radio size={14} />,
+          ttlMs: 8_000,
+        });
+      }
+    },
+    [seen],
+  );
+
+  useServerEvents("/dashboard/api/events", handleServerEvent, {
+    events: LIVE_EVENTS,
+  });
 
   return null;
 }

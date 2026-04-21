@@ -1,5 +1,6 @@
-import { Flag, Target, Coins, Calendar } from "lucide-react";
-import { Card, CardHeader, Badge } from "@/components/ui/Primitives";
+import { memo, useMemo } from "react";
+import { AlertTriangle, Flag, Target, Coins, Calendar } from "lucide-react";
+import { Card, CardHeader, Badge, ProgressBar } from "@/components/ui/Primitives";
 import { cn } from "@/lib/utils";
 import type { DashboardQuality, DashboardProvenance } from "@/lib/api";
 
@@ -55,20 +56,44 @@ function verdictTone(v: string | undefined): "pos" | "warn" | "neg" | "muted" {
   return "muted";
 }
 
-export function ReentryGatePanel({
+export type QualityFetchState = "loading" | "ready" | "error";
+
+function ReentryGatePanelImpl({
   quality,
   provenance,
+  qualityState = "ready",
+  qualityError,
 }: {
   quality: DashboardQuality | null;
   provenance: DashboardProvenance | null;
+  qualityState?: QualityFetchState;
+  qualityError?: string | null;
 }) {
-  const alerts = quality?.active_resolved_count ?? 0;
-  const fills = quality?.paper_fills_with_pnl ?? 0;
-  const pnlUsd = quality?.paper_realized_pnl_usd ?? 0;
-  const daysLeft = daysUntil(REENTRY_DATE_ISO);
-  const gate = evaluateGate(alerts, fills);
+  const daysLeft = useMemo(() => daysUntil(REENTRY_DATE_ISO), []);
 
-  const banner = bannerProps(gate, daysLeft);
+  const computed = useMemo(() => {
+    if (qualityState !== "ready" || quality == null) return null;
+    const alerts = quality.active_resolved_count ?? 0;
+    const fills = quality.paper_fills_with_pnl ?? 0;
+    const pnlUsd = quality.paper_realized_pnl_usd ?? 0;
+    const gate = evaluateGate(alerts, fills);
+    return { alerts, fills, pnlUsd, gate, banner: bannerProps(gate, daysLeft) };
+  }, [quality, qualityState, daysLeft]);
+
+  // DALI-F-028: bei loading/error keinen 0/0-Gate-Versagen-Visual zeigen,
+  // sondern Skeleton bzw. Error-Banner. Countdown bleibt sichtbar, weil er
+  // nicht von API-Daten abhängt.
+  if (!computed || quality == null) {
+    return (
+      <ReentryGatePanelFallback
+        state={qualityState}
+        daysLeft={daysLeft}
+        errorMessage={qualityError ?? null}
+      />
+    );
+  }
+
+  const { alerts, fills, pnlUsd, gate, banner } = computed;
 
   return (
     <Card padded>
@@ -199,7 +224,6 @@ function ProgressRow({
   met: boolean;
   helper?: React.ReactNode;
 }) {
-  const pct = Math.min(100, (current / target) * 100);
   return (
     <div className="rounded-sm border border-line-subtle bg-bg-1 p-2.5 space-y-1.5">
       <div className="flex items-center justify-between gap-2">
@@ -212,19 +236,13 @@ function ProgressRow({
           <span className="text-fg-subtle font-normal">/{target}</span>
         </span>
       </div>
-      <div
-        className="h-1.5 w-full rounded-sm bg-bg-3 overflow-hidden"
-        role="progressbar"
-        aria-valuenow={current}
-        aria-valuemin={0}
-        aria-valuemax={target}
-        aria-label={label}
-      >
-        <div
-          className={cn("h-full transition-all", met ? "bg-pos" : pct >= 50 ? "bg-warn" : "bg-fg-subtle/70")}
-          style={{ width: `${pct}%` }}
-        />
-      </div>
+      <ProgressBar
+        value={current}
+        target={target}
+        tone={met ? "pos" : "auto"}
+        size="md"
+        label={label}
+      />
       {helper ? (
         <div className="text-2xs text-fg-subtle font-mono">{helper}</div>
       ) : null}
@@ -232,6 +250,95 @@ function ProgressRow({
   );
 }
 
+function ReentryGatePanelFallback({
+  state,
+  daysLeft,
+  errorMessage,
+}: {
+  state: QualityFetchState;
+  daysLeft: number;
+  errorMessage: string | null;
+}) {
+  const isError = state === "error";
+  const banner = isError
+    ? {
+        title: "Gate-Daten nicht erreichbar",
+        detail:
+          errorMessage ??
+          "/dashboard/api/quality antwortet nicht — Gate-Status unbekannt, Deadline läuft weiter.",
+        className: "border-neg/30 bg-neg/10 text-neg",
+        icon: <AlertTriangle size={14} className="shrink-0" />,
+      }
+    : {
+        title: "Lade Gate-Daten …",
+        detail: "Auto-Refresh alle 30 s · Pfad A/B werden geprüft.",
+        className: "border-line-subtle bg-bg-2 text-fg-muted",
+        icon: <Flag size={14} className="shrink-0" />,
+      };
+
+  return (
+    <Card padded>
+      <CardHeader
+        title="Re-Entry-Gate"
+        subtitle={`TV-Pivot D-125 · Ziel: ${REENTRY_DATE_ISO} · Pfad A (alerts ≥${ALERTS_TARGET}) ODER Pfad B (fills ≥${FILLS_TARGET})`}
+        right={
+          <Badge tone={daysLeft <= 7 ? "warn" : "muted"} dot>
+            <Calendar size={10} />
+            {daysLeft === 0 ? "heute" : `${daysLeft} Tage`}
+          </Badge>
+        }
+      />
+
+      <div
+        className={cn(
+          "mt-1 mb-3 rounded-sm border px-3 py-2 text-xs flex items-center gap-2",
+          banner.className,
+        )}
+        role="status"
+        aria-live="polite"
+      >
+        {banner.icon}
+        <span className="font-semibold">{banner.title}</span>
+        <span className="text-fg-muted">·</span>
+        <span className="text-fg-muted break-words">{banner.detail}</span>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <SkeletonRow icon={<Target size={12} />} label="Pfad A — Resolved Alerts (active)" target={ALERTS_TARGET} />
+        <SkeletonRow icon={<Coins size={12} />} label="Pfad B — Paper Fills mit PnL" target={FILLS_TARGET} />
+      </div>
+    </Card>
+  );
+}
+
+function SkeletonRow({
+  icon,
+  label,
+  target,
+}: {
+  icon: React.ReactNode;
+  label: string;
+  target: number;
+}) {
+  return (
+    <div className="rounded-sm border border-line-subtle bg-bg-1 p-2.5 space-y-1.5" aria-busy>
+      <div className="flex items-center justify-between gap-2">
+        <span className="inline-flex items-center gap-1.5 text-2xs font-mono uppercase tracking-wide text-fg-muted">
+          {icon}
+          {label}
+        </span>
+        <span className="font-mono text-sm font-semibold text-fg-subtle">
+          —<span className="text-fg-subtle font-normal">/{target}</span>
+        </span>
+      </div>
+      <div className="h-1.5 w-full rounded-full bg-bg-3 overflow-hidden animate-pulse" aria-hidden />
+      <div className="text-2xs text-fg-subtle font-mono opacity-60">lädt …</div>
+    </div>
+  );
+}
+
 function fmtPct(n: number | null | undefined): string {
   return n == null ? "—" : `${n.toFixed(1)}%`;
 }
+
+export const ReentryGatePanel = memo(ReentryGatePanelImpl);

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Radio, Target, ShieldAlert, CheckCircle2, Activity, AlertCircle, Inbox, ChevronDown, ChevronUp, Wrench } from "lucide-react";
+import { Radio, Target, ShieldAlert, CheckCircle2, AlertCircle, ChevronDown, ChevronUp, Wrench } from "lucide-react";
 import { KpiCard } from "@/components/kpi/KpiCard";
 import { QualityBarPanel } from "@/components/panels/QualityBar";
 import { ActivePrecisionCard } from "@/components/panels/ActivePrecisionCard";
@@ -7,13 +7,15 @@ import { PreparedPanel } from "@/components/panels/PreparedPanel";
 import { ReentryGatePanel } from "@/components/panels/ReentryGatePanel";
 import { SignalHeatmapPanel } from "@/components/panels/SignalHeatmap";
 import { AgentsStatusCard } from "@/components/panels/AgentsStatusCard";
+import { SignalQualityCard } from "@/components/panels/SignalQualityCard";
+import { TradingLoopCard } from "@/components/panels/TradingLoopCard";
+import { RecentAlertsCard } from "@/components/panels/RecentAlertsCard";
+import { PanelErrorBoundary } from "@/components/PanelErrorBoundary";
 import { TradingViewChart, isTradingViewEnabled } from "@/components/trading/tradingview";
 import { Card, CardHeader, Badge } from "@/components/ui/Primitives";
-import { EmptyState } from "@/components/ui/EmptyState";
 import { useT } from "@/i18n/I18nProvider";
 import { useDashboardQuality } from "@/lib/useDashboardQuality";
 import { useDashboardProvenance } from "@/lib/useDashboardProvenance";
-import { formatAbsolute, formatRelative } from "@/lib/time";
 import { cn } from "@/lib/utils";
 import { useRouter, type Route } from "@/state/Router";
 
@@ -182,50 +184,73 @@ export function Dashboard() {
       </div>
 
       {/* Re-Entry-Gate (TV-Pivot D-125 · Stichtag 2026-05-16) */}
-      <ReentryGatePanel quality={data} provenance={provenance} />
+      <PanelErrorBoundary name="Re-Entry-Gate">
+        <ReentryGatePanel
+          quality={data}
+          provenance={provenance}
+          qualityState={q.state}
+          qualityError={q.state === "error" ? q.error.message : null}
+        />
+      </PanelErrorBoundary>
 
       {/* Aktiver Analytics-Grid */}
       <div className="grid grid-cols-12 gap-4">
         <div className="col-span-12 lg:col-span-8">
-          <QualityBarPanel data={data} />
+          <PanelErrorBoundary name="Quality-Bar">
+            <QualityBarPanel data={data} />
+          </PanelErrorBoundary>
         </div>
         <div className="col-span-12 lg:col-span-4 space-y-4">
-          <SignalQualityCard data={data} />
-          <TradingLoopCard data={data} />
+          <PanelErrorBoundary name="Signal-Qualität">
+            <SignalQualityCard data={data} />
+          </PanelErrorBoundary>
+          <PanelErrorBoundary name="Trading-Loop-Status">
+            <TradingLoopCard data={data} />
+          </PanelErrorBoundary>
         </div>
       </div>
 
       {/* Active-Precision-Split (Source-Breakdown mit Wilson-CI) */}
       <div className="grid grid-cols-12 gap-4">
         <div className="col-span-12">
-          <ActivePrecisionCard data={provenance} />
+          <PanelErrorBoundary name="Active-Precision">
+            <ActivePrecisionCard data={provenance} />
+          </PanelErrorBoundary>
         </div>
       </div>
 
       {/* Signal-Matrix + Market-Snapshot */}
       <div className="grid grid-cols-12 gap-4">
         <div className="col-span-12 lg:col-span-7">
-          <SignalHeatmapPanel />
+          <PanelErrorBoundary name="Signal-Matrix">
+            <SignalHeatmapPanel />
+          </PanelErrorBoundary>
         </div>
         <div className="col-span-12 lg:col-span-5">
-          {isTradingViewEnabled() ? (
-            <TradingViewChart heightClass="h-[320px]" title="Markt-Snapshot" />
-          ) : (
-            <Card padded>
-              <CardHeader title="Markt-Snapshot" right={<Badge tone="muted">offline</Badge>} />
-              <div className="py-8 text-center text-xs text-fg-subtle">
-                TradingView deaktiviert — Chart unter „Märkte" verfügbar.
-              </div>
-            </Card>
-          )}
+          <PanelErrorBoundary name="Markt-Snapshot">
+            {isTradingViewEnabled() ? (
+              <TradingViewChart heightClass="h-[320px]" title="Markt-Snapshot" />
+            ) : (
+              <Card padded>
+                <CardHeader title="Markt-Snapshot" right={<Badge tone="muted">offline</Badge>} />
+                <div className="py-8 text-center text-xs text-fg-subtle">
+                  TradingView deaktiviert — Chart unter „Märkte" verfügbar.
+                </div>
+              </Card>
+            )}
+          </PanelErrorBoundary>
         </div>
       </div>
 
       {/* Agent Roster */}
-      <AgentsStatusCard />
+      <PanelErrorBoundary name="Agent-Roster">
+        <AgentsStatusCard />
+      </PanelErrorBoundary>
 
       {/* Recent Alerts */}
-      <RecentAlertsCard data={data} />
+      <PanelErrorBoundary name="Recent-Alerts">
+        <RecentAlertsCard data={data} />
+      </PanelErrorBoundary>
 
       {/* Vorbereitete Bereiche — default collapsed Ribbon, expandable zu vollem Grid */}
       <PreparedSection />
@@ -323,212 +348,4 @@ function PreparedSection() {
       )}
     </section>
   );
-}
-
-function SignalQualityCard({ data }: { data: ReturnType<typeof useDashboardQuality>["data"] }) {
-  const rows: Array<[string, string, string?]> = data
-    ? [
-        ["Actionable Rate", fmtPct(data.actionable_rate_pct)],
-        ["False Positive", fmtPct(data.false_positive_pct), "neg"],
-        ["High-P Hit Rate", fmtPct(data.high_priority_hit_rate_pct), "pos"],
-        ["Low-P Hit Rate", fmtPct(data.low_priority_hit_rate_pct)],
-        ["Directional Docs", String(data.directional_count)],
-      ]
-    : [];
-
-  return (
-    <Card padded>
-      <CardHeader
-        title="Signal-Qualität"
-        right={
-          <Badge tone="muted">
-            <Activity size={10} />
-            live
-          </Badge>
-        }
-      />
-      {data ? (
-        <div className="space-y-1.5">
-          {rows.map(([k, v, tone]) => (
-            <div key={k} className="flex items-center justify-between text-xs">
-              <span className="text-fg-muted">{k}</span>
-              <span
-                className={cn(
-                  "font-mono font-semibold",
-                  tone === "pos" && "text-pos",
-                  tone === "neg" && "text-neg",
-                )}
-              >
-                {v}
-              </span>
-            </div>
-          ))}
-        </div>
-      ) : (
-        <div className="py-4 text-center text-xs text-fg-subtle">
-          Quality-Report lädt …
-        </div>
-      )}
-    </Card>
-  );
-}
-
-const LOOP_STATUS_TONE: Record<string, "pos" | "neg" | "warn" | "muted" | "info"> = {
-  completed: "pos",
-  no_signal: "muted",
-  no_market_data: "warn",
-  stale_data: "warn",
-  risk_rejected: "warn",
-  consensus_rejected: "neg",
-  order_failed: "neg",
-};
-
-const TONE_BG: Record<string, string> = {
-  pos: "bg-pos",
-  neg: "bg-neg",
-  warn: "bg-warn",
-  muted: "bg-fg-subtle/40",
-  info: "bg-info",
-};
-
-function TradingLoopCard({ data }: { data: ReturnType<typeof useDashboardQuality>["data"] }) {
-  const entries = data
-    ? Object.entries(data.loop_status_counts).sort((a, b) => b[1] - a[1])
-    : [];
-  const total = entries.reduce((acc, [, v]) => acc + v, 0);
-  return (
-    <Card padded>
-      <CardHeader
-        title="Trading Loop Status"
-        subtitle={total > 0 ? `${total} Cycles im Fenster` : undefined}
-        right={
-          <Badge tone="muted">
-            <Activity size={10} />
-            live
-          </Badge>
-        }
-      />
-      {entries.length > 0 ? (
-        <div className="space-y-2">
-          <div
-            className="h-2 w-full rounded-sm overflow-hidden flex bg-bg-3"
-            role="img"
-            aria-label={`Loop-Status-Verteilung: ${entries.map(([k, v]) => `${k} ${v}`).join(", ")}`}
-          >
-            {entries.map(([k, v]) => {
-              const tone = LOOP_STATUS_TONE[k] ?? "muted";
-              const pct = total > 0 ? (v / total) * 100 : 0;
-              if (pct <= 0) return null;
-              return (
-                <div
-                  key={k}
-                  className={TONE_BG[tone]}
-                  style={{ width: `${pct}%` }}
-                  title={`${k}: ${v} (${pct.toFixed(1)}%)`}
-                />
-              );
-            })}
-          </div>
-          <div className="space-y-1 pt-1">
-            {entries.map(([k, v]) => {
-              const tone = LOOP_STATUS_TONE[k] ?? "muted";
-              const pct = total > 0 ? (v / total) * 100 : 0;
-              return (
-                <div key={k} className="flex items-center justify-between text-xs">
-                  <span className="inline-flex items-center gap-2 text-fg-muted font-mono">
-                    <span className={cn("inline-block h-2 w-2 rounded-xs", TONE_BG[tone])} aria-hidden />
-                    {k}
-                  </span>
-                  <span className="font-mono font-semibold tabular-nums">
-                    {v}
-                    <span className="ml-1.5 text-2xs text-fg-subtle font-normal">{pct.toFixed(0)}%</span>
-                  </span>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      ) : (
-        <div className="py-4 text-center text-xs text-fg-subtle">
-          Noch keine Cycles im aktuellen Fenster
-        </div>
-      )}
-    </Card>
-  );
-}
-
-function RecentAlertsCard({ data }: { data: ReturnType<typeof useDashboardQuality>["data"] }) {
-  const rows = data?.recent_alerts ?? [];
-  return (
-    <Card padded>
-      <CardHeader
-        title="Letzte Directional Alerts"
-        subtitle={`${rows.length} Einträge aus alert_audit.jsonl (jüngste zuerst)`}
-        right={
-          <Badge tone="muted" dot>
-            live
-          </Badge>
-        }
-      />
-      {rows.length === 0 ? (
-        <EmptyState
-          icon={<Inbox size={18} />}
-          title="Noch keine Alerts in diesem Fenster"
-          hint="Directional Alerts erscheinen hier in Echtzeit, sobald die Pipeline sie dispatched. Quality-Report refreshed alle 30s."
-          className="my-2"
-        />
-      ) : (
-        <div className="overflow-x-auto">
-          <table className="w-full text-xs">
-            <thead>
-              <tr className="text-2xs uppercase tracking-wide text-fg-subtle border-b border-line-subtle">
-                <th className="text-left py-2 pr-3 font-medium">Doc</th>
-                <th className="text-left py-2 pr-3 font-medium">Sentiment</th>
-                <th className="text-center py-2 pr-3 font-medium">P</th>
-                <th className="text-left py-2 pr-3 font-medium">Assets</th>
-                <th className="text-left py-2 pr-3 font-medium">Dispatched</th>
-                <th className="text-left py-2 pr-3 font-medium">Outcome</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((a, i) => (
-                <tr key={`${a.doc_id}-${i}`} className="border-b border-line-subtle/60 last:border-0">
-                  <td className="py-2 pr-3 font-mono text-2xs text-fg-muted">{a.doc_id}</td>
-                  <td className="py-2 pr-3">
-                    <SentimentBadge s={a.sentiment} />
-                  </td>
-                  <td className="py-2 pr-3 text-center font-mono">{a.priority ?? "—"}</td>
-                  <td className="py-2 pr-3 font-mono text-2xs text-fg-muted">
-                    {a.assets.length ? a.assets.join(", ") : "—"}
-                  </td>
-                  <td className="py-2 pr-3 text-xs text-fg-muted" title={formatAbsolute(a.dispatched_at)}>
-                    {formatRelative(a.dispatched_at)}
-                  </td>
-                  <td className="py-2 pr-3">
-                    <OutcomeBadge o={a.outcome} />
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-    </Card>
-  );
-}
-
-function SentimentBadge({ s }: { s: string }) {
-  if (!s) return <span className="text-fg-subtle">—</span>;
-  const tone = s === "bullish" ? "pos" : s === "bearish" ? "neg" : "muted";
-  return <Badge tone={tone}>{s}</Badge>;
-}
-
-function OutcomeBadge({ o }: { o: string }) {
-  if (!o) return <Badge tone="muted">pending</Badge>;
-  const tone = o === "hit" ? "pos" : o === "miss" ? "neg" : "muted";
-  return <Badge tone={tone}>{o}</Badge>;
-}
-
-function fmtPct(v: number | null | undefined): string {
-  return v != null ? `${v.toFixed(2)}%` : "—";
 }

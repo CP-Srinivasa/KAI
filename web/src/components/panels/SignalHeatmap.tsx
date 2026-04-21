@@ -1,9 +1,14 @@
-import { useEffect, useState } from "react";
+import { useMemo } from "react";
 import { Radio, ArrowUpRight, ArrowDownRight, ExternalLink } from "lucide-react";
 import { Card, CardHeader, Badge } from "@/components/ui/Primitives";
 import { EmptyState } from "@/components/ui/EmptyState";
-import { fetchRecentEnvelopes, type EnvelopeRecord } from "@/lib/api";
+import {
+  fetchRecentEnvelopes,
+  type EnvelopeRecord,
+  type EnvelopeRecentResponse,
+} from "@/lib/api";
 import { formatRelative, formatAbsolute } from "@/lib/time";
+import { usePolling } from "@/lib/usePolling";
 import { useRouter } from "@/state/Router";
 import { cn } from "@/lib/utils";
 
@@ -15,11 +20,6 @@ type SymbolRow = {
   latestStatus: string | null;
   totalSignals: number;
 };
-
-type State =
-  | { kind: "loading" }
-  | { kind: "ready"; rows: SymbolRow[]; totalSignals: number }
-  | { kind: "error"; message: string };
 
 const POLL_MS = 60_000;
 const MAX_ROWS = 8;
@@ -34,42 +34,27 @@ function statusTone(status: string | null): "pos" | "warn" | "neg" | "muted" {
 }
 
 export function SignalHeatmapPanel() {
-  const [state, setState] = useState<State>({ kind: "loading" });
+  const state = usePolling<EnvelopeRecentResponse>(
+    (signal) => fetchRecentEnvelopes(50, signal),
+    { intervalMs: POLL_MS, pauseWhenHidden: true, retry: { maxAttempts: 3, baseMs: 2_000 } },
+  );
   const { navigate } = useRouter();
 
-  useEffect(() => {
-    const ctrl = new AbortController();
-    let cancelled = false;
-
-    const load = async () => {
-      try {
-        const r = await fetchRecentEnvelopes(50, ctrl.signal);
-        if (cancelled) return;
-        const signals = r.records.filter((x) => x.message_type === "signal" && x.signal);
-        const rows = aggregate(signals);
-        setState({ kind: "ready", rows, totalSignals: signals.length });
-      } catch (e) {
-        if (cancelled) return;
-        setState({ kind: "error", message: e instanceof Error ? e.message : String(e) });
-      }
-    };
-
-    load();
-    const id = window.setInterval(load, POLL_MS);
-    return () => {
-      cancelled = true;
-      ctrl.abort();
-      window.clearInterval(id);
-    };
-  }, []);
+  const view = useMemo(() => {
+    if (state.state !== "ready") return null;
+    const signals = state.data.records.filter(
+      (x) => x.message_type === "signal" && x.signal,
+    );
+    return { rows: aggregate(signals), totalSignals: signals.length };
+  }, [state]);
 
   return (
     <Card padded>
       <CardHeader
         title="Signal-Matrix"
         subtitle={
-          state.kind === "ready"
-            ? `${state.rows.length} Symbole · ${state.totalSignals} Signale (Fenster ≤50)`
+          view
+            ? `${view.rows.length} Symbole · ${view.totalSignals} Signale (Fenster ≤50)`
             : undefined
         }
         right={
@@ -78,15 +63,15 @@ export function SignalHeatmapPanel() {
           </Badge>
         }
       />
-      {state.kind === "loading" && (
+      {state.state === "loading" && (
         <div className="py-6 text-center text-xs text-fg-subtle">Lade Signale …</div>
       )}
-      {state.kind === "error" && (
+      {state.state === "error" && (
         <div className="py-4 text-xs text-neg break-words">
-          Konnte Signale nicht laden: {state.message}
+          Konnte Signale nicht laden: {state.error.message}
         </div>
       )}
-      {state.kind === "ready" && state.rows.length === 0 && (
+      {view && view.rows.length === 0 && (
         <EmptyState
           icon={<Radio size={18} />}
           title="Noch keine Signale im Fenster"
@@ -94,10 +79,10 @@ export function SignalHeatmapPanel() {
           className="my-2"
         />
       )}
-      {state.kind === "ready" && state.rows.length > 0 && (
+      {view && view.rows.length > 0 && (
         <HeatmapTable
-          rows={state.rows.slice(0, MAX_ROWS)}
-          overflow={Math.max(0, state.rows.length - MAX_ROWS)}
+          rows={view.rows.slice(0, MAX_ROWS)}
+          overflow={Math.max(0, view.rows.length - MAX_ROWS)}
           onSelect={() => navigate("external")}
         />
       )}

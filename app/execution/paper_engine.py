@@ -30,6 +30,27 @@ logger = logging.getLogger(__name__)
 _AUDIT_LOG = Path("artifacts/paper_execution_audit.jsonl")
 
 
+# NEO-P-005: event-types the paper engine broadcasts to the dashboard SSE
+# bus. We map internal audit-names to public event-names so the dashboard can
+# stay stable if the audit schema ever gets a rename.
+_SSE_EVENT_MAP = {
+    "order_filled": "fill_settled",
+    "position_closed": "position_closed",
+}
+
+
+def _publish_paper_event(event_type: str, record: dict[str, object]) -> None:
+    sse_event = _SSE_EVENT_MAP.get(event_type)
+    if sse_event is None:
+        return
+    try:
+        from app.api.event_hub import get_default_event_hub
+
+        get_default_event_hub().publish(sse_event, record)
+    except Exception:  # noqa: BLE001 — publish must never fail the engine
+        pass
+
+
 class PaperExecutionEngine:
     """
     Simulated order execution engine for paper trading.
@@ -304,6 +325,53 @@ class PaperExecutionEngine:
             return "take"
         return None
 
+    def adjust_position(
+        self,
+        symbol: str,
+        *,
+        stop_loss: float | None = None,
+        take_profit: float | None = None,
+        reason: str = "manual",
+    ) -> bool:
+        """Update SL/TP of an open position without changing quantity or entry.
+
+        Use when an averaged-down merge has left the position with a stop that
+        no longer makes geometric sense (e.g. SL above avg_entry for a long).
+        Appends a ``position_adjusted`` audit event so replay reconstructs
+        state correctly. Returns True iff a position existed and was updated.
+        """
+        pos = self._portfolio.positions.get(symbol)
+        if pos is None:
+            return False
+        new_sl = stop_loss if stop_loss is not None else pos.stop_loss
+        new_tp = take_profit if take_profit is not None else pos.take_profit
+        self._portfolio.positions[symbol] = PaperPosition(
+            symbol=pos.symbol,
+            quantity=pos.quantity,
+            avg_entry_price=pos.avg_entry_price,
+            stop_loss=new_sl,
+            take_profit=new_tp,
+            opened_at=pos.opened_at,
+            realized_pnl_usd=pos.realized_pnl_usd,
+        )
+        self._append_audit(
+            "position_adjusted",
+            {
+                "symbol": symbol,
+                "stop_loss": new_sl,
+                "take_profit": new_tp,
+                "reason": reason,
+            },
+        )
+        logger.info(
+            "[PAPER] Adjusted %s sl=%s tp=%s reason=%s",
+            symbol,
+            new_sl,
+            new_tp,
+            reason,
+        )
+        return True
+
     def close_position(
         self,
         symbol: str,
@@ -400,3 +468,4 @@ class PaperExecutionEngine:
                 fh.write(json.dumps(record) + "\n")
         except OSError as e:
             logger.error("[PAPER] Audit log write failed: %s", e)
+        _publish_paper_event(event_type, record)

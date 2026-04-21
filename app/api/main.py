@@ -15,6 +15,7 @@ from app.api.routers import (
     agents,
     alerts,
     dashboard,
+    events,
     health,
     operator,
     query,
@@ -129,6 +130,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         signal_exchange_sent_log_path=op.signal_exchange_sent_log,
         signal_exchange_dead_letter_log_path=op.signal_exchange_dead_letter_log,
         dashboard_url=op.telegram_dashboard_url,
+        signal_approval_enabled=settings.execution.operator_signal_approval_enabled,
+        signal_approval_ttl_minutes=settings.execution.operator_signal_approval_ttl_minutes,
     )
     poller = TelegramPoller(
         bot,
@@ -245,6 +248,7 @@ def create_app() -> FastAPI:
     app.include_router(signals.router)
     app.include_router(tradingview.router)
     app.include_router(dashboard.router)
+    app.include_router(events.router)
 
     # React-SPA (Vite-Build) unter /dashboard. JSON-Route /dashboard/api/quality
     # wurde oben über include_router zuerst registriert und hat dadurch Vorrang

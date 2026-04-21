@@ -1,15 +1,10 @@
-import { useEffect, useState } from "react";
 import { Bot, ExternalLink } from "lucide-react";
 import { Card, CardHeader, Badge, StatusDot } from "@/components/ui/Primitives";
 import { fetchAgents, type AgentListResponse, type AgentSummary, type AgentStatus } from "@/lib/api";
 import { formatRelative, formatAbsolute } from "@/lib/time";
+import { usePolling } from "@/lib/usePolling";
 import { useRouter } from "@/state/Router";
 import { cn } from "@/lib/utils";
-
-type State =
-  | { kind: "loading" }
-  | { kind: "ready"; data: AgentListResponse }
-  | { kind: "error"; message: string };
 
 const POLL_MS = 90_000;
 
@@ -26,41 +21,21 @@ function statusLabel(s: AgentStatus): string {
 }
 
 export function AgentsStatusCard() {
-  const [state, setState] = useState<State>({ kind: "loading" });
+  const state = usePolling<AgentListResponse>(fetchAgents, {
+    intervalMs: POLL_MS,
+    pauseWhenHidden: true,
+    retry: { maxAttempts: 3, baseMs: 2_000 },
+  });
   const { navigate } = useRouter();
 
-  useEffect(() => {
-    const ctrl = new AbortController();
-    let cancelled = false;
-
-    const load = async () => {
-      try {
-        const data = await fetchAgents(ctrl.signal);
-        if (cancelled) return;
-        setState({ kind: "ready", data });
-      } catch (e) {
-        if (cancelled) return;
-        setState({ kind: "error", message: e instanceof Error ? e.message : String(e) });
-      }
-    };
-
-    load();
-    const id = window.setInterval(load, POLL_MS);
-    return () => {
-      cancelled = true;
-      ctrl.abort();
-      window.clearInterval(id);
-    };
-  }, []);
-
-  const agents = state.kind === "ready" ? state.data.agents : [];
+  const agents = state.state === "ready" ? state.data.agents : [];
 
   return (
     <Card padded>
       <CardHeader
         title="Agent Roster"
         subtitle={
-          state.kind === "ready"
+          state.state === "ready"
             ? `${agents.length} Agenten · Stand: ${state.data.generated_at.substring(0, 19).replace("T", " ")}`
             : undefined
         }
@@ -71,20 +46,20 @@ export function AgentsStatusCard() {
           </Badge>
         }
       />
-      {state.kind === "loading" && (
+      {state.state === "loading" && (
         <div className="py-4 text-center text-xs text-fg-subtle">Lade Agenten …</div>
       )}
-      {state.kind === "error" && (
+      {state.state === "error" && (
         <div className="py-3 text-xs text-neg break-words">
-          Roster unerreichbar: {state.message}
+          Roster unerreichbar: {state.error.message}
         </div>
       )}
-      {state.kind === "ready" && agents.length === 0 && (
+      {state.state === "ready" && agents.length === 0 && (
         <div className="py-4 text-center text-xs text-fg-subtle">
           Keine Agenten registriert.
         </div>
       )}
-      {state.kind === "ready" && agents.length > 0 && (
+      {state.state === "ready" && agents.length > 0 && (
         <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-2">
           {agents.map((a) => (
             <AgentTile key={a.slug} agent={a} onClick={() => navigate("agents")} />
