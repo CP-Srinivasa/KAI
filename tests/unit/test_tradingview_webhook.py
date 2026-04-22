@@ -289,3 +289,117 @@ def test_audit_log_records_client_ip_and_size(
     assert "source_ip" in entry
     assert "received_at" in entry
     assert entry["request_id"].startswith("tvwh_")
+
+
+# --- V8.1: Layer-2 replay guard (external event_id) ---
+
+
+def test_event_id_replay_rejected_as_409(
+    enabled_client: TestClient, audit_path: Path
+) -> None:
+    """Layer-2: same event_id, different payload bytes → 2nd request 409."""
+    body_a = b'{"symbol":"BTCUSDT","action":"buy","event_id":"alert-42"}'
+    body_b = b'{"symbol":"BTCUSDT","action":"buy","event_id":"alert-42","note":"x"}'
+    # bodies differ → payload_hash cache would NOT catch this; only event_id does.
+
+    first = enabled_client.post(
+        "/tradingview/webhook", content=body_a, headers={_SIGNATURE_HEADER: _sign(body_a)}
+    )
+    assert first.status_code == 202
+
+    second = enabled_client.post(
+        "/tradingview/webhook", content=body_b, headers={_SIGNATURE_HEADER: _sign(body_b)}
+    )
+    assert second.status_code == 409
+
+    records = _read_audit(audit_path)
+    assert records[0]["outcome"] == "accepted"
+    assert records[0]["external_event_id"] == "alert-42"
+    assert records[1]["outcome"] == "rejected"
+    assert records[1]["reason"] == "event_id_replay"
+    assert records[1]["external_event_id"] == "alert-42"
+    assert records[1]["dedup_layer"] == "external_event_id"
+
+
+def test_event_id_absent_skips_layer2(
+    enabled_client: TestClient, audit_path: Path
+) -> None:
+    """No event_id in payload → only layer-1 is consulted, differing bodies pass."""
+    body_a = b'{"symbol":"BTCUSDT","action":"buy"}'
+    body_b = b'{"symbol":"BTCUSDT","action":"buy","note":"second"}'
+
+    r1 = enabled_client.post(
+        "/tradingview/webhook", content=body_a, headers={_SIGNATURE_HEADER: _sign(body_a)}
+    )
+    r2 = enabled_client.post(
+        "/tradingview/webhook", content=body_b, headers={_SIGNATURE_HEADER: _sign(body_b)}
+    )
+    assert r1.status_code == 202
+    assert r2.status_code == 202
+
+    records = _read_audit(audit_path)
+    assert records[0]["external_event_id"] is None
+    assert records[1]["external_event_id"] is None
+
+
+def test_event_id_empty_string_skips_layer2(
+    enabled_client: TestClient, audit_path: Path
+) -> None:
+    """event_id='' and whitespace-only are treated as absent (guard against
+    poisoning the cache with a universally-matching empty key)."""
+    body_a = b'{"symbol":"BTCUSDT","action":"buy","event_id":""}'
+    body_b = b'{"symbol":"BTCUSDT","action":"buy","event_id":"   "}'
+
+    r1 = enabled_client.post(
+        "/tradingview/webhook", content=body_a, headers={_SIGNATURE_HEADER: _sign(body_a)}
+    )
+    r2 = enabled_client.post(
+        "/tradingview/webhook", content=body_b, headers={_SIGNATURE_HEADER: _sign(body_b)}
+    )
+    assert r1.status_code == 202
+    assert r2.status_code == 202
+
+    records = _read_audit(audit_path)
+    assert records[0]["external_event_id"] is None
+    assert records[1]["external_event_id"] is None
+
+
+def test_payload_hash_layer_takes_precedence_over_event_id(
+    enabled_client: TestClient, audit_path: Path
+) -> None:
+    """Identical body → layer-1 catches it; audit reason stays 'replay',
+    not 'event_id_replay'. Verifies ordering: byte-hash cache is checked first."""
+    body = b'{"symbol":"BTCUSDT","action":"buy","event_id":"alert-7"}'
+    headers = {_SIGNATURE_HEADER: _sign(body)}
+
+    first = enabled_client.post("/tradingview/webhook", content=body, headers=headers)
+    assert first.status_code == 202
+
+    second = enabled_client.post("/tradingview/webhook", content=body, headers=headers)
+    assert second.status_code == 409
+
+    records = _read_audit(audit_path)
+    assert records[1]["reason"] == "replay"
+    assert "dedup_layer" not in records[1]
+
+
+def test_event_id_cache_isolates_between_fixtures(audit_path: Path) -> None:
+    """The layer-2 singleton is reset alongside the layer-1 cache."""
+    tv_router._reset_replay_cache_for_tests()
+    cache_a = tv_router._get_event_id_cache(
+        TradingViewSettings(
+            webhook_enabled=True,
+            webhook_secret="x",
+            webhook_audit_log=str(audit_path),
+        )
+    )
+    assert cache_a.check_and_record("evt-1") is True
+    tv_router._reset_replay_cache_for_tests()
+    cache_b = tv_router._get_event_id_cache(
+        TradingViewSettings(
+            webhook_enabled=True,
+            webhook_secret="x",
+            webhook_audit_log=str(audit_path),
+        )
+    )
+    assert cache_b.check_and_record("evt-1") is True  # fresh cache

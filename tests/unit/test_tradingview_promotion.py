@@ -51,6 +51,7 @@ def _event(
         strategy=strategy,
         source_request_id="tvwh_xyz",
         source_payload_hash="b" * 64,
+        external_event_id=None,
         provenance=SignalProvenance(
             source="tradingview_webhook",
             version="tv-3",

@@ -62,6 +62,7 @@ class TradingViewSignalEvent:
     strategy: str | None
     source_request_id: str  # links back to tradingview_webhook_audit.jsonl
     source_payload_hash: str
+    external_event_id: str | None  # V8.1: operator-provided id from TV alert body
     provenance: SignalProvenance
 
 
@@ -124,17 +125,43 @@ def _coerce_optional_str(raw: Any, *, max_len: int = 1024) -> str | None:
     return value
 
 
+def extract_external_event_id(payload: dict[str, Any]) -> str | None:
+    """Return the operator-supplied ``event_id`` from a parsed TV payload, if any.
+
+    Shared by the webhook router (Layer-2 replay guard) and the normalizer
+    (event-object attribution). Empty / non-string / oversized values are
+    treated as absent — pass-through rather than poison the cache key.
+    """
+    if not isinstance(payload, dict):
+        return None
+    raw = payload.get("event_id")
+    if not isinstance(raw, str):
+        return None
+    value = raw.strip()
+    if not value:
+        return None
+    if len(value) > 128:
+        return value[:128]
+    return value
+
+
 def normalize_tradingview_payload(
     payload: dict[str, Any],
     *,
     request_id: str,
     payload_hash: str,
     received_at: str,
+    external_event_id: str | None = None,
 ) -> TradingViewSignalEvent:
     """Turn a parsed TV alert JSON into a TradingViewSignalEvent.
 
     Raises NormalizationError on missing/invalid required fields
     (`ticker`, `action`). Optional fields silently absent are allowed.
+
+    ``external_event_id`` is injected by the router after its own extraction
+    (so Layer-2 dedup and the attached event-object agree on the same value).
+    If omitted, the normalizer re-extracts it from the payload itself so
+    direct callers still get the attribution.
     """
     if not isinstance(payload, dict):
         raise NormalizationError("payload must be a JSON object")
@@ -144,6 +171,10 @@ def normalize_tradingview_payload(
     price = _coerce_price(payload.get("price"))
     note = _coerce_optional_str(payload.get("note"))
     strategy = _coerce_optional_str(payload.get("strategy"), max_len=128)
+    resolved_event_id = (
+        external_event_id if external_event_id is not None
+        else extract_external_event_id(payload)
+    )
 
     provenance = SignalProvenance(
         source=_TV_SOURCE,
@@ -160,6 +191,7 @@ def normalize_tradingview_payload(
         strategy=strategy,
         source_request_id=request_id,
         source_payload_hash=payload_hash,
+        external_event_id=resolved_event_id,
         provenance=provenance,
     )
 

@@ -306,6 +306,11 @@ class TradingViewSettings(BaseSettings):
     )
     webhook_replay_cache_size: int = Field(default=256, ge=1)
     webhook_replay_window_seconds: float = Field(default=300.0, gt=0.0)
+    # V8.1 (SAT-C-V8-001): second replay layer keyed on an operator-provided
+    # `event_id` field in the alert body. Pass-through when the payload has no
+    # event_id — bytes-layer cache remains the sole guard in that case.
+    webhook_event_id_cache_size: int = Field(default=1024, ge=1)
+    webhook_event_id_window_seconds: float = Field(default=1800.0, gt=0.0)
     # TV-2.1: shared-token fallback for TradingView's native webhook which
     # cannot produce body-HMACs. Modes: hmac (default, strongest) |
     # shared_token (no body integrity) | hmac_or_token (accept either).

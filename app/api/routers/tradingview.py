@@ -43,6 +43,7 @@ from app.signals.tradingview_event import (
     NormalizationError,
     TradingViewSignalEvent,
     append_pending_signal,
+    extract_external_event_id,
     normalize_tradingview_payload,
 )
 
@@ -94,6 +95,7 @@ class ReplayCache:
 
 
 _REPLAY_CACHE: ReplayCache | None = None
+_EVENT_ID_CACHE: ReplayCache | None = None
 
 
 def _get_replay_cache(settings: TradingViewSettings) -> ReplayCache:
@@ -106,10 +108,26 @@ def _get_replay_cache(settings: TradingViewSettings) -> ReplayCache:
     return _REPLAY_CACHE
 
 
+def _get_event_id_cache(settings: TradingViewSettings) -> ReplayCache:
+    """V8.1: Layer-2 replay cache keyed on operator-supplied external event_id.
+
+    Independent LRU — cache key space and TTL differ from the payload-hash
+    cache, so sharing the instance would cross-pollute both.
+    """
+    global _EVENT_ID_CACHE
+    if _EVENT_ID_CACHE is None:
+        _EVENT_ID_CACHE = ReplayCache(
+            max_size=settings.webhook_event_id_cache_size,
+            window_seconds=settings.webhook_event_id_window_seconds,
+        )
+    return _EVENT_ID_CACHE
+
+
 def _reset_replay_cache_for_tests() -> None:
-    """Test hook — clear singleton so each test starts clean."""
-    global _REPLAY_CACHE
+    """Test hook — clear singletons so each test starts clean."""
+    global _REPLAY_CACHE, _EVENT_ID_CACHE
     _REPLAY_CACHE = None
+    _EVENT_ID_CACHE = None
 
 
 def _verify_signature(raw_body: bytes, signature_header: str | None, secret: str) -> bool:
@@ -325,6 +343,27 @@ async def tradingview_webhook(
         parsed_payload.pop("token", None)
         parsed_payload.pop("_token", None)
 
+    # V8.1 Layer-2 replay guard: operator-supplied external event_id, cached
+    # independently from the byte-level payload hash. Pass-through when the
+    # alert body has no event_id field — layer-1 remains the sole guard.
+    external_event_id = extract_external_event_id(
+        parsed_payload if isinstance(parsed_payload, dict) else {}
+    )
+    if external_event_id is not None:
+        event_cache = _get_event_id_cache(tv)
+        if not event_cache.check_and_record(external_event_id):
+            entry = {
+                **common_log,
+                "outcome": "rejected",
+                "reason": "event_id_replay",
+                "payload_hash": payload_hash,
+                "external_event_id": external_event_id,
+                "dedup_layer": "external_event_id",
+            }
+            _audit_writer(audit_path, entry)
+            _logger.info("tradingview_webhook_event_id_replay", **entry)
+            raise HTTPException(status_code=409, detail="Replay detected (event_id)")
+
     routing_outcome: dict[str, object] = {"enabled": tv.webhook_signal_routing_enabled}
     pipeline_event: TradingViewSignalEvent | None = None
     if tv.webhook_signal_routing_enabled:
@@ -334,6 +373,7 @@ async def tradingview_webhook(
                 request_id=request_id,
                 payload_hash=payload_hash,
                 received_at=common_log["received_at"],  # type: ignore[arg-type]
+                external_event_id=external_event_id,
             )
         except NormalizationError as exc:
             routing_outcome["status"] = "normalize_failed"
@@ -359,6 +399,7 @@ async def tradingview_webhook(
         **common_log,
         "outcome": "accepted",
         "payload_hash": payload_hash,
+        "external_event_id": external_event_id,
         "payload": parsed_payload,
         "provenance": {
             "source": "tradingview_webhook",

@@ -13,6 +13,7 @@ from app.signals.tradingview_event import (
     TradingViewSignalEvent,
     append_pending_signal,
     event_to_jsonl_dict,
+    extract_external_event_id,
     normalize_tradingview_payload,
 )
 
@@ -72,6 +73,37 @@ class TestNormalize:
         b = _normalize({"ticker": "X", "action": "buy"})
         assert a.event_id != b.event_id
         assert a.provenance.signal_path_id != b.provenance.signal_path_id
+
+    def test_external_event_id_read_from_payload(self) -> None:
+        event = _normalize({"ticker": "BTC", "action": "buy", "event_id": "alert-9"})
+        assert event.external_event_id == "alert-9"
+
+    def test_external_event_id_absent_is_none(self) -> None:
+        event = _normalize({"ticker": "BTC", "action": "buy"})
+        assert event.external_event_id is None
+
+    def test_external_event_id_explicit_override(self) -> None:
+        """Router-extracted event_id takes precedence over payload re-read."""
+        event = normalize_tradingview_payload(
+            {"ticker": "BTC", "action": "buy", "event_id": "from-payload"},
+            request_id=_REQUEST_ID,
+            payload_hash=_PAYLOAD_HASH,
+            received_at=_RECEIVED_AT,
+            external_event_id="from-router",
+        )
+        assert event.external_event_id == "from-router"
+
+    def test_external_event_id_empty_or_nonstring_is_none(self) -> None:
+        assert extract_external_event_id({"event_id": ""}) is None
+        assert extract_external_event_id({"event_id": "   "}) is None
+        assert extract_external_event_id({"event_id": 42}) is None
+        assert extract_external_event_id({"event_id": None}) is None
+        assert extract_external_event_id({}) is None
+
+    def test_external_event_id_truncated_at_128_chars(self) -> None:
+        long_id = "a" * 200
+        got = extract_external_event_id({"event_id": long_id})
+        assert got is not None and len(got) == 128
 
     @pytest.mark.parametrize("missing", ["ticker", "action"])
     def test_required_field_missing(self, missing: str) -> None:

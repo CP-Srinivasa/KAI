@@ -28,6 +28,7 @@ def _event(event_id: str = "tvsig_abc", ticker: str = "BTCUSDT") -> TradingViewS
         strategy=None,
         source_request_id="req-1",
         source_payload_hash="hash-1",
+        external_event_id=None,
         provenance=SignalProvenance(
             source="tradingview_webhook",
             version="tv-3",

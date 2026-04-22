@@ -88,6 +88,7 @@ def load_pending_events(pending_path: Path) -> list[TradingViewSignalEvent]:
                     strategy=raw.get("strategy"),
                     source_request_id=raw["source_request_id"],
                     source_payload_hash=raw["source_payload_hash"],
+                    external_event_id=raw.get("external_event_id"),
                     provenance=SignalProvenance(
                         source=prov["source"],
                         version=prov["version"],
