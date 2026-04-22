@@ -17,7 +17,11 @@ from app.core.domain.document import CanonicalDocument
 from app.core.enums import DocumentType, SourceType
 
 
-def _make_doc(author: str, text: str, source_type: SourceType = SourceType.SOCIAL_API) -> CanonicalDocument:
+def _make_doc(
+    author: str,
+    text: str,
+    source_type: SourceType = SourceType.SOCIAL_API,
+) -> CanonicalDocument:
     return CanonicalDocument(
         id=uuid4(),
         external_id="tid-1",

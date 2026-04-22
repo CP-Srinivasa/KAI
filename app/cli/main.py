@@ -83,12 +83,23 @@ def _build_primary_provider() -> Any:
 
 
 def _maybe_gemini_shadow() -> Any:
-    """Return a GeminiAnalysisProvider if GEMINI_API_KEY is configured, else None."""
+    """Return a shadow analysis provider, preferring Anthropic for red-team value.
+
+    The primary ensemble chain runs OpenAI → Gemini. If the shadow were also
+    Gemini, the shadow call duplicates the ensemble fallback whenever OpenAI
+    drops — burning quota and producing no Konsens/Dissens signal
+    (CLAUDE.md §6). Prefer Anthropic (Claude) when configured so the shadow
+    stays independent. Fall back to Gemini only if Anthropic is unavailable.
+    Return None if neither key is configured.
+    """
     settings = get_settings()
-    if not settings.providers.gemini_api_key:
-        return None
-    from app.integrations.gemini.provider import GeminiAnalysisProvider
-    return GeminiAnalysisProvider.from_settings(settings.providers)
+    if settings.providers.anthropic_api_key:
+        from app.integrations.anthropic.provider import AnthropicAnalysisProvider
+        return AnthropicAnalysisProvider.from_settings(settings.providers)
+    if settings.providers.gemini_api_key:
+        from app.integrations.gemini.provider import GeminiAnalysisProvider
+        return GeminiAnalysisProvider.from_settings(settings.providers)
+    return None
 
 
 ingest_app = typer.Typer(help="Ingestion commands", no_args_is_help=True)
