@@ -153,6 +153,29 @@ Gedankenaustausch zwischen Agenten erfolgt über das **Artifact-Cross-Ref-Patter
 
 Auto-Routing-Pflicht (welcher Agent bei welchem Topic, inkl. Parallel-Aktivierung) ist in **CLAUDE.md § Auto-Routing-Pflicht** definiert.
 
+## Operator-Trust-Boundary: `monitor/*` (D-177, 2026-04-22)
+
+Die Dateien unter `monitor/` (u. a. `social_accounts.txt`, `keywords.txt`,
+`entity_aliases.yml`, `watchlists.yml`, `alert_rules.yml`, `news_domains.txt`,
+`website_sources.txt`, `youtube_channels.txt`, `podcast_feeds_*`, `hashtags.txt`,
+`historical_events.yml`) sind **operator-curated** und werden vom System als
+vertrauenswürdig eingelesen. Sie steuern u. a.:
+
+- Watchlist-basierten Trusted-Author-Gate-Bypass (D-176)
+- Keyword-/Ticker-Extraktion und Entity-Alias-Auflösung
+- Quellen-Klassifikation und Fetch-Whitelists
+- Alert-Regeln und Routing
+
+Wer Schreibzugriff auf `monitor/*` hat, kann Trust-Signale, Bypass-Regeln
+und Source-Listen manipulieren. Die Trust-Grenze ist also das Dateisystem-ACL
+der Checkout-Ordner, **nicht** ein separates Subsystem. Zugangsbeschränkung
+ist Aufgabe des Operators (Datei-Permissions, Code-Review bei PR-Änderungen
+an `monitor/*`).
+
+Keine neue Angriffsfläche gegenüber bestehenden `monitor/*`-Loaders — dieser
+Abschnitt macht die implizite Grenze explizit, damit spätere Reviewer sie
+nicht erneut aufdecken müssen.
+
 ## Documentation Policy (D-99, 2026-03-24)
 
 - Neue Sprint-Contract-Dokumente sind gestoppt (keine neuen `docs/sprint*_contract*.md` und keine neuen Sprint-Sections als Primärquelle).
