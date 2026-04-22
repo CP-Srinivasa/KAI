@@ -578,6 +578,31 @@ def trading_monitor_positions(
     console.print("write_back_allowed=False")
 
 
+@trading_app.command("operator-signal-bridge-tick")
+def trading_operator_signal_bridge_tick() -> None:
+    """Route accepted signal envelopes (dashboard/telegram) to paper fills.
+
+    Fail-closed: no-op unless EXECUTION_OPERATOR_SIGNAL_BRIDGE_ENABLED=true.
+    Designed for cron invocation. Reads artifacts/telegram_message_envelope.jsonl,
+    filters source allowlist, applies risk gates, and fills operator-supplied
+    entry/SL/TP1 via the paper engine. Non-fillable signals stay pending until
+    the configured TTL elapses.
+    """
+    import asyncio
+
+    from app.execution.envelope_to_paper_bridge import run_tick
+
+    result = asyncio.run(run_tick())
+    data = result.to_dict()
+
+    console.print("[bold]Operator-Signal-Bridge[/bold]")
+    if not data["enabled"]:
+        console.print("enabled=False (fail-closed) — no action taken")
+        return
+    for k, v in data.items():
+        console.print(f"{k}={v}")
+
+
 # -- backtest --
 
 

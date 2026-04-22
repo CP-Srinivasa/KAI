@@ -95,6 +95,23 @@ function Monitor-Positions {
     }
 }
 
+function Bridge-Tick {
+    try {
+        $output = & $Python -m app.cli.main trading operator-signal-bridge-tick 2>&1 | Out-String
+        if ($output -match "enabled=False") {
+            return  # fail-closed: silent when disabled
+        }
+        $filled   = if ($output -match "filled=(\S+)")            { $Matches[1] } else { "0" }
+        $pending  = if ($output -match "newly_pending=(\S+)")     { $Matches[1] } else { "0" }
+        $repend   = if ($output -match "re_pending=(\S+)")        { $Matches[1] } else { "0" }
+        $expired  = if ($output -match "expired=(\S+)")           { $Matches[1] } else { "0" }
+        $rejrisk  = if ($output -match "rejected_risk=(\S+)")     { $Matches[1] } else { "0" }
+        Write-Log "bridge  filled=$filled  pending=$pending  repending=$repend  expired=$expired  rejrisk=$rejrisk"
+    } catch {
+        Write-Log "bridge  ERROR: $_"
+    }
+}
+
 # -- Server watchdog ---------------------------------------------------------
 function Ensure-Server {
     try {
@@ -136,6 +153,10 @@ Ensure-Server
 
 # Close SL/TP-triggered positions first so new cycles don't compete for slots.
 Monitor-Positions
+
+# Turn accepted operator-signal envelopes into paper fills.
+# Fail-closed: silent no-op unless EXECUTION_OPERATOR_SIGNAL_BRIDGE_ENABLED=true.
+Bridge-Tick
 
 Run-Cycle "BTC/USDT"
 Start-Sleep -Seconds 15

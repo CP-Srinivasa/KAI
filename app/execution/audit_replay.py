@@ -93,6 +93,24 @@ def replay_paper_audit(audit_path: Path) -> AuditReplayResult:
                 )
             continue
 
+        if event_type == "position_adjusted":
+            sym = _coerce_str(payload.get("symbol"))
+            if sym is None or sym not in positions:
+                continue
+            existing = positions[sym]
+            new_sl = _coerce_float(payload.get("stop_loss"))
+            new_tp = _coerce_float(payload.get("take_profit"))
+            positions[sym] = PaperPosition(
+                symbol=existing.symbol,
+                quantity=existing.quantity,
+                avg_entry_price=existing.avg_entry_price,
+                stop_loss=new_sl if new_sl is not None else existing.stop_loss,
+                take_profit=new_tp if new_tp is not None else existing.take_profit,
+                opened_at=existing.opened_at,
+                realized_pnl_usd=existing.realized_pnl_usd,
+            )
+            continue
+
         if event_type != "order_filled":
             continue
 

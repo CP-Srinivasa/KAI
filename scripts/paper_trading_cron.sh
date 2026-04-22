@@ -76,6 +76,24 @@ monitor_positions() {
     write_log "monitor  checked=$checked  triggered=$triggered  no_market_data=$nomd"
 }
 
+# Turn accepted operator-signal envelopes into paper fills.
+# Fail-closed: silent no-op unless EXECUTION_OPERATOR_SIGNAL_BRIDGE_ENABLED=true.
+bridge_tick() {
+    local out
+    out=$("$PYTHON" -m app.cli.main trading operator-signal-bridge-tick 2>&1) || true
+    # Silent when disabled (fail-closed default).
+    if printf '%s' "$out" | grep -q 'enabled=False'; then
+        return
+    fi
+    local filled pending repend expired rejrisk
+    filled=$(extract_field "$out" filled)
+    pending=$(extract_field "$out" newly_pending)
+    repend=$(extract_field "$out" re_pending)
+    expired=$(extract_field "$out" expired)
+    rejrisk=$(extract_field "$out" rejected_risk)
+    write_log "bridge  filled=$filled  pending=$pending  repending=$repend  expired=$expired  rejrisk=$rejrisk"
+}
+
 # --- main -------------------------------------------------------------------
 
 write_log "--- cron start ---"
@@ -83,6 +101,7 @@ write_log "--- cron start ---"
 # Server-watchdog entfällt — systemd kai-server.service hat Restart=on-failure.
 
 monitor_positions
+bridge_tick
 run_cycle "BTC/USDT"
 sleep 15
 run_cycle "ETH/USDT"

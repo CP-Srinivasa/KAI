@@ -170,6 +170,8 @@ class TelegramOperatorBot:
         signal_exchange_sent_log_path: str = "artifacts/telegram_exchange_sent.jsonl",
         signal_exchange_dead_letter_log_path: str = "artifacts/telegram_exchange_dead_letter.jsonl",
         dashboard_url: str = "",
+        signal_approval_enabled: bool = False,
+        signal_approval_ttl_minutes: int = 60,
     ) -> None:
         normalized_updates = tuple(
             dict.fromkeys(
@@ -220,6 +222,8 @@ class TelegramOperatorBot:
         self._signal_auto_run_mode = normalized_signal_mode
         self._signal_auto_run_provider = signal_auto_run_provider.strip()
         self._signal_forward_to_exchange_enabled = signal_forward_to_exchange_enabled
+        self._signal_approval_enabled = signal_approval_enabled
+        self._signal_approval_ttl_minutes = max(1, int(signal_approval_ttl_minutes))
         self._pending_confirm: dict[int, str] = {}
         # Voice-Confirm-Gate: voice-transkribierte Signale parken hier, bis /ok oder /cancel
         self._pending_signal_draft: dict[int, dict[str, Any]] = {}
@@ -2664,6 +2668,10 @@ class TelegramOperatorBot:
             await self._handle_annotation_callback(
                 chat_id, query_id, data,
             )
+        elif data.startswith("sig:"):
+            await self._handle_signal_approval_callback(
+                chat_id, query_id, data, callback_query,
+            )
         else:
             await self._answer_callback_query(query_id, text="Unbekannte Aktion.")
 
@@ -2681,6 +2689,102 @@ class TelegramOperatorBot:
         if text:
             payload["text"] = text
         return await self._send_payload_with_retry(url, payload)
+
+    async def _handle_signal_approval_callback(
+        self,
+        chat_id: int,
+        query_id: str,
+        data: str,
+        callback_query: dict[str, Any],
+    ) -> None:
+        """Process `sig:{f|i}:<envelope_id>` Fill/Ignore approval click.
+
+        Dispatches to the pure handler in ``app.ingestion.telegram_channel_approval``
+        which loads the shadow envelope, checks TTL + dedup, and re-emits a new
+        ``*_approved`` envelope on Fill (or writes an ignore/expired audit row).
+        The bot then edits the original approval message so the operator sees
+        the outcome inline.
+        """
+        from app.ingestion.telegram_channel_approval import (
+            handle_signal_approval,
+            parse_callback_data,
+        )
+
+        action = parse_callback_data(data)
+        if action is None:
+            await self._answer_callback_query(query_id, text="Ungültige Signal-Aktion.")
+            return
+
+        if not self._signal_approval_enabled:
+            await self._answer_callback_query(
+                query_id, text="Approval-Mode ist aus.",
+            )
+            return
+
+        outcome = handle_signal_approval(
+            action.action,
+            action.envelope_id,
+            envelope_log=self._message_envelope_log_path,
+            ttl_minutes=self._signal_approval_ttl_minutes,
+            approved_by=chat_id,
+        )
+
+        # Short toast in the Telegram UI.
+        toast_map = {
+            "filled": "✅ Gefüllt.",
+            "ignored": "❌ Ignoriert.",
+            "expired": "⏰ Abgelaufen.",
+            "duplicate": "↩︎ Bereits gefüllt.",
+            "not_found": "❓ Signal nicht gefunden.",
+        }
+        await self._answer_callback_query(
+            query_id, text=toast_map.get(outcome.status, outcome.status),
+        )
+
+        # Edit the original approval message so the status is visible without
+        # scrolling for the toast. Keep the original body + append outcome.
+        message = callback_query.get("message") or {}
+        message_id = message.get("message_id")
+        orig_text = message.get("text") or message.get("caption") or ""
+        status_line_map = {
+            "filled": f"\n\n✅ *Gefüllt* — new env: `{outcome.new_envelope_id or '?'}`",
+            "ignored": "\n\n❌ *Ignoriert*",
+            "expired": (
+                f"\n\n⏰ *Abgelaufen* — TTL {self._signal_approval_ttl_minutes} Min"
+            ),
+            "duplicate": "\n\n↩︎ *Bereits gefüllt*",
+            "not_found": "\n\n❓ *Signal nicht mehr im Log*",
+        }
+        suffix = status_line_map.get(outcome.status, f"\n\n_{outcome.status}_")
+        new_text = f"{orig_text}{suffix}"
+
+        self._audit(
+            chat_id,
+            "_signal_approval",
+            args=f"{action.action}:{action.envelope_id}:{outcome.status}",
+        )
+
+        if self._dry_run or not self._token or not message_id:
+            logger.info(
+                "[BOT] approval outcome env=%s status=%s (no edit: dry_run=%s)",
+                action.envelope_id,
+                outcome.status,
+                self._dry_run,
+            )
+            return
+
+        url = f"{_TELEGRAM_API_BASE}/bot{self._token}/editMessageText"
+        payload = {
+            "chat_id": chat_id,
+            "message_id": message_id,
+            "text": new_text,
+            "parse_mode": "Markdown",
+            "disable_web_page_preview": True,
+            # Removing reply_markup: Telegram treats missing key as "keep";
+            # to strip buttons we send an empty inline_keyboard explicitly.
+            "reply_markup": {"inline_keyboard": []},
+        }
+        await self._send_payload_with_retry(url, payload)
 
     async def _handle_annotation_callback(
         self, chat_id: int, query_id: str, data: str,

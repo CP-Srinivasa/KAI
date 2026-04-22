@@ -160,6 +160,22 @@ class ExecutionSettings(BaseSettings):
     position_monitor_enabled: bool = Field(default=True)
     position_monitor_interval_seconds: int = Field(default=60, ge=10)
 
+    # Operator-Signal-Bridge: turns accepted signal envelopes (from dashboard
+    # paste or telegram-bot handoff) into real paper-engine fills, honoring
+    # the operator's entry/SL/TP 1:1. Fail-closed: disabled by default.
+    operator_signal_bridge_enabled: bool = Field(default=False)
+    operator_signal_source_allowlist: str = Field(default="dashboard")  # CSV
+    operator_signal_ttl_hours: int = Field(default=24, ge=1, le=168)
+    operator_signal_entry_tolerance_pct: float = Field(default=0.5, ge=0.0, le=5.0)
+
+    # Approval-Mode (Vorschlag B, B-6): per-signal manual Fill/Ignore via Telegram
+    # buttons. Fail-closed: disabled by default. When enabled, parsed signals
+    # from auto-ingest workers (e.g. telegram_channel) are NOT auto-routed to
+    # the bridge — instead a new envelope is re-emitted with source
+    # `<orig>_approved` only after the operator clicks [Fill].
+    operator_signal_approval_enabled: bool = Field(default=False)
+    operator_signal_approval_ttl_minutes: int = Field(default=60, ge=1, le=1440)
+
     @model_validator(mode="after")
     def validate_mode_guardrails(self) -> "ExecutionSettings":
         if self.live_enabled and self.mode is not ExecutionMode.LIVE:
@@ -359,6 +375,42 @@ class BinanceMarketDataSettings(BaseSettings):
     freshness_threshold_seconds: float = Field(default=120.0, gt=0.0)
 
 
+class TelegramChannelIngestSettings(BaseSettings):
+    """Vorschlag B — premium-channel MTProto auto-ingest (Telethon).
+
+    Fail-closed: disabled by default. When enabled, the worker connects
+    via MTProto, resolves the target channel by title or explicit chat_id,
+    subscribes to new messages, and emits parsed signals as envelope-JSONL
+    records. No execution happens unless the bridge allowlist explicitly
+    includes ``telegram_premium_channel`` (see B-5).
+    """
+
+    model_config = SettingsConfigDict(
+        env_prefix="INGESTION_TELEGRAM_CHANNEL_", env_file=".env", extra="ignore"
+    )
+
+    enabled: bool = Field(default=False)
+    # api_id/api_hash from https://my.telegram.org/apps. Required once to
+    # create the session file; afterwards the session stores the auth.
+    api_id: int = Field(default=0)
+    api_hash: str = Field(default="", repr=False)
+    # Path to the Telethon session file (persists auth state across runs).
+    session_path: str = Field(default="artifacts/telegram_channel.session")
+    # Resolution: prefer explicit chat_id when known, else match by title.
+    # The premium channel has no @handle — title-match is the fallback.
+    target_chat_id: int = Field(default=0)
+    target_title: str = Field(default="")
+    # Shadow-Mode: when True, the worker parses + emits envelopes but skips
+    # no execution step (execution is already gated by the bridge allowlist,
+    # so this is mostly for operator-side logging clarity).
+    dry_run: bool = Field(default=True)
+    # Source-tag written into every emitted envelope. Must match the value
+    # added to EXECUTION_OPERATOR_SIGNAL_SOURCE_ALLOWLIST in B-5.
+    source_tag: str = Field(default="telegram_premium_channel")
+    # Diagnostic log for observed channel messages (parsed + unparsed both).
+    raw_log_path: str = Field(default="artifacts/telegram_channel_raw.jsonl")
+
+
 class AppSettings(BaseSettings):
     model_config = SettingsConfigDict(
         env_prefix="APP_",
@@ -492,6 +544,9 @@ class AppSettings(BaseSettings):
     operator: OperatorSettings = Field(default_factory=OperatorSettings)
     tradingview: TradingViewSettings = Field(default_factory=TradingViewSettings)
     binance: BinanceMarketDataSettings = Field(default_factory=BinanceMarketDataSettings)
+    telegram_channel_ingest: TelegramChannelIngestSettings = Field(
+        default_factory=TelegramChannelIngestSettings
+    )
 
     _strip_secrets = field_validator(
         "api_key", "api_key_next", "coingecko_api_key", mode="before"
