@@ -3,15 +3,17 @@
 from __future__ import annotations
 
 import asyncio
+import re
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 from app.analysis.base.interfaces import BaseAnalysisProvider, LLMAnalysisOutput
 from app.analysis.keywords.engine import KeywordEngine, KeywordHit
 from app.analysis.rules.rule_analyzer import compute_spam_probability
 from app.core.domain.document import AnalysisResult, CanonicalDocument, EntityMention
-from app.core.enums import AnalysisSource, MarketScope, SentimentLabel
+from app.core.enums import AnalysisSource, MarketScope, SentimentLabel, SourceType
 from app.core.logging import get_logger
 from app.market_data.base import BaseMarketDataAdapter
 from app.normalization.entities import hits_to_entity_mentions
@@ -63,6 +65,43 @@ _CRYPTO_TITLE_TERMS = frozenset(
 )
 
 logger = get_logger(__name__)
+
+_TRUSTED_AUTHOR_HANDLE_RE = re.compile(r"@([A-Za-z0-9_]{1,15})")
+
+
+def load_trusted_social_handles(monitor_dir: Path) -> frozenset[str]:
+    """Parse monitor/social_accounts.txt → lowercased handles without the @.
+
+    D-174 Phase I (2Y): tweets from curated watchlist authors bypass both the
+    stub-length and low-relevance gates, because the curated list is already
+    the whitelist. Format: `platform|handle|name|category`, platform=twitter,
+    comments (#) and blanks ignored.
+    """
+    path = Path(monitor_dir) / "social_accounts.txt"
+    if not path.exists():
+        return frozenset()
+    handles: set[str] = set()
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        parts = line.split("|")
+        if len(parts) < 2 or parts[0].strip().lower() != "twitter":
+            continue
+        handle = parts[1].strip().lstrip("@").lower()
+        if handle:
+            handles.add(handle)
+    return frozenset(handles)
+
+
+def _extract_author_handle(author: str | None) -> str | None:
+    """Return the @handle (without @, lowercase) from a CanonicalDocument.author string."""
+    if not author:
+        return None
+    match = _TRUSTED_AUTHOR_HANDLE_RE.search(author)
+    if not match:
+        return None
+    return match.group(1).lower()
 
 
 def _unique_strings(values: list[str]) -> list[str]:
@@ -337,6 +376,7 @@ class AnalysisPipeline:
         run_llm: bool = True,
         shadow_provider: BaseAnalysisProvider | None = None,
         market_data_adapter: BaseMarketDataAdapter | None = None,
+        trusted_social_handles: frozenset[str] | None = None,
     ) -> None:
         self._keyword_engine = keyword_engine
         self._provider = provider
@@ -344,6 +384,8 @@ class AnalysisPipeline:
         self._shadow_provider = shadow_provider
         self._market_data_adapter = market_data_adapter
         self._cached_market_context: dict[str, Any] | None = None
+        # D-174 Phase I (2Y): curated twitter watchlist bypasses stub + low-relevance gates.
+        self._trusted_social_handles: frozenset[str] = trusted_social_handles or frozenset()
 
         if self._shadow_overlaps_ensemble() and shadow_provider is not None:
             # CLAUDE.md §6 requires Konsens/Dissens/Red-Team. A shadow that
@@ -361,6 +403,17 @@ class AnalysisPipeline:
                     "provider. Consider a distinct shadow (e.g. Anthropic)."
                 ),
             )
+
+    def _is_trusted_social_author(self, doc: CanonicalDocument) -> bool:
+        """True if doc is a tweet whose author is in the curated watchlist."""
+        if not self._trusted_social_handles:
+            return False
+        if doc.source_type != SourceType.SOCIAL_API:
+            return False
+        handle = _extract_author_handle(doc.author)
+        if handle is None:
+            return False
+        return handle in self._trusted_social_handles
 
     def _shadow_overlaps_ensemble(self) -> bool:
         """True if the primary is an Ensemble that contains the shadow provider.
@@ -435,11 +488,22 @@ class AnalysisPipeline:
             context["market_context"] = self._cached_market_context
         pre_llm_relevance = _fallback_relevance(doc, keyword_hits, entity_mentions)
 
+        trusted_author = self._is_trusted_social_author(doc)
         fallback_reason: str | None = None
         if self._provider is None:
             fallback_reason = "LLM provider unavailable."
         elif not self._run_llm:
             fallback_reason = "LLM provider disabled."
+        elif trusted_author:
+            # D-174 Phase I (2Y): curated social watchlist author — bypass both
+            # stub-length and low-relevance gates. Handle is lowercased in loader.
+            logger.info(
+                "trusted_author_gate_bypass",
+                doc_id=str(doc.id),
+                author=doc.author,
+                content_len=len(text),
+                pre_llm_relevance=pre_llm_relevance,
+            )
         elif len(text) <= _STUB_CONTENT_THRESHOLD:
             # PH5C: skip LLM for stub/placeholder documents
             fallback_reason = "stub_document: content below threshold."

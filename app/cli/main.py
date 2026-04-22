@@ -696,11 +696,18 @@ def analyze_pending(
         from app.market_data.service import create_market_data_adapter
 
         market_adapter = create_market_data_adapter(provider="coingecko")
+        from pathlib import Path as _Path
+
+        from app.analysis.pipeline import load_trusted_social_handles
+
         pipeline = AnalysisPipeline(
             keyword_engine,
             provider_obj,
             run_llm=bool(provider_obj),
             market_data_adapter=market_adapter,
+            trusted_social_handles=load_trusted_social_handles(
+                _Path(get_settings().monitor_dir)
+            ),
         )
         session_factory = build_session_factory(settings.db)
 

@@ -21,7 +21,11 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.alerts.service import AlertService
 from app.analysis.base.interfaces import BaseAnalysisProvider
 from app.analysis.keywords.engine import KeywordEngine
-from app.analysis.pipeline import AnalysisPipeline, PipelineResult
+from app.analysis.pipeline import (
+    AnalysisPipeline,
+    PipelineResult,
+    load_trusted_social_handles,
+)
 from app.core.domain.document import AnalysisResult, CanonicalDocument
 from app.core.enums import DocumentStatus, SourceStatus
 from app.core.errors import StorageError
@@ -232,6 +236,9 @@ async def run_rss_pipeline(
         run_llm=provider is not None,
         shadow_provider=shadow_provider,
         market_data_adapter=market_adapter,
+        trusted_social_handles=load_trusted_social_handles(
+            Path(get_settings().monitor_dir)
+        ),
     )
     pipeline_results = await pipeline.run_batch(saved_docs)
 
@@ -436,6 +443,9 @@ async def run_youtube_pipeline(
         run_llm=provider is not None,
         shadow_provider=shadow_provider,
         market_data_adapter=market_adapter,
+        trusted_social_handles=load_trusted_social_handles(
+            Path(get_settings().monitor_dir)
+        ),
     )
     pipeline_results = await pipeline.run_batch(saved_docs)
 
@@ -659,6 +669,9 @@ async def run_newsdata_pipeline(
         run_llm=provider is not None,
         shadow_provider=shadow_provider,
         market_data_adapter=market_adapter,
+        trusted_social_handles=load_trusted_social_handles(
+            Path(get_settings().monitor_dir)
+        ),
     )
     pipeline_results = await pipeline.run_batch(saved_docs)
 
@@ -866,6 +879,9 @@ async def run_twitter_pipeline(
         run_llm=provider is not None,
         shadow_provider=shadow_provider,
         market_data_adapter=market_adapter,
+        trusted_social_handles=load_trusted_social_handles(
+            Path(get_settings().monitor_dir)
+        ),
     )
     pipeline_results = await pipeline.run_batch(saved_docs)
 
