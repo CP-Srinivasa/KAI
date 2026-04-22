@@ -71,11 +71,27 @@ def create_provider(provider_type: str, settings: Any) -> BaseAnalysisProvider |
         if getattr(settings.providers, "gemini_api_key", None):
             providers.append(create_provider("gemini", settings))
 
+        # D-174 Phase I: Grok as emergency fallback — only when all premium
+        # providers above have failed. Flag-gated so the chain stays unchanged
+        # when disabled.
+        if (
+            getattr(settings.providers, "xai_fallback_enabled", False)
+            and getattr(settings.providers, "xai_api_key", None)
+        ):
+            providers.append(create_provider("grok", settings))
+
         # Internal model must be last (guaranteed fallback)
         internal = create_provider("internal", settings)
         if internal:
             providers.append(internal)
 
         return EnsembleProvider([p for p in providers if p is not None])
+
+    if provider_type == "grok":
+        if not getattr(settings.providers, "xai_api_key", None):
+            return None
+        from app.integrations.xai.provider import GrokAnalysisProvider
+
+        return GrokAnalysisProvider.from_settings(settings.providers)
 
     raise ValueError(f"Unsupported analysis provider: {provider_type!r}")

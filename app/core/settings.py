@@ -97,6 +97,11 @@ class ProviderSettings(BaseSettings):
     newsdata_api_key: str = Field(default="", repr=False)
     x_bearer_token: str = Field(default="", repr=False)
 
+    xai_api_key: str = Field(default="", repr=False)
+    xai_model: str = Field(default="grok-4")
+    xai_timeout: int = Field(default=30)
+    xai_fallback_enabled: bool = Field(default=False)
+
     _strip_secrets = field_validator(
         "openai_api_key",
         "anthropic_api_key",
@@ -104,6 +109,7 @@ class ProviderSettings(BaseSettings):
         "youtube_api_key",
         "newsdata_api_key",
         "x_bearer_token",
+        "xai_api_key",
         mode="before",
     )(_strip_secret)
 

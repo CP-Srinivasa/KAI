@@ -54,8 +54,10 @@ def _safe_text(text: str) -> str:
         )
 
 def _build_primary_provider() -> Any:
-    """Build an Ensemble (OpenAI -> Gemini) provider with automatic fallback.
+    """Build an Ensemble (OpenAI -> Gemini -> [Grok]) provider with automatic fallback.
 
+    Grok is appended only when XAI_FALLBACK_ENABLED=true and a key is set,
+    and only acts when OpenAI and Gemini have both failed (D-174 Phase I).
     Returns None if no API keys are configured.
     """
     settings = get_settings()
@@ -66,6 +68,12 @@ def _build_primary_provider() -> Any:
     if settings.providers.gemini_api_key:
         from app.integrations.gemini.provider import GeminiAnalysisProvider
         providers.append(GeminiAnalysisProvider.from_settings(settings.providers))
+    if (
+        settings.providers.xai_fallback_enabled
+        and settings.providers.xai_api_key
+    ):
+        from app.integrations.xai.provider import GrokAnalysisProvider
+        providers.append(GrokAnalysisProvider.from_settings(settings.providers))
     if not providers:
         return None
     if len(providers) == 1:
