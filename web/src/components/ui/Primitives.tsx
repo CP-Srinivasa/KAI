@@ -184,3 +184,71 @@ export function SectionLabel({ children, className }: { children: ReactNode; cla
     </div>
   );
 }
+
+/* ---------- ProgressBar (DALI-P-025) ----------
+   Zentrale Progress-Komponente für alle Panels (Quality-Bar, Re-Entry-Gate,
+   Active-Precision u.a.). Tokens vereinheitlicht (h-1.5 md / h-1 sm, rounded-full,
+   bg-bg-3 track); Auto-Tone-Logik: >=100 pos, >=50 warn, sonst neg; bei
+   sufficientSample=false oder value=null → muted. Per tone="pos|warn|neg|muted"
+   explizit überschreibbar. A11y-Attribute (role, aria-valuenow/-min/-max,
+   aria-label) werden zentral gesetzt. */
+
+type ProgressTone = "pos" | "warn" | "neg" | "muted" | "auto";
+type ProgressSize = "sm" | "md";
+
+const PROGRESS_FILL: Record<Exclude<ProgressTone, "auto">, string> = {
+  pos: "bg-pos",
+  warn: "bg-warn",
+  neg: "bg-neg",
+  muted: "bg-fg-subtle/60",
+};
+
+export function ProgressBar({
+  value,
+  target,
+  tone = "auto",
+  size = "md",
+  label,
+  sufficientSample = true,
+  className,
+}: {
+  value: number | null | undefined;
+  target: number;
+  tone?: ProgressTone;
+  size?: ProgressSize;
+  label: string;
+  sufficientSample?: boolean;
+  className?: string;
+}) {
+  const hasValue = value != null;
+  const pct = hasValue ? Math.min(100, (value / target) * 100) : 0;
+
+  const resolved: Exclude<ProgressTone, "auto"> =
+    !hasValue || !sufficientSample
+      ? "muted"
+      : tone !== "auto"
+        ? tone
+        : pct >= 100
+          ? "pos"
+          : pct >= 50
+            ? "warn"
+            : "neg";
+
+  const trackHeight = size === "sm" ? "h-1" : "h-1.5";
+
+  return (
+    <div
+      className={cn(trackHeight, "w-full rounded-full bg-bg-3 overflow-hidden", className)}
+      role="progressbar"
+      aria-valuenow={hasValue ? Math.round(value) : 0}
+      aria-valuemin={0}
+      aria-valuemax={target}
+      aria-label={label}
+    >
+      <div
+        className={cn("h-full rounded-full transition-all", PROGRESS_FILL[resolved])}
+        style={{ width: `${pct}%` }}
+      />
+    </div>
+  );
+}

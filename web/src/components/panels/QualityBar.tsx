@@ -1,4 +1,4 @@
-import { Card, CardHeader, Badge } from "@/components/ui/Primitives";
+import { Card, CardHeader, Badge, ProgressBar } from "@/components/ui/Primitives";
 import { useT } from "@/i18n/I18nProvider";
 import { cn } from "@/lib/utils";
 import type { DashboardQuality } from "@/lib/api";
@@ -78,7 +78,6 @@ export function QualityBarPanel({ data }: { data: DashboardQuality | null }) {
       <div className="space-y-3.5">
         {rows.map((r) => {
           const hasValue = r.value != null;
-          const pct = hasValue ? Math.min(100, (r.value! / r.target) * 100) : 0;
           const ok = hasValue && r.value! >= r.target;
           return (
             <div key={r.label}>
@@ -94,15 +93,14 @@ export function QualityBarPanel({ data }: { data: DashboardQuality | null }) {
                   <span className="text-fg-subtle">/ {r.format(r.target)}</span>
                 </div>
               </div>
-              <div className="mt-1.5 h-1.5 rounded-full bg-bg-3 overflow-hidden">
-                <div
-                  className={cn(
-                    "h-full rounded-full transition-all",
-                    !hasValue ? "bg-bg-3" : ok ? "bg-pos" : pct >= 50 ? "bg-warn" : "bg-neg",
-                  )}
-                  style={{ width: `${pct}%` }}
-                />
-              </div>
+              <ProgressBar
+                value={r.value}
+                target={r.target}
+                tone={ok ? "pos" : "auto"}
+                size="md"
+                label={r.label}
+                className="mt-1.5"
+              />
             </div>
           );
         })}
