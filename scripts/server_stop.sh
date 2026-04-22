@@ -23,6 +23,10 @@ is_pid_running() {
 }
 
 stop_pid() {
+    # Returns 0 on success, non-zero when the OS refuses the kill
+    # (e.g. access-denied because the target runs in another session).
+    # Callers MUST verify the process is actually gone afterwards via
+    # is_pid_running — a zero return only means the OS accepted the call.
     local pid=$1
     local force=${2:-0}
     if [ "$IS_WINDOWS" = "1" ]; then
@@ -38,6 +42,7 @@ stop_pid() {
             kill "$pid" 2>/dev/null
         fi
     fi
+    return $?
 }
 
 if [ ! -f "$PID_FILE" ]; then
@@ -52,10 +57,23 @@ fi
 
 PID=$(cat "$PID_FILE")
 if is_pid_running "$PID"; then
-    stop_pid "$PID" 0
+    stop_pid "$PID" 0 || true   # graceful SIGTERM; ignore exit for now
     sleep 2
     if is_pid_running "$PID"; then
-        stop_pid "$PID" 1
+        stop_pid "$PID" 1 || true   # force SIGKILL
+        sleep 1
+    fi
+    # D-185: verify the process is actually gone — taskkill/kill can silently
+    # fail with access-denied on cross-session targets, and the old script
+    # reported "stopped" anyway. Preserve the PID file so the operator can
+    # diagnose; a silent success led to a confused restart cycle.
+    if is_pid_running "$PID"; then
+        echo "ERROR: Server process $PID still running after SIGTERM+SIGKILL." >&2
+        echo "  Likely cause: access-denied (target in a more-privileged session)." >&2
+        echo "  Remedy: run 'Stop-Process -Id $PID -Force' from an elevated" >&2
+        echo "  PowerShell, then re-run this script or scripts/server_start.sh." >&2
+        echo "  PID file left intact for inspection: $PID_FILE" >&2
+        exit 1
     fi
     echo "Server stopped (PID $PID)"
 else
@@ -74,10 +92,17 @@ TUNNEL_PID_FILE=".tunnel.pid"
 if [ -f "$TUNNEL_PID_FILE" ]; then
     TPID=$(cat "$TUNNEL_PID_FILE")
     if is_pid_running "$TPID"; then
-        stop_pid "$TPID" 1
-        echo "Tunnel stopped (PID $TPID)"
+        stop_pid "$TPID" 1 || true
+        sleep 1
+        if is_pid_running "$TPID"; then
+            echo "WARNING: Tunnel process $TPID still running after SIGKILL." >&2
+            echo "  PID file left intact: $TUNNEL_PID_FILE" >&2
+        else
+            echo "Tunnel stopped (PID $TPID)"
+            rm -f "$TUNNEL_PID_FILE"
+        fi
     else
         echo "Tunnel was not running (stale PID $TPID)"
+        rm -f "$TUNNEL_PID_FILE"
     fi
-    rm -f "$TUNNEL_PID_FILE"
 fi
