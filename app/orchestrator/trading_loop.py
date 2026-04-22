@@ -110,6 +110,24 @@ class TradingLoop:
         started_at = _now_utc()
         notes: list[str] = []
 
+        # D-182: priority-tier gate. Default min_priority=1 is a no-op; setting
+        # it to 10 restricts paper fills to the high-conviction tier where
+        # live hit-rate evidence is disjoint from standard tier (D-149).
+        min_priority = get_settings().execution.paper_min_priority
+        if min_priority > 1:
+            observed = analysis.recommended_priority
+            if observed is None or observed < min_priority:
+                cycle = self._build_cycle(
+                    cycle_id,
+                    started_at,
+                    symbol,
+                    CycleStatus.PRIORITY_REJECTED,
+                    notes=notes
+                    + [f"priority_gate_reject:{observed}|threshold:{min_priority}"],
+                )
+                await self._write_db(cycle)
+                return cycle
+
         market_data = None
         try:
             market_data = await self._market_data.get_market_data_point(symbol)

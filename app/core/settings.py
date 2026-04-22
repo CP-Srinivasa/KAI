@@ -183,6 +183,14 @@ class ExecutionSettings(BaseSettings):
     paper_fee_pct: float = Field(default=0.1)  # 0.1% fee
     paper_slippage_pct: float = Field(default=0.05)  # 0.05% slippage
 
+    # Priority-Tier-Gate (D-182): only fill paper cycles when the underlying
+    # AnalysisResult.recommended_priority is >= this threshold. Default 1
+    # preserves pre-gate behavior (every priority passes). Set to 10 to
+    # restrict paper execution to the high-conviction tier (D-149 evidence:
+    # P>=10 hit-rate 72.73% on n=55, CI95 [59.77, 82.72] vs P7-P9 29.03%
+    # on n=186). Analyses with priority=None are blocked when threshold>1.
+    paper_min_priority: int = Field(default=1, ge=1, le=10)
+
     # Order parameters
     order_ttl_seconds: int = Field(default=300)
     max_order_retries: int = Field(default=3)

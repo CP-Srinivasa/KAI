@@ -16,6 +16,7 @@ class CycleStatus(StrEnum):
     RISK_REJECTED = "risk_rejected"
     SIZE_REJECTED = "size_rejected"
     CONSENSUS_REJECTED = "consensus_rejected"
+    PRIORITY_REJECTED = "priority_rejected"  # D-182: priority below paper_min_priority
     ORDER_FAILED = "order_failed"
     ERROR = "error"
 
