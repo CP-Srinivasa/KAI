@@ -264,7 +264,7 @@ Nach dem Cutover in dieser Reihenfolge abhaken:
 
 1. ~~**CLI-Entry `paper-trading cron`**~~ — ✅ **geklärt 2026-04-20:** kein CLI-Entry nötig, Bash-Port `scripts/paper_trading_cron.sh` liefert funktionale Parität. Siehe §6.4.
 2. ~~**Agent-Worker-Entrypoint**~~ — ✅ **geklärt 2026-04-20:** `python -m app.agents.worker --loop` (Quelle `scripts/agent_worker_start.sh:37`). In §6.2 eingetragen.
-3. **Ruft die CLI `daily-strategy bootstrap` ohne TTY sauber durch?** Der Telegram-Ping läuft `async` — in einer systemd-oneshot-Umgebung (ohne Interaktivität) verifizieren. Idealerweise heute mit `--no-notify` auch auf dem Laptop als Dry-Run testen.
+3. ~~**Ruft die CLI `daily-strategy bootstrap` ohne TTY sauber durch?**~~ ✅ **geklärt 2026-04-22 (V3-Dry-Run):** `python -m app.cli.main daily-strategy bootstrap --no-notify` läuft sauber, idempotent (bei vorhandener Datei: Exit-Status 0, Output `already present: artifacts/daily_strategy/<DATE>.md`). Kein TTY-Bedarf. Für systemd-Timer: `--no-notify` bewusst weglassen (Notify ist kostenfrei und gewünscht), nur falls Telegram-Token noch nicht gesetzt → `--no-notify`.
 4. **Port 8000 auf Pi:** lokal frei? Falls Pi schon andere Services hat, `ss -tlnp | grep 8000` zeigt das.
 5. **Zeitzone Pi:** `timedatectl` → `Europe/Berlin`. Sonst stimmen die Timer-Cron-Zeiten nicht, und die Daily-Artefakt-Namen (UTC-Date) driften vs. lokaler 08:00-Trigger.
 6. **SSH-Zugriff ab Migration:** User ist am 05-01 vor Ort. Für Remote-Debugging ab 05-02 muss SSH-Port erreichbar sein (entweder LAN-only + VPN, oder Cloudflare-Tunnel-SSH). **Empfehlung:** Cloudflare-Tunnel-SSH (zero open ports im Router, gleiche Domain-Infra).
@@ -298,9 +298,62 @@ Trigger: irgendein Check in §7 schlägt fehl, oder Pi crasht binnen 48 h mehr a
 
 ---
 
+## 11. Dry-Run-Verifikation 2026-04-22 (V3)
+
+Auf dem Laptop ohne Pi durchgeführt. Ziel: alle in §6 referenzierten Skripte/CLI-Pfade existieren und sind ausführbar; keine Überraschung am 05-01.
+
+### 11.1 Skripte/Module verifiziert (file:line)
+- `scripts/paper_trading_cron.sh` → existiert, Bash-Port mit funktionaler Parität zum PS1 ✓
+- `scripts/agent_worker_start.sh:37` → `nohup python -m app.agents.worker --loop` ✓ (matched §6.2 ExecStart)
+- `python -m app.cli.main daily-strategy bootstrap --no-notify` → idempotent, exit 0, kein TTY nötig ✓
+- `app/cli/main.py:101` → `from app.cli.commands.daily_strategy import daily_strategy_app` ✓
+
+### 11.2 ARM64-Wheel-Audit (alle Direct-Deps aus pyproject.toml)
+Risiko: einige C-/Rust-Extensions brauchen aarch64-Wheels, sonst Build-from-Source (15-30 min, gcc + dev-headers nötig).
+
+| Dep | ARM64-Wheel auf PyPI? | Risiko |
+|---|---|---|
+| `pydantic>=2.10` (Rust core) | ✓ | none |
+| `psycopg2-binary>=2.9.10` | ✓ (manylinux_aarch64) | none |
+| `asyncpg>=0.30` (C ext) | ✓ | none |
+| `tiktoken>=0.8` (Rust) | ✓ | none |
+| `selectolax>=0.3.21` (Lexbor C) | ✓ | none |
+| `httpx`, `feedparser`, `beautifulsoup4`, `structlog`, `typer`, `rich`, `apscheduler`, `tenacity`, `pydantic-settings`, `sqlalchemy`, `alembic`, `aiosqlite`, `mcp` | pure-Python | none |
+| `openai`, `anthropic`, `google-genai` | pure-Python | none |
+
+→ **Erwartung:** `pip install -e .` auf Pi 4b (Bookworm/aarch64) zieht alles als Wheels, keine Compile-Zeit. Falls doch eine Quelle erscheint, ist das ein Hinweis auf eine inkompatible Python-Version (z.B. 3.11 statt 3.12) — vor `pip install` mit `python3 --version` prüfen.
+
+### 11.3 Postgres-Migrationsweg
+Aktuelle Strategie: pg_dump vom Laptop → Pi (siehe §3.1). Voraussetzung: gleiche Major-Version Postgres beidseitig. Auf dem Laptop:
+```bash
+psql -V    # Major-Version notieren
+pg_dump --format=custom --file=kai_db_<DATE>.dump <db_url>
+```
+Auf dem Pi vor Restore: gleiche Major-Version installieren. **Vorab-Action für User:** Postgres-Major heute notieren, damit am 05-01 nicht das Risiko einer Cross-Version-Migration entsteht.
+
+### 11.4 Open-Risk-Tabelle (Stand 2026-04-22, D-9)
+
+| Risiko | Mitigation | Verantwortlich |
+|---|---|---|
+| Python 3.12 fehlt auf Pi-Image | `apt install python3.12 python3.12-venv` (Bookworm hat 3.11; ggf. deadsnakes oder pyenv nötig) | User vor Ort |
+| Postgres-Major-Mismatch Laptop↔Pi | Heute Major auf Laptop notieren, gleiche Version auf Pi | User vor Ort |
+| ARM64-Wheel überraschend nicht da | `pip install --only-binary=:all:` als Trockenlauf vor systemd-Enable | Pi-Session |
+| Cloudflared-Bundle scp scheitert (`.cloudflared/` permissions) | Pi-User `kai` muss vor `scp` existieren, Zielpfad `/home/kai/.cloudflared/` mit `mkdir -p && chown kai:kai` | Pi-Session |
+| Daily-Strategy-Telegram-Notify schickt aus Pi-Kontext | `--no-notify` für ersten Trigger, dann auf `notify` umstellen | systemd-Unit |
+| BotFather-URL noch nicht umgestellt | siehe §8.7 — heute beim User explizit anstoßen | User |
+
+### 11.5 Was diese Dry-Run NICHT klärt (echtes Pi-Setup nötig)
+- Cloudflared-ARM64-Binary-Download — URL ändert sich pro Release, am 05-01 frisch holen
+- systemd-Pfade: `/etc/systemd/system/...` — auf RaspiOS Bookworm Standard, aber je nach Image variabel
+- `Environment=TZ=Europe/Berlin` ggf. zusätzlich zu `timedatectl` setzen wenn Locale-Issues auftreten
+- Performance-Headroom Pi 4b unter realer 138-cycles/day-Last — erst Live messbar
+
+---
+
 ## Status
 
 - **Erstellt:** 2026-04-20
+- **V3-Verifikation ergänzt:** 2026-04-22 (§11)
 - **Verantwortlich:** Operator (User) + Claude-Session am 05-01
-- **Nächste Review:** spätestens 2026-04-28 (D-3 vor Migration) — Antworten auf §8 prüfen
+- **Nächste Review:** spätestens 2026-04-28 (D-3 vor Migration) — verbleibende Punkte in §8 (4, 5, 6, 7) prüfen
 - **Quer-Referenz:** Memory `reminder_server_migration_pi.md`, `reminder_cloudflare_named_tunnel.md`
