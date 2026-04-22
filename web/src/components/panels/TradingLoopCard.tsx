@@ -13,6 +13,7 @@ const LOOP_STATUS_TONE: Record<string, "pos" | "neg" | "warn" | "muted" | "info"
   stale_data: "warn",
   risk_rejected: "warn",
   consensus_rejected: "neg",
+  priority_rejected: "muted",
   order_failed: "neg",
 };
 
