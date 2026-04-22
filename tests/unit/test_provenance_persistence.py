@@ -160,3 +160,87 @@ def test_provenance_hash_empty_secret_is_fail_open() -> None:
     assert prov.provenance_hash is None
     assert prov.verify_hash("") is False
     assert prov.verify_hash("any-secret") is False
+
+
+# --- V8.3 / SAT-C-V8-002: zero-downtime secret rotation ---
+
+
+def _bare_provenance(signal_path_id: str = "sp_rot_001") -> SignalProvenance:
+    return SignalProvenance(
+        source="rss",
+        version="rss-1",
+        signal_path_id=signal_path_id,
+        auth_method="n/a",
+        ingest_event_id="doc_rot",
+    )
+
+
+def test_verify_hash_accepts_next_secret_during_rotation() -> None:
+    """Row signed under OLD secret must verify during grace period when the
+    operator has promoted a NEW secret and moved OLD to *_next."""
+    old_secret = "old-provenance-secret"
+    new_secret = "new-provenance-secret"
+    sealed_under_old = _bare_provenance().with_hash(old_secret)
+
+    # Phase 3 of rollover: primary=new, next=old. Historical rows still verify.
+    assert sealed_under_old.verify_hash(new_secret, secret_next=old_secret) is True
+    # Sanity: same row does NOT verify under new alone.
+    assert sealed_under_old.verify_hash(new_secret) is False
+    # Sanity: still verifies under old alone (rotation not yet completed).
+    assert sealed_under_old.verify_hash(old_secret) is True
+
+
+def test_verify_hash_rejects_after_rotation_window_closes() -> None:
+    """Phase 4 (operator clears *_next) — old-key rows are unverifiable by
+    design. That is the rotation being complete, not a regression."""
+    old_secret = "old-provenance-secret"
+    new_secret = "new-provenance-secret"
+    sealed_under_old = _bare_provenance().with_hash(old_secret)
+
+    # Phase 4: next cleared. Old rows fail verification.
+    assert sealed_under_old.verify_hash(new_secret, secret_next="") is False
+    assert sealed_under_old.verify_hash(new_secret) is False
+
+
+def test_verify_hash_next_secret_symmetric_during_phase1() -> None:
+    """Phase 1 of rollover: primary=old, next=new — rows written before and
+    after the operator set *_next must both verify regardless of order."""
+    old_secret = "old-provenance-secret"
+    new_secret = "new-provenance-secret"
+
+    # Row written BEFORE operator set *_next: signed under old (primary).
+    sealed_pre = _bare_provenance("sp_pre").with_hash(old_secret)
+    assert sealed_pre.verify_hash(old_secret, secret_next=new_secret) is True
+
+    # Hypothetical row signed under new (e.g. after operator promoted in
+    # Phase 3) — must verify when caller supplies new as primary, old as next.
+    sealed_post = _bare_provenance("sp_post").with_hash(new_secret)
+    assert sealed_post.verify_hash(new_secret, secret_next=old_secret) is True
+
+    # Cross-check: swapping primary/next does not break verification.
+    assert sealed_pre.verify_hash(new_secret, secret_next=old_secret) is True
+    assert sealed_post.verify_hash(old_secret, secret_next=new_secret) is True
+
+
+def test_verify_hash_rejects_tampering_even_with_next_secret() -> None:
+    """Rotation must not weaken tamper-detection. A row whose signed fields
+    were altered must fail under BOTH primary and next."""
+    old_secret = "old-provenance-secret"
+    new_secret = "new-provenance-secret"
+    sealed = _bare_provenance().with_hash(old_secret)
+
+    from dataclasses import replace
+    tampered = replace(sealed, signal_path_id="sp_attacker_chosen")
+
+    assert tampered.verify_hash(old_secret) is False
+    assert tampered.verify_hash(new_secret, secret_next=old_secret) is False
+    assert tampered.verify_hash(old_secret, secret_next=new_secret) is False
+
+
+def test_verify_hash_next_secret_alone_does_not_bypass_primary_requirement() -> None:
+    """Empty primary + non-empty next must NOT accept anything — primary is
+    still required. This guards against a misconfiguration where the operator
+    only sets *_next and leaves the primary empty."""
+    secret = "some-secret"
+    sealed = _bare_provenance().with_hash(secret)
+    assert sealed.verify_hash("", secret_next=secret) is False

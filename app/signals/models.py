@@ -114,12 +114,27 @@ class SignalProvenance:
             return self
         return replace(self, provenance_hash=self.compute_hash(secret))
 
-    def verify_hash(self, secret: str) -> bool:
-        """Constant-time verification of the stored hash against ``secret``."""
+    def verify_hash(self, secret: str, *, secret_next: str = "") -> bool:
+        """Constant-time verification of the stored hash.
+
+        V8.3 rotation: when ``secret_next`` is non-empty, both secrets are
+        accepted (primary first, then next). This preserves verifiability of
+        historical rows signed under the old secret during a rollover window.
+        Both compare operations run unconditionally when the hash + both
+        secrets are present — no short-circuit — so a passing verification
+        does not leak which key matched via timing.
+        """
         if not self.provenance_hash or not secret:
             return False
-        expected = self.compute_hash(secret)
-        return hmac.compare_digest(expected, self.provenance_hash)
+        primary_match = hmac.compare_digest(
+            self.compute_hash(secret), self.provenance_hash
+        )
+        if not secret_next:
+            return primary_match
+        next_match = hmac.compare_digest(
+            self.compute_hash(secret_next), self.provenance_hash
+        )
+        return primary_match or next_match
 
 
 def _new_decision_id() -> str:

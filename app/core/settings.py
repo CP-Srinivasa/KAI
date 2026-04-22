@@ -71,9 +71,30 @@ class AlertSettings(BaseSettings):
     # the three non-negotiable fields. Set in ``.env`` as
     # ``ALERT_PROVENANCE_SECRET`` to enable tamper-evident provenance.
     provenance_secret: str = Field(default="", repr=False)
+    # V8.3 / SAT-C-V8-002 — zero-downtime rotation of ``provenance_secret``.
+    # Mirrors the APP_API_KEY / APP_API_KEY_NEXT pattern from SENTR-F-008.
+    # Writes always use ``provenance_secret`` (primary); verification checks
+    # both when ``provenance_secret_next`` is set. Rollover flow:
+    #   1. operator sets ALERT_PROVENANCE_SECRET_NEXT=<new>, redeploys —
+    #      existing sealed rows remain verifiable, new rows still signed
+    #      with old key.
+    #   2. grace period: old rows continue to verify via primary, new rows
+    #      written under primary.
+    #   3. operator promotes ALERT_PROVENANCE_SECRET=<new>, sets
+    #      ALERT_PROVENANCE_SECRET_NEXT=<old> — new rows signed with new,
+    #      historical rows still verify via next.
+    #   4. after the retention window of historical sealed rows, operator
+    #      clears ALERT_PROVENANCE_SECRET_NEXT="". Old-key rows are then
+    #      unverifiable by design — that is the rotation being complete.
+    # Empty string = disabled (single-secret mode, no behaviour change).
+    provenance_secret_next: str = Field(default="", repr=False)
 
     _strip_secrets = field_validator(
-        "telegram_token", "email_password", "provenance_secret", mode="before"
+        "telegram_token",
+        "email_password",
+        "provenance_secret",
+        "provenance_secret_next",
+        mode="before",
     )(_strip_secret)
 
 
