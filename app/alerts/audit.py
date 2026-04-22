@@ -14,6 +14,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
 
+from app.signals.models import SignalProvenance
+
 # NEO-P-002 (D): delay before re-reading a JSONL file when the LAST line
 # failed to decode — gives the writer time to finish flushing an append.
 _LAST_LINE_RETRY_SLEEP_S = 0.1
@@ -99,6 +101,10 @@ class AlertAuditRecord:
     title_hash: str | None = None
     normalized_title: str | None = None
     source_name: str | None = None
+    # D-125 / SAT-C-PROV-20260422-001 — persisted provenance so the quality-bar
+    # phase has a beglaubigte Zuordnung instead of relying on analysis-time
+    # DB joins in provenance_metrics._load_doc_metadata.
+    provenance: SignalProvenance | None = None
 
     def to_json_dict(self) -> dict[str, object]:
         d: dict[str, object] = {
@@ -128,6 +134,8 @@ class AlertAuditRecord:
             d["normalized_title"] = self.normalized_title
         if self.source_name is not None:
             d["source_name"] = self.source_name
+        if self.provenance is not None:
+            d["provenance"] = self.provenance.to_dict()
         return d
 
 
@@ -146,6 +154,11 @@ class AlertOutcomeAnnotation:
     annotated_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
     asset: str | None = None
     note: str | None = None
+    # D-125 / SAT-C-PROV-20260422-001 — provenance at outcome-write time.
+    # Writers resolve this from the originating AlertAuditRecord (or the TV
+    # pending-signal row for synthetic ``tv:`` ids) so backdated annotations
+    # can't drift away from the source attribution they were made against.
+    provenance: SignalProvenance | None = None
 
     def to_json_dict(self) -> dict[str, object]:
         d: dict[str, object] = {
@@ -157,6 +170,8 @@ class AlertOutcomeAnnotation:
             d["asset"] = self.asset
         if self.note is not None:
             d["note"] = self.note
+        if self.provenance is not None:
+            d["provenance"] = self.provenance.to_dict()
         return d
 
 
@@ -194,6 +209,7 @@ def load_outcome_annotations(
                     ),
                     asset=data.get("asset"),
                     note=data.get("note"),
+                    provenance=SignalProvenance.from_dict(data.get("provenance")),
                 )
             )
         except KeyError:
@@ -235,6 +251,32 @@ def _publish_alert_fired(record: AlertAuditRecord) -> None:
         )
     except Exception:  # noqa: BLE001 — audit must never fail on a broadcast issue
         pass
+
+
+def latest_provenance_by_document_id(
+    input_path: str | Path,
+) -> dict[str, SignalProvenance]:
+    """Return a {document_id: SignalProvenance} map from the audit JSONL.
+
+    For documents with multiple audit rows (re-dispatches, digest+single)
+    the LAST occurrence wins — matches the convention in
+    ``provenance_metrics`` where the latest provenance is treated as
+    authoritative. Rows without provenance are skipped (so callers see
+    ``KeyError``/``dict.get is None`` for legacy untagged rows and can
+    fall back to the analysis-time DB join).
+    """
+    p = _resolve_audit_path(Path(input_path))
+    out: dict[str, SignalProvenance] = {}
+    for data in _read_jsonl_tolerant(p):
+        if not isinstance(data, dict):
+            continue
+        doc_id = data.get("document_id")
+        if not isinstance(doc_id, str):
+            continue
+        prov = SignalProvenance.from_dict(data.get("provenance"))
+        if prov is not None:
+            out[doc_id] = prov
+    return out
 
 
 def iter_alert_audit_document_ids(input_path: str | Path) -> set[str]:
@@ -282,6 +324,7 @@ def load_alert_audits(input_path: str | Path) -> list[AlertAuditRecord]:
                 title_hash=data.get("title_hash"),
                 normalized_title=data.get("normalized_title"),
                 source_name=data.get("source_name"),
+                provenance=SignalProvenance.from_dict(data.get("provenance")),
             )
             records.append(record)
         except KeyError:

@@ -213,6 +213,20 @@ def build_provenance_split_report(
     audits = load_alert_audits(alert_audit_path)
     annotations = load_outcome_annotations(alert_outcomes_path)
 
+    # D-125 / SAT-C-PROV-20260422-001 — primary source resolution comes from
+    # the persisted ``provenance`` field on the outcome (preferred) or audit
+    # record. The DB-join via ``source_by_doc`` is now a Fallback for legacy
+    # untagged rows pre-Backfill, not the primary path.
+    provenance_by_doc: dict[str, str] = {}
+    for ann in annotations:
+        if ann.provenance is not None:
+            provenance_by_doc[ann.document_id] = ann.provenance.source
+    for rec in audits:
+        if rec.document_id in provenance_by_doc:
+            continue  # outcome-bound provenance wins (caught backdating)
+        if rec.provenance is not None:
+            provenance_by_doc[rec.document_id] = rec.provenance.source
+
     latest_outcome: dict[str, str] = {}
     for ann in annotations:
         latest_outcome[ann.document_id] = ann.outcome
@@ -224,7 +238,7 @@ def build_provenance_split_report(
             continue
         directional_docs.add(rec.document_id)
 
-    source_lookup = source_by_doc or {}
+    db_lookup = source_by_doc or {}
 
     total_hits = 0
     total_misses = 0
@@ -237,7 +251,9 @@ def build_provenance_split_report(
         outcome = latest_outcome.get(doc_id)
         if outcome not in {"hit", "miss", "inconclusive"}:
             continue
-        source = (source_lookup.get(doc_id) or DEFAULT_SOURCE).strip().lower()
+        # Persisted provenance first, DB-join Fallback, default ``unknown``.
+        resolved = provenance_by_doc.get(doc_id) or db_lookup.get(doc_id)
+        source = (resolved or DEFAULT_SOURCE).strip().lower()
         if outcome == "hit":
             total_hits += 1
             per_source_hits[source] = per_source_hits.get(source, 0) + 1

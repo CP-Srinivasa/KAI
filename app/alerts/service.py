@@ -48,6 +48,7 @@ from app.analysis.scoring import compute_priority
 from app.core.domain.document import AnalysisResult, CanonicalDocument
 from app.core.settings import AppSettings
 from app.normalization.cleaner import normalize_title, title_hash
+from app.signals.models import SignalProvenance
 
 log = structlog.get_logger(__name__)
 
@@ -480,6 +481,16 @@ def _log_result(
                         )
 
 
+            from app.core.settings import get_settings as _get_settings
+
+            rss_source = (message.source_name if message else None) or "rss"
+            provenance = SignalProvenance(
+                source=rss_source,
+                version="rss-1",
+                signal_path_id=None,
+                auth_method="n/a",
+                ingest_event_id=doc_id,
+            ).with_hash(_get_settings().alerts.provenance_secret)
             record = AlertAuditRecord(
                 document_id=doc_id,
                 channel=result.channel,
@@ -495,6 +506,7 @@ def _log_result(
                 title_hash=title_hash(message.title) if message else None,
                 normalized_title=normalize_title(message.title) if message else None,
                 source_name=message.source_name if message else None,
+                provenance=provenance,
             )
             effective_path = audit_path or (
                 _WORKSPACE_ROOT / "artifacts" / ALERT_AUDIT_JSONL_FILENAME

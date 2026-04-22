@@ -323,6 +323,7 @@ async def auto_annotate_pending(
             outcome=outcome,  # type: ignore[arg-type]
             asset=symbol,
             note=note,
+            provenance=rec.provenance,
         )
 
         log.info(

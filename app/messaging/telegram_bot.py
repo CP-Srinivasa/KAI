@@ -2194,12 +2194,15 @@ class TelegramOperatorBot:
         from app.alerts.audit import (
             AlertOutcomeAnnotation,
             append_outcome_annotation,
+            latest_provenance_by_document_id,
         )
 
+        prov_map = latest_provenance_by_document_id(Path("artifacts"))
         annotation = AlertOutcomeAnnotation(
             document_id=doc_id,
             outcome=normalized,  # type: ignore[arg-type]
             note="via Telegram",
+            provenance=prov_map.get(doc_id),
         )
         try:
             append_outcome_annotation(annotation, Path("artifacts"))

@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from enum import StrEnum
 
@@ -29,11 +31,95 @@ class SignalProvenance:
     the later quality-bar phase can attribute precision deltas to the right
     signal path (RSS pipeline vs. tradingview_webhook vs. binance_ohlcv_rsi).
     `signal_path_id` is None for audit-only stages (e.g. TV-1 webhook ingest).
+
+    Extended 2026-04-22 (SAT-C-PROV-20260422-001) with attribution-integrity
+    fields so the outcome-layer carries beglaubigte Zuordnung, not just
+    analysis-time DB joins: ``auth_method`` records how the ingress was
+    authenticated, ``ingest_event_id`` pins the concrete upstream event, and
+    ``provenance_hash`` is an HMAC-SHA256 seal over the other five fields
+    using ``AlertSettings.provenance_secret``.
     """
 
     source: str  # e.g. "rss", "tradingview_webhook", "binance_ohlcv_rsi"
     version: str  # pivot stage tag, e.g. "tv-1", "tv-2", "tv-3"
     signal_path_id: str | None = None  # set when routed to a concrete pipeline
+    auth_method: str | None = None  # "hmac" | "shared_token" | "n/a"
+    ingest_event_id: str | None = None  # upstream event identifier
+    provenance_hash: str | None = None  # HMAC-SHA256 hex over the other fields
+
+    def to_dict(self) -> dict[str, str]:
+        """Serialize to the minimal dict embedded in JSONL rows (non-None only)."""
+        d: dict[str, str] = {"source": self.source, "version": self.version}
+        if self.signal_path_id is not None:
+            d["signal_path_id"] = self.signal_path_id
+        if self.auth_method is not None:
+            d["auth_method"] = self.auth_method
+        if self.ingest_event_id is not None:
+            d["ingest_event_id"] = self.ingest_event_id
+        if self.provenance_hash is not None:
+            d["provenance_hash"] = self.provenance_hash
+        return d
+
+    @classmethod
+    def from_dict(cls, data: dict[str, object] | None) -> SignalProvenance | None:
+        """Parse a nested provenance dict; returns None if missing/invalid."""
+        if not isinstance(data, dict):
+            return None
+        source = data.get("source")
+        version = data.get("version")
+        if not isinstance(source, str) or not isinstance(version, str):
+            return None
+
+        def _opt_str(key: str) -> str | None:
+            value = data.get(key)
+            return value if isinstance(value, str) else None
+
+        return cls(
+            source=source,
+            version=version,
+            signal_path_id=_opt_str("signal_path_id"),
+            auth_method=_opt_str("auth_method"),
+            ingest_event_id=_opt_str("ingest_event_id"),
+            provenance_hash=_opt_str("provenance_hash"),
+        )
+
+    def _hash_payload(self) -> bytes:
+        """Canonical HMAC payload — order-stable, None → empty string."""
+        parts = [
+            self.source,
+            self.version,
+            self.signal_path_id or "",
+            self.auth_method or "",
+            self.ingest_event_id or "",
+        ]
+        return "|".join(parts).encode("utf-8")
+
+    def compute_hash(self, secret: str) -> str:
+        """Return HMAC-SHA256 hex of the canonical payload under ``secret``."""
+        if not secret:
+            return ""
+        return hmac.new(
+            secret.encode("utf-8"), self._hash_payload(), hashlib.sha256
+        ).hexdigest()
+
+    def with_hash(self, secret: str) -> SignalProvenance:
+        """Return a copy with ``provenance_hash`` filled.
+
+        Fail-open: when ``secret`` is empty, returns self unchanged — the hash
+        stays ``None`` so downstream consumers can distinguish unbound rows.
+        Callers that require a sealed record must check ``provenance_hash is
+        not None`` explicitly.
+        """
+        if not secret:
+            return self
+        return replace(self, provenance_hash=self.compute_hash(secret))
+
+    def verify_hash(self, secret: str) -> bool:
+        """Constant-time verification of the stored hash against ``secret``."""
+        if not self.provenance_hash or not secret:
+            return False
+        expected = self.compute_hash(secret)
+        return hmac.compare_digest(expected, self.provenance_hash)
 
 
 def _new_decision_id() -> str:

@@ -64,10 +64,17 @@ class AlertSettings(BaseSettings):
     # Digest mode: accumulate alerts and send as a batch instead of individually.
     digest_enabled: bool = Field(default=False)
     digest_interval_minutes: int = Field(default=60)
+    # D-125 / SAT-C-PROV-20260422-001 — HMAC secret for sealing
+    # ``SignalProvenance.provenance_hash`` at alert/outcome write time. Empty
+    # = hash stays None (source/version/signal_path_id still persist), which
+    # is fail-open for the seal but still satisfies TV-Pivot-Bedingung 3 on
+    # the three non-negotiable fields. Set in ``.env`` as
+    # ``ALERT_PROVENANCE_SECRET`` to enable tamper-evident provenance.
+    provenance_secret: str = Field(default="", repr=False)
 
-    _strip_secrets = field_validator("telegram_token", "email_password", mode="before")(
-        _strip_secret
-    )
+    _strip_secrets = field_validator(
+        "telegram_token", "email_password", "provenance_secret", mode="before"
+    )(_strip_secret)
 
 
 class ProviderSettings(BaseSettings):

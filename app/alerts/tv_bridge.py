@@ -34,6 +34,7 @@ from app.alerts.audit import (
     iter_alert_audit_document_ids,
 )
 from app.market_data.coingecko_adapter import _BASE_ASSET_TO_COINGECKO
+from app.signals.models import SignalProvenance
 from app.signals.tradingview_event import TV_ROW_HMAC_FIELD, verify_row_hmac
 
 log = structlog.get_logger(__name__)
@@ -212,6 +213,25 @@ def persist_tv_events_as_alert_audits(
             continue
 
         note = event.get("note")
+        event_prov = event.get("provenance") or {}
+        prov_version = (
+            event_prov.get("version") if isinstance(event_prov, dict) else None
+        ) or "tv-3"
+        prov_signal_path_id = (
+            event_prov.get("signal_path_id") if isinstance(event_prov, dict) else None
+        )
+        prov_auth_method = (
+            event_prov.get("auth_method") if isinstance(event_prov, dict) else None
+        )
+        from app.core.settings import get_settings as _get_settings
+
+        provenance = SignalProvenance(
+            source=_TV_SOURCE,
+            version=prov_version,
+            signal_path_id=prov_signal_path_id,
+            auth_method=prov_auth_method,
+            ingest_event_id=event_id,
+        ).with_hash(_get_settings().alerts.provenance_secret)
         record = AlertAuditRecord(
             document_id=doc_id,
             channel=_TV_CHANNEL,
@@ -225,6 +245,7 @@ def persist_tv_events_as_alert_audits(
             directional_eligible=True,
             source_name=_TV_SOURCE,
             normalized_title=note if isinstance(note, str) else None,
+            provenance=provenance,
         )
         append_alert_audit(record, alert_audit_path)
         existing_ids.add(doc_id)

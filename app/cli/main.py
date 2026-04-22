@@ -1175,6 +1175,55 @@ def alerts_tv4_quality_bar(
         console.print(f"  - {note}")
 
 
+@alerts_app.command("backfill-provenance")
+def alerts_backfill_provenance(
+    artifacts_dir: str = typer.Option("artifacts", help="Artifacts directory"),
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run/--apply",
+        help="Dry-run shows counts without touching files. --apply writes.",
+    ),
+) -> None:
+    """Backfill persisted provenance into legacy audit + outcomes JSONL.
+
+    Pre-2026-04-22 rows were written before the ``provenance`` nested dict
+    existed on the writer path. This reads the DB-join source map for RSS
+    rows and the TV pending-signals file for TV rows, then rewrites both
+    JSONL files in place with a best-effort ``SignalProvenance`` attached
+    (timestamped .bak copy, write-temp-then-rename, mtime concurrent-write
+    guard). Idempotent — rows that already carry provenance are untouched.
+    """
+    from app.alerts.provenance_backfill import backfill_provenance
+
+    artifacts_path = Path(artifacts_dir)
+    audits = load_alert_audits(artifacts_path)
+    source_map, _title_map = _load_doc_metadata(audits)
+    secret = get_settings().alerts.provenance_secret
+    if not secret:
+        console.print(
+            "[yellow]ALERT_PROVENANCE_SECRET not set -- backfilled rows will "
+            "carry provenance without provenance_hash (fail-open).[/yellow]"
+        )
+
+    result = backfill_provenance(
+        artifacts_dir=artifacts_path,
+        secret=secret,
+        source_by_doc=source_map or {},
+        dry_run=dry_run,
+    )
+    mode = "dry-run" if dry_run else "applied"
+    console.print(f"[bold]Provenance backfill ({mode})[/bold]")
+    for file_name, counts in result.items():
+        aborted = counts.get("aborted_concurrent_write")
+        tail = " [red]ABORTED concurrent write[/red]" if aborted else ""
+        console.print(
+            f"  {file_name}: total={counts['total']} "
+            f"augmented={counts['augmented']} "
+            f"already_tagged={counts['already_tagged']} "
+            f"no_source={counts['no_source']}{tail}"
+        )
+
+
 @alerts_app.command("analyze-resolved")
 def alerts_analyze_resolved(
     by: str = typer.Option(
@@ -1480,11 +1529,15 @@ def alerts_annotate(
             "A new append-only entry will be used as latest value.[/yellow]"
         )
 
+    from app.alerts.audit import latest_provenance_by_document_id
+
+    prov_map = latest_provenance_by_document_id(Path(artifacts_dir))
     annotation = AlertOutcomeAnnotation(
         document_id=document_id,
         outcome=cast(OutcomeLabel, normalized),
         asset=asset,
         note=note,
+        provenance=prov_map.get(document_id),
     )
     append_outcome_annotation(annotation, Path(artifacts_dir))
     console.print(
@@ -1638,6 +1691,9 @@ def alerts_auto_check(
         if curr_abs > prev_abs:
             best_by_doc[r.document_id] = r
 
+    from app.alerts.audit import latest_provenance_by_document_id
+
+    prov_map = latest_provenance_by_document_id(Path(artifacts_dir))
     applied = 0
     for r in best_by_doc.values():
         annotation = AlertOutcomeAnnotation(
@@ -1645,6 +1701,7 @@ def alerts_auto_check(
             outcome=r.suggested_outcome,
             asset=r.asset,
             note=f"auto-check ({r.evaluation_mode}, horizon={horizon_hours}h): {r.reason}",
+            provenance=prov_map.get(r.document_id),
         )
         append_outcome_annotation(annotation, Path(artifacts_dir))
         applied += 1
