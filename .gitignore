@@ -77,3 +77,6 @@ web/tsconfig.tsbuildinfo
 
 # E2E test database (root-level)
 test_e2e.db
+
+# Claude Code / MCP-Server project config (per-host absolute paths, not portable)
+.mcp.json
