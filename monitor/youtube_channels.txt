@@ -15,7 +15,9 @@ https://www.youtube.com/@MMCryptoTube
 https://www.youtube.com/@KryptoReport
 https://www.youtube.com/@ORACLEFASTMONEYTRADER
 https://www.youtube.com/@CryptoDad
-https://www.youtube.com/@TargetHit
+# Removed 2026-04-22: @TargetHit — 24h-Livestream, YouTube Data API v3 liefert
+# einen einzigen Video-Eintrag mit fester ID (Dedup skippt Refetches, Transcripts
+# erst nach Stream-Ende). 2 Docs in 8 Monaten → toter Eintrag.
 https://www.youtube.com/@TradermacherDe
 https://www.youtube.com/c/JacobCryptoBury
 https://www.youtube.com/@99Bitcoins
