@@ -302,6 +302,32 @@ async def dashboard_quality_api() -> JSONResponse:
     }, headers={"Cache-Control": "no-store, max-age=0"})
 
 
+@router.get("/dashboard/api/priority-gate", tags=["dashboard"])
+async def dashboard_priority_gate_api() -> JSONResponse:
+    """D-184: operator-visibility for the D-182 priority-tier paper-fill gate.
+
+    Returns the active threshold + rolling 24h bucket counts so the dashboard
+    can distinguish "quiet because gate is raised" from "quiet because no
+    signals". Fails soft to zeros when the audit file is absent.
+    """
+    from app.orchestrator.trading_loop import build_priority_gate_summary
+
+    try:
+        summary = build_priority_gate_summary(
+            audit_path=_TRADING_LOOP_AUDIT, window_hours=24
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("priority_gate_summary_failed: %s", exc)
+        return JSONResponse(
+            content={"error": "priority_gate_unavailable", "detail": str(exc)},
+            status_code=503,
+        )
+    return JSONResponse(
+        content=summary.to_json_dict(),
+        headers={"Cache-Control": "no-store, max-age=0"},
+    )
+
+
 @router.get("/dashboard/api/provenance", tags=["dashboard"])
 async def dashboard_provenance_api() -> JSONResponse:
     """Per-source active-precision split (Wilson 95% CI) for the dashboard SPA.

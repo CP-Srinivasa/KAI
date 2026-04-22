@@ -16,6 +16,7 @@ import { Card, CardHeader, Badge } from "@/components/ui/Primitives";
 import { useT } from "@/i18n/I18nProvider";
 import { useDashboardQuality } from "@/lib/useDashboardQuality";
 import { useDashboardProvenance } from "@/lib/useDashboardProvenance";
+import { usePriorityGate } from "@/lib/usePriorityGate";
 import { cn } from "@/lib/utils";
 import { useRouter, type Route } from "@/state/Router";
 
@@ -58,6 +59,8 @@ export function Dashboard() {
   const data = q.state === "ready" ? q.data : null;
   const p = useDashboardProvenance();
   const provenance = p.state === "ready" ? p.data : null;
+  const pg = usePriorityGate();
+  const priorityGate = pg.state === "ready" ? pg.data : null;
 
   const fp = data?.forward_precision_pct ?? null;
   const rc = data?.resolved_count ?? null;
@@ -190,6 +193,7 @@ export function Dashboard() {
           provenance={provenance}
           qualityState={q.state}
           qualityError={q.state === "error" ? q.error.message : null}
+          priorityGate={priorityGate}
         />
       </PanelErrorBoundary>
 

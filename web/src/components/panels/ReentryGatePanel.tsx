@@ -2,7 +2,7 @@ import { memo, useMemo } from "react";
 import { AlertTriangle, Flag, Target, Coins, Calendar } from "lucide-react";
 import { Card, CardHeader, Badge, ProgressBar } from "@/components/ui/Primitives";
 import { cn } from "@/lib/utils";
-import type { DashboardQuality, DashboardProvenance } from "@/lib/api";
+import type { DashboardQuality, DashboardProvenance, PriorityGateSummary } from "@/lib/api";
 
 // Re-Entry-Gate (TV-Pivot D-125, Ziel 2026-05-16):
 // Entweder ≥200 resolved directional alerts ODER ≥10 paper fills mit PnL.
@@ -63,11 +63,13 @@ function ReentryGatePanelImpl({
   provenance,
   qualityState = "ready",
   qualityError,
+  priorityGate = null,
 }: {
   quality: DashboardQuality | null;
   provenance: DashboardProvenance | null;
   qualityState?: QualityFetchState;
   qualityError?: string | null;
+  priorityGate?: PriorityGateSummary | null;
 }) {
   const daysLeft = useMemo(() => daysUntil(REENTRY_DATE_ISO), []);
 
@@ -178,7 +180,70 @@ function ReentryGatePanelImpl({
           </div>
         </div>
       ) : null}
+
+      {priorityGate ? <PriorityGateRow summary={priorityGate} /> : null}
     </Card>
+  );
+}
+
+function PriorityGateRow({ summary }: { summary: PriorityGateSummary }) {
+  // D-184: dual-state visibility for the D-182 paper-fill gate. Off-state
+  // reminds the operator the gate is still at the no-op default; active-state
+  // surfaces the 24h bucket counts so "no new fills" has context.
+  const { threshold, gate_active, priority_rejected, other_rejected, completed, total_cycles, window_hours } =
+    summary;
+
+  if (!gate_active) {
+    return (
+      <div
+        className="mt-2 pt-2 border-t border-line-subtle flex items-center gap-2 text-2xs font-mono text-fg-muted"
+        role="status"
+      >
+        <span className="text-fg-subtle uppercase tracking-wide">Priority-Gate</span>
+        <Badge tone="muted">aus · threshold=1</Badge>
+        <span className="text-fg-subtle">· alle Paper-Cycles laufen (D-182)</span>
+      </div>
+    );
+  }
+
+  const blockedPct =
+    total_cycles > 0 ? Math.round((priority_rejected / total_cycles) * 100) : 0;
+
+  return (
+    <div
+      className="mt-2 pt-2 border-t border-line-subtle flex items-center justify-between flex-wrap gap-2 text-2xs font-mono text-fg-muted"
+      role="status"
+      aria-label={`Priority-Gate aktiv, Schwelle ${threshold}, ${priority_rejected} von ${total_cycles} Cycles in ${window_hours}h blockiert`}
+    >
+      <div className="flex items-center gap-2">
+        <span className="text-fg-subtle uppercase tracking-wide">Priority-Gate</span>
+        <Badge tone="warn" dot>
+          aktiv · P≥{threshold}
+        </Badge>
+      </div>
+      <div className="flex items-center gap-3">
+        <span>
+          <span className="font-semibold">{priority_rejected}</span>
+          <span className="text-fg-subtle"> rejected</span>
+          {total_cycles > 0 && (
+            <span className="text-fg-subtle">
+              {" "}({blockedPct}% v. {total_cycles})
+            </span>
+          )}
+        </span>
+        <span>
+          <span className="font-semibold text-pos">{completed}</span>
+          <span className="text-fg-subtle"> filled</span>
+        </span>
+        {other_rejected > 0 && (
+          <span>
+            <span className="font-semibold">{other_rejected}</span>
+            <span className="text-fg-subtle"> other-reject</span>
+          </span>
+        )}
+        <span className="text-fg-subtle">· {window_hours}h</span>
+      </div>
+    </div>
   );
 }
 

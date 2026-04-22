@@ -20,6 +20,7 @@ from app.orchestrator.models import (
     CycleStatus,
     LoopCycle,
     LoopStatusSummary,
+    PriorityGateSummary,
     RecentCyclesSummary,
     _new_cycle_id,
     _now_utc,
@@ -1021,6 +1022,62 @@ def build_recent_cycles_summary(
         status_counts=status_counts,
         recent_cycles=recent,
         last_n=normalized_last_n,
+        audit_path=str(Path(audit_path)),
+    )
+
+
+def build_priority_gate_summary(
+    *,
+    audit_path: str | Path = _AUDIT_LOG,
+    window_hours: int = 24,
+) -> PriorityGateSummary:
+    """D-184: summarize D-182 priority-gate activity over a rolling window.
+
+    Reads the trading-loop JSONL, filters by ``started_at`` ISO timestamp,
+    and buckets cycles by status. Settings are re-read fresh each call so
+    operator rotation of the threshold is visible without restart.
+    """
+    from datetime import UTC, datetime, timedelta
+
+    from app.core.settings import get_settings
+
+    now = datetime.now(UTC)
+    window_start = now - timedelta(hours=max(1, window_hours))
+    window_start_iso = window_start.isoformat()
+
+    threshold = get_settings().execution.paper_min_priority
+    gate_active = threshold > 1
+
+    records = load_trading_loop_cycles(audit_path)
+    total = 0
+    priority_rejected = 0
+    other_rejected = 0
+    completed = 0
+    for record in records:
+        started_raw = record.get("started_at")
+        if not isinstance(started_raw, str) or started_raw < window_start_iso:
+            continue
+        total += 1
+        status = str(record.get("status", "unknown"))
+        if status == CycleStatus.PRIORITY_REJECTED.value:
+            priority_rejected += 1
+        elif status == CycleStatus.COMPLETED.value:
+            completed += 1
+        elif status.endswith("_rejected") or status in {
+            CycleStatus.ORDER_FAILED.value,
+            CycleStatus.ERROR.value,
+        }:
+            other_rejected += 1
+
+    return PriorityGateSummary(
+        threshold=threshold,
+        gate_active=gate_active,
+        window_hours=window_hours,
+        total_cycles=total,
+        priority_rejected=priority_rejected,
+        other_rejected=other_rejected,
+        completed=completed,
+        window_start_utc=window_start_iso,
         audit_path=str(Path(audit_path)),
     )
 

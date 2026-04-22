@@ -1,6 +1,10 @@
-"""Tests for D-182 paper-execution priority-tier gate."""
+"""Tests for D-182 paper-execution priority-tier gate + D-184 summary."""
 
 from __future__ import annotations
+
+import json
+from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 import pytest
 
@@ -9,7 +13,7 @@ from app.core.enums import SentimentLabel
 from app.execution.paper_engine import PaperExecutionEngine
 from app.market_data.mock_adapter import MockMarketDataAdapter
 from app.orchestrator.models import CycleStatus
-from app.orchestrator.trading_loop import TradingLoop
+from app.orchestrator.trading_loop import TradingLoop, build_priority_gate_summary
 from app.risk.engine import RiskEngine
 from app.risk.models import RiskLimits
 from app.signals.generator import SignalGenerator
@@ -73,8 +77,15 @@ def _analysis(priority: int | None) -> AnalysisResult:
 
 
 @pytest.mark.asyncio
-async def test_default_threshold_allows_any_priority(tmp_path) -> None:
-    """paper_min_priority=1 (default) must not block low-priority analyses."""
+async def test_default_threshold_allows_any_priority(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """paper_min_priority=1 (default) must not block low-priority analyses.
+
+    Explicit setenv defends against a .env file that already raised the gate
+    on the host — tests must not depend on ambient env state.
+    """
+    monkeypatch.setenv("EXECUTION_PAPER_MIN_PRIORITY", "1")
     loop = _loop(tmp_path)
     cycle = await loop.run_cycle(_analysis(priority=3), "BTC/USDT")
     assert cycle.status != CycleStatus.PRIORITY_REJECTED
@@ -118,8 +129,97 @@ async def test_none_priority_blocked_when_gate_active(
 
 
 @pytest.mark.asyncio
-async def test_none_priority_allowed_at_default_threshold(tmp_path) -> None:
+async def test_none_priority_allowed_at_default_threshold(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """priority=None must not be penalised while the gate is the no-op default."""
+    monkeypatch.setenv("EXECUTION_PAPER_MIN_PRIORITY", "1")
     loop = _loop(tmp_path)
     cycle = await loop.run_cycle(_analysis(priority=None), "BTC/USDT")
     assert cycle.status != CycleStatus.PRIORITY_REJECTED
+
+
+# --- D-184: operator-visibility summary ---
+
+
+def _write_cycle_row(
+    audit_path: Path, *, status: str, started_at: str
+) -> None:
+    audit_path.parent.mkdir(parents=True, exist_ok=True)
+    with audit_path.open("a", encoding="utf-8") as fh:
+        fh.write(
+            json.dumps(
+                {
+                    "cycle_id": f"c_{status}_{started_at[-8:]}",
+                    "started_at": started_at,
+                    "completed_at": started_at,
+                    "symbol": "BTC/USDT",
+                    "status": status,
+                    "market_data_fetched": False,
+                    "signal_generated": False,
+                    "risk_approved": False,
+                    "order_created": False,
+                    "fill_simulated": False,
+                    "decision_id": None,
+                    "risk_check_id": None,
+                    "order_id": None,
+                    "notes": [],
+                }
+            )
+            + "\n"
+        )
+
+
+def test_priority_gate_summary_counts_by_status(tmp_path: Path) -> None:
+    """Buckets cycles in-window by status; out-of-window rows are excluded."""
+    audit = tmp_path / "loop_audit.jsonl"
+    now = datetime.now(UTC)
+    recent = (now - timedelta(hours=1)).isoformat()
+    old = (now - timedelta(hours=48)).isoformat()
+
+    # in-window: 2 priority_rejected, 1 completed, 1 risk_rejected
+    _write_cycle_row(audit, status="priority_rejected", started_at=recent)
+    _write_cycle_row(audit, status="priority_rejected", started_at=recent)
+    _write_cycle_row(audit, status="completed", started_at=recent)
+    _write_cycle_row(audit, status="risk_rejected", started_at=recent)
+    # out-of-window: ignored
+    _write_cycle_row(audit, status="priority_rejected", started_at=old)
+    _write_cycle_row(audit, status="completed", started_at=old)
+
+    summary = build_priority_gate_summary(audit_path=audit, window_hours=24)
+    assert summary.total_cycles == 4
+    assert summary.priority_rejected == 2
+    assert summary.completed == 1
+    assert summary.other_rejected == 1
+    assert summary.window_hours == 24
+
+
+def test_priority_gate_summary_reflects_current_threshold(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """threshold field + gate_active mirror the active setting, not a cached value."""
+    audit = tmp_path / "loop_audit.jsonl"
+    audit.parent.mkdir(parents=True, exist_ok=True)
+    audit.touch()
+
+    monkeypatch.setenv("EXECUTION_PAPER_MIN_PRIORITY", "1")
+    summary_off = build_priority_gate_summary(audit_path=audit)
+    assert summary_off.threshold == 1
+    assert summary_off.gate_active is False
+
+    monkeypatch.setenv("EXECUTION_PAPER_MIN_PRIORITY", "10")
+    summary_on = build_priority_gate_summary(audit_path=audit)
+    assert summary_on.threshold == 10
+    assert summary_on.gate_active is True
+
+
+def test_priority_gate_summary_handles_missing_audit(tmp_path: Path) -> None:
+    """No audit file → zeros everywhere, but threshold still surfaced."""
+    audit = tmp_path / "never_written.jsonl"
+    summary = build_priority_gate_summary(audit_path=audit)
+    assert summary.total_cycles == 0
+    assert summary.priority_rejected == 0
+    assert summary.completed == 0
+    assert summary.other_rejected == 0
+    # threshold still read from settings — operator-visible even before first cycle
+    assert summary.threshold >= 1

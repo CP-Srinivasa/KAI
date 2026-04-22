@@ -101,6 +101,40 @@ class LoopStatusSummary:
 
 
 @dataclass(frozen=True)
+class PriorityGateSummary:
+    """D-184: operator visibility for the D-182 priority-tier gate.
+
+    Counts over a rolling window so the dashboard can surface *why* no new
+    paper fills land when the gate is raised. Without this, the operator
+    sees "no new trades" without context.
+    """
+
+    threshold: int  # current EXECUTION_PAPER_MIN_PRIORITY (1 = gate off)
+    gate_active: bool  # True iff threshold > 1
+    window_hours: int
+    total_cycles: int  # all cycles in window
+    priority_rejected: int  # cycles blocked by the priority gate
+    other_rejected: int  # risk/size/consensus/order_failed/error
+    completed: int  # status == COMPLETED
+    window_start_utc: str  # ISO, inclusive lower bound
+    audit_path: str
+
+    def to_json_dict(self) -> dict[str, object]:
+        return {
+            "report_type": "priority_gate_summary",
+            "threshold": self.threshold,
+            "gate_active": self.gate_active,
+            "window_hours": self.window_hours,
+            "total_cycles": self.total_cycles,
+            "priority_rejected": self.priority_rejected,
+            "other_rejected": self.other_rejected,
+            "completed": self.completed,
+            "window_start_utc": self.window_start_utc,
+            "audit_path": self.audit_path,
+        }
+
+
+@dataclass(frozen=True)
 class RecentCyclesSummary:
     """Read-only recent-cycle audit projection for operator visibility."""
 

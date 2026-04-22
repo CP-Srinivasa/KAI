@@ -188,6 +188,26 @@ export function fetchDashboardProvenance(
   return apiGet<DashboardProvenance>("/dashboard/api/provenance", { signal });
 }
 
+// D-184: Priority-tier gate (D-182) operator visibility.
+export type PriorityGateSummary = {
+  report_type: string;
+  threshold: number;
+  gate_active: boolean;
+  window_hours: number;
+  total_cycles: number;
+  priority_rejected: number;
+  other_rejected: number;
+  completed: number;
+  window_start_utc: string;
+  audit_path: string;
+};
+
+export function fetchPriorityGate(
+  signal?: AbortSignal,
+): Promise<PriorityGateSummary> {
+  return apiGet<PriorityGateSummary>("/dashboard/api/priority-gate", { signal });
+}
+
 // ---------------- Operator surfaces ----------------
 
 export type OperatorStatus = {
