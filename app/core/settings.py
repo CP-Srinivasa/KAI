@@ -350,6 +350,12 @@ class TradingViewSettings(BaseSettings):
     webhook_replay_cache_db_path: str = Field(
         default="artifacts/tradingview_replay_cache.db"
     )
+    # D-193 / NEO-F-META-20260424-023: brute-force guard on the webhook
+    # auth pipeline (HMAC + shared-token). Independent bucket from the
+    # API-Key rate-limiter in auth.py so webhook bursts don't affect the
+    # operator dashboard and vice versa. Threshold=0 disables the guard.
+    webhook_rate_limit_threshold: int = Field(default=10, ge=0)
+    webhook_rate_limit_window_seconds: float = Field(default=300.0, gt=0.0)
     # TV-2.1: shared-token fallback for TradingView's native webhook which
     # cannot produce body-HMACs. Modes: hmac (default, strongest) |
     # shared_token (no body integrity) | hmac_or_token (accept either).

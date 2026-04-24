@@ -40,6 +40,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Request
 
 from app.core.logging import get_logger
 from app.core.settings import AppSettings, TradingViewSettings, get_settings
+from app.security.rate_limit import FailureTracker, client_ip
 from app.signals.tradingview_event import (
     NormalizationError,
     TradingViewSignalEvent,
@@ -258,6 +259,29 @@ def _reset_replay_cache_for_tests() -> None:
     _EVENT_ID_CACHE = None
 
 
+# D-193 / NEO-F-META-20260424-023: brute-force guard for the webhook auth
+# pipeline. Independent bucket from app.security.auth so API-Key failures and
+# webhook-credential failures do not cross-pollute each other. Threshold=0
+# (from settings) disables the guard entirely.
+_RATE_LIMITER: FailureTracker | None = None
+
+
+def _get_rate_limiter(settings: TradingViewSettings) -> FailureTracker:
+    global _RATE_LIMITER
+    if _RATE_LIMITER is None:
+        _RATE_LIMITER = FailureTracker(
+            window_seconds=settings.webhook_rate_limit_window_seconds,
+            threshold=settings.webhook_rate_limit_threshold,
+        )
+    return _RATE_LIMITER
+
+
+def _reset_rate_limiter_for_tests() -> None:
+    """Test hook — clear the webhook rate-limiter singleton."""
+    global _RATE_LIMITER
+    _RATE_LIMITER = None
+
+
 def _verify_signature(raw_body: bytes, signature_header: str | None, secret: str) -> bool:
     if not signature_header or not secret:
         return False
@@ -412,13 +436,34 @@ async def tradingview_webhook(
     audit_path = Path(tv.webhook_audit_log)
     raw_body = await request.body()
 
+    caller_ip = client_ip(request)
     common_log: dict[str, object] = {
         "request_id": request_id,
         "received_at": _utcnow_iso(),
-        "source_ip": request.client.host if request.client else None,
+        "source_ip": caller_ip or (request.client.host if request.client else None),
         "body_bytes": len(raw_body),
         "auth_mode": tv.webhook_auth_mode,
     }
+
+    # D-193 / NEO-F-META-20260424-023: Brute-force guard BEFORE the auth
+    # decision — a locked IP cannot even learn whether its credentials
+    # would have been accepted. Threshold=0 disables the guard.
+    rate_limiter = _get_rate_limiter(tv)
+    locked, retry_after = rate_limiter.is_limited(caller_ip)
+    if locked:
+        entry = {
+            **common_log,
+            "outcome": "rejected",
+            "reason": "rate_limited",
+            "retry_after_seconds": retry_after,
+        }
+        _audit_writer(audit_path, entry)
+        _logger.warning("tradingview_webhook_rate_limited", **entry)
+        raise HTTPException(
+            status_code=429,
+            detail="Too Many Requests",
+            headers={"Retry-After": str(retry_after)},
+        )
 
     # TradingView cannot send custom HTTP headers in webhook alerts.
     # Fall back to extracting the token from the JSON body "token" field.
@@ -433,10 +478,17 @@ async def tradingview_webhook(
 
     accepted, auth_method = _authorize_request(raw_body, x_kai_signature, body_token, tv)
     if not accepted:
-        entry = {**common_log, "outcome": "rejected", "reason": auth_method}
+        failures = rate_limiter.record_failure(caller_ip)
+        entry = {
+            **common_log,
+            "outcome": "rejected",
+            "reason": auth_method,
+            "rate_limit_failures": failures,
+        }
         _audit_writer(audit_path, entry)
         _logger.warning("tradingview_webhook_rejected", **entry)
         raise HTTPException(status_code=401, detail="Invalid credentials")
+    rate_limiter.reset(caller_ip)
     common_log["auth_method"] = auth_method
 
     payload_hash = _payload_hash(raw_body)
