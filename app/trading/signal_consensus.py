@@ -1,5 +1,13 @@
 """Multi-model consensus validator for trading signals.
 
+⚠️  EXPERIMENTAL — paused until PHASE 5 Re-Entry (2026-05-16).
+
+Status (2026-04-24): CLI-flag ``--consensus`` defaults to False; the validator
+is never constructed in production. D-186 confirmed no reactivation of the
+Multi-Agent model before the Re-Entry date. Module stays in the tree so tests
+keep the contract honest, but do NOT extend or refactor without first making
+the binary decision documented in ``docs/adr/0002-signal-consensus-experimental.md``.
+
 Sends signal context to one or more independent LLMs for directional
 assessment.  ALL validators must agree before a trade proceeds
 (unanimous consensus, fail-closed).

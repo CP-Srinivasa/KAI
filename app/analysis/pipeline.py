@@ -1,4 +1,54 @@
-"""Analysis pipeline for keyword, entity, LLM, and fallback analysis."""
+"""Analysis pipeline for keyword, entity, LLM, and fallback analysis.
+
+Topologie (primary / shadow / ensemble)
+=======================================
+
+::
+
+    CanonicalDocument
+           │
+           ▼
+    ┌──────────────────────────────────┐
+    │ KeywordEngine + Rules            │  deterministic pre-filter
+    │  • spam probability              │  (compute_spam_probability,
+    │  • rule_relevance                │   _MIN_RULE_RELEVANCE_FOR_LLM,
+    │  • trusted-author bypass (D-176) │   STUB_CONTENT_THRESHOLD)
+    └──────────────────────────────────┘
+           │ (gate: skip LLM if pre-filter says noise,
+           │  unless author is on trusted social-handles list)
+           ▼
+      ┌────────────────┐          ┌────────────────┐
+      │ PRIMARY LLM    │◄── fan ──│ SHADOW LLM     │ optional, D-156f
+      │ (default:      │   out    │ (Anthropic     │ Shadow shows divergence
+      │  Anthropic     │          │  preferred     │ without affecting
+      │  post-D-180)   │          │  post-D-180)   │ primary decision path
+      └────────────────┘          └────────────────┘
+           │                              │
+           │   LLMAnalysisOutput          │  LLMAnalysisOutput (shadow)
+           ▼                              ▼
+    ┌──────────────────────────────────┐
+    │ ENSEMBLE (optional, flag-gated)  │  merges primary + shadow
+    │   if ensemble.enabled:           │  via confidence-weighted
+    │     blend → AnalysisResult       │  averaging (see ensemble.py)
+    │   else:                          │
+    │     primary → AnalysisResult     │
+    └──────────────────────────────────┘
+           │
+           ▼
+    AnalysisResult {sentiment, priority, actionable, entities, tags, …}
+
+Guards / gates (inlined before LLM call)
+- ``_STUB_CONTENT_THRESHOLD`` — body ≤ 50 bytes → skip LLM (PH5C)
+- ``_MIN_RULE_RELEVANCE_FOR_LLM`` — rule_relevance < 0.10 → skip LLM (D-110)
+- trusted-author bypass — tweets from ``monitor/social_accounts.txt`` skip
+  stub/relevance gates (D-176)
+- spam probability from rules feeds into LLM prompt + post-filter
+
+Semantics was shaped by D-156f (shadow-provider selection), D-180
+(Anthropic preferred), commits 3e5be3e + 61ebbfd. See also
+``docs/adr/0001-tradingview-integration.md`` for the TV branch of the
+analysis flow.
+"""
 
 from __future__ import annotations
 
