@@ -113,6 +113,21 @@ function Bridge-Tick {
 }
 
 # -- Server watchdog ---------------------------------------------------------
+# Limitation: effective only while the laptop is awake AND Task Scheduler fires.
+# Laptop-offline (lid closed / hibernate) cannot be covered here — rely on the
+# external uptime probe (UptimeRobot → kai-trader.org/health) for that class.
+# See DECISION_LOG D-188.
+function Write-WatchdogIncident($event, $detail) {
+    $incidentFile = Join-Path $ProjectRoot "artifacts\watchdog_incidents.jsonl"
+    $record = [ordered]@{
+        ts      = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
+        event   = $event
+        detail  = $detail
+        host    = $env:COMPUTERNAME
+    } | ConvertTo-Json -Compress
+    Add-Content -Path $incidentFile -Value $record -Encoding utf8
+}
+
 function Ensure-Server {
     try {
         $health = Invoke-WebRequest -Uri "http://127.0.0.1:8000/health" `
@@ -120,26 +135,45 @@ function Ensure-Server {
         if ($health.StatusCode -eq 200) { return }
     } catch {}
 
-    # Server is down - restart it.
-    Write-Log "SERVER DOWN - restarting uvicorn"
-    $serverLog = Join-Path $ProjectRoot "logs\server.log"
-    Start-Process -NoNewWindow -FilePath $Python `
-        -ArgumentList "-m", "uvicorn", "app.api.main:app", `
-            "--host", "127.0.0.1", "--port", "8000", "--log-level", "info" `
-        -RedirectStandardOutput $serverLog `
-        -RedirectStandardError (Join-Path $ProjectRoot "logs\server.err.log")
+    # Server is down — full-stack restart via server_start.sh (includes
+    # Telegram poller, RSSScheduler, PositionMonitor, Agent-Worker, Tunnel).
+    # The prior bare uvicorn restart dropped all of those silently.
+    Write-Log "SERVER DOWN - full-stack restart via server_start.sh"
+    Write-WatchdogIncident "server_down_detected" @{
+        pid_file = (Test-Path (Join-Path $ProjectRoot "pipeline_server.pid"))
+    }
+
+    # First try a clean stop (removes zombie PID-file, kills residual procs).
+    $bashExe = "C:\Program Files\Git\bin\bash.exe"
+    if (-not (Test-Path $bashExe)) { $bashExe = "bash" }
+
+    & $bashExe -c "cd '$($ProjectRoot -replace '\\','/')' && scripts/server_stop.sh" 2>&1 | Out-Null
+    Start-Sleep -Seconds 2
+
+    # Full-stack start (Ignore-Output — logs land in logs/server.log via script).
+    $startOut = & $bashExe -c "cd '$($ProjectRoot -replace '\\','/')' && scripts/server_start.sh" 2>&1 | Out-String
+    Write-Log "server_start.sh output (first 500 chars): $($startOut.Substring(0, [Math]::Min(500, $startOut.Length)))"
 
     Start-Sleep -Seconds 5
     try {
         $health = Invoke-WebRequest -Uri "http://127.0.0.1:8000/health" `
             -TimeoutSec 5 -UseBasicParsing -ErrorAction Stop
         if ($health.StatusCode -eq 200) {
-            Write-Log "SERVER restarted OK"
+            Write-Log "SERVER restarted OK (full stack)"
+            Write-WatchdogIncident "server_restart_ok" @{ method = "server_start.sh" }
         } else {
             Write-Log "SERVER restart FAILED (status $($health.StatusCode))"
+            Write-WatchdogIncident "server_restart_failed" @{
+                status = $health.StatusCode
+                method = "server_start.sh"
+            }
         }
     } catch {
         Write-Log "SERVER restart FAILED: $_"
+        Write-WatchdogIncident "server_restart_failed" @{
+            error  = "$_"
+            method = "server_start.sh"
+        }
     }
 }
 
