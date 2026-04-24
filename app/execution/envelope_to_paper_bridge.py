@@ -114,24 +114,19 @@ def _parse_allowlist(raw: str) -> frozenset[str]:
 
 
 def _read_jsonl(path: Path) -> list[dict[str, object]]:
-    if not path.exists():
-        return []
-    out: list[dict[str, object]] = []
+    """Read JSONL with mid-file tolerance and reader-vs-writer retry on the
+    last line. Delegates to :func:`app.storage.jsonl_io.read_jsonl_tolerant`
+    since D-194 (NEO-F-META-20260424-029). The outer ``try``/``except``
+    below still swallows ``OSError`` on the off-chance of a transient
+    filesystem error that the utility does not cover (e.g. permission
+    flipping during a deploy)."""
+    from app.storage.jsonl_io import read_jsonl_tolerant
+
     try:
-        with path.open("r", encoding="utf-8") as fh:
-            for line in fh:
-                stripped = line.strip()
-                if not stripped:
-                    continue
-                try:
-                    rec = json.loads(stripped)
-                except json.JSONDecodeError:
-                    continue
-                if isinstance(rec, dict):
-                    out.append(rec)
+        return list(read_jsonl_tolerant(path))
     except OSError as exc:
         logger.warning("[bridge] read %s failed: %s", path, exc)
-    return out
+        return []
 
 
 def _append_bridge_audit(record: dict[str, object]) -> None:

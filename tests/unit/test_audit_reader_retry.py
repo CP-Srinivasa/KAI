@@ -19,13 +19,13 @@ from pathlib import Path
 
 import pytest
 
-from app.alerts import audit as audit_mod
 from app.alerts.audit import (
     _read_jsonl_tolerant,
     iter_alert_audit_document_ids,
     load_alert_audits,
     load_outcome_annotations,
 )
+from app.storage import jsonl_io as jsonl_io_mod
 
 _AUDIT_LINE_A = (
     '{"document_id": "a", "channel": "telegram", "message_id": null, '
@@ -44,7 +44,7 @@ _OUTCOME_LINE_B = '{"document_id": "b", "outcome": "miss"}'
 def _silence_sleep(monkeypatch: pytest.MonkeyPatch) -> None:
     """Default: skip the retry wait in tests. Individual tests can override
     via a side-effecting sleep to simulate a writer finishing mid-race."""
-    monkeypatch.setattr(audit_mod.time, "sleep", lambda _s: None)
+    monkeypatch.setattr(jsonl_io_mod.time, "sleep", lambda _s: None)
 
 
 # ---------------------------------------------------------------------------
@@ -87,7 +87,7 @@ def test_last_line_retry_recovers_complete_record(
         # Simulate the writer finishing its append during our sleep.
         p.write_text(f"{_AUDIT_LINE_A}\n{_AUDIT_LINE_B}\n", encoding="utf-8")
 
-    monkeypatch.setattr(audit_mod.time, "sleep", _finishing_writer)
+    monkeypatch.setattr(jsonl_io_mod.time, "sleep", _finishing_writer)
 
     records = _read_jsonl_tolerant(p)
     assert sleep_calls["n"] == 1
@@ -112,7 +112,7 @@ def test_clean_file_does_not_invoke_sleep(
 
     sleep_calls = {"n": 0}
     monkeypatch.setattr(
-        audit_mod.time, "sleep", lambda _s: sleep_calls.__setitem__("n", sleep_calls["n"] + 1)
+        jsonl_io_mod.time, "sleep", lambda _s: sleep_calls.__setitem__("n", sleep_calls["n"] + 1)
     )
 
     _read_jsonl_tolerant(p)
@@ -133,7 +133,7 @@ def test_load_alert_audits_recovers_half_written_last_line(
     def _finishing_writer(_s: float) -> None:
         p.write_text(f"{_AUDIT_LINE_A}\n{_AUDIT_LINE_B}\n", encoding="utf-8")
 
-    monkeypatch.setattr(audit_mod.time, "sleep", _finishing_writer)
+    monkeypatch.setattr(jsonl_io_mod.time, "sleep", _finishing_writer)
 
     records = load_alert_audits(tmp_path)
     assert [r.document_id for r in records] == ["a", "b"]
@@ -148,7 +148,7 @@ def test_iter_alert_audit_document_ids_recovers_half_written_last_line(
     def _finishing_writer(_s: float) -> None:
         p.write_text(f"{_AUDIT_LINE_A}\n{_AUDIT_LINE_B}\n", encoding="utf-8")
 
-    monkeypatch.setattr(audit_mod.time, "sleep", _finishing_writer)
+    monkeypatch.setattr(jsonl_io_mod.time, "sleep", _finishing_writer)
 
     ids = iter_alert_audit_document_ids(tmp_path)
     assert ids == {"a", "b"}
@@ -164,7 +164,7 @@ def test_load_outcome_annotations_recovers_half_written_last_line(
     def _finishing_writer(_s: float) -> None:
         p.write_text(f"{_OUTCOME_LINE_A}\n{_OUTCOME_LINE_B}\n", encoding="utf-8")
 
-    monkeypatch.setattr(audit_mod.time, "sleep", _finishing_writer)
+    monkeypatch.setattr(jsonl_io_mod.time, "sleep", _finishing_writer)
 
     annotations = load_outcome_annotations(tmp_path)
     assert [a.document_id for a in annotations] == ["a", "b"]

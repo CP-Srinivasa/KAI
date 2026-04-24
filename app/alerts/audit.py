@@ -8,57 +8,24 @@ a separate JSONL file so hit-rate can be computed without live price data.
 """
 
 import json
-import time
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
 
 from app.signals.models import SignalProvenance
-
-# NEO-P-002 (D): delay before re-reading a JSONL file when the LAST line
-# failed to decode — gives the writer time to finish flushing an append.
-_LAST_LINE_RETRY_SLEEP_S = 0.1
+from app.storage.jsonl_io import read_jsonl_tolerant
 
 
 def _read_jsonl_tolerant(path: Path) -> list[dict]:
-    """Read all JSON objects from a JSONL file.
+    """Backward-compat wrapper around :func:`app.storage.jsonl_io.read_jsonl_tolerant`.
 
-    Policy:
-    - Middle-of-file ``JSONDecodeError`` is skipped silently (legacy behaviour;
-      mid-file corruption is rare with append-only writes).
-    - If the **last** non-empty line fails to decode, sleep briefly and re-read
-      the whole file once (NEO-P-002 D). append_alert_audit uses plain
-      ``'a'``-mode without flock; on Windows POSIX append-atomicity is not
-      guaranteed, so a reader racing with a writer can observe a partial last
-      line. 100 ms of patience makes that race statistically invisible without
-      introducing a file-lock dependency (deferred to Pi-migration).
-    - If the last line is still unparsable after retry, it is dropped.
+    Kept as a private name so existing intra-module callers and tests that
+    monkey-patch this symbol continue to work. New code should import
+    :func:`read_jsonl_tolerant` directly. NEO-P-002 D (D-156h) retry policy
+    is owned by the shared utility as of D-194.
     """
-    if not path.exists():
-        return []
-
-    def _parse(text: str) -> tuple[list[dict], bool]:
-        lines = [ln for ln in text.splitlines() if ln.strip()]
-        if not lines:
-            return [], False
-        records: list[dict] = []
-        last_idx = len(lines) - 1
-        last_failed = False
-        for idx, line in enumerate(lines):
-            try:
-                records.append(json.loads(line))
-            except json.JSONDecodeError:
-                if idx == last_idx:
-                    last_failed = True
-                # mid-file decode errors are skipped silently (legacy policy)
-        return records, last_failed
-
-    records, last_failed = _parse(path.read_text(encoding="utf-8"))
-    if last_failed:
-        time.sleep(_LAST_LINE_RETRY_SLEEP_S)
-        records, _ = _parse(path.read_text(encoding="utf-8"))
-    return records
+    return read_jsonl_tolerant(path)
 
 # Default JSONL filename for alert audits
 ALERT_AUDIT_JSONL_FILENAME = "alert_audit.jsonl"

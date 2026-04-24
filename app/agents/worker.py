@@ -43,20 +43,12 @@ def _now_iso() -> str:
 
 
 def _read_jsonl_raw(path: Path) -> list[dict[str, Any]]:
-    if not path.exists():
-        return []
-    rows: list[dict[str, Any]] = []
-    for raw in path.read_text(encoding="utf-8").splitlines():
-        line = raw.strip()
-        if not line:
-            continue
-        try:
-            obj = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if isinstance(obj, dict):
-            rows.append(obj)
-    return rows
+    """Read JSONL with mid-file tolerance and reader-vs-writer retry on the
+    last line. Delegates to :func:`app.storage.jsonl_io.read_jsonl_tolerant`
+    since D-194 (NEO-F-META-20260424-029)."""
+    from app.storage.jsonl_io import read_jsonl_tolerant
+
+    return read_jsonl_tolerant(path)
 
 
 def _rewrite_jsonl(path: Path, rows: list[dict[str, Any]]) -> None:

@@ -84,20 +84,13 @@ def _agent_dir(slug: str) -> Path:
 
 
 def _read_jsonl(path: Path, tail: int = 50) -> list[dict[str, Any]]:
-    if not path.exists():
-        return []
-    rows: list[dict[str, Any]] = []
-    for raw in path.read_text(encoding="utf-8").splitlines():
-        line = raw.strip()
-        if not line:
-            continue
-        try:
-            obj = json.loads(line)
-            if isinstance(obj, dict):
-                rows.append(obj)
-        except json.JSONDecodeError:
-            continue
-    return rows[-tail:] if tail else rows
+    """Read JSONL with mid-file tolerance and reader-vs-writer retry on the
+    last line. ``tail`` preserved for backward-compat callers. Delegates to
+    :func:`app.storage.jsonl_io.read_jsonl_tolerant` since D-194
+    (NEO-F-META-20260424-029)."""
+    from app.storage.jsonl_io import read_jsonl_tolerant
+
+    return read_jsonl_tolerant(path, tail=tail if tail else None)
 
 
 def _agent_status(slug: str) -> dict[str, Any]:
