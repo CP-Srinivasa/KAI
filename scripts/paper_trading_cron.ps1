@@ -118,6 +118,9 @@ function Bridge-Tick {
 # external uptime probe (UptimeRobot → kai-trader.org/health) for that class.
 # See DECISION_LOG D-188.
 function Write-WatchdogIncident($event, $detail) {
+    # UTF-8 no-BOM: Add-Content -Encoding utf8 prepends BOM on PS 5.1, which
+    # breaks strict JSONL parsers (json.loads fails on line 1). Use .NET
+    # UTF8Encoding($false) to write raw UTF-8 without BOM.
     $incidentFile = Join-Path $ProjectRoot "artifacts\watchdog_incidents.jsonl"
     $record = [ordered]@{
         ts      = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
@@ -125,7 +128,8 @@ function Write-WatchdogIncident($event, $detail) {
         detail  = $detail
         host    = $env:COMPUTERNAME
     } | ConvertTo-Json -Compress
-    Add-Content -Path $incidentFile -Value $record -Encoding utf8
+    $utf8NoBom = New-Object System.Text.UTF8Encoding $false
+    [System.IO.File]::AppendAllText($incidentFile, $record + "`n", $utf8NoBom)
 }
 
 function Ensure-Server {
