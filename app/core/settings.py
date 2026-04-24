@@ -340,6 +340,16 @@ class TradingViewSettings(BaseSettings):
     # event_id — bytes-layer cache remains the sole guard in that case.
     webhook_event_id_cache_size: int = Field(default=1024, ge=1)
     webhook_event_id_window_seconds: float = Field(default=1800.0, gt=0.0)
+    # D-189 / NEO-F-META-20260424-026: SQLite-persist the payload-hash and
+    # event-id replay caches so they survive uvicorn/systemd restarts. The
+    # in-memory LRU keeps the fast path; SQLite hydrates on startup, so a
+    # restart within the replay window no longer reopens the replay door.
+    # Default off — operator opts in after setting webhook_replay_cache_db_path
+    # somewhere writable (artifacts/ is fine on Windows AND Pi).
+    webhook_replay_cache_persistent: bool = Field(default=False)
+    webhook_replay_cache_db_path: str = Field(
+        default="artifacts/tradingview_replay_cache.db"
+    )
     # TV-2.1: shared-token fallback for TradingView's native webhook which
     # cannot produce body-HMACs. Modes: hmac (default, strongest) |
     # shared_token (no body integrity) | hmac_or_token (accept either).

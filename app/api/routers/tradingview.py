@@ -26,6 +26,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import sqlite3
 import time
 from collections import OrderedDict
 from collections.abc import Callable
@@ -94,16 +95,139 @@ class ReplayCache:
             self._seen.clear()
 
 
+class PersistentReplayCache(ReplayCache):
+    """SQLite-backed replay cache that survives uvicorn/systemd restarts.
+
+    D-189 / NEO-F-META-20260424-026: without persistence, a restart within the
+    replay window reopens the replay door — attacker with a stolen signed body
+    (or event_id) could re-submit until the natural time window expires. This
+    subclass mirrors every accepted ``check_and_record`` into a single-file
+    SQLite store; on construction it rehydrates within-window rows back into
+    the in-memory OrderedDict, so the guard stays closed across restarts.
+
+    The in-memory path is unchanged (same monotonic-based LRU). SQLite only
+    participates on (a) construction (hydrate + prune) and (b) each accept
+    (INSERT OR IGNORE). A persistence failure is logged but does not block
+    the request — the in-memory guard still works for the current process.
+    """
+
+    def __init__(
+        self,
+        max_size: int,
+        window_seconds: float,
+        db_path: Path,
+        table_name: str,
+    ) -> None:
+        super().__init__(max_size, window_seconds)
+        # Whitelist the table name — must be a simple identifier; SQLite
+        # parameter binding does not cover table names, so we refuse anything
+        # that is not [A-Za-z0-9_]+ to close off any injection vector even
+        # though the caller is trusted.
+        if not table_name.replace("_", "").isalnum():
+            raise ValueError(f"unsafe table name: {table_name!r}")
+        self._db_path = db_path
+        self._table = table_name
+        self._init_db()
+        self._hydrate()
+
+    def _init_db(self) -> None:
+        self._db_path.parent.mkdir(parents=True, exist_ok=True)
+        with sqlite3.connect(self._db_path) as conn:
+            conn.execute(
+                f"CREATE TABLE IF NOT EXISTS {self._table} ("
+                "  key TEXT PRIMARY KEY, "
+                "  inserted_at REAL NOT NULL)"
+            )
+            conn.commit()
+
+    def _hydrate(self) -> None:
+        """Load within-window rows back into _seen; prune expired rows."""
+        now_wall = time.time()
+        cutoff_wall = now_wall - self._window_seconds
+        with sqlite3.connect(self._db_path) as conn:
+            conn.execute(
+                f"DELETE FROM {self._table} WHERE inserted_at <= ?",
+                (cutoff_wall,),
+            )
+            rows = conn.execute(
+                f"SELECT key, inserted_at FROM {self._table} "
+                f"ORDER BY inserted_at",
+            ).fetchall()
+            conn.commit()
+        # Translate wall-clock timestamps into monotonic-relative values so
+        # the parent class' time.monotonic()-based pruning keeps working.
+        now_mono = time.monotonic()
+        with self._lock:
+            for key, inserted_at in rows:
+                age_seconds = now_wall - inserted_at
+                self._seen[key] = now_mono - age_seconds
+            # Enforce max_size even on hydrate — keeps oldest-first eviction.
+            while len(self._seen) > self._max_size:
+                self._seen.popitem(last=False)
+
+    def check_and_record(self, payload_hash: str) -> bool:
+        accepted = super().check_and_record(payload_hash)
+        if accepted:
+            try:
+                with sqlite3.connect(self._db_path) as conn:
+                    conn.execute(
+                        f"INSERT OR IGNORE INTO {self._table} (key, inserted_at) VALUES (?, ?)",
+                        (payload_hash, time.time()),
+                    )
+                    conn.commit()
+            except sqlite3.Error as exc:
+                # Fail-open: in-memory guard still holds for this process.
+                # Operator sees the drift via log + next hydrate will either
+                # recover or keep surfacing the underlying DB issue.
+                _logger.warning(
+                    "replay_cache_persist_failed",
+                    table=self._table,
+                    key_prefix=payload_hash[:8],
+                    error=str(exc),
+                )
+        return accepted
+
+    def clear(self) -> None:
+        super().clear()
+        try:
+            with sqlite3.connect(self._db_path) as conn:
+                conn.execute(f"DELETE FROM {self._table}")
+                conn.commit()
+        except sqlite3.Error as exc:
+            _logger.warning(
+                "replay_cache_clear_failed", table=self._table, error=str(exc)
+            )
+
+
 _REPLAY_CACHE: ReplayCache | None = None
 _EVENT_ID_CACHE: ReplayCache | None = None
+
+
+def _build_cache(
+    settings: TradingViewSettings,
+    *,
+    max_size: int,
+    window_seconds: float,
+    table_name: str,
+) -> ReplayCache:
+    if settings.webhook_replay_cache_persistent:
+        return PersistentReplayCache(
+            max_size=max_size,
+            window_seconds=window_seconds,
+            db_path=Path(settings.webhook_replay_cache_db_path),
+            table_name=table_name,
+        )
+    return ReplayCache(max_size=max_size, window_seconds=window_seconds)
 
 
 def _get_replay_cache(settings: TradingViewSettings) -> ReplayCache:
     global _REPLAY_CACHE
     if _REPLAY_CACHE is None:
-        _REPLAY_CACHE = ReplayCache(
+        _REPLAY_CACHE = _build_cache(
+            settings,
             max_size=settings.webhook_replay_cache_size,
             window_seconds=settings.webhook_replay_window_seconds,
+            table_name="payload_seen",
         )
     return _REPLAY_CACHE
 
@@ -112,13 +236,17 @@ def _get_event_id_cache(settings: TradingViewSettings) -> ReplayCache:
     """V8.1: Layer-2 replay cache keyed on operator-supplied external event_id.
 
     Independent LRU — cache key space and TTL differ from the payload-hash
-    cache, so sharing the instance would cross-pollute both.
+    cache, so sharing the instance would cross-pollute both. Shares the
+    SQLite file with the payload cache when persistence is enabled (separate
+    tables keep the key spaces cleanly apart).
     """
     global _EVENT_ID_CACHE
     if _EVENT_ID_CACHE is None:
-        _EVENT_ID_CACHE = ReplayCache(
+        _EVENT_ID_CACHE = _build_cache(
+            settings,
             max_size=settings.webhook_event_id_cache_size,
             window_seconds=settings.webhook_event_id_window_seconds,
+            table_name="event_id_seen",
         )
     return _EVENT_ID_CACHE
 
