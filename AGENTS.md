@@ -1,109 +1,33 @@
 
 
 
-## Current State (2026-03-24)
-
+## Current State (2026-04-24)
 
 | Field | Value |
-
-
 |---|---|
-
-
-| current_phase | `PHASE 5 (active)` |
-
-
-| current_sprint | `PH5C_FILTER_BEFORE_LLM_BASELINE (closed D-97)` |
-
-
-| next_required_step | `STRATEGIC_HOLD -- no new feature-work until alert-hit-rate is calculable on >=50 resolved directional alerts` |
-
-
-| ph4a_status | `closed (D-53) -- immutable baseline anchor (S67)` |
-
-
-| ph4b_status | `closed (D-62) -- paired_count=69; root cause: keyword coverage blindness` |
-
-
-| ph4c_status | `closed -- rule-keyword gap audit; top-3 gaps: macro, regulatory, AI` |
-
-
-| ph4d_status | `closed (D-68) -- 56 keywords added; zero-hit 42%->37.7%; S71 frozen anchor` |
-
-
-| ph4e_status | `closed (D-70) -- relevance 41.2% of gap; root cause: defaults by design` |
-
-
-| ph4f_status | `closed (D-69) -- fallback path identified; actionable missing 69/69; market_scope unknown 69/69` |
-
-
-| ph4g_status | `closed (D-68/69) -- relevance floor applied; actionable reverted (I-13); S75 frozen anchor` |
-
-
-| ph4h_status | `closed (D-74/75) -- policy decision: actionable=LLM-only; I-13 confirmed permanent; S76 frozen anchor` |
-
-
-| ph4i_status | `closed (D-78) -- market_scope enrichment complete; S77 frozen anchor` |
-
-
-| ph4j_status | `closed -- tags enrichment: keyword-hit 4->7, zero-hit 1->4, assets-only 0->4` |
-
-
-| ph4k_status | `closed (D-84) -- utility review complete; S79 frozen anchor` |
-
-
-| v4_dual_write_status | `closed (D-86) -- N-4 closed` |
-
-
-| baseline | `1039 passed, ruff clean, mypy 0 errors` |
-
-
-| working_tree | `clean` |
-
-
-| cli_canonical_count | 53 |
-
-
-| provisional_cli_count | 0 |
-
-
-| phase3_status | `closed (2026-03-22) -- GO` |
-
-
-| phase4_status | `CLOSED (D-87, 2026-03-24) -- 11 sprints PH4A-PH4K + V-4; canonical closeout complete` |
-
-
-| ph5a_status | `closed (D-91) -- reliability baseline established` |
-
-
-| ph5b_status | `closed (accepted) -- EMPTY_MANUAL confirmed root cause; no model failure` |
-
-
-| ph5c_status | `closed (D-97) -- strategic hold active; no new companion-ML sprint/decision/invariant` |
-
-
-| phase5_status | `HOLD -- PH5C closed (D-97); feature-work blocked until alert-hit-rate is calculable on >=50 resolved directional alerts` |
-
-
-| production_limits | `D-101 -- Priority MAE=3.13 and LLM-Error-Proxy=27.5% are accepted production metrics; improve via operation and real data, not internal sprints` |
-
-
-| tier1_fallback_policy | `D-104 -- I-13 remains permanent: actionable=0 in Tier1/keyword fallback; signal quality focus stays on LLM-driven alerts` |
-
-
-| thirty_day_gate | `D-105 -- review on 2026-04-23 after a real 7-day ingestion run with LLM analysis; if alert_audit.jsonl has <5 triggered alerts or alert precision <30%, stop trading-signal work and focus on data quality (feeds, keywords, spam-filter), no new architecture` |
-
-
-| living_architecture | `D-106 -- active architecture is CLAUDE.md + docs/contracts.md (slim); all other docs are historical in docs/archive/` |
-
-
----> **Verbindliches Betriebsdokument fuer alle Coding-Agenten.**
-
-
-> Aktiver Agent: Claude Code (Architekt + Implementierer)
-> Multi-Agent-Modell (Codex, Antigravity) pausiert bis 30-Day-Gate (2026-04-23) — siehe docs/archive/AGENT_ROLES.md
-
-
+| current_phase | `PHASE 5 (SUSPENDED, D-125)` |
+| phase5_status | `SUSPENDED -- TradingView-Pivot active until 2026-05-16 (D-125, 2026-04-16)` |
+| re_entry_gate | `≥200 resolved directional alerts OR ≥10 paper fills with PnL at 2026-05-16` |
+| re_entry_data_side | `met (305 resolved / 54 fills) -- calendar half pending` |
+| re_entry_date | `2026-05-16` (calendar-fixed; no further deferral per D-125 condition 1) |
+| active_workstream | `TradingView-Pivot stages TV-1..TV-4b, operator-signal approval bridge, provenance-persistence V8 follow-ups` |
+| thirty_day_gate_d117 | `resolved (D-186, 2026-04-24) -- no re-activation of Codex/Antigravity; re-eval after TV-pivot re-entry` |
+| multi_agent_status | `paused -- D-186 decided no re-activation; re-eval 2026-05-16` |
+| live_execution | `OFF -- paper + operator-approval only` |
+| next_operator_milestone | `Pi-Migration cutover 2026-05-01 (D-7) -- see memory reminder_server_migration_pi.md` |
+| liveness_watchdog | `hardened D-188 (2026-04-24) -- full-stack restart via server_start.sh + JSONL incidents; external UptimeRobot layer operator-action pending` |
+| provenance_persistence | `V1 active (D-125/SAT-C-PROV-20260422-001, commit 66c638d) -- HMAC-seal, zero-downtime rotation D-183, replay-guard D-179; V8 follow-ups: signal_path_id in fresh rows, auth_method at TV-ingress, ReplayCache persistence, shared-token body-signing` |
+| living_architecture | `D-106 -- active architecture is CLAUDE.md + docs/contracts.md (slim); historical docs under docs/archive/` |
+| documentation_policy | `D-99 -- no sprint-contract docs; decisions live in DECISION_LOG.md or code comments only` |
+| baseline | `~1946 tests, ruff clean (Stand D-184, 2026-04-22)` |
+| cloudflare_tunnel | `kai-trader.org active (D-167, 2026-04-17); auto-started by scripts/server_start.sh` |
+| cron_status | `KAI-PaperTrading every 10 min (Windows Task Scheduler)` |
+
+> **Verbindliches Betriebsdokument für alle Coding-Agenten.**
+>
+> Aktiver Agent: **Claude Code** (Architekt + Implementierer)
+> Multi-Agent-Modell (Codex, Antigravity) **endgültig nicht reaktiviert bis TV-Pivot Re-Entry** (D-186, 2026-04-24) — archivierte Roster-Historie in `docs/archive/AGENT_ROLES.md`.
+>
 > Dieses Dokument lesen, bevor eine einzige Zeile Code angefasst wird.
 
 ## Agent Roster (D-141, 2026-04-15)

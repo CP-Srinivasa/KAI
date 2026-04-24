@@ -562,18 +562,28 @@ The repository should evolve into a platform with the following capability layer
 ## Expected Module Separation
 
 - `app/core/` → settings, logging, domain types, enums, errors, utilities
-- `app/ingestion/` → source adapters, resolvers, registries, schedulers
+- `app/ingestion/` → source adapters, resolvers, registries, schedulers (RSS, TradingView, Telegram MTProto, NewsData, YouTube, X/Twitter)
 - `app/normalization/` → canonical schemas, content cleanup, metadata alignment
 - `app/enrichment/` → entities, tags, language, dedup helpers
-- `app/analysis/` → keyword logic, DSL, sentiment, scoring, historical comparison
-- `app/integrations/` → provider-specific clients and adapters
-- `app/alerts/` → Telegram, email, alert rules, formatters
-- `app/research/` → briefs, summaries, event clusters, watchlists
+- `app/analysis/` → keyword logic, DSL, sentiment, scoring, historical comparison, priority-tier gate
+- `app/integrations/` → provider-specific clients and adapters (CoinGecko, Binance, NewsData, YouTube, LLM providers)
+- `app/alerts/` → Telegram, email, alert rules, formatters, provenance persistence, TV-4 bridge, quality-bar
 - `app/trading/` → signal candidates, asset mapping, risk notes
-- `app/api/` → FastAPI endpoints
-- `app/cli/` → Typer commands
-- `app/storage/` → DB models, repositories, migrations
-- `monitor/` → user-editable source lists and watchlists
+- `app/api/` → FastAPI endpoints (operator API, dashboard SPA, webhooks, agent control)
+- `app/cli/` → Typer commands (canonical + command submodules)
+- `app/storage/` → DB models, repositories, migrations (Alembic)
+- `app/agents/` → Claude-Code-only subagent workers (SENTR, Watchdog, Architect, DALI, Neo, SATOSHI), guarded write tools, MCP server surface
+- `app/decisions/` → decision journal persistence
+- `app/execution/` → paper execution engine, operator-signal bridge, portfolio read surface
+- `app/market_data/` → read-only adapter contract (mock, CoinGecko), stale-gated snapshots
+- `app/messaging/` → Telegram operator bot, webhook hardening, menu, unified chat
+- `app/orchestrator/` → TradingLoop (7-step pipeline), cycle audit, loop status, TV-bridge scheduler
+- `app/pipeline/` → full-pipeline orchestration (`run-all`), Typer entry
+- `app/risk/` → risk engine, gate chain, property-based invariants
+- `app/schemas/` → runtime validator, schema binding
+- `app/security/` → idempotency store, rate-limit store, brute-force guard, auth guards
+- `app/signals/` → SignalGenerator (6 filters, confluence, SL/TP), SignalCandidate models
+- `monitor/` → operator-curated source lists, watchlists, keyword/alias/rule definitions (trust-boundary: file-system ACL, D-181)
 
 ---
 

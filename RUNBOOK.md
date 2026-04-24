@@ -2,63 +2,110 @@
 
 ## Scope
 
-Canonical operator runbook for the active PH5 hold period.
-Goal: run the pipeline daily, collect directional alerts, and annotate outcomes until the gate is met.
+Canonical operator runbook for the **TradingView-Pivot period** (PHASE 5 suspended until 2026-05-16, D-125).
+Primary goals: (a) keep pipeline + TV ingestion + paper-bridge alive 24/7, (b) approve operator signals via Telegram, (c) accumulate directional evidence for Re-Entry gate, (d) prepare Pi-migration for 2026-05-01.
 
-Gate: no new feature work until at least 50 directional alerts are resolved (`hit` or `miss`).
+**Re-Entry criterion** (2026-05-16): ≥200 resolved directional alerts OR ≥10 paper fills with PnL — **data-side already met** (305 resolved, 54 fills). Calendar half is the only remaining block.
 
 ## 1. Baseline Check
 
 ```bash
-python -m pytest
+python -m pytest                                           # ~1946 tests
 python -m ruff check .
 ```
 
-## 2. Daily Core Routine
+## 2. Daily Core Routine (mostly automatic)
+
+The Windows scheduled task `KAI-PaperTrading` runs every 10 min and performs:
+- `Ensure-Server` liveness watchdog (full-stack restart via `server_start.sh` on down-detect; incidents logged to `artifacts/watchdog_incidents.jsonl`)
+- `trading monitor-positions` (SL/TP triggers)
+- `trading operator-signal-bridge-tick` (approved signals → paper fills)
+- `trading run-once` BTC/USDT + ETH/USDT (paper mode, CoinGecko)
+- Every 6th tick (~hourly): `alerts auto-annotate`
+- Every 4th tick (~40 min): `pipeline run-all`
+- Every 3rd tick (~30 min): `pipeline newsdata`
+- Every 12th tick (~2h): `pipeline youtube`
+- Every 6th tick (~hourly): `pipeline twitter`
+- Each tick: `tradingview run` (TV-4 bridge), `freshness_check.py`
+- First run after 08:00: `alerts daily-briefing`, `alerts health-check`, `daily-strategy bootstrap`
+
+Manual re-trigger:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File scripts/ph5_daily_ops.ps1
-python scripts/ph5_hold_metrics_report.py
+powershell -ExecutionPolicy Bypass -File scripts\paper_trading_cron.ps1
 ```
 
-The routine does:
-- `pipeline-run`
-- `alerts auto-check` (historical horizon check, default dry-run)
-- `alerts hold-report`
-- `alerts pending-annotations`
+Install / remove the scheduled task:
+
+```powershell
+scripts\paper_trading_cron.ps1 -Install
+schtasks /Delete /TN "KAI-PaperTrading" /F
+```
+
+Bash port (used on Pi after migration):
+
+```bash
+bash scripts/paper_trading_cron.sh
+```
 
 ## 3. Manual Operator Commands
 
 ```bash
-python -m app.cli.main pipeline-run <feed_url> --source-id <id> --source-name <name> --top-n 5
-python -m app.cli.main analyze pending --limit 50
-python -m app.cli.main signals extract --limit 20 --min-priority 8
-python -m app.cli.main alerts evaluate-pending
-python -m app.cli.main alerts auto-check --threshold-pct 5 --horizon-hours 24 --min-age-hours 24 --dry-run
+# Health + diagnostics
+python -m app.cli.main /status
+python -m app.cli.main alerts pending-annotations --limit 20 --min-age-hours 0
+python -m app.cli.main alerts tv4-quality-bar --output-path artifacts/ph5_hold/quality_bar_<YYYYMMDD>.json
 python -m app.cli.main alerts hold-report
-python -m app.cli.main alerts baseline-report --input-path artifacts/ph4b_tier3_shadow.jsonl
-python -m app.cli.main alerts pending-annotations --limit 20 --min-age-hours 24
+
+# Pipeline
+python -m app.cli.main pipeline run-all --top-n 1
+python -m app.cli.main pipeline newsdata "crypto bitcoin ethereum solana" --language en --category business --size 10 --top-n 3
+python -m app.cli.main pipeline twitter --top-n 5
+python -m app.cli.main pipeline youtube <channel_url> --max-results 3 --top-n 1
+
+# Paper trading (manual)
+python -m app.cli.main trading run-once --symbol BTC/USDT --mode paper --provider coingecko --analysis-profile conservative
+python -m app.cli.main trading monitor-positions --provider coingecko
+python -m app.cli.main trading operator-signal-bridge-tick
+
+# Alerts + annotation
+python -m app.cli.main alerts auto-annotate
 python -m app.cli.main alerts annotate <document_id> <hit|miss|inconclusive>
-python scripts/ph5_keyword_coverage_audit.py --limit 300 --target-coverage 80 --suggestions 30
+python -m app.cli.main alerts backfill-provenance --dry-run
+
+# TradingView
+python -m app.cli.main tradingview run
+python -m app.cli.main alerts tv-bridge                    # TV events → alert_audit.jsonl
+
+# Daily strategy
+python -m app.cli.main daily-strategy bootstrap            # writes artifacts/daily_strategy/<today>.md
 ```
 
-## 4. Hold Gate Review
+Allowed annotation outcomes: `hit`, `miss`, `inconclusive`.
 
-Use the generated report under `artifacts/ph5_hold/`.
+## 4. Quality-Bar Review (replaces old Hold Gate review)
 
-Primary checks:
-- resolved directional alerts (`hit` + `miss`) >= 50
-- alert precision from resolved outcomes
-- paper-trading evidence present
+Artefacts under `artifacts/ph5_hold/`:
+- `quality_bar_<YYYYMMDD>.json` — per-source precision + Wilson 95% CI
+- `ph5_hold_metrics_report.json` — forward-simulation (actionable + priority gates)
 
-If the gate is not met, continue daily operation and annotation only.
+Primary checks toward Re-Entry (2026-05-16):
+- `resolved_directional_documents ≥ 200` (D-125 condition)
+- `order_filled_count ≥ 3` (D-125 floor; target ≥ 10 with PnL)
+- Active-precision (ex `unknown`-source) trending above gate
+- Per-source CIs disjoint enough to distinguish signal quality
+
+Decision record: always in `DECISION_LOG.md` (compact, 1–N lines). No sprint-contract docs.
 
 ## 5. Guardrails
 
-- Keep execution in paper/shadow-safe mode (no live execution)
-- Do not add new sprint-contract documents
-- Do not add new companion-ML feature work while hold is active
-- Record decisions compactly in `DECISION_LOG.md`
+- Paper/approval-mode only. No live execution path. (`EXECUTION_PAPER_MIN_PRIORITY` gate flag-gated, default 1)
+- Fail-closed on stale market data — cycle skipped, logged with `market_data_source`.
+- Approval-mode pflicht for operator-signal bridge (`EXECUTION_OPERATOR_SIGNAL_APPROVAL_ENABLED=true`, `_TTL_MINUTES=60`).
+- No sprint-contract docs (D-99). Decisions in `DECISION_LOG.md` or code comments.
+- `monitor/*` is operator-trust-boundary (D-181) — file-system ACL is the trust line.
+- Provenance persistence pflicht (D-125/SAT-C-PROV-20260422-001): every outcome/audit row carries `source+version+signal_path_id+auth_method+ingest_event_id+provenance_hash`.
+- Zero-downtime key rotation for `ALERT_PROVENANCE_SECRET` via 4-phase runbook in `.env.example` (D-183).
 
 ## 6. Operator Dashboard (D-140)
 
@@ -101,16 +148,18 @@ The server binds `0.0.0.0:8000`. Windows firewall: allow inbound TCP/8000 for
 the private profile once. Do not enable on untrusted networks — the API key
 is the only auth boundary.
 
-## 7. Agenten (SENTR · Watchdog · Architect)
+## 7. Agenten (6 Claude-Code-only Specialists)
 
-Drei Claude-Code-only-Agenten mit ehrlicher Status-Erkennung über JSONL-Dropbox
-unter `artifacts/agents/{sentr,watchdog,architect}/`. Keine Fake-Heartbeats.
+JSONL-Dropbox unter `artifacts/agents/{sentr,watchdog,architect,dali,neo,satoshi}/`. Keine Fake-Heartbeats. Volle Roster-Definition + Auto-Routing-Map: `AGENTS.md § Agent Roster` + `CLAUDE.md § Auto-Routing-Pflicht`.
 
-| Agent | ID | Modi |
-|---|---|---|
-| SENTR | `a708ac129e9cf2569` | inspect, report |
-| Watchdog | — | check, report |
-| Architect | `a14a2b53ba50ebadd` | review, propose |
+| Agent | ID | Modi | Rolle |
+|---|---|---|---|
+| SENTR | `a708ac129e9cf2569` | inspect, report | Security/Inspection — Code, Configs, Secrets, Auditierbarkeit |
+| Watchdog | — | check, report | Health/Drift — Pipeline-Outputs, Quality-Bar, Regressionen |
+| Architect | `a14a2b53ba50ebadd` | review, propose | Architektur/Struktur — Module, Abhängigkeiten, Refactor |
+| DALI | — | audit, propose, implement | Design/UI — Dashboard, Telegram, Visual System (Patch-Proposals, nie Auto-Apply) |
+| Neo | — | analyze, propose, implement | Code-Tiefenanalyse — Root-Cause, Concurrency, Datenfluss, Performance |
+| SATOSHI | — | crypto-review, forensic, threat-model, propose, implement | Krypto/Wallet/Smart-Contract/Forensik — Signaturen, HMAC, Webhooks, Provenance, Threat-Models |
 
 UI: Dashboard → Sidebar → "Kontrolle" → "Agenten" (`#agents`).
 
@@ -151,6 +200,9 @@ Event-Shape: `{id, ts, agent, source: dashboard|telegram|agent, role: operator|a
 /watchdog !check <note>      # Kommando einreihen (wie Dashboard-Button)
 /sentr  !inspect ...         # SENTR: inspect|report
 /architect !review ...       # Architect: review|propose
+/dali !audit ...             # DALI: audit|propose|implement (Patch-Proposal)
+/neo !analyze ...            # Neo: analyze|propose|implement
+/satoshi !crypto-review ...  # SATOSHI: crypto-review|forensic|threat-model|propose|implement
 ```
 
 **Agent-Reply-Konvention** — Claude Code schreibt Antworten via:
