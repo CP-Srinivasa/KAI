@@ -1,0 +1,25 @@
+[Unit]
+Description=KAI Pipeline Server (FastAPI + in-process schedulers)
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=kai
+Group=kai
+WorkingDirectory=/home/kai/ai_analyst_trading_bot
+EnvironmentFile=/home/kai/ai_analyst_trading_bot/.env
+ExecStart=/home/kai/ai_analyst_trading_bot/.venv/bin/python -m uvicorn app.api.main:app --host 127.0.0.1 --port 8000 --log-level info
+Restart=on-failure
+RestartSec=10
+StandardOutput=append:/home/kai/ai_analyst_trading_bot/logs/server.log
+StandardError=append:/home/kai/ai_analyst_trading_bot/logs/server.err.log
+# Hardening (RPi OS Bookworm supports all of these)
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/kai/ai_analyst_trading_bot
+
+[Install]
+WantedBy=multi-user.target

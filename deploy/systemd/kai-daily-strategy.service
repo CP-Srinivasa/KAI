@@ -1,0 +1,13 @@
+[Unit]
+Description=KAI Daily Strategy Skeleton (morning bootstrap)
+
+[Service]
+Type=oneshot
+User=kai
+Group=kai
+WorkingDirectory=/home/kai/ai_analyst_trading_bot
+EnvironmentFile=/home/kai/ai_analyst_trading_bot/.env
+Environment=PYTHONIOENCODING=utf-8
+ExecStart=/home/kai/ai_analyst_trading_bot/.venv/bin/python -m app.cli.main daily-strategy bootstrap
+StandardOutput=journal
+StandardError=journal

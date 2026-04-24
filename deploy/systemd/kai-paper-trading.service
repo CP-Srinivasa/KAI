@@ -1,0 +1,18 @@
+[Unit]
+Description=KAI Paper-Trading cron tick (10-min functional parity with Windows Task Scheduler)
+After=kai-server.service
+Requires=kai-server.service
+
+[Service]
+Type=oneshot
+User=kai
+Group=kai
+WorkingDirectory=/home/kai/ai_analyst_trading_bot
+EnvironmentFile=/home/kai/ai_analyst_trading_bot/.env
+Environment=PYTHON=/home/kai/ai_analyst_trading_bot/.venv/bin/python
+Environment=PYTHONIOENCODING=utf-8
+ExecStart=/bin/bash /home/kai/ai_analyst_trading_bot/scripts/paper_trading_cron.sh
+StandardOutput=journal
+StandardError=journal
+# Script writes its own structured log to artifacts/paper_trading_cron.log;
+# systemd-journal captures anything that bleeds to stdout/stderr beyond that.

@@ -1,0 +1,12 @@
+[Unit]
+Description=Trigger KAI Paper-Trading every 10 min
+Requires=kai-server.service
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=10min
+AccuracySec=30s
+Unit=kai-paper-trading.service
+
+[Install]
+WantedBy=timers.target

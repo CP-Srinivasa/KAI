@@ -1,0 +1,20 @@
+[Unit]
+Description=Cloudflare Tunnel (kai-trader.org)
+After=network-online.target kai-server.service
+Wants=network-online.target
+Requires=kai-server.service
+
+[Service]
+Type=simple
+User=kai
+Group=kai
+ExecStart=/usr/local/bin/cloudflared tunnel --config /home/kai/.cloudflared/config.yml run kai
+Restart=always
+RestartSec=10
+StandardOutput=append:/home/kai/ai_analyst_trading_bot/logs/tunnel.log
+StandardError=append:/home/kai/ai_analyst_trading_bot/logs/tunnel.err.log
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
