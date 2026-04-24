@@ -143,8 +143,12 @@ function Ensure-Server {
     # Telegram poller, RSSScheduler, PositionMonitor, Agent-Worker, Tunnel).
     # The prior bare uvicorn restart dropped all of those silently.
     Write-Log "SERVER DOWN - full-stack restart via server_start.sh"
+    $pidFilePath = Join-Path $ProjectRoot ".server.pid"
+    $pidFileExists = Test-Path $pidFilePath
+    $pidFromFile = if ($pidFileExists) { (Get-Content $pidFilePath -ErrorAction SilentlyContinue | Select-Object -First 1) } else { $null }
     Write-WatchdogIncident "server_down_detected" @{
-        pid_file = (Test-Path (Join-Path $ProjectRoot "pipeline_server.pid"))
+        pid_file_exists = $pidFileExists
+        pid_from_file   = $pidFromFile
     }
 
     # First try a clean stop (removes zombie PID-file, kills residual procs).
