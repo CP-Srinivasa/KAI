@@ -202,6 +202,23 @@ def cmd_check() -> None:
     raise typer.Exit(code=1)
 
 
+# Stub-marker the bootstrap writes into placeholder sections. The reminder
+# uses these to detect "skeleton present but unfilled" — Claude removes them
+# when filling §1..§6 in a session-start review.
+_STUB_MARKERS = (
+    "_Bitte Claude füllen",
+    "(Carry-over aus Vortagen bitte hier migrieren)",
+)
+
+
+def _reminder_marker_path(today: date) -> Path:
+    return _daily_dir() / f".reminder_sent_{today.isoformat()}"
+
+
+def _stub_section_count(text: str) -> int:
+    return sum(text.count(marker) for marker in _STUB_MARKERS)
+
+
 @daily_strategy_app.command("bootstrap")
 def cmd_bootstrap(
     notify: bool = typer.Option(
@@ -247,6 +264,99 @@ async def _ping_operator(today: date, path: Path) -> bool:
         "Öffne eine Claude-Session, damit die 6 Pflicht-Sektionen gefüllt werden."
     )
     return await send_operator_notification(msg)
+
+
+async def _ping_reminder(today: date, path: Path, kind: str, detail: str) -> bool:
+    """Send a reminder when today's review is missing or stub-only."""
+    from app.alerts.notify import send_operator_notification
+
+    msg = (
+        f"⏰ KAI Daily Strategy Reminder — {kind}\n"
+        f"Datum: {today.isoformat()}\n"
+        f"Pfad: {path.as_posix()}\n"
+        f"{detail}\n"
+        "Skill `daily-strategy-review` ausführen."
+    )
+    return await send_operator_notification(msg)
+
+
+@daily_strategy_app.command("reminder")
+def cmd_reminder(
+    notify: bool = typer.Option(
+        True,
+        "--notify/--no-notify",
+        help="Send a Telegram reminder when the review is missing or stub-only.",
+    ),
+    force: bool = typer.Option(
+        False,
+        "--force",
+        help="Send the reminder even if one was already sent today.",
+    ),
+) -> None:
+    """V2: nudge the operator if today's review is missing or unfilled.
+
+    Idempotent per day — once a reminder has been sent, a marker file
+    `artifacts/daily_strategy/.reminder_sent_<YYYY-MM-DD>` keeps subsequent
+    invocations silent. Use ``--force`` to bypass the marker (e.g. after
+    operator deletes the marker manually).
+
+    Exit codes:
+      0 — review present and filled, no reminder needed
+      1 — review present but stub-only, reminder sent
+      2 — review missing entirely, reminder sent
+    """
+    today = datetime.now(UTC).date()
+    path = _today_path(today)
+    marker = _reminder_marker_path(today)
+    _daily_dir().mkdir(parents=True, exist_ok=True)
+
+    if marker.exists() and not force:
+        typer.echo(f"reminder already sent today: {marker}")
+        raise typer.Exit(code=0)
+
+    if not path.exists():
+        kind = "Skeleton fehlt komplett"
+        detail = (
+            "Der Bootstrap lief heute nicht. "
+            "`trading-bot daily-strategy bootstrap` ausführen."
+        )
+        exit_code = 2
+    else:
+        text = path.read_text(encoding="utf-8")
+        stub_count = _stub_section_count(text)
+        if stub_count == 0:
+            typer.echo(f"review filled: {path} ({len(text)} bytes)")
+            raise typer.Exit(code=0)
+        kind = f"{stub_count} Sektion(en) leer"
+        detail = (
+            f"Skeleton seit Bootstrap mit {stub_count} unausgefüllten "
+            f"Stub-Markern. Claude-Session öffnen."
+        )
+        exit_code = 1
+
+    typer.echo(f"reminder needed: {kind}")
+    if notify:
+        try:
+            ok = asyncio.run(_ping_reminder(today, path, kind, detail))
+            typer.echo(f"telegram reminder: {'ok' if ok else 'disabled_or_failed'}")
+        except Exception as exc:  # pragma: no cover — best-effort
+            typer.echo(f"telegram reminder: error ({exc})")
+
+    # Mark sent regardless of telegram outcome — dedup-by-attempt, not by
+    # delivery. If telegram is broken, the operator sees CLI output anyway
+    # (cron stdout / journalctl).
+    marker.write_text(
+        json.dumps(
+            {
+                "ts": datetime.now(UTC).isoformat(),
+                "kind": kind,
+                "review_path": path.as_posix(),
+                "review_exists": path.exists(),
+            }
+        ),
+        encoding="utf-8",
+    )
+    raise typer.Exit(code=exit_code)
 
 
 __all__ = ["daily_strategy_app"]

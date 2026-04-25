@@ -1,0 +1,10 @@
+[Unit]
+Description=Daily strategy reminder at midday (4h after bootstrap)
+
+[Timer]
+OnCalendar=*-*-* 12:00:00 Europe/Berlin
+Persistent=true
+Unit=kai-daily-strategy-reminder.service
+
+[Install]
+WantedBy=timers.target

@@ -28,6 +28,8 @@ UNITS=(
     "kai-paper-trading.timer"
     "kai-daily-strategy.service"
     "kai-daily-strategy.timer"
+    "kai-daily-strategy-reminder.service"
+    "kai-daily-strategy-reminder.timer"
 )
 
 ENABLE_ON_INSTALL=(
@@ -36,6 +38,7 @@ ENABLE_ON_INSTALL=(
     "cloudflared.service"
     "kai-paper-trading.timer"
     "kai-daily-strategy.timer"
+    "kai-daily-strategy-reminder.timer"
 )
 
 DRY_RUN=0
