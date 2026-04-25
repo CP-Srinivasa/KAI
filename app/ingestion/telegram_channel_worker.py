@@ -58,6 +58,82 @@ def _append_raw_log(path: Path, record: dict[str, object]) -> None:
         logger.warning("[channel-worker] raw log write failed: %s", exc)
 
 
+# ── Checkpoint + Gap-Detection (testable without Telethon) ──────────────────
+#
+# Telethon's catch_up=True only replays updates Telegram still has in its
+# update-state window when the client reconnects (typically a few hours).
+# After a longer outage — or a session-file rebuild — that window is gone
+# and the listener silently misses every message that arrived while offline.
+# That's exactly the 6-message gap that hit on 2026-04-23/-24.
+#
+# The checkpoint records the highest message_id we have processed per chat.
+# On startup we ask Telegram for everything strictly newer than that id and
+# re-run process_message on each, before attaching the live event handler.
+# This is the bridge to the Pi-migration on 2026-05-01: a Laptop-Stack that
+# has to survive sleep/reboots without dropping signals.
+
+
+def load_checkpoint(path: Path) -> dict[str, dict[str, Any]]:
+    """Load the per-chat checkpoint map. Missing/corrupt → empty dict.
+
+    Schema: ``{"<chat_id>": {"last_message_id": int, "last_seen_at": iso}}``
+    chat_id is stored as ``str`` because JSON object keys must be strings;
+    callers convert to ``int`` themselves.
+    """
+    if not path.exists():
+        return {}
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        logger.warning(
+            "[channel-worker] checkpoint unreadable at %s (%s) — starting fresh",
+            path,
+            exc,
+        )
+        return {}
+    if not isinstance(raw, dict):
+        return {}
+    out: dict[str, dict[str, Any]] = {}
+    for k, v in raw.items():
+        if isinstance(k, str) and isinstance(v, dict) and "last_message_id" in v:
+            out[k] = v
+    return out
+
+
+def save_checkpoint(
+    path: Path,
+    chat_id: int,
+    message_id: int,
+    *,
+    now: datetime | None = None,
+) -> None:
+    """Persist last_message_id for chat_id. Atomic via temp-file + replace."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    state = load_checkpoint(path)
+    state[str(chat_id)] = {
+        "last_message_id": int(message_id),
+        "last_seen_at": (now or datetime.now(UTC)).isoformat(),
+    }
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    try:
+        tmp.write_text(json.dumps(state, ensure_ascii=False), encoding="utf-8")
+        tmp.replace(path)
+    except OSError as exc:
+        logger.warning("[channel-worker] checkpoint write failed: %s", exc)
+
+
+def get_last_seen_id(checkpoint: dict[str, dict[str, Any]], chat_id: int) -> int:
+    """Return the last_message_id we've seen for chat_id, or 0 if unknown."""
+    entry = checkpoint.get(str(chat_id))
+    if not entry:
+        return 0
+    raw = entry.get("last_message_id", 0)
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return 0
+
+
 def process_message(
     text: str,
     *,
@@ -165,6 +241,81 @@ async def resolve_target_entity(client: Any, cfg: TelegramChannelIngestSettings)
     raise RuntimeError(f"Channel with title {wanted!r} not found in dialogs.")
 
 
+async def replay_missed_messages(
+    client: Any,
+    entity: Any,
+    *,
+    chat_id: int,
+    last_seen_id: int,
+    process_fn: Callable[[int, str], None],
+    max_replay: int = 200,
+) -> dict[str, int]:
+    """Fetch messages with id > last_seen_id and re-run process_fn on each.
+
+    Returns ``{"scanned": int, "processed": int, "skipped_no_checkpoint": int}``.
+
+    Behaviour:
+    - ``last_seen_id <= 0`` → no prior checkpoint exists; we do NOT replay
+      historical messages on first run (would replay the channel's history).
+      The first live message will establish the baseline.
+    - Telethon's ``iter_messages`` returns newest-first; we collect, sort
+      ascending by id, then process so the checkpoint advances monotonically
+      and the operator sees the same order Telegram delivered them in.
+    - Per-message handler errors are logged and skipped so one bad message
+      cannot abort the entire replay.
+    """
+    if last_seen_id <= 0:
+        return {"scanned": 0, "processed": 0, "skipped_no_checkpoint": 1}
+    collected: list[tuple[int, str]] = []
+    async for msg in client.iter_messages(
+        entity, min_id=last_seen_id, limit=max_replay,
+    ):
+        msg_id = getattr(msg, "id", None)
+        if not isinstance(msg_id, int) or msg_id <= last_seen_id:
+            continue
+        text = (
+            getattr(msg, "raw_text", "")
+            or getattr(msg, "message", "")
+            or ""
+        )
+        collected.append((msg_id, text))
+    collected.sort(key=lambda item: item[0])
+    processed = 0
+    for msg_id, text in collected:
+        try:
+            process_fn(msg_id, text)
+        except Exception as exc:  # noqa: BLE001 — one bad msg must not stall replay
+            logger.warning(
+                "[channel-worker] gap-replay handler error chat=%s msg=%s: %s",
+                chat_id,
+                msg_id,
+                exc,
+            )
+            continue
+        processed += 1
+    if collected:
+        logger.info(
+            "[channel-worker] gap-replay chat=%s scanned=%d processed=%d "
+            "from_msg_id=%d to_msg_id=%d",
+            chat_id,
+            len(collected),
+            processed,
+            collected[0][0],
+            collected[-1][0],
+        )
+    else:
+        logger.info(
+            "[channel-worker] gap-replay chat=%s no missed messages since id=%d",
+            chat_id,
+            last_seen_id,
+        )
+    return {
+        "scanned": len(collected),
+        "processed": processed,
+        "skipped_no_checkpoint": 0,
+    }
+
+
 async def list_dialogs(cfg: TelegramChannelIngestSettings) -> list[dict[str, object]]:
     """Enumerate dialog titles + ids — helper to find the channel's chat_id."""
     TelegramClient, _ = _import_telethon()  # noqa: N806 — class import alias
@@ -173,7 +324,9 @@ async def list_dialogs(cfg: TelegramChannelIngestSettings) -> list[dict[str, obj
             "api_id and api_hash are required. Set "
             "INGESTION_TELEGRAM_CHANNEL_API_ID and _API_HASH in .env."
         )
-    client = TelegramClient(cfg.session_path, cfg.api_id, cfg.api_hash)
+    client = TelegramClient(
+        cfg.session_path, cfg.api_id, cfg.api_hash, catch_up=True,
+    )
     await client.start()
     try:
         out: list[dict[str, object]] = []
@@ -209,8 +362,11 @@ async def run_worker(cfg: TelegramChannelIngestSettings | None = None) -> None:
 
     TelegramClient, events = _import_telethon()  # noqa: N806 — class import alias
     raw_log = Path(cfg.raw_log_path)
+    checkpoint_path = Path(cfg.checkpoint_path)
 
-    client = TelegramClient(cfg.session_path, cfg.api_id, cfg.api_hash)
+    client = TelegramClient(
+        cfg.session_path, cfg.api_id, cfg.api_hash, catch_up=True,
+    )
     await client.start()
     try:
         entity = await resolve_target_entity(client, cfg)
@@ -228,16 +384,51 @@ async def run_worker(cfg: TelegramChannelIngestSettings | None = None) -> None:
         approval_chat_id = admin_chat_ids[0] if admin_chat_ids else 0
         envelope_log_path = Path("artifacts/telegram_message_envelope.jsonl")
 
+        # Gap-Replay: before attaching the live handler, ask Telegram for
+        # any messages that arrived after our last checkpoint. catch_up=True
+        # only handles the short Telegram-side update-state window; this
+        # closes the longer-outage gap (e.g. laptop sleep, restart, session
+        # rebuild). Skipped silently when no checkpoint exists yet so we
+        # don't accidentally replay channel history on first run.
+        entity_chat_id = getattr(entity, "id", None)
+        if isinstance(entity_chat_id, int):
+            initial_checkpoint = load_checkpoint(checkpoint_path)
+            last_seen = get_last_seen_id(initial_checkpoint, entity_chat_id)
+
+            def _replay_handler(msg_id: int, text: str) -> None:
+                process_message(
+                    text,
+                    source_tag=cfg.source_tag,
+                    chat_id=entity_chat_id,
+                    raw_log_path=raw_log,
+                )
+                save_checkpoint(checkpoint_path, entity_chat_id, msg_id)
+
+            await replay_missed_messages(
+                client,
+                entity,
+                chat_id=entity_chat_id,
+                last_seen_id=last_seen,
+                process_fn=_replay_handler,
+            )
+
         @client.on(events.NewMessage(chats=entity))  # type: ignore[misc]
         async def _handler(event: Any) -> None:
             text = getattr(event, "raw_text", "") or getattr(event.message, "message", "")
             chat_id = getattr(event, "chat_id", None)
+            msg_id = getattr(getattr(event, "message", None), "id", None)
             summary = process_message(
                 text,
                 source_tag=cfg.source_tag,
                 chat_id=chat_id,
                 raw_log_path=raw_log,
             )
+            # Advance checkpoint after every observed message — including
+            # non-signals. Otherwise a long run of chatter without signals
+            # would leave the replay window open and re-process them on
+            # the next restart.
+            if isinstance(chat_id, int) and isinstance(msg_id, int):
+                save_checkpoint(checkpoint_path, chat_id, msg_id)
             logger.info(
                 "[channel-worker] msg chat=%s parsed=%s emitted=%s reason=%s env=%s",
                 chat_id,
@@ -305,7 +496,9 @@ async def setup_auth(cfg: TelegramChannelIngestSettings | None = None) -> None:
             "api_id and api_hash are required. Set them in .env first."
         )
     TelegramClient, _ = _import_telethon()  # noqa: N806 — class import alias
-    client = TelegramClient(cfg.session_path, cfg.api_id, cfg.api_hash)
+    client = TelegramClient(
+        cfg.session_path, cfg.api_id, cfg.api_hash, catch_up=True,
+    )
     await client.start()  # triggers interactive auth on first run
     me = await client.get_me()
     logger.info(
@@ -317,9 +510,13 @@ async def setup_auth(cfg: TelegramChannelIngestSettings | None = None) -> None:
 
 
 __all__ = [
+    "get_last_seen_id",
     "list_dialogs",
+    "load_checkpoint",
     "process_message",
+    "replay_missed_messages",
     "resolve_target_entity",
     "run_worker",
+    "save_checkpoint",
     "setup_auth",
 ]

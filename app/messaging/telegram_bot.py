@@ -1838,12 +1838,33 @@ class TelegramOperatorBot:
                 return "n/a"
             return f"{self._inline(raw)}{suffix}"
 
+        # Telegram-Premium-Channel listener liveness. Prints a status glyph
+        # + age so the operator sees within /status whether the MTProto
+        # listener is alive — that was invisible before 2026-04-24 and
+        # caused 6 premium signals to be silently dropped on 2026-04-23/-24.
+        tg_ingest = payload.get("telegram_channel_ingest", {})
+        tg_status = tg_ingest.get("status", "unknown") if isinstance(tg_ingest, dict) else "unknown"
+        tg_line: str
+        if tg_status == "ok":
+            age_s = tg_ingest.get("age_seconds", "?") if isinstance(tg_ingest, dict) else "?"
+            tg_line = f"TG-Channel ingest: ok ({age_s}s since last heartbeat)"
+        elif tg_status == "disabled":
+            tg_line = "TG-Channel ingest: disabled (opt-out)"
+        elif tg_status == "stale":
+            age_s = tg_ingest.get("age_seconds", "?") if isinstance(tg_ingest, dict) else "?"
+            tg_line = f"TG-Channel ingest: STALE ({age_s}s old) — restart listener!"
+        elif tg_status == "missing_session":
+            tg_line = "TG-Channel ingest: NO SESSION — run setup"
+        else:
+            tg_line = f"TG-Channel ingest: {tg_status}"
+
         msg = (
             f"*KAI Status*\n"
             f"Readiness: {readiness}\n"
             f"Cycles today: {cycles} · Positions: {pos_count}\n"
             f"Ingestion backlog: {backlog} docs\n"
             f"Alert rate (24h): {alert_rate}/h\n"
+            f"{tg_line}\n"
             f"LLM failures (24h): {_metric('llm_provider_failure_rate_24h')}\n"
             f"Latency p95 (24h): {_metric('rss_to_alert_latency_p95_seconds_24h', 's')}"
         )

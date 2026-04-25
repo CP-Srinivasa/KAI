@@ -129,6 +129,15 @@ if [ "${KAI_AGENT_WORKER:-1}" != "0" ]; then
     bash "$(dirname "$0")/agent_worker_start.sh" || echo "WARN: agent-worker failed to start"
 fi
 
+# Start Telegram Premium-Channel listener unless opt-out is set.
+# Previously manual-only — the listener silently died on 2026-04-21 and
+# 6 premium signals (3 on 2026-04-23, 3 on 2026-04-24) never entered the
+# pipeline. Tying it to server lifecycle closes that gap until the Pi
+# migration (2026-05-01) introduces proper service supervision.
+if [ "${KAI_TELEGRAM_LISTENER:-1}" != "0" ]; then
+    bash "$(dirname "$0")/telegram_listener_start.sh" || echo "WARN: telegram-listener failed to start"
+fi
+
 # Start Cloudflare Named Tunnel unless opt-out is set.
 # Exposes the local server as https://kai-trader.org via Cloudflare.
 if [ "${KAI_TUNNEL:-1}" != "0" ] && command -v cloudflared &>/dev/null; then
@@ -250,6 +259,16 @@ if [ -f "$WORKER_PID_FILE" ] && is_pid_running "$(cat "$WORKER_PID_FILE")"; then
     echo "[OK]   Agent-Worker    PID $(cat "$WORKER_PID_FILE")"
 else
     echo "[WARN] Agent-Worker    not running"
+fi
+
+# Telegram-Listener (MTProto premium-channel ingest)
+LISTENER_PID_FILE=".telegram_listener.pid"
+if [ -f "$LISTENER_PID_FILE" ] && is_pid_running "$(cat "$LISTENER_PID_FILE")"; then
+    echo "[OK]   TG-Listener     PID $(cat "$LISTENER_PID_FILE")"
+elif [ "${KAI_TELEGRAM_LISTENER:-1}" = "0" ]; then
+    echo "[--]   TG-Listener     opt-out (KAI_TELEGRAM_LISTENER=0)"
+else
+    echo "[WARN] TG-Listener     not running"
 fi
 
 # Tunnel

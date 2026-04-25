@@ -87,6 +87,11 @@ if [ -x "$(dirname "$0")/agent_worker_stop.sh" ] || [ -f "$(dirname "$0")/agent_
     bash "$(dirname "$0")/agent_worker_stop.sh" || true
 fi
 
+# Stop the Telegram premium-channel listener (idempotent).
+if [ -f "$(dirname "$0")/telegram_listener_stop.sh" ]; then
+    bash "$(dirname "$0")/telegram_listener_stop.sh" || true
+fi
+
 # Stop Cloudflare Tunnel if running.
 TUNNEL_PID_FILE=".tunnel.pid"
 if [ -f "$TUNNEL_PID_FILE" ]; then
