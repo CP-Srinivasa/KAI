@@ -105,6 +105,21 @@ class TestNormalize:
         got = extract_external_event_id({"event_id": long_id})
         assert got is not None and len(got) == 128
 
+    def test_auth_method_default_is_none(self) -> None:
+        event = _normalize({"ticker": "BTC", "action": "buy"})
+        assert event.provenance.auth_method is None
+
+    @pytest.mark.parametrize("method", ["hmac", "shared_token"])
+    def test_auth_method_propagates_into_provenance(self, method: str) -> None:
+        event = normalize_tradingview_payload(
+            {"ticker": "BTC", "action": "buy"},
+            request_id=_REQUEST_ID,
+            payload_hash=_PAYLOAD_HASH,
+            received_at=_RECEIVED_AT,
+            auth_method=method,
+        )
+        assert event.provenance.auth_method == method
+
     @pytest.mark.parametrize("missing", ["ticker", "action"])
     def test_required_field_missing(self, missing: str) -> None:
         payload = {"ticker": "X", "action": "buy"}

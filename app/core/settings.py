@@ -358,9 +358,18 @@ class TradingViewSettings(BaseSettings):
     webhook_rate_limit_window_seconds: float = Field(default=300.0, gt=0.0)
     # TV-2.1: shared-token fallback for TradingView's native webhook which
     # cannot produce body-HMACs. Modes: hmac (default, strongest) |
-    # shared_token (no body integrity) | hmac_or_token (accept either).
+    # shared_token (no body integrity, deprecated) |
+    # hmac_or_token (accept either, deprecated) |
+    # hmac_strict_event_id (V8-f: shared_token mandates body event_id + ts).
     webhook_auth_mode: str = Field(default="hmac")
     webhook_shared_token: str = Field(default="", repr=False)
+    # V8-f kill-switch: when true, shared_token / hmac_or_token / strict are
+    # all rejected at the door. Lets the operator hard-disable token-auth
+    # without rotating the env or reaching for ENABLED=false.
+    webhook_shared_token_disabled: bool = Field(default=False)
+    # V8-f strict mode: maximum allowed clock skew (seconds) between body ts
+    # and server now. Outside the window -> rejected as clock_skew.
+    webhook_strict_ts_skew_seconds: int = Field(default=300, ge=30, le=3600)
     # TV-3: when true, accepted payloads are normalized to a
     # TradingViewSignalEvent and appended to the pending-signals JSONL.
     # Default false (fail-closed). No auto-execution — events wait for
@@ -406,15 +415,16 @@ class TradingViewSettings(BaseSettings):
     @model_validator(mode="after")
     def validate_auth_mode(self) -> "TradingViewSettings":
         normalized = self.webhook_auth_mode.strip().lower()
-        if normalized not in {"hmac", "shared_token", "hmac_or_token"}:
+        token_modes = {"shared_token", "hmac_or_token", "hmac_strict_event_id"}
+        if normalized not in {"hmac"} | token_modes:
             raise ValueError(
                 "TRADINGVIEW_WEBHOOK_AUTH_MODE must be one of "
-                "hmac, shared_token, hmac_or_token."
+                "hmac, shared_token, hmac_or_token, hmac_strict_event_id."
             )
-        if normalized in {"shared_token", "hmac_or_token"} and not self.webhook_shared_token:
+        if normalized in token_modes and not self.webhook_shared_token:
             raise ValueError(
                 "TRADINGVIEW_WEBHOOK_SHARED_TOKEN must be set when "
-                "TRADINGVIEW_WEBHOOK_AUTH_MODE is shared_token or hmac_or_token."
+                "TRADINGVIEW_WEBHOOK_AUTH_MODE uses a token-based mode."
             )
         self.webhook_auth_mode = normalized
         return self
@@ -472,6 +482,14 @@ class TelegramChannelIngestSettings(BaseSettings):
     source_tag: str = Field(default="telegram_premium_channel")
     # Diagnostic log for observed channel messages (parsed + unparsed both).
     raw_log_path: str = Field(default="artifacts/telegram_channel_raw.jsonl")
+    # Checkpoint file: persists last_message_id per chat across restarts so
+    # the worker can detect and replay messages missed during downtime.
+    # Complements Telethon's catch_up=True (which only handles updates
+    # delivered while the session was online and reconnected within
+    # Telegram's update-state retention window — typically a few hours).
+    checkpoint_path: str = Field(
+        default="artifacts/telegram_channel_checkpoint.json"
+    )
 
 
 class AppSettings(BaseSettings):

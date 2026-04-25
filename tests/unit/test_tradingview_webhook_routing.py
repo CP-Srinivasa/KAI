@@ -139,11 +139,13 @@ def test_routing_on_emits_pending_event(
     assert event["provenance"]["source"] == "tradingview_webhook"
     assert event["provenance"]["version"] == "tv-3"
     assert event["provenance"]["signal_path_id"] == data["signal_path_id"]
+    assert event["provenance"]["auth_method"] == "hmac"
 
     # Audit entry reflects the routing outcome + promoted provenance version.
     audit_entry = json.loads(audit_path.read_text(encoding="utf-8").splitlines()[0])
     assert audit_entry["provenance"]["version"] == "tv-3"
     assert audit_entry["provenance"]["signal_path_id"] == data["signal_path_id"]
+    assert audit_entry["provenance"]["auth_method"] == "hmac"
     assert audit_entry["routing"]["status"] == "emitted"
     assert audit_entry["routing"]["event_id"] == data["event_id"]
 

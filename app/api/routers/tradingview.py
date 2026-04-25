@@ -312,13 +312,24 @@ def _authorize_request(
     """Return (accepted, auth_method_used).
 
     On failure, auth_method_used carries the rejection reason instead.
+
+    V8-f: ``hmac_strict_event_id`` mode reuses the shared-token credential
+    check at this layer. The strict body-binding (event_id + ts skew check)
+    is enforced by ``_validate_strict_body_fields`` after JSON parsing.
     """
     mode = settings.webhook_auth_mode
+    if settings.webhook_shared_token_disabled and mode in {
+        "shared_token",
+        "hmac_or_token",
+        "hmac_strict_event_id",
+    }:
+        # Operator hard-off — short-circuit before constant-time compare.
+        return False, "shared_token_disabled"
     if mode == "hmac":
         if _verify_signature(raw_body, signature_header, settings.webhook_secret):
             return True, "hmac"
         return False, "invalid_signature"
-    if mode == "shared_token":
+    if mode in {"shared_token", "hmac_strict_event_id"}:
         if _verify_shared_token(token_header, settings.webhook_shared_token):
             return True, "shared_token"
         return False, "invalid_shared_token"
@@ -328,6 +339,79 @@ def _authorize_request(
     if _verify_shared_token(token_header, settings.webhook_shared_token):
         return True, "shared_token"
     return False, "invalid_credentials"
+
+
+def _validate_strict_body_fields(
+    payload: object,
+    *,
+    now: datetime,
+    skew_seconds: int,
+) -> tuple[bool, str]:
+    """V8-f strict-mode body validation.
+
+    The shared-token-only path (``shared_token`` and ``hmac_or_token``) cannot
+    bind the credential to the body — a leaked token replays any payload. The
+    strict mode closes that gap by demanding two body fields:
+
+    - ``event_id`` (>=8 chars, str) — Layer-2 dedup anchor; replay across
+      restarts is already covered by D-189 PersistentReplayCache.
+    - ``ts`` (ISO-8601 with timezone) — must fall within ``±skew_seconds`` of
+      ``now``. Defends against captured-and-stalled replays beyond the
+      rate-limit window.
+
+    Returns ``(ok, reason)``. Reason is one of:
+      ``ok``, ``not_a_dict``, ``missing_event_id``, ``event_id_too_short``,
+      ``missing_ts``, ``invalid_ts``, ``clock_skew``.
+    """
+    if not isinstance(payload, dict):
+        return False, "not_a_dict"
+    raw_event_id = payload.get("event_id")
+    if not isinstance(raw_event_id, str) or not raw_event_id.strip():
+        return False, "missing_event_id"
+    if len(raw_event_id.strip()) < 8:
+        return False, "event_id_too_short"
+    raw_ts = payload.get("ts")
+    if not isinstance(raw_ts, str) or not raw_ts.strip():
+        return False, "missing_ts"
+    try:
+        ts = datetime.fromisoformat(raw_ts.strip())
+    except ValueError:
+        return False, "invalid_ts"
+    if ts.tzinfo is None:
+        return False, "invalid_ts"
+    delta = abs((now - ts).total_seconds())
+    if delta > skew_seconds:
+        return False, "clock_skew"
+    return True, "ok"
+
+
+_DEPRECATION_LOGGED = False
+
+
+def _maybe_log_deprecation(mode: str) -> None:
+    """V8-f: emit a one-shot warning when legacy token modes are active.
+
+    ``shared_token`` and ``hmac_or_token`` accept any body once the token is
+    valid — the strict mode is the supported migration target. Logged once
+    per process to keep logs readable.
+    """
+    global _DEPRECATION_LOGGED
+    if _DEPRECATION_LOGGED:
+        return
+    if mode in {"shared_token", "hmac_or_token"}:
+        _logger.warning(
+            "tradingview_webhook_auth_mode_deprecated",
+            mode=mode,
+            migration="hmac_strict_event_id or hmac (with proxy)",
+            doc="docs/security/tv_webhook_migration.md",
+        )
+        _DEPRECATION_LOGGED = True
+
+
+def _reset_deprecation_flag_for_tests() -> None:
+    """Test hook — re-arm the one-shot deprecation warning."""
+    global _DEPRECATION_LOGGED
+    _DEPRECATION_LOGGED = False
 
 
 def _payload_hash(raw_body: bytes) -> str:
@@ -490,6 +574,7 @@ async def tradingview_webhook(
         raise HTTPException(status_code=401, detail="Invalid credentials")
     rate_limiter.reset(caller_ip)
     common_log["auth_method"] = auth_method
+    _maybe_log_deprecation(tv.webhook_auth_mode)
 
     payload_hash = _payload_hash(raw_body)
     cache = _get_replay_cache(tv)
@@ -523,6 +608,28 @@ async def tradingview_webhook(
         parsed_payload.pop("token", None)
         parsed_payload.pop("_token", None)
 
+    # V8-f strict-mode body binding: when shared-token auth is in strict mode,
+    # the body MUST carry event_id + ts within skew. Failure is a 401 (auth-
+    # bucket Brute-Force-Guard increments) and an audit row keyed by reason.
+    if tv.webhook_auth_mode == "hmac_strict_event_id" and auth_method == "shared_token":
+        ok, strict_reason = _validate_strict_body_fields(
+            parsed_payload,
+            now=datetime.now(UTC),
+            skew_seconds=tv.webhook_strict_ts_skew_seconds,
+        )
+        if not ok:
+            failures = rate_limiter.record_failure(caller_ip)
+            entry = {
+                **common_log,
+                "outcome": "rejected",
+                "reason": f"strict_{strict_reason}",
+                "payload_hash": payload_hash,
+                "rate_limit_failures": failures,
+            }
+            _audit_writer(audit_path, entry)
+            _logger.warning("tradingview_webhook_strict_rejected", **entry)
+            raise HTTPException(status_code=401, detail="Strict mode rejected")
+
     # V8.1 Layer-2 replay guard: operator-supplied external event_id, cached
     # independently from the byte-level payload hash. Pass-through when the
     # alert body has no event_id field — layer-1 remains the sole guard.
@@ -554,6 +661,7 @@ async def tradingview_webhook(
                 payload_hash=payload_hash,
                 received_at=common_log["received_at"],  # type: ignore[arg-type]
                 external_event_id=external_event_id,
+                auth_method=auth_method,
             )
         except NormalizationError as exc:
             routing_outcome["status"] = "normalize_failed"

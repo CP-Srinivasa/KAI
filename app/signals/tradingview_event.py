@@ -152,6 +152,7 @@ def normalize_tradingview_payload(
     payload_hash: str,
     received_at: str,
     external_event_id: str | None = None,
+    auth_method: str | None = None,
 ) -> TradingViewSignalEvent:
     """Turn a parsed TV alert JSON into a TradingViewSignalEvent.
 
@@ -162,6 +163,11 @@ def normalize_tradingview_payload(
     (so Layer-2 dedup and the attached event-object agree on the same value).
     If omitted, the normalizer re-extracts it from the payload itself so
     direct callers still get the attribution.
+
+    ``auth_method`` is the ingress credential mode used by the webhook router
+    (``"hmac"`` or ``"shared_token"``). The normalizer is also called from
+    operator-replay paths where no auth happened — those leave the field
+    ``None`` and the provenance reader treats it as unknown.
     """
     if not isinstance(payload, dict):
         raise NormalizationError("payload must be a JSON object")
@@ -180,6 +186,7 @@ def normalize_tradingview_payload(
         source=_TV_SOURCE,
         version=_TV_VERSION,
         signal_path_id=_new_signal_path_id(),
+        auth_method=auth_method,
     )
     return TradingViewSignalEvent(
         event_id=_new_event_id(),
