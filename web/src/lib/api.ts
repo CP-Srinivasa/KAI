@@ -170,6 +170,10 @@ export type ProvenanceMetrics = {
 export type DashboardProvenance = {
   generated_at: string;
   overall: ProvenanceMetrics;
+  // V3: same ratio without the legacy `unknown` bucket — represents the
+  // currently-tagged signal flow precision. Optional for backward-compat
+  // with cached payloads from before V3.
+  overall_active?: ProvenanceMetrics;
   by_source: ProvenanceMetrics[];
   tradingview_pipeline: {
     pending_events: number;

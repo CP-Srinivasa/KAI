@@ -266,5 +266,77 @@ def test_write_provenance_report_roundtrip(tmp_path: Path) -> None:
     assert payload["report_type"] == "tv4_quality_bar_provenance_split"
     assert payload["verdict"] == report.verdict
     assert "overall" in payload
+    assert "overall_active" in payload
     assert "by_source" in payload
     assert "tradingview_pipeline" in payload
+
+
+def test_overall_active_excludes_unknown_bucket(tmp_path: Path) -> None:
+    """V3: overall_active is the same metric without unknown legacy bucket."""
+    alerts, outcomes, tv = _setup_paths(tmp_path)
+    # 4 RSS-tagged docs (3 hit, 1 miss) + 6 unknown-tagged (1 hit, 5 miss).
+    # Baseline: 4 hits / 10 resolved = 40%.
+    # Active (without unknown): 3 hits / 4 resolved = 75%.
+    docs = [{"document_id": f"doc-{i}", "channel": "x", "message_id": "x",
+             "is_digest": False, "dispatched_at": "2026-04-01T10:00:00+00:00",
+             "sentiment_label": "bullish", "affected_assets": ["BTC"]}
+            for i in range(10)]
+    _write_jsonl(alerts, docs)
+    _write_jsonl(outcomes, [
+        {"document_id": "doc-0", "outcome": "hit"},
+        {"document_id": "doc-1", "outcome": "hit"},
+        {"document_id": "doc-2", "outcome": "hit"},
+        {"document_id": "doc-3", "outcome": "miss"},
+        {"document_id": "doc-4", "outcome": "hit"},
+        {"document_id": "doc-5", "outcome": "miss"},
+        {"document_id": "doc-6", "outcome": "miss"},
+        {"document_id": "doc-7", "outcome": "miss"},
+        {"document_id": "doc-8", "outcome": "miss"},
+        {"document_id": "doc-9", "outcome": "miss"},
+    ])
+    _write_jsonl(tv, [])
+    # Only the first 4 docs are RSS-tagged; the rest have no source -> unknown.
+    source_map = {f"doc-{i}": "rss" for i in range(4)}
+
+    report = build_provenance_split_report(
+        alert_audit_path=alerts,
+        alert_outcomes_path=outcomes,
+        tradingview_pending_signals_path=tv,
+        source_by_doc=source_map,
+    )
+
+    assert report.overall.resolved == 10
+    assert report.overall.hits == 4
+    assert report.overall.hit_rate_pct == 40.0
+
+    # Active excludes the unknown bucket.
+    assert report.overall_active.resolved == 4
+    assert report.overall_active.hits == 3
+    assert report.overall_active.misses == 1
+    assert report.overall_active.hit_rate_pct == 75.0
+
+
+def test_overall_active_equals_overall_when_no_unknown(tmp_path: Path) -> None:
+    """When every doc is source-tagged, active and baseline coincide."""
+    alerts, outcomes, tv = _setup_paths(tmp_path)
+    docs = [{"document_id": f"doc-{i}", "channel": "x", "message_id": "x",
+             "is_digest": False, "dispatched_at": "2026-04-01T10:00:00+00:00",
+             "sentiment_label": "bullish", "affected_assets": ["BTC"]}
+            for i in range(3)]
+    _write_jsonl(alerts, docs)
+    _write_jsonl(outcomes, [
+        {"document_id": "doc-0", "outcome": "hit"},
+        {"document_id": "doc-1", "outcome": "miss"},
+        {"document_id": "doc-2", "outcome": "hit"},
+    ])
+    _write_jsonl(tv, [])
+    source_map = {f"doc-{i}": "rss" for i in range(3)}
+
+    report = build_provenance_split_report(
+        alert_audit_path=alerts,
+        alert_outcomes_path=outcomes,
+        tradingview_pending_signals_path=tv,
+        source_by_doc=source_map,
+    )
+    assert report.overall.hit_rate_pct == report.overall_active.hit_rate_pct
+    assert report.overall.resolved == report.overall_active.resolved

@@ -367,6 +367,7 @@ async def dashboard_provenance_api() -> JSONResponse:
     payload = {
         "generated_at": report.generated_at,
         "overall": asdict(report.overall),
+        "overall_active": asdict(report.overall_active),
         "by_source": [asdict(m) for m in report.by_source],
         "tradingview_pipeline": asdict(report.tradingview_pipeline),
         "verdict": report.verdict,

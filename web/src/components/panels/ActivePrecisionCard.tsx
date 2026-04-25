@@ -59,6 +59,14 @@ function ActivePrecisionCardImpl({
   }
 
   const tvPipe = data.tradingview_pipeline;
+  const active = data.overall_active;
+  // V3 Re-Entry-KPI: when active diverges from baseline, the gap quantifies
+  // how much the legacy `unknown` bucket drags down the topline. After
+  // Provenance-V1 backfill stabilises, the two values converge.
+  const activeDelta =
+    active && active.hit_rate_pct != null && data.overall.hit_rate_pct != null
+      ? active.hit_rate_pct - data.overall.hit_rate_pct
+      : null;
 
   return (
     <Card padded>
@@ -72,12 +80,17 @@ function ActivePrecisionCardImpl({
         }
       />
 
-      {/* Overall row */}
-      <div className="mb-3 rounded-md border border-line-subtle px-3 py-2.5 bg-bg-2">
-        <div className="flex items-baseline justify-between gap-3 text-xs">
-          <span className="text-fg font-medium">Overall (alle Sources)</span>
-          <div className="flex items-center gap-3 font-mono shrink-0">
-            <span className="text-sm font-semibold text-fg">
+      {/* V3 DoppelKPI: Baseline (with unknown legacy bucket) vs Active
+          (Provenance-V1-tagged only). Side-by-side so the operator sees
+          how much of the baseline is just legacy drag. */}
+      <div className="mb-3 grid grid-cols-1 sm:grid-cols-2 gap-2">
+        {/* Baseline pill */}
+        <div className="rounded-md border border-line-subtle px-3 py-2.5 bg-bg-2">
+          <div className="text-2xs text-fg-muted uppercase tracking-wide">
+            Baseline (alle Sources)
+          </div>
+          <div className="mt-1 flex items-baseline gap-2 font-mono">
+            <span className="text-base font-semibold text-fg">
               {fmtPct(data.overall.hit_rate_pct)}
             </span>
             <span className="text-2xs text-fg-subtle">
@@ -88,6 +101,40 @@ function ActivePrecisionCardImpl({
             </span>
           </div>
         </div>
+        {/* Active pill — only when backend provides it (graceful degrade) */}
+        {active != null && (
+          <div className="rounded-md border border-line-strong px-3 py-2.5 bg-bg-2">
+            <div className="text-2xs text-fg-muted uppercase tracking-wide flex items-center gap-1">
+              Active (ohne unknown-Altlast)
+              {activeDelta != null && Math.abs(activeDelta) >= 1 && (
+                <Badge tone={activeDelta > 0 ? "pos" : "neg"} dot={false}>
+                  {activeDelta > 0 ? "+" : ""}
+                  {activeDelta.toFixed(1)}pp
+                </Badge>
+              )}
+            </div>
+            <div className="mt-1 flex items-baseline gap-2 font-mono">
+              <span
+                className={cn(
+                  "text-base font-semibold",
+                  active.hit_rate_pct != null && active.hit_rate_pct >= 60
+                    ? "text-pos"
+                    : active.hit_rate_pct != null && active.hit_rate_pct >= 40
+                      ? "text-warn"
+                      : "text-fg",
+                )}
+              >
+                {fmtPct(active.hit_rate_pct)}
+              </span>
+              <span className="text-2xs text-fg-subtle">
+                CI {ciLabel(active)}
+              </span>
+              <span className="text-2xs text-fg-muted">
+                n={active.resolved}
+              </span>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Per-source list */}

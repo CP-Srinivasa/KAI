@@ -61,10 +61,17 @@ class TradingViewSignalSummary:
 class ProvenanceReport:
     generated_at: str
     overall: ProvenanceMetrics
+    overall_active: ProvenanceMetrics
     by_source: list[ProvenanceMetrics]
     tradingview_pipeline: TradingViewSignalSummary
     verdict: str
     notes: list[str] = field(default_factory=list)
+    # ``overall`` includes the legacy ``unknown`` bucket (pre-Provenance-V1
+    # rows that could not be source-resolved). ``overall_active`` excludes
+    # it — represents the precision of the *currently-tagged* signal flow,
+    # which is what the operator should track from Re-Entry onwards. Both
+    # are exposed so the dashboard can show baseline vs. active side by
+    # side without recomputing anything client-side.
 
 
 def wilson_ci(hits: int, total: int, z: float = 1.96) -> tuple[float, float] | None:
@@ -268,6 +275,19 @@ def build_provenance_split_report(
         "__overall__", total_hits, total_misses, total_inconclusive,
     )
 
+    # Active-precision: same ratio computed without the ``unknown`` legacy
+    # bucket. Pre-V1 rows that could not be source-resolved live in
+    # ``unknown`` and only drag the baseline down; ``overall_active`` is
+    # what the operator should watch as Provenance-V1 fills in.
+    active_hits = total_hits - per_source_hits.get(DEFAULT_SOURCE, 0)
+    active_misses = total_misses - per_source_misses.get(DEFAULT_SOURCE, 0)
+    active_inconclusive = total_inconclusive - per_source_inconclusive.get(
+        DEFAULT_SOURCE, 0
+    )
+    overall_active = _compute_metrics(
+        "__active__", active_hits, active_misses, active_inconclusive,
+    )
+
     all_sources = sorted(
         set(per_source_hits) | set(per_source_misses) | set(per_source_inconclusive)
     )
@@ -287,6 +307,7 @@ def build_provenance_split_report(
     return ProvenanceReport(
         generated_at=datetime.now(UTC).isoformat(),
         overall=overall,
+        overall_active=overall_active,
         by_source=by_source,
         tradingview_pipeline=tv_summary,
         verdict=verdict,
@@ -300,6 +321,7 @@ def write_provenance_report(report: ProvenanceReport, output_path: Path) -> Path
         "report_type": "tv4_quality_bar_provenance_split",
         "generated_at": report.generated_at,
         "overall": asdict(report.overall),
+        "overall_active": asdict(report.overall_active),
         "by_source": [asdict(m) for m in report.by_source],
         "tradingview_pipeline": asdict(report.tradingview_pipeline),
         "verdict": report.verdict,
