@@ -24,8 +24,10 @@ Fail-closed:
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
+import os
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
@@ -56,6 +58,48 @@ def _append_raw_log(path: Path, record: dict[str, object]) -> None:
             fh.write(json.dumps(record, ensure_ascii=False) + "\n")
     except OSError as exc:
         logger.warning("[channel-worker] raw log write failed: %s", exc)
+
+
+# ── Liveness heartbeat (D-191 / S-003) ──────────────────────────────────────
+#
+# The 2026-04-21..24 outage proved that "session.mtime" alone is not a
+# reliable liveness signal: when the channel is silent, Telethon doesn't
+# touch the session file even though the worker is alive. Heartbeat is a
+# dedicated file that the worker touches at startup, on every observed
+# message, and on a 60-second timer. canonical_read picks it as a third
+# liveness candidate (see _summarize_telegram_channel_ingest).
+#
+# Fail-soft: heartbeat write errors log a warning but never break the
+# run-loop. Liveness is observability, not a control plane.
+
+
+def _touch_heartbeat(path: Path) -> None:
+    """Update the heartbeat file's mtime to *now*. Best-effort, non-fatal."""
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        # Touch semantics: create if missing, refresh mtime regardless.
+        if path.exists():
+            now_ts = datetime.now(tz=UTC).timestamp()
+            os.utime(path, (now_ts, now_ts))
+        else:
+            path.write_bytes(b"")
+    except OSError as exc:
+        logger.warning("[channel-worker] heartbeat touch failed: %s", exc)
+
+
+async def _heartbeat_loop(path: Path, interval_seconds: float = 60.0) -> None:
+    """Periodically touch the heartbeat file until cancelled.
+
+    Cancellation is the normal exit path (parent's ``finally`` block).
+    All other OSError surface as warnings inside ``_touch_heartbeat``.
+    """
+    try:
+        while True:
+            _touch_heartbeat(path)
+            await asyncio.sleep(interval_seconds)
+    except asyncio.CancelledError:
+        # Re-raise so awaiters see the cancellation.
+        raise
 
 
 # ── Checkpoint + Gap-Detection (testable without Telethon) ──────────────────
@@ -241,6 +285,32 @@ async def resolve_target_entity(client: Any, cfg: TelegramChannelIngestSettings)
     raise RuntimeError(f"Channel with title {wanted!r} not found in dialogs.")
 
 
+_REPLAY_MARKER_PATH = Path("artifacts/.telegram_channel_replay.json")
+
+
+def _write_replay_marker(result: dict[str, int]) -> None:
+    # Persist the replay outcome so the operator-summary watchdog can show
+    # whether gap-replay actually ran on this listener boot, and how many
+    # messages it recovered. Marker is overwritten each boot (we only care
+    # about the most recent attempt). Failure to write is non-fatal — the
+    # listener keeps running, watchdog just stays blind to this attempt.
+    try:
+        _REPLAY_MARKER_PATH.parent.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "attempted_at": datetime.now(UTC).isoformat(),
+            "scanned": int(result.get("scanned", 0)),
+            "processed": int(result.get("processed", 0)),
+            "skipped_no_checkpoint": int(result.get("skipped_no_checkpoint", 0)),
+        }
+        _REPLAY_MARKER_PATH.write_text(
+            json.dumps(payload), encoding="utf-8"
+        )
+    except OSError as exc:
+        logger.warning(
+            "[channel-worker] could not write replay marker: %s", exc
+        )
+
+
 async def replay_missed_messages(
     client: Any,
     entity: Any,
@@ -363,11 +433,17 @@ async def run_worker(cfg: TelegramChannelIngestSettings | None = None) -> None:
     TelegramClient, events = _import_telethon()  # noqa: N806 — class import alias
     raw_log = Path(cfg.raw_log_path)
     checkpoint_path = Path(cfg.checkpoint_path)
+    heartbeat_path = Path(cfg.heartbeat_path)
 
     client = TelegramClient(
         cfg.session_path, cfg.api_id, cfg.api_hash, catch_up=True,
     )
     await client.start()
+    # First heartbeat right after a successful start — the watchdog must
+    # see "alive" within seconds of process spawn, not only after the
+    # first periodic tick (60 s away).
+    _touch_heartbeat(heartbeat_path)
+    heartbeat_task: asyncio.Task[None] | None = None
     try:
         entity = await resolve_target_entity(client, cfg)
         logger.info(
@@ -404,16 +480,21 @@ async def run_worker(cfg: TelegramChannelIngestSettings | None = None) -> None:
                 )
                 save_checkpoint(checkpoint_path, entity_chat_id, msg_id)
 
-            await replay_missed_messages(
+            replay_result = await replay_missed_messages(
                 client,
                 entity,
                 chat_id=entity_chat_id,
                 last_seen_id=last_seen,
                 process_fn=_replay_handler,
             )
+            _write_replay_marker(replay_result)
 
         @client.on(events.NewMessage(chats=entity))  # type: ignore[misc]
         async def _handler(event: Any) -> None:
+            # First action: refresh the liveness heartbeat. Even if the
+            # message is unparseable / not a signal, observing it counts
+            # as proof the listener is alive.
+            _touch_heartbeat(heartbeat_path)
             text = getattr(event, "raw_text", "") or getattr(event.message, "message", "")
             chat_id = getattr(event, "chat_id", None)
             msg_id = getattr(getattr(event, "message", None), "id", None)
@@ -477,8 +558,20 @@ async def run_worker(cfg: TelegramChannelIngestSettings | None = None) -> None:
             )
 
         logger.info("[channel-worker] entering run-loop")
+        # Periodic heartbeat — independent of channel chatter. Without
+        # this a silent channel would let the watchdog flip to "stale"
+        # 30 minutes into a perfectly healthy run.
+        heartbeat_task = asyncio.create_task(_heartbeat_loop(heartbeat_path))
         await client.run_until_disconnected()
     finally:
+        if heartbeat_task is not None:
+            heartbeat_task.cancel()
+            try:
+                await heartbeat_task
+            except (asyncio.CancelledError, Exception):
+                # Cancellation is expected; any other tail-end error from
+                # the heartbeat loop must not mask the original disconnect.
+                pass
         await client.disconnect()
 
 

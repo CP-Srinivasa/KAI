@@ -324,6 +324,233 @@ def _summarize_tradingview_webhook_auth_24h(
     }
 
 
+def _summarize_warp_status() -> dict[str, object]:
+    # Cloudflare WARP detection. WARP routes the laptop's traffic through CF
+    # in a way that breaks the kai-trader.org/dashboard CF-Access email-OTP
+    # flow (the request arrives "from WARP" and the policy classifies it
+    # differently). On 2026-04-19 the operator hit this manually; the daily
+    # summary should now surface it automatically so the operator gets a
+    # "WARP pausieren" hint without needing memory recall.
+    #
+    # Detection strategy (ordered):
+    #   1. Windows: tasklist for "Cloudflare WARP.exe" — most reliable signal.
+    #   2. Cross-platform: WARP installs a virtual interface in the 100.96/12
+    #      CGNAT range. If a local NIC has an IP there, WARP is up.
+    #   3. Otherwise inactive (or undetectable on this OS).
+    #
+    # Returns a compact dict consumed by the daily operator summary. The
+    # `hint` field is operator-facing copy — keep it terse and actionable.
+    import platform
+    import subprocess
+
+    is_windows = platform.system() == "Windows"
+
+    # Strategy 1 — Windows process check.
+    if is_windows:
+        try:
+            out = subprocess.run(
+                ["tasklist", "/FI", "IMAGENAME eq Cloudflare WARP.exe", "/FO", "CSV", "/NH"],
+                capture_output=True,
+                text=True,
+                timeout=3,
+                check=False,
+            )
+            stdout = out.stdout or ""
+            if "Cloudflare WARP.exe" in stdout:
+                return {
+                    "active": True,
+                    "detection_method": "process",
+                    "hint": (
+                        "WARP läuft — falls Dashboard-Login auf "
+                        "kai-trader.org hängt: WARP pausieren "
+                        "(Taskleisten-Icon)."
+                    ),
+                }
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+
+    # Strategy 2 — WARP CGNAT interface (100.96.0.0/12). Cross-platform.
+    try:
+        import ipaddress
+        import socket
+
+        warp_net = ipaddress.ip_network("100.96.0.0/12")
+        # Light enumeration: getaddrinfo on the host tends to return WARP's
+        # virtual address in the candidate list when the interface is up.
+        # Fall back to socket.gethostbyname_ex if needed.
+        host_ips: list[str] = []
+        try:
+            host_ips = socket.gethostbyname_ex(socket.gethostname())[2]
+        except OSError:
+            host_ips = []
+        for ip_str in host_ips:
+            try:
+                if ipaddress.ip_address(ip_str) in warp_net:
+                    return {
+                        "active": True,
+                        "detection_method": "interface",
+                        "hint": (
+                            "WARP-Interface aktiv — falls "
+                            "Dashboard-Login hängt: WARP pausieren."
+                        ),
+                    }
+            except ValueError:
+                continue
+    except Exception:
+        pass
+
+    return {
+        "active": False,
+        "detection_method": "none",
+        "hint": None,
+    }
+
+
+def _summarize_telegram_channel_ingest(
+    *,
+    now: datetime,
+    stale_threshold_seconds: int | None = None,
+    session_path_override: str | None = None,
+    pid_file_override: str | None = None,
+    heartbeat_path_override: str | None = None,
+    replay_marker_override: str | None = None,
+) -> dict[str, object]:
+    # Liveness probe for the Telegram premium-channel MTProto listener.
+    # Motivation: 2026-04-21 the listener silently died and 6 premium
+    # signals (2026-04-23/-24) never entered the pipeline. We now surface
+    # `telegram_channel_ingest` in the daily operator summary so /status
+    # flags a stale listener within stale_threshold_seconds instead of
+    # days.
+    #
+    # Liveness = max(pid_file.mtime, session_file.mtime). The PID file is
+    # written by scripts/telegram_listener_start.sh at process spawn; the
+    # Telethon session file gets touched whenever the client processes
+    # updates. Either one being fresh is a valid liveness signal.
+    try:
+        cfg = get_settings().telegram_channel_ingest
+    except Exception:
+        return {"status": "unknown", "reason": "settings_load_failed"}
+
+    if not cfg.enabled:
+        return {
+            "status": "disabled",
+            "reason": "INGESTION_TELEGRAM_CHANNEL_ENABLED=false",
+        }
+
+    # Resolve directly against WORKSPACE_ROOT — .session is not in the
+    # ARTIFACT_SUFFIXES allowlist used by resolve_workspace_path().
+    from app.agents.tools._helpers import WORKSPACE_ROOT
+
+    # Threshold resolution: caller-provided override wins; otherwise fall
+    # back to the configured value, then to a 1800 s safety default.
+    # ``getattr`` is defensive — older Mock-based tests construct cfg
+    # without the new field; ``isinstance`` filters the resulting Mock.
+    if stale_threshold_seconds is None:
+        configured = getattr(cfg, "heartbeat_stale_seconds", None)
+        stale_threshold_seconds = (
+            int(configured) if isinstance(configured, int) and configured > 0 else 1800
+        )
+
+    session_rel = session_path_override or cfg.session_path
+    pid_rel = pid_file_override or ".telegram_listener.pid"
+
+    session_path = (
+        Path(session_rel)
+        if Path(session_rel).is_absolute()
+        else WORKSPACE_ROOT / session_rel
+    )
+    pid_path = (
+        Path(pid_rel)
+        if Path(pid_rel).is_absolute()
+        else WORKSPACE_ROOT / pid_rel
+    )
+
+    # Heartbeat path — D-191/S-003. Same defensive resolution as above so
+    # MagicMock-based legacy tests don't choke on Path(MagicMock()).
+    if heartbeat_path_override is not None:
+        hb_rel: str | None = heartbeat_path_override
+    else:
+        cfg_hb = getattr(cfg, "heartbeat_path", None)
+        hb_rel = cfg_hb if isinstance(cfg_hb, str) and cfg_hb else None
+
+    hb_path: Path | None = None
+    if hb_rel:
+        hb_path = (
+            Path(hb_rel)
+            if Path(hb_rel).is_absolute()
+            else WORKSPACE_ROOT / hb_rel
+        )
+
+    if not session_path.exists():
+        return {
+            "status": "missing_session",
+            "reason": (
+                "session file not found — run: "
+                "python -m app.cli.main ingestion telegram-channel setup"
+            ),
+            "session_path": str(session_path),
+        }
+
+    candidates: list[tuple[str, float]] = [
+        ("session", session_path.stat().st_mtime)
+    ]
+    if pid_path.exists():
+        candidates.append(("pid_file", pid_path.stat().st_mtime))
+    if hb_path is not None and hb_path.exists():
+        candidates.append(("heartbeat", hb_path.stat().st_mtime))
+
+    src, last_touch = max(candidates, key=lambda c: c[1])
+    last_seen = datetime.fromtimestamp(last_touch, tz=UTC)
+    age_seconds = (now - last_seen).total_seconds()
+
+    status = "ok" if age_seconds < stale_threshold_seconds else "stale"
+
+    # Replay marker — written by replay_missed_messages() at worker start.
+    # Surfaces whether gap-replay actually ran on the last listener boot, and
+    # how many messages it recovered. Without this, a silent
+    # last_seen_id<=0 short-circuit (no checkpoint yet) is indistinguishable
+    # from a successful empty replay.
+    replay_attempted_at: str | None = None
+    replay_processed_count: int | None = None
+    replay_scanned_count: int | None = None
+    if replay_marker_override is not None:
+        replay_marker = (
+            Path(replay_marker_override)
+            if Path(replay_marker_override).is_absolute()
+            else WORKSPACE_ROOT / replay_marker_override
+        )
+    else:
+        replay_marker = WORKSPACE_ROOT / "artifacts" / ".telegram_channel_replay.json"
+    if replay_marker.exists():
+        try:
+            data = json.loads(replay_marker.read_text(encoding="utf-8"))
+            attempted_raw = data.get("attempted_at")
+            replay_attempted_at = (
+                str(attempted_raw) if isinstance(attempted_raw, str) else None
+            )
+            processed_raw = data.get("processed")
+            scanned_raw = data.get("scanned")
+            if isinstance(processed_raw, int):
+                replay_processed_count = processed_raw
+            if isinstance(scanned_raw, int):
+                replay_scanned_count = scanned_raw
+        except (OSError, json.JSONDecodeError):
+            pass
+
+    return {
+        "status": status,
+        "age_seconds": int(age_seconds),
+        "last_seen_utc": last_seen.isoformat(),
+        "last_seen_source": src,
+        "stale_threshold_seconds": stale_threshold_seconds,
+        "pid_file_exists": pid_path.exists(),
+        "heartbeat_file_exists": bool(hb_path is not None and hb_path.exists()),
+        "replay_attempted_at": replay_attempted_at,
+        "replay_processed_count": replay_processed_count,
+        "replay_scanned_count": replay_scanned_count,
+    }
+
+
 async def get_daily_operator_summary(
     *,
     alert_audit_dir: str = ALERT_AUDIT_DEFAULT_DIR,
@@ -386,8 +613,16 @@ async def get_daily_operator_summary(
         alert_rate_24h = None
         degraded = True
 
-    # Cycles today — count loop audit rows whose started_at is on today's UTC date.
+    # Cycles today — count loop audit rows whose started_at is on today's UTC
+    # date. While we have the audit loaded, also build a 24h status-breakdown
+    # so /status surfaces "loop running but blocked by design" vs "loop dead"
+    # instead of conflating both as activity. priority_rejected > 50% trips
+    # the alert flag — that's the threshold the V1 priority-pipeline fix
+    # exposed (Cycles routinely 100% rejected by design under conservative).
     cycle_count_today: int | None
+    cycle_status_breakdown_24h: dict[str, int] | None
+    priority_rejected_pct_24h: float | None
+    priority_rejected_alert: bool
     try:
         loop_path = resolve_workspace_path(
             loop_audit_path,
@@ -396,13 +631,34 @@ async def get_daily_operator_summary(
         )
         cycles = load_trading_loop_cycles(loop_path)
         cycle_count_today_int = 0
+        breakdown: dict[str, int] = {}
+        breakdown_total = 0
         for row in cycles:
             started = _parse_iso_utc(row.get("started_at"))
-            if started is not None and started.date() == today_date:
+            if started is None:
+                continue
+            if started.date() == today_date:
                 cycle_count_today_int += 1
+            if started >= cutoff_24h:
+                status_value = str(row.get("status") or "unknown")
+                breakdown[status_value] = breakdown.get(status_value, 0) + 1
+                breakdown_total += 1
         cycle_count_today = cycle_count_today_int
+        cycle_status_breakdown_24h = breakdown
+        if breakdown_total > 0:
+            rejected = breakdown.get("priority_rejected", 0)
+            priority_rejected_pct_24h = round(100.0 * rejected / breakdown_total, 1)
+        else:
+            priority_rejected_pct_24h = None
+        priority_rejected_alert = (
+            priority_rejected_pct_24h is not None
+            and priority_rejected_pct_24h > 50.0
+        )
     except Exception:
         cycle_count_today = None
+        cycle_status_breakdown_24h = None
+        priority_rejected_pct_24h = None
+        priority_rejected_alert = False
         degraded = True
 
     # SAT-C-002: TV-Webhook auth-method counter (24h). Silent hmac→shared_token
@@ -418,6 +674,14 @@ async def get_daily_operator_summary(
     except Exception:
         tv_auth_summary = None
 
+    # Telegram premium-channel listener liveness (D-125-adjacent watchdog).
+    # `stale` means the listener process likely died; operators must restart
+    # via scripts/telegram_listener_start.sh. Does not mark the overall
+    # summary as degraded — ingest going dark is an operational warning,
+    # not a data-integrity failure.
+    tg_channel_ingest = _summarize_telegram_channel_ingest(now=now_utc)
+    warp_status = _summarize_warp_status()
+
     def _or_unknown(value: int | float | None) -> object:
         return value if value is not None else "?"
 
@@ -431,10 +695,19 @@ async def get_daily_operator_summary(
         "ingestion_backlog_documents": _or_unknown(ingestion_backlog),
         "alert_fire_rate_docs_per_hour_24h": _or_unknown(alert_rate_24h),
         "cycle_count_today": _or_unknown(cycle_count_today),
+        "cycle_status_breakdown_24h": (
+            cycle_status_breakdown_24h
+            if cycle_status_breakdown_24h is not None
+            else "?"
+        ),
+        "priority_rejected_pct_24h": _or_unknown(priority_rejected_pct_24h),
+        "priority_rejected_alert": priority_rejected_alert,
         "tv_webhook_auth_24h": {
             "configured_mode": tv_configured_mode,
             "summary": tv_auth_summary if tv_auth_summary is not None else "no_audit_log",
         },
+        "telegram_channel_ingest": tg_channel_ingest,
+        "warp_status": warp_status,
         # Explicit not-measured markers: /status consumers must NOT treat a
         # missing field as zero. Wire these up once the underlying telemetry
         # exists (LLM call success/failure per provider, per-doc RSS→alert

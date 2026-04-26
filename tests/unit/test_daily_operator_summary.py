@@ -268,3 +268,208 @@ async def test_unimplemented_fields_flagged_not_zero(tmp_path: Path) -> None:
 
     assert result["llm_provider_failure_rate_24h"] == "not_implemented"
     assert result["rss_to_alert_latency_p95_seconds_24h"] == "not_implemented"
+
+
+@pytest.mark.asyncio
+async def test_cycle_status_breakdown_24h(tmp_path: Path) -> None:
+    """Surfaces the priority_rejected vs filled vs other-status mix so a
+    'loop running but blocked by design' state is distinguishable from
+    a 'loop dead' state. Without this, /status reports activity without
+    revealing that 100% of cycles are rejecting (V1-fix scenario)."""
+    alerts_dir = tmp_path / "artifacts"
+    alerts_dir.mkdir(parents=True, exist_ok=True)
+    _write_jsonl(alerts_dir / "alert_audit.jsonl", [])
+    loop_audit = tmp_path / "loop.jsonl"
+    exec_audit = tmp_path / "exec.jsonl"
+    now = _now()
+    inside_24h = (now - timedelta(hours=2)).isoformat()
+    inside_24h_alt = (now - timedelta(hours=10)).isoformat()
+    outside_24h = (now - timedelta(hours=30)).isoformat()
+    rejected_rows = [
+        {"cycle_id": f"r{i}", "started_at": inside_24h, "status": "priority_rejected"}
+        for i in range(8)
+    ]
+    filled_rows = [
+        {"cycle_id": f"f{i}", "started_at": inside_24h_alt, "status": "filled"}
+        for i in range(2)
+    ]
+    outside_rows = [{"cycle_id": "old", "started_at": outside_24h, "status": "filled"}]
+    rows = rejected_rows + filled_rows + outside_rows
+    _write_jsonl(loop_audit, rows)
+    _write_jsonl(exec_audit, [])
+
+    factory_p, repo_p, _ = _db_patches(pending=0)
+    _pass = lambda p, **kw: Path(p)  # noqa: E731
+    with _exposure_patch(position_count=0), factory_p, repo_p as repo_cls, patch(
+        "app.agents.tools.canonical_read.resolve_workspace_dir",
+        side_effect=_pass,
+    ), patch(
+        "app.agents.tools.canonical_read.resolve_workspace_path",
+        side_effect=_pass,
+    ):
+        repo_cls.return_value.count_pending_documents = AsyncMock(return_value=0)
+        result = await get_daily_operator_summary(
+            alert_audit_dir=str(alerts_dir),
+            loop_audit_path=str(loop_audit),
+            paper_execution_audit_path=str(exec_audit),
+            now=now,
+        )
+
+    breakdown = result["cycle_status_breakdown_24h"]
+    assert breakdown == {"priority_rejected": 8, "filled": 2}
+    assert result["priority_rejected_pct_24h"] == 80.0
+    assert result["priority_rejected_alert"] is True
+
+
+@pytest.mark.asyncio
+async def test_cycle_status_breakdown_alert_threshold(tmp_path: Path) -> None:
+    """Alert flag is only True when priority_rejected > 50% — exactly 50%
+    must NOT trigger (operator gets noise). 51%+ triggers."""
+    alerts_dir = tmp_path / "artifacts"
+    alerts_dir.mkdir(parents=True, exist_ok=True)
+    _write_jsonl(alerts_dir / "alert_audit.jsonl", [])
+    loop_audit = tmp_path / "loop.jsonl"
+    exec_audit = tmp_path / "exec.jsonl"
+    now = _now()
+    inside = (now - timedelta(hours=1)).isoformat()
+    rejected = [
+        {"cycle_id": f"r{i}", "started_at": inside, "status": "priority_rejected"}
+        for i in range(5)
+    ]
+    other = [
+        {"cycle_id": f"o{i}", "started_at": inside, "status": "no_signal"}
+        for i in range(5)
+    ]
+    rows = rejected + other
+    _write_jsonl(loop_audit, rows)
+    _write_jsonl(exec_audit, [])
+
+    factory_p, repo_p, _ = _db_patches(pending=0)
+    _pass = lambda p, **kw: Path(p)  # noqa: E731
+    with _exposure_patch(position_count=0), factory_p, repo_p as repo_cls, patch(
+        "app.agents.tools.canonical_read.resolve_workspace_dir",
+        side_effect=_pass,
+    ), patch(
+        "app.agents.tools.canonical_read.resolve_workspace_path",
+        side_effect=_pass,
+    ):
+        repo_cls.return_value.count_pending_documents = AsyncMock(return_value=0)
+        result = await get_daily_operator_summary(
+            alert_audit_dir=str(alerts_dir),
+            loop_audit_path=str(loop_audit),
+            paper_execution_audit_path=str(exec_audit),
+            now=now,
+        )
+
+    assert result["priority_rejected_pct_24h"] == 50.0
+    assert result["priority_rejected_alert"] is False
+
+
+@pytest.mark.asyncio
+async def test_warp_status_present_in_summary(tmp_path: Path) -> None:
+    """warp_status must always be present so the dashboard never gets a
+    KeyError when WARP is not running. Active vs not-active is environment-
+    dependent — we only assert the contract here."""
+    alerts_dir = tmp_path / "artifacts"
+    alerts_dir.mkdir(parents=True, exist_ok=True)
+    _write_jsonl(alerts_dir / "alert_audit.jsonl", [])
+    _write_jsonl(tmp_path / "loop.jsonl", [])
+    _write_jsonl(tmp_path / "exec.jsonl", [])
+
+    factory_p, repo_p, _ = _db_patches(pending=0)
+    _pass = lambda p, **kw: Path(p)  # noqa: E731
+    with _exposure_patch(position_count=0), factory_p, repo_p as repo_cls, patch(
+        "app.agents.tools.canonical_read.resolve_workspace_dir",
+        side_effect=_pass,
+    ), patch(
+        "app.agents.tools.canonical_read.resolve_workspace_path",
+        side_effect=_pass,
+    ):
+        repo_cls.return_value.count_pending_documents = AsyncMock(return_value=0)
+        result = await get_daily_operator_summary(
+            alert_audit_dir=str(alerts_dir),
+            loop_audit_path=str(tmp_path / "loop.jsonl"),
+            paper_execution_audit_path=str(tmp_path / "exec.jsonl"),
+            now=_now(),
+        )
+
+    warp = result["warp_status"]
+    assert isinstance(warp, dict)
+    assert "active" in warp and isinstance(warp["active"], bool)
+    assert warp["detection_method"] in {"process", "interface", "none"}
+    assert "hint" in warp
+
+
+@pytest.mark.asyncio
+async def test_warp_status_active_when_process_present(tmp_path: Path) -> None:
+    """When the Cloudflare WARP.exe process is detected, active=True with the
+    process detection method and a non-empty hint."""
+    alerts_dir = tmp_path / "artifacts"
+    alerts_dir.mkdir(parents=True, exist_ok=True)
+    _write_jsonl(alerts_dir / "alert_audit.jsonl", [])
+    _write_jsonl(tmp_path / "loop.jsonl", [])
+    _write_jsonl(tmp_path / "exec.jsonl", [])
+
+    factory_p, repo_p, _ = _db_patches(pending=0)
+    _pass = lambda p, **kw: Path(p)  # noqa: E731
+    fake_run_result = MagicMock()
+    fake_run_result.stdout = '"Cloudflare WARP.exe","1234","Console","1","45,678 K"\n'
+    with _exposure_patch(position_count=0), factory_p, repo_p as repo_cls, patch(
+        "app.agents.tools.canonical_read.resolve_workspace_dir",
+        side_effect=_pass,
+    ), patch(
+        "app.agents.tools.canonical_read.resolve_workspace_path",
+        side_effect=_pass,
+    ), patch(
+        "platform.system", return_value="Windows"
+    ), patch(
+        "subprocess.run", return_value=fake_run_result
+    ):
+        repo_cls.return_value.count_pending_documents = AsyncMock(return_value=0)
+        result = await get_daily_operator_summary(
+            alert_audit_dir=str(alerts_dir),
+            loop_audit_path=str(tmp_path / "loop.jsonl"),
+            paper_execution_audit_path=str(tmp_path / "exec.jsonl"),
+            now=_now(),
+        )
+
+    warp = result["warp_status"]
+    assert warp["active"] is True
+    assert warp["detection_method"] == "process"
+    assert isinstance(warp["hint"], str) and "WARP" in warp["hint"]
+
+
+@pytest.mark.asyncio
+async def test_cycle_status_breakdown_empty_when_no_recent_cycles(tmp_path: Path) -> None:
+    """When the loop audit has no rows in the last 24h, breakdown is {} and
+    pct is None ('?') — distinguishable from a real 0% rejected state."""
+    alerts_dir = tmp_path / "artifacts"
+    alerts_dir.mkdir(parents=True, exist_ok=True)
+    _write_jsonl(alerts_dir / "alert_audit.jsonl", [])
+    loop_audit = tmp_path / "loop.jsonl"
+    exec_audit = tmp_path / "exec.jsonl"
+    now = _now()
+    outside = (now - timedelta(hours=48)).isoformat()
+    _write_jsonl(loop_audit, [{"cycle_id": "old", "started_at": outside, "status": "filled"}])
+    _write_jsonl(exec_audit, [])
+
+    factory_p, repo_p, _ = _db_patches(pending=0)
+    _pass = lambda p, **kw: Path(p)  # noqa: E731
+    with _exposure_patch(position_count=0), factory_p, repo_p as repo_cls, patch(
+        "app.agents.tools.canonical_read.resolve_workspace_dir",
+        side_effect=_pass,
+    ), patch(
+        "app.agents.tools.canonical_read.resolve_workspace_path",
+        side_effect=_pass,
+    ):
+        repo_cls.return_value.count_pending_documents = AsyncMock(return_value=0)
+        result = await get_daily_operator_summary(
+            alert_audit_dir=str(alerts_dir),
+            loop_audit_path=str(loop_audit),
+            paper_execution_audit_path=str(exec_audit),
+            now=now,
+        )
+
+    assert result["cycle_status_breakdown_24h"] == {}
+    assert result["priority_rejected_pct_24h"] == "?"
+    assert result["priority_rejected_alert"] is False

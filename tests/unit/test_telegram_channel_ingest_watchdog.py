@@ -111,6 +111,87 @@ def test_stale_session_beyond_threshold_reports_stale(tmp_path: Path) -> None:
     assert result["age_seconds"] > 1800
 
 
+def test_replay_fields_default_to_none_when_marker_absent(tmp_path: Path) -> None:
+    # No marker file exists yet → all replay_* fields are None.
+    # Operators must see "never attempted" distinctly from "0 messages
+    # recovered" (which is a legitimate empty-replay outcome).
+    session = tmp_path / "artifacts" / "fresh.session"
+    _touch(session, age_seconds=60)
+
+    with patch(
+        "app.agents.tools.canonical_read.get_settings",
+        return_value=_settings(enabled=True),
+    ):
+        result = _summarize_telegram_channel_ingest(
+            now=datetime.now(UTC),
+            stale_threshold_seconds=1800,
+            session_path_override=str(session),
+            pid_file_override=str(tmp_path / "no.pid"),
+            replay_marker_override=str(tmp_path / "no_marker.json"),
+        )
+    assert result["replay_attempted_at"] is None
+    assert result["replay_processed_count"] is None
+    assert result["replay_scanned_count"] is None
+
+
+def test_replay_fields_surfaced_from_marker(tmp_path: Path) -> None:
+    # Marker file from worker boot → fields exposed verbatim. This is the
+    # signal V4 is supposed to surface: gap-replay actually ran, processed
+    # this many messages.
+    import json as _json
+    session = tmp_path / "artifacts" / "fresh.session"
+    _touch(session, age_seconds=60)
+    marker = tmp_path / "replay.json"
+    marker.write_text(
+        _json.dumps({
+            "attempted_at": "2026-04-26T12:00:00+00:00",
+            "scanned": 17,
+            "processed": 15,
+            "skipped_no_checkpoint": 0,
+        }),
+        encoding="utf-8",
+    )
+
+    with patch(
+        "app.agents.tools.canonical_read.get_settings",
+        return_value=_settings(enabled=True),
+    ):
+        result = _summarize_telegram_channel_ingest(
+            now=datetime.now(UTC),
+            stale_threshold_seconds=1800,
+            session_path_override=str(session),
+            pid_file_override=str(tmp_path / "no.pid"),
+            replay_marker_override=str(marker),
+        )
+    assert result["replay_attempted_at"] == "2026-04-26T12:00:00+00:00"
+    assert result["replay_processed_count"] == 15
+    assert result["replay_scanned_count"] == 17
+
+
+def test_replay_marker_corrupt_json_does_not_crash(tmp_path: Path) -> None:
+    # A corrupted marker file must not break the watchdog — the listener
+    # could still be alive. Replay fields fall back to None.
+    session = tmp_path / "artifacts" / "fresh.session"
+    _touch(session, age_seconds=60)
+    marker = tmp_path / "broken.json"
+    marker.write_text("{not valid json", encoding="utf-8")
+
+    with patch(
+        "app.agents.tools.canonical_read.get_settings",
+        return_value=_settings(enabled=True),
+    ):
+        result = _summarize_telegram_channel_ingest(
+            now=datetime.now(UTC),
+            stale_threshold_seconds=1800,
+            session_path_override=str(session),
+            pid_file_override=str(tmp_path / "no.pid"),
+            replay_marker_override=str(marker),
+        )
+    assert result["status"] == "ok"
+    assert result["replay_attempted_at"] is None
+    assert result["replay_processed_count"] is None
+
+
 def test_fresh_pid_file_overrides_stale_session(tmp_path: Path) -> None:
     # Just-restarted listener: PID file brand new, session file still
     # stale because Telethon hasn't processed an update yet. Liveness
