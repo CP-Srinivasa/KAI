@@ -14,9 +14,13 @@
 #   bash scripts/pi_transfer_artifacts.sh kai@pi.local --verify
 #   bash scripts/pi_transfer_artifacts.sh kai@pi.local --group=audit
 #
-# Supported groups: audit, paper, tradingview, telegram, agents, metrics,
-#                   state, retention, env. Default = all groups except
-#                   retention (old snapshots, optional).
+# Supported groups: database, audit, paper, tradingview, telegram, agents,
+#                   metrics, state, retention, env. Default = all groups
+#                   except retention (old snapshots, optional).
+#
+# `database` covers the SQLite domain DB at data/dev.db (canonical_documents,
+# trading_cycles, sources, portfolio_states). Without it the Pi starts with
+# an empty schema — Re-Entry baseline lost. Added 2026-04-26 (D-5 status memo).
 #
 # SSH-over-Cloudflare-Tunnel hint:
 #   Setup cloudflared access on the Pi + client, then REMOTE_HOST can be
@@ -64,7 +68,7 @@ fi
 
 # Default: all groups except retention.
 if [[ -z "$SELECTED_GROUPS" ]]; then
-    SELECTED_GROUPS="audit paper tradingview telegram agents metrics state env"
+    SELECTED_GROUPS="database audit paper tradingview telegram agents metrics state env"
     if (( INCLUDE_RETENTION == 1 )); then
         SELECTED_GROUPS="${SELECTED_GROUPS} retention"
     fi
@@ -78,6 +82,15 @@ REMOTE_ROOT="/home/kai/ai_analyst_trading_bot"
 # --- Path inventory --------------------------------------------------------
 # Only curated paths — transient caches (.log, .tmp, *.bak older than 30 d)
 # stay on the laptop. Each array holds paths RELATIVE to repo root.
+
+# Domain DB (SQLite). Holds canonical_documents, trading_cycles, sources,
+# portfolio_states, alembic_version. CRITICAL: a fresh Pi clone has an empty
+# schema — without this transfer the Re-Entry baseline (4651+ docs, 1803+
+# cycles as of 2026-04-26) is lost. Final pre-cutover sync should run AFTER
+# the laptop server is stopped, otherwise the file is mid-write.
+DATABASE_FILES=(
+    "data/dev.db"
+)
 
 AUDIT_FILES=(
     "artifacts/alert_audit.jsonl"
@@ -258,6 +271,7 @@ echo ""
 
 for group in $SELECTED_GROUPS; do
     case "$group" in
+        database)     transfer_paths database     "${DATABASE_FILES[@]}" ;;
         audit)        transfer_paths audit        "${AUDIT_FILES[@]}" ;;
         paper)        transfer_paths paper        "${PAPER_FILES[@]}" ;;
         tradingview)  transfer_paths tradingview  "${TRADINGVIEW_FILES[@]}" ;;

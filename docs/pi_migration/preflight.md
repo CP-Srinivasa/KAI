@@ -267,8 +267,44 @@ Nach dem Cutover in dieser Reihenfolge abhaken:
 3. ~~**Ruft die CLI `daily-strategy bootstrap` ohne TTY sauber durch?**~~ ✅ **geklärt 2026-04-22 (V3-Dry-Run):** `python -m app.cli.main daily-strategy bootstrap --no-notify` läuft sauber, idempotent (bei vorhandener Datei: Exit-Status 0, Output `already present: artifacts/daily_strategy/<DATE>.md`). Kein TTY-Bedarf. Für systemd-Timer: `--no-notify` bewusst weglassen (Notify ist kostenfrei und gewünscht), nur falls Telegram-Token noch nicht gesetzt → `--no-notify`.
 4. **Port 8000 auf Pi:** lokal frei? Falls Pi schon andere Services hat, `ss -tlnp | grep 8000` zeigt das.
 5. **Zeitzone Pi:** `timedatectl` → `Europe/Berlin`. Sonst stimmen die Timer-Cron-Zeiten nicht, und die Daily-Artefakt-Namen (UTC-Date) driften vs. lokaler 08:00-Trigger.
-6. **SSH-Zugriff ab Migration:** User ist am 05-01 vor Ort. Für Remote-Debugging ab 05-02 muss SSH-Port erreichbar sein (entweder LAN-only + VPN, oder Cloudflare-Tunnel-SSH). **Empfehlung:** Cloudflare-Tunnel-SSH (zero open ports im Router, gleiche Domain-Infra).
+6. **SSH-Zugriff ab Migration:** User ist am 05-01 vor Ort. Für Remote-Debugging ab 05-02 muss SSH-Port erreichbar sein (entweder LAN-only + VPN, oder Cloudflare-Tunnel-SSH). **Empfehlung:** Cloudflare-Tunnel-SSH (zero open ports im Router, gleiche Domain-Infra). Setup-Block siehe §8.6 unten.
 7. **BotFather-Mini-App-URL:** prüfen ob bereits auf `https://kai-trader.org/dashboard/` (nicht die alte Trycloudflare-URL). War laut Memory `reminder_cloudflare_named_tunnel.md` am 04-17 noch offen. **User-Action:** @BotFather → `/mybots` → KAI-Bot → Bot Settings → Menu Button/Configure Mini App — aktuellen Wert melden, dann schließen wir den Reminder.
+
+### 8.6 SSH-Tunnel-Setup (Cloudflare Access)
+
+Konkretisierung der Empfehlung aus §8.6. Setup am 05-01 nach Cloudflared-Bring-up auf dem Pi.
+
+**Pi: `~/.cloudflared/config.yml` erweitern** um SSH-Ingress:
+```yaml
+tunnel: beafc2ce-3c02-40c6-a6d7-359b2cc40cf6
+credentials-file: /home/kai/.cloudflared/beafc2ce-3c02-40c6-a6d7-359b2cc40cf6.json
+
+ingress:
+  - hostname: kai-trader.org
+    service: http://127.0.0.1:8000
+  - hostname: ssh.kai-trader.org
+    service: ssh://localhost:22
+  - service: http_status:404
+```
+Danach `sudo systemctl restart cloudflared`.
+
+**Cloudflare-DNS** (im Cloudflare-Dashboard, Zone `kai-trader.org`):
+- CNAME `ssh.kai-trader.org` → `beafc2ce-3c02-40c6-a6d7-359b2cc40cf6.cfargotunnel.com` (Proxy on/orange-Wolke).
+
+**Cloudflare Access** (Zero Trust → Access → Applications):
+- Self-hosted Application für `ssh.kai-trader.org`, Policy: E-Mail-Allowlist (gleicher User wie für `/dashboard`-Login).
+
+**Laptop (Client) `~/.ssh/config`:**
+```
+Host pi.kai-trader.org
+  HostName ssh.kai-trader.org
+  ProxyCommand cloudflared access ssh --hostname %h
+  User kai
+```
+
+Test: `ssh pi.kai-trader.org` — Cloudflare prüft Identity, dann SSH zum Pi.
+
+**Aufwand:** 15-20 min am 05-01. **P1**, nicht Cutover-blockierend, aber innerhalb 24 h fertigstellen — sonst kein Remote-Debug möglich.
 
 ---
 
