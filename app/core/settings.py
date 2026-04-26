@@ -1,10 +1,12 @@
 from collections.abc import Mapping
+from pathlib import Path
 
 from pydantic import AliasChoices, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from app.core.enums import ExecutionMode
 from app.core.errors import ConfigurationError
+from app.core.re_entry_mode import ReEntryModeProfile
 from app.core.schema_runtime import (
     validate_json_schema_payload as _validate_json_schema_payload,
 )
@@ -490,6 +492,16 @@ class TelegramChannelIngestSettings(BaseSettings):
     checkpoint_path: str = Field(
         default="artifacts/telegram_channel_checkpoint.json"
     )
+    # D-191 / S-003: Liveness heartbeat. The worker touches this file at
+    # startup and every ~60 s while the run-loop is alive — independent of
+    # whether the channel actually emits messages. canonical_read uses it
+    # as a third candidate next to the PID file and the Telethon session
+    # file. ``heartbeat_stale_seconds`` is the threshold the watchdog uses
+    # for the heartbeat-only sub-status.
+    heartbeat_path: str = Field(
+        default="artifacts/telegram_listener_heartbeat"
+    )
+    heartbeat_stale_seconds: int = Field(default=1800, ge=1)
 
 
 class AppSettings(BaseSettings):
@@ -628,6 +640,8 @@ class AppSettings(BaseSettings):
     telegram_channel_ingest: TelegramChannelIngestSettings = Field(
         default_factory=TelegramChannelIngestSettings
     )
+    # D-191 re-entry capability gate. Default disabled — see ReEntryModeProfile.
+    re_entry_mode: ReEntryModeProfile = Field(default_factory=ReEntryModeProfile)
 
     _strip_secrets = field_validator(
         "api_key", "api_key_next", "coingecko_api_key", mode="before"
@@ -663,6 +677,83 @@ class AppSettings(BaseSettings):
     @model_validator(mode="after")
     def validate_runtime_contract(self) -> "AppSettings":
         validate_runtime_config_payload(self.to_runtime_config_payload())
+        return self
+
+    @model_validator(mode="after")
+    def _enforce_re_entry_invariants(self) -> "AppSettings":
+        """D-191 re-entry-gate enforcement.
+
+        When ``re_entry_mode.enabled`` is False (today's default) this is a
+        no-op and the laptop boot is unchanged. When True, every selected
+        ``enforce_*`` invariant must hold or boot fails with
+        ``ConfigurationError`` — fail-closed, never fail-open.
+        """
+        gate = self.re_entry_mode
+        if not gate.enabled:
+            return self
+
+        violations: list[str] = []
+
+        # S-001: provenance HMAC seal secret must be present.
+        if gate.enforce_provenance_secret and not (
+            (self.alerts.provenance_secret or "").strip()
+        ):
+            violations.append(
+                "RE_ENTRY_MODE_ENFORCE_PROVENANCE_SECRET=1 but "
+                "ALERT_PROVENANCE_SECRET is empty (S-001)."
+            )
+
+        # S-002a: TradingView webhook replay cache must be persistent.
+        if (
+            gate.enforce_replay_cache_persistent
+            and not self.tradingview.webhook_replay_cache_persistent
+        ):
+            violations.append(
+                "RE_ENTRY_MODE_ENFORCE_REPLAY_CACHE_PERSISTENT=1 but "
+                "TRADINGVIEW_WEBHOOK_REPLAY_CACHE_PERSISTENT=false — a "
+                "restart within the replay window would re-open the door (S-002)."
+            )
+
+        # S-002b: replay-cache DB path must be absolute (working-directory
+        # safety: relative paths break under systemd / Pi rootless setups).
+        if gate.enforce_replay_cache_absolute_path:
+            db_path = (self.tradingview.webhook_replay_cache_db_path or "").strip()
+            if not db_path or not Path(db_path).is_absolute():
+                violations.append(
+                    "RE_ENTRY_MODE_ENFORCE_REPLAY_CACHE_ABSOLUTE_PATH=1 but "
+                    f"TRADINGVIEW_WEBHOOK_REPLAY_CACHE_DB_PATH='{db_path}' "
+                    "is not absolute (S-002)."
+                )
+
+        # S-003: telegram listener heartbeat path must be configured.
+        if gate.enforce_watchdog_heartbeat:
+            hb = (self.telegram_channel_ingest.heartbeat_path or "").strip()
+            if not hb:
+                violations.append(
+                    "RE_ENTRY_MODE_ENFORCE_WATCHDOG_HEARTBEAT=1 but "
+                    "INGESTION_TELEGRAM_CHANNEL_HEARTBEAT_PATH is empty (S-003)."
+                )
+
+        # B-002: complete observability surface — capability flag.
+        # Telemetry for LLM-failure-rate / latency p95 is not implemented
+        # yet (see /status). We model that as a hard-coded capability
+        # flag here so flipping the enforce switch deliberately fails
+        # boot until the implementation lands.
+        if gate.enforce_observability_complete:
+            observability_complete = False  # B-002 not yet implemented.
+            if not observability_complete:
+                violations.append(
+                    "RE_ENTRY_MODE_ENFORCE_OBSERVABILITY_COMPLETE=1 but "
+                    "B-002 (LLM-failure-rate, latency p95) is not yet "
+                    "implemented — /status still returns 'not_implemented' "
+                    "for those fields."
+                )
+
+        if violations:
+            raise ConfigurationError(
+                "Re-entry invariants violated:\n  - "
+                + "\n  - ".join(violations)
+            )
         return self
 
     def to_runtime_config_payload(self) -> dict[str, object]:

@@ -7,6 +7,8 @@
 
 Diese Doku ist **Pre-Flight**, nicht Runbook: der User fährt am 2026-05-01 physisch zum Pi, vorher läuft hier nichts. Jeder Abschnitt endet mit einer expliziten **Verifikations-Frage** — erst wenn alle mit „ja" beantwortet sind, ist die Migration durchführbar.
 
+**Re-Entry-Aktivierung (D-200, separate Doku):** Der Re-Entry-Mode-Schalter (`RE_ENTRY_MODE_ENABLED`) wird **nicht** am 2026-05-01 aktiviert, sondern frühestens am 2026-05-15 (D-1 vor Re-Entry-Verdict). Cutover läuft mit Default `false`. Aktivierungs-Checkliste, .env-Template und Rollback siehe `re_entry_mode.md`.
+
 ---
 
 ## 1. Ist-Zustand (gemessen 2026-04-20)
