@@ -1,12 +1,20 @@
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from app.alerts.hold_metrics import (
     MIN_ACTIVE_PRECISION_PCT,
+    MIN_PER_SOURCE_RESOLVED,
+    MIN_PER_SOURCE_RESOLVED_PER_WINDOW,
+    MIN_PER_SOURCE_WILSON_LOW_PCT,
     MIN_RESOLVED_DIRECTIONAL_ALERTS,
+    STABILITY_WINDOW_COUNT,
+    STABILITY_WINDOW_DAYS,
     build_hold_metrics_report,
+    compute_per_source_active_precision,
+    compute_per_source_stability,
 )
 
 
@@ -466,6 +474,9 @@ def test_forward_simulation_filters_reactive_title(tmp_path: Path) -> None:
 # ── D-151: Hold-Gate enforces sample-size + active-precision + paper ─────────
 
 
+_GATE_FIXTURE_ANCHOR = datetime(2026, 4, 30, tzinfo=UTC)
+
+
 def _build_gate_fixture(
     tmp_path: Path,
     *,
@@ -475,8 +486,16 @@ def _build_gate_fixture(
     paper_fills: int = 5,
     paper_cycles: int = 15,
     pnl: float = 0.0,
+    spread_across_windows: bool = False,
 ) -> dict[str, object]:
-    """Build a minimal hold-metrics report with controllable gate inputs."""
+    """Build a minimal hold-metrics report with controllable gate inputs.
+
+    When ``spread_across_windows`` is True, dispatched_at is distributed
+    evenly across the three 30-day stability windows ending at
+    ``_GATE_FIXTURE_ANCHOR`` so the per-source stability check has data
+    in every window. Hit/miss is interleaved within each window so the
+    Wilson-lower bound holds locally as well as in aggregate.
+    """
     alert_audit = tmp_path / "alert_audit.jsonl"
     alert_outcomes = tmp_path / "alert_outcomes.jsonl"
     trading_loop_audit = tmp_path / "trading_loop_audit.jsonl"
@@ -485,15 +504,40 @@ def _build_gate_fixture(
     audits: list[dict[str, object]] = []
     outcomes: list[dict[str, object]] = []
     source_map: dict[str, str] = {}
+    if spread_across_windows:
+        per_window = resolved_count // 3
+        leftovers = resolved_count - per_window * 3
+        # window centers: anchor-15d, anchor-45d, anchor-75d
+        window_offsets_days = [15, 45, 75]
+        bucket_assignments: list[int] = []
+        bucket_hits_target: list[int] = []
+        per_window_hit = hits // 3
+        hit_leftovers = hits - per_window_hit * 3
+        for w_idx in range(3):
+            n = per_window + (1 if w_idx < leftovers else 0)
+            h = per_window_hit + (1 if w_idx < hit_leftovers else 0)
+            bucket_assignments.extend([w_idx] * n)
+            # Interleave: first h docs in this window are hits, rest are misses.
+            for j in range(n):
+                bucket_hits_target.append(1 if j < h else 0)
     for i in range(resolved_count):
         doc_id = f"doc-{i}"
+        if spread_across_windows:
+            offset_days = window_offsets_days[bucket_assignments[i]]
+            dispatched = (
+                _GATE_FIXTURE_ANCHOR - timedelta(days=offset_days)
+            ).isoformat()
+            is_hit = bucket_hits_target[i] == 1
+        else:
+            dispatched = "2026-04-01T10:00:00+00:00"
+            is_hit = i < hits
         audits.append(
             {
                 "document_id": doc_id,
                 "channel": "telegram",
                 "message_id": "dry_run",
                 "is_digest": False,
-                "dispatched_at": "2026-04-01T10:00:00+00:00",
+                "dispatched_at": dispatched,
                 "sentiment_label": "bullish",
                 "affected_assets": ["BTC/USDT"],
                 "priority": 8,
@@ -504,7 +548,7 @@ def _build_gate_fixture(
         outcomes.append(
             {
                 "document_id": doc_id,
-                "outcome": "hit" if i < hits else "miss",
+                "outcome": "hit" if is_hit else "miss",
                 "annotated_at": "2026-04-01T12:00:00+00:00",
             }
         )
@@ -540,6 +584,7 @@ def _build_gate_fixture(
         trading_loop_audit_path=trading_loop_audit,
         paper_execution_audit_path=paper_execution_audit,
         source_by_doc=source_map,
+        stability_anchor=_GATE_FIXTURE_ANCHOR,
     )
 
 
@@ -568,17 +613,74 @@ def test_hold_gate_active_precision_below_threshold_blocks(tmp_path: Path) -> No
 
 
 def test_hold_gate_all_conditions_met_releases(tmp_path: Path) -> None:
-    """n=200, precision=60%, paper positive → hold_releasable."""
+    """All gate conditions including per-source floor + stability satisfied."""
+    # 70% hit-rate at n=240 (80 per window) — Wilson lower ~64% comfortably
+    # clears both the 60% headline floor and the 55% per-source floor in
+    # every 30-day window.
+    report = _build_gate_fixture(
+        tmp_path,
+        resolved_count=240,
+        hits=168,
+        paper_fills=5,
+        pnl=1.0,
+        spread_across_windows=True,
+    )
+    gate = report["hold_gate_evaluation"]
+    assert gate["alert_hit_rate_condition_met"] is True
+    assert gate["active_precision_condition_met"] is True
+    assert gate["per_source_precision_condition_met"] is True
+    assert gate["per_source_stability_condition_met"] is True
+    assert gate["paper_trading_condition_met"] is True
+    assert gate["feature_work_unblocked"] is True
+    assert gate["overall_status"] == "hold_releasable"
+    assert gate["blocking_reasons"] == []
+    assert "rss" in gate["sources_passing_both"]
+
+
+def test_hold_gate_per_source_precision_blocks_when_no_source_clears_floor(
+    tmp_path: Path,
+) -> None:
+    """Aggregate precision ok, but no single source has n>=50 + Wilson>=55%.
+
+    Hit-rate of 60% at n=200 yields a Wilson lower bound of ~53% — clears
+    the headline 60% floor on the point estimate but fails the stricter
+    55% lower-bound check the per-source gate enforces.
+    """
     report = _build_gate_fixture(
         tmp_path, resolved_count=200, hits=120, paper_fills=5, pnl=1.0,
     )
     gate = report["hold_gate_evaluation"]
     assert gate["alert_hit_rate_condition_met"] is True
     assert gate["active_precision_condition_met"] is True
-    assert gate["paper_trading_condition_met"] is True
-    assert gate["feature_work_unblocked"] is True
-    assert gate["overall_status"] == "hold_releasable"
-    assert gate["blocking_reasons"] == []
+    assert gate["per_source_precision_condition_met"] is False
+    assert gate["feature_work_unblocked"] is False
+    assert any(
+        r.startswith("no_source_meets_per_source_floor")
+        for r in gate["blocking_reasons"]
+    )
+
+
+def test_hold_gate_stability_blocks_when_only_one_window_has_data(
+    tmp_path: Path,
+) -> None:
+    """Strong precision today but no spread across windows → stability fails."""
+    # All docs land in one timestamp → only window 0 has data, windows 1+2
+    # are empty (insufficient_n) → stability=False even with 70% hit-rate.
+    report = _build_gate_fixture(
+        tmp_path,
+        resolved_count=240,
+        hits=170,
+        paper_fills=5,
+        pnl=1.0,
+        spread_across_windows=False,
+    )
+    gate = report["hold_gate_evaluation"]
+    assert gate["per_source_precision_condition_met"] is True  # current snapshot ok
+    assert gate["per_source_stability_condition_met"] is False
+    assert gate["feature_work_unblocked"] is False
+    assert any(
+        r.startswith("no_source_stable_across_") for r in gate["blocking_reasons"]
+    )
 
 
 def test_hold_gate_legacy_unknown_excluded_from_active(tmp_path: Path) -> None:
@@ -601,3 +703,131 @@ def test_hold_gate_exposes_thresholds(tmp_path: Path) -> None:
     gate = report["hold_gate_evaluation"]
     assert gate["minimum_resolved_directional_alerts_for_gate"] == 200
     assert gate["minimum_active_precision_pct_for_gate"] == 60.0
+    assert gate["minimum_per_source_resolved_for_gate"] == MIN_PER_SOURCE_RESOLVED
+    assert (
+        gate["minimum_per_source_wilson_low_pct_for_gate"]
+        == MIN_PER_SOURCE_WILSON_LOW_PCT
+    )
+
+
+# ── Direct unit tests for the per-source helpers (no fixture indirection) ───
+
+
+def test_compute_per_source_active_precision_excludes_legacy_unknown() -> None:
+    active_resolved = {"d1", "d2", "d3"}
+    hit_docs = {"d1"}
+    source_lookup = {"d1": "rss", "d2": "rss", "d3": "unknown"}
+    out = compute_per_source_active_precision(
+        active_resolved_docs=active_resolved,
+        hit_docs=hit_docs,
+        source_lookup=source_lookup,
+    )
+    # 'unknown' is filtered out, only 'rss' remains.
+    assert set(out.keys()) == {"rss"}
+    assert out["rss"]["resolved"] == 2
+    assert out["rss"]["hits"] == 1
+
+
+def test_compute_per_source_active_precision_passes_gate_at_clear_signal() -> None:
+    # 50 resolved, 40 hits → p=0.80, Wilson lower (n=50) ≈ 0.668 = 66.8%.
+    active_resolved = {f"d{i}" for i in range(50)}
+    hit_docs = {f"d{i}" for i in range(40)}
+    source_lookup = {f"d{i}": "rss" for i in range(50)}
+    out = compute_per_source_active_precision(
+        active_resolved_docs=active_resolved,
+        hit_docs=hit_docs,
+        source_lookup=source_lookup,
+    )
+    assert out["rss"]["resolved"] == 50
+    assert out["rss"]["passes_gate"] is True
+    assert out["rss"]["ci_low_pct"] >= MIN_PER_SOURCE_WILSON_LOW_PCT
+
+
+def test_compute_per_source_active_precision_fails_gate_on_small_sample() -> None:
+    # 49 resolved (just below floor), even at 100% hit-rate must fail n threshold.
+    active_resolved = {f"d{i}" for i in range(49)}
+    hit_docs = set(active_resolved)
+    source_lookup = dict.fromkeys(active_resolved, "rss")
+    out = compute_per_source_active_precision(
+        active_resolved_docs=active_resolved,
+        hit_docs=hit_docs,
+        source_lookup=source_lookup,
+    )
+    assert out["rss"]["n_threshold_met"] is False
+    assert out["rss"]["passes_gate"] is False
+
+
+def test_compute_per_source_stability_marks_empty_windows_as_fail() -> None:
+    """One source, all docs in window 0 — windows 1+2 must register as fail."""
+    anchor = datetime(2026, 4, 30, tzinfo=UTC)
+
+    class _Rec:
+        def __init__(self, dispatched_at: str) -> None:
+            self.dispatched_at = dispatched_at
+
+    docs = {f"d{i}" for i in range(40)}
+    hits = {f"d{i}" for i in range(30)}
+    # All in window 0 (anchor - 10d): plenty for window 0, nothing else.
+    latest_directional_by_doc = {
+        d: _Rec((anchor - timedelta(days=10)).isoformat()) for d in docs
+    }
+    source_lookup = dict.fromkeys(docs, "rss")
+
+    out = compute_per_source_stability(
+        active_resolved_docs=docs,
+        hit_docs=hits,
+        latest_directional_by_doc=latest_directional_by_doc,
+        source_lookup=source_lookup,
+        now=anchor,
+    )
+    assert out["window_count"] == STABILITY_WINDOW_COUNT
+    assert out["window_days"] == STABILITY_WINDOW_DAYS
+    rss = out["by_source"]["rss"]
+    assert rss["stable"] is False
+    assert rss["windows"][0]["passes_window"] is True
+    # Empty windows must report insufficient_n explicitly.
+    assert rss["windows"][1]["passes_window"] is False
+    assert rss["windows"][1]["fail_reason"] == "insufficient_n"
+    assert rss["windows"][2]["fail_reason"] == "insufficient_n"
+    assert rss["windows"][1]["resolved"] == 0
+
+
+def test_compute_per_source_stability_passes_when_all_windows_strong() -> None:
+    """Sufficient n + strong precision in every window → stable=True."""
+    anchor = datetime(2026, 4, 30, tzinfo=UTC)
+
+    class _Rec:
+        def __init__(self, dispatched_at: str) -> None:
+            self.dispatched_at = dispatched_at
+
+    # 50 docs × 38 hits per window → p=0.76, Wilson lower ≈ 62.6%.
+    # Comfortably above the 55% floor with the 20-doc per-window minimum.
+    per_window = 50
+    hits_per_window = 38
+    docs: set[str] = set()
+    hit_docs: set[str] = set()
+    latest: dict[str, _Rec] = {}
+    sources: dict[str, str] = {}
+    for w in range(3):
+        offset_days = 15 + w * 30  # window centers
+        for i in range(per_window):
+            doc_id = f"w{w}_d{i}"
+            docs.add(doc_id)
+            if i < hits_per_window:
+                hit_docs.add(doc_id)
+            latest[doc_id] = _Rec(
+                (anchor - timedelta(days=offset_days)).isoformat()
+            )
+            sources[doc_id] = "rss"
+
+    out = compute_per_source_stability(
+        active_resolved_docs=docs,
+        hit_docs=hit_docs,
+        latest_directional_by_doc=latest,
+        source_lookup=sources,
+        now=anchor,
+    )
+    rss = out["by_source"]["rss"]
+    assert rss["stable"] is True
+    assert all(w["passes_window"] for w in rss["windows"])
+    assert all(w["resolved"] >= MIN_PER_SOURCE_RESOLVED_PER_WINDOW for w in rss["windows"])

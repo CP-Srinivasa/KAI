@@ -8,7 +8,7 @@ from __future__ import annotations
 import json
 import math
 from collections import Counter
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -26,6 +26,26 @@ MIN_RESOLVED_DIRECTIONAL_ALERTS = 200
 MIN_ACTIVE_PRECISION_PCT = 60.0
 MIN_PAPER_CYCLES = 10
 MIN_PAPER_FILLS = 3
+
+# 2026-04-25: Per-source active-precision floor. Aggregate active-precision
+# can be inflated by one dominant source while the rest of the sources
+# under-perform; the per-source floor closes that loophole. The gate now
+# requires at least one source with n>=50 resolved active outcomes AND a
+# Wilson-95 lower bound >= 55% on its hit-rate. Wilson lower (not the point
+# estimate) is the bar so a small-but-lucky source cannot release the gate.
+MIN_PER_SOURCE_RESOLVED = 50
+MIN_PER_SOURCE_WILSON_LOW_PCT = 55.0
+
+# Stability check on top of the per-source floor. The same Wilson-lower
+# threshold must hold across STABILITY_WINDOW_COUNT consecutive
+# STABILITY_WINDOW_DAYS-day rolling windows. Per-window n is relaxed to
+# MIN_PER_SOURCE_RESOLVED_PER_WINDOW so we can detect drift even when the
+# 90-day total only marginally clears the headline 50-sample floor — but
+# windows below that minimum are explicitly recorded as ``insufficient_n``
+# rather than counting as a pass.
+STABILITY_WINDOW_DAYS = 30
+STABILITY_WINDOW_COUNT = 3
+MIN_PER_SOURCE_RESOLVED_PER_WINDOW = 20
 
 # D-139 fix (2026-03-28) stopped the bug that left directional docs without a
 # persisted CanonicalDocument row — provenance buckets those as
@@ -95,6 +115,189 @@ def _pearson_correlation(xs: list[float], ys: list[float]) -> float | None:
     return round(num / (den_x * den_y), 4)
 
 
+def _parse_iso_utc(value: str | None) -> datetime | None:
+    """Parse an ISO-8601 timestamp; return tz-aware UTC or None on failure."""
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        ts = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if ts.tzinfo is None:
+        ts = ts.replace(tzinfo=UTC)
+    return ts.astimezone(UTC)
+
+
+def _wilson_low_pct(hits: int, total: int) -> float | None:
+    if total <= 0:
+        return None
+    ci = wilson_ci(hits, total)
+    if ci is None:
+        return None
+    return round(ci[0] * 100.0, 2)
+
+
+def _wilson_high_pct(hits: int, total: int) -> float | None:
+    if total <= 0:
+        return None
+    ci = wilson_ci(hits, total)
+    if ci is None:
+        return None
+    return round(ci[1] * 100.0, 2)
+
+
+def compute_per_source_active_precision(
+    *,
+    active_resolved_docs: set[str],
+    hit_docs: set[str],
+    source_lookup: dict[str, str],
+) -> dict[str, dict[str, Any]]:
+    """Per-source hits/misses/Wilson-CI on the active (post-D-139) bucket.
+
+    Excludes ``LEGACY_UNKNOWN_SOURCE`` — the per-source floor is meant to
+    measure *current* pipeline quality, and the legacy-unknown bucket
+    represents the pre-D-139 attribution gap that the active-filter
+    already excludes from the headline figure.
+
+    Returns ``{source: {resolved, hits, misses, hit_rate_pct, ci_low_pct,
+    ci_high_pct, n_threshold_met, wilson_low_threshold_met, passes_gate}}``.
+    A source ``passes_gate`` iff resolved >= MIN_PER_SOURCE_RESOLVED AND
+    ci_low_pct >= MIN_PER_SOURCE_WILSON_LOW_PCT.
+    """
+    counts: dict[str, dict[str, int]] = {}
+    for doc_id in active_resolved_docs:
+        source = (source_lookup.get(doc_id) or LEGACY_UNKNOWN_SOURCE).strip().lower()
+        if source == LEGACY_UNKNOWN_SOURCE:
+            continue
+        bucket = counts.setdefault(source, {"hits": 0, "misses": 0})
+        if doc_id in hit_docs:
+            bucket["hits"] += 1
+        else:
+            bucket["misses"] += 1
+
+    out: dict[str, dict[str, Any]] = {}
+    for source, c in sorted(counts.items()):
+        hits = c["hits"]
+        misses = c["misses"]
+        n = hits + misses
+        ci_low = _wilson_low_pct(hits, n)
+        ci_high = _wilson_high_pct(hits, n)
+        n_ok = n >= MIN_PER_SOURCE_RESOLVED
+        wilson_ok = ci_low is not None and ci_low >= MIN_PER_SOURCE_WILSON_LOW_PCT
+        out[source] = {
+            "resolved": n,
+            "hits": hits,
+            "misses": misses,
+            "hit_rate_pct": _rate_pct(hits, n),
+            "ci_low_pct": ci_low,
+            "ci_high_pct": ci_high,
+            "n_threshold_met": n_ok,
+            "wilson_low_threshold_met": wilson_ok,
+            "passes_gate": n_ok and wilson_ok,
+        }
+    return out
+
+
+def compute_per_source_stability(
+    *,
+    active_resolved_docs: set[str],
+    hit_docs: set[str],
+    latest_directional_by_doc: dict[str, Any],
+    source_lookup: dict[str, str],
+    now: datetime | None = None,
+) -> dict[str, Any]:
+    """Per-source × N rolling 30-day windows: Wilson-lower vs. threshold.
+
+    Window 0 is the most recent ``STABILITY_WINDOW_DAYS`` days
+    (``[now - 30d, now)``), window 1 is the 30-day block before that, and
+    so on for ``STABILITY_WINDOW_COUNT`` total windows.
+
+    A source is ``stable`` iff every window it has data in passes the
+    Wilson-lower threshold AND meets the per-window minimum n. Windows
+    below the per-window minimum are flagged ``insufficient_n`` and count
+    as a fail — otherwise a source with one strong window and two empty
+    windows would falsely qualify.
+    """
+    anchor = now or datetime.now(UTC)
+    if anchor.tzinfo is None:
+        anchor = anchor.replace(tzinfo=UTC)
+    boundaries: list[tuple[datetime, datetime]] = []
+    for i in range(STABILITY_WINDOW_COUNT):
+        end = anchor - timedelta(days=STABILITY_WINDOW_DAYS * i)
+        start = end - timedelta(days=STABILITY_WINDOW_DAYS)
+        boundaries.append((start, end))
+
+    per_source_windows: dict[str, list[dict[str, Any]]] = {}
+    for doc_id in active_resolved_docs:
+        rec = latest_directional_by_doc.get(doc_id)
+        if rec is None:
+            continue
+        ts = _parse_iso_utc(getattr(rec, "dispatched_at", None))
+        if ts is None:
+            continue
+        source = (source_lookup.get(doc_id) or LEGACY_UNKNOWN_SOURCE).strip().lower()
+        if source == LEGACY_UNKNOWN_SOURCE:
+            continue
+        windows = per_source_windows.setdefault(
+            source,
+            [
+                {"hits": 0, "misses": 0, "start": s, "end": e}
+                for s, e in boundaries
+            ],
+        )
+        for window in windows:
+            if window["start"] <= ts < window["end"]:
+                if doc_id in hit_docs:
+                    window["hits"] += 1
+                else:
+                    window["misses"] += 1
+                break
+
+    by_source: dict[str, dict[str, Any]] = {}
+    for source, windows in sorted(per_source_windows.items()):
+        window_results: list[dict[str, Any]] = []
+        all_pass = True
+        for window in windows:
+            n = window["hits"] + window["misses"]
+            ci_low = _wilson_low_pct(window["hits"], n)
+            n_ok = n >= MIN_PER_SOURCE_RESOLVED_PER_WINDOW
+            wilson_ok = (
+                ci_low is not None and ci_low >= MIN_PER_SOURCE_WILSON_LOW_PCT
+            )
+            window_pass = n_ok and wilson_ok
+            if not window_pass:
+                all_pass = False
+            window_results.append(
+                {
+                    "window_start": window["start"].isoformat(),
+                    "window_end": window["end"].isoformat(),
+                    "resolved": n,
+                    "hits": window["hits"],
+                    "misses": window["misses"],
+                    "hit_rate_pct": _rate_pct(window["hits"], n),
+                    "ci_low_pct": ci_low,
+                    "n_threshold_met": n_ok,
+                    "wilson_low_threshold_met": wilson_ok,
+                    "passes_window": window_pass,
+                    "fail_reason": (
+                        None
+                        if window_pass
+                        else ("insufficient_n" if not n_ok else "wilson_low_below_threshold")
+                    ),
+                }
+            )
+        by_source[source] = {"windows": window_results, "stable": all_pass}
+
+    return {
+        "window_days": STABILITY_WINDOW_DAYS,
+        "window_count": STABILITY_WINDOW_COUNT,
+        "min_resolved_per_window": MIN_PER_SOURCE_RESOLVED_PER_WINDOW,
+        "min_wilson_low_pct": MIN_PER_SOURCE_WILSON_LOW_PCT,
+        "anchor_at": anchor.isoformat(),
+        "by_source": by_source,
+    }
+
+
 def build_hold_metrics_report(
     *,
     alert_audit_path: Path,
@@ -103,8 +306,14 @@ def build_hold_metrics_report(
     paper_execution_audit_path: Path,
     source_by_doc: dict[str, str] | None = None,
     title_by_doc: dict[str, str] | None = None,
+    stability_anchor: datetime | None = None,
 ) -> dict[str, Any]:
-    """Build an in-memory PH5 hold metrics report from artifact paths."""
+    """Build an in-memory PH5 hold metrics report from artifact paths.
+
+    ``stability_anchor`` pins the rolling-window endpoint for the
+    per-source stability check. Defaults to ``datetime.now(UTC)``.
+    Tests pass a fixed anchor so window boundaries are deterministic.
+    """
     audits = load_alert_audits(alert_audit_path)
     annotations = load_outcome_annotations(alert_outcomes_path)
 
@@ -294,6 +503,37 @@ def build_hold_metrics_report(
         active_hit_rate is not None
         and active_hit_rate >= MIN_ACTIVE_PRECISION_PCT
     )
+
+    # 2026-04-25: Per-source floor + 3-window stability. Both must pass for
+    # the gate to release; the source that clears the precision floor must
+    # also be the one that demonstrates stability (intersection check
+    # below). Active-only — legacy_unknown bucket is excluded inside the
+    # helpers, matching the headline active-precision filter.
+    per_source_active_precision = compute_per_source_active_precision(
+        active_resolved_docs=active_resolved_docs,
+        hit_docs=active_hit_docs,
+        source_lookup=_source_lookup,
+    )
+    per_source_stability = compute_per_source_stability(
+        active_resolved_docs=active_resolved_docs,
+        hit_docs=active_hit_docs,
+        latest_directional_by_doc=latest_directional_by_doc,
+        source_lookup=_source_lookup,
+        now=stability_anchor,
+    )
+    sources_passing_precision: list[str] = sorted(
+        src for src, m in per_source_active_precision.items() if m["passes_gate"]
+    )
+    sources_stable: set[str] = {
+        src
+        for src, info in per_source_stability["by_source"].items()
+        if info["stable"]
+    }
+    sources_passing_both: list[str] = sorted(
+        set(sources_passing_precision) & sources_stable
+    )
+    per_source_precision_condition_met = bool(sources_passing_precision)
+    per_source_stability_condition_met = bool(sources_passing_both)
 
     # Conservative evidence condition: enough cycles + fills and non-negative
     # realized PnL when available.
@@ -590,17 +830,33 @@ def build_hold_metrics_report(
                 "latest_realized_pnl_usd": latest_realized_pnl,
             },
         },
+        "per_source_active_precision": {
+            "min_resolved": MIN_PER_SOURCE_RESOLVED,
+            "min_wilson_low_pct": MIN_PER_SOURCE_WILSON_LOW_PCT,
+            "by_source": per_source_active_precision,
+            "sources_passing": sources_passing_precision,
+        },
+        "per_source_stability": per_source_stability,
         "hold_gate_evaluation": {
             "alert_hit_rate_condition_met": alert_hit_rate_condition_met,
             "active_precision_condition_met": active_precision_condition_met,
+            "per_source_precision_condition_met": per_source_precision_condition_met,
+            "per_source_stability_condition_met": per_source_stability_condition_met,
+            "sources_passing_both": sources_passing_both,
             "paper_trading_condition_met": paper_trading_condition_met,
             "minimum_resolved_directional_alerts_for_gate": (
                 MIN_RESOLVED_DIRECTIONAL_ALERTS
             ),
             "minimum_active_precision_pct_for_gate": MIN_ACTIVE_PRECISION_PCT,
+            "minimum_per_source_resolved_for_gate": MIN_PER_SOURCE_RESOLVED,
+            "minimum_per_source_wilson_low_pct_for_gate": (
+                MIN_PER_SOURCE_WILSON_LOW_PCT
+            ),
             "feature_work_unblocked": (
                 alert_hit_rate_condition_met
                 and active_precision_condition_met
+                and per_source_precision_condition_met
+                and per_source_stability_condition_met
                 and paper_trading_condition_met
             ),
             "overall_status": (
@@ -608,6 +864,8 @@ def build_hold_metrics_report(
                 if (
                     alert_hit_rate_condition_met
                     and active_precision_condition_met
+                    and per_source_precision_condition_met
+                    and per_source_stability_condition_met
                     and paper_trading_condition_met
                 )
                 else "hold_remains_active"
@@ -622,6 +880,22 @@ def build_hold_metrics_report(
                     (
                         f"active_precision_below_{int(MIN_ACTIVE_PRECISION_PCT)}_pct",
                         not active_precision_condition_met,
+                    ),
+                    (
+                        (
+                            "no_source_meets_per_source_floor_n"
+                            f"{MIN_PER_SOURCE_RESOLVED}"
+                            f"_wilson_low{int(MIN_PER_SOURCE_WILSON_LOW_PCT)}pct"
+                        ),
+                        not per_source_precision_condition_met,
+                    ),
+                    (
+                        (
+                            "no_source_stable_across_"
+                            f"{STABILITY_WINDOW_COUNT}x"
+                            f"{STABILITY_WINDOW_DAYS}d_windows"
+                        ),
+                        not per_source_stability_condition_met,
                     ),
                     (
                         "paper_trading_not_clearly_positive",
