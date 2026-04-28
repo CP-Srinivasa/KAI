@@ -13,7 +13,11 @@ from app.core.enums import SentimentLabel
 from app.execution.paper_engine import PaperExecutionEngine
 from app.market_data.mock_adapter import MockMarketDataAdapter
 from app.orchestrator.models import CycleStatus
-from app.orchestrator.trading_loop import TradingLoop, build_priority_gate_summary
+from app.orchestrator.trading_loop import (
+    TradingLoop,
+    build_loop_trigger_analysis,
+    build_priority_gate_summary,
+)
 from app.risk.engine import RiskEngine
 from app.risk.models import RiskLimits
 from app.signals.generator import SignalGenerator
@@ -223,3 +227,75 @@ def test_priority_gate_summary_handles_missing_audit(tmp_path: Path) -> None:
     assert summary.other_rejected == 0
     # threshold still read from settings — operator-visible even before first cycle
     assert summary.threshold >= 1
+
+
+# --- NEO-P-PRIO-20260425-03: regression for the 2026-04-19→25 cron blackout ---
+#
+# build_loop_trigger_analysis() defaulted recommended_priority to None and the
+# D-182 gate at threshold=10 silently rejected every cron-triggered cycle for
+# 6 days. CI was structurally blind to this because conftest pins
+# EXECUTION_PAPER_MIN_PRIORITY=1 globally. These tests deliberately raise the
+# threshold inside the test scope so a future regression in the trigger
+# factory cannot ride the conftest-default again.
+
+
+def test_build_loop_trigger_analysis_sets_priority_for_every_profile() -> None:
+    """recommended_priority must be populated for all supported profiles."""
+    conservative = build_loop_trigger_analysis(
+        symbol="BTC/USDT", analysis_profile="conservative"
+    )
+    bullish = build_loop_trigger_analysis(
+        symbol="BTC/USDT", analysis_profile="bullish"
+    )
+    bearish = build_loop_trigger_analysis(
+        symbol="BTC/USDT", analysis_profile="bearish"
+    )
+    assert conservative.recommended_priority is not None
+    assert bullish.recommended_priority is not None
+    assert bearish.recommended_priority is not None
+    # Conservative is intentionally below the high-conviction tier.
+    assert conservative.recommended_priority < 10
+    # Bullish/bearish probes must clear the highest documented gate (=10).
+    assert bullish.recommended_priority >= 10
+    assert bearish.recommended_priority >= 10
+
+
+@pytest.mark.asyncio
+async def test_bullish_probe_passes_gate_at_threshold_10(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Bullish trigger-factory output must NOT be rejected at threshold=10.
+
+    This is the exact failure that ran for 6 days unnoticed: cron fires the
+    bullish/conservative profile, gate is at 10, the factory leaves
+    recommended_priority=None → 100% rejection. The test forces the gate to
+    10 (overriding the conftest default of 1) so a regression cannot hide
+    behind the dev-friendly default again.
+    """
+    monkeypatch.setenv("EXECUTION_PAPER_MIN_PRIORITY", "10")
+    loop = _loop(tmp_path)
+    analysis = build_loop_trigger_analysis(
+        symbol="BTC/USDT", analysis_profile="bullish"
+    )
+    cycle = await loop.run_cycle(analysis, "BTC/USDT")
+    assert cycle.status != CycleStatus.PRIORITY_REJECTED
+
+
+@pytest.mark.asyncio
+async def test_conservative_probe_blocked_at_threshold_10(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Conservative profile is *intentionally* below the high-conviction gate.
+
+    Documents the contract: conservative is a health-check probe that must
+    NOT actually fill paper trades when the strict gate is on — bullish is
+    the profile that exercises the engine. If a future refactor lifts
+    conservative to >=10 by accident, this test catches it.
+    """
+    monkeypatch.setenv("EXECUTION_PAPER_MIN_PRIORITY", "10")
+    loop = _loop(tmp_path)
+    analysis = build_loop_trigger_analysis(
+        symbol="BTC/USDT", analysis_profile="conservative"
+    )
+    cycle = await loop.run_cycle(analysis, "BTC/USDT")
+    assert cycle.status == CycleStatus.PRIORITY_REJECTED

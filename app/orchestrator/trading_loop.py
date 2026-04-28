@@ -730,6 +730,14 @@ def build_loop_trigger_analysis(
     profile = analysis_profile.strip().lower()
     asset = symbol.split("/")[0].upper()
 
+    # NEO-P-PRIO-20260425-01: AnalysisResult.recommended_priority defaults to
+    # None. The D-182 paper-priority-gate (run_cycle, lines ~117-130) hard-
+    # rejects None when EXECUTION_PAPER_MIN_PRIORITY > 1. Without explicit
+    # values here every cron-triggered cycle since 2026-04-22 silently
+    # rejected (218 priority_rejected / zero regular fills). Conservative
+    # stays low (=1) so it remains correctly blocked under the strict gate;
+    # bullish/bearish probes are at the high-conviction tier (=10) so they
+    # actually exercise the downstream paper engine they were meant to test.
     if profile == "conservative":
         return AnalysisResult(
             document_id=f"loop_control_{asset.lower()}_conservative",
@@ -751,6 +759,7 @@ def build_loop_trigger_analysis(
             actionable=False,
             tags=["control_plane", "conservative", "run_once"],
             spam_probability=0.0,
+            recommended_priority=1,
         )
 
     if profile == "bullish":
@@ -773,6 +782,7 @@ def build_loop_trigger_analysis(
             actionable=True,
             tags=["control_plane", "bullish", "run_once"],
             spam_probability=0.0,
+            recommended_priority=10,
         )
 
     if profile == "bearish":
@@ -795,6 +805,7 @@ def build_loop_trigger_analysis(
             actionable=True,
             tags=["control_plane", "bearish", "run_once"],
             spam_probability=0.0,
+            recommended_priority=10,
         )
 
     raise ValueError(
