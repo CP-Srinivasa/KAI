@@ -71,6 +71,7 @@ data/
 .server.pid
 .agent_worker.pid
 .tunnel.pid
+.telegram_listener.pid
 
 # Frontend build artifacts (regenerable)
 web/tsconfig.tsbuildinfo

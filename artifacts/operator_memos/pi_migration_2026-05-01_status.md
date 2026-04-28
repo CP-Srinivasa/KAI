@@ -17,7 +17,7 @@ Dieses Memo ist die D-5-Bestandsaufnahme: **was ist fertig, was ist offen, wo en
 | `pi_install_systemd.sh` | ✅ idempotent, Dry-Run-fähig | `scripts/pi_install_systemd.sh` |
 | `pi_transfer_artifacts.sh` | ⚠️ **DB-Lücke**, sonst OK | `scripts/pi_transfer_artifacts.sh` |
 | `paper_trading_cron.sh` | ✅ Bash-Port mit funktionaler Parität | `scripts/paper_trading_cron.sh` |
-| Backup-Skript | ✅ live | `scripts/kai_backup_artifacts.sh` (D-190) |
+| Backup-Skript | ✅ live | `scripts/kai_backup_artifacts.sh` (vor D-190 lokal vorhanden, formell committed via D-207) |
 
 ---
 
