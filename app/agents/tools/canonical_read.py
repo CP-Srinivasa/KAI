@@ -551,6 +551,111 @@ def _summarize_telegram_channel_ingest(
     }
 
 
+def _summarize_operator_envelope_activity(
+    *,
+    now: datetime,
+    envelope_path_override: str | None = None,
+    stale_threshold_hours: int = 24,
+    dead_threshold_hours: int = 72,
+) -> dict[str, object]:
+    # Operator-Envelope activity watchdog. Motivation: 2026-04-21 the operator
+    # stopped dispatching envelopes; the gap was only noticed on 2026-04-28
+    # (7 days). The Re-Entry data flow until 2026-05-16 depends on
+    # operator-curated envelopes, so /status now surfaces how long ago the last
+    # envelope was received. Status classes:
+    #   ok      — last envelope < stale_threshold_hours
+    #   stale   — between stale and dead threshold (operator should dispatch)
+    #   dead    — >= dead_threshold_hours (Re-Entry data flow is at risk)
+    #   empty   — file exists but contains no parseable envelope
+    #   missing — file does not exist
+    from app.agents.tools._helpers import WORKSPACE_ROOT
+
+    rel_path = envelope_path_override or "artifacts/telegram_message_envelope.jsonl"
+    envelope_path = (
+        Path(rel_path) if Path(rel_path).is_absolute() else WORKSPACE_ROOT / rel_path
+    )
+
+    if not envelope_path.exists():
+        return {
+            "status": "missing",
+            "reason": "envelope file not found",
+            "envelope_path": str(envelope_path),
+            "stale_threshold_hours": stale_threshold_hours,
+            "dead_threshold_hours": dead_threshold_hours,
+        }
+
+    cutoff_24h = now - timedelta(hours=24)
+    last_ts: datetime | None = None
+    total_alltime = 0
+    total_24h = 0
+
+    try:
+        with envelope_path.open("r", encoding="utf-8") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    entry = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                ts = _parse_iso_utc(entry.get("timestamp_utc"))
+                if ts is None:
+                    continue
+                total_alltime += 1
+                if ts >= cutoff_24h:
+                    total_24h += 1
+                if last_ts is None or ts > last_ts:
+                    last_ts = ts
+    except OSError:
+        return {
+            "status": "missing",
+            "reason": "envelope file not readable",
+            "envelope_path": str(envelope_path),
+            "stale_threshold_hours": stale_threshold_hours,
+            "dead_threshold_hours": dead_threshold_hours,
+        }
+
+    if last_ts is None:
+        return {
+            "status": "empty",
+            "reason": "no parseable envelope with timestamp_utc",
+            "envelope_path": str(envelope_path),
+            "total_envelopes_alltime": total_alltime,
+            "total_envelopes_24h": total_24h,
+            "stale_threshold_hours": stale_threshold_hours,
+            "dead_threshold_hours": dead_threshold_hours,
+        }
+
+    age_hours = (now - last_ts).total_seconds() / 3600.0
+    if age_hours >= dead_threshold_hours:
+        status = "dead"
+        hint = (
+            f"Operator-Envelope-Stream tot ({age_hours:.1f}h ohne Signal). "
+            "Re-Entry-Datenfluss bis 2026-05-16 ist gefährdet — Envelope dispatchen."
+        )
+    elif age_hours >= stale_threshold_hours:
+        status = "stale"
+        hint = (
+            f"Operator-Envelope seit {age_hours:.1f}h aus. "
+            "Routine-Action: 1-2 Envelopes/Tag bis Re-Entry."
+        )
+    else:
+        status = "ok"
+        hint = None
+
+    return {
+        "status": status,
+        "hours_since_last_envelope": round(age_hours, 2),
+        "last_envelope_at_utc": last_ts.isoformat(),
+        "total_envelopes_alltime": total_alltime,
+        "total_envelopes_24h": total_24h,
+        "stale_threshold_hours": stale_threshold_hours,
+        "dead_threshold_hours": dead_threshold_hours,
+        "hint": hint,
+    }
+
+
 async def get_daily_operator_summary(
     *,
     alert_audit_dir: str = ALERT_AUDIT_DEFAULT_DIR,
@@ -681,6 +786,9 @@ async def get_daily_operator_summary(
     # not a data-integrity failure.
     tg_channel_ingest = _summarize_telegram_channel_ingest(now=now_utc)
     warp_status = _summarize_warp_status()
+    # Operator-Envelope activity watchdog. Surfaces silent gaps in the
+    # operator-curated envelope stream (e.g. 7-day blackout 2026-04-21..04-28).
+    operator_envelope = _summarize_operator_envelope_activity(now=now_utc)
 
     def _or_unknown(value: int | float | None) -> object:
         return value if value is not None else "?"
@@ -707,6 +815,7 @@ async def get_daily_operator_summary(
             "summary": tv_auth_summary if tv_auth_summary is not None else "no_audit_log",
         },
         "telegram_channel_ingest": tg_channel_ingest,
+        "operator_envelope": operator_envelope,
         "warp_status": warp_status,
         # Explicit not-measured markers: /status consumers must NOT treat a
         # missing field as zero. Wire these up once the underlying telemetry
