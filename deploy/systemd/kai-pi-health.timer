@@ -1,0 +1,11 @@
+[Unit]
+Description=KAI Pi Health Digest — fire once, 2026-05-08 09:00 UTC (7d post-cutover)
+
+[Timer]
+OnCalendar=2026-05-08 09:00:00 UTC
+Persistent=true
+Unit=kai-pi-health.service
+RemainAfterElapse=no
+
+[Install]
+WantedBy=timers.target
