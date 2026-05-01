@@ -23,6 +23,7 @@ UNIT_DST="/etc/systemd/system"
 UNITS=(
     "kai-server.service"
     "kai-agent-worker.service"
+    "kai-tg-listener.service"
     "cloudflared.service"
     "kai-paper-trading.service"
     "kai-paper-trading.timer"
@@ -35,6 +36,7 @@ UNITS=(
 ENABLE_ON_INSTALL=(
     "kai-server.service"
     "kai-agent-worker.service"
+    "kai-tg-listener.service"
     "cloudflared.service"
     "kai-paper-trading.timer"
     "kai-daily-strategy.timer"
@@ -118,9 +120,10 @@ install() {
 
     echo ""
     echo "Done. Verify with:"
-    echo "  systemctl status kai-server kai-agent-worker cloudflared"
+    echo "  systemctl status kai-server kai-agent-worker kai-tg-listener cloudflared"
     echo "  systemctl list-timers 'kai-*'"
     echo "  curl -s http://127.0.0.1:8000/health"
+    echo "  journalctl -u kai-tg-listener -n 30  # MTProto connect should show 'channel listener live'"
 }
 
 if (( UNINSTALL == 1 )); then
