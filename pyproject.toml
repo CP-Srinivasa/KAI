@@ -43,6 +43,7 @@ dependencies = [
     "langdetect>=1.0.9",
     "tiktoken>=0.8.0",
     "mcp>=1.2.0",
+    "telethon>=1.43.0",
 ]
 
 [project.optional-dependencies]
