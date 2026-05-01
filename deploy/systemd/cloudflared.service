@@ -8,6 +8,9 @@ Requires=kai-server.service
 Type=simple
 User=ubuntu
 Group=ubuntu
+# D-208: ensure logs/ exists and is owned by service-user before systemd
+# opens StandardOutput=append: as root.
+ExecStartPre=+/bin/bash -c 'mkdir -p /home/kai/ai_analyst_trading_bot/logs && chown -R ubuntu:ubuntu /home/kai/ai_analyst_trading_bot/logs'
 ExecStart=/usr/local/bin/cloudflared tunnel --config /home/kai/.cloudflared/config.yml run kai
 Restart=always
 RestartSec=10

@@ -10,6 +10,9 @@ Group=ubuntu
 WorkingDirectory=/home/kai/ai_analyst_trading_bot
 EnvironmentFile=/home/kai/ai_analyst_trading_bot/.env
 Environment=PYTHONIOENCODING=utf-8
+# D-208: ensure logs/ exists and is owned by service-user before systemd
+# opens StandardOutput=append: as root.
+ExecStartPre=+/bin/bash -c 'mkdir -p /home/kai/ai_analyst_trading_bot/logs && chown -R ubuntu:ubuntu /home/kai/ai_analyst_trading_bot/logs'
 ExecStart=/home/kai/ai_analyst_trading_bot/.venv/bin/python -m app.cli.main ingestion telegram-channel run
 Restart=on-failure
 RestartSec=15

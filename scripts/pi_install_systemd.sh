@@ -9,6 +9,8 @@
 #     sudo bash scripts/pi_install_systemd.sh            # install + enable + start
 #     sudo bash scripts/pi_install_systemd.sh --dry-run  # show what would happen
 #     sudo bash scripts/pi_install_systemd.sh --uninstall
+#     sudo bash scripts/pi_install_systemd.sh --force    # skip path-warning prompt
+#                                                          (SSH non-interactive; D-208)
 #
 # The script assumes the KAI checkout lives at /home/kai/ai_analyst_trading_bot
 # (path is hard-coded in the unit files). If you deploy elsewhere, edit the
@@ -45,10 +47,12 @@ ENABLE_ON_INSTALL=(
 
 DRY_RUN=0
 UNINSTALL=0
+FORCE=0
 for arg in "$@"; do
     case "$arg" in
         --dry-run) DRY_RUN=1 ;;
         --uninstall) UNINSTALL=1 ;;
+        --force) FORCE=1 ;;
         -h|--help)
             sed -n '3,17p' "$0"
             exit 0
@@ -94,7 +98,10 @@ install() {
     if [[ "$REPO_ROOT" != "$EXPECTED_ROOT" ]]; then
         echo "WARNING: repo root is $REPO_ROOT but units point at $EXPECTED_ROOT." >&2
         echo "         Either checkout at $EXPECTED_ROOT or edit units first." >&2
-        if (( DRY_RUN == 0 )); then
+        if (( DRY_RUN == 0 && FORCE == 0 )); then
+            # FORCE=1 oder non-interactive (SSH ohne TTY) erfordern --force.
+            # Auf Pi mit /home/kai → /home/ubuntu Symlink ist die Pfad-Diskrepanz
+            # erwartet — D-208 Cutover Lessons-Learned.
             read -r -p "Continue anyway? [y/N] " answer
             [[ "$answer" == "y" || "$answer" == "Y" ]] || exit 1
         fi
