@@ -93,6 +93,21 @@ install() {
     echo "Destination: $UNIT_DST"
     echo ""
 
+    # D-208: web/dist is .gitignored and was missing at cutover, breaking the
+    # Telegram Mini-App with FastAPI's default 404. Build the SPA before
+    # installing units so /dashboard/ serves HTML from the first start.
+    # Build runs as the invoking user (sudo'd from $SUDO_USER), not root,
+    # to keep node_modules ownership consistent.
+    BUILD_USER="${SUDO_USER:-$USER}"
+    if [[ -x "${REPO_ROOT}/scripts/pi_build_web.sh" ]]; then
+        echo "=== build web/ SPA (idempotent) ==="
+        run sudo -u "$BUILD_USER" bash "${REPO_ROOT}/scripts/pi_build_web.sh" || {
+            echo "WARNING: web build failed — /dashboard/ will return 404 until fixed." >&2
+            echo "         Re-run manually: bash scripts/pi_build_web.sh" >&2
+        }
+        echo ""
+    fi
+
     # Basic pre-flight — verify the checkout path matches the unit files.
     EXPECTED_ROOT="/home/kai/ai_analyst_trading_bot"
     if [[ "$REPO_ROOT" != "$EXPECTED_ROOT" ]]; then

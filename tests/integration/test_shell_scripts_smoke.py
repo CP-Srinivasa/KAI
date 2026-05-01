@@ -62,6 +62,8 @@ def _require_bash() -> str:
         "paper_trading_cron.sh",
         "pi_install_systemd.sh",
         "pi_transfer_artifacts.sh",
+        "pi_build_web.sh",
+        "pi_health_digest.sh",
     ],
 )
 def test_bash_syntax(script_name: str) -> None:
