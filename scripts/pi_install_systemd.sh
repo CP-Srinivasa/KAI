@@ -93,18 +93,15 @@ install() {
     echo "Destination: $UNIT_DST"
     echo ""
 
-    # D-208: web/dist is .gitignored and was missing at cutover, breaking the
-    # Telegram Mini-App with FastAPI's default 404. Build the SPA before
-    # installing units so /dashboard/ serves HTML from the first start.
-    # Build runs as the invoking user (sudo'd from $SUDO_USER), not root,
-    # to keep node_modules ownership consistent.
-    BUILD_USER="${SUDO_USER:-$USER}"
-    if [[ -x "${REPO_ROOT}/scripts/pi_build_web.sh" ]]; then
-        echo "=== build web/ SPA (idempotent) ==="
-        run sudo -u "$BUILD_USER" bash "${REPO_ROOT}/scripts/pi_build_web.sh" || {
-            echo "WARNING: web build failed — /dashboard/ will return 404 until fixed." >&2
-            echo "         Re-run manually: bash scripts/pi_build_web.sh" >&2
-        }
+    # D-208: web/dist (Vite SPA build) is .gitignored. The Pi-4b 1GB-RAM
+    # variant cannot run `npm ci + tsc + vite build` reliably (OOM/SSH
+    # banner timeouts under memory pressure). The build is done on the
+    # laptop instead via `scripts/pi_deploy_web.sh` which scp's the
+    # tarball. Run that BEFORE `pi_install_systemd.sh` if web/dist is
+    # absent or stale.
+    if [[ ! -f "${REPO_ROOT}/web/dist/index.html" ]]; then
+        echo "WARNING: web/dist/index.html missing — /dashboard/ will return 404." >&2
+        echo "         Run on the laptop: bash scripts/pi_deploy_web.sh ubuntu@192.168.178.20" >&2
         echo ""
     fi
 
