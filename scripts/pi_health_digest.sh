@@ -36,7 +36,9 @@ done
 ERR_TOTAL=0
 ERR_DETAIL=""
 for u in "${UNITS[@]}"; do
-    n="$(journalctl -u "$u" --priority=err --since="-${WINDOW_DAYS} days" --no-pager 2>/dev/null | grep -cE '^\w' || echo 0)"
+    # grep -c always prints a number; trust its stdout, ignore exit code
+    n="$(journalctl -u "$u" --priority=err --since="-${WINDOW_DAYS} days" --no-pager 2>/dev/null | grep -cE '^\w' 2>/dev/null)"
+    n="${n:-0}"
     ERR_TOTAL=$((ERR_TOTAL + n))
     if (( n > 0 )); then
         ERR_DETAIL+="${u}=${n} "
@@ -54,10 +56,12 @@ if [[ "$HEALTH_HTTP" != "200" ]]; then
     ALARMS+=("[api] /health = HTTP ${HEALTH_HTTP} (Body: ${HEALTH_BODY:0:80})")
 fi
 
-# 4. Tunnel-Connector-Liste — nur Pi-Connector erwartet
+# 4. Tunnel-Connector-Liste — nur Pi-Connector (linux_arm64) erwartet
+NON_PI_CONNECTORS=0
 if command -v cloudflared >/dev/null 2>&1; then
     CONN_INFO="$(/usr/local/bin/cloudflared tunnel info kai 2>&1 || true)"
-    NON_PI_CONNECTORS="$(echo "$CONN_INFO" | grep -E 'windows|darwin' | wc -l)"
+    NON_PI_CONNECTORS="$(echo "$CONN_INFO" | grep -cE 'windows|darwin' 2>/dev/null)"
+    NON_PI_CONNECTORS="${NON_PI_CONNECTORS:-0}"
     if (( NON_PI_CONNECTORS > 0 )); then
         ALARMS+=("[tun] ${NON_PI_CONNECTORS} non-Pi connectors noch registriert — \`cloudflared tunnel cleanup kai\` ausführen")
     fi
@@ -94,7 +98,11 @@ fi
 
 NOTES+=("Signale 7d: ${SIGNAL_COUNT}")
 NOTES+=("Err-Logs 7d: ${ERR_TOTAL}")
-NOTES+=("Tunnel-Connectoren ok: $((NON_PI_CONNECTORS == 0 ? 1 : 0))")
+if (( NON_PI_CONNECTORS == 0 )); then
+    NOTES+=("Tunnel: only-Pi")
+else
+    NOTES+=("Tunnel: +${NON_PI_CONNECTORS} fremde Connectoren")
+fi
 
 # Telegram-Send (immer — OK kurz, Alarm ausführlich)
 HOSTNAME_SHORT="$(hostname -s 2>/dev/null || echo pi)"
