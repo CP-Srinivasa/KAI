@@ -6,8 +6,8 @@ Requires=kai-server.service
 
 [Service]
 Type=simple
-User=kai
-Group=kai
+User=ubuntu
+Group=ubuntu
 ExecStart=/usr/local/bin/cloudflared tunnel --config /home/kai/.cloudflared/config.yml run kai
 Restart=always
 RestartSec=10

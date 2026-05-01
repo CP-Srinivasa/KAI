@@ -5,8 +5,8 @@ Wants=network-online.target
 
 [Service]
 Type=simple
-User=kai
-Group=kai
+User=ubuntu
+Group=ubuntu
 WorkingDirectory=/home/kai/ai_analyst_trading_bot
 EnvironmentFile=/home/kai/ai_analyst_trading_bot/.env
 ExecStart=/home/kai/ai_analyst_trading_bot/.venv/bin/python -m uvicorn app.api.main:app --host 127.0.0.1 --port 8000 --log-level info

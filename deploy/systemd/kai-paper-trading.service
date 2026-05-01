@@ -5,8 +5,8 @@ Requires=kai-server.service
 
 [Service]
 Type=oneshot
-User=kai
-Group=kai
+User=ubuntu
+Group=ubuntu
 WorkingDirectory=/home/kai/ai_analyst_trading_bot
 EnvironmentFile=/home/kai/ai_analyst_trading_bot/.env
 Environment=PYTHON=/home/kai/ai_analyst_trading_bot/.venv/bin/python
