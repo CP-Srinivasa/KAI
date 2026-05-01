@@ -223,20 +223,22 @@ async def dashboard_quality_api() -> JSONResponse:
 
     exec_rows = _load_jsonl(_PAPER_EXECUTION_AUDIT)
     fills = [r for r in exec_rows if r.get("event_type") == "order_filled"]
-    # Gate-relevante Zählung: nur fills die eine Position geschlossen haben
-    # produzieren realized_pnl_usd != 0 (buy-side ist immer 0). Der Re-Entry-
-    # Gate (2026-05-16) verlangt ≥10 solcher PnL-tragenden Fills.
-    pnl_fills = [
-        r for r in fills
-        if isinstance(r.get("realized_pnl_usd"), (int, float))
-        and r["realized_pnl_usd"] != 0.0
-    ]
+    # NEO-P-102: Bis NEO-P-101 das Schema trennt, ist 'realized_pnl_usd' im
+    # Audit der KUMULATIVE Portfolio-Total (paper_engine.py:277), nicht der
+    # Per-Trade-PnL — Buys erben den Wert des letzten Closes. Pro Trade wird
+    # genau ein 'position_closed'-Event emittiert; daraus rekonstruieren wir
+    # den echten Per-Trade-PnL via Legacy-Formel (exit_price-entry_price)*qty.
+    # Fees werden mit NEO-P-106 (Maker/Taker-Modell) ergänzt.
+    closes = [r for r in exec_rows if r.get("event_type") == "position_closed"]
     realized_pnl_usd = round(
-        sum(float(r.get("realized_pnl_usd", 0.0)) for r in pnl_fills), 2,
+        sum(
+            (float(r.get("exit_price", 0.0)) - float(r.get("entry_price", 0.0)))
+            * float(r.get("quantity", 0.0))
+            for r in closes
+        ),
+        2,
     )
-    positions_closed = sum(
-        1 for r in exec_rows if r.get("event_type") == "position_closed"
-    )
+    positions_closed = len(closes)
 
     audit_rows = _load_jsonl(_ALERT_AUDIT)
     non_digest = [r for r in audit_rows if not r.get("is_digest")]
@@ -276,7 +278,7 @@ async def dashboard_quality_api() -> JSONResponse:
         "forward_hits": fwd.get("hits", 0),
         "forward_miss": fwd.get("miss", 0),
         "paper_fills": len(fills),
-        "paper_fills_with_pnl": len(pnl_fills),
+        "paper_fills_with_pnl": positions_closed,
         "paper_realized_pnl_usd": realized_pnl_usd,
         "paper_positions_closed": positions_closed,
         "paper_cycles": paper.get("loop_metrics", {}).get("total_cycles", 0),

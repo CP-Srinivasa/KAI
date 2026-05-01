@@ -79,7 +79,26 @@ def _tv_pending_count() -> int:
 
 
 def _paper_fills_count() -> int:
-    return _count_jsonl_lines(Path("artifacts/paper_execution_audit.jsonl"))
+    # NEO-P-103: Re-Entry-Gate verlangt "≥10 paper fills mit PnL" — d.h. echte
+    # geschlossene Trades. Zählung der gesamten JSONL ist falsch (mischt
+    # order_created + order_filled + position_closed + position_adjusted).
+    # Pro Trade wird genau ein 'position_closed'-Event emittiert.
+    path = Path("artifacts/paper_execution_audit.jsonl")
+    if not path.exists():
+        return 0
+    n = 0
+    with path.open("r", encoding="utf-8") as fh:
+        for line in fh:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                rec = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if rec.get("event_type") == "position_closed":
+                n += 1
+    return n
 
 
 def _days_until(target: date, today: date) -> int:
@@ -141,7 +160,7 @@ Horizont-Anker: {horizon_line}
 | Resolved directional alerts | {directional} (hit {res["hit"]} / miss {res["miss"]}) |
 | Baseline-Precision | {precision_line} |
 | TV pending events (unpromoted) | {tv_pending} |
-| Paper-Execution-Audit-Einträge | {paper_fills} |
+| Paper-Trading abgeschlossene Trades | {paper_fills} |
 | Tage bis TV-Pivot Re-Entry | {d_reentry} |
 | Tage bis Pi-Migration | {d_pi} |
 | Tage bis Multi-Agent-Gate | {d_gate} |
