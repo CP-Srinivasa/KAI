@@ -8,8 +8,9 @@ is covered by a separate integration test once the dispatch is wired.
 
 from __future__ import annotations
 
+import asyncio
 import json
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -344,3 +345,214 @@ class TestHandleSignalApproval:
             "detonate", "ENV-A", envelope_log=log, ttl_minutes=60
         )
         assert outcome.status == "not_found"
+
+
+class _FakeResponse:
+    def __init__(
+        self,
+        status_code: int,
+        payload: dict[str, Any] | None = None,
+        text: str = "",
+    ) -> None:
+        self.status_code = status_code
+        self._payload = payload or {}
+        self.text = text
+
+    def json(self) -> dict[str, Any]:
+        return self._payload
+
+
+class _FakeAsyncClient:
+    """Drop-in async-context-manager replacement for httpx.AsyncClient.
+
+    The constructor swallows kwargs (timeout=...), and post() either returns a
+    pre-baked response or raises a pre-baked exception. Per-test instance.
+    """
+
+    def __init__(
+        self,
+        response: _FakeResponse | None = None,
+        raise_exc: BaseException | None = None,
+    ) -> None:
+        self._response = response
+        self._raise_exc = raise_exc
+
+    @classmethod
+    def factory(
+        cls,
+        *,
+        response: _FakeResponse | None = None,
+        raise_exc: BaseException | None = None,
+    ):
+        def _ctor(*args: Any, **kwargs: Any) -> _FakeAsyncClient:
+            return cls(response=response, raise_exc=raise_exc)
+        return _ctor
+
+    async def __aenter__(self) -> _FakeAsyncClient:
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb) -> None:
+        return None
+
+    async def post(self, url: str, json: dict[str, Any] | None = None) -> _FakeResponse:
+        if self._raise_exc is not None:
+            raise self._raise_exc
+        assert self._response is not None
+        return self._response
+
+
+def _read_audit(path: Path) -> list[dict[str, Any]]:
+    if not path.exists():
+        return []
+    return [
+        json.loads(line)
+        for line in path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+
+
+def _send_audit_required_fields() -> tuple[str, ...]:
+    # V1 schema (NEO-P-approval-send-audit-v1) - additive-only
+    return (
+        "timestamp_utc",
+        "event",
+        "stage",
+        "envelope_id",
+        "chat_id",
+        "bot_message_id",
+        "status",
+        "failure_reason",
+        "http_status",
+        "tg_error_code",
+        "error",
+        "ttl_minutes",
+    )
+
+
+class TestSendApprovalRequestAudit:
+    """Forward-only audit persistence for the bot send path (Neo-P-approval-send-audit-v1)."""
+
+    def test_send_audit_writes_ok_record(
+        self, tmp_path: Path, monkeypatch: Any
+    ) -> None:
+        from app.ingestion import telegram_channel_approval as mod
+
+        audit = tmp_path / "telegram_approval_send.jsonl"
+        rec = _shadow_record(envelope_id="ENV-OK")
+
+        monkeypatch.setattr(
+            mod.httpx if hasattr(mod, "httpx") else __import__("httpx"),
+            "AsyncClient",
+            _FakeAsyncClient.factory(
+                response=_FakeResponse(
+                    status_code=200,
+                    payload={"ok": True, "result": {"message_id": 4711}},
+                )
+            ),
+        )
+
+        result = asyncio.run(
+            mod.send_approval_request(
+                rec,
+                bot_token="TOKEN",
+                chat_id=123456789,
+                ttl_minutes=60,
+                send_audit_log=audit,
+            )
+        )
+
+        assert result == {"message_id": 4711}
+        rows = _read_audit(audit)
+        assert len(rows) == 1
+        row = rows[0]
+        for f in _send_audit_required_fields():
+            assert f in row, f"missing V1 field: {f}"
+        assert row["event"] == "telegram_approval_send"
+        assert row["stage"] == "approval_sent"
+        assert row["status"] == "ok"
+        assert row["failure_reason"] is None
+        assert row["envelope_id"] == "ENV-OK"
+        assert row["chat_id"] == 123456789
+        assert row["bot_message_id"] == 4711
+        assert row["http_status"] == 200
+        assert row["tg_error_code"] is None
+        assert row["error"] is None
+        assert row["ttl_minutes"] == 60
+
+    def test_send_audit_writes_http_error(
+        self, tmp_path: Path, monkeypatch: Any
+    ) -> None:
+        from app.ingestion import telegram_channel_approval as mod
+
+        audit = tmp_path / "telegram_approval_send.jsonl"
+        rec = _shadow_record(envelope_id="ENV-429")
+
+        import httpx as _httpx
+        monkeypatch.setattr(
+            _httpx,
+            "AsyncClient",
+            _FakeAsyncClient.factory(
+                response=_FakeResponse(
+                    status_code=429,
+                    text="Too Many Requests",
+                    payload={},
+                )
+            ),
+        )
+
+        result = asyncio.run(
+            mod.send_approval_request(
+                rec,
+                bot_token="TOKEN",
+                chat_id=123,
+                ttl_minutes=60,
+                send_audit_log=audit,
+            )
+        )
+
+        assert result is None
+        rows = _read_audit(audit)
+        assert len(rows) == 1
+        row = rows[0]
+        assert row["status"] == "failed"
+        assert row["failure_reason"] == "http_error"
+        assert row["http_status"] == 429
+        assert row["bot_message_id"] is None
+        assert "Too Many" in (row["error"] or "")
+
+    def test_send_audit_writes_exception(
+        self, tmp_path: Path, monkeypatch: Any
+    ) -> None:
+        from app.ingestion import telegram_channel_approval as mod
+
+        audit = tmp_path / "telegram_approval_send.jsonl"
+        rec = _shadow_record(envelope_id="ENV-BOOM")
+
+        import httpx as _httpx
+        monkeypatch.setattr(
+            _httpx,
+            "AsyncClient",
+            _FakeAsyncClient.factory(
+                raise_exc=_httpx.ConnectError("network down")
+            ),
+        )
+
+        # Must NOT raise out of send_approval_request.
+        result = asyncio.run(
+            mod.send_approval_request(
+                rec,
+                bot_token="TOKEN",
+                chat_id=123,
+                ttl_minutes=60,
+                send_audit_log=audit,
+            )
+        )
+
+        assert result is None
+        rows = _read_audit(audit)
+        assert len(rows) == 1
+        row = rows[0]
+        assert row["status"] == "failed"
+        assert row["failure_reason"] == "exception"
+        assert "ConnectError" in (row["error"] or "") or "network down" in (row["error"] or "")
+

@@ -195,6 +195,53 @@ def _append_jsonl(path: Path, record: dict[str, Any]) -> None:
         fh.write(json.dumps(record, ensure_ascii=False) + "\n")
 
 
+# Forward-only audit log for approval-bot send attempts (NEO-P-approval-send-audit-v1).
+# Separate file from the envelope log to avoid breaking downstream envelope consumers.
+_DEFAULT_SEND_AUDIT_LOG = Path("artifacts/telegram_approval_send.jsonl")
+
+# Stable V1 field order for human-readable inspection. Schema is additive-only.
+_SEND_AUDIT_FIELDS: tuple[str, ...] = (
+    "timestamp_utc",
+    "event",
+    "stage",
+    "envelope_id",
+    "chat_id",
+    "bot_message_id",
+    "status",
+    "failure_reason",
+    "http_status",
+    "tg_error_code",
+    "error",
+    "ttl_minutes",
+)
+
+
+def _append_send_audit(
+    record: dict[str, Any],
+    path: Path = _DEFAULT_SEND_AUDIT_LOG,
+) -> None:
+    """Append a single approval-send audit record (forward-only).
+
+    Sync write, no lock, no aiofiles. Caller passes a fully-populated dict;
+    we normalise field order for stable JSONL inspection but never mutate
+    contents. Failure to write is logged + swallowed - audit must never
+    kill the listener.
+    """
+    try:
+        ordered: dict[str, Any] = {}
+        for key in _SEND_AUDIT_FIELDS:
+            ordered[key] = record.get(key)
+        # Preserve any caller-supplied extras (forward-compatible) at the end.
+        for key, value in record.items():
+            if key not in ordered:
+                ordered[key] = value
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(ordered, ensure_ascii=False) + "\n")
+    except OSError as exc:
+        logger.warning("[approval] send-audit write failed: %s", exc)
+
+
 # ── Approval re-emit ────────────────────────────────────────────────────────
 
 
@@ -367,26 +414,56 @@ async def send_approval_request(
     bot_token: str,
     chat_id: int,
     ttl_minutes: int,
+    send_audit_log: Path | None = None,
 ) -> dict[str, Any] | None:
     """POST sendMessage with an inline keyboard. Returns Telegram API response
     JSON (``result`` payload) or None on network/API failure.
 
     Kept intentionally minimal: no retries, no typing-indicator. The caller
     is a Telethon handler that shouldn't block the event loop on failures.
-    Any exception → logged + None, so a temporary Telegram outage never
+    Any exception is logged + swallowed, so a temporary Telegram outage never
     kills the channel listener.
+
+    Forward-only audit (NEO-P-approval-send-audit-v1): every send attempt is
+    persisted to ``send_audit_log`` (default _DEFAULT_SEND_AUDIT_LOG) with one
+    of status=ok|failed and a structured failure_reason. No backfill.
     """
     import httpx
 
     env_id = record.get("envelope_id")
+    audit_path = send_audit_log if send_audit_log is not None else _DEFAULT_SEND_AUDIT_LOG
+
+    def _audit(extra: dict[str, Any]) -> None:
+        # Only emit when env_id is present; without an envelope id the record
+        # is unusable for downstream correlation.
+        if not env_id:
+            return
+        base: dict[str, Any] = {
+            "timestamp_utc": datetime.now(UTC).isoformat(),
+            "event": "telegram_approval_send",
+            "stage": "approval_sent",
+            "envelope_id": env_id,
+            "chat_id": chat_id,
+            "bot_message_id": None,
+            "status": None,
+            "failure_reason": None,
+            "http_status": None,
+            "tg_error_code": None,
+            "error": None,
+            "ttl_minutes": ttl_minutes,
+        }
+        base.update(extra)
+        _append_send_audit(base, path=audit_path)
+
     if not bot_token or not chat_id or not env_id:
         logger.warning(
-            "[approval] send refused — missing token/chat_id/envelope_id "
+            "[approval] send refused - missing token/chat_id/envelope_id "
             "(token_set=%s chat_id=%s env_id=%s)",
             bool(bot_token),
             chat_id,
             env_id,
         )
+        _audit({"status": "failed", "failure_reason": "missing_config"})
         return None
 
     text = format_approval_message(record, ttl_minutes=ttl_minutes)
@@ -408,14 +485,40 @@ async def send_approval_request(
                 resp.status_code,
                 resp.text[:200],
             )
+            _audit(
+                {
+                    "status": "failed",
+                    "failure_reason": "http_error",
+                    "http_status": resp.status_code,
+                    "error": resp.text[:200],
+                }
+            )
             return None
         body = resp.json()
         if not body.get("ok"):
             logger.warning("[approval] telegram sendMessage not-ok body=%s", body)
+            _audit(
+                {
+                    "status": "failed",
+                    "failure_reason": "api_not_ok",
+                    "http_status": 200,
+                    "tg_error_code": body.get("error_code"),
+                    "error": str(body)[:200],
+                }
+            )
             return None
-        return body.get("result")
-    except Exception as exc:  # noqa: BLE001 — log + swallow, caller shouldn't die
+        result = body.get("result") or {}
+        _audit(
+            {
+                "status": "ok",
+                "http_status": 200,
+                "bot_message_id": result.get("message_id") if isinstance(result, dict) else None,
+            }
+        )
+        return result if isinstance(result, dict) else None
+    except Exception as exc:  # noqa: BLE001 - log + swallow, caller shouldn't die
         logger.warning("[approval] telegram sendMessage exception: %s", exc)
+        _audit({"status": "failed", "failure_reason": "exception", "error": repr(exc)[:200]})
         return None
 
 
