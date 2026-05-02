@@ -126,6 +126,7 @@ TELEGRAM_FILES=(
     "artifacts/telegram_channel.session"
     "artifacts/telegram_channel_raw.jsonl"
     "artifacts/telegram_message_envelope.jsonl"
+    "artifacts/telegram_approval_send.jsonl"
     "artifacts/telegram_signal_handoff.jsonl"
 )
 

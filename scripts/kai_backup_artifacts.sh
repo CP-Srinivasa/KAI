@@ -102,6 +102,7 @@ DEFAULT_SOURCES=(
     "artifacts/paper_execution_audit.jsonl"
     "artifacts/trading_loop_audit.jsonl"
     "artifacts/telegram_message_envelope.jsonl"
+    "artifacts/telegram_approval_send.jsonl"
     "artifacts/telegram_channel_raw.jsonl"
     "artifacts/telegram_channel_checkpoint.json"
     "artifacts/ph5_hold_metrics_report.json"
