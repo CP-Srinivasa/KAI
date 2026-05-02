@@ -219,6 +219,10 @@ export type OperatorStatus = {
   execution_enabled: boolean;
   write_back_allowed: boolean;
   status: string;
+  position_count?: number | string;
+  cash_usd?: number | string;
+  total_equity_usd?: number | string;
+  realized_pnl_usd?: number | string;
 };
 
 export function fetchOperatorStatus(signal?: AbortSignal): Promise<OperatorStatus> {

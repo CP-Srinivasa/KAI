@@ -1838,6 +1838,19 @@ class TelegramOperatorBot:
                 return "n/a"
             return f"{self._inline(raw)}{suffix}"
 
+        # Money formatter: real numbers get $1,234.56 formatting; "?" passes
+        # through. Keeps Telegram readable when cash/equity are present but
+        # also covers the degraded-payload case.
+        def _money(key: str) -> str:
+            raw = payload.get(key, "?")
+            if isinstance(raw, (int, float)):
+                return f"${raw:,.2f}"
+            return self._inline(raw)
+
+        equity = _money("total_equity_usd")
+        cash = _money("cash_usd")
+        realized = _money("realized_pnl_usd")
+
         # Telegram-Premium-Channel listener liveness. Prints a status glyph
         # + age so the operator sees within /status whether the MTProto
         # listener is alive — that was invisible before 2026-04-24 and
@@ -1861,6 +1874,7 @@ class TelegramOperatorBot:
         msg = (
             f"*KAI Status*\n"
             f"Readiness: {readiness}\n"
+            f"Equity: {equity} · Cash: {cash} · Realized PnL: {realized}\n"
             f"Cycles today: {cycles} · Positions: {pos_count}\n"
             f"Ingestion backlog: {backlog} docs\n"
             f"Alert rate (24h): {alert_rate}/h\n"

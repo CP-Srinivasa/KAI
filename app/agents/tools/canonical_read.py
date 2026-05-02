@@ -682,15 +682,28 @@ async def get_daily_operator_summary(
 
     degraded = False
 
-    # Positions — read from the paper execution audit (no DB dependency).
+    # Portfolio (positions, cash, equity, realized PnL) — single read of the
+    # paper execution audit via the canonical snapshot helper. Same source as
+    # /operator/portfolio-snapshot, so /status, Telegram /status, and the
+    # browser dashboard agree on the truth. Replaces the prior exposure-only
+    # read whose 'position_count' key never matched the producer's
+    # 'priced_position_count' (silent 0-fallback for 7 surfaces).
+    cash_usd: float | None
+    total_equity_usd: float | None
+    realized_pnl_usd: float | None
     try:
-        exposure = await get_paper_exposure_summary(audit_path=paper_execution_audit_path)
-        raw_position_count = exposure.get("position_count", 0)
-        position_count: int | None = (
-            int(raw_position_count) if isinstance(raw_position_count, int) else 0
+        snapshot = await build_paper_portfolio_snapshot_helper(
+            audit_path=paper_execution_audit_path,
         )
+        position_count: int | None = int(snapshot.position_count)
+        cash_usd = float(snapshot.cash_usd)
+        total_equity_usd = float(snapshot.total_equity_usd)
+        realized_pnl_usd = float(snapshot.realized_pnl_usd)
     except Exception:
         position_count = None
+        cash_usd = None
+        total_equity_usd = None
+        realized_pnl_usd = None
         degraded = True
 
     # Ingestion backlog — documents persisted but not yet analyzed.
@@ -800,6 +813,9 @@ async def get_daily_operator_summary(
         "status": "degraded" if degraded else "operational",
         "readiness_status": "degraded" if degraded else "operational",
         "position_count": _or_unknown(position_count),
+        "cash_usd": _or_unknown(cash_usd),
+        "total_equity_usd": _or_unknown(total_equity_usd),
+        "realized_pnl_usd": _or_unknown(realized_pnl_usd),
         "ingestion_backlog_documents": _or_unknown(ingestion_backlog),
         "alert_fire_rate_docs_per_hour_24h": _or_unknown(alert_rate_24h),
         "cycle_count_today": _or_unknown(cycle_count_today),

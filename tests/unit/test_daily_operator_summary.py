@@ -59,15 +59,34 @@ def _db_patches(*, pending: int = 0):
     return factory_patch, repo_patch, pending
 
 
-def _exposure_patch(*, position_count: int = 0, raise_error: bool = False):
+def _snapshot_patch(
+    *,
+    position_count: int = 0,
+    cash_usd: float = 10_000.0,
+    total_equity_usd: float = 10_000.0,
+    realized_pnl_usd: float = 0.0,
+    raise_error: bool = False,
+):
+    """Mock the canonical portfolio snapshot helper used by the daily summary.
+
+    Mirrors the real producer's attribute names (snapshot.cash_usd etc.) so
+    the test can no longer drift away from reality the way the prior
+    exposure-mock did — that drift was the root cause of /status reporting
+    "0 positions" while the dashboard showed live trades.
+    """
     if raise_error:
         return patch(
-            "app.agents.tools.canonical_read.get_paper_exposure_summary",
+            "app.agents.tools.canonical_read.build_paper_portfolio_snapshot_helper",
             AsyncMock(side_effect=RuntimeError("paper audit corrupted")),
         )
+    snapshot = MagicMock()
+    snapshot.position_count = position_count
+    snapshot.cash_usd = cash_usd
+    snapshot.total_equity_usd = total_equity_usd
+    snapshot.realized_pnl_usd = realized_pnl_usd
     return patch(
-        "app.agents.tools.canonical_read.get_paper_exposure_summary",
-        AsyncMock(return_value={"position_count": position_count}),
+        "app.agents.tools.canonical_read.build_paper_portfolio_snapshot_helper",
+        AsyncMock(return_value=snapshot),
     )
 
 
@@ -83,7 +102,7 @@ async def test_summary_has_required_keys_for_status_command(tmp_path: Path) -> N
 
     factory_p, repo_p, _ = _db_patches(pending=0)
     _passthrough = lambda p, **kw: Path(p)  # noqa: E731
-    with _exposure_patch(position_count=0), factory_p, repo_p as repo_cls, patch(
+    with _snapshot_patch(position_count=0), factory_p, repo_p as repo_cls, patch(
         "app.agents.tools.canonical_read.resolve_workspace_dir",
         side_effect=_passthrough,
     ), patch(
@@ -148,7 +167,7 @@ async def test_alert_rate_counts_only_last_24h(tmp_path: Path) -> None:
 
     factory_p, repo_p, _ = _db_patches(pending=0)
     _passthrough = lambda p, **kw: Path(p)  # noqa: E731
-    with _exposure_patch(position_count=0), factory_p, repo_p as repo_cls, patch(
+    with _snapshot_patch(position_count=0), factory_p, repo_p as repo_cls, patch(
         "app.agents.tools.canonical_read.resolve_workspace_dir",
         side_effect=_passthrough,
     ), patch(
@@ -189,7 +208,7 @@ async def test_cycles_today_counts_only_todays_started_at(tmp_path: Path) -> Non
 
     factory_p, repo_p, _ = _db_patches(pending=0)
     _passthrough = lambda p, **kw: Path(p)  # noqa: E731
-    with _exposure_patch(position_count=0), factory_p, repo_p as repo_cls, patch(
+    with _snapshot_patch(position_count=0), factory_p, repo_p as repo_cls, patch(
         "app.agents.tools.canonical_read.resolve_workspace_dir",
         side_effect=_passthrough,
     ), patch(
@@ -208,7 +227,7 @@ async def test_cycles_today_counts_only_todays_started_at(tmp_path: Path) -> Non
 
 
 @pytest.mark.asyncio
-async def test_degraded_when_exposure_read_fails(tmp_path: Path) -> None:
+async def test_degraded_when_portfolio_read_fails(tmp_path: Path) -> None:
     alerts_dir = tmp_path / "artifacts"
     alerts_dir.mkdir(parents=True, exist_ok=True)
     _write_jsonl(alerts_dir / "alert_audit.jsonl", [])
@@ -217,7 +236,7 @@ async def test_degraded_when_exposure_read_fails(tmp_path: Path) -> None:
 
     factory_p, repo_p, _ = _db_patches(pending=5)
     _pass = lambda p, **kw: Path(p)  # noqa: E731
-    with _exposure_patch(raise_error=True), factory_p, repo_p as repo_cls, patch(
+    with _snapshot_patch(raise_error=True), factory_p, repo_p as repo_cls, patch(
         "app.agents.tools.canonical_read.resolve_workspace_dir",
         side_effect=_pass,
     ), patch(
@@ -251,7 +270,7 @@ async def test_unimplemented_fields_flagged_not_zero(tmp_path: Path) -> None:
 
     factory_p, repo_p, _ = _db_patches(pending=0)
     _passthrough = lambda p, **kw: Path(p)  # noqa: E731
-    with _exposure_patch(position_count=0), factory_p, repo_p as repo_cls, patch(
+    with _snapshot_patch(position_count=0), factory_p, repo_p as repo_cls, patch(
         "app.agents.tools.canonical_read.resolve_workspace_dir",
         side_effect=_passthrough,
     ), patch(
@@ -300,7 +319,7 @@ async def test_cycle_status_breakdown_24h(tmp_path: Path) -> None:
 
     factory_p, repo_p, _ = _db_patches(pending=0)
     _pass = lambda p, **kw: Path(p)  # noqa: E731
-    with _exposure_patch(position_count=0), factory_p, repo_p as repo_cls, patch(
+    with _snapshot_patch(position_count=0), factory_p, repo_p as repo_cls, patch(
         "app.agents.tools.canonical_read.resolve_workspace_dir",
         side_effect=_pass,
     ), patch(
@@ -346,7 +365,7 @@ async def test_cycle_status_breakdown_alert_threshold(tmp_path: Path) -> None:
 
     factory_p, repo_p, _ = _db_patches(pending=0)
     _pass = lambda p, **kw: Path(p)  # noqa: E731
-    with _exposure_patch(position_count=0), factory_p, repo_p as repo_cls, patch(
+    with _snapshot_patch(position_count=0), factory_p, repo_p as repo_cls, patch(
         "app.agents.tools.canonical_read.resolve_workspace_dir",
         side_effect=_pass,
     ), patch(
@@ -378,7 +397,7 @@ async def test_warp_status_present_in_summary(tmp_path: Path) -> None:
 
     factory_p, repo_p, _ = _db_patches(pending=0)
     _pass = lambda p, **kw: Path(p)  # noqa: E731
-    with _exposure_patch(position_count=0), factory_p, repo_p as repo_cls, patch(
+    with _snapshot_patch(position_count=0), factory_p, repo_p as repo_cls, patch(
         "app.agents.tools.canonical_read.resolve_workspace_dir",
         side_effect=_pass,
     ), patch(
@@ -414,7 +433,7 @@ async def test_warp_status_active_when_process_present(tmp_path: Path) -> None:
     _pass = lambda p, **kw: Path(p)  # noqa: E731
     fake_run_result = MagicMock()
     fake_run_result.stdout = '"Cloudflare WARP.exe","1234","Console","1","45,678 K"\n'
-    with _exposure_patch(position_count=0), factory_p, repo_p as repo_cls, patch(
+    with _snapshot_patch(position_count=0), factory_p, repo_p as repo_cls, patch(
         "app.agents.tools.canonical_read.resolve_workspace_dir",
         side_effect=_pass,
     ), patch(
@@ -455,7 +474,7 @@ async def test_cycle_status_breakdown_empty_when_no_recent_cycles(tmp_path: Path
 
     factory_p, repo_p, _ = _db_patches(pending=0)
     _pass = lambda p, **kw: Path(p)  # noqa: E731
-    with _exposure_patch(position_count=0), factory_p, repo_p as repo_cls, patch(
+    with _snapshot_patch(position_count=0), factory_p, repo_p as repo_cls, patch(
         "app.agents.tools.canonical_read.resolve_workspace_dir",
         side_effect=_pass,
     ), patch(
@@ -473,3 +492,91 @@ async def test_cycle_status_breakdown_empty_when_no_recent_cycles(tmp_path: Path
     assert result["cycle_status_breakdown_24h"] == {}
     assert result["priority_rejected_pct_24h"] == "?"
     assert result["priority_rejected_alert"] is False
+
+
+@pytest.mark.asyncio
+async def test_summary_surfaces_cash_equity_and_realized_pnl(tmp_path: Path) -> None:
+    """Regression guard for the 2026-05-02 /status display bug.
+
+    Before the fix, get_daily_operator_summary read from the exposure-only
+    surface whose 'priced_position_count' key was looked up as 'position_count'
+    (silent default 0), and cash/equity/realized_pnl were not exposed at all.
+    Result: Telegram /status and the dashboard header reported 0 positions
+    and Cash == Equity for 7 different consumer surfaces while the underlying
+    paper engine was actively trading three open positions.
+
+    This test pins the contract: the daily summary must surface real cash,
+    equity, realized PnL and the position count taken straight from the
+    canonical portfolio snapshot — same source as /operator/portfolio-snapshot.
+    """
+    alerts_dir = tmp_path / "artifacts"
+    alerts_dir.mkdir(parents=True, exist_ok=True)
+    _write_jsonl(alerts_dir / "alert_audit.jsonl", [])
+    _write_jsonl(tmp_path / "loop.jsonl", [])
+    _write_jsonl(tmp_path / "exec.jsonl", [])
+
+    factory_p, repo_p, _ = _db_patches(pending=0)
+    _pass = lambda p, **kw: Path(p)  # noqa: E731
+    with _snapshot_patch(
+        position_count=3,
+        cash_usd=16_715.74,
+        total_equity_usd=23_028.49,
+        realized_pnl_usd=945.45,
+    ), factory_p, repo_p as repo_cls, patch(
+        "app.agents.tools.canonical_read.resolve_workspace_dir",
+        side_effect=_pass,
+    ), patch(
+        "app.agents.tools.canonical_read.resolve_workspace_path",
+        side_effect=_pass,
+    ):
+        repo_cls.return_value.count_pending_documents = AsyncMock(return_value=0)
+        result = await get_daily_operator_summary(
+            alert_audit_dir=str(alerts_dir),
+            loop_audit_path=str(tmp_path / "loop.jsonl"),
+            paper_execution_audit_path=str(tmp_path / "exec.jsonl"),
+            now=_now(),
+        )
+
+    assert result["position_count"] == 3
+    assert result["cash_usd"] == pytest.approx(16_715.74)
+    assert result["total_equity_usd"] == pytest.approx(23_028.49)
+    assert result["realized_pnl_usd"] == pytest.approx(945.45)
+    # Cash MUST NOT equal equity here — that was the symptom of the bug.
+    assert result["cash_usd"] != result["total_equity_usd"]
+
+
+@pytest.mark.asyncio
+async def test_summary_marks_portfolio_fields_unknown_when_snapshot_fails(
+    tmp_path: Path,
+) -> None:
+    """When the snapshot helper raises, all four portfolio fields collapse to
+    '?' (the canonical 'unknown' marker) instead of silently zero-filling.
+    Operator must see the gap, not a fabricated 0/0/0/0."""
+    alerts_dir = tmp_path / "artifacts"
+    alerts_dir.mkdir(parents=True, exist_ok=True)
+    _write_jsonl(alerts_dir / "alert_audit.jsonl", [])
+    _write_jsonl(tmp_path / "loop.jsonl", [])
+    _write_jsonl(tmp_path / "exec.jsonl", [])
+
+    factory_p, repo_p, _ = _db_patches(pending=0)
+    _pass = lambda p, **kw: Path(p)  # noqa: E731
+    with _snapshot_patch(raise_error=True), factory_p, repo_p as repo_cls, patch(
+        "app.agents.tools.canonical_read.resolve_workspace_dir",
+        side_effect=_pass,
+    ), patch(
+        "app.agents.tools.canonical_read.resolve_workspace_path",
+        side_effect=_pass,
+    ):
+        repo_cls.return_value.count_pending_documents = AsyncMock(return_value=0)
+        result = await get_daily_operator_summary(
+            alert_audit_dir=str(alerts_dir),
+            loop_audit_path=str(tmp_path / "loop.jsonl"),
+            paper_execution_audit_path=str(tmp_path / "exec.jsonl"),
+            now=_now(),
+        )
+
+    assert result["readiness_status"] == "degraded"
+    assert result["position_count"] == "?"
+    assert result["cash_usd"] == "?"
+    assert result["total_equity_usd"] == "?"
+    assert result["realized_pnl_usd"] == "?"
