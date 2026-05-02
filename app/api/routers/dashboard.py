@@ -223,16 +223,17 @@ async def dashboard_quality_api() -> JSONResponse:
 
     exec_rows = _load_jsonl(_PAPER_EXECUTION_AUDIT)
     fills = [r for r in exec_rows if r.get("event_type") == "order_filled"]
-    # NEO-P-102: Bis NEO-P-101 das Schema trennt, ist 'realized_pnl_usd' im
-    # Audit der KUMULATIVE Portfolio-Total (paper_engine.py:277), nicht der
-    # Per-Trade-PnL — Buys erben den Wert des letzten Closes. Pro Trade wird
-    # genau ein 'position_closed'-Event emittiert; daraus rekonstruieren wir
-    # den echten Per-Trade-PnL via Legacy-Formel (exit_price-entry_price)*qty.
-    # Fees werden mit NEO-P-106 (Maker/Taker-Modell) ergänzt.
+    # NEO-P-101-r2: position_closed-Events haben ab schema_version=v2 das
+    # per-Trade NETTO-Feld trade_pnl_usd (inkl. Fee). Legacy v1-Zeilen (vor
+    # NEO-P-101-r2) tragen nur entry_price/exit_price/quantity — dafür
+    # rekonstruieren wir per Brutto-Formel (ohne Fee). Fees werden mit
+    # NEO-P-106 (Maker/Taker-Modell) per-trade nachgereicht.
     closes = [r for r in exec_rows if r.get("event_type") == "position_closed"]
     realized_pnl_usd = round(
         sum(
-            (float(r.get("exit_price", 0.0)) - float(r.get("entry_price", 0.0)))
+            float(r.get("trade_pnl_usd", 0.0))
+            if r.get("schema_version") == "v2"
+            else (float(r.get("exit_price", 0.0)) - float(r.get("entry_price", 0.0)))
             * float(r.get("quantity", 0.0))
             for r in closes
         ),

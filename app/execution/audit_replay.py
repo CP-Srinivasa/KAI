@@ -142,6 +142,8 @@ def replay_paper_audit(audit_path: Path) -> AuditReplayResult:
         if order_id is not None:
             stop_loss, take_profit = order_meta.get(order_id, (None, None))
 
+        # NEO-P-101-r2: v2 audit rows carry position_side; v1 rows default to long.
+        position_side_val = _coerce_str(payload.get("position_side")) or "long"
         existing = positions.get(symbol)
         if side == "buy":
             if existing is None:
@@ -153,6 +155,7 @@ def replay_paper_audit(audit_path: Path) -> AuditReplayResult:
                     take_profit=take_profit,
                     opened_at=filled_at,
                     realized_pnl_usd=0.0,
+                    position_side=position_side_val,
                 )
             else:
                 total_qty = existing.quantity + quantity
@@ -194,6 +197,11 @@ def replay_paper_audit(audit_path: Path) -> AuditReplayResult:
         portfolio_cash = _coerce_float(payload.get("portfolio_cash"))
         if portfolio_cash is not None:
             cash_usd = portfolio_cash
+        # NEO-P-101-r2 / DECISION_LOG D-209: payload["realized_pnl_usd"]
+        # is the KUMULATIVE portfolio total per fill — NEVER per-trade. Per-trade
+        # NETTO PnL lives in payload["trade_pnl_usd"] on schema_version=v2
+        # position_closed events. Reading here is correct: we want the latest
+        # cumulative snapshot to seed self._portfolio.realized_pnl_usd.
         realized = _coerce_float(payload.get("realized_pnl_usd"))
         if realized is not None:
             realized_pnl_usd = realized

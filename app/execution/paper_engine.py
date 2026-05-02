@@ -14,6 +14,8 @@ import json
 import logging
 from pathlib import Path
 
+import portalocker
+
 from app.execution.audit_replay import replay_paper_audit
 from app.execution.models import (
     PaperFill,
@@ -118,8 +120,18 @@ class PaperExecutionEngine:
         take_profit: float | None = None,
         idempotency_key: str | None = None,
         risk_check_id: str = "",
+        position_side: str = "long",
     ) -> PaperOrder:
-        """Create an order record (does not fill immediately)."""
+        """Create an order record (does not fill immediately).
+
+        NEO-P-101-r2: position_side defaults to "long". Any other value
+        currently raises NotImplementedError; V5 (Long+Short engine) is not yet
+        implemented. The default keeps every existing call-site behavior-stable.
+        """
+        if position_side != "long":
+            raise NotImplementedError(
+                "position_side=long-only currently; V5 (Long+Short-Engine) not implemented yet"
+            )
         idem_key = idempotency_key or f"{symbol}_{side}_{_now_utc()}"
         order = PaperOrder(
             order_id=_new_order_id(),
@@ -133,6 +145,7 @@ class PaperExecutionEngine:
             created_at=_now_utc(),
             idempotency_key=idem_key,
             risk_check_id=risk_check_id,
+            position_side=position_side,
         )
         self._append_audit("order_created", order.__dict__)
         return order
@@ -145,6 +158,13 @@ class PaperExecutionEngine:
         if order.idempotency_key in self._filled_keys:
             logger.warning("[PAPER] Duplicate order rejected: key=%s", order.idempotency_key)
             return None
+
+        # NEO-P-101-r2: defense-in-depth - orders constructed outside
+        # create_order (e.g. via direct PaperOrder()) must still trip the V5 gate.
+        if order.position_side != "long":
+            raise NotImplementedError(
+                "position_side=long-only currently; V5 (Long+Short-Engine) not implemented yet"
+            )
 
         if current_price <= 0:
             logger.error(
@@ -206,6 +226,7 @@ class PaperExecutionEngine:
 
         cost = fill_price * order.quantity
         fee = cost * self._fee_pct
+        pnl = 0.0  # NEO-P-101-r2: per-trade pnl; sell-branch overwrites with netto
 
         if order.side == "buy":
             if self._portfolio.cash < cost + fee:
@@ -233,6 +254,7 @@ class PaperExecutionEngine:
                     take_profit=order.take_profit or pos.take_profit,
                     opened_at=pos.opened_at,
                     realized_pnl_usd=pos.realized_pnl_usd,
+                    position_side=pos.position_side,
                 )
             else:
                 self._portfolio.positions[order.symbol] = PaperPosition(
@@ -242,6 +264,7 @@ class PaperExecutionEngine:
                     stop_loss=order.stop_loss,
                     take_profit=order.take_profit,
                     opened_at=_now_utc(),
+                    position_side=order.position_side,
                 )
         else:  # sell
             pos = self._portfolio.positions.get(order.symbol)
@@ -265,11 +288,16 @@ class PaperExecutionEngine:
                     take_profit=pos.take_profit,
                     opened_at=pos.opened_at,
                     realized_pnl_usd=pos.realized_pnl_usd + pnl,
+                    position_side=pos.position_side,
                 )
 
         self._portfolio.total_fees_usd += fee
         self._portfolio.trade_count += 1
         self._filled_keys.add(order.idempotency_key)
+
+        # NEO-P-101-r2: per-trade NETTO pnl. Buys do not realize PnL; sells
+        # carry the netto PnL (sell-branch already subtracted fee).
+        trade_pnl_for_fill = pnl if order.side == "sell" else 0.0
 
         fill = PaperFill(
             fill_id=_new_fill_id(),
@@ -281,6 +309,8 @@ class PaperExecutionEngine:
             fee_usd=fee,
             filled_at=_now_utc(),
             slippage_pct=self._slippage_pct * 100,
+            pnl_usd=trade_pnl_for_fill,
+            position_side=order.position_side,
         )
 
         self._append_audit(
@@ -422,7 +452,12 @@ class PaperExecutionEngine:
                 "exit_price": fill.fill_price,
                 "fill_id": fill.fill_id,
                 "order_id": fill.order_id,
+                # NEO-P-101-r2: KEEP realized_pnl_usd KUMULATIV (legacy alias).
+                # New consumers must read trade_pnl_usd for per-trade NETTO PnL.
                 "realized_pnl_usd": self._portfolio.realized_pnl_usd,
+                "trade_pnl_usd": fill.pnl_usd,
+                "fee_usd": fill.fee_usd,
+                "position_side": fill.position_side,
             },
         )
         logger.info(
@@ -462,9 +497,22 @@ class PaperExecutionEngine:
         return fills
 
     def _append_audit(self, event_type: str, data: dict[str, object]) -> None:
-        record = {"event_type": event_type, "timestamp_utc": _now_utc(), **data}
+        # NEO-P-101-r2: every NEW audit row carries schema_version="v2".
+        # Legacy v1 rows (pre-NEO-P-101-r2) lack the field - consumers must
+        # default to "v1" via dict.get("schema_version", "v1").
+        record = {
+            "schema_version": "v2",
+            "event_type": event_type,
+            "timestamp_utc": _now_utc(),
+            **data,
+        }
         try:
+            # NEO-P-101-r2: portalocker advisory file-lock (cross-platform).
+            # Required because Pi runs kai-server + kai-agent-worker as
+            # parallel writers on the same audit file. Lock auto-releases on
+            # file close (context-manager exit).
             with self._audit_path.open("a", encoding="utf-8") as fh:
+                portalocker.lock(fh, portalocker.LOCK_EX)
                 fh.write(json.dumps(record) + "\n")
         except OSError as e:
             logger.error("[PAPER] Audit log write failed: %s", e)

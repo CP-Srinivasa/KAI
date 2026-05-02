@@ -35,6 +35,7 @@ class PaperOrder:
     idempotency_key: str
     status: str = "pending"  # "pending" | "filled" | "cancelled" | "rejected"
     risk_check_id: str = ""
+    position_side: str = "long"  # NEO-P-101-r2: V5-Vorbereitung; nur "long" supported
 
 
 @dataclass(frozen=True)
@@ -50,6 +51,8 @@ class PaperFill:
     fee_usd: float
     filled_at: str
     slippage_pct: float
+    pnl_usd: float = 0.0  # NEO-P-101-r2: per-trade NETTO PnL (Buys=0.0, Sells=netto inkl. fee)
+    position_side: str = "long"  # NEO-P-101-r2: V5-Vorbereitung
 
 
 @dataclass
@@ -63,6 +66,7 @@ class PaperPosition:
     take_profit: float | None
     opened_at: str
     realized_pnl_usd: float = 0.0
+    position_side: str = "long"  # NEO-P-101-r2: V5-Vorbereitung; nur "long" supported
 
     def unrealized_pnl(self, current_price: float) -> float:
         return (current_price - self.avg_entry_price) * self.quantity
@@ -76,6 +80,7 @@ class PaperPosition:
             "take_profit": self.take_profit,
             "opened_at": self.opened_at,
             "realized_pnl_usd": self.realized_pnl_usd,
+            "position_side": self.position_side,
         }
 
 

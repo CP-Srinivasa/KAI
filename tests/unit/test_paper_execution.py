@@ -303,3 +303,253 @@ def test_close_position_not_blocked_by_geometry_check(tmp_path):
     fill = eng.close_position("BTC/USDT", current_price=71000.0, reason="take")
     assert fill is not None
     assert "BTC/USDT" not in eng.portfolio.positions
+
+
+# ---------------------------------------------------------------------------
+# NEO-P-101-r2: schema-v2 audit, position_side, file-lock, per-trade NETTO PnL
+# ---------------------------------------------------------------------------
+
+import json as _json  # noqa: E402
+
+
+def _read_audit_records(audit_path):
+    return [
+        _json.loads(line)
+        for line in audit_path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+
+
+def test_buy_event_trade_pnl_zero(tmp_path):
+    eng = _engine(tmp_path)
+    order = eng.create_order(
+        symbol="BTC/USDT", side="buy", quantity=0.1, idempotency_key="buy_pnl_zero"
+    )
+    eng.fill_order(order, current_price=65000.0)
+    records = _read_audit_records(tmp_path / "audit.jsonl")
+    fill_records = [r for r in records if r.get("event_type") == "order_filled"]
+    assert len(fill_records) == 1
+    fill = fill_records[0]
+    assert fill["pnl_usd"] == 0.0
+    assert fill["side"] == "buy"
+
+
+def test_sell_close_trade_pnl_netto_correct(tmp_path):
+    eng = _engine(tmp_path)
+    buy = eng.create_order(symbol="X/USDT", side="buy", quantity=1.0, idempotency_key="b1")
+    eng.fill_order(buy, current_price=100.0)
+    sell = eng.create_order(symbol="X/USDT", side="sell", quantity=1.0, idempotency_key="s1")
+    fill = eng.fill_order(sell, current_price=110.0)
+    assert fill is not None
+    assert 9.7 < fill.pnl_usd < 9.9, f"netto pnl off: {fill.pnl_usd}"
+    records = _read_audit_records(tmp_path / "audit.jsonl")
+    sell_fills = [
+        r for r in records
+        if r.get("event_type") == "order_filled" and r.get("side") == "sell"
+    ]
+    assert len(sell_fills) == 1
+    assert 9.7 < sell_fills[0]["pnl_usd"] < 9.9
+
+
+def test_position_closed_event_has_fee_usd(tmp_path):
+    eng = _engine(tmp_path)
+    _open_long(eng, "ETH/USDT", 1.0, 3000.0, tp=3200.0)
+    eng.close_position("ETH/USDT", current_price=3300.0, reason="take")
+    records = _read_audit_records(tmp_path / "audit.jsonl")
+    closed = [r for r in records if r.get("event_type") == "position_closed"]
+    assert len(closed) == 1
+    rec = closed[0]
+    assert "fee_usd" in rec
+    assert rec["fee_usd"] > 0
+    assert "trade_pnl_usd" in rec
+    assert rec["trade_pnl_usd"] > 0
+
+
+def test_schema_version_v2_in_every_new_event(tmp_path):
+    eng = _engine(tmp_path)
+    _open_long(eng, "BTC/USDT", 0.1, 65000.0, sl=60000.0, tp=70000.0)
+    eng.close_position("BTC/USDT", current_price=71000.0, reason="take")
+    records = _read_audit_records(tmp_path / "audit.jsonl")
+    assert len(records) >= 3
+    for r in records:
+        assert r.get("schema_version") == "v2", f"missing v2: {r}"
+
+
+def test_audit_replay_handles_v1_legacy_lines(tmp_path):
+    from app.execution.audit_replay import replay_paper_audit
+
+    audit = tmp_path / "legacy.jsonl"
+    v1_records = [
+        {
+            "event_type": "order_created",
+            "timestamp_utc": "2026-01-01T00:00:00Z",
+            "order_id": "ord_legacy_1",
+            "symbol": "BTC/USDT",
+            "side": "buy",
+            "quantity": 0.1,
+            "stop_loss": 60000.0,
+            "take_profit": 70000.0,
+        },
+        {
+            "event_type": "order_filled",
+            "timestamp_utc": "2026-01-01T00:00:01Z",
+            "fill_id": "fill_legacy_1",
+            "order_id": "ord_legacy_1",
+            "symbol": "BTC/USDT",
+            "side": "buy",
+            "quantity": 0.1,
+            "fill_price": 65000.0,
+            "fee_usd": 6.5,
+            "filled_at": "2026-01-01T00:00:01Z",
+            "slippage_pct": 0.05,
+            "portfolio_cash": 3493.5,
+            "realized_pnl_usd": 0.0,
+        },
+    ]
+    audit.write_text(
+        "\n".join(_json.dumps(r) for r in v1_records) + "\n", encoding="utf-8"
+    )
+    result = replay_paper_audit(audit)
+    assert result.available is True
+    assert result.error is None
+    assert "BTC/USDT" in result.positions
+    pos = result.positions["BTC/USDT"]
+    assert pos.position_side == "long"
+
+
+def test_audit_replay_handles_mixed_v1_v2(tmp_path):
+    from app.execution.audit_replay import replay_paper_audit
+
+    audit = tmp_path / "mixed.jsonl"
+    rows = [
+        {
+            "event_type": "order_created", "order_id": "o1", "symbol": "BTC/USDT",
+            "side": "buy", "quantity": 0.1, "stop_loss": 60000.0,
+            "take_profit": 70000.0,
+            "timestamp_utc": "2026-01-01T00:00:00Z",
+        },
+        {
+            "event_type": "order_filled", "fill_id": "f1", "order_id": "o1",
+            "symbol": "BTC/USDT", "side": "buy", "quantity": 0.1,
+            "fill_price": 65000.0, "fee_usd": 6.5,
+            "filled_at": "2026-01-01T00:00:01Z", "slippage_pct": 0.05,
+            "portfolio_cash": 3493.5, "realized_pnl_usd": 0.0,
+            "timestamp_utc": "2026-01-01T00:00:01Z",
+        },
+        {"event_type": "cycle_start", "timestamp_utc": "2026-01-01T00:00:02Z"},
+        {
+            "schema_version": "v2", "event_type": "order_created", "order_id": "o2",
+            "symbol": "ETH/USDT", "side": "buy", "quantity": 1.0,
+            "position_side": "long",
+            "timestamp_utc": "2026-01-02T00:00:00Z",
+        },
+        {
+            "schema_version": "v2", "event_type": "order_filled", "fill_id": "f2",
+            "order_id": "o2", "symbol": "ETH/USDT", "side": "buy",
+            "quantity": 1.0, "fill_price": 3000.0, "fee_usd": 3.0,
+            "filled_at": "2026-01-02T00:00:01Z", "slippage_pct": 0.05,
+            "pnl_usd": 0.0, "position_side": "long",
+            "portfolio_cash": 497.5, "realized_pnl_usd": 0.0,
+            "timestamp_utc": "2026-01-02T00:00:01Z",
+        },
+        {
+            "schema_version": "v2", "event_type": "position_closed",
+            "symbol": "BTC/USDT", "reason": "take", "quantity": 0.1,
+            "entry_price": 65000.0, "exit_price": 71000.0,
+            "trade_pnl_usd": 599.0, "fee_usd": 7.1, "position_side": "long",
+            "realized_pnl_usd": 599.0, "fill_id": "fz", "order_id": "oz",
+            "timestamp_utc": "2026-01-02T00:00:02Z",
+        },
+    ]
+    audit.write_text("\n".join(_json.dumps(r) for r in rows) + "\n", encoding="utf-8")
+    result = replay_paper_audit(audit)
+    assert result.available is True, result.error
+    assert "BTC/USDT" in result.positions
+    assert "ETH/USDT" in result.positions
+
+
+def test_paper_position_default_position_side_long(tmp_path):
+    eng = _engine(tmp_path)
+    _open_long(eng, "SOL/USDT", 10.0, 150.0)
+    pos = eng.portfolio.positions["SOL/USDT"]
+    assert pos.position_side == "long"
+
+
+def test_engine_rejects_position_side_short(tmp_path):
+    eng = _engine(tmp_path)
+    with pytest.raises(NotImplementedError, match="V5"):
+        eng.create_order(
+            symbol="BTC/USDT",
+            side="buy",
+            quantity=0.01,
+            idempotency_key="short_v5",
+            position_side="short",
+        )
+
+
+def test_partial_sell_keeps_position(tmp_path):
+    eng = _engine(tmp_path)
+    buy = eng.create_order(
+        symbol="ETH/USDT", side="buy", quantity=2.0, idempotency_key="b_partial"
+    )
+    eng.fill_order(buy, current_price=3000.0)
+    sell = eng.create_order(
+        symbol="ETH/USDT", side="sell", quantity=1.0, idempotency_key="s_partial"
+    )
+    fill = eng.fill_order(sell, current_price=3300.0)
+    assert fill is not None
+    pos = eng.portfolio.positions.get("ETH/USDT")
+    assert pos is not None
+    assert abs(pos.quantity - 1.0) < 1e-6
+    assert fill.pnl_usd > 0
+    assert fill.quantity == 1.0
+
+
+def test_average_down_then_close(tmp_path):
+    eng = _engine(tmp_path)
+    b1 = eng.create_order(
+        symbol="X/USDT", side="buy", quantity=1.0, idempotency_key="b_avg_1"
+    )
+    eng.fill_order(b1, current_price=100.0)
+    b2 = eng.create_order(
+        symbol="X/USDT", side="buy", quantity=1.0, idempotency_key="b_avg_2"
+    )
+    eng.fill_order(b2, current_price=90.0)
+    sell = eng.create_order(
+        symbol="X/USDT", side="sell", quantity=2.0, idempotency_key="s_avg"
+    )
+    fill = eng.fill_order(sell, current_price=100.0)
+    assert fill is not None
+    assert 8.0 < fill.pnl_usd < 11.0, f"unexpected netto pnl: {fill.pnl_usd}"
+    assert "X/USDT" not in eng.portfolio.positions
+
+
+def test_append_audit_concurrent_writes_no_corruption(tmp_path):
+    import threading
+    eng = _engine(tmp_path)
+
+    def writer(tag):
+        for i in range(50):
+            eng._append_audit(
+                "concurrency_probe",
+                {"tag": tag, "i": i, "payload": "x" * 100},
+            )
+
+    t1 = threading.Thread(target=writer, args=("A",))
+    t2 = threading.Thread(target=writer, args=("B",))
+    t1.start()
+    t2.start()
+    t1.join()
+    t2.join()
+
+    audit = tmp_path / "audit.jsonl"
+    raw_lines = audit.read_text(encoding="utf-8").splitlines()
+    assert len(raw_lines) >= 100
+    probes = []
+    for line in raw_lines:
+        if not line.strip():
+            continue
+        rec = _json.loads(line)
+        if rec.get("event_type") == "concurrency_probe":
+            probes.append(rec)
+    assert len(probes) == 100
