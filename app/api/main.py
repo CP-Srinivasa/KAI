@@ -17,6 +17,7 @@ from app.api.routers import (
     dashboard,
     events,
     health,
+    kai,
     operator,
     query,
     research,
@@ -249,6 +250,7 @@ def create_app() -> FastAPI:
     app.include_router(tradingview.router)
     app.include_router(dashboard.router)
     app.include_router(events.router)
+    app.include_router(kai.router)
 
     # React-SPA (Vite-Build) unter /dashboard. JSON-Route /dashboard/api/quality
     # wurde oben über include_router zuerst registriert und hat dadurch Vorrang

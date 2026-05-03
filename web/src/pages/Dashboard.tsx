@@ -1,5 +1,8 @@
 import { useState } from "react";
-import { Radio, Target, ShieldAlert, CheckCircle2, AlertCircle, ChevronDown, ChevronUp, Wrench } from "lucide-react";
+import { Radio, Target, ShieldAlert, CheckCircle2, AlertCircle, ChevronDown, ChevronUp, Wrench, Info } from "lucide-react";
+import "@/styles/kai.tokens.css";
+import { KaiLiveWidget } from "@/components/kai/KaiLiveWidget";
+import { useKaiState } from "@/lib/useKaiState";
 import { KpiCard } from "@/components/kpi/KpiCard";
 import { QualityBarPanel } from "@/components/panels/QualityBar";
 import { ActivePrecisionCard } from "@/components/panels/ActivePrecisionCard";
@@ -66,6 +69,7 @@ export function Dashboard() {
   const rc = data?.resolved_count ?? null;
   const pc = data?.priority_corr ?? null;
   const pf = data?.paper_fills ?? null;
+  const kai = useKaiState();
 
   return (
     <div className="p-5 xl:p-6 space-y-5 xl:space-y-6 max-w-[1680px] mx-auto">
@@ -117,6 +121,13 @@ export function Dashboard() {
             </div>
           </div>
         </Card>
+      )}
+
+      {/* KAI LIVE — Persona non grata. Hero-Strip per DALI-Audit 2026-05-03. */}
+      {kai.state === "ready" && (
+        <PanelErrorBoundary name="KaiLiveWidget">
+          <KaiLiveWidget runtimeState={kai.data} language="de" />
+        </PanelErrorBoundary>
       )}
 
       {/* Aktive KPI-Row — ausschließlich echte Zahlen aus /dashboard/api/quality */}
@@ -180,6 +191,14 @@ export function Dashboard() {
               <span>
                 <span className="font-mono">{data.paper_cycles}</span> cycles ·{" "}
                 <span className="font-mono">{data.real_price_cycles}</span> real-price
+                <button
+                  type="button"
+                  aria-label="Daten vor 2026-05-02 14:30 UTC unter Schema v1 (NEO-P-101-r2 disqualified, via Backfill rekonstruiert). v2-only-Werte ab Cutover."
+                  title="Daten vor 2026-05-02 14:30 UTC unter Schema v1 (NEO-P-101-r2 disqualified, via Backfill rekonstruiert). v2-only-Werte ab Cutover."
+                  className="ml-1 inline-flex items-center align-middle text-fg-subtle hover:text-fg-muted cursor-help"
+                >
+                  <Info size={11} aria-hidden />
+                </button>
               </span>
             ) : undefined
           }
