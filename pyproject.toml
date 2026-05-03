@@ -45,6 +45,7 @@ dependencies = [
     "mcp>=1.2.0",
     "telethon>=1.43.0",
     "portalocker>=2.8",
+    "youtube-transcript-api>=1.2.0",
 ]
 
 [project.optional-dependencies]
