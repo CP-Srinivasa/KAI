@@ -33,6 +33,10 @@ UNITS=(
     "kai-daily-strategy.timer"
     "kai-daily-strategy-reminder.service"
     "kai-daily-strategy-reminder.timer"
+    "kai-pi-health.service"
+    "kai-pi-health.timer"
+    "kai-service-watchdog.service"
+    "kai-service-watchdog.timer"
 )
 
 ENABLE_ON_INSTALL=(
@@ -43,6 +47,8 @@ ENABLE_ON_INSTALL=(
     "kai-paper-trading.timer"
     "kai-daily-strategy.timer"
     "kai-daily-strategy-reminder.timer"
+    "kai-pi-health.timer"
+    "kai-service-watchdog.timer"
 )
 
 DRY_RUN=0
@@ -126,7 +132,7 @@ install() {
             echo "ERROR: missing source unit: $src" >&2
             exit 1
         fi
-        run install -m 0644 "$src" "$dst"
+        run command install -m 0644 "$src" "$dst"
     done
 
     run systemctl daemon-reload
@@ -143,6 +149,7 @@ install() {
     echo "  systemctl list-timers 'kai-*'"
     echo "  curl -s http://127.0.0.1:8000/health"
     echo "  journalctl -u kai-tg-listener -n 30  # MTProto connect should show 'channel listener live'"
+    echo "  journalctl -u kai-service-watchdog -n 30"
 }
 
 if (( UNINSTALL == 1 )); then

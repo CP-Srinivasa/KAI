@@ -1,0 +1,11 @@
+[Unit]
+Description=KAI Pi External Service Watchdog — every 5 minutes
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=5min
+Unit=kai-service-watchdog.service
+Persistent=true
+
+[Install]
+WantedBy=timers.target
