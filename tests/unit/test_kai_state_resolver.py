@@ -96,7 +96,8 @@ def test_to_dict_serialises_with_camelcase():
     state = create_fallback_state("ANALYSIS", "scanning")
     d = state.to_dict()
     assert d["state"] == "ANALYSIS"
-    assert d["statusLabel"] == "ANALYSIS"
+    # KAI_STATUS_LABEL["ANALYSIS"] == "SCANNING" (per spec dashboard.status_badges)
+    assert d["statusLabel"] == "SCANNING"
     assert "comment" in d
     assert "timestamp" in d
 
