@@ -230,17 +230,22 @@ class PaperExecutionEngine:
             fill_price = current_price * (1 - self._slippage_pct)
 
         cost = fill_price * order.quantity
-        # NEO-P-106 Phase 1: venue-spezifische Taker-Fee aus config/venue_fees.yaml
-        # Fallback bei unknown/paper venue = default_taker_pct (worst-case) aus YAML.
+        # NEO-P-106: venue-spezifische Maker/Taker-Fee aus config/venue_fees.yaml.
+        # Market = taker; Limit mit limit_price = maker. Fallback bei unknown/paper
+        # venue = role-spezifischer worst-case Default aus YAML.
         # Constructor `fee_pct` wird ignoriert, sobald venue!="legacy"; legacy-Path
         # bleibt als explizite Opt-out fuer Property-Tests.
-        from app.execution.fees import lookup_taker_fee
+        from app.execution.fees import lookup_order_fee
 
         if order.venue == "legacy":
             fee_pct_eff = self._fee_pct
             fee_meta = ("legacy", "taker", self._fee_pct * 10000.0, "constructor")
         else:
-            fee_record = lookup_taker_fee(order.venue)
+            fee_record = lookup_order_fee(
+                order.venue,
+                order_type=order.order_type,
+                limit_price=order.limit_price,
+            )
             fee_pct_eff = fee_record.bps_applied / 10000.0
             fee_meta = (
                 fee_record.venue,

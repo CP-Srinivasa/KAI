@@ -1,11 +1,10 @@
-"""Unit tests for app.execution.fees (NEO-P-106 Phase 1, V14)."""
+"""Unit tests for app.execution.fees (NEO-P-106, V14)."""
 
 from __future__ import annotations
 
 from pathlib import Path
 
 import pytest
-import yaml
 
 from app.execution import fees
 
@@ -69,6 +68,45 @@ def test_lookup_coinbase_is_higher_than_binance():
     binance = fees.lookup_taker_fee("binance")
     coinbase = fees.lookup_taker_fee("coinbase")
     assert coinbase.bps_applied > binance.bps_applied
+
+
+def test_lookup_maker_fee_uses_yaml_maker_rate():
+    f = fees.lookup_fee("okx", "maker")
+    assert f.venue == "okx"
+    assert f.role == "maker"
+    assert f.bps_applied == pytest.approx(8.0)
+
+
+def test_lookup_invalid_role_falls_back_to_taker():
+    f = fees.lookup_fee("okx", "post_onlyish")
+    assert f.role == "taker"
+    assert f.bps_applied == pytest.approx(10.0)
+
+
+def test_lookup_unknown_venue_uses_default_maker():
+    f = fees.lookup_fee("kraken", "maker")
+    assert f.venue == "kraken"
+    assert f.role == "maker"
+    assert f.bps_applied == pytest.approx(60.0)
+
+
+@pytest.mark.parametrize(
+    ("order_type", "limit_price", "expected"),
+    [
+        ("market", None, "taker"),
+        ("limit", None, "taker"),
+        ("limit", 100.0, "maker"),
+        (" LIMIT ", 100.0, "maker"),
+    ],
+)
+def test_infer_fee_role(order_type, limit_price, expected):
+    assert fees.infer_fee_role(order_type, limit_price) == expected
+
+
+def test_lookup_order_fee_uses_limit_with_price_as_maker():
+    f = fees.lookup_order_fee("okx", order_type="limit", limit_price=100.0)
+    assert f.role == "maker"
+    assert f.bps_applied == pytest.approx(8.0)
 
 
 def test_yaml_table_has_required_metadata():

@@ -1,11 +1,8 @@
-"""Venue-Fee-Lookup fuer NEO-P-106 Phase 1 (V14, 90/10-Variante).
+"""Venue-Fee-Lookup fuer NEO-P-106 (V14, 90/10-Variante).
 
-Single-Taker-Fee pro Venue, geladen aus config/venue_fees.yaml. Kein Volume-
-Tier, kein Maker-Discount. Tier-1 / Taker-Rate als ehrliche Default-Annahme
-fuer Paper-Mode.
-
-Phase 2 (separat): Bridge/trading_loop venue-Durchleitung an PaperOrder.
-Phase 3 (post Live): Maker/Taker-Differenzierung via Orderbook-Sim.
+Venue-Fee pro Fill-Rolle, geladen aus config/venue_fees.yaml. Kein Volume-Tier.
+Market-Orders werden als Taker modelliert, Limit-Orders mit Limit-Preis als
+Maker. Ohne Orderbook-Sim bleibt das konservativ und auditierbar.
 """
 
 from __future__ import annotations
@@ -26,6 +23,8 @@ _DEFAULT_CONFIG_PATH = Path(__file__).resolve().parents[2] / "config" / "venue_f
 # Hard fallback wenn YAML komplett unbenutzbar ist (corrupt, missing).
 # Bewusst worst-case (Coinbase-Niveau) damit Paper-PnL nicht zu optimistisch wird.
 _HARD_FALLBACK_TAKER_PCT = 0.60
+_HARD_FALLBACK_MAKER_PCT = 0.60
+_VALID_ROLES = {"maker", "taker"}
 
 
 @dataclass(frozen=True)
@@ -33,7 +32,7 @@ class VenueFee:
     """Resolved fee record fuer ein Fill."""
 
     venue: str
-    role: str  # "taker" in Phase 1; spaeter "maker" optional
+    role: str  # "maker" | "taker"
     bps_applied: float  # Fee in basis points (1bps = 0.01%)
     table_version: str
     table_effective_until: str | None
@@ -78,37 +77,48 @@ def _check_effective_until(table: dict[str, Any]) -> None:
         )
 
 
-def lookup_taker_fee(
+def lookup_fee(
     venue: str,
+    role: str,
     *,
     config_path: Path | None = None,
 ) -> VenueFee:
-    """Return the taker fee for a venue.
+    """Return the fee for a venue/role pair.
 
     venue is normalized to lowercase. Unknown venues fall back to
-    `default_taker_pct` from the YAML, then to the hard fallback.
-    Phase 1 always returns role="taker"; Phase 3 will branch on order_type.
+    `default_{role}_pct` from the YAML, then to the hard fallback. Invalid
+    roles are treated as taker so callers fail conservative.
     """
     table = _load_table(config_path) if config_path else _load_table()
     venue_norm = (venue or "").strip().lower() or "paper"
+    role_norm = (role or "").strip().lower()
+    if role_norm not in _VALID_ROLES:
+        logger.warning("[fees] invalid role=%r for venue=%s; using taker", role, venue_norm)
+        role_norm = "taker"
 
     venues = table.get("venues", {}) if isinstance(table.get("venues"), dict) else {}
     entry = venues.get(venue_norm)
+    pct_key = f"{role_norm}_pct"
     pct: float
-    if isinstance(entry, dict) and isinstance(entry.get("taker_pct"), (int, float)):
-        pct = float(entry["taker_pct"])
+    if isinstance(entry, dict) and isinstance(entry.get(pct_key), (int, float)):
+        pct = float(entry[pct_key])
     else:
-        # default_taker_pct, dann hard fallback.
-        default = table.get("default_taker_pct")
+        # default_{role}_pct, dann role-spezifischer hard fallback.
+        default = table.get(f"default_{role_norm}_pct")
+        hard_fallback = (
+            _HARD_FALLBACK_MAKER_PCT
+            if role_norm == "maker"
+            else _HARD_FALLBACK_TAKER_PCT
+        )
         pct = (
             float(default)
             if isinstance(default, (int, float))
-            else _HARD_FALLBACK_TAKER_PCT
+            else hard_fallback
         )
 
     return VenueFee(
         venue=venue_norm,
-        role="taker",
+        role=role_norm,
         bps_applied=pct * 100.0,  # 0.10% -> 10 bps
         table_version=str(table.get("version", "fallback")),
         table_effective_until=(
@@ -117,6 +127,34 @@ def lookup_taker_fee(
             else None
         ),
     )
+
+
+def infer_fee_role(order_type: str, limit_price: float | None) -> str:
+    """Infer maker/taker from the paper order shape."""
+    if (order_type or "").strip().lower() == "limit" and limit_price is not None:
+        return "maker"
+    return "taker"
+
+
+def lookup_order_fee(
+    venue: str,
+    *,
+    order_type: str,
+    limit_price: float | None,
+    config_path: Path | None = None,
+) -> VenueFee:
+    """Return the fee record implied by an order's execution shape."""
+    role = infer_fee_role(order_type, limit_price)
+    return lookup_fee(venue, role, config_path=config_path)
+
+
+def lookup_taker_fee(
+    venue: str,
+    *,
+    config_path: Path | None = None,
+) -> VenueFee:
+    """Backward-compatible taker lookup for older call-sites/tests."""
+    return lookup_fee(venue, "taker", config_path=config_path)
 
 
 def reset_cache() -> None:

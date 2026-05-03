@@ -1,12 +1,12 @@
-# Venue-Tier-Fees fuer NEO-P-106 Phase 1 (V14, 90/10-Variante).
+# Venue-Tier-Fees fuer NEO-P-106 (V14, 90/10-Variante).
 #
 # Quelle: oeffentlich publizierte Spot-Trading-Fees der Venues (Stand 2026-04).
-# Single-Taker-Rate pro Venue (kein Volume-Tier, kein Maker-Discount).
+# Maker/Taker-Rate pro Venue (kein Volume-Tier).
 # Begruendung: KAI ist Paper-Mode ohne reales Trade-Volume → Volume-Tier-
 # Annahmen waeren Self-Reporting-Fiktion. Tier-1 (= keine Volumen-Reduktion)
 # ist die ehrlichste Approximation.
-# Maker/Taker-Unterscheidung kommt erst mit Orderbook-Sim (Phase 3, post
-# Live-Trading-Aktivierung).
+# Rolle: Market-Orders = taker; Limit-Orders mit limit_price = maker. Ohne
+# Orderbook-Sim ist das eine kontrollierte Naeherung, nicht Fill-Garantie.
 #
 # Aktualisierung: vierteljaehrlich pruefen (Binance updated VIP-Tiers
 # typischerweise jedes Quartal). Bei Aktualisierung version + effective_from
@@ -20,7 +20,7 @@ source_note: "Public spot trading fees, taker rate, no VIP/volume discount appli
 venues:
   binance:
     taker_pct: 0.10
-    maker_pct: 0.10  # informational only, not used in Phase 1
+    maker_pct: 0.10
     source_url: "https://www.binance.com/en/fee/schedule"
   okx:
     taker_pct: 0.10
@@ -39,3 +39,4 @@ venues:
 # So underestimieren wir realen Live-Aufwand nie, sondern leichtes
 # Overestimate-by-design (siehe Architecture-Red-Team Empfehlung).
 default_taker_pct: 0.60
+default_maker_pct: 0.60

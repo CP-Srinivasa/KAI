@@ -334,6 +334,29 @@ def test_buy_event_trade_pnl_zero(tmp_path):
     assert fill["side"] == "buy"
 
 
+def test_limit_order_uses_maker_fee_metadata(tmp_path):
+    eng = _engine(tmp_path)
+    order = eng.create_order(
+        symbol="ETH/USDT",
+        side="buy",
+        quantity=1.0,
+        order_type="limit",
+        limit_price=100.0,
+        venue="okx",
+        idempotency_key="okx_limit_maker",
+    )
+    fill = eng.fill_order(order, current_price=100.0)
+    assert fill is not None
+    assert fill.fee_role == "maker"
+    assert fill.fee_venue == "okx"
+    assert fill.fee_bps_applied == pytest.approx(8.0)
+
+    records = _read_audit_records(tmp_path / "audit.jsonl")
+    fill_records = [r for r in records if r.get("event_type") == "order_filled"]
+    assert fill_records[0]["fee_role"] == "maker"
+    assert fill_records[0]["fee_bps_applied"] == pytest.approx(8.0)
+
+
 def test_sell_close_trade_pnl_netto_correct(tmp_path):
     eng = _engine(tmp_path)
     buy = eng.create_order(symbol="X/USDT", side="buy", quantity=1.0, idempotency_key="b1")
