@@ -160,12 +160,19 @@
   50% { transform: translate3d(1px, 0, 0); }
 }
 
-/* DALI Audit C.3: border-pulse for ANALYSIS / WARNING / ERROR, none for IDLE */
+/* Border-pulse intensities per state. IDLE has a slow, subtle breath so the
+ * avatar reads as alive (DALI Audit: "lebendig, nicht still"). */
+.kai-avatar--IDLE .kai-avatar-shell { animation: kai-pulse-idle 4200ms ease-in-out infinite; }
 .kai-avatar--ANALYSIS .kai-avatar-shell { animation: kai-pulse-soft 2400ms ease-in-out infinite; }
 .kai-avatar--SIGNAL .kai-avatar-shell { animation: kai-pulse-strong 1600ms ease-in-out infinite; }
 .kai-avatar--WARNING .kai-avatar-shell { animation: kai-pulse-strong 1200ms ease-in-out infinite; }
 .kai-avatar--ERROR .kai-avatar-shell { animation: kai-pulse-error 800ms ease-in-out infinite; }
 .kai-avatar--SECURITY .kai-avatar-shell { animation: kai-pulse-soft 3200ms ease-in-out infinite; }
+
+@keyframes kai-pulse-idle {
+  0%, 100% { box-shadow: 0 0 8px var(--kai-glow, currentColor); }
+  50%      { box-shadow: 0 0 18px var(--kai-glow, currentColor); }
+}
 
 @keyframes kai-pulse-soft {
   0%, 100% { box-shadow: 0 0 12px var(--kai-glow, currentColor); }

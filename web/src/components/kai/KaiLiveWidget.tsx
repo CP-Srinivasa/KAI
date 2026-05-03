@@ -127,24 +127,24 @@ export function KaiLiveWidget(props: KaiLiveWidgetProps) {
           <span className="text-xs text-fg-muted">{runtimeState.nextAction}</span>
         )}
         <div className="flex gap-2 ml-auto">
-          {onOpenDetails && (
-            <button
-              type="button"
-              onClick={onOpenDetails}
-              className="text-xs px-2 py-1 rounded-md border border-fg-subtle/30 hover:border-fg-subtle text-fg-muted hover:text-fg"
-            >
-              Details
-            </button>
-          )}
-          {onOpenAuditLog && (
-            <button
-              type="button"
-              onClick={onOpenAuditLog}
-              className="text-xs px-2 py-1 rounded-md border border-fg-subtle/30 hover:border-fg-subtle text-fg-muted hover:text-fg"
-            >
-              Audit
-            </button>
-          )}
+          <button
+            type="button"
+            onClick={onOpenDetails ?? (() => undefined)}
+            disabled={!onOpenDetails}
+            className="text-xs px-2 py-1 rounded-md border border-fg-subtle/30 hover:border-fg-subtle text-fg-muted hover:text-fg disabled:opacity-50 disabled:cursor-not-allowed"
+            title={onOpenDetails ? "Details öffnen" : "Details (Phase 2)"}
+          >
+            Details
+          </button>
+          <button
+            type="button"
+            onClick={onOpenAuditLog ?? (() => undefined)}
+            disabled={!onOpenAuditLog}
+            className="text-xs px-2 py-1 rounded-md border border-fg-subtle/30 hover:border-fg-subtle text-fg-muted hover:text-fg disabled:opacity-50 disabled:cursor-not-allowed"
+            title={onOpenAuditLog ? "Audit-Log öffnen" : "Audit (Phase 2)"}
+          >
+            Audit
+          </button>
         </div>
       </footer>
     </section>
