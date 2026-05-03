@@ -31,6 +31,7 @@ _ALERT_OUTCOMES = _ARTIFACTS / "alert_outcomes.jsonl"
 _TRADING_LOOP_AUDIT = _ARTIFACTS / "trading_loop_audit.jsonl"
 _PAPER_EXECUTION_AUDIT = _ARTIFACTS / "paper_execution_audit.jsonl"
 _TV_PENDING = _ARTIFACTS / "tradingview_pending_signals.jsonl"
+_AUDIT_V1_DISQUALIFIED_FLAG = _ARTIFACTS / "paper_execution_audit_v1_disqualified.flag"
 
 # Frankfurter: ECB reference rates, no API key, daily refresh (~16:00 CET).
 # 1-hour TTL is generous — the underlying rate updates once per business day.
@@ -258,6 +259,18 @@ async def dashboard_quality_api() -> JSONResponse:
 
     fwd = report.get("forward_simulation", {})
 
+    audit_v1_disqualified = False
+    audit_provenance: dict[str, Any] | None = None
+    if _AUDIT_V1_DISQUALIFIED_FLAG.exists():
+        audit_v1_disqualified = True
+        try:
+            audit_provenance = json.loads(
+                _AUDIT_V1_DISQUALIFIED_FLAG.read_text(encoding="utf-8")
+            )
+        except (OSError, json.JSONDecodeError) as exc:
+            logger.warning("audit_v1_disqualified_flag_unreadable: %s", exc)
+            audit_provenance = {"error": "flag_unreadable"}
+
     return JSONResponse(content={
         "precision_pct": quality.get("resolved_precision_pct"),
         "false_positive_pct": quality.get("resolved_false_positive_rate_pct"),
@@ -282,6 +295,8 @@ async def dashboard_quality_api() -> JSONResponse:
         "paper_fills_with_pnl": positions_closed,
         "paper_realized_pnl_usd": realized_pnl_usd,
         "paper_positions_closed": positions_closed,
+        "audit_v1_disqualified": audit_v1_disqualified,
+        "audit_provenance": audit_provenance,
         "paper_cycles": paper.get("loop_metrics", {}).get("total_cycles", 0),
         "real_price_cycles": quality.get("paper_real_price_cycle_count", 0),
         "gate_status": gate.get("overall_status"),

@@ -131,6 +131,14 @@ export type DashboardQuality = {
   paper_fills_with_pnl: number;
   paper_realized_pnl_usd: number;
   paper_positions_closed: number;
+  audit_v1_disqualified?: boolean;
+  audit_provenance?: {
+    cut_off_commit?: string;
+    cut_off_ts?: string;
+    n_closes_v1?: number;
+    realized_pnl_v1?: number;
+    error?: string;
+  } | null;
   paper_cycles: number;
   real_price_cycles: number;
   gate_status: string | null;

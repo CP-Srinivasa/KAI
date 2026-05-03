@@ -3,6 +3,10 @@ import { useT } from "@/i18n/I18nProvider";
 import { cn } from "@/lib/utils";
 import type { DashboardQuality } from "@/lib/api";
 
+const V1_DISQUALIFIED_TOOLTIP =
+  "Daten vor 2026-05-02 14:30 UTC unter Schema v1 (NEO-P-101-r2 disqualified, " +
+  "via Backfill rekonstruiert). v2-only-Werte ab Cutover.";
+
 type Row = {
   label: string;
   value: number | null;
@@ -139,6 +143,15 @@ export function QualityBarPanel({ data }: { data: DashboardQuality | null }) {
             >
               ${data.paper_realized_pnl_usd.toFixed(0)}
             </span>
+            {data.audit_v1_disqualified && (
+              <span
+                aria-label={V1_DISQUALIFIED_TOOLTIP}
+                title={V1_DISQUALIFIED_TOOLTIP}
+                className="ml-1.5 inline-flex items-center rounded-md border border-fg-subtle/30 px-1 py-0 text-[9px] uppercase tracking-wide font-mono text-fg-subtle hover:text-fg cursor-help select-none"
+              >
+                v1→v2 backfill
+              </span>
+            )}
           </span>
           {data.generated_at && (
             <span className="ml-auto font-mono">
