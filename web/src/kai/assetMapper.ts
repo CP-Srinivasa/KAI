@@ -15,38 +15,43 @@ export interface KaiAssetSet {
   fallbackReason?: string;
 }
 
+// Vite's BASE_URL is "/dashboard/" in production builds, "/" in dev.
+// All KAI asset URLs MUST honour it, otherwise the browser fetches /assets/...
+// which 404s because the SPA is mounted under /dashboard/.
+const BASE = import.meta.env.BASE_URL.replace(/\/+$/, "");
+
 // Bundled at build-time so the SPA never hits a 404 race for the master.
 // Anchor decided 2026-05-03: kai_master_v1.png is identity, NOT just a placeholder.
-const MASTER_PORTRAIT_PATH = "/assets/kai/master/kai_master_v1.png";
+const MASTER_PORTRAIT_PATH = `${BASE}/assets/kai/master/kai_master_v1.png`;
 
 const STATIC_PATHS: Record<KaiState, string> = {
-  IDLE: "/assets/kai/states/kai_idle.png",
-  ANALYSIS: "/assets/kai/states/kai_analysis.png",
-  SIGNAL: "/assets/kai/states/kai_signal.png",
-  WARNING: "/assets/kai/states/kai_warning.png",
-  SECURITY: "/assets/kai/states/kai_security.png",
-  ERROR: "/assets/kai/states/kai_error.png",
-  OFFLINE: "/assets/kai/states/kai_offline.png",
+  IDLE: `${BASE}/assets/kai/states/kai_idle.png`,
+  ANALYSIS: `${BASE}/assets/kai/states/kai_analysis.png`,
+  SIGNAL: `${BASE}/assets/kai/states/kai_signal.png`,
+  WARNING: `${BASE}/assets/kai/states/kai_warning.png`,
+  SECURITY: `${BASE}/assets/kai/states/kai_security.png`,
+  ERROR: `${BASE}/assets/kai/states/kai_error.png`,
+  OFFLINE: `${BASE}/assets/kai/states/kai_offline.png`,
 };
 
 const GIF_PATHS: Record<KaiState, string> = {
-  IDLE: "/assets/kai/motion/gif/kai_idle_loop.gif",
-  ANALYSIS: "/assets/kai/motion/gif/kai_analysis_loop.gif",
-  SIGNAL: "/assets/kai/motion/gif/kai_signal_found.gif",
-  WARNING: "/assets/kai/motion/gif/kai_risk_detected.gif",
-  SECURITY: "/assets/kai/motion/gif/kai_security_scan.gif",
-  ERROR: "/assets/kai/motion/gif/kai_error_detected.gif",
-  OFFLINE: "/assets/kai/motion/gif/kai_no_signal.gif",
+  IDLE: `${BASE}/assets/kai/motion/gif/kai_idle_loop.gif`,
+  ANALYSIS: `${BASE}/assets/kai/motion/gif/kai_analysis_loop.gif`,
+  SIGNAL: `${BASE}/assets/kai/motion/gif/kai_signal_found.gif`,
+  WARNING: `${BASE}/assets/kai/motion/gif/kai_risk_detected.gif`,
+  SECURITY: `${BASE}/assets/kai/motion/gif/kai_security_scan.gif`,
+  ERROR: `${BASE}/assets/kai/motion/gif/kai_error_detected.gif`,
+  OFFLINE: `${BASE}/assets/kai/motion/gif/kai_no_signal.gif`,
 };
 
 const WEBM_PATHS: Record<KaiState, string> = {
-  IDLE: "/assets/kai/motion/webm/kai_idle_loop.webm",
-  ANALYSIS: "/assets/kai/motion/webm/kai_analysis_loop.webm",
-  SIGNAL: "/assets/kai/motion/webm/kai_signal_found.webm",
-  WARNING: "/assets/kai/motion/webm/kai_risk_detected.webm",
-  SECURITY: "/assets/kai/motion/webm/kai_security_scan.webm",
-  ERROR: "/assets/kai/motion/webm/kai_error_detected.webm",
-  OFFLINE: "/assets/kai/motion/webm/kai_no_signal.webm",
+  IDLE: `${BASE}/assets/kai/motion/webm/kai_idle_loop.webm`,
+  ANALYSIS: `${BASE}/assets/kai/motion/webm/kai_analysis_loop.webm`,
+  SIGNAL: `${BASE}/assets/kai/motion/webm/kai_signal_found.webm`,
+  WARNING: `${BASE}/assets/kai/motion/webm/kai_risk_detected.webm`,
+  SECURITY: `${BASE}/assets/kai/motion/webm/kai_security_scan.webm`,
+  ERROR: `${BASE}/assets/kai/motion/webm/kai_error_detected.webm`,
+  OFFLINE: `${BASE}/assets/kai/motion/webm/kai_no_signal.webm`,
 };
 
 const ICON_NAMES: Record<KaiState, string> = {
@@ -68,9 +73,10 @@ export function setKaiAssetManifest(manifest: KaiAssetManifest): void {
 }
 
 export function getMasterPortraitPath(): string {
-  return _manifest?.assets.master_portrait_v1.path
-    ? `${_manifest.asset_root}${_manifest.assets.master_portrait_v1.path}`
-    : MASTER_PORTRAIT_PATH;
+  // The bundled MASTER_PORTRAIT_PATH already honours import.meta.env.BASE_URL.
+  // Manifest values are relative URLs without the SPA mount prefix, so we
+  // intentionally ignore them here for the master fallback.
+  return MASTER_PORTRAIT_PATH;
 }
 
 function isAvailable(entry?: KaiAssetEntry): boolean {
