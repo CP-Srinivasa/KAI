@@ -36,6 +36,10 @@ class PaperOrder:
     status: str = "pending"  # "pending" | "filled" | "cancelled" | "rejected"
     risk_check_id: str = ""
     position_side: str = "long"  # NEO-P-101-r2: V5-Vorbereitung; nur "long" supported
+    # NEO-P-106 Phase 1: venue-Tag fuer Fee-Lookup. Default "legacy" laesst den
+    # konstruktor-`fee_pct` aktiv (Backwards-compat). Bridge/trading_loop in
+    # Phase 2 setzt explizit "binance"/"okx"/"coinbase"/"bybit" oder "paper".
+    venue: str = "legacy"
 
 
 @dataclass(frozen=True)
@@ -53,6 +57,12 @@ class PaperFill:
     slippage_pct: float
     pnl_usd: float = 0.0  # NEO-P-101-r2: per-trade NETTO PnL (Buys=0.0, Sells=netto inkl. fee)
     position_side: str = "long"  # NEO-P-101-r2: V5-Vorbereitung
+    # NEO-P-106 Phase 1: additive Audit-Felder fuer Fee-Provenienz (Backwards-compat
+    # weil Defaults; Konsumenten lesen via .get() oder ignorieren unbekannte Keys).
+    fee_venue: str = "legacy"
+    fee_role: str = "taker"
+    fee_bps_applied: float = 0.0
+    fee_table_version: str = "unknown"
 
 
 @dataclass

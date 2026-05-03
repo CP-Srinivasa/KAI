@@ -1,0 +1,81 @@
+"""Unit tests for app.execution.fees (NEO-P-106 Phase 1, V14)."""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+import yaml
+
+from app.execution import fees
+
+
+@pytest.fixture(autouse=True)
+def _clear_cache() -> None:
+    fees.reset_cache()
+    yield
+    fees.reset_cache()
+
+
+def test_lookup_known_venue_binance_returns_yaml_taker():
+    f = fees.lookup_taker_fee("binance")
+    assert f.venue == "binance"
+    assert f.role == "taker"
+    assert f.bps_applied == pytest.approx(10.0)
+    assert f.table_version != "fallback"
+
+
+def test_lookup_normalizes_case_and_whitespace():
+    f = fees.lookup_taker_fee("  Binance  ")
+    assert f.venue == "binance"
+
+
+def test_lookup_unknown_venue_uses_default_taker():
+    f = fees.lookup_taker_fee("kraken")
+    # default_taker_pct in YAML is 0.60 (worst-case across configured venues)
+    assert f.bps_applied == pytest.approx(60.0)
+    assert f.venue == "kraken"
+
+
+def test_lookup_paper_uses_default_taker():
+    f = fees.lookup_taker_fee("paper")
+    assert f.bps_applied == pytest.approx(60.0)
+
+
+def test_lookup_empty_venue_falls_back_to_paper_default():
+    f = fees.lookup_taker_fee("")
+    assert f.venue == "paper"
+    assert f.bps_applied == pytest.approx(60.0)
+
+
+def test_lookup_corrupt_config_falls_back_hard(tmp_path: Path):
+    bad = tmp_path / "broken.yaml"
+    bad.write_text("not: valid: yaml: at: all: ::\n", encoding="utf-8")
+    f = fees.lookup_taker_fee("binance", config_path=bad)
+    # Hard fallback path: 0.60 (worst-case)
+    assert f.bps_applied == pytest.approx(60.0)
+    assert f.table_version == "fallback"
+
+
+def test_lookup_missing_config_falls_back_hard(tmp_path: Path):
+    missing = tmp_path / "does_not_exist.yaml"
+    f = fees.lookup_taker_fee("binance", config_path=missing)
+    assert f.bps_applied == pytest.approx(60.0)
+    assert f.table_version == "fallback"
+
+
+def test_lookup_coinbase_is_higher_than_binance():
+    """Smoke: ehrliche Fee-Differenz zwischen Venues sollte sichtbar sein."""
+    binance = fees.lookup_taker_fee("binance")
+    coinbase = fees.lookup_taker_fee("coinbase")
+    assert coinbase.bps_applied > binance.bps_applied
+
+
+def test_yaml_table_has_required_metadata():
+    """Die ausgelieferte config/venue_fees.yaml hat die Pflichtfelder."""
+    table = fees._load_table()
+    assert "version" in table
+    assert "effective_from" in table
+    assert "effective_until" in table
+    assert isinstance(table.get("venues"), dict)
+    assert len(table["venues"]) >= 4  # binance, okx, coinbase, bybit

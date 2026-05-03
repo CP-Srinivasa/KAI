@@ -121,12 +121,16 @@ class PaperExecutionEngine:
         idempotency_key: str | None = None,
         risk_check_id: str = "",
         position_side: str = "long",
+        venue: str = "legacy",
     ) -> PaperOrder:
         """Create an order record (does not fill immediately).
 
         NEO-P-101-r2: position_side defaults to "long". Any other value
         currently raises NotImplementedError; V5 (Long+Short engine) is not yet
         implemented. The default keeps every existing call-site behavior-stable.
+
+        NEO-P-106 Phase 1: venue defaults to "paper" (= worst-case default fee).
+        Bridge/trading_loop venue-Durchleitung kommt in Phase 2 (separater PR).
         """
         if position_side != "long":
             raise NotImplementedError(
@@ -146,6 +150,7 @@ class PaperExecutionEngine:
             idempotency_key=idem_key,
             risk_check_id=risk_check_id,
             position_side=position_side,
+            venue=venue,
         )
         self._append_audit("order_created", order.__dict__)
         return order
@@ -225,7 +230,25 @@ class PaperExecutionEngine:
             fill_price = current_price * (1 - self._slippage_pct)
 
         cost = fill_price * order.quantity
-        fee = cost * self._fee_pct
+        # NEO-P-106 Phase 1: venue-spezifische Taker-Fee aus config/venue_fees.yaml
+        # Fallback bei unknown/paper venue = default_taker_pct (worst-case) aus YAML.
+        # Constructor `fee_pct` wird ignoriert, sobald venue!="legacy"; legacy-Path
+        # bleibt als explizite Opt-out fuer Property-Tests.
+        from app.execution.fees import lookup_taker_fee
+
+        if order.venue == "legacy":
+            fee_pct_eff = self._fee_pct
+            fee_meta = ("legacy", "taker", self._fee_pct * 10000.0, "constructor")
+        else:
+            fee_record = lookup_taker_fee(order.venue)
+            fee_pct_eff = fee_record.bps_applied / 10000.0
+            fee_meta = (
+                fee_record.venue,
+                fee_record.role,
+                fee_record.bps_applied,
+                fee_record.table_version,
+            )
+        fee = cost * fee_pct_eff
         pnl = 0.0  # NEO-P-101-r2: per-trade pnl; sell-branch overwrites with netto
 
         if order.side == "buy":
@@ -311,6 +334,10 @@ class PaperExecutionEngine:
             slippage_pct=self._slippage_pct * 100,
             pnl_usd=trade_pnl_for_fill,
             position_side=order.position_side,
+            fee_venue=fee_meta[0],
+            fee_role=fee_meta[1],
+            fee_bps_applied=fee_meta[2],
+            fee_table_version=fee_meta[3],
         )
 
         self._append_audit(
