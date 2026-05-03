@@ -122,6 +122,13 @@ def test_pi_install_systemd_installs_health_units() -> None:
     assert "kai-service-watchdog.timer" in text
 
 
+def test_pi_install_systemd_uses_external_install_command() -> None:
+    text = (SCRIPTS / "pi_install_systemd.sh").read_text(encoding="utf-8")
+    assert "install()" in text
+    assert "run command install -m 0644" in text
+    assert "run install -m 0644" not in text
+
+
 def test_pi_service_watchdog_is_external_and_restart_capable() -> None:
     text = (SCRIPTS / "pi_service_watchdog.sh").read_text(encoding="utf-8")
     assert "kai-agent-worker" in text
