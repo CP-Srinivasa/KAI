@@ -1,0 +1,126 @@
+{
+  "$schema": "./kai_assets_manifest.schema.json",
+  "version": "1.0.0",
+  "generated_for": "KAI Persona V2.0.0 / Persona non grata",
+  "master_decision": {
+    "mode": "hybrid_with_image_anchor",
+    "anchor_asset": "master/kai_master_v1.png",
+    "anchor_decided_at": "2026-05-03",
+    "note": "Image is visual master (platinum hair, black suit, cyan eye-glow). State variations allowed and expected — see docs/kai_persona/prompt_bibel_v1.md for variation prompts."
+  },
+  "asset_root": "/assets/kai/",
+  "assets": {
+    "master_portrait_v1": {
+      "path": "master/kai_master_v1.png",
+      "status": "available",
+      "format": "png",
+      "size_bytes": 2520092,
+      "intended_use": ["dashboard_hero_avatar", "telegram_bot_profile", "fallback_for_missing_states"],
+      "note": "Source: User-provided Me_KAI.png. Visual anchor for all later state variations."
+    },
+    "transparent_portrait": {
+      "path": "master/kai_master_transparent.png",
+      "status": "placeholder",
+      "format": "png",
+      "intended_use": ["dashboard_sidebar_anchor"],
+      "production_prompt_ref": "docs/kai_persona/prompt_bibel_v1.md#152-kai-transparent-icon"
+    },
+    "telegram_avatar_circular": {
+      "path": "telegram/kai_telegram_avatar.png",
+      "status": "placeholder",
+      "format": "png",
+      "intended_use": ["telegram_bot_profile_picture"],
+      "production_prompt_ref": "docs/kai_persona/prompt_bibel_v1.md#153-kai-telegram-avatar"
+    },
+    "states": {
+      "IDLE": {
+        "static": { "path": "states/kai_idle.png", "status": "placeholder", "fallback_to": "master_portrait_v1" },
+        "motion_gif": { "path": "motion/gif/kai_idle_loop.gif", "status": "placeholder", "fallback_to": null },
+        "motion_webm": { "path": "motion/webm/kai_idle_loop.webm", "status": "placeholder", "fallback_to": null },
+        "production_prompt_ref": "docs/kai_persona/prompt_bibel_v1.md#161-kai-idle-loop"
+      },
+      "ANALYSIS": {
+        "static": { "path": "states/kai_analysis.png", "status": "placeholder", "fallback_to": "master_portrait_v1" },
+        "motion_gif": { "path": "motion/gif/kai_analysis_loop.gif", "status": "placeholder", "fallback_to": null },
+        "motion_webm": { "path": "motion/webm/kai_analysis_loop.webm", "status": "placeholder", "fallback_to": null },
+        "production_priority": "P3"
+      },
+      "SIGNAL": {
+        "static": { "path": "states/kai_signal.png", "status": "placeholder", "fallback_to": "master_portrait_v1" },
+        "motion_gif": { "path": "motion/gif/kai_signal_found.gif", "status": "placeholder", "fallback_to": null },
+        "motion_webm": { "path": "motion/webm/kai_signal_found.webm", "status": "placeholder", "fallback_to": null },
+        "production_priority": "P1",
+        "production_prompt_ref": "docs/kai_persona/prompt_bibel_v1.md#163-kai-signal-found-gif"
+      },
+      "WARNING": {
+        "static": { "path": "states/kai_warning.png", "status": "placeholder", "fallback_to": "master_portrait_v1" },
+        "motion_gif": { "path": "motion/gif/kai_risk_detected.gif", "status": "placeholder", "fallback_to": null },
+        "motion_webm": { "path": "motion/webm/kai_risk_detected.webm", "status": "placeholder", "fallback_to": null },
+        "production_priority": "P1",
+        "production_prompt_ref": "docs/kai_persona/prompt_bibel_v1.md#162-kai-alert-gif"
+      },
+      "SECURITY": {
+        "static": { "path": "states/kai_security.png", "status": "placeholder", "fallback_to": "master_portrait_v1" },
+        "motion_gif": { "path": "motion/gif/kai_security_scan.gif", "status": "placeholder", "fallback_to": null },
+        "motion_webm": { "path": "motion/webm/kai_security_scan.webm", "status": "placeholder", "fallback_to": null },
+        "production_priority": "P2",
+        "production_prompt_ref": "docs/kai_persona/prompt_bibel_v1.md#164-kai-system-check-gif"
+      },
+      "ERROR": {
+        "static": { "path": "states/kai_error.png", "status": "placeholder", "fallback_to": "master_portrait_v1" },
+        "motion_gif": { "path": "motion/gif/kai_error_detected.gif", "status": "placeholder", "fallback_to": null },
+        "motion_webm": { "path": "motion/webm/kai_error_detected.webm", "status": "placeholder", "fallback_to": null },
+        "production_priority": "P1"
+      },
+      "OFFLINE": {
+        "static": { "path": "states/kai_offline.png", "status": "placeholder", "fallback_to": "master_portrait_v1" },
+        "motion_gif": { "path": "motion/gif/kai_no_signal.gif", "status": "placeholder", "fallback_to": null },
+        "motion_webm": { "path": "motion/webm/kai_no_signal.webm", "status": "placeholder", "fallback_to": null },
+        "production_priority": "P3"
+      }
+    },
+    "voice": {
+      "de": {
+        "kai_voice_idle": { "path": "voice/de/kai_voice_idle.wav", "status": "placeholder" },
+        "kai_voice_analysis": { "path": "voice/de/kai_voice_analysis.wav", "status": "placeholder" },
+        "kai_voice_signal": { "path": "voice/de/kai_voice_signal.wav", "status": "placeholder" },
+        "kai_voice_warning": { "path": "voice/de/kai_voice_warning.wav", "status": "placeholder" },
+        "kai_voice_security": { "path": "voice/de/kai_voice_security.wav", "status": "placeholder" },
+        "kai_voice_error": { "path": "voice/de/kai_voice_error.wav", "status": "placeholder" },
+        "kai_voice_offline": { "path": "voice/de/kai_voice_offline.wav", "status": "placeholder" }
+      },
+      "en": {
+        "kai_voice_idle": { "path": "voice/en/kai_voice_idle.wav", "status": "placeholder" },
+        "kai_voice_analysis": { "path": "voice/en/kai_voice_analysis.wav", "status": "placeholder" },
+        "kai_voice_signal": { "path": "voice/en/kai_voice_signal.wav", "status": "placeholder" },
+        "kai_voice_warning": { "path": "voice/en/kai_voice_warning.wav", "status": "placeholder" },
+        "kai_voice_security": { "path": "voice/en/kai_voice_security.wav", "status": "placeholder" },
+        "kai_voice_error": { "path": "voice/en/kai_voice_error.wav", "status": "placeholder" },
+        "kai_voice_offline": { "path": "voice/en/kai_voice_offline.wav", "status": "placeholder" }
+      },
+      "voice_default_enabled": false,
+      "note": "Voice playback is opt-in only. Phase 5 in evolution roadmap (post Re-Entry 2026-05-16)."
+    },
+    "talking_avatar_base": {
+      "path": "talking_avatar/kai_talking_avatar_base.png",
+      "status": "placeholder",
+      "production_priority": "P3",
+      "note": "Phase 6 (future). Requires voice samples first."
+    }
+  },
+  "fallback_strategy": {
+    "missing_state_static": "Use master_portrait_v1 with state-color glow (CSS box-shadow + border-pulse)",
+    "missing_state_motion": "Use static fallback, no animation",
+    "missing_voice_file": "Skip audio playback silently, no error to user",
+    "production_mode_fail_closed": "If master_portrait_v1 itself is missing, KAI widget shows OFFLINE state with text-only",
+    "audit_event_on_fallback": "KAI_ASSET_FALLBACK_USED"
+  },
+  "production_roadmap": {
+    "phase_1_now": ["master_portrait_v1 (DONE)"],
+    "phase_2_post_reentry_2026_05_17": ["states.SIGNAL.static", "states.WARNING.static", "states.ERROR.static"],
+    "phase_3": ["states.SECURITY.static", "states.IDLE.static", "remaining states"],
+    "phase_4": ["motion gifs P1 priority"],
+    "phase_5": ["voice de+en"],
+    "phase_6": ["talking_avatar_base + lip-sync rig"]
+  }
+}
