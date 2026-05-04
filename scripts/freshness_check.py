@@ -3,11 +3,18 @@
 Independently probes every endpoint the dashboard polls, extracts the
 timestamp each one exposes, and reports staleness against per-endpoint
 thresholds. Designed to be safe to run from cron — no writes to DB or
-audit files, no expensive recomputation, just GETs against loopback.
+audit files, no expensive recomputation.
+
+Default mode probes loopback only (service truth). Pass --external-base or set
+KAI_FRESHNESS_EXTERNAL_BASE to probe the public edge in the same run (operator
+reachability truth). The combined overall is intentionally strict: any internal
+or external DOWN/CRIT makes the whole run CRIT, so a Cloudflare Access or tunnel
+break cannot hide behind a green loopback probe.
 
 Usage:
-    python scripts/freshness_check.py            # human-readable
-    python scripts/freshness_check.py --json     # machine output
+    python scripts/freshness_check.py                              # loopback only
+    python scripts/freshness_check.py --json                       # machine output
+    python scripts/freshness_check.py --external-base https://...  # loopback + edge
 
 Exit codes:
     0  all probes within OK threshold
@@ -128,10 +135,7 @@ class Result:
     age_seconds: float | None
     state: str  # ok | warn | crit | down | no_ts
     note: str = ""
-
-    @property
-    def state_rank(self) -> int:
-        return {"ok": 0, "no_ts": 0, "warn": 2, "crit": 1, "down": 1}[self.state]
+    scope: str = "internal"
 
 
 def _is_cloudflare_access_login(response: httpx.Response) -> bool:
@@ -142,45 +146,112 @@ def _is_cloudflare_access_login(response: httpx.Response) -> bool:
     return "cloudflare access" in body_head or "sign in" in body_head and "cloudflare" in body_head
 
 
+def _is_cloudflare_access_redirect(response: httpx.Response) -> bool:
+    if response.status_code not in {301, 302, 303, 307, 308}:
+        return False
+    location = response.headers.get("location", "").lower()
+    return "cloudflareaccess.com" in location or "/cdn-cgi/access/login" in location
+
+
+def _request_sent_cf_access_token(response: httpx.Response) -> bool:
+    try:
+        request = response.request
+    except RuntimeError:
+        return False
+    return (
+        bool(request.headers.get("CF-Access-Client-Id"))
+        and bool(request.headers.get("CF-Access-Client-Secret"))
+    )
+
+
+def _cloudflare_access_note(response: httpx.Response) -> str:
+    if _request_sent_cf_access_token(response):
+        return "cloudflare_access_service_token_rejected"
+    if _is_cloudflare_access_redirect(response):
+        return "cloudflare_access_redirect"
+    return "cloudflare_access_login"
+
+
 def _non_json_note(response: httpx.Response) -> str:
-    if _is_cloudflare_access_login(response):
-        return "cloudflare_access_login"
+    if _is_cloudflare_access_redirect(response) or _is_cloudflare_access_login(response):
+        return _cloudflare_access_note(response)
     content_type = response.headers.get("content-type", "").split(";", 1)[0].strip()
     if content_type:
         return f"non-json body ({content_type})"
     return "non-json body"
 
 
-def probe_one(client: httpx.Client, p: Probe, now: datetime) -> Result:
+def probe_one(
+    client: httpx.Client,
+    p: Probe,
+    now: datetime,
+    *,
+    scope: str = "internal",
+) -> Result:
     try:
         r = client.get(p.path, timeout=10.0)
     except httpx.HTTPError as exc:
         return Result(
-            p.name, p.path, 0, None, None, "down", f"http_error: {exc.__class__.__name__}"
+            p.name,
+            p.path,
+            0,
+            None,
+            None,
+            "down",
+            f"http_error: {exc.__class__.__name__}",
+            scope,
+        )
+
+    if _is_cloudflare_access_redirect(r):
+        return Result(
+            p.name,
+            p.path,
+            r.status_code,
+            None,
+            None,
+            "down",
+            _cloudflare_access_note(r),
+            scope,
         )
 
     if r.status_code != 200:
-        return Result(p.name, p.path, r.status_code, None, None, "down", f"status {r.status_code}")
+        return Result(
+            p.name,
+            p.path,
+            r.status_code,
+            None,
+            None,
+            "down",
+            f"status {r.status_code}",
+            scope,
+        )
 
     if p.timestamp_field is None:
         if _is_cloudflare_access_login(r):
-            return Result(p.name, p.path, 200, None, None, "down", "cloudflare_access_login")
-        return Result(p.name, p.path, 200, None, None, "no_ts")
+            return Result(p.name, p.path, 200, None, None, "down", _cloudflare_access_note(r), scope)
+        return Result(p.name, p.path, 200, None, None, "no_ts", "", scope)
 
     try:
         body = r.json()
     except ValueError:
-        return Result(p.name, p.path, 200, None, None, "down", _non_json_note(r))
+        return Result(p.name, p.path, 200, None, None, "down", _non_json_note(r), scope)
 
     raw_ts = _extract_field(body, p.timestamp_field)
     if raw_ts is None:
         return Result(
-            p.name, p.path, 200, None, None, "down", f"missing field '{p.timestamp_field}'"
+            p.name,
+            p.path,
+            200,
+            None,
+            None,
+            "down",
+            f"missing field '{p.timestamp_field}'",
+            scope,
         )
 
     parsed = _parse_iso(raw_ts)
     if parsed is None:
-        return Result(p.name, p.path, 200, raw_ts, None, "down", "unparseable timestamp")
+        return Result(p.name, p.path, 200, raw_ts, None, "down", "unparseable timestamp", scope)
 
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=UTC)
@@ -192,7 +263,16 @@ def probe_one(client: httpx.Client, p: Probe, now: datetime) -> Result:
         state = "warn"
     else:
         state = "ok"
-    return Result(p.name, p.path, 200, raw_ts, age, state)
+    return Result(p.name, p.path, 200, raw_ts, age, state, "", scope)
+
+
+def overall_from_results(results: list[Result]) -> tuple[str, int]:
+    states = {r.state for r in results}
+    if "down" in states or "crit" in states:
+        return "crit", 1
+    if "warn" in states:
+        return "warn", 2
+    return "ok", 0
 
 
 def write_outputs(results: list[Result], overall: str) -> None:
@@ -209,7 +289,7 @@ def write_outputs(results: list[Result], overall: str) -> None:
     line_bits = [datetime.now(UTC).isoformat(), overall]
     for r in results:
         age = f"{r.age_seconds:.0f}s" if r.age_seconds is not None else "-"
-        line_bits.append(f"{r.name}={r.state}({age})")
+        line_bits.append(f"{r.scope}.{r.name}={r.state}({age})")
     with LOG_FILE.open("a", encoding="utf-8") as fh:
         fh.write("\t".join(line_bits) + "\n")
 
@@ -218,6 +298,14 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--base", default=os.environ.get("KAI_FRESHNESS_BASE", "http://127.0.0.1:8000")
+    )
+    parser.add_argument(
+        "--external-base",
+        default=os.environ.get("KAI_FRESHNESS_EXTERNAL_BASE", "").strip(),
+        help=(
+            "Optional public base URL to probe in the same run. If set, any "
+            "external failure contributes to the same overall status."
+        ),
     )
     parser.add_argument("--json", action="store_true", help="JSON output to stdout")
     args = parser.parse_args()
@@ -230,20 +318,22 @@ def main() -> int:
     headers = {"Authorization": f"Bearer {token}", **_read_cf_access_headers()}
     now = datetime.now(UTC)
     results: list[Result] = []
-    with httpx.Client(base_url=args.base, headers=headers) as client:
+    # follow_redirects=False is load-bearing: Cloudflare Access detection in
+    # _is_cloudflare_access_redirect requires the 302 to be visible. Following
+    # the redirect would land us on the IDP login page (possibly a third party)
+    # where the body-based fallback is brittle.
+    with httpx.Client(base_url=args.base, headers=headers, follow_redirects=False) as client:
         for p in PROBES:
-            results.append(probe_one(client, p, now))
+            results.append(probe_one(client, p, now, scope="internal"))
 
-    states = {r.state for r in results}
-    if "down" in states or "crit" in states:
-        overall = "crit"
-        exit_code = 1
-    elif "warn" in states:
-        overall = "warn"
-        exit_code = 2
-    else:
-        overall = "ok"
-        exit_code = 0
+    if args.external_base:
+        with httpx.Client(
+            base_url=args.external_base, headers=headers, follow_redirects=False
+        ) as client:
+            for p in PROBES:
+                results.append(probe_one(client, p, now, scope="external"))
+
+    overall, exit_code = overall_from_results(results)
 
     write_outputs(results, overall)
 
@@ -269,7 +359,10 @@ def main() -> int:
                 "no_ts": "[--]  ",
             }[r.state]
             extra = f"  ({r.note})" if r.note else ""
-            print(f"  {tag}  {r.name:24s} age={age}  http={r.http_status}{extra}")
+            print(
+                f"  {tag}  {r.scope:8s} {r.name:24s} "
+                f"age={age}  http={r.http_status}{extra}"
+            )
 
     return exit_code
 

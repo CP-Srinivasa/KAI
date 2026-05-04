@@ -209,6 +209,9 @@ fi
 write_counter "$counter" "$twitter_marker"
 
 # Dashboard freshness self-test — cheap loopback probes, no DB writes.
+# External-edge probe (D-212) auto-activates when KAI_FRESHNESS_EXTERNAL_BASE
+# is set in the environment (Pi systemd loads .env via EnvironmentFile=).
+# No CLI arg needed — freshness_check.py reads the env-var itself.
 fresh_out=$("$PYTHON" "$ROOT/scripts/freshness_check.py" 2>&1) || true
 overall=$(printf '%s' "$fresh_out" | grep -oE 'KAI Freshness \([A-Z]+\)' | head -1 \
     | sed 's/KAI Freshness (//;s/)//')

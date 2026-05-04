@@ -346,6 +346,9 @@ if ($twitterCounter -ge 6) {
 $twitterCounter | Out-File -Encoding utf8 $twitterMarker
 
 # Dashboard freshness self-test (cheap loopback probes, no DB writes).
+# External-edge probe (D-212) auto-activates when KAI_FRESHNESS_EXTERNAL_BASE
+# is in the environment. Laptop-cron stays loopback-only by default; set the
+# env-var to add the public-edge probe on top. No CLI arg needed.
 # Logs to artifacts/freshness_status.json + logs/freshness_check.log.
 try {
     $output = & $Python "$ProjectRoot\scripts\freshness_check.py" 2>&1 | Out-String
