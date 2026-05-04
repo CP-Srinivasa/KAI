@@ -17,6 +17,7 @@ from types import SimpleNamespace
 from typing import Any
 
 from app.ingestion.telegram_channel_worker import (
+    _checkpoint_chat_id_marked,
     get_last_seen_id,
     load_checkpoint,
     process_message,
@@ -193,6 +194,49 @@ class TestCheckpoint:
         assert get_last_seen_id({}, -100) == 0
         assert get_last_seen_id({"-100": {"last_message_id": "abc"}}, -100) == 0
         assert get_last_seen_id({"-100": {"last_message_id": 17}}, -100) == 17
+
+    # ── F6 (2026-05-04) Chat-ID-Key-Normalisation ──────────────────────────
+
+    def test_chat_id_marked_helper_normalises_unmarked_to_marked(self) -> None:
+        # Telethon entity.id (unmarked) -> marked with -100 prefix
+        assert _checkpoint_chat_id_marked(1275462917) == -1001275462917
+        # Already-marked passes through
+        assert _checkpoint_chat_id_marked(-1001275462917) == -1001275462917
+        # Edge case: 0 and small negatives untouched
+        assert _checkpoint_chat_id_marked(0) == 0
+        assert _checkpoint_chat_id_marked(-100) == -100
+
+    def test_save_normalises_unmarked_chat_id(self, tmp_path: Path) -> None:
+        # Caller passes unmarked entity.id; on disk we expect the marked key.
+        path = tmp_path / "checkpoint.json"
+        save_checkpoint(path, chat_id=1275462917, message_id=23820)
+        state = load_checkpoint(path)
+        assert "-1001275462917" in state
+        assert "1275462917" not in state
+        assert state["-1001275462917"]["last_message_id"] == 23820
+
+    def test_get_last_seen_id_falls_back_to_legacy_unmarked_key(self) -> None:
+        # Pre-F6 checkpoints may carry the unmarked key. Lookup with the
+        # marked form must still find it (deprecation warning is logged but
+        # not asserted here).
+        legacy = {"1275462917": {"last_message_id": 99, "last_seen_at": "x"}}
+        assert get_last_seen_id(legacy, -1001275462917) == 99
+
+    def test_save_migrates_legacy_unmarked_key(self, tmp_path: Path) -> None:
+        # On the first save after upgrade, the legacy unmarked entry must be
+        # removed and the canonical marked entry written. This converges the
+        # checkpoint without a separate migration tool.
+        path = tmp_path / "checkpoint.json"
+        path.write_text(
+            json.dumps(
+                {"1275462917": {"last_message_id": 23820, "last_seen_at": "old"}}
+            ),
+            encoding="utf-8",
+        )
+        save_checkpoint(path, chat_id=-1001275462917, message_id=23830)
+        state = load_checkpoint(path)
+        assert "1275462917" not in state
+        assert state["-1001275462917"]["last_message_id"] == 23830
 
 
 class _FakeMessage(SimpleNamespace):

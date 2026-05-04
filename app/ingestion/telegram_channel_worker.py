@@ -117,6 +117,36 @@ async def _heartbeat_loop(path: Path, interval_seconds: float = 60.0) -> None:
 # has to survive sleep/reboots without dropping signals.
 
 
+# F6 (2026-05-04): Telethon has two chat_id conventions:
+# - entity.id        — unmarked positive int for Channels (e.g. 1275462917)
+# - event.chat_id    — marked negative int with -100 prefix (e.g. -1001275462917)
+#
+# Pre-F6, the read path used entity.id (unmarked) while the live write path
+# used event.chat_id (marked). Result: live-written checkpoints could never
+# be found by the read path on the next boot — manifested as 4 days of
+# Approval-Loop silence on 2026-05-02..04 (see operator_loop_silence_20260504.md).
+#
+# Canonical form going forward: marked. Public Telegram URLs, Bot-API, and
+# deep-links all use the marked form, so persisting it matches the public
+# identity. _checkpoint_chat_id_marked() normalises both incoming variants.
+# get_last_seen_id() additionally falls back to legacy unmarked keys with a
+# deprecation warning so existing checkpoints migrate transparently on the
+# first save after upgrade.
+_MARKED_CHANNEL_PREFIX = -1_000_000_000_000
+
+
+def _checkpoint_chat_id_marked(chat_id: int) -> int:
+    """Return marked chat_id form (negative, with -100 prefix for Channels).
+
+    Heuristic: positive int → assumed unmarked Channel/Supergroup, gets prefix.
+    Already-negative int → pass through unchanged. The listener only handles
+    Channels (resolve_target_entity), so the heuristic is safe in this scope.
+    """
+    if chat_id > 0:
+        return _MARKED_CHANNEL_PREFIX - chat_id
+    return chat_id
+
+
 def load_checkpoint(path: Path) -> dict[str, dict[str, Any]]:
     """Load the per-chat checkpoint map. Missing/corrupt → empty dict.
 
@@ -151,10 +181,22 @@ def save_checkpoint(
     *,
     now: datetime | None = None,
 ) -> None:
-    """Persist last_message_id for chat_id. Atomic via temp-file + replace."""
+    """Persist last_message_id for chat_id. Atomic via temp-file + replace.
+
+    chat_id is normalised to the marked form (-100 prefix for Channels) before
+    persistence so read-path and write-path agree on the JSON key. Legacy
+    unmarked entries for the same chat are removed on save to migrate the
+    checkpoint cleanly.
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
     state = load_checkpoint(path)
-    state[str(chat_id)] = {
+    canonical = _checkpoint_chat_id_marked(int(chat_id))
+    # Drop the legacy (unmarked) entry for the same chat if it exists,
+    # regardless of whether chat_id was passed in marked or unmarked form.
+    if canonical < 0:
+        unmarked_legacy_key = str(_MARKED_CHANNEL_PREFIX - canonical)
+        state.pop(unmarked_legacy_key, None)
+    state[str(canonical)] = {
         "last_message_id": int(message_id),
         "last_seen_at": (now or datetime.now(UTC)).isoformat(),
     }
@@ -167,15 +209,37 @@ def save_checkpoint(
 
 
 def get_last_seen_id(checkpoint: dict[str, dict[str, Any]], chat_id: int) -> int:
-    """Return the last_message_id we've seen for chat_id, or 0 if unknown."""
-    entry = checkpoint.get(str(chat_id))
-    if not entry:
-        return 0
-    raw = entry.get("last_message_id", 0)
-    try:
-        return int(raw)
-    except (TypeError, ValueError):
-        return 0
+    """Return the last_message_id we've seen for chat_id, or 0 if unknown.
+
+    Tries marked form first (canonical post-F6), falls back to unmarked form
+    (legacy pre-F6 from entity.id-based reads/writes). Logs a deprecation
+    warning when only the legacy key matches; the next save_checkpoint() will
+    migrate the entry to the canonical form.
+    """
+    canonical = _checkpoint_chat_id_marked(int(chat_id))
+    entry = checkpoint.get(str(canonical))
+    if entry and "last_message_id" in entry:
+        try:
+            return int(entry["last_message_id"])
+        except (TypeError, ValueError):
+            return 0
+    # Legacy fallback: try the unmarked counterpart of the canonical key so
+    # pre-F6 checkpoints (entity.id-based, unmarked) still resolve.
+    if canonical < 0:
+        unmarked_key = str(_MARKED_CHANNEL_PREFIX - canonical)
+        legacy = checkpoint.get(unmarked_key)
+        if legacy and "last_message_id" in legacy:
+            logger.warning(
+                "[channel-worker] checkpoint legacy unmarked key matched for "
+                "chat_id=%s (canonical=%s) — will migrate on next save",
+                chat_id,
+                canonical,
+            )
+            try:
+                return int(legacy["last_message_id"])
+            except (TypeError, ValueError):
+                return 0
+    return 0
 
 
 def process_message(
@@ -389,6 +453,14 @@ async def list_dialogs(cfg: TelegramChannelIngestSettings) -> list[dict[str, obj
         cfg.api_id,
         cfg.api_hash,
         catch_up=True,
+        # F1 (2026-05-04): FloodWait-Härtung. Default flood_sleep_threshold=60s
+        # crasht bei FloodWait > 60s mit FloodWaitError; auf 300s gesetzt damit
+        # Telethon intern wartet statt aufzugeben. connection_retries=10 (default 5)
+        # gegen TCP-Flapping bei chronischer Telegram-Drosselung (V19-Befund:
+        # 1039× InvalidBufferError 429 in jüngsten ~50000 stderr-Zeilen).
+        flood_sleep_threshold=300,
+        connection_retries=10,
+        retry_delay=2,
     )
     await client.start()
     try:
@@ -433,6 +505,14 @@ async def run_worker(cfg: TelegramChannelIngestSettings | None = None) -> None:
         cfg.api_id,
         cfg.api_hash,
         catch_up=True,
+        # F1 (2026-05-04): FloodWait-Härtung. Default flood_sleep_threshold=60s
+        # crasht bei FloodWait > 60s mit FloodWaitError; auf 300s gesetzt damit
+        # Telethon intern wartet statt aufzugeben. connection_retries=10 (default 5)
+        # gegen TCP-Flapping bei chronischer Telegram-Drosselung (V19-Befund:
+        # 1039× InvalidBufferError 429 in jüngsten ~50000 stderr-Zeilen).
+        flood_sleep_threshold=300,
+        connection_retries=10,
+        retry_delay=2,
     )
     await client.start()
     # First heartbeat right after a successful start — the watchdog must
@@ -462,24 +542,32 @@ async def run_worker(cfg: TelegramChannelIngestSettings | None = None) -> None:
         # closes the longer-outage gap (e.g. laptop sleep, restart, session
         # rebuild). Skipped silently when no checkpoint exists yet so we
         # don't accidentally replay channel history on first run.
-        entity_chat_id = getattr(entity, "id", None)
-        if isinstance(entity_chat_id, int):
+        entity_chat_id_raw = getattr(entity, "id", None)
+        if isinstance(entity_chat_id_raw, int):
+            # F6 (2026-05-04): Normalise to marked form so this matches the
+            # canonical chat_id format used by event.chat_id in the live
+            # handler. Pre-F6, the read path saw the unmarked Telethon
+            # entity.id while the live writer used the marked event.chat_id —
+            # the two never aligned and replay was perpetually skipped on
+            # boot. See operator_loop_silence_20260504.md and
+            # listener_reactivity_followup_20260504.md.
+            chat_id_marked = _checkpoint_chat_id_marked(entity_chat_id_raw)
             initial_checkpoint = load_checkpoint(checkpoint_path)
-            last_seen = get_last_seen_id(initial_checkpoint, entity_chat_id)
+            last_seen = get_last_seen_id(initial_checkpoint, chat_id_marked)
 
             def _replay_handler(msg_id: int, text: str) -> None:
                 process_message(
                     text,
                     source_tag=cfg.source_tag,
-                    chat_id=entity_chat_id,
+                    chat_id=chat_id_marked,
                     raw_log_path=raw_log,
                 )
-                save_checkpoint(checkpoint_path, entity_chat_id, msg_id)
+                save_checkpoint(checkpoint_path, chat_id_marked, msg_id)
 
             replay_result = await replay_missed_messages(
                 client,
                 entity,
-                chat_id=entity_chat_id,
+                chat_id=chat_id_marked,
                 last_seen_id=last_seen,
                 process_fn=_replay_handler,
             )
@@ -588,6 +676,14 @@ async def setup_auth(cfg: TelegramChannelIngestSettings | None = None) -> None:
         cfg.api_id,
         cfg.api_hash,
         catch_up=True,
+        # F1 (2026-05-04): FloodWait-Härtung. Default flood_sleep_threshold=60s
+        # crasht bei FloodWait > 60s mit FloodWaitError; auf 300s gesetzt damit
+        # Telethon intern wartet statt aufzugeben. connection_retries=10 (default 5)
+        # gegen TCP-Flapping bei chronischer Telegram-Drosselung (V19-Befund:
+        # 1039× InvalidBufferError 429 in jüngsten ~50000 stderr-Zeilen).
+        flood_sleep_threshold=300,
+        connection_retries=10,
+        retry_delay=2,
     )
     await client.start()  # triggers interactive auth on first run
     me = await client.get_me()
