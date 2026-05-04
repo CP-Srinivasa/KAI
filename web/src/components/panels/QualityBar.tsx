@@ -39,16 +39,10 @@ export function QualityBarPanel({ data }: { data: DashboardQuality | null }) {
       target: 0.4,
       format: (n) => n.toFixed(3),
     },
-    {
-      label: t("primitives.paper_fills_operator_quality"),
-      value: data?.paper_fills ?? null,
-      target: 10,
-      format: (n) => `${n}`,
-      hint:
-        data?.paper_fills_with_pnl != null
-          ? `PnL-Fills: ${data.paper_fills_with_pnl}`
-          : undefined,
-    },
+    // Row 4 (paper_fills) + Row 5 (paper_fills_with_pnl) beide entfernt
+    // — Re-Entry-Metriken gehören in ReentryGatePanel (DALI-P-026 Original-Plan,
+    // NEO-F-PANEL-CHECK-2026-05-04-003 P2-Korrektur). QualityBar zeigt nur noch
+    // Re-Entry-unabhängige Operator-Signalqualität.
   ];
 
   const met = rows.filter((r) => r.value != null && r.value >= r.target).length;
