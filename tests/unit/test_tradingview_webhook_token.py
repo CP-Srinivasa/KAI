@@ -101,7 +101,7 @@ def test_shared_token_accepts_correct_token(
 def test_shared_token_rejects_wrong_token(shared_token_client: TestClient) -> None:
     resp = shared_token_client.post(
         "/tradingview/webhook",
-        content=b'{}',
+        content=b"{}",
         headers={_TOKEN_HEADER: "wrong-token"},
     )
     assert resp.status_code == 401
@@ -121,7 +121,7 @@ def test_shared_token_rejects_hmac_signature_in_token_only_mode(
 
 
 def test_shared_token_missing_header_rejected(shared_token_client: TestClient) -> None:
-    resp = shared_token_client.post("/tradingview/webhook", content=b'{}')
+    resp = shared_token_client.post("/tradingview/webhook", content=b"{}")
     assert resp.status_code == 401
 
 
@@ -151,7 +151,7 @@ def test_shared_token_unconfigured_returns_404(audit_path: Path) -> None:
     with TestClient(app) as client:
         resp = client.post(
             "/tradingview/webhook",
-            content=b'{}',
+            content=b"{}",
             headers={_TOKEN_HEADER: "anything"},
         )
     assert resp.status_code == 404
@@ -160,9 +160,7 @@ def test_shared_token_unconfigured_returns_404(audit_path: Path) -> None:
 # --- hmac_or_token mode ---------------------------------------------------
 
 
-def test_hmac_or_token_accepts_hmac(
-    hmac_or_token_client: TestClient, audit_path: Path
-) -> None:
+def test_hmac_or_token_accepts_hmac(hmac_or_token_client: TestClient, audit_path: Path) -> None:
     body = b'{"alert":"trigger"}'
     resp = hmac_or_token_client.post(
         "/tradingview/webhook",

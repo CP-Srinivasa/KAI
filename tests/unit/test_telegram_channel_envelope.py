@@ -112,9 +112,7 @@ class TestBuildRecord:
         rec_with = build_envelope_record(parsed_gun, chat_id=-100123456789)
         assert rec_with["chat_id"] == -100123456789
 
-    def test_deterministic_idempotency_across_instances(
-        self, parsed_gun
-    ) -> None:
+    def test_deterministic_idempotency_across_instances(self, parsed_gun) -> None:
         """Same parsed signal + same `now` → same idempotency key."""
         now = datetime(2026, 4, 20, 12, 0, 0, tzinfo=UTC)
         a = build_envelope_record(parsed_gun, now=now)
@@ -140,24 +138,18 @@ class TestEmit:
         parsed_back = json.loads(lines[0])
         assert parsed_back["envelope_id"] == rec["envelope_id"]
 
-    def test_deduplicates_same_signal(
-        self, parsed_gun, tmp_path: Path
-    ) -> None:
+    def test_deduplicates_same_signal(self, parsed_gun, tmp_path: Path) -> None:
         """Emitting the same parsed signal twice → second call returns None."""
         log = tmp_path / "envelope.jsonl"
         fixed_now = datetime(2026, 4, 20, 12, 0, 0, tzinfo=UTC)
         first = emit_parsed_signal(parsed_gun, envelope_log=log, now=fixed_now)
         assert first is not None
-        second = emit_parsed_signal(
-            parsed_gun, envelope_log=log, now=fixed_now
-        )
+        second = emit_parsed_signal(parsed_gun, envelope_log=log, now=fixed_now)
         assert second is None
         # Log should still contain exactly one line.
         assert len(log.read_text(encoding="utf-8").splitlines()) == 1
 
-    def test_dedup_scoped_to_accepted_only(
-        self, parsed_gun, tmp_path: Path
-    ) -> None:
+    def test_dedup_scoped_to_accepted_only(self, parsed_gun, tmp_path: Path) -> None:
         """A prior non-accepted record with same key must NOT block emit."""
         log = tmp_path / "envelope.jsonl"
         fixed_now = datetime(2026, 4, 20, 12, 0, 0, tzinfo=UTC)
@@ -187,9 +179,7 @@ class TestEmit:
 class TestBridgeContract:
     """The emitted record must pass the bridge's pending-collector filter."""
 
-    def test_bridge_would_pick_up_emitted_record(
-        self, parsed_gun, tmp_path: Path
-    ) -> None:
+    def test_bridge_would_pick_up_emitted_record(self, parsed_gun, tmp_path: Path) -> None:
         log = tmp_path / "envelope.jsonl"
         rec = emit_parsed_signal(parsed_gun, envelope_log=log)
         assert rec is not None

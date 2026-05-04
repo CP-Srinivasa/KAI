@@ -67,7 +67,5 @@ def test_warning_is_throttled_within_min_interval(
     # Drive the counter past the threshold.
     for _ in range(cg._RATE_WARN_THRESHOLD_RPM + 50):
         cg._record_request_and_maybe_warn()
-    count_first = sum(
-        1 for r in caplog.records if "crossed warn threshold" in r.message
-    )
+    count_first = sum(1 for r in caplog.records if "crossed warn threshold" in r.message)
     assert count_first == 1, f"expected single warn, got {count_first}"

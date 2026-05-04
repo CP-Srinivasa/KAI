@@ -44,7 +44,6 @@ DECISION_JOURNAL_DEFAULT_PATH = "artifacts/decision_journal.jsonl"
 LOOP_AUDIT_DEFAULT_PATH = "artifacts/trading_loop_audit.jsonl"
 
 
-
 # ---------------------------------------------------------------------------
 # Path helpers
 # ---------------------------------------------------------------------------
@@ -131,8 +130,6 @@ def append_mcp_write_audit(
     }
     with audit_path.open("a", encoding="utf-8") as f:
         f.write(json.dumps(entry) + "\n")
-
-
 
 
 # ---------------------------------------------------------------------------

@@ -39,11 +39,7 @@ def test_control_menu_contains_reload_button() -> None:
     clear_menu_cache()
     control = get_menu("control")
     assert control is not None
-    callbacks = [
-        button.get("callback_data", "")
-        for row in control["keyboard"]
-        for button in row
-    ]
+    callbacks = [button.get("callback_data", "") for row in control["keyboard"] for button in row]
     assert "cmd:menu_reload" in callbacks
 
 
@@ -118,15 +114,9 @@ def test_signal_send_is_reachable_from_main_via_signals() -> None:
     signals = get_menu("signals")
     assert main is not None and signals is not None
 
-    main_callbacks = [
-        button.get("callback_data", "")
-        for row in main["keyboard"]
-        for button in row
-    ]
+    main_callbacks = [button.get("callback_data", "") for row in main["keyboard"] for button in row]
     signals_callbacks = [
-        button.get("callback_data", "")
-        for row in signals["keyboard"]
-        for button in row
+        button.get("callback_data", "") for row in signals["keyboard"] for button in row
     ]
     assert "menu:signals" in main_callbacks
     assert "menu:signal_send" in signals_callbacks
@@ -148,10 +138,6 @@ def test_trading_menu_exists() -> None:
     clear_menu_cache()
     menu = get_menu("trading")
     assert menu is not None
-    callbacks = [
-        button.get("callback_data", "")
-        for row in menu["keyboard"]
-        for button in row
-    ]
+    callbacks = [button.get("callback_data", "") for row in menu["keyboard"] for button in row]
     assert "cmd:positions" in callbacks
     assert "cmd:exposure" in callbacks

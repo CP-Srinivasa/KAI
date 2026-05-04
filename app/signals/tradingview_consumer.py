@@ -94,9 +94,7 @@ def _to_consumed(row: dict[str, object], *, now_iso: str) -> ConsumedSignal | No
     confidence = row.get("confidence_score")
     source_event_id = row.get("source_document_id", "")
     provenance = row.get("provenance") if isinstance(row.get("provenance"), dict) else {}
-    signal_path_id = (
-        provenance.get("signal_path_id") if isinstance(provenance, dict) else None
-    )
+    signal_path_id = provenance.get("signal_path_id") if isinstance(provenance, dict) else None
     if not isinstance(decision_id, str) or not decision_id:
         return None
     if not isinstance(symbol, str) or not isinstance(direction, str):

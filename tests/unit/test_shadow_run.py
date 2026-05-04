@@ -243,9 +243,7 @@ async def test_shadow_skipped_when_ensemble_winner_matches_shadow() -> None:
 
     ensemble = EnsembleProvider(providers=[openai, gemini_primary])
 
-    pipeline = AnalysisPipeline(
-        _empty_engine(), ensemble, shadow_provider=gemini_shadow
-    )
+    pipeline = AnalysisPipeline(_empty_engine(), ensemble, shadow_provider=gemini_shadow)
     result = await pipeline.run(_make_doc())
 
     # Primary ensemble resolved to gemini; shadow (also gemini) must NOT be called.
@@ -266,9 +264,7 @@ async def test_shadow_called_serially_when_ensemble_winner_is_not_shadow() -> No
 
     ensemble = EnsembleProvider(providers=[openai_primary, gemini_in_chain])
 
-    pipeline = AnalysisPipeline(
-        _empty_engine(), ensemble, shadow_provider=gemini_shadow
-    )
+    pipeline = AnalysisPipeline(_empty_engine(), ensemble, shadow_provider=gemini_shadow)
     result = await pipeline.run(_make_doc())
 
     # openai wins → gemini shadow still runs (overlap existed but didn't realize)
@@ -302,7 +298,9 @@ async def test_overlap_detection_accepts_tuple_chain() -> None:
     gemini_shadow = _mock_provider("gemini", sentiment=SentimentLabel.BEARISH)
 
     pipeline = AnalysisPipeline(
-        _empty_engine(), ensemble, shadow_provider=gemini_shadow  # type: ignore[arg-type]
+        _empty_engine(),
+        ensemble,
+        shadow_provider=gemini_shadow,  # type: ignore[arg-type]
     )
     result = await pipeline.run(_make_doc())
 
@@ -342,9 +340,7 @@ def test_overlap_detection_flags_redundant_shadow() -> None:
     ensemble = EnsembleProvider(providers=[p1, p2])
     shadow_gemini = _mock_provider("gemini")
 
-    pipeline = AnalysisPipeline(
-        _empty_engine(), ensemble, shadow_provider=shadow_gemini
-    )
+    pipeline = AnalysisPipeline(_empty_engine(), ensemble, shadow_provider=shadow_gemini)
     assert pipeline._shadow_overlaps_ensemble() is True
 
 
@@ -357,7 +353,5 @@ def test_overlap_detection_false_for_distinct_shadow() -> None:
     ensemble = EnsembleProvider(providers=[p1, p2])
     shadow_anthropic = _mock_provider("anthropic")
 
-    pipeline = AnalysisPipeline(
-        _empty_engine(), ensemble, shadow_provider=shadow_anthropic
-    )
+    pipeline = AnalysisPipeline(_empty_engine(), ensemble, shadow_provider=shadow_anthropic)
     assert pipeline._shadow_overlaps_ensemble() is False

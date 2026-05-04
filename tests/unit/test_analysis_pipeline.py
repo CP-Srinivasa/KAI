@@ -135,7 +135,6 @@ async def test_pipeline_with_llm_provider():
     assert result.analysis_result.analysis_source == AnalysisSource.EXTERNAL_LLM
 
 
-
 @pytest.mark.asyncio
 async def test_ensemble_openai_wins_sets_external_llm_source():
     llm_out = _make_llm_output()

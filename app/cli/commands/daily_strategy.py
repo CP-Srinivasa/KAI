@@ -112,9 +112,7 @@ def _gate_status_line(directional: int, paper_fills: int) -> str:
         else f"❌ {directional}/200 resolved (noch {200 - directional})"
     )
     fill_gate = (
-        "✅ Gate ≥10 Fills erreicht"
-        if paper_fills >= 10
-        else f"❌ {paper_fills}/10 paper-fills"
+        "✅ Gate ≥10 Fills erreicht" if paper_fills >= 10 else f"❌ {paper_fills}/10 paper-fills"
     )
     return f"{alert_gate} · {fill_gate}"
 
@@ -140,9 +138,7 @@ def _build_skeleton(today: date) -> str:
     )
 
     precision_line = (
-        f"{precision_pct:.1f}% ({res['hit']}/{directional})"
-        if precision_pct is not None
-        else "—"
+        f"{precision_pct:.1f}% ({res['hit']}/{directional})" if precision_pct is not None else "—"
     )
 
     return f"""# KAI Daily Strategy Review — {today.isoformat()}
@@ -335,10 +331,7 @@ def cmd_reminder(
 
     if not path.exists():
         kind = "Skeleton fehlt komplett"
-        detail = (
-            "Der Bootstrap lief heute nicht. "
-            "`trading-bot daily-strategy bootstrap` ausführen."
-        )
+        detail = "Der Bootstrap lief heute nicht. `trading-bot daily-strategy bootstrap` ausführen."
         exit_code = 2
     else:
         text = path.read_text(encoding="utf-8")

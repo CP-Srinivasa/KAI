@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import logging
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Body, HTTPException, Query
@@ -31,13 +30,11 @@ from app.messaging.kai_persona import (
     KaiPersonaConfigError,
     load_kai_persona,
 )
+from app.messaging.kai_phrase_engine import get_kai_phrase
 from app.messaging.kai_state_resolver import (
-    KaiRuntimeState,
     create_fallback_state,
     fail_closed_state,
-    resolve_kai_state,
 )
-from app.messaging.kai_phrase_engine import get_kai_phrase
 
 logger = logging.getLogger(__name__)
 

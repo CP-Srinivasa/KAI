@@ -294,7 +294,9 @@ async def auto_annotate_pending(
         elapsed_h = (eval_end - dispatch_time).total_seconds() / 3600
 
         threshold = _scaled_threshold(
-            elapsed_h, move_threshold, volatility_24h,
+            elapsed_h,
+            move_threshold,
+            volatility_24h,
         )
 
         sentiment = (rec.sentiment_label or "").lower()
@@ -347,8 +349,6 @@ async def auto_annotate_pending(
         total=len(results),
         hits=sum(1 for a in results if a.outcome == "hit"),
         misses=sum(1 for a in results if a.outcome == "miss"),
-        inconclusive=sum(
-            1 for a in results if a.outcome == "inconclusive"
-        ),
+        inconclusive=sum(1 for a in results if a.outcome == "inconclusive"),
     )
     return results

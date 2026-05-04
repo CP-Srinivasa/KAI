@@ -192,7 +192,8 @@ def test_extract_client_ip_uses_xff_with_trusted_proxy() -> None:
     mock_request.client.host = "10.0.0.1"
 
     result = _extract_client_ip(  # type: ignore[arg-type]
-        mock_request, trusted_proxies=frozenset({"10.0.0.1"}),
+        mock_request,
+        trusted_proxies=frozenset({"10.0.0.1"}),
     )
     assert result == "1.2.3.4"
 

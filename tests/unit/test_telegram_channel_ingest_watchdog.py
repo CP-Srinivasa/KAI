@@ -34,6 +34,7 @@ def _touch(path: Path, age_seconds: float) -> None:
     path.write_bytes(b"session-stub")
     past = time.time() - age_seconds
     import os
+
     os.utime(path, (past, past))
 
 
@@ -139,16 +140,19 @@ def test_replay_fields_surfaced_from_marker(tmp_path: Path) -> None:
     # signal V4 is supposed to surface: gap-replay actually ran, processed
     # this many messages.
     import json as _json
+
     session = tmp_path / "artifacts" / "fresh.session"
     _touch(session, age_seconds=60)
     marker = tmp_path / "replay.json"
     marker.write_text(
-        _json.dumps({
-            "attempted_at": "2026-04-26T12:00:00+00:00",
-            "scanned": 17,
-            "processed": 15,
-            "skipped_no_checkpoint": 0,
-        }),
+        _json.dumps(
+            {
+                "attempted_at": "2026-04-26T12:00:00+00:00",
+                "scanned": 17,
+                "processed": 15,
+                "skipped_no_checkpoint": 0,
+            }
+        ),
         encoding="utf-8",
     )
 
@@ -222,9 +226,10 @@ def test_stale_session_and_stale_pid_still_stale(tmp_path: Path) -> None:
     # pick one without comparing to threshold.
     session = tmp_path / "artifacts" / "s.session"
     pid_file = tmp_path / ".telegram_listener.pid"
-    _touch(session, age_seconds=7200)   # 2h
+    _touch(session, age_seconds=7200)  # 2h
     pid_file.write_text("9999")
     import os
+
     past = time.time() - 7200
     os.utime(pid_file, (past, past))
 

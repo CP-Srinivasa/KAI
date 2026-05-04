@@ -818,4 +818,3 @@ def trading_decision_journal_summary(
         console.print(f"avg_confidence={summary.avg_confidence}")
     console.print("execution_enabled=False")
     console.print("write_back_allowed=False")
-

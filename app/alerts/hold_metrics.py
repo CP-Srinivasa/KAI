@@ -88,9 +88,7 @@ def _load_jsonl(path: Path) -> list[dict[str, Any]]:
 
 def _latest_value(rows: list[dict[str, Any]], key: str) -> str | None:
     values = [
-        row[key]
-        for row in rows
-        if key in row and isinstance(row[key], str) and row[key].strip()
+        row[key] for row in rows if key in row and isinstance(row[key], str) and row[key].strip()
     ]
     return max(values) if values else None
 
@@ -240,10 +238,7 @@ def compute_per_source_stability(
             continue
         windows = per_source_windows.setdefault(
             source,
-            [
-                {"hits": 0, "misses": 0, "start": s, "end": e}
-                for s, e in boundaries
-            ],
+            [{"hits": 0, "misses": 0, "start": s, "end": e} for s, e in boundaries],
         )
         for window in windows:
             if window["start"] <= ts < window["end"]:
@@ -261,9 +256,7 @@ def compute_per_source_stability(
             n = window["hits"] + window["misses"]
             ci_low = _wilson_low_pct(window["hits"], n)
             n_ok = n >= MIN_PER_SOURCE_RESOLVED_PER_WINDOW
-            wilson_ok = (
-                ci_low is not None and ci_low >= MIN_PER_SOURCE_WILSON_LOW_PCT
-            )
+            wilson_ok = ci_low is not None and ci_low >= MIN_PER_SOURCE_WILSON_LOW_PCT
             window_pass = n_ok and wilson_ok
             if not window_pass:
                 all_pass = False
@@ -338,29 +331,21 @@ def build_hold_metrics_report(
             # Also honour the original decision if it was False (stricter).
             if rec.directional_eligible is False:
                 blocked_directional.append(rec)
-                blocked_directional_reasons.append(
-                    rec.directional_block_reason or "unknown"
-                )
+                blocked_directional_reasons.append(rec.directional_block_reason or "unknown")
             else:
                 directional.append(rec)
         else:
             blocked_directional.append(rec)
-            blocked_directional_reasons.append(
-                current_check.directional_block_reason or "unknown"
-            )
+            blocked_directional_reasons.append(current_check.directional_block_reason or "unknown")
 
     blocked_directional_reason_counts = Counter(blocked_directional_reasons)
     directional_doc_ids = {r.document_id for r in directional}
 
     # Alert audits are channel-level (email + telegram). For gate evidence we
     # track unique document IDs as a proxy for unique directional alerts.
-    known_priority_docs = {
-        r.document_id for r in non_digest if r.priority is not None
-    }
+    known_priority_docs = {r.document_id for r in non_digest if r.priority is not None}
     high_priority_docs = {
-        r.document_id
-        for r in non_digest
-        if r.priority is not None and r.priority >= 7
+        r.document_id for r in non_digest if r.priority is not None and r.priority >= 7
     }
 
     latest_ann_by_doc: dict[str, str] = {}
@@ -374,35 +359,21 @@ def build_hold_metrics_report(
             latest_directional_by_doc[rec.document_id] = rec
 
     labeled_directional_docs = {
-        doc_id
-        for doc_id in directional_doc_ids
-        if doc_id in latest_ann_by_doc
+        doc_id for doc_id in directional_doc_ids if doc_id in latest_ann_by_doc
     }
-    hit_docs = {
-        doc_id
-        for doc_id in directional_doc_ids
-        if latest_ann_by_doc.get(doc_id) == "hit"
-    }
+    hit_docs = {doc_id for doc_id in directional_doc_ids if latest_ann_by_doc.get(doc_id) == "hit"}
     miss_docs = {
-        doc_id
-        for doc_id in directional_doc_ids
-        if latest_ann_by_doc.get(doc_id) == "miss"
+        doc_id for doc_id in directional_doc_ids if latest_ann_by_doc.get(doc_id) == "miss"
     }
     resolved_docs = hit_docs | miss_docs
     inconclusive_docs = {
-        doc_id
-        for doc_id in directional_doc_ids
-        if latest_ann_by_doc.get(doc_id) == "inconclusive"
+        doc_id for doc_id in directional_doc_ids if latest_ann_by_doc.get(doc_id) == "inconclusive"
     }
     actionable_directional_docs = {
-        doc_id
-        for doc_id, rec in latest_directional_by_doc.items()
-        if rec.actionable is True
+        doc_id for doc_id, rec in latest_directional_by_doc.items() if rec.actionable is True
     }
     actionable_unknown_directional_docs = {
-        doc_id
-        for doc_id, rec in latest_directional_by_doc.items()
-        if rec.actionable is None
+        doc_id for doc_id, rec in latest_directional_by_doc.items() if rec.actionable is None
     }
     hit_rate = _rate_pct(len(hit_docs), len(resolved_docs))
     false_positive_rate = _rate_pct(len(miss_docs), len(resolved_docs))
@@ -426,9 +397,7 @@ def build_hold_metrics_report(
     active_miss_docs = {d for d in miss_docs if _is_active(d)}
     active_resolved_docs = active_hit_docs | active_miss_docs
     active_hit_rate = _rate_pct(len(active_hit_docs), len(active_resolved_docs))
-    active_false_positive_rate = _rate_pct(
-        len(active_miss_docs), len(active_resolved_docs)
-    )
+    active_false_positive_rate = _rate_pct(len(active_miss_docs), len(active_resolved_docs))
     legacy_resolved_count = len(resolved_docs) - len(active_resolved_docs)
     actionable_rate = (
         round(len(actionable_directional_docs) / len(directional_doc_ids) * 100.0, 2)
@@ -436,25 +405,14 @@ def build_hold_metrics_report(
         else None
     )
     resolved_coverage_ratio = (
-        round(len(resolved_docs) / len(directional_doc_ids), 4)
-        if directional_doc_ids
-        else 0.0
+        round(len(resolved_docs) / len(directional_doc_ids), 4) if directional_doc_ids else 0.0
     )
 
     loop_rows = _load_jsonl(trading_loop_audit_path)
-    loop_status_counts = Counter(
-        row.get("status", "unknown")
-        for row in loop_rows
-    )
-    signal_generated_count = sum(
-        1 for row in loop_rows if bool(row.get("signal_generated"))
-    )
-    risk_approved_count = sum(
-        1 for row in loop_rows if bool(row.get("risk_approved"))
-    )
-    fill_simulated_count = sum(
-        1 for row in loop_rows if bool(row.get("fill_simulated"))
-    )
+    loop_status_counts = Counter(row.get("status", "unknown") for row in loop_rows)
+    signal_generated_count = sum(1 for row in loop_rows if bool(row.get("signal_generated")))
+    risk_approved_count = sum(1 for row in loop_rows if bool(row.get("risk_approved")))
+    fill_simulated_count = sum(1 for row in loop_rows if bool(row.get("fill_simulated")))
     market_data_source_counts: Counter[str] = Counter()
     latest_real_price_cycle_completed_at = None
     for row in loop_rows:
@@ -477,10 +435,7 @@ def build_hold_metrics_report(
     mock_price_cycle_count = market_data_source_counts.get("mock", 0)
 
     exec_rows = _load_jsonl(paper_execution_audit_path)
-    exec_event_counts = Counter(
-        row.get("event_type", "unknown")
-        for row in exec_rows
-    )
+    exec_event_counts = Counter(row.get("event_type", "unknown") for row in exec_rows)
     order_created_count = exec_event_counts.get("order_created", 0)
     order_filled_count = exec_event_counts.get("order_filled", 0)
     latest_realized_pnl = None
@@ -492,16 +447,13 @@ def build_hold_metrics_report(
                 latest_realized_pnl = None
             break
 
-    alert_hit_rate_condition_met = (
-        len(resolved_docs) >= MIN_RESOLVED_DIRECTIONAL_ALERTS
-    )
+    alert_hit_rate_condition_met = len(resolved_docs) >= MIN_RESOLVED_DIRECTIONAL_ALERTS
 
     # D-151: active-precision gate — excludes pre-D-139 legacy_unknown docs so
     # the Altlasten-bucket cannot suppress the measurement.  None counts as
     # unmet (no active sample yet).
     active_precision_condition_met = (
-        active_hit_rate is not None
-        and active_hit_rate >= MIN_ACTIVE_PRECISION_PCT
+        active_hit_rate is not None and active_hit_rate >= MIN_ACTIVE_PRECISION_PCT
     )
 
     # 2026-04-25: Per-source floor + 3-window stability. Both must pass for
@@ -525,13 +477,9 @@ def build_hold_metrics_report(
         src for src, m in per_source_active_precision.items() if m["passes_gate"]
     )
     sources_stable: set[str] = {
-        src
-        for src, info in per_source_stability["by_source"].items()
-        if info["stable"]
+        src for src, info in per_source_stability["by_source"].items() if info["stable"]
     }
-    sources_passing_both: list[str] = sorted(
-        set(sources_passing_precision) & sources_stable
-    )
+    sources_passing_both: list[str] = sorted(set(sources_passing_precision) & sources_stable)
     per_source_precision_condition_met = bool(sources_passing_precision)
     per_source_stability_condition_met = bool(sources_passing_both)
 
@@ -629,8 +577,7 @@ def build_hold_metrics_report(
         and standard_tier_stats["hit_rate_pct"] is not None
     ):
         priority_tier_lift_pct = round(
-            high_conviction_stats["hit_rate_pct"]
-            - standard_tier_stats["hit_rate_pct"],
+            high_conviction_stats["hit_rate_pct"] - standard_tier_stats["hit_rate_pct"],
             2,
         )
 
@@ -649,9 +596,7 @@ def build_hold_metrics_report(
         priority_calibration_finding = "inverse_correlation"
     else:
         priority_calibration_finding = "weak_correlation"
-    priority_hit_correlation_deprecated_reason = (
-        "non_monotonic_within_p7_p10_band_see_d149"
-    )
+    priority_hit_correlation_deprecated_reason = "non_monotonic_within_p7_p10_band_see_d149"
 
     # D-134: Forward-precision simulation using all audit record fields.
     # Re-evaluates each resolved alert with current gates (priority,
@@ -711,14 +656,10 @@ def build_hold_metrics_report(
             ),
         },
         "alert_hit_rate_evidence": {
-            "finding": (
-                "calculable" if alert_hit_rate_condition_met else "insufficient_data"
-            ),
+            "finding": ("calculable" if alert_hit_rate_condition_met else "insufficient_data"),
             "minimum_resolved_directional_alerts_for_gate": MIN_RESOLVED_DIRECTIONAL_ALERTS,
             "directional_alert_documents": len(directional_doc_ids),
-            "blocked_directional_documents": len(
-                {r.document_id for r in blocked_directional}
-            ),
+            "blocked_directional_documents": len({r.document_id for r in blocked_directional}),
             "blocked_directional_by_reason": dict(blocked_directional_reason_counts),
             "labeled_directional_documents": len(labeled_directional_docs),
             "resolved_directional_documents": len(resolved_docs),
@@ -809,9 +750,7 @@ def build_hold_metrics_report(
             ),
         },
         "paper_trading_evidence": {
-            "finding": (
-                "clearly_positive" if paper_trading_condition_met else "insufficient_data"
-            ),
+            "finding": ("clearly_positive" if paper_trading_condition_met else "insufficient_data"),
             "minimum_cycles_for_gate": MIN_PAPER_CYCLES,
             "minimum_fills_for_gate": MIN_PAPER_FILLS,
             "loop_metrics": {
@@ -844,14 +783,10 @@ def build_hold_metrics_report(
             "per_source_stability_condition_met": per_source_stability_condition_met,
             "sources_passing_both": sources_passing_both,
             "paper_trading_condition_met": paper_trading_condition_met,
-            "minimum_resolved_directional_alerts_for_gate": (
-                MIN_RESOLVED_DIRECTIONAL_ALERTS
-            ),
+            "minimum_resolved_directional_alerts_for_gate": (MIN_RESOLVED_DIRECTIONAL_ALERTS),
             "minimum_active_precision_pct_for_gate": MIN_ACTIVE_PRECISION_PCT,
             "minimum_per_source_resolved_for_gate": MIN_PER_SOURCE_RESOLVED,
-            "minimum_per_source_wilson_low_pct_for_gate": (
-                MIN_PER_SOURCE_WILSON_LOW_PCT
-            ),
+            "minimum_per_source_wilson_low_pct_for_gate": (MIN_PER_SOURCE_WILSON_LOW_PCT),
             "feature_work_unblocked": (
                 alert_hit_rate_condition_met
                 and active_precision_condition_met
@@ -993,8 +928,7 @@ def _write_operator_summary(report: dict[str, Any], output_path: Path) -> None:
         f"CI95=["
         f"{quality['priority_tier_standard_ci_low_pct']}, "
         f"{quality['priority_tier_standard_ci_high_pct']}]",
-        f"- priority_tier_lift_pct: {quality['priority_tier_lift_pct']} "
-        "(P10 minus P7-P9 hit-rate)",
+        f"- priority_tier_lift_pct: {quality['priority_tier_lift_pct']} (P10 minus P7-P9 hit-rate)",
         f"- paper_real_price_cycle_count: {quality['paper_real_price_cycle_count']}",
         "- priority_mae_tier1_vs_teacher_baseline: "
         f"{quality['priority_mae_tier1_vs_teacher_baseline']}",

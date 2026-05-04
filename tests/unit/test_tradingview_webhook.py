@@ -124,9 +124,7 @@ def test_returns_404_when_secret_missing(missing_secret_client: TestClient) -> N
     assert resp.status_code == 404
 
 
-def test_returns_401_when_signature_missing(
-    enabled_client: TestClient, audit_path: Path
-) -> None:
+def test_returns_401_when_signature_missing(enabled_client: TestClient, audit_path: Path) -> None:
     body = b'{"symbol":"BTCUSDT"}'
     resp = enabled_client.post("/tradingview/webhook", content=body)
     assert resp.status_code == 401
@@ -136,9 +134,7 @@ def test_returns_401_when_signature_missing(
     assert records[0]["reason"] == "invalid_signature"
 
 
-def test_returns_401_when_signature_invalid(
-    enabled_client: TestClient, audit_path: Path
-) -> None:
+def test_returns_401_when_signature_invalid(enabled_client: TestClient, audit_path: Path) -> None:
     body = b'{"symbol":"BTCUSDT"}'
     resp = enabled_client.post(
         "/tradingview/webhook",
@@ -174,9 +170,7 @@ def test_returns_401_when_prefix_missing(enabled_client: TestClient) -> None:
     assert resp.status_code == 401
 
 
-def test_accepts_valid_signed_payload(
-    enabled_client: TestClient, audit_path: Path
-) -> None:
+def test_accepts_valid_signed_payload(enabled_client: TestClient, audit_path: Path) -> None:
     body = b'{"symbol":"BTCUSDT","action":"buy","price":65000}'
     resp = enabled_client.post(
         "/tradingview/webhook",
@@ -201,9 +195,7 @@ def test_accepts_valid_signed_payload(
     assert entry["provenance"]["signal_path_id"] is None
 
 
-def test_duplicate_payload_rejected_as_replay(
-    enabled_client: TestClient, audit_path: Path
-) -> None:
+def test_duplicate_payload_rejected_as_replay(enabled_client: TestClient, audit_path: Path) -> None:
     body = b'{"symbol":"BTCUSDT","action":"buy"}'
     headers = {_SIGNATURE_HEADER: _sign(body)}
 
@@ -275,9 +267,7 @@ def test_replay_cache_isolates_between_test_fixtures(audit_path: Path) -> None:
     assert cache_b.check_and_record("hash1") is True
 
 
-def test_audit_log_records_client_ip_and_size(
-    enabled_client: TestClient, audit_path: Path
-) -> None:
+def test_audit_log_records_client_ip_and_size(enabled_client: TestClient, audit_path: Path) -> None:
     body = b'{"symbol":"BTCUSDT"}'
     enabled_client.post(
         "/tradingview/webhook",
@@ -294,9 +284,7 @@ def test_audit_log_records_client_ip_and_size(
 # --- V8.1: Layer-2 replay guard (external event_id) ---
 
 
-def test_event_id_replay_rejected_as_409(
-    enabled_client: TestClient, audit_path: Path
-) -> None:
+def test_event_id_replay_rejected_as_409(enabled_client: TestClient, audit_path: Path) -> None:
     """Layer-2: same event_id, different payload bytes → 2nd request 409."""
     body_a = b'{"symbol":"BTCUSDT","action":"buy","event_id":"alert-42"}'
     body_b = b'{"symbol":"BTCUSDT","action":"buy","event_id":"alert-42","note":"x"}'
@@ -321,9 +309,7 @@ def test_event_id_replay_rejected_as_409(
     assert records[1]["dedup_layer"] == "external_event_id"
 
 
-def test_event_id_absent_skips_layer2(
-    enabled_client: TestClient, audit_path: Path
-) -> None:
+def test_event_id_absent_skips_layer2(enabled_client: TestClient, audit_path: Path) -> None:
     """No event_id in payload → only layer-1 is consulted, differing bodies pass."""
     body_a = b'{"symbol":"BTCUSDT","action":"buy"}'
     body_b = b'{"symbol":"BTCUSDT","action":"buy","note":"second"}'
@@ -342,9 +328,7 @@ def test_event_id_absent_skips_layer2(
     assert records[1]["external_event_id"] is None
 
 
-def test_event_id_empty_string_skips_layer2(
-    enabled_client: TestClient, audit_path: Path
-) -> None:
+def test_event_id_empty_string_skips_layer2(enabled_client: TestClient, audit_path: Path) -> None:
     """event_id='' and whitespace-only are treated as absent (guard against
     poisoning the cache with a universally-matching empty key)."""
     body_a = b'{"symbol":"BTCUSDT","action":"buy","event_id":""}'

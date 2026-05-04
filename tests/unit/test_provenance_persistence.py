@@ -99,10 +99,14 @@ def test_latest_provenance_wins_on_redispatch(tmp_path: Path) -> None:
     """Two audit rows for the same doc: the LAST provenance is authoritative."""
     doc_id = "doc_redispatched"
     first = SignalProvenance(
-        source="rss", version="rss-0", ingest_event_id=doc_id,
+        source="rss",
+        version="rss-0",
+        ingest_event_id=doc_id,
     ).with_hash(SECRET)
     second = SignalProvenance(
-        source="rss", version="rss-1", ingest_event_id=doc_id,
+        source="rss",
+        version="rss-1",
+        ingest_event_id=doc_id,
     ).with_hash(SECRET)
     for prov in (first, second):
         append_alert_audit(
@@ -155,7 +159,9 @@ def test_latest_provenance_skips_untagged_rows(tmp_path: Path) -> None:
 def test_provenance_hash_empty_secret_is_fail_open() -> None:
     """Empty secret → no hash computed, verify returns False (stays unbound)."""
     prov = SignalProvenance(
-        source="rss", version="rss-1", ingest_event_id="doc_x",
+        source="rss",
+        version="rss-1",
+        ingest_event_id="doc_x",
     ).with_hash("")
     assert prov.provenance_hash is None
     assert prov.verify_hash("") is False
@@ -230,6 +236,7 @@ def test_verify_hash_rejects_tampering_even_with_next_secret() -> None:
     sealed = _bare_provenance().with_hash(old_secret)
 
     from dataclasses import replace
+
     tampered = replace(sealed, signal_path_id="sp_attacker_chosen")
 
     assert tampered.verify_hash(old_secret) is False

@@ -83,8 +83,10 @@ class TestTvConsumerRoundTrip:
     def test_load_and_mark_consumed(self, tmp_path: Path) -> None:
         promoted = tmp_path / "promoted.jsonl"
         promoted.write_text(
-            json.dumps(_make_promoted_row("dec_a")) + "\n"
-            + json.dumps(_make_promoted_row("dec_b", symbol="ETHUSDT")) + "\n",
+            json.dumps(_make_promoted_row("dec_a"))
+            + "\n"
+            + json.dumps(_make_promoted_row("dec_b", symbol="ETHUSDT"))
+            + "\n",
             encoding="utf-8",
         )
 
@@ -103,9 +105,7 @@ class TestTvConsumerRoundTrip:
         good = _make_promoted_row("dec_good")
         bad = {"no_decision_id": True}
         promoted.write_text(
-            json.dumps(good) + "\n"
-            + "not-json-at-all\n"
-            + json.dumps(bad) + "\n",
+            json.dumps(good) + "\n" + "not-json-at-all\n" + json.dumps(bad) + "\n",
             encoding="utf-8",
         )
 

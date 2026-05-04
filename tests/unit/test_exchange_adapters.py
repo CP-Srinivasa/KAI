@@ -25,6 +25,7 @@ from app.execution.exchanges.factory import create_exchange_adapter
 # Shared fixtures
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture
 def market_order() -> OrderRequest:
     return OrderRequest(
@@ -53,6 +54,7 @@ def limit_order() -> OrderRequest:
 # ---------------------------------------------------------------------------
 # Base adapter / model tests
 # ---------------------------------------------------------------------------
+
 
 class TestOrderModels:
     """Test OrderRequest, OrderResult, and related models."""
@@ -85,6 +87,7 @@ class TestOrderModels:
 # Binance adapter tests (dry-run only)
 # ---------------------------------------------------------------------------
 
+
 class TestBinanceAdapter:
     """Test BinanceAdapter in dry-run mode."""
 
@@ -102,9 +105,7 @@ class TestBinanceAdapter:
         assert adapter.is_live is False  # dry_run still True
 
     def test_live_mode(self) -> None:
-        adapter = BinanceAdapter(
-            api_key="key", api_secret="secret", dry_run=False
-        )
+        adapter = BinanceAdapter(api_key="key", api_secret="secret", dry_run=False)
         assert adapter.is_live is True
 
     @pytest.mark.asyncio
@@ -126,9 +127,7 @@ class TestBinanceAdapter:
         assert result.price == 3500.0
 
     @pytest.mark.asyncio
-    async def test_unconfigured_real_order_fails(
-        self, market_order: OrderRequest
-    ) -> None:
+    async def test_unconfigured_real_order_fails(self, market_order: OrderRequest) -> None:
         adapter = BinanceAdapter(dry_run=False)
         result = await adapter.place_order(market_order)
         assert result.success is False
@@ -148,18 +147,14 @@ class TestBinanceAdapter:
 
     @pytest.mark.asyncio
     async def test_cancel_requires_symbol(self) -> None:
-        adapter = BinanceAdapter(
-            api_key="key", api_secret="secret", dry_run=False
-        )
+        adapter = BinanceAdapter(api_key="key", api_secret="secret", dry_run=False)
         result = await adapter.cancel_order("123")
         assert result.success is False
         assert "Symbol is required" in result.error
 
     @pytest.mark.asyncio
     async def test_limit_order_without_price_fails(self) -> None:
-        adapter = BinanceAdapter(
-            api_key="key", api_secret="secret", dry_run=False
-        )
+        adapter = BinanceAdapter(api_key="key", api_secret="secret", dry_run=False)
         order = OrderRequest(
             symbol="BTCUSDT",
             side=OrderSide.BUY,
@@ -201,6 +196,7 @@ class TestBinanceStatusMapping:
 # Bybit adapter tests (dry-run only)
 # ---------------------------------------------------------------------------
 
+
 class TestBybitAdapter:
     """Test BybitAdapter in dry-run mode."""
 
@@ -224,9 +220,7 @@ class TestBybitAdapter:
         assert result.exchange == "bybit"
 
     @pytest.mark.asyncio
-    async def test_unconfigured_real_order_fails(
-        self, market_order: OrderRequest
-    ) -> None:
+    async def test_unconfigured_real_order_fails(self, market_order: OrderRequest) -> None:
         adapter = BybitAdapter(dry_run=False)
         result = await adapter.place_order(market_order)
         assert result.success is False
@@ -246,9 +240,7 @@ class TestBybitAdapter:
 
     @pytest.mark.asyncio
     async def test_limit_order_without_price_fails(self) -> None:
-        adapter = BybitAdapter(
-            api_key="key", api_secret="secret", dry_run=False
-        )
+        adapter = BybitAdapter(api_key="key", api_secret="secret", dry_run=False)
         order = OrderRequest(
             symbol="BTCUSDT",
             side=OrderSide.BUY,
@@ -288,11 +280,13 @@ class TestBybitStatusMapping:
 # Factory tests
 # ---------------------------------------------------------------------------
 
+
 class TestExchangeFactory:
     """Test create_exchange_adapter factory."""
 
     def test_creates_binance_by_default(self) -> None:
         from app.core.settings import ExchangeSettings
+
         settings = ExchangeSettings(
             binance_api_key="bk",
             binance_secret="bs",
@@ -303,6 +297,7 @@ class TestExchangeFactory:
 
     def test_creates_bybit(self) -> None:
         from app.core.settings import ExchangeSettings
+
         settings = ExchangeSettings(
             bybit_api_key="yk",
             bybit_secret="ys",
@@ -313,12 +308,14 @@ class TestExchangeFactory:
 
     def test_unknown_exchange_raises(self) -> None:
         from app.core.settings import ExchangeSettings
+
         settings = ExchangeSettings()
         with pytest.raises(ValueError, match="Unknown exchange"):
             create_exchange_adapter(settings, exchange="kraken")
 
     def test_respects_dry_run(self) -> None:
         from app.core.settings import ExchangeSettings
+
         settings = ExchangeSettings(
             binance_api_key="k",
             binance_secret="s",
@@ -329,6 +326,7 @@ class TestExchangeFactory:
 
     def test_respects_testnet(self) -> None:
         from app.core.settings import ExchangeSettings
+
         settings = ExchangeSettings(
             binance_api_key="k",
             binance_secret="s",

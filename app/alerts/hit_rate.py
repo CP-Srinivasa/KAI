@@ -65,12 +65,8 @@ class HitRateReport:
             "hit_rate_pct": self.hit_rate_pct,
             "sufficient_sample": self.sufficient_sample,
             "min_sample": self.min_sample,
-            "by_sentiment": {
-                k: v.to_dict() for k, v in self.by_sentiment.items()
-            },
-            "by_asset": {
-                k: v.to_dict() for k, v in self.by_asset.items()
-            },
+            "by_sentiment": {k: v.to_dict() for k, v in self.by_sentiment.items()},
+            "by_asset": {k: v.to_dict() for k, v in self.by_asset.items()},
         }
 
 
@@ -239,11 +235,7 @@ def build_outcomes_from_records(
             else:
                 p_alert, p_res, resolved_at = prices
                 is_hit = classify_hit(sentiment, p_alert, p_res)
-                ret_pct = (
-                    ((p_res - p_alert) / p_alert * 100.0)
-                    if p_alert != 0
-                    else 0.0
-                )
+                ret_pct = ((p_res - p_alert) / p_alert * 100.0) if p_alert != 0 else 0.0
                 outcomes.append(
                     AlertOutcome(
                         document_id=rec.document_id,
@@ -276,11 +268,7 @@ def compute_hit_rate(
     hits = [o for o in resolved if o.is_hit]
     misses = [o for o in resolved if not o.is_hit]
 
-    hit_rate = (
-        round(len(hits) / len(resolved) * 100.0, 2)
-        if resolved
-        else None
-    )
+    hit_rate = round(len(hits) / len(resolved) * 100.0, 2) if resolved else None
 
     # Per-sentiment breakdown
     by_sentiment: dict[str, SentimentBreakdown] = {}
@@ -292,9 +280,7 @@ def compute_hit_rate(
             count=len(subset),
             resolved=len(res),
             hits=len(h),
-            hit_rate_pct=(
-                round(len(h) / len(res) * 100.0, 2) if res else None
-            ),
+            hit_rate_pct=(round(len(h) / len(res) * 100.0, 2) if res else None),
         )
 
     # Per-asset breakdown
@@ -307,9 +293,7 @@ def compute_hit_rate(
             count=len(subset),
             resolved=len(res),
             hits=len(h),
-            hit_rate_pct=(
-                round(len(h) / len(res) * 100.0, 2) if res else None
-            ),
+            hit_rate_pct=(round(len(h) / len(res) * 100.0, 2) if res else None),
         )
 
     return HitRateReport(
@@ -325,4 +309,3 @@ def compute_hit_rate(
         by_sentiment=by_sentiment,
         by_asset=by_asset,
     )
-

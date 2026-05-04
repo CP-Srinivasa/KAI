@@ -210,9 +210,10 @@ class TestRejectNonSignals:
         assert parse_premium_channel_message("SL moved to BE on GUN/USDT") is None
 
     def test_prose_only(self) -> None:
-        assert parse_premium_channel_message(
-            "Good morning traders! Market looking bullish today."
-        ) is None
+        assert (
+            parse_premium_channel_message("Good morning traders! Market looking bullish today.")
+            is None
+        )
 
     def test_header_but_no_entry_is_rejected(self) -> None:
         """Header without entry-line → incomplete signal."""

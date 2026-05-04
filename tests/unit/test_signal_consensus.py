@@ -241,12 +241,8 @@ async def test_multi_model_one_disagrees() -> None:
         ),
     )
 
-    resp_agree = _mock_openai_response(
-        '{"agree": true, "confidence": 0.85, "reasoning": "Yes"}'
-    )
-    resp_disagree = _mock_openai_response(
-        '{"agree": false, "confidence": 0.70, "reasoning": "No"}'
-    )
+    resp_agree = _mock_openai_response('{"agree": true, "confidence": 0.85, "reasoning": "Yes"}')
+    resp_disagree = _mock_openai_response('{"agree": false, "confidence": 0.70, "reasoning": "No"}')
 
     call_count = 0
 
@@ -282,9 +278,7 @@ async def test_multi_model_one_errors() -> None:
         ),
     )
 
-    resp_agree = _mock_openai_response(
-        '{"agree": true, "confidence": 0.90, "reasoning": "Fine"}'
-    )
+    resp_agree = _mock_openai_response('{"agree": true, "confidence": 0.90, "reasoning": "Fine"}')
 
     call_count = 0
 

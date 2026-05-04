@@ -124,9 +124,7 @@ class TestIdempotency:
 
 class TestSerialization:
     def test_to_dict_contains_canonical_fields(self) -> None:
-        env = MessageEnvelope.wrap(
-            _signal(), source_channel="telegram", chat_id=42
-        )
+        env = MessageEnvelope.wrap(_signal(), source_channel="telegram", chat_id=42)
         d = env.to_dict()
         assert d["envelope_id"] == env.envelope_id
         assert d["received_ts"] == env.received_ts

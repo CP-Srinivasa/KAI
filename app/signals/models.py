@@ -98,9 +98,7 @@ class SignalProvenance:
         """Return HMAC-SHA256 hex of the canonical payload under ``secret``."""
         if not secret:
             return ""
-        return hmac.new(
-            secret.encode("utf-8"), self._hash_payload(), hashlib.sha256
-        ).hexdigest()
+        return hmac.new(secret.encode("utf-8"), self._hash_payload(), hashlib.sha256).hexdigest()
 
     def with_hash(self, secret: str) -> SignalProvenance:
         """Return a copy with ``provenance_hash`` filled.
@@ -126,14 +124,10 @@ class SignalProvenance:
         """
         if not self.provenance_hash or not secret:
             return False
-        primary_match = hmac.compare_digest(
-            self.compute_hash(secret), self.provenance_hash
-        )
+        primary_match = hmac.compare_digest(self.compute_hash(secret), self.provenance_hash)
         if not secret_next:
             return primary_match
-        next_match = hmac.compare_digest(
-            self.compute_hash(secret_next), self.provenance_hash
-        )
+        next_match = hmac.compare_digest(self.compute_hash(secret_next), self.provenance_hash)
         return primary_match or next_match
 
 

@@ -66,9 +66,7 @@ def test_briefing_counts_recent_alerts(tmp_path: Path) -> None:
     _write_audit(
         tmp_path,
         document_id="d-old",
-        dispatched_at=(
-            datetime.now(UTC) - timedelta(hours=48)
-        ).isoformat(),
+        dispatched_at=(datetime.now(UTC) - timedelta(hours=48)).isoformat(),
     )
 
     data = build_daily_briefing(tmp_path, lookback_hours=24)
@@ -159,7 +157,10 @@ def test_briefing_p10_excludes_old_dispatches(tmp_path: Path) -> None:
     """Dispatches >7d old are excluded from P10 7d window."""
     old_ts = (datetime.now(UTC) - timedelta(days=10)).isoformat()
     _write_audit(
-        tmp_path, document_id="p10-old", priority=10, dispatched_at=old_ts,
+        tmp_path,
+        document_id="p10-old",
+        priority=10,
+        dispatched_at=old_ts,
     )
     _write_outcome(tmp_path, "p10-old", "hit")
 
@@ -207,7 +208,9 @@ def test_healthy_system(tmp_path: Path) -> None:
 
 def test_no_alerts_warning(tmp_path: Path) -> None:
     issues = run_health_check(
-        tmp_path, min_expected_alerts=5, min_expected_cycles=0,
+        tmp_path,
+        min_expected_alerts=5,
+        min_expected_cycles=0,
     )
     alert_issues = [i for i in issues if i.component == "alerts"]
     assert len(alert_issues) == 1
@@ -224,12 +227,11 @@ def test_high_error_rate_critical(tmp_path: Path) -> None:
         )
 
     issues = run_health_check(
-        tmp_path, min_expected_alerts=0, min_expected_cycles=0,
+        tmp_path,
+        min_expected_alerts=0,
+        min_expected_cycles=0,
     )
-    error_issues = [
-        i for i in issues
-        if i.component == "trading_loop" and i.severity == "critical"
-    ]
+    error_issues = [i for i in issues if i.component == "trading_loop" and i.severity == "critical"]
     assert len(error_issues) == 1
 
 
@@ -241,7 +243,9 @@ def test_low_precision_warning(tmp_path: Path) -> None:
         _write_outcome(tmp_path, f"miss-{i}", "miss")
 
     issues = run_health_check(
-        tmp_path, min_expected_alerts=0, min_expected_cycles=0,
+        tmp_path,
+        min_expected_alerts=0,
+        min_expected_cycles=0,
         min_precision_pct=15.0,
     )
     prec_issues = [i for i in issues if i.component == "precision"]

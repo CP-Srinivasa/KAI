@@ -52,8 +52,19 @@ _HEURISTIC_DIRECTION_PATTERN = re.compile(
 _HEURISTIC_NUM = r"\d+(?:[.,]\d+)?"
 
 _HEURISTIC_EXCHANGES = (
-    "binance_futures", "binance", "bybit", "okx", "deribit", "bitget",
-    "kucoin", "huobi", "blofin", "bingx", "mexc", "gate", "gateio",
+    "binance_futures",
+    "binance",
+    "bybit",
+    "okx",
+    "deribit",
+    "bitget",
+    "kucoin",
+    "huobi",
+    "blofin",
+    "bingx",
+    "mexc",
+    "gate",
+    "gateio",
 )
 
 # Validation errors the operator can fix by supplying a single field.
@@ -135,9 +146,7 @@ def parse_signal_message(text: str) -> ParsedSignal:
     clean_text = _KV_PATTERN.sub("", text).strip()
     tokens = clean_text.upper().split()
     if len(tokens) < 2:
-        raise SignalParseError(
-            f"Signal requires at minimum DIRECTION and ASSET. Got: '{text}'"
-        )
+        raise SignalParseError(f"Signal requires at minimum DIRECTION and ASSET. Got: '{text}'")
 
     direction_token = tokens[0].lower()
     direction_parts = [part for part in direction_token.split("/") if part]
@@ -153,9 +162,7 @@ def parse_signal_message(text: str) -> ParsedSignal:
 
     asset = tokens[1].upper().lstrip("#$")
     if not asset.isalpha() or len(asset) < 2 or len(asset) > 10:
-        raise SignalParseError(
-            f"Invalid asset '{asset}'. Must be 2-10 alphabetic characters."
-        )
+        raise SignalParseError(f"Invalid asset '{asset}'. Must be 2-10 alphabetic characters.")
 
     price: float | None = None
     if len(tokens) >= 3:
@@ -193,11 +200,7 @@ def _detect_bracket_header(text: str) -> str | None:
     upper_tokens = first_line.upper().replace("[", " ").replace("]", " ").split()
     if len(upper_tokens) >= 2 and upper_tokens[1] in {"NEWS", "SIGNAL"}:
         return upper_tokens[1].lower()
-    if (
-        len(upper_tokens) >= 3
-        and upper_tokens[1] == "EXCHANGE"
-        and upper_tokens[2] == "RESPONSE"
-    ):
+    if len(upper_tokens) >= 3 and upper_tokens[1] == "EXCHANGE" and upper_tokens[2] == "RESPONSE":
         return "exchange_response"
 
     return None
@@ -210,8 +213,7 @@ def _looks_like_crypto_signal(text: str) -> bool:
     if not text:
         return False
     return bool(
-        _HEURISTIC_SYMBOL_PATTERN.search(text)
-        and _HEURISTIC_DIRECTION_PATTERN.search(text)
+        _HEURISTIC_SYMBOL_PATTERN.search(text) and _HEURISTIC_DIRECTION_PATTERN.search(text)
     )
 
 
@@ -499,7 +501,7 @@ def _extract_heuristic_signal(text: str) -> dict[str, object] | None:
     if entry_type_str == "market" and symbol_line:
         dmatch = _HEURISTIC_DIRECTION_PATTERN.search(symbol_line)
         if dmatch:
-            tail = symbol_line[dmatch.end():]
+            tail = symbol_line[dmatch.end() :]
             tail_match = re.search(rf"[-–:]\s*({_HEURISTIC_NUM})", tail)
             if tail_match:
                 val = _parse_float(tail_match.group(1))
@@ -627,9 +629,7 @@ def parse_structured_message(
     if msg_type == "signal" and _detect_bracket_header(text) is None:
         heur = _extract_heuristic_signal(text)
         if heur is None:
-            raise SignalParseError(
-                "Signal-Heuristik konnte Paar/Richtung nicht extrahieren."
-            )
+            raise SignalParseError("Signal-Heuristik konnte Paar/Richtung nicht extrahieren.")
         signal_id = _generate_signal_id(str(heur["internal_symbol"]) or "UNKNOWN")
         return TradingSignal(
             signal_id=signal_id,
@@ -639,12 +639,8 @@ def parse_structured_message(
             symbol=str(heur["internal_symbol"]),
             display_symbol=str(heur["display_symbol"]),
             side=_enum_or_default(Side, str(heur["side"] or "buy"), Side.BUY),
-            direction=_enum_or_default(
-                Direction, str(heur["direction"] or "long"), Direction.LONG
-            ),
-            entry_type=_enum_or_default(
-                EntryType, str(heur["entry_type"]), EntryType.MARKET
-            ),
+            direction=_enum_or_default(Direction, str(heur["direction"] or "long"), Direction.LONG),
+            entry_type=_enum_or_default(EntryType, str(heur["entry_type"]), EntryType.MARKET),
             entry_value=heur["entry_value"],  # type: ignore[arg-type]
             entry_min=heur["entry_min"],  # type: ignore[arg-type]
             entry_max=heur["entry_max"],  # type: ignore[arg-type]

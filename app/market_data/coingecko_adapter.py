@@ -64,6 +64,7 @@ def _record_request_and_maybe_warn() -> int:
         )
     return rpm
 
+
 _BASE_ASSET_TO_COINGECKO: dict[str, str] = {
     "BTC": "bitcoin",
     "ETH": "ethereum",
@@ -174,9 +175,7 @@ class CoinGeckoAdapter(BaseMarketDataAdapter):
         resolved_key = (api_key or "").strip() or None
         self._api_key: str | None = resolved_key
         self._base_url = _COINGECKO_PRO_BASE if resolved_key else _COINGECKO_FREE_BASE
-        self._backoff_schedule = (
-            _BACKOFF_SCHEDULE_PRO if resolved_key else _BACKOFF_SCHEDULE_FREE
-        )
+        self._backoff_schedule = _BACKOFF_SCHEDULE_PRO if resolved_key else _BACKOFF_SCHEDULE_FREE
 
     @property
     def base_url(self) -> str:
@@ -488,7 +487,10 @@ class CoinGeckoAdapter(BaseMarketDataAdapter):
                     wait_s = min(max(wait_s, 1.0), 120.0)
                     logger.warning(
                         "[CoinGecko] HTTP 429 (attempt %d/%d) — backing off %.1fs for %s",
-                        attempt + 1, max_attempts, wait_s, url,
+                        attempt + 1,
+                        max_attempts,
+                        wait_s,
+                        url,
                     )
                     await asyncio.sleep(wait_s)
                     continue

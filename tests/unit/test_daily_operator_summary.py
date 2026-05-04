@@ -102,12 +102,18 @@ async def test_summary_has_required_keys_for_status_command(tmp_path: Path) -> N
 
     factory_p, repo_p, _ = _db_patches(pending=0)
     _passthrough = lambda p, **kw: Path(p)  # noqa: E731
-    with _snapshot_patch(position_count=0), factory_p, repo_p as repo_cls, patch(
-        "app.agents.tools.canonical_read.resolve_workspace_dir",
-        side_effect=_passthrough,
-    ), patch(
-        "app.agents.tools.canonical_read.resolve_workspace_path",
-        side_effect=_passthrough,
+    with (
+        _snapshot_patch(position_count=0),
+        factory_p,
+        repo_p as repo_cls,
+        patch(
+            "app.agents.tools.canonical_read.resolve_workspace_dir",
+            side_effect=_passthrough,
+        ),
+        patch(
+            "app.agents.tools.canonical_read.resolve_workspace_path",
+            side_effect=_passthrough,
+        ),
     ):
         repo_cls.return_value.count_pending_documents = AsyncMock(return_value=0)
         result = await get_daily_operator_summary(
@@ -167,12 +173,18 @@ async def test_alert_rate_counts_only_last_24h(tmp_path: Path) -> None:
 
     factory_p, repo_p, _ = _db_patches(pending=0)
     _passthrough = lambda p, **kw: Path(p)  # noqa: E731
-    with _snapshot_patch(position_count=0), factory_p, repo_p as repo_cls, patch(
-        "app.agents.tools.canonical_read.resolve_workspace_dir",
-        side_effect=_passthrough,
-    ), patch(
-        "app.agents.tools.canonical_read.resolve_workspace_path",
-        side_effect=_passthrough,
+    with (
+        _snapshot_patch(position_count=0),
+        factory_p,
+        repo_p as repo_cls,
+        patch(
+            "app.agents.tools.canonical_read.resolve_workspace_dir",
+            side_effect=_passthrough,
+        ),
+        patch(
+            "app.agents.tools.canonical_read.resolve_workspace_path",
+            side_effect=_passthrough,
+        ),
     ):
         repo_cls.return_value.count_pending_documents = AsyncMock(return_value=0)
         result = await get_daily_operator_summary(
@@ -208,12 +220,18 @@ async def test_cycles_today_counts_only_todays_started_at(tmp_path: Path) -> Non
 
     factory_p, repo_p, _ = _db_patches(pending=0)
     _passthrough = lambda p, **kw: Path(p)  # noqa: E731
-    with _snapshot_patch(position_count=0), factory_p, repo_p as repo_cls, patch(
-        "app.agents.tools.canonical_read.resolve_workspace_dir",
-        side_effect=_passthrough,
-    ), patch(
-        "app.agents.tools.canonical_read.resolve_workspace_path",
-        side_effect=_passthrough,
+    with (
+        _snapshot_patch(position_count=0),
+        factory_p,
+        repo_p as repo_cls,
+        patch(
+            "app.agents.tools.canonical_read.resolve_workspace_dir",
+            side_effect=_passthrough,
+        ),
+        patch(
+            "app.agents.tools.canonical_read.resolve_workspace_path",
+            side_effect=_passthrough,
+        ),
     ):
         repo_cls.return_value.count_pending_documents = AsyncMock(return_value=0)
         result = await get_daily_operator_summary(
@@ -236,12 +254,18 @@ async def test_degraded_when_portfolio_read_fails(tmp_path: Path) -> None:
 
     factory_p, repo_p, _ = _db_patches(pending=5)
     _pass = lambda p, **kw: Path(p)  # noqa: E731
-    with _snapshot_patch(raise_error=True), factory_p, repo_p as repo_cls, patch(
-        "app.agents.tools.canonical_read.resolve_workspace_dir",
-        side_effect=_pass,
-    ), patch(
-        "app.agents.tools.canonical_read.resolve_workspace_path",
-        side_effect=_pass,
+    with (
+        _snapshot_patch(raise_error=True),
+        factory_p,
+        repo_p as repo_cls,
+        patch(
+            "app.agents.tools.canonical_read.resolve_workspace_dir",
+            side_effect=_pass,
+        ),
+        patch(
+            "app.agents.tools.canonical_read.resolve_workspace_path",
+            side_effect=_pass,
+        ),
     ):
         repo_cls.return_value.count_pending_documents = AsyncMock(return_value=5)
         result = await get_daily_operator_summary(
@@ -270,12 +294,18 @@ async def test_unimplemented_fields_flagged_not_zero(tmp_path: Path) -> None:
 
     factory_p, repo_p, _ = _db_patches(pending=0)
     _passthrough = lambda p, **kw: Path(p)  # noqa: E731
-    with _snapshot_patch(position_count=0), factory_p, repo_p as repo_cls, patch(
-        "app.agents.tools.canonical_read.resolve_workspace_dir",
-        side_effect=_passthrough,
-    ), patch(
-        "app.agents.tools.canonical_read.resolve_workspace_path",
-        side_effect=_passthrough,
+    with (
+        _snapshot_patch(position_count=0),
+        factory_p,
+        repo_p as repo_cls,
+        patch(
+            "app.agents.tools.canonical_read.resolve_workspace_dir",
+            side_effect=_passthrough,
+        ),
+        patch(
+            "app.agents.tools.canonical_read.resolve_workspace_path",
+            side_effect=_passthrough,
+        ),
     ):
         repo_cls.return_value.count_pending_documents = AsyncMock(return_value=0)
         result = await get_daily_operator_summary(
@@ -309,8 +339,7 @@ async def test_cycle_status_breakdown_24h(tmp_path: Path) -> None:
         for i in range(8)
     ]
     filled_rows = [
-        {"cycle_id": f"f{i}", "started_at": inside_24h_alt, "status": "filled"}
-        for i in range(2)
+        {"cycle_id": f"f{i}", "started_at": inside_24h_alt, "status": "filled"} for i in range(2)
     ]
     outside_rows = [{"cycle_id": "old", "started_at": outside_24h, "status": "filled"}]
     rows = rejected_rows + filled_rows + outside_rows
@@ -319,12 +348,18 @@ async def test_cycle_status_breakdown_24h(tmp_path: Path) -> None:
 
     factory_p, repo_p, _ = _db_patches(pending=0)
     _pass = lambda p, **kw: Path(p)  # noqa: E731
-    with _snapshot_patch(position_count=0), factory_p, repo_p as repo_cls, patch(
-        "app.agents.tools.canonical_read.resolve_workspace_dir",
-        side_effect=_pass,
-    ), patch(
-        "app.agents.tools.canonical_read.resolve_workspace_path",
-        side_effect=_pass,
+    with (
+        _snapshot_patch(position_count=0),
+        factory_p,
+        repo_p as repo_cls,
+        patch(
+            "app.agents.tools.canonical_read.resolve_workspace_dir",
+            side_effect=_pass,
+        ),
+        patch(
+            "app.agents.tools.canonical_read.resolve_workspace_path",
+            side_effect=_pass,
+        ),
     ):
         repo_cls.return_value.count_pending_documents = AsyncMock(return_value=0)
         result = await get_daily_operator_summary(
@@ -352,25 +387,27 @@ async def test_cycle_status_breakdown_alert_threshold(tmp_path: Path) -> None:
     now = _now()
     inside = (now - timedelta(hours=1)).isoformat()
     rejected = [
-        {"cycle_id": f"r{i}", "started_at": inside, "status": "priority_rejected"}
-        for i in range(5)
+        {"cycle_id": f"r{i}", "started_at": inside, "status": "priority_rejected"} for i in range(5)
     ]
-    other = [
-        {"cycle_id": f"o{i}", "started_at": inside, "status": "no_signal"}
-        for i in range(5)
-    ]
+    other = [{"cycle_id": f"o{i}", "started_at": inside, "status": "no_signal"} for i in range(5)]
     rows = rejected + other
     _write_jsonl(loop_audit, rows)
     _write_jsonl(exec_audit, [])
 
     factory_p, repo_p, _ = _db_patches(pending=0)
     _pass = lambda p, **kw: Path(p)  # noqa: E731
-    with _snapshot_patch(position_count=0), factory_p, repo_p as repo_cls, patch(
-        "app.agents.tools.canonical_read.resolve_workspace_dir",
-        side_effect=_pass,
-    ), patch(
-        "app.agents.tools.canonical_read.resolve_workspace_path",
-        side_effect=_pass,
+    with (
+        _snapshot_patch(position_count=0),
+        factory_p,
+        repo_p as repo_cls,
+        patch(
+            "app.agents.tools.canonical_read.resolve_workspace_dir",
+            side_effect=_pass,
+        ),
+        patch(
+            "app.agents.tools.canonical_read.resolve_workspace_path",
+            side_effect=_pass,
+        ),
     ):
         repo_cls.return_value.count_pending_documents = AsyncMock(return_value=0)
         result = await get_daily_operator_summary(
@@ -397,12 +434,18 @@ async def test_warp_status_present_in_summary(tmp_path: Path) -> None:
 
     factory_p, repo_p, _ = _db_patches(pending=0)
     _pass = lambda p, **kw: Path(p)  # noqa: E731
-    with _snapshot_patch(position_count=0), factory_p, repo_p as repo_cls, patch(
-        "app.agents.tools.canonical_read.resolve_workspace_dir",
-        side_effect=_pass,
-    ), patch(
-        "app.agents.tools.canonical_read.resolve_workspace_path",
-        side_effect=_pass,
+    with (
+        _snapshot_patch(position_count=0),
+        factory_p,
+        repo_p as repo_cls,
+        patch(
+            "app.agents.tools.canonical_read.resolve_workspace_dir",
+            side_effect=_pass,
+        ),
+        patch(
+            "app.agents.tools.canonical_read.resolve_workspace_path",
+            side_effect=_pass,
+        ),
     ):
         repo_cls.return_value.count_pending_documents = AsyncMock(return_value=0)
         result = await get_daily_operator_summary(
@@ -433,16 +476,20 @@ async def test_warp_status_active_when_process_present(tmp_path: Path) -> None:
     _pass = lambda p, **kw: Path(p)  # noqa: E731
     fake_run_result = MagicMock()
     fake_run_result.stdout = '"Cloudflare WARP.exe","1234","Console","1","45,678 K"\n'
-    with _snapshot_patch(position_count=0), factory_p, repo_p as repo_cls, patch(
-        "app.agents.tools.canonical_read.resolve_workspace_dir",
-        side_effect=_pass,
-    ), patch(
-        "app.agents.tools.canonical_read.resolve_workspace_path",
-        side_effect=_pass,
-    ), patch(
-        "platform.system", return_value="Windows"
-    ), patch(
-        "subprocess.run", return_value=fake_run_result
+    with (
+        _snapshot_patch(position_count=0),
+        factory_p,
+        repo_p as repo_cls,
+        patch(
+            "app.agents.tools.canonical_read.resolve_workspace_dir",
+            side_effect=_pass,
+        ),
+        patch(
+            "app.agents.tools.canonical_read.resolve_workspace_path",
+            side_effect=_pass,
+        ),
+        patch("platform.system", return_value="Windows"),
+        patch("subprocess.run", return_value=fake_run_result),
     ):
         repo_cls.return_value.count_pending_documents = AsyncMock(return_value=0)
         result = await get_daily_operator_summary(
@@ -474,12 +521,18 @@ async def test_cycle_status_breakdown_empty_when_no_recent_cycles(tmp_path: Path
 
     factory_p, repo_p, _ = _db_patches(pending=0)
     _pass = lambda p, **kw: Path(p)  # noqa: E731
-    with _snapshot_patch(position_count=0), factory_p, repo_p as repo_cls, patch(
-        "app.agents.tools.canonical_read.resolve_workspace_dir",
-        side_effect=_pass,
-    ), patch(
-        "app.agents.tools.canonical_read.resolve_workspace_path",
-        side_effect=_pass,
+    with (
+        _snapshot_patch(position_count=0),
+        factory_p,
+        repo_p as repo_cls,
+        patch(
+            "app.agents.tools.canonical_read.resolve_workspace_dir",
+            side_effect=_pass,
+        ),
+        patch(
+            "app.agents.tools.canonical_read.resolve_workspace_path",
+            side_effect=_pass,
+        ),
     ):
         repo_cls.return_value.count_pending_documents = AsyncMock(return_value=0)
         result = await get_daily_operator_summary(
@@ -517,17 +570,23 @@ async def test_summary_surfaces_cash_equity_and_realized_pnl(tmp_path: Path) -> 
 
     factory_p, repo_p, _ = _db_patches(pending=0)
     _pass = lambda p, **kw: Path(p)  # noqa: E731
-    with _snapshot_patch(
-        position_count=3,
-        cash_usd=16_715.74,
-        total_equity_usd=23_028.49,
-        realized_pnl_usd=945.45,
-    ), factory_p, repo_p as repo_cls, patch(
-        "app.agents.tools.canonical_read.resolve_workspace_dir",
-        side_effect=_pass,
-    ), patch(
-        "app.agents.tools.canonical_read.resolve_workspace_path",
-        side_effect=_pass,
+    with (
+        _snapshot_patch(
+            position_count=3,
+            cash_usd=16_715.74,
+            total_equity_usd=23_028.49,
+            realized_pnl_usd=945.45,
+        ),
+        factory_p,
+        repo_p as repo_cls,
+        patch(
+            "app.agents.tools.canonical_read.resolve_workspace_dir",
+            side_effect=_pass,
+        ),
+        patch(
+            "app.agents.tools.canonical_read.resolve_workspace_path",
+            side_effect=_pass,
+        ),
     ):
         repo_cls.return_value.count_pending_documents = AsyncMock(return_value=0)
         result = await get_daily_operator_summary(
@@ -560,12 +619,18 @@ async def test_summary_marks_portfolio_fields_unknown_when_snapshot_fails(
 
     factory_p, repo_p, _ = _db_patches(pending=0)
     _pass = lambda p, **kw: Path(p)  # noqa: E731
-    with _snapshot_patch(raise_error=True), factory_p, repo_p as repo_cls, patch(
-        "app.agents.tools.canonical_read.resolve_workspace_dir",
-        side_effect=_pass,
-    ), patch(
-        "app.agents.tools.canonical_read.resolve_workspace_path",
-        side_effect=_pass,
+    with (
+        _snapshot_patch(raise_error=True),
+        factory_p,
+        repo_p as repo_cls,
+        patch(
+            "app.agents.tools.canonical_read.resolve_workspace_dir",
+            side_effect=_pass,
+        ),
+        patch(
+            "app.agents.tools.canonical_read.resolve_workspace_path",
+            side_effect=_pass,
+        ),
     ):
         repo_cls.return_value.count_pending_documents = AsyncMock(return_value=0)
         result = await get_daily_operator_summary(

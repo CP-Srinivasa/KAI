@@ -27,6 +27,7 @@ def _read_jsonl_tolerant(path: Path) -> list[dict]:
     """
     return read_jsonl_tolerant(path)
 
+
 # Default JSONL filename for alert audits
 ALERT_AUDIT_JSONL_FILENAME = "alert_audit.jsonl"
 # Backwards-compatibility alias
@@ -171,9 +172,7 @@ def load_outcome_annotations(
                 AlertOutcomeAnnotation(
                     document_id=data["document_id"],
                     outcome=data["outcome"],
-                    annotated_at=data.get(
-                        "annotated_at", datetime.now(UTC).isoformat()
-                    ),
+                    annotated_at=data.get("annotated_at", datetime.now(UTC).isoformat()),
                     asset=data.get("asset"),
                     note=data.get("note"),
                     provenance=SignalProvenance.from_dict(data.get("provenance")),
@@ -285,9 +284,7 @@ def load_alert_audits(input_path: str | Path) -> list[AlertAuditRecord]:
                 actionable=data.get("actionable"),
                 directional_eligible=data.get("directional_eligible"),
                 directional_block_reason=data.get("directional_block_reason"),
-                directional_blocked_assets=data.get(
-                    "directional_blocked_assets", []
-                ),
+                directional_blocked_assets=data.get("directional_blocked_assets", []),
                 title_hash=data.get("title_hash"),
                 normalized_title=data.get("normalized_title"),
                 source_name=data.get("source_name"),

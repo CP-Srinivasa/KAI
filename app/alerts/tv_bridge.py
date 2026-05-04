@@ -169,8 +169,12 @@ def persist_tv_events_as_alert_audits(
         ticker = event.get("ticker")
         action = (event.get("action") or "").lower()
         received_at = event.get("received_at")
-        if not (isinstance(event_id, str) and isinstance(ticker, str)
-                and isinstance(received_at, str) and action):
+        if not (
+            isinstance(event_id, str)
+            and isinstance(ticker, str)
+            and isinstance(received_at, str)
+            and action
+        ):
             counts["skipped_invalid"] += 1
             continue
 
@@ -220,9 +224,7 @@ def persist_tv_events_as_alert_audits(
         prov_signal_path_id = (
             event_prov.get("signal_path_id") if isinstance(event_prov, dict) else None
         )
-        prov_auth_method = (
-            event_prov.get("auth_method") if isinstance(event_prov, dict) else None
-        )
+        prov_auth_method = event_prov.get("auth_method") if isinstance(event_prov, dict) else None
         from app.core.settings import get_settings as _get_settings
 
         provenance = SignalProvenance(

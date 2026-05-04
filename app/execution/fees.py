@@ -106,15 +106,9 @@ def lookup_fee(
         # default_{role}_pct, dann role-spezifischer hard fallback.
         default = table.get(f"default_{role_norm}_pct")
         hard_fallback = (
-            _HARD_FALLBACK_MAKER_PCT
-            if role_norm == "maker"
-            else _HARD_FALLBACK_TAKER_PCT
+            _HARD_FALLBACK_MAKER_PCT if role_norm == "maker" else _HARD_FALLBACK_TAKER_PCT
         )
-        pct = (
-            float(default)
-            if isinstance(default, (int, float))
-            else hard_fallback
-        )
+        pct = float(default) if isinstance(default, (int, float)) else hard_fallback
 
     return VenueFee(
         venue=venue_norm,
@@ -122,9 +116,7 @@ def lookup_fee(
         bps_applied=pct * 100.0,  # 0.10% -> 10 bps
         table_version=str(table.get("version", "fallback")),
         table_effective_until=(
-            str(table["effective_until"])
-            if "effective_until" in table
-            else None
+            str(table["effective_until"]) if "effective_until" in table else None
         ),
     )
 

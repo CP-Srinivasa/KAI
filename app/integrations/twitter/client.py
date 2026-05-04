@@ -155,7 +155,8 @@ class TwitterClient:
                     logger.debug("twitter: user not found: %s", handle)
                     continue
                 tweets = await self.get_user_tweets(
-                    user.user_id, max_results=max_per_user,
+                    user.user_id,
+                    max_results=max_per_user,
                 )
                 all_tweets.extend(tweets)
             except httpx.HTTPStatusError as exc:

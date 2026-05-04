@@ -119,8 +119,7 @@ async def _load_source_by_doc() -> dict[str, str]:
             ).where(CanonicalDocumentModel.id.in_(doc_ids))
             rows = (await session.execute(stmt)).all()
         source_map = {
-            str(row[0]): ((row[1] or row[2] or "unknown").strip().lower())
-            for row in rows
+            str(row[0]): ((row[1] or row[2] or "unknown").strip().lower()) for row in rows
         }
         # doc_ids present in audits but absent from DB → legacy-unknown
         for doc_id in doc_ids:
@@ -264,60 +263,59 @@ async def dashboard_quality_api() -> JSONResponse:
     if _AUDIT_V1_DISQUALIFIED_FLAG.exists():
         audit_v1_disqualified = True
         try:
-            audit_provenance = json.loads(
-                _AUDIT_V1_DISQUALIFIED_FLAG.read_text(encoding="utf-8")
-            )
+            audit_provenance = json.loads(_AUDIT_V1_DISQUALIFIED_FLAG.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as exc:
             logger.warning("audit_v1_disqualified_flag_unreadable: %s", exc)
             audit_provenance = {"error": "flag_unreadable"}
 
-    return JSONResponse(content={
-        "precision_pct": quality.get("resolved_precision_pct"),
-        "false_positive_pct": quality.get("resolved_false_positive_rate_pct"),
-        "resolved_count": hit_rate.get("resolved_directional_documents", 0),
-        "directional_count": hit_rate.get("directional_alert_documents", 0),
-        "hits": hit_rate.get("alert_hits", 0),
-        "misses": hit_rate.get("alert_misses", 0),
-        "active_precision_pct": quality.get("active_precision_pct"),
-        "active_resolved_count": hit_rate.get(
-            "active_resolved_directional_documents", 0
-        ),
-        "active_hits": hit_rate.get("active_alert_hits", 0),
-        "active_misses": hit_rate.get("active_alert_misses", 0),
-        "legacy_resolved_count": hit_rate.get("legacy_resolved_documents", 0),
-        "legacy_unknown_cutoff": hit_rate.get("legacy_unknown_cutoff"),
-        "priority_corr": quality.get("priority_hit_correlation"),
-        "forward_precision_pct": fwd.get("precision_pct"),
-        "forward_resolved": fwd.get("resolved", 0),
-        "forward_hits": fwd.get("hits", 0),
-        "forward_miss": fwd.get("miss", 0),
-        "paper_fills": len(fills),
-        "paper_fills_with_pnl": positions_closed,
-        "paper_realized_pnl_usd": realized_pnl_usd,
-        "paper_positions_closed": positions_closed,
-        "audit_v1_disqualified": audit_v1_disqualified,
-        "audit_provenance": audit_provenance,
-        "paper_cycles": paper.get("loop_metrics", {}).get("total_cycles", 0),
-        "real_price_cycles": quality.get("paper_real_price_cycle_count", 0),
-        "gate_status": gate.get("overall_status"),
-        "blocking_reasons": gate.get("blocking_reasons", []),
-        "actionable_rate_pct": quality.get("directional_actionable_rate_pct"),
-        "high_priority_hit_rate_pct": quality.get("high_priority_hit_rate_pct"),
-        "low_priority_hit_rate_pct": quality.get("low_priority_hit_rate_pct"),
-        "loop_status_counts": status_counts,
-        "recent_alerts": [
-            {
-                "doc_id": r.get("document_id", "")[:12],
-                "sentiment": r.get("sentiment_label", ""),
-                "priority": r.get("priority"),
-                "assets": r.get("affected_assets", []),
-                "dispatched_at": r.get("dispatched_at", "")[:16],
-                "outcome": outcomes_by_doc.get(r.get("document_id", ""), ""),
-            }
-            for r in reversed(recent_alerts)
-        ],
-        "generated_at": report.get("generated_at", ""),
-    }, headers={"Cache-Control": "no-store, max-age=0"})
+    return JSONResponse(
+        content={
+            "precision_pct": quality.get("resolved_precision_pct"),
+            "false_positive_pct": quality.get("resolved_false_positive_rate_pct"),
+            "resolved_count": hit_rate.get("resolved_directional_documents", 0),
+            "directional_count": hit_rate.get("directional_alert_documents", 0),
+            "hits": hit_rate.get("alert_hits", 0),
+            "misses": hit_rate.get("alert_misses", 0),
+            "active_precision_pct": quality.get("active_precision_pct"),
+            "active_resolved_count": hit_rate.get("active_resolved_directional_documents", 0),
+            "active_hits": hit_rate.get("active_alert_hits", 0),
+            "active_misses": hit_rate.get("active_alert_misses", 0),
+            "legacy_resolved_count": hit_rate.get("legacy_resolved_documents", 0),
+            "legacy_unknown_cutoff": hit_rate.get("legacy_unknown_cutoff"),
+            "priority_corr": quality.get("priority_hit_correlation"),
+            "forward_precision_pct": fwd.get("precision_pct"),
+            "forward_resolved": fwd.get("resolved", 0),
+            "forward_hits": fwd.get("hits", 0),
+            "forward_miss": fwd.get("miss", 0),
+            "paper_fills": len(fills),
+            "paper_fills_with_pnl": positions_closed,
+            "paper_realized_pnl_usd": realized_pnl_usd,
+            "paper_positions_closed": positions_closed,
+            "audit_v1_disqualified": audit_v1_disqualified,
+            "audit_provenance": audit_provenance,
+            "paper_cycles": paper.get("loop_metrics", {}).get("total_cycles", 0),
+            "real_price_cycles": quality.get("paper_real_price_cycle_count", 0),
+            "gate_status": gate.get("overall_status"),
+            "blocking_reasons": gate.get("blocking_reasons", []),
+            "actionable_rate_pct": quality.get("directional_actionable_rate_pct"),
+            "high_priority_hit_rate_pct": quality.get("high_priority_hit_rate_pct"),
+            "low_priority_hit_rate_pct": quality.get("low_priority_hit_rate_pct"),
+            "loop_status_counts": status_counts,
+            "recent_alerts": [
+                {
+                    "doc_id": r.get("document_id", "")[:12],
+                    "sentiment": r.get("sentiment_label", ""),
+                    "priority": r.get("priority"),
+                    "assets": r.get("affected_assets", []),
+                    "dispatched_at": r.get("dispatched_at", "")[:16],
+                    "outcome": outcomes_by_doc.get(r.get("document_id", ""), ""),
+                }
+                for r in reversed(recent_alerts)
+            ],
+            "generated_at": report.get("generated_at", ""),
+        },
+        headers={"Cache-Control": "no-store, max-age=0"},
+    )
 
 
 @router.get("/dashboard/api/priority-gate", tags=["dashboard"])
@@ -331,9 +329,7 @@ async def dashboard_priority_gate_api() -> JSONResponse:
     from app.orchestrator.trading_loop import build_priority_gate_summary
 
     try:
-        summary = build_priority_gate_summary(
-            audit_path=_TRADING_LOOP_AUDIT, window_hours=24
-        )
+        summary = build_priority_gate_summary(audit_path=_TRADING_LOOP_AUDIT, window_hours=24)
     except Exception as exc:  # noqa: BLE001
         logger.warning("priority_gate_summary_failed: %s", exc)
         return JSONResponse(

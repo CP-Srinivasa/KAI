@@ -37,4 +37,3 @@ def hits_to_entity_mentions(
             )
         )
     return mentions
-

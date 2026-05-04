@@ -236,9 +236,7 @@ async def run_rss_pipeline(
         run_llm=provider is not None,
         shadow_provider=shadow_provider,
         market_data_adapter=market_adapter,
-        trusted_social_handles=load_trusted_social_handles(
-            Path(get_settings().monitor_dir)
-        ),
+        trusted_social_handles=load_trusted_social_handles(Path(get_settings().monitor_dir)),
     )
     pipeline_results = await pipeline.run_batch(saved_docs)
 
@@ -288,9 +286,7 @@ async def run_rss_pipeline(
                         )
                         if deliveries:
                             alerts_fired_count += 1
-                            await _maybe_trigger_paper_trade(
-                                res.document, res.analysis_result
-                            )
+                            await _maybe_trigger_paper_trade(res.document, res.analysis_result)
                 except StorageError as exc:
                     logger.warning(
                         "pipeline_update_failed",
@@ -443,9 +439,7 @@ async def run_youtube_pipeline(
         run_llm=provider is not None,
         shadow_provider=shadow_provider,
         market_data_adapter=market_adapter,
-        trusted_social_handles=load_trusted_social_handles(
-            Path(get_settings().monitor_dir)
-        ),
+        trusted_social_handles=load_trusted_social_handles(Path(get_settings().monitor_dir)),
     )
     pipeline_results = await pipeline.run_batch(saved_docs)
 
@@ -488,9 +482,7 @@ async def run_youtube_pipeline(
                         )
                         if deliveries:
                             alerts_fired_count += 1
-                            await _maybe_trigger_paper_trade(
-                                res.document, res.analysis_result
-                            )
+                            await _maybe_trigger_paper_trade(res.document, res.analysis_result)
                 except StorageError as exc:
                     logger.warning(
                         "youtube_pipeline_update_failed",
@@ -669,9 +661,7 @@ async def run_newsdata_pipeline(
         run_llm=provider is not None,
         shadow_provider=shadow_provider,
         market_data_adapter=market_adapter,
-        trusted_social_handles=load_trusted_social_handles(
-            Path(get_settings().monitor_dir)
-        ),
+        trusted_social_handles=load_trusted_social_handles(Path(get_settings().monitor_dir)),
     )
     pipeline_results = await pipeline.run_batch(saved_docs)
 
@@ -714,9 +704,7 @@ async def run_newsdata_pipeline(
                         )
                         if deliveries:
                             alerts_fired_count += 1
-                            await _maybe_trigger_paper_trade(
-                                res.document, res.analysis_result
-                            )
+                            await _maybe_trigger_paper_trade(res.document, res.analysis_result)
                 except StorageError as exc:
                     logger.warning(
                         "newsdata_pipeline_update_failed",
@@ -794,9 +782,14 @@ async def run_twitter_pipeline(
         handles = _load_twitter_handles(monitor_path)
     if not handles:
         return PipelineRunStats(
-            source_id=source_id, url="twitter:watchlist",
-            fetched_count=0, saved_count=0, analyzed_count=0,
-            failed_count=0, skipped_count=0, alerts_fired_count=0,
+            source_id=source_id,
+            url="twitter:watchlist",
+            fetched_count=0,
+            saved_count=0,
+            analyzed_count=0,
+            failed_count=0,
+            skipped_count=0,
+            alerts_fired_count=0,
             priority_distribution={},
         )
 
@@ -806,9 +799,14 @@ async def run_twitter_pipeline(
     except Exception as exc:
         logger.warning("twitter_pipeline_fetch_failed", error=str(exc))
         return PipelineRunStats(
-            source_id=source_id, url="twitter:watchlist",
-            fetched_count=0, saved_count=0, analyzed_count=0,
-            failed_count=1, skipped_count=0, alerts_fired_count=0,
+            source_id=source_id,
+            url="twitter:watchlist",
+            fetched_count=0,
+            saved_count=0,
+            analyzed_count=0,
+            failed_count=1,
+            skipped_count=0,
+            alerts_fired_count=0,
             priority_distribution={},
         )
 
@@ -864,11 +862,14 @@ async def run_twitter_pipeline(
 
     if not saved_docs:
         return PipelineRunStats(
-            source_id=source_id, url="twitter:watchlist",
+            source_id=source_id,
+            url="twitter:watchlist",
             fetched_count=ingest_stats.fetched_count,
             saved_count=ingest_stats.saved_count,
-            analyzed_count=0, failed_count=ingest_stats.failed_count,
-            skipped_count=skipped, alerts_fired_count=0,
+            analyzed_count=0,
+            failed_count=ingest_stats.failed_count,
+            skipped_count=skipped,
+            alerts_fired_count=0,
             priority_distribution={},
         )
 
@@ -879,9 +880,7 @@ async def run_twitter_pipeline(
         run_llm=provider is not None,
         shadow_provider=shadow_provider,
         market_data_adapter=market_adapter,
-        trusted_social_handles=load_trusted_social_handles(
-            Path(get_settings().monitor_dir)
-        ),
+        trusted_social_handles=load_trusted_social_handles(Path(get_settings().monitor_dir)),
     )
     pipeline_results = await pipeline.run_batch(saved_docs)
 
@@ -905,7 +904,8 @@ async def run_twitter_pipeline(
                 try:
                     if res.analysis_result is not None:
                         await repo.update_analysis(
-                            str(res.document.id), res.analysis_result,
+                            str(res.document.id),
+                            res.analysis_result,
                             provider_name=res.document.provider,
                             metadata_updates=res.document.metadata,
                         )
@@ -915,17 +915,23 @@ async def run_twitter_pipeline(
                     if res.analysis_result is not None:
                         spam_prob = (
                             res.llm_output.spam_probability
-                            if res.llm_output else res.analysis_result.spam_probability
+                            if res.llm_output
+                            else res.analysis_result.spam_probability
                         )
                         deliveries = await alert_service.process_document(
-                            res.document, res.analysis_result, spam_probability=spam_prob,
+                            res.document,
+                            res.analysis_result,
+                            spam_probability=spam_prob,
                         )
                         if deliveries:
                             alerts_fired_count += 1
                             await _maybe_trigger_paper_trade(res.document, res.analysis_result)
                 except StorageError as exc:
-                    logger.warning("twitter_pipeline_update_failed",
-                                   doc_id=str(res.document.id), error=str(exc))
+                    logger.warning(
+                        "twitter_pipeline_update_failed",
+                        doc_id=str(res.document.id),
+                        error=str(exc),
+                    )
                     failed_count += 1
     else:
         for res in pipeline_results:
@@ -948,11 +954,14 @@ async def run_twitter_pipeline(
     )
 
     return PipelineRunStats(
-        source_id=source_id, url="twitter:watchlist",
+        source_id=source_id,
+        url="twitter:watchlist",
         fetched_count=ingest_stats.fetched_count,
         saved_count=ingest_stats.saved_count,
-        analyzed_count=analyzed_count, failed_count=failed_count,
-        skipped_count=skipped, alerts_fired_count=alerts_fired_count,
+        analyzed_count=analyzed_count,
+        failed_count=failed_count,
+        skipped_count=skipped,
+        alerts_fired_count=alerts_fired_count,
         priority_distribution=priority_distribution,
         top_results=top_results,
     )

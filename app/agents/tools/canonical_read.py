@@ -390,8 +390,7 @@ def _summarize_warp_status() -> dict[str, object]:
                         "active": True,
                         "detection_method": "interface",
                         "hint": (
-                            "WARP-Interface aktiv — falls "
-                            "Dashboard-Login hängt: WARP pausieren."
+                            "WARP-Interface aktiv — falls Dashboard-Login hängt: WARP pausieren."
                         ),
                     }
             except ValueError:
@@ -455,15 +454,9 @@ def _summarize_telegram_channel_ingest(
     pid_rel = pid_file_override or ".telegram_listener.pid"
 
     session_path = (
-        Path(session_rel)
-        if Path(session_rel).is_absolute()
-        else WORKSPACE_ROOT / session_rel
+        Path(session_rel) if Path(session_rel).is_absolute() else WORKSPACE_ROOT / session_rel
     )
-    pid_path = (
-        Path(pid_rel)
-        if Path(pid_rel).is_absolute()
-        else WORKSPACE_ROOT / pid_rel
-    )
+    pid_path = Path(pid_rel) if Path(pid_rel).is_absolute() else WORKSPACE_ROOT / pid_rel
 
     # Heartbeat path — D-191/S-003. Same defensive resolution as above so
     # MagicMock-based legacy tests don't choke on Path(MagicMock()).
@@ -475,11 +468,7 @@ def _summarize_telegram_channel_ingest(
 
     hb_path: Path | None = None
     if hb_rel:
-        hb_path = (
-            Path(hb_rel)
-            if Path(hb_rel).is_absolute()
-            else WORKSPACE_ROOT / hb_rel
-        )
+        hb_path = Path(hb_rel) if Path(hb_rel).is_absolute() else WORKSPACE_ROOT / hb_rel
 
     if not session_path.exists():
         return {
@@ -491,9 +480,7 @@ def _summarize_telegram_channel_ingest(
             "session_path": str(session_path),
         }
 
-    candidates: list[tuple[str, float]] = [
-        ("session", session_path.stat().st_mtime)
-    ]
+    candidates: list[tuple[str, float]] = [("session", session_path.stat().st_mtime)]
     if pid_path.exists():
         candidates.append(("pid_file", pid_path.stat().st_mtime))
     if hb_path is not None and hb_path.exists():
@@ -525,9 +512,7 @@ def _summarize_telegram_channel_ingest(
         try:
             data = json.loads(replay_marker.read_text(encoding="utf-8"))
             attempted_raw = data.get("attempted_at")
-            replay_attempted_at = (
-                str(attempted_raw) if isinstance(attempted_raw, str) else None
-            )
+            replay_attempted_at = str(attempted_raw) if isinstance(attempted_raw, str) else None
             processed_raw = data.get("processed")
             scanned_raw = data.get("scanned")
             if isinstance(processed_raw, int):
@@ -571,9 +556,7 @@ def _summarize_operator_envelope_activity(
     from app.agents.tools._helpers import WORKSPACE_ROOT
 
     rel_path = envelope_path_override or "artifacts/telegram_message_envelope.jsonl"
-    envelope_path = (
-        Path(rel_path) if Path(rel_path).is_absolute() else WORKSPACE_ROOT / rel_path
-    )
+    envelope_path = Path(rel_path) if Path(rel_path).is_absolute() else WORKSPACE_ROOT / rel_path
 
     if not envelope_path.exists():
         return {
@@ -653,6 +636,168 @@ def _summarize_operator_envelope_activity(
         "stale_threshold_hours": stale_threshold_hours,
         "dead_threshold_hours": dead_threshold_hours,
         "hint": hint,
+    }
+
+
+def _summarize_approval_latency_24h(
+    *,
+    now: datetime,
+    send_audit_path_override: str | None = None,
+    envelope_path_override: str | None = None,
+) -> dict[str, object]:
+    """Operator approval-click latency over the last 24h.
+
+    Joins approval-send audit (telegram_approval_send.jsonl, written when the
+    bot posts an approval card) with envelope decisions
+    (telegram_message_envelope.jsonl) by envelope_id ↔ origin_envelope_id.
+
+    Percentiles cover only *decided* clicks (filled + ignored) — that's the
+    operator's actual reaction time. Expired and still_open are reported
+    separately so operators see whether the TTL itself is binding (= raise
+    TTL) versus the operator missing the click (= add reminder).
+
+    Status classes:
+      ok            — at least one send exists in 24h (counts populated)
+      no_sends_24h  — nothing was sent in the last 24h (audit healthy, traffic dry)
+      missing       — send-audit log absent or unreadable
+    """
+    from app.agents.tools._helpers import WORKSPACE_ROOT
+
+    send_rel = send_audit_path_override or "artifacts/telegram_approval_send.jsonl"
+    env_rel = envelope_path_override or "artifacts/telegram_message_envelope.jsonl"
+    send_path = Path(send_rel) if Path(send_rel).is_absolute() else WORKSPACE_ROOT / send_rel
+    env_path = Path(env_rel) if Path(env_rel).is_absolute() else WORKSPACE_ROOT / env_rel
+
+    if not send_path.exists():
+        return {
+            "status": "missing",
+            "reason": "send-audit log not found",
+            "send_audit_path": str(send_path),
+        }
+
+    cutoff_24h = now - timedelta(hours=24)
+
+    # envelope_id -> latest sent_ts (within 24h, status=ok)
+    sent_24h: dict[str, datetime] = {}
+    try:
+        with send_path.open("r", encoding="utf-8") as fh:
+            for line in fh:
+                stripped = line.strip()
+                if not stripped:
+                    continue
+                try:
+                    rec = json.loads(stripped)
+                except json.JSONDecodeError:
+                    continue
+                if not isinstance(rec, dict):
+                    continue
+                if rec.get("event") != "telegram_approval_send":
+                    continue
+                if rec.get("status") != "ok":
+                    continue
+                env_id = rec.get("envelope_id")
+                if not isinstance(env_id, str) or not env_id:
+                    continue
+                ts = _parse_iso_utc(rec.get("timestamp_utc"))
+                if ts is None or ts < cutoff_24h:
+                    continue
+                prior = sent_24h.get(env_id)
+                if prior is None or ts > prior:
+                    sent_24h[env_id] = ts
+    except OSError:
+        return {
+            "status": "missing",
+            "reason": "send-audit log not readable",
+            "send_audit_path": str(send_path),
+        }
+
+    if not sent_24h:
+        return {
+            "status": "no_sends_24h",
+            "sent": 0,
+            "decided": 0,
+            "expired": 0,
+            "still_open": 0,
+            "p50_seconds": None,
+            "p90_seconds": None,
+            "p99_seconds": None,
+            "decision_rate_pct": None,
+        }
+
+    # Earliest decision per origin_envelope_id (filled / ignored / expired).
+    # An envelope can have multiple records (e.g. expired + later manual fix);
+    # we treat the *first* decision as canonical because TTL/dedup logic does.
+    decisions: dict[str, tuple[str, datetime]] = {}
+    if env_path.exists():
+        try:
+            with env_path.open("r", encoding="utf-8") as fh:
+                for line in fh:
+                    stripped = line.strip()
+                    if not stripped:
+                        continue
+                    try:
+                        rec = json.loads(stripped)
+                    except json.JSONDecodeError:
+                        continue
+                    if not isinstance(rec, dict):
+                        continue
+                    if rec.get("event") != "telegram_channel_approval":
+                        continue
+                    origin_id = rec.get("origin_envelope_id")
+                    if not isinstance(origin_id, str) or origin_id not in sent_24h:
+                        continue
+                    stage = str(rec.get("stage") or "")
+                    if stage not in {"accepted", "ignored", "expired"}:
+                        continue
+                    ts = _parse_iso_utc(rec.get("timestamp_utc"))
+                    if ts is None:
+                        continue
+                    prior = decisions.get(origin_id)
+                    if prior is None or ts < prior[1]:
+                        decisions[origin_id] = (stage, ts)
+        except OSError:
+            pass
+
+    decided_latencies: list[float] = []
+    decided_count = 0
+    expired_count = 0
+    still_open_count = 0
+
+    for env_id, sent_ts in sent_24h.items():
+        decision = decisions.get(env_id)
+        if decision is None:
+            still_open_count += 1
+            continue
+        stage, decision_ts = decision
+        latency_s = max(0.0, (decision_ts - sent_ts).total_seconds())
+        if stage == "expired":
+            expired_count += 1
+        else:
+            decided_count += 1
+            decided_latencies.append(latency_s)
+
+    def _pct(p: float) -> float | None:
+        if not decided_latencies:
+            return None
+        ordered = sorted(decided_latencies)
+        # Nearest-rank — stable on small n. Index clamped to [0, len-1].
+        idx = int(round(p / 100.0 * (len(ordered) - 1)))
+        idx = max(0, min(len(ordered) - 1, idx))
+        return round(ordered[idx], 1)
+
+    sent_total = len(sent_24h)
+    return {
+        "status": "ok",
+        "sent": sent_total,
+        "decided": decided_count,
+        "expired": expired_count,
+        "still_open": still_open_count,
+        "p50_seconds": _pct(50),
+        "p90_seconds": _pct(90),
+        "p99_seconds": _pct(99),
+        "decision_rate_pct": (
+            round(100.0 * decided_count / sent_total, 1) if sent_total > 0 else None
+        ),
     }
 
 
@@ -769,8 +914,7 @@ async def get_daily_operator_summary(
         else:
             priority_rejected_pct_24h = None
         priority_rejected_alert = (
-            priority_rejected_pct_24h is not None
-            and priority_rejected_pct_24h > 50.0
+            priority_rejected_pct_24h is not None and priority_rejected_pct_24h > 50.0
         )
     except Exception:
         cycle_count_today = None
@@ -802,6 +946,9 @@ async def get_daily_operator_summary(
     # Operator-Envelope activity watchdog. Surfaces silent gaps in the
     # operator-curated envelope stream (e.g. 7-day blackout 2026-04-21..04-28).
     operator_envelope = _summarize_operator_envelope_activity(now=now_utc)
+    # B-6 approval-click latency over 24h. Replaces the manual JSONL pull that
+    # the TTL-decision (2026-05-07) was previously gated on.
+    approval_latency_24h = _summarize_approval_latency_24h(now=now_utc)
 
     def _or_unknown(value: int | float | None) -> object:
         return value if value is not None else "?"
@@ -820,9 +967,7 @@ async def get_daily_operator_summary(
         "alert_fire_rate_docs_per_hour_24h": _or_unknown(alert_rate_24h),
         "cycle_count_today": _or_unknown(cycle_count_today),
         "cycle_status_breakdown_24h": (
-            cycle_status_breakdown_24h
-            if cycle_status_breakdown_24h is not None
-            else "?"
+            cycle_status_breakdown_24h if cycle_status_breakdown_24h is not None else "?"
         ),
         "priority_rejected_pct_24h": _or_unknown(priority_rejected_pct_24h),
         "priority_rejected_alert": priority_rejected_alert,
@@ -832,6 +977,7 @@ async def get_daily_operator_summary(
         },
         "telegram_channel_ingest": tg_channel_ingest,
         "operator_envelope": operator_envelope,
+        "approval_latency_24h": approval_latency_24h,
         "warp_status": warp_status,
         # Explicit not-measured markers: /status consumers must NOT treat a
         # missing field as zero. Wire these up once the underlying telemetry
@@ -891,9 +1037,7 @@ async def get_alert_audit_summary(
         if outcome_entry is not None:
             row["outcome"] = outcome_entry["outcome"]
             row["resolved_at"] = outcome_entry["resolved_at"]
-            sec = _seconds_between(
-                audit.dispatched_at, str(outcome_entry["resolved_at"])
-            )
+            sec = _seconds_between(audit.dispatched_at, str(outcome_entry["resolved_at"]))
             if sec is not None:
                 row["resolved_after_seconds"] = sec
         enriched.append(row)

@@ -10,12 +10,17 @@ from __future__ import annotations
 
 import asyncio
 import json
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 from app.ingestion.telegram_channel_approval import (
     APPROVED_SUFFIX,
+    _compute_position_risk_pct,
+    _compute_risk_reward,
+    _format_source_quality_badge,
+    _format_ttl_endtime,
+    _load_source_quality,
     build_approval_record,
     build_inline_keyboard,
     format_approval_message,
@@ -75,9 +80,7 @@ def _read_log(path: Path) -> list[dict[str, Any]]:
     if not path.exists():
         return []
     return [
-        json.loads(line)
-        for line in path.read_text(encoding="utf-8").splitlines()
-        if line.strip()
+        json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()
     ]
 
 
@@ -109,6 +112,277 @@ class TestFormatApprovalMessage:
         msg = format_approval_message(rec, ttl_minutes=60)
         # leverage slot renders "—" instead of crashing
         assert "—" in msg
+
+    def test_decision_glance_header_renders(self, tmp_path: Path) -> None:
+        # No quality report → glance still renders R/R + Risk + TTL deadline.
+        rec = _shadow_record()
+        msg = format_approval_message(
+            rec,
+            ttl_minutes=60,
+            source_quality_report_path=tmp_path / "missing.json",
+        )
+        # First non-empty line is the Decision-Glance header
+        first_line = msg.splitlines()[0]
+        assert first_line.startswith("🎯")
+        assert "GUN/USDT" in first_line
+        assert "LONG" in first_line
+        assert "10x" in first_line
+        # R/R 1:0.1 (entry 2800, SL 2680, target 2815 → reward 15 / risk 120)
+        assert "R/R 1:0.1" in first_line
+        # Position-risk = sl_dist% × leverage = 4.29% × 10 ≈ 42.9%
+        assert "Risk 42." in first_line
+        # TTL deadline derived from record_ts (11:17 UTC) + 60min = 12:17 UTC
+        assert "TTL bis 12:17 UTC" in first_line
+
+    def test_glance_drops_invalid_geometry_silently(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        # Long with SL above entry → R/R must be dropped, no NaN/None leak.
+        rec = _shadow_record()
+        rec["payload"]["stop_loss"] = 2900  # above entry on a long
+        msg = format_approval_message(
+            rec,
+            ttl_minutes=60,
+            source_quality_report_path=tmp_path / "missing.json",
+        )
+        first_line = msg.splitlines()[0]
+        assert "R/R" not in first_line
+        # other glance fields still present
+        assert "GUN/USDT" in first_line
+        assert "TTL bis" in first_line
+
+    def test_source_badge_shown_when_sample_sufficient(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        report = tmp_path / "tv4.json"
+        report.write_text(
+            json.dumps(
+                {
+                    "generated_at": datetime.now(UTC).isoformat(),
+                    "by_source": [
+                        {
+                            "source": "telegram_premium_channel",
+                            "resolved": 30,
+                            "hits": 15,
+                            "misses": 15,
+                            "hit_rate_pct": 50.0,
+                            "ci_low_pct": 33.0,
+                            "ci_high_pct": 67.0,
+                            "sample_sufficient": True,
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        rec = _shadow_record()  # source="telegram_premium_channel"
+        msg = format_approval_message(
+            rec,
+            ttl_minutes=60,
+            source_quality_report_path=report,
+        )
+        assert "50% · n=30 · CI [33–67]" in msg
+
+    def test_source_badge_omitted_when_sample_insufficient(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        report = tmp_path / "tv4.json"
+        report.write_text(
+            json.dumps(
+                {
+                    "generated_at": datetime.now(UTC).isoformat(),
+                    "by_source": [
+                        {
+                            "source": "telegram_premium_channel",
+                            "resolved": 5,
+                            "hits": 2,
+                            "misses": 3,
+                            "hit_rate_pct": 40.0,
+                            "ci_low_pct": 12.0,
+                            "ci_high_pct": 78.0,
+                            "sample_sufficient": False,
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        rec = _shadow_record()
+        msg = format_approval_message(
+            rec,
+            ttl_minutes=60,
+            source_quality_report_path=report,
+        )
+        # No misleading badge for insufficient samples
+        assert "n=5" not in msg
+        assert "CI [12" not in msg
+
+    def test_source_badge_omitted_when_report_stale(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        # 30 days old → past max_age_days
+        old_iso = (datetime.now(UTC) - timedelta(days=30)).isoformat()
+        report = tmp_path / "tv4.json"
+        report.write_text(
+            json.dumps(
+                {
+                    "generated_at": old_iso,
+                    "by_source": [
+                        {
+                            "source": "telegram_premium_channel",
+                            "resolved": 100,
+                            "hit_rate_pct": 50.0,
+                            "ci_low_pct": 40.0,
+                            "ci_high_pct": 60.0,
+                            "sample_sufficient": True,
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        rec = _shadow_record()
+        msg = format_approval_message(
+            rec,
+            ttl_minutes=60,
+            source_quality_report_path=report,
+        )
+        # Stale report must not feed a badge — operator could be misled.
+        assert "n=100" not in msg
+
+
+class TestRiskRewardHelper:
+    def test_long_first_target(self) -> None:
+        # entry 100, SL 90, target 130 → reward 30 / risk 10 → 3.0
+        assert _compute_risk_reward(100, 90, [130, 140], "long") == 3.0
+
+    def test_short_first_target(self) -> None:
+        # entry 100, SL 110, target 70 → reward 30 / risk 10 → 3.0
+        assert _compute_risk_reward(100, 110, [70, 60], "short") == 3.0
+
+    def test_inverted_long_returns_none(self) -> None:
+        # SL above entry on long → drop badge, don't show negative R/R
+        assert _compute_risk_reward(100, 110, [130], "long") is None
+
+    def test_target_below_entry_on_long_returns_none(self) -> None:
+        assert _compute_risk_reward(100, 90, [95], "long") is None
+
+    def test_unknown_direction_returns_none(self) -> None:
+        assert _compute_risk_reward(100, 90, [110], "sideways") is None
+
+    def test_missing_inputs_return_none(self) -> None:
+        assert _compute_risk_reward(None, 90, [110], "long") is None
+        assert _compute_risk_reward(100, None, [110], "long") is None
+        assert _compute_risk_reward(100, 90, [], "long") is None
+
+
+class TestPositionRiskHelper:
+    def test_long_with_leverage(self) -> None:
+        # SL 2% below entry, lev 10x → 20% margin loss
+        result = _compute_position_risk_pct(100, 98, 10)
+        assert result is not None
+        assert abs(result - 20.0) < 0.01
+
+    def test_no_leverage_defaults_to_1x(self) -> None:
+        # leverage None → behave as 1x (spot)
+        result = _compute_position_risk_pct(100, 98, None)
+        assert result is not None
+        assert abs(result - 2.0) < 0.01
+
+    def test_invalid_entry_returns_none(self) -> None:
+        assert _compute_position_risk_pct(0, 98, 10) is None
+        assert _compute_position_risk_pct(None, 98, 10) is None
+
+
+class TestFormatTtlEndtime:
+    def test_well_formed(self) -> None:
+        ts = datetime(2026, 5, 3, 14, 0, 0, tzinfo=UTC).isoformat()
+        assert _format_ttl_endtime(ts, 60) == "15:00 UTC"
+
+    def test_naive_treated_as_utc(self) -> None:
+        ts = datetime(2026, 5, 3, 14, 0, 0).isoformat()  # no tz
+        assert _format_ttl_endtime(ts, 30) == "14:30 UTC"
+
+    def test_unparseable_returns_none(self) -> None:
+        assert _format_ttl_endtime("nope", 60) is None
+
+
+class TestSourceQualityLoader:
+    def test_missing_file_returns_none(self, tmp_path: Path) -> None:
+        assert _load_source_quality("rss", tmp_path / "absent.json") is None
+
+    def test_unknown_source_returns_none(self, tmp_path: Path) -> None:
+        report = tmp_path / "tv4.json"
+        report.write_text(
+            json.dumps(
+                {
+                    "generated_at": datetime.now(UTC).isoformat(),
+                    "by_source": [
+                        {
+                            "source": "rss",
+                            "resolved": 30,
+                            "hit_rate_pct": 50.0,
+                            "ci_low_pct": 33.0,
+                            "ci_high_pct": 67.0,
+                            "sample_sufficient": True,
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        assert _load_source_quality("tradingview_webhook", report) is None
+
+    def test_case_insensitive_source_match(self, tmp_path: Path) -> None:
+        report = tmp_path / "tv4.json"
+        report.write_text(
+            json.dumps(
+                {
+                    "generated_at": datetime.now(UTC).isoformat(),
+                    "by_source": [
+                        {
+                            "source": "rss",
+                            "resolved": 30,
+                            "hit_rate_pct": 50.0,
+                            "ci_low_pct": 33.0,
+                            "ci_high_pct": 67.0,
+                            "sample_sufficient": True,
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        # Production caller sometimes passes upper-case sources.
+        result = _load_source_quality("RSS", report)
+        assert result is not None
+        assert result["source"] == "rss"
+
+    def test_corrupt_json_returns_none(self, tmp_path: Path) -> None:
+        report = tmp_path / "tv4.json"
+        report.write_text("{not json", encoding="utf-8")
+        assert _load_source_quality("rss", report) is None
+
+
+class TestSourceQualityBadge:
+    def test_renders_metrics(self) -> None:
+        metrics = {
+            "hit_rate_pct": 50.0,
+            "resolved": 30,
+            "ci_low_pct": 33.0,
+            "ci_high_pct": 67.0,
+        }
+        assert _format_source_quality_badge(metrics) == "50% · n=30 · CI [33–67]"
+
+    def test_none_metrics_empty_string(self) -> None:
+        assert _format_source_quality_badge(None) == ""
+
+    def test_partial_metrics_empty_string(self) -> None:
+        assert _format_source_quality_badge({"hit_rate_pct": 50.0}) == ""
 
 
 class TestBuildInlineKeyboard:
@@ -278,9 +552,7 @@ class TestHandleSignalApproval:
         assert audit["stage"] == "ignored"
         assert audit["ignored_by"] == 42
         # No _approved source record was written
-        assert not any(
-            str(r.get("source", "")).endswith("_approved") for r in records
-        )
+        assert not any(str(r.get("source", "")).endswith("_approved") for r in records)
 
     def test_expired_fill_refused(self, tmp_path: Path) -> None:
         log = tmp_path / "envelope.jsonl"
@@ -302,9 +574,7 @@ class TestHandleSignalApproval:
         assert outcome.status == "expired"
         # No approved record was written
         records = _read_log(log)
-        assert not any(
-            str(r.get("source", "")).endswith("_approved") for r in records
-        )
+        assert not any(str(r.get("source", "")).endswith("_approved") for r in records)
         # But an "expired" audit row is written
         assert any(r.get("stage") == "expired" for r in records)
 
@@ -314,9 +584,7 @@ class TestHandleSignalApproval:
         _write_log(log, [orig])
         later = datetime(2026, 4, 21, 11, 20, 0, tzinfo=UTC)
 
-        first = handle_signal_approval(
-            "fill", "ENV-A", envelope_log=log, ttl_minutes=60, now=later
-        )
+        first = handle_signal_approval("fill", "ENV-A", envelope_log=log, ttl_minutes=60, now=later)
         second = handle_signal_approval(
             "fill", "ENV-A", envelope_log=log, ttl_minutes=60, now=later
         )
@@ -324,9 +592,7 @@ class TestHandleSignalApproval:
         assert second.status == "duplicate"
         # Only one _approved re-emit present
         approved_count = sum(
-            1
-            for r in _read_log(log)
-            if str(r.get("source", "")).endswith("_approved")
+            1 for r in _read_log(log) if str(r.get("source", "")).endswith("_approved")
         )
         assert approved_count == 1
 
@@ -341,9 +607,7 @@ class TestHandleSignalApproval:
     def test_unknown_action(self, tmp_path: Path) -> None:
         log = tmp_path / "envelope.jsonl"
         _write_log(log, [_shadow_record(envelope_id="ENV-A")])
-        outcome = handle_signal_approval(
-            "detonate", "ENV-A", envelope_log=log, ttl_minutes=60
-        )
+        outcome = handle_signal_approval("detonate", "ENV-A", envelope_log=log, ttl_minutes=60)
         assert outcome.status == "not_found"
 
 
@@ -386,6 +650,7 @@ class _FakeAsyncClient:
     ):
         def _ctor(*args: Any, **kwargs: Any) -> _FakeAsyncClient:
             return cls(response=response, raise_exc=raise_exc)
+
         return _ctor
 
     async def __aenter__(self) -> _FakeAsyncClient:
@@ -405,9 +670,7 @@ def _read_audit(path: Path) -> list[dict[str, Any]]:
     if not path.exists():
         return []
     return [
-        json.loads(line)
-        for line in path.read_text(encoding="utf-8").splitlines()
-        if line.strip()
+        json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()
     ]
 
 
@@ -432,9 +695,7 @@ def _send_audit_required_fields() -> tuple[str, ...]:
 class TestSendApprovalRequestAudit:
     """Forward-only audit persistence for the bot send path (Neo-P-approval-send-audit-v1)."""
 
-    def test_send_audit_writes_ok_record(
-        self, tmp_path: Path, monkeypatch: Any
-    ) -> None:
+    def test_send_audit_writes_ok_record(self, tmp_path: Path, monkeypatch: Any) -> None:
         from app.ingestion import telegram_channel_approval as mod
 
         audit = tmp_path / "telegram_approval_send.jsonl"
@@ -479,15 +740,14 @@ class TestSendApprovalRequestAudit:
         assert row["error"] is None
         assert row["ttl_minutes"] == 60
 
-    def test_send_audit_writes_http_error(
-        self, tmp_path: Path, monkeypatch: Any
-    ) -> None:
+    def test_send_audit_writes_http_error(self, tmp_path: Path, monkeypatch: Any) -> None:
         from app.ingestion import telegram_channel_approval as mod
 
         audit = tmp_path / "telegram_approval_send.jsonl"
         rec = _shadow_record(envelope_id="ENV-429")
 
         import httpx as _httpx
+
         monkeypatch.setattr(
             _httpx,
             "AsyncClient",
@@ -520,21 +780,18 @@ class TestSendApprovalRequestAudit:
         assert row["bot_message_id"] is None
         assert "Too Many" in (row["error"] or "")
 
-    def test_send_audit_writes_exception(
-        self, tmp_path: Path, monkeypatch: Any
-    ) -> None:
+    def test_send_audit_writes_exception(self, tmp_path: Path, monkeypatch: Any) -> None:
         from app.ingestion import telegram_channel_approval as mod
 
         audit = tmp_path / "telegram_approval_send.jsonl"
         rec = _shadow_record(envelope_id="ENV-BOOM")
 
         import httpx as _httpx
+
         monkeypatch.setattr(
             _httpx,
             "AsyncClient",
-            _FakeAsyncClient.factory(
-                raise_exc=_httpx.ConnectError("network down")
-            ),
+            _FakeAsyncClient.factory(raise_exc=_httpx.ConnectError("network down")),
         )
 
         # Must NOT raise out of send_approval_request.
@@ -555,4 +812,3 @@ class TestSendApprovalRequestAudit:
         assert row["status"] == "failed"
         assert row["failure_reason"] == "exception"
         assert "ConnectError" in (row["error"] or "") or "network down" in (row["error"] or "")
-

@@ -99,12 +99,32 @@ async def test_get_ohlcv_happy_path() -> None:
     # [open_time, open, high, low, close, volume, close_time, quote_vol, trades, ...]
     klines = [
         [
-            1_713_312_000_000, "65000.0", "65200.0", "64950.0", "65150.0",
-            "12.34", 1_713_315_599_999, "803000.0", 250, "6.0", "390000.0", "0",
+            1_713_312_000_000,
+            "65000.0",
+            "65200.0",
+            "64950.0",
+            "65150.0",
+            "12.34",
+            1_713_315_599_999,
+            "803000.0",
+            250,
+            "6.0",
+            "390000.0",
+            "0",
         ],
         [
-            1_713_315_600_000, "65150.0", "65300.0", "65100.0", "65275.0",
-            "10.0", 1_713_319_199_999, "651500.0", 200, "5.0", "325000.0", "0",
+            1_713_315_600_000,
+            "65150.0",
+            "65300.0",
+            "65100.0",
+            "65275.0",
+            "10.0",
+            1_713_319_199_999,
+            "651500.0",
+            200,
+            "5.0",
+            "325000.0",
+            "0",
         ],
     ]
     adapter = BinanceAdapter()
@@ -177,8 +197,10 @@ async def test_429_retries_then_succeeds() -> None:
     success = _mk_response(200, success_payload)
     adapter = BinanceAdapter(max_retries=2)
     # asyncio.sleep is patched to instant so test is fast.
-    with patch("httpx.AsyncClient.get", new=AsyncMock(side_effect=[rate_limited, success])), \
-         patch("app.market_data.binance_adapter.asyncio.sleep", new=AsyncMock(return_value=None)):
+    with (
+        patch("httpx.AsyncClient.get", new=AsyncMock(side_effect=[rate_limited, success])),
+        patch("app.market_data.binance_adapter.asyncio.sleep", new=AsyncMock(return_value=None)),
+    ):
         ticker = await adapter.get_ticker("BTC/USDT")
     assert ticker is not None
     assert ticker.last == 100.0

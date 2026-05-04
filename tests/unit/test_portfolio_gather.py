@@ -47,9 +47,7 @@ async def test_parallel_fetch_returns_all_symbols() -> None:
         await asyncio.sleep(0)  # yield to event loop
         return _ok_snapshot(symbol)
 
-    with patch(
-        "app.execution.portfolio_read.get_market_data_snapshot", side_effect=fake
-    ):
+    with patch("app.execution.portfolio_read.get_market_data_snapshot", side_effect=fake):
         result = await _gather_market_snapshots(
             symbols=["BTC/USDT", "ETH/USDT", "SOL/USDT"],
             provider="coingecko",
@@ -83,11 +81,12 @@ async def test_semaphore_caps_concurrency_to_configured_limit() -> None:
             active -= 1
         return _ok_snapshot(symbol)
 
-    with patch(
-        "app.execution.portfolio_read.get_market_data_snapshot", side_effect=fake
-    ), patch(
-        "app.execution.portfolio_read._PORTFOLIO_MARK_TO_MARKET_MAX_CONCURRENCY",
-        cap,
+    with (
+        patch("app.execution.portfolio_read.get_market_data_snapshot", side_effect=fake),
+        patch(
+            "app.execution.portfolio_read._PORTFOLIO_MARK_TO_MARKET_MAX_CONCURRENCY",
+            cap,
+        ),
     ):
         await _gather_market_snapshots(
             symbols=["A", "B", "C", "D", "E"],
@@ -108,11 +107,12 @@ async def test_overall_timeout_labels_unresolved_as_timeout() -> None:
         await asyncio.sleep(10)  # exceeds overall timeout
         return _ok_snapshot(symbol)
 
-    with patch(
-        "app.execution.portfolio_read.get_market_data_snapshot", side_effect=fake_slow
-    ), patch(
-        "app.execution.portfolio_read._PORTFOLIO_MARK_TO_MARKET_OVERALL_TIMEOUT_SECONDS",
-        0.1,
+    with (
+        patch("app.execution.portfolio_read.get_market_data_snapshot", side_effect=fake_slow),
+        patch(
+            "app.execution.portfolio_read._PORTFOLIO_MARK_TO_MARKET_OVERALL_TIMEOUT_SECONDS",
+            0.1,
+        ),
     ):
         result = await _gather_market_snapshots(
             symbols=["BTC/USDT", "ETH/USDT"],
@@ -137,9 +137,7 @@ async def test_per_symbol_exception_labeled_with_class_name() -> None:
             raise ValueError("bad symbol")
         return _ok_snapshot(symbol)
 
-    with patch(
-        "app.execution.portfolio_read.get_market_data_snapshot", side_effect=fake
-    ):
+    with patch("app.execution.portfolio_read.get_market_data_snapshot", side_effect=fake):
         result = await _gather_market_snapshots(
             symbols=["BTC/USDT", "BROKEN"],
             provider="coingecko",

@@ -205,6 +205,7 @@ async def enqueue_command(slug: str, payload: CommandRequest) -> dict[str, Any]:
 # Conversation — single-source-of-truth für Dashboard + Telegram + Agent-Replies
 # ---------------------------------------------------------------------------
 
+
 class MessageRequest(BaseModel):
     content: str = Field(min_length=1, max_length=4000)
     source: Literal["dashboard", "telegram", "agent"] = "dashboard"

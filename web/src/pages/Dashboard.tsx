@@ -209,7 +209,6 @@ export function Dashboard() {
       <PanelErrorBoundary name="Re-Entry-Gate">
         <ReentryGatePanel
           quality={data}
-          provenance={provenance}
           qualityState={q.state}
           qualityError={q.state === "error" ? q.error.message : null}
           priorityGate={priorityGate}

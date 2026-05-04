@@ -47,22 +47,16 @@ class SecurityHeadersPolicy:
 
 
 _TRADINGVIEW_SCRIPT_SRC = (
-    "https://s3.tradingview.com https://s.tradingview.com "
-    "https://www.tradingview.com"
+    "https://s3.tradingview.com https://s.tradingview.com https://www.tradingview.com"
 )
-_TRADINGVIEW_FRAME_SRC = (
-    "https://s.tradingview.com https://www.tradingview.com"
-)
+_TRADINGVIEW_FRAME_SRC = "https://s.tradingview.com https://www.tradingview.com"
 _TRADINGVIEW_CONNECT_SRC = (
-    "https://www.tradingview.com https://*.tradingview.com "
-    "wss://*.tradingview.com"
+    "https://www.tradingview.com https://*.tradingview.com wss://*.tradingview.com"
 )
 _TRADINGVIEW_IMG_SRC = "https://*.tradingview.com"
 
 
-def build_default_csp(
-    extra_script_src: str = "", *, allow_tradingview: bool = False
-) -> str:
+def build_default_csp(extra_script_src: str = "", *, allow_tradingview: bool = False) -> str:
     """Return the default CSP string used when no override is configured.
 
     The policy is tight: self-only scripts/connects, inline styles allowed
@@ -115,9 +109,7 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         super().__init__(app)
         self._policy = policy
 
-    async def dispatch(
-        self, request: Request, call_next: RequestResponseEndpoint
-    ) -> Response:
+    async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
         response = await call_next(request)
         policy = self._policy
 
@@ -147,9 +139,7 @@ def setup_security_headers(
     hsts_max_age: int = 31_536_000,
     frame_options: str = "DENY",
     referrer_policy: str = "strict-origin-when-cross-origin",
-    permissions_policy: str = (
-        "camera=(), microphone=(), geolocation=(), payment=(), usb=()"
-    ),
+    permissions_policy: str = ("camera=(), microphone=(), geolocation=(), payment=(), usb=()"),
     extra_csp_script_src: str = "",
     allow_tradingview: bool = False,
 ) -> None:
@@ -164,9 +154,7 @@ def setup_security_headers(
     policy = SecurityHeadersPolicy(
         csp=csp
         if csp is not None
-        else build_default_csp(
-            extra_csp_script_src, allow_tradingview=allow_tradingview
-        ),
+        else build_default_csp(extra_csp_script_src, allow_tradingview=allow_tradingview),
         csp_report_only=csp_report_only,
         hsts_max_age=hsts_max_age,
         frame_options=frame_options,

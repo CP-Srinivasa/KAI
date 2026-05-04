@@ -115,7 +115,6 @@ class ProviderSettings(BaseSettings):
     gemini_model: str = Field(default="gemini-2.5-flash")
     gemini_timeout: int = Field(default=30)
 
-
     youtube_api_key: str = Field(default="", repr=False)
     newsdata_api_key: str = Field(default="", repr=False)
     x_bearer_token: str = Field(default="", repr=False)
@@ -275,9 +274,7 @@ class OperatorSettings(BaseSettings):
     def validate_signal_handoff_mode(self) -> "OperatorSettings":
         normalized_mode = self.signal_auto_run_mode.strip().lower()
         if normalized_mode not in {"paper", "shadow"}:
-            raise ValueError(
-                "OPERATOR_SIGNAL_AUTO_RUN_MODE must be one of: paper, shadow."
-            )
+            raise ValueError("OPERATOR_SIGNAL_AUTO_RUN_MODE must be one of: paper, shadow.")
         self.signal_auto_run_mode = normalized_mode
         return self
 
@@ -326,15 +323,11 @@ class TradingViewSettings(BaseSettings):
     enabled=true AND a non-empty secret are configured.
     """
 
-    model_config = SettingsConfigDict(
-        env_prefix="TRADINGVIEW_", env_file=".env", extra="ignore"
-    )
+    model_config = SettingsConfigDict(env_prefix="TRADINGVIEW_", env_file=".env", extra="ignore")
 
     webhook_enabled: bool = Field(default=False)
     webhook_secret: str = Field(default="", repr=False)
-    webhook_audit_log: str = Field(
-        default="artifacts/tradingview_webhook_audit.jsonl"
-    )
+    webhook_audit_log: str = Field(default="artifacts/tradingview_webhook_audit.jsonl")
     webhook_replay_cache_size: int = Field(default=256, ge=1)
     webhook_replay_window_seconds: float = Field(default=300.0, gt=0.0)
     # V8.1 (SAT-C-V8-001): second replay layer keyed on an operator-provided
@@ -349,9 +342,7 @@ class TradingViewSettings(BaseSettings):
     # Default off — operator opts in after setting webhook_replay_cache_db_path
     # somewhere writable (artifacts/ is fine on Windows AND Pi).
     webhook_replay_cache_persistent: bool = Field(default=False)
-    webhook_replay_cache_db_path: str = Field(
-        default="artifacts/tradingview_replay_cache.db"
-    )
+    webhook_replay_cache_db_path: str = Field(default="artifacts/tradingview_replay_cache.db")
     # D-193 / NEO-F-META-20260424-023: brute-force guard on the webhook
     # auth pipeline (HMAC + shared-token). Independent bucket from the
     # API-Key rate-limiter in auth.py so webhook bursts don't affect the
@@ -377,25 +368,17 @@ class TradingViewSettings(BaseSettings):
     # Default false (fail-closed). No auto-execution — events wait for
     # operator approval. Normalizer failures leave audit intact.
     webhook_signal_routing_enabled: bool = Field(default=False)
-    webhook_pending_signals_log: str = Field(
-        default="artifacts/tradingview_pending_signals.jsonl"
-    )
+    webhook_pending_signals_log: str = Field(default="artifacts/tradingview_pending_signals.jsonl")
     # TV-3.1: append-only operator decision log (promote / reject) and
     # promoted-candidate sink. Re-deciding an event is rejected by the CLI.
-    pending_decisions_log: str = Field(
-        default="artifacts/tradingview_pending_decisions.jsonl"
-    )
-    promoted_signals_log: str = Field(
-        default="artifacts/tradingview_promoted_signals.jsonl"
-    )
+    pending_decisions_log: str = Field(default="artifacts/tradingview_pending_decisions.jsonl")
+    promoted_signals_log: str = Field(default="artifacts/tradingview_promoted_signals.jsonl")
     # TV-4 prep: measurement-only consumer. When disabled (default),
     # the consumer is a no-op — no file is written, no state changes.
     # When enabled, each promoted row is appended once (by decision_id)
     # to the signal-audit JSONL. No trading-loop side effects.
     promoted_consumer_enabled: bool = Field(default=False)
-    promoted_signal_audit_log: str = Field(
-        default="artifacts/tradingview_signal_audit.jsonl"
-    )
+    promoted_signal_audit_log: str = Field(default="artifacts/tradingview_signal_audit.jsonl")
     # D-156c: periodic bridge from pending TV events into alert_audit so
     # the auto-annotator can score them for the TV-4 Quality-Bar. Default
     # off — operator opts in explicitly once the bridge is trusted.
@@ -439,9 +422,7 @@ class BinanceMarketDataSettings(BaseSettings):
     provider when explicitly enabled; CoinGecko remains the default.
     """
 
-    model_config = SettingsConfigDict(
-        env_prefix="BINANCE_", env_file=".env", extra="ignore"
-    )
+    model_config = SettingsConfigDict(env_prefix="BINANCE_", env_file=".env", extra="ignore")
 
     enabled: bool = Field(default=False)
     base_url: str = Field(default="https://api.binance.com")
@@ -489,18 +470,14 @@ class TelegramChannelIngestSettings(BaseSettings):
     # Complements Telethon's catch_up=True (which only handles updates
     # delivered while the session was online and reconnected within
     # Telegram's update-state retention window — typically a few hours).
-    checkpoint_path: str = Field(
-        default="artifacts/telegram_channel_checkpoint.json"
-    )
+    checkpoint_path: str = Field(default="artifacts/telegram_channel_checkpoint.json")
     # D-191 / S-003: Liveness heartbeat. The worker touches this file at
     # startup and every ~60 s while the run-loop is alive — independent of
     # whether the channel actually emits messages. canonical_read uses it
     # as a third candidate next to the PID file and the Telethon session
     # file. ``heartbeat_stale_seconds`` is the threshold the watchdog uses
     # for the heartbeat-only sub-status.
-    heartbeat_path: str = Field(
-        default="artifacts/telegram_listener_heartbeat"
-    )
+    heartbeat_path: str = Field(default="artifacts/telegram_listener_heartbeat")
     heartbeat_stale_seconds: int = Field(default=1800, ge=1)
 
 
@@ -643,9 +620,9 @@ class AppSettings(BaseSettings):
     # D-191 re-entry capability gate. Default disabled — see ReEntryModeProfile.
     re_entry_mode: ReEntryModeProfile = Field(default_factory=ReEntryModeProfile)
 
-    _strip_secrets = field_validator(
-        "api_key", "api_key_next", "coingecko_api_key", mode="before"
-    )(_strip_secret)
+    _strip_secrets = field_validator("api_key", "api_key_next", "coingecko_api_key", mode="before")(
+        _strip_secret
+    )
 
     @model_validator(mode="after")
     def validate_bind_host_against_env(self) -> "AppSettings":
@@ -695,9 +672,7 @@ class AppSettings(BaseSettings):
         violations: list[str] = []
 
         # S-001: provenance HMAC seal secret must be present.
-        if gate.enforce_provenance_secret and not (
-            (self.alerts.provenance_secret or "").strip()
-        ):
+        if gate.enforce_provenance_secret and not ((self.alerts.provenance_secret or "").strip()):
             violations.append(
                 "RE_ENTRY_MODE_ENFORCE_PROVENANCE_SECRET=1 but "
                 "ALERT_PROVENANCE_SECRET is empty (S-001)."
@@ -751,8 +726,7 @@ class AppSettings(BaseSettings):
 
         if violations:
             raise ConfigurationError(
-                "Re-entry invariants violated:\n  - "
-                + "\n  - ".join(violations)
+                "Re-entry invariants violated:\n  - " + "\n  - ".join(violations)
             )
         return self
 

@@ -63,9 +63,7 @@ def _event(
 class TestPromoteEvent:
     def test_happy_path_long(self) -> None:
         ev = _event(action="buy", price=100.0)
-        candidate = promote_event(
-            ev, PromotionInputs(thesis="breakout"), now_iso=_NOW_ISO
-        )
+        candidate = promote_event(ev, PromotionInputs(thesis="breakout"), now_iso=_NOW_ISO)
         assert candidate.symbol == "BTCUSDT"
         assert candidate.direction is SignalDirection.LONG
         assert candidate.entry_price == 100.0
@@ -87,9 +85,7 @@ class TestPromoteEvent:
 
     def test_rsi_enrichment_appends_factor_and_data_source(self) -> None:
         ev = _event(action="buy", price=100.0, strategy="rsi_reversal")
-        candidate = promote_event(
-            ev, PromotionInputs(thesis="x"), rsi_value=27.5, now_iso=_NOW_ISO
-        )
+        candidate = promote_event(ev, PromotionInputs(thesis="x"), rsi_value=27.5, now_iso=_NOW_ISO)
         assert any("rsi_14=27.50" in f for f in candidate.supporting_factors)
         assert "binance_ohlcv_rsi" in candidate.data_sources_used
         assert any("strategy:rsi_reversal" in f for f in candidate.supporting_factors)
@@ -119,9 +115,7 @@ class TestPromoteEvent:
         long_note = "x" * 500
         ev = _event(action="buy", price=100.0, note=long_note)
         candidate = promote_event(ev, PromotionInputs(thesis="x"))
-        note_factor = next(
-            f for f in candidate.supporting_factors if f.startswith("note:")
-        )
+        note_factor = next(f for f in candidate.supporting_factors if f.startswith("note:"))
         # "note:" + 120 chars
         assert len(note_factor) == len("note:") + 120
 
@@ -210,10 +204,7 @@ class TestLoadPendingEvents:
             },
         }
         path.write_text(
-            "{not json}\n"
-            + json.dumps(good_row)
-            + "\n"
-            + '{"event_id":"missing_fields"}\n',
+            "{not json}\n" + json.dumps(good_row) + "\n" + '{"event_id":"missing_fields"}\n',
             encoding="utf-8",
         )
         events = load_pending_events(path)

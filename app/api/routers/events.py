@@ -36,9 +36,7 @@ async def dashboard_events(request: Request) -> StreamingResponse:
                 if await request.is_disconnected():
                     break
                 try:
-                    evt = await asyncio.wait_for(
-                        queue.get(), timeout=_KEEPALIVE_INTERVAL_S
-                    )
+                    evt = await asyncio.wait_for(queue.get(), timeout=_KEEPALIVE_INTERVAL_S)
                     yield evt.to_sse()
                 except TimeoutError:
                     yield ": keepalive\n\n"

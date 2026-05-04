@@ -30,9 +30,7 @@ def _write_jsonl(path: Path, rows: list[dict]) -> None:
 
 def _read_jsonl(path: Path) -> list[dict]:
     return [
-        json.loads(line)
-        for line in path.read_text(encoding="utf-8").splitlines()
-        if line.strip()
+        json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()
     ]
 
 
@@ -73,8 +71,11 @@ def test_backfill_augments_rss_and_tv_rows(tmp_path: Path) -> None:
     _write_jsonl(
         outcomes_path,
         [
-            {"document_id": "doc_rss_1", "outcome": "hit",
-             "annotated_at": "2026-04-20T13:00:00+00:00"},
+            {
+                "document_id": "doc_rss_1",
+                "outcome": "hit",
+                "annotated_at": "2026-04-20T13:00:00+00:00",
+            },
         ],
     )
     _write_jsonl(
@@ -130,8 +131,13 @@ def test_backfill_is_idempotent(tmp_path: Path) -> None:
     _write_jsonl(
         audit_path,
         [
-            {"document_id": "doc_1", "channel": "telegram", "message_id": None,
-             "is_digest": False, "dispatched_at": "2026-04-20T10:00:00+00:00"},
+            {
+                "document_id": "doc_1",
+                "channel": "telegram",
+                "message_id": None,
+                "is_digest": False,
+                "dispatched_at": "2026-04-20T10:00:00+00:00",
+            },
         ],
     )
 
@@ -156,8 +162,11 @@ def test_backfill_is_idempotent(tmp_path: Path) -> None:
 def test_backfill_dry_run_does_not_write(tmp_path: Path) -> None:
     audit_path = tmp_path / "alert_audit.jsonl"
     original = {
-        "document_id": "doc_1", "channel": "telegram", "message_id": None,
-        "is_digest": False, "dispatched_at": "2026-04-20T10:00:00+00:00",
+        "document_id": "doc_1",
+        "channel": "telegram",
+        "message_id": None,
+        "is_digest": False,
+        "dispatched_at": "2026-04-20T10:00:00+00:00",
     }
     _write_jsonl(audit_path, [original])
 
@@ -191,8 +200,15 @@ def test_backfill_writes_timestamped_backup(tmp_path: Path) -> None:
     audit_path = tmp_path / "alert_audit.jsonl"
     _write_jsonl(
         audit_path,
-        [{"document_id": "doc_1", "channel": "telegram", "message_id": None,
-          "is_digest": False, "dispatched_at": "2026-04-20T10:00:00+00:00"}],
+        [
+            {
+                "document_id": "doc_1",
+                "channel": "telegram",
+                "message_id": None,
+                "is_digest": False,
+                "dispatched_at": "2026-04-20T10:00:00+00:00",
+            }
+        ],
     )
 
     backfill_provenance(
@@ -236,7 +252,8 @@ def test_quality_bar_uses_persisted_provenance_over_db_lookup(tmp_path: Path) ->
                 "sentiment_label": "bullish",
                 "affected_assets": ["BTC"],
                 "provenance": {
-                    "source": "rss_A", "version": "rss-1",
+                    "source": "rss_A",
+                    "version": "rss-1",
                     "ingest_event_id": "doc_1",
                 },
             },
@@ -244,8 +261,7 @@ def test_quality_bar_uses_persisted_provenance_over_db_lookup(tmp_path: Path) ->
     )
     _write_jsonl(
         outcomes_path,
-        [{"document_id": "doc_1", "outcome": "hit",
-          "annotated_at": "2026-04-20T11:00:00+00:00"}],
+        [{"document_id": "doc_1", "outcome": "hit", "annotated_at": "2026-04-20T11:00:00+00:00"}],
     )
     tv_pending_path.write_text("", encoding="utf-8")
 
@@ -261,9 +277,7 @@ def test_quality_bar_uses_persisted_provenance_over_db_lookup(tmp_path: Path) ->
     assert "rss_b" not in sources
 
 
-def test_backfill_aborts_on_concurrent_write(
-    tmp_path: Path, monkeypatch
-) -> None:
+def test_backfill_aborts_on_concurrent_write(tmp_path: Path, monkeypatch) -> None:
     """mtime bump between scan and rewrite → abort, original preserved.
 
     Patches ``Path.read_text`` on the audit file so that after the first
@@ -274,8 +288,11 @@ def test_backfill_aborts_on_concurrent_write(
 
     audit_path = tmp_path / "alert_audit.jsonl"
     original_row = {
-        "document_id": "doc_1", "channel": "telegram", "message_id": None,
-        "is_digest": False, "dispatched_at": "2026-04-20T10:00:00+00:00",
+        "document_id": "doc_1",
+        "channel": "telegram",
+        "message_id": None,
+        "is_digest": False,
+        "dispatched_at": "2026-04-20T10:00:00+00:00",
     }
     _write_jsonl(audit_path, [original_row])
 

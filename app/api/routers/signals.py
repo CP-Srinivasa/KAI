@@ -148,9 +148,7 @@ def _apply_completions(
     changes: dict[str, object] = {}
     if completions.exchange_scope:
         normalized = [
-            v.strip().lower().replace(" ", "_")
-            for v in completions.exchange_scope
-            if v.strip()
+            v.strip().lower().replace(" ", "_") for v in completions.exchange_scope if v.strip()
         ]
         if normalized:
             changes["exchange_scope"] = normalized
@@ -229,15 +227,20 @@ async def paste_signal(
         parsed = parse_structured_message(text)
     except SignalParseError as exc:
         rec = _record_base(
-            "parse", "rejected", "unknown",
-            payload.operator_user_id, payload.trace_id,
+            "parse",
+            "rejected",
+            "unknown",
+            payload.operator_user_id,
+            payload.trace_id,
         )
         rec["errors"] = [str(exc)]
         rec["payload"] = {"text_preview": text[:300]}
         _append_audit(rec)
         return SignalPasteResponse(
-            status="rejected", stage="parse",
-            message_type=None, errors=[str(exc)],
+            status="rejected",
+            stage="parse",
+            message_type=None,
+            errors=[str(exc)],
         )
 
     try:
@@ -245,16 +248,20 @@ async def paste_signal(
     except MessageSchemaValidationError as exc:
         errors = exc.errors or [str(exc)]
         rec = _record_base(
-            "schema_validation", "rejected",
+            "schema_validation",
+            "rejected",
             parsed.message_type.value,
-            payload.operator_user_id, payload.trace_id,
+            payload.operator_user_id,
+            payload.trace_id,
         )
         rec["errors"] = list(errors)
         rec["payload"] = {"text_preview": text[:300]}
         _append_audit(rec)
         return SignalPasteResponse(
-            status="rejected", stage="schema_validation",
-            message_type=parsed.message_type.value, errors=list(errors),
+            status="rejected",
+            stage="schema_validation",
+            message_type=parsed.message_type.value,
+            errors=list(errors),
         )
 
     if isinstance(parsed, TradingSignal):
@@ -272,8 +279,11 @@ async def paste_signal(
             # envelope yet — we're waiting on the operator to supply them.
             if completable and not blocking:
                 rec = _record_base(
-                    "completion_gate", "needs_completion", "signal",
-                    payload.operator_user_id, payload.trace_id,
+                    "completion_gate",
+                    "needs_completion",
+                    "signal",
+                    payload.operator_user_id,
+                    payload.trace_id,
                 )
                 rec["missing_fields"] = list(completable)
                 rec["payload"] = preview
@@ -296,8 +306,11 @@ async def paste_signal(
                 trace_id=payload.trace_id,
             )
             rec = _record_base(
-                "execution_gate", "blocked", "signal",
-                payload.operator_user_id, payload.trace_id,
+                "execution_gate",
+                "blocked",
+                "signal",
+                payload.operator_user_id,
+                payload.trace_id,
             )
             rec["envelope_id"] = envelope.envelope_id
             rec["idempotency_key"] = envelope.idempotency_key
@@ -307,7 +320,8 @@ async def paste_signal(
             rec["missing_fields"] = list(completable)
             _append_audit(rec)
             return SignalPasteResponse(
-                status="rejected", stage="execution_gate",
+                status="rejected",
+                stage="execution_gate",
                 message_type="signal",
                 envelope_id=envelope.envelope_id,
                 idempotency_key=envelope.idempotency_key,
@@ -326,8 +340,11 @@ async def paste_signal(
 
     if _is_duplicate(envelope.idempotency_key):
         rec = _record_base(
-            "idempotency_gate", "duplicate", message_type,
-            payload.operator_user_id, payload.trace_id,
+            "idempotency_gate",
+            "duplicate",
+            message_type,
+            payload.operator_user_id,
+            payload.trace_id,
         )
         rec["envelope_id"] = envelope.envelope_id
         rec["idempotency_key"] = envelope.idempotency_key
@@ -335,15 +352,19 @@ async def paste_signal(
         rec["raw_text_preview"] = text[:500]
         _append_audit(rec)
         return SignalPasteResponse(
-            status="duplicate", stage="idempotency_gate",
+            status="duplicate",
+            stage="idempotency_gate",
             message_type=message_type,
             envelope_id=envelope.envelope_id,
             idempotency_key=envelope.idempotency_key,
         )
 
     rec = _record_base(
-        "accepted", "ok", message_type,
-        payload.operator_user_id, payload.trace_id,
+        "accepted",
+        "ok",
+        message_type,
+        payload.operator_user_id,
+        payload.trace_id,
     )
     rec["envelope_id"] = envelope.envelope_id
     rec["idempotency_key"] = envelope.idempotency_key
@@ -358,7 +379,8 @@ async def paste_signal(
     _ = (NewsMessage, ExchangeResponse)  # keep imports referenced; isinstance for typing only
 
     return SignalPasteResponse(
-        status="accepted", stage="accepted",
+        status="accepted",
+        stage="accepted",
         message_type=message_type,
         envelope_id=envelope.envelope_id,
         idempotency_key=envelope.idempotency_key,

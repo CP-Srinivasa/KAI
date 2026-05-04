@@ -18,8 +18,14 @@ def test_keyboard_rows_carry_top_level_entries() -> None:
     rows = PERSISTENT_KEYBOARD["keyboard"]
     flat = [btn["text"] for row in rows for btn in row]
     assert set(flat) == {
-        "Status", "Help", "Portfolio", "Signals",
-        "Trades", "Alerts", "Quality", "Daily",
+        "Status",
+        "Help",
+        "Portfolio",
+        "Signals",
+        "Trades",
+        "Alerts",
+        "Quality",
+        "Daily",
     }
 
 

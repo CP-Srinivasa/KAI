@@ -415,9 +415,7 @@ def require_operator_api_token(
 
     # (1) Cloudflare Access — trusted email forwarded by the tunnel.
     cf_allowed = {
-        e.strip().lower()
-        for e in (settings.cf_access_allowed_emails or "").split(",")
-        if e.strip()
+        e.strip().lower() for e in (settings.cf_access_allowed_emails or "").split(",") if e.strip()
     }
     if cf_allowed and cf_access_email:
         email = cf_access_email.strip().lower()

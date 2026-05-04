@@ -28,4 +28,3 @@ __all__ = [
     "validate_config_payload",
     "validate_decision_payload",
 ]
-

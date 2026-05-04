@@ -51,11 +51,7 @@ def _nav_row(parent: str | None = "main") -> list[dict[str, str]]:
 
 
 DEFAULT_MENU_MAIN: dict[str, Any] = {
-    "text": (
-        "*KAI Control Center*\n"
-        "\n"
-        "Signale, Portfolio, Automation und Agenten zentral steuern."
-    ),
+    "text": ("*KAI Control Center*\n\nSignale, Portfolio, Automation und Agenten zentral steuern."),
     "keyboard": [
         _row(_btn("System-Status", "cmd:status")),
         _row(
@@ -82,11 +78,7 @@ DEFAULT_MENU_MAIN: dict[str, Any] = {
 }
 
 DEFAULT_MENU_TRADING: dict[str, Any] = {
-    "text": (
-        "*Trades*\n"
-        "\n"
-        "Live-Positionen und Exposure im Paper-Portfolio."
-    ),
+    "text": ("*Trades*\n\nLive-Positionen und Exposure im Paper-Portfolio."),
     "keyboard": [
         _row(
             _btn("Offene Positionen", "cmd:positions"),
@@ -97,11 +89,7 @@ DEFAULT_MENU_TRADING: dict[str, Any] = {
 }
 
 DEFAULT_MENU_PORTFOLIO: dict[str, Any] = {
-    "text": (
-        "*Portfolio*\n"
-        "\n"
-        "Paper-Portfolio-Snapshot mit realisiertem und unrealisiertem PnL."
-    ),
+    "text": ("*Portfolio*\n\nPaper-Portfolio-Snapshot mit realisiertem und unrealisiertem PnL."),
     "keyboard": [
         _row(
             _btn("Offene Positionen", "cmd:positions"),
@@ -113,11 +101,7 @@ DEFAULT_MENU_PORTFOLIO: dict[str, Any] = {
 }
 
 DEFAULT_MENU_SIGNALS: dict[str, Any] = {
-    "text": (
-        "*Signale*\n"
-        "\n"
-        "Aktive Signale prüfen oder ein neues über den Paste-Flow einreichen."
-    ),
+    "text": ("*Signale*\n\nAktive Signale prüfen oder ein neues über den Paste-Flow einreichen."),
     "keyboard": [
         _row(
             _btn("Aktive Signale", "cmd:signals"),
@@ -129,11 +113,7 @@ DEFAULT_MENU_SIGNALS: dict[str, Any] = {
 }
 
 DEFAULT_MENU_ALERTS: dict[str, Any] = {
-    "text": (
-        "*Alerts*\n"
-        "\n"
-        "Zustellstatus, Precision-Metriken und Tageszusammenfassung."
-    ),
+    "text": ("*Alerts*\n\nZustellstatus, Precision-Metriken und Tageszusammenfassung."),
     "keyboard": [
         _row(
             _btn("Alert-Status", "cmd:alertstatus"),
@@ -146,9 +126,7 @@ DEFAULT_MENU_ALERTS: dict[str, Any] = {
 
 DEFAULT_MENU_AGENTS: dict[str, Any] = {
     "text": (
-        "*Agenten*\n"
-        "\n"
-        "Beaufsichtigte Assistenten für Sicherheit, Health, Architektur und Design."
+        "*Agenten*\n\nBeaufsichtigte Assistenten für Sicherheit, Health, Architektur und Design."
     ),
     "keyboard": [
         _row(_btn("SENTR — Sicherheit", "menu:agents_sentr")),
@@ -267,11 +245,7 @@ DEFAULT_MENU_INSIGHTS: dict[str, Any] = {
 }
 
 DEFAULT_MENU_OPS: dict[str, Any] = {
-    "text": (
-        "*Betrieb*\n"
-        "\n"
-        "System-Steuerung, Pause und Fortsetzen sowie Wartungsaktionen."
-    ),
+    "text": ("*Betrieb*\n\nSystem-Steuerung, Pause und Fortsetzen sowie Wartungsaktionen."),
     "keyboard": [
         _row(_btn("System-Status", "cmd:status")),
         _row(
@@ -330,11 +304,7 @@ DEFAULT_MENU_SIGNAL_SEND: dict[str, Any] = {
 }
 
 DEFAULT_MENU_CONTROL: dict[str, Any] = {
-    "text": (
-        "*Steuerung*\n"
-        "\n"
-        "System-Steuerung und Notaktionen."
-    ),
+    "text": ("*Steuerung*\n\nSystem-Steuerung und Notaktionen."),
     "keyboard": [
         _row(
             _btn("Pause", "cmd:pause"),
@@ -572,4 +542,3 @@ def validate_menu_config() -> dict[str, object]:
         "warnings": warnings,
         "errors": errors,
     }
-

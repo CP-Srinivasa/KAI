@@ -91,4 +91,3 @@ def test_telegram_interface_lists_first_class_commands() -> None:
         "/incident",
     ):
         assert command in text
-

@@ -87,9 +87,7 @@ def test_bash_syntax(script_name: str) -> None:
         timeout=10,
         cwd=REPO_ROOT,
     )
-    assert result.returncode == 0, (
-        f"bash -n failed for {script_name}:\n{result.stderr}"
-    )
+    assert result.returncode == 0, f"bash -n failed for {script_name}:\n{result.stderr}"
 
 
 # ---------------------------------------------------------------------------
@@ -214,9 +212,7 @@ def test_pi_transfer_env_group_shows_secrets_handler() -> None:
         timeout=10,
         cwd=REPO_ROOT,
     )
-    assert result.returncode == 0, (
-        f"rc={result.returncode} stderr={result.stderr[:300]}"
-    )
+    assert result.returncode == 0, f"rc={result.returncode} stderr={result.stderr[:300]}"
     out = result.stdout
     assert "[group=env]" in out
     assert "SENSITIVE" in out
@@ -239,7 +235,7 @@ def test_server_stop_exposes_d185_verify_block() -> None:
     text = (SCRIPTS / "server_stop.sh").read_text(encoding="utf-8")
     # D-185 ensures the script verifies is_pid_running after SIGKILL and
     # exits 1 with a clear message rather than falsely reporting success.
-    assert "is_pid_running \"$PID\"" in text or 'is_pid_running "$PID"' in text
+    assert 'is_pid_running "$PID"' in text or 'is_pid_running "$PID"' in text
     assert "still running after SIGTERM+SIGKILL" in text
     assert "D-185" in text
 
@@ -275,10 +271,9 @@ def test_server_stop_handles_stale_pid_file(tmp_path: Path) -> None:
     assert result.returncode == 0, f"rc={result.returncode} stderr={result.stderr}"
     # Either "Server was not running" (PID absent) or "Server stopped"
     # (if by some race a matching PID existed). Stale PID case is expected.
-    assert (
-        "Server was not running" in result.stdout
-        or "Server stopped" in result.stdout
-    ), result.stdout
+    assert "Server was not running" in result.stdout or "Server stopped" in result.stdout, (
+        result.stdout
+    )
     # PID file must be removed after a clean non-running path.
     assert not (sandbox / ".server.pid").exists()
 

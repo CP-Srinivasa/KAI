@@ -52,7 +52,7 @@ def _normalize_tv_symbol(raw: str) -> str:
         return s
     for quote in _TV_QUOTE_SUFFIXES:
         if s.endswith(quote) and len(s) > len(quote):
-            return f"{s[:-len(quote)]}/{quote}"
+            return f"{s[: -len(quote)]}/{quote}"
     return f"{s}/USDT"
 
 
@@ -123,8 +123,7 @@ class TradingLoop:
                     started_at,
                     symbol,
                     CycleStatus.PRIORITY_REJECTED,
-                    notes=notes
-                    + [f"priority_gate_reject:{observed}|threshold:{min_priority}"],
+                    notes=notes + [f"priority_gate_reject:{observed}|threshold:{min_priority}"],
                 )
                 await self._write_db(cycle)
                 return cycle
@@ -199,11 +198,7 @@ class TradingLoop:
                 f"models:{consensus.validator_model}"
             )
             for vr in consensus.validator_results:
-                notes.append(
-                    f"validator:{vr.label}|"
-                    f"agreed:{vr.agreed}|"
-                    f"conf:{vr.confidence:.2f}"
-                )
+                notes.append(f"validator:{vr.label}|agreed:{vr.agreed}|conf:{vr.confidence:.2f}")
             if not consensus.agreed:
                 cycle = self._build_cycle(
                     cycle_id,
@@ -212,7 +207,8 @@ class TradingLoop:
                     CycleStatus.CONSENSUS_REJECTED,
                     market_data_fetched=True,
                     signal_generated=True,
-                    notes=notes + [
+                    notes=notes
+                    + [
                         f"consensus_reason:{consensus.reasoning}",
                     ],
                 )
@@ -416,9 +412,7 @@ class TradingLoop:
             f"source:tv_promoted|decision_id:{signal.decision_id}",
         ]
         if signal.provenance:
-            notes.append(
-                f"provenance:{signal.provenance.source}|{signal.provenance.version}"
-            )
+            notes.append(f"provenance:{signal.provenance.source}|{signal.provenance.version}")
 
         symbol = _normalize_tv_symbol(signal.symbol)
 
@@ -430,7 +424,10 @@ class TradingLoop:
 
         if market_data is None:
             cycle = self._build_cycle(
-                cycle_id, started_at, symbol, CycleStatus.NO_MARKET_DATA,
+                cycle_id,
+                started_at,
+                symbol,
+                CycleStatus.NO_MARKET_DATA,
                 notes=notes + [f"no_market_data:{symbol}"],
             )
             await self._write_db(cycle)
@@ -440,7 +437,10 @@ class TradingLoop:
 
         if market_data.is_stale:
             cycle = self._build_cycle(
-                cycle_id, started_at, symbol, CycleStatus.STALE_DATA,
+                cycle_id,
+                started_at,
+                symbol,
+                CycleStatus.STALE_DATA,
                 market_data_fetched=True,
                 notes=notes + [f"stale_data_skip:{symbol}"],
             )
@@ -451,14 +451,15 @@ class TradingLoop:
 
         if self._consensus is not None:
             consensus = await self._consensus.validate(signal, market_data)
-            notes.append(
-                f"consensus:{consensus.agreed}|conf:{consensus.confidence:.2f}"
-            )
+            notes.append(f"consensus:{consensus.agreed}|conf:{consensus.confidence:.2f}")
             if not consensus.agreed:
                 cycle = self._build_cycle(
-                    cycle_id, started_at, symbol,
+                    cycle_id,
+                    started_at,
+                    symbol,
                     CycleStatus.CONSENSUS_REJECTED,
-                    market_data_fetched=True, signal_generated=True,
+                    market_data_fetched=True,
+                    signal_generated=True,
                     notes=notes + [f"consensus_reason:{consensus.reasoning}"],
                 )
                 await self._write_db(cycle)
@@ -479,8 +480,12 @@ class TradingLoop:
 
         if not risk_result.approved:
             cycle = self._build_cycle(
-                cycle_id, started_at, symbol, CycleStatus.RISK_REJECTED,
-                market_data_fetched=True, signal_generated=True,
+                cycle_id,
+                started_at,
+                symbol,
+                CycleStatus.RISK_REJECTED,
+                market_data_fetched=True,
+                signal_generated=True,
                 decision_id=signal.decision_id,
                 risk_check_id=risk_result.check_id,
                 notes=notes + risk_result.violations,
@@ -498,8 +503,12 @@ class TradingLoop:
 
         if not size_result.approved or size_result.position_size_units <= 0:
             cycle = self._build_cycle(
-                cycle_id, started_at, symbol, CycleStatus.SIZE_REJECTED,
-                market_data_fetched=True, signal_generated=True,
+                cycle_id,
+                started_at,
+                symbol,
+                CycleStatus.SIZE_REJECTED,
+                market_data_fetched=True,
+                signal_generated=True,
                 risk_approved=True,
                 decision_id=signal.decision_id,
                 risk_check_id=risk_result.check_id,
@@ -525,8 +534,12 @@ class TradingLoop:
         except Exception as exc:  # noqa: BLE001
             notes.append(f"execution_error:{exc}")
             cycle = self._build_cycle(
-                cycle_id, started_at, symbol, CycleStatus.ORDER_FAILED,
-                market_data_fetched=True, signal_generated=True,
+                cycle_id,
+                started_at,
+                symbol,
+                CycleStatus.ORDER_FAILED,
+                market_data_fetched=True,
+                signal_generated=True,
                 risk_approved=True,
                 decision_id=signal.decision_id,
                 risk_check_id=risk_result.check_id,
@@ -539,9 +552,14 @@ class TradingLoop:
         if fill is None:
             notes.append("fill_not_simulated")
             cycle = self._build_cycle(
-                cycle_id, started_at, symbol, CycleStatus.ORDER_FAILED,
-                market_data_fetched=True, signal_generated=True,
-                risk_approved=True, order_created=order is not None,
+                cycle_id,
+                started_at,
+                symbol,
+                CycleStatus.ORDER_FAILED,
+                market_data_fetched=True,
+                signal_generated=True,
+                risk_approved=True,
+                order_created=order is not None,
                 fill_simulated=False,
                 decision_id=signal.decision_id,
                 risk_check_id=risk_result.check_id,
@@ -557,9 +575,14 @@ class TradingLoop:
         )
 
         cycle = self._build_cycle(
-            cycle_id, started_at, symbol, CycleStatus.COMPLETED,
-            market_data_fetched=True, signal_generated=True,
-            risk_approved=True, order_created=order is not None,
+            cycle_id,
+            started_at,
+            symbol,
+            CycleStatus.COMPLETED,
+            market_data_fetched=True,
+            signal_generated=True,
+            risk_approved=True,
+            order_created=order is not None,
             fill_simulated=fill is not None,
             decision_id=signal.decision_id,
             risk_check_id=risk_result.check_id,
@@ -825,30 +848,43 @@ def _build_consensus_validator(
     configs: list[ValidatorConfig] = []
 
     openai_key = getattr(
-        getattr(settings, "providers", None), "openai_api_key", "",
+        getattr(settings, "providers", None),
+        "openai_api_key",
+        "",
     )
     if openai_key:
-        configs.append(ValidatorConfig(
-            api_key=openai_key,
-            model=consensus_model,
-            label="openai",
-        ))
+        configs.append(
+            ValidatorConfig(
+                api_key=openai_key,
+                model=consensus_model,
+                label="openai",
+            )
+        )
 
     gemini_key = getattr(
-        getattr(settings, "providers", None), "gemini_api_key", "",
+        getattr(settings, "providers", None),
+        "gemini_api_key",
+        "",
     )
-    gemini_model = getattr(
-        getattr(settings, "providers", None), "gemini_model", "",
-    ) or "gemini-2.5-flash"
+    gemini_model = (
+        getattr(
+            getattr(settings, "providers", None),
+            "gemini_model",
+            "",
+        )
+        or "gemini-2.5-flash"
+    )
     if gemini_key:
-        configs.append(ValidatorConfig(
-            api_key=gemini_key,
-            model=gemini_model,
-            label="gemini",
-            base_url=GEMINI_OPENAI_BASE_URL,
-            max_tokens=1024,
-            timeout=30,
-        ))
+        configs.append(
+            ValidatorConfig(
+                api_key=gemini_key,
+                model=gemini_model,
+                label="gemini",
+                base_url=GEMINI_OPENAI_BASE_URL,
+                max_tokens=1024,
+                timeout=30,
+            )
+        )
 
     if not configs:
         return None
@@ -906,7 +942,9 @@ def build_trading_loop(
         venue="paper",
     )
     consensus_validator = _build_consensus_validator(
-        enable_consensus, consensus_model, settings,
+        enable_consensus,
+        consensus_model,
+        settings,
     )
 
     from app.storage.db.session import build_session_factory

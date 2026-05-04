@@ -127,10 +127,7 @@ class TextIntentProcessor:
 
         # Build user message with optional context
         if context:
-            user_content = (
-                f"Aktueller KAI-Systemkontext:\n{context}\n\n"
-                f"Operator-Nachricht: {text}"
-            )
+            user_content = f"Aktueller KAI-Systemkontext:\n{context}\n\nOperator-Nachricht: {text}"
         else:
             user_content = text
 

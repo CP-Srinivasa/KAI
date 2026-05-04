@@ -92,7 +92,10 @@ def wilson_ci(hits: int, total: int, z: float = 1.96) -> tuple[float, float] | N
 
 
 def _compute_metrics(
-    source: str, hits: int, misses: int, inconclusive: int = 0,
+    source: str,
+    hits: int,
+    misses: int,
+    inconclusive: int = 0,
 ) -> ProvenanceMetrics:
     resolved = hits + misses
     if resolved == 0:
@@ -119,9 +122,7 @@ def _compute_metrics(
         ci_low_pct=round(low * 100.0, 2) if low is not None else None,
         ci_high_pct=round(high * 100.0, 2) if high is not None else None,
         ci_width_pct=(
-            round((high - low) * 100.0, 2)
-            if low is not None and high is not None
-            else None
+            round((high - low) * 100.0, 2) if low is not None and high is not None else None
         ),
         sample_sufficient=resolved >= MIN_SAMPLE_FOR_JUDGMENT,
         inconclusive=inconclusive,
@@ -272,7 +273,10 @@ def build_provenance_split_report(
             per_source_inconclusive[source] = per_source_inconclusive.get(source, 0) + 1
 
     overall = _compute_metrics(
-        "__overall__", total_hits, total_misses, total_inconclusive,
+        "__overall__",
+        total_hits,
+        total_misses,
+        total_inconclusive,
     )
 
     # Active-precision: same ratio computed without the ``unknown`` legacy
@@ -281,11 +285,12 @@ def build_provenance_split_report(
     # what the operator should watch as Provenance-V1 fills in.
     active_hits = total_hits - per_source_hits.get(DEFAULT_SOURCE, 0)
     active_misses = total_misses - per_source_misses.get(DEFAULT_SOURCE, 0)
-    active_inconclusive = total_inconclusive - per_source_inconclusive.get(
-        DEFAULT_SOURCE, 0
-    )
+    active_inconclusive = total_inconclusive - per_source_inconclusive.get(DEFAULT_SOURCE, 0)
     overall_active = _compute_metrics(
-        "__active__", active_hits, active_misses, active_inconclusive,
+        "__active__",
+        active_hits,
+        active_misses,
+        active_inconclusive,
     )
 
     all_sources = sorted(

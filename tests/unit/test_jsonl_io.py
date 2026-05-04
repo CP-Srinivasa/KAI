@@ -65,7 +65,7 @@ def test_last_line_truncation_triggers_retry(
     path = tmp_path / "race.jsonl"
     _write_lines(
         path,
-        [json.dumps({"a": 1}), "{\"b\":"],  # last line truncated
+        [json.dumps({"a": 1}), '{"b":'],  # last line truncated
     )
 
     sleep_calls: list[float] = []
@@ -86,7 +86,7 @@ def test_last_line_still_bad_after_retry_is_dropped(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     path = tmp_path / "stilbad.jsonl"
-    _write_lines(path, [json.dumps({"a": 1}), "{\"b\":"])  # bad tail, never fixed
+    _write_lines(path, [json.dumps({"a": 1}), '{"b":'])  # bad tail, never fixed
 
     monkeypatch.setattr(jsonl_io.time, "sleep", lambda _s: None)
     rows = read_jsonl_tolerant(path)

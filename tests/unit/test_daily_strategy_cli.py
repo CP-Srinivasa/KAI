@@ -37,7 +37,9 @@ def _today_path(repo: Path) -> Path:
 
 def _marker_path(repo: Path) -> Path:
     today = datetime.now(UTC).date()
-    return repo / "artifacts" / "daily_strategy" / f".reminder_sent_{today.isoformat()}.tmp"  # placeholder, overwritten below
+    return (
+        repo / "artifacts" / "daily_strategy" / f".reminder_sent_{today.isoformat()}.tmp"
+    )  # placeholder, overwritten below
 
 
 def _real_marker_path(repo: Path) -> Path:
@@ -66,9 +68,7 @@ def test_check_exits_0_when_present(runner: CliRunner, repo_cwd: Path) -> None:
 # --- bootstrap ------------------------------------------------------------
 
 
-def test_bootstrap_writes_skeleton_with_stub_markers(
-    runner: CliRunner, repo_cwd: Path
-) -> None:
+def test_bootstrap_writes_skeleton_with_stub_markers(runner: CliRunner, repo_cwd: Path) -> None:
     result = runner.invoke(daily_strategy_app, ["bootstrap", "--no-notify"])
     assert result.exit_code == 0
     today_path = _today_path(repo_cwd)
@@ -105,9 +105,7 @@ def test_bootstrap_force_overwrites(runner: CliRunner, repo_cwd: Path) -> None:
 # --- reminder -------------------------------------------------------------
 
 
-def test_reminder_exit2_when_review_missing(
-    runner: CliRunner, repo_cwd: Path
-) -> None:
+def test_reminder_exit2_when_review_missing(runner: CliRunner, repo_cwd: Path) -> None:
     result = runner.invoke(daily_strategy_app, ["reminder", "--no-notify"])
     assert result.exit_code == 2
     assert "Skeleton fehlt komplett" in result.stdout
@@ -115,9 +113,7 @@ def test_reminder_exit2_when_review_missing(
     assert _real_marker_path(repo_cwd).exists()
 
 
-def test_reminder_exit1_when_skeleton_unfilled(
-    runner: CliRunner, repo_cwd: Path
-) -> None:
+def test_reminder_exit1_when_skeleton_unfilled(runner: CliRunner, repo_cwd: Path) -> None:
     # Bootstrap first to get the canonical stub-marker layout.
     runner.invoke(daily_strategy_app, ["bootstrap", "--no-notify"])
     result = runner.invoke(daily_strategy_app, ["reminder", "--no-notify"])
@@ -130,9 +126,7 @@ def test_reminder_exit1_when_skeleton_unfilled(
     assert "Sektion" in payload["kind"]
 
 
-def test_reminder_exit0_when_review_filled(
-    runner: CliRunner, repo_cwd: Path
-) -> None:
+def test_reminder_exit0_when_review_filled(runner: CliRunner, repo_cwd: Path) -> None:
     today_path = _today_path(repo_cwd)
     today_path.parent.mkdir(parents=True, exist_ok=True)
     # No stub markers — counts as filled.
@@ -147,9 +141,7 @@ def test_reminder_exit0_when_review_filled(
     assert not _real_marker_path(repo_cwd).exists()
 
 
-def test_reminder_dedup_skip_when_marker_exists(
-    runner: CliRunner, repo_cwd: Path
-) -> None:
+def test_reminder_dedup_skip_when_marker_exists(runner: CliRunner, repo_cwd: Path) -> None:
     runner.invoke(daily_strategy_app, ["bootstrap", "--no-notify"])
     first = runner.invoke(daily_strategy_app, ["reminder", "--no-notify"])
     assert first.exit_code == 1
@@ -159,14 +151,10 @@ def test_reminder_dedup_skip_when_marker_exists(
     assert "already sent" in second.stdout
 
 
-def test_reminder_force_bypasses_marker(
-    runner: CliRunner, repo_cwd: Path
-) -> None:
+def test_reminder_force_bypasses_marker(runner: CliRunner, repo_cwd: Path) -> None:
     runner.invoke(daily_strategy_app, ["bootstrap", "--no-notify"])
     runner.invoke(daily_strategy_app, ["reminder", "--no-notify"])
-    forced = runner.invoke(
-        daily_strategy_app, ["reminder", "--no-notify", "--force"]
-    )
+    forced = runner.invoke(daily_strategy_app, ["reminder", "--no-notify", "--force"])
     # --force re-evaluates and re-triggers — exit-code reflects current state.
     assert forced.exit_code == 1
 

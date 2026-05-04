@@ -99,7 +99,7 @@ def _normalize_symbol(raw: str) -> tuple[str, str]:
         return cleaned.replace("/", ""), cleaned
     for quote in ("USDT", "USDC", "USD", "BTC", "ETH"):
         if cleaned.endswith(quote) and len(cleaned) > len(quote):
-            return cleaned, f"{cleaned[:-len(quote)]}/{quote}"
+            return cleaned, f"{cleaned[: -len(quote)]}/{quote}"
     return cleaned, cleaned
 
 
@@ -155,18 +155,12 @@ def _extract_symbol_and_direction(
 # 2) ABOVE: 'Entry Above - X' / 'Enter Above - X' / typos
 # 3) AT   : 'Entry Point - X' / 'Entry - X'
 # 4) AT   : inline 'Long/Buy - X' or '#SYM Long/BUY – X'
-_ENTRY_RANGE = re.compile(
-    rf"(?i)Entry\s*Zone\s*:\s*(?P<lo>[\d.]+)\s*{_DASH}\s*(?P<hi>[\d.]+)"
-)
+_ENTRY_RANGE = re.compile(rf"(?i)Entry\s*Zone\s*:\s*(?P<lo>[\d.]+)\s*{_DASH}\s*(?P<hi>[\d.]+)")
 _ENTRY_ABOVE = re.compile(
     rf"(?i)(?:Entry|Enter)\s*(?:\s+A\s*[Bb]ove|\s+ABove)\s*{_DASH}?\s*(?P<v>[\d.]+)"
 )
-_ENTRY_POINT = re.compile(
-    rf"(?i)Entry(?:\s*Point)?\s*{_DASH}\s*(?P<v>[\d.]+)"
-)
-_ENTRY_INLINE = re.compile(
-    rf"(?i)(?:Long|Short)\s*/\s*(?:Buy|Sell)\s*{_DASH}\s*(?P<v>[\d.]+)"
-)
+_ENTRY_POINT = re.compile(rf"(?i)Entry(?:\s*Point)?\s*{_DASH}\s*(?P<v>[\d.]+)")
+_ENTRY_INLINE = re.compile(rf"(?i)(?:Long|Short)\s*/\s*(?:Buy|Sell)\s*{_DASH}\s*(?P<v>[\d.]+)")
 
 
 def _extract_entry(text: str) -> tuple[str, float | None, float | None, float | None]:
@@ -207,9 +201,7 @@ def _extract_stop_loss(text: str) -> float | None:
 #  A) "Targets: 100 - 110 - 120 - 130"       (single-line, dash-separated)
 #  B) "🎯 100\n🎯 110\n..."                    (bullseye + inline value per line)
 #  C) "🎯 Target:\n100\n110\n..."             (bullseye label then values below)
-_TARGETS_LINE = re.compile(
-    rf"(?im)^\s*Targets?\s*:\s*(?P<list>[\d.,\s{_DASH_CHARS}]+?)\s*$"
-)
+_TARGETS_LINE = re.compile(rf"(?im)^\s*Targets?\s*:\s*(?P<list>[\d.,\s{_DASH_CHARS}]+?)\s*$")
 _TARGET_EMOJI_INLINE = re.compile(r"(?im)^\s*🎯\s*(?P<v>\d[\d.]*)\s*$")
 # Label form: "🎯 Target:" (any case, optional 's') followed by numeric lines.
 _TARGET_EMOJI_LABEL = re.compile(r"(?im)^\s*🎯\s*Targets?\s*:?\s*$")
@@ -240,7 +232,7 @@ def _extract_targets(text: str) -> list[float]:
     # non-numeric/non-empty line interrupts (e.g. "🛑 Stop Loss").
     label = _TARGET_EMOJI_LABEL.search(text)
     if label is not None:
-        after = text[label.end():]
+        after = text[label.end() :]
         values: list[float] = []
         for raw in after.splitlines():
             line = raw.strip()
@@ -261,9 +253,7 @@ def _extract_targets(text: str) -> list[float]:
     return _parse_targets_dashlist(m["list"])
 
 
-_LEVERAGE = re.compile(
-    rf"(?i)Leverage\s*[:{_DASH_CHARS}]\s*(?P<lev>\d+)\s*x?"
-)
+_LEVERAGE = re.compile(rf"(?i)Leverage\s*[:{_DASH_CHARS}]\s*(?P<lev>\d+)\s*x?")
 
 
 def _extract_leverage(text: str) -> int:

@@ -28,4 +28,3 @@ __all__ = [
     "load_decision_journal",
     "build_decision_journal_summary",
 ]
-

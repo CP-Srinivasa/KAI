@@ -74,9 +74,7 @@ class OrderResult:
     avg_fill_price: float = 0.0
     status: OrderStatus = OrderStatus.PENDING
     error: str = ""
-    timestamp_utc: str = field(
-        default_factory=lambda: datetime.now(UTC).isoformat()
-    )
+    timestamp_utc: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
     exchange: str = ""
     raw_response: dict[str, object] = field(default_factory=dict)
 
@@ -92,9 +90,7 @@ class BalanceResult:
     assets: dict[str, float] = field(default_factory=dict)
     error: str = ""
     exchange: str = ""
-    timestamp_utc: str = field(
-        default_factory=lambda: datetime.now(UTC).isoformat()
-    )
+    timestamp_utc: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
 
 
 @dataclass(frozen=True)

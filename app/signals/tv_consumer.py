@@ -40,7 +40,8 @@ def _load_consumed_ids() -> set[str]:
 def _save_consumed_ids(ids: set[str]) -> None:
     _CONSUMED_MARKER_PATH.parent.mkdir(parents=True, exist_ok=True)
     _CONSUMED_MARKER_PATH.write_text(
-        json.dumps(sorted(ids), ensure_ascii=False), encoding="utf-8",
+        json.dumps(sorted(ids), ensure_ascii=False),
+        encoding="utf-8",
     )
 
 
@@ -73,9 +74,7 @@ def _parse_promoted(raw: dict[str, Any]) -> SignalCandidate | None:
             volatility_state=raw.get("volatility_state", "normal"),
             liquidity_state=raw.get("liquidity_state", "adequate"),
             entry_price=float(raw["entry_price"]),
-            stop_loss_price=(
-                float(raw["stop_loss_price"]) if raw.get("stop_loss_price") else None
-            ),
+            stop_loss_price=(float(raw["stop_loss_price"]) if raw.get("stop_loss_price") else None),
             take_profit_price=(
                 float(raw["take_profit_price"]) if raw.get("take_profit_price") else None
             ),

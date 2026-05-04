@@ -54,11 +54,13 @@ def run_health_check(
     try:
         audits = load_alert_audits(adir)
     except Exception:
-        issues.append(HealthIssue(
-            severity="critical",
-            component="alerts",
-            message="Cannot read alert audit trail",
-        ))
+        issues.append(
+            HealthIssue(
+                severity="critical",
+                component="alerts",
+                message="Cannot read alert audit trail",
+            )
+        )
         audits = []
 
     recent_alerts = 0
@@ -73,14 +75,16 @@ def run_health_check(
             recent_alerts += 1
 
     if recent_alerts < min_expected_alerts:
-        issues.append(HealthIssue(
-            severity="warning",
-            component="alerts",
-            message=(
-                f"Only {recent_alerts} alerts in last {lookback_hours}h "
-                f"(expected >= {min_expected_alerts})"
-            ),
-        ))
+        issues.append(
+            HealthIssue(
+                severity="warning",
+                component="alerts",
+                message=(
+                    f"Only {recent_alerts} alerts in last {lookback_hours}h "
+                    f"(expected >= {min_expected_alerts})"
+                ),
+            )
+        )
 
     # ── Trading loop freshness ───────────────────────────────────────
     try:
@@ -88,11 +92,13 @@ def run_health_check(
             adir / "trading_loop_audit.jsonl",
         )
     except Exception:
-        issues.append(HealthIssue(
-            severity="critical",
-            component="trading_loop",
-            message="Cannot read trading loop audit trail",
-        ))
+        issues.append(
+            HealthIssue(
+                severity="critical",
+                component="trading_loop",
+                message="Cannot read trading loop audit trail",
+            )
+        )
         cycles = []
 
     recent_cycles = 0
@@ -112,24 +118,28 @@ def run_health_check(
             error_cycles += 1
 
     if recent_cycles < min_expected_cycles:
-        issues.append(HealthIssue(
-            severity="warning",
-            component="trading_loop",
-            message=(
-                f"Only {recent_cycles} cycles in last {lookback_hours}h "
-                f"(expected >= {min_expected_cycles})"
-            ),
-        ))
+        issues.append(
+            HealthIssue(
+                severity="warning",
+                component="trading_loop",
+                message=(
+                    f"Only {recent_cycles} cycles in last {lookback_hours}h "
+                    f"(expected >= {min_expected_cycles})"
+                ),
+            )
+        )
 
     if recent_cycles > 0 and error_cycles / recent_cycles > 0.5:
-        issues.append(HealthIssue(
-            severity="critical",
-            component="trading_loop",
-            message=(
-                f"{error_cycles}/{recent_cycles} cycles errored "
-                f"({error_cycles/recent_cycles:.0%})"
-            ),
-        ))
+        issues.append(
+            HealthIssue(
+                severity="critical",
+                component="trading_loop",
+                message=(
+                    f"{error_cycles}/{recent_cycles} cycles errored "
+                    f"({error_cycles / recent_cycles:.0%})"
+                ),
+            )
+        )
 
     # ── Precision ────────────────────────────────────────────────────
     try:
@@ -143,29 +153,32 @@ def run_health_check(
     if resolved >= 20:
         precision = hits / resolved * 100
         if precision < min_precision_pct:
-            issues.append(HealthIssue(
-                severity="warning",
-                component="precision",
-                message=(
-                    f"Precision {precision:.1f}% is below "
-                    f"threshold {min_precision_pct:.0f}%"
-                ),
-            ))
+            issues.append(
+                HealthIssue(
+                    severity="warning",
+                    component="precision",
+                    message=(
+                        f"Precision {precision:.1f}% is below threshold {min_precision_pct:.0f}%"
+                    ),
+                )
+            )
 
     # ── Annotation backlog ───────────────────────────────────────────
     annotated_ids = {a.document_id for a in annotations}
-    unique_unannotated = len({
-        rec.document_id for rec in audits
-        if rec.directional_eligible is True
-        and rec.document_id not in annotated_ids
-    })
+    unique_unannotated = len(
+        {
+            rec.document_id
+            for rec in audits
+            if rec.directional_eligible is True and rec.document_id not in annotated_ids
+        }
+    )
     if unique_unannotated > 20:
-        issues.append(HealthIssue(
-            severity="warning",
-            component="annotations",
-            message=(
-                f"{unique_unannotated} directional alerts unannotated"
-            ),
-        ))
+        issues.append(
+            HealthIssue(
+                severity="warning",
+                component="annotations",
+                message=(f"{unique_unannotated} directional alerts unannotated"),
+            )
+        )
 
     return issues

@@ -46,14 +46,10 @@ class TestParseAllowlist:
         assert _parse_allowlist("dashboard,telegram") == frozenset({"dashboard", "telegram"})
 
     def test_case_and_whitespace_normalized(self) -> None:
-        assert _parse_allowlist("  Dashboard , TELEGRAM ") == frozenset(
-            {"dashboard", "telegram"}
-        )
+        assert _parse_allowlist("  Dashboard , TELEGRAM ") == frozenset({"dashboard", "telegram"})
 
     def test_empty_entries_skipped(self) -> None:
-        assert _parse_allowlist("dashboard,,, ,telegram") == frozenset(
-            {"dashboard", "telegram"}
-        )
+        assert _parse_allowlist("dashboard,,, ,telegram") == frozenset({"dashboard", "telegram"})
 
     def test_empty_string(self) -> None:
         assert _parse_allowlist("") == frozenset()
@@ -147,18 +143,20 @@ class TestResolveEntryPrice:
         assert _resolve_entry_price({"entry_type": "limit", "entry_value": 100.5}) == 100.5
 
     def test_range_midpoint(self) -> None:
-        assert _resolve_entry_price(
-            {"entry_type": "range", "entry_min": 100.0, "entry_max": 110.0}
-        ) == 105.0
+        assert (
+            _resolve_entry_price({"entry_type": "range", "entry_min": 100.0, "entry_max": 110.0})
+            == 105.0
+        )
 
     def test_range_missing_bounds(self) -> None:
         assert _resolve_entry_price({"entry_type": "range"}) is None
 
     def test_range_inverted(self) -> None:
         # max <= min: invalid range
-        assert _resolve_entry_price(
-            {"entry_type": "range", "entry_min": 110.0, "entry_max": 100.0}
-        ) is None
+        assert (
+            _resolve_entry_price({"entry_type": "range", "entry_min": 110.0, "entry_max": 100.0})
+            is None
+        )
 
     def test_missing(self) -> None:
         assert _resolve_entry_price({}) is None
@@ -370,9 +368,7 @@ async def test_incomplete_envelope_rejected(
 
 
 @pytest.mark.asyncio
-async def test_ttl_expired(
-    tmp_artifacts: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_ttl_expired(tmp_artifacts: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Envelope older than TTL → stage=expired, no fill attempt."""
     monkeypatch.setenv("EXECUTION_OPERATOR_SIGNAL_BRIDGE_ENABLED", "true")
     monkeypatch.setenv("EXECUTION_OPERATOR_SIGNAL_SOURCE_ALLOWLIST", "dashboard")
@@ -392,9 +388,7 @@ async def test_ttl_expired(
 
 
 @pytest.mark.asyncio
-async def test_happy_path_fills(
-    tmp_artifacts: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_happy_path_fills(tmp_artifacts: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Allowlisted dashboard envelope, price in tolerance → filled paper order."""
     monkeypatch.setenv("EXECUTION_OPERATOR_SIGNAL_BRIDGE_ENABLED", "true")
     monkeypatch.setenv("EXECUTION_OPERATOR_SIGNAL_SOURCE_ALLOWLIST", "dashboard")

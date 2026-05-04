@@ -108,9 +108,7 @@ class BridgeTickResult:
 
 
 def _parse_allowlist(raw: str) -> frozenset[str]:
-    return frozenset(
-        s.strip().lower() for s in raw.split(",") if s.strip()
-    )
+    return frozenset(s.strip().lower() for s in raw.split(",") if s.strip())
 
 
 def _read_jsonl(path: Path) -> list[dict[str, object]]:

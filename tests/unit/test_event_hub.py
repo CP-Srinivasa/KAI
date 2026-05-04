@@ -33,7 +33,7 @@ def test_server_event_to_sse_wraps_ts_and_json() -> None:
     wire = evt.to_sse()
     assert wire.startswith("event: alert_fired\n")
     body_line = next(ln for ln in wire.splitlines() if ln.startswith("data: "))
-    payload = json.loads(body_line[len("data: "):])
+    payload = json.loads(body_line[len("data: ") :])
     assert payload["doc"] == "x"
     assert payload["priority"] == 3
     assert "ts" in payload

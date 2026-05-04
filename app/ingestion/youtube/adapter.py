@@ -157,9 +157,7 @@ def fetch_transcript(video_id: str) -> str | None:
         # Fall back to auto-generated
         if transcript is None:
             try:
-                transcript = transcript_list.find_generated_transcript(
-                    _PREFERRED_LANGUAGES
-                )
+                transcript = transcript_list.find_generated_transcript(_PREFERRED_LANGUAGES)
             except NoTranscriptFound:
                 return None
 
@@ -189,9 +187,7 @@ def _video_to_document(
     published = None
     if video.published_at:
         try:
-            published = datetime.fromisoformat(
-                video.published_at.replace("Z", "+00:00")
-            )
+            published = datetime.fromisoformat(video.published_at.replace("Z", "+00:00"))
         except ValueError:
             pass
 

@@ -273,9 +273,7 @@ def test_hold_metrics_excludes_blocked_directional_alerts(tmp_path: Path) -> Non
     assert hit["directional_alert_documents"] == 1
     assert hit["blocked_directional_documents"] == 1
     # D-142: bearish is blocked before asset resolution in current re-evaluation
-    assert hit["blocked_directional_by_reason"] == {
-        "bearish_directional_disabled": 1
-    }
+    assert hit["blocked_directional_by_reason"] == {"bearish_directional_disabled": 1}
     assert hit["resolved_directional_documents"] == 1
     assert quality["resolved_precision_pct"] == 100.0
 
@@ -319,10 +317,16 @@ def test_forward_simulation_uses_source_by_doc(tmp_path: Path) -> None:
     _write_jsonl(
         alert_outcomes,
         [
-            {"document_id": "doc-good", "outcome": "hit",
-             "annotated_at": "2026-04-14T11:00:00+00:00"},
-            {"document_id": "doc-decrypt", "outcome": "miss",
-             "annotated_at": "2026-04-14T11:01:00+00:00"},
+            {
+                "document_id": "doc-good",
+                "outcome": "hit",
+                "annotated_at": "2026-04-14T11:00:00+00:00",
+            },
+            {
+                "document_id": "doc-decrypt",
+                "outcome": "miss",
+                "annotated_at": "2026-04-14T11:01:00+00:00",
+            },
         ],
     )
     _write_jsonl(trading_loop_audit, [])
@@ -384,8 +388,7 @@ def test_forward_simulation_prefers_audit_source_name(tmp_path: Path) -> None:
     _write_jsonl(
         alert_outcomes,
         [
-            {"document_id": "doc-1", "outcome": "hit",
-             "annotated_at": "2026-04-14T11:00:00+00:00"},
+            {"document_id": "doc-1", "outcome": "hit", "annotated_at": "2026-04-14T11:00:00+00:00"},
         ],
     )
     _write_jsonl(trading_loop_audit, [])
@@ -443,10 +446,16 @@ def test_forward_simulation_filters_reactive_title(tmp_path: Path) -> None:
     _write_jsonl(
         alert_outcomes,
         [
-            {"document_id": "doc-hit", "outcome": "hit",
-             "annotated_at": "2026-04-14T11:00:00+00:00"},
-            {"document_id": "doc-reactive", "outcome": "miss",
-             "annotated_at": "2026-04-14T11:01:00+00:00"},
+            {
+                "document_id": "doc-hit",
+                "outcome": "hit",
+                "annotated_at": "2026-04-14T11:00:00+00:00",
+            },
+            {
+                "document_id": "doc-reactive",
+                "outcome": "miss",
+                "annotated_at": "2026-04-14T11:01:00+00:00",
+            },
         ],
     )
     _write_jsonl(trading_loop_audit, [])
@@ -524,9 +533,7 @@ def _build_gate_fixture(
         doc_id = f"doc-{i}"
         if spread_across_windows:
             offset_days = window_offsets_days[bucket_assignments[i]]
-            dispatched = (
-                _GATE_FIXTURE_ANCHOR - timedelta(days=offset_days)
-            ).isoformat()
+            dispatched = (_GATE_FIXTURE_ANCHOR - timedelta(days=offset_days)).isoformat()
             is_hit = bucket_hits_target[i] == 1
         else:
             dispatched = "2026-04-01T10:00:00+00:00"
@@ -570,11 +577,8 @@ def _build_gate_fixture(
     ]
     _write_jsonl(trading_loop_audit, loop_rows)
 
-    exec_rows = [
-        {"event_type": "order_created"} for _ in range(paper_fills)
-    ] + [
-        {"event_type": "order_filled", "realized_pnl_usd": pnl}
-        for _ in range(paper_fills)
+    exec_rows = [{"event_type": "order_created"} for _ in range(paper_fills)] + [
+        {"event_type": "order_filled", "realized_pnl_usd": pnl} for _ in range(paper_fills)
     ]
     _write_jsonl(paper_execution_audit, exec_rows)
 
@@ -647,17 +651,18 @@ def test_hold_gate_per_source_precision_blocks_when_no_source_clears_floor(
     55% lower-bound check the per-source gate enforces.
     """
     report = _build_gate_fixture(
-        tmp_path, resolved_count=200, hits=120, paper_fills=5, pnl=1.0,
+        tmp_path,
+        resolved_count=200,
+        hits=120,
+        paper_fills=5,
+        pnl=1.0,
     )
     gate = report["hold_gate_evaluation"]
     assert gate["alert_hit_rate_condition_met"] is True
     assert gate["active_precision_condition_met"] is True
     assert gate["per_source_precision_condition_met"] is False
     assert gate["feature_work_unblocked"] is False
-    assert any(
-        r.startswith("no_source_meets_per_source_floor")
-        for r in gate["blocking_reasons"]
-    )
+    assert any(r.startswith("no_source_meets_per_source_floor") for r in gate["blocking_reasons"])
 
 
 def test_hold_gate_stability_blocks_when_only_one_window_has_data(
@@ -678,16 +683,17 @@ def test_hold_gate_stability_blocks_when_only_one_window_has_data(
     assert gate["per_source_precision_condition_met"] is True  # current snapshot ok
     assert gate["per_source_stability_condition_met"] is False
     assert gate["feature_work_unblocked"] is False
-    assert any(
-        r.startswith("no_source_stable_across_") for r in gate["blocking_reasons"]
-    )
+    assert any(r.startswith("no_source_stable_across_") for r in gate["blocking_reasons"])
 
 
 def test_hold_gate_legacy_unknown_excluded_from_active(tmp_path: Path) -> None:
     """Legacy `source=unknown` docs don't count toward active precision."""
     # 200 resolved, 80 hits (40%) — but all legacy_unknown → active_resolved=0
     report = _build_gate_fixture(
-        tmp_path, resolved_count=200, hits=80, source_for_docs="unknown",
+        tmp_path,
+        resolved_count=200,
+        hits=80,
+        source_for_docs="unknown",
     )
     gate = report["hold_gate_evaluation"]
     hit = report["alert_hit_rate_evidence"]
@@ -704,10 +710,7 @@ def test_hold_gate_exposes_thresholds(tmp_path: Path) -> None:
     assert gate["minimum_resolved_directional_alerts_for_gate"] == 200
     assert gate["minimum_active_precision_pct_for_gate"] == 60.0
     assert gate["minimum_per_source_resolved_for_gate"] == MIN_PER_SOURCE_RESOLVED
-    assert (
-        gate["minimum_per_source_wilson_low_pct_for_gate"]
-        == MIN_PER_SOURCE_WILSON_LOW_PCT
-    )
+    assert gate["minimum_per_source_wilson_low_pct_for_gate"] == MIN_PER_SOURCE_WILSON_LOW_PCT
 
 
 # ── Direct unit tests for the per-source helpers (no fixture indirection) ───
@@ -768,9 +771,7 @@ def test_compute_per_source_stability_marks_empty_windows_as_fail() -> None:
     docs = {f"d{i}" for i in range(40)}
     hits = {f"d{i}" for i in range(30)}
     # All in window 0 (anchor - 10d): plenty for window 0, nothing else.
-    latest_directional_by_doc = {
-        d: _Rec((anchor - timedelta(days=10)).isoformat()) for d in docs
-    }
+    latest_directional_by_doc = {d: _Rec((anchor - timedelta(days=10)).isoformat()) for d in docs}
     source_lookup = dict.fromkeys(docs, "rss")
 
     out = compute_per_source_stability(
@@ -815,9 +816,7 @@ def test_compute_per_source_stability_passes_when_all_windows_strong() -> None:
             docs.add(doc_id)
             if i < hits_per_window:
                 hit_docs.add(doc_id)
-            latest[doc_id] = _Rec(
-                (anchor - timedelta(days=offset_days)).isoformat()
-            )
+            latest[doc_id] = _Rec((anchor - timedelta(days=offset_days)).isoformat())
             sources[doc_id] = "rss"
 
     out = compute_per_source_stability(

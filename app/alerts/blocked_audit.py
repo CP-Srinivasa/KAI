@@ -149,9 +149,7 @@ def load_blocked_outcomes(input_path: str | Path) -> list[BlockedOutcomeAnnotati
                 BlockedOutcomeAnnotation(
                     document_id=data["document_id"],
                     outcome=data["outcome"],
-                    annotated_at=data.get(
-                        "annotated_at", datetime.now(UTC).isoformat()
-                    ),
+                    annotated_at=data.get("annotated_at", datetime.now(UTC).isoformat()),
                     asset=data.get("asset"),
                     note=data.get("note"),
                 )

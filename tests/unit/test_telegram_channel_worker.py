@@ -42,9 +42,7 @@ def _read_jsonl(path: Path) -> list[dict[str, Any]]:
     if not path.exists():
         return []
     return [
-        json.loads(line)
-        for line in path.read_text(encoding="utf-8").splitlines()
-        if line.strip()
+        json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()
     ]
 
 
@@ -209,7 +207,11 @@ class _FakeClient:
         self.calls: list[dict[str, Any]] = []
 
     def iter_messages(
-        self, entity: Any, *, min_id: int = 0, limit: int | None = None,
+        self,
+        entity: Any,
+        *,
+        min_id: int = 0,
+        limit: int | None = None,
     ) -> Any:
         self.calls.append({"entity": entity, "min_id": min_id, "limit": limit})
         # Telethon returns newest-first; we mimic that — replay must sort.
@@ -241,7 +243,8 @@ class TestReplayMissedMessages:
         assert seen == []
 
     def test_replay_processes_messages_in_chronological_order(
-        self, tmp_path: Path,
+        self,
+        tmp_path: Path,
     ) -> None:
         client = _FakeClient(
             [
@@ -265,9 +268,7 @@ class TestReplayMissedMessages:
         # ascending msg-id order so the persisted checkpoint advances monotonically.
         assert [mid for mid, _ in seen] == [10, 11, 12]
         # Telethon was queried with the correct min_id.
-        assert client.calls == [
-            {"entity": client.calls[0]["entity"], "min_id": 9, "limit": 200}
-        ]
+        assert client.calls == [{"entity": client.calls[0]["entity"], "min_id": 9, "limit": 200}]
 
     def test_replay_filters_messages_at_or_below_checkpoint(self) -> None:
         # Defense-in-depth: even if Telethon returns a stale msg with id <= min_id
@@ -325,9 +326,7 @@ class TestReplayMissedMessages:
     def test_replay_falls_back_to_message_attr_when_raw_text_empty(self) -> None:
         # Telethon exposes ``raw_text`` for plain text but service messages
         # only carry ``message``. Replay must look at both.
-        client = _FakeClient(
-            [_FakeMessage(id=10, raw_text="", message="from_message_field")]
-        )
+        client = _FakeClient([_FakeMessage(id=10, raw_text="", message="from_message_field")])
         captured: list[str] = []
         asyncio.run(
             replay_missed_messages(

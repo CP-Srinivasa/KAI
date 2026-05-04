@@ -8,4 +8,3 @@ from __future__ import annotations
 from app.normalization.entities import hits_to_entity_mentions
 
 __all__ = ["hits_to_entity_mentions"]
-

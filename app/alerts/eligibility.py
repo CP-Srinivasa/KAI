@@ -41,11 +41,13 @@ BLOCK_REASON_LOW_PRECISION_SOURCE = "low_precision_source"
 # is indistinguishable from noise (17.5% ≈ random with bullish bias).
 # Block from directional eligibility until source-specific signal quality
 # improves or the record can be re-attributed.
-_LOW_PRECISION_SOURCES: frozenset[str] = frozenset({
-    "decrypt",
-    "bitcoin_magazine",
-    "unknown",
-})
+_LOW_PRECISION_SOURCES: frozenset[str] = frozenset(
+    {
+        "decrypt",
+        "bitcoin_magazine",
+        "unknown",
+    }
+)
 
 # D-142: Bearish directional disabled based on 50 eligible resolved outcomes.
 # Bearish precision: 4% (1 hit / 24 miss). Bullish precision: 76% (19/25).
@@ -264,9 +266,7 @@ def evaluate_directional_eligibility(
             directional_block_reason=BLOCK_REASON_WEAK_SIGNAL,
         )
     # D-121: Asymmetric impact threshold — bearish needs higher impact.
-    min_impact = (
-        MIN_IMPACT_SCORE_BEARISH if sentiment == "bearish" else MIN_IMPACT_SCORE_BULLISH
-    )
+    min_impact = MIN_IMPACT_SCORE_BEARISH if sentiment == "bearish" else MIN_IMPACT_SCORE_BULLISH
     if impact_score is not None and impact_score < min_impact:
         return DirectionalEligibilityDecision(
             is_directional=True,
@@ -298,10 +298,7 @@ def evaluate_directional_eligibility(
         if sentiment == "bearish"
         else MIN_DIRECTIONAL_CONFIDENCE_BULLISH
     )
-    if (
-        directional_confidence is not None
-        and directional_confidence < min_confidence
-    ):
+    if directional_confidence is not None and directional_confidence < min_confidence:
         return DirectionalEligibilityDecision(
             is_directional=True,
             directional_eligible=False,
@@ -361,9 +358,7 @@ def evaluate_directional_eligibility(
         )
 
     reason = (
-        BLOCK_REASON_MISSING_ASSETS
-        if not has_non_empty_asset
-        else BLOCK_REASON_UNSUPPORTED_ASSETS
+        BLOCK_REASON_MISSING_ASSETS if not has_non_empty_asset else BLOCK_REASON_UNSUPPORTED_ASSETS
     )
     return DirectionalEligibilityDecision(
         is_directional=True,

@@ -156,11 +156,17 @@ def test_min_bucket_size_filters_noise() -> None:
 def test_latest_dispatch_per_document_wins() -> None:
     audits = [
         _audit(
-            "d1", "bullish", ["BTC"], 5,
+            "d1",
+            "bullish",
+            ["BTC"],
+            5,
             dispatched_at="2026-03-25T10:00:00+00:00",
         ),
         _audit(
-            "d1", "bullish", ["BTC"], 9,  # later dispatch with different priority
+            "d1",
+            "bullish",
+            ["BTC"],
+            9,  # later dispatch with different priority
             dispatched_at="2026-03-25T11:00:00+00:00",
         ),
     ]
@@ -260,7 +266,10 @@ def test_forward_simulation_filters_low_precision_source() -> None:
     ]
     source_by_doc = {"d1": "coindesk", "d2": "decrypt", "d3": "cointelegraph"}
     report = build_feature_analysis(
-        audits, annotations, source_by_doc=source_by_doc, min_bucket_size=1,
+        audits,
+        annotations,
+        source_by_doc=source_by_doc,
+        min_bucket_size=1,
     )
     fwd = report["forward_simulation"]
     # d2 from decrypt filtered out
@@ -290,11 +299,11 @@ def test_forward_simulation_filters_not_actionable() -> None:
 def test_forward_simulation_combined_filters() -> None:
     """Multiple gates combine to filter in forward sim."""
     audits = [
-        _audit("d1", "bullish", ["BTC"], 9),       # passes all
-        _audit("d2", "bearish", ["BTC"], 9),        # bearish block
-        _audit("d3", "bullish", ["BTC"], 7),        # priority block
-        _audit("d4", "bullish", ["BTC"], 8),        # source block
-        _audit("d5", "bullish", ["ETH"], 8),        # passes
+        _audit("d1", "bullish", ["BTC"], 9),  # passes all
+        _audit("d2", "bearish", ["BTC"], 9),  # bearish block
+        _audit("d3", "bullish", ["BTC"], 7),  # priority block
+        _audit("d4", "bullish", ["BTC"], 8),  # source block
+        _audit("d5", "bullish", ["ETH"], 8),  # passes
     ]
     annotations = [
         _ann("d1", "hit"),
@@ -304,11 +313,17 @@ def test_forward_simulation_combined_filters() -> None:
         _ann("d5", "hit"),
     ]
     source_by_doc = {
-        "d1": "coindesk", "d2": "coindesk", "d3": "coindesk",
-        "d4": "bitcoin_magazine", "d5": "beincrypto",
+        "d1": "coindesk",
+        "d2": "coindesk",
+        "d3": "coindesk",
+        "d4": "bitcoin_magazine",
+        "d5": "beincrypto",
     }
     report = build_feature_analysis(
-        audits, annotations, source_by_doc=source_by_doc, min_bucket_size=1,
+        audits,
+        annotations,
+        source_by_doc=source_by_doc,
+        min_bucket_size=1,
     )
     fwd = report["forward_simulation"]
     # d1 + d5 pass, d2/d3/d4 filtered
@@ -324,7 +339,10 @@ def test_forward_simulation_filters_reactive_bullish_title() -> None:
     audits = [
         _audit("d1", "bullish", ["BTC"], 9),
         _audit(
-            "d2", "bullish", ["BTC"], 10,
+            "d2",
+            "bullish",
+            ["BTC"],
+            10,
             normalized_title="btc etf empire surging past $100b",
         ),
         _audit("d3", "bullish", ["ETH"], 9),
@@ -346,8 +364,8 @@ def test_forward_simulation_filters_reactive_bullish_title() -> None:
 def test_forward_simulation_uses_title_by_doc_fallback() -> None:
     """title_by_doc provides title for old records without normalized_title."""
     audits = [
-        _audit("d1", "bullish", ["BTC"], 9),       # no title
-        _audit("d2", "bullish", ["BTC"], 10),       # no title
+        _audit("d1", "bullish", ["BTC"], 9),  # no title
+        _audit("d2", "bullish", ["BTC"], 10),  # no title
     ]
     annotations = [
         _ann("d1", "hit"),
@@ -360,7 +378,10 @@ def test_forward_simulation_uses_title_by_doc_fallback() -> None:
     # With title_by_doc: d2 gets reactive title from DB → filtered
     title_by_doc = {"d2": "bitcoin price eyes breakout as oil drops"}
     report_with = build_feature_analysis(
-        audits, annotations, title_by_doc=title_by_doc, min_bucket_size=1,
+        audits,
+        annotations,
+        title_by_doc=title_by_doc,
+        min_bucket_size=1,
     )
     fwd = report_with["forward_simulation"]
     assert fwd["resolved"] == 1

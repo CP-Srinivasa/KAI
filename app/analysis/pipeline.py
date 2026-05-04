@@ -73,6 +73,8 @@ _ASSET_HIT_CATEGORIES = frozenset({"crypto", "equity", "etf"})
 _FALLBACK_MAX_TERMS = 20
 _STUB_CONTENT_THRESHOLD = 50  # PH5C: skip LLM for docs with body Ã¢â€°Â¤ 50 bytes
 _MIN_RULE_RELEVANCE_FOR_LLM = 0.10  # D-110: skip LLM for very low rule relevance
+
+
 # PH4I: title-level crypto signal words for market_scope inference in fallback path
 def _derive_market_regime(assets: list[dict[str, Any]]) -> str:
     """Derive a simple market regime label from BTC/ETH 7d changes."""
@@ -478,10 +480,7 @@ class AnalysisPipeline:
         if not isinstance(chain, (list, tuple)):
             return False
         shadow_name = self._shadow_provider.provider_name.strip().lower()
-        return any(
-            isinstance(name, str) and name.strip().lower() == shadow_name
-            for name in chain
-        )
+        return any(isinstance(name, str) and name.strip().lower() == shadow_name for name in chain)
 
     async def _run_shadow_analysis(
         self,
@@ -860,4 +859,3 @@ class AnalysisPipeline:
                 return await self.run(doc)
 
         return list(await asyncio.gather(*[_bounded(d) for d in documents]))
-

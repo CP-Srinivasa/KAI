@@ -76,4 +76,3 @@ def test_collect_rss_feed_calls_are_confined_to_pipeline_service() -> None:
         "collect_rss_feed must only be called inside app/pipeline/service.py; "
         f"found callers: {sorted(str(p) for p in callers)}"
     )
-

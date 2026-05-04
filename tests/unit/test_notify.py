@@ -47,7 +47,9 @@ def test_notify_sends_when_configured() -> None:
 
         channel._post_message = AsyncMock(
             return_value=AlertDeliveryResult(
-                channel="telegram", success=True, message_id="42",
+                channel="telegram",
+                success=True,
+                message_id="42",
             ),
         )
 
@@ -76,7 +78,9 @@ def test_notify_returns_false_on_failure() -> None:
 
         channel._post_message = AsyncMock(
             return_value=AlertDeliveryResult(
-                channel="telegram", success=False, error="timeout",
+                channel="telegram",
+                success=False,
+                error="timeout",
             ),
         )
 
@@ -131,7 +135,9 @@ def test_ops_status_combines_health_and_briefing(tmp_path: Path) -> None:
     _write_cycle(tmp_path, cycle_id="c1")
 
     issues = run_health_check(
-        tmp_path, min_expected_alerts=0, min_expected_cycles=0,
+        tmp_path,
+        min_expected_alerts=0,
+        min_expected_cycles=0,
     )
     data = build_daily_briefing(tmp_path)
 

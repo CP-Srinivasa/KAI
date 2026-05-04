@@ -46,14 +46,10 @@ async def test_bullish_price_up_is_hit(tmp_path: Path) -> None:
     """Bullish alert + price went up > threshold = hit."""
     _write_audit(tmp_path, _make_audit(sentiment="bullish"))
 
-    with patch(
-        "app.alerts.auto_annotator.CoinGeckoAdapter"
-    ) as mock_cls:
+    with patch("app.alerts.auto_annotator.CoinGeckoAdapter") as mock_cls:
         adapter = mock_cls.return_value
         # pct_change=2.5 means 2.5% up (adapter returns percent)
-        adapter.get_price_change_between = AsyncMock(
-            return_value=(65000.0, 66625.0, 2.5)
-        )
+        adapter.get_price_change_between = AsyncMock(return_value=(65000.0, 66625.0, 2.5))
 
         results = await auto_annotate_pending(tmp_path, min_age_hours=6)
 
@@ -66,13 +62,9 @@ async def test_bearish_price_down_is_hit(tmp_path: Path) -> None:
     """Bearish alert + price went down > threshold = hit."""
     _write_audit(tmp_path, _make_audit(sentiment="bearish"))
 
-    with patch(
-        "app.alerts.auto_annotator.CoinGeckoAdapter"
-    ) as mock_cls:
+    with patch("app.alerts.auto_annotator.CoinGeckoAdapter") as mock_cls:
         adapter = mock_cls.return_value
-        adapter.get_price_change_between = AsyncMock(
-            return_value=(65000.0, 63700.0, -2.0)
-        )
+        adapter.get_price_change_between = AsyncMock(return_value=(65000.0, 63700.0, -2.0))
 
         results = await auto_annotate_pending(tmp_path, min_age_hours=6)
 
@@ -84,13 +76,9 @@ async def test_bearish_price_up_is_miss(tmp_path: Path) -> None:
     """Bearish alert + price went up > threshold = miss."""
     _write_audit(tmp_path, _make_audit(sentiment="bearish"))
 
-    with patch(
-        "app.alerts.auto_annotator.CoinGeckoAdapter"
-    ) as mock_cls:
+    with patch("app.alerts.auto_annotator.CoinGeckoAdapter") as mock_cls:
         adapter = mock_cls.return_value
-        adapter.get_price_change_between = AsyncMock(
-            return_value=(65000.0, 66300.0, 2.0)
-        )
+        adapter.get_price_change_between = AsyncMock(return_value=(65000.0, 66300.0, 2.0))
 
         results = await auto_annotate_pending(tmp_path, min_age_hours=6)
 
@@ -102,13 +90,9 @@ async def test_small_move_is_inconclusive(tmp_path: Path) -> None:
     """Move below threshold = inconclusive."""
     _write_audit(tmp_path, _make_audit(sentiment="bullish"))
 
-    with patch(
-        "app.alerts.auto_annotator.CoinGeckoAdapter"
-    ) as mock_cls:
+    with patch("app.alerts.auto_annotator.CoinGeckoAdapter") as mock_cls:
         adapter = mock_cls.return_value
-        adapter.get_price_change_between = AsyncMock(
-            return_value=(65000.0, 65300.0, 0.46)
-        )
+        adapter.get_price_change_between = AsyncMock(return_value=(65000.0, 65300.0, 0.46))
 
         results = await auto_annotate_pending(tmp_path, min_age_hours=6)
 
@@ -130,9 +114,7 @@ async def test_skips_already_annotated(tmp_path: Path) -> None:
     }
     outcomes_path.write_text(json.dumps(annotation) + "\n", encoding="utf-8")
 
-    with patch(
-        "app.alerts.auto_annotator.CoinGeckoAdapter"
-    ) as mock_cls:
+    with patch("app.alerts.auto_annotator.CoinGeckoAdapter") as mock_cls:
         adapter = mock_cls.return_value
         adapter.get_price_change_between = AsyncMock()
 
@@ -146,9 +128,7 @@ async def test_skips_too_recent(tmp_path: Path) -> None:
     """Alert dispatched less than min_age_hours ago is skipped."""
     _write_audit(tmp_path, _make_audit(hours_ago=2.0))
 
-    with patch(
-        "app.alerts.auto_annotator.CoinGeckoAdapter"
-    ) as mock_cls:
+    with patch("app.alerts.auto_annotator.CoinGeckoAdapter") as mock_cls:
         adapter = mock_cls.return_value
         adapter.get_price_change_between = AsyncMock()
 
@@ -164,18 +144,14 @@ async def test_skips_non_directional(tmp_path: Path) -> None:
         channel="telegram",
         message_id="dry_run",
         is_digest=False,
-        dispatched_at=(
-            datetime.now(UTC) - timedelta(hours=12)
-        ).isoformat(),
+        dispatched_at=(datetime.now(UTC) - timedelta(hours=12)).isoformat(),
         sentiment_label="neutral",
         affected_assets=["BTC/USDT"],
         directional_eligible=False,
     )
     _write_audit(tmp_path, rec)
 
-    with patch(
-        "app.alerts.auto_annotator.CoinGeckoAdapter"
-    ) as mock_cls:
+    with patch("app.alerts.auto_annotator.CoinGeckoAdapter") as mock_cls:
         adapter = mock_cls.return_value
         adapter.get_price_change_between = AsyncMock()
 
@@ -188,16 +164,14 @@ async def test_dry_run_does_not_write(tmp_path: Path) -> None:
     """In dry_run mode, no annotation file is written."""
     _write_audit(tmp_path, _make_audit())
 
-    with patch(
-        "app.alerts.auto_annotator.CoinGeckoAdapter"
-    ) as mock_cls:
+    with patch("app.alerts.auto_annotator.CoinGeckoAdapter") as mock_cls:
         adapter = mock_cls.return_value
-        adapter.get_price_change_between = AsyncMock(
-            return_value=(65000.0, 66300.0, 2.0)
-        )
+        adapter.get_price_change_between = AsyncMock(return_value=(65000.0, 66300.0, 2.0))
 
         results = await auto_annotate_pending(
-            tmp_path, min_age_hours=6, dry_run=True,
+            tmp_path,
+            min_age_hours=6,
+            dry_run=True,
         )
 
     assert len(results) == 1
@@ -209,14 +183,14 @@ async def test_skips_too_old(tmp_path: Path) -> None:
     """Alert older than max_age_hours is skipped (stale window)."""
     _write_audit(tmp_path, _make_audit(hours_ago=100.0))
 
-    with patch(
-        "app.alerts.auto_annotator.CoinGeckoAdapter"
-    ) as mock_cls:
+    with patch("app.alerts.auto_annotator.CoinGeckoAdapter") as mock_cls:
         adapter = mock_cls.return_value
         adapter.get_price_change_between = AsyncMock()
 
         results = await auto_annotate_pending(
-            tmp_path, min_age_hours=6, max_age_hours=48,
+            tmp_path,
+            min_age_hours=6,
+            max_age_hours=48,
         )
 
     assert results == []
@@ -227,14 +201,10 @@ async def test_scaled_threshold_long_window(tmp_path: Path) -> None:
     """At 30h evaluation window, threshold scales to 2% — +1.5% is inconclusive."""
     _write_audit(tmp_path, _make_audit(sentiment="bullish", hours_ago=30.0))
 
-    with patch(
-        "app.alerts.auto_annotator.CoinGeckoAdapter"
-    ) as mock_cls:
+    with patch("app.alerts.auto_annotator.CoinGeckoAdapter") as mock_cls:
         adapter = mock_cls.return_value
         # +1.5% over 30h — below scaled threshold of 2%
-        adapter.get_price_change_between = AsyncMock(
-            return_value=(65000.0, 65975.0, 1.5)
-        )
+        adapter.get_price_change_between = AsyncMock(return_value=(65000.0, 65975.0, 1.5))
 
         results = await auto_annotate_pending(tmp_path, min_age_hours=6)
 
@@ -255,12 +225,11 @@ async def test_dedup_by_document_id_ignores_asset(tmp_path: Path) -> None:
         "asset": "BTC/USDT",
     }
     outcomes_path.write_text(
-        json.dumps(annotation) + "\n", encoding="utf-8",
+        json.dumps(annotation) + "\n",
+        encoding="utf-8",
     )
 
-    with patch(
-        "app.alerts.auto_annotator.CoinGeckoAdapter"
-    ) as mock_cls:
+    with patch("app.alerts.auto_annotator.CoinGeckoAdapter") as mock_cls:
         adapter = mock_cls.return_value
         adapter.get_price_change_between = AsyncMock()
 
@@ -333,13 +302,14 @@ async def test_reevals_inconclusive_after_24h(tmp_path: Path) -> None:
 
     outcomes_path = tmp_path / ALERT_OUTCOMES_JSONL_FILENAME
     outcomes_path.write_text(
-        json.dumps({
-            "document_id": "reeval-doc",
-            "outcome": "inconclusive",
-            "annotated_at": (
-                datetime.now(UTC) - timedelta(hours=20)
-            ).isoformat(),
-        }) + "\n",
+        json.dumps(
+            {
+                "document_id": "reeval-doc",
+                "outcome": "inconclusive",
+                "annotated_at": (datetime.now(UTC) - timedelta(hours=20)).isoformat(),
+            }
+        )
+        + "\n",
         encoding="utf-8",
     )
 
@@ -353,7 +323,8 @@ async def test_reevals_inconclusive_after_24h(tmp_path: Path) -> None:
         )
 
         results = await auto_annotate_pending(
-            tmp_path, min_age_hours=4,
+            tmp_path,
+            min_age_hours=4,
         )
 
     assert len(results) == 1
@@ -370,11 +341,14 @@ async def test_skips_reeval_if_disabled(tmp_path: Path) -> None:
 
     outcomes_path = tmp_path / ALERT_OUTCOMES_JSONL_FILENAME
     outcomes_path.write_text(
-        json.dumps({
-            "document_id": "no-reeval",
-            "outcome": "inconclusive",
-            "annotated_at": datetime.now(UTC).isoformat(),
-        }) + "\n",
+        json.dumps(
+            {
+                "document_id": "no-reeval",
+                "outcome": "inconclusive",
+                "annotated_at": datetime.now(UTC).isoformat(),
+            }
+        )
+        + "\n",
         encoding="utf-8",
     )
 
@@ -403,11 +377,14 @@ async def test_skips_hit_miss_reeval(tmp_path: Path) -> None:
 
     outcomes_path = tmp_path / ALERT_OUTCOMES_JSONL_FILENAME
     outcomes_path.write_text(
-        json.dumps({
-            "document_id": "final-doc",
-            "outcome": "hit",
-            "annotated_at": datetime.now(UTC).isoformat(),
-        }) + "\n",
+        json.dumps(
+            {
+                "document_id": "final-doc",
+                "outcome": "hit",
+                "annotated_at": datetime.now(UTC).isoformat(),
+            }
+        )
+        + "\n",
         encoding="utf-8",
     )
 
@@ -419,7 +396,8 @@ async def test_skips_hit_miss_reeval(tmp_path: Path) -> None:
         adapter.get_price_change_between = AsyncMock()
 
         results = await auto_annotate_pending(
-            tmp_path, min_age_hours=4,
+            tmp_path,
+            min_age_hours=4,
         )
 
     assert results == []
@@ -440,13 +418,14 @@ async def test_stale_inconclusive_is_backfilled(tmp_path: Path) -> None:
     # Pre-existing inconclusive annotation.
     outcomes_path = tmp_path / ALERT_OUTCOMES_JSONL_FILENAME
     outcomes_path.write_text(
-        json.dumps({
-            "document_id": "stale-doc",
-            "outcome": "inconclusive",
-            "annotated_at": (
-                datetime.now(UTC) - timedelta(hours=200)
-            ).isoformat(),
-        }) + "\n",
+        json.dumps(
+            {
+                "document_id": "stale-doc",
+                "outcome": "inconclusive",
+                "annotated_at": (datetime.now(UTC) - timedelta(hours=200)).isoformat(),
+            }
+        )
+        + "\n",
         encoding="utf-8",
     )
 
@@ -461,7 +440,9 @@ async def test_stale_inconclusive_is_backfilled(tmp_path: Path) -> None:
         )
 
         results = await auto_annotate_pending(
-            tmp_path, min_age_hours=4, backfill_batch=10,
+            tmp_path,
+            min_age_hours=4,
+            backfill_batch=10,
         )
 
     assert len(results) == 1
@@ -486,13 +467,15 @@ async def test_stale_backfill_respects_batch_limit(tmp_path: Path) -> None:
             tmp_path,
             _make_audit(doc_id=f"stale-{i}", hours_ago=200.0 + i),
         )
-        outcomes_lines.append(json.dumps({
-            "document_id": f"stale-{i}",
-            "outcome": "inconclusive",
-            "annotated_at": (
-                datetime.now(UTC) - timedelta(hours=150)
-            ).isoformat(),
-        }))
+        outcomes_lines.append(
+            json.dumps(
+                {
+                    "document_id": f"stale-{i}",
+                    "outcome": "inconclusive",
+                    "annotated_at": (datetime.now(UTC) - timedelta(hours=150)).isoformat(),
+                }
+            )
+        )
 
     outcomes_path = tmp_path / ALERT_OUTCOMES_JSONL_FILENAME
     outcomes_path.write_text(
@@ -510,7 +493,9 @@ async def test_stale_backfill_respects_batch_limit(tmp_path: Path) -> None:
         )
 
         results = await auto_annotate_pending(
-            tmp_path, min_age_hours=4, backfill_batch=2,
+            tmp_path,
+            min_age_hours=4,
+            backfill_batch=2,
         )
 
     # Only 2 of 5 stale inconclusives processed.
@@ -533,7 +518,9 @@ async def test_never_annotated_beyond_max_age_skipped(tmp_path: Path) -> None:
         adapter.get_price_change_between = AsyncMock()
 
         results = await auto_annotate_pending(
-            tmp_path, min_age_hours=4, backfill_batch=10,
+            tmp_path,
+            min_age_hours=4,
+            backfill_batch=10,
         )
 
     assert results == []

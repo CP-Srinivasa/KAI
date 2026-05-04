@@ -43,6 +43,12 @@ CB_PREFIX = "sig"
 CB_FILL = "f"
 CB_IGNORE = "i"
 
+# Default location of the TV-4 quality-bar JSON report. Used to enrich approval
+# cards with per-source precision badges (Wilson CI). When file is missing,
+# stale, or sample insufficient → no badge (silent fallback, no false signals).
+DEFAULT_SOURCE_QUALITY_REPORT = Path("artifacts/tv4_quality_bar_report.json")
+SOURCE_QUALITY_MAX_AGE_DAYS = 7
+
 
 # ── Pure helpers (io-free, test-friendly) ───────────────────────────────────
 
@@ -55,12 +61,148 @@ def _fmt_price(value: float | int | None) -> str:
     return f"{value:g}"
 
 
-def format_approval_message(record: dict[str, Any], *, ttl_minutes: int) -> str:
+def _compute_risk_reward(
+    entry: float | int | None,
+    stop_loss: float | int | None,
+    targets: list[Any],
+    direction: str,
+) -> float | None:
+    """R/R against the *first* target (conservative take-profit).
+
+    None when any input is missing/invalid or geometry is inverted (e.g. SL
+    above entry on a long). The card silently drops the badge in those cases
+    rather than showing a misleading number.
+    """
+    if not isinstance(entry, (int, float)) or not isinstance(stop_loss, (int, float)):
+        return None
+    if not targets:
+        return None
+    first_target = targets[0]
+    if not isinstance(first_target, (int, float)):
+        return None
+    direction_lower = direction.strip().lower()
+    if direction_lower in {"long", "buy"}:
+        risk = entry - stop_loss
+        reward = first_target - entry
+    elif direction_lower in {"short", "sell"}:
+        risk = stop_loss - entry
+        reward = entry - first_target
+    else:
+        return None
+    if risk <= 0 or reward <= 0:
+        return None
+    return reward / risk
+
+
+def _compute_position_risk_pct(
+    entry: float | int | None,
+    stop_loss: float | int | None,
+    leverage: float | int | None,
+) -> float | None:
+    """Margin-loss percentage when SL is hit. Lev-aware.
+
+    Worst-case position drawdown at SL = sl_distance% × leverage. None if any
+    input is missing or geometrically invalid.
+    """
+    if not isinstance(entry, (int, float)) or entry <= 0:
+        return None
+    if not isinstance(stop_loss, (int, float)):
+        return None
+    lev = leverage if isinstance(leverage, (int, float)) and leverage > 0 else 1.0
+    sl_distance_pct = abs(stop_loss - entry) / entry
+    return sl_distance_pct * lev * 100.0
+
+
+def _format_ttl_endtime(record_ts_iso: str, ttl_minutes: int) -> str | None:
+    """Absolute TTL deadline as 'HH:MM UTC'. None if record_ts is unparseable."""
+    try:
+        ts = datetime.fromisoformat(record_ts_iso)
+    except ValueError:
+        return None
+    if ts.tzinfo is None:
+        ts = ts.replace(tzinfo=UTC)
+    deadline = (ts + timedelta(minutes=ttl_minutes)).astimezone(UTC)
+    return deadline.strftime("%H:%M UTC")
+
+
+def _load_source_quality(
+    source: str,
+    quality_report_path: Path,
+    *,
+    max_age_days: int = SOURCE_QUALITY_MAX_AGE_DAYS,
+    now: datetime | None = None,
+) -> dict[str, Any] | None:
+    """TV-4 quality-bar lookup for a single source. Stale-safe, fail-silent.
+
+    Returns the by_source[i] dict (resolved/hits/hit_rate_pct/ci_low_pct/...)
+    only when: file exists, JSON parses, report not older than max_age_days,
+    source is present, and Wilson sample is sufficient. Otherwise None — the
+    card omits the badge rather than showing a low-confidence number.
+    """
+    if not quality_report_path.exists():
+        return None
+    try:
+        data = json.loads(quality_report_path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    generated_at_iso = data.get("generated_at")
+    if isinstance(generated_at_iso, str):
+        try:
+            generated_at = datetime.fromisoformat(generated_at_iso)
+        except ValueError:
+            return None
+        if generated_at.tzinfo is None:
+            generated_at = generated_at.replace(tzinfo=UTC)
+        current = (now or datetime.now(UTC)).astimezone(UTC)
+        if (current - generated_at) > timedelta(days=max_age_days):
+            return None
+    by_source = data.get("by_source")
+    if not isinstance(by_source, list):
+        return None
+    src_lower = source.strip().lower()
+    for entry in by_source:
+        if not isinstance(entry, dict):
+            continue
+        if str(entry.get("source", "")).strip().lower() == src_lower:
+            if not entry.get("sample_sufficient"):
+                return None
+            return entry
+    return None
+
+
+def _format_source_quality_badge(metrics: dict[str, Any] | None) -> str:
+    """One-line precision badge: '50% · n=30 · CI [33–67]'. Empty when missing."""
+    if not metrics:
+        return ""
+    rate = metrics.get("hit_rate_pct")
+    n = metrics.get("resolved")
+    low = metrics.get("ci_low_pct")
+    high = metrics.get("ci_high_pct")
+    if not isinstance(rate, (int, float)) or not isinstance(n, int):
+        return ""
+    if not isinstance(low, (int, float)) or not isinstance(high, (int, float)):
+        return ""
+    return f"{rate:.0f}% · n={n} · CI [{low:.0f}–{high:.0f}]"
+
+
+def format_approval_message(
+    record: dict[str, Any],
+    *,
+    ttl_minutes: int,
+    source_quality_report_path: Path | None = None,
+    now: datetime | None = None,
+) -> str:
     """Human-readable approval prompt. Callable independent of bot transport.
 
     ``record`` is the envelope JSONL entry (output of build_envelope_record).
     Returned string is Markdown-safe for Telegram — no escape helpers required
     since we only emit digits / ticker symbols / short labels.
+
+    Decision-Glance header (R/R, position-risk, absolute TTL deadline) and
+    per-source quality badge are best-effort: any missing or geometrically
+    invalid input drops just that field, the rest of the card still renders.
     """
     p: dict[str, Any] = dict(record.get("payload", {}))
     source = str(record.get("source", "?"))
@@ -72,6 +214,14 @@ def format_approval_message(record: dict[str, Any], *, ttl_minutes: int) -> str:
     entry_max = p.get("entry_max")
     sl = p.get("stop_loss")
     targets = list(p.get("targets", []) or [])
+
+    rr = _compute_risk_reward(entry, sl, targets, direction)
+    pos_risk_pct = _compute_position_risk_pct(entry, sl, leverage)
+    ttl_endtime = _format_ttl_endtime(str(record.get("timestamp_utc", "")), ttl_minutes)
+
+    quality_path = source_quality_report_path or DEFAULT_SOURCE_QUALITY_REPORT
+    source_metrics = _load_source_quality(source, quality_path, now=now)
+    source_badge = _format_source_quality_badge(source_metrics)
 
     entry_line = _fmt_price(entry)
     if entry_min is not None and entry_max is not None:
@@ -85,8 +235,23 @@ def format_approval_message(record: dict[str, Any], *, ttl_minutes: int) -> str:
     lev_str = f"{int(leverage)}x" if isinstance(leverage, (int, float)) and leverage else "—"
     t_str = " / ".join(_fmt_price(t) for t in targets) if targets else "—"
 
+    glance_parts: list[str] = [f"{symbol} · {direction} · {lev_str}"]
+    if rr is not None:
+        glance_parts.append(f"R/R 1:{rr:.1f}")
+    if pos_risk_pct is not None:
+        glance_parts.append(f"Risk {pos_risk_pct:.1f}%")
+    if ttl_endtime is not None:
+        glance_parts.append(f"TTL bis {ttl_endtime}")
+    decision_glance = "🎯 *" + " · ".join(glance_parts) + "*"
+
+    source_line = f"📡 *Signal* — `{source}`"
+    if source_badge:
+        source_line = f"📡 *Signal* — `{source}` · {source_badge}"
+
     lines = [
-        f"📡 *Signal* — `{source}`",
+        decision_glance,
+        "",
+        source_line,
         f"*{symbol}* · *{direction}* · {lev_str}",
         f"Entry: `{entry_line}`",
         f"SL: `{_fmt_price(sl)}`{sl_pct}",

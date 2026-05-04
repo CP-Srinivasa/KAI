@@ -96,9 +96,7 @@ async def test_default_threshold_allows_any_priority(
 
 
 @pytest.mark.asyncio
-async def test_threshold_10_blocks_below_tier(
-    tmp_path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_threshold_10_blocks_below_tier(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
     """P<10 must be rejected when threshold is raised to the high-conviction tier."""
     monkeypatch.setenv("EXECUTION_PAPER_MIN_PRIORITY", "10")
     loop = _loop(tmp_path)
@@ -110,9 +108,7 @@ async def test_threshold_10_blocks_below_tier(
 
 
 @pytest.mark.asyncio
-async def test_threshold_10_allows_p10(
-    tmp_path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+async def test_threshold_10_allows_p10(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
     """P=10 must pass the gate even at threshold=10 (boundary, inclusive)."""
     monkeypatch.setenv("EXECUTION_PAPER_MIN_PRIORITY", "10")
     loop = _loop(tmp_path)
@@ -146,9 +142,7 @@ async def test_none_priority_allowed_at_default_threshold(
 # --- D-184: operator-visibility summary ---
 
 
-def _write_cycle_row(
-    audit_path: Path, *, status: str, started_at: str
-) -> None:
+def _write_cycle_row(audit_path: Path, *, status: str, started_at: str) -> None:
     audit_path.parent.mkdir(parents=True, exist_ok=True)
     with audit_path.open("a", encoding="utf-8") as fh:
         fh.write(
@@ -241,15 +235,9 @@ def test_priority_gate_summary_handles_missing_audit(tmp_path: Path) -> None:
 
 def test_build_loop_trigger_analysis_sets_priority_for_every_profile() -> None:
     """recommended_priority must be populated for all supported profiles."""
-    conservative = build_loop_trigger_analysis(
-        symbol="BTC/USDT", analysis_profile="conservative"
-    )
-    bullish = build_loop_trigger_analysis(
-        symbol="BTC/USDT", analysis_profile="bullish"
-    )
-    bearish = build_loop_trigger_analysis(
-        symbol="BTC/USDT", analysis_profile="bearish"
-    )
+    conservative = build_loop_trigger_analysis(symbol="BTC/USDT", analysis_profile="conservative")
+    bullish = build_loop_trigger_analysis(symbol="BTC/USDT", analysis_profile="bullish")
+    bearish = build_loop_trigger_analysis(symbol="BTC/USDT", analysis_profile="bearish")
     assert conservative.recommended_priority is not None
     assert bullish.recommended_priority is not None
     assert bearish.recommended_priority is not None
@@ -274,9 +262,7 @@ async def test_bullish_probe_passes_gate_at_threshold_10(
     """
     monkeypatch.setenv("EXECUTION_PAPER_MIN_PRIORITY", "10")
     loop = _loop(tmp_path)
-    analysis = build_loop_trigger_analysis(
-        symbol="BTC/USDT", analysis_profile="bullish"
-    )
+    analysis = build_loop_trigger_analysis(symbol="BTC/USDT", analysis_profile="bullish")
     cycle = await loop.run_cycle(analysis, "BTC/USDT")
     assert cycle.status != CycleStatus.PRIORITY_REJECTED
 
@@ -294,8 +280,6 @@ async def test_conservative_probe_blocked_at_threshold_10(
     """
     monkeypatch.setenv("EXECUTION_PAPER_MIN_PRIORITY", "10")
     loop = _loop(tmp_path)
-    analysis = build_loop_trigger_analysis(
-        symbol="BTC/USDT", analysis_profile="conservative"
-    )
+    analysis = build_loop_trigger_analysis(symbol="BTC/USDT", analysis_profile="conservative")
     cycle = await loop.run_cycle(analysis, "BTC/USDT")
     assert cycle.status == CycleStatus.PRIORITY_REJECTED

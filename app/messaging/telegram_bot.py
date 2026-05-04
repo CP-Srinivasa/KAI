@@ -258,9 +258,7 @@ class TelegramOperatorBot:
 
     def _collect_invalid_command_refs(self) -> tuple[str, ...]:
         refs = [
-            ref
-            for command_refs in TELEGRAM_CANONICAL_COMMAND_REFS.values()
-            for ref in command_refs
+            ref for command_refs in TELEGRAM_CANONICAL_COMMAND_REFS.values() for ref in command_refs
         ]
         try:
             from app.cli.commands.trading import get_invalid_trading_command_refs
@@ -525,6 +523,7 @@ class TelegramOperatorBot:
             from app.messaging.telegram_persistent_keyboard import (
                 match_label_to_command,
             )
+
             mapped = match_label_to_command(text)
             if mapped is not None:
                 await self._dispatch(chat_id, mapped)
@@ -694,8 +693,7 @@ class TelegramOperatorBot:
             )
             await self._send(
                 chat_id,
-                f"{formatted}\n\n"
-                "Analyse-only. NEWS fuehrt nie zu einer Order-Ausfuehrung.",
+                f"{formatted}\n\nAnalyse-only. NEWS fuehrt nie zu einer Order-Ausfuehrung.",
             )
             logger.info("[BOT] Structured NEWS received from %s", chat_id)
             return
@@ -888,7 +886,7 @@ class TelegramOperatorBot:
                 chat_id,
                 "*Voice signal could not be interpreted*\n"
                 "Please state the asset and direction clearly — for example "
-                "\"BTC bullish\".",
+                '"BTC bullish".',
             )
             return
 
@@ -1007,7 +1005,7 @@ class TelegramOperatorBot:
                 chat_id,
                 "*Signal could not be normalized*\n"
                 "Please state the asset and direction clearly — for example "
-                "\"BTC bullish\".",
+                '"BTC bullish".',
             )
             return
 
@@ -1035,8 +1033,7 @@ class TelegramOperatorBot:
         if "message_type" in signal:
             # Full TradingSignal dict — preserve all fields
             structured_data = {
-                k: v for k, v in signal.items()
-                if k not in {"asset", "direction", "reasoning"}
+                k: v for k, v in signal.items() if k not in {"asset", "direction", "reasoning"}
             }
 
         handoff_record: dict[str, object] = {
@@ -1078,11 +1075,7 @@ class TelegramOperatorBot:
                 if isinstance(signal.get("stop_loss"), (int, float))
                 else None
             ),
-            targets=(
-                signal.get("targets", [])
-                if isinstance(signal.get("targets"), list)
-                else []
-            ),
+            targets=(signal.get("targets", []) if isinstance(signal.get("targets"), list) else []),
             leverage=int(signal.get("leverage", 1)) if signal.get("leverage") else 1,
             entry_value=(
                 signal.get("entry_value")
@@ -1125,14 +1118,10 @@ class TelegramOperatorBot:
                 )
                 cycle = cycle_payload.get("cycle", {})
                 cycle_status = (
-                    cycle.get("status", "unknown")
-                    if isinstance(cycle, dict)
-                    else "unknown"
+                    cycle.get("status", "unknown") if isinstance(cycle, dict) else "unknown"
                 )
                 cycle_id = (
-                    cycle.get("cycle_id", "unknown")
-                    if isinstance(cycle, dict)
-                    else "unknown"
+                    cycle.get("cycle_id", "unknown") if isinstance(cycle, dict) else "unknown"
                 )
                 handoff_record["signal_auto_run_status"] = "ok"
                 handoff_record["signal_auto_run_cycle_status"] = cycle_status
@@ -1400,9 +1389,7 @@ class TelegramOperatorBot:
 
         direction_raw = signal.get("direction", "")
         direction_key = (
-            direction_raw.strip().lower()
-            if isinstance(direction_raw, str)
-            else "neutral"
+            direction_raw.strip().lower() if isinstance(direction_raw, str) else "neutral"
         )
         direction = _SIGNAL_DIRECTION_MAP.get(direction_key, "neutral")
 
@@ -1436,9 +1423,11 @@ class TelegramOperatorBot:
     def _compute_idempotency_key(self, parsed_payload: Any) -> str | None:
         """Return the canonical idempotency key for a typed payload, or None."""
         from app.messaging.message_models import MessageEnvelope, SourceChannel
+
         try:
             env = MessageEnvelope.wrap(
-                parsed_payload, source_channel=SourceChannel.TELEGRAM,
+                parsed_payload,
+                source_channel=SourceChannel.TELEGRAM,
             )
         except Exception as exc:  # noqa: BLE001
             logger.warning("[BOT] Idempotency compute failed: %s", exc)
@@ -1699,7 +1688,6 @@ class TelegramOperatorBot:
 
         return await get_daily_operator_summary()
 
-
     async def _cmd_agent(
         self,
         chat_id: int,
@@ -1826,9 +1814,8 @@ class TelegramOperatorBot:
         cycles = payload.get("cycle_count_today", 0)
         pos_count = payload.get("position_count", 0)
         backlog = self._inline(payload.get("ingestion_backlog_documents", "?"))
-        alert_rate = self._inline(
-            payload.get("alert_fire_rate_docs_per_hour_24h", "?")
-        )
+        alert_rate = self._inline(payload.get("alert_fire_rate_docs_per_hour_24h", "?"))
+
         # "not_implemented" is a canonical sentinel emitted by the summary
         # builder for telemetry that doesn't exist yet — display as "n/a"
         # and drop trailing unit characters so the line reads clean.
@@ -2037,7 +2024,10 @@ class TelegramOperatorBot:
         await self._send(chat_id, msg)
 
     async def _cmd_quality(
-        self, chat_id: int, *, args: str = "",
+        self,
+        chat_id: int,
+        *,
+        args: str = "",
     ) -> None:
         """Show quality-bar metrics from hold report."""
         report_path = Path("artifacts/ph5_hold/ph5_hold_metrics_report.json")
@@ -2089,7 +2079,10 @@ class TelegramOperatorBot:
         await self._send(chat_id, msg)
 
     async def _cmd_annotate(
-        self, chat_id: int, *, args: str = "",
+        self,
+        chat_id: int,
+        *,
+        args: str = "",
     ) -> None:
         """Show pending alerts for annotation or annotate directly.
 
@@ -2130,10 +2123,7 @@ class TelegramOperatorBot:
             if prev is None or rec.dispatched_at > prev.dispatched_at:
                 latest_by_doc[rec.document_id] = rec
 
-        pending = [
-            r for r in latest_by_doc.values()
-            if r.document_id not in annotated
-        ]
+        pending = [r for r in latest_by_doc.values() if r.document_id not in annotated]
         pending.sort(key=lambda r: r.dispatched_at, reverse=True)
 
         if not pending:
@@ -2159,9 +2149,13 @@ class TelegramOperatorBot:
                 pass
             sent = rec.sentiment_label or "?"
             prio = rec.priority if rec.priority else "?"
-            assets_s = ", ".join(
-                rec.affected_assets[:2],
-            ) if rec.affected_assets else "--"
+            assets_s = (
+                ", ".join(
+                    rec.affected_assets[:2],
+                )
+                if rec.affected_assets
+                else "--"
+            )
             lines.append(
                 f"`{doc_short}` {sent} P{prio} {assets_s} ({age_h})",
             )
@@ -2176,9 +2170,7 @@ class TelegramOperatorBot:
                 },
                 {
                     "text": "?",
-                    "callback_data": (
-                        f"ann:{rec.document_id}:inconclusive"
-                    ),
+                    "callback_data": (f"ann:{rec.document_id}:inconclusive"),
                 },
             ]
             buttons.append(row)
@@ -2196,14 +2188,14 @@ class TelegramOperatorBot:
         """Send a message with an inline keyboard."""
         if self._dry_run:
             logger.info(
-                "[BOT DRY RUN] Keyboard to %s: %s", chat_id, text[:80],
+                "[BOT DRY RUN] Keyboard to %s: %s",
+                chat_id,
+                text[:80],
             )
             return True
         if not self._token:
             return False
-        url = (
-            f"{_TELEGRAM_API_BASE}/bot{self._token}/sendMessage"
-        )
+        url = f"{_TELEGRAM_API_BASE}/bot{self._token}/sendMessage"
         payload = {
             "chat_id": chat_id,
             "text": text,
@@ -2214,16 +2206,17 @@ class TelegramOperatorBot:
         return await self._send_payload_with_retry(url, payload)
 
     async def _annotate_direct(
-        self, chat_id: int, doc_id: str, outcome: str,
+        self,
+        chat_id: int,
+        doc_id: str,
+        outcome: str,
     ) -> None:
         """Annotate a document directly via text command."""
         normalized = outcome.strip().lower()
         if normalized not in _VALID_OUTCOMES:
             await self._send(
                 chat_id,
-                "*Annotation*\n"
-                f"Ungueltiges Outcome: `{outcome}`\n"
-                "Erlaubt: hit, miss, inconclusive",
+                f"*Annotation*\nUngueltiges Outcome: `{outcome}`\nErlaubt: hit, miss, inconclusive",
             )
             return
         from app.alerts.audit import (
@@ -2249,8 +2242,7 @@ class TelegramOperatorBot:
             return
         await self._send(
             chat_id,
-            f"*Annotation gespeichert*\n"
-            f"`{doc_id[:12]}` -> {normalized}",
+            f"*Annotation gespeichert*\n`{doc_id[:12]}` -> {normalized}",
         )
 
     async def _cmd_approve(self, chat_id: int, *, args: str = "") -> None:
@@ -2354,21 +2346,11 @@ class TelegramOperatorBot:
         pos_count = payload.get("position_count", 0)
         exposure = payload.get("total_exposure_pct", 0.0)
         backlog = self._inline(payload.get("ingestion_backlog_documents", "?"))
-        dir_alerts = self._inline(
-            payload.get("directional_alert_documents_24h", "?")
-        )
-        alert_rate = self._inline(
-            payload.get("alert_fire_rate_docs_per_hour_24h", "?")
-        )
-        latency = self._inline(
-            payload.get("rss_to_alert_latency_p50_seconds_24h", "?")
-        )
-        llm_fail = self._inline(
-            payload.get("llm_provider_failure_rate_24h", "?")
-        )
-        decision_status = self._inline(
-            payload.get("decision_pack_status", "?")
-        )
+        dir_alerts = self._inline(payload.get("directional_alert_documents_24h", "?"))
+        alert_rate = self._inline(payload.get("alert_fire_rate_docs_per_hour_24h", "?"))
+        latency = self._inline(payload.get("rss_to_alert_latency_p50_seconds_24h", "?"))
+        llm_fail = self._inline(payload.get("llm_provider_failure_rate_24h", "?"))
+        decision_status = self._inline(payload.get("decision_pack_status", "?"))
         incidents = payload.get("open_incidents", 0)
         msg = (
             f"*Daily Report*\n"
@@ -2420,14 +2402,20 @@ class TelegramOperatorBot:
             await self._send(chat_id, f"*Signal error:* {exc}")
             return
 
-        self._audit(chat_id, "_signal_parsed", args=json.dumps({
-            "direction": signal.direction,
-            "asset": signal.asset,
-            "price": signal.price,
-            "stop_loss": signal.stop_loss,
-            "take_profit": signal.take_profit,
-            "size": signal.size,
-        }))
+        self._audit(
+            chat_id,
+            "_signal_parsed",
+            args=json.dumps(
+                {
+                    "direction": signal.direction,
+                    "asset": signal.asset,
+                    "price": signal.price,
+                    "stop_loss": signal.stop_loss,
+                    "take_profit": signal.take_profit,
+                    "size": signal.size,
+                }
+            ),
+        )
 
         price_line = f"Price: `{signal.price}`" if signal.price else "Price: `Market`"
         sl_line = f"Stop-Loss: `{signal.stop_loss}`" if signal.stop_loss else ""
@@ -2508,8 +2496,7 @@ class TelegramOperatorBot:
         clear_menu_cache()
         await self._send(
             chat_id,
-            "*Menu reloaded*\n"
-            "Configuration re-read from disk.",
+            "*Menu reloaded*\nConfiguration re-read from disk.",
         )
 
     async def _cmd_menu_validate(self, chat_id: int, *, args: str = "") -> None:
@@ -2619,7 +2606,8 @@ class TelegramOperatorBot:
         else:
             logger.warning(
                 "[BOT] Bot menu bootstrap incomplete (commands=%s, button=%s)",
-                ok_cmds, ok_btn,
+                ok_cmds,
+                ok_btn,
             )
         return ok_cmds and ok_btn
 
@@ -2704,11 +2692,16 @@ class TelegramOperatorBot:
             await self._dispatch(chat_id, command, args=cmd_args)
         elif data.startswith("ann:"):
             await self._handle_annotation_callback(
-                chat_id, query_id, data,
+                chat_id,
+                query_id,
+                data,
             )
         elif data.startswith("sig:"):
             await self._handle_signal_approval_callback(
-                chat_id, query_id, data, callback_query,
+                chat_id,
+                query_id,
+                data,
+                callback_query,
             )
         else:
             await self._answer_callback_query(query_id, text="Unbekannte Aktion.")
@@ -2755,7 +2748,8 @@ class TelegramOperatorBot:
 
         if not self._signal_approval_enabled:
             await self._answer_callback_query(
-                query_id, text="Approval-Mode ist aus.",
+                query_id,
+                text="Approval-Mode ist aus.",
             )
             return
 
@@ -2767,16 +2761,19 @@ class TelegramOperatorBot:
             approved_by=chat_id,
         )
 
-        # Short toast in the Telegram UI.
+        # Short toast in the Telegram UI. ≤100 chars to stay under TG's 200-byte
+        # limit even with multi-byte glyphs. Wording avoids implicit blame on
+        # expired/ignored — operator already saw the click outcome.
         toast_map = {
-            "filled": "✅ Gefüllt.",
-            "ignored": "❌ Ignoriert.",
-            "expired": "⏰ Abgelaufen.",
-            "duplicate": "↩︎ Bereits gefüllt.",
-            "not_found": "❓ Signal nicht gefunden.",
+            "filled": "✅ Eingebucht — paper-fill folgt.",
+            "ignored": "❌ Ignoriert — gespeichert für Analyse.",
+            "expired": "⏰ TTL durch — neue Setups kommen meist binnen Stunden.",
+            "duplicate": "↩︎ Bereits eingebucht.",
+            "not_found": "❓ Envelope nicht mehr im Log.",
         }
         await self._answer_callback_query(
-            query_id, text=toast_map.get(outcome.status, outcome.status),
+            query_id,
+            text=toast_map.get(outcome.status, outcome.status),
         )
 
         # Edit the original approval message so the status is visible without
@@ -2785,13 +2782,19 @@ class TelegramOperatorBot:
         message_id = message.get("message_id")
         orig_text = message.get("text") or message.get("caption") or ""
         status_line_map = {
-            "filled": f"\n\n✅ *Gefüllt* — new env: `{outcome.new_envelope_id or '?'}`",
-            "ignored": "\n\n❌ *Ignoriert*",
-            "expired": (
-                f"\n\n⏰ *Abgelaufen* — TTL {self._signal_approval_ttl_minutes} Min"
+            "filled": (
+                f"\n\n✅ *Eingebucht* · paper-fill in ~30s · "
+                f"new env: `{outcome.new_envelope_id or '?'}`"
             ),
-            "duplicate": "\n\n↩︎ *Bereits gefüllt*",
-            "not_found": "\n\n❓ *Signal nicht mehr im Log*",
+            "ignored": ("\n\n❌ *Ignoriert* — Signal bleibt gespeichert für Analyse."),
+            "expired": (
+                f"\n\n⏰ *Verfallen* nach {self._signal_approval_ttl_minutes} Min — "
+                "ähnliche Setups erscheinen meist binnen Stunden erneut."
+            ),
+            "duplicate": "\n\n↩︎ *Bereits eingebucht* — kein erneuter Fill nötig.",
+            "not_found": (
+                "\n\n❓ *Envelope nicht mehr im Log* — ggf. Listener-Restart erforderlich."
+            ),
         }
         suffix = status_line_map.get(outcome.status, f"\n\n_{outcome.status}_")
         new_text = f"{orig_text}{suffix}"
@@ -2825,13 +2828,17 @@ class TelegramOperatorBot:
         await self._send_payload_with_retry(url, payload)
 
     async def _handle_annotation_callback(
-        self, chat_id: int, query_id: str, data: str,
+        self,
+        chat_id: int,
+        query_id: str,
+        data: str,
     ) -> None:
         """Process ann:<doc_id>:<outcome> callback from inline button."""
         parts = data.split(":", 2)
         if len(parts) != 3 or parts[2] not in _VALID_OUTCOMES:
             await self._answer_callback_query(
-                query_id, text="Ungueltiges Format.",
+                query_id,
+                text="Ungueltiges Format.",
             )
             return
         doc_id = parts[1]
@@ -2912,7 +2919,9 @@ class TelegramOperatorBot:
                 return True
             logger.info(
                 "[BOT] deleteMessage skipped chat=%s mid=%s status=%s",
-                chat_id, message_id, response.status_code,
+                chat_id,
+                message_id,
+                response.status_code,
             )
         except Exception as exc:  # noqa: BLE001
             logger.info("[BOT] deleteMessage error chat=%s mid=%s: %s", chat_id, message_id, exc)
@@ -3037,9 +3046,7 @@ class TelegramPoller:
                     if resp.status_code != 200:
                         if resp.status_code == 429:
                             retry_after = _extract_retry_after_seconds(resp)
-                            await asyncio.sleep(
-                                min(retry_after, _TELEGRAM_MAX_RETRY_SLEEP_SECONDS)
-                            )
+                            await asyncio.sleep(min(retry_after, _TELEGRAM_MAX_RETRY_SLEEP_SECONDS))
                             continue
                         logger.error(
                             "[POLLER] Telegram HTTP %s: %s",

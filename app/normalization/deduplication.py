@@ -98,4 +98,3 @@ class Deduplicator:
     @property
     def threshold(self) -> float:
         return self._threshold
-

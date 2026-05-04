@@ -139,7 +139,6 @@ def test_operator_endpoints_reject_invalid_bearer_token(client: TestClient) -> N
                 "write_back_allowed": False,
             },
         ),
-
         (
             "/operator/daily-summary",
             "get_daily_operator_summary",

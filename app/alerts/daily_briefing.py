@@ -107,10 +107,7 @@ class BriefingData:
         if self.p10_resolved_7d > 0:
             p10_pct = self.p10_precision_pct_7d
             pct_str = f"{p10_pct:.1f}%" if p10_pct is not None else "n/a"
-            lines.append(
-                f"  🔥 P10 7d:    {self.p10_hits_7d}/{self.p10_resolved_7d} "
-                f"({pct_str})"
-            )
+            lines.append(f"  🔥 P10 7d:    {self.p10_hits_7d}/{self.p10_resolved_7d} ({pct_str})")
 
         # Trading loop
         lines.append("")
@@ -120,9 +117,7 @@ class BriefingData:
         lines.append(f"  Fills:        {self.fills}")
         lines.append(f"  No signal:    {self.cycles_no_signal}")
         if self.cycles_consensus_rejected:
-            lines.append(
-                f"  Consensus rej: {self.cycles_consensus_rejected}"
-            )
+            lines.append(f"  Consensus rej: {self.cycles_consensus_rejected}")
         if self.cycles_risk_rejected:
             lines.append(f"  Risk rej:     {self.cycles_risk_rejected}")
         if self.cycles_no_market_data:
@@ -200,14 +195,14 @@ def build_daily_briefing(
         if rec.directional_eligible is False:
             data.alerts_blocked += 1
             reason = rec.directional_block_reason or "unknown"
-            data.block_reasons[reason] = (
-                data.block_reasons.get(reason, 0) + 1
-            )
+            data.block_reasons[reason] = data.block_reasons.get(reason, 0) + 1
         for asset in rec.affected_assets:
             asset_counter[asset] = asset_counter.get(asset, 0) + 1
 
     data.top_assets = sorted(
-        asset_counter, key=asset_counter.get, reverse=True,  # type: ignore[arg-type]
+        asset_counter,
+        key=asset_counter.get,
+        reverse=True,  # type: ignore[arg-type]
     )[:5]
 
     # ── Outcome annotations ──────────────────────────────────────────
@@ -219,9 +214,7 @@ def build_daily_briefing(
     data.total_annotations = len(annotations)
     data.hits = sum(1 for a in annotations if a.outcome == "hit")
     data.misses = sum(1 for a in annotations if a.outcome == "miss")
-    data.inconclusive = sum(
-        1 for a in annotations if a.outcome == "inconclusive"
-    )
+    data.inconclusive = sum(1 for a in annotations if a.outcome == "inconclusive")
     resolved = data.hits + data.misses
     if resolved > 0:
         data.precision_pct = data.hits / resolved * 100
@@ -304,6 +297,7 @@ async def build_daily_briefing_with_portfolio(
             data.portfolio_positions = [p.to_json_dict() for p in snapshot.positions]
     except Exception as exc:
         import logging
+
         logging.getLogger(__name__).warning("portfolio_snapshot_failed: %s", exc)
 
     return data

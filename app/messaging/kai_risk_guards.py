@@ -10,8 +10,8 @@ BEFORE the Telegram renderer can emit a Livetrade card.
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Iterable
 
 
 @dataclass(frozen=True)

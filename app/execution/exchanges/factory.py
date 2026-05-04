@@ -76,6 +76,4 @@ def create_exchange_adapter(
         )
         return adapter
 
-    raise ValueError(
-        f"Unknown exchange: '{target}'. Supported: binance, bybit"
-    )
+    raise ValueError(f"Unknown exchange: '{target}'. Supported: binance, bybit")

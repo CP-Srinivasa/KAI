@@ -45,9 +45,7 @@ async def test_bullish_price_up_is_would_have_hit(tmp_path: Path) -> None:
     with patch("app.alerts.blocked_annotator.CoinGeckoAdapter") as mock_cls:
         adapter = mock_cls.return_value
         adapter.get_ticker = AsyncMock(return_value=None)
-        adapter.get_price_change_between = AsyncMock(
-            return_value=(65000.0, 66625.0, 2.5)
-        )
+        adapter.get_price_change_between = AsyncMock(return_value=(65000.0, 66625.0, 2.5))
         results = await auto_annotate_blocked(tmp_path, min_age_hours=6)
 
     assert len(results) == 1
@@ -61,9 +59,7 @@ async def test_bearish_price_down_is_would_have_hit(tmp_path: Path) -> None:
     with patch("app.alerts.blocked_annotator.CoinGeckoAdapter") as mock_cls:
         adapter = mock_cls.return_value
         adapter.get_ticker = AsyncMock(return_value=None)
-        adapter.get_price_change_between = AsyncMock(
-            return_value=(65000.0, 63700.0, -2.0)
-        )
+        adapter.get_price_change_between = AsyncMock(return_value=(65000.0, 63700.0, -2.0))
         results = await auto_annotate_blocked(tmp_path, min_age_hours=6)
 
     assert len(results) == 1
@@ -77,9 +73,7 @@ async def test_bullish_price_down_is_correct_block(tmp_path: Path) -> None:
     with patch("app.alerts.blocked_annotator.CoinGeckoAdapter") as mock_cls:
         adapter = mock_cls.return_value
         adapter.get_ticker = AsyncMock(return_value=None)
-        adapter.get_price_change_between = AsyncMock(
-            return_value=(65000.0, 63000.0, -3.0)
-        )
+        adapter.get_price_change_between = AsyncMock(return_value=(65000.0, 63000.0, -3.0))
         results = await auto_annotate_blocked(tmp_path, min_age_hours=6)
 
     assert len(results) == 1
@@ -92,9 +86,7 @@ async def test_flat_price_is_inconclusive(tmp_path: Path) -> None:
     with patch("app.alerts.blocked_annotator.CoinGeckoAdapter") as mock_cls:
         adapter = mock_cls.return_value
         adapter.get_ticker = AsyncMock(return_value=None)
-        adapter.get_price_change_between = AsyncMock(
-            return_value=(65000.0, 65100.0, 0.15)
-        )
+        adapter.get_price_change_between = AsyncMock(return_value=(65000.0, 65100.0, 0.15))
         results = await auto_annotate_blocked(tmp_path, min_age_hours=6)
 
     assert len(results) == 1
@@ -107,9 +99,7 @@ async def test_skips_alerts_younger_than_min_age(tmp_path: Path) -> None:
     with patch("app.alerts.blocked_annotator.CoinGeckoAdapter") as mock_cls:
         adapter = mock_cls.return_value
         adapter.get_ticker = AsyncMock(return_value=None)
-        adapter.get_price_change_between = AsyncMock(
-            return_value=(65000.0, 66625.0, 2.5)
-        )
+        adapter.get_price_change_between = AsyncMock(return_value=(65000.0, 66625.0, 2.5))
         results = await auto_annotate_blocked(tmp_path, min_age_hours=6)
 
     assert results == []
@@ -125,9 +115,7 @@ async def test_skips_already_resolved_doc(tmp_path: Path) -> None:
     with patch("app.alerts.blocked_annotator.CoinGeckoAdapter") as mock_cls:
         adapter = mock_cls.return_value
         adapter.get_ticker = AsyncMock(return_value=None)
-        adapter.get_price_change_between = AsyncMock(
-            return_value=(65000.0, 66625.0, 2.5)
-        )
+        adapter.get_price_change_between = AsyncMock(return_value=(65000.0, 66625.0, 2.5))
         results = await auto_annotate_blocked(tmp_path, min_age_hours=6)
 
     assert results == []
@@ -171,12 +159,8 @@ async def test_dry_run_does_not_persist(tmp_path: Path) -> None:
     with patch("app.alerts.blocked_annotator.CoinGeckoAdapter") as mock_cls:
         adapter = mock_cls.return_value
         adapter.get_ticker = AsyncMock(return_value=None)
-        adapter.get_price_change_between = AsyncMock(
-            return_value=(65000.0, 66625.0, 2.5)
-        )
-        results = await auto_annotate_blocked(
-            tmp_path, min_age_hours=6, dry_run=True
-        )
+        adapter.get_price_change_between = AsyncMock(return_value=(65000.0, 66625.0, 2.5))
+        results = await auto_annotate_blocked(tmp_path, min_age_hours=6, dry_run=True)
 
     assert len(results) == 1
     # Nothing should have been written to blocked_outcomes.jsonl.

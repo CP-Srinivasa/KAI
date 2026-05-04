@@ -184,6 +184,7 @@ def test_close_position_writes_position_closed_audit(tmp_path):
     _open_long(eng, "SOL/USDT", 10.0, 150.0, tp=170.0)
     eng.close_position("SOL/USDT", current_price=175.0, reason="take")
     import json
+
     lines = (tmp_path / "audit.jsonl").read_text(encoding="utf-8").strip().splitlines()
     records = [json.loads(line) for line in lines]
     events = [rec["event_type"] for rec in records]
@@ -260,6 +261,7 @@ def test_fill_long_with_sl_above_price_rejected(tmp_path):
     assert "BTC/USDT" not in eng.portfolio.positions
     # Audit contains a rejection event
     import json
+
     lines = (tmp_path / "audit.jsonl").read_text(encoding="utf-8").strip().splitlines()
     events = [json.loads(line)["event_type"] for line in lines]
     assert "order_rejected_invalid_sl" in events
@@ -277,6 +279,7 @@ def test_fill_long_with_tp_below_price_rejected(tmp_path):
     fill = eng.fill_order(order, current_price=3000.0)
     assert fill is None
     import json
+
     lines = (tmp_path / "audit.jsonl").read_text(encoding="utf-8").strip().splitlines()
     events = [json.loads(line)["event_type"] for line in lines]
     assert "order_rejected_invalid_tp" in events
@@ -367,8 +370,7 @@ def test_sell_close_trade_pnl_netto_correct(tmp_path):
     assert 9.7 < fill.pnl_usd < 9.9, f"netto pnl off: {fill.pnl_usd}"
     records = _read_audit_records(tmp_path / "audit.jsonl")
     sell_fills = [
-        r for r in records
-        if r.get("event_type") == "order_filled" and r.get("side") == "sell"
+        r for r in records if r.get("event_type") == "order_filled" and r.get("side") == "sell"
     ]
     assert len(sell_fills) == 1
     assert 9.7 < sell_fills[0]["pnl_usd"] < 9.9
@@ -429,9 +431,7 @@ def test_audit_replay_handles_v1_legacy_lines(tmp_path):
             "realized_pnl_usd": 0.0,
         },
     ]
-    audit.write_text(
-        "\n".join(_json.dumps(r) for r in v1_records) + "\n", encoding="utf-8"
-    )
+    audit.write_text("\n".join(_json.dumps(r) for r in v1_records) + "\n", encoding="utf-8")
     result = replay_paper_audit(audit)
     assert result.available is True
     assert result.error is None
@@ -446,41 +446,73 @@ def test_audit_replay_handles_mixed_v1_v2(tmp_path):
     audit = tmp_path / "mixed.jsonl"
     rows = [
         {
-            "event_type": "order_created", "order_id": "o1", "symbol": "BTC/USDT",
-            "side": "buy", "quantity": 0.1, "stop_loss": 60000.0,
+            "event_type": "order_created",
+            "order_id": "o1",
+            "symbol": "BTC/USDT",
+            "side": "buy",
+            "quantity": 0.1,
+            "stop_loss": 60000.0,
             "take_profit": 70000.0,
             "timestamp_utc": "2026-01-01T00:00:00Z",
         },
         {
-            "event_type": "order_filled", "fill_id": "f1", "order_id": "o1",
-            "symbol": "BTC/USDT", "side": "buy", "quantity": 0.1,
-            "fill_price": 65000.0, "fee_usd": 6.5,
-            "filled_at": "2026-01-01T00:00:01Z", "slippage_pct": 0.05,
-            "portfolio_cash": 3493.5, "realized_pnl_usd": 0.0,
+            "event_type": "order_filled",
+            "fill_id": "f1",
+            "order_id": "o1",
+            "symbol": "BTC/USDT",
+            "side": "buy",
+            "quantity": 0.1,
+            "fill_price": 65000.0,
+            "fee_usd": 6.5,
+            "filled_at": "2026-01-01T00:00:01Z",
+            "slippage_pct": 0.05,
+            "portfolio_cash": 3493.5,
+            "realized_pnl_usd": 0.0,
             "timestamp_utc": "2026-01-01T00:00:01Z",
         },
         {"event_type": "cycle_start", "timestamp_utc": "2026-01-01T00:00:02Z"},
         {
-            "schema_version": "v2", "event_type": "order_created", "order_id": "o2",
-            "symbol": "ETH/USDT", "side": "buy", "quantity": 1.0,
+            "schema_version": "v2",
+            "event_type": "order_created",
+            "order_id": "o2",
+            "symbol": "ETH/USDT",
+            "side": "buy",
+            "quantity": 1.0,
             "position_side": "long",
             "timestamp_utc": "2026-01-02T00:00:00Z",
         },
         {
-            "schema_version": "v2", "event_type": "order_filled", "fill_id": "f2",
-            "order_id": "o2", "symbol": "ETH/USDT", "side": "buy",
-            "quantity": 1.0, "fill_price": 3000.0, "fee_usd": 3.0,
-            "filled_at": "2026-01-02T00:00:01Z", "slippage_pct": 0.05,
-            "pnl_usd": 0.0, "position_side": "long",
-            "portfolio_cash": 497.5, "realized_pnl_usd": 0.0,
+            "schema_version": "v2",
+            "event_type": "order_filled",
+            "fill_id": "f2",
+            "order_id": "o2",
+            "symbol": "ETH/USDT",
+            "side": "buy",
+            "quantity": 1.0,
+            "fill_price": 3000.0,
+            "fee_usd": 3.0,
+            "filled_at": "2026-01-02T00:00:01Z",
+            "slippage_pct": 0.05,
+            "pnl_usd": 0.0,
+            "position_side": "long",
+            "portfolio_cash": 497.5,
+            "realized_pnl_usd": 0.0,
             "timestamp_utc": "2026-01-02T00:00:01Z",
         },
         {
-            "schema_version": "v2", "event_type": "position_closed",
-            "symbol": "BTC/USDT", "reason": "take", "quantity": 0.1,
-            "entry_price": 65000.0, "exit_price": 71000.0,
-            "trade_pnl_usd": 599.0, "fee_usd": 7.1, "position_side": "long",
-            "realized_pnl_usd": 599.0, "fill_id": "fz", "order_id": "oz",
+            "schema_version": "v2",
+            "event_type": "position_closed",
+            "symbol": "BTC/USDT",
+            "reason": "take",
+            "quantity": 0.1,
+            "entry_price": 65000.0,
+            "exit_price": 71000.0,
+            "trade_pnl_usd": 599.0,
+            "fee_usd": 7.1,
+            "position_side": "long",
+            "realized_pnl_usd": 599.0,
+            "fill_id": "fz",
+            "order_id": "oz",
             "timestamp_utc": "2026-01-02T00:00:02Z",
         },
     ]
@@ -512,9 +544,7 @@ def test_engine_rejects_position_side_short(tmp_path):
 
 def test_partial_sell_keeps_position(tmp_path):
     eng = _engine(tmp_path)
-    buy = eng.create_order(
-        symbol="ETH/USDT", side="buy", quantity=2.0, idempotency_key="b_partial"
-    )
+    buy = eng.create_order(symbol="ETH/USDT", side="buy", quantity=2.0, idempotency_key="b_partial")
     eng.fill_order(buy, current_price=3000.0)
     sell = eng.create_order(
         symbol="ETH/USDT", side="sell", quantity=1.0, idempotency_key="s_partial"
@@ -530,17 +560,11 @@ def test_partial_sell_keeps_position(tmp_path):
 
 def test_average_down_then_close(tmp_path):
     eng = _engine(tmp_path)
-    b1 = eng.create_order(
-        symbol="X/USDT", side="buy", quantity=1.0, idempotency_key="b_avg_1"
-    )
+    b1 = eng.create_order(symbol="X/USDT", side="buy", quantity=1.0, idempotency_key="b_avg_1")
     eng.fill_order(b1, current_price=100.0)
-    b2 = eng.create_order(
-        symbol="X/USDT", side="buy", quantity=1.0, idempotency_key="b_avg_2"
-    )
+    b2 = eng.create_order(symbol="X/USDT", side="buy", quantity=1.0, idempotency_key="b_avg_2")
     eng.fill_order(b2, current_price=90.0)
-    sell = eng.create_order(
-        symbol="X/USDT", side="sell", quantity=2.0, idempotency_key="s_avg"
-    )
+    sell = eng.create_order(symbol="X/USDT", side="sell", quantity=2.0, idempotency_key="s_avg")
     fill = eng.fill_order(sell, current_price=100.0)
     assert fill is not None
     assert 8.0 < fill.pnl_usd < 11.0, f"unexpected netto pnl: {fill.pnl_usd}"
@@ -549,6 +573,7 @@ def test_average_down_then_close(tmp_path):
 
 def test_append_audit_concurrent_writes_no_corruption(tmp_path):
     import threading
+
     eng = _engine(tmp_path)
 
     def writer(tag):

@@ -103,9 +103,7 @@ def test_last_line_still_broken_after_retry_is_dropped(tmp_path: Path) -> None:
     assert [r["document_id"] for r in records] == ["a"]
 
 
-def test_clean_file_does_not_invoke_sleep(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_clean_file_does_not_invoke_sleep(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Happy-path reads must not pay the 100 ms penalty."""
     p = tmp_path / "a.jsonl"
     p.write_text(f"{_AUDIT_LINE_A}\n{_AUDIT_LINE_B}\n", encoding="utf-8")

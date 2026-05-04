@@ -137,7 +137,9 @@ def test_consumer_picks_up_new_rows_added_after_first_run(tmp_path: Path) -> Non
     result = consume_promoted_signals(settings)
 
     assert [c.decision_id for c in result] == ["dec_bbbb"]
-    audit_rows = Path(settings.promoted_signal_audit_log).read_text(encoding="utf-8").strip().splitlines()
+    audit_rows = (
+        Path(settings.promoted_signal_audit_log).read_text(encoding="utf-8").strip().splitlines()
+    )
     assert len(audit_rows) == 2
 
 

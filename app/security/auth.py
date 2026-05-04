@@ -91,9 +91,7 @@ def _reset_auth_failures(ip: str) -> None:
         _AUTH_FAILURES.pop(ip, None)
 
 
-def _is_rate_limited(
-    ip: str, threshold: int, window: float, now: float
-) -> tuple[bool, int]:
+def _is_rate_limited(ip: str, threshold: int, window: float, now: float) -> tuple[bool, int]:
     """Return (locked, retry_after_seconds).
 
     Locked when ``len(in-window failures) >= threshold``. ``retry_after``
@@ -161,6 +159,7 @@ def _audit_access(
             "status_code": status_code,
         },
     )
+
 
 # Environments where an empty API key is acceptable (local dev / CI).
 _DEV_TEST_ENVS: frozenset[str] = frozenset({"development", "dev", "test", "testing"})
@@ -295,9 +294,7 @@ def setup_auth(
         if path == "/dashboard" or path.startswith("/dashboard/"):
             if not cf_allowed or not request.headers.get("Cf-Ray"):
                 _reset_auth_failures(client_ip)
-                _audit_access(
-                    decision="granted", reason="dashboard_local", request=request
-                )
+                _audit_access(decision="granted", reason="dashboard_local", request=request)
                 return await call_next(request)
             # NEO-P-001 (A): Cloudflare sets both Cf-Ray AND Cf-Connecting-IP
             # on every edge-authenticated request. A non-CF reverse proxy that
@@ -318,11 +315,7 @@ def setup_auth(
                     status_code=401,
                     content={"detail": "Cloudflare Access authentication required"},
                 )
-            cf_email = (
-                request.headers.get("Cf-Access-Authenticated-User-Email", "")
-                .strip()
-                .lower()
-            )
+            cf_email = request.headers.get("Cf-Access-Authenticated-User-Email", "").strip().lower()
             if cf_email and cf_email in cf_allowed:
                 _reset_auth_failures(client_ip)
                 _audit_access(
@@ -368,9 +361,7 @@ def setup_auth(
                 return await call_next(request)
             if next_key and secrets.compare_digest(token, next_key):
                 _reset_auth_failures(client_ip)
-                _audit_access(
-                    decision="granted", reason="bearer_next", request=request
-                )
+                _audit_access(decision="granted", reason="bearer_next", request=request)
                 return await call_next(request)
             _record_auth_failure(client_ip, rate_limit_window_seconds, now)
             _audit_access(
@@ -405,6 +396,4 @@ def setup_auth(
             rotation_suffix,
         )
     else:
-        logger.info(
-            "API authentication enabled — Bearer token required%s", rotation_suffix
-        )
+        logger.info("API authentication enabled — Bearer token required%s", rotation_suffix)

@@ -334,12 +334,8 @@ def test_format_telegram_digest_p10_item_prefix():
         _make_alert_msg(priority=10, title="Conviction alert"),
     ]
     text = format_telegram_digest(msgs, "last hour")
-    conviction_line = next(
-        line for line in text.splitlines() if "Conviction alert" in line
-    )
-    regular_line = next(
-        line for line in text.splitlines() if "Regular alert" in line
-    )
+    conviction_line = next(line for line in text.splitlines() if "Conviction alert" in line)
+    regular_line = next(line for line in text.splitlines() if "Regular alert" in line)
     assert conviction_line.startswith("🔥")
     assert not regular_line.startswith("🔥")
 
@@ -652,10 +648,12 @@ async def test_different_titles_both_dispatched(tmp_path: Path):
     result = _make_high_result()
 
     doc1 = CanonicalDocument(
-        url="https://a.com/1", title="Ethereum staking rewards restructured",
+        url="https://a.com/1",
+        title="Ethereum staking rewards restructured",
     )
     doc2 = CanonicalDocument(
-        url="https://b.com/2", title="Federal Reserve holds rates unchanged",
+        url="https://b.com/2",
+        title="Federal Reserve holds rates unchanged",
     )
 
     deliveries1 = await service.process_document(doc1, result)

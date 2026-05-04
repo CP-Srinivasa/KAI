@@ -111,9 +111,7 @@ def build_envelope_record(
     return record
 
 
-def _iter_prior_idempotency_keys(
-    path: Path, *, lookback: int
-) -> set[str]:
+def _iter_prior_idempotency_keys(path: Path, *, lookback: int) -> set[str]:
     """Return accepted idempotency_keys from the tail of the envelope log."""
     if not path.exists():
         return set()
@@ -156,17 +154,13 @@ def emit_parsed_signal(
     (e.g. Telethon reconnect) is a no-op.
     """
     log_path = envelope_log or _DEFAULT_ENVELOPE_LOG
-    record = build_envelope_record(
-        parsed, source=source, chat_id=chat_id, now=now
-    )
+    record = build_envelope_record(parsed, source=source, chat_id=chat_id, now=now)
     idem = record["idempotency_key"]
     assert isinstance(idem, str)
 
     prior = _iter_prior_idempotency_keys(log_path, lookback=lookback)
     if idem in prior:
-        logger.info(
-            "[channel-envelope] duplicate idempotency_key=%s — skipping", idem
-        )
+        logger.info("[channel-envelope] duplicate idempotency_key=%s — skipping", idem)
         return None
 
     log_path.parent.mkdir(parents=True, exist_ok=True)

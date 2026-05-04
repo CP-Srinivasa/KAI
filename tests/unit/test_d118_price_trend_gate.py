@@ -107,13 +107,19 @@ class TestCheckPriceTrendAlignment7dRegime:
     def test_custom_regime_threshold(self) -> None:
         """Custom threshold overrides the defaults."""
         # 5% 7d change, but bearish threshold is 10% -> no regime block
-        assert check_price_trend_alignment(
-            "bearish", -1.0, change_pct_7d=5.0, regime_threshold_7d_bearish=10.0
-        ) is True
+        assert (
+            check_price_trend_alignment(
+                "bearish", -1.0, change_pct_7d=5.0, regime_threshold_7d_bearish=10.0
+            )
+            is True
+        )
         # Same change, bearish threshold lowered to 2% -> blocked
-        assert check_price_trend_alignment(
-            "bearish", -1.0, change_pct_7d=5.0, regime_threshold_7d_bearish=2.0
-        ) is False
+        assert (
+            check_price_trend_alignment(
+                "bearish", -1.0, change_pct_7d=5.0, regime_threshold_7d_bearish=2.0
+            )
+            is False
+        )
 
     def test_asymmetric_bearish_regime_default(self) -> None:
         """D-121: Bearish default threshold (1.5%) is tighter than bullish (3.0%)."""

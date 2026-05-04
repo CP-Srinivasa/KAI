@@ -46,9 +46,7 @@ from app.signals.models import SignalCandidate
 
 log = structlog.get_logger(__name__)
 
-GEMINI_OPENAI_BASE_URL = (
-    "https://generativelanguage.googleapis.com/v1beta/openai/"
-)
+GEMINI_OPENAI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
 
 _CONSENSUS_SYSTEM_PROMPT = """\
 You are an independent trading signal validator.  You receive a proposed \
@@ -196,22 +194,14 @@ class SignalConsensusValidator:
             contradicting="; ".join(signal.contradictory_factors) or "none",
         )
 
-        tasks = [
-            self._validate_single(cfg, user_msg) for cfg in self._configs
-        ]
+        tasks = [self._validate_single(cfg, user_msg) for cfg in self._configs]
         results = await asyncio.gather(*tasks)
 
         all_agreed = all(r.agreed for r in results)
-        avg_confidence = (
-            sum(r.confidence for r in results) / len(results)
-            if results
-            else 0.0
-        )
+        avg_confidence = sum(r.confidence for r in results) / len(results) if results else 0.0
         errors = [r.error for r in results if r.error]
         model_str = "+".join(r.model for r in results)
-        reasoning_parts = [
-            f"{r.label}:{r.reasoning}" for r in results
-        ]
+        reasoning_parts = [f"{r.label}:{r.reasoning}" for r in results]
 
         result = ConsensusResult(
             agreed=all_agreed,
@@ -230,8 +220,7 @@ class SignalConsensusValidator:
             confidence=avg_confidence,
             models=model_str,
             individual=[
-                {"label": r.label, "agreed": r.agreed, "conf": r.confidence}
-                for r in results
+                {"label": r.label, "agreed": r.agreed, "conf": r.confidence} for r in results
             ],
         )
 

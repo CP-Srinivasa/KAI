@@ -110,6 +110,7 @@ class BybitAdapter(BaseExchangeAdapter):
             payload["orderLinkId"] = order.client_order_id
 
         import json
+
         payload_str = json.dumps(payload)
         headers = self._sign_headers(payload_str)
 
@@ -224,6 +225,7 @@ class BybitAdapter(BaseExchangeAdapter):
             )
 
         import json
+
         payload = {
             "category": self._category,
             "orderId": order_id,
@@ -275,6 +277,7 @@ class BybitAdapter(BaseExchangeAdapter):
             params_dict["symbol"] = symbol.upper().replace("/", "")
 
         from urllib.parse import urlencode
+
         params_str = urlencode(params_dict)
         headers = self._sign_headers(params_str)
 

@@ -409,8 +409,12 @@ async def test_scheduler_without_keyword_engine_uses_fetch_only(monkeypatch) -> 
     async def fake_persist(result):
         persisted.append(result)
         return IngestPersistStats(
-            fetched_count=1, candidate_count=1, batch_duplicates=0,
-            existing_duplicates=0, saved_count=1, failed_count=0,
+            fetched_count=1,
+            candidate_count=1,
+            batch_duplicates=0,
+            existing_duplicates=0,
+            saved_count=1,
+            failed_count=0,
             preview_documents=[doc],
         )
 

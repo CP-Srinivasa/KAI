@@ -178,8 +178,7 @@ def normalize_tradingview_payload(
     note = _coerce_optional_str(payload.get("note"))
     strategy = _coerce_optional_str(payload.get("strategy"), max_len=128)
     resolved_event_id = (
-        external_event_id if external_event_id is not None
-        else extract_external_event_id(payload)
+        external_event_id if external_event_id is not None else extract_external_event_id(payload)
     )
 
     provenance = SignalProvenance(
@@ -216,9 +215,9 @@ def _canonical_payload_bytes(payload: dict[str, Any]) -> bytes:
     must reproduce the stored digest.
     """
     filtered = {k: v for k, v in payload.items() if k != TV_ROW_HMAC_FIELD}
-    return json.dumps(
-        filtered, ensure_ascii=False, separators=(",", ":"), sort_keys=True
-    ).encode("utf-8")
+    return json.dumps(filtered, ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode(
+        "utf-8"
+    )
 
 
 def compute_row_hmac(payload: dict[str, Any], secret: str) -> str:
@@ -254,6 +253,4 @@ def append_pending_signal(
         payload[TV_ROW_HMAC_FIELD] = compute_row_hmac(payload, hmac_secret)
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a", encoding="utf-8") as fh:
-        fh.write(
-            json.dumps(payload, ensure_ascii=False, separators=(",", ":")) + "\n"
-        )
+        fh.write(json.dumps(payload, ensure_ascii=False, separators=(",", ":")) + "\n")

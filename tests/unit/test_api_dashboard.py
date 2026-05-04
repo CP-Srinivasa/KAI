@@ -12,7 +12,6 @@ import json
 from collections.abc import Generator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any
 from unittest.mock import patch
 
 import pytest
@@ -45,19 +44,23 @@ def _patch_artifacts(
     with (
         patch.object(dashboard_mod, "_ARTIFACTS", d),
         patch.object(
-            dashboard_mod, "_ALERT_AUDIT",
+            dashboard_mod,
+            "_ALERT_AUDIT",
             d / "alert_audit.jsonl",
         ),
         patch.object(
-            dashboard_mod, "_ALERT_OUTCOMES",
+            dashboard_mod,
+            "_ALERT_OUTCOMES",
             d / "alert_outcomes.jsonl",
         ),
         patch.object(
-            dashboard_mod, "_TRADING_LOOP_AUDIT",
+            dashboard_mod,
+            "_TRADING_LOOP_AUDIT",
             d / "trading_loop_audit.jsonl",
         ),
         patch.object(
-            dashboard_mod, "_PAPER_EXECUTION_AUDIT",
+            dashboard_mod,
+            "_PAPER_EXECUTION_AUDIT",
             d / "paper_execution_audit.jsonl",
         ),
         patch.dict(dashboard_mod._hold_cache, {"report": None, "at": 0.0}),
@@ -73,36 +76,46 @@ def artifacts_dir(tmp_path: Path) -> Path:
     via build_hold_metrics_report — there is no pre-computed snapshot file.
     """
     (tmp_path / "alert_audit.jsonl").write_text(
-        json.dumps({
-            "document_id": "abc12345-dead-beef",
-            "sentiment_label": "bullish",
-            "priority": 9,
-            "affected_assets": ["BTC/USDT"],
-            "dispatched_at": "2026-04-14T10:00:00",
-            "is_digest": False,
-        }) + "\n",
+        json.dumps(
+            {
+                "document_id": "abc12345-dead-beef",
+                "sentiment_label": "bullish",
+                "priority": 9,
+                "affected_assets": ["BTC/USDT"],
+                "dispatched_at": "2026-04-14T10:00:00",
+                "is_digest": False,
+            }
+        )
+        + "\n",
         encoding="utf-8",
     )
 
     (tmp_path / "alert_outcomes.jsonl").write_text(
-        json.dumps({
-            "document_id": "abc12345-dead-beef",
-            "outcome": "hit",
-        }) + "\n",
+        json.dumps(
+            {
+                "document_id": "abc12345-dead-beef",
+                "outcome": "hit",
+            }
+        )
+        + "\n",
         encoding="utf-8",
     )
 
     (tmp_path / "trading_loop_audit.jsonl").write_text(
-        json.dumps({"status": "no_signal"}) + "\n"
-        + json.dumps({"status": "no_signal"}) + "\n"
-        + json.dumps({"status": "completed"}) + "\n",
+        json.dumps({"status": "no_signal"})
+        + "\n"
+        + json.dumps({"status": "no_signal"})
+        + "\n"
+        + json.dumps({"status": "completed"})
+        + "\n",
         encoding="utf-8",
     )
 
     (tmp_path / "paper_execution_audit.jsonl").write_text(
         json.dumps({"event_type": "order_filled", "side": "buy"})
         + "\n"
-        + json.dumps({"event_type": "cycle_start"}) + "\n",
+        + json.dumps({"event_type": "cycle_start"})
+        + "\n",
         encoding="utf-8",
     )
     return tmp_path
@@ -180,7 +193,8 @@ def test_load_jsonl_empty_for_missing_file() -> None:
 def test_load_jsonl_skips_invalid_lines(tmp_path: Path) -> None:
     f = tmp_path / "test.jsonl"
     f.write_text(
-        '{"a":1}\nnot-json\n{"b":2}\n', encoding="utf-8",
+        '{"a":1}\nnot-json\n{"b":2}\n',
+        encoding="utf-8",
     )
     rows = _load_jsonl(f)
     assert len(rows) == 2

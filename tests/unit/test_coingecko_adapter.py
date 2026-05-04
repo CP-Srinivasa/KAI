@@ -449,7 +449,7 @@ class _StubClient:
         self._responses = list(responses)
         self.calls = 0
 
-    async def __aenter__(self) -> "_StubClient":
+    async def __aenter__(self) -> _StubClient:
         return self
 
     async def __aexit__(self, *args: object) -> None:

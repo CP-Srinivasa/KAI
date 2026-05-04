@@ -44,9 +44,7 @@ def telegram_channel_setup() -> None:
             "(get them from https://my.telegram.org/apps)."
         )
         raise typer.Exit(code=2)
-    console.print(
-        f"[cyan]Starting interactive auth for session=[/cyan]{cfg.session_path}"
-    )
+    console.print(f"[cyan]Starting interactive auth for session=[/cyan]{cfg.session_path}")
     asyncio.run(setup_auth(cfg))
     console.print("[green]Auth complete.[/green] Session written.")
 
@@ -101,9 +99,7 @@ def telegram_channel_run() -> None:
 
     cfg = get_settings().telegram_channel_ingest
     if not cfg.enabled:
-        console.print(
-            "[red]Disabled[/red]: set INGESTION_TELEGRAM_CHANNEL_ENABLED=true to run."
-        )
+        console.print("[red]Disabled[/red]: set INGESTION_TELEGRAM_CHANNEL_ENABLED=true to run.")
         raise typer.Exit(code=2)
     console.print(
         f"[cyan]Starting channel listener[/cyan] "

@@ -86,10 +86,7 @@ def format_telegram_digest(messages: list[AlertMessage], period: str) -> str:
         emoji = _SENTIMENT_EMOJI.get(msg.sentiment_label.lower(), "⚪")
         short_title = msg.title[:60] + ("…" if len(msg.title) > 60 else "")
         hc_marker = "🔥 " if _is_high_conviction(msg.priority) else ""
-        items.append(
-            f"{hc_marker}{emoji} P{msg.priority} "
-            f"[{_escape_md(short_title)}]({msg.url})"
-        )
+        items.append(f"{hc_marker}{emoji} P{msg.priority} [{_escape_md(short_title)}]({msg.url})")
     return "\n".join(header + items)
 
 

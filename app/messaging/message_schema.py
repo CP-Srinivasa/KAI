@@ -217,8 +217,7 @@ def _validator_for_message_type(message_type: str) -> Draft202012Validator:
     schema = _MESSAGE_SCHEMAS.get(message_type)
     if schema is None:
         raise MessageSchemaValidationError(
-            "Unsupported message_type "
-            f"'{message_type}'. Expected one of: {sorted(_MESSAGE_TYPES)}"
+            f"Unsupported message_type '{message_type}'. Expected one of: {sorted(_MESSAGE_TYPES)}"
         )
     return Draft202012Validator(schema, format_checker=_FORMAT_CHECKER)
 

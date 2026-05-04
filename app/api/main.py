@@ -106,9 +106,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             openai_api_key=settings.providers.openai_api_key,
             timeout=settings.providers.openai_timeout,
         )
-        _logger.info(
-            "text_and_voice_processor_ready", model=settings.providers.openai_model
-        )
+        _logger.info("text_and_voice_processor_ready", model=settings.providers.openai_model)
 
     # Context provider — feeds recent analyses into LLM prompts
     context_provider = make_context_provider(app.state.session_factory)

@@ -89,5 +89,3 @@ __all__ = [
     "extract_runbook_command_refs",
     "get_invalid_research_command_refs",
 ]
-
-

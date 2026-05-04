@@ -94,9 +94,7 @@ def test_provenance_secret_present_passes() -> None:
 def test_replay_cache_persistent_false_blocks_boot() -> None:
     # S-002: a non-persistent cache loses state across restarts and
     # re-opens the replay window. Refuse to boot.
-    with pytest.raises(
-        ConfigurationError, match="WEBHOOK_REPLAY_CACHE_PERSISTENT"
-    ):
+    with pytest.raises(ConfigurationError, match="WEBHOOK_REPLAY_CACHE_PERSISTENT"):
         AppSettings(
             re_entry_mode=_enabled_profile(enforce_replay_cache_persistent=True),
             tradingview=TradingViewSettings(webhook_replay_cache_persistent=False),
@@ -115,9 +113,7 @@ def test_replay_cache_relative_path_blocks_boot() -> None:
     # S-002b: relative paths break under systemd/Pi where cwd is unknown.
     with pytest.raises(ConfigurationError, match="not absolute"):
         AppSettings(
-            re_entry_mode=_enabled_profile(
-                enforce_replay_cache_absolute_path=True
-            ),
+            re_entry_mode=_enabled_profile(enforce_replay_cache_absolute_path=True),
             tradingview=TradingViewSettings(
                 webhook_replay_cache_db_path="artifacts/replay.db",
             ),
@@ -138,9 +134,7 @@ def test_replay_cache_absolute_path_passes(tmp_path) -> None:
 def test_watchdog_heartbeat_empty_path_blocks_boot() -> None:
     # S-003: without a configured heartbeat path the worker has nothing
     # to touch; canonical_read can't observe liveness.
-    with pytest.raises(
-        ConfigurationError, match="TELEGRAM_CHANNEL_HEARTBEAT_PATH"
-    ):
+    with pytest.raises(ConfigurationError, match="TELEGRAM_CHANNEL_HEARTBEAT_PATH"):
         AppSettings(
             re_entry_mode=_enabled_profile(enforce_watchdog_heartbeat=True),
             telegram_channel_ingest=TelegramChannelIngestSettings(
@@ -156,10 +150,7 @@ def test_watchdog_heartbeat_path_set_passes() -> None:
             heartbeat_path="artifacts/heartbeat.txt",
         ),
     )
-    assert (
-        settings.telegram_channel_ingest.heartbeat_path
-        == "artifacts/heartbeat.txt"
-    )
+    assert settings.telegram_channel_ingest.heartbeat_path == "artifacts/heartbeat.txt"
 
 
 def test_observability_enforce_blocks_boot_until_b002_lands() -> None:

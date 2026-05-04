@@ -1,8 +1,8 @@
 import { memo, useMemo } from "react";
-import { AlertTriangle, Flag, Target, Coins, Calendar } from "lucide-react";
+import { AlertTriangle, Flag, Target, Coins, Calendar, Info } from "lucide-react";
 import { Card, CardHeader, Badge, ProgressBar } from "@/components/ui/Primitives";
 import { cn } from "@/lib/utils";
-import type { DashboardQuality, DashboardProvenance, PriorityGateSummary } from "@/lib/api";
+import type { DashboardQuality, PriorityGateSummary } from "@/lib/api";
 
 // Re-Entry-Gate (TV-Pivot D-125, Ziel 2026-05-16):
 // Entweder ≥200 resolved directional alerts ODER ≥10 paper fills mit PnL.
@@ -12,6 +12,13 @@ import type { DashboardQuality, DashboardProvenance, PriorityGateSummary } from 
 const REENTRY_DATE_ISO = "2026-05-16";
 const ALERTS_TARGET = 200;
 const FILLS_TARGET = 10;
+
+// Pi-Daten-Cutover 2026-05-02 14:30 UTC: alles davor unter Schema v1 (NEO-P-101-r2
+// disqualified, via Backfill rekonstruiert). Operator soll wissen, dass Realized-PnL
+// pre-Cutover nicht direkt mit post-Cutover-Werten verglichen werden kann.
+const V1_DISQUALIFIED_TOOLTIP =
+  "Daten vor 2026-05-02 14:30 UTC unter Schema v1 (NEO-P-101-r2 disqualified, " +
+  "via Backfill rekonstruiert). v2-only-Werte ab Cutover.";
 
 function daysUntil(targetIso: string): number {
   const target = new Date(`${targetIso}T00:00:00Z`).getTime();
@@ -38,35 +45,15 @@ function evaluateGate(alerts: number, fills: number): GateState {
     : { kind: "open", closest: "b", pctToClosest: pctB };
 }
 
-function verdictShort(v: string | undefined): string {
-  if (!v) return "—";
-  const map: Record<string, string> = {
-    tv_significantly_better_than_rss: "TV > RSS",
-    rss_significantly_better_than_tv: "RSS > TV",
-    overlapping_confidence_intervals_no_significant_difference: "CIs überlappen",
-    insufficient_sample_for_split_comparison: "n zu klein",
-  };
-  return map[v] ?? v;
-}
-
-function verdictTone(v: string | undefined): "pos" | "warn" | "neg" | "muted" {
-  if (v === "tv_significantly_better_than_rss") return "pos";
-  if (v === "rss_significantly_better_than_tv") return "neg";
-  if (v === "overlapping_confidence_intervals_no_significant_difference") return "warn";
-  return "muted";
-}
-
 export type QualityFetchState = "loading" | "ready" | "error";
 
 function ReentryGatePanelImpl({
   quality,
-  provenance,
   qualityState = "ready",
   qualityError,
   priorityGate = null,
 }: {
   quality: DashboardQuality | null;
-  provenance: DashboardProvenance | null;
   qualityState?: QualityFetchState;
   qualityError?: string | null;
   priorityGate?: PriorityGateSummary | null;
@@ -78,8 +65,9 @@ function ReentryGatePanelImpl({
     const alerts = quality.active_resolved_count ?? 0;
     const fills = quality.paper_fills_with_pnl ?? 0;
     const pnlUsd = quality.paper_realized_pnl_usd ?? 0;
+    const v1Disqualified = quality.audit_v1_disqualified ?? false;
     const gate = evaluateGate(alerts, fills);
-    return { alerts, fills, pnlUsd, gate, banner: bannerProps(gate, daysLeft) };
+    return { alerts, fills, pnlUsd, v1Disqualified, gate, banner: bannerProps(gate, daysLeft) };
   }, [quality, qualityState, daysLeft]);
 
   // DALI-F-028: bei loading/error keinen 0/0-Gate-Versagen-Visual zeigen,
@@ -95,7 +83,7 @@ function ReentryGatePanelImpl({
     );
   }
 
-  const { alerts, fills, pnlUsd, gate, banner } = computed;
+  const { alerts, fills, pnlUsd, v1Disqualified, gate, banner } = computed;
 
   return (
     <Card padded>
@@ -149,6 +137,19 @@ function ReentryGatePanelImpl({
                 {pnlUsd >= 0 ? "+" : ""}
                 {pnlUsd.toFixed(2)} USD
               </span>
+              {v1Disqualified && (
+                <>
+                  {" "}
+                  <span
+                    aria-label={V1_DISQUALIFIED_TOOLTIP}
+                    title={V1_DISQUALIFIED_TOOLTIP}
+                    className="inline-flex items-center align-middle gap-0.5 rounded-sm border border-warn/40 bg-warn/10 px-1 py-0 text-[9px] uppercase tracking-wide font-mono text-warn cursor-help select-none"
+                  >
+                    <Info size={9} aria-hidden />
+                    v1→v2 Backfill
+                  </span>
+                </>
+              )}
               {quality ? (
                 <>
                   {" "}· {quality.paper_positions_closed} closed
@@ -159,27 +160,9 @@ function ReentryGatePanelImpl({
         />
       </div>
 
-      {provenance ? (
-        <div className="mt-3 pt-3 border-t border-line-subtle flex items-center justify-between flex-wrap gap-2 text-2xs font-mono text-fg-muted">
-          <div className="flex items-center gap-2">
-            <span className="text-fg-subtle uppercase tracking-wide">TV-4 Verdict</span>
-            <Badge tone={verdictTone(provenance.verdict)}>{verdictShort(provenance.verdict)}</Badge>
-          </div>
-          <div className="flex items-center gap-3">
-            <span>
-              overall: <span className="font-semibold">{fmtPct(provenance.overall.hit_rate_pct)}</span>
-              {provenance.overall.ci_low_pct != null && provenance.overall.ci_high_pct != null && (
-                <span className="text-fg-subtle">
-                  {" "}[{provenance.overall.ci_low_pct.toFixed(1)}–{provenance.overall.ci_high_pct.toFixed(1)}]
-                </span>
-              )}
-            </span>
-            <span>
-              n={provenance.overall.resolved}
-            </span>
-          </div>
-        </div>
-      ) : null}
+      <div className="mt-3 pt-3 border-t border-line-subtle text-2xs font-mono text-fg-subtle">
+        Source-Vergleich und TV-4-Verdict: siehe <span className="text-fg-muted">Active Precision</span> unten.
+      </div>
 
       {priorityGate ? <PriorityGateRow summary={priorityGate} /> : null}
     </Card>

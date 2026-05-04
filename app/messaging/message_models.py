@@ -23,6 +23,7 @@ from typing import Any
 # Enums
 # ---------------------------------------------------------------------------
 
+
 class MessageType(StrEnum):
     """Top-level message classification."""
 
@@ -113,6 +114,7 @@ class Priority(StrEnum):
 # NEWS
 # ---------------------------------------------------------------------------
 
+
 @dataclass(frozen=True)
 class NewsMessage:
     """Informational message — no order execution allowed."""
@@ -123,9 +125,7 @@ class NewsMessage:
     market: str = ""  # e.g. "Futures", "Spot", "Crypto"
     symbol: str = ""  # optional, e.g. "BTC/USDT"
     priority: Priority = Priority.MEDIUM
-    timestamp_utc: str = field(
-        default_factory=lambda: datetime.now(UTC).isoformat()
-    )
+    timestamp_utc: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
 
     @property
     def message_type(self) -> MessageType:
@@ -148,6 +148,7 @@ class NewsMessage:
 # ---------------------------------------------------------------------------
 # SIGNAL
 # ---------------------------------------------------------------------------
+
 
 def _generate_signal_id(symbol: str) -> str:
     """Generate a unique signal ID: SIG-YYYYMMDD-SYMBOL-NNN."""
@@ -192,9 +193,7 @@ class TradingSignal:
 
     # Metadata
     status: SignalStatus = SignalStatus.NEW
-    timestamp_utc: str = field(
-        default_factory=lambda: datetime.now(UTC).isoformat()
-    )
+    timestamp_utc: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
     notes: str = ""
     confidence: float | None = None  # 0.0-1.0
     strategy_tag: str = ""
@@ -293,6 +292,7 @@ class TradingSignal:
 # EXCHANGE_RESPONSE
 # ---------------------------------------------------------------------------
 
+
 def _generate_response_id(symbol: str) -> str:
     """Generate a unique response ID: EXR-YYYYMMDD-SYMBOL-HHMMSS."""
     now = datetime.now(UTC)
@@ -335,9 +335,7 @@ class ExchangeResponse:
     message: str = ""
 
     # Metadata
-    timestamp_utc: str = field(
-        default_factory=lambda: datetime.now(UTC).isoformat()
-    )
+    timestamp_utc: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
 
     @property
     def message_type(self) -> MessageType:
@@ -396,6 +394,7 @@ class ExchangeResponse:
 # ---------------------------------------------------------------------------
 # ENVELOPE (v2 routing wrapper)
 # ---------------------------------------------------------------------------
+
 
 class SourceChannel(StrEnum):
     """Where a message entered the system."""

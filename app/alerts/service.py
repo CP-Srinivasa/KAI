@@ -117,11 +117,7 @@ class AlertService:
                 if words:
                     self._seen_title_words.append((rec.normalized_title, words))
             # D-119: Seed asset rate-limit from recent directional alerts.
-            if (
-                ts >= rate_cutoff
-                and rec.directional_eligible is True
-                and rec.sentiment_label
-            ):
+            if ts >= rate_cutoff and rec.directional_eligible is True and rec.sentiment_label:
                 sentiment = rec.sentiment_label.lower()
                 for asset in rec.affected_assets:
                     key = (asset.upper(), sentiment)
@@ -309,9 +305,7 @@ class AlertService:
             "bullish",
             "bearish",
         ):
-            trend_blocked = await self._check_price_trend_divergence(
-                message, str(doc.id)
-            )
+            trend_blocked = await self._check_price_trend_divergence(message, str(doc.id))
             if trend_blocked:
                 return []
 
@@ -479,7 +473,6 @@ def _log_result(
                             block_reason=eligibility.directional_block_reason,
                             blocked_assets=eligibility.blocked_assets,
                         )
-
 
             from app.core.settings import get_settings as _get_settings
 

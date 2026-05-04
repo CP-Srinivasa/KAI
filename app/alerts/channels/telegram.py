@@ -58,7 +58,10 @@ class TelegramAlertChannel(BaseAlertChannel):
         return await self._post_message(text)
 
     async def _post_message(
-        self, text: str, *, parse_mode: str | None = "Markdown",
+        self,
+        text: str,
+        *,
+        parse_mode: str | None = "Markdown",
     ) -> AlertDeliveryResult:
         url = f"{_TELEGRAM_API_BASE}/bot{self._settings.telegram_token}/sendMessage"
         chunks = _split_telegram_text(text)

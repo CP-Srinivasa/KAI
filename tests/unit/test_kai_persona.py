@@ -7,9 +7,9 @@ from pathlib import Path
 import pytest
 
 from app.messaging.kai_persona import (
-    KaiPersonaConfigError,
     REQUIRED_MOTTO,
     VALID_STATES,
+    KaiPersonaConfigError,
     load_kai_persona,
     reset_persona_cache,
 )

@@ -88,9 +88,7 @@ class VoiceTranscriber:
 
         try:
             async with httpx.AsyncClient(timeout=self._timeout) as client:
-                resp = await client.post(
-                    _WHISPER_URL, headers=headers, files=files, data=data
-                )
+                resp = await client.post(_WHISPER_URL, headers=headers, files=files, data=data)
                 resp.raise_for_status()
                 text = resp.json().get("text", "").strip()
                 if text:

@@ -59,6 +59,7 @@ async def test_stream_subscribes_publishes_and_cleans_up(
     hub.publish("alert_fired", {"document_id": "doc-1", "priority": 2})
 
     collected: list[str] = []
+
     async def _drain() -> None:
         async for chunk in resp.body_iterator:
             text = chunk.decode() if isinstance(chunk, bytes) else chunk

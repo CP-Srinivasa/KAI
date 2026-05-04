@@ -202,29 +202,19 @@ def build_feature_analysis(
             priority_group_by_doc[doc_id] = ["unknown"]
         else:
             priority_by_doc[doc_id] = [f"p{rec.priority}"]
-            priority_group_by_doc[doc_id] = (
-                ["high (>=7)"] if rec.priority >= 7 else ["low (<7)"]
-            )
+            priority_group_by_doc[doc_id] = ["high (>=7)"] if rec.priority >= 7 else ["low (<7)"]
 
     by_asset = _build_buckets(assets_by_doc, hit_docs, miss_docs, min_bucket_size)
-    by_sentiment = _build_buckets(
-        sentiment_by_doc, hit_docs, miss_docs, min_bucket_size
-    )
-    by_priority = _build_buckets(
-        priority_by_doc, hit_docs, miss_docs, min_bucket_size
-    )
-    by_priority_group = _build_buckets(
-        priority_group_by_doc, hit_docs, miss_docs, min_bucket_size
-    )
+    by_sentiment = _build_buckets(sentiment_by_doc, hit_docs, miss_docs, min_bucket_size)
+    by_priority = _build_buckets(priority_by_doc, hit_docs, miss_docs, min_bucket_size)
+    by_priority_group = _build_buckets(priority_group_by_doc, hit_docs, miss_docs, min_bucket_size)
 
     by_source: list[FeatureBucket] | None = None
     if source_by_doc is not None:
         source_map: dict[str, list[str]] = {}
         for doc_id in latest_directional:
             source_map[doc_id] = [source_by_doc.get(doc_id) or "unknown"]
-        by_source = _build_buckets(
-            source_map, hit_docs, miss_docs, min_bucket_size
-        )
+        by_source = _build_buckets(source_map, hit_docs, miss_docs, min_bucket_size)
 
     precision_overall = _rate_pct(len(hit_docs), len(resolved_docs))
 
@@ -234,7 +224,8 @@ def build_feature_analysis(
         return rec.normalized_title or (title_by_doc or {}).get(doc_id)
 
     fwd_hits = {
-        d for d in hit_docs
+        d
+        for d in hit_docs
         if _forward_eligible(
             latest_directional[d],
             (source_by_doc or {}).get(d),
@@ -242,7 +233,8 @@ def build_feature_analysis(
         )
     }
     fwd_misses = {
-        d for d in miss_docs
+        d
+        for d in miss_docs
         if _forward_eligible(
             latest_directional[d],
             (source_by_doc or {}).get(d),

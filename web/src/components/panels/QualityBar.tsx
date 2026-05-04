@@ -3,10 +3,6 @@ import { useT } from "@/i18n/I18nProvider";
 import { cn } from "@/lib/utils";
 import type { DashboardQuality } from "@/lib/api";
 
-const V1_DISQUALIFIED_TOOLTIP =
-  "Daten vor 2026-05-02 14:30 UTC unter Schema v1 (NEO-P-101-r2 disqualified, " +
-  "via Backfill rekonstruiert). v2-only-Werte ab Cutover.";
-
 type Row = {
   label: string;
   value: number | null;
@@ -44,23 +40,13 @@ export function QualityBarPanel({ data }: { data: DashboardQuality | null }) {
       format: (n) => n.toFixed(3),
     },
     {
-      label: t("primitives.paper_fills_real"),
+      label: t("primitives.paper_fills_operator_quality"),
       value: data?.paper_fills ?? null,
       target: 10,
       format: (n) => `${n}`,
       hint:
         data?.paper_fills_with_pnl != null
           ? `PnL-Fills: ${data.paper_fills_with_pnl}`
-          : undefined,
-    },
-    {
-      label: "Paper Fills (PnL) — Re-Entry-Gate",
-      value: data?.paper_fills_with_pnl ?? null,
-      target: 10,
-      format: (n) => `${n}`,
-      hint:
-        data?.paper_realized_pnl_usd != null
-          ? `Σ realized: $${data.paper_realized_pnl_usd.toFixed(0)}`
           : undefined,
     },
   ];
@@ -127,32 +113,8 @@ export function QualityBarPanel({ data }: { data: DashboardQuality | null }) {
             <span className="font-mono">{data.forward_miss}</span> miss (
             <span className="font-mono">{data.forward_resolved}</span> resolved)
           </span>
-          <span>
-            Paper:{" "}
-            <span className="font-mono">{data.paper_fills_with_pnl}</span>/10 PnL-Fills ·{" "}
-            <span className="font-mono">{data.paper_positions_closed}</span> closed · Σ{" "}
-            <span
-              className={cn(
-                "font-mono",
-                data.paper_realized_pnl_usd > 0
-                  ? "text-pos"
-                  : data.paper_realized_pnl_usd < 0
-                    ? "text-neg"
-                    : "text-fg-muted",
-              )}
-            >
-              ${data.paper_realized_pnl_usd.toFixed(0)}
-            </span>
-            {data.audit_v1_disqualified && (
-              <span
-                aria-label={V1_DISQUALIFIED_TOOLTIP}
-                title={V1_DISQUALIFIED_TOOLTIP}
-                className="ml-1.5 inline-flex items-center rounded-md border border-fg-subtle/30 px-1 py-0 text-[9px] uppercase tracking-wide font-mono text-fg-subtle hover:text-fg cursor-help select-none"
-              >
-                v1→v2 backfill
-              </span>
-            )}
-          </span>
+          {/* V1-Backfill-Marker lebt im ReentryGatePanel direkt am PnL-Wert
+              (DALI-P-026-r1 Folge-Cleanup) — hier nicht mehr doppelt. */}
           {data.generated_at && (
             <span className="ml-auto font-mono">
               {data.generated_at.substring(0, 19).replace("T", " ")}

@@ -151,8 +151,7 @@ class PersistentReplayCache(ReplayCache):
                 (cutoff_wall,),
             )
             rows = conn.execute(
-                f"SELECT key, inserted_at FROM {self._table} "
-                f"ORDER BY inserted_at",
+                f"SELECT key, inserted_at FROM {self._table} ORDER BY inserted_at",
             ).fetchall()
             conn.commit()
         # Translate wall-clock timestamps into monotonic-relative values so
@@ -195,9 +194,7 @@ class PersistentReplayCache(ReplayCache):
                 conn.execute(f"DELETE FROM {self._table}")
                 conn.commit()
         except sqlite3.Error as exc:
-            _logger.warning(
-                "replay_cache_clear_failed", table=self._table, error=str(exc)
-            )
+            _logger.warning("replay_cache_clear_failed", table=self._table, error=str(exc))
 
 
 _REPLAY_CACHE: ReplayCache | None = None
@@ -287,7 +284,7 @@ def _verify_signature(raw_body: bytes, signature_header: str | None, secret: str
         return False
     if not signature_header.startswith(_SIGNATURE_PREFIX):
         return False
-    provided = signature_header[len(_SIGNATURE_PREFIX):].strip()
+    provided = signature_header[len(_SIGNATURE_PREFIX) :].strip()
     expected = hmac.new(secret.encode("utf-8"), raw_body, hashlib.sha256).hexdigest()
     return hmac.compare_digest(provided, expected)
 

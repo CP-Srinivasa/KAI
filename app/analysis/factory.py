@@ -74,9 +74,8 @@ def create_provider(provider_type: str, settings: Any) -> BaseAnalysisProvider |
         # D-174 Phase I: Grok as emergency fallback — only when all premium
         # providers above have failed. Flag-gated so the chain stays unchanged
         # when disabled.
-        if (
-            getattr(settings.providers, "xai_fallback_enabled", False)
-            and getattr(settings.providers, "xai_api_key", None)
+        if getattr(settings.providers, "xai_fallback_enabled", False) and getattr(
+            settings.providers, "xai_api_key", None
         ):
             providers.append(create_provider("grok", settings))
 

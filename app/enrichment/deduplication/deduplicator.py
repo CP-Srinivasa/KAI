@@ -8,4 +8,3 @@ from __future__ import annotations
 from app.normalization.deduplication import Deduplicator, DuplicateScore
 
 __all__ = ["Deduplicator", "DuplicateScore"]
-

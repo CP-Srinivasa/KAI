@@ -170,15 +170,36 @@ def test_compute_hit_rate_empty():
 
 def test_compute_hit_rate_all_resolved():
     outcomes = [
-        AlertOutcome(document_id="1", asset="BTC", sentiment_label="bullish",
-                     dispatched_at="t", price_at_alert=100.0,
-                     price_at_resolution=110.0, is_hit=True, return_pct=10.0),
-        AlertOutcome(document_id="2", asset="BTC", sentiment_label="bullish",
-                     dispatched_at="t", price_at_alert=100.0,
-                     price_at_resolution=90.0, is_hit=False, return_pct=-10.0),
-        AlertOutcome(document_id="3", asset="ETH", sentiment_label="bearish",
-                     dispatched_at="t", price_at_alert=100.0,
-                     price_at_resolution=80.0, is_hit=True, return_pct=-20.0),
+        AlertOutcome(
+            document_id="1",
+            asset="BTC",
+            sentiment_label="bullish",
+            dispatched_at="t",
+            price_at_alert=100.0,
+            price_at_resolution=110.0,
+            is_hit=True,
+            return_pct=10.0,
+        ),
+        AlertOutcome(
+            document_id="2",
+            asset="BTC",
+            sentiment_label="bullish",
+            dispatched_at="t",
+            price_at_alert=100.0,
+            price_at_resolution=90.0,
+            is_hit=False,
+            return_pct=-10.0,
+        ),
+        AlertOutcome(
+            document_id="3",
+            asset="ETH",
+            sentiment_label="bearish",
+            dispatched_at="t",
+            price_at_alert=100.0,
+            price_at_resolution=80.0,
+            is_hit=True,
+            return_pct=-20.0,
+        ),
     ]
     report = compute_hit_rate(outcomes, min_sample=3)
     assert report.total_alerts == 3
@@ -191,11 +212,19 @@ def test_compute_hit_rate_all_resolved():
 
 def test_compute_hit_rate_mixed_resolved_unresolved():
     outcomes = [
-        AlertOutcome(document_id="1", asset="BTC", sentiment_label="bullish",
-                     dispatched_at="t", is_hit=True, price_at_alert=100.0,
-                     price_at_resolution=110.0, return_pct=10.0),
-        AlertOutcome(document_id="2", asset="BTC", sentiment_label="bullish",
-                     dispatched_at="t"),  # unresolved
+        AlertOutcome(
+            document_id="1",
+            asset="BTC",
+            sentiment_label="bullish",
+            dispatched_at="t",
+            is_hit=True,
+            price_at_alert=100.0,
+            price_at_resolution=110.0,
+            return_pct=10.0,
+        ),
+        AlertOutcome(
+            document_id="2", asset="BTC", sentiment_label="bullish", dispatched_at="t"
+        ),  # unresolved
     ]
     report = compute_hit_rate(outcomes, min_sample=1)
     assert report.resolved_count == 1
@@ -221,12 +250,26 @@ def test_compute_hit_rate_sample_uses_resolved_count_not_directional():
 
 def test_compute_hit_rate_by_sentiment():
     outcomes = [
-        AlertOutcome(document_id="1", asset="BTC", sentiment_label="bullish",
-                     dispatched_at="t", is_hit=True, price_at_alert=1.0,
-                     price_at_resolution=2.0, return_pct=100.0),
-        AlertOutcome(document_id="2", asset="BTC", sentiment_label="bearish",
-                     dispatched_at="t", is_hit=False, price_at_alert=1.0,
-                     price_at_resolution=2.0, return_pct=100.0),
+        AlertOutcome(
+            document_id="1",
+            asset="BTC",
+            sentiment_label="bullish",
+            dispatched_at="t",
+            is_hit=True,
+            price_at_alert=1.0,
+            price_at_resolution=2.0,
+            return_pct=100.0,
+        ),
+        AlertOutcome(
+            document_id="2",
+            asset="BTC",
+            sentiment_label="bearish",
+            dispatched_at="t",
+            is_hit=False,
+            price_at_alert=1.0,
+            price_at_resolution=2.0,
+            return_pct=100.0,
+        ),
     ]
     report = compute_hit_rate(outcomes, min_sample=1)
     assert report.by_sentiment["bullish"].hits == 1
@@ -235,12 +278,26 @@ def test_compute_hit_rate_by_sentiment():
 
 def test_compute_hit_rate_by_asset():
     outcomes = [
-        AlertOutcome(document_id="1", asset="BTC", sentiment_label="bullish",
-                     dispatched_at="t", is_hit=True, price_at_alert=1.0,
-                     price_at_resolution=2.0, return_pct=100.0),
-        AlertOutcome(document_id="2", asset="ETH", sentiment_label="bullish",
-                     dispatched_at="t", is_hit=False, price_at_alert=1.0,
-                     price_at_resolution=0.5, return_pct=-50.0),
+        AlertOutcome(
+            document_id="1",
+            asset="BTC",
+            sentiment_label="bullish",
+            dispatched_at="t",
+            is_hit=True,
+            price_at_alert=1.0,
+            price_at_resolution=2.0,
+            return_pct=100.0,
+        ),
+        AlertOutcome(
+            document_id="2",
+            asset="ETH",
+            sentiment_label="bullish",
+            dispatched_at="t",
+            is_hit=False,
+            price_at_alert=1.0,
+            price_at_resolution=0.5,
+            return_pct=-50.0,
+        ),
     ]
     report = compute_hit_rate(outcomes, min_sample=1)
     assert "BTC" in report.by_asset
@@ -251,9 +308,16 @@ def test_compute_hit_rate_by_asset():
 
 def test_compute_hit_rate_insufficient_sample():
     outcomes = [
-        AlertOutcome(document_id="1", asset="BTC", sentiment_label="bullish",
-                     dispatched_at="t", is_hit=True, price_at_alert=1.0,
-                     price_at_resolution=2.0, return_pct=100.0),
+        AlertOutcome(
+            document_id="1",
+            asset="BTC",
+            sentiment_label="bullish",
+            dispatched_at="t",
+            is_hit=True,
+            price_at_alert=1.0,
+            price_at_resolution=2.0,
+            return_pct=100.0,
+        ),
     ]
     report = compute_hit_rate(outcomes, min_sample=50)
     assert report.sufficient_sample is False

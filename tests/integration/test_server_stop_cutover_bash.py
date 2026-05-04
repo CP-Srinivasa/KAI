@@ -162,7 +162,7 @@ def test_cutover_aborts_when_ssh_probe_fails(tmp_path: Path) -> None:
         tmp_path,
         {
             # Probe: refuse the cutover_probe_ok command, exit 255 (ssh-style auth-fail)
-            "ssh": 'exit 255',
+            "ssh": "exit 255",
             "scp": "exit 0",
             "sha256sum": 'echo "deadbeef  $1"',
         },
@@ -195,11 +195,11 @@ def test_cutover_happy_path_sha_match(tmp_path: Path) -> None:
             "ssh": (
                 'last="${@: -1}"; '
                 f'case "$last" in '
-                f'  *cutover_probe_ok*) exit 0 ;; '
-                f'  *mkdir*) exit 0 ;; '
+                f"  *cutover_probe_ok*) exit 0 ;; "
+                f"  *mkdir*) exit 0 ;; "
                 f'  *sha256sum*) echo "{fixed_sha}"; exit 0 ;; '
                 f'  *) echo "unstubbed ssh: $@" >&2; exit 99 ;; '
-                f'esac'
+                f"esac"
             ),
             "scp": "exit 0",
             # Local sha: the SUT calls `sha256sum data/dev.db` then awks
@@ -225,11 +225,11 @@ def test_cutover_sha_mismatch_exits_two(tmp_path: Path) -> None:
             "ssh": (
                 'last="${@: -1}"; '
                 f'case "$last" in '
-                f'  *cutover_probe_ok*) exit 0 ;; '
-                f'  *mkdir*) exit 0 ;; '
+                f"  *cutover_probe_ok*) exit 0 ;; "
+                f"  *mkdir*) exit 0 ;; "
                 f'  *sha256sum*) echo "{remote_sha}"; exit 0 ;; '
-                f'  *) exit 99 ;; '
-                f'esac'
+                f"  *) exit 99 ;; "
+                f"esac"
             ),
             "scp": "exit 0",
             "sha256sum": f'echo "{local_sha}  $1"',
@@ -255,11 +255,11 @@ def test_remote_root_override_threads_through(tmp_path: Path) -> None:
             "ssh": (
                 'last="${@: -1}"; '
                 f'case "$last" in '
-                f'  *cutover_probe_ok*) exit 0 ;; '
-                f'  *mkdir*) exit 0 ;; '
+                f"  *cutover_probe_ok*) exit 0 ;; "
+                f"  *mkdir*) exit 0 ;; "
                 f'  *sha256sum*) echo "{fixed_sha}"; exit 0 ;; '
-                f'  *) exit 99 ;; '
-                f'esac'
+                f"  *) exit 99 ;; "
+                f"esac"
             ),
             "scp": "exit 0",
             "sha256sum": f'echo "{fixed_sha}  $1"',

@@ -133,9 +133,7 @@ class BinanceAdapter(BaseMarketDataAdapter):
 
         close_time_ms = data.get("closeTime")
         if isinstance(close_time_ms, (int, float)) and close_time_ms > 0:
-            timestamp_utc = datetime.fromtimestamp(
-                close_time_ms / 1000, tz=UTC
-            ).isoformat()
+            timestamp_utc = datetime.fromtimestamp(close_time_ms / 1000, tz=UTC).isoformat()
         else:
             timestamp_utc = datetime.now(UTC).isoformat()
 
@@ -200,9 +198,7 @@ class BinanceAdapter(BaseMarketDataAdapter):
             candles.append(
                 OHLCV(
                     symbol=canonical,
-                    timestamp_utc=datetime.fromtimestamp(
-                        open_time_ms / 1000, tz=UTC
-                    ).isoformat(),
+                    timestamp_utc=datetime.fromtimestamp(open_time_ms / 1000, tz=UTC).isoformat(),
                     timeframe=timeframe,
                     open=open_p,
                     high=high_p,
@@ -249,9 +245,7 @@ class BinanceAdapter(BaseMarketDataAdapter):
             source_timestamp_utc=ticker.timestamp_utc,
             price=ticker.last,
             is_stale=is_stale,
-            freshness_seconds=(
-                round(age_seconds, 2) if age_seconds is not None else None
-            ),
+            freshness_seconds=(round(age_seconds, 2) if age_seconds is not None else None),
             available=True,
             error=("stale_data" if is_stale else None),
         )
@@ -315,9 +309,7 @@ class BinanceAdapter(BaseMarketDataAdapter):
 
             except httpx.TimeoutException:
                 if attempt < self._max_retries - 1:
-                    await asyncio.sleep(
-                        backoff_schedule[min(attempt, len(backoff_schedule) - 1)]
-                    )
+                    await asyncio.sleep(backoff_schedule[min(attempt, len(backoff_schedule) - 1)])
                     continue
                 self._set_error("timeout")
                 logger.error("[Binance] Timeout for %s", url)

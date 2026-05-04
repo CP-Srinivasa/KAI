@@ -246,9 +246,7 @@ def _import_telethon() -> tuple[Any, Any]:
     try:
         from telethon import TelegramClient, events  # type: ignore[import-not-found]
     except ImportError as exc:
-        raise RuntimeError(
-            "telethon is not installed. Install with: pip install telethon"
-        ) from exc
+        raise RuntimeError("telethon is not installed. Install with: pip install telethon") from exc
     return TelegramClient, events
 
 
@@ -260,9 +258,7 @@ async def resolve_target_entity(client: Any, cfg: TelegramChannelIngestSettings)
     premium channel has no @handle, this is the only robust option.
     """
     if cfg.target_chat_id:
-        logger.info(
-            "[channel-worker] resolving channel by chat_id=%s", cfg.target_chat_id
-        )
+        logger.info("[channel-worker] resolving channel by chat_id=%s", cfg.target_chat_id)
         return await client.get_entity(cfg.target_chat_id)
 
     if not cfg.target_title.strip():
@@ -302,13 +298,9 @@ def _write_replay_marker(result: dict[str, int]) -> None:
             "processed": int(result.get("processed", 0)),
             "skipped_no_checkpoint": int(result.get("skipped_no_checkpoint", 0)),
         }
-        _REPLAY_MARKER_PATH.write_text(
-            json.dumps(payload), encoding="utf-8"
-        )
+        _REPLAY_MARKER_PATH.write_text(json.dumps(payload), encoding="utf-8")
     except OSError as exc:
-        logger.warning(
-            "[channel-worker] could not write replay marker: %s", exc
-        )
+        logger.warning("[channel-worker] could not write replay marker: %s", exc)
 
 
 async def replay_missed_messages(
@@ -338,16 +330,14 @@ async def replay_missed_messages(
         return {"scanned": 0, "processed": 0, "skipped_no_checkpoint": 1}
     collected: list[tuple[int, str]] = []
     async for msg in client.iter_messages(
-        entity, min_id=last_seen_id, limit=max_replay,
+        entity,
+        min_id=last_seen_id,
+        limit=max_replay,
     ):
         msg_id = getattr(msg, "id", None)
         if not isinstance(msg_id, int) or msg_id <= last_seen_id:
             continue
-        text = (
-            getattr(msg, "raw_text", "")
-            or getattr(msg, "message", "")
-            or ""
-        )
+        text = getattr(msg, "raw_text", "") or getattr(msg, "message", "") or ""
         collected.append((msg_id, text))
     collected.sort(key=lambda item: item[0])
     processed = 0
@@ -395,7 +385,10 @@ async def list_dialogs(cfg: TelegramChannelIngestSettings) -> list[dict[str, obj
             "INGESTION_TELEGRAM_CHANNEL_API_ID and _API_HASH in .env."
         )
     client = TelegramClient(
-        cfg.session_path, cfg.api_id, cfg.api_hash, catch_up=True,
+        cfg.session_path,
+        cfg.api_id,
+        cfg.api_hash,
+        catch_up=True,
     )
     await client.start()
     try:
@@ -436,7 +429,10 @@ async def run_worker(cfg: TelegramChannelIngestSettings | None = None) -> None:
     heartbeat_path = Path(cfg.heartbeat_path)
 
     client = TelegramClient(
-        cfg.session_path, cfg.api_id, cfg.api_hash, catch_up=True,
+        cfg.session_path,
+        cfg.api_id,
+        cfg.api_hash,
+        catch_up=True,
     )
     await client.start()
     # First heartbeat right after a successful start — the watchdog must
@@ -585,12 +581,13 @@ async def setup_auth(cfg: TelegramChannelIngestSettings | None = None) -> None:
     if cfg is None:
         cfg = get_settings().telegram_channel_ingest
     if not cfg.api_id or not cfg.api_hash:
-        raise RuntimeError(
-            "api_id and api_hash are required. Set them in .env first."
-        )
+        raise RuntimeError("api_id and api_hash are required. Set them in .env first.")
     TelegramClient, _ = _import_telethon()  # noqa: N806 — class import alias
     client = TelegramClient(
-        cfg.session_path, cfg.api_id, cfg.api_hash, catch_up=True,
+        cfg.session_path,
+        cfg.api_id,
+        cfg.api_hash,
+        catch_up=True,
     )
     await client.start()  # triggers interactive auth on first run
     me = await client.get_me()

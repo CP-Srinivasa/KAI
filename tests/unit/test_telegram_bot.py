@@ -182,8 +182,14 @@ async def test_send_attaches_persistent_reply_keyboard(tmp_path, monkeypatch):
     assert markup["resize_keyboard"] is True
     flat = [btn["text"] for row in markup["keyboard"] for btn in row]
     assert {
-        "Status", "Help", "Portfolio", "Signals",
-        "Trades", "Alerts", "Quality", "Daily",
+        "Status",
+        "Help",
+        "Portfolio",
+        "Signals",
+        "Trades",
+        "Alerts",
+        "Quality",
+        "Daily",
     }.issubset(set(flat))
 
 
@@ -639,9 +645,7 @@ async def test_send_retries_on_429(tmp_path, monkeypatch):
 def test_telegram_command_inventory_references_registered_cli_trading_commands() -> None:
     inventory = get_telegram_command_inventory()
     refs = [
-        ref
-        for command_refs in inventory["canonical_command_refs"].values()
-        for ref in command_refs
+        ref for command_refs in inventory["canonical_command_refs"].values() for ref in command_refs
     ]
     assert get_invalid_trading_command_refs(refs) == []
 
@@ -1549,9 +1553,7 @@ async def test_structured_news_writes_message_envelope_audit(tmp_path, monkeypat
     assert envelope.exists()
     rows = [json.loads(line) for line in envelope.read_text(encoding="utf-8").splitlines()]
     assert any(
-        row["message_type"] == "news"
-        and row["stage"] == "accepted"
-        and row["status"] == "ok"
+        row["message_type"] == "news" and row["stage"] == "accepted" and row["status"] == "ok"
         for row in rows
     )
 
@@ -1571,11 +1573,7 @@ async def test_structured_signal_schema_error_writes_envelope_rejection(tmp_path
         "message": {
             "chat": {"id": 12345},
             "text": (
-                "[SIGNAL]\n"
-                "Symbol: BTC/USDT\n"
-                "Direction: LONG\n"
-                "Targets: 72800\n"
-                "Stop Loss: 76600\n"
+                "[SIGNAL]\nSymbol: BTC/USDT\nDirection: LONG\nTargets: 72800\nStop Loss: 76600\n"
             ),
         }
     }
@@ -1583,9 +1581,7 @@ async def test_structured_signal_schema_error_writes_envelope_rejection(tmp_path
 
     assert len(sent) == 1
     assert (
-        "Erg" in sent[0]
-        or "Signal blockiert" in sent[0]
-        or "Structured-Schema Fehler" in sent[0]
+        "Erg" in sent[0] or "Signal blockiert" in sent[0] or "Structured-Schema Fehler" in sent[0]
     )
     envelope = tmp_path / "message_envelope.jsonl"
     rows = [json.loads(line) for line in envelope.read_text(encoding="utf-8").splitlines()]
@@ -1698,8 +1694,7 @@ async def test_freetext_signal_handoff_pipeline_with_optional_routes(tmp_path, m
     assert "*Not Executed*" in sent[0]
 
     handoff_rows = [
-        json.loads(line)
-        for line in handoff_log.read_text(encoding="utf-8").splitlines()
+        json.loads(line) for line in handoff_log.read_text(encoding="utf-8").splitlines()
     ]
     assert len(handoff_rows) == 1
     assert handoff_rows[0]["event"] == "telegram_signal_handoff"
@@ -1765,9 +1760,7 @@ async def test_freetext_signal_with_invalid_asset_is_rejected(tmp_path, monkeypa
 @pytest.mark.asyncio
 async def test_freetext_command_dispatches_to_handler(tmp_path, monkeypatch):
     """Command intent should dispatch to the matching bot command."""
-    proc = _FakeTextProcessor(
-        IntentResult(intent="command", response="", mapped_command="help")
-    )
+    proc = _FakeTextProcessor(IntentResult(intent="command", response="", mapped_command="help"))
     bot = _bot(tmp_path, text_processor=proc)
     sent: list[str] = []
 
@@ -1788,9 +1781,7 @@ async def test_freetext_command_dispatches_to_handler(tmp_path, monkeypatch):
 @pytest.mark.asyncio
 async def test_freetext_query_returns_response(tmp_path, monkeypatch):
     """Query intent should return the LLM response directly."""
-    proc = _FakeTextProcessor(
-        IntentResult(intent="query", response="Bitcoin steht bei 95k USD.")
-    )
+    proc = _FakeTextProcessor(IntentResult(intent="query", response="Bitcoin steht bei 95k USD."))
     bot = _bot(tmp_path, text_processor=proc)
     sent: list[str] = []
 
@@ -1848,9 +1839,7 @@ class _FakeVoiceTranscriber:
 @pytest.mark.asyncio
 async def test_voice_message_transcribed_and_processed(tmp_path, monkeypatch):
     """Voice → transcribe → text intent pipeline."""
-    proc = _FakeTextProcessor(
-        IntentResult(intent="chat", response="Verstanden!")
-    )
+    proc = _FakeTextProcessor(IntentResult(intent="chat", response="Verstanden!"))
     voice_t = _FakeVoiceTranscriber("Bitcoin ist bullish")
     bot = _bot(tmp_path, text_processor=proc, voice_transcriber=voice_t)
     sent: list[str] = []
@@ -1925,8 +1914,7 @@ async def test_voice_signal_handoff_marks_source_voice(tmp_path, monkeypatch):
     await bot.process_update({"message": {"chat": {"id": 12345}, "text": "/ok"}})
 
     handoff_rows = [
-        json.loads(line)
-        for line in handoff_log.read_text(encoding="utf-8").splitlines()
+        json.loads(line) for line in handoff_log.read_text(encoding="utf-8").splitlines()
     ]
     assert len(handoff_rows) == 1
     assert handoff_rows[0]["source"] == "voice"
@@ -2069,7 +2057,8 @@ async def test_quality_command_shows_metrics(tmp_path, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_quality_command_handles_missing_report(
-    tmp_path, monkeypatch,
+    tmp_path,
+    monkeypatch,
 ):
     """Quality command degrades gracefully when report is missing."""
     bot = _bot(tmp_path)
@@ -2140,7 +2129,8 @@ async def test_annotate_direct_writes_outcome(tmp_path, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_annotate_direct_rejects_invalid_outcome(
-    tmp_path, monkeypatch,
+    tmp_path,
+    monkeypatch,
 ):
     """Direct annotation rejects invalid outcome values."""
     bot = _bot(tmp_path)
@@ -2159,7 +2149,8 @@ async def test_annotate_direct_rejects_invalid_outcome(
 
 @pytest.mark.asyncio
 async def test_annotate_no_pending_shows_all_done(
-    tmp_path, monkeypatch,
+    tmp_path,
+    monkeypatch,
 ):
     """Annotate with no pending alerts shows completion message."""
     bot = _bot(tmp_path)
@@ -2175,7 +2166,8 @@ async def test_annotate_no_pending_shows_all_done(
 
     with (
         mock_patch(
-            "app.alerts.audit.load_alert_audits", return_value=[],
+            "app.alerts.audit.load_alert_audits",
+            return_value=[],
         ),
         mock_patch(
             "app.alerts.audit.load_outcome_annotations",
@@ -2204,7 +2196,9 @@ async def test_annotation_callback_handler(tmp_path, monkeypatch):
     monkeypatch.setattr(bot, "_answer_callback_query", fake_answer)
 
     await bot._handle_annotation_callback(
-        12345, "query-1", "ann:doc-xyz:miss",
+        12345,
+        "query-1",
+        "ann:doc-xyz:miss",
     )
 
     assert len(annotated) == 1
@@ -2213,7 +2207,8 @@ async def test_annotation_callback_handler(tmp_path, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_annotation_callback_rejects_invalid_outcome(
-    tmp_path, monkeypatch,
+    tmp_path,
+    monkeypatch,
 ):
     """Callback handler rejects invalid outcome in ann: data."""
     bot = _bot(tmp_path)
@@ -2227,7 +2222,9 @@ async def test_annotation_callback_rejects_invalid_outcome(
     monkeypatch.setattr(bot, "_answer_callback_query", fake_answer)
 
     await bot._handle_annotation_callback(
-        12345, "query-1", "ann:doc-xyz:invalid",
+        12345,
+        "query-1",
+        "ann:doc-xyz:invalid",
     )
 
     assert len(answers) == 1
@@ -2268,7 +2265,8 @@ def _envelope_rows(tmp_path):
 
 @pytest.mark.asyncio
 async def test_accepted_signal_audit_has_envelope_id_and_idempotency_key(
-    tmp_path, monkeypatch,
+    tmp_path,
+    monkeypatch,
 ):
     bot = _bot(tmp_path)
 
@@ -2282,8 +2280,7 @@ async def test_accepted_signal_audit_has_envelope_id_and_idempotency_key(
 
     rows = _envelope_rows(tmp_path)
     accepted = [
-        r for r in rows
-        if r.get("stage") == "accepted" and r.get("message_type") == "signal"
+        r for r in rows if r.get("stage") == "accepted" and r.get("message_type") == "signal"
     ]
     assert len(accepted) == 1
     assert accepted[0]["envelope_id"].startswith("ENV-")
@@ -2340,7 +2337,8 @@ def _bot_with_voice_processor(tmp_path) -> TelegramOperatorBot:
 
 @pytest.mark.asyncio
 async def test_voice_signal_is_stashed_as_draft_and_not_executed(
-    tmp_path, monkeypatch,
+    tmp_path,
+    monkeypatch,
 ):
     bot = _bot_with_voice_processor(tmp_path)
     handoff_calls: list[dict] = []
@@ -2387,7 +2385,8 @@ async def test_text_intent_signal_still_executes_directly(tmp_path, monkeypatch)
 
 @pytest.mark.asyncio
 async def test_ok_confirms_pending_voice_draft_and_triggers_handoff(
-    tmp_path, monkeypatch,
+    tmp_path,
+    monkeypatch,
 ):
     bot = _bot_with_voice_processor(tmp_path)
     handoff_calls: list[dict] = []
@@ -2409,17 +2408,15 @@ async def test_ok_confirms_pending_voice_draft_and_triggers_handoff(
     assert 12345 not in bot._pending_signal_draft
 
     rows = _envelope_rows(tmp_path)
-    stages = [
-        r.get("status") for r in rows
-        if r.get("stage") == "voice_confirm_gate"
-    ]
+    stages = [r.get("status") for r in rows if r.get("stage") == "voice_confirm_gate"]
     assert "draft_pending" in stages
     assert "confirmed" in stages
 
 
 @pytest.mark.asyncio
 async def test_cancel_drops_pending_voice_draft_without_handoff(
-    tmp_path, monkeypatch,
+    tmp_path,
+    monkeypatch,
 ):
     bot = _bot_with_voice_processor(tmp_path)
     handoff_calls: list[dict] = []
@@ -2444,8 +2441,7 @@ async def test_cancel_drops_pending_voice_draft_without_handoff(
 
     rows = _envelope_rows(tmp_path)
     cancelled = [
-        r for r in rows
-        if r.get("stage") == "voice_confirm_gate" and r.get("status") == "cancelled"
+        r for r in rows if r.get("stage") == "voice_confirm_gate" and r.get("status") == "cancelled"
     ]
     assert len(cancelled) == 1
 
@@ -2500,7 +2496,6 @@ async def test_expired_voice_draft_is_pruned_on_ok(tmp_path, monkeypatch):
 
     rows = _envelope_rows(tmp_path)
     expired = [
-        r for r in rows
-        if r.get("stage") == "voice_confirm_gate" and r.get("status") == "expired"
+        r for r in rows if r.get("stage") == "voice_confirm_gate" and r.get("status") == "expired"
     ]
     assert len(expired) == 1

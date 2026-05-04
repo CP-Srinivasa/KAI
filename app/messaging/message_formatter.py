@@ -123,5 +123,3 @@ _EXCHANGE_DISPLAY_NAMES: dict[str, str] = {
 
 def _exchange_display_name(exchange_id: str) -> str:
     return _EXCHANGE_DISPLAY_NAMES.get(exchange_id.lower(), exchange_id)
-
-

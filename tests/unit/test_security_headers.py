@@ -45,9 +45,7 @@ def test_middleware_attaches_all_headers_to_json_response() -> None:
     response = client.get("/ping")
     assert response.status_code == 200
     assert response.headers["Content-Security-Policy"].startswith("default-src 'self'")
-    assert response.headers["Strict-Transport-Security"].startswith(
-        "max-age=31536000"
-    )
+    assert response.headers["Strict-Transport-Security"].startswith("max-age=31536000")
     assert response.headers["X-Content-Type-Options"] == "nosniff"
     assert response.headers["X-Frame-Options"] == "DENY"
     assert response.headers["Referrer-Policy"] == "strict-origin-when-cross-origin"
@@ -72,16 +70,11 @@ def test_disabled_attaches_no_headers() -> None:
 def test_hsts_max_age_respects_override() -> None:
     client = TestClient(_app_with_policy(hsts_max_age=7_776_000))
     response = client.get("/ping")
-    assert (
-        response.headers["Strict-Transport-Security"]
-        == "max-age=7776000; includeSubDomains"
-    )
+    assert response.headers["Strict-Transport-Security"] == "max-age=7776000; includeSubDomains"
 
 
 def test_extra_script_src_propagates_through_setup() -> None:
-    client = TestClient(
-        _app_with_policy(extra_csp_script_src="https://telegram.org")
-    )
+    client = TestClient(_app_with_policy(extra_csp_script_src="https://telegram.org"))
     response = client.get("/ping")
     assert "https://telegram.org" in response.headers["Content-Security-Policy"]
 

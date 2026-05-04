@@ -268,12 +268,8 @@ def tradingview_run(
     freshness_threshold_seconds: float = typer.Option(
         120.0, "--freshness", help="Market data stale threshold."
     ),
-    timeout_seconds: int = typer.Option(
-        10, "--timeout", help="Market data request timeout."
-    ),
-    consensus: bool = typer.Option(
-        False, "--consensus", help="Enable multi-model consensus gate."
-    ),
+    timeout_seconds: int = typer.Option(10, "--timeout", help="Market data request timeout."),
+    consensus: bool = typer.Option(False, "--consensus", help="Enable multi-model consensus gate."),
     consensus_model: str = typer.Option(
         "gpt-4o-mini", "--consensus-model", help="LLM model for consensus."
     ),
@@ -315,9 +311,7 @@ def tradingview_run(
 
     console.print(table)
     completed = sum(1 for c in cycles if c.status.value == "completed")
-    console.print(
-        f"[bold]{len(cycles)} signals processed, {completed} completed (filled).[/bold]"
-    )
+    console.print(f"[bold]{len(cycles)} signals processed, {completed} completed (filled).[/bold]")
 
 
 def _format_event_dict(event_dict: dict) -> str:

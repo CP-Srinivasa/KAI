@@ -36,9 +36,7 @@ class TestStrictValidator:
     SKEW = 300
 
     def _check(self, payload: object) -> tuple[bool, str]:
-        return _validate_strict_body_fields(
-            payload, now=self.NOW, skew_seconds=self.SKEW
-        )
+        return _validate_strict_body_fields(payload, now=self.NOW, skew_seconds=self.SKEW)
 
     def test_happy_path(self) -> None:
         payload = {
@@ -71,15 +69,17 @@ class TestStrictValidator:
         assert self._check({"event_id": "tvalert-12345"}) == (False, "missing_ts")
 
     def test_invalid_ts_format(self) -> None:
-        assert self._check(
-            {"event_id": "tvalert-12345", "ts": "yesterday"}
-        ) == (False, "invalid_ts")
+        assert self._check({"event_id": "tvalert-12345", "ts": "yesterday"}) == (
+            False,
+            "invalid_ts",
+        )
 
     def test_naive_ts_rejected(self) -> None:
         # No tzinfo — strict mode demands timezone-aware ISO timestamps.
-        assert self._check(
-            {"event_id": "tvalert-12345", "ts": "2026-04-25T12:00:00"}
-        ) == (False, "invalid_ts")
+        assert self._check({"event_id": "tvalert-12345", "ts": "2026-04-25T12:00:00"}) == (
+            False,
+            "invalid_ts",
+        )
 
     def test_skew_within_window_accepted(self) -> None:
         ts = (self.NOW - timedelta(seconds=299)).isoformat()
@@ -144,9 +144,7 @@ def kill_switch_client(audit_path: Path) -> Iterator[TestClient]:
     yield from _make_strict_client(audit_path, kill_switch=True)
 
 
-def test_strict_accepts_valid_token_and_body(
-    strict_client: TestClient, audit_path: Path
-) -> None:
+def test_strict_accepts_valid_token_and_body(strict_client: TestClient, audit_path: Path) -> None:
     body = json.dumps(
         {
             "ticker": "BTCUSDT",
@@ -167,12 +165,8 @@ def test_strict_accepts_valid_token_and_body(
     assert entry["provenance"]["auth_method"] == "shared_token"
 
 
-def test_strict_rejects_body_without_event_id(
-    strict_client: TestClient, audit_path: Path
-) -> None:
-    body = json.dumps(
-        {"ticker": "BTCUSDT", "action": "buy", "ts": _ts()}
-    ).encode()
+def test_strict_rejects_body_without_event_id(strict_client: TestClient, audit_path: Path) -> None:
+    body = json.dumps({"ticker": "BTCUSDT", "action": "buy", "ts": _ts()}).encode()
     resp = strict_client.post(
         "/tradingview/webhook",
         content=body,
@@ -186,9 +180,7 @@ def test_strict_rejects_body_without_event_id(
     assert entry["rate_limit_failures"] == 1
 
 
-def test_strict_rejects_clock_skew(
-    strict_client: TestClient, audit_path: Path
-) -> None:
+def test_strict_rejects_clock_skew(strict_client: TestClient, audit_path: Path) -> None:
     body = json.dumps(
         {
             "ticker": "BTCUSDT",
@@ -207,12 +199,8 @@ def test_strict_rejects_clock_skew(
     assert entry["reason"] == "strict_clock_skew"
 
 
-def test_strict_rejects_short_event_id(
-    strict_client: TestClient, audit_path: Path
-) -> None:
-    body = json.dumps(
-        {"ticker": "BTC", "action": "buy", "event_id": "abc", "ts": _ts()}
-    ).encode()
+def test_strict_rejects_short_event_id(strict_client: TestClient, audit_path: Path) -> None:
+    body = json.dumps({"ticker": "BTC", "action": "buy", "event_id": "abc", "ts": _ts()}).encode()
     resp = strict_client.post(
         "/tradingview/webhook",
         content=body,
@@ -300,10 +288,7 @@ def test_deprecation_log_fires_once_for_legacy_modes(
                 headers={_TOKEN_HEADER: _TOKEN},
             )
 
-    deprecation_calls = [
-        c for c in calls
-        if c[0] == "tradingview_webhook_auth_mode_deprecated"
-    ]
+    deprecation_calls = [c for c in calls if c[0] == "tradingview_webhook_auth_mode_deprecated"]
     assert len(deprecation_calls) == 1
     assert deprecation_calls[0][1].get("mode") == "shared_token"
     app.dependency_overrides.clear()

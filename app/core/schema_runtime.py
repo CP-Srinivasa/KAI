@@ -100,4 +100,3 @@ def validate_decision_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
     """Compatibility alias for runtime decision validation."""
 
     return validate_decision_schema_payload(payload)
-

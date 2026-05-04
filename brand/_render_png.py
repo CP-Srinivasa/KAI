@@ -7,10 +7,11 @@ and the SVG stay visually identical. Anti-aliasing via 4x supersampling.
 from __future__ import annotations
 
 from pathlib import Path
+
 from PIL import Image, ImageDraw
 
 ROOT = Path(__file__).resolve().parent
-FG = (17, 17, 17, 255)   # #111
+FG = (17, 17, 17, 255)  # #111
 FG_LIGHT = (245, 245, 245, 255)  # for dark-mode export
 BG_TRANSPARENT = (0, 0, 0, 0)
 SS = 4  # 4x supersample for AA
@@ -18,6 +19,7 @@ SS = 4  # 4x supersample for AA
 
 def _draw_mark(draw: ImageDraw.ImageDraw, scale: float, color=FG) -> None:
     """Draw KAI mark into a 128x128 logical canvas, pre-scaled by `scale`."""
+
     def S(*pts):
         return [(x * scale, y * scale) for (x, y) in pts]
 
@@ -31,6 +33,7 @@ def _draw_mark(draw: ImageDraw.ImageDraw, scale: float, color=FG) -> None:
 
 def _draw_wordmark(draw: ImageDraw.ImageDraw, scale: float, color=FG) -> None:
     """Draw full KAI wordmark into a 320x96 logical canvas, pre-scaled."""
+
     def S(*pts):
         return [(x * scale, y * scale) for (x, y) in pts]
 

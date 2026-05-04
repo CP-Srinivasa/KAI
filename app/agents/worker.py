@@ -149,7 +149,7 @@ def _watchdog_report(note: str | None) -> tuple[str, str]:
     lines.append("Letzte 5 Findings:")
     for f in findings[-5:]:
         detail = str(f.get("detail", ""))[:120]
-        lines.append(f"  [{f.get('severity','?')}] {f.get('title','?')} — {detail}")
+        lines.append(f"  [{f.get('severity', '?')}] {f.get('title', '?')} — {detail}")
     return ("\n".join(lines), "ok")
 
 
@@ -281,7 +281,7 @@ def _sentr_report(note: str | None) -> tuple[str, str]:
         lines.append(f"Note: {note}")
     for f in findings[-5:]:
         lines.append(
-            f"  [{f.get('severity','?')}] {f.get('title','?')} — {str(f.get('detail',''))[:120]}"
+            f"  [{f.get('severity', '?')}] {f.get('title', '?')} — {str(f.get('detail', ''))[:120]}"
         )
     return ("\n".join(lines), "warn" if warn or crit else "ok")
 
@@ -432,14 +432,13 @@ def _process_agent(slug: str, state: dict[str, Any]) -> int:
             # Is there any agent reply newer than this message?
             op_ts = str(last_op_msg.get("ts", ""))
             has_newer_agent_reply = any(
-                ev.get("role") == "agent" and str(ev.get("ts", "")) > op_ts
-                for ev in events
+                ev.get("role") == "agent" and str(ev.get("ts", "")) > op_ts for ev in events
             )
             if not has_newer_agent_reply and last_ack_ts != op_ts:
                 content = str(last_op_msg.get("content", ""))[:200]
                 modes = ", ".join(_AGENTS[slug].modes)
                 ack = (
-                    f"Nachricht erhalten: \"{content[:120]}\".\n"
+                    f'Nachricht erhalten: "{content[:120]}".\n'
                     f"Freitext wird derzeit nicht inhaltlich beantwortet.\n"
                     f"Sende `!{_AGENTS[slug].modes[0]}` oder `!{modes.split(', ')[-1]}` "
                     f"(ggf. mit Note) fuer eine Aktion."

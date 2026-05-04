@@ -13,7 +13,6 @@ from app.market_data.models import Ticker
 
 
 class TestSuggestOutcome:
-
     """Unit tests for the _suggest_outcome deterministic logic."""
 
     def test_bullish_hit(self) -> None:

@@ -53,6 +53,7 @@ def _safe_text(text: str) -> str:
             sys.stdout.encoding or "cp1252"
         )
 
+
 def _build_primary_provider() -> Any:
     """Build an Ensemble (OpenAI -> Gemini -> [Grok]) provider with automatic fallback.
 
@@ -64,21 +65,22 @@ def _build_primary_provider() -> Any:
     providers: list[Any] = []
     if settings.providers.openai_api_key:
         from app.integrations.openai.provider import OpenAIAnalysisProvider
+
         providers.append(OpenAIAnalysisProvider.from_settings(settings.providers))
     if settings.providers.gemini_api_key:
         from app.integrations.gemini.provider import GeminiAnalysisProvider
+
         providers.append(GeminiAnalysisProvider.from_settings(settings.providers))
-    if (
-        settings.providers.xai_fallback_enabled
-        and settings.providers.xai_api_key
-    ):
+    if settings.providers.xai_fallback_enabled and settings.providers.xai_api_key:
         from app.integrations.xai.provider import GrokAnalysisProvider
+
         providers.append(GrokAnalysisProvider.from_settings(settings.providers))
     if not providers:
         return None
     if len(providers) == 1:
         return providers[0]
     from app.analysis.ensemble.provider import EnsembleProvider
+
     return EnsembleProvider(providers)
 
 
@@ -95,9 +97,11 @@ def _maybe_gemini_shadow() -> Any:
     settings = get_settings()
     if settings.providers.anthropic_api_key:
         from app.integrations.anthropic.provider import AnthropicAnalysisProvider
+
         return AnthropicAnalysisProvider.from_settings(settings.providers)
     if settings.providers.gemini_api_key:
         from app.integrations.gemini.provider import GeminiAnalysisProvider
+
         return GeminiAnalysisProvider.from_settings(settings.providers)
     return None
 
@@ -341,23 +345,29 @@ def pipeline_run_all(
 
         # Load active RSS feeds from DB
         async with session_factory.begin() as session:
-            rows = (await session.execute(
-                select(
-                    SourceModel.source_id,
-                    SourceModel.provider,
-                    SourceModel.original_url,
-                ).where(
-                    SourceModel.status == "active",
-                    SourceModel.source_type == "rss_feed",
+            rows = (
+                await session.execute(
+                    select(
+                        SourceModel.source_id,
+                        SourceModel.provider,
+                        SourceModel.original_url,
+                    ).where(
+                        SourceModel.status == "active",
+                        SourceModel.source_type == "rss_feed",
+                    )
                 )
-            )).all()
+            ).all()
 
         feeds = [(r[0], r[1] or "unknown", r[2]) for r in rows]
         console.print(f"[bold]Active RSS feeds:[/bold] {len(feeds)}")
 
         totals = {
-            "fetched": 0, "saved": 0, "analyzed": 0,
-            "alerts": 0, "skipped": 0, "failed": 0,
+            "fetched": 0,
+            "saved": 0,
+            "analyzed": 0,
+            "alerts": 0,
+            "skipped": 0,
+            "failed": 0,
         }
         for source_id, source_name, url in feeds:
             console.print(f"\n[bold cyan]{source_name}[/bold cyan] ({url[:50]}...)")
@@ -407,7 +417,9 @@ def pipeline_run_all(
 
 @pipeline_app.command("youtube")
 def pipeline_youtube(
-    channel_url: str = typer.Argument(..., help="YouTube channel URL (e.g. https://youtube.com/@Bankless)"),
+    channel_url: str = typer.Argument(
+        ..., help="YouTube channel URL (e.g. https://youtube.com/@Bankless)"
+    ),
     source_id: str = typer.Option("youtube", help="Source ID"),
     source_name: str = typer.Option("YouTube", help="Source name"),
     max_results: int = typer.Option(5, help="Max videos to fetch per channel"),
@@ -552,7 +564,10 @@ def pipeline_twitter(
             pri = str(doc.priority_score or "–")
             sentiment = doc.sentiment_label.value if doc.sentiment_label else "–"
             table.add_row(
-                pri, sentiment, _safe_text(doc.author or "–"), _safe_text((doc.title or "–")[:60]),
+                pri,
+                sentiment,
+                _safe_text(doc.author or "–"),
+                _safe_text((doc.title or "–")[:60]),
             )
 
         console.print(table)
@@ -716,9 +731,7 @@ def analyze_pending(
             provider_obj,
             run_llm=bool(provider_obj),
             market_data_adapter=market_adapter,
-            trusted_social_handles=load_trusted_social_handles(
-                _Path(get_settings().monitor_dir)
-            ),
+            trusted_social_handles=load_trusted_social_handles(_Path(get_settings().monitor_dir)),
         )
         session_factory = build_session_factory(settings.db)
 
@@ -991,9 +1004,7 @@ def _load_doc_metadata(
             continue
         directional_doc_ids.add(rec.document_id)
         if rec.source_name:
-            audit_source_fallback[rec.document_id] = (
-                rec.source_name.strip().lower()
-            )
+            audit_source_fallback[rec.document_id] = rec.source_name.strip().lower()
 
     if not directional_doc_ids:
         return {}, {}
@@ -1013,17 +1024,8 @@ def _load_doc_metadata(
                 CanonicalDocumentModel.title,
             ).where(CanonicalDocumentModel.id.in_(directional_doc_ids))
             rows = (await session.execute(stmt)).all()
-        sources = {
-            str(row[0]): (
-                (row[1] or row[2] or "unknown").strip().lower()
-            )
-            for row in rows
-        }
-        titles = {
-            str(row[0]): row[3]
-            for row in rows
-            if row[3]
-        }
+        sources = {str(row[0]): ((row[1] or row[2] or "unknown").strip().lower()) for row in rows}
+        titles = {str(row[0]): row[3] for row in rows if row[3]}
         # D-139: doc_ids present in the audit but missing from the
         # CanonicalDocumentModel table (e.g. purged test batches or
         # records from legacy pipelines that never persisted the
@@ -1037,16 +1039,15 @@ def _load_doc_metadata(
         # ``source_name="tradingview_webhook"``.
         for doc_id in directional_doc_ids:
             sources.setdefault(
-                doc_id, audit_source_fallback.get(doc_id, "unknown"),
+                doc_id,
+                audit_source_fallback.get(doc_id, "unknown"),
             )
         return sources, titles
 
     try:
         return asyncio.run(_query())
     except Exception as exc:
-        console.print(
-            f"[yellow]Doc metadata lookup failed:[/yellow] {exc}"
-        )
+        console.print(f"[yellow]Doc metadata lookup failed:[/yellow] {exc}")
         return {}, {}
 
 
@@ -1087,9 +1088,7 @@ def alerts_hold_report(
         f"paper cycles {paper['loop_metrics']['total_cycles']}"
     )
     if gate.get("blocking_reasons"):
-        console.print(
-            "[yellow]Blocking:[/yellow] " + ", ".join(gate["blocking_reasons"])
-        )
+        console.print("[yellow]Blocking:[/yellow] " + ", ".join(gate["blocking_reasons"]))
     console.print(
         "[bold]Quality:[/bold] "
         f"actionable_rate={quality['directional_actionable_rate_pct']}% | "
@@ -1098,16 +1097,15 @@ def alerts_hold_report(
         f"priority_corr={quality['priority_hit_correlation']} | "
         f"real_price_cycles={quality['paper_real_price_cycle_count']}"
     )
-    console.print(
-        "[bold]Validation gaps:[/bold] " + ", ".join(quality["validation_gaps"])
-    )
+    console.print("[bold]Validation gaps:[/bold] " + ", ".join(quality["validation_gaps"]))
 
 
 @alerts_app.command("tv-bridge")
 def alerts_tv_bridge(
     artifacts_dir: str = typer.Option("artifacts", help="Artifacts directory"),
     include_smoke: bool = typer.Option(
-        False, "--include-smoke",
+        False,
+        "--include-smoke",
         help="Include smoke/test events (default: filtered out)",
     ),
 ) -> None:
@@ -1169,8 +1167,7 @@ def alerts_tv4_quality_bar(
     report = build_provenance_split_report(
         alert_audit_path=artifacts_path / "alert_audit.jsonl",
         alert_outcomes_path=artifacts_path / "alert_outcomes.jsonl",
-        tradingview_pending_signals_path=artifacts_path
-        / "tradingview_pending_signals.jsonl",
+        tradingview_pending_signals_path=artifacts_path / "tradingview_pending_signals.jsonl",
         source_by_doc=source_map or None,
     )
     out = write_provenance_report(report, Path(output_path))
@@ -1255,10 +1252,7 @@ def alerts_analyze_resolved(
     by: str = typer.Option(
         "all",
         "--by",
-        help=(
-            "Bucket dimension: all | sentiment | priority | priority-group "
-            "| asset | source"
-        ),
+        help=("Bucket dimension: all | sentiment | priority | priority-group | asset | source"),
     ),
     min_bucket_size: int = typer.Option(
         3,
@@ -1357,9 +1351,7 @@ def alerts_analyze_resolved(
         table.add_column("Miss", justify="right")
         table.add_column("Precision", justify="right")
         if not rows:
-            table.add_row(
-                "[dim](no buckets meet min size)[/dim]", "-", "-", "-", "-"
-            )
+            table.add_row("[dim](no buckets meet min size)[/dim]", "-", "-", "-", "-")
         for row in rows:
             prec = row["precision_pct"]
             prec_str = "-" if prec is None else f"{prec:.2f}%"
@@ -1399,9 +1391,7 @@ def alerts_analyze_resolved(
     if json_out:
         out_path = Path(json_out)
         out_path.parent.mkdir(parents=True, exist_ok=True)
-        out_path.write_text(
-            _json.dumps(report, indent=2, sort_keys=True), encoding="utf-8"
-        )
+        out_path.write_text(_json.dumps(report, indent=2, sort_keys=True), encoding="utf-8")
         console.print(f"[green]Report written:[/green] {out_path}")
 
 
@@ -1541,9 +1531,7 @@ def alerts_annotate(
     """Append an outcome annotation for a directional alert document."""
     normalized = outcome.strip().lower()
     if normalized not in {"hit", "miss", "inconclusive"}:
-        console.print(
-            "[red]Invalid outcome.[/red] Use one of: hit, miss, inconclusive."
-        )
+        console.print("[red]Invalid outcome.[/red] Use one of: hit, miss, inconclusive.")
         raise typer.Exit(2)
 
     existing = [
@@ -1567,8 +1555,7 @@ def alerts_annotate(
     )
     append_outcome_annotation(annotation, Path(artifacts_dir))
     console.print(
-        "[green]Annotation written.[/green] "
-        f"document_id={document_id} outcome={normalized}"
+        f"[green]Annotation written.[/green] document_id={document_id} outcome={normalized}"
     )
 
 
@@ -1695,14 +1682,10 @@ def alerts_auto_check(
     hits = sum(1 for r in results if r.suggested_outcome == "hit")
     misses = sum(1 for r in results if r.suggested_outcome == "miss")
     inconc = sum(1 for r in results if r.suggested_outcome == "inconclusive")
-    console.print(
-        f"\n[bold]Summary:[/bold] {hits} hits, {misses} misses, {inconc} inconclusive"
-    )
+    console.print(f"\n[bold]Summary:[/bold] {hits} hits, {misses} misses, {inconc} inconclusive")
 
     if dry_run:
-        console.print(
-            "[dim](dry-run -- use --apply to write annotations)[/dim]"
-        )
+        console.print("[dim](dry-run -- use --apply to write annotations)[/dim]")
         return
 
     # Apply: deduplicate by document_id, prefer strongest absolute move evidence
@@ -1738,13 +1721,16 @@ def alerts_auto_check(
 @alerts_app.command("auto-annotate")
 def alerts_auto_annotate(
     min_age_hours: float = typer.Option(
-        4.0, help="Only annotate alerts older than this (hours)",
+        4.0,
+        help="Only annotate alerts older than this (hours)",
     ),
     move_threshold: float = typer.Option(
-        1.0, help="Price move threshold in percent (1.0 = 1%%)",
+        1.0,
+        help="Price move threshold in percent (1.0 = 1%%)",
     ),
     no_reeval: bool = typer.Option(
-        False, "--no-reeval",
+        False,
+        "--no-reeval",
         help="Skip re-evaluation of prior inconclusive annotations",
     ),
     backfill_batch: int = typer.Option(
@@ -1753,7 +1739,9 @@ def alerts_auto_annotate(
         help="Max stale (>72h) inconclusives to re-evaluate per run (0=skip)",
     ),
     dry_run: bool = typer.Option(
-        False, "--dry-run", help="Preview without writing annotations",
+        False,
+        "--dry-run",
+        help="Preview without writing annotations",
     ),
 ) -> None:
     """Auto-annotate directional alerts based on price movement.
@@ -1800,13 +1788,16 @@ def alerts_auto_annotate(
 @alerts_app.command("auto-annotate-blocked")
 def alerts_auto_annotate_blocked(
     min_age_hours: float = typer.Option(
-        4.0, help="Only annotate blocked alerts older than this (hours)",
+        4.0,
+        help="Only annotate blocked alerts older than this (hours)",
     ),
     move_threshold: float = typer.Option(
-        1.0, help="Price move threshold in percent (1.0 = 1%%)",
+        1.0,
+        help="Price move threshold in percent (1.0 = 1%%)",
     ),
     no_reeval: bool = typer.Option(
-        False, "--no-reeval",
+        False,
+        "--no-reeval",
         help="Skip re-evaluation of prior inconclusive annotations",
     ),
     backfill_batch: int = typer.Option(
@@ -1815,7 +1806,9 @@ def alerts_auto_annotate_blocked(
         help="Max stale (>72h) inconclusives to re-evaluate per run (0=skip)",
     ),
     dry_run: bool = typer.Option(
-        False, "--dry-run", help="Preview without writing annotations",
+        False,
+        "--dry-run",
+        help="Preview without writing annotations",
     ),
 ) -> None:
     """Resolve would-have-been outcomes for blocked directional alerts.
@@ -1865,10 +1858,12 @@ def alerts_auto_annotate_blocked(
 @alerts_app.command("daily-briefing")
 def alerts_daily_briefing(
     lookback_hours: int = typer.Option(
-        24, help="Lookback window in hours",
+        24,
+        help="Lookback window in hours",
     ),
     notify: bool = typer.Option(
-        False, help="Send briefing via Telegram to operator",
+        False,
+        help="Send briefing via Telegram to operator",
     ),
 ) -> None:
     """Generate a daily operator briefing from all audit trails."""
@@ -1891,10 +1886,12 @@ def alerts_daily_briefing(
 @alerts_app.command("health-check")
 def alerts_health_check(
     lookback_hours: int = typer.Option(
-        24, help="Lookback window in hours",
+        24,
+        help="Lookback window in hours",
     ),
     notify: bool = typer.Option(
-        False, help="Send issues via Telegram to operator",
+        False,
+        help="Send issues via Telegram to operator",
     ),
 ) -> None:
     """Run system health checks and report issues."""
@@ -1909,9 +1906,7 @@ def alerts_health_check(
         if notify:
             from app.alerts.notify import send_operator_notification
 
-            ok = asyncio.run(
-                send_operator_notification("KAI Health Check: All systems healthy.")
-            )
+            ok = asyncio.run(send_operator_notification("KAI Health Check: All systems healthy."))
             if ok:
                 console.print("[green]Telegram notification sent.[/green]")
         return
@@ -1919,16 +1914,12 @@ def alerts_health_check(
     for issue in issues:
         color = "red" if issue.severity == "critical" else "yellow"
         console.print(
-            f"[{color}][{issue.severity.upper()}][/{color}] "
-            f"{issue.component}: {issue.message}"
+            f"[{color}][{issue.severity.upper()}][/{color}] {issue.component}: {issue.message}"
         )
 
     critical = sum(1 for i in issues if i.severity == "critical")
     warnings = sum(1 for i in issues if i.severity == "warning")
-    console.print(
-        f"\n[bold]{len(issues)} issues:[/bold]"
-        f" {critical} critical, {warnings} warnings"
-    )
+    console.print(f"\n[bold]{len(issues)} issues:[/bold] {critical} critical, {warnings} warnings")
 
     if notify:
         from app.alerts.notify import send_operator_notification
@@ -1942,15 +1933,14 @@ def alerts_health_check(
         if ok:
             console.print("[green]Telegram notification sent.[/green]")
         else:
-            console.print(
-                "[yellow]Telegram not configured or send failed.[/yellow]"
-            )
+            console.print("[yellow]Telegram not configured or send failed.[/yellow]")
 
 
 @alerts_app.command("ops-status")
 def alerts_ops_status(
     lookback_hours: int = typer.Option(
-        24, help="Lookback window in hours",
+        24,
+        help="Lookback window in hours",
     ),
 ) -> None:
     """Quick operator dashboard — health, cycles, precision at a glance."""
@@ -1969,10 +1959,7 @@ def alerts_ops_status(
         lookback_hours=lookback_hours,
     )
     if issues:
-        health_str = ", ".join(
-            f"{i.component}({i.severity[0].upper()})"
-            for i in issues
-        )
+        health_str = ", ".join(f"{i.component}({i.severity[0].upper()})" for i in issues)
     else:
         health_str = "OK"
 
@@ -1991,10 +1978,7 @@ def alerts_ops_status(
                 if "cron start" in line:
                     last_cron = line[:19].strip()
 
-    console.print(
-        f"[bold]KAI System Status[/bold] "
-        f"({now.strftime('%Y-%m-%d %H:%M')} UTC)"
-    )
+    console.print(f"[bold]KAI System Status[/bold] ({now.strftime('%Y-%m-%d %H:%M')} UTC)")
     console.print(f"  Health:       {health_str}")
     console.print(f"  Last Cron:    {last_cron}")
     console.print(
@@ -2004,22 +1988,16 @@ def alerts_ops_status(
         f"{data.fills} fills"
     )
     if data.precision_pct is not None:
-        console.print(
-            f"  Precision:    {data.precision_pct:.1f}% "
-            f"({data.hits}h / {data.misses}m)"
-        )
+        console.print(f"  Precision:    {data.precision_pct:.1f}% ({data.hits}h / {data.misses}m)")
     else:
-        console.print(
-            f"  Precision:    n/a ({data.hits}h / {data.misses}m)"
-        )
+        console.print(f"  Precision:    n/a ({data.hits}h / {data.misses}m)")
     console.print(
         f"  Alerts {lookback_hours}h:   "
         f"{data.alerts_dispatched} dispatched, "
         f"{data.alerts_directional} directional"
     )
     console.print(
-        f"  Annotations:  {data.total_annotations} total, "
-        f"{data.inconclusive} inconclusive"
+        f"  Annotations:  {data.total_annotations} total, {data.inconclusive} inconclusive"
     )
 
 
@@ -2058,9 +2036,7 @@ def alerts_signal_status(
     console.print(f"exchange_sent_total={payload['exchange_sent_total']}")
     console.print(f"exchange_sent_lookback={payload['exchange_sent_lookback']}")
     console.print(f"exchange_dead_letter_total={payload['exchange_dead_letter_total']}")
-    console.print(
-        f"exchange_dead_letter_lookback={payload['exchange_dead_letter_lookback']}"
-    )
+    console.print(f"exchange_dead_letter_lookback={payload['exchange_dead_letter_lookback']}")
     console.print(f"execution_enabled={payload['execution_enabled']}")
     console.print(f"write_back_allowed={payload['write_back_allowed']}")
 

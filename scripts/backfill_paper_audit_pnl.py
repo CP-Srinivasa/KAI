@@ -215,12 +215,21 @@ def main() -> int:
             "per-trade NETTO trade_pnl_usd."
         )
     )
-    parser.add_argument("--input", type=Path, default=DEFAULT_INPUT,
-                        help=f"v1 audit JSONL (default: {DEFAULT_INPUT})")
-    parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT,
-                        help=f"v2 audit JSONL (default: {DEFAULT_OUTPUT})")
-    parser.add_argument("--dry-run", action="store_true",
-                        help="report stats only; do not write output file")
+    parser.add_argument(
+        "--input",
+        type=Path,
+        default=DEFAULT_INPUT,
+        help=f"v1 audit JSONL (default: {DEFAULT_INPUT})",
+    )
+    parser.add_argument(
+        "--output",
+        type=Path,
+        default=DEFAULT_OUTPUT,
+        help=f"v2 audit JSONL (default: {DEFAULT_OUTPUT})",
+    )
+    parser.add_argument(
+        "--dry-run", action="store_true", help="report stats only; do not write output file"
+    )
     args = parser.parse_args()
     return run(args.input, args.output, dry_run=args.dry_run)
 

@@ -101,8 +101,10 @@ def main() -> int:
         print(f"  duplicate IDs ({len(dups)}): {', '.join('D-' + str(d) for d in dups)}")
 
     if order_anomalies:
-        print(f"  order anomalies ({len(order_anomalies)}): "
-              + ", ".join(f"D-{prev} before D-{cur}" for _, prev, cur in order_anomalies))
+        print(
+            f"  order anomalies ({len(order_anomalies)}): "
+            + ", ".join(f"D-{prev} before D-{cur}" for _, prev, cur in order_anomalies)
+        )
 
     if not issues_found and not args.quiet:
         print("  OK — no gaps, duplicates" + (", or order anomalies" if args.check_order else ""))

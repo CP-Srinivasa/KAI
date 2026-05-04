@@ -81,10 +81,7 @@ class TestDetectMessageType:
     def test_emoji_headers(self) -> None:
         assert detect_message_type("📡 SIGNAL\nSymbol: BTC/USDT") == "signal"
         assert detect_message_type("📰 NEWS\nTitle: Test") == "news"
-        assert (
-            detect_message_type("✅ EXCHANGE RESPONSE\nExchange: Bybit")
-            == "exchange_response"
-        )
+        assert detect_message_type("✅ EXCHANGE RESPONSE\nExchange: Bybit") == "exchange_response"
 
     def test_no_header(self) -> None:
         assert detect_message_type("BUY BTC 65000") is None

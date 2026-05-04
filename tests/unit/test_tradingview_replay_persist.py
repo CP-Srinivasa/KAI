@@ -72,9 +72,7 @@ def test_hydrate_prunes_expired_rows(tmp_path: Path) -> None:
     # Seed the DB directly with one expired row and one fresh row.
     now = time.time()
     with sqlite3.connect(db_path) as conn:
-        conn.execute(
-            "CREATE TABLE payload_seen (key TEXT PRIMARY KEY, inserted_at REAL NOT NULL)"
-        )
+        conn.execute("CREATE TABLE payload_seen (key TEXT PRIMARY KEY, inserted_at REAL NOT NULL)")
         conn.execute(
             "INSERT INTO payload_seen (key, inserted_at) VALUES (?, ?)",
             ("stale", now - 10_000.0),  # 10_000 s ago, well outside 300 s window
@@ -98,9 +96,7 @@ def test_max_size_enforced_on_hydrate(tmp_path: Path) -> None:
     db_path = tmp_path / "replay.db"
     now = time.time()
     with sqlite3.connect(db_path) as conn:
-        conn.execute(
-            "CREATE TABLE payload_seen (key TEXT PRIMARY KEY, inserted_at REAL NOT NULL)"
-        )
+        conn.execute("CREATE TABLE payload_seen (key TEXT PRIMARY KEY, inserted_at REAL NOT NULL)")
         for i in range(10):
             conn.execute(
                 "INSERT INTO payload_seen (key, inserted_at) VALUES (?, ?)",
@@ -116,9 +112,7 @@ def test_max_size_enforced_on_hydrate(tmp_path: Path) -> None:
     assert cache.check_and_record("k9") is False  # kept, replay rejected
 
 
-def test_persistence_failure_is_fail_open(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_persistence_failure_is_fail_open(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """A broken sqlite layer should not crash the request path.
 
     Uses monkey-patch on the module-level ``sqlite3.connect`` used by the
