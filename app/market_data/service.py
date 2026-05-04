@@ -6,9 +6,12 @@ import logging
 from datetime import UTC, datetime
 
 from app.market_data.base import BaseMarketDataAdapter
+from app.market_data.binance_futures_adapter import BinanceFuturesAdapter
+from app.market_data.bitmex_adapter import BitMEXAdapter
 from app.market_data.bybit_adapter import BybitAdapter
 from app.market_data.coingecko_adapter import CoinGeckoAdapter
 from app.market_data.mock_adapter import MockMarketDataAdapter
+from app.market_data.okx_adapter import OKXAdapter
 from app.market_data.models import MarketDataSnapshot, OHLCV, MarketDataPoint, Ticker
 
 logger = logging.getLogger(__name__)
@@ -76,17 +79,42 @@ def create_market_data_adapter(
     """Create a market data adapter by provider name.
 
     Provider values:
-    - 'bybit'     : Bybit V5 linear (futures) — best coverage for premium-
-                     channel signal symbols (SWARMS, GIGGLE, 1000LUNC, …).
-    - 'coingecko' : CoinGecko spot aggregation — broad token list, slower,
-                     misses Bybit-exclusive futures pairs.
-    - 'fallback'  : Try Bybit → CoinGecko → Mock in order. RECOMMENDED for
-                     the operator-signal bridge (V25-D).
-    - 'mock'      : Synthetic test data only.
+    - 'bybit'           : Bybit V5 linear (futures) — broadest premium-channel
+                          symbol coverage; primary source.
+    - 'binance_futures' : Binance USD-M futures (fapi.binance.com) — full
+                          coverage backup with same symbol convention.
+    - 'okx'             : OKX V5 perpetual swap (BTC-USDT-SWAP convention) —
+                          mainstream-token redundancy.
+    - 'bitmex'          : BitMEX instrument ticker (XBT prefix for BTC) —
+                          BTC + major-coin redundancy.
+    - 'coingecko'       : CoinGecko spot aggregation — broad token list,
+                          slower, misses many Bybit-exclusive pairs.
+    - 'fallback'        : Try Bybit → Binance Futures → OKX → BitMEX →
+                          CoinGecko → Mock. RECOMMENDED for the operator
+                          bridge — matches the channel name "Bitmex/Bybit/
+                          Futures/OKX Premium Signals" exactly so any signal
+                          for any of those venues resolves on the first
+                          adapter that knows the symbol.
+    - 'mock'            : Synthetic test data only.
     """
     normalized = provider.strip().lower()
     if normalized == "bybit":
         return BybitAdapter(
+            freshness_threshold_seconds=freshness_threshold_seconds,
+            timeout_seconds=timeout_seconds,
+        )
+    if normalized in ("binance_futures", "binance-futures", "binancefutures"):
+        return BinanceFuturesAdapter(
+            freshness_threshold_seconds=freshness_threshold_seconds,
+            timeout_seconds=timeout_seconds,
+        )
+    if normalized == "okx":
+        return OKXAdapter(
+            freshness_threshold_seconds=freshness_threshold_seconds,
+            timeout_seconds=timeout_seconds,
+        )
+    if normalized == "bitmex":
+        return BitMEXAdapter(
             freshness_threshold_seconds=freshness_threshold_seconds,
             timeout_seconds=timeout_seconds,
         )
@@ -107,6 +135,18 @@ def create_market_data_adapter(
             api_key = get_settings().coingecko_api_key
         chain: list[BaseMarketDataAdapter] = [
             BybitAdapter(
+                freshness_threshold_seconds=freshness_threshold_seconds,
+                timeout_seconds=timeout_seconds,
+            ),
+            BinanceFuturesAdapter(
+                freshness_threshold_seconds=freshness_threshold_seconds,
+                timeout_seconds=timeout_seconds,
+            ),
+            OKXAdapter(
+                freshness_threshold_seconds=freshness_threshold_seconds,
+                timeout_seconds=timeout_seconds,
+            ),
+            BitMEXAdapter(
                 freshness_threshold_seconds=freshness_threshold_seconds,
                 timeout_seconds=timeout_seconds,
             ),
