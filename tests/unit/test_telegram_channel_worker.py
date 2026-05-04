@@ -228,9 +228,7 @@ class TestCheckpoint:
         # checkpoint without a separate migration tool.
         path = tmp_path / "checkpoint.json"
         path.write_text(
-            json.dumps(
-                {"1275462917": {"last_message_id": 23820, "last_seen_at": "old"}}
-            ),
+            json.dumps({"1275462917": {"last_message_id": 23820, "last_seen_at": "old"}}),
             encoding="utf-8",
         )
         save_checkpoint(path, chat_id=-1001275462917, message_id=23830)

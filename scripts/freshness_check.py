@@ -67,13 +67,39 @@ def _read_token() -> str:
     token = os.environ.get("KAI_FRESHNESS_TOKEN", "").strip()
     if token:
         return token
+    return _read_env_key("APP_API_KEY")
+
+
+def _read_env_key(key: str) -> str:
     env_path = REPO_ROOT / ".env"
     if env_path.exists():
         for line in env_path.read_text(encoding="utf-8").splitlines():
             line = line.strip()
-            if line.startswith("APP_API_KEY="):
+            if line.startswith(f"{key}="):
                 return line.split("=", 1)[1].strip().strip('"').strip("'")
     return ""
+
+
+def _read_cf_access_headers() -> dict[str, str]:
+    """Optional Cloudflare Access service-token headers for external probes."""
+    client_id = (
+        os.environ.get("KAI_FRESHNESS_CF_ACCESS_CLIENT_ID", "").strip()
+        or os.environ.get("CF_ACCESS_CLIENT_ID", "").strip()
+        or _read_env_key("KAI_FRESHNESS_CF_ACCESS_CLIENT_ID")
+        or _read_env_key("CF_ACCESS_CLIENT_ID")
+    )
+    client_secret = (
+        os.environ.get("KAI_FRESHNESS_CF_ACCESS_CLIENT_SECRET", "").strip()
+        or os.environ.get("CF_ACCESS_CLIENT_SECRET", "").strip()
+        or _read_env_key("KAI_FRESHNESS_CF_ACCESS_CLIENT_SECRET")
+        or _read_env_key("CF_ACCESS_CLIENT_SECRET")
+    )
+    if not client_id or not client_secret:
+        return {}
+    return {
+        "CF-Access-Client-Id": client_id,
+        "CF-Access-Client-Secret": client_secret,
+    }
 
 
 def _extract_field(payload: object, dotted: str) -> str | None:
@@ -108,6 +134,23 @@ class Result:
         return {"ok": 0, "no_ts": 0, "warn": 2, "crit": 1, "down": 1}[self.state]
 
 
+def _is_cloudflare_access_login(response: httpx.Response) -> bool:
+    content_type = response.headers.get("content-type", "").lower()
+    if "text/html" not in content_type:
+        return False
+    body_head = response.text[:2000].lower()
+    return "cloudflare access" in body_head or "sign in" in body_head and "cloudflare" in body_head
+
+
+def _non_json_note(response: httpx.Response) -> str:
+    if _is_cloudflare_access_login(response):
+        return "cloudflare_access_login"
+    content_type = response.headers.get("content-type", "").split(";", 1)[0].strip()
+    if content_type:
+        return f"non-json body ({content_type})"
+    return "non-json body"
+
+
 def probe_one(client: httpx.Client, p: Probe, now: datetime) -> Result:
     try:
         r = client.get(p.path, timeout=10.0)
@@ -120,12 +163,14 @@ def probe_one(client: httpx.Client, p: Probe, now: datetime) -> Result:
         return Result(p.name, p.path, r.status_code, None, None, "down", f"status {r.status_code}")
 
     if p.timestamp_field is None:
+        if _is_cloudflare_access_login(r):
+            return Result(p.name, p.path, 200, None, None, "down", "cloudflare_access_login")
         return Result(p.name, p.path, 200, None, None, "no_ts")
 
     try:
         body = r.json()
     except ValueError:
-        return Result(p.name, p.path, 200, None, None, "down", "non-json body")
+        return Result(p.name, p.path, 200, None, None, "down", _non_json_note(r))
 
     raw_ts = _extract_field(body, p.timestamp_field)
     if raw_ts is None:
@@ -182,7 +227,7 @@ def main() -> int:
         print("ERROR: no APP_API_KEY available (env KAI_FRESHNESS_TOKEN or .env)", file=sys.stderr)
         return 1
 
-    headers = {"Authorization": f"Bearer {token}"}
+    headers = {"Authorization": f"Bearer {token}", **_read_cf_access_headers()}
     now = datetime.now(UTC)
     results: list[Result] = []
     with httpx.Client(base_url=args.base, headers=headers) as client:

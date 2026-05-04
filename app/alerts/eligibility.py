@@ -28,6 +28,7 @@ BLOCK_REASON_NOT_ACTIONABLE = "not_actionable"
 BLOCK_REASON_LOW_PRIORITY = "low_priority"
 BLOCK_REASON_BEARISH_DISABLED = "bearish_directional_disabled"
 BLOCK_REASON_LOW_PRECISION_SOURCE = "low_precision_source"
+BLOCK_REASON_NAKED_ASSET = "naked_asset_no_trading_pair"
 
 # D-133/D-139: Sources with persistently low directional precision.
 # Based on 229 resolved directional outcomes (2026-04-14 after D-138 backfill):
@@ -46,6 +47,7 @@ _LOW_PRECISION_SOURCES: frozenset[str] = frozenset(
         "decrypt",
         "bitcoin_magazine",
         "unknown",
+        "tradingview_webhook",
     }
 )
 
@@ -324,6 +326,14 @@ def evaluate_directional_eligibility(
         if not candidate:
             continue
         has_non_empty_asset = True
+
+        # D-xxx: Filter Naked-Assets (e.g. BTC without /USDT) to improve precision
+        if "/" not in candidate:
+            if candidate not in seen_blocked:
+                blocked_assets.append(candidate)
+                seen_blocked.add(candidate)
+            continue
+
         resolved = _resolve_symbol(candidate)
         if resolved is None:
             if candidate not in seen_blocked:
@@ -357,9 +367,17 @@ def evaluate_directional_eligibility(
             blocked_assets=blocked_assets,
         )
 
-    reason = (
-        BLOCK_REASON_MISSING_ASSETS if not has_non_empty_asset else BLOCK_REASON_UNSUPPORTED_ASSETS
-    )
+    if not has_non_empty_asset:
+        reason = BLOCK_REASON_MISSING_ASSETS
+    elif all(
+        "/" not in raw_asset.strip().upper()
+        for raw_asset in affected_assets
+        if raw_asset.strip().upper()
+    ):
+        reason = BLOCK_REASON_NAKED_ASSET
+    else:
+        reason = BLOCK_REASON_UNSUPPORTED_ASSETS
+
     return DirectionalEligibilityDecision(
         is_directional=True,
         directional_eligible=False,

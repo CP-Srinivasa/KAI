@@ -9,6 +9,7 @@ from app.alerts.eligibility import (
     BLOCK_REASON_LOW_PRECISION_SOURCE,
     BLOCK_REASON_LOW_PRIORITY,
     BLOCK_REASON_MISSING_ASSETS,
+    BLOCK_REASON_NAKED_ASSET,
     BLOCK_REASON_NOT_ACTIONABLE,
     BLOCK_REASON_UNSUPPORTED_ASSETS,
     BLOCK_REASON_WEAK_SIGNAL,
@@ -22,7 +23,7 @@ from app.alerts.eligibility import (
 def test_directional_eligibility_allows_supported_btc_asset() -> None:
     decision = evaluate_directional_eligibility(
         sentiment_label="bullish",
-        affected_assets=["BTC"],
+        affected_assets=["BTC/USDT"],
     )
     assert decision.is_directional is True
     assert decision.directional_eligible is True
@@ -68,7 +69,7 @@ def test_weak_sentiment_blocks_directional() -> None:
     """D-142: Bearish blocked before score gate; weak bullish uses score gate."""
     decision = evaluate_directional_eligibility(
         sentiment_label="bearish",
-        affected_assets=["BTC"],
+        affected_assets=["BTC/USDT"],
         sentiment_score=-0.30,
     )
     assert decision.is_directional is True
@@ -80,7 +81,7 @@ def test_weak_bullish_sentiment_blocks_directional() -> None:
     """Barely bullish signal below magnitude threshold is blocked."""
     decision = evaluate_directional_eligibility(
         sentiment_label="bullish",
-        affected_assets=["ETH"],
+        affected_assets=["ETH/USDT"],
         sentiment_score=0.40,
     )
     assert decision.is_directional is True
@@ -92,7 +93,7 @@ def test_strong_sentiment_passes_gate() -> None:
     """Strong bullish signal passes the sentiment magnitude gate."""
     decision = evaluate_directional_eligibility(
         sentiment_label="bullish",
-        affected_assets=["BTC"],
+        affected_assets=["BTC/USDT"],
         sentiment_score=0.80,
         impact_score=0.80,
     )
@@ -105,7 +106,7 @@ def test_low_impact_blocks_directional() -> None:
     """High-sentiment but low-impact event is not directional."""
     decision = evaluate_directional_eligibility(
         sentiment_label="bullish",
-        affected_assets=["ETH"],
+        affected_assets=["ETH/USDT"],
         sentiment_score=0.80,
         impact_score=0.30,
     )
@@ -118,7 +119,7 @@ def test_scores_at_exact_threshold_pass() -> None:
     """Scores exactly at the threshold must pass (>=, not >)."""
     decision = evaluate_directional_eligibility(
         sentiment_label="bullish",
-        affected_assets=["BTC"],
+        affected_assets=["BTC/USDT"],
         sentiment_score=MIN_SENTIMENT_MAGNITUDE,
         impact_score=MIN_IMPACT_SCORE_BULLISH,
     )
@@ -130,7 +131,7 @@ def test_bullish_lower_impact_threshold_passes() -> None:
     # Impact at bullish threshold (0.60) passes for bullish...
     decision = evaluate_directional_eligibility(
         sentiment_label="bullish",
-        affected_assets=["BTC"],
+        affected_assets=["BTC/USDT"],
         sentiment_score=0.7,
         impact_score=MIN_IMPACT_SCORE_BULLISH,
     )
@@ -138,7 +139,7 @@ def test_bullish_lower_impact_threshold_passes() -> None:
     # D-142: bearish is now blocked entirely before impact gate is reached
     decision = evaluate_directional_eligibility(
         sentiment_label="bearish",
-        affected_assets=["BTC"],
+        affected_assets=["BTC/USDT"],
         sentiment_score=-0.7,
         impact_score=MIN_IMPACT_SCORE_BULLISH,
     )
@@ -150,7 +151,7 @@ def test_none_scores_skip_gates() -> None:
     """When scores are None (legacy data), gates are skipped — backwards compat."""
     decision = evaluate_directional_eligibility(
         sentiment_label="bullish",
-        affected_assets=["BTC"],
+        affected_assets=["BTC/USDT"],
         sentiment_score=None,
         impact_score=None,
     )
@@ -161,7 +162,7 @@ def test_sentiment_gate_checked_before_asset_resolution() -> None:
     """D-142: Bearish blocked before expensive CoinGecko resolution."""
     decision = evaluate_directional_eligibility(
         sentiment_label="bearish",
-        affected_assets=["BTC", "ETH", "SOL"],
+        affected_assets=["BTC/USDT", "ETH/USDT", "SOL/USDT"],
         sentiment_score=-0.20,
     )
     assert decision.directional_eligible is False
@@ -174,7 +175,7 @@ def test_neutral_sentiment_unaffected_by_scores() -> None:
     """Non-directional sentiment is not affected by score gates."""
     decision = evaluate_directional_eligibility(
         sentiment_label="neutral",
-        affected_assets=["BTC"],
+        affected_assets=["BTC/USDT"],
         sentiment_score=0.10,
         impact_score=0.20,
     )
@@ -198,7 +199,7 @@ def test_bearish_blocked_by_d127_before_reactive_filter(title: str) -> None:
     """D-142: All bearish directional is blocked regardless of title pattern."""
     decision = evaluate_directional_eligibility(
         sentiment_label="bearish",
-        affected_assets=["BTC"],
+        affected_assets=["BTC/USDT"],
         sentiment_score=-0.80,
         impact_score=0.80,
         title=title,
@@ -212,7 +213,7 @@ def test_reactive_bearish_filter_only_applies_to_bearish() -> None:
     """Bullish alerts with bearish reactive words are not blocked."""
     decision = evaluate_directional_eligibility(
         sentiment_label="bullish",
-        affected_assets=["ETH"],
+        affected_assets=["ETH/USDT"],
         sentiment_score=0.80,
         impact_score=0.70,
         title="Ethereum drops to key support then bounces hard",
@@ -239,7 +240,7 @@ def test_reactive_bullish_title_blocked(title: str) -> None:
     """Bullish alert with reactive price-movement title is blocked (D-115)."""
     decision = evaluate_directional_eligibility(
         sentiment_label="bullish",
-        affected_assets=["BTC"],
+        affected_assets=["BTC/USDT"],
         sentiment_score=0.80,
         impact_score=0.70,
         title=title,
@@ -262,7 +263,7 @@ def test_actor_action_bullish_title_allowed(title: str) -> None:
     """Bullish alert with actor-action title passes reactive filter."""
     decision = evaluate_directional_eligibility(
         sentiment_label="bullish",
-        affected_assets=["BTC"],
+        affected_assets=["BTC/USDT"],
         sentiment_score=0.80,
         impact_score=0.70,
         title=title,
@@ -275,7 +276,7 @@ def test_reactive_filter_skipped_when_title_is_none() -> None:
     """No title (legacy data) skips the reactive filter — bullish passes."""
     decision = evaluate_directional_eligibility(
         sentiment_label="bullish",
-        affected_assets=["BTC"],
+        affected_assets=["BTC/USDT"],
         sentiment_score=0.80,
         impact_score=0.70,
         title=None,
@@ -307,7 +308,7 @@ def test_bearish_blocked_before_asset_resolution() -> None:
     """D-142: Bearish blocked before expensive CoinGecko symbol resolution."""
     decision = evaluate_directional_eligibility(
         sentiment_label="bearish",
-        affected_assets=["BTC", "ETH", "SOL", "XRP"],
+        affected_assets=["BTC/USDT", "ETH/USDT", "SOL/USDT", "XRP/USDT"],
         sentiment_score=-0.90,
         impact_score=0.90,
         title="Bitcoin plunges 10% as panic selling hits exchanges",
@@ -325,7 +326,7 @@ def test_not_actionable_blocks_directional() -> None:
     """Non-actionable alerts are blocked from directional tracking (D-122)."""
     decision = evaluate_directional_eligibility(
         sentiment_label="bullish",
-        affected_assets=["BTC"],
+        affected_assets=["BTC/USDT"],
         actionable=False,
     )
     assert decision.is_directional is True
@@ -337,7 +338,7 @@ def test_actionable_true_passes_gate() -> None:
     """Actionable alerts pass the actionable gate."""
     decision = evaluate_directional_eligibility(
         sentiment_label="bullish",
-        affected_assets=["BTC"],
+        affected_assets=["BTC/USDT"],
         actionable=True,
     )
     assert decision.directional_eligible is True
@@ -347,7 +348,7 @@ def test_actionable_none_skips_gate() -> None:
     """Legacy data without actionable field skips the gate."""
     decision = evaluate_directional_eligibility(
         sentiment_label="bullish",
-        affected_assets=["BTC"],
+        affected_assets=["BTC/USDT"],
         actionable=None,
     )
     assert decision.directional_eligible is True
@@ -361,7 +362,7 @@ def test_low_priority_blocks_directional() -> None:
     for pri in (3, 5, 7):
         decision = evaluate_directional_eligibility(
             sentiment_label="bullish",
-            affected_assets=["BTC"],
+            affected_assets=["BTC/USDT"],
             priority=pri,
         )
         assert decision.is_directional is True
@@ -373,7 +374,7 @@ def test_priority_8_passes_gate() -> None:
     """Priority 8 passes the minimum threshold."""
     decision = evaluate_directional_eligibility(
         sentiment_label="bullish",
-        affected_assets=["BTC"],
+        affected_assets=["BTC/USDT"],
         priority=8,
     )
     assert decision.directional_eligible is True
@@ -384,7 +385,7 @@ def test_high_priority_passes_gate() -> None:
     for pri in (9, 10):
         decision = evaluate_directional_eligibility(
             sentiment_label="bullish",
-            affected_assets=["BTC"],
+            affected_assets=["BTC/USDT"],
             priority=pri,
         )
         assert decision.directional_eligible is True
@@ -394,7 +395,7 @@ def test_priority_none_skips_gate() -> None:
     """Legacy data without priority field skips the gate."""
     decision = evaluate_directional_eligibility(
         sentiment_label="bullish",
-        affected_assets=["BTC"],
+        affected_assets=["BTC/USDT"],
         priority=None,
     )
     assert decision.directional_eligible is True
@@ -407,7 +408,7 @@ def test_bearish_directional_disabled() -> None:
     """D-142: Bearish is blocked from directional tracking entirely."""
     decision = evaluate_directional_eligibility(
         sentiment_label="bearish",
-        affected_assets=["BTC"],
+        affected_assets=["BTC/USDT"],
         sentiment_score=-0.90,
         impact_score=0.90,
         directional_confidence=0.99,
@@ -424,7 +425,7 @@ def test_bullish_still_eligible_after_d127() -> None:
     """D-142: Bullish signals are unaffected by bearish block."""
     decision = evaluate_directional_eligibility(
         sentiment_label="bullish",
-        affected_assets=["BTC"],
+        affected_assets=["BTC/USDT"],
         sentiment_score=0.80,
         impact_score=0.70,
         priority=9,
@@ -450,7 +451,7 @@ def test_low_precision_source_blocks_directional(source: str) -> None:
     """
     decision = evaluate_directional_eligibility(
         sentiment_label="bullish",
-        affected_assets=["BTC"],
+        affected_assets=["BTC/USDT"],
         sentiment_score=0.80,
         impact_score=0.70,
         priority=9,
@@ -467,7 +468,7 @@ def test_low_precision_source_case_insensitive() -> None:
     """D-133: Source name matching is case-insensitive."""
     decision = evaluate_directional_eligibility(
         sentiment_label="bullish",
-        affected_assets=["BTC"],
+        affected_assets=["BTC/USDT"],
         source_name="Decrypt",
     )
     assert decision.directional_eligible is False
@@ -478,7 +479,7 @@ def test_good_source_passes_gate() -> None:
     """D-133: Sources not in the blocklist pass the gate."""
     decision = evaluate_directional_eligibility(
         sentiment_label="bullish",
-        affected_assets=["BTC"],
+        affected_assets=["BTC/USDT"],
         sentiment_score=0.80,
         impact_score=0.70,
         priority=9,
@@ -492,7 +493,28 @@ def test_source_none_skips_gate() -> None:
     """D-133: No source_name (legacy data) skips the gate."""
     decision = evaluate_directional_eligibility(
         sentiment_label="bullish",
-        affected_assets=["BTC"],
+        affected_assets=["BTC/USDT"],
         source_name=None,
     )
     assert decision.directional_eligible is True
+
+
+def test_naked_asset_blocks_directional() -> None:
+    """D-xxx: Naked assets without a trading pair format are blocked."""
+    decision = evaluate_directional_eligibility(
+        sentiment_label="bullish",
+        affected_assets=["BTC"],
+    )
+    assert decision.directional_eligible is False
+    assert decision.directional_block_reason == BLOCK_REASON_NAKED_ASSET
+
+
+def test_tradingview_webhook_blocks_directional() -> None:
+    """D-xxx: TradingView webhooks are blocked due to 0% precision."""
+    decision = evaluate_directional_eligibility(
+        sentiment_label="bullish",
+        affected_assets=["BTC/USDT"],
+        source_name="tradingview_webhook",
+    )
+    assert decision.directional_eligible is False
+    assert decision.directional_block_reason == BLOCK_REASON_LOW_PRECISION_SOURCE
