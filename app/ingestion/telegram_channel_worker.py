@@ -373,7 +373,7 @@ async def replay_missed_messages(
     *,
     chat_id: int,
     last_seen_id: int,
-    process_fn: Callable[[int, str], None],
+    process_fn: Callable[[int, str], Any],
     max_replay: int = 200,
 ) -> dict[str, int]:
     """Fetch messages with id > last_seen_id and re-run process_fn on each.
@@ -389,6 +389,10 @@ async def replay_missed_messages(
       and the operator sees the same order Telegram delivered them in.
     - Per-message handler errors are logged and skipped so one bad message
       cannot abort the entire replay.
+    - ``process_fn`` may be sync or async. If it returns a coroutine, the
+      coroutine is awaited before continuing — required so the V25 replay
+      handler can call the async ``send_approval_request`` for every
+      replayed signal (symmetry with the live handler).
     """
     if last_seen_id <= 0:
         return {"scanned": 0, "processed": 0, "skipped_no_checkpoint": 1}
@@ -407,7 +411,9 @@ async def replay_missed_messages(
     processed = 0
     for msg_id, text in collected:
         try:
-            process_fn(msg_id, text)
+            maybe_coro = process_fn(msg_id, text)
+            if asyncio.iscoroutine(maybe_coro):
+                await maybe_coro
         except Exception as exc:  # noqa: BLE001 — one bad msg must not stall replay
             logger.warning(
                 "[channel-worker] gap-replay handler error chat=%s msg=%s: %s",
@@ -542,6 +548,50 @@ async def run_worker(cfg: TelegramChannelIngestSettings | None = None) -> None:
         # closes the longer-outage gap (e.g. laptop sleep, restart, session
         # rebuild). Skipped silently when no checkpoint exists yet so we
         # don't accidentally replay channel history on first run.
+        # V25 (2026-05-04): single approval-send helper used by BOTH the live
+        # NewMessage handler and the gap-replay loop. Pre-V25 only the live
+        # handler sent approval pushes — replayed signals slipped through to
+        # the envelope log silently, the operator never got a Fill/Ignore
+        # button, and the bridge could not pick them up because no _approved
+        # re-emit ever happened. Any restart / reconnect / cutover therefore
+        # produced "ghost signals" that the dashboard surfaced but never
+        # filled. Symmetric send eliminates that whole failure mode. See
+        # listener_reactivity_followup_20260504.md.
+        async def _send_approval_for_envelope(
+            env_id: str, *, replay: bool = False
+        ) -> None:
+            if not approval_enabled:
+                return
+            if not bot_token or not approval_chat_id:
+                logger.warning(
+                    "[channel-worker] approval enabled but "
+                    "OPERATOR_TELEGRAM_BOT_TOKEN or OPERATOR_ADMIN_CHAT_IDS "
+                    "missing — skipping approval request for env=%s",
+                    env_id,
+                )
+                return
+            record = load_envelope_by_id(envelope_log_path, str(env_id))
+            if record is None:
+                logger.warning(
+                    "[channel-worker] emitted envelope not readable from log "
+                    "env=%s path=%s — skipping approval request",
+                    env_id,
+                    envelope_log_path,
+                )
+                return
+            result = await send_approval_request(
+                record,
+                bot_token=bot_token,
+                chat_id=approval_chat_id,
+                ttl_minutes=approval_ttl_min,
+            )
+            logger.info(
+                "[channel-worker] approval request env=%s replay=%s sent=%s",
+                env_id,
+                replay,
+                result is not None,
+            )
+
         entity_chat_id_raw = getattr(entity, "id", None)
         if isinstance(entity_chat_id_raw, int):
             # F6 (2026-05-04): Normalise to marked form so this matches the
@@ -555,14 +605,20 @@ async def run_worker(cfg: TelegramChannelIngestSettings | None = None) -> None:
             initial_checkpoint = load_checkpoint(checkpoint_path)
             last_seen = get_last_seen_id(initial_checkpoint, chat_id_marked)
 
-            def _replay_handler(msg_id: int, text: str) -> None:
-                process_message(
+            async def _replay_handler(msg_id: int, text: str) -> None:
+                summary = process_message(
                     text,
                     source_tag=cfg.source_tag,
                     chat_id=chat_id_marked,
                     raw_log_path=raw_log,
                 )
                 save_checkpoint(checkpoint_path, chat_id_marked, msg_id)
+                # V25: replayed signals get the same approval-send treatment
+                # as live signals so a restart/cutover never silently drops a
+                # signal between accepted-stage and the operator's Fill click.
+                env_id = summary.get("envelope_id")
+                if summary.get("emitted") and isinstance(env_id, str):
+                    await _send_approval_for_envelope(env_id, replay=True)
 
             replay_result = await replay_missed_messages(
                 client,
@@ -605,48 +661,63 @@ async def run_worker(cfg: TelegramChannelIngestSettings | None = None) -> None:
 
             # Approval-Mode: if a signal was just emitted, ping the operator.
             # Fail-soft: missing bot token / chat id logs a warning but does
-            # not break the listener. Approval skip => shadow envelope stays
-            # in log but bridge drops it (no _approved source re-emit yet).
-            if not (approval_enabled and summary["emitted"]):
-                return
-            env_id = summary.get("envelope_id")
-            if not env_id:
-                return
-            if not bot_token or not approval_chat_id:
-                logger.warning(
-                    "[channel-worker] approval enabled but "
-                    "OPERATOR_TELEGRAM_BOT_TOKEN or OPERATOR_ADMIN_CHAT_IDS missing — "
-                    "skipping approval request for env=%s",
-                    env_id,
-                )
-                return
-            record = load_envelope_by_id(envelope_log_path, str(env_id))
-            if record is None:
-                logger.warning(
-                    "[channel-worker] emitted envelope not readable from log "
-                    "env=%s path=%s — skipping approval request",
-                    env_id,
-                    envelope_log_path,
-                )
-                return
-            result = await send_approval_request(
-                record,
-                bot_token=bot_token,
-                chat_id=approval_chat_id,
-                ttl_minutes=approval_ttl_min,
-            )
-            logger.info(
-                "[channel-worker] approval request env=%s sent=%s",
-                env_id,
-                result is not None,
-            )
+            # not break the listener. Uses the same _send_approval_for_envelope
+            # helper as the replay handler (V25 symmetry).
+            if summary["emitted"]:
+                env_id_live = summary.get("envelope_id")
+                if isinstance(env_id_live, str):
+                    await _send_approval_for_envelope(env_id_live, replay=False)
 
         logger.info("[channel-worker] entering run-loop")
         # Periodic heartbeat — independent of channel chatter. Without
         # this a silent channel would let the watchdog flip to "stale"
         # 30 minutes into a perfectly healthy run.
         heartbeat_task = asyncio.create_task(_heartbeat_loop(heartbeat_path))
-        await client.run_until_disconnected()
+
+        # F2 (2026-05-04): structured exception handling around the long-
+        # running run-loop. Pre-F2 a Telethon InvalidBufferError (HTTP 429
+        # FloodWait, IOError on a TCP hiccup, ServerError on an MTProto
+        # transport glitch) propagated unhandled and the process crashed
+        # silently — visible only in stderr. systemd Restart=always brings
+        # us back inside ~30s, and V25's replay-push then ensures any
+        # signals that landed during the gap still reach the operator.
+        # We catch the known transient classes here purely to LOG with the
+        # right context (so the watchdog's stderr trail is searchable) and
+        # then let systemd own the restart instead of pretending we can
+        # repair Telethon's internal state in-process.
+        try:
+            await client.run_until_disconnected()
+        except (asyncio.CancelledError, KeyboardInterrupt):
+            # Operator-driven shutdown — respect it, no log noise.
+            raise
+        except Exception as exc:  # noqa: BLE001
+            exc_name = type(exc).__name__
+            transient_markers = (
+                "InvalidBufferError",
+                "ServerError",
+                "RpcCallFailError",
+                "TimeoutError",
+                "IOError",
+                "IncompleteReadError",
+                "FloodWaitError",
+                "ConnectionError",
+            )
+            is_transient = any(marker in exc_name for marker in transient_markers)
+            if is_transient:
+                logger.warning(
+                    "[channel-worker] run-loop transient error %s: %s — "
+                    "exiting for systemd Restart=always; V25 replay-push "
+                    "will recover any missed signals on the next boot",
+                    exc_name,
+                    exc,
+                )
+            else:
+                logger.exception(
+                    "[channel-worker] run-loop unexpected error %s — "
+                    "exiting for systemd Restart=always",
+                    exc_name,
+                )
+            raise
     finally:
         if heartbeat_task is not None:
             heartbeat_task.cancel()

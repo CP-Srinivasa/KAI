@@ -336,6 +336,33 @@ class TestReplayMissedMessages:
         assert result["scanned"] == 1
         assert result["processed"] == 1
 
+    def test_replay_supports_async_process_fn(self) -> None:
+        # V25 (2026-05-04): Replay handler is async because it must call the
+        # async send_approval_request to keep parity with the live handler.
+        client = _FakeClient(
+            [
+                _FakeMessage(id=10, raw_text="a", message="a"),
+                _FakeMessage(id=11, raw_text="b", message="b"),
+            ]
+        )
+        seen: list[int] = []
+
+        async def async_handler(msg_id: int, _text: str) -> None:
+            await asyncio.sleep(0)
+            seen.append(msg_id)
+
+        result = asyncio.run(
+            replay_missed_messages(
+                client,
+                entity=object(),
+                chat_id=-100,
+                last_seen_id=9,
+                process_fn=async_handler,
+            )
+        )
+        assert seen == [10, 11]
+        assert result == {"scanned": 2, "processed": 2, "skipped_no_checkpoint": 0}
+
     def test_replay_handler_error_does_not_abort(self) -> None:
         client = _FakeClient(
             [

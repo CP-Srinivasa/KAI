@@ -66,6 +66,7 @@ def _record_request_and_maybe_warn() -> int:
 
 
 _BASE_ASSET_TO_COINGECKO: dict[str, str] = {
+    # Majors
     "BTC": "bitcoin",
     "ETH": "ethereum",
     "BNB": "binancecoin",
@@ -74,12 +75,50 @@ _BASE_ASSET_TO_COINGECKO: dict[str, str] = {
     "XRP": "ripple",
     "DOT": "polkadot",
     "AVAX": "avalanche-2",
+    "LINK": "chainlink",
     # Polygon rebrand (Sept 2024): MATIC migrated to POL. The legacy
     # matic-network id still resolves on CoinGecko but returns price=None.
     # Both symbols map to the active polygon-ecosystem-token.
     "POL": "polygon-ecosystem-token",
     "MATIC": "polygon-ecosystem-token",
-    "LINK": "chainlink",
+    # V25 (2026-05-04): Symbol-Mapping erweitert um häufige Premium-Channel-
+    # Coins. Strukturell besser wäre dynamisches Lookup via CoinGecko
+    # /coins/list (10k+ tokens, daily-cached). TODO: V26 — dynamic mapping
+    # mit on-demand-refresh + Persistent-Cache, um Hardcoding zu beenden.
+    # Bis dahin Whitelist der Top-Premium-Channel-Symbole.
+    "HYPE": "hyperliquid",
+    "PEPE": "pepe",
+    "DOGE": "dogecoin",
+    "SHIB": "shiba-inu",
+    "WIF": "dogwifcoin",
+    "BONK": "bonk",
+    "TRX": "tron",
+    "TON": "the-open-network",
+    "NEAR": "near",
+    "APT": "aptos",
+    "SUI": "sui",
+    "ARB": "arbitrum",
+    "OP": "optimism",
+    "INJ": "injective-protocol",
+    "TIA": "celestia",
+    "SEI": "sei-network",
+    "JUP": "jupiter-exchange-solana",
+    "LTC": "litecoin",
+    "ATOM": "cosmos",
+    "FIL": "filecoin",
+    "RNDR": "render-token",
+    "RENDER": "render-token",
+    "FET": "fetch-ai",
+    "ICP": "internet-computer",
+    "AAVE": "aave",
+    "UNI": "uniswap",
+    "CRV": "curve-dao-token",
+    "MKR": "maker",
+    "GUN": "gun",
+    "AKE": "ake",
+    "ENSO": "enso-finance",
+    "1000LUNC": "terra-luna",
+    "LUNC": "terra-luna",
 }
 
 

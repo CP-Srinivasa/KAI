@@ -528,6 +528,47 @@ async def test_rejects_when_position_already_open(
     assert records[-1]["existing_quantity"] == 0.05
 
 
+def test_detect_scale_factor_recognises_bybit_tick_formats() -> None:
+    from app.execution.envelope_to_paper_bridge import _detect_scale_factor
+
+    assert _detect_scale_factor(32450.0, 0.033627) == 1e6  # SWARMS-style
+    assert _detect_scale_factor(10310.0, 0.10524) == 1e5  # 1000LUNC-style
+    assert _detect_scale_factor(39.5, 39.05) == 1.0  # GIGGLE direct USD
+    assert _detect_scale_factor(40.9, 42.063) == 1.0  # HYPE direct USD
+    # Pathological: ratio outside any recognised scale → fall through
+    assert _detect_scale_factor(100.0, 1.0) == 1.0
+
+
+def test_apply_scale_rescales_entry_sl_targets_in_place() -> None:
+    from app.execution.envelope_to_paper_bridge import _apply_scale
+
+    payload: dict[str, object] = {
+        "entry_value": 32450.0,
+        "stop_loss": 31150.0,
+        "targets": [32610.0, 32775.0, 32935.0, 33099.0],
+        "symbol": "SWARMSUSDT",
+    }
+    _apply_scale(payload, 1e6)
+    assert payload["entry_value"] == 32450.0 / 1e6
+    assert payload["stop_loss"] == 31150.0 / 1e6
+    assert payload["targets"] == [t / 1e6 for t in [32610.0, 32775.0, 32935.0, 33099.0]]
+    assert payload["symbol"] == "SWARMSUSDT"  # untouched
+
+
+def test_apply_scale_noop_when_factor_one() -> None:
+    from app.execution.envelope_to_paper_bridge import _apply_scale
+
+    payload: dict[str, object] = {
+        "entry_value": 39.5,
+        "stop_loss": 37.9,
+        "targets": [39.7, 39.9, 40.1, 40.3],
+    }
+    snapshot = dict(payload)
+    snapshot["targets"] = list(payload["targets"])  # type: ignore[arg-type]
+    _apply_scale(payload, 1.0)
+    assert payload == snapshot
+
+
 @pytest.mark.asyncio
 async def test_result_to_dict_shape() -> None:
     """CLI/cron integration relies on stable key names in to_dict()."""

@@ -269,7 +269,9 @@ class PaperExecutionEngine:
 
             pos = self._portfolio.positions.get(order.symbol)
             if pos:
-                # Average into existing position
+                # Average into existing position. V25-C: tier ladder + initial
+                # quantity carry forward — averaging in does NOT reset the
+                # staged-exit plan that the bridge already attached.
                 total_qty = pos.quantity + order.quantity
                 avg_price = (
                     pos.avg_entry_price * pos.quantity + fill_price * order.quantity
@@ -283,6 +285,8 @@ class PaperExecutionEngine:
                     opened_at=pos.opened_at,
                     realized_pnl_usd=pos.realized_pnl_usd,
                     position_side=pos.position_side,
+                    take_profit_tiers=list(pos.take_profit_tiers),
+                    initial_quantity=pos.initial_quantity,
                 )
             else:
                 self._portfolio.positions[order.symbol] = PaperPosition(
@@ -308,6 +312,8 @@ class PaperExecutionEngine:
             if remaining_qty <= 1e-8:
                 del self._portfolio.positions[order.symbol]
             else:
+                # V25-C: partial sell preserves the tier ladder + initial
+                # quantity so the next monitor tick can fire the next tier.
                 self._portfolio.positions[order.symbol] = PaperPosition(
                     symbol=order.symbol,
                     quantity=remaining_qty,
@@ -317,6 +323,8 @@ class PaperExecutionEngine:
                     opened_at=pos.opened_at,
                     realized_pnl_usd=pos.realized_pnl_usd + pnl,
                     position_side=pos.position_side,
+                    take_profit_tiers=list(pos.take_profit_tiers),
+                    initial_quantity=pos.initial_quantity,
                 )
 
         self._portfolio.total_fees_usd += fee
@@ -386,6 +394,152 @@ class PaperExecutionEngine:
             )
             return "take"
         return None
+
+    # V25-C (2026-05-04): Multi-tier take-profit (staged exits).
+    #
+    # The bridge calls set_position_tp_tiers(symbol, tiers) right after fill
+    # with [(price, qty_share)] pairs derived from the channel's targets.
+    # On each subsequent monitor tick we look at the FIRST remaining tier;
+    # if current_price has reached it, we close that fraction of the
+    # original position (consume_first_tier), audit it as
+    # position_partial_closed, and shrink the tiers list. SL still applies
+    # to the residual position. When tiers is empty and SL never fired the
+    # operator can manually close or wait for SL.
+
+    def set_position_tp_tiers(
+        self,
+        symbol: str,
+        tiers: list[tuple[float, float]],
+    ) -> bool:
+        """Attach a multi-tier take-profit ladder to an open position.
+
+        ``tiers`` is a list of ``(price, qty_share)`` pairs, where qty_share
+        is the fraction of the position's current quantity to close when that
+        price is hit. Tiers are sorted ascending by price so the lowest target
+        fires first. Returns True if applied, False if the symbol has no open
+        position. Setting an empty list reverts to legacy single-TP behaviour.
+        Audit event: ``position_tp_tiers_set``.
+        """
+        pos = self._portfolio.positions.get(symbol)
+        if pos is None:
+            return False
+        sorted_tiers = sorted(
+            (
+                (float(price), float(qty_share))
+                for price, qty_share in tiers
+                if qty_share > 0 and price > 0
+            ),
+            key=lambda item: item[0],
+        )
+        pos.take_profit_tiers = sorted_tiers
+        if pos.initial_quantity <= 0:
+            pos.initial_quantity = pos.quantity
+        self._append_audit(
+            "position_tp_tiers_set",
+            {
+                "symbol": symbol,
+                "tiers": [
+                    {"price": p, "qty_share": q} for p, q in sorted_tiers
+                ],
+                "initial_quantity": pos.initial_quantity,
+            },
+        )
+        logger.info(
+            "[PAPER] Tiers set: %s tiers=%s initial_qty=%.6f",
+            symbol,
+            sorted_tiers,
+            pos.initial_quantity,
+        )
+        return True
+
+    def _consume_first_tier(
+        self,
+        symbol: str,
+        current_price: float,
+    ) -> PaperFill | None:
+        """Close the tier-share of the position at current_price, advance tiers.
+
+        Internal helper used by monitor_positions when the first tier's price
+        has been hit. Audit event ``position_partial_closed`` is emitted in
+        addition to the standard order_created/order_filled pair.
+        """
+        pos = self._portfolio.positions.get(symbol)
+        if pos is None or not pos.take_profit_tiers:
+            return None
+        if current_price <= 0:
+            return None
+
+        tier_price, qty_share = pos.take_profit_tiers[0]
+        # Quantity to close = share * initial_quantity. Last tier closes the
+        # exact remainder so floating-point drift cannot leave dust behind.
+        is_last = len(pos.take_profit_tiers) == 1
+        if is_last:
+            close_qty = pos.quantity
+        else:
+            close_qty = min(pos.initial_quantity * qty_share, pos.quantity)
+        if close_qty <= 0:
+            # Empty tier — drop and try again next tick.
+            pos.take_profit_tiers = pos.take_profit_tiers[1:]
+            return None
+
+        idem_key = f"tp_tier_{symbol}_{pos.opened_at}_{tier_price}"
+        if idem_key in self._filled_keys:
+            # Already executed (e.g. duplicate monitor tick) — drop tier safely.
+            pos.take_profit_tiers = pos.take_profit_tiers[1:]
+            return None
+
+        entry_price = pos.avg_entry_price
+        order = self.create_order(
+            symbol=symbol,
+            side="sell",
+            quantity=close_qty,
+            idempotency_key=idem_key,
+            risk_check_id=f"tp_tier:{tier_price}",
+        )
+        fill = self.fill_order(order, current_price)
+        if fill is None:
+            return None
+
+        # Re-read position because fill_order may have removed it on full close.
+        residual = self._portfolio.positions.get(symbol)
+        residual_tiers = pos.take_profit_tiers[1:]
+        if residual is not None:
+            residual.take_profit_tiers = residual_tiers
+        # else: residual is None → position exited fully, tiers drop with it.
+
+        self._append_audit(
+            "position_partial_closed",
+            {
+                "symbol": symbol,
+                "reason": "tp_tier",
+                "tier_price": tier_price,
+                "tier_qty_share": qty_share,
+                "quantity_closed": close_qty,
+                "entry_price": entry_price,
+                "exit_price": fill.fill_price,
+                "fill_id": fill.fill_id,
+                "order_id": fill.order_id,
+                "remaining_quantity": residual.quantity if residual else 0.0,
+                "remaining_tiers": [
+                    {"price": p, "qty_share": q} for p, q in residual_tiers
+                ],
+                "trade_pnl_usd": fill.pnl_usd,
+                "fee_usd": fill.fee_usd,
+                "realized_pnl_usd": self._portfolio.realized_pnl_usd,
+            },
+        )
+        logger.info(
+            "[PAPER] Tier-close: %s qty=%.6f at tier_price=%.4f exit=%.4f "
+            "remaining=%.6f tiers_left=%d pnl=%.2f",
+            symbol,
+            close_qty,
+            tier_price,
+            fill.fill_price,
+            residual.quantity if residual else 0.0,
+            len(residual_tiers),
+            self._portfolio.realized_pnl_usd,
+        )
+        return fill
 
     def adjust_position(
         self,
@@ -514,11 +668,46 @@ class PaperExecutionEngine:
         trigger fires). Positions whose symbol is missing from the price map
         are skipped — this is intentional, so a partial price feed cannot
         force a close at a zero or stale price.
+
+        V25-C (2026-05-04) staged exits: when a position carries
+        ``take_profit_tiers`` we evaluate the first tier first. If
+        current_price has reached it the tier is consumed (partial close)
+        and we keep looping the same symbol until either no more tiers fire
+        in this tick or the position is closed. SL still wins over any tier
+        — a stop hit closes the full residual position regardless of tiers.
         """
         fills: list[PaperFill] = []
         for symbol in list(self._portfolio.positions.keys()):
             price = prices_by_symbol.get(symbol)
             if price is None or price <= 0:
+                continue
+            # Stop-loss has priority over tiers — it kills the whole residual.
+            pos = self._portfolio.positions.get(symbol)
+            if pos and pos.stop_loss and price <= pos.stop_loss:
+                fill = self.close_position(symbol, price, reason="stop")
+                if fill:
+                    fills.append(fill)
+                continue
+            # Multi-tier path: consume as many tiers as the price triggers
+            # in this single tick (e.g. one wide candle can clear TP1+TP2).
+            consumed_any = False
+            while True:
+                pos = self._portfolio.positions.get(symbol)
+                if pos is None or not pos.take_profit_tiers:
+                    break
+                tier_price = pos.take_profit_tiers[0][0]
+                if price < tier_price:
+                    break
+                fill = self._consume_first_tier(symbol, price)
+                if fill is None:
+                    break
+                fills.append(fill)
+                consumed_any = True
+            if consumed_any:
+                continue
+            # Legacy single-TP path: only when no tier ladder is set.
+            pos = self._portfolio.positions.get(symbol)
+            if pos is None or pos.take_profit_tiers:
                 continue
             trigger = self.check_stop_take(symbol, price)
             if trigger is None:

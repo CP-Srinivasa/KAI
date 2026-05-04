@@ -244,6 +244,141 @@ def test_monitor_positions_rejects_non_positive_prices(tmp_path):
     assert "BTC/USDT" in eng.portfolio.positions
 
 
+# --- V25-C: Multi-tier take-profit (staged exits) ---
+
+
+def test_set_tp_tiers_attaches_ladder_to_open_position(tmp_path):
+    eng = _engine(tmp_path)
+    _open_long(eng, "HYPE/USDT", 100.0, 40.9, sl=39.26)
+    ok = eng.set_position_tp_tiers(
+        "HYPE/USDT",
+        [(41.105, 0.25), (41.31, 0.25), (41.515, 0.25), (41.72, 0.25)],
+    )
+    assert ok is True
+    pos = eng.portfolio.positions["HYPE/USDT"]
+    assert len(pos.take_profit_tiers) == 4
+    assert pos.take_profit_tiers[0][0] == 41.105
+    assert pos.initial_quantity == 100.0
+
+
+def test_set_tp_tiers_returns_false_for_missing_position(tmp_path):
+    eng = _engine(tmp_path)
+    assert eng.set_position_tp_tiers("BTC/USDT", [(70000.0, 1.0)]) is False
+
+
+def test_monitor_positions_consumes_first_tier_only(tmp_path):
+    eng = _engine(tmp_path)
+    _open_long(eng, "HYPE/USDT", 100.0, 40.9, sl=39.26)
+    eng.set_position_tp_tiers(
+        "HYPE/USDT",
+        [(41.105, 0.25), (41.31, 0.25), (41.515, 0.25), (41.72, 0.25)],
+    )
+    # Price hits TP1 only.
+    fills = eng.monitor_positions({"HYPE/USDT": 41.15})
+    assert len(fills) == 1
+    pos = eng.portfolio.positions.get("HYPE/USDT")
+    assert pos is not None
+    # 25% closed → ~75% of original quantity remains.
+    assert abs(pos.quantity - 75.0) < 1e-6
+    # First tier consumed, three remaining.
+    assert len(pos.take_profit_tiers) == 3
+    assert pos.take_profit_tiers[0][0] == 41.31
+
+
+def test_monitor_positions_consumes_multiple_tiers_in_one_tick(tmp_path):
+    # A single wide candle clears TP1 + TP2 — both tiers must close.
+    eng = _engine(tmp_path)
+    _open_long(eng, "HYPE/USDT", 100.0, 40.9, sl=39.26)
+    eng.set_position_tp_tiers(
+        "HYPE/USDT",
+        [(41.105, 0.25), (41.31, 0.25), (41.515, 0.25), (41.72, 0.25)],
+    )
+    fills = eng.monitor_positions({"HYPE/USDT": 41.4})  # > TP2
+    assert len(fills) == 2
+    pos = eng.portfolio.positions["HYPE/USDT"]
+    assert abs(pos.quantity - 50.0) < 1e-6
+    assert len(pos.take_profit_tiers) == 2
+
+
+def test_monitor_positions_full_sweep_through_all_tiers(tmp_path):
+    eng = _engine(tmp_path)
+    _open_long(eng, "HYPE/USDT", 100.0, 40.9, sl=39.26)
+    eng.set_position_tp_tiers(
+        "HYPE/USDT",
+        [(41.105, 0.25), (41.31, 0.25), (41.515, 0.25), (41.72, 0.25)],
+    )
+    fills = eng.monitor_positions({"HYPE/USDT": 42.0})  # > TP4
+    assert len(fills) == 4
+    # Position fully exited after the last tier.
+    assert "HYPE/USDT" not in eng.portfolio.positions
+
+
+def test_stop_loss_overrides_tier_ladder(tmp_path):
+    # SL is the safety net — even with a tier ladder, an SL hit closes the
+    # entire residual at once and discards the remaining tiers.
+    eng = _engine(tmp_path)
+    _open_long(eng, "HYPE/USDT", 100.0, 40.9, sl=39.26)
+    eng.set_position_tp_tiers(
+        "HYPE/USDT",
+        [(41.105, 0.25), (41.31, 0.25), (41.515, 0.25), (41.72, 0.25)],
+    )
+    fills = eng.monitor_positions({"HYPE/USDT": 39.0})
+    assert len(fills) == 1
+    assert "HYPE/USDT" not in eng.portfolio.positions
+
+
+def test_sl_after_partial_tier_close_kills_remainder(tmp_path):
+    # Sequence: TP1 hit (25% closed) → price reverses → SL fires → 75% closed.
+    eng = _engine(tmp_path)
+    _open_long(eng, "HYPE/USDT", 100.0, 40.9, sl=39.26)
+    eng.set_position_tp_tiers(
+        "HYPE/USDT",
+        [(41.105, 0.25), (41.31, 0.25), (41.515, 0.25), (41.72, 0.25)],
+    )
+    eng.monitor_positions({"HYPE/USDT": 41.15})
+    pos = eng.portfolio.positions["HYPE/USDT"]
+    assert abs(pos.quantity - 75.0) < 1e-6
+    fills = eng.monitor_positions({"HYPE/USDT": 39.0})
+    assert len(fills) == 1
+    assert "HYPE/USDT" not in eng.portfolio.positions
+
+
+def test_last_tier_closes_full_remaining_quantity(tmp_path):
+    # Floating-point safety: the final tier must zero the position out
+    # exactly, no dust quantity left behind.
+    eng = _engine(tmp_path)
+    _open_long(eng, "ETH/USDT", 1.0, 3000.0, sl=2900.0)
+    eng.set_position_tp_tiers(
+        "ETH/USDT",
+        [(3050.0, 0.333333), (3100.0, 0.333333), (3150.0, 0.333333)],
+    )
+    fills = eng.monitor_positions({"ETH/USDT": 3200.0})
+    assert len(fills) == 3
+    assert "ETH/USDT" not in eng.portfolio.positions
+
+
+def test_audit_replay_restores_tiers_after_restart(tmp_path):
+    # Open position + set tiers → consume TP1 → simulate restart by
+    # rehydrating a fresh engine from the same audit log → tiers must be
+    # consistent with what was on disk before the "restart".
+    eng1 = _engine(tmp_path)
+    _open_long(eng1, "HYPE/USDT", 100.0, 40.9, sl=39.26)
+    eng1.set_position_tp_tiers(
+        "HYPE/USDT",
+        [(41.105, 0.25), (41.31, 0.25), (41.515, 0.25), (41.72, 0.25)],
+    )
+    eng1.monitor_positions({"HYPE/USDT": 41.15})
+    pos1 = eng1.portfolio.positions["HYPE/USDT"]
+    assert len(pos1.take_profit_tiers) == 3
+
+    eng2 = _engine(tmp_path)
+    eng2.rehydrate_from_audit()
+    pos2 = eng2.portfolio.positions["HYPE/USDT"]
+    assert len(pos2.take_profit_tiers) == 3
+    assert pos2.take_profit_tiers[0][0] == 41.31
+    assert abs(pos2.quantity - 75.0) < 1e-3
+
+
 # --- Defense-in-depth: reject fills with inverted SL/TP geometry ---
 
 

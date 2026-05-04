@@ -127,3 +127,166 @@ def telegram_channel_test_parse(
         raise typer.Exit(code=1)
     record = build_envelope_record(parsed)
     console.print_json(data=record)
+
+
+@telegram_channel_app.command("probe")
+def telegram_channel_probe(
+    symbol: str = typer.Option("BTC/USDT", help="Symbol to probe (must have CoinGecko mapping)"),
+    targets_count: int = typer.Option(4, help="Number of TP tiers to simulate"),
+) -> None:
+    """End-to-end probe of the V25/V25-C pipeline — runs in isolation.
+
+    Verifies the full staged-exit cascade against the real PaperExecutionEngine
+    + audit_replay layer in a sandboxed audit path so production state is NOT
+    touched. Skips the live Telethon listener and the Telegram-bot transport
+    (those are out-of-scope for a deterministic CI-style smoke). Live coverage
+    of those last two hops still depends on a real channel post + operator
+    click.
+
+    Steps:
+      1. Open a paper-long position with 4 staged-exit tiers
+      2. Drive monitor_positions through escalating prices (T1 → T4)
+      3. Assert: 4 partial-closes + final close, realized PnL > 0, audit
+         contains all expected event types, rehydrate from audit reproduces
+         a clean (empty) portfolio at the end.
+
+    Exit code 0 on full GREEN, 1 on any RED gate.
+    """
+    configure_logging()
+    import json
+    import tempfile
+    from pathlib import Path
+
+    from app.execution.paper_engine import PaperExecutionEngine
+
+    console.print(f"[bold cyan]V25 Pipeline Probe[/bold cyan] symbol={symbol} tiers={targets_count}")
+
+    failures: list[str] = []
+
+    with tempfile.TemporaryDirectory() as tmp:
+        audit_path = Path(tmp) / "probe_audit.jsonl"
+        engine = PaperExecutionEngine(
+            initial_equity=10_000.0,
+            fee_pct=0.1,
+            slippage_pct=0.05,
+            live_enabled=False,
+            audit_log_path=str(audit_path),
+        )
+
+        # Synthetic prices: entry=100, SL=95, tier prices 101..104.
+        entry, sl = 100.0, 95.0
+        tier_prices = [100.5 + 0.5 * i for i in range(1, targets_count + 1)]
+        order = engine.create_order(
+            symbol=symbol,
+            side="buy",
+            quantity=10.0,
+            stop_loss=sl,
+            take_profit=tier_prices[0],
+            idempotency_key="probe_open",
+        )
+        fill = engine.fill_order(order, current_price=entry)
+        if fill is None:
+            failures.append("step1_open_fill_returned_none")
+            console.print("[red]RED step 1[/red] — open fill returned None")
+        elif symbol not in engine.portfolio.positions:
+            failures.append("step1_position_missing")
+            console.print("[red]RED step 1[/red] — position not found after fill")
+        else:
+            console.print(f"[green]GREEN step 1[/green] — position opened qty=10.0 @ {fill.fill_price:.2f}")
+
+        share = round(1.0 / targets_count, 6)
+        tiers = [(p, share) for p in tier_prices]
+        ok = engine.set_position_tp_tiers(symbol, tiers)
+        if not ok:
+            failures.append("step2_set_tp_tiers_returned_false")
+            console.print("[red]RED step 2[/red] — set_position_tp_tiers returned False")
+        else:
+            pos = engine.portfolio.positions[symbol]
+            if len(pos.take_profit_tiers) != targets_count:
+                failures.append(f"step2_tier_count_mismatch_{len(pos.take_profit_tiers)}")
+                console.print(f"[red]RED step 2[/red] — tier count mismatch ({len(pos.take_profit_tiers)})")
+            else:
+                console.print(f"[green]GREEN step 2[/green] — {targets_count} tiers attached")
+
+        # Drive each tier individually so we can verify partial closes one by one.
+        partial_fills = 0
+        for i, tier_price in enumerate(tier_prices, start=1):
+            # Step price slightly above the tier so it triggers, but below the next
+            # tier so we get one close per step.
+            step_price = tier_price + 0.001
+            fills = engine.monitor_positions({symbol: step_price})
+            if len(fills) != 1:
+                failures.append(f"step3_tier{i}_unexpected_fills_{len(fills)}")
+                console.print(f"[red]RED tier {i}[/red] — got {len(fills)} fills (expected 1)")
+            else:
+                partial_fills += 1
+                pos = engine.portfolio.positions.get(symbol)
+                remaining_qty = pos.quantity if pos else 0.0
+                console.print(
+                    f"[green]GREEN tier {i}[/green] — close@{step_price:.3f} "
+                    f"qty_closed={fills[0].quantity:.4f} remaining={remaining_qty:.4f}"
+                )
+
+        if partial_fills != targets_count:
+            failures.append(f"step3_partial_count_{partial_fills}")
+        if symbol in engine.portfolio.positions:
+            failures.append("step3_position_not_fully_closed")
+            console.print(f"[red]RED step 3[/red] — position {symbol} not fully closed")
+        else:
+            console.print(f"[green]GREEN step 3[/green] — position fully exited after {targets_count} tiers")
+
+        if engine.portfolio.realized_pnl_usd <= 0:
+            failures.append(f"step4_realized_pnl_{engine.portfolio.realized_pnl_usd:.4f}")
+            console.print(f"[red]RED step 4[/red] — realized_pnl_usd={engine.portfolio.realized_pnl_usd:.4f} ≤ 0")
+        else:
+            console.print(f"[green]GREEN step 4[/green] — realized_pnl_usd={engine.portfolio.realized_pnl_usd:.4f}")
+
+        # Audit-trail content gate: every expected event_type must appear at least once.
+        expected_events = {
+            "order_created",
+            "order_filled",
+            "position_tp_tiers_set",
+            "position_partial_closed",
+        }
+        seen_events: set[str] = set()
+        for raw in audit_path.read_text(encoding="utf-8").splitlines():
+            line = raw.strip()
+            if not line:
+                continue
+            try:
+                payload = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(payload, dict):
+                ev = payload.get("event_type")
+                if isinstance(ev, str):
+                    seen_events.add(ev)
+        missing = expected_events - seen_events
+        if missing:
+            failures.append(f"step5_audit_missing_events_{sorted(missing)}")
+            console.print(f"[red]RED step 5[/red] — audit missing events: {sorted(missing)}")
+        else:
+            console.print(f"[green]GREEN step 5[/green] — audit contains all 4 expected event types")
+
+        # Rehydrate gate: a fresh engine reading the same audit must reproduce
+        # the empty-portfolio terminal state (V25-C audit_replay extension).
+        eng2 = PaperExecutionEngine(
+            initial_equity=10_000.0,
+            fee_pct=0.1,
+            slippage_pct=0.05,
+            live_enabled=False,
+            audit_log_path=str(audit_path),
+        )
+        eng2.rehydrate_from_audit()
+        if symbol in eng2.portfolio.positions:
+            failures.append("step6_rehydrate_position_leaked")
+            console.print(f"[red]RED step 6[/red] — rehydrated portfolio still has {symbol}")
+        else:
+            console.print("[green]GREEN step 6[/green] — rehydrate reproduces empty portfolio")
+
+    if failures:
+        console.print(f"\n[bold red]PROBE RED[/bold red] — {len(failures)} gate(s) failed:")
+        for f in failures:
+            console.print(f"  · {f}")
+        raise typer.Exit(code=1)
+    console.print("\n[bold green]PROBE GREEN[/bold green] — all 6 gates passed")

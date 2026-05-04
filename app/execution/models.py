@@ -77,6 +77,18 @@ class PaperPosition:
     opened_at: str
     realized_pnl_usd: float = 0.0
     position_side: str = "long"  # NEO-P-101-r2: V5-Vorbereitung; nur "long" supported
+    # V25-C (2026-05-04): Multi-target staged exits. List of (price, qty_share)
+    # tuples where qty_share is the fraction of the ORIGINAL position to close
+    # at that price (sums should equal 1.0 for full coverage). Empty list ==
+    # legacy single-TP behaviour via stop_loss + take_profit. The list is
+    # consumed left-to-right on each tier-trigger; once empty the residual
+    # position is exit only via SL or manual close. Sorted ascending by price
+    # at construction so the first tier fires first.
+    take_profit_tiers: list[tuple[float, float]] = field(default_factory=list)
+    # Original quantity captured at fill time so partial closes know what
+    # fraction of "the trade" each tier represents even after prior tiers
+    # have already reduced the live quantity.
+    initial_quantity: float = 0.0
 
     def unrealized_pnl(self, current_price: float) -> float:
         return (current_price - self.avg_entry_price) * self.quantity
@@ -91,6 +103,8 @@ class PaperPosition:
             "opened_at": self.opened_at,
             "realized_pnl_usd": self.realized_pnl_usd,
             "position_side": self.position_side,
+            "take_profit_tiers": list(self.take_profit_tiers),
+            "initial_quantity": self.initial_quantity,
         }
 
 

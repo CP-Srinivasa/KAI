@@ -303,17 +303,80 @@ def _audit_base(
 
 
 async def _fetch_price(symbol: str) -> float | None:
-    """Resolve current spot price for ``symbol`` (e.g. 'BTC/USDT')."""
+    """Resolve current spot price for ``symbol`` (e.g. 'BTC/USDT').
+
+    V25-D (2026-05-05): default provider switched from coingecko to
+    'fallback' (Bybit → CoinGecko → Mock). The bridge sees Bybit-Futures
+    symbols from the premium channel (SWARMS, GIGGLE, 1000LUNC, …) that
+    CoinGecko's spot aggregation does not list. Bybit V5 covers these
+    natively. Operators can override via OPERATOR_SIGNAL_AUTO_RUN_PROVIDER.
+    """
     settings = get_settings()
     provider = (
         settings.operator.signal_auto_run_provider
         if hasattr(settings.operator, "signal_auto_run_provider")
-        else "coingecko"
+        else "fallback"
     )
+    if not provider or provider == "coingecko":
+        provider = "fallback"
     snap = await get_market_data_snapshot(symbol=symbol, provider=provider)
     if not snap.available or snap.is_stale:
         return None
     return snap.price
+
+
+# V25-D (2026-05-05) — Channel scale normalisation.
+#
+# The premium Telegram channel posts Bybit-Futures pairs in two distinct
+# formats: (a) direct USD for 1.0+-USD tokens (HYPE 40.9, GIGGLE 39.5),
+# (b) integer ticks for sub-cent tokens (SWARMS '32450' = $0.0003245,
+# 1000LUNC '10310' = $0.10310). The integer form keeps targets readable
+# but breaks any price comparison against a USD-priced provider.
+#
+# We detect the scale by comparing channel-entry against current_price:
+# the ratio falls into a power-of-ten band and we divide entry / SL /
+# targets by that factor. If the ratio is outside the recognised bands
+# we leave the values untouched and let the existing tolerance check
+# decide — better silent pass-through than a wrong scale.
+_RECOGNISED_SCALES = (1.0, 1e3, 1e4, 1e5, 1e6, 1e7, 1e8)
+
+
+def _detect_scale_factor(channel_value: float, provider_price: float) -> float:
+    """Return the power-of-ten factor that brings channel_value to provider scale.
+
+    Returns 1.0 if no recognised scale matches (fail-soft: bridge then
+    treats the values as-is and the tolerance gate will reject sensibly).
+    """
+    if channel_value <= 0 or provider_price <= 0:
+        return 1.0
+    ratio = channel_value / provider_price
+    # Find the recognised scale whose log-distance to the ratio is smallest
+    # AND within ±50% (strict guardrail so a 2× drift is not "rescaled").
+    best_factor = 1.0
+    best_dist = abs(ratio - 1.0)
+    for factor in _RECOGNISED_SCALES:
+        dist = abs(ratio - factor) / factor
+        if dist <= 0.5 and dist < best_dist:
+            best_factor = factor
+            best_dist = dist
+    return best_factor
+
+
+def _apply_scale(payload: dict[str, object], factor: float) -> None:
+    """In-place rescale of entry/sl/targets by 1/factor. No-op when factor=1."""
+    if factor <= 0 or factor == 1.0:
+        return
+    for key in ("entry_value", "entry_min", "entry_max", "stop_loss"):
+        v = payload.get(key)
+        if isinstance(v, (int, float)) and not isinstance(v, bool) and v > 0:
+            payload[key] = float(v) / factor
+    raw_targets = payload.get("targets")
+    if isinstance(raw_targets, list):
+        scaled: list[float] = []
+        for t in raw_targets:
+            if isinstance(t, (int, float)) and not isinstance(t, bool) and t > 0:
+                scaled.append(float(t) / factor)
+        payload["targets"] = scaled
 
 
 async def run_tick() -> BridgeTickResult:
@@ -403,8 +466,18 @@ async def _process_one(
     entry_price = _resolve_entry_price(payload)
     stop_loss = _float(payload.get("stop_loss"))
     targets_raw = payload.get("targets")
-    targets = [t for t in (targets_raw or []) if isinstance(t, (int, float)) and t > 0]
-    tp1 = float(targets[0]) if targets else None
+    # V25-C (2026-05-04): preserve all targets for staged-exit ladder.
+    # Pre-V25-C only targets[0] (TP1) was used; the remaining targets were
+    # silently dropped, so a 4-target signal could only ever realise 1/4
+    # of the channel-intended take-profit progression.
+    targets = sorted(
+        (
+            float(t)
+            for t in (targets_raw or [])
+            if isinstance(t, (int, float)) and not isinstance(t, bool) and t > 0
+        )
+    )
+    tp1 = targets[0] if targets else None
 
     missing: list[str] = []
     if not symbol:
@@ -460,6 +533,30 @@ async def _process_one(
         _append_bridge_audit(rec)
         result.no_market_data += 1
         return
+
+    # V25-D (2026-05-05): rescale Bybit-Futures integer-tick entries to USD
+    # before the tolerance check. Channel posts e.g. SWARMS 32450 (×10^6) /
+    # 1000LUNC 10310 (×10^5) which would otherwise blow past every gate.
+    # _detect_scale_factor returns 1.0 when no scaling is needed (HYPE,
+    # GIGGLE, BTC, …) so this is a no-op for direct-USD signals.
+    scale_factor = _detect_scale_factor(entry_price, current_price)
+    if scale_factor != 1.0:
+        logger.info(
+            "[bridge] scale-detect symbol=%s entry=%.6g current=%.6g "
+            "factor=%.0e → rescaling entry/sl/targets",
+            symbol,
+            entry_price,
+            current_price,
+            scale_factor,
+        )
+        entry_price = entry_price / scale_factor
+        stop_loss = stop_loss / scale_factor
+        tp1 = tp1 / scale_factor
+        targets = [t / scale_factor for t in targets]
+        # Persist the corrected scale on the envelope payload so downstream
+        # consumers (engine, tier ladder, audit) see the same numbers we
+        # just gated on.
+        _apply_scale(envelope.get("payload") if isinstance(envelope.get("payload"), dict) else {}, scale_factor)
 
     if not _within_tolerance(
         current_price=current_price,
@@ -548,6 +645,16 @@ async def _process_one(
         result.rejected_fill += 1
         return
 
+    # V25-C: hand the staged-exit ladder over to the engine. We split the
+    # filled position equally across all targets (e.g. 4 targets → 25/25/25/25
+    # of the original quantity). The first target wins TP1, the second TP2,
+    # etc. The position-monitor (cron 1min, V25-A) will close each tier as
+    # its price gets hit, instead of dumping the entire position at TP1.
+    if len(targets) > 1:
+        share_each = 1.0 / len(targets)
+        tiers = [(price, share_each) for price in targets]
+        engine.set_position_tp_tiers(symbol, tiers)
+
     rec = base("filled")
     rec["order_id"] = order.order_id
     rec["fill_id"] = fill.fill_id
@@ -558,6 +665,9 @@ async def _process_one(
     rec["fill_price"] = fill.fill_price
     rec["stop_loss"] = stop_loss
     rec["take_profit"] = tp1
+    rec["take_profit_tiers"] = [
+        {"price": price, "qty_share": 1.0 / len(targets)} for price in targets
+    ] if len(targets) > 1 else []
     rec["risk_check_id"] = risk_result.check_id
     _append_bridge_audit(rec)
     result.filled += 1

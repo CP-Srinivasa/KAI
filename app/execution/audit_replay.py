@@ -93,6 +93,52 @@ def replay_paper_audit(audit_path: Path) -> AuditReplayResult:
                 )
             continue
 
+        if event_type == "position_tp_tiers_set":
+            # V25-C (2026-05-04): re-attach the tier ladder + initial_quantity
+            # to a position that was rehydrated from prior order_filled rows.
+            sym = _coerce_str(payload.get("symbol"))
+            if sym is None or sym not in positions:
+                continue
+            existing = positions[sym]
+            raw_tiers = payload.get("tiers")
+            tiers: list[tuple[float, float]] = []
+            if isinstance(raw_tiers, list):
+                for entry in raw_tiers:
+                    if not isinstance(entry, dict):
+                        continue
+                    p = _coerce_float(entry.get("price"))
+                    q = _coerce_float(entry.get("qty_share"))
+                    if p is None or q is None or p <= 0 or q <= 0:
+                        continue
+                    tiers.append((p, q))
+            initial_qty = (
+                _coerce_float(payload.get("initial_quantity")) or existing.quantity
+            )
+            existing.take_profit_tiers = sorted(tiers, key=lambda t: t[0])
+            existing.initial_quantity = initial_qty
+            continue
+
+        if event_type == "position_partial_closed":
+            # Carry the tier ladder forward — the actual quantity reduction
+            # was already booked by the preceding order_filled (sell) row.
+            sym = _coerce_str(payload.get("symbol"))
+            if sym is None or sym not in positions:
+                continue
+            existing = positions[sym]
+            raw_remaining = payload.get("remaining_tiers")
+            remaining: list[tuple[float, float]] = []
+            if isinstance(raw_remaining, list):
+                for entry in raw_remaining:
+                    if not isinstance(entry, dict):
+                        continue
+                    p = _coerce_float(entry.get("price"))
+                    q = _coerce_float(entry.get("qty_share"))
+                    if p is None or q is None or p <= 0 or q <= 0:
+                        continue
+                    remaining.append((p, q))
+            existing.take_profit_tiers = sorted(remaining, key=lambda t: t[0])
+            continue
+
         if event_type == "position_adjusted":
             sym = _coerce_str(payload.get("symbol"))
             if sym is None or sym not in positions:

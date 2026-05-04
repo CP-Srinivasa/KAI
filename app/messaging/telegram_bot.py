@@ -2827,6 +2827,41 @@ class TelegramOperatorBot:
         }
         await self._send_payload_with_retry(url, payload)
 
+        # V25-B (2026-05-04): Event-driven Bridge-Trigger.
+        # Pre-V25-B the operator pressed [Fill] and then waited for the next
+        # systemd-timer-driven bridge tick (10min, now 1min). For momentum
+        # crypto signals that 1-Minute window can already miss the entry
+        # tolerance band. We now fire one bridge tick asynchronously right
+        # after the _approved envelope is written so the latency drops to
+        # sub-second. Fail-soft: any error in the bridge is logged but never
+        # surfaces to the operator (the toast already promised the fill).
+        if outcome.status == "filled":
+
+            async def _trigger_bridge_now() -> None:
+                try:
+                    from app.execution.envelope_to_paper_bridge import run_tick
+
+                    res = await run_tick()
+                    logger.info(
+                        "[BOT] post-approval bridge tick env=%s scanned=%s "
+                        "filled=%s pending=%s no_md=%s",
+                        outcome.new_envelope_id,
+                        res.envelopes_scanned,
+                        res.filled,
+                        res.newly_pending + res.re_pending,
+                        res.no_market_data,
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning(
+                        "[BOT] post-approval bridge tick failed env=%s: %s",
+                        outcome.new_envelope_id,
+                        exc,
+                    )
+
+            import asyncio as _asyncio
+
+            _asyncio.create_task(_trigger_bridge_now())
+
     async def _handle_annotation_callback(
         self,
         chat_id: int,

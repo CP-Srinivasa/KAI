@@ -6,11 +6,64 @@ import logging
 from datetime import UTC, datetime
 
 from app.market_data.base import BaseMarketDataAdapter
+from app.market_data.bybit_adapter import BybitAdapter
 from app.market_data.coingecko_adapter import CoinGeckoAdapter
 from app.market_data.mock_adapter import MockMarketDataAdapter
-from app.market_data.models import MarketDataSnapshot
+from app.market_data.models import MarketDataSnapshot, OHLCV, MarketDataPoint, Ticker
 
 logger = logging.getLogger(__name__)
+
+
+class FallbackMarketDataAdapter(BaseMarketDataAdapter):
+    """Tries each underlying adapter in order, returns the first available.
+
+    Built for the operator-signal bridge (V25-D, 2026-05-05): the premium
+    Telegram channel posts Bybit-Futures pairs that include exotic tokens
+    CoinGecko does not list. We therefore query Bybit first; if Bybit
+    returns no data (symbol not found, transport error, rate limit), we
+    fall back to CoinGecko for the well-known majors. Mock is the last
+    resort so a smoke-test never crashes for missing market data.
+
+    The chain order is intentional: Bybit is authoritative for the symbols
+    the bridge actually sees in production. CoinGecko only covers a subset
+    but uses different rate-limit pools, so it adds true redundancy.
+    """
+
+    def __init__(self, adapters: list[BaseMarketDataAdapter]) -> None:
+        if not adapters:
+            raise ValueError("FallbackMarketDataAdapter requires >=1 adapter")
+        self._adapters = adapters
+
+    @property
+    def adapter_name(self) -> str:
+        return "fallback:" + ",".join(a.adapter_name for a in self._adapters)
+
+    async def get_ticker(self, symbol: str) -> Ticker | None:
+        for adapter in self._adapters:
+            ticker = await adapter.get_ticker(symbol)
+            if ticker is not None and ticker.last > 0:
+                return ticker
+        return None
+
+    async def get_price(self, symbol: str) -> float | None:
+        ticker = await self.get_ticker(symbol)
+        return ticker.last if ticker is not None else None
+
+    async def get_ohlcv(
+        self, symbol: str, timeframe: str = "1h", limit: int = 100
+    ) -> list[OHLCV]:
+        for adapter in self._adapters:
+            data = await adapter.get_ohlcv(symbol, timeframe=timeframe, limit=limit)
+            if data:
+                return data
+        return []
+
+    async def get_market_data_point(self, symbol: str) -> MarketDataPoint | None:
+        for adapter in self._adapters:
+            point = await adapter.get_market_data_point(symbol)
+            if point is not None and point.price > 0:
+                return point
+        return None
 
 
 def create_market_data_adapter(
@@ -22,12 +75,21 @@ def create_market_data_adapter(
 ) -> BaseMarketDataAdapter:
     """Create a market data adapter by provider name.
 
-    For 'coingecko': when `api_key` is omitted, falls back to
-    `AppSettings.coingecko_api_key`. A non-empty key activates the paid
-    pro-api endpoint (250 req/min, 100k/mo); empty key = free tier.
-    Using 'mock' is only appropriate for tests/dev — a WARNING is logged.
+    Provider values:
+    - 'bybit'     : Bybit V5 linear (futures) — best coverage for premium-
+                     channel signal symbols (SWARMS, GIGGLE, 1000LUNC, …).
+    - 'coingecko' : CoinGecko spot aggregation — broad token list, slower,
+                     misses Bybit-exclusive futures pairs.
+    - 'fallback'  : Try Bybit → CoinGecko → Mock in order. RECOMMENDED for
+                     the operator-signal bridge (V25-D).
+    - 'mock'      : Synthetic test data only.
     """
     normalized = provider.strip().lower()
+    if normalized == "bybit":
+        return BybitAdapter(
+            freshness_threshold_seconds=freshness_threshold_seconds,
+            timeout_seconds=timeout_seconds,
+        )
     if normalized == "coingecko":
         if api_key is None:
             from app.core.settings import get_settings
@@ -38,10 +100,30 @@ def create_market_data_adapter(
             timeout_seconds=timeout_seconds,
             api_key=api_key or None,
         )
+    if normalized == "fallback":
+        if api_key is None:
+            from app.core.settings import get_settings
+
+            api_key = get_settings().coingecko_api_key
+        chain: list[BaseMarketDataAdapter] = [
+            BybitAdapter(
+                freshness_threshold_seconds=freshness_threshold_seconds,
+                timeout_seconds=timeout_seconds,
+            ),
+            CoinGeckoAdapter(
+                freshness_threshold_seconds=freshness_threshold_seconds,
+                timeout_seconds=timeout_seconds,
+                api_key=api_key or None,
+            ),
+            MockMarketDataAdapter(
+                freshness_threshold_seconds=freshness_threshold_seconds,
+            ),
+        ]
+        return FallbackMarketDataAdapter(chain)
     if normalized == "mock":
         logger.warning(
             "market_data_provider=mock: using synthetic mock data. "
-            "Set APP_MARKET_DATA_PROVIDER=coingecko for real market data."
+            "Set APP_MARKET_DATA_PROVIDER=fallback for real market data."
         )
         return MockMarketDataAdapter(
             freshness_threshold_seconds=freshness_threshold_seconds,
