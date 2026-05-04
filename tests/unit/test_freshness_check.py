@@ -169,6 +169,59 @@ def test_json_probe_reports_unexpected_content_type_for_other_html() -> None:
     assert result.note == "non-json body (text/html)"
 
 
+def test_cloudflare_access_401_with_cf_mitigated_header_classified_as_login() -> None:
+    # Cloudflare Access can deny with 401 + cf-mitigated=challenge instead of
+    # a 302 redirect. Without a service-token header the note is "login".
+    response = httpx.Response(
+        401,
+        headers={"cf-mitigated": "challenge"},
+    )
+    result = freshness.probe_one(
+        _client(response),
+        freshness.Probe("dashboard_quality", "/dashboard/api/quality", "generated_at", 120, 600),
+        datetime.now(UTC),
+    )
+
+    assert result.http_status == 401
+    assert result.state == "down"
+    assert result.note == "cloudflare_access_login"
+
+
+def test_cloudflare_access_401_with_token_sent_classified_as_rejected() -> None:
+    # Same 401-from-edge case, but our request carried a service token —
+    # so the operator sees "rejected", not "login required".
+    response = httpx.Response(
+        401,
+        headers={"cf-mitigated": "challenge"},
+    )
+    result = freshness.probe_one(
+        _client_with_request_echo(response),
+        freshness.Probe("dashboard_quality", "/dashboard/api/quality", "generated_at", 120, 600),
+        datetime.now(UTC),
+    )
+
+    assert result.http_status == 401
+    assert result.state == "down"
+    assert result.note == "cloudflare_access_service_token_rejected"
+    assert "super-secret-value" not in result.note
+
+
+def test_generic_401_without_cf_mitigated_falls_back_to_status_note() -> None:
+    # A 401 without the cf-mitigated marker is treated as upstream-auth
+    # failure (legacy `status 401` note) — we don't claim CF involvement
+    # without evidence.
+    response = httpx.Response(401)
+    result = freshness.probe_one(
+        _client(response),
+        freshness.Probe("dashboard_quality", "/dashboard/api/quality", "generated_at", 120, 600),
+        datetime.now(UTC),
+    )
+
+    assert result.http_status == 401
+    assert result.state == "down"
+    assert result.note == "status 401"
+
+
 def test_cf_access_headers_loaded_from_environment(monkeypatch) -> None:
     monkeypatch.setenv("KAI_FRESHNESS_CF_ACCESS_CLIENT_ID", "id.example")
     monkeypatch.setenv("KAI_FRESHNESS_CF_ACCESS_CLIENT_SECRET", "secret")

@@ -1,5 +1,6 @@
 import { memo, useMemo } from "react";
 import { Card, CardHeader, Badge, ProgressBar } from "@/components/ui/Primitives";
+import { useT } from "@/i18n/I18nProvider";
 import { cn } from "@/lib/utils";
 import type { DashboardProvenance, ProvenanceMetrics } from "@/lib/api";
 
@@ -42,6 +43,7 @@ function ActivePrecisionCardImpl({
 }: {
   data: DashboardProvenance | null;
 }) {
+  const { t } = useT();
   const sourcesByResolvedDesc = useMemo(
     () => (data ? [...data.by_source].sort((a, b) => b.resolved - a.resolved) : []),
     [data],
@@ -216,9 +218,9 @@ function ActivePrecisionCardImpl({
           </span>
         </div>
         <div>
-          TV-Pipeline: pending=
-          <span className="font-mono">{tvPipe.pending_events}</span>, smoke=
-          <span className="font-mono">{tvPipe.smoke_test_events}</span>, real=
+          {t("primitives.tv_pipeline_label")}: {t("primitives.tv_pipeline_pending")}=
+          <span className="font-mono">{tvPipe.pending_events}</span>, {t("primitives.tv_pipeline_smoke")}=
+          <span className="font-mono">{tvPipe.smoke_test_events}</span>, {t("primitives.tv_pipeline_real")}=
           <span className="font-mono">{tvPipe.real_events}</span>
         </div>
         {data.notes.length > 0 && (

@@ -1,6 +1,7 @@
 import { memo, useMemo } from "react";
 import { AlertTriangle, Flag, Target, Coins, Calendar, Info } from "lucide-react";
 import { Card, CardHeader, Badge, ProgressBar } from "@/components/ui/Primitives";
+import { useT } from "@/i18n/I18nProvider";
 import { cn } from "@/lib/utils";
 import type { DashboardQuality, PriorityGateSummary } from "@/lib/api";
 
@@ -58,6 +59,7 @@ function ReentryGatePanelImpl({
   qualityError?: string | null;
   priorityGate?: PriorityGateSummary | null;
 }) {
+  const { t } = useT();
   const daysLeft = useMemo(() => daysUntil(REENTRY_DATE_ISO), []);
 
   const computed = useMemo(() => {
@@ -114,19 +116,23 @@ function ReentryGatePanelImpl({
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
         <ProgressRow
           icon={<Target size={12} />}
-          label="Pfad A — Resolved Alerts (active)"
+          label={t("primitives.reentry_path_a")}
           current={alerts}
           target={ALERTS_TARGET}
           met={gate.kind === "path_a_met" || gate.kind === "both_met"}
           helper={
             quality
-              ? `${quality.active_hits} hits · ${quality.active_misses} miss · ${fmtPct(quality.active_precision_pct)} precision`
+              ? t("primitives.reentry_path_a_helper", {
+                  hits: quality.active_hits,
+                  misses: quality.active_misses,
+                  precision: fmtPct(quality.active_precision_pct),
+                })
               : undefined
           }
         />
         <ProgressRow
           icon={<Coins size={12} />}
-          label="Pfad B — Paper Fills mit PnL"
+          label={t("primitives.reentry_path_b")}
           current={fills}
           target={FILLS_TARGET}
           met={gate.kind === "path_b_met" || gate.kind === "both_met"}
@@ -307,6 +313,7 @@ function ReentryGatePanelFallback({
   daysLeft: number;
   errorMessage: string | null;
 }) {
+  const { t } = useT();
   const isError = state === "error";
   const banner = isError
     ? {
@@ -352,8 +359,8 @@ function ReentryGatePanelFallback({
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-        <SkeletonRow icon={<Target size={12} />} label="Pfad A — Resolved Alerts (active)" target={ALERTS_TARGET} />
-        <SkeletonRow icon={<Coins size={12} />} label="Pfad B — Paper Fills mit PnL" target={FILLS_TARGET} />
+        <SkeletonRow icon={<Target size={12} />} label={t("primitives.reentry_path_a")} target={ALERTS_TARGET} />
+        <SkeletonRow icon={<Coins size={12} />} label={t("primitives.reentry_path_b")} target={FILLS_TARGET} />
       </div>
     </Card>
   );

@@ -3,6 +3,18 @@ import { useT } from "@/i18n/I18nProvider";
 import { cn } from "@/lib/utils";
 import type { DashboardQuality } from "@/lib/api";
 
+// Lokalisierung der gate_status raw-snake-Strings analog zu verdictText() in
+// ActivePrecisionCard. Unbekannte Werte fallen by-design auf den raw-Key
+// zurück (Forensik-Anker, Debug-Sichtbarkeit).
+function gateStatusText(t: (key: string) => string, raw: string | null | undefined): string {
+  if (!raw) return "—";
+  const map: Record<string, string> = {
+    hold_releasable: t("primitives.gate_status_hold_releasable"),
+    blocked: t("primitives.gate_status_blocked"),
+  };
+  return map[raw] ?? raw;
+}
+
 type Row = {
   label: string;
   value: number | null;
@@ -92,14 +104,15 @@ export function QualityBarPanel({ data }: { data: DashboardQuality | null }) {
       {data && (
         <div className="mt-5 pt-4 border-t border-line-subtle text-2xs text-fg-muted leading-relaxed flex flex-wrap gap-x-4 gap-y-1">
           <span>
-            Gate:{" "}
+            {t("primitives.gate_status_label")}:{" "}
             <span
               className={cn(
                 "font-mono font-semibold",
                 data.gate_status === "hold_releasable" ? "text-pos" : "text-warn",
               )}
+              title={data.gate_status ?? undefined}
             >
-              {data.gate_status ?? "—"}
+              {gateStatusText(t, data.gate_status)}
             </span>
           </span>
           <span>

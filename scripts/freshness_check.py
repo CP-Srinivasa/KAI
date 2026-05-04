@@ -153,6 +153,18 @@ def _is_cloudflare_access_redirect(response: httpx.Response) -> bool:
     return "cloudflareaccess.com" in location or "/cdn-cgi/access/login" in location
 
 
+def _is_cloudflare_access_401(response: httpx.Response) -> bool:
+    # Cloudflare Access can deny a probe with HTTP 401 instead of a 302
+    # (e.g. when the request carries a Bearer/service-token header that the
+    # edge actively rejects). The reliable marker is the `cf-mitigated`
+    # response header — when "challenge", the 401 came from Cloudflare's
+    # access layer, not the upstream service. Without that header a 401 is
+    # generic and we keep the legacy `status 401` note for forensics.
+    if response.status_code != 401:
+        return False
+    return response.headers.get("cf-mitigated", "").lower() == "challenge"
+
+
 def _request_sent_cf_access_token(response: httpx.Response) -> bool:
     try:
         request = response.request
@@ -207,6 +219,22 @@ def probe_one(
             p.name,
             p.path,
             r.status_code,
+            None,
+            None,
+            "down",
+            _cloudflare_access_note(r),
+            scope,
+        )
+
+    if _is_cloudflare_access_401(r):
+        # Distinct path from generic 401 — surfaces "the edge denied us"
+        # vs "the upstream said unauthorized". `_cloudflare_access_note`
+        # picks service_token_rejected when our request carried a token,
+        # falls back to access_login otherwise.
+        return Result(
+            p.name,
+            p.path,
+            401,
             None,
             None,
             "down",
