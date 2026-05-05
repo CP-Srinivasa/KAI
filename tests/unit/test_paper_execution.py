@@ -495,6 +495,41 @@ def test_limit_order_uses_maker_fee_metadata(tmp_path):
     assert fill_records[0]["fee_bps_applied"] == pytest.approx(8.0)
 
 
+def test_default_order_uses_paper_fee_metadata(tmp_path):
+    eng = _engine(tmp_path)
+    order = eng.create_order(
+        symbol="ETH/USDT",
+        side="buy",
+        quantity=1.0,
+        order_type="limit",
+        limit_price=100.0,
+        idempotency_key="paper_default_fee",
+    )
+    assert order.venue == "paper"
+    fill = eng.fill_order(order, current_price=100.0)
+    assert fill is not None
+    assert fill.fee_venue == "paper"
+    assert fill.fee_role == "maker"
+    assert fill.fee_bps_applied == pytest.approx(60.0)
+
+
+def test_explicit_legacy_venue_preserves_constructor_fee(tmp_path):
+    eng = _engine(tmp_path)
+    order = eng.create_order(
+        symbol="ETH/USDT",
+        side="buy",
+        quantity=1.0,
+        order_type="limit",
+        limit_price=100.0,
+        venue="legacy",
+        idempotency_key="legacy_fee",
+    )
+    fill = eng.fill_order(order, current_price=100.0)
+    assert fill is not None
+    assert fill.fee_venue == "legacy"
+    assert fill.fee_bps_applied == pytest.approx(10.0)
+
+
 def test_sell_close_trade_pnl_netto_correct(tmp_path):
     eng = _engine(tmp_path)
     buy = eng.create_order(symbol="X/USDT", side="buy", quantity=1.0, idempotency_key="b1")
@@ -502,13 +537,17 @@ def test_sell_close_trade_pnl_netto_correct(tmp_path):
     sell = eng.create_order(symbol="X/USDT", side="sell", quantity=1.0, idempotency_key="s1")
     fill = eng.fill_order(sell, current_price=110.0)
     assert fill is not None
-    assert 9.7 < fill.pnl_usd < 9.9, f"netto pnl off: {fill.pnl_usd}"
+    assert fill.fee_venue == "paper"
+    assert fill.fee_bps_applied == pytest.approx(60.0)
+    assert 9.2 < fill.pnl_usd < 9.3, f"netto pnl off: {fill.pnl_usd}"
     records = _read_audit_records(tmp_path / "audit.jsonl")
     sell_fills = [
         r for r in records if r.get("event_type") == "order_filled" and r.get("side") == "sell"
     ]
     assert len(sell_fills) == 1
-    assert 9.7 < sell_fills[0]["pnl_usd"] < 9.9
+    assert sell_fills[0]["fee_venue"] == "paper"
+    assert sell_fills[0]["fee_bps_applied"] == pytest.approx(60.0)
+    assert 9.2 < sell_fills[0]["pnl_usd"] < 9.3
 
 
 def test_position_closed_event_has_fee_usd(tmp_path):

@@ -121,7 +121,7 @@ class PaperExecutionEngine:
         idempotency_key: str | None = None,
         risk_check_id: str = "",
         position_side: str = "long",
-        venue: str = "legacy",
+        venue: str = "paper",
     ) -> PaperOrder:
         """Create an order record (does not fill immediately).
 
@@ -129,8 +129,9 @@ class PaperExecutionEngine:
         currently raises NotImplementedError; V5 (Long+Short engine) is not yet
         implemented. The default keeps every existing call-site behavior-stable.
 
-        NEO-P-106 Phase 1: venue defaults to "paper" (= worst-case default fee).
-        Bridge/trading_loop venue-Durchleitung kommt in Phase 2 (separater PR).
+        NEO-P-106 Phase 2: venue defaults to "paper" (= worst-case default fee).
+        Callers that need constructor fee_pct compatibility must pass
+        venue="legacy" explicitly.
         """
         if position_side != "long":
             raise NotImplementedError(

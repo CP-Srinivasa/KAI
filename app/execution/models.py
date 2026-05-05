@@ -36,10 +36,10 @@ class PaperOrder:
     status: str = "pending"  # "pending" | "filled" | "cancelled" | "rejected"
     risk_check_id: str = ""
     position_side: str = "long"  # NEO-P-101-r2: V5-Vorbereitung; nur "long" supported
-    # NEO-P-106 Phase 1: venue-Tag fuer Fee-Lookup. Default "legacy" laesst den
-    # konstruktor-`fee_pct` aktiv (Backwards-compat). Bridge/trading_loop in
-    # Phase 2 setzt explizit "binance"/"okx"/"coinbase"/"bybit" oder "paper".
-    venue: str = "legacy"
+    # NEO-P-106 Phase 2: venue-Tag fuer Fee-Lookup. Default "paper" nutzt den
+    # worst-case Paper-Fee aus config/venue_fees.yaml; "legacy" bleibt als
+    # expliziter Opt-out fuer Tests/historische Konstruktor-fee_pct-Pfade.
+    venue: str = "paper"
 
 
 @dataclass(frozen=True)
