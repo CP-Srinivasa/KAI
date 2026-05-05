@@ -42,8 +42,8 @@ class DBSettings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="DB_", env_file=".env", extra="ignore")
 
     url: str = Field(default="postgresql+asyncpg://postgres:postgres@localhost:5432/ai_analyst_bot")
-    pool_size: int = Field(default=5)
-    max_overflow: int = Field(default=10)
+    pool_size: int = Field(default=20)
+    max_overflow: int = Field(default=50)
     echo: bool = Field(default=False)
 
 
@@ -328,12 +328,12 @@ class TradingViewSettings(BaseSettings):
     webhook_enabled: bool = Field(default=False)
     webhook_secret: str = Field(default="", repr=False)
     webhook_audit_log: str = Field(default="artifacts/tradingview_webhook_audit.jsonl")
-    webhook_replay_cache_size: int = Field(default=256, ge=1)
+    webhook_replay_cache_size: int = Field(default=2048, ge=1)
     webhook_replay_window_seconds: float = Field(default=300.0, gt=0.0)
     # V8.1 (SAT-C-V8-001): second replay layer keyed on an operator-provided
     # `event_id` field in the alert body. Pass-through when the payload has no
     # event_id — bytes-layer cache remains the sole guard in that case.
-    webhook_event_id_cache_size: int = Field(default=1024, ge=1)
+    webhook_event_id_cache_size: int = Field(default=4096, ge=1)
     webhook_event_id_window_seconds: float = Field(default=1800.0, gt=0.0)
     # D-189 / NEO-F-META-20260424-026: SQLite-persist the payload-hash and
     # event-id replay caches so they survive uvicorn/systemd restarts. The
