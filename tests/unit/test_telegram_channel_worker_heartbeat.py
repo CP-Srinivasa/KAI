@@ -24,9 +24,22 @@ from unittest.mock import patch
 import pytest
 
 from app.ingestion.telegram_channel_worker import (
+    _HEARTBEAT_STATE,
     _heartbeat_loop,
+    _init_heartbeat,
+    _record_message_observed,
     _touch_heartbeat,
 )
+
+
+@pytest.fixture(autouse=True)
+def _clear_heartbeat_state():
+    # F3 (2026-05-05): module-level state must not leak across cases.
+    # Pre-F3 tests assume _touch_heartbeat behaves in mtime-only mode;
+    # they only stay green if state starts empty.
+    _HEARTBEAT_STATE.clear()
+    yield
+    _HEARTBEAT_STATE.clear()
 
 
 def test_touch_heartbeat_creates_file_when_missing(tmp_path: Path) -> None:
@@ -103,3 +116,111 @@ def test_heartbeat_loop_repeats_touches_within_interval(tmp_path: Path) -> None:
         # check because filesystem mtime granularity varies).
 
     asyncio.run(runner())
+
+
+# ── F3 (2026-05-05) — Reactivity-Counter ────────────────────────────────────
+
+
+def test_init_heartbeat_writes_json_with_zero_counter(tmp_path: Path) -> None:
+    # Boot: counter starts at 0, last_message_iso None, boot_iso stamped.
+    target = tmp_path / "heartbeat"
+    _init_heartbeat(target)
+
+    import json as _json
+
+    payload = _json.loads(target.read_text(encoding="utf-8"))
+    assert payload["messages_since_boot"] == 0
+    assert payload["last_message_iso"] is None
+    assert isinstance(payload["boot_iso"], str)
+    assert isinstance(payload["last_heartbeat_iso"], str)
+    # boot_iso == last_heartbeat_iso at the moment of init.
+    assert payload["boot_iso"] == payload["last_heartbeat_iso"]
+
+
+def test_record_message_observed_increments_counter_and_stamps_message_ts(
+    tmp_path: Path,
+) -> None:
+    # Each message-observed event bumps the counter and refreshes
+    # last_message_iso. last_heartbeat_iso also refreshes (every observed
+    # message proves the listener is alive).
+    target = tmp_path / "heartbeat"
+    _init_heartbeat(target)
+
+    import json as _json
+
+    boot_iso = _json.loads(target.read_text(encoding="utf-8"))["boot_iso"]
+
+    _record_message_observed(target)
+    after_one = _json.loads(target.read_text(encoding="utf-8"))
+    assert after_one["messages_since_boot"] == 1
+    assert isinstance(after_one["last_message_iso"], str)
+    assert after_one["boot_iso"] == boot_iso  # boot_iso never changes mid-run
+
+    _record_message_observed(target)
+    after_two = _json.loads(target.read_text(encoding="utf-8"))
+    assert after_two["messages_since_boot"] == 2
+
+
+def test_touch_heartbeat_after_init_updates_only_last_heartbeat(
+    tmp_path: Path,
+) -> None:
+    # Periodic _touch_heartbeat (60-second loop) must NOT touch the
+    # counter — that's reserved for _record_message_observed. It only
+    # refreshes last_heartbeat_iso so the watchdog sees the worker alive
+    # even on a silent channel.
+    target = tmp_path / "heartbeat"
+    _init_heartbeat(target)
+    _record_message_observed(target)  # counter -> 1
+
+    import json as _json
+
+    before = _json.loads(target.read_text(encoding="utf-8"))
+    counter_before = before["messages_since_boot"]
+    last_msg_before = before["last_message_iso"]
+
+    _touch_heartbeat(target)
+
+    after = _json.loads(target.read_text(encoding="utf-8"))
+    assert after["messages_since_boot"] == counter_before  # unchanged
+    assert after["last_message_iso"] == last_msg_before  # unchanged
+    # last_heartbeat_iso may equal or be later — datetime resolution is
+    # microseconds on POSIX but coarser on Windows; we accept either.
+    assert after["last_heartbeat_iso"] >= before["last_heartbeat_iso"]
+
+
+def test_touch_heartbeat_without_init_falls_back_to_mtime_only(
+    tmp_path: Path,
+) -> None:
+    # Pre-F3 callers (and pre-existing tests) must still work: when the
+    # module-level state is empty, _touch_heartbeat behaves like the
+    # legacy mtime-only path on an empty file. This is the backwards-
+    # compat anchor for any deploy that hasn't run _init_heartbeat yet
+    # (e.g. an in-flight worker upgrade).
+    target = tmp_path / "heartbeat"
+    assert not _HEARTBEAT_STATE  # autouse fixture confirmed clear
+    _touch_heartbeat(target)
+
+    # Legacy semantics: file exists but is empty bytes (NOT JSON).
+    assert target.exists()
+    assert target.read_bytes() == b""
+
+
+def test_record_message_observed_lazily_inits_when_state_empty(
+    tmp_path: Path,
+) -> None:
+    # Defensive: if a unit test (or a regression in the worker boot
+    # sequence) calls _record_message_observed without _init_heartbeat
+    # first, the helper must self-initialise rather than silently drop
+    # the event. This protects against off-by-one in counter math.
+    target = tmp_path / "heartbeat"
+    assert not _HEARTBEAT_STATE
+    _record_message_observed(target)
+
+    import json as _json
+
+    payload = _json.loads(target.read_text(encoding="utf-8"))
+    # Counter is 1 — init set it to 0, then the observed-message
+    # increment in the same call brought it to 1. Without lazy init
+    # the counter would still be at 0 (the bug we're guarding against).
+    assert payload["messages_since_boot"] == 1
+    assert payload["last_message_iso"] is not None

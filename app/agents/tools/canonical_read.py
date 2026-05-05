@@ -492,6 +492,68 @@ def _summarize_telegram_channel_ingest(
 
     status = "ok" if age_seconds < stale_threshold_seconds else "stale"
 
+    # F3 (2026-05-05): Heartbeat-Reactivity-Counter. Worker now persists
+    # JSON state inside the heartbeat file (boot_iso, last_heartbeat_iso,
+    # last_message_iso, messages_since_boot). Parsing it lets us
+    # distinguish "process alive but channel silent" (stale_silent —
+    # the V19 4-day-silence pattern) from "process alive AND updates
+    # flowing" (ok). Pre-F3 heartbeat files are empty-bytes — JSON
+    # parse fails gracefully and reactivity_status stays "no_data" so
+    # legacy callers keep working unchanged.
+    reactivity_status: str = "no_data"
+    last_message_age_seconds: int | None = None
+    messages_since_boot: int | None = None
+    boot_age_seconds: int | None = None
+    if hb_path is not None and hb_path.exists():
+        try:
+            hb_raw = hb_path.read_text(encoding="utf-8")
+            if hb_raw.strip():
+                hb_data = json.loads(hb_raw)
+                if isinstance(hb_data, dict):
+                    boot_iso_raw = hb_data.get("boot_iso")
+                    last_msg_iso_raw = hb_data.get("last_message_iso")
+                    msgs_raw = hb_data.get("messages_since_boot")
+                    if isinstance(msgs_raw, int) and msgs_raw >= 0:
+                        messages_since_boot = msgs_raw
+                    if isinstance(boot_iso_raw, str):
+                        try:
+                            boot_dt = datetime.fromisoformat(boot_iso_raw)
+                            boot_age_seconds = int((now - boot_dt).total_seconds())
+                        except ValueError:
+                            pass
+                    if isinstance(last_msg_iso_raw, str):
+                        try:
+                            last_msg_dt = datetime.fromisoformat(last_msg_iso_raw)
+                            last_message_age_seconds = int(
+                                (now - last_msg_dt).total_seconds()
+                            )
+                        except ValueError:
+                            pass
+                    # Classify reactivity (independent of liveness `status`).
+                    # cold_boot: just started, no messages yet, < 1 h old
+                    # stale_silent: alive but no messages in > 24 h
+                    # ok: messages observed within last 24 h
+                    cold_boot_threshold = 3600
+                    silent_threshold = 24 * 3600
+                    if (
+                        messages_since_boot == 0
+                        and boot_age_seconds is not None
+                        and boot_age_seconds < cold_boot_threshold
+                    ):
+                        reactivity_status = "cold_boot"
+                    elif (
+                        last_message_age_seconds is None
+                        or last_message_age_seconds >= silent_threshold
+                    ):
+                        reactivity_status = "stale_silent"
+                    else:
+                        reactivity_status = "ok"
+        except (OSError, json.JSONDecodeError):
+            # Pre-F3 empty-bytes file or read error — leave reactivity
+            # at "no_data". Liveness `status` is unaffected (it uses
+            # mtime which write_text() refreshed on the worker side).
+            pass
+
     # Replay marker — written by replay_missed_messages() at worker start.
     # Surfaces whether gap-replay actually ran on the last listener boot, and
     # how many messages it recovered. Without this, a silent
@@ -533,6 +595,13 @@ def _summarize_telegram_channel_ingest(
         "replay_attempted_at": replay_attempted_at,
         "replay_processed_count": replay_processed_count,
         "replay_scanned_count": replay_scanned_count,
+        # F3 (2026-05-05): reactivity layer on top of liveness `status`.
+        # Pre-F3 callers ignore these keys; new operator surface uses
+        # reactivity_status to surface the V19 stale_silent pattern.
+        "reactivity_status": reactivity_status,
+        "last_message_age_seconds": last_message_age_seconds,
+        "messages_since_boot": messages_since_boot,
+        "boot_age_seconds": boot_age_seconds,
     }
 
 

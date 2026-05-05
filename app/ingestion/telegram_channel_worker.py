@@ -73,8 +73,89 @@ def _append_raw_log(path: Path, record: dict[str, object]) -> None:
 # run-loop. Liveness is observability, not a control plane.
 
 
+# F3 (2026-05-05): Heartbeat-Reactivity-Counter. Two distinct liveness
+# signals — periodic heartbeat (process-alive) and message-driven
+# reactivity (Telegram-updates-flowing). Persisted as JSON inside the
+# heartbeat file; mtime is still updated as a side effect of the write
+# so legacy mtime-only readers (pre-F3 canonical_read) keep working.
+#
+# State lives at module scope because run_worker is a single asyncio
+# loop in a single process — counter mutations happen between awaits,
+# so no lock is needed. Tests must clear() the dict in an autouse
+# fixture to stop state leaking across cases.
+_HEARTBEAT_STATE: dict[str, Any] = {}
+
+
+def _write_heartbeat(path: Path) -> None:
+    """Persist _HEARTBEAT_STATE as JSON. Fail-soft: warns, never raises.
+
+    The write also updates mtime, so canonical_read's legacy mtime-only
+    liveness check keeps working transparently.
+    """
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(_HEARTBEAT_STATE), encoding="utf-8")
+    except OSError as exc:
+        logger.warning("[channel-worker] heartbeat write failed: %s", exc)
+
+
+def _init_heartbeat(path: Path) -> None:
+    """Reset _HEARTBEAT_STATE on worker boot.
+
+    Called once after ``client.start()``. Sets ``messages_since_boot=0``
+    and stamps ``boot_iso``. Subsequent ``_record_message_observed`` calls
+    increment the counter; ``_touch_heartbeat`` only refreshes the
+    periodic-liveness timestamp without touching the counter.
+    """
+    now_iso = datetime.now(tz=UTC).isoformat()
+    _HEARTBEAT_STATE.clear()
+    _HEARTBEAT_STATE.update(
+        {
+            "boot_iso": now_iso,
+            "last_heartbeat_iso": now_iso,
+            "last_message_iso": None,
+            "messages_since_boot": 0,
+        }
+    )
+    _write_heartbeat(path)
+
+
+def _record_message_observed(path: Path) -> None:
+    """Increment counter + stamp last_message_iso on every observed message.
+
+    Called from both the live ``_handler`` and the ``_replay_handler``,
+    so reactivity reflects total Telegram-updates-flowing through the
+    listener regardless of replay vs. live origin.
+
+    Defensive: if state was never initialised (e.g. a unit test calls this
+    helper directly without going through run_worker), fall back to a
+    fresh init so we never silently drop the counter.
+    """
+    if not _HEARTBEAT_STATE:
+        _init_heartbeat(path)
+    now_iso = datetime.now(tz=UTC).isoformat()
+    _HEARTBEAT_STATE["last_message_iso"] = now_iso
+    _HEARTBEAT_STATE["last_heartbeat_iso"] = now_iso
+    _HEARTBEAT_STATE["messages_since_boot"] = (
+        int(_HEARTBEAT_STATE.get("messages_since_boot", 0)) + 1
+    )
+    _write_heartbeat(path)
+
+
 def _touch_heartbeat(path: Path) -> None:
-    """Update the heartbeat file's mtime to *now*. Best-effort, non-fatal."""
+    """Update heartbeat timestamp. Best-effort, non-fatal.
+
+    Two modes:
+    - Post-F3 (state initialised via ``_init_heartbeat``): JSON write,
+      refreshes ``last_heartbeat_iso`` while preserving the counter.
+    - Legacy / pre-F3 (state empty, e.g. in unit tests that don't go
+      through run_worker): mtime-only touch on an empty file. Same
+      semantics as before this patch.
+    """
+    if _HEARTBEAT_STATE:
+        _HEARTBEAT_STATE["last_heartbeat_iso"] = datetime.now(tz=UTC).isoformat()
+        _write_heartbeat(path)
+        return
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         # Touch semantics: create if missing, refresh mtime regardless.
@@ -521,10 +602,11 @@ async def run_worker(cfg: TelegramChannelIngestSettings | None = None) -> None:
         retry_delay=2,
     )
     await client.start()
-    # First heartbeat right after a successful start — the watchdog must
-    # see "alive" within seconds of process spawn, not only after the
-    # first periodic tick (60 s away).
-    _touch_heartbeat(heartbeat_path)
+    # F3 (2026-05-05): initialise heartbeat-reactivity-state at boot so
+    # the counter resets to 0 and boot_iso is stamped. Pre-F3 this was a
+    # plain _touch_heartbeat — kept that name but split into init (boot),
+    # touch (periodic), and record_message_observed (per Telegram update).
+    _init_heartbeat(heartbeat_path)
     heartbeat_task: asyncio.Task[None] | None = None
     try:
         entity = await resolve_target_entity(client, cfg)
@@ -606,6 +688,12 @@ async def run_worker(cfg: TelegramChannelIngestSettings | None = None) -> None:
             last_seen = get_last_seen_id(initial_checkpoint, chat_id_marked)
 
             async def _replay_handler(msg_id: int, text: str) -> None:
+                # F3 (2026-05-05): replay-pulled messages also count as
+                # reactivity. After a Pi restart the first 0..N messages
+                # arrive via replay (not live events); without this the
+                # cold-boot window would look "0 messages since boot"
+                # even when 50 signals were just recovered.
+                _record_message_observed(heartbeat_path)
                 summary = process_message(
                     text,
                     source_tag=cfg.source_tag,
@@ -631,10 +719,12 @@ async def run_worker(cfg: TelegramChannelIngestSettings | None = None) -> None:
 
         @client.on(events.NewMessage(chats=entity))  # type: ignore[misc]
         async def _handler(event: Any) -> None:
-            # First action: refresh the liveness heartbeat. Even if the
-            # message is unparseable / not a signal, observing it counts
-            # as proof the listener is alive.
-            _touch_heartbeat(heartbeat_path)
+            # First action: record the message-observed reactivity event.
+            # Counts toward messages_since_boot + stamps last_message_iso
+            # so canonical_read can distinguish "process alive but channel
+            # silent" from "process alive AND processing updates" — the
+            # core blind spot from the V19 4-day silence.
+            _record_message_observed(heartbeat_path)
             text = getattr(event, "raw_text", "") or getattr(event.message, "message", "")
             chat_id = getattr(event, "chat_id", None)
             msg_id = getattr(getattr(event, "message", None), "id", None)
