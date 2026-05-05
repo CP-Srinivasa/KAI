@@ -142,6 +142,41 @@ def _record_message_observed(path: Path) -> None:
     _write_heartbeat(path)
 
 
+def make_verbose_observer_handler(target_logger: logging.Logger) -> Callable[[Any], Any]:
+    """Factory for the F4 diagnostic observer. Returns an async handler.
+
+    The handler logs ``chat_id`` and ``msg_id`` of every NewMessage event
+    Telethon delivers, **regardless of chat filter**. It exists to verify
+    whether updates reach the worker process at all (as opposed to being
+    silently dropped by ``events.NewMessage(chats=entity)``) — Hypotheses
+    B and D from V19's 4-day-silence diagnosis.
+
+    Strict diagnostic constraints (verified by tests):
+    - Logs at ``DEBUG`` level only — invisible at the default ``INFO``
+      logger config, so an accidental enable in production is still
+      effectively silent.
+    - Never logs ``raw_text`` / ``message`` content — irrelevant channels
+      the user follows must not bleed into KAI logs (PII).
+    - Never calls ``_record_message_observed`` — would inflate the F3
+      reactivity counter with non-target-channel updates and corrupt the
+      ``stale_silent`` classification.
+
+    Returned handler must still be registered with
+    ``@client.on(events.NewMessage())`` (without ``chats=`` filter) for
+    the diagnostic to do anything.
+    """
+
+    async def _observer(event: Any) -> None:
+        chat_id = getattr(event, "chat_id", None)
+        msg = getattr(event, "message", None)
+        msg_id = getattr(msg, "id", None) if msg is not None else None
+        target_logger.debug(
+            "[channel-worker] verbose-observer: chat=%s msg_id=%s", chat_id, msg_id
+        )
+
+    return _observer
+
+
 def _touch_heartbeat(path: Path) -> None:
     """Update heartbeat timestamp. Best-effort, non-fatal.
 
@@ -757,6 +792,18 @@ async def run_worker(cfg: TelegramChannelIngestSettings | None = None) -> None:
                 env_id_live = summary.get("envelope_id")
                 if isinstance(env_id_live, str):
                     await _send_approval_for_envelope(env_id_live, replay=False)
+
+        # F4 (2026-05-05): opt-in diagnostic observer (no chats= filter).
+        # Verifies whether updates reach the worker process at all when
+        # the entity-filtered _handler stays silent. Strictly diagnostic
+        # — see make_verbose_observer_handler docstring for constraints.
+        if getattr(cfg, "verbose_observer", False):
+            verbose_observer = make_verbose_observer_handler(logger)
+            client.on(events.NewMessage())(verbose_observer)  # type: ignore[misc]
+            logger.info(
+                "[channel-worker] F4 verbose-observer ENABLED — "
+                "set INGESTION_TELEGRAM_CHANNEL_VERBOSE_OBSERVER=false to disable"
+            )
 
         logger.info("[channel-worker] entering run-loop")
         # Periodic heartbeat — independent of channel chatter. Without

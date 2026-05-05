@@ -17,9 +17,11 @@ from types import SimpleNamespace
 from typing import Any
 
 from app.ingestion.telegram_channel_worker import (
+    _HEARTBEAT_STATE,
     _checkpoint_chat_id_marked,
     get_last_seen_id,
     load_checkpoint,
+    make_verbose_observer_handler,
     process_message,
     replay_missed_messages,
     save_checkpoint,
@@ -407,3 +409,111 @@ class TestReplayMissedMessages:
             )
         )
         assert captured == ["from_message_field"]
+
+
+# ── F4 (2026-05-05) — Verbose-Observer (opt-in diagnostic) ─────────────────
+
+
+class TestVerboseObserverHandler:
+    """Verifies the F4 diagnostic constraints. The handler MUST:
+
+    - log on DEBUG (not INFO) — silent at default logger config
+    - log only chat_id + msg_id, NEVER message text (PII boundary)
+    - NOT bump the F3 reactivity counter (would corrupt stale_silent classify)
+    """
+
+    def _make_event(
+        self, *, chat_id: int | None, msg_id: int | None, raw_text: str = ""
+    ) -> SimpleNamespace:
+        msg = SimpleNamespace(id=msg_id, message=raw_text) if msg_id is not None else None
+        return SimpleNamespace(chat_id=chat_id, message=msg, raw_text=raw_text)
+
+    def test_logs_chat_id_and_msg_id_at_debug_level(self, caplog: Any) -> None:
+        import logging
+
+        custom_logger = logging.getLogger("test_f4_observer_debug")
+        custom_logger.setLevel(logging.DEBUG)
+        handler = make_verbose_observer_handler(custom_logger)
+
+        with caplog.at_level(logging.DEBUG, logger="test_f4_observer_debug"):
+            asyncio.run(
+                handler(
+                    self._make_event(chat_id=-1001275462917, msg_id=23999, raw_text="x"),
+                )
+            )
+
+        debug_records = [r for r in caplog.records if r.levelno == logging.DEBUG]
+        assert len(debug_records) == 1, "must log exactly once at DEBUG"
+        msg = debug_records[0].getMessage()
+        assert "-1001275462917" in msg
+        assert "23999" in msg
+
+    def test_silent_at_info_level(self, caplog: Any) -> None:
+        # Default production logger config is INFO. Even if F4 is enabled
+        # by env, it must produce zero log output without an explicit
+        # DEBUG bump — that's the cheap insurance against accidental
+        # production-noise from a forgotten flag.
+        import logging
+
+        custom_logger = logging.getLogger("test_f4_observer_info")
+        custom_logger.setLevel(logging.INFO)
+        handler = make_verbose_observer_handler(custom_logger)
+
+        with caplog.at_level(logging.INFO, logger="test_f4_observer_info"):
+            asyncio.run(
+                handler(self._make_event(chat_id=-1001234567890, msg_id=42, raw_text="y"))
+            )
+
+        assert caplog.records == [], "INFO-level config must suppress F4 output"
+
+    def test_does_not_log_message_text(self, caplog: Any) -> None:
+        # PII guard: irrelevant channels the user follows must not bleed
+        # into KAI logs. raw_text/message content goes through the handler
+        # but never appears in the log line.
+        import logging
+
+        custom_logger = logging.getLogger("test_f4_observer_no_text")
+        custom_logger.setLevel(logging.DEBUG)
+        handler = make_verbose_observer_handler(custom_logger)
+
+        secret_text = "PRIVATE-MESSAGE-TEXT-DO-NOT-LOG-12345"
+        with caplog.at_level(logging.DEBUG, logger="test_f4_observer_no_text"):
+            asyncio.run(
+                handler(self._make_event(chat_id=-100, msg_id=1, raw_text=secret_text))
+            )
+
+        for record in caplog.records:
+            assert secret_text not in record.getMessage(), (
+                "verbose-observer must never log message text"
+            )
+
+    def test_does_not_increment_f3_reactivity_counter(self) -> None:
+        # F3 counter-purity: the diagnostic observer must NOT count toward
+        # messages_since_boot. It receives updates from arbitrary channels;
+        # mixing those into the target-channel reactivity metric would
+        # corrupt the stale_silent classification (a busy unrelated chat
+        # would mask a stale premium-channel).
+        import logging
+
+        from app.ingestion.telegram_channel_worker import _init_heartbeat
+
+        _HEARTBEAT_STATE.clear()
+        # Init counter at 0, then run the observer 5 times.
+        try:
+            _init_heartbeat(Path("./_unused_test_heartbeat_path"))
+            assert _HEARTBEAT_STATE["messages_since_boot"] == 0
+
+            handler = make_verbose_observer_handler(logging.getLogger("test_f4_purity"))
+            for i in range(5):
+                asyncio.run(handler(self._make_event(chat_id=-100, msg_id=i, raw_text="")))
+
+            # Counter must still be 0 — observer does not call
+            # _record_message_observed.
+            assert _HEARTBEAT_STATE["messages_since_boot"] == 0
+        finally:
+            _HEARTBEAT_STATE.clear()
+            # Cleanup: remove the heartbeat file _init_heartbeat created.
+            try:
+                Path("./_unused_test_heartbeat_path").unlink()
+            except FileNotFoundError:
+                pass

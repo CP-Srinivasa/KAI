@@ -479,6 +479,17 @@ class TelegramChannelIngestSettings(BaseSettings):
     # for the heartbeat-only sub-status.
     heartbeat_path: str = Field(default="artifacts/telegram_listener_heartbeat")
     heartbeat_stale_seconds: int = Field(default=1800, ge=1)
+    # F4 (2026-05-05): opt-in diagnostic observer. When True, the worker
+    # registers a SECOND NewMessage handler WITHOUT the chats=entity filter
+    # to log chat_id + msg_id of every message Telethon delivers. Lets the
+    # operator verify whether updates reach the process at all (Hypothesis B/D
+    # from V19) versus the entity-filter dropping them. Strictly diagnostic:
+    # never calls _record_message_observed (would inflate the F3 reactivity
+    # counter) and never logs message text (PII / unrelated channels). Logged
+    # at DEBUG level — set INGESTION_TELEGRAM_CHANNEL_VERBOSE_OBSERVER=true
+    # AND a logger config that surfaces DEBUG to actually see the output.
+    # Intended for 24-48 h diagnostic windows, not production-default.
+    verbose_observer: bool = Field(default=False)
 
 
 class AppSettings(BaseSettings):
