@@ -129,6 +129,139 @@ def telegram_channel_test_parse(
     console.print_json(data=record)
 
 
+@telegram_channel_app.command("bootstrap-checkpoint")
+def telegram_channel_bootstrap_checkpoint(
+    message_id: int = typer.Option(
+        ...,
+        "--message-id",
+        "-m",
+        help="last_message_id to seed the checkpoint with (must be > 0)",
+    ),
+    chat_id: int = typer.Option(
+        0,
+        "--chat-id",
+        "-c",
+        help=(
+            "Marked chat_id (Channels: -100<peer>). Defaults to "
+            "INGESTION_TELEGRAM_CHANNEL_TARGET_CHAT_ID. Both marked and "
+            "unmarked forms accepted; normalised to marked before write."
+        ),
+    ),
+    force: bool = typer.Option(
+        False,
+        "--force",
+        "-f",
+        help="Skip confirmation prompt when overwriting an existing entry",
+    ),
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help="Preview the resulting file content without writing",
+    ),
+) -> None:
+    """Seed the listener checkpoint manually for recovery scenarios.
+
+    Use case: after a Pi cutover or session-rebuild that loses the
+    checkpoint file, the worker would otherwise short-circuit replay
+    (skipped_no_checkpoint=1, the defensive default that prevents a
+    full-channel-history re-ingest on first boot). This command writes
+    the file in canonical marked-form so the next boot triggers replay
+    from --message-id forward.
+
+    Risks mitigated:
+    - Confirmation prompt before overwriting an existing entry (use
+      --force to bypass in scripts).
+    - --dry-run shows the resulting file content without modifying disk.
+    - Warns + re-prompts when --message-id is lower than the stored
+      value (would replay messages already processed → operator-visible
+      duplicate signals + duplicate approval-sends).
+    - Refuses message_id <= 0 and chat_id == 0 (both produce a no-op
+      checkpoint that the worker would treat as "missing").
+    """
+    from datetime import UTC, datetime
+    from pathlib import Path
+
+    from app.ingestion.telegram_channel_worker import (
+        _checkpoint_chat_id_marked,
+        load_checkpoint,
+        save_checkpoint,
+    )
+
+    configure_logging()
+
+    if message_id <= 0:
+        console.print("[red]--message-id must be > 0[/red]")
+        raise typer.Exit(code=2)
+
+    cfg = get_settings().telegram_channel_ingest
+    effective_chat_id = chat_id if chat_id != 0 else cfg.target_chat_id
+    if effective_chat_id == 0:
+        console.print(
+            "[red]No chat_id resolved.[/red] Pass --chat-id or set "
+            "INGESTION_TELEGRAM_CHANNEL_TARGET_CHAT_ID in .env."
+        )
+        raise typer.Exit(code=2)
+
+    canonical = _checkpoint_chat_id_marked(int(effective_chat_id))
+    checkpoint_path = Path(cfg.checkpoint_path)
+
+    existing = load_checkpoint(checkpoint_path)
+    existing_entry = existing.get(str(canonical))
+    existing_msg_id: int | None = None
+    if existing_entry is not None:
+        try:
+            existing_msg_id = int(existing_entry.get("last_message_id", 0))
+        except (TypeError, ValueError):
+            existing_msg_id = None
+
+    # Operator visibility before any write decision.
+    console.print(
+        f"[cyan]checkpoint_path[/cyan] = {checkpoint_path}\n"
+        f"[cyan]chat_id[/cyan]         = {canonical} (canonical marked form)\n"
+        f"[cyan]new message_id[/cyan]  = {message_id}\n"
+        f"[cyan]existing[/cyan]        = "
+        + (f"{existing_msg_id}" if existing_msg_id is not None else "[dim]none[/dim]")
+    )
+
+    if existing_msg_id is not None and message_id < existing_msg_id and not force:
+        console.print(
+            f"[yellow]WARNING:[/yellow] new message_id {message_id} is "
+            f"LOWER than existing {existing_msg_id}. The next worker boot "
+            f"would replay {existing_msg_id - message_id} messages already "
+            f"processed — risk of duplicate operator-approval-sends. "
+            f"Pass --force to proceed anyway."
+        )
+        raise typer.Exit(code=3)
+
+    if existing_msg_id is not None and not force and not dry_run:
+        # Interactive guard — Operator must type "yes" (or pass --force).
+        confirmed = typer.confirm(
+            "Overwrite the existing checkpoint entry?", default=False
+        )
+        if not confirmed:
+            console.print("[yellow]Aborted by operator.[/yellow] No write performed.")
+            raise typer.Exit(code=1)
+
+    if dry_run:
+        # Compose the would-be file content without touching disk.
+        preview = {
+            **{k: v for k, v in existing.items() if k != str(canonical)},
+            str(canonical): {
+                "last_message_id": int(message_id),
+                "last_seen_at": datetime.now(tz=UTC).isoformat(),
+            },
+        }
+        console.print("[cyan]--dry-run: would write[/cyan]")
+        console.print_json(data=preview)
+        return
+
+    save_checkpoint(checkpoint_path, canonical, message_id)
+    console.print(
+        f"[green]Checkpoint written.[/green] Next listener boot will replay "
+        f"messages with id > {message_id} from chat {canonical}."
+    )
+
+
 @telegram_channel_app.command("probe")
 def telegram_channel_probe(
     symbol: str = typer.Option("BTC/USDT", help="Symbol to probe (must have CoinGecko mapping)"),
