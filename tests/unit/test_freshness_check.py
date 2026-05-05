@@ -379,6 +379,36 @@ def test_service_token_secret_never_leaks_to_outputs(tmp_path, monkeypatch) -> N
     assert secret not in log_text, "secret leaked into freshness_check.log"
 
 
+def test_external_skip_empty_by_default(monkeypatch, tmp_path) -> None:
+    monkeypatch.delenv("KAI_FRESHNESS_EXTERNAL_SKIP", raising=False)
+    monkeypatch.setattr(freshness, "REPO_ROOT", tmp_path)
+    assert freshness._read_external_skip() == set()
+
+
+def test_external_skip_parsed_from_env(monkeypatch, tmp_path) -> None:
+    monkeypatch.setenv(
+        "KAI_FRESHNESS_EXTERNAL_SKIP", "dashboard_quality, trading_loop_status"
+    )
+    monkeypatch.setattr(freshness, "REPO_ROOT", tmp_path)
+    assert freshness._read_external_skip() == {
+        "dashboard_quality",
+        "trading_loop_status",
+    }
+
+
+def test_external_skip_falls_back_to_dotenv(monkeypatch, tmp_path) -> None:
+    # Cron / systemd setups that don't pre-export the var can keep the skip
+    # list in .env next to the other KAI_FRESHNESS_* keys — same pattern
+    # the CF Access headers already follow.
+    monkeypatch.delenv("KAI_FRESHNESS_EXTERNAL_SKIP", raising=False)
+    env_file = tmp_path / ".env"
+    env_file.write_text(
+        "KAI_FRESHNESS_EXTERNAL_SKIP=dashboard_quality\n", encoding="utf-8"
+    )
+    monkeypatch.setattr(freshness, "REPO_ROOT", tmp_path)
+    assert freshness._read_external_skip() == {"dashboard_quality"}
+
+
 def test_overall_goes_crit_when_external_probe_fails_but_internal_is_ok() -> None:
     internal = freshness.Result(
         "dashboard_quality",

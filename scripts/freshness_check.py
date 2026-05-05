@@ -87,6 +87,27 @@ def _read_env_key(key: str) -> str:
     return ""
 
 
+def _read_external_skip() -> set[str]:
+    """Probe names to skip when probing the external base.
+
+    `/dashboard/*` enforces a strict CF-Access user-email allowlist on top
+    of edge auth (see app/security/auth.py D-156d / NEO-F-004): service-token
+    probes legitimately do NOT carry a user email and are denied by design.
+    Without skipping, the operator-facing `overall` permanently reads `crit`
+    on a healthy system, which causes alarm fatigue and hides real outages.
+
+    Comma-separated probe names via env `KAI_FRESHNESS_EXTERNAL_SKIP` or in
+    `.env`. Empty set → no skip (legacy behavior).
+    """
+    raw = (
+        os.environ.get("KAI_FRESHNESS_EXTERNAL_SKIP", "").strip()
+        or _read_env_key("KAI_FRESHNESS_EXTERNAL_SKIP")
+    )
+    if not raw:
+        return set()
+    return {item.strip() for item in raw.split(",") if item.strip()}
+
+
 def _read_cf_access_headers() -> dict[str, str]:
     """Optional Cloudflare Access service-token headers for external probes."""
     client_id = (
@@ -355,10 +376,13 @@ def main() -> int:
             results.append(probe_one(client, p, now, scope="internal"))
 
     if args.external_base:
+        external_skip = _read_external_skip()
         with httpx.Client(
             base_url=args.external_base, headers=headers, follow_redirects=False
         ) as client:
             for p in PROBES:
+                if p.name in external_skip:
+                    continue
                 results.append(probe_one(client, p, now, scope="external"))
 
     overall, exit_code = overall_from_results(results)
