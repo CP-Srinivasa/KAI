@@ -1,0 +1,29 @@
+# Logrotate-Config fuer KAI auf Pi 5 (Pi-Cutover Runbook §0.4).
+#
+# Pflad: zu installieren als /etc/logrotate.d/kai (root-owned, mode 644).
+#   sudo install -m 644 deploy/logrotate/kai /etc/logrotate.d/kai
+#
+# Smoke-Test (dry-run, listet was rotiert wuerde):
+#   sudo logrotate -d /etc/logrotate.d/kai
+#
+# `copytruncate` ist Pflicht: kai-server (uvicorn) und kai-tg-listener halten
+# ihre .log/.err.log-Files dauerhaft im write-Mode offen. Ohne copytruncate
+# muesste der Service nach Rotation neu gestartet werden, was die
+# Approval-Luecke oeffnet, die der Watchdog gerade minimieren soll.
+# copytruncate kopiert den Inhalt weg und truncated das Original an Ort und
+# Stelle, damit die offene File-Handle weiter funktioniert.
+#
+# Lehre Pi-4b 2026-05-05: logs/telegram_listener.err.log war 104 MB
+# nicht-rotierend (lsof bestaetigte offen-im-write-Mode).
+
+/home/ubuntu/ai_analyst_trading_bot/logs/*.log
+/home/ubuntu/ai_analyst_trading_bot/logs/*.err.log {
+    daily
+    rotate 14
+    compress
+    delaycompress
+    missingok
+    notifempty
+    copytruncate
+    su ubuntu ubuntu
+}
