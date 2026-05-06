@@ -95,6 +95,46 @@ def _hours_since(path: Path) -> float | None:
     return (datetime.now(UTC) - mtime).total_seconds() / 3600.0
 
 
+def _listener_reactivity_check(now: datetime) -> tuple[str, str, str] | None:
+    """Surface F3 reactivity_status from canonical_read into watchdog findings.
+
+    Returns ``(severity, title, detail)`` for the watchdog check list, or
+    ``None`` when nothing actionable should be reported (listener disabled,
+    no session yet, no heartbeat data — those are owned by other probes).
+    Never raises: any failure becomes a single ``warn`` finding so the
+    watchdog itself stays unkillable.
+    """
+    try:
+        from app.agents.tools.canonical_read import _summarize_telegram_channel_ingest
+
+        summary = _summarize_telegram_channel_ingest(now=now)
+    except Exception as exc:  # noqa: BLE001 — watchdog must never crash
+        return ("warn", "listener_reactivity_probe_failed", str(exc)[:120])
+
+    reactivity = summary.get("reactivity_status")
+    if reactivity == "stale_silent":
+        last_msg_age = summary.get("last_message_age_seconds")
+        if isinstance(last_msg_age, int):
+            detail = (
+                f"Listener läuft, aber kein Channel-Update seit "
+                f"{last_msg_age / 3600.0:.1f}h"
+            )
+        else:
+            detail = "Listener läuft, aber kein Channel-Update beobachtet"
+        return ("warn", "listener_reactivity_stale_silent", detail)
+    if reactivity in ("ok", "cold_boot"):
+        msgs = summary.get("messages_since_boot")
+        return (
+            "info",
+            f"listener_reactivity_{reactivity}",
+            f"reactivity_status={reactivity}, messages_since_boot={msgs}",
+        )
+    # reactivity_status="no_data" or non-running listener (disabled /
+    # missing_session) — other probes already report those, no need to
+    # double-warn here.
+    return None
+
+
 def _watchdog_check(note: str | None) -> tuple[str, str]:
     checks: list[tuple[str, str, str]] = []  # (severity, title, detail)
     targets = [
@@ -120,6 +160,13 @@ def _watchdog_check(note: str | None) -> tuple[str, str]:
             )
         else:
             checks.append(("info", f"{label}_fresh", f"{path.name} vor {h:.1f}h aktualisiert"))
+
+    # F3-Folge (2026-05-06): pick up listener reactivity_status. Surfaces
+    # the V19 4-day-silence pattern (process alive but channel updates
+    # stopped) which the mtime-based liveness probes above cannot detect.
+    listener_check = _listener_reactivity_check(datetime.now(UTC))
+    if listener_check is not None:
+        checks.append(listener_check)
 
     warns = sum(1 for s, _, _ in checks if s == "warn")
     for sev, title, detail in checks:
