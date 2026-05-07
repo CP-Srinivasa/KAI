@@ -21,6 +21,8 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 UNIT_SRC="${REPO_ROOT}/deploy/systemd"
 UNIT_DST="/etc/systemd/system"
+TMPFILES_SRC="${REPO_ROOT}/deploy/tmpfiles/kai.conf"
+TMPFILES_DST="/etc/tmpfiles.d/kai.conf"
 
 UNITS=(
     "kai-server.service"
@@ -90,6 +92,14 @@ uninstall() {
         run rm -f "${UNIT_DST}/${unit}"
     done
     run systemctl daemon-reload
+    if [[ -f "$TMPFILES_DST" ]]; then
+        echo "Removing tmpfiles config…"
+        run rm -f "$TMPFILES_DST"
+        # Note: do NOT call `systemd-tmpfiles --remove` here — that would delete
+        # /home/kai/ai_analyst_trading_bot/logs/ and any rotated log archives.
+        # The directory is intentionally preserved on uninstall so log forensics
+        # remain available.
+    fi
     echo "Uninstall complete."
 }
 
@@ -134,6 +144,20 @@ install() {
         fi
         run command install -m 0644 "$src" "$dst"
     done
+
+    # 2026-05-07 Cutover-Lehre B-3: kai-server-Erststart auf Blank-Slate
+    # crashte mit `Failed to set up standard output: No such file or directory`
+    # weil systemd StandardOutput=append: VOR ExecStartPre oeffnet. Tmpfiles
+    # legt logs/ vor jedem Service-Start an (via systemd-tmpfiles-setup,
+    # laeuft vor multi-user.target).
+    if [[ ! -f "$TMPFILES_SRC" ]]; then
+        echo "ERROR: missing tmpfiles source: $TMPFILES_SRC" >&2
+        exit 1
+    fi
+    echo ""
+    echo "Installing tmpfiles config (logs/-Verzeichnis-Bootstrap)…"
+    run command install -m 0644 "$TMPFILES_SRC" "$TMPFILES_DST"
+    run systemd-tmpfiles --create "$TMPFILES_DST"
 
     run systemctl daemon-reload
 
