@@ -39,6 +39,8 @@ UNITS=(
     "kai-pi-health.timer"
     "kai-service-watchdog.service"
     "kai-service-watchdog.timer"
+    "kai-hold-report.service"
+    "kai-hold-report.timer"
 )
 
 ENABLE_ON_INSTALL=(
@@ -51,6 +53,7 @@ ENABLE_ON_INSTALL=(
     "kai-daily-strategy-reminder.timer"
     "kai-pi-health.timer"
     "kai-service-watchdog.timer"
+    "kai-hold-report.timer"
 )
 
 DRY_RUN=0
