@@ -21,6 +21,7 @@ import { useDashboardQuality } from "@/lib/useDashboardQuality";
 import { useDashboardProvenance } from "@/lib/useDashboardProvenance";
 import { usePriorityGate } from "@/lib/usePriorityGate";
 import { cn } from "@/lib/utils";
+import { tierLiftTone } from "@/lib/tone";
 import { useRouter, type Route } from "@/state/Router";
 
 const PREPARED_PANELS: Array<{ title: string; reason: string; detail: string }> = [
@@ -72,13 +73,6 @@ export function Dashboard() {
   const ptl = data?.priority_tier_lift_pct ?? null;
   const pf = data?.paper_fills ?? null;
   const kai = useKaiState();
-
-  const tierLiftTone = (pp: number | null): "pos" | "warn" | "neg" | "neutral" => {
-    if (pp == null) return "neutral";
-    if (pp >= 15) return "pos";
-    if (pp > -10) return "warn";
-    return "neg";
-  };
 
   return (
     <div className="p-5 xl:p-6 space-y-5 xl:space-y-6 max-w-[1680px] mx-auto">

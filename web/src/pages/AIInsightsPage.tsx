@@ -4,6 +4,7 @@ import { PreparedPanel } from "@/components/panels/PreparedPanel";
 import { Badge, Card, CardHeader } from "@/components/ui/Primitives";
 import { useDashboardQuality } from "@/lib/useDashboardQuality";
 import { cn } from "@/lib/utils";
+import { tierLiftTone } from "@/lib/tone";
 
 type PrecisionTone = "pos" | "warn" | "neg" | "muted";
 
@@ -55,7 +56,11 @@ export function AIInsightsPage() {
                 ? "awaiting standard-tier sample"
                 : "Gate ≥ +15pp"
             }
-            tone={(q.data.priority_tier_lift_pct ?? 0) >= 15 ? "pos" : "warn"}
+            tone={((): PrecisionTone => {
+              const t = tierLiftTone(q.data.priority_tier_lift_pct);
+              if (t === "pos" || t === "warn" || t === "neg") return t;
+              return "muted";
+            })()}
           />
           <KpiCard
             label="Paper Fills"

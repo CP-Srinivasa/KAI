@@ -2,6 +2,7 @@ import { Card, CardHeader, Badge, ProgressBar } from "@/components/ui/Primitives
 import { useT } from "@/i18n/I18nProvider";
 import { cn } from "@/lib/utils";
 import type { DashboardQuality } from "@/lib/api";
+import { tierLiftTone, type Tone } from "@/lib/tone";
 
 // Lokalisierung der gate_status raw-snake-Strings analog zu verdictText() in
 // ActivePrecisionCard. Unbekannte Werte fallen by-design auf den raw-Key
@@ -21,6 +22,7 @@ type Row = {
   target: number;
   format: (n: number) => string;
   hint?: string;
+  toneFn?: (value: number | null) => Tone;
 };
 
 // Echt-Daten Variante. Die Kennzahlen kommen aus /dashboard/api/quality
@@ -53,6 +55,7 @@ export function QualityBarPanel({ data }: { data: DashboardQuality | null }) {
       value: data?.priority_tier_lift_pct ?? null,
       target: 15,
       format: (n) => `${n >= 0 ? "+" : ""}${n.toFixed(1)}pp`,
+      toneFn: tierLiftTone,
       hint:
         data?.priority_tier_high_conviction_resolved != null &&
         data?.priority_tier_standard_resolved != null
@@ -85,6 +88,7 @@ export function QualityBarPanel({ data }: { data: DashboardQuality | null }) {
         {rows.map((r) => {
           const hasValue = r.value != null;
           const ok = hasValue && r.value! >= r.target;
+          const tone: Tone = r.toneFn ? r.toneFn(r.value) : ok ? "pos" : "neutral";
           return (
             <div key={r.label}>
               <div className="flex items-baseline justify-between gap-3 text-xs">
@@ -93,7 +97,17 @@ export function QualityBarPanel({ data }: { data: DashboardQuality | null }) {
                   {r.hint && <span className="text-2xs text-fg-subtle shrink-0">{r.hint}</span>}
                 </div>
                 <div className="flex items-center gap-1.5 font-mono shrink-0">
-                  <span className={cn("text-sm font-semibold", ok ? "text-pos" : "text-fg")}>
+                  <span
+                    className={cn(
+                      "text-sm font-semibold",
+                      tone === "pos" && "text-pos",
+                      tone === "neg" && "text-neg",
+                      tone === "warn" && "text-warn",
+                      tone === "info" && "text-info",
+                      tone === "ai" && "text-ai",
+                      tone === "neutral" && "text-fg",
+                    )}
+                  >
                     {hasValue ? r.format(r.value!) : "—"}
                   </span>
                   <span className="text-fg-subtle">/ {r.format(r.target)}</span>
