@@ -46,10 +46,20 @@ export function QualityBarPanel({ data }: { data: DashboardQuality | null }) {
       format: (n) => `${n}`,
     },
     {
-      label: t("primitives.priority_hit_corr"),
-      value: data?.priority_corr ?? null,
-      target: 0.4,
-      format: (n) => n.toFixed(3),
+      // D-149: priority_corr (Pearson) ist auf P7-P10-Band nicht aussagekraeftig.
+      // Wir zeigen jetzt priority_tier_lift_pct = High-Conviction-HitRate
+      // minus Standard-Tier-HitRate. Ziel realistisch >=15pp Lift.
+      label: t("primitives.priority_tier_lift"),
+      value: data?.priority_tier_lift_pct ?? null,
+      target: 15,
+      format: (n) => `${n >= 0 ? "+" : ""}${n.toFixed(1)}pp`,
+      hint:
+        data?.priority_tier_high_conviction_resolved != null &&
+        data?.priority_tier_standard_resolved != null
+          ? `n=${data.priority_tier_high_conviction_resolved + data.priority_tier_standard_resolved}`
+          : data?.priority_tier_lift_pct == null
+            ? t("primitives.priority_tier_lift_insufficient")
+            : undefined,
     },
     // Row 4 (paper_fills) + Row 5 (paper_fills_with_pnl) beide entfernt
     // — Re-Entry-Metriken gehören in ReentryGatePanel (DALI-P-026 Original-Plan,

@@ -67,7 +67,9 @@ export function Dashboard() {
 
   const fp = data?.forward_precision_pct ?? null;
   const rc = data?.resolved_count ?? null;
-  const pc = data?.priority_corr ?? null;
+  // D-149: priority_corr ist deprecated; wir nutzen priority_tier_lift_pct
+  // (High-Conviction-HitRate minus Standard-Tier-HitRate).
+  const ptl = data?.priority_tier_lift_pct ?? null;
   const pf = data?.paper_fills ?? null;
   const kai = useKaiState();
 
@@ -170,13 +172,18 @@ export function Dashboard() {
           }
         />
         <KpiCard
-          label={t("primitives.priority_hit_corr")}
-          value={pc != null ? pc.toFixed(3) : "—"}
-          target={0.4}
-          valueNumeric={pc ?? undefined}
-          deltaLabel="Ziel: ≥0.40"
-          tone={pc != null && pc >= 0.4 ? "pos" : "warn"}
+          label={t("primitives.priority_tier_lift")}
+          value={ptl != null ? `${ptl >= 0 ? "+" : ""}${ptl.toFixed(1)}pp` : "—"}
+          target={15}
+          valueNumeric={ptl ?? undefined}
+          deltaLabel="Ziel: ≥+15pp"
+          tone={ptl != null && ptl >= 15 ? "pos" : "warn"}
           icon={<Radio size={12} />}
+          helper={
+            data?.priority_tier_lift_pct == null
+              ? t("primitives.priority_tier_lift_insufficient")
+              : undefined
+          }
         />
         <KpiCard
           label={t("primitives.paper_fills_real")}

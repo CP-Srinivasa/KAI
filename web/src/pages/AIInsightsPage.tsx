@@ -44,10 +44,18 @@ export function AIInsightsPage() {
             tone={precisionTone(q.data.forward_precision_pct)}
           />
           <KpiCard
-            label="Priority-Hit Correlation"
-            value={q.data.priority_corr?.toFixed(4) ?? "—"}
-            note="Gate ≥ 0.40"
-            tone={(q.data.priority_corr ?? 0) >= 0.4 ? "pos" : "warn"}
+            label="Priority Tier-Lift"
+            value={
+              q.data.priority_tier_lift_pct != null
+                ? `${q.data.priority_tier_lift_pct >= 0 ? "+" : ""}${q.data.priority_tier_lift_pct.toFixed(1)}pp`
+                : "—"
+            }
+            note={
+              q.data.priority_tier_lift_pct == null
+                ? "awaiting standard-tier sample"
+                : "Gate ≥ +15pp"
+            }
+            tone={(q.data.priority_tier_lift_pct ?? 0) >= 15 ? "pos" : "warn"}
           />
           <KpiCard
             label="Paper Fills"

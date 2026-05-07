@@ -122,7 +122,15 @@ export type DashboardQuality = {
   active_misses: number;
   legacy_resolved_count: number;
   legacy_unknown_cutoff: string | null;
+  /** @deprecated D-149: Pearson auf P7-P10-Band ist nicht aussagekraeftig.
+   *  Verwende priority_tier_lift_pct stattdessen. */
   priority_corr: number | null;
+  priority_tier_lift_pct: number | null;
+  priority_tier_high_conviction_threshold: number | null;
+  priority_tier_high_conviction_resolved: number | null;
+  priority_tier_high_conviction_hit_rate_pct: number | null;
+  priority_tier_standard_resolved: number | null;
+  priority_tier_standard_hit_rate_pct: number | null;
   forward_precision_pct: number | null;
   forward_resolved: number;
   forward_hits: number;

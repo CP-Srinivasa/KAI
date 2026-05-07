@@ -282,7 +282,26 @@ async def dashboard_quality_api() -> JSONResponse:
             "active_misses": hit_rate.get("active_alert_misses", 0),
             "legacy_resolved_count": hit_rate.get("legacy_resolved_documents", 0),
             "legacy_unknown_cutoff": hit_rate.get("legacy_unknown_cutoff"),
+            # priority_corr ist als deprecated markiert (D-149) — Pearson auf
+            # P7-P10-Band misst nichts Sinnvolles. Bleibt fuer Backwards-Compat
+            # exposed, das Dashboard nutzt jetzt priority_tier_lift_pct.
             "priority_corr": quality.get("priority_hit_correlation"),
+            "priority_tier_lift_pct": quality.get("priority_tier_lift_pct"),
+            "priority_tier_high_conviction_threshold": quality.get(
+                "priority_tier_high_conviction_threshold"
+            ),
+            "priority_tier_high_conviction_resolved": quality.get(
+                "priority_tier_high_conviction_resolved"
+            ),
+            "priority_tier_high_conviction_hit_rate_pct": quality.get(
+                "priority_tier_high_conviction_hit_rate_pct"
+            ),
+            "priority_tier_standard_resolved": quality.get(
+                "priority_tier_standard_resolved"
+            ),
+            "priority_tier_standard_hit_rate_pct": quality.get(
+                "priority_tier_standard_hit_rate_pct"
+            ),
             "forward_precision_pct": fwd.get("precision_pct"),
             "forward_resolved": fwd.get("resolved", 0),
             "forward_hits": fwd.get("hits", 0),

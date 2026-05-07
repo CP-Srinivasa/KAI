@@ -121,13 +121,36 @@ function ReentryGatePanelImpl({
           target={ALERTS_TARGET}
           met={gate.kind === "path_a_met" || gate.kind === "both_met"}
           helper={
-            quality
-              ? t("primitives.reentry_path_a_helper", {
-                  hits: quality.active_hits,
-                  misses: quality.active_misses,
-                  precision: fmtPct(quality.active_precision_pct),
-                })
-              : undefined
+            quality ? (
+              <>
+                <span>
+                  {t("primitives.reentry_path_a_helper", {
+                    hits: quality.active_hits,
+                    misses: quality.active_misses,
+                    precision: fmtPct(quality.active_precision_pct),
+                  })}
+                </span>
+                {quality.legacy_unknown_cutoff && (() => {
+                  const cutoffMs = Date.parse(quality.legacy_unknown_cutoff);
+                  if (Number.isNaN(cutoffMs)) return null;
+                  const dayMs = 24 * 60 * 60 * 1000;
+                  const day = Math.max(1, Math.floor((Date.now() - cutoffMs) / dayMs));
+                  const rate = (alerts / day).toFixed(1);
+                  return (
+                    <>
+                      {" · "}
+                      <span className="text-fg-subtle">
+                        {t("primitives.reentry_path_a_cutoff", {
+                          cutoff: quality.legacy_unknown_cutoff,
+                          day,
+                          rate,
+                        })}
+                      </span>
+                    </>
+                  );
+                })()}
+              </>
+            ) : undefined
           }
         />
         <ProgressRow
