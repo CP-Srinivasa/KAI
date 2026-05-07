@@ -180,6 +180,18 @@ sha256sum /tmp/pi4b_dirty_patch_20260505.patch >> artifacts/runbooks/pi5_patch_a
 
 > **NICHT am Pi 4b** `uv pip install -e .` machen. Pi 5 hat 16 GB RAM, da darf der Build laufen.
 
+### 1.4 Vite-SPA-Build deployen (Pflicht — sonst Dashboard 404)
+
+> **2026-05-07 Cutover-Lehre B-4:** `web/dist/` (Vite-SPA-Build) ist via `.gitignore` ausgeschlossen — `git clone` aus Phase 1.3 hat das Verzeichnis nicht mit-uebertragen. Phase 3.6 Operator-Browser-Smoke laeuft sonst gegen `/dashboard/` HTTP 404. Skript ist idempotent, baut auf dem Laptop (Pi-OOM-Schutz), scp + Hash-Verify + kai-server-Restart automatisch.
+
+```bash
+# auf Laptop, Repo-Root:
+bash scripts/pi_deploy_web.sh ubuntu@<pi5-ip>
+# erwartet am Ende: "Deploy complete." + "/dashboard/ HTTP 200 — SPA serving"
+```
+
+> **Hinweis:** Der `pi_deploy_web.sh`-Smoke triggert intern bereits einen `kai-server`-Restart, damit der StaticFiles-Mount das neue `web/dist/` laedt. Im Cutover-Fenster ist kai-server zu diesem Zeitpunkt noch `inactive` (Phase 2 Stop wartet noch) — der Restart-Befehl ist trotzdem idempotent (no-op auf inactive Service).
+
 ---
 
 ## Phase 2 — Daten-Cutover (Critical Section, ~30 Min)
@@ -243,6 +255,8 @@ ssh ubuntu@192.168.178.20 'cd /home/ubuntu/ai_analyst_trading_bot && \
 
 > **Lehre 2026-05-05 (V25-D-Audit):** Über die Listener-State-Files hinaus existieren weitere kritische JSONLs und State-DBs, die bei Cutover oft vergessen werden — Decision-Journal, Approval-Sends, Replay-Marker, persistenter TV-Replay-Cache. Wenn `tradingview_replay_cache.db` (D-189) fehlt und `TRADINGVIEW_WEBHOOK_REPLAY_CACHE_PERSISTENT=true` in `.env` aktiv ist, ist der Replay-Schutz nach Pi-5-Boot **neu** = Sicherheits-Regression im Webhook-Pfad. Wenn `operator_commands.jsonl` fehlt, fehlt der Decision-Journal-Tail = Audit-Lücke.
 
+> **Lehre 2026-05-07 (B-5):** Die hand-kuratierte Pflicht-File-Liste unten hatte 11 Files, Pi 4b hatte 93 Files in `artifacts/`. 76 Files fehlten nach Cutover, davon Dashboard-kritische (alert_audit, alert_outcomes, trading_loop_audit, agents/-Subdirs etc.). Operator sah Dashboard "fast tot". Empfohlen ab jetzt: **Whitelist-Mechanismus** (alles transferieren ausser den `KEEP_LIVE`-Files, die seit Cutover-Start auf Pi-neu appended Zeilen haben), siehe Phase 2.4.0a unten. Die alte Pflicht-File-Liste in 2.4.1-2.4.5 bleibt als Fallback dokumentiert, ist aber nicht mehr Standard-Pfad.
+
 #### 2.4.0 SQLite WAL-Checkpoint (Pflicht VOR scp)
 
 ```bash
@@ -255,6 +269,77 @@ ssh $PI4B 'cd /home/ubuntu/ai_analyst_trading_bot && \
 ```
 
 > **Warum:** Ohne Checkpoint kopiert `scp data/dev.db` nur den Main-Body — die letzten Transaktionen sitzen noch im WAL und gehen ohne Mit-Kopie verloren. Mit Checkpoint sind alle Pages in `data/dev.db` integriert; WAL/SHM müssen dann nicht transferiert werden.
+
+#### 2.4.0a Whitelist-Mirror Pi-alt → Pi-neu (B-5 empfohlen)
+
+```bash
+# auf Laptop (Repo-Root):
+PI4B=ubuntu@192.168.178.20
+PI5=ubuntu@<pi5-ip>
+
+# 1. Kompletter artifacts/-tarball von Pi-alt nach Laptop:
+ssh $PI4B 'cd /home/ubuntu/ai_analyst_trading_bot && tar czf - artifacts/' \
+  > /tmp/pi_artifacts.tar.gz
+
+# 2. data/dev.db separat (nach 2.4.0 WAL-Checkpoint):
+scp $PI4B:/home/ubuntu/ai_analyst_trading_bot/data/dev.db /tmp/dev.db
+
+# 3. .env separat (Permissions fixen wir auf Pi-neu):
+scp $PI4B:/home/ubuntu/ai_analyst_trading_bot/.env /tmp/.env
+
+# 4. Push tarball + .env + dev.db zu Pi-neu:
+scp /tmp/pi_artifacts.tar.gz $PI5:/tmp/
+scp /tmp/dev.db              $PI5:/home/ubuntu/ai_analyst_trading_bot/data/dev.db
+scp /tmp/.env                $PI5:/home/ubuntu/ai_analyst_trading_bot/.env
+
+# 5. Auf Pi-neu: KEEP_LIVE-Files schuetzen, dann tar entpacken, dann KEEP_LIVE
+#    zurueckspielen. Diese 9 Files haben seit Pi-neu-Service-Start (Phase 3.1)
+#    appended Zeilen, die nicht ueberschrieben werden duerfen.
+ssh $PI5 'cd /home/ubuntu/ai_analyst_trading_bot && bash -s' << 'BASH_EOF'
+set -euo pipefail
+KEEP_LIVE=(
+    artifacts/telegram_channel_checkpoint.json
+    artifacts/telegram_listener_heartbeat
+    artifacts/.telegram_channel_replay.json
+    artifacts/paper_execution_audit.jsonl
+    artifacts/telegram_message_envelope.jsonl
+    artifacts/telegram_channel_raw.jsonl
+    artifacts/operator_commands.jsonl
+    artifacts/telegram_signal_handoff.jsonl
+    artifacts/telegram_approval_send.jsonl
+    artifacts/freshness_status.json
+)
+rm -rf /tmp/pi_keep
+mkdir -p /tmp/pi_keep
+for f in "${KEEP_LIVE[@]}"; do
+    if [[ -f "$f" ]]; then
+        mkdir -p "/tmp/pi_keep/$(dirname "$f")"
+        cp -p "$f" "/tmp/pi_keep/$f"
+    fi
+done
+tar xzf /tmp/pi_artifacts.tar.gz --overwrite
+for f in "${KEEP_LIVE[@]}"; do
+    if [[ -f "/tmp/pi_keep/$f" ]]; then
+        cp -p "/tmp/pi_keep/$f" "$f"
+    fi
+done
+chmod 600 .env
+chown -R ubuntu:ubuntu data/ artifacts/ .env
+BASH_EOF
+
+# 6. Smoke: alert_audit + alert_outcomes + agents/-Subdirs auf Pi-neu vorhanden?
+ssh $PI5 'cd /home/ubuntu/ai_analyst_trading_bot && \
+  wc -l artifacts/alert_audit.jsonl artifacts/alert_outcomes.jsonl artifacts/trading_loop_audit.jsonl 2>&1 | head -5 && \
+  find artifacts/agents -maxdepth 1 -type d | wc -l'
+# Erwartet: alle drei JSONLs mit Hunderten/Tausenden Zeilen, 9+ agents-Subdirs.
+```
+
+> **Wenn die Whitelist-Variante 2.4.0a verwendet wurde, koennen 2.4.1-2.4.5 (alte Pflicht-File-Liste) **uebersprungen** werden.** Die unten dokumentierte Hash-Verify-Logik ist als Audit-Spur fuer die hand-kuratierte Variante gedacht; bei Whitelist-Mirror ersetzt der `tar`-Round-Trip die Hash-Verify-Schicht.
+
+> **KEEP_LIVE-Begruendung pro File:**
+> - `telegram_channel_checkpoint.json` + `_listener_heartbeat` + `.telegram_channel_replay.json`: vom Listener seit Pi-neu-Start neu beschrieben, Pi-alt-Zustand wuerde Replay-Drift triggern.
+> - `paper_execution_audit.jsonl` + `telegram_message_envelope.jsonl` + `_channel_raw.jsonl` + `_signal_handoff.jsonl` + `_approval_send.jsonl` + `operator_commands.jsonl`: append-only, Pi-neu hat seit Cutover-Start neue Zeilen die Pi-alt nicht hat.
+> - `freshness_status.json`: live-overwritten von kai-server, Pi-neu-Wert ist aktueller.
 
 #### 2.4.1 Hash-Snapshot Pi 4b (alle kritischen Files)
 

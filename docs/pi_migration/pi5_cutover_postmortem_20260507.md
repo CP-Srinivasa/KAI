@@ -35,7 +35,7 @@
 
 ---
 
-## Befunde — 3 Runbook-Lücken
+## Befunde — 5 Runbook-Lücken
 
 ### B-1 — `telethon.log_out()` zerstört die lokale `.session`-Datei
 
@@ -77,6 +77,43 @@ systemd öffnet `StandardOutput=append:` **vor** `ExecStartPre`. Wenn `logs/` ni
 
 **Fix-Pfad (im Repo):** `deploy/tmpfiles/kai.conf` mit `d /home/kai/ai_analyst_trading_bot/logs 0755 ubuntu ubuntu` einchecken; `scripts/pi_install_systemd.sh` extend um Tmpfiles-Install + `systemd-tmpfiles --create kai.conf`. Damit ist `logs/` vor jedem Service-Start durch `systemd-tmpfiles-setup.service` garantiert vorhanden, ExecStartPre kann als Defense-in-Depth (chown bei Permission-Drift) bleiben.
 
+### B-4 — `web/dist/` (Vite-SPA-Build) ist gitignored, beim Cutover nicht transferiert
+
+**Symptom:** Nach Cutover-Phase 3.6 reagiert das Dashboard im Browser mit HTTP 404 fuer `/dashboard/`. `curl -I http://127.0.0.1:8000/dashboard/` lokal auf Pi 5 returnt `404 Not Found`. Operator sieht "Dashboard laeuft gar nicht mehr — sowohl Browser als auch Telegram".
+
+**Ursache:** `web/dist/` (Vite-SPA-Build, 5.2 MB auf Pi 4b) ist in `.gitignore` ausgeschlossen — `git clone` auf Pi 5 hat das Verzeichnis nicht mit-uebertragen. Phase 1.3 des Runbooks beschreibt nur Repo-Klon + venv + `uv pip install -e .`, **nicht** `scripts/pi_deploy_web.sh`. Der einzige Hinweis lebt als Pre-Install-Warning in `pi_install_systemd.sh:108-112`, die im 2026-05-07-Manual-Bypass-Pfad gar nicht ausgeloest wurde.
+
+**Operator-Impact im Cutover:** ~30 min sichtbarer Service-Ausfall nach Phase 3.6, bis `scripts/pi_deploy_web.sh ubuntu@192.168.178.23` als Recovery gelaufen ist + kai-server-Restart fuer StaticFiles-Mount-Reload.
+
+**Fix-Pfad:** Runbook neue Phase 1.4 mit `bash scripts/pi_deploy_web.sh ubuntu@<pi5-ip>` direkt nach Phase 1.3 (`uv pip install -e .`). Skript ist idempotent, baut auf dem Laptop (Pi-OOM-Schutz), scp + Hash-Verify + kai-server-Restart automatisch.
+
+### B-5 — Phase-2.4-Pflicht-File-Liste war massiv unvollstaendig
+
+**Symptom:** Direkt nach Phase 3.6 zeigte das Dashboard auffaellige Werte: Forward-Precision `—%`, Resolved Alerts `0`, Signal-Qualitaet alle Felder `—`, **Agent Roster komplett offline**, "Letzte Directional Alerts" tot, Active Precision per-Source leer, Pfad-A schleppend (97/200 statt vermuteter Vollstaendigkeit).
+
+**Ursache:** Der Runbook-Phase-2.4 listet **11 Pflicht-Files** als zu transferieren (`data/dev.db` + 9 `artifacts/*.jsonl|json` + `.env`). Pi 4b hatte aber zum Cutover-Zeitpunkt **93 Dateien** in `artifacts/` (23 MB), darunter Dashboard-kritische:
+
+| File | Pi 4b | Pi 5 nach Phase 2.4 | Tile/Endpoint betroffen |
+|---|---|---|---|
+| `alert_audit.jsonl` | 7573 Z. | 1 Z. | Resolved Alerts, Pfad A |
+| `alert_outcomes.jsonl` | 7003 Z. | nicht da | Forward-Precision, Hit/Miss |
+| `trading_loop_audit.jsonl` | 4638 Z. | 12 Z. | Priority-Gate, Loop-Status |
+| `blocked_alerts.jsonl` | 755 Z. | 1 Z. | Alert-Filter-Statistik |
+| `bridge_pending_orders.jsonl` | 336 Z. | 40 Z. | Paper-Bridge-Audit |
+| `api_request_audit.jsonl` | 61258 Z. | 341 Z. | API-Audit |
+| `decision_journal.jsonl` | 16 Z. | nicht da | Decision-Log-Tail |
+| `operator_api_guarded_audit.jsonl` | 864 Z. | nicht da | Operator-API-Trail |
+| `mcp_write_audit.jsonl` | 44 Z. | nicht da | MCP-Tool-Audit |
+| `tradingview_*.jsonl` | mehrere | nicht da | TV-Pipeline |
+| `artifacts/agents/` | 8 Subdirs (architect/sentr/dali/neo/satoshi/watchdog/operator/daily_review) | komplett fehlend | **Agent Roster offline** |
+| `artifacts/active_route_profile.json`, `freshness_status.json` | ja | nicht da | Live-Status-Indikator |
+
+Insgesamt **76 Files fehlten** + 6 waren auf Pi 5 truncated.
+
+**Operator-Impact im Cutover:** Dashboard sah nach erfolgreicher Phase 3.6 fast "tot" aus — Operator hat das in zwei Eskalations-Schritten gemeldet. Recovery via tar-Transfer Pi 4b → Pi 5 mit selektiver Whitelist fuer die 9 Phase-2.4-Files (die seit Cutover-Start neue appended Zeilen haben) + kai-server/agent-worker Restart.
+
+**Fix-Pfad fuer Runbook Phase 2.4:** Pflicht-File-Liste durch **Whitelist-Mechanismus** ersetzen: alles in `artifacts/` transferieren ausser den 9 `KEEP_LIVE`-Files (die seit Cutover-Start auf Pi 5 neue appended Zeilen haben). Sauberer als hand-kuratierte Liste, die jedes neue JSONL strukturell vergisst. Plus `web/dist/` (siehe B-4).
+
 ---
 
 ## Action-Items
@@ -88,12 +125,15 @@ systemd öffnet `StandardOutput=append:` **vor** `ExecStartPre`. Wenn `logs/` ni
 | A-3 | Watchdog-Probe (Runbook Phase 4) auf Pi 5 fahren | T+24h, 2026-05-08 |
 | A-4 | Pi 4b shutdown + `data/dev_db_pi4b_final_20260508.snapshot` archivieren | T+24h, 2026-05-08 |
 | A-5 | Memory-Pflege: `kai_pi5_cutover_track.md` → completed, F-Status-Memory → Pi 5 live | ✅ |
+| A-6 | Runbook-Patch B-4 — neue Phase 1.4 mit `pi_deploy_web.sh` | siehe Folge-Commit (B-4+B-5) |
+| A-7 | Runbook-Patch B-5 — Phase 2.4 Pflicht-File-Liste auf Whitelist-Mechanismus umstellen | siehe Folge-Commit (B-4+B-5) |
 
 ---
 
 ## Cross-Refs
 
-- Runbook: `artifacts/runbooks/pi5_cutover.md`
+- Runbook (committed): `docs/pi_migration/pi5_cutover.md`
+- Runbook (Pi-lokal historisch): `artifacts/runbooks/pi5_cutover.md`
 - Tag (Rollback-Anker): `pre-pi5-cutover-2026-05-05` (`210f526`)
 - HEAD beim Cutover: `b46ed4a` (chore(pi5-cutover): pre-cutover hygiene — telegram-logout + logrotate)
 - Memory: `feedback_pi_cutover_runbook_gaps.md` (3 Lehren detailliert für nächsten Cutover/DR)

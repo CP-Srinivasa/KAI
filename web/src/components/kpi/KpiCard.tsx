@@ -45,7 +45,18 @@ export function KpiCard({
     gap === undefined ? "warn" : gap >= 0 ? "pos" : "neg";
 
   return (
-    <Card className="relative overflow-hidden" padded>
+    <Card
+      className={cn(
+        "relative overflow-hidden border-l-2",
+        tone === "pos" && "border-l-pos/70",
+        tone === "neg" && "border-l-neg/70",
+        tone === "warn" && "border-l-warn/70",
+        tone === "info" && "border-l-info/70",
+        tone === "ai" && "border-l-ai/70",
+        tone === "neutral" && "border-l-line-subtle",
+      )}
+      padded
+    >
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <div className="flex items-center gap-1.5 text-2xs font-semibold uppercase tracking-[0.08em] text-fg-subtle">
@@ -53,7 +64,17 @@ export function KpiCard({
             <span className="truncate">{label}</span>
           </div>
           <div className="mt-2 flex items-baseline gap-1.5">
-            <span className="text-[26px] leading-none font-semibold tracking-tight text-fg font-mono">
+            <span
+              className={cn(
+                "text-[26px] leading-none font-semibold tracking-tight font-mono",
+                tone === "pos" && "text-pos",
+                tone === "neg" && "text-neg",
+                tone === "warn" && "text-warn",
+                tone === "info" && "text-info",
+                tone === "ai" && "text-ai",
+                tone === "neutral" && "text-fg",
+              )}
+            >
               {value}
             </span>
             {unit && <span className="text-xs text-fg-muted font-medium">{unit}</span>}

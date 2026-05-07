@@ -73,6 +73,13 @@ export function Dashboard() {
   const pf = data?.paper_fills ?? null;
   const kai = useKaiState();
 
+  const tierLiftTone = (pp: number | null): "pos" | "warn" | "neg" | "neutral" => {
+    if (pp == null) return "neutral";
+    if (pp >= 15) return "pos";
+    if (pp > -10) return "warn";
+    return "neg";
+  };
+
   return (
     <div className="p-5 xl:p-6 space-y-5 xl:space-y-6 max-w-[1680px] mx-auto">
       <header className="flex items-center justify-between flex-wrap gap-3">
@@ -177,7 +184,7 @@ export function Dashboard() {
           target={15}
           valueNumeric={ptl ?? undefined}
           deltaLabel="Ziel: ≥+15pp"
-          tone={ptl != null && ptl >= 15 ? "pos" : "warn"}
+          tone={tierLiftTone(ptl)}
           icon={<Radio size={12} />}
           helper={
             data?.priority_tier_lift_pct == null
