@@ -1,16 +1,20 @@
 import { memo, useMemo } from "react";
-import { Activity } from "lucide-react";
-import { Card, CardHeader, Badge } from "@/components/ui/Primitives";
+import { Card, CardHeader } from "@/components/ui/Primitives";
+import { LiveDot } from "@/components/ui/LiveDot";
 import type { DashboardQuality } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
-type Props = { data: DashboardQuality | null };
+type Props = {
+  data: DashboardQuality | null;
+  state: "loading" | "ready" | "error";
+  generatedAt: string | null;
+};
 
 function fmtPct(v: number | null | undefined): string {
   return v != null ? `${v.toFixed(2)}%` : "—";
 }
 
-function SignalQualityCardImpl({ data }: Props) {
+function SignalQualityCardImpl({ data, state, generatedAt }: Props) {
   const rows = useMemo<Array<[string, string, string?]>>(
     () =>
       data
@@ -29,12 +33,7 @@ function SignalQualityCardImpl({ data }: Props) {
     <Card padded>
       <CardHeader
         title="Signal-Qualität"
-        right={
-          <Badge tone="muted">
-            <Activity size={10} />
-            live
-          </Badge>
-        }
+        right={<LiveDot state={state} generatedAt={generatedAt} />}
       />
       {data ? (
         <div className="space-y-1.5">

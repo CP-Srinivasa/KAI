@@ -108,10 +108,15 @@ export function getKaiAssetSet(state: KaiState): KaiAssetSet {
 
   // Motion: only return paths if manifest explicitly says 'available'. Otherwise null,
   // and the component renders the static image (no broken video URL).
+  // IDLE-Bootstrap (2026-05-07): Welcome-Loop als WebM ist deployed, auch ohne Manifest aktiv.
   const animationGif =
     stateAssets && isAvailable(stateAssets.motion_gif) ? GIF_PATHS[state] : null;
   const animationWebm =
-    stateAssets && isAvailable(stateAssets.motion_webm) ? WEBM_PATHS[state] : null;
+    stateAssets && isAvailable(stateAssets.motion_webm)
+      ? WEBM_PATHS[state]
+      : !_manifest && state === "IDLE"
+        ? WEBM_PATHS["IDLE"]
+        : null;
 
   return {
     staticImage,
@@ -124,7 +129,9 @@ export function getKaiAssetSet(state: KaiState): KaiAssetSet {
 }
 
 // Helper for components: "should I show motion at all on this device?".
-// DALI Audit Risk 3: WebM auf Mobile aus, prefers-reduced-motion respektieren.
+// DALI Audit Risk 3: prefers-reduced-motion + slow-connection respektieren.
+// Mobile-Hard-Block 2026-05-07 entfernt — WebM ist 385 KB, auf 4G/5G unkritisch.
+// Slow-Connection-Block (2g/3g) deckt das Bandwidth-Risiko weiterhin ab.
 export interface MotionPolicy {
   allowMotion: boolean;
   reasonIfBlocked?: string;
@@ -138,9 +145,6 @@ export function getMotionPolicy(opts: {
 }): MotionPolicy {
   if (opts.prefersReducedMotion) {
     return { allowMotion: false, reasonIfBlocked: "user prefers reduced motion" };
-  }
-  if (opts.isMobile) {
-    return { allowMotion: false, reasonIfBlocked: "mobile viewport — static only" };
   }
   if (opts.effectiveConnectionType && ["2g", "3g", "slow-2g"].includes(opts.effectiveConnectionType)) {
     return { allowMotion: false, reasonIfBlocked: `slow connection (${opts.effectiveConnectionType})` };

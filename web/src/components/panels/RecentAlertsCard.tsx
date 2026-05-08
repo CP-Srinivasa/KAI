@@ -1,11 +1,16 @@
 import { memo } from "react";
 import { Inbox } from "lucide-react";
 import { Card, CardHeader, Badge } from "@/components/ui/Primitives";
+import { LiveDot } from "@/components/ui/LiveDot";
 import { EmptyState } from "@/components/ui/EmptyState";
 import type { DashboardQuality } from "@/lib/api";
 import { formatAbsolute, formatRelative } from "@/lib/time";
 
-type Props = { data: DashboardQuality | null };
+type Props = {
+  data: DashboardQuality | null;
+  state: "loading" | "ready" | "error";
+  generatedAt: string | null;
+};
 
 function SentimentBadge({ s }: { s: string }) {
   if (!s) return <span className="text-fg-subtle">—</span>;
@@ -19,18 +24,14 @@ function OutcomeBadge({ o }: { o: string }) {
   return <Badge tone={tone}>{o}</Badge>;
 }
 
-function RecentAlertsCardImpl({ data }: Props) {
+function RecentAlertsCardImpl({ data, state, generatedAt }: Props) {
   const rows = data?.recent_alerts ?? [];
   return (
     <Card padded>
       <CardHeader
         title="Letzte Directional Alerts"
         subtitle={`${rows.length} Einträge aus alert_audit.jsonl (jüngste zuerst)`}
-        right={
-          <Badge tone="muted" dot>
-            live
-          </Badge>
-        }
+        right={<LiveDot state={state} generatedAt={generatedAt} />}
       />
       {rows.length === 0 ? (
         <EmptyState

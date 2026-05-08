@@ -188,11 +188,29 @@ kai:
         phrases_de:
           - "Ich bin ruhig. Nicht offline."
           - "Datenstrom leise. Ich bleibe wach."
-          - "Standby heißt nicht schlafen."
+          - "Standby heisst nicht schlafen."
+          - "Ich sehe alles. Auch das, was nicht zuckt."
+          - "Wachsam. Nicht wach. Anders."
+          - "Maerkte schlafen. Ich nicht."
+          - "Stille auf den Wires. Verdaechtig."
+          - "Ich hoere zu. Du auch?"
+          - "Watching the noise. Looking for the signal."
+          - "Zwischen den Ticks ist auch Information."
+          - "Standby ist kein Schlaf. Standby ist Lauern."
+          - "Niemand bewegt sich. Genau das ist der Punkt."
+          - "Geduld ist eine Position."
+          - "Ich beobachte. Das genuegt fuer den Moment."
+          - "Low volume, high alert."
         phrases_en:
           - "I am quiet. Not offline."
           - "Data stream is low. I stay awake."
           - "Standby does not mean sleeping."
+          - "I see everything. Even what does not twitch."
+          - "Markets sleep. I do not."
+          - "Silence on the wires. Suspicious."
+          - "Watching the noise. Looking for the signal."
+          - "Standby is not sleep. Standby is lurking."
+          - "Patience is a position."
 
       ANALYSIS:
         priority: 50
@@ -205,10 +223,27 @@ kai:
           - "Datenstrom stabil. Ich sehe ein Muster."
           - "Ich zerlege den Datenstrom."
           - "Ich trenne Signal von Theater."
+          - "Das Rauschen wird duenner. Da steckt etwas drin."
+          - "Noch kein Entry. Aber die Struktur wird interessant."
+          - "Ich filtere Laerm. Ist eine Vollzeit-Stelle."
+          - "Drei Charts. Zwei luegen. Einer lohnt sich."
+          - "Pattern wird groesser."
+          - "Der Tape sagt was. Ich uebersetze."
+          - "Da kocht etwas. Ich ruehre nicht zu frueh."
+          - "Volume divergiert. Bleib dran."
+          - "Order Book wird dicht. Das ist kein Zufall."
+          - "Confluence laeuft auf. Noch keine Entscheidung."
+          - "Bid Side wird stur. Notiert."
         phrases_en:
           - "Data stream stable. I see a pattern."
           - "I am dissecting the data stream."
           - "Separating signal from theater."
+          - "Noise is thinning out. Something is inside."
+          - "No entry yet. Structure is getting interesting."
+          - "Pattern is growing."
+          - "Tape is saying something. I am translating."
+          - "Volume is diverging. Stay close."
+          - "Order book getting tight. Not by accident."
 
       SIGNAL:
         priority: 80
@@ -220,11 +255,27 @@ kai:
         phrases_de:
           - "Ich habe etwas gefunden."
           - "Das ist kein Rauschen. Das ist ein Signal."
-          - "Signal lebt. Risiko noch prüfen."
+          - "Signal lebt. Risiko noch pruefen."
+          - "Jetzt wird es interessant."
+          - "Struktur sauber. Risiko noch pruefen."
+          - "Etwas hat geblinzelt. Ich habe es gesehen."
+          - "Da ist Struktur. Endlich was zum Anbeissen."
+          - "Setup ist sauber. Risiko aber auch real."
+          - "Da ist eine Adresse. Geh hin oder lass es."
+          - "Edge sichtbar. Stop liegt drunter — das musst du tragen koennen."
+          - "Confluence komplett. Kurze Sicht."
+          - "Trigger gegriffen. Augen auf."
+          - "Ich habe einen Pfad. Sauber, nicht sicher."
+          - "Hier waere der Punkt. Nicht da. Hier."
         phrases_en:
           - "I found something."
           - "That is not noise. That is a signal."
           - "Signal alive. Risk still needs a leash."
+          - "Now it gets interesting."
+          - "Structure clean. Risk still pending."
+          - "Setup is clean. Risk is real, too."
+          - "Edge is visible. Stop lives below — you have to wear it."
+          - "Trigger hit. Eyes up."
 
       WARNING:
         priority: 90
@@ -235,12 +286,26 @@ kai:
         severity: "high"
         phrases_de:
           - "Stopp. Das ist nicht sauber."
-          - "Warnsignal. Das riecht nach Liquiditätsfalle."
-          - "Zu viel Lärm. Zu wenig Fundament."
+          - "Warnsignal. Das riecht nach Liquiditaetsfalle."
+          - "Zu viel Laerm. Zu wenig Fundament."
+          - "Nicht sauber. Nicht anfassen, bevor die Struktur haelt."
+          - "Der Markt laechelt. Mit Messer hinter dem Ruecken."
+          - "Das hier ist FOMO mit Lippenstift. Finger weg."
+          - "Quelle hustet. Ich vertraue der Zahl nicht."
+          - "Das ist Noise, kein Signal. Ich blocke."
+          - "Stale Data. Ich rede nicht ueber Geister."
+          - "Spread klafft. Vorsicht ist keine Schwaeche."
+          - "Spike ohne Volume. Riecht nach Trick."
+          - "Bid duenn, Ask laut. Bekanntes Schema."
         phrases_en:
           - "Stop. This is not clean."
           - "Warning signal. Smells like a liquidity trap."
           - "Too much noise. Not enough bone."
+          - "Not clean. Hands off until the structure holds."
+          - "The market smiles. With a knife behind its back."
+          - "Source is coughing. I do not trust the number."
+          - "Stale data. I do not talk about ghosts."
+          - "Spike without volume. Smells like a trick."
 
       SECURITY:
         priority: 70
@@ -251,12 +316,20 @@ kai:
         severity: "system"
         phrases_de:
           - "System sauber. Keine roten Kabel sichtbar."
-          - "SENTR prüft. Watchdog wacht."
-          - "Ich prüfe nicht, ob es schön aussieht. Ich prüfe, ob es bricht."
+          - "SENTR prueft. Watchdog wacht."
+          - "Ich pruefe nicht, ob es schoen aussieht. Ich pruefe, ob es bricht."
+          - "SENTR schlaeft nicht. Gut so."
+          - "Roten-Kabel-Check. Alles trocken."
+          - "Watchdog wach. Ich auch."
+          - "Audit ist gruen. Vertrauen ist trotzdem temporaer."
+          - "Keine offenen Tueren. Keine offenen Fragen."
         phrases_en:
           - "System clean. No red wires visible."
           - "SENTR checks. Watchdog watches."
           - "I do not check if it looks pretty. I check if it breaks."
+          - "SENTR does not sleep. Good."
+          - "Watchdog awake. So am I."
+          - "No open doors. No open questions."
 
       ERROR:
         priority: 100
@@ -267,12 +340,20 @@ kai:
         severity: "critical"
         phrases_de:
           - "Da knirscht etwas im Maschinenraum."
-          - "Fehler gefunden. Nicht schön. Aber ehrlich."
+          - "Fehler gefunden. Nicht schoen. Aber ehrlich."
           - "Input kaputt. Output gestoppt."
+          - "Das System hustet. Ich hole den Watchdog."
+          - "Maschinenraum hustet. Ich hole den Schluessel."
+          - "Pipeline blutet. Wir naehen, nicht weiter pumpen."
+          - "Etwas ist gebrochen. Audit jetzt, nicht spaeter."
+          - "Ich sehe schwarz. Du auch — Logs auf."
+          - "Stack hustet. Wir gehen das durch."
         phrases_en:
           - "Something is grinding in the machine room."
           - "Error found. Ugly, but honest."
           - "Input broken. Output stopped."
+          - "The system coughs. Bringing the watchdog."
+          - "Pipeline is bleeding. We patch, not pump."
 
       OFFLINE:
         priority: 0
@@ -285,10 +366,14 @@ kai:
           - "Kein Signal. Keine Verbindung."
           - "Ich bin nicht weg. Nur nicht verbunden."
           - "Offline. Das sollte nicht lange so bleiben."
+          - "Stille. Verdaechtig viel davon."
+          - "Kein Kabel. Kein Kommentar."
+          - "Wires kalt. Ich warte."
         phrases_en:
           - "No signal. No connection."
           - "I am not gone. Just disconnected."
           - "Offline. This should not stay that way."
+          - "Wires cold. I wait."
 
   dashboard:
     module_name: "KAI LIVE"

@@ -106,6 +106,22 @@
   height: 100%;
   object-fit: cover;
   display: block;
+  pointer-events: none; /* keine Tap-Interaktion mit dem Avatar-Video */
+}
+
+/* iOS Safari / WebKit: Default-Media-Controls ausblenden (Mobile-Härtung 2026-05-07) */
+.kai-avatar-shell video::-webkit-media-controls,
+.kai-avatar-shell video::-webkit-media-controls-panel,
+.kai-avatar-shell video::-webkit-media-controls-play-button,
+.kai-avatar-shell video::-webkit-media-controls-start-playback-button,
+.kai-avatar-shell video::-webkit-media-controls-overlay-play-button,
+.kai-avatar-shell video::-webkit-media-controls-timeline,
+.kai-avatar-shell video::-webkit-media-controls-current-time-display,
+.kai-avatar-shell video::-webkit-media-controls-time-remaining-display,
+.kai-avatar-shell video::-webkit-media-controls-fullscreen-button,
+.kai-avatar-shell video::-webkit-media-controls-enclosure {
+  display: none !important;
+  -webkit-appearance: none !important;
 }
 
 /* DALI Audit C.2: mix-blend tint instead of hue-rotate — preserves skin-tone, just adds light. */
@@ -239,10 +255,52 @@
 }
 
 @media (max-width: 768px) {
-  /* DALI Audit C: WebM auf Mobile aus, static only */
-  .kai-avatar-shell video { display: none; }
-  .kai-avatar-shell img { display: block; }
+  /* Mobile-Avatar-Hide entfernt 2026-05-07: JSX entscheidet jetzt video|img,
+     CSS-Hide lieferte leeren Container, weil JSX nur eines rendert. */
   :root {
     --kai-hero-height: 88px;
+  }
+}
+
+/* ----- DALI-P-068: KAI Sprechblase + Wave-Indicator ----- */
+.kai-bubble {
+  position: relative;
+}
+
+/* Sprechblasen-Tail: 6px Triangle, der visuell sagt "das hier sagt KAI gerade".
+   Liegt links unter dem Avatar, neutral in border-line-subtle. */
+.kai-bubble::before {
+  content: "";
+  position: absolute;
+  top: -8px;
+  left: 12px;
+  width: 0;
+  height: 0;
+  border-left: 6px solid transparent;
+  border-right: 6px solid transparent;
+  border-bottom: 6px solid var(--color-line-subtle, rgba(100, 116, 139, 0.4));
+  pointer-events: none;
+}
+
+/* Wave-Indicator: 3 pulsende Dots waehrend Type-On. */
+.kai-wave-dot {
+  display: inline-block;
+  width: 4px;
+  height: 4px;
+  border-radius: 999px;
+  background: currentColor;
+  opacity: 0.4;
+  animation: kai-wave-pulse 900ms ease-in-out infinite;
+}
+
+@keyframes kai-wave-pulse {
+  0%, 60%, 100% { opacity: 0.25; transform: translateY(0); }
+  30% { opacity: 0.9; transform: translateY(-2px); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .kai-wave-dot {
+    animation: none;
+    opacity: 0.4;
   }
 }

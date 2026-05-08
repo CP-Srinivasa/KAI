@@ -85,6 +85,47 @@ function useEffectiveConnectionType(): string | undefined {
   return type;
 }
 
+function KaiAvatarVideo({ src, poster, playLimit }: { src: string; poster: string; playLimit: number }) {
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const loopsCompletedRef = useRef(0);
+  const lastTimeRef = useRef(0);
+  const stoppedRef = useRef(false);
+  return (
+    <video
+      ref={videoRef}
+      src={src}
+      poster={poster}
+      autoPlay
+      muted
+      loop
+      playsInline
+      controls={false}
+      controlsList="nodownload nofullscreen noremoteplayback noplaybackrate"
+      disablePictureInPicture
+      disableRemotePlayback
+      className="kai-avatar-video"
+      onTimeUpdate={() => {
+        const v = videoRef.current;
+        if (!v || stoppedRef.current) return;
+        // Wraparound-Detection: currentTime springt von ~duration auf ~0 zurück
+        if (v.currentTime + 0.5 < lastTimeRef.current) {
+          loopsCompletedRef.current += 1;
+          if (loopsCompletedRef.current >= playLimit) {
+            stoppedRef.current = true;
+            v.loop = false;
+            v.pause();
+            // Auf letzten Frame springen (= poster), kein Controls-Flash
+            if (Number.isFinite(v.duration)) {
+              v.currentTime = Math.max(0, v.duration - 0.05);
+            }
+          }
+        }
+        lastTimeRef.current = v.currentTime;
+      }}
+    />
+  );
+}
+
 export function KaiAvatar({ state, size = "full", className }: Props) {
   const [ref, isIntersecting] = useInViewport<HTMLDivElement>();
   const prefersReducedMotion = usePrefersReducedMotion();
@@ -115,14 +156,10 @@ export function KaiAvatar({ state, size = "full", className }: Props) {
     >
       <div className="kai-avatar-shell" style={{ width: px, height: px }}>
         {motion.allowMotion && assets.animationWebm ? (
-          <video
+          <KaiAvatarVideo
             src={assets.animationWebm}
             poster={assets.staticImage}
-            autoPlay
-            muted
-            loop
-            playsInline
-            className="kai-avatar-video"
+            playLimit={2}
           />
         ) : (
           <img
