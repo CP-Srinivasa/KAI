@@ -149,6 +149,8 @@ async def auto_annotate_pending(
     move_threshold: float = _DEFAULT_MOVE_THRESHOLD,
     reeval_inconclusive: bool = True,
     backfill_batch: int = _DEFAULT_BACKFILL_BATCH,
+    catchup_unannotated: bool = False,
+    catchup_batch: int = 50,
     dry_run: bool = False,
 ) -> list[AlertOutcomeAnnotation]:
     """Annotate all eligible directional alerts that are old enough.
@@ -185,6 +187,7 @@ async def auto_annotate_pending(
     pending: list[tuple[AlertAuditRecord, datetime, bool]] = []  # (rec, dt, is_stale)
     seen_doc_ids: set[str] = set()
     stale_count = 0
+    catchup_count = 0
     for rec in audits:
         if rec.directional_eligible is False:
             continue
@@ -206,9 +209,19 @@ async def auto_annotate_pending(
         is_stale = dt < max_cutoff
 
         if current_outcome is None:
-            # Never annotated — only within normal window.
+            # Never annotated — within normal window OR catchup-mode for stale.
             if is_stale:
-                continue
+                # V-DB4d 2026-05-08: Backlog-Catchup-Mode.
+                # Standard-Verhalten: stale + nie-annotiert wird verworfen — das
+                # produziert den 423-Backlog wenn der Timer ueber Tage ausfaellt.
+                # Mit catchup_unannotated=True werden bis zu catchup_batch alte
+                # unannotated Records mit fixed 7d-window (wie D-138 stale-reeval)
+                # nachgezogen, bevor sie endgueltig verloren sind.
+                if not catchup_unannotated:
+                    continue
+                if catchup_count >= catchup_batch:
+                    continue
+                catchup_count += 1
         elif current_outcome == "inconclusive" and reeval_inconclusive:
             # Re-evaluate if old enough (24h+ since dispatch).
             if dt > reeval_cutoff:
@@ -235,6 +248,7 @@ async def auto_annotate_pending(
         pending_count=len(pending),
         fresh=fresh_count,
         stale_backfill=stale_count,
+        catchup_unannotated=catchup_count,
     )
 
     from app.core.settings import get_settings

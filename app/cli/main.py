@@ -1738,6 +1738,16 @@ def alerts_auto_annotate(
         "--backfill-batch",
         help="Max stale (>72h) inconclusives to re-evaluate per run (0=skip)",
     ),
+    catchup_unannotated: bool = typer.Option(
+        False,
+        "--catchup",
+        help="V-DB4d: also process stale (>72h) unannotated alerts (one-time backlog).",
+    ),
+    catchup_batch: int = typer.Option(
+        50,
+        "--catchup-batch",
+        help="Max stale unannotated alerts per run when --catchup is set.",
+    ),
     dry_run: bool = typer.Option(
         False,
         "--dry-run",
@@ -1748,6 +1758,7 @@ def alerts_auto_annotate(
 
     D-132: volatility-adaptive thresholds, inconclusive re-evaluation.
     D-138: stale inconclusives backfilled with fixed 7d attribution window.
+    V-DB4d: --catchup-Modus fuer Backlog von >72h unannotated alerts.
     """
     import asyncio
 
@@ -1762,6 +1773,8 @@ def alerts_auto_annotate(
             move_threshold=move_threshold,
             reeval_inconclusive=not no_reeval,
             backfill_batch=backfill_batch,
+            catchup_unannotated=catchup_unannotated,
+            catchup_batch=catchup_batch,
             dry_run=dry_run,
         )
     )

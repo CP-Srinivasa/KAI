@@ -11,10 +11,12 @@ from app.alerts.eligibility import (
     BLOCK_REASON_MISSING_ASSETS,
     BLOCK_REASON_NAKED_ASSET,
     BLOCK_REASON_NOT_ACTIONABLE,
+    BLOCK_REASON_PROMO_PATTERN,
     BLOCK_REASON_UNSUPPORTED_ASSETS,
     BLOCK_REASON_WEAK_SIGNAL,
     MIN_IMPACT_SCORE_BULLISH,
     MIN_SENTIMENT_MAGNITUDE,
+    _is_promotional,
     _is_reactive_bearish,
     evaluate_directional_eligibility,
 )
@@ -518,3 +520,146 @@ def test_tradingview_webhook_blocks_directional() -> None:
     )
     assert decision.directional_eligible is False
     assert decision.directional_block_reason == BLOCK_REASON_LOW_PRECISION_SOURCE
+
+
+# V-DB4b 2026-05-08: Promotional/listicle filter
+@pytest.mark.parametrize(
+    "title",
+    [
+        "Cardano Price Sits 92% Below Its Peak While Pepeto Presale Hits $9 Million Ahead of Binance Listing",
+        "Could the Crypto Price Prediction for Bitcoin and Ethereum Catch Up to What Pepeto Offers Before Listing",
+        "Best Crypto Presale 2026: Pepeto Eyes 100x Before Listing While PEPE and SHIB Trail",
+        "Could Pepeto Be One of the Top 3 Cryptos to Buy Now as Solana and Cardano Push Higher",
+        "Crypto Update: The Second Chance Entry Pepeto Offers While XRP and Dogecoin Grind",
+        "SHIB Burn Frenzy Spikes 812% While Token Targets 100x Potential",
+    ],
+)
+def test_promo_listicle_title_blocked(title: str) -> None:
+    """V-DB4b: Promo/Listicle/Pre-Sale-Headlines werden gestoppt vor Score-Gates."""
+    decision = evaluate_directional_eligibility(
+        sentiment_label="bullish",
+        affected_assets=["BTC/USDT"],
+        sentiment_score=0.8,
+        impact_score=0.7,
+        title=title,
+        directional_confidence=0.9,
+        actionable=True,
+        priority=9,
+    )
+    assert decision.directional_eligible is False
+    assert decision.directional_block_reason == BLOCK_REASON_PROMO_PATTERN
+
+
+@pytest.mark.parametrize(
+    "title",
+    [
+        "Coinbase Q1 Highlights: Double Miss, Market Share Record High",
+        "Aptos Foundation, Aptos Labs commit $50M to development",
+        "AWS Northern Virginia data center overheats, impacting Coinbase",
+        "MicroStrategy buys 2,500 BTC at average price of $89,000",
+        "SEC approves new spot Bitcoin ETF application",
+        "Hyperliquid Strategies Inc reports $152.5 million net profit",
+    ],
+)
+def test_legit_news_passes_promo_filter(title: str) -> None:
+    """Echte Marktnachrichten dürfen NICHT als Promo gefiltert werden."""
+    assert _is_promotional(title) is False
+
+
+def test_is_promotional_helper_explicit() -> None:
+    """Direkter Pattern-Match-Test."""
+    # Truthy-Cases
+    assert _is_promotional("Pepeto Presale Hits $9 Million") is True
+    assert _is_promotional("Top 3 Cryptos to Buy in 2026") is True
+    assert _is_promotional("100x Before Listing") is True
+    assert _is_promotional("Could hit $50,000 by July") is True
+    assert _is_promotional("burn frenzy ignites altcoin season") is True
+    # Falsy-Cases
+    assert _is_promotional("Bitcoin spot ETF inflows hit $245M") is False
+    assert _is_promotional("Coinbase reports earnings miss") is False
+    assert _is_promotional("Federal Reserve announces rate decision") is False
+
+
+# V-DB4c 2026-05-08: Source-Watchlist soft confidence adjuster
+def test_source_watchlist_modifier_blocks_p8_when_listed(tmp_path, monkeypatch) -> None:
+    """Watchlist-Source mit P8 wird durch Modifier zu effektiv P7 → LOW_PRIORITY-Block."""
+    from app.alerts import eligibility as elig
+
+    # Schreibe eine Test-Watch-Liste
+    watch_file = tmp_path / "source_watch.txt"
+    watch_file.write_text("# test\nweakhouse\n")
+    monkeypatch.chdir(tmp_path.parent)
+    (tmp_path.parent / "monitor").mkdir(exist_ok=True)
+    (tmp_path.parent / "monitor" / "source_watch.txt").write_text(
+        "# test\nweakhouse\n", encoding="utf-8"
+    )
+    elig._invalidate_source_watchlist_cache()
+
+    decision = evaluate_directional_eligibility(
+        sentiment_label="bullish",
+        affected_assets=["BTC/USDT"],
+        sentiment_score=0.8,
+        impact_score=0.7,
+        title="Some legit news",
+        actionable=True,
+        priority=8,  # Original P8 → mit Modifier effektiv P7
+        source_name="weakhouse",
+    )
+    assert decision.directional_eligible is False
+    assert decision.directional_block_reason == BLOCK_REASON_LOW_PRIORITY
+
+    elig._invalidate_source_watchlist_cache()
+
+
+def test_source_watchlist_modifier_keeps_p9_eligible(tmp_path, monkeypatch) -> None:
+    """Watchlist-Source mit P9 wird zu effektiv P8 — eligible, aber tiefer eingestuft."""
+    from app.alerts import eligibility as elig
+
+    (tmp_path.parent / "monitor").mkdir(exist_ok=True)
+    (tmp_path.parent / "monitor" / "source_watch.txt").write_text(
+        "weakhouse\n", encoding="utf-8"
+    )
+    monkeypatch.chdir(tmp_path.parent)
+    elig._invalidate_source_watchlist_cache()
+
+    decision = evaluate_directional_eligibility(
+        sentiment_label="bullish",
+        affected_assets=["BTC/USDT"],
+        sentiment_score=0.8,
+        impact_score=0.7,
+        title="Some legit news",
+        actionable=True,
+        priority=9,  # Original P9 → mit Modifier effektiv P8 → eligible
+        source_name="weakhouse",
+    )
+    # weakhouse ist NICHT in _LOW_PRECISION_SOURCES → kommt durch LOW_PRIORITY
+    # mit effective_priority=8 (über P7-Threshold), bleibt eligible.
+    assert decision.directional_eligible is True
+
+    elig._invalidate_source_watchlist_cache()
+
+
+def test_source_watchlist_no_effect_when_not_listed(tmp_path, monkeypatch) -> None:
+    """Source nicht auf Watch-Liste → keine Modifizierung."""
+    from app.alerts import eligibility as elig
+
+    (tmp_path.parent / "monitor").mkdir(exist_ok=True)
+    (tmp_path.parent / "monitor" / "source_watch.txt").write_text(
+        "weakhouse\n", encoding="utf-8"
+    )
+    monkeypatch.chdir(tmp_path.parent)
+    elig._invalidate_source_watchlist_cache()
+
+    decision = evaluate_directional_eligibility(
+        sentiment_label="bullish",
+        affected_assets=["BTC/USDT"],
+        sentiment_score=0.8,
+        impact_score=0.7,
+        title="Some legit news",
+        actionable=True,
+        priority=8,
+        source_name="cointelegraph",  # NICHT auf Watchlist
+    )
+    assert decision.directional_eligible is True
+
+    elig._invalidate_source_watchlist_cache()

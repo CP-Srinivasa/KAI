@@ -104,8 +104,9 @@ export function KpiCard({
                     gapTone === "pos" && "bg-pos/10 text-pos",
                     gapTone === "neg" && "bg-neg/10 text-neg",
                   )}
-                  title={`Ziel: ${(target as number).toLocaleString("de-DE")}${gapUnit}`}
+                  title={`Differenz Wert minus Ziel · Ziel: ${(target as number).toLocaleString("de-DE")}${gapUnit}`}
                 >
+                  <span className="text-fg-subtle/80 mr-0.5">Δ</span>
                   {gap >= 0 ? "+" : ""}
                   {formatGap(gap)}
                   {gapUnit}
@@ -114,7 +115,7 @@ export function KpiCard({
                   </span>
                 </span>
               )}
-              {deltaLabel && !hasGap && <span className="text-fg-subtle">{deltaLabel}</span>}
+              {deltaLabel && <span className="text-fg-subtle">{deltaLabel}</span>}
             </div>
           )}
         </div>
@@ -138,18 +139,37 @@ export function KpiCard({
         )}
       </div>
 
-      {progressPct !== undefined && (
-        <div className="mt-3 h-1 rounded-full bg-bg-3 overflow-hidden" aria-hidden>
+      {progressPct !== undefined && (() => {
+        const isOutOfRange = progressPct === 0 && (tone === "warn" || tone === "neg");
+        const fillWidth = isOutOfRange ? 100 : progressPct;
+        return (
           <div
             className={cn(
-              "h-full transition-[width] duration-300",
-              gapTone === "pos" && "bg-pos",
-              gapTone === "neg" && "bg-neg",
+              "mt-3 h-1.5 rounded-full overflow-hidden",
+              tone === "pos" && "bg-pos/20",
+              tone === "neg" && "bg-neg/20",
+              tone === "warn" && "bg-warn/20",
+              tone === "info" && "bg-info/20",
+              tone === "ai" && "bg-ai/20",
+              tone === "neutral" && "bg-bg-3",
             )}
-            style={{ width: `${progressPct}%` }}
-          />
-        </div>
-      )}
+            aria-hidden
+          >
+            <div
+              className={cn(
+                "h-full transition-[width] duration-300",
+                tone === "pos" && "bg-pos",
+                tone === "neg" && "bg-neg",
+                tone === "warn" && "bg-warn",
+                tone === "info" && "bg-info",
+                tone === "ai" && "bg-ai",
+                tone === "neutral" && "bg-fg-muted",
+              )}
+              style={{ width: `${fillWidth}%` }}
+            />
+          </div>
+        );
+      })()}
 
       {helper && (
         <div className="mt-3 pt-3 border-t border-line-subtle text-2xs text-fg-muted">{helper}</div>

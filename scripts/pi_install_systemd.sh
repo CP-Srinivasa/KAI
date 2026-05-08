@@ -11,6 +11,13 @@
 #     sudo bash scripts/pi_install_systemd.sh --uninstall
 #     sudo bash scripts/pi_install_systemd.sh --force    # skip path-warning prompt
 #                                                          (SSH non-interactive; D-208)
+#     sudo bash scripts/pi_install_systemd.sh --no-enable # install + daemon-reload only,
+#                                                          # do NOT enable/start units.
+#                                                          # Cutover pre-stage: keeps the
+#                                                          # new host idle so it does not
+#                                                          # race the old host (e.g.
+#                                                          # cloudflared/Telegram-Session
+#                                                          # single-instance constraints).
 #
 # The script assumes the KAI checkout lives at /home/kai/ai_analyst_trading_bot
 # (path is hard-coded in the unit files). If you deploy elsewhere, edit the
@@ -41,6 +48,8 @@ UNITS=(
     "kai-service-watchdog.timer"
     "kai-hold-report.service"
     "kai-hold-report.timer"
+    "kai-auto-annotate.service"
+    "kai-auto-annotate.timer"
 )
 
 ENABLE_ON_INSTALL=(
@@ -54,18 +63,21 @@ ENABLE_ON_INSTALL=(
     "kai-pi-health.timer"
     "kai-service-watchdog.timer"
     "kai-hold-report.timer"
+    "kai-auto-annotate.timer"
 )
 
 DRY_RUN=0
 UNINSTALL=0
 FORCE=0
+NO_ENABLE=0
 for arg in "$@"; do
     case "$arg" in
         --dry-run) DRY_RUN=1 ;;
         --uninstall) UNINSTALL=1 ;;
         --force) FORCE=1 ;;
+        --no-enable) NO_ENABLE=1 ;;
         -h|--help)
-            sed -n '3,17p' "$0"
+            sed -n '3,24p' "$0"
             exit 0
             ;;
         *) echo "unknown arg: $arg" >&2; exit 2 ;;
@@ -163,6 +175,18 @@ install() {
     run systemd-tmpfiles --create "$TMPFILES_DST"
 
     run systemctl daemon-reload
+
+    if (( NO_ENABLE == 1 )); then
+        echo ""
+        echo "--no-enable: units are installed but NOT enabled or started."
+        echo "Activate later with:"
+        for unit in "${ENABLE_ON_INSTALL[@]}"; do
+            echo "  sudo systemctl enable --now $unit"
+        done
+        echo ""
+        echo "Done (install-only)."
+        return
+    fi
 
     echo ""
     echo "Enabling units so they start at boot…"

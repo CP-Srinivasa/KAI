@@ -221,24 +221,39 @@ export function ProgressBar({
   className?: string;
 }) {
   const hasValue = value != null;
-  const pct = hasValue ? Math.min(100, (value / target) * 100) : 0;
+  // Clamp pct in [0, 100]: bei value<0 wuerde das CSS width:-X% als 0 rendern
+  // und der Balken verschwaende komplett (Bug 2026-05-08, Tier-Lift bei -6pp).
+  // subZero rendert einen proportionalen roten Balken VON LINKS, dessen Breite
+  // |value|/target abbildet — visualisiert die "Tiefe unter 0".
+  const rawPct = hasValue ? (value / target) * 100 : 0;
+  const pct = hasValue ? Math.max(0, Math.min(100, rawPct)) : 0;
+  const subZero = hasValue && rawPct < 0;
+  const subZeroPct = subZero ? Math.min(100, Math.abs(rawPct)) : 0;
 
   const resolved: Exclude<ProgressTone, "auto"> =
     !hasValue || !sufficientSample
       ? "muted"
       : tone !== "auto"
         ? tone
-        : pct >= 100
-          ? "pos"
-          : pct >= 50
-            ? "warn"
-            : "neg";
+        : subZero
+          ? "neg"
+          : pct >= 100
+            ? "pos"
+            : pct >= 50
+              ? "warn"
+              : "neg";
 
   const trackHeight = size === "sm" ? "h-1" : "h-1.5";
+  // DALI-F-033 — Track-Pattern fuer muted: gestrichelt statt nur Helligkeit.
+  // Damit liest Operator "inaktiv/keine Daten" als Pattern, nicht als Farbentzug.
+  const trackPattern =
+    resolved === "muted"
+      ? "bg-bg-3 [background-image:repeating-linear-gradient(45deg,transparent,transparent_3px,rgb(var(--line))_3px,rgb(var(--line))_4px)]"
+      : "bg-bg-3";
 
   return (
     <div
-      className={cn(trackHeight, "w-full rounded-full bg-bg-3 overflow-hidden", className)}
+      className={cn(trackHeight, "w-full rounded-full overflow-hidden relative", trackPattern, className)}
       role="progressbar"
       aria-valuenow={hasValue ? Math.round(value) : 0}
       aria-valuemin={0}
@@ -249,6 +264,17 @@ export function ProgressBar({
         className={cn("h-full rounded-full transition-all", PROGRESS_FILL[resolved])}
         style={{ width: `${pct}%` }}
       />
+      {/* Sub-zero indicator: bei value<0 wuerde pct=0 sein und der Balken nichts
+          zeigen. Wir rendern stattdessen einen roten Balken VON LINKS, dessen
+          Breite |value|/target abbildet — Operator sieht visuell, wie tief
+          unter 0 die Metrik liegt. Track-Hintergrund bleibt sichtbar als Anker. */}
+      {subZero && (
+        <div
+          className="absolute inset-y-0 left-0 rounded-full bg-neg/85 transition-all"
+          style={{ width: `${subZeroPct}%` }}
+          aria-hidden
+        />
+      )}
     </div>
   );
 }

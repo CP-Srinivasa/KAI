@@ -154,12 +154,19 @@ class TestNewsdataAdapterFetch:
     async def test_fetch_document_content_prefers_content_over_description(self) -> None:
         meta = _make_source_metadata()
         adapter = NewsdataAdapter(meta)
-        article = _make_article(content="Full body", description="Short desc")
+        # V-DB3a 2026-05-08: content muss substantiell sein (>=50 Zeichen, kein
+        # Free-Tier-Stub), damit es ueber description gewinnt. Echter Body ist
+        # immer laenger.
+        full_body = (
+            "Bitcoin rallied past $90,000 today as institutional flows hit "
+            "record levels, according to multiple exchange dashboards."
+        )
+        article = _make_article(content=full_body, description="Short desc")
 
         with patch.object(adapter._client, "fetch_latest", AsyncMock(return_value=[article])):
             result = await adapter.fetch()
 
-        assert result.documents[0].raw_text == "Full body"
+        assert result.documents[0].raw_text == full_body
 
     @pytest.mark.asyncio
     async def test_fetch_document_uses_description_when_no_content(self) -> None:
@@ -171,6 +178,38 @@ class TestNewsdataAdapterFetch:
             result = await adapter.fetch()
 
         assert result.documents[0].raw_text == "Only description available"
+
+    @pytest.mark.asyncio
+    async def test_fetch_skips_paid_plan_stub_falls_back_to_description(self) -> None:
+        """V-DB3a 2026-05-08: Free-Tier content='ONLY AVAILABLE IN PAID PLANS'
+        darf nicht raw_text werden — sonst liefert die Source 0% Sentiment-Yield."""
+        meta = _make_source_metadata()
+        adapter = NewsdataAdapter(meta)
+        article = _make_article(
+            content="ONLY AVAILABLE IN PAID PLANS",
+            description="Bitcoin slips below $80,000 amid profit-taking concerns.",
+        )
+
+        with patch.object(adapter._client, "fetch_latest", AsyncMock(return_value=[article])):
+            result = await adapter.fetch()
+
+        assert result.documents[0].raw_text == "Bitcoin slips below $80,000 amid profit-taking concerns."
+
+    @pytest.mark.asyncio
+    async def test_fetch_skips_too_short_content_falls_back_to_description(self) -> None:
+        """Content-Felder unter 50 Zeichen sind zu kurz fuer Sentiment-Analyse;
+        Fallback auf description (das oft mehrere Saetze hat)."""
+        meta = _make_source_metadata()
+        adapter = NewsdataAdapter(meta)
+        article = _make_article(
+            content="Crypto news.",
+            description="The SEC classified Shiba Inu as a digital commodity, opening the door for spot ETF products.",
+        )
+
+        with patch.object(adapter._client, "fetch_latest", AsyncMock(return_value=[article])):
+            result = await adapter.fetch()
+
+        assert "SEC classified" in (result.documents[0].raw_text or "")
 
     @pytest.mark.asyncio
     async def test_fetch_document_metadata_populated(self) -> None:

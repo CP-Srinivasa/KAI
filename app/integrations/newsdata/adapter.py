@@ -9,6 +9,23 @@ from app.core.enums import DocumentType, SourceType
 from app.ingestion.base.interfaces import BaseSourceAdapter, FetchResult, SourceMetadata
 from app.integrations.newsdata.client import NewsdataArticle, NewsdataClient
 
+# 2026-05-08: NewsData Free-Tier liefert content="ONLY AVAILABLE IN PAID PLANS"
+# (28 Bytes) statt des echten Bodies. Der or-Fallback auf description wird sonst
+# nie aktiv, weil der Stub truthy ist. Pfad-A V-DB3a Befund.
+_PAID_PLAN_STUB_MARKER = "ONLY AVAILABLE IN PAID PLANS"
+_MIN_CONTENT_LEN = 50
+
+
+def _is_useful_content(text: str | None) -> bool:
+    """True wenn das `content`-Feld echten Body-Text enthaelt (kein Free-Tier-Stub)."""
+    if not text:
+        return False
+    if _PAID_PLAN_STUB_MARKER in text:
+        return False
+    if len(text.strip()) < _MIN_CONTENT_LEN:
+        return False
+    return True
+
 
 class NewsdataAdapter(BaseSourceAdapter):
     """Fetches news articles from the Newsdata.io /api/1/latest endpoint.
@@ -67,7 +84,12 @@ class NewsdataAdapter(BaseSourceAdapter):
             return False
 
     def _article_to_doc(self, article: NewsdataArticle, fetched_at: datetime) -> CanonicalDocument:
-        raw_text = article.content or article.description or None
+        # Pfad-A V-DB3a Fix: Free-Tier liefert "ONLY AVAILABLE IN PAID PLANS"
+        # als content. Wir akzeptieren content nur, wenn er echten Body enthaelt;
+        # sonst Fallback auf description. Vorher: 0% directional yield bei
+        # NewsData; description trägt sehr wohl Sentiment-Signal.
+        content = article.content if _is_useful_content(article.content) else None
+        raw_text = content or article.description or None
         authors = ", ".join(article.creator) if article.creator else None
         tickers: list[str] = []
 

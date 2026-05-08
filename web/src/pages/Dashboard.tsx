@@ -6,6 +6,8 @@ import { useKaiState } from "@/lib/useKaiState";
 import { KpiCard } from "@/components/kpi/KpiCard";
 import { QualityBarPanel } from "@/components/panels/QualityBar";
 import { ActivePrecisionCard } from "@/components/panels/ActivePrecisionCard";
+import { PerSourcePrecisionPanel } from "@/components/panels/PerSourcePrecisionPanel";
+import { PerSourceStabilityPanel } from "@/components/panels/PerSourceStabilityPanel";
 import { PreparedPanel } from "@/components/panels/PreparedPanel";
 import { ReentryGatePanel } from "@/components/panels/ReentryGatePanel";
 import { SignalHeatmapPanel } from "@/components/panels/SignalHeatmap";
@@ -177,13 +179,51 @@ export function Dashboard() {
           value={ptl != null ? `${ptl >= 0 ? "+" : ""}${ptl.toFixed(1)}pp` : "—"}
           target={15}
           valueNumeric={ptl ?? undefined}
+          gapUnit="pp"
           deltaLabel="Ziel: ≥+15pp"
           tone={tierLiftTone(ptl)}
           icon={<Radio size={12} />}
           helper={
             data?.priority_tier_lift_pct == null
               ? t("primitives.priority_tier_lift_insufficient")
-              : undefined
+              : data?.priority_tier_high_conviction_resolved != null &&
+                  data?.priority_tier_standard_resolved != null
+                ? (() => {
+                    const hLo = data.priority_tier_high_conviction_ci_low_pct;
+                    const hHi = data.priority_tier_high_conviction_ci_high_pct;
+                    const sLo = data.priority_tier_standard_ci_low_pct;
+                    const sHi = data.priority_tier_standard_ci_high_pct;
+                    // CIs überlappen → Lift statistisch nicht trennbar
+                    const ciOverlap =
+                      hLo != null && hHi != null && sLo != null && sHi != null &&
+                      hLo <= sHi && sLo <= hHi;
+                    return (
+                      <span className="font-mono">
+                        n=
+                        {data.priority_tier_high_conviction_resolved +
+                          data.priority_tier_standard_resolved}
+                        {" "}· P≥{data.priority_tier_high_conviction_threshold ?? "?"}:
+                        {" "}<span className="text-pos">{data.priority_tier_high_conviction_hit_rate_pct?.toFixed(1) ?? "?"}%</span>
+                        {hLo != null && hHi != null && (
+                          <span className="text-fg-subtle/80"> [{hLo.toFixed(0)}–{hHi.toFixed(0)}]</span>
+                        )}
+                        {" "}· P&lt;{data.priority_tier_high_conviction_threshold ?? "?"}:
+                        {" "}<span className="text-warn">{data.priority_tier_standard_hit_rate_pct?.toFixed(1) ?? "?"}%</span>
+                        {sLo != null && sHi != null && (
+                          <span className="text-fg-subtle/80"> [{sLo.toFixed(0)}–{sHi.toFixed(0)}]</span>
+                        )}
+                        {ciOverlap && (
+                          <span
+                            className="ml-1.5 text-fg-subtle italic"
+                            title="Wilson 95% Konfidenzintervalle der beiden Hit-Rates überlappen → Lift-Differenz statistisch nicht trennbar (n zu klein)."
+                          >
+                            n.s.
+                          </span>
+                        )}
+                      </span>
+                    );
+                  })()
+                : undefined
           }
         />
         <KpiCard
@@ -232,19 +272,42 @@ export function Dashboard() {
         </div>
         <div className="col-span-12 lg:col-span-4 space-y-4">
           <PanelErrorBoundary name="Signal-Qualität">
-            <SignalQualityCard data={data} />
+            <SignalQualityCard
+              data={data}
+              state={q.state}
+              generatedAt={data?.generated_at ?? null}
+            />
           </PanelErrorBoundary>
           <PanelErrorBoundary name="Trading-Loop-Status">
-            <TradingLoopCard data={data} />
+            <TradingLoopCard
+              data={data}
+              state={q.state}
+              generatedAt={data?.generated_at ?? null}
+            />
           </PanelErrorBoundary>
         </div>
       </div>
 
       {/* Active-Precision-Split (Source-Breakdown mit Wilson-CI) */}
       <div className="grid grid-cols-12 gap-4">
-        <div className="col-span-12">
+        <div className="col-span-12 lg:col-span-7">
           <PanelErrorBoundary name="Active-Precision">
             <ActivePrecisionCard data={provenance} />
+          </PanelErrorBoundary>
+        </div>
+        {/* V-DB4a 2026-05-08: Per-source Active-Precision aus Hold-Report. */}
+        <div className="col-span-12 lg:col-span-5">
+          <PanelErrorBoundary name="Source-Precision">
+            <PerSourcePrecisionPanel data={data} />
+          </PanelErrorBoundary>
+        </div>
+      </div>
+
+      {/* V-DB4e 2026-05-08: Per-source Rolling Stability (Drift-Detection). */}
+      <div className="grid grid-cols-12 gap-4">
+        <div className="col-span-12">
+          <PanelErrorBoundary name="Source-Stability">
+            <PerSourceStabilityPanel data={data} />
           </PanelErrorBoundary>
         </div>
       </div>
@@ -279,7 +342,11 @@ export function Dashboard() {
 
       {/* Recent Alerts */}
       <PanelErrorBoundary name="Recent-Alerts">
-        <RecentAlertsCard data={data} />
+        <RecentAlertsCard
+          data={data}
+          state={q.state}
+          generatedAt={data?.generated_at ?? null}
+        />
       </PanelErrorBoundary>
 
       {/* Vorbereitete Bereiche — default collapsed Ribbon, expandable zu vollem Grid */}

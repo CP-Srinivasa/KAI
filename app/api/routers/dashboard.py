@@ -296,11 +296,23 @@ async def dashboard_quality_api() -> JSONResponse:
             "priority_tier_high_conviction_hit_rate_pct": quality.get(
                 "priority_tier_high_conviction_hit_rate_pct"
             ),
+            "priority_tier_high_conviction_ci_low_pct": quality.get(
+                "priority_tier_high_conviction_ci_low_pct"
+            ),
+            "priority_tier_high_conviction_ci_high_pct": quality.get(
+                "priority_tier_high_conviction_ci_high_pct"
+            ),
             "priority_tier_standard_resolved": quality.get(
                 "priority_tier_standard_resolved"
             ),
             "priority_tier_standard_hit_rate_pct": quality.get(
                 "priority_tier_standard_hit_rate_pct"
+            ),
+            "priority_tier_standard_ci_low_pct": quality.get(
+                "priority_tier_standard_ci_low_pct"
+            ),
+            "priority_tier_standard_ci_high_pct": quality.get(
+                "priority_tier_standard_ci_high_pct"
             ),
             "forward_precision_pct": fwd.get("precision_pct"),
             "forward_resolved": fwd.get("resolved", 0),
@@ -320,6 +332,11 @@ async def dashboard_quality_api() -> JSONResponse:
             "high_priority_hit_rate_pct": quality.get("high_priority_hit_rate_pct"),
             "low_priority_hit_rate_pct": quality.get("low_priority_hit_rate_pct"),
             "loop_status_counts": status_counts,
+            # V-DB4a 2026-05-08: Per-source active precision fuer Quality-Tile.
+            # Liefert n / hit-rate / Wilson-CI / passes_gate je Source.
+            "per_source_active_precision": report.get("per_source_active_precision", {}),
+            # V-DB4e 2026-05-08: Per-source rolling 30-day stability windows.
+            "per_source_stability": report.get("per_source_stability", {}),
             "recent_alerts": [
                 {
                     "doc_id": r.get("document_id", "")[:12],

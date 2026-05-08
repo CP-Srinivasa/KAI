@@ -129,8 +129,12 @@ export type DashboardQuality = {
   priority_tier_high_conviction_threshold: number | null;
   priority_tier_high_conviction_resolved: number | null;
   priority_tier_high_conviction_hit_rate_pct: number | null;
+  priority_tier_high_conviction_ci_low_pct: number | null;
+  priority_tier_high_conviction_ci_high_pct: number | null;
   priority_tier_standard_resolved: number | null;
   priority_tier_standard_hit_rate_pct: number | null;
+  priority_tier_standard_ci_low_pct: number | null;
+  priority_tier_standard_ci_high_pct: number | null;
   forward_precision_pct: number | null;
   forward_resolved: number;
   forward_hits: number;
@@ -155,6 +159,53 @@ export type DashboardQuality = {
   high_priority_hit_rate_pct: number | null;
   low_priority_hit_rate_pct: number | null;
   loop_status_counts: Record<string, number>;
+  // V-DB4a 2026-05-08: Per-source active precision (Pfad-A Quality).
+  per_source_active_precision?: {
+    min_resolved: number;
+    min_wilson_low_pct: number;
+    sources_passing: string[];
+    by_source: Record<
+      string,
+      {
+        resolved: number;
+        hits: number;
+        misses: number;
+        hit_rate_pct: number | null;
+        ci_low_pct: number | null;
+        ci_high_pct: number | null;
+        n_threshold_met: boolean;
+        wilson_low_threshold_met: boolean;
+        passes_gate: boolean;
+      }
+    >;
+  };
+  // V-DB4e 2026-05-08: Per-source rolling stability windows.
+  per_source_stability?: {
+    window_days: number;
+    window_count: number;
+    min_resolved_per_window: number;
+    min_wilson_low_pct: number;
+    anchor_at?: string;
+    by_source: Record<
+      string,
+      {
+        stable: boolean;
+        windows: Array<{
+          window_start: string;
+          window_end: string;
+          resolved: number;
+          hits: number;
+          misses: number;
+          hit_rate_pct: number | null;
+          ci_low_pct: number | null;
+          n_threshold_met: boolean;
+          wilson_low_threshold_met: boolean;
+          passes_window: boolean;
+          fail_reason?: string | null;
+        }>;
+      }
+    >;
+  };
   recent_alerts: Array<{
     doc_id: string;
     sentiment: string;

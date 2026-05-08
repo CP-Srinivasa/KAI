@@ -1,0 +1,15 @@
+[Unit]
+Description=Trigger KAI Auto-Annotate every 6 hours (V-DB4d)
+Requires=kai-server.service
+
+[Timer]
+# 30 min nach Boot first-run, dann alle 6h.
+# 6h-Cadenz reicht: auto_annotate.min_age=4h heisst nichts unter 4h dispatchat.
+# Bei 6h-Tick werden alerts in Bucket [4h, 10h] erstmals annotiert.
+OnBootSec=30min
+OnUnitActiveSec=6h
+AccuracySec=2min
+Unit=kai-auto-annotate.service
+
+[Install]
+WantedBy=timers.target

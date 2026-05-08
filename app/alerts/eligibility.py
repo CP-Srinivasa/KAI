@@ -13,6 +13,8 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
+from functools import lru_cache
+from pathlib import Path
 
 from app.market_data.coingecko_adapter import _resolve_symbol
 
@@ -29,6 +31,7 @@ BLOCK_REASON_LOW_PRIORITY = "low_priority"
 BLOCK_REASON_BEARISH_DISABLED = "bearish_directional_disabled"
 BLOCK_REASON_LOW_PRECISION_SOURCE = "low_precision_source"
 BLOCK_REASON_NAKED_ASSET = "naked_asset_no_trading_pair"
+BLOCK_REASON_PROMO_PATTERN = "promotional_or_speculative_listicle"
 
 # D-133/D-139: Sources with persistently low directional precision.
 # Based on 229 resolved directional outcomes (2026-04-14 after D-138 backfill):
@@ -50,6 +53,35 @@ _LOW_PRECISION_SOURCES: frozenset[str] = frozenset(
         "tradingview_webhook",
     }
 )
+
+
+# V-DB4c 2026-05-08: Soft-Source-Confidence-Adjuster.
+# Operator pflegt monitor/source_watch.txt (eine source_name pro Zeile,
+# lower-case). Eine Source auf der Liste bekommt priority -= 1 in der
+# Eligibility-Pruefung — damit greift der LOW_PRIORITY-Gate (P<=7 → block)
+# härter und schwache Sources verdraengen sich weniger ins Forward-Signal.
+# Datei nicht vorhanden oder leer → kein Effekt (default-off).
+@lru_cache(maxsize=1)
+def _load_source_watchlist() -> frozenset[str]:
+    """Read monitor/source_watch.txt — lower-case set, '#' comments stripped."""
+    path = Path("monitor/source_watch.txt")
+    if not path.exists():
+        return frozenset()
+    sources: set[str] = set()
+    try:
+        for raw in path.read_text(encoding="utf-8").splitlines():
+            line = raw.strip()
+            if not line or line.startswith("#"):
+                continue
+            sources.add(line.split("|", 1)[0].strip().lower())
+    except OSError:
+        return frozenset()
+    return frozenset(sources)
+
+
+def _invalidate_source_watchlist_cache() -> None:
+    """Test/Reload-Hook — clears the lru_cache on _load_source_watchlist."""
+    _load_source_watchlist.cache_clear()
 
 # D-142: Bearish directional disabled based on 50 eligible resolved outcomes.
 # Bearish precision: 4% (1 hit / 24 miss). Bullish precision: 76% (19/25).
@@ -125,6 +157,53 @@ _REACTIVE_BULLISH_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"\b(?:breakout|broke out|breaking out)\b", re.IGNORECASE),
     re.compile(r"\binflows?\b", re.IGNORECASE),
 )
+
+
+# V-DB4b 2026-05-08: Promotional / speculative listicle patterns.
+# Empirisch dominante Spam-Familie aus NewsData/AMBCrypto/Aggregator-Reposts:
+# Pre-Sale-Promos ("Pepeto Eyes 100x Before Listing"), Listicles ("Top 3 Cryptos
+# to Buy Now"), spekulative Preis-Ziele ("Could hit $X by July 2026"), AI-
+# generierte Pump-Narrative ohne Substanz. Diese Headlines haben keine
+# vorhersagbare Marktbewegung — sie SIND die Bewegung, die jemand erzeugen will.
+# Hit-Rate dieser Familie historisch <10%, sie verzerrt Source-Hit-Rates ohne
+# eigene Evidenz. Filter wirkt VOR den reactive-narrative-Filtern, weil ein
+# Promo-Titel z.B. "surges" enthalten kann ohne darum reactive zu sein.
+_PROMO_PATTERNS: tuple[re.Pattern[str], ...] = (
+    # Pre-Sale / Listing-Pump-Narrative
+    re.compile(r"\bpresale\b", re.IGNORECASE),
+    re.compile(r"\bpre[-\s]sale\b", re.IGNORECASE),
+    re.compile(r"\bbefore\s+(?:binance\s+)?listing\b", re.IGNORECASE),
+    re.compile(r"\bbest\s+crypto\s+(?:to\s+buy|presale)\b", re.IGNORECASE),
+    # Listicle-Marker
+    re.compile(r"\btop\s+\d+\s+(?:crypto|coin|altcoin|token)s?\s+to\s+buy\b", re.IGNORECASE),
+    re.compile(r"\b(?:could\s+be\s+)?one\s+of\s+the\s+top\s+\d+\s+crypto", re.IGNORECASE),
+    # Spekulative Multiplikator-Ziele
+    re.compile(r"\b(?:eyes?|targets?|aims?)\s+\d+0+x\b", re.IGNORECASE),
+    re.compile(r"\b\d{2,4}x\s+(?:before|by|in)\b", re.IGNORECASE),
+    re.compile(r"\b\d{2,4}x\s+potential\b", re.IGNORECASE),
+    # "Catch up to / second chance" Pump-Phrasen
+    re.compile(r"\bcatch\s+up\s+to\s+what\b", re.IGNORECASE),
+    re.compile(r"\bsecond\s+chance\s+entry\b", re.IGNORECASE),
+    # "Could hit $X by Y" Spekulations-Header
+    re.compile(r"\bcould\s+hit\s+\$\d", re.IGNORECASE),
+    re.compile(r"\bprice\s+prediction\b.*\b(?:by|before|hit)\b", re.IGNORECASE),
+    # Burn / Frenzy / Rally-Hype ohne konkretes Ereignis
+    re.compile(r"\bburn\s+frenzy\b", re.IGNORECASE),
+    re.compile(r"\boffers?\s+while\s+\w+\s+(?:and|grin|grinds?)\b", re.IGNORECASE),
+)
+
+
+def _is_promotional(title: str) -> bool:
+    """Return True if the title matches a known promotional/listicle pattern.
+
+    Filter wirkt fail-closed: Treffer = directional_eligible=False mit
+    BLOCK_REASON_PROMO_PATTERN. Echte direktional-handelnde Headlines wie
+    "Coinbase Q1 miss" oder "Aptos Foundation commits $50M" matchen nicht.
+    """
+    for pattern in _PROMO_PATTERNS:
+        if pattern.search(title):
+            return True
+    return False
 
 
 def _is_reactive_bearish(title: str) -> bool:
@@ -242,9 +321,22 @@ def evaluate_directional_eligibility(
             directional_block_reason=BLOCK_REASON_BEARISH_DISABLED,
         )
 
+    # V-DB4c 2026-05-08: Soft-Confidence-Adjuster.
+    # Sources auf monitor/source_watch.txt bekommen priority -= 1, BEVOR
+    # der LOW_PRIORITY-Gate prueft. Damit kippen P8-Watchlist-Sources nach
+    # P7 und werden geblockt; P9-Watchlist-Sources bleiben eligible mit
+    # tieferer Position. Operator-kuratierte Liste.
+    effective_priority = priority
+    if (
+        effective_priority is not None
+        and source_name
+        and source_name.lower() in _load_source_watchlist()
+    ):
+        effective_priority = effective_priority - 1
+
     # D-122: Low-priority alerts lack predictive value for directional tracking.
     # Empirical: P7 had 21% precision.  Minimum P8 required.
-    if priority is not None and priority <= 7:
+    if effective_priority is not None and effective_priority <= 7:
         return DirectionalEligibilityDecision(
             is_directional=True,
             directional_eligible=False,
@@ -258,6 +350,20 @@ def evaluate_directional_eligibility(
             is_directional=True,
             directional_eligible=False,
             directional_block_reason=BLOCK_REASON_LOW_PRECISION_SOURCE,
+        )
+
+    # V-DB4b 2026-05-08: Promotional/listicle gate.
+    # Pre-sale spam, "Top 3 Cryptos to Buy", Multiplikator-Ziele ("100x before
+    # listing"), spekulative Preis-Ziele. Diese Headlines sind keine
+    # Marktnachrichten, sondern Pump-Narrative — geringe Hit-Rate, hohe Source-
+    # Verzerrung. Filter wirkt VOR Score-Gates, weil Promo-Headlines oft hohen
+    # Sentiment-Score und Impact haben (LLM-Analyse erkennt den "bullish ton",
+    # aber nicht die fehlende Substanz).
+    if title and _is_promotional(title):
+        return DirectionalEligibilityDecision(
+            is_directional=True,
+            directional_eligible=False,
+            directional_block_reason=BLOCK_REASON_PROMO_PATTERN,
         )
 
     # Score-strength gates (D-111): block weak directional signals early.

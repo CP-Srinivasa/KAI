@@ -46,6 +46,7 @@ dependencies = [
     "telethon>=1.43.0",
     "portalocker>=2.8",
     "youtube-transcript-api>=1.2.0",
+    "trafilatura>=1.12.0",
 ]
 
 [project.optional-dependencies]
