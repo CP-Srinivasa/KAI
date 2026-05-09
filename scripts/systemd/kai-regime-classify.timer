@@ -1,0 +1,15 @@
+[Unit]
+Description=KAI Regime Classifier — hourly trigger
+Requires=kai-regime-classify.service
+
+[Timer]
+# Fire 5 minutes past every hour, after most exchanges have closed their candle.
+OnCalendar=*-*-* *:05:00
+# If the system was off when the timer should have fired, run it on the next boot.
+Persistent=true
+# Avoid pile-ups on slow Pi cycles.
+AccuracySec=60s
+RandomizedDelaySec=30s
+
+[Install]
+WantedBy=timers.target

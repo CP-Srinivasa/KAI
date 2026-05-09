@@ -453,3 +453,36 @@ Ergebnis: Forward-Precision 82.76% → 88.89% (+6.13pp). 2 reactive Misses gefil
 Unknown-Source-Gate + purged-doc-Fallback. Diagnose nach D-138: Resolved-Volumen verdoppelt (93→166), aber Forward-Precision KOLLABIERT 88.89% → 36.27% weil 80 der neu resolved Records (68/196 Backfill-Items) weder in AlertAuditRecord noch in CanonicalDocumentModel eine `source_name` haben — alte Records aus 2026-03-24, vor Source-Attribution verschwundene Pipeline-Batches. Diese 80 "Mystery-Source" Records haben 17.50% precision (14 hit / 66 miss) — praktisch Noise. `_load_doc_metadata` gab vorher `None` fuer DB-missing docs zurueck, Eligibility-Gate skip'te source_name=None → ungefilterter Passthrough.
 Fix: (1) `unknown` in `_LOW_PRECISION_SOURCES` aufgenommen; (2) `_load_doc_metadata` setzt fuer alle directional_doc_ids NICHT im DB-Result-Set `source="unknown"` via `setdefault`. Damit blockt Forward-Simulation die Mystery-Records sauber.
 Ergebnis: Forward-Precision 36.27% → **85.19%** (23 hit / 4 miss / 27 resolved, 144 filtered). Resolved bleibt unter 50er Schwelle (Path 1 benoetigt ≥50), aber Precision ueberschreitet 60%-Schwelle klar. Priority-Corr -0.104 (homogener Pool p9/p10, kein Signal mehr differenzierbar). Parametrize-Test auf `unknown` in test_alert_eligibility, 97 Unit-Tests gruen.
+
+
+### D-REGIME-001 (2026-05-09)
+**Multi-Regime-System R1 — read-only Observer.** Operator-Anforderung 2026-05-09: Strategien sterben in Sideways, explodieren in Panik — KAI braucht Regime-Erkennung. Aktueller Stand vor R1: keinerlei Regime-Code; ADX/HMM nur als false-positives in unverwandten Modulen; TradingLoop blockt nur via D-182 Priority-Gate.
+
+**R1-Scope (deployed):**
+- 6 Regime-Klassen + `unknown`: trend_up/down, breakout_up/down, chop_quiet/volatile.
+- 3 Vol-Klassen (vol_low/normal/high) als zweite Dimension, 33/66-Perzentil rolling.
+- Indikatoren (alle aus Price-History ableitbar, keine neuen Datenquellen): Wilder ATR-14, Wilder ADX-14 + ±DI, 24h Realized Volatility (sample stddev log returns), ATR z-score gegen 30-Sample-Trailing.
+- Crypto-adjusted ADX-Schwellen 25/30 (FX-Default 20/25 zu rauschanfällig auf 24/7-Crypto).
+- Threshold-Klassifikation (kein ML in R1): deterministisch, vollständig audit-bar aus den im Snapshot persistierten Indicator-Werten.
+- 2-Bar-Hysteresis gegen Flickering an Klassen-Grenzen.
+- Stündlicher Cron via `kai-regime-classify.timer` (BTC + ETH, fallback-Provider Bybit→Binance→OKX→BitMEX→CoinGecko).
+- JSONL-Persistenz mit portalocker.Lock (B-K2-Pattern aus 7c8055f).
+- `GET /dashboard/api/regime` + Frontend-Tile RegimeStatusPanel.
+
+**Bewusst NICHT in R1 (Risiken aus architecture-red-team-Bewertung):**
+- Kein TradingLoop-Block. **R3 (Shadow) vor R4 (Active) ist nicht-verhandelbar.** Falsch-Klassifikation kostet legitime Trades; aggressive Filter drücken eine 60%-Hit-Rate-Strategie auf 50% durch geblockte Profit-Trades. Asymmetrisch riskant — verpasste Gewinne sind unsichtbar, geblockte Verluste sichtbar als „richtig erkannt".
+- Kein HMM, kein Bayesian Change-Point (R3+).
+- Kein Funding/Stablecoin/Orderbook (R5+, jeweils eigene Datenquellen-Sprints).
+- Keine panic/euphoria/manipulation/risk-off-Klassen (R5+ — brauchen Funding/Volume/Orderbook).
+- Kein Multi-Asset >2 (R2), keine Korrelations-Tracking (R2).
+- Kein Agent-Compatibility-Mapping (R3+).
+
+**Validierung:** 14 Tage Operator-Sichtung im Dashboard. Akzeptanz: ≥70% subjektive Plausibilität auf 5-7 markanten Marktbewegungen (Pump, Crash, Sideways, Breakout). Erst bei Sign-off Sprint R2 starten.
+
+**Erste Live-Klassifikation (manueller Trigger 2026-05-09 22:25 CEST):**
+- BTC @ 2026-05-09T20:00:00Z → chop_quiet (ADX=27.6, +DI=25.8, -DI=10.8, ATR-Z=0.68, vol_low)
+- ETH @ 2026-05-09T20:00:00Z → breakout_up (ADX=25.3, +DI=24.2, -DI=13.1, ATR-Z=1.24, vol_low)
+
+**Tests:** 65 Unit-Tests grün (ATR 7, ADX 8, RV/Vol-Class/ATR-Z 16, Classifier+Hysteresis 19, Storage 8, Service 7).
+
+**Nächster Folge-Sprint:** R2 — Multi-Asset (BTC, ETH + 3-5 weitere) + Korrelations-Tracking.

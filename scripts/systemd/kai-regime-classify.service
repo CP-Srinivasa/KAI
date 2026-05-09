@@ -1,0 +1,19 @@
+[Unit]
+Description=KAI Regime Classifier — single-pass run for BTC + ETH
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/ubuntu/ai_analyst_trading_bot
+Environment=PYTHONPATH=/home/ubuntu/ai_analyst_trading_bot
+ExecStart=/home/ubuntu/ai_analyst_trading_bot/.venv/bin/python -m scripts.regime_run_once --assets BTC ETH --log-level INFO
+StandardOutput=journal
+StandardError=journal
+TimeoutStartSec=120
+
+# Resource caps — single-pass classification is light, but keep the budget tight.
+MemoryMax=256M
+CPUQuota=50%

@@ -259,6 +259,47 @@ export function fetchDashboardProvenance(
   return apiGet<DashboardProvenance>("/dashboard/api/provenance", { signal });
 }
 
+// REGIME-R1 (2026-05-09): per-asset regime classification, hourly cron.
+// Backend: app/regime/ — six classes (trend_up/down, breakout_up/down,
+// chop_quiet/volatile) + three vol classes (vol_low/normal/high). Read-only
+// observer phase; TradingLoop is NOT yet gated by regime.
+export type RegimeClass =
+  | "trend_up"
+  | "trend_down"
+  | "breakout_up"
+  | "breakout_down"
+  | "chop_quiet"
+  | "chop_volatile"
+  | "unknown";
+
+export type VolClass = "vol_low" | "vol_normal" | "vol_high";
+
+export type RegimeSnapshot = {
+  asset: string;
+  timestamp: string;
+  regime: RegimeClass;
+  vol_class: VolClass;
+  confidence: number;
+  adx?: number;
+  plus_di?: number;
+  minus_di?: number;
+  rv_24h?: number;
+  atr_zscore?: number;
+  pending_regime?: RegimeClass;
+  pending_consecutive?: number;
+};
+
+export type DashboardRegime = {
+  generated_at: string;
+  by_asset: Record<string, RegimeSnapshot>;
+};
+
+export function fetchDashboardRegime(
+  signal?: AbortSignal,
+): Promise<DashboardRegime> {
+  return apiGet<DashboardRegime>("/dashboard/api/regime", { signal });
+}
+
 // D-184: Priority-tier gate (D-182) operator visibility.
 export type PriorityGateSummary = {
   report_type: string;

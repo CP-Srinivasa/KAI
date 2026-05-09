@@ -430,3 +430,40 @@ async def dashboard_provenance_api() -> JSONResponse:
         content=payload,
         headers={"Cache-Control": "no-store, max-age=0"},
     )
+
+
+# Default assets exposed by the regime endpoint. R1 covers BTC + ETH; later
+# sprints extend the list as the classifier handles more universes.
+_REGIME_DASHBOARD_ASSETS: tuple[str, ...] = ("BTC", "ETH")
+
+
+@router.get("/dashboard/api/regime", tags=["dashboard"])
+async def dashboard_regime_api() -> JSONResponse:
+    """Latest regime snapshot per asset for the dashboard tile.
+
+    R1 (2026-05-09): hourly classification persisted to
+    ``artifacts/regime_state/<asset>_regime.jsonl`` by
+    ``kai-regime-classify.timer``. This endpoint is read-only — it loads
+    the latest committed snapshot per asset and returns it as-is. Missing
+    JSONL → asset is omitted from ``by_asset`` (the tile shows a "noch keine
+    Klassifikation"-empty-state).
+    """
+    from app.regime.storage import latest_regime_snapshot
+
+    by_asset: dict[str, dict[str, Any]] = {}
+    for asset in _REGIME_DASHBOARD_ASSETS:
+        try:
+            snap = latest_regime_snapshot(asset)
+        except Exception as exc:  # noqa: BLE001 — never break the dashboard
+            logger.warning("regime_snapshot_load_failed: asset=%s err=%s", asset, exc)
+            continue
+        if snap is not None:
+            by_asset[asset] = snap.to_json_dict()
+
+    return JSONResponse(
+        content={
+            "generated_at": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "by_asset": by_asset,
+        },
+        headers={"Cache-Control": "no-store, max-age=0"},
+    )

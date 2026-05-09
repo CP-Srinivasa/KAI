@@ -8,6 +8,7 @@ import { QualityBarPanel } from "@/components/panels/QualityBar";
 import { ActivePrecisionCard } from "@/components/panels/ActivePrecisionCard";
 import { PerSourcePrecisionPanel } from "@/components/panels/PerSourcePrecisionPanel";
 import { PerSourceStabilityPanel } from "@/components/panels/PerSourceStabilityPanel";
+import { RegimeStatusPanel } from "@/components/panels/RegimeStatusPanel";
 import { PreparedPanel } from "@/components/panels/PreparedPanel";
 import { ReentryGatePanel } from "@/components/panels/ReentryGatePanel";
 import { SignalHeatmapPanel } from "@/components/panels/SignalHeatmap";
@@ -21,6 +22,7 @@ import { Card, CardHeader, Badge } from "@/components/ui/Primitives";
 import { useT } from "@/i18n/I18nProvider";
 import { useDashboardQuality } from "@/lib/useDashboardQuality";
 import { useDashboardProvenance } from "@/lib/useDashboardProvenance";
+import { useDashboardRegime } from "@/lib/useDashboardRegime";
 import { usePriorityGate } from "@/lib/usePriorityGate";
 import { cn } from "@/lib/utils";
 import {
@@ -71,6 +73,8 @@ export function Dashboard() {
   const data = q.state === "ready" ? q.data : null;
   const p = useDashboardProvenance();
   const provenance = p.state === "ready" ? p.data : null;
+  const r = useDashboardRegime();
+  const regime = r.state === "ready" ? r.data : null;
   const pg = usePriorityGate();
   const priorityGate = pg.state === "ready" ? pg.data : null;
 
@@ -263,6 +267,12 @@ export function Dashboard() {
           qualityError={q.state === "error" ? q.error.message : null}
           priorityGate={priorityGate}
         />
+      </PanelErrorBoundary>
+
+      {/* REGIME-R1 (2026-05-09): Markt-Regime read-only-Beobachter (BTC + ETH).
+          Read-only-Phase, kein TradingLoop-Block — Operator-Validierung über 14 Tage. */}
+      <PanelErrorBoundary name="Markt-Regime">
+        <RegimeStatusPanel data={regime} />
       </PanelErrorBoundary>
 
       {/* Aktiver Analytics-Grid — Symmetrie ab lg: linke Card streckt sich,

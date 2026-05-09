@@ -40,6 +40,9 @@ const SOURCE_DISPLAY: Record<string, SourceLabel> = {
  * Liefert Anzeige-Label und Tooltip-Hint fuer einen Backend-Source-Key.
  * Fallback: roher Key, kein Hint — so bleibt der Forensik-Anker sichtbar.
  */
-export function formatSourceLabel(key: string): SourceLabel {
+export function sourceLabel(key: string): SourceLabel {
   return SOURCE_DISPLAY[key] ?? { label: key };
 }
+
+/** Backwards-compat alias — beide Namen sind in V-DB5-Code in Verwendung. */
+export const formatSourceLabel = sourceLabel;
