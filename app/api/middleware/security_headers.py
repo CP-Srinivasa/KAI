@@ -139,7 +139,7 @@ def setup_security_headers(
     hsts_max_age: int = 31_536_000,
     frame_options: str = "DENY",
     referrer_policy: str = "strict-origin-when-cross-origin",
-    permissions_policy: str = ("camera=(), microphone=(), geolocation=(), payment=(), usb=()"),
+    permissions_policy: str = ("camera=(), microphone=(self), geolocation=(), payment=(), usb=()"),
     extra_csp_script_src: str = "",
     allow_tradingview: bool = False,
 ) -> None:

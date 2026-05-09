@@ -836,9 +836,12 @@ class TelegramOperatorBot:
             await self._send(chat_id, "Sprachnachricht konnte nicht transkribiert werden.")
             return
 
-        # Show transcription, then process through intent pipeline
+        # Show transcription
         await self._send(chat_id, f"Transkript: _{transcript}_")
-        await self._handle_text(chat_id, transcript, source="voice")
+        # 2026-05-09 KAI-Live Phase 3: Voice-Default -> KAI-Chat (Trading + Smalltalk).
+        # Operator-Wahl: Browser-Mic-Sumpf umgehen, Voice direkt im Telegram-Chat.
+        # Trading-Signale weiterhin via /signal <text> oder strukturiertes [SIGNAL]-Format.
+        await self._handle_kai_chat_text(chat_id, transcript)
 
     def _prune_expired_signal_draft(self, chat_id: int) -> dict[str, Any] | None:
         """Return the non-expired draft for chat_id, else drop and return None."""
@@ -928,6 +931,38 @@ class TelegramOperatorBot:
             f"Expires automatically after {_VOICE_DRAFT_TTL_SECONDS // 60} minutes."
         )
         await self._send(chat_id, "\n".join(preview_lines))
+
+    async def _handle_kai_chat_text(
+        self, chat_id: int, text: str, language: str = "de",
+    ) -> None:
+        """KAI-Chat: route an arbitrary user message through kai_chat_engine.
+
+        Trading-Intent (Portfolio, Position, BTC, ...) → read-only Trading-Tools.
+        Smalltalk → GPT-4o im Persona-Stil. Both come back as a single reply.
+        """
+        try:
+            from app.messaging.kai_chat_engine import chat as kai_chat_dispatch
+            reply = await kai_chat_dispatch(message=text, language=language)
+            response = reply.reply or "(keine Antwort)"
+        except Exception as exc:  # noqa: BLE001
+            logger.error("[BOT] kai-chat dispatch failed: %s", exc)
+            response = "KAI-Chat gerade nicht erreichbar. Versuch es nochmal."
+        await self._send(chat_id, response)
+
+    async def _cmd_kai_chat(self, chat_id: int, *, args: str = "") -> None:
+        """/kai <text>  — frei mit KAI chatten (Trading + Smalltalk)."""
+        text = (args or "").strip()
+        if not text:
+            await self._send(
+                chat_id,
+                "Nutzung: /kai <Frage>\n"
+                "Beispiele:\n"
+                "  /kai wie steht mein portfolio\n"
+                "  /kai gib mir einen status\n"
+                "  /kai erzaehl mir einen witz",
+            )
+            return
+        await self._handle_kai_chat_text(chat_id, text)
 
     async def _cmd_ok(self, chat_id: int, *, args: str = "") -> None:
         """Confirm a pending voice-signal draft → route through signal handoff."""
@@ -1560,6 +1595,9 @@ class TelegramOperatorBot:
             "pause": self._cmd_pause,
             "resume": self._cmd_resume,
             "kill": self._cmd_kill,
+            "kai": self._cmd_kai_chat,
+            "frag": self._cmd_kai_chat,
+            "chat": self._cmd_kai_chat,
             "daily_summary": self._cmd_daily_summary,
             "tagesbericht": self._cmd_daily_summary,
             "signal": self._cmd_signal,
@@ -2029,7 +2067,12 @@ class TelegramOperatorBot:
         *,
         args: str = "",
     ) -> None:
-        """Show quality-bar metrics from hold report."""
+        """Show quality-bar metrics from hold report.
+
+        V-DB5 P2 Vorschlag 6 (2026-05-09): wenn der Snapshot stale ist
+        (Timer ausgesetzt, z.B. seit 16d offline), Warning-Suffix
+        anhängen statt stille alte Daten zu zeigen.
+        """
         report_path = Path("artifacts/ph5_hold/ph5_hold_metrics_report.json")
         if not report_path.exists():
             await self._send(chat_id, "*Quality Bar*\nNo hold report available yet.")
@@ -2039,6 +2082,14 @@ class TelegramOperatorBot:
         except (json.JSONDecodeError, OSError) as exc:
             await self._send(chat_id, f"*Quality Bar*\nReport error: {exc}")
             return
+
+        from app.alerts.hold_metrics_freshness import (
+            freshness_for_report,
+            telegram_warning_suffix,
+        )
+
+        freshness = freshness_for_report(data)
+        stale_suffix = telegram_warning_suffix(freshness)
 
         sq = data.get("signal_quality_validation", {})
         hr = data.get("alert_hit_rate_evidence", {})
@@ -2075,6 +2126,7 @@ class TelegramOperatorBot:
             f"Real-price cycles: {fills_count}\n"
             f"\n"
             f"Report: {data.get('generated_at', '?')[:16]}"
+            f"{stale_suffix}"
         )
         await self._send(chat_id, msg)
 

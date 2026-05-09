@@ -2,6 +2,17 @@ from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from pathlib import Path
 
+# 2026-05-09 KAI-Live Phase 2.6: Voice-Audio (Whisper-Upload) wurde bei >1 MB
+# mit 413 Request Entity Too Large abgelehnt — Starlette's default MultiPart-
+# Parser cap (1 MB). 50 MB matched das OpenAI-Whisper-Hard-Limit (25 MB) plus
+# Reserve. Override muss VOR dem ersten App-Boot greifen.
+try:
+    from starlette.formparsers import MultiPartParser
+    MultiPartParser.max_file_size = 50 * 1024 * 1024
+    MultiPartParser.max_part_size = 50 * 1024 * 1024
+except Exception:  # pragma: no cover
+    pass
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse

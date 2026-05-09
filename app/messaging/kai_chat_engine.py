@@ -301,7 +301,7 @@ async def transcribe_audio_via_whisper(
         len(audio_data), ext, mime, data["language"], head_hex,
     )
     try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        async with httpx.AsyncClient(timeout=90.0) as client:
             resp = await client.post(
                 "https://api.openai.com/v1/audio/transcriptions",
                 headers=headers,
