@@ -177,15 +177,160 @@ def test_real_migration_0001_applies_cleanly(tmp_path: Path) -> None:
 
 
 def test_real_migration_idempotent_on_real_schema(tmp_path: Path) -> None:
-    """Running 0001 twice on real schema must not error."""
+    """Running all real migrations twice must not error and second run is no-op."""
     if not _REAL_MIGRATIONS.exists():
         pytest.skip(f"Real migrations dir not found at {_REAL_MIGRATIONS}")
 
     with _conn(tmp_path) as con:
         first = apply_migrations(con, migrations_dir=_REAL_MIGRATIONS)
         second = apply_migrations(con, migrations_dir=_REAL_MIGRATIONS)
-        assert first == ["0001"]
-        assert second == []  # nothing to do
+        # All migrations apply on first run, sorted by version
+        assert first == sorted(first), "Migrations must apply in version order"
+        assert "0001" in first
+        assert "0002" in first
+        assert second == []  # nothing to do on re-run
+
+
+def test_real_migration_0002_extends_trades_for_execution_realism(tmp_path: Path) -> None:
+    """V-Priority-Reorder Punkt A: trades-Tabelle hat Execution-Realismus-Felder."""
+    if not _REAL_MIGRATIONS.exists():
+        pytest.skip(f"Real migrations dir not found at {_REAL_MIGRATIONS}")
+
+    with _conn(tmp_path) as con:
+        apply_migrations(con, migrations_dir=_REAL_MIGRATIONS)
+        rows = con.execute(
+            "SELECT column_name FROM duckdb_columns() WHERE table_name = 'trades'"
+        ).fetchall()
+        cols = {str(r[0]) for r in rows}
+        for required in {"intended_price", "slippage_bps", "orderbook_depth_top", "routing_role"}:
+            assert required in cols, f"trades missing column from 0002: {required}"
+
+
+def test_real_migration_0002_extends_audits_for_latency_and_priority(tmp_path: Path) -> None:
+    """V-Priority-Reorder Punkte B+C: audits hat Latency- + Priority-Queue-Felder."""
+    if not _REAL_MIGRATIONS.exists():
+        pytest.skip(f"Real migrations dir not found at {_REAL_MIGRATIONS}")
+
+    with _conn(tmp_path) as con:
+        apply_migrations(con, migrations_dir=_REAL_MIGRATIONS)
+        rows = con.execute(
+            "SELECT column_name FROM duckdb_columns() WHERE table_name = 'audits'"
+        ).fetchall()
+        cols = {str(r[0]) for r in rows}
+        latency_cols = {"event_age_sec", "ttl_class", "latency_decay_factor"}
+        priority_cols = {"queue_tier", "queue_status", "escalation_level"}
+        missing = (latency_cols | priority_cols) - cols
+        assert not missing, f"audits missing 0002 columns: {missing}"
+
+
+def test_real_migration_0002_extends_metrics_for_meta_analytics(tmp_path: Path) -> None:
+    """V-Priority-Reorder Punkt D: metrics hat agent_slug + regime_tag-Dimensionen."""
+    if not _REAL_MIGRATIONS.exists():
+        pytest.skip(f"Real migrations dir not found at {_REAL_MIGRATIONS}")
+
+    with _conn(tmp_path) as con:
+        apply_migrations(con, migrations_dir=_REAL_MIGRATIONS)
+        rows = con.execute(
+            "SELECT column_name FROM duckdb_columns() WHERE table_name = 'metrics'"
+        ).fetchall()
+        cols = {str(r[0]) for r in rows}
+        for required in {"agent_slug", "regime_tag"}:
+            assert required in cols, f"metrics missing column from 0002: {required}"
+
+
+def test_real_migration_0002_creates_liquidity_profiles_and_regime_snapshots(
+    tmp_path: Path,
+) -> None:
+    """V-Priority-Reorder: liquidity_profiles + regime_snapshots-Tabellen existieren."""
+    if not _REAL_MIGRATIONS.exists():
+        pytest.skip(f"Real migrations dir not found at {_REAL_MIGRATIONS}")
+
+    with _conn(tmp_path) as con:
+        apply_migrations(con, migrations_dir=_REAL_MIGRATIONS)
+        rows = con.execute("SHOW TABLES").fetchall()
+        table_names = {str(r[0]) for r in rows}
+        for required in {"liquidity_profiles", "regime_snapshots"}:
+            assert required in table_names, f"0002 missing table: {required}"
+
+        # Liquidity profiles writable + readable
+        con.execute(
+            "INSERT INTO liquidity_profiles(asset, mean_spread_bps, depth_top_usd, "
+            "sample_minutes, last_calibrated) VALUES (?, ?, ?, ?, ?)",
+            ["BTC/USDT", 4.5, 250000.0, 60, "2026-05-09T12:00:00+00:00"],
+        )
+        n = con.execute(
+            "SELECT mean_spread_bps FROM liquidity_profiles WHERE asset = 'BTC/USDT'"
+        ).fetchone()
+        assert n[0] == 4.5
+
+        # Regime snapshots writable + readable
+        con.execute(
+            "INSERT INTO regime_snapshots(snapshot_id, regime_tag, confidence, "
+            "detected_at, evidence_features, detector_version) VALUES (?, ?, ?, ?, ?, ?)",
+            [
+                "regime-001",
+                "bull_trend",
+                0.78,
+                "2026-05-09T12:00:00+00:00",
+                '{"realized_vol_30d": 0.42}',
+                "neo-2026-05-09",
+            ],
+        )
+        r = con.execute(
+            "SELECT regime_tag, confidence FROM regime_snapshots WHERE snapshot_id = 'regime-001'"
+        ).fetchone()
+        assert r[0] == "bull_trend"
+        assert r[1] == 0.78
+
+
+def test_real_migration_0002_indexes_exist(tmp_path: Path) -> None:
+    """V-Priority-Reorder: neue Indexes für Queue + TTL + Meta-Analytics + Regime."""
+    if not _REAL_MIGRATIONS.exists():
+        pytest.skip(f"Real migrations dir not found at {_REAL_MIGRATIONS}")
+
+    with _conn(tmp_path) as con:
+        apply_migrations(con, migrations_dir=_REAL_MIGRATIONS)
+        rows = con.execute("SELECT index_name FROM duckdb_indexes()").fetchall()
+        index_names = {str(r[0]) for r in rows}
+        critical = {
+            "idx_audits_queue",
+            "idx_audits_ttl_dispatched",
+            "idx_metrics_agent_regime",
+            "idx_regime_detected",
+            "idx_regime_tag",
+            "idx_trades_routing",
+            "idx_liquidity_profiles_calibrated",
+        }
+        missing = critical - index_names
+        assert not missing, f"0002 missing indexes: {missing} (have: {index_names})"
+
+
+def test_real_migration_0002_alter_table_idempotent_after_partial_apply(
+    tmp_path: Path,
+) -> None:
+    """ADD COLUMN IF NOT EXISTS schützt gegen mid-migration-Crash + Re-Run."""
+    if not _REAL_MIGRATIONS.exists():
+        pytest.skip(f"Real migrations dir not found at {_REAL_MIGRATIONS}")
+
+    with _conn(tmp_path) as con:
+        # First run applies everything
+        apply_migrations(con, migrations_dir=_REAL_MIGRATIONS)
+
+        # Simulate operator manually pre-adding one of the columns
+        # (e.g. recovery from a previous crashed migration). Re-running
+        # 0002 must not error — but since 0002 is already in
+        # _schema_versions, the migrate-tool will skip it. To test the
+        # raw idempotency, we delete the version row and re-apply.
+        con.execute("DELETE FROM _schema_versions WHERE version = '0002'")
+        applied = apply_migrations(con, migrations_dir=_REAL_MIGRATIONS)
+        assert applied == ["0002"]
+
+        # All columns + tables still present
+        cols = con.execute(
+            "SELECT column_name FROM duckdb_columns() WHERE table_name = 'audits' "
+            "AND column_name IN ('queue_tier', 'queue_status', 'event_age_sec')"
+        ).fetchall()
+        assert len(cols) == 3
 
 
 def test_real_migration_indexes_exist(tmp_path: Path) -> None:
