@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import logging
 from datetime import UTC, datetime
@@ -15,6 +16,7 @@ from app.core.settings import get_settings
 from app.execution.models import PaperPortfolio
 from app.execution.paper_engine import PaperExecutionEngine
 from app.market_data.base import BaseMarketDataAdapter
+from app.market_data.indicators import compute_atr, compute_sma
 from app.market_data.service import create_market_data_adapter
 from app.orchestrator.models import (
     CycleStatus,
@@ -215,6 +217,25 @@ class TradingLoop:
                 await self._write_db(cycle)
                 return cycle
 
+        # Fetch OHLCV for Indicators (ATR, SMA)
+        limit = max(14, getattr(self._risk._limits, "regime_sma_period", 200))
+        ohlcv_data = await self._market_data.get_ohlcv(symbol, limit=limit)
+        atr = compute_atr(ohlcv_data, period=14)
+        sma = compute_sma(ohlcv_data, period=getattr(self._risk._limits, "regime_sma_period", 200))
+
+        # Dynamic Risk Geometry
+        sl, tp = self._risk.calculate_risk_geometry(
+            entry_price=signal.entry_price,
+            direction=signal.direction.value,
+            atr=atr,
+        )
+        if sl is not None or tp is not None:
+            signal = dataclasses.replace(
+                signal,
+                stop_loss_price=sl if sl is not None else signal.stop_loss_price,
+                take_profit_price=tp if tp is not None else signal.take_profit_price,
+            )
+
         order_side = "buy" if signal.direction == SignalDirection.LONG else "sell"
         current_positions = len(self._exec.portfolio.positions)
         risk_result = self._risk.check_order(
@@ -226,6 +247,7 @@ class TradingLoop:
             current_open_positions=current_positions,
             entry_price=signal.entry_price,
             take_profit_price=signal.take_profit_price,
+            sma=sma,
         )
 
         if not risk_result.approved:
@@ -279,6 +301,7 @@ class TradingLoop:
                 take_profit=signal.take_profit_price,
                 idempotency_key=signal.decision_id,
                 risk_check_id=risk_result.check_id,
+                source_tag=signal.source_document_id,
             )
             fill = self._exec.fill_order(order, current_price=signal.entry_price)
         except Exception as exc:  # noqa: BLE001
@@ -353,14 +376,17 @@ class TradingLoop:
         """
         portfolio = self._exec.portfolio
         open_symbols = list(portfolio.positions.keys())
-        summary: dict[str, object] = {
-            "checked": 0,
-            "no_market_data": 0,
-            "triggered": 0,
-            "closes": [],
-        }
+        checked = 0
+        no_market_data = 0
+        triggered = 0
+        closes: list[dict[str, float | str]] = []
         if not open_symbols:
-            return summary
+            return {
+                "checked": checked,
+                "no_market_data": no_market_data,
+                "triggered": triggered,
+                "closes": closes,
+            }
 
         prices: dict[str, float] = {}
         for symbol in open_symbols:
@@ -370,16 +396,15 @@ class TradingLoop:
                 logger.warning("[LOOP] monitor: market data error for %s: %s", symbol, exc)
                 md = None
             if md is None or md.is_stale:
-                summary["no_market_data"] = int(summary["no_market_data"]) + 1
+                no_market_data += 1
                 continue
             prices[symbol] = md.price
-            summary["checked"] = int(summary["checked"]) + 1
+            checked += 1
 
         fills = self._exec.monitor_positions(prices)
         for fill in fills:
-            summary["triggered"] = int(summary["triggered"]) + 1
-            assert isinstance(summary["closes"], list)
-            summary["closes"].append(
+            triggered += 1
+            closes.append(
                 {
                     "symbol": fill.symbol,
                     "quantity": fill.quantity,
@@ -394,7 +419,12 @@ class TradingLoop:
                 equity=self._exec.portfolio.cash,
             )
 
-        return summary
+        return {
+            "checked": checked,
+            "no_market_data": no_market_data,
+            "triggered": triggered,
+            "closes": closes,
+        }
 
     async def run_promoted_signal(
         self,
@@ -529,6 +559,7 @@ class TradingLoop:
                 take_profit=signal.take_profit_price,
                 idempotency_key=signal.decision_id,
                 risk_check_id=risk_result.check_id,
+                source_tag=signal.source_document_id,
             )
             fill = self._exec.fill_order(order, current_price=live_price)
         except Exception as exc:  # noqa: BLE001
@@ -741,6 +772,10 @@ def _build_risk_limits_from_settings() -> RiskLimits:
         kill_switch_enabled=risk.kill_switch_enabled,
         min_signal_confidence=risk.min_signal_confidence,
         min_signal_confluence_count=risk.min_signal_confluence_count,
+        atr_multiplier=risk.atr_multiplier,
+        tp_atr_multiplier=risk.tp_atr_multiplier,
+        regime_filter_enabled=risk.regime_filter_enabled,
+        regime_sma_period=risk.regime_sma_period,
     )
 
 
@@ -935,11 +970,15 @@ def build_trading_loop(
         freshness_threshold_seconds=freshness_threshold_seconds,
         timeout_seconds=timeout_seconds,
     )
+    from app.signals.bayes_activation import build_bayes_signal_kwargs
+
+    bayes_kwargs = build_bayes_signal_kwargs(settings.risk)
     signal_generator = SignalGenerator(
         min_confidence=settings.risk.min_signal_confidence,
         min_confluence=settings.risk.min_signal_confluence_count,
         mode=normalized_mode.value,
         venue="paper",
+        **bayes_kwargs,
     )
     consensus_validator = _build_consensus_validator(
         enable_consensus,

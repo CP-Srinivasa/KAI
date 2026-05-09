@@ -66,7 +66,7 @@ async def test_run_trading_loop_once_shadow_mode_is_allowed(tmp_path: Path) -> N
 
 
 @pytest.mark.asyncio
-async def test_run_trading_loop_once_bearish_without_position_is_order_failed(
+async def test_run_trading_loop_once_bearish_in_uptrend_is_risk_rejected(
     tmp_path: Path,
 ) -> None:
     loop_audit = tmp_path / "loop_bearish.jsonl"
@@ -81,22 +81,15 @@ async def test_run_trading_loop_once_bearish_without_position_is_order_failed(
         execution_audit_path=execution_audit,
     )
 
-    assert cycle.status == CycleStatus.ORDER_FAILED
+    assert cycle.status == CycleStatus.RISK_REJECTED
     assert cycle.market_data_fetched is True
     assert cycle.signal_generated is True
-    assert cycle.risk_approved is True
-    assert cycle.order_created is True
+    assert cycle.risk_approved is False
+    assert cycle.order_created is False
     assert cycle.fill_simulated is False
-    assert "fill_not_simulated" in cycle.notes
+    assert "regime_conflict:uptrend_rejects_sell" in cycle.notes
 
-    assert execution_audit.exists()
-    exec_rows = [
-        json.loads(line)
-        for line in execution_audit.read_text(encoding="utf-8").splitlines()
-        if line.strip()
-    ]
-    assert len(exec_rows) == 1
-    assert exec_rows[0]["event_type"] == "order_created"
+    assert not execution_audit.exists()
 
 
 @pytest.mark.asyncio

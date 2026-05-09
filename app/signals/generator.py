@@ -14,16 +14,38 @@ TODO (vor Live-Einsatz): ATR-basierter SL/TP, Orderbook-Input.
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable, Sequence
+from datetime import UTC, datetime
+from pathlib import Path
 
 from app.core.domain.document import AnalysisResult
 from app.core.enums import SentimentLabel
 from app.market_data.models import MarketDataPoint
+from app.market_data.regime_detection import (
+    FeatureName,
+    MarketRegime,
+    RegimeDetectionEngine,
+    make_observation,
+)
+from app.signals.bayes_journal import append_bayes_report
+from app.signals.bayesian_confidence import (
+    BayesianConfidenceEngine,
+    ConfidenceReport,
+    Evidence,
+    build_market_regime_evidence,
+    build_news_evidence,
+    build_volume_evidence,
+)
 from app.signals.models import (
     SignalCandidate,
     SignalDirection,
     _new_decision_id,
     _now_utc,
 )
+
+ExtraEvidencesProvider = Callable[
+    [AnalysisResult, MarketDataPoint, SignalDirection], Sequence[Evidence]
+]
 
 logger = logging.getLogger(__name__)
 
@@ -49,8 +71,6 @@ class SignalGenerator:
         *,
         min_confidence: float = 0.75,
         min_confluence: int = 2,
-        stop_loss_pct: float = 2.5,  # percent below entry for LONG
-        take_profit_pct: float = 5.0,  # percent above entry for LONG (2:1 R/R)
         market: str = "crypto",
         venue: str = "paper",
         mode: str = "paper",
@@ -58,11 +78,18 @@ class SignalGenerator:
         prompt_version: str = "unknown",
         price_momentum_threshold_pct: float | None = None,
         volume_threshold_usd: float | None = None,
+        stop_loss_pct: float | None = None,
+        take_profit_pct: float | None = None,
+        bayes_engine: BayesianConfidenceEngine | None = None,
+        bayes_shadow_only: bool = True,
+        min_bayes_confidence: float = 0.0,
+        max_bayes_uncertainty: float = 1.0,
+        bayes_audit_path: Path | str | None = None,
+        bayes_extra_evidences_provider: ExtraEvidencesProvider | None = None,
+        regime_engine: RegimeDetectionEngine | None = None,
     ) -> None:
         self._min_confidence = min_confidence
         self._min_confluence = min_confluence
-        self._stop_loss_factor = stop_loss_pct / 100.0
-        self._take_profit_factor = take_profit_pct / 100.0
         self._market = market
         self._venue = venue
         self._mode = mode
@@ -76,6 +103,20 @@ class SignalGenerator:
         self._volume_threshold_usd = (
             volume_threshold_usd if volume_threshold_usd is not None else self._VOLUME_THRESHOLD_USD
         )
+        self._legacy_stop_loss_pct = stop_loss_pct
+        self._legacy_take_profit_pct = take_profit_pct
+        # Bayes-Pfad — additiv. Engine=None → Schema bleibt bei Legacy-Verhalten.
+        self._bayes_engine = bayes_engine
+        self._bayes_shadow_only = bayes_shadow_only
+        self._min_bayes_confidence = min_bayes_confidence
+        self._max_bayes_uncertainty = max_bayes_uncertainty
+        self._bayes_audit_path = Path(bayes_audit_path) if bayes_audit_path is not None else None
+        self._bayes_extra_evidences_provider = bayes_extra_evidences_provider
+        # Optional: ersetzt die simple change_pct_24h-basierte Regime-Ableitung
+        # durch die 8-Klassen-RegimeDetectionEngine. Engine-Posterior fließt als
+        # source_trust in die Markt-Regime-Evidence — unsichere Klassifikation
+        # ⇒ schwächere Evidence statt falscher Confidence.
+        self._regime_engine = regime_engine
 
     def generate(
         self,
@@ -141,36 +182,68 @@ class SignalGenerator:
             )
             return None
 
+        # Filter 7 (optional, additiv): Bayesian Confidence-Gate.
+        # Engine berechnet immer einen Report, wenn aktiviert.  Ablehnung nur,
+        # wenn ``shadow_only=False`` und Confidence unter / Uncertainty über
+        # operator-konfigurierter Schwelle liegt.  Bei Schatten-Modus werden
+        # die Werte nur angeheftet → Vergleichbarkeit ohne Verhaltensänderung.
+        bayes_report = self._evaluate_bayes(analysis, market_data, direction)
+        if (
+            bayes_report is not None
+            and not self._bayes_shadow_only
+            and (
+                bayes_report.confidence_score < self._min_bayes_confidence
+                or bayes_report.uncertainty_score > self._max_bayes_uncertainty
+            )
+        ):
+            logger.debug(
+                "[SIGNAL] Bayes-gate rejected %s: "
+                "confidence=%.2f<min=%.2f or uncertainty=%.2f>max=%.2f",
+                symbol,
+                bayes_report.confidence_score,
+                self._min_bayes_confidence,
+                bayes_report.uncertainty_score,
+                self._max_bayes_uncertainty,
+            )
+            return None
+
         # Derive market context
         change = market_data.change_pct_24h
         market_regime = self._derive_market_regime(change)
         volatility_state = self._derive_volatility_state(change)
 
-        # Entry / exit levels
+        # Entry levels
         entry_price = market_data.price
-        stop_loss_price, take_profit_price = self._calculate_levels(entry_price, direction)
+        stop_loss_price, take_profit_price = self._legacy_static_risk_bounds(
+            entry_price,
+            direction,
+        )
 
         # Build narrative factors
         supporting = self._build_supporting_factors(analysis, market_data, direction)
         contradicting = self._build_contradicting_factors(analysis, market_data, direction)
 
         # Invalidation
-        sl_fmt = f"{stop_loss_price:.4f}"
-        invalidation = (
-            f"Price closes {'below' if direction == SignalDirection.LONG else 'above'} "
-            f"{sl_fmt} or analysis thesis reversed"
-        )
+        invalidation = "Analysis thesis reversed or invalidated by dynamic risk bounds"
 
         # Risk summary
-        max_loss_pct = self._stop_loss_factor * 100
         risk_assessment = (
             f"{'Long' if direction == SignalDirection.LONG else 'Short'} entry at "
-            f"{entry_price:.4f}. Stop at {stop_loss_price:.4f} "
-            f"({max_loss_pct:.1f}% loss). Target at {take_profit_price:.4f}."
+            f"{entry_price:.4f}. Dynamic SL/TP from RiskEngine."
         )
 
+        decision_id = _new_decision_id()
+        if bayes_report is not None and self._bayes_audit_path is not None:
+            append_bayes_report(
+                decision_id=decision_id,
+                symbol=symbol,
+                direction=direction.value,
+                report=bayes_report,
+                path=self._bayes_audit_path,
+            )
+
         return SignalCandidate(
-            decision_id=_new_decision_id(),
+            decision_id=decision_id,
             timestamp_utc=_now_utc(),
             symbol=symbol,
             market=self._market,
@@ -191,12 +264,189 @@ class SignalGenerator:
             invalidation_condition=invalidation,
             risk_assessment=risk_assessment,
             position_size_rationale="Risk-based sizing from RiskEngine",
-            max_loss_estimate_pct=max_loss_pct,
+            max_loss_estimate_pct=0.0,
             data_sources_used=(market_data.source,),
             source_document_id=analysis.document_id,
             model_version=self._model_version,
             prompt_version=self._prompt_version,
+            bayes_prior_probability=(
+                bayes_report.prior_probability if bayes_report is not None else None
+            ),
+            bayes_posterior_probability=(
+                bayes_report.posterior_probability if bayes_report is not None else None
+            ),
+            bayes_confidence_score=(
+                bayes_report.confidence_score if bayes_report is not None else None
+            ),
+            bayes_uncertainty_score=(
+                bayes_report.uncertainty_score if bayes_report is not None else None
+            ),
+            bayes_evidence_weight=(
+                bayes_report.evidence_weight if bayes_report is not None else None
+            ),
         )
+
+    # ─── Bayes integration ────────────────────────────────────────────────────
+
+    def _evaluate_bayes(
+        self,
+        analysis: AnalysisResult,
+        market_data: MarketDataPoint,
+        direction: SignalDirection,
+    ) -> ConfidenceReport | None:
+        """Übersetze AnalysisResult + MarketDataPoint → ConfidenceReport.
+
+        Phase-1-Mapping (additiv, keine Live-Adapter für Funding/OI/Liq/On-Chain):
+          - News: relevance × |sentiment_score|, source_trust = 1 − spam_probability
+          - Volume: z-Score-Proxy aus volume_24h vs. _VOLUME_THRESHOLD_USD,
+            aligned = price_momentum_score
+          - Marktregime: trending_with / trending_against / ranging / volatile
+            (von _derive_market_regime + Direction-Alignment abgeleitet)
+
+        Funding/OI/Liquidations/On-Chain bleiben absichtlich leer, bis
+        dedizierte Adapter Daten liefern.  Engine ist additiv: weniger
+        Evidence ⇒ höhere uncertainty, nicht falsche Confidence.
+        """
+        if self._bayes_engine is None:
+            return None
+
+        evidences = []
+        observed_at = datetime.now(UTC)
+        # Sentiment-Alignment ist per Konstruktion immer positiv (direction folgt
+        # aus sentiment_label).  Wir nutzen |sentiment_score| als Stärkemaß.
+        relevance_strength = max(0.0, min(1.0, analysis.relevance_score))
+        news_trust = max(0.0, min(1.0, 1.0 - analysis.spam_probability))
+        evidences.append(
+            build_news_evidence(
+                relevance=relevance_strength,
+                sentiment_aligned_with_signal=True,
+                source_trust=news_trust,
+                observed_at=observed_at,
+                source_id=analysis.document_id,
+            )
+        )
+
+        # Volume z-Proxy: 0 bei threshold, +1 bei 4× threshold, −1 bei 0 vol.
+        threshold = max(self._volume_threshold_usd, 1.0)
+        z_proxy = max(-3.0, min(3.0, (market_data.volume_24h - threshold) / threshold))
+        price_aligned = bool(self._price_momentum_score(market_data.change_pct_24h, direction))
+        evidences.append(
+            build_volume_evidence(
+                volume_zscore=z_proxy,
+                price_move_aligned_with_signal=price_aligned,
+                source_trust=1.0,
+                observed_at=observed_at,
+                source_id=market_data.source,
+            )
+        )
+
+        regime_label, regime_trust, regime_source_id = self._regime_for_bayes(
+            analysis=analysis,
+            market_data=market_data,
+            direction=direction,
+            price_aligned=price_aligned,
+        )
+        evidences.append(
+            build_market_regime_evidence(
+                regime=regime_label,
+                source_trust=regime_trust,
+                observed_at=observed_at,
+                source_id=regime_source_id,
+            )
+        )
+
+        # Externe Evidences (Funding, OI, Liquidations, On-Chain) — optional.
+        # Provider liegt beim Caller, weil er u. U. async I/O braucht.
+        if self._bayes_extra_evidences_provider is not None:
+            try:
+                extras = self._bayes_extra_evidences_provider(analysis, market_data, direction)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("[SIGNAL] bayes extra-evidences provider failed: %s", exc)
+                extras = ()
+            evidences.extend(extras)
+
+        return self._bayes_engine.evaluate(
+            evidences,
+            prior_probability=analysis.confidence_score,
+            now=observed_at,
+        )
+
+    # Mapping 8-Klassen-RegimeDetectionEngine → 5-Klassen-Bayes-Label.
+    # Logik:
+    #   bullish_regimes (BULL, ACCUMULATION) → pro für LONG, contra für SHORT
+    #   bearish_regimes (BEAR, DISTRIBUTION, PANIC, EUPHORIC_BLOWOFF) → invers
+    #     (EUPHORIC_BLOWOFF und PANIC sind beide *Risiko-Regime gegen LONG*:
+    #      Blowoff = Top-Bildung, Panic = Sell-Druck.)
+    #   LOW_LIQUIDITY → "ranging" (kein Trend, schwache Confidence)
+    #   HIGH_MANIPULATION → "volatile" (Risk-Warnung beidseitig)
+    _BULLISH_REGIMES = frozenset(
+        {MarketRegime.BULL, MarketRegime.ACCUMULATION}
+    )
+    _BEARISH_REGIMES = frozenset(
+        {
+            MarketRegime.BEAR,
+            MarketRegime.DISTRIBUTION,
+            MarketRegime.PANIC,
+            MarketRegime.EUPHORIC_BLOWOFF,
+        }
+    )
+
+    def _regime_for_bayes(
+        self,
+        *,
+        analysis: AnalysisResult,
+        market_data: MarketDataPoint,
+        direction: SignalDirection,
+        price_aligned: bool,
+    ) -> tuple[str, float, str]:
+        """Liefere (label, source_trust, source_id) für die Regime-Evidence.
+
+        Default (engine=None): das vorherige change_pct_24h-Heuristik-Mapping
+        mit source_trust=1.0.  Mit aktivierter ``regime_engine``: 8-Klassen-
+        Klassifikation aus VOLATILITY-Proxy + SOCIAL_MOMENTUM-Proxy, Mapping
+        auf die 5-Klassen-Bayes-Sprache, Engine-Posterior wird zum
+        ``source_trust`` (unsichere Klassifikation ⇒ schwächere Evidence).
+        """
+        if self._regime_engine is None:
+            heuristic = self._derive_market_regime(market_data.change_pct_24h)
+            if heuristic == "trending":
+                label = "trending_with" if price_aligned else "trending_against"
+            elif heuristic == "volatile":
+                label = "volatile"
+            else:
+                label = "ranging"
+            return label, 1.0, market_data.source
+
+        # 2 von 8 Features ableitbar; Rest bleibt 0 (= neutral, Engine
+        # vergibt automatisch höhere uncertainty).
+        vol_z = max(-3.0, min(3.0, market_data.change_pct_24h / 4.0))
+        social_z = max(-3.0, min(3.0, analysis.sentiment_score * 2.0))
+        observation = make_observation(
+            features={
+                FeatureName.VOLATILITY: abs(vol_z),
+                FeatureName.SOCIAL_MOMENTUM: social_z,
+            },
+        )
+        report = self._regime_engine.classify(observation)
+        primary = report.classification.primary_regime
+        if primary in self._BULLISH_REGIMES:
+            label = "trending_with" if direction == SignalDirection.LONG else "trending_against"
+        elif primary in self._BEARISH_REGIMES:
+            label = "trending_with" if direction == SignalDirection.SHORT else "trending_against"
+        elif primary == MarketRegime.LOW_LIQUIDITY:
+            label = "ranging"
+        else:  # HIGH_MANIPULATION
+            label = "volatile"
+        # Engine-Posterior als source_trust ⇒ schwache Klassifikation dämpft Evidence.
+        # Anomaly-Score zieht zusätzlich runter.
+        trust = max(
+            0.0,
+            min(
+                1.0,
+                report.classification.primary_probability * (1.0 - report.anomaly_score),
+            ),
+        )
+        return label, trust, f"regime_engine:{primary.value}"
 
     # ─── Private helpers ───────────────────────────────────────────────────────
 
@@ -274,17 +524,31 @@ class SignalGenerator:
             return "normal"
         return "low"
 
-    def _calculate_levels(
-        self, entry_price: float, direction: SignalDirection
-    ) -> tuple[float, float]:
-        """Return (stop_loss_price, take_profit_price) for given direction."""
-        if direction == SignalDirection.LONG:
-            sl = entry_price * (1.0 - self._stop_loss_factor)
-            tp = entry_price * (1.0 + self._take_profit_factor)
-        else:
-            sl = entry_price * (1.0 + self._stop_loss_factor)
-            tp = entry_price * (1.0 - self._take_profit_factor)
-        return sl, tp
+    def _legacy_static_risk_bounds(
+        self,
+        entry_price: float,
+        direction: SignalDirection,
+    ) -> tuple[float | None, float | None]:
+        """Return legacy percent SL/TP when configured, else defer to RiskEngine ATR."""
+        stop_loss_price = None
+        take_profit_price = None
+        if self._legacy_stop_loss_pct is not None:
+            stop_loss_delta = entry_price * (self._legacy_stop_loss_pct / 100.0)
+            stop_loss_price = (
+                entry_price - stop_loss_delta
+                if direction == SignalDirection.LONG
+                else entry_price + stop_loss_delta
+            )
+        if self._legacy_take_profit_pct is not None:
+            take_profit_delta = entry_price * (self._legacy_take_profit_pct / 100.0)
+            take_profit_price = (
+                entry_price + take_profit_delta
+                if direction == SignalDirection.LONG
+                else entry_price - take_profit_delta
+            )
+        return stop_loss_price, take_profit_price
+
+
 
     def _build_supporting_factors(
         self,

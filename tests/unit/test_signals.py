@@ -70,8 +70,6 @@ def _generator(**kwargs) -> SignalGenerator:
     defaults = {
         "min_confidence": 0.75,
         "min_confluence": 2,
-        "stop_loss_pct": 2.5,
-        "take_profit_pct": 5.0,
     }
     defaults.update(kwargs)
     return SignalGenerator(**defaults)
@@ -124,39 +122,7 @@ def test_signal_has_all_mandatory_fields():
     assert signal.source_document_id == "doc_test_001"
 
 
-def test_long_stop_loss_below_entry():
-    gen = _generator(stop_loss_pct=2.5)
-    signal = gen.generate(
-        _make_analysis(sentiment_label=SentimentLabel.BULLISH),
-        _make_market_data(price=65000.0),
-        "BTC/USDT",
-    )
-    assert signal is not None
-    assert signal.stop_loss_price is not None
-    assert signal.stop_loss_price < signal.entry_price
 
-
-def test_short_stop_loss_above_entry():
-    gen = _generator(stop_loss_pct=2.5)
-    signal = gen.generate(
-        _make_analysis(sentiment_label=SentimentLabel.BEARISH, sentiment_score=-0.8),
-        _make_market_data(price=65000.0),
-        "BTC/USDT",
-    )
-    assert signal is not None
-    assert signal.stop_loss_price is not None
-    assert signal.stop_loss_price > signal.entry_price
-
-
-def test_take_profit_2_to_1_risk_reward_long():
-    gen = _generator(stop_loss_pct=2.5, take_profit_pct=5.0)
-    signal = gen.generate(_make_analysis(), _make_market_data(price=100.0), "BTC/USDT")
-    assert signal is not None
-    assert signal.take_profit_price is not None
-    # tp distance should be 2x sl distance
-    sl_dist = signal.entry_price - signal.stop_loss_price  # type: ignore[operator]
-    tp_dist = signal.take_profit_price - signal.entry_price
-    assert abs(tp_dist / sl_dist - 2.0) < 0.01
 
 
 def test_approval_and_execution_state_default_pending():

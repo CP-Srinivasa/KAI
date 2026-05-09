@@ -33,6 +33,7 @@ def _default_limits(**overrides) -> RiskLimits:
         "kill_switch_enabled": True,
         "min_signal_confidence": 0.75,
         "min_signal_confluence_count": 2,
+        "regime_filter_enabled": False,
     }
     defaults.update(overrides)
     return RiskLimits(**defaults)
@@ -51,8 +52,6 @@ def _loop(tmp_path, **limit_overrides) -> TradingLoop:
     gen = SignalGenerator(
         min_confidence=0.75,
         min_confluence=2,
-        stop_loss_pct=2.5,
-        take_profit_pct=5.0,
     )
     return TradingLoop(
         risk_engine=risk,
@@ -383,7 +382,7 @@ def _loop_with_prices(tmp_path, prices: dict[str, float | None]) -> TradingLoop:
         audit_log_path=str(tmp_path / "exec_audit.jsonl"),
     )
     gen = SignalGenerator(
-        min_confidence=0.75, min_confluence=2, stop_loss_pct=2.5, take_profit_pct=5.0
+        min_confidence=0.75, min_confluence=2
     )
     return TradingLoop(
         risk_engine=risk,

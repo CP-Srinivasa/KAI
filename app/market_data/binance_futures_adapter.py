@@ -21,7 +21,7 @@ from datetime import UTC, datetime
 import httpx
 
 from app.market_data.base import BaseMarketDataAdapter
-from app.market_data.models import OHLCV, Ticker
+from app.market_data.models import OHLCV, FundingRateSnapshot, Ticker
 
 logger = logging.getLogger(__name__)
 
@@ -136,3 +136,67 @@ class BinanceFuturesAdapter(BaseMarketDataAdapter):
     ) -> list[OHLCV]:
         del symbol, timeframe, limit
         return []
+
+    async def get_funding_rate(self, symbol: str) -> FundingRateSnapshot | None:
+        """Fetch latest perpetual funding rate for a USD-M futures symbol.
+
+        Endpoint: ``/fapi/v1/premiumIndex`` — returns ``lastFundingRate`` as
+        a *fraction* (0.0001 = 1bp), already aligned with the 8h funding
+        cadence.  Returns ``None`` on any transport / parse failure; the
+        caller decides whether absence == evidence-skip.
+        """
+        sym = _normalize_symbol(symbol)
+        if not sym:
+            self.last_error = "empty_symbol"
+            return None
+        try:
+            async with httpx.AsyncClient(timeout=self._timeout) as client:
+                resp = await client.get(
+                    f"{self._base}/fapi/v1/premiumIndex",
+                    params={"symbol": sym},
+                )
+        except (httpx.HTTPError, OSError) as exc:
+            self.last_error = f"transport_error:{exc}"
+            return None
+        if resp.status_code in (400, 404):
+            self.last_error = "symbol_not_found"
+            return None
+        if resp.status_code in (418, 429):
+            self.last_error = "rate_limited"
+            return None
+        if resp.status_code != 200:
+            self.last_error = f"http_{resp.status_code}"
+            return None
+        try:
+            row = resp.json()
+        except ValueError:
+            self.last_error = "json_decode_error"
+            return None
+        if not isinstance(row, dict) or "lastFundingRate" not in row:
+            self.last_error = "unexpected_payload"
+            return None
+        try:
+            rate = float(row.get("lastFundingRate", 0.0) or 0.0)
+            mark = float(row.get("markPrice", 0.0) or 0.0) or None
+            index = float(row.get("indexPrice", 0.0) or 0.0) or None
+        except (TypeError, ValueError):
+            self.last_error = "funding_parse_error"
+            return None
+        ts_ms = row.get("time")
+        if isinstance(ts_ms, (int, float)) and ts_ms > 0:
+            source_ts = datetime.fromtimestamp(int(ts_ms) / 1000, tz=UTC).isoformat()
+        else:
+            source_ts = datetime.now(UTC).isoformat()
+        next_ms = row.get("nextFundingTime")
+        next_ts: str | None = None
+        if isinstance(next_ms, (int, float)) and next_ms > 0:
+            next_ts = datetime.fromtimestamp(int(next_ms) / 1000, tz=UTC).isoformat()
+        return FundingRateSnapshot(
+            symbol=_canonical_symbol(sym),
+            timestamp_utc=source_ts,
+            rate=rate,
+            mark_price=mark,
+            index_price=index,
+            next_funding_time_utc=next_ts,
+            source=self.adapter_name,
+        )

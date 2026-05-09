@@ -197,3 +197,14 @@ class SignalCandidate:
 
     # D-125 provenance: optional, fail-open (None = legacy/RSS path).
     provenance: SignalProvenance | None = None
+
+    # Bayesian Confidence (additiv, RISK_BAYES_CONFIDENCE_ENABLED).  Wenn die
+    # Engine im Generator aktiviert ist, hält dieses Quartett die wichtigsten
+    # Skalare des `ConfidenceReport` für Audit, UI und Schatten-Vergleich
+    # gegen das bestehende `confluence_count`/`confidence_score`-Schema.  Alle
+    # Felder bleiben None, wenn der Flag aus ist — Schema-Bruch ausgeschlossen.
+    bayes_prior_probability: float | None = None
+    bayes_posterior_probability: float | None = None
+    bayes_confidence_score: float | None = None
+    bayes_uncertainty_score: float | None = None
+    bayes_evidence_weight: float | None = None
