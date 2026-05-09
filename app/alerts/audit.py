@@ -13,6 +13,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
 
+import portalocker
+
 from app.signals.models import SignalProvenance
 from app.storage.jsonl_io import read_jsonl_tolerant
 
@@ -153,11 +155,20 @@ def append_outcome_annotation(
     annotation: AlertOutcomeAnnotation,
     output_path: str | Path,
 ) -> None:
-    """Append an operator outcome annotation to the outcomes JSONL file."""
+    """Append an operator outcome annotation to the outcomes JSONL file.
+
+    V-DB5 audit B-K2 (2026-05-09): portalocker-Append-Lock schliesst die
+    Restluecke gegen parallele Writer. Der V-DB5 Auto-Annotate-Run-Lock
+    (`auto_annotator._acquire_run_lock`) deckt nur den Auto-Annotator-Pfad
+    ab; manuelle ``annotate``-CLI und ``alerts-blocked-annotate`` koennen
+    weiterhin parallel zur Auto-Annotation in dieselbe JSONL schreiben.
+    Pattern konsistent mit ``app.audit.kai_audit_service.append_event``.
+    """
     p = _resolve_outcomes_path(Path(output_path))
     p.parent.mkdir(parents=True, exist_ok=True)
-    with p.open("a", encoding="utf-8") as f:
-        f.write(json.dumps(annotation.to_json_dict()) + "\n")
+    line = json.dumps(annotation.to_json_dict())
+    with portalocker.Lock(p, mode="a", encoding="utf-8") as f:
+        f.write(line + "\n")
 
 
 def load_outcome_annotations(

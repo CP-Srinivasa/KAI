@@ -1,6 +1,7 @@
 import { Card, CardHeader, Badge, ProgressBar } from "@/components/ui/Primitives";
 import type { DashboardQuality } from "@/lib/api";
 import { cn } from "@/lib/utils";
+import { sourceLabel } from "@/lib/sourceLabels";
 
 // V-DB4e 2026-05-08: Per-source 30-day rolling stability tile.
 // Quelle: /dashboard/api/quality.per_source_stability (Backend-Field neu
@@ -13,6 +14,11 @@ import { cn } from "@/lib/utils";
 //   - Konsistente Visualisierung: Tone-Dot + ProgressBar (size="md") plus
 //     das Drift-Mosaik rechts. Bar zeigt die jüngste Window-Hit-Rate,
 //     Mosaik zeigt die Drift-Historie. Konsistent zur ActivePrecisionCard.
+//   - "drift"-Source atmet permanent (attention-breathe-warn).
+//
+// V-DB5 audit I-4 (2026-05-09):
+//   Deutsche Microcopy ((rolling)→(gleitend), stable→stabil, drift→Drift)
+//   + humanisierte Source-Labels via lib/sourceLabels.
 
 type Window = NonNullable<
   DashboardQuality["per_source_stability"]
@@ -42,7 +48,7 @@ export function PerSourceStabilityPanel({ data }: { data: DashboardQuality | nul
     return (
       <Card padded>
         <CardHeader
-          title="Source-Stability (rolling)"
+          title="Source-Stability (gleitend)"
           subtitle="Liefert eine Quelle ueber drei 30-Tage-Fenster konstant Treffer — oder driftet sie?"
         />
         <div className="rounded-md border border-line-subtle bg-bg-2 px-3 py-4 text-xs text-fg-muted leading-relaxed">
@@ -66,11 +72,11 @@ export function PerSourceStabilityPanel({ data }: { data: DashboardQuality | nul
   return (
     <Card padded>
       <CardHeader
-        title="Source-Stability (rolling)"
+        title="Source-Stability (gleitend)"
         subtitle={`${pss.window_count} Windows × ${pss.window_days}d · min n=${pss.min_resolved_per_window} · Wilson-Lower ≥${pss.min_wilson_low_pct.toFixed(0)}%`}
         right={
           <Badge tone={stableCount === sources.length ? "pos" : stableCount > 0 ? "warn" : "muted"} dot>
-            {stableCount}/{sources.length} stable
+            {stableCount}/{sources.length} stabil
           </Badge>
         }
       />
@@ -95,6 +101,10 @@ export function PerSourceStabilityPanel({ data }: { data: DashboardQuality | nul
                 : latestTone === "neg"
                   ? "neg"
                   : "muted";
+          const display = sourceLabel(source);
+          const titleText = display.hint
+            ? `${display.hint} · Backend-Key: ${source}`
+            : `Backend-Key: ${source}`;
           return (
             <div key={source} className="grid items-center gap-3" style={{ gridTemplateColumns: "minmax(0,1fr) auto auto" }}>
               <div className="min-w-0">
@@ -104,7 +114,12 @@ export function PerSourceStabilityPanel({ data }: { data: DashboardQuality | nul
                     className={cn("inline-block h-2 w-2 rounded-full shrink-0", dotClass)}
                     aria-hidden="true"
                   />
-                  <span className="text-fg font-medium truncate">{source}</span>
+                  <span
+                    className="text-fg font-medium truncate"
+                    title={titleText}
+                  >
+                    {display.label}
+                  </span>
                   {latest && (
                     <span className="text-2xs font-mono text-fg-subtle shrink-0 ml-auto">
                       {latest.hit_rate_pct != null ? `${latest.hit_rate_pct.toFixed(1)}%` : "—"}
@@ -119,7 +134,7 @@ export function PerSourceStabilityPanel({ data }: { data: DashboardQuality | nul
                     tone={barTone}
                     size="md"
                     sufficientSample={latest?.n_threshold_met ?? false}
-                    label={`${source} juengste Hit-Rate`}
+                    label={`${display.label} juengste Hit-Rate`}
                   />
                   {/* Wilson-Lower-Threshold-Marker konsistent zu ActivePrecisionCard. */}
                   <span
@@ -131,7 +146,7 @@ export function PerSourceStabilityPanel({ data }: { data: DashboardQuality | nul
                 </div>
               </div>
               {/* Drift-Mosaik: 3 Window-Kacheln (alt → neu rechts). */}
-              <div className="flex gap-1 shrink-0" aria-label={`${source} Drift-Verlauf`}>
+              <div className="flex gap-1 shrink-0" aria-label={`${display.label} Drift-Verlauf`}>
                 {[...m.windows].reverse().map((w, idx) => {
                   const tone = windowTone(w);
                   return (
@@ -159,7 +174,7 @@ export function PerSourceStabilityPanel({ data }: { data: DashboardQuality | nul
                   !m.stable && "attention-breathe-warn",
                 )}
               >
-                {m.stable ? "stable" : "drift"}
+                {m.stable ? "stabil" : "Drift"}
               </Badge>
             </div>
           );
@@ -167,7 +182,7 @@ export function PerSourceStabilityPanel({ data }: { data: DashboardQuality | nul
       </div>
       <div className="mt-4 pt-3 border-t border-line-subtle text-2xs text-fg-muted leading-relaxed">
         Bar = juengste 30-Tage-Hit-Rate · Mosaik = drei Buckets von links (alt) nach rechts (neu, ~aktuell).
-        Eine Source ist <span className="text-pos">stable</span>, wenn jeder Bucket mit Daten
+        Eine Source ist <span className="text-pos">stabil</span>, wenn jeder Bucket mit Daten
         n≥{pss.min_resolved_per_window} UND Wilson-Lower ≥{pss.min_wilson_low_pct.toFixed(0)}% erfuellt.
         Hover ueber eine Kachel fuer Details.
       </div>

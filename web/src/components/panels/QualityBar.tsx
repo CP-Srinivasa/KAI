@@ -2,7 +2,14 @@ import { Card, CardHeader, Badge, ProgressBar } from "@/components/ui/Primitives
 import { useT } from "@/i18n/I18nProvider";
 import { cn } from "@/lib/utils";
 import type { DashboardQuality } from "@/lib/api";
-import { tierLiftTone, type Tone } from "@/lib/tone";
+import {
+  tierLiftTone,
+  formatTierLift,
+  evaluateTierLiftSignificance,
+  TIER_LIFT_INSIGNIFICANT_LABEL,
+  TIER_LIFT_INSIGNIFICANT_TOOLTIP,
+  type Tone,
+} from "@/lib/tierLift";
 
 // Lokalisierung der gate_status raw-snake-Strings analog zu verdictText() in
 // ActivePrecisionCard. Unbekannte Werte fallen by-design auf den raw-Key
@@ -22,6 +29,8 @@ type Row = {
   target: number;
   format: (n: number) => string;
   hint?: string;
+  /** Optional title-Tooltip auf dem hint-span (D-1: "Lift unsicher"-Erklaerung). */
+  hintTooltip?: string;
   toneFn?: (value: number | null) => Tone;
 };
 
@@ -47,36 +56,33 @@ export function QualityBarPanel({ data }: { data: DashboardQuality | null }) {
       target: 50,
       format: (n) => `${n}`,
     },
-    {
+    (() => {
       // D-149: priority_corr (Pearson) ist auf P7-P10-Band nicht aussagekraeftig.
       // Wir zeigen jetzt priority_tier_lift_pct = High-Conviction-HitRate
       // minus Standard-Tier-HitRate. Ziel realistisch >=15pp Lift.
-      label: t("primitives.priority_tier_lift"),
-      value: data?.priority_tier_lift_pct ?? null,
-      target: 15,
-      format: (n) => `${n >= 0 ? "+" : ""}${n.toFixed(1)}pp`,
-      toneFn: tierLiftTone,
-      hint: (() => {
-        if (
-          data?.priority_tier_high_conviction_resolved == null ||
-          data?.priority_tier_standard_resolved == null
-        ) {
-          return data?.priority_tier_lift_pct == null
-            ? t("primitives.priority_tier_lift_insufficient")
-            : undefined;
-        }
-        const n = data.priority_tier_high_conviction_resolved + data.priority_tier_standard_resolved;
-        const hLo = data.priority_tier_high_conviction_ci_low_pct;
-        const hHi = data.priority_tier_high_conviction_ci_high_pct;
-        const sLo = data.priority_tier_standard_ci_low_pct;
-        const sHi = data.priority_tier_standard_ci_high_pct;
-        const ciOverlap =
-          hLo != null && hHi != null && sLo != null && sHi != null &&
-          hLo <= sHi && sLo <= hHi;
-        // n.s. = nicht statistisch signifikant (Wilson-95%-CIs ueberlappen)
-        return ciOverlap ? `n=${n} (n.s.)` : `n=${n}`;
-      })(),
-    },
+      // V-DB5 A-1/A-2/A-3 + D-1: Format/Tone/Significance via shared lib/tierLift.
+      const sig = evaluateTierLiftSignificance(data);
+      const ptl = data?.priority_tier_lift_pct ?? null;
+      let hint: string | undefined;
+      let hintTooltip: string | undefined;
+      if (sig.sampleN == null) {
+        hint = ptl == null ? t("primitives.priority_tier_lift_insufficient") : undefined;
+      } else if (sig.isSignificant === false) {
+        hint = `n=${sig.sampleN} (${TIER_LIFT_INSIGNIFICANT_LABEL})`;
+        hintTooltip = TIER_LIFT_INSIGNIFICANT_TOOLTIP;
+      } else {
+        hint = `n=${sig.sampleN}`;
+      }
+      return {
+        label: t("primitives.priority_tier_lift"),
+        value: ptl,
+        target: 15,
+        format: (n: number) => formatTierLift(n),
+        toneFn: tierLiftTone,
+        hint,
+        hintTooltip,
+      } satisfies Row;
+    })(),
     // Row 4 (paper_fills) + Row 5 (paper_fills_with_pnl) beide entfernt
     // — Re-Entry-Metriken gehören in ReentryGatePanel (DALI-P-026 Original-Plan,
     // NEO-F-PANEL-CHECK-2026-05-04-003 P2-Korrektur). QualityBar zeigt nur noch
@@ -107,7 +113,14 @@ export function QualityBarPanel({ data }: { data: DashboardQuality | null }) {
               <div className="flex items-baseline justify-between gap-3 text-xs">
                 <div className="flex items-center gap-2 min-w-0">
                   <span className="text-fg font-medium truncate">{r.label}</span>
-                  {r.hint && <span className="text-2xs text-fg-subtle shrink-0">{r.hint}</span>}
+                  {r.hint && (
+                    <span
+                      className="text-2xs text-fg-subtle shrink-0"
+                      title={r.hintTooltip}
+                    >
+                      {r.hint}
+                    </span>
+                  )}
                 </div>
                 <div className="flex items-center gap-1.5 font-mono shrink-0">
                   <span

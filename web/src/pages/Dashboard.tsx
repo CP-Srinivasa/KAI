@@ -23,7 +23,13 @@ import { useDashboardQuality } from "@/lib/useDashboardQuality";
 import { useDashboardProvenance } from "@/lib/useDashboardProvenance";
 import { usePriorityGate } from "@/lib/usePriorityGate";
 import { cn } from "@/lib/utils";
-import { tierLiftTone } from "@/lib/tone";
+import {
+  tierLiftTone,
+  formatTierLift,
+  evaluateTierLiftSignificance,
+  TIER_LIFT_INSIGNIFICANT_LABEL,
+  TIER_LIFT_INSIGNIFICANT_TOOLTIP,
+} from "@/lib/tierLift";
 import { useRouter, type Route } from "@/state/Router";
 
 const PREPARED_PANELS: Array<{ title: string; reason: string; detail: string }> = [
@@ -176,7 +182,7 @@ export function Dashboard() {
         />
         <KpiCard
           label={t("primitives.priority_tier_lift")}
-          value={ptl != null ? `${ptl >= 0 ? "+" : ""}${ptl.toFixed(1)}pp` : "—"}
+          value={formatTierLift(ptl)}
           target={15}
           valueNumeric={ptl ?? undefined}
           gapUnit="pp"
@@ -189,19 +195,15 @@ export function Dashboard() {
               : data?.priority_tier_high_conviction_resolved != null &&
                   data?.priority_tier_standard_resolved != null
                 ? (() => {
+                    // V-DB5 A-1/A-2/A-3 + D-1: Single-source-of-truth via lib/tierLift.
+                    const sig = evaluateTierLiftSignificance(data);
                     const hLo = data.priority_tier_high_conviction_ci_low_pct;
                     const hHi = data.priority_tier_high_conviction_ci_high_pct;
                     const sLo = data.priority_tier_standard_ci_low_pct;
                     const sHi = data.priority_tier_standard_ci_high_pct;
-                    // CIs überlappen → Lift statistisch nicht trennbar
-                    const ciOverlap =
-                      hLo != null && hHi != null && sLo != null && sHi != null &&
-                      hLo <= sHi && sLo <= hHi;
                     return (
                       <span className="font-mono">
-                        n=
-                        {data.priority_tier_high_conviction_resolved +
-                          data.priority_tier_standard_resolved}
+                        n={sig.sampleN}
                         {" "}· P≥{data.priority_tier_high_conviction_threshold ?? "?"}:
                         {" "}<span className="text-pos">{data.priority_tier_high_conviction_hit_rate_pct?.toFixed(1) ?? "?"}%</span>
                         {hLo != null && hHi != null && (
@@ -212,12 +214,12 @@ export function Dashboard() {
                         {sLo != null && sHi != null && (
                           <span className="text-fg-subtle/80"> [{sLo.toFixed(0)}–{sHi.toFixed(0)}]</span>
                         )}
-                        {ciOverlap && (
+                        {sig.isSignificant === false && (
                           <span
                             className="ml-1.5 text-fg-subtle italic"
-                            title="Wilson 95% Konfidenzintervalle der beiden Hit-Rates überlappen → Lift-Differenz statistisch nicht trennbar (n zu klein)."
+                            title={TIER_LIFT_INSIGNIFICANT_TOOLTIP}
                           >
-                            n.s.
+                            {TIER_LIFT_INSIGNIFICANT_LABEL}
                           </span>
                         )}
                       </span>
