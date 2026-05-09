@@ -193,5 +193,11 @@ function StatusDotTone({ tone }: { tone: "pos" | "warn" | "neg" | "muted" }) {
         : tone === "neg"
           ? "bg-neg"
           : "bg-fg-subtle/50";
-  return <span className={cn("h-1.5 w-1.5 rounded-full inline-block", bg)} aria-hidden />;
+  // Synthwave Stufe 2: aktive Dots glühen in ihrer Tone.
+  const glow =
+    tone === "pos" ? "glow-pos"
+    : tone === "warn" ? "glow-warn"
+    : tone === "neg" ? "glow-neg"
+    : "";
+  return <span className={cn("h-1.5 w-1.5 rounded-full inline-block", bg, glow)} aria-hidden />;
 }

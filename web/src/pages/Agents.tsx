@@ -1,10 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import {
   Bot,
-  Shield,
-  Activity,
-  Wrench,
-  Palette,
   AlertTriangle,
   CheckCircle2,
   RefreshCw,
@@ -18,6 +14,7 @@ import {
 } from "lucide-react";
 import { PageHeader } from "@/layout/PageHeader";
 import { Card, CardHeader, Badge } from "@/components/ui/Primitives";
+import { AgentIcon } from "@/components/agents/AgentIcon";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { useApi } from "@/lib/useApi";
 import {
@@ -51,13 +48,6 @@ const STATUS_HINT: Record<AgentStatus, string> = {
   live: "Aktivität in den letzten 24h",
   prepared: "Verzeichnis vorhanden, keine Aktivität in 24h",
   unavailable: "Dropbox-Verzeichnis fehlt — wird beim ersten Kommando angelegt",
-};
-
-const ICON_BY_SLUG: Record<string, JSX.Element> = {
-  sentr: <Shield size={16} />,
-  watchdog: <Activity size={16} />,
-  architect: <Wrench size={16} />,
-  dali: <Palette size={16} />,
 };
 
 export function AgentsPage() {
@@ -151,7 +141,7 @@ function AgentCard({
       <CardHeader
         title={
           <div className="flex items-center gap-2">
-            <span className="text-fg-subtle">{ICON_BY_SLUG[agent.slug] ?? <Bot size={16} />}</span>
+            <AgentIcon slug={agent.slug} size={20} className="text-fg-subtle" />
             <span>{agent.name}</span>
           </div>
         }

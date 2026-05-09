@@ -114,7 +114,7 @@ export function Dashboard() {
       </header>
 
       {q.state === "error" && (
-        <Card padded className="border-neg/30 bg-neg/5">
+        <Card padded className="border-neg/30 bg-neg/5 attention-breathe-neg">
           <div className="flex items-start gap-3 text-xs text-neg">
             <AlertCircle size={16} className="mt-0.5 shrink-0" />
             <div className="min-w-0">
@@ -263,14 +263,15 @@ export function Dashboard() {
         />
       </PanelErrorBoundary>
 
-      {/* Aktiver Analytics-Grid */}
+      {/* Aktiver Analytics-Grid — Symmetrie ab lg: linke Card streckt sich,
+          rechter Stack teilt sich die Hoehe via flex-1. Mobile bleibt block-stack. */}
       <div className="grid grid-cols-12 gap-4">
-        <div className="col-span-12 lg:col-span-8">
+        <div className="col-span-12 lg:col-span-8 lg:[&>*]:h-full">
           <PanelErrorBoundary name="Quality-Bar">
             <QualityBarPanel data={data} />
           </PanelErrorBoundary>
         </div>
-        <div className="col-span-12 lg:col-span-4 space-y-4">
+        <div className="col-span-12 lg:col-span-4 flex flex-col gap-4 lg:[&>*]:flex-1">
           <PanelErrorBoundary name="Signal-Qualität">
             <SignalQualityCard
               data={data}
@@ -288,15 +289,16 @@ export function Dashboard() {
         </div>
       </div>
 
-      {/* Active-Precision-Split (Source-Breakdown mit Wilson-CI) */}
+      {/* Active-Precision-Split (Source-Breakdown mit Wilson-CI).
+          Beide Spalten strecken Card auf gleiche Hoehe ab lg. */}
       <div className="grid grid-cols-12 gap-4">
-        <div className="col-span-12 lg:col-span-7">
+        <div className="col-span-12 lg:col-span-7 lg:[&>*]:h-full">
           <PanelErrorBoundary name="Active-Precision">
             <ActivePrecisionCard data={provenance} />
           </PanelErrorBoundary>
         </div>
         {/* V-DB4a 2026-05-08: Per-source Active-Precision aus Hold-Report. */}
-        <div className="col-span-12 lg:col-span-5">
+        <div className="col-span-12 lg:col-span-5 lg:[&>*]:h-full">
           <PanelErrorBoundary name="Source-Precision">
             <PerSourcePrecisionPanel data={data} />
           </PanelErrorBoundary>
@@ -312,14 +314,14 @@ export function Dashboard() {
         </div>
       </div>
 
-      {/* Signal-Matrix + Market-Snapshot */}
+      {/* Signal-Matrix + Market-Snapshot — gleiche Hoehe ab lg. */}
       <div className="grid grid-cols-12 gap-4">
-        <div className="col-span-12 lg:col-span-7">
+        <div className="col-span-12 lg:col-span-7 lg:[&>*]:h-full">
           <PanelErrorBoundary name="Signal-Matrix">
             <SignalHeatmapPanel />
           </PanelErrorBoundary>
         </div>
-        <div className="col-span-12 lg:col-span-5">
+        <div className="col-span-12 lg:col-span-5 lg:[&>*]:h-full">
           <PanelErrorBoundary name="Markt-Snapshot">
             {isTradingViewEnabled() ? (
               <TradingViewChart heightClass="h-[320px]" title="Markt-Snapshot" />

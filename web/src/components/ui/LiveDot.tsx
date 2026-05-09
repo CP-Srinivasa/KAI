@@ -104,6 +104,9 @@ export function LiveDot({
           className={cn(
             "relative inline-flex rounded-full h-2 w-2",
             PHASE_DOT[phase],
+            phase === "live" && "glow-pos",
+            phase === "stale" && "glow-warn",
+            phase === "down" && "glow-neg",
           )}
           aria-hidden
         />

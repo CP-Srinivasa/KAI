@@ -158,8 +158,13 @@ export function KaiLiveWidget(props: KaiLiveWidgetProps) {
     [runtimeState.timestamp, language],
   );
 
-  // Anti-Repeat-History fuer cycleKaiPhrase.
-  const historyRef = useRef<string[]>([]);
+  // Anti-Repeat-History fuer cycleKaiPhrase: zwei Listen.
+  // textHistoryRef = letzte n=5 Phrases (verhindert woertliche Wiederholung).
+  // themeHistoryRef = letzte n=2 Themes (verhindert thematische Cluster wie
+  // "zwei Buffett-Quotes hintereinander" oder "drei Watchful-IDLE-Saetze").
+  const textHistoryRef = useRef<string[]>([]);
+  const themeHistoryRef = useRef<string[]>([]);
+  const THEME_HISTORY_LEN = 2;
 
   // Chat-History: Greeting + Cycle-Phrases + Backend-Comments. Max 5 sichtbar.
   // Greeting wird bei initialem IDLE einmal pro Session vorangestellt.
@@ -168,10 +173,12 @@ export function KaiLiveWidget(props: KaiLiveWidgetProps) {
     const greet = shouldRenderGreeting(runtimeState.state) ? getGreeting(language) : null;
     if (greet) {
       init.push({ id: makeId(), text: greet, origin: "greeting" });
-      historyRef.current = [greet];
+      textHistoryRef.current = [greet];
+      themeHistoryRef.current = ["greeting"];
     } else if (runtimeState.comment) {
       init.push({ id: makeId(), text: runtimeState.comment, origin: "backend" });
-      historyRef.current = [runtimeState.comment];
+      textHistoryRef.current = [runtimeState.comment];
+      themeHistoryRef.current = ["backend"];
     }
     return init;
   });
@@ -186,12 +193,14 @@ export function KaiLiveWidget(props: KaiLiveWidgetProps) {
       const next = cycleKaiPhrase({
         state: runtimeState.state,
         language,
-        history: historyRef.current,
+        textHistory: textHistoryRef.current,
+        themeHistory: themeHistoryRef.current,
         backendComment: runtimeState.comment,
       });
-      if (!isPhraseSafe(next, language)) return;
-      historyRef.current = [next, ...historyRef.current].slice(0, HISTORY_LEN);
-      const entry: ChatEntry = { id: makeId(), text: next, origin: "cycle" };
+      if (!isPhraseSafe(next.text, language)) return;
+      textHistoryRef.current = [next.text, ...textHistoryRef.current].slice(0, HISTORY_LEN);
+      themeHistoryRef.current = [next.theme, ...themeHistoryRef.current].slice(0, THEME_HISTORY_LEN);
+      const entry: ChatEntry = { id: makeId(), text: next.text, origin: "cycle" };
       setMessages((prev) => [...prev, entry].slice(-MAX_VISIBLE_MESSAGES));
     }
 
@@ -225,7 +234,8 @@ export function KaiLiveWidget(props: KaiLiveWidgetProps) {
       if (last.text === runtimeState.comment) return prev;
       return [...prev, echo].slice(-MAX_VISIBLE_MESSAGES);
     });
-    historyRef.current = [runtimeState.comment, ...historyRef.current].slice(0, HISTORY_LEN);
+    textHistoryRef.current = [runtimeState.comment, ...textHistoryRef.current].slice(0, HISTORY_LEN);
+    themeHistoryRef.current = ["backend", ...themeHistoryRef.current].slice(0, THEME_HISTORY_LEN);
   }, [runtimeState.comment]);
 
   // Type-On nur auf der neuesten Message. Pause bei OFFLINE/ERROR
@@ -258,7 +268,7 @@ export function KaiLiveWidget(props: KaiLiveWidgetProps) {
       className={cn(
         "kai-widget kai-widget--full kai-card",
         `kai-widget--state-${runtimeState.state}`,
-        "p-4",
+        "p-4 synthwave-edge scanline-overlay",
       )}
       aria-label="KAI Live Widget"
     >

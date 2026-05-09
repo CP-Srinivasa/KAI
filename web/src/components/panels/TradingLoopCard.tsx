@@ -99,16 +99,42 @@ function TradingLoopCardImpl({ data, state, generatedAt }: Props) {
         subtitle={total > 0 ? `${total} Cycles im Fenster` : undefined}
         right={<LiveDot state={state} generatedAt={generatedAt} />}
       />
-      {entries.length > 0 ? (
+      {entries.length > 0 ? (() => {
+        // Synthwave Stufe 2: die dominante Klasse pulsiert dezent (atmender Glow).
+        const dominant = (["healthy", "risk", "data", "fail"] as const).reduce(
+          (acc, k) => (summary[k] > summary[acc] ? k : acc),
+          "healthy" as const,
+        );
+        return (
         <div className="space-y-3">
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-2xs">
             {(["healthy", "risk", "data", "fail"] as const).map((c) => {
               const v = summary[c];
               const pct = total > 0 ? (v / total) * 100 : 0;
+              const isDominant = c === dominant && v > 0;
+              const pulseColor =
+                c === "healthy" ? "var(--info)"
+                : c === "risk" ? "var(--ai)"
+                : c === "data" ? "var(--warn)"
+                : "var(--neg)";
+              // 2026-05-08 Operator-Folge: kritische Klassen atmen permanent —
+              // unabhaengig davon ob sie dominant sind. fail = neg, data = warn.
+              // Operator soll immer sehen: hier ist was zu beachten.
+              const isAttention =
+                v > 0 && (c === "fail" || c === "data");
+              const attentionClass =
+                c === "fail" ? "attention-breathe-neg"
+                : c === "data" ? "attention-breathe-warn"
+                : "";
               return (
                 <div
                   key={c}
-                  className="rounded-xs border border-line-subtle bg-bg-2 px-2 py-1.5"
+                  className={cn(
+                    "rounded-xs border border-line-subtle bg-bg-2 px-2 py-1.5",
+                    isDominant && !isAttention && "neon-pulse",
+                    isAttention && attentionClass,
+                  )}
+                  style={isDominant && !isAttention ? ({ ["--neon-pulse-color" as string]: pulseColor } as React.CSSProperties) : undefined}
                 >
                   <div className="flex items-center gap-1.5">
                     <span
@@ -186,7 +212,8 @@ function TradingLoopCardImpl({ data, state, generatedAt }: Props) {
             })}
           </div>
         </div>
-      ) : (
+        );
+      })() : (
         <div className="py-4 text-center text-xs text-fg-subtle">
           Noch keine Cycles im aktuellen Fenster
         </div>

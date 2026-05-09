@@ -14,13 +14,17 @@
   --fg: 18 23 32;
   --fg-muted: 92 102 118;
   --fg-subtle: 140 150 165;
-  --accent: 96 99 255;
-  --accent-soft: 232 233 255;
-  --pos: 22 163 110;
-  --neg: 220 54 68;
-  --warn: 201 133 10;
-  --info: 20 141 186;
-  --ai: 128 96 220;
+  /* Operator-Folge 2026-05-08 (dritter Pass): Mittelweg zwischen vollem
+     KAI-Neon und WCAG-Doctrine. Mehr Neon-Pop als der vorherige Stand,
+     aber noch nicht 100% Vollsaettigung. Sub-WCAG-Body wird bewusst
+     akzeptiert (Vibe vor Lesbarkeit) — Glow-Klassen verstaerken zusaetzlich. */
+  --accent: 35 130 250;       /* electric blue    #2382FA */
+  --accent-soft: 224 235 255;
+  --pos: 0 215 135;           /* giftgruen-pop    #00D787 */
+  --neg: 235 30 75;           /* magenta-rot      #EB1E4B */
+  --warn: 240 75 5;           /* magma-glow       #F04B05 */
+  --info: 0 180 220;          /* cyber-cyan       #00B4DC */
+  --ai: 132 90 240;           /* violet-glow      #845AF0 */
 }
 
 .dark {
@@ -35,13 +39,17 @@
   --fg: 232 236 243;
   --fg-muted: 156 165 184;
   --fg-subtle: 109 119 138;
-  --accent: 130 135 255;
-  --accent-soft: 36 38 70;
-  --pos: 52 199 140;
-  --neg: 245 103 118;
-  --warn: 230 170 50;
-  --info: 80 186 225;
-  --ai: 170 140 255;
+  /* Operator-Folge 2026-05-08: identische KAI-Neon-Werte wie Light-Mode.
+     Volle Saettigung in beiden Themes — auf dunklem bg-1 wirken sie
+     extra elektrisch (8-9:1 Kontrast), auf hellem bg-1 ist es laut.
+     Bewusste Stilentscheidung. */
+  --accent: 47 125 255;       /* KAI-blue   #2F7DFF */
+  --accent-soft: 24 38 68;
+  --pos: 0 255 163;           /* KAI-green  #00FFA3 */
+  --neg: 255 23 68;           /* KAI-red    #FF1744 */
+  --warn: 255 90 30;          /* Magma-Orange #FF5A1E — TRON-Sark, glueht im Dark-Mode */
+  --info: 0 229 255;          /* KAI-cyan   #00E5FF */
+  --ai: 139 92 246;           /* KAI-violet #8B5CF6 */
 }
 
 html,
@@ -132,4 +140,198 @@ body {
 }
 .recharts-cartesian-grid line {
   stroke: rgb(var(--line-subtle)) !important;
+}
+
+/* ----- Synthwave / TRON-Glow auf Tone-Elementen -----
+   Operator-Folge 2026-05-08: 80er-Neon-Vibe ueber dezente Box-Shadows in der
+   Tone-Color. Light-Mode 0.55 Saturation (Surface ist hell, Glow dezent),
+   Dark-Mode 0.75 + 0.35 Doppel-Halo fuer TRON-Aura. Wird auf ProgressBar-Fill,
+   Badge-Border, KPI-Tone-Border und beliebige Tone-Punkte angewandt
+   via .glow-{tone} Klasse. */
+.glow-pos    { box-shadow: 0 0 8px rgb(var(--pos) / 0.7), 0 0 14px rgb(var(--pos) / 0.25); }
+.glow-neg    { box-shadow: 0 0 8px rgb(var(--neg) / 0.7), 0 0 14px rgb(var(--neg) / 0.25); }
+.glow-warn   { box-shadow: 0 0 8px rgb(var(--warn) / 0.7), 0 0 14px rgb(var(--warn) / 0.25); }
+.glow-info   { box-shadow: 0 0 8px rgb(var(--info) / 0.7), 0 0 14px rgb(var(--info) / 0.25); }
+.glow-ai     { box-shadow: 0 0 8px rgb(var(--ai) / 0.7), 0 0 14px rgb(var(--ai) / 0.25); }
+.glow-accent { box-shadow: 0 0 8px rgb(var(--accent) / 0.7), 0 0 14px rgb(var(--accent) / 0.25); }
+
+.dark .glow-pos    { box-shadow: 0 0 8px rgb(var(--pos) / 0.75),    0 0 16px rgb(var(--pos) / 0.35); }
+.dark .glow-neg    { box-shadow: 0 0 8px rgb(var(--neg) / 0.75),    0 0 16px rgb(var(--neg) / 0.35); }
+.dark .glow-warn   { box-shadow: 0 0 8px rgb(var(--warn) / 0.75),   0 0 16px rgb(var(--warn) / 0.35); }
+.dark .glow-info   { box-shadow: 0 0 8px rgb(var(--info) / 0.75),   0 0 16px rgb(var(--info) / 0.35); }
+.dark .glow-ai     { box-shadow: 0 0 8px rgb(var(--ai) / 0.75),     0 0 16px rgb(var(--ai) / 0.35); }
+.dark .glow-accent { box-shadow: 0 0 8px rgb(var(--accent) / 0.75), 0 0 16px rgb(var(--accent) / 0.35); }
+
+/* Card-Border-Glow — fuer KPI-Cards mit Tone, Hero-Cards.
+   Light: Inset-Hairline + dezenter Outer-Halo. Dark: TRON-Halo. */
+.glow-border-pos    { box-shadow: inset 0 0 0 1px rgb(var(--pos) / 0.18),    0 0 14px -2px rgb(var(--pos) / 0.25); }
+.glow-border-neg    { box-shadow: inset 0 0 0 1px rgb(var(--neg) / 0.18),    0 0 14px -2px rgb(var(--neg) / 0.25); }
+.glow-border-warn   { box-shadow: inset 0 0 0 1px rgb(var(--warn) / 0.18),   0 0 14px -2px rgb(var(--warn) / 0.25); }
+.glow-border-info   { box-shadow: inset 0 0 0 1px rgb(var(--info) / 0.18),   0 0 14px -2px rgb(var(--info) / 0.25); }
+.glow-border-ai     { box-shadow: inset 0 0 0 1px rgb(var(--ai) / 0.18),     0 0 14px -2px rgb(var(--ai) / 0.25); }
+.glow-border-accent { box-shadow: inset 0 0 0 1px rgb(var(--accent) / 0.18), 0 0 14px -2px rgb(var(--accent) / 0.25); }
+
+.dark .glow-border-pos    { box-shadow: inset 0 0 0 1px rgb(var(--pos) / 0.32),    0 0 22px -2px rgb(var(--pos) / 0.45); }
+.dark .glow-border-neg    { box-shadow: inset 0 0 0 1px rgb(var(--neg) / 0.32),    0 0 22px -2px rgb(var(--neg) / 0.45); }
+.dark .glow-border-warn   { box-shadow: inset 0 0 0 1px rgb(var(--warn) / 0.32),   0 0 22px -2px rgb(var(--warn) / 0.45); }
+.dark .glow-border-info   { box-shadow: inset 0 0 0 1px rgb(var(--info) / 0.32),   0 0 22px -2px rgb(var(--info) / 0.45); }
+.dark .glow-border-ai     { box-shadow: inset 0 0 0 1px rgb(var(--ai) / 0.32),     0 0 22px -2px rgb(var(--ai) / 0.45); }
+.dark .glow-border-accent { box-shadow: inset 0 0 0 1px rgb(var(--accent) / 0.32), 0 0 22px -2px rgb(var(--accent) / 0.45); }
+
+/* Synthwave-Top-Edge — Cyan→Magenta→Pink-Gradient als 1px-Linie am Card-Top.
+   Wird auf prominenten Cards (KAI Live, Hero-Sections) eingesetzt. Setzt
+   Container voraus mit position:relative + overflow:visible. */
+.synthwave-edge {
+  position: relative;
+}
+.synthwave-edge::before {
+  content: "";
+  position: absolute;
+  top: 0; left: 14px; right: 14px;
+  height: 1px;
+  background: linear-gradient(90deg,
+    transparent 0%,
+    rgb(var(--info) / 0.7) 18%,
+    rgb(var(--ai) / 0.85) 50%,
+    rgb(var(--neg) / 0.7) 82%,
+    transparent 100%);
+  pointer-events: none;
+  border-radius: 1px;
+  z-index: 1;
+}
+
+/* Scanline-Overlay — animierte CRT-Anmutung fuer Hero-Bereiche.
+   Subtle: 3% Opacity, 3px Pitch. Light + Dark unterscheidet nur die Tint. */
+.scanline-overlay {
+  position: relative;
+  isolation: isolate;
+}
+.scanline-overlay::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: repeating-linear-gradient(
+    0deg,
+    transparent 0px, transparent 2px,
+    rgb(var(--info) / 0.04) 2px, rgb(var(--info) / 0.04) 3px);
+  z-index: 1;
+  animation: scanline-drift 8s linear infinite;
+}
+.dark .scanline-overlay::after {
+  background: repeating-linear-gradient(
+    0deg,
+    transparent 0px, transparent 2px,
+    rgb(var(--info) / 0.07) 2px, rgb(var(--info) / 0.07) 3px);
+}
+@keyframes scanline-drift {
+  from { background-position: 0 0; }
+  to   { background-position: 0 6px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .scanline-overlay::after { animation: none; }
+}
+
+/* Neon-Pulse — atmendes Glow fuer das aktivste Element auf dem Dashboard.
+   Variable --neon-pulse-color erlaubt jedem Caller, die Tone zu setzen. */
+@keyframes neon-pulse {
+  0%, 100% {
+    box-shadow:
+      0 0 4px rgb(var(--neon-pulse-color, var(--info)) / 0.45),
+      0 0 10px rgb(var(--neon-pulse-color, var(--info)) / 0.15);
+  }
+  50% {
+    box-shadow:
+      0 0 8px rgb(var(--neon-pulse-color, var(--info)) / 0.75),
+      0 0 22px rgb(var(--neon-pulse-color, var(--info)) / 0.32);
+  }
+}
+.neon-pulse {
+  animation: neon-pulse 2.4s ease-in-out infinite;
+}
+.dark .neon-pulse {
+  animation-duration: 2.8s;
+}
+@media (prefers-reduced-motion: reduce) {
+  .neon-pulse { animation: none; }
+}
+
+/* StatusDot Glow-Default — alle Status-Dots bekommen einen kleinen Halo
+   in ihrer currentColor. Subtle im Light, knackig im Dark. */
+.dot-glow {
+  box-shadow: 0 0 4px currentColor, 0 0 1px currentColor;
+}
+.dark .dot-glow {
+  box-shadow: 0 0 6px currentColor, 0 0 12px rgb(255 255 255 / 0.05);
+}
+
+/* Synthwave-Divider — eigenstaendige 1px-Linie mit Cyan->Violet->Pink-Verlauf.
+   Sitzt unter PageHeader-Titles (alle Sub-Seiten via layout/PageHeader.tsx)
+   und an beliebigen Trennstellen, wo eine Synthwave-Identifikation passt. */
+.synthwave-divider {
+  height: 1px;
+  background: linear-gradient(90deg,
+    transparent 0%,
+    rgb(var(--info) / 0.55) 18%,
+    rgb(var(--ai) / 0.7) 50%,
+    rgb(var(--neg) / 0.55) 82%,
+    transparent 100%);
+  border-radius: 1px;
+}
+.dark .synthwave-divider {
+  background: linear-gradient(90deg,
+    transparent 0%,
+    rgb(var(--info) / 0.75) 18%,
+    rgb(var(--ai) / 0.9) 50%,
+    rgb(var(--neg) / 0.75) 82%,
+    transparent 100%);
+  box-shadow: 0 0 8px rgb(var(--ai) / 0.2);
+}
+
+/* Synthwave-Title — dezenter Cyan-Halo auf Page-Titles im Dark-Mode.
+   Im Light-Mode bewusst kein Glow (waere auf hell-grauem Text unsinnig). */
+.dark .synthwave-title {
+  text-shadow:
+    0 0 12px rgb(var(--info) / 0.18),
+    0 0 24px rgb(var(--ai) / 0.10);
+}
+
+/* Attention-Breathe — langsamer als neon-pulse (Cycle 3.6s neg, 4s warn).
+   Fuer Error-/Warn-/Risiko-Cards die langfristig Aufmerksamkeit brauchen.
+   "Atmen statt Blinken" — der Operator sieht sofort: hier muss ich hin. */
+@keyframes attn-breathe-neg {
+  0%, 100% {
+    box-shadow:
+      0 0 4px rgb(var(--neg) / 0.35),
+      0 0 10px rgb(var(--neg) / 0.15);
+  }
+  50% {
+    box-shadow:
+      0 0 10px rgb(var(--neg) / 0.65),
+      0 0 22px rgb(var(--neg) / 0.32);
+  }
+}
+@keyframes attn-breathe-warn {
+  0%, 100% {
+    box-shadow:
+      0 0 4px rgb(var(--warn) / 0.30),
+      0 0 10px rgb(var(--warn) / 0.12);
+  }
+  50% {
+    box-shadow:
+      0 0 8px rgb(var(--warn) / 0.55),
+      0 0 18px rgb(var(--warn) / 0.25);
+  }
+}
+.attention-breathe-neg {
+  animation: attn-breathe-neg 3.6s ease-in-out infinite;
+}
+.attention-breathe-warn {
+  animation: attn-breathe-warn 4.2s ease-in-out infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .attention-breathe-neg,
+  .attention-breathe-warn {
+    animation: none;
+  }
 }

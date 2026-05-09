@@ -32,7 +32,7 @@ export class PanelErrorBoundary extends Component<Props, State> {
   render() {
     if (this.state.error) {
       return (
-        <Card padded className="border-neg/30 bg-neg/5">
+        <Card padded className="border-neg/30 bg-neg/5 attention-breathe-neg">
           <div className="flex items-start gap-3" role="alert">
             <AlertTriangle size={16} className="mt-0.5 shrink-0 text-neg" aria-hidden />
             <div className="min-w-0 flex-1">

@@ -1,5 +1,6 @@
 import { Bot, ExternalLink } from "lucide-react";
 import { Card, CardHeader, Badge, StatusDot } from "@/components/ui/Primitives";
+import { AgentIcon } from "@/components/agents/AgentIcon";
 import { fetchAgents, type AgentListResponse, type AgentSummary, type AgentStatus } from "@/lib/api";
 import { formatRelative, formatAbsolute } from "@/lib/time";
 import { usePolling } from "@/lib/usePolling";
@@ -81,6 +82,7 @@ function AgentTile({ agent, onClick }: { agent: AgentSummary; onClick: () => voi
       title={`${agent.name} · ${agent.role}${agent.last_seen ? ` · zuletzt ${formatAbsolute(agent.last_seen)}` : ""}`}
     >
       <div className="flex items-center gap-2 min-w-0">
+        <AgentIcon slug={agent.slug} size={18} className="text-fg-muted" />
         <StatusDot tone={tone} pulse={agent.status === "live"} />
         <span className="font-mono text-xs font-semibold truncate flex-1">{agent.name}</span>
         <ExternalLink

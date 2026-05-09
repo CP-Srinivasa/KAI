@@ -48,11 +48,13 @@ export function KpiCard({
     <Card
       className={cn(
         "relative overflow-hidden border-l-2",
-        tone === "pos" && "border-l-pos/70",
-        tone === "neg" && "border-l-neg/70",
-        tone === "warn" && "border-l-warn/70",
-        tone === "info" && "border-l-info/70",
-        tone === "ai" && "border-l-ai/70",
+        tone === "pos" && "border-l-pos/70 glow-border-pos",
+        // 2026-05-08 Operator-Folge: KPI mit neg/warn-Tone atmet permanent —
+        // Operator sieht sofort wo etwas unter Threshold liegt.
+        tone === "neg" && "border-l-neg/70 glow-border-neg attention-breathe-neg",
+        tone === "warn" && "border-l-warn/70 glow-border-warn attention-breathe-warn",
+        tone === "info" && "border-l-info/70 glow-border-info",
+        tone === "ai" && "border-l-ai/70 glow-border-ai",
         tone === "neutral" && "border-l-line-subtle",
       )}
       padded

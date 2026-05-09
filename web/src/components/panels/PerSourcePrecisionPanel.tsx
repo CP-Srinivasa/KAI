@@ -62,7 +62,7 @@ export function PerSourcePrecisionPanel({ data }: { data: DashboardQuality | nul
           const ciLo = m.ci_low_pct;
           const ciHi = m.ci_high_pct;
           return (
-            <div key={source} className="grid grid-cols-[minmax(0,1fr)_auto] gap-2 items-baseline">
+            <div key={source} className="grid grid-cols-[minmax(0,1fr)_auto] gap-2 items-center">
               <div className="min-w-0">
                 <div className="flex items-baseline justify-between gap-2 text-xs">
                   <span className="text-fg font-medium truncate">{source}</span>
@@ -70,14 +70,14 @@ export function PerSourcePrecisionPanel({ data }: { data: DashboardQuality | nul
                     n={m.resolved} ({m.hits}/{m.misses})
                   </span>
                 </div>
-                <div className="mt-1 flex items-baseline gap-2">
+                <div className="mt-1 flex items-center gap-2">
                   <ProgressBar
                     value={m.hit_rate_pct}
                     target={psp.min_wilson_low_pct}
                     tone={tone === "pos" ? "pos" : tone === "neg" ? "neg" : "auto"}
                     sufficientSample={m.n_threshold_met}
                     label={`${source} hit rate`}
-                    size="sm"
+                    size="md"
                     className="flex-1"
                   />
                   <span className={cn(
@@ -96,7 +96,15 @@ export function PerSourcePrecisionPanel({ data }: { data: DashboardQuality | nul
                   </span>
                 </div>
               </div>
-              <Badge tone={tone === "muted" ? "muted" : tone} className="shrink-0">
+              <Badge
+                tone={tone === "muted" ? "muted" : tone}
+                className={cn(
+                  "shrink-0",
+                  // "low rate" (n erfuellt aber Hit-Rate zu niedrig) atmet —
+                  // das ist der kritische Fall, keine Stichprobe-Toleranz.
+                  tone === "neg" && "attention-breathe-neg",
+                )}
+              >
                 {gateLabel(m)}
               </Badge>
             </div>

@@ -13,16 +13,21 @@ import {
 const EMBED_SCRIPT =
   "https://s3.tradingview.com/external-embedding/embed-widget-advanced-chart.js";
 
-function cssVarToRgba(varName: string, alpha = 1): string {
-  const raw = getComputedStyle(document.documentElement)
-    .getPropertyValue(varName)
-    .trim();
-  const parts = raw.split(/\s+/).map(Number);
-  if (parts.length === 3 && parts.every((n) => !isNaN(n))) {
-    return `rgba(${parts[0]}, ${parts[1]}, ${parts[2]}, ${alpha})`;
-  }
-  return "";
-}
+// Operator-Folge 2026-05-08:
+// Theme-Werte deterministisch aus dem theme-State, nicht aus
+// getComputedStyle(documentElement). Beim Theme-Toggle laeuft das
+// .dark-Class-Toggle (ThemeProvider.useEffect) parallel zu unserem
+// useEffect — Reihenfolge ist nicht garantiert. Hardcoded-Mapping
+// (Werte aus index.css gespiegelt) eliminiert das Race komplett.
+// Quelle: web/src/index.css :root + .dark
+const THEME_BG = {
+  light: "rgba(255, 255, 255, 1)",
+  dark: "rgba(17, 21, 29, 1)",
+} as const;
+const THEME_GRID = {
+  light: "rgba(235, 237, 240, 0.5)",
+  dark: "rgba(30, 36, 48, 0.5)",
+} as const;
 
 interface TradingViewChartProps {
   symbol?: string;
@@ -72,12 +77,8 @@ export function TradingViewChart({
     el.innerHTML = "";
     setStatus({ state: "loading" });
 
-    const bg =
-      cssVarToRgba("--bg-1") ||
-      (theme === "dark" ? "rgba(17, 21, 29, 1)" : "rgba(255, 255, 255, 1)");
-    const grid =
-      cssVarToRgba("--line-subtle", 0.06) ||
-      (theme === "dark" ? "rgba(30, 36, 48, 0.06)" : "rgba(235, 237, 240, 0.06)");
+    const bg = THEME_BG[theme];
+    const grid = THEME_GRID[theme];
 
     const config = {
       autosize: true,
@@ -135,7 +136,7 @@ export function TradingViewChart({
         subtitle={`${effectiveSymbol} · ${effectiveInterval}`}
         right={<StatusBadge status={status} mode={effectiveMode} />}
       />
-      <div className={`relative w-full ${heightClass} rounded-sm bg-bg-1`}>
+      <div className={`relative w-full ${heightClass} rounded-md bg-bg-1 border border-line-subtle overflow-hidden`}>
         {status.state === "disabled" && <DisabledOverlay />}
         {status.state === "unsupported" && (
           <UnsupportedOverlay message={status.message ?? ""} />
@@ -144,12 +145,29 @@ export function TradingViewChart({
           <ErrorOverlay message={status.message ?? "Unbekannter Fehler"} />
         )}
         {enabled && effectiveMode === "widget" && (
-          <div
-            ref={containerRef}
-            className="absolute inset-0"
-            role="region"
-            aria-label={`TradingView chart ${effectiveSymbol}`}
-          />
+          <>
+            <div
+              ref={containerRef}
+              className="absolute inset-0"
+              role="region"
+              aria-label={`TradingView chart ${effectiveSymbol}`}
+            />
+            {status.state === "loading" && (
+              <div
+                className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-bg-1 pointer-events-none"
+                aria-hidden="true"
+              >
+                <div className="flex items-center gap-1.5">
+                  <span className="h-2 w-2 rounded-full bg-fg-subtle/50 animate-pulse" />
+                  <span className="h-2 w-2 rounded-full bg-fg-subtle/50 animate-pulse" style={{ animationDelay: "150ms" }} />
+                  <span className="h-2 w-2 rounded-full bg-fg-subtle/50 animate-pulse" style={{ animationDelay: "300ms" }} />
+                </div>
+                <span className="text-2xs text-fg-subtle font-mono uppercase tracking-wide">
+                  Lade Markt-Snapshot …
+                </span>
+              </div>
+            )}
+          </>
         )}
       </div>
     </Card>
@@ -229,7 +247,7 @@ function UnsupportedOverlay({ message }: { message: string }) {
 
 function ErrorOverlay({ message }: { message: string }) {
   return (
-    <div className="absolute inset-0 flex items-center justify-center p-6 text-center">
+    <div className="absolute inset-0 flex items-center justify-center p-6 text-center bg-neg/5 attention-breathe-neg">
       <div className="max-w-md space-y-2 text-xs text-fg-muted">
         <p className="text-sm font-medium text-neg">
           Chart konnte nicht geladen werden

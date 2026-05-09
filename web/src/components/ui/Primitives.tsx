@@ -126,6 +126,14 @@ export function StatusDot({
   pulse?: boolean;
   className?: string;
 }) {
+  // Synthwave Stufe 2: jeder Dot bekommt einen kleinen Halo in seiner Tone.
+  const glow =
+    tone === "pos" ? "glow-pos"
+    : tone === "neg" ? "glow-neg"
+    : tone === "warn" ? "glow-warn"
+    : tone === "info" ? "glow-info"
+    : tone === "ai" ? "glow-ai"
+    : "";
   return (
     <span className={cn("relative inline-flex h-2 w-2", className)}>
       {pulse && (
@@ -136,7 +144,7 @@ export function StatusDot({
           )}
         />
       )}
-      <span className={cn("relative inline-flex rounded-full h-2 w-2", toneDot(tone))} />
+      <span className={cn("relative inline-flex rounded-full h-2 w-2", toneDot(tone), glow)} />
     </span>
   );
 }
@@ -244,35 +252,50 @@ export function ProgressBar({
               : "neg";
 
   const trackHeight = size === "sm" ? "h-1" : "h-1.5";
-  // DALI-F-033 — Track-Pattern fuer muted: gestrichelt statt nur Helligkeit.
-  // Damit liest Operator "inaktiv/keine Daten" als Pattern, nicht als Farbentzug.
+  // Operator-Folge 2026-05-08: Track auf bg-line — bg-bg-3 war im Light-Mode
+  // zu hell, Bars hoben sich nicht ab. bg-line gibt klaren Kontrast in beiden
+  // Modi. Muted-Pattern bleibt fuer "inaktiv/keine Daten" als Diagonalstreifen.
   const trackPattern =
     resolved === "muted"
       ? "bg-bg-3 [background-image:repeating-linear-gradient(45deg,transparent,transparent_3px,rgb(var(--line))_3px,rgb(var(--line))_4px)]"
-      : "bg-bg-3";
+      : "bg-line";
+  // Synthwave-Glow nur auf farbigen Bars, nicht muted (sonst lila-grauer Glow).
+  const fillGlow =
+    resolved === "muted" ? "" : `glow-${resolved}`;
+
+  // V-DB5 Calibration 2026-05-08 (audit B-2):
+  // ARIA: aria-valuenow MUSS >= aria-valuemin sein (WCAG). Bei subZero (value<0)
+  // setzen wir aria-valuemin=value statt 0; aria-valuetext erklaert den
+  // sub-zero-Zustand fuer Screen-Reader explizit.
+  const ariaValueMin = subZero && hasValue ? Math.floor(value) : 0;
+  const ariaValueText = subZero && hasValue
+    ? `${Math.round(value)} (unter Schwelle ${target})`
+    : undefined;
 
   return (
     <div
       className={cn(trackHeight, "w-full rounded-full overflow-hidden relative", trackPattern, className)}
       role="progressbar"
       aria-valuenow={hasValue ? Math.round(value) : 0}
-      aria-valuemin={0}
+      aria-valuemin={ariaValueMin}
       aria-valuemax={target}
       aria-label={label}
+      aria-valuetext={ariaValueText}
     >
       <div
-        className={cn("h-full rounded-full transition-all", PROGRESS_FILL[resolved])}
+        className={cn("h-full rounded-full transition-all", PROGRESS_FILL[resolved], fillGlow)}
         style={{ width: `${pct}%` }}
       />
-      {/* Sub-zero indicator: bei value<0 wuerde pct=0 sein und der Balken nichts
-          zeigen. Wir rendern stattdessen einen roten Balken VON LINKS, dessen
-          Breite |value|/target abbildet — Operator sieht visuell, wie tief
-          unter 0 die Metrik liegt. Track-Hintergrund bleibt sichtbar als Anker. */}
-      {subZero && (
+      {/* V-DB5 audit B-1: Sub-zero indicator als Diagonal-Stripes (statt solid),
+          damit visuell vom 40%-Goal-Pfad trennbar. Stripes = "negativ-Bereich"
+          ist DALI-Konvention analog zu muted-Pattern (DALI-F-033). subZero wird
+          nur gerendert wenn sufficientSample, sonst muted-State. */}
+      {subZero && sufficientSample && (
         <div
-          className="absolute inset-y-0 left-0 rounded-full bg-neg/85 transition-all"
+          className="absolute inset-y-0 left-0 rounded-full transition-all [background-image:repeating-linear-gradient(45deg,rgb(var(--neg))_0,rgb(var(--neg))_3px,transparent_3px,transparent_6px)]"
           style={{ width: `${subZeroPct}%` }}
           aria-hidden
+          title={`${Math.abs(Math.round(value))} unter Schwelle ${target}`}
         />
       )}
     </div>
