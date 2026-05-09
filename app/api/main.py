@@ -36,6 +36,7 @@ from app.orchestrator.position_monitor_scheduler import PositionMonitorScheduler
 from app.orchestrator.tv_bridge_scheduler import TVBridgeScheduler
 from app.security.auth import setup_auth
 from app.security.secrets import validate_secrets
+from app.storage.compaction_worker import CompactionWorkerScheduler
 from app.storage.db.session import build_session_factory
 
 _logger = get_logger(__name__)
@@ -90,6 +91,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
             hmac_secret=settings.tradingview.bridge_hmac_secret,
         )
         app.state.tv_bridge_scheduler.start()
+
+    # DuckDB Compaction Worker (runs every minute)
+    app.state.compaction_worker = CompactionWorkerScheduler(interval_minutes=1)
+    app.state.compaction_worker.start()
 
     # Telegram operator bot — receives commands and free text via long-polling
     op = settings.operator
@@ -172,6 +177,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         _tvb = getattr(app.state, "tv_bridge_scheduler", None)
         if _tvb is not None:
             _tvb.stop()
+        _compaction = getattr(app.state, "compaction_worker", None)
+        if _compaction is not None:
+            _compaction.stop()
 
 
 def create_app() -> FastAPI:

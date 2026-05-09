@@ -47,6 +47,7 @@ dependencies = [
     "portalocker>=2.8",
     "youtube-transcript-api>=1.2.0",
     "trafilatura>=1.12.0",
+    "duckdb>=1.1.0",
 ]
 
 [project.optional-dependencies]

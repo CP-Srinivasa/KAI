@@ -64,6 +64,13 @@ def _patch_artifacts(
             d / "paper_execution_audit.jsonl",
         ),
         patch.dict(dashboard_mod._hold_cache, {"report": None, "at": 0.0}),
+        # Also patch analytics_db constants
+        patch("app.storage.analytics_db._ARTIFACTS", d),
+        patch("app.storage.analytics_db._ANALYTICS_DB", d / "analytics.duckdb"),
+        patch("app.storage.analytics_db._ALERT_AUDIT", d / "alert_audit.jsonl"),
+        patch("app.storage.analytics_db._ALERT_OUTCOMES", d / "alert_outcomes.jsonl"),
+        patch("app.storage.analytics_db._TRADING_LOOP_AUDIT", d / "trading_loop_audit.jsonl"),
+        patch("app.storage.analytics_db._PAPER_EXECUTION_AUDIT", d / "paper_execution_audit.jsonl"),
     ):
         yield
 
@@ -132,8 +139,10 @@ def artifacts_dir(tmp_path: Path) -> Path:
 def test_quality_api_returns_metrics(
     artifacts_dir: Path,
 ) -> None:
+    from app.storage.analytics_db import run_compaction
     app = _make_app()
     with _patch_artifacts(artifacts_dir):
+        run_compaction()
         with TestClient(app) as client:
             r = client.get("/dashboard/api/quality")
 
@@ -154,8 +163,10 @@ def test_quality_api_returns_metrics(
 def test_quality_api_includes_alerts_with_outcomes(
     artifacts_dir: Path,
 ) -> None:
+    from app.storage.analytics_db import run_compaction
     app = _make_app()
     with _patch_artifacts(artifacts_dir):
+        run_compaction()
         with TestClient(app) as client:
             r = client.get("/dashboard/api/quality")
 
@@ -174,8 +185,10 @@ def test_quality_api_includes_alerts_with_outcomes(
 def test_dashboard_api_exempt_from_auth(
     artifacts_dir: Path,
 ) -> None:
+    from app.storage.analytics_db import run_compaction
     app = _make_app(api_key="secret-key")
     with _patch_artifacts(artifacts_dir):
+        run_compaction()
         with TestClient(app) as client:
             r = client.get("/dashboard/api/quality")
     assert r.status_code == 200

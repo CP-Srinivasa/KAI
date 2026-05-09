@@ -221,76 +221,19 @@ async def dashboard_quality_api() -> JSONResponse:
     paper = report.get("paper_trading_evidence", {})
     gate = report.get("hold_gate_evaluation", {})
 
-    exec_rows = _load_jsonl(_PAPER_EXECUTION_AUDIT)
-    fills = [r for r in exec_rows if r.get("event_type") == "order_filled"]
-    # NEO-P-101-r2: position_closed-Events haben ab schema_version=v2 das
-    # per-Trade NETTO-Feld trade_pnl_usd (inkl. Fee). Legacy v1-Zeilen (vor
-    # NEO-P-101-r2) tragen nur entry_price/exit_price/quantity — dafür
-    # rekonstruieren wir per Brutto-Formel (ohne Fee). Fees werden mit
-    # NEO-P-106 (Maker/Taker-Modell) per-trade nachgereicht.
-    closes = [
-        r
-        for r in exec_rows
-        if r.get("event_type") in {"position_closed", "position_partial_closed"}
-    ]
-    attribution_pnl: dict[str, dict[str, float | int]] = {}
-    realized_pnl_usd = 0.0
+    from app.storage.analytics_db import (
+        get_attribution_pnl,
+        get_loop_status_counts,
+        get_paper_fills_count,
+        get_realized_pnl,
+        get_recent_alerts,
+    )
 
-    for r in closes:
-        # Reconstruct PnL for legacy lines
-        if r.get("schema_version") == "v2" or "trade_pnl_usd" in r:
-            trade_pnl = float(r.get("trade_pnl_usd", 0.0))
-        else:
-            trade_pnl = (
-                float(r.get("exit_price", 0.0))
-                - float(r.get("entry_price", 0.0))
-            ) * float(r.get("quantity", 0.0))
-            if r.get("position_side") == "short":
-                trade_pnl = -trade_pnl
-
-        realized_pnl_usd += trade_pnl
-
-        # Attribution aggregation
-        tag = (r.get("source_tag") or "unknown").strip()
-        if not tag:
-            tag = "unknown"
-
-        if tag not in attribution_pnl:
-            attribution_pnl[tag] = {
-                "total_pnl_usd": 0.0,
-                "win_count": 0,
-                "loss_count": 0,
-            }
-
-        attribution_pnl[tag]["total_pnl_usd"] += trade_pnl
-        if trade_pnl > 0:
-            attribution_pnl[tag]["win_count"] += 1
-        elif trade_pnl < 0:
-            attribution_pnl[tag]["loss_count"] += 1
-
-    realized_pnl_usd = round(realized_pnl_usd, 2)
-    # Runden der attribution werte
-    for tag in attribution_pnl:
-        attribution_pnl[tag]["total_pnl_usd"] = round(
-            float(attribution_pnl[tag]["total_pnl_usd"]), 2
-        )
-
-    positions_closed = len(closes)
-
-    audit_rows = _load_jsonl(_ALERT_AUDIT)
-    non_digest = [r for r in audit_rows if not r.get("is_digest")]
-    recent_alerts = non_digest[-20:]
-
-    outcome_rows = _load_jsonl(_ALERT_OUTCOMES)
-    outcomes_by_doc: dict[str, str] = {}
-    for o in outcome_rows:
-        outcomes_by_doc[o.get("document_id", "")] = o.get("outcome", "")
-
-    loop_rows = _load_jsonl(_TRADING_LOOP_AUDIT)
-    status_counts: dict[str, int] = {}
-    for r in loop_rows:
-        s = r.get("status", "unknown")
-        status_counts[s] = status_counts.get(s, 0) + 1
+    realized_pnl_usd, positions_closed = get_realized_pnl()
+    attribution_pnl = get_attribution_pnl()
+    recent_alerts = get_recent_alerts(20)
+    status_counts = get_loop_status_counts()
+    paper_fills = get_paper_fills_count()
 
     fwd = report.get("forward_simulation", {})
 
@@ -354,7 +297,7 @@ async def dashboard_quality_api() -> JSONResponse:
             "forward_resolved": fwd.get("resolved", 0),
             "forward_hits": fwd.get("hits", 0),
             "forward_miss": fwd.get("miss", 0),
-            "paper_fills": len(fills),
+            "paper_fills": paper_fills,
             "paper_fills_with_pnl": positions_closed,
             "paper_realized_pnl_usd": realized_pnl_usd,
             "paper_positions_closed": positions_closed,
@@ -374,17 +317,7 @@ async def dashboard_quality_api() -> JSONResponse:
             # V-DB4e 2026-05-08: Per-source rolling 30-day stability windows.
             "per_source_stability": report.get("per_source_stability", {}),
             "attribution_pnl": attribution_pnl,
-            "recent_alerts": [
-                {
-                    "doc_id": r.get("document_id", "")[:12],
-                    "sentiment": r.get("sentiment_label", ""),
-                    "priority": r.get("priority"),
-                    "assets": r.get("affected_assets", []),
-                    "dispatched_at": r.get("dispatched_at", "")[:16],
-                    "outcome": outcomes_by_doc.get(r.get("document_id", ""), ""),
-                }
-                for r in reversed(recent_alerts)
-            ],
+            "recent_alerts": recent_alerts,
             "generated_at": report.get("generated_at", ""),
         },
         headers={"Cache-Control": "no-store, max-age=0"},
