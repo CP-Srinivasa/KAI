@@ -11,8 +11,8 @@ from app.market_data.bitmex_adapter import BitMEXAdapter
 from app.market_data.bybit_adapter import BybitAdapter
 from app.market_data.coingecko_adapter import CoinGeckoAdapter
 from app.market_data.mock_adapter import MockMarketDataAdapter
+from app.market_data.models import OHLCV, MarketDataPoint, MarketDataSnapshot, Ticker
 from app.market_data.okx_adapter import OKXAdapter
-from app.market_data.models import MarketDataSnapshot, OHLCV, MarketDataPoint, Ticker
 
 logger = logging.getLogger(__name__)
 

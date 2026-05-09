@@ -23,6 +23,10 @@ class RiskLimits:
     kill_switch_enabled: bool
     min_signal_confidence: float
     min_signal_confluence_count: int
+    atr_multiplier: float = 2.0
+    tp_atr_multiplier: float = 4.0
+    regime_filter_enabled: bool = True
+    regime_sma_period: int = 200
 
 
 @dataclass(frozen=True)

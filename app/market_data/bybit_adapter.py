@@ -28,7 +28,7 @@ from datetime import UTC, datetime
 import httpx
 
 from app.market_data.base import BaseMarketDataAdapter
-from app.market_data.models import OHLCV, MarketDataPoint, MarketDataSnapshot, Ticker
+from app.market_data.models import OHLCV, MarketDataSnapshot, Ticker
 
 logger = logging.getLogger(__name__)
 

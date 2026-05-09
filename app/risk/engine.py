@@ -118,6 +118,7 @@ class RiskEngine:
         is_averaging_down: bool = False,
         entry_price: float | None = None,
         take_profit_price: float | None = None,
+        sma: float | None = None,
     ) -> RiskCheckResult:
         """
         Pre-order risk gate. Must return approved=True before any order is sent.
@@ -220,6 +221,14 @@ class RiskEngine:
                 f"drawdown_limit_breached:{self._total_drawdown_pct:.2f}%>{self._limits.max_total_drawdown_pct}%"
             )
 
+        # Gate 9: Regime Filter (Anti-Fehlsignal)
+        if self._limits.regime_filter_enabled and sma is not None and entry_price is not None:
+            side_norm = side.strip().lower()
+            if entry_price > sma and side_norm in {"sell", "short"}:
+                violations.append(f"regime_conflict:uptrend_rejects_{side_norm}")
+            elif entry_price < sma and side_norm in {"buy", "long"}:
+                violations.append(f"regime_conflict:downtrend_rejects_{side_norm}")
+
         approved = len(violations) == 0
         reason = (
             "All risk gates passed" if approved else f"Risk violations: {'; '.join(violations)}"
@@ -255,6 +264,37 @@ class RiskEngine:
             )
 
         return result
+
+    def calculate_risk_geometry(
+        self,
+        *,
+        entry_price: float,
+        direction: str,
+        atr: float | None,
+    ) -> tuple[float | None, float | None]:
+        """
+        Dynamically calculate stop-loss and take-profit bounds based on ATR.
+        Returns (stop_loss_price, take_profit_price).
+        If atr is None, returns (None, None).
+        """
+        if atr is None or atr <= 0 or entry_price <= 0:
+            return None, None
+
+        direction_normalized = direction.strip().lower()
+
+        sl_distance = atr * getattr(self._limits, "atr_multiplier", 2.0)
+        tp_distance = atr * getattr(self._limits, "tp_atr_multiplier", 4.0)
+
+        if direction_normalized in {"long", "buy"}:
+            stop_loss = entry_price - sl_distance
+            take_profit = entry_price + tp_distance
+        elif direction_normalized in {"short", "sell"}:
+            stop_loss = entry_price + sl_distance
+            take_profit = entry_price - tp_distance
+        else:
+            return None, None
+
+        return stop_loss, take_profit
 
     def calculate_position_size(
         self,
