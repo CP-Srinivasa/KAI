@@ -475,8 +475,9 @@ def evaluate_directional_eligibility(
 
     if not has_non_empty_asset:
         reason = BLOCK_REASON_MISSING_ASSETS
-    elif all(
-        "/" not in raw_asset.strip().upper()
+    elif any(
+        "/" not in (candidate := raw_asset.strip().upper())
+        and _resolve_symbol(f"{candidate}/USDT") is not None
         for raw_asset in affected_assets
         if raw_asset.strip().upper()
     ):

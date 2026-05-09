@@ -12,7 +12,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.execution.audit_replay import AuditReplayResult, replay_paper_audit
-from app.market_data.base import MarketDataSnapshot
+from app.market_data.models import MarketDataSnapshot
 from app.market_data.service import get_market_data_snapshot
 from app.storage.models.trading import PortfolioStateRecord
 
@@ -42,6 +42,7 @@ class PositionSummary:
     market_price: float | None
     market_value_usd: float | None
     unrealized_pnl_usd: float | None
+    source_tag: str | None
     provider: str
     market_data_retrieved_at_utc: str | None
     market_data_source_timestamp_utc: str | None
@@ -60,6 +61,7 @@ class PositionSummary:
             "market_price": self.market_price,
             "market_value_usd": self.market_value_usd,
             "unrealized_pnl_usd": self.unrealized_pnl_usd,
+            "source_tag": self.source_tag,
             "provider": self.provider,
             "market_data_retrieved_at": self.market_data_retrieved_at_utc,
             "market_data_source_timestamp": self.market_data_source_timestamp_utc,
@@ -232,6 +234,11 @@ def _build_snapshot_from_portfolio_state(
                 market_price=None,
                 market_value_usd=None,
                 unrealized_pnl_usd=None,
+                source_tag=(
+                    pos_raw.get("source_tag")
+                    if isinstance(pos_raw.get("source_tag"), str)
+                    else None
+                ),
                 provider="db_snapshot",
                 market_data_retrieved_at_utc=None,
                 market_data_source_timestamp_utc=None,
@@ -452,6 +459,7 @@ async def build_portfolio_snapshot(
                 market_price=market_price,
                 market_value_usd=market_value,
                 unrealized_pnl_usd=unrealized_pnl,
+                source_tag=position.source_tag,
                 provider=market_snapshot.provider,
                 market_data_retrieved_at_utc=market_snapshot.retrieved_at_utc,
                 market_data_source_timestamp_utc=market_snapshot.source_timestamp_utc,

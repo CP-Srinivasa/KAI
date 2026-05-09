@@ -67,7 +67,7 @@ def _make_record(
         is_digest=False,
         dispatched_at=dispatched_at,
         sentiment_label=sentiment,
-        affected_assets=assets or ["BTC"],
+        affected_assets=assets or ["BTC/USDT"],
         priority=8,
         actionable=True,
     )
@@ -93,8 +93,14 @@ def test_build_outcomes_no_price_data():
 
 
 def test_build_outcomes_with_price_data():
-    records = [_make_record(assets=["BTC"])]
-    lookup = {("BTC", "2026-01-01T12:00:00+00:00"): (40000.0, 42000.0, "2026-01-02T12:00:00+00:00")}
+    records = [_make_record(assets=["BTC/USDT"])]
+    lookup = {
+        ("BTC/USDT", "2026-01-01T12:00:00+00:00"): (
+            40000.0,
+            42000.0,
+            "2026-01-02T12:00:00+00:00",
+        )
+    }
     outcomes = build_outcomes_from_records(records, price_lookup=lookup)
     assert len(outcomes) == 1
     assert outcomes[0].is_hit is True
@@ -102,10 +108,10 @@ def test_build_outcomes_with_price_data():
 
 
 def test_build_outcomes_multi_asset():
-    records = [_make_record(assets=["BTC", "ETH"])]
+    records = [_make_record(assets=["BTC/USDT", "ETH/USDT"])]
     outcomes = build_outcomes_from_records(records)
     assert len(outcomes) == 2
-    assert {o.asset for o in outcomes} == {"BTC", "ETH"}
+    assert {o.asset for o in outcomes} == {"BTC/USDT", "ETH/USDT"}
 
 
 def test_build_outcomes_no_assets():
@@ -334,7 +340,7 @@ def test_audit_record_enriched_serialization(tmp_path: Path):
 
     raw = json.loads(p.read_text(encoding="utf-8").strip())
     assert raw["sentiment_label"] == "bullish"
-    assert raw["affected_assets"] == ["BTC"]
+    assert raw["affected_assets"] == ["BTC/USDT"]
     assert raw["priority"] == 8
     assert raw["actionable"] is True
 
@@ -452,7 +458,7 @@ def test_load_outcome_annotations_via_directory(tmp_path: Path):
 
 
 def test_build_outcomes_annotation_hit():
-    records = [_make_record(doc_id="doc-1", assets=["BTC"])]
+    records = [_make_record(doc_id="doc-1", assets=["BTC/USDT"])]
     annotations = [AlertOutcomeAnnotation(document_id="doc-1", outcome="hit")]
     outcomes = build_outcomes_from_records(records, annotations=annotations)
     assert len(outcomes) == 1
@@ -461,14 +467,14 @@ def test_build_outcomes_annotation_hit():
 
 
 def test_build_outcomes_annotation_miss():
-    records = [_make_record(doc_id="doc-1", assets=["ETH"])]
+    records = [_make_record(doc_id="doc-1", assets=["ETH/USDT"])]
     annotations = [AlertOutcomeAnnotation(document_id="doc-1", outcome="miss")]
     outcomes = build_outcomes_from_records(records, annotations=annotations)
     assert outcomes[0].is_hit is False
 
 
 def test_build_outcomes_annotation_inconclusive_remains_unresolved():
-    records = [_make_record(doc_id="doc-1", assets=["BTC"])]
+    records = [_make_record(doc_id="doc-1", assets=["BTC/USDT"])]
     annotations = [AlertOutcomeAnnotation(document_id="doc-1", outcome="inconclusive")]
     outcomes = build_outcomes_from_records(records, annotations=annotations)
     assert outcomes[0].is_hit is None
@@ -476,8 +482,14 @@ def test_build_outcomes_annotation_inconclusive_remains_unresolved():
 
 def test_build_outcomes_price_data_takes_precedence_over_annotation():
     """When price data is available, use it; ignore annotation for same record."""
-    records = [_make_record(doc_id="doc-1", assets=["BTC"])]
-    lookup = {("BTC", "2026-01-01T12:00:00+00:00"): (40000.0, 42000.0, "2026-01-02T12:00:00+00:00")}
+    records = [_make_record(doc_id="doc-1", assets=["BTC/USDT"])]
+    lookup = {
+        ("BTC/USDT", "2026-01-01T12:00:00+00:00"): (
+            40000.0,
+            42000.0,
+            "2026-01-02T12:00:00+00:00",
+        )
+    }
     # Annotation says "miss" but price says hit
     annotations = [AlertOutcomeAnnotation(document_id="doc-1", outcome="miss")]
     outcomes = build_outcomes_from_records(records, price_lookup=lookup, annotations=annotations)
@@ -485,7 +497,7 @@ def test_build_outcomes_price_data_takes_precedence_over_annotation():
 
 
 def test_build_outcomes_annotation_no_match_stays_unresolved():
-    records = [_make_record(doc_id="doc-1", assets=["BTC"])]
+    records = [_make_record(doc_id="doc-1", assets=["BTC/USDT"])]
     annotations = [AlertOutcomeAnnotation(document_id="doc-99", outcome="hit")]  # different doc
     outcomes = build_outcomes_from_records(records, annotations=annotations)
     assert outcomes[0].is_hit is None
@@ -494,9 +506,9 @@ def test_build_outcomes_annotation_no_match_stays_unresolved():
 def test_build_outcomes_compute_hit_rate_from_annotations():
     """End-to-end: annotations feed into compute_hit_rate."""
     records = [
-        _make_record(doc_id="doc-1", assets=["BTC"]),
-        _make_record(doc_id="doc-2", assets=["ETH"], sentiment="bullish"),
-        _make_record(doc_id="doc-3", assets=["BTC"]),
+        _make_record(doc_id="doc-1", assets=["BTC/USDT"]),
+        _make_record(doc_id="doc-2", assets=["ETH/USDT"], sentiment="bullish"),
+        _make_record(doc_id="doc-3", assets=["BTC/USDT"]),
     ]
     annotations = [
         AlertOutcomeAnnotation(document_id="doc-1", outcome="hit"),

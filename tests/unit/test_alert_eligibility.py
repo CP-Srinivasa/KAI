@@ -526,8 +526,10 @@ def test_tradingview_webhook_blocks_directional() -> None:
 @pytest.mark.parametrize(
     "title",
     [
-        "Cardano Price Sits 92% Below Its Peak While Pepeto Presale Hits $9 Million Ahead of Binance Listing",
-        "Could the Crypto Price Prediction for Bitcoin and Ethereum Catch Up to What Pepeto Offers Before Listing",
+        "Cardano Price Sits 92% Below Its Peak While Pepeto Presale Hits "
+        "$9 Million Ahead of Binance Listing",
+        "Could the Crypto Price Prediction for Bitcoin and Ethereum Catch Up "
+        "to What Pepeto Offers Before Listing",
         "Best Crypto Presale 2026: Pepeto Eyes 100x Before Listing While PEPE and SHIB Trail",
         "Could Pepeto Be One of the Top 3 Cryptos to Buy Now as Solana and Cardano Push Higher",
         "Crypto Update: The Second Chance Entry Pepeto Offers While XRP and Dogecoin Grind",

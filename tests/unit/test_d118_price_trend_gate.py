@@ -155,7 +155,7 @@ def _make_result(doc_id: str, **overrides) -> AnalysisResult:
         "directional_confidence": 0.9,
         "explanation_short": "Strong buy signal",
         "explanation_long": "Detailed explanation",
-        "affected_assets": ["BTC"],
+        "affected_assets": ["BTC/USDT"],
     }
     defaults.update(overrides)
     return AnalysisResult(**defaults)

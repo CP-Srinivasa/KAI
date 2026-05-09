@@ -6,10 +6,11 @@ import { useApi } from "@/lib/useApi";
 import {
   fetchPortfolioSnapshot,
   fetchExposureSummary,
+  fetchDashboardQuality,
   type PaperPosition,
 } from "@/lib/api";
 import { cn } from "@/lib/utils";
-import { PreparedPanel } from "@/components/panels/PreparedPanel";
+import { AttributionRankingPanel } from "@/components/panels/AttributionRankingPanel";
 import { useCurrency } from "@/state/CurrencyProvider";
 
 export function PortfolioPage() {
@@ -19,6 +20,7 @@ export function PortfolioPage() {
     v == null ? "—" : fmt(v, undefined, digits);
   const snap = useApi(fetchPortfolioSnapshot, 30_000);
   const exposure = useApi(fetchExposureSummary, 30_000);
+  const metricsSnap = useApi(fetchDashboardQuality, 60_000);
 
   const positions: PaperPosition[] = snap.state === "ready" ? snap.data.positions : [];
   const unrealized = positions.reduce((sum, p) => sum + (p.unrealized_pnl_usd ?? 0), 0);
@@ -142,11 +144,9 @@ export function PortfolioPage() {
         </div>
       </Card>
 
-      <PreparedPanel
-        title="Equity-Kurve & historische PnL"
-        reason="Equity-Verlauf, Drawdown-Kurve und Realized-PnL-Historie."
-        detail="Quelle: artifacts/paper_execution_audit.jsonl — Aggregations-Endpoint folgt in Phase 2."
-      />
+      {metricsSnap.state === "ready" && (
+        <AttributionRankingPanel data={metricsSnap.data.attribution_pnl} />
+      )}
     </div>
   );
 }

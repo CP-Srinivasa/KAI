@@ -214,6 +214,11 @@ export type DashboardQuality = {
     dispatched_at: string;
     outcome: string;
   }>;
+  attribution_pnl?: Record<string, {
+    total_pnl_usd: number;
+    win_count: number;
+    loss_count: number;
+  }>;
   generated_at: string;
 };
 
@@ -339,6 +344,7 @@ export type PaperPosition = {
   market_price: number | null;
   market_value_usd: number | null;
   unrealized_pnl_usd: number | null;
+  source_tag: string | null;
 };
 
 export type PortfolioSnapshot = {

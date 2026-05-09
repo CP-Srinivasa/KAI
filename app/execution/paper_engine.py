@@ -122,6 +122,7 @@ class PaperExecutionEngine:
         risk_check_id: str = "",
         position_side: str = "long",
         venue: str = "paper",
+        source_tag: str | None = None,
     ) -> PaperOrder:
         """Create an order record (does not fill immediately).
 
@@ -152,6 +153,7 @@ class PaperExecutionEngine:
             risk_check_id=risk_check_id,
             position_side=position_side,
             venue=venue,
+            source_tag=source_tag,
         )
         self._append_audit("order_created", order.__dict__)
         return order
@@ -288,6 +290,7 @@ class PaperExecutionEngine:
                     position_side=pos.position_side,
                     take_profit_tiers=list(pos.take_profit_tiers),
                     initial_quantity=pos.initial_quantity,
+                    source_tag=order.source_tag or pos.source_tag,
                 )
             else:
                 self._portfolio.positions[order.symbol] = PaperPosition(
@@ -298,6 +301,7 @@ class PaperExecutionEngine:
                     take_profit=order.take_profit,
                     opened_at=_now_utc(),
                     position_side=order.position_side,
+                    source_tag=order.source_tag,
                 )
         else:  # sell
             pos = self._portfolio.positions.get(order.symbol)
@@ -326,6 +330,7 @@ class PaperExecutionEngine:
                     position_side=pos.position_side,
                     take_profit_tiers=list(pos.take_profit_tiers),
                     initial_quantity=pos.initial_quantity,
+                    source_tag=order.source_tag or pos.source_tag,
                 )
 
         self._portfolio.total_fees_usd += fee
@@ -352,6 +357,7 @@ class PaperExecutionEngine:
             fee_role=fee_meta[1],
             fee_bps_applied=fee_meta[2],
             fee_table_version=fee_meta[3],
+            source_tag=order.source_tag,
         )
 
         self._append_audit(
@@ -527,6 +533,7 @@ class PaperExecutionEngine:
                 "trade_pnl_usd": fill.pnl_usd,
                 "fee_usd": fill.fee_usd,
                 "realized_pnl_usd": self._portfolio.realized_pnl_usd,
+                "source_tag": pos.source_tag,
             },
         )
         logger.info(
@@ -645,6 +652,7 @@ class PaperExecutionEngine:
                 "trade_pnl_usd": fill.pnl_usd,
                 "fee_usd": fill.fee_usd,
                 "position_side": fill.position_side,
+                "source_tag": pos.source_tag,
             },
         )
         logger.info(

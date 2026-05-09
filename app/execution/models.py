@@ -40,6 +40,8 @@ class PaperOrder:
     # worst-case Paper-Fee aus config/venue_fees.yaml; "legacy" bleibt als
     # expliziter Opt-out fuer Tests/historische Konstruktor-fee_pct-Pfade.
     venue: str = "paper"
+    # P2: Portfolio Attribution
+    source_tag: str | None = None
 
 
 @dataclass(frozen=True)
@@ -63,6 +65,7 @@ class PaperFill:
     fee_role: str = "taker"
     fee_bps_applied: float = 0.0
     fee_table_version: str = "unknown"
+    source_tag: str | None = None
 
 
 @dataclass
@@ -89,6 +92,8 @@ class PaperPosition:
     # fraction of "the trade" each tier represents even after prior tiers
     # have already reduced the live quantity.
     initial_quantity: float = 0.0
+    # P2: Portfolio Attribution
+    source_tag: str | None = None
 
     def unrealized_pnl(self, current_price: float) -> float:
         return (current_price - self.avg_entry_price) * self.quantity
@@ -105,6 +110,7 @@ class PaperPosition:
             "position_side": self.position_side,
             "take_profit_tiers": list(self.take_profit_tiers),
             "initial_quantity": self.initial_quantity,
+            "source_tag": self.source_tag,
         }
 
 

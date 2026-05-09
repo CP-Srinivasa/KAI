@@ -34,7 +34,7 @@ def _write_directional_alert(
             is_digest=False,
             dispatched_at=dispatched_at,
             sentiment_label=sentiment,
-            affected_assets=["BTC"],
+            affected_assets=["BTC/USDT"],
             priority=8,
             actionable=True,
         ),
