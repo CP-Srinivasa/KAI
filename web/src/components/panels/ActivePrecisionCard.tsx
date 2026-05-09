@@ -2,6 +2,7 @@ import { memo, useMemo, useState } from "react";
 import { Card, CardHeader, Badge, ProgressBar } from "@/components/ui/Primitives";
 import { useT } from "@/i18n/I18nProvider";
 import { cn } from "@/lib/utils";
+import { sourceLabel as formatSourceLabel } from "@/lib/sourceLabels";
 import type { DashboardProvenance, ProvenanceMetrics } from "@/lib/api";
 
 // Active-Precision split per Signal-Source mit Wilson 95%-CI.
@@ -19,36 +20,10 @@ import type { DashboardProvenance, ProvenanceMetrics } from "@/lib/api";
 //   - Empty-State mit Erklaerung statt nur "laedt...".
 // ProgressBar/Trust-Badge/Tone-Logik aus DALI-F-033 + DALI-P-064 unveraendert.
 
-const SOURCE_DISPLAY: Record<string, { label: string; hint?: string }> = {
-  unknown: {
-    label: "Legacy (vor Provenance V1)",
-    hint: "Alerts aus der Zeit, bevor die Source-Tagging-Pipeline live war. Druecken die Baseline nach unten — verschwinden ueber Zeit.",
-  },
-  rss: {
-    label: "RSS-Feeds (gemischt)",
-    hint: "Klassische News-Feeds: Coindesk, Cointelegraph-RSS etc. Sammelbucket fuer alles per RSS.",
-  },
-  tradingview_webhook: {
-    label: "TradingView Webhook",
-    hint: "Direkt von TradingView-Alerts an unseren Webhook. Hier landet die TV-Pivot-Pipeline.",
-  },
-  cointelegraph: {
-    label: "Cointelegraph",
-    hint: "Cointelegraph als eigene Source (jenseits der gemischten RSS-Bucket).",
-  },
-  decrypt: {
-    label: "Decrypt News",
-    hint: "decrypt.co — eigener Feed.",
-  },
-  tradingview: {
-    label: "TradingView (legacy)",
-    hint: "Alte TV-Eintraege vor Webhook-Cutover. Wird mit der Zeit von tradingview_webhook abgeloest.",
-  },
-};
-
-function formatSourceLabel(key: string): { label: string; hint?: string } {
-  return SOURCE_DISPLAY[key] ?? { label: key };
-}
+// V-DB5 I-4 (2026-05-09): Mapping nach `lib/sourceLabels.ts` extrahiert,
+// damit ActivePrecision/PerSourcePrecision/PerSourceStability denselben
+// Source-Anzeigenamen sehen — konsistente UI über alle drei Panels.
+// 2026-05-09: Re-alias direkt im Import (tsc noUnusedLocals strikter geworden).
 
 function fmtPct(n: number | null): string {
   return n == null ? "—" : `${n.toFixed(1)}%`;
