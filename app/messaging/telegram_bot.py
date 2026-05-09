@@ -2029,7 +2029,12 @@ class TelegramOperatorBot:
         *,
         args: str = "",
     ) -> None:
-        """Show quality-bar metrics from hold report."""
+        """Show quality-bar metrics from hold report.
+
+        V-DB5 P2 Vorschlag 6 (2026-05-09): wenn der Snapshot stale ist
+        (Timer ausgesetzt, z.B. seit 16d offline), Warning-Suffix
+        anhängen statt stille alte Daten zu zeigen.
+        """
         report_path = Path("artifacts/ph5_hold/ph5_hold_metrics_report.json")
         if not report_path.exists():
             await self._send(chat_id, "*Quality Bar*\nNo hold report available yet.")
@@ -2039,6 +2044,14 @@ class TelegramOperatorBot:
         except (json.JSONDecodeError, OSError) as exc:
             await self._send(chat_id, f"*Quality Bar*\nReport error: {exc}")
             return
+
+        from app.alerts.hold_metrics_freshness import (
+            freshness_for_report,
+            telegram_warning_suffix,
+        )
+
+        freshness = freshness_for_report(data)
+        stale_suffix = telegram_warning_suffix(freshness)
 
         sq = data.get("signal_quality_validation", {})
         hr = data.get("alert_hit_rate_evidence", {})
@@ -2075,6 +2088,7 @@ class TelegramOperatorBot:
             f"Real-price cycles: {fills_count}\n"
             f"\n"
             f"Report: {data.get('generated_at', '?')[:16]}"
+            f"{stale_suffix}"
         )
         await self._send(chat_id, msg)
 

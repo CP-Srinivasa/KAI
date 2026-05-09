@@ -95,6 +95,57 @@ def _hours_since(path: Path) -> float | None:
     return (datetime.now(UTC) - mtime).total_seconds() / 3600.0
 
 
+def _forward_precision_drift_check(now: datetime) -> tuple[str, str, str] | None:
+    """V-DB5 P2 Vorschlag 2: forward-precision-drift watchdog.
+
+    Reads forward_precision from a fresh hold-metrics-report build,
+    runs the streak/cooldown evaluation, persists state, and pushes
+    Telegram on drift- or recovery-transition. Never raises.
+    """
+    try:
+        from app.alerts.forward_precision_watchdog import run_check
+        from app.alerts.hold_metrics import build_hold_metrics_report
+
+        artifacts = REPO_ROOT / "artifacts"
+        report = build_hold_metrics_report(
+            alert_audit_path=artifacts / "alert_audit.jsonl",
+            alert_outcomes_path=artifacts / "alert_outcomes.jsonl",
+            trading_loop_audit_path=artifacts / "trading_loop_audit.jsonl",
+            paper_execution_audit_path=artifacts / "paper_execution_audit.jsonl",
+            stability_anchor=now,
+        )
+        forward = report.get("forward_precision") if isinstance(report, dict) else None
+        if not isinstance(forward, dict):
+            return None  # report shape unexpected — silent skip, mtime probe owns this
+        fwd_pct = forward.get("precision_pct")
+        ci_low_pct = forward.get("ci_low_pct")
+
+        bot_token: str | None = None
+        chat_id: str | None = None
+        try:
+            from app.core.settings import get_settings
+
+            settings = get_settings()
+            alerts = getattr(settings, "alerts", None)
+            if alerts is not None:
+                bot_token = getattr(alerts, "telegram_token", None) or None
+                chat_id = getattr(alerts, "telegram_chat_id", None) or None
+        except Exception:  # noqa: BLE001 — fall back to no-push
+            pass
+
+        return run_check(
+            forward_precision_pct=fwd_pct if isinstance(fwd_pct, (int, float)) else None,
+            forward_precision_ci_low_pct=(
+                ci_low_pct if isinstance(ci_low_pct, (int, float)) else None
+            ),
+            now=now,
+            bot_token=bot_token,
+            chat_id=chat_id,
+        )
+    except Exception as exc:  # noqa: BLE001 — watchdog must never crash
+        return ("warn", "forward_precision_watchdog_probe_failed", str(exc)[:120])
+
+
 def _listener_reactivity_check(now: datetime) -> tuple[str, str, str] | None:
     """Surface F3 reactivity_status from canonical_read into watchdog findings.
 
@@ -167,6 +218,13 @@ def _watchdog_check(note: str | None) -> tuple[str, str]:
     listener_check = _listener_reactivity_check(datetime.now(UTC))
     if listener_check is not None:
         checks.append(listener_check)
+
+    # V-DB5 P2 Vorschlag 2 (2026-05-09): Forward-Precision-Drift-Watchdog.
+    # Telegram-Push wenn N consecutive checks unter Quality-Schwelle —
+    # ersetzt das vorher silent-failure-Verhalten.
+    fwd_prec_check = _forward_precision_drift_check(datetime.now(UTC))
+    if fwd_prec_check is not None:
+        checks.append(fwd_prec_check)
 
     warns = sum(1 for s, _, _ in checks if s == "warn")
     for sev, title, detail in checks:
