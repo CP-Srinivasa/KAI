@@ -1,6 +1,7 @@
 import { Card, CardHeader, Badge, ProgressBar } from "@/components/ui/Primitives";
 import type { DashboardQuality } from "@/lib/api";
 import { cn } from "@/lib/utils";
+import { sourceLabel } from "@/lib/sourceLabels";
 
 // V-DB4e 2026-05-08: Per-source 30-day rolling stability tile.
 // Quelle: /dashboard/api/quality.per_source_stability (Backend-Field neu
@@ -70,7 +71,7 @@ export function PerSourceStabilityPanel({ data }: { data: DashboardQuality | nul
         subtitle={`${pss.window_count} Windows × ${pss.window_days}d · min n=${pss.min_resolved_per_window} · Wilson-Lower ≥${pss.min_wilson_low_pct.toFixed(0)}%`}
         right={
           <Badge tone={stableCount === sources.length ? "pos" : stableCount > 0 ? "warn" : "muted"} dot>
-            {stableCount}/{sources.length} stable
+            {stableCount}/{sources.length} stabil
           </Badge>
         }
       />
@@ -104,7 +105,17 @@ export function PerSourceStabilityPanel({ data }: { data: DashboardQuality | nul
                     className={cn("inline-block h-2 w-2 rounded-full shrink-0", dotClass)}
                     aria-hidden="true"
                   />
-                  <span className="text-fg font-medium truncate">{source}</span>
+                  <span className="text-fg font-medium truncate" title={sourceLabel(source).hint}>
+                    {sourceLabel(source).label}
+                  </span>
+                  {sourceLabel(source).label !== source && (
+                    <span
+                      className="text-2xs font-mono text-fg-subtle shrink-0 truncate"
+                      title={`Backend-Source-Key: ${source}`}
+                    >
+                      {source}
+                    </span>
+                  )}
                   {latest && (
                     <span className="text-2xs font-mono text-fg-subtle shrink-0 ml-auto">
                       {latest.hit_rate_pct != null ? `${latest.hit_rate_pct.toFixed(1)}%` : "—"}
@@ -159,7 +170,7 @@ export function PerSourceStabilityPanel({ data }: { data: DashboardQuality | nul
                   !m.stable && "attention-breathe-warn",
                 )}
               >
-                {m.stable ? "stable" : "drift"}
+                {m.stable ? "stabil" : "Drift"}
               </Badge>
             </div>
           );
@@ -167,7 +178,7 @@ export function PerSourceStabilityPanel({ data }: { data: DashboardQuality | nul
       </div>
       <div className="mt-4 pt-3 border-t border-line-subtle text-2xs text-fg-muted leading-relaxed">
         Bar = juengste 30-Tage-Hit-Rate · Mosaik = drei Buckets von links (alt) nach rechts (neu, ~aktuell).
-        Eine Source ist <span className="text-pos">stable</span>, wenn jeder Bucket mit Daten
+        Eine Source ist <span className="text-pos">stabil</span>, wenn jeder Bucket mit Daten
         n≥{pss.min_resolved_per_window} UND Wilson-Lower ≥{pss.min_wilson_low_pct.toFixed(0)}% erfuellt.
         Hover ueber eine Kachel fuer Details.
       </div>

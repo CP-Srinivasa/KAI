@@ -1,8 +1,10 @@
+import type { ReactNode } from "react";
 import { Card, CardHeader, Badge, ProgressBar } from "@/components/ui/Primitives";
 import { useT } from "@/i18n/I18nProvider";
 import { cn } from "@/lib/utils";
 import type { DashboardQuality } from "@/lib/api";
-import { tierLiftTone, type Tone } from "@/lib/tone";
+import { tierLiftCiOverlap, tierLiftTone, type Tone } from "@/lib/tone";
+import { LiftUncertainBadge } from "@/components/quality/LiftUncertainBadge";
 
 // Lokalisierung der gate_status raw-snake-Strings analog zu verdictText() in
 // ActivePrecisionCard. Unbekannte Werte fallen by-design auf den raw-Key
@@ -21,7 +23,7 @@ type Row = {
   value: number | null;
   target: number;
   format: (n: number) => string;
-  hint?: string;
+  hint?: ReactNode;
   toneFn?: (value: number | null) => Tone;
 };
 
@@ -66,15 +68,12 @@ export function QualityBarPanel({ data }: { data: DashboardQuality | null }) {
             : undefined;
         }
         const n = data.priority_tier_high_conviction_resolved + data.priority_tier_standard_resolved;
-        const hLo = data.priority_tier_high_conviction_ci_low_pct;
-        const hHi = data.priority_tier_high_conviction_ci_high_pct;
-        const sLo = data.priority_tier_standard_ci_low_pct;
-        const sHi = data.priority_tier_standard_ci_high_pct;
-        const ciOverlap =
-          hLo != null && hHi != null && sLo != null && sHi != null &&
-          hLo <= sHi && sLo <= hHi;
-        // n.s. = nicht statistisch signifikant (Wilson-95%-CIs ueberlappen)
-        return ciOverlap ? `n=${n} (n.s.)` : `n=${n}`;
+        return (
+          <span className="inline-flex items-center">
+            <span>n={n}</span>
+            {tierLiftCiOverlap(data) && <LiftUncertainBadge />}
+          </span>
+        );
       })(),
     },
     // Row 4 (paper_fills) + Row 5 (paper_fills_with_pnl) beide entfernt

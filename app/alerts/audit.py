@@ -13,6 +13,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
 
+import portalocker
+
 from app.signals.models import SignalProvenance
 from app.storage.jsonl_io import read_jsonl_tolerant
 
@@ -153,10 +155,20 @@ def append_outcome_annotation(
     annotation: AlertOutcomeAnnotation,
     output_path: str | Path,
 ) -> None:
-    """Append an operator outcome annotation to the outcomes JSONL file."""
+    """Append an operator outcome annotation to the outcomes JSONL file.
+
+    V-DB5 B-K2 (2026-05-09): wrapped with a cross-platform advisory file
+    lock (portalocker LOCK_EX). The auto-annotator already holds a
+    higher-level lock for level-changes, but other writers — manual
+    `annotate`-CLI calls, alerts-blocked auto-annotate runs, and tests
+    sharing the same outcomes file — could interleave bytes mid-line.
+    Lock auto-releases on file close (context-manager exit), so partial
+    JSONL lines from concurrent runs are no longer possible.
+    """
     p = _resolve_outcomes_path(Path(output_path))
     p.parent.mkdir(parents=True, exist_ok=True)
     with p.open("a", encoding="utf-8") as f:
+        portalocker.lock(f, portalocker.LOCK_EX)
         f.write(json.dumps(annotation.to_json_dict()) + "\n")
 
 
@@ -188,10 +200,16 @@ def append_alert_audit(record: AlertAuditRecord, output_path: str | Path) -> Non
 
     *output_path* may be a directory (writes to
     ``<dir>/ALERT_AUDIT_JSONL_FILENAME``) or a full file path.
+
+    V-DB5 B-K2 (2026-05-09): wrapped with portalocker LOCK_EX so the
+    Pi's parallel writers (kai-server alert dispatch + agent-worker
+    re-publish) cannot interleave bytes when both fire near-simultaneous
+    audits.
     """
     p = _resolve_audit_path(Path(output_path))
     p.parent.mkdir(parents=True, exist_ok=True)
     with p.open("a", encoding="utf-8") as f:
+        portalocker.lock(f, portalocker.LOCK_EX)
         f.write(json.dumps(record.to_json_dict()) + "\n")
     _publish_alert_fired(record)
 

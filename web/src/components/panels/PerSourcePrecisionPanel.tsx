@@ -1,27 +1,47 @@
 import { Card, CardHeader, Badge, ProgressBar } from "@/components/ui/Primitives";
 import type { DashboardQuality } from "@/lib/api";
 import { cn } from "@/lib/utils";
+import { sourceLabel } from "@/lib/sourceLabels";
 
 // V-DB4a 2026-05-08: Per-source active precision panel.
 // Quelle: /dashboard/api/quality.per_source_active_precision (Backend-Field
 // neu freigegeben durch dashboard.py:V-DB4a). Zeigt n / hit-rate / Wilson-Lower
 // pro Source plus Gate-Status. Operator sieht direkt, welche Sources
 // systemtisch tragen und welche das Forward-Signal verwaessern.
+//
+// V-DB5 (2026-05-09):
+//   - E-2: gateLabel nutzt psp.min_resolved statt hardcoded 50
+//   - G-2: Tone-Dot vor Source-Label analog ActivePrecisionCard / Stability
+//   - I-4: deutsche Microcopy ("OK", "Quote zu niedrig"), shared sourceLabels.
 
 type SourceMetrics = NonNullable<DashboardQuality["per_source_active_precision"]>["by_source"][string];
+type GateTone = "pos" | "warn" | "neg" | "muted";
 
-function gateBadgeTone(m: SourceMetrics): "pos" | "warn" | "neg" | "muted" {
+function gateBadgeTone(m: SourceMetrics): GateTone {
   if (m.passes_gate) return "pos";
   if (m.n_threshold_met && !m.wilson_low_threshold_met) return "neg";
   if (!m.n_threshold_met && m.wilson_low_threshold_met) return "warn";
   return "muted";
 }
 
-function gateLabel(m: SourceMetrics): string {
-  if (m.passes_gate) return "PASS";
-  if (m.n_threshold_met && !m.wilson_low_threshold_met) return "low rate";
-  if (!m.n_threshold_met) return `n<${50}`;
+function gateLabel(m: SourceMetrics, minResolved: number): string {
+  if (m.passes_gate) return "OK";
+  if (m.n_threshold_met && !m.wilson_low_threshold_met) return "Quote zu niedrig";
+  if (!m.n_threshold_met) return `n<${minResolved}`;
   return "—";
+}
+
+function toneDotClass(tone: GateTone): string {
+  switch (tone) {
+    case "pos":
+      return "bg-pos";
+    case "warn":
+      return "bg-warn";
+    case "neg":
+      return "bg-neg";
+    default:
+      return "bg-fg-subtle/50";
+  }
 }
 
 export function PerSourcePrecisionPanel({ data }: { data: DashboardQuality | null }) {
@@ -61,11 +81,31 @@ export function PerSourcePrecisionPanel({ data }: { data: DashboardQuality | nul
           const tone = gateBadgeTone(m);
           const ciLo = m.ci_low_pct;
           const ciHi = m.ci_high_pct;
+          const display = sourceLabel(source);
           return (
             <div key={source} className="grid grid-cols-[minmax(0,1fr)_auto] gap-2 items-center">
               <div className="min-w-0">
                 <div className="flex items-baseline justify-between gap-2 text-xs">
-                  <span className="text-fg font-medium truncate">{source}</span>
+                  <span className="flex items-baseline gap-1.5 min-w-0">
+                    {/* G-2 (V-DB5): Tone-Dot vor Source-Label, konsistent zu
+                        ActivePrecisionCard / PerSourceStabilityPanel —
+                        A11y-Hilfe für Rot-Grün-Schwäche. */}
+                    <span
+                      className={cn("inline-block h-2 w-2 rounded-full shrink-0 self-center", toneDotClass(tone))}
+                      aria-hidden="true"
+                    />
+                    <span className="text-fg font-medium truncate" title={display.hint}>
+                      {display.label}
+                    </span>
+                    {display.label !== source && (
+                      <span
+                        className="text-2xs font-mono text-fg-subtle shrink-0 truncate"
+                        title={`Backend-Source-Key: ${source}`}
+                      >
+                        {source}
+                      </span>
+                    )}
+                  </span>
                   <span className="font-mono text-2xs text-fg-subtle shrink-0">
                     n={m.resolved} ({m.hits}/{m.misses})
                   </span>
@@ -100,12 +140,12 @@ export function PerSourcePrecisionPanel({ data }: { data: DashboardQuality | nul
                 tone={tone === "muted" ? "muted" : tone}
                 className={cn(
                   "shrink-0",
-                  // "low rate" (n erfuellt aber Hit-Rate zu niedrig) atmet —
-                  // das ist der kritische Fall, keine Stichprobe-Toleranz.
+                  // "Quote zu niedrig" (n erfuellt aber Hit-Rate zu niedrig)
+                  // atmet — das ist der kritische Fall, keine Stichprobe-Toleranz.
                   tone === "neg" && "attention-breathe-neg",
                 )}
               >
-                {gateLabel(m)}
+                {gateLabel(m, psp.min_resolved)}
               </Badge>
             </div>
           );
@@ -115,8 +155,8 @@ export function PerSourcePrecisionPanel({ data }: { data: DashboardQuality | nul
         <div className="text-2xs text-fg-subtle">keine Source mit active resolutions</div>
       )}
       <div className="mt-4 pt-3 border-t border-line-subtle text-2xs text-fg-muted leading-relaxed">
-        Wilson-95% Konfidenzintervalle in Klammern. <span className="text-pos">PASS</span>: n≥{psp.min_resolved} und CI-Lower≥{psp.min_wilson_low_pct.toFixed(0)}%.
-        <span className="text-neg ml-1">low rate</span>: n erfüllt aber Hit-Rate zu niedrig.
+        Wilson-95% Konfidenzintervalle in Klammern. <span className="text-pos">OK</span>: n≥{psp.min_resolved} und CI-Lower≥{psp.min_wilson_low_pct.toFixed(0)}%.
+        <span className="text-neg ml-1">Quote zu niedrig</span>: n erfüllt, aber Hit-Rate unter Schwelle.
         <span className="text-warn ml-1">n&lt;{psp.min_resolved}</span>: Sample noch zu klein für Aussage.
       </div>
     </Card>

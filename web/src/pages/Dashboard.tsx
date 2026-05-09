@@ -23,7 +23,8 @@ import { useDashboardQuality } from "@/lib/useDashboardQuality";
 import { useDashboardProvenance } from "@/lib/useDashboardProvenance";
 import { usePriorityGate } from "@/lib/usePriorityGate";
 import { cn } from "@/lib/utils";
-import { tierLiftTone } from "@/lib/tone";
+import { tierLiftCiOverlap, tierLiftTone, tierLiftValueFormat } from "@/lib/tone";
+import { LiftUncertainBadge } from "@/components/quality/LiftUncertainBadge";
 import { useRouter, type Route } from "@/state/Router";
 
 const PREPARED_PANELS: Array<{ title: string; reason: string; detail: string }> = [
@@ -176,7 +177,7 @@ export function Dashboard() {
         />
         <KpiCard
           label={t("primitives.priority_tier_lift")}
-          value={ptl != null ? `${ptl >= 0 ? "+" : ""}${ptl.toFixed(1)}pp` : "—"}
+          value={tierLiftValueFormat(ptl)}
           target={15}
           valueNumeric={ptl ?? undefined}
           gapUnit="pp"
@@ -193,10 +194,6 @@ export function Dashboard() {
                     const hHi = data.priority_tier_high_conviction_ci_high_pct;
                     const sLo = data.priority_tier_standard_ci_low_pct;
                     const sHi = data.priority_tier_standard_ci_high_pct;
-                    // CIs überlappen → Lift statistisch nicht trennbar
-                    const ciOverlap =
-                      hLo != null && hHi != null && sLo != null && sHi != null &&
-                      hLo <= sHi && sLo <= hHi;
                     return (
                       <span className="font-mono">
                         n=
@@ -212,14 +209,7 @@ export function Dashboard() {
                         {sLo != null && sHi != null && (
                           <span className="text-fg-subtle/80"> [{sLo.toFixed(0)}–{sHi.toFixed(0)}]</span>
                         )}
-                        {ciOverlap && (
-                          <span
-                            className="ml-1.5 text-fg-subtle italic"
-                            title="Wilson 95% Konfidenzintervalle der beiden Hit-Rates überlappen → Lift-Differenz statistisch nicht trennbar (n zu klein)."
-                          >
-                            n.s.
-                          </span>
-                        )}
+                        {tierLiftCiOverlap(data) && <LiftUncertainBadge />}
                       </span>
                     );
                   })()
