@@ -757,10 +757,9 @@ class RegimeDetectionEngine:
         n_obs = sum(1 for v in observations[-1].features.values() if v is not None)
         explanations = self._build_explanations(classification, supporting, opposing, vol_bucket)
         if path[-1] != primary:
-            explanations = (
-                *explanations,
+            explanations.append(
                 f"Viterbi-Pfad endet in {path[-1].value}, posterior bevorzugt {primary.value} — "
-                "globale Pfad-Optimalität ≠ marginale Last-State-Optimalität.",
+                "globale Pfad-Optimalität ≠ marginale Last-State-Optimalität."
             )
         drivers = _residual_drivers(
             primary_p=classification.primary_probability,
