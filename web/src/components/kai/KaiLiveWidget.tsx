@@ -514,8 +514,8 @@ export function KaiLiveWidget(props: KaiLiveWidgetProps) {
     if (!voiceSupported) {
       const msg =
         language === "de"
-          ? "Spracheingabe in diesem Browser nicht verfügbar. Chrome, Edge oder Safari öffnen. NICHT in: Telegram-WebView, Firefox-Mobile, Brave (per default)."
-          : "Voice input unavailable in this browser. Open Chrome, Edge or Safari. NOT in: Telegram WebView, Firefox Mobile, Brave (default).";
+          ? "Mikro geht in diesem Browser nicht. Chrome oder Safari nehmen."
+          : "Mic does not work here. Use Chrome or Safari.";
       const entry: ChatEntry = { id: makeId(), text: msg, origin: "reply" };
       setMessages((prev) => [...prev, entry].slice(-MAX_VISIBLE_MESSAGES));
       return;
