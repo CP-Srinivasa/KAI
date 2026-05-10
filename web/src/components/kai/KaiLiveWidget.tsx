@@ -754,7 +754,7 @@ export function KaiLiveWidget(props: KaiLiveWidgetProps) {
               !voiceSupported
                 ? language === "de" ? "Spracheingabe nicht verfügbar (Browser)" : "Voice not supported (browser)"
                 : isListening
-                ? language === "de" ? "Aufnahme stoppen" : "Stop recording"
+                ? language === "de" ? `Aufnahme läuft seit ${recordingSeconds} Sekunden, Klick zum Stoppen` : `Recording for ${recordingSeconds} seconds, click to stop`
                 : language === "de" ? "Aufnahme starten" : "Start recording"
             }
             title={
