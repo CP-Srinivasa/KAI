@@ -169,6 +169,204 @@ def _now_utc() -> str:
     return datetime.now(UTC).isoformat()
 
 
+class OrderLifecycleState(StrEnum):
+    """Canonical signal-to-order lifecycle states.
+
+    Shared by Telegram bridge, paper execution and the future live adapter so a
+    signal can be replayed from intake to terminal outcome by correlation_id.
+    """
+
+    RECEIVED = "RECEIVED"
+    PARSED = "PARSED"
+    VALIDATED = "VALIDATED"
+    REJECTED_INVALID_SIGNAL = "REJECTED_INVALID_SIGNAL"
+    WAITING_FOR_ENTRY = "WAITING_FOR_ENTRY"
+    ENTRY_TRIGGERED = "ENTRY_TRIGGERED"
+    ORDER_BUILDING = "ORDER_BUILDING"
+    ORDER_SUBMITTED = "ORDER_SUBMITTED"
+    ORDER_ACCEPTED = "ORDER_ACCEPTED"
+    POSITION_OPEN = "POSITION_OPEN"
+    PARTIAL_TP_HIT = "PARTIAL_TP_HIT"
+    TP_HIT = "TP_HIT"
+    SL_HIT = "SL_HIT"
+    EXPIRED = "EXPIRED"
+    CANCELLED = "CANCELLED"
+    FAILED = "FAILED"
+
+
+TERMINAL_ORDER_LIFECYCLE_STATES = frozenset(
+    {
+        OrderLifecycleState.REJECTED_INVALID_SIGNAL,
+        OrderLifecycleState.TP_HIT,
+        OrderLifecycleState.SL_HIT,
+        OrderLifecycleState.EXPIRED,
+        OrderLifecycleState.CANCELLED,
+        OrderLifecycleState.FAILED,
+    }
+)
+
+
+LIFECYCLE_TRANSITIONS: dict[OrderLifecycleState, frozenset[OrderLifecycleState]] = {
+    OrderLifecycleState.RECEIVED: frozenset(
+        {OrderLifecycleState.PARSED, OrderLifecycleState.REJECTED_INVALID_SIGNAL}
+    ),
+    OrderLifecycleState.PARSED: frozenset(
+        {OrderLifecycleState.VALIDATED, OrderLifecycleState.REJECTED_INVALID_SIGNAL}
+    ),
+    OrderLifecycleState.VALIDATED: frozenset(
+        {
+            OrderLifecycleState.WAITING_FOR_ENTRY,
+            OrderLifecycleState.ENTRY_TRIGGERED,
+            OrderLifecycleState.ORDER_BUILDING,
+            OrderLifecycleState.REJECTED_INVALID_SIGNAL,
+            OrderLifecycleState.EXPIRED,
+        }
+    ),
+    OrderLifecycleState.WAITING_FOR_ENTRY: frozenset(
+        {
+            OrderLifecycleState.ENTRY_TRIGGERED,
+            OrderLifecycleState.EXPIRED,
+            OrderLifecycleState.CANCELLED,
+            OrderLifecycleState.FAILED,
+        }
+    ),
+    OrderLifecycleState.ENTRY_TRIGGERED: frozenset(
+        {OrderLifecycleState.ORDER_BUILDING, OrderLifecycleState.FAILED}
+    ),
+    OrderLifecycleState.ORDER_BUILDING: frozenset(
+        {OrderLifecycleState.ORDER_SUBMITTED, OrderLifecycleState.FAILED}
+    ),
+    OrderLifecycleState.ORDER_SUBMITTED: frozenset(
+        {
+            OrderLifecycleState.ORDER_ACCEPTED,
+            OrderLifecycleState.REJECTED_INVALID_SIGNAL,
+            OrderLifecycleState.FAILED,
+        }
+    ),
+    OrderLifecycleState.ORDER_ACCEPTED: frozenset(
+        {OrderLifecycleState.POSITION_OPEN, OrderLifecycleState.FAILED}
+    ),
+    OrderLifecycleState.POSITION_OPEN: frozenset(
+        {
+            OrderLifecycleState.PARTIAL_TP_HIT,
+            OrderLifecycleState.TP_HIT,
+            OrderLifecycleState.SL_HIT,
+            OrderLifecycleState.CANCELLED,
+            OrderLifecycleState.FAILED,
+        }
+    ),
+    OrderLifecycleState.PARTIAL_TP_HIT: frozenset(
+        {
+            OrderLifecycleState.PARTIAL_TP_HIT,
+            OrderLifecycleState.TP_HIT,
+            OrderLifecycleState.SL_HIT,
+            OrderLifecycleState.CANCELLED,
+            OrderLifecycleState.FAILED,
+        }
+    ),
+    OrderLifecycleState.REJECTED_INVALID_SIGNAL: frozenset(),
+    OrderLifecycleState.TP_HIT: frozenset(),
+    OrderLifecycleState.SL_HIT: frozenset(),
+    OrderLifecycleState.EXPIRED: frozenset(),
+    OrderLifecycleState.CANCELLED: frozenset(),
+    OrderLifecycleState.FAILED: frozenset(),
+}
+
+
+class IllegalLifecycleTransition(ValueError):
+    """Raised when a signal/order attempts an impossible lifecycle move."""
+
+
+@dataclass(frozen=True)
+class LifecycleTransition:
+    correlation_id: str
+    from_state: OrderLifecycleState
+    to_state: OrderLifecycleState
+    reason: str
+    timestamp_utc: str = field(default_factory=_now_utc)
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "correlation_id": self.correlation_id,
+            "from_state": self.from_state.value,
+            "to_state": self.to_state.value,
+            "reason": self.reason,
+            "timestamp_utc": self.timestamp_utc,
+        }
+
+
+def validate_lifecycle_transition(
+    from_state: OrderLifecycleState,
+    to_state: OrderLifecycleState,
+) -> None:
+    if to_state not in LIFECYCLE_TRANSITIONS[from_state]:
+        raise IllegalLifecycleTransition(
+            f"illegal lifecycle transition: {from_state.value} -> {to_state.value}"
+        )
+
+
+def make_lifecycle_transition(
+    *,
+    correlation_id: str,
+    from_state: OrderLifecycleState,
+    to_state: OrderLifecycleState,
+    reason: str,
+) -> LifecycleTransition:
+    validate_lifecycle_transition(from_state, to_state)
+    return LifecycleTransition(
+        correlation_id=correlation_id,
+        from_state=from_state,
+        to_state=to_state,
+        reason=reason,
+    )
+
+
+@dataclass(frozen=True)
+class OrderIntent:
+    """Paper/live parity contract for one executable trade intent."""
+
+    symbol: str
+    side: str
+    order_type: str
+    entry_type: str
+    entry_value: float | None
+    entry_min: float | None
+    entry_max: float | None
+    quantity: float | None
+    risk_allocation_pct: float | None
+    leverage: float
+    margin_mode: str
+    stop_loss: float
+    take_profit_targets: tuple[float, ...]
+    reduce_only: bool
+    source: str
+    correlation_id: str
+    idempotency_key: str
+    order_intent: str = "OPEN_POSITION"
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "symbol": self.symbol,
+            "side": self.side,
+            "order_type": self.order_type,
+            "entry_type": self.entry_type,
+            "entry_value": self.entry_value,
+            "entry_min": self.entry_min,
+            "entry_max": self.entry_max,
+            "quantity": self.quantity,
+            "risk_allocation_pct": self.risk_allocation_pct,
+            "leverage": self.leverage,
+            "margin_mode": self.margin_mode,
+            "stop_loss": self.stop_loss,
+            "take_profit_targets": list(self.take_profit_targets),
+            "reduce_only": self.reduce_only,
+            "source": self.source,
+            "correlation_id": self.correlation_id,
+            "idempotency_key": self.idempotency_key,
+            "order_intent": self.order_intent,
+        }
+
+
 def _new_decision_id() -> str:
     return f"dec_{uuid.uuid4().hex[:12]}"
 

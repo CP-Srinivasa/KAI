@@ -15,6 +15,7 @@ regex extractors over the whole text for:
     stop_loss               (required)
     targets                 (optional; empty = no TPs detected)
     leverage                (optional — default 1x)
+    margin_pct              (optional; "Margin: 5%" / "Risk: 5%")
     exchange_scope          (optional — from header line)
 
 If symbol, direction, entry, or stop_loss are missing, the message is NOT
@@ -68,11 +69,12 @@ class ParsedSignal:
     stop_loss: float | None
     targets: list[float]
     leverage: int
+    margin_pct: float | None
     exchange_scope: list[str]
     raw_text: str
 
     def to_payload(self) -> dict[str, object]:
-        return {
+        payload: dict[str, object] = {
             "symbol": self.symbol,
             "display_symbol": self.display_symbol,
             "direction": self.direction,
@@ -86,6 +88,9 @@ class ParsedSignal:
             "leverage": self.leverage,
             "exchange_scope": list(self.exchange_scope),
         }
+        if self.margin_pct is not None:
+            payload["margin_pct"] = self.margin_pct
+        return payload
 
 
 # ── Helpers ─────────────────────────────────────────────────────────────────
@@ -134,13 +139,26 @@ _SYMBOL_DIR_ORDER_2 = re.compile(  # "#ABC/USDT Long/BUY" (emoji or plain)
     r"(?im)#\s*(?P<symbol>[A-Z0-9]+\s*/\s*[A-Z0-9]+)\s+"
     r"(?P<direction>Long|Short)\s*/\s*(?P<side>Buy|Sell)"
 )
+_SYMBOL_DIR_PLAIN_1 = re.compile(  # "BTCUSDT LONG" / "BTC/USDT SHORT"
+    r"(?im)^\s*(?P<symbol>[A-Z0-9]{2,}(?:\s*/\s*[A-Z0-9]+)?)\s+"
+    r"(?P<direction>Long|Short|Buy|Sell)\b"
+)
+_SYMBOL_DIR_PLAIN_2 = re.compile(  # "LONG BTCUSDT" / "SHORT BTC/USDT"
+    r"(?im)^\s*(?P<direction>Long|Short|Buy|Sell)\s+"
+    r"(?P<symbol>[A-Z0-9]{2,}(?:\s*/\s*[A-Z0-9]+)?)\b"
+)
 
 
 def _extract_symbol_and_direction(
     text: str,
 ) -> tuple[str, str, str, str] | None:
     """Return (symbol_internal, symbol_display, direction, side) or None."""
-    for pat in (_SYMBOL_DIR_ORDER_1, _SYMBOL_DIR_ORDER_2):
+    for pat in (
+        _SYMBOL_DIR_ORDER_1,
+        _SYMBOL_DIR_ORDER_2,
+        _SYMBOL_DIR_PLAIN_1,
+        _SYMBOL_DIR_PLAIN_2,
+    ):
         m = pat.search(text)
         if m is None:
             continue
@@ -155,11 +173,14 @@ def _extract_symbol_and_direction(
 # 2) ABOVE: 'Entry Above - X' / 'Enter Above - X' / typos
 # 3) AT   : 'Entry Point - X' / 'Entry - X'
 # 4) AT   : inline 'Long/Buy - X' or '#SYM Long/BUY – X'
-_ENTRY_RANGE = re.compile(rf"(?i)Entry\s*Zone\s*:\s*(?P<lo>[\d.]+)\s*{_DASH}\s*(?P<hi>[\d.]+)")
+_ENTRY_RANGE = re.compile(
+    rf"(?i)Entry(?:\s*Zone)?\s*[:{_DASH_CHARS}]\s*"
+    rf"(?P<lo>[\d.,]+)\s*{_DASH}\s*(?P<hi>[\d.,]+)"
+)
 _ENTRY_ABOVE = re.compile(
     rf"(?i)(?:Entry|Enter)\s*(?:\s+A\s*[Bb]ove|\s+ABove)\s*{_DASH}?\s*(?P<v>[\d.]+)"
 )
-_ENTRY_POINT = re.compile(rf"(?i)Entry(?:\s*Point)?\s*{_DASH}\s*(?P<v>[\d.]+)")
+_ENTRY_POINT = re.compile(rf"(?i)Entry(?:\s*Point)?\s*[:{_DASH_CHARS}]\s*(?P<v>[\d.]+)")
 _ENTRY_INLINE = re.compile(rf"(?i)(?:Long|Short)\s*/\s*(?:Buy|Sell)\s*{_DASH}\s*(?P<v>[\d.]+)")
 
 
@@ -201,7 +222,7 @@ def _extract_stop_loss(text: str) -> float | None:
 #  A) "Targets: 100 - 110 - 120 - 130"       (single-line, dash-separated)
 #  B) "🎯 100\n🎯 110\n..."                    (bullseye + inline value per line)
 #  C) "🎯 Target:\n100\n110\n..."             (bullseye label then values below)
-_TARGETS_LINE = re.compile(rf"(?im)^\s*Targets?\s*:\s*(?P<list>[\d.,\s{_DASH_CHARS}]+?)\s*$")
+_TARGETS_LINE = re.compile(rf"(?im)^\s*Targets?\s*:\s*(?P<list>[\d.,/\s{_DASH_CHARS}]+?)\s*$")
 _TARGET_EMOJI_INLINE = re.compile(r"(?im)^\s*🎯\s*(?P<v>\d[\d.]*)\s*$")
 # Label form: "🎯 Target:" (any case, optional 's') followed by numeric lines.
 _TARGET_EMOJI_LABEL = re.compile(r"(?im)^\s*🎯\s*Targets?\s*:?\s*$")
@@ -211,7 +232,7 @@ _NUMERIC_LINE = re.compile(r"(?im)^\s*(?P<v>\d[\d.]*)\s*$")
 def _parse_targets_dashlist(list_text: str) -> list[float]:
     """Parse '100 - 110 - 120' / '100 – 110 – 120' → [100.0, 110.0, 120.0]."""
     out: list[float] = []
-    parts = re.split(rf"[,\s]*{_DASH}\s*", list_text.strip())
+    parts = re.split(rf"(?:[,\s]*{_DASH}\s*|[,\s]*/[,\s]*|[,]+)", list_text.strip())
     for p in parts:
         p = p.strip()
         if not p:
@@ -254,12 +275,26 @@ def _extract_targets(text: str) -> list[float]:
 
 
 _LEVERAGE = re.compile(rf"(?i)Leverage\s*[:{_DASH_CHARS}]\s*(?P<lev>\d+)\s*x?")
+_MARGIN_PCT = re.compile(
+    rf"(?i)(?:Margin|Risk(?:\s+Allocation)?)\s*[:{_DASH_CHARS}]\s*"
+    rf"(?P<pct>\d+(?:[,.]\d+)?)\s*%?"
+)
 
 
 def _extract_leverage(text: str) -> int:
     m = _LEVERAGE.search(text)
     if m is None:
         return 1
+
+
+def _extract_margin_pct(text: str) -> float | None:
+    m = _MARGIN_PCT.search(text)
+    if m is None:
+        return None
+    pct = _to_float(m["pct"])
+    if pct is None or pct <= 0:
+        return None
+    return pct
     try:
         lev = int(m["lev"])
         return lev if lev > 0 else 1
@@ -326,6 +361,7 @@ def parse_premium_channel_message(text: str) -> ParsedSignal | None:
         stop_loss=stop_loss,
         targets=_extract_targets(text),
         leverage=_extract_leverage(text),
+        margin_pct=_extract_margin_pct(text),
         exchange_scope=_extract_exchange_scope(text),
         raw_text=text,
     )

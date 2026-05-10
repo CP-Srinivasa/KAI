@@ -26,11 +26,12 @@ from app.audit.kai_audit_service import (
     KaiAuditValidationError,
     get_default_kai_audit_service,
 )
+from app.messaging.kai_chat_engine import ChatReply, transcribe_audio_via_whisper
+from app.messaging.kai_chat_engine import chat as kai_chat_dispatch
 from app.messaging.kai_persona import (
     KaiPersonaConfigError,
     load_kai_persona,
 )
-from app.messaging.kai_chat_engine import ChatReply, chat as kai_chat_dispatch, transcribe_audio_via_whisper
 from app.messaging.kai_phrase_engine import get_kai_phrase
 from app.messaging.kai_state_resolver import (
     create_fallback_state,

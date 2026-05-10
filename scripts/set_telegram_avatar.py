@@ -14,9 +14,10 @@ import asyncio
 import sys
 from pathlib import Path
 
-from app.core.settings import TelegramChannelIngestSettings
 from telethon import TelegramClient
 from telethon.tl.functions.photos import UploadProfilePhotoRequest
+
+from app.core.settings import TelegramChannelIngestSettings
 
 
 async def main(video_path: str, png_fallback: str) -> int:

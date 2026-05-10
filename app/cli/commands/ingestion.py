@@ -399,7 +399,7 @@ def telegram_channel_probe(
             failures.append(f"step5_audit_missing_events_{sorted(missing)}")
             console.print(f"[red]RED step 5[/red] — audit missing events: {sorted(missing)}")
         else:
-            console.print(f"[green]GREEN step 5[/green] — audit contains all 4 expected event types")
+            console.print("[green]GREEN step 5[/green] — audit contains all 4 expected event types")
 
         # Rehydrate gate: a fresh engine reading the same audit must reproduce
         # the empty-portfolio terminal state (V25-C audit_replay extension).

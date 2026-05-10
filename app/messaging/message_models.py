@@ -189,6 +189,7 @@ class TradingSignal:
     targets: list[float] = field(default_factory=list)
     stop_loss: float | None = None
     leverage: int = 1
+    margin_pct: float | None = None
     risk_mode: RiskMode = RiskMode.ISOLATED
 
     # Metadata
@@ -245,6 +246,8 @@ class TradingSignal:
             errors.append("missing_stop_loss")
         if self.leverage <= 0:
             errors.append("invalid_leverage")
+        if self.margin_pct is not None and self.margin_pct <= 0:
+            errors.append("invalid_margin_pct")
         if not self.timestamp_utc.strip():
             errors.append("missing_timestamp")
         return errors
@@ -279,6 +282,8 @@ class TradingSignal:
             d["notes"] = self.notes
         if self.confidence is not None:
             d["confidence"] = self.confidence
+        if self.margin_pct is not None:
+            d["margin_pct"] = self.margin_pct
         if self.strategy_tag:
             d["strategy_tag"] = self.strategy_tag
         if self.reduce_only:
