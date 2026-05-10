@@ -94,6 +94,22 @@ bridge_tick() {
     write_log "bridge  filled=$filled  pending=$pending  repending=$repend  expired=$expired  rejrisk=$rejrisk"
 }
 
+entry_watch() {
+    local out
+    out=$("$PYTHON" -m app.cli.main trading operator-signal-entry-watch \
+        --duration-seconds 55 \
+        --poll-interval-seconds 5 2>&1) || true
+    if printf '%s' "$out" | grep -q 'enabled=False'; then
+        return
+    fi
+    local triggered filled held stale
+    triggered=$(extract_field "$out" triggered)
+    filled=$(extract_field "$out" bridge_filled)
+    held=$(extract_field "$out" held)
+    stale=$(extract_field "$out" stale_or_unavailable)
+    write_log "entry-watch  triggered=$triggered  bridge_filled=$filled  held=$held  stale=$stale"
+}
+
 # --- main -------------------------------------------------------------------
 
 write_log "--- cron start ---"
@@ -102,6 +118,7 @@ write_log "--- cron start ---"
 
 monitor_positions
 bridge_tick
+entry_watch
 run_cycle "BTC/USDT"
 sleep 15
 run_cycle "ETH/USDT"

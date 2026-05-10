@@ -252,9 +252,6 @@ def make_lifecycle_transition(
     )
 
 
-
-
-
 def _new_decision_id() -> str:
     return f"dec_{uuid.uuid4().hex[:12]}"
 

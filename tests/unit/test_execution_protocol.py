@@ -176,9 +176,7 @@ def test_parity_drift_detected_when_quantity_inconsistent() -> None:
         take_profit=66000.0,
         client_order_id=intent.idempotency_key,
     )
-    assert paper["quantity"] != drift_request.quantity, (
-        "test setup error — drift required"
-    )
+    assert paper["quantity"] != drift_request.quantity, "test setup error — drift required"
 
 
 def test_intent_quantity_none_is_zero_in_kwargs() -> None:
@@ -227,8 +225,7 @@ def test_correlation_id_immutable_across_signal_lifecycle() -> None:
     for to in chain:
         s = s.transition_to(to, actor="test", reason="ok")
         assert s.correlation_id == cid, (
-            f"correlation_id drift after transition to {to.value}: "
-            f"got {s.correlation_id}"
+            f"correlation_id drift after transition to {to.value}: got {s.correlation_id}"
         )
 
     # Status-history hat alle 7 Transitions
@@ -376,9 +373,7 @@ def test_correlation_id_chain_signal_to_position_full() -> None:
         "fill": fill.correlation_id,
         "position": position.correlation_id,
     }
-    assert len(set(cids.values())) == 1, (
-        f"correlation_id chain broken: {cids}"
-    )
+    assert len(set(cids.values())) == 1, f"correlation_id chain broken: {cids}"
     assert all(v == cid for v in cids.values())
 
 

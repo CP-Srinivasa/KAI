@@ -877,6 +877,13 @@ async def test_signal_status_command_returns_read_only_payload(tmp_path, monkeyp
             "exchange_sent_lookback": 1,
             "exchange_dead_letter_total": 1,
             "exchange_dead_letter_lookback": 0,
+            "signal_execution": {
+                "waiting_for_entry": 2,
+                "positions_open": 1,
+                "filled": 4,
+                "expired": 1,
+                "rejected": 3,
+            },
             "execution_enabled": False,
             "write_back_allowed": False,
         }
@@ -893,6 +900,8 @@ async def test_signal_status_command_returns_read_only_payload(tmp_path, monkeyp
     assert "Signal Pipeline" in sent_messages[0]
     assert "Handoff: 7 total" in sent_messages[0]
     assert "Outbox: 3 queued" in sent_messages[0]
+    assert "Waiting entry: 2" in sent_messages[0]
+    assert "Open/Filled: 1 / 4" in sent_messages[0]
 
 
 @pytest.mark.asyncio

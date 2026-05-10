@@ -116,9 +116,7 @@ def test_short_range_entry_inside_range_hits() -> None:
 
 
 def test_long_limit_entry_at_or_below_hits() -> None:
-    s = _waiting_long_range(
-        entry_type="limit", entry_value=100.0, entry_min=None, entry_max=None
-    )
+    s = _waiting_long_range(entry_type="limit", entry_value=100.0, entry_min=None, entry_max=None)
     assert is_entry_condition_met(s, current_price=100.0)
     assert is_entry_condition_met(s, current_price=99.0)
     assert not is_entry_condition_met(s, current_price=100.01)
@@ -362,9 +360,7 @@ def test_watcher_step_hold_keeps_signal_unchanged() -> None:
 def test_watcher_step_ttl_emits_expired() -> None:
     s = _waiting_long_range()
     w = EntryRangeWatcher(s)
-    eval_, new_s = w.step(
-        current_price=66000.0, quote_age_seconds=2.0, ttl_expired=True
-    )
+    eval_, new_s = w.step(current_price=66000.0, quote_age_seconds=2.0, ttl_expired=True)
     assert eval_.decision == WatcherDecision.EXPIRE_TTL
     assert new_s.status == SignalStatus.EXPIRED
     assert new_s.is_terminal
@@ -467,9 +463,12 @@ def test_operator_example_eth_short_limit_time_series() -> None:
 def test_operator_example_with_stale_data_skips_until_fresh() -> None:
     """Stale data blocks trigger even if price would hit. Fresh data triggers."""
     s = _waiting_long_range()  # range 65000-65500
-    w = EntryRangeWatcher(s, config=EntryWatcherConfig(
-        market_data_max_staleness_seconds=10.0,
-    ))
+    w = EntryRangeWatcher(
+        s,
+        config=EntryWatcherConfig(
+            market_data_max_staleness_seconds=10.0,
+        ),
+    )
     # Stale tick — even though price hits range, must skip
     eval_, new_s = w.step(current_price=65250.0, quote_age_seconds=99.0)
     assert eval_.decision == WatcherDecision.SKIP_STALE_DATA

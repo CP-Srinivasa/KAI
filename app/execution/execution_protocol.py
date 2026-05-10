@@ -67,11 +67,7 @@ def executable_intent_to_paper_kwargs(intent: ExecutableOrderIntent) -> dict[str
 
     # TP1 from staged targets (paper-engine native single-TP; tier-ladder is
     # set separately via engine.set_position_tp_tiers).
-    tp_first = (
-        intent.take_profit_targets[0]
-        if intent.take_profit_targets
-        else None
-    )
+    tp_first = intent.take_profit_targets[0] if intent.take_profit_targets else None
 
     # SHORT-positions on paper require both side=sell + position_side=short.
     # Operator's signal-direction is encoded in ExecutableOrderIntent.side already.
@@ -131,11 +127,7 @@ def executable_intent_to_live_request(intent: ExecutableOrderIntent) -> OrderReq
         type_enum = OrderType.LIMIT
         price = intent.entry_value
 
-    tp_first = (
-        intent.take_profit_targets[0]
-        if intent.take_profit_targets
-        else None
-    )
+    tp_first = intent.take_profit_targets[0] if intent.take_profit_targets else None
 
     return OrderRequest(
         symbol=intent.symbol,
@@ -181,8 +173,7 @@ def assert_parity(intent: ExecutableOrderIntent) -> None:
         f"take_profit drift: paper={paper['take_profit']} live={live.take_profit}"
     )
     assert paper["idempotency_key"] == live.client_order_id, (
-        f"idempotency drift: paper={paper['idempotency_key']!r} "
-        f"live={live.client_order_id!r}"
+        f"idempotency drift: paper={paper['idempotency_key']!r} live={live.client_order_id!r}"
     )
 
 

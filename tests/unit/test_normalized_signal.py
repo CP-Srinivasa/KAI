@@ -139,9 +139,7 @@ def test_transition_matrix_targets_are_valid_states() -> None:
     all_states = set(SignalStatus)
     for from_state, allowed in LIFECYCLE_TRANSITIONS.items():
         for to_state in allowed:
-            assert to_state in all_states, (
-                f"unknown target state {to_state} from {from_state}"
-            )
+            assert to_state in all_states, f"unknown target state {to_state} from {from_state}"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -194,9 +192,7 @@ def test_illegal_transition_raises() -> None:
     s = _long_signal()  # status = PARSED
     # PARSED → POSITION_OPEN ist ein verbotener Sprung (skip 6 states)
     with pytest.raises(IllegalLifecycleTransition) as exc_info:
-        s.transition_to(
-            SignalStatus.POSITION_OPEN, actor="Test", reason="forced"
-        )
+        s.transition_to(SignalStatus.POSITION_OPEN, actor="Test", reason="forced")
     assert "transition not allowed" in str(exc_info.value)
     assert "PARSED → POSITION_OPEN" in str(exc_info.value)
     assert "correlation_id=" in str(exc_info.value)
@@ -248,9 +244,7 @@ def test_waiting_to_expired_transition() -> None:
     s = _long_signal()
     s = s.transition_to(SignalStatus.VALIDATED, actor="x", reason="x")
     s = s.transition_to(SignalStatus.WAITING_FOR_ENTRY, actor="x", reason="x")
-    s = s.transition_to(
-        SignalStatus.EXPIRED, actor="EntryWatcher", reason="ttl_24h_exceeded"
-    )
+    s = s.transition_to(SignalStatus.EXPIRED, actor="EntryWatcher", reason="ttl_24h_exceeded")
     assert s.status == SignalStatus.EXPIRED
     assert s.is_terminal
 
@@ -293,9 +287,7 @@ def test_primary_entry_for_limit() -> None:
 
 
 def test_primary_entry_for_market_returns_none() -> None:
-    s = _long_signal(
-        entry_type="market", entry_value=None, entry_min=None, entry_max=None
-    )
+    s = _long_signal(entry_type="market", entry_value=None, entry_min=None, entry_max=None)
     assert s.primary_entry is None
 
 
@@ -365,27 +357,21 @@ def test_validator_rejects_invalid_target() -> None:
 
 
 def test_validator_rejects_range_entry_without_min_max() -> None:
-    s = _long_signal(
-        entry_type="range", entry_min=None, entry_max=None, entry_value=None
-    )
+    s = _long_signal(entry_type="range", entry_min=None, entry_max=None, entry_value=None)
     result = validate(s)
     assert not result.is_valid
     assert "range_entry_requires_min_and_max" in result.rejected_reason
 
 
 def test_validator_rejects_limit_entry_without_value() -> None:
-    s = _long_signal(
-        entry_type="limit", entry_value=None, entry_min=None, entry_max=None
-    )
+    s = _long_signal(entry_type="limit", entry_value=None, entry_min=None, entry_max=None)
     result = validate(s)
     assert not result.is_valid
     assert "limit_entry_requires_value" in result.rejected_reason
 
 
 def test_validator_warns_on_market_entry_with_explicit_price() -> None:
-    s = _long_signal(
-        entry_type="market", entry_value=65000.0, entry_min=None, entry_max=None
-    )
+    s = _long_signal(entry_type="market", entry_value=65000.0, entry_min=None, entry_max=None)
     result = validate(s)
     assert result.is_valid  # warnings sind keine rejections
     assert "market_entry_with_explicit_price" in result.warnings
@@ -441,34 +427,26 @@ def test_long_sl_at_entry_boundary_rejected() -> None:
 
 
 def test_validator_rejects_no_sizing_at_all() -> None:
-    s = _long_signal(
-        leverage=None, margin_size_usd=None, risk_allocation_pct=None
-    )
+    s = _long_signal(leverage=None, margin_size_usd=None, risk_allocation_pct=None)
     result = validate(s)
     assert not result.is_valid
     assert "sizing_missing" in result.rejected_reason
 
 
 def test_validator_accepts_only_leverage() -> None:
-    s = _long_signal(
-        leverage=5, margin_size_usd=None, risk_allocation_pct=None
-    )
+    s = _long_signal(leverage=5, margin_size_usd=None, risk_allocation_pct=None)
     result = validate(s)
     assert result.is_valid
 
 
 def test_validator_accepts_only_margin_size_usd() -> None:
-    s = _long_signal(
-        leverage=None, margin_size_usd=200.0, risk_allocation_pct=None
-    )
+    s = _long_signal(leverage=None, margin_size_usd=200.0, risk_allocation_pct=None)
     result = validate(s)
     assert result.is_valid
 
 
 def test_validator_accepts_only_risk_allocation_pct() -> None:
-    s = _long_signal(
-        leverage=None, margin_size_usd=None, risk_allocation_pct=0.05
-    )
+    s = _long_signal(leverage=None, margin_size_usd=None, risk_allocation_pct=0.05)
     result = validate(s)
     assert result.is_valid
 
@@ -612,12 +590,12 @@ def test_new_signal_display_symbol_defaults_to_symbol() -> None:
 def test_operator_example_btc_long_full_lifecycle() -> None:
     """Genau das Beispiel-Signal aus dem Operator-Auftrag.
 
-        BTCUSDT LONG
-        Entry: 65000 - 65500
-        Leverage: 10x
-        Margin: 5%
-        Stop Loss: 64200
-        Targets: 66000 / 67000 / 68500
+    BTCUSDT LONG
+    Entry: 65000 - 65500
+    Leverage: 10x
+    Margin: 5%
+    Stop Loss: 64200
+    Targets: 66000 / 67000 / 68500
     """
     s = new_signal(
         correlation_id="SIG-TGCH-20260510120000-BTCUSDT",

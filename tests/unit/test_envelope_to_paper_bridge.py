@@ -435,12 +435,8 @@ async def test_happy_path_fills(tmp_artifacts: Path, monkeypatch: pytest.MonkeyP
     assert records[-1]["signal_margin_pct"] == 5.0
     assert records[-1]["signal_leverage"] == 5.0
     assert "leverage=1x (capped)" in records[-1]["position_size_rationale"]
-    paper_audit = _read_bridge_records(
-        tmp_artifacts / "artifacts" / "paper_execution_audit.jsonl"
-    )
-    lifecycle = [
-        rec for rec in paper_audit if rec.get("event_type") == "lifecycle_transition"
-    ]
+    paper_audit = _read_bridge_records(tmp_artifacts / "artifacts" / "paper_execution_audit.jsonl")
+    lifecycle = [rec for rec in paper_audit if rec.get("event_type") == "lifecycle_transition"]
     assert [rec["to_state"] for rec in lifecycle] == [
         "ORDER_SUBMITTED",
         "ORDER_ACCEPTED",

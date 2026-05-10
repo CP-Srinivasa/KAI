@@ -603,6 +603,46 @@ def trading_operator_signal_bridge_tick() -> None:
         console.print(f"{k}={v}")
 
 
+@trading_app.command("operator-signal-entry-watch")
+def trading_operator_signal_entry_watch(
+    duration_seconds: float = typer.Option(
+        55.0,
+        "--duration-seconds",
+        min=0.0,
+        help="How long to watch pending operator entries before exiting.",
+    ),
+    poll_interval_seconds: float = typer.Option(
+        5.0,
+        "--poll-interval-seconds",
+        min=0.1,
+        help="Seconds between market-data polls while watching.",
+    ),
+) -> None:
+    """High-frequency EntryRangeWatcher loop for pending operator signals.
+
+    On entry hit, this invokes the existing bridge immediately. The bridge still
+    owns risk gates, idempotency, paper order creation and audit.
+    """
+    import asyncio
+
+    from app.execution.operator_entry_watch import run_watch_loop
+
+    result = asyncio.run(
+        run_watch_loop(
+            duration_seconds=duration_seconds,
+            poll_interval_seconds=poll_interval_seconds,
+        )
+    )
+    data = result.to_dict()
+
+    console.print("[bold]Operator-Signal-Entry-Watch[/bold]")
+    if not data["enabled"]:
+        console.print("enabled=False (fail-closed) — no action taken")
+        return
+    for k, v in data.items():
+        console.print(f"{k}={v}")
+
+
 # -- backtest --
 
 

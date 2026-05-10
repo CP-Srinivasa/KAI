@@ -170,9 +170,7 @@ def make_verbose_observer_handler(target_logger: logging.Logger) -> Callable[[An
         chat_id = getattr(event, "chat_id", None)
         msg = getattr(event, "message", None)
         msg_id = getattr(msg, "id", None) if msg is not None else None
-        target_logger.debug(
-            "[channel-worker] verbose-observer: chat=%s msg_id=%s", chat_id, msg_id
-        )
+        target_logger.debug("[channel-worker] verbose-observer: chat=%s msg_id=%s", chat_id, msg_id)
 
     return _observer
 
@@ -674,9 +672,7 @@ async def run_worker(cfg: TelegramChannelIngestSettings | None = None) -> None:
         # produced "ghost signals" that the dashboard surfaced but never
         # filled. Symmetric send eliminates that whole failure mode. See
         # listener_reactivity_followup_20260504.md.
-        async def _send_approval_for_envelope(
-            env_id: str, *, replay: bool = False
-        ) -> None:
+        async def _send_approval_for_envelope(env_id: str, *, replay: bool = False) -> None:
             if not approval_enabled:
                 return
             if not bot_token or not approval_chat_id:

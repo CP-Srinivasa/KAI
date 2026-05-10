@@ -933,7 +933,10 @@ class TelegramOperatorBot:
         await self._send(chat_id, "\n".join(preview_lines))
 
     async def _handle_kai_chat_text(
-        self, chat_id: int, text: str, language: str = "de",
+        self,
+        chat_id: int,
+        text: str,
+        language: str = "de",
     ) -> None:
         """KAI-Chat: route an arbitrary user message through kai_chat_engine.
 
@@ -942,6 +945,7 @@ class TelegramOperatorBot:
         """
         try:
             from app.messaging.kai_chat_engine import chat as kai_chat_dispatch
+
             reply = await kai_chat_dispatch(message=text, language=language)
             response = reply.reply or "(keine Antwort)"
         except Exception as exc:  # noqa: BLE001
@@ -2029,6 +2033,17 @@ class TelegramOperatorBot:
         sent_24h = payload.get("exchange_sent_lookback", 0)
         dead = payload.get("exchange_dead_letter_total", 0)
         dead_24h = payload.get("exchange_dead_letter_lookback", 0)
+        execution = payload.get("signal_execution")
+        execution_lines = ""
+        if isinstance(execution, dict):
+            execution_lines = (
+                f"\n"
+                f"Waiting entry: {execution.get('waiting_for_entry', 0)}\n"
+                f"Open/Filled: {execution.get('positions_open', 0)} / "
+                f"{execution.get('filled', 0)}\n"
+                f"Expired/Rejected: {execution.get('expired', 0)} / "
+                f"{execution.get('rejected', 0)}"
+            )
         msg = (
             f"*Signal Pipeline*\n"
             f"Read-only · last 24h window\n"
@@ -2037,6 +2052,7 @@ class TelegramOperatorBot:
             f"Outbox: {outbox} queued\n"
             f"Sent: {sent} total · {sent_24h} last 24h\n"
             f"Dead-letter: {dead} total · {dead_24h} last 24h"
+            f"{execution_lines}"
         )
         await self._send(chat_id, msg)
 
@@ -2903,6 +2919,22 @@ class TelegramOperatorBot:
                         res.newly_pending + res.re_pending,
                         res.no_market_data,
                     )
+                    if res.newly_pending or res.re_pending or res.no_market_data:
+                        from app.execution.operator_entry_watch import run_watch_loop
+
+                        watch = await run_watch_loop(
+                            duration_seconds=60.0,
+                            poll_interval_seconds=5.0,
+                        )
+                        logger.info(
+                            "[BOT] post-approval entry watch env=%s triggered=%s "
+                            "bridge_filled=%s held=%s stale=%s",
+                            outcome.new_envelope_id,
+                            watch.triggered,
+                            watch.bridge_filled,
+                            watch.held,
+                            watch.stale_or_unavailable,
+                        )
                 except Exception as exc:  # noqa: BLE001
                     logger.warning(
                         "[BOT] post-approval bridge tick failed env=%s: %s",

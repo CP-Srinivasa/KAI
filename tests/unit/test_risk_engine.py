@@ -431,13 +431,14 @@ def test_position_size_with_leverage_and_margin():
         stop_loss_price=9000.0,
         equity=10000.0,
         leverage=5.0,
-        risk_allocation_pct=2.0, # 2% margin
+        risk_allocation_pct=2.0,  # 2% margin
     )
     assert result.approved
     # 2% of 10000 equity = 200 margin
     # notional = 200 * 5.0 leverage = 1000
     # units = 1000 / 10000 entry_price = 0.1
     assert abs(result.position_size_units - 0.1) < 0.001
+
 
 def test_position_size_leverage_cap():
     engine = _default_engine(max_leverage=3.0, max_risk_per_trade_pct=10.0)
@@ -446,8 +447,8 @@ def test_position_size_leverage_cap():
         entry_price=10000.0,
         stop_loss_price=9000.0,
         equity=10000.0,
-        leverage=10.0, # Should be capped at 3.0
-        risk_allocation_pct=2.0, # 2% margin
+        leverage=10.0,  # Should be capped at 3.0
+        risk_allocation_pct=2.0,  # 2% margin
     )
     assert result.approved
     # capped leverage = 3.0

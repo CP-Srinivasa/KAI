@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -518,7 +519,10 @@ def _apply_scale(payload: dict[str, object], factor: float) -> None:
         payload["targets"] = scaled
 
 
-async def run_tick() -> BridgeTickResult:
+PriceProvider = Callable[[str], Awaitable[float | None]]
+
+
+async def run_tick(*, price_provider: PriceProvider | None = None) -> BridgeTickResult:
     """One bridge tick: scan new envelopes, re-check pending ones, fill/expire."""
     settings = get_settings()
     if not settings.execution.operator_signal_bridge_enabled:
@@ -557,6 +561,7 @@ async def run_tick() -> BridgeTickResult:
             ttl_hours=ttl_hours,
             tolerance_pct=tolerance_pct,
             result=result,
+            price_provider=price_provider,
         )
 
     return result
@@ -571,6 +576,7 @@ async def _process_one(
     ttl_hours: int,
     tolerance_pct: float,
     result: BridgeTickResult,
+    price_provider: PriceProvider | None = None,
 ) -> None:
     envelope_id = str(envelope.get("envelope_id") or "")
     source = _extract_source(envelope)
@@ -715,7 +721,9 @@ async def _process_one(
         return
 
     # Gate 4: market data / entry-band
-    current_price = await _fetch_price(symbol)
+    current_price = await price_provider(symbol) if price_provider is not None else None
+    if current_price is None:
+        current_price = await _fetch_price(symbol)
     if current_price is None:
         rec = base("pending")
         rec["reason"] = "no_market_data"
@@ -1007,9 +1015,11 @@ async def _process_one(
     rec["fill_price"] = fill.fill_price
     rec["stop_loss"] = stop_loss
     rec["take_profit"] = tp1
-    rec["take_profit_tiers"] = [
-        {"price": price, "qty_share": 1.0 / len(targets)} for price in targets
-    ] if len(targets) > 1 else []
+    rec["take_profit_tiers"] = (
+        [{"price": price, "qty_share": 1.0 / len(targets)} for price in targets]
+        if len(targets) > 1
+        else []
+    )
     rec["executable_intent"] = _build_executable_intent(
         envelope_id=envelope_id,
         correlation_id=str(rec["correlation_id"]),

@@ -207,9 +207,7 @@ def test_has_idempotency_collision_true_after_fill(
         tmp_logs["paper"],
         [_paper_filled_record(idempotency_key="opbridge:env-DUP")],
     )
-    assert has_idempotency_collision(
-        "opbridge:env-DUP", audit_path=tmp_logs["paper"]
-    )
+    assert has_idempotency_collision("opbridge:env-DUP", audit_path=tmp_logs["paper"])
 
 
 def test_has_idempotency_collision_false_for_new_key(
@@ -219,9 +217,7 @@ def test_has_idempotency_collision_false_for_new_key(
         tmp_logs["paper"],
         [_paper_filled_record(idempotency_key="opbridge:env-OLD")],
     )
-    assert not has_idempotency_collision(
-        "opbridge:env-NEW", audit_path=tmp_logs["paper"]
-    )
+    assert not has_idempotency_collision("opbridge:env-NEW", audit_path=tmp_logs["paper"])
 
 
 def test_has_idempotency_collision_empty_key_is_false(
@@ -390,9 +386,7 @@ def test_detect_orphaned_submitted_excludes_keys_already_filled(
     )
     # paper-audit zeigt: env-A war schon filled (Crash zwischen audit-write
     # und bridge-stage-update) — nur env-B ist echt orphaned
-    _write_jsonl(
-        tmp_logs["paper"], [_paper_filled_record(idempotency_key="opbridge:env-A")]
-    )
+    _write_jsonl(tmp_logs["paper"], [_paper_filled_record(idempotency_key="opbridge:env-A")])
     orphaned = detect_orphaned_submitted(
         bridge_log=tmp_logs["bridge"], audit_path=tmp_logs["paper"]
     )
@@ -403,9 +397,7 @@ def test_detect_orphaned_submitted_no_submitted_records(
     tmp_logs: dict[str, Path],
 ) -> None:
     """Bridge ohne SUBMITTED-records → kein orphaned."""
-    _write_jsonl(
-        tmp_logs["bridge"], [_bridge_record(envelope_id="env-X", stage="pending")]
-    )
+    _write_jsonl(tmp_logs["bridge"], [_bridge_record(envelope_id="env-X", stage="pending")])
     orphaned = detect_orphaned_submitted(
         bridge_log=tmp_logs["bridge"], audit_path=tmp_logs["paper"]
     )
@@ -437,9 +429,7 @@ def test_no_double_order_after_crash_at_audit_write_boundary(
             ),
         ],
     )
-    _write_jsonl(
-        tmp_logs["paper"], [_paper_filled_record(idempotency_key=submitted_key)]
-    )
+    _write_jsonl(tmp_logs["paper"], [_paper_filled_record(idempotency_key=submitted_key)])
 
     # detect_orphaned_submitted findet keinen orphan (key war filled)
     orphaned = detect_orphaned_submitted(
@@ -462,9 +452,7 @@ def test_recovery_sweep_combines_all_results(tmp_logs: dict[str, Path]) -> None:
         tmp_logs["envelope"],
         [
             _envelope_record(envelope_id="env-PEND"),
-            _envelope_record(
-                envelope_id="env-ORPH", correlation_id="SIG-X-20260510120000-X"
-            ),
+            _envelope_record(envelope_id="env-ORPH", correlation_id="SIG-X-20260510120000-X"),
         ],
     )
     _write_jsonl(
@@ -529,12 +517,11 @@ def test_recovery_tolerates_malformed_jsonl_lines(
     valid records werden geliefert, malformed übersprungen."""
     # Erste Zeile valid, zweite Zeile broken (truncated), dritte Zeile valid
     content = (
-        json.dumps(_paper_filled_record(idempotency_key="opbridge:env-A")) + "\n"
+        json.dumps(_paper_filled_record(idempotency_key="opbridge:env-A"))
+        + "\n"
         + '{"event_type": "order_filled", "idempo'  # truncated, no newline
         + "\n"
-        + json.dumps(_paper_filled_record(
-            order_id="ord_2", idempotency_key="opbridge:env-B"
-        ))
+        + json.dumps(_paper_filled_record(order_id="ord_2", idempotency_key="opbridge:env-B"))
         + "\n"
     )
     tmp_logs["paper"].write_text(content, encoding="utf-8")
@@ -548,13 +535,9 @@ def test_recovery_handles_missing_files(tmp_path: Path) -> None:
     nonexistent = tmp_path / "does_not_exist.jsonl"
     keys = collect_idempotency_keys_from_paper_audit(audit_path=nonexistent)
     assert keys == set()
-    orphans = detect_orphaned_submitted(
-        bridge_log=nonexistent, audit_path=nonexistent
-    )
+    orphans = detect_orphaned_submitted(bridge_log=nonexistent, audit_path=nonexistent)
     assert orphans == []
-    pending = recover_pending_signals(
-        bridge_log=nonexistent, envelope_log=nonexistent
-    )
+    pending = recover_pending_signals(bridge_log=nonexistent, envelope_log=nonexistent)
     assert pending == []
 
 

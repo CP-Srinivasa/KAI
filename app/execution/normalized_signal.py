@@ -320,9 +320,7 @@ class NormalizedTradeSignal:
             reason=reason,
         )
         new_history = (*self.status_history, transition)
-        new_audit_reason = (
-            reason if new_status in TERMINAL_STATES else self.audit_reason
-        )
+        new_audit_reason = reason if new_status in TERMINAL_STATES else self.audit_reason
         return dataclasses.replace(
             self,
             status=new_status,
@@ -345,9 +343,7 @@ class NormalizedTradeSignal:
     @property
     def has_range_entry(self) -> bool:
         return (
-            self.entry_type == "range"
-            and self.entry_min is not None
-            and self.entry_max is not None
+            self.entry_type == "range" and self.entry_min is not None and self.entry_max is not None
         )
 
 
@@ -440,10 +436,7 @@ def validate(signal: NormalizedTradeSignal) -> ValidationResult:
     # 7. Sizing — mindestens eines der drei (Operator-Auftrag Aufgabenpaket 5)
     has_sizing = (
         (signal.margin_size_usd is not None and signal.margin_size_usd > 0)
-        or (
-            signal.risk_allocation_pct is not None
-            and signal.risk_allocation_pct > 0
-        )
+        or (signal.risk_allocation_pct is not None and signal.risk_allocation_pct > 0)
         or (signal.leverage is not None and signal.leverage > 0)
     )
     if not has_sizing:
@@ -452,25 +445,17 @@ def validate(signal: NormalizedTradeSignal) -> ValidationResult:
     # 8. Plausibility — nur wenn Pflicht-Felder grundsätzlich da sind
     if not rejections:
         primary = signal.primary_entry
-        if (
-            primary is not None
-            and signal.stop_loss is not None
-            and signal.targets
-        ):
+        if primary is not None and signal.stop_loss is not None and signal.targets:
             if signal.direction == "long":
                 if signal.stop_loss >= primary:
-                    rejections.append(
-                        f"long_sl_above_entry:sl={signal.stop_loss},entry={primary}"
-                    )
+                    rejections.append(f"long_sl_above_entry:sl={signal.stop_loss},entry={primary}")
                 if min(signal.targets) <= primary:
                     rejections.append(
                         f"long_target_below_entry:min_target={min(signal.targets)},entry={primary}"
                     )
             elif signal.direction == "short":
                 if signal.stop_loss <= primary:
-                    rejections.append(
-                        f"short_sl_below_entry:sl={signal.stop_loss},entry={primary}"
-                    )
+                    rejections.append(f"short_sl_below_entry:sl={signal.stop_loss},entry={primary}")
                 if max(signal.targets) >= primary:
                     rejections.append(
                         f"short_target_above_entry:max_target={max(signal.targets)},entry={primary}"

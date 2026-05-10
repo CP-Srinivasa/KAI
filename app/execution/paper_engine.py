@@ -187,9 +187,7 @@ class PaperExecutionEngine:
                 logger.error("[PAPER] Failed to emit lifecycle transition ORDER_SUBMITTED: %s", e)
         return order
 
-    def fill_order(
-        self, order: PaperOrder, current_price: float
-    ) -> PaperFill | None:
+    def fill_order(self, order: PaperOrder, current_price: float) -> PaperFill | None:
         """
         Execute a paper fill for an order.
         Returns None if: duplicate (idempotency), insufficient cash, or invalid price.
@@ -486,9 +484,8 @@ class PaperExecutionEngine:
         self._portfolio.trade_count += 1
         self._filled_keys.add(order.idempotency_key)
 
-        is_closing_fill = (
-            (order.position_side == "long" and order.side == "sell")
-            or (order.position_side == "short" and order.side == "buy")
+        is_closing_fill = (order.position_side == "long" and order.side == "sell") or (
+            order.position_side == "short" and order.side == "buy"
         )
         trade_pnl_for_fill = pnl if is_closing_fill else 0.0
 
@@ -538,9 +535,8 @@ class PaperExecutionEngine:
                 )
                 self._append_audit("lifecycle_transition", t1.to_dict())
                 # If opening/increasing position
-                is_opening = (
-                    (order.position_side == "long" and order.side == "buy")
-                    or (order.position_side == "short" and order.side == "sell")
+                is_opening = (order.position_side == "long" and order.side == "buy") or (
+                    order.position_side == "short" and order.side == "sell"
                 )
                 if is_opening:
                     t2 = make_lifecycle_transition(
@@ -639,9 +635,7 @@ class PaperExecutionEngine:
             "position_tp_tiers_set",
             {
                 "symbol": symbol,
-                "tiers": [
-                    {"price": p, "qty_share": q} for p, q in sorted_tiers
-                ],
+                "tiers": [{"price": p, "qty_share": q} for p, q in sorted_tiers],
                 "initial_quantity": pos.initial_quantity,
             },
         )
@@ -724,9 +718,7 @@ class PaperExecutionEngine:
                 "fill_id": fill.fill_id,
                 "order_id": fill.order_id,
                 "remaining_quantity": residual.quantity if residual else 0.0,
-                "remaining_tiers": [
-                    {"price": p, "qty_share": q} for p, q in residual_tiers
-                ],
+                "remaining_tiers": [{"price": p, "qty_share": q} for p, q in residual_tiers],
                 "trade_pnl_usd": fill.pnl_usd,
                 "fee_usd": fill.fee_usd,
                 "realized_pnl_usd": self._portfolio.realized_pnl_usd,

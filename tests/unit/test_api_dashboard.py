@@ -63,6 +63,16 @@ def _patch_artifacts(
             "_PAPER_EXECUTION_AUDIT",
             d / "paper_execution_audit.jsonl",
         ),
+        patch.object(
+            dashboard_mod,
+            "_BRIDGE_PENDING_ORDERS",
+            d / "bridge_pending_orders.jsonl",
+        ),
+        patch.object(
+            dashboard_mod,
+            "_ENTRY_WATCHER_AUDIT",
+            d / "entry_watcher_audit.jsonl",
+        ),
         patch.dict(dashboard_mod._hold_cache, {"report": None, "at": 0.0}),
     ):
         yield
@@ -144,6 +154,7 @@ def test_quality_api_returns_metrics(
     assert data["precision_pct"] is None
     assert data["paper_fills"] == 1
     assert data["paper_cycles"] == 3
+    assert data["signal_execution"]["total_correlations"] == 0
     assert data["loop_status_counts"]["no_signal"] == 2
     assert data["loop_status_counts"]["completed"] == 1
     # Sparse fixture → gate stays active with documented blocking reasons.

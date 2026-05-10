@@ -359,14 +359,9 @@ class EntryRangeWatcher:
 # ─── Helper: human-readable reason strings ───────────────────────────────────
 
 
-def _describe_entry_hit(
-    signal: NormalizedTradeSignal, price: float
-) -> str:
+def _describe_entry_hit(signal: NormalizedTradeSignal, price: float) -> str:
     if signal.entry_type == "range":
-        return (
-            f"range_hit:{signal.entry_min}<={price}<={signal.entry_max}"
-            f"_dir={signal.direction}"
-        )
+        return f"range_hit:{signal.entry_min}<={price}<={signal.entry_max}_dir={signal.direction}"
     if signal.entry_type == "limit":
         op = "<=" if signal.direction == "long" else ">="
         return f"limit_hit:{price}{op}{signal.entry_value}_dir={signal.direction}"
@@ -376,19 +371,11 @@ def _describe_entry_hit(
     return f"market_entry:{price}"
 
 
-def _describe_entry_miss(
-    signal: NormalizedTradeSignal, price: float
-) -> str:
+def _describe_entry_miss(signal: NormalizedTradeSignal, price: float) -> str:
     if signal.entry_type == "range":
-        return (
-            f"price_outside_range:{price}_not_in_"
-            f"[{signal.entry_min},{signal.entry_max}]"
-        )
+        return f"price_outside_range:{price}_not_in_[{signal.entry_min},{signal.entry_max}]"
     if signal.entry_type in {"limit", "trigger"}:
-        return (
-            f"price_{price}_not_yet_at_entry_{signal.entry_value}"
-            f"_dir={signal.direction}"
-        )
+        return f"price_{price}_not_yet_at_entry_{signal.entry_value}_dir={signal.direction}"
     return f"price_{price}_no_match"
 
 

@@ -51,9 +51,7 @@ logger = logging.getLogger(__name__)
 # Default-Pfade — alle relativ zum CWD beim Boot von kai-server.
 _BRIDGE_LOG_DEFAULT: Final[Path] = Path("artifacts/bridge_pending_orders.jsonl")
 _PAPER_AUDIT_DEFAULT: Final[Path] = Path("artifacts/paper_execution_audit.jsonl")
-_ENVELOPE_LOG_DEFAULT: Final[Path] = Path(
-    "artifacts/telegram_message_envelope.jsonl"
-)
+_ENVELOPE_LOG_DEFAULT: Final[Path] = Path("artifacts/telegram_message_envelope.jsonl")
 
 
 # Bridge-Stages die Recovery NICHT mehr betrachtet (= Signal ist abgeschlossen).
@@ -125,9 +123,7 @@ def _read_jsonl_tolerant(path: Path) -> list[dict[str, object]]:
             return []
         records: list[dict[str, object]] = []
         try:
-            for line_no, line in enumerate(
-                path.read_text(encoding="utf-8").splitlines(), start=1
-            ):
+            for line_no, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
                 stripped = line.strip()
                 if not stripped:
                     continue
@@ -308,8 +304,7 @@ def detect_orphaned_submitted(
         if state.upper() != "ORDER_SUBMITTED":
             continue
         idem = (
-            rec.get("idempotency_key")
-            or rec.get("order_intent", {}).get("idempotency_key")
+            rec.get("idempotency_key") or rec.get("order_intent", {}).get("idempotency_key")
             if isinstance(rec.get("order_intent"), dict)
             else rec.get("idempotency_key")
         )
@@ -342,9 +337,7 @@ def run_recovery_sweep(
     aufgerufen mit den Keys der gerade-recovered envelopes.
     """
     pending = recover_pending_signals(bridge_log=bridge_log, envelope_log=envelope_log)
-    orphaned_keys = detect_orphaned_submitted(
-        bridge_log=bridge_log, audit_path=audit_path
-    )
+    orphaned_keys = detect_orphaned_submitted(bridge_log=bridge_log, audit_path=audit_path)
     filled_keys_cache = collect_idempotency_keys_from_paper_audit(audit_path)
 
     collisions = 0
