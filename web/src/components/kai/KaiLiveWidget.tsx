@@ -512,10 +512,13 @@ export function KaiLiveWidget(props: KaiLiveWidgetProps) {
   // Operator kann beliebig lange sprechen. Plus: 90s auto-stop als Safety.
   const handleMicToggle = (): void => {
     if (!voiceSupported) {
+      // voiceSupported greift nur bei sehr alten Browsern (kein MediaRecorder
+      // oder kein getUserMedia). Moderne Firefox/Brave/Telegram-WebView
+      // funktionieren — daher kein Browser-Vorschlag, nur Faktum.
       const msg =
         language === "de"
-          ? "Mikro geht in diesem Browser nicht. Chrome oder Safari nehmen."
-          : "Mic does not work here. Use Chrome or Safari.";
+          ? "Spracheingabe in diesem Browser nicht verfügbar."
+          : "Voice input not available in this browser.";
       const entry: ChatEntry = { id: makeId(), text: msg, origin: "reply" };
       setMessages((prev) => [...prev, entry].slice(-MAX_VISIBLE_MESSAGES));
       return;
@@ -703,145 +706,146 @@ export function KaiLiveWidget(props: KaiLiveWidgetProps) {
           })}
         </div>
 
-        {/* Phase 2.1 (2026-05-09) — DALI-redesigned Operator-Chat-Footer.
-            Prominentes Textfeld + Telegram-Style runde Buttons mit Press-and-Hold am Mic. */}
+        {/* 2026-05-10 Phase 2.9 — Buttons ins Textfeld integriert.
+            Operator-Wunsch: Mic + Send "als wären sie ein Teil davon", rechts mittig.
+            textarea bekommt pr-20 als Platz, Buttons absolute mit inset-y-0+items-center. */}
         <form
-          className="kai-reply-form pt-2 flex items-end gap-2"
+          className="kai-reply-form pt-2"
           onSubmit={(e) => {
             e.preventDefault();
             void submitOperatorMessage(inputValue);
           }}
           aria-label={language === "de" ? "An KAI schreiben" : "Send to KAI"}
         >
-          <div className="relative flex-1 group">
-            {/* 80er-Neon-Edge in IDLE-Cyan (#00B8D9, kongruent zu KAI-Avatar-Border). */}
-            <textarea
-              value={inputValue}
-              onChange={(e) => setInputValue(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter" && !e.shiftKey) {
-                  e.preventDefault();
-                  void submitOperatorMessage(inputValue);
-                }
-              }}
-              disabled={isSending}
-              rows={2}
-              placeholder={
-                language === "de" ? "Frag KAI etwas …" : "Ask KAI something …"
+          <div className="relative">
+          {/* 80er-Neon-Edge in IDLE-Cyan (#00B8D9, kongruent zu KAI-Avatar-Border). */}
+          <textarea
+            value={inputValue}
+            onChange={(e) => setInputValue(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                void submitOperatorMessage(inputValue);
               }
-              aria-label={language === "de" ? "Nachricht an KAI" : "Message to KAI"}
+            }}
+            disabled={isSending}
+            rows={2}
+            placeholder={
+              language === "de" ? "Frag KAI etwas …" : "Ask KAI something …"
+            }
+            aria-label={language === "de" ? "Nachricht an KAI" : "Message to KAI"}
+            className={cn(
+              "w-full resize-none rounded-xl pl-3.5 pr-20 py-2.5",
+              "bg-bg-1 text-sm text-fg placeholder:text-[#00B8D9]/60",
+              "border border-[#00B8D9]/40",
+              "shadow-[inset_0_1px_2px_rgba(0,0,0,0.45),0_0_12px_-4px_rgba(0,184,217,0.5)]",
+              "focus:outline-none focus:border-[#00B8D9]/80",
+              "focus:shadow-[inset_0_1px_2px_rgba(0,0,0,0.45),0_0_18px_-2px_rgba(0,184,217,0.75),0_0_4px_rgba(0,184,217,0.4)]",
+              "transition-[border-color,box-shadow] duration-200",
+              "disabled:opacity-50 disabled:cursor-not-allowed",
+              "min-h-[56px] font-mono tracking-wide",
+            )}
+          />
+
+          {/* REC-Indicator als kleine Pille oben rechts der textarea, leicht ueber
+              den Rand hinaushaengend (Visibility ueber Buttons hinaus). */}
+          {isListening && (
+            <span
+              aria-hidden="true"
+              className="absolute -top-2 right-2 z-10 whitespace-nowrap rounded-full px-1.5 py-px text-[10px] font-mono font-bold tabular-nums text-neg bg-bg-0 border border-neg/60 shadow-[0_0_6px_rgb(var(--neg)/0.5)]"
+            >
+              REC {recordingSeconds}s
+            </span>
+          )}
+
+          {/* Buttons-Cluster: absolute rechts mittig in der textarea, kein
+              Border-Left — Operator-Wahl Variante 3 (transparent overlay). */}
+          <div className="absolute right-1.5 inset-y-0 flex items-center gap-1">
+            <button
+              type="button"
+              onClick={handleMicToggle}
+              disabled={isSending || isTranscribing}
+              aria-pressed={isListening}
+              aria-label={
+                !voiceSupported
+                  ? language === "de" ? "Spracheingabe nicht verfügbar (Browser)" : "Voice not supported (browser)"
+                  : isListening
+                  ? language === "de" ? `Aufnahme läuft seit ${recordingSeconds} Sekunden, Klick zum Stoppen` : `Recording for ${recordingSeconds} seconds, click to stop`
+                  : language === "de" ? "Aufnahme starten" : "Start recording"
+              }
+              title={
+                !voiceSupported
+                  ? language === "de" ? "Spracheingabe nicht verfügbar" : "Voice not supported"
+                  : isListening
+                  ? language === "de" ? `Stoppen (${recordingSeconds}s)` : `Stop (${recordingSeconds}s)`
+                  : language === "de" ? "Sprachaufnahme starten" : "Start voice recording"
+              }
               className={cn(
-                "w-full resize-none rounded-xl px-3.5 py-2.5",
-                "bg-bg-1 text-sm text-fg placeholder:text-[#00B8D9]/60",
-                "border border-[#00B8D9]/40",
-                "shadow-[inset_0_1px_2px_rgba(0,0,0,0.45),0_0_12px_-4px_rgba(0,184,217,0.5)]",
-                "focus:outline-none focus:border-[#00B8D9]/80",
-                "focus:shadow-[inset_0_1px_2px_rgba(0,0,0,0.45),0_0_18px_-2px_rgba(0,184,217,0.75),0_0_4px_rgba(0,184,217,0.4)]",
-                "transition-[border-color,box-shadow] duration-200",
-                "disabled:opacity-50 disabled:cursor-not-allowed",
-                "min-h-[56px] font-mono tracking-wide",
+                "relative shrink-0 h-9 w-9 rounded-full",
+                "flex items-center justify-center",
+                "transition-all duration-150 select-none touch-none",
+                !voiceSupported
+                  ? "text-fg-subtle/70 cursor-help"
+                  : isTranscribing
+                  ? "text-[#00B8D9]"
+                  : isListening
+                  ? "text-neg animate-pulse"
+                  : "text-[#00B8D9]/80 hover:text-[#00B8D9] hover:bg-[#00B8D9]/10 active:scale-95",
+                "disabled:opacity-40 disabled:cursor-not-allowed",
               )}
-            />
-          </div>
-
-          {/* 2026-05-09 Phase 2.3: Mic-Button IMMER rendern. Wenn !voiceSupported,
-              disabled-Look + Click postet konkreten Hinweis welche Browser gehen.
-              Vorher war der Button auf Laptop (Firefox/Brave) unsichtbar — Operator hatte
-              keine Chance zu verstehen warum die Voice-Spalte fehlt. */}
-          <button
-            type="button"
-            onClick={handleMicToggle}
-            disabled={isSending || isTranscribing}
-            aria-pressed={isListening}
-            aria-label={
-              !voiceSupported
-                ? language === "de" ? "Spracheingabe nicht verfügbar (Browser)" : "Voice not supported (browser)"
-                : isListening
-                ? language === "de" ? `Aufnahme läuft seit ${recordingSeconds} Sekunden, Klick zum Stoppen` : `Recording for ${recordingSeconds} seconds, click to stop`
-                : language === "de" ? "Aufnahme starten" : "Start recording"
-            }
-            title={
-              !voiceSupported
-                ? language === "de" ? "Spracheingabe nicht verfügbar" : "Voice not supported"
-                : isListening
-                ? language === "de" ? `Stoppen (${recordingSeconds}s)` : `Stop (${recordingSeconds}s)`
-                : language === "de" ? "Sprachaufnahme starten" : "Start voice recording"
-            }
-            className={cn(
-              "relative shrink-0 h-11 w-11 rounded-full",
-              "flex items-center justify-center",
-              "transition-all duration-150 select-none touch-none",
-              "bg-bg-0/60 backdrop-blur-sm",
-              !voiceSupported
-                ? "text-fg-subtle border border-fg-subtle/30 cursor-help"
-                : isTranscribing
-                ? "text-[#00B8D9] border border-[#00B8D9]/70 shadow-[inset_0_0_0_1px_rgba(0,184,217,0.3),0_0_22px_-2px_rgba(0,184,217,0.55)]"
-                : isListening
-                ? "text-neg border border-neg/80 glow-neg animate-pulse"
-                : "text-[#00B8D9] border border-[#00B8D9]/70 shadow-[inset_0_0_0_1px_rgba(0,184,217,0.3),0_0_22px_-2px_rgba(0,184,217,0.55)] hover:border-[#00B8D9] active:scale-95",
-              "disabled:opacity-40 disabled:cursor-not-allowed",
-            )}
-          >
-            {isTranscribing ? (
-              <Loader2 className="h-[18px] w-[18px] animate-spin" aria-hidden="true" />
-            ) : isListening ? (
-              <Square className="h-[16px] w-[16px] fill-current" aria-hidden="true" strokeWidth={2.25} />
-            ) : (
-              <Mic className="h-[18px] w-[18px]" aria-hidden="true" strokeWidth={2.25} />
-            )}
-            {!voiceSupported && (
-              <span
-                aria-hidden="true"
-                className="absolute inset-0 flex items-center justify-center"
-              >
-                <span className="block h-7 w-[2px] rotate-45 bg-fg-subtle/70" />
-              </span>
-            )}
-            {isListening && (
-              <>
-                {/* Outer expanding ring — Telegram-Recording-Vorbild im Neon-Stil */}
+            >
+              {isTranscribing ? (
+                <Loader2 className="h-[17px] w-[17px] animate-spin" aria-hidden="true" />
+              ) : isListening ? (
+                <Square className="h-[14px] w-[14px] fill-current" aria-hidden="true" strokeWidth={2.25} />
+              ) : (
+                <Mic className="h-[17px] w-[17px]" aria-hidden="true" strokeWidth={2.25} />
+              )}
+              {!voiceSupported && (
                 <span
                   aria-hidden="true"
-                  className="absolute inset-0 rounded-full ring-2 ring-neg/70 animate-ping"
-                />
-                {/* Recording-Dot rechts oben — leuchtend statt deckend */}
-                <span
-                  aria-hidden="true"
-                  className="absolute -top-1 -right-1 h-2.5 w-2.5 rounded-full bg-neg shadow-[0_0_8px_rgb(var(--neg)/0.9),0_0_14px_rgb(var(--neg)/0.5)]"
-                />
-                {/* Prominenter Recording-Status: REC + Sekunden, gut lesbar */}
-                <span
-                  aria-hidden="true"
-                  className="absolute -bottom-6 left-1/2 -translate-x-1/2 whitespace-nowrap rounded-full px-2 py-0.5 text-[11px] font-mono font-bold tabular-nums text-neg bg-bg-0/85 border border-neg/60 shadow-[0_0_8px_rgb(var(--neg)/0.55)]"
+                  className="absolute inset-0 flex items-center justify-center"
                 >
-                  REC {recordingSeconds}s
+                  <span className="block h-5 w-[2px] rotate-45 bg-fg-subtle/70" />
                 </span>
-              </>
-            )}
-          </button>
+              )}
+              {isListening && (
+                <>
+                  <span
+                    aria-hidden="true"
+                    className="absolute inset-0 rounded-full ring-2 ring-neg/70 animate-ping"
+                  />
+                  <span
+                    aria-hidden="true"
+                    className="absolute -top-0.5 -right-0.5 h-2 w-2 rounded-full bg-neg shadow-[0_0_6px_rgb(var(--neg)/0.9)]"
+                  />
+                </>
+              )}
+            </button>
 
-          <button
-            type="submit"
-            disabled={isSending || !inputValue.trim()}
-            aria-label={language === "de" ? "Senden" : "Send"}
-            title={language === "de" ? "Senden" : "Send"}
-            className={cn(
-              "shrink-0 h-11 w-11 rounded-full",
-              "flex items-center justify-center",
-              "transition-all duration-150",
-              "bg-bg-0/60 backdrop-blur-sm",
-              !isSending && inputValue.trim()
-                ? "text-[#00B8D9] border border-[#00B8D9]/70 shadow-[inset_0_0_0_1px_rgba(0,184,217,0.3),0_0_22px_-2px_rgba(0,184,217,0.55)] hover:border-[#00B8D9] active:scale-95"
-                : "text-fg-subtle border border-fg-subtle/30",
-              "disabled:opacity-40 disabled:cursor-not-allowed",
-            )}
-          >
-            {isSending ? (
-              <Loader2 className="h-[18px] w-[18px] animate-spin" aria-hidden="true" />
-            ) : (
-              <Send className="h-[17px] w-[17px] -ml-0.5" aria-hidden="true" strokeWidth={2.25} />
-            )}
-          </button>
+            <button
+              type="submit"
+              disabled={isSending || !inputValue.trim()}
+              aria-label={language === "de" ? "Senden" : "Send"}
+              title={language === "de" ? "Senden" : "Send"}
+              className={cn(
+                "shrink-0 h-9 w-9 rounded-full",
+                "flex items-center justify-center",
+                "transition-all duration-150",
+                !isSending && inputValue.trim()
+                  ? "text-[#00B8D9] hover:bg-[#00B8D9]/10 active:scale-95"
+                  : "text-fg-subtle/50",
+                "disabled:cursor-not-allowed",
+              )}
+            >
+              {isSending ? (
+                <Loader2 className="h-[17px] w-[17px] animate-spin" aria-hidden="true" />
+              ) : (
+                <Send className="h-[16px] w-[16px] -ml-0.5" aria-hidden="true" strokeWidth={2.25} />
+              )}
+            </button>
+          </div>
+          </div>
         </form>
 
         <p className="text-xs text-fg-subtle font-mono">{ts}</p>
