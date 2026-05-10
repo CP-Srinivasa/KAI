@@ -1,17 +1,74 @@
-import { AlertCircle, RefreshCw, CheckCircle2, XCircle, ArrowLeftRight } from "lucide-react";
+import { AlertCircle, RefreshCw, CheckCircle2, XCircle, ArrowLeftRight, Activity } from "lucide-react";
 import { useT } from "@/i18n/I18nProvider";
-import { Badge, Button, Card, CardHeader } from "@/components/ui/Primitives";
+import { Badge, Button, Card, CardHeader, Kpi } from "@/components/ui/Primitives";
 import { PageHeader } from "@/layout/PageHeader";
 import { useApi } from "@/lib/useApi";
 import { fetchTradingLoopStatus, fetchRecentCycles, type TradingCycle } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { PreparedPanel } from "@/components/panels/PreparedPanel";
-import { modeTone, type TradingMode } from "@/state/AppState";
+import { LABEL_DE, CYCLE_STATUS_EXPLAIN, humanizeLabel } from "@/lib/labels";
+
+// 2026-05-10 DALI-T1: Klartext-Synopsis aus Cycle-Buckets ableiten.
+// Operator-Frage "was sagt mir die Seite?" wird in 1 Satz beantwortet.
+function summarizeCycles(cyclesList: TradingCycle[]): string {
+  if (cyclesList.length === 0) return "Noch keine Cycles in der jüngsten Historie.";
+  const counts: Record<string, number> = {};
+  for (const c of cyclesList) counts[c.status] = (counts[c.status] ?? 0) + 1;
+  const parts: string[] = [];
+  const completed = counts.completed ?? 0;
+  if (completed > 0) parts.push(`${completed}× ausgeführt`);
+  if (counts.no_signal) parts.push(`${counts.no_signal}× kein Signal`);
+  if (counts.no_market_data) parts.push(`${counts.no_market_data}× keine Markt-Daten`);
+  if (counts.consensus_rejected) parts.push(`${counts.consensus_rejected}× Konsens abgelehnt`);
+  if (counts.order_failed) parts.push(`${counts.order_failed}× Order fehlgeschlagen`);
+  if (counts.stale_data) parts.push(`${counts.stale_data}× veraltete Daten`);
+  // letzten ausgeführten Trade finden
+  const lastCompleted = [...cyclesList].reverse().find((c) => c.status === "completed");
+  const lastSegment = lastCompleted
+    ? ` — letzter Trade ${lastCompleted.symbol} ${formatTimeShort(lastCompleted.started_at)}`
+    : "";
+  return `Letzte ${cyclesList.length} Cycles: ${parts.join(", ") || "—"}${lastSegment}.`;
+}
+
+function formatTimeShort(iso: string): string {
+  try {
+    const dt = new Date(iso);
+    const now = new Date();
+    const diffMs = now.getTime() - dt.getTime();
+    const diffH = Math.round(diffMs / 3600000);
+    if (diffH < 1) return "vor weniger als 1h";
+    if (diffH < 24) return `vor ${diffH}h`;
+    return `vor ${Math.round(diffH / 24)}d`;
+  } catch {
+    return iso.substring(11, 16);
+  }
+}
+
+const CYCLE_DOT_TONE: Record<string, string> = {
+  completed: "bg-pos",
+  no_signal: "bg-fg-subtle/40",
+  no_market_data: "bg-warn",
+  stale_data: "bg-warn",
+  consensus_rejected: "bg-neg",
+  order_failed: "bg-neg",
+};
+
+// Notes-humanize: kurz lesbar statt snake_case-Roh-String.
+function humanizeNote(note: string): string {
+  // Beispiel: "signal_block:reason=consensus" → "signal block (reason=consensus)"
+  const [head, tail] = note.split(":");
+  const headHum = LABEL_DE[head ?? ""] ?? head?.replace(/_/g, " ") ?? note;
+  if (tail) return `${headHum} (${tail})`;
+  return headHum;
+}
 
 export function TradesPage() {
   const { t } = useT();
   const status = useApi(fetchTradingLoopStatus, 20_000);
   const cycles = useApi((s) => fetchRecentCycles(30, s), 15_000);
+
+  const cyclesList = cycles.state === "ready" ? cycles.data.recent_cycles : [];
+  const completed24h = cyclesList.filter((c) => c.status === "completed").length;
 
   return (
     <div className="p-5 xl:p-6 space-y-5 max-w-[1680px] mx-auto">
@@ -21,7 +78,7 @@ export function TradesPage() {
         icon={<ArrowLeftRight size={18} />}
         sub={
           status.state === "ready"
-            ? `Mode: ${status.data.mode} · ${status.data.total_cycles} cycles · last: ${status.data.last_cycle_status ?? "—"}`
+            ? `Mode: ${status.data.mode} · Letzter Status: ${status.data.last_cycle_status ?? "—"}`
             : "Was wurde zuletzt ausgeführt und mit welchem Ergebnis."
         }
         right={
@@ -33,12 +90,54 @@ export function TradesPage() {
 
       {status.state === "error" && <ErrorCard kind={status.error.kind} message={status.error.message} path="/operator/trading-loop/status" />}
 
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
-        <Kpi label="Mode" value={status.state === "ready" ? status.data.mode : "—"} tone={status.state === "ready" ? modeTone(status.data.mode as TradingMode) : "muted"} />
-        <Kpi label="Total Cycles" value={status.state === "ready" ? String(status.data.total_cycles) : "—"} />
+      {/* DALI-T1: Hero-Banner mit Klartext-Synopsis + Mini-Sparkline.
+          Beantwortet "was sagt mir die Seite" in einem Satz und einer
+          Pillen-Reihe — Operator scannt Muster (Wand aus grauen Pillen
+          = Signal-Drought, rote Pille = Order-Failed) ohne Tabelle. */}
+      {cycles.state === "ready" && cyclesList.length > 0 && (
+        <Card padded className="border-l-4 border-l-info">
+          <div className="flex items-start gap-3">
+            <Activity size={18} className="text-info mt-0.5 shrink-0" aria-hidden />
+            <div className="min-w-0 flex-1">
+              <div className="text-sm font-semibold text-fg leading-relaxed">
+                {summarizeCycles(cyclesList)}
+              </div>
+              <div className="mt-2 flex items-center gap-1 flex-wrap">
+                {cyclesList.slice(-30).map((c, i) => (
+                  <span
+                    key={i}
+                    className={cn("h-3 w-1.5 rounded-xs", CYCLE_DOT_TONE[c.status] ?? "bg-fg-muted")}
+                    title={`${LABEL_DE[c.status] ?? c.status} · ${c.symbol}`}
+                  />
+                ))}
+              </div>
+              <div className="mt-1 text-2xs text-fg-subtle font-mono">
+                letzte {Math.min(cyclesList.length, 30)} Cycles · Hover für Status pro Cycle
+              </div>
+            </div>
+          </div>
+        </Card>
+      )}
+
+      {/* DALI-T2: Hero-Number "Ausgeführte Trades" col-span-2, sekundäre KPIs
+          rechts daneben. Mode raus (steht im Topbar+PageHeader-sub). Total-
+          Cycles raus (im Hero-Banner-Synopsis sichtbar). */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <Kpi
-          label="Last Status"
-          value={status.state === "ready" ? status.data.last_cycle_status ?? "—" : "—"}
+          label="Ausgeführte Trades"
+          value={String(completed24h)}
+          sub={`von ${cyclesList.length} Cycles in der jüngsten Historie`}
+          tone={completed24h > 0 ? "pos" : "muted"}
+          size="hero"
+          className="md:col-span-2"
+        />
+        <Kpi
+          label="Letzter Status"
+          value={
+            status.state === "ready"
+              ? LABEL_DE[status.data.last_cycle_status ?? ""] ?? status.data.last_cycle_status ?? "—"
+              : "—"
+          }
           tone={
             status.state === "ready" && status.data.last_cycle_status === "completed"
               ? "pos"
@@ -60,13 +159,13 @@ export function TradesPage() {
             title="Execution-Guardrails"
             right={
               <Badge tone={status.data.execution_enabled ? "pos" : "muted"} dot>
-                {status.data.execution_enabled ? "execution enabled" : "paper/shadow only"}
+                {status.data.execution_enabled ? "execution aktiv" : "paper / shadow"}
               </Badge>
             }
           />
           <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-xs">
-            <RowKV k="write_back_allowed" v={String(status.data.write_back_allowed)} tone={status.data.write_back_allowed ? "pos" : "muted"} />
-            <RowKV k="run_once_allowed" v={String(status.data.run_once_allowed)} tone={status.data.run_once_allowed ? "pos" : "warn"} />
+            <RowKV k="write_back_allowed" v={status.data.write_back_allowed ? "erlaubt" : "gesperrt"} tone={status.data.write_back_allowed ? "pos" : "muted"} />
+            <RowKV k="run_once_allowed" v={status.data.run_once_allowed ? "bereit" : "blockiert"} tone={status.data.run_once_allowed ? "pos" : "warn"} />
             <RowKV k="run_once_block_reason" v={status.data.run_once_block_reason ?? "—"} />
             <RowKV k="last_cycle_id" v={status.data.last_cycle_id?.slice(-14) ?? "—"} />
             <RowKV k="last_cycle_symbol" v={status.data.last_cycle_symbol ?? "—"} />
@@ -97,8 +196,8 @@ export function TradesPage() {
                   <th className="text-left font-semibold px-4 py-2">Started</th>
                   <th className="text-left font-semibold px-4 py-2">Symbol</th>
                   <th className="text-left font-semibold px-4 py-2">Status</th>
-                  <th className="text-center font-semibold px-4 py-2">Data</th>
-                  <th className="text-center font-semibold px-4 py-2">Sig</th>
+                  <th className="text-center font-semibold px-4 py-2">Daten</th>
+                  <th className="text-center font-semibold px-4 py-2">Signal</th>
                   <th className="text-center font-semibold px-4 py-2">Risk</th>
                   <th className="text-center font-semibold px-4 py-2">Order</th>
                   <th className="text-center font-semibold px-4 py-2">Fill</th>
@@ -140,14 +239,34 @@ function CycleRow({ c }: { c: TradingCycle }) {
     <tr className="border-t border-line-subtle hover:bg-bg-2">
       <td className="px-4 py-2 font-mono text-2xs text-fg-subtle">{c.started_at.substring(11, 19)}</td>
       <td className="px-4 py-2 font-mono font-semibold">{c.symbol}</td>
-      <td className="px-4 py-2"><Badge tone={toneFor(c.status)}>{c.status}</Badge></td>
+      <td className="px-4 py-2">
+        <span title={CYCLE_STATUS_EXPLAIN[c.status] ?? c.status}>
+          <Badge tone={toneFor(c.status)}>{LABEL_DE[c.status] ?? c.status}</Badge>
+        </span>
+      </td>
       <td className="px-4 py-2 text-center"><BoolDot v={c.market_data_fetched} /></td>
       <td className="px-4 py-2 text-center"><BoolDot v={c.signal_generated} /></td>
       <td className="px-4 py-2 text-center"><BoolDot v={c.risk_approved} /></td>
       <td className="px-4 py-2 text-center"><BoolDot v={c.order_created} /></td>
       <td className="px-4 py-2 text-center"><BoolDot v={c.fill_simulated} /></td>
-      <td className="px-4 py-2 font-mono text-2xs text-fg-subtle max-w-[360px] truncate">
-        {c.notes.join(" · ") || "—"}
+      <td className="px-4 py-2 max-w-[420px]">
+        <div className="flex flex-wrap gap-1">
+          {c.notes.slice(0, 3).map((n, i) => (
+            <span
+              key={i}
+              title={n}
+              className="inline-flex items-center rounded-xs border border-line-subtle bg-bg-2 px-1.5 py-0.5 text-[10px] font-mono text-fg-subtle"
+            >
+              {humanizeNote(n)}
+            </span>
+          ))}
+          {c.notes.length > 3 && (
+            <span className="text-2xs text-fg-subtle">+{c.notes.length - 3}</span>
+          )}
+          {c.notes.length === 0 && (
+            <span className="text-2xs text-fg-subtle italic">—</span>
+          )}
+        </div>
       </td>
     </tr>
   );
@@ -157,32 +276,10 @@ function BoolDot({ v }: { v: boolean }) {
   return v ? <CheckCircle2 size={13} className="text-pos inline" /> : <XCircle size={13} className="text-fg-subtle inline" />;
 }
 
-function Kpi({ label, value, tone = "neutral" }: {
-  label: string;
-  value: string;
-  tone?: "pos" | "neg" | "warn" | "info" | "neutral" | "muted";
-}) {
-  return (
-    <Card padded>
-      <div className="text-2xs uppercase tracking-wider text-fg-subtle font-semibold">{label}</div>
-      <div className={cn(
-        "mt-1 font-mono text-lg font-semibold",
-        tone === "pos" && "text-pos",
-        tone === "neg" && "text-neg",
-        tone === "warn" && "text-warn",
-        tone === "info" && "text-info",
-        tone === "muted" && "text-fg-muted",
-      )}>
-        {value}
-      </div>
-    </Card>
-  );
-}
-
 function RowKV({ k, v, tone }: { k: string; v: string; tone?: "pos" | "neg" | "warn" | "muted" }) {
   return (
     <div className="flex items-center justify-between gap-2 overflow-hidden border-b border-line-subtle/50 py-1">
-      <span className="min-w-0 truncate font-mono text-2xs text-fg-subtle">{k}</span>
+      <span className="min-w-0 truncate font-mono text-2xs text-fg-subtle" title={k}>{humanizeLabel(k)}</span>
       <span className={cn(
         "shrink-0 font-mono text-right",
         tone === "pos" && "text-pos",
