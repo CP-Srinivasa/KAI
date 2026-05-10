@@ -45,19 +45,109 @@ function formatTimeShort(iso: string): string {
   }
 }
 
-// 2026-05-10 DALI-T1-Neon: Sparkline-Punkte als Neon-Lichtpunkte mit Glow.
-// Operator: "Die Punkte sind nicht wirklich 80er Neon, total am Thema vorbei."
-// rounded-full + glow-{tone} statt flach-rectangle. Cyan-Glow als Default fuer
-// "lebendig/laeuft".
-const CYCLE_DOT_STYLE: Record<string, { bg: string; glow: string }> = {
-  completed:          { bg: "bg-pos",  glow: "glow-pos" },
-  no_signal:          { bg: "bg-info/40", glow: "" },
-  no_market_data:     { bg: "bg-warn", glow: "glow-warn" },
-  stale_data:         { bg: "bg-warn", glow: "glow-warn" },
-  consensus_rejected: { bg: "bg-neg",  glow: "glow-neg" },
-  order_failed:       { bg: "bg-neg",  glow: "glow-neg" },
-  blocked:            { bg: "bg-fg-subtle/40", glow: "" },
-};
+// 2026-05-10 DALI-T-Pacman: Sparkline als ATARI-Pacman-Stage.
+// Operator-Wunsch: "Packman am anfang der Punkte, som ATARI like".
+// Pellets statt Status-Pillen — gelb (Pacman-Food), Power-Pellets (cyan/glow)
+// fuer completed-Cycles, Geist-rot fuer order_failed.
+type PelletKind = "pellet" | "power" | "warn" | "ghost" | "empty";
+
+function pelletForStatus(status: string): PelletKind {
+  if (status === "completed") return "power";
+  if (status === "order_failed" || status === "consensus_rejected") return "ghost";
+  if (status === "no_market_data" || status === "stale_data") return "warn";
+  if (status === "blocked") return "empty";
+  return "pellet"; // no_signal
+}
+
+// Pacman-Komponente: nutzt .pacman-icon CSS-Klasse mit clip-path-Animation
+// (definiert in index.css). ATARI-Stil: gelb, scharfer Mund auf/zu, kein
+// smooth-tween (steps(1)). Drop-shadow gibt Neon-Halo.
+function PacmanIcon({ size = 14 }: { size?: number }) {
+  return (
+    <span
+      aria-hidden="true"
+      className="pacman-icon"
+      style={{ width: size, height: size }}
+    />
+  );
+}
+
+// Pellet-Renderer: ATARI-Pacman-Food in den vier Status-Varianten.
+function Pellet({ kind, title }: { kind: PelletKind; title: string }) {
+  if (kind === "ghost") {
+    // Geist als kleines Quadrat mit roundes Top + Glow (ATARI-Geister-Pixelart-Vibe)
+    return (
+      <span
+        title={title}
+        aria-hidden="true"
+        className="inline-block shrink-0 transition-transform hover:scale-150"
+        style={{
+          width: 9,
+          height: 9,
+          backgroundColor: "rgb(var(--neg))",
+          borderTopLeftRadius: "50%",
+          borderTopRightRadius: "50%",
+          filter: "drop-shadow(0 0 5px rgb(var(--neg) / 0.85))",
+        }}
+      />
+    );
+  }
+  if (kind === "power") {
+    return (
+      <span
+        title={title}
+        aria-hidden="true"
+        className="inline-block shrink-0 rounded-full transition-transform hover:scale-150"
+        style={{
+          width: 8,
+          height: 8,
+          backgroundColor: "rgb(var(--info))",
+          filter: "drop-shadow(0 0 6px rgb(var(--info) / 0.9))",
+          animation: "pacman-power-pulse 0.7s steps(1) infinite",
+        }}
+      />
+    );
+  }
+  if (kind === "warn") {
+    return (
+      <span
+        title={title}
+        aria-hidden="true"
+        className="inline-block shrink-0 rounded-full transition-transform hover:scale-150"
+        style={{
+          width: 5,
+          height: 5,
+          backgroundColor: "rgb(var(--warn))",
+          filter: "drop-shadow(0 0 4px rgb(var(--warn) / 0.7))",
+        }}
+      />
+    );
+  }
+  if (kind === "empty") {
+    return (
+      <span
+        title={title}
+        aria-hidden="true"
+        className="inline-block shrink-0 rounded-full"
+        style={{ width: 4, height: 4, backgroundColor: "rgb(var(--fg-subtle) / 0.2)" }}
+      />
+    );
+  }
+  // pellet — Standard-Pacman-Food, gelb, klein
+  return (
+    <span
+      title={title}
+      aria-hidden="true"
+      className="inline-block shrink-0 rounded-full transition-transform hover:scale-150"
+      style={{
+        width: 4,
+        height: 4,
+        backgroundColor: "rgb(var(--warn) / 0.55)",
+        filter: "drop-shadow(0 0 2px rgb(var(--warn) / 0.5))",
+      }}
+    />
+  );
+}
 
 // Notes-humanize: kurz lesbar statt snake_case-Roh-String.
 function humanizeNote(note: string): string {
@@ -108,24 +198,28 @@ export function TradesPage() {
               <div className="text-sm font-semibold text-fg leading-relaxed">
                 {summarizeCycles(cyclesList)}
               </div>
-              <div className="mt-2.5 flex items-center gap-1.5 flex-wrap">
-                {cyclesList.slice(-30).map((c, i) => {
-                  const style = CYCLE_DOT_STYLE[c.status] ?? CYCLE_DOT_STYLE.no_signal;
-                  return (
-                    <span
+              <div className="mt-2.5 flex items-center gap-2 flex-wrap">
+                <PacmanIcon size={14} />
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  {cyclesList.slice(-30).map((c, i) => (
+                    <Pellet
                       key={i}
-                      className={cn(
-                        "h-2.5 w-2.5 rounded-full shrink-0 transition-transform hover:scale-150",
-                        style.bg,
-                        style.glow,
-                      )}
+                      kind={pelletForStatus(c.status)}
                       title={`${LABEL_DE[c.status] ?? c.status} · ${c.symbol}`}
                     />
-                  );
-                })}
+                  ))}
+                </div>
               </div>
-              <div className="mt-1.5 text-2xs text-fg-subtle font-mono">
-                letzte {Math.min(cyclesList.length, 30)} Cycles · Hover für Status
+              <div className="mt-1.5 text-2xs text-fg-subtle font-mono flex flex-wrap items-center gap-x-3 gap-y-1">
+                <span>letzte {Math.min(cyclesList.length, 30)} Cycles</span>
+                <span className="inline-flex items-center gap-1">
+                  <span className="inline-block h-2 w-2 rounded-full" style={{ backgroundColor: "rgb(var(--info))", filter: "drop-shadow(0 0 4px rgb(var(--info) / 0.8))" }} />
+                  <span>Power-Pellet = ausgeführter Trade</span>
+                </span>
+                <span className="inline-flex items-center gap-1">
+                  <span className="inline-block h-2 w-2" style={{ backgroundColor: "rgb(var(--neg))", borderTopLeftRadius: "50%", borderTopRightRadius: "50%", filter: "drop-shadow(0 0 4px rgb(var(--neg) / 0.7))" }} />
+                  <span>Geist = Order/Konsens-Fehler</span>
+                </span>
               </div>
             </div>
           </div>
@@ -209,7 +303,7 @@ export function TradesPage() {
         </Card>
       )}
 
-      <Card padded={false}>
+      <Card padded={false} className="synthwave-pulse-edge overflow-hidden">
         <div className="flex items-center justify-between gap-3 px-4 py-3 border-b border-line-subtle">
           <div className="text-sm font-semibold tracking-tight text-fg">Letzte Trading-Cycles</div>
           <div className="text-2xs text-fg-subtle font-mono">

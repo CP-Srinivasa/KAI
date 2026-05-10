@@ -2,7 +2,7 @@ import { Info, ShieldAlert } from "lucide-react";
 import { useT } from "@/i18n/I18nProvider";
 import { PageHeader } from "@/layout/PageHeader";
 import { PreparedPanel } from "@/components/panels/PreparedPanel";
-import { Card, CardHeader } from "@/components/ui/Primitives";
+import { Badge, Card, CardHeader } from "@/components/ui/Primitives";
 import { useApi } from "@/lib/useApi";
 import { fetchExposureSummary, fetchOperatorReadiness } from "@/lib/api";
 import { cn } from "@/lib/utils";
@@ -39,9 +39,73 @@ export function RiskPage() {
         icon={<ShieldAlert size={18} />}
       />
 
+      {/* DALI-Lebendigkeit: Risk-Hero-Card mit Konzentrations-Score (analog Portfolio).
+          Operator: "Risk genau das selbe nicht aussagekraeftig und visuell tot."
+          Fokus auf "wo ist das groesste Risiko gerade" mit Hero-Number + Klartext. */}
       {exposure.state === "ready" && (
-        <Card padded>
-          <CardHeader title="Paper-Portfolio Exposure" subtitle="Live aus /operator/exposure-summary" />
+        <Card padded className="synthwave-pulse-edge overflow-hidden">
+          <CardHeader
+            title="Aktuelle Risiko-Lage"
+            subtitle="Wo steht das Portfolio gerade — wo ist Vorsicht angesagt?"
+            right={
+              <Badge tone={exposure.data.mark_to_market_status === "ok" ? "pos" : "warn"} dot>
+                Bewertung: {exposure.data.mark_to_market_status === "ok" ? "frisch" : exposure.data.mark_to_market_status}
+              </Badge>
+            }
+          />
+          {/* Konzentrations-Hero */}
+          {exposure.data.largest_position_symbol && (() => {
+            const pct = exposure.data.largest_position_weight_pct ?? 0;
+            const tone = pct > 70 ? "neg" : pct > 40 ? "warn" : "pos";
+            const headline = pct > 70 ? "Klumpenrisiko"
+              : pct > 40 ? "Erhöhte Konzentration"
+              : "Diversifiziert";
+            return (
+              <div className="rounded-md border border-line-subtle bg-bg-2 p-4 mb-3">
+                <div className="flex items-baseline justify-between flex-wrap gap-2 mb-2">
+                  <span className="text-2xs uppercase tracking-wider text-fg-subtle font-semibold">Konzentrations-Score</span>
+                  <span
+                    className={cn(
+                      "font-mono text-xs font-semibold",
+                      tone === "neg" && "text-neg",
+                      tone === "warn" && "text-warn",
+                      tone === "pos" && "text-pos",
+                    )}
+                  >
+                    {headline}
+                  </span>
+                </div>
+                <div
+                  className={cn(
+                    "font-mono text-3xl font-semibold mb-1",
+                    tone === "neg" && "text-neg",
+                    tone === "warn" && "text-warn",
+                    tone === "pos" && "text-pos",
+                  )}
+                >
+                  {pct.toFixed(1)}%
+                </div>
+                <div className="text-xs text-fg-muted leading-relaxed">
+                  in <span className="font-mono">{exposure.data.largest_position_symbol}</span>
+                  {" — "}
+                  {pct >= 99 ? "alles in einer Position" : pct > 70 ? "wenn dieses Asset stark fällt, fällt das Portfolio mit" : pct > 40 ? "ein Asset dominiert das Portfolio" : "kein Asset dominiert"}
+                </div>
+                <div className="mt-3 h-1.5 w-full rounded-xs bg-bg-3 overflow-hidden">
+                  <div
+                    className={cn(
+                      "h-full transition-all",
+                      tone === "neg" && "bg-neg glow-neg",
+                      tone === "warn" && "bg-warn glow-warn",
+                      tone === "pos" && "bg-pos glow-pos",
+                    )}
+                    style={{ width: `${Math.min(pct, 100)}%` }}
+                  />
+                </div>
+              </div>
+            );
+          })()}
+
+          {/* Sekundäre Risk-Metriken — kompakt */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
             <KV k="gross_exposure" v={fmt$(exposure.data.gross_exposure_usd)} />
             <KV k="net_exposure" v={fmt$(exposure.data.net_exposure_usd)} />
@@ -57,14 +121,6 @@ export function RiskPage() {
               tone={exposure.data.unavailable_price_count > 0 ? "warn" : undefined}
             />
             <KV k="mark_to_market" v={exposure.data.mark_to_market_status} />
-            <KV
-              k="largest_position"
-              v={
-                exposure.data.largest_position_symbol
-                  ? `${exposure.data.largest_position_symbol} (${exposure.data.largest_position_weight_pct?.toFixed(1)}%)`
-                  : "—"
-              }
-            />
           </div>
         </Card>
       )}

@@ -11,7 +11,6 @@ import {
 import { cn } from "@/lib/utils";
 import { PreparedPanel } from "@/components/panels/PreparedPanel";
 import { useCurrency } from "@/state/CurrencyProvider";
-import { humanizeLabel } from "@/lib/labels";
 
 export function PortfolioPage() {
   const { t } = useT();
@@ -210,39 +209,77 @@ export function PortfolioPage() {
         }
       />
 
+      {/* DALI-P-Klartext: Exposure-Card komplett umstrukturiert.
+          Operator: "Was soll ich unter OHNE PREIS 2 BTC/USDT (100%) verstehen?
+          Konzentrationsrisiko 100%? BRUTTO-... 1.776,00€ NETTO-E... abgeschnitten?"
+          Lösung: Klartext-Reihen mit voller Label-Breite, kein truncate. Erklärung
+          in jeder Zeile statt Snake-Case-Keys. Konzentrations-Visualisierung mit
+          Klartext-Aussage. */}
       {exposure.state === "ready" && (
         <Card padded>
           <CardHeader
-            title="Exposure"
+            title="Exposure & Risiko-Übersicht"
+            subtitle="Wie ist das Portfolio gerade aufgestellt — und wo sind Stolperfallen?"
             right={
-              <Badge tone={exposure.data.mark_to_market_status === "ok" ? "pos" : "warn"} dot>
-                MtM {exposure.data.mark_to_market_status}
-              </Badge>
+              <span title={`Mark-to-Market-Status: ${exposure.data.mark_to_market_status}`}>
+                <Badge tone={exposure.data.mark_to_market_status === "ok" ? "pos" : "warn"} dot>
+                  Bewertung: {exposure.data.mark_to_market_status === "ok" ? "frisch" : exposure.data.mark_to_market_status}
+                </Badge>
+              </span>
             }
           />
-          <div className="grid grid-cols-2 md:grid-cols-3 gap-2 text-xs">
-            <RowKV k="gross_exposure" v={fmt$(exposure.data.gross_exposure_usd)} />
-            <RowKV k="net_exposure" v={fmt$(exposure.data.net_exposure_usd)} />
-            <RowKV k="priced_positions" v={String(exposure.data.priced_position_count)} />
-            <RowKV k="stale_positions" v={String(exposure.data.stale_position_count)} tone={exposure.data.stale_position_count > 0 ? "warn" : undefined} />
-            <RowKV k="unavailable_price" v={String(exposure.data.unavailable_price_count)} tone={exposure.data.unavailable_price_count > 0 ? "warn" : undefined} />
-            <RowKV
-              k="largest_position"
-              v={
-                exposure.data.largest_position_symbol
-                  ? `${exposure.data.largest_position_symbol} (${exposure.data.largest_position_weight_pct?.toFixed(1)}%)`
-                  : "—"
-              }
-            />
+
+          {/* Zwei Hero-Werte: Brutto + Netto in voller Breite, Klartext-Hinweis darunter. */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
+            <div className="rounded-md border border-line-subtle bg-bg-2 p-3">
+              <div className="text-2xs uppercase tracking-wider text-fg-subtle font-semibold">Brutto-Exposure</div>
+              <div className="mt-1 font-mono text-xl font-semibold text-fg">{fmt$(exposure.data.gross_exposure_usd)}</div>
+              <div className="mt-1 text-2xs text-fg-subtle leading-relaxed">
+                Summe aller absoluten Positionswerte — unabhängig von Long/Short.
+              </div>
+            </div>
+            <div className="rounded-md border border-line-subtle bg-bg-2 p-3">
+              <div className="text-2xs uppercase tracking-wider text-fg-subtle font-semibold">Netto-Exposure</div>
+              <div className="mt-1 font-mono text-xl font-semibold text-fg">{fmt$(exposure.data.net_exposure_usd)}</div>
+              <div className="mt-1 text-2xs text-fg-subtle leading-relaxed">
+                Long-Positionen minus Short — der Richtungs-Bias deines Portfolios.
+              </div>
+            </div>
           </div>
-          {/* DALI-P5-Lite: Konzentrations-Indikator */}
+
+          {/* Positions-Health: Preis-Status pro Position */}
+          <div className="space-y-2 mb-3">
+            <div className="text-2xs uppercase tracking-wider text-fg-subtle font-semibold">Preis-Status der Positionen</div>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-2 text-xs">
+              <PriceStatusRow
+                count={exposure.data.priced_position_count}
+                label="mit frischem Marktpreis"
+                hint="Bewertung verlässlich"
+                tone="pos"
+              />
+              <PriceStatusRow
+                count={exposure.data.stale_position_count}
+                label="mit altem Preis"
+                hint="Bewertung evtl. ungenau"
+                tone={exposure.data.stale_position_count > 0 ? "warn" : "muted"}
+              />
+              <PriceStatusRow
+                count={exposure.data.unavailable_price_count}
+                label="ohne Preis"
+                hint={exposure.data.unavailable_price_count > 0 ? "Provider lieferte keinen Kurs — diese Positionen können nicht bewertet werden" : "alle Positionen haben einen Kurs"}
+                tone={exposure.data.unavailable_price_count > 0 ? "neg" : "muted"}
+              />
+            </div>
+          </div>
+
+          {/* Konzentrations-Indikator mit Klartext-Aussage */}
           {exposure.data.largest_position_symbol && (
-            <div className="mt-3 pt-3 border-t border-line-subtle/40">
-              <div className="flex items-baseline justify-between text-2xs mb-1">
-                <span className="text-fg-subtle">Konzentrationsrisiko</span>
+            <div className="pt-3 border-t border-line-subtle/40">
+              <div className="flex items-baseline justify-between mb-1.5 flex-wrap gap-2">
+                <span className="text-2xs uppercase tracking-wider text-fg-subtle font-semibold">Konzentrationsrisiko</span>
                 <span
                   className={cn(
-                    "font-mono",
+                    "font-mono text-xs font-semibold",
                     concentrationTone === "neg" && "text-neg",
                     concentrationTone === "warn" && "text-warn",
                     concentrationTone === "pos" && "text-pos",
@@ -262,10 +299,14 @@ export function PortfolioPage() {
                   style={{ width: `${Math.min(largestPct, 100)}%` }}
                 />
               </div>
-              <div className="mt-1 text-2xs text-fg-subtle">
-                {concentrationTone === "neg" && "Hoch konzentriert (>70%) — Klumpenrisiko."}
-                {concentrationTone === "warn" && "Erhöhte Konzentration (40–70%)."}
-                {concentrationTone === "pos" && "Diversifiziert (<40% in einer Position)."}
+              <div className="mt-1.5 text-2xs text-fg-muted leading-relaxed">
+                {largestPct >= 99 && (snap.state === "ready" && snap.data.position_count <= 1)
+                  ? <>Du hältst aktuell nur eine Position — entsprechend liegen 100% deines Markteinsatzes in <span className="font-mono">{exposure.data.largest_position_symbol}</span>. Mehr Positionen reduzieren das Klumpenrisiko.</>
+                  : concentrationTone === "neg"
+                    ? <>Hoch konzentriert ({'>'}70% in einer Position) — Klumpenrisiko. Wenn dieses Asset stark fällt, fällt das ganze Portfolio mit.</>
+                    : concentrationTone === "warn"
+                      ? <>Erhöhte Konzentration (40–70% in einer Position). Im Auge behalten.</>
+                      : <>Gut diversifiziert ({'<'}40% in einer Position).</>}
               </div>
             </div>
           )}
@@ -340,6 +381,44 @@ export function PortfolioPage() {
   );
 }
 
+// 2026-05-10 DALI-P-Klartext: Preis-Status-Reihe im Exposure-Card.
+// Statt "unavailable_price 2 BTC/USDT (100%)" jetzt "2 Positionen ohne Preis
+// — Provider lieferte keinen Kurs". Klartext + Tone-Akzent links.
+function PriceStatusRow({
+  count,
+  label,
+  hint,
+  tone,
+}: {
+  count: number;
+  label: string;
+  hint: string;
+  tone: "pos" | "warn" | "neg" | "muted";
+}) {
+  const accentBar =
+    tone === "pos" ? "bg-pos"
+    : tone === "warn" ? "bg-warn"
+    : tone === "neg" ? "bg-neg"
+    : "bg-fg-subtle/40";
+  const valueColor =
+    tone === "pos" ? "text-pos"
+    : tone === "warn" ? "text-warn"
+    : tone === "neg" ? "text-neg"
+    : "text-fg-muted";
+  return (
+    <div className="flex items-start gap-2">
+      <span className={cn("mt-1 h-3 w-1 rounded-full shrink-0", accentBar)} aria-hidden />
+      <div className="min-w-0 flex-1">
+        <div className="flex items-baseline gap-1.5">
+          <span className={cn("font-mono font-semibold text-base", valueColor)}>{count}</span>
+          <span className="text-xs text-fg break-words">{label}</span>
+        </div>
+        <div className="text-2xs text-fg-subtle leading-relaxed mt-0.5">{hint}</div>
+      </div>
+    </div>
+  );
+}
+
 function BucketLabel({
   tone,
   label,
@@ -371,24 +450,6 @@ function BucketLabel({
         <div className={cn("font-mono font-semibold text-base", accentText)}>{value}</div>
         <div className="text-2xs text-fg-subtle font-mono">{sub}</div>
       </div>
-    </div>
-  );
-}
-
-function RowKV({ k, v, tone }: { k: string; v: string; tone?: "pos" | "neg" | "warn" | "muted" }) {
-  return (
-    <div className="flex items-baseline justify-between gap-2 overflow-hidden border-b border-line-subtle/50 py-1">
-      <span className="min-w-0 truncate text-2xs uppercase tracking-wide text-fg-subtle" title={k}>
-        {humanizeLabel(k)}
-      </span>
-      <span className={cn(
-        "shrink-0 font-mono font-medium text-sm text-right",
-        tone === "pos" && "text-pos",
-        tone === "neg" && "text-neg",
-        tone === "warn" && "text-warn",
-        tone === "muted" && "text-fg-muted",
-        !tone && "text-fg",
-      )}>{v}</span>
     </div>
   );
 }

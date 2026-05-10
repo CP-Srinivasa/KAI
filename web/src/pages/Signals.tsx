@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
-import { AlertCircle, RefreshCw, CheckCircle2, XCircle, Clock, Ban, Activity, Radio } from "lucide-react";
+import { AlertCircle, RefreshCw, XCircle, Ban, Activity, Radio } from "lucide-react";
 import { useT } from "@/i18n/I18nProvider";
+import { LABEL_DE, CYCLE_STATUS_EXPLAIN } from "@/lib/labels";
 import { Badge, Button, Card } from "@/components/ui/Primitives";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { PageHeader } from "@/layout/PageHeader";
@@ -63,7 +64,7 @@ export function SignalsPage() {
         <ErrorCard kind={cycles.error.kind} message={cycles.error.message} path="/operator/trading-loop/recent-cycles" />
       )}
 
-      <Card padded={false}>
+      <Card padded={false} className="synthwave-pulse-edge overflow-hidden">
         <div className="flex items-center justify-between gap-3 px-4 pt-3 border-b border-line-subtle flex-wrap">
           <div className="flex items-center gap-0 flex-wrap -mb-px">
             {tabs.map((tb) => {
@@ -75,7 +76,7 @@ export function SignalsPage() {
                   className={cn(
                     "h-9 px-3 text-xs font-medium inline-flex items-center gap-2 border-b-2 transition-colors",
                     active
-                      ? "border-accent text-fg"
+                      ? "border-info text-fg shadow-[0_2px_8px_-2px_rgb(var(--info)/0.5)]"
                       : "border-transparent text-fg-muted hover:text-fg hover:border-line",
                   )}
                   aria-pressed={active}
@@ -84,7 +85,7 @@ export function SignalsPage() {
                   <span
                     className={cn(
                       "text-2xs font-mono rounded-xs px-1",
-                      active ? "bg-accent-soft text-accent" : "text-fg-subtle",
+                      active ? "bg-info/15 text-info" : "text-fg-subtle",
                     )}
                   >
                     {tb.count}
@@ -175,34 +176,37 @@ function CycleRow({ c }: { c: TradingCycle }) {
   };
   const completed = c.completed_at ?? "";
   return (
-    <tr className="border-t border-line-subtle hover:bg-bg-2">
-      <td className="px-4 py-2 font-mono text-2xs text-fg-subtle">{c.cycle_id.slice(-12)}</td>
-      <td className="px-4 py-2 font-mono font-semibold">{c.symbol}</td>
+    <tr className={cn("border-t border-line-subtle hover:bg-bg-2", c.status === "completed" && "bg-pos/[0.03]")}>
+      <td className="px-4 py-2 font-mono text-2xs text-fg-subtle whitespace-nowrap">{c.cycle_id.slice(-12)}</td>
+      <td className="px-4 py-2 font-mono font-semibold whitespace-nowrap">{c.symbol}</td>
       <td className="px-4 py-2">
-        <Badge tone={toneFor(c.status)}>{c.status}</Badge>
+        <span title={CYCLE_STATUS_EXPLAIN[c.status] ?? c.status}>
+          <Badge tone={toneFor(c.status)}>{LABEL_DE[c.status] ?? c.status}</Badge>
+        </span>
       </td>
-      <td className="px-4 py-2 text-center">
-        <BoolDot v={c.market_data_fetched} />
-      </td>
-      <td className="px-4 py-2 text-center">
-        <BoolDot v={c.signal_generated} />
-      </td>
-      <td className="px-4 py-2 text-center">
-        <BoolDot v={c.risk_approved} />
-      </td>
-      <td className="px-4 py-2 text-center">
-        <BoolDot v={c.order_created} />
-      </td>
-      <td className="px-4 py-2 font-mono text-2xs text-fg-subtle">
+      <td className="px-4 py-2 text-center"><PipelineDot reached={c.market_data_fetched} /></td>
+      <td className="px-4 py-2 text-center"><PipelineDot reached={c.signal_generated} /></td>
+      <td className="px-4 py-2 text-center"><PipelineDot reached={c.risk_approved} /></td>
+      <td className="px-4 py-2 text-center"><PipelineDot reached={c.order_created} /></td>
+      <td className="px-4 py-2 font-mono text-2xs text-fg-subtle whitespace-nowrap">
         {completed ? completed.substring(11, 19) : "—"}
       </td>
     </tr>
   );
 }
 
-function BoolDot({ v }: { v: boolean }) {
-  if (v) return <CheckCircle2 size={13} className="text-pos inline" />;
-  return <Clock size={13} className="text-fg-subtle inline" />;
+// 2026-05-10 DALI-Lebendigkeit: BoolDot-Icons (CheckCircle2/Clock) → Neon-Lichtpunkte
+// mit glow-info für erreicht, gedimmt sonst. Konsistent mit Trades-Pipeline.
+function PipelineDot({ reached }: { reached: boolean }) {
+  return (
+    <span
+      aria-hidden="true"
+      className={cn(
+        "inline-block h-2 w-2 rounded-full transition-transform hover:scale-150",
+        reached ? "bg-info glow-info" : "bg-fg-subtle/20",
+      )}
+    />
+  );
 }
 
 function ErrorCard({ kind, message, path }: { kind: string; message: string; path: string }) {
