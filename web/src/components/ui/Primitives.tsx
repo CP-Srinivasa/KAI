@@ -54,6 +54,61 @@ export function CardHeader({
   );
 }
 
+/* ---------- Kpi ----------
+   2026-05-10 DALI-K1: zentrale Kpi-Komponente. Bisher waren Kpi-Funktionen
+   in 7+ Pages dupliziert (Trades, Portfolio, AIInsightsPage, Dashboard, ...)
+   ohne Hero-Variante. Diese zentrale Variante hat:
+   - size: sm/md/lg/hero (text-base / text-lg / text-xl / text-3xl)
+   - tone: pos/neg/warn/info/ai/muted/neutral
+   - sub: optionaler Mono-Subtext unter Wert
+   Operator-Wunsch: Hero-Number pro Page für "was sagt mir diese Seite". */
+
+export type KpiTone = "pos" | "neg" | "warn" | "info" | "ai" | "muted" | "neutral";
+export type KpiSize = "sm" | "md" | "lg" | "hero";
+
+const KPI_TONE_TEXT: Record<KpiTone, string> = {
+  pos: "text-pos",
+  neg: "text-neg",
+  warn: "text-warn",
+  info: "text-info",
+  ai: "text-ai",
+  muted: "text-fg-muted",
+  neutral: "text-fg",
+};
+
+const KPI_SIZE_CLS: Record<KpiSize, string> = {
+  sm: "text-base",
+  md: "text-lg",
+  lg: "text-xl",
+  hero: "text-3xl",
+};
+
+export function Kpi({
+  label,
+  value,
+  sub,
+  tone = "neutral",
+  size = "md",
+  className,
+}: {
+  label: string;
+  value: ReactNode;
+  sub?: ReactNode;
+  tone?: KpiTone;
+  size?: KpiSize;
+  className?: string;
+}) {
+  return (
+    <Card padded className={className}>
+      <div className="text-2xs uppercase tracking-wider text-fg-subtle font-semibold">{label}</div>
+      <div className={cn("mt-1 font-mono font-semibold", KPI_SIZE_CLS[size], KPI_TONE_TEXT[tone])}>
+        {value}
+      </div>
+      {sub && <div className="mt-1 text-2xs text-fg-subtle font-mono">{sub}</div>}
+    </Card>
+  );
+}
+
 /* ---------- Badge ---------- */
 
 // text-2xs (11px) Konvention (DALI-F-009):
