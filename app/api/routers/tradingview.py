@@ -147,11 +147,11 @@ class PersistentReplayCache(ReplayCache):
         cutoff_wall = now_wall - self._window_seconds
         with sqlite3.connect(self._db_path) as conn:
             conn.execute(
-                f"DELETE FROM {self._table} WHERE inserted_at <= ?",
+                f"DELETE FROM {self._table} WHERE inserted_at <= ?",  # noqa: S608  # nosec B608 — _table is hardcoded class-constant, never user-input
                 (cutoff_wall,),
             )
             rows = conn.execute(
-                f"SELECT key, inserted_at FROM {self._table} ORDER BY inserted_at",
+                f"SELECT key, inserted_at FROM {self._table} ORDER BY inserted_at",  # noqa: S608  # nosec B608 — _table is hardcoded class-constant
             ).fetchall()
             conn.commit()
         # Translate wall-clock timestamps into monotonic-relative values so
@@ -171,7 +171,7 @@ class PersistentReplayCache(ReplayCache):
             try:
                 with sqlite3.connect(self._db_path) as conn:
                     conn.execute(
-                        f"INSERT OR IGNORE INTO {self._table} (key, inserted_at) VALUES (?, ?)",
+                        f"INSERT OR IGNORE INTO {self._table} (key, inserted_at) VALUES (?, ?)",  # noqa: S608  # nosec B608 — _table is hardcoded class-constant
                         (payload_hash, time.time()),
                     )
                     conn.commit()
@@ -191,7 +191,7 @@ class PersistentReplayCache(ReplayCache):
         super().clear()
         try:
             with sqlite3.connect(self._db_path) as conn:
-                conn.execute(f"DELETE FROM {self._table}")
+                conn.execute(f"DELETE FROM {self._table}")  # noqa: S608  # nosec B608 — _table is hardcoded class-constant
                 conn.commit()
         except sqlite3.Error as exc:
             _logger.warning("replay_cache_clear_failed", table=self._table, error=str(exc))

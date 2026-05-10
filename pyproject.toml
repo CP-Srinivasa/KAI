@@ -114,6 +114,8 @@ module = [
     "app.alerts.daily_briefing",
     "app.alerts.feature_analysis",
     "app.alerts.hold_metrics",
+    "app.analysis.keywords.aliases",
+    "app.analysis.keywords.watchlist",
     "app.api.main",
     "app.api.middleware.security_headers",
     "app.api.routers.dashboard",
