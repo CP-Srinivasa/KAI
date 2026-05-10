@@ -87,24 +87,24 @@ def _short_signal(**overrides) -> NormalizedTradeSignal:
 
 
 def test_status_enum_has_all_16_states() -> None:
-    """Operator-Auftrag listet 16 explizite States."""
+    """Operator-Auftrag listet 16 explizite States, UPPERCASE values."""
     expected = {
-        "received",
-        "parsed",
-        "validated",
-        "rejected_invalid_signal",
-        "waiting_for_entry",
-        "entry_triggered",
-        "order_building",
-        "order_submitted",
-        "order_accepted",
-        "position_open",
-        "partial_tp_hit",
-        "tp_hit",
-        "sl_hit",
-        "expired",
-        "cancelled",
-        "failed",
+        "RECEIVED",
+        "PARSED",
+        "VALIDATED",
+        "REJECTED_INVALID_SIGNAL",
+        "WAITING_FOR_ENTRY",
+        "ENTRY_TRIGGERED",
+        "ORDER_BUILDING",
+        "ORDER_SUBMITTED",
+        "ORDER_ACCEPTED",
+        "POSITION_OPEN",
+        "PARTIAL_TP_HIT",
+        "TP_HIT",
+        "SL_HIT",
+        "EXPIRED",
+        "CANCELLED",
+        "FAILED",
     }
     actual = {s.value for s in SignalStatus}
     assert actual == expected
@@ -198,7 +198,7 @@ def test_illegal_transition_raises() -> None:
             SignalStatus.POSITION_OPEN, actor="Test", reason="forced"
         )
     assert "transition not allowed" in str(exc_info.value)
-    assert "parsed → position_open" in str(exc_info.value)
+    assert "PARSED → POSITION_OPEN" in str(exc_info.value)
     assert "correlation_id=" in str(exc_info.value)
 
 

@@ -67,37 +67,41 @@ OrderIntent = Literal["OPEN_POSITION", "CLOSE_POSITION", "MODIFY", "CANCEL"]
 class SignalStatus(StrEnum):
     """16 explicit Lifecycle-States per Operator-Auftrag 2026-05-10.
 
-    Die Reihenfolge in dieser Enum entspricht der typischen Vorwärts-
+    UPPERCASE values matching the Operator-Auftrag-Format (`WAITING_FOR_ENTRY`
+    etc.). Codex' ``OrderLifecycleState`` (``app/execution/models.py``) is now
+    a re-export alias for this enum — single-source-of-truth.
+
+    Reihenfolge in der Enum-Definition entspricht der typischen Vorwärts-
     Progression — Tests dürfen das aber NICHT als Ordnungsrelation
     annehmen. Erlaubte Transitions sind ausschließlich in
     ``LIFECYCLE_TRANSITIONS`` definiert.
     """
 
     # Ingest
-    RECEIVED = "received"
-    PARSED = "parsed"
-    VALIDATED = "validated"
-    REJECTED_INVALID_SIGNAL = "rejected_invalid_signal"
+    RECEIVED = "RECEIVED"
+    PARSED = "PARSED"
+    VALIDATED = "VALIDATED"
+    REJECTED_INVALID_SIGNAL = "REJECTED_INVALID_SIGNAL"
 
     # Entry-Phase
-    WAITING_FOR_ENTRY = "waiting_for_entry"
-    ENTRY_TRIGGERED = "entry_triggered"
+    WAITING_FOR_ENTRY = "WAITING_FOR_ENTRY"
+    ENTRY_TRIGGERED = "ENTRY_TRIGGERED"
 
     # Order-Phase
-    ORDER_BUILDING = "order_building"
-    ORDER_SUBMITTED = "order_submitted"
-    ORDER_ACCEPTED = "order_accepted"
+    ORDER_BUILDING = "ORDER_BUILDING"
+    ORDER_SUBMITTED = "ORDER_SUBMITTED"
+    ORDER_ACCEPTED = "ORDER_ACCEPTED"
 
     # Position-Phase
-    POSITION_OPEN = "position_open"
-    PARTIAL_TP_HIT = "partial_tp_hit"
-    TP_HIT = "tp_hit"
-    SL_HIT = "sl_hit"
+    POSITION_OPEN = "POSITION_OPEN"
+    PARTIAL_TP_HIT = "PARTIAL_TP_HIT"
+    TP_HIT = "TP_HIT"
+    SL_HIT = "SL_HIT"
 
     # Termination
-    EXPIRED = "expired"
-    CANCELLED = "cancelled"
-    FAILED = "failed"
+    EXPIRED = "EXPIRED"
+    CANCELLED = "CANCELLED"
+    FAILED = "FAILED"
 
 
 # Terminal states accept no further transitions.
@@ -116,9 +120,18 @@ TERMINAL_STATES: Final[frozenset[SignalStatus]] = frozenset(
 # Transition-Matrix — Wahrheit für jeden Übergang. Jede Transition außerhalb
 # dieser Matrix wirft ``IllegalLifecycleTransition``. Die Matrix ist Pflicht-
 # Vertrag für Pre-Sprint A (Lifecycle-State-Machine in paper_engine).
+#
+# Reconcile 2026-05-10: Vereinigung der zwei parallel entwickelten Matrices
+# (mein Sprint-1 + Codex' models.py). Operator-Decision: SignalStatus ist
+# kanonisch, ``OrderLifecycleState`` (models.py) wird zum Alias.
 LIFECYCLE_TRANSITIONS: Final[dict[SignalStatus, frozenset[SignalStatus]]] = {
+    # Ingest-Pfad: System-Error (FAILED) und parser-rejection (REJECTED) beide möglich
     SignalStatus.RECEIVED: frozenset(
-        {SignalStatus.PARSED, SignalStatus.FAILED}
+        {
+            SignalStatus.PARSED,
+            SignalStatus.REJECTED_INVALID_SIGNAL,  # Codex: parser kann sofort rejecten
+            SignalStatus.FAILED,
+        }
     ),
     SignalStatus.PARSED: frozenset(
         {
@@ -131,6 +144,9 @@ LIFECYCLE_TRANSITIONS: Final[dict[SignalStatus, frozenset[SignalStatus]]] = {
         {
             SignalStatus.WAITING_FOR_ENTRY,
             SignalStatus.ENTRY_TRIGGERED,  # market-orders direkt triggern
+            SignalStatus.ORDER_BUILDING,  # Codex: market-orders skip ENTRY_TRIGGERED
+            SignalStatus.REJECTED_INVALID_SIGNAL,  # Codex: post-validation reject
+            SignalStatus.EXPIRED,  # Codex: TTL bei VALIDATED schon möglich
             SignalStatus.CANCELLED,
             SignalStatus.FAILED,
         }
@@ -144,7 +160,11 @@ LIFECYCLE_TRANSITIONS: Final[dict[SignalStatus, frozenset[SignalStatus]]] = {
         }
     ),
     SignalStatus.ENTRY_TRIGGERED: frozenset(
-        {SignalStatus.ORDER_BUILDING, SignalStatus.FAILED, SignalStatus.CANCELLED}
+        {
+            SignalStatus.ORDER_BUILDING,
+            SignalStatus.FAILED,
+            SignalStatus.CANCELLED,
+        }
     ),
     SignalStatus.ORDER_BUILDING: frozenset(
         {
@@ -184,6 +204,7 @@ LIFECYCLE_TRANSITIONS: Final[dict[SignalStatus, frozenset[SignalStatus]]] = {
             SignalStatus.TP_HIT,
             SignalStatus.SL_HIT,
             SignalStatus.CANCELLED,
+            SignalStatus.FAILED,  # Codex: Engine-FAILED nach Partial möglich
         }
     ),
     # Terminale Zustände akzeptieren keine weiteren Transitions

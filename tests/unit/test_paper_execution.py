@@ -110,6 +110,22 @@ def test_take_profit_detection(tmp_path):
     assert trigger == "take"
 
 
+def test_short_stop_and_take_detection(tmp_path):
+    eng = _engine(tmp_path)
+    order = eng.create_order(
+        symbol="BTC/USDT",
+        side="sell",
+        quantity=0.1,
+        stop_loss=70000.0,
+        take_profit=60000.0,
+        position_side="short",
+    )
+    eng.fill_order(order, current_price=65000.0)
+
+    assert eng.check_stop_take("BTC/USDT", current_price=70100.0) == "stop"
+    assert eng.check_stop_take("BTC/USDT", current_price=59900.0) == "take"
+
+
 def test_audit_log_written(tmp_path):
     eng = _engine(tmp_path)
     order = eng.create_order(
@@ -140,6 +156,40 @@ def _open_long(eng, symbol, qty, entry, *, sl=None, tp=None, idem=None):
         idempotency_key=idem or f"open_{symbol}",
     )
     return eng.fill_order(order, current_price=entry)
+
+
+def _open_short(eng, symbol, qty, entry, *, sl=None, tp=None, idem=None):
+    order = eng.create_order(
+        symbol=symbol,
+        side="sell",
+        quantity=qty,
+        stop_loss=sl,
+        take_profit=tp,
+        idempotency_key=idem or f"short_{symbol}",
+        position_side="short",
+    )
+    return eng.fill_order(order, current_price=entry)
+
+
+def test_short_order_fills_and_updates_portfolio(tmp_path):
+    eng = _engine(tmp_path)
+    fill = _open_short(eng, "BTC/USDT", 0.1, 65000.0, sl=70000.0, tp=60000.0)
+    assert fill is not None
+    assert fill.side == "sell"
+    pos = eng.portfolio.positions["BTC/USDT"]
+    assert pos.position_side == "short"
+    assert eng.portfolio.cash > 10000.0
+
+
+def test_close_short_realizes_profit_when_price_drops(tmp_path):
+    eng = _engine(tmp_path)
+    _open_short(eng, "ETH/USDT", 1.0, 3000.0, sl=3300.0, tp=2700.0)
+    fill = eng.close_position("ETH/USDT", current_price=2700.0, reason="take")
+    assert fill is not None
+    assert fill.side == "buy"
+    assert fill.position_side == "short"
+    assert "ETH/USDT" not in eng.portfolio.positions
+    assert eng.portfolio.realized_pnl_usd > 0
 
 
 def test_close_position_full_exit_realizes_pnl(tmp_path):
@@ -614,6 +664,53 @@ def test_audit_replay_handles_v1_legacy_lines(tmp_path):
     assert pos.position_side == "long"
 
 
+def test_audit_replay_restores_open_short_position(tmp_path):
+    from app.execution.audit_replay import replay_paper_audit
+
+    audit = tmp_path / "short.jsonl"
+    rows = [
+        {
+            "schema_version": "v2",
+            "event_type": "order_created",
+            "order_id": "short_o1",
+            "symbol": "ETH/USDT",
+            "side": "sell",
+            "quantity": 1.0,
+            "stop_loss": 3300.0,
+            "take_profit": 2700.0,
+            "position_side": "short",
+            "timestamp_utc": "2026-01-01T00:00:00Z",
+        },
+        {
+            "schema_version": "v2",
+            "event_type": "order_filled",
+            "fill_id": "short_f1",
+            "order_id": "short_o1",
+            "symbol": "ETH/USDT",
+            "side": "sell",
+            "quantity": 1.0,
+            "fill_price": 3000.0,
+            "fee_usd": 3.0,
+            "filled_at": "2026-01-01T00:00:01Z",
+            "slippage_pct": 0.05,
+            "pnl_usd": 0.0,
+            "position_side": "short",
+            "portfolio_cash": 12997.0,
+            "realized_pnl_usd": 0.0,
+            "timestamp_utc": "2026-01-01T00:00:01Z",
+        },
+    ]
+    audit.write_text("\n".join(_json.dumps(r) for r in rows) + "\n", encoding="utf-8")
+
+    result = replay_paper_audit(audit)
+
+    assert result.available is True, result.error
+    pos = result.positions["ETH/USDT"]
+    assert pos.position_side == "short"
+    assert pos.stop_loss == 3300.0
+    assert pos.take_profit == 2700.0
+
+
 def test_audit_replay_handles_mixed_v1_v2(tmp_path):
     from app.execution.audit_replay import replay_paper_audit
 
@@ -704,16 +801,16 @@ def test_paper_position_default_position_side_long(tmp_path):
     assert pos.position_side == "long"
 
 
-def test_engine_rejects_position_side_short(tmp_path):
+def test_engine_accepts_position_side_short(tmp_path):
     eng = _engine(tmp_path)
-    with pytest.raises(NotImplementedError, match="V5"):
-        eng.create_order(
-            symbol="BTC/USDT",
-            side="buy",
-            quantity=0.01,
-            idempotency_key="short_v5",
-            position_side="short",
-        )
+    order = eng.create_order(
+        symbol="BTC/USDT",
+        side="sell",
+        quantity=0.01,
+        idempotency_key="short_v5",
+        position_side="short",
+    )
+    assert order.position_side == "short"
 
 
 def test_partial_sell_keeps_position(tmp_path):

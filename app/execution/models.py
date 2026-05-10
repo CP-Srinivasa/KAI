@@ -35,7 +35,7 @@ class PaperOrder:
     idempotency_key: str
     status: str = "pending"  # "pending" | "filled" | "cancelled" | "rejected"
     risk_check_id: str = ""
-    position_side: str = "long"  # NEO-P-101-r2: V5-Vorbereitung; nur "long" supported
+    position_side: str = "long"  # "long" | "short"
     # NEO-P-106 Phase 2: venue-Tag fuer Fee-Lookup. Default "paper" nutzt den
     # worst-case Paper-Fee aus config/venue_fees.yaml; "legacy" bleibt als
     # expliziter Opt-out fuer Tests/historische Konstruktor-fee_pct-Pfade.
@@ -56,7 +56,7 @@ class PaperFill:
     filled_at: str
     slippage_pct: float
     pnl_usd: float = 0.0  # NEO-P-101-r2: per-trade NETTO PnL (Buys=0.0, Sells=netto inkl. fee)
-    position_side: str = "long"  # NEO-P-101-r2: V5-Vorbereitung
+    position_side: str = "long"  # "long" | "short"
     # NEO-P-106 Phase 1: additive Audit-Felder fuer Fee-Provenienz (Backwards-compat
     # weil Defaults; Konsumenten lesen via .get() oder ignorieren unbekannte Keys).
     fee_venue: str = "legacy"
@@ -76,7 +76,7 @@ class PaperPosition:
     take_profit: float | None
     opened_at: str
     realized_pnl_usd: float = 0.0
-    position_side: str = "long"  # NEO-P-101-r2: V5-Vorbereitung; nur "long" supported
+    position_side: str = "long"  # "long" | "short"
     # V25-C (2026-05-04): Multi-target staged exits. List of (price, qty_share)
     # tuples where qty_share is the fraction of the ORIGINAL position to close
     # at that price (sums should equal 1.0 for full coverage). Empty list ==
@@ -91,6 +91,8 @@ class PaperPosition:
     initial_quantity: float = 0.0
 
     def unrealized_pnl(self, current_price: float) -> float:
+        if self.position_side == "short":
+            return (self.avg_entry_price - current_price) * self.quantity
         return (current_price - self.avg_entry_price) * self.quantity
 
     def to_dict(self) -> dict[str, object]:
@@ -124,9 +126,13 @@ class PaperPortfolio:
         self._peak_equity = self.initial_equity
 
     def total_equity(self, prices: dict[str, float]) -> float:
-        position_value = sum(
-            p.quantity * prices.get(sym, p.avg_entry_price) for sym, p in self.positions.items()
-        )
+        position_value = 0.0
+        for sym, pos in self.positions.items():
+            price = prices.get(sym, pos.avg_entry_price)
+            if pos.position_side == "short":
+                position_value -= pos.quantity * price
+            else:
+                position_value += pos.quantity * price
         return self.cash + position_value
 
     def drawdown_pct(self, prices: dict[str, float]) -> float:
@@ -153,7 +159,11 @@ class PaperPortfolio:
             "total_equity": self.total_equity(p)
             if p
             else self.cash
-            + sum(pos.quantity * pos.avg_entry_price for pos in self.positions.values()),
+            + sum(
+                (-pos.quantity if pos.position_side == "short" else pos.quantity)
+                * pos.avg_entry_price
+                for pos in self.positions.values()
+            ),
         }
 
 
@@ -169,112 +179,24 @@ def _now_utc() -> str:
     return datetime.now(UTC).isoformat()
 
 
-class OrderLifecycleState(StrEnum):
-    """Canonical signal-to-order lifecycle states.
-
-    Shared by Telegram bridge, paper execution and the future live adapter so a
-    signal can be replayed from intake to terminal outcome by correlation_id.
-    """
-
-    RECEIVED = "RECEIVED"
-    PARSED = "PARSED"
-    VALIDATED = "VALIDATED"
-    REJECTED_INVALID_SIGNAL = "REJECTED_INVALID_SIGNAL"
-    WAITING_FOR_ENTRY = "WAITING_FOR_ENTRY"
-    ENTRY_TRIGGERED = "ENTRY_TRIGGERED"
-    ORDER_BUILDING = "ORDER_BUILDING"
-    ORDER_SUBMITTED = "ORDER_SUBMITTED"
-    ORDER_ACCEPTED = "ORDER_ACCEPTED"
-    POSITION_OPEN = "POSITION_OPEN"
-    PARTIAL_TP_HIT = "PARTIAL_TP_HIT"
-    TP_HIT = "TP_HIT"
-    SL_HIT = "SL_HIT"
-    EXPIRED = "EXPIRED"
-    CANCELLED = "CANCELLED"
-    FAILED = "FAILED"
-
-
-TERMINAL_ORDER_LIFECYCLE_STATES = frozenset(
-    {
-        OrderLifecycleState.REJECTED_INVALID_SIGNAL,
-        OrderLifecycleState.TP_HIT,
-        OrderLifecycleState.SL_HIT,
-        OrderLifecycleState.EXPIRED,
-        OrderLifecycleState.CANCELLED,
-        OrderLifecycleState.FAILED,
-    }
+# ─── Lifecycle Aliases (Reconcile 2026-05-10) ─────────────────────────────────
+# Operator-Decision: ``SignalStatus`` (app/execution/normalized_signal.py) ist
+# kanonisch für die 16-State-Lifecycle. Codex' ursprüngliche
+# ``OrderLifecycleState`` und ``LIFECYCLE_TRANSITIONS`` sind hier als Aliases
+# / Re-Exports erhalten, damit der Bridge-Code (``envelope_to_paper_bridge.py``)
+# unverändert importieren kann.
+#
+# Cross-Ref: docs/architecture/signal_to_execution_gap_analysis_20260510.md
+from app.execution.normalized_signal import (  # noqa: E402
+    LIFECYCLE_TRANSITIONS,  # noqa: F401 — re-export
+    IllegalLifecycleTransition,  # noqa: F401 — re-export
 )
-
-
-LIFECYCLE_TRANSITIONS: dict[OrderLifecycleState, frozenset[OrderLifecycleState]] = {
-    OrderLifecycleState.RECEIVED: frozenset(
-        {OrderLifecycleState.PARSED, OrderLifecycleState.REJECTED_INVALID_SIGNAL}
-    ),
-    OrderLifecycleState.PARSED: frozenset(
-        {OrderLifecycleState.VALIDATED, OrderLifecycleState.REJECTED_INVALID_SIGNAL}
-    ),
-    OrderLifecycleState.VALIDATED: frozenset(
-        {
-            OrderLifecycleState.WAITING_FOR_ENTRY,
-            OrderLifecycleState.ENTRY_TRIGGERED,
-            OrderLifecycleState.ORDER_BUILDING,
-            OrderLifecycleState.REJECTED_INVALID_SIGNAL,
-            OrderLifecycleState.EXPIRED,
-        }
-    ),
-    OrderLifecycleState.WAITING_FOR_ENTRY: frozenset(
-        {
-            OrderLifecycleState.ENTRY_TRIGGERED,
-            OrderLifecycleState.EXPIRED,
-            OrderLifecycleState.CANCELLED,
-            OrderLifecycleState.FAILED,
-        }
-    ),
-    OrderLifecycleState.ENTRY_TRIGGERED: frozenset(
-        {OrderLifecycleState.ORDER_BUILDING, OrderLifecycleState.FAILED}
-    ),
-    OrderLifecycleState.ORDER_BUILDING: frozenset(
-        {OrderLifecycleState.ORDER_SUBMITTED, OrderLifecycleState.FAILED}
-    ),
-    OrderLifecycleState.ORDER_SUBMITTED: frozenset(
-        {
-            OrderLifecycleState.ORDER_ACCEPTED,
-            OrderLifecycleState.REJECTED_INVALID_SIGNAL,
-            OrderLifecycleState.FAILED,
-        }
-    ),
-    OrderLifecycleState.ORDER_ACCEPTED: frozenset(
-        {OrderLifecycleState.POSITION_OPEN, OrderLifecycleState.FAILED}
-    ),
-    OrderLifecycleState.POSITION_OPEN: frozenset(
-        {
-            OrderLifecycleState.PARTIAL_TP_HIT,
-            OrderLifecycleState.TP_HIT,
-            OrderLifecycleState.SL_HIT,
-            OrderLifecycleState.CANCELLED,
-            OrderLifecycleState.FAILED,
-        }
-    ),
-    OrderLifecycleState.PARTIAL_TP_HIT: frozenset(
-        {
-            OrderLifecycleState.PARTIAL_TP_HIT,
-            OrderLifecycleState.TP_HIT,
-            OrderLifecycleState.SL_HIT,
-            OrderLifecycleState.CANCELLED,
-            OrderLifecycleState.FAILED,
-        }
-    ),
-    OrderLifecycleState.REJECTED_INVALID_SIGNAL: frozenset(),
-    OrderLifecycleState.TP_HIT: frozenset(),
-    OrderLifecycleState.SL_HIT: frozenset(),
-    OrderLifecycleState.EXPIRED: frozenset(),
-    OrderLifecycleState.CANCELLED: frozenset(),
-    OrderLifecycleState.FAILED: frozenset(),
-}
-
-
-class IllegalLifecycleTransition(ValueError):
-    """Raised when a signal/order attempts an impossible lifecycle move."""
+from app.execution.normalized_signal import (  # noqa: E402
+    TERMINAL_STATES as TERMINAL_ORDER_LIFECYCLE_STATES,  # noqa: F401 — re-export
+)
+from app.execution.normalized_signal import (  # noqa: E402
+    SignalStatus as OrderLifecycleState,  # noqa: F401 — alias
+)
 
 
 @dataclass(frozen=True)
