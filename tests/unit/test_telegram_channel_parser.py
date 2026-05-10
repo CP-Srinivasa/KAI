@@ -102,6 +102,14 @@ Entry Zone: 70565 – 70590
 🛑 Stop Loss - 69800
 ⚡️ Leverage: 10x"""
 
+SAMPLE_BTC_OPERATOR_STYLE = """\
+BTCUSDT LONG
+Entry: 65000 - 65500
+Leverage: 10x
+Margin: 5%
+Stop Loss: 64200
+Targets: 66000 / 67000 / 68500"""
+
 
 # ── Layout A (classic header + labeled fields) ──────────────────────────────
 
@@ -172,6 +180,21 @@ class TestEntryRange:
         # emoji-list is authoritative when present
         assert sig.targets == [70700.0, 70850.0, 71000.0]
         assert sig.leverage == 10
+
+    def test_operator_style_range_margin_and_slash_targets(self) -> None:
+        sig = parse_premium_channel_message(SAMPLE_BTC_OPERATOR_STYLE)
+        assert sig is not None
+        assert sig.symbol == "BTCUSDT"
+        assert sig.display_symbol == "BTC/USDT"
+        assert sig.direction == "long"
+        assert sig.side == "buy"
+        assert sig.entry_type == "range"
+        assert sig.entry_min == 65000.0
+        assert sig.entry_max == 65500.0
+        assert sig.leverage == 10
+        assert sig.margin_pct == 5.0
+        assert sig.stop_loss == 64200.0
+        assert sig.targets == [66000.0, 67000.0, 68500.0]
 
 
 # ── Exchange-prefix emoji layout ────────────────────────────────────────────

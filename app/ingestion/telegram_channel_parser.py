@@ -285,6 +285,11 @@ def _extract_leverage(text: str) -> int:
     m = _LEVERAGE.search(text)
     if m is None:
         return 1
+    try:
+        lev = int(m["lev"])
+        return lev if lev > 0 else 1
+    except (ValueError, TypeError):
+        return 1
 
 
 def _extract_margin_pct(text: str) -> float | None:
@@ -295,11 +300,6 @@ def _extract_margin_pct(text: str) -> float | None:
     if pct is None or pct <= 0:
         return None
     return pct
-    try:
-        lev = int(m["lev"])
-        return lev if lev > 0 else 1
-    except (ValueError, TypeError):
-        return 1
 
 
 def _extract_exchange_scope(text: str) -> list[str]:

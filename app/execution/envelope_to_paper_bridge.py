@@ -364,7 +364,7 @@ def _lifecycle_events(
     reason: str,
 ) -> list[dict[str, object]]:
     events: list[dict[str, object]] = []
-    for from_state, to_state in zip(states, states[1:], strict=True):
+    for from_state, to_state in zip(states, states[1:], strict=False):
         events.append(
             make_lifecycle_transition(
                 correlation_id=correlation_id,
@@ -669,7 +669,8 @@ async def _process_one(
         rec["side"] = side_str
         assert stop_loss is not None and tp1 is not None
         rec["order_intent"] = _build_order_intent(
-            envelope_id=str(rec["correlation_id"]),
+            envelope_id=envelope_id,
+            correlation_id=str(rec["correlation_id"]),
             source=source,
             payload=payload,
             symbol=symbol,
@@ -705,7 +706,8 @@ async def _process_one(
         rec = base("rejected_position_exists")
         rec["existing_quantity"] = engine.portfolio.positions[symbol].quantity
         rec["order_intent"] = _build_order_intent(
-            envelope_id=str(rec["correlation_id"]),
+            envelope_id=envelope_id,
+            correlation_id=str(rec["correlation_id"]),
             source=source,
             payload=payload,
             symbol=symbol,
@@ -736,7 +738,8 @@ async def _process_one(
         rec["reason"] = "no_market_data"
         rec["target_entry"] = entry_price
         rec["order_intent"] = _build_order_intent(
-            envelope_id=str(rec["correlation_id"]),
+            envelope_id=envelope_id,
+            correlation_id=str(rec["correlation_id"]),
             source=source,
             payload=payload,
             symbol=symbol,
@@ -782,7 +785,8 @@ async def _process_one(
         # Persist the corrected scale on the envelope payload so downstream
         # consumers (engine, tier ladder, audit) see the same numbers we
         # just gated on.
-        _apply_scale(envelope.get("payload") if isinstance(envelope.get("payload"), dict) else {}, scale_factor)
+        scaled_payload = envelope.get("payload")
+        _apply_scale(scaled_payload if isinstance(scaled_payload, dict) else {}, scale_factor)
 
     if not _entry_condition_met(
         payload=payload,
@@ -799,7 +803,8 @@ async def _process_one(
         rec["entry_max"] = payload.get("entry_max")
         rec["tolerance_pct"] = tolerance_pct
         rec["order_intent"] = _build_order_intent(
-            envelope_id=str(rec["correlation_id"]),
+            envelope_id=envelope_id,
+            correlation_id=str(rec["correlation_id"]),
             source=source,
             payload=payload,
             symbol=symbol,
@@ -847,7 +852,8 @@ async def _process_one(
         rec["risk_check_id"] = risk_result.check_id
         rec["violations"] = list(risk_result.violations)
         rec["order_intent"] = _build_order_intent(
-            envelope_id=str(rec["correlation_id"]),
+            envelope_id=envelope_id,
+            correlation_id=str(rec["correlation_id"]),
             source=source,
             payload=payload,
             symbol=symbol,
@@ -886,7 +892,8 @@ async def _process_one(
         rec = base("rejected_size")
         rec["rationale"] = size_result.rationale
         rec["order_intent"] = _build_order_intent(
-            envelope_id=str(rec["correlation_id"]),
+            envelope_id=envelope_id,
+            correlation_id=str(rec["correlation_id"]),
             source=source,
             payload=payload,
             symbol=symbol,
@@ -995,7 +1002,8 @@ async def _process_one(
         {"price": price, "qty_share": 1.0 / len(targets)} for price in targets
     ] if len(targets) > 1 else []
     rec["order_intent"] = _build_order_intent(
-        envelope_id=str(rec["correlation_id"]),
+        envelope_id=envelope_id,
+        correlation_id=str(rec["correlation_id"]),
         source=source,
         payload=payload,
         symbol=symbol,
