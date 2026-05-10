@@ -82,12 +82,16 @@ function shouldPauseCycle(state: string): boolean {
   return state === "OFFLINE" || state === "ERROR";
 }
 
-// Singleton: Greeting nur 1x pro Session anzeigen.
+// Greeting 1x pro Operator-Tag (UTC), persistent über localStorage.
+// Vorher: sessionStorage → 4 offene Tabs = 4 Greetings, kein Tages-Refresh.
+// Storage-Key kai_greeted_at speichert ISO-Timestamp; wir matchen auf YYYY-MM-DD.
 function shouldRenderGreeting(state: string): boolean {
   if (state !== "IDLE") return false;
   try {
-    if (sessionStorage.getItem(GREETING_KEY)) return false;
-    sessionStorage.setItem(GREETING_KEY, new Date().toISOString());
+    const last = localStorage.getItem(GREETING_KEY);
+    const today = new Date().toISOString().slice(0, 10);
+    if (last && last.startsWith(today)) return false;
+    localStorage.setItem(GREETING_KEY, new Date().toISOString());
     return true;
   } catch {
     return false;
