@@ -759,10 +759,10 @@ export function KaiLiveWidget(props: KaiLiveWidgetProps) {
             }
             title={
               !voiceSupported
-                ? language === "de" ? "Browser unterstützt keine Spracheingabe — Klick für Details" : "Browser does not support voice input — click for details"
+                ? language === "de" ? "Spracheingabe nicht verfügbar" : "Voice not supported"
                 : isListening
-                ? language === "de" ? `Aufnahme läuft (${recordingSeconds}s) — klicken zum Stoppen` : `Recording (${recordingSeconds}s) — click to stop`
-                : language === "de" ? "Klick zum Aufnehmen — sprich beliebig lang, klick erneut zum Stoppen" : "Click to record — speak any length, click again to stop"
+                ? language === "de" ? `Stoppen (${recordingSeconds}s)` : `Stop (${recordingSeconds}s)`
+                : language === "de" ? "Sprachaufnahme starten" : "Start voice recording"
             }
             className={cn(
               "relative shrink-0 h-11 w-11 rounded-full",
