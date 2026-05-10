@@ -164,8 +164,8 @@ def collect_idempotency_keys_from_paper_audit(
         # idempotency_key kann auf Top-Level oder nested liegen — prüfe beides
         idem = rec.get("idempotency_key")
         if not isinstance(idem, str):
-            order = rec.get("order") if isinstance(rec.get("order"), dict) else None
-            if order is not None:
+            order = rec.get("order")
+            if isinstance(order, dict):
                 idem_nested = order.get("idempotency_key")
                 if isinstance(idem_nested, str):
                     idem = idem_nested
@@ -303,11 +303,13 @@ def detect_orphaned_submitted(
             continue
         if state.upper() != "ORDER_SUBMITTED":
             continue
-        idem = (
-            rec.get("idempotency_key") or rec.get("order_intent", {}).get("idempotency_key")
-            if isinstance(rec.get("order_intent"), dict)
-            else rec.get("idempotency_key")
-        )
+        idem = rec.get("idempotency_key")
+        if not isinstance(idem, str):
+            order_intent = rec.get("order_intent")
+            if isinstance(order_intent, dict):
+                nested = order_intent.get("idempotency_key")
+                if isinstance(nested, str):
+                    idem = nested
         if isinstance(idem, str) and idem:
             submitted_keys.add(idem)
 
