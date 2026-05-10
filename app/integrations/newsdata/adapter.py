@@ -88,8 +88,13 @@ class NewsdataAdapter(BaseSourceAdapter):
         # als content. Wir akzeptieren content nur, wenn er echten Body enthaelt;
         # sonst Fallback auf description. Vorher: 0% directional yield bei
         # NewsData; description trägt sehr wohl Sentiment-Signal.
+        # V-DB5 Calibration 2026-05-08 (audit H-5/F-007): description ebenfalls
+        # auf MIN_CONTENT_LEN=50 prüfen, nicht ungefiltert durchreichen.
+        # Vorher konnten 3-Zeichen-descriptions ("BTC") als toxischer raw_text
+        # in die LLM-Sentiment-Analyse gelangen.
         content = article.content if _is_useful_content(article.content) else None
-        raw_text = content or article.description or None
+        description = article.description if _is_useful_content(article.description) else None
+        raw_text = content or description or None
         authors = ", ".join(article.creator) if article.creator else None
         tickers: list[str] = []
 

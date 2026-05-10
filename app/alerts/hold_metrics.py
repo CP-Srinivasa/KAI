@@ -527,6 +527,12 @@ def build_hold_metrics_report(
     high_conviction_tier_threshold = 10
     high_conviction_resolved_docs: set[str] = set()
     standard_tier_resolved_docs: set[str] = set()
+    # V-DB5 Calibration 2026-05-08 (audit F-002):
+    # Tier-Stats laufen jetzt auf active_resolved_docs (post-D-139), NICHT auf
+    # resolved_docs (incl. Legacy-Pre-Cutover). Vorher waren die Wilson-CIs des
+    # Tier-Lift auf einer Mixed-Population berechnet — inkonsistent zur
+    # active_precision_pct-Berechnung. Pearson-Pairs bleiben global (alle docs)
+    # weil Pearson per design auf der Gesamt-Verteilung arbeitet.
     for doc_id in resolved_docs:
         latest_record = latest_directional_by_doc.get(doc_id)
         if latest_record is None or latest_record.priority is None:
@@ -538,6 +544,11 @@ def build_hold_metrics_report(
             high_priority_resolved_docs.add(doc_id)
         else:
             low_priority_resolved_docs.add(doc_id)
+    # Tier-Buckets nur fuer active_resolved_docs (Active-Quality-Konsistenz).
+    for doc_id in active_resolved_docs:
+        latest_record = latest_directional_by_doc.get(doc_id)
+        if latest_record is None or latest_record.priority is None:
+            continue
         if latest_record.priority >= high_conviction_tier_threshold:
             high_conviction_resolved_docs.add(doc_id)
         elif latest_record.priority >= high_priority_threshold:
@@ -556,9 +567,10 @@ def build_hold_metrics_report(
         len(low_priority_resolved_docs),
     )
 
-    # D-149: tier precision + Wilson 95% CI per tier.
+    # D-149 + V-DB5: tier precision + Wilson 95% CI auf active_hit_docs (passend
+    # zu active_resolved_docs als Population).
     def _tier_stats(docs: set[str]) -> dict[str, Any]:
-        hits = sum(1 for d in docs if d in hit_docs)
+        hits = sum(1 for d in docs if d in active_hit_docs)
         n = len(docs)
         ci = wilson_ci(hits, n) if n > 0 else None
         return {
