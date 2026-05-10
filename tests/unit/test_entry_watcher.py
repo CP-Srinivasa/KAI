@@ -32,7 +32,6 @@ from app.execution.normalized_signal import (
     new_signal,
 )
 
-
 # ── Helper ────────────────────────────────────────────────────────────────────
 
 

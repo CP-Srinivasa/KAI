@@ -53,7 +53,6 @@ from app.execution.normalized_signal import (
     SignalStatus,
 )
 
-
 # ─── Configuration ───────────────────────────────────────────────────────────
 
 
