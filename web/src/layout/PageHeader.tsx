@@ -33,12 +33,16 @@ export function PageHeader({
   right,
   tone,
   icon,
+  divider = true,
 }: {
   title: string;
   sub?: string;
   right?: ReactNode;
   tone?: PageHeaderTone;
   icon?: ReactNode;
+  /** Operator 2026-05-10: divider lässt sich pro Page abschalten,
+   *  z.B. wenn die erste Card schon ein synthwave-pulse-edge hat. */
+  divider?: boolean;
 }) {
   const barClass = tone ? TONE_BAR[tone] : "bg-fg-subtle/40";
   const iconClass = tone ? TONE_ICON[tone] : "text-fg-subtle";
@@ -66,7 +70,7 @@ export function PageHeader({
         </div>
         {right}
       </div>
-      <div className="synthwave-divider" aria-hidden="true" />
+      {divider && <div className="synthwave-divider" aria-hidden="true" />}
     </div>
   );
 }

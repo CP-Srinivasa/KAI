@@ -45,82 +45,86 @@ function formatTimeShort(iso: string): string {
   }
 }
 
-// 2026-05-10 DALI-T-Pacman: Sparkline als ATARI-Pacman-Stage.
-// Operator-Wunsch: "Packman am anfang der Punkte, som ATARI like".
-// Pellets statt Status-Pillen — gelb (Pacman-Food), Power-Pellets (cyan/glow)
-// fuer completed-Cycles, Geist-rot fuer order_failed.
-type PelletKind = "pellet" | "power" | "warn" | "ghost" | "empty";
+// 2026-05-10 DALI-BTC-Pacman: Bitcoin-Pacman frisst Currency-Symbole.
+// Operator-Bild 2026-05-10: Bitcoin-Logo als Pacman, Mund auf/zu, davor
+// Currency-Pellets ($/€/¥/£) die nacheinander "gefressen" werden.
+type PelletKind = "dollar" | "euro" | "yen" | "pound" | "btc" | "ghost" | "empty";
 
-function pelletForStatus(status: string): PelletKind {
-  if (status === "completed") return "power";
-  if (status === "order_failed" || status === "consensus_rejected") return "ghost";
-  if (status === "no_market_data" || status === "stale_data") return "warn";
+// Cycle-Status → Pellet-Mapping. Verschiedene Currency-Symbole spiegeln den
+// Status: completed = $ (Hauptgewinn), no_signal = · (kleiner Punkt), failed = Geist.
+function pelletForStatus(status: string, idx: number): PelletKind {
+  if (status === "completed") {
+    // Power-Pellet: rotierende Currency-Symbole pro completed-Cycle
+    const symbols: PelletKind[] = ["dollar", "euro", "yen", "pound"];
+    return symbols[idx % symbols.length];
+  }
+  if (status === "order_failed" || status === "consensus_rejected" || status === "priority_rejected") {
+    return "ghost";
+  }
   if (status === "blocked") return "empty";
-  return "pellet"; // no_signal
+  return "empty"; // no_signal, no_market_data etc → kleiner Punkt
 }
 
-// Pacman-Komponente: nutzt .pacman-icon CSS-Klasse mit clip-path-Animation
-// (definiert in index.css). ATARI-Stil: gelb, scharfer Mund auf/zu, kein
-// smooth-tween (steps(1)). Drop-shadow gibt Neon-Halo.
-function PacmanIcon({ size = 14 }: { size?: number }) {
+// Bitcoin-Pacman: orange Kreis mit B-Logo links, Mund-Klappen rechts
+// rotieren auf/zu via CSS-Animation (transform-rotate, ease-in-out).
+// SVG damit Mund-Klappen-Animation deklarativ sauber ist.
+function BitcoinPacman({ size = 22 }: { size?: number }) {
   return (
-    <span
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 32 32"
+      className="btc-pacman"
       aria-hidden="true"
-      className="pacman-icon"
-      style={{ width: size, height: size }}
-    />
+    >
+      {/* Bitcoin-Body: oranger Kreis */}
+      <circle cx="16" cy="16" r="14" fill="rgb(var(--warn))" />
+      {/* B-Logo (Bitcoin) — bold, weiss/hell, links sodass Mund rechts frei ist */}
+      <text
+        x="10"
+        y="22"
+        fontSize="18"
+        fontWeight="900"
+        fill="rgb(var(--bg-0))"
+        fontFamily="ui-serif, Georgia, serif"
+      >
+        ₿
+      </text>
+      {/* Mund-Klappe oben — rotiert auf-zu */}
+      <polygon
+        className="btc-jaw-top"
+        points="16,16 32,16 32,2 16,2"
+        fill="rgb(var(--bg-0))"
+      />
+      {/* Mund-Klappe unten — rotiert auf-zu */}
+      <polygon
+        className="btc-jaw-bottom"
+        points="16,16 32,16 32,30 16,30"
+        fill="rgb(var(--bg-0))"
+      />
+      {/* Auge */}
+      <circle cx="14" cy="9" r="1.4" fill="rgb(var(--bg-0))" />
+    </svg>
   );
 }
 
-// Pellet-Renderer: ATARI-Pacman-Food in den vier Status-Varianten.
-function Pellet({ kind, title }: { kind: PelletKind; title: string }) {
+// Currency-Pellet: $-, €-, ¥-, £- oder ₿-Symbol als Neon-Pellet.
+// Pellet-Größe + Glow nach Status. Hover-scale für Detail.
+function CurrencyPellet({ kind, title }: { kind: PelletKind; title: string }) {
   if (kind === "ghost") {
-    // Geist als kleines Quadrat mit roundes Top + Glow (ATARI-Geister-Pixelart-Vibe)
+    // Pacman-Geist: rotes pixel-Quadrat mit roundes Top + 2 weiße Augen.
     return (
-      <span
-        title={title}
-        aria-hidden="true"
-        className="inline-block shrink-0 transition-transform hover:scale-150"
-        style={{
-          width: 9,
-          height: 9,
-          backgroundColor: "rgb(var(--neg))",
-          borderTopLeftRadius: "50%",
-          borderTopRightRadius: "50%",
-          filter: "drop-shadow(0 0 5px rgb(var(--neg) / 0.85))",
-        }}
-      />
-    );
-  }
-  if (kind === "power") {
-    return (
-      <span
-        title={title}
-        aria-hidden="true"
-        className="inline-block shrink-0 rounded-full transition-transform hover:scale-150"
-        style={{
-          width: 8,
-          height: 8,
-          backgroundColor: "rgb(var(--info))",
-          filter: "drop-shadow(0 0 6px rgb(var(--info) / 0.9))",
-          animation: "pacman-power-pulse 0.7s steps(1) infinite",
-        }}
-      />
-    );
-  }
-  if (kind === "warn") {
-    return (
-      <span
-        title={title}
-        aria-hidden="true"
-        className="inline-block shrink-0 rounded-full transition-transform hover:scale-150"
-        style={{
-          width: 5,
-          height: 5,
-          backgroundColor: "rgb(var(--warn))",
-          filter: "drop-shadow(0 0 4px rgb(var(--warn) / 0.7))",
-        }}
-      />
+      <span title={title} className="inline-flex shrink-0 transition-transform hover:scale-150" aria-hidden="true">
+        <svg width={11} height={11} viewBox="0 0 16 16" style={{ filter: "drop-shadow(0 0 4px rgb(var(--neg) / 0.85))" }}>
+          {/* Body */}
+          <path d="M2 8 Q 2 1 8 1 Q 14 1 14 8 L 14 14 L 12 13 L 10 15 L 8 13 L 6 15 L 4 13 L 2 14 Z" fill="rgb(var(--neg))" />
+          {/* Augen */}
+          <circle cx="6" cy="7" r="1.3" fill="rgb(var(--bg-0))" />
+          <circle cx="10" cy="7" r="1.3" fill="rgb(var(--bg-0))" />
+          <circle cx="6.4" cy="7.2" r="0.6" fill="rgb(var(--neg))" />
+          <circle cx="10.4" cy="7.2" r="0.6" fill="rgb(var(--neg))" />
+        </svg>
+      </span>
     );
   }
   if (kind === "empty") {
@@ -129,23 +133,35 @@ function Pellet({ kind, title }: { kind: PelletKind; title: string }) {
         title={title}
         aria-hidden="true"
         className="inline-block shrink-0 rounded-full"
-        style={{ width: 4, height: 4, backgroundColor: "rgb(var(--fg-subtle) / 0.2)" }}
+        style={{ width: 3, height: 3, backgroundColor: "rgb(var(--fg-subtle) / 0.25)" }}
       />
     );
   }
-  // pellet — Standard-Pacman-Food, gelb, klein
+  // Currency-Pellet — Symbol mit Glow
+  const symbol = kind === "dollar" ? "$" : kind === "euro" ? "€" : kind === "yen" ? "¥" : kind === "pound" ? "£" : "₿";
+  // Verschiedene Tone für verschiedene Currencies — pos/info/ai/warn-Mischung
+  const tone =
+    kind === "dollar" ? "rgb(var(--pos))"
+    : kind === "euro" ? "rgb(var(--info))"
+    : kind === "yen"  ? "rgb(var(--ai))"
+    : kind === "pound" ? "rgb(var(--accent))"
+    : "rgb(var(--warn))";
   return (
     <span
       title={title}
       aria-hidden="true"
-      className="inline-block shrink-0 rounded-full transition-transform hover:scale-150"
+      className="currency-pellet shrink-0 transition-transform hover:scale-150"
       style={{
-        width: 4,
-        height: 4,
-        backgroundColor: "rgb(var(--warn) / 0.55)",
-        filter: "drop-shadow(0 0 2px rgb(var(--warn) / 0.5))",
+        width: 11,
+        height: 11,
+        fontSize: 11,
+        color: tone,
+        textShadow: `0 0 6px ${tone}, 0 0 10px ${tone}`,
+        animation: "pacman-power-pulse 0.9s steps(1) infinite",
       }}
-    />
+    >
+      {symbol}
+    </span>
   );
 }
 
@@ -198,13 +214,13 @@ export function TradesPage() {
               <div className="text-sm font-semibold text-fg leading-relaxed">
                 {summarizeCycles(cyclesList)}
               </div>
-              <div className="mt-2.5 flex items-center gap-2 flex-wrap">
-                <PacmanIcon size={14} />
+              <div className="mt-2.5 flex items-center gap-2.5 flex-wrap">
+                <BitcoinPacman size={22} />
                 <div className="flex items-center gap-1.5 flex-wrap">
                   {cyclesList.slice(-30).map((c, i) => (
-                    <Pellet
+                    <CurrencyPellet
                       key={i}
-                      kind={pelletForStatus(c.status)}
+                      kind={pelletForStatus(c.status, i)}
                       title={`${LABEL_DE[c.status] ?? c.status} · ${c.symbol}`}
                     />
                   ))}
@@ -213,12 +229,16 @@ export function TradesPage() {
               <div className="mt-1.5 text-2xs text-fg-subtle font-mono flex flex-wrap items-center gap-x-3 gap-y-1">
                 <span>letzte {Math.min(cyclesList.length, 30)} Cycles</span>
                 <span className="inline-flex items-center gap-1">
-                  <span className="inline-block h-2 w-2 rounded-full" style={{ backgroundColor: "rgb(var(--info))", filter: "drop-shadow(0 0 4px rgb(var(--info) / 0.8))" }} />
-                  <span>Power-Pellet = ausgeführter Trade</span>
+                  <span style={{ color: "rgb(var(--pos))", textShadow: "0 0 4px rgb(var(--pos))", fontWeight: 700 }}>$ € ¥ £</span>
+                  <span>= ausgeführter Trade</span>
                 </span>
                 <span className="inline-flex items-center gap-1">
-                  <span className="inline-block h-2 w-2" style={{ backgroundColor: "rgb(var(--neg))", borderTopLeftRadius: "50%", borderTopRightRadius: "50%", filter: "drop-shadow(0 0 4px rgb(var(--neg) / 0.7))" }} />
-                  <span>Geist = Order/Konsens-Fehler</span>
+                  <CurrencyPellet kind="ghost" title="" />
+                  <span>= Order-/Konsens-/Priority-Fehler</span>
+                </span>
+                <span className="inline-flex items-center gap-1">
+                  <span style={{ color: "rgb(var(--fg-subtle))" }}>·</span>
+                  <span>= kein Trade-Anlass</span>
                 </span>
               </div>
             </div>

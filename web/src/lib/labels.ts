@@ -47,9 +47,14 @@ export const LABEL_DE: Record<string, string> = {
   no_signal: "Kein Signal",
   no_market_data: "Keine Markt-Daten",
   consensus_rejected: "Konsens abgelehnt",
+  priority_rejected: "Priorität zu niedrig",
   order_failed: "Order fehlgeschlagen",
   stale_data: "Veraltete Daten",
   blocked: "Blockiert",
+  gate_blocked: "Quality-Gate blockiert",
+  sl_failed: "SL-Order fehlgeschlagen",
+  risk_rejected: "Risk-Gate abgelehnt",
+  signal_below_threshold: "Signal unter Schwelle",
 
   // Alerts
   document_id: "Dokument-ID",
@@ -97,9 +102,14 @@ export const CYCLE_STATUS_EXPLAIN: Record<string, string> = {
   no_signal: "Daten OK, aber Signal-Engine sah keinen Trade-Anlass.",
   no_market_data: "Provider lieferte keine Kerzen — Cycle wurde übersprungen.",
   consensus_rejected: "LLM-Konsens war uneins; Risk-Gate blockierte den Trade.",
+  priority_rejected: "Signal-Priorität war zu niedrig für die aktuelle Quality-Bar — Operator-Setting im Risk/Settings.",
   order_failed: "Signal + Risk OK, aber Exchange-Order schlug fehl. Notes prüfen.",
   stale_data: "Markt-Daten waren älter als das Freshness-Gate erlaubt.",
   blocked: "Cycle wurde vor Signalerkennung gestoppt (Run-Once / Mode-Lock).",
+  gate_blocked: "Quality-Gate hat den Cycle blockiert — entweder Active-Precision unter Schwelle oder Volatility-Window-Pause.",
+  sl_failed: "Stop-Loss-Order konnte nach Main-Order nicht platziert werden — Main wurde zurückgenommen.",
+  risk_rejected: "Risk-Engine hat das Signal abgelehnt — z.B. zu hohes Konzentrationsrisiko oder Drawdown-Limit erreicht.",
+  signal_below_threshold: "Signal-Confidence war unter dem konfigurierten Mindestwert.",
 };
 
 // Trade-Outcome-Klartext (für Alerts-Tabelle, getrennt von Send-Status).

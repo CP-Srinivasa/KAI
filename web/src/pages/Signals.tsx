@@ -48,6 +48,7 @@ export function SignalsPage() {
         title={t("pages.signals.title")}
         tone="info"
         icon={<Radio size={18} />}
+        divider={false}
         sub={
           readiness.state === "ready"
             ? `Status: ${readiness.data.status} · Execution ${readiness.data.execution_enabled ? "aktiv" : "aus"} · Write-Back ${readiness.data.write_back_allowed ? "erlaubt" : "gesperrt"}`
@@ -103,25 +104,27 @@ export function SignalsPage() {
           <table className="w-full text-xs">
             <thead>
               <tr className="text-fg-subtle text-2xs uppercase tracking-wider">
-                <th className="text-left font-semibold px-4 py-2">Cycle</th>
+                <th className="text-left font-semibold px-4 py-2">Wann</th>
                 <th className="text-left font-semibold px-4 py-2">Symbol</th>
-                <th className="text-left font-semibold px-4 py-2">Status</th>
-                <th className="text-center font-semibold px-4 py-2">Data</th>
-                <th className="text-center font-semibold px-4 py-2">Signal</th>
-                <th className="text-center font-semibold px-4 py-2">Risk</th>
-                <th className="text-center font-semibold px-4 py-2">Order</th>
-                <th className="text-left font-semibold px-4 py-2">Completed</th>
+                <th className="text-left font-semibold px-4 py-2">Was passierte</th>
+                <th className="text-left font-semibold px-4 py-2 whitespace-nowrap">
+                  Pipeline
+                  <span className="ml-1 normal-case text-fg-subtle/70 font-normal">
+                    (Daten → Signal → Risk → Order)
+                  </span>
+                </th>
+                <th className="text-left font-semibold px-4 py-2">Dauer</th>
               </tr>
             </thead>
             <tbody>
               {cycles.state === "loading" && (
                 <tr>
-                  <td colSpan={8} className="px-4 py-6 text-center text-fg-subtle">{t("common.loading")}</td>
+                  <td colSpan={5} className="px-4 py-6 text-center text-fg-subtle">{t("common.loading")}</td>
                 </tr>
               )}
               {cycles.state === "ready" && filtered.length === 0 && (
                 <tr>
-                  <td colSpan={8}>
+                  <td colSpan={5}>
                     <EmptyState
                       icon={<Activity size={18} />}
                       title={tab === "all" ? "Keine Cycles in diesem Zeitfenster" : `Keine Cycles mit Status '${tabs.find((x) => x.id === tab)?.label}'`}
@@ -166,46 +169,121 @@ export function SignalsPage() {
   );
 }
 
+// 2026-05-10 DALI-Signals-Klartext: Cycle-ID als Tooltip + relative Zeit als
+// primäre Identifikation. Pipeline-Visualisierung mit Neon-Glow und Stop-
+// Markierung wo der Cycle gescheitert ist.
+function formatCycleTime(iso: string): string {
+  try {
+    const dt = new Date(iso);
+    const now = new Date();
+    const diffSec = Math.round((now.getTime() - dt.getTime()) / 1000);
+    if (diffSec < 60) return `vor ${diffSec}s`;
+    if (diffSec < 3600) return `vor ${Math.round(diffSec / 60)}min`;
+    if (diffSec < 86400) return `vor ${Math.round(diffSec / 3600)}h`;
+    return `vor ${Math.round(diffSec / 86400)}d`;
+  } catch {
+    return iso.substring(11, 19);
+  }
+}
+
+function formatDuration(start: string, end: string | undefined): string {
+  if (!end) return "läuft";
+  try {
+    const startMs = new Date(start).getTime();
+    const endMs = new Date(end).getTime();
+    const diffMs = endMs - startMs;
+    if (diffMs < 1000) return `${diffMs}ms`;
+    if (diffMs < 60000) return `${(diffMs / 1000).toFixed(1)}s`;
+    return `${Math.round(diffMs / 60000)}min`;
+  } catch {
+    return "—";
+  }
+}
+
 function CycleRow({ c }: { c: TradingCycle }) {
   const toneFor = (s: string) => {
     if (s === "completed") return "pos";
     if (s === "no_signal") return "muted";
     if (s === "no_market_data" || s === "stale_data") return "warn";
-    if (s === "order_failed" || s === "consensus_rejected") return "neg";
+    if (s === "order_failed" || s === "consensus_rejected" || s === "priority_rejected") return "neg";
     return "neutral";
   };
-  const completed = c.completed_at ?? "";
   return (
     <tr className={cn("border-t border-line-subtle hover:bg-bg-2", c.status === "completed" && "bg-pos/[0.03]")}>
-      <td className="px-4 py-2 font-mono text-2xs text-fg-subtle whitespace-nowrap">{c.cycle_id.slice(-12)}</td>
+      <td className="px-4 py-2 whitespace-nowrap" title={`Cycle-ID: ${c.cycle_id}`}>
+        <div className="font-mono text-xs text-fg">{formatCycleTime(c.started_at)}</div>
+        <div className="text-2xs text-fg-subtle font-mono">{c.started_at.substring(11, 19)} UTC</div>
+      </td>
       <td className="px-4 py-2 font-mono font-semibold whitespace-nowrap">{c.symbol}</td>
       <td className="px-4 py-2">
         <span title={CYCLE_STATUS_EXPLAIN[c.status] ?? c.status}>
           <Badge tone={toneFor(c.status)}>{LABEL_DE[c.status] ?? c.status}</Badge>
         </span>
       </td>
-      <td className="px-4 py-2 text-center"><PipelineDot reached={c.market_data_fetched} /></td>
-      <td className="px-4 py-2 text-center"><PipelineDot reached={c.signal_generated} /></td>
-      <td className="px-4 py-2 text-center"><PipelineDot reached={c.risk_approved} /></td>
-      <td className="px-4 py-2 text-center"><PipelineDot reached={c.order_created} /></td>
+      <td className="px-4 py-2">
+        <CyclePipeline c={c} />
+      </td>
       <td className="px-4 py-2 font-mono text-2xs text-fg-subtle whitespace-nowrap">
-        {completed ? completed.substring(11, 19) : "—"}
+        {formatDuration(c.started_at, c.completed_at ?? undefined)}
       </td>
     </tr>
   );
 }
 
-// 2026-05-10 DALI-Lebendigkeit: BoolDot-Icons (CheckCircle2/Clock) → Neon-Lichtpunkte
-// mit glow-info für erreicht, gedimmt sonst. Konsistent mit Trades-Pipeline.
-function PipelineDot({ reached }: { reached: boolean }) {
+// 2026-05-10 DALI-Signals-Pipeline: 4 Steps als Neon-Lichtpunkte mit Verbindungs-
+// linien. Operator: "DATA SIGNAL RISK ORDER schein tot keine Bewegung keine Farben."
+// Lösung: erreicht=cyan/glow-info; Stop-Step bei Fehler=neg/glow-neg oder
+// warn/glow-warn; last-reached pulst leicht (zeigt "hier ist der Cycle stehen
+// geblieben").
+function CyclePipeline({ c }: { c: TradingCycle }) {
+  const steps = [
+    { reached: c.market_data_fetched, label: "Markt-Daten geholt", key: "data" },
+    { reached: c.signal_generated, label: "Signal erzeugt", key: "signal" },
+    { reached: c.risk_approved, label: "Risk-Gate bestanden", key: "risk" },
+    { reached: c.order_created, label: "Order erstellt", key: "order" },
+  ];
+  let lastReachedIdx = -1;
+  for (let j = steps.length - 1; j >= 0; j--) {
+    if (steps[j].reached) {
+      lastReachedIdx = j;
+      break;
+    }
+  }
+  const isFail = c.status === "order_failed" || c.status === "consensus_rejected" || c.status === "priority_rejected";
+  const isWarn = c.status === "no_market_data" || c.status === "stale_data";
+  const stoppedAt = lastReachedIdx >= 0 && lastReachedIdx < steps.length - 1 && (isFail || isWarn) ? lastReachedIdx : -1;
   return (
-    <span
-      aria-hidden="true"
-      className={cn(
-        "inline-block h-2 w-2 rounded-full transition-transform hover:scale-150",
-        reached ? "bg-info glow-info" : "bg-fg-subtle/20",
-      )}
-    />
+    <div className="flex items-center">
+      {steps.map((s, i) => {
+        const isStopAt = i === stoppedAt;
+        const dotClass = !s.reached
+          ? "bg-fg-subtle/20"
+          : isStopAt && isFail
+            ? "bg-neg glow-neg animate-pulse"
+            : isStopAt && isWarn
+              ? "bg-warn glow-warn animate-pulse"
+              : "bg-info glow-info";
+        const lineClass =
+          i < steps.length - 1
+            ? steps[i + 1].reached
+              ? "bg-info/45"
+              : s.reached && isStopAt && isFail
+                ? "bg-neg/30"
+                : s.reached && isStopAt && isWarn
+                  ? "bg-warn/30"
+                  : "bg-fg-subtle/15"
+            : "";
+        return (
+          <span key={s.key} className="inline-flex items-center">
+            <span
+              title={`${s.label}: ${s.reached ? "✓ erreicht" : "× nicht erreicht"}`}
+              className={cn("inline-block h-2.5 w-2.5 rounded-full shrink-0 transition-transform hover:scale-150", dotClass)}
+            />
+            {i < steps.length - 1 && <span className={cn("inline-block h-px w-5 shrink-0", lineClass)} />}
+          </span>
+        );
+      })}
+    </div>
   );
 }
 
