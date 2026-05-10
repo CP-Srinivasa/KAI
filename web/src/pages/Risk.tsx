@@ -1,4 +1,4 @@
-import { Info } from "lucide-react";
+import { Info, ShieldAlert } from "lucide-react";
 import { useT } from "@/i18n/I18nProvider";
 import { PageHeader } from "@/layout/PageHeader";
 import { PreparedPanel } from "@/components/panels/PreparedPanel";
@@ -35,6 +35,8 @@ export function RiskPage() {
       <PageHeader
         title={t("pages.risk.title")}
         sub="Live-Exposure (real) + Risiko-Analysen (vorbereitet)"
+        tone="warn"
+        icon={<ShieldAlert size={18} />}
       />
 
       {exposure.state === "ready" && (

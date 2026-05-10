@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { AlertCircle, RefreshCw, CheckCircle2, XCircle, Clock, Ban, Activity } from "lucide-react";
+import { AlertCircle, RefreshCw, CheckCircle2, XCircle, Clock, Ban, Activity, Radio } from "lucide-react";
 import { useT } from "@/i18n/I18nProvider";
 import { Badge, Button, Card } from "@/components/ui/Primitives";
 import { EmptyState } from "@/components/ui/EmptyState";
@@ -45,6 +45,8 @@ export function SignalsPage() {
     <div className="p-5 xl:p-6 space-y-5 max-w-[1680px] mx-auto">
       <PageHeader
         title={t("pages.signals.title")}
+        tone="info"
+        icon={<Radio size={18} />}
         sub={
           readiness.state === "ready"
             ? `Status: ${readiness.data.status} · Execution ${readiness.data.execution_enabled ? "aktiv" : "aus"} · Write-Back ${readiness.data.write_back_allowed ? "erlaubt" : "gesperrt"}`

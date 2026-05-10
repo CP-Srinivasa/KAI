@@ -1,4 +1,4 @@
-import { AlertCircle, RefreshCw, CheckCircle2, XCircle } from "lucide-react";
+import { AlertCircle, RefreshCw, CheckCircle2, XCircle, ArrowLeftRight } from "lucide-react";
 import { useT } from "@/i18n/I18nProvider";
 import { Badge, Button, Card, CardHeader } from "@/components/ui/Primitives";
 import { PageHeader } from "@/layout/PageHeader";
@@ -17,6 +17,8 @@ export function TradesPage() {
     <div className="p-5 xl:p-6 space-y-5 max-w-[1680px] mx-auto">
       <PageHeader
         title={t("pages.trades.title")}
+        tone="pos"
+        icon={<ArrowLeftRight size={18} />}
         sub={
           status.state === "ready"
             ? `Mode: ${status.data.mode} · ${status.data.total_cycles} cycles · last: ${status.data.last_cycle_status ?? "—"}`

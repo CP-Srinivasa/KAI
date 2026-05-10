@@ -1,3 +1,4 @@
+import { Sparkles } from "lucide-react";
 import { useT } from "@/i18n/I18nProvider";
 import { PageHeader } from "@/layout/PageHeader";
 import { PreparedPanel } from "@/components/panels/PreparedPanel";
@@ -28,6 +29,8 @@ export function AIInsightsPage() {
       <PageHeader
         title={t("pages.ai.title")}
         sub="Welche Quellen liefern zuverlässige Signale — und wie sicher sind wir."
+        tone="ai"
+        icon={<Sparkles size={18} />}
       />
 
       {q.state === "ready" && (

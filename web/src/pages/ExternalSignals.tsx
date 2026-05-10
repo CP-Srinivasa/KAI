@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Send, Loader2, RefreshCw, Inbox, CheckCircle2, AlertTriangle, XCircle, Clock, HelpCircle } from "lucide-react";
+import { Send, Loader2, RefreshCw, Inbox, CheckCircle2, AlertTriangle, XCircle, Clock, HelpCircle, Upload } from "lucide-react";
 import { useT } from "@/i18n/I18nProvider";
 import { PageHeader } from "@/layout/PageHeader";
 import { Badge, Button, Card, CardHeader } from "@/components/ui/Primitives";
@@ -741,6 +741,8 @@ export function ExternalSignalsPage() {
       <PageHeader
         title={t("pages.external.title")}
         sub="Manuelle & externe Signale — Dashboard/Telegram-Parität über Envelope-Pipeline"
+        tone="accent"
+        icon={<Upload size={18} />}
       />
 
       <SignalPasteForm onPasted={auditState.reload} />

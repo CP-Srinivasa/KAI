@@ -59,6 +59,8 @@ export function AgentsPage() {
       <PageHeader
         title="Agenten"
         sub="SENTR · Watchdog · Architect · DALI — alle ausschließlich von Claude Code ausgeführt"
+        tone="ai"
+        icon={<Bot size={18} />}
       />
 
       <Card padded>

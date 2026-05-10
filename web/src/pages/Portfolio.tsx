@@ -1,4 +1,4 @@
-import { AlertCircle, RefreshCw } from "lucide-react";
+import { AlertCircle, RefreshCw, Briefcase } from "lucide-react";
 import { useT } from "@/i18n/I18nProvider";
 import { Badge, Button, Card, CardHeader } from "@/components/ui/Primitives";
 import { PageHeader } from "@/layout/PageHeader";
@@ -27,6 +27,8 @@ export function PortfolioPage() {
     <div className="p-5 xl:p-6 space-y-5 max-w-[1680px] mx-auto">
       <PageHeader
         title={t("pages.portfolio.title")}
+        tone="accent"
+        icon={<Briefcase size={18} />}
         sub={
           snap.state === "ready"
             ? `Paper Portfolio · ${snap.data.position_count} Positionen · Quelle: ${snap.data.source}`

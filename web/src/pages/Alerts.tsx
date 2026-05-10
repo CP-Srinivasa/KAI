@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Send, RefreshCw, AlertCircle, Inbox } from "lucide-react";
+import { Send, RefreshCw, AlertCircle, Inbox, Bell } from "lucide-react";
 import { useT } from "@/i18n/I18nProvider";
 import { Badge, Button, Card } from "@/components/ui/Primitives";
 import { EmptyState } from "@/components/ui/EmptyState";
@@ -55,6 +55,8 @@ export function AlertsPage() {
     <div className="p-5 xl:p-6 space-y-5 max-w-[1680px] mx-auto">
       <PageHeader
         title={t("pages.alerts.title")}
+        tone="accent"
+        icon={<Bell size={18} />}
         sub={
           audit.state === "ready"
             ? `${total} Einträge · ${totalResolved} aufgelöst · zeige jüngste ${rows.length}`
