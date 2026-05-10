@@ -50,7 +50,12 @@ export function AppShell() {
       <Sidebar mobileOpen={mobileNavOpen} onMobileClose={() => setMobileNavOpen(false)} />
       <div className="flex-1 min-w-0 flex flex-col">
         {mode === "live" && (
-          <div className="h-1 bg-gradient-to-r from-neg via-neg/60 to-neg" aria-hidden />
+          <div
+            className="h-[2px] mx-3 bg-gradient-to-r from-transparent via-pos to-transparent shadow-[0_0_10px_rgb(var(--pos)/0.55)]"
+            aria-hidden
+            role="status"
+            aria-label="Live-Trading aktiv"
+          />
         )}
         <BackendStatusBanner />
         <Topbar onMobileMenuToggle={() => setMobileNavOpen((v) => !v)} />

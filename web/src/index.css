@@ -302,6 +302,10 @@ body {
    Bitcoin-Body (orange Kreis + B-Logo links) frisst Currency-Pellets ($/€/¥/£).
    Mund-Klappen rotieren auf/zu via transform. Steps(1) fuer retro-Look.
    Pixelated rendering fuer ATARI-feel auf modernen Displays. */
+/* Pacman v3 (Operator-Wunsch 2026-05-10): klassischer ATARI-Pacman mit
+   einem animierten Mund-Dreieck (SMIL animate auf points-Attribut im SVG
+   selbst). Hier nur der Container-Glow + pixel-rendering — die Animation
+   läuft im SVG via <animate>. */
 .btc-pacman {
   display: inline-block;
   flex-shrink: 0;
@@ -309,26 +313,6 @@ body {
   image-rendering: pixelated;
   image-rendering: -moz-crisp-edges;
   image-rendering: crisp-edges;
-}
-.btc-pacman .btc-jaw-top {
-  transform-origin: 50% 50%;
-  animation: btc-jaw-top 0.42s ease-in-out infinite alternate;
-}
-.btc-pacman .btc-jaw-bottom {
-  transform-origin: 50% 50%;
-  animation: btc-jaw-bottom 0.42s ease-in-out infinite alternate;
-}
-@keyframes btc-jaw-top {
-  0%   { transform: rotate(0deg); }
-  100% { transform: rotate(-32deg); }
-}
-@keyframes btc-jaw-bottom {
-  0%   { transform: rotate(0deg); }
-  100% { transform: rotate(32deg); }
-}
-@media (prefers-reduced-motion: reduce) {
-  .btc-pacman .btc-jaw-top    { transform: rotate(-25deg); animation: none; }
-  .btc-pacman .btc-jaw-bottom { transform: rotate(25deg);  animation: none; }
 }
 
 /* Pacman-Pellet-Power-Pulse — Power-Pellets blinken im ATARI-Original. */

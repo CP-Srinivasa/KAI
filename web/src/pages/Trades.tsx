@@ -7,7 +7,7 @@ import { useApi } from "@/lib/useApi";
 import { fetchTradingLoopStatus, fetchRecentCycles, type TradingCycle } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { PreparedPanel } from "@/components/panels/PreparedPanel";
-import { LABEL_DE, CYCLE_STATUS_EXPLAIN, humanizeLabel } from "@/lib/labels";
+import { LABEL_DE, CYCLE_STATUS_EXPLAIN } from "@/lib/labels";
 
 // 2026-05-10 DALI-T1: Klartext-Synopsis aus Cycle-Buckets ableiten.
 // Operator-Frage "was sagt mir die Seite?" wird in 1 Satz beantwortet.
@@ -65,10 +65,11 @@ function pelletForStatus(status: string, idx: number): PelletKind {
   return "empty"; // no_signal, no_market_data etc → kleiner Punkt
 }
 
-// Bitcoin-Pacman: orange Kreis mit B-Logo links, Mund-Klappen rechts
-// rotieren auf/zu via CSS-Animation (transform-rotate, ease-in-out).
-// SVG damit Mund-Klappen-Animation deklarativ sauber ist.
-function BitcoinPacman({ size = 22 }: { size?: number }) {
+// Klassischer ATARI-Pacman v3: gelber Kreis + kleines Auge + animiertes
+// Mund-Dreieck (öffnet/schließt via SMIL-Animation auf points-Attribut).
+// Operator: "Mach ein Dreieck als Mund das sich schließt und öffnet,
+// nimm dir ein Beispiel wie er wirklich aussieht."
+function PacmanIcon({ size = 22 }: { size?: number }) {
   return (
     <svg
       width={size}
@@ -77,33 +78,23 @@ function BitcoinPacman({ size = 22 }: { size?: number }) {
       className="btc-pacman"
       aria-hidden="true"
     >
-      {/* Bitcoin-Body: oranger Kreis */}
+      {/* Pacman-Body: gelber Kreis */}
       <circle cx="16" cy="16" r="14" fill="rgb(var(--warn))" />
-      {/* B-Logo (Bitcoin) — bold, weiss/hell, links sodass Mund rechts frei ist */}
-      <text
-        x="10"
-        y="22"
-        fontSize="18"
-        fontWeight="900"
-        fill="rgb(var(--bg-0))"
-        fontFamily="ui-serif, Georgia, serif"
-      >
-        ₿
-      </text>
-      {/* Mund-Klappe oben — rotiert auf-zu */}
-      <polygon
-        className="btc-jaw-top"
-        points="16,16 32,16 32,2 16,2"
-        fill="rgb(var(--bg-0))"
-      />
-      {/* Mund-Klappe unten — rotiert auf-zu */}
-      <polygon
-        className="btc-jaw-bottom"
-        points="16,16 32,16 32,30 16,30"
-        fill="rgb(var(--bg-0))"
-      />
-      {/* Auge */}
-      <circle cx="14" cy="9" r="1.4" fill="rgb(var(--bg-0))" />
+      {/* Mund-Dreieck — öffnet/schließt via SMIL-Animation auf points.
+          calcMode="discrete" gibt den retro-stuck-Effekt von ATARI-Pacman
+          (kein smooth-tween zwischen offen und zu). 3 Frames sodass es
+          smooth zurückkommt. */}
+      <polygon fill="rgb(var(--bg-0))">
+        <animate
+          attributeName="points"
+          values="16,16 32,4 32,28; 16,16 31,15 31,17; 16,16 32,4 32,28"
+          dur="0.42s"
+          calcMode="discrete"
+          repeatCount="indefinite"
+        />
+      </polygon>
+      {/* Auge oben */}
+      <circle cx="14" cy="9" r="1.6" fill="rgb(var(--bg-0))" />
     </svg>
   );
 }
@@ -215,7 +206,7 @@ export function TradesPage() {
                 {summarizeCycles(cyclesList)}
               </div>
               <div className="mt-2.5 flex items-center gap-2.5 flex-wrap">
-                <BitcoinPacman size={22} />
+                <PacmanIcon size={22} />
                 <div className="flex items-center gap-1.5 flex-wrap">
                   {cyclesList.slice(-30).map((c, i) => (
                     <CurrencyPellet
@@ -299,27 +290,85 @@ export function TradesPage() {
         </Card>
       </div>
 
+      {/* DALI-T-Guardrails-v2: ausdrucksvolle Schutzschalter-Ansicht.
+          Operator: "Was sollen mir die Werte sagen, ausdrucksstaerker
+          und visueller darstellen."
+          Drei klare Status-Pillen (Execution / Write-Back / Run-Once)
+          + kompakte Letzter-Cycle-Karte mit Symbol + Status + relativer
+          Zeit. RowKV-Snake-Case-Liste raus. */}
       {status.state === "ready" && (
         <Card padded>
           <CardHeader
-            title="Execution-Guardrails"
-            right={
-              <Badge tone={status.data.execution_enabled ? "pos" : "muted"} dot>
-                {status.data.execution_enabled ? "execution aktiv" : "paper / shadow"}
-              </Badge>
-            }
+            title="Schutzschalter"
+            subtitle="Was darf KAI gerade machen — und was ist gesperrt?"
           />
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-2 text-xs">
-            <RowKV k="write_back_allowed" v={status.data.write_back_allowed ? "erlaubt" : "gesperrt"} tone={status.data.write_back_allowed ? "pos" : "muted"} />
-            <RowKV k="run_once_allowed" v={status.data.run_once_allowed ? "bereit" : "blockiert"} tone={status.data.run_once_allowed ? "pos" : "warn"} />
-            <RowKV k="run_once_block_reason" v={status.data.run_once_block_reason ?? "—"} />
-            <RowKV k="last_cycle_id" v={status.data.last_cycle_id?.slice(-14) ?? "—"} />
-            <RowKV k="last_cycle_symbol" v={status.data.last_cycle_symbol ?? "—"} />
-            <RowKV
-              k="last_cycle_completed_at"
-              v={status.data.last_cycle_completed_at?.substring(0, 19).replace("T", " ") ?? "—"}
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-4">
+            <GuardrailPill
+              label="Real-Order-Execution"
+              active={status.data.execution_enabled}
+              onText="aktiv"
+              offText="aus"
+              activeTone="neg"
+              hint={status.data.execution_enabled
+                ? "Echte Orders werden auf der Boerse platziert."
+                : "Nur Paper/Shadow — keine echten Orders."}
+            />
+            <GuardrailPill
+              label="Trading-Journal Schreiben"
+              active={status.data.write_back_allowed}
+              onText="erlaubt"
+              offText="gesperrt"
+              activeTone="warn"
+              hint={status.data.write_back_allowed
+                ? "Cycles werden ins Journal geschrieben."
+                : "Read-only — Journal ist gesperrt."}
+            />
+            <GuardrailPill
+              label="Run-Once Trigger"
+              active={status.data.run_once_allowed}
+              onText="bereit"
+              offText="blockiert"
+              activeTone="pos"
+              hint={status.data.run_once_allowed
+                ? "Operator kann manuell einen Cycle anstossen."
+                : status.data.run_once_block_reason ?? "Run-Once aktuell nicht moeglich."}
             />
           </div>
+
+          {/* Letzter Cycle als kompakte Hervor-Card */}
+          {status.data.last_cycle_symbol && (
+            <div className="rounded-md border border-line-subtle bg-bg-2 p-3">
+              <div className="flex items-baseline justify-between gap-3 flex-wrap">
+                <div className="flex items-baseline gap-3">
+                  <span className="text-2xs uppercase tracking-wider text-fg-subtle font-semibold">Letzter Cycle</span>
+                  <span className="font-mono font-semibold text-base text-fg">{status.data.last_cycle_symbol}</span>
+                  {status.data.last_cycle_status && (
+                    <span title={CYCLE_STATUS_EXPLAIN[status.data.last_cycle_status] ?? status.data.last_cycle_status}>
+                      <Badge
+                        tone={
+                          status.data.last_cycle_status === "completed" ? "pos"
+                          : status.data.last_cycle_status === "order_failed" || status.data.last_cycle_status === "consensus_rejected"
+                            ? "neg"
+                            : "warn"
+                        }
+                      >
+                        {LABEL_DE[status.data.last_cycle_status] ?? status.data.last_cycle_status}
+                      </Badge>
+                    </span>
+                  )}
+                </div>
+                <span
+                  className="text-2xs text-fg-subtle font-mono"
+                  title={status.data.last_cycle_id ? `Cycle-ID: ${status.data.last_cycle_id}` : undefined}
+                >
+                  {status.data.last_cycle_completed_at
+                    ? formatTimeShort(status.data.last_cycle_completed_at)
+                    : "—"}
+                </span>
+              </div>
+            </div>
+          )}
         </Card>
       )}
 
@@ -487,17 +536,48 @@ function CyclePipeline({ c }: { c: TradingCycle }) {
   );
 }
 
-function RowKV({ k, v, tone }: { k: string; v: string; tone?: "pos" | "neg" | "warn" | "muted" }) {
+// Schutzschalter-Pille: visueller Status-Indikator mit Klartext + Hint.
+// Active/Inactive-Tone unterscheiden sich semantisch — bei "Real-Execution
+// aktiv" ist das ein Warn-/Neg-Zustand (Live-Trading läuft!), bei "Write-Back
+// erlaubt" ist das ein Warn-Zustand (Journal wird geschrieben), bei "Run-Once
+// bereit" ist das ein Pos-Zustand (Operator kann triggern). Daher der
+// activeTone-Prop — Inactive ist immer muted.
+function GuardrailPill({
+  label,
+  active,
+  onText,
+  offText,
+  activeTone,
+  hint,
+}: {
+  label: string;
+  active: boolean;
+  onText: string;
+  offText: string;
+  activeTone: "pos" | "neg" | "warn";
+  hint: string;
+}) {
+  const tone = active ? activeTone : "muted";
+  const accentBar =
+    tone === "pos" ? "bg-pos"
+    : tone === "neg" ? "bg-neg"
+    : tone === "warn" ? "bg-warn"
+    : "bg-fg-subtle/40";
+  const valueColor =
+    tone === "pos" ? "text-pos"
+    : tone === "neg" ? "text-neg"
+    : tone === "warn" ? "text-warn"
+    : "text-fg-muted";
   return (
-    <div className="flex items-center justify-between gap-2 overflow-hidden border-b border-line-subtle/50 py-1">
-      <span className="min-w-0 truncate font-mono text-2xs text-fg-subtle" title={k}>{humanizeLabel(k)}</span>
-      <span className={cn(
-        "shrink-0 font-mono text-right",
-        tone === "pos" && "text-pos",
-        tone === "neg" && "text-neg",
-        tone === "warn" && "text-warn",
-        tone === "muted" && "text-fg-muted",
-      )}>{v}</span>
+    <div className="rounded-md border border-line-subtle bg-bg-2 p-3 flex gap-2">
+      <span className={cn("h-full w-1 rounded-full shrink-0", accentBar)} aria-hidden />
+      <div className="min-w-0 flex-1">
+        <div className="text-2xs uppercase tracking-wider text-fg-subtle font-semibold">{label}</div>
+        <div className={cn("mt-1 font-mono font-semibold text-sm", valueColor)}>
+          {active ? onText : offText}
+        </div>
+        <div className="mt-1 text-2xs text-fg-subtle leading-relaxed">{hint}</div>
+      </div>
     </div>
   );
 }
