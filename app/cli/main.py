@@ -121,8 +121,10 @@ app.add_typer(query_app, name="query", hidden=True)
 app.add_typer(alerts_app, name="alerts")
 
 # Lazy import to avoid heavy trading deps at top-level
+from app.cli.commands.audit import audit_app  # noqa: E402
 from app.cli.commands.daily_strategy import daily_strategy_app  # noqa: E402
 from app.cli.commands.ingestion import ingestion_app  # noqa: E402
+from app.cli.commands.learning import learning_app  # noqa: E402
 from app.cli.commands.trading import trading_app  # noqa: E402
 from app.cli.commands.tradingview import tradingview_app  # noqa: E402
 
@@ -130,6 +132,8 @@ app.add_typer(trading_app, name="trading")
 app.add_typer(tradingview_app, name="tradingview")
 app.add_typer(daily_strategy_app, name="daily-strategy")
 app.add_typer(ingestion_app, name="ingestion")
+app.add_typer(learning_app, name="learning")
+app.add_typer(audit_app, name="audit")
 
 
 @app.callback()
@@ -1063,10 +1067,6 @@ def alerts_hold_report(
     audits = load_alert_audits(artifacts_path)
     source_map, title_map = _load_doc_metadata(audits)
     report = build_hold_metrics_report(
-        alert_audit_path=artifacts_path / "alert_audit.jsonl",
-        alert_outcomes_path=artifacts_path / "alert_outcomes.jsonl",
-        trading_loop_audit_path=artifacts_path / "trading_loop_audit.jsonl",
-        paper_execution_audit_path=artifacts_path / "paper_execution_audit.jsonl",
         source_by_doc=source_map or None,
         title_by_doc=title_map or None,
     )
@@ -1165,8 +1165,6 @@ def alerts_tv4_quality_bar(
     audits = load_alert_audits(artifacts_path)
     source_map, _title_map = _load_doc_metadata(audits)
     report = build_provenance_split_report(
-        alert_audit_path=artifacts_path / "alert_audit.jsonl",
-        alert_outcomes_path=artifacts_path / "alert_outcomes.jsonl",
         tradingview_pending_signals_path=artifacts_path / "tradingview_pending_signals.jsonl",
         source_by_doc=source_map or None,
     )
@@ -1299,6 +1297,8 @@ def alerts_analyze_resolved(
     audits = load_alert_audits(artifacts_path)
     annotations = load_outcome_annotations(artifacts_path)
 
+    source_by_doc: dict[str, str] | None
+    title_by_doc: dict[str, str] | None
     if include_source:
         source_by_doc, title_by_doc = _load_doc_metadata(audits)
         source_by_doc = source_by_doc or None

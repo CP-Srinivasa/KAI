@@ -89,6 +89,7 @@ def artifacts_dir(tmp_path: Path) -> Path:
                 "sentiment_label": "bullish",
                 "priority": 9,
                 "affected_assets": ["BTC/USDT"],
+                "directional_eligible": False,
                 "dispatched_at": "2026-04-14T10:00:00",
                 "is_digest": False,
             }
@@ -119,7 +120,22 @@ def artifacts_dir(tmp_path: Path) -> Path:
     )
 
     (tmp_path / "paper_execution_audit.jsonl").write_text(
-        json.dumps({"event_type": "order_filled", "side": "buy"})
+        json.dumps(
+            {
+                "schema_version": "v2",
+                "event_type": "order_filled",
+                "timestamp_utc": "2026-04-14T10:05:00+00:00",
+                "fill_id": "fill-dashboard-1",
+                "order_id": "order-dashboard-1",
+                "symbol": "BTC/USDT",
+                "side": "buy",
+                "position_side": "long",
+                "quantity": 0.01,
+                "fill_price": 50000.0,
+                "fee_usd": 0.5,
+                "pnl_usd": 0.0,
+            }
+        )
         + "\n"
         + json.dumps({"event_type": "cycle_start"})
         + "\n",

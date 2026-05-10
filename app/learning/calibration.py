@@ -44,7 +44,12 @@ DEFAULT_MIN_SAMPLE_FOR_JUDGMENT: Final[int] = 30
 
 
 class OutcomePair(BaseModel):
-    """Eine einzelne (Vorhersage, Wirklichkeit)-Paarung."""
+    """Eine einzelne (Vorhersage, Wirklichkeit)-Paarung.
+
+    `regime` ist optional und nur für regime-spezifische Calibration relevant
+    (siehe `app.learning.regime_calibration`). Pairs ohne regime werden in
+    den globalen Bucket einsortiert.
+    """
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -53,6 +58,7 @@ class OutcomePair(BaseModel):
     actual_outcome: int = Field(ge=0, le=1)
     timestamp_utc: datetime | None = None
     weight: float = Field(default=1.0, ge=0.0)
+    regime: str | None = None
 
     @field_validator("actual_outcome")
     @classmethod

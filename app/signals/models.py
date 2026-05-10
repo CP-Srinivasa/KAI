@@ -13,6 +13,8 @@ from enum import StrEnum
 class SignalDirection(StrEnum):
     LONG = "long"
     SHORT = "short"
+    NEUTRAL = "neutral"
+    CANCEL = "cancel"
 
 
 class SignalState(StrEnum):

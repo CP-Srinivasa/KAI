@@ -18,8 +18,15 @@ from collections.abc import Callable, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 
+from app.audit.structured_reasoning import (
+    PHASE_CONFIDENCE_CHANGE,
+    PHASE_INVALIDATION,
+    ReasoningJournal,
+)
 from app.core.domain.document import AnalysisResult
 from app.core.enums import SentimentLabel
+from app.learning.active_calibrator import ActiveCalibrator
+from app.learning.active_threshold import ActiveThreshold
 from app.market_data.models import MarketDataPoint
 from app.market_data.regime_detection import (
     FeatureName,
@@ -87,6 +94,9 @@ class SignalGenerator:
         bayes_audit_path: Path | str | None = None,
         bayes_extra_evidences_provider: ExtraEvidencesProvider | None = None,
         regime_engine: RegimeDetectionEngine | None = None,
+        active_calibrator: ActiveCalibrator | None = None,
+        active_min_bayes_confidence: ActiveThreshold | None = None,
+        reasoning_journal: ReasoningJournal | None = None,
     ) -> None:
         self._min_confidence = min_confidence
         self._min_confluence = min_confluence
@@ -117,6 +127,18 @@ class SignalGenerator:
         # source_trust in die Markt-Regime-Evidence — unsichere Klassifikation
         # ⇒ schwächere Evidence statt falscher Confidence.
         self._regime_engine = regime_engine
+        # Opt-in: aktiver Calibrator aus dem Learning-Pfad. None = no behavior
+        # change (raw Bayes-Posterior wird verwendet wie bisher).
+        self._active_calibrator = active_calibrator
+        # Opt-in: aktive min-bayes-confidence-Schwelle aus dem Learning-Pfad.
+        # None = no behavior change (Constructor-`min_bayes_confidence` wird
+        # verwendet wie bisher).
+        self._active_min_bayes_confidence = active_min_bayes_confidence
+        # Opt-in: structured reasoning journal. Wenn gesetzt, werden
+        # Calibrator-Apply (confidence_change) und Bayes-Gate-Reject
+        # (invalidation) als ReasoningStep persistiert. None = no audit
+        # writes — bestehendes Verhalten bleibt erhalten.
+        self._reasoning_journal = reasoning_journal
 
     def generate(
         self,
@@ -162,7 +184,7 @@ class SignalGenerator:
             return None
 
         # Filter 5: direction from sentiment (neutral/mixed → no signal)
-        direction = self._sentiment_to_direction(analysis.sentiment_label)
+        direction = self._sentiment_to_direction(analysis)
         if direction is None:
             logger.debug(
                 "[SIGNAL] Neutral/mixed sentiment for %s (%s) — no signal",
@@ -187,12 +209,84 @@ class SignalGenerator:
         # wenn ``shadow_only=False`` und Confidence unter / Uncertainty über
         # operator-konfigurierter Schwelle liegt.  Bei Schatten-Modus werden
         # die Werte nur angeheftet → Vergleichbarkeit ohne Verhaltensänderung.
-        bayes_report = self._evaluate_bayes(analysis, market_data, direction)
+        raw_bayes_report = self._evaluate_bayes(analysis, market_data, direction)
+
+        # decision_id wird hier (vor dem Bayes-Gate) generiert, damit auch
+        # ein abgelehntes Signal eine Reasoning-Trail-Identität trägt.
+        # Bei Approve trägt der SignalCandidate dieselbe ID weiter.
+        decision_id = _new_decision_id()
+
+        # Opt-in: aktiver Calibrator korrigiert posterior + abgeleitete
+        # confidence vor dem Gate. Der RAW Report bleibt unverändert für das
+        # bayes_audit-Append weiter unten (sonst würde das nächste Lern-
+        # Run zirkulär auf bereits-kalibrierten Werten lernen).
+        bayes_report = raw_bayes_report
+        if (
+            raw_bayes_report is not None
+            and self._active_calibrator is not None
+            and self._active_calibrator.is_active
+        ):
+            bayes_report = self._active_calibrator.apply_to_report(
+                raw_bayes_report,
+                direction=direction.value,
+                regime=self._derive_market_regime(market_data.change_pct_24h),
+            )
+            logger.debug(
+                "[SIGNAL] Calibrator %s applied to %s: "
+                "posterior %.4f → %.4f, confidence %.4f → %.4f",
+                self._active_calibrator.version_id,
+                symbol,
+                raw_bayes_report.posterior_probability,
+                bayes_report.posterior_probability,
+                raw_bayes_report.confidence_score,
+                bayes_report.confidence_score,
+            )
+            # Structured-reasoning step: confidence_change
+            if self._reasoning_journal is not None:
+                version_id = self._active_calibrator.version_id
+                self._reasoning_journal.log_step(
+                    decision_id=decision_id,
+                    phase=PHASE_CONFIDENCE_CHANGE,
+                    actor="ActiveCalibrator",
+                    rationale_summary=(
+                        f"posterior calibrated for {direction.value} "
+                        f"in regime={self._derive_market_regime(market_data.change_pct_24h)}"
+                    ),
+                    inputs={
+                        "raw_posterior": raw_bayes_report.posterior_probability,
+                        "regime": self._derive_market_regime(market_data.change_pct_24h),
+                        "direction": direction.value,
+                    },
+                    outputs={
+                        "calibrated_posterior": bayes_report.posterior_probability,
+                        "calibrated_confidence": bayes_report.confidence_score,
+                    },
+                    confidence_before=raw_bayes_report.confidence_score,
+                    confidence_after=bayes_report.confidence_score,
+                    parameter_versions=(
+                        {self._active_calibrator.parameter_path: version_id}
+                        if version_id is not None
+                        else {}
+                    ),
+                    evidence_refs=(f"bayes_audit:{decision_id}",),
+                )
+
+        # Effective min-bayes-confidence: ActiveThreshold (wenn aktiv) sonst
+        # Constructor-Default. Audit-friendly: wir loggen den Threshold-Wert,
+        # damit der Operator nachvollziehen kann, gegen welche Schwelle gegated
+        # wurde.
+        effective_min_bayes_confidence = (
+            self._active_min_bayes_confidence.value
+            if self._active_min_bayes_confidence is not None
+            and self._active_min_bayes_confidence.is_active
+            else self._min_bayes_confidence
+        )
+
         if (
             bayes_report is not None
             and not self._bayes_shadow_only
             and (
-                bayes_report.confidence_score < self._min_bayes_confidence
+                bayes_report.confidence_score < effective_min_bayes_confidence
                 or bayes_report.uncertainty_score > self._max_bayes_uncertainty
             )
         ):
@@ -201,10 +295,39 @@ class SignalGenerator:
                 "confidence=%.2f<min=%.2f or uncertainty=%.2f>max=%.2f",
                 symbol,
                 bayes_report.confidence_score,
-                self._min_bayes_confidence,
+                effective_min_bayes_confidence,
                 bayes_report.uncertainty_score,
                 self._max_bayes_uncertainty,
             )
+            # Structured-reasoning step: invalidation (gate-reject)
+            if self._reasoning_journal is not None:
+                self._reasoning_journal.log_step(
+                    decision_id=decision_id,
+                    phase=PHASE_INVALIDATION,
+                    actor="SignalGenerator.bayes_gate",
+                    rationale_summary=(
+                        f"bayes-gate rejected {symbol}: confidence "
+                        f"{bayes_report.confidence_score:.4f} vs. min "
+                        f"{effective_min_bayes_confidence:.4f}"
+                    ),
+                    inputs={
+                        "confidence_score": bayes_report.confidence_score,
+                        "uncertainty_score": bayes_report.uncertainty_score,
+                        "min_bayes_confidence": effective_min_bayes_confidence,
+                        "max_bayes_uncertainty": self._max_bayes_uncertainty,
+                    },
+                    outputs={"reason": "bayes_gate_rejected"},
+                    parameter_versions=(
+                        {
+                            self._active_min_bayes_confidence.parameter_path: (
+                                self._active_min_bayes_confidence.version_id or ""
+                            )
+                        }
+                        if self._active_min_bayes_confidence is not None
+                        and self._active_min_bayes_confidence.is_active
+                        else {}
+                    ),
+                )
             return None
 
         # Derive market context
@@ -232,13 +355,16 @@ class SignalGenerator:
             f"{entry_price:.4f}. Dynamic SL/TP from RiskEngine."
         )
 
-        decision_id = _new_decision_id()
-        if bayes_report is not None and self._bayes_audit_path is not None:
+        # decision_id wurde bereits in Filter 7 generiert (siehe oben), damit
+        # auch ein abgelehntes Signal eine Reasoning-Trail-Identität trägt.
+        # Audit immer den RAW Report — nicht den (ggf.) calibrated. Sonst
+        # wird der nächste Calibration-Run zirkulär.
+        if raw_bayes_report is not None and self._bayes_audit_path is not None:
             append_bayes_report(
                 decision_id=decision_id,
                 symbol=symbol,
                 direction=direction.value,
-                report=bayes_report,
+                report=raw_bayes_report,
                 path=self._bayes_audit_path,
             )
 
@@ -451,7 +577,10 @@ class SignalGenerator:
     # ─── Private helpers ───────────────────────────────────────────────────────
 
     @staticmethod
-    def _sentiment_to_direction(label: SentimentLabel) -> SignalDirection | None:
+    def _sentiment_to_direction(analysis: AnalysisResult) -> SignalDirection | None:
+        if analysis.event_type and analysis.event_type.strip().lower() == "cancel":
+            return SignalDirection.CANCEL
+        label = analysis.sentiment_label
         if label == SentimentLabel.BULLISH:
             return SignalDirection.LONG
         if label == SentimentLabel.BEARISH:
