@@ -28,9 +28,10 @@ export function PreparedPanel({
     <Card
       padded={!compact}
       className={cn(
-        "relative overflow-hidden",
-        "before:absolute before:top-0 before:left-4 before:right-4 before:h-px",
-        "before:bg-gradient-to-r before:from-transparent before:via-ai/40 before:to-transparent",
+        // 2026-05-10 DALI-A12: statische ai-Hairline durch animierte
+        // synthwave-pulse-edge ersetzt — atmet wie ein Schweif von links
+        // nach rechts, gleiche Animation-DNA wie der PageHeader-Divider.
+        "synthwave-pulse-edge overflow-hidden",
         compact && "p-4",
       )}
     >

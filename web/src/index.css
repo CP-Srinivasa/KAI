@@ -270,27 +270,77 @@ body {
    und an beliebigen Trennstellen, wo eine Synthwave-Identifikation passt. */
 .synthwave-divider {
   height: 1px;
-  /* 2026-05-10 DALI-A1: Inset wie synthwave-edge (left:14px; right:14px),
-     damit die Linie am Card-Layout darunter andockt statt freischwebend
-     ueber der Page zu kleben. Saturation -22% damit sie sich nicht mehr
-     wie ein Banner liest. */
+  /* 2026-05-10 DALI-A1: Inset wie synthwave-edge.
+     2026-05-10 DALI-A12: Animiert wie ein Schweif (background-position
+     wandert von links nach rechts und alternate zurueck — atmen statt
+     statisch). Geteilte Keyframes mit synthwave-pulse-edge. */
   margin: 0 14px;
   background: linear-gradient(90deg,
     transparent 0%,
-    rgb(var(--info) / 0.45) 22%,
-    rgb(var(--ai) / 0.55) 50%,
-    rgb(var(--neg) / 0.45) 78%,
+    rgb(var(--info) / 0) 25%,
+    rgb(var(--info) / 0.55) 42%,
+    rgb(var(--ai) / 0.7) 50%,
+    rgb(var(--neg) / 0.55) 58%,
+    rgb(var(--neg) / 0) 75%,
     transparent 100%);
+  background-size: 250% 100%;
+  background-position: -25% 0%;
   border-radius: 1px;
+  animation: synthwave-pulse-flow 8s ease-in-out infinite alternate;
 }
 .dark .synthwave-divider {
+  box-shadow: 0 0 6px rgb(var(--ai) / 0.18);
+}
+@media (prefers-reduced-motion: reduce) {
+  .synthwave-divider {
+    animation: none;
+    background-position: 50% 0%;
+  }
+}
+
+/* Synthwave-Pulse-Edge — animierter Schweif am Card-Top. Operator-Wunsch
+   2026-05-10: Regenbogen-Linie nicht mehr freischwebend im PageHeader,
+   sondern als atmender Schweif AUF den oberen Linien der ersten Card
+   jeder Sub-Page. Gradient ist eine konzentrierte Mitte (info→ai→neg)
+   mit transparenten Raendern, background-size 250% sodass nur ein
+   Teil sichtbar ist und sich mit ease-in-out hin und her schiebt
+   (16s Hin-und-Zurueck via alternate). Reduced-motion-respektiv. */
+.synthwave-pulse-edge {
+  position: relative;
+}
+.synthwave-pulse-edge::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 1px;
   background: linear-gradient(90deg,
     transparent 0%,
-    rgb(var(--info) / 0.55) 22%,
-    rgb(var(--ai) / 0.65) 50%,
-    rgb(var(--neg) / 0.55) 78%,
+    rgb(var(--info) / 0) 25%,
+    rgb(var(--info) / 0.65) 42%,
+    rgb(var(--ai) / 0.85) 50%,
+    rgb(var(--neg) / 0.65) 58%,
+    rgb(var(--neg) / 0) 75%,
     transparent 100%);
-  box-shadow: 0 0 6px rgb(var(--ai) / 0.12);
+  background-size: 250% 100%;
+  background-position: -25% 0%;
+  animation: synthwave-pulse-flow 8s ease-in-out infinite alternate;
+  pointer-events: none;
+  border-radius: 1px;
+}
+.dark .synthwave-pulse-edge::before {
+  filter: drop-shadow(0 0 4px rgb(var(--ai) / 0.35));
+}
+@keyframes synthwave-pulse-flow {
+  0%   { background-position: -25% 0%; }
+  100% { background-position: 125% 0%; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .synthwave-pulse-edge::before {
+    animation: none;
+    background-position: 50% 0%;
+  }
 }
 
 /* Synthwave-Title — dezenter Cyan-Halo auf Page-Titles im Dark-Mode.
