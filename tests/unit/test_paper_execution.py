@@ -188,6 +188,7 @@ def test_close_short_realizes_profit_when_price_drops(tmp_path):
     assert fill is not None
     assert fill.side == "buy"
     assert fill.position_side == "short"
+    assert fill.pnl_usd > 0
     assert "ETH/USDT" not in eng.portfolio.positions
     assert eng.portfolio.realized_pnl_usd > 0
 

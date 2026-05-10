@@ -1,4 +1,4 @@
-"""Paper/Live ExecutionEngine Parity-Adapter — converts ``OrderIntent``
+"""Paper/Live ExecutionEngine Parity-Adapter — converts ``ExecutableOrderIntent``
 (Aufgabenpaket-6 Pflicht-Vertrag) to engine-specific call shapes.
 
 Spec: docs/architecture/signal_to_execution_gap_analysis_20260510.md
@@ -9,7 +9,7 @@ functions, vollständiges Protocol kommt mit live_engine.py).
 Why
 ---
 Aufgabenpaket-9 Test #14: *"Paper Engine und Live Adapter akzeptieren
-denselben OrderIntent."* Today both sides have **incompatible** input
+denselben ExecutableOrderIntent."* Today both sides have **incompatible** input
 shapes:
 
 - ``PaperExecutionEngine.create_order(symbol, side, quantity, ...)`` —
@@ -18,7 +18,7 @@ shapes:
   dataclass with separate enum types (``OrderSide``, ``OrderType``).
 
 This module bridges via two pure adapter-functions that take a single
-``OrderIntent`` and emit the engine-specific shape. Tests can then
+``ExecutableOrderIntent`` and emit the engine-specific shape. Tests can then
 verify *parity* — same intent → consistent symbol/side/quantity/SL/TP
 on both engines.
 
@@ -31,11 +31,11 @@ from __future__ import annotations
 from typing import Any
 
 from app.execution.exchanges.base import OrderRequest, OrderSide, OrderType
-from app.execution.models import OrderIntent
+from app.execution.order_intent import ExecutableOrderIntent
 
 
-def order_intent_to_paper_kwargs(intent: OrderIntent) -> dict[str, Any]:
-    """Translate ``OrderIntent`` → kwargs for ``PaperExecutionEngine.create_order``.
+def executable_intent_to_paper_kwargs(intent: ExecutableOrderIntent) -> dict[str, Any]:
+    """Translate ``ExecutableOrderIntent`` → kwargs for ``PaperExecutionEngine.create_order``.
 
     Mapping
     -------
@@ -48,7 +48,7 @@ def order_intent_to_paper_kwargs(intent: OrderIntent) -> dict[str, Any]:
     - ``idempotency_key`` → ``idempotency_key``
     - ``correlation_id`` → ``correlation_id``
     - ``quantity`` → ``quantity`` (Risk-Engine sizing happens upstream — this
-      adapter respects whatever quantity the OrderIntent already carries)
+      adapter respects whatever quantity the ExecutableOrderIntent already carries)
     - ``side="sell"`` + native short → ``position_side="short"``
     """
     side_lower = str(intent.side).lower()
@@ -74,7 +74,7 @@ def order_intent_to_paper_kwargs(intent: OrderIntent) -> dict[str, Any]:
     )
 
     # SHORT-positions on paper require both side=sell + position_side=short.
-    # Operator's signal-direction is encoded in OrderIntent.side already.
+    # Operator's signal-direction is encoded in ExecutableOrderIntent.side already.
     position_side = "short" if side_lower == "sell" else "long"
 
     return {
@@ -91,8 +91,8 @@ def order_intent_to_paper_kwargs(intent: OrderIntent) -> dict[str, Any]:
     }
 
 
-def order_intent_to_live_request(intent: OrderIntent) -> OrderRequest:
-    """Translate ``OrderIntent`` → ``OrderRequest`` for ``BaseExchangeAdapter.place_order``.
+def executable_intent_to_live_request(intent: ExecutableOrderIntent) -> OrderRequest:
+    """Translate ``ExecutableOrderIntent`` to exchange ``OrderRequest``.
 
     Mapping
     -------
@@ -149,18 +149,18 @@ def order_intent_to_live_request(intent: OrderIntent) -> OrderRequest:
     )
 
 
-def assert_parity(intent: OrderIntent) -> None:
+def assert_parity(intent: ExecutableOrderIntent) -> None:
     """Assert that paper-kwargs and live-request agree on the trade-essence.
 
     Used by test_paper_live_parity (Aufgabenpaket-9 Test #14). Raises
-    ``AssertionError`` if the same OrderIntent would result in materially
+    ``AssertionError`` if the same ExecutableOrderIntent would result in materially
     different fills on paper vs live.
 
     Compared fields: symbol, side (case-normalized), quantity, limit/price,
     stop_loss, take_profit (TP1).
     """
-    paper = order_intent_to_paper_kwargs(intent)
-    live = order_intent_to_live_request(intent)
+    paper = executable_intent_to_paper_kwargs(intent)
+    live = executable_intent_to_live_request(intent)
 
     assert paper["symbol"] == live.symbol, (
         f"symbol drift: paper={paper['symbol']!r} live={live.symbol!r}"
@@ -186,8 +186,14 @@ def assert_parity(intent: OrderIntent) -> None:
     )
 
 
+order_intent_to_paper_kwargs = executable_intent_to_paper_kwargs
+order_intent_to_live_request = executable_intent_to_live_request
+
+
 __all__ = [
     "assert_parity",
+    "executable_intent_to_live_request",
+    "executable_intent_to_paper_kwargs",
     "order_intent_to_live_request",
     "order_intent_to_paper_kwargs",
 ]

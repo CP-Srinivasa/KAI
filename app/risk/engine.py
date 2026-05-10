@@ -287,8 +287,13 @@ class RiskEngine:
 
         max_risk_usd = equity * (self._limits.max_risk_per_trade_pct / 100)
 
+        sizing_mode = "risk_based"
+        leverage_capped = False
         if risk_allocation_pct is not None and risk_allocation_pct > 0:
-            # Channel-stated fixed margin and leverage (Sprint 5)
+            # Channel-stated fixed margin and leverage. Risk caps still win:
+            # the requested notional is clipped to max_risk_per_trade_pct
+            # whenever stop-distance implies a larger worst-case loss.
+            sizing_mode = "signal_margin_leverage"
             eff_leverage = leverage if leverage is not None and leverage > 0 else 1.0
             if eff_leverage > self._limits.max_leverage:
                 logger.warning(
@@ -298,9 +303,18 @@ class RiskEngine:
                     symbol,
                 )
                 eff_leverage = self._limits.max_leverage
+                leverage_capped = True
             margin_usd = equity * (risk_allocation_pct / 100.0)
             notional_usd = margin_usd * eff_leverage
-            units = notional_usd / entry_price
+            requested_units = notional_usd / entry_price
+            units = requested_units
+            if stop_loss_price is not None and stop_loss_price > 0:
+                risk_per_unit = abs(entry_price - stop_loss_price)
+                if risk_per_unit > 0:
+                    risk_capped_units = max_risk_usd / risk_per_unit
+                    if units > risk_capped_units:
+                        sizing_mode = "signal_margin_leverage_risk_capped"
+                        units = risk_capped_units
         elif stop_loss_price is not None and stop_loss_price > 0:
             risk_per_unit = abs(entry_price - stop_loss_price)
             if risk_per_unit > 0:
@@ -313,8 +327,25 @@ class RiskEngine:
 
         position_value = units * entry_price
         position_size_pct = (position_value / equity) * 100
-        max_loss_usd = min(max_risk_usd, position_value)
+        if stop_loss_price is not None and stop_loss_price > 0:
+            max_loss_usd = abs(entry_price - stop_loss_price) * units
+        else:
+            max_loss_usd = min(max_risk_usd, position_value)
         max_loss_pct = (max_loss_usd / equity) * 100
+
+        if risk_allocation_pct is not None and risk_allocation_pct > 0:
+            rationale = (
+                f"{sizing_mode}: margin={risk_allocation_pct:.4g}% "
+                f"leverage={eff_leverage:.4g}x"
+                f"{' (capped)' if leverage_capped else ''}, "
+                f"{units:.4f} units @ {entry_price:.2f}, "
+                f"max_loss={max_loss_pct:.4g}%"
+            )
+        else:
+            rationale = (
+                f"Risk-based sizing: {self._limits.max_risk_per_trade_pct}% equity risk, "
+                f"{units:.4f} units @ {entry_price:.2f}"
+            )
 
         return PositionSizeResult(
             approved=True,
@@ -325,8 +356,5 @@ class RiskEngine:
             stop_loss_price=stop_loss_price,
             max_loss_usd=max_loss_usd,
             max_loss_pct=max_loss_pct,
-            rationale=(
-                f"Risk-based sizing: {self._limits.max_risk_per_trade_pct}% equity risk, "
-                f"{units:.4f} units @ {entry_price:.2f}"
-            ),
+            rationale=rationale,
         )

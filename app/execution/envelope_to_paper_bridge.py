@@ -11,7 +11,7 @@ Operator 1:1 semantics:
 - Risk-Engine gates still apply (kill-switch, daily-loss, max-positions).
 - Position size is computed via Risk-Engine (max_risk_per_trade_pct).
 - Channel-stated leverage and margin/risk allocation are carried into the
-  OrderIntent/audit contract. Paper sizing remains risk-engine-owned.
+  ExecutableOrderIntent/audit contract. Paper sizing remains risk-engine-owned.
 - Entry-type: range/limit/trigger-style. Range entries fill only when the
   current price is inside the operator range; otherwise the envelope stays
   ``pending`` and is re-checked next tick.
@@ -22,7 +22,7 @@ Fail-closed:
 - ``operator_signal_bridge_enabled=False`` (default) -> tick() is a no-op.
 - Source not in allowlist -> skipped with audit, no fill.
 - Missing entry / stop_loss / targets -> rejected at gate.
-- Short/sell signals -> paper short positions via the same OrderIntent
+- Short/sell signals -> paper short positions via the same ExecutableOrderIntent
   contract (side=SELL, position_side=short).
 
 Audit trails:
@@ -43,10 +43,10 @@ from pathlib import Path
 
 from app.core.settings import get_settings
 from app.execution.models import (
-    OrderIntent,
     OrderLifecycleState,
     make_lifecycle_transition,
 )
+from app.execution.order_intent import ExecutableOrderIntent
 from app.execution.paper_engine import PaperExecutionEngine
 from app.market_data.service import get_market_data_snapshot
 from app.risk.engine import RiskEngine
@@ -400,7 +400,7 @@ def _attach_lifecycle(
     )
 
 
-def _build_order_intent(
+def _build_executable_intent(
     *,
     envelope_id: str,
     correlation_id: str | None = None,
@@ -412,7 +412,7 @@ def _build_order_intent(
     stop_loss: float,
     targets: list[float],
     quantity: float | None = None,
-) -> OrderIntent:
+) -> ExecutableOrderIntent:
     leverage = _float(payload.get("leverage")) or 1.0
     risk_allocation_pct = _float(payload.get("margin_pct"))
     if risk_allocation_pct is None:
@@ -420,7 +420,7 @@ def _build_order_intent(
     entry_min, entry_max = _entry_bounds(payload)
     entry_type = str(payload.get("entry_type") or "market").lower()
     order_type = "market" if entry_type == "market" else "limit"
-    return OrderIntent(
+    return ExecutableOrderIntent(
         symbol=symbol,
         side=side.upper(),
         order_type=order_type,
@@ -577,6 +577,12 @@ async def _process_one(
     base = lambda stage: _audit_base(  # noqa: E731
         envelope_id=envelope_id, stage=stage, source=source, envelope=envelope
     )
+    correlation_id = str(
+        envelope.get("origin_envelope_id")
+        or envelope.get("trace_id")
+        or envelope.get("envelope_id")
+        or envelope_id
+    )
 
     # Gate 1: allowlist
     if source not in allowlist:
@@ -681,7 +687,7 @@ async def _process_one(
     if symbol in engine.portfolio.positions:
         rec = base("rejected_position_exists")
         rec["existing_quantity"] = engine.portfolio.positions[symbol].quantity
-        rec["order_intent"] = _build_order_intent(
+        rec["executable_intent"] = _build_executable_intent(
             envelope_id=envelope_id,
             correlation_id=str(rec["correlation_id"]),
             source=source,
@@ -692,6 +698,7 @@ async def _process_one(
             stop_loss=stop_loss,
             targets=targets,
         ).to_dict()
+        rec["order_intent"] = rec["executable_intent"]
         _attach_lifecycle(
             rec,
             final_state=OrderLifecycleState.REJECTED_INVALID_SIGNAL,
@@ -713,7 +720,7 @@ async def _process_one(
         rec = base("pending")
         rec["reason"] = "no_market_data"
         rec["target_entry"] = entry_price
-        rec["order_intent"] = _build_order_intent(
+        rec["executable_intent"] = _build_executable_intent(
             envelope_id=envelope_id,
             correlation_id=str(rec["correlation_id"]),
             source=source,
@@ -724,6 +731,7 @@ async def _process_one(
             stop_loss=stop_loss,
             targets=targets,
         ).to_dict()
+        rec["order_intent"] = rec["executable_intent"]
         _attach_lifecycle(
             rec,
             final_state=OrderLifecycleState.WAITING_FOR_ENTRY,
@@ -778,7 +786,7 @@ async def _process_one(
         rec["entry_min"] = payload.get("entry_min")
         rec["entry_max"] = payload.get("entry_max")
         rec["tolerance_pct"] = tolerance_pct
-        rec["order_intent"] = _build_order_intent(
+        rec["executable_intent"] = _build_executable_intent(
             envelope_id=envelope_id,
             correlation_id=str(rec["correlation_id"]),
             source=source,
@@ -789,6 +797,7 @@ async def _process_one(
             stop_loss=stop_loss,
             targets=targets,
         ).to_dict()
+        rec["order_intent"] = rec["executable_intent"]
         _attach_lifecycle(
             rec,
             final_state=OrderLifecycleState.WAITING_FOR_ENTRY,
@@ -827,7 +836,7 @@ async def _process_one(
         rec = base("rejected_risk")
         rec["risk_check_id"] = risk_result.check_id
         rec["violations"] = list(risk_result.violations)
-        rec["order_intent"] = _build_order_intent(
+        rec["executable_intent"] = _build_executable_intent(
             envelope_id=envelope_id,
             correlation_id=str(rec["correlation_id"]),
             source=source,
@@ -838,6 +847,7 @@ async def _process_one(
             stop_loss=stop_loss,
             targets=targets,
         ).to_dict()
+        rec["order_intent"] = rec["executable_intent"]
         _attach_lifecycle(
             rec,
             final_state=OrderLifecycleState.REJECTED_INVALID_SIGNAL,
@@ -874,7 +884,12 @@ async def _process_one(
     if not size_result.approved or size_result.position_size_units <= 0:
         rec = base("rejected_size")
         rec["rationale"] = size_result.rationale
-        rec["order_intent"] = _build_order_intent(
+        rec["signal_margin_pct"] = risk_allocation_pct
+        rec["signal_leverage"] = leverage_val
+        rec["position_size_pct"] = size_result.position_size_pct
+        rec["max_loss_usd"] = size_result.max_loss_usd
+        rec["max_loss_pct"] = size_result.max_loss_pct
+        rec["executable_intent"] = _build_executable_intent(
             envelope_id=envelope_id,
             correlation_id=str(rec["correlation_id"]),
             source=source,
@@ -885,6 +900,7 @@ async def _process_one(
             stop_loss=stop_loss,
             targets=targets,
         ).to_dict()
+        rec["order_intent"] = rec["executable_intent"]
         _attach_lifecycle(
             rec,
             final_state=OrderLifecycleState.REJECTED_INVALID_SIGNAL,
@@ -904,22 +920,24 @@ async def _process_one(
         return
 
     # Create + fill
-    idem = f"opbridge:{envelope_id}"
-    position_side = "short" if direction == "short" else "long"
+    executable_intent = _build_executable_intent(
+        envelope_id=envelope_id,
+        correlation_id=correlation_id,
+        source=source,
+        payload=payload,
+        symbol=symbol,
+        side=str(side_str),
+        entry_price=entry_price,
+        stop_loss=stop_loss,
+        targets=targets,
+        quantity=size_result.position_size_units,
+    )
     try:
-        order = engine.create_order(
-            symbol=symbol,
-            side=side_str,
-            quantity=size_result.position_size_units,
-            order_type="limit",
-            limit_price=entry_price,
-            stop_loss=stop_loss,
-            take_profit=tp1,
-            idempotency_key=idem,
+        order, fill = engine.execute_intent(
+            intent=executable_intent,
+            current_price=current_price,
             risk_check_id=risk_result.check_id,
-            position_side=position_side,
         )
-        fill = engine.fill_order(order, current_price=current_price)
     except Exception as exc:  # noqa: BLE001
         rec = base("rejected_fill")
         rec["error"] = str(exc)
@@ -979,6 +997,12 @@ async def _process_one(
     rec["symbol"] = symbol
     rec["side"] = side_str
     rec["quantity"] = size_result.position_size_units
+    rec["position_size_pct"] = size_result.position_size_pct
+    rec["position_size_rationale"] = size_result.rationale
+    rec["max_loss_usd"] = size_result.max_loss_usd
+    rec["max_loss_pct"] = size_result.max_loss_pct
+    rec["signal_margin_pct"] = risk_allocation_pct
+    rec["signal_leverage"] = leverage_val
     rec["entry_price_target"] = entry_price
     rec["fill_price"] = fill.fill_price
     rec["stop_loss"] = stop_loss
@@ -986,7 +1010,7 @@ async def _process_one(
     rec["take_profit_tiers"] = [
         {"price": price, "qty_share": 1.0 / len(targets)} for price in targets
     ] if len(targets) > 1 else []
-    rec["order_intent"] = _build_order_intent(
+    rec["executable_intent"] = _build_executable_intent(
         envelope_id=envelope_id,
         correlation_id=str(rec["correlation_id"]),
         source=source,
@@ -998,6 +1022,7 @@ async def _process_one(
         targets=targets,
         quantity=size_result.position_size_units,
     ).to_dict()
+    rec["order_intent"] = rec["executable_intent"]
     rec["leverage_mode"] = "paper_audit_only"
     rec["risk_allocation_source"] = (
         "signal_margin_pct"

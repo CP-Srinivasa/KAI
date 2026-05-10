@@ -17,7 +17,9 @@ from pathlib import Path
 import portalocker
 
 from app.execution.audit_replay import replay_paper_audit
+from app.execution.execution_protocol import executable_intent_to_paper_kwargs
 from app.execution.models import (
+    OrderLifecycleState,
     PaperFill,
     PaperOrder,
     PaperPortfolio,
@@ -25,7 +27,9 @@ from app.execution.models import (
     _new_fill_id,
     _new_order_id,
     _now_utc,
+    make_lifecycle_transition,
 )
+from app.execution.order_intent import ExecutableOrderIntent
 
 logger = logging.getLogger(__name__)
 
@@ -108,6 +112,22 @@ class PaperExecutionEngine:
         self._portfolio.realized_pnl_usd = result.realized_pnl_usd
         return True
 
+    def execute_intent(
+        self,
+        intent: ExecutableOrderIntent,
+        current_price: float,
+        risk_check_id: str,
+    ) -> tuple[PaperOrder, PaperFill | None]:
+        """Parity interface: execute an ExecutableOrderIntent on paper."""
+        kwargs = executable_intent_to_paper_kwargs(intent)
+        kwargs["risk_check_id"] = risk_check_id
+
+        order = self.create_order(**kwargs)
+        # Limit or market? In paper, fill_order requires current_price.
+        # We pass the current_price regardless of type.
+        fill = self.fill_order(order, current_price)
+        return order, fill
+
     def create_order(
         self,
         *,
@@ -122,6 +142,7 @@ class PaperExecutionEngine:
         risk_check_id: str = "",
         position_side: str = "long",
         venue: str = "paper",
+        correlation_id: str = "",
     ) -> PaperOrder:
         """Create an order record (does not fill immediately).
 
@@ -150,11 +171,25 @@ class PaperExecutionEngine:
             risk_check_id=risk_check_id,
             position_side=position_side,
             venue=venue,
+            correlation_id=correlation_id,
         )
         self._append_audit("order_created", order.__dict__)
+        if correlation_id:
+            try:
+                t = make_lifecycle_transition(
+                    correlation_id=correlation_id,
+                    from_state=OrderLifecycleState.ORDER_BUILDING,
+                    to_state=OrderLifecycleState.ORDER_SUBMITTED,
+                    reason="paper_order_created",
+                )
+                self._append_audit("lifecycle_transition", t.to_dict())
+            except Exception as e:
+                logger.error("[PAPER] Failed to emit lifecycle transition ORDER_SUBMITTED: %s", e)
         return order
 
-    def fill_order(self, order: PaperOrder, current_price: float) -> PaperFill | None:
+    def fill_order(
+        self, order: PaperOrder, current_price: float
+    ) -> PaperFill | None:
         """
         Execute a paper fill for an order.
         Returns None if: duplicate (idempotency), insufficient cash, or invalid price.
@@ -324,6 +359,7 @@ class PaperExecutionEngine:
                     position_side=pos.position_side,
                     take_profit_tiers=list(pos.take_profit_tiers),
                     initial_quantity=pos.initial_quantity,
+                    correlation_id=pos.correlation_id,
                 )
             else:
                 self._portfolio.positions[order.symbol] = PaperPosition(
@@ -334,6 +370,7 @@ class PaperExecutionEngine:
                     take_profit=order.take_profit,
                     opened_at=_now_utc(),
                     position_side=order.position_side,
+                    correlation_id=order.correlation_id,
                 )
         elif order.position_side == "long" and order.side == "sell":
             pos = self._portfolio.positions.get(order.symbol)
@@ -362,6 +399,7 @@ class PaperExecutionEngine:
                     position_side=pos.position_side,
                     take_profit_tiers=list(pos.take_profit_tiers),
                     initial_quantity=pos.initial_quantity,
+                    correlation_id=pos.correlation_id,
                 )
         elif order.position_side == "short" and order.side == "sell":
             pos = self._portfolio.positions.get(order.symbol)
@@ -388,6 +426,7 @@ class PaperExecutionEngine:
                     position_side=pos.position_side,
                     take_profit_tiers=list(pos.take_profit_tiers),
                     initial_quantity=pos.initial_quantity,
+                    correlation_id=pos.correlation_id,
                 )
             else:
                 self._portfolio.positions[order.symbol] = PaperPosition(
@@ -398,6 +437,7 @@ class PaperExecutionEngine:
                     take_profit=order.take_profit,
                     opened_at=_now_utc(),
                     position_side=order.position_side,
+                    correlation_id=order.correlation_id,
                 )
         elif order.position_side == "short" and order.side == "buy":
             pos = self._portfolio.positions.get(order.symbol)
@@ -432,6 +472,7 @@ class PaperExecutionEngine:
                     position_side=pos.position_side,
                     take_profit_tiers=list(pos.take_profit_tiers),
                     initial_quantity=pos.initial_quantity,
+                    correlation_id=pos.correlation_id,
                 )
         else:
             logger.warning(
@@ -445,9 +486,11 @@ class PaperExecutionEngine:
         self._portfolio.trade_count += 1
         self._filled_keys.add(order.idempotency_key)
 
-        # NEO-P-101-r2: per-trade NETTO pnl. Buys do not realize PnL; sells
-        # carry the netto PnL (sell-branch already subtracted fee).
-        trade_pnl_for_fill = pnl if order.side == "sell" else 0.0
+        is_closing_fill = (
+            (order.position_side == "long" and order.side == "sell")
+            or (order.position_side == "short" and order.side == "buy")
+        )
+        trade_pnl_for_fill = pnl if is_closing_fill else 0.0
 
         fill = PaperFill(
             fill_id=_new_fill_id(),
@@ -465,6 +508,7 @@ class PaperExecutionEngine:
             fee_role=fee_meta[1],
             fee_bps_applied=fee_meta[2],
             fee_table_version=fee_meta[3],
+            correlation_id=order.correlation_id,
         )
 
         self._append_audit(
@@ -484,6 +528,30 @@ class PaperExecutionEngine:
             fee,
             self._portfolio.realized_pnl_usd,
         )
+        if order.correlation_id:
+            try:
+                t1 = make_lifecycle_transition(
+                    correlation_id=order.correlation_id,
+                    from_state=OrderLifecycleState.ORDER_SUBMITTED,
+                    to_state=OrderLifecycleState.ORDER_ACCEPTED,
+                    reason="paper_order_accepted",
+                )
+                self._append_audit("lifecycle_transition", t1.to_dict())
+                # If opening/increasing position
+                is_opening = (
+                    (order.position_side == "long" and order.side == "buy")
+                    or (order.position_side == "short" and order.side == "sell")
+                )
+                if is_opening:
+                    t2 = make_lifecycle_transition(
+                        correlation_id=order.correlation_id,
+                        from_state=OrderLifecycleState.ORDER_ACCEPTED,
+                        to_state=OrderLifecycleState.POSITION_OPEN,
+                        reason="paper_position_opened",
+                    )
+                    self._append_audit("lifecycle_transition", t2.to_dict())
+            except Exception as e:
+                logger.error("[PAPER] Failed to emit lifecycle transition for fill: %s", e)
         return fill
 
     def check_stop_take(self, symbol: str, current_price: float) -> str | None:
@@ -589,7 +657,7 @@ class PaperExecutionEngine:
         self,
         symbol: str,
         current_price: float,
-    ) -> PaperFill | None:
+    ) -> tuple[PaperOrder, PaperFill | None]:
         """Close the tier-share of the position at current_price, advance tiers.
 
         Internal helper used by monitor_positions when the first tier's price
@@ -630,6 +698,7 @@ class PaperExecutionEngine:
             idempotency_key=idem_key,
             risk_check_id=f"tp_tier:{tier_price}",
             position_side=pos.position_side,
+            correlation_id=pos.correlation_id,
         )
         fill = self.fill_order(order, current_price)
         if fill is None:
@@ -674,6 +743,17 @@ class PaperExecutionEngine:
             len(residual_tiers),
             self._portfolio.realized_pnl_usd,
         )
+        if pos.correlation_id:
+            try:
+                t3 = make_lifecycle_transition(
+                    correlation_id=pos.correlation_id,
+                    from_state=OrderLifecycleState.POSITION_OPEN,
+                    to_state=OrderLifecycleState.PARTIAL_TP_HIT,
+                    reason="paper_tier_closed",
+                )
+                self._append_audit("lifecycle_transition", t3.to_dict())
+            except Exception as e:
+                logger.error("[PAPER] Failed to emit lifecycle transition PARTIAL_TP_HIT: %s", e)
         return fill
 
     def adjust_position(
@@ -707,6 +787,7 @@ class PaperExecutionEngine:
             position_side=pos.position_side,
             take_profit_tiers=list(pos.take_profit_tiers),
             initial_quantity=pos.initial_quantity,
+            correlation_id=pos.correlation_id,
         )
         self._append_audit(
             "position_adjusted",
@@ -731,7 +812,7 @@ class PaperExecutionEngine:
         symbol: str,
         current_price: float,
         reason: str = "manual",
-    ) -> PaperFill | None:
+    ) -> tuple[PaperOrder, PaperFill | None]:
         """Close a full open position at current_price.
 
         Emits the standard order_created + order_filled pair (via create_order /
@@ -763,6 +844,7 @@ class PaperExecutionEngine:
             idempotency_key=idem_key,
             risk_check_id=f"auto_close:{reason}",
             position_side=pos.position_side,
+            correlation_id=pos.correlation_id,
         )
         fill = self.fill_order(order, current_price)
         if fill is None:
@@ -795,6 +877,24 @@ class PaperExecutionEngine:
             reason,
             self._portfolio.realized_pnl_usd,
         )
+        if pos.correlation_id:
+            try:
+                if reason == "sl":
+                    target_state = OrderLifecycleState.SL_HIT
+                elif reason == "take" or reason == "tp_hit":
+                    target_state = OrderLifecycleState.TP_HIT
+                else:
+                    target_state = OrderLifecycleState.CANCELLED
+
+                t4 = make_lifecycle_transition(
+                    correlation_id=pos.correlation_id,
+                    from_state=OrderLifecycleState.POSITION_OPEN,
+                    to_state=target_state,
+                    reason=reason,
+                )
+                self._append_audit("lifecycle_transition", t4.to_dict())
+            except Exception as e:
+                logger.error("[PAPER] Failed to emit lifecycle transition for close: %s", e)
         return fill
 
     def monitor_positions(

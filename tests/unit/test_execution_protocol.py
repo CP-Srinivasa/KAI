@@ -1,9 +1,9 @@
-"""Tests für Paper/Live OrderIntent-Parity-Adapter + correlation_id-Kette.
+"""Tests für Paper/Live ExecutableOrderIntent-Parity-Adapter + correlation_id-Kette.
 
 Spec: docs/architecture/signal_to_execution_gap_analysis_20260510.md
 Operator-Auftrag (2026-05-10) Aufgabenpaket 9 — Test-Cases #14 + #15.
 
-Test #14: *"Paper Engine und Live Adapter akzeptieren denselben OrderIntent."*
+Test #14: *"Paper Engine und Live Adapter akzeptieren denselben ExecutableOrderIntent."*
 Test #15: *"AuditStream enthält vollständige correlation_id-Kette."*
 """
 
@@ -12,11 +12,10 @@ from __future__ import annotations
 from app.execution.exchanges.base import OrderRequest, OrderSide, OrderType
 from app.execution.execution_protocol import (
     assert_parity,
-    order_intent_to_live_request,
-    order_intent_to_paper_kwargs,
+    executable_intent_to_live_request,
+    executable_intent_to_paper_kwargs,
 )
 from app.execution.models import (
-    OrderIntent,
     PaperFill,
     PaperOrder,
     PaperPosition,
@@ -25,11 +24,12 @@ from app.execution.normalized_signal import (
     SignalStatus,
     new_signal,
 )
+from app.execution.order_intent import ExecutableOrderIntent
 
 # ── Test-Helper ──────────────────────────────────────────────────────────────
 
 
-def _intent(**overrides) -> OrderIntent:
+def _intent(**overrides) -> ExecutableOrderIntent:
     base = {
         "symbol": "BTCUSDT",
         "side": "BUY",
@@ -51,7 +51,7 @@ def _intent(**overrides) -> OrderIntent:
         "order_intent": "OPEN_POSITION",
     }
     base.update(overrides)
-    return OrderIntent(**base)
+    return ExecutableOrderIntent(**base)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -61,7 +61,7 @@ def _intent(**overrides) -> OrderIntent:
 
 def test_paper_kwargs_preserves_essence() -> None:
     intent = _intent()
-    kwargs = order_intent_to_paper_kwargs(intent)
+    kwargs = executable_intent_to_paper_kwargs(intent)
 
     assert kwargs["symbol"] == "BTCUSDT"
     assert kwargs["side"] == "buy"  # lowered
@@ -77,7 +77,7 @@ def test_paper_kwargs_preserves_essence() -> None:
 
 def test_live_request_preserves_essence() -> None:
     intent = _intent()
-    request = order_intent_to_live_request(intent)
+    request = executable_intent_to_live_request(intent)
 
     assert isinstance(request, OrderRequest)
     assert request.symbol == "BTCUSDT"
@@ -111,8 +111,8 @@ def test_parity_short_limit_passes() -> None:
         risk_allocation_pct=3.0,
     )
     assert_parity(intent)
-    paper = order_intent_to_paper_kwargs(intent)
-    live = order_intent_to_live_request(intent)
+    paper = executable_intent_to_paper_kwargs(intent)
+    live = executable_intent_to_live_request(intent)
     assert paper["side"] == "sell"
     assert paper["position_side"] == "short"  # SELL → short position
     assert live.side == OrderSide.SELL
@@ -126,8 +126,8 @@ def test_parity_market_order_no_price() -> None:
         entry_min=None,
         entry_max=None,
     )
-    paper = order_intent_to_paper_kwargs(intent)
-    live = order_intent_to_live_request(intent)
+    paper = executable_intent_to_paper_kwargs(intent)
+    live = executable_intent_to_live_request(intent)
     assert paper["limit_price"] is None
     assert live.price is None
     assert paper["order_type"] == "market"
@@ -137,8 +137,8 @@ def test_parity_market_order_no_price() -> None:
 
 def test_parity_no_targets_yields_no_take_profit() -> None:
     intent = _intent(take_profit_targets=())
-    paper = order_intent_to_paper_kwargs(intent)
-    live = order_intent_to_live_request(intent)
+    paper = executable_intent_to_paper_kwargs(intent)
+    live = executable_intent_to_live_request(intent)
     assert paper["take_profit"] is None
     assert live.take_profit is None
     assert_parity(intent)
@@ -152,8 +152,8 @@ def test_parity_with_explicit_entry_value() -> None:
         entry_min=None,
         entry_max=None,
     )
-    paper = order_intent_to_paper_kwargs(intent)
-    live = order_intent_to_live_request(intent)
+    paper = executable_intent_to_paper_kwargs(intent)
+    live = executable_intent_to_live_request(intent)
     assert paper["limit_price"] == 65000.0
     assert live.price == 65000.0
     assert_parity(intent)
@@ -163,7 +163,7 @@ def test_parity_drift_detected_when_quantity_inconsistent() -> None:
     """Manuelle Quantity-Überschreibung würde drift erzeugen — assert_parity
     wirft AssertionError. Diagnostic test, NICHT production-flow."""
     intent = _intent()
-    paper = order_intent_to_paper_kwargs(intent)
+    paper = executable_intent_to_paper_kwargs(intent)
 
     # Construct a live request with a different quantity by hand
     drift_request = OrderRequest(
@@ -182,10 +182,10 @@ def test_parity_drift_detected_when_quantity_inconsistent() -> None:
 
 
 def test_intent_quantity_none_is_zero_in_kwargs() -> None:
-    """Defensive: OrderIntent.quantity=None resolves to 0.0 in both engines."""
+    """Defensive: ExecutableOrderIntent.quantity=None resolves to 0.0 in both engines."""
     intent = _intent(quantity=None)
-    paper = order_intent_to_paper_kwargs(intent)
-    live = order_intent_to_live_request(intent)
+    paper = executable_intent_to_paper_kwargs(intent)
+    live = executable_intent_to_live_request(intent)
     assert paper["quantity"] == 0.0
     assert live.quantity == 0.0
     assert_parity(intent)
@@ -245,9 +245,9 @@ def test_correlation_id_propagated_to_paper_records() -> None:
     cid = "SIG-TGCH-20260510120000-BTCUSDT"
     intent = _intent(correlation_id=cid)
 
-    # Paper-Engine würde via order_intent_to_paper_kwargs die korrelation_id
+    # Paper-Engine würde via executable_intent_to_paper_kwargs die korrelation_id
     # in PaperOrder ablegen.
-    kwargs = order_intent_to_paper_kwargs(intent)
+    kwargs = executable_intent_to_paper_kwargs(intent)
     assert kwargs["correlation_id"] == cid
 
     # PaperOrder konstruiert mit kwargs:
@@ -302,7 +302,7 @@ def test_correlation_id_propagated_to_paper_records() -> None:
 
 
 def test_correlation_id_chain_signal_to_position_full() -> None:
-    """End-to-End: NormalizedTradeSignal → OrderIntent → PaperOrder → PaperFill
+    """End-to-End: NormalizedTradeSignal → ExecutableOrderIntent → PaperOrder → PaperFill
     → PaperPosition. Die correlation_id muss in allen 5 Records identisch sein
     — das ist die Akzeptanz für Aufgabenpaket-9 Test #15."""
     cid = "SIG-TGCH-20260510120000-BTCUSDT"
@@ -323,12 +323,12 @@ def test_correlation_id_chain_signal_to_position_full() -> None:
         risk_allocation_pct=0.05,
     )
 
-    # 2. OrderIntent (gleicher cid)
+    # 2. ExecutableOrderIntent (gleicher cid)
     intent = _intent(correlation_id=s.correlation_id)
     assert intent.correlation_id == s.correlation_id
 
     # 3. PaperOrder
-    kwargs = order_intent_to_paper_kwargs(intent)
+    kwargs = executable_intent_to_paper_kwargs(intent)
     order = PaperOrder(
         order_id="ord_x",
         symbol=kwargs["symbol"],
@@ -383,7 +383,7 @@ def test_correlation_id_chain_signal_to_position_full() -> None:
 
 
 def test_correlation_id_in_order_intent_to_dict_audit() -> None:
-    """OrderIntent.to_dict() (von Codex) muss correlation_id für audit
+    """ExecutableOrderIntent.to_dict() (von Codex) muss correlation_id für audit
     durchreichen."""
     intent = _intent()
     d = intent.to_dict()

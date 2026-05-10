@@ -197,6 +197,58 @@ def test_position_size_with_stop_loss():
     assert result.max_loss_usd <= 25.5  # allow tiny rounding
 
 
+def test_position_size_uses_signal_margin_and_leverage_when_safe():
+    engine = _default_engine(max_risk_per_trade_pct=10.0, max_leverage=20.0)
+    result = engine.calculate_position_size(
+        symbol="BTC/USDT",
+        entry_price=100.0,
+        stop_loss_price=99.0,
+        equity=10000.0,
+        leverage=10.0,
+        risk_allocation_pct=5.0,
+    )
+    assert result.approved
+    # 10_000 equity * 5% margin * 10x leverage = 5_000 notional.
+    assert result.position_size_units == 50.0
+    assert result.position_size_pct == 50.0
+    assert result.max_loss_usd == 50.0
+    assert "signal_margin_leverage" in result.rationale
+
+
+def test_position_size_caps_signal_leverage_at_limit():
+    engine = _default_engine(max_risk_per_trade_pct=10.0, max_leverage=2.0)
+    result = engine.calculate_position_size(
+        symbol="BTC/USDT",
+        entry_price=100.0,
+        stop_loss_price=99.0,
+        equity=10000.0,
+        leverage=10.0,
+        risk_allocation_pct=5.0,
+    )
+    assert result.approved
+    # Leverage capped to 2x: 10_000 * 5% * 2 / 100 = 10 units.
+    assert result.position_size_units == 10.0
+    assert "leverage=2x (capped)" in result.rationale
+
+
+def test_position_size_caps_signal_size_by_stop_loss_risk():
+    engine = _default_engine(max_risk_per_trade_pct=0.25, max_leverage=20.0)
+    result = engine.calculate_position_size(
+        symbol="BTC/USDT",
+        entry_price=100.0,
+        stop_loss_price=90.0,
+        equity=10000.0,
+        leverage=10.0,
+        risk_allocation_pct=5.0,
+    )
+    assert result.approved
+    # Requested = 50 units, but risk cap = $25 max loss / $10 risk = 2.5 units.
+    assert result.position_size_units == 2.5
+    assert result.max_loss_usd == 25.0
+    assert result.max_loss_pct == 0.25
+    assert "risk_capped" in result.rationale
+
+
 def test_position_size_invalid_price():
     engine = _default_engine()
     result = engine.calculate_position_size(
@@ -369,3 +421,37 @@ def test_geometry_check_skipped_when_sl_omitted():
     )
     assert result.approved
     assert result.violations == []
+
+
+def test_position_size_with_leverage_and_margin():
+    engine = _default_engine(max_leverage=10.0, max_risk_per_trade_pct=10.0)
+    result = engine.calculate_position_size(
+        symbol="BTC/USDT",
+        entry_price=10000.0,
+        stop_loss_price=9000.0,
+        equity=10000.0,
+        leverage=5.0,
+        risk_allocation_pct=2.0, # 2% margin
+    )
+    assert result.approved
+    # 2% of 10000 equity = 200 margin
+    # notional = 200 * 5.0 leverage = 1000
+    # units = 1000 / 10000 entry_price = 0.1
+    assert abs(result.position_size_units - 0.1) < 0.001
+
+def test_position_size_leverage_cap():
+    engine = _default_engine(max_leverage=3.0, max_risk_per_trade_pct=10.0)
+    result = engine.calculate_position_size(
+        symbol="BTC/USDT",
+        entry_price=10000.0,
+        stop_loss_price=9000.0,
+        equity=10000.0,
+        leverage=10.0, # Should be capped at 3.0
+        risk_allocation_pct=2.0, # 2% margin
+    )
+    assert result.approved
+    # capped leverage = 3.0
+    # 2% of 10000 = 200 margin
+    # notional = 200 * 3.0 = 600
+    # units = 600 / 10000 = 0.06
+    assert abs(result.position_size_units - 0.06) < 0.001
