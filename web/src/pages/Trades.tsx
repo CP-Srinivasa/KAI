@@ -1,4 +1,5 @@
-import { AlertCircle, RefreshCw, CheckCircle2, XCircle, ArrowLeftRight, Activity } from "lucide-react";
+import { Fragment } from "react";
+import { AlertCircle, RefreshCw, ArrowLeftRight, Activity } from "lucide-react";
 import { useT } from "@/i18n/I18nProvider";
 import { Badge, Button, Card, CardHeader, Kpi } from "@/components/ui/Primitives";
 import { PageHeader } from "@/layout/PageHeader";
@@ -44,13 +45,18 @@ function formatTimeShort(iso: string): string {
   }
 }
 
-const CYCLE_DOT_TONE: Record<string, string> = {
-  completed: "bg-pos",
-  no_signal: "bg-fg-subtle/40",
-  no_market_data: "bg-warn",
-  stale_data: "bg-warn",
-  consensus_rejected: "bg-neg",
-  order_failed: "bg-neg",
+// 2026-05-10 DALI-T1-Neon: Sparkline-Punkte als Neon-Lichtpunkte mit Glow.
+// Operator: "Die Punkte sind nicht wirklich 80er Neon, total am Thema vorbei."
+// rounded-full + glow-{tone} statt flach-rectangle. Cyan-Glow als Default fuer
+// "lebendig/laeuft".
+const CYCLE_DOT_STYLE: Record<string, { bg: string; glow: string }> = {
+  completed:          { bg: "bg-pos",  glow: "glow-pos" },
+  no_signal:          { bg: "bg-info/40", glow: "" },
+  no_market_data:     { bg: "bg-warn", glow: "glow-warn" },
+  stale_data:         { bg: "bg-warn", glow: "glow-warn" },
+  consensus_rejected: { bg: "bg-neg",  glow: "glow-neg" },
+  order_failed:       { bg: "bg-neg",  glow: "glow-neg" },
+  blocked:            { bg: "bg-fg-subtle/40", glow: "" },
 };
 
 // Notes-humanize: kurz lesbar statt snake_case-Roh-String.
@@ -102,55 +108,81 @@ export function TradesPage() {
               <div className="text-sm font-semibold text-fg leading-relaxed">
                 {summarizeCycles(cyclesList)}
               </div>
-              <div className="mt-2 flex items-center gap-1 flex-wrap">
-                {cyclesList.slice(-30).map((c, i) => (
-                  <span
-                    key={i}
-                    className={cn("h-3 w-1.5 rounded-xs", CYCLE_DOT_TONE[c.status] ?? "bg-fg-muted")}
-                    title={`${LABEL_DE[c.status] ?? c.status} · ${c.symbol}`}
-                  />
-                ))}
+              <div className="mt-2.5 flex items-center gap-1.5 flex-wrap">
+                {cyclesList.slice(-30).map((c, i) => {
+                  const style = CYCLE_DOT_STYLE[c.status] ?? CYCLE_DOT_STYLE.no_signal;
+                  return (
+                    <span
+                      key={i}
+                      className={cn(
+                        "h-2.5 w-2.5 rounded-full shrink-0 transition-transform hover:scale-150",
+                        style.bg,
+                        style.glow,
+                      )}
+                      title={`${LABEL_DE[c.status] ?? c.status} · ${c.symbol}`}
+                    />
+                  );
+                })}
               </div>
-              <div className="mt-1 text-2xs text-fg-subtle font-mono">
-                letzte {Math.min(cyclesList.length, 30)} Cycles · Hover für Status pro Cycle
+              <div className="mt-1.5 text-2xs text-fg-subtle font-mono">
+                letzte {Math.min(cyclesList.length, 30)} Cycles · Hover für Status
               </div>
             </div>
           </div>
         </Card>
       )}
 
-      {/* DALI-T2: Hero-Number "Ausgeführte Trades" col-span-2, sekundäre KPIs
-          rechts daneben. Mode raus (steht im Topbar+PageHeader-sub). Total-
-          Cycles raus (im Hero-Banner-Synopsis sichtbar). */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+      {/* DALI-T2-v2: Status-Werte sind kategorisch (nicht numerisch) — gehoeren
+          in Badges, nicht in Hero-Schrift (overflow bei "Konsens abgelehnt").
+          Hero-Number "Ausgefuehrte Trades" links (col-span-2), rechts daneben
+          eine kombinierte Status-Card mit Letzter Status + Auto-Loop als Badges. */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
         <Kpi
           label="Ausgeführte Trades"
           value={String(completed24h)}
           sub={`von ${cyclesList.length} Cycles in der jüngsten Historie`}
           tone={completed24h > 0 ? "pos" : "muted"}
           size="hero"
-          className="md:col-span-2"
         />
-        <Kpi
-          label="Letzter Status"
-          value={
-            status.state === "ready"
-              ? LABEL_DE[status.data.last_cycle_status ?? ""] ?? status.data.last_cycle_status ?? "—"
-              : "—"
-          }
-          tone={
-            status.state === "ready" && status.data.last_cycle_status === "completed"
-              ? "pos"
-              : status.state === "ready" && status.data.last_cycle_status === "order_failed"
-                ? "neg"
-                : "warn"
-          }
-        />
-        <Kpi
-          label="Auto-Loop"
-          value={status.state === "ready" ? (status.data.auto_loop_enabled ? "aktiv" : "aus") : "—"}
-          tone={status.state === "ready" && status.data.auto_loop_enabled ? "pos" : "muted"}
-        />
+        <Card padded>
+          <div className="text-2xs uppercase tracking-wider text-fg-subtle font-semibold">Letzter Cycle</div>
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            {status.state === "ready" && status.data.last_cycle_status ? (
+              <span title={status.data.last_cycle_status}>
+                <Badge
+                  tone={
+                    status.data.last_cycle_status === "completed"
+                      ? "pos"
+                      : status.data.last_cycle_status === "order_failed" ||
+                        status.data.last_cycle_status === "consensus_rejected"
+                        ? "neg"
+                        : "warn"
+                  }
+                  dot
+                >
+                  {LABEL_DE[status.data.last_cycle_status] ?? status.data.last_cycle_status}
+                </Badge>
+              </span>
+            ) : (
+              <Badge tone="muted">—</Badge>
+            )}
+          </div>
+          <div className="mt-3 text-2xs uppercase tracking-wider text-fg-subtle font-semibold">Auto-Loop</div>
+          <div className="mt-2 flex flex-wrap items-center gap-2">
+            {status.state === "ready" ? (
+              <Badge tone={status.data.auto_loop_enabled ? "pos" : "muted"} dot>
+                {status.data.auto_loop_enabled ? "aktiv" : "aus"}
+              </Badge>
+            ) : (
+              <Badge tone="muted">—</Badge>
+            )}
+            {status.state === "ready" && (
+              <span className="text-2xs text-fg-subtle font-mono">
+                Mode: {status.data.mode}
+              </span>
+            )}
+          </div>
+        </Card>
       </div>
 
       {status.state === "ready" && (
@@ -193,23 +225,22 @@ export function TradesPage() {
             <table className="w-full text-xs">
               <thead>
                 <tr className="text-fg-subtle text-2xs uppercase tracking-wider">
-                  <th className="text-left font-semibold px-4 py-2">Started</th>
+                  <th className="text-left font-semibold px-4 py-2">Zeit</th>
                   <th className="text-left font-semibold px-4 py-2">Symbol</th>
                   <th className="text-left font-semibold px-4 py-2">Status</th>
-                  <th className="text-center font-semibold px-4 py-2">Daten</th>
-                  <th className="text-center font-semibold px-4 py-2">Signal</th>
-                  <th className="text-center font-semibold px-4 py-2">Risk</th>
-                  <th className="text-center font-semibold px-4 py-2">Order</th>
-                  <th className="text-center font-semibold px-4 py-2">Fill</th>
+                  <th className="text-left font-semibold px-4 py-2 whitespace-nowrap">
+                    Pipeline
+                    <span className="ml-1 normal-case text-fg-subtle/70 font-normal">(Daten → Signal → Risk → Order → Fill)</span>
+                  </th>
                   <th className="text-left font-semibold px-4 py-2">Notes</th>
                 </tr>
               </thead>
               <tbody>
                 {cycles.state === "loading" && (
-                  <tr><td colSpan={9} className="px-4 py-6 text-center text-fg-subtle">{t("common.loading")}</td></tr>
+                  <tr><td colSpan={5} className="px-4 py-6 text-center text-fg-subtle">{t("common.loading")}</td></tr>
                 )}
                 {cycles.state === "ready" && cycles.data.recent_cycles.length === 0 && (
-                  <tr><td colSpan={9} className="px-4 py-6 text-center text-fg-subtle">{t("common.no_data")}</td></tr>
+                  <tr><td colSpan={5} className="px-4 py-6 text-center text-fg-subtle">{t("common.no_data")}</td></tr>
                 )}
                 {cycles.state === "ready" && cycles.data.recent_cycles.slice().reverse().map((c) => <CycleRow key={c.cycle_id} c={c} />)}
               </tbody>
@@ -235,20 +266,29 @@ function CycleRow({ c }: { c: TradingCycle }) {
     if (s === "order_failed" || s === "consensus_rejected") return "neg";
     return "neutral";
   };
+  // 2026-05-10 DALI-T-Pipeline: 5x BoolDot-Spalten → 1 Pipeline-Visualisierung
+  // mit Neon-Lichtpunkten (cyan-glow für erreicht, gedimmt sonst). Verbindungs-
+  // linien zwischen Steps zeigen Fluss; abgebrochen wo der Cycle stoppte.
+  // completed-Rows bekommen subtilen pos-Glow als Zeilen-Hintergrund.
   return (
-    <tr className="border-t border-line-subtle hover:bg-bg-2">
-      <td className="px-4 py-2 font-mono text-2xs text-fg-subtle">{c.started_at.substring(11, 19)}</td>
-      <td className="px-4 py-2 font-mono font-semibold">{c.symbol}</td>
+    <tr
+      className={cn(
+        "border-t border-line-subtle hover:bg-bg-2",
+        c.status === "completed" && "bg-pos/[0.03]",
+      )}
+    >
+      <td className="px-4 py-2 font-mono text-2xs text-fg-subtle whitespace-nowrap">
+        {c.started_at.substring(11, 19)}
+      </td>
+      <td className="px-4 py-2 font-mono font-semibold whitespace-nowrap">{c.symbol}</td>
       <td className="px-4 py-2">
         <span title={CYCLE_STATUS_EXPLAIN[c.status] ?? c.status}>
           <Badge tone={toneFor(c.status)}>{LABEL_DE[c.status] ?? c.status}</Badge>
         </span>
       </td>
-      <td className="px-4 py-2 text-center"><BoolDot v={c.market_data_fetched} /></td>
-      <td className="px-4 py-2 text-center"><BoolDot v={c.signal_generated} /></td>
-      <td className="px-4 py-2 text-center"><BoolDot v={c.risk_approved} /></td>
-      <td className="px-4 py-2 text-center"><BoolDot v={c.order_created} /></td>
-      <td className="px-4 py-2 text-center"><BoolDot v={c.fill_simulated} /></td>
+      <td className="px-4 py-2">
+        <CyclePipeline c={c} />
+      </td>
       <td className="px-4 py-2 max-w-[420px]">
         <div className="flex flex-wrap gap-1">
           {c.notes.slice(0, 3).map((n, i) => (
@@ -272,8 +312,65 @@ function CycleRow({ c }: { c: TradingCycle }) {
   );
 }
 
-function BoolDot({ v }: { v: boolean }) {
-  return v ? <CheckCircle2 size={13} className="text-pos inline" /> : <XCircle size={13} className="text-fg-subtle inline" />;
+// Neon-Pipeline: 5 Steps als runde Lichtpunkte mit Glow + Verbindungslinien.
+// Reached-Steps: cyan/info mit glow-info. Nicht erreicht: gedimmtes fg-subtle/20.
+// Fail-Step (z.B. order_failed bei letztem reached): wird in neg/glow-neg gerendert.
+function CyclePipeline({ c }: { c: TradingCycle }) {
+  const steps = [
+    { reached: c.market_data_fetched, label: "Markt-Daten", key: "data" },
+    { reached: c.signal_generated, label: "Signal erzeugt", key: "signal" },
+    { reached: c.risk_approved, label: "Risk-Gate bestanden", key: "risk" },
+    { reached: c.order_created, label: "Order erstellt", key: "order" },
+    { reached: c.fill_simulated, label: "Fill simuliert", key: "fill" },
+  ];
+  // Den letzten erreichten Step finden — wenn der Cycle dort gestoppt ist und
+  // Status ein Fehler-Status ist, soll dieser Punkt rot leuchten.
+  // (findLastIndex ist ES2023 — target ist niedriger, also manueller Loop.)
+  let lastReachedIdx = -1;
+  for (let j = steps.length - 1; j >= 0; j--) {
+    if (steps[j].reached) {
+      lastReachedIdx = j;
+      break;
+    }
+  }
+  const isFail = c.status === "order_failed" || c.status === "consensus_rejected";
+  const isWarn = c.status === "no_market_data" || c.status === "stale_data";
+  const stoppedAt = lastReachedIdx >= 0 && lastReachedIdx < steps.length - 1 ? lastReachedIdx : -1;
+  return (
+    <div className="flex items-center gap-0">
+      {steps.map((s, i) => {
+        const isStopAt = i === stoppedAt && (isFail || isWarn);
+        const dotTone = !s.reached
+          ? "bg-fg-subtle/20"
+          : isStopAt && isFail
+            ? "bg-neg glow-neg"
+            : isStopAt && isWarn
+              ? "bg-warn glow-warn"
+              : "bg-info glow-info";
+        const lineTone =
+          i < steps.length - 1
+            ? steps[i + 1].reached
+              ? "bg-info/45"
+              : s.reached && isStopAt && isFail
+                ? "bg-neg/30"
+                : s.reached && isStopAt && isWarn
+                  ? "bg-warn/30"
+                  : "bg-fg-subtle/15"
+            : "";
+        return (
+          <Fragment key={s.key}>
+            <span
+              title={`${s.label}: ${s.reached ? "✓ erreicht" : "× nicht erreicht"}`}
+              className={cn("h-2.5 w-2.5 rounded-full shrink-0 transition-transform hover:scale-150", dotTone)}
+            />
+            {i < steps.length - 1 && (
+              <span className={cn("h-px w-4 shrink-0", lineTone)} />
+            )}
+          </Fragment>
+        );
+      })}
+    </div>
+  );
 }
 
 function RowKV({ k, v, tone }: { k: string; v: string; tone?: "pos" | "neg" | "warn" | "muted" }) {
