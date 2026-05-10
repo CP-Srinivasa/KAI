@@ -43,9 +43,9 @@ from __future__ import annotations
 import dataclasses
 import logging
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import UTC, datetime
-from enum import Enum
+from enum import StrEnum
 from typing import Final, Literal
 
 logger = logging.getLogger(__name__)
@@ -64,7 +64,7 @@ OrderIntent = Literal["OPEN_POSITION", "CLOSE_POSITION", "MODIFY", "CANCEL"]
 # ─── Lifecycle-State-Machine ─────────────────────────────────────────────────
 
 
-class SignalStatus(str, Enum):
+class SignalStatus(StrEnum):
     """16 explicit Lifecycle-States per Operator-Auftrag 2026-05-10.
 
     Die Reihenfolge in dieser Enum entspricht der typischen Vorwärts-
@@ -196,7 +196,7 @@ LIFECYCLE_TRANSITIONS: Final[dict[SignalStatus, frozenset[SignalStatus]]] = {
 }
 
 
-class IllegalLifecycleTransition(ValueError):
+class IllegalLifecycleTransition(ValueError):  # noqa: N818 — domain term over Error-suffix
     """Wird geworfen wenn eine Status-Transition nicht in der Matrix steht."""
 
 
@@ -210,7 +210,8 @@ class StatusTransition:
     from_status: SignalStatus
     to_status: SignalStatus
     timestamp_utc: str
-    actor: str  # "TelegramParser" | "SignalValidator" | "EntryWatcher" | "PaperEngine" | "Operator" | "RiskEngine"
+    # actor: TelegramParser | SignalValidator | EntryWatcher | PaperEngine | Operator | RiskEngine
+    actor: str
     reason: str  # human-readable, audit-grade
 
 
