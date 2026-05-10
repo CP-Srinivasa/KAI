@@ -22,8 +22,8 @@ Fail-closed:
 - ``operator_signal_bridge_enabled=False`` (default) -> tick() is a no-op.
 - Source not in allowlist -> skipped with audit, no fill.
 - Missing entry / stop_loss / targets -> rejected at gate.
-- Short/sell signals -> rejected in v1 (paper_engine has no open-short
-  primitive; would require separate logic).
+- Short/sell signals -> paper short positions via the same OrderIntent
+  contract (side=SELL, position_side=short).
 
 Audit trails:
 - ``artifacts/bridge_pending_orders.jsonl`` — append-only per-envelope
@@ -59,6 +59,11 @@ _BRIDGE_LOG = Path("artifacts/bridge_pending_orders.jsonl")
 _PAPER_AUDIT_LOG = Path("artifacts/paper_execution_audit.jsonl")
 
 # Terminal stages — envelopes that have reached any of these are done.
+# ``rejected_short_unsupported`` is kept in the set for **historical**
+# compatibility — pre-V25 envelopes audited with this stage stay terminal
+# in replay tools. Live code does not emit it any more (Sprint-B-Bug-#1
+# 2026-05-10: short-pfad ist nun nativer paper_engine-Pfad via
+# position_side="short" + side="sell" durchgereicht).
 _TERMINAL_STAGES = frozenset(
     {
         "filled",
@@ -66,7 +71,7 @@ _TERMINAL_STAGES = frozenset(
         "rejected_risk",
         "rejected_size",
         "rejected_incomplete",
-        "rejected_short_unsupported",
+        "rejected_short_unsupported",  # historical pre-V25 envelopes only
         "rejected_fill",
         "rejected_position_exists",
         "skipped_source",
@@ -86,6 +91,8 @@ class BridgeTickResult:
     rejected_risk: int = 0
     rejected_size: int = 0
     rejected_incomplete: int = 0
+    # Historical counter — pre-V25 path. Active code never increments it any
+    # more (SHORT signals open as native paper short via paper_engine).
     rejected_short: int = 0
     rejected_fill: int = 0
     rejected_position_exists: int = 0
@@ -623,11 +630,12 @@ async def _process_one(
     # silently dropped, so a 4-target signal could only ever realise 1/4
     # of the channel-intended take-profit progression.
     targets = sorted(
-
+        (
             float(t)
             for t in (targets_raw or [])
             if isinstance(t, (int, float)) and not isinstance(t, bool) and t > 0
-
+        ),
+        reverse=direction == "short",
     )
     tp1 = targets[0] if targets else None
 
@@ -660,38 +668,6 @@ async def _process_one(
         )
         _append_bridge_audit(rec)
         result.rejected_incomplete += 1
-        return
-
-    # v1: only long/buy supported by paper_engine open path
-    if direction != "long" or side_str != "buy":
-        rec = base("rejected_short_unsupported")
-        rec["direction"] = direction
-        rec["side"] = side_str
-        assert stop_loss is not None and tp1 is not None
-        rec["order_intent"] = _build_order_intent(
-            envelope_id=envelope_id,
-            correlation_id=str(rec["correlation_id"]),
-            source=source,
-            payload=payload,
-            symbol=symbol,
-            side=str(side_str),
-            entry_price=entry_price,
-            stop_loss=stop_loss,
-            targets=targets,
-        ).to_dict()
-        _attach_lifecycle(
-            rec,
-            final_state=OrderLifecycleState.REJECTED_INVALID_SIGNAL,
-            states=[
-                OrderLifecycleState.RECEIVED,
-                OrderLifecycleState.PARSED,
-                OrderLifecycleState.VALIDATED,
-                OrderLifecycleState.REJECTED_INVALID_SIGNAL,
-            ],
-            reason="paper_short_open_unsupported",
-        )
-        _append_bridge_audit(rec)
-        result.rejected_short += 1
         return
 
     # Re-narrow types for the type checker:
@@ -922,6 +898,7 @@ async def _process_one(
 
     # Create + fill
     idem = f"opbridge:{envelope_id}"
+    position_side = "short" if direction == "short" else "long"
     try:
         order = engine.create_order(
             symbol=symbol,
@@ -933,6 +910,7 @@ async def _process_one(
             take_profit=tp1,
             idempotency_key=idem,
             risk_check_id=risk_result.check_id,
+            position_side=position_side,
         )
         fill = engine.fill_order(order, current_price=current_price)
     except Exception as exc:  # noqa: BLE001

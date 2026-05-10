@@ -661,3 +661,79 @@ def test_operator_example_btc_long_full_lifecycle() -> None:
     assert len(s.status_history) == 3
     assert s.status_history[0].actor == "SignalValidator"
     assert s.status_history[-1].reason == "price_65250_in_range"
+
+
+def test_operator_example_eth_short_full_lifecycle() -> None:
+    """SHORT-Pendant zum Operator-LONG-Beispiel — Sprint-B-Bug-#1 Akzeptanz.
+
+        ETHUSDT SHORT
+        Entry: 3500
+        Leverage: 5x
+        Margin: 3%
+        Stop Loss: 3600
+        Targets: 3400 / 3300 / 3200
+
+    SHORT-Geometrie: SL > Entry > Targets (gespiegelt zu LONG).
+    Bridge + paper_engine akzeptieren das jetzt nativ via
+    ``side="sell"`` + ``position_side="short"`` (Codex-Commit b005f43,
+    paper_engine V25 SHORT-Support, Reconcile 2026-05-10).
+    """
+    s = new_signal(
+        correlation_id="SIG-TGCH-20260510143000-ETHUSDT",
+        source="telegram_premium_channel",
+        symbol="ETHUSDT",
+        display_symbol="ETH/USDT",
+        side="sell",
+        direction="short",
+        entry_type="limit",
+        entry_value=3500.0,
+        stop_loss=3600.0,
+        targets=(3400.0, 3300.0, 3200.0),
+        leverage=5,
+        margin_mode="isolated",
+        risk_allocation_pct=0.03,
+        raw_text=(
+            "ETHUSDT SHORT\nEntry: 3500\nLeverage: 5x\n"
+            "Margin: 3%\nStop Loss: 3600\nTargets: 3400 / 3300 / 3200"
+        ),
+    )
+
+    # Validator akzeptiert SHORT mit korrekter SL>Entry>Targets-Geometrie
+    result = validate(s)
+    assert result.is_valid
+    assert result.rejected_reason is None
+
+    # Lifecycle bis POSITION_OPEN durchlaufen
+    s = s.transition_to(SignalStatus.VALIDATED, actor="SignalValidator", reason="ok")
+    s = s.transition_to(
+        SignalStatus.ENTRY_TRIGGERED, actor="EntryWatcher", reason="price_at_3500_limit"
+    )
+    s = s.transition_to(SignalStatus.ORDER_BUILDING, actor="PaperEngine", reason="building")
+    s = s.transition_to(SignalStatus.ORDER_SUBMITTED, actor="PaperEngine", reason="sell_short")
+    s = s.transition_to(SignalStatus.ORDER_ACCEPTED, actor="PaperEngine", reason="accepted")
+    s = s.transition_to(SignalStatus.POSITION_OPEN, actor="PaperEngine", reason="filled")
+
+    assert s.status == SignalStatus.POSITION_OPEN
+    assert s.direction == "short"
+    assert s.side == "sell"
+    assert s.primary_entry == 3500.0
+    # SHORT-Geometrie: SL über Entry, Targets unter Entry
+    assert s.stop_loss > s.primary_entry
+    assert all(t < s.primary_entry for t in s.targets)
+    assert len(s.status_history) == 6
+
+
+def test_validator_rejects_short_signal_with_long_geometry() -> None:
+    """Pflicht: SHORT mit LONG-Geometrie (SL unter Entry) wird abgelehnt.
+
+    Dies verhindert dass ein falsch-getaggtes Signal (SHORT direction, aber
+    SL unter Entry) durchrutscht und im Paper-Engine eine illegal-orderierte
+    SHORT-Position erzeugt.
+    """
+    s = _short_signal(
+        stop_loss=3400.0,  # < Entry 3500 — falsch für SHORT
+        targets=(3300.0,),
+    )
+    result = validate(s)
+    assert not result.is_valid
+    assert "short_sl_below_entry" in result.rejected_reason
