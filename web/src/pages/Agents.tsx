@@ -143,7 +143,7 @@ function AgentCard({
       <CardHeader
         title={
           <div className="flex items-center gap-2">
-            <AgentIcon slug={agent.slug} size={20} className="text-fg-subtle" />
+            <AgentIcon slug={agent.slug} size={28} className="text-fg-muted" />
             <span>{agent.name}</span>
           </div>
         }

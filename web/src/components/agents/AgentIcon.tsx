@@ -1,10 +1,28 @@
-import { Bot, Shield, Activity, Wrench, Palette, type LucideIcon } from "lucide-react";
+import {
+  Bot,
+  ShieldCheck,
+  Activity,
+  Compass,
+  Palette,
+  Cpu,
+  Key,
+  type LucideIcon,
+} from "lucide-react";
 import { cn } from "@/lib/utils";
 
 // 2026-05-08 Operator-Folge: Custom-Icons fuer SENTR / Watchdog / Architect / DALI.
 // Files liegen in web/public/agents/<slug>.ico und werden lazy geladen, damit
 // die Icons nicht den Initial-Page-Load blockieren. Andere Agenten (Neo,
 // SATOSHI, ...) bekommen weiterhin ihre lucide-Fallback-Icons.
+//
+// 2026-05-10 DALI-A11: Default-size 16→22, neuer rounded-md statt rounded-xs.
+// Lucide-Fallbacks aufgefrischt fuer "wer macht was?"-Sofortlesbarkeit:
+//   SENTR     → ShieldCheck  (Security & Inspection — verifiziertes Schutzschild)
+//   Watchdog  → Activity     (Health-Pulse — Heartbeat-Monitor)
+//   Architect → Compass      (Navigation/Strukturentscheidung — kein Wrench)
+//   DALI      → Palette      (Design/UI/Visual — unveraendert)
+//   Neo       → Cpu          (Code-Tiefenanalyse, Logik, Refactor)
+//   SATOSHI   → Key          (Krypto/Custody/Key-Material)
 
 // Vite serviert in production unter /dashboard/. Absolute "/agents/..." Pfade
 // laufen sonst gegen den FastAPI-Root (401). BASE_URL = "/dashboard/" in prod,
@@ -18,15 +36,17 @@ const CUSTOM_ICON: Record<string, string> = {
 };
 
 const FALLBACK_LUCIDE: Record<string, LucideIcon> = {
-  sentr: Shield,
+  sentr: ShieldCheck,
   watchdog: Activity,
-  architect: Wrench,
+  architect: Compass,
   dali: Palette,
+  neo: Cpu,
+  satoshi: Key,
 };
 
 export function AgentIcon({
   slug,
-  size = 16,
+  size = 22,
   className,
 }: {
   slug: string;
@@ -45,11 +65,17 @@ export function AgentIcon({
         decoding="async"
         width={size}
         height={size}
-        className={cn("inline-block shrink-0 rounded-xs object-contain", className)}
+        className={cn(
+          "inline-block shrink-0 rounded-md object-contain",
+          // 2026-05-10: subtiler Glow + Border, damit das PNG am Dark-BG
+          // nicht ausgewaschen wirkt und visuell mit Lucide-Icons gleichzieht.
+          "ring-1 ring-fg-subtle/15 bg-bg-1/40 p-0.5",
+          className,
+        )}
         style={{ width: size, height: size }}
       />
     );
   }
   const Fallback = FALLBACK_LUCIDE[key] ?? Bot;
-  return <Fallback size={size} className={className} />;
+  return <Fallback size={size} className={cn("shrink-0", className)} strokeWidth={2.25} />;
 }
