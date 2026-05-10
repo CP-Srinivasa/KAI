@@ -972,7 +972,10 @@ def build_trading_loop(
     )
     from app.signals.bayes_activation import build_bayes_signal_kwargs
 
-    bayes_kwargs = build_bayes_signal_kwargs(settings.risk)
+    bayes_kwargs = build_bayes_signal_kwargs(
+        settings.risk,
+        learning_settings=settings.learning,
+    )
     signal_generator = SignalGenerator(
         min_confidence=settings.risk.min_signal_confidence,
         min_confluence=settings.risk.min_signal_confluence_count,

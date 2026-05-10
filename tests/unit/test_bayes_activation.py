@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from app.core.settings import RiskSettings
+from app.core.settings import LearningSettings, RiskSettings
 from app.signals.bayes_activation import build_bayes_signal_kwargs
 from app.signals.bayes_journal import DEFAULT_BAYES_AUDIT_PATH
 from app.signals.bayesian_confidence import BayesianConfidenceEngine, build_default_engine
@@ -142,3 +142,151 @@ def test_generator_built_from_kwargs_writes_audit(tmp_path: Path) -> None:
     rows = load_bayes_reports(audit)
     assert len(rows) == 1
     assert rows[0].decision_id == signal.decision_id
+
+
+# ── Adaptive-Learning Wiring (Schritt 1) ─────────────────────────────────────
+
+
+def _learning_settings(**overrides) -> LearningSettings:
+    base = LearningSettings()
+    return base.model_copy(update=overrides)
+
+
+def test_no_learning_settings_omits_adaptive_loaders() -> None:
+    """Default ``learning_settings=None`` ⇒ kein Verhaltenswechsel."""
+    s = _settings(bayes_confidence_enabled=True)
+    kwargs = build_bayes_signal_kwargs(s)
+    assert "active_calibrator" not in kwargs
+    assert "active_min_bayes_confidence" not in kwargs
+    assert "reasoning_journal" not in kwargs
+
+
+def test_disabled_adaptive_learning_omits_loaders(tmp_path: Path) -> None:
+    """``adaptive_learning_enabled=False`` ⇒ Loaders werden nicht gebaut."""
+    s = _settings(bayes_confidence_enabled=True)
+    learning = _learning_settings(
+        adaptive_learning_enabled=False,
+        snapshot_dir=tmp_path / "snapshots",
+        reasoning_journal_path=tmp_path / "rj.jsonl",
+    )
+    kwargs = build_bayes_signal_kwargs(s, learning_settings=learning)
+    assert "active_calibrator" not in kwargs
+    assert "active_min_bayes_confidence" not in kwargs
+    assert "reasoning_journal" not in kwargs
+
+
+def test_disabled_bayes_skips_learning_even_if_enabled(tmp_path: Path) -> None:
+    """Master-Gate: ohne Bayes keine Learning-Loaders, egal was learning sagt."""
+    s = _settings(bayes_confidence_enabled=False)
+    learning = _learning_settings(
+        adaptive_learning_enabled=True,
+        snapshot_dir=tmp_path / "snapshots",
+    )
+    kwargs = build_bayes_signal_kwargs(s, learning_settings=learning)
+    assert kwargs == {}
+
+
+def test_enabled_adaptive_learning_no_snapshot_yields_inactive_loaders(
+    tmp_path: Path,
+) -> None:
+    """Snapshot fehlt ⇒ Loaders sind ``is_active=False`` (Identity-Verhalten)."""
+    from app.audit.structured_reasoning import ReasoningJournal
+    from app.learning.active_calibrator import ActiveCalibrator
+    from app.learning.active_threshold import ActiveThreshold
+
+    s = _settings(bayes_confidence_enabled=True, min_bayes_confidence=0.42)
+    journal_path = tmp_path / "structured_reasoning.jsonl"
+    learning = _learning_settings(
+        adaptive_learning_enabled=True,
+        snapshot_dir=tmp_path / "snapshots",  # leeres / nicht-existentes Verzeichnis
+        reasoning_journal_path=journal_path,
+    )
+    kwargs = build_bayes_signal_kwargs(s, learning_settings=learning)
+
+    cal = kwargs["active_calibrator"]
+    threshold = kwargs["active_min_bayes_confidence"]
+    journal = kwargs["reasoning_journal"]
+
+    assert isinstance(cal, ActiveCalibrator)
+    assert cal.is_active is False  # kein Snapshot ⇒ Identity
+    assert cal.version_id is None
+
+    assert isinstance(threshold, ActiveThreshold)
+    assert threshold.is_active is False
+    assert threshold.value == 0.42  # default aus risk_settings.min_bayes_confidence
+    assert threshold.default_value == 0.42
+
+    assert isinstance(journal, ReasoningJournal)
+    assert journal.path == journal_path
+
+
+def test_enabled_adaptive_learning_with_threshold_snapshot(tmp_path: Path) -> None:
+    """Snapshot vorhanden ⇒ Threshold lädt operator-approved value."""
+    from app.learning.config_snapshot import write_snapshot
+
+    snap_dir = tmp_path / "snapshots"
+    write_snapshot(
+        parameter_path="signal.thresholds.min_bayes_confidence",
+        parameter_set={"value": 0.71, "default": 0.30},
+        version_id="pv_test_001",
+        activated_at_utc="2026-05-10T08:00:00+00:00",
+        activated_by="operator",
+        snapshot_dir=snap_dir,
+    )
+
+    s = _settings(bayes_confidence_enabled=True, min_bayes_confidence=0.30)
+    learning = _learning_settings(
+        adaptive_learning_enabled=True,
+        snapshot_dir=snap_dir,
+        reasoning_journal_path=tmp_path / "rj.jsonl",
+    )
+    kwargs = build_bayes_signal_kwargs(s, learning_settings=learning)
+
+    threshold = kwargs["active_min_bayes_confidence"]
+    assert threshold.is_active is True
+    assert threshold.value == 0.71
+    assert threshold.default_value == 0.30
+    assert threshold.version_id == "pv_test_001"
+
+
+def test_enabled_adaptive_learning_with_calibrator_snapshot(tmp_path: Path) -> None:
+    """Snapshot vorhanden ⇒ Calibrator lädt active bundle (single-form payload)."""
+    from app.learning.active_calibrator import DEFAULT_BAYES_CALIBRATOR_PATH
+    from app.learning.config_snapshot import write_snapshot
+
+    snap_dir = tmp_path / "snapshots"
+    write_snapshot(
+        parameter_path=DEFAULT_BAYES_CALIBRATOR_PATH,
+        parameter_set={
+            "intercept": 0.05,
+            "slope": 0.95,
+            "n_fitted": 240,
+            "is_identity": False,
+        },
+        version_id="pv_cal_001",
+        activated_at_utc="2026-05-10T08:00:00+00:00",
+        activated_by="operator",
+        snapshot_dir=snap_dir,
+    )
+
+    s = _settings(bayes_confidence_enabled=True)
+    learning = _learning_settings(
+        adaptive_learning_enabled=True,
+        snapshot_dir=snap_dir,
+        reasoning_journal_path=tmp_path / "rj.jsonl",
+    )
+    kwargs = build_bayes_signal_kwargs(s, learning_settings=learning)
+
+    cal = kwargs["active_calibrator"]
+    assert cal.is_active is True
+    assert cal.version_id == "pv_cal_001"
+
+
+def test_learning_settings_default_off() -> None:
+    """``LearningSettings()`` boot-time default = adaptive_learning disabled.
+
+    Ein frisches Deployment darf nie ohne expliziten Operator-Schalter in
+    den Active-Calibrator-Pfad rutschen.
+    """
+    learning = LearningSettings()
+    assert learning.adaptive_learning_enabled is False
