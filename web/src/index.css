@@ -270,22 +270,27 @@ body {
    und an beliebigen Trennstellen, wo eine Synthwave-Identifikation passt. */
 .synthwave-divider {
   height: 1px;
+  /* 2026-05-10 DALI-A1: Inset wie synthwave-edge (left:14px; right:14px),
+     damit die Linie am Card-Layout darunter andockt statt freischwebend
+     ueber der Page zu kleben. Saturation -22% damit sie sich nicht mehr
+     wie ein Banner liest. */
+  margin: 0 14px;
   background: linear-gradient(90deg,
     transparent 0%,
-    rgb(var(--info) / 0.55) 18%,
-    rgb(var(--ai) / 0.7) 50%,
-    rgb(var(--neg) / 0.55) 82%,
+    rgb(var(--info) / 0.45) 22%,
+    rgb(var(--ai) / 0.55) 50%,
+    rgb(var(--neg) / 0.45) 78%,
     transparent 100%);
   border-radius: 1px;
 }
 .dark .synthwave-divider {
   background: linear-gradient(90deg,
     transparent 0%,
-    rgb(var(--info) / 0.75) 18%,
-    rgb(var(--ai) / 0.9) 50%,
-    rgb(var(--neg) / 0.75) 82%,
+    rgb(var(--info) / 0.55) 22%,
+    rgb(var(--ai) / 0.65) 50%,
+    rgb(var(--neg) / 0.55) 78%,
     transparent 100%);
-  box-shadow: 0 0 8px rgb(var(--ai) / 0.2);
+  box-shadow: 0 0 6px rgb(var(--ai) / 0.12);
 }
 
 /* Synthwave-Title — dezenter Cyan-Halo auf Page-Titles im Dark-Mode.
