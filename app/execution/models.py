@@ -40,6 +40,8 @@ class PaperOrder:
     # worst-case Paper-Fee aus config/venue_fees.yaml; "legacy" bleibt als
     # expliziter Opt-out fuer Tests/historische Konstruktor-fee_pct-Pfade.
     venue: str = "paper"
+    # Sprint A Lifecycle: Durchgängige Identität
+    correlation_id: str = ""
 
 
 @dataclass(frozen=True)
@@ -63,6 +65,7 @@ class PaperFill:
     fee_role: str = "taker"
     fee_bps_applied: float = 0.0
     fee_table_version: str = "unknown"
+    correlation_id: str = ""
 
 
 @dataclass
@@ -89,6 +92,7 @@ class PaperPosition:
     # fraction of "the trade" each tier represents even after prior tiers
     # have already reduced the live quantity.
     initial_quantity: float = 0.0
+    correlation_id: str = ""
 
     def unrealized_pnl(self, current_price: float) -> float:
         if self.position_side == "short":
@@ -107,6 +111,7 @@ class PaperPosition:
             "position_side": self.position_side,
             "take_profit_tiers": list(self.take_profit_tiers),
             "initial_quantity": self.initial_quantity,
+            "correlation_id": self.correlation_id,
         }
 
 

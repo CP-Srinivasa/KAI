@@ -330,22 +330,34 @@ async def test_source_not_in_allowlist_skipped(
 
 
 @pytest.mark.asyncio
-async def test_short_direction_rejected(
+async def test_short_direction_fills_short_paper_order(
     tmp_artifacts: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """v1: short/sell must be rejected (paper_engine has no short primitive)."""
+    """Short/Sell signals open a paper short with mirrored SL/TP geometry."""
     monkeypatch.setenv("EXECUTION_OPERATOR_SIGNAL_BRIDGE_ENABLED", "true")
     monkeypatch.setenv("EXECUTION_OPERATOR_SIGNAL_SOURCE_ALLOWLIST", "dashboard")
     _write_envelope(
         tmp_artifacts / "telegram_message_envelope.jsonl",
-        _accepted_envelope(payload_overrides={"direction": "short", "side": "sell"}),
+        _accepted_envelope(
+            payload_overrides={
+                "direction": "short",
+                "side": "sell",
+                "entry_value": 60000.0,
+                "stop_loss": 62000.0,
+                "targets": [58000.0, 57000.0],
+            }
+        ),
     )
 
-    result = await run_tick()
+    with patch.object(bridge, "_fetch_price", new=AsyncMock(return_value=60050.0)):
+        result = await run_tick()
 
-    assert result.rejected_short == 1
+    assert result.filled == 1
     records = _read_bridge_records(tmp_artifacts / "bridge_pending_orders.jsonl")
-    assert records[-1]["stage"] == "rejected_short_unsupported"
+    assert records[-1]["stage"] == "filled"
+    assert records[-1]["side"] == "sell"
+    assert records[-1]["order_intent"]["side"] == "SELL"
+    assert records[-1]["order_intent"]["take_profit_targets"] == [58000.0, 57000.0]
 
 
 @pytest.mark.asyncio
@@ -528,10 +540,10 @@ async def test_range_entry_waits_until_price_inside_range(
 
 
 @pytest.mark.asyncio
-async def test_short_signal_maps_to_sell_order_intent_before_paper_reject(
+async def test_short_signal_maps_to_sell_order_intent_and_opens_position(
     tmp_artifacts: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Paper still cannot open shorts, but the contract preserves SELL intent."""
+    """The bridge preserves SELL intent and submits it to paper as a short."""
     monkeypatch.setenv("EXECUTION_OPERATOR_SIGNAL_BRIDGE_ENABLED", "true")
     monkeypatch.setenv("EXECUTION_OPERATOR_SIGNAL_SOURCE_ALLOWLIST", "dashboard")
     _write_envelope(
@@ -548,13 +560,14 @@ async def test_short_signal_maps_to_sell_order_intent_before_paper_reject(
         ),
     )
 
-    result = await run_tick()
+    with patch.object(bridge, "_fetch_price", new=AsyncMock(return_value=60000.0)):
+        result = await run_tick()
 
-    assert result.rejected_short == 1
+    assert result.filled == 1
     records = _read_bridge_records(tmp_artifacts / "bridge_pending_orders.jsonl")
-    assert records[-1]["stage"] == "rejected_short_unsupported"
+    assert records[-1]["stage"] == "filled"
     assert records[-1]["order_intent"]["side"] == "SELL"
-    assert records[-1]["audit_reason"] == "paper_short_open_unsupported"
+    assert records[-1]["audit_reason"] == "paper_order_filled"
 
 
 @pytest.mark.asyncio

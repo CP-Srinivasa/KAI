@@ -263,11 +263,14 @@ class RiskEngine:
         entry_price: float,
         stop_loss_price: float | None,
         equity: float,
+        leverage: float | None = None,
+        risk_allocation_pct: float | None = None,
     ) -> PositionSizeResult:
         """
-        Calculate safe position size based on risk limits.
-        Risk per trade = max_risk_per_trade_pct % of equity.
-        If no stop loss, use minimum position size.
+        Calculate safe position size based on risk limits or explicit channel sizing.
+        If `risk_allocation_pct` and `leverage` are provided, computes deterministically.
+        Otherwise, Risk per trade = max_risk_per_trade_pct % of equity.
+        If no stop loss, uses minimum position size.
         """
         if entry_price <= 0 or equity <= 0:
             return PositionSizeResult(
@@ -284,7 +287,21 @@ class RiskEngine:
 
         max_risk_usd = equity * (self._limits.max_risk_per_trade_pct / 100)
 
-        if stop_loss_price is not None and stop_loss_price > 0:
+        if risk_allocation_pct is not None and risk_allocation_pct > 0:
+            # Channel-stated fixed margin and leverage (Sprint 5)
+            eff_leverage = leverage if leverage is not None and leverage > 0 else 1.0
+            if eff_leverage > self._limits.max_leverage:
+                logger.warning(
+                    "[RISK] Capping leverage from %s to %s for %s",
+                    eff_leverage,
+                    self._limits.max_leverage,
+                    symbol,
+                )
+                eff_leverage = self._limits.max_leverage
+            margin_usd = equity * (risk_allocation_pct / 100.0)
+            notional_usd = margin_usd * eff_leverage
+            units = notional_usd / entry_price
+        elif stop_loss_price is not None and stop_loss_price > 0:
             risk_per_unit = abs(entry_price - stop_loss_price)
             if risk_per_unit > 0:
                 units = max_risk_usd / risk_per_unit

@@ -858,11 +858,18 @@ async def _process_one(
 
     # Gate 6: Position sizing
     equity = engine.portfolio.cash
+    leverage_val = _float(payload.get("leverage"))
+    risk_allocation_pct = _float(payload.get("margin_pct"))
+    if risk_allocation_pct is None:
+        risk_allocation_pct = _float(payload.get("position_size_suggestion"))
+
     size_result = risk.calculate_position_size(
         symbol=symbol,
         entry_price=entry_price,
         stop_loss_price=stop_loss,
         equity=equity,
+        leverage=leverage_val,
+        risk_allocation_pct=risk_allocation_pct,
     )
     if not size_result.approved or size_result.position_size_units <= 0:
         rec = base("rejected_size")

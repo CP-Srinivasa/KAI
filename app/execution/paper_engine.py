@@ -125,18 +125,16 @@ class PaperExecutionEngine:
     ) -> PaperOrder:
         """Create an order record (does not fill immediately).
 
-        NEO-P-101-r2: position_side defaults to "long". Any other value
-        currently raises NotImplementedError; V5 (Long+Short engine) is not yet
-        implemented. The default keeps every existing call-site behavior-stable.
+        position_side defaults to "long". Use side="sell", position_side="short"
+        to open/increase a simulated short, and side="buy", position_side="short"
+        to close/reduce it.
 
         NEO-P-106 Phase 2: venue defaults to "paper" (= worst-case default fee).
         Callers that need constructor fee_pct compatibility must pass
         venue="legacy" explicitly.
         """
-        if position_side != "long":
-            raise NotImplementedError(
-                "position_side=long-only currently; V5 (Long+Short-Engine) not implemented yet"
-            )
+        if position_side not in {"long", "short"}:
+            raise ValueError("position_side must be 'long' or 'short'")
         idem_key = idempotency_key or f"{symbol}_{side}_{_now_utc()}"
         order = PaperOrder(
             order_id=_new_order_id(),
@@ -165,12 +163,8 @@ class PaperExecutionEngine:
             logger.warning("[PAPER] Duplicate order rejected: key=%s", order.idempotency_key)
             return None
 
-        # NEO-P-101-r2: defense-in-depth - orders constructed outside
-        # create_order (e.g. via direct PaperOrder()) must still trip the V5 gate.
-        if order.position_side != "long":
-            raise NotImplementedError(
-                "position_side=long-only currently; V5 (Long+Short-Engine) not implemented yet"
-            )
+        if order.position_side not in {"long", "short"}:
+            raise ValueError("position_side must be 'long' or 'short'")
 
         if current_price <= 0:
             logger.error(
@@ -179,10 +173,9 @@ class PaperExecutionEngine:
             return None
 
         # Defense-in-depth against inverted stops — the Risk Engine owns the
-        # primary geometry gate, but if it is ever bypassed we still refuse to
-        # fill a long with SL above or TP below current price. Short/close
-        # orders carry no SL/TP so the check is scoped to buys.
-        if order.side == "buy":
+        # primary geometry gate, but if it is ever bypassed we still refuse
+        # geometrically impossible open orders.
+        if order.side == "buy" and order.position_side == "long":
             if order.stop_loss is not None and order.stop_loss >= current_price:
                 logger.error(
                     "[PAPER] Rejected fill — long SL at or above current price: "
@@ -223,6 +216,49 @@ class PaperExecutionEngine:
                     },
                 )
                 return None
+        if order.side == "sell" and order.position_side == "short":
+            if order.stop_loss is not None and order.stop_loss <= current_price:
+                logger.error(
+                    "[PAPER] Rejected fill — short SL at or below current price: "
+                    "%s sl=%.4f price=%.4f",
+                    order.symbol,
+                    order.stop_loss,
+                    current_price,
+                )
+                self._append_audit(
+                    "order_rejected_invalid_sl",
+                    {
+                        "order_id": order.order_id,
+                        "symbol": order.symbol,
+                        "side": order.side,
+                        "position_side": order.position_side,
+                        "stop_loss": order.stop_loss,
+                        "current_price": current_price,
+                        "reason": "short_sl_at_or_below_price",
+                    },
+                )
+                return None
+            if order.take_profit is not None and order.take_profit >= current_price:
+                logger.error(
+                    "[PAPER] Rejected fill — short TP at or above current price: "
+                    "%s tp=%.4f price=%.4f",
+                    order.symbol,
+                    order.take_profit,
+                    current_price,
+                )
+                self._append_audit(
+                    "order_rejected_invalid_tp",
+                    {
+                        "order_id": order.order_id,
+                        "symbol": order.symbol,
+                        "side": order.side,
+                        "position_side": order.position_side,
+                        "take_profit": order.take_profit,
+                        "current_price": current_price,
+                        "reason": "short_tp_at_or_above_price",
+                    },
+                )
+                return None
 
         # Apply slippage (adverse for buyer, favorable for seller)
         if order.side == "buy":
@@ -257,7 +293,7 @@ class PaperExecutionEngine:
         fee = cost * fee_pct_eff
         pnl = 0.0  # NEO-P-101-r2: per-trade pnl; sell-branch overwrites with netto
 
-        if order.side == "buy":
+        if order.position_side == "long" and order.side == "buy":
             if self._portfolio.cash < cost + fee:
                 logger.warning(
                     "[PAPER] Insufficient cash for order %s: need=%.2f have=%.2f",
@@ -299,9 +335,9 @@ class PaperExecutionEngine:
                     opened_at=_now_utc(),
                     position_side=order.position_side,
                 )
-        else:  # sell
+        elif order.position_side == "long" and order.side == "sell":
             pos = self._portfolio.positions.get(order.symbol)
-            if not pos or pos.quantity < order.quantity:
+            if not pos or pos.position_side != "long" or pos.quantity < order.quantity:
                 logger.warning("[PAPER] Cannot sell %s — insufficient position", order.symbol)
                 return None
             proceeds = fill_price * order.quantity - fee
@@ -327,6 +363,83 @@ class PaperExecutionEngine:
                     take_profit_tiers=list(pos.take_profit_tiers),
                     initial_quantity=pos.initial_quantity,
                 )
+        elif order.position_side == "short" and order.side == "sell":
+            pos = self._portfolio.positions.get(order.symbol)
+            if pos:
+                if pos.position_side != "short":
+                    logger.warning("[PAPER] Cannot short %s — long position exists", order.symbol)
+                    return None
+            proceeds = fill_price * order.quantity - fee
+            self._portfolio.cash += proceeds
+
+            if pos:
+                total_qty = pos.quantity + order.quantity
+                avg_price = (
+                    pos.avg_entry_price * pos.quantity + fill_price * order.quantity
+                ) / total_qty
+                self._portfolio.positions[order.symbol] = PaperPosition(
+                    symbol=order.symbol,
+                    quantity=total_qty,
+                    avg_entry_price=avg_price,
+                    stop_loss=order.stop_loss or pos.stop_loss,
+                    take_profit=order.take_profit or pos.take_profit,
+                    opened_at=pos.opened_at,
+                    realized_pnl_usd=pos.realized_pnl_usd,
+                    position_side=pos.position_side,
+                    take_profit_tiers=list(pos.take_profit_tiers),
+                    initial_quantity=pos.initial_quantity,
+                )
+            else:
+                self._portfolio.positions[order.symbol] = PaperPosition(
+                    symbol=order.symbol,
+                    quantity=order.quantity,
+                    avg_entry_price=fill_price,
+                    stop_loss=order.stop_loss,
+                    take_profit=order.take_profit,
+                    opened_at=_now_utc(),
+                    position_side=order.position_side,
+                )
+        elif order.position_side == "short" and order.side == "buy":
+            pos = self._portfolio.positions.get(order.symbol)
+            if not pos or pos.position_side != "short" or pos.quantity < order.quantity:
+                logger.warning("[PAPER] Cannot buy-cover %s — insufficient short", order.symbol)
+                return None
+            cover_cost = fill_price * order.quantity + fee
+            if self._portfolio.cash < cover_cost:
+                logger.warning(
+                    "[PAPER] Insufficient cash to cover short %s: need=%.2f have=%.2f",
+                    order.order_id,
+                    cover_cost,
+                    self._portfolio.cash,
+                )
+                return None
+            pnl = (pos.avg_entry_price - fill_price) * order.quantity - fee
+            self._portfolio.cash -= cover_cost
+            self._portfolio.realized_pnl_usd += pnl
+
+            remaining_qty = pos.quantity - order.quantity
+            if remaining_qty <= 1e-8:
+                del self._portfolio.positions[order.symbol]
+            else:
+                self._portfolio.positions[order.symbol] = PaperPosition(
+                    symbol=order.symbol,
+                    quantity=remaining_qty,
+                    avg_entry_price=pos.avg_entry_price,
+                    stop_loss=pos.stop_loss,
+                    take_profit=pos.take_profit,
+                    opened_at=pos.opened_at,
+                    realized_pnl_usd=pos.realized_pnl_usd + pnl,
+                    position_side=pos.position_side,
+                    take_profit_tiers=list(pos.take_profit_tiers),
+                    initial_quantity=pos.initial_quantity,
+                )
+        else:
+            logger.warning(
+                "[PAPER] Unsupported side/position_side combo: side=%s position_side=%s",
+                order.side,
+                order.position_side,
+            )
+            return None
 
         self._portfolio.total_fees_usd += fee
         self._portfolio.trade_count += 1
@@ -377,6 +490,24 @@ class PaperExecutionEngine:
         """Check stop-loss and take-profit triggers. Returns 'stop' | 'take' | None."""
         pos = self._portfolio.positions.get(symbol)
         if not pos:
+            return None
+        if pos.position_side == "short":
+            if pos.stop_loss and current_price >= pos.stop_loss:
+                logger.warning(
+                    "[PAPER] Short stop-loss triggered: %s price=%.2f sl=%.2f",
+                    symbol,
+                    current_price,
+                    pos.stop_loss,
+                )
+                return "stop"
+            if pos.take_profit and current_price <= pos.take_profit:
+                logger.info(
+                    "[PAPER] Short take-profit triggered: %s price=%.2f tp=%.2f",
+                    symbol,
+                    current_price,
+                    pos.take_profit,
+                )
+                return "take"
             return None
         if pos.stop_loss and current_price <= pos.stop_loss:
             logger.warning(
@@ -431,6 +562,7 @@ class PaperExecutionEngine:
                 if qty_share > 0 and price > 0
             ),
             key=lambda item: item[0],
+            reverse=pos.position_side == "short",
         )
         pos.take_profit_tiers = sorted_tiers
         if pos.initial_quantity <= 0:
@@ -490,12 +622,14 @@ class PaperExecutionEngine:
             return None
 
         entry_price = pos.avg_entry_price
+        close_side = "buy" if pos.position_side == "short" else "sell"
         order = self.create_order(
             symbol=symbol,
-            side="sell",
+            side=close_side,
             quantity=close_qty,
             idempotency_key=idem_key,
             risk_check_id=f"tp_tier:{tier_price}",
+            position_side=pos.position_side,
         )
         fill = self.fill_order(order, current_price)
         if fill is None:
@@ -570,6 +704,9 @@ class PaperExecutionEngine:
             take_profit=new_tp,
             opened_at=pos.opened_at,
             realized_pnl_usd=pos.realized_pnl_usd,
+            position_side=pos.position_side,
+            take_profit_tiers=list(pos.take_profit_tiers),
+            initial_quantity=pos.initial_quantity,
         )
         self._append_audit(
             "position_adjusted",
@@ -618,12 +755,14 @@ class PaperExecutionEngine:
 
         entry_price = pos.avg_entry_price
         quantity = pos.quantity
+        close_side = "buy" if pos.position_side == "short" else "sell"
         order = self.create_order(
             symbol=symbol,
-            side="sell",
+            side=close_side,
             quantity=quantity,
             idempotency_key=idem_key,
             risk_check_id=f"auto_close:{reason}",
+            position_side=pos.position_side,
         )
         fill = self.fill_order(order, current_price)
         if fill is None:
@@ -684,7 +823,12 @@ class PaperExecutionEngine:
                 continue
             # Stop-loss has priority over tiers — it kills the whole residual.
             pos = self._portfolio.positions.get(symbol)
-            if pos and pos.stop_loss and price <= pos.stop_loss:
+            if pos and pos.position_side == "short" and pos.stop_loss and price >= pos.stop_loss:
+                fill = self.close_position(symbol, price, reason="stop")
+                if fill:
+                    fills.append(fill)
+                continue
+            if pos and pos.position_side != "short" and pos.stop_loss and price <= pos.stop_loss:
                 fill = self.close_position(symbol, price, reason="stop")
                 if fill:
                     fills.append(fill)
@@ -697,7 +841,10 @@ class PaperExecutionEngine:
                 if pos is None or not pos.take_profit_tiers:
                     break
                 tier_price = pos.take_profit_tiers[0][0]
-                if price < tier_price:
+                if pos.position_side == "short":
+                    if price > tier_price:
+                        break
+                elif price < tier_price:
                     break
                 fill = self._consume_first_tier(symbol, price)
                 if fill is None:

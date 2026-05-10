@@ -154,6 +154,9 @@ def replay_paper_audit(audit_path: Path) -> AuditReplayResult:
                 take_profit=new_tp if new_tp is not None else existing.take_profit,
                 opened_at=existing.opened_at,
                 realized_pnl_usd=existing.realized_pnl_usd,
+                position_side=existing.position_side,
+                take_profit_tiers=list(existing.take_profit_tiers),
+                initial_quantity=existing.initial_quantity,
             )
             continue
 
@@ -191,7 +194,16 @@ def replay_paper_audit(audit_path: Path) -> AuditReplayResult:
         # NEO-P-101-r2: v2 audit rows carry position_side; v1 rows default to long.
         position_side_val = _coerce_str(payload.get("position_side")) or "long"
         existing = positions.get(symbol)
-        if side == "buy":
+        is_open = (
+            (position_side_val == "long" and side == "buy")
+            or (position_side_val == "short" and side == "sell")
+        )
+        is_close = (
+            (position_side_val == "long" and side == "sell")
+            or (position_side_val == "short" and side == "buy")
+        )
+
+        if is_open:
             if existing is None:
                 positions[symbol] = PaperPosition(
                     symbol=symbol,
@@ -204,6 +216,14 @@ def replay_paper_audit(audit_path: Path) -> AuditReplayResult:
                     position_side=position_side_val,
                 )
             else:
+                if existing.position_side != position_side_val:
+                    return AuditReplayResult(
+                        positions={},
+                        cash_usd=0.0,
+                        realized_pnl_usd=0.0,
+                        available=False,
+                        error=f"audit_position_side_conflict_line_{line_number}",
+                    )
                 total_qty = existing.quantity + quantity
                 avg_entry = (
                     (existing.avg_entry_price * existing.quantity) + (fill_price * quantity)
@@ -216,15 +236,22 @@ def replay_paper_audit(audit_path: Path) -> AuditReplayResult:
                     take_profit=(take_profit if take_profit is not None else existing.take_profit),
                     opened_at=existing.opened_at,
                     realized_pnl_usd=existing.realized_pnl_usd,
+                    position_side=existing.position_side,
+                    take_profit_tiers=list(existing.take_profit_tiers),
+                    initial_quantity=existing.initial_quantity,
                 )
-        else:
-            if existing is None or existing.quantity + 1e-9 < quantity:
+        elif is_close:
+            if (
+                existing is None
+                or existing.position_side != position_side_val
+                or existing.quantity + 1e-9 < quantity
+            ):
                 return AuditReplayResult(
                     positions={},
                     cash_usd=0.0,
                     realized_pnl_usd=0.0,
                     available=False,
-                    error=f"audit_sell_without_position_line_{line_number}",
+                    error=f"audit_close_without_position_line_{line_number}",
                 )
             remaining = existing.quantity - quantity
             if remaining <= 1e-8:
@@ -238,7 +265,18 @@ def replay_paper_audit(audit_path: Path) -> AuditReplayResult:
                     take_profit=existing.take_profit,
                     opened_at=existing.opened_at,
                     realized_pnl_usd=existing.realized_pnl_usd,
+                    position_side=existing.position_side,
+                    take_profit_tiers=list(existing.take_profit_tiers),
+                    initial_quantity=existing.initial_quantity,
                 )
+        else:
+            return AuditReplayResult(
+                positions={},
+                cash_usd=0.0,
+                realized_pnl_usd=0.0,
+                available=False,
+                error=f"audit_side_position_combo_error_line_{line_number}",
+            )
 
         portfolio_cash = _coerce_float(payload.get("portfolio_cash"))
         if portfolio_cash is not None:
