@@ -652,8 +652,11 @@ export function KaiLiveWidget(props: KaiLiveWidgetProps) {
           <KaiAvatar state={runtimeState.state} size="full" />
           <div>
             <div className="text-sm uppercase tracking-widest font-bold text-fg">KAI LIVE</div>
-            <div className="text-2xs uppercase tracking-wider text-fg-subtle">
-              Persona non grata
+            <div
+              className="text-2xs uppercase tracking-wider text-fg-muted font-mono"
+              title="Persona non grata"
+            >
+              {runtimeState.state}
             </div>
           </div>
         </div>
