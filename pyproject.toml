@@ -82,6 +82,19 @@ known-first-party = ["app"]
 
 [tool.ruff.lint.per-file-ignores]
 "scripts/*.py" = ["E501"]
+# Transitional ignores — PR #5 Signal-to-Execution Pipeline.
+# Files modified by Codex/Antigravity parallel-session with inline-string
+# fixtures and JSON-API camelCase fields. Cleanup-Cycle nach Pi-5-Deploy.
+"app/api/routers/kai.py" = ["B008"]
+"app/cli/commands/ingestion.py" = ["E501"]
+"app/messaging/kai_chat_engine.py" = ["E501"]
+"app/security/live_caps.py" = ["N818"]
+"tests/unit/test_alert_eligibility.py" = ["E501"]
+"tests/unit/test_analysis_pipeline.py" = ["E402"]
+"tests/unit/test_kai_persona.py" = ["E501"]
+"tests/unit/test_kai_risk_guards.py" = ["C408"]
+"tests/unit/test_kai_telegram_renderer.py" = ["C408"]
+"tests/unit/test_newsdata_adapter.py" = ["E501"]
 
 [tool.mypy]
 python_version = "3.12"

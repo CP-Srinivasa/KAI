@@ -101,7 +101,7 @@ class KaiAuditEventInput(BaseModel):
     source: str
     message: str
     payload: dict[str, Any] = Field(default_factory=dict)
-    correlationId: str | None = None
+    correlationId: str | None = None  # noqa: N815 — JSON-API-compat with frontend camelCase
     id: str | None = None
     timestamp: str | None = None
 

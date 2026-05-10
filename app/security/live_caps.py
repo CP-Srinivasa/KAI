@@ -22,7 +22,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-
 # 2026-05-09 — DO NOT make configurable.
 # Phase-0-Schutz: jeder Override braucht Code-Edit + Re-Deploy + Operator-Review.
 # Eskalation auf $500-1000/position kommt nach 3 Monaten Stable-Run, nicht heute.
