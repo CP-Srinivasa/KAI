@@ -107,7 +107,14 @@ class AnthropicAnalysisProvider(BaseAnalysisProvider):
         for block in response.content:
             if block.type == "tool_use" and block.name == "record_analysis":
                 # Validate using JSON mode so Pydantic coerces strings to Enums correctly
-                return LLMAnalysisOutput.model_validate_json(json.dumps(block.input))
+                raw_json = json.dumps(block.input)
+                result = LLMAnalysisOutput.model_validate_json(raw_json)
+                result.raw_prompt = user_prompt
+                result.raw_response = raw_json
+                if hasattr(response, "usage") and response.usage:
+                    result.prompt_tokens = getattr(response.usage, "input_tokens", 0)
+                    result.completion_tokens = getattr(response.usage, "output_tokens", 0)
+                return result
 
         raise ValueError(
             "Anthropic returned successful response but did not call record_analysis tool."

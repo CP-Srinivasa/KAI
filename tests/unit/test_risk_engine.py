@@ -132,7 +132,7 @@ def test_missing_stop_loss_rejected_when_required():
     assert "stop_loss_required_but_missing" in result.violations
 
 
-def test_no_stop_loss_ok_when_not_required():
+def test_no_stop_loss_rejected_even_when_not_required():
     engine = _default_engine(require_stop_loss=False)
     result = engine.check_order(
         symbol="BTC/USDT",
@@ -142,7 +142,8 @@ def test_no_stop_loss_ok_when_not_required():
         stop_loss_price=None,
         current_open_positions=0,
     )
-    assert result.approved
+    assert not result.approved
+    assert "stop_loss_required_but_missing" in result.violations
 
 
 # --- max open positions ---
@@ -355,7 +356,7 @@ def test_geometry_check_skipped_when_entry_price_omitted():
     assert not any("geometry_invalid" in v for v in result.violations)
 
 
-def test_geometry_check_skipped_when_sl_omitted():
+def test_geometry_check_rejected_when_sl_omitted():
     engine = _default_engine(require_stop_loss=False)
     result = engine.check_order(
         symbol="BTC/USDT",
@@ -367,5 +368,5 @@ def test_geometry_check_skipped_when_sl_omitted():
         entry_price=65000.0,
         take_profit_price=72000.0,
     )
-    assert result.approved
-    assert result.violations == []
+    assert not result.approved
+    assert "stop_loss_required_but_missing" in result.violations

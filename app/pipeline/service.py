@@ -271,6 +271,16 @@ async def run_rss_pipeline(
                             provider_name=res.document.provider,
                             metadata_updates=res.document.metadata,
                         )
+                        if res.llm_output and res.llm_output.raw_prompt:
+                            await repo.save_llm_audit(
+                                document_id=str(res.document.id),
+                                provider=res.provider_name or "unknown",
+                                model="unknown",
+                                prompt_text=res.llm_output.raw_prompt,
+                                raw_response=res.llm_output.raw_response or "",
+                                prompt_tokens=res.llm_output.prompt_tokens,
+                                completion_tokens=res.llm_output.completion_tokens,
+                            )
                     else:
                         await repo.update_status(str(res.document.id), DocumentStatus.ANALYZED)
                     analyzed_count += 1
@@ -468,6 +478,16 @@ async def run_youtube_pipeline(
                             provider_name=res.document.provider,
                             metadata_updates=res.document.metadata,
                         )
+                        if res.llm_output and res.llm_output.raw_prompt:
+                            await repo.save_llm_audit(
+                                document_id=str(res.document.id),
+                                provider=res.provider_name or "unknown",
+                                model="unknown",
+                                prompt_text=res.llm_output.raw_prompt,
+                                raw_response=res.llm_output.raw_response or "",
+                                prompt_tokens=res.llm_output.prompt_tokens,
+                                completion_tokens=res.llm_output.completion_tokens,
+                            )
                     else:
                         await repo.update_status(str(res.document.id), DocumentStatus.ANALYZED)
                     analyzed_count += 1
@@ -690,6 +710,16 @@ async def run_newsdata_pipeline(
                             provider_name=res.document.provider,
                             metadata_updates=res.document.metadata,
                         )
+                        if res.llm_output and res.llm_output.raw_prompt:
+                            await repo.save_llm_audit(
+                                document_id=str(res.document.id),
+                                provider=res.provider_name or "unknown",
+                                model="unknown",
+                                prompt_text=res.llm_output.raw_prompt,
+                                raw_response=res.llm_output.raw_response or "",
+                                prompt_tokens=res.llm_output.prompt_tokens,
+                                completion_tokens=res.llm_output.completion_tokens,
+                            )
                     else:
                         await repo.update_status(str(res.document.id), DocumentStatus.ANALYZED)
                     analyzed_count += 1
@@ -909,6 +939,16 @@ async def run_twitter_pipeline(
                             provider_name=res.document.provider,
                             metadata_updates=res.document.metadata,
                         )
+                        if res.llm_output and res.llm_output.raw_prompt:
+                            await repo.save_llm_audit(
+                                document_id=str(res.document.id),
+                                provider=res.provider_name or "unknown",
+                                model="unknown",
+                                prompt_text=res.llm_output.raw_prompt,
+                                raw_response=res.llm_output.raw_response or "",
+                                prompt_tokens=res.llm_output.prompt_tokens,
+                                completion_tokens=res.llm_output.completion_tokens,
+                            )
                     else:
                         await repo.update_status(str(res.document.id), DocumentStatus.ANALYZED)
                     analyzed_count += 1

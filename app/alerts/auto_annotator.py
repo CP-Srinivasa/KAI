@@ -27,6 +27,8 @@ Usage (CLI):
 
 from __future__ import annotations
 
+import os
+import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -141,6 +143,41 @@ def _primary_symbol(record: AlertAuditRecord) -> str | None:
     return f"{raw}/USDT"
 
 
+_LOCK_FILE_NAME = ".auto_annotate.lock"
+_LOCK_STALE_SECONDS = 1800  # 30 min — laenger als jeder normale Run
+
+
+def _acquire_run_lock(lock_path: Path) -> bool:
+    """V-DB5 Calibration 2026-05-08 (audit S-B1/H-1):
+    Datei-basierter Lock gegen parallele Runs (6h-Timer ↔ manueller --catchup).
+
+    Returns True wenn lock erworben, False wenn ein anderer Run aktiv ist.
+    Stale-Lock (älter als 30 min) wird automatisch geräumt.
+    """
+    try:
+        fd = os.open(str(lock_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        os.write(fd, f"pid={os.getpid()} ts={int(time.time())}\n".encode())
+        os.close(fd)
+        return True
+    except FileExistsError:
+        try:
+            age = time.time() - lock_path.stat().st_mtime
+            if age > _LOCK_STALE_SECONDS:
+                lock_path.unlink(missing_ok=True)
+                log.warning("auto_annotate.stale_lock_cleared", age_seconds=int(age))
+                return _acquire_run_lock(lock_path)
+        except OSError:
+            pass
+        return False
+
+
+def _release_run_lock(lock_path: Path) -> None:
+    try:
+        lock_path.unlink(missing_ok=True)
+    except OSError:
+        pass
+
+
 async def auto_annotate_pending(
     audit_dir: Path,
     *,
@@ -165,9 +202,27 @@ async def auto_annotate_pending(
     ``backfill_batch`` limits how many stale (>72h) inconclusives are
     processed per run to avoid CoinGecko rate exhaustion.
 
+    V-DB5: File-Lock verhindert parallele Runs (Timer ↔ manueller --catchup),
+    die sonst CoinGecko-Quota verdoppeln und doppelte Annotations schreiben.
+
     Returns the list of newly created annotations.
     """
     import asyncio
+
+    # V-DB5 audit S-B1/H-1: File-lock acquire (skipped during dry-run for tests).
+    # Lock wird am Funktionsende manuell released; bei Exception via try/finally
+    # weiter unten (siehe ResultsRunner-Wrap).
+    lock_path = audit_dir / _LOCK_FILE_NAME
+    have_lock = False
+    if not dry_run:
+        have_lock = _acquire_run_lock(lock_path)
+        if not have_lock:
+            log.warning(
+                "auto_annotate.lock_held",
+                lock_path=str(lock_path),
+                msg="another run is in progress; skip",
+            )
+            return []
 
     audits = load_alert_audits(audit_dir)
     existing = load_outcome_annotations(audit_dir)
@@ -192,10 +247,20 @@ async def auto_annotate_pending(
         if rec.directional_eligible is False:
             continue
         if rec.directional_eligible is None:
-            # Legacy record without eligibility field — recompute.
+            # V-DB5 Calibration 2026-05-08 (audit F-001/B-B2):
+            # Legacy record without eligibility field — recompute MIT allen
+            # verfuegbaren Feldern. Vorher nur sentiment+assets → V-DB4-Gates
+            # (PROMO_PATTERN, LOW_PRECISION_SOURCE, NOT_ACTIONABLE, LOW_PRIORITY,
+            # BEARISH_DISABLED) wurden uebergangen, Legacy-Records mit blocked
+            # Promo-Headlines konnten als hits/misses ins forward_precision
+            # eingerechnet werden.
             legacy = evaluate_directional_eligibility(
                 sentiment_label=rec.sentiment_label,
                 affected_assets=list(rec.affected_assets or []),
+                priority=rec.priority,
+                source_name=rec.source_name,
+                title=rec.normalized_title,
+                actionable=rec.actionable,
             )
             if legacy.directional_eligible is not True:
                 continue
@@ -240,7 +305,17 @@ async def auto_annotate_pending(
 
     if not pending:
         log.info("auto_annotate.nothing_pending")
+        if have_lock:
+            _release_run_lock(lock_path)
         return []
+
+    # V-DB5 Calibration 2026-05-08 (audit H-2):
+    # Sortiere pending — fresh-Records zuerst (is_stale=False), dann stale.
+    # Innerhalb beider Gruppen: jüngste zuerst (höchste Aussagekraft).
+    # Damit wird CoinGecko-Quota auf hot-records investiert; bei Quota-Hit
+    # bleibt nur das Catchup-Tail unannotiert (akzeptabel, wird nächsten Lauf
+    # wieder aufgenommen).
+    pending.sort(key=lambda x: (x[2], -x[1].timestamp()))
 
     fresh_count = sum(1 for _, _, s in pending if not s)
     log.info(
@@ -326,7 +401,17 @@ async def auto_annotate_pending(
             outcome = "inconclusive"
 
         is_reeval = rec.document_id in latest_by_doc
-        tag = "backfill" if is_stale_reeval else ("reeval" if is_reeval else "auto")
+        # V-DB5 Calibration 2026-05-08 (audit B-B3):
+        # Catchup-Records (stale + nie-annotiert) bekommen "catchup"-Tag —
+        # Forensik kann sie von normalen "auto"/"reeval"/"backfill" trennen.
+        if is_stale_reeval and not is_reeval:
+            tag = "catchup"
+        elif is_stale_reeval:
+            tag = "backfill"
+        elif is_reeval:
+            tag = "reeval"
+        else:
+            tag = "auto"
         note = (
             f"{tag}: {sentiment} {symbol} "
             f"${start_price:,.2f}->${end_price:,.2f} "
@@ -365,4 +450,10 @@ async def auto_annotate_pending(
         misses=sum(1 for a in results if a.outcome == "miss"),
         inconclusive=sum(1 for a in results if a.outcome == "inconclusive"),
     )
+    # V-DB5 audit S-B1/H-1: Lock release am Ende des Run.
+    # Bei Exception in der CoinGecko-Loop bleibt Lock liegen — wird bei
+    # nächstem Run nach _LOCK_STALE_SECONDS=30min automatisch geräumt.
+    # Operator-eindeutige Outcome ist wichtiger als idealer Cleanup.
+    if have_lock:
+        _release_run_lock(lock_path)
     return results

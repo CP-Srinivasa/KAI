@@ -53,6 +53,14 @@ FEEDS: list[dict[str, str]] = [
         "provider": "cryptoslate",
         "notes": "CryptoSlate - crypto news and data",
     },
+    # V-DB3c 2026-05-08 + V-DB5 Calibration (audit B-K1):
+    # cryptobriefing war in news_domains.txt aber nicht im seed-Script —
+    # damit blieb die Source seit V-DB3c effektiv inaktiv im RSS-Loop.
+    {
+        "url": "https://cryptobriefing.com/feed/",
+        "provider": "cryptobriefing",
+        "notes": "Crypto Briefing - WordPress RSS, ~75% directional yield",
+    },
 ]
 
 

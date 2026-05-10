@@ -234,7 +234,11 @@ def test_reactive_bearish_filter_only_applies_to_bearish() -> None:
         "Bitcoin rockets through key level as bulls take control",
         "Ethereum price exploding as DeFi TVL hits new ATH",
         "Bitcoin hits new all-time high above $120K",
-        "Massive ETF inflows push BTC higher",
+        # V-DB5 Calibration 2026-05-08 (audit B-A2):
+        # "Massive ETF inflows push BTC higher" wurde entfernt — ETF-Inflows sind
+        # Substanz-Events (Capital-Flow), keine reaktiven Preis-Narrative. Der
+        # \\binflows?\\b-Filter im REACTIVE_BULLISH-Set wurde entfernt; siehe
+        # auch test_etf_inflows_passes_reactive_filter unten.
         "SOL breaking out as Solana ecosystem surges",
     ],
 )
@@ -522,20 +526,38 @@ def test_tradingview_webhook_blocks_directional() -> None:
     assert decision.directional_block_reason == BLOCK_REASON_LOW_PRECISION_SOURCE
 
 
-# V-DB4b 2026-05-08: Promotional/listicle filter
+# V-DB4b 2026-05-08 + V-DB5 Calibration: Promotional/listicle filter
 @pytest.mark.parametrize(
     "title",
     [
-        "Cardano Price Sits 92% Below Its Peak While Pepeto Presale Hits $9 Million Ahead of Binance Listing",
-        "Could the Crypto Price Prediction for Bitcoin and Ethereum Catch Up to What Pepeto Offers Before Listing",
+        # Pre-Sale-Familie (immer Promo)
+        (
+            "Cardano Price Sits 92% Below Its Peak While Pepeto Presale Hits "
+            "$9 Million Ahead of Binance Listing"
+        ),
         "Best Crypto Presale 2026: Pepeto Eyes 100x Before Listing While PEPE and SHIB Trail",
+        "Pre-sale opens Tuesday — limited allocation",
+        # Listicle-Marker
         "Could Pepeto Be One of the Top 3 Cryptos to Buy Now as Solana and Cardano Push Higher",
-        "Crypto Update: The Second Chance Entry Pepeto Offers While XRP and Dogecoin Grind",
-        "SHIB Burn Frenzy Spikes 812% While Token Targets 100x Potential",
+        "Top 5 Coins To Buy This Week",
+        # Catch-up / Second-Chance Pump-Phrasen
+        "Crypto Update: The Second Chance Entry Pepeto Offers in Q2",
+        (
+            "Could the Crypto Price Prediction for Bitcoin and Ethereum Catch Up "
+            "to What Pepeto Offers Before Listing"
+        ),
+        # Multiplikator-Ziele MIT Promo-Substanz (V-DB5: enger gefasst)
+        "SHIB Targets 100x Gains Before Listing",
+        "PEPE eyes 200x return in coming weeks",
+        # Could-hit MIT Zeit-Anker (V-DB5: enger gefasst)
+        "Bitcoin could hit $200,000 by December",
+        "ETH could hit $10000 by Q3",
+        # Burn frenzy (Pump-Hype ohne Substanz)
+        "SHIB Burn Frenzy Ignites Altcoin Season",
     ],
 )
 def test_promo_listicle_title_blocked(title: str) -> None:
-    """V-DB4b: Promo/Listicle/Pre-Sale-Headlines werden gestoppt vor Score-Gates."""
+    """V-DB4b/V-DB5: Promo/Listicle/Pre-Sale-Headlines werden gestoppt vor Score-Gates."""
     decision = evaluate_directional_eligibility(
         sentiment_label="bullish",
         affected_assets=["BTC/USDT"],
@@ -553,12 +575,29 @@ def test_promo_listicle_title_blocked(title: str) -> None:
 @pytest.mark.parametrize(
     "title",
     [
+        # Mainstream-Marktnachrichten (heute zentral)
         "Coinbase Q1 Highlights: Double Miss, Market Share Record High",
         "Aptos Foundation, Aptos Labs commit $50M to development",
         "AWS Northern Virginia data center overheats, impacting Coinbase",
         "MicroStrategy buys 2,500 BTC at average price of $89,000",
         "SEC approves new spot Bitcoin ETF application",
         "Hyperliquid Strategies Inc reports $152.5 million net profit",
+        # V-DB5 Calibration: vorher fälschlich als Promo geblockt
+        # C-1: "price prediction" allein ist Mainstream-SEO
+        "Bitcoin Price Prediction by Standard Chartered: $250K Target",
+        "ETH Price Prediction by Cathie Wood",
+        "Solana price prediction hit list",
+        # C-2: "targets/eyes Nx" ohne Promo-Trailer ist legit
+        "Trump targets 200x export tariffs on Chinese chips",
+        "Visa eyes 1000x scaling target",
+        "BTC eyes 100x cycle target",
+        "Solana 100x in three years study finds",
+        # F-003: "could hit $X — analysts split" ohne Zeit-Anker ist Analyst-Konsens
+        "Bitcoin could hit $80,000 — analysts split on timing",
+        "Bitcoin could hit $100,000",
+        # C-3: "offers while ... and ..." ist normales Englisch
+        "Robinhood offers while Coinbase grinds out gains",
+        "Issuer offers while ETF and SEC negotiate",
     ],
 )
 def test_legit_news_passes_promo_filter(title: str) -> None:
@@ -567,17 +606,22 @@ def test_legit_news_passes_promo_filter(title: str) -> None:
 
 
 def test_is_promotional_helper_explicit() -> None:
-    """Direkter Pattern-Match-Test."""
-    # Truthy-Cases
+    """Direkter Pattern-Match-Test (V-DB5 calibrated)."""
+    # Truthy-Cases (Promo)
     assert _is_promotional("Pepeto Presale Hits $9 Million") is True
     assert _is_promotional("Top 3 Cryptos to Buy in 2026") is True
-    assert _is_promotional("100x Before Listing") is True
+    assert _is_promotional("100x potential within weeks") is True
     assert _is_promotional("Could hit $50,000 by July") is True
     assert _is_promotional("burn frenzy ignites altcoin season") is True
-    # Falsy-Cases
+    assert _is_promotional("eyes 1000x return") is True
+    assert _is_promotional("100x before listing") is True
+    # Falsy-Cases (legit)
     assert _is_promotional("Bitcoin spot ETF inflows hit $245M") is False
     assert _is_promotional("Coinbase reports earnings miss") is False
     assert _is_promotional("Federal Reserve announces rate decision") is False
+    assert _is_promotional("Bitcoin Price Prediction by Standard Chartered") is False
+    assert _is_promotional("Trump targets 200x export tariffs") is False
+    assert _is_promotional("Robinhood offers while Coinbase grinds") is False
 
 
 # V-DB4c 2026-05-08: Source-Watchlist soft confidence adjuster
@@ -662,4 +706,46 @@ def test_source_watchlist_no_effect_when_not_listed(tmp_path, monkeypatch) -> No
     )
     assert decision.directional_eligible is True
 
+    elig._invalidate_source_watchlist_cache()
+
+
+def test_source_watchlist_reloads_on_mtime_change(tmp_path, monkeypatch) -> None:
+    """V-DB5: Watchlist-File-Edit wird ohne Worker-Restart wirksam (mtime-Reload)."""
+    import time
+
+    from app.alerts import eligibility as elig
+
+    (tmp_path.parent / "monitor").mkdir(exist_ok=True)
+    watch_file = tmp_path.parent / "monitor" / "source_watch.txt"
+    watch_file.write_text("source_alpha\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_path.parent)
+    elig._invalidate_source_watchlist_cache()
+
+    # Erste Lektüre — alpha auf Liste
+    assert "source_alpha" in elig._load_source_watchlist()
+    assert "source_beta" not in elig._load_source_watchlist()
+
+    # Operator editiert das File: alpha raus, beta rein
+    time.sleep(0.05)  # mtime-Resolution kann grob sein
+    watch_file.write_text("source_beta\n", encoding="utf-8")
+    # Force mtime change explizit (Windows-Fallback)
+    import os
+    new_mtime = watch_file.stat().st_mtime + 1
+    os.utime(watch_file, (new_mtime, new_mtime))
+
+    # Reload OHNE Cache-Invalidate-Aufruf → mtime-basiert
+    after = elig._load_source_watchlist()
+    assert "source_beta" in after
+    assert "source_alpha" not in after
+
+    elig._invalidate_source_watchlist_cache()
+
+
+def test_source_watchlist_missing_file_returns_empty(tmp_path, monkeypatch) -> None:
+    """File fehlt → frozenset() ohne Crash."""
+    from app.alerts import eligibility as elig
+
+    monkeypatch.chdir(tmp_path)  # tmp_path enthält kein monitor/
+    elig._invalidate_source_watchlist_cache()
+    assert elig._load_source_watchlist() == frozenset()
     elig._invalidate_source_watchlist_cache()

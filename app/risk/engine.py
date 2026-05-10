@@ -157,8 +157,8 @@ class RiskEngine:
             # Trust the caller to flag this; we enforce the limit setting
             pass
 
-        # Gate 3: Stop loss required
-        if self._limits.require_stop_loss and stop_loss_price is None:
+        # Gate 3: Stop loss required (Hard-Gate, no longer configurable)
+        if stop_loss_price is None or stop_loss_price <= 0:
             violations.append("stop_loss_required_but_missing")
 
         # Gate 3b: SL/TP geometry — prevent inverted stops (long with sl>=entry,
@@ -256,6 +256,37 @@ class RiskEngine:
 
         return result
 
+    def calculate_risk_geometry(
+        self,
+        *,
+        entry_price: float,
+        direction: str,
+        atr: float | None,
+    ) -> tuple[float | None, float | None]:
+        """
+        Dynamically calculate stop-loss and take-profit bounds based on ATR.
+        Returns (stop_loss_price, take_profit_price).
+        If atr is None, returns (None, None).
+        """
+        if atr is None or atr <= 0 or entry_price <= 0:
+            return None, None
+
+        direction_normalized = direction.strip().lower()
+
+        sl_distance = atr * self._limits.atr_multiplier
+        tp_distance = atr * self._limits.tp_atr_multiplier
+
+        if direction_normalized in {"long", "buy"}:
+            stop_loss = entry_price - sl_distance
+            take_profit = entry_price + tp_distance
+        elif direction_normalized in {"short", "sell"}:
+            stop_loss = entry_price + sl_distance
+            take_profit = entry_price - tp_distance
+        else:
+            return None, None
+
+        return stop_loss, take_profit
+
     def calculate_position_size(
         self,
         *,
@@ -284,15 +315,24 @@ class RiskEngine:
 
         max_risk_usd = equity * (self._limits.max_risk_per_trade_pct / 100)
 
-        if stop_loss_price is not None and stop_loss_price > 0:
-            risk_per_unit = abs(entry_price - stop_loss_price)
-            if risk_per_unit > 0:
-                units = max_risk_usd / risk_per_unit
-            else:
-                units = max_risk_usd / entry_price
+        if stop_loss_price is None or stop_loss_price <= 0:
+            return PositionSizeResult(
+                approved=False,
+                symbol=symbol,
+                position_size_pct=0.0,
+                position_size_units=0.0,
+                entry_price=entry_price,
+                stop_loss_price=stop_loss_price,
+                max_loss_usd=0.0,
+                max_loss_pct=0.0,
+                rationale="Risk geometry missing: Stop-Loss is mandatory for sizing.",
+            )
+
+        risk_per_unit = abs(entry_price - stop_loss_price)
+        if risk_per_unit > 0:
+            units = max_risk_usd / risk_per_unit
         else:
-            # No stop loss — use minimum sizing (0.1x normal)
-            units = (max_risk_usd / entry_price) * 0.1
+            units = max_risk_usd / entry_price
 
         position_value = units * entry_price
         position_size_pct = (position_value / equity) * 100

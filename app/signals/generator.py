@@ -49,8 +49,6 @@ class SignalGenerator:
         *,
         min_confidence: float = 0.75,
         min_confluence: int = 2,
-        stop_loss_pct: float = 2.5,  # percent below entry for LONG
-        take_profit_pct: float = 5.0,  # percent above entry for LONG (2:1 R/R)
         market: str = "crypto",
         venue: str = "paper",
         mode: str = "paper",
@@ -58,11 +56,11 @@ class SignalGenerator:
         prompt_version: str = "unknown",
         price_momentum_threshold_pct: float | None = None,
         volume_threshold_usd: float | None = None,
+        stop_loss_pct: float | None = None,
+        take_profit_pct: float | None = None,
     ) -> None:
         self._min_confidence = min_confidence
         self._min_confluence = min_confluence
-        self._stop_loss_factor = stop_loss_pct / 100.0
-        self._take_profit_factor = take_profit_pct / 100.0
         self._market = market
         self._venue = venue
         self._mode = mode
@@ -76,6 +74,8 @@ class SignalGenerator:
         self._volume_threshold_usd = (
             volume_threshold_usd if volume_threshold_usd is not None else self._VOLUME_THRESHOLD_USD
         )
+        self._legacy_stop_loss_pct = stop_loss_pct
+        self._legacy_take_profit_pct = take_profit_pct
 
     def generate(
         self,
@@ -148,25 +148,23 @@ class SignalGenerator:
 
         # Entry / exit levels
         entry_price = market_data.price
-        stop_loss_price, take_profit_price = self._calculate_levels(entry_price, direction)
+        stop_loss_price, take_profit_price = self._legacy_static_risk_bounds(
+            entry_price,
+            direction,
+        )
 
         # Build narrative factors
         supporting = self._build_supporting_factors(analysis, market_data, direction)
         contradicting = self._build_contradicting_factors(analysis, market_data, direction)
 
         # Invalidation
-        sl_fmt = f"{stop_loss_price:.4f}"
-        invalidation = (
-            f"Price closes {'below' if direction == SignalDirection.LONG else 'above'} "
-            f"{sl_fmt} or analysis thesis reversed"
-        )
+        invalidation = "Analysis thesis reversed or dynamic ATR Stop-Loss triggered"
 
         # Risk summary
-        max_loss_pct = self._stop_loss_factor * 100
         risk_assessment = (
             f"{'Long' if direction == SignalDirection.LONG else 'Short'} entry at "
-            f"{entry_price:.4f}. Stop at {stop_loss_price:.4f} "
-            f"({max_loss_pct:.1f}% loss). Target at {take_profit_price:.4f}."
+            f"{entry_price:.4f}. Risk bounds (SL/TP) will be dynamically "
+            f"calculated by RiskEngine using ATR."
         )
 
         return SignalCandidate(
@@ -191,7 +189,7 @@ class SignalGenerator:
             invalidation_condition=invalidation,
             risk_assessment=risk_assessment,
             position_size_rationale="Risk-based sizing from RiskEngine",
-            max_loss_estimate_pct=max_loss_pct,
+            max_loss_estimate_pct=0.0,  # Will be calculated by RiskEngine
             data_sources_used=(market_data.source,),
             source_document_id=analysis.document_id,
             model_version=self._model_version,
@@ -274,17 +272,29 @@ class SignalGenerator:
             return "normal"
         return "low"
 
-    def _calculate_levels(
-        self, entry_price: float, direction: SignalDirection
-    ) -> tuple[float, float]:
-        """Return (stop_loss_price, take_profit_price) for given direction."""
-        if direction == SignalDirection.LONG:
-            sl = entry_price * (1.0 - self._stop_loss_factor)
-            tp = entry_price * (1.0 + self._take_profit_factor)
-        else:
-            sl = entry_price * (1.0 + self._stop_loss_factor)
-            tp = entry_price * (1.0 - self._take_profit_factor)
-        return sl, tp
+    def _legacy_static_risk_bounds(
+        self,
+        entry_price: float,
+        direction: SignalDirection,
+    ) -> tuple[float | None, float | None]:
+        """Return legacy percent SL/TP when configured, else defer to RiskEngine ATR."""
+        stop_loss_price = None
+        take_profit_price = None
+        if self._legacy_stop_loss_pct is not None:
+            stop_loss_delta = entry_price * (self._legacy_stop_loss_pct / 100.0)
+            stop_loss_price = (
+                entry_price - stop_loss_delta
+                if direction == SignalDirection.LONG
+                else entry_price + stop_loss_delta
+            )
+        if self._legacy_take_profit_pct is not None:
+            take_profit_delta = entry_price * (self._legacy_take_profit_pct / 100.0)
+            take_profit_price = (
+                entry_price + take_profit_delta
+                if direction == SignalDirection.LONG
+                else entry_price - take_profit_delta
+            )
+        return stop_loss_price, take_profit_price
 
     def _build_supporting_factors(
         self,

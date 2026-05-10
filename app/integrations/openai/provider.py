@@ -87,6 +87,13 @@ class OpenAIAnalysisProvider(BaseAnalysisProvider):
         result: LLMAnalysisOutput | None = response.choices[0].message.parsed
         if result is None:
             raise ValueError("OpenAI returned null parsed output — possible refusal")
+        
+        result.raw_prompt = user_prompt
+        result.raw_response = response.choices[0].message.content or ""
+        if hasattr(response, "usage") and response.usage:
+            result.prompt_tokens = getattr(response.usage, "prompt_tokens", 0)
+            result.completion_tokens = getattr(response.usage, "completion_tokens", 0)
+            
         return result
 
     @classmethod

@@ -165,6 +165,14 @@ class RiskSettings(BaseSettings):
     min_signal_confidence: float = Field(default=0.75)
     min_signal_confluence_count: int = Field(default=2)
 
+    # ATR Geometrie
+    atr_multiplier: float = Field(default=2.0)
+    tp_atr_multiplier: float = Field(default=4.0)
+
+    # Regime Filter
+    regime_filter_enabled: bool = Field(default=True)
+    regime_sma_period: int = Field(default=200)
+
     # Cooldown after loss/error (minutes)
     cooldown_after_loss_minutes: int = Field(default=30)
     cooldown_after_error_minutes: int = Field(default=10)

@@ -13,10 +13,12 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
-from functools import lru_cache
 from pathlib import Path
 
+from app.core.logging import get_logger
 from app.market_data.coingecko_adapter import _resolve_symbol
+
+_log = get_logger(__name__)
 
 _DIRECTIONAL_SENTIMENTS = frozenset({"bullish", "bearish"})
 BLOCK_REASON_MISSING_ASSETS = "missing_affected_assets"
@@ -55,18 +57,61 @@ _LOW_PRECISION_SOURCES: frozenset[str] = frozenset(
 )
 
 
-# V-DB4c 2026-05-08: Soft-Source-Confidence-Adjuster.
-# Operator pflegt monitor/source_watch.txt (eine source_name pro Zeile,
-# lower-case). Eine Source auf der Liste bekommt priority -= 1 in der
-# Eligibility-Pruefung — damit greift der LOW_PRIORITY-Gate (P<=7 → block)
-# härter und schwache Sources verdraengen sich weniger ins Forward-Signal.
-# Datei nicht vorhanden oder leer → kein Effekt (default-off).
-@lru_cache(maxsize=1)
+# V-DB4c 2026-05-08 + V-DB5 Calibration 2026-05-08:
+# Soft-Source-Confidence-Adjuster. Operator pflegt monitor/source_watch.txt
+# (eine source_name pro Zeile, lower-case). Eine Source auf der Liste bekommt
+# priority -= 1 in der Eligibility-Pruefung — damit greift der LOW_PRIORITY-Gate
+# (P<=7 → block) härter und schwache Sources verdraengen sich weniger ins
+# Forward-Signal. Datei nicht vorhanden oder leer → kein Effekt (default-off).
+#
+# V-DB5 Calibration (audit C-4 / F-006):
+#   - Vorher @lru_cache(maxsize=1) → Operator-File-Edits unsichtbar bis Worker-
+#     Restart. Jetzt: mtime-basierter Cache. Datei-Edit ist beim naechsten
+#     Eligibility-Check sofort wirksam (innerhalb der Stat-call-Latenz, ~ms).
+#   - Vorher relative Path → CWD-Abhaengigkeit (Settings-monitor_dir wurde
+#     ignoriert). Jetzt: Settings-monitor_dir mit Lazy-Load-Fallback auf
+#     "monitor" wenn Settings nicht verfügbar (z.B. in Tests).
+_watch_cache: dict = {
+    "mtime": -1.0,
+    "data": frozenset(),
+    "path": None,
+    "resolved_path": None,
+}
+
+
+def _resolve_watchlist_path() -> Path:
+    """Resolve monitor/source_watch.txt via get_settings, fallback to relative."""
+    cached_path = _watch_cache.get("resolved_path")
+    if isinstance(cached_path, str) and cached_path:
+        return Path(cached_path)
+
+    try:
+        from app.core.settings import get_settings  # lazy to avoid import cycles
+
+        path = Path(get_settings().monitor_dir) / "source_watch.txt"
+    except Exception:  # noqa: BLE001 — settings not available (tests, early-boot)
+        path = Path("monitor") / "source_watch.txt"
+
+    _watch_cache["resolved_path"] = str(path)
+    return path
+
+
 def _load_source_watchlist() -> frozenset[str]:
-    """Read monitor/source_watch.txt — lower-case set, '#' comments stripped."""
-    path = Path("monitor/source_watch.txt")
+    """Read source_watch.txt with mtime-based reload (no Worker-restart needed)."""
+    path = _resolve_watchlist_path()
+
+    try:
+        mtime = path.stat().st_mtime if path.exists() else 0.0
+    except OSError:
+        return _watch_cache["data"] if _watch_cache["path"] == str(path) else frozenset()
+
+    if _watch_cache["path"] == str(path) and mtime == _watch_cache["mtime"]:
+        return _watch_cache["data"]
+
     if not path.exists():
-        return frozenset()
+        _watch_cache.update({"mtime": 0.0, "data": frozenset(), "path": str(path)})
+        return _watch_cache["data"]
+
     sources: set[str] = set()
     try:
         for raw in path.read_text(encoding="utf-8").splitlines():
@@ -75,13 +120,29 @@ def _load_source_watchlist() -> frozenset[str]:
                 continue
             sources.add(line.split("|", 1)[0].strip().lower())
     except OSError:
-        return frozenset()
-    return frozenset(sources)
+        return _watch_cache["data"] if _watch_cache["path"] == str(path) else frozenset()
+
+    data = frozenset(sources)
+    _watch_cache.update({"mtime": mtime, "data": data, "path": str(path)})
+    _log.info(
+        "source_watchlist.loaded",
+        count=len(data),
+        path=str(path),
+        sources=sorted(data) if len(data) <= 10 else f"{len(data)}_entries",
+    )
+    return data
 
 
 def _invalidate_source_watchlist_cache() -> None:
-    """Test/Reload-Hook — clears the lru_cache on _load_source_watchlist."""
-    _load_source_watchlist.cache_clear()
+    """Test/Reload-Hook — clears the watchlist cache."""
+    _watch_cache.update(
+        {
+            "mtime": -1.0,
+            "data": frozenset(),
+            "path": None,
+            "resolved_path": None,
+        }
+    )
 
 # D-142: Bearish directional disabled based on 50 eligible resolved outcomes.
 # Bearish precision: 4% (1 hit / 24 miss). Bullish precision: 76% (19/25).
@@ -155,7 +216,10 @@ _REACTIVE_BULLISH_PATTERNS: tuple[re.Pattern[str], ...] = (
         re.IGNORECASE,
     ),
     re.compile(r"\b(?:breakout|broke out|breaking out)\b", re.IGNORECASE),
-    re.compile(r"\binflows?\b", re.IGNORECASE),
+    # V-DB5 Calibration 2026-05-08 (audit B-A2):
+    # "inflows" allein blockt ETF-Substanz-News ("Bitcoin spot ETF inflows hit $245M"),
+    # die direktional handelbar ist (kein lagging price-move). Pattern entfernt;
+    # echte reactive bullish narratives sind durch surge/rally/jump abgedeckt.
 )
 
 
@@ -169,27 +233,55 @@ _REACTIVE_BULLISH_PATTERNS: tuple[re.Pattern[str], ...] = (
 # eigene Evidenz. Filter wirkt VOR den reactive-narrative-Filtern, weil ein
 # Promo-Titel z.B. "surges" enthalten kann ohne darum reactive zu sein.
 _PROMO_PATTERNS: tuple[re.Pattern[str], ...] = (
-    # Pre-Sale / Listing-Pump-Narrative
+    # Pre-Sale / Listing-Pump-Narrative — diskriminative Markers, keine FP bekannt.
     re.compile(r"\bpresale\b", re.IGNORECASE),
     re.compile(r"\bpre[-\s]sale\b", re.IGNORECASE),
     re.compile(r"\bbefore\s+(?:binance\s+)?listing\b", re.IGNORECASE),
     re.compile(r"\bbest\s+crypto\s+(?:to\s+buy|presale)\b", re.IGNORECASE),
-    # Listicle-Marker
+    # Listicle-Marker — "Top N Cryptos To Buy" ist klar Promo, "Top 5 facts" nicht.
     re.compile(r"\btop\s+\d+\s+(?:crypto|coin|altcoin|token)s?\s+to\s+buy\b", re.IGNORECASE),
     re.compile(r"\b(?:could\s+be\s+)?one\s+of\s+the\s+top\s+\d+\s+crypto", re.IGNORECASE),
-    # Spekulative Multiplikator-Ziele
-    re.compile(r"\b(?:eyes?|targets?|aims?)\s+\d+0+x\b", re.IGNORECASE),
-    re.compile(r"\b\d{2,4}x\s+(?:before|by|in)\b", re.IGNORECASE),
+    # V-DB5 Calibration 2026-05-08 (audit C-2):
+    # Multiplikator-Ziele MIT Promo-Substanz-Marker (gain/return/pump/moon/rally).
+    # Vorher zu breit: "Trump targets 200x export tariffs" oder "Visa eyes 1000x scaling"
+    # wurden als Promo geblockt. Jetzt fordert das Pattern eine Promo-typische
+    # Rendite-/Pump-Phrase als Trailer.
+    re.compile(
+        r"\b(?:eyes?|targets?|aims?)\s+\d+0+x\s+"
+        r"(?:gain|gains|return|returns|rally|pump|surge|growth|moon|profit)",
+        re.IGNORECASE,
+    ),
+    # \d{2,4}x mit konkretem Zeit-Anker (Listing/Quartal/Wochen/Monate) statt freiem
+    # "before/by/in" — das matchte vorher seriöse "100x in three years study finds".
+    re.compile(
+        r"\b\d{2,4}x\s+"
+        r"(?:before\s+listing|by\s+Q\d|in\s+\d+\s+(?:weeks?|days?|months?))\b",
+        re.IGNORECASE,
+    ),
     re.compile(r"\b\d{2,4}x\s+potential\b", re.IGNORECASE),
     # "Catch up to / second chance" Pump-Phrasen
     re.compile(r"\bcatch\s+up\s+to\s+what\b", re.IGNORECASE),
     re.compile(r"\bsecond\s+chance\s+entry\b", re.IGNORECASE),
-    # "Could hit $X by Y" Spekulations-Header
-    re.compile(r"\bcould\s+hit\s+\$\d", re.IGNORECASE),
-    re.compile(r"\bprice\s+prediction\b.*\b(?:by|before|hit)\b", re.IGNORECASE),
+    # V-DB5 Calibration 2026-05-08 (audit F-003):
+    # "could hit $X" mit konkretem Zeit-Anker — verhindert FP bei Analyst-Konsens
+    # ("Bitcoin could hit $80,000 — analysts split on timing" hat keinen Zeit-Anker).
+    re.compile(
+        r"\bcould\s+hit\s+\$\d[\d,]*\s+(?:by|before|this)\s+"
+        r"(?:Q\d|month|week|day|year|20\d{2}|"
+        r"jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|"
+        r"jul(?:y)?|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?|"
+        r"spring|summer|fall|autumn|winter)",
+        re.IGNORECASE,
+    ),
+    # V-DB5 Calibration 2026-05-08 (audit C-1):
+    # "price prediction" allein war zu breit (Mainstream-SEO). Patternsentfernt.
+    # Pre-Sale-Multipliziere + Listicles fangen die echte Promo-Familie ab.
     # Burn / Frenzy / Rally-Hype ohne konkretes Ereignis
     re.compile(r"\bburn\s+frenzy\b", re.IGNORECASE),
-    re.compile(r"\boffers?\s+while\s+\w+\s+(?:and|grin|grinds?)\b", re.IGNORECASE),
+    # V-DB5 Calibration 2026-05-08 (audit C-3):
+    # "offers while ... and|grin|grinds" matchte normales Englisch
+    # ("Robinhood offers while Coinbase grinds out gains"). Pattern entfernt;
+    # Pre-Sale-Familie (Index 0-3) + Catch-Up (Index 9) decken Pump-Promos ab.
 )
 
 
@@ -480,7 +572,20 @@ def evaluate_directional_eligibility(
         for raw_asset in affected_assets
         if raw_asset.strip().upper()
     ):
-        reason = BLOCK_REASON_NAKED_ASSET
+        # V-DB5 Calibration 2026-05-08 (audit S-A1):
+        # NAKED_ASSET nur wenn mindestens ein Asset crypto-mappable waere
+        # (z.B. "BTC" → resolve_symbol("BTC/USDT") returns mapping).
+        # "PredictIt" / "Sports-Bill" / "AAPL" sind NICHT crypto-mappable
+        # und gehen als UNSUPPORTED_ASSETS, nicht als naked-crypto.
+        any_crypto_mappable = any(
+            _resolve_symbol(f"{raw_asset.strip().upper()}/USDT") is not None
+            for raw_asset in affected_assets
+            if raw_asset.strip()
+        )
+        reason = (
+            BLOCK_REASON_NAKED_ASSET if any_crypto_mappable
+            else BLOCK_REASON_UNSUPPORTED_ASSETS
+        )
     else:
         reason = BLOCK_REASON_UNSUPPORTED_ASSETS
 
