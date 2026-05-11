@@ -228,7 +228,8 @@ class BinanceAdapter(BaseExchangeAdapter):
                 # Partial-OCO-Response — Defense-in-Depth cancel der teil-Order
                 logger.error(
                     "[BINANCE] OCO partial-response: entry=%s sl=%s — cancelling",
-                    entry_id, sl_id,
+                    entry_id,
+                    sl_id,
                 )
                 if entry_id:
                     await self.cancel_order(entry_id, order.symbol)

@@ -26,14 +26,12 @@ import pytest
 from app.security.hotp_auth import (
     HOTP_DIGITS,
     MAX_ADVANCE_WINDOW,
-    HotpReplayDetected,
     HotpSeedInvalid,
     HotpSeedMissing,
     HotpVerificationFailed,
     HotpVerifier,
     humanize_counter,
 )
-
 
 # Test-Seed: base32 für RFC-4226-konform; pyotp.random_base32() würde rotieren
 # je test-run; wir nutzen einen statischen damit die Tests reproduzierbar sind.
@@ -98,9 +96,7 @@ class TestSeedLoading:
         with pytest.raises(HotpSeedInvalid):
             verifier.verify("123456")  # any digit-code, format-valid
 
-    def test_accepts_seed_with_whitespace_and_hyphens(
-        self, tmp_path: Path
-    ) -> None:
+    def test_accepts_seed_with_whitespace_and_hyphens(self, tmp_path: Path) -> None:
         # Authenticator-Apps zeigen Seed oft mit Spaces — sollte normalisiert werden.
         seed = tmp_path / "spaced.b32"
         seed.write_text("JBSW Y3DP-EHPK 3PXP", encoding="ascii")
@@ -120,23 +116,17 @@ class TestSeedLoading:
 
 
 class TestCodeFormat:
-    def test_rejects_non_6_digit_code(
-        self, hotp_paths: tuple[Path, Path]
-    ) -> None:
+    def test_rejects_non_6_digit_code(self, hotp_paths: tuple[Path, Path]) -> None:
         verifier = _make_verifier(hotp_paths)
         with pytest.raises(ValueError, match="6 digits"):
             verifier.verify("12345")  # 5 digits
 
-    def test_rejects_non_digit_code(
-        self, hotp_paths: tuple[Path, Path]
-    ) -> None:
+    def test_rejects_non_digit_code(self, hotp_paths: tuple[Path, Path]) -> None:
         verifier = _make_verifier(hotp_paths)
         with pytest.raises(ValueError, match="6 digits"):
             verifier.verify("ABCDEF")
 
-    def test_accepts_code_with_whitespace(
-        self, hotp_paths: tuple[Path, Path]
-    ) -> None:
+    def test_accepts_code_with_whitespace(self, hotp_paths: tuple[Path, Path]) -> None:
         verifier = _make_verifier(hotp_paths)
         code = _code_for(0)
         # Operator könnte Code mit Space tippen — wir trimmen.
@@ -151,9 +141,7 @@ class TestCodeFormat:
 
 
 class TestVerifyHappyPath:
-    def test_virgin_journal_accepts_counter_0(
-        self, hotp_paths: tuple[Path, Path]
-    ) -> None:
+    def test_virgin_journal_accepts_counter_0(self, hotp_paths: tuple[Path, Path]) -> None:
         verifier = _make_verifier(hotp_paths)
         assert verifier.last_used_counter() == -1
         assert verifier.next_expected_counter() == 0
@@ -166,9 +154,7 @@ class TestVerifyHappyPath:
         assert verifier.last_used_counter() == 0
         assert verifier.next_expected_counter() == 1
 
-    def test_sequential_verifications_increment(
-        self, hotp_paths: tuple[Path, Path]
-    ) -> None:
+    def test_sequential_verifications_increment(self, hotp_paths: tuple[Path, Path]) -> None:
         verifier = _make_verifier(hotp_paths)
         for expected in (0, 1, 2, 3, 4):
             res = verifier.verify(_code_for(expected))
@@ -182,42 +168,32 @@ class TestVerifyHappyPath:
 
 
 class TestToleranceWindow:
-    def test_accepts_code_1_ahead(
-        self, hotp_paths: tuple[Path, Path]
-    ) -> None:
+    def test_accepts_code_1_ahead(self, hotp_paths: tuple[Path, Path]) -> None:
         # Operator hat App vorgeklickt, Pi steht bei next=0, Code ist counter=1.
         verifier = _make_verifier(hotp_paths)
         res = verifier.verify(_code_for(1))
         assert res.counter_used == 1
         assert res.counter_advance == 2  # 1 - (-1) = 2 (initial jump)
 
-    def test_accepts_code_2_ahead(
-        self, hotp_paths: tuple[Path, Path]
-    ) -> None:
+    def test_accepts_code_2_ahead(self, hotp_paths: tuple[Path, Path]) -> None:
         verifier = _make_verifier(hotp_paths)
         res = verifier.verify(_code_for(2))
         assert res.counter_used == 2
 
-    def test_rejects_code_outside_window(
-        self, hotp_paths: tuple[Path, Path]
-    ) -> None:
+    def test_rejects_code_outside_window(self, hotp_paths: tuple[Path, Path]) -> None:
         # MAX_ADVANCE_WINDOW=3 → akzeptiert next/next+1/next+2.
         # Code für counter=10 sollte rejected werden bei virgin journal.
         verifier = _make_verifier(hotp_paths)
         with pytest.raises(HotpVerificationFailed):
             verifier.verify(_code_for(10))
 
-    def test_narrow_window_rejects_at_boundary(
-        self, hotp_paths: tuple[Path, Path]
-    ) -> None:
+    def test_narrow_window_rejects_at_boundary(self, hotp_paths: tuple[Path, Path]) -> None:
         verifier = _make_verifier(hotp_paths, allow_advance=1)
         # window=1 → nur counter 0 akzeptiert bei virgin.
         with pytest.raises(HotpVerificationFailed):
             verifier.verify(_code_for(1))
 
-    def test_invalid_allow_advance(
-        self, hotp_paths: tuple[Path, Path]
-    ) -> None:
+    def test_invalid_allow_advance(self, hotp_paths: tuple[Path, Path]) -> None:
         with pytest.raises(ValueError, match="außerhalb"):
             HotpVerifier(
                 seed_path=hotp_paths[0],
@@ -238,9 +214,7 @@ class TestToleranceWindow:
 
 
 class TestReplayProtection:
-    def test_same_code_twice_rejected_second_time(
-        self, hotp_paths: tuple[Path, Path]
-    ) -> None:
+    def test_same_code_twice_rejected_second_time(self, hotp_paths: tuple[Path, Path]) -> None:
         verifier = _make_verifier(hotp_paths)
         verifier.verify(_code_for(0))  # ok
         # Second attempt: same code for counter=0 — Pi has counter at 0,
@@ -248,9 +222,7 @@ class TestReplayProtection:
         with pytest.raises(HotpVerificationFailed):
             verifier.verify(_code_for(0))
 
-    def test_journal_tamper_replay_protection(
-        self, hotp_paths: tuple[Path, Path]
-    ) -> None:
+    def test_journal_tamper_replay_protection(self, hotp_paths: tuple[Path, Path]) -> None:
         """Defense-in-Depth: wenn jemand das Journal extern manipuliert um
         Counter zurückzusetzen, soll Replay trotzdem erkannt werden.
 
@@ -291,9 +263,7 @@ class TestReplayProtection:
 
 
 class TestJournalSemantics:
-    def test_journal_records_have_schema_version(
-        self, hotp_paths: tuple[Path, Path]
-    ) -> None:
+    def test_journal_records_have_schema_version(self, hotp_paths: tuple[Path, Path]) -> None:
         verifier = _make_verifier(hotp_paths)
         verifier.verify(_code_for(0))
         line = hotp_paths[1].read_text().strip()
@@ -303,24 +273,19 @@ class TestJournalSemantics:
         assert record["advance"] == 1
         assert "verified_at_utc" in record
 
-    def test_corrupt_journal_line_skipped(
-        self, hotp_paths: tuple[Path, Path]
-    ) -> None:
+    def test_corrupt_journal_line_skipped(self, hotp_paths: tuple[Path, Path]) -> None:
         # Write garbage + valid record. last_used_counter() should skip garbage.
         hotp_paths[1].write_text(
             "this is not json\n"
             + json.dumps(
-                {"counter": 7, "advance": 1, "verified_at_utc": "x",
-                 "schema_version": "hotp-v1"}
+                {"counter": 7, "advance": 1, "verified_at_utc": "x", "schema_version": "hotp-v1"}
             )
             + "\n"
         )
         verifier = _make_verifier(hotp_paths)
         assert verifier.last_used_counter() == 7
 
-    def test_journal_directory_created_on_demand(
-        self, tmp_path: Path
-    ) -> None:
+    def test_journal_directory_created_on_demand(self, tmp_path: Path) -> None:
         seed = tmp_path / "seed.b32"
         seed.write_text(_TEST_SEED)
         journal = tmp_path / "deep" / "nested" / "dir" / "hotp.jsonl"
