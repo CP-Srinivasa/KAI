@@ -61,7 +61,7 @@ def parse_watchlist_type(value: str) -> WatchlistType:
     if normalized not in SUPPORTED_WATCHLIST_TYPES:
         supported = ", ".join(SUPPORTED_WATCHLIST_TYPES)
         raise ValueError(f"Unsupported watchlist type '{value}'. Expected one of: {supported}.")
-    return normalized  # type: ignore[return-value]
+    return normalized
 
 
 def _normalize_text(value: str) -> str:
