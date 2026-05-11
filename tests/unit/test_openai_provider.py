@@ -36,10 +36,16 @@ def _make_llm_output(**overrides) -> LLMAnalysisOutput:
 def _mock_parse_response(parsed: LLMAnalysisOutput) -> MagicMock:
     msg = MagicMock()
     msg.parsed = parsed
+    # Pydantic strict + validate_assignment rejects MagicMock for str | None.
+    # Provider sets result.raw_response = msg.content or "" — give it a real str.
+    msg.content = ""
     choice = MagicMock()
     choice.message = msg
     response = MagicMock()
     response.choices = [choice]
+    # Same reason: provider reads response.usage.prompt_tokens (int field).
+    # Setting usage=None makes the provider skip the token-stat assignment.
+    response.usage = None
     return response
 
 
