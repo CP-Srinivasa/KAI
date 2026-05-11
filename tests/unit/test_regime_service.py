@@ -19,17 +19,13 @@ class _FakeProvider:
         self.candles = candles
         self.calls: list[tuple[str, str, int]] = []
 
-    async def get_ohlcv(
-        self, symbol: str, timeframe: str = "1h", limit: int = 100
-    ) -> list[OHLCV]:
+    async def get_ohlcv(self, symbol: str, timeframe: str = "1h", limit: int = 100) -> list[OHLCV]:
         self.calls.append((symbol, timeframe, limit))
         return self.candles
 
 
 class _RaisingProvider:
-    async def get_ohlcv(
-        self, symbol: str, timeframe: str = "1h", limit: int = 100
-    ) -> list[OHLCV]:
+    async def get_ohlcv(self, symbol: str, timeframe: str = "1h", limit: int = 100) -> list[OHLCV]:
         raise RuntimeError("boom")
 
 
@@ -90,9 +86,7 @@ async def test_service_classifies_flat_market_to_chop(tmp_path: Path) -> None:
 @pytest.mark.asyncio
 async def test_service_uses_correct_ohlcv_request(tmp_path: Path) -> None:
     provider = _FakeProvider(_uptrend_candles(60))
-    svc = RegimeService(
-        market_data=provider, storage_dir=tmp_path, ohlcv_limit=150, timeframe="4h"
-    )
+    svc = RegimeService(market_data=provider, storage_dir=tmp_path, ohlcv_limit=150, timeframe="4h")
     await svc.classify_once("ETH")
     assert provider.calls == [("ETH", "4h", 150)]
 

@@ -133,9 +133,7 @@ class RegimeService:
 
         min_bars = max(2 * ADX_DEFAULT_PERIOD, RV_DEFAULT_WINDOW + 1)
         if len(candles) < min_bars:
-            snap = _unknown_snapshot(
-                asset, f"insufficient OHLCV: {len(candles)} < {min_bars}"
-            )
+            snap = _unknown_snapshot(asset, f"insufficient OHLCV: {len(candles)} < {min_bars}")
             append_regime_snapshot(snap, self._storage_dir)
             return snap
 

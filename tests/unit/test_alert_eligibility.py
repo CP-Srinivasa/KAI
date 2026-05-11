@@ -726,6 +726,7 @@ def test_source_watchlist_reloads_on_mtime_change(tmp_path, monkeypatch) -> None
     watch_file.write_text("source_beta\n", encoding="utf-8")
     # Force mtime change explizit (Windows-Fallback)
     import os
+
     new_mtime = watch_file.stat().st_mtime + 1
     os.utime(watch_file, (new_mtime, new_mtime))
 

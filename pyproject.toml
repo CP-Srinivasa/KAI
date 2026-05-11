@@ -86,6 +86,9 @@ known-first-party = ["app"]
 
 [tool.ruff.lint.per-file-ignores]
 "scripts/*.py" = ["E501"]
+# Alembic-generated migrations: never hand-edited; regeneration would
+# overwrite stylistic fixes. Mypy already excludes "migrations/".
+"app/storage/migrations/versions/*.py" = ["E501", "I001", "UP007", "UP035"]
 # Transitional ignores — PR #5 Signal-to-Execution Pipeline.
 # Files modified by Codex/Antigravity parallel-session with inline-string
 # fixtures and JSON-API camelCase fields. Cleanup-Cycle nach Pi-5-Deploy.

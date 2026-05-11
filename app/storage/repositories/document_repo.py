@@ -156,6 +156,7 @@ class DocumentRepository:
         completion_tokens: int,
     ) -> None:
         from app.storage.models.audit import LLMAuditRecord
+
         audit = LLMAuditRecord(
             document_id=document_id,
             provider=provider,

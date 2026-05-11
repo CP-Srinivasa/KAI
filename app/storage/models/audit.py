@@ -22,9 +22,7 @@ class LLMAuditRecord(Base):
     """
 
     __tablename__ = "llm_audit"
-    __table_args__ = (
-        Index("ix_llm_audit_document_created", "document_id", "created_at"),
-    )
+    __table_args__ = (Index("ix_llm_audit_document_created", "document_id", "created_at"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
 

@@ -584,8 +584,7 @@ def evaluate_directional_eligibility(
             if raw_asset.strip()
         )
         reason = (
-            BLOCK_REASON_NAKED_ASSET if any_crypto_mappable
-            else BLOCK_REASON_UNSUPPORTED_ASSETS
+            BLOCK_REASON_NAKED_ASSET if any_crypto_mappable else BLOCK_REASON_UNSUPPORTED_ASSETS
         )
     else:
         reason = BLOCK_REASON_UNSUPPORTED_ASSETS

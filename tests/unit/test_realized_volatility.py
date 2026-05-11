@@ -13,7 +13,6 @@ from app.analysis.indicators.realized_volatility import (
     compute_realized_volatility,
 )
 
-
 # ── log returns ─────────────────────────────────────────────────────────────
 
 
@@ -79,9 +78,7 @@ def test_rv_lifts_during_volatility_burst() -> None:
     quiet_rv = out[29]
     burst_rv = out[-1]
     assert quiet_rv is not None and burst_rv is not None
-    assert burst_rv > quiet_rv * 5, (
-        f"burst RV {burst_rv:.4f} should dwarf quiet RV {quiet_rv:.4f}"
-    )
+    assert burst_rv > quiet_rv * 5, f"burst RV {burst_rv:.4f} should dwarf quiet RV {quiet_rv:.4f}"
 
 
 # ── vol class ──────────────────────────────────────────────────────────────

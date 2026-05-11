@@ -22,7 +22,6 @@ from dataclasses import dataclass
 from app.analysis.indicators.realized_volatility import VolClass
 from app.regime.models import RegimeClass, RegimeSnapshot
 
-
 ADX_TREND_THRESHOLD = 30.0
 ADX_BREAKOUT_THRESHOLD = 25.0
 ATR_Z_BREAKOUT_THRESHOLD = 1.0
@@ -57,10 +56,7 @@ def classify_raw(inputs: ClassifierInputs) -> RegimeClass:
         return RegimeClass.TREND_UP if plus_dominant else RegimeClass.TREND_DOWN
 
     if inputs.adx >= ADX_BREAKOUT_THRESHOLD:
-        atr_z_high = (
-            inputs.atr_zscore is not None
-            and inputs.atr_zscore >= ATR_Z_BREAKOUT_THRESHOLD
-        )
+        atr_z_high = inputs.atr_zscore is not None and inputs.atr_zscore >= ATR_Z_BREAKOUT_THRESHOLD
         if atr_z_high:
             return RegimeClass.BREAKOUT_UP if plus_dominant else RegimeClass.BREAKOUT_DOWN
         # Transition zone without volatility anomaly → still chop, classified
