@@ -177,7 +177,8 @@ class LiveExecutionEngine:
         self._last_unlock_ts = time.time()
         logger.info(
             "live_engine_unlocked counter=%d advance=%d",
-            result.counter_used, result.counter_advance,
+            result.counter_used,
+            result.counter_advance,
         )
         return result
 
@@ -249,23 +250,28 @@ class LiveExecutionEngine:
         audit_id = f"live_attempt_{int(time.time() * 1000)}_{self._orders_attempted}"
         gates: list[GateResult] = []
 
-        self._audit("live_order_attempted", {
-            "audit_id": audit_id,
-            "exchange": exchange,
-            "symbol": order.symbol,
-            "side": order.side,
-            "quantity": order.quantity,
-            "price": order.price,
-            "stop_loss": order.stop_loss,
-            "notional_usd": notional_usd,
-            "live_state": self.state.value,
-            "client_order_id": order.client_order_id,
-        })
+        self._audit(
+            "live_order_attempted",
+            {
+                "audit_id": audit_id,
+                "exchange": exchange,
+                "symbol": order.symbol,
+                "side": order.side,
+                "quantity": order.quantity,
+                "price": order.price,
+                "stop_loss": order.stop_loss,
+                "notional_usd": notional_usd,
+                "live_state": self.state.value,
+                "client_order_id": order.client_order_id,
+            },
+        )
 
         # Pre-Check: Live-Mode muss UNLOCKED sein (per Idle-Check)
         if self.state != LiveModeState.UNLOCKED:
             return self._reject(
-                audit_id, gates, "live_mode_locked",
+                audit_id,
+                gates,
+                "live_mode_locked",
                 "Live-Mode is LOCKED — /live unlock <hotp> first",
             )
 
@@ -292,7 +298,10 @@ class LiveExecutionEngine:
         except LiveCapBreach as exc:
             gates.append(GateResult("live_caps", False, str(exc)))
             return self._reject(
-                audit_id, gates, "live_caps_breach", str(exc),
+                audit_id,
+                gates,
+                "live_caps_breach",
+                str(exc),
                 hotp_counter=hotp_result.counter_used,
             )
 
@@ -310,7 +319,9 @@ class LiveExecutionEngine:
         if not risk_result.approved:
             gates.append(GateResult("risk", False, risk_result.reason or "rejected"))
             return self._reject(
-                audit_id, gates, "risk_engine_rejected",
+                audit_id,
+                gates,
+                "risk_engine_rejected",
                 risk_result.reason or "no_reason",
                 hotp_counter=hotp_result.counter_used,
             )
@@ -321,26 +332,35 @@ class LiveExecutionEngine:
         if verifier is None:
             gates.append(GateResult("exchange_perms", False, f"no_verifier_for_{exchange}"))
             return self._reject(
-                audit_id, gates, "exchange_perms_not_configured",
+                audit_id,
+                gates,
+                "exchange_perms_not_configured",
                 f"no verifier for exchange={exchange}",
                 hotp_counter=hotp_result.counter_used,
             )
         try:
             status = verifier.fetch_status()
             verify_against_phase0_requirements(
-                status=status, expectations=self._perms_expectations,
+                status=status,
+                expectations=self._perms_expectations,
             )
             gates.append(GateResult("exchange_perms", True, "phase0_compliant"))
         except PermissionDriftError as exc:
             gates.append(GateResult("exchange_perms", False, str(exc)))
             return self._reject(
-                audit_id, gates, "exchange_perms_drift", str(exc),
+                audit_id,
+                gates,
+                "exchange_perms_drift",
+                str(exc),
                 hotp_counter=hotp_result.counter_used,
             )
         except Exception as exc:  # ExchangeApiError oder anderes
             gates.append(GateResult("exchange_perms", False, f"api_error: {exc}"))
             return self._reject(
-                audit_id, gates, "exchange_perms_api_error", str(exc),
+                audit_id,
+                gates,
+                "exchange_perms_api_error",
+                str(exc),
                 hotp_counter=hotp_result.counter_used,
             )
 
@@ -349,7 +369,9 @@ class LiveExecutionEngine:
         if adapter is None:
             gates.append(GateResult("server_sl", False, f"no_adapter_for_{exchange}"))
             return self._reject(
-                audit_id, gates, "adapter_not_configured",
+                audit_id,
+                gates,
+                "adapter_not_configured",
                 f"no adapter for exchange={exchange}",
                 hotp_counter=hotp_result.counter_used,
             )
@@ -358,34 +380,43 @@ class LiveExecutionEngine:
         if not exchange_result.success:
             gates.append(GateResult("server_sl", False, exchange_result.error))
             return self._reject(
-                audit_id, gates, "server_sl_failed", exchange_result.error,
+                audit_id,
+                gates,
+                "server_sl_failed",
+                exchange_result.error,
                 hotp_counter=hotp_result.counter_used,
                 exchange_result=exchange_result,
             )
-        gates.append(GateResult(
-            "server_sl", True,
-            f"order_id={exchange_result.order_id} sl={exchange_result.sl_order_id}",
-        ))
+        gates.append(
+            GateResult(
+                "server_sl",
+                True,
+                f"order_id={exchange_result.order_id} sl={exchange_result.sl_order_id}",
+            )
+        )
 
         # All gates passed — record placement.
         self._orders_placed += 1
-        self._audit("live_order_placed", {
-            "audit_id": audit_id,
-            "schema_version": "live-v1",
-            "exchange": exchange,
-            "symbol": order.symbol,
-            "side": order.side,
-            "quantity": order.quantity,
-            "notional_usd": notional_usd,
-            "order_id": exchange_result.order_id,
-            "sl_order_id": exchange_result.sl_order_id,
-            "sl_price": exchange_result.sl_price,
-            "hotp_counter_used": hotp_result.counter_used,
-            "current_open_positions_at_send": self._open_position_count,
-            "live_caps_check": "passed",
-            "risk_engine_check": "passed",
-            "exchange_perms_check": "passed",
-        })
+        self._audit(
+            "live_order_placed",
+            {
+                "audit_id": audit_id,
+                "schema_version": "live-v1",
+                "exchange": exchange,
+                "symbol": order.symbol,
+                "side": order.side,
+                "quantity": order.quantity,
+                "notional_usd": notional_usd,
+                "order_id": exchange_result.order_id,
+                "sl_order_id": exchange_result.sl_order_id,
+                "sl_price": exchange_result.sl_price,
+                "hotp_counter_used": hotp_result.counter_used,
+                "current_open_positions_at_send": self._open_position_count,
+                "live_caps_check": "passed",
+                "risk_engine_check": "passed",
+                "exchange_perms_check": "passed",
+            },
+        )
 
         return LiveOrderOutcome(
             success=True,
@@ -406,15 +437,18 @@ class LiveExecutionEngine:
         exchange_result: OrderResult | None = None,
     ) -> LiveOrderOutcome:
         """Helper: persist reject-audit + return outcome."""
-        self._audit("live_order_rejected", {
-            "audit_id": audit_id,
-            "schema_version": "live-v1",
-            "reject_reason": reject_reason,
-            "detail": detail,
-            "gates_passed": [g.name for g in gates if g.passed],
-            "gate_failed": next((g.name for g in gates if not g.passed), None),
-            "hotp_counter_used": hotp_counter,
-        })
+        self._audit(
+            "live_order_rejected",
+            {
+                "audit_id": audit_id,
+                "schema_version": "live-v1",
+                "reject_reason": reject_reason,
+                "detail": detail,
+                "gates_passed": [g.name for g in gates if g.passed],
+                "gate_failed": next((g.name for g in gates if not g.passed), None),
+                "hotp_counter_used": hotp_counter,
+            },
+        )
         return LiveOrderOutcome(
             success=False,
             gates=tuple(gates),

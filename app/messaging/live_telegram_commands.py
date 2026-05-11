@@ -58,9 +58,7 @@ def _parse_live_unlock(text: str) -> LiveUnlockArgs:
         )
     code = parts[2]
     if len(code) != 6 or not code.isdigit():
-        raise LiveCommandError(
-            f"HOTP-Code muss 6 Ziffern sein, erhielt: '{code}'"
-        )
+        raise LiveCommandError(f"HOTP-Code muss 6 Ziffern sein, erhielt: '{code}'")
     return LiveUnlockArgs(hotp_code=code)
 
 
@@ -169,17 +167,13 @@ def _parse_trade(text: str) -> TradeArgs:
         raise LiveCommandError(f"qty/price/sl müssen Zahlen sein: {exc}") from exc
 
     if qty <= 0 or entry <= 0 or sl <= 0:
-        raise LiveCommandError(
-            f"qty/price/sl müssen > 0 sein: qty={qty} entry={entry} sl={sl}"
-        )
+        raise LiveCommandError(f"qty/price/sl müssen > 0 sein: qty={qty} entry={entry} sl={sl}")
 
     if len(hotp) != 6 or not hotp.isdigit():
         raise LiveCommandError(f"HOTP-Code muss 6 Ziffern sein, erhielt: '{hotp}'")
 
     if exchange not in {"binance", "bybit"}:
-        raise LiveCommandError(
-            f"exchange muss 'binance' oder 'bybit' sein, erhielt: '{exchange}'"
-        )
+        raise LiveCommandError(f"exchange muss 'binance' oder 'bybit' sein, erhielt: '{exchange}'")
 
     return TradeArgs(
         symbol=sym.upper(),
