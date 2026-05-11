@@ -233,6 +233,69 @@ export const Button = forwardRef<HTMLButtonElement, BtnProps>(function Button(
   );
 });
 
+/* ---------- InfoHint (DALI-P-026, 2026-05-11) ----------
+   Inline-Tooltip-Affordance fuer Fachbegriffe (ADX, ATR-Z, Wilson-CI etc.).
+   CSS-only via group + focus-within, kein Portal — bleibt im Card-Stacking-
+   Context und vererbt das Synthwave-Glow-Pattern (border-info/40 +
+   glow-info-leicht). Operator-Wunsch 2026-05-11: deutsche Klar-Definitionen
+   auf einen Blick, ohne ein eigenes Drawer/Modal zu oeffnen.
+
+   - trigger: kleines (i)-Glyph (a11y: button mit aria-label, type=button).
+   - hint:    deutsche Erklaerung, max ~2-3 Saetze. Wird unter dem Trigger
+              eingeblendet, rechts bzw. links je nach side="left|right".
+   - inline:  true → triggert als kleines Symbol neben Text; false → block.
+*/
+
+export function InfoHint({
+  label,
+  hint,
+  side = "right",
+  className,
+  triggerClassName,
+}: {
+  label: string;
+  hint: ReactNode;
+  side?: "left" | "right";
+  className?: string;
+  triggerClassName?: string;
+}) {
+  const sidePos = side === "left" ? "right-0" : "left-0";
+  return (
+    <span className={cn("relative inline-flex items-center group", className)}>
+      <button
+        type="button"
+        aria-label={`Erklaerung: ${label}`}
+        className={cn(
+          "inline-flex h-3.5 w-3.5 items-center justify-center rounded-full",
+          "border border-info/40 bg-bg-2 text-info text-[9px] font-bold leading-none",
+          "transition-colors hover:border-info hover:bg-info/10",
+          "focus:outline-none focus-visible:ring-1 focus-visible:ring-info/60",
+          triggerClassName,
+        )}
+      >
+        i
+      </button>
+      <span
+        role="tooltip"
+        className={cn(
+          "pointer-events-none absolute top-full mt-1.5 z-30 w-64 max-w-[80vw]",
+          sidePos,
+          "rounded-md border border-info/40 bg-bg-1 px-2.5 py-2",
+          "text-2xs leading-relaxed text-fg shadow-panel glow-info",
+          "opacity-0 translate-y-1 transition-all duration-150",
+          "group-hover:opacity-100 group-hover:translate-y-0 group-hover:pointer-events-auto",
+          "group-focus-within:opacity-100 group-focus-within:translate-y-0 group-focus-within:pointer-events-auto",
+        )}
+      >
+        <span className="block text-2xs font-semibold uppercase tracking-wider text-info mb-1">
+          {label}
+        </span>
+        <span className="block text-fg-muted">{hint}</span>
+      </span>
+    </span>
+  );
+}
+
 /* ---------- Section label ---------- */
 
 export function SectionLabel({ children, className }: { children: ReactNode; className?: string }) {
