@@ -147,6 +147,125 @@ class BinanceAdapter(BaseExchangeAdapter):
                 exchange="binance",
             )
 
+    async def place_order_with_server_sl(self, order: OrderRequest) -> OrderResult:
+        """Place atomic Binance OCO order (entry + server-side stop-loss).
+
+        Phase-0 Pflicht-Pfad. Spec: docs/security/kai_light_live_phase0_spec.md §4.
+
+        Uses ``/api/v3/order/oco`` (legacy OCO endpoint, testnet-supported).
+        Binance OCO ist atomar: entweder beide Orders (LIMIT + STOP_LOSS_LIMIT)
+        werden platziert, oder keine. Bei API-Fehler ist nichts placed → kein
+        Cancel-Fallback nötig. Cancel-Fallback nur bei partial-response (sollte
+        nie passieren, aber Defense-in-Depth).
+        """
+        invalid = self._validate_server_sl(order)
+        if invalid is not None:
+            return invalid
+
+        if self._dry_run:
+            return self._dry_run_order_with_sl(order)
+
+        if not self.is_configured:
+            return OrderResult(
+                success=False,
+                error="Binance API keys not configured",
+                exchange="binance",
+                symbol=order.symbol,
+            )
+
+        # Binance-OCO: stopLimitPrice ist der Trigger-Wert für die Stop-Limit-Order;
+        # ohne stopLimitPrice fällt OCO auf STOP_LOSS-Market zurück (schlechtere
+        # Preisgarantie). Wir setzen stopLimitPrice = stop_loss (deterministischer
+        # Limit-Exit auf SL-Niveau).
+        assert order.price is not None  # validated above
+        assert order.stop_loss is not None  # validated above
+        params: dict[str, str | int | float] = {
+            "symbol": order.symbol.upper().replace("/", ""),
+            "side": order.side.upper(),
+            "quantity": order.quantity,
+            "price": order.price,
+            "stopPrice": order.stop_loss,
+            "stopLimitPrice": order.stop_loss,
+            "stopLimitTimeInForce": order.time_in_force,
+        }
+        if order.client_order_id:
+            params["listClientOrderId"] = order.client_order_id
+            params["limitClientOrderId"] = f"{order.client_order_id}-entry"
+            params["stopClientOrderId"] = f"{order.client_order_id}-sl"
+
+        signed = self._sign(params)
+
+        try:
+            async with httpx.AsyncClient(timeout=self._timeout) as client:
+                resp = await client.post(
+                    f"{self._base_url}/api/v3/order/oco",
+                    params=signed,
+                    headers=self._headers(),
+                )
+
+            data = resp.json()
+            if resp.status_code != 200:
+                return OrderResult(
+                    success=False,
+                    error=f"oco_http_{resp.status_code}: {data.get('msg', resp.text[:200])}",
+                    exchange="binance",
+                    symbol=order.symbol,
+                    raw_response=data,
+                )
+
+            # OCO-Response: orderReports array mit 2 Einträgen (LIMIT + STOP_LOSS_LIMIT)
+            reports = data.get("orderReports", [])
+            entry_id = ""
+            sl_id = ""
+            for r in reports:
+                rtype = str(r.get("type", "")).upper()
+                if rtype in {"LIMIT_MAKER", "LIMIT"}:
+                    entry_id = str(r.get("orderId", ""))
+                elif "STOP" in rtype:
+                    sl_id = str(r.get("orderId", ""))
+
+            if not entry_id or not sl_id:
+                # Partial-OCO-Response — Defense-in-Depth cancel der teil-Order
+                logger.error(
+                    "[BINANCE] OCO partial-response: entry=%s sl=%s — cancelling",
+                    entry_id, sl_id,
+                )
+                if entry_id:
+                    await self.cancel_order(entry_id, order.symbol)
+                if sl_id:
+                    await self.cancel_order(sl_id, order.symbol)
+                return OrderResult(
+                    success=False,
+                    error="sl_placement_failed: oco_partial_response",
+                    exchange="binance",
+                    symbol=order.symbol,
+                    raw_response=data,
+                )
+
+            return OrderResult(
+                success=True,
+                order_id=entry_id,
+                client_order_id=order.client_order_id,
+                symbol=order.symbol,
+                side=order.side,
+                order_type=order.order_type,
+                quantity=order.quantity,
+                price=order.price,
+                status=OrderStatus.SUBMITTED,
+                exchange="binance",
+                raw_response=data,
+                sl_order_id=sl_id,
+                sl_price=order.stop_loss,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.error("[BINANCE] OCO failed: %s", exc)
+            return OrderResult(
+                success=False,
+                error=f"oco_exception: {str(exc)[:180]}",
+                exchange="binance",
+                symbol=order.symbol,
+            )
+
     async def get_balance(self) -> BalanceResult:
         """Fetch account balance from Binance."""
         if not self.is_configured:
