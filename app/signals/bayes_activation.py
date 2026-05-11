@@ -85,17 +85,12 @@ def build_bayes_signal_kwargs(
     resolved_engine = engine if engine is not None else build_default_engine()
     resolved_path = Path(audit_path) if audit_path is not None else DEFAULT_BAYES_AUDIT_PATH
 
-    kwargs: dict[str, Any] = {
-        "bayes_engine": resolved_engine,
-        "bayes_shadow_only": risk_settings.bayes_confidence_shadow_only,
-        "min_bayes_confidence": risk_settings.min_bayes_confidence,
-        "max_bayes_uncertainty": risk_settings.max_bayes_uncertainty,
-        "bayes_audit_path": resolved_path,
-    }
-    if extra_evidences_provider is not None:
-        kwargs["bayes_extra_evidences_provider"] = extra_evidences_provider
-    if regime_engine is not None:
-        kwargs["regime_engine"] = regime_engine
+    # Local import — keeps audit_adapter optional when bayes is off.
+    from app.signals.audit_adapter import SignalAuditAdapter
+
+    reasoning_journal_for_adapter = None
+    active_calibrator = None
+    active_threshold = None
 
     if learning_settings is not None and learning_settings.adaptive_learning_enabled:
         # Local imports keep the legacy code path import-graph unchanged when
@@ -109,18 +104,47 @@ def build_bayes_signal_kwargs(
         from app.learning.active_threshold import ActiveThreshold
 
         snapshot_dir = learning_settings.snapshot_dir
-        kwargs["active_calibrator"] = ActiveCalibrator.load(
+        active_calibrator = ActiveCalibrator.load(
             parameter_path=DEFAULT_BAYES_CALIBRATOR_PATH,
             snapshot_dir=snapshot_dir,
         )
-        kwargs["active_min_bayes_confidence"] = ActiveThreshold.load(
+        active_threshold = ActiveThreshold.load(
             parameter_path="signal.thresholds.min_bayes_confidence",
             default_value=risk_settings.min_bayes_confidence,
             snapshot_dir=snapshot_dir,
         )
-        kwargs["reasoning_journal"] = ReasoningJournal(
+        reasoning_journal_for_adapter = ReasoningJournal(
             path=learning_settings.reasoning_journal_path,
         )
+
+    kwargs: dict[str, Any] = {
+        "bayes_engine": resolved_engine,
+        "bayes_shadow_only": risk_settings.bayes_confidence_shadow_only,
+        "min_bayes_confidence": risk_settings.min_bayes_confidence,
+        "max_bayes_uncertainty": risk_settings.max_bayes_uncertainty,
+        # Schritt 3: SignalAuditAdapter ist der neue, einzige audit-Pfad
+        # zwischen signals/ und audit/+bayes_journal. Generator nutzt
+        # audit_adapter intern und ignoriert die alten kwargs sobald
+        # audit_adapter gegeben ist (siehe SignalGenerator-Constructor).
+        # Wir reichen die alten kwargs zusaetzlich durch, weil bestehende
+        # Test-Fixtures sie noch im Output erwarten (Migration in eigenem
+        # Cycle, gem. Adaptive-Learning Schritte 4/5).
+        "audit_adapter": SignalAuditAdapter(
+            reasoning_journal=reasoning_journal_for_adapter,
+            bayes_audit_path=resolved_path,
+        ),
+        "bayes_audit_path": resolved_path,
+    }
+    if reasoning_journal_for_adapter is not None:
+        kwargs["reasoning_journal"] = reasoning_journal_for_adapter
+    if extra_evidences_provider is not None:
+        kwargs["bayes_extra_evidences_provider"] = extra_evidences_provider
+    if regime_engine is not None:
+        kwargs["regime_engine"] = regime_engine
+    if active_calibrator is not None:
+        kwargs["active_calibrator"] = active_calibrator
+    if active_threshold is not None:
+        kwargs["active_min_bayes_confidence"] = active_threshold
     return kwargs
 
 

@@ -14,15 +14,15 @@ TODO (vor Live-Einsatz): ATR-basierter SL/TP, Orderbook-Input.
 from __future__ import annotations
 
 import logging
+import warnings
 from collections.abc import Callable, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import TYPE_CHECKING
 
-from app.audit.structured_reasoning import (
-    PHASE_CONFIDENCE_CHANGE,
-    PHASE_INVALIDATION,
-    ReasoningJournal,
-)
+if TYPE_CHECKING:
+    from app.audit.structured_reasoning import ReasoningJournal
+
 from app.core.domain.document import AnalysisResult
 from app.core.enums import SentimentLabel
 from app.learning.active_calibrator import ActiveCalibrator
@@ -34,7 +34,7 @@ from app.market_data.regime_detection import (
     RegimeDetectionEngine,
     make_observation,
 )
-from app.signals.bayes_journal import append_bayes_report
+from app.signals.audit_adapter import SignalAuditAdapter
 from app.signals.bayesian_confidence import (
     BayesianConfidenceEngine,
     ConfidenceReport,
@@ -91,13 +91,40 @@ class SignalGenerator:
         bayes_shadow_only: bool = True,
         min_bayes_confidence: float = 0.0,
         max_bayes_uncertainty: float = 1.0,
-        bayes_audit_path: Path | str | None = None,
         bayes_extra_evidences_provider: ExtraEvidencesProvider | None = None,
         regime_engine: RegimeDetectionEngine | None = None,
         active_calibrator: ActiveCalibrator | None = None,
         active_min_bayes_confidence: ActiveThreshold | None = None,
+        audit_adapter: SignalAuditAdapter | None = None,
+        # Deprecated — pre-Schritt-3 kwargs. Provided strictly for backward
+        # compatibility with existing call-sites (test fixtures + dashboard
+        # router). New code should pass `audit_adapter=SignalAuditAdapter(...)`
+        # directly and let the adapter own both sinks.
         reasoning_journal: ReasoningJournal | None = None,
+        bayes_audit_path: Path | str | None = None,
     ) -> None:
+        # If both audit_adapter and the legacy kwargs are passed (e.g. by
+        # bayes_activation, which still emits both during the migration
+        # window), the explicit audit_adapter wins silently. Only legacy-
+        # only callers see the deprecation warning.
+        if audit_adapter is None and (
+            reasoning_journal is not None or bayes_audit_path is not None
+        ):
+            warnings.warn(
+                "SignalGenerator(reasoning_journal=..., bayes_audit_path=...) "
+                "is deprecated. Pass audit_adapter=SignalAuditAdapter(...) "
+                "instead — see app/signals/audit_adapter.py (Schritt 3).",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            audit_adapter = SignalAuditAdapter(
+                reasoning_journal=reasoning_journal,
+                bayes_audit_path=bayes_audit_path,
+            )
+        # Keep the legacy attributes around for tests that still inspect
+        # `gen._bayes_audit_path` directly. The generator itself never
+        # reads these — the audit_adapter is the single source of truth.
+        self._bayes_audit_path = Path(bayes_audit_path) if bayes_audit_path is not None else None
         self._min_confidence = min_confidence
         self._min_confluence = min_confluence
         self._market = market
@@ -120,7 +147,9 @@ class SignalGenerator:
         self._bayes_shadow_only = bayes_shadow_only
         self._min_bayes_confidence = min_bayes_confidence
         self._max_bayes_uncertainty = max_bayes_uncertainty
-        self._bayes_audit_path = Path(bayes_audit_path) if bayes_audit_path is not None else None
+        # Schritt 3: alle audit-Sinks gehen ueber den SignalAuditAdapter — der
+        # Generator weiss nichts mehr ueber audit/-Schema oder bayes_journal.
+        self._audit_adapter = audit_adapter or SignalAuditAdapter()
         self._bayes_extra_evidences_provider = bayes_extra_evidences_provider
         # Optional: ersetzt die simple change_pct_24h-basierte Regime-Ableitung
         # durch die 8-Klassen-RegimeDetectionEngine. Engine-Posterior fließt als
@@ -134,11 +163,6 @@ class SignalGenerator:
         # None = no behavior change (Constructor-`min_bayes_confidence` wird
         # verwendet wie bisher).
         self._active_min_bayes_confidence = active_min_bayes_confidence
-        # Opt-in: structured reasoning journal. Wenn gesetzt, werden
-        # Calibrator-Apply (confidence_change) und Bayes-Gate-Reject
-        # (invalidation) als ReasoningStep persistiert. None = no audit
-        # writes — bestehendes Verhalten bleibt erhalten.
-        self._reasoning_journal = reasoning_journal
 
     def generate(
         self,
@@ -241,35 +265,34 @@ class SignalGenerator:
                 raw_bayes_report.confidence_score,
                 bayes_report.confidence_score,
             )
-            # Structured-reasoning step: confidence_change
-            if self._reasoning_journal is not None:
-                version_id = self._active_calibrator.version_id
-                self._reasoning_journal.log_step(
-                    decision_id=decision_id,
-                    phase=PHASE_CONFIDENCE_CHANGE,
-                    actor="ActiveCalibrator",
-                    rationale_summary=(
-                        f"posterior calibrated for {direction.value} "
-                        f"in regime={self._derive_market_regime(market_data.change_pct_24h)}"
-                    ),
-                    inputs={
-                        "raw_posterior": raw_bayes_report.posterior_probability,
-                        "regime": self._derive_market_regime(market_data.change_pct_24h),
-                        "direction": direction.value,
-                    },
-                    outputs={
-                        "calibrated_posterior": bayes_report.posterior_probability,
-                        "calibrated_confidence": bayes_report.confidence_score,
-                    },
-                    confidence_before=raw_bayes_report.confidence_score,
-                    confidence_after=bayes_report.confidence_score,
-                    parameter_versions=(
-                        {self._active_calibrator.parameter_path: version_id}
-                        if version_id is not None
-                        else {}
-                    ),
-                    evidence_refs=(f"bayes_audit:{decision_id}",),
-                )
+            # Structured-reasoning step: calibrator-apply (audit_adapter
+            # encapsulates the audit-side phase constant + journal handle).
+            version_id = self._active_calibrator.version_id
+            self._audit_adapter.log_calibrator_apply(
+                decision_id=decision_id,
+                actor="ActiveCalibrator",
+                rationale_summary=(
+                    f"posterior calibrated for {direction.value} "
+                    f"in regime={self._derive_market_regime(market_data.change_pct_24h)}"
+                ),
+                inputs={
+                    "raw_posterior": raw_bayes_report.posterior_probability,
+                    "regime": self._derive_market_regime(market_data.change_pct_24h),
+                    "direction": direction.value,
+                },
+                outputs={
+                    "calibrated_posterior": bayes_report.posterior_probability,
+                    "calibrated_confidence": bayes_report.confidence_score,
+                },
+                confidence_before=raw_bayes_report.confidence_score,
+                confidence_after=bayes_report.confidence_score,
+                parameter_versions=(
+                    {self._active_calibrator.parameter_path: version_id}
+                    if version_id is not None
+                    else {}
+                ),
+                evidence_refs=(f"bayes_audit:{decision_id}",),
+            )
 
         # Effective min-bayes-confidence: ActiveThreshold (wenn aktiv) sonst
         # Constructor-Default. Audit-friendly: wir loggen den Threshold-Wert,
@@ -299,35 +322,34 @@ class SignalGenerator:
                 bayes_report.uncertainty_score,
                 self._max_bayes_uncertainty,
             )
-            # Structured-reasoning step: invalidation (gate-reject)
-            if self._reasoning_journal is not None:
-                self._reasoning_journal.log_step(
-                    decision_id=decision_id,
-                    phase=PHASE_INVALIDATION,
-                    actor="SignalGenerator.bayes_gate",
-                    rationale_summary=(
-                        f"bayes-gate rejected {symbol}: confidence "
-                        f"{bayes_report.confidence_score:.4f} vs. min "
-                        f"{effective_min_bayes_confidence:.4f}"
-                    ),
-                    inputs={
-                        "confidence_score": bayes_report.confidence_score,
-                        "uncertainty_score": bayes_report.uncertainty_score,
-                        "min_bayes_confidence": effective_min_bayes_confidence,
-                        "max_bayes_uncertainty": self._max_bayes_uncertainty,
-                    },
-                    outputs={"reason": "bayes_gate_rejected"},
-                    parameter_versions=(
-                        {
-                            self._active_min_bayes_confidence.parameter_path: (
-                                self._active_min_bayes_confidence.version_id or ""
-                            )
-                        }
-                        if self._active_min_bayes_confidence is not None
-                        and self._active_min_bayes_confidence.is_active
-                        else {}
-                    ),
-                )
+            # Structured-reasoning step: bayes-gate-reject (audit_adapter
+            # encapsulates the audit-side phase constant + journal handle).
+            self._audit_adapter.log_bayes_gate_reject(
+                decision_id=decision_id,
+                actor="SignalGenerator.bayes_gate",
+                rationale_summary=(
+                    f"bayes-gate rejected {symbol}: confidence "
+                    f"{bayes_report.confidence_score:.4f} vs. min "
+                    f"{effective_min_bayes_confidence:.4f}"
+                ),
+                inputs={
+                    "confidence_score": bayes_report.confidence_score,
+                    "uncertainty_score": bayes_report.uncertainty_score,
+                    "min_bayes_confidence": effective_min_bayes_confidence,
+                    "max_bayes_uncertainty": self._max_bayes_uncertainty,
+                },
+                outputs={"reason": "bayes_gate_rejected"},
+                parameter_versions=(
+                    {
+                        self._active_min_bayes_confidence.parameter_path: (
+                            self._active_min_bayes_confidence.version_id or ""
+                        )
+                    }
+                    if self._active_min_bayes_confidence is not None
+                    and self._active_min_bayes_confidence.is_active
+                    else {}
+                ),
+            )
             return None
 
         # Derive market context
@@ -358,14 +380,14 @@ class SignalGenerator:
         # decision_id wurde bereits in Filter 7 generiert (siehe oben), damit
         # auch ein abgelehntes Signal eine Reasoning-Trail-Identität trägt.
         # Audit immer den RAW Report — nicht den (ggf.) calibrated. Sonst
-        # wird der nächste Calibration-Run zirkulär.
-        if raw_bayes_report is not None and self._bayes_audit_path is not None:
-            append_bayes_report(
+        # wird der naechste Calibration-Run zirkulaer. audit_adapter no-ops
+        # wenn kein bayes-audit-path konfiguriert ist.
+        if raw_bayes_report is not None:
+            self._audit_adapter.record_raw_bayes_report(
                 decision_id=decision_id,
                 symbol=symbol,
                 direction=direction.value,
                 report=raw_bayes_report,
-                path=self._bayes_audit_path,
             )
 
         return SignalCandidate(
@@ -505,9 +527,7 @@ class SignalGenerator:
     #      Blowoff = Top-Bildung, Panic = Sell-Druck.)
     #   LOW_LIQUIDITY → "ranging" (kein Trend, schwache Confidence)
     #   HIGH_MANIPULATION → "volatile" (Risk-Warnung beidseitig)
-    _BULLISH_REGIMES = frozenset(
-        {MarketRegime.BULL, MarketRegime.ACCUMULATION}
-    )
+    _BULLISH_REGIMES = frozenset({MarketRegime.BULL, MarketRegime.ACCUMULATION})
     _BEARISH_REGIMES = frozenset(
         {
             MarketRegime.BEAR,
@@ -676,8 +696,6 @@ class SignalGenerator:
                 else entry_price - take_profit_delta
             )
         return stop_loss_price, take_profit_price
-
-
 
     def _build_supporting_factors(
         self,
