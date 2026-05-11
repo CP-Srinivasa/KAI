@@ -163,7 +163,12 @@ ignore_errors = true
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
-addopts = ["-v"]
+# Default: skip @pytest.mark.testnet (real-network gegen Binance/Bybit-Testnet).
+# Operator activates via: pytest -m testnet + KAI_TESTNET_INTEGRATION=1 env-Flag.
+addopts = ["-v", "-m", "not testnet"]
+markers = [
+    "testnet: integration tests gegen Binance/Bybit-Testnet — needs API-Keys + KAI_TESTNET_INTEGRATION=1",
+]
 
 [tool.coverage.run]
 source = ["app"]
