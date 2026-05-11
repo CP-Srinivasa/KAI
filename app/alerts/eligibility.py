@@ -14,6 +14,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any, cast
 
 from app.core.logging import get_logger
 from app.market_data.coingecko_adapter import _resolve_symbol
@@ -71,7 +72,7 @@ _LOW_PRECISION_SOURCES: frozenset[str] = frozenset(
 #   - Vorher relative Path → CWD-Abhaengigkeit (Settings-monitor_dir wurde
 #     ignoriert). Jetzt: Settings-monitor_dir mit Lazy-Load-Fallback auf
 #     "monitor" wenn Settings nicht verfügbar (z.B. in Tests).
-_watch_cache: dict = {
+_watch_cache: dict[str, Any] = {
     "mtime": -1.0,
     "data": frozenset(),
     "path": None,
@@ -106,11 +107,11 @@ def _load_source_watchlist() -> frozenset[str]:
         return _watch_cache["data"] if _watch_cache["path"] == str(path) else frozenset()
 
     if _watch_cache["path"] == str(path) and mtime == _watch_cache["mtime"]:
-        return _watch_cache["data"]
+        return cast(frozenset[str], _watch_cache["data"])
 
     if not path.exists():
         _watch_cache.update({"mtime": 0.0, "data": frozenset(), "path": str(path)})
-        return _watch_cache["data"]
+        return cast(frozenset[str], _watch_cache["data"])
 
     sources: set[str] = set()
     try:

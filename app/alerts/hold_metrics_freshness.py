@@ -162,7 +162,7 @@ def annotate_report(report: dict[str, Any], *, now: datetime | None = None) -> d
     the top level, never inside business data.
     """
     if not isinstance(report, dict):
-        return report  # type: ignore[unreachable]
+        return report
     moment = now if now is not None else datetime.now(UTC)
     result = freshness_for_report(report, now=moment)
     annotated = dict(report)

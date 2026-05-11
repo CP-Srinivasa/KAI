@@ -142,7 +142,8 @@ def compute_atr_zscore(
     n = len(atr_series)
     out: list[float | None] = [None] * n
     for i in range(n):
-        if atr_series[i] is None:
+        val = atr_series[i]
+        if val is None:
             continue
         prior: list[float] = []
         j = i - 1
@@ -158,5 +159,5 @@ def compute_atr_zscore(
         if var == 0.0:
             out[i] = 0.0
             continue
-        out[i] = (atr_series[i] - m) / math.sqrt(var)
+        out[i] = (val - m) / math.sqrt(var)
     return out
