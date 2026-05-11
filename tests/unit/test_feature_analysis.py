@@ -14,6 +14,10 @@ def _audit(
     actionable: bool = True,
     normalized_title: str | None = None,
 ) -> AlertAuditRecord:
+    # Auto-promote naked tickers to trading-pair form: build_feature_analysis
+    # re-evaluates directional eligibility, and the naked-asset gate would
+    # otherwise filter every audit out — masking the actual filter under test.
+    pair_assets = [a if "/" in a else f"{a}/USDT" for a in assets]
     return AlertAuditRecord(
         document_id=doc_id,
         channel="telegram",
@@ -21,7 +25,7 @@ def _audit(
         is_digest=False,
         dispatched_at=dispatched_at,
         sentiment_label=sentiment,
-        affected_assets=assets,
+        affected_assets=pair_assets,
         priority=priority,
         actionable=actionable,
         directional_eligible=True,

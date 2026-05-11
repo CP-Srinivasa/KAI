@@ -155,7 +155,11 @@ def _make_result(doc_id: str, **overrides) -> AnalysisResult:
         "directional_confidence": 0.9,
         "explanation_short": "Strong buy signal",
         "explanation_long": "Detailed explanation",
-        "affected_assets": ["BTC"],
+        # eligibility.py blocks naked assets ("BTC" without /USDT) since the
+        # naked-asset gate was added; the directional-eligibility gate runs
+        # BEFORE the price-trend gate, so naked-asset would mask the very
+        # fail-open behavior these tests verify. Use the trading-pair form.
+        "affected_assets": ["BTC/USDT"],
     }
     defaults.update(overrides)
     return AnalysisResult(**defaults)
