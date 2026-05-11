@@ -227,7 +227,17 @@ def test_load_jsonl_tail(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_dashboard_routes_in_main_app() -> None:
+def test_dashboard_routes_in_main_app(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Verify React-SPA mount registers when web/dist exists.
+
+    The mount in app.api.main is conditional on `web/dist` being present
+    (created by `npm run build`). CI runners do not build the SPA, so we
+    stage a dummy web/dist to exercise the conditional mount.
+    """
+    (tmp_path / "web" / "dist").mkdir(parents=True)
+    (tmp_path / "web" / "dist" / "index.html").write_text("<html></html>")
+    monkeypatch.chdir(tmp_path)
+
     from app.api.main import create_app
 
     app = create_app()
