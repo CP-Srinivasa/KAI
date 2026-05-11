@@ -1,5 +1,7 @@
 // 2026-05-10 DALI-K2: Snake-Case zu Klartext-Map.
 // 2026-05-11 DALI-T6: + CYCLE_STATUS_TITLE/REASON/TAB, PIPELINE_STEP_LABELS, TERM_EXPLAIN.
+// 2026-05-11 DALI-T7: + PASTE_STATUS_LABEL, ENVELOPE_STAGE_LABEL, ENVELOPE_SOURCE_LABEL,
+//                     PASTE_STEPPER_STEPS; TERM_EXPLAIN ergaenzt um Envelope/Idempotency/Stage.
 //
 // Verwendung: <span title={key}>{humanizeLabel(key)}</span>
 
@@ -181,12 +183,77 @@ export const PIPELINE_STEP_LABELS: Record<PipelineStepKey, { short: string; long
   },
 };
 
+// 2026-05-11 DALI-T7: Paste-Pipeline-Stepper fuer Externe-Signale-Page.
+// Sechs operative Schritte, die der externe Signal-Paste durchlaeuft. Bewusst
+// nicht 1:1 die Backend-Stages, sondern operator-verstaendlich abstrahiert:
+// was passiert MIT meinem Signal?
+export type PasteStepKey =
+  | "analyse"
+  | "extract"
+  | "validate"
+  | "dedupe"
+  | "audit"
+  | "handoff";
+
+export const PASTE_STEPPER_STEPS: { key: PasteStepKey; short: string; explain: string }[] = [
+  { key: "analyse",  short: "Nachricht analysieren",        explain: "KAI liest den Text und erkennt, ob es ein Trading-Signal, eine News oder eine Exchange-Antwort ist." },
+  { key: "extract",  short: "Trading-Daten erkennen",       explain: "Symbol, Richtung (LONG/SHORT), Entry-Zone, Stop Loss, Targets und Leverage werden extrahiert." },
+  { key: "validate", short: "Format & Sicherheit pruefen",  explain: "Schema-Check, Plausibilitaet, Risk-Gates. Unvollstaendige Signale gehen in den Ergaenzungs-Modus." },
+  { key: "dedupe",   short: "Duplikate verhindern",         explain: "Idempotency-Key erkennt, ob dasselbe Signal bereits empfangen wurde - keine doppelte Verarbeitung." },
+  { key: "audit",    short: "Audit-Log speichern",          explain: "Jeder Schritt wird unveraenderlich protokolliert - vollstaendige Forensik-Spur." },
+  { key: "handoff",  short: "An Trading-System uebergeben", explain: "Akzeptierte Signale gehen in die Trading-Pipeline und koennen Orders ausloesen." },
+];
+
+// 2026-05-11 DALI-T7: Status-Klartext fuer /signals/paste-Response.
+// Operator sieht statt rohen Status-Codes eine humane Erklaerung.
+export const PASTE_STATUS_LABEL: Record<string, string> = {
+  accepted: "Akzeptiert — Signal wurde verarbeitet",
+  duplicate: "Duplikat — bereits empfangen, keine neue Verarbeitung",
+  needs_completion: "Ergänzung nötig — bitte fehlende Felder ausfüllen",
+  rejected: "Abgelehnt — siehe Fehler unten",
+};
+
+export const PASTE_STATUS_SHORT: Record<string, string> = {
+  accepted: "Akzeptiert",
+  duplicate: "Duplikat",
+  needs_completion: "Ergänzung nötig",
+  rejected: "Abgelehnt",
+};
+
+// 2026-05-11 DALI-T7: Envelope-Stage-Klartext.
+export const ENVELOPE_STAGE_LABEL: Record<string, string> = {
+  accepted: "In Trading-Pipeline übergeben",
+  idempotency_gate: "Duplikat-Erkennung",
+  parse: "Nachricht analysiert",
+  schema_validation: "Format-Prüfung",
+  execution_gate: "Ausführungs-Gate",
+  completion_gate: "Ergänzung erforderlich",
+  voice_confirm_gate: "Wartet auf Sprach-Bestätigung",
+  draft_pending: "Entwurf — wartet auf Bestätigung",
+};
+
+// 2026-05-11 DALI-T7: Quelle der Envelope-Eintraege humanisiert.
+export const ENVELOPE_SOURCE_LABEL: Record<string, string> = {
+  telegram: "Telegram",
+  dashboard: "Dashboard",
+  api: "API",
+  manual: "Manuell",
+  external: "Externe Schnittstelle",
+};
+
 // Fachbegriff-Tooltips fuer InfoHint (DALI-T6).
 export const TERM_EXPLAIN: Record<string, string> = {
   konsens: "Mehrere KI-/Strategie-Komponenten stimmen über die Richtung ab. Bei Uneinigkeit wird der Trade nicht eröffnet.",
   quality_bar: "Adaptive Mindest-Precision pro Priority-Tier. Liegt die historische Precision unter dieser Schwelle, werden neue Signale dieses Tiers blockiert.",
   freshness_gate: "Maximales Alter der Marktdaten in Sekunden. Sind die letzten Kerzen älter, wird der Cycle übersprungen statt mit veralteten Preisen zu handeln.",
   risk_gate: "Prüft Konzentrations-, Drawdown- und Volatility-Limits, bevor eine Order ausgelöst werden darf.",
+  // DALI-T7 Begriffe rund um externe Signale.
+  envelope: "Ein Envelope ist die unveränderliche Hülle um ein eingehendes Signal. Sie enthält Rohtext, Parse-Ergebnis, Status und Audit-Spur. Quelle: Telegram, Dashboard, API — alles landet im selben Envelope-Format.",
+  idempotency: "Schutz vor Doppelverarbeitung. KAI erzeugt aus jedem Signal einen eindeutigen Schlüssel (Idempotency-Key). Trifft dasselbe Signal erneut ein, wird es als Duplikat erkannt und nicht doppelt verarbeitet.",
+  stage: "Aktuelle Position des Signals in der Verarbeitungs-Pipeline (z.B. parse, schema_validation, accepted). Sagt dir, WO im Prozess das Signal zuletzt war.",
+  needs_completion: "Das Signal ist heuristisch lesbar, aber Pflichtfelder fehlen (z.B. Exchange, Stop Loss). Anstatt mit stillen Defaults zu raten, fragt KAI den Operator explizit nach den fehlenden Werten.",
+  exchange_scope: "Liste der Exchanges, auf denen dieses Signal ausgeführt werden soll. Mehrere Exchanges möglich — KAI fächert die Order entsprechend.",
+  audit_log: "Unveränderlicher Protokoll-Strom aller verarbeiteten Envelopes. Dashboard und Telegram teilen denselben Audit-Log — forensische Quelle der Wahrheit.",
 };
 
 export const OUTCOME_LABEL_DE: Record<string, string> = {
