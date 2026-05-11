@@ -408,9 +408,11 @@ class BayesianConfidenceEngine:
         posterior = _sigmoid(posterior_logit)
 
         # Aggregate: |Σ| / Σ|·| = "wie konsistent zogen die Evidences in eine Richtung"
-        active = [c for c in contributions if c.effect in (
-            ContributionEffect.INCREASED, ContributionEffect.DECREASED
-        )]
+        active = [
+            c
+            for c in contributions
+            if c.effect in (ContributionEffect.INCREASED, ContributionEffect.DECREASED)
+        ]
         total_abs = sum(abs(c.contribution) for c in active)
         net = sum(c.contribution for c in active)
         agreement = abs(net) / total_abs if total_abs > EPS else 0.0
@@ -420,14 +422,18 @@ class BayesianConfidenceEngine:
         directional_strength = abs(2.0 * posterior - 1.0)
         confidence = directional_strength * certainty
 
-        increased = tuple(sorted(
-            (c for c in contributions if c.effect == ContributionEffect.INCREASED),
-            key=lambda c: -c.contribution,
-        ))
-        decreased = tuple(sorted(
-            (c for c in contributions if c.effect == ContributionEffect.DECREASED),
-            key=lambda c: c.contribution,
-        ))
+        increased = tuple(
+            sorted(
+                (c for c in contributions if c.effect == ContributionEffect.INCREASED),
+                key=lambda c: -c.contribution,
+            )
+        )
+        decreased = tuple(
+            sorted(
+                (c for c in contributions if c.effect == ContributionEffect.DECREASED),
+                key=lambda c: c.contribution,
+            )
+        )
         neutral = tuple(c for c in contributions if c.effect == ContributionEffect.NEUTRAL)
         discarded = tuple(c for c in contributions if c.effect == ContributionEffect.DISCARDED)
 

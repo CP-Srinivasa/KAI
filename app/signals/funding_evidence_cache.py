@@ -100,9 +100,9 @@ class FundingEvidenceCache:
 
     # ── Provider-Factory für SignalGenerator ──────────────────────────────────
 
-    def make_provider(self) -> Callable[
-        [AnalysisResult, MarketDataPoint, SignalDirection], Sequence[Evidence]
-    ]:
+    def make_provider(
+        self,
+    ) -> Callable[[AnalysisResult, MarketDataPoint, SignalDirection], Sequence[Evidence]]:
         """Liefert eine sync-Funktion mit der vom Generator erwarteten
         Signatur ``(analysis, market_data, direction) -> Sequence[Evidence]``.
         """
