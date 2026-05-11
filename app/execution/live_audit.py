@@ -73,7 +73,9 @@ class AuditEvent:
     schema_version: str = LIVE_AUDIT_SCHEMA_VERSION
     event_type: str = AuditEventType.ATTEMPTED.value
     audit_id: str = ""
-    timestamp_utc: str = field(default_factory=lambda: datetime.now(UTC).isoformat(timespec="seconds"))
+    timestamp_utc: str = field(
+        default_factory=lambda: datetime.now(UTC).isoformat(timespec="seconds")
+    )
 
     # Order Context
     exchange: str = ""  # "binance" | "bybit"
