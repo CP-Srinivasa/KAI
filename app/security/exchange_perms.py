@@ -91,7 +91,9 @@ class PermissionStatus:
     margin_enabled: bool
     futures_enabled: bool
     derivatives_enabled: bool  # Bybit-Sammelbegriff (linear/inverse/options)
-    ip_allowlist: tuple[str, ...]  # frozenset wäre semantisch sauberer, tuple ist json-serialisierbar
+    ip_allowlist: tuple[
+        str, ...
+    ]  # frozenset wäre semantisch sauberer, tuple ist json-serialisierbar
     ip_restrict_enforced: bool  # Binance hat ein separates Flag für "Allowlist aktiv"
     last_check_utc: str
     raw_payload: dict[str, Any] = field(default_factory=dict)  # nur für debugging / audit-trail
@@ -150,9 +152,7 @@ def verify_against_phase0_requirements(
             )
 
     if drift_reasons:
-        raise PermissionDriftError(
-            f"{status.exchange}: " + "; ".join(drift_reasons)
-        )
+        raise PermissionDriftError(f"{status.exchange}: " + "; ".join(drift_reasons))
 
 
 # ─── Verifier-Protocol + HTTP-Implementierungen ──────────────────────────────
@@ -191,7 +191,7 @@ class BinancePermissionVerifier(ExchangePermissionVerifier):
         *,
         api_key: str,
         api_secret: str,
-        http_caller: "BinanceHttpCaller | None" = None,
+        http_caller: BinanceHttpCaller | None = None,
     ) -> None:
         if not api_key or not api_secret:
             raise ExchangePermsError("binance_api_key/secret missing in settings")
@@ -228,7 +228,7 @@ class BybitPermissionVerifier(ExchangePermissionVerifier):
         *,
         api_key: str,
         api_secret: str,
-        http_caller: "BybitHttpCaller | None" = None,
+        http_caller: BybitHttpCaller | None = None,
     ) -> None:
         if not api_key or not api_secret:
             raise ExchangePermsError("bybit_api_key/secret missing in settings")
@@ -242,9 +242,7 @@ class BybitPermissionVerifier(ExchangePermissionVerifier):
                 "bybit: http_caller not injected — wire BybitHttpCallerLive in Sprint N+2"
             )
         try:
-            payload = self._http.call_query_api(
-                api_key=self._api_key, api_secret=self._api_secret
-            )
+            payload = self._http.call_query_api(api_key=self._api_key, api_secret=self._api_secret)
         except Exception as exc:  # noqa: BLE001
             raise ExchangeApiError(f"bybit query_api call failed: {exc}") from exc
         return _bybit_payload_to_status(payload, raw=payload)
@@ -316,9 +314,7 @@ def _bybit_payload_to_status(
     # Bybit unterscheidet Wallet:AccountTransfer (intern) vs Wallet:SubMemberTransfer
     # vs explizites Withdrawal-Permission. ``WithdrawWithinWhiteList`` ist die
     # Withdraw-Berechtigung, die in Phase 0 zwingend OFF sein muss.
-    withdrawals_enabled = any(
-        "withdraw" in p.lower() for p in wallet_perms
-    )
+    withdrawals_enabled = any("withdraw" in p.lower() for p in wallet_perms)
 
     ips_raw = result.get("ips") or []
     ip_allowlist: tuple[str, ...] = tuple(ips_raw)
@@ -343,7 +339,7 @@ def _bybit_payload_to_status(
 # ─── Pi-WAN-IP-Detection ─────────────────────────────────────────────────────
 
 
-def get_pi_wan_ip(*, ip_resolver: "IpResolver | None" = None) -> str:
+def get_pi_wan_ip(*, ip_resolver: IpResolver | None = None) -> str:
     """Liefert die aktuelle Pi-WAN-IP für die Allowlist-Verifikation.
 
     Production-Default: api.ipify.org. Für Tests: ``ip_resolver`` Stub.
@@ -353,9 +349,7 @@ def get_pi_wan_ip(*, ip_resolver: "IpResolver | None" = None) -> str:
     sinnlos.
     """
     if ip_resolver is None:
-        raise ExchangeApiError(
-            "ip_resolver not injected — wire IpifyResolver in Sprint N+2"
-        )
+        raise ExchangeApiError("ip_resolver not injected — wire IpifyResolver in Sprint N+2")
     try:
         return ip_resolver.resolve()
     except Exception as exc:  # noqa: BLE001

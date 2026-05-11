@@ -83,10 +83,24 @@ known-first-party = ["app"]
 
 [tool.ruff.lint.per-file-ignores]
 "scripts/*.py" = ["E501"]
+# Alembic-generated migrations: never hand-edited; regeneration would overwrite stylistic fixes.
+"app/storage/migrations/versions/*.py" = ["E501", "I001", "UP007", "UP035"]
 # Phase-0 security modules use domain-meaningful exception names without
 # the "Error" suffix (HotpReplayDetected, HotpVerificationFailed, LiveCapBreach).
 "app/security/hotp_auth.py" = ["N818"]
 "app/security/live_caps.py" = ["N818"]
+# Transitional ignores — preexisting code with JSON-API camelCase fields,
+# inline-string fixtures, FastAPI Body() defaults. Cleanup-Cycle separat.
+"app/api/routers/kai.py" = ["B008", "N815"]
+"app/cli/commands/ingestion.py" = ["E501"]
+"app/messaging/kai_chat_engine.py" = ["E501"]
+"app/messaging/telegram_bot.py" = ["E501"]
+"tests/unit/test_alert_eligibility.py" = ["E501"]
+"tests/unit/test_analysis_pipeline.py" = ["E402"]
+"tests/unit/test_kai_persona.py" = ["E501"]
+"tests/unit/test_kai_risk_guards.py" = ["C408"]
+"tests/unit/test_kai_telegram_renderer.py" = ["C408"]
+"tests/unit/test_newsdata_adapter.py" = ["E501"]
 
 [tool.mypy]
 python_version = "3.12"

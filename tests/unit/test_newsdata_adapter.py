@@ -193,7 +193,10 @@ class TestNewsdataAdapterFetch:
         with patch.object(adapter._client, "fetch_latest", AsyncMock(return_value=[article])):
             result = await adapter.fetch()
 
-        assert result.documents[0].raw_text == "Bitcoin slips below $80,000 amid profit-taking concerns."
+        assert (
+            result.documents[0].raw_text
+            == "Bitcoin slips below $80,000 amid profit-taking concerns."
+        )
 
     @pytest.mark.asyncio
     async def test_fetch_skips_too_short_content_falls_back_to_description(self) -> None:

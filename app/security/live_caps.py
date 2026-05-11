@@ -22,7 +22,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-
 # 2026-05-09 — DO NOT make configurable.
 # Phase-0-Schutz: jeder Override braucht Code-Edit + Re-Deploy + Operator-Review.
 # Eskalation auf $500-1000/position kommt nach 3 Monaten Stable-Run, nicht heute.
@@ -69,9 +68,7 @@ def verify_live_order(view: LiveOrderCapsView) -> None:
             Exception-Text 1:1 in den Live-Audit-Stream schreiben.
     """
     if view.notional_usd <= 0:
-        raise LiveCapBreach(
-            f"invalid_notional: {view.notional_usd} (symbol={view.symbol})"
-        )
+        raise LiveCapBreach(f"invalid_notional: {view.notional_usd} (symbol={view.symbol})")
     if view.notional_usd > MAX_POSITION_USD:
         raise LiveCapBreach(
             f"position_size_exceeds_cap: {view.notional_usd:.2f} USD > "
@@ -79,8 +76,7 @@ def verify_live_order(view: LiveOrderCapsView) -> None:
         )
     if view.current_open_positions < 0:
         raise LiveCapBreach(
-            f"invalid_open_count: {view.current_open_positions} "
-            f"(symbol={view.symbol})"
+            f"invalid_open_count: {view.current_open_positions} (symbol={view.symbol})"
         )
     if view.current_open_positions >= MAX_OPEN_POSITIONS:
         raise LiveCapBreach(

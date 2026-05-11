@@ -115,10 +115,7 @@ def _listener_reactivity_check(now: datetime) -> tuple[str, str, str] | None:
     if reactivity == "stale_silent":
         last_msg_age = summary.get("last_message_age_seconds")
         if isinstance(last_msg_age, int):
-            detail = (
-                f"Listener läuft, aber kein Channel-Update seit "
-                f"{last_msg_age / 3600.0:.1f}h"
-            )
+            detail = f"Listener läuft, aber kein Channel-Update seit {last_msg_age / 3600.0:.1f}h"
         else:
             detail = "Listener läuft, aber kein Channel-Update beobachtet"
         return ("warn", "listener_reactivity_stale_silent", detail)

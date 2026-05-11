@@ -933,7 +933,10 @@ class TelegramOperatorBot:
         await self._send(chat_id, "\n".join(preview_lines))
 
     async def _handle_kai_chat_text(
-        self, chat_id: int, text: str, language: str = "de",
+        self,
+        chat_id: int,
+        text: str,
+        language: str = "de",
     ) -> None:
         """KAI-Chat: route an arbitrary user message through kai_chat_engine.
 
@@ -942,6 +945,7 @@ class TelegramOperatorBot:
         """
         try:
             from app.messaging.kai_chat_engine import chat as kai_chat_dispatch
+
             reply = await kai_chat_dispatch(message=text, language=language)
             response = reply.reply or "(keine Antwort)"
         except Exception as exc:  # noqa: BLE001

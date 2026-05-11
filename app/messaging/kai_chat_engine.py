@@ -37,17 +37,70 @@ class ChatReply:
 
 
 _TRADING_KEYWORDS_DE = {
-    "portfolio", "position", "positionen", "trade", "trades", "gewinn", "verlust",
-    "pnl", "balance", "equity", "kasse", "cash", "bilanz", "btc", "eth", "kurs",
-    "kurse", "monitor", "signal", "signale", "stop", "loss", "tier", "fill",
-    "verdient", "verloren", "geschlossen", "offen", "exposure", "risiko",
-    "buy", "sell", "kaufen", "verkaufen",
+    "portfolio",
+    "position",
+    "positionen",
+    "trade",
+    "trades",
+    "gewinn",
+    "verlust",
+    "pnl",
+    "balance",
+    "equity",
+    "kasse",
+    "cash",
+    "bilanz",
+    "btc",
+    "eth",
+    "kurs",
+    "kurse",
+    "monitor",
+    "signal",
+    "signale",
+    "stop",
+    "loss",
+    "tier",
+    "fill",
+    "verdient",
+    "verloren",
+    "geschlossen",
+    "offen",
+    "exposure",
+    "risiko",
+    "buy",
+    "sell",
+    "kaufen",
+    "verkaufen",
 }
 _TRADING_KEYWORDS_EN = {
-    "portfolio", "position", "positions", "trade", "trades", "profit", "loss",
-    "pnl", "balance", "equity", "cash", "btc", "eth", "price", "monitor",
-    "signal", "signals", "stop", "tier", "fill", "earned", "lost", "closed",
-    "open", "exposure", "risk", "buy", "sell",
+    "portfolio",
+    "position",
+    "positions",
+    "trade",
+    "trades",
+    "profit",
+    "loss",
+    "pnl",
+    "balance",
+    "equity",
+    "cash",
+    "btc",
+    "eth",
+    "price",
+    "monitor",
+    "signal",
+    "signals",
+    "stop",
+    "tier",
+    "fill",
+    "earned",
+    "lost",
+    "closed",
+    "open",
+    "exposure",
+    "risk",
+    "buy",
+    "sell",
 }
 
 
@@ -69,22 +122,26 @@ async def _respond_trading(message: str, language: str) -> ChatReply:
         if language == "de":
             return ChatReply(
                 reply="Portfolio-Snapshot gerade nicht erreichbar. Versuch es in einer Minute nochmal.",
-                intent="trading", source="fallback",
+                intent="trading",
+                source="fallback",
             )
         return ChatReply(
             reply="Portfolio snapshot unavailable. Try again in a minute.",
-            intent="trading", source="fallback",
+            intent="trading",
+            source="fallback",
         )
 
     if not snap.available or snap.position_count == 0:
         if language == "de":
             return ChatReply(
                 reply=f"Kasse {snap.cash_usd:.2f} USD, keine offenen Positionen. Realized PnL {snap.realized_pnl_usd:.2f}.",
-                intent="trading", source="system",
+                intent="trading",
+                source="system",
             )
         return ChatReply(
             reply=f"Cash {snap.cash_usd:.2f} USD, no open positions. Realized PnL {snap.realized_pnl_usd:.2f}.",
-            intent="trading", source="system",
+            intent="trading",
+            source="system",
         )
 
     pos_lines: list[str] = []
@@ -123,14 +180,14 @@ def _build_persona_system_prompt(language: str) -> str:
 
     if language == "de":
         return (
-            f"Du bist KAI. Motto: \"{motto}\". Archetyp: {archetypes}. "
+            f'Du bist KAI. Motto: "{motto}". Archetyp: {archetypes}. '
             f"Charakter: {primary}. Du bist NICHT: {forbidden}. "
             "Antworte in 1-2 kurzen Saetzen, trocken, leicht patzig, on-brand. "
             "Keine Marketing-Floskeln, keine Hoeflichkeitsphrasen, kein Disclaimer-Geschwafel. "
             "Wenn du etwas nicht weisst, sag es kurz und direkt."
         )
     return (
-        f"You are KAI. Motto: \"{motto}\". Archetype: {archetypes}. "
+        f'You are KAI. Motto: "{motto}". Archetype: {archetypes}. '
         f"Character: {primary}. You are NOT: {forbidden}. "
         "Reply in 1-2 short sentences, dry, slightly snide, on-brand. "
         "No marketing fluff, no pleasantries, no disclaimer talk. "
@@ -148,14 +205,17 @@ async def _respond_smalltalk(message: str, language: str) -> ChatReply:
         if language == "de":
             return ChatReply(
                 reply="Smalltalk-Modus offline. Frag mich was zum Trading.",
-                intent="smalltalk", source="fallback",
+                intent="smalltalk",
+                source="fallback",
             )
         return ChatReply(
             reply="Smalltalk mode offline. Ask me about trading.",
-            intent="smalltalk", source="fallback",
+            intent="smalltalk",
+            source="fallback",
         )
 
     from openai import AsyncOpenAI
+
     system_prompt = _build_persona_system_prompt(language)
     client = AsyncOpenAI(api_key=api_key, timeout=20.0)
     try:
@@ -177,11 +237,13 @@ async def _respond_smalltalk(message: str, language: str) -> ChatReply:
         if language == "de":
             return ChatReply(
                 reply="Verbindung zur KI-Schicht stockt. Versuch es nochmal.",
-                intent="smalltalk", source="fallback",
+                intent="smalltalk",
+                source="fallback",
             )
         return ChatReply(
             reply="LLM layer hiccuped. Try again.",
-            intent="smalltalk", source="fallback",
+            intent="smalltalk",
+            source="fallback",
         )
 
 
@@ -274,6 +336,7 @@ async def transcribe_audio_via_whisper(
     handler logs a warning. Caller decides what to surface to the user.
     """
     import httpx
+
     settings = get_settings()
     api_key = settings.providers.openai_api_key
     if not api_key:
@@ -298,7 +361,11 @@ async def transcribe_audio_via_whisper(
     head_hex = audio_data[:8].hex()
     logger.info(
         "[kai-voice] whisper request: size=%d ext=%s mime=%s lang=%s head=%s",
-        len(audio_data), ext, mime, data["language"], head_hex,
+        len(audio_data),
+        ext,
+        mime,
+        data["language"],
+        head_hex,
     )
     try:
         async with httpx.AsyncClient(timeout=90.0) as client:
@@ -314,7 +381,8 @@ async def transcribe_audio_via_whisper(
             if text and _is_whisper_hallucination(text):
                 logger.warning(
                     "[kai-voice] whisper hallucination filtered: %r (size=%d)",
-                    text[:120], len(audio_data),
+                    text[:120],
+                    len(audio_data),
                 )
                 return None
             if text:
@@ -322,7 +390,9 @@ async def transcribe_audio_via_whisper(
                 return text
             logger.warning(
                 "[kai-voice] whisper returned empty. size=%d mime=%s payload-keys=%s",
-                len(audio_data), mime, list(payload.keys()),
+                len(audio_data),
+                mime,
+                list(payload.keys()),
             )
     except Exception as exc:  # noqa: BLE001
         logger.warning("[kai-voice] whisper error: %s", exc)

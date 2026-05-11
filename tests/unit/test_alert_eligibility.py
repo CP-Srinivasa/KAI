@@ -616,9 +616,7 @@ def test_source_watchlist_modifier_keeps_p9_eligible(tmp_path, monkeypatch) -> N
     from app.alerts import eligibility as elig
 
     (tmp_path.parent / "monitor").mkdir(exist_ok=True)
-    (tmp_path.parent / "monitor" / "source_watch.txt").write_text(
-        "weakhouse\n", encoding="utf-8"
-    )
+    (tmp_path.parent / "monitor" / "source_watch.txt").write_text("weakhouse\n", encoding="utf-8")
     monkeypatch.chdir(tmp_path.parent)
     elig._invalidate_source_watchlist_cache()
 
@@ -644,9 +642,7 @@ def test_source_watchlist_no_effect_when_not_listed(tmp_path, monkeypatch) -> No
     from app.alerts import eligibility as elig
 
     (tmp_path.parent / "monitor").mkdir(exist_ok=True)
-    (tmp_path.parent / "monitor" / "source_watch.txt").write_text(
-        "weakhouse\n", encoding="utf-8"
-    )
+    (tmp_path.parent / "monitor" / "source_watch.txt").write_text("weakhouse\n", encoding="utf-8")
     monkeypatch.chdir(tmp_path.parent)
     elig._invalidate_source_watchlist_cache()
 
