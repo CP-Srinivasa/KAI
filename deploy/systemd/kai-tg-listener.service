@@ -2,6 +2,15 @@
 Description=KAI Telegram Premium-Channel MTProto Listener
 After=network-online.target
 Wants=network-online.target
+# F2-P3 (2026-05-06, fixed-section 2026-05-11): hard cap restart storms.
+# RestartSec=30 makes 5 restarts physically take ≥150s, so the
+# default StartLimitBurst=5 / StartLimitIntervalSec=10 was already
+# unreachable — but explicit windows kill the service after 10
+# restarts in 5 min instead of letting it churn silently.
+# NOTE: These keys MUST live in [Unit], not [Service]. systemd silently
+# ignores them in [Service] with "Unknown key" warnings (NB1, 2026-05-11).
+StartLimitIntervalSec=300
+StartLimitBurst=10
 
 [Service]
 Type=simple
@@ -16,13 +25,6 @@ ExecStartPre=+/bin/bash -c 'mkdir -p /home/kai/ai_analyst_trading_bot/logs && ch
 ExecStart=/home/kai/ai_analyst_trading_bot/.venv/bin/python -m app.cli.main ingestion telegram-channel run
 Restart=always
 RestartSec=30
-# F2-P3 (2026-05-06): hard cap restart storms.
-# RestartSec=30 makes 5 restarts physically take ≥150s, so the
-# default StartLimitBurst=5 / StartLimitIntervalSec=10 was already
-# unreachable — but explicit windows kill the service after 10
-# restarts in 5 min instead of letting it churn silently.
-StartLimitIntervalSec=300
-StartLimitBurst=10
 StandardOutput=append:/home/kai/ai_analyst_trading_bot/logs/telegram_listener.log
 StandardError=append:/home/kai/ai_analyst_trading_bot/logs/telegram_listener.err.log
 NoNewPrivileges=true
