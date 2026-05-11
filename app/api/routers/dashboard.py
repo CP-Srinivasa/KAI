@@ -30,6 +30,8 @@ _ALERT_AUDIT = _ARTIFACTS / "alert_audit.jsonl"
 _ALERT_OUTCOMES = _ARTIFACTS / "alert_outcomes.jsonl"
 _TRADING_LOOP_AUDIT = _ARTIFACTS / "trading_loop_audit.jsonl"
 _PAPER_EXECUTION_AUDIT = _ARTIFACTS / "paper_execution_audit.jsonl"
+_BRIDGE_PENDING_ORDERS = _ARTIFACTS / "bridge_pending_orders.jsonl"
+_ENTRY_WATCHER_AUDIT = _ARTIFACTS / "entry_watcher_audit.jsonl"
 _TV_PENDING = _ARTIFACTS / "tradingview_pending_signals.jsonl"
 _AUDIT_V1_DISQUALIFIED_FLAG = _ARTIFACTS / "paper_execution_audit_v1_disqualified.flag"
 
@@ -256,6 +258,14 @@ async def dashboard_quality_api() -> JSONResponse:
         s = r.get("status", "unknown")
         status_counts[s] = status_counts.get(s, 0) + 1
 
+    from app.execution.signal_execution_status import build_signal_execution_status
+
+    signal_execution = build_signal_execution_status(
+        bridge_log_path=_BRIDGE_PENDING_ORDERS,
+        paper_audit_log_path=_PAPER_EXECUTION_AUDIT,
+        entry_watcher_log_path=_ENTRY_WATCHER_AUDIT,
+    )
+
     fwd = report.get("forward_simulation", {})
 
     audit_v1_disqualified = False
@@ -302,18 +312,12 @@ async def dashboard_quality_api() -> JSONResponse:
             "priority_tier_high_conviction_ci_high_pct": quality.get(
                 "priority_tier_high_conviction_ci_high_pct"
             ),
-            "priority_tier_standard_resolved": quality.get(
-                "priority_tier_standard_resolved"
-            ),
+            "priority_tier_standard_resolved": quality.get("priority_tier_standard_resolved"),
             "priority_tier_standard_hit_rate_pct": quality.get(
                 "priority_tier_standard_hit_rate_pct"
             ),
-            "priority_tier_standard_ci_low_pct": quality.get(
-                "priority_tier_standard_ci_low_pct"
-            ),
-            "priority_tier_standard_ci_high_pct": quality.get(
-                "priority_tier_standard_ci_high_pct"
-            ),
+            "priority_tier_standard_ci_low_pct": quality.get("priority_tier_standard_ci_low_pct"),
+            "priority_tier_standard_ci_high_pct": quality.get("priority_tier_standard_ci_high_pct"),
             "forward_precision_pct": fwd.get("precision_pct"),
             "forward_resolved": fwd.get("resolved", 0),
             "forward_hits": fwd.get("hits", 0),
@@ -332,6 +336,7 @@ async def dashboard_quality_api() -> JSONResponse:
             "high_priority_hit_rate_pct": quality.get("high_priority_hit_rate_pct"),
             "low_priority_hit_rate_pct": quality.get("low_priority_hit_rate_pct"),
             "loop_status_counts": status_counts,
+            "signal_execution": signal_execution,
             # V-DB4a 2026-05-08: Per-source active precision fuer Quality-Tile.
             # Liefert n / hit-rate / Wilson-CI / passes_gate je Source.
             "per_source_active_precision": report.get("per_source_active_precision", {}),

@@ -83,6 +83,7 @@ def build_envelope_record(
         targets=list(parsed.targets),
         stop_loss=parsed.stop_loss,
         leverage=parsed.leverage,
+        margin_pct=parsed.margin_pct,
         timestamp_utc=ts,
     )
 

@@ -59,6 +59,7 @@ def _make_record(
     sentiment: str = "bullish",
     assets: list[str] | None = None,
     dispatched_at: str = "2026-01-01T12:00:00+00:00",
+    directional_eligible: bool | None = True,
 ) -> AlertAuditRecord:
     return AlertAuditRecord(
         document_id=doc_id,
@@ -70,6 +71,7 @@ def _make_record(
         affected_assets=assets or ["BTC"],
         priority=8,
         actionable=True,
+        directional_eligible=directional_eligible,
     )
 
 

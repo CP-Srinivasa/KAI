@@ -113,8 +113,7 @@ def evaluate_snapshot_freshness(
             warn_hours_threshold=warn_hours,
             crit_hours_threshold=crit_hours,
             message=(
-                f"Snapshot ist {age_hours:.0f}h alt "
-                f"(Schwelle {warn_hours}h) — Live-API empfohlen"
+                f"Snapshot ist {age_hours:.0f}h alt (Schwelle {warn_hours}h) — Live-API empfohlen"
             ),
         )
     age_days = age_hours / 24.0
@@ -163,7 +162,7 @@ def annotate_report(report: dict[str, Any], *, now: datetime | None = None) -> d
     the top level, never inside business data.
     """
     if not isinstance(report, dict):
-        return report  # type: ignore[unreachable]
+        return report
     moment = now if now is not None else datetime.now(UTC)
     result = freshness_for_report(report, now=moment)
     annotated = dict(report)

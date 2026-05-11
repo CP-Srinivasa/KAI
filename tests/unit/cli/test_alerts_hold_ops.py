@@ -26,6 +26,9 @@ def _write_directional_alert(
     sentiment: str,
     dispatched_at: str = "2026-03-25T10:00:00+00:00",
 ) -> None:
+    # eligibility.py blocks naked assets ("BTC" without /USDT) since the
+    # naked-asset gate was added; helper writes the trading-pair form so
+    # re-evaluated current_check.directional_eligible stays True for tests.
     append_alert_audit(
         AlertAuditRecord(
             document_id=doc_id,
@@ -34,7 +37,7 @@ def _write_directional_alert(
             is_digest=False,
             dispatched_at=dispatched_at,
             sentiment_label=sentiment,
-            affected_assets=["BTC"],
+            affected_assets=["BTC/USDT"],
             priority=8,
             actionable=True,
         ),

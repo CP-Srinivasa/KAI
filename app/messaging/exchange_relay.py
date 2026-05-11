@@ -254,6 +254,9 @@ def build_signal_pipeline_status(
     outbox_log_path: str | Path,
     sent_log_path: str | Path,
     dead_letter_log_path: str | Path,
+    bridge_log_path: str | Path = "artifacts/bridge_pending_orders.jsonl",
+    paper_audit_log_path: str | Path = "artifacts/paper_execution_audit.jsonl",
+    entry_watcher_log_path: str | Path = "artifacts/entry_watcher_audit.jsonl",
     lookback_hours: int = 24,
 ) -> dict[str, object]:
     cutoff = datetime.now(UTC) - timedelta(hours=max(1, lookback_hours))
@@ -276,6 +279,14 @@ def build_signal_pipeline_status(
                 count += 1
         return count
 
+    from app.execution.signal_execution_status import build_signal_execution_status
+
+    execution = build_signal_execution_status(
+        bridge_log_path=bridge_log_path,
+        paper_audit_log_path=paper_audit_log_path,
+        entry_watcher_log_path=entry_watcher_log_path,
+    )
+
     return {
         "report_type": "telegram_signal_pipeline_status",
         "lookback_hours": max(1, lookback_hours),
@@ -286,6 +297,7 @@ def build_signal_pipeline_status(
         "exchange_sent_lookback": _count_since(sent_rows, "relayed_at_utc"),
         "exchange_dead_letter_total": len(dead_rows),
         "exchange_dead_letter_lookback": _count_since(dead_rows, "dead_lettered_at_utc"),
+        "signal_execution": execution,
         "execution_enabled": False,
         "write_back_allowed": False,
     }

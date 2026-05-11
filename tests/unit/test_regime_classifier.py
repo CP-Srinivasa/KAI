@@ -93,23 +93,17 @@ def test_raw_breakout_zone_without_atr_anomaly_falls_to_chop() -> None:
 
 
 def test_raw_low_adx_low_vol_yields_chop_quiet() -> None:
-    out = classify_raw(
-        _make_inputs(adx=15.0, plus_di=10.0, minus_di=12.0, vol_class="vol_low")
-    )
+    out = classify_raw(_make_inputs(adx=15.0, plus_di=10.0, minus_di=12.0, vol_class="vol_low"))
     assert out == RegimeClass.CHOP_QUIET
 
 
 def test_raw_low_adx_high_vol_yields_chop_volatile() -> None:
-    out = classify_raw(
-        _make_inputs(adx=15.0, plus_di=10.0, minus_di=12.0, vol_class="vol_high")
-    )
+    out = classify_raw(_make_inputs(adx=15.0, plus_di=10.0, minus_di=12.0, vol_class="vol_high"))
     assert out == RegimeClass.CHOP_VOLATILE
 
 
 def test_raw_breakout_down_with_minus_dominant() -> None:
-    out = classify_raw(
-        _make_inputs(adx=28.0, plus_di=5.0, minus_di=20.0, atr_zscore=1.5)
-    )
+    out = classify_raw(_make_inputs(adx=28.0, plus_di=5.0, minus_di=20.0, atr_zscore=1.5))
     assert out == RegimeClass.BREAKOUT_DOWN
 
 

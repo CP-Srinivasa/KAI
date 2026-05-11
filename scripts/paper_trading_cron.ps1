@@ -112,6 +112,24 @@ function Bridge-Tick {
     }
 }
 
+function Entry-Watch {
+    try {
+        $output = & $Python -m app.cli.main trading operator-signal-entry-watch `
+            --duration-seconds 55 `
+            --poll-interval-seconds 5 2>&1 | Out-String
+        if ($output -match "enabled=False") {
+            return  # fail-closed: silent when disabled
+        }
+        $triggered = if ($output -match "triggered=(\S+)") { $Matches[1] } else { "0" }
+        $filled    = if ($output -match "bridge_filled=(\S+)") { $Matches[1] } else { "0" }
+        $held      = if ($output -match "held=(\S+)") { $Matches[1] } else { "0" }
+        $stale     = if ($output -match "stale_or_unavailable=(\S+)") { $Matches[1] } else { "0" }
+        Write-Log "entry-watch  triggered=$triggered  bridge_filled=$filled  held=$held  stale=$stale"
+    } catch {
+        Write-Log "entry-watch  ERROR: $_"
+    }
+}
+
 # -- Server watchdog ---------------------------------------------------------
 # Limitation: effective only while the laptop is awake AND Task Scheduler fires.
 # Laptop-offline (lid closed / hibernate) cannot be covered here — rely on the
@@ -199,6 +217,7 @@ Monitor-Positions
 # Turn accepted operator-signal envelopes into paper fills.
 # Fail-closed: silent no-op unless EXECUTION_OPERATOR_SIGNAL_BRIDGE_ENABLED=true.
 Bridge-Tick
+Entry-Watch
 
 Run-Cycle "BTC/USDT"
 Start-Sleep -Seconds 15

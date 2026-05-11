@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
 import portalocker
 
@@ -55,7 +56,7 @@ def append_regime_snapshot(
     return p
 
 
-def _snapshot_from_dict(data: dict) -> RegimeSnapshot | None:
+def _snapshot_from_dict(data: dict[str, Any]) -> RegimeSnapshot | None:
     """Reverse of ``RegimeSnapshot.to_json_dict``. Returns None on bad data."""
     try:
         regime = RegimeClass(data["regime"])

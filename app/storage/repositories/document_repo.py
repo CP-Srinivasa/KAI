@@ -145,6 +145,31 @@ class DocumentRepository:
         )
         await self._session.flush()
 
+    async def save_llm_audit(
+        self,
+        document_id: str,
+        provider: str,
+        model: str,
+        prompt_text: str,
+        raw_response: str,
+        prompt_tokens: int,
+        completion_tokens: int,
+    ) -> None:
+        from app.storage.models.audit import LLMAuditRecord
+
+        audit = LLMAuditRecord(
+            document_id=document_id,
+            provider=provider,
+            model=model,
+            prompt_text=prompt_text,
+            raw_response=raw_response,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            total_tokens=prompt_tokens + completion_tokens,
+        )
+        self._session.add(audit)
+        await self._session.flush()
+
     # ── Backward-compat aliases ──────────────────────────────────────────────
 
     async def save(self, doc: CanonicalDocument) -> CanonicalDocument:

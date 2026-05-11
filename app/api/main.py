@@ -8,6 +8,7 @@ from pathlib import Path
 # Reserve. Override muss VOR dem ersten App-Boot greifen.
 try:
     from starlette.formparsers import MultiPartParser
+
     MultiPartParser.max_file_size = 50 * 1024 * 1024
     MultiPartParser.max_part_size = 50 * 1024 * 1024
 except Exception:  # pragma: no cover

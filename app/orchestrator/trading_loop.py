@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -15,6 +16,7 @@ from app.core.settings import get_settings
 from app.execution.models import PaperPortfolio
 from app.execution.paper_engine import PaperExecutionEngine
 from app.market_data.base import BaseMarketDataAdapter
+from app.market_data.indicators import compute_atr
 from app.market_data.service import create_market_data_adapter
 from app.orchestrator.models import (
     CycleStatus,
@@ -215,6 +217,30 @@ class TradingLoop:
                 await self._write_db(cycle)
                 return cycle
 
+        # P1.1: Dynamic ATR Geometry
+        if signal.stop_loss_price is None:
+            try:
+                ohlcv_data = await self._market_data.get_ohlcv(symbol, limit=20)
+                atr = compute_atr(ohlcv_data, period=14)
+                if atr is not None:
+                    notes.append(f"atr_calculated:{atr:.4f}")
+                else:
+                    notes.append("atr_calculated:None")
+
+                sl, tp = self._risk.calculate_risk_geometry(
+                    entry_price=signal.entry_price,
+                    direction=signal.direction.value,
+                    atr=atr,
+                )
+
+                signal = replace(
+                    signal,
+                    stop_loss_price=sl,
+                    take_profit_price=tp,
+                )
+            except Exception as exc:
+                notes.append(f"atr_geometry_error:{exc}")
+
         order_side = "buy" if signal.direction == SignalDirection.LONG else "sell"
         current_positions = len(self._exec.portfolio.positions)
         risk_result = self._risk.check_order(
@@ -353,14 +379,17 @@ class TradingLoop:
         """
         portfolio = self._exec.portfolio
         open_symbols = list(portfolio.positions.keys())
-        summary: dict[str, object] = {
-            "checked": 0,
-            "no_market_data": 0,
-            "triggered": 0,
-            "closes": [],
-        }
+        checked = 0
+        no_market_data = 0
+        triggered = 0
+        closes: list[dict[str, float | str]] = []
         if not open_symbols:
-            return summary
+            return {
+                "checked": checked,
+                "no_market_data": no_market_data,
+                "triggered": triggered,
+                "closes": closes,
+            }
 
         prices: dict[str, float] = {}
         for symbol in open_symbols:
@@ -370,16 +399,15 @@ class TradingLoop:
                 logger.warning("[LOOP] monitor: market data error for %s: %s", symbol, exc)
                 md = None
             if md is None or md.is_stale:
-                summary["no_market_data"] = int(summary["no_market_data"]) + 1
+                no_market_data += 1
                 continue
             prices[symbol] = md.price
-            summary["checked"] = int(summary["checked"]) + 1
+            checked += 1
 
         fills = self._exec.monitor_positions(prices)
         for fill in fills:
-            summary["triggered"] = int(summary["triggered"]) + 1
-            assert isinstance(summary["closes"], list)
-            summary["closes"].append(
+            triggered += 1
+            closes.append(
                 {
                     "symbol": fill.symbol,
                     "quantity": fill.quantity,
@@ -394,7 +422,12 @@ class TradingLoop:
                 equity=self._exec.portfolio.cash,
             )
 
-        return summary
+        return {
+            "checked": checked,
+            "no_market_data": no_market_data,
+            "triggered": triggered,
+            "closes": closes,
+        }
 
     async def run_promoted_signal(
         self,
@@ -464,6 +497,30 @@ class TradingLoop:
                 )
                 await self._write_db(cycle)
                 return cycle
+
+        # P1.1: Dynamic ATR Geometry
+        if signal.stop_loss_price is None:
+            try:
+                ohlcv_data = await self._market_data.get_ohlcv(symbol, limit=20)
+                atr = compute_atr(ohlcv_data, period=14)
+                if atr is not None:
+                    notes.append(f"atr_calculated:{atr:.4f}")
+                else:
+                    notes.append("atr_calculated:None")
+
+                sl, tp = self._risk.calculate_risk_geometry(
+                    entry_price=live_price,
+                    direction=signal.direction.value,
+                    atr=atr,
+                )
+
+                signal = replace(
+                    signal,
+                    stop_loss_price=sl,
+                    take_profit_price=tp,
+                )
+            except Exception as exc:
+                notes.append(f"atr_geometry_error:{exc}")
 
         order_side = "buy" if signal.direction == SignalDirection.LONG else "sell"
         current_positions = len(self._exec.portfolio.positions)
@@ -741,6 +798,8 @@ def _build_risk_limits_from_settings() -> RiskLimits:
         kill_switch_enabled=risk.kill_switch_enabled,
         min_signal_confidence=risk.min_signal_confidence,
         min_signal_confluence_count=risk.min_signal_confluence_count,
+        atr_multiplier=risk.atr_multiplier,
+        tp_atr_multiplier=risk.tp_atr_multiplier,
     )
 
 

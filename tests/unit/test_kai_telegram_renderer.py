@@ -24,19 +24,19 @@ def _clear_cache():
 
 
 def _signal_card(**overrides) -> KaiSignalCard:
-    base = dict(
-        asset="BTC/USDT",
-        mode="WATCHLIST",
-        direction="LONG",
-        confidence=72,
-        risk="MEDIUM",
-        entry="78000",
-        stop_loss="76500",
-        data_basis=("news", "volume", "structure"),
-        data_quality="MEDIUM",
-        timestamp="2026-05-03T14:22:00Z",
-        comment="Signal lebt. Einstieg noch nicht sauber.",
-    )
+    base = {
+        "asset": "BTC/USDT",
+        "mode": "WATCHLIST",
+        "direction": "LONG",
+        "confidence": 72,
+        "risk": "MEDIUM",
+        "entry": "78000",
+        "stop_loss": "76500",
+        "data_basis": ("news", "volume", "structure"),
+        "data_quality": "MEDIUM",
+        "timestamp": "2026-05-03T14:22:00Z",
+        "comment": "Signal lebt. Einstieg noch nicht sauber.",
+    }
     base.update(overrides)
     return KaiSignalCard(**base)
 

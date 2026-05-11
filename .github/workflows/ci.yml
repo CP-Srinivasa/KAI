@@ -79,7 +79,9 @@ jobs:
           python-version: ${{ env.PYTHON_VERSION }}
       - run: pip install pip-audit bandit
       - name: Dependency vulnerability scan (pip-audit)
-        run: pip install -e ".[dev]" && pip-audit
+        # pip-CVEs (CVE-2026-3219 no-fix, CVE-2026-6357 fix-pending in pip 26.1)
+        # ignored — pip is the build-tool itself, not a project dependency.
+        run: pip install -e ".[dev]" && pip-audit --ignore-vuln CVE-2026-3219 --ignore-vuln CVE-2026-6357
       - name: Static security analysis (bandit)
         run: |
           bandit -r app/ \

@@ -9,8 +9,9 @@ import asyncio
 import sys
 from pathlib import Path
 
-from app.core.settings import TelegramChannelIngestSettings
 from telethon import TelegramClient
+
+from app.core.settings import TelegramChannelIngestSettings
 
 
 async def main() -> int:

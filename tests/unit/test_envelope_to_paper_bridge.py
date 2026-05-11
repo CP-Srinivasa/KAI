@@ -275,6 +275,7 @@ def _accepted_envelope(
         "stop_loss": 58000.0,
         "targets": [62000.0, 64000.0],
         "leverage": 5,
+        "margin_pct": 5.0,
     }
     if payload_overrides:
         payload.update(payload_overrides)
@@ -329,22 +330,34 @@ async def test_source_not_in_allowlist_skipped(
 
 
 @pytest.mark.asyncio
-async def test_short_direction_rejected(
+async def test_short_direction_fills_short_paper_order(
     tmp_artifacts: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """v1: short/sell must be rejected (paper_engine has no short primitive)."""
+    """Short/Sell signals open a paper short with mirrored SL/TP geometry."""
     monkeypatch.setenv("EXECUTION_OPERATOR_SIGNAL_BRIDGE_ENABLED", "true")
     monkeypatch.setenv("EXECUTION_OPERATOR_SIGNAL_SOURCE_ALLOWLIST", "dashboard")
     _write_envelope(
         tmp_artifacts / "telegram_message_envelope.jsonl",
-        _accepted_envelope(payload_overrides={"direction": "short", "side": "sell"}),
+        _accepted_envelope(
+            payload_overrides={
+                "direction": "short",
+                "side": "sell",
+                "entry_value": 60000.0,
+                "stop_loss": 62000.0,
+                "targets": [58000.0, 57000.0],
+            }
+        ),
     )
 
-    result = await run_tick()
+    with patch.object(bridge, "_fetch_price", new=AsyncMock(return_value=60050.0)):
+        result = await run_tick()
 
-    assert result.rejected_short == 1
+    assert result.filled == 1
     records = _read_bridge_records(tmp_artifacts / "bridge_pending_orders.jsonl")
-    assert records[-1]["stage"] == "rejected_short_unsupported"
+    assert records[-1]["stage"] == "filled"
+    assert records[-1]["side"] == "sell"
+    assert records[-1]["order_intent"]["side"] == "SELL"
+    assert records[-1]["order_intent"]["take_profit_targets"] == [58000.0, 57000.0]
 
 
 @pytest.mark.asyncio
@@ -408,6 +421,28 @@ async def test_happy_path_fills(tmp_artifacts: Path, monkeypatch: pytest.MonkeyP
     assert records[-1]["stage"] == "filled"
     assert records[-1]["symbol"] == "BTC/USDT"
     assert records[-1]["entry_price_target"] == 60000.0
+    assert records[-1]["lifecycle_state"] == "POSITION_OPEN"
+    assert records[-1]["correlation_id"] == "env-001"
+    assert records[-1]["order_intent"]["side"] == "BUY"
+    assert records[-1]["order_intent"]["leverage"] == 5.0
+    assert records[-1]["order_intent"]["risk_allocation_pct"] == 5.0
+    assert records[-1]["order_intent"]["stop_loss"] == 58000.0
+    assert records[-1]["order_intent"]["take_profit_targets"] == [62000.0, 64000.0]
+    # Default max_leverage=1 caps the 5x signal leverage, but still uses
+    # signal margin for notional sizing: 10_000 * 5% * 1x / 60_000.
+    assert records[-1]["quantity"] == pytest.approx(500.0 / 60000.0)
+    assert records[-1]["position_size_pct"] == pytest.approx(5.0)
+    assert records[-1]["signal_margin_pct"] == 5.0
+    assert records[-1]["signal_leverage"] == 5.0
+    assert "leverage=1x (capped)" in records[-1]["position_size_rationale"]
+    paper_audit = _read_bridge_records(tmp_artifacts / "artifacts" / "paper_execution_audit.jsonl")
+    lifecycle = [rec for rec in paper_audit if rec.get("event_type") == "lifecycle_transition"]
+    assert [rec["to_state"] for rec in lifecycle] == [
+        "ORDER_SUBMITTED",
+        "ORDER_ACCEPTED",
+        "POSITION_OPEN",
+    ]
+    assert {rec["correlation_id"] for rec in lifecycle} == {"env-001"}
 
 
 @pytest.mark.asyncio
@@ -466,6 +501,125 @@ async def test_pending_when_price_outside_tolerance(
     records = _read_bridge_records(tmp_artifacts / "bridge_pending_orders.jsonl")
     assert records[-1]["stage"] == "pending"
     assert records[-1]["reason"] == "price_outside_tolerance"
+    assert records[-1]["lifecycle_state"] == "WAITING_FOR_ENTRY"
+    assert records[-1]["audit_reason"] == "entry_not_reached"
+
+
+@pytest.mark.asyncio
+async def test_range_entry_waits_until_price_inside_range(
+    tmp_artifacts: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Range entries are watched as ranges, not midpoint-tolerance shortcuts."""
+    monkeypatch.setenv("EXECUTION_OPERATOR_SIGNAL_BRIDGE_ENABLED", "true")
+    monkeypatch.setenv("EXECUTION_OPERATOR_SIGNAL_SOURCE_ALLOWLIST", "dashboard")
+    _write_envelope(
+        tmp_artifacts / "telegram_message_envelope.jsonl",
+        _accepted_envelope(
+            envelope_id="env-range",
+            payload_overrides={
+                "entry_type": "range",
+                "entry_value": None,
+                "entry_min": 65000.0,
+                "entry_max": 65500.0,
+                "stop_loss": 64200.0,
+                "targets": [66000.0, 67000.0, 68500.0],
+                "leverage": 10,
+                "margin_pct": 5.0,
+            },
+        ),
+    )
+
+    with patch.object(bridge, "_fetch_price", new=AsyncMock(return_value=65600.0)):
+        result = await run_tick()
+
+    assert result.filled == 0
+    assert result.newly_pending == 1
+    records = _read_bridge_records(tmp_artifacts / "bridge_pending_orders.jsonl")
+    assert records[-1]["stage"] == "pending"
+    assert records[-1]["entry_min"] == 65000.0
+    assert records[-1]["entry_max"] == 65500.0
+
+    with patch.object(bridge, "_fetch_price", new=AsyncMock(return_value=65250.0)):
+        result = await run_tick()
+
+    assert result.filled == 1, result.to_dict()
+    records = _read_bridge_records(tmp_artifacts / "bridge_pending_orders.jsonl")
+    assert records[-1]["stage"] == "filled"
+    assert records[-1]["lifecycle_state"] == "POSITION_OPEN"
+    assert records[-1]["order_intent"]["entry_type"] == "range"
+    assert records[-1]["order_intent"]["entry_min"] == 65000.0
+    assert records[-1]["order_intent"]["entry_max"] == 65500.0
+    assert records[-1]["order_intent"]["side"] == "BUY"
+    assert records[-1]["order_intent"]["leverage"] == 10.0
+    assert records[-1]["order_intent"]["risk_allocation_pct"] == 5.0
+
+
+@pytest.mark.asyncio
+async def test_short_signal_maps_to_sell_order_intent_and_opens_position(
+    tmp_artifacts: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The bridge preserves SELL intent and submits it to paper as a short."""
+    monkeypatch.setenv("EXECUTION_OPERATOR_SIGNAL_BRIDGE_ENABLED", "true")
+    monkeypatch.setenv("EXECUTION_OPERATOR_SIGNAL_SOURCE_ALLOWLIST", "dashboard")
+    _write_envelope(
+        tmp_artifacts / "telegram_message_envelope.jsonl",
+        _accepted_envelope(
+            envelope_id="env-short",
+            payload_overrides={
+                "direction": "short",
+                "side": "sell",
+                "entry_value": 60000.0,
+                "stop_loss": 62000.0,
+                "targets": [58000.0],
+            },
+        ),
+    )
+
+    with patch.object(bridge, "_fetch_price", new=AsyncMock(return_value=60000.0)):
+        result = await run_tick()
+
+    assert result.filled == 1
+    records = _read_bridge_records(tmp_artifacts / "bridge_pending_orders.jsonl")
+    assert records[-1]["stage"] == "filled"
+    assert records[-1]["order_intent"]["side"] == "SELL"
+    assert records[-1]["audit_reason"] == "paper_order_filled"
+
+
+@pytest.mark.asyncio
+async def test_signal_margin_leverage_size_is_risk_capped(
+    tmp_artifacts: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Signal sizing is honored until the SL-distance risk cap becomes smaller."""
+    monkeypatch.setenv("EXECUTION_OPERATOR_SIGNAL_BRIDGE_ENABLED", "true")
+    monkeypatch.setenv("EXECUTION_OPERATOR_SIGNAL_SOURCE_ALLOWLIST", "dashboard")
+    monkeypatch.setenv("RISK_MAX_RISK_PER_TRADE_PCT", "0.25")
+    _write_envelope(
+        tmp_artifacts / "telegram_message_envelope.jsonl",
+        _accepted_envelope(
+            envelope_id="env-risk-cap",
+            payload_overrides={
+                "entry_value": 60000.0,
+                "stop_loss": 58000.0,
+                "targets": [62000.0],
+                "leverage": 10,
+                "margin_pct": 20.0,
+            },
+        ),
+    )
+
+    with patch.object(bridge, "_fetch_price", new=AsyncMock(return_value=60000.0)):
+        result = await run_tick()
+
+    assert result.filled == 1
+    records = _read_bridge_records(tmp_artifacts / "bridge_pending_orders.jsonl")
+    filled = records[-1]
+    # Leverage is hard-capped to 1x. Requested notional = 10_000 * 20% * 1x
+    # = 2_000 → 0.033333 BTC.
+    # Risk cap = $25 / ($60_000 - $58_000) = 0.0125 BTC.
+    assert filled["quantity"] == pytest.approx(0.0125)
+    assert filled["max_loss_usd"] == pytest.approx(25.0)
+    assert filled["max_loss_pct"] == pytest.approx(0.25)
+    assert "risk_capped" in filled["position_size_rationale"]
 
 
 @pytest.mark.asyncio

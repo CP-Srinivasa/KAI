@@ -195,8 +195,12 @@ def test_pi_transfer_env_group_shows_secrets_handler() -> None:
 
     We pick the ``env`` group because it is the only group that does NOT
     invoke rsync (and therefore does not try to resolve the fake host).
-    It surfaces sha256 + manual-scp instructions, which is enough to
-    verify the env-secrets path is wired in.
+    It surfaces the sensitive-files handler (header + manual-transfer
+    section), which is enough to verify the env-secrets path is wired in.
+
+    Note: the actual ``scp ...`` instruction lines are conditional on
+    ``.env`` files being present in the repo root — CI does not ship any,
+    so we assert the handler-trigger lines instead.
     """
     bash = _require_bash()
     result = subprocess.run(
@@ -216,7 +220,7 @@ def test_pi_transfer_env_group_shows_secrets_handler() -> None:
     out = result.stdout
     assert "[group=env]" in out
     assert "SENSITIVE" in out
-    assert "scp " in out  # instruction line for manual .env transfer
+    assert "Transfer these yourself with:" in out  # manual-transfer section header
 
 
 # ---------------------------------------------------------------------------

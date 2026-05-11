@@ -11,8 +11,8 @@ from app.market_data.bitmex_adapter import BitMEXAdapter
 from app.market_data.bybit_adapter import BybitAdapter
 from app.market_data.coingecko_adapter import CoinGeckoAdapter
 from app.market_data.mock_adapter import MockMarketDataAdapter
+from app.market_data.models import OHLCV, MarketDataPoint, MarketDataSnapshot, Ticker
 from app.market_data.okx_adapter import OKXAdapter
-from app.market_data.models import MarketDataSnapshot, OHLCV, MarketDataPoint, Ticker
 
 logger = logging.getLogger(__name__)
 
@@ -52,9 +52,7 @@ class FallbackMarketDataAdapter(BaseMarketDataAdapter):
         ticker = await self.get_ticker(symbol)
         return ticker.last if ticker is not None else None
 
-    async def get_ohlcv(
-        self, symbol: str, timeframe: str = "1h", limit: int = 100
-    ) -> list[OHLCV]:
+    async def get_ohlcv(self, symbol: str, timeframe: str = "1h", limit: int = 100) -> list[OHLCV]:
         for adapter in self._adapters:
             data = await adapter.get_ohlcv(symbol, timeframe=timeframe, limit=limit)
             if data:

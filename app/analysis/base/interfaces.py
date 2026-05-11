@@ -44,6 +44,12 @@ class LLMAnalysisOutput(BaseModel):
     # where a shared provider instance would otherwise race on mutable state.
     provider_used: str | None = None
 
+    # Cognitive Audit fields (populated post-validation by the provider)
+    raw_prompt: str | None = None
+    raw_response: str | None = None
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+
 
 class BaseAnalysisProvider(ABC):
     """Base interface for all LLM analysis providers."""

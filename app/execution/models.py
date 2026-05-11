@@ -15,8 +15,12 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 from app.core.enums import ExecutionMode
 from app.core.schema_runtime import validate_decision_schema_payload
+from app.execution.order_intent import ExecutableOrderIntent
 
 logger = logging.getLogger(__name__)
+
+# Backwards-compatible public name used by bridge/lifecycle tests.
+OrderIntent = ExecutableOrderIntent
 
 
 @dataclass(frozen=True)
@@ -35,11 +39,13 @@ class PaperOrder:
     idempotency_key: str
     status: str = "pending"  # "pending" | "filled" | "cancelled" | "rejected"
     risk_check_id: str = ""
-    position_side: str = "long"  # NEO-P-101-r2: V5-Vorbereitung; nur "long" supported
+    position_side: str = "long"  # "long" | "short"
     # NEO-P-106 Phase 2: venue-Tag fuer Fee-Lookup. Default "paper" nutzt den
     # worst-case Paper-Fee aus config/venue_fees.yaml; "legacy" bleibt als
     # expliziter Opt-out fuer Tests/historische Konstruktor-fee_pct-Pfade.
     venue: str = "paper"
+    # Sprint A Lifecycle: Durchgängige Identität
+    correlation_id: str = ""
 
 
 @dataclass(frozen=True)
@@ -56,13 +62,14 @@ class PaperFill:
     filled_at: str
     slippage_pct: float
     pnl_usd: float = 0.0  # NEO-P-101-r2: per-trade NETTO PnL (Buys=0.0, Sells=netto inkl. fee)
-    position_side: str = "long"  # NEO-P-101-r2: V5-Vorbereitung
+    position_side: str = "long"  # "long" | "short"
     # NEO-P-106 Phase 1: additive Audit-Felder fuer Fee-Provenienz (Backwards-compat
     # weil Defaults; Konsumenten lesen via .get() oder ignorieren unbekannte Keys).
     fee_venue: str = "legacy"
     fee_role: str = "taker"
     fee_bps_applied: float = 0.0
     fee_table_version: str = "unknown"
+    correlation_id: str = ""
 
 
 @dataclass
@@ -76,7 +83,7 @@ class PaperPosition:
     take_profit: float | None
     opened_at: str
     realized_pnl_usd: float = 0.0
-    position_side: str = "long"  # NEO-P-101-r2: V5-Vorbereitung; nur "long" supported
+    position_side: str = "long"  # "long" | "short"
     # V25-C (2026-05-04): Multi-target staged exits. List of (price, qty_share)
     # tuples where qty_share is the fraction of the ORIGINAL position to close
     # at that price (sums should equal 1.0 for full coverage). Empty list ==
@@ -89,8 +96,11 @@ class PaperPosition:
     # fraction of "the trade" each tier represents even after prior tiers
     # have already reduced the live quantity.
     initial_quantity: float = 0.0
+    correlation_id: str = ""
 
     def unrealized_pnl(self, current_price: float) -> float:
+        if self.position_side == "short":
+            return (self.avg_entry_price - current_price) * self.quantity
         return (current_price - self.avg_entry_price) * self.quantity
 
     def to_dict(self) -> dict[str, object]:
@@ -105,6 +115,7 @@ class PaperPosition:
             "position_side": self.position_side,
             "take_profit_tiers": list(self.take_profit_tiers),
             "initial_quantity": self.initial_quantity,
+            "correlation_id": self.correlation_id,
         }
 
 
@@ -124,9 +135,13 @@ class PaperPortfolio:
         self._peak_equity = self.initial_equity
 
     def total_equity(self, prices: dict[str, float]) -> float:
-        position_value = sum(
-            p.quantity * prices.get(sym, p.avg_entry_price) for sym, p in self.positions.items()
-        )
+        position_value = 0.0
+        for sym, pos in self.positions.items():
+            price = prices.get(sym, pos.avg_entry_price)
+            if pos.position_side == "short":
+                position_value -= pos.quantity * price
+            else:
+                position_value += pos.quantity * price
         return self.cash + position_value
 
     def drawdown_pct(self, prices: dict[str, float]) -> float:
@@ -153,7 +168,11 @@ class PaperPortfolio:
             "total_equity": self.total_equity(p)
             if p
             else self.cash
-            + sum(pos.quantity * pos.avg_entry_price for pos in self.positions.values()),
+            + sum(
+                (-pos.quantity if pos.position_side == "short" else pos.quantity)
+                * pos.avg_entry_price
+                for pos in self.positions.values()
+            ),
         }
 
 
@@ -167,6 +186,70 @@ def _new_fill_id() -> str:
 
 def _now_utc() -> str:
     return datetime.now(UTC).isoformat()
+
+
+# ─── Lifecycle Aliases (Reconcile 2026-05-10) ─────────────────────────────────
+# Operator-Decision: ``SignalStatus`` (app/execution/normalized_signal.py) ist
+# kanonisch für die 16-State-Lifecycle. Codex' ursprüngliche
+# ``OrderLifecycleState`` und ``LIFECYCLE_TRANSITIONS`` sind hier als Aliases
+# / Re-Exports erhalten, damit der Bridge-Code (``envelope_to_paper_bridge.py``)
+# unverändert importieren kann.
+#
+# Cross-Ref: docs/architecture/signal_to_execution_gap_analysis_20260510.md
+from app.execution.normalized_signal import (  # noqa: E402
+    LIFECYCLE_TRANSITIONS,  # noqa: F401 — re-export
+    IllegalLifecycleTransition,  # noqa: F401 — re-export
+)
+from app.execution.normalized_signal import (  # noqa: E402
+    TERMINAL_STATES as TERMINAL_ORDER_LIFECYCLE_STATES,  # noqa: F401 — re-export
+)
+from app.execution.normalized_signal import (  # noqa: E402
+    SignalStatus as OrderLifecycleState,  # noqa: F401 — alias
+)
+
+
+@dataclass(frozen=True)
+class LifecycleTransition:
+    correlation_id: str
+    from_state: OrderLifecycleState
+    to_state: OrderLifecycleState
+    reason: str
+    timestamp_utc: str = field(default_factory=_now_utc)
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "correlation_id": self.correlation_id,
+            "from_state": self.from_state.value,
+            "to_state": self.to_state.value,
+            "reason": self.reason,
+            "timestamp_utc": self.timestamp_utc,
+        }
+
+
+def validate_lifecycle_transition(
+    from_state: OrderLifecycleState,
+    to_state: OrderLifecycleState,
+) -> None:
+    if to_state not in LIFECYCLE_TRANSITIONS[from_state]:
+        raise IllegalLifecycleTransition(
+            f"illegal lifecycle transition: {from_state.value} -> {to_state.value}"
+        )
+
+
+def make_lifecycle_transition(
+    *,
+    correlation_id: str,
+    from_state: OrderLifecycleState,
+    to_state: OrderLifecycleState,
+    reason: str,
+) -> LifecycleTransition:
+    validate_lifecycle_transition(from_state, to_state)
+    return LifecycleTransition(
+        correlation_id=correlation_id,
+        from_state=from_state,
+        to_state=to_state,
+        reason=reason,
+    )
 
 
 def _new_decision_id() -> str:

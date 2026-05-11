@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from app.analysis.indicators.adx import ADX_DEFAULT_PERIOD, compute_adx_di
+from app.analysis.indicators.adx import compute_adx_di
 
 
 def test_adx_rejects_period_below_one() -> None:

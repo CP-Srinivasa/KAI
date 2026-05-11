@@ -10,11 +10,11 @@ Operator 1:1 semantics:
 - KAIs own SignalGenerator is NOT invoked.
 - Risk-Engine gates still apply (kill-switch, daily-loss, max-positions).
 - Position size is computed via Risk-Engine (max_risk_per_trade_pct).
-- Channel-stated leverage is ignored in paper mode (consistent with
-  execution safety invariants).
-- Entry-type: limit-style. Only fills when the current spot price is
-  within ``entry_tolerance_pct`` of the operator entry; otherwise the
-  envelope stays ``pending`` and is re-checked next tick.
+- Channel-stated leverage and margin/risk allocation are carried into the
+  ExecutableOrderIntent/audit contract. Paper sizing remains risk-engine-owned.
+- Entry-type: range/limit/trigger-style. Range entries fill only when the
+  current price is inside the operator range; otherwise the envelope stays
+  ``pending`` and is re-checked next tick.
 - TTL: after ``ttl_hours`` (default 24) an unfilled envelope is expired.
 - Take-profit: TP1 only (``targets[0]``). Staged exits are out of scope.
 
@@ -22,8 +22,8 @@ Fail-closed:
 - ``operator_signal_bridge_enabled=False`` (default) -> tick() is a no-op.
 - Source not in allowlist -> skipped with audit, no fill.
 - Missing entry / stop_loss / targets -> rejected at gate.
-- Short/sell signals -> rejected in v1 (paper_engine has no open-short
-  primitive; would require separate logic).
+- Short/sell signals -> paper short positions via the same ExecutableOrderIntent
+  contract (side=SELL, position_side=short).
 
 Audit trails:
 - ``artifacts/bridge_pending_orders.jsonl`` — append-only per-envelope
@@ -37,11 +37,17 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from app.core.settings import get_settings
+from app.execution.models import (
+    OrderLifecycleState,
+    make_lifecycle_transition,
+)
+from app.execution.order_intent import ExecutableOrderIntent
 from app.execution.paper_engine import PaperExecutionEngine
 from app.market_data.service import get_market_data_snapshot
 from app.risk.engine import RiskEngine
@@ -54,6 +60,11 @@ _BRIDGE_LOG = Path("artifacts/bridge_pending_orders.jsonl")
 _PAPER_AUDIT_LOG = Path("artifacts/paper_execution_audit.jsonl")
 
 # Terminal stages — envelopes that have reached any of these are done.
+# ``rejected_short_unsupported`` is kept in the set for **historical**
+# compatibility — pre-V25 envelopes audited with this stage stay terminal
+# in replay tools. Live code does not emit it any more (Sprint-B-Bug-#1
+# 2026-05-10: short-pfad ist nun nativer paper_engine-Pfad via
+# position_side="short" + side="sell" durchgereicht).
 _TERMINAL_STAGES = frozenset(
     {
         "filled",
@@ -61,7 +72,7 @@ _TERMINAL_STAGES = frozenset(
         "rejected_risk",
         "rejected_size",
         "rejected_incomplete",
-        "rejected_short_unsupported",
+        "rejected_short_unsupported",  # historical pre-V25 envelopes only
         "rejected_fill",
         "rejected_position_exists",
         "skipped_source",
@@ -81,6 +92,8 @@ class BridgeTickResult:
     rejected_risk: int = 0
     rejected_size: int = 0
     rejected_incomplete: int = 0
+    # Historical counter — pre-V25 path. Active code never increments it any
+    # more (SHORT signals open as native paper short via paper_engine).
     rejected_short: int = 0
     rejected_fill: int = 0
     rejected_position_exists: int = 0
@@ -218,6 +231,16 @@ def _resolve_entry_price(payload: dict[str, object]) -> float | None:
     return _float(payload.get("entry_value"))
 
 
+def _entry_bounds(payload: dict[str, object]) -> tuple[float | None, float | None]:
+    if payload.get("entry_type") != "range":
+        return None, None
+    emin = _float(payload.get("entry_min"))
+    emax = _float(payload.get("entry_max"))
+    if emin is None or emax is None or emax <= emin <= 0:
+        return None, None
+    return emin, emax
+
+
 def _within_tolerance(
     *,
     current_price: float,
@@ -235,6 +258,37 @@ def _within_tolerance(
         return current_price <= target_price + tol
     # sell (short entry)
     return current_price >= target_price - tol
+
+
+def _entry_condition_met(
+    *,
+    payload: dict[str, object],
+    current_price: float,
+    target_price: float,
+    tolerance_pct: float,
+    side: str,
+) -> bool:
+    """Return True when the market price activates the signal entry rule."""
+    if current_price <= 0 or target_price <= 0:
+        return False
+    entry_type = str(payload.get("entry_type") or "").lower()
+    if entry_type == "range":
+        entry_min, entry_max = _entry_bounds(payload)
+        if entry_min is None or entry_max is None:
+            return False
+        return entry_min <= current_price <= entry_max
+    if entry_type in {"above", "breakout_above"}:
+        tol = target_price * (tolerance_pct / 100.0)
+        return current_price >= target_price - tol
+    if entry_type in {"below", "breakdown_below"}:
+        tol = target_price * (tolerance_pct / 100.0)
+        return current_price <= target_price + tol
+    return _within_tolerance(
+        current_price=current_price,
+        target_price=target_price,
+        tolerance_pct=tolerance_pct,
+        side=side,
+    )
 
 
 def _ttl_exceeded(
@@ -291,15 +345,101 @@ def _build_risk_limits() -> RiskLimits:
 def _audit_base(
     *, envelope_id: str, stage: str, source: str, envelope: dict[str, object]
 ) -> dict[str, object]:
+    correlation_id = str(
+        envelope.get("origin_envelope_id")
+        or envelope.get("trace_id")
+        or envelope.get("envelope_id")
+        or envelope_id
+    )
+    idem = envelope.get("idempotency_key")
     return {
         "timestamp_utc": datetime.now(UTC).isoformat(),
         "event": "operator_signal_bridge",
         "envelope_id": envelope_id,
+        "correlation_id": correlation_id,
         "stage": stage,
         "source": source,
         "origin_envelope_stage": envelope.get("stage"),
         "origin_envelope_timestamp": envelope.get("timestamp_utc"),
+        **({"idempotency_key": idem} if isinstance(idem, str) and idem else {}),
     }
+
+
+def _lifecycle_events(
+    *,
+    correlation_id: str,
+    states: list[OrderLifecycleState],
+    reason: str,
+) -> list[dict[str, object]]:
+    events: list[dict[str, object]] = []
+    for from_state, to_state in zip(states, states[1:], strict=False):
+        events.append(
+            make_lifecycle_transition(
+                correlation_id=correlation_id,
+                from_state=from_state,
+                to_state=to_state,
+                reason=reason,
+            ).to_dict()
+        )
+    return events
+
+
+def _attach_lifecycle(
+    rec: dict[str, object],
+    *,
+    final_state: OrderLifecycleState,
+    states: list[OrderLifecycleState],
+    reason: str,
+) -> None:
+    correlation_id = str(rec.get("correlation_id") or rec.get("envelope_id") or "")
+    rec["lifecycle_state"] = final_state.value
+    rec["audit_reason"] = reason
+    rec["lifecycle_events"] = _lifecycle_events(
+        correlation_id=correlation_id,
+        states=states,
+        reason=reason,
+    )
+
+
+def _build_executable_intent(
+    *,
+    envelope_id: str,
+    correlation_id: str | None = None,
+    source: str,
+    payload: dict[str, object],
+    symbol: str,
+    side: str,
+    entry_price: float | None,
+    stop_loss: float,
+    targets: list[float],
+    quantity: float | None = None,
+) -> ExecutableOrderIntent:
+    leverage = _float(payload.get("leverage")) or 1.0
+    risk_allocation_pct = _float(payload.get("margin_pct"))
+    if risk_allocation_pct is None:
+        risk_allocation_pct = _float(payload.get("position_size_suggestion"))
+    entry_min, entry_max = _entry_bounds(payload)
+    entry_type = str(payload.get("entry_type") or "market").lower()
+    order_type = "market" if entry_type == "market" else "limit"
+    return ExecutableOrderIntent(
+        symbol=symbol,
+        side=side.upper(),
+        order_type=order_type,
+        entry_type=entry_type,
+        entry_value=entry_price,
+        entry_min=entry_min,
+        entry_max=entry_max,
+        quantity=quantity,
+        risk_allocation_pct=risk_allocation_pct,
+        leverage=leverage,
+        margin_mode=str(payload.get("risk_mode") or "isolated"),
+        stop_loss=stop_loss,
+        take_profit_targets=tuple(targets),
+        reduce_only=bool(payload.get("reduce_only", False)),
+        source=source,
+        correlation_id=correlation_id or envelope_id,
+        idempotency_key=f"opbridge:{envelope_id}",
+    )
 
 
 async def _fetch_price(symbol: str) -> float | None:
@@ -379,7 +519,10 @@ def _apply_scale(payload: dict[str, object], factor: float) -> None:
         payload["targets"] = scaled
 
 
-async def run_tick() -> BridgeTickResult:
+PriceProvider = Callable[[str], Awaitable[float | None]]
+
+
+async def run_tick(*, price_provider: PriceProvider | None = None) -> BridgeTickResult:
     """One bridge tick: scan new envelopes, re-check pending ones, fill/expire."""
     settings = get_settings()
     if not settings.execution.operator_signal_bridge_enabled:
@@ -418,6 +561,7 @@ async def run_tick() -> BridgeTickResult:
             ttl_hours=ttl_hours,
             tolerance_pct=tolerance_pct,
             result=result,
+            price_provider=price_provider,
         )
 
     return result
@@ -432,17 +576,33 @@ async def _process_one(
     ttl_hours: int,
     tolerance_pct: float,
     result: BridgeTickResult,
+    price_provider: PriceProvider | None = None,
 ) -> None:
     envelope_id = str(envelope.get("envelope_id") or "")
     source = _extract_source(envelope)
     base = lambda stage: _audit_base(  # noqa: E731
         envelope_id=envelope_id, stage=stage, source=source, envelope=envelope
     )
+    correlation_id = str(
+        envelope.get("origin_envelope_id")
+        or envelope.get("trace_id")
+        or envelope.get("envelope_id")
+        or envelope_id
+    )
 
     # Gate 1: allowlist
     if source not in allowlist:
         rec = base("skipped_source")
         rec["allowlist"] = sorted(allowlist)
+        _attach_lifecycle(
+            rec,
+            final_state=OrderLifecycleState.REJECTED_INVALID_SIGNAL,
+            states=[
+                OrderLifecycleState.RECEIVED,
+                OrderLifecycleState.REJECTED_INVALID_SIGNAL,
+            ],
+            reason="source_not_allowlisted",
+        )
         _append_bridge_audit(rec)
         result.skipped_source += 1
         return
@@ -453,6 +613,17 @@ async def _process_one(
     if _ttl_exceeded(ts_str, ttl_hours):
         rec = base("expired")
         rec["ttl_hours"] = ttl_hours
+        _attach_lifecycle(
+            rec,
+            final_state=OrderLifecycleState.EXPIRED,
+            states=[
+                OrderLifecycleState.RECEIVED,
+                OrderLifecycleState.PARSED,
+                OrderLifecycleState.VALIDATED,
+                OrderLifecycleState.EXPIRED,
+            ],
+            reason="ttl_exceeded",
+        )
         _append_bridge_audit(rec)
         result.expired += 1
         return
@@ -475,7 +646,8 @@ async def _process_one(
             float(t)
             for t in (targets_raw or [])
             if isinstance(t, (int, float)) and not isinstance(t, bool) and t > 0
-        )
+        ),
+        reverse=direction == "short",
     )
     tp1 = targets[0] if targets else None
 
@@ -496,17 +668,18 @@ async def _process_one(
     if missing:
         rec = base("rejected_incomplete")
         rec["missing"] = missing
+        _attach_lifecycle(
+            rec,
+            final_state=OrderLifecycleState.REJECTED_INVALID_SIGNAL,
+            states=[
+                OrderLifecycleState.RECEIVED,
+                OrderLifecycleState.PARSED,
+                OrderLifecycleState.REJECTED_INVALID_SIGNAL,
+            ],
+            reason=f"missing_required_fields:{','.join(missing)}",
+        )
         _append_bridge_audit(rec)
         result.rejected_incomplete += 1
-        return
-
-    # v1: only long/buy supported by paper_engine open path
-    if direction != "long" or side_str != "buy":
-        rec = base("rejected_short_unsupported")
-        rec["direction"] = direction
-        rec["side"] = side_str
-        _append_bridge_audit(rec)
-        result.rejected_short += 1
         return
 
     # Re-narrow types for the type checker:
@@ -520,16 +693,64 @@ async def _process_one(
     if symbol in engine.portfolio.positions:
         rec = base("rejected_position_exists")
         rec["existing_quantity"] = engine.portfolio.positions[symbol].quantity
+        rec["executable_intent"] = _build_executable_intent(
+            envelope_id=envelope_id,
+            correlation_id=str(rec["correlation_id"]),
+            source=source,
+            payload=payload,
+            symbol=symbol,
+            side=str(side_str),
+            entry_price=entry_price,
+            stop_loss=stop_loss,
+            targets=targets,
+        ).to_dict()
+        rec["order_intent"] = rec["executable_intent"]
+        _attach_lifecycle(
+            rec,
+            final_state=OrderLifecycleState.REJECTED_INVALID_SIGNAL,
+            states=[
+                OrderLifecycleState.RECEIVED,
+                OrderLifecycleState.PARSED,
+                OrderLifecycleState.VALIDATED,
+                OrderLifecycleState.REJECTED_INVALID_SIGNAL,
+            ],
+            reason="position_already_open",
+        )
         _append_bridge_audit(rec)
         result.rejected_position_exists += 1
         return
 
     # Gate 4: market data / entry-band
-    current_price = await _fetch_price(symbol)
+    current_price = await price_provider(symbol) if price_provider is not None else None
+    if current_price is None:
+        current_price = await _fetch_price(symbol)
     if current_price is None:
         rec = base("pending")
         rec["reason"] = "no_market_data"
         rec["target_entry"] = entry_price
+        rec["executable_intent"] = _build_executable_intent(
+            envelope_id=envelope_id,
+            correlation_id=str(rec["correlation_id"]),
+            source=source,
+            payload=payload,
+            symbol=symbol,
+            side=str(side_str),
+            entry_price=entry_price,
+            stop_loss=stop_loss,
+            targets=targets,
+        ).to_dict()
+        rec["order_intent"] = rec["executable_intent"]
+        _attach_lifecycle(
+            rec,
+            final_state=OrderLifecycleState.WAITING_FOR_ENTRY,
+            states=[
+                OrderLifecycleState.RECEIVED,
+                OrderLifecycleState.PARSED,
+                OrderLifecycleState.VALIDATED,
+                OrderLifecycleState.WAITING_FOR_ENTRY,
+            ],
+            reason="market_data_unavailable",
+        )
         _append_bridge_audit(rec)
         result.no_market_data += 1
         return
@@ -556,9 +777,11 @@ async def _process_one(
         # Persist the corrected scale on the envelope payload so downstream
         # consumers (engine, tier ladder, audit) see the same numbers we
         # just gated on.
-        _apply_scale(envelope.get("payload") if isinstance(envelope.get("payload"), dict) else {}, scale_factor)
+        scaled_payload = envelope.get("payload")
+        _apply_scale(scaled_payload if isinstance(scaled_payload, dict) else {}, scale_factor)
 
-    if not _within_tolerance(
+    if not _entry_condition_met(
+        payload=payload,
         current_price=current_price,
         target_price=entry_price,
         tolerance_pct=tolerance_pct,
@@ -568,7 +791,32 @@ async def _process_one(
         rec["reason"] = "price_outside_tolerance"
         rec["current_price"] = current_price
         rec["target_entry"] = entry_price
+        rec["entry_min"] = payload.get("entry_min")
+        rec["entry_max"] = payload.get("entry_max")
         rec["tolerance_pct"] = tolerance_pct
+        rec["executable_intent"] = _build_executable_intent(
+            envelope_id=envelope_id,
+            correlation_id=str(rec["correlation_id"]),
+            source=source,
+            payload=payload,
+            symbol=symbol,
+            side=str(side_str),
+            entry_price=entry_price,
+            stop_loss=stop_loss,
+            targets=targets,
+        ).to_dict()
+        rec["order_intent"] = rec["executable_intent"]
+        _attach_lifecycle(
+            rec,
+            final_state=OrderLifecycleState.WAITING_FOR_ENTRY,
+            states=[
+                OrderLifecycleState.RECEIVED,
+                OrderLifecycleState.PARSED,
+                OrderLifecycleState.VALIDATED,
+                OrderLifecycleState.WAITING_FOR_ENTRY,
+            ],
+            reason="entry_not_reached",
+        )
         _append_bridge_audit(rec)
         existed_before = any(
             r.get("envelope_id") == envelope_id and r.get("stage") == "pending"
@@ -596,43 +844,125 @@ async def _process_one(
         rec = base("rejected_risk")
         rec["risk_check_id"] = risk_result.check_id
         rec["violations"] = list(risk_result.violations)
+        rec["executable_intent"] = _build_executable_intent(
+            envelope_id=envelope_id,
+            correlation_id=str(rec["correlation_id"]),
+            source=source,
+            payload=payload,
+            symbol=symbol,
+            side=str(side_str),
+            entry_price=entry_price,
+            stop_loss=stop_loss,
+            targets=targets,
+        ).to_dict()
+        rec["order_intent"] = rec["executable_intent"]
+        _attach_lifecycle(
+            rec,
+            final_state=OrderLifecycleState.REJECTED_INVALID_SIGNAL,
+            states=[
+                OrderLifecycleState.RECEIVED,
+                OrderLifecycleState.PARSED,
+                OrderLifecycleState.VALIDATED,
+                OrderLifecycleState.ENTRY_TRIGGERED,
+                OrderLifecycleState.ORDER_BUILDING,
+                OrderLifecycleState.ORDER_SUBMITTED,
+                OrderLifecycleState.REJECTED_INVALID_SIGNAL,
+            ],
+            reason="risk_gate_rejected",
+        )
         _append_bridge_audit(rec)
         result.rejected_risk += 1
         return
 
     # Gate 6: Position sizing
     equity = engine.portfolio.cash
+    leverage_val = _float(payload.get("leverage"))
+    risk_allocation_pct = _float(payload.get("margin_pct"))
+    if risk_allocation_pct is None:
+        risk_allocation_pct = _float(payload.get("position_size_suggestion"))
+
     size_result = risk.calculate_position_size(
         symbol=symbol,
         entry_price=entry_price,
         stop_loss_price=stop_loss,
         equity=equity,
+        leverage=leverage_val,
+        risk_allocation_pct=risk_allocation_pct,
     )
     if not size_result.approved or size_result.position_size_units <= 0:
         rec = base("rejected_size")
         rec["rationale"] = size_result.rationale
+        rec["signal_margin_pct"] = risk_allocation_pct
+        rec["signal_leverage"] = leverage_val
+        rec["position_size_pct"] = size_result.position_size_pct
+        rec["max_loss_usd"] = size_result.max_loss_usd
+        rec["max_loss_pct"] = size_result.max_loss_pct
+        rec["executable_intent"] = _build_executable_intent(
+            envelope_id=envelope_id,
+            correlation_id=str(rec["correlation_id"]),
+            source=source,
+            payload=payload,
+            symbol=symbol,
+            side=str(side_str),
+            entry_price=entry_price,
+            stop_loss=stop_loss,
+            targets=targets,
+        ).to_dict()
+        rec["order_intent"] = rec["executable_intent"]
+        _attach_lifecycle(
+            rec,
+            final_state=OrderLifecycleState.REJECTED_INVALID_SIGNAL,
+            states=[
+                OrderLifecycleState.RECEIVED,
+                OrderLifecycleState.PARSED,
+                OrderLifecycleState.VALIDATED,
+                OrderLifecycleState.ENTRY_TRIGGERED,
+                OrderLifecycleState.ORDER_BUILDING,
+                OrderLifecycleState.ORDER_SUBMITTED,
+                OrderLifecycleState.REJECTED_INVALID_SIGNAL,
+            ],
+            reason="position_sizing_rejected",
+        )
         _append_bridge_audit(rec)
         result.rejected_size += 1
         return
 
     # Create + fill
-    idem = f"opbridge:{envelope_id}"
+    executable_intent = _build_executable_intent(
+        envelope_id=envelope_id,
+        correlation_id=correlation_id,
+        source=source,
+        payload=payload,
+        symbol=symbol,
+        side=str(side_str),
+        entry_price=entry_price,
+        stop_loss=stop_loss,
+        targets=targets,
+        quantity=size_result.position_size_units,
+    )
     try:
-        order = engine.create_order(
-            symbol=symbol,
-            side=side_str,
-            quantity=size_result.position_size_units,
-            order_type="limit",
-            limit_price=entry_price,
-            stop_loss=stop_loss,
-            take_profit=tp1,
-            idempotency_key=idem,
+        order, fill = engine.execute_intent(
+            intent=executable_intent,
+            current_price=current_price,
             risk_check_id=risk_result.check_id,
         )
-        fill = engine.fill_order(order, current_price=current_price)
     except Exception as exc:  # noqa: BLE001
         rec = base("rejected_fill")
         rec["error"] = str(exc)
+        _attach_lifecycle(
+            rec,
+            final_state=OrderLifecycleState.FAILED,
+            states=[
+                OrderLifecycleState.RECEIVED,
+                OrderLifecycleState.PARSED,
+                OrderLifecycleState.VALIDATED,
+                OrderLifecycleState.ENTRY_TRIGGERED,
+                OrderLifecycleState.ORDER_BUILDING,
+                OrderLifecycleState.ORDER_SUBMITTED,
+                OrderLifecycleState.FAILED,
+            ],
+            reason="paper_engine_exception",
+        )
         _append_bridge_audit(rec)
         result.rejected_fill += 1
         return
@@ -641,6 +971,20 @@ async def _process_one(
         rec = base("rejected_fill")
         rec["reason"] = "paper_engine_returned_none"
         rec["order_id"] = order.order_id
+        _attach_lifecycle(
+            rec,
+            final_state=OrderLifecycleState.FAILED,
+            states=[
+                OrderLifecycleState.RECEIVED,
+                OrderLifecycleState.PARSED,
+                OrderLifecycleState.VALIDATED,
+                OrderLifecycleState.ENTRY_TRIGGERED,
+                OrderLifecycleState.ORDER_BUILDING,
+                OrderLifecycleState.ORDER_SUBMITTED,
+                OrderLifecycleState.FAILED,
+            ],
+            reason="paper_engine_returned_none",
+        )
         _append_bridge_audit(rec)
         result.rejected_fill += 1
         return
@@ -661,14 +1005,56 @@ async def _process_one(
     rec["symbol"] = symbol
     rec["side"] = side_str
     rec["quantity"] = size_result.position_size_units
+    rec["position_size_pct"] = size_result.position_size_pct
+    rec["position_size_rationale"] = size_result.rationale
+    rec["max_loss_usd"] = size_result.max_loss_usd
+    rec["max_loss_pct"] = size_result.max_loss_pct
+    rec["signal_margin_pct"] = risk_allocation_pct
+    rec["signal_leverage"] = leverage_val
     rec["entry_price_target"] = entry_price
     rec["fill_price"] = fill.fill_price
     rec["stop_loss"] = stop_loss
     rec["take_profit"] = tp1
-    rec["take_profit_tiers"] = [
-        {"price": price, "qty_share": 1.0 / len(targets)} for price in targets
-    ] if len(targets) > 1 else []
+    rec["take_profit_tiers"] = (
+        [{"price": price, "qty_share": 1.0 / len(targets)} for price in targets]
+        if len(targets) > 1
+        else []
+    )
+    rec["executable_intent"] = _build_executable_intent(
+        envelope_id=envelope_id,
+        correlation_id=str(rec["correlation_id"]),
+        source=source,
+        payload=payload,
+        symbol=symbol,
+        side=side_str,
+        entry_price=entry_price,
+        stop_loss=stop_loss,
+        targets=targets,
+        quantity=size_result.position_size_units,
+    ).to_dict()
+    rec["order_intent"] = rec["executable_intent"]
+    rec["leverage_mode"] = "paper_audit_only"
+    rec["risk_allocation_source"] = (
+        "signal_margin_pct"
+        if _float(payload.get("margin_pct")) is not None
+        else "risk_engine_default"
+    )
     rec["risk_check_id"] = risk_result.check_id
+    _attach_lifecycle(
+        rec,
+        final_state=OrderLifecycleState.POSITION_OPEN,
+        states=[
+            OrderLifecycleState.RECEIVED,
+            OrderLifecycleState.PARSED,
+            OrderLifecycleState.VALIDATED,
+            OrderLifecycleState.ENTRY_TRIGGERED,
+            OrderLifecycleState.ORDER_BUILDING,
+            OrderLifecycleState.ORDER_SUBMITTED,
+            OrderLifecycleState.ORDER_ACCEPTED,
+            OrderLifecycleState.POSITION_OPEN,
+        ],
+        reason="paper_order_filled",
+    )
     _append_bridge_audit(rec)
     result.filled += 1
     logger.info(

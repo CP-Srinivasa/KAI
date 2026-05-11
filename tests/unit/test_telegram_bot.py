@@ -877,6 +877,13 @@ async def test_signal_status_command_returns_read_only_payload(tmp_path, monkeyp
             "exchange_sent_lookback": 1,
             "exchange_dead_letter_total": 1,
             "exchange_dead_letter_lookback": 0,
+            "signal_execution": {
+                "waiting_for_entry": 2,
+                "positions_open": 1,
+                "filled": 4,
+                "expired": 1,
+                "rejected": 3,
+            },
             "execution_enabled": False,
             "write_back_allowed": False,
         }
@@ -893,6 +900,8 @@ async def test_signal_status_command_returns_read_only_payload(tmp_path, monkeyp
     assert "Signal Pipeline" in sent_messages[0]
     assert "Handoff: 7 total" in sent_messages[0]
     assert "Outbox: 3 queued" in sent_messages[0]
+    assert "Waiting entry: 2" in sent_messages[0]
+    assert "Open/Filled: 1 / 4" in sent_messages[0]
 
 
 @pytest.mark.asyncio
@@ -1836,9 +1845,15 @@ class _FakeVoiceTranscriber:
         return self._transcript
 
 
+@pytest.mark.skip(
+    reason="Obsolete after 2026-05-09 KAI-Live Phase 3 refactor: voice now routes "
+    "directly to kai_chat_engine (telegram_bot.py:841 comment), bypassing the "
+    "text_processor + voice-confirm-gate pipeline this test was written for. "
+    "Replacement test against the new pipeline tracked in PR #5 follow-up."
+)
 @pytest.mark.asyncio
 async def test_voice_message_transcribed_and_processed(tmp_path, monkeypatch):
-    """Voice → transcribe → text intent pipeline."""
+    """Voice → transcribe → text intent pipeline (obsolete pipeline)."""
     proc = _FakeTextProcessor(IntentResult(intent="chat", response="Verstanden!"))
     voice_t = _FakeVoiceTranscriber("Bitcoin ist bullish")
     bot = _bot(tmp_path, text_processor=proc, voice_transcriber=voice_t)
@@ -1871,6 +1886,12 @@ async def test_voice_message_transcribed_and_processed(tmp_path, monkeypatch):
     assert "_voice" in commands
 
 
+@pytest.mark.skip(
+    reason="Obsolete after 2026-05-09 KAI-Live Phase 3 refactor: voice no longer "
+    "creates signal-handoff drafts. Per operator decision (telegram_bot.py:843), "
+    "voice → KAI-Chat (Trading-Tools + Smalltalk); trading signals must be "
+    "submitted explicitly via /signal <text> or structured [SIGNAL] format."
+)
 @pytest.mark.asyncio
 async def test_voice_signal_handoff_marks_source_voice(tmp_path, monkeypatch):
     proc = _FakeTextProcessor(

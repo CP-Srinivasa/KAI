@@ -2050,6 +2050,13 @@ def alerts_signal_status(
     console.print(f"exchange_sent_lookback={payload['exchange_sent_lookback']}")
     console.print(f"exchange_dead_letter_total={payload['exchange_dead_letter_total']}")
     console.print(f"exchange_dead_letter_lookback={payload['exchange_dead_letter_lookback']}")
+    execution = payload.get("signal_execution")
+    if isinstance(execution, dict):
+        console.print(f"waiting_for_entry={execution.get('waiting_for_entry', 0)}")
+        console.print(f"positions_open={execution.get('positions_open', 0)}")
+        console.print(f"filled={execution.get('filled', 0)}")
+        console.print(f"expired={execution.get('expired', 0)}")
+        console.print(f"rejected={execution.get('rejected', 0)}")
     console.print(f"execution_enabled={payload['execution_enabled']}")
     console.print(f"write_back_allowed={payload['write_back_allowed']}")
 
