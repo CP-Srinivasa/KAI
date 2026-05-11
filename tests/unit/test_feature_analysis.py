@@ -108,12 +108,14 @@ def test_asset_bucket_counts_multi_asset_alerts_in_each_bucket() -> None:
     report = build_feature_analysis(audits, annotations, min_bucket_size=1)
     by_asset = {b["label"]: b for b in report["buckets"]["by_asset"]}
 
-    assert by_asset["BTC"]["resolved"] == 2
-    assert by_asset["BTC"]["hits"] == 1  # d1 hit, d2 miss
-    assert by_asset["BTC"]["precision_pct"] == 50.0
-    assert by_asset["ETH"]["resolved"] == 2
-    assert by_asset["ETH"]["hits"] == 2  # d1 hit, d3 hit
-    assert by_asset["ETH"]["precision_pct"] == 100.0
+    # Buckets use trading-pair labels since the naked-asset gate enforces
+    # "/USDT" form (see _audit helper auto-promotion).
+    assert by_asset["BTC/USDT"]["resolved"] == 2
+    assert by_asset["BTC/USDT"]["hits"] == 1  # d1 hit, d2 miss
+    assert by_asset["BTC/USDT"]["precision_pct"] == 50.0
+    assert by_asset["ETH/USDT"]["resolved"] == 2
+    assert by_asset["ETH/USDT"]["hits"] == 2  # d1 hit, d3 hit
+    assert by_asset["ETH/USDT"]["precision_pct"] == 100.0
 
 
 def test_priority_group_high_vs_low() -> None:
@@ -153,8 +155,9 @@ def test_min_bucket_size_filters_noise() -> None:
 
     report = build_feature_analysis(audits, annotations, min_bucket_size=3)
     labels = {b["label"] for b in report["buckets"]["by_asset"]}
-    assert "BTC" in labels
-    assert "SOL" not in labels  # below min_bucket_size
+    # Trading-pair labels — naked tickers auto-promoted in _audit helper.
+    assert "BTC/USDT" in labels
+    assert "SOL/USDT" not in labels  # below min_bucket_size
 
 
 def test_latest_dispatch_per_document_wins() -> None:
