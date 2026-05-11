@@ -60,7 +60,11 @@ class OrderRequest:
 
 @dataclass(frozen=True)
 class OrderResult:
-    """Immutable order result — output from exchange adapter."""
+    """Immutable order result — output from exchange adapter.
+
+    ``sl_order_id`` / ``sl_price`` werden von :meth:`place_order_with_server_sl`
+    gefüllt. Bei ``place_order`` (ohne SL-Pflicht) bleiben sie leer.
+    """
 
     success: bool
     order_id: str = ""
@@ -77,6 +81,9 @@ class OrderResult:
     timestamp_utc: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
     exchange: str = ""
     raw_response: dict[str, object] = field(default_factory=dict)
+    # Phase-0 Server-Side-SL fields. See docs/security/kai_light_live_phase0_spec.md §4.
+    sl_order_id: str = ""
+    sl_price: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -185,4 +192,100 @@ class BaseExchangeAdapter(ABC):
             avg_fill_price=order.price or 0.0,
             status=OrderStatus.DRY_RUN,
             exchange=self.exchange_name,
+        )
+
+    async def place_order_with_server_sl(self, order: OrderRequest) -> OrderResult:
+        """Place a live order with mandatory server-side stop-loss (Phase-0).
+
+        Spec: docs/security/kai_light_live_phase0_spec.md §4.
+
+        Default-Implementation rejects with ``error="not_implemented"``.
+        Concrete adapters override with exchange-native OCO / TP-SL semantics.
+
+        Contract:
+        - ``order.stop_loss`` MUSS gesetzt sein (>0). Sonst Reject ohne API-Call.
+        - Bei Erfolg enthält Result ``order_id`` UND ``sl_order_id`` UND ``sl_price``.
+        - Bei Teil-Erfolg (Main placed, SL fail) MUSS Adapter Main canceln und
+          ``success=False`` mit ``error="sl_placement_failed"`` zurückgeben.
+        - Bei dry_run → simulierter Result analog ``_dry_run_order``, plus
+          ``sl_order_id="dry_sl_..."``.
+        """
+        return OrderResult(
+            success=False,
+            error=f"place_order_with_server_sl not implemented for {self.exchange_name}",
+            exchange=self.exchange_name,
+            symbol=order.symbol,
+        )
+
+    def _validate_server_sl(self, order: OrderRequest) -> OrderResult | None:
+        """Phase-0 SL-Pflicht-Validation. Returns failed result or None if ok.
+
+        Verboten: place_order_with_server_sl ohne stop_loss > 0 oder mit
+        market-order-type (Spec: nur LIMIT für Phase-0 — deterministisches
+        Entry-Pricing macht die Cap-Check deterministisch).
+        """
+        if order.stop_loss is None or order.stop_loss <= 0:
+            return OrderResult(
+                success=False,
+                error="server_side_sl_required",
+                exchange=self.exchange_name,
+                symbol=order.symbol,
+            )
+        if order.order_type != OrderType.LIMIT:
+            return OrderResult(
+                success=False,
+                error="server_side_sl_requires_limit_order",
+                exchange=self.exchange_name,
+                symbol=order.symbol,
+            )
+        if order.price is None or order.price <= 0:
+            return OrderResult(
+                success=False,
+                error="server_side_sl_requires_entry_price",
+                exchange=self.exchange_name,
+                symbol=order.symbol,
+            )
+        # SL muss auf der Verlust-Seite vom Entry liegen.
+        if order.side == OrderSide.BUY and order.stop_loss >= order.price:
+            return OrderResult(
+                success=False,
+                error=f"sl_above_buy_entry: sl={order.stop_loss} >= entry={order.price}",
+                exchange=self.exchange_name,
+                symbol=order.symbol,
+            )
+        if order.side == OrderSide.SELL and order.stop_loss <= order.price:
+            return OrderResult(
+                success=False,
+                error=f"sl_below_sell_entry: sl={order.stop_loss} <= entry={order.price}",
+                exchange=self.exchange_name,
+                symbol=order.symbol,
+            )
+        return None
+
+    def _dry_run_order_with_sl(self, order: OrderRequest) -> OrderResult:
+        """Simulated atomic entry+SL for dry-run mode."""
+        logger.info(
+            "[%s DRY RUN+SL] %s %s %.6f @ %s, SL=%s",
+            self.exchange_name.upper(),
+            order.side.upper(),
+            order.symbol,
+            order.quantity,
+            order.price,
+            order.stop_loss,
+        )
+        cid = order.client_order_id or "none"
+        return OrderResult(
+            success=True,
+            order_id=f"dry_{cid}",
+            client_order_id=order.client_order_id,
+            symbol=order.symbol,
+            side=order.side,
+            order_type=order.order_type,
+            quantity=order.quantity,
+            filled_quantity=0.0,  # Live-LIMIT-Order nicht sofort fill
+            price=order.price or 0.0,
+            status=OrderStatus.DRY_RUN,
+            exchange=self.exchange_name,
+            sl_order_id=f"dry_sl_{cid}",
+            sl_price=order.stop_loss or 0.0,
         )
