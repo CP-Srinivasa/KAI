@@ -831,7 +831,9 @@ def test_log_result_marks_directional_crypto_assets_eligible(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
     monkeypatch.setattr("app.alerts.service._WORKSPACE_ROOT", tmp_path)
-    msg = _make_alert_msg(sentiment_label="bullish", affected_assets=["BTC"])
+    # eligibility.py blocks naked assets ("BTC" without /USDT) since the
+    # naked-asset gate was added; supply the trading pair the gate expects.
+    msg = _make_alert_msg(sentiment_label="bullish", affected_assets=["BTC/USDT"])
     delivery = AlertDeliveryResult(channel="telegram", success=True, message_id="1")
 
     _log_result(delivery, message=msg)
