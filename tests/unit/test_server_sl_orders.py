@@ -175,7 +175,10 @@ class TestBinanceOco:
         monkeypatch.setattr(httpx.AsyncClient, "post", mock_post)
 
         adapter = BinanceAdapter(
-            api_key="k", api_secret="s", dry_run=False, testnet=True,
+            api_key="k",
+            api_secret="s",
+            dry_run=False,
+            testnet=True,
         )
         res = await adapter.place_order_with_server_sl(_make_order())
         assert res.success
@@ -185,9 +188,7 @@ class TestBinanceOco:
         assert res.status == OrderStatus.SUBMITTED
 
     @pytest.mark.asyncio
-    async def test_oco_partial_triggers_cancel_and_rejects(
-        self, monkeypatch
-    ) -> None:
+    async def test_oco_partial_triggers_cancel_and_rejects(self, monkeypatch) -> None:
         cancel_calls: list[str] = []
 
         async def mock_post(self, url, *args, **kwargs):  # type: ignore[no-untyped-def]
@@ -201,7 +202,10 @@ class TestBinanceOco:
         monkeypatch.setattr(httpx.AsyncClient, "delete", mock_delete)
 
         adapter = BinanceAdapter(
-            api_key="k", api_secret="s", dry_run=False, testnet=True,
+            api_key="k",
+            api_secret="s",
+            dry_run=False,
+            testnet=True,
         )
         res = await adapter.place_order_with_server_sl(_make_order())
         assert not res.success
@@ -217,7 +221,10 @@ class TestBinanceOco:
         monkeypatch.setattr(httpx.AsyncClient, "post", mock_post)
 
         adapter = BinanceAdapter(
-            api_key="k", api_secret="s", dry_run=False, testnet=True,
+            api_key="k",
+            api_secret="s",
+            dry_run=False,
+            testnet=True,
         )
         res = await adapter.place_order_with_server_sl(_make_order())
         assert not res.success
@@ -226,7 +233,10 @@ class TestBinanceOco:
     @pytest.mark.asyncio
     async def test_no_api_keys_returns_failed(self) -> None:
         adapter = BinanceAdapter(
-            api_key="", api_secret="", dry_run=False, testnet=True,
+            api_key="",
+            api_secret="",
+            dry_run=False,
+            testnet=True,
         )
         res = await adapter.place_order_with_server_sl(_make_order())
         assert not res.success
@@ -256,9 +266,7 @@ def _bybit_create_response_error() -> dict[str, Any]:
 
 class TestBybitOrderWithSl:
     @pytest.mark.asyncio
-    async def test_success_returns_entry_and_synthetic_sl_id(
-        self, monkeypatch
-    ) -> None:
+    async def test_success_returns_entry_and_synthetic_sl_id(self, monkeypatch) -> None:
         captured: dict[str, Any] = {}
 
         async def mock_post(self, url, *args, **kwargs):  # type: ignore[no-untyped-def]
@@ -268,7 +276,10 @@ class TestBybitOrderWithSl:
         monkeypatch.setattr(httpx.AsyncClient, "post", mock_post)
 
         adapter = BybitAdapter(
-            api_key="k", api_secret="s", dry_run=False, testnet=True,
+            api_key="k",
+            api_secret="s",
+            dry_run=False,
+            testnet=True,
         )
         res = await adapter.place_order_with_server_sl(_make_order())
         assert res.success
@@ -289,7 +300,10 @@ class TestBybitOrderWithSl:
         monkeypatch.setattr(httpx.AsyncClient, "post", mock_post)
 
         adapter = BybitAdapter(
-            api_key="k", api_secret="s", dry_run=False, testnet=True,
+            api_key="k",
+            api_secret="s",
+            dry_run=False,
+            testnet=True,
         )
         res = await adapter.place_order_with_server_sl(_make_order())
         assert not res.success
@@ -299,7 +313,10 @@ class TestBybitOrderWithSl:
     @pytest.mark.asyncio
     async def test_no_api_keys_returns_failed(self) -> None:
         adapter = BybitAdapter(
-            api_key="", api_secret="", dry_run=False, testnet=True,
+            api_key="",
+            api_secret="",
+            dry_run=False,
+            testnet=True,
         )
         res = await adapter.place_order_with_server_sl(_make_order())
         assert not res.success

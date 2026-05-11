@@ -99,9 +99,7 @@ class HotpVerifier:
         allow_advance: int = MAX_ADVANCE_WINDOW,
     ) -> None:
         if not 1 <= allow_advance <= MAX_ADVANCE_WINDOW:
-            raise ValueError(
-                f"allow_advance={allow_advance} außerhalb [1, {MAX_ADVANCE_WINDOW}]"
-            )
+            raise ValueError(f"allow_advance={allow_advance} außerhalb [1, {MAX_ADVANCE_WINDOW}]")
         self._seed_path = seed_path
         self._journal_path = journal_path
         self._allow_advance = allow_advance
@@ -122,9 +120,7 @@ class HotpVerifier:
         cleaned = raw.replace(" ", "").replace("-", "").upper()
         valid_chars = set("ABCDEFGHIJKLMNOPQRSTUVWXYZ234567=")
         if not cleaned or any(ch not in valid_chars for ch in cleaned):
-            raise HotpSeedInvalid(
-                f"seed not base32 (only A-Z2-7=): {self._seed_path}"
-            )
+            raise HotpSeedInvalid(f"seed not base32 (only A-Z2-7=): {self._seed_path}")
         return cleaned
 
     def last_used_counter(self) -> int:
@@ -148,7 +144,8 @@ class HotpVerifier:
                     except json.JSONDecodeError:
                         logger.warning(
                             "hotp_journal_corrupt_line file=%s line=%r",
-                            self._journal_path, line[:80],
+                            self._journal_path,
+                            line[:80],
                         )
                         continue
                     counter = record.get("counter")
@@ -229,14 +226,13 @@ class HotpVerifier:
                 # next_expected_counter zwischenzeitlich von extern manipuliert.
                 last = self.last_used_counter()
                 if candidate_counter <= last:
-                    raise HotpReplayDetected(
-                        f"counter {candidate_counter} <= last_used {last}"
-                    )
+                    raise HotpReplayDetected(f"counter {candidate_counter} <= last_used {last}")
                 advance = candidate_counter - last  # ≥ 1
                 ts = self._append_journal(candidate_counter, advance)
                 logger.info(
                     "hotp_verify_ok counter=%d advance=%d",
-                    candidate_counter, advance,
+                    candidate_counter,
+                    advance,
                 )
                 return HotpVerifyResult(
                     counter_used=candidate_counter,
@@ -247,7 +243,8 @@ class HotpVerifier:
         # Kein Match in der Tolerance-Window.
         logger.warning(
             "hotp_verify_failed next_expected=%d window=%d",
-            next_counter, self._allow_advance,
+            next_counter,
+            self._allow_advance,
         )
         raise HotpVerificationFailed(
             f"code rejected (window {next_counter}…{next_counter + self._allow_advance - 1})"

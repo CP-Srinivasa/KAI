@@ -83,6 +83,10 @@ known-first-party = ["app"]
 
 [tool.ruff.lint.per-file-ignores]
 "scripts/*.py" = ["E501"]
+# Phase-0 security modules use domain-meaningful exception names without
+# the "Error" suffix (HotpReplayDetected, HotpVerificationFailed, LiveCapBreach).
+"app/security/hotp_auth.py" = ["N818"]
+"app/security/live_caps.py" = ["N818"]
 
 [tool.mypy]
 python_version = "3.12"
