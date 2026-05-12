@@ -23,7 +23,7 @@
 // aus Klaerungsrunde). prefers-reduced-motion: Bahn pausiert (CSS-Rule in
 // index.css), Geister/Coins statisch, Score lesbar.
 
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { TradingCycle } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
@@ -89,10 +89,32 @@ function aggregateArcade(cycles: TradingCycle[]): ArcadeAggregate {
   return { ghostCounts, coinCounts, totalGhosts, totalCoins };
 }
 
+// SSR-safe Hook: liest prefers-reduced-motion + reagiert auf System-Wechsel.
+// Initial false (matched serverseitig + erstem Client-Render). useEffect-Phase
+// setzt den echten Wert - das verhindert Hydration-Mismatch im Vite-Build
+// (kein SSR aktuell, aber zukunftsfest).
+function useReducedMotion(): boolean {
+  const [reduced, setReduced] = useState(false);
+  useEffect(() => {
+    if (typeof window === "undefined" || !window.matchMedia) return;
+    const mq = window.matchMedia("(prefers-reduced-motion: reduce)");
+    setReduced(mq.matches);
+    const handler = (e: MediaQueryListEvent) => setReduced(e.matches);
+    mq.addEventListener("change", handler);
+    return () => mq.removeEventListener("change", handler);
+  }, []);
+  return reduced;
+}
+
 // Pacman-SVG - klassischer ATARI-Look. Mund oeffnet/schliesst via SMIL-Animation
 // (calcMode=discrete -> retro-stuck-Effekt). Bahn-Animation kommt von der
 // .kai-pacman-march CSS-Klasse - die ist via prefers-reduced-motion abdimmbar.
+// SMIL-<animate> wird NICHT von CSS prefers-reduced-motion erfasst (eigener
+// SVG-Animation-Layer) - wir gaten den Mund-Loop daher per JS-Hook.
 function PacmanSprite({ size = 28 }: { size?: number }) {
+  const reducedMotion = useReducedMotion();
+  // Statischer Mund-Fallback: halb geoeffnet, Pacman-Profil bleibt erkennbar.
+  const staticPoints = "16,16 30,9 30,23";
   return (
     <svg
       width={size}
@@ -102,14 +124,16 @@ function PacmanSprite({ size = 28 }: { size?: number }) {
       style={{ filter: "drop-shadow(0 0 6px rgb(var(--warn) / 0.85))" }}
     >
       <circle cx="16" cy="16" r="14" fill="rgb(var(--warn))" />
-      <polygon fill="rgb(var(--bg-0))">
-        <animate
-          attributeName="points"
-          values="16,16 32,4 32,28; 16,16 31,15 31,17; 16,16 32,4 32,28"
-          dur="0.42s"
-          calcMode="discrete"
-          repeatCount="indefinite"
-        />
+      <polygon fill="rgb(var(--bg-0))" points={reducedMotion ? staticPoints : undefined}>
+        {reducedMotion ? null : (
+          <animate
+            attributeName="points"
+            values="16,16 32,4 32,28; 16,16 31,15 31,17; 16,16 32,4 32,28"
+            dur="0.42s"
+            calcMode="discrete"
+            repeatCount="indefinite"
+          />
+        )}
       </polygon>
       <circle cx="14" cy="9" r="1.8" fill="rgb(var(--bg-0))" />
     </svg>
