@@ -12,7 +12,7 @@ position (they are not repeated on the fill record).
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -26,6 +26,11 @@ class AuditReplayResult:
     realized_pnl_usd: float
     available: bool
     error: str | None = None
+    # 2026-05-12 Sprint C: persistente idempotency-Spur aus Audit damit
+    # cross-process & cross-engine-instance Race-Conditions die zu doppelten
+    # PaperFills geführt haben (Q/USDT 2026-05-09 Bug) nicht mehr durchkommen.
+    # Set leer wenn audit-file fehlt — Replay bleibt rückwärtskompatibel.
+    filled_idempotency_keys: frozenset[str] = field(default_factory=frozenset)
 
 
 def _coerce_float(value: object) -> float | None:
@@ -52,7 +57,17 @@ def replay_paper_audit(audit_path: Path) -> AuditReplayResult:
         )
 
     positions: dict[str, PaperPosition] = {}
-    order_meta: dict[str, tuple[float | None, float | None]] = {}
+    # 2026-05-12 Sprint A: order_meta erweitert um leverage + source. Pre-Sprint-A
+    # audit-rows haben diese Felder nicht — _coerce_float/str geben None/"" zurück
+    # und der Replay bleibt rückwärtskompatibel.
+    order_meta: dict[
+        str, tuple[float | None, float | None, float | None, str]
+    ] = {}
+    # 2026-05-12 Sprint C: idempotency_key-Mapping aus order_created. Wenn das
+    # zugehörige order_filled später erfolgreich verarbeitet wird, landet der
+    # key im filled_keys-set. Cross-process Race-Schutz (siehe Q/USDT 2026-05-09).
+    order_idem_by_id: dict[str, str] = {}
+    filled_keys: set[str] = set()
     cash_usd = 0.0
     realized_pnl_usd = 0.0
 
@@ -90,7 +105,14 @@ def replay_paper_audit(audit_path: Path) -> AuditReplayResult:
                 order_meta[order_id] = (
                     _coerce_float(payload.get("stop_loss")),
                     _coerce_float(payload.get("take_profit")),
+                    _coerce_float(payload.get("leverage")),
+                    _coerce_str(payload.get("source")) or "",
                 )
+                # Sprint C: idempotency_key persistieren damit fill-replay sie
+                # in filled_keys eintragen kann sobald order_filled gesehen wird.
+                idem_key = _coerce_str(payload.get("idempotency_key"))
+                if idem_key:
+                    order_idem_by_id[order_id] = idem_key
             continue
 
         if event_type == "position_tp_tiers_set":
@@ -155,6 +177,9 @@ def replay_paper_audit(audit_path: Path) -> AuditReplayResult:
                 position_side=existing.position_side,
                 take_profit_tiers=list(existing.take_profit_tiers),
                 initial_quantity=existing.initial_quantity,
+                correlation_id=existing.correlation_id,
+                leverage=existing.leverage,
+                source=existing.source,
             )
             continue
 
@@ -186,8 +211,19 @@ def replay_paper_audit(audit_path: Path) -> AuditReplayResult:
 
         stop_loss: float | None = None
         take_profit: float | None = None
+        leverage: float | None = None
+        source: str = ""
         if order_id is not None:
-            stop_loss, take_profit = order_meta.get(order_id, (None, None))
+            meta = order_meta.get(order_id)
+            if meta is not None:
+                stop_loss, take_profit, leverage, source = meta
+            # Sprint C: filled_keys aus der order_idem_by_id-Brücke befüllen.
+            # Wenn ein order_filled für einen bekannten order_id replay-läuft,
+            # wissen wir dass dieser idempotency_key bereits einen Fill produziert
+            # hat. Cross-process Race-Schutz für engine.create_order.
+            idem_for_order = order_idem_by_id.get(order_id)
+            if idem_for_order:
+                filled_keys.add(idem_for_order)
 
         # NEO-P-101-r2: v2 audit rows carry position_side; v1 rows default to long.
         position_side_val = _coerce_str(payload.get("position_side")) or "long"
@@ -210,6 +246,8 @@ def replay_paper_audit(audit_path: Path) -> AuditReplayResult:
                     opened_at=filled_at,
                     realized_pnl_usd=0.0,
                     position_side=position_side_val,
+                    leverage=leverage,
+                    source=source,
                 )
             else:
                 if existing.position_side != position_side_val:
@@ -235,6 +273,8 @@ def replay_paper_audit(audit_path: Path) -> AuditReplayResult:
                     position_side=existing.position_side,
                     take_profit_tiers=list(existing.take_profit_tiers),
                     initial_quantity=existing.initial_quantity,
+                    leverage=existing.leverage if existing.leverage is not None else leverage,
+                    source=existing.source or source,
                 )
         elif is_close:
             if (
@@ -264,6 +304,8 @@ def replay_paper_audit(audit_path: Path) -> AuditReplayResult:
                     position_side=existing.position_side,
                     take_profit_tiers=list(existing.take_profit_tiers),
                     initial_quantity=existing.initial_quantity,
+                    leverage=existing.leverage,
+                    source=existing.source,
                 )
         else:
             return AuditReplayResult(
@@ -292,4 +334,5 @@ def replay_paper_audit(audit_path: Path) -> AuditReplayResult:
         realized_pnl_usd=realized_pnl_usd,
         available=True,
         error=None,
+        filled_idempotency_keys=frozenset(filled_keys),
     )

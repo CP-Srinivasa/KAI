@@ -371,6 +371,11 @@ export function fetchAlertAudit(signal?: AbortSignal): Promise<AlertAuditSummary
   return apiGet<AlertAuditSummary>("/operator/alert-audit", { signal });
 }
 
+export type PaperPositionTpTier = {
+  price: number;
+  qty_share: number;
+};
+
 export type PaperPosition = {
   symbol: string;
   quantity: number;
@@ -380,6 +385,22 @@ export type PaperPosition = {
   market_price: number | null;
   market_value_usd: number | null;
   unrealized_pnl_usd: number | null;
+  // Sprint A (2026-05-12) Premium-Signal-Pipeline: erweiterte Felder so dass
+  // Portfolio.tsx Side/Leverage/Source/Status/Tiers ohne Backend-Crosswalk
+  // anzeigen kann. Alle optional weil pre-Sprint-A audit-records sie nicht
+  // tragen (Backend gibt null/Default zurück).
+  position_side?: "long" | "short" | null;
+  leverage?: number | null;
+  source?: string | null;
+  opened_at?: string | null;
+  correlation_id?: string | null;
+  realized_pnl_usd?: number | null;
+  take_profit_tiers?: PaperPositionTpTier[] | null;
+  initial_quantity?: number | null;
+  provider?: string | null;
+  market_data_is_stale?: boolean | null;
+  market_data_available?: boolean | null;
+  market_data_error?: string | null;
 };
 
 export type PortfolioSnapshot = {
@@ -394,6 +415,71 @@ export type PortfolioSnapshot = {
   position_count: number;
   positions: PaperPosition[];
 };
+
+// ── Premium-Signal Operator-Actions (Sprint E 2026-05-12) ───────────────────
+
+export type PendingEnvelopeRow = {
+  envelope_id: string;
+  timestamp_utc: string | null;
+  source: string | null;
+  symbol: string | null;
+  direction: string | null;
+  entry_value: number | null;
+  stop_loss: number | null;
+  targets: number[] | null;
+  leverage: number | null;
+  current_bridge_stage: string | null;
+};
+
+export type PendingEnvelopesResponse = {
+  count: number;
+  terminal_stages: string[];
+  envelopes: PendingEnvelopeRow[];
+};
+
+export function fetchPendingEnvelopes(limit = 50, signal?: AbortSignal): Promise<PendingEnvelopesResponse> {
+  return apiGet<PendingEnvelopesResponse>(`/api/premium-signals/pending-envelopes?limit=${limit}`, { signal });
+}
+
+export function postManualFill(envelopeId: string, idempotencyKey?: string): Promise<Record<string, unknown>> {
+  return apiPost("/api/premium-signals/manual-fill", {
+    envelope_id: envelopeId,
+    idempotency_key: idempotencyKey,
+  });
+}
+
+export function postReprocess(envelopeId?: string, idempotencyKey?: string): Promise<Record<string, unknown>> {
+  return apiPost("/api/premium-signals/reprocess", {
+    envelope_id: envelopeId,
+    idempotency_key: idempotencyKey,
+  });
+}
+
+export function postReconcileCompletion(
+  symbol: string,
+  touchPrice?: number,
+  idempotencyKey?: string,
+): Promise<Record<string, unknown>> {
+  return apiPost("/api/premium-signals/reconcile-target-completion", {
+    symbol,
+    touch_price: touchPrice,
+    idempotency_key: idempotencyKey,
+  });
+}
+
+export function postPositionRepair(
+  symbol: string,
+  action: "close" | "adjust",
+  options?: { new_stop_loss?: number; new_take_profit?: number; idempotency_key?: string },
+): Promise<Record<string, unknown>> {
+  return apiPost("/api/premium-signals/position-repair", {
+    symbol,
+    action,
+    new_stop_loss: options?.new_stop_loss,
+    new_take_profit: options?.new_take_profit,
+    idempotency_key: options?.idempotency_key,
+  });
+}
 
 export function fetchPortfolioSnapshot(signal?: AbortSignal): Promise<PortfolioSnapshot> {
   return apiGet<PortfolioSnapshot>("/operator/portfolio-snapshot", { signal });

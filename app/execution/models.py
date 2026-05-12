@@ -46,6 +46,10 @@ class PaperOrder:
     venue: str = "paper"
     # Sprint A Lifecycle: Durchgängige Identität
     correlation_id: str = ""
+    # 2026-05-12 Premium-Signal-Sprint A: leverage + source durchreichen damit
+    # PaperPosition + Frontend sie ohne audit-jsonl-Crosswalk anzeigen kann.
+    leverage: float | None = None
+    source: str = ""
 
 
 @dataclass(frozen=True)
@@ -97,6 +101,11 @@ class PaperPosition:
     # have already reduced the live quantity.
     initial_quantity: float = 0.0
     correlation_id: str = ""
+    # 2026-05-12 Premium-Signal-Sprint A. Channel-stated leverage + source-tag
+    # für Dashboard-Anzeige. Optional weil pre-Sprint-A audit-records sie nicht
+    # haben — audit_replay setzt None/"" als Fallback.
+    leverage: float | None = None
+    source: str = ""
 
     def unrealized_pnl(self, current_price: float) -> float:
         if self.position_side == "short":
@@ -116,6 +125,8 @@ class PaperPosition:
             "take_profit_tiers": list(self.take_profit_tiers),
             "initial_quantity": self.initial_quantity,
             "correlation_id": self.correlation_id,
+            "leverage": self.leverage,
+            "source": self.source,
         }
 
 

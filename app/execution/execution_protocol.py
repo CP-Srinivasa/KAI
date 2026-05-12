@@ -84,6 +84,10 @@ def executable_intent_to_paper_kwargs(intent: ExecutableOrderIntent) -> dict[str
         "idempotency_key": intent.idempotency_key,
         "correlation_id": intent.correlation_id,
         "position_side": position_side,
+        # 2026-05-12 Sprint A: channel-stated leverage + source-tag durchreichen
+        # damit PaperPosition + Frontend ohne audit-jsonl-Crosswalk anzeigen kann.
+        "leverage": intent.leverage,
+        "source": intent.source or "",
     }
 
 

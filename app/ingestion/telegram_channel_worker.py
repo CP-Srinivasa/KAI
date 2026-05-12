@@ -34,12 +34,20 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from app.core.settings import TelegramChannelIngestSettings, get_settings
+from app.execution.target_completion_reconciler import (
+    reconcile_target_completion,
+)
 from app.ingestion.telegram_channel_approval import (
+    handle_signal_approval,
     load_envelope_by_id,
     send_approval_request,
 )
+from app.ingestion.telegram_channel_parser import TargetCompletionEvent
 from app.ingestion.telegram_channel_envelope import emit_parsed_signal
-from app.ingestion.telegram_channel_parser import parse_premium_channel_message
+from app.ingestion.telegram_channel_parser import (
+    parse_premium_channel_message,
+    parse_target_completion,
+)
 
 if TYPE_CHECKING:
     # Only imported for type-checkers; runtime uses lazy import.
@@ -381,6 +389,26 @@ def process_message(
         "text_len": len(text or ""),
     }
     if parsed is None:
+        # 2026-05-12 Sprint D: Bevor wir "not_a_signal" loggen, prüfen ob es
+        # eine 🎯 all-TP-Completion-Meldung ist. Diese wird separat als
+        # target_completion-Outcome im raw-log markiert und der Reconciler
+        # läuft im Anschluss async. Hier nur das raw-log-Marker — der eigentliche
+        # Reconcile-Call passiert in run_worker._handler / _replay_handler.
+        completion = parse_target_completion(text or "")
+        if completion is not None:
+            base["outcome"] = "target_completion"
+            base["symbol"] = completion.symbol
+            base["touch_price"] = completion.touch_price
+            _append_raw_log(raw_log_path, base)
+            return {
+                "parsed": False,
+                "emitted": False,
+                "envelope_id": None,
+                "reason": "target_completion",
+                "completion_symbol": completion.display_symbol,
+                "completion_touch_price": completion.touch_price,
+                "completion_raw_text": completion.raw_text,
+            }
         base["outcome"] = "not_a_signal"
         _append_raw_log(raw_log_path, base)
         return {
@@ -652,10 +680,104 @@ async def run_worker(cfg: TelegramChannelIngestSettings | None = None) -> None:
         full_settings = get_settings()
         approval_enabled = full_settings.execution.operator_signal_approval_enabled
         approval_ttl_min = full_settings.execution.operator_signal_approval_ttl_minutes
+        # 2026-05-12 Sprint B: Premium-Auto-Fill (paper-mode-only). Wenn aktiv,
+        # triggert der Worker nach jedem accepted Envelope sofort den fill-Pfad
+        # ohne Operator-Klick. ADR 0004.
+        auto_fill_enabled = full_settings.execution.operator_signal_premium_auto_fill_enabled
         bot_token = full_settings.operator.telegram_bot_token
         admin_chat_ids = full_settings.operator.admin_chat_id_list
         approval_chat_id = admin_chat_ids[0] if admin_chat_ids else 0
         envelope_log_path = Path("artifacts/telegram_message_envelope.jsonl")
+
+        def _reconcile_completion_if_present(summary: dict[str, object], *, msg_id: int | None) -> None:
+            """Run target_completion-reconciler for 🎯 all-TP-completion messages.
+
+            Sprint D (2026-05-12). Fail-soft: any exception is logged and
+            swallowed — reconcile must never crash the listener-loop. The
+            "envelope_id" used for reconciliation idempotency is synthesised
+            from chat_id + msg_id when present, else falls back to a timestamp,
+            so a checkpoint-replay of the same 🎯-message is a no-op.
+            """
+            if summary.get("reason") != "target_completion":
+                return
+            display_symbol_raw = summary.get("completion_symbol")
+            if not isinstance(display_symbol_raw, str) or not display_symbol_raw:
+                return
+            touch_price_raw = summary.get("completion_touch_price")
+            touch_price = (
+                float(touch_price_raw)
+                if isinstance(touch_price_raw, (int, float)) and not isinstance(touch_price_raw, bool)
+                else None
+            )
+            raw_text_raw = summary.get("completion_raw_text")
+            raw_text = raw_text_raw if isinstance(raw_text_raw, str) else ""
+            # Synthetic envelope_id für Reconcile-Idempotency (separat vom
+            # NewSignal-Envelope-Stream weil Completion-Meldungen keinen
+            # eigenen Envelope erzeugen).
+            synthetic_env_id = (
+                f"TGCOMPL-{chat_id_marked}-{msg_id}" if msg_id is not None
+                else f"TGCOMPL-{datetime.now(UTC).strftime('%Y%m%d%H%M%S%f')}"
+            )
+            # Internal symbol = display ohne /
+            internal_symbol = display_symbol_raw.replace("/", "")
+            event = TargetCompletionEvent(
+                symbol=internal_symbol,
+                display_symbol=display_symbol_raw,
+                touch_price=touch_price,
+                raw_text=raw_text,
+            )
+            try:
+                outcome = reconcile_target_completion(
+                    event=event,
+                    source_envelope_id=synthetic_env_id,
+                )
+                logger.info(
+                    "[channel-worker] target-completion reconcile env=%s sym=%s status=%s reason=%s",
+                    synthetic_env_id,
+                    display_symbol_raw,
+                    outcome.status,
+                    outcome.reason,
+                )
+            except Exception as exc:  # noqa: BLE001 — reconcile must never crash listener
+                logger.warning(
+                    "[channel-worker] reconcile failed sym=%s env=%s err=%s",
+                    display_symbol_raw,
+                    synthetic_env_id,
+                    exc,
+                )
+
+        async def _auto_fill_envelope(env_id: str, *, replay: bool = False) -> None:
+            """Auto-fill the envelope without waiting for an operator click.
+
+            Writes the same `_approved` re-emit record that a manual Fill-click
+            would produce, so the bridge picks it up via the existing source-
+            allowlist path. Idempotent: handle_signal_approval refuses double-
+            approval for the same origin_envelope_id.
+            """
+            if not auto_fill_enabled:
+                return
+            try:
+                outcome = handle_signal_approval(
+                    action="fill",
+                    envelope_id=env_id,
+                    envelope_log=envelope_log_path,
+                    ttl_minutes=approval_ttl_min,
+                    approved_by="auto-fill",
+                )
+                logger.info(
+                    "[channel-worker] auto-fill env=%s replay=%s outcome=%s reason=%s",
+                    env_id,
+                    replay,
+                    outcome.status,
+                    outcome.reason,
+                )
+            except Exception as exc:  # noqa: BLE001 — auto-fill must never crash listener
+                logger.warning(
+                    "[channel-worker] auto-fill failed env=%s replay=%s err=%s",
+                    env_id,
+                    replay,
+                    exc,
+                )
 
         # Gap-Replay: before attaching the live handler, ask Telegram for
         # any messages that arrived after our last checkpoint. catch_up=True
@@ -738,6 +860,14 @@ async def run_worker(cfg: TelegramChannelIngestSettings | None = None) -> None:
                 env_id = summary.get("envelope_id")
                 if summary.get("emitted") and isinstance(env_id, str):
                     await _send_approval_for_envelope(env_id, replay=True)
+                    # 2026-05-12 Sprint B: Auto-Fill für Replay-Signale identisch
+                    # zum Live-Pfad. Reihenfolge: erst approval-send (Operator
+                    # sieht Button für manual override), dann auto-fill — der
+                    # double-click-dedup von handle_signal_approval verhindert
+                    # eine race wenn Operator zwischen den beiden Aktionen klickt.
+                    await _auto_fill_envelope(env_id, replay=True)
+                # Sprint D: Replay kann auch 🎯 all-TP-completion-messages enthalten.
+                _reconcile_completion_if_present(summary, msg_id=msg_id)
 
             replay_result = await replay_missed_messages(
                 client,
@@ -788,6 +918,15 @@ async def run_worker(cfg: TelegramChannelIngestSettings | None = None) -> None:
                 env_id_live = summary.get("envelope_id")
                 if isinstance(env_id_live, str):
                     await _send_approval_for_envelope(env_id_live, replay=False)
+                    # 2026-05-12 Sprint B: Auto-Fill. Operator-Auftrag Sektion 4:
+                    # "Auch wenn keine manuelle Bestätigung erfolgt, muss das
+                    # Signal mindestens im Paper Trading verarbeitet werden."
+                    # Wenn auto_fill_enabled=False, ist das ein No-op.
+                    await _auto_fill_envelope(env_id_live, replay=False)
+            # Sprint D: 🎯 all-TP-completion-messages reconcile-Pfad. Läuft
+            # unabhängig vom emitted-Flag — Completion-Meldungen erzeugen
+            # keinen Envelope, sie schließen nur bereits offene Positionen.
+            _reconcile_completion_if_present(summary, msg_id=msg_id if isinstance(msg_id, int) else None)
 
         # F4 (2026-05-05): opt-in diagnostic observer (no chats= filter).
         # Verifies whether updates reach the worker process at all when
