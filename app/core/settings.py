@@ -227,6 +227,26 @@ class ExecutionSettings(BaseSettings):
     operator_signal_approval_enabled: bool = Field(default=False)
     operator_signal_approval_ttl_minutes: int = Field(default=60, ge=1, le=1440)
 
+    # Premium-Auto-Fill (2026-05-12 Sprint B per Operator-Auftrag Sektion 4):
+    # Wenn aktiviert, schreibt der Worker nach jedem accepted Premium-Signal
+    # SOFORT einen auto-approved Envelope (source-Suffix `_approved`,
+    # approved_by="auto-fill"). Damit greift der etablierte Approval→Bridge-
+    # Pfad ohne dass der Operator klicken muss. Operator-Klick bleibt als
+    # manueller Override möglich, ist aber nicht mehr Voraussetzung.
+    #
+    # Sicherheitsleitplanken (paper-mode-only):
+    # - Risk-Gates der Bridge greifen unverändert (kill_switch, max_positions,
+    #   daily_loss, sizing). Ein vollgelaufenes max_open_positions blockt
+    #   Auto-Fill genauso wie manuelles Fill.
+    # - Operator-Auftrag-Sektion 14 Fail-Closed gilt: ein nicht parsbares
+    #   Signal landet nicht als Envelope, also auch nicht als Auto-Fill.
+    # - Approval-Audit-Trail wird weiterhin geschrieben (approved_by="auto-fill"
+    #   ist sichtbar, idempotency_key prevents double-emit).
+    # - Live-Mode blockt sich durch eigene Phase-0-Gates (HOTP, server-SL).
+    #   Auto-Fill ist explizit eine Paper-Lockerung — nie für live aktivieren.
+    # ADR: docs/adr/0004-premium-signal-auto-fill.md
+    operator_signal_premium_auto_fill_enabled: bool = Field(default=False)
+
     @model_validator(mode="after")
     def validate_mode_guardrails(self) -> "ExecutionSettings":
         if self.live_enabled and self.mode is not ExecutionMode.LIVE:

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -32,7 +32,12 @@ _PORTFOLIO_MARK_TO_MARKET_MAX_CONCURRENCY = 10
 
 @dataclass(frozen=True)
 class PositionSummary:
-    """Read-only position projection with optional mark-to-market metadata."""
+    """Read-only position projection with optional mark-to-market metadata.
+
+    Sprint A (2026-05-12): erweitert um position_side, leverage, source,
+    opened_at, correlation_id, take_profit_tiers — Operator-Auftrag Sektion 8
+    + 10 verlangt diese Felder im Portfolio-View.
+    """
 
     symbol: str
     quantity: float
@@ -49,6 +54,17 @@ class PositionSummary:
     market_data_freshness_seconds: float | None
     market_data_available: bool
     market_data_error: str | None = None
+    # Sprint A erweitert — alle optional damit Rückwärtskompatibilität für
+    # pre-Sprint-A audit-records gilt.
+    position_side: str = "long"
+    leverage: float | None = None
+    source: str = ""
+    opened_at: str | None = None
+    correlation_id: str = ""
+    realized_pnl_usd: float = 0.0
+    # Multi-target staged-exit ladder. List of (price, qty_share)-Tuples.
+    take_profit_tiers: list[tuple[float, float]] = field(default_factory=list)
+    initial_quantity: float = 0.0
 
     def to_json_dict(self) -> dict[str, object]:
         return {
@@ -67,6 +83,16 @@ class PositionSummary:
             "market_data_freshness_seconds": self.market_data_freshness_seconds,
             "market_data_available": self.market_data_available,
             "market_data_error": self.market_data_error,
+            "position_side": self.position_side,
+            "leverage": self.leverage,
+            "source": self.source,
+            "opened_at": self.opened_at,
+            "correlation_id": self.correlation_id,
+            "realized_pnl_usd": self.realized_pnl_usd,
+            "take_profit_tiers": [
+                {"price": p, "qty_share": q} for p, q in self.take_profit_tiers
+            ],
+            "initial_quantity": self.initial_quantity,
         }
 
 
@@ -222,6 +248,20 @@ def _build_snapshot_from_portfolio_state(
     for sym, pos_raw in positions_data.items():
         if not isinstance(pos_raw, dict):
             continue
+        raw_tiers = pos_raw.get("take_profit_tiers") or []
+        tiers: list[tuple[float, float]] = []
+        if isinstance(raw_tiers, list):
+            for t in raw_tiers:
+                if isinstance(t, dict):
+                    p = _coerce_float(t.get("price"))
+                    q = _coerce_float(t.get("qty_share"))
+                    if p is not None and q is not None:
+                        tiers.append((p, q))
+                elif isinstance(t, (list, tuple)) and len(t) == 2:
+                    p = _coerce_float(t[0])
+                    q = _coerce_float(t[1])
+                    if p is not None and q is not None:
+                        tiers.append((p, q))
         position_summaries.append(
             PositionSummary(
                 symbol=sym,
@@ -239,6 +279,14 @@ def _build_snapshot_from_portfolio_state(
                 market_data_freshness_seconds=None,
                 market_data_available=False,
                 market_data_error="market_price_not_available_from_db_snapshot",
+                position_side=str(pos_raw.get("position_side") or "long"),
+                leverage=_coerce_float(pos_raw.get("leverage")),
+                source=str(pos_raw.get("source") or ""),
+                opened_at=_coerce_str(pos_raw.get("opened_at")),
+                correlation_id=str(pos_raw.get("correlation_id") or ""),
+                realized_pnl_usd=float(pos_raw.get("realized_pnl_usd") or 0.0),
+                take_profit_tiers=tiers,
+                initial_quantity=float(pos_raw.get("initial_quantity") or 0.0),
             )
         )
 
@@ -461,6 +509,14 @@ async def build_portfolio_snapshot(
                 market_data_error=(
                     market_snapshot.error or ("stale_data" if market_snapshot.is_stale else None)
                 ),
+                position_side=position.position_side,
+                leverage=position.leverage,
+                source=position.source,
+                opened_at=position.opened_at,
+                correlation_id=position.correlation_id,
+                realized_pnl_usd=position.realized_pnl_usd,
+                take_profit_tiers=list(position.take_profit_tiers),
+                initial_quantity=position.initial_quantity,
             )
         )
 

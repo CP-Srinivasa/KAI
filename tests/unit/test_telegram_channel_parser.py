@@ -24,6 +24,7 @@ from app.ingestion.telegram_channel_parser import (
     _normalize_symbol,
     _parse_targets_dashlist,
     parse_premium_channel_message,
+    parse_target_completion,
 )
 
 # ── Real-channel corpus ─────────────────────────────────────────────────────
@@ -312,3 +313,148 @@ def test_to_payload_matches_envelope_schema() -> None:
     # bridge expects targets as a plain list of floats
     assert isinstance(payload["targets"], list)
     assert all(isinstance(t, float) for t in payload["targets"])
+
+
+# ── Sprint F (2026-05-12): Operator-Auftrag-Beispielsignale verbatim ────────
+
+
+SAMPLE_TRUTH = """\
+Long/Buy #TRUTH/USDT
+
+Entry Point - 15210
+
+Targets:
+15285
+15360
+15440
+15515
+
+Leverage - 10x
+
+Stop Loss - 14600"""
+
+SAMPLE_OPG = """\
+Long/Buy #OPG/USDT
+
+Entry Point - 3385
+
+Targets:
+3400
+3418
+3435
+3450
+
+Leverage - 10x
+
+Stop Loss - 3245"""
+
+SAMPLE_IRYS = """\
+Long/Buy #IRYS/USDT
+
+Entry Point - 4550
+
+Targets:
+4570
+4595
+4620
+4640
+
+Leverage - 10x
+
+Stop Loss - 4360"""
+
+
+@pytest.mark.parametrize(
+    "raw,display,entry,sl,targets,leverage",
+    [
+        (SAMPLE_TRUTH, "TRUTH/USDT", 15210.0, 14600.0, [15285.0, 15360.0, 15440.0, 15515.0], 10),
+        (SAMPLE_OPG, "OPG/USDT", 3385.0, 3245.0, [3400.0, 3418.0, 3435.0, 3450.0], 10),
+        (SAMPLE_IRYS, "IRYS/USDT", 4550.0, 4360.0, [4570.0, 4595.0, 4620.0, 4640.0], 10),
+    ],
+    ids=["TRUTH", "OPG", "IRYS"],
+)
+def test_operator_example_signals_2026_05_12(
+    raw: str,
+    display: str,
+    entry: float,
+    sl: float,
+    targets: list[float],
+    leverage: int,
+) -> None:
+    """3 verbatim-Operator-Beispiele aus dem End-to-End-Fix-Auftrag.
+
+    Akzeptanzkriterium 1: TRUTH/OPG/IRYS korrekt geparst — kein 0.01-Default,
+    Entry/Targets/SL/Leverage exakt aus dem Channel-Text übernommen.
+    """
+    sig = parse_premium_channel_message(raw)
+    assert sig is not None, f"signal could not be parsed: {display}"
+    assert sig.display_symbol == display
+    assert sig.direction == "long"
+    assert sig.side == "buy"
+    assert sig.entry_type == "at"
+    assert sig.entry_value == entry, f"entry mismatch for {display}: got {sig.entry_value}"
+    assert sig.stop_loss == sl, f"SL mismatch for {display}: got {sig.stop_loss}"
+    assert sig.targets == targets, f"targets mismatch for {display}: got {sig.targets}"
+    assert sig.leverage == leverage
+    # Wichtiger Anti-Regression: keine der numerischen Werte darf magisch 0.01 sein.
+    assert sig.entry_value != 0.01
+    assert sig.stop_loss != 0.01
+    for t in sig.targets:
+        assert t != 0.01
+
+
+# ── Target-Completion-Parser (Sprint D + F) ─────────────────────────────────
+
+
+@pytest.mark.parametrize(
+    "raw,expected_display,expected_price",
+    [
+        (
+            "🎯 #ON/USDT has touched 19561 and has completed all the profit targets",
+            "ON/USDT",
+            19561.0,
+        ),
+        (
+            "🎯 #Q/USDT has touched 17890 and has completed all the profit targets",
+            "Q/USDT",
+            17890.0,
+        ),
+        (
+            "🎯 #TRUTH/USDT has touched 15674 and has completed all the profit targets",
+            "TRUTH/USDT",
+            15674.0,
+        ),
+    ],
+    ids=["ON", "Q", "TRUTH"],
+)
+def test_target_completion_parser_operator_examples(
+    raw: str, expected_display: str, expected_price: float
+) -> None:
+    """3 verbatim-Channel-Completion-Meldungen aus dem Operator-Auftrag Sektion 3."""
+    event = parse_target_completion(raw)
+    assert event is not None
+    assert event.display_symbol == expected_display
+    assert event.touch_price == expected_price
+
+
+def test_target_completion_returns_none_for_new_signal_message() -> None:
+    """Sicherstellen dass Parser nicht versehentlich New-Signals als Completion klassifiziert."""
+    event = parse_target_completion(SAMPLE_TRUTH)
+    assert event is None
+
+
+def test_new_signal_parser_returns_none_for_target_completion_message() -> None:
+    """Symmetrisch: Completion-Meldungen sind keine New-Signals."""
+    sig = parse_premium_channel_message(
+        "🎯 #TRUTH/USDT has touched 15674 and has completed all the profit targets"
+    )
+    assert sig is None
+
+
+def test_target_completion_no_price_variant() -> None:
+    """Channel-Variante ohne touch-price — Reconciler soll mit None umgehen können."""
+    raw = "🎯 #BTC/USDT completed all profit targets"
+    event = parse_target_completion(raw)
+    assert event is not None
+    assert event.display_symbol == "BTC/USDT"
+    assert event.touch_price is None

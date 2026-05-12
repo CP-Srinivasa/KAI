@@ -31,6 +31,7 @@ from app.api.routers import (
     health,
     kai,
     operator,
+    premium_signals,
     query,
     research,
     signals,
@@ -261,6 +262,9 @@ def create_app() -> FastAPI:
     app.include_router(dashboard.router)
     app.include_router(events.router)
     app.include_router(kai.router)
+    # 2026-05-12 Sprint E: Premium-Signal Operator-Actions (5 idempotente
+    # POST-Endpoints + 1 GET für pending-envelopes — Datenquelle für UI-Buttons).
+    app.include_router(premium_signals.router)
 
     # React-SPA (Vite-Build) unter /dashboard. JSON-Route /dashboard/api/quality
     # wurde oben über include_router zuerst registriert und hat dadurch Vorrang
