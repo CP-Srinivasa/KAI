@@ -166,7 +166,15 @@ export function TradesPage() {
           und visueller darstellen."
           Drei klare Status-Pillen (Execution / Write-Back / Run-Once)
           + kompakte Letzter-Cycle-Karte mit Symbol + Status + relativer
-          Zeit. RowKV-Snake-Case-Liste raus. */}
+          Zeit. RowKV-Snake-Case-Liste raus.
+          2026-05-12 DALI-arcade-T2: Microcopy operativer.
+          - Pille 1: "Real-Order-Execution" -> "Echtgeld-Trading" (AKTIV/DEAKTIVIERT).
+          - Pille 2: "Trading-Journal Schreiben" -> "Trading-Journal" (AKTIV/PAUSIERT).
+          - Pille 3 (Run-Once): bewusst NICHT angefasst, bleibt fuer T5 reserviert.
+          Operator-Spec §16 nennt "Sicherheits-Blocker" als dritte Pille.
+          Mapping (Run-Once -> Sicherheits-Blocker? oder 4. Pille?) entscheidet T5.
+          Status-Werte mappen weiter auf bestehende TradingLoopStatus-Felder
+          (execution_enabled, write_back_allowed) — keine erfundenen Felder. */}
       {status.state === "ready" && (
         <Card padded>
           <CardHeader
@@ -176,24 +184,24 @@ export function TradesPage() {
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-4">
             <GuardrailPill
-              label="Real-Order-Execution"
+              label="Echtgeld-Trading"
               active={status.data.execution_enabled}
-              onText="aktiv"
-              offText="aus"
+              onText="AKTIV"
+              offText="DEAKTIVIERT"
               activeTone="neg"
               hint={status.data.execution_enabled
-                ? "Echte Orders werden auf der Boerse platziert."
-                : "Nur Paper/Shadow — keine echten Orders."}
+                ? "Echte Boersenorders werden platziert."
+                : "Es werden aktuell keine echten Boersenorders ausgefuehrt. Paper Trading aktiv."}
             />
             <GuardrailPill
-              label="Trading-Journal Schreiben"
+              label="Trading-Journal"
               active={status.data.write_back_allowed}
-              onText="erlaubt"
-              offText="gesperrt"
+              onText="AKTIV"
+              offText="PAUSIERT"
               activeTone="warn"
               hint={status.data.write_back_allowed
-                ? "Cycles werden ins Journal geschrieben."
-                : "Read-only — Journal ist gesperrt."}
+                ? "Alle Signale, Orders und Marktentscheidungen werden protokolliert."
+                : "Read-only — es werden keine Cycles ins Journal geschrieben."}
             />
             <GuardrailPill
               label="Run-Once Trigger"
@@ -549,11 +557,12 @@ function CyclePipeline({ c }: { c: TradingCycle }) {
 }
 
 // Schutzschalter-Pille: visueller Status-Indikator mit Klartext + Hint.
-// Active/Inactive-Tone unterscheiden sich semantisch — bei "Real-Execution
-// aktiv" ist das ein Warn-/Neg-Zustand (Live-Trading läuft!), bei "Write-Back
-// erlaubt" ist das ein Warn-Zustand (Journal wird geschrieben), bei "Run-Once
-// bereit" ist das ein Pos-Zustand (Operator kann triggern). Daher der
-// activeTone-Prop — Inactive ist immer muted.
+// Active/Inactive-Tone unterscheiden sich semantisch — bei "Echtgeld-Trading
+// AKTIV" ist das ein Neg-Zustand (Live-Trading laeuft, Operator muss wissen!),
+// bei "Trading-Journal AKTIV" ist das ein Warn-Zustand (Journal wird
+// geschrieben — Audit-Trail laeuft mit), bei "Run-Once bereit" ein Pos-Zustand.
+// Daher der activeTone-Prop — Inactive ist immer muted.
+// 2026-05-12 DALI-arcade-T2: Labels operativ umformuliert (siehe oben).
 function GuardrailPill({
   label,
   active,
