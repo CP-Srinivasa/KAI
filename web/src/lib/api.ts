@@ -482,6 +482,43 @@ export function fetchRecentCycles(
   });
 }
 
+
+// 2026-05-12 DALI-arcade-T5: Run-Once Operator-Trigger.
+// Endpoint POST /operator/trading-loop/run-once erwartet Idempotency-Key
+// als HTTP-Header (Pattern [A-Za-z0-9._:-]{1,128}) - UUID v4 matcht.
+// Body: symbol (default "BTC/USDT"), mode (paper), provider (mock).
+// Response: dict aus run_trading_loop_once + idempotency_replayed-Flag.
+// 409 nur bei Idempotency-Key + abweichendem Payload (Konflikt). Gleicher
+// Key + gleicher Payload -> 200 mit idempotency_replayed=true (Backend-Replay).
+export type RunOnceRequest = {
+  idempotency_key: string;
+  symbol?: string;
+  mode?: string;
+  provider?: string;
+};
+
+export type RunOnceResponse = {
+  idempotency_replayed: boolean;
+  // weitere Felder kommen direkt aus mcp_server.run_trading_loop_once -
+  // wir typisieren defensiv (alle optional), damit das UI tolerant bleibt.
+  cycle_id?: string;
+  status?: string;
+  symbol?: string;
+  mode?: string;
+  [key: string]: unknown;
+};
+
+export async function postRunOnce(req: RunOnceRequest): Promise<RunOnceResponse> {
+  const { idempotency_key, symbol, mode, provider } = req;
+  const body: Record<string, string> = {};
+  if (symbol && symbol.trim()) body.symbol = symbol.trim();
+  if (mode) body.mode = mode;
+  if (provider) body.provider = provider;
+  return apiPost<RunOnceResponse>("/operator/trading-loop/run-once", body, {
+    headers: { "Idempotency-Key": idempotency_key },
+  });
+}
+
 export type AlertTestResponse = {
   dispatched: number;
   results: Array<{
