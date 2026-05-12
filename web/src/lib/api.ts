@@ -356,6 +356,15 @@ export type AlertAuditEntry = {
   outcome?: AlertOutcome;
   resolved_at?: string;
   resolved_after_seconds?: number;
+  // 2026-05-10 DALI-A2: zusätzliche Felder die Backend bereits liefert,
+  // aber bisher nicht im Frontend-Type abgebildet waren. Erlaubt sprechende
+  // "Was"-Spalte (Sentiment/Assets/Source) statt Document-Hash-Murmel.
+  // Alle optional — Backend liefert teils null/missing bei alten Records.
+  sentiment_label?: string | null;
+  affected_assets?: string[];
+  priority?: number | null;
+  source_name?: string | null;
+  directional_block_reason?: string | null;
 };
 
 export type AlertAuditSummary = {

@@ -1,8 +1,13 @@
 import { memo, useMemo } from "react";
-import { Card, CardHeader } from "@/components/ui/Primitives";
+import { Card, CardHeader, InfoHint } from "@/components/ui/Primitives";
 import { LiveDot } from "@/components/ui/LiveDot";
 import type { DashboardQuality } from "@/lib/api";
 import { cn } from "@/lib/utils";
+
+// 2026-05-11 DALI Operator-Klarheit:
+//   - Deutscher Untertitel pro Kennzahl ("Anteil verwertbarer Signale").
+//   - InfoHint mit deutscher Definition pro Metrik.
+//   - Visueller Trennstrich zwischen High-P und Low-P fuer klarere Hierarchie.
 
 type Props = {
   data: DashboardQuality | null;
@@ -10,51 +15,110 @@ type Props = {
   generatedAt: string | null;
 };
 
+type QualityTone = "pos" | "neg" | "neutral";
+
+type Row = {
+  key: string;
+  label: string;
+  sub: string;
+  value: string;
+  tone: QualityTone;
+  hint: string;
+};
+
 function fmtPct(v: number | null | undefined): string {
-  return v != null ? `${v.toFixed(2)}%` : "—";
+  return v != null ? v.toFixed(2) + "%" : "-";
+}
+
+function buildRows(data: DashboardQuality): Row[] {
+  return [
+    {
+      key: "actionable",
+      label: "Actionable Rate",
+      sub: "Anteil verwertbarer Signale",
+      value: fmtPct(data.actionable_rate_pct),
+      tone: "neutral",
+      hint: "Anteil aller eingehenden Signale, die nach den Filtern als handelbar eingestuft wurden. Hohe Quote = viele Signale schaffen es durch die Quality-Gates. Sehr hohe Quote kann auch heissen: Gates zu locker.",
+    },
+    {
+      key: "fp",
+      label: "False Positive",
+      sub: "Anteil aufgeloester Fehlsignale",
+      value: fmtPct(data.false_positive_pct),
+      tone: "neg",
+      hint: "Anteil der aufgeloesten Signale, die sich rueckblickend als falsch entpuppt haben (SL getroffen statt TP). Niedrig ist gut. Wird aus dem Hold-Report berechnet.",
+    },
+    {
+      key: "hi-hit",
+      label: "High-Priority Hit Rate",
+      sub: "Treffer der wichtigsten Signale",
+      value: fmtPct(data.high_priority_hit_rate_pct),
+      tone: "pos",
+      hint: "Trefferquote der hoechsten Prioritaetsstufe (groesste Confluence, staerkste Source-Mix). Sollte deutlich ueber der Low-P-Quote liegen, sonst ist die Priorisierung kaputt.",
+    },
+    {
+      key: "lo-hit",
+      label: "Low-Priority Hit Rate",
+      sub: "Treffer der schwaecheren Signale",
+      value: fmtPct(data.low_priority_hit_rate_pct),
+      tone: "neutral",
+      hint: "Trefferquote der niedrigeren Prioritaetsstufen. Dient als Baseline-Vergleich: wenn Low-P fast so gut wie High-P, leistet die Priorisierung wenig.",
+    },
+    {
+      key: "dir-docs",
+      label: "Direktionale Dokumente",
+      sub: "Long/Short-tagged Quellen heute",
+      value: String(data.directional_count),
+      tone: "neutral",
+      hint: "Wieviele Quelldokumente heute eine Richtung (Long/Short) bekommen haben. Indikator fuer das Tagging-Volumen, nicht fuer Qualitaet.",
+    },
+  ];
 }
 
 function SignalQualityCardImpl({ data, state, generatedAt }: Props) {
-  const rows = useMemo<Array<[string, string, string?]>>(
-    () =>
-      data
-        ? [
-            ["Actionable Rate", fmtPct(data.actionable_rate_pct)],
-            ["False Positive", fmtPct(data.false_positive_pct), "neg"],
-            ["High-P Hit Rate", fmtPct(data.high_priority_hit_rate_pct), "pos"],
-            ["Low-P Hit Rate", fmtPct(data.low_priority_hit_rate_pct)],
-            ["Directional Docs", String(data.directional_count)],
-          ]
-        : [],
-    [data],
-  );
+  const rows = useMemo(() => (data ? buildRows(data) : []), [data]);
 
   return (
     <Card padded>
       <CardHeader
-        title="Signal-Qualität"
+        title={
+          <span className="inline-flex items-center gap-1.5">
+            Signal-Qualitaet
+            <InfoHint
+              label="Signal-Qualitaet"
+              hint="Fuenf rollende Kennzahlen aus dem letzten Hold-Report. Zeigen, wie gut die Pipeline aktuell zwischen guten und schlechten Signalen trennt."
+            />
+          </span>
+        }
         right={<LiveDot state={state} generatedAt={generatedAt} />}
       />
       {data ? (
-        <div className="space-y-1.5">
-          {rows.map(([k, v, tone]) => (
-            <div key={k} className="flex items-center justify-between text-xs">
-              <span className="text-fg-muted">{k}</span>
+        <div className="divide-y divide-line-subtle/60">
+          {rows.map((r) => (
+            <div key={r.key} className="flex items-start justify-between gap-3 py-2 first:pt-0 last:pb-0">
+              <div className="min-w-0">
+                <div className="flex items-center gap-1.5 text-xs text-fg">
+                  <span className="font-medium">{r.label}</span>
+                  <InfoHint label={r.label} hint={r.hint} />
+                </div>
+                <div className="text-2xs text-fg-subtle leading-snug mt-0.5">{r.sub}</div>
+              </div>
               <span
                 className={cn(
-                  "font-mono font-semibold",
-                  tone === "pos" && "text-pos",
-                  tone === "neg" && "text-neg",
+                  "font-mono font-semibold text-sm shrink-0 tabular-nums",
+                  r.tone === "pos" && "text-pos",
+                  r.tone === "neg" && "text-neg",
+                  r.tone === "neutral" && "text-fg",
                 )}
               >
-                {v}
+                {r.value}
               </span>
             </div>
           ))}
         </div>
       ) : (
         <div className="py-4 text-center text-xs text-fg-subtle">
-          Quality-Report lädt …
+          Quality-Report laedt...
         </div>
       )}
     </Card>
