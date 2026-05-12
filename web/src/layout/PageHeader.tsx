@@ -33,15 +33,17 @@ export function PageHeader({
   right,
   tone,
   icon,
-  divider = true,
+  divider = false,
 }: {
   title: string;
   sub?: string;
   right?: ReactNode;
   tone?: PageHeaderTone;
   icon?: ReactNode;
-  /** Operator 2026-05-10: divider lässt sich pro Page abschalten,
-   *  z.B. wenn die erste Card schon ein synthwave-pulse-edge hat. */
+  /** Operator 2026-05-10: divider lässt sich pro Page abschalten.
+   *  2026-05-12 Operator-Folge: Default jetzt false — die Synthwave-Linie
+   *  unter dem Header lenkt vom operativen Content ab. Wer sie auf einer
+   *  Page bewusst will, setzt divider={true}. */
   divider?: boolean;
 }) {
   const barClass = tone ? TONE_BAR[tone] : "bg-fg-subtle/40";
