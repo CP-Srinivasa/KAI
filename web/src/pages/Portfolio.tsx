@@ -115,9 +115,12 @@ export function PortfolioPage() {
       {/* DALI-P1: Equity-Decomposition als Bucket-Modell.
           Operator: "Was ist auf der Börse, was im Trade, was Withdraw, was
           auf dem Konto, wo Gewinne." Stacked-Bar visualisiert den
-          Geld-Aufenthaltsort, Hero-Number ist Total-Equity. */}
+          Geld-Aufenthaltsort, Hero-Number ist Total-Equity.
+          2026-05-12 DALI-A12-Konsistenz: synthwave-pulse-edge auch auf
+          Portfolio-Cards damit die animierten Regenbogen-Schwünge die
+          Seite mit den anderen Pages (Risk/Signals/Trades) verbinden. */}
       {snap.state === "ready" && (
-        <Card padded>
+        <Card padded className="synthwave-pulse-edge overflow-hidden">
           <div className="flex items-baseline justify-between mb-3 flex-wrap gap-2">
             <div>
               <div className="text-2xs uppercase tracking-wider text-fg-subtle font-semibold">Gesamt-Equity</div>
@@ -201,7 +204,7 @@ export function PortfolioPage() {
       {/* DALI-P2: Per-Asset-Unrealized-PnL als Heatmap-Pills.
           Operator: "Wo sind die Gewinne gemacht worden." */}
       {snap.state === "ready" && positions.length > 0 && (
-        <Card padded>
+        <Card padded className="synthwave-pulse-edge overflow-hidden">
           <div className="text-2xs uppercase tracking-wider text-fg-subtle font-semibold mb-2">
             Unrealized PnL nach Asset (offene Positionen)
           </div>
@@ -263,7 +266,7 @@ export function PortfolioPage() {
           in jeder Zeile statt Snake-Case-Keys. Konzentrations-Visualisierung mit
           Klartext-Aussage. */}
       {exposure.state === "ready" && (
-        <Card padded>
+        <Card padded className="synthwave-pulse-edge overflow-hidden">
           <CardHeader
             title="Exposure & Risiko-Übersicht"
             subtitle="Wie ist das Portfolio gerade aufgestellt — und wo sind Stolperfallen?"
@@ -362,7 +365,7 @@ export function PortfolioPage() {
       {exposure.state === "error" && <ErrorCard kind={exposure.error.kind} message={exposure.error.message} path="/operator/exposure-summary" />}
 
       {/* Sprint E (2026-05-12): Operator-Actions für Premium-Signal-Pipeline */}
-      <Card padded>
+      <Card padded className="synthwave-pulse-edge overflow-hidden">
         <CardHeader title="Operator-Aktionen" />
         <div className="flex flex-wrap gap-2 mt-2">
           <Button
