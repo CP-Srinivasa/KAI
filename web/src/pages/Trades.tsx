@@ -171,8 +171,10 @@ export function TradesPage() {
           - Pille 1: "Real-Order-Execution" -> "Echtgeld-Trading" (AKTIV/DEAKTIVIERT).
           - Pille 2: "Trading-Journal Schreiben" -> "Trading-Journal" (AKTIV/PAUSIERT).
           - Pille 3 (Run-Once): bewusst NICHT angefasst, bleibt fuer T5 reserviert.
-          Operator-Spec §16 nennt "Sicherheits-Blocker" als dritte Pille.
-          Mapping (Run-Once -> Sicherheits-Blocker? oder 4. Pille?) entscheidet T5.
+          2026-05-12 DALI-arcade-T2b: + Pille 3 "Sicherheits-Blocker" (Risk-Engine).
+          Risk-Engine ist Architektur-Invariant (kein toggle-bares Feature),
+          daher hartcodiert auf AKTIV - kein Backend-Feld erfunden. Grid auf
+          1->2->4 Spalten responsiv. Run-Once rueckt an Pille 4.
           Status-Werte mappen weiter auf bestehende TradingLoopStatus-Felder
           (execution_enabled, write_back_allowed) — keine erfundenen Felder. */}
       {status.state === "ready" && (
@@ -182,7 +184,7 @@ export function TradesPage() {
             subtitle="Was darf KAI gerade machen — und was ist gesperrt?"
           />
 
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3 mb-4">
             <GuardrailPill
               label="Echtgeld-Trading"
               active={status.data.execution_enabled}
@@ -202,6 +204,20 @@ export function TradesPage() {
               hint={status.data.write_back_allowed
                 ? "Alle Signale, Orders und Marktentscheidungen werden protokolliert."
                 : "Read-only — es werden keine Cycles ins Journal geschrieben."}
+            />
+            {/* DALI-arcade-T2b: Sicherheits-Blocker = Risk-Engine.
+                Architektur-Invariant: Risk-Engine laeuft immer mit, ist
+                kein toggle-bares Feature - kein Backend-Feld dafuer.
+                Daher hartcodiert AKTIV (active=true). Wenn jemals ein
+                Bypass-Flag eingefuehrt wird, hier auf status.data.X
+                mappen. activeTone=pos, weil aktive Schutzfunktion. */}
+            <GuardrailPill
+              label="Sicherheits-Blocker"
+              active={true}
+              onText="AKTIV"
+              offText="DEAKTIVIERT"
+              activeTone="pos"
+              hint="Risk-Engine blockiert gefaehrliche oder unvollstaendige Orders automatisch."
             />
             <GuardrailPill
               label="Run-Once Trigger"
