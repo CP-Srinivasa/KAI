@@ -21,6 +21,7 @@ import { fetchTradingLoopStatus, fetchRecentCycles, type TradingCycle, type Trad
 import type { AsyncState } from "@/lib/useApi";
 import { cn } from "@/lib/utils";
 import { PreparedPanel } from "@/components/panels/PreparedPanel";
+import { PacmanArcade } from "@/components/arcade/PacmanArcade";
 import { LABEL_DE, CYCLE_STATUS_EXPLAIN, CYCLE_STATUS_TITLE, CYCLE_STATUS_REASON } from "@/lib/labels";
 import { formatRelative, formatDuration } from "@/lib/time";
 
@@ -280,6 +281,15 @@ export function TradesPage() {
           )}
         </Card>
       )}
+
+      {/* 2026-05-12 DALI-arcade-T4: Live-Arcade Cycle-Heartbeat-Panel.
+          Spec §2.3 + Operator-Prompt §3-§6. Eigener Block ZWISCHEN
+          Schutzschalter und Cycle-Cards-Liste - kein Overlay ueber Daten.
+          Wiederverwendet keine neuen Backend-Felder; rechnet eigene
+          4-Geist-Bucket-Aggregation aus cyclesList (feinere Granularitaet
+          als aggregateCyclesHealth, das nur risk/api kennt).
+          Animation 30s/Runde, prefers-reduced-motion pausiert die Bahn. */}
+      <PacmanArcade cycles={cyclesList} />
 
       {/* 2026-05-12 DALI-arcade-T3: Cycle-Card-Liste ersetzt Debug-Tabelle.
           Spec 4.1 + 4.2 (Wireframe), Operator-Prompt 7-9.
