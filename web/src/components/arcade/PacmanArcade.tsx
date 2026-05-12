@@ -143,12 +143,12 @@ function GhostSprite({ size = 22 }: { size?: number }) {
 // rechtlich sauber + Stil-Reinheit.
 function CoinSprite({ kind, size = 14 }: { kind: CoinKind; size?: number }) {
   const symbol =
-    kind === "btc" ? "B"
-    : kind === "eth" ? "E"
-    : kind === "sol" ? "S"
-    : kind === "xrp" ? "X"
-    : kind === "usdt" ? "T"
-    : "*";
+    kind === "btc" ? "₿"
+    : kind === "eth" ? "Ξ"
+    : kind === "sol" ? "◎"
+    : kind === "xrp" ? "×"
+    : kind === "usdt" ? "₮"
+    : "Σ";
   const tone =
     kind === "btc" ? "rgb(var(--warn))"
     : kind === "eth" ? "rgb(var(--info))"
