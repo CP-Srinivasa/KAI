@@ -252,7 +252,7 @@ const de: Dict = {
     },
     trades: {
       title: "Trades",
-      sub: "Offene & geschlossene Positionen · Realized / Unrealized / Fees",
+      sub: "Was hat KAI entschieden — und mit welchem Ergebnis?",
       tabs: { open: "Offen", closed: "Geschlossen", all: "Alle" },
       columns: { time: "Zeit", asset: "Asset", side: "Richtung", size: "Größe", entry: "Eintritt", exit: "Exit", pnl_r: "Realized PnL", pnl_u: "Unrealized", fees: "Fees", net: "Netto", status: "Status" },
       summary: {
@@ -707,7 +707,7 @@ const en: Dict = {
     },
     trades: {
       title: "Trades",
-      sub: "Open & closed positions · Realized / Unrealized / Fees",
+      sub: "What did KAI decide — and with what outcome?",
       tabs: { open: "Open", closed: "Closed", all: "All" },
       columns: { time: "Time", asset: "Asset", side: "Side", size: "Size", entry: "Entry", exit: "Exit", pnl_r: "Realized PnL", pnl_u: "Unrealized", fees: "Fees", net: "Net", status: "Status" },
       summary: { realized: "Realized PnL", unrealized: "Unrealized PnL", fees: "Total fees", net: "Net result", active: "Active portfolio", inactive: "Inactive portfolio" },
