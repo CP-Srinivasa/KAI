@@ -211,9 +211,7 @@ class PaperExecutionEngine:
                     "rejected_at": _now_utc(),
                 },
             )
-            raise DuplicateOrderError(
-                f"order with idempotency_key={idem_key!r} already filled"
-            )
+            raise DuplicateOrderError(f"order with idempotency_key={idem_key!r} already filled")
         order = PaperOrder(
             order_id=_new_order_id(),
             symbol=symbol,

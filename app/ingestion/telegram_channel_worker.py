@@ -42,9 +42,9 @@ from app.ingestion.telegram_channel_approval import (
     load_envelope_by_id,
     send_approval_request,
 )
-from app.ingestion.telegram_channel_parser import TargetCompletionEvent
 from app.ingestion.telegram_channel_envelope import emit_parsed_signal
 from app.ingestion.telegram_channel_parser import (
+    TargetCompletionEvent,
     parse_premium_channel_message,
     parse_target_completion,
 )
@@ -689,7 +689,9 @@ async def run_worker(cfg: TelegramChannelIngestSettings | None = None) -> None:
         approval_chat_id = admin_chat_ids[0] if admin_chat_ids else 0
         envelope_log_path = Path("artifacts/telegram_message_envelope.jsonl")
 
-        def _reconcile_completion_if_present(summary: dict[str, object], *, msg_id: int | None) -> None:
+        def _reconcile_completion_if_present(
+            summary: dict[str, object], *, msg_id: int | None
+        ) -> None:
             """Run target_completion-reconciler for 🎯 all-TP-completion messages.
 
             Sprint D (2026-05-12). Fail-soft: any exception is logged and
@@ -706,7 +708,8 @@ async def run_worker(cfg: TelegramChannelIngestSettings | None = None) -> None:
             touch_price_raw = summary.get("completion_touch_price")
             touch_price = (
                 float(touch_price_raw)
-                if isinstance(touch_price_raw, (int, float)) and not isinstance(touch_price_raw, bool)
+                if isinstance(touch_price_raw, (int, float))
+                and not isinstance(touch_price_raw, bool)
                 else None
             )
             raw_text_raw = summary.get("completion_raw_text")
@@ -715,7 +718,8 @@ async def run_worker(cfg: TelegramChannelIngestSettings | None = None) -> None:
             # NewSignal-Envelope-Stream weil Completion-Meldungen keinen
             # eigenen Envelope erzeugen).
             synthetic_env_id = (
-                f"TGCOMPL-{chat_id_marked}-{msg_id}" if msg_id is not None
+                f"TGCOMPL-{chat_id_marked}-{msg_id}"
+                if msg_id is not None
                 else f"TGCOMPL-{datetime.now(UTC).strftime('%Y%m%d%H%M%S%f')}"
             )
             # Internal symbol = display ohne /
@@ -732,7 +736,8 @@ async def run_worker(cfg: TelegramChannelIngestSettings | None = None) -> None:
                     source_envelope_id=synthetic_env_id,
                 )
                 logger.info(
-                    "[channel-worker] target-completion reconcile env=%s sym=%s status=%s reason=%s",
+                    "[channel-worker] target-completion reconcile "
+                    "env=%s sym=%s status=%s reason=%s",
                     synthetic_env_id,
                     display_symbol_raw,
                     outcome.status,
@@ -926,7 +931,9 @@ async def run_worker(cfg: TelegramChannelIngestSettings | None = None) -> None:
             # Sprint D: 🎯 all-TP-completion-messages reconcile-Pfad. Läuft
             # unabhängig vom emitted-Flag — Completion-Meldungen erzeugen
             # keinen Envelope, sie schließen nur bereits offene Positionen.
-            _reconcile_completion_if_present(summary, msg_id=msg_id if isinstance(msg_id, int) else None)
+            _reconcile_completion_if_present(
+                summary, msg_id=msg_id if isinstance(msg_id, int) else None
+            )
 
         # F4 (2026-05-05): opt-in diagnostic observer (no chats= filter).
         # Verifies whether updates reach the worker process at all when

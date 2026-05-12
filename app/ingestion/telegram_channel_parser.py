@@ -365,14 +365,14 @@ def _extract_exchange_scope(text: str) -> list[str]:
 #     Bestätigung). Caller dispatcht: erst NewSignal-Parser, dann Completion-Parser.
 
 _TARGET_COMPLETION = re.compile(
-    rf"(?im)🎯\s*#\s*(?P<symbol>[A-Z0-9]+\s*/\s*[A-Z0-9]+|[A-Z0-9]{{2,}}\s*/\s*[A-Z0-9]+)"
-    rf"\s+has\s+touched\s+(?P<price>[\d.,]+)?\s*"
-    rf".*?completed\s+all\s+the\s+profit\s+targets"
+    r"(?im)🎯\s*#\s*(?P<symbol>[A-Z0-9]+\s*/\s*[A-Z0-9]+|[A-Z0-9]{2,}\s*/\s*[A-Z0-9]+)"
+    r"\s+has\s+touched\s+(?P<price>[\d.,]+)?\s*"
+    r".*?completed\s+all\s+the\s+profit\s+targets"
 )
 # Variante ohne touch-price ("has completed all the profit targets")
 _TARGET_COMPLETION_NO_PRICE = re.compile(
-    rf"(?im)🎯\s*#\s*(?P<symbol>[A-Z0-9]+\s*/\s*[A-Z0-9]+|[A-Z0-9]{{2,}}\s*/\s*[A-Z0-9]+)"
-    rf"\s+(?:has\s+)?completed\s+all\s+(?:the\s+)?profit\s+targets"
+    r"(?im)🎯\s*#\s*(?P<symbol>[A-Z0-9]+\s*/\s*[A-Z0-9]+|[A-Z0-9]{2,}\s*/\s*[A-Z0-9]+)"
+    r"\s+(?:has\s+)?completed\s+all\s+(?:the\s+)?profit\s+targets"
 )
 
 
