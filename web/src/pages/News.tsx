@@ -1,3 +1,4 @@
+import { Newspaper } from "lucide-react";
 import { useT } from "@/i18n/I18nProvider";
 import { PageHeader } from "@/layout/PageHeader";
 import { PreparedPanel } from "@/components/panels/PreparedPanel";
@@ -9,6 +10,8 @@ export function NewsPage() {
       <PageHeader
         title={t("pages.news.title")}
         sub="News-Stream mit Sentiment, Impact & Signal-Verknüpfung — vorbereitet"
+        tone="info"
+        icon={<Newspaper size={18} />}
       />
 
       <PreparedPanel

@@ -59,6 +59,8 @@ export function AgentsPage() {
       <PageHeader
         title="Agenten"
         sub="SENTR · Watchdog · Architect · DALI — alle ausschließlich von Claude Code ausgeführt"
+        tone="ai"
+        icon={<Bot size={18} />}
       />
 
       <Card padded>
@@ -141,7 +143,7 @@ function AgentCard({
       <CardHeader
         title={
           <div className="flex items-center gap-2">
-            <AgentIcon slug={agent.slug} size={20} className="text-fg-subtle" />
+            <AgentIcon slug={agent.slug} size={36} />
             <span>{agent.name}</span>
           </div>
         }

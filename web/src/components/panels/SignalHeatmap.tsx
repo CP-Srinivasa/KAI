@@ -128,7 +128,7 @@ function HeatmapTable({
 }) {
   return (
     <div className="space-y-1">
-      <div className="grid grid-cols-[1fr_auto_auto_auto] items-center gap-2 px-1 pb-1 text-2xs uppercase tracking-wide text-fg-subtle font-mono">
+      <div className="grid grid-cols-[1fr_52px_52px_auto] items-center gap-2 px-1 pb-1 text-2xs uppercase tracking-wide text-fg-subtle font-mono">
         <span>Symbol</span>
         <span className="text-center">Long</span>
         <span className="text-center">Short</span>
@@ -138,7 +138,7 @@ function HeatmapTable({
         <button
           key={r.symbol}
           onClick={onSelect}
-          className="w-full grid grid-cols-[1fr_auto_auto_auto] items-center gap-2 px-1 py-1.5 rounded-sm text-xs hover:bg-bg-2 transition-colors text-left"
+          className="w-full grid grid-cols-[1fr_52px_52px_auto] items-center gap-2 px-1 py-1.5 rounded-sm text-xs hover:bg-bg-2 transition-colors text-left"
           title={`${r.totalSignals} Signale · latest ${formatAbsolute(r.latestTs)}`}
         >
           <span className="font-mono font-semibold truncate">{r.symbol}</span>
@@ -165,14 +165,14 @@ function HeatmapTable({
 
 function DirCell({ count, dir }: { count: number; dir: "long" | "short" }) {
   if (count === 0) {
-    return <span className="w-[52px] text-center text-fg-subtle font-mono text-xs">—</span>;
+    return <span className="w-full text-center text-fg-subtle font-mono text-xs tabular-nums">—</span>;
   }
   const tone = dir === "long" ? "pos" : "neg";
   const Icon = dir === "long" ? ArrowUpRight : ArrowDownRight;
   return (
     <span
       className={cn(
-        "w-[52px] inline-flex items-center justify-center gap-1 rounded-xs border px-1.5 py-0.5 text-2xs font-mono font-semibold",
+        "w-full inline-flex items-center justify-center gap-1 rounded-xs border px-1.5 py-0.5 text-2xs font-mono font-semibold tabular-nums",
         tone === "pos"
           ? "border-pos/30 bg-pos/10 text-pos"
           : "border-neg/30 bg-neg/10 text-neg",

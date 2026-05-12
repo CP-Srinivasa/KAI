@@ -1,3 +1,4 @@
+import { LineChart } from "lucide-react";
 import { useT } from "@/i18n/I18nProvider";
 import { PageHeader } from "@/layout/PageHeader";
 import { PreparedPanel } from "@/components/panels/PreparedPanel";
@@ -10,6 +11,8 @@ export function MarketsPage() {
       <PageHeader
         title={t("pages.markets.title")}
         sub="Multi-Asset-Marktübersicht — vorbereitet für Integration"
+        tone="info"
+        icon={<LineChart size={18} />}
       />
 
       <TradingViewChart title="TradingView-Chart" />

@@ -1,44 +1,95 @@
-import { Card, CardHeader, Badge, ProgressBar } from "@/components/ui/Primitives";
+import { Card, CardHeader, Badge, ProgressBar, InfoHint } from "@/components/ui/Primitives";
 import type { DashboardQuality } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { sourceLabel } from "@/lib/sourceLabels";
 
 // V-DB4e 2026-05-08: Per-source 30-day rolling stability tile.
-// Quelle: /dashboard/api/quality.per_source_stability (Backend-Field neu
-// freigegeben durch dashboard.py:V-DB4e). Drift-Detection ueber 3 Windows
-// a 30 Tagen — Operator sieht ob eine Source historisch stabil performt
-// oder ob der Wilson-Lower zwischen Windows kippt.
+// 2026-05-11 DALI Mobile-Klarheit (Tranche A, Folge zu Precision-Patch):
+//   - Stacked-Mobile-Layout: Source-Name immer voll (kein truncate).
+//   - InfoHint-Primitive (DALI-P-026) fuer Begriffe stabil/Drift + Wilson-CI.
+//   - Pro Source: Header (Name+Status-Badge) / Hero-Satz (juengstes Fenster) /
+//     ProgressBar + Wilson-CI-Strip + Threshold-Marker / CI-Klarschrift /
+//     Drift-Mosaik (alt -> neu).
+//   - Deutsche Microcopy spiegelt PerSourcePrecisionPanel-Vorlage.
+//   - 80s-Retro-Neon-Style erhalten (border-info/40, text-pos, glow-info).
 //
-// Operator-Folge 2026-05-08:
-//   - Empty-State mit Erklaer-Box statt unsichtbarem Subtitle.
-//   - Konsistente Visualisierung: Tone-Dot + ProgressBar (size="md") plus
-//     das Drift-Mosaik rechts. Bar zeigt die jüngste Window-Hit-Rate,
-//     Mosaik zeigt die Drift-Historie. Konsistent zur ActivePrecisionCard.
-//   - "drift"-Source atmet permanent (attention-breathe-warn).
-//
-// V-DB5 audit I-4 (2026-05-09):
-//   Deutsche Microcopy ((rolling)→(gleitend), stable→stabil, drift→Drift)
-//   + humanisierte Source-Labels via lib/sourceLabels.
+// Stability-Semantik: Backend liefert pro Source drei rollende 30-Tage-Fenster.
+// Eine Source ist stabil, wenn JEDES Fenster mit Daten n>=min_resolved_per_window
+// UND Wilson-Untergrenze>=min_wilson_low_pct erfuellt. Bar zeigt das juengste
+// Fenster, Mosaik zeigt den Verlauf (alt -> neu).
 
-type Window = NonNullable<
-  DashboardQuality["per_source_stability"]
->["by_source"][string]["windows"][number];
+type StabilityRoot = NonNullable<DashboardQuality["per_source_stability"]>;
+type StabilityWindow = StabilityRoot["by_source"][string]["windows"][number];
 
-function windowTone(w: Window): "pos" | "warn" | "neg" | "muted" {
+type Tone = "pos" | "warn" | "neg" | "muted";
+
+function windowTone(w: StabilityWindow): Tone {
   if (!w.n_threshold_met) return "muted";
   if (w.passes_window) return "pos";
   if (w.wilson_low_threshold_met) return "warn";
   return "neg";
 }
 
-function windowTitle(w: Window): string {
+function windowTitle(w: StabilityWindow): string {
   const start = w.window_start.substring(0, 10);
   const end = w.window_end.substring(0, 10);
-  return `${start} → ${end} · n=${w.resolved} · ${
-    w.hit_rate_pct != null ? `${w.hit_rate_pct.toFixed(1)}%` : "—"
-  } · CI-Lower ${w.ci_low_pct != null ? `${w.ci_low_pct.toFixed(1)}%` : "—"}${
-    w.fail_reason ? ` · ${w.fail_reason}` : ""
-  }`;
+  return (
+    start +
+    " -> " +
+    end +
+    " - n=" +
+    w.resolved +
+    " - " +
+    (w.hit_rate_pct != null ? w.hit_rate_pct.toFixed(1) + "%" : "-") +
+    " - CI-Untergrenze " +
+    (w.ci_low_pct != null ? w.ci_low_pct.toFixed(1) + "%" : "-") +
+    (w.fail_reason ? " - " + w.fail_reason : "")
+  );
+}
+
+const TONE_DOT_CLASS: Record<Tone, string> = {
+  pos: "bg-pos",
+  warn: "bg-warn",
+  neg: "bg-neg",
+  muted: "bg-fg-subtle/50",
+};
+
+const TONE_TEXT_CLASS: Record<Tone, string> = {
+  pos: "text-pos",
+  warn: "text-warn",
+  neg: "text-neg",
+  muted: "text-fg-subtle",
+};
+
+const TONE_STRIP_CLASS: Record<Tone, string> = {
+  pos: "bg-pos/60",
+  warn: "bg-warn/60",
+  neg: "bg-neg/60",
+  muted: "bg-fg-subtle/40",
+};
+
+// Wilson-Lower-Strip: zeigt ab der statistischen Untergrenze (Wilson 95%) bis
+// 100% den plausiblen Bereich, in dem die wahre Hit-Rate mindestens liegt.
+// Auf Stability-Ebene gibt das Backend nur ci_low_pct (keinen oberen Rand) -
+// wir visualisieren daher die Untergrenze als "ab hier ist die Quote belastbar".
+function WilsonLowerStrip({
+  ciLo,
+  tone,
+}: {
+  ciLo: number | null | undefined;
+  tone: Tone;
+}) {
+  if (ciLo == null) return null;
+  const lo = Math.max(0, Math.min(100, ciLo));
+  const width = Math.max(2, 100 - lo);
+  return (
+    <div className="relative h-0.5 w-full mt-1 rounded-full bg-line/40" aria-hidden="true">
+      <div
+        className={cn("absolute h-full rounded-full", TONE_STRIP_CLASS[tone])}
+        style={{ left: lo + "%", width: width + "%" }}
+      />
+    </div>
+  );
 }
 
 export function PerSourceStabilityPanel({ data }: { data: DashboardQuality | null }) {
@@ -48,14 +99,24 @@ export function PerSourceStabilityPanel({ data }: { data: DashboardQuality | nul
     return (
       <Card padded>
         <CardHeader
-          title="Source-Stability (gleitend)"
-          subtitle="Liefert eine Quelle ueber drei 30-Tage-Fenster konstant Treffer — oder driftet sie?"
+          title={
+            <span className="inline-flex items-center gap-1.5">
+              Quellen-Stabilitaet (gleitend)
+              <InfoHint
+                label="Quellen-Stabilitaet"
+                hint="Wie verlaesslich war jede Quelle zuletzt - gleitender Hit-Rate-Score ueber drei 30-Tage-Fenster. Eine Quelle ist stabil, wenn sie in jedem Fenster genug Signale UND eine ausreichend hohe statistische Untergrenze hatte."
+              />
+            </span>
+          }
+          subtitle="Liefert eine Quelle ueber drei 30-Tage-Fenster konstant Treffer - oder driftet sie weg?"
         />
         <div className="rounded-md border border-line-subtle bg-bg-2 px-3 py-4 text-xs text-fg-muted leading-relaxed">
-          <div className="font-medium text-fg mb-1">Stability-Daten kommen mit dem nächsten Hold-Report.</div>
+          <div className="font-medium text-fg mb-1">
+            Stability-Daten kommen mit dem naechsten Hold-Report.
+          </div>
           <p>
-            Sobald drei vollständige 30-Tage-Fenster aufgeloest sind, erscheint hier pro Quelle
-            die juengste Hit-Rate als Bar plus drei Drift-Kacheln (alt → neu) als Verlauf.
+            Sobald drei vollstaendige 30-Tage-Fenster aufgeloest sind, erscheint hier pro Quelle
+            die juengste Trefferquote als Bar plus drei Drift-Kacheln (alt -&gt; neu) als Verlauf.
           </p>
         </div>
       </Card>
@@ -68,123 +129,206 @@ export function PerSourceStabilityPanel({ data }: { data: DashboardQuality | nul
   });
 
   const stableCount = sources.filter(([, m]) => m.stable).length;
+  const total = sources.length;
+  const minResolved = pss.min_resolved_per_window;
+  const minWilson = pss.min_wilson_low_pct;
+  const windowDays = pss.window_days;
 
   return (
     <Card padded>
       <CardHeader
-        title="Source-Stability (gleitend)"
-        subtitle={`${pss.window_count} Windows × ${pss.window_days}d · min n=${pss.min_resolved_per_window} · Wilson-Lower ≥${pss.min_wilson_low_pct.toFixed(0)}%`}
+        title={
+          <span className="inline-flex items-center gap-1.5">
+            Quellen-Stabilitaet (gleitend)
+            <InfoHint
+              label="Quellen-Stabilitaet"
+              hint="Wie verlaesslich war jede Quelle zuletzt - gleitender Hit-Rate-Score ueber drei 30-Tage-Fenster. Eine Quelle ist stabil, wenn sie in jedem Fenster genug Signale UND eine ausreichend hohe statistische Untergrenze hatte."
+            />
+          </span>
+        }
+        subtitle={
+          "Drei rollende " +
+          windowDays +
+          "-Tage-Fenster, je mindestens " +
+          minResolved +
+          " aufgeloeste Signale, statistische Untergrenze >= " +
+          minWilson.toFixed(0) +
+          "% (Wilson). " +
+          stableCount +
+          " von " +
+          total +
+          " Quellen sind stabil."
+        }
         right={
-          <Badge tone={stableCount === sources.length ? "pos" : stableCount > 0 ? "warn" : "muted"} dot>
-            {stableCount}/{sources.length} stabil
+          <Badge
+            tone={stableCount === total ? "pos" : stableCount > 0 ? "warn" : "muted"}
+            dot
+          >
+            {stableCount}/{total} stabil
           </Badge>
         }
       />
-      <div className="space-y-2.5">
+      <div className="space-y-3">
         {sources.map(([source, m]) => {
-          // Juengstes Window steht laut Backend an Index 0 (sorted desc by window_end).
           const latest = m.windows[0];
-          const latestTone = latest ? windowTone(latest) : "muted";
-          const dotClass =
-            latestTone === "pos"
-              ? "bg-pos"
-              : latestTone === "warn"
-                ? "bg-warn"
-                : latestTone === "neg"
-                  ? "bg-neg"
-                  : "bg-fg-subtle/50";
-          const barTone: "pos" | "warn" | "neg" | "muted" =
-            latestTone === "pos"
-              ? "pos"
-              : latestTone === "warn"
-                ? "warn"
-                : latestTone === "neg"
-                  ? "neg"
-                  : "muted";
+          const latestTone: Tone = latest ? windowTone(latest) : "muted";
           const display = sourceLabel(source);
           const titleText = display.hint
-            ? `${display.hint} · Backend-Key: ${source}`
-            : `Backend-Key: ${source}`;
+            ? display.hint + " - Backend-Key: " + source
+            : "Backend-Key: " + source;
+          const resolved = latest?.resolved ?? 0;
+          const hits = latest?.hits ?? 0;
+          const hitRate = latest?.hit_rate_pct;
+          const ciLo = latest?.ci_low_pct;
+
+          const statusLabel = m.stable ? "stabil" : "Drift";
+          const statusTone: Tone = m.stable ? "pos" : "warn";
+          const statusHint = m.stable
+            ? "Alle drei 30-Tage-Fenster mit Daten erfuellen n>=" +
+              minResolved +
+              " UND Wilson-Untergrenze>=" +
+              minWilson.toFixed(0) +
+              "%. Quelle liefert konsistent verlaessliche Signale."
+            : "Mindestens ein Fenster reisst die Stabilitaets-Schwellen. Hit-Rate kippt zwischen den Fenstern - Quelle aktuell nicht durchgaengig verlaesslich.";
+
           return (
-            <div key={source} className="grid items-center gap-3" style={{ gridTemplateColumns: "minmax(0,1fr) auto auto" }}>
-              <div className="min-w-0">
-                <div className="flex items-center gap-1.5 text-xs">
-                  {/* Tone-Dot konsistent zu ActivePrecisionCard. */}
+            <div
+              key={source}
+              className={cn(
+                "rounded-md border border-line-subtle bg-bg-2/30 p-3",
+                !m.stable && "attention-breathe-warn",
+              )}
+            >
+              <div className="flex items-start justify-between gap-2 mb-1.5">
+                <div className="flex items-start gap-1.5 min-w-0 flex-1">
                   <span
-                    className={cn("inline-block h-2 w-2 rounded-full shrink-0", dotClass)}
+                    className={cn(
+                      "inline-block h-2 w-2 rounded-full shrink-0 mt-1",
+                      TONE_DOT_CLASS[latestTone],
+                    )}
                     aria-hidden="true"
                   />
                   <span
-                    className="text-fg font-medium truncate"
+                    className="text-xs font-semibold text-fg break-words"
                     title={titleText}
                   >
                     {display.label}
                   </span>
-                  {latest && (
-                    <span className="text-2xs font-mono text-fg-subtle shrink-0 ml-auto">
-                      {latest.hit_rate_pct != null ? `${latest.hit_rate_pct.toFixed(1)}%` : "—"}
-                      <span className="text-fg-subtle/70 ml-1">n={latest.resolved}</span>
-                    </span>
+                </div>
+                <Badge
+                  tone={statusTone}
+                  className="shrink-0 inline-flex items-center gap-1"
+                >
+                  {statusLabel}
+                  <InfoHint label={statusLabel} hint={statusHint} side="left" />
+                </Badge>
+              </div>
+
+              <div className="flex items-baseline justify-between gap-2 text-2xs">
+                <span className="text-fg-muted">
+                  <span className="font-mono tabular-nums text-fg">{hits}</span>
+                  {" von "}
+                  <span className="font-mono tabular-nums text-fg">{resolved}</span>
+                  {" trafen "}
+                  <span className="text-fg-subtle">(letztes Fenster)</span>
+                </span>
+                <span
+                  className={cn(
+                    "font-mono font-semibold text-xs tabular-nums",
+                    TONE_TEXT_CLASS[latestTone],
                   )}
+                >
+                  {hitRate != null ? hitRate.toFixed(1) + "%" : "-"}
+                </span>
+              </div>
+
+              <div className="mt-1.5 relative">
+                <ProgressBar
+                  value={hitRate ?? null}
+                  target={minWilson}
+                  tone={
+                    latestTone === "pos"
+                      ? "pos"
+                      : latestTone === "neg"
+                        ? "neg"
+                        : "auto"
+                  }
+                  sufficientSample={latest?.n_threshold_met ?? false}
+                  label={display.label + " juengste Trefferquote"}
+                  size="md"
+                />
+                <WilsonLowerStrip ciLo={ciLo} tone={latestTone} />
+                <span
+                  className="absolute top-0 h-2 w-px bg-fg-subtle/35 pointer-events-none"
+                  style={{ left: minWilson + "%" }}
+                  title={
+                    "Stabilitaets-Schwelle: " +
+                    minWilson.toFixed(0) +
+                    "% Wilson-Untergrenze"
+                  }
+                  aria-hidden="true"
+                />
+              </div>
+
+              {ciLo != null && (
+                <div className="mt-1.5 inline-flex items-center gap-1 text-2xs text-fg-subtle">
+                  <span>
+                    Statistische Untergrenze: <span className="font-mono tabular-nums">{ciLo.toFixed(0)}%</span>
+                  </span>
+                  <InfoHint
+                    label="Wilson-Untergrenze (95%)"
+                    hint="Mit 95% Wahrscheinlichkeit liegt die wahre Trefferquote im juengsten Fenster mindestens hier. Je hoeher, desto belastbarer die Quote - kleine Stichproben druecken die Untergrenze."
+                  />
                 </div>
-                <div className="relative mt-1.5">
-                  <ProgressBar
-                    value={latest?.hit_rate_pct ?? null}
-                    target={100}
-                    tone={barTone}
-                    size="md"
-                    sufficientSample={latest?.n_threshold_met ?? false}
-                    label={`${display.label} juengste Hit-Rate`}
+              )}
+
+              <div className="mt-2 flex items-center justify-between gap-2">
+                <span className="text-2xs text-fg-subtle inline-flex items-center gap-1">
+                  Verlauf
+                  <InfoHint
+                    label="Drift-Verlauf"
+                    hint="Drei rollende 30-Tage-Fenster, links = aelteste, rechts = juengste. Gruen erfuellt die Schwellen, gelb knapp, rot reisst die Quote, grau zu wenig Daten. Wenn die Kacheln von links nach rechts kippen, driftet die Quelle."
+                    side="right"
                   />
-                  {/* Wilson-Lower-Threshold-Marker konsistent zu ActivePrecisionCard. */}
-                  <span
-                    className="absolute top-0 bottom-0 w-px bg-fg-subtle/35 pointer-events-none"
-                    style={{ left: `${pss.min_wilson_low_pct}%` }}
-                    title={`Stability-Gate liegt bei ${pss.min_wilson_low_pct.toFixed(0)}% Wilson-Lower`}
-                    aria-hidden="true"
-                  />
+                </span>
+                <div
+                  className="flex gap-1 shrink-0"
+                  aria-label={display.label + " Drift-Verlauf von alt nach neu"}
+                >
+                  {[...m.windows].reverse().map((w, idx) => {
+                    const t = windowTone(w);
+                    return (
+                      <div
+                        key={idx}
+                        title={windowTitle(w)}
+                        className={cn(
+                          "h-5 w-10 rounded-xs border text-[10px] flex items-center justify-center font-mono tabular-nums",
+                          t === "pos" && "bg-pos/15 text-pos border-pos/30",
+                          t === "warn" && "bg-warn/15 text-warn border-warn/30",
+                          t === "neg" && "bg-neg/15 text-neg border-neg/30",
+                          t === "muted" && "bg-bg-3 text-fg-subtle border-line-subtle",
+                        )}
+                      >
+                        {w.resolved > 0 ? "n" + w.resolved : "-"}
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
-              {/* Drift-Mosaik: 3 Window-Kacheln (alt → neu rechts). */}
-              <div className="flex gap-1 shrink-0" aria-label={`${display.label} Drift-Verlauf`}>
-                {[...m.windows].reverse().map((w, idx) => {
-                  const tone = windowTone(w);
-                  return (
-                    <div
-                      key={idx}
-                      title={windowTitle(w)}
-                      className={cn(
-                        "h-5 w-9 rounded-xs border text-[10px] flex items-center justify-center font-mono",
-                        tone === "pos" && "bg-pos/15 text-pos border-pos/30",
-                        tone === "warn" && "bg-warn/15 text-warn border-warn/30",
-                        tone === "neg" && "bg-neg/15 text-neg border-neg/30",
-                        tone === "muted" && "bg-bg-3 text-fg-subtle border-line-subtle",
-                      )}
-                    >
-                      {w.resolved > 0 ? `n${w.resolved}` : "—"}
-                    </div>
-                  );
-                })}
-              </div>
-              <Badge
-                tone={m.stable ? "pos" : "muted"}
-                className={cn(
-                  "shrink-0 w-[60px] justify-center",
-                  // Drift-Source atmet permanent — bleibt im Operator-Blickfeld.
-                  !m.stable && "attention-breathe-warn",
-                )}
-              >
-                {m.stable ? "stabil" : "Drift"}
-              </Badge>
             </div>
           );
         })}
       </div>
-      <div className="mt-4 pt-3 border-t border-line-subtle text-2xs text-fg-muted leading-relaxed">
-        Bar = juengste 30-Tage-Hit-Rate · Mosaik = drei Buckets von links (alt) nach rechts (neu, ~aktuell).
-        Eine Source ist <span className="text-pos">stabil</span>, wenn jeder Bucket mit Daten
-        n≥{pss.min_resolved_per_window} UND Wilson-Lower ≥{pss.min_wilson_low_pct.toFixed(0)}% erfuellt.
-        Hover ueber eine Kachel fuer Details.
+      <div className="mt-4 pt-3 border-t border-line-subtle text-2xs text-fg-muted leading-relaxed space-y-1">
+        <div>
+          <span className="text-pos font-semibold">stabil</span>: jedes Fenster mit Daten erfuellt n&gt;={minResolved} UND Wilson-Untergrenze&gt;={minWilson.toFixed(0)}%.
+        </div>
+        <div>
+          <span className="text-warn font-semibold">Drift</span>: mindestens ein Fenster reisst die Schwellen - Quote kippt zwischen den Fenstern.
+        </div>
+        <div>
+          Mosaik = drei Buckets von links (alt) nach rechts (neu, ~aktuell). Hover ueber eine Kachel fuer Fenster-Details.
+        </div>
       </div>
     </Card>
   );

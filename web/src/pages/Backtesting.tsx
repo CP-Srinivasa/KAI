@@ -1,3 +1,4 @@
+import { History } from "lucide-react";
 import { useT } from "@/i18n/I18nProvider";
 import { PageHeader } from "@/layout/PageHeader";
 import { PreparedPanel } from "@/components/panels/PreparedPanel";
@@ -9,6 +10,8 @@ export function BacktestPage() {
       <PageHeader
         title={t("pages.backtest.title")}
         sub="Historical Replay & Strategy-Validation — vorbereitet"
+        tone="ai"
+        icon={<History size={18} />}
       />
 
       <PreparedPanel

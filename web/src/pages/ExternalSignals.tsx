@@ -1,10 +1,41 @@
-import { useEffect, useState } from "react";
-import { Send, Loader2, RefreshCw, Inbox, CheckCircle2, AlertTriangle, XCircle, Clock, HelpCircle } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import {
+  Send,
+  Loader2,
+  RefreshCw,
+  Inbox,
+  CheckCircle2,
+  AlertTriangle,
+  XCircle,
+  Clock,
+  HelpCircle,
+  Upload,
+  Sparkles,
+  RotateCcw,
+  FileText,
+  MessageSquare,
+} from "lucide-react";
 import { useT } from "@/i18n/I18nProvider";
 import { PageHeader } from "@/layout/PageHeader";
-import { Badge, Button, Card, CardHeader } from "@/components/ui/Primitives";
+import {
+  Badge,
+  Button,
+  Card,
+  CardHeader,
+  InfoHint,
+  Kpi,
+  SectionLabel,
+} from "@/components/ui/Primitives";
 import { useApi } from "@/lib/useApi";
 import { cn } from "@/lib/utils";
+import {
+  ENVELOPE_SOURCE_LABEL,
+  ENVELOPE_STAGE_LABEL,
+  PASTE_STATUS_LABEL,
+  PASTE_STATUS_SHORT,
+  PASTE_STEPPER_STEPS,
+  TERM_EXPLAIN,
+} from "@/lib/labels";
 import {
   ApiError,
   fetchRecentEnvelopes,
@@ -81,11 +112,25 @@ function statusHeadline(rec: EnvelopeRecord): string {
   return rec.status ?? "—";
 }
 
+// DALI-T7: humanisiere Source-Tag (telegram → "Telegram" etc.).
+function humanizeSource(src: string | null | undefined): string {
+  if (!src) return "Unbekannt";
+  const key = src.toLowerCase();
+  return ENVELOPE_SOURCE_LABEL[key] ?? src;
+}
+
+// DALI-T7: humanisiere Stage (parse → "Nachricht analysiert" etc.).
+function humanizeStage(stage: string | null | undefined): string {
+  if (!stage) return "—";
+  return ENVELOPE_STAGE_LABEL[stage] ?? stage;
+}
+
 function formatNumber(value: number | null | undefined): string {
   if (value == null || !Number.isFinite(value)) return "—";
-  // Keep up to 8 significant digits, trim trailing zeros (SOL prices vs BTC prices).
-  return value
-    .toLocaleString("de-DE", { maximumFractionDigits: 8, useGrouping: false });
+  return value.toLocaleString("de-DE", {
+    maximumFractionDigits: 8,
+    useGrouping: false,
+  });
 }
 
 function formatEntryRule(signal: SignalSummary): string {
@@ -175,6 +220,121 @@ function relativeTs(value: string | null): string {
   return `vor ${Math.floor(deltaSec / 86400)}d`;
 }
 
+
+// DALI-T7: 6-Schritt-Stepper im Synthwave-Stil, abgeleitet vom T6-Cycle-
+// Pipeline-Pattern aus Signals.tsx.
+type PasteStepperProps = {
+  activeIdx: number;
+  failedIdx?: number;
+  className?: string;
+};
+
+function PasteStepper({ activeIdx, failedIdx = -1, className }: PasteStepperProps) {
+  return (
+    <div
+      className={cn(
+        "flex flex-col gap-3 sm:flex-row sm:items-start sm:gap-0",
+        className,
+      )}
+      role="list"
+      aria-label="Signal-Verarbeitungs-Pipeline"
+    >
+      {PASTE_STEPPER_STEPS.map((step, i) => {
+        const isLast = i === PASTE_STEPPER_STEPS.length - 1;
+        const isFailed = failedIdx === i;
+        const isActive = activeIdx === i;
+        const isReached = activeIdx > i || activeIdx === PASTE_STEPPER_STEPS.length;
+        const dotTone = isFailed
+          ? "bg-neg glow-neg animate-pulse"
+          : isActive
+            ? "bg-info glow-info animate-pulse"
+            : isReached
+              ? "bg-info glow-info"
+              : "bg-fg-subtle/25";
+        const lineTone = isReached || isActive ? "bg-info/45" : "bg-fg-subtle/15";
+        const textTone = isFailed
+          ? "text-neg"
+          : isActive
+            ? "text-info font-medium"
+            : isReached
+              ? "text-fg-muted"
+              : "text-fg-subtle/80";
+        return (
+          <div
+            key={step.key}
+            role="listitem"
+            className="flex sm:flex-col items-start sm:items-center sm:flex-1 gap-2 sm:gap-1 min-w-0"
+            title={(i + 1) + ". " + step.short + " — " + step.explain}
+          >
+            <div className="flex items-center sm:flex-col sm:items-center shrink-0">
+              <span
+                className={cn(
+                  "inline-block h-2.5 w-2.5 rounded-full shrink-0 transition-transform hover:scale-150",
+                  dotTone,
+                )}
+                aria-hidden
+              />
+              {!isLast && (
+                <span
+                  className={cn(
+                    "hidden sm:inline-block h-px shrink-0 mt-0 sm:w-full sm:max-w-[60px] sm:mx-1",
+                    lineTone,
+                  )}
+                  aria-hidden
+                />
+              )}
+            </div>
+            <div className="flex flex-col min-w-0 sm:items-center sm:text-center">
+              <span
+                className={cn(
+                  "text-2xs uppercase tracking-wider leading-tight whitespace-nowrap",
+                  textTone,
+                )}
+              >
+                {i + 1}. {step.short}
+              </span>
+              <span className="sm:hidden text-2xs text-fg-subtle/70 leading-snug mt-0.5 break-words">
+                {step.explain}
+              </span>
+            </div>
+            {!isLast && (
+              <span
+                className={cn("sm:hidden ml-1 inline-block h-3 w-px shrink-0", lineTone)}
+                aria-hidden
+              />
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// DALI-T7: Triage-Strip — Counts aus records, gefiltert auf heute (UTC).
+function todayCounts(records: EnvelopeRecord[]) {
+  const today = new Date();
+  const start = Date.UTC(
+    today.getUTCFullYear(),
+    today.getUTCMonth(),
+    today.getUTCDate(),
+  );
+  let accepted = 0;
+  let duplicate = 0;
+  let needs = 0;
+  let rejected = 0;
+  for (const rec of records) {
+    if (!rec.timestamp_utc) continue;
+    const ts = Date.parse(rec.timestamp_utc);
+    if (Number.isNaN(ts) || ts < start) continue;
+    if (rec.status === "ok" || rec.stage === "accepted") accepted++;
+    else if (rec.status === "duplicate") duplicate++;
+    else if (rec.status === "rejected" || rec.status === "blocked") rejected++;
+    else if (rec.stage === "voice_confirm_gate" || rec.status === "draft_pending")
+      needs++;
+  }
+  return { accepted, duplicate, needs, rejected };
+}
+
 type SignalPasteFormProps = {
   onPasted: () => void;
 };
@@ -189,10 +349,11 @@ function SignalPasteForm({ onPasted }: SignalPasteFormProps) {
   const [targetsInput, setTargetsInput] = useState<string>("");
   const [leverageInput, setLeverageInput] = useState<string>("");
 
-  // Prefill the verify-and-submit form from the parsed preview whenever the
-  // backend returns needs_completion. Missing fields stay empty (forcing the
-  // operator to fill them); parsed fields show up pre-filled so the operator
-  // can cross-check and correct misparses before committing.
+  // DALI-T7: -1 = idle, 0..5 = laufend, 6 = fertig.
+  const [stepIdx, setStepIdx] = useState<number>(-1);
+  const [failIdx, setFailIdx] = useState<number>(-1);
+
+  // Prefill verify-and-submit form from parsed preview on needs_completion.
   useEffect(() => {
     if (!result || result.status !== "needs_completion") return;
     const preview = result.parsed_preview ?? {};
@@ -214,10 +375,36 @@ function SignalPasteForm({ onPasted }: SignalPasteFormProps) {
     setLeverageInput(typeof lev === "number" && lev > 1 ? String(lev) : "");
   }, [result]);
 
+  // Final stepper state nach Response.
+  useEffect(() => {
+    if (!result) return;
+    if (result.status === "accepted" || result.status === "duplicate") {
+      setStepIdx(PASTE_STEPPER_STEPS.length);
+      setFailIdx(-1);
+    } else if (result.status === "needs_completion") {
+      setStepIdx(2);
+      setFailIdx(-1);
+    } else if (result.status === "rejected") {
+      setStepIdx(2);
+      setFailIdx(2);
+    }
+  }, [result]);
+
   async function submit(extra?: SignalCompletionFields) {
     if (!text.trim()) return;
     setBusy(true);
     setError(null);
+    setStepIdx(0);
+    setFailIdx(-1);
+    const timers: ReturnType<typeof setTimeout>[] = [];
+    for (let i = 1; i <= 4; i++) {
+      timers.push(
+        setTimeout(
+          () => setStepIdx((cur) => (cur < i && cur >= 0 ? i : cur)),
+          i * 180,
+        ),
+      );
+    }
     try {
       const res = await postSignalPaste(
         text,
@@ -232,9 +419,12 @@ function SignalPasteForm({ onPasted }: SignalPasteFormProps) {
       }
       onPasted();
     } catch (e) {
-      if (e instanceof ApiError) setError(`${e.kind} (${e.status}): ${e.message}`);
+      if (e instanceof ApiError) setError(e.kind + " (" + e.status + "): " + e.message);
       else setError((e as Error).message || "Fehler");
+      setStepIdx(2);
+      setFailIdx(2);
     } finally {
+      timers.forEach(clearTimeout);
       setBusy(false);
     }
   }
@@ -263,80 +453,172 @@ function SignalPasteForm({ onPasted }: SignalPasteFormProps) {
     submit(completion);
   }
 
+  function resetAll() {
+    setText("");
+    setResult(null);
+    setError(null);
+    setStepIdx(-1);
+    setFailIdx(-1);
+    setExchangeChoice("");
+    setStopLossInput("");
+    setTargetsInput("");
+    setLeverageInput("");
+  }
+
+  const statusLong = result ? PASTE_STATUS_LABEL[result.status] ?? result.status : "";
+  const statusShort = result ? PASTE_STATUS_SHORT[result.status] ?? result.status : "";
+
   return (
     <Card>
       <CardHeader
-        title="Signal-Paste"
-        subtitle="Akzeptiert strukturierte Blöcke ([SIGNAL] / [NEWS] / [EXCHANGE_RESPONSE]) UND freie Telegram-Formate (Paar + LONG/SHORT, z. B. 🟢 #BTC/USDT LONG/BUY …). Pipeline: parse → schema → idempotency → audit."
+        title={
+          <span className="inline-flex items-center gap-2">
+            Externe Trading-Signale einspeisen
+            <InfoHint
+              label="Was unterstützt KAI?"
+              hint="Strukturiertes [SIGNAL]/[NEWS]/[EXCHANGE_RESPONSE] und freie Telegram-Formate. Erkannt werden: Paar (BTC/USDT), Richtung (LONG/SHORT bzw. BUY/SELL), Entry-Zone, Stop Loss, Targets, Leverage, Exchange-Scope. KAI parst, validiert, dedupliziert und schreibt jede Verarbeitung ins Audit-Log."
+            />
+          </span>
+        }
+        subtitle={
+          <>
+            LONG/SHORT, BUY/SELL, Trading-Paare, Entry-Zonen, SL/TP &mdash;
+            strukturiert ODER freies Telegram-Format. KAI analysiert, validiert
+            und dokumentiert jede Eingabe.
+          </>
+        }
         right={
-          <Badge tone="info" dot>
+          <Badge tone="muted" className="font-mono">
             POST /signals/paste
           </Badge>
         }
       />
+
+      {/* DALI-T7: 6-Schritt-Stepper als visuelle Prozess-Leiste. */}
+      <div className="mb-5 rounded-sm border border-line-subtle bg-bg-0 p-3">
+        <PasteStepper activeIdx={stepIdx} failedIdx={failIdx} />
+      </div>
+
       <div className="grid gap-4 lg:grid-cols-[1fr_minmax(280px,360px)]">
         {/* Paste-Feld */}
         <div className="space-y-3">
-          <textarea
-            value={text}
-            onChange={(e) => setText(e.target.value)}
-            placeholder={SAMPLE}
-            spellCheck={false}
-            className="w-full min-h-[260px] rounded-sm border border-line bg-bg-0 p-3 font-mono text-xs text-fg placeholder:text-fg-subtle focus:outline-none focus:ring-2 focus:ring-accent/40"
-          />
-          <div className="flex flex-wrap items-center gap-2">
+          {/*
+            DALI-T7 Fix: integriertes Neon-Top-Border am Textarea-Wrapper
+            (statt schwebender PageHeader-Synthwave-Divider darueber). Der
+            obere ::before-Pseudo-Gradient sitzt FEST auf der Top-Kante der
+            Paste-Box; box-shadow gibt subtilen Glow nach oben.
+          */}
+          <div
+            className={cn(
+              "relative rounded-sm",
+              "before:content-[''] before:absolute before:inset-x-0 before:top-0 before:h-px",
+              "before:bg-gradient-to-r before:from-info/0 before:via-info/70 before:to-ai/0",
+              "before:rounded-sm before:pointer-events-none",
+              "before:shadow-[0_-2px_8px_-1px_rgba(56,189,248,0.35)]",
+              "dark:before:shadow-[0_-2px_10px_-1px_rgba(168,85,247,0.45)]",
+            )}
+          >
+            <textarea
+              value={text}
+              onChange={(e) => setText(e.target.value)}
+              placeholder={SAMPLE}
+              spellCheck={false}
+              aria-label="Signal-Text eingeben"
+              className={cn(
+                "w-full min-h-[260px] rounded-sm border border-line bg-bg-0 p-3 pt-3.5",
+                "font-mono text-xs text-fg placeholder:text-fg-subtle",
+                "focus:outline-none focus:ring-2 focus:ring-accent/40",
+                "border-t-info/40",
+              )}
+            />
+          </div>
+
+          {/* DALI-T7 Buttons: Haupt-CTA gross+glow, Reset, Beispiel-Trio. */}
+          <div className="flex flex-col sm:flex-row sm:flex-wrap items-stretch sm:items-center gap-2">
             <Button
               variant="primary"
               size="md"
               onClick={() => submit()}
               disabled={busy || !text.trim()}
+              className={cn(
+                "h-10 px-5 text-sm font-semibold tracking-wide uppercase",
+                "shadow-[0_0_18px_-2px_rgba(99,102,241,0.55)] glow-info",
+                "w-full sm:w-auto",
+              )}
+              aria-label="Signal an KAI senden und analysieren"
             >
               {busy ? (
-                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                <Loader2 className="h-4 w-4 animate-spin" />
               ) : (
-                <Send className="h-3.5 w-3.5" />
+                <Sparkles className="h-4 w-4" />
               )}
-              Absenden
+              Signal analysieren
             </Button>
+
             <Button
-              variant="ghost"
+              variant="outline"
               size="md"
-              onClick={() => {
-                setText("");
-                setResult(null);
-                setError(null);
-              }}
+              onClick={resetAll}
               disabled={busy}
+              aria-label="Eingabe und Antwort zurücksetzen"
             >
-              Zurücksetzen
+              <RotateCcw className="h-3.5 w-3.5" />
+              Eingabe zurücksetzen
             </Button>
-            <Button
-              variant="ghost"
-              size="md"
-              onClick={() => setText(SAMPLE)}
-              disabled={busy}
-            >
-              Beispiel [SIGNAL]
-            </Button>
-            <Button
-              variant="ghost"
-              size="md"
-              onClick={() => setText(SAMPLE_FREEFORM)}
-              disabled={busy}
-            >
-              Beispiel freies Format
-            </Button>
+
+            {/* Hilfe-Gruppe rechts — ghost-Buttons. */}
+            <div className="flex flex-wrap items-center gap-1 sm:ml-auto">
+              <SectionLabel className="mr-1 hidden sm:inline">
+                Beispiel laden:
+              </SectionLabel>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setText(SAMPLE)}
+                disabled={busy}
+                title="Strukturiertes [SIGNAL]-Beispiel in die Paste-Box laden."
+              >
+                <FileText className="h-3.5 w-3.5" />
+                Strukturiert
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setText(SAMPLE_FREEFORM)}
+                disabled={busy}
+                title="Freies Telegram-Format (Emoji + Kurzschrift) in die Paste-Box laden."
+              >
+                <MessageSquare className="h-3.5 w-3.5" />
+                Telegram-Stil
+              </Button>
+            </div>
           </div>
         </div>
 
-        {/* Response-Pane */}
+        {/* DALI-T7 Response-Pane */}
         <div className="space-y-3">
-          <div className="text-2xs font-semibold uppercase tracking-[0.1em] text-fg-subtle">
-            Letzte Antwort
-          </div>
+          <SectionLabel>
+            <span className="inline-flex items-center gap-1.5">
+              Verarbeitungs-Antwort von KAI
+              <InfoHint
+                label="Antwort-Inhalt"
+                hint="Status, Verarbeitungs-Stage, ggf. Envelope-ID und Idempotency-Key. Bei needs_completion erscheint hier das Ergänzungs-Formular."
+                side="left"
+              />
+            </span>
+          </SectionLabel>
+
           {!result && !error && (
-            <div className="rounded-sm border border-dashed border-line-subtle bg-bg-0 p-4 text-xs text-fg-subtle">
-              Noch kein Paste abgesendet.
+            <div className="rounded-sm border border-dashed border-line-subtle bg-bg-0 p-4 text-xs space-y-1.5">
+              <div className="text-fg font-medium">
+                Noch kein externes Signal verarbeitet
+              </div>
+              <div className="text-fg-subtle leading-relaxed">
+                Sobald du ein Signal einfügst und auf{" "}
+                <span className="text-info font-medium">Signal analysieren</span>{" "}
+                klickst, erscheint hier die Analyse- und Verarbeitungsantwort
+                von KAI.
+              </div>
             </div>
           )}
           {error && (
@@ -347,39 +629,52 @@ function SignalPasteForm({ onPasted }: SignalPasteFormProps) {
           {result && (
             <div
               className={cn(
-                "rounded-sm border border-line bg-bg-0 p-3 text-xs space-y-2 border-l-4",
+                "rounded-sm border border-line bg-bg-0 p-3 text-xs space-y-2.5 border-l-4",
                 TONE_ACCENT[statusTone(result.status)],
               )}
             >
-              <div className="flex flex-wrap items-center gap-2">
-                <Badge tone={statusTone(result.status)} dot>
-                  {result.status}
-                </Badge>
-                <Badge tone="muted">{result.stage}</Badge>
-                {result.message_type && (
-                  <Badge tone="info">{result.message_type}</Badge>
-                )}
+              <div className="space-y-1.5">
+                <div className="flex flex-wrap items-center gap-2">
+                  <Badge tone={statusTone(result.status)} dot>
+                    {statusShort}
+                  </Badge>
+                  <Badge tone="muted">
+                    {humanizeStage(result.stage)}
+                  </Badge>
+                  {result.message_type && (
+                    <Badge tone="info">{result.message_type}</Badge>
+                  )}
+                </div>
+                <div className="text-xs text-fg-muted leading-relaxed">
+                  {statusLong}
+                </div>
               </div>
+
               {result.status === "needs_completion" && (
                 <div className="space-y-3 rounded-sm border border-info/30 bg-info/5 p-3">
                   <div className="flex items-start gap-2 text-info">
                     <HelpCircle className="h-4 w-4 shrink-0 mt-0.5" />
                     <div className="text-xs">
-                      <div className="font-semibold">
-                        Ergänzen, gegenprüfen, absenden
+                      <div className="font-semibold inline-flex items-center gap-1.5">
+                        KAI braucht zusätzliche Angaben
+                        <InfoHint
+                          label="needs_completion"
+                          hint={TERM_EXPLAIN.needs_completion}
+                          side="left"
+                        />
                       </div>
-                      <div className="text-fg-muted">
-                        KAI hat den Paste heuristisch geparst. Bitte jetzt
-                        gegenprüfen — fehlende Felder ergänzen, falsch
-                        erkannte Felder korrigieren. Ohne vollständige Angaben
-                        setzt KAI keine stillen Defaults.
+                      <div className="text-fg-muted leading-relaxed">
+                        Das Signal ist heuristisch lesbar, aber Pflichtfelder
+                        fehlen. Bitte jetzt ergänzen oder korrigieren &mdash;
+                        ohne vollständige Angaben setzt KAI keine stillen
+                        Defaults.
                       </div>
                     </div>
                   </div>
                   {result.parsed_preview && (
                     <div className="rounded-sm border border-line bg-bg-0 p-2 space-y-0.5">
                       <div className="text-2xs uppercase tracking-wider text-fg-subtle mb-1">
-                        Geparst (read-only Übersicht)
+                        Was KAI bisher erkannt hat
                       </div>
                       <div className="font-mono text-2xs text-fg-muted space-y-0.5">
                         {Object.entries(result.parsed_preview).map(([k, v]) => (
@@ -391,8 +686,8 @@ function SignalPasteForm({ onPasted }: SignalPasteFormProps) {
                                   ? "—"
                                   : v.join(", ")
                                 : v === null
-                                ? "—"
-                                : String(v)}
+                                  ? "—"
+                                  : String(v)}
                             </span>
                           </div>
                         ))}
@@ -401,11 +696,15 @@ function SignalPasteForm({ onPasted }: SignalPasteFormProps) {
                   )}
                   <div className="space-y-2">
                     <div className="text-2xs uppercase tracking-wider text-fg-subtle">
-                      Verifizieren & korrigieren
+                      Fehlende Felder ergänzen
                     </div>
                     <label className="block space-y-1">
                       <span className="text-2xs uppercase tracking-wider text-fg-subtle flex items-center gap-1">
                         Exchange
+                        <InfoHint
+                          label="exchange_scope"
+                          hint={TERM_EXPLAIN.exchange_scope}
+                        />
                         {result.missing_fields.includes("exchange_scope") && (
                           <Badge tone="warn">erforderlich</Badge>
                         )}
@@ -474,39 +773,21 @@ function SignalPasteForm({ onPasted }: SignalPasteFormProps) {
                   </div>
                   <Button
                     variant="primary"
-                    size="sm"
+                    size="md"
                     onClick={submitWithCompletion}
                     disabled={busy}
+                    className="glow-info"
                   >
                     {busy ? (
                       <Loader2 className="h-3.5 w-3.5 animate-spin" />
                     ) : (
                       <Send className="h-3.5 w-3.5" />
                     )}
-                    Gegenprüfen & absenden
+                    Mit Ergänzung absenden
                   </Button>
                 </div>
               )}
-              {result.envelope_id && (
-                <div className="space-y-0.5">
-                  <div className="text-2xs uppercase tracking-wider text-fg-subtle">
-                    Envelope-ID
-                  </div>
-                  <div className="font-mono text-xs text-fg break-all">
-                    {result.envelope_id}
-                  </div>
-                </div>
-              )}
-              {result.idempotency_key && (
-                <div className="space-y-0.5">
-                  <div className="text-2xs uppercase tracking-wider text-fg-subtle">
-                    Idempotency-Key
-                  </div>
-                  <div className="font-mono text-2xs text-fg-muted break-all">
-                    {result.idempotency_key}
-                  </div>
-                </div>
-              )}
+
               {result.errors.length > 0 && (
                 <div className="space-y-1">
                   <div className="text-2xs uppercase tracking-wider text-neg">
@@ -519,6 +800,43 @@ function SignalPasteForm({ onPasted }: SignalPasteFormProps) {
                   </ul>
                 </div>
               )}
+
+              {(result.envelope_id || result.idempotency_key) && (
+                <details className="rounded-sm border border-line-subtle bg-bg-2/30">
+                  <summary className="cursor-pointer list-none px-2 py-1.5 text-2xs uppercase tracking-wider text-fg-subtle font-semibold flex items-center justify-between">
+                    <span className="inline-flex items-center gap-1.5">
+                      Technische Details
+                      <InfoHint
+                        label="Envelope und Idempotency"
+                        hint={TERM_EXPLAIN.envelope + " " + TERM_EXPLAIN.idempotency}
+                      />
+                    </span>
+                    <span className="text-2xs text-fg-subtle/70">(forensik)</span>
+                  </summary>
+                  <div className="px-2 pb-2 pt-1 space-y-1.5">
+                    {result.envelope_id && (
+                      <div className="space-y-0.5">
+                        <div className="text-2xs uppercase tracking-wider text-fg-subtle">
+                          Envelope-ID
+                        </div>
+                        <div className="font-mono text-2xs text-fg-muted break-all">
+                          {result.envelope_id}
+                        </div>
+                      </div>
+                    )}
+                    {result.idempotency_key && (
+                      <div className="space-y-0.5">
+                        <div className="text-2xs uppercase tracking-wider text-fg-subtle">
+                          Idempotency-Key
+                        </div>
+                        <div className="font-mono text-2xs text-fg-muted break-all">
+                          {result.idempotency_key}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </details>
+              )}
             </div>
           )}
         </div>
@@ -527,21 +845,41 @@ function SignalPasteForm({ onPasted }: SignalPasteFormProps) {
   );
 }
 
-function SignalDetailRow({ label, value, mono = false }: { label: string; value: string; mono?: boolean }) {
+function SignalDetailRow({
+  label,
+  value,
+  mono = false,
+}: {
+  label: string;
+  value: string;
+  mono?: boolean;
+}) {
   return (
     <div className="flex gap-2 min-w-0">
       <span className="text-2xs uppercase tracking-wider text-fg-subtle shrink-0 w-[110px] pt-0.5">
         {label}
       </span>
-      <span className={cn("text-xs text-fg break-words min-w-0", mono && "font-mono")}>
+      <span
+        className={cn(
+          "text-xs text-fg break-words min-w-0",
+          mono && "font-mono",
+        )}
+      >
         {value}
       </span>
     </div>
   );
 }
 
-function SignalDetails({ signal, duplicate }: { signal: SignalSummary; duplicate: boolean }) {
-  const exchanges = signal.exchange_scope.length > 0 ? signal.exchange_scope.join(", ") : "—";
+function SignalDetails({
+  signal,
+  duplicate,
+}: {
+  signal: SignalSummary;
+  duplicate: boolean;
+}) {
+  const exchanges =
+    signal.exchange_scope.length > 0 ? signal.exchange_scope.join(", ") : "—";
   const targets =
     signal.targets.length > 0 ? signal.targets.map(formatNumber).join(", ") : "—";
   const statusLabel = (signal.signal_status ?? "—").toUpperCase();
@@ -551,7 +889,7 @@ function SignalDetails({ signal, duplicate }: { signal: SignalSummary; duplicate
     <div className="rounded-sm border border-line-subtle bg-bg-2/40 p-3 space-y-2">
       <div className="flex items-center justify-between gap-2">
         <div className="text-2xs uppercase tracking-wider text-fg-subtle font-semibold">
-          Signal-Details
+          Was KAI erkannt hat
         </div>
         {signal.signal_id && (
           <span className="text-2xs font-mono text-fg-subtle break-all">
@@ -594,7 +932,9 @@ function EnvelopeCard({ rec }: { rec: EnvelopeRecord }) {
         <div className="flex items-center gap-2.5 min-w-0">
           <span className="shrink-0">{TONE_ICON[tone]}</span>
           <div className="min-w-0 space-y-1">
-            <div className="text-sm font-semibold text-fg">{statusHeadline(rec)}</div>
+            <div className="text-sm font-semibold text-fg">
+              {statusHeadline(rec)}
+            </div>
             {rec.signal && (
               <div className="text-sm font-mono text-fg break-words">
                 {signalHeadline(rec.signal)}
@@ -604,13 +944,16 @@ function EnvelopeCard({ rec }: { rec: EnvelopeRecord }) {
               <Badge tone={tone === "neutral" ? "muted" : tone} dot>
                 {rec.status ?? "—"}
               </Badge>
-              <Badge tone="muted">{rec.stage ?? "—"}</Badge>
+              <Badge tone="muted">
+                {humanizeStage(rec.stage)}
+              </Badge>
               {rec.message_type && (
                 <Badge tone="info">{rec.message_type}</Badge>
               )}
               {rec.source && (
                 <span className="text-2xs uppercase tracking-wider text-fg-subtle">
-                  src: {rec.source}
+                  Quelle:{" "}
+                  <span className="text-fg-muted">{humanizeSource(rec.source)}</span>
                 </span>
               )}
             </div>
@@ -629,9 +972,13 @@ function EnvelopeCard({ rec }: { rec: EnvelopeRecord }) {
       {rec.raw_text_preview && (
         <details className="rounded-sm border border-line-subtle bg-bg-2/40 group" open>
           <summary className="cursor-pointer list-none px-3 py-2 text-2xs uppercase tracking-wider text-fg-subtle font-semibold flex items-center justify-between">
-            <span>Original-Paste</span>
-            <span className="text-2xs text-fg-subtle group-open:hidden">(klicken zum Öffnen)</span>
-            <span className="text-2xs text-fg-subtle hidden group-open:inline">(klicken zum Schließen)</span>
+            <span>Original-Nachricht</span>
+            <span className="text-2xs text-fg-subtle group-open:hidden">
+              (klicken zum Öffnen)
+            </span>
+            <span className="text-2xs text-fg-subtle hidden group-open:inline">
+              (klicken zum Schließen)
+            </span>
           </summary>
           <pre className="px-3 pb-3 pt-1 font-mono text-2xs text-fg-muted whitespace-pre-wrap break-words leading-relaxed">
 {rec.raw_text_preview}
@@ -654,19 +1001,26 @@ function EnvelopeCard({ rec }: { rec: EnvelopeRecord }) {
         </div>
       )}
 
+      {/* DALI-T7: forensische Felder ins Technische-Details-Collapse. */}
       {(rec.envelope_id || rec.idempotency_key) && (
-        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 pt-1 border-t border-line-subtle text-2xs text-fg-subtle font-mono">
-          {rec.envelope_id && (
-            <span className="break-all">
-              <span className="opacity-70">env:</span> {rec.envelope_id}
-            </span>
-          )}
-          {rec.idempotency_key && (
-            <span className="break-all">
-              <span className="opacity-70">idem:</span> {rec.idempotency_key}
-            </span>
-          )}
-        </div>
+        <details className="rounded-sm border border-line-subtle bg-bg-2/30">
+          <summary className="cursor-pointer list-none px-2.5 py-1.5 text-2xs uppercase tracking-wider text-fg-subtle font-semibold flex items-center justify-between">
+            <span>Technische Details</span>
+            <span className="text-2xs text-fg-subtle/70">(forensik)</span>
+          </summary>
+          <div className="px-2.5 pb-2 pt-1 flex flex-wrap items-center gap-x-4 gap-y-1 text-2xs text-fg-subtle font-mono">
+            {rec.envelope_id && (
+              <span className="break-all">
+                <span className="opacity-70">env:</span> {rec.envelope_id}
+              </span>
+            )}
+            {rec.idempotency_key && (
+              <span className="break-all">
+                <span className="opacity-70">idem:</span> {rec.idempotency_key}
+              </span>
+            )}
+          </div>
+        </details>
       )}
     </div>
   );
@@ -683,8 +1037,16 @@ function AuditLogPanel({ state }: AuditPanelProps) {
   return (
     <Card>
       <CardHeader
-        title="Audit-Log"
-        subtitle="Letzte Envelope-Einträge aus artifacts/telegram_message_envelope.jsonl (Dashboard + Telegram geteilt, newest first)."
+        title={
+          <span className="inline-flex items-center gap-2">
+            Letzte empfangene externe Signale
+            <InfoHint
+              label="Audit-Log"
+              hint={TERM_EXPLAIN.audit_log}
+            />
+          </span>
+        }
+        subtitle="Zuletzt verarbeitete Signale aus Telegram, Dashboard-Eingaben, externen Schnittstellen und API-Feeds. Neueste zuerst."
         right={
           <div className="flex items-center gap-2">
             {state.state === "ready" && (
@@ -692,7 +1054,7 @@ function AuditLogPanel({ state }: AuditPanelProps) {
             )}
             <Button variant="outline" size="sm" onClick={state.reload}>
               <RefreshCw className="h-3.5 w-3.5" />
-              Reload
+              Aktualisieren
             </Button>
           </div>
         }
@@ -710,22 +1072,66 @@ function AuditLogPanel({ state }: AuditPanelProps) {
         </div>
       )}
       {state.state === "ready" && records.length === 0 && (
-        <div className="rounded-sm border border-dashed border-line-subtle bg-bg-0 p-6 text-center text-xs text-fg-subtle">
-          <Inbox className="h-6 w-6 mx-auto mb-2 opacity-50" />
-          Noch keine Einträge. Paste oben ein Signal oder warte auf Telegram-Traffic.
+        <div className="rounded-sm border border-dashed border-line-subtle bg-bg-0 p-6 text-center text-xs text-fg-subtle space-y-1.5">
+          <Inbox className="h-6 w-6 mx-auto mb-1 opacity-50" />
+          <div className="text-fg font-medium">
+            Noch keine externen Signale empfangen
+          </div>
+          <div>
+            Sobald du oben ein Signal einfügst oder Telegram eines weiterleitet,
+            erscheint es hier.
+          </div>
         </div>
       )}
       {state.state === "ready" && records.length > 0 && (
         <div className="space-y-2.5">
           {records.map((rec, i) => (
             <EnvelopeCard
-              key={`${rec.envelope_id ?? "na"}-${rec.timestamp_utc ?? i}-${i}`}
+              key={(rec.envelope_id ?? "na") + "-" + (rec.timestamp_utc ?? i) + "-" + i}
               rec={rec}
             />
           ))}
         </div>
       )}
     </Card>
+  );
+}
+
+// DALI-T7: Triage-Strip — 4 Hero-Kpis "heute" — visueller Anker für den
+// Operator, sofort erkennbar wie viel heute lief und wie es geendet ist.
+function TriageStrip({ records }: { records: EnvelopeRecord[] }) {
+  const counts = useMemo(() => todayCounts(records), [records]);
+  return (
+    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+      <Kpi
+        label="Heute akzeptiert"
+        value={counts.accepted}
+        sub="erfolgreich verarbeitet"
+        tone="pos"
+        size="lg"
+      />
+      <Kpi
+        label="Heute Duplikate"
+        value={counts.duplicate}
+        sub="bereits empfangen"
+        tone="warn"
+        size="lg"
+      />
+      <Kpi
+        label="Ergänzung nötig"
+        value={counts.needs}
+        sub="wartet auf Operator"
+        tone="info"
+        size="lg"
+      />
+      <Kpi
+        label="Heute abgelehnt"
+        value={counts.rejected}
+        sub="siehe Fehler"
+        tone="neg"
+        size="lg"
+      />
+    </div>
   );
 }
 
@@ -736,12 +1142,19 @@ export function ExternalSignalsPage() {
     30_000,
   );
 
+  const records = auditState.state === "ready" ? auditState.data.records : [];
+
   return (
     <div className="p-5 xl:p-6 space-y-5 max-w-[1680px] mx-auto">
       <PageHeader
         title={t("pages.external.title")}
-        sub="Manuelle & externe Signale — Dashboard/Telegram-Parität über Envelope-Pipeline"
+        sub="Trading-Signale aus Telegram, externen Gruppen, manuellen Quellen oder APIs einfügen — KAI analysiert, validiert und dokumentiert."
+        tone="accent"
+        icon={<Upload size={18} />}
+        divider={false}
       />
+
+      <TriageStrip records={records} />
 
       <SignalPasteForm onPasted={auditState.reload} />
       <AuditLogPanel state={auditState} />

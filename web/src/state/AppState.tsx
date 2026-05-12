@@ -69,8 +69,11 @@ export function useAppState() {
   return c;
 }
 
-export function modeTone(mode: TradingMode): "warn" | "neg" | "info" {
-  if (mode === "live") return "neg";
+// 2026-05-10 DALI-Mode-Konsistenz (Operator-Wunsch): live = grün (pos)
+// statt rot (neg). Paper = orange (warn), sim = cyan (info).
+// Operator: "live nicht grün, paper nicht orange — bitte konsistent."
+export function modeTone(mode: TradingMode): "warn" | "pos" | "info" {
+  if (mode === "live") return "pos";
   if (mode === "sim") return "info";
-  return "warn";
+  return "warn"; // paper
 }

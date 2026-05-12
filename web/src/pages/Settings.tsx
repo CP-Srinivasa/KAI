@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Settings as SettingsIcon } from "lucide-react";
 import { useT } from "@/i18n/I18nProvider";
 import { useTheme } from "@/theme/ThemeProvider";
 import { useAppState, type TradingMode } from "@/state/AppState";
@@ -24,7 +25,11 @@ export function SettingsPage() {
 
   return (
     <div className="p-5 xl:p-6 space-y-5 max-w-[1680px] mx-auto">
-      <PageHeader title={t("pages.settings.title")} sub={t("pages.settings.sub")} />
+      <PageHeader
+        title={t("pages.settings.title")}
+        sub={t("pages.settings.sub")}
+        icon={<SettingsIcon size={18} />}
+      />
 
       <div className="relative max-w-full">
         <div className="inline-flex items-center rounded-sm border border-line-subtle bg-bg-2 p-0.5 gap-0.5 overflow-x-auto max-w-full">

@@ -66,7 +66,9 @@ export function Sidebar({ mobileOpen = false, onMobileClose }: SidebarProps) {
   const { route, navigate } = useRouter();
   const { mode } = useAppState();
 
-  const modeTone = mode === "live" ? "neg" : mode === "sim" ? "info" : "warn";
+  // 2026-05-10 DALI-Mode-Konsistenz: live=pos (grün), paper=warn (orange),
+  // sim=info (cyan). Operator-Wunsch.
+  const modeTone: "pos" | "warn" | "info" = mode === "live" ? "pos" : mode === "sim" ? "info" : "warn";
   const modeLabel = mode === "live" ? t("topbar.mode_live") : mode === "sim" ? t("topbar.mode_sim") : t("topbar.mode_paper");
   const ModeIcon = mode === "live" ? Zap : mode === "sim" ? FlaskConical : Shield;
 
@@ -121,8 +123,8 @@ export function Sidebar({ mobileOpen = false, onMobileClose }: SidebarProps) {
           <div
             className={cn(
               "flex items-center justify-between px-2 py-1.5 rounded-sm border text-xs",
-              modeTone === "neg"
-                ? "border-neg/30 bg-neg/5 text-neg"
+              modeTone === "pos"
+                ? "border-pos/30 bg-pos/5 text-pos"
                 : modeTone === "info"
                   ? "border-info/25 bg-info/5 text-info"
                   : "border-warn/25 bg-warn/5 text-warn",

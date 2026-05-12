@@ -54,6 +54,61 @@ export function CardHeader({
   );
 }
 
+/* ---------- Kpi ----------
+   2026-05-10 DALI-K1: zentrale Kpi-Komponente. Bisher waren Kpi-Funktionen
+   in 7+ Pages dupliziert (Trades, Portfolio, AIInsightsPage, Dashboard, ...)
+   ohne Hero-Variante. Diese zentrale Variante hat:
+   - size: sm/md/lg/hero (text-base / text-lg / text-xl / text-3xl)
+   - tone: pos/neg/warn/info/ai/muted/neutral
+   - sub: optionaler Mono-Subtext unter Wert
+   Operator-Wunsch: Hero-Number pro Page für "was sagt mir diese Seite". */
+
+export type KpiTone = "pos" | "neg" | "warn" | "info" | "ai" | "muted" | "neutral";
+export type KpiSize = "sm" | "md" | "lg" | "hero";
+
+const KPI_TONE_TEXT: Record<KpiTone, string> = {
+  pos: "text-pos",
+  neg: "text-neg",
+  warn: "text-warn",
+  info: "text-info",
+  ai: "text-ai",
+  muted: "text-fg-muted",
+  neutral: "text-fg",
+};
+
+const KPI_SIZE_CLS: Record<KpiSize, string> = {
+  sm: "text-base",
+  md: "text-lg",
+  lg: "text-xl",
+  hero: "text-3xl",
+};
+
+export function Kpi({
+  label,
+  value,
+  sub,
+  tone = "neutral",
+  size = "md",
+  className,
+}: {
+  label: string;
+  value: ReactNode;
+  sub?: ReactNode;
+  tone?: KpiTone;
+  size?: KpiSize;
+  className?: string;
+}) {
+  return (
+    <Card padded className={className}>
+      <div className="text-2xs uppercase tracking-wider text-fg-subtle font-semibold">{label}</div>
+      <div className={cn("mt-1 font-mono font-semibold", KPI_SIZE_CLS[size], KPI_TONE_TEXT[tone])}>
+        {value}
+      </div>
+      {sub && <div className="mt-1 text-2xs text-fg-subtle font-mono">{sub}</div>}
+    </Card>
+  );
+}
+
 /* ---------- Badge ---------- */
 
 // text-2xs (11px) Konvention (DALI-F-009):
@@ -177,6 +232,69 @@ export const Button = forwardRef<HTMLButtonElement, BtnProps>(function Button(
     </button>
   );
 });
+
+/* ---------- InfoHint (DALI-P-026, 2026-05-11) ----------
+   Inline-Tooltip-Affordance fuer Fachbegriffe (ADX, ATR-Z, Wilson-CI etc.).
+   CSS-only via group + focus-within, kein Portal — bleibt im Card-Stacking-
+   Context und vererbt das Synthwave-Glow-Pattern (border-info/40 +
+   glow-info-leicht). Operator-Wunsch 2026-05-11: deutsche Klar-Definitionen
+   auf einen Blick, ohne ein eigenes Drawer/Modal zu oeffnen.
+
+   - trigger: kleines (i)-Glyph (a11y: button mit aria-label, type=button).
+   - hint:    deutsche Erklaerung, max ~2-3 Saetze. Wird unter dem Trigger
+              eingeblendet, rechts bzw. links je nach side="left|right".
+   - inline:  true → triggert als kleines Symbol neben Text; false → block.
+*/
+
+export function InfoHint({
+  label,
+  hint,
+  side = "right",
+  className,
+  triggerClassName,
+}: {
+  label: string;
+  hint: ReactNode;
+  side?: "left" | "right";
+  className?: string;
+  triggerClassName?: string;
+}) {
+  const sidePos = side === "left" ? "right-0" : "left-0";
+  return (
+    <span className={cn("relative inline-flex items-center group", className)}>
+      <button
+        type="button"
+        aria-label={`Erklaerung: ${label}`}
+        className={cn(
+          "inline-flex h-3.5 w-3.5 items-center justify-center rounded-full",
+          "border border-info/40 bg-bg-2 text-info text-[9px] font-bold leading-none",
+          "transition-colors hover:border-info hover:bg-info/10",
+          "focus:outline-none focus-visible:ring-1 focus-visible:ring-info/60",
+          triggerClassName,
+        )}
+      >
+        i
+      </button>
+      <span
+        role="tooltip"
+        className={cn(
+          "pointer-events-none absolute top-full mt-1.5 z-30 w-64 max-w-[80vw]",
+          sidePos,
+          "rounded-md border border-info/40 bg-bg-1 px-2.5 py-2",
+          "text-2xs leading-relaxed text-fg shadow-panel glow-info",
+          "opacity-0 translate-y-1 transition-all duration-150",
+          "group-hover:opacity-100 group-hover:translate-y-0 group-hover:pointer-events-auto",
+          "group-focus-within:opacity-100 group-focus-within:translate-y-0 group-focus-within:pointer-events-auto",
+        )}
+      >
+        <span className="block text-2xs font-semibold uppercase tracking-wider text-info mb-1">
+          {label}
+        </span>
+        <span className="block text-fg-muted">{hint}</span>
+      </span>
+    </span>
+  );
+}
 
 /* ---------- Section label ---------- */
 
