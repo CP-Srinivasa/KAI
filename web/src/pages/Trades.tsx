@@ -572,16 +572,20 @@ function CycleCard({ c }: { c: TradingCycle }) {
           )}
         </div>
 
-        {/* Zeile 3: Slot-Strip Risiko / PnL / Konfidenz / Dauer */}
+        {/* Zeile 3: Slot-Strip - Dauer zuerst, dann Hybrid-Slots.
+            2026-05-12 DALI-arcade-T3a: Reihenfolge bewusst Dauer-first.
+            Dauer ist das einzige real berechnete Feld (started_at -> completed_at).
+            Risiko/PnL/Konfidenz sind Hybrid-Slots (n/a bis Backend liefert).
+            Operator-Entscheidung: ehrlicher Look statt fake-prominenter Slots. */}
         <div className="mt-2.5 flex flex-wrap gap-1.5">
-          <CycleSlot label="Risiko" value="n/a" muted />
-          <CycleSlot label="PnL" value="n/a" muted />
-          <CycleSlot label="Konfidenz" value="n/a" muted />
           <CycleSlot
             label="Dauer"
             value={duration ?? "n/a"}
             muted={!duration}
           />
+          <CycleSlot label="Risiko" value="n/a" muted />
+          <CycleSlot label="PnL" value="n/a" muted />
+          <CycleSlot label="Konfidenz" value="n/a" muted />
         </div>
 
         {/* Zeile 4: Mikro-Pipeline-Dots */}
