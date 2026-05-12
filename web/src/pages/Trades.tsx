@@ -1,5 +1,18 @@
 import { Fragment } from "react";
-import { AlertCircle, RefreshCw, ArrowLeftRight } from "lucide-react";
+import {
+  AlertCircle,
+  RefreshCw,
+  ArrowLeftRight,
+  CheckCircle2,
+  XCircle,
+  Slash,
+  ShieldAlert,
+  ShieldOff,
+  Activity,
+  Ban,
+  CloudOff,
+  Clock,
+} from "lucide-react";
 import { useT } from "@/i18n/I18nProvider";
 import { Badge, Button, Card, CardHeader } from "@/components/ui/Primitives";
 import { PageHeader } from "@/layout/PageHeader";
@@ -8,7 +21,8 @@ import { fetchTradingLoopStatus, fetchRecentCycles, type TradingCycle, type Trad
 import type { AsyncState } from "@/lib/useApi";
 import { cn } from "@/lib/utils";
 import { PreparedPanel } from "@/components/panels/PreparedPanel";
-import { LABEL_DE, CYCLE_STATUS_EXPLAIN } from "@/lib/labels";
+import { LABEL_DE, CYCLE_STATUS_EXPLAIN, CYCLE_STATUS_TITLE, CYCLE_STATUS_REASON } from "@/lib/labels";
+import { formatRelative, formatDuration } from "@/lib/time";
 
 // 2026-05-10 DALI-T1: Klartext-Synopsis aus Cycle-Buckets ableiten.
 // Operator-Frage "was sagt mir die Seite?" wird in 1 Satz beantwortet.
@@ -267,42 +281,38 @@ export function TradesPage() {
         </Card>
       )}
 
+      {/* 2026-05-12 DALI-arcade-T3: Cycle-Card-Liste ersetzt Debug-Tabelle.
+          Spec 4.1 + 4.2 (Wireframe), Operator-Prompt 7-9.
+          - Jede Card: Status-Headline (CYCLE_STATUS_TITLE) + Pair + Ergebnis
+            (CYCLE_STATUS_REASON) + Slots fuer Risk/PnL/Confidence (Hybrid:
+            n/a bis Backend liefert) + Dauer (formatDuration) + relative Zeit
+            (formatRelative) + Tone-Akzentbalken links.
+          - Mobile: 1-spaltig, Desktop: weiterhin 1-spaltig mit breiteren
+            Cards (lesbarer als 2-spaltig - viel Microcopy pro Card).
+          - Pipeline-Dots wandern in den Card-Footer (kompakter Mikro-Indikator).
+          - Notes als Pillen unten, max 3 sichtbar + Rest-Count.
+          - A11y: jede Card ist role=article mit aria-label (Status + Pair + Zeit).
+            Pipeline-Dots haben title-Hint. Reduced-Motion: kein Hover-Bounce. */}
       <Card padded={false} className="overflow-hidden">
         <div className="flex items-center justify-between gap-3 px-4 py-3 border-b border-line-subtle">
           <div className="text-sm font-semibold tracking-tight text-fg">Letzte Trading-Cycles</div>
           <div className="text-2xs text-fg-subtle font-mono">
-            {cycles.state === "ready" ? `${cycles.data.recent_cycles.length} Einträge` : ""}
+            {cycles.state === "ready" ? `${cycles.data.recent_cycles.length} Eintraege` : ""}
           </div>
         </div>
         {cycles.state === "error" ? (
           <div className="p-4">
             <ErrorCard kind={cycles.error.kind} message={cycles.error.message} path="/operator/trading-loop/recent-cycles" />
           </div>
+        ) : cycles.state === "loading" ? (
+          <div className="px-4 py-6 text-center text-fg-subtle text-xs">{t("common.loading")}</div>
+        ) : cycles.data.recent_cycles.length === 0 ? (
+          <div className="px-4 py-6 text-center text-fg-subtle text-xs">{t("common.no_data")}</div>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-xs">
-              <thead>
-                <tr className="text-fg-subtle text-2xs uppercase tracking-wider">
-                  <th className="text-left font-semibold px-4 py-2">Zeit</th>
-                  <th className="text-left font-semibold px-4 py-2">Symbol</th>
-                  <th className="text-left font-semibold px-4 py-2">Status</th>
-                  <th className="text-left font-semibold px-4 py-2 whitespace-nowrap">
-                    Pipeline
-                    <span className="ml-1 normal-case text-fg-subtle/70 font-normal">(Daten → Signal → Risk → Order → Fill)</span>
-                  </th>
-                  <th className="text-left font-semibold px-4 py-2">Notes</th>
-                </tr>
-              </thead>
-              <tbody>
-                {cycles.state === "loading" && (
-                  <tr><td colSpan={5} className="px-4 py-6 text-center text-fg-subtle">{t("common.loading")}</td></tr>
-                )}
-                {cycles.state === "ready" && cycles.data.recent_cycles.length === 0 && (
-                  <tr><td colSpan={5} className="px-4 py-6 text-center text-fg-subtle">{t("common.no_data")}</td></tr>
-                )}
-                {cycles.state === "ready" && cycles.data.recent_cycles.slice().reverse().map((c) => <CycleRow key={c.cycle_id} c={c} />)}
-              </tbody>
-            </table>
+          <div className="flex flex-col gap-2 p-3">
+            {cycles.data.recent_cycles.slice().reverse().map((c) => (
+              <CycleCard key={c.cycle_id} c={c} />
+            ))}
           </div>
         )}
       </Card>
@@ -457,57 +467,183 @@ function BucketTile({
   );
 }
 
-function CycleRow({ c }: { c: TradingCycle }) {
-  const toneFor = (s: string) => {
-    if (s === "completed") return "pos";
-    if (s === "no_signal") return "muted";
-    if (s === "no_market_data" || s === "stale_data") return "warn";
-    if (s === "order_failed" || s === "consensus_rejected") return "neg";
-    return "neutral";
-  };
-  // 2026-05-10 DALI-T-Pipeline: 5x BoolDot-Spalten → 1 Pipeline-Visualisierung
-  // mit Neon-Lichtpunkten (cyan-glow für erreicht, gedimmt sonst). Verbindungs-
-  // linien zwischen Steps zeigen Fluss; abgebrochen wo der Cycle stoppte.
-  // completed-Rows bekommen subtilen pos-Glow als Zeilen-Hintergrund.
+// 2026-05-12 DALI-arcade-T3: CycleCard ersetzt CycleRow.
+// Spec 4.1 + 4.2 + Operator-Prompt 7-9.
+// Layout pro Card:
+//   [Akzentbalken] Status-Headline + Tone-Icon + Zeit (rel)
+//                  Pair (mono) - Ergebnis (Reason-Text)
+//                  [Risk n/a] [PnL n/a] [Conf n/a] [Dauer +X.Xs]
+//                  Pipeline-Dots (Daten/Signal/Risk/Order/Fill)
+//                  Notes-Pillen (max 3) + Rest-Count
+// Tones: completed=pos, no_signal=muted, no_market_data/stale=warn,
+//        order_failed/consensus_rejected/risk_rejected/sl_failed=neg,
+//        sonst info. Risk/PnL/Confidence sind Hybrid-Slots (n/a bis
+//        Backend liefert) - kein erfundenes Feld, kein Mock-Wert.
+function cycleCardTone(s: string): "pos" | "neg" | "warn" | "info" | "muted" {
+  if (s === "completed") return "pos";
+  if (s === "no_signal") return "muted";
+  if (s === "no_market_data" || s === "stale_data") return "warn";
+  if (
+    s === "order_failed" ||
+    s === "consensus_rejected" ||
+    s === "risk_rejected" ||
+    s === "sl_failed"
+  ) {
+    return "neg";
+  }
+  return "info";
+}
+
+// Status-Icon: A11y-Spiegelung von Status + Tone in Symbolform.
+function cycleCardIcon(s: string) {
+  const sz = 14;
+  if (s === "completed") return <CheckCircle2 size={sz} className="text-pos shrink-0" aria-hidden />;
+  if (s === "order_failed" || s === "sl_failed") return <XCircle size={sz} className="text-neg shrink-0" aria-hidden />;
+  if (s === "consensus_rejected") return <Ban size={sz} className="text-neg shrink-0" aria-hidden />;
+  if (s === "risk_rejected") return <ShieldAlert size={sz} className="text-neg shrink-0" aria-hidden />;
+  if (s === "no_market_data") return <CloudOff size={sz} className="text-warn shrink-0" aria-hidden />;
+  if (s === "stale_data") return <Clock size={sz} className="text-warn shrink-0" aria-hidden />;
+  if (s === "no_signal") return <Slash size={sz} className="text-fg-subtle shrink-0" aria-hidden />;
+  if (s === "priority_rejected" || s === "signal_below_threshold") return <ShieldOff size={sz} className="text-warn shrink-0" aria-hidden />;
+  if (s === "blocked" || s === "gate_blocked") return <Ban size={sz} className="text-warn shrink-0" aria-hidden />;
+  return <Activity size={sz} className="text-info shrink-0" aria-hidden />;
+}
+
+function CycleCard({ c }: { c: TradingCycle }) {
+  const tone = cycleCardTone(c.status);
+  const accentBar =
+    tone === "pos" ? "bg-pos"
+    : tone === "neg" ? "bg-neg"
+    : tone === "warn" ? "bg-warn"
+    : tone === "info" ? "bg-info"
+    : "bg-fg-subtle/40";
+  const headlineColor =
+    tone === "pos" ? "text-pos"
+    : tone === "neg" ? "text-neg"
+    : tone === "warn" ? "text-warn"
+    : tone === "info" ? "text-info"
+    : "text-fg";
+  const title = CYCLE_STATUS_TITLE[c.status] ?? (LABEL_DE[c.status] ?? c.status);
+  const reason = CYCLE_STATUS_REASON[c.status] ?? CYCLE_STATUS_EXPLAIN[c.status] ?? "";
+  const relTime = formatRelative(c.started_at);
+  const duration = c.completed_at ? formatDuration(c.started_at, c.completed_at) : null;
+  const ariaLabel = `Cycle ${c.symbol}. ${title}. ${relTime}.`;
   return (
-    <tr
+    <article
+      role="article"
+      aria-label={ariaLabel}
+      tabIndex={0}
       className={cn(
-        "border-t border-line-subtle hover:bg-bg-2",
-        c.status === "completed" && "bg-pos/[0.03]",
+        "rounded-md border border-line-subtle bg-bg-2 p-3 flex gap-3",
+        "focus:outline-none focus-visible:ring-1 focus-visible:ring-info/60 focus-visible:border-info/40",
+        c.status === "completed" && "bg-pos/[0.04]",
       )}
     >
-      <td className="px-4 py-2 font-mono text-2xs text-fg-subtle whitespace-nowrap">
-        {c.started_at.substring(11, 19)}
-      </td>
-      <td className="px-4 py-2 font-mono font-semibold whitespace-nowrap">{c.symbol}</td>
-      <td className="px-4 py-2">
-        <span title={CYCLE_STATUS_EXPLAIN[c.status] ?? c.status}>
-          <Badge tone={toneFor(c.status)}>{LABEL_DE[c.status] ?? c.status}</Badge>
-        </span>
-      </td>
-      <td className="px-4 py-2">
-        <CyclePipeline c={c} />
-      </td>
-      <td className="px-4 py-2 max-w-[420px]">
-        <div className="flex flex-wrap gap-1">
-          {c.notes.slice(0, 3).map((n, i) => (
-            <span
-              key={i}
-              title={n}
-              className="inline-flex items-center rounded-xs border border-line-subtle bg-bg-2 px-1.5 py-0.5 text-[10px] font-mono text-fg-subtle"
+      {/* Linker Tone-Akzentbalken */}
+      <span
+        className={cn("w-1 rounded-full shrink-0 self-stretch", accentBar)}
+        aria-hidden
+      />
+      <div className="min-w-0 flex-1">
+        {/* Zeile 1: Headline + Icon + Zeit */}
+        <div className="flex items-start justify-between gap-3 flex-wrap">
+          <div className="flex items-center gap-2 min-w-0">
+            {cycleCardIcon(c.status)}
+            <h3
+              className={cn("text-sm font-semibold tracking-tight leading-tight", headlineColor)}
+              title={CYCLE_STATUS_EXPLAIN[c.status] ?? title}
             >
-              {humanizeNote(n)}
-            </span>
-          ))}
-          {c.notes.length > 3 && (
-            <span className="text-2xs text-fg-subtle">+{c.notes.length - 3}</span>
-          )}
-          {c.notes.length === 0 && (
-            <span className="text-2xs text-fg-subtle italic">—</span>
+              {title}
+            </h3>
+          </div>
+          <span
+            className="text-2xs text-fg-subtle font-mono whitespace-nowrap shrink-0"
+            title={c.started_at}
+          >
+            {relTime}
+          </span>
+        </div>
+
+        {/* Zeile 2: Pair + Ergebnis-Text */}
+        <div className="mt-1.5 flex items-baseline gap-2 flex-wrap">
+          <span className="font-mono font-semibold text-base text-fg">{c.symbol}</span>
+          {reason && (
+            <span className="text-xs text-fg-muted leading-snug">- {reason}</span>
           )}
         </div>
-      </td>
-    </tr>
+
+        {/* Zeile 3: Slot-Strip Risiko / PnL / Konfidenz / Dauer */}
+        <div className="mt-2.5 flex flex-wrap gap-1.5">
+          <CycleSlot label="Risiko" value="n/a" muted />
+          <CycleSlot label="PnL" value="n/a" muted />
+          <CycleSlot label="Konfidenz" value="n/a" muted />
+          <CycleSlot
+            label="Dauer"
+            value={duration ?? "n/a"}
+            muted={!duration}
+          />
+        </div>
+
+        {/* Zeile 4: Mikro-Pipeline-Dots */}
+        <div className="mt-2.5 flex items-center gap-2 flex-wrap">
+          <span className="text-2xs uppercase tracking-wider text-fg-subtle font-semibold">
+            Pipeline
+          </span>
+          <CyclePipeline c={c} />
+          <span className="text-2xs text-fg-subtle font-normal hidden sm:inline">
+            Daten - Signal - Risk - Order - Fill
+          </span>
+        </div>
+
+        {/* Zeile 5: Notes-Pillen */}
+        {c.notes.length > 0 && (
+          <div className="mt-2.5 flex flex-wrap gap-1">
+            {c.notes.slice(0, 3).map((n, i) => (
+              <span
+                key={i}
+                title={n}
+                className="inline-flex items-center rounded-xs border border-line-subtle bg-bg-1 px-1.5 py-0.5 text-[10px] font-mono text-fg-subtle"
+              >
+                {humanizeNote(n)}
+              </span>
+            ))}
+            {c.notes.length > 3 && (
+              <span className="text-2xs text-fg-subtle self-center">
+                +{c.notes.length - 3} weitere
+              </span>
+            )}
+          </div>
+        )}
+      </div>
+    </article>
+  );
+}
+
+// Slot fuer Risiko/PnL/Konfidenz/Dauer - kompakte Label-Value-Pille.
+// Hybrid-Mode: bei muted=true wird der Slot visuell zurueckgenommen
+// (Operator sieht: Feld existiert, aber Backend liefert noch nicht).
+function CycleSlot({
+  label,
+  value,
+  muted,
+}: {
+  label: string;
+  value: string;
+  muted?: boolean;
+}) {
+  return (
+    <span
+      className={cn(
+        "inline-flex items-baseline gap-1 rounded-xs border px-1.5 py-0.5 text-[10px] font-mono",
+        muted
+          ? "border-line-subtle bg-bg-1 text-fg-subtle"
+          : "border-info/30 bg-bg-1 text-fg",
+      )}
+      title={muted ? `${label}: Backend liefert dieses Feld noch nicht (Hybrid-Mode-Slot).` : `${label}: ${value}`}
+    >
+      <span className="uppercase tracking-wider text-fg-subtle/80">{label}</span>
+      <span className={cn("font-semibold", muted ? "italic" : "")}>{value}</span>
+    </span>
   );
 }
 
