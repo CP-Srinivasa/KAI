@@ -1,10 +1,11 @@
 import { Fragment } from "react";
-import { AlertCircle, RefreshCw, ArrowLeftRight, Activity } from "lucide-react";
+import { AlertCircle, RefreshCw, ArrowLeftRight } from "lucide-react";
 import { useT } from "@/i18n/I18nProvider";
-import { Badge, Button, Card, CardHeader, Kpi } from "@/components/ui/Primitives";
+import { Badge, Button, Card, CardHeader } from "@/components/ui/Primitives";
 import { PageHeader } from "@/layout/PageHeader";
 import { useApi } from "@/lib/useApi";
-import { fetchTradingLoopStatus, fetchRecentCycles, type TradingCycle } from "@/lib/api";
+import { fetchTradingLoopStatus, fetchRecentCycles, type TradingCycle, type TradingLoopStatus, type RecentCyclesSummary } from "@/lib/api";
+import type { AsyncState } from "@/lib/useApi";
 import { cn } from "@/lib/utils";
 import { PreparedPanel } from "@/components/panels/PreparedPanel";
 import { LABEL_DE, CYCLE_STATUS_EXPLAIN } from "@/lib/labels";
@@ -31,6 +32,59 @@ function summarizeCycles(cyclesList: TradingCycle[]): string {
   return `Letzte ${cyclesList.length} Cycles: ${parts.join(", ") || "—"}${lastSegment}.`;
 }
 
+
+// 2026-05-12 DALI-arcade-T1: Bucket-Aggregation + Systemstatus-Headline.
+// Spec 4.1 + 4.2. Liefert die 5 Buckets als feste Felder + abgeleitete
+// tone/headline. Keine erfundenen Felder - nur status_counts/recent_cycles
+// als Quelle (RecentCyclesSummary aus lib/api.ts).
+type CyclesHealth = {
+  total: number;
+  analyzed: number;
+  validSignals: number;
+  executed: number;
+  riskBlocked: number;
+  apiFail: number;
+  ghostsTotal: number;
+  headline: string;
+  tone: "pos" | "neg" | "warn" | "info" | "muted";
+};
+
+function aggregateCyclesHealth(cycles: TradingCycle[]): CyclesHealth {
+  const sc: Record<string, number> = {};
+  for (const c of cycles) sc[c.status] = (sc[c.status] ?? 0) + 1;
+  const total = cycles.length;
+  const executed = sc.completed ?? 0;
+  const riskBlocked =
+    (sc.risk_rejected ?? 0) + (sc.consensus_rejected ?? 0) + (sc.priority_rejected ?? 0);
+  const apiFail =
+    (sc.no_market_data ?? 0) + (sc.stale_data ?? 0) + (sc.order_failed ?? 0);
+  const validSignals =
+    executed + (sc.risk_rejected ?? 0) + (sc.consensus_rejected ?? 0) + (sc.order_failed ?? 0);
+  const ghostsTotal = riskBlocked + apiFail;
+  const orderFail = sc.order_failed ?? 0;
+
+  let headline: string;
+  let tone: CyclesHealth["tone"];
+  if (total === 0) {
+    headline = "Noch keine Cycles im aktuellen Fenster";
+    tone = "muted";
+  } else if (orderFail >= 3) {
+    headline = "Systemstatus: INSTABIL - Execution-Layer pruefen";
+    tone = "neg";
+  } else if (total > 0 && ghostsTotal / total > 0.4) {
+    headline = "Systemstatus: Aufmerksamkeit noetig";
+    tone = "warn";
+  } else if (executed === 0 && total >= 10) {
+    headline = "Systemstatus: ruhig - kein Trade-Anlass";
+    tone = "info";
+  } else {
+    headline = "Systemstatus: stabil";
+    tone = "pos";
+  }
+
+  return { total, analyzed: total, validSignals, executed, riskBlocked, apiFail, ghostsTotal, headline, tone };
+}
+
 function formatTimeShort(iso: string): string {
   try {
     const dt = new Date(iso);
@@ -43,117 +97,6 @@ function formatTimeShort(iso: string): string {
   } catch {
     return iso.substring(11, 16);
   }
-}
-
-// 2026-05-10 DALI-BTC-Pacman: Bitcoin-Pacman frisst Currency-Symbole.
-// Operator-Bild 2026-05-10: Bitcoin-Logo als Pacman, Mund auf/zu, davor
-// Currency-Pellets ($/€/¥/£) die nacheinander "gefressen" werden.
-type PelletKind = "dollar" | "euro" | "yen" | "pound" | "btc" | "ghost" | "empty";
-
-// Cycle-Status → Pellet-Mapping. Verschiedene Currency-Symbole spiegeln den
-// Status: completed = $ (Hauptgewinn), no_signal = · (kleiner Punkt), failed = Geist.
-function pelletForStatus(status: string, idx: number): PelletKind {
-  if (status === "completed") {
-    // Power-Pellet: rotierende Currency-Symbole pro completed-Cycle
-    const symbols: PelletKind[] = ["dollar", "euro", "yen", "pound"];
-    return symbols[idx % symbols.length];
-  }
-  if (status === "order_failed" || status === "consensus_rejected" || status === "priority_rejected") {
-    return "ghost";
-  }
-  if (status === "blocked") return "empty";
-  return "empty"; // no_signal, no_market_data etc → kleiner Punkt
-}
-
-// Klassischer ATARI-Pacman v3: gelber Kreis + kleines Auge + animiertes
-// Mund-Dreieck (öffnet/schließt via SMIL-Animation auf points-Attribut).
-// Operator: "Mach ein Dreieck als Mund das sich schließt und öffnet,
-// nimm dir ein Beispiel wie er wirklich aussieht."
-function PacmanIcon({ size = 22 }: { size?: number }) {
-  return (
-    <svg
-      width={size}
-      height={size}
-      viewBox="0 0 32 32"
-      className="btc-pacman"
-      aria-hidden="true"
-    >
-      {/* Pacman-Body: gelber Kreis */}
-      <circle cx="16" cy="16" r="14" fill="rgb(var(--warn))" />
-      {/* Mund-Dreieck — öffnet/schließt via SMIL-Animation auf points.
-          calcMode="discrete" gibt den retro-stuck-Effekt von ATARI-Pacman
-          (kein smooth-tween zwischen offen und zu). 3 Frames sodass es
-          smooth zurückkommt. */}
-      <polygon fill="rgb(var(--bg-0))">
-        <animate
-          attributeName="points"
-          values="16,16 32,4 32,28; 16,16 31,15 31,17; 16,16 32,4 32,28"
-          dur="0.42s"
-          calcMode="discrete"
-          repeatCount="indefinite"
-        />
-      </polygon>
-      {/* Auge oben */}
-      <circle cx="14" cy="9" r="1.6" fill="rgb(var(--bg-0))" />
-    </svg>
-  );
-}
-
-// Currency-Pellet: $-, €-, ¥-, £- oder ₿-Symbol als Neon-Pellet.
-// Pellet-Größe + Glow nach Status. Hover-scale für Detail.
-function CurrencyPellet({ kind, title }: { kind: PelletKind; title: string }) {
-  if (kind === "ghost") {
-    // Pacman-Geist: rotes pixel-Quadrat mit roundes Top + 2 weiße Augen.
-    return (
-      <span title={title} className="inline-flex shrink-0 transition-transform hover:scale-150" aria-hidden="true">
-        <svg width={11} height={11} viewBox="0 0 16 16" style={{ filter: "drop-shadow(0 0 4px rgb(var(--neg) / 0.85))" }}>
-          {/* Body */}
-          <path d="M2 8 Q 2 1 8 1 Q 14 1 14 8 L 14 14 L 12 13 L 10 15 L 8 13 L 6 15 L 4 13 L 2 14 Z" fill="rgb(var(--neg))" />
-          {/* Augen */}
-          <circle cx="6" cy="7" r="1.3" fill="rgb(var(--bg-0))" />
-          <circle cx="10" cy="7" r="1.3" fill="rgb(var(--bg-0))" />
-          <circle cx="6.4" cy="7.2" r="0.6" fill="rgb(var(--neg))" />
-          <circle cx="10.4" cy="7.2" r="0.6" fill="rgb(var(--neg))" />
-        </svg>
-      </span>
-    );
-  }
-  if (kind === "empty") {
-    return (
-      <span
-        title={title}
-        aria-hidden="true"
-        className="inline-block shrink-0 rounded-full"
-        style={{ width: 3, height: 3, backgroundColor: "rgb(var(--fg-subtle) / 0.25)" }}
-      />
-    );
-  }
-  // Currency-Pellet — Symbol mit Glow
-  const symbol = kind === "dollar" ? "$" : kind === "euro" ? "€" : kind === "yen" ? "¥" : kind === "pound" ? "£" : "₿";
-  // Verschiedene Tone für verschiedene Currencies — pos/info/ai/warn-Mischung
-  const tone =
-    kind === "dollar" ? "rgb(var(--pos))"
-    : kind === "euro" ? "rgb(var(--info))"
-    : kind === "yen"  ? "rgb(var(--ai))"
-    : kind === "pound" ? "rgb(var(--accent))"
-    : "rgb(var(--warn))";
-  return (
-    <span
-      title={title}
-      aria-hidden="true"
-      className="currency-pellet shrink-0 transition-transform hover:scale-150"
-      style={{
-        width: 11,
-        height: 11,
-        fontSize: 11,
-        color: tone,
-        textShadow: `0 0 6px ${tone}, 0 0 10px ${tone}`,
-        animation: "pacman-power-pulse 0.9s steps(1) infinite",
-      }}
-    >
-      {symbol}
-    </span>
-  );
 }
 
 // Notes-humanize: kurz lesbar statt snake_case-Roh-String.
@@ -171,7 +114,6 @@ export function TradesPage() {
   const cycles = useApi((s) => fetchRecentCycles(30, s), 15_000);
 
   const cyclesList = cycles.state === "ready" ? cycles.data.recent_cycles : [];
-  const completed24h = cyclesList.filter((c) => c.status === "completed").length;
 
   return (
     <div className="p-5 xl:p-6 space-y-5 max-w-[1680px] mx-auto">
@@ -179,10 +121,22 @@ export function TradesPage() {
         title={t("pages.trades.title")}
         tone="pos"
         icon={<ArrowLeftRight size={18} />}
+        // 2026-05-12 DALI-arcade-T1: divider=false - die Synthwave-Linie
+        // wandert als border-top an die erste Card (Cycles-Healthcheck).
+        // Vorher waren BEIDE aktiv -> schwebende Doppellinie (F-001).
+        divider={false}
         sub={
           status.state === "ready"
-            ? `Mode: ${status.data.mode} · Letzter Status: ${status.data.last_cycle_status ?? "—"}`
-            : "Was wurde zuletzt ausgeführt und mit welchem Ergebnis."
+            ? `Mode: ${status.data.mode} · Letzter Cycle: ${
+                status.data.last_cycle_completed_at
+                  ? formatTimeShort(status.data.last_cycle_completed_at)
+                  : "—"
+              }${
+                status.data.last_cycle_status
+                  ? ` · ${LABEL_DE[status.data.last_cycle_status] ?? status.data.last_cycle_status}`
+                  : ""
+              }`
+            : "Was hat KAI entschieden - und mit welchem Ergebnis?"
         }
         right={
           <Button onClick={() => { status.reload(); cycles.reload(); }} variant="outline" size="sm">
@@ -193,102 +147,19 @@ export function TradesPage() {
 
       {status.state === "error" && <ErrorCard kind={status.error.kind} message={status.error.message} path="/operator/trading-loop/status" />}
 
-      {/* DALI-T1: Hero-Banner mit Klartext-Synopsis + Mini-Sparkline.
-          Beantwortet "was sagt mir die Seite" in einem Satz und einer
-          Pillen-Reihe — Operator scannt Muster (Wand aus grauen Pillen
-          = Signal-Drought, rote Pille = Order-Failed) ohne Tabelle. */}
-      {cycles.state === "ready" && cyclesList.length > 0 && (
-        <Card padded className="border-l-4 border-l-info">
-          <div className="flex items-start gap-3">
-            <Activity size={18} className="text-info mt-0.5 shrink-0" aria-hidden />
-            <div className="min-w-0 flex-1">
-              <div className="text-sm font-semibold text-fg leading-relaxed">
-                {summarizeCycles(cyclesList)}
-              </div>
-              <div className="mt-2.5 flex items-center gap-2.5 flex-wrap">
-                <PacmanIcon size={22} />
-                <div className="flex items-center gap-1.5 flex-wrap">
-                  {cyclesList.slice(-30).map((c, i) => (
-                    <CurrencyPellet
-                      key={i}
-                      kind={pelletForStatus(c.status, i)}
-                      title={`${LABEL_DE[c.status] ?? c.status} · ${c.symbol}`}
-                    />
-                  ))}
-                </div>
-              </div>
-              <div className="mt-1.5 text-2xs text-fg-subtle font-mono flex flex-wrap items-center gap-x-3 gap-y-1">
-                <span>letzte {Math.min(cyclesList.length, 30)} Cycles</span>
-                <span className="inline-flex items-center gap-1">
-                  <span style={{ color: "rgb(var(--pos))", textShadow: "0 0 4px rgb(var(--pos))", fontWeight: 700 }}>$ € ¥ £</span>
-                  <span>= ausgeführter Trade</span>
-                </span>
-                <span className="inline-flex items-center gap-1">
-                  <CurrencyPellet kind="ghost" title="" />
-                  <span>= Order-/Konsens-/Priority-Fehler</span>
-                </span>
-                <span className="inline-flex items-center gap-1">
-                  <span style={{ color: "rgb(var(--fg-subtle))" }}>·</span>
-                  <span>= kein Trade-Anlass</span>
-                </span>
-              </div>
-            </div>
-          </div>
-        </Card>
-      )}
-
-      {/* DALI-T2-v2: Status-Werte sind kategorisch (nicht numerisch) — gehoeren
-          in Badges, nicht in Hero-Schrift (overflow bei "Konsens abgelehnt").
-          Hero-Number "Ausgefuehrte Trades" links (col-span-2), rechts daneben
-          eine kombinierte Status-Card mit Letzter Status + Auto-Loop als Badges. */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-        <Kpi
-          label="Ausgeführte Trades"
-          value={String(completed24h)}
-          sub={`von ${cyclesList.length} Cycles in der jüngsten Historie`}
-          tone={completed24h > 0 ? "pos" : "muted"}
-          size="hero"
-        />
-        <Card padded>
-          <div className="text-2xs uppercase tracking-wider text-fg-subtle font-semibold">Letzter Cycle</div>
-          <div className="mt-2 flex flex-wrap items-center gap-2">
-            {status.state === "ready" && status.data.last_cycle_status ? (
-              <span title={status.data.last_cycle_status}>
-                <Badge
-                  tone={
-                    status.data.last_cycle_status === "completed"
-                      ? "pos"
-                      : status.data.last_cycle_status === "order_failed" ||
-                        status.data.last_cycle_status === "consensus_rejected"
-                        ? "neg"
-                        : "warn"
-                  }
-                  dot
-                >
-                  {LABEL_DE[status.data.last_cycle_status] ?? status.data.last_cycle_status}
-                </Badge>
-              </span>
-            ) : (
-              <Badge tone="muted">—</Badge>
-            )}
-          </div>
-          <div className="mt-3 text-2xs uppercase tracking-wider text-fg-subtle font-semibold">Auto-Loop</div>
-          <div className="mt-2 flex flex-wrap items-center gap-2">
-            {status.state === "ready" ? (
-              <Badge tone={status.data.auto_loop_enabled ? "pos" : "muted"} dot>
-                {status.data.auto_loop_enabled ? "aktiv" : "aus"}
-              </Badge>
-            ) : (
-              <Badge tone="muted">—</Badge>
-            )}
-            {status.state === "ready" && (
-              <span className="text-2xs text-fg-subtle font-mono">
-                Mode: {status.data.mode}
-              </span>
-            )}
-          </div>
-        </Card>
-      </div>
+      {/* 2026-05-12 DALI-arcade-T1: Cycles-Healthcheck-Card.
+          Ersetzt den alten Hero-KPI "0 Trades von 30 Cycles" (F-002), der
+          Operator demoralisierte ohne zu erklaeren. Stattdessen:
+          - Headline mit Systemstatus-Tone (stabil/Aufmerksamkeit/INSTABIL)
+          - 5 semantische Buckets (analysiert / valide / ausgefuehrt / risk-blocked / API-Fail)
+          - 1-Zeilen-Klartext-Synopsis darunter
+          - Auto-Loop + Mode als kompakte Footer-Pillen
+          Synthwave-pulse-edge ist hier als border-top integriert (F-001-Fix). */}
+      <CyclesHealthcheckCard
+        cycles={cycles}
+        status={status}
+        cyclesList={cyclesList}
+      />
 
       {/* DALI-T-Guardrails-v2: ausdrucksvolle Schutzschalter-Ansicht.
           Operator: "Was sollen mir die Werte sagen, ausdrucksstaerker
@@ -372,7 +243,7 @@ export function TradesPage() {
         </Card>
       )}
 
-      <Card padded={false} className="synthwave-pulse-edge overflow-hidden">
+      <Card padded={false} className="overflow-hidden">
         <div className="flex items-center justify-between gap-3 px-4 py-3 border-b border-line-subtle">
           <div className="text-sm font-semibold tracking-tight text-fg">Letzte Trading-Cycles</div>
           <div className="text-2xs text-fg-subtle font-mono">
@@ -417,6 +288,147 @@ export function TradesPage() {
         reason="POST /operator/trading-loop/run-once (Idempotency-Key nötig) erlaubt gezielten Cycle im Paper/Shadow-Modus."
         detail="UI-Trigger erfordert confirm-flow + Idempotency-Key-Generierung — in Phase 2 geplant."
       />
+    </div>
+  );
+}
+
+
+// 2026-05-12 DALI-arcade-T1: Cycles-Healthcheck-Card.
+// Spec 2.1 (Wireframe) + 4.1 (Field-Mapping) + 4.2 (Headline-Regel).
+// Synthwave-pulse-edge als border-top - integriert, nicht schwebend (F-001-Fix).
+function CyclesHealthcheckCard({
+  cycles,
+  status,
+  cyclesList,
+}: {
+  cycles: AsyncState<RecentCyclesSummary>;
+  status: AsyncState<TradingLoopStatus>;
+  cyclesList: TradingCycle[];
+}) {
+  if (cycles.state === "loading") {
+    return (
+      <Card padded className="synthwave-pulse-edge">
+        <div className="text-2xs uppercase tracking-wider text-fg-subtle font-semibold">
+          Cycles-Healthcheck
+        </div>
+        <div className="mt-2 text-sm text-fg-subtle">Daten werden geladen ...</div>
+      </Card>
+    );
+  }
+  const health = aggregateCyclesHealth(cyclesList);
+  const synopsis = summarizeCycles(cyclesList);
+
+  const toneTextClass =
+    health.tone === "neg" ? "text-neg"
+    : health.tone === "warn" ? "text-warn"
+    : health.tone === "info" ? "text-info"
+    : health.tone === "pos" ? "text-pos"
+    : "text-fg-subtle";
+
+  // Attention-breathe ist eine bestehende Glow-Utility - dezent, kein Stroboskop.
+  // Bei reduced-motion ohnehin gestoppt. Wir wenden sie nur an, wenn die
+  // Klasse global existiert; sonst fallback auf nur die Tone-Farbe.
+  const attentionClass =
+    health.tone === "neg" ? "attention-breathe-neg"
+    : health.tone === "warn" ? "attention-breathe-warn"
+    : "";
+
+  // Aria-Label: Klartext-Zusammenfassung fuer Screen-Reader (A11y, F-009).
+  const ariaLabel = health.total === 0
+    ? "Cycles-Healthcheck. Noch keine Cycles im aktuellen Fenster."
+    : `Cycles-Healthcheck. ${health.total} Cycles analysiert. ` +
+      `${health.executed} ausgefuehrt, ${health.riskBlocked} durch Risk-Engine blockiert, ` +
+      `${health.apiFail} durch API oder Exchange fehlgeschlagen. ${health.headline}.`;
+
+  return (
+    <Card
+      padded
+      className={cn("synthwave-pulse-edge", attentionClass)}
+    >
+      <div role="region" aria-label={ariaLabel}>
+        <div className="flex items-start justify-between gap-3 flex-wrap">
+          <div className="min-w-0 flex-1">
+            <div className="text-2xs uppercase tracking-wider text-fg-subtle font-semibold">
+              Cycles-Healthcheck
+            </div>
+            <div className={cn("mt-1 text-base font-semibold tracking-tight", toneTextClass)}>
+              {health.total} Cycles analysiert
+              {health.total > 0 && (
+                <span className="text-fg-subtle font-normal">
+                  {" "}- {health.headline.replace(/^Systemstatus: /, "")}
+                </span>
+              )}
+            </div>
+          </div>
+          {status.state === "ready" && (
+            <div className="flex items-center gap-2 shrink-0 flex-wrap">
+              <Badge tone={status.data.auto_loop_enabled ? "pos" : "muted"} dot>
+                Auto-Loop {status.data.auto_loop_enabled ? "aktiv" : "aus"}
+              </Badge>
+              <Badge tone="info">Mode: {status.data.mode}</Badge>
+            </div>
+          )}
+        </div>
+
+        {/* 5-Bucket-Strip - Operator-Prompt 13 */}
+        <div className="mt-4 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2.5">
+          <BucketTile label="analysiert" value={health.analyzed} tone="info" />
+          <BucketTile label="valide Signale" value={health.validSignals} tone="ai" />
+          <BucketTile label="ausgefuehrt" value={health.executed} tone="pos" />
+          <BucketTile label="risk-blocked" value={health.riskBlocked} tone="warn" />
+          <BucketTile label="API-Fail" value={health.apiFail} tone="neg" />
+        </div>
+
+        {health.total > 0 && (
+          <div className="mt-3 text-xs text-fg-muted leading-relaxed">
+            {synopsis}
+          </div>
+        )}
+
+        {health.total === 0 && (
+          <div className="mt-3 text-xs text-fg-subtle italic">
+            Sobald der erste Cycle laeuft, erscheinen hier Statistik und Systemstatus.
+          </div>
+        )}
+      </div>
+    </Card>
+  );
+}
+
+// Bucket-Kachel: Label (klein, gedimmt) + grosse tonalisierte Number.
+// Klein gehalten - 5 davon nebeneinander auf Desktop, 2-3 auf Mobile.
+function BucketTile({
+  label,
+  value,
+  tone,
+}: {
+  label: string;
+  value: number;
+  tone: "info" | "ai" | "pos" | "warn" | "neg";
+}) {
+  const accentBar =
+    tone === "pos" ? "bg-pos"
+    : tone === "neg" ? "bg-neg"
+    : tone === "warn" ? "bg-warn"
+    : tone === "ai" ? "bg-ai"
+    : "bg-info";
+  const valueColor =
+    tone === "pos" ? "text-pos"
+    : tone === "neg" ? "text-neg"
+    : tone === "warn" ? "text-warn"
+    : tone === "ai" ? "text-ai"
+    : "text-info";
+  return (
+    <div className="rounded-md border border-line-subtle bg-bg-2 p-2.5 flex gap-2 items-stretch">
+      <span className={cn("w-1 rounded-full shrink-0", accentBar)} aria-hidden />
+      <div className="min-w-0 flex-1">
+        <div className="text-2xs uppercase tracking-wider text-fg-subtle font-semibold">
+          {label}
+        </div>
+        <div className={cn("mt-0.5 font-mono font-semibold text-xl tabular-nums", valueColor)}>
+          {value}
+        </div>
+      </div>
     </div>
   );
 }
