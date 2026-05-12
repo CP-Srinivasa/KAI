@@ -89,9 +89,7 @@ class PositionSummary:
             "opened_at": self.opened_at,
             "correlation_id": self.correlation_id,
             "realized_pnl_usd": self.realized_pnl_usd,
-            "take_profit_tiers": [
-                {"price": p, "qty_share": q} for p, q in self.take_profit_tiers
-            ],
+            "take_profit_tiers": [{"price": p, "qty_share": q} for p, q in self.take_profit_tiers],
             "initial_quantity": self.initial_quantity,
         }
 

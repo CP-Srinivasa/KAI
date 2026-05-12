@@ -60,9 +60,7 @@ def replay_paper_audit(audit_path: Path) -> AuditReplayResult:
     # 2026-05-12 Sprint A: order_meta erweitert um leverage + source. Pre-Sprint-A
     # audit-rows haben diese Felder nicht — _coerce_float/str geben None/"" zurück
     # und der Replay bleibt rückwärtskompatibel.
-    order_meta: dict[
-        str, tuple[float | None, float | None, float | None, str]
-    ] = {}
+    order_meta: dict[str, tuple[float | None, float | None, float | None, str]] = {}
     # 2026-05-12 Sprint C: idempotency_key-Mapping aus order_created. Wenn das
     # zugehörige order_filled später erfolgreich verarbeitet wird, landet der
     # key im filled_keys-set. Cross-process Race-Schutz (siehe Q/USDT 2026-05-09).

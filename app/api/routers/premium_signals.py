@@ -218,7 +218,11 @@ async def reprocess(req: ReprocessRequest) -> dict[str, Any]:
         result = {"status": "ok", "tick": tick_result.to_dict()}
     except Exception as exc:  # noqa: BLE001
         logger.warning("[premium-signals] reprocess tick failed: %s", exc)
-        result = {"status": "error", "reason": f"tick_exception:{type(exc).__name__}", "error": str(exc)}
+        result = {
+            "status": "error",
+            "reason": f"tick_exception:{type(exc).__name__}",
+            "error": str(exc),
+        }
     _store_idempotency(req.idempotency_key, "reprocess", body, result)
     _audit_action("reprocess", body, result)
     return result
@@ -246,9 +250,7 @@ async def reconcile_completion(req: ReconcileRequest) -> dict[str, Any]:
         touch_price=req.touch_price,
         raw_text=f"manual_reconcile via operator dashboard at {datetime.now(UTC).isoformat()}",
     )
-    outcome = reconcile_target_completion(
-        event=event, source_envelope_id=synthetic_env_id
-    )
+    outcome = reconcile_target_completion(event=event, source_envelope_id=synthetic_env_id)
     result = {
         "status": outcome.status,
         "reason": outcome.reason,
@@ -275,7 +277,9 @@ async def position_repair(req: PositionRepairRequest) -> dict[str, Any]:
         return {**cached, "_idempotency_cached": True}
 
     if req.action == "adjust" and req.new_stop_loss is None and req.new_take_profit is None:
-        raise HTTPException(status_code=400, detail="adjust requires new_stop_loss or new_take_profit")
+        raise HTTPException(
+            status_code=400, detail="adjust requires new_stop_loss or new_take_profit"
+        )
 
     from app.execution.paper_engine import PaperExecutionEngine
 
@@ -312,7 +316,11 @@ async def position_repair(req: PositionRepairRequest) -> dict[str, Any]:
                 "quantity_closed": pos.quantity,
             }
         except Exception as exc:  # noqa: BLE001
-            result = {"status": "error", "reason": f"close_exception:{type(exc).__name__}", "error": str(exc)}
+            result = {
+                "status": "error",
+                "reason": f"close_exception:{type(exc).__name__}",
+                "error": str(exc),
+            }
     else:  # adjust
         # PaperExecutionEngine hat kein public adjust-API; wir schreiben einen
         # position_adjusted audit-Record direkt damit der rehydrate die neue
@@ -328,9 +336,9 @@ async def position_repair(req: PositionRepairRequest) -> dict[str, Any]:
         if req.new_take_profit is not None:
             adjust_record["take_profit"] = req.new_take_profit
         try:
-            _PAPER_AUDIT = Path("artifacts/paper_execution_audit.jsonl")
-            _PAPER_AUDIT.parent.mkdir(parents=True, exist_ok=True)
-            with _PAPER_AUDIT.open("a", encoding="utf-8") as fh:
+            paper_audit = Path("artifacts/paper_execution_audit.jsonl")
+            paper_audit.parent.mkdir(parents=True, exist_ok=True)
+            with paper_audit.open("a", encoding="utf-8") as fh:
                 fh.write(json.dumps(adjust_record, ensure_ascii=False) + "\n")
             result = {
                 "status": "adjusted",
