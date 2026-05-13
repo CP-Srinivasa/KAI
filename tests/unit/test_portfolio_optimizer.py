@@ -54,8 +54,7 @@ def _correlated_returns(
         idiosyncratic = [rng.gauss(0.0, 1.0) for _ in range(k)]
         for i in range(k):
             r = sigmas[i] * (
-                math.sqrt(rho) * z_common
-                + math.sqrt(max(1.0 - rho, 0.0)) * idiosyncratic[i]
+                math.sqrt(rho) * z_common + math.sqrt(max(1.0 - rho, 0.0)) * idiosyncratic[i]
             )
             out[i].append(r)
     return out
@@ -132,7 +131,7 @@ def test_min_variance_picks_lower_volatility_asset():
 
 def test_max_sharpe_tilts_to_higher_return_per_risk():
     cov = [[0.04, 0.0], [0.0, 0.04]]  # equal vol
-    expected = [0.001, 0.005]            # asset 1 has 5× the daily return
+    expected = [0.001, 0.005]  # asset 1 has 5× the daily return
     w = _max_sharpe(expected, cov, risk_free=0.0, lo=0.0, hi=1.0)
     assert w is not None
     assert w[1] > w[0]
@@ -160,10 +159,10 @@ def test_hrp_returns_valid_weights():
     n_obs = len(returns[0])
 
     def _cov(i: int, j: int) -> float:
-        return sum(
-            (returns[i][t] - means[i]) * (returns[j][t] - means[j])
-            for t in range(n_obs)
-        ) / n_obs
+        return (
+            sum((returns[i][t] - means[i]) * (returns[j][t] - means[j]) for t in range(n_obs))
+            / n_obs
+        )
 
     cov = [[_cov(i, j) for j in range(n)] for i in range(n)]
     w = _hrp(cov, ["A", "B", "C", "D"])
@@ -239,9 +238,7 @@ def test_regime_dispatch_picks_min_variance_in_high_vol(
     assert out.method_used == METHOD_MIN_VARIANCE
 
 
-def test_regime_crisis_uses_equal_weight_and_floors_stables(
-    basic_returns: dict[str, list[float]]
-):
+def test_regime_crisis_uses_equal_weight_and_floors_stables(basic_returns: dict[str, list[float]]):
     cfg = OptimizationConfig(stablecoin_floor_in_crisis=0.5)
     opt = PortfolioOptimizer(cfg)
     rng = random.Random(7)
@@ -397,7 +394,7 @@ def test_rebalance_required_when_drift_exceeds_threshold(
     btc = next(a for a in out.allocations if a.symbol == "BTC/USDT")
     eth = next(a for a in out.allocations if a.symbol == "ETH/USDT")
     assert btc.action == ACTION_SELL  # over-weight → trim
-    assert eth.action == ACTION_BUY   # under-weight → add
+    assert eth.action == ACTION_BUY  # under-weight → add
     assert btc.trade_size_usd < 0
     assert eth.trade_size_usd > 0
 
@@ -441,12 +438,8 @@ def test_funding_cost_reduces_expected_return(basic_returns: dict[str, list[floa
     opt = PortfolioOptimizer(
         OptimizationConfig(enforce_vol_target=False, enforce_max_drawdown=False)
     )
-    out_base = opt.optimize(
-        assets=base, returns_history=rets, method=METHOD_MAX_SHARPE
-    )
-    out_funded = opt.optimize(
-        assets=high_funding, returns_history=rets, method=METHOD_MAX_SHARPE
-    )
+    out_base = opt.optimize(assets=base, returns_history=rets, method=METHOD_MAX_SHARPE)
+    out_funded = opt.optimize(assets=high_funding, returns_history=rets, method=METHOD_MAX_SHARPE)
     sol_base = next(a for a in out_base.allocations if a.symbol == "SOL/USDT")
     sol_fund = next(a for a in out_funded.allocations if a.symbol == "SOL/USDT")
     assert sol_fund.target_weight_pct <= sol_base.target_weight_pct + 1e-6
@@ -474,17 +467,11 @@ def test_all_methods_produce_valid_weights(
     """Smoke test: every supported method produces a non-empty, normalized
     allocation without raising."""
     opt = PortfolioOptimizer(
-        OptimizationConfig(
-            enforce_vol_target=False, enforce_max_drawdown=False
-        )
+        OptimizationConfig(enforce_vol_target=False, enforce_max_drawdown=False)
     )
     for m in ALL_METHODS:
-        out = opt.optimize(
-            assets=basic_assets, returns_history=basic_returns, method=m
-        )
+        out = opt.optimize(assets=basic_assets, returns_history=basic_returns, method=m)
         assert out.method_used == m
         total = sum(a.target_weight_pct for a in out.allocations) / 100.0
         # Without vol-target the sum equals 1.0 (un-leveraged baseline)
-        assert total == pytest.approx(1.0, abs=0.05), (
-            f"{m} produced sum={total:.4f}"
-        )
+        assert total == pytest.approx(1.0, abs=0.05), f"{m} produced sum={total:.4f}"

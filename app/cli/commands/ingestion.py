@@ -235,9 +235,7 @@ def telegram_channel_bootstrap_checkpoint(
 
     if existing_msg_id is not None and not force and not dry_run:
         # Interactive guard — Operator must type "yes" (or pass --force).
-        confirmed = typer.confirm(
-            "Overwrite the existing checkpoint entry?", default=False
-        )
+        confirmed = typer.confirm("Overwrite the existing checkpoint entry?", default=False)
         if not confirmed:
             console.print("[yellow]Aborted by operator.[/yellow] No write performed.")
             raise typer.Exit(code=1)
@@ -292,7 +290,9 @@ def telegram_channel_probe(
 
     from app.execution.paper_engine import PaperExecutionEngine
 
-    console.print(f"[bold cyan]V25 Pipeline Probe[/bold cyan] symbol={symbol} tiers={targets_count}")
+    console.print(
+        f"[bold cyan]V25 Pipeline Probe[/bold cyan] symbol={symbol} tiers={targets_count}"
+    )
 
     failures: list[str] = []
 
@@ -325,7 +325,9 @@ def telegram_channel_probe(
             failures.append("step1_position_missing")
             console.print("[red]RED step 1[/red] — position not found after fill")
         else:
-            console.print(f"[green]GREEN step 1[/green] — position opened qty=10.0 @ {fill.fill_price:.2f}")
+            console.print(
+                f"[green]GREEN step 1[/green] — position opened qty=10.0 @ {fill.fill_price:.2f}"
+            )
 
         share = round(1.0 / targets_count, 6)
         tiers = [(p, share) for p in tier_prices]
@@ -337,7 +339,9 @@ def telegram_channel_probe(
             pos = engine.portfolio.positions[symbol]
             if len(pos.take_profit_tiers) != targets_count:
                 failures.append(f"step2_tier_count_mismatch_{len(pos.take_profit_tiers)}")
-                console.print(f"[red]RED step 2[/red] — tier count mismatch ({len(pos.take_profit_tiers)})")
+                console.print(
+                    f"[red]RED step 2[/red] — tier count mismatch ({len(pos.take_profit_tiers)})"
+                )
             else:
                 console.print(f"[green]GREEN step 2[/green] — {targets_count} tiers attached")
 
@@ -366,13 +370,19 @@ def telegram_channel_probe(
             failures.append("step3_position_not_fully_closed")
             console.print(f"[red]RED step 3[/red] — position {symbol} not fully closed")
         else:
-            console.print(f"[green]GREEN step 3[/green] — position fully exited after {targets_count} tiers")
+            console.print(
+                f"[green]GREEN step 3[/green] — position fully exited after {targets_count} tiers"
+            )
 
         if engine.portfolio.realized_pnl_usd <= 0:
             failures.append(f"step4_realized_pnl_{engine.portfolio.realized_pnl_usd:.4f}")
-            console.print(f"[red]RED step 4[/red] — realized_pnl_usd={engine.portfolio.realized_pnl_usd:.4f} ≤ 0")
+            console.print(
+                f"[red]RED step 4[/red] — realized_pnl_usd={engine.portfolio.realized_pnl_usd:.4f} ≤ 0"
+            )
         else:
-            console.print(f"[green]GREEN step 4[/green] — realized_pnl_usd={engine.portfolio.realized_pnl_usd:.4f}")
+            console.print(
+                f"[green]GREEN step 4[/green] — realized_pnl_usd={engine.portfolio.realized_pnl_usd:.4f}"
+            )
 
         # Audit-trail content gate: every expected event_type must appear at least once.
         expected_events = {
@@ -399,7 +409,7 @@ def telegram_channel_probe(
             failures.append(f"step5_audit_missing_events_{sorted(missing)}")
             console.print(f"[red]RED step 5[/red] — audit missing events: {sorted(missing)}")
         else:
-            console.print(f"[green]GREEN step 5[/green] — audit contains all 4 expected event types")
+            console.print("[green]GREEN step 5[/green] — audit contains all 4 expected event types")
 
         # Rehydrate gate: a fresh engine reading the same audit must reproduce
         # the empty-portfolio terminal state (V25-C audit_replay extension).

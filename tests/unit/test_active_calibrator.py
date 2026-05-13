@@ -264,8 +264,6 @@ def test_loading_from_custom_parameter_path(tmp_path: Path):
         slope=1.0,
         parameter_path="bayes.calibrator.global",
     )
-    cal = ActiveCalibrator.load(
-        parameter_path="bayes.calibrator.global", snapshot_dir=tmp_path
-    )
+    cal = ActiveCalibrator.load(parameter_path="bayes.calibrator.global", snapshot_dir=tmp_path)
     assert cal.is_active
     assert cal.parameter_path == "bayes.calibrator.global"

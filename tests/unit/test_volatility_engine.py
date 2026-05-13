@@ -118,9 +118,7 @@ def test_historical_volatility_recovers_known_sigma():
     sigma_per_bar = 0.02  # 2 % per bar
     closes = _gbm_closes(500, sigma_per_bar=sigma_per_bar, seed=7)
     candles = _make_candles(closes, timeframe="1h")
-    returns = [
-        math.log(closes[i] / closes[i - 1]) for i in range(1, len(closes))
-    ]
+    returns = [math.log(closes[i] / closes[i - 1]) for i in range(1, len(closes))]
     annual = 365 * 24
     hv = historical_volatility(returns, window=200, bars_per_year=annual)
     expected_annual = sigma_per_bar * math.sqrt(annual)
@@ -306,8 +304,7 @@ def test_liquidity_adjustment_inflates_vol_for_thin_books():
     assert deep.liquidity_score is not None and shallow.liquidity_score is not None
     assert deep.liquidity_score > shallow.liquidity_score
     assert (
-        shallow.liquidity_adjusted_volatility
-        > deep.liquidity_adjusted_volatility  # type: ignore[operator]
+        shallow.liquidity_adjusted_volatility > deep.liquidity_adjusted_volatility  # type: ignore[operator]
     )
     # Thin-book leverage should be cut at least as hard as thick-book
     assert shallow.leverage_recommendation <= deep.leverage_recommendation
@@ -419,7 +416,7 @@ def test_strong_clustering_haircuts_strong_leverage():
 
     rng = random.Random(23)
     closes = [100.0]
-    var = 0.005 ** 2
+    var = 0.005**2
     for _ in range(300):
         r = rng.gauss(0.0, math.sqrt(var))
         closes.append(closes[-1] * math.exp(r))

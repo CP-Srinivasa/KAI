@@ -134,9 +134,7 @@ class SanitizationConfig:
     max_string_length: int = DEFAULT_MAX_STRING_LENGTH
     patterns: tuple[SecretPattern, ...] = DEFAULT_PATTERNS
 
-    def with_extra_patterns(
-        self, extras: Sequence[SecretPattern]
-    ) -> SanitizationConfig:
+    def with_extra_patterns(self, extras: Sequence[SecretPattern]) -> SanitizationConfig:
         """Add operator-supplied patterns. They are applied **before** the
         defaults so that a more specific custom pattern wins over the broader
         built-ins (e.g. a project-internal token shape matches before the
@@ -192,9 +190,7 @@ def sanitize_string(text: str, *, config: SanitizationConfig | None = None) -> s
 # ─── Recursive walker ─────────────────────────────────────────────────────────
 
 
-def sanitize_value(
-    value: Any, *, config: SanitizationConfig | None = None
-) -> Any:
+def sanitize_value(value: Any, *, config: SanitizationConfig | None = None) -> Any:
     """Recursively sanitize a JSON-like structure.
 
     String values get redacted + truncated. Numbers, bools, None pass through.
@@ -219,8 +215,7 @@ def _sanitize(value: Any, cfg: SanitizationConfig) -> Any:
         # `{"sk-ant-...": "value"}` (e.g. from repr() of a provider response)
         # would otherwise leak the secret as a dict key in the JSONL.
         return {
-            (sanitize_string(k, config=cfg) if isinstance(k, str) else k):
-            _sanitize(v, cfg)
+            (sanitize_string(k, config=cfg) if isinstance(k, str) else k): _sanitize(v, cfg)
             for k, v in value.items()
         }
     if isinstance(value, tuple):

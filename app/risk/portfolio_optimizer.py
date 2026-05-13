@@ -64,10 +64,7 @@ def _invert_matrix(matrix: list[list[float]]) -> list[list[float]] | None:
     n = len(matrix)
     if n == 0:
         return []
-    aug = [
-        list(matrix[i]) + [1.0 if i == j else 0.0 for j in range(n)]
-        for i in range(n)
-    ]
+    aug = [list(matrix[i]) + [1.0 if i == j else 0.0 for j in range(n)] for i in range(n)]
     for col in range(n):
         # Partial pivot
         max_row = col
@@ -102,9 +99,7 @@ def _quadratic_form(weights: list[float], cov: list[list[float]]) -> float:
     return total
 
 
-def _project_simplex_capped(
-    v: list[float], total: float, lo: float, hi: float
-) -> list[float]:
+def _project_simplex_capped(v: list[float], total: float, lo: float, hi: float) -> list[float]:
     """Project v onto {w : Σw = total, lo ≤ w_i ≤ hi}.
 
     Uses bisection on the dual variable. O(N log(1/ε)).
@@ -162,19 +157,13 @@ def _hierarchical_clusters(
         best_a, best_b = 0, 1
         for a in range(len(clusters)):
             for b in range(a + 1, len(clusters)):
-                d = min(
-                    distances[i][j]
-                    for i in clusters[a]
-                    for j in clusters[b]
-                )
+                d = min(distances[i][j] for i in clusters[a] for j in clusters[b])
                 if d < best_d:
                     best_d = d
                     best_a, best_b = a, b
         merged = clusters[best_a] + clusters[best_b]
         # Drop b first (higher index) to keep a stable
-        clusters = [
-            c for k, c in enumerate(clusters) if k not in (best_a, best_b)
-        ]
+        clusters = [c for k, c in enumerate(clusters) if k not in (best_a, best_b)]
         clusters.append(merged)
 
     leaf_order = clusters[0]
@@ -202,16 +191,14 @@ def _covariance_matrix(returns: list[list[float]]) -> list[list[float]]:
     cov = [[0.0] * n for _ in range(n)]
     for i in range(n):
         for j in range(n):
-            cov[i][j] = sum(
-                (aligned[i][t] - means[i]) * (aligned[j][t] - means[j])
-                for t in range(n_obs)
-            ) / n_obs
+            cov[i][j] = (
+                sum((aligned[i][t] - means[i]) * (aligned[j][t] - means[j]) for t in range(n_obs))
+                / n_obs
+            )
     return cov
 
 
-def _semicov_matrix(
-    returns: list[list[float]], mar: float
-) -> list[list[float]]:
+def _semicov_matrix(returns: list[list[float]], mar: float) -> list[list[float]]:
     """Downside semi-covariance: cov(min(r-MAR, 0), min(r-MAR, 0))."""
     n = len(returns)
     if n == 0:
@@ -219,16 +206,11 @@ def _semicov_matrix(
     n_obs = min(len(r) for r in returns)
     if n_obs < 2:
         return [[0.0] * n for _ in range(n)]
-    clipped = [
-        [min(r[t] - mar, 0.0) for t in range(len(r) - n_obs, len(r))]
-        for r in returns
-    ]
+    clipped = [[min(r[t] - mar, 0.0) for t in range(len(r) - n_obs, len(r))] for r in returns]
     cov = [[0.0] * n for _ in range(n)]
     for i in range(n):
         for j in range(n):
-            cov[i][j] = sum(
-                clipped[i][t] * clipped[j][t] for t in range(n_obs)
-            ) / n_obs
+            cov[i][j] = sum(clipped[i][t] * clipped[j][t] for t in range(n_obs)) / n_obs
     return cov
 
 
@@ -253,10 +235,7 @@ def _regularize(cov: list[list[float]], eps: float) -> list[list[float]]:
         return cov
     trace = sum(cov[i][i] for i in range(n))
     ridge = eps * max(trace / max(n, 1), 1.0)
-    return [
-        [cov[i][j] + (ridge if i == j else 0.0) for j in range(n)]
-        for i in range(n)
-    ]
+    return [[cov[i][j] + (ridge if i == j else 0.0) for j in range(n)] for i in range(n)]
 
 
 # ============================================================================
@@ -270,9 +249,7 @@ def _equal_weight(n: int) -> list[float]:
     return [1.0 / n] * n
 
 
-def _min_variance(
-    cov: list[list[float]], lo: float, hi: float
-) -> list[float] | None:
+def _min_variance(cov: list[list[float]], lo: float, hi: float) -> list[float] | None:
     n = len(cov)
     if n == 0:
         return None
@@ -373,9 +350,7 @@ def _risk_parity(
     return w
 
 
-def _hrp(
-    cov: list[list[float]], symbols: list[str]
-) -> list[float] | None:
+def _hrp(cov: list[list[float]], symbols: list[str]) -> list[float] | None:
     """Hierarchical Risk Parity (Lopez de Prado, 2016)."""
     n = len(cov)
     if n == 0:
@@ -384,10 +359,7 @@ def _hrp(
         return [1.0]
 
     corr = _correlation_matrix(cov)
-    distance = [
-        [math.sqrt(max(0.5 * (1.0 - corr[i][j]), 0.0)) for j in range(n)]
-        for i in range(n)
-    ]
+    distance = [[math.sqrt(max(0.5 * (1.0 - corr[i][j]), 0.0)) for j in range(n)] for i in range(n)]
     ordered = _hierarchical_clusters(distance, symbols)[0]
     sym_to_idx = {s: i for i, s in enumerate(symbols)}
     order = [sym_to_idx[s] for s in ordered]
@@ -591,7 +563,8 @@ class PortfolioOptimizer:
         if regime != "crisis":
             return weights, False
         stable_idx = [
-            i for i, a in enumerate(assets)
+            i
+            for i, a in enumerate(assets)
             if a.is_stablecoin or a.symbol.lower() in cfg.stablecoin_set
         ]
         if not stable_idx:
@@ -612,9 +585,7 @@ class PortfolioOptimizer:
         for i, _a in enumerate(assets):
             if i in stable_idx:
                 # distribute deficit equally over stables, preserving proportions
-                share = (
-                    weights[i] / cur_floor if cur_floor > 0 else 1.0 / len(stable_idx)
-                )
+                share = weights[i] / cur_floor if cur_floor > 0 else 1.0 / len(stable_idx)
                 new_weights[i] = weights[i] + deficit * share
             else:
                 new_weights[i] = weights[i] * scale_non_stable
@@ -661,8 +632,7 @@ class PortfolioOptimizer:
             return leverage, False, 0.0
         aligned = [r[-n_obs:] for r in returns]
         port_returns = [
-            sum(weights[i] * aligned[i][t] for i in range(len(weights)))
-            for t in range(n_obs)
+            sum(weights[i] * aligned[i][t] for i in range(len(weights))) for t in range(n_obs)
         ]
 
         def _max_dd(rets: list[float]) -> float:
@@ -868,9 +838,7 @@ class PortfolioOptimizer:
             constraints.append("stablecoin_floor")
 
         # Vol targeting (sets the gross leverage)
-        weights_scaled, leverage, vt_active = self._apply_volatility_target(
-            weights, cov_reg
-        )
+        weights_scaled, leverage, vt_active = self._apply_volatility_target(weights, cov_reg)
         if vt_active:
             constraints.append("vol_target")
 
@@ -934,7 +902,8 @@ class PortfolioOptimizer:
         net = sum(weights_scaled)
         cash_pct = max(0.0, 1.0 - sum(weights_scaled)) * 100.0
         stable_idx = [
-            i for i, a in enumerate(kept)
+            i
+            for i, a in enumerate(kept)
             if a.is_stablecoin or a.symbol.lower() in cfg.stablecoin_set
         ]
         stablecoin_exposure = sum(weights_scaled[i] for i in stable_idx) * 100.0

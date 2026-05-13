@@ -134,9 +134,7 @@ class BaselineStats(BaseModel):
 
     @field_validator("stddevs")
     @classmethod
-    def _ensure_positive_stddevs(
-        cls, v: dict[FeatureName, float]
-    ) -> dict[FeatureName, float]:
+    def _ensure_positive_stddevs(cls, v: dict[FeatureName, float]) -> dict[FeatureName, float]:
         for name, s in v.items():
             if s <= 0:
                 raise ValueError(f"stddev for {name} must be positive (got {s})")
@@ -381,9 +379,7 @@ def _build_transition_matrix() -> dict[MarketRegime, dict[MarketRegime, float]]:
     return matrix
 
 
-TRANSITION_MATRIX: Final[dict[MarketRegime, dict[MarketRegime, float]]] = (
-    _build_transition_matrix()
-)
+TRANSITION_MATRIX: Final[dict[MarketRegime, dict[MarketRegime, float]]] = _build_transition_matrix()
 
 
 # ─── Z-Scoring + Volatilitäts-Bucket + Anomaly ────────────────────────────────
@@ -472,7 +468,7 @@ def _classify_distribution(log_lls: Mapping[MarketRegime, float]) -> RegimeClass
     distribution = _softmax(log_lls)
     ranked = sorted(distribution.items(), key=lambda kv: -kv[1])
     primary, primary_p = ranked[0]
-    secondary, secondary_p = (ranked[1] if len(ranked) > 1 else (None, 0.0))
+    secondary, secondary_p = ranked[1] if len(ranked) > 1 else (None, 0.0)
     return RegimeClassification(
         primary_regime=primary,
         primary_probability=round(primary_p, 6),
@@ -561,10 +557,9 @@ def _forward_log(
         emit = log_emissions[t]
         new_alpha: dict[MarketRegime, float] = {}
         for j in states:
-            new_alpha[j] = (
-                _logsumexp([alpha[t - 1][i] + log_trans[i][j] for i in states])
-                + emit.get(j, float("-inf"))
-            )
+            new_alpha[j] = _logsumexp(
+                [alpha[t - 1][i] + log_trans[i][j] for i in states]
+            ) + emit.get(j, float("-inf"))
         alpha.append(new_alpha)
     return alpha
 
@@ -736,7 +731,7 @@ class RegimeDetectionEngine:
 
         ranked = sorted(last_dist.items(), key=lambda kv: -kv[1])
         primary, primary_p = ranked[0]
-        secondary, secondary_p = (ranked[1] if len(ranked) > 1 else (None, 0.0))
+        secondary, secondary_p = ranked[1] if len(ranked) > 1 else (None, 0.0)
         classification = RegimeClassification(
             primary_regime=primary,
             primary_probability=round(primary_p, 6),

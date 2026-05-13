@@ -1,5 +1,5 @@
 """Loader: Bayes-Audit + Outcome-Map → OutcomePair-Stream.
-   Dashboard: /dashboard/api/calibration."""
+Dashboard: /dashboard/api/calibration."""
 
 from __future__ import annotations
 

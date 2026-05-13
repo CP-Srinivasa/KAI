@@ -84,8 +84,7 @@ def test_json_probe_reports_cloudflare_access_redirect() -> None:
         302,
         headers={
             "location": (
-                "https://kai-dashboard.cloudflareaccess.com/cdn-cgi/access/login/"
-                "kai-trader.org"
+                "https://kai-dashboard.cloudflareaccess.com/cdn-cgi/access/login/kai-trader.org"
             )
         },
     )
@@ -120,8 +119,7 @@ def test_bad_or_expired_service_token_has_distinct_non_secret_note() -> None:
         302,
         headers={
             "location": (
-                "https://kai-dashboard.cloudflareaccess.com/cdn-cgi/access/login/"
-                "kai-trader.org"
+                "https://kai-dashboard.cloudflareaccess.com/cdn-cgi/access/login/kai-trader.org"
             )
         },
     )
@@ -285,14 +283,10 @@ def test_service_token_secret_never_leaks_to_outputs(tmp_path, monkeypatch) -> N
 
     monkeypatch.setattr(freshness, "ARTIFACTS", tmp_path / "artifacts")
     monkeypatch.setattr(freshness, "LOGS", tmp_path / "logs")
-    monkeypatch.setattr(
-        freshness, "STATUS_FILE", tmp_path / "artifacts" / "freshness_status.json"
-    )
+    monkeypatch.setattr(freshness, "STATUS_FILE", tmp_path / "artifacts" / "freshness_status.json")
     monkeypatch.setattr(freshness, "LOG_FILE", tmp_path / "logs" / "freshness_check.log")
 
-    def _client_with_secret(
-        response: httpx.Response | None, *, fail: bool = False
-    ) -> httpx.Client:
+    def _client_with_secret(response: httpx.Response | None, *, fail: bool = False) -> httpx.Client:
         def handler(request: httpx.Request) -> httpx.Response:
             if fail:
                 raise httpx.ConnectError("upstream refused", request=request)
@@ -310,18 +304,14 @@ def test_service_token_secret_never_leaks_to_outputs(tmp_path, monkeypatch) -> N
             transport=httpx.MockTransport(handler),
         )
 
-    probe = freshness.Probe(
-        "dashboard_quality", "/dashboard/api/quality", "generated_at", 120, 600
-    )
+    probe = freshness.Probe("dashboard_quality", "/dashboard/api/quality", "generated_at", 120, 600)
     now = datetime.now(UTC)
 
     pathological = [
         # Cloudflare Access redirect (302 → cloudflareaccess.com)
         httpx.Response(
             302,
-            headers={
-                "location": "https://x.cloudflareaccess.com/cdn-cgi/access/login/foo"
-            },
+            headers={"location": "https://x.cloudflareaccess.com/cdn-cgi/access/login/foo"},
         ),
         # Cloudflare Access HTML login page (200 + HTML body)
         httpx.Response(
@@ -353,14 +343,10 @@ def test_service_token_secret_never_leaks_to_outputs(tmp_path, monkeypatch) -> N
 
     results: list[freshness.Result] = []
     for resp in pathological:
-        results.append(
-            freshness.probe_one(_client_with_secret(resp), probe, now, scope="external")
-        )
+        results.append(freshness.probe_one(_client_with_secret(resp), probe, now, scope="external"))
     # Exception path (httpx.HTTPError branch)
     results.append(
-        freshness.probe_one(
-            _client_with_secret(None, fail=True), probe, now, scope="external"
-        )
+        freshness.probe_one(_client_with_secret(None, fail=True), probe, now, scope="external")
     )
 
     for r in results:
@@ -370,9 +356,7 @@ def test_service_token_secret_never_leaks_to_outputs(tmp_path, monkeypatch) -> N
     overall, _ = freshness.overall_from_results(results)
     freshness.write_outputs(results, overall)
 
-    status_text = (tmp_path / "artifacts" / "freshness_status.json").read_text(
-        encoding="utf-8"
-    )
+    status_text = (tmp_path / "artifacts" / "freshness_status.json").read_text(encoding="utf-8")
     log_text = (tmp_path / "logs" / "freshness_check.log").read_text(encoding="utf-8")
 
     assert secret not in status_text, "secret leaked into freshness_status.json"
@@ -386,9 +370,7 @@ def test_external_skip_empty_by_default(monkeypatch, tmp_path) -> None:
 
 
 def test_external_skip_parsed_from_env(monkeypatch, tmp_path) -> None:
-    monkeypatch.setenv(
-        "KAI_FRESHNESS_EXTERNAL_SKIP", "dashboard_quality, trading_loop_status"
-    )
+    monkeypatch.setenv("KAI_FRESHNESS_EXTERNAL_SKIP", "dashboard_quality, trading_loop_status")
     monkeypatch.setattr(freshness, "REPO_ROOT", tmp_path)
     assert freshness._read_external_skip() == {
         "dashboard_quality",
@@ -402,9 +384,7 @@ def test_external_skip_falls_back_to_dotenv(monkeypatch, tmp_path) -> None:
     # the CF Access headers already follow.
     monkeypatch.delenv("KAI_FRESHNESS_EXTERNAL_SKIP", raising=False)
     env_file = tmp_path / ".env"
-    env_file.write_text(
-        "KAI_FRESHNESS_EXTERNAL_SKIP=dashboard_quality\n", encoding="utf-8"
-    )
+    env_file.write_text("KAI_FRESHNESS_EXTERNAL_SKIP=dashboard_quality\n", encoding="utf-8")
     monkeypatch.setattr(freshness, "REPO_ROOT", tmp_path)
     assert freshness._read_external_skip() == {"dashboard_quality"}
 

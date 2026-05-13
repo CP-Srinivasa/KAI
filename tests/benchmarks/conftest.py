@@ -30,7 +30,14 @@ from app.storage.duckdb_migrate import apply_migrations
 _REAL_MIGRATIONS = Path(__file__).resolve().parents[2] / "app" / "storage" / "duckdb_migrations"
 
 _ASSETS = ["BTC", "ETH", "SOL", "BNB", "XRP", "ADA", "AVAX", "DOT", "MATIC", "LINK"]
-_SOURCES = ["rss", "tradingview_webhook", "newsdata", "telegram_channel", "cointelegraph", "decrypt"]
+_SOURCES = [
+    "rss",
+    "tradingview_webhook",
+    "newsdata",
+    "telegram_channel",
+    "cointelegraph",
+    "decrypt",
+]
 _SENTIMENTS = ["bullish", "bearish", "neutral", "mixed"]
 _OUTCOMES = ["hit", "miss", "inconclusive", None]
 _EVENT_TYPES = ["order_filled", "position_closed", "position_partial_closed"]

@@ -76,9 +76,7 @@ class CounterfactualConfig(BaseModel):
 
     threshold: float = Field(default=DEFAULT_THRESHOLD, ge=0.0, le=1.0)
     min_trades: int = Field(default=DEFAULT_MIN_TRADES, ge=1)
-    min_pnl_improvement_usd: float = Field(
-        default=DEFAULT_MIN_PNL_IMPROVEMENT_USD, ge=0.0
-    )
+    min_pnl_improvement_usd: float = Field(default=DEFAULT_MIN_PNL_IMPROVEMENT_USD, ge=0.0)
     side_aware: bool = True
 
 
@@ -93,8 +91,8 @@ class TradeCounterfactual(BaseModel):
     decision_id: str
     direction: DirectionLiteral
     raw_posterior: float
-    signal_posterior: float        # nach side-aware-Spiegelung, vor Calibrator
-    calibrated_posterior: float    # nach Calibrator
+    signal_posterior: float  # nach side-aware-Spiegelung, vor Calibrator
+    calibrated_posterior: float  # nach Calibrator
     realized_pnl_usd: float
     would_still_trade: bool
 
@@ -108,15 +106,15 @@ class CounterfactualReport(BaseModel):
     n_would_still_trade: int
     n_would_skip: int
 
-    pnl_realized_total_usd: float       # Σ über alle Trades (= heutiger Stand)
-    pnl_realized_kept_usd: float        # Σ would_still_trade
-    pnl_realized_skipped_usd: float     # Σ would_skip (positive = winners we'd lose)
-    pnl_delta_usd: float                # = −pnl_realized_skipped: was wir gewinnen
+    pnl_realized_total_usd: float  # Σ über alle Trades (= heutiger Stand)
+    pnl_realized_kept_usd: float  # Σ would_still_trade
+    pnl_realized_skipped_usd: float  # Σ would_skip (positive = winners we'd lose)
+    pnl_delta_usd: float  # = −pnl_realized_skipped: was wir gewinnen
 
     avoided_loss_count: int
-    avoided_loss_sum_usd: float         # negative — Loser, die wir geblockt hätten
+    avoided_loss_sum_usd: float  # negative — Loser, die wir geblockt hätten
     skipped_gain_count: int
-    skipped_gain_sum_usd: float         # positive — Winner, die wir geblockt hätten
+    skipped_gain_sum_usd: float  # positive — Winner, die wir geblockt hätten
 
     decision: DecisionLiteral
     decision_reasons: tuple[str, ...]
@@ -167,9 +165,7 @@ def evaluate_calibrator_counterfactual(
             skipped_gain_count=0,
             skipped_gain_sum_usd=0.0,
             decision="insufficient_data",
-            decision_reasons=(
-                f"have {n} trades, need >= {cfg.min_trades}",
-            ),
+            decision_reasons=(f"have {n} trades, need >= {cfg.min_trades}",),
             config=cfg,
             trades=(),
         )

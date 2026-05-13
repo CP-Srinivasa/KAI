@@ -76,9 +76,7 @@ SnapshotDir = Annotated[
 
 
 def _service(journal: Path, snapshot_dir: Path | None = None) -> ApprovalService:
-    return ApprovalService(
-        ParameterVersionStore(journal), snapshot_dir=snapshot_dir
-    )
+    return ApprovalService(ParameterVersionStore(journal), snapshot_dir=snapshot_dir)
 
 
 # ─── list ─────────────────────────────────────────────────────────────────────

@@ -131,9 +131,7 @@ def _log_loss(pairs: Sequence[OutcomePair]) -> float:
     return _weighted_mean(losses, weights)
 
 
-def _build_bins(
-    pairs: Sequence[OutcomePair], *, n_bins: int
-) -> tuple[list[CalibrationBin], float]:
+def _build_bins(pairs: Sequence[OutcomePair], *, n_bins: int) -> tuple[list[CalibrationBin], float]:
     """Bin pairs über [0,1] in n_bins gleicher Breite + ECE."""
     if n_bins <= 0:
         raise ValueError("n_bins must be positive")
@@ -230,9 +228,7 @@ def compute_calibration(
         )
 
     if ece > 0.10 and sample_sufficient:
-        notes.append(
-            f"ECE={ece:.3f} > 0.10 — Re-Calibration der Profile/Priors empfohlen."
-        )
+        notes.append(f"ECE={ece:.3f} > 0.10 — Re-Calibration der Profile/Priors empfohlen.")
 
     return CalibrationReport(
         n_pairs=len(pairs),

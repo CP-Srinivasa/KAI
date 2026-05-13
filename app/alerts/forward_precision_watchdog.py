@@ -56,9 +56,7 @@ def load_config_from_env(env: dict[str, str] | None = None) -> WatchdogConfig:
     """Build WatchdogConfig from environment, falling back to defaults."""
     src = env if env is not None else os.environ
     return WatchdogConfig(
-        threshold_pct=float(
-            src.get("APP_WATCHDOG_FWD_PREC_THRESHOLD_PCT", _DEFAULT_THRESHOLD_PCT)
-        ),
+        threshold_pct=float(src.get("APP_WATCHDOG_FWD_PREC_THRESHOLD_PCT", _DEFAULT_THRESHOLD_PCT)),
         ci_low_threshold_pct=float(
             src.get(
                 "APP_WATCHDOG_FWD_PREC_CI_LOW_THRESHOLD_PCT",
@@ -114,9 +112,7 @@ def load_state(path: Path = _DEFAULT_STATE_PATH) -> StreakState:
         return StreakState.from_dict(data)
     except (OSError, json.JSONDecodeError, ValueError) as exc:
         # Corruption → start fresh, don't crash watchdog.
-        logger.warning(
-            "[fwd-prec-watchdog] state load failed (%s) — resetting", exc
-        )
+        logger.warning("[fwd-prec-watchdog] state load failed (%s) — resetting", exc)
         return StreakState()
 
 
@@ -178,8 +174,7 @@ def evaluate_forward_precision_drift(
         )
 
     below_threshold = (
-        forward_precision_pct is not None
-        and forward_precision_pct < config.threshold_pct
+        forward_precision_pct is not None and forward_precision_pct < config.threshold_pct
     )
     below_ci_low = (
         forward_precision_ci_low_pct is not None
@@ -192,12 +187,9 @@ def evaluate_forward_precision_drift(
     if is_drift:
         # Increment streak. First-below-at gets set on transition 0→1.
         new_streak = state.streak_hours + 1
-        first_below_at = (
-            state.first_below_at if state.streak_hours > 0 else now_iso
-        )
+        first_below_at = state.first_below_at if state.streak_hours > 0 else now_iso
         crossed_threshold = (
-            state.streak_hours < config.consecutive_hours
-            and new_streak >= config.consecutive_hours
+            state.streak_hours < config.consecutive_hours and new_streak >= config.consecutive_hours
         )
 
         should_push = crossed_threshold and cooldown_ok and state.last_push_kind != "drift"
@@ -220,9 +212,7 @@ def evaluate_forward_precision_drift(
         # Severity: warn only after threshold crossed, info while building up.
         severity = "warn" if new_streak >= config.consecutive_hours else "info"
         title = (
-            "forward_precision_drift"
-            if severity == "warn"
-            else "forward_precision_below_warming"
+            "forward_precision_drift" if severity == "warn" else "forward_precision_below_warming"
         )
         return WatchdogResult(
             severity=severity,
@@ -319,11 +309,7 @@ def format_telegram_message(result: WatchdogResult) -> str:
             f"Source-Quality im Dashboard prüfen, blocked-alert-Reasons checken._"
         )
     if result.push_kind == "recovery":
-        return (
-            f"✅ *KAI Watchdog — Forward-Precision erholt*\n\n"
-            f"`{result.title}`\n"
-            f"{result.detail}"
-        )
+        return f"✅ *KAI Watchdog — Forward-Precision erholt*\n\n`{result.title}`\n{result.detail}"
     return ""
 
 

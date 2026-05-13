@@ -156,6 +156,7 @@ def test_quality_api_returns_metrics(
     artifacts_dir: Path,
 ) -> None:
     from app.storage.analytics_db import run_compaction
+
     app = _make_app()
     with _patch_artifacts(artifacts_dir):
         run_compaction()
@@ -180,6 +181,7 @@ def test_quality_api_includes_alerts_with_outcomes(
     artifacts_dir: Path,
 ) -> None:
     from app.storage.analytics_db import run_compaction
+
     app = _make_app()
     with _patch_artifacts(artifacts_dir):
         run_compaction()
@@ -202,6 +204,7 @@ def test_dashboard_api_exempt_from_auth(
     artifacts_dir: Path,
 ) -> None:
     from app.storage.analytics_db import run_compaction
+
     app = _make_app(api_key="secret-key")
     with _patch_artifacts(artifacts_dir):
         run_compaction()

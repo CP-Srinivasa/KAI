@@ -381,9 +381,7 @@ def _loop_with_prices(tmp_path, prices: dict[str, float | None]) -> TradingLoop:
         live_enabled=False,
         audit_log_path=str(tmp_path / "exec_audit.jsonl"),
     )
-    gen = SignalGenerator(
-        min_confidence=0.75, min_confluence=2
-    )
+    gen = SignalGenerator(min_confidence=0.75, min_confluence=2)
     return TradingLoop(
         risk_engine=risk,
         execution_engine=exec_eng,

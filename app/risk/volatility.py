@@ -287,9 +287,7 @@ class VolatilityEngine:
 
         return _clamp(0.6 * vol_score + 0.4 * spread_score, 0.0, 1.0)
 
-    def _liquidity_adjusted_vol(
-        self, hv: float | None, liq_score: float | None
-    ) -> float | None:
+    def _liquidity_adjusted_vol(self, hv: float | None, liq_score: float | None) -> float | None:
         if hv is None:
             return None
         if liq_score is None:
@@ -533,9 +531,7 @@ class VolatilityEngine:
         # --- max position size ---
         regime_pos_cap = self._regime_max_position_pct(regime)
         risk_pct = (
-            risk_per_trade_pct
-            if risk_per_trade_pct is not None
-            else cfg.risk_per_trade_pct_default
+            risk_per_trade_pct if risk_per_trade_pct is not None else cfg.risk_per_trade_pct_default
         )
 
         if stop_distance_pct is not None and stop_distance_pct > 0.0:

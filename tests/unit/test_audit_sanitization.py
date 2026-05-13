@@ -116,9 +116,7 @@ def test_redaction_is_idempotent():
 
 
 def test_redacts_with_custom_pattern():
-    custom = SecretPattern(
-        name="kai_internal", pattern=re.compile(r"INTERNAL_[A-Z0-9]{8}")
-    )
+    custom = SecretPattern(name="kai_internal", pattern=re.compile(r"INTERNAL_[A-Z0-9]{8}"))
     cfg = SanitizationConfig().with_extra_patterns([custom])
     out = redact_secrets("token: INTERNAL_ABC12345", patterns=cfg.patterns)
     assert "[REDACTED:kai_internal]" in out

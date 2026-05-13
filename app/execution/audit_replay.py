@@ -111,9 +111,7 @@ def replay_paper_audit(audit_path: Path) -> AuditReplayResult:
                     if p is None or q is None or p <= 0 or q <= 0:
                         continue
                     tiers.append((p, q))
-            initial_qty = (
-                _coerce_float(payload.get("initial_quantity")) or existing.quantity
-            )
+            initial_qty = _coerce_float(payload.get("initial_quantity")) or existing.quantity
             existing.take_profit_tiers = sorted(tiers, key=lambda t: t[0])
             existing.initial_quantity = initial_qty
             continue

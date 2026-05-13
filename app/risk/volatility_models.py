@@ -42,17 +42,17 @@ class VolatilityConfig:
     """Engine configuration. All thresholds are explicit and audit-friendly."""
 
     # Rolling windows
-    hv_window: int = 30                 # bars used for historical volatility
-    rv_window: int = 30                 # bars used for realized volatility
-    intraday_window: int = 30           # bars for Garman-Klass / Parkinson
-    baseline_window: int = 90           # long-term baseline used for regime ratio
-    cluster_window: int = 30            # bars for ρ₁(r²) clustering
+    hv_window: int = 30  # bars used for historical volatility
+    rv_window: int = 30  # bars used for realized volatility
+    intraday_window: int = 30  # bars for Garman-Klass / Parkinson
+    baseline_window: int = 90  # long-term baseline used for regime ratio
+    cluster_window: int = 30  # bars for ρ₁(r²) clustering
 
     # ATR
     atr_period: int = 14
 
     # EWMA (RiskMetrics-style)
-    ewma_lambda: float = 0.94           # daily decay
+    ewma_lambda: float = 0.94  # daily decay
     ewma_lambda_intraday: float = 0.97  # intraday decay
 
     # Regime thresholds (current σ / baseline σ)
@@ -89,8 +89,8 @@ class VolatilityConfig:
 
     # Liquidity
     liquidity_volume_floor_usd: float = 1_000_000.0  # below = penalty
-    liquidity_spread_ceiling_pct: float = 0.5         # above = penalty
-    liquidity_penalty_alpha: float = 0.5              # LAV = HV * (1 + α * illiquidity)
+    liquidity_spread_ceiling_pct: float = 0.5  # above = penalty
+    liquidity_penalty_alpha: float = 0.5  # LAV = HV * (1 + α * illiquidity)
 
     # Annualization
     bars_per_year_default: int = 365  # crypto trading is 24/7
@@ -123,30 +123,30 @@ class VolatilityRegimeOutput:
     atr: float | None
     historical_volatility: float | None
     realized_volatility: float | None
-    intraday_volatility: float | None       # Garman-Klass
+    intraday_volatility: float | None  # Garman-Klass
     parkinson_volatility: float | None
     ewma_volatility: float | None
 
     # Clustering
-    clustering_score: float                 # ρ₁(r²) ∈ [-1, 1]
-    clustering_label: str                   # CLUSTER_*
+    clustering_score: float  # ρ₁(r²) ∈ [-1, 1]
+    clustering_label: str  # CLUSTER_*
 
     # Regime classification
-    volatility_regime: str                  # REGIME_*
-    regime_ratio: float | None              # current_vol / baseline_vol
-    regime_confidence: float                # 0..1
+    volatility_regime: str  # REGIME_*
+    regime_ratio: float | None  # current_vol / baseline_vol
+    regime_confidence: float  # 0..1
 
     # Liquidity adjustment
-    liquidity_score: float | None           # 0..1 — higher = more liquid
+    liquidity_score: float | None  # 0..1 — higher = more liquid
     liquidity_adjusted_volatility: float | None
 
     # Trading recommendations
-    expected_move_pct_1bar: float | None    # ±% on next bar (1σ)
-    expected_move_pct_1d: float | None      # ±% over next 24h (1σ)
-    stop_distance_pct: float | None         # recommended SL distance %
-    leverage_recommendation: float          # 0..max_leverage_cap
-    max_position_size_pct: float            # % of equity
-    liquidation_risk_score: float           # 0..1 — higher = riskier
+    expected_move_pct_1bar: float | None  # ±% on next bar (1σ)
+    expected_move_pct_1d: float | None  # ±% over next 24h (1σ)
+    stop_distance_pct: float | None  # recommended SL distance %
+    leverage_recommendation: float  # 0..max_leverage_cap
+    max_position_size_pct: float  # % of equity
+    liquidation_risk_score: float  # 0..1 — higher = riskier
 
     # Diagnostics & audit
     sample_size: int

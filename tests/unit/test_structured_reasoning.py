@@ -60,33 +60,21 @@ def test_chain_links_step_to_step(journal: ReasoningJournal):
 
 
 def test_verify_chain_passes_for_clean_journal(journal: ReasoningJournal):
-    journal.log_step(
-        decision_id="d", phase=PHASE_TRIGGER, actor="x", rationale_summary="a"
-    )
-    journal.log_step(
-        decision_id="d", phase=PHASE_EVIDENCE, actor="x", rationale_summary="b"
-    )
+    journal.log_step(decision_id="d", phase=PHASE_TRIGGER, actor="x", rationale_summary="a")
+    journal.log_step(decision_id="d", phase=PHASE_EVIDENCE, actor="x", rationale_summary="b")
     ok, err = journal.verify_chain()
     assert ok, err
 
 
 def test_verify_chain_detects_in_place_tamper(journal: ReasoningJournal):
-    journal.log_step(
-        decision_id="d", phase=PHASE_TRIGGER, actor="x", rationale_summary="a"
-    )
-    journal.log_step(
-        decision_id="d", phase=PHASE_EVIDENCE, actor="x", rationale_summary="b"
-    )
-    journal.log_step(
-        decision_id="d", phase=PHASE_SCORING, actor="x", rationale_summary="c"
-    )
+    journal.log_step(decision_id="d", phase=PHASE_TRIGGER, actor="x", rationale_summary="a")
+    journal.log_step(decision_id="d", phase=PHASE_EVIDENCE, actor="x", rationale_summary="b")
+    journal.log_step(decision_id="d", phase=PHASE_SCORING, actor="x", rationale_summary="c")
     # Tamper with the second row
     lines = journal.path.read_text(encoding="utf-8").splitlines()
     payload = json.loads(lines[1])
     payload["rationale_summary"] = "secretly altered"
-    lines[1] = json.dumps(
-        payload, sort_keys=True, ensure_ascii=False, separators=(",", ":")
-    )
+    lines[1] = json.dumps(payload, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
     journal.path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     ok, err = journal.verify_chain()
     assert not ok
@@ -186,9 +174,7 @@ def test_all_six_phases_round_trip(journal: ReasoningJournal):
         PHASE_INVALIDATION,
     ]
     for p in phases:
-        journal.log_step(
-            decision_id="d", phase=p, actor="x", rationale_summary=f"phase {p}"
-        )
+        journal.log_step(decision_id="d", phase=p, actor="x", rationale_summary=f"phase {p}")
     steps = list(journal.iter_steps())
     assert len(steps) == 6
     assert [s.phase for s in steps] == phases
@@ -221,15 +207,9 @@ def test_confidence_change_carries_before_after_and_param_version(
 
 
 def test_steps_for_decision_filters_correctly(journal: ReasoningJournal):
-    journal.log_step(
-        decision_id="d_a", phase=PHASE_TRIGGER, actor="x", rationale_summary="a"
-    )
-    journal.log_step(
-        decision_id="d_b", phase=PHASE_TRIGGER, actor="x", rationale_summary="b"
-    )
-    journal.log_step(
-        decision_id="d_a", phase=PHASE_SCORING, actor="x", rationale_summary="a2"
-    )
+    journal.log_step(decision_id="d_a", phase=PHASE_TRIGGER, actor="x", rationale_summary="a")
+    journal.log_step(decision_id="d_b", phase=PHASE_TRIGGER, actor="x", rationale_summary="b")
+    journal.log_step(decision_id="d_a", phase=PHASE_SCORING, actor="x", rationale_summary="a2")
     a_steps = journal.steps_for_decision("d_a")
     assert len(a_steps) == 2
     assert all(s.decision_id == "d_a" for s in a_steps)
@@ -277,13 +257,9 @@ def test_step_is_immutable():
 
 
 def test_malformed_lines_skipped_with_warning(journal: ReasoningJournal):
-    journal.log_step(
-        decision_id="d", phase=PHASE_TRIGGER, actor="x", rationale_summary="a"
-    )
+    journal.log_step(decision_id="d", phase=PHASE_TRIGGER, actor="x", rationale_summary="a")
     with journal.path.open("a", encoding="utf-8") as fh:
         fh.write("this-is-not-json\n")
-    journal.log_step(
-        decision_id="d", phase=PHASE_EVIDENCE, actor="x", rationale_summary="b"
-    )
+    journal.log_step(decision_id="d", phase=PHASE_EVIDENCE, actor="x", rationale_summary="b")
     steps = list(journal.iter_steps())
     assert len(steps) == 2

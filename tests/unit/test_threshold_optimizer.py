@@ -59,14 +59,9 @@ def test_optimizer_lifts_threshold_when_higher_score_means_better_pnl():
 def test_optimizer_neutral_when_score_carries_no_signal():
     """Score uncorrelated with P&L → no in-grid threshold materially improves."""
     rng = random.Random(11)
-    obs = [
-        _obs(rng.uniform(0.50, 0.95), rng.uniform(-50, 50), oid=f"o_{i}")
-        for i in range(120)
-    ]
+    obs = [_obs(rng.uniform(0.50, 0.95), rng.uniform(-50, 50), oid=f"o_{i}") for i in range(120)]
     cfg = ThresholdConfig(min_pnl_improvement_usd=200.0)
-    report = optimize_threshold(
-        observations=obs, baseline_threshold=0.50, config=cfg
-    )
+    report = optimize_threshold(observations=obs, baseline_threshold=0.50, config=cfg)
     assert report.decision in ("neutral", "reject")
 
 
@@ -82,9 +77,7 @@ def test_optimizer_insufficient_data_when_no_threshold_meets_min_trades():
     cfg = ThresholdConfig(min_trades_for_threshold=50)
     # 30 obs, no threshold reaches 50 passing
     obs = _mixed_observations(n=30, seed=3)
-    report = optimize_threshold(
-        observations=obs, baseline_threshold=0.50, config=cfg
-    )
+    report = optimize_threshold(observations=obs, baseline_threshold=0.50, config=cfg)
     assert report.decision == "insufficient_data"
     assert any("min_trades_for_threshold" in r or "passes" in r for r in report.decision_reasons)
 
@@ -111,9 +104,7 @@ def test_only_thresholds_at_or_above_baseline_are_considered_by_default():
 def test_can_explicitly_consider_lower_thresholds():
     obs = _mixed_observations(n=120, seed=5)
     cfg = ThresholdConfig(only_consider_at_or_above_baseline=False)
-    report = optimize_threshold(
-        observations=obs, baseline_threshold=0.80, config=cfg
-    )
+    report = optimize_threshold(observations=obs, baseline_threshold=0.80, config=cfg)
     grid_min = min(gp.threshold for gp in report.grid)
     assert grid_min < 0.80
 
@@ -169,12 +160,9 @@ def test_decision_reasons_always_populated():
 
 def test_reject_when_best_in_grid_underperforms_baseline():
     """Construct a degenerate case: baseline already has all the winners."""
-    obs = (
-        [_obs(0.50, +100.0, oid=f"low_{i}") for i in range(40)]
-        + [_obs(0.95, -50.0, oid=f"high_{i}") for i in range(40)]
-    )
+    obs = [_obs(0.50, +100.0, oid=f"low_{i}") for i in range(40)] + [
+        _obs(0.95, -50.0, oid=f"high_{i}") for i in range(40)
+    ]
     cfg = ThresholdConfig(only_consider_at_or_above_baseline=False)
-    report = optimize_threshold(
-        observations=obs, baseline_threshold=0.50, config=cfg
-    )
+    report = optimize_threshold(observations=obs, baseline_threshold=0.50, config=cfg)
     assert report.decision in ("reject", "neutral")

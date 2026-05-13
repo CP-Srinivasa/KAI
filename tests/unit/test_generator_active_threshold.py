@@ -127,23 +127,21 @@ def test_active_threshold_overrides_static_constructor_value(tmp_path: Path):
     # binds when overridden.
     assert baseline.bayes_confidence_score < 0.99
 
-    out = _make_generator(
-        active_min_bayes_confidence=th, static_min_bayes=0.30
-    ).generate(_make_analysis(), _make_market_data(), "BTC/USDT")
+    out = _make_generator(active_min_bayes_confidence=th, static_min_bayes=0.30).generate(
+        _make_analysis(), _make_market_data(), "BTC/USDT"
+    )
     # Active threshold tightened the gate → signal rejected
     assert out is None
 
 
 def test_active_threshold_lower_than_static_lets_more_through():
     """Active threshold = 0.10, static = 0.50 → active wins, signal passes."""
-    th = ActiveThreshold.fixed(
-        parameter_path=DEFAULT_MIN_BAYES_CONFIDENCE_PATH, value=0.10
-    )
+    th = ActiveThreshold.fixed(parameter_path=DEFAULT_MIN_BAYES_CONFIDENCE_PATH, value=0.10)
     # We mark it as fixed → is_active is False, so the static value applies.
     # Use the .load path from a snapshot dir for a *real* active test below.
-    out = _make_generator(
-        active_min_bayes_confidence=th, static_min_bayes=0.99
-    ).generate(_make_analysis(), _make_market_data(), "BTC/USDT")
+    out = _make_generator(active_min_bayes_confidence=th, static_min_bayes=0.99).generate(
+        _make_analysis(), _make_market_data(), "BTC/USDT"
+    )
     # ActiveThreshold.fixed() reports is_active=False so the static gate of
     # 0.99 still applies → signal rejected. This documents fixed-vs-load.
     assert out is None
@@ -158,8 +156,8 @@ def test_active_threshold_loaded_from_snapshot_relaxes_strict_static(tmp_path: P
         snapshot_dir=tmp_path,
     )
     assert th.is_active
-    out = _make_generator(
-        active_min_bayes_confidence=th, static_min_bayes=0.99
-    ).generate(_make_analysis(), _make_market_data(), "BTC/USDT")
+    out = _make_generator(active_min_bayes_confidence=th, static_min_bayes=0.99).generate(
+        _make_analysis(), _make_market_data(), "BTC/USDT"
+    )
     # Active 0.10 overrides static 0.99 → signal passes
     assert out is not None

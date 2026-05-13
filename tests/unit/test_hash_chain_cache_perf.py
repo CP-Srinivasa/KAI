@@ -24,9 +24,7 @@ from app.learning.parameter_version import ParameterVersionStore
 
 def test_reasoning_journal_uses_cache_after_first_write(tmp_path: Path):
     rj = ReasoningJournal(tmp_path / "rj.jsonl")
-    s1 = rj.log_step(
-        decision_id="d", phase=PHASE_TRIGGER, actor="x", rationale_summary="a"
-    )
+    s1 = rj.log_step(decision_id="d", phase=PHASE_TRIGGER, actor="x", rationale_summary="a")
     # Cache should now be the hash of s1 + the file size after the write
     assert rj._cached_last_hash == _hash_record(s1)
     assert rj._cached_size > 0
@@ -37,21 +35,15 @@ def test_reasoning_journal_invalidates_cache_on_external_change(tmp_path: Path):
     `_last_chain_hash()` call must re-read (not return the stale cache)."""
     path = tmp_path / "rj.jsonl"
     rj = ReasoningJournal(path)
-    s1 = rj.log_step(
-        decision_id="d", phase=PHASE_TRIGGER, actor="x", rationale_summary="a"
-    )
+    s1 = rj.log_step(decision_id="d", phase=PHASE_TRIGGER, actor="x", rationale_summary="a")
 
     # External change: append a clearly different valid step out-of-band by
     # using a *second* journal instance (no cache yet)
     rj2 = ReasoningJournal(path)
-    s2 = rj2.log_step(
-        decision_id="d", phase=PHASE_TRIGGER, actor="y", rationale_summary="b"
-    )
+    s2 = rj2.log_step(decision_id="d", phase=PHASE_TRIGGER, actor="y", rationale_summary="b")
 
     # rj's cached_size now mismatches the on-disk size → next log_step re-walks
-    s3 = rj.log_step(
-        decision_id="d", phase=PHASE_TRIGGER, actor="z", rationale_summary="c"
-    )
+    s3 = rj.log_step(decision_id="d", phase=PHASE_TRIGGER, actor="z", rationale_summary="c")
     # s3 should chain off s2, NOT off s1
     assert s3.prev_chain_hash == _hash_record(s2)
     assert s3.prev_chain_hash != _hash_record(s1)
@@ -65,9 +57,7 @@ def test_reasoning_journal_append_is_constant_time_per_step(tmp_path: Path):
     n_measure = 200
 
     for i in range(n_warmup):
-        rj.log_step(
-            decision_id=f"w_{i}", phase=PHASE_TRIGGER, actor="x", rationale_summary="warm"
-        )
+        rj.log_step(decision_id=f"w_{i}", phase=PHASE_TRIGGER, actor="x", rationale_summary="warm")
 
     start = time.perf_counter()
     for i in range(n_measure):

@@ -460,9 +460,7 @@ class TestVerboseObserverHandler:
         handler = make_verbose_observer_handler(custom_logger)
 
         with caplog.at_level(logging.INFO, logger="test_f4_observer_info"):
-            asyncio.run(
-                handler(self._make_event(chat_id=-1001234567890, msg_id=42, raw_text="y"))
-            )
+            asyncio.run(handler(self._make_event(chat_id=-1001234567890, msg_id=42, raw_text="y")))
 
         assert caplog.records == [], "INFO-level config must suppress F4 output"
 
@@ -478,9 +476,7 @@ class TestVerboseObserverHandler:
 
         secret_text = "PRIVATE-MESSAGE-TEXT-DO-NOT-LOG-12345"
         with caplog.at_level(logging.DEBUG, logger="test_f4_observer_no_text"):
-            asyncio.run(
-                handler(self._make_event(chat_id=-100, msg_id=1, raw_text=secret_text))
-            )
+            asyncio.run(handler(self._make_event(chat_id=-100, msg_id=1, raw_text=secret_text)))
 
         for record in caplog.records:
             assert secret_text not in record.getMessage(), (

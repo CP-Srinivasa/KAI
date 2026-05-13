@@ -115,8 +115,17 @@ jobs:
             '[0-9]{8,10}:[A-Za-z0-9_-]{35}'  # Telegram bot tokens
           )
 
+          # Sanitizer-Tests need realistic-looking fake secrets as fixtures
+          # to verify redaction. They are allowlisted from the guard.
+          EXCLUDE_PATHS=(
+            ':!.github/workflows/ci.yml'
+            ':!tests/unit/test_audit_sanitization.py'
+            ':!tests/unit/test_bayes_journal_sanitize.py'
+            ':!tests/unit/test_structured_reasoning.py'
+          )
+
           for pat in "${PATTERNS[@]}"; do
-            HITS=$(git grep -lP "$pat" -- ':!.github/workflows/ci.yml' 2>/dev/null || true)
+            HITS=$(git grep -lP "$pat" -- "${EXCLUDE_PATHS[@]}" 2>/dev/null || true)
             if [ -n "$HITS" ]; then
               echo "FAIL: Pattern '$pat' found in: $HITS"
               FAIL=1

@@ -53,9 +53,7 @@ from app.audit.sanitization import SanitizationConfig, sanitize_string, sanitize
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_REASONING_JOURNAL_PATH: Final[Path] = Path(
-    "artifacts/structured_reasoning.jsonl"
-)
+DEFAULT_REASONING_JOURNAL_PATH: Final[Path] = Path("artifacts/structured_reasoning.jsonl")
 SCHEMA_VERSION: Final[int] = 1
 GENESIS_PREV_HASH: Final[str] = "0" * 64
 
@@ -169,9 +167,7 @@ class ReasoningJournal:
         """
         if not self._path.exists():
             return
-        for line_no, raw in enumerate(
-            self._path.read_text(encoding="utf-8").splitlines(), start=1
-        ):
+        for line_no, raw in enumerate(self._path.read_text(encoding="utf-8").splitlines(), start=1):
             stripped = raw.strip()
             if not stripped:
                 continue
@@ -287,14 +283,10 @@ class ReasoningJournal:
             timestamp_utc=_now_utc(),
             phase=phase,
             actor=sanitize_string(actor, config=san_cfg),
-            rationale_summary=sanitize_string(
-                rationale_summary, config=san_cfg
-            ),
+            rationale_summary=sanitize_string(rationale_summary, config=san_cfg),
             inputs=sanitize_value(inputs or {}, config=san_cfg),
             outputs=sanitize_value(outputs or {}, config=san_cfg),
-            evidence_refs=tuple(
-                sanitize_string(r, config=san_cfg) for r in evidence_refs
-            ),
+            evidence_refs=tuple(sanitize_string(r, config=san_cfg) for r in evidence_refs),
             parameter_versions=dict(parameter_versions or {}),
             confidence_before=confidence_before,
             confidence_after=confidence_after,

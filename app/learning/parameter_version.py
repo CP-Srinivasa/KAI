@@ -38,9 +38,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_PARAMETER_JOURNAL_PATH: Final[Path] = Path(
-    "artifacts/learning/parameter_journal.jsonl"
-)
+DEFAULT_PARAMETER_JOURNAL_PATH: Final[Path] = Path("artifacts/learning/parameter_journal.jsonl")
 SCHEMA_VERSION: Final[int] = 1
 GENESIS_PREV_HASH: Final[str] = "0" * 64
 
@@ -133,9 +131,7 @@ class ParameterVersionStore:
         """
         if not self._path.exists():
             return
-        for line_no, raw in enumerate(
-            self._path.read_text(encoding="utf-8").splitlines(), start=1
-        ):
+        for line_no, raw in enumerate(self._path.read_text(encoding="utf-8").splitlines(), start=1):
             stripped = raw.strip()
             if not stripped:
                 continue
@@ -306,9 +302,7 @@ class ParameterVersionStore:
         """
         proposal = self._find_proposal(parameter_path, version_id)
         if proposal is None:
-            raise ValueError(
-                f"unknown_version:{version_id} for path={parameter_path}"
-            )
+            raise ValueError(f"unknown_version:{version_id} for path={parameter_path}")
 
         record = ParameterChange(
             timestamp_utc=_now_utc(),
@@ -340,9 +334,7 @@ class ParameterVersionStore:
         """
         proposal = self._find_proposal(parameter_path, version_id)
         if proposal is None:
-            raise ValueError(
-                f"unknown_version:{version_id} for path={parameter_path}"
-            )
+            raise ValueError(f"unknown_version:{version_id} for path={parameter_path}")
 
         record = ParameterChange(
             timestamp_utc=_now_utc(),
@@ -373,9 +365,7 @@ class ParameterVersionStore:
         """
         proposal = self._find_proposal(parameter_path, version_id)
         if proposal is None:
-            raise ValueError(
-                f"unknown_version:{version_id} for path={parameter_path}"
-            )
+            raise ValueError(f"unknown_version:{version_id} for path={parameter_path}")
 
         record = ParameterChange(
             timestamp_utc=_now_utc(),
@@ -393,9 +383,7 @@ class ParameterVersionStore:
 
     # --- internals ---------------------------------------------------------
 
-    def _find_proposal(
-        self, parameter_path: str, version_id: str
-    ) -> ParameterChange | None:
+    def _find_proposal(self, parameter_path: str, version_id: str) -> ParameterChange | None:
         for rec in self.iter_records():
             if (
                 rec.record_type == "version_proposed"

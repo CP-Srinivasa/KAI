@@ -394,13 +394,9 @@ class TestEvidenceValidation:
 
 
 class TestDeterminism:
-    def test_same_input_same_report(
-        self, engine: BayesianConfidenceEngine, now: datetime
-    ) -> None:
+    def test_same_input_same_report(self, engine: BayesianConfidenceEngine, now: datetime) -> None:
         evidences = [
-            build_news_evidence(
-                relevance=0.7, sentiment_aligned_with_signal=True, observed_at=now
-            ),
+            build_news_evidence(relevance=0.7, sentiment_aligned_with_signal=True, observed_at=now),
             build_funding_rate_evidence(
                 funding_rate_pct=0.02, signal_is_long=True, observed_at=now
             ),
@@ -419,9 +415,7 @@ class TestExplainability:
         self, engine: BayesianConfidenceEngine, now: datetime
     ) -> None:
         evidences = [
-            build_news_evidence(
-                relevance=0.9, sentiment_aligned_with_signal=True, observed_at=now
-            ),
+            build_news_evidence(relevance=0.9, sentiment_aligned_with_signal=True, observed_at=now),
             build_news_evidence(
                 relevance=0.4, sentiment_aligned_with_signal=False, observed_at=now
             ),

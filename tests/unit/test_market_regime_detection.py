@@ -151,9 +151,7 @@ class TestSpecificRegimes:
 
 
 class TestDistributionContract:
-    def test_distribution_sums_to_one(
-        self, engine: RegimeDetectionEngine, now: datetime
-    ) -> None:
+    def test_distribution_sums_to_one(self, engine: RegimeDetectionEngine, now: datetime) -> None:
         obs = _obs_from_profile(MarketRegime.BULL, now)
         r = engine.classify(obs)
         assert sum(r.classification.distribution.values()) == pytest.approx(1.0, abs=1e-5)
@@ -165,9 +163,7 @@ class TestDistributionContract:
         r = engine.classify(obs)
         assert set(r.classification.distribution.keys()) == set(MarketRegime)
 
-    def test_secondary_is_not_primary(
-        self, engine: RegimeDetectionEngine, now: datetime
-    ) -> None:
+    def test_secondary_is_not_primary(self, engine: RegimeDetectionEngine, now: datetime) -> None:
         obs = _obs_from_profile(MarketRegime.BULL, now)
         r = engine.classify(obs)
         assert r.classification.secondary_regime != r.classification.primary_regime
@@ -218,9 +214,7 @@ class TestAnomalyDetection:
         r = engine.classify(obs)
         assert r.anomaly_score > 0.95
 
-    def test_anomaly_in_unit_interval(
-        self, engine: RegimeDetectionEngine, now: datetime
-    ) -> None:
+    def test_anomaly_in_unit_interval(self, engine: RegimeDetectionEngine, now: datetime) -> None:
         for vol in [-5.0, 0.0, 5.0]:
             obs = make_observation(features={FeatureName.VOLATILITY: vol}, timestamp_utc=now)
             r = engine.classify(obs)
@@ -277,8 +271,7 @@ class TestHMM:
         self, engine: RegimeDetectionEngine, now: datetime
     ) -> None:
         obs_list = [
-            _obs_from_profile(MarketRegime.BULL, now + timedelta(minutes=i))
-            for i in range(5)
+            _obs_from_profile(MarketRegime.BULL, now + timedelta(minutes=i)) for i in range(5)
         ]
         r = engine.classify_sequence(obs_list)
         assert r.hmm_path is not None
@@ -288,8 +281,7 @@ class TestHMM:
         self, engine: RegimeDetectionEngine, now: datetime
     ) -> None:
         obs_list = [
-            _obs_from_profile(MarketRegime.BULL, now + timedelta(minutes=i))
-            for i in range(8)
+            _obs_from_profile(MarketRegime.BULL, now + timedelta(minutes=i)) for i in range(8)
         ]
         r = engine.classify_sequence(obs_list)
         # Persistenz 0.7 + alle Beobachtungen bullish → kompletter Pfad bull
@@ -466,10 +458,7 @@ def test_same_input_same_output(engine: RegimeDetectionEngine, now: datetime) ->
 def test_sequence_classification_is_deterministic(
     engine: RegimeDetectionEngine, now: datetime
 ) -> None:
-    obs = [
-        _obs_from_profile(MarketRegime.BULL, now + timedelta(minutes=i))
-        for i in range(5)
-    ]
+    obs = [_obs_from_profile(MarketRegime.BULL, now + timedelta(minutes=i)) for i in range(5)]
     r1 = engine.classify_sequence(obs)
     r2 = engine.classify_sequence(obs)
     assert r1.model_dump() == r2.model_dump()

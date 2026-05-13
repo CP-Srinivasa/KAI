@@ -147,9 +147,7 @@ def test_no_confidence_change_step_when_calibrator_inactive(tmp_path: Path):
     gen = _make_generator(active_calibrator=cal, reasoning_journal=rj)
     signal = gen.generate(_make_analysis(), _make_market_data(), "BTC/USDT")
     assert signal is not None
-    confidence_steps = [
-        s for s in rj.iter_steps() if s.phase == PHASE_CONFIDENCE_CHANGE
-    ]
+    confidence_steps = [s for s in rj.iter_steps() if s.phase == PHASE_CONFIDENCE_CHANGE]
     assert confidence_steps == []
 
 
@@ -180,9 +178,7 @@ def test_bayes_gate_reject_emits_invalidation_step(tmp_path: Path):
     out = gen.generate(_make_analysis(), _make_market_data(), "BTC/USDT")
     assert out is None  # gate rejected
 
-    invalidation_steps = [
-        s for s in rj.iter_steps() if s.phase == PHASE_INVALIDATION
-    ]
+    invalidation_steps = [s for s in rj.iter_steps() if s.phase == PHASE_INVALIDATION]
     assert len(invalidation_steps) == 1
     step = invalidation_steps[0]
     assert step.actor == "SignalGenerator.bayes_gate"

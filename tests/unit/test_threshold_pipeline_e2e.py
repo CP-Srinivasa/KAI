@@ -35,11 +35,7 @@ def _build_observations(n: int = 120, seed: int = 99) -> list[ThresholdObservati
         score = rng.uniform(0.50, 0.95)
         win = rng.random() < (0.85 if score >= 0.75 else 0.30)
         pnl = rng.uniform(50, 150) if win else -rng.uniform(50, 150)
-        out.append(
-            ThresholdObservation(
-                observation_id=f"o_{i}", score=score, realized_pnl_usd=pnl
-            )
-        )
+        out.append(ThresholdObservation(observation_id=f"o_{i}", score=score, realized_pnl_usd=pnl))
     return out
 
 
@@ -50,18 +46,14 @@ def test_full_pipeline_threshold_class_round_trip(tmp_path: Path):
 
     # ── Step 1: optimize ──────────────────────────────────────────────────
     observations = _build_observations(n=120, seed=99)
-    report = optimize_threshold(
-        observations=observations, baseline_threshold=0.50
-    )
+    report = optimize_threshold(observations=observations, baseline_threshold=0.50)
     assert report.decision == "approve", report.decision_reasons
     new_threshold = report.best_threshold
     assert new_threshold is not None
     assert new_threshold > 0.50
 
     # ── Step 2: propose into hash-chained journal ────────────────────────
-    svc = ApprovalService(
-        ParameterVersionStore(journal), snapshot_dir=snap_dir
-    )
+    svc = ApprovalService(ParameterVersionStore(journal), snapshot_dir=snap_dir)
     proposal = svc.store.propose_version(
         parameter_path=DEFAULT_MIN_BAYES_CONFIDENCE_PATH,
         parameter_set={"value": new_threshold, "default": 0.50},

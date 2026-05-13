@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime
 from pathlib import Path
 
 import duckdb
@@ -90,7 +89,9 @@ def _alert_outcome(doc_id: str, outcome: str, *, ts: str = "2026-05-09T13:00:00+
 # --- Stream-Parse -------------------------------------------------------
 
 
-def test_compact_empty_jsonl_advances_no_offset(tmp_path: Path, db: duckdb.DuckDBPyConnection) -> None:
+def test_compact_empty_jsonl_advances_no_offset(
+    tmp_path: Path, db: duckdb.DuckDBPyConnection
+) -> None:
     jsonl = tmp_path / "empty.jsonl"
     jsonl.touch()
     src = CompactionSource("alert_audit", jsonl, handle_alert_audit_row)
@@ -111,7 +112,9 @@ def test_compact_missing_file_is_no_error(tmp_path: Path, db: duckdb.DuckDBPyCon
     assert result.error is None
 
 
-def test_compact_paper_fill_inserts_one_trade(tmp_path: Path, db: duckdb.DuckDBPyConnection) -> None:
+def test_compact_paper_fill_inserts_one_trade(
+    tmp_path: Path, db: duckdb.DuckDBPyConnection
+) -> None:
     jsonl = tmp_path / "paper.jsonl"
     _write_jsonl(jsonl, [_paper_fill("fill_aaa")])
     src = CompactionSource("paper_execution_audit", jsonl, handle_paper_execution_row)
@@ -206,9 +209,11 @@ def test_compaction_tolerates_partial_last_line(
 
     # Now writer finishes the line — re-run should pick up the rest.
     with jsonl.open("ab") as f:
-        f.write(b'", "order_id": "ord_partial", "symbol": "ETH/USDT", "side": "buy", '
-                b'"position_side": "long", "quantity": 1.0, "fill_price": 3000.0, '
-                b'"fee_usd": 1.5, "pnl_usd": 0.0, "timestamp_utc": "2026-05-09T12:05:00+00:00"}\n')
+        f.write(
+            b'", "order_id": "ord_partial", "symbol": "ETH/USDT", "side": "buy", '
+            b'"position_side": "long", "quantity": 1.0, "fill_price": 3000.0, '
+            b'"fee_usd": 1.5, "pnl_usd": 0.0, "timestamp_utc": "2026-05-09T12:05:00+00:00"}\n'
+        )
 
     r2 = compact_source(db, src)
     assert r2.rows_applied == 1
@@ -222,7 +227,7 @@ def test_compaction_skips_corrupted_mid_file_line(
     jsonl = tmp_path / "paper.jsonl"
     _write_jsonl(jsonl, [_paper_fill("fill_a")])
     with jsonl.open("ab") as f:
-        f.write(b'{this is not json}\n')
+        f.write(b"{this is not json}\n")
     _write_jsonl(jsonl, [_paper_fill("fill_b")])
 
     src = CompactionSource("paper_execution_audit", jsonl, handle_paper_execution_row)
@@ -299,7 +304,11 @@ def test_alert_outcome_rejects_invalid_outcome_label(
     _write_jsonl(
         outcomes_jsonl,
         [
-            {"document_id": "doc-x", "outcome": "definitely-not-valid", "annotated_at": "2026-05-09T12:00:00+00:00"},
+            {
+                "document_id": "doc-x",
+                "outcome": "definitely-not-valid",
+                "annotated_at": "2026-05-09T12:00:00+00:00",
+            },
         ],
     )
     src = CompactionSource("alert_outcomes", outcomes_jsonl, handle_alert_outcome_row)
@@ -330,9 +339,7 @@ def test_full_compaction_runs_all_sources_in_order(
     assert outcome[0] == "hit"
 
 
-def test_watermark_persists_across_runs(
-    tmp_path: Path, db: duckdb.DuckDBPyConnection
-) -> None:
+def test_watermark_persists_across_runs(tmp_path: Path, db: duckdb.DuckDBPyConnection) -> None:
     jsonl = tmp_path / "paper.jsonl"
     _write_jsonl(jsonl, [_paper_fill(f"fill_{i}") for i in range(3)])
     src = CompactionSource("paper_execution_audit", jsonl, handle_paper_execution_row)

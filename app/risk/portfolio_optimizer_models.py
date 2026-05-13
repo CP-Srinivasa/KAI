@@ -43,7 +43,12 @@ ACTION_HOLD: Final[str] = "hold"
 
 # --- Common stablecoin tickers (lowercased) ---
 _DEFAULT_STABLECOINS: Final[tuple[str, ...]] = (
-    "usdt", "usdc", "busd", "tusd", "dai", "fdusd",
+    "usdt",
+    "usdc",
+    "busd",
+    "tusd",
+    "dai",
+    "fdusd",
 )
 
 
@@ -152,16 +157,16 @@ class AssetAllocation:
     """Per-asset target allocation + diff vs. current portfolio."""
 
     symbol: str
-    target_weight_pct: float        # 0..100, signed if long-short enabled
+    target_weight_pct: float  # 0..100, signed if long-short enabled
     current_weight_pct: float
-    drift_pct: float                # target − current, in pct points
-    risk_contribution_pct: float    # 0..100 — share of portfolio variance
+    drift_pct: float  # target − current, in pct points
+    risk_contribution_pct: float  # 0..100 — share of portfolio variance
     expected_return_annual: float | None
     expected_volatility_annual: float | None
     funding_adjusted_return_annual: float | None
-    action: str                     # ACTION_BUY / SELL / HOLD
-    trade_size_usd: float           # signed
-    trade_size_pct: float           # signed, % of portfolio
+    action: str  # ACTION_BUY / SELL / HOLD
+    trade_size_usd: float  # signed
+    trade_size_pct: float  # signed, % of portfolio
     liquidity_capped: bool = False
     notes: dict[str, object] = field(default_factory=dict)
 

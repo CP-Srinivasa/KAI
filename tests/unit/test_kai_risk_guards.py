@@ -13,16 +13,16 @@ from app.messaging.kai_risk_guards import (
 
 
 def _signal(**overrides) -> KaiSignalForGuards:
-    base = dict(
-        asset="BTC/USDT",
-        mode="LIVETRADE",
-        direction="LONG",
-        confidence=70.0,
-        risk="MEDIUM",
-        stop_loss="76500",
-        data_basis=("news", "volume", "structure"),
-        data_quality="MEDIUM",
-    )
+    base = {
+        "asset": "BTC/USDT",
+        "mode": "LIVETRADE",
+        "direction": "LONG",
+        "confidence": 70.0,
+        "risk": "MEDIUM",
+        "stop_loss": "76500",
+        "data_basis": ("news", "volume", "structure"),
+        "data_quality": "MEDIUM",
+    }
     base.update(overrides)
     return KaiSignalForGuards(**base)
 

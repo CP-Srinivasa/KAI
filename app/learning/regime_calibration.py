@@ -143,9 +143,7 @@ class RegimeCalibratorBundle(BaseModel):
         regimes_raw = payload["regimes"]
         if not isinstance(regimes_raw, dict):
             raise ValueError("'regimes' must be a dict")
-        regimes = {
-            k: _entry_from_dict(v, regime=k) for k, v in regimes_raw.items()
-        }
+        regimes = {k: _entry_from_dict(v, regime=k) for k, v in regimes_raw.items()}
         min_pairs = int(payload.get("min_pairs_per_regime", DEFAULT_MIN_PAIRS_FOR_FIT))
         return cls(
             regimes=regimes,
@@ -226,9 +224,7 @@ def fit_regime_calibrators(
 
     # Global calibrator from the entire pool
     global_cal = fit_calibrator(global_pool, min_pairs=min_pairs_per_regime)
-    global_entry = _calibrator_to_entry(
-        regime=GLOBAL_BUCKET, cal=global_cal, is_fallback=False
-    )
+    global_entry = _calibrator_to_entry(regime=GLOBAL_BUCKET, cal=global_cal, is_fallback=False)
 
     # Determine the union of regimes to emit
     regime_keys: set[str] = set(by_regime.keys())
@@ -242,9 +238,7 @@ def fit_regime_calibrators(
             cal = fit_calibrator(bucket, min_pairs=min_pairs_per_regime)
             entry = _calibrator_to_entry(regime=regime, cal=cal, is_fallback=False)
         else:
-            entry = _calibrator_to_entry(
-                regime=regime, cal=global_cal, is_fallback=True
-            )
+            entry = _calibrator_to_entry(regime=regime, cal=global_cal, is_fallback=True)
         regime_entries[regime] = entry
 
     return RegimeCalibratorBundle(

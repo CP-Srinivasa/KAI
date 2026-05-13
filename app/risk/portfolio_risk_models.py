@@ -35,7 +35,12 @@ ALL_STRESS_SCENARIOS: Final[tuple[str, ...]] = (
 
 # Common stablecoins (lowercased for matching)
 _DEFAULT_STABLECOINS: Final[tuple[str, ...]] = (
-    "usdt", "usdc", "busd", "tusd", "dai", "fdusd",
+    "usdt",
+    "usdc",
+    "busd",
+    "tusd",
+    "dai",
+    "fdusd",
 )
 
 # Default per-exchange insolvency haircut (loss fraction in failure event).
@@ -136,11 +141,11 @@ class PositionRisk:
 
     symbol: str
     notional_usd: float
-    weight_pct: float                  # |notional| / gross_exposure × 100
-    risk_budget_pct: float             # component VaR / portfolio VaR × 100
-    expected_downside_usd: float       # standalone position VaR
-    tail_exposure_usd: float           # contribution to ES (MC-attributed)
-    stress_exposure_usd: float         # max loss across stress scenarios
+    weight_pct: float  # |notional| / gross_exposure × 100
+    risk_budget_pct: float  # component VaR / portfolio VaR × 100
+    expected_downside_usd: float  # standalone position VaR
+    tail_exposure_usd: float  # contribution to ES (MC-attributed)
+    stress_exposure_usd: float  # max loss across stress scenarios
     stress_breakdown: dict[str, float] = field(default_factory=dict)
 
 
@@ -150,7 +155,7 @@ class PortfolioRiskReport:
 
     # Identity
     timestamp_utc: str
-    portfolio_value_usd: float          # gross exposure
+    portfolio_value_usd: float  # gross exposure
     gross_exposure_usd: float
     net_exposure_usd: float
     confidence_level: float
@@ -171,9 +176,9 @@ class PortfolioRiskReport:
     # Tail risk
     portfolio_skew: float | None
     portfolio_excess_kurtosis: float | None
-    tail_index: float | None             # Hill-estimator α; smaller = fatter
+    tail_index: float | None  # Hill-estimator α; smaller = fatter
     tail_prob_threshold_sigma: float
-    tail_prob_exceedance: float | None   # empirical P(loss > k·σ)
+    tail_prob_exceedance: float | None  # empirical P(loss > k·σ)
 
     # Drawdown distribution
     max_drawdown_pct: float | None

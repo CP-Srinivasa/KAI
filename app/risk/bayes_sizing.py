@@ -142,7 +142,7 @@ def compute_bayes_sized_position(inp: BayesSizingInput) -> BayesSizingDecision:
             capped_by="negative_edge",
             rationale=(
                 f"Kelly-Edge nicht-positiv (p={inp.win_probability:.3f}, "
-                f"reward/risk={inp.expected_reward_pct/inp.stop_loss_pct:.2f}) — "
+                f"reward/risk={inp.expected_reward_pct / inp.stop_loss_pct:.2f}) — "
                 "Trade abgelehnt."
             ),
         )
@@ -195,7 +195,7 @@ def compute_bayes_sized_position(inp: BayesSizingInput) -> BayesSizingDecision:
         f"Kelly raw={f_raw:.4f} → adjusted={f_adj:.4f} → final={f_cap:.4f} "
         f"({position_size_usd:,.2f} USD bei equity={inp.equity:,.2f}). "
         f"win_p={inp.win_probability:.3f}, reward/risk="
-        f"{inp.expected_reward_pct/inp.stop_loss_pct:.2f}, "
+        f"{inp.expected_reward_pct / inp.stop_loss_pct:.2f}, "
         f"confidence={inp.bayes_confidence:.3f}, uncertainty={inp.bayes_uncertainty:.3f}, "
         f"anomaly={inp.regime_anomaly:.3f}."
     )

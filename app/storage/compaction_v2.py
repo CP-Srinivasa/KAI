@@ -109,7 +109,11 @@ def handle_paper_execution_row(con: duckdb.DuckDBPyConnection, row: dict[str, An
 
     quantity = row.get("quantity")
     price = row.get("fill_price")
-    if not isinstance(asset, str) or not _is_finite_number(quantity) or not _is_finite_number(price):
+    if (
+        not isinstance(asset, str)
+        or not _is_finite_number(quantity)
+        or not _is_finite_number(price)
+    ):
         return 0
 
     fee_usd = row.get("fee_usd") if _is_finite_number(row.get("fee_usd")) else 0.0
@@ -249,9 +253,7 @@ def default_sources(artifacts_dir: Path) -> list[CompactionSource]:
 # --- Watermark-Hilfen ---------------------------------------------------
 
 
-def _read_watermark(
-    con: duckdb.DuckDBPyConnection, source: str
-) -> tuple[int, str | None, int]:
+def _read_watermark(con: duckdb.DuckDBPyConnection, source: str) -> tuple[int, str | None, int]:
     """Returns (last_byte_offset, last_event_id, rows_processed)."""
     row = con.execute(
         "SELECT last_byte_offset, last_event_id, rows_processed "
@@ -342,7 +344,7 @@ def _stream_parse_from_offset(
         # streamed line by line; for the common steady-state case
         # (delta < few KB) memory pressure is negligible.
         while True:
-            line_start = f.tell()
+            f.tell()
             raw = f.readline()
             if not raw:
                 break

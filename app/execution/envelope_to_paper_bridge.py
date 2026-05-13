@@ -471,11 +471,9 @@ async def _process_one(
     # silently dropped, so a 4-target signal could only ever realise 1/4
     # of the channel-intended take-profit progression.
     targets = sorted(
-        (
-            float(t)
-            for t in (targets_raw or [])
-            if isinstance(t, (int, float)) and not isinstance(t, bool) and t > 0
-        )
+        float(t)
+        for t in (targets_raw or [])
+        if isinstance(t, (int, float)) and not isinstance(t, bool) and t > 0
     )
     tp1 = targets[0] if targets else None
 
@@ -556,7 +554,10 @@ async def _process_one(
         # Persist the corrected scale on the envelope payload so downstream
         # consumers (engine, tier ladder, audit) see the same numbers we
         # just gated on.
-        _apply_scale(envelope.get("payload") if isinstance(envelope.get("payload"), dict) else {}, scale_factor)
+        _apply_scale(
+            envelope.get("payload") if isinstance(envelope.get("payload"), dict) else {},
+            scale_factor,
+        )
 
     if not _within_tolerance(
         current_price=current_price,
@@ -665,9 +666,11 @@ async def _process_one(
     rec["fill_price"] = fill.fill_price
     rec["stop_loss"] = stop_loss
     rec["take_profit"] = tp1
-    rec["take_profit_tiers"] = [
-        {"price": price, "qty_share": 1.0 / len(targets)} for price in targets
-    ] if len(targets) > 1 else []
+    rec["take_profit_tiers"] = (
+        [{"price": price, "qty_share": 1.0 / len(targets)} for price in targets]
+        if len(targets) > 1
+        else []
+    )
     rec["risk_check_id"] = risk_result.check_id
     _append_bridge_audit(rec)
     result.filled += 1
