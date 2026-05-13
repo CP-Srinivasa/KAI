@@ -92,9 +92,10 @@ known-first-party = ["app"]
 # Transitional ignores — PR #5 Signal-to-Execution Pipeline.
 # Files modified by Codex/Antigravity parallel-session with inline-string
 # fixtures and JSON-API camelCase fields. Cleanup-Cycle nach Pi-5-Deploy.
-"app/api/routers/kai.py" = ["B008"]
+"app/api/routers/kai.py" = ["B008", "N815"]
 "app/cli/commands/ingestion.py" = ["E501"]
 "app/messaging/kai_chat_engine.py" = ["E501"]
+"app/messaging/telegram_bot.py" = ["E501"]
 "app/security/live_caps.py" = ["N818"]
 "tests/unit/test_alert_eligibility.py" = ["E501"]
 "tests/unit/test_analysis_pipeline.py" = ["E402"]

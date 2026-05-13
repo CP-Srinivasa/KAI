@@ -28,7 +28,6 @@ from app.security.exchange_perms import (
     ExchangePermsError,
     IpResolver,
     PermissionDriftError,
-    PermissionStatus,
     Phase0Expectations,
     _binance_payload_to_status,
     _bybit_payload_to_status,
@@ -37,7 +36,6 @@ from app.security.exchange_perms import (
     verify_against_phase0_requirements,
     verify_all,
 )
-
 
 # ── Test-Fixtures ─────────────────────────────────────────────────────────────
 
@@ -174,9 +172,7 @@ def test_bybit_mapper_withdraw_permission_detected() -> None:
 
 
 def test_bybit_mapper_derivatives_detected() -> None:
-    status = _bybit_payload_to_status(
-        _bybit_happy_payload(derivatives=["ContractTrade"])
-    )
+    status = _bybit_payload_to_status(_bybit_happy_payload(derivatives=["ContractTrade"]))
     assert status.derivatives_enabled is True
     assert status.futures_enabled is True  # Bybit-Sammelbegriff
 
@@ -230,9 +226,7 @@ def test_drift_margin_enabled_rejected() -> None:
 
 
 def test_drift_ip_not_in_allowlist_rejected() -> None:
-    status = _binance_payload_to_status(
-        _binance_happy_payload(ip_list=("8.8.8.8",))
-    )
+    status = _binance_payload_to_status(_binance_happy_payload(ip_list=("8.8.8.8",)))
     with pytest.raises(PermissionDriftError) as exc_info:
         verify_against_phase0_requirements(status, _expectations())
     assert "pi_wan_ip_missing_from_allowlist" in str(exc_info.value)
@@ -240,9 +234,7 @@ def test_drift_ip_not_in_allowlist_rejected() -> None:
 
 
 def test_drift_ip_restrict_not_enforced_rejected() -> None:
-    status = _binance_payload_to_status(
-        _binance_happy_payload(ip_restrict=False, ip_list=())
-    )
+    status = _binance_payload_to_status(_binance_happy_payload(ip_restrict=False, ip_list=()))
     with pytest.raises(PermissionDriftError) as exc_info:
         verify_against_phase0_requirements(status, _expectations())
     assert "ip_restrict_not_enforced" in str(exc_info.value)
@@ -250,9 +242,7 @@ def test_drift_ip_restrict_not_enforced_rejected() -> None:
 
 def test_drift_multiple_reasons_concatenated() -> None:
     status = _binance_payload_to_status(
-        _binance_happy_payload(
-            spot=False, withdraw=True, futures=True, ip_list=("1.2.3.4",)
-        )
+        _binance_happy_payload(spot=False, withdraw=True, futures=True, ip_list=("1.2.3.4",))
     )
     with pytest.raises(PermissionDriftError) as exc_info:
         verify_against_phase0_requirements(status, _expectations())
@@ -336,9 +326,7 @@ def test_binance_verifier_with_stub_caller_returns_status() -> None:
 
 
 def test_binance_verifier_wraps_transport_error_as_api_error() -> None:
-    v = BinancePermissionVerifier(
-        api_key="k", api_secret="s", http_caller=_RaisingBinanceCaller()
-    )
+    v = BinancePermissionVerifier(api_key="k", api_secret="s", http_caller=_RaisingBinanceCaller())
     with pytest.raises(ExchangeApiError) as exc_info:
         v.fetch_status()
     assert "binance api_restrictions call failed" in str(exc_info.value)
@@ -358,11 +346,13 @@ def test_bybit_verifier_with_stub_caller_returns_status() -> None:
 
 def test_verify_all_both_exchanges_clean() -> None:
     binance = BinancePermissionVerifier(
-        api_key="bk", api_secret="bs",
+        api_key="bk",
+        api_secret="bs",
         http_caller=_BinanceStubCaller(_binance_happy_payload()),
     )
     bybit = BybitPermissionVerifier(
-        api_key="yk", api_secret="ys",
+        api_key="yk",
+        api_secret="ys",
         http_caller=_BybitStubCaller(_bybit_happy_payload()),
     )
     statuses = verify_all(
@@ -378,12 +368,15 @@ def test_verify_all_both_exchanges_clean() -> None:
 def test_verify_all_binance_drift_blocks_bybit_check() -> None:
     """Erste Drift-Detection wirft sofort — Bybit-Verifier wird nicht mehr aufgerufen."""
     binance = BinancePermissionVerifier(
-        api_key="bk", api_secret="bs",
+        api_key="bk",
+        api_secret="bs",
         http_caller=_BinanceStubCaller(_binance_happy_payload(withdraw=True)),
     )
     bybit_caller = _BybitStubCaller(_bybit_happy_payload())
     bybit = BybitPermissionVerifier(
-        api_key="yk", api_secret="ys", http_caller=bybit_caller,
+        api_key="yk",
+        api_secret="ys",
+        http_caller=bybit_caller,
     )
     with pytest.raises(PermissionDriftError):
         verify_all(
@@ -397,7 +390,8 @@ def test_verify_all_binance_drift_blocks_bybit_check() -> None:
 def test_verify_all_only_bybit_works() -> None:
     """Operator-Setup auf nur einem Exchange ist erlaubt."""
     bybit = BybitPermissionVerifier(
-        api_key="yk", api_secret="ys",
+        api_key="yk",
+        api_secret="ys",
         http_caller=_BybitStubCaller(_bybit_happy_payload()),
     )
     statuses = verify_all(
@@ -424,7 +418,8 @@ def test_perms_summary_serializes_to_jsonable_dict() -> None:
     import json
 
     binance = BinancePermissionVerifier(
-        api_key="bk", api_secret="bs",
+        api_key="bk",
+        api_secret="bs",
         http_caller=_BinanceStubCaller(_binance_happy_payload()),
     )
     statuses = verify_all(
