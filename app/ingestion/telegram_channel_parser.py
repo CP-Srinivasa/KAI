@@ -218,14 +218,21 @@ def _extract_stop_loss(text: str) -> float | None:
     return _to_float(m["sl"]) if m else None
 
 
-# Targets: three observed forms.
+# Targets: four observed forms.
 #  A) "Targets: 100 - 110 - 120 - 130"       (single-line, dash-separated)
 #  B) "🎯 100\n🎯 110\n..."                    (bullseye + inline value per line)
 #  C) "🎯 Target:\n100\n110\n..."             (bullseye label then values below)
+#  D) "Targets:\n100\n110\n..."               (plain label then values below,
+#                                              no emoji — Sprint F 2026-05-12,
+#                                              Operator-Beispielsignale TRUTH/OPG/IRYS)
 _TARGETS_LINE = re.compile(rf"(?im)^\s*Targets?\s*:\s*(?P<list>[\d.,/\s{_DASH_CHARS}]+?)\s*$")
 _TARGET_EMOJI_INLINE = re.compile(r"(?im)^\s*🎯\s*(?P<v>\d[\d.]*)\s*$")
 # Label form: "🎯 Target:" (any case, optional 's') followed by numeric lines.
 _TARGET_EMOJI_LABEL = re.compile(r"(?im)^\s*🎯\s*Targets?\s*:?\s*$")
+# Plain label form: "Targets:" (case-insensitive, optional 's') followed by
+# numeric lines. Distinct from form A because A's regex demands AT LEAST one
+# digit on the label-line itself; form D has an empty label line.
+_TARGET_PLAIN_LABEL = re.compile(r"(?im)^\s*Targets?\s*:\s*$")
 _NUMERIC_LINE = re.compile(r"(?im)^\s*(?P<v>\d[\d.]*)\s*$")
 
 
@@ -267,6 +274,24 @@ def _extract_targets(text: str) -> list[float]:
                 values.append(v)
         if values:
             return values
+    # Form D (Sprint F 2026-05-12): "Targets:" plain label without emoji,
+    # values on following lines. Operator-Beispielsignale TRUTH/OPG/IRYS.
+    plain_label = _TARGET_PLAIN_LABEL.search(text)
+    if plain_label is not None:
+        after = text[plain_label.end() :]
+        values_d: list[float] = []
+        for raw in after.splitlines():
+            line = raw.strip()
+            if not line:
+                continue
+            nm = _NUMERIC_LINE.match(line)
+            if nm is None:
+                break  # stop at first non-numeric line (e.g. "Leverage - 10x")
+            v = _to_float(nm["v"])
+            if v is not None and v > 0:
+                values_d.append(v)
+        if values_d:
+            return values_d
     # Form A: dash-list on a single "Targets:" line.
     m = _TARGETS_LINE.search(text)
     if m is None:
@@ -324,6 +349,74 @@ def _extract_exchange_scope(text: str) -> list[str]:
 # ── Public entry ────────────────────────────────────────────────────────────
 
 
+# ── Target-Completion / All-TP-Hit-Meldungen ───────────────────────────────
+#
+# 2026-05-12 Sprint D (per Operator-Auftrag Sektion 3+9). Channel postet nach
+# einem vollständigen Take-Profit-Run kurze Bestätigungen:
+#
+#   🎯 #TRUTH/USDT has touched 15674 and has completed all the profit targets
+#   🎯 #ON/USDT has touched 19561 and has completed all the profit targets
+#
+# Parser-Vertrag:
+#   - liefert ``TargetCompletionEvent`` (symbol, touch_price, raw_text) oder None
+#   - touch_price ist optional (manche Channel-Varianten lassen die Zahl weg)
+#   - bewusst getrennt von ``parse_premium_channel_message`` weil das Schema
+#     fundamental anders ist (kein entry/SL/targets/leverage — nur eine Outcome-
+#     Bestätigung). Caller dispatcht: erst NewSignal-Parser, dann Completion-Parser.
+
+_TARGET_COMPLETION = re.compile(
+    rf"(?im)🎯\s*#\s*(?P<symbol>[A-Z0-9]+\s*/\s*[A-Z0-9]+|[A-Z0-9]{{2,}}\s*/\s*[A-Z0-9]+)"
+    rf"\s+has\s+touched\s+(?P<price>[\d.,]+)?\s*"
+    rf".*?completed\s+all\s+the\s+profit\s+targets"
+)
+# Variante ohne touch-price ("has completed all the profit targets")
+_TARGET_COMPLETION_NO_PRICE = re.compile(
+    rf"(?im)🎯\s*#\s*(?P<symbol>[A-Z0-9]+\s*/\s*[A-Z0-9]+|[A-Z0-9]{{2,}}\s*/\s*[A-Z0-9]+)"
+    rf"\s+(?:has\s+)?completed\s+all\s+(?:the\s+)?profit\s+targets"
+)
+
+
+@dataclass(frozen=True)
+class TargetCompletionEvent:
+    """All-TP-Hit-Bestätigung aus dem Premium-Channel."""
+
+    symbol: str  # internal canonical e.g. "TRUTHUSDT"
+    display_symbol: str  # human e.g. "TRUTH/USDT"
+    touch_price: float | None  # None when channel omits it
+    raw_text: str
+
+
+def parse_target_completion(text: str) -> TargetCompletionEvent | None:
+    """Return TargetCompletionEvent or None for 🎯 all-TP-completion messages.
+
+    Pure, IO-free. Caller decides: dispatch to new-signal parser first; if that
+    returns None, try this one before classifying the message as not-a-signal.
+    """
+    if not text or not text.strip():
+        return None
+    # Order matters: price-bearing form first (more specific).
+    m = _TARGET_COMPLETION.search(text)
+    if m is not None:
+        symbol_internal, symbol_display = _normalize_symbol(m["symbol"])
+        price = _to_float(m["price"]) if m["price"] else None
+        return TargetCompletionEvent(
+            symbol=symbol_internal,
+            display_symbol=symbol_display,
+            touch_price=price,
+            raw_text=text,
+        )
+    m = _TARGET_COMPLETION_NO_PRICE.search(text)
+    if m is not None:
+        symbol_internal, symbol_display = _normalize_symbol(m["symbol"])
+        return TargetCompletionEvent(
+            symbol=symbol_internal,
+            display_symbol=symbol_display,
+            touch_price=None,
+            raw_text=text,
+        )
+    return None
+
+
 def parse_premium_channel_message(text: str) -> ParsedSignal | None:
     """Return a ParsedSignal or None. None = not a new-signal message.
 
@@ -367,4 +460,9 @@ def parse_premium_channel_message(text: str) -> ParsedSignal | None:
     )
 
 
-__all__ = ["ParsedSignal", "parse_premium_channel_message"]
+__all__ = [
+    "ParsedSignal",
+    "TargetCompletionEvent",
+    "parse_premium_channel_message",
+    "parse_target_completion",
+]

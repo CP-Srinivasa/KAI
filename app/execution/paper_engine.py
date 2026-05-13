@@ -36,6 +36,18 @@ logger = logging.getLogger(__name__)
 _AUDIT_LOG = Path("artifacts/paper_execution_audit.jsonl")
 
 
+class DuplicateOrderError(RuntimeError):
+    """Raised when create_order would re-fill a known idempotency_key.
+
+    Sprint C (2026-05-12) fix gegen Q/USDT-Duplicate-Race: cross-process oder
+    cross-engine-instance run_tick()-Aufrufe können bei identischer envelope-id
+    parallel Fills versuchen. Der idempotency-Check in create_order bricht das
+    sofort ab, schreibt order_created_rejected_duplicate Audit-Event, und
+    Caller (Bridge) muss diese Exception als rejected_fill behandeln statt
+    die Pipeline-Stack zu crashen.
+    """
+
+
 # NEO-P-005: event-types the paper engine broadcasts to the dashboard SSE
 # bus. We map internal audit-names to public event-names so the dashboard can
 # stay stable if the audit schema ever gets a rename.
@@ -100,6 +112,13 @@ class PaperExecutionEngine:
         Necessary for cross-process continuity (e.g. cron-driven runs) where
         a fresh engine must observe previously opened positions. Returns True
         on success, False on replay error (engine state left unchanged).
+
+        Sprint C (2026-05-12): zusätzlich werden die idempotency_keys aller
+        bisherigen Fills in ``self._filled_keys`` geladen. Damit blockt der
+        nächste ``create_order`` einen doppelten Fill, auch wenn zwei
+        run_tick()-Aufrufe (oder zwei Engine-Instanzen) parallel laufen —
+        Race-Condition aus Q/USDT 2026-05-09 16:21:18 (zwei identische
+        opbridge-Keys 333 ms auseinander).
         """
         path = Path(audit_path) if audit_path is not None else self._audit_path
         result = replay_paper_audit(path)
@@ -110,6 +129,8 @@ class PaperExecutionEngine:
         if result.cash_usd:
             self._portfolio.cash = result.cash_usd
         self._portfolio.realized_pnl_usd = result.realized_pnl_usd
+        # Sprint C: persistent dedup-Set aus audit-replay übernehmen.
+        self._filled_keys.update(result.filled_idempotency_keys)
         return True
 
     def execute_intent(
@@ -143,6 +164,8 @@ class PaperExecutionEngine:
         position_side: str = "long",
         venue: str = "paper",
         correlation_id: str = "",
+        leverage: float | None = None,
+        source: str = "",
     ) -> PaperOrder:
         """Create an order record (does not fill immediately).
 
@@ -153,10 +176,44 @@ class PaperExecutionEngine:
         NEO-P-106 Phase 2: venue defaults to "paper" (= worst-case default fee).
         Callers that need constructor fee_pct compatibility must pass
         venue="legacy" explicitly.
+
+        Sprint A (2026-05-12): leverage + source aus ExecutableOrderIntent
+        durchgereicht damit PaperPosition + Frontend sie ohne audit-jsonl-
+        Crosswalk anzeigen kann. Beide optional — Legacy-Tests ohne diese
+        Felder bleiben funktional.
         """
         if position_side not in {"long", "short"}:
             raise ValueError("position_side must be 'long' or 'short'")
         idem_key = idempotency_key or f"{symbol}_{side}_{_now_utc()}"
+        # Sprint C (2026-05-12): upfront idempotency-Check verhindert das
+        # Schreiben einer doppelten order_created-Audit-Zeile wenn dieser
+        # idempotency_key bereits einen erfolgreichen Fill produziert hat
+        # (cross-process / cross-instance Race aus Q/USDT 2026-05-09).
+        # rehydrate_from_audit lädt _filled_keys aus dem audit-jsonl; das
+        # in-memory-set fängt zusätzlich same-process-races.
+        if idem_key in self._filled_keys:
+            logger.warning(
+                "[PAPER] create_order rejected — idempotency_key already filled: "
+                "key=%s symbol=%s side=%s qty=%s",
+                idem_key,
+                symbol,
+                side,
+                quantity,
+            )
+            self._append_audit(
+                "order_created_rejected_duplicate",
+                {
+                    "symbol": symbol,
+                    "side": side,
+                    "quantity": quantity,
+                    "idempotency_key": idem_key,
+                    "reason": "idempotency_key_already_filled",
+                    "rejected_at": _now_utc(),
+                },
+            )
+            raise DuplicateOrderError(
+                f"order with idempotency_key={idem_key!r} already filled"
+            )
         order = PaperOrder(
             order_id=_new_order_id(),
             symbol=symbol,
@@ -172,6 +229,8 @@ class PaperExecutionEngine:
             position_side=position_side,
             venue=venue,
             correlation_id=correlation_id,
+            leverage=leverage,
+            source=source,
         )
         self._append_audit("order_created", order.__dict__)
         if correlation_id:
@@ -358,6 +417,8 @@ class PaperExecutionEngine:
                     take_profit_tiers=list(pos.take_profit_tiers),
                     initial_quantity=pos.initial_quantity,
                     correlation_id=pos.correlation_id,
+                    leverage=pos.leverage,
+                    source=pos.source,
                 )
             else:
                 self._portfolio.positions[order.symbol] = PaperPosition(
@@ -369,6 +430,8 @@ class PaperExecutionEngine:
                     opened_at=_now_utc(),
                     position_side=order.position_side,
                     correlation_id=order.correlation_id,
+                    leverage=order.leverage,
+                    source=order.source,
                 )
         elif order.position_side == "long" and order.side == "sell":
             pos = self._portfolio.positions.get(order.symbol)
@@ -398,6 +461,8 @@ class PaperExecutionEngine:
                     take_profit_tiers=list(pos.take_profit_tiers),
                     initial_quantity=pos.initial_quantity,
                     correlation_id=pos.correlation_id,
+                    leverage=pos.leverage,
+                    source=pos.source,
                 )
         elif order.position_side == "short" and order.side == "sell":
             pos = self._portfolio.positions.get(order.symbol)
@@ -425,6 +490,8 @@ class PaperExecutionEngine:
                     take_profit_tiers=list(pos.take_profit_tiers),
                     initial_quantity=pos.initial_quantity,
                     correlation_id=pos.correlation_id,
+                    leverage=pos.leverage,
+                    source=pos.source,
                 )
             else:
                 self._portfolio.positions[order.symbol] = PaperPosition(
@@ -436,6 +503,8 @@ class PaperExecutionEngine:
                     opened_at=_now_utc(),
                     position_side=order.position_side,
                     correlation_id=order.correlation_id,
+                    leverage=order.leverage,
+                    source=order.source,
                 )
         elif order.position_side == "short" and order.side == "buy":
             pos = self._portfolio.positions.get(order.symbol)
@@ -471,6 +540,8 @@ class PaperExecutionEngine:
                     take_profit_tiers=list(pos.take_profit_tiers),
                     initial_quantity=pos.initial_quantity,
                     correlation_id=pos.correlation_id,
+                    leverage=pos.leverage,
+                    source=pos.source,
                 )
         else:
             logger.warning(

@@ -48,7 +48,7 @@ from app.execution.models import (
     make_lifecycle_transition,
 )
 from app.execution.order_intent import ExecutableOrderIntent
-from app.execution.paper_engine import PaperExecutionEngine
+from app.execution.paper_engine import DuplicateOrderError, PaperExecutionEngine
 from app.market_data.service import get_market_data_snapshot
 from app.risk.engine import RiskEngine
 from app.risk.models import RiskLimits
@@ -68,6 +68,10 @@ _PAPER_AUDIT_LOG = Path("artifacts/paper_execution_audit.jsonl")
 _TERMINAL_STAGES = frozenset(
     {
         "filled",
+        # 2026-05-12 Sprint C: cross-process Race-Guard. Envelope wurde
+        # bereits von einer parallelen run_tick()-Instanz gefüllt; KEIN
+        # neuer Fill-Versuch nötig.
+        "filled_duplicate_suppressed",
         "expired",
         "rejected_risk",
         "rejected_size",
@@ -946,6 +950,36 @@ async def _process_one(
             current_price=current_price,
             risk_check_id=risk_result.check_id,
         )
+    except DuplicateOrderError as exc:
+        # Sprint C (2026-05-12): cross-process Race-Guard hat eine zweite
+        # Fill-Attempte für denselben envelope blockiert. KEIN rejected_fill —
+        # das wäre falsch (der erste Fill war erfolgreich) — stattdessen
+        # markieren wir den Tick als "filled_duplicate_suppressed" damit
+        # downstream Konsumenten (Dashboard, AuditStream) das vom echten
+        # rejected_fill unterscheiden können. Bridge zählt es als filled,
+        # weil das envelope tatsächlich gefüllt wurde, nur nicht von uns.
+        rec = base("filled_duplicate_suppressed")
+        rec["reason"] = str(exc)
+        _attach_lifecycle(
+            rec,
+            final_state=OrderLifecycleState.POSITION_OPEN,
+            states=[
+                OrderLifecycleState.RECEIVED,
+                OrderLifecycleState.PARSED,
+                OrderLifecycleState.VALIDATED,
+                OrderLifecycleState.POSITION_OPEN,
+            ],
+            reason="duplicate_fill_already_executed",
+        )
+        _append_bridge_audit(rec)
+        result.filled += 1
+        logger.info(
+            "[bridge] duplicate-fill suppressed envelope=%s symbol=%s reason=%s",
+            envelope_id,
+            symbol,
+            exc,
+        )
+        return
     except Exception as exc:  # noqa: BLE001
         rec = base("rejected_fill")
         rec["error"] = str(exc)
