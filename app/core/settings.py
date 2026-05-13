@@ -536,9 +536,7 @@ class LearningSettings(BaseSettings):
 
     adaptive_learning_enabled: bool = Field(default=False)
     snapshot_dir: Path = Field(default=Path("config/learning"))
-    reasoning_journal_path: Path = Field(
-        default=Path("artifacts/structured_reasoning.jsonl")
-    )
+    reasoning_journal_path: Path = Field(default=Path("artifacts/structured_reasoning.jsonl"))
 
 
 class AppSettings(BaseSettings):

@@ -86,9 +86,7 @@ def test_read_snapshot_rejects_non_mapping_root(tmp_path: Path):
 def test_read_snapshot_rejects_missing_required_fields(tmp_path: Path):
     target = snapshot_path("partial.path", tmp_path)
     target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(
-        yaml.safe_dump({"parameter_path": "partial.path"}), encoding="utf-8"
-    )
+    target.write_text(yaml.safe_dump({"parameter_path": "partial.path"}), encoding="utf-8")
     assert read_snapshot("partial.path", tmp_path) is None
 
 
@@ -152,9 +150,7 @@ def test_remove_snapshot(tmp_path: Path):
 def test_approval_writes_snapshot_when_snapshot_dir_configured(tmp_path: Path):
     journal = tmp_path / "journal.jsonl"
     snap_dir = tmp_path / "snaps"
-    svc = ApprovalService(
-        ParameterVersionStore(journal), snapshot_dir=snap_dir
-    )
+    svc = ApprovalService(ParameterVersionStore(journal), snapshot_dir=snap_dir)
     proposal = svc.store.propose_version(
         parameter_path="bayes.calibrator.global",
         parameter_set={"intercept": 0.05, "slope": 0.92, "n_fitted": 80},
@@ -187,9 +183,7 @@ def test_approval_does_not_write_snapshot_when_dir_is_none(tmp_path: Path):
 def test_rollback_refreshes_snapshot_to_earlier_version(tmp_path: Path):
     journal = tmp_path / "journal.jsonl"
     snap_dir = tmp_path / "snaps"
-    svc = ApprovalService(
-        ParameterVersionStore(journal), snapshot_dir=snap_dir
-    )
+    svc = ApprovalService(ParameterVersionStore(journal), snapshot_dir=snap_dir)
     p1 = svc.store.propose_version(parameter_path="p", parameter_set={"v": 1})
     p2 = svc.store.propose_version(parameter_path="p", parameter_set={"v": 2})
     svc.approve(parameter_path="p", version_id=p1.version_id, operator_id="op")
@@ -214,9 +208,7 @@ def test_reject_does_not_touch_active_snapshot(tmp_path: Path):
     snapshot of the currently-active one."""
     journal = tmp_path / "journal.jsonl"
     snap_dir = tmp_path / "snaps"
-    svc = ApprovalService(
-        ParameterVersionStore(journal), snapshot_dir=snap_dir
-    )
+    svc = ApprovalService(ParameterVersionStore(journal), snapshot_dir=snap_dir)
     p1 = svc.store.propose_version(parameter_path="p", parameter_set={"v": 1})
     svc.approve(parameter_path="p", version_id=p1.version_id, operator_id="op")
     p2 = svc.store.propose_version(parameter_path="p", parameter_set={"v": 2})
@@ -256,9 +248,7 @@ def test_snapshot_persists_regime_bundle_round_trip(tmp_path: Path):
 
     journal = tmp_path / "journal.jsonl"
     snap_dir = tmp_path / "snaps"
-    svc = ApprovalService(
-        ParameterVersionStore(journal), snapshot_dir=snap_dir
-    )
+    svc = ApprovalService(ParameterVersionStore(journal), snapshot_dir=snap_dir)
     proposal = svc.store.propose_version(
         parameter_path="bayes.calibrator.regime_bundle",
         parameter_set=payload,

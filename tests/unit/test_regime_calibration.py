@@ -44,9 +44,8 @@ def _overconfident_in(
 
 
 def test_each_regime_with_enough_data_gets_its_own_calibrator():
-    pairs = (
-        _overconfident_in(80, regime="low_vol", seed=1, win_rate=0.85)
-        + _overconfident_in(80, regime="high_vol", seed=2, win_rate=0.40)
+    pairs = _overconfident_in(80, regime="low_vol", seed=1, win_rate=0.85) + _overconfident_in(
+        80, regime="high_vol", seed=2, win_rate=0.40
     )
     bundle = fit_regime_calibrators(pairs, min_pairs_per_regime=30)
     assert "low_vol" in bundle.regimes
@@ -55,9 +54,9 @@ def test_each_regime_with_enough_data_gets_its_own_calibrator():
     assert not bundle.regimes["high_vol"].is_fallback
     # The high_vol regime is much more overconfident → its slope should be
     # smaller (= heavier squashing) than low_vol's.
-    assert (
-        bundle.regimes["high_vol"].slope < bundle.regimes["low_vol"].slope
-    ), "high_vol calibrator should compress more than low_vol"
+    assert bundle.regimes["high_vol"].slope < bundle.regimes["low_vol"].slope, (
+        "high_vol calibrator should compress more than low_vol"
+    )
 
 
 def test_sparse_regime_falls_back_to_global():
@@ -115,9 +114,8 @@ def test_pairs_without_regime_only_feed_global_calibrator():
 
 
 def test_transform_uses_regime_specific_calibrator():
-    pairs = (
-        _overconfident_in(80, regime="low_vol", seed=11, win_rate=0.95)
-        + _overconfident_in(80, regime="high_vol", seed=12, win_rate=0.20)
+    pairs = _overconfident_in(80, regime="low_vol", seed=11, win_rate=0.95) + _overconfident_in(
+        80, regime="high_vol", seed=12, win_rate=0.20
     )
     bundle = fit_regime_calibrators(pairs, min_pairs_per_regime=30)
     # 0.85 raw posterior in low_vol (well calibrated, win rate 0.95)
@@ -143,13 +141,11 @@ def test_transform_none_regime_uses_global():
     assert p_none == p_explicit_global
 
 
-def test_sparse_regime_transform_equals_global(
-):
+def test_sparse_regime_transform_equals_global():
     """Even when a sparse regime is named explicitly, transform routes to
     global because the entry's is_fallback flag is honored."""
-    pairs = (
-        _overconfident_in(80, regime="normal", seed=31)
-        + _overconfident_in(5, regime="crisis", seed=32)
+    pairs = _overconfident_in(80, regime="normal", seed=31) + _overconfident_in(
+        5, regime="crisis", seed=32
     )
     bundle = fit_regime_calibrators(pairs, min_pairs_per_regime=30)
     assert bundle.regimes["crisis"].is_fallback
@@ -223,9 +219,16 @@ def test_from_parameter_set_rejects_malformed_payload():
         RegimeCalibratorBundle.from_parameter_set({"regimes": {}})
     with pytest.raises(ValueError, match="'regimes' must be a dict"):
         RegimeCalibratorBundle.from_parameter_set(
-            {"global": {"intercept": 0, "slope": 1, "n_fitted": 0,
-                        "is_identity": True, "is_fallback": False},
-             "regimes": "not a dict"}
+            {
+                "global": {
+                    "intercept": 0,
+                    "slope": 1,
+                    "n_fitted": 0,
+                    "is_identity": True,
+                    "is_fallback": False,
+                },
+                "regimes": "not a dict",
+            }
         )
 
 

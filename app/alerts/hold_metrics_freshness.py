@@ -113,8 +113,7 @@ def evaluate_snapshot_freshness(
             warn_hours_threshold=warn_hours,
             crit_hours_threshold=crit_hours,
             message=(
-                f"Snapshot ist {age_hours:.0f}h alt "
-                f"(Schwelle {warn_hours}h) — Live-API empfohlen"
+                f"Snapshot ist {age_hours:.0f}h alt (Schwelle {warn_hours}h) — Live-API empfohlen"
             ),
         )
     age_days = age_hours / 24.0

@@ -34,9 +34,7 @@ class TestPairValidation:
 
     def test_negative_weight_rejected(self) -> None:
         with pytest.raises(ValidationError):
-            OutcomePair(
-                decision_id="x", predicted_probability=0.5, actual_outcome=1, weight=-1.0
-            )
+            OutcomePair(decision_id="x", predicted_probability=0.5, actual_outcome=1, weight=-1.0)
 
 
 # ─── Empty / Edge ────────────────────────────────────────────────────────────

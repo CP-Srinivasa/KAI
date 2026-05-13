@@ -45,7 +45,8 @@ from typing import Final, Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 DEFAULT_GRID: Final[tuple[float, ...]] = tuple(
-    round(0.50 + 0.05 * i, 2) for i in range(10)  # 0.50..0.95
+    round(0.50 + 0.05 * i, 2)
+    for i in range(10)  # 0.50..0.95
 )
 DEFAULT_MIN_TRADES_FOR_THRESHOLD: Final[int] = 5
 DEFAULT_MIN_PNL_IMPROVEMENT_USD: Final[float] = 0.0
@@ -73,12 +74,8 @@ class ThresholdConfig(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     threshold_grid: tuple[float, ...] = DEFAULT_GRID
-    min_trades_for_threshold: int = Field(
-        default=DEFAULT_MIN_TRADES_FOR_THRESHOLD, ge=1
-    )
-    min_pnl_improvement_usd: float = Field(
-        default=DEFAULT_MIN_PNL_IMPROVEMENT_USD, ge=0.0
-    )
+    min_trades_for_threshold: int = Field(default=DEFAULT_MIN_TRADES_FOR_THRESHOLD, ge=1)
+    min_pnl_improvement_usd: float = Field(default=DEFAULT_MIN_PNL_IMPROVEMENT_USD, ge=0.0)
     min_observations: int = Field(default=DEFAULT_MIN_OBSERVATIONS, ge=1)
     only_consider_at_or_above_baseline: bool = True
 
@@ -118,9 +115,7 @@ class ThresholdOptimizationReport(BaseModel):
 # ─── Optimizer ────────────────────────────────────────────────────────────────
 
 
-def _evaluate(
-    observations: Sequence[ThresholdObservation], threshold: float
-) -> ThresholdGridPoint:
+def _evaluate(observations: Sequence[ThresholdObservation], threshold: float) -> ThresholdGridPoint:
     passing = [o for o in observations if o.score >= threshold]
     n = len(passing)
     pnl = sum(o.realized_pnl_usd for o in passing)
@@ -160,22 +155,16 @@ def optimize_threshold(
             best_pnl_usd=None,
             pnl_improvement_usd=0.0,
             decision="insufficient_data",
-            decision_reasons=(
-                f"have {n} observations, need >= {cfg.min_observations}",
-            ),
+            decision_reasons=(f"have {n} observations, need >= {cfg.min_observations}",),
             config=cfg,
         )
 
     candidate_thresholds = tuple(cfg.threshold_grid)
     if cfg.only_consider_at_or_above_baseline:
-        candidate_thresholds = tuple(
-            t for t in candidate_thresholds if t >= baseline_threshold
-        )
+        candidate_thresholds = tuple(t for t in candidate_thresholds if t >= baseline_threshold)
 
     grid_points = [_evaluate(observations, t) for t in candidate_thresholds]
-    eligible = [
-        gp for gp in grid_points if gp.n_passing >= cfg.min_trades_for_threshold
-    ]
+    eligible = [gp for gp in grid_points if gp.n_passing >= cfg.min_trades_for_threshold]
 
     if not eligible:
         return ThresholdOptimizationReport(

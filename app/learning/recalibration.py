@@ -121,10 +121,7 @@ def _weighted_lstsq(
         return 0.0, 1.0
     mean_x = sum(w * x for w, x in zip(weights, xs, strict=True)) / total_w
     mean_y = sum(w * y for w, y in zip(weights, ys, strict=True)) / total_w
-    cov_xy = sum(
-        w * (x - mean_x) * (y - mean_y)
-        for w, x, y in zip(weights, xs, ys, strict=True)
-    )
+    cov_xy = sum(w * (x - mean_x) * (y - mean_y) for w, x, y in zip(weights, xs, ys, strict=True))
     var_x = sum(w * (x - mean_x) * (x - mean_x) for w, x in zip(weights, xs, strict=True))
     if var_x <= EPS:
         return 0.0, 1.0

@@ -75,9 +75,7 @@ def _mixed_trades(
             pnl = -rng.uniform(20, 150)
         else:
             pnl = rng.uniform(-50, 50)
-        trades.append(
-            _trade(decision_id=f"d_{i}", posterior=p, pnl=pnl)
-        )
+        trades.append(_trade(decision_id=f"d_{i}", posterior=p, pnl=pnl))
     return trades
 
 
@@ -91,21 +89,15 @@ def test_calibrator_that_filters_low_confidence_losers_is_approved():
     below threshold. If those marginal trades were dominantly losers, the
     counterfactual approves."""
     # Build trades where posteriors near 0.76 are losers, near 0.92 are winners.
-    trades = [
-        _trade(decision_id=f"loser_{i}", posterior=0.78, pnl=-100.0)
-        for i in range(20)
-    ] + [
-        _trade(decision_id=f"winner_{i}", posterior=0.92, pnl=80.0)
-        for i in range(20)
+    trades = [_trade(decision_id=f"loser_{i}", posterior=0.78, pnl=-100.0) for i in range(20)] + [
+        _trade(decision_id=f"winner_{i}", posterior=0.92, pnl=80.0) for i in range(20)
     ]
     # Calibrator: slope 0.6, intercept 0.0  ⇒ p_new = 0.6 * p
     #   0.78 → 0.468 (below 0.75 → SKIP, avoid loss)
     #   0.92 → 0.552 (also below — uh, calibrator too aggressive)
     # So we use slope 1.0, intercept −0.10 → 0.78 → 0.68 (skip), 0.92 → 0.82 (keep)
     calibrator = _make_calibrator(intercept=-0.10, slope=1.0)
-    report = evaluate_calibrator_counterfactual(
-        trade_outcomes=trades, new_calibrator=calibrator
-    )
+    report = evaluate_calibrator_counterfactual(trade_outcomes=trades, new_calibrator=calibrator)
     assert report.decision == "approve", report.decision_reasons
     assert report.n_would_skip == 20  # all losers skipped
     assert report.n_would_still_trade == 20
@@ -116,15 +108,10 @@ def test_calibrator_that_filters_low_confidence_losers_is_approved():
 def test_calibrator_that_filters_winners_is_rejected():
     """A calibrator that pulls posteriors *down* through the threshold for
     high-conf winners → costs realized P&L → reject."""
-    trades = [
-        _trade(decision_id=f"winner_{i}", posterior=0.78, pnl=80.0)
-        for i in range(40)
-    ]
+    trades = [_trade(decision_id=f"winner_{i}", posterior=0.78, pnl=80.0) for i in range(40)]
     # Slope 1.0, intercept −0.10 → 0.78 → 0.68 → all skipped
     calibrator = _make_calibrator(intercept=-0.10, slope=1.0)
-    report = evaluate_calibrator_counterfactual(
-        trade_outcomes=trades, new_calibrator=calibrator
-    )
+    report = evaluate_calibrator_counterfactual(trade_outcomes=trades, new_calibrator=calibrator)
     assert report.decision == "reject", report.decision_reasons
     assert report.n_would_skip == 40
     assert report.skipped_gain_count == 40
@@ -184,9 +171,7 @@ def test_empty_input_returns_insufficient_data():
 def test_short_signal_is_side_aware_by_default():
     """Short signal with raw posterior 0.20 → side-aware p = 0.80 (above
     threshold). Identity calibrator → keeps it."""
-    trade = _trade(
-        decision_id="s_1", posterior=0.20, pnl=50.0, direction="short"
-    )
+    trade = _trade(decision_id="s_1", posterior=0.20, pnl=50.0, direction="short")
     cfg = CounterfactualConfig(min_trades=1)
     report = evaluate_calibrator_counterfactual(
         trade_outcomes=[trade] * 30,
@@ -201,8 +186,7 @@ def test_short_signal_is_side_aware_by_default():
 def test_side_aware_off_treats_short_posterior_directly():
     """With side_aware=False, posterior=0.20 stays 0.20 → below 0.75 → skip."""
     trades = [
-        _trade(decision_id=f"s_{i}", posterior=0.20, pnl=50.0, direction="short")
-        for i in range(30)
+        _trade(decision_id=f"s_{i}", posterior=0.20, pnl=50.0, direction="short") for i in range(30)
     ]
     cfg = CounterfactualConfig(side_aware=False)
     report = evaluate_calibrator_counterfactual(
@@ -235,23 +219,18 @@ def test_per_trade_detail_records_signal_and_calibrated_posteriors():
 def test_pnl_aggregates_match_per_trade_sums():
     trades = _mixed_trades(80, seed=22)
     calibrator = _make_calibrator(intercept=-0.05, slope=0.95)
-    report = evaluate_calibrator_counterfactual(
-        trade_outcomes=trades, new_calibrator=calibrator
-    )
+    report = evaluate_calibrator_counterfactual(trade_outcomes=trades, new_calibrator=calibrator)
     expected_total = round(sum(t.realized_pnl_usd for t in trades), 2)
     assert report.pnl_realized_total_usd == pytest.approx(expected_total, abs=0.01)
-    assert (
-        report.pnl_realized_kept_usd + report.pnl_realized_skipped_usd
-        == pytest.approx(report.pnl_realized_total_usd, abs=0.02)
+    assert report.pnl_realized_kept_usd + report.pnl_realized_skipped_usd == pytest.approx(
+        report.pnl_realized_total_usd, abs=0.02
     )
 
 
 def test_decision_reasons_are_populated_on_every_outcome():
     trades = _mixed_trades(80, seed=23)
     for cal in [IdentityCalibrator(), _make_calibrator(intercept=-0.10, slope=1.0)]:
-        report = evaluate_calibrator_counterfactual(
-            trade_outcomes=trades, new_calibrator=cal
-        )
+        report = evaluate_calibrator_counterfactual(trade_outcomes=trades, new_calibrator=cal)
         assert report.decision_reasons
 
 
@@ -270,9 +249,7 @@ def test_report_round_trips_through_pydantic():
 def test_threshold_is_respected_strictly():
     """Calibrated posterior exactly == threshold → keep (>=)."""
     cfg = CounterfactualConfig(threshold=0.75, min_trades=1)
-    trades = [
-        _trade(decision_id=f"d_{i}", posterior=0.75, pnl=10.0) for i in range(30)
-    ]
+    trades = [_trade(decision_id=f"d_{i}", posterior=0.75, pnl=10.0) for i in range(30)]
     report = evaluate_calibrator_counterfactual(
         trade_outcomes=trades, new_calibrator=IdentityCalibrator(), config=cfg
     )
@@ -289,17 +266,13 @@ def test_avoided_loss_and_skipped_gain_are_disjoint():
         + [_trade(decision_id=f"keep_{i}", posterior=0.95, pnl=10.0) for i in range(20)]
     )
     calibrator = _make_calibrator(intercept=-0.05, slope=1.0)
-    report = evaluate_calibrator_counterfactual(
-        trade_outcomes=trades, new_calibrator=calibrator
-    )
+    report = evaluate_calibrator_counterfactual(trade_outcomes=trades, new_calibrator=calibrator)
     # 30 trades skipped (all 0.76 trades): 10 losers + 10 winners + 10 flat
     assert report.n_would_skip == 30
     assert report.avoided_loss_count == 10
     assert report.skipped_gain_count == 10
     # 10 zero-PnL trades skipped but in neither bucket
     assert (
-        report.avoided_loss_count
-        + report.skipped_gain_count
-        + 10  # flat
+        report.avoided_loss_count + report.skipped_gain_count + 10  # flat
         == report.n_would_skip
     )

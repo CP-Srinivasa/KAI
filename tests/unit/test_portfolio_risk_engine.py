@@ -124,10 +124,7 @@ def test_cholesky_reconstructs_2x2_matrix():
     matrix = [[4.0, 2.0], [2.0, 3.0]]
     chol = _cholesky(matrix)
     # Reconstruct L·L'
-    rec = [
-        [sum(chol[i][k] * chol[j][k] for k in range(2)) for j in range(2)]
-        for i in range(2)
-    ]
+    rec = [[sum(chol[i][k] * chol[j][k] for k in range(2)) for j in range(2)] for i in range(2)]
     for i in range(2):
         for j in range(2):
             assert rec[i][j] == pytest.approx(matrix[i][j], abs=1e-9)
@@ -258,9 +255,7 @@ def test_cornish_fisher_higher_than_parametric_for_negatively_skewed_data():
     cfg = PortfolioRiskConfig(n_monte_carlo=1000)
     eng = PortfolioRiskEngine(cfg)
     rng = random.Random(101)
-    rets = [rng.gauss(0.0, 0.01) for _ in range(900)] + [
-        rng.gauss(-0.05, 0.01) for _ in range(100)
-    ]
+    rets = [rng.gauss(0.0, 0.01) for _ in range(900)] + [rng.gauss(-0.05, 0.01) for _ in range(100)]
     p = Position(symbol="BTC/USDT", notional_usd=10_000.0)
     out = eng.compute(positions=[p], returns_history={"BTC/USDT": rets})
     assert out.parametric_var is not None and out.cornish_fisher_var is not None
@@ -338,9 +333,7 @@ def test_flash_crash_amplified_by_illiquidity():
         flash_crash_illiquid_amplifier=2.0,
     )
     eng = PortfolioRiskEngine(cfg)
-    illiq = Position(
-        symbol="ALT/USDT", notional_usd=10_000.0, liquidity_score=0.0
-    )
+    illiq = Position(symbol="ALT/USDT", notional_usd=10_000.0, liquidity_score=0.0)
     out = eng.compute(positions=[illiq], returns_history={})
     # 20% × (1 + 2 × (1-0)) = 60% loss → $6k
     assert out.stress_scenarios[STRESS_FLASH_CRASH] == pytest.approx(6_000.0, rel=0.05)
@@ -389,9 +382,7 @@ def test_exchange_insolvency_picks_worst_venue():
     )
     eng = PortfolioRiskEngine(cfg)
     safe = Position(symbol="BTC/USDT", notional_usd=10_000.0, exchange="binance")
-    risky = Position(
-        symbol="ALT/USDT", notional_usd=10_000.0, exchange="fly_by_night"
-    )
+    risky = Position(symbol="ALT/USDT", notional_usd=10_000.0, exchange="fly_by_night")
     out = eng.compute(positions=[safe, risky], returns_history={})
     # Insolvency takes the WORST exchange's loss as the scenario value
     insolvency = out.stress_scenarios[STRESS_EXCHANGE_INSOLVENCY]

@@ -148,8 +148,6 @@ class BitMEXAdapter(BaseMarketDataAdapter):
         ticker = await self.get_ticker(symbol)
         return ticker.last if ticker is not None else None
 
-    async def get_ohlcv(
-        self, symbol: str, timeframe: str = "1h", limit: int = 100
-    ) -> list[OHLCV]:
+    async def get_ohlcv(self, symbol: str, timeframe: str = "1h", limit: int = 100) -> list[OHLCV]:
         del symbol, timeframe, limit
         return []

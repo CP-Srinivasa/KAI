@@ -54,9 +54,9 @@ def _make_generator(active_calibrator=None, *, audit_path: Path | None = None):
         min_confidence=0.75,
         min_confluence=2,
         bayes_engine=build_default_engine(),
-        bayes_shadow_only=False,         # gate is live so calibration matters
-        min_bayes_confidence=0.30,        # high enough that an aggressive
-        max_bayes_uncertainty=0.95,       # squashing calibrator can knock signals out
+        bayes_shadow_only=False,  # gate is live so calibration matters
+        min_bayes_confidence=0.30,  # high enough that an aggressive
+        max_bayes_uncertainty=0.95,  # squashing calibrator can knock signals out
         bayes_audit_path=audit_path,
         active_calibrator=active_calibrator,
     )
@@ -144,7 +144,7 @@ def test_active_calibrator_can_gate_a_signal_out(tmp_path: Path):
         parameter_path=DEFAULT_BAYES_CALIBRATOR_PATH,
         parameter_set={
             "intercept": -0.40,
-            "slope": 0.05,           # extreme squash to ~0.05
+            "slope": 0.05,  # extreme squash to ~0.05
             "n_fitted": 100,
             "is_identity": False,
         },
@@ -189,10 +189,6 @@ def test_bayes_audit_records_raw_posterior_not_calibrated(tmp_path: Path):
     assert raw_lines, "audit file should have at least one row"
     payload = json.loads(raw_lines[0])
     audit_posterior = payload["report"]["posterior_probability"]
-    assert audit_posterior == pytest.approx(
-        raw_baseline.bayes_posterior_probability, abs=1e-6
-    )
+    assert audit_posterior == pytest.approx(raw_baseline.bayes_posterior_probability, abs=1e-6)
     # And: that posterior differs from the calibrated one on the signal
-    assert audit_posterior != pytest.approx(
-        signal.bayes_posterior_probability, abs=1e-6
-    )
+    assert audit_posterior != pytest.approx(signal.bayes_posterior_probability, abs=1e-6)

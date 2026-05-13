@@ -38,9 +38,7 @@ from typing import Any, Final
 logger = logging.getLogger(__name__)
 
 # Events im Paper-Execution-Audit, die einen realisierten PnL-Beitrag liefern.
-_CLOSE_EVENTS: Final[frozenset[str]] = frozenset(
-    {"position_closed", "position_partial_closed"}
-)
+_CLOSE_EVENTS: Final[frozenset[str]] = frozenset({"position_closed", "position_partial_closed"})
 
 
 def _iter_jsonl(path: Path) -> Iterator[dict[str, Any]]:

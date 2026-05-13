@@ -47,7 +47,8 @@ def test_trail_renders_table_for_existing_decision(tmp_path: Path):
     journal = tmp_path / "reasoning.jsonl"
     alpha, _beta = _seed_journal(journal)
     result = runner.invoke(
-        audit_app, ["trail", alpha, "--journal", str(journal)],
+        audit_app,
+        ["trail", alpha, "--journal", str(journal)],
         # Force a wide terminal so rich doesn't truncate column content
         env={"COLUMNS": "200"},
     )
@@ -61,9 +62,7 @@ def test_trail_renders_table_for_existing_decision(tmp_path: Path):
 def test_trail_unknown_decision_exits_with_error(tmp_path: Path):
     journal = tmp_path / "empty.jsonl"
     journal.touch()
-    result = runner.invoke(
-        audit_app, ["trail", "dec_nonexistent", "--journal", str(journal)]
-    )
+    result = runner.invoke(audit_app, ["trail", "dec_nonexistent", "--journal", str(journal)])
     assert result.exit_code == 1
     assert "No data found" in result.output
 
@@ -71,9 +70,7 @@ def test_trail_unknown_decision_exits_with_error(tmp_path: Path):
 def test_trail_without_steps_but_no_other_streams(tmp_path: Path):
     """Empty journal + no decision_journal/bayes_audit → exit 1 with message."""
     journal = tmp_path / "empty.jsonl"
-    result = runner.invoke(
-        audit_app, ["trail", "dec_anything", "--journal", str(journal)]
-    )
+    result = runner.invoke(audit_app, ["trail", "dec_anything", "--journal", str(journal)])
     assert result.exit_code == 1
 
 
@@ -99,9 +96,7 @@ def test_verify_tampered_chain_exits_one(tmp_path: Path):
 
     payload = json.loads(lines[0])
     payload["rationale_summary"] = "tampered"
-    lines[0] = json.dumps(
-        payload, sort_keys=True, ensure_ascii=False, separators=(",", ":")
-    )
+    lines[0] = json.dumps(payload, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
     # Append a fresh row so the chain has a successor that catches the change
     rj = ReasoningJournal(journal)
     journal.write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -115,9 +110,7 @@ def test_verify_tampered_chain_exits_one(tmp_path: Path):
     lines = journal.read_text(encoding="utf-8").splitlines()
     payload = json.loads(lines[0])
     payload["rationale_summary"] = "tampered again"
-    lines[0] = json.dumps(
-        payload, sort_keys=True, ensure_ascii=False, separators=(",", ":")
-    )
+    lines[0] = json.dumps(payload, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
     journal.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
     result = runner.invoke(audit_app, ["verify", "--journal", str(journal)])

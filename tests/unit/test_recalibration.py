@@ -146,10 +146,7 @@ def test_fit_notes_flag_strong_drift() -> None:
     cal = fit_calibrator(pairs)
     assert isinstance(cal, LogitLinearCalibrator)
     notes_joined = " ".join(cal.parameters.fit_notes).lower()
-    assert any(
-        kw in notes_joined
-        for kw in ("overconfidence", "bias", "underconfidence", "drift")
-    )
+    assert any(kw in notes_joined for kw in ("overconfidence", "bias", "underconfidence", "drift"))
 
 
 def test_full_score_pipeline_with_random_input() -> None:

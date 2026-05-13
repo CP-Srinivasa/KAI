@@ -281,18 +281,12 @@ async def dashboard_quality_api() -> JSONResponse:
             "priority_tier_high_conviction_ci_high_pct": quality.get(
                 "priority_tier_high_conviction_ci_high_pct"
             ),
-            "priority_tier_standard_resolved": quality.get(
-                "priority_tier_standard_resolved"
-            ),
+            "priority_tier_standard_resolved": quality.get("priority_tier_standard_resolved"),
             "priority_tier_standard_hit_rate_pct": quality.get(
                 "priority_tier_standard_hit_rate_pct"
             ),
-            "priority_tier_standard_ci_low_pct": quality.get(
-                "priority_tier_standard_ci_low_pct"
-            ),
-            "priority_tier_standard_ci_high_pct": quality.get(
-                "priority_tier_standard_ci_high_pct"
-            ),
+            "priority_tier_standard_ci_low_pct": quality.get("priority_tier_standard_ci_low_pct"),
+            "priority_tier_standard_ci_high_pct": quality.get("priority_tier_standard_ci_high_pct"),
             "forward_precision_pct": fwd.get("precision_pct"),
             "forward_resolved": fwd.get("resolved", 0),
             "forward_hits": fwd.get("hits", 0),

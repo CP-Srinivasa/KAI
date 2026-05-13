@@ -137,15 +137,11 @@ def test_pearson_correlation_perfect_positive():
 def test_coordinated_shilling_detects_clustered_identical_posts():
     eng = ManipulationDetectionEngine()
     text = "BTC moon soon — buy now, this is your chance!!!"
-    posts = [
-        _make_post(source=f"acc_{i}", text=text, sec_offset=i * 30)
-        for i in range(5)
-    ]
+    posts = [_make_post(source=f"acc_{i}", text=text, sec_offset=i * 30) for i in range(5)]
     out = eng.analyze(posts=posts)
     assert out.coordinated_shilling_events >= 1
     suspect_sources = {
-        s.source_id for s in out.sources
-        if PATTERN_COORDINATED_SHILLING in s.detected_patterns
+        s.source_id for s in out.sources if PATTERN_COORDINATED_SHILLING in s.detected_patterns
     }
     assert len(suspect_sources) >= 3
 
@@ -166,10 +162,7 @@ def test_coordinated_shilling_window_excludes_far_apart_posts():
     eng = ManipulationDetectionEngine()
     text = "BTC to the moon — buy now!"
     # Three identical posts but spaced one hour apart → outside 5 min window
-    posts = [
-        _make_post(source=f"acc_{i}", text=text, sec_offset=i * 3600)
-        for i in range(3)
-    ]
+    posts = [_make_post(source=f"acc_{i}", text=text, sec_offset=i * 3600) for i in range(3)]
     out = eng.analyze(posts=posts)
     assert out.coordinated_shilling_events == 0
 
@@ -189,8 +182,8 @@ def test_fake_engagement_flags_extreme_outliers():
         _make_post(
             source="suspect",
             text="hot take",
-            engagement=50_000,        # 50× the baseline
-            followers=100,            # tiny audience
+            engagement=50_000,  # 50× the baseline
+            followers=100,  # tiny audience
             sec_offset=21,
         )
     )
@@ -491,9 +484,7 @@ def test_abnormal_wallet_detects_volume_zscore_spike():
 
 
 def test_abnormal_wallet_funnel_pattern():
-    eng = ManipulationDetectionEngine(
-        ManipulationDetectionConfig(wallet_funnel_min_sources=4)
-    )
+    eng = ManipulationDetectionEngine(ManipulationDetectionConfig(wallet_funnel_min_sources=4))
     txs = [
         WalletTx(
             tx_id=f"funnel_{i}",

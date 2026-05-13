@@ -110,9 +110,7 @@ def write_snapshot(
     return target
 
 
-def read_snapshot(
-    parameter_path: str, snapshot_dir: Path | str
-) -> ConfigSnapshot | None:
+def read_snapshot(parameter_path: str, snapshot_dir: Path | str) -> ConfigSnapshot | None:
     """Read a YAML snapshot. Returns None if missing or malformed.
 
     Malformed files are logged + skipped — they never crash the boot path.

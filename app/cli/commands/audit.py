@@ -120,9 +120,7 @@ def _bayes_audit_lookup(decision_id: str) -> list[dict[str, object]]:
 
 @audit_app.command("trail")
 def trail(
-    decision_id: Annotated[
-        str, typer.Argument(help="The decision_id (dec_*) to inspect")
-    ],
+    decision_id: Annotated[str, typer.Argument(help="The decision_id (dec_*) to inspect")],
     journal: JournalPath = DEFAULT_REASONING_JOURNAL_PATH,
 ) -> None:
     """Show the full structured reasoning trail for a decision_id."""
@@ -130,16 +128,12 @@ def trail(
     steps: list[ReasoningStep] = rj.steps_for_decision(decision_id)
 
     if not steps:
-        console.print(
-            f"[yellow]No reasoning steps for {decision_id} in {journal}.[/yellow]"
-        )
+        console.print(f"[yellow]No reasoning steps for {decision_id} in {journal}.[/yellow]")
         # Continue to show cross-stream lookups even when reasoning is empty
         # — the operator may want to see the canonical record anyway.
 
     if steps:
-        table = Table(
-            title=f"Reasoning trail — {decision_id}", show_lines=False
-        )
+        table = Table(title=f"Reasoning trail — {decision_id}", show_lines=False)
         table.add_column("ts_utc")
         table.add_column("phase")
         table.add_column("actor")
@@ -147,13 +141,8 @@ def trail(
         table.add_column("rationale")
         for step in steps:
             delta = "-"
-            if (
-                step.confidence_before is not None
-                and step.confidence_after is not None
-            ):
-                delta = (
-                    f"{step.confidence_before:.4f} → {step.confidence_after:.4f}"
-                )
+            if step.confidence_before is not None and step.confidence_after is not None:
+                delta = f"{step.confidence_before:.4f} → {step.confidence_after:.4f}"
             table.add_row(
                 step.timestamp_utc[:19],
                 _phase_label(step.phase),
@@ -190,9 +179,7 @@ def trail(
             )
 
     if not steps and record is None and not bayes_rows:
-        console.print(
-            f"[red]No data found for {decision_id} in any stream.[/red]"
-        )
+        console.print(f"[red]No data found for {decision_id} in any stream.[/red]")
         raise typer.Exit(1)
 
 

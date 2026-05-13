@@ -445,9 +445,7 @@ class PaperExecutionEngine:
             "position_tp_tiers_set",
             {
                 "symbol": symbol,
-                "tiers": [
-                    {"price": p, "qty_share": q} for p, q in sorted_tiers
-                ],
+                "tiers": [{"price": p, "qty_share": q} for p, q in sorted_tiers],
                 "initial_quantity": pos.initial_quantity,
             },
         )
@@ -527,9 +525,7 @@ class PaperExecutionEngine:
                 "fill_id": fill.fill_id,
                 "order_id": fill.order_id,
                 "remaining_quantity": residual.quantity if residual else 0.0,
-                "remaining_tiers": [
-                    {"price": p, "qty_share": q} for p, q in residual_tiers
-                ],
+                "remaining_tiers": [{"price": p, "qty_share": q} for p, q in residual_tiers],
                 "trade_pnl_usd": fill.pnl_usd,
                 "fee_usd": fill.fee_usd,
                 "realized_pnl_usd": self._portfolio.realized_pnl_usd,

@@ -144,8 +144,7 @@ class ActiveCalibrator:
                 bundle = _bundle_from_payload(snapshot.parameter_set)
             except (ValueError, KeyError, TypeError) as exc:
                 logger.warning(
-                    "[active-calibrator] %s payload is unusable, falling back "
-                    "to identity: %s",
+                    "[active-calibrator] %s payload is unusable, falling back to identity: %s",
                     parameter_path,
                     exc,
                 )
@@ -159,11 +158,7 @@ class ActiveCalibrator:
 
     @classmethod
     def identity(cls, parameter_path: str = DEFAULT_BAYES_CALIBRATOR_PATH) -> ActiveCalibrator:
-        return cls(
-            ActiveCalibratorState(
-                parameter_path=parameter_path, snapshot=None, bundle=None
-            )
-        )
+        return cls(ActiveCalibratorState(parameter_path=parameter_path, snapshot=None, bundle=None))
 
     # ----- properties ----------------------------------------------------
 

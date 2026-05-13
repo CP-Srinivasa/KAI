@@ -74,12 +74,8 @@ class WalkForwardConfig(BaseModel):
     train_fraction: float = Field(default=DEFAULT_TRAIN_FRACTION, gt=0.0, lt=1.0)
     min_train_size: int = Field(default=DEFAULT_MIN_TRAIN_SIZE, ge=10)
     min_test_size: int = Field(default=DEFAULT_MIN_TEST_SIZE, ge=5)
-    min_brier_improvement: float = Field(
-        default=DEFAULT_MIN_BRIER_IMPROVEMENT, ge=0.0, le=1.0
-    )
-    min_consistency: float = Field(
-        default=DEFAULT_MIN_CONSISTENCY, ge=0.0, le=1.0
-    )
+    min_brier_improvement: float = Field(default=DEFAULT_MIN_BRIER_IMPROVEMENT, ge=0.0, le=1.0)
+    min_consistency: float = Field(default=DEFAULT_MIN_CONSISTENCY, ge=0.0, le=1.0)
 
 
 class WalkForwardSplit(BaseModel):
@@ -185,9 +181,7 @@ def walk_forward_validate(
             median_oos_brier_improvement=0.0,
             consistency_ratio=0.0,
             decision="insufficient_data",
-            decision_reasons=(
-                f"have {n} pairs, need >= {cfg.min_train_size + cfg.min_test_size}",
-            ),
+            decision_reasons=(f"have {n} pairs, need >= {cfg.min_train_size + cfg.min_test_size}",),
             config=cfg,
         )
 
@@ -265,9 +259,7 @@ def walk_forward_validate(
             median_oos_brier_improvement=0.0,
             consistency_ratio=0.0,
             decision="insufficient_data",
-            decision_reasons=(
-                "no fold met min_train_size and min_test_size simultaneously",
-            ),
+            decision_reasons=("no fold met min_train_size and min_test_size simultaneously",),
             config=cfg,
         )
 
@@ -278,17 +270,14 @@ def walk_forward_validate(
     decision_reasons: list[str] = []
     if mean_imp < cfg.min_brier_improvement:
         decision_reasons.append(
-            f"mean OoS Brier improvement {mean_imp:.4f} < threshold "
-            f"{cfg.min_brier_improvement:.4f}"
+            f"mean OoS Brier improvement {mean_imp:.4f} < threshold {cfg.min_brier_improvement:.4f}"
         )
     if consistency < cfg.min_consistency:
         decision_reasons.append(
             f"consistency {consistency:.2f} < {cfg.min_consistency:.2f} "
             f"(only {improved_count}/{len(splits)} folds improved)"
         )
-    decision: DecisionLiteral = (
-        "approve" if not decision_reasons else "reject"
-    )
+    decision: DecisionLiteral = "approve" if not decision_reasons else "reject"
     if decision == "approve":
         decision_reasons.append(
             f"mean Δbrier={mean_imp:.4f} ≥ {cfg.min_brier_improvement:.4f}, "

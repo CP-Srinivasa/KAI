@@ -66,5 +66,3 @@ def test_build_trading_loop_hard_gate_thresholds_passed(
     assert gen._bayes_shadow_only is False  # noqa: SLF001
     assert gen._min_bayes_confidence == pytest.approx(0.42)  # noqa: SLF001
     assert gen._max_bayes_uncertainty == pytest.approx(0.66)  # noqa: SLF001
-
-

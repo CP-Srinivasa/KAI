@@ -40,9 +40,7 @@ def test_pending_status_for_fresh_proposal(service: ApprovalService):
 
 
 def test_active_status_after_approve(service: ApprovalService):
-    proposal = service.store.propose_version(
-        parameter_path="p", parameter_set={"v": 1}
-    )
+    proposal = service.store.propose_version(parameter_path="p", parameter_set={"v": 1})
     service.approve(
         parameter_path="p",
         version_id=proposal.version_id,
@@ -54,9 +52,7 @@ def test_active_status_after_approve(service: ApprovalService):
 
 
 def test_rejected_status_after_reject(service: ApprovalService):
-    proposal = service.store.propose_version(
-        parameter_path="p", parameter_set={"v": 1}
-    )
+    proposal = service.store.propose_version(parameter_path="p", parameter_set={"v": 1})
     service.reject(
         parameter_path="p",
         version_id=proposal.version_id,
@@ -118,20 +114,14 @@ def test_list_pending_excludes_active_rejected_superseded(service: ApprovalServi
 def test_approve_requires_operator_id(service: ApprovalService):
     proposal = service.store.propose_version(parameter_path="p", parameter_set={"v": 1})
     with pytest.raises(ValueError, match="operator_id_required"):
-        service.approve(
-            parameter_path="p", version_id=proposal.version_id, operator_id=""
-        )
+        service.approve(parameter_path="p", version_id=proposal.version_id, operator_id="")
     with pytest.raises(ValueError, match="operator_id_required"):
-        service.approve(
-            parameter_path="p", version_id=proposal.version_id, operator_id="   "
-        )
+        service.approve(parameter_path="p", version_id=proposal.version_id, operator_id="   ")
 
 
 def test_approve_unknown_version_raises(service: ApprovalService):
     with pytest.raises(ValueError, match="unknown_proposal"):
-        service.approve(
-            parameter_path="p", version_id="pv_unknown", operator_id="op"
-        )
+        service.approve(parameter_path="p", version_id="pv_unknown", operator_id="op")
 
 
 def test_approve_rejected_proposal_raises(service: ApprovalService):
@@ -143,18 +133,14 @@ def test_approve_rejected_proposal_raises(service: ApprovalService):
         reason="bad fit",
     )
     with pytest.raises(ValueError, match="already_rejected"):
-        service.approve(
-            parameter_path="p", version_id=proposal.version_id, operator_id="op"
-        )
+        service.approve(parameter_path="p", version_id=proposal.version_id, operator_id="op")
 
 
 def test_approve_already_active_raises(service: ApprovalService):
     proposal = service.store.propose_version(parameter_path="p", parameter_set={"v": 1})
     service.approve(parameter_path="p", version_id=proposal.version_id, operator_id="op")
     with pytest.raises(ValueError, match="already_active"):
-        service.approve(
-            parameter_path="p", version_id=proposal.version_id, operator_id="op"
-        )
+        service.approve(parameter_path="p", version_id=proposal.version_id, operator_id="op")
 
 
 def test_approve_superseded_raises_with_rollback_hint(service: ApprovalService):

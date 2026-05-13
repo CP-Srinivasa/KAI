@@ -60,4 +60,3 @@ def test_bayes_sizing_drawdown_exhausted_blocks_trade() -> None:
 
     assert decision.approved is False
     assert decision.capped_by == "drawdown_exhausted"
-

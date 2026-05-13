@@ -524,9 +524,7 @@ def _summarize_telegram_channel_ingest(
                     if isinstance(last_msg_iso_raw, str):
                         try:
                             last_msg_dt = datetime.fromisoformat(last_msg_iso_raw)
-                            last_message_age_seconds = int(
-                                (now - last_msg_dt).total_seconds()
-                            )
+                            last_message_age_seconds = int((now - last_msg_dt).total_seconds())
                         except ValueError:
                             pass
                     # Classify reactivity (independent of liveness `status`).

@@ -40,15 +40,9 @@ def test_propose_genesis_uses_genesis_prev_hash(store: ParameterVersionStore):
 
 
 def test_journal_file_is_appended_one_line_per_record(store: ParameterVersionStore):
-    store.propose_version(
-        parameter_path="x", parameter_set={"a": 1}
-    )
-    store.propose_version(
-        parameter_path="x", parameter_set={"a": 2}
-    )
-    store.propose_version(
-        parameter_path="y", parameter_set={"b": 3}
-    )
+    store.propose_version(parameter_path="x", parameter_set={"a": 1})
+    store.propose_version(parameter_path="x", parameter_set={"a": 2})
+    store.propose_version(parameter_path="y", parameter_set={"b": 3})
     lines = store.path.read_text(encoding="utf-8").strip().split("\n")
     assert len(lines) == 3
     # Each line is valid JSON
@@ -86,9 +80,7 @@ def test_chain_documents_last_line_limitation(store: ParameterVersionStore):
     lines = store.path.read_text(encoding="utf-8").strip().split("\n")
     payload = json.loads(lines[1])
     payload["parameter_set"] = {"v": 999}
-    lines[1] = json.dumps(
-        payload, sort_keys=True, ensure_ascii=False, separators=(",", ":")
-    )
+    lines[1] = json.dumps(payload, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
     store.path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     # As documented: still verifies clean — the last line is not yet sealed.
     ok, _ = store.verify_chain()
@@ -187,9 +179,7 @@ def test_reject_marks_proposal_without_changing_active(store: ParameterVersionSt
     p1 = store.propose_version(parameter_path="p", parameter_set={"v": 1})
     store.activate_version(parameter_path="p", version_id=p1.version_id)
     p2 = store.propose_version(parameter_path="p", parameter_set={"v": 2})
-    store.reject_version(
-        parameter_path="p", version_id=p2.version_id, reason="OoS-Brier worse"
-    )
+    store.reject_version(parameter_path="p", version_id=p2.version_id, reason="OoS-Brier worse")
     # Active is still p1 — reject doesn't switch
     assert store.latest_active("p").version_id == p1.version_id
 

@@ -505,9 +505,7 @@ class SignalGenerator:
     #      Blowoff = Top-Bildung, Panic = Sell-Druck.)
     #   LOW_LIQUIDITY → "ranging" (kein Trend, schwache Confidence)
     #   HIGH_MANIPULATION → "volatile" (Risk-Warnung beidseitig)
-    _BULLISH_REGIMES = frozenset(
-        {MarketRegime.BULL, MarketRegime.ACCUMULATION}
-    )
+    _BULLISH_REGIMES = frozenset({MarketRegime.BULL, MarketRegime.ACCUMULATION})
     _BEARISH_REGIMES = frozenset(
         {
             MarketRegime.BEAR,
@@ -676,8 +674,6 @@ class SignalGenerator:
                 else entry_price - take_profit_delta
             )
         return stop_loss_price, take_profit_price
-
-
 
     def _build_supporting_factors(
         self,

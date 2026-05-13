@@ -83,6 +83,7 @@ def _invalidate_source_watchlist_cache() -> None:
     """Test/Reload-Hook — clears the lru_cache on _load_source_watchlist."""
     _load_source_watchlist.cache_clear()
 
+
 # D-142: Bearish directional disabled based on 50 eligible resolved outcomes.
 # Bearish precision: 4% (1 hit / 24 miss). Bullish precision: 76% (19/25).
 # Bearish news in trending markets is almost never price-predictive — reactive

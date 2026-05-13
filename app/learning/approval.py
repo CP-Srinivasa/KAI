@@ -151,9 +151,7 @@ class ApprovalService:
         snapshot_dir: Path | str | None = None,
     ) -> None:
         self._store = store
-        self._snapshot_dir: Path | None = (
-            Path(snapshot_dir) if snapshot_dir is not None else None
-        )
+        self._snapshot_dir: Path | None = Path(snapshot_dir) if snapshot_dir is not None else None
 
     @property
     def store(self) -> ParameterVersionStore:
@@ -165,9 +163,7 @@ class ApprovalService:
 
     # ----- read ----------------------------------------------------------
 
-    def list_proposals(
-        self, parameter_path: str | None = None
-    ) -> list[ProposalStatus]:
+    def list_proposals(self, parameter_path: str | None = None) -> list[ProposalStatus]:
         """All `version_proposed` records, with computed current status.
 
         Optionally filter by `parameter_path`.
@@ -180,10 +176,7 @@ class ApprovalService:
 
     def list_pending(self, parameter_path: str | None = None) -> list[ProposalStatus]:
         """Only proposals whose status is currently 'pending'."""
-        return [
-            ps for ps in self.list_proposals(parameter_path)
-            if ps.status == STATUS_PENDING
-        ]
+        return [ps for ps in self.list_proposals(parameter_path) if ps.status == STATUS_PENDING]
 
     def get_status(self, version_id: str) -> ProposalStatus | None:
         """Lookup a single proposal by version_id; returns None if not found
@@ -224,21 +217,13 @@ class ApprovalService:
         _require_operator(operator_id)
         status = self.get_status(version_id)
         if status is None or status.proposal.parameter_path != parameter_path:
-            raise ValueError(
-                f"unknown_proposal:version_id={version_id} path={parameter_path}"
-            )
+            raise ValueError(f"unknown_proposal:version_id={version_id} path={parameter_path}")
         if status.status == STATUS_REJECTED:
-            raise ValueError(
-                f"already_rejected:version_id={version_id}"
-            )
+            raise ValueError(f"already_rejected:version_id={version_id}")
         if status.status == STATUS_ACTIVE:
-            raise ValueError(
-                f"already_active:version_id={version_id}"
-            )
+            raise ValueError(f"already_active:version_id={version_id}")
         if status.status == STATUS_SUPERSEDED:
-            raise ValueError(
-                f"superseded:version_id={version_id} — use rollback instead"
-            )
+            raise ValueError(f"superseded:version_id={version_id} — use rollback instead")
         record = self._store.activate_version(
             parameter_path=parameter_path,
             version_id=version_id,
@@ -268,9 +253,7 @@ class ApprovalService:
             raise ValueError("reason_required_for_reject")
         status = self.get_status(version_id)
         if status is None or status.proposal.parameter_path != parameter_path:
-            raise ValueError(
-                f"unknown_proposal:version_id={version_id} path={parameter_path}"
-            )
+            raise ValueError(f"unknown_proposal:version_id={version_id} path={parameter_path}")
         if status.status == STATUS_REJECTED:
             raise ValueError(f"already_rejected:version_id={version_id}")
         if status.status == STATUS_ACTIVE:
@@ -306,17 +289,11 @@ class ApprovalService:
             raise ValueError("notes_required_for_rollback")
         status = self.get_status(version_id)
         if status is None or status.proposal.parameter_path != parameter_path:
-            raise ValueError(
-                f"unknown_proposal:version_id={version_id} path={parameter_path}"
-            )
+            raise ValueError(f"unknown_proposal:version_id={version_id} path={parameter_path}")
         if status.status == STATUS_REJECTED:
-            raise ValueError(
-                f"cannot_rollback_to_rejected:version_id={version_id}"
-            )
+            raise ValueError(f"cannot_rollback_to_rejected:version_id={version_id}")
         if status.status == STATUS_ACTIVE:
-            raise ValueError(
-                f"already_active_no_op:version_id={version_id}"
-            )
+            raise ValueError(f"already_active_no_op:version_id={version_id}")
         record = self._store.rollback_to(
             parameter_path=parameter_path,
             version_id=version_id,

@@ -97,8 +97,7 @@ def test_well_calibrated_engine_is_rejected():
     report = walk_forward_validate(pairs)
     assert report.decision == "reject", report.decision_reasons
     assert any(
-        "mean OoS Brier improvement" in r or "consistency" in r
-        for r in report.decision_reasons
+        "mean OoS Brier improvement" in r or "consistency" in r for r in report.decision_reasons
     )
 
 
@@ -179,9 +178,7 @@ def test_strict_threshold_can_flip_approve_to_reject():
     pairs = _overconfident_pairs(n=300, seed=16)
     base = walk_forward_validate(pairs)
     assert base.decision == "approve"
-    strict = walk_forward_validate(
-        pairs, config=WalkForwardConfig(min_brier_improvement=0.20)
-    )
+    strict = walk_forward_validate(pairs, config=WalkForwardConfig(min_brier_improvement=0.20))
     assert strict.decision == "reject"
     assert any("mean OoS Brier improvement" in r for r in strict.decision_reasons)
 
@@ -189,7 +186,8 @@ def test_strict_threshold_can_flip_approve_to_reject():
 def test_strict_consistency_can_flip_to_reject():
     pairs = _overconfident_pairs(n=300, seed=17)
     strict = walk_forward_validate(
-        pairs, config=WalkForwardConfig(min_consistency=1.0)  # all folds must improve
+        pairs,
+        config=WalkForwardConfig(min_consistency=1.0),  # all folds must improve
     )
     # With small bucket sizes, any noise can flip a fold — strict 1.0 likely rejects
     if any(not s.improved for s in strict.splits):
@@ -228,11 +226,8 @@ def test_split_records_are_self_describing():
         assert split.n_test > 0
         assert split.brier_test_before >= 0.0
         assert split.brier_test_after >= 0.0
-        assert (
-            split.brier_improvement
-            == pytest.approx(
-                split.brier_test_before - split.brier_test_after, abs=1e-6
-            )
+        assert split.brier_improvement == pytest.approx(
+            split.brier_test_before - split.brier_test_after, abs=1e-6
         )
 
 
@@ -274,9 +269,7 @@ def test_degenerate_constant_predictions_does_not_crash():
 def test_constant_outcome_does_not_crash():
     """All actual_outcome == 1 → fit returns IdentityCalibrator (degenerate)."""
     pairs = [
-        OutcomePair(
-            decision_id=f"d_{i}", predicted_probability=0.7, actual_outcome=1
-        )
+        OutcomePair(decision_id=f"d_{i}", predicted_probability=0.7, actual_outcome=1)
         for i in range(150)
     ]
     report = walk_forward_validate(pairs)

@@ -122,9 +122,6 @@ def test_signal_has_all_mandatory_fields():
     assert signal.source_document_id == "doc_test_001"
 
 
-
-
-
 def test_approval_and_execution_state_default_pending():
     gen = _generator()
     signal = gen.generate(_make_analysis(), _make_market_data(), "BTC/USDT")

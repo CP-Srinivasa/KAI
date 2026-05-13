@@ -211,9 +211,7 @@ class ManipulationDetectionEngine:
 
     # -------------------------------------------------- coord shilling
 
-    def _detect_coordinated_shilling(
-        self, posts: list[Post]
-    ) -> tuple[int, dict[str, float]]:
+    def _detect_coordinated_shilling(self, posts: list[Post]) -> tuple[int, dict[str, float]]:
         """Find clusters of similar posts in narrow time windows.
 
         Returns (cluster_count, per_source_evidence ∈ [0, 1]).
@@ -251,9 +249,7 @@ class ManipulationDetectionEngine:
 
     # ----------------------------------------------- fake engagement
 
-    def _detect_fake_engagement(
-        self, posts: list[Post]
-    ) -> tuple[int, dict[str, float]]:
+    def _detect_fake_engagement(self, posts: list[Post]) -> tuple[int, dict[str, float]]:
         cfg = self._config
         if len(posts) < 5:
             return 0, {}
@@ -269,9 +265,7 @@ class ManipulationDetectionEngine:
             if p.follower_count_at_post > 0:
                 ratio = p.engagement_count / p.follower_count_at_post
                 if ratio > cfg.engagement_to_follower_ratio_threshold:
-                    ratio_anomaly = min(
-                        1.0, ratio / cfg.engagement_to_follower_ratio_threshold
-                    )
+                    ratio_anomaly = min(1.0, ratio / cfg.engagement_to_follower_ratio_threshold)
             elif p.engagement_count > 100:
                 # No followers but lots of engagement → very suspect
                 ratio_anomaly = 1.0
@@ -354,9 +348,7 @@ class ManipulationDetectionEngine:
 
     # -------------------------------------------------- wash trading
 
-    def _detect_wash_trading(
-        self, trades: list[Trade]
-    ) -> tuple[float | None, dict[str, float]]:
+    def _detect_wash_trading(self, trades: list[Trade]) -> tuple[float | None, dict[str, float]]:
         cfg = self._config
         if len(trades) < cfg.wash_min_trades:
             return None, {}
@@ -380,17 +372,13 @@ class ManipulationDetectionEngine:
         ratio = total_volume / max(price_move_pct, 0.01)
         ratio_signature = 0.0
         if ratio > cfg.wash_volume_to_impact_threshold:
-            ratio_signature = _logistic(
-                math.log(ratio / cfg.wash_volume_to_impact_threshold)
-            )
+            ratio_signature = _logistic(math.log(ratio / cfg.wash_volume_to_impact_threshold))
 
         # 2) Self-pair detection: same buyer/seller participates in both sides
         evidence: dict[str, float] = {}
         if any(t.buyer_id and t.seller_id for t in trades_sorted):
             self_pair_count = sum(
-                1
-                for t in trades_sorted
-                if t.buyer_id and t.seller_id and t.buyer_id == t.seller_id
+                1 for t in trades_sorted if t.buyer_id and t.seller_id and t.buyer_id == t.seller_id
             )
             self_pair_share = self_pair_count / len(trades_sorted)
             if self_pair_share >= cfg.wash_self_trade_pair_threshold:
@@ -476,9 +464,7 @@ class ManipulationDetectionEngine:
 
     # ---------------------------------------------- pump and dump
 
-    def _detect_pump_and_dump(
-        self, bars: list[PriceBar]
-    ) -> tuple[float | None, dict[str, float]]:
+    def _detect_pump_and_dump(self, bars: list[PriceBar]) -> tuple[float | None, dict[str, float]]:
         cfg = self._config
         n_required = cfg.pump_window_bars + cfg.dump_window_bars
         if len(bars) < n_required:
@@ -523,9 +509,7 @@ class ManipulationDetectionEngine:
 
     # ------------------------------------------------- abnormal wallet
 
-    def _detect_abnormal_wallet(
-        self, wallet_txs: list[WalletTx]
-    ) -> tuple[int, dict[str, float]]:
+    def _detect_abnormal_wallet(self, wallet_txs: list[WalletTx]) -> tuple[int, dict[str, float]]:
         cfg = self._config
         if not wallet_txs:
             return 0, {}
@@ -646,9 +630,7 @@ class ManipulationDetectionEngine:
 
     # --------------------------------------- historical reliability
 
-    def _historical_reliability(
-        self, calls: list[HistoricalCall]
-    ) -> dict[str, tuple[float, int]]:
+    def _historical_reliability(self, calls: list[HistoricalCall]) -> dict[str, tuple[float, int]]:
         """Per-source (reliability, sample_size) from past calls.
 
         Reliability = correct_calls / total_calls, smoothed toward 0.5 by a
@@ -812,9 +794,7 @@ class ManipulationDetectionEngine:
         for src, val in wallet_ev.items():
             evidence[(SOURCE_WALLET, src)][PATTERN_ABNORMAL_WALLET] = val
 
-        insider_sig, insider_ev = self._detect_insider_behavior(
-            wallet_txs, bars, target_symbol
-        )
+        insider_sig, insider_ev = self._detect_insider_behavior(wallet_txs, bars, target_symbol)
         for src, val in insider_ev.items():
             evidence[(SOURCE_WALLET, src)][PATTERN_INSIDER_BEHAVIOR] = val
 
@@ -851,13 +831,9 @@ class ManipulationDetectionEngine:
         source_reports: list[SourceTrustReport] = []
         for src_type, src_id in sorted(all_sources):
             ev = evidence.get((src_type, src_id), {})
-            hist = history.get(
-                src_id, (cfg.history_neutral_score, 0)
-            )
+            hist = history.get(src_id, (cfg.history_neutral_score, 0))
             n_samples = sample_sizes_post.get(src_id, 0)
-            source_reports.append(
-                self._aggregate_source(src_id, src_type, ev, hist, n_samples)
-            )
+            source_reports.append(self._aggregate_source(src_id, src_type, ev, hist, n_samples))
 
         if not posts and not trades and not order_events and not wallet_txs:
             warnings.append("no_input_data")

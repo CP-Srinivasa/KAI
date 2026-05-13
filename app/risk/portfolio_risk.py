@@ -116,7 +116,7 @@ def _skewness(xs: list[float]) -> float:
         return 0.0
     sd = math.sqrt(var)
     m3 = sum((x - mean) ** 3 for x in xs) / n
-    return m3 / (sd ** 3)
+    return m3 / (sd**3)
 
 
 def _excess_kurtosis(xs: list[float]) -> float:
@@ -128,7 +128,7 @@ def _excess_kurtosis(xs: list[float]) -> float:
     if var <= 0.0:
         return 0.0
     m4 = sum((x - mean) ** 4 for x in xs) / n
-    return m4 / (var ** 2) - 3.0
+    return m4 / (var**2) - 3.0
 
 
 def _correlation(xs: list[float], ys: list[float]) -> float:
@@ -330,14 +330,11 @@ class PortfolioRiskEngine:
 
     # ----------------------------------------------------------- helpers
 
-    def _hash_inputs(
-        self, positions: list[Position], aligned_n: int
-    ) -> str:
+    def _hash_inputs(self, positions: list[Position], aligned_n: int) -> str:
         payload_parts = [str(aligned_n)]
         for p in positions:
             payload_parts.append(
-                f"{p.symbol}|{p.notional_usd:.6f}|{p.leverage}|"
-                f"{p.exchange}|{p.quote_currency}"
+                f"{p.symbol}|{p.notional_usd:.6f}|{p.leverage}|{p.exchange}|{p.quote_currency}"
             )
         payload = "||".join(payload_parts)
         return "sha256:" + hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
@@ -490,9 +487,7 @@ class PortfolioRiskEngine:
         per_path_returns: list[list[float]] = []
 
         sample_fn: Callable[[], float] = (
-            (lambda: _student_t_sample(df, rng))
-            if use_student_t
-            else (lambda: rng.gauss(0.0, 1.0))
+            (lambda: _student_t_sample(df, rng)) if use_student_t else (lambda: rng.gauss(0.0, 1.0))
         )
 
         for _ in range(n_paths):
@@ -500,10 +495,7 @@ class PortfolioRiskEngine:
             asset_returns = [0.0] * n_assets
             for _h in range(horizon):
                 z = [sample_fn() for _ in range(n_assets)]
-                shock = [
-                    sum(chol[i][k] * z[k] for k in range(n_assets))
-                    for i in range(n_assets)
-                ]
+                shock = [sum(chol[i][k] * z[k] for k in range(n_assets)) for i in range(n_assets)]
                 for i in range(n_assets):
                     asset_returns[i] += means[i] + shock[i]
 
@@ -603,8 +595,7 @@ class PortfolioRiskEngine:
                     stressed_cov[i][j] = target_corr * sigmas[i] * sigmas[j]
         weight_vec = [weights[s] for s in symbols]
         port_var = sum(
-            weight_vec[i] * weight_vec[j] * stressed_cov[i][j]
-            for i in range(n) for j in range(n)
+            weight_vec[i] * weight_vec[j] * stressed_cov[i][j] for i in range(n) for j in range(n)
         )
         port_sigma = math.sqrt(max(port_var, 0.0))
         port_mean = sum(weight_vec[i] * means[i] for i in range(n))
@@ -614,9 +605,7 @@ class PortfolioRiskEngine:
 
     # -------------------------------------------------- crypto stress
 
-    def _stress_flash_crash(
-        self, positions: list[Position]
-    ) -> tuple[float, dict[str, float]]:
+    def _stress_flash_crash(self, positions: list[Position]) -> tuple[float, dict[str, float]]:
         cfg = self._config
         per_sym: dict[str, float] = {}
         net_pnl = 0.0
@@ -651,9 +640,7 @@ class PortfolioRiskEngine:
             per_sym[p.symbol] = per_sym.get(p.symbol, 0.0) + loss
         return total_loss, per_sym
 
-    def _stress_stablecoin_depeg(
-        self, positions: list[Position]
-    ) -> tuple[float, dict[str, float]]:
+    def _stress_stablecoin_depeg(self, positions: list[Position]) -> tuple[float, dict[str, float]]:
         cfg = self._config
         per_sym: dict[str, float] = {}
         total_loss = 0.0
@@ -759,9 +746,7 @@ class PortfolioRiskEngine:
         weight_vec = [weights[s] for s in symbols]
         means = [statistics.fmean(r) for r in aligned_returns]
         port_var_ret = sum(
-            weight_vec[i] * weight_vec[j] * cov[i][j]
-            for i in range(n)
-            for j in range(n)
+            weight_vec[i] * weight_vec[j] * cov[i][j] for i in range(n) for j in range(n)
         )
         port_sigma = math.sqrt(max(port_var_ret, 0.0))
         if port_sigma <= 0.0:
@@ -771,9 +756,9 @@ class PortfolioRiskEngine:
         components: dict[str, float] = {}
         for i, s in enumerate(symbols):
             sigma_ip = sum(weight_vec[j] * cov[i][j] for j in range(n))
-            comp = -(
-                means[i] * horizon + z * sigma_ip * sqrt_h / port_sigma
-            ) * weight_vec[i] * value
+            comp = (
+                -(means[i] * horizon + z * sigma_ip * sqrt_h / port_sigma) * weight_vec[i] * value
+            )
             components[s] = comp  # already in loss-positive convention
         return components
 
@@ -849,15 +834,10 @@ class PortfolioRiskEngine:
         )
         warnings.extend(align_warnings)
 
-        sufficient = (
-            len(symbols) >= 1
-            and common_n >= cfg.min_returns_for_var
-        )
+        sufficient = len(symbols) >= 1 and common_n >= cfg.min_returns_for_var
 
         # Weights (signed) by gross exposure
-        weights: dict[str, float] = {
-            p.symbol: p.notional_usd / gross for p in positions
-        }
+        weights: dict[str, float] = {p.symbol: p.notional_usd / gross for p in positions}
 
         # Defaults for "no analytical data" branch — stress-only report
         historical_var = parametric_var = cf_var = t_var = mc_var = None
@@ -879,23 +859,24 @@ class PortfolioRiskEngine:
             historical_var, historical_es = self._historical_var_es(
                 portfolio_returns, conf, gross, horizon
             )
-            parametric_var, parametric_es = self._parametric_var_es(
-                mu, sigma, conf, gross, horizon
-            )
+            parametric_var, parametric_es = self._parametric_var_es(mu, sigma, conf, gross, horizon)
 
             skew = _skewness(portfolio_returns)
             excess_kurt = _excess_kurtosis(portfolio_returns)
-            cf_var = self._cornish_fisher_var(
-                mu, sigma, skew, excess_kurt, conf, gross, horizon
-            )
-            t_var = self._student_t_var(
-                mu, sigma, cfg.student_t_df, conf, gross, horizon
-            )
+            cf_var = self._cornish_fisher_var(mu, sigma, skew, excess_kurt, conf, gross, horizon)
+            t_var = self._student_t_var(mu, sigma, cfg.student_t_df, conf, gross, horizon)
 
             mc_var, mc_es, mc_paths = self._monte_carlo_var_es(
-                symbols, aligned_returns, weights,
-                n_mc, conf, cfg.mc_seed, gross, horizon,
-                cfg.mc_use_student_t, cfg.student_t_df,
+                symbols,
+                aligned_returns,
+                weights,
+                n_mc,
+                conf,
+                cfg.mc_seed,
+                gross,
+                horizon,
+                cfg.mc_use_student_t,
+                cfg.student_t_df,
             )
 
             # Tail risk
@@ -917,27 +898,26 @@ class PortfolioRiskEngine:
                 pair_corrs: list[float] = []
                 for i in range(n):
                     for j in range(i + 1, n):
-                        pair_corrs.append(
-                            _correlation(aligned_returns[i], aligned_returns[j])
-                        )
+                        pair_corrs.append(_correlation(aligned_returns[i], aligned_returns[j]))
                 if pair_corrs:
                     avg_corr = statistics.fmean(pair_corrs)
             corr_stress_var = self._correlation_stress_var(
-                symbols, aligned_returns, weights,
-                cfg.correlation_stress_target, conf, gross, horizon,
+                symbols,
+                aligned_returns,
+                weights,
+                cfg.correlation_stress_target,
+                conf,
+                gross,
+                horizon,
             )
         else:
             warnings.append("insufficient_returns_for_var")
 
         # ------------------------------------------------ stress scenarios
         stress_results: dict[str, float] = {}
-        stress_per_position: dict[str, dict[str, float]] = {
-            p.symbol: {} for p in positions
-        }
+        stress_per_position: dict[str, dict[str, float]] = {p.symbol: {} for p in positions}
 
-        scenarios: list[
-            tuple[str, tuple[float, dict[str, float]]]
-        ] = [
+        scenarios: list[tuple[str, tuple[float, dict[str, float]]]] = [
             (STRESS_FLASH_CRASH, self._stress_flash_crash(positions)),
             (STRESS_LIQUIDATION_CASCADE, self._stress_liquidation_cascade(positions)),
             (STRESS_STABLECOIN_DEPEG, self._stress_stablecoin_depeg(positions)),
@@ -958,10 +938,7 @@ class PortfolioRiskEngine:
                     (
                         corr_stress_var or 0.0,
                         # Per-symbol attribution: weight × component-VaR-style proxy
-                        {
-                            s: abs(weights[s]) * (corr_stress_var or 0.0)
-                            for s in symbols
-                        },
+                        {s: abs(weights[s]) * (corr_stress_var or 0.0) for s in symbols},
                     ),
                 )
             )
@@ -985,12 +962,18 @@ class PortfolioRiskEngine:
 
         # ------------------------------------------------ per-position
 
-        component_vars = self._component_var_attribution(
-            symbols, aligned_returns, weights, parametric_var, gross, horizon, conf
-        ) if sufficient else dict.fromkeys(symbols, 0.0)
-        tail_attribution = self._tail_attribution_from_mc(
-            symbols, weights, mc_paths, conf, gross
-        ) if sufficient else dict.fromkeys(symbols, 0.0)
+        component_vars = (
+            self._component_var_attribution(
+                symbols, aligned_returns, weights, parametric_var, gross, horizon, conf
+            )
+            if sufficient
+            else dict.fromkeys(symbols, 0.0)
+        )
+        tail_attribution = (
+            self._tail_attribution_from_mc(symbols, weights, mc_paths, conf, gross)
+            if sufficient
+            else dict.fromkeys(symbols, 0.0)
+        )
 
         z_param = _inverse_norm_cdf(1.0 - conf) if sufficient else 0.0
         sym_sigmas: dict[str, float] = {}
@@ -1005,10 +988,14 @@ class PortfolioRiskEngine:
             comp = component_vars.get(p.symbol, 0.0)
             risk_budget_pct = (comp / param_var * 100.0) if param_var > 0.0 else 0.0
             sigma_i = sym_sigmas.get(p.symbol, 0.0)
-            standalone_var = max(
-                0.0,
-                -(sigma_i * math.sqrt(horizon) * z_param) * abs(p.notional_usd),
-            ) if sufficient and sigma_i > 0.0 else 0.0
+            standalone_var = (
+                max(
+                    0.0,
+                    -(sigma_i * math.sqrt(horizon) * z_param) * abs(p.notional_usd),
+                )
+                if sufficient and sigma_i > 0.0
+                else 0.0
+            )
             stress_breakdown = stress_per_position.get(p.symbol, {})
             stress_exposure = max(stress_breakdown.values()) if stress_breakdown else 0.0
             position_risks.append(

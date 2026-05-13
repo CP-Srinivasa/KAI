@@ -55,12 +55,12 @@ class Post:
     """A single social-media post."""
 
     post_id: str
-    source_id: str               # the account that posted
-    timestamp_utc: str           # ISO 8601
+    source_id: str  # the account that posted
+    timestamp_utc: str  # ISO 8601
     text: str
     asset_mentions: tuple[str, ...] = ()
     sentiment_score: float = 0.0  # −1 (bearish) … +1 (bullish)
-    engagement_count: int = 0    # likes + reposts + replies
+    engagement_count: int = 0  # likes + reposts + replies
     follower_count_at_post: int = 0
 
 
@@ -88,7 +88,7 @@ class Trade:
     timestamp_utc: str
     price: float
     size: float
-    side: str                       # "buy" | "sell"
+    side: str  # "buy" | "sell"
     buyer_id: str | None = None
     seller_id: str | None = None
     venue: str = "binance"
@@ -102,10 +102,10 @@ class OrderEvent:
     symbol: str
     timestamp_utc: str
     account_id: str | None
-    side: str                       # "buy" | "sell"
+    side: str  # "buy" | "sell"
     price: float
     size: float
-    event_type: str                 # "placed" | "canceled" | "filled" | "partially_filled"
+    event_type: str  # "placed" | "canceled" | "filled" | "partially_filled"
 
 
 @dataclass(frozen=True)
@@ -141,7 +141,7 @@ class HistoricalCall:
     source_id: str
     timestamp_utc: str
     asset: str
-    direction: str                  # "bullish" | "bearish" | "neutral"
+    direction: str  # "bullish" | "bearish" | "neutral"
     realized_pnl_pct_30d: float | None = None
 
 
@@ -155,10 +155,10 @@ class SourceTrustReport:
     """Per-source trust assessment."""
 
     source_id: str
-    source_type: str                # SOURCE_*
-    trust_score: float              # 0..1, higher = more trustworthy
+    source_type: str  # SOURCE_*
+    trust_score: float  # 0..1, higher = more trustworthy
     manipulation_probability: float  # 0..1, higher = manipulative
-    historical_reliability: float   # 0..1, accuracy track record (0.5 = unknown)
+    historical_reliability: float  # 0..1, accuracy track record (0.5 = unknown)
     detected_patterns: list[str] = field(default_factory=list)  # PATTERN_*
     pattern_evidence: dict[str, float] = field(default_factory=dict)
     sample_size: int = 0
@@ -176,9 +176,9 @@ class ManipulationReport:
     coordinated_shilling_events: int = 0
     fake_engagement_events: int = 0
     bot_networks_detected: int = 0
-    wash_trading_signature: float | None = None    # 0..1
-    spoofing_signature: float | None = None        # 0..1
-    pump_and_dump_signature: float | None = None   # 0..1
+    wash_trading_signature: float | None = None  # 0..1
+    spoofing_signature: float | None = None  # 0..1
+    pump_and_dump_signature: float | None = None  # 0..1
     abnormal_wallet_flows: int = 0
     insider_behavior_signature: float | None = None  # 0..1
 
@@ -251,7 +251,7 @@ class ManipulationDetectionConfig:
     engagement_to_follower_ratio_threshold: float = 0.50
 
     # Bot network
-    bot_max_account_age_days: int = 30          # young accounts = suspect
+    bot_max_account_age_days: int = 30  # young accounts = suspect
     bot_min_post_count_for_analysis: int = 10
     bot_interval_entropy_threshold: float = 0.50  # low → too regular → bot
     bot_default_avatar_weight: float = 0.20
