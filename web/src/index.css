@@ -321,6 +321,31 @@ body {
   50%, 100% { opacity: 0.55; transform: scale(0.85); }
 }
 
+/* 2026-05-12 DALI-arcade-T4: Pacman-Bahn-Animation fuer Live-Arcade-Panel.
+   Operator-Entscheidung: 30s pro Runde (im JSX via CSS-Var --pacman-march-duration
+   uebergeben, mit Fallback auf 30s). Pacman startet links ausserhalb der Buehne,
+   laeuft nach rechts ueber die Bahn und resettet. Endlos-Loop. */
+@keyframes kai-pacman-march {
+  0%   { transform: translate(0%, -50%); }
+  100% { transform: translate(calc(100% + 320px), -50%); }
+}
+.kai-pacman-march {
+  left: -32px;
+  animation-name: kai-pacman-march;
+  animation-duration: var(--pacman-march-duration, 30s);
+  animation-timing-function: linear;
+  animation-iteration-count: infinite;
+  animation-play-state: running;
+  will-change: transform;
+}
+@media (prefers-reduced-motion: reduce) {
+  .kai-pacman-march {
+    animation-play-state: paused;
+    /* Pacman bleibt sichtbar in der linken Halfte, statisch lesbar. */
+    transform: translate(12%, -50%);
+  }
+}
+
 /* Currency-Pellets: pixel-rendering fuer scharfe Symbol-Kanten */
 .currency-pellet {
   display: inline-flex;

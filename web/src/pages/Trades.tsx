@@ -1,4 +1,4 @@
-import { Fragment } from "react";
+import { Fragment, useState } from "react";
 import {
   AlertCircle,
   RefreshCw,
@@ -20,7 +20,8 @@ import { useApi } from "@/lib/useApi";
 import { fetchTradingLoopStatus, fetchRecentCycles, type TradingCycle, type TradingLoopStatus, type RecentCyclesSummary } from "@/lib/api";
 import type { AsyncState } from "@/lib/useApi";
 import { cn } from "@/lib/utils";
-import { PreparedPanel } from "@/components/panels/PreparedPanel";
+import { RunOnceLauncher, type LauncherUiState } from "@/components/trading/RunOnceLauncher";
+import { PacmanArcade } from "@/components/arcade/PacmanArcade";
 import { LABEL_DE, CYCLE_STATUS_EXPLAIN, CYCLE_STATUS_TITLE, CYCLE_STATUS_REASON } from "@/lib/labels";
 import { formatRelative, formatDuration } from "@/lib/time";
 
@@ -129,6 +130,12 @@ export function TradesPage() {
 
   const cyclesList = cycles.state === "ready" ? cycles.data.recent_cycles : [];
 
+  // 2026-05-12 DALI-arcade-T5: Launcher-UI-State an die Schutzschalter-Pille
+  // (Run-Once Trigger) lifted, damit die Pille BEREIT/IN AUSFUEHRUNG/COOLDOWN
+  // synchron zum Launch-Panel anzeigt. State lebt im Page, gesetzt durch
+  // RunOnceLauncher.onStateChange.
+  const [launcherState, setLauncherState] = useState<LauncherUiState>("idle");
+
   return (
     <div className="p-5 xl:p-6 space-y-5 max-w-[1680px] mx-auto">
       <PageHeader
@@ -233,15 +240,37 @@ export function TradesPage() {
               activeTone="pos"
               hint="Risk-Engine blockiert gefaehrliche oder unvollstaendige Orders automatisch."
             />
+            {/* 2026-05-12 DALI-arcade-T5: Schutzschalter-Pille spiegelt jetzt
+                den Launcher-State (idle/submitting/cooldown), zusaetzlich zum
+                Backend-Gate run_once_allowed. Mental-Model: 4 Status-Pillen oben,
+                Bedienung im Cycle-Launcher unten. Hint verweist darauf. */}
             <GuardrailPill
-              label="Run-Once Trigger"
+              label="Manueller Cycle-Launch"
               active={status.data.run_once_allowed}
-              onText="bereit"
-              offText="blockiert"
-              activeTone="pos"
-              hint={status.data.run_once_allowed
-                ? "Operator kann manuell einen Cycle anstossen."
-                : status.data.run_once_block_reason ?? "Run-Once aktuell nicht moeglich."}
+              onText={
+                launcherState === "submitting"
+                  ? "IN AUSFUEHRUNG"
+                  : launcherState === "cooldown"
+                    ? "COOLDOWN"
+                    : "BEREIT"
+              }
+              offText="gesperrt"
+              activeTone={
+                launcherState === "submitting"
+                  ? "warn"
+                  : launcherState === "cooldown"
+                    ? "pos"
+                    : "pos"
+              }
+              hint={
+                !status.data.run_once_allowed
+                  ? status.data.run_once_block_reason ?? "Aktuell gesperrt - siehe Grund."
+                  : launcherState === "submitting"
+                    ? "Cycle laeuft - siehe Launcher unten."
+                    : launcherState === "cooldown"
+                      ? "Kurze Pause vor naechstem Cycle."
+                      : "Manueller Trading-Zyklus, Bedienung im Launcher unten."
+              }
             />
           </div>
 
@@ -281,6 +310,15 @@ export function TradesPage() {
         </Card>
       )}
 
+      {/* 2026-05-12 DALI-arcade-T4: Live-Arcade Cycle-Heartbeat-Panel.
+          Spec §2.3 + Operator-Prompt §3-§6. Eigener Block ZWISCHEN
+          Schutzschalter und Cycle-Cards-Liste - kein Overlay ueber Daten.
+          Wiederverwendet keine neuen Backend-Felder; rechnet eigene
+          4-Geist-Bucket-Aggregation aus cyclesList (feinere Granularitaet
+          als aggregateCyclesHealth, das nur risk/api kennt).
+          Animation 30s/Runde, prefers-reduced-motion pausiert die Bahn. */}
+      <PacmanArcade cycles={cyclesList} />
+
       {/* 2026-05-12 DALI-arcade-T3: Cycle-Card-Liste ersetzt Debug-Tabelle.
           Spec 4.1 + 4.2 (Wireframe), Operator-Prompt 7-9.
           - Jede Card: Status-Headline (CYCLE_STATUS_TITLE) + Pair + Ergebnis
@@ -317,11 +355,17 @@ export function TradesPage() {
         )}
       </Card>
 
-      <PreparedPanel
-        title="Guarded run-once trigger"
-        reason="POST /operator/trading-loop/run-once (Idempotency-Key nötig) erlaubt gezielten Cycle im Paper/Shadow-Modus."
-        detail="UI-Trigger erfordert confirm-flow + Idempotency-Key-Generierung — in Phase 2 geplant."
-      />
+      {/* 2026-05-12 DALI-arcade-T5: RunOnceLauncher ersetzt PreparedPanel-Stub.
+          Spec F-007. POST /operator/trading-loop/run-once mit Idempotency-Key-Header
+          und Bestaetigungs-Modal. Sicht-only bei status.state === "ready" -
+          ohne Status-Daten kein run_once_allowed / mode / execution_enabled. */}
+      {status.state === "ready" && (
+        <RunOnceLauncher
+          status={status.data}
+          onCycleStarted={() => cycles.reload()}
+          onStateChange={setLauncherState}
+        />
+      )}
     </div>
   );
 }
