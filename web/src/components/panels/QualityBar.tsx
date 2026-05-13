@@ -92,14 +92,29 @@ export function QualityBarPanel({ data }: { data: DashboardQuality | null }) {
   const met = rows.filter((r) => r.value != null && r.value >= r.target).length;
   const total = rows.length;
 
+  // DALI v2 S3 M1a: Klartext-Bewertung nach Master-Spec G2.
+  // Operator sieht ohne Zahlen-Interpretation, wie es um die Pipeline steht.
+  let verdictText: string;
+  let verdictTone: "pos" | "warn" | "neg";
+  if (met === total) {
+    verdictText = "Alle Ziele erreicht";
+    verdictTone = "pos";
+  } else if (met >= Math.ceil(total / 2)) {
+    verdictText = "Teilweise — Aufmerksamkeit";
+    verdictTone = "warn";
+  } else {
+    verdictText = "Ziele verfehlt";
+    verdictTone = "neg";
+  }
+
   return (
     <Card padded>
       <CardHeader
         title={t("primitives.quality_bar")}
         subtitle={t("primitives.quality_bar_sub")}
         right={
-          <Badge tone={met === total ? "pos" : met >= 2 ? "warn" : "neg"} dot>
-            {met}/{total}
+          <Badge tone={verdictTone} dot>
+            {met}/{total} · {verdictText}
           </Badge>
         }
       />
@@ -166,9 +181,9 @@ export function QualityBarPanel({ data }: { data: DashboardQuality | null }) {
             </span>
           </span>
           <span>
-            Forward: <span className="font-mono">{data.forward_hits}</span> hits /{" "}
-            <span className="font-mono">{data.forward_miss}</span> miss (
-            <span className="font-mono">{data.forward_resolved}</span> resolved)
+            Aus <span className="font-mono">{data.forward_resolved}</span> aufgelösten Signalen:{" "}
+            <span className="font-mono text-pos">{data.forward_hits}</span> Treffer ·{" "}
+            <span className="font-mono text-neg">{data.forward_miss}</span> Fehler
           </span>
           {/* V1-Backfill-Marker lebt im ReentryGatePanel direkt am PnL-Wert
               (DALI-P-026-r1 Folge-Cleanup) — hier nicht mehr doppelt. */}
