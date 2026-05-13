@@ -17,21 +17,38 @@ export function NewsPage() {
         divider={false}
       />
 
+      {/* DALI v2 S6 M7b: Live News-Stream Panel mit DevelopmentStatus.
+          Backend ingestiert bereits News (skeleton 50%), Read-Endpoint fehlt. */}
       <PreparedPanel
-        title="Live News-Stream"
-        reason="Das Ingestion-Backend verarbeitet News bereits (RSS, Feeds, klassifizierte Quellen) — ein Operator-Read-Endpoint für die UI-Konsole fehlt noch."
+        title="Live-News-Stream"
+        reason="Welche News kommen gerade rein? Wie ist die Stimmung pro Headline? Welche Märkte sind betroffen? Stream aus klassifizierten RSS-Quellen, Feeds und kuratierter Source-Liste."
         detail={
           <>
-            Geplante Route: <span className="font-mono">GET /operator/recent-news</span> — lesen aus <span className="font-mono">artifacts/analysis_results/*.json</span>,
-            ergänzt um Sentiment/Impact-Score und verlinkte Signal-IDs.
+            Backend-Ingestion läuft (RSS, Feeds, klassifizierte Quellen werden bereits verarbeitet).
+            Geplanter Read-Endpoint: <span className="font-mono">GET /operator/recent-news</span> — liefert{" "}
+            <span className="font-mono">artifacts/analysis_results/*.json</span> mit Sentiment/Impact-Score
+            und verlinkten Signal-IDs.
           </>
         }
+        phase="skeleton"
+        progress={50}
+        timeline="Phase 2 — nach Operator-News-Endpoint"
       />
 
+      {/* DALI v2 S6 M7b: News-Detail mit Signal-Kontext (planning 20% - UI-Konzept). */}
       <PreparedPanel
-        title="News-Detail mit Signal-Kontext"
-        reason="Drawer mit Zusammenfassung, Quelle, verknüpften Signalen und Outcome-Tracking ist UI-seitig vorgesehen."
-        detail="Phase 2 · nach Operator-News-Endpoint."
+        title="News-Detail mit Signal-Verknüpfung"
+        reason="Tiefere Sicht pro News-Item: Was steht drin (Zusammenfassung)? Wer hat es geschrieben (Quelle)? Welche Signale haben darauf reagiert? Was war der Outcome? Drill-down von News → Signal → Trade-Ergebnis."
+        detail={
+          <>
+            Zielanzeige: Drawer mit Klartext-Zusammenfassung, Quellen-Reputation, verknüpften
+            Signal-IDs und Outcome-Tracking. Erfordert das Operator-News-Endpoint plus
+            Signal-Linking-Tabelle.
+          </>
+        }
+        phase="planning"
+        progress={20}
+        timeline="Phase 2 — nach Live-News-Stream"
       />
     </div>
   );
