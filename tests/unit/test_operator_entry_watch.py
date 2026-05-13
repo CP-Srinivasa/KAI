@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -8,6 +9,14 @@ import pytest
 from app.execution import operator_entry_watch as watch_mod
 from app.execution.envelope_to_paper_bridge import BridgeTickResult
 from app.market_data.models import MarketDataSnapshot
+
+
+def _recent_timestamp_utc() -> str:
+    """Envelope-timestamp 1h in past — well under default 24h TTL.
+
+    Avoids time-bomb fixtures that fail >24h after the hardcoded date.
+    """
+    return (datetime.now(UTC) - timedelta(hours=1)).isoformat()
 
 
 def _write_jsonl(path: Path, row: dict[str, object]) -> None:
@@ -38,7 +47,7 @@ def _accepted_envelope(**payload_overrides: object) -> dict[str, object]:
         "status": "ok",
         "message_type": "signal",
         "source": "dashboard",
-        "timestamp_utc": "2026-05-10T12:00:00+00:00",
+        "timestamp_utc": _recent_timestamp_utc(),
         "payload": payload,
     }
 
