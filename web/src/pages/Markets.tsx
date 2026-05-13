@@ -20,21 +20,38 @@ export function MarketsPage() {
 
       <TradingViewChart title="TradingView-Chart" />
 
+      {/* DALI v2 S7 M6b: Marktübersicht-Panel mit DevelopmentStatus.
+          Operator-Brief: "Marktstatus, aktive Assets, verknüpfte Signale,
+          relevante Bewegungen, Risiko, Trendrichtung". */}
       <PreparedPanel
-        title="Marktübersicht (Crypto · ETF · Equities · Bonds · Commodities)"
-        reason="Kurs-, Volumen- und Sentiment-Live-Daten über ein einheitliches Markets-API werden noch nicht vom Backend bereitgestellt."
+        title="Marktübersicht — Krypto · ETF · Aktien · Anleihen · Rohstoffe"
+        reason="Wie steht der Markt gerade? Welche Assets sind aktiv, welche fallen? Wo zeigt sich Trendrichtung, wo Risiko? Klassen-gefilterte Übersicht über alle Anlageklassen mit Kurs-, Volumen- und Sentiment-Daten."
         detail={
           <>
-            Geplanter Endpoint: <span className="font-mono">GET /markets/overview</span> mit klassen-gefilterter Kurs- und Signalzuordnung.
-            Datenquellen: CoinGecko (crypto), integrierte Equity/ETF-Provider — in Phase 2 der Dashboard-Konsolidierung.
+            Geplanter Endpoint: <span className="font-mono">GET /markets/overview</span> — klassen-gefilterte
+            Kurs- und Signalzuordnung. Quellen: CoinGecko (Krypto), integrierte Equity/ETF-Provider.
+            Zielanzeige: Risiko-Badge pro Asset, Trend-Pfeile, Top-Movers, verknüpfte Signal-IDs.
           </>
         }
+        phase="planning"
+        progress={15}
+        timeline="Phase 2 — Dashboard-Konsolidierung"
       />
 
+      {/* DALI v2 S7 M6b: Asset-Detail mit Signal-Verknuepfung (skeleton 40%). */}
       <PreparedPanel
-        title="Asset-Detail & verknüpfte Signale"
-        reason="Drill-down von Asset → aktive Signale → zugehörige News ist UI-seitig vorgesehen, benötigt aber strukturiertes Markets-Mapping im Backend."
-        detail="Phase 2 · nach Operator-Signals-Endpoint."
+        title="Asset-Detail mit Signal-Verknüpfung"
+        reason="Drill-down pro Asset: welche Signale waren aktiv? Welche News sind verlinkt? Wie ist das Risikoprofil? Wo steht der Asset relativ zur Vergleichsgruppe? Tiefere Sicht für Operator-Entscheidungen."
+        detail={
+          <>
+            UI-Konzept steht. Benötigt strukturiertes Markets-Mapping im Backend
+            (Asset-Klassifizierung, Korrelations-Cluster) und das Operator-Signals-Endpoint.
+            Zielanzeige: Trendrichtung-Banner, Signal-History, News-Liste, Risiko-Badge.
+          </>
+        }
+        phase="planning"
+        progress={20}
+        timeline="Phase 2 — nach Operator-Signals-Endpoint"
       />
     </div>
   );
