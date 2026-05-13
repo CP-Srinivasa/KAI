@@ -122,11 +122,15 @@ export function Badge({
   children,
   className,
   dot = false,
+  title,
 }: {
   tone?: BadgeTone;
   children: ReactNode;
   className?: string;
   dot?: boolean;
+  /** Tooltip-Text (HTML title attribute). DALI v2: fuer Klartext-Erklaerung
+   *  der raw-Begriffe (Master-Spec G1 — Forensik-Anker bleibt zugaenglich). */
+  title?: string;
 }) {
   const tones: Record<BadgeTone, string> = {
     neutral: "bg-bg-3 text-fg border-line",
@@ -139,6 +143,7 @@ export function Badge({
   };
   return (
     <span
+      title={title}
       className={cn(
         "inline-flex items-center gap-1.5 rounded-xs border px-1.5 py-0.5 text-2xs font-medium",
         tones[tone],
