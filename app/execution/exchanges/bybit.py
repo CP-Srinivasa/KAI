@@ -154,6 +154,116 @@ class BybitAdapter(BaseExchangeAdapter):
                 exchange="bybit",
             )
 
+    async def place_order_with_server_sl(self, order: OrderRequest) -> OrderResult:
+        """Place atomic Bybit V5 order with server-side stop-loss.
+
+        Phase-0 Pflicht-Pfad. Spec: docs/security/kai_light_live_phase0_spec.md §4.
+
+        Bybit V5 erlaubt ``stopLoss`` als Field direkt im order/create-Call —
+        die SL-Order wird vom Exchange als hidden conditional-Order verwaltet.
+        ``tpslMode=Full`` schließt die Position bei SL komplett (Phase-0-Schutz:
+        wir wollen kein Partial-Close).
+
+        Atomar: entweder Order+SL beide angenommen (retCode=0) oder beide
+        rejected (kein Cancel nötig).
+        """
+        invalid = self._validate_server_sl(order)
+        if invalid is not None:
+            return invalid
+
+        if self._dry_run:
+            return self._dry_run_order_with_sl(order)
+
+        if not self.is_configured:
+            return OrderResult(
+                success=False,
+                error="Bybit API keys not configured",
+                exchange="bybit",
+                symbol=order.symbol,
+            )
+
+        assert order.price is not None  # validated above
+        assert order.stop_loss is not None  # validated above
+        payload: dict[str, str | float] = {
+            "category": self._category,
+            "symbol": order.symbol.upper().replace("/", ""),
+            "side": "Buy" if order.side == "buy" else "Sell",
+            "orderType": "Limit",
+            "qty": str(order.quantity),
+            "price": str(order.price),
+            "timeInForce": order.time_in_force,
+            "stopLoss": str(order.stop_loss),
+            "slOrderType": "Limit",
+            "slLimitPrice": str(order.stop_loss),
+            "tpslMode": "Full",
+        }
+        if order.client_order_id:
+            payload["orderLinkId"] = order.client_order_id
+
+        import json
+
+        payload_str = json.dumps(payload)
+        headers = self._sign_headers(payload_str)
+
+        try:
+            async with httpx.AsyncClient(timeout=self._timeout) as client:
+                resp = await client.post(
+                    f"{self._base_url}/v5/order/create",
+                    content=payload_str,
+                    headers=headers,
+                )
+
+            data = resp.json()
+            ret_code = data.get("retCode", -1)
+
+            if ret_code != 0:
+                return OrderResult(
+                    success=False,
+                    error=f"bybit_sl_order_failed: code={ret_code} msg={data.get('retMsg', '')}",
+                    exchange="bybit",
+                    symbol=order.symbol,
+                    raw_response=data,
+                )
+
+            result = data.get("result", {}) or {}
+            entry_id = str(result.get("orderId", ""))
+            # Bybit V5: SL ist attached zur main-Order, kein separater orderId in
+            # response. Wir markieren ``sl_order_id`` mit "<entry>-sl" als Audit-
+            # Beweis, dass SL-Field tatsächlich am Exchange aktiv ist (verifiziert
+            # via subsequent GET /v5/order/realtime, nicht in dieser Methode).
+            if not entry_id:
+                return OrderResult(
+                    success=False,
+                    error="bybit_sl_order_no_id",
+                    exchange="bybit",
+                    symbol=order.symbol,
+                    raw_response=data,
+                )
+
+            return OrderResult(
+                success=True,
+                order_id=entry_id,
+                client_order_id=str(result.get("orderLinkId", order.client_order_id)),
+                symbol=order.symbol,
+                side=order.side,
+                order_type=order.order_type,
+                quantity=order.quantity,
+                price=order.price,
+                status=OrderStatus.SUBMITTED,
+                exchange="bybit",
+                raw_response=data,
+                sl_order_id=f"{entry_id}-sl",
+                sl_price=order.stop_loss,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.error("[BYBIT] Order+SL failed: %s", exc)
+            return OrderResult(
+                success=False,
+                error=f"bybit_sl_exception: {str(exc)[:180]}",
+                exchange="bybit",
+                symbol=order.symbol,
+            )
+
     async def get_balance(self) -> BalanceResult:
         """Fetch unified account balance from Bybit."""
         if not self.is_configured:

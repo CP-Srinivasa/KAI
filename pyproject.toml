@@ -51,6 +51,7 @@ dependencies = [
     "lxml>=6.1.0",  # CVE-2026-41066
     "mako>=1.3.12",  # CVE-2026-44307
     "python-multipart>=0.0.27",  # CVE-2026-42561
+    "pyotp>=2.9.0",  # HOTP-Verifier Task 39 (PR #6)
 ]
 
 [project.optional-dependencies]
@@ -103,6 +104,9 @@ known-first-party = ["app"]
 "tests/unit/test_kai_risk_guards.py" = ["C408"]
 "tests/unit/test_kai_telegram_renderer.py" = ["C408"]
 "tests/unit/test_newsdata_adapter.py" = ["E501"]
+# Phase-0 N+2 security modules — N818 exempt for domain-meaningful names
+# (HotpReplayDetected, HotpVerificationFailed).
+"app/security/hotp_auth.py" = ["N818"]
 
 [tool.mypy]
 python_version = "3.12"
