@@ -1,4 +1,4 @@
-import { Bot, Cpu, Key, type LucideIcon } from "lucide-react";
+import { Bot, type LucideIcon } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 // 2026-05-10 DALI-A11-v3: Operator-Wunsch — alte PNG bleibt, neue SVG RECHTS
@@ -6,11 +6,17 @@ import { cn } from "@/lib/utils";
 // Klassen-Namen: links = Tradition (PNG), rechts = Persona-Symbol (SVG, Neon-Glow).
 
 const BASE = import.meta.env.BASE_URL;
+// 2026-05-13 DALI v2 S2: 6 Agenten-PNGs einheitlich aus
+// C:\Users\sasch\Desktop\<Agent>\<Agent>.png auf 384x384 resized
+// (159-287 kB pro Bild) und nach web/public/agents/ deployed.
+// Satoshi + Neo neu addiert.
 const CUSTOM_ICON_PNG: Record<string, string> = {
   sentr: `${BASE}agents/sentr.png`,
   watchdog: `${BASE}agents/watchdog.png`,
   architect: `${BASE}agents/architect.png`,
   dali: `${BASE}agents/dali.png`,
+  satoshi: `${BASE}agents/satoshi.png`,
+  neo: `${BASE}agents/neo.png`,
 };
 
 type IconProps = { size: number };
@@ -129,11 +135,68 @@ function ArchitectIcon({ size }: IconProps) {
   );
 }
 
+// SATOSHI v1: Bitcoin-B als geometrisches Glyph (klassischer ₿ mit Ober/Unter-Strich),
+// neon-glow ueber currentColor.
+function SatoshiIcon({ size }: IconProps) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 32 32" aria-hidden>
+      {/* Korpus-Kreis (Coin-Andeutung) */}
+      <circle cx="16" cy="16" r="13" fill="currentColor" opacity="0.12" />
+      <circle cx="16" cy="16" r="13" fill="none" stroke="currentColor" strokeWidth="1.6" />
+      {/* B-Stamm */}
+      <rect x="11.5" y="8" width="2.5" height="16" fill="currentColor" />
+      {/* B-Ober-Wulst */}
+      <path
+        d="M 14 8 H 19 a 4 4 0 0 1 0 8 H 14 Z"
+        fill="currentColor"
+        opacity="0.85"
+      />
+      {/* B-Unter-Wulst */}
+      <path
+        d="M 14 15 H 20 a 4.5 4.5 0 0 1 0 9 H 14 Z"
+        fill="currentColor"
+        opacity="0.95"
+      />
+      {/* Vertikale Strich-Erweiterung oben + unten (das ikonische ₿) */}
+      <rect x="14.5" y="5.5" width="1.8" height="3.5" fill="currentColor" />
+      <rect x="17" y="5.5" width="1.8" height="3.5" fill="currentColor" />
+      <rect x="14.5" y="23" width="1.8" height="3.5" fill="currentColor" />
+      <rect x="17" y="23" width="1.8" height="3.5" fill="currentColor" />
+    </svg>
+  );
+}
+
+// NEO v1: 0/1 Matrix-Cascade als drei vertikale Bit-Spalten,
+// einzelne Bits semi-glow.
+function NeoIcon({ size }: IconProps) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 32 32" aria-hidden>
+      {/* Aussenrahmen (Console/Matrix-Frame) */}
+      <rect x="3" y="3" width="26" height="26" rx="2" fill="currentColor" opacity="0.08" />
+      <rect x="3" y="3" width="26" height="26" rx="2" fill="none" stroke="currentColor" strokeWidth="1.4" />
+      {/* Linke Spalte: 1 0 1 */}
+      <text x="8.5" y="11" fontFamily="monospace" fontWeight="700" fontSize="6" fill="currentColor">1</text>
+      <text x="8.5" y="18" fontFamily="monospace" fontWeight="700" fontSize="6" fill="currentColor" opacity="0.55">0</text>
+      <text x="8.5" y="25" fontFamily="monospace" fontWeight="700" fontSize="6" fill="currentColor">1</text>
+      {/* Mittlere Spalte: 0 1 0 */}
+      <text x="14.5" y="11" fontFamily="monospace" fontWeight="700" fontSize="6" fill="currentColor" opacity="0.55">0</text>
+      <text x="14.5" y="18" fontFamily="monospace" fontWeight="700" fontSize="6" fill="currentColor">1</text>
+      <text x="14.5" y="25" fontFamily="monospace" fontWeight="700" fontSize="6" fill="currentColor" opacity="0.55">0</text>
+      {/* Rechte Spalte: 1 1 0 */}
+      <text x="20.5" y="11" fontFamily="monospace" fontWeight="700" fontSize="6" fill="currentColor">1</text>
+      <text x="20.5" y="18" fontFamily="monospace" fontWeight="700" fontSize="6" fill="currentColor">1</text>
+      <text x="20.5" y="25" fontFamily="monospace" fontWeight="700" fontSize="6" fill="currentColor" opacity="0.55">0</text>
+    </svg>
+  );
+}
+
 const CUSTOM_ICON_SVG: Record<string, (props: IconProps) => JSX.Element> = {
   sentr: SentrIcon,
   watchdog: WatchdogIcon,
   architect: ArchitectIcon,
   dali: DaliIcon,
+  satoshi: SatoshiIcon,
+  neo: NeoIcon,
 };
 
 const AGENT_TONE: Record<string, string> = {
@@ -145,10 +208,10 @@ const AGENT_TONE: Record<string, string> = {
   satoshi: "text-warn",
 };
 
-const FALLBACK_LUCIDE: Record<string, LucideIcon> = {
-  neo: Cpu,
-  satoshi: Key,
-};
+// FALLBACK_LUCIDE wird seit S2 nicht mehr benoetigt - neo + satoshi haben jetzt
+// eigene SVG-Glyphen analog zu sentr/watchdog/architect/dali. Mapping bleibt
+// leer als Sicherheitsnetz fuer kuenftige Agenten ohne SVG.
+const FALLBACK_LUCIDE: Record<string, LucideIcon> = {};
 
 export function AgentIcon({
   slug,

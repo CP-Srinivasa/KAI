@@ -166,11 +166,14 @@ function AgentCard({
 
       <p className="text-xs text-fg-muted leading-relaxed">{agent.role}</p>
 
+      {/* DALI v2 S2: KV-Pillen mit Klartext-Labels (Master-Spec G1 - keine
+          Backend-Begriffe sichtbar). Vorher: last_seen/findings/runs/modes.
+          Operator-Brief: "Aufgabe, Status, Aktivitaet, letzte Aktion". */}
       <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs">
-        <KV k="last_seen" v={agent.last_seen ? formatTs(agent.last_seen) : "—"} />
-        <KV k="findings" v={String(agent.findings_count)} />
-        <KV k="runs" v={String(agent.runs_count)} />
-        <KV k="modes" v={agent.modes.join(", ")} />
+        <KV k="Letzte Aktivität" v={agent.last_seen ? formatTs(agent.last_seen) : "—"} />
+        <KV k="Befunde" v={String(agent.findings_count)} />
+        <KV k="Durchläufe" v={String(agent.runs_count)} />
+        <KV k="Modi" v={agent.modes.join(", ")} />
       </div>
 
       {!isDefaultPermissions(agent.permissions) && (
@@ -601,9 +604,12 @@ function DetailList({
 }
 
 function KV({ k, v }: { k: string; v: string }) {
+  // DALI v2 S2: Label-Spalte ist jetzt Klartext (deutsch) statt Snake-Case.
+  // text-fg-subtle bleibt fuer Hierarchie, font-mono wandert auf den Wert
+  // damit Timestamps/Zahlen weiterhin monospace lesbar bleiben.
   return (
     <span className="inline-flex items-baseline gap-1 min-w-0">
-      <span className="font-mono text-fg-subtle">{k}</span>
+      <span className="text-fg-subtle">{k}</span>
       <span className="font-mono text-fg truncate">{v}</span>
     </span>
   );
