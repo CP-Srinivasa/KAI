@@ -326,7 +326,7 @@ async def position_repair(req: PositionRepairRequest) -> dict[str, Any]:
         # position_adjusted audit-Record direkt damit der rehydrate die neue
         # SL/TP übernimmt. Im audit_replay ist position_adjusted bereits
         # behandelt (line 140+ in audit_replay.py).
-        adjust_record = {
+        adjust_record: dict[str, Any] = {
             "event_type": "position_adjusted",
             "timestamp_utc": datetime.now(UTC).isoformat(),
             "symbol": display_symbol,
@@ -379,7 +379,8 @@ async def pending_envelopes(limit: int = 50) -> dict[str, Any]:
         env_id = env.get("envelope_id")
         if not isinstance(env_id, str):
             continue
-        payload = env.get("payload") if isinstance(env.get("payload"), dict) else {}
+        payload_raw = env.get("payload")
+        payload: dict[str, Any] = payload_raw if isinstance(payload_raw, dict) else {}
         rows.append(
             {
                 "envelope_id": env_id,
