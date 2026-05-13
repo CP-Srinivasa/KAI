@@ -193,15 +193,21 @@ export function PortfolioPage() {
       {/* DALI-P4-Lite: Ehrlicher Hinweis auf fehlende Buckets im Paper-Mode.
           Operator hat explizit nach On-Exchange / Withdrawn / On-Account
           gefragt — diese existieren erst im Live-Mode-Datenmodell. */}
+      {/* DALI v2 S4 M2b: Buckets-Panel mit explizitem DevelopmentStatus.
+          Operator sieht sofort, dass das auf Live-Mode wartet (planning 10%). */}
       <PreparedPanel
-        title="Buckets: On-Exchange · On-Account · Withdrawn"
-        reason="KAI führt aktuell nur den Paper-Account-Cash separat. Tatsächliche On-Exchange-Balances (echte Positionen auf Binance/Bybit), Withdraw-Historie und freier Account-Cash sind im Live-Mode-Datenmodell vorgesehen — aber im Paper-Mode nicht relevant."
+        title="Kapital-Aufteilung: Börse · Konto · Ausgezahlt"
+        reason="Aktuell sieht KAI nur den Paper-Konto-Cash. Tatsächliche Börsen-Balances (echte Positionen auf Binance/Bybit), ausgezahlte Beträge und freier Konto-Cash sind im Live-Mode-Datenmodell vorgesehen — im Paper-Mode nicht anwendbar."
         detail={
           <>
-            Phase Live (Sprint 39+): Exchange-Balance-Reader joint Positions + freie Margins. Withdraw-Audit aus{" "}
-            <span className="font-mono">exchange_relay.py</span> ergibt Withdrawals pro Asset. Vor Live-Mode keine sinnvolle Visualisierung.
+            Live-Mode liefert: Börsen-Balance-Reader (Positionen + freie Margin),
+            Auszahlungs-Audit aus <span className="font-mono">exchange_relay.py</span> für Withdrawals pro Asset,
+            Konto-Cash als freie Margin. Vor Live-Mode keine sinnvolle Visualisierung.
           </>
         }
+        phase="planning"
+        progress={10}
+        timeline="Live-Mode — Sprint 39+"
       />
 
       {/* DALI-P2: Per-Asset-Unrealized-PnL als Heatmap-Pills.
@@ -250,16 +256,21 @@ export function PortfolioPage() {
         </Card>
       )}
 
-      {/* PreparedPanel für Realized-PnL-pro-Asset (Backend-Lücke). */}
+      {/* DALI v2 S4 M2b: Realized-PnL-Panel mit DevelopmentStatus.
+          Backend-Aggregation steht aus (planning 25% - Daten sind da, Endpoint nicht). */}
       <PreparedPanel
-        title="Realized PnL nach Asset"
-        reason="Per-Asset-Aufschlüsselung der realisierten Gewinne braucht Aggregation aus paper_execution_audit.jsonl — Endpoint folgt in Phase 2."
+        title="Realisierte Gewinne nach Asset"
+        reason="Welche Coins haben gewonnen oder verloren — und welche Trades waren erfolgreich? Per-Asset-Aufschlüsselung braucht Aggregation aus dem Paper-Execution-Audit."
         detail={
           <>
-            Quelle: <span className="font-mono">artifacts/paper_execution_audit.jsonl</span>. Geplant:{" "}
-            <span className="font-mono">GET /operator/portfolio/realized-by-asset</span>.
+            Rohdaten liegen bereit (<span className="font-mono">artifacts/paper_execution_audit.jsonl</span>).
+            Geplanter Endpoint: <span className="font-mono">GET /operator/portfolio/realized-by-asset</span>.
+            Zielanzeige: Top-Performer, Worst-Performer, abgeschlossene Trades pro Asset.
           </>
         }
+        phase="planning"
+        progress={25}
+        timeline="Phase 2 — nach Backtest-Endpoint"
       />
 
       {/* DALI-P-Klartext: Exposure-Card komplett umstrukturiert.
@@ -469,20 +480,23 @@ export function PortfolioPage() {
         <div className="relative">
           <div className="overflow-x-auto">
             <table className="w-full text-xs">
+            {/* DALI v2 S4 M2c: Klartext-Spalten + title-Tooltipps fuer Bedeutung
+                (Master-Spec G1 + G2). Trading-Standard-Kuerzel (Long/Short, SL/TP)
+                bleiben - sie sind Operator-Vokabular. Raw-Begriffe in title. */}
             <thead>
               <tr className="text-fg-subtle text-2xs uppercase tracking-wider">
-                <th className="text-left font-semibold px-3 py-2">Symbol</th>
-                <th className="text-left font-semibold px-3 py-2">Side</th>
-                <th className="text-right font-semibold px-3 py-2">Lev</th>
-                <th className="text-right font-semibold px-3 py-2">Qty</th>
-                <th className="text-right font-semibold px-3 py-2">Entry</th>
-                <th className="text-right font-semibold px-3 py-2">Markt</th>
-                <th className="text-right font-semibold px-3 py-2">Wert</th>
-                <th className="text-right font-semibold px-3 py-2">Unrealized</th>
-                <th className="text-right font-semibold px-3 py-2">Realized</th>
-                <th className="text-right font-semibold px-3 py-2">SL</th>
-                <th className="text-right font-semibold px-3 py-2">TP</th>
-                <th className="text-left font-semibold px-3 py-2">Source</th>
+                <th className="text-left font-semibold px-3 py-2" title="Trading-Symbol">Symbol</th>
+                <th className="text-left font-semibold px-3 py-2" title="Richtung: Long = auf steigende Kurse, Short = auf fallende">Richtung</th>
+                <th className="text-right font-semibold px-3 py-2" title="Hebel (Leverage) — Multiplikator des Einsatzes">Hebel</th>
+                <th className="text-right font-semibold px-3 py-2" title="Stueckzahl der Position">Menge</th>
+                <th className="text-right font-semibold px-3 py-2" title="Durchschnittlicher Einstiegspreis">Einstieg</th>
+                <th className="text-right font-semibold px-3 py-2" title="Aktueller Marktpreis">Markt</th>
+                <th className="text-right font-semibold px-3 py-2" title="Aktueller Marktwert der Position">Wert</th>
+                <th className="text-right font-semibold px-3 py-2" title="Nicht realisierter Gewinn/Verlust — noch offen">Offen G/V</th>
+                <th className="text-right font-semibold px-3 py-2" title="Realisierter Gewinn/Verlust — bereits gebucht">Geb. G/V</th>
+                <th className="text-right font-semibold px-3 py-2" title="Stop-Loss-Limit: Position schliesst bei diesem Preis automatisch (Verlustbegrenzung)">Stop</th>
+                <th className="text-right font-semibold px-3 py-2" title="Take-Profit-Limit: Position schliesst bei diesem Preis automatisch (Gewinnmitnahme)">Ziel</th>
+                <th className="text-left font-semibold px-3 py-2" title="Wo das Signal urspruenglich herkam">Quelle</th>
                 <th className="text-right font-semibold px-3 py-2">Aktion</th>
               </tr>
             </thead>
@@ -526,7 +540,14 @@ export function PortfolioPage() {
                       (isStale || mktUnavailable) && "text-warn",
                     )}>
                       {fmt$(p.market_price)}
-                      {isStale && <span className="ml-1 text-2xs">·stale</span>}
+                      {isStale && (
+                        <span
+                          className="ml-1 text-2xs"
+                          title="Marktpreis ist veraltet (stale) — Bewertung evtl. ungenau"
+                        >
+                          ·alt
+                        </span>
+                      )}
                     </td>
                     <td className="px-3 py-2 text-right font-mono">{fmt$(p.market_value_usd)}</td>
                     <td className={cn(
@@ -570,7 +591,7 @@ export function PortfolioPage() {
                           );
                         }}
                       >
-                        <X size={10} /> Close
+                        <X size={10} /> Schließen
                       </button>
                     </td>
                   </tr>
@@ -586,10 +607,23 @@ export function PortfolioPage() {
         </div>
       </Card>
 
+      {/* DALI v2 S4 M2b: Equity-Kurve mit DevelopmentStatus.
+          Operator-Brief: "wie sich das Kapital entwickelt, Drawdowns,
+          historische Performance, kritische Entwicklungen". Wartet auf
+          Aggregations-Endpoint (planning 20%). */}
       <PreparedPanel
-        title="Equity-Kurve & historische PnL"
-        reason="Equity-Verlauf, Drawdown-Kurve und Realized-PnL-Historie."
-        detail="Quelle: artifacts/paper_execution_audit.jsonl — Aggregations-Endpoint folgt in Phase 2."
+        title="Kapital-Verlauf & historische Gewinne"
+        reason="Wie hat sich das Kapital über Zeit entwickelt? Wo waren die größten Rückschläge (Drawdowns)? Welche Phasen waren kritisch? Visualisierung als Linienchart mit Drawdown-Spiegel."
+        detail={
+          <>
+            Rohdaten in <span className="font-mono">artifacts/paper_execution_audit.jsonl</span>.
+            Geplant: Equity-Linie + Drawdown-Banner + Max-Drawdown-Marker.
+            Zielanzeige: kritische Phasen werden mit warn/neg-Tönen markiert.
+          </>
+        }
+        phase="planning"
+        progress={20}
+        timeline="Phase 2 — gemeinsam mit Realized-PnL-Endpoint"
       />
     </div>
   );
