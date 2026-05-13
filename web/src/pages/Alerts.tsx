@@ -49,6 +49,15 @@ const SENTIMENT_TONE: Record<string, "pos" | "neg" | "muted"> = {
   mixed: "muted",
 };
 
+// DALI v2 S6 M3b: Deutsche Klartext-Labels fuer Sentiment (Master-Spec G1).
+// raw-key bleibt im Badge.title als Forensik-Anker.
+const SENTIMENT_LABEL_DE: Record<string, string> = {
+  bullish: "steigend",
+  bearish: "fallend",
+  neutral: "neutral",
+  mixed: "gemischt",
+};
+
 export function AlertsPage() {
   const { t } = useT();
   const audit = useApi(fetchAlertAudit, 30_000);
@@ -260,14 +269,46 @@ export function AlertsPage() {
         <Card padded={false}>
           <div className="overflow-x-auto">
             <table className="w-full text-xs">
+              {/* DALI v2 S6 M3b: title-Tooltipps fuer Spalten-Bedeutung
+                  (Master-Spec G1 - Operator versteht ohne Lexikon). */}
               <thead>
                 <tr className="text-fg-subtle text-2xs uppercase tracking-wider">
-                  <th className="text-left font-semibold px-4 py-2">{t("common.time")}</th>
-                  <th className="text-left font-semibold px-4 py-2">Was</th>
-                  <th className="text-left font-semibold px-4 py-2">{t("common.channel")}</th>
-                  <th className="text-left font-semibold px-4 py-2">Versand</th>
-                  <th className="text-left font-semibold px-4 py-2">Trade-Vorhersage</th>
-                  <th className="text-left font-semibold px-4 py-2">Digest</th>
+                  <th
+                    className="text-left font-semibold px-4 py-2"
+                    title="Wann der Alert versendet wurde (relativ)"
+                  >
+                    {t("common.time")}
+                  </th>
+                  <th
+                    className="text-left font-semibold px-4 py-2"
+                    title="Stimmung + Assets + Prioritaet + Quelle"
+                  >
+                    Was
+                  </th>
+                  <th
+                    className="text-left font-semibold px-4 py-2"
+                    title="Versand-Kanal: Telegram, Email, …"
+                  >
+                    {t("common.channel")}
+                  </th>
+                  <th
+                    className="text-left font-semibold px-4 py-2"
+                    title="Versendet / Dry-Run / Unbekannt — Beleg pro Alert"
+                  >
+                    Versand
+                  </th>
+                  <th
+                    className="text-left font-semibold px-4 py-2"
+                    title="War der Alert nach Forward-Window ein Treffer oder Fehler?"
+                  >
+                    Trade-Vorhersage
+                  </th>
+                  <th
+                    className="text-left font-semibold px-4 py-2"
+                    title="Markierung wenn der Alert Teil einer Digest-Sendung war"
+                  >
+                    Digest
+                  </th>
                 </tr>
               </thead>
               <tbody>
@@ -294,7 +335,12 @@ export function AlertsPage() {
                       <td className="px-4 py-2 max-w-[280px]" title={`Document-ID: ${a.document_id}`}>
                         <div className="flex items-center gap-1.5 min-w-0 flex-wrap">
                           {a.sentiment_label && (
-                            <Badge tone={sentimentTone}>{a.sentiment_label}</Badge>
+                            <Badge
+                              tone={sentimentTone}
+                              title={`Sentiment: ${a.sentiment_label}`}
+                            >
+                              {SENTIMENT_LABEL_DE[a.sentiment_label.toLowerCase()] ?? a.sentiment_label}
+                            </Badge>
                           )}
                           <span className="font-mono text-xs text-fg truncate">
                             {a.affected_assets && a.affected_assets.length > 0
