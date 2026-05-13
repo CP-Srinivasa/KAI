@@ -136,7 +136,9 @@ def write_event(path: Path, event: AuditEvent) -> None:
     except OSError as exc:
         logger.error(
             "live_audit_write_failed event_type=%s audit_id=%s exc=%s",
-            event.event_type, event.audit_id, exc,
+            event.event_type,
+            event.audit_id,
+            exc,
         )
 
 
@@ -171,7 +173,9 @@ def read_events(path: Path) -> list[AuditEvent]:
         except TypeError as exc:
             logger.warning(
                 "live_audit_schema_mismatch file=%s line=%d exc=%s",
-                path, line_no, exc,
+                path,
+                line_no,
+                exc,
             )
             continue
     return events

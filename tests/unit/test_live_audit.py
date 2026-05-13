@@ -138,6 +138,7 @@ class TestErrorHandling:
 
     def test_read_skips_schema_mismatch(self, tmp_path: Path) -> None:
         import json
+
         path = tmp_path / "audit.jsonl"
         # Schema-Mismatch: unknown field
         with path.open("w", encoding="utf-8") as fh:

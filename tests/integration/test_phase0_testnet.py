@@ -90,8 +90,10 @@ async def test_binance_testnet_oco_happy_path() -> None:
         pytest.skip("BINANCE_TESTNET_API_KEY/SECRET nicht in env")
 
     adapter = BinanceAdapter(
-        api_key=key, api_secret=secret,
-        dry_run=False, testnet=True,
+        api_key=key,
+        api_secret=secret,
+        dry_run=False,
+        testnet=True,
     )
 
     # BTC-Preis aus Testnet-Markt holen wäre korrekter — für Skeleton
@@ -117,10 +119,12 @@ async def test_binance_testnet_oco_happy_path() -> None:
     # Cleanup: cancel beide Orders
     cancel_main = await adapter.cancel_order(res.order_id, "BTCUSDT")
     cancel_sl = await adapter.cancel_order(res.sl_order_id, "BTCUSDT")
-    assert cancel_main.success or "NEW" in str(cancel_main.error), \
+    assert cancel_main.success or "NEW" in str(cancel_main.error), (
         f"main-cancel failed: {cancel_main.error}"
-    assert cancel_sl.success or "NEW" in str(cancel_sl.error), \
+    )
+    assert cancel_sl.success or "NEW" in str(cancel_sl.error), (
         f"sl-cancel failed: {cancel_sl.error}"
+    )
 
 
 @pytest.mark.asyncio
@@ -131,8 +135,11 @@ async def test_bybit_testnet_sl_happy_path() -> None:
         pytest.skip("BYBIT_TESTNET_API_KEY/SECRET nicht in env")
 
     adapter = BybitAdapter(
-        api_key=key, api_secret=secret,
-        dry_run=False, testnet=True, category="spot",
+        api_key=key,
+        api_secret=secret,
+        dry_run=False,
+        testnet=True,
+        category="spot",
     )
 
     client_id = f"int-{int(time.time() * 1000)}"
@@ -164,8 +171,10 @@ async def test_binance_testnet_balance_query() -> None:
         pytest.skip("BINANCE_TESTNET keys missing")
 
     adapter = BinanceAdapter(
-        api_key=key, api_secret=secret,
-        dry_run=False, testnet=True,
+        api_key=key,
+        api_secret=secret,
+        dry_run=False,
+        testnet=True,
     )
     bal = await adapter.get_balance()
     assert bal.success, f"balance-query failed: {bal.error}"
@@ -181,8 +190,10 @@ async def test_bybit_testnet_balance_query() -> None:
         pytest.skip("BYBIT_TESTNET keys missing")
 
     adapter = BybitAdapter(
-        api_key=key, api_secret=secret,
-        dry_run=False, testnet=True,
+        api_key=key,
+        api_secret=secret,
+        dry_run=False,
+        testnet=True,
     )
     bal = await adapter.get_balance()
     assert bal.success, f"balance-query failed: {bal.error}"
