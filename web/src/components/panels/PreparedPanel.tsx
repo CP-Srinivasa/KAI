@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { Wrench } from "lucide-react";
 import { Card, CardHeader, Badge } from "@/components/ui/Primitives";
+import { DevelopmentStatus, type DevelopmentPhase } from "@/components/system/DevelopmentStatus";
 import { cn } from "@/lib/utils";
 
 // Ehrlicher Platzhalter für Bereiche, die UI-seitig vorbereitet, aber
@@ -8,33 +9,48 @@ import { cn } from "@/lib/utils";
 // keine Demo-Zahlen — nur klare Kennzeichnung, was später hier erscheint.
 //
 // 2026-05-10 DALI-A4: ai-Hairline am Card-Top + ai-tinted Badge/Icon.
-// Vorher dominierte ein muted-grauer Look auf 6 Sub-Pages, der "kaputt"
-// statt "vorbereitet" wirkte. Hairline = visuelles Pendant zur synthwave-edge
-// im KAI-Live-Widget, signalisiert "KAI denkt schon an diesen Bereich".
+// 2026-05-10 DALI-A12: synthwave-pulse-edge ersetzt statische ai-Hairline.
+// 2026-05-13 DALI v2 S3 M1d: Optionaler DevelopmentStatus-Top-Strip mit
+// phase/progress/timeline (Master-Spec G3 — Operator sieht den Reifegrad).
 export function PreparedPanel({
   title,
   reason,
   detail,
   action,
   compact = false,
+  phase,
+  progress,
+  timeline,
 }: {
   title: string;
   reason?: string;
   detail?: ReactNode;
   action?: ReactNode;
   compact?: boolean;
+  /** DALI v2 S3 M1d: Optional Phase-Anzeige als Top-Strip. */
+  phase?: DevelopmentPhase;
+  progress?: number;
+  timeline?: string;
 }) {
   return (
     <Card
       padded={!compact}
       className={cn(
-        // 2026-05-10 DALI-A12: statische ai-Hairline durch animierte
-        // synthwave-pulse-edge ersetzt — atmet wie ein Schweif von links
-        // nach rechts, gleiche Animation-DNA wie der PageHeader-Divider.
+        // synthwave-pulse-edge atmet wie ein Schweif von links nach rechts,
+        // gleiche Animation-DNA wie der PageHeader-Divider.
         "synthwave-pulse-edge overflow-hidden",
         compact && "p-4",
       )}
     >
+      {phase && (
+        <DevelopmentStatus
+          phase={phase}
+          progress={progress}
+          timeline={timeline}
+          variant="top-strip"
+          className={cn("-mx-5 -mt-5 mb-4", compact && "-mx-4 -mt-4 mb-3")}
+        />
+      )}
       <CardHeader
         title={title}
         right={

@@ -34,36 +34,66 @@ import {
 } from "@/lib/tierLift";
 import { useRouter, type Route } from "@/state/Router";
 
-const PREPARED_PANELS: Array<{ title: string; reason: string; detail: string }> = [
+// DALI v2 S3 M1d: PREPARED_PANELS mit explizitem Entwicklungsstatus (Master-Spec G3).
+// Operator sieht sofort welches Modul in welcher Phase steckt - statt nur
+// "Integration ausstehend" als Pauschal-Badge.
+type DashboardPreparedPanel = {
+  title: string;
+  reason: string;
+  detail: string;
+  phase: "planning" | "skeleton" | "beta" | "stable";
+  progress?: number;
+  timeline?: string;
+};
+
+const PREPARED_PANELS: DashboardPreparedPanel[] = [
   {
     title: "Portfolio Snapshot",
-    reason: "Paper-Portfolio-Snapshot mit Mark-to-Market und Exposure-Summary.",
-    detail: "Backend: GET /operator/portfolio-snapshot — wird in Phase 2 angebunden.",
+    reason: "Paper-Portfolio mit Mark-to-Market und Exposure-Summary auf dem Dashboard.",
+    detail: "Backend bereit: GET /operator/portfolio-snapshot. Eigene Portfolio-Page liest das schon — Dashboard-Tile fehlt.",
+    phase: "skeleton",
+    progress: 60,
+    timeline: "geplant für Sprint nach Backtesting-Endpoint",
   },
   {
     title: "Risk Meter",
-    reason: "Risiko-Score aus Exposure, Correlation und Paper-PnL-Drawdown.",
-    detail: "Ableitung aus /operator/exposure-summary — Phase 2.",
+    reason: "Risiko-Score aus Exposure, Korrelation und Paper-PnL-Drawdown als Hero-KPI.",
+    detail: "Backend bereit: GET /operator/exposure-summary. Risk-Page nutzt es — Dashboard-Tile fehlt.",
+    phase: "skeleton",
+    progress: 55,
+    timeline: "Phase 2 — gekoppelt an Risk-Modul (S5)",
   },
   {
     title: "Equity / PnL Kurve",
-    reason: "Equity-Kurve aus Paper-Execution-Audit (Ledger).",
-    detail: "Quelle: artifacts/paper_execution_audit.jsonl — Aggregation in Phase 2.",
+    reason: "Kapital-Entwicklung über Zeit aus Paper-Execution-Audit (Ledger).",
+    detail: "Rohdaten in artifacts/paper_execution_audit.jsonl. Aggregations-Endpoint geplant.",
+    phase: "planning",
+    progress: 20,
+    timeline: "Phase 2 — nach Sub-Account-KYC",
   },
   {
     title: "Sentiment Stream",
-    reason: "Rolling Sentiment aus analysierten Dokumenten.",
-    detail: "Erfordert neuen Aggregations-Endpoint — Phase 2.",
+    reason: "Rolling Sentiment aus analysierten News- und Social-Dokumenten.",
+    detail: "Backend-Ingestion läuft. Aggregations-Endpoint für Frontend-Stream offen.",
+    phase: "planning",
+    progress: 25,
+    timeline: "Phase 2 — gekoppelt an News-Modul (S6)",
   },
   {
     title: "Allocation",
-    reason: "Asset-Allokation aus Portfolio-Snapshot.",
-    detail: "Phase 2.",
+    reason: "Asset-Allokation aus Portfolio-Snapshot als Donut/Treemap.",
+    detail: "Daten in Portfolio-Snapshot vorhanden. UI-Visualisierung fehlt.",
+    phase: "skeleton",
+    progress: 45,
+    timeline: "Phase 2 — gekoppelt an Portfolio-Modul (S4)",
   },
   {
     title: "AI Insights",
     reason: "LLM-generierte Markt-Zusammenfassung mit Provider-Metadaten.",
-    detail: "Erfordert neuen Insight-Endpoint — Phase 3.",
+    detail: "Eigene AI-Insights-Page existiert. Dashboard-Tile als Kurzform fehlt.",
+    phase: "beta",
+    progress: 70,
+    timeline: "Phase 3 — nach Insight-Endpoint-Stabilisierung",
   },
 ];
 
@@ -453,7 +483,15 @@ function PreparedSection() {
       {expanded && (
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
           {PREPARED_PANELS.map((p) => (
-            <PreparedPanel key={p.title} title={p.title} reason={p.reason} detail={p.detail} />
+            <PreparedPanel
+              key={p.title}
+              title={p.title}
+              reason={p.reason}
+              detail={p.detail}
+              phase={p.phase}
+              progress={p.progress}
+              timeline={p.timeline}
+            />
           ))}
         </div>
       )}
