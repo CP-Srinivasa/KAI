@@ -249,16 +249,41 @@ export function RiskPage() {
         </Card>
       )}
 
+      {/* DALI v2 S5 M4b: Risk-Score & Volatilitaet mit Phase-Anzeige.
+          Operator-Brief: "aktuelles Marktrisiko, Stabilitaet, Schwankungen,
+          Risikoentwicklung + Handlungsempfehlungen + Risiko-Level + Statusfarben". */}
       <PreparedPanel
-        title="Risk-Score & Volatilität (7d / 30d)"
-        reason="Aggregierter Portfolio-Risk-Score, Vola-Windows und Max-Drawdown werden noch nicht als Metrik exponiert."
-        detail="Geplant: GET /operator/risk-summary — leitet aus paper_execution_audit.jsonl + Exposure ab. Phase 2."
+        title="Marktrisiko & Schwankungen (7 / 30 Tage)"
+        reason="Wie risikoreich ist der Markt gerade? Wie stark schwanken die Preise? Wo zeigt sich Stress, wo ist es ruhig? Aggregierter Portfolio-Risk-Score plus Volatilitats-Fenster und Max-Drawdown als Marktstabilitäts-Signal."
+        detail={
+          <>
+            Geplant: <span className="font-mono">GET /operator/risk-summary</span> — leitet aus
+            <span className="font-mono"> paper_execution_audit.jsonl</span> + Exposure-Summary ab.
+            Zielanzeige: Risk-Level-Badge (niedrig / mittel / hoch) + Handlungsempfehlung
+            (z.B. "Position-Size reduzieren bei Vol &gt; 30d-Median").
+          </>
+        }
+        phase="planning"
+        progress={30}
+        timeline="Phase 2 — nach Backtest-Endpoint"
       />
 
+      {/* DALI v2 S5 M4c: "Missed-Signal-Analyse" -> "Verpasste Trading-Chancen"
+          (Operator-Brief: Umbenennen + verstaendliche Erklaerung pro Block). */}
       <PreparedPanel
-        title="Missed-Signal-Analyse"
-        reason="Welche Signale wurden vom Gate/Risk blockiert, und was wäre der hypothetische PnL? Erfordert Outcome-Join über alert_outcomes.jsonl."
-        detail="Phase 2 · nach Signal-Detail-Endpoint."
+        title="Verpasste Trading-Chancen"
+        reason="Welche Signale hat der Risk- oder Priority-Gate blockiert? Welche dieser Trades wären potenziell profitabel gewesen? Und welche Schutzmechanismen haben sinnvoll gegriffen? Diese Analyse zeigt sowohl Lernen (echte Chancen verpasst) als auch Bestätigung (Verluste verhindert)."
+        detail={
+          <>
+            Erfordert Outcome-Join: <span className="font-mono">blocked_alerts.jsonl</span> ×{" "}
+            <span className="font-mono">alert_outcomes.jsonl</span> mit hypothetischem
+            Forward-PnL. Zielanzeige: Top-10 verpasste Chancen mit Grund (Risk-Cap / Priority-Gate /
+            Konzentration / Cooldown) + tatsaechlicher 24h-Performance.
+          </>
+        }
+        phase="planning"
+        progress={15}
+        timeline="Phase 2 — nach Signal-Detail-Endpoint"
       />
     </div>
   );
