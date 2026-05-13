@@ -25,6 +25,7 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
+from app.learning.active_threshold import DEFAULT_MIN_BAYES_CONFIDENCE_PATH
 from app.learning.approval import (
     STATUS_ACTIVE,
     STATUS_PENDING,
@@ -37,6 +38,16 @@ from app.learning.parameter_version import (
     DEFAULT_PARAMETER_JOURNAL_PATH,
     ParameterVersionStore,
 )
+from app.learning.threshold_observations import (
+    DEFAULT_SCORE_FIELD,
+    observations_from_audit,
+)
+from app.learning.threshold_optimizer import (
+    DEFAULT_GRID,
+    ThresholdConfig,
+    optimize_threshold,
+)
+from app.signals.bayes_journal import DEFAULT_BAYES_AUDIT_PATH
 
 console = Console()
 
@@ -322,6 +333,172 @@ def history(
             (r.notes or "")[:80],
         )
     console.print(table)
+
+
+# ─── optimize-threshold ───────────────────────────────────────────────────────
+
+
+@learning_app.command("optimize-threshold")
+def optimize_threshold_cmd(
+    parameter_path: Annotated[
+        str,
+        typer.Option(
+            "--path",
+            "-p",
+            help="Parameter path to optimize",
+        ),
+    ] = DEFAULT_MIN_BAYES_CONFIDENCE_PATH,
+    baseline_threshold: Annotated[
+        float,
+        typer.Option(
+            "--baseline",
+            "-b",
+            help="Current production threshold (used as a reference)",
+        ),
+    ] = 0.30,
+    loop_audit: Annotated[
+        Path,
+        typer.Option(
+            "--loop-audit",
+            help="Path to trading_loop_audit.jsonl",
+        ),
+    ] = Path("artifacts/trading_loop_audit.jsonl"),
+    exec_audit: Annotated[
+        Path,
+        typer.Option(
+            "--exec-audit",
+            help="Path to paper_execution_audit.jsonl",
+        ),
+    ] = Path("artifacts/paper_execution_audit.jsonl"),
+    bayes_audit: Annotated[
+        Path,
+        typer.Option(
+            "--bayes-audit",
+            help="Path to bayes_confidence_audit.jsonl",
+        ),
+    ] = DEFAULT_BAYES_AUDIT_PATH,
+    score_field: Annotated[
+        str,
+        typer.Option(
+            "--score-field",
+            help=(
+                "Which Bayes report field to use as the score "
+                "(confidence_score | posterior_probability)"
+            ),
+        ),
+    ] = DEFAULT_SCORE_FIELD,
+    propose: Annotated[
+        bool,
+        typer.Option(
+            "--propose",
+            help=(
+                "Write an `approve`-able proposal into the journal if the "
+                "optimizer's decision is `approve`. Defaults to dry-run."
+            ),
+        ),
+    ] = False,
+    operator: Annotated[
+        str | None,
+        typer.Option("--operator", "-o", help="Operator id (required with --propose)"),
+    ] = None,
+    journal: JournalPath = DEFAULT_PARAMETER_JOURNAL_PATH,
+) -> None:
+    """Run the ThresholdOptimizer on realized paper-trade audits.
+
+    Default is a dry-run that prints the grid + decision. Pass ``--propose
+    --operator <name>`` to additionally append the best threshold to the
+    hash-chained parameter journal (still requires a follow-up
+    ``learning approve`` to activate).
+    """
+    observations = observations_from_audit(
+        loop_audit_path=loop_audit,
+        exec_audit_path=exec_audit,
+        bayes_audit_path=bayes_audit,
+        score_field=score_field,
+    )
+    cfg = ThresholdConfig(threshold_grid=DEFAULT_GRID)
+    report = optimize_threshold(
+        observations=observations,
+        baseline_threshold=baseline_threshold,
+        config=cfg,
+    )
+
+    console.print(
+        f"[bold]ThresholdOptimizer[/bold]  path=[cyan]{parameter_path}[/cyan]  "
+        f"score_field=[cyan]{score_field}[/cyan]  n_obs={report.n_observations}"
+    )
+    console.print(
+        f"baseline={report.baseline_threshold:.4f}  "
+        f"n_passing={report.baseline_n_passing}  "
+        f"pnl=${report.baseline_pnl_usd:+,.2f}"
+    )
+
+    if report.grid:
+        table = Table(title="Grid sweep", show_lines=False)
+        table.add_column("threshold", justify="right")
+        table.add_column("n_passing", justify="right")
+        table.add_column("pnl_total_usd", justify="right")
+        table.add_column("pnl_mean_usd", justify="right")
+        for gp in report.grid:
+            table.add_row(
+                f"{gp.threshold:.4f}",
+                f"{gp.n_passing}",
+                f"${gp.pnl_total_usd:+,.2f}",
+                f"${gp.pnl_mean_per_trade_usd:+,.2f}",
+            )
+        console.print(table)
+
+    style = {
+        "approve": "green bold",
+        "reject": "red",
+        "neutral": "yellow",
+        "insufficient_data": "dim",
+    }.get(report.decision, "")
+    console.print(
+        f"decision: [{style}]{report.decision}[/{style}]"
+        if style
+        else f"decision: {report.decision}"
+    )
+    for reason in report.decision_reasons:
+        console.print(f"  • {reason}")
+
+    if not propose:
+        return
+
+    if report.decision != "approve":
+        console.print(
+            f"[yellow]--propose set but decision is `{report.decision}` "
+            f"— nothing to write.[/yellow]"
+        )
+        raise typer.Exit(0)
+
+    if not operator:
+        console.print("[red]--operator is required with --propose[/red]")
+        raise typer.Exit(2)
+
+    assert report.best_threshold is not None  # narrowed by `approve` decision
+    svc = _service(journal)
+    proposal = svc.store.propose_version(
+        parameter_path=parameter_path,
+        parameter_set={"value": report.best_threshold, "default": baseline_threshold},
+        evidence={
+            "n_observations": report.n_observations,
+            "baseline_threshold": report.baseline_threshold,
+            "baseline_pnl_usd": report.baseline_pnl_usd,
+            "best_threshold": report.best_threshold,
+            "best_pnl_usd": report.best_pnl_usd,
+            "improvement_usd": report.pnl_improvement_usd,
+            "score_field": score_field,
+        },
+        created_by=operator,
+        notes="optimizer auto-proposal (run `learning approve` to activate)",
+    )
+    console.print(
+        f"[green]Proposed[/green] {proposal.version_id} on {parameter_path} "
+        f"(value={report.best_threshold:.4f}). "
+        f"Activate via `trading-bot learning approve {parameter_path} "
+        f"{proposal.version_id} --operator {operator}`."
+    )
 
 
 __all__ = ["learning_app"]
