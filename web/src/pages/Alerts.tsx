@@ -105,6 +105,9 @@ export function AlertsPage() {
         title={t("pages.alerts.title")}
         tone="accent"
         icon={<Bell size={18} />}
+        // DALI-v2 S1: divider=false - Synthwave-Linie wandert auf die
+        // Versand-Diagnose-Card direkt darunter (Master-Spec G4).
+        divider={false}
         sub={
           audit.state === "ready"
             ? `${total} Einträge · ${totalResolved} aufgelöst · zeige jüngste ${rows.length}`
@@ -122,11 +125,9 @@ export function AlertsPage() {
         }
       />
 
-      {/* DALI-A3: Versand-Diagnose-Hinweis. Operator-Frage "ging es sauber raus,
-          und wenn nein warum" — Frontend kann das nur teilweise beantworten,
-          weil delivery_status/error_reason im AlertAuditRecord fehlen. Lieber
-          ehrlich sagen was geht und was nicht, als Schweigen oder Vortäuschen. */}
-      <Card padded className="border-l-4 border-l-info">
+      {/* DALI-A3 + DALI-v2 S1: Versand-Diagnose-Hinweis mit Synthwave-Top-Edge
+          (Master-Spec G4 - Lichtkante integriert statt freischwebend). */}
+      <Card padded className="synthwave-pulse-edge border-l-4 border-l-info">
         <div className="flex items-start gap-3 text-xs">
           <Info size={14} className="mt-0.5 text-info shrink-0" aria-hidden />
           <div className="min-w-0 space-y-1">

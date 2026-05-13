@@ -94,6 +94,9 @@ export function PortfolioPage() {
         title={t("pages.portfolio.title")}
         tone="accent"
         icon={<Briefcase size={18} />}
+        // DALI-v2 S1: divider=false - Synthwave-Glow lebt in den Cards,
+        // nicht freischwebend ueber dem Header (Master-Spec G4).
+        divider={false}
         sub={
           snap.state === "ready"
             ? `Paper Portfolio · ${snap.data.position_count} Positionen · Quelle: ${snap.data.source}`

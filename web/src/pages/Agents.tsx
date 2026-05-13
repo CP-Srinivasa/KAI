@@ -58,12 +58,15 @@ export function AgentsPage() {
     <div className="p-4 sm:p-5 xl:p-6 space-y-5 max-w-[1680px] mx-auto">
       <PageHeader
         title="Agenten"
-        sub="SENTR · Watchdog · Architect · DALI — alle ausschließlich von Claude Code ausgeführt"
+        sub="SENTR · Watchdog · Architect · DALI · Satoshi · Neo — alle ausschließlich von Claude Code ausgeführt"
         tone="ai"
         icon={<Bot size={18} />}
+        // DALI-v2 S1: divider=false - Lichtkante landet auf der ersten
+        // Agenten-Erklaerungs-Card (Master-Spec G4).
+        divider={false}
       />
 
-      <Card padded>
+      <Card padded className="synthwave-pulse-edge">
         <div className="flex items-start gap-3 text-xs text-fg-muted leading-relaxed">
           <Bot size={14} className="mt-0.5 text-fg-subtle shrink-0" aria-hidden />
           <div className="min-w-0 space-y-1.5">

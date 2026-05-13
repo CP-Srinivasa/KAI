@@ -13,6 +13,9 @@ export function MarketsPage() {
         sub="Multi-Asset-Marktübersicht — vorbereitet für Integration"
         tone="info"
         icon={<LineChart size={18} />}
+        // DALI-v2 S1: divider=false - PreparedPanel haelt synthwave-pulse-edge
+        // als Default-Pattern (Master-Spec G4 - Lichtkante in der Card).
+        divider={false}
       />
 
       <TradingViewChart title="TradingView-Chart" />

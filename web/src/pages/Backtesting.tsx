@@ -12,6 +12,9 @@ export function BacktestPage() {
         sub="Historical Replay & Strategy-Validation — vorbereitet"
         tone="ai"
         icon={<History size={18} />}
+        // DALI-v2 S1: divider=false - Historical-Replay-Card traegt den
+        // Glow (PreparedPanel default, Master-Spec G4).
+        divider={false}
       />
 
       <PreparedPanel
