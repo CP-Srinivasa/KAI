@@ -14,6 +14,7 @@ from app.api.routers import dashboard as dashboard_mod
 from app.api.routers.dashboard import router
 from app.learning.calibration import compute_calibration
 from app.learning.calibration_loader import pairs_from_bayes_audit
+from app.learning.regime_lookup import RegimeLookup
 from app.signals.bayes_journal import append_bayes_report
 from app.signals.bayesian_confidence import build_default_engine, build_news_evidence
 
@@ -72,6 +73,62 @@ class TestLoader:
         outcomes = {ids[0]: 1, ids[1]: 5, ids[2]: 0}  # 5 illegal
         pairs = pairs_from_bayes_audit(bayes_audit_path=audit, outcomes=outcomes)
         assert {p.decision_id for p in pairs} == {ids[0], ids[2]}
+
+    def test_regime_lookup_tags_pairs_with_active_regime(self, tmp_path: Path) -> None:
+        """Step 5: regime_lookup taggt OutcomePair.regime aus Snapshot ≤ entry.timestamp_utc."""
+        audit = tmp_path / "audit.jsonl"
+        ids = _seed_audit(audit, n=3)
+
+        # Regime-State so seeden, dass ALLE Bayes-Einträge nach 06:00 UTC liegen
+        # (append_bayes_report nutzt datetime.now(UTC) — wir wählen ein
+        # Snapshot weit in der Vergangenheit, das wird Bin für alle Einträge).
+        regime_state_dir = tmp_path / "regime_state"
+        regime_state_dir.mkdir()
+        (regime_state_dir / "btc_regime.jsonl").write_text(
+            '{"asset":"BTC","timestamp":"2000-01-01T00:00:00Z",'
+            '"regime":"breakout_up","vol_class":"vol_low","confidence":1.0}\n',
+            encoding="utf-8",
+        )
+        lookup = RegimeLookup.from_artifacts(regime_state_dir)
+
+        outcomes = dict.fromkeys(ids, 1)
+        pairs = pairs_from_bayes_audit(
+            bayes_audit_path=audit, outcomes=outcomes, regime_lookup=lookup
+        )
+
+        assert len(pairs) == 3
+        assert all(p.regime == "breakout_up|vol_low" for p in pairs)
+
+    def test_regime_lookup_none_keeps_regime_unset(self, tmp_path: Path) -> None:
+        """Backwards-compat: ohne regime_lookup bleibt OutcomePair.regime None."""
+        audit = tmp_path / "audit.jsonl"
+        ids = _seed_audit(audit, n=2)
+        pairs = pairs_from_bayes_audit(
+            bayes_audit_path=audit, outcomes=dict.fromkeys(ids, 1)
+        )
+        assert all(p.regime is None for p in pairs)
+
+    def test_regime_lookup_miss_leaves_regime_none(self, tmp_path: Path) -> None:
+        """Lookup-Miss (Asset nicht im Index) → regime bleibt None, kein Crash."""
+        audit = tmp_path / "audit.jsonl"
+        ids = _seed_audit(audit, n=2)  # symbol="BTC/USDT"
+
+        regime_state_dir = tmp_path / "regime_state"
+        regime_state_dir.mkdir()
+        (regime_state_dir / "eth_regime.jsonl").write_text(
+            '{"asset":"ETH","timestamp":"2000-01-01T00:00:00Z",'
+            '"regime":"trend_up","vol_class":"vol_low","confidence":1.0}\n',
+            encoding="utf-8",
+        )
+        lookup = RegimeLookup.from_artifacts(regime_state_dir)
+
+        pairs = pairs_from_bayes_audit(
+            bayes_audit_path=audit,
+            outcomes=dict.fromkeys(ids, 1),
+            regime_lookup=lookup,
+        )
+        assert len(pairs) == 2
+        assert all(p.regime is None for p in pairs)
 
     def test_short_direction_inverts_predicted_probability(self, tmp_path: Path) -> None:
         audit = tmp_path / "audit.jsonl"
