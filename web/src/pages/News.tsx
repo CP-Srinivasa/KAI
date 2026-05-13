@@ -12,6 +12,9 @@ export function NewsPage() {
         sub="News-Stream mit Sentiment, Impact & Signal-Verknüpfung — vorbereitet"
         tone="info"
         icon={<Newspaper size={18} />}
+        // DALI-v2 S1: divider=false - Live-News-Stream-Card haelt die
+        // Lichtkante (PreparedPanel default, Master-Spec G4).
+        divider={false}
       />
 
       <PreparedPanel

@@ -77,6 +77,9 @@ export function RiskPage() {
         sub="Wo steht das Portfolio gerade — was ist sauber, was ist heikel?"
         tone="warn"
         icon={<ShieldAlert size={18} />}
+        // DALI-v2 S1: divider=false - Hero-Bewertungs-Banner traegt den Glow
+        // (synthwave-pulse-edge ist da bereits gesetzt, Master-Spec G4).
+        divider={false}
       />
 
       {/* DALI-R-Hero-v2: Gesamtbewertung als Banner mit Klartext-Risikoliste.
