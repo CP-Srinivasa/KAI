@@ -54,12 +54,12 @@ export function SignalHeatmapPanel() {
         title="Signal-Matrix"
         subtitle={
           view
-            ? `${view.rows.length} Symbole · ${view.totalSignals} Signale (Fenster ≤50)`
-            : undefined
+            ? `${view.rows.length} Symbole · ${view.totalSignals} Signale aus den letzten 50 Envelopes`
+            : "Welche Symbole sind aktuell aktiv und mit welchem Sentiment?"
         }
         right={
-          <Badge tone="muted" dot>
-            live
+          <Badge tone="info" dot>
+            Live
           </Badge>
         }
       />
@@ -139,7 +139,7 @@ function HeatmapTable({
           key={r.symbol}
           onClick={onSelect}
           className="w-full grid grid-cols-[1fr_52px_52px_auto] items-center gap-2 px-1 py-1.5 rounded-sm text-xs hover:bg-bg-2 transition-colors text-left"
-          title={`${r.totalSignals} Signale · latest ${formatAbsolute(r.latestTs)}`}
+          title={`${r.totalSignals} Signal${r.totalSignals === 1 ? "" : "e"} · letztes ${formatAbsolute(r.latestTs)}`}
         >
           <span className="font-mono font-semibold truncate">{r.symbol}</span>
           <DirCell count={r.long} dir="long" />
@@ -165,7 +165,13 @@ function HeatmapTable({
 
 function DirCell({ count, dir }: { count: number; dir: "long" | "short" }) {
   if (count === 0) {
-    return <span className="w-full text-center text-fg-subtle font-mono text-xs tabular-nums">—</span>;
+    // DALI v2 S3 M1b: tabular-nums + min-width damit "—" exakt unter den
+    // Zahlen-Pillen ausgerichtet bleibt (Operator: "ordentlich strukturieren").
+    return (
+      <span className="w-full inline-flex items-center justify-center text-fg-subtle font-mono text-xs tabular-nums h-[20px]">
+        —
+      </span>
+    );
   }
   const tone = dir === "long" ? "pos" : "neg";
   const Icon = dir === "long" ? ArrowUpRight : ArrowDownRight;
