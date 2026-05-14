@@ -38,6 +38,13 @@ UNITS=(
     "cloudflared.service"
     "kai-paper-trading.service"
     "kai-paper-trading.timer"
+    "kai-entry-watch.service"
+    "kai-regime-classify.service"
+    "kai-regime-classify.timer"
+    "kai-premium-healthcheck.service"
+    "kai-premium-healthcheck.timer"
+    "kai-parser-feedback.service"
+    "kai-parser-feedback.timer"
     "kai-daily-strategy.service"
     "kai-daily-strategy.timer"
     "kai-daily-strategy-reminder.service"
@@ -58,6 +65,10 @@ ENABLE_ON_INSTALL=(
     "kai-tg-listener.service"
     "cloudflared.service"
     "kai-paper-trading.timer"
+    "kai-entry-watch.service"
+    "kai-regime-classify.timer"
+    "kai-premium-healthcheck.timer"
+    "kai-parser-feedback.timer"
     "kai-daily-strategy.timer"
     "kai-daily-strategy-reminder.timer"
     "kai-pi-health.timer"
@@ -66,16 +77,34 @@ ENABLE_ON_INSTALL=(
     "kai-auto-annotate.timer"
 )
 
+# 2026-05-14: Reactivate-Hook — kritische Premium-Signal-Pipeline-Units.
+# Hintergrund: Beim 2026-05-12-Deploy blieben kai-paper-trading.timer und
+# kai-entry-watch.service nach systemctl-Stop inaktiv (Restart-Limit getriggert
+# durch transienten Mid-Deploy-Config-Mismatch). Operator merkte den Ausfall
+# 48h lang nicht — Bridge-Tick fehlte, Premium-Signale liefen 10h Delay bis Fill.
+# Die hier gelisteten Services sind die, deren Inaktivität eine stille Pipeline-
+# Degradation verursacht (Symptome erst im Audit-Log sichtbar, nicht in /health).
+CRITICAL_REACTIVATE=(
+    "kai-server.service"
+    "kai-tg-listener.service"
+    "kai-paper-trading.timer"
+    "kai-entry-watch.service"
+    "kai-premium-healthcheck.timer"
+    "cloudflared.service"
+)
+
 DRY_RUN=0
 UNINSTALL=0
 FORCE=0
 NO_ENABLE=0
+REACTIVATE_ONLY=0
 for arg in "$@"; do
     case "$arg" in
         --dry-run) DRY_RUN=1 ;;
         --uninstall) UNINSTALL=1 ;;
         --force) FORCE=1 ;;
         --no-enable) NO_ENABLE=1 ;;
+        --reactivate) REACTIVATE_ONLY=1 ;;
         -h|--help)
             sed -n '3,24p' "$0"
             exit 0
@@ -96,6 +125,63 @@ require_root() {
         echo "ERROR: must run as root (use sudo)" >&2
         exit 1
     fi
+}
+
+# Post-install / post-deploy smoke: verify each critical unit is active.
+# Inactive units get one reset-failed + restart attempt. Final state is reported
+# per unit so a stale restart-counter (siehe entry-watch counter 1091, 2026-05-12)
+# cannot leave a service silently dead after an otherwise-successful deploy.
+# Exit code 0 = all reactivated; exit code 1 = at least one still inactive.
+#
+# 2026-05-14 Fix: 'activating' wird als healthy akzeptiert. Hintergrund:
+# kai-entry-watch.service hat `--duration-seconds 55` → Service zykelt zwischen
+# 'active' (running) und 'activating' (restarting). `systemctl is-active --quiet`
+# returnt nur bei state=active exit 0; bei state=activating exit 3 → ein
+# false-positive Restart wurde getriggert, obwohl der Service gesund war.
+# `systemctl is-active <unit>` (ohne --quiet) liefert den state als string;
+# wir akzeptieren active+activating+reloading (Symmetrie zu
+# premium_pipeline_health._HEALTHY_ACTIVE_STATES).
+_is_healthy_active_state() {
+    local state="$1"
+    case "$state" in
+        active|activating|reloading) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+reactivate_critical() {
+    local failed=0
+    echo ""
+    echo "=== Reactivate-Hook: verifying critical services ==="
+    for unit in "${CRITICAL_REACTIVATE[@]}"; do
+        local state
+        state="$(systemctl is-active "$unit" 2>/dev/null || true)"
+        if _is_healthy_active_state "$state"; then
+            echo "  OK    $unit (state=$state)"
+            continue
+        fi
+        echo "  WARN  $unit state=$state — reset-failed + restart"
+        run systemctl reset-failed "$unit" 2>/dev/null || true
+        run systemctl restart "$unit" || true
+        # Give the unit a moment to settle; entry-watch + paper-trading
+        # complete one cycle in <30s, so 5s is enough for liveness check.
+        sleep 5
+        state="$(systemctl is-active "$unit" 2>/dev/null || true)"
+        if _is_healthy_active_state "$state"; then
+            echo "  OK    $unit (recovered, state=$state)"
+        else
+            echo "  FAIL  $unit state=$state — manual diagnosis required"
+            failed=$((failed + 1))
+        fi
+    done
+    if (( failed > 0 )); then
+        echo ""
+        echo "Reactivate-Hook: $failed critical unit(s) still inactive."
+        echo "Investigate with: journalctl -u <unit> -n 100"
+        return 1
+    fi
+    echo "Reactivate-Hook: all critical units active."
+    return 0
 }
 
 uninstall() {
@@ -194,6 +280,10 @@ install() {
         run systemctl enable --now "$unit"
     done
 
+    if (( DRY_RUN == 0 )); then
+        reactivate_critical || true
+    fi
+
     echo ""
     echo "Done. Verify with:"
     echo "  systemctl status kai-server kai-agent-worker kai-tg-listener cloudflared"
@@ -203,7 +293,18 @@ install() {
     echo "  journalctl -u kai-service-watchdog -n 30"
 }
 
-if (( UNINSTALL == 1 )); then
+# Standalone-Aufruf: bash scripts/pi_install_systemd.sh --reactivate
+# Ruft NUR den Reactivate-Hook auf, ohne Re-Install. Für Post-Deploy-Smoke
+# nach `git pull && systemctl restart kai-server` ohne kompletten Reinstall.
+reactivate_only() {
+    require_root
+    reactivate_critical
+}
+
+if (( REACTIVATE_ONLY == 1 )); then
+    reactivate_only
+    exit $?
+elif (( UNINSTALL == 1 )); then
     uninstall
 else
     install

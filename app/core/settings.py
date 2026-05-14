@@ -226,6 +226,13 @@ class ExecutionSettings(BaseSettings):
     # `<orig>_approved` only after the operator clicks [Fill].
     operator_signal_approval_enabled: bool = Field(default=False)
     operator_signal_approval_ttl_minutes: int = Field(default=60, ge=1, le=1440)
+    # 2026-05-14 P1 #9: HMAC secret for callback_data signing. Default ""
+    # → legacy unsigned tokens (migration runway). Set to 32+ random bytes
+    # (base64 ok) to enable strict-mode: only signed callback_data with
+    # valid HMAC + non-expired TTL is accepted. Pre-existing in-flight
+    # buttons become invalid the moment strict-mode flips on — that's
+    # the security-target, NOT a bug.
+    operator_signal_approval_hmac_secret: str = Field(default="", repr=False)
 
     # Premium-Auto-Fill (2026-05-12 Sprint B per Operator-Auftrag Sektion 4):
     # Wenn aktiviert, schreibt der Worker nach jedem accepted Premium-Signal
@@ -484,10 +491,11 @@ class TelegramChannelIngestSettings(BaseSettings):
     # The premium channel has no @handle — title-match is the fallback.
     target_chat_id: int = Field(default=0)
     target_title: str = Field(default="")
-    # Shadow-Mode: when True, the worker parses + emits envelopes but skips
-    # no execution step (execution is already gated by the bridge allowlist,
-    # so this is mostly for operator-side logging clarity).
-    dry_run: bool = Field(default=True)
+    # 2026-05-14 (P0 #6): das alte `dry_run` Feld wurde ersatzlos entfernt
+    # weil es im Worker NIE abgefragt wurde — ein Schein-Schalter (Operator
+    # konnte ihn auf =true setzen ohne dass irgendwas geschah). Schein-Flags
+    # kosten Operator-Vertrauen. Re-implementierung ist 30min wenn ein
+    # konkreter Diagnose-Trigger auftaucht; aktuell fehlt der Trigger.
     # Source-tag written into every emitted envelope. Must match the value
     # added to EXECUTION_OPERATOR_SIGNAL_SOURCE_ALLOWLIST in B-5.
     source_tag: str = Field(default="telegram_premium_channel")

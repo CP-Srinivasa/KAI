@@ -26,6 +26,8 @@ Design invariants:
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import json
 import logging
 from dataclasses import dataclass
@@ -38,10 +40,21 @@ logger = logging.getLogger(__name__)
 APPROVED_SUFFIX = "_approved"
 
 # Callback-data prefixes — kept short (Telegram limit 64 bytes total).
-# Format: "sig:{action}:{envelope_id}" → max ~40 chars with ENV-ids.
+# Legacy format: "sig:{action}:{envelope_id}" → ~35 chars.
+# Signed format (P1 #9, 2026-05-14):
+#   "sig:{action}:{envelope_id}:{ttl_unix}:{hmac8}" → ~52 chars
+# - ttl_unix: epoch seconds at which the token expires (replay window)
+# - hmac8: first 8 hex chars of HMAC-SHA256 over
+#          "{action}:{envelope_id}:{ttl_unix}" keyed by
+#          OPERATOR_APPROVAL_HMAC_SECRET.
+# Strict-mode (secret set in env) accepts only the 5-part form. Legacy
+# 3-part tokens are rejected as ``None`` so an attacker cannot downgrade.
+# When the secret is empty (default), both forms still pass through —
+# that's the migration runway, NOT the security target state.
 CB_PREFIX = "sig"
 CB_FILL = "f"
 CB_IGNORE = "i"
+_CB_HMAC_PREFIX_LEN = 8
 
 # Default location of the TV-4 quality-bar JSON report. Used to enrich approval
 # cards with per-source precision badges (Wilson CI). When file is missing,
@@ -262,12 +275,52 @@ def format_approval_message(
     return "\n".join(lines)
 
 
-def build_inline_keyboard(envelope_id: str) -> list[list[dict[str, str]]]:
-    """Telegram inline_keyboard for [Fill]/[Ignore] per envelope_id."""
+def _compute_callback_hmac(
+    secret: str, action: str, envelope_id: str, ttl_deadline_unix: int
+) -> str:
+    """Return first 8 hex chars of HMAC-SHA256 over the canonical token input.
+
+    The HMAC binds ``action`` so a captured Fill-token cannot be re-used as
+    Ignore (the action is signed, not just trusted from URL). It binds
+    ``ttl_deadline_unix`` so a leaked token cannot be replayed past its
+    TTL — even before ``handle_signal_approval``'s envelope-id dedup runs.
+    """
+    msg = f"{action}:{envelope_id}:{ttl_deadline_unix}".encode("utf-8")
+    digest = hmac.new(secret.encode("utf-8"), msg, hashlib.sha256).hexdigest()
+    return digest[:_CB_HMAC_PREFIX_LEN]
+
+
+def build_inline_keyboard(
+    envelope_id: str,
+    *,
+    secret: str | None = None,
+    ttl_deadline_unix: int | None = None,
+) -> list[list[dict[str, str]]]:
+    """Telegram inline_keyboard for [Fill]/[Ignore] per envelope_id.
+
+    When ``secret`` is non-empty AND ``ttl_deadline_unix`` is provided, the
+    callback_data carries an HMAC tag + TTL window. The bot's parse-side
+    rejects tokens with bad HMAC or expired TTL even before the envelope
+    dedup gate fires.
+
+    Legacy (secret missing): emits the 3-part form for backward-compat
+    while the operator rolls out OPERATOR_APPROVAL_HMAC_SECRET.
+    """
+    use_signed = bool(secret) and ttl_deadline_unix is not None
+    if use_signed:
+        # mypy: secret is non-empty + ttl_deadline_unix is int at this point
+        assert secret is not None and ttl_deadline_unix is not None
+        fill_hmac = _compute_callback_hmac(secret, CB_FILL, envelope_id, ttl_deadline_unix)
+        ignore_hmac = _compute_callback_hmac(secret, CB_IGNORE, envelope_id, ttl_deadline_unix)
+        fill_cb = f"{CB_PREFIX}:{CB_FILL}:{envelope_id}:{ttl_deadline_unix}:{fill_hmac}"
+        ignore_cb = f"{CB_PREFIX}:{CB_IGNORE}:{envelope_id}:{ttl_deadline_unix}:{ignore_hmac}"
+    else:
+        fill_cb = f"{CB_PREFIX}:{CB_FILL}:{envelope_id}"
+        ignore_cb = f"{CB_PREFIX}:{CB_IGNORE}:{envelope_id}"
     return [
         [
-            {"text": "✅ Fill", "callback_data": f"{CB_PREFIX}:{CB_FILL}:{envelope_id}"},
-            {"text": "❌ Ignore", "callback_data": f"{CB_PREFIX}:{CB_IGNORE}:{envelope_id}"},
+            {"text": "✅ Fill", "callback_data": fill_cb},
+            {"text": "❌ Ignore", "callback_data": ignore_cb},
         ]
     ]
 
@@ -278,18 +331,83 @@ class CallbackAction:
     envelope_id: str
 
 
-def parse_callback_data(data: str) -> CallbackAction | None:
-    """Parse a Telegram callback_data string. Returns None if not for us."""
+def parse_callback_data(
+    data: str,
+    *,
+    secret: str | None = None,
+    now: datetime | None = None,
+) -> CallbackAction | None:
+    """Parse a Telegram callback_data string. Returns None if invalid.
+
+    Validation rules:
+    - Legacy 3-part tokens: accepted IFF ``secret`` is empty/None. When a
+      secret is configured, legacy tokens are rejected — that's the whole
+      point of enabling HMAC, an attacker cannot downgrade.
+    - Signed 5-part tokens: accepted IFF the HMAC matches AND ``now`` is
+      before ttl_deadline_unix. Either failure returns None silently —
+      the bot answers the callback with a benign "ignored" rather than
+      leaking which check fired.
+
+    ``now`` is injectable for tests so TTL boundary cases are deterministic.
+    """
     if not isinstance(data, str):
         return None
-    parts = data.split(":", 2)
-    if len(parts) != 3 or parts[0] != CB_PREFIX:
+    parts = data.split(":")
+    if len(parts) < 3 or parts[0] != CB_PREFIX:
         return None
-    code, env_id = parts[1], parts[2]
-    if code == CB_FILL:
-        return CallbackAction(action="fill", envelope_id=env_id)
-    if code == CB_IGNORE:
-        return CallbackAction(action="ignore", envelope_id=env_id)
+
+    code = parts[1]
+    if code not in (CB_FILL, CB_IGNORE):
+        return None
+    action_name = "fill" if code == CB_FILL else "ignore"
+
+    has_secret = bool(secret)
+
+    if len(parts) == 3:
+        # Legacy form — only accepted while secret is unset (migration mode)
+        if has_secret:
+            logger.info(
+                "[approval] legacy unsigned callback rejected under HMAC strict-mode"
+            )
+            return None
+        return CallbackAction(action=action_name, envelope_id=parts[2])
+
+    if len(parts) == 5:
+        env_id = parts[2]
+        try:
+            ttl_deadline_unix = int(parts[3])
+        except ValueError:
+            logger.warning("[approval] callback ttl_unix not int: %r", parts[3])
+            return None
+        provided_hmac = parts[4]
+
+        if not has_secret:
+            # Strict-mode not active yet — accept signed tokens too so a
+            # mid-rollout flip-flop (secret set then unset) doesn't strand
+            # in-flight buttons. Cheap to keep symmetric.
+            return CallbackAction(action=action_name, envelope_id=env_id)
+
+        assert secret is not None
+        expected = _compute_callback_hmac(secret, code, env_id, ttl_deadline_unix)
+        # Constant-time compare prevents timing oracles on the 8-hex tag.
+        if not hmac.compare_digest(provided_hmac, expected):
+            logger.warning(
+                "[approval] callback hmac mismatch env=%s — rejected", env_id
+            )
+            return None
+
+        current = (now or datetime.now(UTC)).timestamp()
+        if current > ttl_deadline_unix:
+            logger.info(
+                "[approval] callback ttl expired env=%s (deadline=%s now=%s)",
+                env_id,
+                ttl_deadline_unix,
+                int(current),
+            )
+            return None
+
+        return CallbackAction(action=action_name, envelope_id=env_id)
+
     return None
 
 
@@ -580,6 +698,7 @@ async def send_approval_request(
     chat_id: int,
     ttl_minutes: int,
     send_audit_log: Path | None = None,
+    hmac_secret: str | None = None,
 ) -> dict[str, Any] | None:
     """POST sendMessage with an inline keyboard. Returns Telegram API response
     JSON (``result`` payload) or None on network/API failure.
@@ -632,7 +751,17 @@ async def send_approval_request(
         return None
 
     text = format_approval_message(record, ttl_minutes=ttl_minutes)
-    keyboard = build_inline_keyboard(str(env_id))
+    # 2026-05-14 P1 #9: signed callback_data when HMAC secret is configured.
+    # ttl_deadline_unix is computed here (not at parse time) so the bot can
+    # verify the token without re-fetching the envelope's send timestamp.
+    ttl_deadline_unix = (
+        int(datetime.now(UTC).timestamp()) + ttl_minutes * 60
+        if hmac_secret
+        else None
+    )
+    keyboard = build_inline_keyboard(
+        str(env_id), secret=hmac_secret, ttl_deadline_unix=ttl_deadline_unix
+    )
     payload = {
         "chat_id": chat_id,
         "text": text,
