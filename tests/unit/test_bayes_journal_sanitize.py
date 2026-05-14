@@ -30,9 +30,7 @@ def _make_report_with_secret_in_drivers() -> ConfidenceReport:
         decreased=(),
         neutral=(),
         discarded=(),
-        residual_uncertainty_drivers=(
-            f"{_FAKE_AWS_KEY} leaked into a driver string by accident",
-        ),
+        residual_uncertainty_drivers=(f"{_FAKE_AWS_KEY} leaked into a driver string by accident",),
     )
 
 
