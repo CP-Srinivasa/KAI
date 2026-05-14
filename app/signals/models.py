@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import logging
 import uuid
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from enum import StrEnum
+
+logger = logging.getLogger(__name__)
 
 
 class SignalDirection(StrEnum):
@@ -21,6 +24,71 @@ class SignalState(StrEnum):
     REJECTED = "rejected"
     EXECUTED = "executed"
     CANCELLED = "cancelled"
+    CLOSED = "closed"
+
+
+class IllegalStateTransitionError(ValueError):
+    """Raised when a signal state transition violates the FSM rules."""
+
+
+@dataclass(frozen=True)
+class SignalStateTransition:
+    """Audit record for a state machine transition."""
+
+    decision_id: str
+    from_state: SignalState
+    to_state: SignalState
+    source: str
+    timestamp_utc: str
+    reason: str = ""
+
+    def to_dict(self) -> dict[str, str]:
+        return {
+            "decision_id": self.decision_id,
+            "from_state": self.from_state.value,
+            "to_state": self.to_state.value,
+            "source": self.source,
+            "timestamp_utc": self.timestamp_utc,
+            "reason": self.reason,
+        }
+
+
+class SignalStateMachine:
+    """FSM rules for signal execution and approval states."""
+
+    # Key: from_state, Value: allowed to_states
+    VALID_TRANSITIONS: dict[SignalState, frozenset[SignalState]] = {
+        SignalState.PENDING: frozenset(
+            {
+                SignalState.APPROVED,
+                SignalState.REJECTED,
+                SignalState.CANCELLED,
+            }
+        ),
+        SignalState.APPROVED: frozenset(
+            {
+                SignalState.EXECUTED,
+                SignalState.REJECTED,
+                SignalState.CANCELLED,
+            }
+        ),
+        SignalState.EXECUTED: frozenset(
+            {
+                SignalState.CLOSED,
+            }
+        ),
+        SignalState.REJECTED: frozenset(),
+        SignalState.CANCELLED: frozenset(),
+        SignalState.CLOSED: frozenset(),
+    }
+
+    @classmethod
+    def validate_transition(cls, from_state: SignalState, to_state: SignalState) -> None:
+        """Raise IllegalStateTransitionError if the transition is not allowed."""
+        if to_state not in cls.VALID_TRANSITIONS.get(from_state, frozenset()):
+            raise IllegalStateTransitionError(
+                f"Illegal state transition from {from_state.value} to {to_state.value}"
+            )
 
 
 @dataclass(frozen=True)
@@ -197,3 +265,25 @@ class SignalCandidate:
 
     # D-125 provenance: optional, fail-open (None = legacy/RSS path).
     provenance: SignalProvenance | None = None
+
+    def with_execution_state(
+        self, new_state: SignalState, source: str, reason: str = ""
+    ) -> tuple[SignalCandidate, SignalStateTransition]:
+        """Transition execution_state according to FSM rules.
+
+        Returns:
+            A tuple of (the updated SignalCandidate, the SignalStateTransition audit record).
+        Raises:
+            IllegalStateTransitionError: if the transition violates FSM rules.
+        """
+        SignalStateMachine.validate_transition(self.execution_state, new_state)
+        transition = SignalStateTransition(
+            decision_id=self.decision_id,
+            from_state=self.execution_state,
+            to_state=new_state,
+            source=source,
+            timestamp_utc=_now_utc(),
+            reason=reason,
+        )
+        updated = replace(self, execution_state=new_state)
+        return updated, transition

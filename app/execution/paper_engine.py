@@ -30,6 +30,12 @@ from app.execution.models import (
     make_lifecycle_transition,
 )
 from app.execution.order_intent import ExecutableOrderIntent
+from app.signals.models import (
+    IllegalStateTransitionError,
+    SignalState,
+    SignalStateMachine,
+    SignalStateTransition,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -615,6 +621,15 @@ class PaperExecutionEngine:
                         reason="paper_position_opened",
                     )
                     self._append_audit("lifecycle_transition", t2.to_dict())
+
+                    if order.correlation_id:
+                        self._validate_and_append_signal_transition(
+                            decision_id=order.correlation_id,
+                            from_state=SignalState.APPROVED,
+                            to_state=SignalState.EXECUTED,
+                            source="paper_engine",
+                            reason="order_filled",
+                        )
             except Exception as e:
                 logger.error("[PAPER] Failed to emit lifecycle transition for fill: %s", e)
         return fill
@@ -954,6 +969,14 @@ class PaperExecutionEngine:
                     reason=reason,
                 )
                 self._append_audit("lifecycle_transition", t4.to_dict())
+
+                self._validate_and_append_signal_transition(
+                    decision_id=pos.correlation_id,
+                    from_state=SignalState.EXECUTED,
+                    to_state=SignalState.CLOSED,
+                    source="paper_engine",
+                    reason=reason,
+                )
             except Exception as e:
                 logger.error("[PAPER] Failed to emit lifecycle transition for close: %s", e)
         return fill
@@ -1047,3 +1070,32 @@ class PaperExecutionEngine:
         except OSError as e:
             logger.error("[PAPER] Audit log write failed: %s", e)
         _publish_paper_event(event_type, record)
+
+    def _validate_and_append_signal_transition(
+        self,
+        decision_id: str,
+        from_state: SignalState,
+        to_state: SignalState,
+        source: str,
+        reason: str,
+    ) -> None:
+        try:
+            SignalStateMachine.validate_transition(from_state, to_state)
+            trans = SignalStateTransition(
+                decision_id=decision_id,
+                from_state=from_state,
+                to_state=to_state,
+                source=source,
+                timestamp_utc=_now_utc(),
+                reason=reason,
+            )
+            self._append_audit("signal_state_transition", trans.to_dict())
+        except IllegalStateTransitionError as e:
+            logger.error(
+                "[PAPER] Illegal signal state transition: %s "
+                "(decision_id=%s, source=%s, reason=%s)",
+                e,
+                decision_id,
+                source,
+                reason,
+            )

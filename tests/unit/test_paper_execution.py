@@ -873,3 +873,92 @@ def test_append_audit_concurrent_writes_no_corruption(tmp_path):
         if rec.get("event_type") == "concurrency_probe":
             probes.append(rec)
     assert len(probes) == 100
+
+
+def test_order_filled_emits_executed_transition(tmp_path):
+    eng = _engine(tmp_path)
+    order = eng.create_order(
+        symbol="BTC/USDT",
+        side="buy",
+        quantity=0.1,
+        idempotency_key="fill_trans",
+        correlation_id="dec_123",
+    )
+    eng.fill_order(order, current_price=65000.0)
+
+    records = _read_audit_records(tmp_path / "audit.jsonl")
+    transitions = [r for r in records if r.get("event_type") == "signal_state_transition"]
+    assert len(transitions) == 1
+    t = transitions[0]
+    assert t["decision_id"] == "dec_123"
+    assert t["from_state"] == "approved"
+    assert t["to_state"] == "executed"
+    assert t["source"] == "paper_engine"
+
+
+def test_close_position_emits_closed_transition(tmp_path):
+    eng = _engine(tmp_path)
+    order = eng.create_order(
+        symbol="ETH/USDT",
+        side="buy",
+        quantity=1.0,
+        idempotency_key="close_trans",
+        correlation_id="dec_456",
+        take_profit=3500.0,
+    )
+    eng.fill_order(order, current_price=3000.0)
+
+    eng.close_position("ETH/USDT", current_price=3600.0, reason="take")
+
+    records = _read_audit_records(tmp_path / "audit.jsonl")
+    transitions = [r for r in records if r.get("event_type") == "signal_state_transition"]
+    assert len(transitions) == 2
+
+    # Second transition should be EXECUTED -> CLOSED
+    t = transitions[1]
+    assert t["decision_id"] == "dec_456"
+    assert t["from_state"] == "executed"
+    assert t["to_state"] == "closed"
+    assert t["source"] == "paper_engine"
+    assert t["reason"] == "take"
+
+
+def test_fill_without_correlation_id_skips_signal_transition(tmp_path):
+    eng = _engine(tmp_path)
+    order = eng.create_order(
+        symbol="BTC/USDT",
+        side="buy",
+        quantity=0.1,
+        idempotency_key="no_corr_id",
+    )
+    fill = eng.fill_order(order, current_price=65000.0)
+    assert fill is not None
+
+    records = _read_audit_records(tmp_path / "audit.jsonl")
+    transitions = [r for r in records if r.get("event_type") == "signal_state_transition"]
+    assert transitions == []
+
+
+def test_illegal_signal_transition_logged_not_raised(tmp_path, caplog):
+    import logging
+
+    from app.signals.models import SignalState
+
+    eng = _engine(tmp_path)
+    caplog.set_level(logging.ERROR)
+
+    eng._validate_and_append_signal_transition(
+        decision_id="dec_illegal",
+        from_state=SignalState.CLOSED,
+        to_state=SignalState.EXECUTED,
+        source="paper_engine",
+        reason="fuzzing_test",
+    )
+
+    assert any("Illegal signal state transition" in rec.message for rec in caplog.records), (
+        "Expected error log for illegal transition"
+    )
+
+    audit_path = tmp_path / "audit.jsonl"
+    if audit_path.exists():
+        assert "signal_state_transition" not in audit_path.read_text(encoding="utf-8")
