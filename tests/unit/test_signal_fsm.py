@@ -1,11 +1,11 @@
 import pytest
 
 from app.signals.models import (
+    IllegalStateTransitionError,
     SignalCandidate,
     SignalDirection,
     SignalState,
     SignalStateMachine,
-    IllegalStateTransitionError,
 )
 
 
@@ -64,9 +64,7 @@ def test_immutability():
     )
 
     updated, transition = candidate.with_execution_state(
-        SignalState.EXECUTED,
-        source="test",
-        reason="test_filled"
+        SignalState.EXECUTED, source="test", reason="test_filled"
     )
 
     assert updated is not candidate
@@ -76,7 +74,7 @@ def test_immutability():
 
 def test_illegal_state_transition_error_is_value_error():
     assert issubclass(IllegalStateTransitionError, ValueError)
-    
+
     try:
         SignalStateMachine.validate_transition(SignalState.CLOSED, SignalState.EXECUTED)
     except ValueError as e:

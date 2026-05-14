@@ -1092,7 +1092,8 @@ class PaperExecutionEngine:
             self._append_audit("signal_state_transition", trans.to_dict())
         except IllegalStateTransitionError as e:
             logger.error(
-                "[PAPER] Illegal signal state transition: %s (decision_id=%s, source=%s, reason=%s)",
+                "[PAPER] Illegal signal state transition: %s "
+                "(decision_id=%s, source=%s, reason=%s)",
                 e,
                 decision_id,
                 source,
