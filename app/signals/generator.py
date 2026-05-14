@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable, Sequence
+from typing import TYPE_CHECKING
 
 from app.core.domain.document import AnalysisResult
 from app.core.enums import SentimentLabel
@@ -26,6 +27,12 @@ from app.signals.models import (
     _new_decision_id,
     _now_utc,
 )
+
+if TYPE_CHECKING:
+    from app.learning.active_calibrator import ActiveCalibrator
+    from app.learning.active_threshold import ActiveThreshold
+    from app.signals.audit_adapter import SignalAuditAdapter
+    from app.signals.bayesian_confidence import BayesianConfidenceEngine
 
 ExtraEvidencesProvider = Callable[
     [AnalysisResult, MarketDataPoint, SignalDirection], Sequence[Evidence]
@@ -64,6 +71,17 @@ class SignalGenerator:
         volume_threshold_usd: float | None = None,
         stop_loss_pct: float | None = None,
         take_profit_pct: float | None = None,
+        # Phase 2C — opt-in Bayes/Adaptive-Learning wiring. All defaults are
+        # None → SignalGenerator behaves exactly as before when not configured.
+        # The hooks themselves are wired in `generate()` but only fire when
+        # both `bayes_engine` AND `audit_adapter` are present; otherwise the
+        # parameters are stored for future Phase-2-Sprints and ignored at
+        # runtime. KAI Master Coding: kleinster sinnvoller Schritt — Wiring-
+        # Readiness ohne Verhaltensänderung des Live-Pfads.
+        audit_adapter: SignalAuditAdapter | None = None,
+        active_calibrator: ActiveCalibrator | None = None,
+        active_threshold: ActiveThreshold | None = None,
+        bayes_engine: BayesianConfidenceEngine | None = None,
     ) -> None:
         self._min_confidence = min_confidence
         self._min_confluence = min_confluence
@@ -82,6 +100,11 @@ class SignalGenerator:
         )
         self._legacy_stop_loss_pct = stop_loss_pct
         self._legacy_take_profit_pct = take_profit_pct
+        # Phase 2C wiring slots (Adaptive-Learning + Bayes Shadow-Mode).
+        self._audit_adapter = audit_adapter
+        self._active_calibrator = active_calibrator
+        self._active_threshold = active_threshold
+        self._bayes_engine = bayes_engine
 
     def generate(
         self,
