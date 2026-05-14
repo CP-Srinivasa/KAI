@@ -14,16 +14,22 @@ TODO (vor Live-Einsatz): ATR-basierter SL/TP, Orderbook-Input.
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable, Sequence
 
 from app.core.domain.document import AnalysisResult
 from app.core.enums import SentimentLabel
 from app.market_data.models import MarketDataPoint
+from app.signals.bayesian_confidence import Evidence
 from app.signals.models import (
     SignalCandidate,
     SignalDirection,
     _new_decision_id,
     _now_utc,
 )
+
+ExtraEvidencesProvider = Callable[
+    [AnalysisResult, MarketDataPoint, SignalDirection], Sequence[Evidence]
+]
 
 logger = logging.getLogger(__name__)
 

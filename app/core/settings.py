@@ -165,6 +165,15 @@ class RiskSettings(BaseSettings):
     min_signal_confidence: float = Field(default=0.75)
     min_signal_confluence_count: int = Field(default=2)
 
+    # Bayesian Confidence Engine (additiv, Schatten-Modus per Default)
+    # - enabled=True   → Engine läuft, Felder werden auf SignalCandidate gehängt
+    # - shadow_only=True → Engine-Werte nur loggen/persistieren, nie filtern
+    # - shadow_only=False + enabled=True → harte Gates aktiv (siehe min/max)
+    bayes_confidence_enabled: bool = Field(default=False)
+    bayes_confidence_shadow_only: bool = Field(default=True)
+    min_bayes_confidence: float = Field(default=0.0, ge=0.0, le=1.0)
+    max_bayes_uncertainty: float = Field(default=1.0, ge=0.0, le=1.0)
+
     # ATR Geometrie
     atr_multiplier: float = Field(default=2.0)
     tp_atr_multiplier: float = Field(default=4.0)
@@ -520,6 +529,36 @@ class TelegramChannelIngestSettings(BaseSettings):
     verbose_observer: bool = Field(default=False)
 
 
+class LearningSettings(BaseSettings):
+    """Adaptive-Learning Pipeline configuration.
+
+    Contract:
+      - ``adaptive_learning_enabled`` is the master gate. False (default) ⇒
+        ``build_bayes_signal_kwargs`` injects no Active*-Loaders, no
+        ReasoningJournal — SignalGenerator runs in raw-Bayes mode like
+        before. The full Approval/Snapshot pipeline still works (operator
+        can write/diff snapshots), but the trading loop stays unchanged.
+      - True ⇒ Loaders read the YAML snapshots in ``snapshot_dir`` and
+        emit reasoning steps to ``reasoning_journal_path``. Snapshot
+        missing ⇒ Identity-Loader (still no behavior change at runtime),
+        snapshot present ⇒ active calibrator/threshold applied.
+
+    The opt-in flag exists so a fresh boot of the trading loop is always
+    behavior-preserving — operator must consciously flip the switch
+    after a calibration approval has actually been signed off.
+    """
+
+    model_config = SettingsConfigDict(
+        env_prefix="APP_LEARNING_",
+        env_file=".env",
+        extra="ignore",
+    )
+
+    adaptive_learning_enabled: bool = Field(default=False)
+    snapshot_dir: Path = Field(default=Path("config/learning"))
+    reasoning_journal_path: Path = Field(default=Path("artifacts/structured_reasoning.jsonl"))
+
+
 class AppSettings(BaseSettings):
     model_config = SettingsConfigDict(
         env_prefix="APP_",
@@ -656,6 +695,7 @@ class AppSettings(BaseSettings):
     telegram_channel_ingest: TelegramChannelIngestSettings = Field(
         default_factory=TelegramChannelIngestSettings
     )
+    learning: LearningSettings = Field(default_factory=LearningSettings)
     # D-191 re-entry capability gate. Default disabled — see ReEntryModeProfile.
     re_entry_mode: ReEntryModeProfile = Field(default_factory=ReEntryModeProfile)
 

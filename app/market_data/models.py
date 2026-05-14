@@ -45,6 +45,24 @@ class OrderBook:
 
 
 @dataclass(frozen=True)
+class FundingRateSnapshot:
+    """Perpetual-Futures Funding-Rate-Beobachtung.
+
+    ``rate`` ist der zuletzt fällige (oder aktuell laufende) 8h-Funding-
+    Satz als *Anteil* (z. B. 0.0001 = 1bp = 0.01 %).  ``next_funding_at``
+    ist optional, weil nicht alle Quellen den nächsten Termin zurückgeben.
+    """
+
+    symbol: str
+    timestamp_utc: str
+    rate: float  # 0.0001 = 1bp pro 8h
+    mark_price: float | None = None
+    index_price: float | None = None
+    next_funding_time_utc: str | None = None
+    source: str = "unknown"
+
+
+@dataclass(frozen=True)
 class MarketDataPoint:
     """Single market data observation used in analysis."""
 
