@@ -437,6 +437,120 @@ async def dashboard_provenance_api() -> JSONResponse:
     )
 
 
+# ─── Bayesian Confidence Audit (Schatten-Vergleich-Spalte) ────────────────────
+
+_BAYES_AUDIT = _ARTIFACTS / "bayes_confidence_audit.jsonl"
+_BAYES_LIMIT_DEFAULT = 50
+_BAYES_LIMIT_MAX = 500
+# Outcome-Map für Calibration: pluggable, damit der Endpoint funktioniert,
+# *bevor* das Decision_id→Outcome-Linking fertig verdrahtet ist. Default leer.
+_BAYES_OUTCOME_MAP: dict[str, int] = {}
+
+
+@router.get("/dashboard/api/bayes-audit", tags=["dashboard"])
+async def dashboard_bayes_audit_api(limit: int = _BAYES_LIMIT_DEFAULT) -> JSONResponse:
+    """Letzte N Bayes-Confidence-Reports aus dem Audit-Sidecar."""
+    from app.signals.bayes_journal import load_bayes_reports
+
+    capped = max(1, min(int(limit), _BAYES_LIMIT_MAX))
+    try:
+        all_entries = load_bayes_reports(_BAYES_AUDIT)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("bayes_audit_load_failed: %s", exc)
+        return JSONResponse(
+            content={"error": "bayes_audit_unavailable", "detail": str(exc)},
+            status_code=503,
+        )
+
+    tail = all_entries[-capped:]
+    entries: list[dict[str, Any]] = []
+    for e in reversed(tail):
+        report = e.report
+        increased = report.get("increased")
+        decreased = report.get("decreased")
+        neutral = report.get("neutral")
+        discarded = report.get("discarded")
+        residual = report.get("residual_uncertainty_drivers")
+        increased_items = increased if isinstance(increased, list) else []
+        decreased_items = decreased if isinstance(decreased, list) else []
+        neutral_items = neutral if isinstance(neutral, list) else []
+        discarded_items = discarded if isinstance(discarded, list) else []
+        residual_items = residual if isinstance(residual, list) else []
+        entries.append(
+            {
+                "decision_id": e.decision_id,
+                "timestamp_utc": e.timestamp_utc,
+                "symbol": e.symbol,
+                "direction": e.direction,
+                "prior_probability": report.get("prior_probability"),
+                "posterior_probability": report.get("posterior_probability"),
+                "confidence_score": report.get("confidence_score"),
+                "uncertainty_score": report.get("uncertainty_score"),
+                "evidence_weight": report.get("evidence_weight"),
+                "agreement": report.get("agreement"),
+                "increased_count": len(increased_items),
+                "decreased_count": len(decreased_items),
+                "neutral_count": len(neutral_items),
+                "discarded_count": len(discarded_items),
+                "residual_uncertainty_drivers": list(residual_items),
+            }
+        )
+
+    return JSONResponse(
+        content={
+            "generated_at": datetime.now(UTC).isoformat(),
+            "total_count": len(all_entries),
+            "returned_count": len(entries),
+            "limit": capped,
+            "entries": entries,
+        },
+        headers={"Cache-Control": "no-store, max-age=0"},
+    )
+
+
+# ─── Calibration-Report (Quality-Bar-Erweiterung) ─────────────────────────────
+
+
+@router.get("/dashboard/api/calibration", tags=["dashboard"])
+async def dashboard_calibration_api(n_bins: int = 10) -> JSONResponse:
+    """Brier / Log-Loss / ECE / Reliability-Diagramm aus Bayes-Audit + Outcomes."""
+    from app.learning.calibration import compute_calibration
+    from app.learning.calibration_loader import pairs_from_bayes_audit
+
+    capped_bins = max(2, min(int(n_bins), 50))
+    try:
+        pairs = pairs_from_bayes_audit(
+            bayes_audit_path=_BAYES_AUDIT,
+            outcomes=_BAYES_OUTCOME_MAP,
+        )
+        report = compute_calibration(pairs, n_bins=capped_bins)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("calibration_report_failed: %s", exc)
+        return JSONResponse(
+            content={"error": "calibration_unavailable", "detail": str(exc)},
+            status_code=503,
+        )
+
+    payload = {
+        "generated_at": datetime.now(UTC).isoformat(),
+        "n_pairs": report.n_pairs,
+        "total_weight": report.total_weight,
+        "brier_score": report.brier_score,
+        "log_loss": report.log_loss,
+        "expected_calibration_error": report.expected_calibration_error,
+        "mean_predicted": report.mean_predicted,
+        "mean_observed": report.mean_observed,
+        "sample_sufficient": report.sample_sufficient,
+        "bins": [b.model_dump() for b in report.bins],
+        "notes": list(report.notes),
+        "outcome_map_size": len(_BAYES_OUTCOME_MAP),
+    }
+    return JSONResponse(
+        content=payload,
+        headers={"Cache-Control": "no-store, max-age=0"},
+    )
+
+
 # Default assets exposed by the regime endpoint. R1 covers BTC + ETH; later
 # sprints extend the list as the classifier handles more universes.
 _REGIME_DASHBOARD_ASSETS: tuple[str, ...] = ("BTC", "ETH")
