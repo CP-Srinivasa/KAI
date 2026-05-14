@@ -48,7 +48,8 @@ from app.execution.models import (
     make_lifecycle_transition,
 )
 from app.execution.order_intent import ExecutableOrderIntent
-from app.execution.paper_engine import DuplicateOrderError, PaperExecutionEngine
+from app.execution.paper_engine import DuplicateOrderError
+from app.execution.paper_engine_singleton import get_paper_engine
 from app.market_data.service import get_market_data_snapshot
 from app.risk.engine import RiskEngine
 from app.risk.models import RiskLimits
@@ -547,12 +548,12 @@ async def run_tick(*, price_provider: PriceProvider | None = None) -> BridgeTick
     if not pending_signals:
         return result
 
-    engine = PaperExecutionEngine(
-        initial_equity=settings.execution.paper_initial_equity,
-        fee_pct=settings.execution.paper_fee_pct,
-        slippage_pct=settings.execution.paper_slippage_pct,
-        live_enabled=False,
-    )
+    # 2026-05-14 P1 #7: Singleton statt new+rehydrate-per-tick. rehydrate
+    # bleibt zwingend — sonst sieht der FastAPI-Prozess Cron-Process-Writes
+    # nicht. Spart Konstruktor-Kosten + macht initial_equity/fee/slippage
+    # konsistent über alle Konsumenten (vorher hatten Reconciler + /adjust
+    # hardcoded 10000.0, jetzt kommt der Wert aus settings.execution).
+    engine = get_paper_engine()
     engine.rehydrate_from_audit()
     risk = RiskEngine(_build_risk_limits())
 
@@ -762,9 +763,17 @@ async def _process_one(
     # V25-D (2026-05-05): rescale Bybit-Futures integer-tick entries to USD
     # before the tolerance check. Channel posts e.g. SWARMS 32450 (×10^6) /
     # 1000LUNC 10310 (×10^5) which would otherwise blow past every gate.
-    # _detect_scale_factor returns 1.0 when no scaling is needed (HYPE,
-    # GIGGLE, BTC, …) so this is a no-op for direct-USD signals.
-    scale_factor = _detect_scale_factor(entry_price, current_price)
+    #
+    # 2026-05-14 (P1 #8): if the worker already resolved the scale at receive
+    # time (``scale_resolved_at_emit=True``), the entry/sl/targets values are
+    # already in USD and we skip the bridge-side re-detection. Legacy
+    # envelopes (no marker) and ``scale_unknown=True`` envelopes still flow
+    # through the legacy path so a market_data outage at receive doesn't
+    # strand the signal.
+    if bool(payload.get("scale_resolved_at_emit")):
+        scale_factor = 1.0
+    else:
+        scale_factor = _detect_scale_factor(entry_price, current_price)
     if scale_factor != 1.0:
         logger.info(
             "[bridge] scale-detect symbol=%s entry=%.6g current=%.6g "

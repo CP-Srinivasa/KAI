@@ -281,9 +281,12 @@ async def position_repair(req: PositionRepairRequest) -> dict[str, Any]:
             status_code=400, detail="adjust requires new_stop_loss or new_take_profit"
         )
 
-    from app.execution.paper_engine import PaperExecutionEngine
+    # 2026-05-14 P1 #7: Singleton statt new-per-request. Vorher hardcoded
+    # initial_equity=10000.0 → unterschiedlich zu Bridge-Engine (die
+    # settings.execution.paper_initial_equity las). Singleton vereinheitlicht.
+    from app.execution.paper_engine_singleton import get_paper_engine
 
-    eng = PaperExecutionEngine(initial_equity=10000.0, live_enabled=False)
+    eng = get_paper_engine()
     eng.rehydrate_from_audit()
     symbol_input = req.symbol.strip().upper()
     display_symbol = symbol_input if "/" in symbol_input else _add_quote(symbol_input)

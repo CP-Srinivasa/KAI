@@ -40,6 +40,7 @@ from pathlib import Path
 from typing import Any
 
 from app.execution.paper_engine import PaperExecutionEngine
+from app.execution.paper_engine_singleton import get_paper_engine
 from app.ingestion.telegram_channel_parser import TargetCompletionEvent
 
 logger = logging.getLogger(__name__)
@@ -144,10 +145,16 @@ def reconcile_target_completion(
             audit_record=rec,
         )
 
-    # Engine entweder vom Caller ODER fresh rehydrated.
+    # Engine entweder vom Caller ODER aus dem Prozess-Singleton.
+    # 2026-05-14 P1 #7: das alte `PaperExecutionEngine(initial_equity=10000.0,
+    # ...)`-Konstrukt ignorierte settings.execution.paper_initial_equity und
+    # erzeugte stille Divergenz zwischen Reconciler-Portfolio und Bridge-
+    # Portfolio. Singleton zieht den Wert aus den Settings → konsistent über
+    # alle Konsumenten. rehydrate gegen die per Test ggf. überschriebene
+    # audit_path bleibt nötig, damit Test-Isolation via TempDir-Audit greift.
     eng = engine
     if eng is None:
-        eng = PaperExecutionEngine(initial_equity=10000.0, live_enabled=False)
+        eng = get_paper_engine()
         eng.rehydrate_from_audit(audit_path)
 
     pos = eng.portfolio.positions.get(display_sym)
