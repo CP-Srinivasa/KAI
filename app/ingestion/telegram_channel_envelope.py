@@ -48,11 +48,23 @@ def build_envelope_record(
     source: str = DEFAULT_SOURCE,
     chat_id: int | None = None,
     now: datetime | None = None,
+    scale_factor: float | None = None,
 ) -> dict[str, object]:
     """Wrap a ParsedSignal into the canonical envelope-audit record.
 
     Keep this function pure — it does not touch disk or settings. The
     returned dict is append-ready for the envelope JSONL.
+
+    2026-05-14 (P1 #8): ``scale_factor`` controls the channel-scale
+    annotation that lets the bridge skip its own re-detection:
+    - ``None``  → market_data was unreachable at receive time;
+                   payload keeps raw values + ``scale_unknown=True``;
+                   bridge will re-resolve every tick until it succeeds.
+    - ``1.0``   → channel already in USD scale (BTC, ETH, …);
+                   payload values unchanged + ``scale_resolved_at_emit=True``.
+    - ``>1.0``  → integer-tick scale (e.g. 1e6 for SWARMS);
+                   payload's entry/sl/targets divided by factor +
+                   ``scale_resolved_at_emit=True`` + ``scale_factor=X``.
     """
     from app.messaging.message_models import (
         Direction,
@@ -94,6 +106,21 @@ def build_envelope_record(
         received_ts=ts,
     )
 
+    payload = dict(envelope.payload)
+    # 2026-05-14 (P1 #8): apply scale at receive time so the bridge does
+    # not have to re-resolve on every tick. See ``scale_resolver`` for the
+    # detection logic. If scale_factor is None the worker could not reach
+    # the market_data provider — payload stays raw and the bridge falls
+    # back to its legacy detection until the price comes back.
+    if scale_factor is None:
+        payload["scale_unknown"] = True
+    else:
+        from app.execution.scale_resolver import apply_scale_to_payload
+
+        apply_scale_to_payload(payload, scale_factor)
+        payload["scale_resolved_at_emit"] = True
+        payload["scale_factor"] = float(scale_factor)
+
     record: dict[str, object] = {
         "timestamp_utc": ts,
         "event": "telegram_channel_envelope",
@@ -105,7 +132,7 @@ def build_envelope_record(
         "write_back_allowed": False,
         "envelope_id": envelope.envelope_id,
         "idempotency_key": envelope.idempotency_key,
-        "payload": dict(envelope.payload),
+        "payload": payload,
     }
     if chat_id is not None:
         record["chat_id"] = chat_id
@@ -147,15 +174,21 @@ def emit_parsed_signal(
     envelope_log: Path | None = None,
     lookback: int = 500,
     now: datetime | None = None,
+    scale_factor: float | None = None,
 ) -> dict[str, object] | None:
     """Append an envelope record for `parsed`. Returns the record, or None on dup.
 
     Duplicate detection scans the tail of the log for accepted records
     with the same idempotency_key — so replaying the same channel post
     (e.g. Telethon reconnect) is a no-op.
+
+    ``scale_factor`` is forwarded to ``build_envelope_record`` so the
+    envelope carries the channel-scale annotation set by the worker.
     """
     log_path = envelope_log or _DEFAULT_ENVELOPE_LOG
-    record = build_envelope_record(parsed, source=source, chat_id=chat_id, now=now)
+    record = build_envelope_record(
+        parsed, source=source, chat_id=chat_id, now=now, scale_factor=scale_factor
+    )
     idem = record["idempotency_key"]
     assert isinstance(idem, str)
 

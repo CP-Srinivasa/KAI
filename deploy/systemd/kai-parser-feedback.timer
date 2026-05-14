@@ -1,0 +1,14 @@
+[Unit]
+Description=Trigger KAI Parser-Feedback Aggregator hourly
+
+[Timer]
+# 1h cadence — matches the scan-window in parser_feedback_aggregator.py.
+# Operator gets one digest per hour with up to 5 sample previews; if more
+# than 5 long-unparsed messages accumulate, the alert points at the raw-log.
+OnBootSec=300s
+OnUnitActiveSec=1h
+AccuracySec=60s
+Unit=kai-parser-feedback.service
+
+[Install]
+WantedBy=timers.target
