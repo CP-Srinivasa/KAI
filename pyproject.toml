@@ -52,6 +52,7 @@ dependencies = [
     "mako>=1.3.12",  # CVE-2026-44307
     "python-multipart>=0.0.27",  # CVE-2026-42561
     "pyotp>=2.9.0",  # HOTP-Verifier Task 39 (PR #6)
+    "duckdb>=1.1.0",  # ADR 0003 DuckDB-Pivot Phase 1 (analytical read-layer)
 ]
 
 [project.optional-dependencies]
