@@ -122,3 +122,69 @@ def test_malicious_note_does_not_crash_bridge(tmp_path: Path) -> None:
     # Smoke-filtered (note contains "smoke") — expected.
     assert counts["skipped_smoke"] == 1
     assert counts["written"] == 0
+
+
+# ---------------------------------------------------------------------------
+# Bare-supported ticker fallback (D-223 — bare-asset pair assumption)
+# ---------------------------------------------------------------------------
+
+
+def test_bare_supported_ticker_is_persisted_with_bare_asset(tmp_path: Path) -> None:
+    """Bare-asset ticker (no quote suffix) that maps to a CoinGecko-supported
+    base asset is persisted with ``affected_assets=[BASE]``. Downstream
+    USDT-pair assumption lives in ``docs/architecture/bare_asset_pair_assumption.md``
+    (D-223).
+    """
+    pending = tmp_path / "pending.jsonl"
+    audit = tmp_path / "audit.jsonl"
+    _write_pending(
+        pending,
+        [
+            {
+                "event_id": "bare-1",
+                "ticker": "BTC",
+                "action": "buy",
+                "received_at": "2026-05-14T12:00:00+00:00",
+            }
+        ],
+    )
+
+    counts = persist_tv_events_as_alert_audits(
+        tv_pending_path=pending,
+        alert_audit_path=audit,
+    )
+
+    assert counts["written"] == 1
+    assert counts["skipped_unsupported"] == 0
+    rows = [json.loads(line) for line in audit.read_text(encoding="utf-8").strip().splitlines()]
+    assert len(rows) == 1
+    assert rows[0]["affected_assets"] == ["BTC"]
+
+
+def test_bare_unsupported_ticker_is_still_skipped(tmp_path: Path) -> None:
+    """Bare-asset ticker whose base is NOT in the CoinGecko-supported map
+    must remain unsupported — the bare-asset fallback only applies to
+    supported bases (negative guard against persisting random tickers).
+    """
+    pending = tmp_path / "pending.jsonl"
+    audit = tmp_path / "audit.jsonl"
+    _write_pending(
+        pending,
+        [
+            {
+                "event_id": "bare-unknown-1",
+                "ticker": "XYZUNKNOWN",
+                "action": "buy",
+                "received_at": "2026-05-14T12:00:00+00:00",
+            }
+        ],
+    )
+
+    counts = persist_tv_events_as_alert_audits(
+        tv_pending_path=pending,
+        alert_audit_path=audit,
+    )
+
+    assert counts["written"] == 0
+    assert counts["skipped_unsupported"] == 1
+    assert not audit.exists() or audit.read_text(encoding="utf-8").strip() == ""

@@ -73,6 +73,8 @@ def _split_ticker(ticker: str) -> tuple[str, str] | None:
     for quote in _KNOWN_QUOTES:
         if up.endswith(quote) and len(up) > len(quote):
             return up[: -len(quote)], quote
+    if up in _BASE_ASSET_TO_COINGECKO:
+        return up, ""
     return None
 
 
