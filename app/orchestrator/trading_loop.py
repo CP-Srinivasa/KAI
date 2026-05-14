@@ -994,11 +994,24 @@ def build_trading_loop(
         freshness_threshold_seconds=freshness_threshold_seconds,
         timeout_seconds=timeout_seconds,
     )
+    # Phase 2D — Bayes + Adaptive-Learning Wiring.
+    # Default-off contract: when both risk.bayes_confidence_enabled and
+    # learning.adaptive_learning_enabled are False (the production default),
+    # build_bayes_signal_kwargs returns {} and SignalGenerator runs with the
+    # exact legacy kwargs it had before this wiring landed. The operator
+    # opts in via settings — no silent activation.
+    from app.signals.bayes_activation import build_bayes_signal_kwargs
+
+    bayes_kwargs = build_bayes_signal_kwargs(
+        settings.risk,
+        learning_settings=settings.learning,
+    )
     signal_generator = SignalGenerator(
         min_confidence=settings.risk.min_signal_confidence,
         min_confluence=settings.risk.min_signal_confluence_count,
         mode=normalized_mode.value,
         venue="paper",
+        **bayes_kwargs,
     )
     consensus_validator = _build_consensus_validator(
         enable_consensus,
