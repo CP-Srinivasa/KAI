@@ -6,7 +6,6 @@ import random
 from pathlib import Path
 
 import pytest
-from pydantic import BaseModel
 
 from app.learning.active_calibrator import (
     DEFAULT_BAYES_CALIBRATOR_PATH,
@@ -15,6 +14,7 @@ from app.learning.active_calibrator import (
 from app.learning.calibration import OutcomePair
 from app.learning.config_snapshot import write_snapshot
 from app.learning.regime_calibration import fit_regime_calibrators
+from app.signals.bayesian_confidence import ConfidenceReport
 
 # --------------------------------------------------------------------- helpers
 
@@ -170,37 +170,32 @@ def test_apply_clamps_to_unit_interval(tmp_path: Path):
 # ============================================================================
 
 
-class _ReportStub(BaseModel):
-    """Local stand-in for ``ConfidenceReport`` (lives in Cluster 4 / Bayes-Stack).
-
-    Mirrors only the field surface that ``ActiveCalibrator.apply_to_report``
-    reads (``posterior_probability``, ``uncertainty_score``) and writes via
-    ``model_copy(update=...)`` (``posterior_probability``, ``confidence_score``),
-    plus the fields the preservation test asserts pass-through for.
-    """
-
-    prior_probability: float
-    posterior_probability: float
-    confidence_score: float
-    uncertainty_score: float
-    evidence_weight: float
-    agreement: float
-
-
 def _build_minimal_report(
     *,
     posterior: float = 0.85,
     uncertainty: float = 0.30,
-) -> _ReportStub:
+) -> ConfidenceReport:
+    """Construct a minimal ConfidenceReport for ActiveCalibrator tests.
+
+    Cluster 1 used a local ``_ReportStub`` because ``ConfidenceReport`` lived
+    in the not-yet-extracted Cluster 4 (Bayes-Stack). Now that Cluster 4 is
+    in this PR, we switch back to the real type — keeps the test honest
+    against actual Pydantic field validation and future schema changes.
+    """
     directional_strength = abs(2.0 * posterior - 1.0)
     confidence = directional_strength * (1.0 - uncertainty)
-    return _ReportStub(
+    return ConfidenceReport(
         prior_probability=0.5,
         posterior_probability=posterior,
         confidence_score=round(confidence, 6),
         uncertainty_score=uncertainty,
         evidence_weight=1.0,
         agreement=0.5,
+        increased=(),
+        decreased=(),
+        neutral=(),
+        discarded=(),
+        residual_uncertainty_drivers=(),
     )
 
 
