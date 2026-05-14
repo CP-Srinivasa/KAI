@@ -458,3 +458,91 @@ def test_position_size_leverage_cap():
     # notional = 200 * 3.0 = 600
     # units = 600 / 10000 = 0.06
     assert abs(result.position_size_units - 0.06) < 0.001
+
+
+# --- Gate 9: Regime Filter (Cluster 3b) ---
+
+
+def _regime_check(engine: RiskEngine, *, side: str, entry_price: float, sma: float | None):
+    """Helper: call check_order with all other gates passing, varying only regime inputs."""
+    return engine.check_order(
+        symbol="BTC/USDT",
+        side=side,
+        signal_confidence=0.9,
+        signal_confluence_count=3,
+        stop_loss_price=entry_price * (0.95 if side in {"buy", "long"} else 1.05),
+        current_open_positions=0,
+        entry_price=entry_price,
+        sma=sma,
+    )
+
+
+def test_regime_filter_uptrend_rejects_short():
+    engine = _default_engine(regime_filter_enabled=True)
+    result = _regime_check(engine, side="short", entry_price=110.0, sma=100.0)
+    assert not result.approved
+    assert any("regime_conflict:uptrend_rejects_short" in v for v in result.violations)
+
+
+def test_regime_filter_uptrend_rejects_sell():
+    engine = _default_engine(regime_filter_enabled=True)
+    result = _regime_check(engine, side="sell", entry_price=110.0, sma=100.0)
+    assert not result.approved
+    assert any("regime_conflict:uptrend_rejects_sell" in v for v in result.violations)
+
+
+def test_regime_filter_downtrend_rejects_long():
+    engine = _default_engine(regime_filter_enabled=True)
+    result = _regime_check(engine, side="long", entry_price=90.0, sma=100.0)
+    assert not result.approved
+    assert any("regime_conflict:downtrend_rejects_long" in v for v in result.violations)
+
+
+def test_regime_filter_downtrend_rejects_buy():
+    engine = _default_engine(regime_filter_enabled=True)
+    result = _regime_check(engine, side="buy", entry_price=90.0, sma=100.0)
+    assert not result.approved
+    assert any("regime_conflict:downtrend_rejects_buy" in v for v in result.violations)
+
+
+def test_regime_filter_allows_buy_in_uptrend():
+    engine = _default_engine(regime_filter_enabled=True)
+    result = _regime_check(engine, side="buy", entry_price=110.0, sma=100.0)
+    assert result.approved
+    assert not any("regime_conflict" in v for v in result.violations)
+
+
+def test_regime_filter_allows_short_in_downtrend():
+    engine = _default_engine(regime_filter_enabled=True)
+    result = _regime_check(engine, side="short", entry_price=90.0, sma=100.0)
+    assert result.approved
+    assert not any("regime_conflict" in v for v in result.violations)
+
+
+def test_regime_filter_bypassed_when_sma_none():
+    engine = _default_engine(regime_filter_enabled=True)
+    # short in uptrend would normally be rejected, but sma=None bypasses Gate 9
+    result = _regime_check(engine, side="short", entry_price=110.0, sma=None)
+    assert result.approved
+
+
+def test_regime_filter_bypassed_when_disabled():
+    engine = _default_engine(regime_filter_enabled=False)
+    # short in uptrend would normally be rejected, but flag-off bypasses Gate 9
+    result = _regime_check(engine, side="short", entry_price=110.0, sma=100.0)
+    assert result.approved
+
+
+def test_regime_filter_check_skipped_when_entry_price_omitted():
+    engine = _default_engine(regime_filter_enabled=True)
+    # Without entry_price, Gate 9 can't compare to sma — backwards-compat bypass.
+    result = engine.check_order(
+        symbol="BTC/USDT",
+        side="short",
+        signal_confidence=0.9,
+        signal_confluence_count=3,
+        stop_loss_price=120.0,
+        current_open_positions=0,
+        sma=100.0,
+    )
+    assert result.approved

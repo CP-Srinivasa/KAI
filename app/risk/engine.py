@@ -118,6 +118,7 @@ class RiskEngine:
         is_averaging_down: bool = False,
         entry_price: float | None = None,
         take_profit_price: float | None = None,
+        sma: float | None = None,
     ) -> RiskCheckResult:
         """
         Pre-order risk gate. Must return approved=True before any order is sent.
@@ -219,6 +220,17 @@ class RiskEngine:
             violations.append(
                 f"drawdown_limit_breached:{self._total_drawdown_pct:.2f}%>{self._limits.max_total_drawdown_pct}%"
             )
+
+        # Gate 9: Regime Filter (Anti-Fehlsignal — Cluster 3b)
+        # Reject trades that fight the prevailing trend defined by an SMA reference.
+        # Bypassed when regime_filter_enabled=False OR sma=None OR entry_price=None,
+        # so callers that don't provide regime context remain backwards compatible.
+        if self._limits.regime_filter_enabled and sma is not None and entry_price is not None:
+            side_norm = side.strip().lower()
+            if entry_price > sma and side_norm in {"sell", "short"}:
+                violations.append(f"regime_conflict:uptrend_rejects_{side_norm}")
+            elif entry_price < sma and side_norm in {"buy", "long"}:
+                violations.append(f"regime_conflict:downtrend_rejects_{side_norm}")
 
         approved = len(violations) == 0
         reason = (
