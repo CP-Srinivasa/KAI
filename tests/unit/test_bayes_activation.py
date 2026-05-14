@@ -4,8 +4,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
 from app.core.settings import LearningSettings, RiskSettings
 from app.signals.bayes_activation import build_bayes_signal_kwargs
 from app.signals.bayes_journal import DEFAULT_BAYES_AUDIT_PATH
@@ -27,10 +25,6 @@ def test_disabled_returns_empty_mapping() -> None:
     assert kwargs == {}
 
 
-@pytest.mark.xfail(
-    reason="Cluster 4b: requires SignalGenerator.__init__ bayes_engine/audit/provider kwargs",
-    strict=True,
-)
 def test_disabled_kwargs_preserve_legacy_signal_generator() -> None:
     s = _settings(bayes_confidence_enabled=False)
     gen = SignalGenerator(**build_bayes_signal_kwargs(s))
@@ -106,10 +100,6 @@ def test_regime_engine_omitted_when_bayes_disabled() -> None:
 # ── End-to-End: SignalGenerator mit Activation-Kwargs ────────────────────────
 
 
-@pytest.mark.xfail(
-    reason="Cluster 4b: requires SignalGenerator bayes_engine wiring in __init__ + generate()",
-    strict=True,
-)
 def test_generator_built_from_kwargs_writes_audit(tmp_path: Path) -> None:
     """Aktivator + Generator + Audit-Sidecar laufen zusammen ohne Bruch."""
     from app.core.domain.document import AnalysisResult
