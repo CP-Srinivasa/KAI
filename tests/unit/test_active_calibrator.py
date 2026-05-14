@@ -6,6 +6,7 @@ import random
 from pathlib import Path
 
 import pytest
+from pydantic import BaseModel
 
 from app.learning.active_calibrator import (
     DEFAULT_BAYES_CALIBRATOR_PATH,
@@ -169,28 +170,37 @@ def test_apply_clamps_to_unit_interval(tmp_path: Path):
 # ============================================================================
 
 
+class _ReportStub(BaseModel):
+    """Local stand-in for ``ConfidenceReport`` (lives in Cluster 4 / Bayes-Stack).
+
+    Mirrors only the field surface that ``ActiveCalibrator.apply_to_report``
+    reads (``posterior_probability``, ``uncertainty_score``) and writes via
+    ``model_copy(update=...)`` (``posterior_probability``, ``confidence_score``),
+    plus the fields the preservation test asserts pass-through for.
+    """
+
+    prior_probability: float
+    posterior_probability: float
+    confidence_score: float
+    uncertainty_score: float
+    evidence_weight: float
+    agreement: float
+
+
 def _build_minimal_report(
     *,
     posterior: float = 0.85,
     uncertainty: float = 0.30,
-):
-    """Construct a minimal ConfidenceReport for testing."""
-    from app.signals.bayesian_confidence import ConfidenceReport
-
+) -> _ReportStub:
     directional_strength = abs(2.0 * posterior - 1.0)
     confidence = directional_strength * (1.0 - uncertainty)
-    return ConfidenceReport(
+    return _ReportStub(
         prior_probability=0.5,
         posterior_probability=posterior,
         confidence_score=round(confidence, 6),
         uncertainty_score=uncertainty,
         evidence_weight=1.0,
         agreement=0.5,
-        increased=(),
-        decreased=(),
-        neutral=(),
-        discarded=(),
-        residual_uncertainty_drivers=(),
     )
 
 
