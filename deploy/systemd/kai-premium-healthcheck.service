@@ -1,0 +1,21 @@
+[Unit]
+Description=KAI Premium-Signal-Pipeline End-to-End Healthcheck (P0 #4)
+After=kai-server.service
+# Soft dependency — wir wollen alarmieren wenn kai-server tot ist, also
+# kein Requires=.
+
+[Service]
+Type=oneshot
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/kai/ai_analyst_trading_bot
+EnvironmentFile=/home/kai/ai_analyst_trading_bot/.env
+Environment=PYTHONIOENCODING=utf-8
+ExecStart=/home/kai/ai_analyst_trading_bot/.venv/bin/python /home/kai/ai_analyst_trading_bot/scripts/premium_pipeline_healthcheck.py
+StandardOutput=journal
+StandardError=journal
+# Allow read on /run/systemd/units (default for ubuntu user is fine);
+# DBus socket access for systemd-user is standard for non-root.
+
+[Install]
+WantedBy=multi-user.target
