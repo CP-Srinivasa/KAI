@@ -14,6 +14,7 @@ from app.alerts.audit import (
     append_alert_audit,
 )
 from app.alerts.auto_annotator import (
+    _primary_symbol,
     _scaled_threshold,
     auto_annotate_pending,
 )
@@ -40,6 +41,12 @@ def _make_audit(
         affected_assets=assets or ["BTC/USDT"],
         directional_eligible=True,
     )
+
+
+def test_primary_symbol_pins_bare_asset_to_usdt_pair() -> None:
+    rec = _make_audit(assets=["BTC"])
+
+    assert _primary_symbol(rec) == "BTC/USDT"
 
 
 async def test_bullish_price_up_is_hit(tmp_path: Path) -> None:
