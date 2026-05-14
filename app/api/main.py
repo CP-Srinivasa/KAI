@@ -29,6 +29,7 @@ from app.api.routers import (
     dashboard,
     events,
     health,
+    health_premium_pipeline,
     kai,
     operator,
     premium_signals,
@@ -144,6 +145,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         dashboard_url=op.telegram_dashboard_url,
         signal_approval_enabled=settings.execution.operator_signal_approval_enabled,
         signal_approval_ttl_minutes=settings.execution.operator_signal_approval_ttl_minutes,
+        signal_approval_hmac_secret=settings.execution.operator_signal_approval_hmac_secret,
     )
     poller = TelegramPoller(
         bot,
@@ -251,6 +253,10 @@ def create_app() -> FastAPI:
         return RedirectResponse(url="/dashboard/", status_code=307)
 
     app.include_router(health.router)
+    # 2026-05-14 P0 #4: End-to-End-Pipeline-Healthcheck. Wird vom Operator-
+    # Dashboard + kai-premium-healthcheck.timer konsumiert. Separater Router
+    # damit der triviale /health (Server-Liveness) ohne DBus-Dependency bleibt.
+    app.include_router(health_premium_pipeline.router)
     app.include_router(sources.router)
     app.include_router(query.router)
     app.include_router(alerts.router)

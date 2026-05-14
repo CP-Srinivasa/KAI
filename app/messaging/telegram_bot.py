@@ -172,6 +172,7 @@ class TelegramOperatorBot:
         dashboard_url: str = "",
         signal_approval_enabled: bool = False,
         signal_approval_ttl_minutes: int = 60,
+        signal_approval_hmac_secret: str = "",
     ) -> None:
         normalized_updates = tuple(
             dict.fromkeys(
@@ -224,6 +225,11 @@ class TelegramOperatorBot:
         self._signal_forward_to_exchange_enabled = signal_forward_to_exchange_enabled
         self._signal_approval_enabled = signal_approval_enabled
         self._signal_approval_ttl_minutes = max(1, int(signal_approval_ttl_minutes))
+        # 2026-05-14 P1 #9: HMAC secret for callback_data signing. Empty
+        # string = legacy unsigned mode (migration window). Non-empty =
+        # strict-mode: unsigned callback_data is rejected, signed tokens
+        # must match HMAC + TTL deadline encoded in token.
+        self._signal_approval_hmac_secret = (signal_approval_hmac_secret or "").strip()
         self._pending_confirm: dict[int, str] = {}
         # Voice-Confirm-Gate: voice-transkribierte Signale parken hier, bis /ok oder /cancel
         self._pending_signal_draft: dict[int, dict[str, Any]] = {}
@@ -2809,7 +2815,12 @@ class TelegramOperatorBot:
             parse_callback_data,
         )
 
-        action = parse_callback_data(data)
+        # 2026-05-14 P1 #9: pull HMAC secret from constructor (instance attr,
+        # not get_settings()) so tests can inject an isolated value. Empty
+        # = legacy mode, non-empty = strict-mode.
+        action = parse_callback_data(
+            data, secret=self._signal_approval_hmac_secret or None
+        )
         if action is None:
             await self._answer_callback_query(query_id, text="Ungültige Signal-Aktion.")
             return
