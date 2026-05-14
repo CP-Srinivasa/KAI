@@ -55,7 +55,12 @@ def _intent(**overrides: object) -> ExecutableOrderIntent:
 
 
 def test_paper_adapter_emits_full_kwargs_set() -> None:
-    """Paper adapter must surface every field the engine consumes."""
+    """Paper adapter must surface every field the engine consumes.
+
+    Updated 2026-05-14: PR #12 (Premium-Signal-Pipeline-E2E-Fix, Sprint A 2026-05-12)
+    added `source` + `leverage` kwargs from ExecutableOrderIntent — kwargs-set
+    expanded accordingly. See [[kai_premium_signal_pipeline_e2e_fix_20260512]].
+    """
     kwargs = executable_intent_to_paper_kwargs(_intent())
     expected_keys = {
         "symbol",
@@ -68,6 +73,8 @@ def test_paper_adapter_emits_full_kwargs_set() -> None:
         "idempotency_key",
         "correlation_id",
         "position_side",
+        "source",
+        "leverage",
     }
     assert set(kwargs.keys()) == expected_keys
 
