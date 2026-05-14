@@ -43,8 +43,10 @@ def _replace_table_from_jsonl(
 ) -> None:
     if not source_path.exists():
         return
-    con.execute(  # nosec B608 — table_name is hardcoded internal literal (execution_audit/alert_audit/alert_outcomes/loop_audit), never external input
-        f"CREATE OR REPLACE TABLE {table_name} AS "
+    # table_name is a hardcoded internal literal (execution_audit/alert_audit/
+    # alert_outcomes/loop_audit, see callers below); never external input.
+    con.execute(
+        f"CREATE OR REPLACE TABLE {table_name} AS "  # nosec B608
         f"SELECT * FROM read_json_auto("
         f"{_path_literal(source_path)}, maximum_object_size={_MAX_JSON_OBJECT_SIZE}"
         ")"
