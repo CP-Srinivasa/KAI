@@ -123,6 +123,7 @@ jobs:
             ':!.github/workflows/ci.yml'
             ':!tests/unit/test_audit_sanitization.py'
             ':!tests/unit/test_structured_reasoning.py'
+            ':!tests/unit/test_bayes_journal_sanitize.py'
           )
 
           for pat in "${PATTERNS[@]}"; do
