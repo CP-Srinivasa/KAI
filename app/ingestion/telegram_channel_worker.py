@@ -372,6 +372,7 @@ def process_message(
     raw_log_path: Path,
     emit_fn: Callable[..., dict[str, object] | None] = emit_parsed_signal,
     now: datetime | None = None,
+    scale_factor: float | None = None,
 ) -> dict[str, object]:
     """Parse one channel message and emit an envelope if it's a signal.
 
@@ -380,6 +381,11 @@ def process_message(
 
         {"parsed": bool, "emitted": bool,
          "envelope_id": str | None, "reason": str}
+
+    ``scale_factor`` (2026-05-14 P1 #8): forwarded to ``emit_fn`` so the
+    persisted envelope carries the resolved channel scale. ``None`` means
+    market_data was unreachable at receive time and the envelope is
+    annotated ``scale_unknown=True``.
     """
     ts = (now or datetime.now(UTC)).isoformat()
     parsed = parse_premium_channel_message(text or "")
@@ -410,6 +416,13 @@ def process_message(
                 "completion_raw_text": completion.raw_text,
             }
         base["outcome"] = "not_a_signal"
+        # 2026-05-14 P1 #10: Parser-Feedback-Loop braucht ein Preview vom Roh-
+        # Text damit der Operator beim stündlichen Aggregat sieht, welches
+        # Channel-Format er nicht parsen kann. Nur für Long-Messages (>50 Zeichen)
+        # — kurzer Chat-Noise (👍, "ok", "thanks") braucht keine Aufmerksamkeit.
+        # Truncated auf 200 Zeichen damit das raw-log nicht explodiert.
+        if len(text or "") > 50:
+            base["text_preview"] = (text or "")[:200]
         _append_raw_log(raw_log_path, base)
         return {
             "parsed": False,
@@ -428,6 +441,7 @@ def process_message(
         source=source_tag,
         chat_id=chat_id,
         now=now,
+        scale_factor=scale_factor,
     )
     if record is None:
         return {
@@ -680,6 +694,11 @@ async def run_worker(cfg: TelegramChannelIngestSettings | None = None) -> None:
         full_settings = get_settings()
         approval_enabled = full_settings.execution.operator_signal_approval_enabled
         approval_ttl_min = full_settings.execution.operator_signal_approval_ttl_minutes
+        # 2026-05-14 P1 #9: HMAC secret for callback_data. Empty string = legacy
+        # unsigned mode; non-empty = strict-mode (signed tokens, TTL-enforced).
+        approval_hmac_secret = (
+            full_settings.execution.operator_signal_approval_hmac_secret or ""
+        )
         # 2026-05-12 Sprint B: Premium-Auto-Fill (paper-mode-only). Wenn aktiv,
         # triggert der Worker nach jedem accepted Envelope sofort den fill-Pfad
         # ohne Operator-Klick. ADR 0004.
@@ -790,6 +809,35 @@ async def run_worker(cfg: TelegramChannelIngestSettings | None = None) -> None:
         # closes the longer-outage gap (e.g. laptop sleep, restart, session
         # rebuild). Skipped silently when no checkpoint exists yet so we
         # don't accidentally replay channel history on first run.
+
+        # 2026-05-14 P1 #8: pre-receive channel-scale resolver. Worker fetches
+        # the current provider price for the parsed symbol and detects the
+        # power-of-ten factor BEFORE persisting the envelope. Two outcomes:
+        # - factor resolved (1.0 .. 1e8) → envelope-payload carries scaled
+        #   values + ``scale_resolved_at_emit=True`` + ``scale_factor=X``.
+        #   Bridge skips its own re-detection (cheaper per tick).
+        # - market_data unreachable → factor=None → envelope marked
+        #   ``scale_unknown=True``; bridge falls back to per-tick detection
+        #   until the provider answers (legacy behaviour).
+        # Fail-soft: any exception in the resolver path is logged and we fall
+        # through with scale_factor=None — never block the emit on price-fetch.
+        async def _resolve_channel_scale(text: str) -> float | None:
+            try:
+                from app.execution.scale_resolver import resolve_scale_for_symbol
+
+                parsed = parse_premium_channel_message(text or "")
+                if parsed is None or parsed.entry_value is None or parsed.entry_value <= 0:
+                    return None
+                return await resolve_scale_for_symbol(
+                    parsed.display_symbol, float(parsed.entry_value)
+                )
+            except Exception as exc:  # noqa: BLE001 — scale-resolve must not stall the listener
+                logger.warning(
+                    "[channel-worker] scale-resolve failed: %s — emitting as scale_unknown",
+                    exc,
+                )
+                return None
+
         # V25 (2026-05-04): single approval-send helper used by BOTH the live
         # NewMessage handler and the gap-replay loop. Pre-V25 only the live
         # handler sent approval pushes — replayed signals slipped through to
@@ -824,6 +872,7 @@ async def run_worker(cfg: TelegramChannelIngestSettings | None = None) -> None:
                 bot_token=bot_token,
                 chat_id=approval_chat_id,
                 ttl_minutes=approval_ttl_min,
+                hmac_secret=approval_hmac_secret or None,
             )
             logger.info(
                 "[channel-worker] approval request env=%s replay=%s sent=%s",
@@ -852,11 +901,15 @@ async def run_worker(cfg: TelegramChannelIngestSettings | None = None) -> None:
                 # cold-boot window would look "0 messages since boot"
                 # even when 50 signals were just recovered.
                 _record_message_observed(heartbeat_path)
+                # 2026-05-14 P1 #8: pre-resolve channel-scale-factor before
+                # emit so the bridge does not have to re-detect on every tick.
+                scale_factor = await _resolve_channel_scale(text)
                 summary = process_message(
                     text,
                     source_tag=cfg.source_tag,
                     chat_id=chat_id_marked,
                     raw_log_path=raw_log,
+                    scale_factor=scale_factor,
                 )
                 save_checkpoint(checkpoint_path, chat_id_marked, msg_id)
                 # V25: replayed signals get the same approval-send treatment
@@ -894,11 +947,14 @@ async def run_worker(cfg: TelegramChannelIngestSettings | None = None) -> None:
             text = getattr(event, "raw_text", "") or getattr(event.message, "message", "")
             chat_id = getattr(event, "chat_id", None)
             msg_id = getattr(getattr(event, "message", None), "id", None)
+            # 2026-05-14 P1 #8: pre-resolve channel-scale-factor before emit.
+            scale_factor = await _resolve_channel_scale(text)
             summary = process_message(
                 text,
                 source_tag=cfg.source_tag,
                 chat_id=chat_id,
                 raw_log_path=raw_log,
+                scale_factor=scale_factor,
             )
             # Advance checkpoint after every observed message — including
             # non-signals. Otherwise a long run of chatter without signals
