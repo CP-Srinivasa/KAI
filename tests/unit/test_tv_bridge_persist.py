@@ -137,12 +137,17 @@ def test_bare_supported_ticker_is_persisted_with_bare_asset(tmp_path: Path) -> N
     """
     pending = tmp_path / "pending.jsonl"
     audit = tmp_path / "audit.jsonl"
-    _write_pending(pending, [{
-        "event_id": "bare-1",
-        "ticker": "BTC",
-        "action": "buy",
-        "received_at": "2026-05-14T12:00:00+00:00",
-    }])
+    _write_pending(
+        pending,
+        [
+            {
+                "event_id": "bare-1",
+                "ticker": "BTC",
+                "action": "buy",
+                "received_at": "2026-05-14T12:00:00+00:00",
+            }
+        ],
+    )
 
     counts = persist_tv_events_as_alert_audits(
         tv_pending_path=pending,
@@ -151,10 +156,7 @@ def test_bare_supported_ticker_is_persisted_with_bare_asset(tmp_path: Path) -> N
 
     assert counts["written"] == 1
     assert counts["skipped_unsupported"] == 0
-    rows = [
-        json.loads(line)
-        for line in audit.read_text(encoding="utf-8").strip().splitlines()
-    ]
+    rows = [json.loads(line) for line in audit.read_text(encoding="utf-8").strip().splitlines()]
     assert len(rows) == 1
     assert rows[0]["affected_assets"] == ["BTC"]
 
@@ -166,12 +168,17 @@ def test_bare_unsupported_ticker_is_still_skipped(tmp_path: Path) -> None:
     """
     pending = tmp_path / "pending.jsonl"
     audit = tmp_path / "audit.jsonl"
-    _write_pending(pending, [{
-        "event_id": "bare-unknown-1",
-        "ticker": "XYZUNKNOWN",
-        "action": "buy",
-        "received_at": "2026-05-14T12:00:00+00:00",
-    }])
+    _write_pending(
+        pending,
+        [
+            {
+                "event_id": "bare-unknown-1",
+                "ticker": "XYZUNKNOWN",
+                "action": "buy",
+                "received_at": "2026-05-14T12:00:00+00:00",
+            }
+        ],
+    )
 
     counts = persist_tv_events_as_alert_audits(
         tv_pending_path=pending,
