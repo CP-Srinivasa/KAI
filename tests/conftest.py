@@ -19,6 +19,24 @@ def _pin_feature_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("EXECUTION_PAPER_MIN_PRIORITY", "1")
 
 
+@pytest.fixture(autouse=True)
+def _reset_paper_engine_singleton() -> None:
+    """Drop the PaperExecutionEngine singleton between tests (P1 #7).
+
+    The 2026-05-14 singleton-refactor (``app.execution.paper_engine_singleton``)
+    means one engine instance is reused across all consumers within a process.
+    In production that is correct; in tests it would leak ``_filled_keys`` and
+    portfolio state from one case into the next (Bridge tests open env-001 →
+    next test re-fires env-001 → DuplicateOrderError). Clearing the cache
+    before and after every test enforces deterministic per-test isolation.
+    """
+    from app.execution.paper_engine_singleton import reset_paper_engine_cache
+
+    reset_paper_engine_cache()
+    yield
+    reset_paper_engine_cache()
+
+
 @pytest.fixture
 def client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
     """TestClient with auth disabled (APP_ENV=testing, no API key).
