@@ -134,6 +134,30 @@ async def test_check_alert_price_moves_prefers_historical_window() -> None:
 
 
 @pytest.mark.asyncio
+async def test_check_alert_price_moves_pins_bare_asset_to_usdt_pair() -> None:
+    rec = AlertAuditRecord(
+        document_id="doc-bare-btc",
+        channel="telegram",
+        message_id="dry_run",
+        is_digest=False,
+        dispatched_at="2026-03-20T12:00:00+00:00",
+        sentiment_label="bullish",
+        affected_assets=["BTC"],
+    )
+
+    with patch(
+        "app.alerts.price_check.CoinGeckoAdapter.get_price_change_between",
+        new=AsyncMock(return_value=(100.0, 104.0, 4.0)),
+    ) as mock_hist:
+        out = await check_alert_price_moves([rec], threshold_pct=2.0, horizon_hours=24)
+
+    assert len(out) == 1
+    assert out[0].asset == "BTC"
+    assert out[0].suggested_outcome == "hit"
+    assert mock_hist.call_args.args[0] == "BTC/USDT"
+
+
+@pytest.mark.asyncio
 async def test_check_alert_price_moves_falls_back_to_ticker() -> None:
     rec = AlertAuditRecord(
         document_id="doc-2",
