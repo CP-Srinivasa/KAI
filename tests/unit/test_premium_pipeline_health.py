@@ -22,6 +22,7 @@ def _fake_service_check_factory(state: str):
             ok=(state == "active"),
             detail=f"ActiveState={state}",
         )
+
     return _check
 
 
@@ -33,20 +34,30 @@ def _fake_timer_check_factory(*, ok: bool, age_seconds: float):
             detail=f"fake age={age_seconds}s",
             age_seconds=age_seconds,
         )
+
     return _check
 
 
 def _fake_hb_check_factory(*, ok: bool):
-    def _check(max_age_seconds: int, now: datetime | None = None, path: Path | None = None) -> pph.CheckResult:
+    def _check(
+        max_age_seconds: int,
+        now: datetime | None = None,
+        path: Path | None = None,
+    ) -> pph.CheckResult:
         return pph.CheckResult(name="heartbeat", ok=ok, detail="fake")
+
     return _check
 
 
-def _fake_audit_check() -> "pph.CheckResult":
+def _fake_audit_check() -> pph.CheckResult:
     return pph.CheckResult(name="bridge_audit_last_event", ok=True, detail="fake")
 
 
-def _fake_audit_check_fn(info_age_seconds: int, now: datetime | None = None, path: Path | None = None):
+def _fake_audit_check_fn(
+    info_age_seconds: int,
+    now: datetime | None = None,
+    path: Path | None = None,
+):
     return _fake_audit_check()
 
 
@@ -122,6 +133,7 @@ def test_real_heartbeat_check_with_stale_file(tmp_path: Path):
     # Reach back 200s — older than the 90s default ceiling.
     stale_ts = (datetime.now(UTC) - timedelta(seconds=200)).timestamp()
     import os
+
     os.utime(hb, (stale_ts, stale_ts))
     result = pph._check_heartbeat(max_age_seconds=90, path=hb)
     assert result.ok is False

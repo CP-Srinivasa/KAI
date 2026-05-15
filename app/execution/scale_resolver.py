@@ -25,8 +25,8 @@ wraps the market_data service; callers inject a fake fetcher for tests.
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
 import logging
+from collections.abc import Awaitable, Callable
 
 from app.core.settings import get_settings
 from app.market_data.service import get_market_data_snapshot

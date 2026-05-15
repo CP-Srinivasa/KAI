@@ -6,7 +6,6 @@ import pytest
 
 from app.execution import scale_resolver as sr
 
-
 # ── detect_scale_factor ─────────────────────────────────────────────────────
 
 
