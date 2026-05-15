@@ -2818,9 +2818,7 @@ class TelegramOperatorBot:
         # 2026-05-14 P1 #9: pull HMAC secret from constructor (instance attr,
         # not get_settings()) so tests can inject an isolated value. Empty
         # = legacy mode, non-empty = strict-mode.
-        action = parse_callback_data(
-            data, secret=self._signal_approval_hmac_secret or None
-        )
+        action = parse_callback_data(data, secret=self._signal_approval_hmac_secret or None)
         if action is None:
             await self._answer_callback_query(query_id, text="Ungültige Signal-Aktion.")
             return

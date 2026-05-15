@@ -285,7 +285,7 @@ def _compute_callback_hmac(
     ``ttl_deadline_unix`` so a leaked token cannot be replayed past its
     TTL — even before ``handle_signal_approval``'s envelope-id dedup runs.
     """
-    msg = f"{action}:{envelope_id}:{ttl_deadline_unix}".encode("utf-8")
+    msg = f"{action}:{envelope_id}:{ttl_deadline_unix}".encode()
     digest = hmac.new(secret.encode("utf-8"), msg, hashlib.sha256).hexdigest()
     return digest[:_CB_HMAC_PREFIX_LEN]
 
@@ -366,9 +366,7 @@ def parse_callback_data(
     if len(parts) == 3:
         # Legacy form — only accepted while secret is unset (migration mode)
         if has_secret:
-            logger.info(
-                "[approval] legacy unsigned callback rejected under HMAC strict-mode"
-            )
+            logger.info("[approval] legacy unsigned callback rejected under HMAC strict-mode")
             return None
         return CallbackAction(action=action_name, envelope_id=parts[2])
 
@@ -391,9 +389,7 @@ def parse_callback_data(
         expected = _compute_callback_hmac(secret, code, env_id, ttl_deadline_unix)
         # Constant-time compare prevents timing oracles on the 8-hex tag.
         if not hmac.compare_digest(provided_hmac, expected):
-            logger.warning(
-                "[approval] callback hmac mismatch env=%s — rejected", env_id
-            )
+            logger.warning("[approval] callback hmac mismatch env=%s — rejected", env_id)
             return None
 
         current = (now or datetime.now(UTC)).timestamp()
@@ -755,9 +751,7 @@ async def send_approval_request(
     # ttl_deadline_unix is computed here (not at parse time) so the bot can
     # verify the token without re-fetching the envelope's send timestamp.
     ttl_deadline_unix = (
-        int(datetime.now(UTC).timestamp()) + ttl_minutes * 60
-        if hmac_secret
-        else None
+        int(datetime.now(UTC).timestamp()) + ttl_minutes * 60 if hmac_secret else None
     )
     keyboard = build_inline_keyboard(
         str(env_id), secret=hmac_secret, ttl_deadline_unix=ttl_deadline_unix

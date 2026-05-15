@@ -10,12 +10,11 @@ Verifiziert:
 
 from __future__ import annotations
 
+import importlib.util
 import json
+import sys
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-
-import importlib.util
-import sys
 
 # Load the aggregator as a module (it lives in scripts/, not in app/)
 _SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "parser_feedback_aggregator.py"
@@ -45,16 +44,24 @@ def test_scan_returns_empty_list_when_no_records(tmp_path: Path):
 def test_scan_matches_only_not_a_signal_with_long_text(tmp_path: Path):
     now = datetime.now(UTC)
     log = tmp_path / "raw.jsonl"
-    _write_log(log, [
-        # Match: not_a_signal + long
-        {"timestamp_utc": now.isoformat(), "outcome": "not_a_signal", "text_len": 100, "text_preview": "lang"},
-        # Skip: parsed (signal worked)
-        {"timestamp_utc": now.isoformat(), "outcome": "parsed", "text_len": 100},
-        # Skip: too short
-        {"timestamp_utc": now.isoformat(), "outcome": "not_a_signal", "text_len": 20},
-        # Skip: target_completion (separate flow)
-        {"timestamp_utc": now.isoformat(), "outcome": "target_completion", "text_len": 100},
-    ])
+    _write_log(
+        log,
+        [
+            # Match: not_a_signal + long
+            {
+                "timestamp_utc": now.isoformat(),
+                "outcome": "not_a_signal",
+                "text_len": 100,
+                "text_preview": "lang",
+            },
+            # Skip: parsed (signal worked)
+            {"timestamp_utc": now.isoformat(), "outcome": "parsed", "text_len": 100},
+            # Skip: too short
+            {"timestamp_utc": now.isoformat(), "outcome": "not_a_signal", "text_len": 20},
+            # Skip: target_completion (separate flow)
+            {"timestamp_utc": now.isoformat(), "outcome": "target_completion", "text_len": 100},
+        ],
+    )
     matches = pfa.scan_unparsed(log, now=now)
     assert len(matches) == 1
     assert matches[0]["text_preview"] == "lang"
@@ -65,10 +72,23 @@ def test_scan_window_cutoff_excludes_old_records(tmp_path: Path):
     old_ts = (now - timedelta(minutes=90)).isoformat()
     fresh_ts = (now - timedelta(minutes=30)).isoformat()
     log = tmp_path / "raw.jsonl"
-    _write_log(log, [
-        {"timestamp_utc": old_ts, "outcome": "not_a_signal", "text_len": 100, "text_preview": "old"},
-        {"timestamp_utc": fresh_ts, "outcome": "not_a_signal", "text_len": 100, "text_preview": "fresh"},
-    ])
+    _write_log(
+        log,
+        [
+            {
+                "timestamp_utc": old_ts,
+                "outcome": "not_a_signal",
+                "text_len": 100,
+                "text_preview": "old",
+            },
+            {
+                "timestamp_utc": fresh_ts,
+                "outcome": "not_a_signal",
+                "text_len": 100,
+                "text_preview": "fresh",
+            },
+        ],
+    )
     matches = pfa.scan_unparsed(log, window_minutes=60, now=now)
     assert len(matches) == 1
     assert matches[0]["text_preview"] == "fresh"
@@ -77,11 +97,14 @@ def test_scan_window_cutoff_excludes_old_records(tmp_path: Path):
 def test_scan_tolerates_malformed_json_lines(tmp_path: Path):
     now = datetime.now(UTC)
     log = tmp_path / "raw.jsonl"
+    valid_record = {
+        "timestamp_utc": now.isoformat(),
+        "outcome": "not_a_signal",
+        "text_len": 100,
+        "text_preview": "ok",
+    }
     log.write_text(
-        "not-json-line\n"
-        + json.dumps({"timestamp_utc": now.isoformat(), "outcome": "not_a_signal", "text_len": 100, "text_preview": "ok"})
-        + "\n"
-        + "{broken\n",
+        "not-json-line\n" + json.dumps(valid_record) + "\n" + "{broken\n",
         encoding="utf-8",
     )
     matches = pfa.scan_unparsed(log, now=now)
@@ -91,10 +114,13 @@ def test_scan_tolerates_malformed_json_lines(tmp_path: Path):
 def test_scan_skips_records_without_timestamp(tmp_path: Path):
     now = datetime.now(UTC)
     log = tmp_path / "raw.jsonl"
-    _write_log(log, [
-        {"outcome": "not_a_signal", "text_len": 100},
-        {"timestamp_utc": now.isoformat(), "outcome": "not_a_signal", "text_len": 100},
-    ])
+    _write_log(
+        log,
+        [
+            {"outcome": "not_a_signal", "text_len": 100},
+            {"timestamp_utc": now.isoformat(), "outcome": "not_a_signal", "text_len": 100},
+        ],
+    )
     matches = pfa.scan_unparsed(log, now=now)
     assert len(matches) == 1
 

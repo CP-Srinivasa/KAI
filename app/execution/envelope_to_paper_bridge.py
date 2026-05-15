@@ -41,6 +41,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from app.core.settings import get_settings
 from app.execution.models import (
@@ -53,6 +54,9 @@ from app.execution.paper_engine_singleton import get_paper_engine
 from app.market_data.service import get_market_data_snapshot
 from app.risk.engine import RiskEngine
 from app.risk.models import RiskLimits
+
+if TYPE_CHECKING:
+    from app.execution.paper_engine import PaperExecutionEngine
 
 logger = logging.getLogger(__name__)
 

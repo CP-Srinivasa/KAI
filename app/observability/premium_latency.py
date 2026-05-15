@@ -28,7 +28,7 @@ from __future__ import annotations
 import json
 import logging
 import math
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -96,9 +96,7 @@ def _get_or_init_baseline(path: Path, now: datetime) -> datetime:
                 ts = datetime.fromisoformat(raw)
                 return ts if ts.tzinfo else ts.replace(tzinfo=UTC)
         except (json.JSONDecodeError, ValueError) as exc:
-            logger.warning(
-                "[latency] baseline read failed (%s) — re-initialising", exc
-            )
+            logger.warning("[latency] baseline read failed (%s) — re-initialising", exc)
     payload = {
         "baseline_at": now.isoformat(),
         "rationale": (
@@ -199,8 +197,7 @@ def compute_latency_stats(
     if p95 is not None and n >= trigger_min_samples and p95 > trigger_p95_seconds:
         trigger_fired = True
         trigger_reason = (
-            f"p95={p95:.0f}s > {trigger_p95_seconds}s "
-            f"AND samples={n} >= {trigger_min_samples}"
+            f"p95={p95:.0f}s > {trigger_p95_seconds}s AND samples={n} >= {trigger_min_samples}"
         )
 
     return LatencyStats(

@@ -696,9 +696,7 @@ async def run_worker(cfg: TelegramChannelIngestSettings | None = None) -> None:
         approval_ttl_min = full_settings.execution.operator_signal_approval_ttl_minutes
         # 2026-05-14 P1 #9: HMAC secret for callback_data. Empty string = legacy
         # unsigned mode; non-empty = strict-mode (signed tokens, TTL-enforced).
-        approval_hmac_secret = (
-            full_settings.execution.operator_signal_approval_hmac_secret or ""
-        )
+        approval_hmac_secret = full_settings.execution.operator_signal_approval_hmac_secret or ""
         # 2026-05-12 Sprint B: Premium-Auto-Fill (paper-mode-only). Wenn aktiv,
         # triggert der Worker nach jedem accepted Envelope sofort den fill-Pfad
         # ohne Operator-Klick. ADR 0004.

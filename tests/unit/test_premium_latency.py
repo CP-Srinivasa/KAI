@@ -10,7 +10,6 @@ import pytest
 
 from app.observability import premium_latency as pl
 
-
 _NOW = datetime(2026, 5, 21, 6, 5, tzinfo=UTC)
 
 
@@ -70,10 +69,10 @@ def test_single_fill_yields_one_sample(tmp_path: Path, baseline_path: Path):
 def test_below_min_samples_does_not_trigger(tmp_path: Path, baseline_path: Path):
     log = tmp_path / "bridge.jsonl"
     # 4 samples all 30 min — high latency but n < min_samples
-    _write_audit(log, [
-        _fill_record(fill_offset_sec=100 + i, origin_offset_sec=100 + i + 1800)
-        for i in range(4)
-    ])
+    _write_audit(
+        log,
+        [_fill_record(fill_offset_sec=100 + i, origin_offset_sec=100 + i + 1800) for i in range(4)],
+    )
     stats = pl.compute_latency_stats(audit_path=log, baseline_path=baseline_path, now=_NOW)
     assert stats.sample_size == 4
     assert stats.p95_seconds >= 20 * 60
@@ -83,10 +82,10 @@ def test_below_min_samples_does_not_trigger(tmp_path: Path, baseline_path: Path)
 def test_high_p95_with_enough_samples_fires_trigger(tmp_path: Path, baseline_path: Path):
     log = tmp_path / "bridge.jsonl"
     # 5 fills, all 30 min latency → p95 = 1800s > 20min, n=5 >= 5 → fires
-    _write_audit(log, [
-        _fill_record(fill_offset_sec=100 + i, origin_offset_sec=100 + i + 1800)
-        for i in range(5)
-    ])
+    _write_audit(
+        log,
+        [_fill_record(fill_offset_sec=100 + i, origin_offset_sec=100 + i + 1800) for i in range(5)],
+    )
     stats = pl.compute_latency_stats(audit_path=log, baseline_path=baseline_path, now=_NOW)
     assert stats.sample_size == 5
     assert stats.p95_seconds == 1800
@@ -98,10 +97,10 @@ def test_high_p95_with_enough_samples_fires_trigger(tmp_path: Path, baseline_pat
 def test_low_p95_does_not_trigger_even_with_many_samples(tmp_path: Path, baseline_path: Path):
     log = tmp_path / "bridge.jsonl"
     # 20 fills, all 5 min latency
-    _write_audit(log, [
-        _fill_record(fill_offset_sec=100 + i, origin_offset_sec=100 + i + 300)
-        for i in range(20)
-    ])
+    _write_audit(
+        log,
+        [_fill_record(fill_offset_sec=100 + i, origin_offset_sec=100 + i + 300) for i in range(20)],
+    )
     stats = pl.compute_latency_stats(audit_path=log, baseline_path=baseline_path, now=_NOW)
     assert stats.sample_size == 20
     assert stats.p95_seconds == 300
@@ -112,14 +111,17 @@ def test_records_outside_lookback_excluded(tmp_path: Path, baseline_path: Path):
     log = tmp_path / "bridge.jsonl"
     # 10 fills 30 days ago — outside 7-day lookback
     ts_old = (_NOW - timedelta(days=30)).isoformat()
-    _write_audit(log, [
-        {
-            "timestamp_utc": ts_old,
-            "stage": "filled",
-            "origin_envelope_timestamp": (_NOW - timedelta(days=30, seconds=1800)).isoformat(),
-        }
-        for _ in range(10)
-    ])
+    _write_audit(
+        log,
+        [
+            {
+                "timestamp_utc": ts_old,
+                "stage": "filled",
+                "origin_envelope_timestamp": (_NOW - timedelta(days=30, seconds=1800)).isoformat(),
+            }
+            for _ in range(10)
+        ],
+    )
     stats = pl.compute_latency_stats(audit_path=log, baseline_path=baseline_path, now=_NOW)
     assert stats.sample_size == 0
 
@@ -127,13 +129,15 @@ def test_records_outside_lookback_excluded(tmp_path: Path, baseline_path: Path):
 def test_expired_records_counted_separately(tmp_path: Path, baseline_path: Path):
     log = tmp_path / "bridge.jsonl"
     records = [_fill_record(fill_offset_sec=100, origin_offset_sec=300)]
-    records.extend([
-        {
-            "timestamp_utc": (_NOW - timedelta(seconds=200 + i)).isoformat(),
-            "stage": "expired",
-        }
-        for i in range(3)
-    ])
+    records.extend(
+        [
+            {
+                "timestamp_utc": (_NOW - timedelta(seconds=200 + i)).isoformat(),
+                "stage": "expired",
+            }
+            for i in range(3)
+        ]
+    )
     _write_audit(log, records)
     stats = pl.compute_latency_stats(audit_path=log, baseline_path=baseline_path, now=_NOW)
     assert stats.sample_size == 1
@@ -143,14 +147,17 @@ def test_expired_records_counted_separately(tmp_path: Path, baseline_path: Path)
 
 def test_filled_duplicate_suppressed_counts_as_sample(tmp_path: Path, baseline_path: Path):
     log = tmp_path / "bridge.jsonl"
-    _write_audit(log, [
-        _fill_record(fill_offset_sec=100, origin_offset_sec=400),
-        {
-            "timestamp_utc": (_NOW - timedelta(seconds=50)).isoformat(),
-            "stage": "filled_duplicate_suppressed",
-            "origin_envelope_timestamp": (_NOW - timedelta(seconds=200)).isoformat(),
-        },
-    ])
+    _write_audit(
+        log,
+        [
+            _fill_record(fill_offset_sec=100, origin_offset_sec=400),
+            {
+                "timestamp_utc": (_NOW - timedelta(seconds=50)).isoformat(),
+                "stage": "filled_duplicate_suppressed",
+                "origin_envelope_timestamp": (_NOW - timedelta(seconds=200)).isoformat(),
+            },
+        ],
+    )
     stats = pl.compute_latency_stats(audit_path=log, baseline_path=baseline_path, now=_NOW)
     assert stats.sample_size == 2
 
@@ -174,11 +181,16 @@ def test_malformed_lines_tolerated(tmp_path: Path, baseline_path: Path):
 def test_negative_latency_dropped_clock_skew(tmp_path: Path, baseline_path: Path):
     log = tmp_path / "bridge.jsonl"
     # Fill timestamp BEFORE origin — impossible without clock skew
-    _write_audit(log, [{
-        "timestamp_utc": (_NOW - timedelta(seconds=500)).isoformat(),
-        "stage": "filled",
-        "origin_envelope_timestamp": (_NOW - timedelta(seconds=100)).isoformat(),
-    }])
+    _write_audit(
+        log,
+        [
+            {
+                "timestamp_utc": (_NOW - timedelta(seconds=500)).isoformat(),
+                "stage": "filled",
+                "origin_envelope_timestamp": (_NOW - timedelta(seconds=100)).isoformat(),
+            }
+        ],
+    )
     stats = pl.compute_latency_stats(audit_path=log, baseline_path=baseline_path, now=_NOW)
     assert stats.sample_size == 0
 
@@ -202,9 +214,7 @@ def test_baseline_suppresses_pre_fix_outliers(tmp_path: Path):
     ]
     _write_audit(log, pre_fix_records)
     # First call writes baseline = _NOW → all pre-fix records get cut
-    stats = pl.compute_latency_stats(
-        audit_path=log, baseline_path=fresh_baseline, now=_NOW
-    )
+    stats = pl.compute_latency_stats(audit_path=log, baseline_path=fresh_baseline, now=_NOW)
     assert stats.sample_size == 0
     assert stats.trigger_fired is False
     assert fresh_baseline.exists()

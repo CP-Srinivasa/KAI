@@ -102,9 +102,7 @@ def _dbus_get_unit_path_and_state(unit: str) -> tuple[str, str]:
             bus_name=_SYSTEMD_BUS,
             interface=_SYSTEMD_MANAGER_IFACE,
         )
-        unit_path_reply = conn.send_and_get_reply(
-            new_method_call(manager, "GetUnit", "s", (unit,))
-        )
+        unit_path_reply = conn.send_and_get_reply(new_method_call(manager, "GetUnit", "s", (unit,)))
         unit_path = unit_path_reply.body[0]
         state_reply = conn.send_and_get_reply(
             new_method_call(
@@ -204,9 +202,7 @@ def _check_heartbeat(
 ) -> CheckResult:
     target = path or _HEARTBEAT_FILE
     if not target.exists():
-        return CheckResult(
-            name="heartbeat", ok=False, detail=f"missing: {target}"
-        )
+        return CheckResult(name="heartbeat", ok=False, detail=f"missing: {target}")
     try:
         mtime = datetime.fromtimestamp(target.stat().st_mtime, tz=UTC)
     except OSError as exc:

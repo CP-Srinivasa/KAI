@@ -6,10 +6,7 @@ import hashlib
 import hmac as _hmac
 from datetime import UTC, datetime, timedelta
 
-import pytest
-
 from app.ingestion import telegram_channel_approval as approval
-
 
 _SECRET = "test-secret-do-not-use-in-prod"
 _ENV_ID = "ENV-20260514120000-deadbeef"
@@ -33,9 +30,7 @@ def test_build_keyboard_legacy_when_no_secret():
 
 def test_build_keyboard_signed_when_secret_and_ttl():
     ttl_unix = 1746273600
-    kb = approval.build_inline_keyboard(
-        _ENV_ID, secret=_SECRET, ttl_deadline_unix=ttl_unix
-    )
+    kb = approval.build_inline_keyboard(_ENV_ID, secret=_SECRET, ttl_deadline_unix=ttl_unix)
     fill_cb = kb[0][0]["callback_data"]
     parts = fill_cb.split(":")
     assert len(parts) == 5
@@ -53,9 +48,7 @@ def test_build_keyboard_falls_back_to_legacy_when_ttl_missing():
 def test_callback_data_under_telegram_64_byte_limit():
     # Realistic worst case: 32-byte secret, longest reasonable ttl, longest env_id.
     ttl_unix = 9999999999
-    kb = approval.build_inline_keyboard(
-        _ENV_ID, secret="x" * 64, ttl_deadline_unix=ttl_unix
-    )
+    kb = approval.build_inline_keyboard(_ENV_ID, secret="x" * 64, ttl_deadline_unix=ttl_unix)
     for row in kb:
         for button in row:
             assert len(button["callback_data"].encode("utf-8")) <= 64
