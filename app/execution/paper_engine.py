@@ -888,17 +888,24 @@ class PaperExecutionEngine:
         symbol: str,
         current_price: float,
         reason: str = "manual",
-    ) -> tuple[PaperOrder, PaperFill | None]:
+    ) -> PaperFill | None:
         """Close a full open position at current_price.
 
         Emits the standard order_created + order_filled pair (via create_order /
         fill_order), followed by a dedicated position_closed audit event that
         distinguishes exits from entry-side sells (short entries).
 
-        Returns the fill, or None if there is no open position / price invalid
-        / idempotency dedup. Idempotency key is derived from the position's
-        open timestamp + reason so repeated calls within the same trigger do
-        not double-close.
+        Returns the close-side fill, or None if there is no open position /
+        price invalid / idempotency dedup. Idempotency key is derived from the
+        position's open timestamp + reason so repeated calls within the same
+        trigger do not double-close.
+
+        Return-type note (2026-05-16 V4.1): an earlier annotation declared
+        ``tuple[PaperOrder, PaperFill | None]`` but the implementation never
+        returned a tuple — all three internal callers (monitor_positions
+        SL/TP/trigger paths) already destructure as a single fill. Annotation
+        corrected to match reality so the new /premium-signals/position-repair
+        consumer can type-check.
         """
         pos = self._portfolio.positions.get(symbol)
         if not pos:

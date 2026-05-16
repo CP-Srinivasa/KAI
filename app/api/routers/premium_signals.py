@@ -298,26 +298,42 @@ async def position_repair(req: PositionRepairRequest) -> dict[str, Any]:
         # Manual close zum avg_entry_price wenn kein market-data — Operator
         # akzeptiert "Notfall-Close ohne Profit/Loss-Realisation". Bewusst
         # konservativ; alternativ würde man hier market-data-snapshot ziehen.
-        close_side = "sell" if pos.position_side == "long" else "buy"
+        #
+        # 2026-05-16 V4.1: route via paper_engine.close_position() statt
+        # rohem create_order + fill_order. Damit wird der vollständige
+        # position_closed-Audit-Event emittiert (inkl. trade_pnl_usd /
+        # fee_usd / position_side / reason="manual"). Vor dem Fix hat
+        # position-repair NUR ein order_filled-sell geschrieben und damit
+        # die Bayes-Posterior-Lernschleife (V4) blind für Premium-Trades
+        # gemacht — Premium-Closes wurden klassifiziert als unsourced
+        # und ohne PnL-Klassifikation übergangen.
         close_price = pos.avg_entry_price
         try:
-            close_order = eng.create_order(
+            # close_position returns the close-side PaperFill (or None if the
+            # position vanished / price invalid / idempotency dedup hit).
+            # Its docstring (paper_engine.py:892-901) supersedes the stale
+            # tuple-typed return annotation on the function signature.
+            close_fill = eng.close_position(
                 symbol=display_symbol,
-                side=close_side,
-                quantity=pos.quantity,
-                order_type="market",
-                idempotency_key=f"repair-close:{display_symbol}:{datetime.now(UTC).timestamp()}",
-                position_side=pos.position_side,
-                source=pos.source,
-                leverage=pos.leverage,
+                current_price=close_price,
+                reason="manual",
             )
-            eng.fill_order(close_order, close_price)
-            result = {
-                "status": "closed",
-                "symbol": display_symbol,
-                "close_price": close_price,
-                "quantity_closed": pos.quantity,
-            }
+            if close_fill is None:
+                result = {
+                    "status": "noop",
+                    "reason": "close_position_returned_none",
+                    "symbol": display_symbol,
+                    "close_price": close_price,
+                }
+            else:
+                result = {
+                    "status": "closed",
+                    "symbol": display_symbol,
+                    "close_price": close_fill.fill_price,
+                    "quantity_closed": pos.quantity,
+                    "trade_pnl_usd": close_fill.pnl_usd,
+                    "fee_usd": close_fill.fee_usd,
+                }
         except Exception as exc:  # noqa: BLE001
             result = {
                 "status": "error",
