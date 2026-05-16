@@ -151,9 +151,7 @@ def test_position_repair_close_is_idempotent_and_no_duplicate_event(
     events = _read_audit_events(audit_path)
     closes = [e for e in events if e.get("event_type") == "position_closed"]
     # Critically: only ONE position_closed event, not two.
-    assert len(closes) == 1, (
-        f"idempotency must prevent duplicate close events, got {len(closes)}"
-    )
+    assert len(closes) == 1, f"idempotency must prevent duplicate close events, got {len(closes)}"
 
 
 def test_position_repair_returns_404_when_no_open_position(fresh_engine) -> None:
