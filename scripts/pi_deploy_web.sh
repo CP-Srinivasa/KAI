@@ -105,13 +105,43 @@ if [[ "$LOCAL_SHA" != "$REMOTE_SHA" ]]; then
 fi
 echo "  sha256 match: ${LOCAL_SHA:0:16}..."
 
-echo "=== extract on $REMOTE_HOST ==="
+echo "=== extract on $REMOTE_HOST (atomic-swap) ==="
+# Atomic-swap-Deploy:
+# 1. Extract in staging-dir (NICHT in web/dist direkt — sonst tar merged
+#    ueber alte Vite-Hash-Bundles und sammelt Disk-Muell).
+# 2. Rotate alte web/dist als .dist-prev-deploy-<timestamp> (Rollback-Anker).
+# 3. mv staging -> web/dist (atomic-ish — FastAPI StaticFiles sieht nur
+#    den Endzustand nach dem mv).
+# 4. Cleanup .dist-prev-deploy-* aelter als 3 Tage.
+#
+# Memory feedback_pi_deploy_web_dist_no_clean dokumentiert den alten Bug:
+# tar -xzf web/dist akkumuliert ~5MB Muell pro 10 Deploys.
+STAGE_TS="$(date -u +%Y%m%dT%H%M%SZ)"
 ssh -o BatchMode=yes "$REMOTE_HOST" "
     set -e
     cd '$REMOTE_ROOT'
-    tar -xzf /tmp/kai_web_dist.tar.gz
+    rm -rf web/dist.deploy-staging
+    mkdir -p web/dist.deploy-staging
+    # Tarball-Pfad ist 'web/dist/...' (gepackt mit -C \$ROOT web/dist).
+    # --strip-components=1 entfernt das 'web/'-prefix, landet bei
+    # web/dist.deploy-staging/dist/...
+    tar -xzf /tmp/kai_web_dist.tar.gz -C web/dist.deploy-staging --strip-components=1
+    if [ ! -f web/dist.deploy-staging/dist/index.html ]; then
+        echo 'ERROR: staging dist missing index.html — extract failed' >&2
+        rm -rf web/dist.deploy-staging
+        exit 2
+    fi
+    # Rotate alte dist als rollback-Anker (nur wenn vorhanden).
+    if [ -d web/dist ]; then
+        mv web/dist 'web/.dist-prev-deploy-${STAGE_TS}'
+    fi
+    mv web/dist.deploy-staging/dist web/dist
+    rmdir web/dist.deploy-staging
     rm -f /tmp/kai_web_dist.tar.gz
+    # Cleanup rotate-anchors aelter als 3 Tage (idempotent, schweigt wenn keine).
+    find web -maxdepth 1 -name '.dist-prev-deploy-*' -type d -mtime +3 -exec rm -rf {} + 2>/dev/null || true
     echo \"  remote dist: \$(find web/dist -type f | wc -l) files, \$(du -sh web/dist | awk '{print \$1}')\"
+    echo \"  rollback-anchors: \$(ls -d web/.dist-prev-deploy-* 2>/dev/null | wc -l)\"
 " || { echo "ERROR: remote extract failed" >&2; exit 2; }
 
 echo "=== restart kai-server (load new dist via StaticFiles mount) ==="
