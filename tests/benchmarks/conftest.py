@@ -18,6 +18,7 @@ pro session.
 
 from __future__ import annotations
 
+import os
 import random
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -28,6 +29,22 @@ import pytest
 from app.storage.duckdb_migrate import apply_migrations
 
 _REAL_MIGRATIONS = Path(__file__).resolve().parents[2] / "app" / "storage" / "duckdb_migrations"
+
+# Phase-2-Scale-Selector: Operator/CI kann zwischen "smoke" und "realistic"
+# umschalten ohne Code-Edit. Default = realistic, weil Pi-5-Run die echte
+# Pflichtmetrik-Validation ist (ADR 0003). Lokaler Windows-Dev kann smoke
+# nehmen wenn das Windows-subprocess-output-buffering-Quirk stoert.
+_SCALE_PROFILES: dict[str, dict[str, int]] = {
+    "smoke": {"audits": 500, "trades": 200, "metrics": 100, "signals": 50},
+    "realistic": {"audits": 10_000, "trades": 2_000, "metrics": 1_000, "signals": 200},
+}
+DUCKDB_BENCH_SCALE = os.environ.get("DUCKDB_BENCH_SCALE", "realistic").lower()
+if DUCKDB_BENCH_SCALE not in _SCALE_PROFILES:
+    raise ValueError(
+        f"DUCKDB_BENCH_SCALE='{DUCKDB_BENCH_SCALE}' invalid — "
+        f"must be one of {list(_SCALE_PROFILES)}"
+    )
+_ACTIVE_SCALE = _SCALE_PROFILES[DUCKDB_BENCH_SCALE]
 
 _ASSETS = ["BTC", "ETH", "SOL", "BNB", "XRP", "ADA", "AVAX", "DOT", "MATIC", "LINK"]
 _SOURCES = [
@@ -55,14 +72,13 @@ def thirty_day_db(tmp_path_factory: pytest.TempPathFactory) -> Path:
         applied = apply_migrations(con, migrations_dir=_REAL_MIGRATIONS)
         assert applied == ["0001", "0002"], f"Expected 0001+0002 migrations, got {applied}"
 
-        # Smoke-scale: validate test infrastructure runs end-to-end.
-        # Realistic-30d-scale (10k+2k+1k+200) re-enabled in Phase 3 once
-        # the Windows-subprocess output-buffering quirk on this dev machine
-        # is resolved (see Memory pi5_subprocess_output_buffering).
-        _populate_audits(con, rng, count=500)
-        _populate_trades(con, rng, count=200)
-        _populate_metrics(con, rng, count=100)
-        _populate_signals(con, rng, count=50)
+        # Phase-2-Aktivierung: Scale via DUCKDB_BENCH_SCALE env-var.
+        # Default realistic = 10k/2k/1k/200 (Pi-5 Pflichtmetrik-Run).
+        # smoke = 500/200/100/50 (lokaler Smoke-Test, schneller).
+        _populate_audits(con, rng, count=_ACTIVE_SCALE["audits"])
+        _populate_trades(con, rng, count=_ACTIVE_SCALE["trades"])
+        _populate_metrics(con, rng, count=_ACTIVE_SCALE["metrics"])
+        _populate_signals(con, rng, count=_ACTIVE_SCALE["signals"])
 
     return db_path
 
