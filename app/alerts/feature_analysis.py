@@ -148,6 +148,78 @@ def _forward_eligible(
     return check.directional_eligible is True
 
 
+def _build_regime_timeline_by_asset(assets: list[str]) -> dict[str, list[tuple[Any, Any]]]:
+    """Load regime snapshots once per asset and return a sorted (datetime, snapshot) list.
+
+    Returns ``{}`` when regime data is unavailable (e.g. fresh repo / first run).
+    R3-Shadow: this powers the ``by_regime`` bucket in build_feature_analysis
+    without paying file-IO per alert (7k+ alerts × per-alert load_regime_snapshots
+    would dominate ph5 cron runtime).
+    """
+    from app.regime.lookup import _parse_iso  # noqa: PLC0415 — module-local helper
+    from app.regime.storage import load_regime_snapshots
+
+    timelines: dict[str, list[tuple[Any, Any]]] = {}
+    for asset in assets:
+        snaps = load_regime_snapshots(asset)
+        if not snaps:
+            continue
+        by_ts: dict[Any, Any] = {}
+        for s in snaps:
+            dt = _parse_iso(s.timestamp)
+            if dt is not None:
+                by_ts[dt] = s
+        if not by_ts:
+            continue
+        sorted_pairs = sorted(by_ts.items(), key=lambda pair: pair[0])
+        timelines[asset] = sorted_pairs
+    return timelines
+
+
+def _regime_label_for_doc(
+    rec: AlertAuditRecord,
+    timelines: dict[str, list[tuple[Any, Any]]],
+    max_age_seconds: float = 24 * 60 * 60.0,
+) -> str:
+    """Return the regime label active when an alert was dispatched.
+
+    Uses BTC as a market-wide proxy when the alert's affected_assets are not
+    directly classified (R1 covers BTC + ETH only). Returns ``"unknown"`` if
+    no eligible snapshot exists — that label is itself a useful bucket so the
+    operator sees how many alerts went out before the classifier had history.
+    """
+    from app.regime.lookup import _parse_iso, symbol_to_regime_asset  # noqa: PLC0415
+
+    asset_for_lookup = "BTC"
+    affected = rec.affected_assets or []
+    if affected:
+        # Pick the most-classified asset among the affected: BTC > ETH > proxy.
+        for a in affected:
+            mapped = symbol_to_regime_asset(a)
+            if mapped == "BTC":
+                asset_for_lookup = "BTC"
+                break
+            asset_for_lookup = mapped
+
+    timeline = timelines.get(asset_for_lookup) or []
+    if not timeline:
+        return "unknown"
+
+    target_dt = _parse_iso(rec.dispatched_at)
+    if target_dt is None:
+        return "unknown"
+
+    # Linear scan from the back is fastest for typical "alert is recent"
+    # patterns; if profiling shows ph5 spending >1s here, switch to bisect.
+    for ts, snap in reversed(timeline):
+        if ts <= target_dt:
+            age = (target_dt - ts).total_seconds()
+            if age > max_age_seconds:
+                return "stale"
+            return str(snap.regime)
+    return "all_future"
+
+
 def build_feature_analysis(
     audits: list[AlertAuditRecord],
     annotations: list[AlertOutcomeAnnotation],
@@ -209,6 +281,18 @@ def build_feature_analysis(
     by_priority = _build_buckets(priority_by_doc, hit_docs, miss_docs, min_bucket_size)
     by_priority_group = _build_buckets(priority_group_by_doc, hit_docs, miss_docs, min_bucket_size)
 
+    # R3-Shadow 2026-05-16: regime-conditional precision so the operator
+    # sees where the system is reliable vs noisy. Load timelines for the
+    # two R1 assets once (BTC + ETH); each alert dispatched_at maps to the
+    # regime active at that moment (le-target, ≤24h-stale-tolerance).
+    # Cheap: O(alerts × log(snapshots)) with linear-scan reverse for
+    # typical recent-alerts case.
+    regime_by_doc: dict[str, list[str]] = {}
+    regime_timelines = _build_regime_timeline_by_asset(["BTC", "ETH"])
+    for doc_id, rec in latest_directional.items():
+        regime_by_doc[doc_id] = [_regime_label_for_doc(rec, regime_timelines)]
+    by_regime = _build_buckets(regime_by_doc, hit_docs, miss_docs, min_bucket_size)
+
     by_source: list[FeatureBucket] | None = None
     if source_by_doc is not None:
         source_map: dict[str, list[str]] = {}
@@ -269,6 +353,7 @@ def build_feature_analysis(
             "by_priority": [b.to_json_dict() for b in by_priority],
             "by_priority_group": [b.to_json_dict() for b in by_priority_group],
             "by_asset": [b.to_json_dict() for b in by_asset],
+            "by_regime": [b.to_json_dict() for b in by_regime],
         },
     }
     if by_source is not None:

@@ -704,11 +704,65 @@ class TradingLoop:
                 "risk_check_id": cycle.risk_check_id,
                 "order_id": cycle.order_id,
                 "notes": list(cycle.notes),
+                **self._regime_stamp_for_audit(cycle),
             }
             with self._audit_path.open("a", encoding="utf-8") as handle:
                 handle.write(json.dumps(record) + "\n")
         except Exception as exc:  # noqa: BLE001
             logger.error("[LOOP] Audit write failed: %s", exc)
+
+    @staticmethod
+    def _regime_stamp_for_audit(cycle: LoopCycle) -> dict[str, object]:
+        """Stamp the cycle audit with the regime that was active when it ran.
+
+        R3-Shadow read-only — the cycle is NOT filtered by regime here, the
+        stamp is forensic context for ph5_feature_analysis ``by_regime``
+        bucket and any later R4-Active-Filter decision.
+
+        Failure-mode: any exception inside the lookup is swallowed and the
+        audit record gets ``regime`` fields with reason="error". The cycle
+        itself must complete regardless — this is a forensic side-channel,
+        not a gate.
+        """
+        from app.regime.lookup import (
+            DEFAULT_MAX_AGE_SECONDS,
+            get_regime_at,
+            symbol_to_regime_asset,
+        )
+
+        symbol = cycle.symbol or ""
+        timestamp = cycle.completed_at or cycle.started_at
+        if not timestamp:
+            return {
+                "regime": None,
+                "regime_reason": "no_timestamp",
+            }
+        asset = symbol_to_regime_asset(symbol)
+        is_proxy = asset != symbol.upper().split("/", 1)[0].split("-", 1)[0]
+        try:
+            result = get_regime_at(
+                asset,
+                timestamp,
+                max_age_seconds=DEFAULT_MAX_AGE_SECONDS,
+            )
+        except Exception as exc:  # noqa: BLE001 — never crash audit
+            logger.warning("[LOOP] Regime lookup failed: %s", exc)
+            return {
+                "regime": None,
+                "regime_reason": "error",
+                "regime_symbol_asset": asset,
+                "regime_symbol_is_proxy": is_proxy,
+            }
+        snap = result.snapshot
+        return {
+            "regime": str(snap.regime) if snap is not None else None,
+            "regime_vol_class": str(snap.vol_class) if snap is not None else None,
+            "regime_confidence": snap.confidence if snap is not None else None,
+            "regime_reason": result.reason,
+            "regime_age_seconds": result.age_seconds,
+            "regime_symbol_asset": asset,
+            "regime_symbol_is_proxy": is_proxy,
+        }
 
     async def _write_db(self, cycle: LoopCycle) -> None:
         """Dual-write cycle to DB (session-per-cycle). Non-fatal: DB errors never stop the loop."""
