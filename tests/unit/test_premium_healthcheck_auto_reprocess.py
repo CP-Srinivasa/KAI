@@ -13,6 +13,7 @@ Why these tests:
   healthcheck if run_tick itself misbehaves, (c) stay quiet on an empty bus
   so the systemd journal does not get spammed.
 """
+
 from __future__ import annotations
 
 import importlib.util
@@ -24,19 +25,13 @@ import pytest
 
 from app.execution.envelope_to_paper_bridge import BridgeTickResult
 
-_SCRIPT_PATH = (
-    Path(__file__).resolve().parents[2]
-    / "scripts"
-    / "premium_pipeline_healthcheck.py"
-)
+_SCRIPT_PATH = Path(__file__).resolve().parents[2] / "scripts" / "premium_pipeline_healthcheck.py"
 
 
 @pytest.fixture
 def healthcheck_module():
     """Import the script as a module so we can monkeypatch its globals."""
-    spec = importlib.util.spec_from_file_location(
-        "premium_healthcheck_under_test", _SCRIPT_PATH
-    )
+    spec = importlib.util.spec_from_file_location("premium_healthcheck_under_test", _SCRIPT_PATH)
     assert spec is not None and spec.loader is not None
     module = importlib.util.module_from_spec(spec)
     sys.modules["premium_healthcheck_under_test"] = module
@@ -107,8 +102,7 @@ def test_auto_reprocess_emits_info_when_envelopes_scanned(
         if "auto-reprocess tick scanned=2" in rec.message and "filled=1" in rec.message
     ]
     assert matched, (
-        "expected info log with scan/fill counts, got: "
-        f"{[r.message for r in caplog.records]}"
+        f"expected info log with scan/fill counts, got: {[r.message for r in caplog.records]}"
     )
 
 
@@ -129,9 +123,7 @@ def test_auto_reprocess_stays_silent_on_empty_bus(
         for rec in caplog.records
         if rec.levelno >= logging.INFO and "auto-reprocess tick" in rec.message
     ]
-    assert not info_records, (
-        "empty bus should not log INFO — would spam journal once per minute"
-    )
+    assert not info_records, "empty bus should not log INFO — would spam journal once per minute"
 
 
 def test_auto_reprocess_handles_disabled_bridge(
