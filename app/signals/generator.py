@@ -19,8 +19,6 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from app.audit.structured_reasoning import (
-    PHASE_CONFIDENCE_CHANGE,
-    PHASE_INVALIDATION,
     ReasoningJournal,
 )
 from app.core.domain.document import AnalysisResult
@@ -34,7 +32,7 @@ from app.market_data.regime_detection import (
     RegimeDetectionEngine,
     make_observation,
 )
-from app.signals.bayes_journal import append_bayes_report
+from app.signals.audit_adapter import SignalAuditAdapter
 from app.signals.bayesian_confidence import (
     BayesianConfidenceEngine,
     ConfidenceReport,
@@ -97,6 +95,7 @@ class SignalGenerator:
         active_calibrator: ActiveCalibrator | None = None,
         active_min_bayes_confidence: ActiveThreshold | None = None,
         reasoning_journal: ReasoningJournal | None = None,
+        audit_adapter: SignalAuditAdapter | None = None,
     ) -> None:
         self._min_confidence = min_confidence
         self._min_confluence = min_confluence
@@ -139,6 +138,20 @@ class SignalGenerator:
         # (invalidation) als ReasoningStep persistiert. None = no audit
         # writes — bestehendes Verhalten bleibt erhalten.
         self._reasoning_journal = reasoning_journal
+        # Schritt 3+4: SignalAuditAdapter ist der einzige Audit-Pfad zwischen
+        # signals/ und audit/+bayes_journal. Wenn der Caller explizit einen
+        # Adapter mitgibt, gewinnt der; sonst wird er intern aus den
+        # Legacy-kwargs (reasoning_journal + bayes_audit_path) konstruiert.
+        # Damit laufen alle bestehenden Aufrufer ohne Aenderung weiter,
+        # und neue Aufrufer koennen den Adapter einmal bauen + reichen.
+        self._audit_adapter = (
+            audit_adapter
+            if audit_adapter is not None
+            else SignalAuditAdapter(
+                reasoning_journal=reasoning_journal,
+                bayes_audit_path=bayes_audit_path,
+            )
+        )
 
     def generate(
         self,
@@ -242,34 +255,34 @@ class SignalGenerator:
                 bayes_report.confidence_score,
             )
             # Structured-reasoning step: confidence_change
-            if self._reasoning_journal is not None:
-                version_id = self._active_calibrator.version_id
-                self._reasoning_journal.log_step(
-                    decision_id=decision_id,
-                    phase=PHASE_CONFIDENCE_CHANGE,
-                    actor="ActiveCalibrator",
-                    rationale_summary=(
-                        f"posterior calibrated for {direction.value} "
-                        f"in regime={self._derive_market_regime(market_data.change_pct_24h)}"
-                    ),
-                    inputs={
-                        "raw_posterior": raw_bayes_report.posterior_probability,
-                        "regime": self._derive_market_regime(market_data.change_pct_24h),
-                        "direction": direction.value,
-                    },
-                    outputs={
-                        "calibrated_posterior": bayes_report.posterior_probability,
-                        "calibrated_confidence": bayes_report.confidence_score,
-                    },
-                    confidence_before=raw_bayes_report.confidence_score,
-                    confidence_after=bayes_report.confidence_score,
-                    parameter_versions=(
-                        {self._active_calibrator.parameter_path: version_id}
-                        if version_id is not None
-                        else {}
-                    ),
-                    evidence_refs=(f"bayes_audit:{decision_id}",),
-                )
+            # Schritt 4: kein if-Check noetig — Adapter ist no-op-safe wenn
+            # kein reasoning_journal konfiguriert ist.
+            version_id = self._active_calibrator.version_id
+            self._audit_adapter.log_calibrator_apply(
+                decision_id=decision_id,
+                actor="ActiveCalibrator",
+                rationale_summary=(
+                    f"posterior calibrated for {direction.value} "
+                    f"in regime={self._derive_market_regime(market_data.change_pct_24h)}"
+                ),
+                inputs={
+                    "raw_posterior": raw_bayes_report.posterior_probability,
+                    "regime": self._derive_market_regime(market_data.change_pct_24h),
+                    "direction": direction.value,
+                },
+                outputs={
+                    "calibrated_posterior": bayes_report.posterior_probability,
+                    "calibrated_confidence": bayes_report.confidence_score,
+                },
+                confidence_before=raw_bayes_report.confidence_score,
+                confidence_after=bayes_report.confidence_score,
+                parameter_versions=(
+                    {self._active_calibrator.parameter_path: version_id}
+                    if version_id is not None
+                    else {}
+                ),
+                evidence_refs=(f"bayes_audit:{decision_id}",),
+            )
 
         # Effective min-bayes-confidence: ActiveThreshold (wenn aktiv) sonst
         # Constructor-Default. Audit-friendly: wir loggen den Threshold-Wert,
@@ -300,34 +313,33 @@ class SignalGenerator:
                 self._max_bayes_uncertainty,
             )
             # Structured-reasoning step: invalidation (gate-reject)
-            if self._reasoning_journal is not None:
-                self._reasoning_journal.log_step(
-                    decision_id=decision_id,
-                    phase=PHASE_INVALIDATION,
-                    actor="SignalGenerator.bayes_gate",
-                    rationale_summary=(
-                        f"bayes-gate rejected {symbol}: confidence "
-                        f"{bayes_report.confidence_score:.4f} vs. min "
-                        f"{effective_min_bayes_confidence:.4f}"
-                    ),
-                    inputs={
-                        "confidence_score": bayes_report.confidence_score,
-                        "uncertainty_score": bayes_report.uncertainty_score,
-                        "min_bayes_confidence": effective_min_bayes_confidence,
-                        "max_bayes_uncertainty": self._max_bayes_uncertainty,
-                    },
-                    outputs={"reason": "bayes_gate_rejected"},
-                    parameter_versions=(
-                        {
-                            self._active_min_bayes_confidence.parameter_path: (
-                                self._active_min_bayes_confidence.version_id or ""
-                            )
-                        }
-                        if self._active_min_bayes_confidence is not None
-                        and self._active_min_bayes_confidence.is_active
-                        else {}
-                    ),
-                )
+            # Schritt 4: kein if-Check noetig — Adapter ist no-op-safe.
+            self._audit_adapter.log_bayes_gate_reject(
+                decision_id=decision_id,
+                actor="SignalGenerator.bayes_gate",
+                rationale_summary=(
+                    f"bayes-gate rejected {symbol}: confidence "
+                    f"{bayes_report.confidence_score:.4f} vs. min "
+                    f"{effective_min_bayes_confidence:.4f}"
+                ),
+                inputs={
+                    "confidence_score": bayes_report.confidence_score,
+                    "uncertainty_score": bayes_report.uncertainty_score,
+                    "min_bayes_confidence": effective_min_bayes_confidence,
+                    "max_bayes_uncertainty": self._max_bayes_uncertainty,
+                },
+                outputs={"reason": "bayes_gate_rejected"},
+                parameter_versions=(
+                    {
+                        self._active_min_bayes_confidence.parameter_path: (
+                            self._active_min_bayes_confidence.version_id or ""
+                        )
+                    }
+                    if self._active_min_bayes_confidence is not None
+                    and self._active_min_bayes_confidence.is_active
+                    else {}
+                ),
+            )
             return None
 
         # Derive market context
@@ -359,13 +371,14 @@ class SignalGenerator:
         # auch ein abgelehntes Signal eine Reasoning-Trail-Identität trägt.
         # Audit immer den RAW Report — nicht den (ggf.) calibrated. Sonst
         # wird der nächste Calibration-Run zirkulär.
-        if raw_bayes_report is not None and self._bayes_audit_path is not None:
-            append_bayes_report(
+        # Schritt 4: ueber Adapter — no-op wenn kein bayes_audit_path
+        # konfiguriert ist.
+        if raw_bayes_report is not None:
+            self._audit_adapter.record_raw_bayes_report(
                 decision_id=decision_id,
                 symbol=symbol,
                 direction=direction.value,
                 report=raw_bayes_report,
-                path=self._bayes_audit_path,
             )
 
         return SignalCandidate(
