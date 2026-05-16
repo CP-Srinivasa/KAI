@@ -624,10 +624,18 @@ class AppSettings(BaseSettings):
         default=["http://localhost:3000", "http://localhost:8000"]
     )
     # Market data provider used by TradingLoop and operator surfaces.
-    # Supported: coingecko (real, free or paid), mock (dev/test only).
-    # Without API key: free tier, ~30 req/min.
-    # With API key (x-cg-pro-api-key): paid tier via pro-api.coingecko.com.
-    market_data_provider: str = Field(default="coingecko")
+    # Supported values: see app/market_data/service.py create_market_data_adapter.
+    # Default `fallback` chains bybit→binance_futures→okx→bitmex→coingecko→mock
+    # so premium Bybit-/OKX-/BitMEX-Futures-Channel symbols (incl. young/exotic
+    # tokens CoinGecko does not list) resolve on the venue that actually quotes
+    # them. The 2026-05-08 incident (ON/GIGGLE positions stuck "without value")
+    # and the 2026-05-14 re-drift (BAS/ASTER closed as ostensibly "tot") both
+    # traced back to coingecko-only reads; see memory-pin
+    # `kai_market_data_provider_symmetry`. `.env` may override via
+    # `APP_MARKET_DATA_PROVIDER=<provider>` — that override remains the runtime
+    # knob. Setting `coingecko` here would silently regress to the unsafe
+    # default if `.env` ever loses the line again.
+    market_data_provider: str = Field(default="fallback")
     # Optional CoinGecko Pro/Lite API key. When set, the adapter switches to
     # the pro-api.coingecko.com endpoint and sends the key via the
     # x-cg-pro-api-key header. Leave empty for free-tier.
