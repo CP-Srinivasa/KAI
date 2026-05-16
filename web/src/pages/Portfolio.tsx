@@ -16,6 +16,7 @@ import {
 } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { PreparedPanel } from "@/components/panels/PreparedPanel";
+import { PremiumTradeCard } from "@/components/panels/PremiumTradeCard";
 import { useCurrency } from "@/state/CurrencyProvider";
 
 /**
@@ -377,6 +378,64 @@ export function PortfolioPage() {
         </Card>
       )}
       {exposure.state === "error" && <ErrorCard kind={exposure.error.kind} message={exposure.error.message} path="/operator/exposure-summary" />}
+
+      {/* 2026-05-16 V3: Premium-Trade-Karten (Hero-Komponente pro aktivem
+          Telegram-Premium-Signal). Zeigt Plan (Entry, SL, 4 TP-Tiers) + Live
+          (Markt, Bewegung, PnL) + nächsten Close-Trigger in einer kompakten
+          Karte — der Tabelle-Zeilen-Pfad bleibt zusätzlich erhalten. Operator
+          sieht in 1 Sekunde wo der Trade steht und was als nächstes passiert.
+          Filter: source startet mit "telegram_premium" (deckt
+          _channel + _channel_approved). */}
+      {snap.state === "ready" && positions.filter((p) => (p.source ?? "").startsWith("telegram_premium")).length > 0 && (
+        <section className="space-y-3">
+          <div className="flex items-baseline justify-between gap-2 flex-wrap px-1">
+            <div>
+              <div className="text-sm font-semibold tracking-tight text-fg">Aktive Premium-Trades</div>
+              <div className="text-2xs text-fg-subtle">
+                Hero-Ansicht pro offenem Telegram-Premium-Signal — Plan, Live-Kurs und nächster Trigger.
+              </div>
+            </div>
+            <div className="text-2xs text-fg-subtle font-mono">
+              {positions.filter((p) => (p.source ?? "").startsWith("telegram_premium")).length} aktiv
+            </div>
+          </div>
+          {positions
+            .filter((p) => (p.source ?? "").startsWith("telegram_premium"))
+            .map((p) => (
+              <PremiumTradeCard
+                key={`premium-${p.symbol}-${p.correlation_id ?? "no-cid"}`}
+                position={p}
+                fmt$={fmt$}
+                busy={actionBusy !== null}
+                onClose={(symbol, idempotencyKey, mktUnavailable) => {
+                  // Hard-Confirm-Logik gespiegelt von der Tabellen-Zeile in #46:
+                  // bei fehlender Markt-Bewertung ausführlich erklären was passiert.
+                  const tierCount = (p.take_profit_tiers ?? []).length;
+                  const confirmMsg = mktUnavailable
+                    ? `⚠️ ${symbol}\n\n` +
+                      `Diese Position LEBT — Stop-Loss (${fmt$(p.stop_loss)}) und ` +
+                      `Take-Profit-Tier(s) (${fmt$(p.take_profit)}${tierCount > 1 ? ` +${tierCount - 1}` : ""}) ` +
+                      `sind weiter aktiv im Hintergrund.\n\n` +
+                      `Es fehlt nur der aktuelle Markt-Preis (Provider listet diesen Token nicht). ` +
+                      `Die Position wird automatisch geschlossen sobald SL oder ein TP-Tier erreicht ist.\n\n` +
+                      `Wenn du JETZT manuell schließt:\n` +
+                      `• Close-Preis = Einstieg (${fmt$(p.avg_entry_price)}) ohne Markt-Daten\n` +
+                      `• kein realer Profit, nur Slippage + Fees\n` +
+                      `• die geplante Strategie wird abgebrochen\n\n` +
+                      `Wirklich JETZT manuell schließen?`
+                    : `Premium-Trade ${symbol} schließen?\n\n` +
+                      `Stop-Loss steht bei ${fmt$(p.stop_loss)}, nächster TP-Tier bei ` +
+                      `${fmt$((p.take_profit_tiers ?? [])[0]?.price ?? p.take_profit)}.\n\n` +
+                      `Manuelles Schließen bricht den Plan ab.`;
+                  if (!window.confirm(confirmMsg)) return;
+                  runAction(`Close ${symbol}`, () =>
+                    postPositionRepair(symbol, "close", { idempotency_key: idempotencyKey }),
+                  );
+                }}
+              />
+            ))}
+        </section>
+      )}
 
       {/* Sprint E (2026-05-12): Operator-Actions für Premium-Signal-Pipeline */}
       <Card padded className="synthwave-pulse-edge overflow-hidden">
