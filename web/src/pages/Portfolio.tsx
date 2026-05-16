@@ -470,6 +470,32 @@ export function PortfolioPage() {
         </div>
       </Card>
 
+      {/* 2026-05-16 V2: Banner wenn ≥1 Position keinen Markt-Preis hat — verhindert
+          False-Close-Reflex ("rein und tot"). Die Position LEBT, nur die Bewertung
+          steht aus, weil der Preis-Provider den Token nicht listet. Operator-Auftrag
+          nach BAS/ASTER-Forensik 2026-05-14. */}
+      {snap.state === "ready" && positions.some((p) => p.market_data_available === false) && (
+        <Card padded className="border-info/40 bg-info/5">
+          <div className="flex items-start gap-3">
+            <AlertCircle size={16} className="text-info shrink-0 mt-0.5" />
+            <div className="text-xs leading-relaxed">
+              <div className="font-semibold text-fg mb-1">
+                {positions.filter((p) => p.market_data_available === false).length} Position(en) ohne aktuellen Markt-Preis
+              </div>
+              <div className="text-fg-muted">
+                Diese Positionen <strong>leben</strong> — Stop-Loss und Take-Profit-Tiers wirken weiter im Hintergrund.
+                Nur die Live-Bewertung (Markt-Preis, Wert, offener G/V) ist aktuell nicht verfügbar, weil der Preis-Provider
+                <span className="font-mono"> ({snap.data.source}) </span>
+                den Token nicht listet.
+                <span className="block mt-1 text-fg-subtle">
+                  „Schließen" nur klicken wenn du die Position wirklich auflösen willst — der Trade läuft sonst normal seinen geplanten Verlauf.
+                </span>
+              </div>
+            </div>
+          </div>
+        </Card>
+      )}
+
       <Card padded={false}>
         <div className="flex items-center justify-between gap-3 px-4 py-3 border-b border-line-subtle">
           <div className="text-sm font-semibold tracking-tight text-fg">Offene Positionen</div>
@@ -520,7 +546,19 @@ export function PortfolioPage() {
                 return (
                   <tr key={`${p.symbol}-${p.correlation_id ?? "no-cid"}`} className="border-t border-line-subtle hover:bg-bg-2">
                     <td className="px-3 py-2 font-mono font-semibold whitespace-nowrap">
-                      <div>{p.symbol}</div>
+                      <div className="flex items-center gap-1.5">
+                        <span>{p.symbol}</span>
+                        {/* 2026-05-16 V2: Inline-Marker wenn Provider keinen Preis liefert.
+                            Position lebt, Bewertung steht aus — stoppt False-Close-Klick. */}
+                        {mktUnavailable && (
+                          <Badge
+                            tone="info"
+                            title="Preis-Provider liefert keinen Kurs für diesen Token — die Position lebt, SL/TP sind aktiv, nur die Live-Bewertung fehlt."
+                          >
+                            Preis steht aus
+                          </Badge>
+                        )}
+                      </div>
                       {p.opened_at && (
                         <div className="text-2xs text-fg-subtle font-normal mt-0.5">
                           {formatOpenedAt(p.opened_at)}
@@ -537,16 +575,28 @@ export function PortfolioPage() {
                     <td className="px-3 py-2 text-right font-mono">{fmt$(p.avg_entry_price)}</td>
                     <td className={cn(
                       "px-3 py-2 text-right font-mono",
-                      (isStale || mktUnavailable) && "text-warn",
+                      isStale && "text-warn",
+                      mktUnavailable && "text-info",
                     )}>
-                      {fmt$(p.market_price)}
-                      {isStale && (
+                      {mktUnavailable ? (
                         <span
-                          className="ml-1 text-2xs"
-                          title="Marktpreis ist veraltet (stale) — Bewertung evtl. ungenau"
+                          className="text-2xs"
+                          title="Preis-Provider liefert für diesen Token keinen Kurs. Position lebt unverändert weiter."
                         >
-                          ·alt
+                          kein Kurs
                         </span>
+                      ) : (
+                        <>
+                          {fmt$(p.market_price)}
+                          {isStale && (
+                            <span
+                              className="ml-1 text-2xs"
+                              title="Marktpreis ist veraltet (stale) — Bewertung evtl. ungenau"
+                            >
+                              ·alt
+                            </span>
+                          )}
+                        </>
                       )}
                     </td>
                     <td className="px-3 py-2 text-right font-mono">{fmt$(p.market_value_usd)}</td>
@@ -584,7 +634,23 @@ export function PortfolioPage() {
                           "hover:border-neg hover:text-neg disabled:opacity-50",
                         )}
                         onClick={() => {
-                          if (!window.confirm(`Position ${p.symbol} schließen (Notfall-Close zum avg_entry)?`)) return;
+                          // 2026-05-16 V2: Hard-Confirm bei fehlender Markt-Bewertung —
+                          // explizit erklären dass die Position LEBT und SL/TP aktiv sind.
+                          // Verhindert False-Close-Klick aus Unsicherheit ("rein und tot").
+                          const confirmMsg = mktUnavailable
+                            ? `⚠️ ${p.symbol}\n\n` +
+                              `Diese Position LEBT — Stop-Loss (${fmt$(p.stop_loss)}) und ` +
+                              `Take-Profit-Tier(s) (${fmt$(p.take_profit)}${tierCount > 1 ? ` +${tierCount - 1}` : ""}) ` +
+                              `sind weiter aktiv im Hintergrund.\n\n` +
+                              `Es fehlt nur der aktuelle Markt-Preis (Provider listet diesen Token nicht). ` +
+                              `Die Position wird automatisch geschlossen sobald SL oder ein TP-Tier erreicht ist.\n\n` +
+                              `Wenn du JETZT manuell schließt:\n` +
+                              `• Close-Preis = Einstieg (${fmt$(p.avg_entry_price)}) ohne Markt-Daten\n` +
+                              `• kein realer Profit, nur Slippage + Fees\n` +
+                              `• die geplante Strategie wird abgebrochen\n\n` +
+                              `Wirklich JETZT manuell schließen?`
+                            : `Position ${p.symbol} schließen (Notfall-Close zum avg_entry)?`;
+                          if (!window.confirm(confirmMsg)) return;
                           const key = `close-${p.symbol}-${Date.now()}`;
                           runAction(`Close ${p.symbol}`, () =>
                             postPositionRepair(p.symbol, "close", { idempotency_key: key }),
