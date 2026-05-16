@@ -66,6 +66,8 @@ dev = [
     "freezegun>=1.5.1",
     "hypothesis>=6.0.0",
     "pytest-mock>=3.14.0",
+    # Phase-2-DuckDB-Benchmark: RSS-Memory-Tracking (ADR 0003 <2GB).
+    "psutil>=5.9.0",
 ]
 
 [project.scripts]

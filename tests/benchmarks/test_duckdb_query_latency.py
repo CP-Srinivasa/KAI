@@ -238,15 +238,77 @@ def test_dashboard_query_set_total_under_50ms_per_query(thirty_day_db: Path) -> 
 
 
 def test_synthetic_30d_db_has_expected_volumes(thirty_day_db: Path) -> None:
-    """Verify the fixture actually populated the expected scale."""
+    """Verify the fixture actually populated the expected scale (env-driven)."""
+    from tests.benchmarks.conftest import _ACTIVE_SCALE, DUCKDB_BENCH_SCALE
+
     with _open_readonly(thirty_day_db) as con:
         audits = con.execute("SELECT COUNT(*) FROM audits").fetchone()[0]
         trades = con.execute("SELECT COUNT(*) FROM trades").fetchone()[0]
         metrics = con.execute("SELECT COUNT(*) FROM metrics").fetchone()[0]
         signals = con.execute("SELECT COUNT(*) FROM signals").fetchone()[0]
 
-    # Smoke-scale (Phase-2-bootstrap); realistic-30d-scale gated to Phase 3.
-    assert audits == 500, f"Expected 500 audits, got {audits}"
-    assert trades == 200, f"Expected 200 trades, got {trades}"
-    assert metrics == 100, f"Expected 100 metrics, got {metrics}"
-    assert signals == 50, f"Expected 50 signals, got {signals}"
+    print(
+        f"\n[scale={DUCKDB_BENCH_SCALE}] audits={audits} trades={trades} "
+        f"metrics={metrics} signals={signals}"
+    )
+    assert audits == _ACTIVE_SCALE["audits"], (
+        f"Expected {_ACTIVE_SCALE['audits']} audits, got {audits}"
+    )
+    assert trades == _ACTIVE_SCALE["trades"], (
+        f"Expected {_ACTIVE_SCALE['trades']} trades, got {trades}"
+    )
+    assert metrics == _ACTIVE_SCALE["metrics"], (
+        f"Expected {_ACTIVE_SCALE['metrics']} metrics, got {metrics}"
+    )
+    assert signals == _ACTIVE_SCALE["signals"], (
+        f"Expected {_ACTIVE_SCALE['signals']} signals, got {signals}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# ADR 0003 Pflicht: Memory-Constraint <2 GB RAM
+# ---------------------------------------------------------------------------
+
+P95_MEMORY_MB_TARGET = 2048.0  # 2 GB pro ADR 0003
+
+
+def test_dashboard_query_set_memory_under_2gb(thirty_day_db: Path) -> None:
+    """ADR 0003 Pflichtmetrik: Read-Pfad bleibt unter 2 GB RAM.
+
+    Misst den Peak-RSS-Wachstum waehrend ein realistic dashboard query-set
+    sequenziell laeuft. RSS=Resident Set Size, das ist die OS-Sicht auf
+    den realen RAM-Verbrauch — kein Python-internes heap-tracking.
+    """
+    import os
+
+    import psutil
+
+    proc = psutil.Process(os.getpid())
+    baseline_mb = proc.memory_info().rss / 1024 / 1024
+
+    queries = [
+        "SELECT SUM(pnl_usd) FROM trades WHERE pnl_usd IS NOT NULL",
+        "SELECT event_type, COUNT(*) FROM trades GROUP BY event_type",
+        "SELECT COUNT(*) FROM trades WHERE event_type = 'order_filled'",
+        "SELECT COUNT(*) FROM audits",
+        "SELECT metric_type, COUNT(*) FROM metrics GROUP BY metric_type",
+        "SELECT asset, COUNT(*) FROM signals GROUP BY asset",
+        "SELECT day, source_tag FROM pnl_daily ORDER BY day DESC LIMIT 100",
+    ]
+
+    peak_mb = baseline_mb
+    with _open_readonly(thirty_day_db) as con:
+        for _ in range(5):  # 5 wiederholungen = realistische dashboard-poll
+            for sql in queries:
+                con.execute(sql).fetchall()
+                current_mb = proc.memory_info().rss / 1024 / 1024
+                peak_mb = max(peak_mb, current_mb)
+
+    delta_mb = peak_mb - baseline_mb
+    print(
+        f"\n[memory] baseline={baseline_mb:.1f}MB peak={peak_mb:.1f}MB "
+        f"delta={delta_mb:.1f}MB target<{P95_MEMORY_MB_TARGET:.0f}MB"
+    )
+    assert peak_mb < P95_MEMORY_MB_TARGET, (
+        f"peak RSS {peak_mb:.1f}MB exceeds ADR 0003 target {P95_MEMORY_MB_TARGET:.0f}MB"
+    )
