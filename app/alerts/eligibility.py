@@ -146,6 +146,96 @@ def _invalidate_source_watchlist_cache() -> None:
     )
 
 
+# Goal-pin 2026-05-16 V1: Source-Reliability-Loop. monitor/source_reliability.json
+# is regenerated daily by scripts/source_reliability_recalc.py. Schema matches
+# app/learning/source_reliability.build_source_reliability_report — a JSON dict
+# with ``scores`` mapping ``source_name`` → ``{tier, priority_modifier, ...}``.
+# Mirrors the mtime-reload pattern used for source_watch.txt so an operator can
+# rewrite the file without restarting kai-server.
+_reliability_cache: dict[str, Any] = {
+    "mtime": -1.0,
+    "data": {},  # dict[str, int] — lower-cased source_name → priority_modifier
+    "path": None,
+    "resolved_path": None,
+}
+
+
+def _resolve_reliability_path() -> Path:
+    cached_path = _reliability_cache.get("resolved_path")
+    if isinstance(cached_path, str) and cached_path:
+        return Path(cached_path)
+    try:
+        from app.core.settings import get_settings  # lazy
+
+        path = Path(get_settings().monitor_dir) / "source_reliability.json"
+    except Exception:  # noqa: BLE001
+        path = Path("monitor") / "source_reliability.json"
+    _reliability_cache["resolved_path"] = str(path)
+    return path
+
+
+def _load_source_reliability_modifiers() -> dict[str, int]:
+    """Read source_reliability.json with mtime-based reload.
+
+    Returns a mapping ``source_name.lower() → priority_modifier`` from the
+    most recent recalc. Empty dict when the file is missing or unparsable
+    (fail-open — no modifier is safer than a wrong modifier).
+    """
+    path = _resolve_reliability_path()
+    try:
+        mtime = path.stat().st_mtime if path.exists() else 0.0
+    except OSError:
+        cached_path = _reliability_cache.get("path")
+        return cast(
+            dict[str, int],
+            _reliability_cache["data"] if cached_path == str(path) else {},
+        )
+    if _reliability_cache["path"] == str(path) and mtime == _reliability_cache["mtime"]:
+        return cast(dict[str, int], _reliability_cache["data"])
+    if not path.exists():
+        _reliability_cache.update({"mtime": 0.0, "data": {}, "path": str(path)})
+        return cast(dict[str, int], _reliability_cache["data"])
+
+    modifiers: dict[str, int] = {}
+    try:
+        import json as _json
+
+        payload = _json.loads(path.read_text(encoding="utf-8"))
+        scores = (payload or {}).get("scores") or {}
+        for raw_source, score in scores.items():
+            if not isinstance(raw_source, str) or not isinstance(score, dict):
+                continue
+            mod = score.get("priority_modifier")
+            if isinstance(mod, int) and mod != 0:
+                modifiers[raw_source.lower()] = mod
+    except (OSError, ValueError, TypeError):
+        cached_path = _reliability_cache.get("path")
+        return cast(
+            dict[str, int],
+            _reliability_cache["data"] if cached_path == str(path) else {},
+        )
+
+    _reliability_cache.update({"mtime": mtime, "data": modifiers, "path": str(path)})
+    _log.info(
+        "source_reliability.loaded",
+        count=len(modifiers),
+        path=str(path),
+    )
+    return modifiers
+
+
+def _invalidate_source_reliability_cache() -> None:
+    """Test/Reload-Hook — clears the reliability cache."""
+    _reliability_cache.update(
+        {
+            "mtime": -1.0,
+            "data": {},
+            "path": None,
+            "resolved_path": None,
+        }
+    )
+
+
 # D-142: Bearish directional disabled based on 50 eligible resolved outcomes.
 # Bearish precision: 4% (1 hit / 24 miss). Bullish precision: 76% (19/25).
 # Bearish news in trending markets is almost never price-predictive — reactive
@@ -427,6 +517,20 @@ def evaluate_directional_eligibility(
         and source_name.lower() in _load_source_watchlist()
     ):
         effective_priority = effective_priority - 1
+
+    # Goal-pin 2026-05-16 V1: Source-Reliability-Loop.
+    # monitor/source_reliability.json wird täglich von
+    # scripts/source_reliability_recalc.py geschrieben (Wilson Lower 95 über
+    # 90d-Fenster). Modifier-Range {-2, -1, 0, +1}. Wirkt ZUSÄTZLICH zur
+    # Operator-watchlist, kombiniert additiv. Source-Reliability-Promote
+    # (+1) hebt einen P7-Border-Case auf P8 → bleibt eligible; -2 demote
+    # kippt P9 nach P7 → geblockt. KAI-no-prediction-Regel: dies ist ein
+    # historisches Konfidenz-Intervall, keine Zukunftsprognose.
+    if effective_priority is not None and source_name:
+        reliability_modifiers = _load_source_reliability_modifiers()
+        mod = reliability_modifiers.get(source_name.lower(), 0)
+        if mod != 0:
+            effective_priority = effective_priority + mod
 
     # D-122: Low-priority alerts lack predictive value for directional tracking.
     # Empirical: P7 had 21% precision.  Minimum P8 required.
