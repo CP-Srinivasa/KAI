@@ -181,8 +181,8 @@ def compute_confluence(
             key = (asset.upper(), direction)
             index.setdefault(key, []).append((dt, source, rec.document_id))
 
-    for key in index:
-        index[key].sort(key=lambda triple: triple[0])
+    for index_key in index:
+        index[index_key].sort(key=lambda triple: triple[0])
 
     # Score every directional, sourced, dispatched alert.
     observations: list[ConfluenceObservation] = []
