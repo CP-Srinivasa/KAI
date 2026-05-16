@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from app.alerts.audit import AlertAuditRecord, AlertOutcomeAnnotation
 from app.alerts.feature_analysis import build_feature_analysis
 
@@ -417,3 +419,106 @@ def test_excludes_digests_and_non_directional_sentiments() -> None:
     report = build_feature_analysis(audits, annotations, min_bucket_size=1)
     assert report["totals"]["directional_alerts"] == 1
     assert report["totals"]["hits"] == 1
+
+
+# ── by_regime bucket (R3-Shadow, 2026-05-16) ───────────────────────────────
+
+
+def _write_regime_jsonl(base_dir: Path, asset: str, lines: list[dict]) -> None:
+    """Write regime snapshot lines under base_dir for the regime-storage loader."""
+    import json
+
+    p = base_dir / "artifacts" / "regime_state" / f"{asset.lower()}_regime.jsonl"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text("\n".join(json.dumps(d) for d in lines) + "\n", encoding="utf-8")
+
+
+def test_by_regime_bucket_present_in_report(tmp_path: Path, monkeypatch) -> None:
+    """The by_regime bucket exists even when regime data is unavailable.
+
+    When no regime jsonl exists the alerts map to label 'unknown' — that is
+    itself useful (operator sees how many alerts went out before classifier
+    had data) and is filtered out only by min_bucket_size.
+    """
+    audits = [
+        _audit("d1", "bullish", ["BTC"], 8),
+        _audit("d2", "bullish", ["BTC"], 8),
+        _audit("d3", "bullish", ["BTC"], 8),
+    ]
+    annotations = [_ann("d1", "hit"), _ann("d2", "miss"), _ann("d3", "hit")]
+    report = build_feature_analysis(audits, annotations, min_bucket_size=1)
+    assert "by_regime" in report["buckets"]
+
+
+def test_by_regime_splits_alerts_by_active_regime(tmp_path: Path, monkeypatch) -> None:
+    """Two alerts at different timestamps under different regimes → two labels."""
+    # Force the regime-storage loader to read our tmp dir.
+    monkeypatch.chdir(tmp_path)
+    _write_regime_jsonl(
+        tmp_path,
+        "BTC",
+        [
+            {
+                "asset": "BTC",
+                "timestamp": "2026-03-25T09:00:00Z",
+                "regime": "trend_up",
+                "vol_class": "vol_low",
+                "confidence": 1.0,
+            },
+            {
+                "asset": "BTC",
+                "timestamp": "2026-03-25T11:00:00Z",
+                "regime": "chop_quiet",
+                "vol_class": "vol_normal",
+                "confidence": 1.0,
+            },
+        ],
+    )
+    audits = [
+        _audit("d1", "bullish", ["BTC"], 8, dispatched_at="2026-03-25T09:30:00+00:00"),
+        _audit("d2", "bullish", ["BTC"], 8, dispatched_at="2026-03-25T09:45:00+00:00"),
+        _audit("d3", "bullish", ["BTC"], 8, dispatched_at="2026-03-25T11:30:00+00:00"),
+    ]
+    annotations = [_ann("d1", "hit"), _ann("d2", "miss"), _ann("d3", "hit")]
+    report = build_feature_analysis(audits, annotations, min_bucket_size=1)
+    labels = {b["label"] for b in report["buckets"]["by_regime"]}
+    assert "trend_up" in labels
+    assert "chop_quiet" in labels
+
+
+def test_by_regime_labels_unknown_when_no_history(tmp_path: Path, monkeypatch) -> None:
+    """No regime jsonl at all → all alerts get 'unknown' label."""
+    monkeypatch.chdir(tmp_path)
+    audits = [
+        _audit("d1", "bullish", ["BTC"], 8),
+        _audit("d2", "bullish", ["BTC"], 8),
+    ]
+    annotations = [_ann("d1", "hit"), _ann("d2", "miss")]
+    report = build_feature_analysis(audits, annotations, min_bucket_size=1)
+    labels = {b["label"] for b in report["buckets"]["by_regime"]}
+    assert "unknown" in labels
+
+
+def test_by_regime_labels_stale_when_regime_too_old(tmp_path: Path, monkeypatch) -> None:
+    """Alert dispatched long after the latest snapshot → label 'stale'."""
+    monkeypatch.chdir(tmp_path)
+    _write_regime_jsonl(
+        tmp_path,
+        "BTC",
+        [
+            {
+                "asset": "BTC",
+                "timestamp": "2026-03-20T09:00:00Z",  # 5 days before
+                "regime": "trend_up",
+                "vol_class": "vol_low",
+                "confidence": 1.0,
+            },
+        ],
+    )
+    audits = [
+        _audit("d1", "bullish", ["BTC"], 8, dispatched_at="2026-03-25T09:30:00+00:00"),
+    ]
+    annotations = [_ann("d1", "hit")]
+    report = build_feature_analysis(audits, annotations, min_bucket_size=1)
+    labels = {b["label"] for b in report["buckets"]["by_regime"]}
+    assert "stale" in labels
