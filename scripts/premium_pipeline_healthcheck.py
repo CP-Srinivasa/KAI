@@ -6,6 +6,14 @@ single Telegram message to ``ALERT_TELEGRAM_CHAT_ID`` summarising the
 failure_modes plus per-check details, then exits 1 so the journal records
 the FAIL. On OK it exits 0 silently.
 
+2026-05-16: auto-reprocess pre-step. Before health is computed the script
+calls ``envelope_to_paper_bridge.run_tick()`` so that re-pending envelopes
+(e.g. an auto-fill where the first market-data lookup returned None for an
+exotic token) get re-processed without an operator clicking "Reprocess
+Bridge". Root cause of the 2026-05-14 BAS/USDT 10h17m fill-delay. The tick
+is idempotent and returns early when there is nothing pending; cost on a
+quiet bus is one JSONL scan. Disable via ``KAI_HEALTHCHECK_AUTO_REPROCESS=0``.
+
 No throttle by design — operator opted for "alert on every failing tick"
 on 2026-05-14. If that becomes too noisy, gate by an env-toggle here.
 
@@ -18,6 +26,7 @@ Stdout structure on FAIL:
 
 from __future__ import annotations
 
+import asyncio
 import os
 import sys
 from pathlib import Path
@@ -33,6 +42,7 @@ import logging
 import urllib.parse
 import urllib.request
 
+from app.execution.envelope_to_paper_bridge import run_tick
 from app.observability.premium_pipeline_health import compute_pipeline_health
 
 logging.basicConfig(
@@ -83,7 +93,45 @@ def _send_telegram(text: str) -> bool:
         return False
 
 
+def _auto_reprocess_pending() -> None:
+    """Run one bridge tick to clear stuck pending envelopes (best-effort).
+
+    Why: when the first auto-fill bridge tick happens at signal-receive time
+    and market-data is briefly unavailable for an exotic token, the envelope
+    goes to ``re_pending`` and stays there until an operator clicks the
+    "Reprocess Bridge" button in the Portfolio UI. The healthcheck timer
+    runs every 60s anyway — letting it nudge the bridge closes that gap.
+
+    Failure-mode: any exception inside ``run_tick`` is logged at WARNING
+    and swallowed. The healthcheck must still proceed to ``compute_pipeline_health``
+    so an alert fires if the bridge itself is broken. We deliberately do not
+    raise — the next tick will retry, and a persistent failure shows up in
+    the health-report (which counts ``re_pending`` age separately).
+    """
+    if os.environ.get("KAI_HEALTHCHECK_AUTO_REPROCESS", "1") == "0":
+        return
+    try:
+        result = asyncio.run(run_tick())
+    except Exception as exc:  # noqa: BLE001 — must not crash healthcheck
+        logger.warning("auto-reprocess tick failed: %s", exc)
+        return
+    if not result.enabled:
+        logger.debug("auto-reprocess skipped: bridge disabled")
+        return
+    if result.envelopes_scanned == 0:
+        return
+    logger.info(
+        "auto-reprocess tick scanned=%d filled=%d re_pending=%d expired=%d errors=%d",
+        result.envelopes_scanned,
+        result.filled,
+        result.re_pending,
+        result.expired,
+        len(result.errors),
+    )
+
+
 def main() -> int:
+    _auto_reprocess_pending()
     report = compute_pipeline_health()
     if report.healthy:
         logger.info("OK %s checks=%d", report.timestamp_utc, len(report.checks))
