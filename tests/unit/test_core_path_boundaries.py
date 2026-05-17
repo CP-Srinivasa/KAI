@@ -13,10 +13,39 @@ def _python_files(root: Path) -> list[Path]:
     return [p for p in root.rglob("*.py") if p.is_file()]
 
 
+def _is_type_checking_guard(node: ast.If) -> bool:
+    """Detect ``if TYPE_CHECKING:`` / ``if typing.TYPE_CHECKING:`` blocks."""
+    test = node.test
+    if isinstance(test, ast.Name) and test.id == "TYPE_CHECKING":
+        return True
+    if (
+        isinstance(test, ast.Attribute)
+        and test.attr == "TYPE_CHECKING"
+        and isinstance(test.value, ast.Name)
+        and test.value.id == "typing"
+    ):
+        return True
+    return False
+
+
 def _module_imports(path: Path) -> set[str]:
+    """Return runtime module imports.
+
+    Imports inside ``if TYPE_CHECKING:`` blocks are excluded — they are
+    erased at runtime and do not constitute a layer dependency.
+    """
     tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+
+    type_checking_nodes: set[int] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.If) and _is_type_checking_guard(node):
+            for child in ast.walk(node):
+                type_checking_nodes.add(id(child))
+
     modules: set[str] = set()
     for node in ast.walk(tree):
+        if id(node) in type_checking_nodes:
+            continue
         if isinstance(node, ast.Import):
             for alias in node.names:
                 modules.add(alias.name)

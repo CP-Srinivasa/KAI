@@ -45,9 +45,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
-from app.alerts.audit import AlertAuditRecord
+if TYPE_CHECKING:
+    from app.alerts.audit import AlertAuditRecord
 
 # Sentiments treated as directional. Mirrors
 # ``app/alerts/feature_analysis._DIRECTIONAL_SENTIMENTS`` so the
