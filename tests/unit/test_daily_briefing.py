@@ -188,8 +188,8 @@ def test_briefing_to_text_includes_p10_section(tmp_path: Path) -> None:
     _write_outcome(tmp_path, "p10-a", "hit")
     data = build_daily_briefing(tmp_path)
     text = data.to_text()
-    assert "P10 tier" in text
-    assert "P10 7d" in text
+    assert "[P10] tier" in text
+    assert "[P10] 7d" in text
 
 
 # ── Health Check ────────────────────────────────────────────────────
