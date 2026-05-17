@@ -93,7 +93,7 @@ class BriefingData:
                 lines.append(f"    {reason}: {count}")
         if self.top_assets:
             lines.append(f"  Top assets:   {', '.join(self.top_assets[:5])}")
-        lines.append(f"  🔥 P10 tier:  {self.p10_dispatched}")
+        lines.append(f"  [P10] tier:   {self.p10_dispatched}")
 
         # Precision
         lines.append("")
@@ -107,7 +107,7 @@ class BriefingData:
         if self.p10_resolved_7d > 0:
             p10_pct = self.p10_precision_pct_7d
             pct_str = f"{p10_pct:.1f}%" if p10_pct is not None else "n/a"
-            lines.append(f"  🔥 P10 7d:    {self.p10_hits_7d}/{self.p10_resolved_7d} ({pct_str})")
+            lines.append(f"  [P10] 7d:     {self.p10_hits_7d}/{self.p10_resolved_7d} ({pct_str})")
 
         # Trading loop
         lines.append("")
