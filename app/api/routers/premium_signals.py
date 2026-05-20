@@ -63,6 +63,8 @@ logger = logging.getLogger(__name__)
 
 _ENVELOPE_LOG = Path("artifacts/telegram_message_envelope.jsonl")
 _BRIDGE_LOG = Path("artifacts/bridge_pending_orders.jsonl")
+_PAPER_LOG = Path("artifacts/paper_execution_audit.jsonl")
+_RAW_LOG = Path("artifacts/telegram_channel_raw.jsonl")
 _ACTION_AUDIT_LOG = Path("artifacts/premium_signal_actions.jsonl")
 
 router = APIRouter(prefix="/api/premium-signals", tags=["premium-signals"])
@@ -426,6 +428,38 @@ def _add_quote(symbol_upper: str) -> str:
         if symbol_upper.endswith(quote) and len(symbol_upper) > len(quote):
             return f"{symbol_upper[: -len(quote)]}/{quote}"
     return f"{symbol_upper}/USDT"
+
+
+@router.get("/trail")
+async def trail(limit: int = 20) -> dict[str, Any]:
+    """End-to-End Premium-Signal-Trail (2026-05-20 /goal).
+
+    Joint die 4 Audit-Streams (raw / envelope / bridge / paper) und liefert
+    pro Premium-Signal-Envelope eine Trail-Zeile mit 6 Pipeline-Stages und
+    klarem overall-Status. UI-Konsument: Premium-Signal-Trail-Komponente.
+
+    Datenquelle nur lesend — alle Streams sind append-only. ``limit`` cap
+    auf 100 damit der UI nicht 5 MB JSON laden muss.
+    """
+    from app.execution.envelope_to_paper_bridge import _read_jsonl
+    from app.observability.premium_signal_trail import build_trail
+
+    safe_limit = max(1, min(int(limit), 100))
+    envelopes = _read_jsonl(_ENVELOPE_LOG)
+    bridge_records = _read_jsonl(_BRIDGE_LOG)
+    paper_records = _read_jsonl(_PAPER_LOG)
+
+    entries = build_trail(
+        envelope_records=envelopes,
+        bridge_records=bridge_records,
+        paper_records=paper_records,
+        limit=safe_limit,
+    )
+    return {
+        "count": len(entries),
+        "limit": safe_limit,
+        "trail": [e.to_dict() for e in entries],
+    }
 
 
 __all__ = ["router"]
