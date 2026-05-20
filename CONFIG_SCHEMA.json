@@ -153,7 +153,7 @@
         "max_risk_per_trade_pct": { "type": "number", "minimum": 0.0, "maximum": 0.25 },
         "max_daily_loss_pct": { "type": "number", "minimum": 0.0, "maximum": 1.0 },
         "max_total_drawdown_pct": { "type": "number", "minimum": 0.0, "maximum": 5.0 },
-        "max_open_positions": { "type": "integer", "minimum": 0, "maximum": 3 },
+        "max_open_positions": { "type": "integer", "minimum": 0, "maximum": 6 },
         "max_sector_or_theme_exposure_pct": { "type": "number", "minimum": 0.0 },
         "max_correlated_exposure_pct": { "type": "number", "minimum": 0.0 },
         "max_leverage": { "type": "number", "minimum": 0.0, "maximum": 1.0 },
