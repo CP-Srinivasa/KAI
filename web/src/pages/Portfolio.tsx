@@ -17,6 +17,7 @@ import {
 import { cn } from "@/lib/utils";
 import { PreparedPanel } from "@/components/panels/PreparedPanel";
 import { PremiumTradeCard } from "@/components/panels/PremiumTradeCard";
+import { PremiumSignalTrail } from "@/components/panels/PremiumSignalTrail";
 import { useCurrency } from "@/state/CurrencyProvider";
 
 /**
@@ -436,6 +437,13 @@ export function PortfolioPage() {
             ))}
         </section>
       )}
+
+      {/* /goal 2026-05-20: Premium-Signal Trail — End-to-End-Sicht aller
+          Pipeline-Stages pro Envelope (raw → envelope → approved → bridge
+          → paper → closed). Ersetzt die alte "External grün, Portfolio leer"-
+          Wahrnehmung durch differenzierte Status (CLOSED / BRIDGE_REJECTED /
+          PAPER_REJECTED / SOURCE_SKIPPED / PENDING_ENTRY / OPEN). */}
+      <PremiumSignalTrail limit={20} />
 
       {/* Sprint E (2026-05-12): Operator-Actions für Premium-Signal-Pipeline */}
       <Card padded className="synthwave-pulse-edge overflow-hidden">

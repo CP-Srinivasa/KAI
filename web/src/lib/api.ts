@@ -490,6 +490,68 @@ export function postPositionRepair(
   });
 }
 
+// ── Premium-Signal Trail (2026-05-20 /goal) ──────────────────────────────────
+
+export type PremiumSignalTrailStage = {
+  name: string;
+  ok: boolean;
+  label: string;
+  ts?: string | null;
+  reason?: string | null;
+  detail?: Record<string, unknown>;
+};
+
+export type PremiumSignalTrailBridgeHistoryEntry = {
+  ts: string | null;
+  stage: string | null;
+  audit_reason: string | null;
+  lifecycle_state?: string | null;
+  order_id?: string | null;
+  fill_price?: number | null;
+  quantity?: number | null;
+};
+
+export type PremiumSignalTrailEntry = {
+  envelope_id: string;
+  symbol: string;
+  received_at: string | null;
+  direction: string | null;
+  side: string | null;
+  entry_value: number | null;
+  stop_loss: number | null;
+  targets: number[];
+  leverage: number | null;
+  scale_factor: number | null;
+  scale_unknown: boolean;
+  stages: PremiumSignalTrailStage[];
+  overall: string;
+  is_open: boolean;
+  realized_pnl_usd: number | null;
+  next_action_hint: string;
+  approved_envelope_id: string | null;
+  bridge_history: PremiumSignalTrailBridgeHistoryEntry[];
+  paper_order_id: string | null;
+  paper_position_state: string | null;
+  paper_close_reason: string | null;
+  quantity: number | null;
+};
+
+export type PremiumSignalTrailResponse = {
+  count: number;
+  limit: number;
+  trail: PremiumSignalTrailEntry[];
+};
+
+export function fetchPremiumSignalTrail(
+  limit = 20,
+  signal?: AbortSignal,
+): Promise<PremiumSignalTrailResponse> {
+  return apiGet<PremiumSignalTrailResponse>(
+    `/api/premium-signals/trail?limit=${limit}`,
+    { signal },
+  );
+}
+
 export function fetchPortfolioSnapshot(signal?: AbortSignal): Promise<PortfolioSnapshot> {
   return apiGet<PortfolioSnapshot>("/operator/portfolio-snapshot", { signal });
 }
