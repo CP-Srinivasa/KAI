@@ -51,6 +51,7 @@ _BRIDGE_REJECT_STAGES = frozenset(
         "rejected_fill",
         "rejected_position_exists",
         "rejected_short_unsupported",
+        "rejected_scale_review",  # 2026-05-21 IRYS-Bug-Härtung
     }
 )
 

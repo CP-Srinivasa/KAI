@@ -110,6 +110,78 @@ async def fetch_price(symbol: str) -> float | None:
     return snap.price
 
 
+def validate_scaled_signal(
+    *,
+    direction: str,
+    entry: float | None,
+    stop_loss: float | None,
+    targets: list[float] | None,
+    spot: float | None = None,
+    entry_spot_ratio_tolerance: float = 0.5,
+) -> str | None:
+    """Sanity-Check der scaled Signal-Werte. Returns reason-code oder None.
+
+    Strukturelle Checks (immer):
+    - ``entry`` muss > 0 sein, sonst "scale_collapses_to_zero"
+    - long: ``stop_loss`` muss < ``entry`` (sonst "long_sl_at_or_above_entry")
+    - short: ``stop_loss`` muss > ``entry`` (sonst "short_sl_at_or_below_entry")
+    - long: mindestens 1 target > ``entry`` (sonst "long_targets_at_or_below_entry")
+    - short: mindestens 1 target < ``entry`` (sonst "short_targets_at_or_above_entry")
+
+    Markt-Plausibilität (nur wenn ``spot`` gesetzt):
+    - long: ``stop_loss`` muss < ``spot`` (sonst "long_sl_at_or_above_spot"
+            — Markt ist bereits unter dem SL → Fill würde sofort gestoppt)
+    - short: ``stop_loss`` muss > ``spot`` (sonst "short_sl_at_or_below_spot")
+    - ``entry/spot`` ratio innerhalb ``[1-tol, 1+tol]`` (default 0.5 →
+            entry darf nicht > 50% vom spot abweichen, sonst
+            "entry_far_from_spot" — fast immer ein Scale-Detection-Bug)
+
+    Die Reason-Codes sind stabile API für Bridge-Audit + Trail-UI. Wenn
+    None zurückgegeben wird, ist das Signal nach Skalierung plausibel.
+
+    Wurzel 2026-05-12: IRYS/USDT (entry 5455 nach scale ×1e5 = 0.05455,
+    spot war 0.05153, SL 0.0523). Strukturell korrekt (SL < entry), aber
+    Markt war bereits durch SL gelaufen → paper_engine reject mit
+    ``long_sl_at_or_above_price`` und der bridge_pending_orders.jsonl-Audit
+    bekam nur den opaken Reason ``paper_engine_returned_none``. Mit dieser
+    Validation greift Bridge VOR dem paper-engine-call und schreibt einen
+    aussagekräftigen Reason im Trail.
+    """
+    norm = (direction or "").strip().lower()
+    is_long = norm in {"long", "buy"}
+    is_short = norm in {"short", "sell"}
+    if not is_long and not is_short:
+        return None  # unbekannte direction — kein Block hier, Bridge-Gate-3 catched das
+    if entry is None or entry <= 0:
+        return "scale_collapses_to_zero"
+    if stop_loss is not None and stop_loss > 0:
+        if is_long and stop_loss >= entry:
+            return "long_sl_at_or_above_entry"
+        if is_short and stop_loss <= entry:
+            return "short_sl_at_or_below_entry"
+    valid_targets = [
+        float(t)
+        for t in (targets or [])
+        if isinstance(t, (int, float)) and not isinstance(t, bool) and t > 0
+    ]
+    if valid_targets:
+        if is_long and all(t <= entry for t in valid_targets):
+            return "long_targets_at_or_below_entry"
+        if is_short and all(t >= entry for t in valid_targets):
+            return "short_targets_at_or_above_entry"
+    if spot is not None and spot > 0:
+        if is_long and stop_loss is not None and stop_loss > 0 and stop_loss >= spot:
+            return "long_sl_at_or_above_spot"
+        if is_short and stop_loss is not None and stop_loss > 0 and stop_loss <= spot:
+            return "short_sl_at_or_below_spot"
+        ratio = entry / spot
+        lo = 1.0 - entry_spot_ratio_tolerance
+        hi = 1.0 + entry_spot_ratio_tolerance
+        if ratio < lo or ratio > hi:
+            return "entry_far_from_spot"
+    return None
+
+
 async def resolve_scale_for_symbol(
     symbol: str,
     reference_value: float,
@@ -138,4 +210,5 @@ __all__ = [
     "detect_scale_factor",
     "fetch_price",
     "resolve_scale_for_symbol",
+    "validate_scaled_signal",
 ]

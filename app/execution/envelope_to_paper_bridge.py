@@ -84,6 +84,7 @@ _TERMINAL_STAGES = frozenset(
         "rejected_short_unsupported",  # historical pre-V25 envelopes only
         "rejected_fill",
         "rejected_position_exists",
+        "rejected_scale_review",  # 2026-05-21 IRYS-Bug-Härtung
         "skipped_source",
     }
 )
@@ -796,6 +797,55 @@ async def _process_one(
         # just gated on.
         scaled_payload = envelope.get("payload")
         _apply_scale(scaled_payload if isinstance(scaled_payload, dict) else {}, scale_factor)
+
+    # Gate 4.5 (2026-05-21): plausibility-check der skalierten Werte gegen spot.
+    # Adressiert IRYS 2026-05-12: SL nach Skalierung lag über spot, paper-engine
+    # rejected mit ``long_sl_at_or_above_price`` und Bridge schrieb nur opaken
+    # ``paper_engine_returned_none``. validate_scaled_signal liefert jetzt einen
+    # aussagekräftigen Reason der direkt in den Trail-Audit landet.
+    from app.execution.scale_resolver import validate_scaled_signal
+
+    validation_reason = validate_scaled_signal(
+        direction=str(direction or ""),
+        entry=entry_price,
+        stop_loss=stop_loss,
+        targets=list(targets),
+        spot=current_price,
+    )
+    if validation_reason is not None:
+        rec = base("rejected_scale_review")
+        rec["reason"] = validation_reason
+        rec["scale_factor_applied"] = scale_factor
+        rec["scaled_entry"] = entry_price
+        rec["scaled_stop_loss"] = stop_loss
+        rec["scaled_targets"] = list(targets)
+        rec["current_price"] = current_price
+        rec["executable_intent"] = _build_executable_intent(
+            envelope_id=envelope_id,
+            correlation_id=str(rec["correlation_id"]),
+            source=source,
+            payload=payload,
+            symbol=symbol,
+            side=str(side_str),
+            entry_price=entry_price,
+            stop_loss=stop_loss,
+            targets=targets,
+        ).to_dict()
+        rec["order_intent"] = rec["executable_intent"]
+        _attach_lifecycle(
+            rec,
+            final_state=OrderLifecycleState.REJECTED_INVALID_SIGNAL,
+            states=[
+                OrderLifecycleState.RECEIVED,
+                OrderLifecycleState.PARSED,
+                OrderLifecycleState.VALIDATED,
+                OrderLifecycleState.REJECTED_INVALID_SIGNAL,
+            ],
+            reason=validation_reason,
+        )
+        _append_bridge_audit(rec)
+        result.rejected_size += 1
+        return
 
     if not _entry_condition_met(
         payload=payload,

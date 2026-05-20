@@ -724,6 +724,62 @@ def test_apply_scale_noop_when_factor_one() -> None:
 
 
 @pytest.mark.asyncio
+async def test_irys_path_blocked_by_scale_review_gate(
+    tmp_artifacts: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """IRYS 2026-05-12: scaled SL über spot → rejected_scale_review, NICHT
+    opaker paper_engine_returned_none.
+
+    Pre-2026-05-21: scale_resolver erkannte factor=1e5 korrekt, aber zwischen
+    Receive und Bridge-Tick ist der spot durch den SL gelaufen. paper_engine
+    rejected mit long_sl_at_or_above_price, Bridge schrieb nur den opaken
+    `paper_engine_returned_none`-Reason. Gate 4.5 fängt das jetzt ab und
+    liefert den klaren Grund in den Trail.
+    """
+    monkeypatch.setenv("EXECUTION_OPERATOR_SIGNAL_BRIDGE_ENABLED", "true")
+    monkeypatch.setenv("EXECUTION_OPERATOR_SIGNAL_SOURCE_ALLOWLIST", "dashboard")
+
+    # Scale-resolved at emit (factor 1e5), SL liegt nach scale OBER spot.
+    payload_overrides = {
+        "symbol": "IRYSUSDT",
+        "display_symbol": "IRYS/USDT",
+        "entry_value": 0.05455,
+        "stop_loss": 0.0523,
+        "targets": [0.0548, 0.05505, 0.05535, 0.05565],
+        "scale_resolved_at_emit": True,
+        "scale_factor": 100000.0,
+        "leverage": 10,
+        "margin_pct": 5.0,
+    }
+    _write_envelope(
+        tmp_artifacts / "telegram_message_envelope.jsonl",
+        _accepted_envelope(
+            envelope_id="env-irys-scale",
+            payload_overrides=payload_overrides,
+        ),
+    )
+
+    with patch.object(bridge, "_fetch_price", new=AsyncMock(return_value=0.05153)):
+        result = await run_tick()
+
+    records = _read_bridge_records(tmp_artifacts / "bridge_pending_orders.jsonl")
+    assert len(records) == 1, [r["stage"] for r in records]
+    rec = records[0]
+    assert rec["stage"] == "rejected_scale_review"
+    assert rec["reason"] == "long_sl_at_or_above_spot"
+    assert rec["scaled_stop_loss"] == 0.0523
+    assert rec["current_price"] == 0.05153
+    assert rec["lifecycle_state"] == "REJECTED_INVALID_SIGNAL"
+    assert result.rejected_size == 1
+    # paper_engine darf NICHT aufgerufen worden sein → kein order_created
+    paper_audit = tmp_artifacts / "artifacts" / "paper_execution_audit.jsonl"
+    if paper_audit.exists():
+        paper_recs = _read_bridge_records(paper_audit)
+        order_created = [r for r in paper_recs if r.get("event_type") == "order_created"]
+        assert order_created == [], "paper_engine sollte nicht aufgerufen werden"
+
+
+@pytest.mark.asyncio
 async def test_result_to_dict_shape() -> None:
     """CLI/cron integration relies on stable key names in to_dict()."""
     r = BridgeTickResult(enabled=True)

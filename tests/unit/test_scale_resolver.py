@@ -104,3 +104,117 @@ async def test_resolve_returns_1e8_for_integer_tick_pattern():
 
     factor = await sr.resolve_scale_for_symbol("SWARMS/USDT", 32450.0, price_fetcher=_swarms_price)
     assert factor == 1e8
+
+
+# ── validate_scaled_signal (2026-05-21 IRYS-Bug-Härtung) ────────────────────
+
+
+def test_validate_passes_for_well_formed_long():
+    # entry < tps, sl < entry, spot near entry
+    assert (
+        sr.validate_scaled_signal(
+            direction="long",
+            entry=0.06,
+            stop_loss=0.05,
+            targets=[0.062, 0.065],
+            spot=0.0595,
+        )
+        is None
+    )
+
+
+def test_validate_passes_for_well_formed_short():
+    assert (
+        sr.validate_scaled_signal(
+            direction="short",
+            entry=0.06,
+            stop_loss=0.065,
+            targets=[0.058, 0.055],
+            spot=0.0605,
+        )
+        is None
+    )
+
+
+def test_validate_collapses_to_zero_when_entry_non_positive():
+    assert (
+        sr.validate_scaled_signal(
+            direction="long", entry=0.0, stop_loss=0.05, targets=[0.07], spot=0.06
+        )
+        == "scale_collapses_to_zero"
+    )
+
+
+def test_validate_blocks_long_sl_above_entry():
+    # Strukturell-falsch: SL kann für LONG nicht über Entry liegen
+    assert (
+        sr.validate_scaled_signal(
+            direction="long", entry=0.05, stop_loss=0.06, targets=[0.07], spot=None
+        )
+        == "long_sl_at_or_above_entry"
+    )
+
+
+def test_validate_blocks_short_sl_below_entry():
+    assert (
+        sr.validate_scaled_signal(
+            direction="short", entry=0.05, stop_loss=0.04, targets=[0.03], spot=None
+        )
+        == "short_sl_at_or_below_entry"
+    )
+
+
+def test_validate_blocks_long_targets_below_entry():
+    # Alle Targets <= Entry für LONG → kein Take-Profit-Pfad möglich
+    assert (
+        sr.validate_scaled_signal(
+            direction="long", entry=0.05, stop_loss=0.04, targets=[0.045, 0.048]
+        )
+        == "long_targets_at_or_below_entry"
+    )
+
+
+def test_validate_irys_2026_05_12_path():
+    # Der echte IRYS-Bug-Pfad: SL nach scale (0.0523) liegt OBER spot (0.05153)
+    # für LONG → Markt ist bereits durch SL gelaufen vor Fill.
+    assert (
+        sr.validate_scaled_signal(
+            direction="long",
+            entry=0.05455,
+            stop_loss=0.0523,
+            targets=[0.0548, 0.05505, 0.05535, 0.05565],
+            spot=0.05153,
+        )
+        == "long_sl_at_or_above_spot"
+    )
+
+
+def test_validate_blocks_entry_far_from_spot():
+    # entry/spot ratio > 1.5 → scale-detection-Verdacht. SL muss UNTER spot
+    # liegen damit der SL-Check vorher nicht zuschlägt.
+    assert (
+        sr.validate_scaled_signal(
+            direction="long", entry=1.0, stop_loss=0.3, targets=[1.1], spot=0.4
+        )
+        == "entry_far_from_spot"
+    )
+
+
+def test_validate_returns_none_without_direction():
+    # Unbekannte direction → kein Block (Bridge-Gate 3 catched das separat)
+    assert (
+        sr.validate_scaled_signal(
+            direction="", entry=0.06, stop_loss=0.05, targets=[0.07], spot=0.0595
+        )
+        is None
+    )
+
+
+def test_validate_skips_spot_checks_when_spot_unknown():
+    # Strukturell ok; ohne spot werden Markt-Checks übersprungen
+    assert (
+        sr.validate_scaled_signal(
+            direction="long", entry=0.06, stop_loss=0.055, targets=[0.07], spot=None
+        )
+        is None
+    )
