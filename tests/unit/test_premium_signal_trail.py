@@ -18,6 +18,7 @@ from __future__ import annotations
 from app.observability.premium_signal_trail import (
     StageStatus,
     TrailEntry,
+    build_orphan_completions,
     build_trail,
 )
 
@@ -373,6 +374,67 @@ def test_approval_only_records_dont_create_orphan_entries():
     )
     trail = build_trail(envelope_records=[approved_only], bridge_records=[], paper_records=[])
     assert trail == []
+
+
+def _completion_audit(
+    symbol: str,
+    touch_price: float,
+    ts: str,
+    *,
+    status: str = "orphan_no_match",
+    reason: str = "no_open_position_for_symbol",
+    raw_text: str | None = None,
+) -> dict:
+    return {
+        "timestamp_utc": ts,
+        "event": "target_completion_reconcile",
+        "source_envelope_id": f"TGCOMPL-{symbol.replace('/', '')}",
+        "symbol": symbol,
+        "raw_text": raw_text or f"🎯#{symbol.replace('/', '')} touched {touch_price}",
+        "touch_price": touch_price,
+        "status": status,
+        "reason": reason,
+    }
+
+
+def test_build_orphan_completions_filters_status_and_event():
+    records = [
+        _completion_audit("OPG/USDT", 3447.0, "2026-05-19T20:51:06+00:00"),
+        # closed → not an orphan
+        _completion_audit("BIRB/USDT", 13777.0, "2026-05-19T20:51:46+00:00", status="closed"),
+        # other event entirely → ignore
+        {"event": "some_other_event", "status": "orphan_no_match", "symbol": "X"},
+        _completion_audit("IRYS/USDT", 7718.0, "2026-05-19T20:51:13+00:00"),
+    ]
+    orphans = build_orphan_completions(audit_records=records)
+    assert [o.symbol for o in orphans] == ["IRYS/USDT", "OPG/USDT"]
+    assert orphans[0].touch_price == 7718.0
+    assert orphans[0].reason == "no_open_position_for_symbol"
+
+
+def test_build_orphan_completions_newest_first_and_limit():
+    records = [
+        _completion_audit("A/USDT", 1.0, "2026-05-19T20:51:01+00:00"),
+        _completion_audit("B/USDT", 2.0, "2026-05-19T20:51:02+00:00"),
+        _completion_audit("C/USDT", 3.0, "2026-05-19T20:51:03+00:00"),
+    ]
+    orphans = build_orphan_completions(audit_records=records, limit=2)
+    assert [o.symbol for o in orphans] == ["C/USDT", "B/USDT"]
+
+
+def test_build_orphan_completions_skips_records_without_symbol():
+    records = [
+        {
+            "event": "target_completion_reconcile",
+            "status": "orphan_no_match",
+            "symbol": "",
+            "touch_price": 1.0,
+            "timestamp_utc": "2026-05-19T20:51:01+00:00",
+        },
+        _completion_audit("OK/USDT", 1.0, "2026-05-19T20:51:02+00:00"),
+    ]
+    orphans = build_orphan_completions(audit_records=records)
+    assert [o.symbol for o in orphans] == ["OK/USDT"]
 
 
 def test_multiple_targets_passed_through():

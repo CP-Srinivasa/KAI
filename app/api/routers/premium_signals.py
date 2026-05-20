@@ -65,6 +65,7 @@ _ENVELOPE_LOG = Path("artifacts/telegram_message_envelope.jsonl")
 _BRIDGE_LOG = Path("artifacts/bridge_pending_orders.jsonl")
 _PAPER_LOG = Path("artifacts/paper_execution_audit.jsonl")
 _RAW_LOG = Path("artifacts/telegram_channel_raw.jsonl")
+_TARGET_COMPLETION_LOG = Path("artifacts/target_completion_audit.jsonl")
 _ACTION_AUDIT_LOG = Path("artifacts/premium_signal_actions.jsonl")
 
 router = APIRouter(prefix="/api/premium-signals", tags=["premium-signals"])
@@ -442,12 +443,16 @@ async def trail(limit: int = 20) -> dict[str, Any]:
     auf 100 damit der UI nicht 5 MB JSON laden muss.
     """
     from app.execution.envelope_to_paper_bridge import _read_jsonl
-    from app.observability.premium_signal_trail import build_trail
+    from app.observability.premium_signal_trail import (
+        build_orphan_completions,
+        build_trail,
+    )
 
     safe_limit = max(1, min(int(limit), 100))
     envelopes = _read_jsonl(_ENVELOPE_LOG)
     bridge_records = _read_jsonl(_BRIDGE_LOG)
     paper_records = _read_jsonl(_PAPER_LOG)
+    completion_records = _read_jsonl(_TARGET_COMPLETION_LOG)
 
     entries = build_trail(
         envelope_records=envelopes,
@@ -455,10 +460,15 @@ async def trail(limit: int = 20) -> dict[str, Any]:
         paper_records=paper_records,
         limit=safe_limit,
     )
+    orphans = build_orphan_completions(
+        audit_records=completion_records,
+        limit=safe_limit,
+    )
     return {
         "count": len(entries),
         "limit": safe_limit,
         "trail": [e.to_dict() for e in entries],
+        "orphan_completions": [o.to_dict() for o in orphans],
     }
 
 

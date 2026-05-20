@@ -924,8 +924,71 @@ def build_trail(
     return trail
 
 
+@dataclass
+class OrphanCompletion:
+    """🎯-Completion-Meldung ohne passende offene Position.
+
+    Wurzel 2026-05-19/20: Operator-Auftrag /goal explicit fordert sichtbare
+    orphans statt stiller Ignorierung. Reconciler schreibt
+    ``target_completion_audit.jsonl`` mit ``status="orphan_no_match"`` —
+    die Trail-UI zeigt sie als eigene Liste unter dem Envelope-Trail.
+    """
+
+    timestamp_utc: str | None
+    symbol: str
+    touch_price: float | None
+    reason: str | None
+    source_envelope_id: str | None
+    raw_text: str | None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "timestamp_utc": self.timestamp_utc,
+            "symbol": self.symbol,
+            "touch_price": self.touch_price,
+            "reason": self.reason,
+            "source_envelope_id": self.source_envelope_id,
+            "raw_text": self.raw_text,
+        }
+
+
+def build_orphan_completions(
+    *,
+    audit_records: list[dict[str, Any]],
+    limit: int = 20,
+) -> list[OrphanCompletion]:
+    """Filtert ``target_completion_reconcile``-Records auf ``orphan_no_match``.
+
+    Newest first nach ``timestamp_utc``. Liefert max ``limit`` Einträge.
+    Pure — kein IO. Caller liefert die JSONL-Records via ``_read_jsonl``.
+    """
+    orphans: list[OrphanCompletion] = []
+    for rec in audit_records:
+        if rec.get("event") != "target_completion_reconcile":
+            continue
+        if rec.get("status") != "orphan_no_match":
+            continue
+        symbol_raw = rec.get("symbol")
+        if not isinstance(symbol_raw, str) or not symbol_raw:
+            continue
+        orphans.append(
+            OrphanCompletion(
+                timestamp_utc=_safe_str(rec.get("timestamp_utc")),
+                symbol=symbol_raw,
+                touch_price=_safe_float(rec.get("touch_price")),
+                reason=_safe_str(rec.get("reason")),
+                source_envelope_id=_safe_str(rec.get("source_envelope_id")),
+                raw_text=_safe_str(rec.get("raw_text")),
+            )
+        )
+    orphans.sort(key=lambda o: o.timestamp_utc or "", reverse=True)
+    return orphans[:limit]
+
+
 __all__ = [
+    "OrphanCompletion",
     "StageStatus",
     "TrailEntry",
+    "build_orphan_completions",
     "build_trail",
 ]

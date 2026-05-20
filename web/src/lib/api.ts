@@ -536,10 +536,20 @@ export type PremiumSignalTrailEntry = {
   quantity: number | null;
 };
 
+export type PremiumSignalOrphanCompletion = {
+  timestamp_utc: string | null;
+  symbol: string;
+  touch_price: number | null;
+  reason: string | null;
+  source_envelope_id: string | null;
+  raw_text: string | null;
+};
+
 export type PremiumSignalTrailResponse = {
   count: number;
   limit: number;
   trail: PremiumSignalTrailEntry[];
+  orphan_completions?: PremiumSignalOrphanCompletion[];
 };
 
 export function fetchPremiumSignalTrail(

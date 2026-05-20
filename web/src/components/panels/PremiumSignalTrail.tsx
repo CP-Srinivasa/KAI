@@ -6,13 +6,16 @@ import {
   Pause,
   Play,
   RefreshCw,
+  Target,
   X,
 } from "lucide-react";
 import { Badge, Card, CardHeader } from "@/components/ui/Primitives";
 import {
   fetchPremiumSignalTrail,
   postManualFill,
+  postReconcileCompletion,
   postReprocess,
+  type PremiumSignalOrphanCompletion,
   type PremiumSignalTrailEntry,
   type PremiumSignalTrailStage,
 } from "@/lib/api";
@@ -294,6 +297,47 @@ function TrailRow({
   );
 }
 
+function OrphanRow({
+  orphan,
+  busy,
+  onReconcile,
+}: {
+  orphan: PremiumSignalOrphanCompletion;
+  busy: boolean;
+  onReconcile: (o: PremiumSignalOrphanCompletion) => void;
+}): JSX.Element {
+  return (
+    <div className="rounded-md border border-warn/30 bg-warn/5 p-3 flex items-center justify-between gap-3 flex-wrap">
+      <div className="flex items-center gap-2 flex-wrap min-w-0">
+        <Target size={14} className="text-warn shrink-0" />
+        <span className="font-mono text-sm font-semibold">{orphan.symbol}</span>
+        <Badge tone="warn">Orphan TP-Hit</Badge>
+        <span className="text-2xs text-fg-subtle font-mono">
+          touched {_formatPrice(orphan.touch_price)}
+        </span>
+        <span className="text-2xs text-fg-subtle font-mono" title={orphan.timestamp_utc ?? ""}>
+          {_formatTs(orphan.timestamp_utc)} · {_formatRelativeAge(orphan.timestamp_utc)} her
+        </span>
+        {orphan.reason && (
+          <span className="text-2xs text-fg-muted font-mono">({orphan.reason})</span>
+        )}
+      </div>
+      <button
+        type="button"
+        disabled={busy}
+        onClick={() => onReconcile(orphan)}
+        className={cn(
+          "inline-flex items-center gap-1 text-2xs font-mono px-2 py-1 rounded-xs border border-line",
+          "hover:border-warn hover:text-warn disabled:opacity-50 transition-colors shrink-0",
+        )}
+        title="Forciert einen Reconcile-Run für diese Completion-Meldung; nützlich wenn eine Position außerhalb des Channels geschlossen wurde."
+      >
+        <RefreshCw size={10} /> Reconcile erzwingen
+      </button>
+    </div>
+  );
+}
+
 export const PremiumSignalTrail = memo(function PremiumSignalTrail({
   limit = 20,
 }: Props): JSX.Element {
@@ -306,7 +350,26 @@ export const PremiumSignalTrail = memo(function PremiumSignalTrail({
     pauseWhenHidden: true,
   });
   const [busyEnv, setBusyEnv] = useState<string | null>(null);
+  const [busyOrphan, setBusyOrphan] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+
+  const handleOrphanReconcile = useCallback(
+    async (o: PremiumSignalOrphanCompletion) => {
+      setBusyOrphan(o.source_envelope_id ?? o.symbol);
+      setActionError(null);
+      try {
+        const key = `trail-orphan-${o.symbol}-${o.timestamp_utc ?? Date.now()}`;
+        await postReconcileCompletion(o.symbol, o.touch_price ?? undefined, key);
+      } catch (e) {
+        setActionError(
+          `reconcile fehlgeschlagen für ${o.symbol}: ${(e as Error).message}`,
+        );
+      } finally {
+        setBusyOrphan(null);
+      }
+    },
+    [],
+  );
 
   const handleAction = useCallback(
     async (
@@ -380,6 +443,34 @@ export const PremiumSignalTrail = memo(function PremiumSignalTrail({
           ))}
         </div>
       )}
+
+      {polling.state === "ready" &&
+        (polling.data.orphan_completions?.length ?? 0) > 0 && (
+          <div className="mt-4 pt-3 border-t border-line-subtle/40">
+            <div className="flex items-center gap-2 mb-2">
+              <Target size={12} className="text-warn" />
+              <span className="text-2xs uppercase tracking-wider text-fg-subtle font-semibold">
+                Orphan Target-Completions
+              </span>
+              <Badge tone="warn">{polling.data.orphan_completions!.length}</Badge>
+            </div>
+            <div className="text-2xs text-fg-subtle mb-2 leading-relaxed">
+              🎯-Channel-Meldungen die KEINE passende offene Position fanden
+              (Position war bereits geschlossen oder nie eröffnet). Reconciler
+              hat sie sauber als orphan markiert — kein silent fail.
+            </div>
+            <div className="space-y-2">
+              {polling.data.orphan_completions!.map((o, i) => (
+                <OrphanRow
+                  key={`${o.source_envelope_id ?? o.symbol}-${i}`}
+                  orphan={o}
+                  busy={busyOrphan === (o.source_envelope_id ?? o.symbol)}
+                  onReconcile={handleOrphanReconcile}
+                />
+              ))}
+            </div>
+          </div>
+        )}
 
       {actionError && (
         <div className="mt-2 rounded-md border border-neg/30 bg-neg/10 p-2 text-2xs font-mono text-neg">
