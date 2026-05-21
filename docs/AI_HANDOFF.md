@@ -176,6 +176,7 @@ Diese Decisions sind **nicht-delegierbar** an KIs. Operator-Sign-off ist Pflicht
 |---|---|
 | `.env`-Secret-Store-Wahl (V4) | offen bis 2026-05-30 |
 | Auto-Annotate-Threshold-Tuning (V5-T nach V5-Forensik) | `[[kai-auto-annotate-reactivation-20260521]]` Option A done, weitere offen |
+| Auto-Annotate-Reporting-Split Implementation | `docs/architecture/auto_annotate_reporting_split_spec.md`; reporting-only erlaubt, Tuning bleibt sign-off-pflichtig |
 | Live-Mode-Aktivierung (`LIVE_MODE=enabled`) | Phase-5, frühestens Q3 |
 | SHADOW_ONLY-Flip | Heuristik `[[kai-bayes-shadow-only-flip-heuristik]]` |
 | Skalierung auf weitere Premium-Channels | nach Phase-1-Ende |
@@ -202,7 +203,30 @@ Diese Decisions sind **nicht-delegierbar** an KIs. Operator-Sign-off ist Pflicht
 
 ---
 
-## 8. Bei Konflikt zwischen AIs
+## 8. Auto-Annotate Review-Gate
+
+Jede Änderung an `app/alerts/auto_annotator.py`, `app/alerts/eligibility.py`,
+`app/alerts/hit_rate.py`, Alert-Outcome-Reports oder verwandten CLI/API-Reports
+muss vor Review diese Fragen beantworten:
+
+1. Ist die Änderung reporting-only oder verändert sie Thresholds/Gates?
+2. Welche Kohorte ist betroffen: `fresh_auto`, `backfill`, `reeval`,
+   `latest_per_doc` oder dispatch-window joined view?
+3. Bleibt `inconclusive` unresolved und aus der Hit-Rate ausgeschlossen?
+4. Werden raw append-only Rows und latest-per-document Views getrennt?
+5. Wird die Zeitbasis explizit genannt: `annotated_at` oder `dispatched_at`?
+6. Nutzen Tests `tmp_path` und synthetische JSONL-Fixtures statt echter
+   Produktionsartefakte?
+7. Gibt es irgendeinen Touch an SHADOW_ONLY, Bayes sizing, bearish disabled,
+   priority gates, source modifiers oder threshold scaling?
+8. Falls ja: liegt ein expliziter Operator-Sign-off vor?
+
+Default-Urteil: Reporting-only darf weiterlaufen. Threshold-/Gate-/Modell-Tuning
+stoppt ohne Operator-Token.
+
+---
+
+## 9. Bei Konflikt zwischen AIs
 
 **Eskalations-Pfad:**
 1. Konflikt-Befund schriftlich (welche Datei, welcher Diff, welcher AI)
@@ -215,7 +239,7 @@ Diese Decisions sind **nicht-delegierbar** an KIs. Operator-Sign-off ist Pflicht
 
 ---
 
-## 9. Pflege dieses Dokuments
+## 10. Pflege dieses Dokuments
 
 - Jeder neue Drift-Vorfall → Eintrag in §7-Tabelle
 - Jede neue Operator-Decision → Eintrag in §6-Tabelle

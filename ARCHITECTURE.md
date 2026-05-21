@@ -183,6 +183,7 @@ Pflichtweg: `envelope.correlation_id` → `NormalizedTradeSignal.correlation_id`
 | 7 | Auto-Annotate-Pipeline-Disziplin | Pipeline A reaktiviert 2026-05-21 | [[kai-auto-annotate-reactivation-20260521]] |
 | 8 | Telegram-Lesbarkeit (Trail-Summary fehlt) | P2 | V8 |
 | 9 | Priority-Scoring vs Sentiment Negativkorrelation | Decision-Pflicht 30.05. | [[kai-priority-sentiment-correlation-paradox]] |
+| 10 | Auto-Annotate-Reporting vermischt Fresh/Backfill/Reeval | spezifiziert, kein Tuning | `docs/architecture/auto_annotate_reporting_split_spec.md` |
 
 ---
 
@@ -190,6 +191,7 @@ Pflichtweg: `envelope.correlation_id` → `NormalizedTradeSignal.correlation_id`
 
 - **ADRs:** `docs/adr/0001..0004` (TradingView, Signal-Consensus-Experimental, DuckDB-Pivot, Premium-Signal-Auto-Fill)
 - **Architektur-Reports:** `docs/architecture/signal_to_execution_gap_analysis_20260510.md`, `signal_to_execution_implementation_report_20260510.md`
+- **Auto-Annotate-Reporting:** `docs/architecture/auto_annotate_reporting_split_spec.md` (V5-Folgepaket: Reporting-Split ohne Threshold-Tuning)
 - **Decision-Log:** `DECISION_LOG.md` (kompakter Verlauf, 29KB)
 - **Operator-Memos:** `artifacts/operator_memos/` (laufende Entscheidungen + Forensik)
 - **Daily-Strategy:** `artifacts/daily_strategy/YYYY-MM-DD.md` (Bootstrap morgens 08:00 CEST)

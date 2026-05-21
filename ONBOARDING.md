@@ -64,6 +64,7 @@ mypy app/                                 # sofern im Projekt üblich
 | `app/execution/entry_watcher.py` | Deterministisches Entry-Polling |
 | `app/observability/premium_signal_trail.py` | Trail-API + End-to-End-Forensik |
 | `app/alerts/auto_annotator.py` | Outcome-Klassifikation (Lernschicht) |
+| `docs/architecture/auto_annotate_reporting_split_spec.md` | V5-Folgepaket: Reporting-Kohorten ohne Threshold-Tuning |
 | `app/api/main.py` | FastAPI-Server-Einstieg |
 | `app/cli/main.py` | CLI-Commands (operator-Tools) |
 | `docs/adr/` + `docs/architecture/` | Decision + Architektur-Doku |
@@ -124,6 +125,7 @@ Format aus dem `kai-master-coding-regeln`-Skill. Wer im Hauptworktree ohne ARBEI
 - ❌ **Kein Touch auf `app/execution/live_engine.py` / `live_caps.py`** ohne explizite Operator-Freigabe.
 - ❌ **Kein SHADOW_ONLY-Flip** vor Heuristik [[kai-bayes-shadow-only-flip-heuristik]] (n≥20 ODER ≥4 Wochen + Diversität + Sentinel + Rollback).
 - ❌ **Keine `EXECUTION_PAPER_MIN_PRIORITY`-Gate-ADRs** vor 2026-05-30 (Operator-Sign-off Option D ratifiziert, siehe `priority_scoring_decision_brief_2026-05-23.md`).
+- ❌ **Kein Auto-Annotate-Threshold-/Gate-Tuning** ohne Operator-Sign-off. Reporting-Splits sind erlaubt, aber `fresh_auto`, `backfill`, `reeval`, `latest_per_doc` müssen getrennt bleiben.
 - ❌ **Keine echten API/Market-Data/Exchange-Calls in Tests.** monkeypatch + tmp_path Pflicht.
 - ❌ **Kein Push trotz STOP**, kein force-push auf p7 (Memory-Pin `feedback_antigravity_bypass_pattern`).
 
@@ -189,6 +191,7 @@ Memory-Pin `feedback_pr_body_edit_no_ci_retrigger`: `gh pr edit --body` triggert
 **Aktueller Sprint-Fokus (DS-20260521):**
 - V1 Premium-Pipeline-E2E-Test (Codex aktiv)
 - V5 Auto-Annotate Pipeline-A reaktiviert
+- V5-Folgepaket: Auto-Annotate-Reporting-Split spezifiziert, noch ohne Threshold-Tuning
 - V3 ARCHITECTURE.md + ONBOARDING.md (dieses Dokument)
 - V7 AI_HANDOFF.md (folgt)
 
