@@ -40,6 +40,10 @@ alembic/versions/*.py
 artifacts/
 .test_doc_ids
 
+# Workshop scratch files — agents that dump temporary code into the repo root
+# (e.g. ".tmp_parser.py", ".tmp_bridge.py") should never end up tracked.
+.tmp_*
+
 # Root-level JSON/JSONL runtime artifacts (not config — these are generated outputs)
 artifact.json
 pass_report.json
