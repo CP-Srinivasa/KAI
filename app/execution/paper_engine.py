@@ -104,6 +104,7 @@ class PaperExecutionEngine:
         self._slippage_pct = slippage_pct / 100
         self._portfolio = PaperPortfolio(initial_equity=initial_equity, cash=initial_equity)
         self._filled_keys: set[str] = set()
+        self._partial_fill_ratios: dict[str, float] = {}
         self._audit_path = Path(audit_log_path or _AUDIT_LOG)
         self._audit_path.parent.mkdir(parents=True, exist_ok=True)
         logger.info("[PAPER] Engine initialized. equity=%.2f", initial_equity)
@@ -172,6 +173,7 @@ class PaperExecutionEngine:
         correlation_id: str = "",
         leverage: float | None = None,
         source: str = "",
+        partial_fill_ratio: float = 1.0,
     ) -> PaperOrder:
         """Create an order record (does not fill immediately).
 
@@ -190,6 +192,13 @@ class PaperExecutionEngine:
         """
         if position_side not in {"long", "short"}:
             raise ValueError("position_side must be 'long' or 'short'")
+        if (
+            isinstance(partial_fill_ratio, bool)
+            or not isinstance(partial_fill_ratio, (int, float))
+            or partial_fill_ratio <= 0.0
+            or partial_fill_ratio > 1.0
+        ):
+            raise ValueError("partial_fill_ratio must be > 0.0 and <= 1.0")
         idem_key = idempotency_key or f"{symbol}_{side}_{_now_utc()}"
         # Sprint C (2026-05-12): upfront idempotency-Check verhindert das
         # Schreiben einer doppelten order_created-Audit-Zeile wenn dieser
@@ -236,7 +245,15 @@ class PaperExecutionEngine:
             leverage=leverage,
             source=source,
         )
-        self._append_audit("order_created", order.__dict__)
+        self._partial_fill_ratios[order.order_id] = float(partial_fill_ratio)
+        self._append_audit(
+            "order_created",
+            {
+                **order.__dict__,
+                "partial_fill_ratio": float(partial_fill_ratio),
+                "requested_quantity": quantity,
+            },
+        )
         if correlation_id:
             try:
                 t = make_lifecycle_transition(
@@ -267,6 +284,17 @@ class PaperExecutionEngine:
                 "[PAPER] Invalid price for fill: %s price=%.2f", order.symbol, current_price
             )
             return None
+
+        is_entry_fill = (order.position_side == "long" and order.side == "buy") or (
+            order.position_side == "short" and order.side == "sell"
+        )
+        partial_fill_ratio = self._partial_fill_ratios.get(order.order_id, 1.0)
+        if not is_entry_fill:
+            partial_fill_ratio = 1.0
+        requested_quantity = order.quantity
+        fill_quantity = requested_quantity * partial_fill_ratio
+        remaining_quantity = max(requested_quantity - fill_quantity, 0.0)
+        is_partial_entry = is_entry_fill and remaining_quantity > 1e-12
 
         # Defense-in-depth against inverted stops — the Risk Engine owns the
         # primary geometry gate, but if it is ever bypassed we still refuse
@@ -362,7 +390,7 @@ class PaperExecutionEngine:
         else:
             fill_price = current_price * (1 - self._slippage_pct)
 
-        cost = fill_price * order.quantity
+        cost = fill_price * fill_quantity
         # NEO-P-106: venue-spezifische Maker/Taker-Fee aus config/venue_fees.yaml.
         # Market = taker; Limit mit limit_price = maker. Fallback bei unknown/paper
         # venue = role-spezifischer worst-case Default aus YAML.
@@ -405,9 +433,9 @@ class PaperExecutionEngine:
                 # Average into existing position. V25-C: tier ladder + initial
                 # quantity carry forward — averaging in does NOT reset the
                 # staged-exit plan that the bridge already attached.
-                total_qty = pos.quantity + order.quantity
+                total_qty = pos.quantity + fill_quantity
                 avg_price = (
-                    pos.avg_entry_price * pos.quantity + fill_price * order.quantity
+                    pos.avg_entry_price * pos.quantity + fill_price * fill_quantity
                 ) / total_qty
                 self._portfolio.positions[order.symbol] = PaperPosition(
                     symbol=order.symbol,
@@ -427,7 +455,7 @@ class PaperExecutionEngine:
             else:
                 self._portfolio.positions[order.symbol] = PaperPosition(
                     symbol=order.symbol,
-                    quantity=order.quantity,
+                    quantity=fill_quantity,
                     avg_entry_price=fill_price,
                     stop_loss=order.stop_loss,
                     take_profit=order.take_profit,
@@ -442,12 +470,12 @@ class PaperExecutionEngine:
             if not pos or pos.position_side != "long" or pos.quantity < order.quantity:
                 logger.warning("[PAPER] Cannot sell %s — insufficient position", order.symbol)
                 return None
-            proceeds = fill_price * order.quantity - fee
-            pnl = (fill_price - pos.avg_entry_price) * order.quantity - fee
+            proceeds = fill_price * fill_quantity - fee
+            pnl = (fill_price - pos.avg_entry_price) * fill_quantity - fee
             self._portfolio.cash += proceeds
             self._portfolio.realized_pnl_usd += pnl
 
-            remaining_qty = pos.quantity - order.quantity
+            remaining_qty = pos.quantity - fill_quantity
             if remaining_qty <= 1e-8:
                 del self._portfolio.positions[order.symbol]
             else:
@@ -474,13 +502,13 @@ class PaperExecutionEngine:
                 if pos.position_side != "short":
                     logger.warning("[PAPER] Cannot short %s — long position exists", order.symbol)
                     return None
-            proceeds = fill_price * order.quantity - fee
+            proceeds = fill_price * fill_quantity - fee
             self._portfolio.cash += proceeds
 
             if pos:
-                total_qty = pos.quantity + order.quantity
+                total_qty = pos.quantity + fill_quantity
                 avg_price = (
-                    pos.avg_entry_price * pos.quantity + fill_price * order.quantity
+                    pos.avg_entry_price * pos.quantity + fill_price * fill_quantity
                 ) / total_qty
                 self._portfolio.positions[order.symbol] = PaperPosition(
                     symbol=order.symbol,
@@ -500,7 +528,7 @@ class PaperExecutionEngine:
             else:
                 self._portfolio.positions[order.symbol] = PaperPosition(
                     symbol=order.symbol,
-                    quantity=order.quantity,
+                    quantity=fill_quantity,
                     avg_entry_price=fill_price,
                     stop_loss=order.stop_loss,
                     take_profit=order.take_profit,
@@ -515,7 +543,7 @@ class PaperExecutionEngine:
             if not pos or pos.position_side != "short" or pos.quantity < order.quantity:
                 logger.warning("[PAPER] Cannot buy-cover %s — insufficient short", order.symbol)
                 return None
-            cover_cost = fill_price * order.quantity + fee
+            cover_cost = fill_price * fill_quantity + fee
             if self._portfolio.cash < cover_cost:
                 logger.warning(
                     "[PAPER] Insufficient cash to cover short %s: need=%.2f have=%.2f",
@@ -524,11 +552,11 @@ class PaperExecutionEngine:
                     self._portfolio.cash,
                 )
                 return None
-            pnl = (pos.avg_entry_price - fill_price) * order.quantity - fee
+            pnl = (pos.avg_entry_price - fill_price) * fill_quantity - fee
             self._portfolio.cash -= cover_cost
             self._portfolio.realized_pnl_usd += pnl
 
-            remaining_qty = pos.quantity - order.quantity
+            remaining_qty = pos.quantity - fill_quantity
             if remaining_qty <= 1e-8:
                 del self._portfolio.positions[order.symbol]
             else:
@@ -569,7 +597,7 @@ class PaperExecutionEngine:
             order_id=order.order_id,
             symbol=order.symbol,
             side=order.side,
-            quantity=order.quantity,
+            quantity=fill_quantity,
             fill_price=fill_price,
             fee_usd=fee,
             filled_at=_now_utc(),
@@ -589,6 +617,12 @@ class PaperExecutionEngine:
                 **fill.__dict__,
                 "portfolio_cash": self._portfolio.cash,
                 "realized_pnl_usd": self._portfolio.realized_pnl_usd,
+                "requested_quantity": requested_quantity,
+                "filled_quantity": fill_quantity,
+                "remaining_quantity": remaining_quantity,
+                "partial_fill_ratio": partial_fill_ratio,
+                "is_partial_entry": is_partial_entry,
+                "fill_status": "partial_entry" if is_partial_entry else "filled",
             },
         )
         logger.info(

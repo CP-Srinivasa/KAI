@@ -91,6 +91,16 @@ async def _forbid_live_market_data(symbol: str) -> float | None:
     raise AssertionError(f"unexpected live market-data lookup for {symbol}")
 
 
+class _FixedBridgeDatetime(datetime):
+    @classmethod
+    def now(cls, tz: Any = None) -> _FixedBridgeDatetime:
+        fixed = cls(2026, 5, 20, 12, 10, tzinfo=UTC)
+        if tz is None:
+            return fixed
+        shifted = fixed.astimezone(tz)
+        return cls.fromtimestamp(shifted.timestamp(), tz)
+
+
 def _fixed_price_provider(expected_symbol: str, price: float) -> PriceProvider:
     async def _provider(symbol: str) -> float | None:
         assert symbol == expected_symbol
@@ -141,6 +151,7 @@ async def test_premium_telegram_approved_signal_reaches_paper_fill(
     approved_at = emitted_at + timedelta(minutes=3)
 
     monkeypatch.setattr(bridge, "_fetch_price", _forbid_live_market_data)
+    monkeypatch.setattr(bridge, "datetime", _FixedBridgeDatetime)
     origin_envelope_id, approved_envelope_id = _emit_and_approve(
         PREMIUM_SOL_LONG,
         envelope_log=envelope_log,
@@ -217,6 +228,7 @@ async def test_premium_telegram_invalid_long_sl_is_bridge_rejected(
     approved_at = emitted_at + timedelta(minutes=2)
 
     monkeypatch.setattr(bridge, "_fetch_price", _forbid_live_market_data)
+    monkeypatch.setattr(bridge, "datetime", _FixedBridgeDatetime)
     origin_envelope_id, approved_envelope_id = _emit_and_approve(
         PREMIUM_IRYS_LONG_INVALID_SL,
         envelope_log=envelope_log,

@@ -174,8 +174,8 @@ Pflichtweg: `envelope.correlation_id` → `NormalizedTradeSignal.correlation_id`
 
 | # | Lücke | Status | Anker |
 |---|---|---|---|
-| 1 | Partial-ENTRY-Fill fehlt (nur partial-EXIT via tp_tier) | offen, P1, V2 geplant nach V1-grün | `paper_engine.py:580+` |
-| 2 | Echter Premium-Pipeline-E2E-Test fehlt | in Arbeit (V1, Codex) | `tests/integration/test_premium_pipeline_e2e.py` |
+| 1 | Partial-ENTRY-Fill ohne Resting-Order-Simulation (V2 2026-05-21 done) | teilweise gelöst | `paper_engine.py:295+` `partial_fill_ratio`-Parameter, Restmenge nur im Audit-Feld `remaining_quantity`, keine pending-Order im Engine-State; Folge-Fill aktuell nur via neue Order auslösbar |
+| 2 | Echter Premium-Pipeline-E2E-Test (V1 2026-05-21 done) | gelöst | `tests/integration/test_premium_pipeline_e2e.py` (2 Tests: happy + reject_long_sl_at_or_above_spot) |
 | 3 | Lern-Datenbasis dünn (Bayes 4 organisch / Source-Reliability 8/8 insufficient) | beobachtet bis 2026-05-30 | [[kai-bayes-shadow-only-flip-heuristik]] |
 | 4 | Singleton-paper_engine | Phase-1-tauglich, P3 für Multi-Asset | `paper_engine_singleton.py` |
 | 5 | Audit-Stream-Rotation offen | P2 | V6 |

@@ -830,6 +830,146 @@ def test_partial_sell_keeps_position(tmp_path):
     assert fill.quantity == 1.0
 
 
+def test_entry_fill_default_ratio_fills_full_quantity(tmp_path):
+    eng = _engine(tmp_path)
+    order = eng.create_order(
+        symbol="BTC/USDT",
+        side="buy",
+        quantity=0.1,
+        idempotency_key="entry_full_default",
+    )
+
+    fill = eng.fill_order(order, current_price=65000.0)
+
+    assert fill is not None
+    assert fill.quantity == pytest.approx(0.1)
+    assert eng.portfolio.positions["BTC/USDT"].quantity == pytest.approx(0.1)
+    records = _read_audit_records(tmp_path / "audit.jsonl")
+    fill_record = next(r for r in records if r.get("event_type") == "order_filled")
+    assert fill_record["partial_fill_ratio"] == pytest.approx(1.0)
+    assert fill_record["remaining_quantity"] == pytest.approx(0.0)
+    assert fill_record["is_partial_entry"] is False
+
+
+def test_partial_entry_fill_50_percent_opens_half_quantity(tmp_path):
+    eng = _engine(tmp_path)
+    order = eng.create_order(
+        symbol="SOL/USDT",
+        side="buy",
+        quantity=10.0,
+        idempotency_key="entry_half",
+        partial_fill_ratio=0.5,
+    )
+
+    fill = eng.fill_order(order, current_price=100.0)
+
+    assert fill is not None
+    assert fill.quantity == pytest.approx(5.0)
+    assert eng.portfolio.positions["SOL/USDT"].quantity == pytest.approx(5.0)
+    records = _read_audit_records(tmp_path / "audit.jsonl")
+    fill_record = next(r for r in records if r.get("event_type") == "order_filled")
+    assert fill_record["requested_quantity"] == pytest.approx(10.0)
+    assert fill_record["filled_quantity"] == pytest.approx(5.0)
+    assert fill_record["remaining_quantity"] == pytest.approx(5.0)
+    assert fill_record["fill_status"] == "partial_entry"
+
+
+def test_partial_entry_fill_30_percent_opens_fractional_quantity(tmp_path):
+    eng = _engine(tmp_path)
+    order = eng.create_order(
+        symbol="ETH/USDT",
+        side="buy",
+        quantity=3.0,
+        idempotency_key="entry_thirty",
+        partial_fill_ratio=0.3,
+    )
+
+    fill = eng.fill_order(order, current_price=3000.0)
+
+    assert fill is not None
+    assert fill.quantity == pytest.approx(0.9)
+    assert eng.portfolio.positions["ETH/USDT"].quantity == pytest.approx(0.9)
+
+
+def test_partial_entry_followup_order_can_fill_remaining_quantity(tmp_path):
+    eng = _engine(tmp_path)
+    first = eng.create_order(
+        symbol="ADA/USDT",
+        side="buy",
+        quantity=100.0,
+        idempotency_key="entry_partial_first",
+        partial_fill_ratio=0.5,
+    )
+    fill1 = eng.fill_order(first, current_price=1.0)
+    assert fill1 is not None
+
+    second = eng.create_order(
+        symbol="ADA/USDT",
+        side="buy",
+        quantity=50.0,
+        idempotency_key="entry_partial_followup",
+    )
+    fill2 = eng.fill_order(second, current_price=1.0)
+
+    assert fill2 is not None
+    assert fill2.quantity == pytest.approx(50.0)
+    assert eng.portfolio.positions["ADA/USDT"].quantity == pytest.approx(100.0)
+    records = _read_audit_records(tmp_path / "audit.jsonl")
+    fills = [r for r in records if r.get("event_type") == "order_filled"]
+    assert fills[0]["remaining_quantity"] == pytest.approx(50.0)
+    assert fills[1]["remaining_quantity"] == pytest.approx(0.0)
+
+
+def test_invalid_partial_entry_ratio_rejected(tmp_path):
+    eng = _engine(tmp_path)
+    with pytest.raises(ValueError, match="partial_fill_ratio"):
+        eng.create_order(
+            symbol="BTC/USDT",
+            side="buy",
+            quantity=1.0,
+            partial_fill_ratio=0.0,
+        )
+    with pytest.raises(ValueError, match="partial_fill_ratio"):
+        eng.create_order(
+            symbol="BTC/USDT",
+            side="buy",
+            quantity=1.0,
+            partial_fill_ratio=1.1,
+        )
+
+
+def test_partial_entry_fee_slippage_audit_and_correlation_id_use_filled_quantity(tmp_path):
+    eng = _engine(tmp_path)
+    order = eng.create_order(
+        symbol="LINK/USDT",
+        side="buy",
+        quantity=10.0,
+        idempotency_key="entry_partial_audit",
+        partial_fill_ratio=0.5,
+        correlation_id="cid-partial-entry",
+    )
+
+    fill = eng.fill_order(order, current_price=100.0)
+
+    assert fill is not None
+    assert fill.quantity == pytest.approx(5.0)
+    assert fill.fill_price == pytest.approx(100.05)
+    expected_fee = fill.fill_price * fill.quantity * (fill.fee_bps_applied / 10000.0)
+    full_quantity_fee = fill.fill_price * 10.0 * (fill.fee_bps_applied / 10000.0)
+    assert fill.fee_usd == pytest.approx(expected_fee)
+    assert fill.fee_usd < full_quantity_fee
+    assert fill.correlation_id == "cid-partial-entry"
+    assert eng.portfolio.positions["LINK/USDT"].correlation_id == "cid-partial-entry"
+
+    records = _read_audit_records(tmp_path / "audit.jsonl")
+    fill_record = next(r for r in records if r.get("event_type") == "order_filled")
+    assert fill_record["correlation_id"] == "cid-partial-entry"
+    assert fill_record["is_partial_entry"] is True
+    assert fill_record["partial_fill_ratio"] == pytest.approx(0.5)
+    assert fill_record["filled_quantity"] == pytest.approx(5.0)
+    assert fill_record["fee_usd"] == pytest.approx(expected_fee)
+
+
 def test_average_down_then_close(tmp_path):
     eng = _engine(tmp_path)
     b1 = eng.create_order(symbol="X/USDT", side="buy", quantity=1.0, idempotency_key="b_avg_1")
