@@ -536,3 +536,105 @@ async def test_premium_telegram_partial_fill_opens_half_position(
     # Bridge does not know about partial fills — stage stays "filled"
     # (documented limitation per V2-Spec R4).
     assert filled_bridge[0]["correlation_id"] == origin_envelope_id
+
+
+@pytest.mark.asyncio
+async def test_premium_telegram_entry_watcher_rejects_implausible_then_triggers(
+    isolated_premium_artifacts: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """V2.4 — EntryRangeWatcher Plausibility-Outlier via OperatorEntryWatch.
+
+    Different test path than V2.1-V2.3: instead of bridge.run_tick() directly,
+    this exercises the HF-polling layer (app.execution.operator_entry_watch.
+    run_watch_once). The watcher accumulates a rolling-median plausibility
+    window; once filled, an outlier tick must be rejected without poisoning
+    the window, and the next plausible in-range tick triggers a fill via
+    the same bridge.run_tick path.
+
+    Sequence of 7 ticks for SOL/USDT (Entry Zone 84.20-84.50):
+      1-5: 83.50, 83.60, 83.70, 83.80, 83.90 (below range → HOLD, window fills)
+      6:   50.00 (window-filled, deviation >> 5% from median ~83.70
+            → REJECT_TICK_PLAUSIBILITY, NOT recorded in window)
+      7:   84.30 (inside range, ~0.7% from median → plausible
+            → TRIGGER_ENTRY → bridge.run_tick fills)
+    """
+    from app.execution import operator_entry_watch as oew
+    from app.execution.entry_watcher import EntryWatcherConfig
+    from app.market_data.models import MarketDataSnapshot
+
+    envelope_log = isolated_premium_artifacts / "telegram_message_envelope.jsonl"
+    bridge_log = isolated_premium_artifacts / "bridge_pending_orders.jsonl"
+    paper_audit_log = isolated_premium_artifacts / "paper_execution_audit.jsonl"
+    entry_watch_audit = isolated_premium_artifacts / "entry_watcher_audit.jsonl"
+
+    emitted_at = datetime(2026, 5, 20, 12, 0, tzinfo=UTC)
+    approved_at = emitted_at + timedelta(minutes=3)
+    frozen_now = _freeze_bridge_now(emitted_at + timedelta(minutes=10))
+
+    monkeypatch.setattr(bridge, "_fetch_price", _forbid_live_market_data)
+    monkeypatch.setattr(bridge, "datetime", frozen_now)
+    monkeypatch.setattr(oew, "_ENVELOPE_LOG", envelope_log)
+    monkeypatch.setattr(oew, "_BRIDGE_LOG", bridge_log)
+    monkeypatch.setattr(oew, "_ENTRY_WATCH_AUDIT", entry_watch_audit)
+
+    origin_envelope_id, _ = _emit_and_approve(
+        PREMIUM_SOL_LONG_RANGE,
+        envelope_log=envelope_log,
+        emitted_at=emitted_at,
+        approved_at=approved_at,
+    )
+
+    price_sequence = iter([83.50, 83.60, 83.70, 83.80, 83.90, 50.00, 84.30])
+
+    async def _stub_snapshot(symbol: str, config: EntryWatcherConfig) -> MarketDataSnapshot:
+        now_iso = datetime(2026, 5, 20, 12, 10, tzinfo=UTC).isoformat()
+        return MarketDataSnapshot(
+            symbol=symbol,
+            provider="stub",
+            retrieved_at_utc=now_iso,
+            source_timestamp_utc=now_iso,
+            price=next(price_sequence),
+            is_stale=False,
+            freshness_seconds=1.0,
+            available=True,
+        )
+
+    monkeypatch.setattr(oew, "_snapshot", _stub_snapshot)
+
+    cfg = EntryWatcherConfig()
+    watchers: dict[str, Any] = {}
+    aggregate = oew.EntryWatchResult(enabled=True)
+    for _ in range(7):
+        tick_result = await oew.run_watch_once(watchers=watchers, config=cfg)
+        aggregate.add(tick_result)
+
+    assert aggregate.implausible == 1, aggregate.to_dict()
+    assert aggregate.triggered == 1, aggregate.to_dict()
+    assert aggregate.held == 5, aggregate.to_dict()
+    assert aggregate.bridge_filled == 1, aggregate.to_dict()
+
+    audit = _read_jsonl(entry_watch_audit)
+    decisions = [rec["decision"] for rec in audit]
+    assert decisions.count("REJECT_TICK_PLAUSIBILITY") == 1
+    assert decisions.count("TRIGGER_ENTRY") == 1
+    assert decisions.count("HOLD") == 5
+
+    outlier = next(rec for rec in audit if rec["decision"] == "REJECT_TICK_PLAUSIBILITY")
+    assert outlier["price"] == pytest.approx(50.00)
+    assert outlier["correlation_id"] == origin_envelope_id
+
+    trigger = next(rec for rec in audit if rec["decision"] == "TRIGGER_ENTRY")
+    assert trigger["price"] == pytest.approx(84.30)
+    assert trigger["correlation_id"] == origin_envelope_id
+
+    paper_fills = [
+        rec for rec in _read_jsonl(paper_audit_log) if rec.get("event_type") == "order_filled"
+    ]
+    assert len(paper_fills) == 1
+    assert paper_fills[0]["correlation_id"] == origin_envelope_id
+
+    engine = get_paper_engine()
+    position = engine.portfolio.positions["SOL/USDT"]
+    assert position.correlation_id == origin_envelope_id
+    assert position.quantity > 0
