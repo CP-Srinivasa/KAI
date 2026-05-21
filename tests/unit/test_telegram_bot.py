@@ -2520,3 +2520,208 @@ async def test_expired_voice_draft_is_pruned_on_ok(tmp_path, monkeypatch):
         r for r in rows if r.get("stage") == "voice_confirm_gate" and r.get("status") == "expired"
     ]
     assert len(expired) == 1
+
+
+# ── Phase-0 /live + /trade wiring ─────────────────────────────────────────
+
+
+class _FakeLiveEngine:
+    """Minimal stub. Only used to verify the dispatch path — handler
+    bodies live in tests/unit/test_live_telegram_commands.py."""
+
+    def __init__(self) -> None:
+        self.unlock_called_with: str | None = None
+        self.lock_called: bool = False
+        self.status_called: bool = False
+        self.submit_live_order_called_with: dict[str, object] | None = None
+
+    def status(self) -> dict[str, object]:
+        self.status_called = True
+        return {
+            "state": "locked",
+            "idle_lock_remaining_s": 0,
+            "hotp_last_counter": 0,
+            "hotp_next_expected": 1,
+            "open_positions": 0,
+            "orders_attempted": 0,
+            "orders_placed": 0,
+        }
+
+
+@pytest.mark.asyncio
+async def test_cmd_live_no_engine_replies_with_not_configured(tmp_path, monkeypatch):
+    bot = _bot(tmp_path)
+    assert bot._live_engine is None
+    sent: list[str] = []
+
+    async def fake_send(_chat_id: int, text: str) -> bool:
+        sent.append(text)
+        return True
+
+    monkeypatch.setattr(bot, "_send", fake_send)
+    await bot.process_update({"message": {"chat": {"id": 12345}, "text": "/live status"}})
+
+    assert sent == ["❌ Live-Mode not configured on this Pi (paper-only deployment)."]
+
+
+@pytest.mark.asyncio
+async def test_cmd_live_status_delegates_to_handler(tmp_path, monkeypatch):
+    engine = _FakeLiveEngine()
+    bot = _bot(tmp_path, live_engine=engine)
+    sent: list[str] = []
+
+    async def fake_send(_chat_id: int, text: str) -> bool:
+        sent.append(text)
+        return True
+
+    monkeypatch.setattr(bot, "_send", fake_send)
+    await bot.process_update({"message": {"chat": {"id": 12345}, "text": "/live status"}})
+
+    assert engine.status_called is True
+    assert len(sent) == 1
+    assert "Live-Mode" in sent[0]
+
+
+@pytest.mark.asyncio
+async def test_cmd_live_unlock_passes_hotp_through(tmp_path, monkeypatch):
+    engine = _FakeLiveEngine()
+    captured: dict[str, str] = {}
+
+    def fake_unlock(text: str, eng: object) -> str:
+        captured["text"] = text
+        assert eng is engine
+        return "✅ unlock-stub"
+
+    bot = _bot(tmp_path, live_engine=engine)
+    monkeypatch.setattr(
+        "app.messaging.live_telegram_commands.handle_live_unlock",
+        fake_unlock,
+    )
+    sent: list[str] = []
+
+    async def fake_send(_chat_id: int, text: str) -> bool:
+        sent.append(text)
+        return True
+
+    monkeypatch.setattr(bot, "_send", fake_send)
+    await bot.process_update(
+        {"message": {"chat": {"id": 12345}, "text": "/live unlock 654321"}}
+    )
+
+    assert captured["text"] == "/live unlock 654321"
+    assert sent == ["✅ unlock-stub"]
+
+
+@pytest.mark.asyncio
+async def test_cmd_live_lock_delegates(tmp_path, monkeypatch):
+    engine = _FakeLiveEngine()
+    bot = _bot(tmp_path, live_engine=engine)
+    lock_called: list[object] = []
+
+    def fake_lock(eng: object) -> str:
+        lock_called.append(eng)
+        return "🔒 lock-stub"
+
+    monkeypatch.setattr(
+        "app.messaging.live_telegram_commands.handle_live_lock",
+        fake_lock,
+    )
+    sent: list[str] = []
+
+    async def fake_send(_chat_id: int, text: str) -> bool:
+        sent.append(text)
+        return True
+
+    monkeypatch.setattr(bot, "_send", fake_send)
+    await bot.process_update({"message": {"chat": {"id": 12345}, "text": "/live lock"}})
+
+    assert lock_called == [engine]
+    assert sent == ["🔒 lock-stub"]
+
+
+@pytest.mark.asyncio
+async def test_cmd_live_unknown_subcommand_replies_with_usage(tmp_path, monkeypatch):
+    engine = _FakeLiveEngine()
+    bot = _bot(tmp_path, live_engine=engine)
+    sent: list[str] = []
+
+    async def fake_send(_chat_id: int, text: str) -> bool:
+        sent.append(text)
+        return True
+
+    monkeypatch.setattr(bot, "_send", fake_send)
+    await bot.process_update(
+        {"message": {"chat": {"id": 12345}, "text": "/live frobnicate"}}
+    )
+
+    assert len(sent) == 1
+    assert "Unknown /live subcommand" in sent[0]
+    assert "/live status" in sent[0]
+    assert "/live unlock" in sent[0]
+    assert "/live lock" in sent[0]
+
+
+@pytest.mark.asyncio
+async def test_cmd_trade_no_engine_replies_with_not_configured(tmp_path, monkeypatch):
+    bot = _bot(tmp_path)
+    sent: list[str] = []
+
+    async def fake_send(_chat_id: int, text: str) -> bool:
+        sent.append(text)
+        return True
+
+    monkeypatch.setattr(bot, "_send", fake_send)
+    await bot.process_update(
+        {
+            "message": {
+                "chat": {"id": 12345},
+                "text": "/trade BTCUSDT buy 0.001 80100 78500 384733",
+            }
+        }
+    )
+
+    assert sent == ["❌ Live-Mode not configured on this Pi (paper-only deployment)."]
+
+
+@pytest.mark.asyncio
+async def test_cmd_trade_delegates_full_text_to_handler(tmp_path, monkeypatch):
+    engine = _FakeLiveEngine()
+    bot = _bot(tmp_path, live_engine=engine)
+    captured: dict[str, object] = {}
+
+    async def fake_handle_trade(text: str, eng: object) -> str:
+        captured["text"] = text
+        captured["engine_id"] = id(eng)
+        return "✅ trade-stub"
+
+    monkeypatch.setattr(
+        "app.messaging.live_telegram_commands.handle_trade",
+        fake_handle_trade,
+    )
+    sent: list[str] = []
+
+    async def fake_send(_chat_id: int, text: str) -> bool:
+        sent.append(text)
+        return True
+
+    monkeypatch.setattr(bot, "_send", fake_send)
+    await bot.process_update(
+        {
+            "message": {
+                "chat": {"id": 12345},
+                "text": "/trade BTCUSDT buy 0.001 80100 78500 384733 binance",
+            }
+        }
+    )
+
+    assert captured["text"] == "/trade BTCUSDT buy 0.001 80100 78500 384733 binance"
+    assert captured["engine_id"] == id(engine)
+    assert sent == ["✅ trade-stub"]
+
+
+def test_live_command_ephemeral_trade_is_persistent():
+    """/live is ephemeral (status churn), /trade is persistent (audit-relevant)."""
+    from app.messaging.telegram_bot import _EPHEMERAL_MENU_COMMANDS
+
+    assert "live" in _EPHEMERAL_MENU_COMMANDS
+    assert "trade" not in _EPHEMERAL_MENU_COMMANDS

@@ -29,6 +29,7 @@ from uuid import uuid4
 import httpx
 
 if TYPE_CHECKING:
+    from app.execution.live_engine import LiveExecutionEngine
     from app.messaging.text_intent import TextIntentProcessor
     from app.messaging.voice_transcriber import VoiceTranscriber
 
@@ -83,6 +84,11 @@ _EPHEMERAL_MENU_COMMANDS = frozenset(
         "menue_reload",
         "menu_validate",
         "menue_validate",
+        # /live status/unlock/lock is operator-visible state — ephemeral so the
+        # chat does not accumulate status snapshots. /trade is INTENTIONALLY
+        # NOT ephemeral because its reply (live order placement or rejection)
+        # is forensically relevant and must stay in the chat history.
+        "live",
     }
 )
 _EPHEMERAL_MENU_HISTORY_DEPTH = 3
@@ -173,6 +179,7 @@ class TelegramOperatorBot:
         signal_approval_enabled: bool = False,
         signal_approval_ttl_minutes: int = 60,
         signal_approval_hmac_secret: str = "",
+        live_engine: LiveExecutionEngine | None = None,
     ) -> None:
         normalized_updates = tuple(
             dict.fromkeys(
@@ -240,6 +247,10 @@ class TelegramOperatorBot:
         self._menu_history: dict[int, deque[int]] = {}
         # Set during _dispatch for ephemeral commands so _send can track IDs.
         self._track_ephemeral_reply = False
+        # Phase-0 live-trading engine (HOTP-gated, light-live caps). Optional:
+        # when None, /live and /trade reply with a "not configured" error
+        # instead of crashing. Bridge to app.messaging.live_telegram_commands.
+        self._live_engine = live_engine
 
     @property
     def is_configured(self) -> bool:
@@ -1629,6 +1640,8 @@ class TelegramOperatorBot:
             "cancel": self._cmd_cancel,
             "abbrechen": self._cmd_cancel,
             "verwerfen": self._cmd_cancel,
+            "live": self._cmd_live,
+            "trade": self._cmd_trade,
         }
         handler = handlers.get(command)
         if handler is None:
@@ -2512,6 +2525,63 @@ class TelegramOperatorBot:
 
         await self._send(chat_id, "\n".join(lines))
 
+    async def _cmd_live(self, chat_id: int, *, args: str = "") -> None:
+        """Phase-0 live-mode control: /live status | unlock <hotp> | lock.
+
+        Delegates to ``app.messaging.live_telegram_commands`` so all parsing
+        + HOTP + gate-chain logic stays in one place. If no ``live_engine``
+        is configured the bot replies with a controlled error instead of
+        crashing — the bot is usable on Pi 5 paper-only deployments where
+        live trading is intentionally absent.
+        """
+        if self._live_engine is None:
+            await self._send(
+                chat_id,
+                "❌ Live-Mode not configured on this Pi (paper-only deployment).",
+            )
+            return
+
+        from app.messaging.live_telegram_commands import (
+            handle_live_lock,
+            handle_live_status,
+            handle_live_unlock,
+        )
+
+        parts = args.strip().split(maxsplit=1)
+        sub = parts[0].lower() if parts else "status"
+        if sub == "status":
+            reply = handle_live_status(self._live_engine)
+        elif sub == "unlock":
+            hotp_arg = parts[1] if len(parts) > 1 else ""
+            reply = handle_live_unlock(f"/live unlock {hotp_arg}".strip(), self._live_engine)
+        elif sub == "lock":
+            reply = handle_live_lock(self._live_engine)
+        else:
+            reply = (
+                f"❌ Unknown /live subcommand: '{sub}'\n"
+                "Use: /live status | /live unlock <hotp> | /live lock"
+            )
+        await self._send(chat_id, reply)
+
+    async def _cmd_trade(self, chat_id: int, *, args: str = "") -> None:
+        """Phase-0 live-trade entry-point: /trade SYM SIDE QTY ENTRY SL HOTP [EX].
+
+        Delegates the full parse + 5-gate-engine check + audit emission
+        to ``app.messaging.live_telegram_commands.handle_trade``. The bot
+        itself stays transport-only — no order plumbing here.
+        """
+        if self._live_engine is None:
+            await self._send(
+                chat_id,
+                "❌ Live-Mode not configured on this Pi (paper-only deployment).",
+            )
+            return
+
+        from app.messaging.live_telegram_commands import handle_trade
+
+        reply = await handle_trade(f"/trade {args}".strip(), self._live_engine)
+        await self._send(chat_id, reply)
+
     async def _cmd_help(self, chat_id: int, *, args: str = "") -> None:
         msg = (
             "*KAI Help & Support*\n"
@@ -2534,6 +2604,12 @@ class TelegramOperatorBot:
             "/pause — pause the system\n"
             "/resume — resume the system\n"
             "/kill — emergency stop\n"
+            "\n"
+            "*Live-Mode (HOTP-gated, Phase 0)*\n"
+            "/live status — current state + caps\n"
+            "/live unlock <hotp> — unlock for live trades\n"
+            "/live lock — relock immediately\n"
+            "/trade SYM SIDE QTY ENTRY SL HOTP \\[EX\\] — place live limit order\n"
             "\n"
             "*Message types*\n"
             "[NEWS] — information only, never triggers execution\n"
