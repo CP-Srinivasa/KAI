@@ -11,7 +11,12 @@ Formula (weighted sum → mapped to [1, 10]):
   (1-spam)   × 0.05   — quality signal
 
 Actionability bonus: +1 to final priority if result.actionable is True.
-Spam penalty: if spam_probability > 0.7 → priority capped at 3.
+Sentiment-clarity penalty: -2 to final priority if sentiment_label is
+NEUTRAL or MIXED. Resolves DS-20260520-NEW-1: empirical Cross-Tab over
+1826 alert_audit entries showed p≥10 was only 43.5% directional vs
+p=8/9 87.8% — the prior formula had no clarity term, so asset-relevant
+neutral regulatory news could reach p=10. Applied AFTER actionable bonus
+but BEFORE spam cap, so spam cap still binds as final floor for spam.
 """
 
 from __future__ import annotations
@@ -20,6 +25,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from app.core.domain.document import AnalysisResult
+from app.core.enums import SentimentLabel
 
 # Score weights (must sum to 1.0)
 _W_RELEVANCE: float = 0.30
@@ -31,6 +37,11 @@ _W_QUALITY: float = 0.05
 _SPAM_CAP_THRESHOLD: float = 0.70
 _SPAM_PRIORITY_CAP: int = 3
 
+_SENTIMENT_CLARITY_PENALTY: int = 2
+_SENTIMENT_PENALTY_LABELS: frozenset[SentimentLabel] = frozenset(
+    {SentimentLabel.NEUTRAL, SentimentLabel.MIXED}
+)
+
 
 @dataclass(frozen=True)
 class PriorityScore:
@@ -38,6 +49,7 @@ class PriorityScore:
     raw_score: float  # 0.0–1.0 before rounding
     is_spam_capped: bool
     actionable_bonus_applied: bool
+    is_sentiment_penalized: bool
 
 
 def compute_priority(
@@ -72,7 +84,15 @@ def compute_priority(
     if bonus_applied:
         priority = min(10, priority + 1)
 
-    # Spam cap
+    # Sentiment-clarity penalty (DS-20260520-NEW-1): neutral/mixed labels
+    # carry no directional information, so they should not reach high
+    # priorities on the back of topic/impact alone.
+    sentiment_penalized = result.sentiment_label in _SENTIMENT_PENALTY_LABELS
+    if sentiment_penalized:
+        priority = max(1, priority - _SENTIMENT_CLARITY_PENALTY)
+
+    # Spam cap — runs last so it binds as the final floor for spam regardless
+    # of prior bonus/penalty interaction.
     spam_capped = spam_probability > _SPAM_CAP_THRESHOLD
     if spam_capped:
         priority = min(priority, _SPAM_PRIORITY_CAP)
@@ -82,6 +102,7 @@ def compute_priority(
         raw_score=round(raw, 4),
         is_spam_capped=spam_capped,
         actionable_bonus_applied=bonus_applied,
+        is_sentiment_penalized=sentiment_penalized,
     )
 
 
