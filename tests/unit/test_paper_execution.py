@@ -970,6 +970,67 @@ def test_partial_entry_fee_slippage_audit_and_correlation_id_use_filled_quantity
     assert fill_record["fee_usd"] == pytest.approx(expected_fee)
 
 
+def test_partial_entry_runtime_log_shows_fill_and_requested_quantity(tmp_path, caplog):
+    """V2-Followup 2026-05-21 (Codex-Audit-Nachbesserung): runtime log bei
+    partial-entry muss BEIDE Werte zeigen (filled + requested), nicht nur
+    order.quantity — sonst sieht Operator im Live-Log einen 100%-Fill obwohl
+    nur partial ausgeführt wurde. Audit-JSONL war schon korrekt, dieser Test
+    sichert die Runtime-Log-Linie ab."""
+    import logging
+
+    eng = _engine(tmp_path)
+    order = eng.create_order(
+        symbol="ARB/USDT",
+        side="buy",
+        quantity=20.0,
+        idempotency_key="entry_log_partial",
+        partial_fill_ratio=0.25,
+    )
+
+    with caplog.at_level(logging.INFO, logger="app.execution.paper_engine"):
+        fill = eng.fill_order(order, current_price=1.5)
+
+    assert fill is not None
+    assert fill.quantity == pytest.approx(5.0)
+
+    fill_logs = [r for r in caplog.records if "[PAPER] Fill:" in r.getMessage()]
+    assert len(fill_logs) == 1
+    msg = fill_logs[0].getMessage()
+    # Pflicht: gefüllte Menge sichtbar.
+    assert "5.0000" in msg or "5.000" in msg, msg
+    # Pflicht: requested-Menge sichtbar (damit Operator den 25%-Fill nicht
+    # mit einem 100%-Fill von 5 ARB verwechselt).
+    assert "20.0000" in msg or "20.000" in msg, msg
+    # Pflicht: ratio sichtbar im partial-Pfad.
+    assert "ratio=0.25" in msg, msg
+
+
+def test_partial_entry_runtime_log_full_fill_keeps_short_format(tmp_path, caplog):
+    """Komplementärtest: bei 100%-Fill bleibt das Log-Format kompakt (kein
+    redundanter requested-Wert), damit der Normalfall lesbar bleibt."""
+    import logging
+
+    eng = _engine(tmp_path)
+    order = eng.create_order(
+        symbol="ARB/USDT",
+        side="buy",
+        quantity=10.0,
+        idempotency_key="entry_log_full",
+        partial_fill_ratio=1.0,
+    )
+
+    with caplog.at_level(logging.INFO, logger="app.execution.paper_engine"):
+        fill = eng.fill_order(order, current_price=1.5)
+
+    assert fill is not None
+    fill_logs = [r for r in caplog.records if "[PAPER] Fill:" in r.getMessage()]
+    assert len(fill_logs) == 1
+    msg = fill_logs[0].getMessage()
+    # 100%-Fill: kein ratio-Suffix, kein doppelter Wert.
+    assert "ratio=" not in msg, msg
+    assert "10.0000" in msg, msg
+
+
 def test_average_down_then_close(tmp_path):
     eng = _engine(tmp_path)
     b1 = eng.create_order(symbol="X/USDT", side="buy", quantity=1.0, idempotency_key="b_avg_1")

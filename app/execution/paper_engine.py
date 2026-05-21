@@ -625,15 +625,30 @@ class PaperExecutionEngine:
                 "fill_status": "partial_entry" if is_partial_entry else "filled",
             },
         )
-        logger.info(
-            "[PAPER] Fill: %s %s %.4f @ %.2f (fee=%.4f pnl_impact=%.2f)",
-            order.side,
-            order.symbol,
-            order.quantity,
-            fill_price,
-            fee,
-            self._portfolio.realized_pnl_usd,
-        )
+        # V2-Followup 2026-05-21: bei Partial-Entry beide Werte loggen, damit
+        # Runtime-Logs nicht wie 100%-Fill aussehen (Operator-Lesbarkeit).
+        if is_partial_entry:
+            logger.info(
+                "[PAPER] Fill: %s %s %.4f/%.4f @ %.2f (ratio=%.2f fee=%.4f pnl_impact=%.2f)",
+                order.side,
+                order.symbol,
+                fill_quantity,
+                requested_quantity,
+                fill_price,
+                partial_fill_ratio,
+                fee,
+                self._portfolio.realized_pnl_usd,
+            )
+        else:
+            logger.info(
+                "[PAPER] Fill: %s %s %.4f @ %.2f (fee=%.4f pnl_impact=%.2f)",
+                order.side,
+                order.symbol,
+                fill_quantity,
+                fill_price,
+                fee,
+                self._portfolio.realized_pnl_usd,
+            )
         if order.correlation_id:
             try:
                 t1 = make_lifecycle_transition(
