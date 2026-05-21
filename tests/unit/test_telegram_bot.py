@@ -2725,3 +2725,121 @@ def test_live_command_ephemeral_trade_is_persistent():
 
     assert "live" in _EPHEMERAL_MENU_COMMANDS
     assert "trade" not in _EPHEMERAL_MENU_COMMANDS
+
+
+# ── H-A1 Lazy live_engine_factory (Red-Team finding S-001/002/003) ──────
+
+
+@pytest.mark.asyncio
+async def test_live_factory_constructs_engine_on_first_call(tmp_path, monkeypatch):
+    """Factory is called exactly once on the first /live request; cached after."""
+    factory_calls: list[None] = []
+
+    def factory():
+        factory_calls.append(None)
+        return _FakeLiveEngine()
+
+    bot = _bot(tmp_path, live_engine_factory=factory)
+    sent: list[str] = []
+
+    async def fake_send(_chat_id: int, text: str) -> bool:
+        sent.append(text)
+        return True
+
+    monkeypatch.setattr(bot, "_send", fake_send)
+
+    await bot.process_update({"message": {"chat": {"id": 12345}, "text": "/live status"}})
+    await bot.process_update({"message": {"chat": {"id": 12345}, "text": "/live status"}})
+
+    assert len(factory_calls) == 1, "factory must be memoised after first success"
+    assert len(sent) == 2
+    assert all("Live-Mode" in msg for msg in sent)
+
+
+@pytest.mark.asyncio
+async def test_live_factory_failure_surfaces_actionable_error(tmp_path, monkeypatch):
+    """Factory raising HotpSeedMissing-like exception must reach the user.
+
+    This is the Red-Team H-A1 advantage over Variante B: failure is
+    operator-actionable ("HotpSeedMissing: seed_path=… not found") rather
+    than a generic "not configured" lie or a boot crash.
+    """
+
+    class HotpSeedMissingError(RuntimeError):
+        pass
+
+    def failing_factory() -> _FakeLiveEngine:
+        raise HotpSeedMissingError(
+            "seed_path=/home/kai/.config/kai/hotp_seed.b32 not found"
+        )
+
+    bot = _bot(tmp_path, live_engine_factory=failing_factory)
+    sent: list[str] = []
+
+    async def fake_send(_chat_id: int, text: str) -> bool:
+        sent.append(text)
+        return True
+
+    monkeypatch.setattr(bot, "_send", fake_send)
+    await bot.process_update({"message": {"chat": {"id": 12345}, "text": "/live status"}})
+
+    assert len(sent) == 1
+    assert "HotpSeedMissingError" in sent[0]
+    assert "seed_path" in sent[0]
+    # Failure must NOT be cached — operator might fix and retry.
+    assert bot._live_engine is None
+
+
+@pytest.mark.asyncio
+async def test_live_factory_failure_is_retried_on_next_call(tmp_path, monkeypatch):
+    """If the factory first fails then succeeds (operator fixes seed), the
+    second /live call must succeed without restarting the bot."""
+    call_counter = {"n": 0}
+
+    def flaky_factory() -> _FakeLiveEngine:
+        call_counter["n"] += 1
+        if call_counter["n"] == 1:
+            raise RuntimeError("seed_missing")
+        return _FakeLiveEngine()
+
+    bot = _bot(tmp_path, live_engine_factory=flaky_factory)
+    sent: list[str] = []
+
+    async def fake_send(_chat_id: int, text: str) -> bool:
+        sent.append(text)
+        return True
+
+    monkeypatch.setattr(bot, "_send", fake_send)
+
+    await bot.process_update({"message": {"chat": {"id": 12345}, "text": "/live status"}})
+    await bot.process_update({"message": {"chat": {"id": 12345}, "text": "/live status"}})
+
+    assert call_counter["n"] == 2
+    assert "RuntimeError" in sent[0]
+    assert "Live-Mode" in sent[1]
+
+
+@pytest.mark.asyncio
+async def test_live_eager_engine_wins_over_factory(tmp_path, monkeypatch):
+    """If both ``live_engine`` and ``live_engine_factory`` are passed, the
+    pre-constructed engine wins — factory is never called. Useful for tests
+    that want full control over the engine instance."""
+    eager = _FakeLiveEngine()
+    factory_calls: list[None] = []
+
+    def factory() -> _FakeLiveEngine:
+        factory_calls.append(None)
+        return _FakeLiveEngine()
+
+    bot = _bot(tmp_path, live_engine=eager, live_engine_factory=factory)
+    sent: list[str] = []
+
+    async def fake_send(_chat_id: int, text: str) -> bool:
+        sent.append(text)
+        return True
+
+    monkeypatch.setattr(bot, "_send", fake_send)
+    await bot.process_update({"message": {"chat": {"id": 12345}, "text": "/live status"}})
+
+    assert factory_calls == []
+    assert eager.status_called is True

@@ -180,6 +180,7 @@ class TelegramOperatorBot:
         signal_approval_ttl_minutes: int = 60,
         signal_approval_hmac_secret: str = "",
         live_engine: LiveExecutionEngine | None = None,
+        live_engine_factory: Callable[[], LiveExecutionEngine] | None = None,
     ) -> None:
         normalized_updates = tuple(
             dict.fromkeys(
@@ -247,10 +248,23 @@ class TelegramOperatorBot:
         self._menu_history: dict[int, deque[int]] = {}
         # Set during _dispatch for ephemeral commands so _send can track IDs.
         self._track_ephemeral_reply = False
-        # Phase-0 live-trading engine (HOTP-gated, light-live caps). Optional:
-        # when None, /live and /trade reply with a "not configured" error
-        # instead of crashing. Bridge to app.messaging.live_telegram_commands.
-        self._live_engine = live_engine
+        # Phase-0 live-trading engine (HOTP-gated, light-live caps).
+        #
+        # Two construction modes (per Red-Team review H-A1, 2026-05-21):
+        # 1. ``live_engine`` — pre-constructed engine, eager. Useful for tests
+        #    or callers that want full control.
+        # 2. ``live_engine_factory`` — zero-arg callable, lazy. Called the
+        #    first time /live or /trade actually need an engine. Lazy avoids
+        #    boot-time crashes when HOTP-seed / API-keys are not yet
+        #    provisioned (the failure becomes an operator-actionable Telegram
+        #    reply instead of a service-start crash). Memoised after first
+        #    success — failure raises through to the caller.
+        # If both are None: /live and /trade reply with "not configured".
+        # Eager wins over factory if both are passed (test-injection path).
+        self._live_engine: LiveExecutionEngine | None = live_engine
+        self._live_engine_factory: Callable[[], LiveExecutionEngine] | None = (
+            live_engine_factory
+        )
 
     @property
     def is_configured(self) -> bool:
@@ -2525,20 +2539,45 @@ class TelegramOperatorBot:
 
         await self._send(chat_id, "\n".join(lines))
 
+    def _resolve_live_engine(self) -> tuple[LiveExecutionEngine | None, str | None]:
+        """Return ``(engine, error_reply_or_None)``.
+
+        Lazy-constructs from ``live_engine_factory`` if no eager engine was
+        passed. Memoises the first successful construction. If the factory
+        raises, returns ``(None, "<operator-actionable message>")`` so the
+        Telegram caller can surface the real reason (e.g. "HOTP-Seed fehlt")
+        instead of a generic "not configured" — that asymmetric reply is the
+        whole point of H-A1 over Variante B (Red-Team finding S-003).
+        """
+        if self._live_engine is not None:
+            return self._live_engine, None
+        if self._live_engine_factory is None:
+            return None, "❌ Live-Mode not configured on this Pi (paper-only deployment)."
+        try:
+            self._live_engine = self._live_engine_factory()
+        except Exception as exc:  # noqa: BLE001
+            # Exception types are domain-specific (HotpSeedMissing,
+            # ExchangePermsError, etc.) — surface the type and a redacted
+            # message to the operator. NO secrets in exception strings:
+            # callers must not let API keys / seed bytes leak via repr.
+            logger.warning(
+                "[BOT] live_engine_factory failed at first use: %s",
+                exc.__class__.__name__,
+            )
+            return None, f"❌ Live-Mode setup incomplete: {exc.__class__.__name__}: {exc}"
+        return self._live_engine, None
+
     async def _cmd_live(self, chat_id: int, *, args: str = "") -> None:
         """Phase-0 live-mode control: /live status | unlock <hotp> | lock.
 
         Delegates to ``app.messaging.live_telegram_commands`` so all parsing
-        + HOTP + gate-chain logic stays in one place. If no ``live_engine``
-        is configured the bot replies with a controlled error instead of
-        crashing — the bot is usable on Pi 5 paper-only deployments where
-        live trading is intentionally absent.
+        + HOTP + gate-chain logic stays in one place. Engine acquisition is
+        lazy via ``_resolve_live_engine`` so a Pi without HOTP-seed
+        does not crash on startup — the failure becomes a Telegram reply.
         """
-        if self._live_engine is None:
-            await self._send(
-                chat_id,
-                "❌ Live-Mode not configured on this Pi (paper-only deployment).",
-            )
+        engine, err = self._resolve_live_engine()
+        if engine is None:
+            await self._send(chat_id, err or "❌ Live-Mode unavailable.")
             return
 
         from app.messaging.live_telegram_commands import (
@@ -2550,12 +2589,12 @@ class TelegramOperatorBot:
         parts = args.strip().split(maxsplit=1)
         sub = parts[0].lower() if parts else "status"
         if sub == "status":
-            reply = handle_live_status(self._live_engine)
+            reply = handle_live_status(engine)
         elif sub == "unlock":
             hotp_arg = parts[1] if len(parts) > 1 else ""
-            reply = handle_live_unlock(f"/live unlock {hotp_arg}".strip(), self._live_engine)
+            reply = handle_live_unlock(f"/live unlock {hotp_arg}".strip(), engine)
         elif sub == "lock":
-            reply = handle_live_lock(self._live_engine)
+            reply = handle_live_lock(engine)
         else:
             reply = (
                 f"❌ Unknown /live subcommand: '{sub}'\n"
@@ -2570,16 +2609,14 @@ class TelegramOperatorBot:
         to ``app.messaging.live_telegram_commands.handle_trade``. The bot
         itself stays transport-only — no order plumbing here.
         """
-        if self._live_engine is None:
-            await self._send(
-                chat_id,
-                "❌ Live-Mode not configured on this Pi (paper-only deployment).",
-            )
+        engine, err = self._resolve_live_engine()
+        if engine is None:
+            await self._send(chat_id, err or "❌ Live-Mode unavailable.")
             return
 
         from app.messaging.live_telegram_commands import handle_trade
 
-        reply = await handle_trade(f"/trade {args}".strip(), self._live_engine)
+        reply = await handle_trade(f"/trade {args}".strip(), engine)
         await self._send(chat_id, reply)
 
     async def _cmd_help(self, chat_id: int, *, args: str = "") -> None:
