@@ -13,13 +13,14 @@ Dieses Dokument bringt einen neuen Bearbeiter in **2-3 Stunden** auf einsatzfäh
 | 1 | `README.md` | Stack + Quick-Start + tägliche Operator-Commands |
 | 2 | `ARCHITECTURE.md` | Tragende Strukturen + 16-State-Lifecycle + bekannte Grenzen |
 | 3 | `ONBOARDING.md` (diese Datei) | Setup + erste Tasks + Verbote |
-| 4 | `DECISION_LOG.md` | Decision-History (kompakt, 29KB) |
-| 5 | `docs/adr/0001..0004` | Architektur-Entscheidungen (4 ADRs) |
-| 6 | `docs/architecture/signal_to_execution_implementation_report_20260510.md` | Pipeline-State + was wirklich gefixt wurde |
-| 7 | `artifacts/operator_memos/re_entry_end_of_window_2026-05-23.md` | Aktueller Re-Entry-Stand |
-| 8 | Letzte Session-Pin im Memory-Store (`session_pin_next_start_*.md`) | Übergabe-Stand der letzten Session |
+| 4 | `docs/AI_HANDOFF.md` | Multi-Agent-Disziplin (Claude/Claude-Code/Codex/Antigravity-Rollen, Worktree-Isolation, V→V-Token, 9 dokumentierte Drift-Vorfälle) |
+| 5 | `DECISION_LOG.md` | Decision-History (kompakt, 29KB) |
+| 6 | `docs/adr/0001..0004` | Architektur-Entscheidungen (4 ADRs) |
+| 7 | `docs/architecture/signal_to_execution_implementation_report_20260510.md` | Pipeline-State + was wirklich gefixt wurde |
+| 8 | `artifacts/operator_memos/re_entry_end_of_window_2026-05-23.md` | Aktueller Re-Entry-Stand |
+| 9 | Letzte Session-Pin im Memory-Store (`session_pin_next_start_*.md`) | Übergabe-Stand der letzten Session |
 
-**Reihenfolge ist verbindlich.** Wer bei #6 anfängt, versteht das WAS aber nicht das WARUM.
+**Reihenfolge ist verbindlich.** Wer bei #7 anfängt, versteht das WAS aber nicht das WARUM.
 
 ---
 
