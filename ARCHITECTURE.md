@@ -31,7 +31,7 @@ Premium-Telegram-Channel (MTProto via Telethon)
   │
   ▼
 telegram_channel_worker → parse_premium_channel_message
-                          (app/messaging/signal_parser.py:128)
+                          (app/ingestion/telegram_channel_parser.py:420)
   │
   ▼
 ParsedSignal (dataclass, immutable)
@@ -116,18 +116,28 @@ REJECTED_INVALID_SIGNAL | EXPIRED | CANCELLED | FAILED
 
 | Modul | Datei | Z | Zweck |
 |---|---|---|---|
-| Signal-Parser | `app/messaging/signal_parser.py` | 765 | Telegram-Text → ParsedSignal |
+| Premium-Channel-Parser | `app/ingestion/telegram_channel_parser.py` | 468 | `parse_premium_channel_message` → ParsedSignal (Premium-Pfad) |
+| Signal-Parser (generisch) | `app/messaging/signal_parser.py` | 765 | RSS-/News-Pfad, separate Schema-Konvention |
 | Normalized-Signal | `app/execution/normalized_signal.py` | 592 | 16-State-Lifecycle + validate() + status_history |
 | Models | `app/execution/models.py` | 400+ | PaperOrder/Fill/Position + LifecycleTransition + Approval/DecisionStates |
 | Order-Intent | `app/execution/order_intent.py` | 56 | ExecutableOrderIntent (Paper/Live-Vertrag) |
 | Bridge | `app/execution/envelope_to_paper_bridge.py` | 1169 | Gates + ExecutableOrderIntent-Build + Audit |
 | Scale-Resolver | `app/execution/scale_resolver.py` | 214 | Symbol-Scale-Detection + Bridge Gate 4.5 (validate_scaled_signal, 7 Reasons) |
-| Entry-Watcher | `app/execution/entry_watcher.py` | 404 | Deterministisches Entry-Range-Polling |
-| Paper-Engine | `app/execution/paper_engine.py` | 1108 | Order-Execution + Slippage + Fees + tp_tier-Partial-Exit |
+| Entry-Watcher | `app/execution/entry_watcher.py` | 390 | Deterministisches Entry-Range-Polling |
+| Paper-Engine | `app/execution/paper_engine.py` | 1157 | Order-Execution + Slippage + Fees + tp_tier-Partial-Exit + partial_fill_ratio |
 | Recovery | `app/execution/recovery.py` | ~350 | Crash-Recovery (recover_pending_signals + run_recovery_sweep) |
 | Auto-Annotator | `app/alerts/auto_annotator.py` | 459 | Outcome-Annotation mit Vol-/Window-Scaling |
-| Trail-API | `app/observability/premium_signal_trail.py` | 990+ | End-to-End-Pipeline-Visibility |
+| Trail-API | `app/observability/premium_signal_trail.py` | 994 | End-to-End-Pipeline-Visibility |
 | Pipeline-Service | `app/pipeline/service.py` | 1027 | RSS-Pipeline + _maybe_trigger_paper_trade |
+
+**Test-Counts (Stand 2026-05-21 abends, p7 `767f02a8`):**
+- `tests/unit/test_telegram_channel_parser.py`: 24 (Premium-Parser)
+- `tests/unit/test_signal_parser.py`: 25 (generisch)
+- `tests/unit/test_normalized_signal.py`: 54
+- `tests/unit/test_envelope_to_paper_bridge.py`: 50
+- `tests/unit/test_paper_execution.py`: 64 (+V2 +A1)
+- `tests/unit/test_entry_watcher.py`: 32
+- `tests/integration/test_premium_pipeline_e2e.py`: 5 (V1 happy/reject + V2.1/V2.2/V2.3)
 
 ---
 

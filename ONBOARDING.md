@@ -56,7 +56,8 @@ mypy app/                                 # sofern im Projekt üblich
 
 | Datei | Was hier passiert |
 |---|---|
-| `app/messaging/signal_parser.py` | Telegram-Text → ParsedSignal |
+| `app/ingestion/telegram_channel_parser.py` | Premium-Telegram-Text → ParsedSignal (`parse_premium_channel_message`) |
+| `app/messaging/signal_parser.py` | Generischer Signal-Parser (RSS-/News-Pfad, separates Schema) |
 | `app/execution/normalized_signal.py:127` | 16-State-Lifecycle SSoT |
 | `app/execution/envelope_to_paper_bridge.py` | Gates + Bridge-Logik |
 | `app/execution/paper_engine.py` | Paper-Order-Execution |
@@ -96,8 +97,10 @@ ssh ubuntu@192.168.178.23 'cat /home/kai/ai_analyst_trading_bot/artifacts/daily_
 
 ```bash
 pytest tests/unit/test_envelope_to_paper_bridge.py -v   # 50 Tests
-pytest tests/unit/test_paper_execution.py -v            # 56 Tests
+pytest tests/unit/test_paper_execution.py -v            # 64 Tests (V2+A1)
 pytest tests/unit/test_normalized_signal.py -v          # 54 Tests
+pytest tests/unit/test_telegram_channel_parser.py -v    # 24 Tests (Premium-Parser)
+pytest tests/integration/test_premium_pipeline_e2e.py -v # 5 Tests (V1+V2.1/2.2/2.3)
 ```
 
 **Ziel:** Test-Patterns kennenlernen, fixture-Konventionen, monkeypatch-Stil. Das ist die Vorlage für jeden eigenen Test.
