@@ -192,9 +192,9 @@ def env_snapshot() -> str:
         "EXECUTION_PAPER_MIN_PRIORITY",
         "RISK_BAYES_CONFIDENCE_ENABLED",
         "RISK_BAYES_CONFIDENCE_SHADOW_ONLY",
-        "SHADOW_ONLY",
-        "RE_ENTRY_MODE",
+        "RE_ENTRY_MODE_ENABLED",
         "RISK_MAX_OPEN_POSITIONS",
+        "LIVE_MODE",
     ]
     lines = ["## .env-Snapshot (Decision-Relevant)\n"]
     if not env_path.exists():
