@@ -207,6 +207,13 @@ def test_healthy_system(tmp_path: Path) -> None:
 
 
 def test_no_alerts_warning(tmp_path: Path) -> None:
+    # P0 update: probe now suppresses alert-volume warnings when artifact files
+    # are stale/missing (we'd just be reading sync-lag data). To exercise the
+    # *real* low-volume path, write one fresh alert + an empty cycle file so
+    # the freshness check passes.
+    _write_audit(tmp_path, document_id="d-fresh")
+    (tmp_path / "trading_loop_audit.jsonl").touch()
+
     issues = run_health_check(
         tmp_path,
         min_expected_alerts=5,

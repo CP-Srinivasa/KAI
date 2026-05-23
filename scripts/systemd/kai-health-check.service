@@ -1,0 +1,20 @@
+[Unit]
+Description=KAI System Health Check — Pi-side authoritative probe with Telegram-on-issue
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/ubuntu/ai_analyst_trading_bot
+Environment=PYTHONPATH=/home/ubuntu/ai_analyst_trading_bot
+EnvironmentFile=-/home/ubuntu/ai_analyst_trading_bot/.env
+ExecStart=/home/ubuntu/ai_analyst_trading_bot/.venv/bin/python -m app.cli.main alerts health-check --telegram-on-issue --lookback-hours 24 --notify-cooldown-minutes 30 --exit-on-stale
+StandardOutput=journal
+StandardError=journal
+TimeoutStartSec=90
+
+# Resource caps — probe is read-only and short.
+MemoryMax=256M
+CPUQuota=50%

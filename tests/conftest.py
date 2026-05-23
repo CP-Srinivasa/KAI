@@ -17,6 +17,14 @@ def _pin_feature_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
     on the same key).
     """
     monkeypatch.setenv("EXECUTION_PAPER_MIN_PRIORITY", "1")
+    # P2: pretend tests run on the Pi so the off-Pi `probe_location` warning
+    # (app.alerts.health_check) doesn't pollute unrelated assertions. Tests
+    # that exercise the off-Pi path opt in via monkeypatch.setenv to a
+    # non-matching marker.
+    import socket as _socket
+
+    _host = _socket.gethostname() or "test-host"
+    monkeypatch.setenv("KAI_PI_HOSTNAME_MARKER", _host.lower())
 
 
 @pytest.fixture(autouse=True)

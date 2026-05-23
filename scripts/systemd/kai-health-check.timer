@@ -1,0 +1,13 @@
+[Unit]
+Description=KAI System Health Check — fire every 15 minutes
+Requires=kai-health-check.service
+
+[Timer]
+# Every 15 minutes (matches cooldown floor of 30min so we get 2 attempts per cooldown).
+OnCalendar=*-*-* *:00/15:00
+Persistent=true
+AccuracySec=60s
+RandomizedDelaySec=30s
+
+[Install]
+WantedBy=timers.target

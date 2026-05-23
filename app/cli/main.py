@@ -1910,17 +1910,87 @@ def alerts_health_check(
         False,
         help="Send issues via Telegram to operator",
     ),
+    telegram_on_issue: bool = typer.Option(
+        False,
+        "--telegram-on-issue",
+        help=(
+            "Send Telegram only when issues are found (suppresses healthy-state pings). "
+            "Honors cooldown via .health_check_last_notification state file."
+        ),
+    ),
+    notify_cooldown_minutes: int = typer.Option(
+        30,
+        help="Minimum minutes between Telegram notifications (cooldown anti-spam).",
+    ),
+    min_expected_actionable: int = typer.Option(
+        0,
+        help="P1 floor: warn if fewer than N actionable alerts in window (0=disabled).",
+    ),
+    exit_on_stale: bool = typer.Option(
+        False,
+        "--exit-on-stale",
+        help=(
+            "P2: exit with code 2 when data sources are stale "
+            "(stops false-positive workstation runs from polluting Telegram). "
+            "Override with --allow-stale."
+        ),
+    ),
+    allow_stale: bool = typer.Option(
+        False,
+        "--allow-stale",
+        help="P2: override --exit-on-stale so workstation runs can still execute.",
+    ),
 ) -> None:
-    """Run system health checks and report issues."""
+    """Run system health checks and report issues (P0+P1+P2 enhanced).
+
+    P0: data-freshness check (avoid sync-lag false-positives like the 2026-05-23
+    workstation-stale incident). P1: actionable + priority_rejected breakdown.
+    P2: hostname detection + exit-on-stale for workstation-redirect.
+    """
     import asyncio
+    import time
+    from pathlib import Path as _Path
 
-    from app.alerts.health_check import run_health_check
+    from app.alerts.health_check import run_health_check_report
 
-    issues = run_health_check(lookback_hours=lookback_hours)
+    report = run_health_check_report(
+        lookback_hours=lookback_hours,
+        min_expected_actionable=min_expected_actionable,
+    )
 
-    if not issues:
+    # Structured breakdown (P1+P2) — always shown, even on green probes
+    host_marker = report.hostname or "unknown"
+    location = "Pi" if report.runs_on_pi else "off-Pi"
+    console.print(
+        f"[dim]Window: {lookback_hours}h · host={host_marker} ({location}) · "
+        f"alerts={report.recent_alerts} (actionable={report.recent_actionable_alerts}) · "
+        f"cycles={report.recent_cycles} · "
+        f"re_entry_mode={'on' if report.re_entry_mode_active else 'off'}[/dim]"
+    )
+    if report.cycle_status_breakdown:
+        sorted_items = sorted(report.cycle_status_breakdown.items(), key=lambda x: -x[1])
+        breakdown_str = ", ".join(f"{k}={v}" for k, v in sorted_items)
+        console.print(f"[dim]Cycle breakdown: {breakdown_str}[/dim]")
+    if report.data_sources_stale:
+        console.print(
+            "[yellow bold]⚠ Data sources are stale — probe may be reading "
+            "workstation-mirrored artifacts. Run on Pi for source-of-truth.[/yellow bold]"
+        )
+    # P2: exit semantic — non-authoritative means either stale mtime OR
+    # off-Pi hostname (partial-mirror risk). `--allow-stale` overrides both.
+    if exit_on_stale and not allow_stale and (
+        report.data_sources_stale or not report.runs_on_pi
+    ):
+        reason = "stale data" if report.data_sources_stale else "off-Pi host"
+        console.print(
+            f"[red bold]Exit-on-stale: aborting with code 2 ({reason}) — "
+            f"use --allow-stale to override.[/red bold]"
+        )
+        raise typer.Exit(code=2)
+
+    if not report.issues:
         console.print("[bold green]All systems healthy.[/bold green]")
-        if notify:
+        if notify and not telegram_on_issue:
             from app.alerts.notify import send_operator_notification
 
             ok = asyncio.run(send_operator_notification("KAI Health Check: All systems healthy."))
@@ -1928,26 +1998,55 @@ def alerts_health_check(
                 console.print("[green]Telegram notification sent.[/green]")
         return
 
-    for issue in issues:
+    for issue in report.issues:
         color = "red" if issue.severity == "critical" else "yellow"
         console.print(
             f"[{color}][{issue.severity.upper()}][/{color}] {issue.component}: {issue.message}"
         )
 
-    critical = sum(1 for i in issues if i.severity == "critical")
-    warnings = sum(1 for i in issues if i.severity == "warning")
-    console.print(f"\n[bold]{len(issues)} issues:[/bold] {critical} critical, {warnings} warnings")
+    critical = sum(1 for i in report.issues if i.severity == "critical")
+    warnings = sum(1 for i in report.issues if i.severity == "warning")
+    console.print(
+        f"\n[bold]{len(report.issues)} issues:[/bold] {critical} critical, {warnings} warnings"
+    )
 
-    if notify:
+    if notify or telegram_on_issue:
+        # Cooldown gate (state file in artifacts/)
+        state_file = _Path("artifacts") / ".health_check_last_notification"
+        now_ts = time.time()
+        if state_file.exists():
+            try:
+                last_ts = float(state_file.read_text(encoding="utf-8").strip())
+            except (ValueError, OSError):
+                last_ts = 0.0
+            elapsed_min = (now_ts - last_ts) / 60.0
+            if elapsed_min < notify_cooldown_minutes:
+                console.print(
+                    f"[dim]Notification suppressed (cooldown: "
+                    f"{elapsed_min:.1f}/{notify_cooldown_minutes}min).[/dim]"
+                )
+                return
+
         from app.alerts.notify import send_operator_notification
 
         lines = ["KAI Health Alert"]
-        for issue in issues:
+        if report.data_sources_stale:
+            lines.append("[NOTE] data sources stale — Pi-sync may be lagging")
+        lines.append(
+            f"Window: {lookback_hours}h · alerts={report.recent_alerts} "
+            f"(actionable={report.recent_actionable_alerts}) · cycles={report.recent_cycles}"
+        )
+        for issue in report.issues:
             tag = "CRITICAL" if issue.severity == "critical" else "WARNING"
             lines.append(f"[{tag}] {issue.component}: {issue.message}")
         text = "\n".join(lines)
         ok = asyncio.run(send_operator_notification(text))
         if ok:
+            try:
+                state_file.parent.mkdir(parents=True, exist_ok=True)
+                state_file.write_text(str(now_ts), encoding="utf-8")
+            except OSError:
+                pass
             console.print("[green]Telegram notification sent.[/green]")
         else:
             console.print("[yellow]Telegram not configured or send failed.[/yellow]")
