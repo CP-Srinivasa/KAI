@@ -74,3 +74,34 @@ Diese Kopplung ist ein zusätzliches Argument für Operator-Variante 1 aus dem D
 - Pi-`.env` `EXECUTION_PAPER_MIN_PRIORITY=10`, `RISK_BAYES_CONFIDENCE_SHADOW_ONLY=true`
 - Decision-Brief: `priority_scoring_decision_brief_2026-05-23.md`
 - Voll-Inspection: `priority_scoring_inspection_2026-05-20.md`
+
+---
+
+## Update 2026-05-23 (DS-20260523-V6, EOW-Validierungstag)
+
+**Schreibrate-Trajektorie aktualisiert:**
+
+| Stand | Total Einträge | Tage seit Phase-2D-E2E | Rate/Tag | n≥20-ETA (linear) |
+|---|---|---|---|---|
+| 2026-05-21 vormittag | 4 | 6.5 | 0.62 | 2026-06-16 |
+| 2026-05-21 nachmittag (Memo-Original) | 4 | 6.5 | 0.40 organisch (post-19.05.) | 2026-06-15 |
+| **2026-05-23 vormittag** | **4** | **8.5** | **0.47 (gesamt) / 0.27 (organisch)** | **2026-06-23 (gesamt) / 2026-08-03 (organisch)** |
+
+**Beobachtung:** Seit 2026-05-21 04:14 UTC **kein neuer Eintrag** (53h Stille). Die in der V2-Indizienkette belegte Ursache ist strukturell (Channel-Quietness + ADR-1-Priority-Gate=10), nicht ein Pipeline-Defekt. Bei Fortsetzung dieses Verlaufs verschiebt sich die n≥20-Schwelle um weitere ~10 Tage gegenüber der 21.05.-Hochrechnung.
+
+**Konsequenz für Flip-Heuristik (Memory-Pin `bayes_shadow_only_flip_heuristik`):**
+
+- Die n≥20-Bedingung ist organisch realistisch **erst ab ~2026-06-23 oder später** erreichbar — und nur falls Premium-Channel aus der aktuellen Stille zurückkehrt.
+- Die "≥4 Wochen"-Bedingung würde ab Phase-2D-E2E-Stichtag 2026-05-14 zählen → **2026-06-11** wäre erreicht. Bis dahin wäre die Datenbasis aber strukturell zu dünn (n≤8) für eine seriöse Posterior-Diversity-Auswertung.
+
+**Empfehlung 2026-05-23:** Heuristik bleibt unverändert (n≥20 **UND** ≥4 Wochen-Vorbedingung **UND** Diversität **UND** 7d-Sentinel **UND** Auto-Rollback). Ein Trigger für vorzeitigen Flip-Sprint wäre nur dann begründet, wenn der Operator (a) Signal-Breite erhöht (Whale-Alert / Funding-Divergenzen — Phase-2-Backlog) ODER (b) ADR-1 zugunsten Variante 2 (PR #58 Penalty-Patch) revidiert. Beides separate Operator-Entscheidungen, kein Bayes-Memo-Trigger.
+
+**Kopplung zur 30.05.-Priority-Scoring-Decision:**
+- Variante 1 (Option D, Status quo): erwartbar bleibt Schreibrate ~0.27/Tag organisch → SHADOW_ONLY bleibt durchgehend `true` bis mindestens 2026-08.
+- Variante 2 (A'-Penalty-Patch): erwartbar mehr p≥10-Filtering, eventuell sogar **reduzierte** Schreibrate (Penalty reduziert Top-Tier-Pass-Rate). Modellierung im 30.05.-Decision-Pack als Risiko ergänzen.
+- Variante 3 (hypothetisch, Option A Sentiment-Faktor): hätte vermutlich höchste Schreibrate, ist aber nicht Teil der aktuellen Decision-Optionen.
+
+**Datenquellen-Update:**
+- Pi-Check 2026-05-23T10:35 CEST: `bayes_confidence_audit.jsonl` unverändert 4 Einträge, last `dec_25599792322e` 2026-05-21T04:14:07 UTC.
+- journalctl `kai-server` seit 21.05.: 0 Treffer für "bayes|audit_adapter|confidence" → konsistent mit "kein Aufruf", nicht mit "Schreib-Bug".
+- Querverweis: `eow_review_2026-05-23.md` § 3.
