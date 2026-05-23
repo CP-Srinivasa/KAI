@@ -33,8 +33,11 @@ _ARTIFACTS = Path("artifacts")
 # Data-freshness thresholds (P0). A probe-run that reads files older than these
 # is almost certainly a sync-lag false-positive (Pi is source-of-truth — see
 # memory feedback_pi_branch_pointer_staleness + V4-forensik 2026-05-23).
-_FRESHNESS_MTIME_WARN_MIN = 30
-_FRESHNESS_LAST_RECORD_WARN_HOURS = 2
+# 120min default: alert_audit only writes when the Telegram channel dispatches
+# a message, which can be quiet for an hour or more in low-vol phases. A
+# narrower window produces false stale-warnings on legitimately quiet windows.
+_FRESHNESS_MTIME_WARN_MIN = 120
+_FRESHNESS_LAST_RECORD_WARN_HOURS = 4
 
 # Hostname substrings that identify the Pi-side authoritative host. Override
 # via env KAI_PI_HOSTNAME_MARKER for non-default deployments.
