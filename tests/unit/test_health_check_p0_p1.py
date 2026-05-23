@@ -166,6 +166,23 @@ def test_actionable_floor_relaxed_during_re_entry_mode(
     assert report.re_entry_mode_active is True
 
 
+def test_re_entry_mode_enabled_alias_accepted(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Pi `.env` uses RE_ENTRY_MODE_ENABLED=true; probe must honor that alias."""
+    monkeypatch.delenv("RE_ENTRY_MODE", raising=False)
+    monkeypatch.setenv("RE_ENTRY_MODE_ENABLED", "true")
+    _make_files_fresh(tmp_path)
+    for _ in range(20):
+        _write_cycle(tmp_path, status="priority_rejected")
+
+    report = run_health_check_report(tmp_path)
+    assert report.re_entry_mode_active is True
+    sig_health = [i for i in report.issues if i.component == "trading_loop_signal_health"]
+    assert sig_health == []
+
+
 def test_priority_rejected_ratio_surfaces_in_breakdown(tmp_path: Path) -> None:
     _make_files_fresh(tmp_path)
     for _ in range(8):

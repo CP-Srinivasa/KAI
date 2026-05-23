@@ -122,8 +122,17 @@ def _check_data_freshness(adir: Path, now: datetime) -> tuple[list[HealthIssue],
 
 
 def _re_entry_mode_active() -> bool:
-    """P1 — respect RE_ENTRY_MODE env-flag so probe relaxes during gated window."""
-    return os.environ.get("RE_ENTRY_MODE", "").strip().lower() in {"1", "true", "active"}
+    """P1 — respect RE_ENTRY_MODE env-flag so probe relaxes during gated window.
+
+    Accepts two key variants because the codebase has both in circulation:
+    - ``RE_ENTRY_MODE`` (legacy, accepts "active"/"true"/"1")
+    - ``RE_ENTRY_MODE_ENABLED`` (current Pi `.env` form, boolean-like)
+    """
+    truthy = {"1", "true", "active", "yes", "on"}
+    for key in ("RE_ENTRY_MODE", "RE_ENTRY_MODE_ENABLED"):
+        if os.environ.get(key, "").strip().lower() in truthy:
+            return True
+    return False
 
 
 def _detect_hostname() -> tuple[str, bool]:
