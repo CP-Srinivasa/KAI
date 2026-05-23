@@ -81,9 +81,13 @@ def test_missing_files_yield_critical_freshness_issues(tmp_path: Path) -> None:
 
 
 def test_stale_mtime_yields_freshness_warning(tmp_path: Path) -> None:
-    """Files exist but mtime older than 30min -> warning + stale flag."""
+    """Files exist but mtime past per-file threshold -> warning + stale flag.
+
+    alert_audit threshold is 480min (event-driven), trading_loop is 30min.
+    10h-old mtime trips both.
+    """
     _make_files_fresh(tmp_path)
-    old_ts = (datetime.now(UTC) - timedelta(hours=2)).timestamp()
+    old_ts = (datetime.now(UTC) - timedelta(hours=10)).timestamp()
     os.utime(tmp_path / ALERT_AUDIT_JSONL_FILENAME, (old_ts, old_ts))
     os.utime(tmp_path / "trading_loop_audit.jsonl", (old_ts, old_ts))
 
@@ -95,10 +99,30 @@ def test_stale_mtime_yields_freshness_warning(tmp_path: Path) -> None:
     assert report.data_sources_stale is True
 
 
+def test_alert_audit_quiet_channel_does_not_trip_freshness(tmp_path: Path) -> None:
+    """alert_audit 2h gap = legit-quiet channel; should NOT flag stale.
+
+    Lehre 1 aus 2026-05-23 Pi-Sprint: alert_audit ist eventbasiert. Pi-Run
+    12:15 CEST hatte 122min alten alert_audit (threshold 120min war zu eng) +
+    feuerte stale + suppresste den echten priority_rejected-Warning.
+    """
+    _make_files_fresh(tmp_path)
+    two_hours_ago = (datetime.now(UTC) - timedelta(hours=2)).timestamp()
+    # alert_audit alone 2h old: should still be fresh (threshold 480min)
+    os.utime(tmp_path / ALERT_AUDIT_JSONL_FILENAME, (two_hours_ago, two_hours_ago))
+    # trading_loop fresh
+    report = run_health_check_report(tmp_path)
+    alert_freshness = [
+        i for i in report.issues if i.component == "alerts_freshness"
+    ]
+    assert alert_freshness == []
+    assert report.data_sources_stale is False
+
+
 def test_stale_suppresses_volume_warnings(tmp_path: Path) -> None:
     """When data is stale, base alerts/cycles volume warnings must NOT fire."""
     _make_files_fresh(tmp_path)
-    old_ts = (datetime.now(UTC) - timedelta(hours=2)).timestamp()
+    old_ts = (datetime.now(UTC) - timedelta(hours=10)).timestamp()
     os.utime(tmp_path / ALERT_AUDIT_JSONL_FILENAME, (old_ts, old_ts))
     os.utime(tmp_path / "trading_loop_audit.jsonl", (old_ts, old_ts))
 

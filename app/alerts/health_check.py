@@ -33,10 +33,18 @@ _ARTIFACTS = Path("artifacts")
 # Data-freshness thresholds (P0). A probe-run that reads files older than these
 # is almost certainly a sync-lag false-positive (Pi is source-of-truth — see
 # memory feedback_pi_branch_pointer_staleness + V4-forensik 2026-05-23).
-# 120min default: alert_audit only writes when the Telegram channel dispatches
-# a message, which can be quiet for an hour or more in low-vol phases. A
-# narrower window produces false stale-warnings on legitimately quiet windows.
-_FRESHNESS_MTIME_WARN_MIN = 120
+#
+# Per-file thresholds (see feedback_health_probe_design_lessons.md Lehre 1):
+# - alert_audit.jsonl is event-driven: it only writes when the Telegram channel
+#   dispatches. Quiet hours / weekends commonly produce 4-8h gaps in low-vol
+#   phases. Use a wide window (8h) so legitimate quiet is not flagged.
+# - trading_loop_audit.jsonl is timer-driven (~5min cycles). A multi-hour gap
+#   indicates a real broken scheduler. Use a tight window.
+_FRESHNESS_DEFAULT_MIN = 120
+_FRESHNESS_PER_FILE_MIN: dict[str, int] = {
+    "alert_audit.jsonl": 480,  # 8h — event-driven channel
+    "trading_loop_audit.jsonl": 30,  # 5min cycle → 30min is 6 missed runs
+}
 _FRESHNESS_LAST_RECORD_WARN_HOURS = 4
 
 # Hostname substrings that identify the Pi-side authoritative host. Override
@@ -79,13 +87,12 @@ class HealthReport:
 def _check_data_freshness(adir: Path, now: datetime) -> tuple[list[HealthIssue], bool]:
     """P0 — flag stale artifact files so probe doesn't false-positive on sync lag.
 
-    Checks two files (alert_audit + trading_loop_audit): mtime must be within
-    `_FRESHNESS_MTIME_WARN_MIN` minutes, last record's timestamp within
-    `_FRESHNESS_LAST_RECORD_WARN_HOURS` hours. Returns (issues, is_stale).
+    Per-file mtime thresholds (see ``_FRESHNESS_PER_FILE_MIN``): event-driven
+    streams (alert_audit) get a wide window; timer-driven streams
+    (trading_loop_audit) get a tight one. Returns (issues, is_stale).
     """
     issues: list[HealthIssue] = []
     stale = False
-    mtime_cutoff = now - timedelta(minutes=_FRESHNESS_MTIME_WARN_MIN)
     files_to_check = [
         ("alert_audit.jsonl", "alerts"),
         ("trading_loop_audit.jsonl", "trading_loop"),
@@ -102,6 +109,8 @@ def _check_data_freshness(adir: Path, now: datetime) -> tuple[list[HealthIssue],
             )
             stale = True
             continue
+        threshold_min = _FRESHNESS_PER_FILE_MIN.get(fname, _FRESHNESS_DEFAULT_MIN)
+        mtime_cutoff = now - timedelta(minutes=threshold_min)
         mtime = datetime.fromtimestamp(path.stat().st_mtime, tz=UTC)
         if mtime < mtime_cutoff:
             age_min = int((now - mtime).total_seconds() / 60)
@@ -111,7 +120,7 @@ def _check_data_freshness(adir: Path, now: datetime) -> tuple[list[HealthIssue],
                     component=f"{component}_freshness",
                     message=(
                         f"{fname} mtime is {age_min}min old "
-                        f"(threshold: {_FRESHNESS_MTIME_WARN_MIN}min) — "
+                        f"(threshold: {threshold_min}min) — "
                         f"probe may be running against stale data, "
                         f"check Pi sync"
                     ),
