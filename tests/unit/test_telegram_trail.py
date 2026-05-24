@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from app.messaging.signal_trail import format_signal_trail_message, find_matching_signal_data
+
+from app.messaging.signal_trail import format_signal_trail_message
 
 
 def test_format_signal_trail_empty_logs(tmp_path: Path) -> None:

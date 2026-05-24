@@ -11,8 +11,7 @@ Provides a reporting split to evaluate different cohorts:
 
 from __future__ import annotations
 
-import json
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -31,8 +30,8 @@ def parse_utc_timestamp(ts_str: str | None) -> datetime | None:
         # standard ISO format parsing
         dt = datetime.fromisoformat(ts_str.replace("Z", "+00:00"))
         if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=timezone.utc)
-        return dt.astimezone(timezone.utc)
+            dt = dt.replace(tzinfo=UTC)
+        return dt.astimezone(UTC)
     except (ValueError, TypeError):
         return None
 
@@ -96,8 +95,8 @@ def generate_cohort_report(
     filtered_outcomes: list[AlertOutcomeAnnotation] = []
     invalid_timestamp = 0
 
-    since_utc = since.astimezone(timezone.utc) if since is not None else None
-    until_utc = until.astimezone(timezone.utc) if until is not None else None
+    since_utc = since.astimezone(UTC) if since is not None else None
+    until_utc = until.astimezone(UTC) if until is not None else None
 
     for a in outcomes:
         annot_dt = parse_utc_timestamp(a.annotated_at)
@@ -136,7 +135,7 @@ def generate_cohort_report(
     # This de-duplicates over the *filtered* outcomes for the current window.
     latest_by_doc_map: dict[str, tuple[AlertOutcomeAnnotation, datetime]] = {}
     for a in filtered_outcomes:
-        annot_dt = parse_utc_timestamp(a.annotated_at) or datetime.fromtimestamp(0, tz=timezone.utc)
+        annot_dt = parse_utc_timestamp(a.annotated_at) or datetime.fromtimestamp(0, tz=UTC)
         if a.document_id not in latest_by_doc_map:
             latest_by_doc_map[a.document_id] = (a, annot_dt)
         else:
@@ -152,7 +151,7 @@ def generate_cohort_report(
     # then join with audit, and filter by dispatched_at.
     global_latest_by_doc_map: dict[str, tuple[AlertOutcomeAnnotation, datetime]] = {}
     for a in outcomes:
-        annot_dt = parse_utc_timestamp(a.annotated_at) or datetime.fromtimestamp(0, tz=timezone.utc)
+        annot_dt = parse_utc_timestamp(a.annotated_at) or datetime.fromtimestamp(0, tz=UTC)
         if a.document_id not in global_latest_by_doc_map:
             global_latest_by_doc_map[a.document_id] = (a, annot_dt)
         else:

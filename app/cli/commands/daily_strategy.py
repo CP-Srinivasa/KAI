@@ -374,7 +374,6 @@ def cmd_sync(
 ) -> None:
     """Sync operational artifacts (JSONLs) from Pi to laptop to mitigate sync-lag."""
     import subprocess
-    import sys
 
     files = [
         "artifacts/alert_outcomes.jsonl",

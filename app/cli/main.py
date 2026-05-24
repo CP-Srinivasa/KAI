@@ -1822,7 +1822,7 @@ def alerts_auto_annotate_report(
     from app.alerts.reporting import generate_cohort_report, parse_utc_timestamp
 
     artifacts_dir = Path("artifacts")
-    
+
     since_dt = parse_utc_timestamp(since) if since else None
     until_dt = parse_utc_timestamp(until) if until else None
 

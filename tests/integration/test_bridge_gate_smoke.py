@@ -10,15 +10,14 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-import pytest
 
 from app.alerts.audit import (
     AlertOutcomeAnnotation,
     append_outcome_annotation,
     load_outcome_annotations,
 )
+from app.messaging.signal_parser import detect_message_type, parse_structured_message
 from app.messaging.signal_trail import format_signal_trail_message
-from app.messaging.signal_parser import parse_structured_message, detect_message_type
 
 
 def test_structured_signal_parsing_smoke() -> None:
@@ -51,7 +50,7 @@ def test_manual_bridge_outcome_portalocker_smoke(tmp_path: Path) -> None:
     # Simulates concurrent writers accessing the same outcomes JSONL file
     # and verifies Portalocker keeps it safe.
     outcome_file = tmp_path / "alert_outcomes.jsonl"
-    
+
     annot = AlertOutcomeAnnotation(
         document_id="doc_smoke_001",
         outcome="hit",
@@ -72,7 +71,7 @@ def test_manual_bridge_outcome_portalocker_smoke(tmp_path: Path) -> None:
 
 def test_telegram_trail_integration_smoke(tmp_path: Path) -> None:
     # Reconstructs a full trail from empty to populated to guarantee no crashes
-    
+
     # 1. Empty trail
     res_empty = format_signal_trail_message("NON_EXISTING_ID", tmp_path)
     assert "Kein Signal" in res_empty

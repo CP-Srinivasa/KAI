@@ -7,7 +7,6 @@ and state of a TradingView signal through the 9 Bridge/Execution gates.
 from __future__ import annotations
 
 import json
-from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -127,7 +126,7 @@ def format_signal_trail_message(query_id: str, artifacts_dir: Path) -> str:
         ingress_records = load_jsonl_records(artifacts_dir / "tradingview_signal_audit.jsonl")
         if not ingress_records:
             return "Keine kürzlichen Signale gefunden. Bitte eine Signal ID angeben (z. B. `/trail SIG-20260415-BTCUSDT-001`)."
-        
+
         recent = []
         seen = set()
         for r in reversed(ingress_records):
@@ -140,7 +139,7 @@ def format_signal_trail_message(query_id: str, artifacts_dir: Path) -> str:
                 recent.append(f"• `{sig_id}` ({symbol} {dir_str}) @ {ts}")
                 if len(recent) >= 5:
                     break
-        
+
         recent_str = "\n".join(recent)
         return (
             f"*Kürzliche TradingView Signale:*\n\n"
@@ -247,7 +246,7 @@ def format_signal_trail_message(query_id: str, artifacts_dir: Path) -> str:
         # Find the latest state from the execution audit chain
         latest_event = data["lifecycle"][-1]
         evt_type = latest_event.get("event_type", "unknown")
-        
+
         emoji_map = {
             "position_closed": "🏁 Geschlossen (Closed)",
             "position_opened": "🟢 Offen (Filled)",
@@ -259,9 +258,9 @@ def format_signal_trail_message(query_id: str, artifacts_dir: Path) -> str:
         }
         status_text = emoji_map.get(evt_type, f"🔄 {evt_type}")
         ts = latest_event.get("timestamp_utc", "")[:19].replace("T", " ")
-        
+
         lines.append(f"9️⃣ *Lifecycle:* {status_text} @ {ts}")
-        
+
         # Details of the trail
         lines.append("\n*Historischer Ablauf:*")
         for idx, ev in enumerate(data["lifecycle"]):
