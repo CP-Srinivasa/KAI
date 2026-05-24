@@ -16,7 +16,12 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 
-from app.execution.models import PaperPosition
+from app.execution.models import (
+    LifecycleTransition,
+    OrderLifecycleState,
+    PaperPosition,
+    validate_lifecycle_transition,
+)
 
 
 @dataclass(frozen=True)
@@ -31,6 +36,11 @@ class AuditReplayResult:
     # PaperFills geführt haben (Q/USDT 2026-05-09 Bug) nicht mehr durchkommen.
     # Set leer wenn audit-file fehlt — Replay bleibt rückwärtskompatibel.
     filled_idempotency_keys: frozenset[str] = field(default_factory=frozenset)
+    # PRE-A: lifecycle_transition rows are audit metadata, not the position
+    # source of truth. Replay reconstructs valid history but keeps portfolio
+    # recovery available when legacy/corrupt lifecycle rows are encountered.
+    lifecycle_history: dict[str, tuple[LifecycleTransition, ...]] = field(default_factory=dict)
+    lifecycle_replay_errors: tuple[str, ...] = ()
 
 
 def _coerce_float(value: object) -> float | None:
@@ -43,6 +53,51 @@ def _coerce_str(value: object) -> str | None:
     if isinstance(value, str) and value.strip():
         return value.strip()
     return None
+
+
+def _coerce_lifecycle_transition(
+    payload: dict[str, object],
+    *,
+    line_number: int,
+) -> tuple[LifecycleTransition | None, str | None]:
+    correlation_id = _coerce_str(payload.get("correlation_id"))
+    from_state_raw = _coerce_str(payload.get("from_state"))
+    to_state_raw = _coerce_str(payload.get("to_state"))
+    timestamp_utc = _coerce_str(payload.get("timestamp_utc"))
+    reason = _coerce_str(payload.get("reason")) or ""
+
+    if (
+        correlation_id is None
+        or from_state_raw is None
+        or to_state_raw is None
+        or timestamp_utc is None
+    ):
+        return (
+            None,
+            f"audit_lifecycle_validation_error_line_{line_number}: missing_required_field",
+        )
+
+    try:
+        from_state = OrderLifecycleState(from_state_raw)
+        to_state = OrderLifecycleState(to_state_raw)
+        validate_lifecycle_transition(from_state, to_state)
+    except ValueError:
+        return (
+            None,
+            "audit_lifecycle_validation_error_line_"
+            f"{line_number}: illegal {from_state_raw} -> {to_state_raw}",
+        )
+
+    return (
+        LifecycleTransition(
+            correlation_id=correlation_id,
+            from_state=from_state,
+            to_state=to_state,
+            reason=reason,
+            timestamp_utc=timestamp_utc,
+        ),
+        None,
+    )
 
 
 def replay_paper_audit(audit_path: Path) -> AuditReplayResult:
@@ -66,6 +121,8 @@ def replay_paper_audit(audit_path: Path) -> AuditReplayResult:
     # key im filled_keys-set. Cross-process Race-Schutz (siehe Q/USDT 2026-05-09).
     order_idem_by_id: dict[str, str] = {}
     filled_keys: set[str] = set()
+    lifecycle_history: dict[str, list[LifecycleTransition]] = {}
+    lifecycle_replay_errors: list[str] = []
     cash_usd = 0.0
     realized_pnl_usd = 0.0
 
@@ -97,6 +154,14 @@ def replay_paper_audit(audit_path: Path) -> AuditReplayResult:
             )
 
         event_type = _coerce_str(payload.get("event_type"))
+        if event_type == "lifecycle_transition":
+            transition, error = _coerce_lifecycle_transition(payload, line_number=line_number)
+            if transition is not None:
+                lifecycle_history.setdefault(transition.correlation_id, []).append(transition)
+            if error is not None:
+                lifecycle_replay_errors.append(error)
+            continue
+
         if event_type == "order_created":
             order_id = _coerce_str(payload.get("order_id"))
             if order_id is not None:
@@ -333,4 +398,9 @@ def replay_paper_audit(audit_path: Path) -> AuditReplayResult:
         available=True,
         error=None,
         filled_idempotency_keys=frozenset(filled_keys),
+        lifecycle_history={
+            correlation_id: tuple(transitions)
+            for correlation_id, transitions in lifecycle_history.items()
+        },
+        lifecycle_replay_errors=tuple(lifecycle_replay_errors),
     )

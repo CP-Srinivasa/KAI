@@ -113,6 +113,21 @@ class PaperExecutionEngine:
     def portfolio(self) -> PaperPortfolio:
         return self._portfolio
 
+    @property
+    def state(self) -> str:
+        """PRE-C protocol state: paper mode is always armed for simulation."""
+        return "paper"
+
+    def status(self) -> dict[str, object]:
+        """Read-only PRE-C status snapshot compatible with live_engine.status()."""
+        return {
+            "state": self.state,
+            "open_positions": len(self._portfolio.positions),
+            "cash": self._portfolio.cash,
+            "realized_pnl_usd": self._portfolio.realized_pnl_usd,
+            "filled_idempotency_keys": len(self._filled_keys),
+        }
+
     def rehydrate_from_audit(self, audit_path: str | Path | None = None) -> bool:
         """Replay the audit JSONL and replace in-memory portfolio state.
 

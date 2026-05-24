@@ -27,6 +27,7 @@ from app.execution.exchanges.base import (
     OrderType,
 )
 from app.execution.exchanges.binance import BinanceAdapter
+from app.execution.execution_protocol import ExecutionEngineProtocol, LiveExecutionExtensions
 from app.execution.live_engine import (
     LiveExecutionEngine,
     LiveModeState,
@@ -215,6 +216,12 @@ class TestLockState:
         assert "hotp_last_counter" in s
         assert "open_positions" in s
         assert "orders_attempted" in s
+
+    def test_protocol_surfaces(self, engine: LiveExecutionEngine) -> None:
+        assert isinstance(engine, ExecutionEngineProtocol)
+        assert isinstance(engine, LiveExecutionExtensions)
+        assert engine.state == LiveModeState.LOCKED
+        assert engine.status()["state"] == "locked"
 
     def test_update_open_count(self, engine: LiveExecutionEngine) -> None:
         engine.update_open_count(2)

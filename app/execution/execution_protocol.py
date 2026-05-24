@@ -22,16 +22,58 @@ This module bridges via two pure adapter-functions that take a single
 verify *parity* — same intent → consistent symbol/side/quantity/SL/TP
 on both engines.
 
-Full ``ExecutionEngineProtocol`` (Pre-Sprint C, both engines implement
-identical methods) is left for the cycle that introduces ``live_engine.py``.
+PRE-C now also defines a minimal ``ExecutionEngineProtocol`` for the shared
+engine state surface. Live-only actions remain in ``LiveExecutionExtensions``
+so HOTP / exchange-specific gates do not leak into the paper core contract.
 """
 
 from __future__ import annotations
 
-from typing import Any
+from collections.abc import Mapping
+from typing import Any, Protocol, runtime_checkable
 
 from app.execution.exchanges.base import OrderRequest, OrderSide, OrderType
 from app.execution.order_intent import ExecutableOrderIntent
+
+
+@runtime_checkable
+class ExecutionEngineProtocol(Protocol):
+    """PRE-C core state contract shared by paper and live execution engines."""
+
+    @property
+    def state(self) -> object:
+        """Serializable or enum-like engine state."""
+        ...
+
+    def status(self) -> Mapping[str, object]:
+        """Read-only operator/debug status snapshot."""
+        ...
+
+
+@runtime_checkable
+class LiveExecutionExtensions(Protocol):
+    """Live-only Phase-0 controls kept out of the core paper/live protocol."""
+
+    def lock(self) -> None:
+        """Immediately lock live mode."""
+        ...
+
+    def update_open_count(self, count: int) -> None:
+        """Update live open-position count before cap checks."""
+        ...
+
+    async def submit_live_order(
+        self,
+        order: OrderRequest,
+        *,
+        hotp_code: str,
+        signal_confidence: float,
+        signal_confluence_count: int,
+        exchange: str,
+        notional_usd: float,
+    ) -> Any:
+        """Submit a live order through Phase-0 live gates."""
+        ...
 
 
 def executable_intent_to_paper_kwargs(intent: ExecutableOrderIntent) -> dict[str, Any]:
@@ -186,6 +228,8 @@ order_intent_to_live_request = executable_intent_to_live_request
 
 
 __all__ = [
+    "ExecutionEngineProtocol",
+    "LiveExecutionExtensions",
     "assert_parity",
     "executable_intent_to_live_request",
     "executable_intent_to_paper_kwargs",
