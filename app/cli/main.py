@@ -1978,9 +1978,7 @@ def alerts_health_check(
         )
     # P2: exit semantic — non-authoritative means either stale mtime OR
     # off-Pi hostname (partial-mirror risk). `--allow-stale` overrides both.
-    if exit_on_stale and not allow_stale and (
-        report.data_sources_stale or not report.runs_on_pi
-    ):
+    if exit_on_stale and not allow_stale and (report.data_sources_stale or not report.runs_on_pi):
         reason = "stale data" if report.data_sources_stale else "off-Pi host"
         console.print(
             f"[red bold]Exit-on-stale: aborting with code 2 ({reason}) — "

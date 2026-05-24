@@ -112,9 +112,7 @@ def test_alert_audit_quiet_channel_does_not_trip_freshness(tmp_path: Path) -> No
     os.utime(tmp_path / ALERT_AUDIT_JSONL_FILENAME, (two_hours_ago, two_hours_ago))
     # trading_loop fresh
     report = run_health_check_report(tmp_path)
-    alert_freshness = [
-        i for i in report.issues if i.component == "alerts_freshness"
-    ]
+    alert_freshness = [i for i in report.issues if i.component == "alerts_freshness"]
     assert alert_freshness == []
     assert report.data_sources_stale is False
 

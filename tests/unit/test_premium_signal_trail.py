@@ -196,12 +196,20 @@ def test_filled_and_closed_path():
     paper = [
         _paper_order_filled(order_id, env_id, approved_id, sym, "2026-05-18T19:17:52+00:00"),
         _paper_position_closed(
-            order_id, env_id, sym, "2026-05-18T21:38:26+00:00",
-            reason="tp_tier", trade_pnl_usd=5.5,
+            order_id,
+            env_id,
+            sym,
+            "2026-05-18T21:38:26+00:00",
+            reason="tp_tier",
+            trade_pnl_usd=5.5,
         ),
         _paper_position_closed(
-            order_id, env_id, sym, "2026-05-19T04:03:27+00:00",
-            reason="tp_tier", trade_pnl_usd=5.2,
+            order_id,
+            env_id,
+            sym,
+            "2026-05-19T04:03:27+00:00",
+            reason="tp_tier",
+            trade_pnl_usd=5.2,
         ),
     ]
 
@@ -321,8 +329,11 @@ def test_paper_rejected_invalid_sl_path():
 
     envelopes = [
         _origin_env(
-            env_id, sym, "2026-05-12T19:09:27+00:00",
-            scale_factor=None, scale_unknown=True,
+            env_id,
+            sym,
+            "2026-05-12T19:09:27+00:00",
+            scale_factor=None,
+            scale_unknown=True,
         ),
         _approved_env(approved_id, env_id, sym, "2026-05-12T19:09:28+00:00"),
     ]

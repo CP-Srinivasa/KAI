@@ -347,10 +347,7 @@ def run_health_check_report(
     # P1: priority_rejected saturation — Cron-Liveness without Wertschöpfung.
     # Relaxed during RE_ENTRY_MODE (ADR-1 paper_min_priority=10 expects
     # near-total rejection by design).
-    if (
-        recent_cycles > 0
-        and not report.re_entry_mode_active
-    ):
+    if recent_cycles > 0 and not report.re_entry_mode_active:
         rejected = status_breakdown.get("priority_rejected", 0)
         ratio = rejected / recent_cycles
         if ratio > max_priority_rejected_ratio:
