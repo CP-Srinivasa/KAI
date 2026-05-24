@@ -1,4 +1,5 @@
 from pathlib import Path
+from typing import Literal
 
 from fastapi import APIRouter, Depends, Response
 from pydantic import BaseModel
@@ -14,6 +15,9 @@ class HealthResponse(BaseModel):
     version: str
 
 
+TimerHealthState = Literal["ok", "has_inactive", "stale", "no_data", "corrupt"]
+
+
 class TimerHealthInactiveEntry(BaseModel):
     unit: str
     state: str
@@ -21,7 +25,7 @@ class TimerHealthInactiveEntry(BaseModel):
 
 
 class TimerHealthResponse(BaseModel):
-    state: str
+    state: TimerHealthState
     checked_at: str | None = None
     stale_minutes: int | None = None
     total: int

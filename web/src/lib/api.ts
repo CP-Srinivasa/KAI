@@ -128,7 +128,6 @@ export function fetchTimerHealth(signal?: AbortSignal): Promise<TimerHealthRespo
   return apiGet<TimerHealthResponse>("/health/timers", { signal });
 }
 
-
 export type DashboardQuality = {
   precision_pct: number | null;
   false_positive_pct: number | null;
