@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import time
 from pathlib import Path
 
 
@@ -128,6 +129,12 @@ def test_timer_health_probe_inactive_alert_and_throttling(tmp_path) -> None:
         assert data_2["findings"] == ["kai-auto-annotate.timer (inactive)"]
         assert data_2["decision_reason"] == "throttled"
         assert data_2["last_alerted_utc"] == data_1["last_alerted_utc"]
+
+        # Probe-Skript schreibt last_alerted_utc mit Sekundenauflösung.
+        # In CI laufen die 3 Subprocess-Aufrufe sub-sekündlich → ohne sleep
+        # kollidiert Scenario-3 mit Scenario-1 im selben UTC-Sekunden-Bucket
+        # und die "last_alerted_utc != data_1.last_alerted_utc"-Assertion failt.
+        time.sleep(1.1)
 
         # Scenario 3: Third run with NEW findings -> Alerting again!
         test_env_3 = {
