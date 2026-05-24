@@ -192,6 +192,7 @@ def env_snapshot() -> str:
         "EXECUTION_PAPER_MIN_PRIORITY",
         "RISK_BAYES_CONFIDENCE_ENABLED",
         "RISK_BAYES_CONFIDENCE_SHADOW_ONLY",
+        "SHADOW_ONLY",  # Legacy fallback support
         "RE_ENTRY_MODE_ENABLED",
         "RISK_MAX_OPEN_POSITIONS",
         "LIVE_MODE",
@@ -230,6 +231,34 @@ def git_head() -> str:
         return f"## Repo-Stand\n\n- git read failed: {e}\n"
 
 
+def paper_trading_summary() -> str:
+    path = ARTIFACTS / "paper_execution_audit.jsonl"
+    lines = ["## Paper-Trading Fills & Trades (letzte 7d)\n"]
+    if not path.exists():
+        lines.append(f"- paper_execution_audit not found at {path}")
+        return "\n".join(lines) + "\n"
+
+    closed = 0
+    partial = 0
+    pnl_sum = 0.0
+    for rec in iter_jsonl(path):
+        ts = parse_ts(rec.get("timestamp_utc") or rec.get("timestamp"))
+        if ts and ts < WINDOW_START:
+            continue
+        evt = rec.get("event_type")
+        if evt == "position_closed":
+            closed += 1
+            pnl_sum += float(rec.get("pnl") or 0.0)
+        elif evt == "position_partial_closed":
+            partial += 1
+            pnl_sum += float(rec.get("pnl") or 0.0)
+
+    lines.append(f"- **Geschlossene Positionen (Full Closes)**: {closed}")
+    lines.append(f"- **Teilschließungen (Partial Closes)**: {partial}")
+    lines.append(f"- **Summierter realisierter PnL**: {pnl_sum:+.2f}%")
+    return "\n".join(lines) + "\n"
+
+
 def main() -> int:
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     now = datetime.now(UTC)
@@ -252,6 +281,7 @@ def main() -> int:
         cross_tab_alert_audit(),
         audit_streams(),
         outcome_distribution(),
+        paper_trading_summary(),
     ]
     OUT_FILE.write_text(header + "\n".join(sections), encoding="utf-8")
     print(f"wrote {OUT_FILE}", file=sys.stderr)

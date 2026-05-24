@@ -1,5 +1,5 @@
 [Unit]
-Description=KAI Pi Post-Cutover Health Digest (7d, one-shot)
+Description=KAI Pi systemd Timer Health Probe (DS-V-C 2026-05-21)
 
 [Service]
 Type=oneshot
@@ -8,6 +8,7 @@ Group=ubuntu
 WorkingDirectory=/home/kai/ai_analyst_trading_bot
 EnvironmentFile=/home/kai/ai_analyst_trading_bot/.env
 Environment=PYTHONIOENCODING=utf-8
-ExecStart=/bin/bash /home/kai/ai_analyst_trading_bot/scripts/pi_health_digest.sh
+ExecStart=/bin/bash /home/kai/ai_analyst_trading_bot/scripts/pi_timer_health_probe.sh
 StandardOutput=journal
 StandardError=journal
+

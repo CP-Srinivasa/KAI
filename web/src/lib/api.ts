@@ -901,3 +901,73 @@ export function fetchRecentEnvelopes(
     { signal },
   );
 }
+
+/* ---------------------------------------------------------------------------
+ * Auto-Annotate Cohort Report (DALI-P-102 / V5 Followup)
+ * Feeds the AutoAnnotateCohortDrawer; mirrors GET /alerts/auto-annotate-report.
+ * ------------------------------------------------------------------------- */
+
+export type CohortCounters = {
+  total: number;
+  hit: number;
+  miss: number;
+  inconclusive: number;
+  resolved: number;
+  hit_rate_pct: number | null;
+  inconclusive_pct: number | null;
+};
+
+export type LatestPerDocCohort = CohortCounters & {
+  raw_rows: number;
+  unique_document_ids: number;
+  duplicate_rows_removed: number;
+};
+
+export type FreshDispatchCohort = CohortCounters & {
+  missing_audit: number;
+};
+
+export type CohortBundle = {
+  fresh_auto: CohortCounters;
+  backfill: CohortCounters;
+  reeval: CohortCounters;
+  other: CohortCounters;
+  latest_per_doc: LatestPerDocCohort;
+  fresh_dispatch: FreshDispatchCohort;
+};
+
+export type CohortReportWindow = {
+  since: string | null;
+  until: string | null;
+  timestamp_basis: "annotated_at" | "dispatched_at";
+};
+
+export type AutoAnnotateCohortReport = {
+  window: CohortReportWindow;
+  raw_rows: number;
+  invalid_timestamp: number;
+  cohorts: CohortBundle;
+  generated_at: string;
+};
+
+export type CohortRangePreset = "24h" | "7d" | "30d";
+
+export function fetchAutoAnnotateCohortReport(
+  range: CohortRangePreset,
+  dispatchedWindow: boolean = false,
+  signal?: AbortSignal,
+): Promise<AutoAnnotateCohortReport> {
+  const now = new Date();
+  const sinceMs = {
+    "24h": 24 * 60 * 60 * 1000,
+    "7d": 7 * 24 * 60 * 60 * 1000,
+    "30d": 30 * 24 * 60 * 60 * 1000,
+  }[range];
+  const since = new Date(now.getTime() - sinceMs).toISOString();
+  const params = new URLSearchParams({ since });
+  if (dispatchedWindow) params.set("dispatched_window", "true");
+  return apiGet<AutoAnnotateCohortReport>(
+    `/alerts/auto-annotate-report?${params.toString()}`,
+    { signal },
+  );
+}

@@ -1802,6 +1802,42 @@ def alerts_auto_annotate(
     )
 
 
+@alerts_app.command("auto-annotate-report")
+def alerts_auto_annotate_report(
+    since: str = typer.Option(
+        None,
+        help="Start date in ISO format (e.g. 2026-05-16)",
+    ),
+    until: str = typer.Option(
+        None,
+        help="End date in ISO format (e.g. 2026-05-21)",
+    ),
+    dispatched_window: bool = typer.Option(
+        False,
+        "--dispatched-window",
+        help="Use dispatched_at window filtering instead of annotated_at",
+    ),
+) -> None:
+    """Generate a detailed cohort report for auto-annotated alerts (V5 Follow-up)."""
+    from app.alerts.reporting import generate_cohort_report, parse_utc_timestamp
+
+    artifacts_dir = Path("artifacts")
+
+    since_dt = parse_utc_timestamp(since) if since else None
+    until_dt = parse_utc_timestamp(until) if until else None
+
+    report = generate_cohort_report(
+        audit_dir=artifacts_dir,
+        since=since_dt,
+        until=until_dt,
+        use_dispatched_at=dispatched_window,
+    )
+
+    import json
+
+    console.print(json.dumps(report, indent=2))
+
+
 @alerts_app.command("auto-annotate-blocked")
 def alerts_auto_annotate_blocked(
     min_age_hours: float = typer.Option(

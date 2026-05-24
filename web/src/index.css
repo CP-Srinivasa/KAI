@@ -96,6 +96,27 @@ body {
   animation: kai-fade 280ms ease-out both;
 }
 
+/* DALI-P-103: trail-pulse — Synthwave-Glow für Deep-Link-Highlight im PremiumSignalTrail. */
+@keyframes trail-pulse {
+  0% {
+    box-shadow: 0 0 0 0 rgb(var(--ai) / 0), 0 0 0 0 rgb(var(--pos) / 0);
+    background-color: rgb(var(--bg-2) / 0.6);
+  }
+  20% {
+    box-shadow:
+      0 0 0 2px rgb(var(--ai) / 0.7),
+      0 0 14px rgb(var(--pos) / 0.6);
+    background-color: rgb(var(--ai) / 0.08);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgb(var(--ai) / 0), 0 0 0 0 rgb(var(--pos) / 0);
+    background-color: rgb(var(--bg-2) / 0.6);
+  }
+}
+.trail-pulse {
+  animation: trail-pulse 1500ms ease-out both;
+}
+
 /* TradingView embed copyright — match dashboard theme */
 .tradingview-widget-copyright {
   font-size: 11px !important;
