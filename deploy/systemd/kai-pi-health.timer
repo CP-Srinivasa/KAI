@@ -1,11 +1,12 @@
 [Unit]
-Description=KAI Pi Health Digest — fire once, 2026-05-08 09:00 UTC (7d post-cutover)
+Description=Trigger KAI systemd Timer Health Probe daily at 04:30 UTC
 
 [Timer]
-OnCalendar=2026-05-08 09:00:00 UTC
+OnCalendar=*-*-* 04:30:00 UTC
+AccuracySec=2min
 Persistent=true
 Unit=kai-pi-health.service
-RemainAfterElapse=no
 
 [Install]
 WantedBy=timers.target
+

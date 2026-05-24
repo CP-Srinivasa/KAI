@@ -97,7 +97,7 @@ def _paper_fills_count() -> int:
                 rec = json.loads(line)
             except json.JSONDecodeError:
                 continue
-            if rec.get("event_type") == "position_closed":
+            if rec.get("event_type") in ("position_closed", "position_partial_closed"):
                 n += 1
     return n
 
@@ -359,6 +359,62 @@ def _stub_section_count(text: str) -> int:
     return sum(text.count(marker) for marker in _STUB_MARKERS)
 
 
+@daily_strategy_app.command("sync")
+def cmd_sync(
+    remote: str = typer.Option(
+        "kai@kai-trader.org",
+        "--remote",
+        help="SSH connection string for the remote Pi (e.g. kai@kai-trader.org)",
+    ),
+    remote_dir: str = typer.Option(
+        "/home/kai/ai_analyst_trading_bot",
+        "--remote-dir",
+        help="Remote directory path on the Pi",
+    ),
+) -> None:
+    """Sync operational artifacts (JSONLs) from Pi to laptop to mitigate sync-lag."""
+    import subprocess
+    import sys
+
+    files = [
+        "artifacts/alert_outcomes.jsonl",
+        "artifacts/paper_execution_audit.jsonl",
+        "artifacts/alert_audit.jsonl",
+        "artifacts/tradingview_pending_signals.jsonl",
+    ]
+
+    typer.echo(f"Syncing artifacts from Pi ({remote}) to mitigate sync-lag...")
+
+    scp_cmd = "scp"
+    success = 0
+    for f in files:
+        local_path = Path(f)
+        local_path.parent.mkdir(parents=True, exist_ok=True)
+
+        # Build scp source and destination
+        remote_src = f"{remote}:{remote_dir}/{f}"
+
+        typer.echo(f"  Fetching {f}...")
+        try:
+            # We run scp synchronously
+            res = subprocess.run(
+                [scp_cmd, remote_src, str(local_path)],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                timeout=30,
+            )
+            if res.returncode == 0:
+                typer.echo(f"    [OK] {f} synced successfully.")
+                success += 1
+            else:
+                typer.echo(f"    [SKIP] Could not sync {f}: {res.stderr.strip()}")
+        except Exception as exc:
+            typer.echo(f"    [SKIP] Failed to fetch {f}: {exc}")
+
+    typer.echo(f"\nSync complete. {success}/{len(files)} files updated from Pi.")
+
+
 @daily_strategy_app.command("bootstrap")
 def cmd_bootstrap(
     notify: bool = typer.Option(
@@ -371,8 +427,29 @@ def cmd_bootstrap(
         "--force",
         help="Overwrite existing skeleton (use with care — destroys content).",
     ),
+    sync: bool = typer.Option(
+        True,
+        "--sync/--no-sync",
+        help="Sync artifacts from Pi first to avoid sync-lag.",
+    ),
+    remote: str = typer.Option(
+        "kai@kai-trader.org",
+        "--remote",
+        help="SSH connection string for the remote Pi.",
+    ),
+    remote_dir: str = typer.Option(
+        "/home/kai/ai_analyst_trading_bot",
+        "--remote-dir",
+        help="Remote directory path on the Pi.",
+    ),
 ) -> None:
     """Write today's skeleton if missing. Idempotent by default."""
+    if sync:
+        try:
+            cmd_sync(remote=remote, remote_dir=remote_dir)
+        except Exception as exc:
+            typer.echo(f"Warning: Sync failed, continuing with local data. ({exc})")
+
     today = datetime.now(UTC).date()
     path = _today_path(today)
     _daily_dir().mkdir(parents=True, exist_ok=True)
