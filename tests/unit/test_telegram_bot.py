@@ -2604,9 +2604,7 @@ async def test_cmd_live_unlock_passes_hotp_through(tmp_path, monkeypatch):
         return True
 
     monkeypatch.setattr(bot, "_send", fake_send)
-    await bot.process_update(
-        {"message": {"chat": {"id": 12345}, "text": "/live unlock 654321"}}
-    )
+    await bot.process_update({"message": {"chat": {"id": 12345}, "text": "/live unlock 654321"}})
 
     assert captured["text"] == "/live unlock 654321"
     assert sent == ["✅ unlock-stub"]
@@ -2650,9 +2648,7 @@ async def test_cmd_live_unknown_subcommand_replies_with_usage(tmp_path, monkeypa
         return True
 
     monkeypatch.setattr(bot, "_send", fake_send)
-    await bot.process_update(
-        {"message": {"chat": {"id": 12345}, "text": "/live frobnicate"}}
-    )
+    await bot.process_update({"message": {"chat": {"id": 12345}, "text": "/live frobnicate"}})
 
     assert len(sent) == 1
     assert "Unknown /live subcommand" in sent[0]
@@ -2769,9 +2765,7 @@ async def test_live_factory_failure_surfaces_actionable_error(tmp_path, monkeypa
         pass
 
     def failing_factory() -> _FakeLiveEngine:
-        raise HotpSeedMissingError(
-            "seed_path=/home/kai/.config/kai/hotp_seed.b32 not found"
-        )
+        raise HotpSeedMissingError("seed_path=/home/kai/.config/kai/hotp_seed.b32 not found")
 
     bot = _bot(tmp_path, live_engine_factory=failing_factory)
     sent: list[str] = []
