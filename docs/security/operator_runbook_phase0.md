@@ -224,13 +224,17 @@ unset SEED_VAR
 ykman oath code "KAI-Live:operator"
 # Output: KAI-Live:operator  123456
 
-# Pi: Verify gegen Counter
+# Pi: Verify gegen Counter (echte HotpVerifier-API mit keyword-args)
 ssh ubuntu@192.168.178.23 'cd /home/ubuntu/ai_analyst_trading_bot && .venv/bin/python -c "
+from pathlib import Path
 from app.security.hotp_auth import HotpVerifier
-v = HotpVerifier()
+v = HotpVerifier(
+    seed_path=Path.home() / \".config/kai/hotp_seed.b32\",
+    journal_path=Path(\"artifacts/security/hotp_counter.jsonl\"),
+)
 print(v.verify(\"123456\"))
 "'
-# Expected: HotpVerificationOK(counter_advanced=1, ...) o.ä.
+# Expected: HotpVerifyResult mit ok=True, counter_advanced=<n>.
 ```
 
 Wenn `HotpVerificationFailed`: SEED auf Workstation und Pi sind nicht identisch — Step 4.A.4 wiederholen.
