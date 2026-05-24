@@ -26,7 +26,8 @@ Tool categories:
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime, timedelta
+from collections import Counter
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -46,6 +47,12 @@ from app.core.signals import extract_signal_candidates
 from app.core.watchlists import WatchlistRegistry, parse_watchlist_type
 from app.storage.db.session import build_session_factory
 from app.storage.repositories.document_repo import DocumentRepository
+
+_DECISION_PACK_TARGET_DATE = date(2026, 5, 30)
+_DECISION_PACK_MIN_DIRECTIONAL_7D = 30
+_DECISION_PACK_MIN_RESOLVED_7D = 30
+_DECISION_PACK_MIN_PAPER_CLOSES = 10
+_DECISION_PACK_UNKNOWN_SOURCE_WARN_PCT = 20.0
 
 # ---------------------------------------------------------------------------
 # Canonical inventory (authoritative list)
@@ -276,6 +283,219 @@ def _parse_iso_utc(value: object) -> datetime | None:
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=UTC)
     return parsed.astimezone(UTC)
+
+
+def _normalise_decision_pack_sentiment(value: object) -> str:
+    if not isinstance(value, str) or not value.strip():
+        return "unknown"
+    label = value.strip().lower()
+    if label in {"bullish", "bearish", "neutral", "mixed"}:
+        return label
+    return "unknown"
+
+
+def _normalise_decision_pack_source(record: object) -> str:
+    source = getattr(record, "source_name", None)
+    provenance = getattr(record, "provenance", None)
+    if not isinstance(source, str) or not source.strip():
+        source = getattr(provenance, "source", None)
+    if not isinstance(source, str) or not source.strip():
+        return "unknown"
+    return source.strip().lower()
+
+
+def _pct(part: int, whole: int) -> float | None:
+    if whole <= 0:
+        return None
+    return round(100.0 * part / whole, 1)
+
+
+def _read_paper_closed_with_pnl_count(path: Path) -> tuple[int | None, str]:
+    if not path.exists():
+        return None, "missing"
+    count = 0
+    try:
+        with path.open("r", encoding="utf-8") as fh:
+            for line in fh:
+                stripped = line.strip()
+                if not stripped:
+                    continue
+                try:
+                    rec = json.loads(stripped)
+                except json.JSONDecodeError:
+                    continue
+                if not isinstance(rec, dict) or rec.get("event_type") != "position_closed":
+                    continue
+                if isinstance(rec.get("trade_pnl_usd"), (int, float)):
+                    count += 1
+        return count, "ok"
+    except OSError:
+        return None, "unreadable"
+
+
+def _build_decision_pack_20260530(
+    *,
+    audits: list[object] | None,
+    outcome_by_doc: dict[str, str],
+    now_utc: datetime,
+    portfolio_snapshot_ok: bool,
+    alert_audit_ok: bool,
+    loop_audit_ok: bool,
+    paper_execution_audit_path: Path | None,
+) -> dict[str, object]:
+    cutoff_7d = now_utc - timedelta(days=7)
+    latest_recent: dict[str, tuple[datetime, object]] = {}
+    for record in audits or []:
+        if getattr(record, "is_digest", False):
+            continue
+        doc_id = getattr(record, "document_id", None)
+        if not isinstance(doc_id, str) or not doc_id:
+            continue
+        dispatched = _parse_iso_utc(getattr(record, "dispatched_at", None))
+        if dispatched is None or dispatched < cutoff_7d:
+            continue
+        prior = latest_recent.get(doc_id)
+        if prior is None or dispatched > prior[0]:
+            latest_recent[doc_id] = (dispatched, record)
+
+    recent_records = [entry[1] for entry in latest_recent.values()]
+    sentiment_counts: Counter[str] = Counter()
+    source_counts: Counter[str] = Counter()
+    directional_by_source: Counter[str] = Counter()
+    resolved_directional = 0
+    inconclusive_directional = 0
+
+    for record in recent_records:
+        sentiment = _normalise_decision_pack_sentiment(getattr(record, "sentiment_label", None))
+        source = _normalise_decision_pack_source(record)
+        sentiment_counts[sentiment] += 1
+        source_counts[source] += 1
+        if sentiment in {"bullish", "bearish"}:
+            directional_by_source[source] += 1
+            outcome = outcome_by_doc.get(str(getattr(record, "document_id", "")))
+            if outcome in {"hit", "miss"}:
+                resolved_directional += 1
+            elif outcome == "inconclusive":
+                inconclusive_directional += 1
+
+    total_recent = len(recent_records)
+    directional_7d = sum(sentiment_counts[s] for s in ("bullish", "bearish"))
+    unknown_sources = source_counts.get("unknown", 0)
+    unknown_share_pct = _pct(unknown_sources, total_recent)
+
+    paper_closed_count: int | None = None
+    paper_audit_status = "not_checked"
+    if paper_execution_audit_path is not None:
+        paper_closed_count, paper_audit_status = _read_paper_closed_with_pnl_count(
+            paper_execution_audit_path
+        )
+
+    warnings: list[dict[str, object]] = []
+    if not portfolio_snapshot_ok:
+        warnings.append(
+            {
+                "code": "portfolio_snapshot_unavailable",
+                "severity": "warn",
+                "detail": "Paper portfolio snapshot could not be read.",
+            }
+        )
+    if not alert_audit_ok:
+        warnings.append(
+            {
+                "code": "alert_audit_unavailable",
+                "severity": "warn",
+                "detail": "Alert audit stream could not be read.",
+            }
+        )
+    if not loop_audit_ok:
+        warnings.append(
+            {
+                "code": "loop_audit_unavailable",
+                "severity": "warn",
+                "detail": "Trading-loop audit stream could not be read.",
+            }
+        )
+    if directional_7d < _DECISION_PACK_MIN_DIRECTIONAL_7D:
+        warnings.append(
+            {
+                "code": "directional_sample_low",
+                "severity": "warn",
+                "actual": directional_7d,
+                "minimum": _DECISION_PACK_MIN_DIRECTIONAL_7D,
+            }
+        )
+    if resolved_directional < _DECISION_PACK_MIN_RESOLVED_7D:
+        warnings.append(
+            {
+                "code": "resolved_directional_sample_low",
+                "severity": "warn",
+                "actual": resolved_directional,
+                "minimum": _DECISION_PACK_MIN_RESOLVED_7D,
+            }
+        )
+    if paper_closed_count is None or paper_closed_count < _DECISION_PACK_MIN_PAPER_CLOSES:
+        warnings.append(
+            {
+                "code": "paper_pnl_sample_low",
+                "severity": "warn",
+                "actual": paper_closed_count,
+                "minimum": _DECISION_PACK_MIN_PAPER_CLOSES,
+            }
+        )
+    if (
+        unknown_share_pct is not None
+        and unknown_share_pct > _DECISION_PACK_UNKNOWN_SOURCE_WARN_PCT
+    ):
+        warnings.append(
+            {
+                "code": "unknown_source_share_high",
+                "severity": "warn",
+                "actual_pct": unknown_share_pct,
+                "threshold_pct": _DECISION_PACK_UNKNOWN_SOURCE_WARN_PCT,
+            }
+        )
+
+    source_table = [
+        {
+            "source": source,
+            "alerts": count,
+            "directional_alerts": directional_by_source.get(source, 0),
+            "share_pct": _pct(count, total_recent),
+        }
+        for source, count in source_counts.most_common(10)
+    ]
+    sentiment_order = ("bullish", "bearish", "neutral", "mixed", "unknown")
+    sentiment_table = [
+        {
+            "sentiment": sentiment,
+            "alerts": sentiment_counts.get(sentiment, 0),
+            "share_pct": _pct(sentiment_counts.get(sentiment, 0), total_recent),
+        }
+        for sentiment in sentiment_order
+        if sentiment_counts.get(sentiment, 0) > 0
+    ]
+
+    return {
+        "target_date": _DECISION_PACK_TARGET_DATE.isoformat(),
+        "days_to_target": (_DECISION_PACK_TARGET_DATE - now_utc.date()).days,
+        "window_days": 7,
+        "snapshot_robustness": {
+            "portfolio_snapshot": "ok" if portfolio_snapshot_ok else "unavailable",
+            "alert_audit": "ok" if alert_audit_ok else "unavailable",
+            "trading_loop_audit": "ok" if loop_audit_ok else "unavailable",
+            "paper_execution_audit": paper_audit_status,
+        },
+        "sample_sizes": {
+            "alerts_7d": total_recent,
+            "directional_alerts_7d": directional_7d,
+            "resolved_directional_hit_miss_7d": resolved_directional,
+            "inconclusive_directional_7d": inconclusive_directional,
+            "paper_closed_positions_with_pnl": paper_closed_count,
+        },
+        "sample_size_warnings": warnings,
+        "source_table_7d": source_table,
+        "sentiment_table_7d": sentiment_table,
+    }
 
 
 def _summarize_tradingview_webhook_auth_24h(
@@ -885,7 +1105,7 @@ async def get_daily_operator_summary(
 
     execution_enabled and write_back_allowed are always False.
     """
-    from app.alerts.audit import load_alert_audits
+    from app.alerts.audit import load_alert_audits, load_outcome_annotations
     from app.orchestrator.trading_loop import load_trading_loop_cycles
 
     now_utc = (now or datetime.now(UTC)).astimezone(UTC)
@@ -893,6 +1113,19 @@ async def get_daily_operator_summary(
     today_date = now_utc.date()
 
     degraded = False
+    portfolio_snapshot_ok = False
+    alert_audit_ok = False
+    loop_audit_ok = False
+    audits_for_decision_pack: list[object] | None = None
+    outcome_by_doc_for_decision_pack: dict[str, str] = {}
+    try:
+        paper_execution_resolved_path: Path | None = resolve_workspace_path(
+            paper_execution_audit_path,
+            label="Paper execution audit",
+            allowed_suffixes=frozenset({".jsonl"}),
+        )
+    except Exception:
+        paper_execution_resolved_path = None
 
     # Portfolio (positions, cash, equity, realized PnL) — single read of the
     # paper execution audit via the canonical snapshot helper. Same source as
@@ -911,6 +1144,7 @@ async def get_daily_operator_summary(
         cash_usd = float(snapshot.cash_usd)
         total_equity_usd = float(snapshot.total_equity_usd)
         realized_pnl_usd = float(snapshot.realized_pnl_usd)
+        portfolio_snapshot_ok = True
     except Exception:
         position_count = None
         cash_usd = None
@@ -933,6 +1167,12 @@ async def get_daily_operator_summary(
     try:
         audit_dir = resolve_workspace_dir(alert_audit_dir, label="Alert audit directory")
         audits = load_alert_audits(audit_dir)
+        outcomes = load_outcome_annotations(audit_dir)
+        audits_for_decision_pack = list(audits)
+        outcome_by_doc_for_decision_pack = {
+            outcome.document_id: outcome.outcome for outcome in outcomes
+        }
+        alert_audit_ok = True
         recent_alerts = 0
         for record in audits:
             dispatched = _parse_iso_utc(record.dispatched_at)
@@ -975,6 +1215,7 @@ async def get_daily_operator_summary(
                 breakdown_total += 1
         cycle_count_today = cycle_count_today_int
         cycle_status_breakdown_24h = breakdown
+        loop_audit_ok = True
         if breakdown_total > 0:
             rejected = breakdown.get("priority_rejected", 0)
             priority_rejected_pct_24h = round(100.0 * rejected / breakdown_total, 1)
@@ -1020,6 +1261,16 @@ async def get_daily_operator_summary(
     def _or_unknown(value: int | float | None) -> object:
         return value if value is not None else "?"
 
+    decision_pack = _build_decision_pack_20260530(
+        audits=audits_for_decision_pack,
+        outcome_by_doc=outcome_by_doc_for_decision_pack,
+        now_utc=now_utc,
+        portfolio_snapshot_ok=portfolio_snapshot_ok,
+        alert_audit_ok=alert_audit_ok,
+        loop_audit_ok=loop_audit_ok,
+        paper_execution_audit_path=paper_execution_resolved_path,
+    )
+
     return {
         "report_type": "daily_operator_summary",
         "execution_enabled": False,
@@ -1046,6 +1297,7 @@ async def get_daily_operator_summary(
         "operator_envelope": operator_envelope,
         "approval_latency_24h": approval_latency_24h,
         "warp_status": warp_status,
+        "decision_pack_2026_05_30": decision_pack,
         # Explicit not-measured markers: /status consumers must NOT treat a
         # missing field as zero. Wire these up once the underlying telemetry
         # exists (LLM call success/failure per provider, per-doc RSS→alert

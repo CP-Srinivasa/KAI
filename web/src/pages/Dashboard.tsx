@@ -8,6 +8,7 @@ import { QualityBarPanel } from "@/components/panels/QualityBar";
 import { ActivePrecisionCard } from "@/components/panels/ActivePrecisionCard";
 import { PerSourcePrecisionPanel } from "@/components/panels/PerSourcePrecisionPanel";
 import { PerSourceStabilityPanel } from "@/components/panels/PerSourceStabilityPanel";
+import { SourceReliabilityPanel } from "@/components/panels/SourceReliabilityPanel";
 import { RegimeStatusPanel } from "@/components/panels/RegimeStatusPanel";
 import { PreparedPanel } from "@/components/panels/PreparedPanel";
 import { ReentryGatePanel } from "@/components/panels/ReentryGatePanel";
@@ -347,9 +348,14 @@ export function Dashboard() {
         </div>
       </div>
 
-      {/* V-DB4e 2026-05-08: Per-source Rolling Stability (Drift-Detection). */}
+      {/* Source-Reliability + Rolling Stability (Drift-Detection). */}
       <div className="grid grid-cols-12 gap-4">
-        <div className="col-span-12">
+        <div className="col-span-12 lg:col-span-5 lg:[&>*]:h-full">
+          <PanelErrorBoundary name="Source-Reliability">
+            <SourceReliabilityPanel data={data} />
+          </PanelErrorBoundary>
+        </div>
+        <div className="col-span-12 lg:col-span-7 lg:[&>*]:h-full">
           <PanelErrorBoundary name="Source-Stability">
             <PerSourceStabilityPanel data={data} />
           </PanelErrorBoundary>
