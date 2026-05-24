@@ -390,8 +390,127 @@ def _is_promotional(title: str) -> bool:
     return False
 
 
+# F1 (Sprint 2026-05-24) — Substantive-Trigger Whitelist for reactive patterns.
+#
+# Empirisches Problem (siehe `dispatch_filter_root_befund_2026-05-24.md`):
+# Headlines wie "Bitcoin surges past 82K amid US-Iran de-escalation" oder
+# "Crypto rallies as Senate committee advances market structure bill" werden
+# durch `_REACTIVE_BULLISH_PATTERNS` geblockt, weil sie "surges"/"rallies"
+# enthalten — obwohl der Auslöser eine substanzielle Nachricht ist
+# (geopolitischer Trigger, Regulatorik, ETF-Launch). 14d-Audit 2026-05-10..24:
+# 26 reactive-blocks, ~14 davon mit klarem substanziellem Trigger.
+#
+# Logik: Wenn der Title eine substanzielle Trigger-Phrase enthält, ist die
+# "rally/surge"-Sprache ein deskriptiver Anker für eine echte News, nicht
+# ein lagging-indicator narrative. Whitelist wird VOR der Reactive-Logik
+# konsultiert; ein Match → Reactive-Gate wird übersprungen, restliche
+# Gates (confidence, magnitude, impact, etc.) bleiben aktiv.
+_SUBSTANTIVE_TRIGGER_PATTERNS: tuple[re.Pattern[str], ...] = (
+    # Geopolitical: nation-state action + verb of substance.
+    re.compile(
+        r"\b(?:us|usa|iran|china|russia|eu|uk|trump|biden|putin|xi)\b.{0,80}"
+        r"\b(?:announce|announces|signed?|signs|passe[sd]?|pass|voted?|votes|"
+        r"talks?|meet|meets|met|deal|agreement|mou|memorandum|"
+        r"de[\s-]?escalation|peace|sanctions?|tariff|tariffs|bans?)\b",
+        re.IGNORECASE,
+    ),
+    # Regulatory body action (US-centric crypto regulators + agencies).
+    re.compile(
+        r"\b(?:sec|cftc|senate|house|congress|fed|federal reserve|"
+        r"treasury|irs|fincen|ofac|esma|mica|sfc|fsa|bafin)\b.{0,80}"
+        r"\b(?:approve|approves|approved|reject|rejects|rejected|"
+        r"sign|signs|signed|pass|passes|passed|vote|votes|voted|"
+        r"advance|advances|advanced|launch|launches|launched|"
+        r"propose|proposes|proposed|rule|rules|order|orders|"
+        r"guidance|exemption|denial|lawsuit|charges?)\b",
+        re.IGNORECASE,
+    ),
+    # Named regulatory acts / bills / frameworks (bullish & bearish neutral —
+    # the directional sentiment is already provided by the classifier).
+    re.compile(
+        r"\b(?:clarity act|market structure bill|fit21|stablecoin bill|"
+        r"crypto bill|genius act|mica)\b",
+        re.IGNORECASE,
+    ),
+    # ETF / index-product launches + listings.
+    re.compile(
+        r"\b(?:etf|index option|spot etf|futures etf|index options?)\b.{0,80}"
+        r"\b(?:approve[ds]?|launch(?:es|ed)?|start[s]? trading|"
+        r"list(?:s|ed)?|file[ds]?|filing|debut)\b",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\b(?:approve[ds]?|launch(?:es|ed)?|filed?|filing|list(?:s|ed)?|"
+        r"debut)\b.{0,40}\b(?:etf|index option|spot etf|futures etf|"
+        r"index options?)\b",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        r"\b(?:nasdaq|nyse|cboe|coinbase|kraken|binance|bybit|okx)\b.{0,60}"
+        r"\b(?:list(?:s|ed)?|launch(?:es|ed)?|debut|trading|product|"
+        r"index|adds?|delists?)\b",
+        re.IGNORECASE,
+    ),
+    # Institutional / corporate substantive action (named actor + verb).
+    re.compile(
+        r"\b(?:blackrock|fidelity|morgan stanley|jp ?morgan|jpm|goldman|"
+        r"vanguard|state street|coinbase|circle|tether|paypal|visa|"
+        r"mastercard|microstrategy|strategy|tesla|spacex|metaplanet|"
+        r"sharplink|twenty one capital|bitmine|hyperliquid)\b.{0,60}"
+        r"\b(?:invest(?:s|ed|ment|ments)?|bet[s]?|back[s]?|endorse[sd]?|"
+        r"partner|partnership|launch(?:es|ed)?|integrate[sd]?|adopt[s]?|"
+        r"acquire[sd]?|acquires?|buy[s]?|bought|sell[s]?|sold|"
+        r"raise[ds]?|allocation|holding[s]?)\b",
+        re.IGNORECASE,
+    ),
+    # Protocol / on-chain substantive events (technical milestones).
+    re.compile(
+        r"\b(?:mainnet|testnet|upgrade|hard fork|soft fork|merge|"
+        r"halving|burn|launch|integration|migration|resharding|"
+        r"private transactions?|zero[\s-]?fee|cross[\s-]?chain)\b",
+        re.IGNORECASE,
+    ),
+    # On-chain flow events with named metric (institutional volume signals).
+    re.compile(
+        r"\b(?:inflows?|outflows?|liquidations?|short squeeze|"
+        r"open interest|funding rate|whale)\b.{0,80}"
+        r"\b(?:\$\d+|\d+\s*(?:m|million|b|billion)|"
+        r"institutional|record|streak|first|trading month|month high|"
+        r"week high|all[\s-]?time)\b",
+        re.IGNORECASE,
+    ),
+    # Catalysts pinned by named entity (analyst calls, CEO statements w/ substance).
+    re.compile(
+        r"\b(?:ceo|chairman|director|founder|analyst)\b.{0,80}"
+        r"\b(?:announce|reveal|confirm|disclose|warn)\b",
+        re.IGNORECASE,
+    ),
+)
+
+
+def _has_substantive_trigger(title: str) -> bool:
+    """Return True if the title contains a substantive news trigger (F1).
+
+    Used as a whitelist override for the reactive-narrative gate. When True,
+    the reactive-pattern block is skipped so substantive news with price
+    language (e.g. "Bitcoin rallies past $82K on US-Iran MOU") flows through
+    to confidence/impact/magnitude gates.
+    """
+    for pattern in _SUBSTANTIVE_TRIGGER_PATTERNS:
+        if pattern.search(title):
+            return True
+    return False
+
+
 def _is_reactive_bearish(title: str) -> bool:
-    """Return True if the title describes a past/ongoing price decline."""
+    """Return True if the title describes a past/ongoing price decline.
+
+    F1: substantive triggers override the reactive block. A title that
+    matches both reactive-pattern AND substantive-trigger is treated as
+    a real news event, not a lagging indicator.
+    """
+    if _has_substantive_trigger(title):
+        return False
     for pattern in _REACTIVE_BEARISH_PATTERNS:
         if pattern.search(title):
             return True
@@ -399,7 +518,12 @@ def _is_reactive_bearish(title: str) -> bool:
 
 
 def _is_reactive_bullish(title: str) -> bool:
-    """Return True if the title describes a past/ongoing price rise."""
+    """Return True if the title describes a past/ongoing price rise.
+
+    F1: see ``_is_reactive_bearish`` — same whitelist logic.
+    """
+    if _has_substantive_trigger(title):
+        return False
     for pattern in _REACTIVE_BULLISH_PATTERNS:
         if pattern.search(title):
             return True

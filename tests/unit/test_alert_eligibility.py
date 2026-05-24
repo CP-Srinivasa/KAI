@@ -746,3 +746,143 @@ def test_source_watchlist_missing_file_returns_empty(tmp_path, monkeypatch) -> N
     elig._invalidate_source_watchlist_cache()
     assert elig._load_source_watchlist() == frozenset()
     elig._invalidate_source_watchlist_cache()
+
+
+# ============================================================================
+# F1 (Sprint 2026-05-24) — Substantive-Trigger Whitelist for reactive patterns.
+#
+# Befund-Memo: artifacts/operator_memos/dispatch_filter_root_befund_2026-05-24.md
+# Memory: kai-dispatch-filter-root-befund-20260524
+#
+# These tests cover: (a) the new `_has_substantive_trigger` helper,
+# (b) Whitelist-Override für reaktive Patterns in _is_reactive_bullish/bearish,
+# (c) Replay-Cases aus 14d-Sample blocked_alerts.jsonl 10.-24.05.2026.
+# ============================================================================
+
+
+@pytest.mark.parametrize(
+    "title",
+    [
+        # Geopolitical triggers (US/Iran/China/etc + action verb)
+        "Iran and US near memorandum of understanding as Bitcoin rallies past 82K",
+        "Iran and US move closer to finalizing MOU as bitcoin surges past 82k",
+        "Bitcoin surges above 82000 amid US-Iran de-escalation signals",
+        "Trump announces Iran peace agreement, bitcoin heads higher",
+        # Regulatory body action
+        "SEC approves Nasdaq to list Bitcoin index options on the exchange",
+        "Senate committee advances market structure bill to full senate, crypto rallies",
+        "Circle stock explodes as long-stalled CLARITY Act passes Senate vote",
+        # ETF / index-product
+        "Bitwise Hyperliquid ETF to start trading Friday as hype rallies",
+        # Institutional named-actor + verb
+        "BlackRock bets on Circle as 222 million arc raise ignites CRCL stock surge",
+        "Hype jumps as Coinbase and Circle back Hyperliquids stablecoin model",
+        # Protocol/Technical milestone
+        "Near Protocol to automate growth with dynamic resharding upgrade in June, NEAR token surges 27",
+        "Sui mainnet to introduce private transactions, token surges over 20",
+        # On-chain flow with named institutional metric
+        "Morgan Stanley's MSBT ends first trading month with 0 outflows amid Bitcoin ETF inflow streak",
+    ],
+)
+def test_f1_substantive_trigger_overrides_reactive_block(title: str) -> None:
+    """F1: Headlines with substantive triggers must pass reactive-narrative gate."""
+    from app.alerts.eligibility import _has_substantive_trigger, _is_reactive_bullish
+
+    assert _has_substantive_trigger(title), f"Expected substantive trigger in: {title!r}"
+    assert _is_reactive_bullish(title) is False, (
+        f"Whitelist must override reactive block for: {title!r}"
+    )
+
+
+@pytest.mark.parametrize(
+    "title",
+    [
+        # Pure price reaction without any named trigger — must STILL be blocked.
+        "XRP spikes 2.5 beating bitcoin and ether in breakout above 1.45",
+        "BuildOn B explodes 55 in 24 hours, is 0.74 the next stop",
+        "Bitcoin surges past 78000 triggers 30m in short liquidations",
+        "The real reason zcash zec is pumping",
+        "The truth behind the TON pump",
+        "BTC rallies on no news",
+        "Bitcoin drops below 60K",
+    ],
+)
+def test_f1_pure_price_reaction_still_blocked(title: str) -> None:
+    """F1: Reactive titles without substantive triggers stay blocked."""
+    from app.alerts.eligibility import _has_substantive_trigger
+
+    assert _has_substantive_trigger(title) is False, (
+        f"Should NOT have substantive trigger: {title!r}"
+    )
+
+
+def test_f1_iran_mou_e2e_passes_reactive_gate() -> None:
+    """F1 E2E: the canonical Iran-MOU + BTC-rally headline reaches eligible=True."""
+    decision = evaluate_directional_eligibility(
+        sentiment_label="bullish",
+        affected_assets=["BTC/USDT"],
+        sentiment_score=0.80,
+        impact_score=0.70,
+        title="Iran and US near memorandum of understanding as Bitcoin rallies past 82K",
+        directional_confidence=0.85,
+        actionable=True,
+        priority=10,
+        source_name="cryptobriefing",
+    )
+    assert decision.is_directional is True
+    assert decision.directional_eligible is True
+    assert decision.directional_block_reason is None
+
+
+def test_f1_xrp_pure_pump_still_blocked_e2e() -> None:
+    """F1 E2E: a pure-pump headline without trigger still hits reactive_price_narrative."""
+    decision = evaluate_directional_eligibility(
+        sentiment_label="bullish",
+        affected_assets=["XRP/USDT"],
+        sentiment_score=0.75,
+        impact_score=0.65,
+        title="XRP spikes 2.5 in surprise pump",
+        directional_confidence=0.85,
+        actionable=True,
+        priority=9,
+        source_name="coindesk",
+    )
+    assert decision.is_directional is True
+    assert decision.directional_eligible is False
+    assert decision.directional_block_reason == "reactive_price_narrative"
+
+
+def test_f1_has_substantive_trigger_unit() -> None:
+    """Direct test of `_has_substantive_trigger` matcher."""
+    from app.alerts.eligibility import _has_substantive_trigger
+
+    # Positive cases
+    assert _has_substantive_trigger("US and Iran sign de-escalation deal") is True
+    assert _has_substantive_trigger("SEC approves spot ETF") is True
+    assert _has_substantive_trigger("CLARITY Act passed by Senate") is True
+    assert _has_substantive_trigger("Nasdaq launches Bitcoin Index options") is True
+    assert _has_substantive_trigger("MicroStrategy buys 10000 BTC") is True
+    assert _has_substantive_trigger("Mainnet launch for Sui privacy features") is True
+
+    # Negative cases (no substantive trigger)
+    assert _has_substantive_trigger("BTC rallies on no news") is False
+    assert _has_substantive_trigger("XRP spikes 2.5") is False
+    assert _has_substantive_trigger("Bitcoin drops 5%") is False
+    assert _has_substantive_trigger("ETH surges to weekly high") is False
+
+
+def test_f1_whitelist_does_not_break_neutral_or_bearish_paths() -> None:
+    """F1: Whitelist override only matters when reactive pattern matched —
+    neutral sentiment is unaffected, bearish blocked by D-142 first."""
+    # Neutral with surge in title: bearish_disabled gate is for bearish only,
+    # neutral skips directional path entirely.
+    decision = evaluate_directional_eligibility(
+        sentiment_label="neutral",
+        affected_assets=["BTC/USDT"],
+        sentiment_score=0.0,
+        impact_score=0.5,
+        title="Bitcoin surges past 82K amid Iran MOU",
+        actionable=True,
+    )
+    assert decision.is_directional is False
+    assert decision.directional_eligible is None
