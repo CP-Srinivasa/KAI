@@ -24,6 +24,10 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
 
+from app.audit.stream_validation import BlockedAlertStreamRow, load_audit_stream
+from app.core.file_lock import append_lock
+from app.storage.jsonl_io import read_jsonl_tolerant
+
 BLOCKED_ALERTS_JSONL_FILENAME = "blocked_alerts.jsonl"
 BLOCKED_OUTCOMES_JSONL_FILENAME = "blocked_outcomes.jsonl"
 
@@ -97,8 +101,11 @@ def append_blocked_alert(
     """
     p = _resolve_blocked_path(Path(output_path))
     p.parent.mkdir(parents=True, exist_ok=True)
-    with p.open("a", encoding="utf-8") as f:
-        f.write(json.dumps(record.to_json_dict()) + "\n")
+    payload = record.to_json_dict()
+    BlockedAlertStreamRow.model_validate(payload)
+    with append_lock(p):
+        with p.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(payload) + "\n")
 
 
 @dataclass(frozen=True)
@@ -135,22 +142,17 @@ def append_blocked_outcome(
     """Append a would-have-been outcome annotation to the JSONL file."""
     p = _resolve_blocked_outcomes_path(Path(output_path))
     p.parent.mkdir(parents=True, exist_ok=True)
-    with p.open("a", encoding="utf-8") as f:
-        f.write(json.dumps(annotation.to_json_dict()) + "\n")
+    with append_lock(p):
+        with p.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(annotation.to_json_dict()) + "\n")
 
 
 def load_blocked_outcomes(input_path: str | Path) -> list[BlockedOutcomeAnnotation]:
     """Load existing would-have-been outcome annotations."""
     p = _resolve_blocked_outcomes_path(Path(input_path))
-    if not p.exists():
-        return []
-
     annotations: list[BlockedOutcomeAnnotation] = []
-    for line in p.read_text(encoding="utf-8").strip().splitlines():
-        if not line.strip():
-            continue
+    for data in read_jsonl_tolerant(p):
         try:
-            data = json.loads(line)
             annotations.append(
                 BlockedOutcomeAnnotation(
                     document_id=data["document_id"],
@@ -160,7 +162,7 @@ def load_blocked_outcomes(input_path: str | Path) -> list[BlockedOutcomeAnnotati
                     note=data.get("note"),
                 )
             )
-        except (json.JSONDecodeError, KeyError):
+        except KeyError:
             continue
     return annotations
 
@@ -168,15 +170,9 @@ def load_blocked_outcomes(input_path: str | Path) -> list[BlockedOutcomeAnnotati
 def load_blocked_alerts(input_path: str | Path) -> list[BlockedAlertRecord]:
     """Load existing BlockedAlertRecord entries from the JSONL file."""
     p = _resolve_blocked_path(Path(input_path))
-    if not p.exists():
-        return []
-
     records: list[BlockedAlertRecord] = []
-    for line in p.read_text(encoding="utf-8").strip().splitlines():
-        if not line.strip():
-            continue
+    for data in load_audit_stream(p, "blocked_alerts").rows:
         try:
-            data = json.loads(line)
             records.append(
                 BlockedAlertRecord(
                     document_id=data["document_id"],
@@ -192,6 +188,6 @@ def load_blocked_alerts(input_path: str | Path) -> list[BlockedAlertRecord]:
                     directional_confidence=data.get("directional_confidence"),
                 )
             )
-        except (json.JSONDecodeError, KeyError):
+        except KeyError:
             continue
     return records

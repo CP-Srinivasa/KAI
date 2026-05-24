@@ -7,12 +7,16 @@ from pathlib import Path
 
 import pytest
 
+from app.alerts.audit import AlertAuditRecord, append_alert_audit
+from app.alerts.blocked_audit import BlockedAlertRecord, append_blocked_alert
 from app.audit.stream_validation import (
     AuditStreamName,
     AuditStreamValidationError,
     load_audit_stream,
 )
 from app.decisions.journal import RiskAssessment, create_decision_instance
+from app.execution.models import append_decision_record_jsonl
+from app.execution.paper_engine import PaperExecutionEngine
 
 _TS = "2026-05-24T10:00:00+00:00"
 _STREAMS: tuple[AuditStreamName, ...] = (
@@ -166,3 +170,70 @@ def test_load_audit_stream_preserves_legacy_paper_schema_default(tmp_path: Path)
 
     assert result.valid_count == 1
     assert result.rows[0]["schema_version"] == "v1"
+
+
+def test_pre_d_writers_leave_locked_schema_valid_rows(tmp_path: Path) -> None:
+    alert_path = tmp_path / "alert_audit.jsonl"
+    append_alert_audit(
+        AlertAuditRecord(
+            document_id="doc-alert",
+            channel="telegram",
+            message_id="msg-1",
+            is_digest=False,
+            dispatched_at=_TS,
+        ),
+        alert_path,
+    )
+    assert alert_path.with_suffix(".jsonl.lock").exists()
+    assert load_audit_stream(alert_path, "alert_audit").issue_count == 0
+
+    blocked_path = tmp_path / "blocked_alerts.jsonl"
+    append_blocked_alert(
+        BlockedAlertRecord(
+            document_id="doc-blocked",
+            block_reason="low_directional_confidence",
+            blocked_at=_TS,
+        ),
+        blocked_path,
+    )
+    assert blocked_path.with_suffix(".jsonl.lock").exists()
+    assert load_audit_stream(blocked_path, "blocked_alerts").issue_count == 0
+
+    decision_path = tmp_path / "decision_journal.jsonl"
+    decision = create_decision_instance(
+        symbol="BTC/USDT",
+        market="crypto",
+        venue="binance_paper",
+        mode="paper",
+        thesis="BTC bullish breakout above resistance",
+        supporting_factors=["Volume spike", "RSI divergence"],
+        contradictory_factors=["High funding rate"],
+        confidence_score=0.85,
+        market_regime="bullish",
+        volatility_state="moderate",
+        liquidity_state="healthy",
+        risk_assessment=RiskAssessment(
+            risk_level="low",
+            max_position_pct=0.25,
+            drawdown_remaining_pct=95.0,
+        ),
+        entry_logic="Break above 68k",
+        exit_logic="Trail stop at 2%",
+        stop_loss=66500.0,
+        take_profit=72000.0,
+        invalidation_condition="Close below 65k",
+        position_size_rationale="0.25% risk per trade",
+        max_loss_estimate=25.0,
+        data_sources_used=["CryptoPanic", "TradingView"],
+        model_version="gpt-4o-2024-11-20",
+        prompt_version="v1.2",
+    )
+    append_decision_record_jsonl(decision_path, decision)
+    assert decision_path.with_suffix(".jsonl.lock").exists()
+    assert load_audit_stream(decision_path, "decision_journal").issue_count == 0
+
+    paper_path = tmp_path / "paper_execution_audit.jsonl"
+    engine = PaperExecutionEngine(audit_log_path=str(paper_path))
+    engine._append_audit("order_created", {"symbol": "BTC/USDT"})
+    assert paper_path.with_suffix(".jsonl.lock").exists()
+    assert load_audit_stream(paper_path, "paper_execution_audit").issue_count == 0

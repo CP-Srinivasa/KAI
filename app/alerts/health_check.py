@@ -26,6 +26,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from app.alerts.audit import load_alert_audits, load_outcome_annotations
+from app.audit.stream_validation import AuditStreamName, load_audit_stream
 from app.orchestrator.trading_loop import load_trading_loop_cycles
 
 _ARTIFACTS = Path("artifacts")
@@ -57,6 +58,13 @@ _FRESHNESS_LAST_RECORD_WARN_HOURS = 4
 # Hostname substrings that identify the Pi-side authoritative host. Override
 # via env KAI_PI_HOSTNAME_MARKER for non-default deployments.
 _PI_HOSTNAME_MARKERS = ("kai-pi", "kai-pi5", "pi5", "kai_pi")
+_AUDIT_STREAM_SCHEMA_FILES: tuple[tuple[AuditStreamName, str], ...] = (
+    ("alert_audit", "alert_audit.jsonl"),
+    ("blocked_alerts", "blocked_alerts.jsonl"),
+    ("paper_execution_audit", "paper_execution_audit.jsonl"),
+    ("decision_journal", "decision_journal.jsonl"),
+    ("bayes_confidence_audit", "bayes_confidence_audit.jsonl"),
+)
 
 
 @dataclass(frozen=True)
@@ -159,6 +167,26 @@ def _check_data_freshness(adir: Path, now: datetime) -> tuple[list[HealthIssue],
     return issues, stale
 
 
+def _check_audit_stream_schemas(adir: Path) -> list[HealthIssue]:
+    issues: list[HealthIssue] = []
+    for stream, filename in _AUDIT_STREAM_SCHEMA_FILES:
+        result = load_audit_stream(adir / filename, stream)
+        if not result.issues:
+            continue
+        first = result.issues[0]
+        issues.append(
+            HealthIssue(
+                severity="warning",
+                component=f"{stream}_schema",
+                message=(
+                    f"{result.issue_count} invalid row(s) in {filename}; "
+                    f"first at line {first.line_number}: {first.message.splitlines()[0]}"
+                ),
+            )
+        )
+    return issues
+
+
 def _re_entry_mode_active() -> bool:
     """P1 — respect RE_ENTRY_MODE env-flag so probe relaxes during gated window.
 
@@ -231,6 +259,7 @@ def run_health_check_report(
     freshness_issues, stale = _check_data_freshness(adir, now)
     report.issues.extend(freshness_issues)
     report.data_sources_stale = stale
+    report.issues.extend(_check_audit_stream_schemas(adir))
 
     # ── P2: workstation-redirect — off-Pi probe runs read mirror/sync data
     # that may be selectively truncated (mtime-fresh but content-incomplete).

@@ -187,6 +187,21 @@ def test_fresh_files_no_freshness_warnings(tmp_path: Path) -> None:
     assert report.data_sources_stale is False
 
 
+def test_schema_validation_warning_for_malformed_pre_d_stream(tmp_path: Path) -> None:
+    _make_files_fresh(tmp_path)
+    (tmp_path / "blocked_alerts.jsonl").write_text(
+        '{"document_id": "blocked", "blocked_at": "2026-05-24T10:00:00+00:00"}\n',
+        encoding="utf-8",
+    )
+
+    report = run_health_check_report(tmp_path)
+
+    schema_issues = [i for i in report.issues if i.component == "blocked_alerts_schema"]
+    assert len(schema_issues) == 1
+    assert "invalid row" in schema_issues[0].message
+    assert "line 1" in schema_issues[0].message
+
+
 def test_actionable_count_surfaces_in_report(tmp_path: Path) -> None:
     _make_files_fresh(tmp_path)
     _write_audit(tmp_path, document_id="d1", actionable=True)

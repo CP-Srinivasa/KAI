@@ -14,6 +14,7 @@ from pathlib import Path
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.core.enums import ExecutionMode
+from app.core.file_lock import append_lock
 from app.core.schema_runtime import validate_decision_schema_payload
 from app.execution.order_intent import ExecutableOrderIntent
 
@@ -395,8 +396,9 @@ def append_decision_record_jsonl(
 
     path = Path(output_path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("a", encoding="utf-8") as handle:
-        handle.write(json.dumps(record.to_json_dict()) + "\n")
+    with append_lock(path):
+        with path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(record.to_json_dict()) + "\n")
 
 
 def load_decision_records(input_path: str | Path) -> list[DecisionRecord]:

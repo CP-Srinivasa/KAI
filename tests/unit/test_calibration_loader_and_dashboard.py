@@ -3,6 +3,7 @@ Dashboard: /dashboard/api/calibration."""
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from unittest.mock import patch
 
@@ -132,6 +133,41 @@ def test_calibration_endpoint_empty_returns_zero_report(audit_path: Path) -> Non
     assert body["brier_score"] is None
     assert body["bins"] == []
     assert body["sample_sufficient"] is False
+
+
+def test_bayes_audit_endpoint_surfaces_stream_validation(audit_path: Path) -> None:
+    rows = [
+        {
+            "schema_version": 1,
+            "timestamp_utc": "2026-05-24T10:00:00+00:00",
+            "decision_id": "dec_ok",
+            "symbol": "BTC/USDT",
+            "direction": "long",
+            "report": {"posterior_probability": 0.7},
+        },
+        {
+            "schema_version": 1,
+            "timestamp_utc": "2026-05-24T10:01:00+00:00",
+            "decision_id": "dec_bad",
+            "symbol": "ETH/USDT",
+            "direction": "short",
+        },
+    ]
+    audit_path.write_text(
+        "\n".join(json.dumps(row) for row in rows) + "\n",
+        encoding="utf-8",
+    )
+    app = _make_app()
+    with patch.object(dashboard_mod, "_BAYES_AUDIT", audit_path):
+        with TestClient(app) as client:
+            r = client.get("/dashboard/api/bayes-audit")
+
+    assert r.status_code == 200
+    body = r.json()
+    assert body["total_count"] == 1
+    assert body["returned_count"] == 1
+    assert body["audit_stream_validation"]["issue_count"] == 1
+    assert body["audit_stream_validation"]["valid_rows"] == 1
 
 
 def test_calibration_endpoint_with_outcomes_returns_metrics(audit_path: Path) -> None:

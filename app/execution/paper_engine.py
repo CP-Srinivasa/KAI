@@ -14,8 +14,8 @@ import json
 import logging
 from pathlib import Path
 
-import portalocker
-
+from app.audit.stream_validation import PaperExecutionAuditStreamRow
+from app.core.file_lock import append_lock
 from app.execution.audit_replay import replay_paper_audit
 from app.execution.execution_protocol import executable_intent_to_paper_kwargs
 from app.execution.models import (
@@ -1161,14 +1161,11 @@ class PaperExecutionEngine:
             **data,
         }
         try:
-            # NEO-P-101-r2: portalocker advisory file-lock (cross-platform).
-            # Required because Pi runs kai-server + kai-agent-worker as
-            # parallel writers on the same audit file. Lock auto-releases on
-            # file close (context-manager exit).
-            with self._audit_path.open("a", encoding="utf-8") as fh:
-                portalocker.lock(fh, portalocker.LOCK_EX)
-                fh.write(json.dumps(record) + "\n")
-        except OSError as e:
+            PaperExecutionAuditStreamRow.model_validate(record)
+            with append_lock(self._audit_path):
+                with self._audit_path.open("a", encoding="utf-8") as fh:
+                    fh.write(json.dumps(record) + "\n")
+        except (OSError, ValueError) as e:
             logger.error("[PAPER] Audit log write failed: %s", e)
         _publish_paper_event(event_type, record)
 

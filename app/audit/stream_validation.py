@@ -67,6 +67,30 @@ class AuditStreamValidationError(ValueError):
         super().__init__(f"{result.stream} validation failed: {detail}")
 
 
+def summarize_audit_stream_result(
+    result: AuditStreamReadResult,
+    *,
+    max_issues: int = 3,
+) -> dict[str, Any]:
+    """Return a compact JSON-safe validation summary for operator surfaces."""
+
+    sample = [
+        {
+            "line_number": issue.line_number,
+            "message": issue.message.splitlines()[0],
+        }
+        for issue in result.issues[:max_issues]
+    ]
+    return {
+        "stream": result.stream,
+        "path": str(result.path),
+        "valid_rows": result.valid_count,
+        "issue_count": result.issue_count,
+        "ok": result.issue_count == 0,
+        "sample_issues": sample,
+    }
+
+
 class _LegacyAuditRow(BaseModel):
     model_config = ConfigDict(extra="allow", frozen=True)
 
@@ -247,4 +271,5 @@ __all__ = [
     "BlockedAlertStreamRow",
     "PaperExecutionAuditStreamRow",
     "load_audit_stream",
+    "summarize_audit_stream_result",
 ]
