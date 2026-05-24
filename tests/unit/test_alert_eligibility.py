@@ -788,9 +788,7 @@ def test_f1_substantive_trigger_overrides_reactive_block(title: str) -> None:
     """F1: Headlines with substantive triggers must pass reactive-narrative gate."""
     from app.alerts.eligibility import _has_substantive_trigger, _is_reactive_bullish
 
-    assert _has_substantive_trigger(title), (
-        f"Expected substantive trigger in: {title!r}"
-    )
+    assert _has_substantive_trigger(title), f"Expected substantive trigger in: {title!r}"
     assert _is_reactive_bullish(title) is False, (
         f"Whitelist must override reactive block for: {title!r}"
     )

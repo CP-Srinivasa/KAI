@@ -74,9 +74,7 @@ Risk: 5%
 
 
 @pytest.fixture
-def isolated_premium_artifacts(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> Iterator[Path]:
+def isolated_premium_artifacts(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
     """Route envelope, bridge, and paper JSONL writes into tmp_path.
 
     Also resets the process-local PaperExecutionEngine singleton before and
@@ -106,9 +104,7 @@ def _read_jsonl(path: Path) -> list[dict[str, Any]]:
     if not path.exists():
         return []
     return [
-        json.loads(line)
-        for line in path.read_text(encoding="utf-8").splitlines()
-        if line.strip()
+        json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()
     ]
 
 
@@ -339,9 +335,7 @@ async def test_premium_telegram_range_entry_multi_tick_fills_on_second_tick(
     approved_at = emitted_at + timedelta(minutes=3)
 
     monkeypatch.setattr(bridge, "_fetch_price", _forbid_live_market_data)
-    monkeypatch.setattr(
-        bridge, "datetime", _freeze_bridge_now(emitted_at + timedelta(minutes=10))
-    )
+    monkeypatch.setattr(bridge, "datetime", _freeze_bridge_now(emitted_at + timedelta(minutes=10)))
 
     origin_envelope_id, approved_envelope_id = _emit_and_approve(
         PREMIUM_SOL_LONG_RANGE,
@@ -357,9 +351,7 @@ async def test_premium_telegram_range_entry_multi_tick_fills_on_second_tick(
 
     bridge_records_after_tick1 = _read_jsonl(bridge_log)
     approved_after_tick1 = [
-        rec
-        for rec in bridge_records_after_tick1
-        if rec.get("envelope_id") == approved_envelope_id
+        rec for rec in bridge_records_after_tick1 if rec.get("envelope_id") == approved_envelope_id
     ]
     assert approved_after_tick1, "approved envelope must have at least one bridge record"
     last_stage_tick1 = approved_after_tick1[-1]["stage"]
@@ -367,9 +359,7 @@ async def test_premium_telegram_range_entry_multi_tick_fills_on_second_tick(
         f"expected pending after sub-range tick, got {last_stage_tick1}"
     )
     paper_records_tick1 = _read_jsonl(paper_audit_log)
-    assert not [
-        rec for rec in paper_records_tick1 if rec.get("event_type") == "order_filled"
-    ]
+    assert not [rec for rec in paper_records_tick1 if rec.get("event_type") == "order_filled"]
 
     tick2 = await bridge.run_tick(price_provider=_fixed_price_provider("SOL/USDT", 84.30))
     assert tick2.filled == 1, tick2.to_dict()
@@ -378,8 +368,7 @@ async def test_premium_telegram_range_entry_multi_tick_fills_on_second_tick(
     filled_bridge = [
         rec
         for rec in bridge_records
-        if rec.get("envelope_id") == approved_envelope_id
-        and rec.get("stage") == "filled"
+        if rec.get("envelope_id") == approved_envelope_id and rec.get("stage") == "filled"
     ]
     assert len(filled_bridge) == 1, "exactly one fill across both ticks"
     bridge_fill = filled_bridge[0]
@@ -436,8 +425,7 @@ async def test_premium_telegram_range_entry_ttl_expires_without_fill(
     expired_records = [
         rec
         for rec in bridge_records
-        if rec.get("envelope_id") == approved_envelope_id
-        and rec.get("stage") == "expired"
+        if rec.get("envelope_id") == approved_envelope_id and rec.get("stage") == "expired"
     ]
     assert len(expired_records) == 1
     expired_rec = expired_records[0]
@@ -475,9 +463,7 @@ async def test_premium_telegram_partial_fill_opens_half_position(
     approved_at = emitted_at + timedelta(minutes=3)
 
     monkeypatch.setattr(bridge, "_fetch_price", _forbid_live_market_data)
-    monkeypatch.setattr(
-        bridge, "datetime", _freeze_bridge_now(emitted_at + timedelta(minutes=10))
-    )
+    monkeypatch.setattr(bridge, "datetime", _freeze_bridge_now(emitted_at + timedelta(minutes=10)))
 
     original_create_order = paper_engine_module.PaperExecutionEngine.create_order
 
@@ -512,12 +498,8 @@ async def test_premium_telegram_partial_fill_opens_half_position(
     fill = paper_fills[0]
     assert fill["fill_status"] == "partial_entry"
     assert fill["partial_fill_ratio"] == pytest.approx(0.5)
-    assert fill["filled_quantity"] == pytest.approx(
-        fill["requested_quantity"] * 0.5, rel=1e-9
-    )
-    assert fill["remaining_quantity"] == pytest.approx(
-        fill["requested_quantity"] * 0.5, rel=1e-9
-    )
+    assert fill["filled_quantity"] == pytest.approx(fill["requested_quantity"] * 0.5, rel=1e-9)
+    assert fill["remaining_quantity"] == pytest.approx(fill["requested_quantity"] * 0.5, rel=1e-9)
     assert fill["correlation_id"] == origin_envelope_id
 
     engine = get_paper_engine()
@@ -529,8 +511,7 @@ async def test_premium_telegram_partial_fill_opens_half_position(
     filled_bridge = [
         rec
         for rec in bridge_records
-        if rec.get("envelope_id") == approved_envelope_id
-        and rec.get("stage") == "filled"
+        if rec.get("envelope_id") == approved_envelope_id and rec.get("stage") == "filled"
     ]
     assert len(filled_bridge) == 1
     # Bridge does not know about partial fills — stage stays "filled"
