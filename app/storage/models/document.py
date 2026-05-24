@@ -56,6 +56,10 @@ class CanonicalDocumentModel(Base):
     # Analysis scores
     sentiment_label: Mapped[str | None] = mapped_column(String(20), nullable=True, index=True)
     sentiment_score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    # F3-V-0 (2026-05-24): LLM-confidence in the directional classification
+    # (0.0..1.0). Used by app/alerts/eligibility.py as bullish>=0.8 /
+    # bearish>=0.95 gate. Persisted for outcome-correlation analysis (F3).
+    directional_confidence: Mapped[float | None] = mapped_column(Float, nullable=True)
     relevance_score: Mapped[float | None] = mapped_column(Float, nullable=True)
     impact_score: Mapped[float | None] = mapped_column(Float, nullable=True)
     novelty_score: Mapped[float | None] = mapped_column(Float, nullable=True)

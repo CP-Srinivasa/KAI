@@ -129,6 +129,10 @@ class CanonicalDocument(BaseModel):
     # Analysis scores (set after analysis pipeline runs)
     sentiment_label: SentimentLabel | None = None
     sentiment_score: float | None = Field(default=None, ge=-1.0, le=1.0)
+    # F3-V-0 (2026-05-24): LLM confidence in directional classification.
+    # Used by app/alerts/eligibility.py as bullish>=0.8 / bearish>=0.95 gate.
+    # Persisted for confidence-threshold-recalibration analysis (F3).
+    directional_confidence: float | None = Field(default=None, ge=0.0, le=1.0)
     relevance_score: float | None = Field(default=None, ge=0.0, le=1.0)
     impact_score: float | None = Field(default=None, ge=0.0, le=1.0)
     novelty_score: float | None = Field(default=None, ge=0.0, le=1.0)

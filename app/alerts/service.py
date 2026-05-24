@@ -273,6 +273,7 @@ class AlertService:
                         title_hash=title_hash(message.title),
                         normalized_title=normalize_title(message.title),
                         source_name=message.source_name,
+                        directional_confidence=message.directional_confidence,
                     )
                     append_blocked_alert(
                         blocked_record,
@@ -499,6 +500,9 @@ def _log_result(
                 title_hash=title_hash(message.title) if message else None,
                 normalized_title=normalize_title(message.title) if message else None,
                 source_name=message.source_name if message else None,
+                directional_confidence=(
+                    message.directional_confidence if message else None
+                ),
                 provenance=provenance,
             )
             effective_path = audit_path or (

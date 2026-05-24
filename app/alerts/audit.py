@@ -71,6 +71,11 @@ class AlertAuditRecord:
     title_hash: str | None = None
     normalized_title: str | None = None
     source_name: str | None = None
+    # F3-V-0 (2026-05-24) — LLM-confidence in the directional classification
+    # (0.0..1.0). Persisted so the confidence-threshold-recalibration analysis
+    # (F3) can correlate gate-pass confidence values with outcome hit/miss.
+    # Currently used by the eligibility gate as bullish>=0.8 / bearish>=0.95.
+    directional_confidence: float | None = None
     # D-125 / SAT-C-PROV-20260422-001 — persisted provenance so the quality-bar
     # phase has a beglaubigte Zuordnung instead of relying on analysis-time
     # DB joins in provenance_metrics._load_doc_metadata.
@@ -104,6 +109,8 @@ class AlertAuditRecord:
             d["normalized_title"] = self.normalized_title
         if self.source_name is not None:
             d["source_name"] = self.source_name
+        if self.directional_confidence is not None:
+            d["directional_confidence"] = self.directional_confidence
         if self.provenance is not None:
             d["provenance"] = self.provenance.to_dict()
         return d
@@ -299,6 +306,7 @@ def load_alert_audits(input_path: str | Path) -> list[AlertAuditRecord]:
                 title_hash=data.get("title_hash"),
                 normalized_title=data.get("normalized_title"),
                 source_name=data.get("source_name"),
+                directional_confidence=data.get("directional_confidence"),
                 provenance=SignalProvenance.from_dict(data.get("provenance")),
             )
             records.append(record)

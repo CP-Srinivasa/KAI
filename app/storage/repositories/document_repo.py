@@ -116,6 +116,7 @@ class DocumentRepository:
             "sentiment_label": result.sentiment_label.value,
             "analysis_source": result.analysis_source.value if result.analysis_source else None,
             "sentiment_score": result.sentiment_score,
+            "directional_confidence": result.directional_confidence,
             "relevance_score": result.relevance_score,
             "impact_score": result.impact_score,
             "novelty_score": result.novelty_score,
@@ -295,6 +296,7 @@ def _to_model(doc: CanonicalDocument) -> CanonicalDocumentModel:
         content_hash=doc.content_hash,
         sentiment_label=doc.sentiment_label.value if doc.sentiment_label else None,
         sentiment_score=doc.sentiment_score,
+        directional_confidence=doc.directional_confidence,
         relevance_score=doc.relevance_score,
         impact_score=doc.impact_score,
         novelty_score=doc.novelty_score,
@@ -357,6 +359,7 @@ def _from_model(model: CanonicalDocumentModel) -> CanonicalDocument:
             else None
         ),
         sentiment_score=model.sentiment_score,
+        directional_confidence=model.directional_confidence or 0.0,
         relevance_score=model.relevance_score,
         impact_score=model.impact_score,
         novelty_score=model.novelty_score,

@@ -56,6 +56,10 @@ class BlockedAlertRecord:
     title_hash: str | None = None
     normalized_title: str | None = None
     source_name: str | None = None
+    # F3-V-0 (2026-05-24) — LLM directional confidence at block-time. Especially
+    # useful for ``low_directional_confidence`` blocks (the exact value the
+    # gate rejected); for other reasons it's still input for outcome correlation.
+    directional_confidence: float | None = None
 
     def to_json_dict(self) -> dict[str, object]:
         d: dict[str, object] = {
@@ -77,6 +81,8 @@ class BlockedAlertRecord:
             d["normalized_title"] = self.normalized_title
         if self.source_name is not None:
             d["source_name"] = self.source_name
+        if self.directional_confidence is not None:
+            d["directional_confidence"] = self.directional_confidence
         return d
 
 
@@ -183,6 +189,7 @@ def load_blocked_alerts(input_path: str | Path) -> list[BlockedAlertRecord]:
                     title_hash=data.get("title_hash"),
                     normalized_title=data.get("normalized_title"),
                     source_name=data.get("source_name"),
+                    directional_confidence=data.get("directional_confidence"),
                 )
             )
         except (json.JSONDecodeError, KeyError):
