@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from app.execution.exchanges.base import OrderRequest, OrderSide, OrderType
 from app.execution.execution_protocol import (
+    ExecutionEngineProtocol,
     assert_parity,
     executable_intent_to_live_request,
     executable_intent_to_paper_kwargs,
@@ -25,6 +26,7 @@ from app.execution.normalized_signal import (
     new_signal,
 )
 from app.execution.order_intent import ExecutableOrderIntent
+from app.execution.paper_engine import PaperExecutionEngine
 
 # ── Test-Helper ──────────────────────────────────────────────────────────────
 
@@ -177,6 +179,16 @@ def test_parity_drift_detected_when_quantity_inconsistent() -> None:
         client_order_id=intent.idempotency_key,
     )
     assert paper["quantity"] != drift_request.quantity, "test setup error — drift required"
+
+
+def test_paper_engine_implements_execution_engine_protocol() -> None:
+    engine = PaperExecutionEngine(initial_equity=10000.0, live_enabled=False)
+
+    assert isinstance(engine, ExecutionEngineProtocol)
+    assert engine.state == "paper"
+    status = engine.status()
+    assert status["state"] == "paper"
+    assert status["open_positions"] == 0
 
 
 def test_intent_quantity_none_is_zero_in_kwargs() -> None:
