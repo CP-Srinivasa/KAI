@@ -115,3 +115,45 @@ def test_append_blocked_alert_appends_not_overwrites(tmp_path: Path):
     append_blocked_alert(record_b, tmp_path)
     loaded = load_blocked_alerts(tmp_path)
     assert [r.document_id for r in loaded] == ["a", "b"]
+
+
+# F3-V-0 (2026-05-24) — directional_confidence persistence in blocked_alerts.jsonl.
+
+
+def test_blocked_alert_record_persists_directional_confidence(tmp_path: Path):
+    """F3-V-0: directional_confidence survives a write+read round-trip."""
+    record = BlockedAlertRecord(
+        document_id="d_conf",
+        block_reason="low_directional_confidence",
+        sentiment_label="bullish",
+        priority=10,
+        directional_confidence=0.72,
+    )
+    append_blocked_alert(record, tmp_path)
+    loaded = load_blocked_alerts(tmp_path)
+    assert len(loaded) == 1
+    assert loaded[0].directional_confidence == 0.72
+
+
+def test_blocked_alert_record_no_confidence_serialises_without_field(tmp_path: Path):
+    """F3-V-0: omitting directional_confidence keeps the field out of the JSON."""
+    record = BlockedAlertRecord(
+        document_id="d_no_conf",
+        block_reason="reactive_price_narrative",
+    )
+    append_blocked_alert(record, tmp_path)
+    text = (tmp_path / BLOCKED_ALERTS_JSONL_FILENAME).read_text(encoding="utf-8")
+    assert "directional_confidence" not in text
+
+
+def test_blocked_alert_record_load_legacy_record_without_confidence(tmp_path: Path):
+    """F3-V-0: pre-V-0 records (without directional_confidence) load cleanly."""
+    target = tmp_path / BLOCKED_ALERTS_JSONL_FILENAME
+    target.write_text(
+        '{"document_id": "legacy", "block_reason": "x", '
+        '"blocked_at": "2026-05-01T00:00:00+00:00"}\n',
+        encoding="utf-8",
+    )
+    loaded = load_blocked_alerts(tmp_path)
+    assert len(loaded) == 1
+    assert loaded[0].directional_confidence is None
