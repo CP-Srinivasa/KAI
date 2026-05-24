@@ -12,7 +12,7 @@ from typing import Any
 
 
 def load_jsonl_records(path: Path) -> list[dict[str, Any]]:
-    records = []
+    records: list[dict[str, Any]] = []
     if not path.exists():
         return records
     try:
@@ -108,7 +108,9 @@ def find_matching_signal_data(query_id: str, artifacts_dir: Path) -> dict[str, A
         if query in (doc_id, "") or (doc_id and query in doc_id):
             data["intent"] = r
             if not data["symbol"] and r.get("affected_assets"):
-                data["symbol"] = r.get("affected_assets")[0]
+                assets = r.get("affected_assets") or []
+                if isinstance(assets, list) and assets:
+                    data["symbol"] = assets[0]
             if not data["direction"] and r.get("sentiment_label"):
                 data["direction"] = r.get("sentiment_label")
             break
