@@ -53,6 +53,7 @@ _DECISION_PACK_MIN_DIRECTIONAL_7D = 30
 _DECISION_PACK_MIN_RESOLVED_7D = 30
 _DECISION_PACK_MIN_PAPER_CLOSES = 10
 _DECISION_PACK_UNKNOWN_SOURCE_WARN_PCT = 20.0
+_DECISION_PACK_MIN_DISPATCH_PASS_RATE_PCT = 50.0
 
 # ---------------------------------------------------------------------------
 # Canonical inventory (authoritative list)
@@ -310,6 +311,21 @@ def _pct(part: int, whole: int) -> float | None:
     return round(100.0 * part / whole, 1)
 
 
+def _coerce_confidence_pct(value: object) -> float | None:
+    if not isinstance(value, (int, float)):
+        return None
+    raw = float(value)
+    if raw < 0.0 or raw > 1.0:
+        return None
+    return round(raw * 100.0, 1)
+
+
+def _avg(values: list[float]) -> float | None:
+    if not values:
+        return None
+    return round(sum(values) / len(values), 1)
+
+
 def _read_paper_closed_with_pnl_count(path: Path) -> tuple[int | None, str]:
     if not path.exists():
         return None, "missing"
@@ -336,10 +352,12 @@ def _read_paper_closed_with_pnl_count(path: Path) -> tuple[int | None, str]:
 def _build_decision_pack_20260530(
     *,
     audits: list[object] | None,
+    blocked_alerts: list[object] | None,
     outcome_by_doc: dict[str, str],
     now_utc: datetime,
     portfolio_snapshot_ok: bool,
     alert_audit_ok: bool,
+    blocked_alerts_status: str,
     loop_audit_ok: bool,
     paper_execution_audit_path: Path | None,
 ) -> dict[str, object]:
@@ -362,12 +380,16 @@ def _build_decision_pack_20260530(
     sentiment_counts: Counter[str] = Counter()
     source_counts: Counter[str] = Counter()
     directional_by_source: Counter[str] = Counter()
+    dispatched_confidences: list[float] = []
     resolved_directional = 0
     inconclusive_directional = 0
 
     for record in recent_records:
         sentiment = _normalise_decision_pack_sentiment(getattr(record, "sentiment_label", None))
         source = _normalise_decision_pack_source(record)
+        confidence = _coerce_confidence_pct(getattr(record, "directional_confidence", None))
+        if confidence is not None:
+            dispatched_confidences.append(confidence)
         sentiment_counts[sentiment] += 1
         source_counts[source] += 1
         if sentiment in {"bullish", "bearish"}:
@@ -382,6 +404,38 @@ def _build_decision_pack_20260530(
     directional_7d = sum(sentiment_counts[s] for s in ("bullish", "bearish"))
     unknown_sources = source_counts.get("unknown", 0)
     unknown_share_pct = _pct(unknown_sources, total_recent)
+
+    blocked_latest: dict[str, tuple[datetime, object]] = {}
+    for record in blocked_alerts or []:
+        doc_id = getattr(record, "document_id", None)
+        if not isinstance(doc_id, str) or not doc_id:
+            continue
+        blocked_at = _parse_iso_utc(getattr(record, "blocked_at", None))
+        if blocked_at is None or blocked_at < cutoff_7d:
+            continue
+        prior = blocked_latest.get(doc_id)
+        if prior is None or blocked_at > prior[0]:
+            blocked_latest[doc_id] = (blocked_at, record)
+
+    recent_blocked = [entry[1] for entry in blocked_latest.values()]
+    blocked_reasons: Counter[str] = Counter()
+    blocked_sentiments: Counter[str] = Counter()
+    blocked_sources: Counter[str] = Counter()
+    blocked_confidences: list[float] = []
+    for record in recent_blocked:
+        reason = getattr(record, "block_reason", None)
+        blocked_reasons[str(reason or "unknown")] += 1
+        blocked_sentiments[
+            _normalise_decision_pack_sentiment(getattr(record, "sentiment_label", None))
+        ] += 1
+        blocked_sources[_normalise_decision_pack_source(record)] += 1
+        confidence = _coerce_confidence_pct(getattr(record, "directional_confidence", None))
+        if confidence is not None:
+            blocked_confidences.append(confidence)
+
+    blocked_7d = len(recent_blocked)
+    classifier_directional_candidates_7d = directional_7d + blocked_7d
+    dispatch_pass_rate_pct = _pct(directional_7d, classifier_directional_candidates_7d)
 
     paper_closed_count: int | None = None
     paper_audit_status = "not_checked"
@@ -405,6 +459,15 @@ def _build_decision_pack_20260530(
                 "code": "alert_audit_unavailable",
                 "severity": "warn",
                 "detail": "Alert audit stream could not be read.",
+            }
+        )
+    if blocked_alerts_status != "ok":
+        warnings.append(
+            {
+                "code": "blocked_alerts_unavailable",
+                "severity": "warn",
+                "status": blocked_alerts_status,
+                "detail": "Blocked-alert stream could not be read or is missing.",
             }
         )
     if not loop_audit_ok:
@@ -454,6 +517,18 @@ def _build_decision_pack_20260530(
                 "threshold_pct": _DECISION_PACK_UNKNOWN_SOURCE_WARN_PCT,
             }
         )
+    if (
+        dispatch_pass_rate_pct is not None
+        and dispatch_pass_rate_pct < _DECISION_PACK_MIN_DISPATCH_PASS_RATE_PCT
+    ):
+        warnings.append(
+            {
+                "code": "dispatch_pass_rate_low",
+                "severity": "warn",
+                "actual_pct": dispatch_pass_rate_pct,
+                "threshold_pct": _DECISION_PACK_MIN_DISPATCH_PASS_RATE_PCT,
+            }
+        )
 
     source_table = [
         {
@@ -474,6 +549,31 @@ def _build_decision_pack_20260530(
         for sentiment in sentiment_order
         if sentiment_counts.get(sentiment, 0) > 0
     ]
+    blocked_reason_table = [
+        {
+            "reason": reason,
+            "blocked_alerts": count,
+            "share_pct": _pct(count, blocked_7d),
+        }
+        for reason, count in blocked_reasons.most_common(10)
+    ]
+    blocked_sentiment_table = [
+        {
+            "sentiment": sentiment,
+            "blocked_alerts": blocked_sentiments.get(sentiment, 0),
+            "share_pct": _pct(blocked_sentiments.get(sentiment, 0), blocked_7d),
+        }
+        for sentiment in sentiment_order
+        if blocked_sentiments.get(sentiment, 0) > 0
+    ]
+    blocked_source_table = [
+        {
+            "source": source,
+            "blocked_alerts": count,
+            "share_pct": _pct(count, blocked_7d),
+        }
+        for source, count in blocked_sources.most_common(10)
+    ]
 
     return {
         "target_date": _DECISION_PACK_TARGET_DATE.isoformat(),
@@ -482,19 +582,41 @@ def _build_decision_pack_20260530(
         "snapshot_robustness": {
             "portfolio_snapshot": "ok" if portfolio_snapshot_ok else "unavailable",
             "alert_audit": "ok" if alert_audit_ok else "unavailable",
+            "blocked_alerts": blocked_alerts_status,
             "trading_loop_audit": "ok" if loop_audit_ok else "unavailable",
             "paper_execution_audit": paper_audit_status,
         },
         "sample_sizes": {
             "alerts_7d": total_recent,
             "directional_alerts_7d": directional_7d,
+            "blocked_alerts_7d": blocked_7d,
+            "classifier_directional_candidates_7d": classifier_directional_candidates_7d,
             "resolved_directional_hit_miss_7d": resolved_directional,
             "inconclusive_directional_7d": inconclusive_directional,
             "paper_closed_positions_with_pnl": paper_closed_count,
         },
         "sample_size_warnings": warnings,
+        "dispatch_filter_7d": {
+            "dispatched_directional_alerts": directional_7d,
+            "blocked_alerts": blocked_7d,
+            "classifier_directional_candidates": classifier_directional_candidates_7d,
+            "dispatch_pass_rate_pct": dispatch_pass_rate_pct,
+        },
+        "confidence_collection_7d": {
+            "dispatched_with_confidence": len(dispatched_confidences),
+            "blocked_with_confidence": len(blocked_confidences),
+            "dispatched_avg_confidence_pct": _avg(dispatched_confidences),
+            "blocked_avg_confidence_pct": _avg(blocked_confidences),
+            "coverage_pct": _pct(
+                len(dispatched_confidences) + len(blocked_confidences),
+                total_recent + blocked_7d,
+            ),
+        },
         "source_table_7d": source_table,
         "sentiment_table_7d": sentiment_table,
+        "blocked_reason_table_7d": blocked_reason_table,
+        "blocked_sentiment_table_7d": blocked_sentiment_table,
+        "blocked_source_table_7d": blocked_source_table,
     }
 
 
@@ -1106,6 +1228,7 @@ async def get_daily_operator_summary(
     execution_enabled and write_back_allowed are always False.
     """
     from app.alerts.audit import load_alert_audits, load_outcome_annotations
+    from app.alerts.blocked_audit import load_blocked_alerts
     from app.orchestrator.trading_loop import load_trading_loop_cycles
 
     now_utc = (now or datetime.now(UTC)).astimezone(UTC)
@@ -1117,6 +1240,8 @@ async def get_daily_operator_summary(
     alert_audit_ok = False
     loop_audit_ok = False
     audits_for_decision_pack: list[object] | None = None
+    blocked_for_decision_pack: list[object] | None = None
+    blocked_alerts_status = "not_checked"
     outcome_by_doc_for_decision_pack: dict[str, str] = {}
     try:
         paper_execution_resolved_path: Path | None = resolve_workspace_path(
@@ -1172,6 +1297,13 @@ async def get_daily_operator_summary(
         outcome_by_doc_for_decision_pack = {
             outcome.document_id: outcome.outcome for outcome in outcomes
         }
+        blocked_path = audit_dir / "blocked_alerts.jsonl"
+        if blocked_path.exists():
+            blocked_for_decision_pack = list(load_blocked_alerts(audit_dir))
+            blocked_alerts_status = "ok"
+        else:
+            blocked_for_decision_pack = []
+            blocked_alerts_status = "missing"
         alert_audit_ok = True
         recent_alerts = 0
         for record in audits:
@@ -1181,6 +1313,7 @@ async def get_daily_operator_summary(
         alert_rate_24h: float | None = round(recent_alerts / 24.0, 2)
     except Exception:
         alert_rate_24h = None
+        blocked_alerts_status = "unavailable"
         degraded = True
 
     # Cycles today — count loop audit rows whose started_at is on today's UTC
@@ -1263,10 +1396,12 @@ async def get_daily_operator_summary(
 
     decision_pack = _build_decision_pack_20260530(
         audits=audits_for_decision_pack,
+        blocked_alerts=blocked_for_decision_pack,
         outcome_by_doc=outcome_by_doc_for_decision_pack,
         now_utc=now_utc,
         portfolio_snapshot_ok=portfolio_snapshot_ok,
         alert_audit_ok=alert_audit_ok,
+        blocked_alerts_status=blocked_alerts_status,
         loop_audit_ok=loop_audit_ok,
         paper_execution_audit_path=paper_execution_resolved_path,
     )
