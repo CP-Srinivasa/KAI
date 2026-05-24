@@ -59,6 +59,8 @@ UNITS=(
     "kai-hold-report.timer"
     "kai-auto-annotate.service"
     "kai-auto-annotate.timer"
+    "kai-recalc-cycle.service"
+    "kai-recalc-cycle.timer"
 )
 
 ENABLE_ON_INSTALL=(
@@ -78,6 +80,7 @@ ENABLE_ON_INSTALL=(
     "kai-service-watchdog.timer"
     "kai-hold-report.timer"
     "kai-auto-annotate.timer"
+    "kai-recalc-cycle.timer"
 )
 
 # 2026-05-14: Reactivate-Hook — kritische Premium-Signal-Pipeline-Units.
