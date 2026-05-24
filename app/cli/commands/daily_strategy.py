@@ -20,7 +20,8 @@ from __future__ import annotations
 
 import asyncio
 import json
-from datetime import UTC, date, datetime
+from collections import Counter
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
 import typer
@@ -105,6 +106,131 @@ def _days_until(target: date, today: date) -> int:
     return (target - today).days
 
 
+def _blocked_alerts_summary(today: date, lookback_hours: int = 24) -> dict[str, object]:
+    """Summarize blocked_alerts.jsonl for the last *lookback_hours*.
+
+    F4 (Dispatch-Observability) — Operator-Pflicht-Sektion in der Daily-
+    Strategy: zeigt was der Eligibility-Gate aussortiert hat, damit
+    Re-Calibration-Decisions auf Empirie statt auf alert_audit-Tunnelblick
+    aufsetzen. Sentiment-Drift-Forensik 2026-05-24: alert_audit zeigt nur
+    ~4% des Klassifikator-Outputs; ohne diese Sicht ist der Operator blind
+    auf 96% des Material-Flows.
+
+    Returns {
+        'total': int,
+        'top_reasons': [(reason, count), ...],   # max 3
+        'top_blocked': [{...}, ...],             # max 3 raw records
+        'window_start': iso str,
+        'window_end': iso str,
+    }
+    """
+    # Window: rolling lookback (default 24h) anchored at today's *end-of-day UTC*
+    # so a bootstrap run at 06:00 still captures yesterday-evening blocks.
+    window_end = datetime.combine(today, datetime.max.time()).replace(tzinfo=UTC)
+    window_start = window_end - timedelta(hours=lookback_hours)
+
+    path = Path("artifacts/blocked_alerts.jsonl")
+    if not path.exists():
+        return {
+            "total": 0,
+            "top_reasons": [],
+            "top_blocked": [],
+            "window_start": window_start.isoformat(),
+            "window_end": window_end.isoformat(),
+        }
+
+    reasons: Counter[str] = Counter()
+    records: list[dict[str, object]] = []
+    with path.open("r", encoding="utf-8") as fh:
+        for line in fh:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                rec = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            ts_raw = rec.get("blocked_at")
+            if not isinstance(ts_raw, str):
+                continue
+            try:
+                ts = datetime.fromisoformat(ts_raw.replace("Z", "+00:00"))
+            except ValueError:
+                continue
+            if not (window_start <= ts <= window_end):
+                continue
+            reason = rec.get("block_reason")
+            if isinstance(reason, str):
+                reasons[reason] += 1
+            records.append(rec)
+
+    # Top-3 records: prefer high priority + directional sentiment so Operator
+    # sees the most material misses first.
+    def _priority_key(r: dict[str, object]) -> int:
+        p = r.get("priority")
+        return p if isinstance(p, int) else -1
+
+    records.sort(key=_priority_key, reverse=True)
+    top_blocked = records[:3]
+
+    return {
+        "total": len(records),
+        "top_reasons": reasons.most_common(3),
+        "top_blocked": top_blocked,
+        "window_start": window_start.isoformat(),
+        "window_end": window_end.isoformat(),
+    }
+
+
+def _format_dispatch_health_section(summary: dict[str, object]) -> str:
+    """Render the Dispatch-Health markdown section from the summary dict."""
+    total = summary["total"]
+    if not isinstance(total, int) or total == 0:
+        return (
+            "## Dispatch-Health 24h\n\n"
+            "Keine geblockten direktionalen Alerts im letzten 24h-Fenster — "
+            "Eligibility-Gate hat nichts ausgesondert.\n"
+        )
+
+    top_reasons = summary["top_reasons"]
+    top_blocked = summary["top_blocked"]
+    assert isinstance(top_reasons, list)
+    assert isinstance(top_blocked, list)
+
+    reason_lines: list[str] = []
+    for reason, count in top_reasons:
+        pct = 100.0 * count / total if total else 0.0
+        reason_lines.append(f"- `{reason}`: {count} ({pct:.0f}%)")
+
+    blocked_lines: list[str] = []
+    for rec in top_blocked:
+        assert isinstance(rec, dict)
+        prio = rec.get("priority", "?")
+        label = rec.get("sentiment_label", "?")
+        src = rec.get("source_name", "?")
+        title = (rec.get("normalized_title") or "")
+        if isinstance(title, str) and len(title) > 100:
+            title = title[:97] + "..."
+        reason = rec.get("block_reason", "?")
+        blocked_lines.append(
+            f"- p={prio} `{label}` src=`{src}` → `{reason}`\n  > {title}"
+        )
+
+    window_start = str(summary["window_start"])
+    window_end = str(summary["window_end"])
+    return (
+        "## Dispatch-Health 24h\n\n"
+        f"**{total}** direktionale Alerts geblockt (Eligibility-Gate, Fenster "
+        f"{window_start[:10]} → {window_end[:10]}).\n\n"
+        "**Top-Block-Reasons:**\n" + "\n".join(reason_lines) + "\n\n"
+        "**Top-3 geblockte Headlines (höchste Priority):**\n"
+        + "\n".join(blocked_lines)
+        + "\n\n"
+        "→ Re-Calibration-Befund: [[kai-dispatch-filter-root-befund-20260524]]. "
+        "Sprint F1+F2+F3 betreffen diese Filter-Stelle.\n"
+    )
+
+
 def _gate_status_line(directional: int, paper_fills: int) -> str:
     alert_gate = (
         "✅ Gate ≥200 erreicht"
@@ -164,6 +290,9 @@ Horizont-Anker: {horizon_line}
 **Re-Entry-Gate (2026-05-16):** ≥200 resolved directional alerts ODER ≥10 Paper-Fills mit PnL.
 Aktueller Status: {_gate_status_line(directional, paper_fills)}
 
+---
+
+{_format_dispatch_health_section(_blocked_alerts_summary(today))}
 ---
 
 ## 1. Lagebild
