@@ -109,6 +109,25 @@ export function fetchHealth(signal?: AbortSignal): Promise<HealthResponse> {
   return apiGet<HealthResponse>("/health", { signal });
 }
 
+export type TimerHealthInactiveEntry = {
+  unit: string;
+  state: string;
+  last_trigger: string | null;
+};
+
+export type TimerHealthResponse = {
+  state: "ok" | "has_inactive" | "stale" | "no_data" | "corrupt";
+  checked_at: string | null;
+  stale_minutes: number | null;
+  total: number;
+  active: number;
+  inactive: TimerHealthInactiveEntry[];
+};
+
+export function fetchTimerHealth(signal?: AbortSignal): Promise<TimerHealthResponse> {
+  return apiGet<TimerHealthResponse>("/health/timers", { signal });
+}
+
 export type DashboardQuality = {
   precision_pct: number | null;
   false_positive_pct: number | null;
