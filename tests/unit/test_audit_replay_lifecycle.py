@@ -89,8 +89,7 @@ def test_replay_flags_lifecycle_discontinuity(tmp_path: Path) -> None:
         "ORDER_SUBMITTED",
     ]
     assert result.lifecycle_replay_errors == (
-        "audit_lifecycle_validation_error_line_2: discontinuous "
-        "ORDER_SUBMITTED -> ORDER_ACCEPTED",
+        "audit_lifecycle_validation_error_line_2: discontinuous ORDER_SUBMITTED -> ORDER_ACCEPTED",
     )
 
 
