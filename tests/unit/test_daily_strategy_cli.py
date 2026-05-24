@@ -233,9 +233,7 @@ def test_format_dispatch_health_section_with_records() -> None:
     assert "kai-dispatch-filter-root-befund-20260524" in section
 
 
-def test_bootstrap_skeleton_includes_dispatch_health(
-    runner: CliRunner, repo_cwd: Path
-) -> None:
+def test_bootstrap_skeleton_includes_dispatch_health(runner: CliRunner, repo_cwd: Path) -> None:
     """F4: ensure the bootstrap-rendered skeleton has the Dispatch-Health section."""
     now = datetime.now(UTC)
     _write_blocked_jsonl(

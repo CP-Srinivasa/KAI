@@ -218,11 +218,7 @@ def _bridge_history_for_envelope(
         match = False
         if isinstance(corr, str) and corr == origin_envelope_id:
             match = True
-        elif (
-            approved_envelope_id
-            and isinstance(env, str)
-            and env == approved_envelope_id
-        ):
+        elif approved_envelope_id and isinstance(env, str) and env == approved_envelope_id:
             match = True
         if not match:
             continue
@@ -268,9 +264,7 @@ def _paper_events_for_envelope(
     ``_attach_tp_tier_sells`` symbol+timestamp-basiert nachgezogen.
     """
     out: list[dict[str, Any]] = []
-    needle_idem = (
-        f"opbridge:{approved_envelope_id}" if approved_envelope_id else None
-    )
+    needle_idem = f"opbridge:{approved_envelope_id}" if approved_envelope_id else None
     for rec in paper_records:
         corr = rec.get("correlation_id")
         idem = rec.get("idempotency_key")
@@ -378,9 +372,7 @@ def _attach_tp_tier_sells(
         if not isinstance(idem, str):
             continue
         matches_pattern = (
-            tp_tier_needle in idem
-            or sl_needle in idem
-            or idem.startswith(repair_needle)
+            tp_tier_needle in idem or sl_needle in idem or idem.startswith(repair_needle)
         )
         if matches_pattern:
             attached.append(rec)
@@ -607,8 +599,7 @@ def _derive_stages(
     sell_fills = 0
     last_sell_ts: str | None = None
     has_position_closed = any(
-        (ev.get("event_type") or ev.get("event")) == "position_closed"
-        for ev in paper_events
+        (ev.get("event_type") or ev.get("event")) == "position_closed" for ev in paper_events
     )
 
     for ev in paper_events:
@@ -824,9 +815,7 @@ def build_trail(
     """
     del raw_records  # parser-outcomes sind im envelope-record bereits implizit "parsed"
 
-    originals, approved_by_origin, approved_id_by_origin = _signal_envelopes(
-        envelope_records
-    )
+    originals, approved_by_origin, approved_id_by_origin = _signal_envelopes(envelope_records)
 
     # Sortiere Original-Envelopes nach Empfangszeit (neueste zuerst)
     ordered = sorted(
@@ -854,11 +843,7 @@ def build_trail(
         )
 
         payload = _payload(env)
-        symbol = (
-            _safe_str(payload.get("display_symbol"))
-            or _safe_str(payload.get("symbol"))
-            or "?"
-        )
+        symbol = _safe_str(payload.get("display_symbol")) or _safe_str(payload.get("symbol")) or "?"
         # Pre-V4.1 TP-Tier-Sells haben correlation_id="" — über symbol+
         # buy-fill-ts nachziehen. V4.1+ position_closed-Events haben
         # eigene correlation_id und sind bereits in base_paper_events.

@@ -208,13 +208,11 @@ def _format_dispatch_health_section(summary: dict[str, object]) -> str:
         prio = rec.get("priority", "?")
         label = rec.get("sentiment_label", "?")
         src = rec.get("source_name", "?")
-        title = (rec.get("normalized_title") or "")
+        title = rec.get("normalized_title") or ""
         if isinstance(title, str) and len(title) > 100:
             title = title[:97] + "..."
         reason = rec.get("block_reason", "?")
-        blocked_lines.append(
-            f"- p={prio} `{label}` src=`{src}` → `{reason}`\n  > {title}"
-        )
+        blocked_lines.append(f"- p={prio} `{label}` src=`{src}` → `{reason}`\n  > {title}")
 
     window_start = str(summary["window_start"])
     window_end = str(summary["window_end"])
@@ -223,9 +221,7 @@ def _format_dispatch_health_section(summary: dict[str, object]) -> str:
         f"**{total}** direktionale Alerts geblockt (Eligibility-Gate, Fenster "
         f"{window_start[:10]} → {window_end[:10]}).\n\n"
         "**Top-Block-Reasons:**\n" + "\n".join(reason_lines) + "\n\n"
-        "**Top-3 geblockte Headlines (höchste Priority):**\n"
-        + "\n".join(blocked_lines)
-        + "\n\n"
+        "**Top-3 geblockte Headlines (höchste Priority):**\n" + "\n".join(blocked_lines) + "\n\n"
         "→ Re-Calibration-Befund: [[kai-dispatch-filter-root-befund-20260524]]. "
         "Sprint F1+F2+F3 betreffen diese Filter-Stelle.\n"
     )

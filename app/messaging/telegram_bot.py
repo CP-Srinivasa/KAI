@@ -262,9 +262,7 @@ class TelegramOperatorBot:
         # If both are None: /live and /trade reply with "not configured".
         # Eager wins over factory if both are passed (test-injection path).
         self._live_engine: LiveExecutionEngine | None = live_engine
-        self._live_engine_factory: Callable[[], LiveExecutionEngine] | None = (
-            live_engine_factory
-        )
+        self._live_engine_factory: Callable[[], LiveExecutionEngine] | None = live_engine_factory
 
     @property
     def is_configured(self) -> bool:
