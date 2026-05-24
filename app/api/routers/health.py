@@ -52,4 +52,3 @@ async def timer_health(
     audit_file = workspace_root / "artifacts" / "timer_health_audit.jsonl"
     data = read_latest_timer_audit(audit_file)
     return TimerHealthResponse(**data)
-

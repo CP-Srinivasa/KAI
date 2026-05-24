@@ -120,11 +120,13 @@ def read_latest_timer_audit(path: Path) -> dict[str, Any]:
             unit_name = parts[0]
             unit_state = parts[1][:-1]
 
-        inactive_timers.append({
-            "unit": unit_name,
-            "state": unit_state,
-            "last_trigger": None,
-        })
+        inactive_timers.append(
+            {
+                "unit": unit_name,
+                "state": unit_state,
+                "last_trigger": None,
+            }
+        )
 
     # Resolve total und active
     total_from_audit = parsed_data.get("total_timers")
