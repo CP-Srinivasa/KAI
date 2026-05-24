@@ -8,13 +8,18 @@ idempotent per day via a marker file.
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
 from typer.testing import CliRunner
 
-from app.cli.commands.daily_strategy import _STUB_MARKERS, daily_strategy_app
+from app.cli.commands.daily_strategy import (
+    _STUB_MARKERS,
+    _blocked_alerts_summary,
+    _format_dispatch_health_section,
+    daily_strategy_app,
+)
 
 
 @pytest.fixture
@@ -100,6 +105,157 @@ def test_bootstrap_force_overwrites(runner: CliRunner, repo_cwd: Path) -> None:
     text = today_path.read_text(encoding="utf-8")
     assert text != "# old"
     assert _STUB_MARKERS[0] in text
+
+
+# --- F4 Dispatch-Health Section ---------------------------------------------
+
+
+def _write_blocked_jsonl(repo: Path, records: list[dict]) -> Path:
+    """Helper: write a blocked_alerts.jsonl in the repo with the given records."""
+    path = repo / "artifacts" / "blocked_alerts.jsonl"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as fh:
+        for rec in records:
+            fh.write(json.dumps(rec) + "\n")
+    return path
+
+
+def test_blocked_alerts_summary_empty_when_file_missing(repo_cwd: Path) -> None:
+    today = datetime.now(UTC).date()
+    summary = _blocked_alerts_summary(today)
+    assert summary["total"] == 0
+    assert summary["top_reasons"] == []
+    assert summary["top_blocked"] == []
+
+
+def test_blocked_alerts_summary_counts_reasons_within_window(repo_cwd: Path) -> None:
+    today = datetime.now(UTC).date()
+    now = datetime.now(UTC)
+    recent = (now - timedelta(hours=2)).isoformat()
+    stale = (now - timedelta(hours=48)).isoformat()
+    _write_blocked_jsonl(
+        repo_cwd,
+        [
+            {
+                "document_id": "d1",
+                "block_reason": "reactive_price_narrative",
+                "blocked_at": recent,
+                "priority": 10,
+                "sentiment_label": "bullish",
+                "source_name": "cryptobriefing",
+                "normalized_title": "iran us mou as btc rallies past 82k",
+            },
+            {
+                "document_id": "d2",
+                "block_reason": "reactive_price_narrative",
+                "blocked_at": recent,
+                "priority": 9,
+                "sentiment_label": "bullish",
+                "source_name": "coindesk",
+                "normalized_title": "bitcoin heads higher on peace deal",
+            },
+            {
+                "document_id": "d3",
+                "block_reason": "bearish_directional_disabled",
+                "blocked_at": recent,
+                "priority": 10,
+                "sentiment_label": "bearish",
+                "source_name": "cryptoslate",
+                "normalized_title": "bitcoin hard money thesis colliding with 5pct yields",
+            },
+            {
+                "document_id": "d_old",
+                "block_reason": "reactive_price_narrative",
+                "blocked_at": stale,  # outside window — must not count
+                "priority": 10,
+                "sentiment_label": "bullish",
+                "source_name": "x",
+                "normalized_title": "old",
+            },
+        ],
+    )
+
+    summary = _blocked_alerts_summary(today)
+    assert summary["total"] == 3
+    reasons = dict(summary["top_reasons"])
+    assert reasons["reactive_price_narrative"] == 2
+    assert reasons["bearish_directional_disabled"] == 1
+
+
+def test_blocked_alerts_summary_top_blocked_sorted_by_priority(repo_cwd: Path) -> None:
+    today = datetime.now(UTC).date()
+    now = datetime.now(UTC)
+    recent = (now - timedelta(hours=1)).isoformat()
+    _write_blocked_jsonl(
+        repo_cwd,
+        [
+            {"document_id": f"d{i}", "block_reason": "x", "blocked_at": recent, "priority": p}
+            for i, p in enumerate([3, 10, 7, 9, 5])
+        ],
+    )
+    summary = _blocked_alerts_summary(today)
+    assert summary["total"] == 5
+    top = summary["top_blocked"]
+    assert [r["priority"] for r in top] == [10, 9, 7]  # top-3 by priority desc
+
+
+def test_format_dispatch_health_section_empty() -> None:
+    section = _format_dispatch_health_section(
+        {"total": 0, "top_reasons": [], "top_blocked": [], "window_start": "x", "window_end": "y"}
+    )
+    assert "Keine geblockten" in section
+    assert "## Dispatch-Health 24h" in section
+
+
+def test_format_dispatch_health_section_with_records() -> None:
+    section = _format_dispatch_health_section(
+        {
+            "total": 3,
+            "top_reasons": [("reactive_price_narrative", 2), ("bearish_directional_disabled", 1)],
+            "top_blocked": [
+                {
+                    "priority": 10,
+                    "sentiment_label": "bullish",
+                    "source_name": "cryptobriefing",
+                    "normalized_title": "iran us mou as btc rallies past 82k",
+                    "block_reason": "reactive_price_narrative",
+                }
+            ],
+            "window_start": "2026-05-23T00:00:00+00:00",
+            "window_end": "2026-05-24T23:59:59+00:00",
+        }
+    )
+    assert "## Dispatch-Health 24h" in section
+    assert "**3** direktionale Alerts geblockt" in section
+    assert "reactive_price_narrative" in section
+    assert "cryptobriefing" in section
+    assert "iran us mou as btc rallies past 82k" in section
+    assert "kai-dispatch-filter-root-befund-20260524" in section
+
+
+def test_bootstrap_skeleton_includes_dispatch_health(runner: CliRunner, repo_cwd: Path) -> None:
+    """F4: ensure the bootstrap-rendered skeleton has the Dispatch-Health section."""
+    now = datetime.now(UTC)
+    _write_blocked_jsonl(
+        repo_cwd,
+        [
+            {
+                "document_id": "d1",
+                "block_reason": "weak_directional_signal",
+                "blocked_at": (now - timedelta(hours=2)).isoformat(),
+                "priority": 9,
+                "sentiment_label": "bullish",
+                "source_name": "beincrypto",
+                "normalized_title": "sample headline for f4 test",
+            }
+        ],
+    )
+    result = runner.invoke(daily_strategy_app, ["bootstrap", "--no-notify"])
+    assert result.exit_code == 0
+    text = _today_path(repo_cwd).read_text(encoding="utf-8")
+    assert "## Dispatch-Health 24h" in text
+    assert "weak_directional_signal" in text
+    assert "sample headline for f4 test" in text
 
 
 # --- reminder -------------------------------------------------------------
