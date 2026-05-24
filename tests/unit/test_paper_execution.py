@@ -1124,6 +1124,92 @@ def test_close_position_emits_closed_transition(tmp_path):
     assert t["reason"] == "take"
 
 
+def test_partial_then_stop_lifecycle_continues_from_partial_state(tmp_path):
+    eng = _engine(tmp_path)
+    order = eng.create_order(
+        symbol="HYPE/USDT",
+        side="buy",
+        quantity=100.0,
+        idempotency_key="lifecycle_partial_stop",
+        correlation_id="dec_partial_stop",
+        stop_loss=39.26,
+    )
+    eng.fill_order(order, current_price=40.9)
+    eng.set_position_tp_tiers(
+        "HYPE/USDT",
+        [(41.105, 0.25), (41.31, 0.25), (41.515, 0.25), (41.72, 0.25)],
+    )
+
+    eng.monitor_positions({"HYPE/USDT": 41.15})
+    eng.monitor_positions({"HYPE/USDT": 39.0})
+
+    records = _read_audit_records(tmp_path / "audit.jsonl")
+    lifecycle = [r for r in records if r.get("event_type") == "lifecycle_transition"]
+    assert [(r["from_state"], r["to_state"]) for r in lifecycle] == [
+        ("ORDER_BUILDING", "ORDER_SUBMITTED"),
+        ("ORDER_SUBMITTED", "ORDER_ACCEPTED"),
+        ("ORDER_ACCEPTED", "POSITION_OPEN"),
+        ("POSITION_OPEN", "PARTIAL_TP_HIT"),
+        ("PARTIAL_TP_HIT", "SL_HIT"),
+    ]
+
+
+def test_rehydrate_restores_partial_lifecycle_before_terminal_close(tmp_path):
+    from app.execution.audit_replay import replay_paper_audit
+
+    eng1 = _engine(tmp_path)
+    order = eng1.create_order(
+        symbol="HYPE/USDT",
+        side="buy",
+        quantity=100.0,
+        idempotency_key="lifecycle_rehydrate_partial",
+        correlation_id="dec_rehydrate_partial",
+        stop_loss=39.26,
+    )
+    eng1.fill_order(order, current_price=40.9)
+    eng1.set_position_tp_tiers("HYPE/USDT", [(41.105, 0.25), (41.31, 0.25)])
+    eng1.monitor_positions({"HYPE/USDT": 41.15})
+
+    eng2 = _engine(tmp_path)
+    assert eng2.rehydrate_from_audit()
+    eng2.monitor_positions({"HYPE/USDT": 39.0})
+
+    audit_path = tmp_path / "audit.jsonl"
+    records = _read_audit_records(audit_path)
+    lifecycle = [r for r in records if r.get("event_type") == "lifecycle_transition"]
+    assert (lifecycle[-1]["from_state"], lifecycle[-1]["to_state"]) == (
+        "PARTIAL_TP_HIT",
+        "SL_HIT",
+    )
+    assert replay_paper_audit(audit_path).lifecycle_replay_errors == ()
+
+
+def test_final_tier_lifecycle_reaches_tp_hit(tmp_path):
+    eng = _engine(tmp_path)
+    order = eng.create_order(
+        symbol="ETH/USDT",
+        side="buy",
+        quantity=3.0,
+        idempotency_key="lifecycle_tier_terminal",
+        correlation_id="dec_tier_terminal",
+        stop_loss=2800.0,
+    )
+    eng.fill_order(order, current_price=3000.0)
+    eng.set_position_tp_tiers("ETH/USDT", [(3100.0, 0.5), (3200.0, 0.5)])
+
+    eng.monitor_positions({"ETH/USDT": 3250.0})
+
+    records = _read_audit_records(tmp_path / "audit.jsonl")
+    lifecycle = [r for r in records if r.get("event_type") == "lifecycle_transition"]
+    assert [(r["from_state"], r["to_state"]) for r in lifecycle] == [
+        ("ORDER_BUILDING", "ORDER_SUBMITTED"),
+        ("ORDER_SUBMITTED", "ORDER_ACCEPTED"),
+        ("ORDER_ACCEPTED", "POSITION_OPEN"),
+        ("POSITION_OPEN", "PARTIAL_TP_HIT"),
+        ("PARTIAL_TP_HIT", "TP_HIT"),
+    ]
+
+
 def test_fill_without_correlation_id_skips_signal_transition(tmp_path):
     eng = _engine(tmp_path)
     order = eng.create_order(

@@ -115,7 +115,7 @@ def replay_paper_audit(audit_path: Path) -> AuditReplayResult:
     # 2026-05-12 Sprint A: order_meta erweitert um leverage + source. Pre-Sprint-A
     # audit-rows haben diese Felder nicht — _coerce_float/str geben None/"" zurück
     # und der Replay bleibt rückwärtskompatibel.
-    order_meta: dict[str, tuple[float | None, float | None, float | None, str]] = {}
+    order_meta: dict[str, tuple[float | None, float | None, float | None, str, str]] = {}
     # 2026-05-12 Sprint C: idempotency_key-Mapping aus order_created. Wenn das
     # zugehörige order_filled später erfolgreich verarbeitet wird, landet der
     # key im filled_keys-set. Cross-process Race-Schutz (siehe Q/USDT 2026-05-09).
@@ -157,7 +157,15 @@ def replay_paper_audit(audit_path: Path) -> AuditReplayResult:
         if event_type == "lifecycle_transition":
             transition, error = _coerce_lifecycle_transition(payload, line_number=line_number)
             if transition is not None:
-                lifecycle_history.setdefault(transition.correlation_id, []).append(transition)
+                history = lifecycle_history.setdefault(transition.correlation_id, [])
+                if history and history[-1].to_state != transition.from_state:
+                    lifecycle_replay_errors.append(
+                        "audit_lifecycle_validation_error_line_"
+                        f"{line_number}: discontinuous "
+                        f"{history[-1].to_state.value} -> {transition.from_state.value}"
+                    )
+                    continue
+                history.append(transition)
             if error is not None:
                 lifecycle_replay_errors.append(error)
             continue
@@ -170,6 +178,7 @@ def replay_paper_audit(audit_path: Path) -> AuditReplayResult:
                     _coerce_float(payload.get("take_profit")),
                     _coerce_float(payload.get("leverage")),
                     _coerce_str(payload.get("source")) or "",
+                    _coerce_str(payload.get("correlation_id")) or "",
                 )
                 # Sprint C: idempotency_key persistieren damit fill-replay sie
                 # in filled_keys eintragen kann sobald order_filled gesehen wird.
@@ -276,10 +285,12 @@ def replay_paper_audit(audit_path: Path) -> AuditReplayResult:
         take_profit: float | None = None
         leverage: float | None = None
         source: str = ""
+        correlation_id = _coerce_str(payload.get("correlation_id")) or ""
         if order_id is not None:
             meta = order_meta.get(order_id)
             if meta is not None:
-                stop_loss, take_profit, leverage, source = meta
+                stop_loss, take_profit, leverage, source, order_correlation_id = meta
+                correlation_id = correlation_id or order_correlation_id
             # Sprint C: filled_keys aus der order_idem_by_id-Brücke befüllen.
             # Wenn ein order_filled für einen bekannten order_id replay-läuft,
             # wissen wir dass dieser idempotency_key bereits einen Fill produziert
@@ -309,6 +320,7 @@ def replay_paper_audit(audit_path: Path) -> AuditReplayResult:
                     opened_at=filled_at,
                     realized_pnl_usd=0.0,
                     position_side=position_side_val,
+                    correlation_id=correlation_id,
                     leverage=leverage,
                     source=source,
                 )
@@ -336,6 +348,7 @@ def replay_paper_audit(audit_path: Path) -> AuditReplayResult:
                     position_side=existing.position_side,
                     take_profit_tiers=list(existing.take_profit_tiers),
                     initial_quantity=existing.initial_quantity,
+                    correlation_id=existing.correlation_id or correlation_id,
                     leverage=existing.leverage if existing.leverage is not None else leverage,
                     source=existing.source or source,
                 )
@@ -367,6 +380,7 @@ def replay_paper_audit(audit_path: Path) -> AuditReplayResult:
                     position_side=existing.position_side,
                     take_profit_tiers=list(existing.take_profit_tiers),
                     initial_quantity=existing.initial_quantity,
+                    correlation_id=existing.correlation_id,
                     leverage=existing.leverage,
                     source=existing.source,
                 )
