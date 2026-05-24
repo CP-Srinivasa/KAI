@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -409,6 +410,13 @@ def _normalize_legacy_decision_payload(payload: dict[str, object]) -> dict[str, 
     return normalized
 
 
+def validate_decision_journal_payload(payload: Mapping[str, object]) -> DecisionInstance:
+    """Validate a raw journal row using the same legacy bridge as the reader."""
+
+    normalized = _normalize_legacy_decision_payload(dict(payload))
+    return validate_decision_record_payload(normalized)
+
+
 def load_decision_journal(path: Path | str) -> list[DecisionInstance]:
     """Load append-only journal rows and fail closed on malformed records."""
 
@@ -437,8 +445,7 @@ def load_decision_journal(path: Path | str) -> list[DecisionInstance]:
         if not isinstance(payload, dict):
             raise ValueError(f"Invalid decision journal payload at line {line_number}")
         try:
-            normalized = _normalize_legacy_decision_payload(dict(payload))
-            entries.append(validate_decision_record_payload(normalized))
+            entries.append(validate_decision_journal_payload(payload))
         except ValueError as exc:
             logger.error(
                 "Decision journal validation failed at %s line %s: %s",
