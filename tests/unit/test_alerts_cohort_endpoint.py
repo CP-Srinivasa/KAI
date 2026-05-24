@@ -61,8 +61,12 @@ def test_endpoint_returns_all_six_cohorts(tmp_path: Path) -> None:
     body = resp.json()
     cohorts = body["cohorts"]
     assert set(cohorts.keys()) == {
-        "fresh_auto", "backfill", "reeval", "other",
-        "latest_per_doc", "fresh_dispatch",
+        "fresh_auto",
+        "backfill",
+        "reeval",
+        "other",
+        "latest_per_doc",
+        "fresh_dispatch",
     }
     assert cohorts["fresh_auto"]["total"] == 2
     assert cohorts["backfill"]["total"] == 1

@@ -53,7 +53,11 @@ def find_matching_signal_data(query_id: str, artifacts_dir: Path) -> dict[str, A
     for r in reversed(ingress_records):
         sig_id = r.get("signal_id") or r.get("document_id")
         corr_id = r.get("correlation_id")
-        if query in (sig_id, corr_id) or (sig_id and query in sig_id) or (corr_id and query in corr_id):
+        if (
+            query in (sig_id, corr_id)
+            or (sig_id and query in sig_id)
+            or (corr_id and query in corr_id)
+        ):
             data["ingress"] = r
             data["symbol"] = r.get("symbol")
             data["direction"] = r.get("direction")
@@ -64,7 +68,11 @@ def find_matching_signal_data(query_id: str, artifacts_dir: Path) -> dict[str, A
     for r in reversed(pending_records):
         sig_id = r.get("signal_id") or r.get("document_id")
         corr_id = r.get("correlation_id")
-        if query in (sig_id, corr_id) or (sig_id and query in sig_id) or (corr_id and query in corr_id):
+        if (
+            query in (sig_id, corr_id)
+            or (sig_id and query in sig_id)
+            or (corr_id and query in corr_id)
+        ):
             data["eligibility"] = r
             break
 
@@ -72,7 +80,11 @@ def find_matching_signal_data(query_id: str, artifacts_dir: Path) -> dict[str, A
     for r in reversed(promoted_records):
         sig_id = r.get("signal_id") or r.get("document_id")
         corr_id = r.get("correlation_id")
-        if query in (sig_id, corr_id) or (sig_id and query in sig_id) or (corr_id and query in corr_id):
+        if (
+            query in (sig_id, corr_id)
+            or (sig_id and query in sig_id)
+            or (corr_id and query in corr_id)
+        ):
             data["promotion"] = r
             break
 
@@ -81,7 +93,11 @@ def find_matching_signal_data(query_id: str, artifacts_dir: Path) -> dict[str, A
     for r in reversed(decision_records):
         sig_id = r.get("signal_id") or r.get("document_id")
         corr_id = r.get("correlation_id")
-        if query in (sig_id, corr_id) or (sig_id and query in sig_id) or (corr_id and query in corr_id):
+        if (
+            query in (sig_id, corr_id)
+            or (sig_id and query in sig_id)
+            or (corr_id and query in corr_id)
+        ):
             data["approval"] = r
             break
 
@@ -103,7 +119,11 @@ def find_matching_signal_data(query_id: str, artifacts_dir: Path) -> dict[str, A
     for r in reversed(exec_records):
         sig_id = r.get("signal_id") or r.get("document_id")
         corr_id = r.get("correlation_id")
-        if query in (sig_id, corr_id) or (sig_id and query in sig_id) or (corr_id and query in corr_id):
+        if (
+            query in (sig_id, corr_id)
+            or (sig_id and query in sig_id)
+            or (corr_id and query in corr_id)
+        ):
             matching_execs.append(r)
             if not data["symbol"] and r.get("symbol"):
                 data["symbol"] = r.get("symbol")
@@ -267,7 +287,7 @@ def format_signal_trail_message(query_id: str, artifacts_dir: Path) -> str:
             etype = ev.get("event_type")
             pnl = ev.get("pnl")
             pnl_str = f" (PnL: {pnl:+.2f}%)" if pnl is not None else ""
-            lines.append(f"  {idx+1}. `{etype}`{pnl_str}")
+            lines.append(f"  {idx + 1}. `{etype}`{pnl_str}")
     else:
         lines.append("9️⃣ *Lifecycle:* ⚪ Inaktiv")
 

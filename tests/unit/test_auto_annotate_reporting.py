@@ -47,14 +47,11 @@ def test_cohort_split_routing_and_rates(tmp_path: Path) -> None:
         create_mock_outcome("doc_1", "hit", "auto: bullish BTC/USDT", t_now),
         create_mock_outcome("doc_2", "miss", "auto: bearish BTC/USDT", t_now),
         create_mock_outcome("doc_3", "inconclusive", "auto: bullish BTC/USDT", t_now),
-
         # backfill (resolved = 1, hit = 1, miss = 0, inconclusive = 1) -> hit_rate = 100%
         create_mock_outcome("doc_4", "hit", "backfill: bullish BTC/USDT", t_now),
         create_mock_outcome("doc_5", "inconclusive", "backfill: bearish BTC/USDT", t_now),
-
         # reeval (resolved = 1, hit = 0, miss = 1, inconclusive = 0) -> hit_rate = 0%
         create_mock_outcome("doc_6", "miss", "reeval: bearish BTC/USDT", t_now),
-
         # other (resolved = 2, hit = 1, miss = 1, inconclusive = 0) -> hit_rate = 50%
         create_mock_outcome("doc_7", "hit", "legacy notes without prefix", t_now),
         create_mock_outcome("doc_8", "miss", "manual: bullish BTC/USDT", t_now),
@@ -164,7 +161,9 @@ def test_dispatch_window_filtering_and_missing_audit(tmp_path: Path) -> None:
     # Create Outcomes (both annotated inside the window / today)
     out_1 = create_mock_outcome("doc_1", "hit", "auto: bullish BTC/USDT", t_inside)
     out_2 = create_mock_outcome("doc_2", "hit", "auto: bullish BTC/USDT", t_inside)
-    out_3 = create_mock_outcome("doc_3", "hit", "auto: bullish BTC/USDT", t_inside)  # missing audit!
+    out_3 = create_mock_outcome(
+        "doc_3", "hit", "auto: bullish BTC/USDT", t_inside
+    )  # missing audit!
 
     append_outcome_annotation(out_1, tmp_path)
     append_outcome_annotation(out_2, tmp_path)

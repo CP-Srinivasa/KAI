@@ -1834,6 +1834,7 @@ def alerts_auto_annotate_report(
     )
 
     import json
+
     console.print(json.dumps(report, indent=2))
 
 

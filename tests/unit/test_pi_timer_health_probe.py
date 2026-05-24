@@ -152,7 +152,10 @@ def test_timer_health_probe_inactive_alert_and_throttling(tmp_path) -> None:
         assert len(lines) == 3
         data_3 = json.loads(lines[2])
         assert data_3["event"] == "timer_health_probe.findings"
-        assert set(data_3["findings"]) == {"kai-auto-annotate.timer (inactive)", "kai-pi-health.timer (inactive)"}
+        assert set(data_3["findings"]) == {
+            "kai-auto-annotate.timer (inactive)",
+            "kai-pi-health.timer (inactive)",
+        }
         assert data_3["decision_reason"] == "new_findings"
         assert data_3["last_alerted_utc"] != data_1["last_alerted_utc"]
     finally:

@@ -2093,6 +2093,7 @@ class TelegramOperatorBot:
     async def _cmd_trail(self, chat_id: int, *, args: str = "") -> None:
         try:
             from app.messaging.signal_trail import format_signal_trail_message
+
             artifacts_dir = Path("artifacts")
             msg = format_signal_trail_message(args, artifacts_dir)
             await self._send(chat_id, msg)
