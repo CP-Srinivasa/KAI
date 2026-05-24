@@ -17,6 +17,8 @@ from app.audit.stream_validation import (
 from app.decisions.journal import RiskAssessment, create_decision_instance
 from app.execution.models import append_decision_record_jsonl
 from app.execution.paper_engine import PaperExecutionEngine
+from app.signals.bayes_journal import append_bayes_report
+from app.signals.bayesian_confidence import ConfidenceReport
 
 _TS = "2026-05-24T10:00:00+00:00"
 _STREAMS: tuple[AuditStreamName, ...] = (
@@ -237,3 +239,26 @@ def test_pre_d_writers_leave_locked_schema_valid_rows(tmp_path: Path) -> None:
     engine._append_audit("order_created", {"symbol": "BTC/USDT"})
     assert paper_path.with_suffix(".jsonl.lock").exists()
     assert load_audit_stream(paper_path, "paper_execution_audit").issue_count == 0
+
+    bayes_path = tmp_path / "bayes_confidence_audit.jsonl"
+    append_bayes_report(
+        decision_id="dec-bayes",
+        symbol="BTC/USDT",
+        direction="long",
+        report=ConfidenceReport(
+            prior_probability=0.5,
+            posterior_probability=0.61,
+            confidence_score=0.42,
+            uncertainty_score=0.58,
+            evidence_weight=1.2,
+            agreement=0.7,
+            increased=(),
+            decreased=(),
+            neutral=(),
+            discarded=(),
+            residual_uncertainty_drivers=(),
+        ),
+        path=bayes_path,
+    )
+    assert bayes_path.with_suffix(".jsonl.lock").exists()
+    assert load_audit_stream(bayes_path, "bayes_confidence_audit").issue_count == 0
