@@ -3,6 +3,7 @@ import { Send, RefreshCw, AlertCircle, Inbox, Bell, Info, CheckCircle2, XCircle 
 import { useT } from "@/i18n/I18nProvider";
 import { Badge, Button, Card } from "@/components/ui/Primitives";
 import { EmptyState } from "@/components/ui/EmptyState";
+import { AutoAnnotateCohortDrawer } from "@/components/panels/AutoAnnotateCohortDrawer";
 import { PageHeader } from "@/layout/PageHeader";
 import { useApi } from "@/lib/useApi";
 import { fetchAlertAudit, postAlertTest, ApiError } from "@/lib/api";
@@ -407,6 +408,8 @@ export function AlertsPage() {
           </div>
         </Card>
       )}
+
+      <AutoAnnotateCohortDrawer />
     </div>
   );
 }
