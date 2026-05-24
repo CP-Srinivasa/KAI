@@ -61,6 +61,10 @@ UNITS=(
     "kai-auto-annotate.timer"
     "kai-recalc-cycle.service"
     "kai-recalc-cycle.timer"
+    "kai-regime-classify.service"
+    "kai-regime-classify.timer"
+    "kai-health-check.service"
+    "kai-health-check.timer"
 )
 
 ENABLE_ON_INSTALL=(
@@ -81,6 +85,7 @@ ENABLE_ON_INSTALL=(
     "kai-hold-report.timer"
     "kai-auto-annotate.timer"
     "kai-recalc-cycle.timer"
+    "kai-health-check.timer"
 )
 
 # 2026-05-14: Reactivate-Hook — kritische Premium-Signal-Pipeline-Units.
