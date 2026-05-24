@@ -26,6 +26,7 @@ from app.learning.source_reliability import (
     build_source_reliability_report,
     wilson_lower_bound,
 )
+from app.signals.models import SignalProvenance
 
 # ── wilson_lower_bound math ────────────────────────────────────────────────
 
@@ -163,6 +164,68 @@ def test_report_excludes_alerts_without_source() -> None:
     )
     assert "Decrypt" in report["scores"]
     assert len(report["scores"]) == 1
+
+
+def test_report_falls_back_to_audit_source_name_when_source_map_missing() -> None:
+    """Audit source_name is canonical enough when the source map has a gap."""
+    audits = [_audit("d1", "CoinDesk")]
+    annotations = [_ann("d1", "hit")]
+    report = build_source_reliability_report(
+        audits,
+        annotations,
+        source_by_doc={},
+    )
+    score = report["scores"]["CoinDesk"]
+    assert score["hits"] == 1
+    assert score["n"] == 1
+
+
+def test_report_falls_back_to_persisted_provenance_source() -> None:
+    """D-125 provenance prevents legacy source-map gaps from dropping rows."""
+    audits = [
+        AlertAuditRecord(
+            document_id="d1",
+            channel="telegram",
+            message_id="m",
+            is_digest=False,
+            dispatched_at="2026-05-15T10:00:00+00:00",
+            source_name=None,
+            provenance=SignalProvenance(source="tradingview_webhook", version="tv-1"),
+        )
+    ]
+    annotations = [_ann("d1", "miss")]
+    report = build_source_reliability_report(
+        audits,
+        annotations,
+        source_by_doc={},
+    )
+    score = report["scores"]["tradingview_webhook"]
+    assert score["miss"] == 1
+    assert score["n"] == 1
+
+
+def test_report_prefers_source_map_over_audit_fallbacks() -> None:
+    """Caller-provided source maps remain the strongest attribution signal."""
+    audits = [
+        AlertAuditRecord(
+            document_id="d1",
+            channel="telegram",
+            message_id="m",
+            is_digest=False,
+            dispatched_at="2026-05-15T10:00:00+00:00",
+            source_name="AuditSource",
+            provenance=SignalProvenance(source="ProvenanceSource", version="rss-1"),
+        )
+    ]
+    annotations = [_ann("d1", "hit")]
+    report = build_source_reliability_report(
+        audits,
+        annotations,
+        source_by_doc={"d1": "MappedSource"},
+    )
+    assert "MappedSource" in report["scores"]
+    assert "AuditSource" not in report["scores"]
+    assert "ProvenanceSource" not in report["scores"]
 
 
 def test_report_classifies_low_tier_for_consistent_misses() -> None:

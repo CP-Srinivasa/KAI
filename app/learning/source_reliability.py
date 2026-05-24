@@ -158,6 +158,32 @@ def _parse_iso(ts: str | None) -> datetime | None:
     return dt
 
 
+def _resolve_record_source(
+    rec: AlertAuditRecord,
+    source_by_doc: dict[str, str],
+) -> str | None:
+    """Resolve a source label for one alert audit record.
+
+    Prefer the explicit caller-provided map, but fall back to the audit row's
+    own persisted fields. Older source-reliability runs only used
+    ``source_by_doc``; that dropped rows whose DB/source-map join was missing
+    even though the append-only audit row carried ``source_name`` or
+    ``provenance.source``.
+    """
+    candidates = (
+        source_by_doc.get(rec.document_id),
+        rec.source_name,
+        rec.provenance.source if rec.provenance is not None else None,
+    )
+    for candidate in candidates:
+        if candidate is None:
+            continue
+        cleaned = candidate.strip()
+        if cleaned:
+            return cleaned
+    return None
+
+
 def build_source_reliability_report(
     audits: list[AlertAuditRecord],
     annotations: list[AlertOutcomeAnnotation],
@@ -172,11 +198,13 @@ def build_source_reliability_report(
     so the recalc-script can re-use the existing loaders. Returns a JSON-
     serialisable dict suitable for writing to ``monitor/source_reliability.json``.
 
-    Documents without a known source (``source_by_doc.get(doc_id) is None``)
-    are excluded — they cannot affect a source's tier. The dispatched_at
-    timestamp is the inclusion criterion (not the annotation timestamp) so
-    a source's reliability reflects when it was acting, not when the operator
-    happened to annotate.
+    Documents without a known source are excluded — they cannot affect a
+    source's tier. Source resolution prefers ``source_by_doc`` but falls back
+    to the audit row's own ``source_name`` and persisted ``provenance.source``
+    so legacy DB/source-map gaps do not silently erase hard outcomes. The
+    dispatched_at timestamp is the inclusion criterion (not the annotation
+    timestamp) so a source's reliability reflects when it was acting, not when
+    the operator happened to annotate.
     """
     now = now_utc or datetime.now(UTC)
     cutoff = now - timedelta(days=window_days)
@@ -193,7 +221,7 @@ def build_source_reliability_report(
     for rec in audits:
         if rec.is_digest:
             continue
-        source = source_by_doc.get(rec.document_id)
+        source = _resolve_record_source(rec, source_by_doc)
         if not source:
             continue
         dispatched = _parse_iso(rec.dispatched_at)
