@@ -14,7 +14,9 @@ import {
   RotateCcw,
   FileText,
   MessageSquare,
+  Target,
 } from "lucide-react";
+import { useRouter } from "@/state/Router";
 import { useT } from "@/i18n/I18nProvider";
 import { PageHeader } from "@/layout/PageHeader";
 import {
@@ -921,6 +923,25 @@ function SignalDetails({
 function EnvelopeCard({ rec }: { rec: EnvelopeRecord }) {
   const tone = envelopeTone(rec);
   const isDuplicate = rec.status === "duplicate";
+  const router = useRouter();
+
+  // DALI-P-103: Trail-Deep-Link aus Signal-Feed.
+  // sessionStorage statt URL-Hash, weil der KAI-Router (state/Router.tsx)
+  // bereits Hash-basiert ist und "#trail-XYZ" mit den Route-Namen kollidieren würde.
+  // PremiumSignalTrail liest den Token beim ersten ready-Poll, scrollt, highlightet
+  // 1.5s und löscht den Token. Falls envelope_id nicht im Trail-Fenster ist,
+  // erscheint ein Hinweis-Banner statt eines stillen Fehlers.
+  const handleTrailJump = () => {
+    if (!rec.envelope_id) return;
+    try {
+      window.sessionStorage.setItem("kai.trail.target", rec.envelope_id);
+    } catch {
+      // privacy mode / quota — Navigation trotzdem ausführen,
+      // der Trail rendert ohne Highlight.
+    }
+    router.navigate("portfolio");
+  };
+
   return (
     <div
       className={cn(
@@ -959,13 +980,24 @@ function EnvelopeCard({ rec }: { rec: EnvelopeRecord }) {
             </div>
           </div>
         </div>
-        <div className="text-right shrink-0">
+        <div className="text-right shrink-0 flex flex-col items-end gap-1">
           <div className="text-2xs font-mono text-fg-muted whitespace-nowrap">
             {formatTs(rec.timestamp_utc)}
           </div>
           <div className="text-2xs text-fg-subtle">
             {relativeTs(rec.timestamp_utc)}
           </div>
+          {rec.envelope_id && (
+            <button
+              type="button"
+              onClick={handleTrailJump}
+              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-sm border border-line-subtle bg-bg-2 text-2xs text-fg-muted hover:text-fg hover:bg-bg-3 hover:border-ai/40 transition-colors"
+              title={`Im Portfolio-Trail anzeigen (envelope ${rec.envelope_id.slice(0, 8)}…)`}
+            >
+              <Target size={10} />
+              <span>Trail</span>
+            </button>
+          )}
         </div>
       </div>
 

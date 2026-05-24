@@ -1,4 +1,4 @@
-import { memo, useCallback, useState } from "react";
+import { memo, useCallback, useEffect, useRef, useState } from "react";
 import {
   AlertTriangle,
   Check,
@@ -158,10 +158,12 @@ function StageDot({ stage }: { stage: PremiumSignalTrailStage }): JSX.Element {
 function TrailRow({
   entry,
   busy,
+  highlighted,
   onAction,
 }: {
   entry: PremiumSignalTrailEntry;
   busy: boolean;
+  highlighted: boolean;
   onAction: (entry: PremiumSignalTrailEntry, action: "manual_fill" | "reprocess") => void;
 }): JSX.Element {
   const overall = entry.overall;
@@ -182,7 +184,13 @@ function TrailRow({
       : "";
 
   return (
-    <div className="rounded-md border border-line-subtle bg-bg-2/60 p-3">
+    <div
+      id={`trail-row-${entry.envelope_id}`}
+      className={cn(
+        "rounded-md border border-line-subtle bg-bg-2/60 p-3 scroll-mt-4",
+        highlighted && "trail-pulse",
+      )}
+    >
       {/* Header: Symbol + Side + Leverage + Overall + Received */}
       <div className="flex items-center justify-between gap-2 flex-wrap mb-2">
         <div className="flex items-center gap-2 flex-wrap">
@@ -352,6 +360,9 @@ export const PremiumSignalTrail = memo(function PremiumSignalTrail({
   const [busyEnv, setBusyEnv] = useState<string | null>(null);
   const [busyOrphan, setBusyOrphan] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [highlightedEnvelopeId, setHighlightedEnvelopeId] = useState<string | null>(null);
+  const [missingHashId, setMissingHashId] = useState<string | null>(null);
+  const pendingHashRef = useRef<string | null>(null);
 
   const handleOrphanReconcile = useCallback(
     async (o: PremiumSignalOrphanCompletion) => {
@@ -370,6 +381,43 @@ export const PremiumSignalTrail = memo(function PremiumSignalTrail({
     },
     [],
   );
+
+  // DALI-P-103: deep-link from external-signals feed via sessionStorage token.
+  // sessionStorage statt URL-Hash, weil der KAI-Router (state/Router.tsx) hash-
+  // basierte Routes nutzt und ein "#trail-XYZ" als unbekannte Route auf
+  // "dashboard" zurückfallen würde. Token wird gesetzt vor navigate("portfolio")
+  // und hier beim ersten ready-Poll konsumiert + gelöscht.
+  useEffect(() => {
+    try {
+      const token = window.sessionStorage.getItem("kai.trail.target");
+      pendingHashRef.current = token;
+      if (token) setMissingHashId(null);
+    } catch {
+      pendingHashRef.current = null;
+    }
+  }, []);
+
+  useEffect(() => {
+    if (polling.state !== "ready") return;
+    const targetId = pendingHashRef.current;
+    if (!targetId) return;
+    const found = polling.data.trail.some((e) => e.envelope_id === targetId);
+    pendingHashRef.current = null;
+    try {
+      window.sessionStorage.removeItem("kai.trail.target");
+    } catch {
+      // ignore quota / privacy mode
+    }
+    if (!found) {
+      setMissingHashId(targetId);
+      return;
+    }
+    setHighlightedEnvelopeId(targetId);
+    const node = document.getElementById(`trail-row-${targetId}`);
+    if (node) node.scrollIntoView({ behavior: "smooth", block: "center" });
+    const t = window.setTimeout(() => setHighlightedEnvelopeId(null), 1500);
+    return () => window.clearTimeout(t);
+  }, [polling]);
 
   const handleAction = useCallback(
     async (
@@ -431,6 +479,24 @@ export const PremiumSignalTrail = memo(function PremiumSignalTrail({
         </div>
       )}
 
+      {missingHashId && (
+        <div className="rounded-md border border-warn/40 bg-warn/10 p-3 text-2xs">
+          <div className="font-semibold text-warn mb-1">
+            Signal nicht im aktuellen Trail-Fenster
+          </div>
+          <div className="text-fg-muted">
+            Envelope{" "}
+            <span className="font-mono break-all">{missingHashId}</span>{" "}
+            ist nicht unter den letzten {limit} Einträgen. Vermutlich älter
+            oder anderer Run — bitte den Trail-Backend direkt befragen via{" "}
+            <span className="font-mono">
+              /api/premium-signals/trail?limit=100
+            </span>
+            .
+          </div>
+        </div>
+      )}
+
       {polling.state === "ready" && polling.data.trail.length > 0 && (
         <div className="space-y-2 max-h-[600px] overflow-y-auto pr-1">
           {polling.data.trail.map((entry) => (
@@ -438,6 +504,7 @@ export const PremiumSignalTrail = memo(function PremiumSignalTrail({
               key={entry.envelope_id}
               entry={entry}
               busy={busyEnv === entry.envelope_id}
+              highlighted={highlightedEnvelopeId === entry.envelope_id}
               onAction={handleAction}
             />
           ))}
