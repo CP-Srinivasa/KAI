@@ -58,6 +58,42 @@ def test_replay_reconstructs_lifecycle_history_by_correlation_id(tmp_path: Path)
     assert history[0].timestamp_utc == "2026-05-24T09:00:00+00:00"
 
 
+def test_replay_flags_lifecycle_discontinuity(tmp_path: Path) -> None:
+    audit_path = tmp_path / "paper_execution_audit.jsonl"
+    _write_jsonl(
+        audit_path,
+        [
+            {
+                "event_type": "lifecycle_transition",
+                "timestamp_utc": "2026-05-24T09:00:00+00:00",
+                "correlation_id": "env-gap",
+                "from_state": "ORDER_BUILDING",
+                "to_state": "ORDER_SUBMITTED",
+                "reason": "paper_order_created",
+            },
+            {
+                "event_type": "lifecycle_transition",
+                "timestamp_utc": "2026-05-24T09:00:01+00:00",
+                "correlation_id": "env-gap",
+                "from_state": "ORDER_ACCEPTED",
+                "to_state": "POSITION_OPEN",
+                "reason": "paper_position_opened_without_accept",
+            },
+        ],
+    )
+
+    result = replay_paper_audit(audit_path)
+
+    assert result.available
+    assert [transition.to_state.value for transition in result.lifecycle_history["env-gap"]] == [
+        "ORDER_SUBMITTED",
+    ]
+    assert result.lifecycle_replay_errors == (
+        "audit_lifecycle_validation_error_line_2: discontinuous "
+        "ORDER_SUBMITTED -> ORDER_ACCEPTED",
+    )
+
+
 def test_lifecycle_replay_errors_do_not_block_position_recovery(tmp_path: Path) -> None:
     audit_path = tmp_path / "paper_execution_audit.jsonl"
     _write_jsonl(
