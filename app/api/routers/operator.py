@@ -627,6 +627,22 @@ async def get_realized_by_asset(
     return compute_realized_by_asset(Path(audit_path))
 
 
+def _realized_summary_block(by_asset_summary: dict[str, object]) -> dict[str, object]:
+    """Extract realized_summary fields from compute_realized_by_asset output.
+
+    mypy-safe: by_asset_summary is dict[str, object] (untyped JSON shape), so
+    we narrow ``totals`` via isinstance and treat missing/non-dict as zero.
+    """
+    totals_raw = by_asset_summary.get("totals")
+    totals: dict[str, object] = totals_raw if isinstance(totals_raw, dict) else {}
+    return {
+        "total_realized_pnl_usd": totals.get("realized_pnl_usd", 0.0),
+        "closed_trades": totals.get("closed_trades", 0),
+        "assets_count": totals.get("assets_count", 0),
+        "last_close_utc": by_asset_summary.get("audit_last_event_utc"),
+    }
+
+
 @router.get("/paper-pipeline-status")
 async def get_paper_pipeline_status(
     request: Request,
@@ -807,18 +823,7 @@ async def get_paper_pipeline_status(
         },
         "block_reasons_24h": block_reasons,
         "block_total_24h": sum(block_reasons.values()),
-        "realized_summary": {
-            "total_realized_pnl_usd": by_asset_summary["totals"]["realized_pnl_usd"]
-            if isinstance(by_asset_summary.get("totals"), dict)
-            else 0.0,
-            "closed_trades": by_asset_summary["totals"]["closed_trades"]
-            if isinstance(by_asset_summary.get("totals"), dict)
-            else 0,
-            "assets_count": by_asset_summary["totals"]["assets_count"]
-            if isinstance(by_asset_summary.get("totals"), dict)
-            else 0,
-            "last_close_utc": by_asset_summary.get("audit_last_event_utc"),
-        },
+        "realized_summary": _realized_summary_block(by_asset_summary),
         "freeze_indicators": {
             "paper_audit_stale_seconds": age_audit,
             "no_fills_since_seconds": (
