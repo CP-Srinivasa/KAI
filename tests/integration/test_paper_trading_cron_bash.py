@@ -30,8 +30,8 @@ Skip matrix
 from __future__ import annotations
 
 import os
-import shutil
 import shlex
+import shutil
 import stat
 import subprocess
 from pathlib import Path
@@ -187,7 +187,11 @@ def _run_cron(bash: str, sandbox: Path, env: dict[str, str]) -> subprocess.Compl
 def _captured_run_once_args(sandbox: Path) -> list[str]:
     capture = sandbox / "artifacts" / "python_args.log"
     assert capture.exists(), "python stub capture was not written"
-    return [line for line in capture.read_text(encoding="utf-8").splitlines() if "trading run-once" in line]
+    return [
+        line
+        for line in capture.read_text(encoding="utf-8").splitlines()
+        if "trading run-once" in line
+    ]
 
 
 def _assert_run_once_profile(sandbox: Path, expected_profile: str) -> None:
@@ -267,7 +271,10 @@ def test_default_cron_profile_is_conservative(tmp_path: Path) -> None:
     assert result.returncode == 0
 
     log_content = (sandbox / "artifacts" / "paper_trading_cron.log").read_text(encoding="utf-8")
-    assert "profile  requested=conservative  active=conservative  mode=paper  safety=explicit" in log_content
+    expected_line = (
+        "profile  requested=conservative  active=conservative  mode=paper  safety=explicit"
+    )
+    assert expected_line in log_content
     _assert_run_once_profile(sandbox, "conservative")
 
 
@@ -279,7 +286,10 @@ def test_explicit_conservative_cron_profile_is_conservative(tmp_path: Path) -> N
     assert result.returncode == 0
 
     log_content = (sandbox / "artifacts" / "paper_trading_cron.log").read_text(encoding="utf-8")
-    assert "profile  requested=conservative  active=conservative  mode=paper  safety=explicit" in log_content
+    expected_line = (
+        "profile  requested=conservative  active=conservative  mode=paper  safety=explicit"
+    )
+    assert expected_line in log_content
     _assert_run_once_profile(sandbox, "conservative")
 
 
@@ -300,7 +310,10 @@ def test_canary_cron_profiles_are_explicit_paper_only(
     assert result.returncode == 0
 
     log_content = (sandbox / "artifacts" / "paper_trading_cron.log").read_text(encoding="utf-8")
-    assert f"profile  requested={cron_profile}  active={analysis_profile}  mode=paper  safety=explicit" in log_content
+    expected_line = (
+        f"profile  requested={cron_profile}  active={analysis_profile}  mode=paper  safety=explicit"
+    )
+    assert expected_line in log_content
     _assert_run_once_profile(sandbox, analysis_profile)
 
 
@@ -319,7 +332,9 @@ def test_invalid_cron_profile_falls_back_to_conservative(tmp_path: Path) -> None
     _assert_run_once_profile(sandbox, "conservative")
 
 
-def test_cron_profile_routing_never_enables_live_exchange_or_withdrawal_paths(tmp_path: Path) -> None:
+def test_cron_profile_routing_never_enables_live_exchange_or_withdrawal_paths(
+    tmp_path: Path,
+) -> None:
     bash = _require_bash()
     sandbox = _stage_sandbox(tmp_path)
     stub = _write_python_stub(sandbox)
