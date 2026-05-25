@@ -554,9 +554,7 @@ async def test_never_annotated_beyond_max_age_skipped(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-async def test_multi_window_hit_at_1h_early_exits(
-    tmp_path: Path, monkeypatch
-) -> None:
+async def test_multi_window_hit_at_1h_early_exits(tmp_path: Path, monkeypatch) -> None:
     """Bullish alert with +2% in 1h window hits immediately; later windows not called."""
     monkeypatch.setattr("app.alerts.auto_annotator._API_DELAY_SECONDS", 0)
     _write_audit(tmp_path, _make_audit(doc_id="mw-1h", hours_ago=12.0))
@@ -564,9 +562,7 @@ async def test_multi_window_hit_at_1h_early_exits(
     with patch("app.alerts.auto_annotator.CoinGeckoAdapter") as mock_cls:
         adapter = mock_cls.return_value
         adapter.get_ticker = AsyncMock(return_value=None)
-        adapter.get_price_change_between = AsyncMock(
-            return_value=(65000.0, 66300.0, 2.0)
-        )
+        adapter.get_price_change_between = AsyncMock(return_value=(65000.0, 66300.0, 2.0))
 
         results = await auto_annotate_pending(tmp_path, min_age_hours=6)
 
@@ -582,9 +578,7 @@ async def test_multi_window_hit_at_24h_after_quiet_short_windows(
 ) -> None:
     """1h+4h below threshold, 24h crosses → hit_at_window=24h, 3 API calls."""
     monkeypatch.setattr("app.alerts.auto_annotator._API_DELAY_SECONDS", 0)
-    _write_audit(
-        tmp_path, _make_audit(doc_id="mw-24h", sentiment="bullish", hours_ago=30.0)
-    )
+    _write_audit(tmp_path, _make_audit(doc_id="mw-24h", sentiment="bullish", hours_ago=30.0))
 
     with patch("app.alerts.auto_annotator.CoinGeckoAdapter") as mock_cls:
         adapter = mock_cls.return_value
@@ -607,14 +601,10 @@ async def test_multi_window_hit_at_24h_after_quiet_short_windows(
     assert adapter.get_price_change_between.call_count == 3
 
 
-async def test_multi_window_all_inconclusive_no_hit_no_miss(
-    tmp_path: Path, monkeypatch
-) -> None:
+async def test_multi_window_all_inconclusive_no_hit_no_miss(tmp_path: Path, monkeypatch) -> None:
     """All 5 windows below threshold and same direction → inconclusive, 5 API calls."""
     monkeypatch.setattr("app.alerts.auto_annotator._API_DELAY_SECONDS", 0)
-    _write_audit(
-        tmp_path, _make_audit(doc_id="mw-incon", sentiment="bullish", hours_ago=200.0)
-    )
+    _write_audit(tmp_path, _make_audit(doc_id="mw-incon", sentiment="bullish", hours_ago=200.0))
     # Seed an inconclusive so the alert qualifies for stale-reeval.
     outcomes_path = tmp_path / ALERT_OUTCOMES_JSONL_FILENAME
     outcomes_path.write_text(
@@ -651,14 +641,10 @@ async def test_multi_window_all_inconclusive_no_hit_no_miss(
     assert adapter.get_price_change_between.call_count == 5
 
 
-async def test_multi_window_miss_via_opposite_cross(
-    tmp_path: Path, monkeypatch
-) -> None:
+async def test_multi_window_miss_via_opposite_cross(tmp_path: Path, monkeypatch) -> None:
     """Bullish alert but price dropped > threshold in any window → miss."""
     monkeypatch.setattr("app.alerts.auto_annotator._API_DELAY_SECONDS", 0)
-    _write_audit(
-        tmp_path, _make_audit(doc_id="mw-miss", sentiment="bullish", hours_ago=200.0)
-    )
+    _write_audit(tmp_path, _make_audit(doc_id="mw-miss", sentiment="bullish", hours_ago=200.0))
     outcomes_path = tmp_path / ALERT_OUTCOMES_JSONL_FILENAME
     outcomes_path.write_text(
         json.dumps(
@@ -694,14 +680,10 @@ async def test_multi_window_miss_via_opposite_cross(
     assert results[0].hit_at_window is None
 
 
-async def test_multi_window_future_windows_skipped_no_api_call(
-    tmp_path: Path, monkeypatch
-) -> None:
+async def test_multi_window_future_windows_skipped_no_api_call(tmp_path: Path, monkeypatch) -> None:
     """Alert 5h old → only 1h+4h windows reachable; 24h/72h/168h skipped without API call."""
     monkeypatch.setattr("app.alerts.auto_annotator._API_DELAY_SECONDS", 0)
-    _write_audit(
-        tmp_path, _make_audit(doc_id="mw-fresh", sentiment="bullish", hours_ago=5.0)
-    )
+    _write_audit(tmp_path, _make_audit(doc_id="mw-fresh", sentiment="bullish", hours_ago=5.0))
 
     with patch("app.alerts.auto_annotator.CoinGeckoAdapter") as mock_cls:
         adapter = mock_cls.return_value
@@ -722,21 +704,15 @@ async def test_multi_window_future_windows_skipped_no_api_call(
     assert adapter.get_price_change_between.call_count == 2
 
 
-async def test_multi_window_hit_serializes_hit_at_window_field(
-    tmp_path: Path, monkeypatch
-) -> None:
+async def test_multi_window_hit_serializes_hit_at_window_field(tmp_path: Path, monkeypatch) -> None:
     """Hit annotation persists hit_at_window in JSONL output."""
     monkeypatch.setattr("app.alerts.auto_annotator._API_DELAY_SECONDS", 0)
-    _write_audit(
-        tmp_path, _make_audit(doc_id="mw-serialize", sentiment="bullish", hours_ago=12.0)
-    )
+    _write_audit(tmp_path, _make_audit(doc_id="mw-serialize", sentiment="bullish", hours_ago=12.0))
 
     with patch("app.alerts.auto_annotator.CoinGeckoAdapter") as mock_cls:
         adapter = mock_cls.return_value
         adapter.get_ticker = AsyncMock(return_value=None)
-        adapter.get_price_change_between = AsyncMock(
-            return_value=(65000.0, 66300.0, 2.0)
-        )
+        adapter.get_price_change_between = AsyncMock(return_value=(65000.0, 66300.0, 2.0))
 
         await auto_annotate_pending(tmp_path, min_age_hours=6)
 

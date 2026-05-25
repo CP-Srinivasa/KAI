@@ -85,6 +85,7 @@ def _window_label(window_hours: float) -> str:
     """Return canonical short label for a sub-window."""
     return f"{int(window_hours)}h"
 
+
 # Default batch size for stale inconclusive backfill.
 # Limits API calls per run to avoid rate exhaustion in cron.
 _DEFAULT_BACKFILL_BATCH = 30
