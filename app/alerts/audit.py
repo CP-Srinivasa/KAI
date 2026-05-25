@@ -136,6 +136,10 @@ class AlertOutcomeAnnotation:
     # pending-signal row for synthetic ``tv:`` ids) so backdated annotations
     # can't drift away from the source attribution they were made against.
     provenance: SignalProvenance | None = None
+    # 2026-05-25 DS-V-MW-Multi-Window-Outcome: which sub-window the alert
+    # triggered hit in. One of "1h"/"4h"/"24h"/"72h"/"168h" or None when
+    # outcome != "hit" or annotation predates the multi-window patch.
+    hit_at_window: str | None = None
 
     def to_json_dict(self) -> dict[str, object]:
         d: dict[str, object] = {
@@ -149,6 +153,8 @@ class AlertOutcomeAnnotation:
             d["note"] = self.note
         if self.provenance is not None:
             d["provenance"] = self.provenance.to_dict()
+        if self.hit_at_window is not None:
+            d["hit_at_window"] = self.hit_at_window
         return d
 
 
@@ -194,6 +200,7 @@ def load_outcome_annotations(
                     asset=data.get("asset"),
                     note=data.get("note"),
                     provenance=SignalProvenance.from_dict(data.get("provenance")),
+                    hit_at_window=data.get("hit_at_window"),
                 )
             )
         except KeyError:

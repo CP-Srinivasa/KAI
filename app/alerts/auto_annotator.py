@@ -69,6 +69,22 @@ _REEVAL_MIN_AGE_HOURS = 24.0
 # for attributing a price move to a specific news event.
 _STALE_REEVAL_WINDOW_HOURS = 168.0  # 7 days
 
+# 2026-05-25 DS-V-MW: Multi-Window-Outcome sub-windows (hours).
+# Replaces single-window evaluation. An alert is "hit" if the predicted
+# direction crosses the scaled threshold in ANY of these windows. Iteration
+# is shortest→longest with early-exit on first hit (saves API calls in the
+# common case where news triggers an intraday move).
+# Diagnostic for choice: in calm markets (BTC <1%/24h) the 168h-window
+# threshold scales to ~1.5% — 99.6% of 7d-samples ended inconclusive on
+# 2026-05-18..25. Adding 1h/4h captures intraday spikes; 24h/72h cover
+# normal news-decay; 168h remains as the legacy long-horizon fallback.
+_MULTI_WINDOW_HOURS: tuple[float, ...] = (1.0, 4.0, 24.0, 72.0, 168.0)
+
+
+def _window_label(window_hours: float) -> str:
+    """Return canonical short label for a sub-window."""
+    return f"{int(window_hours)}h"
+
 # Default batch size for stale inconclusive backfill.
 # Limits API calls per run to avoid rate exhaustion in cron.
 _DEFAULT_BACKFILL_BATCH = 30
@@ -353,52 +369,115 @@ async def auto_annotate_pending(
         if symbol is None:
             continue
 
-        # D-138: Stale inconclusives use a fixed 7d attribution window
-        # instead of dispatch → now (which would be weeks/months and
-        # destroy any causal attribution to the news event).
-        if is_stale_reeval:
-            eval_end = dispatch_time + timedelta(hours=_STALE_REEVAL_WINDOW_HOURS)
+        sentiment = (rec.sentiment_label or "").lower()
+
+        # 2026-05-25 DS-V-MW: Multi-Window-Outcome evaluation.
+        # Iterate sub-windows shortest→longest. Hit on first window that
+        # crosses scaled_threshold in expected direction (early-exit saves
+        # API calls). Track opposite-direction cross as miss-candidate.
+        # Windows beyond `now - dispatch_time` are future — skip without
+        # data (and without API call). Stale-reeval is now structurally
+        # the same as fresh: each sub-window uses dispatch + N hours.
+        hit_at_window: str | None = None
+        hit_pct_change: float | None = None
+        hit_threshold: float | None = None
+        hit_start_price: float | None = None
+        hit_end_price: float | None = None
+        last_pct_change: float | None = None
+        last_threshold: float | None = None
+        last_window_h: float | None = None
+        last_start_price: float | None = None
+        last_end_price: float | None = None
+        any_data_seen = False
+        any_opposite_cross = False
+        api_calls_this_alert = 0
+
+        for window_h in _MULTI_WINDOW_HOURS:
+            eval_end = dispatch_time + timedelta(hours=window_h)
             if eval_end > now:
-                eval_end = now
-        else:
-            eval_end = now
+                # Window not yet elapsed — skip without API call.
+                continue
 
-        price_data = await adapter.get_price_change_between(
-            symbol,
-            start_utc=dispatch_time,
-            end_utc=eval_end,
-        )
+            api_calls_this_alert += 1
+            price_data = await adapter.get_price_change_between(
+                symbol,
+                start_utc=dispatch_time,
+                end_utc=eval_end,
+            )
+            await asyncio.sleep(_API_DELAY_SECONDS)
 
-        if price_data is None:
+            if price_data is None:
+                continue
+
+            any_data_seen = True
+            start_price, end_price, pct_change = price_data
+            threshold = _scaled_threshold(
+                window_h,
+                move_threshold,
+                volatility_24h,
+            )
+            last_pct_change = pct_change
+            last_threshold = threshold
+            last_window_h = window_h
+            last_start_price = start_price
+            last_end_price = end_price
+
+            if sentiment == "bullish" and pct_change >= threshold:
+                hit_at_window = _window_label(window_h)
+                hit_pct_change = pct_change
+                hit_threshold = threshold
+                hit_start_price = start_price
+                hit_end_price = end_price
+                break
+            if sentiment == "bearish" and pct_change <= -threshold:
+                hit_at_window = _window_label(window_h)
+                hit_pct_change = pct_change
+                hit_threshold = threshold
+                hit_start_price = start_price
+                hit_end_price = end_price
+                break
+
+            if sentiment == "bullish" and pct_change <= -threshold:
+                any_opposite_cross = True
+            elif sentiment == "bearish" and pct_change >= threshold:
+                any_opposite_cross = True
+
+        if not any_data_seen:
             log.warning(
                 "auto_annotate.price_unavailable",
                 document_id=rec.document_id,
                 symbol=symbol,
                 stale=is_stale_reeval,
+                api_calls=api_calls_this_alert,
             )
-            await asyncio.sleep(_API_DELAY_SECONDS)
             continue
 
-        start_price, end_price, pct_change = price_data
-        elapsed_h = (eval_end - dispatch_time).total_seconds() / 3600
-
-        threshold = _scaled_threshold(
-            elapsed_h,
-            move_threshold,
-            volatility_24h,
-        )
-
-        sentiment = (rec.sentiment_label or "").lower()
-        if sentiment == "bullish" and pct_change >= threshold:
+        chosen_pct: float | None
+        chosen_thr: float | None
+        chosen_start: float | None
+        chosen_end: float | None
+        chosen_window_h: float | None
+        if hit_at_window is not None:
             outcome: str = "hit"
-        elif sentiment == "bearish" and pct_change <= -threshold:
-            outcome = "hit"
-        elif sentiment == "bullish" and pct_change <= -threshold:
+            chosen_pct = hit_pct_change
+            chosen_thr = hit_threshold
+            chosen_start = hit_start_price
+            chosen_end = hit_end_price
+            chosen_window_h = float(hit_at_window.rstrip("h"))
+        elif any_opposite_cross:
             outcome = "miss"
-        elif sentiment == "bearish" and pct_change >= threshold:
-            outcome = "miss"
+            chosen_pct = last_pct_change
+            chosen_thr = last_threshold
+            chosen_start = last_start_price
+            chosen_end = last_end_price
+            chosen_window_h = last_window_h
         else:
             outcome = "inconclusive"
+            chosen_pct = last_pct_change
+            chosen_thr = last_threshold
+            chosen_start = last_start_price
+            chosen_end = last_end_price
+            chosen_window_h = last_window_h
 
         is_reeval = rec.document_id in latest_by_doc
         # V-DB5 Calibration 2026-05-08 (audit B-B3):
@@ -412,11 +491,14 @@ async def auto_annotate_pending(
             tag = "reeval"
         else:
             tag = "auto"
+        window_note = f"@{_window_label(chosen_window_h)}" if chosen_window_h else ""
+        if hit_at_window is not None:
+            window_note = f"@{hit_at_window}"
         note = (
-            f"{tag}: {sentiment} {symbol} "
-            f"${start_price:,.2f}->${end_price:,.2f} "
-            f"({pct_change:+.2f}% over {elapsed_h:.1f}h, "
-            f"thr={threshold:.2f}%)"
+            f"{tag}{window_note}: {sentiment} {symbol} "
+            f"${(chosen_start or 0):,.2f}->${(chosen_end or 0):,.2f} "
+            f"({(chosen_pct or 0):+.2f}% over {(chosen_window_h or 0):.1f}h, "
+            f"thr={(chosen_thr or 0):.2f}%)"
         )
 
         annotation = AlertOutcomeAnnotation(
@@ -425,6 +507,7 @@ async def auto_annotate_pending(
             asset=symbol,
             note=note,
             provenance=rec.provenance,
+            hit_at_window=hit_at_window,
         )
 
         log.info(
@@ -432,8 +515,10 @@ async def auto_annotate_pending(
             document_id=rec.document_id,
             outcome=outcome,
             symbol=symbol,
-            pct_change=f"{pct_change:+.2f}%",
-            threshold=f"{threshold:.2f}%",
+            hit_at_window=hit_at_window,
+            pct_change=f"{(chosen_pct or 0):+.2f}%",
+            threshold=f"{(chosen_thr or 0):.2f}%",
+            api_calls=api_calls_this_alert,
             reeval=is_reeval,
         )
 
@@ -441,7 +526,6 @@ async def auto_annotate_pending(
             append_outcome_annotation(annotation, audit_dir)
 
         results.append(annotation)
-        await asyncio.sleep(_API_DELAY_SECONDS)
 
     log.info(
         "auto_annotate.done",
