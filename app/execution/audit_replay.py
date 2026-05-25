@@ -12,11 +12,14 @@ position (they are not repeated on the fill record).
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 
 from app.execution.models import PaperPosition
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -31,6 +34,11 @@ class AuditReplayResult:
     # PaperFills geführt haben (Q/USDT 2026-05-09 Bug) nicht mehr durchkommen.
     # Set leer wenn audit-file fehlt — Replay bleibt rückwärtskompatibel.
     filled_idempotency_keys: frozenset[str] = field(default_factory=frozenset)
+    # 2026-05-25 Forensik-Fix: Resilience-Skips statt fataler Abbruch bei
+    # historischen Race-Conditions (z.B. doppeltem position_closed auf MATIC
+    # 2026-05-10). Liste von (line_number, reason)-Tupeln. Aufrufer können
+    # die Liste anzeigen, ohne dass das gesamte Portfolio unsichtbar wird.
+    skipped_events: tuple[tuple[int, str], ...] = field(default_factory=tuple)
 
 
 def _coerce_float(value: object) -> float | None:
@@ -68,6 +76,8 @@ def replay_paper_audit(audit_path: Path) -> AuditReplayResult:
     filled_keys: set[str] = set()
     cash_usd = 0.0
     realized_pnl_usd = 0.0
+    # 2026-05-25 Forensik-Fix: skipped events sammeln statt Replay abzubrechen.
+    skipped: list[tuple[int, str]] = []
 
     for line_number, raw_line in enumerate(
         audit_path.read_text(encoding="utf-8").splitlines(),
@@ -199,13 +209,19 @@ def replay_paper_audit(audit_path: Path) -> AuditReplayResult:
             or quantity <= 0.0
             or fill_price <= 0.0
         ):
-            return AuditReplayResult(
-                positions={},
-                cash_usd=0.0,
-                realized_pnl_usd=0.0,
-                available=False,
-                error=f"audit_fill_validation_error_line_{line_number}",
+            # 2026-05-25 Forensik-Fix: invalid fill row darf nicht das gesamte
+            # Portfolio unsichtbar machen. Skip + warn + weiterlaufen.
+            reason = f"audit_fill_validation_error_line_{line_number}"
+            logger.warning(
+                "[audit_replay] skip %s (symbol=%r side=%r qty=%r price=%r)",
+                reason,
+                symbol,
+                side,
+                quantity,
+                fill_price,
             )
+            skipped.append((line_number, reason))
+            continue
 
         stop_loss: float | None = None
         take_profit: float | None = None
@@ -249,13 +265,18 @@ def replay_paper_audit(audit_path: Path) -> AuditReplayResult:
                 )
             else:
                 if existing.position_side != position_side_val:
-                    return AuditReplayResult(
-                        positions={},
-                        cash_usd=0.0,
-                        realized_pnl_usd=0.0,
-                        available=False,
-                        error=f"audit_position_side_conflict_line_{line_number}",
+                    # 2026-05-25 Forensik-Fix: position_side-Konflikt aus historischer
+                    # Race-Condition oder fehlerhaftem Replay darf nicht das gesamte
+                    # Portfolio unsichtbar machen.
+                    reason = f"audit_position_side_conflict_line_{line_number}"
+                    logger.warning(
+                        "[audit_replay] skip %s (existing.side=%r new.side=%r)",
+                        reason,
+                        existing.position_side,
+                        position_side_val,
                     )
+                    skipped.append((line_number, reason))
+                    continue
                 total_qty = existing.quantity + quantity
                 avg_entry = (
                     (existing.avg_entry_price * existing.quantity) + (fill_price * quantity)
@@ -280,13 +301,22 @@ def replay_paper_audit(audit_path: Path) -> AuditReplayResult:
                 or existing.position_side != position_side_val
                 or existing.quantity + 1e-9 < quantity
             ):
-                return AuditReplayResult(
-                    positions={},
-                    cash_usd=0.0,
-                    realized_pnl_usd=0.0,
-                    available=False,
-                    error=f"audit_close_without_position_line_{line_number}",
+                # 2026-05-25 Forensik-Fix: doppelter close oder out-of-order
+                # close (z.B. MATIC/USDT 2026-05-10 Race-Condition Zeile 75)
+                # darf nicht den gesamten Portfolio-Replay killen. Skip + warn.
+                # Realized-PnL aus dieser Zeile wird trotzdem überschrieben
+                # über das spätere position_closed.realized_pnl_usd-Field
+                # (per_fill cumulative snapshot, siehe Z. 320 unten).
+                reason = f"audit_close_without_position_line_{line_number}"
+                logger.warning(
+                    "[audit_replay] skip %s (sym=%s have_pos=%s req_qty=%s)",
+                    reason,
+                    symbol,
+                    existing is not None,
+                    quantity,
                 )
+                skipped.append((line_number, reason))
+                continue
             remaining = existing.quantity - quantity
             if remaining <= 1e-8:
                 del positions[symbol]
@@ -306,13 +336,13 @@ def replay_paper_audit(audit_path: Path) -> AuditReplayResult:
                     source=existing.source,
                 )
         else:
-            return AuditReplayResult(
-                positions={},
-                cash_usd=0.0,
-                realized_pnl_usd=0.0,
-                available=False,
-                error=f"audit_side_position_combo_error_line_{line_number}",
+            # 2026-05-25 Forensik-Fix: unbekannte side/position-Kombi skipt.
+            reason = f"audit_side_position_combo_error_line_{line_number}"
+            logger.warning(
+                "[audit_replay] skip %s (side=%r position_side=%r)", reason, side, position_side_val
             )
+            skipped.append((line_number, reason))
+            continue
 
         portfolio_cash = _coerce_float(payload.get("portfolio_cash"))
         if portfolio_cash is not None:
@@ -333,4 +363,5 @@ def replay_paper_audit(audit_path: Path) -> AuditReplayResult:
         available=True,
         error=None,
         filled_idempotency_keys=frozenset(filled_keys),
+        skipped_events=tuple(skipped),
     )

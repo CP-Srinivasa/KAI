@@ -18,6 +18,9 @@ cd "$ROOT"
 
 LOG_FILE="$ROOT/artifacts/paper_trading_cron.log"
 PYTHON="${PYTHON:-python}"
+SLEEP_BIN="${SLEEP_BIN:-sleep}"
+CRON_PROFILE_REQUEST="${PAPER_CRON_PROFILE:-conservative}"
+CRON_PROFILE_SAFETY="explicit"
 
 mkdir -p "$ROOT/artifacts"
 
@@ -28,6 +31,25 @@ write_log() {
     ts=$(date +'%Y-%m-%d %H:%M:%S')
     printf '%s  %s\n' "$ts" "$1" >> "$LOG_FILE"
 }
+
+# Canary profiles are explicit paper-only cron probes. Missing operator
+# sign-off/config must keep the scheduler on the conservative profile.
+case "$CRON_PROFILE_REQUEST" in
+    ""|"conservative")
+        CRON_PROFILE_REQUEST="conservative"
+        CRON_ANALYSIS_PROFILE="conservative"
+        ;;
+    "canary_bullish")
+        CRON_ANALYSIS_PROFILE="bullish"
+        ;;
+    "canary_bearish")
+        CRON_ANALYSIS_PROFILE="bearish"
+        ;;
+    *)
+        CRON_PROFILE_SAFETY="invalid_fallback_conservative"
+        CRON_ANALYSIS_PROFILE="conservative"
+        ;;
+esac
 
 # Extract "key=value" from command output. Returns "unknown" on miss.
 extract_field() {
@@ -57,12 +79,12 @@ run_cycle() {
         --symbol "$symbol" \
         --mode paper \
         --provider coingecko \
-        --analysis-profile conservative 2>&1) || true
+        --analysis-profile "$CRON_ANALYSIS_PROFILE" 2>&1) || true
     local cycle status fill
     cycle=$(extract_field "$out" cycle_id)
     status=$(extract_field "$out" status)
     fill=$(extract_field "$out" fill_simulated)
-    write_log "$symbol  cycle=$cycle  status=$status  fill=$fill"
+    write_log "$symbol  profile=$CRON_ANALYSIS_PROFILE  cycle=$cycle  status=$status  fill=$fill"
 }
 
 monitor_positions() {
@@ -113,6 +135,7 @@ entry_watch() {
 # --- main -------------------------------------------------------------------
 
 write_log "--- cron start ---"
+write_log "profile  requested=$CRON_PROFILE_REQUEST  active=$CRON_ANALYSIS_PROFILE  mode=paper  safety=$CRON_PROFILE_SAFETY"
 
 # Server-watchdog entfällt — systemd kai-server.service hat Restart=on-failure.
 
@@ -120,7 +143,7 @@ monitor_positions
 bridge_tick
 entry_watch
 run_cycle "BTC/USDT"
-sleep 15
+"$SLEEP_BIN" 15
 run_cycle "ETH/USDT"
 
 # Auto-annotate every 6th run (~hourly).

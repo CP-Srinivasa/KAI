@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -571,3 +572,212 @@ def build_exposure_summary(snapshot: PortfolioSnapshot) -> dict[str, object]:
         }
     )
     return payload
+
+
+# 2026-05-25 Forensik-Antwort auf "Vor Live-Mode keine sinnvolle Visualisierung":
+# realized-by-asset ist OHNE Live-Mode aus paper_execution_audit.jsonl ableitbar.
+# Datenquelle: position_closed + position_partial_closed Events tragen per-trade
+# trade_pnl_usd (schema_version=v2 NEO-P-101-r2). Diese Funktion ist die
+# kanonische, replay-unabhängige Aggregation. Sie ignoriert den portfolio-kumu-
+# lativen Snapshot-Field realized_pnl_usd (siehe Memory paper_audit_pnl_field_
+# semantics) und summiert ausschließlich per-trade trade_pnl_usd.
+def compute_realized_by_asset(audit_path: Path) -> dict[str, object]:
+    """Aggregate realized PnL per asset from paper_execution_audit.jsonl.
+
+    Returns a dict shaped as::
+
+        {
+            "as_of_utc": "...",
+            "audit_path": "...",
+            "audit_file_exists": bool,
+            "audit_last_event_utc": "..." | None,
+            "by_asset": [
+                {
+                    "symbol": "SOL/USDT",
+                    "realized_pnl_usd": 1486.98,
+                    "closed_trades": 2,
+                    "wins": 2,
+                    "losses": 0,
+                    "win_rate_pct": 100.0,
+                    "fees_usd_total": 0.0,
+                    "partial_closes": 0,
+                    "full_closes": 2,
+                    "last_close_utc": "...",
+                },
+                ...
+            ],
+            "totals": {
+                "realized_pnl_usd": 4447.83,
+                "closed_trades": 8,
+                "assets_count": 6,
+                "fees_usd_total": 0.0,
+                "partial_close_events": 0,
+                "full_close_events": 8,
+            },
+            "top_performer": {"symbol": ..., "realized_pnl_usd": ...} | None,
+            "worst_performer": {"symbol": ..., "realized_pnl_usd": ...} | None,
+            "available": True | False,
+            "error": None | "...",
+            "invalid_lines": [(line_no, reason), ...],
+        }
+
+    No Live-Exchange access. No mark-to-market. Read-only on local JSONL.
+    """
+    result: dict[str, object] = {
+        "as_of_utc": datetime.now(UTC).isoformat(),
+        "audit_path": str(audit_path),
+        "audit_file_exists": False,
+        "audit_last_event_utc": None,
+        "by_asset": [],
+        "totals": {
+            "realized_pnl_usd": 0.0,
+            "closed_trades": 0,
+            "assets_count": 0,
+            "fees_usd_total": 0.0,
+            "partial_close_events": 0,
+            "full_close_events": 0,
+        },
+        "top_performer": None,
+        "worst_performer": None,
+        "available": False,
+        "error": None,
+        "invalid_lines": [],
+    }
+
+    if not audit_path.exists():
+        result["error"] = "audit_file_missing"
+        return result
+
+    result["audit_file_exists"] = True
+
+    per_asset: dict[str, dict[str, float | int | str | None]] = {}
+    invalid: list[tuple[int, str]] = []
+    last_event_ts: str | None = None
+    full_close_total = 0
+    partial_close_total = 0
+
+    try:
+        raw = audit_path.read_text(encoding="utf-8")
+    except OSError as e:
+        result["error"] = f"audit_read_error:{e}"
+        return result
+
+    for line_no, raw_line in enumerate(raw.splitlines(), start=1):
+        line = raw_line.strip()
+        if not line:
+            continue
+        try:
+            d = json.loads(line)
+        except json.JSONDecodeError as e:
+            invalid.append((line_no, f"json_decode_error:{e.msg}"))
+            continue
+        if not isinstance(d, dict):
+            invalid.append((line_no, "non_object_payload"))
+            continue
+        ts = d.get("timestamp_utc") or d.get("created_at") or d.get("filled_at")
+        if isinstance(ts, str) and ts:
+            if last_event_ts is None or ts > last_event_ts:
+                last_event_ts = ts
+        ev = d.get("event_type")
+        if ev not in {"position_closed", "position_partial_closed"}:
+            continue
+        sym = d.get("symbol")
+        if not isinstance(sym, str) or not sym.strip():
+            invalid.append((line_no, "close_event_missing_symbol"))
+            continue
+        sym = sym.strip()
+        # per-trade PnL — never realized_pnl_usd (which is portfolio-cumulative).
+        pnl_raw = d.get("trade_pnl_usd")
+        if pnl_raw is None:
+            # legacy v1: reconstruct from entry/exit/quantity if available
+            ep = d.get("entry_price")
+            xp = d.get("exit_price")
+            qty = d.get("quantity")
+            if all(isinstance(v, (int, float)) for v in (ep, xp, qty)):
+                pnl = (float(xp) - float(ep)) * float(qty)
+            else:
+                invalid.append((line_no, "close_event_missing_trade_pnl_usd_and_v1_fields"))
+                continue
+        else:
+            try:
+                pnl = float(pnl_raw)
+            except (TypeError, ValueError):
+                invalid.append((line_no, "close_event_pnl_not_numeric"))
+                continue
+        fee = 0.0
+        fee_raw = d.get("fee_usd")
+        if isinstance(fee_raw, (int, float)):
+            fee = float(fee_raw)
+        bucket = per_asset.setdefault(
+            sym,
+            {
+                "symbol": sym,
+                "realized_pnl_usd": 0.0,
+                "closed_trades": 0,
+                "wins": 0,
+                "losses": 0,
+                "fees_usd_total": 0.0,
+                "partial_closes": 0,
+                "full_closes": 0,
+                "last_close_utc": None,
+            },
+        )
+        bucket["realized_pnl_usd"] = float(bucket["realized_pnl_usd"]) + pnl  # type: ignore[arg-type]
+        bucket["closed_trades"] = int(bucket["closed_trades"]) + 1  # type: ignore[arg-type]
+        if pnl > 0:
+            bucket["wins"] = int(bucket["wins"]) + 1  # type: ignore[arg-type]
+        elif pnl < 0:
+            bucket["losses"] = int(bucket["losses"]) + 1  # type: ignore[arg-type]
+        bucket["fees_usd_total"] = float(bucket["fees_usd_total"]) + fee  # type: ignore[arg-type]
+        if ev == "position_partial_closed":
+            bucket["partial_closes"] = int(bucket["partial_closes"]) + 1  # type: ignore[arg-type]
+            partial_close_total += 1
+        else:
+            bucket["full_closes"] = int(bucket["full_closes"]) + 1  # type: ignore[arg-type]
+            full_close_total += 1
+        prev_last = bucket["last_close_utc"]
+        if isinstance(ts, str) and ts and (prev_last is None or ts > str(prev_last)):
+            bucket["last_close_utc"] = ts
+
+    by_asset: list[dict[str, object]] = []
+    total_pnl = 0.0
+    total_trades = 0
+    total_fees = 0.0
+    for _sym, bucket in per_asset.items():
+        n = int(bucket["closed_trades"])  # type: ignore[arg-type]
+        w = int(bucket["wins"])  # type: ignore[arg-type]
+        win_rate = round((w / n * 100.0), 2) if n > 0 else None
+        bucket["realized_pnl_usd"] = round(float(bucket["realized_pnl_usd"]), 4)  # type: ignore[arg-type]
+        bucket["fees_usd_total"] = round(float(bucket["fees_usd_total"]), 4)  # type: ignore[arg-type]
+        bucket["win_rate_pct"] = win_rate
+        by_asset.append(dict(bucket))
+        total_pnl += float(bucket["realized_pnl_usd"])
+        total_trades += n
+        total_fees += float(bucket["fees_usd_total"])
+
+    by_asset.sort(key=lambda b: float(b["realized_pnl_usd"]), reverse=True)
+
+    result["by_asset"] = by_asset
+    result["totals"] = {
+        "realized_pnl_usd": round(total_pnl, 4),
+        "closed_trades": total_trades,
+        "assets_count": len(by_asset),
+        "fees_usd_total": round(total_fees, 4),
+        "partial_close_events": partial_close_total,
+        "full_close_events": full_close_total,
+    }
+    result["top_performer"] = by_asset[0] if by_asset else None
+    result["worst_performer"] = by_asset[-1] if by_asset else None
+    result["audit_last_event_utc"] = last_event_ts
+    result["available"] = True
+    result["invalid_lines"] = invalid
+    return result
+
+
+__all__ = [
+    "PositionSummary",
+    "PortfolioSnapshot",
+    "build_portfolio_snapshot",
+    "build_exposure_summary",
+    "compute_realized_by_asset",
+]

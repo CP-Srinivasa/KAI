@@ -230,7 +230,16 @@ async def dashboard_quality_api() -> JSONResponse:
     # NEO-P-101-r2) tragen nur entry_price/exit_price/quantity — dafür
     # rekonstruieren wir per Brutto-Formel (ohne Fee). Fees werden mit
     # NEO-P-106 (Maker/Taker-Modell) per-trade nachgereicht.
-    closes = [r for r in exec_rows if r.get("event_type") == "position_closed"]
+    #
+    # 2026-05-25 Forensik-Fix: position_partial_closed Events tragen ebenfalls
+    # trade_pnl_usd (siehe paper_engine.py:842). Vorher wurden sie ignoriert,
+    # was zu einer systematischen PnL-Untererfassung führte (Codex-Beleg: Pi
+    # hatte 24 partials vs 15 fulls; Quality-Endpoint zeigte $759 statt $2486).
+    closes = [
+        r
+        for r in exec_rows
+        if r.get("event_type") in ("position_closed", "position_partial_closed")
+    ]
     realized_pnl_usd = round(
         sum(
             float(r.get("trade_pnl_usd", 0.0))
@@ -241,7 +250,10 @@ async def dashboard_quality_api() -> JSONResponse:
         ),
         2,
     )
-    positions_closed = len(closes)
+    positions_closed = sum(1 for r in closes if r.get("event_type") == "position_closed")
+    positions_partial_closed = sum(
+        1 for r in closes if r.get("event_type") == "position_partial_closed"
+    )
 
     audit_rows = _load_jsonl(_ALERT_AUDIT)
     non_digest = [r for r in audit_rows if not r.get("is_digest")]
@@ -323,9 +335,10 @@ async def dashboard_quality_api() -> JSONResponse:
             "forward_hits": fwd.get("hits", 0),
             "forward_miss": fwd.get("miss", 0),
             "paper_fills": len(fills),
-            "paper_fills_with_pnl": positions_closed,
+            "paper_fills_with_pnl": positions_closed + positions_partial_closed,
             "paper_realized_pnl_usd": realized_pnl_usd,
             "paper_positions_closed": positions_closed,
+            "paper_positions_partial_closed": positions_partial_closed,
             "audit_v1_disqualified": audit_v1_disqualified,
             "audit_provenance": audit_provenance,
             "paper_cycles": paper.get("loop_metrics", {}).get("total_cycles", 0),

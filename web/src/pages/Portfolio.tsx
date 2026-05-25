@@ -7,6 +7,7 @@ import { useApi } from "@/lib/useApi";
 import {
   fetchPortfolioSnapshot,
   fetchExposureSummary,
+  fetchRealizedByAsset,
   postReprocess,
   postReconcileCompletion,
   postPositionRepair,
@@ -41,6 +42,129 @@ function priceDigits(v: number | null | undefined): number {
   if (abs < 1) return 4;
   if (abs < 100) return 4;
   return 2;
+}
+
+// 2026-05-25 Forensik-Patch: Realisierte Gewinne nach Asset.
+// Liest GET /operator/portfolio/realized-by-asset — keine Live-/Backtest-Abhängigkeit.
+function RealizedByAssetPanel() {
+  const { fmt } = useCurrency();
+  const data = useApi(fetchRealizedByAsset, 60_000);
+
+  if (data.state !== "ready") {
+    return (
+      <Card padded>
+        <CardHeader
+          title="Realisierte Gewinne nach Asset"
+          subtitle="Live aus Paper-Execution-Audit"
+        />
+        <div className="text-sm text-fg-subtle py-6 text-center">
+          {data.state === "error"
+            ? `Fehler beim Laden: ${data.error}`
+            : "Lädt …"}
+        </div>
+      </Card>
+    );
+  }
+
+  const d = data.data;
+  if (!d.available) {
+    return (
+      <Card padded>
+        <CardHeader
+          title="Realisierte Gewinne nach Asset"
+          subtitle="Live aus Paper-Execution-Audit"
+        />
+        <div className="text-sm text-fg-subtle py-6 text-center">
+          Audit nicht verfügbar: {d.error ?? "unbekannt"}
+        </div>
+      </Card>
+    );
+  }
+  if (d.by_asset.length === 0) {
+    return (
+      <Card padded>
+        <CardHeader
+          title="Realisierte Gewinne nach Asset"
+          subtitle="Live aus Paper-Execution-Audit"
+        />
+        <div className="text-sm text-fg-subtle py-6 text-center">
+          Noch keine abgeschlossenen Trades — Paper-Engine hat keine
+          position_closed-Events.
+        </div>
+      </Card>
+    );
+  }
+
+  return (
+    <Card padded>
+      <CardHeader
+        title="Realisierte Gewinne nach Asset"
+        subtitle={`${d.totals.closed_trades} abgeschlossene Trades über ${d.totals.assets_count} Assets · Paper-Mode, keine Live-Daten`}
+        right={
+          <Badge tone={d.totals.realized_pnl_usd >= 0 ? "pos" : "neg"}>
+            Gesamt {d.totals.realized_pnl_usd >= 0 ? "+" : ""}
+            {fmt(d.totals.realized_pnl_usd, undefined, 2)}
+          </Badge>
+        }
+      />
+      <div className="grid grid-cols-1 gap-1 mt-3">
+        {d.by_asset.map((row) => {
+          const pos = row.realized_pnl_usd >= 0;
+          return (
+            <div
+              key={row.symbol}
+              className="grid grid-cols-[1fr_auto_auto_auto] gap-3 items-center px-2 py-1.5 rounded-sm hover:bg-bg-2"
+              style={{
+                background: pos
+                  ? `rgb(var(--pos) / 0.04)`
+                  : `rgb(var(--neg) / 0.04)`,
+              }}
+            >
+              <span className="font-semibold">{row.symbol}</span>
+              <span className="text-2xs text-fg-subtle">
+                {row.closed_trades} Trade(s) · {row.wins}W/{row.losses}L
+                {row.partial_closes > 0 ? ` · ${row.partial_closes} partial` : ""}
+              </span>
+              <span className="text-2xs text-fg-subtle font-mono">
+                {row.win_rate_pct != null ? `${row.win_rate_pct.toFixed(0)}%` : "—"}
+              </span>
+              <span
+                className={cn(
+                  "font-mono text-right font-semibold",
+                  pos ? "text-pos" : "text-neg",
+                )}
+              >
+                {pos ? "+" : ""}
+                {fmt(row.realized_pnl_usd, undefined, 2)}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+      {d.top_performer && d.worst_performer && d.by_asset.length >= 2 && (
+        <div className="mt-3 grid grid-cols-2 gap-3 text-2xs text-fg-subtle">
+          <div>
+            <span className="text-fg">Top-Performer:</span> {d.top_performer.symbol}{" "}
+            <span className="text-pos">
+              +{fmt(d.top_performer.realized_pnl_usd, undefined, 2)}
+            </span>
+          </div>
+          <div className="text-right">
+            <span className="text-fg">Worst-Performer:</span>{" "}
+            {d.worst_performer.symbol}{" "}
+            <span className={d.worst_performer.realized_pnl_usd >= 0 ? "text-pos" : "text-neg"}>
+              {d.worst_performer.realized_pnl_usd >= 0 ? "+" : ""}
+              {fmt(d.worst_performer.realized_pnl_usd, undefined, 2)}
+            </span>
+          </div>
+        </div>
+      )}
+      <div className="mt-2 text-2xs text-fg-subtle">
+        Letztes Close: {d.audit_last_event_utc ?? "—"} · Quelle:{" "}
+        <span className="font-mono">{d.audit_path}</span>
+      </div>
+    </Card>
+  );
 }
 
 export function PortfolioPage() {
@@ -258,22 +382,10 @@ export function PortfolioPage() {
         </Card>
       )}
 
-      {/* DALI v2 S4 M2b: Realized-PnL-Panel mit DevelopmentStatus.
-          Backend-Aggregation steht aus (planning 25% - Daten sind da, Endpoint nicht). */}
-      <PreparedPanel
-        title="Realisierte Gewinne nach Asset"
-        reason="Welche Coins haben gewonnen oder verloren — und welche Trades waren erfolgreich? Per-Asset-Aufschlüsselung braucht Aggregation aus dem Paper-Execution-Audit."
-        detail={
-          <>
-            Rohdaten liegen bereit (<span className="font-mono">artifacts/paper_execution_audit.jsonl</span>).
-            Geplanter Endpoint: <span className="font-mono">GET /operator/portfolio/realized-by-asset</span>.
-            Zielanzeige: Top-Performer, Worst-Performer, abgeschlossene Trades pro Asset.
-          </>
-        }
-        phase="planning"
-        progress={25}
-        timeline="Phase 2 — nach Backtest-Endpoint"
-      />
+      {/* 2026-05-25 Forensik-Patch: PreparedPanel ersetzt durch echte Visualisierung.
+          Endpoint GET /operator/portfolio/realized-by-asset existiert jetzt,
+          liest Paper-Audit ohne Live-Mode / Backtest-Endpoint-Abhängigkeit. */}
+      <RealizedByAssetPanel />
 
       {/* DALI-P-Klartext: Exposure-Card komplett umstrukturiert.
           Operator: "Was soll ich unter OHNE PREIS 2 BTC/USDT (100%) verstehen?

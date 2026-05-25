@@ -139,6 +139,31 @@ def trading_market_data_snapshot(
 # -- paper-portfolio --
 
 
+@trading_app.command("paper-realized-by-asset")
+def trading_paper_realized_by_asset(
+    audit_path: str = typer.Option(
+        "artifacts/paper_execution_audit.jsonl",
+        "--audit-path",
+        help="Append-only paper execution audit JSONL path",
+    ),
+) -> None:
+    """Print realized PnL per asset from paper execution audit (JSON).
+
+    2026-05-25 Forensik-CLI: belegt dass Top-/Worst-Performer ohne Live-Mode
+    und ohne Backtest-Endpoint ableitbar sind. Reine Aggregation über
+    position_closed + position_partial_closed events.
+    """
+    import json as _json
+    from pathlib import Path
+
+    from app.execution.portfolio_read import compute_realized_by_asset
+
+    result = compute_realized_by_asset(Path(audit_path))
+    console.print(_json.dumps(result, indent=2))
+    if not result["available"]:
+        raise typer.Exit(1)
+
+
 @trading_app.command("paper-portfolio-snapshot")
 def trading_paper_portfolio_snapshot(
     audit_path: str = typer.Option(
