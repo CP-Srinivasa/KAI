@@ -76,14 +76,17 @@ def test_empty_file_returns_available_empty(tmp_path):
 
 def test_basic_aggregation(tmp_path):
     audit = tmp_path / "audit.jsonl"
-    _write_jsonl(audit, [
-        _filled("BTC/USDT", "2026-05-01T10:00:00+00:00"),
-        _closed("BTC/USDT", 100.0, ts="2026-05-01T11:00:00+00:00", fee=1.0),
-        _filled("ETH/USDT", "2026-05-02T10:00:00+00:00"),
-        _closed("ETH/USDT", -50.0, ts="2026-05-02T11:00:00+00:00", fee=0.5),
-        _filled("BTC/USDT", "2026-05-03T10:00:00+00:00"),
-        _closed("BTC/USDT", 200.0, ts="2026-05-03T11:00:00+00:00", fee=2.0),
-    ])
+    _write_jsonl(
+        audit,
+        [
+            _filled("BTC/USDT", "2026-05-01T10:00:00+00:00"),
+            _closed("BTC/USDT", 100.0, ts="2026-05-01T11:00:00+00:00", fee=1.0),
+            _filled("ETH/USDT", "2026-05-02T10:00:00+00:00"),
+            _closed("ETH/USDT", -50.0, ts="2026-05-02T11:00:00+00:00", fee=0.5),
+            _filled("BTC/USDT", "2026-05-03T10:00:00+00:00"),
+            _closed("BTC/USDT", 200.0, ts="2026-05-03T11:00:00+00:00", fee=2.0),
+        ],
+    )
     r = compute_realized_by_asset(audit)
     assert r["available"] is True
     assert r["totals"]["closed_trades"] == 3
@@ -108,12 +111,15 @@ def test_partial_closes_are_counted(tmp_path):
     werden (Pi hatte 24 partials vs 15 fulls; quality-Endpoint zeigte $759
     statt $2486)."""
     audit = tmp_path / "audit.jsonl"
-    _write_jsonl(audit, [
-        _filled("BTC/USDT", "2026-05-01T10:00:00+00:00"),
-        _partial("BTC/USDT", 50.0, ts="2026-05-01T11:00:00+00:00"),
-        _partial("BTC/USDT", 80.0, ts="2026-05-01T12:00:00+00:00"),
-        _closed("BTC/USDT", 120.0, ts="2026-05-01T13:00:00+00:00"),
-    ])
+    _write_jsonl(
+        audit,
+        [
+            _filled("BTC/USDT", "2026-05-01T10:00:00+00:00"),
+            _partial("BTC/USDT", 50.0, ts="2026-05-01T11:00:00+00:00"),
+            _partial("BTC/USDT", 80.0, ts="2026-05-01T12:00:00+00:00"),
+            _closed("BTC/USDT", 120.0, ts="2026-05-01T13:00:00+00:00"),
+        ],
+    )
     r = compute_realized_by_asset(audit)
     by_btc = next(b for b in r["by_asset"] if b["symbol"] == "BTC/USDT")
     assert by_btc["realized_pnl_usd"] == 250.0
@@ -127,15 +133,21 @@ def test_partial_closes_are_counted(tmp_path):
 def test_legacy_v1_lines_use_entry_exit_quantity(tmp_path):
     """v1-Zeilen ohne trade_pnl_usd: reconstruct aus entry/exit/quantity."""
     audit = tmp_path / "audit.jsonl"
-    audit.write_text(json.dumps({
-        "event_type": "position_closed",
-        "timestamp_utc": "2026-04-01T10:00:00+00:00",
-        "symbol": "SOL/USDT",
-        "entry_price": 50.0,
-        "exit_price": 60.0,
-        "quantity": 10.0,
-        # no trade_pnl_usd
-    }) + "\n", encoding="utf-8")
+    audit.write_text(
+        json.dumps(
+            {
+                "event_type": "position_closed",
+                "timestamp_utc": "2026-04-01T10:00:00+00:00",
+                "symbol": "SOL/USDT",
+                "entry_price": 50.0,
+                "exit_price": 60.0,
+                "quantity": 10.0,
+                # no trade_pnl_usd
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
     r = compute_realized_by_asset(audit)
     assert r["available"] is True
     assert r["totals"]["realized_pnl_usd"] == 100.0  # (60-50)*10
@@ -143,11 +155,13 @@ def test_legacy_v1_lines_use_entry_exit_quantity(tmp_path):
 
 def test_invalid_lines_logged_but_not_fatal(tmp_path):
     audit = tmp_path / "audit.jsonl"
-    bad_pnl = json.dumps({
-        "event_type": "position_closed",
-        "symbol": "BTC/USDT",
-        "trade_pnl_usd": "not-a-number",
-    })
+    bad_pnl = json.dumps(
+        {
+            "event_type": "position_closed",
+            "symbol": "BTC/USDT",
+            "trade_pnl_usd": "not-a-number",
+        }
+    )
     no_symbol = json.dumps({"event_type": "position_closed", "trade_pnl_usd": 10.0})
     valid = json.dumps(_closed("ETH/USDT", 42.0, ts="2026-05-01T10:00:00+00:00"))
     audit.write_text(
@@ -166,6 +180,7 @@ def test_stress_10k_close_events_sub_second(tmp_path):
     Akzeptanz: läuft in <2 Sekunden auf realistischer Hardware durch.
     """
     import time
+
     audit = tmp_path / "stress.jsonl"
     rows = []
     for i in range(10_000):
@@ -183,12 +198,15 @@ def test_stress_10k_close_events_sub_second(tmp_path):
 
 def test_top_worst_performer_assignment(tmp_path):
     audit = tmp_path / "audit.jsonl"
-    _write_jsonl(audit, [
-        _closed("A/USDT", 100.0, ts="2026-05-01T10:00:00+00:00"),
-        _closed("B/USDT", -200.0, ts="2026-05-01T11:00:00+00:00"),
-        _closed("C/USDT", 50.0, ts="2026-05-01T12:00:00+00:00"),
-        _closed("D/USDT", 300.0, ts="2026-05-01T13:00:00+00:00"),
-    ])
+    _write_jsonl(
+        audit,
+        [
+            _closed("A/USDT", 100.0, ts="2026-05-01T10:00:00+00:00"),
+            _closed("B/USDT", -200.0, ts="2026-05-01T11:00:00+00:00"),
+            _closed("C/USDT", 50.0, ts="2026-05-01T12:00:00+00:00"),
+            _closed("D/USDT", 300.0, ts="2026-05-01T13:00:00+00:00"),
+        ],
+    )
     r = compute_realized_by_asset(audit)
     assert r["top_performer"]["symbol"] == "D/USDT"
     assert r["top_performer"]["realized_pnl_usd"] == 300.0
@@ -198,11 +216,14 @@ def test_top_worst_performer_assignment(tmp_path):
 
 def test_audit_last_event_utc_is_maximum(tmp_path):
     audit = tmp_path / "audit.jsonl"
-    _write_jsonl(audit, [
-        _closed("A/USDT", 10.0, ts="2026-05-01T10:00:00+00:00"),
-        _filled("B/USDT", "2026-05-10T15:00:00+00:00"),
-        _closed("A/USDT", 20.0, ts="2026-05-02T10:00:00+00:00"),
-    ])
+    _write_jsonl(
+        audit,
+        [
+            _closed("A/USDT", 10.0, ts="2026-05-01T10:00:00+00:00"),
+            _filled("B/USDT", "2026-05-10T15:00:00+00:00"),
+            _closed("A/USDT", 20.0, ts="2026-05-02T10:00:00+00:00"),
+        ],
+    )
     r = compute_realized_by_asset(audit)
     # last event ts overall (any event type, including order_filled)
     assert r["audit_last_event_utc"] == "2026-05-10T15:00:00+00:00"

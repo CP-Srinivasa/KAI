@@ -660,7 +660,7 @@ async def get_paper_pipeline_status(
     def _age_seconds(p: Path) -> float | None:
         if not p.exists():
             return None
-        return (now.timestamp() - p.stat().st_mtime)
+        return now.timestamp() - p.stat().st_mtime
 
     def _last_event_ts(p: Path, *, type_filter: set[str] | None = None) -> str | None:
         if not p.exists():
@@ -739,6 +739,7 @@ async def get_paper_pipeline_status(
     # Replay-Health: schickt skipped_events transparent durch.
     try:
         from app.execution.audit_replay import replay_paper_audit
+
         replay = replay_paper_audit(audit)
         replay_payload = {
             "available": replay.available,
@@ -746,9 +747,7 @@ async def get_paper_pipeline_status(
             "cash_usd": round(replay.cash_usd, 4),
             "open_positions": sorted(replay.positions.keys()),
             "open_positions_count": len(replay.positions),
-            "skipped_events": [
-                {"line": ln, "reason": r} for ln, r in replay.skipped_events
-            ],
+            "skipped_events": [{"line": ln, "reason": r} for ln, r in replay.skipped_events],
         }
     except Exception as exc:  # noqa: BLE001
         replay_payload = {
@@ -765,9 +764,7 @@ async def get_paper_pipeline_status(
     age_bridge = _age_seconds(bridge)
 
     last_fill = _last_event_ts(audit, type_filter={"order_filled"})
-    last_close = _last_event_ts(
-        audit, type_filter={"position_closed", "position_partial_closed"}
-    )
+    last_close = _last_event_ts(audit, type_filter={"position_closed", "position_partial_closed"})
     last_order = _last_event_ts(audit, type_filter={"order_created"})
 
     return {
@@ -830,8 +827,7 @@ async def get_paper_pipeline_status(
                 else None
             ),
             "all_cron_priority_rejected": (
-                cron_recent_total > 0
-                and cron_recent_priority_rejected == cron_recent_total
+                cron_recent_total > 0 and cron_recent_priority_rejected == cron_recent_total
             ),
         },
     }

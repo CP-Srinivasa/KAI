@@ -21,8 +21,10 @@ from app.core.settings import get_settings
 def _make_app(api_key: str = "test-key") -> FastAPI:
     app = FastAPI()
     app.include_router(router)
+
     def _override_settings() -> SimpleNamespace:
         return SimpleNamespace(api_key=api_key, cf_access_allowed_emails="")
+
     app.dependency_overrides[get_settings] = _override_settings
     return app
 
@@ -48,11 +50,15 @@ def test_realized_by_asset_requires_auth(tmp_path):
 def test_realized_by_asset_returns_aggregation(tmp_path):
     audit = tmp_path / "audit.jsonl"
     audit.write_text(
-        "\n".join(json.dumps(e) for e in [
-            _close_event("BTC/USDT", 500.0, ts="2026-05-01T10:00:00+00:00"),
-            _close_event("ETH/USDT", -100.0, ts="2026-05-02T10:00:00+00:00"),
-            _close_event("BTC/USDT", 200.0, ts="2026-05-03T10:00:00+00:00"),
-        ]) + "\n",
+        "\n".join(
+            json.dumps(e)
+            for e in [
+                _close_event("BTC/USDT", 500.0, ts="2026-05-01T10:00:00+00:00"),
+                _close_event("ETH/USDT", -100.0, ts="2026-05-02T10:00:00+00:00"),
+                _close_event("BTC/USDT", 200.0, ts="2026-05-03T10:00:00+00:00"),
+            ]
+        )
+        + "\n",
         encoding="utf-8",
     )
     c = TestClient(_make_app())
@@ -87,32 +93,36 @@ def test_realized_by_asset_missing_audit_file_returns_200(tmp_path):
 def test_paper_pipeline_status_returns_shape(tmp_path):
     audit = tmp_path / "audit.jsonl"
     audit.write_text(
-        "\n".join(json.dumps(e) for e in [
-            {
-                "schema_version": "v2",
-                "event_type": "order_filled",
-                "timestamp_utc": "2026-05-20T12:00:00+00:00",
-                "fill_id": "f1",
-                "order_id": "o1",
-                "symbol": "BTC/USDT",
-                "side": "buy",
-                "quantity": 1.0,
-                "fill_price": 70000.0,
-                "fee_usd": 0.0,
-                "filled_at": "2026-05-20T12:00:00+00:00",
-                "slippage_pct": 0.0,
-                "pnl_usd": 0.0,
-                "position_side": "long",
-                "fee_venue": "paper",
-                "fee_role": "taker",
-                "fee_bps_applied": 0.0,
-                "fee_table_version": "1.0.0",
-                "correlation_id": "",
-                "portfolio_cash": 10000.0,
-                "realized_pnl_usd": 0.0,
-            },
-            _close_event("BTC/USDT", 500.0, ts="2026-05-21T10:00:00+00:00"),
-        ]) + "\n",
+        "\n".join(
+            json.dumps(e)
+            for e in [
+                {
+                    "schema_version": "v2",
+                    "event_type": "order_filled",
+                    "timestamp_utc": "2026-05-20T12:00:00+00:00",
+                    "fill_id": "f1",
+                    "order_id": "o1",
+                    "symbol": "BTC/USDT",
+                    "side": "buy",
+                    "quantity": 1.0,
+                    "fill_price": 70000.0,
+                    "fee_usd": 0.0,
+                    "filled_at": "2026-05-20T12:00:00+00:00",
+                    "slippage_pct": 0.0,
+                    "pnl_usd": 0.0,
+                    "position_side": "long",
+                    "fee_venue": "paper",
+                    "fee_role": "taker",
+                    "fee_bps_applied": 0.0,
+                    "fee_table_version": "1.0.0",
+                    "correlation_id": "",
+                    "portfolio_cash": 10000.0,
+                    "realized_pnl_usd": 0.0,
+                },
+                _close_event("BTC/USDT", 500.0, ts="2026-05-21T10:00:00+00:00"),
+            ]
+        )
+        + "\n",
         encoding="utf-8",
     )
     cron = tmp_path / "cron.log"
@@ -123,14 +133,18 @@ def test_paper_pipeline_status_returns_shape(tmp_path):
     )
     blocked = tmp_path / "blocked.jsonl"
     blocked.write_text(
-        "\n".join(json.dumps(e) for e in [
-            {"block_reason": "not_actionable",
-             "blocked_at": "2026-05-25T05:00:00+00:00"},
-            {"block_reason": "not_actionable",
-             "blocked_at": "2026-05-25T06:00:00+00:00"},
-            {"block_reason": "bearish_directional_disabled",
-             "blocked_at": "2026-05-25T07:00:00+00:00"},
-        ]) + "\n",
+        "\n".join(
+            json.dumps(e)
+            for e in [
+                {"block_reason": "not_actionable", "blocked_at": "2026-05-25T05:00:00+00:00"},
+                {"block_reason": "not_actionable", "blocked_at": "2026-05-25T06:00:00+00:00"},
+                {
+                    "block_reason": "bearish_directional_disabled",
+                    "blocked_at": "2026-05-25T07:00:00+00:00",
+                },
+            ]
+        )
+        + "\n",
         encoding="utf-8",
     )
     c = TestClient(_make_app())

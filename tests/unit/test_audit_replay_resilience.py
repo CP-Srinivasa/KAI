@@ -100,17 +100,20 @@ def test_replay_continues_after_duplicate_close(tmp_path):
     skipped_events meldet L6 transparent.
     """
     audit = tmp_path / "audit.jsonl"
-    _write_jsonl(audit, [
-        _order_created("MATIC/USDT", "buy", 100.0, "ord_1"),
-        _order_filled("MATIC/USDT", "buy", 100.0, 1.0, "ord_1"),
-        _order_created("MATIC/USDT", "sell", 100.0, "ord_2"),
-        _order_filled("MATIC/USDT", "sell", 100.0, 1.05, "ord_2"),
-        _position_closed("MATIC/USDT", 100.0, 5.0),
-        _order_filled("MATIC/USDT", "sell", 100.0, 1.05, "ord_3"),  # duplicate
-        _position_closed("MATIC/USDT", 100.0, 5.0),                 # duplicate
-        _order_created("BTC/USDT", "buy", 1.0, "ord_4"),
-        _order_filled("BTC/USDT", "buy", 1.0, 70000.0, "ord_4"),
-    ])
+    _write_jsonl(
+        audit,
+        [
+            _order_created("MATIC/USDT", "buy", 100.0, "ord_1"),
+            _order_filled("MATIC/USDT", "buy", 100.0, 1.0, "ord_1"),
+            _order_created("MATIC/USDT", "sell", 100.0, "ord_2"),
+            _order_filled("MATIC/USDT", "sell", 100.0, 1.05, "ord_2"),
+            _position_closed("MATIC/USDT", 100.0, 5.0),
+            _order_filled("MATIC/USDT", "sell", 100.0, 1.05, "ord_3"),  # duplicate
+            _position_closed("MATIC/USDT", 100.0, 5.0),  # duplicate
+            _order_created("BTC/USDT", "buy", 1.0, "ord_4"),
+            _order_filled("BTC/USDT", "buy", 1.0, 70000.0, "ord_4"),
+        ],
+    )
 
     r = replay_paper_audit(audit)
 
@@ -159,12 +162,15 @@ def test_replay_handles_invalid_fill_payload(tmp_path):
     bad_fill = _order_filled("BTC/USDT", "buy", 1.0, 70000.0, "ord_bad")
     bad_fill["quantity"] = -1.0  # invalid
 
-    _write_jsonl(audit, [
-        _order_created("BTC/USDT", "buy", 1.0, "ord_bad"),
-        bad_fill,
-        _order_created("ETH/USDT", "buy", 1.0, "ord_ok"),
-        _order_filled("ETH/USDT", "buy", 1.0, 3000.0, "ord_ok"),
-    ])
+    _write_jsonl(
+        audit,
+        [
+            _order_created("BTC/USDT", "buy", 1.0, "ord_bad"),
+            bad_fill,
+            _order_created("ETH/USDT", "buy", 1.0, "ord_ok"),
+            _order_filled("ETH/USDT", "buy", 1.0, 3000.0, "ord_ok"),
+        ],
+    )
     r = replay_paper_audit(audit)
     assert r.available is True
     assert "ETH/USDT" in r.positions

@@ -212,8 +212,14 @@ def replay_paper_audit(audit_path: Path) -> AuditReplayResult:
             # 2026-05-25 Forensik-Fix: invalid fill row darf nicht das gesamte
             # Portfolio unsichtbar machen. Skip + warn + weiterlaufen.
             reason = f"audit_fill_validation_error_line_{line_number}"
-            logger.warning("[audit_replay] skip %s (symbol=%r side=%r qty=%r price=%r)",
-                           reason, symbol, side, quantity, fill_price)
+            logger.warning(
+                "[audit_replay] skip %s (symbol=%r side=%r qty=%r price=%r)",
+                reason,
+                symbol,
+                side,
+                quantity,
+                fill_price,
+            )
             skipped.append((line_number, reason))
             continue
 
@@ -263,8 +269,12 @@ def replay_paper_audit(audit_path: Path) -> AuditReplayResult:
                     # Race-Condition oder fehlerhaftem Replay darf nicht das gesamte
                     # Portfolio unsichtbar machen.
                     reason = f"audit_position_side_conflict_line_{line_number}"
-                    logger.warning("[audit_replay] skip %s (existing.side=%r new.side=%r)",
-                                   reason, existing.position_side, position_side_val)
+                    logger.warning(
+                        "[audit_replay] skip %s (existing.side=%r new.side=%r)",
+                        reason,
+                        existing.position_side,
+                        position_side_val,
+                    )
                     skipped.append((line_number, reason))
                     continue
                 total_qty = existing.quantity + quantity
@@ -300,7 +310,10 @@ def replay_paper_audit(audit_path: Path) -> AuditReplayResult:
                 reason = f"audit_close_without_position_line_{line_number}"
                 logger.warning(
                     "[audit_replay] skip %s (sym=%s have_pos=%s req_qty=%s)",
-                    reason, symbol, existing is not None, quantity
+                    reason,
+                    symbol,
+                    existing is not None,
+                    quantity,
                 )
                 skipped.append((line_number, reason))
                 continue
@@ -325,8 +338,9 @@ def replay_paper_audit(audit_path: Path) -> AuditReplayResult:
         else:
             # 2026-05-25 Forensik-Fix: unbekannte side/position-Kombi skipt.
             reason = f"audit_side_position_combo_error_line_{line_number}"
-            logger.warning("[audit_replay] skip %s (side=%r position_side=%r)",
-                           reason, side, position_side_val)
+            logger.warning(
+                "[audit_replay] skip %s (side=%r position_side=%r)", reason, side, position_side_val
+            )
             skipped.append((line_number, reason))
             continue
 

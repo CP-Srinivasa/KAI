@@ -185,27 +185,31 @@ def test_quality_api_includes_position_partial_closed_in_pnl(tmp_path: Path) -> 
     (tmp_path / "alert_outcomes.jsonl").write_text("", encoding="utf-8")
     (tmp_path / "trading_loop_audit.jsonl").write_text("", encoding="utf-8")
     (tmp_path / "paper_execution_audit.jsonl").write_text(
-        "\n".join(json.dumps(r) for r in [
-            {"event_type": "order_filled", "side": "buy", "symbol": "BTC/USDT"},
-            {
-                "schema_version": "v2",
-                "event_type": "position_partial_closed",
-                "symbol": "BTC/USDT",
-                "trade_pnl_usd": 500.0,
-            },
-            {
-                "schema_version": "v2",
-                "event_type": "position_partial_closed",
-                "symbol": "BTC/USDT",
-                "trade_pnl_usd": 300.0,
-            },
-            {
-                "schema_version": "v2",
-                "event_type": "position_closed",
-                "symbol": "BTC/USDT",
-                "trade_pnl_usd": 200.0,
-            },
-        ]) + "\n",
+        "\n".join(
+            json.dumps(r)
+            for r in [
+                {"event_type": "order_filled", "side": "buy", "symbol": "BTC/USDT"},
+                {
+                    "schema_version": "v2",
+                    "event_type": "position_partial_closed",
+                    "symbol": "BTC/USDT",
+                    "trade_pnl_usd": 500.0,
+                },
+                {
+                    "schema_version": "v2",
+                    "event_type": "position_partial_closed",
+                    "symbol": "BTC/USDT",
+                    "trade_pnl_usd": 300.0,
+                },
+                {
+                    "schema_version": "v2",
+                    "event_type": "position_closed",
+                    "symbol": "BTC/USDT",
+                    "trade_pnl_usd": 200.0,
+                },
+            ]
+        )
+        + "\n",
         encoding="utf-8",
     )
 

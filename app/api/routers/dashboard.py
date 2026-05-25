@@ -250,9 +250,7 @@ async def dashboard_quality_api() -> JSONResponse:
         ),
         2,
     )
-    positions_closed = sum(
-        1 for r in closes if r.get("event_type") == "position_closed"
-    )
+    positions_closed = sum(1 for r in closes if r.get("event_type") == "position_closed")
     positions_partial_closed = sum(
         1 for r in closes if r.get("event_type") == "position_partial_closed"
     )
