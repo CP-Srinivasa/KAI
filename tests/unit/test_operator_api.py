@@ -93,6 +93,8 @@ def test_expected_routes_present() -> None:
         "/operator/daily-summary",
         "/operator/portfolio-snapshot",
         "/operator/exposure-summary",
+        "/operator/portfolio/realized-by-asset",
+        "/operator/paper-pipeline-status",
         "/operator/trading-loop/status",
         "/operator/trading-loop/recent-cycles",
         "/operator/trading-loop/run-once",

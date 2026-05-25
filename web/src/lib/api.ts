@@ -606,6 +606,92 @@ export function fetchExposureSummary(signal?: AbortSignal): Promise<ExposureSumm
   return apiGet<ExposureSummary>("/operator/exposure-summary", { signal });
 }
 
+// 2026-05-25 Forensik-Patch: realized-by-asset entkoppelt von Live-Mode.
+export type RealizedByAssetEntry = {
+  symbol: string;
+  realized_pnl_usd: number;
+  closed_trades: number;
+  wins: number;
+  losses: number;
+  win_rate_pct: number | null;
+  fees_usd_total: number;
+  partial_closes: number;
+  full_closes: number;
+  last_close_utc: string | null;
+};
+
+export type RealizedByAssetResponse = {
+  as_of_utc: string;
+  audit_path: string;
+  audit_file_exists: boolean;
+  audit_last_event_utc: string | null;
+  by_asset: RealizedByAssetEntry[];
+  totals: {
+    realized_pnl_usd: number;
+    closed_trades: number;
+    assets_count: number;
+    fees_usd_total: number;
+    partial_close_events: number;
+    full_close_events: number;
+  };
+  top_performer: RealizedByAssetEntry | null;
+  worst_performer: RealizedByAssetEntry | null;
+  available: boolean;
+  error: string | null;
+  invalid_lines: [number, string][];
+};
+
+export function fetchRealizedByAsset(
+  signal?: AbortSignal,
+): Promise<RealizedByAssetResponse> {
+  return apiGet<RealizedByAssetResponse>("/operator/portfolio/realized-by-asset", { signal });
+}
+
+export type PaperPipelineStatusResponse = {
+  as_of_utc: string;
+  audit_files: Record<string, {
+    path: string;
+    exists: boolean;
+    age_seconds: number | null;
+    last_order_created_utc?: string | null;
+    last_order_filled_utc?: string | null;
+    last_position_close_utc?: string | null;
+  }>;
+  replay_health: {
+    available: boolean;
+    error: string | null;
+    cash_usd?: number;
+    open_positions?: string[];
+    open_positions_count?: number;
+    skipped_events?: { line: number; reason: string }[];
+  };
+  cron_recent_1000: {
+    total_status_rows: number;
+    priority_rejected: number;
+    completed: number;
+    priority_rejected_share_pct: number | null;
+  };
+  block_reasons_24h: Record<string, number>;
+  block_total_24h: number;
+  realized_summary: {
+    total_realized_pnl_usd: number;
+    closed_trades: number;
+    assets_count: number;
+    last_close_utc: string | null;
+  };
+  freeze_indicators: {
+    paper_audit_stale_seconds: number | null;
+    no_fills_since_seconds: number | null;
+    all_cron_priority_rejected: boolean;
+  };
+};
+
+export function fetchPaperPipelineStatus(
+  signal?: AbortSignal,
+): Promise<PaperPipelineStatusResponse> {
+  return apiGet<PaperPipelineStatusResponse>("/operator/paper-pipeline-status", { signal });
+}
+
 export type TradingLoopStatus = {
   report_type: string;
   mode: string;

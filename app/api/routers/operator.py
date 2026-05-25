@@ -605,6 +605,238 @@ async def get_operator_exposure_summary(
     )
 
 
+@router.get("/portfolio/realized-by-asset")
+async def get_realized_by_asset(
+    request: Request,
+    response: Response,
+    audit_path: str = "artifacts/paper_execution_audit.jsonl",
+) -> dict[str, object]:
+    """Per-asset realized PnL from paper_execution_audit.jsonl.
+
+    2026-05-25 Forensik-Antwort: Diese Route widerlegt die Annahme "Vor
+    Live-Mode keine sinnvolle Visualisierung" und entkoppelt die UI von
+    "Phase 2 — nach Backtest-Endpoint". Reine Aggregation über
+    position_closed + position_partial_closed Events. KEIN Exchange-Call,
+    KEIN Live-Trading, KEIN Mark-to-Market, read-only.
+
+    Schema: siehe app.execution.portfolio_read.compute_realized_by_asset.
+    """
+    from app.execution.portfolio_read import compute_realized_by_asset
+
+    _set_context_headers(response, request)
+    return compute_realized_by_asset(Path(audit_path))
+
+
+@router.get("/paper-pipeline-status")
+async def get_paper_pipeline_status(
+    request: Request,
+    response: Response,
+    audit_path: str = "artifacts/paper_execution_audit.jsonl",
+    loop_audit_path: str = "artifacts/trading_loop_audit.jsonl",
+    blocked_alerts_path: str = "artifacts/blocked_alerts.jsonl",
+    cron_log_path: str = "artifacts/paper_trading_cron.log",
+    bridge_orders_path: str = "artifacts/bridge_pending_orders.jsonl",
+) -> dict[str, object]:
+    """Operator-Diagnose: ist die Paper-Pipeline lebendig oder eingefroren?
+
+    2026-05-25 Forensik-Antwort: Operator-Eindruck "Equity bewegt sich nicht"
+    wird durch fünf orthogonale Indikatoren erklärt — letzter Fill, letzter
+    Close, Cron-Heartbeat, Bridge-Status, Eligibility-Block-Reasons in den
+    letzten 24h. Keine Behauptung "OK"/"down", nur transparente Zahlen.
+
+    KEINE Exchange-Calls, KEINE Live-Daten.
+    """
+    from app.execution.portfolio_read import compute_realized_by_asset
+
+    _set_context_headers(response, request)
+
+    audit = Path(audit_path)
+    loop_audit = Path(loop_audit_path)
+    blocked = Path(blocked_alerts_path)
+    cron = Path(cron_log_path)
+    bridge = Path(bridge_orders_path)
+    now = datetime.now(UTC)
+
+    def _age_seconds(p: Path) -> float | None:
+        if not p.exists():
+            return None
+        return (now.timestamp() - p.stat().st_mtime)
+
+    def _last_event_ts(p: Path, *, type_filter: set[str] | None = None) -> str | None:
+        if not p.exists():
+            return None
+        last: str | None = None
+        try:
+            for line in p.read_text(encoding="utf-8").splitlines():
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    d = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if not isinstance(d, dict):
+                    continue
+                if type_filter is not None and d.get("event_type") not in type_filter:
+                    continue
+                ts = d.get("timestamp_utc") or d.get("created_at") or d.get("filled_at")
+                if isinstance(ts, str) and ts and (last is None or ts > last):
+                    last = ts
+        except OSError:
+            return None
+        return last
+
+    # Block-Reason-Counter aus blocked_alerts.jsonl (letzte 24h).
+    cutoff = now.timestamp() - 24 * 3600
+    block_reasons: dict[str, int] = {}
+    if blocked.exists():
+        try:
+            for line in blocked.read_text(encoding="utf-8").splitlines():
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    d = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if not isinstance(d, dict):
+                    continue
+                ts = d.get("blocked_at", "")
+                if not isinstance(ts, str):
+                    continue
+                try:
+                    ts_clean = ts.replace("Z", "+00:00") if ts.endswith("Z") else ts
+                    ts_dt = datetime.fromisoformat(ts_clean)
+                except ValueError:
+                    continue
+                if ts_dt.timestamp() < cutoff:
+                    continue
+                reason = d.get("block_reason", "unknown")
+                if isinstance(reason, str):
+                    block_reasons[reason] = block_reasons.get(reason, 0) + 1
+        except OSError:
+            pass
+
+    # Cron-Log: priority_rejected vs completed in den letzten 1000 Zeilen.
+    cron_recent_priority_rejected = 0
+    cron_recent_completed = 0
+    cron_recent_total = 0
+    if cron.exists():
+        try:
+            lines = cron.read_text(encoding="utf-8").splitlines()[-1000:]
+            for line in lines:
+                if "status=priority_rejected" in line:
+                    cron_recent_priority_rejected += 1
+                    cron_recent_total += 1
+                elif "status=completed" in line:
+                    cron_recent_completed += 1
+                    cron_recent_total += 1
+                elif "status=" in line:
+                    cron_recent_total += 1
+        except OSError:
+            pass
+
+    # Replay-Health: schickt skipped_events transparent durch.
+    try:
+        from app.execution.audit_replay import replay_paper_audit
+        replay = replay_paper_audit(audit)
+        replay_payload = {
+            "available": replay.available,
+            "error": replay.error,
+            "cash_usd": round(replay.cash_usd, 4),
+            "open_positions": sorted(replay.positions.keys()),
+            "open_positions_count": len(replay.positions),
+            "skipped_events": [
+                {"line": ln, "reason": r} for ln, r in replay.skipped_events
+            ],
+        }
+    except Exception as exc:  # noqa: BLE001
+        replay_payload = {
+            "available": False,
+            "error": f"replay_exception:{exc.__class__.__name__}",
+        }
+
+    # Realized-by-asset Summary (totals only — full details an separater Route).
+    by_asset_summary = compute_realized_by_asset(audit)
+
+    age_audit = _age_seconds(audit)
+    age_loop = _age_seconds(loop_audit)
+    age_cron = _age_seconds(cron)
+    age_bridge = _age_seconds(bridge)
+
+    last_fill = _last_event_ts(audit, type_filter={"order_filled"})
+    last_close = _last_event_ts(
+        audit, type_filter={"position_closed", "position_partial_closed"}
+    )
+    last_order = _last_event_ts(audit, type_filter={"order_created"})
+
+    return {
+        "as_of_utc": now.isoformat(),
+        "audit_files": {
+            "paper_execution_audit": {
+                "path": str(audit),
+                "exists": audit.exists(),
+                "age_seconds": age_audit,
+                "last_order_created_utc": last_order,
+                "last_order_filled_utc": last_fill,
+                "last_position_close_utc": last_close,
+            },
+            "trading_loop_audit": {
+                "path": str(loop_audit),
+                "exists": loop_audit.exists(),
+                "age_seconds": age_loop,
+            },
+            "paper_trading_cron_log": {
+                "path": str(cron),
+                "exists": cron.exists(),
+                "age_seconds": age_cron,
+            },
+            "bridge_pending_orders": {
+                "path": str(bridge),
+                "exists": bridge.exists(),
+                "age_seconds": age_bridge,
+            },
+        },
+        "replay_health": replay_payload,
+        "cron_recent_1000": {
+            "total_status_rows": cron_recent_total,
+            "priority_rejected": cron_recent_priority_rejected,
+            "completed": cron_recent_completed,
+            "priority_rejected_share_pct": round(
+                cron_recent_priority_rejected / cron_recent_total * 100.0, 2
+            )
+            if cron_recent_total > 0
+            else None,
+        },
+        "block_reasons_24h": block_reasons,
+        "block_total_24h": sum(block_reasons.values()),
+        "realized_summary": {
+            "total_realized_pnl_usd": by_asset_summary["totals"]["realized_pnl_usd"]
+            if isinstance(by_asset_summary.get("totals"), dict)
+            else 0.0,
+            "closed_trades": by_asset_summary["totals"]["closed_trades"]
+            if isinstance(by_asset_summary.get("totals"), dict)
+            else 0,
+            "assets_count": by_asset_summary["totals"]["assets_count"]
+            if isinstance(by_asset_summary.get("totals"), dict)
+            else 0,
+            "last_close_utc": by_asset_summary.get("audit_last_event_utc"),
+        },
+        "freeze_indicators": {
+            "paper_audit_stale_seconds": age_audit,
+            "no_fills_since_seconds": (
+                (now - datetime.fromisoformat(last_fill.replace("Z", "+00:00"))).total_seconds()
+                if isinstance(last_fill, str) and last_fill
+                else None
+            ),
+            "all_cron_priority_rejected": (
+                cron_recent_total > 0
+                and cron_recent_priority_rejected == cron_recent_total
+            ),
+        },
+    }
+
+
 @router.get("/trading-loop/status")
 async def get_operator_trading_loop_status(
     request: Request,
