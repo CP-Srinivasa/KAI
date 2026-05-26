@@ -1,0 +1,46 @@
+# KAI pre-commit hooks — schneller lokaler Lint-Gatekeeper.
+# Verhindert Push-Commits die CI "Lint & Format Check" rot machen.
+#
+# Setup (einmalig pro Workstation/Worktree):
+#   pip install pre-commit
+#   pre-commit install
+#
+# Manuell laufen lassen ohne Commit:
+#   pre-commit run --all-files
+#
+# Skip-Hook für Hotfix-Commits (nur mit explizitem Operator-OK):
+#   git commit --no-verify -m "..."
+#
+# Was NICHT hier ist:
+#   - pip-audit (zu langsam, > 30s pro Run) → bleibt in CI Security Scan
+#   - mypy (zu langsam) → bleibt in CI Type Check
+#   - pytest (per Definition) → bleibt in CI Tests
+#
+# Diese Hooks duplizieren ABSICHTLICH die CI-Lint-Jobs (.github/workflows/ci.yml Z.18-28),
+# damit Drift wie PR #64 (Codex committed ohne lokales ruff format → CI Lint rot)
+# nicht wieder passiert.
+
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.9.0
+    hooks:
+      - id: ruff-format
+        name: ruff format (KAI app/ + tests/)
+        files: ^(app|tests)/.*\.py$
+      - id: ruff
+        name: ruff check (KAI app/ + tests/)
+        args: [--fix]
+        files: ^(app|tests)/.*\.py$
+
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: check-yaml
+        files: \.(yml|yaml)$
+      - id: check-toml
+        files: \.toml$
+      - id: end-of-file-fixer
+        files: \.(py|md|toml|yaml|yml)$
+      - id: trailing-whitespace
+        files: \.(py|md|toml|yaml|yml)$
+        args: [--markdown-linebreak-ext=md]
