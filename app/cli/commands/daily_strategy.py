@@ -106,7 +106,12 @@ def _days_until(target: date, today: date) -> int:
     return (target - today).days
 
 
-def _blocked_alerts_summary(today: date, lookback_hours: int = 24) -> dict[str, object]:
+def _blocked_alerts_summary(
+    today: date,
+    lookback_hours: int = 24,
+    *,
+    now_utc: datetime | None = None,
+) -> dict[str, object]:
     """Summarize blocked_alerts.jsonl for the last *lookback_hours*.
 
     F4 (Dispatch-Observability) — Operator-Pflicht-Sektion in der Daily-
@@ -116,6 +121,14 @@ def _blocked_alerts_summary(today: date, lookback_hours: int = 24) -> dict[str, 
     ~4% des Klassifikator-Outputs; ohne diese Sicht ist der Operator blind
     auf 96% des Material-Flows.
 
+    The window anchors at the actual run-time (``now_utc`` arg or
+    ``datetime.now(UTC)``), NOT at today's end-of-day. Anchoring at
+    end-of-day made the window extend into the future, so a run at
+    08:34 UTC missed every block written between yesterday 23:59 and
+    08:34 today — exactly the rolling slice the operator needs to see.
+    ``now_utc`` is exposed for tests; the ``today`` arg is kept for the
+    legacy call-site and the file-date suffix in the section header.
+
     Returns {
         'total': int,
         'top_reasons': [(reason, count), ...],   # max 3
@@ -124,9 +137,7 @@ def _blocked_alerts_summary(today: date, lookback_hours: int = 24) -> dict[str, 
         'window_end': iso str,
     }
     """
-    # Window: rolling lookback (default 24h) anchored at today's *end-of-day UTC*
-    # so a bootstrap run at 06:00 still captures yesterday-evening blocks.
-    window_end = datetime.combine(today, datetime.max.time()).replace(tzinfo=UTC)
+    window_end = now_utc if now_utc is not None else datetime.now(UTC)
     window_start = window_end - timedelta(hours=lookback_hours)
 
     path = Path("artifacts/blocked_alerts.jsonl")
@@ -246,6 +257,17 @@ def _build_skeleton(today: date) -> str:
     if directional > 0:
         precision_pct = 100.0 * res["hit"] / directional
 
+    # Operator pin 2026-05-26: the raw alert_outcomes count buries
+    # resolved outcomes under repeated inconclusive rows from the
+    # Multi-Window annotator. Show both raw and latest-per-document
+    # so re-entry decisions use the deduped baseline.
+    try:
+        from app.observability.outcome_dedupe_report import build_outcome_dedupe_report
+
+        dedupe_report = build_outcome_dedupe_report()
+    except Exception:  # pragma: no cover — best-effort metric
+        dedupe_report = None
+
     tv_pending = _tv_pending_count()
     paper_fills = _paper_fills_count()
 
@@ -263,6 +285,14 @@ def _build_skeleton(today: date) -> str:
         f"{precision_pct:.1f}% ({res['hit']}/{directional})" if precision_pct is not None else "—"
     )
 
+    deduped_line = "—"
+    if dedupe_report is not None:
+        deduped_line = (
+            f"{dedupe_report.deduped_precision_str} "
+            f"(raw {dedupe_report.raw_precision_str}; "
+            f"dropped {dedupe_report.dropped_inconclusive_dupes} duplicate inconclusives)"
+        )
+
     return f"""# KAI Daily Strategy Review — {today.isoformat()}
 
 Erstellt: {today.isoformat()} · automatischer Skelett-Bootstrap (CLI: `daily-strategy bootstrap`)
@@ -277,6 +307,7 @@ Horizont-Anker: {horizon_line}
 |---|---|
 | Resolved directional alerts | {directional} (hit {res["hit"]} / miss {res["miss"]}) |
 | Baseline-Precision | {precision_line} |
+| Deduped Precision (latest per document_id) | {deduped_line} |
 | TV pending events (unpromoted) | {tv_pending} |
 | Paper-Trading abgeschlossene Trades | {paper_fills} |
 | Tage bis TV-Pivot Re-Entry | {d_reentry} |
@@ -288,7 +319,7 @@ Aktueller Status: {_gate_status_line(directional, paper_fills)}
 
 ---
 
-{_format_dispatch_health_section(_blocked_alerts_summary(today))}
+{_format_dispatch_health_section(_blocked_alerts_summary(today, now_utc=datetime.now(UTC)))}
 ---
 
 ## 1. Lagebild
@@ -380,6 +411,13 @@ def cmd_sync(
         "artifacts/paper_execution_audit.jsonl",
         "artifacts/alert_audit.jsonl",
         "artifacts/tradingview_pending_signals.jsonl",
+        "artifacts/trading_loop_audit.jsonl",
+        "artifacts/blocked_alerts.jsonl",
+        # Regime snapshots — without these the workstation lookup returns
+        # `no_snapshot_file` for every cycle while the Pi has hourly
+        # snapshots. Daily-strategy needs them for the regime-context audit.
+        "artifacts/regime_state/btc_regime.jsonl",
+        "artifacts/regime_state/eth_regime.jsonl",
     ]
 
     typer.echo(f"Syncing artifacts from Pi ({remote}) to mitigate sync-lag...")

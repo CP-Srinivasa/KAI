@@ -1,12 +1,14 @@
 """Unit tests for the historic regime lookup.
 
-Covers the four failure modes that the trading-loop integration must
-distinguish:
-- ok                : snapshot is fresh and effective at target
-- all_future        : target predates everything we have
-- stale             : everything we have is older than max_age_seconds
-- no_history /
-  asset_unknown     : the JSONL doesn't exist or is empty
+Covers the failure modes that the trading-loop integration must
+distinguish (collapsed pre-2026-05-26, split after):
+- ok                  : snapshot is fresh and effective at target
+- all_future          : target predates everything we have
+- stale               : everything we have is older than max_age_seconds
+- no_snapshot_file    : asset file absent (storage drift / wrong CWD)
+- no_snapshots_data   : file exists but no parseable snapshot
+- asset_unsupported   : asset outside R1 coverage (BTC + ETH)
+- invalid_timestamp   : target string cannot be parsed
 
 Plus the no-look-ahead invariant (lookup must NEVER return a snapshot
 whose timestamp is greater than the target) and the same-hour-write
@@ -128,20 +130,48 @@ def test_stale_when_only_old_snapshots_exist(tmp_path: Path) -> None:
     assert result.age_seconds > 3600
 
 
-def test_missing_asset_file_returns_asset_unknown(tmp_path: Path) -> None:
-    """No file at all = honest signal to caller to log the proxy fallback."""
+def test_unsupported_asset_returns_asset_unsupported(tmp_path: Path) -> None:
+    """R1 covers BTC + ETH; anything else is an honest "asset_unsupported"
+    so the caller can decide to drop to the BTC proxy explicitly."""
     result = get_regime_at("DOGE", "2026-05-16T10:00:00Z", base_dir=tmp_path)
-    assert result.reason == "asset_unknown"
+    assert result.reason == "asset_unsupported"
     assert result.snapshot is None
 
 
-def test_empty_file_returns_no_history(tmp_path: Path) -> None:
-    """File exists but is empty (e.g. first-run race)."""
-    (tmp_path / "btc_regime.jsonl").parent.mkdir(parents=True, exist_ok=True)
-    (tmp_path / "btc_regime.jsonl").write_text("", encoding="utf-8")
+def test_missing_btc_file_returns_no_snapshot_file(tmp_path: Path) -> None:
+    """Supported asset (BTC) but file absent = infrastructure drift, not
+    coverage gap. Regression 2026-05-26: workstation had no
+    artifacts/regime_state/, lookup collapsed file-missing into the same
+    "asset_unknown" reason as DOGE — operators could not distinguish a
+    storage gap from a coverage gap."""
     result = get_regime_at("BTC", "2026-05-16T10:00:00Z", base_dir=tmp_path)
-    assert result.reason in ("no_history", "asset_unknown")
+    assert result.reason == "no_snapshot_file"
     assert result.snapshot is None
+
+
+def test_empty_file_returns_no_snapshots_data(tmp_path: Path) -> None:
+    """File exists but contains zero parseable snapshots (e.g. first-run
+    race or a write-then-crash sequence)."""
+    p = tmp_path / "btc_regime.jsonl"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text("", encoding="utf-8")
+    result = get_regime_at("BTC", "2026-05-16T10:00:00Z", base_dir=tmp_path)
+    assert result.reason == "no_snapshots_data"
+    assert result.snapshot is None
+
+
+def test_eth_supported_path(tmp_path: Path) -> None:
+    """ETH is the second R1-supported asset — same path as BTC."""
+    p = tmp_path / "eth_regime.jsonl"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text("", encoding="utf-8")
+    result = get_regime_at("ETH", "2026-05-16T10:00:00Z", base_dir=tmp_path)
+    assert result.reason == "no_snapshots_data"
+
+
+def test_empty_asset_string_returns_asset_unsupported(tmp_path: Path) -> None:
+    result = get_regime_at("", "2026-05-16T10:00:00Z", base_dir=tmp_path)
+    assert result.reason == "asset_unsupported"
 
 
 def test_same_hour_rewrite_last_wins(tmp_path: Path) -> None:

@@ -754,6 +754,18 @@ class TradingLoop:
                 "regime_symbol_is_proxy": is_proxy,
             }
         snap = result.snapshot
+        # Surface infrastructure-level regime gaps (file missing, data empty)
+        # so a silent pipeline failure shows up in the operator log instead
+        # of as an unactionable audit reason. The "stale" / "all_future"
+        # reasons are expected near classifier startup and stay info-only.
+        if result.reason in {"no_snapshot_file", "no_snapshots_data"}:
+            logger.warning(
+                "[LOOP] Regime snapshot missing for %s (asset=%s reason=%s) — "
+                "classifier never wrote or path drift suspected",
+                symbol,
+                asset,
+                result.reason,
+            )
         return {
             "regime": str(snap.regime) if snap is not None else None,
             "regime_vol_class": str(snap.vol_class) if snap is not None else None,

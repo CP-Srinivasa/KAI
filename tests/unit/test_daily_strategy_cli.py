@@ -74,7 +74,7 @@ def test_check_exits_0_when_present(runner: CliRunner, repo_cwd: Path) -> None:
 
 
 def test_bootstrap_writes_skeleton_with_stub_markers(runner: CliRunner, repo_cwd: Path) -> None:
-    result = runner.invoke(daily_strategy_app, ["bootstrap", "--no-notify"])
+    result = runner.invoke(daily_strategy_app, ["bootstrap", "--no-notify", "--no-sync"])
     assert result.exit_code == 0
     today_path = _today_path(repo_cwd)
     assert today_path.exists()
@@ -89,7 +89,7 @@ def test_bootstrap_is_idempotent(runner: CliRunner, repo_cwd: Path) -> None:
     today_path.parent.mkdir(parents=True, exist_ok=True)
     custom = "# Already filled by Claude\nLagebild content."
     today_path.write_text(custom, encoding="utf-8")
-    result = runner.invoke(daily_strategy_app, ["bootstrap", "--no-notify"])
+    result = runner.invoke(daily_strategy_app, ["bootstrap", "--no-notify", "--no-sync"])
     assert result.exit_code == 0
     assert "already present" in result.stdout
     # File untouched.
@@ -182,6 +182,87 @@ def test_blocked_alerts_summary_counts_reasons_within_window(repo_cwd: Path) -> 
     assert reasons["bearish_directional_disabled"] == 1
 
 
+def test_blocked_alerts_summary_window_rolls_from_run_time_not_end_of_day(
+    repo_cwd: Path,
+) -> None:
+    """Regression 2026-05-26: ``_blocked_alerts_summary`` anchored its window
+    at today's *end-of-day UTC*. A bootstrap run at 08:34 UTC produced a
+    window of [yesterday 23:59:59, today 23:59:59] — so a real block at
+    today 06:00 UTC AND a real block at yesterday 16:00 UTC both fell
+    outside the slice. The CLI then reported "no blocks" while six
+    `weak_directional_signal` rejects sat in `blocked_alerts.jsonl`.
+
+    With the rolling-now-anchored window, the same run sees:
+    [yesterday 08:34, today 08:34] — i.e. the real last 24h.
+    """
+    fixed_now = datetime(2026, 5, 26, 8, 34, 0, tzinfo=UTC)
+    today = fixed_now.date()
+    yesterday_morning = fixed_now - timedelta(hours=22)  # 10:34 yesterday
+    yesterday_evening = fixed_now - timedelta(hours=12)  # 20:34 yesterday
+    today_morning = fixed_now - timedelta(hours=1)  # 07:34 today
+    too_old = fixed_now - timedelta(hours=30)  # outside 24h, must drop
+    future = fixed_now + timedelta(hours=2)  # future blocks must drop
+    _write_blocked_jsonl(
+        repo_cwd,
+        [
+            {
+                "document_id": "yest_morn",
+                "block_reason": "weak_directional_signal",
+                "blocked_at": yesterday_morning.isoformat(),
+                "priority": 10,
+                "sentiment_label": "bullish",
+                "source_name": "x",
+                "normalized_title": "captured by rolling window",
+            },
+            {
+                "document_id": "yest_eve",
+                "block_reason": "weak_directional_signal",
+                "blocked_at": yesterday_evening.isoformat(),
+                "priority": 9,
+                "sentiment_label": "bullish",
+                "source_name": "x",
+                "normalized_title": "captured by rolling window",
+            },
+            {
+                "document_id": "today_morn",
+                "block_reason": "low_directional_confidence",
+                "blocked_at": today_morning.isoformat(),
+                "priority": 8,
+                "sentiment_label": "bearish",
+                "source_name": "x",
+                "normalized_title": "captured by rolling window",
+            },
+            {
+                "document_id": "too_old",
+                "block_reason": "x",
+                "blocked_at": too_old.isoformat(),
+                "priority": 7,
+                "sentiment_label": "bullish",
+                "source_name": "x",
+                "normalized_title": "outside window",
+            },
+            {
+                "document_id": "future",
+                "block_reason": "x",
+                "blocked_at": future.isoformat(),
+                "priority": 7,
+                "sentiment_label": "bullish",
+                "source_name": "x",
+                "normalized_title": "future block",
+            },
+        ],
+    )
+
+    summary = _blocked_alerts_summary(today, now_utc=fixed_now)
+    assert summary["total"] == 3, (
+        "rolling-now window must include yest_morn + yest_eve + today_morn "
+        "(would be 0 with the old end-of-day anchor)"
+    )
+    reasons = dict(summary["top_reasons"])
+    assert reasons.get("weak_directional_signal") == 2
+    assert reasons.get("low_directional_confidence") == 1
+
+
 def test_blocked_alerts_summary_top_blocked_sorted_by_priority(repo_cwd: Path) -> None:
     today = datetime.now(UTC).date()
     now = datetime.now(UTC)
@@ -250,7 +331,7 @@ def test_bootstrap_skeleton_includes_dispatch_health(runner: CliRunner, repo_cwd
             }
         ],
     )
-    result = runner.invoke(daily_strategy_app, ["bootstrap", "--no-notify"])
+    result = runner.invoke(daily_strategy_app, ["bootstrap", "--no-notify", "--no-sync"])
     assert result.exit_code == 0
     text = _today_path(repo_cwd).read_text(encoding="utf-8")
     assert "## Dispatch-Health 24h" in text
@@ -271,7 +352,7 @@ def test_reminder_exit2_when_review_missing(runner: CliRunner, repo_cwd: Path) -
 
 def test_reminder_exit1_when_skeleton_unfilled(runner: CliRunner, repo_cwd: Path) -> None:
     # Bootstrap first to get the canonical stub-marker layout.
-    runner.invoke(daily_strategy_app, ["bootstrap", "--no-notify"])
+    runner.invoke(daily_strategy_app, ["bootstrap", "--no-notify", "--no-sync"])
     result = runner.invoke(daily_strategy_app, ["reminder", "--no-notify"])
     assert result.exit_code == 1
     assert "Sektion(en) leer" in result.stdout
@@ -298,7 +379,7 @@ def test_reminder_exit0_when_review_filled(runner: CliRunner, repo_cwd: Path) ->
 
 
 def test_reminder_dedup_skip_when_marker_exists(runner: CliRunner, repo_cwd: Path) -> None:
-    runner.invoke(daily_strategy_app, ["bootstrap", "--no-notify"])
+    runner.invoke(daily_strategy_app, ["bootstrap", "--no-notify", "--no-sync"])
     first = runner.invoke(daily_strategy_app, ["reminder", "--no-notify"])
     assert first.exit_code == 1
     second = runner.invoke(daily_strategy_app, ["reminder", "--no-notify"])
@@ -308,7 +389,7 @@ def test_reminder_dedup_skip_when_marker_exists(runner: CliRunner, repo_cwd: Pat
 
 
 def test_reminder_force_bypasses_marker(runner: CliRunner, repo_cwd: Path) -> None:
-    runner.invoke(daily_strategy_app, ["bootstrap", "--no-notify"])
+    runner.invoke(daily_strategy_app, ["bootstrap", "--no-notify", "--no-sync"])
     runner.invoke(daily_strategy_app, ["reminder", "--no-notify"])
     forced = runner.invoke(daily_strategy_app, ["reminder", "--no-notify", "--force"])
     # --force re-evaluates and re-triggers — exit-code reflects current state.
@@ -318,7 +399,7 @@ def test_reminder_force_bypasses_marker(runner: CliRunner, repo_cwd: Path) -> No
 def test_reminder_partial_fill_still_flags_remaining_stubs(
     runner: CliRunner, repo_cwd: Path
 ) -> None:
-    runner.invoke(daily_strategy_app, ["bootstrap", "--no-notify"])
+    runner.invoke(daily_strategy_app, ["bootstrap", "--no-notify", "--no-sync"])
     today_path = _today_path(repo_cwd)
     text = today_path.read_text(encoding="utf-8")
     # Operator filled exactly one section, others remain stubs.

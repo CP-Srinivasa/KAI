@@ -38,7 +38,12 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from app.regime.models import RegimeSnapshot
-from app.regime.storage import DEFAULT_REGIME_DIR, load_regime_snapshots
+from app.regime.storage import DEFAULT_REGIME_DIR, load_regime_snapshots, resolve_regime_path
+
+# R1 classifier coverage — see regime/service.py. Symbols outside this set
+# fall through symbol_to_regime_asset() to "BTC" as a proxy. Direct callers
+# of get_regime_at() that bypass that mapping get "asset_unsupported".
+SUPPORTED_REGIME_ASSETS = frozenset({"BTC", "ETH"})
 
 # 24h matches the freshness-threshold pattern used in
 # app/observability/premium_pipeline_health.py and the operator staleness
@@ -61,7 +66,23 @@ class RegimeLookupResult:
     asset: str
     target_timestamp_utc: str
     age_seconds: float | None
-    reason: str  # "ok" | "no_history" | "all_future" | "stale" | "asset_unknown"
+    reason: str
+    # reason ∈ {
+    #   "ok"                 — snapshot returned, age ≤ max_age_seconds
+    #   "all_future"         — earliest snapshot is newer than target (no look-ahead)
+    #   "stale"              — best snapshot exceeds max_age_seconds
+    #   "no_snapshot_file"   — asset JSONL does not exist (storage/path drift,
+    #                          regime-classifier never ran, or wrong CWD)
+    #   "no_snapshots_data"  — file exists but no parseable snapshot inside
+    #   "asset_unsupported"  — caller asked for asset outside R1 coverage
+    #                          (R1 covers BTC + ETH; mapping handled by
+    #                          symbol_to_regime_asset)
+    #   "invalid_timestamp"  — target_timestamp_utc could not be parsed
+    # }
+    # NOTE: the legacy "asset_unknown" / "no_history" reasons were collapsed
+    # into one bucket that the trading_loop audit could not act on. The
+    # split surfaces *why* the lookup failed so operators can distinguish
+    # "BTC file missing on the workstation" from "XRP not in R1 coverage".
 
 
 def _parse_iso(timestamp_str: str) -> datetime | None:
@@ -111,6 +132,29 @@ def get_regime_at(
             reason="invalid_timestamp",
         )
 
+    if not asset or asset.upper() not in SUPPORTED_REGIME_ASSETS:
+        return RegimeLookupResult(
+            snapshot=None,
+            asset=asset,
+            target_timestamp_utc=target_timestamp_utc,
+            age_seconds=None,
+            reason="asset_unsupported",
+        )
+
+    # Differentiate "file missing" from "file present but empty" so the
+    # trading-loop audit makes the regime-pipeline failure mode actionable.
+    # Workstation 2026-05-26 had no artifacts/regime_state/ at all while
+    # the Pi was happily writing hourly snapshots — pre-fix both legitimate
+    # absences and a missing pipeline collapsed to "asset_unknown".
+    if not resolve_regime_path(asset, base_dir).exists():
+        return RegimeLookupResult(
+            snapshot=None,
+            asset=asset,
+            target_timestamp_utc=target_timestamp_utc,
+            age_seconds=None,
+            reason="no_snapshot_file",
+        )
+
     snapshots = load_regime_snapshots(asset, base_dir)
     if not snapshots:
         return RegimeLookupResult(
@@ -118,7 +162,7 @@ def get_regime_at(
             asset=asset,
             target_timestamp_utc=target_timestamp_utc,
             age_seconds=None,
-            reason="asset_unknown" if asset else "no_history",
+            reason="no_snapshots_data",
         )
 
     # Build a parallel list of (datetime, snapshot) sorted by timestamp.
@@ -132,12 +176,14 @@ def get_regime_at(
             continue
         by_ts[dt] = snap  # later write at same ts overwrites earlier
     if not by_ts:
+        # File had lines but none parsed as valid timestamps — same operator
+        # signal as "data missing".
         return RegimeLookupResult(
             snapshot=None,
             asset=asset,
             target_timestamp_utc=target_timestamp_utc,
             age_seconds=None,
-            reason="no_history",
+            reason="no_snapshots_data",
         )
 
     sorted_dts = sorted(by_ts.keys())
@@ -207,6 +253,7 @@ def now_utc_iso() -> str:
 
 __all__ = [
     "DEFAULT_MAX_AGE_SECONDS",
+    "SUPPORTED_REGIME_ASSETS",
     "RegimeLookupResult",
     "get_regime_at",
     "now_utc_iso",
