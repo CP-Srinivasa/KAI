@@ -307,3 +307,60 @@ jobs:
               sys.exit(1)
           print("✅ PR-Template vollständig.")
           EOF
+
+  pr-claims-verify:
+    # Härtet gegen Codex-CI-Drift-Pattern (siehe feedback_codex_ci_drift Memory):
+    # PR-Body claimt "ruff passed" / "tests passed" obwohl CI rot. Dieser Job
+    # parst Body-Claims + cross-checked sie gegen tatsächliche CI-Job-Conclusions.
+    # Nicht-blocking (always emit warnings + exit 0) — Lern-Tool, kein Hindernis.
+    name: PR Claims Cross-Check
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request' && always()
+    needs: [lint, test, security, type-check, hygiene]
+    steps:
+      - name: Parse PR-body claims vs CI conclusions
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+          LINT_RESULT: ${{ needs.lint.result }}
+          TEST_RESULT: ${{ needs.test.result }}
+          SECURITY_RESULT: ${{ needs.security.result }}
+          TYPE_RESULT: ${{ needs.type-check.result }}
+          HYGIENE_RESULT: ${{ needs.hygiene.result }}
+        run: |
+          python3 - <<'EOF'
+          import os, re
+          body = os.environ.get("PR_BODY", "") or ""
+          results = {
+              "lint":     os.environ.get("LINT_RESULT", "missing"),
+              "test":     os.environ.get("TEST_RESULT", "missing"),
+              "security": os.environ.get("SECURITY_RESULT", "missing"),
+              "type":     os.environ.get("TYPE_RESULT", "missing"),
+              "hygiene":  os.environ.get("HYGIENE_RESULT", "missing"),
+          }
+          patterns = {
+              "lint":     r"(ruff[\w\s\-]*?(check|format)?[\s\S]{0,40}?(passed|✓|→\s*passed|grün|grun|OK))",
+              "test":     r"((pytest|tests?\b)[\s\S]{0,80}?(passed|✓|→\s*passed|grün|grun|\d+\s*passed|\d+/\d+\s*(passed|grün|grun)|OK))",
+              "type":     r"((mypy|type[- ]check)[\s\S]{0,40}?(passed|✓|→\s*passed|grün|grun|OK|clean))",
+              "security": r"((pip-audit|security|secret)[\s\S]{0,80}?(passed|✓|→\s*passed|grün|grun|OK|no vulnerabilities|0 vulnerabilities))",
+              "hygiene":  r"((hygiene|secret guard|gitignore)[\s\S]{0,40}?(passed|✓|→\s*passed|grün|grun|OK))",
+          }
+          drifts = []
+          claimed_jobs = []
+          for job, pat in patterns.items():
+              if re.search(pat, body, re.IGNORECASE):
+                  claimed_jobs.append(job)
+                  actual = results[job]
+                  if actual not in ("success", "skipped"):
+                      drifts.append(f"{job}: body claims passed but CI conclusion = {actual!r}")
+          if drifts:
+              print("::warning title=PR Body-CI Drift::Body claims do not match CI results")
+              for d in drifts:
+                  print(f"::warning::{d}")
+              print("\nReference: feedback_codex_ci_drift (Memory).")
+              print("This is a NON-BLOCKING warning — fix PR-Body or push CI-fixes.")
+          else:
+              if claimed_jobs:
+                  print(f"OK: PR-Body claims ({', '.join(claimed_jobs)}) match CI results.")
+              else:
+                  print("OK: PR-Body has no testable Quality-Gate-Claims (skipped).")
+          EOF
