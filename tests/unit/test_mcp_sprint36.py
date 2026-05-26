@@ -39,6 +39,7 @@ async def test_get_decision_journal_summary_empty_journal(
     assert result["total_count"] == 0
     assert result["execution_enabled"] is False
     assert result["write_back_allowed"] is False
+    assert result["audit_stream_validation"]["issue_count"] == 0
 
 
 @pytest.mark.asyncio
@@ -63,6 +64,7 @@ async def test_get_decision_journal_summary_counts_entries(
     assert "ETH/USDT" in result["symbols"]
     assert result["execution_enabled"] is False
     assert result["write_back_allowed"] is False
+    assert result["audit_stream_validation"]["valid_rows"] == 2
 
 
 @pytest.mark.asyncio
@@ -133,6 +135,7 @@ async def test_append_decision_instance_writes_jsonl(
     assert "report_type" not in record
     assert isinstance(record["entry_logic"], dict)
     assert record["approval_state"] == "audit_only"
+    assert journal_path.with_suffix(".jsonl.lock").exists()
 
 
 @pytest.mark.asyncio

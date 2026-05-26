@@ -15,6 +15,8 @@ from typing import Literal
 
 import portalocker
 
+from app.audit.stream_validation import AlertAuditStreamRow
+from app.core.file_lock import append_lock
 from app.signals.models import SignalProvenance
 from app.storage.jsonl_io import read_jsonl_tolerant
 
@@ -216,8 +218,11 @@ def append_alert_audit(record: AlertAuditRecord, output_path: str | Path) -> Non
     """
     p = _resolve_audit_path(Path(output_path))
     p.parent.mkdir(parents=True, exist_ok=True)
-    with p.open("a", encoding="utf-8") as f:
-        f.write(json.dumps(record.to_json_dict()) + "\n")
+    payload = record.to_json_dict()
+    AlertAuditStreamRow.model_validate(payload)
+    with append_lock(p):
+        with p.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(payload) + "\n")
     _publish_alert_fired(record)
 
 

@@ -41,6 +41,11 @@ from app.agents.tools._helpers import (
     resolve_workspace_dir,
     resolve_workspace_path,
 )
+from app.audit.stream_validation import (
+    AuditStreamName,
+    load_audit_stream,
+    summarize_audit_stream_result,
+)
 from app.core.briefs import ResearchBriefBuilder
 from app.core.settings import get_settings
 from app.core.signals import extract_signal_candidates
@@ -85,6 +90,13 @@ def get_canonical_read_tool_names() -> tuple[str, ...]:
 # ---------------------------------------------------------------------------
 # Tool implementations
 # ---------------------------------------------------------------------------
+
+
+def _audit_stream_validation_summary(
+    path: Path,
+    stream: AuditStreamName,
+) -> dict[str, Any]:
+    return summarize_audit_stream_result(load_audit_stream(path, stream))
 
 
 async def get_watchlists(watchlist_type: str = "assets") -> dict[str, list[str]]:
@@ -157,13 +169,23 @@ async def get_paper_portfolio_snapshot(
     timeout_seconds: int = 10,
 ) -> dict[str, Any]:
     """Return canonical read-only paper portfolio snapshot from audit replay."""
+    resolved = resolve_workspace_path(
+        audit_path,
+        label="Paper execution audit",
+        allowed_suffixes=frozenset({".jsonl"}),
+    )
     snapshot = await build_paper_portfolio_snapshot_helper(
-        audit_path=audit_path,
+        audit_path=str(resolved),
         provider=provider,
         freshness_threshold_seconds=freshness_threshold_seconds,
         timeout_seconds=timeout_seconds,
     )
-    return snapshot.to_json_dict()  # type: ignore[no-any-return]
+    payload = snapshot.to_json_dict()
+    payload["audit_stream_validation"] = _audit_stream_validation_summary(
+        resolved,
+        "paper_execution_audit",
+    )
+    return payload  # type: ignore[no-any-return]
 
 
 async def get_paper_positions_summary(
@@ -175,13 +197,23 @@ async def get_paper_positions_summary(
     """Return positions-only slice from canonical paper portfolio snapshot."""
     from app.execution.portfolio_read import build_positions_summary
 
+    resolved = resolve_workspace_path(
+        audit_path,
+        label="Paper execution audit",
+        allowed_suffixes=frozenset({".jsonl"}),
+    )
     snapshot = await build_paper_portfolio_snapshot_helper(
-        audit_path=audit_path,
+        audit_path=str(resolved),
         provider=provider,
         freshness_threshold_seconds=freshness_threshold_seconds,
         timeout_seconds=timeout_seconds,
     )
-    return build_positions_summary(snapshot)
+    payload = build_positions_summary(snapshot)
+    payload["audit_stream_validation"] = _audit_stream_validation_summary(
+        resolved,
+        "paper_execution_audit",
+    )
+    return payload
 
 
 async def get_paper_exposure_summary(
@@ -193,13 +225,23 @@ async def get_paper_exposure_summary(
     """Return exposure-only slice from canonical paper portfolio snapshot."""
     from app.execution.portfolio_read import build_exposure_summary
 
+    resolved = resolve_workspace_path(
+        audit_path,
+        label="Paper execution audit",
+        allowed_suffixes=frozenset({".jsonl"}),
+    )
     snapshot = await build_paper_portfolio_snapshot_helper(
-        audit_path=audit_path,
+        audit_path=str(resolved),
         provider=provider,
         freshness_threshold_seconds=freshness_threshold_seconds,
         timeout_seconds=timeout_seconds,
     )
-    return build_exposure_summary(snapshot)
+    payload = build_exposure_summary(snapshot)
+    payload["audit_stream_validation"] = _audit_stream_validation_summary(
+        resolved,
+        "paper_execution_audit",
+    )
+    return payload
 
 
 async def get_narrative_clusters(
@@ -1459,6 +1501,7 @@ async def get_alert_audit_summary(
         audit_dir,
         label="Alert audit directory",
     )
+    validation = _audit_stream_validation_summary(resolved / "alert_audit.jsonl", "alert_audit")
     audits = load_alert_audits(resolved)
     outcomes = load_outcome_annotations(resolved)
 
@@ -1499,6 +1542,7 @@ async def get_alert_audit_summary(
         "write_back_allowed": False,
         "total_alerts": len(audits),
         "total_resolved": len(outcome_by_doc),
+        "audit_stream_validation": validation,
         "alerts": enriched,
     }
 
@@ -1520,9 +1564,12 @@ async def get_decision_journal_summary(
         label="Decision journal",
         allowed_suffixes=frozenset({".jsonl"}),
     )
+    validation = _audit_stream_validation_summary(resolved, "decision_journal")
     entries = load_decision_journal(resolved)
     summary = build_decision_journal_summary(entries, journal_path=resolved)
-    return summary.to_json_dict()
+    payload = summary.to_json_dict()
+    payload["audit_stream_validation"] = validation
+    return payload
 
 
 async def get_trading_loop_status(

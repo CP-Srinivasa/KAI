@@ -20,6 +20,12 @@ from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 
 from app.alerts.hold_metrics import build_hold_metrics_report
+from app.audit.stream_validation import (
+    AuditStreamName,
+    AuditStreamReadResult,
+    load_audit_stream,
+    summarize_audit_stream_result,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -61,6 +67,24 @@ _provenance_cache: dict[str, Any] = {"at": 0.0, "payload": None}
 # 5 min TTL: docs are rarely re-classified, and the map is additive.
 _SOURCE_MAP_TTL_S = 300.0
 _source_map_cache: dict[str, Any] = {"at": 0.0, "map": None}
+
+
+def _warn_on_audit_stream_issues(result: AuditStreamReadResult) -> None:
+    if not result.issues:
+        return
+    summary = summarize_audit_stream_result(result)
+    logger.warning(
+        "audit_stream_schema_issues: stream=%s issues=%s first=%s",
+        result.stream,
+        result.issue_count,
+        summary["sample_issues"][0] if summary["sample_issues"] else "n/a",
+    )
+
+
+def _validate_dashboard_stream(path: Path, stream: AuditStreamName) -> AuditStreamReadResult:
+    result = load_audit_stream(path, stream)
+    _warn_on_audit_stream_issues(result)
+    return result
 
 
 def _load_jsonl(path: Path, tail: int = 0) -> list[dict[str, Any]]:
@@ -164,18 +188,17 @@ async def _load_source_by_doc() -> dict[str, str]:
     try:
         from sqlalchemy import select
 
-        from app.alerts.audit import load_alert_audits
         from app.core.settings import get_settings
         from app.storage.db.session import build_session_factory
         from app.storage.models.document import CanonicalDocumentModel
 
-        audits = load_alert_audits(_ALERT_AUDIT)
+        audits = _validate_dashboard_stream(_ALERT_AUDIT, "alert_audit").rows
         doc_ids: set[str] = set()
         for rec in audits:
-            sentiment = (rec.sentiment_label or "").lower()
-            if rec.is_digest or sentiment not in {"bullish", "bearish"}:
+            sentiment = str(rec.get("sentiment_label") or "").lower()
+            if bool(rec.get("is_digest")) or sentiment not in {"bullish", "bearish"}:
                 continue
-            doc_ids.add(rec.document_id)
+            doc_ids.add(str(rec["document_id"]))
         if not doc_ids:
             _source_map_cache["map"] = {}
             _source_map_cache["at"] = now
@@ -214,6 +237,8 @@ async def _live_hold_report() -> dict[str, Any]:
     if _hold_cache["report"] is not None and (now - _hold_cache["at"]) < _HOLD_CACHE_TTL_S:
         return _hold_cache["report"]
     source_map = await _load_source_by_doc()
+    _validate_dashboard_stream(_ALERT_AUDIT, "alert_audit")
+    _validate_dashboard_stream(_PAPER_EXECUTION_AUDIT, "paper_execution_audit")
     report = build_hold_metrics_report(
         alert_audit_path=_ALERT_AUDIT,
         alert_outcomes_path=_ALERT_OUTCOMES,
@@ -533,11 +558,9 @@ _BAYES_OUTCOME_MAP: dict[str, int] = {}
 @router.get("/dashboard/api/bayes-audit", tags=["dashboard"])
 async def dashboard_bayes_audit_api(limit: int = _BAYES_LIMIT_DEFAULT) -> JSONResponse:
     """Letzte N Bayes-Confidence-Reports aus dem Audit-Sidecar."""
-    from app.signals.bayes_journal import load_bayes_reports
-
     capped = max(1, min(int(limit), _BAYES_LIMIT_MAX))
     try:
-        all_entries = load_bayes_reports(_BAYES_AUDIT)
+        validation = _validate_dashboard_stream(_BAYES_AUDIT, "bayes_confidence_audit")
     except Exception as exc:  # noqa: BLE001
         logger.warning("bayes_audit_load_failed: %s", exc)
         return JSONResponse(
@@ -545,10 +568,11 @@ async def dashboard_bayes_audit_api(limit: int = _BAYES_LIMIT_DEFAULT) -> JSONRe
             status_code=503,
         )
 
-    tail = all_entries[-capped:]
+    tail = validation.rows[-capped:]
     entries: list[dict[str, Any]] = []
     for e in reversed(tail):
-        report = e.report
+        raw_report = e.get("report")
+        report = raw_report if isinstance(raw_report, dict) else {}
         increased = report.get("increased")
         decreased = report.get("decreased")
         neutral = report.get("neutral")
@@ -561,10 +585,10 @@ async def dashboard_bayes_audit_api(limit: int = _BAYES_LIMIT_DEFAULT) -> JSONRe
         residual_items = residual if isinstance(residual, list) else []
         entries.append(
             {
-                "decision_id": e.decision_id,
-                "timestamp_utc": e.timestamp_utc,
-                "symbol": e.symbol,
-                "direction": e.direction,
+                "decision_id": e.get("decision_id"),
+                "timestamp_utc": e.get("timestamp_utc"),
+                "symbol": e.get("symbol"),
+                "direction": e.get("direction"),
                 "prior_probability": report.get("prior_probability"),
                 "posterior_probability": report.get("posterior_probability"),
                 "confidence_score": report.get("confidence_score"),
@@ -582,9 +606,10 @@ async def dashboard_bayes_audit_api(limit: int = _BAYES_LIMIT_DEFAULT) -> JSONRe
     return JSONResponse(
         content={
             "generated_at": datetime.now(UTC).isoformat(),
-            "total_count": len(all_entries),
+            "total_count": validation.valid_count,
             "returned_count": len(entries),
             "limit": capped,
+            "audit_stream_validation": summarize_audit_stream_result(validation),
             "entries": entries,
         },
         headers={"Cache-Control": "no-store, max-age=0"},
