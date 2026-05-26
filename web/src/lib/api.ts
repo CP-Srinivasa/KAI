@@ -225,6 +225,34 @@ export type DashboardQuality = {
       }
     >;
   };
+  source_reliability?: {
+    status: "ok" | "missing" | "unreadable" | "invalid" | string;
+    generated_at: string | null;
+    window_days: number | null;
+    thresholds?: Record<string, number>;
+    source_count: number;
+    tier_counts: Record<string, number>;
+    top_sources: Array<{
+      source_name: string;
+      hits: number;
+      miss: number;
+      n: number;
+      point_estimate_pct: number | null;
+      wilson_lower_95_pct: number | null;
+      tier: string;
+      priority_modifier: number;
+    }>;
+    unknown_bucket: {
+      source_name: string;
+      hits: number;
+      miss: number;
+      n: number;
+      point_estimate_pct: number | null;
+      wilson_lower_95_pct: number | null;
+      tier: string;
+      priority_modifier: number;
+    } | null;
+  };
   recent_alerts: Array<{
     doc_id: string;
     sentiment: string;

@@ -73,6 +73,11 @@ def _patch_artifacts(
             "_ENTRY_WATCHER_AUDIT",
             d / "entry_watcher_audit.jsonl",
         ),
+        patch.object(
+            dashboard_mod,
+            "_SOURCE_RELIABILITY_REPORT",
+            d / "source_reliability.json",
+        ),
         patch.dict(dashboard_mod._hold_cache, {"report": None, "at": 0.0}),
     ):
         yield
@@ -175,6 +180,56 @@ def test_quality_api_includes_alerts_with_outcomes(
     assert alerts[0]["doc_id"] == "abc12345-dea"
     assert alerts[0]["sentiment"] == "bullish"
     assert alerts[0]["outcome"] == "hit"
+
+
+def test_quality_api_includes_source_reliability_summary(
+    artifacts_dir: Path,
+) -> None:
+    (artifacts_dir / "source_reliability.json").write_text(
+        json.dumps(
+            {
+                "report_type": "source_reliability",
+                "generated_at": "2026-05-24T09:00:00+00:00",
+                "window_days": 90,
+                "thresholds": {"min_n_for_demote": 20},
+                "scores": {
+                    "decrypt": {
+                        "source_name": "decrypt",
+                        "hits": 18,
+                        "miss": 7,
+                        "n": 25,
+                        "point_estimate": 0.72,
+                        "wilson_lower_95": 0.52,
+                        "tier": "neutral",
+                        "priority_modifier": 0,
+                    },
+                    "unknown": {
+                        "source_name": "unknown",
+                        "hits": 4,
+                        "miss": 16,
+                        "n": 20,
+                        "point_estimate": 0.2,
+                        "wilson_lower_95": 0.08,
+                        "tier": "low",
+                        "priority_modifier": -2,
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    app = _make_app()
+    with _patch_artifacts(artifacts_dir):
+        with TestClient(app) as client:
+            r = client.get("/dashboard/api/quality")
+
+    rel = r.json()["source_reliability"]
+    assert rel["status"] == "ok"
+    assert rel["source_count"] == 2
+    assert rel["tier_counts"] == {"neutral": 1, "low": 1}
+    assert rel["top_sources"][0]["source_name"] == "decrypt"
+    assert rel["top_sources"][0]["point_estimate_pct"] == 72.0
+    assert rel["unknown_bucket"]["tier"] == "low"
 
 
 def test_quality_api_includes_position_partial_closed_in_pnl(tmp_path: Path) -> None:

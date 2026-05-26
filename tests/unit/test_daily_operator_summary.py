@@ -645,3 +645,194 @@ async def test_summary_marks_portfolio_fields_unknown_when_snapshot_fails(
     assert result["cash_usd"] == "?"
     assert result["total_equity_usd"] == "?"
     assert result["realized_pnl_usd"] == "?"
+
+
+@pytest.mark.asyncio
+async def test_decision_pack_surfaces_sample_warnings_and_tables(tmp_path: Path) -> None:
+    alerts_dir = tmp_path / "artifacts"
+    alerts_dir.mkdir(parents=True, exist_ok=True)
+    now = datetime(2026, 5, 24, 10, 0, 0, tzinfo=UTC)
+    recent = (now - timedelta(days=1)).isoformat()
+    old = (now - timedelta(days=10)).isoformat()
+    _write_jsonl(
+        alerts_dir / "alert_audit.jsonl",
+        [
+            {
+                "document_id": "doc-bull",
+                "channel": "telegram",
+                "message_id": "m1",
+                "is_digest": False,
+                "dispatched_at": recent,
+                "sentiment_label": "bullish",
+                "affected_assets": ["BTC"],
+                "source_name": "decrypt",
+                "directional_confidence": 0.85,
+            },
+            {
+                "document_id": "doc-bear",
+                "channel": "telegram",
+                "message_id": "m2",
+                "is_digest": False,
+                "dispatched_at": recent,
+                "sentiment_label": "bearish",
+                "affected_assets": ["ETH"],
+                "source_name": "unknown",
+                "directional_confidence": 0.65,
+            },
+            {
+                "document_id": "doc-neutral",
+                "channel": "telegram",
+                "message_id": "m3",
+                "is_digest": False,
+                "dispatched_at": recent,
+                "sentiment_label": "neutral",
+                "affected_assets": ["SOL"],
+                "source_name": "decrypt",
+            },
+            {
+                "document_id": "doc-old",
+                "channel": "telegram",
+                "message_id": "m4",
+                "is_digest": False,
+                "dispatched_at": old,
+                "sentiment_label": "bullish",
+                "affected_assets": ["BTC"],
+                "source_name": "old_source",
+            },
+        ],
+    )
+    _write_jsonl(
+        alerts_dir / "alert_outcomes.jsonl",
+        [
+            {"document_id": "doc-bull", "outcome": "hit", "annotated_at": recent},
+            {"document_id": "doc-bear", "outcome": "miss", "annotated_at": recent},
+            {"document_id": "doc-neutral", "outcome": "inconclusive", "annotated_at": recent},
+        ],
+    )
+    _write_jsonl(
+        alerts_dir / "blocked_alerts.jsonl",
+        [
+            {
+                "document_id": "doc-block-bull",
+                "blocked_at": recent,
+                "block_reason": "reactive_price_narrative",
+                "sentiment_label": "bullish",
+                "source_name": "cointelegraph",
+                "directional_confidence": 0.70,
+            },
+            {
+                "document_id": "doc-block-bear",
+                "blocked_at": recent,
+                "block_reason": "low_directional_confidence",
+                "sentiment_label": "bearish",
+                "source_name": "decrypt",
+                "directional_confidence": 0.42,
+            },
+            {
+                "document_id": "doc-block-old",
+                "blocked_at": old,
+                "block_reason": "reactive_price_narrative",
+                "sentiment_label": "bullish",
+                "source_name": "old_source",
+            },
+        ],
+    )
+    _write_jsonl(
+        tmp_path / "loop.jsonl",
+        [{"cycle_id": "c1", "started_at": recent, "status": "ok"}],
+    )
+    _write_jsonl(
+        tmp_path / "exec.jsonl",
+        [{"event_type": "position_closed", "trade_pnl_usd": 12.5, "timestamp_utc": recent}],
+    )
+
+    factory_p, repo_p, _ = _db_patches(pending=0)
+    _pass = lambda p, **kw: Path(p)  # noqa: E731
+    with (
+        _snapshot_patch(position_count=1),
+        factory_p,
+        repo_p as repo_cls,
+        patch(
+            "app.agents.tools.canonical_read.resolve_workspace_dir",
+            side_effect=_pass,
+        ),
+        patch(
+            "app.agents.tools.canonical_read.resolve_workspace_path",
+            side_effect=_pass,
+        ),
+    ):
+        repo_cls.return_value.count_pending_documents = AsyncMock(return_value=0)
+        result = await get_daily_operator_summary(
+            alert_audit_dir=str(alerts_dir),
+            loop_audit_path=str(tmp_path / "loop.jsonl"),
+            paper_execution_audit_path=str(tmp_path / "exec.jsonl"),
+            now=now,
+        )
+
+    pack = result["decision_pack_2026_05_30"]
+    assert pack["target_date"] == "2026-05-30"
+    assert pack["days_to_target"] == 6
+    assert pack["snapshot_robustness"] == {
+        "portfolio_snapshot": "ok",
+        "alert_audit": "ok",
+        "blocked_alerts": "ok",
+        "trading_loop_audit": "ok",
+        "paper_execution_audit": "ok",
+    }
+    assert pack["sample_sizes"] == {
+        "alerts_7d": 3,
+        "directional_alerts_7d": 2,
+        "blocked_alerts_7d": 2,
+        "classifier_directional_candidates_7d": 4,
+        "resolved_directional_hit_miss_7d": 2,
+        "inconclusive_directional_7d": 0,
+        "paper_closed_positions_with_pnl": 1,
+    }
+    assert {w["code"] for w in pack["sample_size_warnings"]} == {
+        "directional_sample_low",
+        "resolved_directional_sample_low",
+        "paper_pnl_sample_low",
+        "unknown_source_share_high",
+    }
+    assert pack["source_table_7d"][:2] == [
+        {"source": "decrypt", "alerts": 2, "directional_alerts": 1, "share_pct": 66.7},
+        {"source": "unknown", "alerts": 1, "directional_alerts": 1, "share_pct": 33.3},
+    ]
+    assert pack["sentiment_table_7d"] == [
+        {"sentiment": "bullish", "alerts": 1, "share_pct": 33.3},
+        {"sentiment": "bearish", "alerts": 1, "share_pct": 33.3},
+        {"sentiment": "neutral", "alerts": 1, "share_pct": 33.3},
+    ]
+    assert pack["dispatch_filter_7d"] == {
+        "dispatched_directional_alerts": 2,
+        "blocked_alerts": 2,
+        "classifier_directional_candidates": 4,
+        "dispatch_pass_rate_pct": 50.0,
+    }
+    assert pack["confidence_collection_7d"] == {
+        "dispatched_with_confidence": 2,
+        "blocked_with_confidence": 2,
+        "dispatched_avg_confidence_pct": 75.0,
+        "blocked_avg_confidence_pct": 56.0,
+        "coverage_pct": 80.0,
+    }
+    assert pack["blocked_reason_table_7d"] == [
+        {
+            "reason": "reactive_price_narrative",
+            "blocked_alerts": 1,
+            "share_pct": 50.0,
+        },
+        {
+            "reason": "low_directional_confidence",
+            "blocked_alerts": 1,
+            "share_pct": 50.0,
+        },
+    ]
+    assert pack["blocked_sentiment_table_7d"] == [
+        {"sentiment": "bullish", "blocked_alerts": 1, "share_pct": 50.0},
+        {"sentiment": "bearish", "blocked_alerts": 1, "share_pct": 50.0},
+    ]
+    assert pack["blocked_source_table_7d"] == [
+        {"source": "cointelegraph", "blocked_alerts": 1, "share_pct": 50.0},
+        {"source": "decrypt", "blocked_alerts": 1, "share_pct": 50.0},
+    ]

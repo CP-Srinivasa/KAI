@@ -34,6 +34,7 @@ _BRIDGE_PENDING_ORDERS = _ARTIFACTS / "bridge_pending_orders.jsonl"
 _ENTRY_WATCHER_AUDIT = _ARTIFACTS / "entry_watcher_audit.jsonl"
 _TV_PENDING = _ARTIFACTS / "tradingview_pending_signals.jsonl"
 _AUDIT_V1_DISQUALIFIED_FLAG = _ARTIFACTS / "paper_execution_audit_v1_disqualified.flag"
+_SOURCE_RELIABILITY_REPORT = Path("monitor/source_reliability.json")
 
 # Frankfurter: ECB reference rates, no API key, daily refresh (~16:00 CET).
 # 1-hour TTL is generous — the underlying rate updates once per business day.
@@ -77,6 +78,74 @@ def _load_jsonl(path: Path, tail: int = 0) -> list[dict[str, Any]]:
         except json.JSONDecodeError:
             continue
     return rows[-tail:] if tail else rows
+
+
+def _pct_fraction(value: object) -> float | None:
+    if not isinstance(value, (int, float)):
+        return None
+    return round(float(value) * 100.0, 1)
+
+
+def _empty_source_reliability(status: str) -> dict[str, Any]:
+    return {
+        "status": status,
+        "generated_at": None,
+        "window_days": None,
+        "source_count": 0,
+        "tier_counts": {},
+        "top_sources": [],
+        "unknown_bucket": None,
+    }
+
+
+def _load_source_reliability_summary() -> dict[str, Any]:
+    if not _SOURCE_RELIABILITY_REPORT.exists():
+        return _empty_source_reliability("missing")
+    try:
+        payload = json.loads(_SOURCE_RELIABILITY_REPORT.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        logger.warning("source_reliability_unreadable: %s", exc)
+        return _empty_source_reliability("unreadable")
+    if not isinstance(payload, dict):
+        return _empty_source_reliability("invalid")
+
+    raw_scores = payload.get("scores")
+    scores: list[dict[str, Any]] = []
+    tier_counts: dict[str, int] = {}
+    if isinstance(raw_scores, dict):
+        for key, raw in raw_scores.items():
+            if not isinstance(raw, dict):
+                continue
+            source = str(raw.get("source_name") or key)
+            tier = str(raw.get("tier") or "unknown")
+            score = {
+                "source_name": source,
+                "hits": int(raw.get("hits") or 0),
+                "miss": int(raw.get("miss") or 0),
+                "n": int(raw.get("n") or 0),
+                "point_estimate_pct": _pct_fraction(raw.get("point_estimate")),
+                "wilson_lower_95_pct": _pct_fraction(raw.get("wilson_lower_95")),
+                "tier": tier,
+                "priority_modifier": int(raw.get("priority_modifier") or 0),
+            }
+            scores.append(score)
+            tier_counts[tier] = tier_counts.get(tier, 0) + 1
+
+    scores.sort(key=lambda score: int(score.get("n") or 0), reverse=True)
+    unknown_bucket = next(
+        (score for score in scores if str(score.get("source_name", "")).lower() == "unknown"),
+        None,
+    )
+    return {
+        "status": "ok",
+        "generated_at": payload.get("generated_at"),
+        "window_days": payload.get("window_days"),
+        "thresholds": payload.get("thresholds", {}),
+        "source_count": len(scores),
+        "tier_counts": tier_counts,
+        "top_sources": scores[:8],
+        "unknown_bucket": unknown_bucket,
+    }
 
 
 async def _load_source_by_doc() -> dict[str, str]:
@@ -355,6 +424,7 @@ async def dashboard_quality_api() -> JSONResponse:
             "per_source_active_precision": report.get("per_source_active_precision", {}),
             # V-DB4e 2026-05-08: Per-source rolling 30-day stability windows.
             "per_source_stability": report.get("per_source_stability", {}),
+            "source_reliability": _load_source_reliability_summary(),
             "recent_alerts": [
                 {
                     "doc_id": r.get("document_id", "")[:12],
