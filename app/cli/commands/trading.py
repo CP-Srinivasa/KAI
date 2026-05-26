@@ -1171,9 +1171,9 @@ def trading_paper_duplicate_rejections(
         tbl.add_column("last_seen", width=26)
         for entry in summary.by_idempotency_key[:10]:
             tbl.add_row(
-                entry["idempotency_key"][:46],
+                str(entry["idempotency_key"])[:46],
                 str(entry["count"]),
-                entry["first_seen"],
-                entry["last_seen"],
+                str(entry["first_seen"]),
+                str(entry["last_seen"]),
             )
         console.print(tbl)

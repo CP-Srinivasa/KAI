@@ -31,10 +31,13 @@ class _KeyBucket:
     side: str = "?"
 
 
+BucketRow = dict[str, str | int]
+
+
 @dataclass(frozen=True)
 class PaperDuplicateRejectionSummary:
     total: int
-    by_idempotency_key: list[dict[str, object]]
+    by_idempotency_key: list[BucketRow]
     first_rejected_at: str | None
     last_rejected_at: str | None
     audit_path: str
@@ -89,19 +92,26 @@ def build_paper_duplicate_rejection_summary(
                 if last_overall is None or ts > last_overall:
                     last_overall = ts
 
-    by_key: list[dict[str, object]] = []
+    by_key: list[BucketRow] = []
     for key, bucket in buckets.items():
-        by_key.append(
-            {
-                "idempotency_key": key,
-                "count": bucket.count,
-                "first_seen": bucket.first_seen,
-                "last_seen": bucket.last_seen,
-                "symbol": bucket.symbol,
-                "side": bucket.side,
-            }
-        )
-    by_key.sort(key=lambda r: (-int(r["count"]), str(r["idempotency_key"])))
+        row: BucketRow = {
+            "idempotency_key": key,
+            "count": bucket.count,
+            "first_seen": bucket.first_seen,
+            "last_seen": bucket.last_seen,
+            "symbol": bucket.symbol,
+            "side": bucket.side,
+        }
+        by_key.append(row)
+
+    def _sort_key(row: BucketRow) -> tuple[int, str]:
+        count_val = row["count"]
+        count = count_val if isinstance(count_val, int) else 0
+        key_val = row["idempotency_key"]
+        key = key_val if isinstance(key_val, str) else ""
+        return (-count, key)
+
+    by_key.sort(key=_sort_key)
 
     return PaperDuplicateRejectionSummary(
         total=total,
