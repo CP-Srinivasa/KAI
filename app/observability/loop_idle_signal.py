@@ -1,7 +1,9 @@
 """Loop idle-signal — detect a silently-rejecting trading loop.
 
 The 2026-05-26 daily-strategy review surfaced 66/66 cycles since the
-previous afternoon as ``priority_rejected`` — formally healthy
+previous afternoon as ``priority_rejected`` (workstation-cron drift,
+since disabled — see memory ``kai_workstation_paper_cron_disabled_20260526``).
+Formally healthy
 ("cron is running, file is fresh") but operationally inert. Without a
 positive idle signal the operator has no automated way to catch the
 case where the loop runs every 10 minutes and rejects every cycle on
