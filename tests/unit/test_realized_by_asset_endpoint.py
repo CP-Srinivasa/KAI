@@ -13,6 +13,7 @@ from types import SimpleNamespace
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from freezegun import freeze_time
 
 from app.api.routers.operator import router
 from app.core.settings import get_settings
@@ -90,6 +91,7 @@ def test_realized_by_asset_missing_audit_file_returns_200(tmp_path):
     assert data["error"] == "audit_file_missing"
 
 
+@freeze_time("2026-05-25T12:00:00+00:00")
 def test_paper_pipeline_status_returns_shape(tmp_path):
     audit = tmp_path / "audit.jsonl"
     audit.write_text(
