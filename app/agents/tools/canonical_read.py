@@ -505,10 +505,7 @@ def _build_decision_pack_20260530(
                 "minimum": _DECISION_PACK_MIN_PAPER_CLOSES,
             }
         )
-    if (
-        unknown_share_pct is not None
-        and unknown_share_pct > _DECISION_PACK_UNKNOWN_SOURCE_WARN_PCT
-    ):
+    if unknown_share_pct is not None and unknown_share_pct > _DECISION_PACK_UNKNOWN_SOURCE_WARN_PCT:
         warnings.append(
             {
                 "code": "unknown_source_share_high",
