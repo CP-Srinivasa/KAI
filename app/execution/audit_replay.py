@@ -17,7 +17,12 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 
-from app.execution.models import PaperPosition
+from app.execution.models import (
+    LifecycleTransition,
+    OrderLifecycleState,
+    PaperPosition,
+    validate_lifecycle_transition,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +44,11 @@ class AuditReplayResult:
     # 2026-05-10). Liste von (line_number, reason)-Tupeln. Aufrufer können
     # die Liste anzeigen, ohne dass das gesamte Portfolio unsichtbar wird.
     skipped_events: tuple[tuple[int, str], ...] = field(default_factory=tuple)
+    # PRE-A: lifecycle_transition rows are audit metadata, not the position
+    # source of truth. Replay reconstructs valid history but keeps portfolio
+    # recovery available when legacy/corrupt lifecycle rows are encountered.
+    lifecycle_history: dict[str, tuple[LifecycleTransition, ...]] = field(default_factory=dict)
+    lifecycle_replay_errors: tuple[str, ...] = ()
 
 
 def _coerce_float(value: object) -> float | None:
@@ -51,6 +61,51 @@ def _coerce_str(value: object) -> str | None:
     if isinstance(value, str) and value.strip():
         return value.strip()
     return None
+
+
+def _coerce_lifecycle_transition(
+    payload: dict[str, object],
+    *,
+    line_number: int,
+) -> tuple[LifecycleTransition | None, str | None]:
+    correlation_id = _coerce_str(payload.get("correlation_id"))
+    from_state_raw = _coerce_str(payload.get("from_state"))
+    to_state_raw = _coerce_str(payload.get("to_state"))
+    timestamp_utc = _coerce_str(payload.get("timestamp_utc"))
+    reason = _coerce_str(payload.get("reason")) or ""
+
+    if (
+        correlation_id is None
+        or from_state_raw is None
+        or to_state_raw is None
+        or timestamp_utc is None
+    ):
+        return (
+            None,
+            f"audit_lifecycle_validation_error_line_{line_number}: missing_required_field",
+        )
+
+    try:
+        from_state = OrderLifecycleState(from_state_raw)
+        to_state = OrderLifecycleState(to_state_raw)
+        validate_lifecycle_transition(from_state, to_state)
+    except ValueError:
+        return (
+            None,
+            "audit_lifecycle_validation_error_line_"
+            f"{line_number}: illegal {from_state_raw} -> {to_state_raw}",
+        )
+
+    return (
+        LifecycleTransition(
+            correlation_id=correlation_id,
+            from_state=from_state,
+            to_state=to_state,
+            reason=reason,
+            timestamp_utc=timestamp_utc,
+        ),
+        None,
+    )
 
 
 def replay_paper_audit(audit_path: Path) -> AuditReplayResult:
@@ -68,12 +123,14 @@ def replay_paper_audit(audit_path: Path) -> AuditReplayResult:
     # 2026-05-12 Sprint A: order_meta erweitert um leverage + source. Pre-Sprint-A
     # audit-rows haben diese Felder nicht — _coerce_float/str geben None/"" zurück
     # und der Replay bleibt rückwärtskompatibel.
-    order_meta: dict[str, tuple[float | None, float | None, float | None, str]] = {}
+    order_meta: dict[str, tuple[float | None, float | None, float | None, str, str]] = {}
     # 2026-05-12 Sprint C: idempotency_key-Mapping aus order_created. Wenn das
     # zugehörige order_filled später erfolgreich verarbeitet wird, landet der
     # key im filled_keys-set. Cross-process Race-Schutz (siehe Q/USDT 2026-05-09).
     order_idem_by_id: dict[str, str] = {}
     filled_keys: set[str] = set()
+    lifecycle_history: dict[str, list[LifecycleTransition]] = {}
+    lifecycle_replay_errors: list[str] = []
     cash_usd = 0.0
     realized_pnl_usd = 0.0
     # 2026-05-25 Forensik-Fix: skipped events sammeln statt Replay abzubrechen.
@@ -107,6 +164,22 @@ def replay_paper_audit(audit_path: Path) -> AuditReplayResult:
             )
 
         event_type = _coerce_str(payload.get("event_type"))
+        if event_type == "lifecycle_transition":
+            transition, error = _coerce_lifecycle_transition(payload, line_number=line_number)
+            if transition is not None:
+                history = lifecycle_history.setdefault(transition.correlation_id, [])
+                if history and history[-1].to_state != transition.from_state:
+                    lifecycle_replay_errors.append(
+                        "audit_lifecycle_validation_error_line_"
+                        f"{line_number}: discontinuous "
+                        f"{history[-1].to_state.value} -> {transition.from_state.value}"
+                    )
+                    continue
+                history.append(transition)
+            if error is not None:
+                lifecycle_replay_errors.append(error)
+            continue
+
         if event_type == "order_created":
             order_id = _coerce_str(payload.get("order_id"))
             if order_id is not None:
@@ -115,6 +188,7 @@ def replay_paper_audit(audit_path: Path) -> AuditReplayResult:
                     _coerce_float(payload.get("take_profit")),
                     _coerce_float(payload.get("leverage")),
                     _coerce_str(payload.get("source")) or "",
+                    _coerce_str(payload.get("correlation_id")) or "",
                 )
                 # Sprint C: idempotency_key persistieren damit fill-replay sie
                 # in filled_keys eintragen kann sobald order_filled gesehen wird.
@@ -227,10 +301,12 @@ def replay_paper_audit(audit_path: Path) -> AuditReplayResult:
         take_profit: float | None = None
         leverage: float | None = None
         source: str = ""
+        correlation_id = _coerce_str(payload.get("correlation_id")) or ""
         if order_id is not None:
             meta = order_meta.get(order_id)
             if meta is not None:
-                stop_loss, take_profit, leverage, source = meta
+                stop_loss, take_profit, leverage, source, order_correlation_id = meta
+                correlation_id = correlation_id or order_correlation_id
             # Sprint C: filled_keys aus der order_idem_by_id-Brücke befüllen.
             # Wenn ein order_filled für einen bekannten order_id replay-läuft,
             # wissen wir dass dieser idempotency_key bereits einen Fill produziert
@@ -260,6 +336,7 @@ def replay_paper_audit(audit_path: Path) -> AuditReplayResult:
                     opened_at=filled_at,
                     realized_pnl_usd=0.0,
                     position_side=position_side_val,
+                    correlation_id=correlation_id,
                     leverage=leverage,
                     source=source,
                 )
@@ -292,6 +369,7 @@ def replay_paper_audit(audit_path: Path) -> AuditReplayResult:
                     position_side=existing.position_side,
                     take_profit_tiers=list(existing.take_profit_tiers),
                     initial_quantity=existing.initial_quantity,
+                    correlation_id=existing.correlation_id or correlation_id,
                     leverage=existing.leverage if existing.leverage is not None else leverage,
                     source=existing.source or source,
                 )
@@ -332,6 +410,7 @@ def replay_paper_audit(audit_path: Path) -> AuditReplayResult:
                     position_side=existing.position_side,
                     take_profit_tiers=list(existing.take_profit_tiers),
                     initial_quantity=existing.initial_quantity,
+                    correlation_id=existing.correlation_id,
                     leverage=existing.leverage,
                     source=existing.source,
                 )
@@ -364,4 +443,9 @@ def replay_paper_audit(audit_path: Path) -> AuditReplayResult:
         error=None,
         filled_idempotency_keys=frozenset(filled_keys),
         skipped_events=tuple(skipped),
+        lifecycle_history={
+            correlation_id: tuple(transitions)
+            for correlation_id, transitions in lifecycle_history.items()
+        },
+        lifecycle_replay_errors=tuple(lifecycle_replay_errors),
     )

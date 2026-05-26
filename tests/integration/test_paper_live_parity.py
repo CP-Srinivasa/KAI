@@ -14,6 +14,8 @@ verified baseline rather than an unchecked assumption.
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from app.execution.execution_protocol import (
@@ -22,6 +24,7 @@ from app.execution.execution_protocol import (
     executable_intent_to_paper_kwargs,
 )
 from app.execution.order_intent import ExecutableOrderIntent
+from app.execution.paper_engine import PaperExecutionEngine
 
 
 def _intent(**overrides: object) -> ExecutableOrderIntent:
@@ -150,6 +153,47 @@ def test_parity_only_first_tp_target_propagates() -> None:
     live = executable_intent_to_live_request(intent)
     assert paper["take_profit"] == 67000.0
     assert live.take_profit == 67000.0
+
+
+def test_paper_execute_intent_matches_live_request_and_lifecycle_contract(tmp_path) -> None:
+    intent = _intent(
+        correlation_id="corr-engine-parity",
+        idempotency_key="idem-engine-parity",
+    )
+    assert_parity(intent)
+    live = executable_intent_to_live_request(intent)
+    engine = PaperExecutionEngine(
+        initial_equity=10000.0,
+        live_enabled=False,
+        audit_log_path=str(tmp_path / "paper_execution_audit.jsonl"),
+    )
+
+    order, fill = engine.execute_intent(
+        intent,
+        current_price=65000.0,
+        risk_check_id="risk-parity",
+    )
+
+    assert fill is not None
+    assert order.symbol == live.symbol
+    assert order.side == str(live.side).lower()
+    assert order.quantity == live.quantity
+    assert order.limit_price == live.price
+    assert order.stop_loss == live.stop_loss
+    assert order.take_profit == live.take_profit
+    assert order.idempotency_key == live.client_order_id
+    audit_path = tmp_path / "paper_execution_audit.jsonl"
+    records = [
+        json.loads(line)
+        for line in audit_path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    lifecycle = [r for r in records if r.get("event_type") == "lifecycle_transition"]
+    assert [(r["from_state"], r["to_state"]) for r in lifecycle] == [
+        ("ORDER_BUILDING", "ORDER_SUBMITTED"),
+        ("ORDER_SUBMITTED", "ORDER_ACCEPTED"),
+        ("ORDER_ACCEPTED", "POSITION_OPEN"),
+    ]
 
 
 # ---------------------------------------------------------------------------
