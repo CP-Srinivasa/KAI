@@ -159,6 +159,21 @@ class PaperExecutionEngine:
             for correlation_id, transitions in result.lifecycle_history.items()
             if transitions
         }
+        # PRE-A follow-up: surface lifecycle-replay discontinuities to operator.
+        # Position recovery itself is unaffected (see test_lifecycle_replay_
+        # errors_do_not_block_position_recovery) but silent drops would mask
+        # legitimate state-machine drift — e.g. a legacy ORDER_SUBMITTED ->
+        # WAITING_FOR_ENTRY row or a discontinuous transition emitted before
+        # the FSM tracker existed. Logged as warning so journalctl + log-
+        # aggregation surface the count without breaking rehydrate-flow.
+        if result.lifecycle_replay_errors:
+            logger.warning(
+                "[PAPER] audit-replay observed %d lifecycle discontinuit%s: %s",
+                len(result.lifecycle_replay_errors),
+                "y" if len(result.lifecycle_replay_errors) == 1 else "ies",
+                "; ".join(result.lifecycle_replay_errors[:3])
+                + ("; ..." if len(result.lifecycle_replay_errors) > 3 else ""),
+            )
         return True
 
     @staticmethod

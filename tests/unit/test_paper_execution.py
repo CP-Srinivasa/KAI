@@ -1184,6 +1184,35 @@ def test_rehydrate_restores_partial_lifecycle_before_terminal_close(tmp_path):
     assert replay_paper_audit(audit_path).lifecycle_replay_errors == ()
 
 
+def test_rehydrate_logs_lifecycle_replay_errors(tmp_path, caplog):
+    """PRE-A follow-up: lifecycle discontinuities during rehydrate must be
+    surfaced via WARNING (silent drop would mask FSM drift)."""
+    import json
+    import logging
+
+    audit_path = tmp_path / "audit.jsonl"
+    audit_path.write_text(
+        json.dumps(
+            {
+                "event_type": "lifecycle_transition",
+                "timestamp_utc": "2026-05-24T09:00:00+00:00",
+                "correlation_id": "env-bad",
+                "from_state": "ORDER_SUBMITTED",
+                "to_state": "WAITING_FOR_ENTRY",
+                "reason": "bad_legacy_row",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    eng = _engine(tmp_path)
+    with caplog.at_level(logging.WARNING, logger="app.execution.paper_engine"):
+        assert eng.rehydrate_from_audit(audit_path) is True
+    warnings = [r for r in caplog.records if "lifecycle" in r.message.lower()]
+    assert warnings, "expected at least one lifecycle-discontinuity warning"
+    assert "WAITING_FOR_ENTRY" in warnings[0].message
+
+
 def test_final_tier_lifecycle_reaches_tp_hit(tmp_path):
     eng = _engine(tmp_path)
     order = eng.create_order(
