@@ -883,3 +883,297 @@ def trading_decision_journal_summary(
         console.print(f"avg_confidence={summary.avg_confidence}")
     console.print("execution_enabled=False")
     console.print("write_back_allowed=False")
+
+
+# -- loop-idle / quality / outcome / tv / audit-rauschen (Goal-Sprint 2026-05-26) --
+
+
+@trading_app.command("loop-idle-check")
+def trading_loop_idle_check(
+    audit_path: str = typer.Option(
+        "artifacts/trading_loop_audit.jsonl",
+        "--audit-path",
+        help="Trading-loop audit JSONL",
+    ),
+    window_hours: int = typer.Option(
+        24, "--window-hours", help="Rolling window length (default: 24h)"
+    ),
+    idle_fraction: float = typer.Option(
+        0.95,
+        "--idle-fraction",
+        help="priority_rejected / total_cycles ratio that counts as idle",
+    ),
+    min_cycles: int = typer.Option(
+        6,
+        "--min-cycles",
+        help="Minimum cycles in window before a decision can be made",
+    ),
+    notify: bool = typer.Option(
+        False,
+        "--notify/--no-notify",
+        help="Send a Telegram alert when status=idle (best-effort)",
+    ),
+) -> None:
+    """Emit a loop-idle signal from the trading-loop audit.
+
+    Exit codes:
+      0 — healthy
+      1 — insufficient_data (not enough cycles to decide)
+      2 — idle (every threshold tripped; operator action needed)
+
+    Designed for cron use:
+        trading-bot trading loop-idle-check --notify || true
+    """
+    import asyncio
+
+    from app.observability.loop_idle_signal import compute_loop_idle_signal
+
+    signal = compute_loop_idle_signal(
+        audit_path=audit_path,
+        window_hours=window_hours,
+        idle_fraction=idle_fraction,
+        min_cycles=min_cycles,
+    )
+
+    payload = signal.to_dict()
+    color = {"healthy": "green", "insufficient_data": "yellow", "idle": "red"}.get(
+        signal.status, "white"
+    )
+    console.print(f"[bold {color}]loop_status={signal.status}[/bold {color}]")
+    console.print(f"reason={signal.reason}")
+    console.print(
+        f"window={signal.window_hours}h "
+        f"total={signal.total_cycles} "
+        f"completed={signal.completed} "
+        f"priority_rejected={signal.priority_rejected} "
+        f"other_rejected={signal.other_rejected}"
+    )
+    if signal.rejection_fraction is not None:
+        console.print(f"rejection_fraction={signal.rejection_fraction:.3f}")
+    console.print(f"audit_path={payload['audit_path']}")
+
+    if signal.status == "idle" and notify:
+        try:
+            from app.alerts.notify import send_operator_notification
+
+            msg = (
+                "🟥 KAI Loop-Idle\n"
+                f"Window: {signal.window_hours}h\n"
+                f"Cycles: {signal.total_cycles} "
+                f"(priority_rejected={signal.priority_rejected}, completed=0)\n"
+                f"Reason: {signal.reason}\n"
+                f"Audit: {payload['audit_path']}\n"
+                "Check EXECUTION_PAPER_MIN_PRIORITY / signal-pipeline upstream."
+            )
+            ok = asyncio.run(send_operator_notification(msg))
+            console.print(f"telegram: {'ok' if ok else 'disabled_or_failed'}")
+        except Exception as exc:  # pragma: no cover — best-effort
+            console.print(f"telegram: error ({exc})")
+
+    if signal.status == "healthy":
+        raise typer.Exit(0)
+    if signal.status == "insufficient_data":
+        raise typer.Exit(1)
+    raise typer.Exit(2)
+
+
+@trading_app.command("paper-quality-snapshot")
+def trading_paper_quality_snapshot(
+    audit_path: str = typer.Option(
+        "artifacts/paper_execution_audit.jsonl",
+        "--audit-path",
+        help="Paper-execution audit JSONL",
+    ),
+    last_n: int = typer.Option(
+        25,
+        "--last-n",
+        help="Show the last N position_closed events (and aggregate them)",
+    ),
+) -> None:
+    """Summarize paper-fill quality from position_closed events.
+
+    Read-only, fixture-friendly. Used to couple a green ≥10-fill gate
+    with an honest PnL/win-rate snapshot — 11 closures all green
+    against a -349.79 USD realized PnL would otherwise pass the
+    re-entry-gate without anyone noticing the negative quality.
+    """
+    from app.observability.paper_quality_snapshot import build_paper_quality_snapshot
+
+    snapshot = build_paper_quality_snapshot(audit_path=audit_path, last_n=last_n)
+
+    console.print("[bold]Paper Quality Snapshot[/bold]")
+    console.print(
+        f"closures_total={snapshot.closures_total} "
+        f"window_last_n={snapshot.window_last_n} "
+        f"shown={len(snapshot.window_closures)}"
+    )
+    console.print(
+        f"win_rate={snapshot.win_rate:.3f} "
+        f"sum_trade_pnl_usd={snapshot.sum_trade_pnl_usd:.2f} "
+        f"avg_trade_pnl_usd={snapshot.avg_trade_pnl_usd:.2f} "
+        f"latest_realized_pnl_usd={snapshot.latest_realized_pnl_usd}"
+    )
+    if snapshot.by_symbol:
+        sym_table = Table(title="by_symbol", show_header=True, header_style="bold cyan")
+        sym_table.add_column("symbol", width=14)
+        sym_table.add_column("n", justify="right")
+        sym_table.add_column("wins", justify="right")
+        sym_table.add_column("losses", justify="right")
+        sym_table.add_column("sum_pnl_usd", justify="right")
+        for sym in sorted(snapshot.by_symbol):
+            row = snapshot.by_symbol[sym]
+            sym_table.add_row(
+                sym,
+                str(row["count"]),
+                str(row["wins"]),
+                str(row["losses"]),
+                f"{row['sum_pnl_usd']:.2f}",
+            )
+        console.print(sym_table)
+    if snapshot.by_reason:
+        rsn_table = Table(title="by_reason", show_header=True, header_style="bold cyan")
+        rsn_table.add_column("reason", width=14)
+        rsn_table.add_column("n", justify="right")
+        rsn_table.add_column("wins", justify="right")
+        rsn_table.add_column("losses", justify="right")
+        rsn_table.add_column("sum_pnl_usd", justify="right")
+        for reason in sorted(snapshot.by_reason):
+            row = snapshot.by_reason[reason]
+            rsn_table.add_row(
+                reason,
+                str(row["count"]),
+                str(row["wins"]),
+                str(row["losses"]),
+                f"{row['sum_pnl_usd']:.2f}",
+            )
+        console.print(rsn_table)
+    console.print(f"audit_path={snapshot.audit_path}")
+
+
+@trading_app.command("outcome-dedupe-report")
+def trading_outcome_dedupe_report(
+    audit_path: str = typer.Option(
+        "artifacts/alert_outcomes.jsonl",
+        "--audit-path",
+        help="Alert-outcomes audit JSONL",
+    ),
+) -> None:
+    """Compare raw vs latest-per-document_id outcome counts.
+
+    The raw JSONL accumulates inconclusive rows from every annotator
+    pass — 4409 raw rows / 3981 inconclusive on the 2026-05-26 baseline,
+    but only 410 unique documents and 35 inconclusive after dedupe.
+    Re-entry-decisions and precision metrics must use the deduped view.
+    """
+    from app.observability.outcome_dedupe_report import build_outcome_dedupe_report
+
+    report = build_outcome_dedupe_report(audit_path=audit_path)
+    console.print("[bold]Outcome Dedupe Report[/bold]")
+    console.print(
+        f"raw: rows={report.raw_total} "
+        f"hit={report.raw_hit} miss={report.raw_miss} "
+        f"inconclusive={report.raw_inconclusive} "
+        f"precision_directional={report.raw_precision_str}"
+    )
+    console.print(
+        f"deduped(latest_per_document_id): "
+        f"documents={report.deduped_total} "
+        f"hit={report.deduped_hit} miss={report.deduped_miss} "
+        f"inconclusive={report.deduped_inconclusive} "
+        f"precision_directional={report.deduped_precision_str}"
+    )
+    if report.dropped_inconclusive_dupes:
+        console.print(
+            f"dropped_inconclusive_dupes={report.dropped_inconclusive_dupes} "
+            "(redundant inconclusive rows replaced by a later resolved outcome)"
+        )
+    console.print(f"audit_path={report.audit_path}")
+
+
+@trading_app.command("tv-pending-classify")
+def trading_tv_pending_classify(
+    audit_path: str = typer.Option(
+        "artifacts/tradingview_pending_signals.jsonl",
+        "--audit-path",
+        help="TradingView pending-signals JSONL",
+    ),
+) -> None:
+    """Classify TV-pending events by age and ticker (read-only).
+
+    The 75-event backlog (tail 2026-05-10/11) was opaque from the
+    Daily-Strategy bootstrap. This split shows operators *what* sits
+    in the queue before they decide to reject/archive in bulk.
+    """
+    from app.observability.tv_pending_classifier import build_tv_pending_breakdown
+
+    breakdown = build_tv_pending_breakdown(audit_path=audit_path)
+    console.print("[bold]TradingView Pending Breakdown[/bold]")
+    console.print(f"total={breakdown.total} audit_path={breakdown.audit_path}")
+    if breakdown.by_age_bucket:
+        tbl = Table(title="by_age_bucket", show_header=True, header_style="bold cyan")
+        tbl.add_column("age", width=8)
+        tbl.add_column("count", justify="right")
+        for bucket in ("<1d", "1-7d", "7-14d", ">14d", "unknown"):
+            if bucket in breakdown.by_age_bucket:
+                tbl.add_row(bucket, str(breakdown.by_age_bucket[bucket]))
+        console.print(tbl)
+    if breakdown.by_ticker:
+        tt = Table(title="top_tickers", show_header=True, header_style="bold cyan")
+        tt.add_column("ticker", width=12)
+        tt.add_column("count", justify="right")
+        for ticker, count in breakdown.by_ticker[:10]:
+            tt.add_row(ticker, str(count))
+        console.print(tt)
+    if breakdown.by_external_event_id:
+        ee = Table(title="top_external_event_ids", show_header=True, header_style="bold cyan")
+        ee.add_column("external_event_id", width=30)
+        ee.add_column("count", justify="right")
+        for ext, count in breakdown.by_external_event_id[:10]:
+            ee.add_row(ext, str(count))
+        console.print(ee)
+
+
+@trading_app.command("paper-duplicate-rejections")
+def trading_paper_duplicate_rejections(
+    audit_path: str = typer.Option(
+        "artifacts/paper_execution_audit.jsonl",
+        "--audit-path",
+        help="Paper-execution audit JSONL",
+    ),
+) -> None:
+    """Aggregate order_created_rejected_duplicate events.
+
+    Surfaces forensic patterns (idempotency_key replays) without
+    forcing the operator to grep. The replay-guard itself stays
+    intact — this CLI only summarizes its audit footprint.
+    """
+    from app.observability.paper_duplicate_rejections import (
+        build_paper_duplicate_rejection_summary,
+    )
+
+    summary = build_paper_duplicate_rejection_summary(audit_path=audit_path)
+    console.print("[bold]Paper Duplicate-Rejection Summary[/bold]")
+    console.print(f"total_rejections={summary.total} audit_path={summary.audit_path}")
+    if summary.first_rejected_at or summary.last_rejected_at:
+        console.print(
+            f"first_rejected_at={summary.first_rejected_at} "
+            f"last_rejected_at={summary.last_rejected_at}"
+        )
+    if summary.by_idempotency_key:
+        tbl = Table(
+            title="by_idempotency_key (top 10)",
+            show_header=True,
+            header_style="bold cyan",
+        )
+        tbl.add_column("idempotency_key", width=46)
+        tbl.add_column("count", justify="right")
+        tbl.add_column("first_seen", width=26)
+        tbl.add_column("last_seen", width=26)
+        for entry in summary.by_idempotency_key[:10]:
+            tbl.add_row(
+                entry["idempotency_key"][:46],
+                str(entry["count"]),
+                entry["first_seen"],
+                entry["last_seen"],
+            )
+        console.print(tbl)
