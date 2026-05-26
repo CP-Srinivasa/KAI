@@ -79,6 +79,11 @@ data/
 
 # Frontend build artifacts (regenerable)
 web/tsconfig.tsbuildinfo
+web/.dist-prev-deploy-*/
+web/.dist-snapshots/
+
+# Generated lern-recalc outputs (kai-recalc-cycle.timer überschreibt daily 04:00)
+monitor/source_reliability.json
 
 # E2E test database (root-level)
 test_e2e.db
