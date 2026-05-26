@@ -50,6 +50,7 @@ _READ_ONLY_COMMANDS = frozenset(
         "alert_status",
         "quality",
         "annotate",
+        "trail",
     }
 )
 _GUARDED_AUDIT_COMMANDS = frozenset({"approve", "reject"})
@@ -89,6 +90,7 @@ _EPHEMERAL_MENU_COMMANDS = frozenset(
         # NOT ephemeral because its reply (live order placement or rejection)
         # is forensically relevant and must stay in the chat history.
         "live",
+        "trail",
     }
 )
 _EPHEMERAL_MENU_HISTORY_DEPTH = 3
@@ -1654,6 +1656,7 @@ class TelegramOperatorBot:
             "verwerfen": self._cmd_cancel,
             "live": self._cmd_live,
             "trade": self._cmd_trade,
+            "trail": self._cmd_trail,
         }
         handler = handlers.get(command)
         if handler is None:
@@ -2086,6 +2089,17 @@ class TelegramOperatorBot:
             f"{execution_lines}"
         )
         await self._send(chat_id, msg)
+
+    async def _cmd_trail(self, chat_id: int, *, args: str = "") -> None:
+        try:
+            from app.messaging.signal_trail import format_signal_trail_message
+
+            artifacts_dir = Path("artifacts")
+            msg = format_signal_trail_message(args, artifacts_dir)
+            await self._send(chat_id, msg)
+        except Exception as exc:
+            logger.error("[BOT] Trail command failed: %s", exc)
+            await self._send(chat_id, f"Fehler bei der Trail-Abfrage: {exc}")
 
     async def _cmd_alert_status(self, chat_id: int, *, args: str = "") -> None:
         payload = await self._load_canonical_surface(

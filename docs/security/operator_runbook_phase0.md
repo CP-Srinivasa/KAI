@@ -141,7 +141,148 @@ Wenn der Provider keine statische IP hat (typisch bei Vodafone/Telekom-Kabelansc
 
 ---
 
-## 4 HOTP-Seed-Setup (Authenticator-App)
+## 4 HOTP-Seed-Setup
+
+Zwei Varianten — **YubiKey 5C N FIPS bevorzugt** (Hardware-bound), Authenticator-App als Fallback. Variante A ergänzt seit 2026-05-24 nach Operator-Hardware-Erweiterung (siehe `docs/security/yubikey_bio_integration_plan_2026-05-24.md`).
+
+### Variante A — YubiKey 5C N FIPS (Track-B aus YubiKey-Plan, EMPFOHLEN)
+
+**Vorteil:** Seed liegt in einem nach FIPS 140-2 zertifizierten Hardware-Container, kann nicht via Phone-Compromise extrahiert werden. Operator drückt YubiKey-Touch → `ykman oath code` → 6-stelliger Code → in TG eintippen.
+
+**Voraussetzungen:**
+- YubiKey 5C N FIPS physisch verfügbar
+- USB-C-Port auf der Workstation (Pi 5 USB-C ist Power-only — Setup macht der Operator auf seiner Workstation, nicht auf dem Pi)
+- `ykman`-CLI installiert auf Workstation:
+  - Windows: `winget install Yubico.YubikeyManager`
+  - macOS: `brew install ykman`
+  - Linux: `apt install yubikey-manager`
+
+**4.A.1 Seed generieren (auf Workstation, NICHT auf Pi)**
+
+```bash
+# Workstation
+python3 -c "import pyotp; print(pyotp.random_base32())"
+```
+
+Output ist 32-Zeichen Base32-String, z.B. `JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP`. Wert merken — wird in den nächsten 3 Schritten benötigt und danach nur noch im YubiKey + Tresor-Backup-QR existieren.
+
+**4.A.2 YubiKey PIN setzen (Pflicht für FIPS, einmalig)**
+
+FIPS-Variante setzt strengere PIN-Policy als Standard-5er. Wenn YubiKey neu/uninitialisiert:
+
+```bash
+ykman oath access change
+# Aktueller PIN: leer (Enter wenn neuer Key)
+# Neuer PIN: 8-64 Zeichen
+```
+
+**PIN-Backup-Pflicht:** Der gewählte PIN MUSS sofort im selben Tresor wie der QR-Backup landen. **FIPS-Compliance triggert key-wipe bei 8 falschen PIN-Versuchen** — ohne PIN-Backup verlierst du Track-B komplett (key wird unbrauchbar, Recovery braucht QR-Restore auf neuen Account).
+
+**4.A.3 OATH-HOTP-Account auf YubiKey programmieren**
+
+```bash
+ykman oath accounts add \
+  --oath-type HOTP \
+  --algorithm SHA1 \
+  --digits 6 \
+  --touch \
+  "KAI-Live:operator" \
+  <SEED-AUS-4.A.1>
+```
+
+Flags:
+- `--oath-type HOTP` — Counter-basiert (nicht Zeit-basiert), MUSS zu `app/security/hotp_auth.py` passen
+- `--algorithm SHA1` — RFC 4226 Default, Code in `hotp_auth.py` erwartet SHA1
+- `--digits 6` — Standard
+- `--touch` — physischer YubiKey-Touch ist Pflicht pro Code-Generierung (Anti-Malware-Schutz)
+
+**4.A.4 Seed auf Pi transportieren**
+
+Pi muss denselben Seed in `~/.config/kai/hotp_seed.b32` haben damit der Verifier den Code matchen kann. KEIN scp-temp-file, KEIN Shell-History-Eintrag.
+
+```bash
+# Workstation, Step 1: Pi-Pfad vorbereiten
+ssh ubuntu@192.168.178.23 'mkdir -p ~/.config/kai && touch ~/.config/kai/hotp_seed.b32 && chmod 600 ~/.config/kai/hotp_seed.b32'
+
+# Workstation, Step 2: Seed via SSH-Stdin schreiben (input hidden, kein temp-file)
+read -s SEED_VAR
+# (Seed eingeben, Enter — Eingabe ist unsichtbar)
+echo -n "$SEED_VAR" | ssh ubuntu@192.168.178.23 'cat > ~/.config/kai/hotp_seed.b32'
+
+# Workstation, Step 3: Verifikation
+ssh ubuntu@192.168.178.23 'ls -la ~/.config/kai/hotp_seed.b32 && wc -c ~/.config/kai/hotp_seed.b32'
+# Expected: -rw------- ubuntu ubuntu 32 ... (Länge entspricht Seed-Länge ohne newline)
+
+# Workstation, Step 4: Seed aus Shell-Variable entfernen
+unset SEED_VAR
+```
+
+**4.A.5 Smoke-Test**
+
+```bash
+# Workstation: YubiKey berühren, Code generieren
+ykman oath code "KAI-Live:operator"
+# Output: KAI-Live:operator  123456
+
+# Pi: Verify gegen Counter (echte HotpVerifier-API mit keyword-args)
+ssh ubuntu@192.168.178.23 'cd /home/ubuntu/ai_analyst_trading_bot && .venv/bin/python -c "
+from pathlib import Path
+from app.security.hotp_auth import HotpVerifier
+v = HotpVerifier(
+    seed_path=Path.home() / \".config/kai/hotp_seed.b32\",
+    journal_path=Path(\"artifacts/security/hotp_counter.jsonl\"),
+)
+print(v.verify(\"123456\"))
+"'
+# Expected: HotpVerifyResult mit ok=True, counter_advanced=<n>.
+```
+
+Wenn `HotpVerificationFailed`: SEED auf Workstation und Pi sind nicht identisch — Step 4.A.4 wiederholen.
+
+**4.A.6 Tresor-Backup (PFLICHT, verhindert Total-Lockout)**
+
+Drei Items kommen ins selbe Tresor-Fach:
+
+| Item | Inhalt | Zweck |
+|---|---|---|
+| QR-Code-Papier | `otpauth://hotp/KAI-Live:operator?secret=<SEED>&counter=0&issuer=KAI-Light-Live` als QR gerendert | Recovery falls YubiKey verloren oder FIPS-wiped |
+| PIN-Backup-Karte | YubiKey-OATH-PIN aus §4.A.2, handschriftlich oder Passwort-Manager-Export | Verhindert key-wipe durch 8 PIN-Failures, ermöglicht YubiKey-Reset |
+| Counter-Notiz | Aktueller Counter-Wert (regelmäßig aktualisierbar nach jedem Live-Trade) | Recovery muss Counter >= aktuellem Pi-Counter setzen, sonst Replay-Reject |
+
+**Tresor-Backup-Procedure:**
+
+```bash
+# Workstation, mit YubiKey gesteckt (SEED-Wert aus 4.A.1 nochmal kurz im Speicher haben)
+qrencode -o ~/Desktop/yubikey-backup.png \
+  "otpauth://hotp/KAI-Live:operator?secret=<SEED>&counter=0&issuer=KAI-Light-Live"
+```
+
+1. **Drucken** auf Papier — Drucker offline via USB-Kabel (nie Cloud-Print, nie WiFi-Drucker)
+2. PIN aus §4.A.2 auf Notiz-Karte schreiben (oder Passwort-Manager-Export ausdrucken)
+3. **Papier + Karte in physischen Tresor** (nicht im selben Raum wie Pi 5)
+4. PNG auf Workstation **shreddern**:
+   - Linux/Mac: `shred -u ~/Desktop/yubikey-backup.png`
+   - Windows: `Cipher /w:$env:USERPROFILE\Desktop` nach dem Löschen
+5. Terminal-Session schließen (alle SEED-Variablen weg)
+
+**Backup-Test-Restore (PFLICHT binnen 7 Tagen nach Setup):**
+
+1. Zweiten OATH-Account auf YubiKey hinzufügen mit Seed-vom-Papier:
+   ```bash
+   ykman oath accounts add --oath-type HOTP --algorithm SHA1 --digits 6 --touch \
+     "KAI-Live-RestoreTest:operator" <SEED-VOM-PAPIER>
+   ```
+2. Code generieren, MUSS mit ursprünglichem `KAI-Live:operator`-Code identisch sein bei gleichem Counter
+3. Restore-Test-Account wieder löschen: `ykman oath accounts delete "KAI-Live-RestoreTest:operator"`
+4. Wenn Test grün: Track-B ready für Light-Live-Aktivierung
+
+**4.A.7 Optional: Zweiter YubiKey-Account auf Bio-Pair (Phase-1-Vorbereitung)**
+
+Sobald Track-A WebAuthn-Sprint läuft (~27.05.+, siehe `yubikey_bio_integration_plan_2026-05-24.md` §4 Track A), wird der HOTP-Pfad zum Fallback. Bis dahin können die 2× Bios als FIDO-Reserve-Hardware im selben Tresor liegen — keine HOTP-Programmierung möglich (Bio ist FIDO-only).
+
+---
+
+### Variante B — Authenticator-App (Fallback wenn keine YubiKey verfügbar)
 
 ### 4.1 Seed generieren auf Pi
 

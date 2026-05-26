@@ -99,6 +99,50 @@ def test_stale_mtime_yields_freshness_warning(tmp_path: Path) -> None:
     assert report.data_sources_stale is True
 
 
+def test_recalc_outputs_missing_silent_when_absent(tmp_path: Path) -> None:
+    """Recalc-cycle outputs are flagged required=False — fresh checkout with no
+    recalc-run yet must NOT produce a critical issue.
+
+    Backstop for kai-recalc-cycle.timer (PR #62, daily 04:00). Absent files on a
+    new clone are normal; the staleness probe only fires once the file exists
+    AND its mtime crosses the 1500min threshold.
+    """
+    _make_files_fresh(tmp_path)
+    report = run_health_check_report(tmp_path)
+    # No critical freshness issues should fire when only the recalc outputs are
+    # missing — the alerts + trading_loop fixtures are fresh.
+    recalc_components = {
+        "bayes_recalc_freshness",
+        "confluence_recalc_freshness",
+        "ph5_recalc_freshness",
+        "source_reliability_recalc_freshness",
+    }
+    recalc_critical = [
+        i for i in report.issues if i.component in recalc_components and i.severity == "critical"
+    ]
+    assert recalc_critical == []
+
+
+def test_stale_recalc_output_yields_freshness_warning(tmp_path: Path) -> None:
+    """Stale bayes_posterior_state.json (>1500min) → bayes_recalc_freshness warn.
+
+    Triggers when kai-recalc-cycle.timer deactivated silently — the exact
+    failure mode that produced the 2026-05-16..24 8-day stall on Pi.
+    """
+    _make_files_fresh(tmp_path)
+    bayes_path = tmp_path / "bayes_posterior_state.json"
+    bayes_path.write_text("{}", encoding="utf-8")
+    # 2 days old = past 25h threshold
+    two_days = (datetime.now(UTC) - timedelta(days=2)).timestamp()
+    os.utime(bayes_path, (two_days, two_days))
+
+    report = run_health_check_report(tmp_path)
+    bayes_warn = [i for i in report.issues if i.component == "bayes_recalc_freshness"]
+    assert len(bayes_warn) == 1
+    assert bayes_warn[0].severity == "warning"
+    assert report.data_sources_stale is True
+
+
 def test_alert_audit_quiet_channel_does_not_trip_freshness(tmp_path: Path) -> None:
     """alert_audit 2h gap = legit-quiet channel; should NOT flag stale.
 

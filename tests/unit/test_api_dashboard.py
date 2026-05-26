@@ -232,6 +232,57 @@ def test_quality_api_includes_source_reliability_summary(
     assert rel["unknown_bucket"]["tier"] == "low"
 
 
+def test_quality_api_includes_position_partial_closed_in_pnl(tmp_path: Path) -> None:
+    """Forensik 2026-05-25: position_partial_closed muss in paper_realized_pnl_usd
+    enthalten sein. Vorher hat dashboard.py:233 nur position_closed eingerechnet,
+    was zu Untererfassung führte (Codex-Beleg: Pi $759 vs Audit-Replay $2486)."""
+    (tmp_path / "alert_audit.jsonl").write_text("", encoding="utf-8")
+    (tmp_path / "alert_outcomes.jsonl").write_text("", encoding="utf-8")
+    (tmp_path / "trading_loop_audit.jsonl").write_text("", encoding="utf-8")
+    (tmp_path / "paper_execution_audit.jsonl").write_text(
+        "\n".join(
+            json.dumps(r)
+            for r in [
+                {"event_type": "order_filled", "side": "buy", "symbol": "BTC/USDT"},
+                {
+                    "schema_version": "v2",
+                    "event_type": "position_partial_closed",
+                    "symbol": "BTC/USDT",
+                    "trade_pnl_usd": 500.0,
+                },
+                {
+                    "schema_version": "v2",
+                    "event_type": "position_partial_closed",
+                    "symbol": "BTC/USDT",
+                    "trade_pnl_usd": 300.0,
+                },
+                {
+                    "schema_version": "v2",
+                    "event_type": "position_closed",
+                    "symbol": "BTC/USDT",
+                    "trade_pnl_usd": 200.0,
+                },
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    app = _make_app()
+    with _patch_artifacts(tmp_path):
+        with TestClient(app) as client:
+            r = client.get("/dashboard/api/quality")
+
+    assert r.status_code == 200
+    data = r.json()
+    # All three close events must be counted: 500 + 300 + 200 = 1000
+    assert data["paper_realized_pnl_usd"] == 1000.0
+    assert data["paper_positions_closed"] == 1
+    assert data["paper_positions_partial_closed"] == 2
+    # Backwards-compat: paper_fills_with_pnl = closes + partials
+    assert data["paper_fills_with_pnl"] == 3
+
+
 # ---------------------------------------------------------------------------
 # Auth exemption: /dashboard/* paths pass without bearer
 # ---------------------------------------------------------------------------

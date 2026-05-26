@@ -14,6 +14,7 @@ import { PreparedPanel } from "@/components/panels/PreparedPanel";
 import { ReentryGatePanel } from "@/components/panels/ReentryGatePanel";
 import { SignalHeatmapPanel } from "@/components/panels/SignalHeatmap";
 import { AgentsStatusCard } from "@/components/panels/AgentsStatusCard";
+import { TimerHealthCard } from "@/components/panels/TimerHealthCard";
 import { SignalQualityCard } from "@/components/panels/SignalQualityCard";
 import { TradingLoopCard } from "@/components/panels/TradingLoopCard";
 import { RecentAlertsCard } from "@/components/panels/RecentAlertsCard";
@@ -388,6 +389,11 @@ export function Dashboard() {
       {/* Agent Roster */}
       <PanelErrorBoundary name="Agent-Roster">
         <AgentsStatusCard />
+      </PanelErrorBoundary>
+
+      {/* DALI-P-101 mount-point candidate */}
+      <PanelErrorBoundary name="Timer-Gesundheit">
+        <TimerHealthCard />
       </PanelErrorBoundary>
 
       {/* Recent Alerts */}

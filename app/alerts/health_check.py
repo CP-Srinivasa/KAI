@@ -44,6 +44,13 @@ _FRESHNESS_DEFAULT_MIN = 120
 _FRESHNESS_PER_FILE_MIN: dict[str, int] = {
     "alert_audit.jsonl": 480,  # 8h — event-driven channel
     "trading_loop_audit.jsonl": 30,  # 5min cycle → 30min is 6 missed runs
+    # Recalc-cycle outputs (kai-recalc-cycle.timer, daily 04:00 Pi-local).
+    # Threshold 1500min = 25h covers next-day-run + RandomizedDelaySec=120s
+    # + longest recalc runtime (~5min ph5_feature) + 1h grace.
+    "bayes_posterior_state.json": 1500,
+    "source_confluence_audit.jsonl": 1500,
+    "ph5_feature_analysis.json": 1500,
+    "source_reliability.json": 1500,  # lives in monitor/, not artifacts/
 }
 _FRESHNESS_LAST_RECORD_WARN_HOURS = 4
 
@@ -93,13 +100,35 @@ def _check_data_freshness(adir: Path, now: datetime) -> tuple[list[HealthIssue],
     """
     issues: list[HealthIssue] = []
     stale = False
+    # (path, fname, component, required). source_reliability.json sits in
+    # monitor/, the others in artifacts/. Recalc-cycle outputs are flagged
+    # required=False so a fresh-checkout (no recalc-run yet) does not trip the
+    # probe; once they exist they are subject to the 1500min staleness
+    # threshold, which catches a silent kai-recalc-cycle.timer (e.g. the
+    # 2026-05-16..24 8-day stall that motivated this patch).
+    monitor_dir = adir.parent / "monitor"
     files_to_check = [
-        ("alert_audit.jsonl", "alerts"),
-        ("trading_loop_audit.jsonl", "trading_loop"),
+        (adir / "alert_audit.jsonl", "alert_audit.jsonl", "alerts", True),
+        (adir / "trading_loop_audit.jsonl", "trading_loop_audit.jsonl", "trading_loop", True),
+        (adir / "bayes_posterior_state.json", "bayes_posterior_state.json", "bayes_recalc", False),
+        (
+            adir / "source_confluence_audit.jsonl",
+            "source_confluence_audit.jsonl",
+            "confluence_recalc",
+            False,
+        ),
+        (adir / "ph5_feature_analysis.json", "ph5_feature_analysis.json", "ph5_recalc", False),
+        (
+            monitor_dir / "source_reliability.json",
+            "source_reliability.json",
+            "source_reliability_recalc",
+            False,
+        ),
     ]
-    for fname, component in files_to_check:
-        path = adir / fname
+    for path, fname, component, required in files_to_check:
         if not path.exists():
+            if not required:
+                continue
             issues.append(
                 HealthIssue(
                     severity="critical",
