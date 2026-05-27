@@ -1,0 +1,104 @@
+name: Lock-File Auto-Update
+
+# Wöchentlicher Refresh des requirements.lock. Jeder Bump erscheint in
+# einem dedizierten PR mit eigenem pip-audit-Run. MAL-/CVE-Findings rotten
+# nur den Bump-PR, andere Feature-PRs bleiben unbetroffen.
+#
+# Spec: docs/security/lock_file_migration_sprint_spec.md (commit ee18dc44)
+# Sprint: branch sprint/lock-file-migration, DS-20260527-V5
+
+on:
+  schedule:
+    # Montag 04:00 UTC = 06:00 CEST / 05:00 BST
+    - cron: '0 4 * * 1'
+  workflow_dispatch:  # manueller Trigger für Ad-hoc-Refresh
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  update-lock:
+    name: Refresh requirements.lock + pip-audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install uv + pip-audit
+        run: |
+          pip install --no-cache-dir uv pip-audit
+
+      - name: Recompile lockfile (universal, --upgrade)
+        run: |
+          uv pip compile pyproject.toml \
+            --extra dev \
+            --universal \
+            --upgrade \
+            -o requirements.lock
+
+      - name: pip-audit gegen neue Lock-File
+        id: audit
+        continue-on-error: true
+        run: |
+          # pip-CVEs ignored (build-tool, nicht Project-Dependency)
+          pip-audit -r requirements.lock \
+            --ignore-vuln CVE-2026-3219 \
+            --ignore-vuln CVE-2026-6357 \
+            --format columns | tee audit_output.txt
+
+      - name: Generate PR body
+        id: prbody
+        run: |
+          {
+            echo "## Änderungsbericht"
+            echo ""
+            echo "Wöchentlicher automatischer Lock-File-Refresh via "
+            echo "\`uv pip compile pyproject.toml --extra dev --universal --upgrade\`."
+            echo ""
+            echo "## Quality Gates"
+            echo ""
+            echo "- [x] Lock-File regeneriert ($(wc -l < requirements.lock) Zeilen)"
+            echo "- [ ] CI grün (lint+test+security+type-check)"
+            echo "- [ ] Operator-Review pip-audit-Output"
+            echo ""
+            echo "## Risiken"
+            echo ""
+            echo "Bei MAL-/CVE-Funden: PR rot lassen, NICHT mergen. Manuelles"
+            echo "Triage: pyproject.toml-Exclude (\`!=<version>\`) für betroffene"
+            echo "Library setzen, Lock-File regenerieren."
+            echo ""
+            echo "## Nächste TODOs"
+            echo ""
+            echo "- Operator reviewed pip-audit-Output (siehe \`audit_output.txt\`)"
+            echo "- Bei Sauberkeit: merge → Pi-Deploy"
+            echo ""
+            echo "## Testbefehl"
+            echo ""
+            echo "\`\`\`bash"
+            echo "uv pip compile pyproject.toml --extra dev --universal -o requirements.lock"
+            echo "pip-audit -r requirements.lock"
+            echo "\`\`\`"
+            echo ""
+            echo "## pip-audit Output"
+            echo ""
+            echo "\`\`\`"
+            cat audit_output.txt
+            echo "\`\`\`"
+          } > pr_body.md
+
+      - uses: peter-evans/create-pull-request@v6
+        with:
+          commit-message: "chore(deps): weekly lock-file refresh"
+          title: "chore(deps): weekly lock-file refresh"
+          body-path: pr_body.md
+          branch: chore/lock-update-${{ github.run_number }}
+          base: main
+          delete-branch: true
+          labels: |
+            dependencies
+            automated
+            lock-file
