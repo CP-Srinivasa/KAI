@@ -250,7 +250,11 @@ def _gate_status_line(directional: int, paper_fills: int) -> str:
     return f"{alert_gate} · {fill_gate}"
 
 
-def _build_skeleton(today: date) -> str:
+def _build_skeleton(
+    today: date,
+    sync_success: int | None = None,
+    sync_total: int | None = None,
+) -> str:
     res = _resolved_directional_count()
     directional = res["hit"] + res["miss"]
     precision_pct: float | None = None
@@ -293,12 +297,25 @@ def _build_skeleton(today: date) -> str:
             f"dropped {dedupe_report.dropped_inconclusive_dupes} duplicate inconclusives)"
         )
 
+    # Sync-Health-Banner: prominent at the top when the operator MUST know that
+    # Live-Metriken are based on stale Workstation snapshots. Skipped entirely
+    # when sync was not attempted (sync_total is None) or fully successful.
+    stale_banner = ""
+    if sync_total is not None and sync_success is not None and sync_success < sync_total:
+        stale_banner = (
+            f"\n> ⚠️ **STALE-DATA-WARNING** (sync {sync_success}/{sync_total}): Pi-Sync ist heute"
+            " (zumindest teilweise) fehlgeschlagen. Die untenstehenden Live-Metriken stammen aus"
+            f" Workstation-Artifacts (Stand: lokales mtime der JSONLs, nicht heute). **Vor jeder"
+            " Decision auf Pi-Side verifizieren.** Fehlerbehebung: `daily-strategy sync` manuell"
+            " mit Verbose-Logs, ggf. SSH-Pfad prüfen.\n"
+        )
+
     return f"""# KAI Daily Strategy Review — {today.isoformat()}
 
 Erstellt: {today.isoformat()} · automatischer Skelett-Bootstrap (CLI: `daily-strategy bootstrap`)
 Format: 6 Pflicht-Sektionen nach CLAUDE.md §7.
 Horizont-Anker: {horizon_line}
-
+{stale_banner}
 ---
 
 ## Live-Metriken (deterministisch, Stand {datetime.now(UTC).isoformat()})
@@ -390,56 +407,57 @@ def _stub_section_count(text: str) -> int:
     return sum(text.count(marker) for marker in _STUB_MARKERS)
 
 
-@daily_strategy_app.command("sync")
-def cmd_sync(
-    remote: str = typer.Option(
-        "kai@kai-trader.org",
-        "--remote",
-        help="SSH connection string for the remote Pi (e.g. kai@kai-trader.org)",
-    ),
-    remote_dir: str = typer.Option(
-        "/home/kai/ai_analyst_trading_bot",
-        "--remote-dir",
-        help="Remote directory path on the Pi",
-    ),
-) -> None:
-    """Sync operational artifacts (JSONLs) from Pi to laptop to mitigate sync-lag."""
-    import subprocess
+_SYNC_FILES = (
+    "artifacts/alert_outcomes.jsonl",
+    "artifacts/paper_execution_audit.jsonl",
+    "artifacts/alert_audit.jsonl",
+    "artifacts/tradingview_pending_signals.jsonl",
+    "artifacts/trading_loop_audit.jsonl",
+    "artifacts/blocked_alerts.jsonl",
+    # Regime snapshots — without these the workstation lookup returns
+    # `no_snapshot_file` for every cycle while the Pi has hourly
+    # snapshots. Daily-strategy needs them for the regime-context audit.
+    "artifacts/regime_state/btc_regime.jsonl",
+    "artifacts/regime_state/eth_regime.jsonl",
+)
 
-    files = [
-        "artifacts/alert_outcomes.jsonl",
-        "artifacts/paper_execution_audit.jsonl",
-        "artifacts/alert_audit.jsonl",
-        "artifacts/tradingview_pending_signals.jsonl",
-        "artifacts/trading_loop_audit.jsonl",
-        "artifacts/blocked_alerts.jsonl",
-        # Regime snapshots — without these the workstation lookup returns
-        # `no_snapshot_file` for every cycle while the Pi has hourly
-        # snapshots. Daily-strategy needs them for the regime-context audit.
-        "artifacts/regime_state/btc_regime.jsonl",
-        "artifacts/regime_state/eth_regime.jsonl",
-    ]
+_SYNC_DEFAULT_REMOTE = "ubuntu@192.168.178.23"
+_SYNC_DEFAULT_REMOTE_DIR = "/home/kai/ai_analyst_trading_bot"
+
+
+def _sync_artifacts(remote: str, remote_dir: str) -> tuple[int, int]:
+    """Run scp for every file in _SYNC_FILES; return (success, total).
+
+    Returns the count of successfully transferred files and the total count.
+    Used by both ``cmd_sync`` (CLI) and ``cmd_bootstrap`` (for STALE-banner
+    detection). All output goes through ``typer.echo`` so cron/tee captures it.
+    """
+    import os
+    import subprocess
 
     typer.echo(f"Syncing artifacts from Pi ({remote}) to mitigate sync-lag...")
 
+    # On Windows Git-Bash / MSYS the absolute remote path is otherwise rewritten
+    # to a Windows path (e.g. /home/kai/... -> C:/Program Files/Git/home/kai/...).
+    # Setting MSYS_NO_PATHCONV=1 disables this conversion. Harmless on Linux.
+    sync_env = {**os.environ, "MSYS_NO_PATHCONV": "1"}
+
     scp_cmd = "scp"
     success = 0
-    for f in files:
+    for f in _SYNC_FILES:
         local_path = Path(f)
         local_path.parent.mkdir(parents=True, exist_ok=True)
-
-        # Build scp source and destination
         remote_src = f"{remote}:{remote_dir}/{f}"
 
         typer.echo(f"  Fetching {f}...")
         try:
-            # We run scp synchronously
             res = subprocess.run(
                 [scp_cmd, remote_src, str(local_path)],
                 capture_output=True,
                 text=True,
                 encoding="utf-8",
                 timeout=30,
+                env=sync_env,
             )
             if res.returncode == 0:
                 typer.echo(f"    [OK] {f} synced successfully.")
@@ -449,7 +467,38 @@ def cmd_sync(
         except Exception as exc:
             typer.echo(f"    [SKIP] Failed to fetch {f}: {exc}")
 
-    typer.echo(f"\nSync complete. {success}/{len(files)} files updated from Pi.")
+    typer.echo(f"\nSync complete. {success}/{len(_SYNC_FILES)} files updated from Pi.")
+    return success, len(_SYNC_FILES)
+
+
+@daily_strategy_app.command("sync")
+def cmd_sync(
+    remote: str = typer.Option(
+        _SYNC_DEFAULT_REMOTE,
+        "--remote",
+        help=(
+            "SSH connection string for the remote Pi. Default is the LAN path"
+            " (ubuntu@192.168.178.23). Cloudflare-Tunnel hostname kai-trader.org"
+            " has only HTTPS ingress, no SSH/TCP route — scp via Tunnel will time"
+            " out on banner exchange."
+        ),
+    ),
+    remote_dir: str = typer.Option(
+        _SYNC_DEFAULT_REMOTE_DIR,
+        "--remote-dir",
+        help="Remote directory path on the Pi (/home/kai is a symlink to /home/ubuntu).",
+    ),
+) -> None:
+    """Sync operational artifacts (JSONLs) from Pi to laptop to mitigate sync-lag.
+
+    Exit codes:
+      0 — all files synced successfully
+      2 — at least one file failed (operator should investigate before
+          treating downstream metrics as live)
+    """
+    success, total = _sync_artifacts(remote, remote_dir)
+    if success < total:
+        raise typer.Exit(code=2)
 
 
 @daily_strategy_app.command("bootstrap")
@@ -470,22 +519,31 @@ def cmd_bootstrap(
         help="Sync artifacts from Pi first to avoid sync-lag.",
     ),
     remote: str = typer.Option(
-        "kai@kai-trader.org",
+        _SYNC_DEFAULT_REMOTE,
         "--remote",
         help="SSH connection string for the remote Pi.",
     ),
     remote_dir: str = typer.Option(
-        "/home/kai/ai_analyst_trading_bot",
+        _SYNC_DEFAULT_REMOTE_DIR,
         "--remote-dir",
         help="Remote directory path on the Pi.",
     ),
 ) -> None:
-    """Write today's skeleton if missing. Idempotent by default."""
+    """Write today's skeleton if missing. Idempotent by default.
+
+    Exit codes:
+      0 — skeleton present (already or freshly written) and sync was healthy
+      2 — sync failed wholesale (0/N files) — skeleton was still written but
+          carries a STALE-DATA banner; downstream metrics are NOT live
+    """
+    sync_success: int | None = None
+    sync_total: int | None = None
     if sync:
         try:
-            cmd_sync(remote=remote, remote_dir=remote_dir)
+            sync_success, sync_total = _sync_artifacts(remote, remote_dir)
         except Exception as exc:
             typer.echo(f"Warning: Sync failed, continuing with local data. ({exc})")
+            sync_success, sync_total = 0, len(_SYNC_FILES)
 
     today = datetime.now(UTC).date()
     path = _today_path(today)
@@ -493,26 +551,51 @@ def cmd_bootstrap(
 
     if path.exists() and not force:
         typer.echo(f"already present: {path}")
+        if sync_success is not None and sync_total and sync_success < sync_total:
+            typer.echo(
+                f"WARNING: sync was {sync_success}/{sync_total} — existing skeleton may be"
+                " based on stale data; check banner inside the file."
+            )
+            raise typer.Exit(code=2)
         raise typer.Exit(code=0)
 
-    content = _build_skeleton(today)
+    content = _build_skeleton(today, sync_success=sync_success, sync_total=sync_total)
     path.write_text(content, encoding="utf-8")
     typer.echo(f"wrote skeleton: {path}")
 
     if notify:
         try:
-            ok = asyncio.run(_ping_operator(today, path))
+            ok = asyncio.run(_ping_operator(today, path, sync_success, sync_total))
             typer.echo(f"telegram ping: {'ok' if ok else 'disabled_or_failed'}")
         except Exception as exc:  # pragma: no cover — ping is best-effort
             typer.echo(f"telegram ping: error ({exc})")
 
+    if sync_success is not None and sync_total and sync_success < sync_total:
+        raise typer.Exit(code=2)
 
-async def _ping_operator(today: date, path: Path) -> bool:
-    """Notify the operator that today's skeleton was created."""
+
+async def _ping_operator(
+    today: date,
+    path: Path,
+    sync_success: int | None = None,
+    sync_total: int | None = None,
+) -> bool:
+    """Notify the operator that today's skeleton was created.
+
+    When sync was partially or fully unhealthy, the message includes a STALE
+    marker so the operator does not silently consume yesterday's metrics.
+    """
     from app.alerts.notify import send_operator_notification
 
+    stale_line = ""
+    if sync_total is not None and sync_success is not None and sync_success < sync_total:
+        stale_line = (
+            f"\n⚠️ STALE: Pi-Sync {sync_success}/{sync_total} — Metriken sind nicht live."
+        )
+
     msg = (
-        "📋 KAI Daily Strategy Review — Skelett für heute angelegt.\n"
+        "📋 KAI Daily Strategy Review — Skelett für heute angelegt."
+        f"{stale_line}\n"
         f"Datum: {today.isoformat()}\n"
         f"Pfad: {path.as_posix()}\n"
         "Öffne eine Claude-Session, damit die 6 Pflicht-Sektionen gefüllt werden."

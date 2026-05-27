@@ -23,7 +23,12 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ env.PYTHON_VERSION }}
-      - run: pip install -e ".[dev]"
+      # Lock-File-Migration (DS-20260527-V5): deterministisches Env aus
+      # requirements.lock (universal-cross-platform). Vorher zog `pip install
+      # -e ".[dev]"` LATEST-Versionen aller Deps und war damit offen für
+      # MAL-/CVE-Hidden-Inject-Pattern (MAL-2026-4750-Klasse, fastapi 0.136.3).
+      - run: pip install --no-cache-dir -r requirements.lock
+      - run: pip install -e . --no-deps
       - run: ruff check app/ tests/
       - run: ruff format --check app/ tests/
 
@@ -59,8 +64,9 @@ jobs:
       - uses: actions/cache@v4
         with:
           path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-${{ hashFiles('pyproject.toml') }}
-      - run: pip install -e ".[dev]"
+          key: ${{ runner.os }}-pip-${{ hashFiles('requirements.lock') }}
+      - run: pip install --no-cache-dir -r requirements.lock
+      - run: pip install -e . --no-deps
       - run: pytest tests/ -v --cov=app --cov-report=xml
       - uses: codecov/codecov-action@v5
         with:
@@ -78,10 +84,12 @@ jobs:
         with:
           python-version: ${{ env.PYTHON_VERSION }}
       - run: pip install pip-audit bandit
-      - name: Dependency vulnerability scan (pip-audit)
+      - name: Dependency vulnerability scan (pip-audit on lockfile)
+        # Lock-File-Migration (DS-20260527-V5): pip-audit scannt direkt das
+        # requirements.lock statt erst zu installieren. Schneller + deterministisch.
         # pip-CVEs (CVE-2026-3219 no-fix, CVE-2026-6357 fix-pending in pip 26.1)
-        # ignored — pip is the build-tool itself, not a project dependency.
-        run: pip install -e ".[dev]" && pip-audit --ignore-vuln CVE-2026-3219 --ignore-vuln CVE-2026-6357
+        # ignored — pip ist Build-Tool, keine Project-Dependency.
+        run: pip-audit -r requirements.lock --ignore-vuln CVE-2026-3219 --ignore-vuln CVE-2026-6357
       - name: Static security analysis (bandit)
         run: |
           bandit -r app/ \
@@ -278,7 +286,10 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ env.PYTHON_VERSION }}
-      - run: pip install -e ".[dev]"
+      # Lock-File-Migration (DS-20260527-V5): deterministisches Env wie in
+      # lint/test/security.
+      - run: pip install --no-cache-dir -r requirements.lock
+      - run: pip install -e . --no-deps
       - run: mypy app/
 
   pr-check:
