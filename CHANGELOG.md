@@ -1,4 +1,14 @@
 
+## 2026-05-28 - Premium-Signal Analytics (/goal sprint)
+
+- **Created** `app/observability/premium_signal_analytics.py` (pure, IO-free): eingesetztes Kapital + Anteil am freien Kapital, PnL absolut/prozentual, Per-Target-Status (hit/missed/pending/unknown), Entry-Status + Wartezeit, Trade-Ergebnis, Source-Quality (Wilson-LB über das Trail-Fenster), Analyse-Hinweise.
+- **Extended** `premium_signal_trail.TrailEntry` mit optionalem `analytics`-Block; `build_trail` berechnet ihn pro Signal + Source-Quality im 2. Pass. `/api/premium-signals/trail` reicht ihn unverändert durch (backward-compatible).
+- **Frontend**: neue Komponente `web/src/components/panels/PremiumSignalAnalytics.tsx` (Kapital-/Ergebnis-/Entry-/Quellen-Kacheln, Target-Stepper, Hinweise), eingebunden in `PremiumSignalTrail` mit Fallback auf die alte Detail-Row. TS-Typen in `api.ts` erweitert.
+- **Annahmen** (dokumentiert im Modul-Docstring): `available_capital_at_entry` = freies Cash vor erstem Entry-Fill (aus `portfolio_cash`); Entry-Timing-Schwellen 300s/3600s; Target-„hit" nur bei belastbarer Preis-Evidenz; fehlende Daten werden NIE erfunden, sondern als „nicht verfügbar"/„nicht bewertbar" gezeigt.
+- **Tests**: 34 neue Unit-Tests in `test_premium_signal_analytics.py` (Kapital, %, fehlende/0-Basis, Targets hit/missed/pending/unknown, Entry on-time/waited/late/missed, win/loss/break_even/unknown PnL, internal/external, Source-Quality, incomplete data). Premium-Bereich: `55 passed`; ruff + mypy clean; `tsc -b` + `vite build` grün.
+
+---
+
 ## 2026-03-24 - Alert hit-rate metric (first quality metric)
 
 - **Enriched** `AlertAuditRecord` with prediction fields (sentiment_label, affected_assets, priority, actionable)

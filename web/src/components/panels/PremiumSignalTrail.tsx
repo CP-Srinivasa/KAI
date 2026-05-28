@@ -10,6 +10,7 @@ import {
   X,
 } from "lucide-react";
 import { Badge, Card, CardHeader } from "@/components/ui/Primitives";
+import { SignalAnalyticsBlock } from "@/components/panels/PremiumSignalAnalytics";
 import {
   fetchPremiumSignalTrail,
   postManualFill,
@@ -226,37 +227,50 @@ function TrailRow({
         ))}
       </div>
 
-      {/* Detail-Row: Entry/SL/TPs/PnL/Action */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-2xs">
-        <div className="font-mono">
-          <span className="text-fg-subtle">Entry </span>
-          <span className="text-fg">{_formatPrice(entry.entry_value)}</span>
+      {/* Auswertung: Kapital · Ergebnis · Entry · Quelle · Targets · Hinweise
+          (2026-05-28 /goal). Fallback auf die schlanke Detail-Row, wenn der
+          Backend-Trail noch keinen analytics-Block liefert (Backward-Compat). */}
+      {entry.analytics ? (
+        <>
+          <SignalAnalyticsBlock analytics={entry.analytics} />
+          <div className="mt-1.5 text-2xs font-mono text-fg-subtle">
+            <span className="text-fg-muted">SL </span>
+            {_formatPrice(entry.stop_loss)}
+          </div>
+        </>
+      ) : (
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-2xs">
+          <div className="font-mono">
+            <span className="text-fg-subtle">Entry </span>
+            <span className="text-fg">{_formatPrice(entry.entry_value)}</span>
+          </div>
+          <div className="font-mono">
+            <span className="text-fg-subtle">SL </span>
+            <span className="text-fg">{_formatPrice(entry.stop_loss)}</span>
+          </div>
+          <div className="font-mono">
+            <span className="text-fg-subtle">TPs </span>
+            <span className="text-fg">
+              {entry.targets.length > 0
+                ? entry.targets.map((t) => _formatPrice(t)).join(" / ")
+                : "—"}
+            </span>
+          </div>
+          <div className="font-mono">
+            <span className="text-fg-subtle">Realisiert </span>
+            <span
+              className={cn(
+                entry.realized_pnl_usd != null && entry.realized_pnl_usd > 0 && "text-pos",
+                entry.realized_pnl_usd != null && entry.realized_pnl_usd < 0 && "text-neg",
+                (entry.realized_pnl_usd == null || entry.realized_pnl_usd === 0) &&
+                  "text-fg-muted",
+              )}
+            >
+              {_formatPnl(entry.realized_pnl_usd)}
+            </span>
+          </div>
         </div>
-        <div className="font-mono">
-          <span className="text-fg-subtle">SL </span>
-          <span className="text-fg">{_formatPrice(entry.stop_loss)}</span>
-        </div>
-        <div className="font-mono">
-          <span className="text-fg-subtle">TPs </span>
-          <span className="text-fg">
-            {entry.targets.length > 0
-              ? entry.targets.map((t) => _formatPrice(t)).join(" / ")
-              : "—"}
-          </span>
-        </div>
-        <div className="font-mono">
-          <span className="text-fg-subtle">Realisiert </span>
-          <span
-            className={cn(
-              entry.realized_pnl_usd != null && entry.realized_pnl_usd > 0 && "text-pos",
-              entry.realized_pnl_usd != null && entry.realized_pnl_usd < 0 && "text-neg",
-              (entry.realized_pnl_usd == null || entry.realized_pnl_usd === 0) && "text-fg-muted",
-            )}
-          >
-            {_formatPnl(entry.realized_pnl_usd)}
-          </span>
-        </div>
-      </div>
+      )}
 
       {/* Action-Row: nur wenn next_action_hint actionable */}
       {actionAvailable && (
