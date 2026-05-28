@@ -354,7 +354,6 @@ def trading_diversification_report(
     """Print the diversification / concentration overview for the paper book."""
     import asyncio
     import json as _json
-
     from typing import Any, cast
 
     from app.trading.diversification_service import build_diversification_overview
@@ -368,7 +367,9 @@ def trading_diversification_report(
 
     conc = cast(dict[str, Any], overview.get("concentration") or {})
     console.print("[bold]Diversification Overview[/bold]")
-    console.print(f"guard_enabled={overview.get('guard_enabled')} mode={overview.get('guard_mode')}")
+    _ge = overview.get("guard_enabled")
+    _gm = overview.get("guard_mode")
+    console.print(f"guard_enabled={_ge} mode={_gm}")
     console.print(f"short_term_gross_usd={conc.get('short_term_gross_usd')}")
     console.print(f"reserve_gross_usd={conc.get('reserve_gross_usd')}")
     console.print(f"btc_eth_short_term_pct={conc.get('btc_eth_short_term_pct')}")
