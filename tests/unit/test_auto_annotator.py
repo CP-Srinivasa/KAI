@@ -721,3 +721,79 @@ async def test_multi_window_hit_serializes_hit_at_window_field(tmp_path: Path, m
     data = json.loads(raw)
     assert data["outcome"] == "hit"
     assert data["hit_at_window"] == "1h"
+
+
+# ---------------------------------------------------------------------------
+# 2026-05-28 DS-V3: cap on unbounded inconclusive re-evaluation
+# ---------------------------------------------------------------------------
+
+
+def _seed_inconclusive(outcomes_path: Path, doc_id: str, count: int) -> None:
+    """Write `count` inconclusive annotations for `doc_id`."""
+    lines = [
+        json.dumps(
+            {
+                "document_id": doc_id,
+                "outcome": "inconclusive",
+                "annotated_at": (datetime.now(UTC) - timedelta(hours=180 + i)).isoformat(),
+            }
+        )
+        for i in range(count)
+    ]
+    outcomes_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+async def test_inconclusive_reeval_capped_after_max_attempts(tmp_path: Path, monkeypatch) -> None:
+    """Fully-elapsed (>168h) doc with >= MAX attempts is terminal — no API call."""
+    monkeypatch.setattr("app.alerts.auto_annotator._API_DELAY_SECONDS", 0)
+    monkeypatch.setattr("app.alerts.auto_annotator._MAX_INCONCLUSIVE_REEVAL_ATTEMPTS", 3)
+    _write_audit(tmp_path, _make_audit(doc_id="capped", hours_ago=200.0))
+    _seed_inconclusive(tmp_path / ALERT_OUTCOMES_JSONL_FILENAME, "capped", 3)
+
+    with patch("app.alerts.auto_annotator.CoinGeckoAdapter") as mock_cls:
+        adapter = mock_cls.return_value
+        adapter.get_ticker = AsyncMock(return_value=None)
+        adapter.get_price_change_between = AsyncMock()
+
+        results = await auto_annotate_pending(tmp_path, min_age_hours=4, backfill_batch=10)
+
+    assert results == []
+    adapter.get_price_change_between.assert_not_called()
+
+
+async def test_inconclusive_reeval_below_cap_still_evaluated(tmp_path: Path, monkeypatch) -> None:
+    """Fully-elapsed doc with fewer than MAX attempts is still re-evaluated."""
+    monkeypatch.setattr("app.alerts.auto_annotator._API_DELAY_SECONDS", 0)
+    monkeypatch.setattr("app.alerts.auto_annotator._MAX_INCONCLUSIVE_REEVAL_ATTEMPTS", 3)
+    _write_audit(tmp_path, _make_audit(doc_id="below-cap", sentiment="bullish", hours_ago=200.0))
+    _seed_inconclusive(tmp_path / ALERT_OUTCOMES_JSONL_FILENAME, "below-cap", 2)
+
+    with patch("app.alerts.auto_annotator.CoinGeckoAdapter") as mock_cls:
+        adapter = mock_cls.return_value
+        adapter.get_ticker = AsyncMock(return_value=None)
+        # +2% in 1h window → hit, early-exit after 1 call.
+        adapter.get_price_change_between = AsyncMock(return_value=(65000.0, 66300.0, 2.0))
+
+        results = await auto_annotate_pending(tmp_path, min_age_hours=4, backfill_batch=10)
+
+    assert len(results) == 1
+    assert adapter.get_price_change_between.call_count >= 1
+
+
+async def test_inconclusive_cap_inactive_before_168h_elapsed(tmp_path: Path, monkeypatch) -> None:
+    """Cap does NOT apply while the 168h window has not fully elapsed."""
+    monkeypatch.setattr("app.alerts.auto_annotator._API_DELAY_SECONDS", 0)
+    monkeypatch.setattr("app.alerts.auto_annotator._MAX_INCONCLUSIVE_REEVAL_ATTEMPTS", 3)
+    # 100h old: stale (>72h) but 168h window not yet elapsed.
+    _write_audit(tmp_path, _make_audit(doc_id="not-elapsed", sentiment="bullish", hours_ago=100.0))
+    _seed_inconclusive(tmp_path / ALERT_OUTCOMES_JSONL_FILENAME, "not-elapsed", 5)
+
+    with patch("app.alerts.auto_annotator.CoinGeckoAdapter") as mock_cls:
+        adapter = mock_cls.return_value
+        adapter.get_ticker = AsyncMock(return_value=None)
+        adapter.get_price_change_between = AsyncMock(return_value=(65000.0, 66300.0, 2.0))
+
+        results = await auto_annotate_pending(tmp_path, min_age_hours=4, backfill_batch=10)
+
+    assert len(results) == 1
+    assert adapter.get_price_change_between.call_count >= 1

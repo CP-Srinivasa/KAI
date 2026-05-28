@@ -69,6 +69,17 @@ _REEVAL_MIN_AGE_HOURS = 24.0
 # for attributing a price move to a specific news event.
 _STALE_REEVAL_WINDOW_HOURS = 168.0  # 7 days
 
+# 2026-05-28 DS-V3: cap on unbounded inconclusive re-evaluation.
+# Once the longest window (168h) has fully elapsed, the evaluation interval
+# (dispatch → dispatch + N) is a fixed historical range, so re-evaluating an
+# inconclusive yields the same result deterministically. Without a cap a
+# perpetually-inconclusive doc is re-annotated every run forever (observed
+# ~256x/doc on 2026-05-28 → ~8950 duplicate rows + wasted CoinGecko calls).
+# After this many confirming inconclusive attempts on a fully-elapsed doc we
+# stop re-queuing it. Does not affect precision: the last inconclusive stays
+# the latest-per-doc outcome.
+_MAX_INCONCLUSIVE_REEVAL_ATTEMPTS = 3
+
 # 2026-05-25 DS-V-MW: Multi-Window-Outcome sub-windows (hours).
 # Replaces single-window evaluation. An alert is "hit" if the predicted
 # direction crosses the scaled threshold in ANY of these windows. Iteration
@@ -246,8 +257,12 @@ async def auto_annotate_pending(
 
     # Latest annotation per document_id (last entry wins).
     latest_by_doc: dict[str, str] = {}
+    # DS-V3: count prior inconclusive annotations per doc to cap re-spin.
+    inconclusive_attempts: dict[str, int] = {}
     for a in existing:
         latest_by_doc[a.document_id] = a.outcome
+        if a.outcome == "inconclusive":
+            inconclusive_attempts[a.document_id] = inconclusive_attempts.get(a.document_id, 0) + 1
 
     now = datetime.now(UTC)
     min_cutoff = now - timedelta(hours=min_age_hours)
@@ -307,6 +322,16 @@ async def auto_annotate_pending(
         elif current_outcome == "inconclusive" and reeval_inconclusive:
             # Re-evaluate if old enough (24h+ since dispatch).
             if dt > reeval_cutoff:
+                continue
+            # DS-V3: terminal cap. Once the 168h window has fully elapsed the
+            # result is deterministic; stop re-queuing after a few confirming
+            # inconclusive attempts to bound JSONL inflation + CoinGecko calls.
+            fully_elapsed = dt < (now - timedelta(hours=_STALE_REEVAL_WINDOW_HOURS))
+            if (
+                fully_elapsed
+                and inconclusive_attempts.get(rec.document_id, 0)
+                >= _MAX_INCONCLUSIVE_REEVAL_ATTEMPTS
+            ):
                 continue
             # D-138: stale inconclusives use fixed 7d window, batch-limited.
             if is_stale and stale_count >= backfill_batch:
