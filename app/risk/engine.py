@@ -382,6 +382,25 @@ class RiskEngine:
                 units = max_risk_usd / entry_price
 
         position_value = units * entry_price
+        # DS-20260528-V2: dust gate. Sizing equity is the portfolio's remaining
+        # cash (trading_loop), so a nearly-deployed portfolio yields a near-zero
+        # notional (~1e-16 units). Those fill but take no real position — they
+        # only pollute the audit and inflate the fill count. Reject below floor.
+        if position_value < self._limits.min_notional_usd:
+            return PositionSizeResult(
+                approved=False,
+                symbol=symbol,
+                position_size_pct=0.0,
+                position_size_units=0.0,
+                entry_price=entry_price,
+                stop_loss_price=stop_loss_price,
+                max_loss_usd=0.0,
+                max_loss_pct=0.0,
+                rationale=(
+                    f"dust_below_min_notional: ${position_value:.4g} < "
+                    f"${self._limits.min_notional_usd:.2f} (sizing_equity=${equity:.2f})"
+                ),
+            )
         position_size_pct = (position_value / equity) * 100
         if stop_loss_price is not None and stop_loss_price > 0:
             max_loss_usd = abs(entry_price - stop_loss_price) * units

@@ -866,6 +866,7 @@ def _build_risk_limits_from_settings() -> RiskLimits:
         min_signal_confluence_count=risk.min_signal_confluence_count,
         atr_multiplier=risk.atr_multiplier,
         tp_atr_multiplier=risk.tp_atr_multiplier,
+        min_notional_usd=risk.min_notional_usd,
     )
 
 
