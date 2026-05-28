@@ -100,7 +100,7 @@ def test_bootstrap_force_overwrites(runner: CliRunner, repo_cwd: Path) -> None:
     today_path = _today_path(repo_cwd)
     today_path.parent.mkdir(parents=True, exist_ok=True)
     today_path.write_text("# old", encoding="utf-8")
-    result = runner.invoke(daily_strategy_app, ["bootstrap", "--no-notify", "--force"])
+    result = runner.invoke(daily_strategy_app, ["bootstrap", "--no-notify", "--no-sync", "--force"])
     assert result.exit_code == 0
     text = today_path.read_text(encoding="utf-8")
     assert text != "# old"
