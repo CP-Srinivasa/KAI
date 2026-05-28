@@ -164,10 +164,17 @@ function ResultTile({ a }: { a: PremiumSignalAnalytics }): JSX.Element {
   const pnl = a.final_pnl_usd;
   const pnlTone =
     pnl == null ? "text-fg-muted" : pnl > 0 ? "text-pos" : pnl < 0 ? "text-neg" : "text-fg-muted";
+  const derived = a.final_pnl_source === "fills";
   return (
     <Tile label="Ergebnis">
       <div className="flex items-center justify-between gap-1">
-        <span className={cn("font-mono text-sm font-semibold", pnlTone)}>{fmtUsd(pnl)}</span>
+        <span
+          className={cn("font-mono text-sm font-semibold", pnlTone)}
+          title={derived ? "PnL aus Fill-Preisen berechnet (Engine-Wert fehlte)" : undefined}
+        >
+          {derived && pnl != null ? "≈ " : ""}
+          {fmtUsd(pnl)}
+        </span>
         <Badge tone={meta.tone}>{meta.label}</Badge>
       </div>
       <div className="mt-1 text-2xs font-mono text-fg-subtle">

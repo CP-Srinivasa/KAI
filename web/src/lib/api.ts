@@ -594,6 +594,7 @@ export type PremiumSignalAnalytics = {
     | "unknown";
   final_pnl_usd: number | null;
   final_pnl_pct: number | null;
+  final_pnl_source: "engine" | "fills" | null;
   targets: PremiumSignalTargetStatus[];
   source_quality_status: "good" | "medium" | "weak" | "unknown";
   source_quality_reason: string;
