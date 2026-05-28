@@ -589,9 +589,7 @@ async def _ping_operator(
 
     stale_line = ""
     if sync_total is not None and sync_success is not None and sync_success < sync_total:
-        stale_line = (
-            f"\n⚠️ STALE: Pi-Sync {sync_success}/{sync_total} — Metriken sind nicht live."
-        )
+        stale_line = f"\n⚠️ STALE: Pi-Sync {sync_success}/{sync_total} — Metriken sind nicht live."
 
     msg = (
         "📋 KAI Daily Strategy Review — Skelett für heute angelegt."
