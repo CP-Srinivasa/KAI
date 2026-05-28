@@ -8,6 +8,8 @@ Group=ubuntu
 WorkingDirectory=/home/kai/ai_analyst_trading_bot
 EnvironmentFile=/home/kai/ai_analyst_trading_bot/.env
 Environment=PYTHONIOENCODING=utf-8
-ExecStart=/home/kai/ai_analyst_trading_bot/.venv/bin/python -m app.cli.main daily-strategy bootstrap
+# --no-sync: the Pi is the artifact source-of-truth; the LAN-sync default points
+# at the Pi's own IP, so syncing here would scp from itself and fail (exit 2).
+ExecStart=/home/kai/ai_analyst_trading_bot/.venv/bin/python -m app.cli.main daily-strategy bootstrap --no-sync
 StandardOutput=journal
 StandardError=journal
