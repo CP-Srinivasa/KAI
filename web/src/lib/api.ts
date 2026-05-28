@@ -784,6 +784,87 @@ export function fetchTradingLoopStatus(signal?: AbortSignal): Promise<TradingLoo
   return apiGet<TradingLoopStatus>("/operator/trading-loop/status", { signal });
 }
 
+// --- Asset diversification / concentration overview ---
+export type ConcentrationBucket = {
+  dimension: string;
+  key: string;
+  exposure_usd: number;
+  weight_pct: number;
+  limit_pct: number | null;
+  over_limit: boolean;
+};
+
+export type DiversificationAssetRow = {
+  symbol: string;
+  base: string;
+  exposure_usd: number | null;
+  weight_pct: number | null;
+  exposure_basis: string;
+  asset_horizon: string;
+  position_horizon: string;
+  sector: string;
+  narrative: string;
+  correlation_group: string;
+  risk_tier: string;
+  liquidity_tier: string;
+  is_reserve: boolean;
+  evaluable: boolean;
+  source: string;
+};
+
+export type DiversificationCandidate = {
+  symbol: string;
+  base: string;
+  structural_score: number;
+  adjusted_score: number;
+  horizon: string;
+  sector: string;
+  correlation_group: string;
+  included: boolean;
+  reasons: string[];
+};
+
+export type DiversificationOverview = {
+  report_type: string;
+  generated_at?: string;
+  guard_enabled?: boolean;
+  guard_mode?: string;
+  universe_scan_enabled?: boolean;
+  portfolio?: {
+    source: string;
+    available: boolean;
+    error: string | null;
+    cash_usd: number;
+    total_equity_usd: number;
+    position_count: number;
+  };
+  concentration?: {
+    short_term_gross_usd: number;
+    reserve_gross_usd: number;
+    total_gross_usd: number;
+    priced_position_count: number;
+    unpriced_position_count: number;
+    btc_eth_short_term_pct: number | null;
+    horizon_split_pct: Record<string, number>;
+    buckets: ConcentrationBucket[];
+    warnings: string[];
+    evaluable: boolean;
+  };
+  asset_distribution?: DiversificationAssetRow[];
+  by_source?: { source: string; exposure_usd: number; weight_pct: number | null }[];
+  candidates?: DiversificationCandidate[];
+  cluster_warnings?: string[];
+  universe_size?: number;
+  available?: boolean;
+  error?: string;
+};
+
+export function fetchDiversificationOverview(
+  signal?: AbortSignal,
+): Promise<DiversificationOverview> {
+  return apiGet<DiversificationOverview>("/api/diversification/overview", { signal });
+}
+
 export type TradingCycle = {
   cycle_id: string;
   started_at: string;
