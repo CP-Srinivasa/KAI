@@ -337,6 +337,112 @@ def trading_paper_exposure_summary(
         raise typer.Exit(1)
 
 
+@trading_app.command("diversification-report")
+def trading_diversification_report(
+    audit_path: str = typer.Option(
+        "artifacts/paper_execution_audit.jsonl",
+        "--audit-path",
+        help="Append-only paper execution audit JSONL path",
+    ),
+    provider: str | None = typer.Option(
+        None,
+        "--provider",
+        help="Read-only market data provider (defaults to APP_MARKET_DATA_PROVIDER)",
+    ),
+    as_json: bool = typer.Option(False, "--json", help="Emit full JSON payload"),
+) -> None:
+    """Print the diversification / concentration overview for the paper book."""
+    import asyncio
+    import json as _json
+
+    from typing import Any, cast
+
+    from app.trading.diversification_service import build_diversification_overview
+
+    overview = asyncio.run(
+        build_diversification_overview(audit_path=audit_path, provider=provider)
+    )
+    if as_json:
+        console.print(_json.dumps(overview, indent=2))
+        return
+
+    conc = cast(dict[str, Any], overview.get("concentration") or {})
+    console.print("[bold]Diversification Overview[/bold]")
+    console.print(f"guard_enabled={overview.get('guard_enabled')} mode={overview.get('guard_mode')}")
+    console.print(f"short_term_gross_usd={conc.get('short_term_gross_usd')}")
+    console.print(f"reserve_gross_usd={conc.get('reserve_gross_usd')}")
+    console.print(f"btc_eth_short_term_pct={conc.get('btc_eth_short_term_pct')}")
+    console.print("[bold]Asset distribution (short-term sleeve)[/bold]")
+    for row in cast(list[dict[str, Any]], overview.get("asset_distribution") or []):
+        console.print(
+            f"  {row['symbol']:12} {row['weight_pct']}%  "
+            f"horizon={row['position_horizon']}  group={row['correlation_group']}"
+        )
+    warnings = cast(list[str], overview.get("cluster_warnings") or [])
+    if warnings:
+        console.print("[bold yellow]Cluster warnings[/bold yellow]")
+        for w in warnings:
+            console.print(f"  - {w}")
+    else:
+        console.print("[green]No cluster warnings[/green]")
+    console.print("[bold]Diversified scan candidates[/bold]")
+    for c in cast(list[dict[str, Any]], overview.get("candidates") or []):
+        if c["included"]:
+            console.print(
+                f"  {c['symbol']:12} adj_score={c['adjusted_score']} group={c['correlation_group']}"
+            )
+
+
+@trading_app.command("scan-candidates")
+def trading_scan_candidates(
+    audit_path: str = typer.Option(
+        "artifacts/paper_execution_audit.jsonl",
+        "--audit-path",
+        help="Append-only paper execution audit JSONL path",
+    ),
+    provider: str | None = typer.Option(
+        None,
+        "--provider",
+        help="Read-only market data provider (defaults to APP_MARKET_DATA_PROVIDER)",
+    ),
+    limit: int = typer.Option(6, "--limit", help="Number of diversified candidates"),
+    symbols_only: bool = typer.Option(
+        False, "--symbols-only", help="Print only the selected scan symbols (one per line)"
+    ),
+) -> None:
+    """Rank diversified short-term scan candidates that broaden beyond BTC/ETH.
+
+    Read-only. ``--symbols-only`` output is consumable by the paper cron when
+    APP_DIVERSIFICATION_UNIVERSE_SCAN_ENABLED=true.
+    """
+    import asyncio
+
+    from app.execution.portfolio_read import build_portfolio_snapshot
+    from app.trading.candidate_selector import select_short_term_candidates
+    from app.trading.diversification import exposures_from_snapshot
+
+    resolved_provider = provider if provider is not None else None
+    snapshot = asyncio.run(
+        build_portfolio_snapshot(audit_path=audit_path, provider=resolved_provider or "coingecko")
+    )
+    rankings = select_short_term_candidates(
+        positions=exposures_from_snapshot(snapshot), limit=limit
+    )
+    if symbols_only:
+        for c in rankings:
+            if c.included:
+                console.print(c.symbol)
+        return
+
+    console.print("[bold]Diversified scan candidates[/bold]")
+    for c in rankings:
+        flag = "[green]PICK[/green]" if c.included else "[dim]skip[/dim]"
+        console.print(
+            f"  {flag} {c.symbol:12} adj={c.adjusted_score} "
+            f"group={c.correlation_group} sector={c.sector}"
+        )
+
+
 @trading_app.command("signals")
 def trading_signals(
     watchlist: str | None = typer.Option(None, "--watchlist", help="Filter by watchlist"),

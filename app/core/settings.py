@@ -567,6 +567,46 @@ class LearningSettings(BaseSettings):
     reasoning_journal_path: Path = Field(default=Path("artifacts/structured_reasoning.jsonl"))
 
 
+class DiversificationSettings(BaseSettings):
+    """Asset-diversification / concentration guard configuration.
+
+    Default-off, shadow-first — mirrors the Bayes/regime rollout discipline.
+
+      - ``enabled=False`` (default): the guard is not consulted anywhere; the
+        trading loop behaves exactly as before. The read-only report/CLI/API
+        surfaces still work (they build the universe on demand).
+      - ``enabled=True`` + ``shadow_only=True``: the loop *stamps* every cycle
+        audit with the diversification recommendation but never blocks — pure
+        observation, reversible at any time.
+      - ``enabled=True`` + ``shadow_only=False``: enforce mode — a ``reject``
+        recommendation (single-asset / BTC-ETH short-term cap breach) blocks the
+        cycle with status ``diversification_rejected``.
+
+    ``universe_scan_enabled`` is a separate opt-in read by the paper cron to
+    broaden the hardcoded BTC/ETH scan into a diversified candidate set. It does
+    not change in-loop behaviour and is safe in paper mode.
+    """
+
+    model_config = SettingsConfigDict(
+        env_prefix="APP_DIVERSIFICATION_",
+        env_file=".env",
+        extra="ignore",
+    )
+
+    enabled: bool = Field(default=False)
+    shadow_only: bool = Field(default=True)
+    universe_scan_enabled: bool = Field(default=False)
+    # How many diversified candidates the universe scan emits per cron tick.
+    universe_scan_limit: int = Field(default=6, ge=1, le=25)
+
+    @property
+    def mode(self) -> str:
+        """Effective guard mode: 'enforce' only when enabled and not shadow-only."""
+        if self.enabled and not self.shadow_only:
+            return "enforce"
+        return "shadow"
+
+
 class AppSettings(BaseSettings):
     model_config = SettingsConfigDict(
         env_prefix="APP_",
@@ -712,6 +752,8 @@ class AppSettings(BaseSettings):
         default_factory=TelegramChannelIngestSettings
     )
     learning: LearningSettings = Field(default_factory=LearningSettings)
+    # Asset-diversification / concentration guard. Default-off, shadow-first.
+    diversification: DiversificationSettings = Field(default_factory=DiversificationSettings)
     # D-191 re-entry capability gate. Default disabled — see ReEntryModeProfile.
     re_entry_mode: ReEntryModeProfile = Field(default_factory=ReEntryModeProfile)
 

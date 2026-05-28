@@ -1,0 +1,321 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# KAI Asset-Universe Overlay
+# ─────────────────────────────────────────────────────────────────────────────
+# Adds the trading dimensions the watchlist (monitor/watchlists.yml) does NOT
+# carry: trade horizon, sector, narrative, risk/liquidity/volatility tiers,
+# tradability, data quality and correlation group.
+#
+# Contract (see app/trading/asset_universe.py):
+#   * symbol keys are the canonical BASE asset (BTC, not BTC/USDT).
+#   * Any field omitted for an asset falls back to `defaults` below.
+#   * `defaults` deliberately uses "unknown" for the qualitative tiers so a
+#     symbol that nobody curated is surfaced as NOT-evaluable instead of being
+#     silently estimated. Fallbacks never invent a tier.
+#   * tradable: true | false | unknown  (false = not tradable on the paper
+#     crypto venue, e.g. equities/ETFs — kept as research-only context).
+#
+# Vocabularies (validated softly — unknown strings are accepted but flagged):
+#   horizon            : short_term | mid_term | long_term_reserve | unknown
+#   risk_tier          : low | medium | high | extreme | unknown
+#   liquidity_tier     : very_low | low | medium | high | very_high | unknown
+#   volatility_tier    : very_low | low | medium | high | very_high | unknown
+#   data_quality       : low | medium | high | unknown
+#
+# This file is operator-curated config, NOT generated. It is intentionally
+# small and explicit — extend it as the universe grows.
+
+version: 1
+
+defaults:
+  horizon: unknown
+  sector: unknown
+  narrative: unknown
+  risk_tier: unknown
+  liquidity_tier: unknown
+  volatility_tier: unknown
+  data_quality: unknown
+  tradable: unknown
+  correlation_group: unknown
+
+# Concentration limits for the SHORT-TERM trading sleeve (percent of short-term
+# gross exposure). long_term_reserve positions are excluded from these caps —
+# that is the whole point of the short/long separation. See DiversificationGuard.
+limits:
+  max_single_asset_pct: 25.0
+  max_btc_eth_short_term_pct: 40.0
+  max_sector_pct: 45.0
+  max_narrative_pct: 45.0
+  max_correlation_group_pct: 50.0
+  max_exchange_pct: 100.0          # paper engine is single-venue; permissive on purpose
+  max_stablecoin_quote_pct: 100.0  # all paper pairs quote in USDT today; permissive
+
+assets:
+  # ── Crypto majors / store-of-value (reserve-eligible) ──────────────────────
+  BTC:
+    horizon: long_term_reserve
+    sector: store_of_value
+    narrative: digital_gold
+    risk_tier: medium
+    liquidity_tier: very_high
+    volatility_tier: medium
+    data_quality: high
+    tradable: true
+    correlation_group: btc_beta
+  ETH:
+    horizon: long_term_reserve
+    sector: smart_contract_l1
+    narrative: programmable_settlement
+    risk_tier: medium
+    liquidity_tier: very_high
+    volatility_tier: high
+    data_quality: high
+    tradable: true
+    correlation_group: eth_beta
+
+  # ── Crypto L1 / L2 / infra (short-term tradable, diversification carriers) ──
+  SOL:
+    horizon: short_term
+    sector: smart_contract_l1
+    narrative: high_throughput_l1
+    risk_tier: high
+    liquidity_tier: high
+    volatility_tier: high
+    data_quality: high
+    tradable: true
+    correlation_group: l1_alts
+  BNB:
+    horizon: mid_term
+    sector: exchange_token
+    narrative: cex_ecosystem
+    risk_tier: high
+    liquidity_tier: high
+    volatility_tier: medium
+    data_quality: high
+    tradable: true
+    correlation_group: exchange_token
+  XRP:
+    horizon: short_term
+    sector: payments
+    narrative: cross_border_settlement
+    risk_tier: high
+    liquidity_tier: high
+    volatility_tier: high
+    data_quality: high
+    tradable: true
+    correlation_group: payments_alts
+  ADA:
+    horizon: short_term
+    sector: smart_contract_l1
+    narrative: academic_l1
+    risk_tier: high
+    liquidity_tier: high
+    volatility_tier: high
+    data_quality: high
+    tradable: true
+    correlation_group: l1_alts
+  AVAX:
+    horizon: short_term
+    sector: smart_contract_l1
+    narrative: subnet_l1
+    risk_tier: high
+    liquidity_tier: medium
+    volatility_tier: high
+    data_quality: high
+    tradable: true
+    correlation_group: l1_alts
+  LINK:
+    horizon: short_term
+    sector: oracle_infra
+    narrative: data_oracle
+    risk_tier: high
+    liquidity_tier: high
+    volatility_tier: high
+    data_quality: high
+    tradable: true
+    correlation_group: defi_infra
+  DOT:
+    horizon: short_term
+    sector: interoperability
+    narrative: parachain_l0
+    risk_tier: high
+    liquidity_tier: medium
+    volatility_tier: high
+    data_quality: high
+    tradable: true
+    correlation_group: l1_alts
+  MATIC:
+    horizon: short_term
+    sector: l2_scaling
+    narrative: eth_scaling
+    risk_tier: high
+    liquidity_tier: high
+    volatility_tier: high
+    data_quality: high
+    tradable: true
+    correlation_group: eth_beta
+  DOGE:
+    horizon: short_term
+    sector: meme
+    narrative: meme_speculation
+    risk_tier: extreme
+    liquidity_tier: high
+    volatility_tier: very_high
+    data_quality: medium
+    tradable: true
+    correlation_group: meme
+
+  # ── Stablecoins (reserve / liquidity, NOT a directional short-term trade) ──
+  USDT:
+    horizon: long_term_reserve
+    sector: stablecoin
+    narrative: dollar_liquidity
+    risk_tier: medium
+    liquidity_tier: very_high
+    volatility_tier: very_low
+    data_quality: high
+    tradable: false
+    correlation_group: stablecoin
+  USDC:
+    horizon: long_term_reserve
+    sector: stablecoin
+    narrative: regulated_dollar
+    risk_tier: low
+    liquidity_tier: very_high
+    volatility_tier: very_low
+    data_quality: high
+    tradable: false
+    correlation_group: stablecoin
+
+  # ── Equities (research-only on the crypto paper venue: tradable=false) ─────
+  MSTR:
+    horizon: mid_term
+    sector: fintech
+    narrative: btc_treasury_proxy
+    risk_tier: high
+    liquidity_tier: high
+    volatility_tier: very_high
+    data_quality: high
+    tradable: false
+    correlation_group: btc_beta
+  COIN:
+    horizon: mid_term
+    sector: fintech
+    narrative: exchange_equity
+    risk_tier: high
+    liquidity_tier: high
+    volatility_tier: high
+    data_quality: high
+    tradable: false
+    correlation_group: exchange_token
+  MARA:
+    horizon: mid_term
+    sector: mining
+    narrative: btc_miner
+    risk_tier: high
+    liquidity_tier: medium
+    volatility_tier: very_high
+    data_quality: high
+    tradable: false
+    correlation_group: btc_beta
+  RIOT:
+    horizon: mid_term
+    sector: mining
+    narrative: btc_miner
+    risk_tier: high
+    liquidity_tier: medium
+    volatility_tier: very_high
+    data_quality: high
+    tradable: false
+    correlation_group: btc_beta
+  NVDA:
+    horizon: long_term_reserve
+    sector: semiconductors
+    narrative: ai_compute
+    risk_tier: medium
+    liquidity_tier: very_high
+    volatility_tier: high
+    data_quality: high
+    tradable: false
+    correlation_group: ai_equity
+  HOOD:
+    horizon: mid_term
+    sector: fintech
+    narrative: retail_brokerage
+    risk_tier: high
+    liquidity_tier: high
+    volatility_tier: high
+    data_quality: high
+    tradable: false
+    correlation_group: fintech_equity
+  SQ:
+    horizon: mid_term
+    sector: fintech
+    narrative: payments_fintech
+    risk_tier: high
+    liquidity_tier: high
+    volatility_tier: high
+    data_quality: high
+    tradable: false
+    correlation_group: fintech_equity
+  PYPL:
+    horizon: mid_term
+    sector: fintech
+    narrative: payments_fintech
+    risk_tier: medium
+    liquidity_tier: high
+    volatility_tier: medium
+    data_quality: high
+    tradable: false
+    correlation_group: fintech_equity
+
+  # ── ETFs (research-only on the crypto paper venue: tradable=false) ─────────
+  IBIT:
+    horizon: long_term_reserve
+    sector: etf_wrapper
+    narrative: spot_btc_etf
+    risk_tier: medium
+    liquidity_tier: very_high
+    volatility_tier: medium
+    data_quality: high
+    tradable: false
+    correlation_group: btc_beta
+  FBTC:
+    horizon: long_term_reserve
+    sector: etf_wrapper
+    narrative: spot_btc_etf
+    risk_tier: medium
+    liquidity_tier: high
+    volatility_tier: medium
+    data_quality: high
+    tradable: false
+    correlation_group: btc_beta
+  GBTC:
+    horizon: long_term_reserve
+    sector: etf_wrapper
+    narrative: spot_btc_etf
+    risk_tier: medium
+    liquidity_tier: high
+    volatility_tier: medium
+    data_quality: high
+    tradable: false
+    correlation_group: btc_beta
+  BITO:
+    horizon: mid_term
+    sector: etf_wrapper
+    narrative: btc_futures_etf
+    risk_tier: high
+    liquidity_tier: high
+    volatility_tier: high
+    data_quality: high
+    tradable: false
+    correlation_group: btc_beta
+  ARKW:
+    horizon: long_term_reserve
+    sector: etf_wrapper
+    narrative: innovation_etf
+    risk_tier: high
+    liquidity_tier: high
+    volatility_tier: high
+    data_quality: high
+    tradable: false
+    correlation_group: innovation_etf

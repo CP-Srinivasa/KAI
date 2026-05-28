@@ -32,6 +32,11 @@ from app.risk.models import RiskLimits
 from app.signals.generator import SignalGenerator
 from app.signals.models import SignalCandidate, SignalDirection
 from app.storage.models.trading import PortfolioStateRecord, TradingCycleRecord
+from app.trading.diversification import (
+    DiversificationDecision,
+    DiversificationGuard,
+    exposures_from_paper_portfolio,
+)
 from app.trading.signal_consensus import (
     GEMINI_OPENAI_BASE_URL,
     SignalConsensusValidator,
@@ -292,6 +297,29 @@ class TradingLoop:
             )
             await self._write_db(cycle)
             return cycle
+
+        # Diversification / concentration guard (default-off, shadow-first).
+        # Stamps the audit with the concentration recommendation; only blocks
+        # the cycle when enforce mode is active and the action is `reject`.
+        notional = size_result.position_size_units * signal.entry_price
+        div_decision = self._evaluate_diversification(symbol=symbol, notional_usd=notional)
+        if div_decision is not None:
+            notes.extend(self._diversification_notes(div_decision))
+            if div_decision.blocks:
+                cycle = self._build_cycle(
+                    cycle_id,
+                    started_at,
+                    symbol,
+                    CycleStatus.DIVERSIFICATION_REJECTED,
+                    market_data_fetched=True,
+                    signal_generated=True,
+                    risk_approved=True,
+                    decision_id=signal.decision_id,
+                    risk_check_id=risk_result.check_id,
+                    notes=notes,
+                )
+                await self._write_db(cycle)
+                return cycle
 
         order = None
         fill = None
@@ -574,6 +602,27 @@ class TradingLoop:
             await self._write_db(cycle)
             return cycle
 
+        # Diversification / concentration guard (default-off, shadow-first).
+        notional = size_result.position_size_units * live_price
+        div_decision = self._evaluate_diversification(symbol=symbol, notional_usd=notional)
+        if div_decision is not None:
+            notes.extend(self._diversification_notes(div_decision))
+            if div_decision.blocks:
+                cycle = self._build_cycle(
+                    cycle_id,
+                    started_at,
+                    symbol,
+                    CycleStatus.DIVERSIFICATION_REJECTED,
+                    market_data_fetched=True,
+                    signal_generated=True,
+                    risk_approved=True,
+                    decision_id=signal.decision_id,
+                    risk_check_id=risk_result.check_id,
+                    notes=notes,
+                )
+                await self._write_db(cycle)
+                return cycle
+
         order = None
         fill = None
         try:
@@ -775,6 +824,49 @@ class TradingLoop:
             "regime_symbol_asset": asset,
             "regime_symbol_is_proxy": is_proxy,
         }
+
+    def _evaluate_diversification(
+        self,
+        *,
+        symbol: str,
+        notional_usd: float | None,
+    ) -> DiversificationDecision | None:
+        """Shadow/enforce concentration check against the current paper book.
+
+        Default-off: returns None when the guard is disabled (no behaviour
+        change). Uses cost-basis exposure from the in-memory portfolio — no
+        market calls, no N+1. Any failure is swallowed (forensic side-channel,
+        never a gate by accident).
+        """
+        settings = get_settings().diversification
+        if not settings.enabled:
+            return None
+        try:
+            guard = DiversificationGuard(mode=settings.mode)
+            exposures = exposures_from_paper_portfolio(self._exec.portfolio)
+            return guard.evaluate_candidate(
+                exposures,
+                candidate_symbol=symbol,
+                notional_usd=notional_usd,
+            )
+        except Exception as exc:  # noqa: BLE001 — never crash the loop on the guard
+            logger.warning("[LOOP] diversification check failed (non-fatal): %s", exc)
+            return None
+
+    @staticmethod
+    def _diversification_notes(decision: DiversificationDecision) -> list[str]:
+        notes = [
+            f"diversification:{decision.action}|mode:{decision.mode}|"
+            f"enforced:{decision.enforced}"
+        ]
+        if decision.projected_btc_eth_pct is not None:
+            notes.append(f"diversification_btc_eth_pct:{decision.projected_btc_eth_pct:.1f}")
+        for reason in decision.reasons:
+            notes.append(f"diversification_reason:{reason}")
+        if decision.alternatives:
+            alts = ",".join(a.symbol for a in decision.alternatives)
+            notes.append(f"diversification_alternatives:{alts}")
+        return notes
 
     async def _write_db(self, cycle: LoopCycle) -> None:
         """Dual-write cycle to DB (session-per-cycle). Non-fatal: DB errors never stop the loop."""

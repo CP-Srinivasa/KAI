@@ -146,6 +146,35 @@ run_cycle "BTC/USDT"
 "$SLEEP_BIN" 15
 run_cycle "ETH/USDT"
 
+# Diversified universe scan (opt-in, default OFF). When the operator sets
+# APP_DIVERSIFICATION_UNIVERSE_SCAN_ENABLED=true the cron additionally scans a
+# ranked, diversified short-term candidate set so the book is not limited to
+# BTC/ETH + premium signals. BTC/ETH above stay in place; this only ADDS breadth.
+# Safe in paper mode: each symbol still passes the full risk/size/diversification
+# chain in run_cycle.
+universe_scan() {
+    if [[ "${APP_DIVERSIFICATION_UNIVERSE_SCAN_ENABLED:-false}" != "true" ]]; then
+        return
+    fi
+    local limit="${APP_DIVERSIFICATION_UNIVERSE_SCAN_LIMIT:-6}"
+    local symbols
+    symbols=$("$PYTHON" -m app.cli.main trading scan-candidates \
+        --limit "$limit" --symbols-only 2>/dev/null) || true
+    if [[ -z "$symbols" ]]; then
+        write_log "universe-scan: no candidates"
+        return
+    fi
+    write_log "universe-scan: $(printf '%s' "$symbols" | tr '\n' ' ')"
+    local sym
+    while IFS= read -r sym; do
+        [[ -z "$sym" ]] && continue
+        [[ "$sym" == "BTC/USDT" || "$sym" == "ETH/USDT" ]] && continue  # already scanned
+        run_cycle "$sym"
+        "$SLEEP_BIN" 5
+    done <<< "$symbols"
+}
+universe_scan
+
 # Auto-annotate every 6th run (~hourly).
 annotate_marker="$ROOT/artifacts/.annotate_counter"
 counter=$(read_counter "$annotate_marker")

@@ -19,6 +19,7 @@ import { cn } from "@/lib/utils";
 import { PreparedPanel } from "@/components/panels/PreparedPanel";
 import { PremiumTradeCard } from "@/components/panels/PremiumTradeCard";
 import { PremiumSignalTrail } from "@/components/panels/PremiumSignalTrail";
+import { DiversificationPanel } from "@/components/panels/DiversificationPanel";
 import { useCurrency } from "@/state/CurrencyProvider";
 
 /**
@@ -386,6 +387,11 @@ export function PortfolioPage() {
           Endpoint GET /operator/portfolio/realized-by-asset existiert jetzt,
           liest Paper-Audit ohne Live-Mode / Backtest-Endpoint-Abhängigkeit. */}
       <RealizedByAssetPanel />
+
+      {/* /goal 2026-05-28: Diversifikation & Klumpenrisiko — Asset-Verteilung,
+          Short-Term vs Reserve, Cluster-Warnungen, Signalherkunft und
+          diversifizierte Alternativen statt BTC/ETH-Schleife. */}
+      <DiversificationPanel />
 
       {/* DALI-P-Klartext: Exposure-Card komplett umstrukturiert.
           Operator: "Was soll ich unter OHNE PREIS 2 BTC/USDT (100%) verstehen?
