@@ -558,6 +558,48 @@ export type PremiumSignalTrailBridgeHistoryEntry = {
   quantity?: number | null;
 };
 
+export type PremiumSignalTargetStatus = {
+  target_number: number;
+  target_price: number;
+  status: "hit" | "missed" | "pending" | "skipped" | "unknown";
+  hit_at?: string | null;
+};
+
+// 2026-05-28 /goal: operatorzentrierte Auswertungs-Schicht (Backend:
+// app/observability/premium_signal_analytics.py). Optional, damit ältere
+// API-Antworten / unvollständige Records die UI nicht brechen.
+export type PremiumSignalAnalytics = {
+  signal_type: "internal" | "external";
+  source_name: string | null;
+  invested_capital: number | null;
+  available_capital_at_entry: number | null;
+  invested_capital_pct: number | null;
+  capital_base_note: string | null;
+  actual_entry_price: number | null;
+  planned_entry_value: number | null;
+  entry_status:
+    | "entered_on_time"
+    | "waited_for_entry"
+    | "entered_late"
+    | "missed_entry"
+    | "unknown";
+  entry_delay_seconds: number | null;
+  entry_delay_label: string;
+  trade_result_status:
+    | "win"
+    | "loss"
+    | "break_even"
+    | "open"
+    | "cancelled"
+    | "unknown";
+  final_pnl_usd: number | null;
+  final_pnl_pct: number | null;
+  targets: PremiumSignalTargetStatus[];
+  source_quality_status: "good" | "medium" | "weak" | "unknown";
+  source_quality_reason: string;
+  analysis_hints: string[];
+};
+
 export type PremiumSignalTrailEntry = {
   envelope_id: string;
   symbol: string;
@@ -581,6 +623,7 @@ export type PremiumSignalTrailEntry = {
   paper_position_state: string | null;
   paper_close_reason: string | null;
   quantity: number | null;
+  analytics?: PremiumSignalAnalytics | null;
 };
 
 export type PremiumSignalOrphanCompletion = {

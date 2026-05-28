@@ -28,6 +28,12 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any
 
+from app.observability.premium_signal_analytics import (
+    SignalAnalytics,
+    annotate_source_quality,
+    derive_signal_analytics,
+)
+
 logger = logging.getLogger(__name__)
 
 
@@ -115,6 +121,7 @@ class TrailEntry:
     paper_position_state: str | None = None
     paper_close_reason: str | None = None
     quantity: float | None = None
+    analytics: SignalAnalytics | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -140,6 +147,7 @@ class TrailEntry:
             "paper_position_state": self.paper_position_state,
             "paper_close_reason": self.paper_close_reason,
             "quantity": self.quantity,
+            "analytics": self.analytics.to_dict() if self.analytics is not None else None,
         }
 
 
@@ -904,7 +912,23 @@ def build_trail(
             paper_close_reason=paper_close_reason,
             quantity=quantity,
         )
+        entry.analytics = derive_signal_analytics(
+            payload=payload,
+            source=_safe_str(env.get("source")),
+            received_at=entry.received_at,
+            overall=overall,
+            realized_pnl_usd=realized_pnl_usd,
+            paper_events=paper_events,
+            bridge_history=bridge_history,
+            paper_close_reason=paper_close_reason,
+            scale_unknown=entry.scale_unknown,
+        )
         trail.append(entry)
+
+    # Zweiter Pass: Source-Quality über das gesamte Trail-Fenster aggregieren
+    # (eine einzelne Zeile kann keine Quelle bewerten). Mutiert analytics
+    # in-place und baut die analysis_hints mit dem Quality-Status neu auf.
+    annotate_source_quality([(e, e.analytics) for e in trail if e.analytics is not None])
 
     return trail
 
