@@ -6,6 +6,7 @@
 - **Frontend**: neue Komponente `web/src/components/panels/PremiumSignalAnalytics.tsx` (Kapital-/Ergebnis-/Entry-/Quellen-Kacheln, Target-Stepper, Hinweise), eingebunden in `PremiumSignalTrail` mit Fallback auf die alte Detail-Row. TS-Typen in `api.ts` erweitert.
 - **Annahmen** (dokumentiert im Modul-Docstring): `available_capital_at_entry` = freies Cash vor erstem Entry-Fill (aus `portfolio_cash`); Entry-Timing-Schwellen 300s/3600s; Target-„hit" nur bei belastbarer Preis-Evidenz; fehlende Daten werden NIE erfunden, sondern als „nicht verfügbar"/„nicht bewertbar" gezeigt.
 - **Tests**: 34 neue Unit-Tests in `test_premium_signal_analytics.py` (Kapital, %, fehlende/0-Basis, Targets hit/missed/pending/unknown, Entry on-time/waited/late/missed, win/loss/break_even/unknown PnL, internal/external, Source-Quality, incomplete data). Premium-Bereich: `55 passed`; ruff + mypy clean; `tsc -b` + `vite build` grün.
+- **Follow-up (Live-Daten)**: per-Trade-PnL-Fallback aus Fill-Preisen, wenn die Paper-Engine kein `trade_pnl_usd` liefert (Legacy-Close-Pfad) — nur bei vollständigem Close, transparent via `final_pnl_source: engine|fills`. Behebt „unknown"-Ergebnisse für reale abgeschlossene Premium-Trades (z.B. CYS/TRUTH/US: alle Targets hit, PnL war zuvor nicht ausgewiesen). +3 Tests.
 
 ---
 

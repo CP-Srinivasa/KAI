@@ -112,6 +112,7 @@ class SignalAnalytics:
     trade_result_status: str  # win | loss | break_even | open | cancelled | unknown
     final_pnl_usd: float | None
     final_pnl_pct: float | None
+    final_pnl_source: str | None  # engine | fills | None — Herkunft des PnL-Werts
     targets: list[TargetStatus]
     source_quality_status: str  # good | medium | weak | unknown
     source_quality_reason: str
@@ -133,6 +134,7 @@ class SignalAnalytics:
             "trade_result_status": self.trade_result_status,
             "final_pnl_usd": self.final_pnl_usd,
             "final_pnl_pct": self.final_pnl_pct,
+            "final_pnl_source": self.final_pnl_source,
             "targets": [t.to_dict() for t in self.targets],
             "source_quality_status": self.source_quality_status,
             "source_quality_reason": self.source_quality_reason,
@@ -399,32 +401,80 @@ def _compute_targets(
 # ── Trade-Ergebnis ───────────────────────────────────────────────────────────
 
 
+def _derive_pnl_from_fills(
+    opening_fills: list[dict[str, Any]],
+    closing_fills: list[dict[str, Any]],
+    *,
+    is_long: bool,
+) -> float | None:
+    """Belastbarer per-Trade-PnL aus den tatsächlichen Fill-Preisen.
+
+    Fallback NUR wenn die Paper-Engine keinen ``trade_pnl_usd`` geliefert hat
+    (pre-V4.1-Close-Pfad). Kein erfundener Wert: gerechnet wird ausschließlich
+    aus den realen Fill-Preisen/-Mengen (+ Gebühren falls vorhanden).
+
+    Konservativ: nur bei VOLLSTÄNDIGEM Close (verkaufte Menge ≈ Entry-Menge,
+    ±2 %). Bei Teil-Close ist None ehrlicher als ein verzerrter Wert.
+    """
+    if not opening_fills or not closing_fills:
+        return None
+    open_qty = sum(_fill_qty(e) or 0.0 for e in opening_fills)
+    close_qty = sum(_fill_qty(e) or 0.0 for e in closing_fills)
+    if open_qty <= 0 or close_qty <= 0:
+        return None
+    if abs(close_qty - open_qty) / open_qty > 0.02:
+        return None  # kein vollständiger Close → nicht belastbar
+
+    def _val(fills: list[dict[str, Any]]) -> float:
+        return sum((_safe_float(e.get("fill_price")) or 0.0) * (_fill_qty(e) or 0.0) for e in fills)
+
+    def _fees(fills: list[dict[str, Any]]) -> float:
+        return sum(_safe_float(e.get("fee_usd")) or 0.0 for e in fills)
+
+    open_val = _val(opening_fills)
+    close_val = _val(closing_fills)
+    fees = _fees(opening_fills) + _fees(closing_fills)
+    pnl = (close_val - open_val) if is_long else (open_val - close_val)
+    return round(pnl - fees, 4)
+
+
 def _compute_result(
     *,
     overall: str,
-    realized_pnl_usd: float | None,
+    engine_pnl: float | None,
+    derived_pnl: float | None,
     invested_capital: float | None,
-) -> tuple[str, float | None, float | None]:
-    """(trade_result_status, final_pnl_usd, final_pnl_pct)."""
+) -> tuple[str, float | None, float | None, str | None]:
+    """(trade_result_status, final_pnl_usd, final_pnl_pct, final_pnl_source).
+
+    PnL-Quelle: Engine-``trade_pnl_usd`` hat Vorrang; fehlt sie, wird der
+    aus Fill-Preisen abgeleitete Wert genutzt (transparent als ``fills``
+    markiert). Keiner vorhanden → ``unknown`` statt erfundenem Ergebnis.
+    """
     if overall in ("OPEN", "PENDING_ENTRY"):
-        return "open", realized_pnl_usd, None
+        return "open", None, None, None
     if overall in _CANCELLED_OVERALLS:
-        return "cancelled", None, None
+        return "cancelled", None, None, None
     if overall == "CLOSED":
-        if realized_pnl_usd is None:
-            # pre-V4.1: kumulativer Alias, kein per-Trade-PnL → nicht behaupten
-            return "unknown", None, None
-        if realized_pnl_usd > _PNL_EPSILON_USD:
+        if engine_pnl is not None:
+            pnl: float = engine_pnl
+            source: str = "engine"
+        elif derived_pnl is not None:
+            pnl = derived_pnl
+            source = "fills"
+        else:
+            return "unknown", None, None, None
+        if pnl > _PNL_EPSILON_USD:
             status = "win"
-        elif realized_pnl_usd < -_PNL_EPSILON_USD:
+        elif pnl < -_PNL_EPSILON_USD:
             status = "loss"
         else:
             status = "break_even"
         pct: float | None = None
         if invested_capital is not None and invested_capital > 0:
-            pct = round(realized_pnl_usd / invested_capital * 100.0, 2)
-        return status, realized_pnl_usd, pct
-    return "unknown", realized_pnl_usd, None
+            pct = round(pnl / invested_capital * 100.0, 2)
+        return status, pnl, pct, source
+    return "unknown", None, None, None
 
 
 # ── Signal-Typ ───────────────────────────────────────────────────────────────
@@ -556,9 +606,13 @@ def derive_signal_analytics(
         paper_events=paper_events,
     )
 
-    result_status, final_pnl, final_pnl_pct = _compute_result(
+    derived_pnl = _derive_pnl_from_fills(
+        opening_fills, closing_fills, is_long=opening_side == "buy"
+    )
+    result_status, final_pnl, final_pnl_pct, final_pnl_source = _compute_result(
         overall=overall,
-        realized_pnl_usd=realized_pnl_usd,
+        engine_pnl=realized_pnl_usd,
+        derived_pnl=derived_pnl,
         invested_capital=invested,
     )
 
@@ -588,6 +642,7 @@ def derive_signal_analytics(
         trade_result_status=result_status,
         final_pnl_usd=final_pnl,
         final_pnl_pct=final_pnl_pct,
+        final_pnl_source=final_pnl_source,
         targets=targets,
         source_quality_status="unknown",
         source_quality_reason="pending_aggregation",

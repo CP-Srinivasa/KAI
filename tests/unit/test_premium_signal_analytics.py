@@ -249,6 +249,7 @@ def test_result_win_with_pnl_pct():
     assert a.trade_result_status == "win"
     assert a.final_pnl_usd == 20.0
     assert a.final_pnl_pct == 20.0  # 20 / 100 * 100
+    assert a.final_pnl_source == "engine"
 
 
 def test_result_loss():
@@ -286,6 +287,52 @@ def test_result_cancelled_for_rejected():
 def test_result_open_for_pending_entry():
     a = _derive(overall="PENDING_ENTRY")
     assert a.trade_result_status == "open"
+
+
+def test_result_win_derived_from_fills_when_engine_pnl_missing():
+    # pre-V4.1-Close ohne trade_pnl_usd: PnL belastbar aus Fill-Preisen
+    # (Entry 100@1.0, voller Exit 100@1.20) → +20 USD, Quelle "fills".
+    buy = _buy_fill("2026-05-18T19:00:05+00:00", price=1.0, qty=100.0, cash=9000.0)
+    sell = _sell_fill("2026-05-18T21:00:00+00:00", price=1.20, qty=100.0)
+    a = _derive(
+        overall="CLOSED",
+        realized_pnl_usd=None,
+        paper_events=[buy, sell],
+        paper_close_reason="tp_tier",
+    )
+    assert a.trade_result_status == "win"
+    assert a.final_pnl_usd == 20.0
+    assert a.final_pnl_pct == 20.0
+    assert a.final_pnl_source == "fills"
+
+
+def test_result_loss_derived_from_fills():
+    buy = _buy_fill("2026-05-18T19:00:05+00:00", price=1.0, qty=100.0, cash=9000.0)
+    sell = _sell_fill("2026-05-18T21:00:00+00:00", price=0.90, qty=100.0)
+    a = _derive(
+        overall="CLOSED",
+        realized_pnl_usd=None,
+        paper_events=[buy, sell],
+        paper_close_reason="stop_loss",
+    )
+    assert a.trade_result_status == "loss"
+    assert a.final_pnl_usd == -10.0
+    assert a.final_pnl_source == "fills"
+
+
+def test_result_unknown_when_partial_close_not_full():
+    # nur halber Exit (50 von 100) → kein vollständiger Close → kein PnL geraten
+    buy = _buy_fill("2026-05-18T19:00:05+00:00", price=1.0, qty=100.0, cash=9000.0)
+    sell = _sell_fill("2026-05-18T21:00:00+00:00", price=1.20, qty=50.0)
+    a = _derive(
+        overall="CLOSED",
+        realized_pnl_usd=None,
+        paper_events=[buy, sell],
+        paper_close_reason="tp_tier",
+    )
+    assert a.trade_result_status == "unknown"
+    assert a.final_pnl_usd is None
+    assert a.final_pnl_source is None
 
 
 # ── Signal-Typ (internal vs external) ────────────────────────────────────────
