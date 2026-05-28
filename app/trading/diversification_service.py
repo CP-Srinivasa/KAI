@@ -76,9 +76,7 @@ def _asset_rows(
     for e in exposures:
         meta = universe.get_or_unknown(e.symbol)
         weight = (
-            (e.exposure_usd / total * 100.0)
-            if (e.exposure_usd is not None and total > 0)
-            else None
+            (e.exposure_usd / total * 100.0) if (e.exposure_usd is not None and total > 0) else None
         )
         rows.append(
             _AssetRow(
@@ -101,7 +99,7 @@ def _asset_rows(
                 source=e.source or "unknown",
             )
         )
-    rows.sort(key=lambda r: (r.weight_pct or -1.0), reverse=True)
+    rows.sort(key=lambda r: r.weight_pct or -1.0, reverse=True)
     return rows
 
 

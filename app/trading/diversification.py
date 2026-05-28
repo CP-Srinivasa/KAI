@@ -246,9 +246,7 @@ class DiversificationGuard:
         for p in priced:
             exp = float(p.exposure_usd or 0.0)
             meta = self._universe.get_or_unknown(p.symbol)
-            pos_horizon = classify_position_horizon(
-                source=p.source, asset_horizon=meta.horizon
-            )
+            pos_horizon = classify_position_horizon(source=p.source, asset_horizon=meta.horizon)
             horizon_gross[pos_horizon] += exp
             if pos_horizon == "long_term_reserve":
                 reserve_gross += exp
@@ -268,13 +266,8 @@ class DiversificationGuard:
         total_gross = short_term_gross + reserve_gross
 
         buckets = self._build_buckets(short_exposure, short_term_gross)
-        btc_eth_pct = (
-            (btc_eth_short / short_term_gross * 100.0) if short_term_gross > 0 else None
-        )
-        if (
-            btc_eth_pct is not None
-            and btc_eth_pct > self._limits.max_btc_eth_short_term_pct
-        ):
+        btc_eth_pct = (btc_eth_short / short_term_gross * 100.0) if short_term_gross > 0 else None
+        if btc_eth_pct is not None and btc_eth_pct > self._limits.max_btc_eth_short_term_pct:
             warnings.append(
                 f"btc_eth_short_term_overweight:{btc_eth_pct:.1f}% > "
                 f"{self._limits.max_btc_eth_short_term_pct:.0f}% cap"
@@ -286,9 +279,11 @@ class DiversificationGuard:
                     f"(> {b.limit_pct:.0f}% cap)"
                 )
 
-        horizon_split = {
-            h: (g / total_gross * 100.0) for h, g in horizon_gross.items()
-        } if total_gross > 0 else {}
+        horizon_split = (
+            {h: (g / total_gross * 100.0) for h, g in horizon_gross.items()}
+            if total_gross > 0
+            else {}
+        )
 
         evaluable = bool(priced)
         if not evaluable:
@@ -318,9 +313,7 @@ class DiversificationGuard:
             "stablecoin_quote": self._limits.max_stablecoin_quote_pct,
         }.get(dimension)
 
-    def _build_buckets(
-        self, exposure: dict[str, float], gross: float
-    ) -> list[ConcentrationBucket]:
+    def _build_buckets(self, exposure: dict[str, float], gross: float) -> list[ConcentrationBucket]:
         buckets: list[ConcentrationBucket] = []
         for compound_key, exp in exposure.items():
             dimension, _, key = compound_key.partition("::")
@@ -410,16 +403,12 @@ class DiversificationGuard:
                         over_limit=True,
                     )
                 )
-                reasons.append(
-                    f"{dimension}={key} would reach {proj:.1f}% (> {limit:.0f}% cap)"
-                )
+                reasons.append(f"{dimension}={key} would reach {proj:.1f}% (> {limit:.0f}% cap)")
 
         # BTC/ETH short-term headline cap.
         proj_btc_eth = None
         if cand_base in _BTC_ETH:
-            cur_btc_eth = sum(
-                current_usd_for("asset", a) for a in _BTC_ETH
-            )
+            cur_btc_eth = sum(current_usd_for("asset", a) for a in _BTC_ETH)
             proj_btc_eth = (
                 (cur_btc_eth + notional_usd) / new_short_gross * 100.0
                 if new_short_gross > 0
@@ -492,9 +481,7 @@ class DiversificationGuard:
     ) -> tuple[AlternativeCandidate, ...]:
         """Diversified alternatives: tradable short-term names that do NOT add to
         an already-breached cluster, ranked by structural score."""
-        over_keys = {
-            (b.dimension, b.key) for b in report.over_limit_buckets()
-        }
+        over_keys = {(b.dimension, b.key) for b in report.over_limit_buckets()}
         # Also avoid the candidate's own correlation group / sector if it was the
         # reason we are here.
         cand_corr = getattr(candidate, "correlation_group", UNKNOWN)

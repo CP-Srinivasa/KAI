@@ -359,7 +359,7 @@ class AssetUniverse:
             for m in self._assets.values()
             if m.is_tradable and m.is_short_term and m.evaluable and not m.is_stablecoin
         ]
-        out.sort(key=lambda m: (m.score or 0.0), reverse=True)
+        out.sort(key=lambda m: m.score or 0.0, reverse=True)
         return out
 
 

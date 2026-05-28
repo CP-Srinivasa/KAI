@@ -358,9 +358,7 @@ def trading_diversification_report(
 
     from app.trading.diversification_service import build_diversification_overview
 
-    overview = asyncio.run(
-        build_diversification_overview(audit_path=audit_path, provider=provider)
-    )
+    overview = asyncio.run(build_diversification_overview(audit_path=audit_path, provider=provider))
     if as_json:
         console.print(_json.dumps(overview, indent=2))
         return

@@ -856,8 +856,7 @@ class TradingLoop:
     @staticmethod
     def _diversification_notes(decision: DiversificationDecision) -> list[str]:
         notes = [
-            f"diversification:{decision.action}|mode:{decision.mode}|"
-            f"enforced:{decision.enforced}"
+            f"diversification:{decision.action}|mode:{decision.mode}|enforced:{decision.enforced}"
         ]
         if decision.projected_btc_eth_pct is not None:
             notes.append(f"diversification_btc_eth_pct:{decision.projected_btc_eth_pct:.1f}")

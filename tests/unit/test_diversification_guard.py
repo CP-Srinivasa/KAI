@@ -123,9 +123,7 @@ def test_detects_single_asset_and_cluster(guard: DiversificationGuard) -> None:
 
 
 def test_reject_more_btc_with_alternatives(guard: DiversificationGuard) -> None:
-    d = guard.evaluate_candidate(
-        _btc_eth_heavy(), candidate_symbol="BTC/USDT", notional_usd=2000.0
-    )
+    d = guard.evaluate_candidate(_btc_eth_heavy(), candidate_symbol="BTC/USDT", notional_usd=2000.0)
     assert d.action == "reject"
     assert d.projected_btc_eth_pct is not None and d.projected_btc_eth_pct > 90
     alt_symbols = {a.symbol for a in d.alternatives}
@@ -135,25 +133,19 @@ def test_reject_more_btc_with_alternatives(guard: DiversificationGuard) -> None:
 
 
 def test_allow_diversifying_candidate(guard: DiversificationGuard) -> None:
-    d = guard.evaluate_candidate(
-        _btc_eth_heavy(), candidate_symbol="LINK/USDT", notional_usd=500.0
-    )
+    d = guard.evaluate_candidate(_btc_eth_heavy(), candidate_symbol="LINK/USDT", notional_usd=500.0)
     assert d.action == "allow"
     assert not d.breached
 
 
 def test_unknown_candidate_not_evaluable(guard: DiversificationGuard) -> None:
-    d = guard.evaluate_candidate(
-        _btc_eth_heavy(), candidate_symbol="FOO/USDT", notional_usd=500.0
-    )
+    d = guard.evaluate_candidate(_btc_eth_heavy(), candidate_symbol="FOO/USDT", notional_usd=500.0)
     assert d.action == "not_evaluable"
     assert not d.blocks
 
 
 def test_missing_notional_not_evaluable(guard: DiversificationGuard) -> None:
-    d = guard.evaluate_candidate(
-        _btc_eth_heavy(), candidate_symbol="LINK/USDT", notional_usd=None
-    )
+    d = guard.evaluate_candidate(_btc_eth_heavy(), candidate_symbol="LINK/USDT", notional_usd=None)
     assert d.action == "not_evaluable"
 
 
@@ -191,8 +183,7 @@ def test_reserve_positions_excluded_from_short_term_caps(guard: DiversificationG
 
 def test_classify_position_horizon() -> None:
     assert (
-        classify_position_horizon(source="cron", asset_horizon="long_term_reserve")
-        == "short_term"
+        classify_position_horizon(source="cron", asset_horizon="long_term_reserve") == "short_term"
     )
     assert (
         classify_position_horizon(source="reserve_alloc", asset_horizon="short_term")
@@ -217,9 +208,7 @@ def test_enforce_mode_blocks(tmp_path: Path) -> None:
 
 
 def test_shadow_mode_never_blocks(guard: DiversificationGuard) -> None:
-    d = guard.evaluate_candidate(
-        _btc_eth_heavy(), candidate_symbol="BTC/USDT", notional_usd=2000.0
-    )
+    d = guard.evaluate_candidate(_btc_eth_heavy(), candidate_symbol="BTC/USDT", notional_usd=2000.0)
     assert d.action == "reject"
     assert d.enforced is False
     assert d.blocks is False

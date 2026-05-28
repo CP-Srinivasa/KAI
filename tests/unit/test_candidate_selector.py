@@ -40,9 +40,7 @@ def test_btc_heavy_book_steers_away_from_btc_beta() -> None:
 
 
 def test_correlation_group_spread_cap() -> None:
-    rankings = select_short_term_candidates(
-        positions=[], limit=8, max_same_correlation_group=1
-    )
+    rankings = select_short_term_candidates(positions=[], limit=8, max_same_correlation_group=1)
     included = [c for c in rankings if c.included]
     groups = [c.correlation_group for c in included if c.correlation_group != "unknown"]
     # No correlation group appears more than once when cap = 1.
@@ -57,9 +55,7 @@ def test_every_candidate_has_reasons() -> None:
 
 
 def test_exclude_btc_eth_when_flag_off() -> None:
-    rankings = select_short_term_candidates(
-        positions=[], limit=6, include_btc_eth=False
-    )
+    rankings = select_short_term_candidates(positions=[], limit=6, include_btc_eth=False)
     bases = {c.base for c in rankings}
     assert "BTC" not in bases
     assert "ETH" not in bases
