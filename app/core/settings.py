@@ -154,6 +154,10 @@ class RiskSettings(BaseSettings):
     max_total_drawdown_pct: float = Field(default=5.0)  # max 5% drawdown
     max_open_positions: int = Field(default=3)
     max_leverage: float = Field(default=1.0)
+    # DS-20260528-V2: minimum order notional (USD). Sizing uses remaining cash
+    # as equity, so a nearly-deployed portfolio yields dust orders (~1e-16 units)
+    # that fill but take no real position. Orders below this notional are rejected.
+    min_notional_usd: float = Field(default=10.0)
 
     # Safety gates (must remain True)
     require_stop_loss: bool = Field(default=True)

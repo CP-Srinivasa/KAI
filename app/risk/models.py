@@ -27,6 +27,9 @@ class RiskLimits:
     tp_atr_multiplier: float = 4.0
     regime_filter_enabled: bool = True
     regime_sma_period: int = 200
+    # DS-20260528-V2: reject orders whose notional falls below this floor.
+    # Guards against dust fills when sizing equity (remaining cash) is depleted.
+    min_notional_usd: float = 10.0
 
 
 @dataclass(frozen=True)

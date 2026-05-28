@@ -349,6 +349,7 @@ def _build_risk_limits() -> RiskLimits:
         kill_switch_enabled=r.kill_switch_enabled,
         min_signal_confidence=r.min_signal_confidence,
         min_signal_confluence_count=r.min_signal_confluence_count,
+        min_notional_usd=r.min_notional_usd,
     )
 
 

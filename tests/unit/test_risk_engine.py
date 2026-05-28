@@ -261,6 +261,64 @@ def test_position_size_invalid_price():
     assert not result.approved
 
 
+# --- DS-20260528-V2: dust gate (min notional) ---
+
+
+def test_position_size_rejects_dust_when_equity_depleted():
+    """Near-zero sizing equity yields a sub-floor notional → reject as dust."""
+    engine = _default_engine()  # default min_notional_usd=10.0
+    result = engine.calculate_position_size(
+        symbol="BTC/USDT",
+        entry_price=65000.0,
+        stop_loss_price=64000.0,  # $1000 risk/unit
+        equity=50.0,  # depleted cash → notional ~$8.13 < $10
+    )
+    assert not result.approved
+    assert result.position_size_units == 0.0
+    assert "dust_below_min_notional" in result.rationale
+
+
+def test_position_size_approves_just_above_min_notional():
+    """Equity that yields a notional above the floor is still approved."""
+    engine = _default_engine()
+    result = engine.calculate_position_size(
+        symbol="BTC/USDT",
+        entry_price=65000.0,
+        stop_loss_price=64000.0,
+        equity=200.0,  # notional ~$32.5 > $10
+    )
+    assert result.approved
+    assert result.position_size_units > 0.0
+
+
+def test_position_size_dust_floor_is_configurable():
+    """A higher min_notional_usd rejects an otherwise-healthy small order."""
+    engine = _default_engine(min_notional_usd=2000.0)
+    result = engine.calculate_position_size(
+        symbol="BTC/USDT",
+        entry_price=65000.0,
+        stop_loss_price=64000.0,
+        equity=10000.0,  # notional ~$1625 < $2000 floor
+    )
+    assert not result.approved
+    assert "dust_below_min_notional" in result.rationale
+
+
+def test_position_size_dust_gate_on_margin_leverage_path():
+    """The margin/leverage sizing path is also dust-gated."""
+    engine = _default_engine(max_risk_per_trade_pct=10.0, max_leverage=20.0)
+    result = engine.calculate_position_size(
+        symbol="BTC/USDT",
+        entry_price=100.0,
+        stop_loss_price=99.0,
+        equity=5.0,  # 5 * 5% * 10x = $2.5 notional < $10
+        leverage=10.0,
+        risk_allocation_pct=5.0,
+    )
+    assert not result.approved
+    assert "dust_below_min_notional" in result.rationale
+
+
 # --- full approved order ---
 
 
