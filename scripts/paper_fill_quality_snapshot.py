@@ -65,8 +65,66 @@ def _float(rec: dict[str, object], key: str) -> float | None:
     return float(v) if isinstance(v, (int, float)) else None
 
 
+# DS-20260528-V4: dust closures (qty ~1e-16) come from the depleted-cash sizing
+# bug (V2). They carry ~zero PnL but inflate the trade count and skew the
+# concentration/win-rate view. Exclude them and report the excluded count.
+_DUST_QTY_THRESHOLD = 1e-9
+
+
+def _closure_quantity(rec: dict[str, object]) -> float:
+    return abs(_float(rec, "quantity") or _float(rec, "quantity_closed") or 0.0)
+
+
+def max_drawdown_from_peak(series: list[float]) -> dict[str, object]:
+    """Max peak-to-trough drawdown over a cumulative-PnL series (USD).
+
+    Returns the largest drop from any running peak to a subsequent value.
+    """
+    if not series:
+        return {"max_drawdown_usd": 0.0, "peak_usd": None, "trough_usd": None}
+    cur_peak = series[0]
+    max_dd = 0.0
+    peak_at = series[0]
+    trough_at = series[0]
+    for v in series:
+        if v > cur_peak:
+            cur_peak = v
+        dd = cur_peak - v
+        if dd > max_dd:
+            max_dd = dd
+            peak_at = cur_peak
+            trough_at = v
+    return {
+        "max_drawdown_usd": round(max_dd, 2),
+        "peak_usd": round(peak_at, 2),
+        "trough_usd": round(trough_at, 2),
+    }
+
+
+def concentration(pnls: list[float]) -> dict[str, object]:
+    """How concentrated is PnL magnitude in the few largest trades.
+
+    Uses absolute PnL so both big wins and big losses count toward
+    concentration — the daily-review concern is that a handful of BTC/ETH
+    swings dominate the book regardless of sign.
+    """
+    n = len(pnls)
+    abs_sorted = sorted((abs(p) for p in pnls), reverse=True)
+    gross = sum(abs_sorted)
+    top1 = abs_sorted[0] if abs_sorted else 0.0
+    top3 = sum(abs_sorted[:3])
+    return {
+        "n_trades": n,
+        "gross_abs_pnl_usd": round(gross, 2),
+        "top1_abs_share_pct": round(100.0 * top1 / gross, 1) if gross else 0.0,
+        "top3_abs_share_pct": round(100.0 * top3 / gross, 1) if gross else 0.0,
+    }
+
+
 def _build_report(closures: list[dict[str, object]]) -> dict[str, object]:
     """Compute aggregates + per-trade detail rows."""
+    dust_excluded = sum(1 for rec in closures if _closure_quantity(rec) < _DUST_QTY_THRESHOLD)
+    closures = [rec for rec in closures if _closure_quantity(rec) >= _DUST_QTY_THRESHOLD]
     rows: list[dict[str, object]] = []
     for rec in closures:
         rows.append(
@@ -77,9 +135,7 @@ def _build_report(closures: list[dict[str, object]]) -> dict[str, object]:
                 "reason": _str(rec, "reason", "?"),
                 "schema_version": _str(rec, "schema_version", "v1"),
                 "side": _str(rec, "position_side", "long"),
-                "quantity": _float(rec, "quantity")
-                or _float(rec, "quantity_closed")
-                or 0.0,
+                "quantity": _float(rec, "quantity") or _float(rec, "quantity_closed") or 0.0,
                 "entry_price": _float(rec, "entry_price"),
                 "exit_price": _float(rec, "exit_price") or _float(rec, "tier_price"),
                 "trade_pnl_usd": _trade_pnl(rec),
@@ -146,10 +202,20 @@ def _build_report(closures: list[dict[str, object]]) -> dict[str, object]:
         for reason, cnt in reason_counter.most_common()
     ]
 
+    # DS-20260528-V4: concentration + drawdown.
+    cumulative_series = [
+        float(r["realized_pnl_usd_cumulative"])
+        for r in rows
+        if r["realized_pnl_usd_cumulative"] is not None
+    ]
+    conc = concentration([float(p) for p in pnls])
+    drawdown = max_drawdown_from_peak(cumulative_series)
+
     return {
         "as_of_utc": datetime.now(UTC).isoformat(),
         "totals": {
             "closures": total,
+            "dust_excluded": dust_excluded,
             "wins": wins,
             "losses": losses,
             "flat": flat,
@@ -159,6 +225,8 @@ def _build_report(closures: list[dict[str, object]]) -> dict[str, object]:
             "pnl_median_usd": round(statistics.median(pnls), 2) if pnls else 0.0,
             "fee_total_usd": round(sum(r["fee_usd"] for r in rows), 2),
         },
+        "concentration": conc,
+        "drawdown": drawdown,
         "by_symbol": by_symbol_out,
         "by_reason": by_reason_out,
         "rows": rows,
@@ -168,6 +236,10 @@ def _build_report(closures: list[dict[str, object]]) -> dict[str, object]:
 def _format_markdown(report: dict[str, object]) -> str:
     t = report["totals"]
     assert isinstance(t, dict)
+    c = report["concentration"]
+    assert isinstance(c, dict)
+    dd = report["drawdown"]
+    assert isinstance(dd, dict)
     sym = report["by_symbol"]
     assert isinstance(sym, list)
     reasons = report["by_reason"]
@@ -186,6 +258,7 @@ Events aus dem Paper-Execution-Audit. Trade-PnL ist fee-adjusted per Closure
 | Metrik | Wert |
 |---|---|
 | Closures (gesamt) | {t["closures"]} |
+| Dust ausgeschlossen | {t["dust_excluded"]} |
 | Wins | {t["wins"]} |
 | Losses | {t["losses"]} |
 | Flat | {t["flat"]} |
@@ -194,6 +267,17 @@ Events aus dem Paper-Execution-Audit. Trade-PnL ist fee-adjusted per Closure
 | Trade-PnL ⌀ | {t["pnl_avg_usd"]} USD |
 | Trade-PnL Median | {t["pnl_median_usd"]} USD |
 | Fees gesamt | {t["fee_total_usd"]} USD |
+
+## Konzentration & Drawdown
+
+| Metrik | Wert |
+|---|---|
+| Trades | {c["n_trades"]} |
+| Brutto-\\|PnL\\| | {c["gross_abs_pnl_usd"]} USD |
+| Top-1-Trade-Anteil (\\|PnL\\|) | {c["top1_abs_share_pct"]}% |
+| Top-3-Trade-Anteil (\\|PnL\\|) | {c["top3_abs_share_pct"]}% |
+| Max Drawdown (kumulativ) | {dd["max_drawdown_usd"]} USD |
+| Peak → Trough | {dd["peak_usd"]} → {dd["trough_usd"]} USD |
 
 ## Per Symbol
 
