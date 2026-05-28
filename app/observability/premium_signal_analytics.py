@@ -193,16 +193,6 @@ def _opening_side(direction: str | None, side: str | None) -> str:
     return "buy"
 
 
-def _fmt_price(v: float | None) -> str:
-    if v is None:
-        return "—"
-    if abs(v) >= 1000:
-        return f"{v:,.2f}"
-    if abs(v) >= 1:
-        return f"{v:.4f}"
-    return f"{v:.6f}"
-
-
 # ── Kapital ──────────────────────────────────────────────────────────────────
 
 
@@ -291,17 +281,15 @@ def _compute_entry(
     entry_ts: str | None = None
     if entry_ev is not None:
         actual_price = _safe_float(entry_ev.get("fill_price"))
-        entry_ts = _safe_str(entry_ev.get("filled_at")) or _safe_str(
-            entry_ev.get("timestamp_utc")
-        )
+        entry_ts = _safe_str(entry_ev.get("filled_at")) or _safe_str(entry_ev.get("timestamp_utc"))
     elif bridge_fill is not None:
         actual_price = _safe_float(bridge_fill.get("fill_price"))
-        entry_ts = _safe_str(bridge_fill.get("ts")) or _safe_str(
-            bridge_fill.get("timestamp_utc")
-        )
+        entry_ts = _safe_str(bridge_fill.get("ts")) or _safe_str(bridge_fill.get("timestamp_utc"))
 
-    entered = actual_price is not None or entry_ev is not None or (
-        bridge_fill is not None and entry_ts is not None
+    entered = (
+        actual_price is not None
+        or entry_ev is not None
+        or (bridge_fill is not None and entry_ts is not None)
     )
 
     if not entered:
@@ -537,9 +525,7 @@ def derive_signal_analytics(
     )
     had_pending = any(b.get("stage") == "pending" for b in bridge_history)
 
-    invested, available, invested_pct, cap_note = _compute_capital(
-        opening_fills, bridge_fill
-    )
+    invested, available, invested_pct, cap_note = _compute_capital(opening_fills, bridge_fill)
 
     entry_status, delay_s, delay_label, actual_entry = _compute_entry(
         received_at=received_at,
@@ -549,9 +535,7 @@ def derive_signal_analytics(
         overall=overall,
     )
 
-    entered = bool(opening_fills) or (
-        bridge_fill is not None and actual_entry is not None
-    )
+    entered = bool(opening_fills) or (bridge_fill is not None and actual_entry is not None)
 
     targets_raw: list[float] = []
     raw = payload.get("targets")
@@ -648,9 +632,7 @@ def classify_source_quality(
         return "good", f"Trefferquote ≥{win_pct}% (95% LB), Entry-Rate {entry_pct}%"
     if win_lb >= _SQ_MEDIUM_WIN_LB:
         return "medium", f"Trefferquote ≥{win_pct}% (95% LB), Entry-Rate {entry_pct}%"
-    miss_note = (
-        f", {n_missed_entry} verpasste Entries" if n_missed_entry else ""
-    )
+    miss_note = f", {n_missed_entry} verpasste Entries" if n_missed_entry else ""
     return "weak", f"Trefferquote ≥{win_pct}% (95% LB){miss_note}"
 
 

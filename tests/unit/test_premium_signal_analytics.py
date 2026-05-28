@@ -243,8 +243,9 @@ def test_no_targets_empty_list():
 
 def test_result_win_with_pnl_pct():
     fill = _buy_fill("2026-05-18T19:00:05+00:00", price=1.0, qty=100.0, cash=9000.0)
-    a = _derive(overall="CLOSED", realized_pnl_usd=20.0, paper_events=[fill],
-                paper_close_reason="tp_tier")
+    a = _derive(
+        overall="CLOSED", realized_pnl_usd=20.0, paper_events=[fill], paper_close_reason="tp_tier"
+    )
     assert a.trade_result_status == "win"
     assert a.final_pnl_usd == 20.0
     assert a.final_pnl_pct == 20.0  # 20 / 100 * 100
@@ -252,8 +253,12 @@ def test_result_win_with_pnl_pct():
 
 def test_result_loss():
     fill = _buy_fill("2026-05-18T19:00:05+00:00", price=1.0, qty=100.0, cash=9000.0)
-    a = _derive(overall="CLOSED", realized_pnl_usd=-15.0, paper_events=[fill],
-                paper_close_reason="stop_loss")
+    a = _derive(
+        overall="CLOSED",
+        realized_pnl_usd=-15.0,
+        paper_events=[fill],
+        paper_close_reason="stop_loss",
+    )
     assert a.trade_result_status == "loss"
     assert a.final_pnl_pct == -15.0
 
@@ -307,9 +312,7 @@ def test_source_quality_unknown_small_sample():
 
 
 def test_source_quality_unknown_few_resolved():
-    status, _ = classify_source_quality(
-        n_total=8, n_entered=8, n_win=1, n_loss=0, n_missed_entry=0
-    )
+    status, _ = classify_source_quality(n_total=8, n_entered=8, n_win=1, n_loss=0, n_missed_entry=0)
     assert status == "unknown"  # nur 1 entschiedener Trade
 
 
@@ -322,9 +325,7 @@ def test_source_quality_good():
 
 
 def test_source_quality_weak():
-    status, _ = classify_source_quality(
-        n_total=6, n_entered=6, n_win=1, n_loss=5, n_missed_entry=0
-    )
+    status, _ = classify_source_quality(n_total=6, n_entered=6, n_win=1, n_loss=5, n_missed_entry=0)
     assert status == "weak"
 
 
@@ -367,8 +368,9 @@ def test_incomplete_data_does_not_crash():
 
 def test_to_dict_is_json_safe():
     fill = _buy_fill("2026-05-18T19:00:05+00:00", price=1.0, qty=100.0, cash=9000.0)
-    a = _derive(overall="CLOSED", realized_pnl_usd=5.0, paper_events=[fill],
-                paper_close_reason="tp_tier")
+    a = _derive(
+        overall="CLOSED", realized_pnl_usd=5.0, paper_events=[fill], paper_close_reason="tp_tier"
+    )
     d = a.to_dict()
     assert {
         "signal_type",
@@ -430,9 +432,7 @@ def test_build_trail_attaches_analytics_and_serializes():
             "portfolio_cash": 9000.0,
         }
     ]
-    trail = build_trail(
-        envelope_records=[env, approved], bridge_records=[], paper_records=paper
-    )
+    trail = build_trail(envelope_records=[env, approved], bridge_records=[], paper_records=paper)
     assert len(trail) == 1
     entry = trail[0]
     assert entry.analytics is not None
