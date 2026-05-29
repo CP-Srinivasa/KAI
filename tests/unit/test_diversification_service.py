@@ -147,7 +147,8 @@ def test_asset_distribution_carries_focus_and_class() -> None:
 
 
 def test_focus_field_cluster_is_observational_only() -> None:
-    """focus_field buckets appear but never breach (no cap → enforce unchanged)."""
+    """focus_field buckets appear but never breach under the default permissive
+    cap (S3: max_focus_field_pct=100.0) → enforce behaviour unchanged."""
     snap = _snapshot(
         (
             _pos("SOL/USDT", 100, 150, source="cron"),
@@ -159,4 +160,5 @@ def test_focus_field_cluster_is_observational_only() -> None:
     focus_buckets = [b for b in buckets if b["dimension"] == "focus_field"]
     assert focus_buckets  # present
     assert all(b["over_limit"] is False for b in focus_buckets)  # observational
-    assert all(b["limit_pct"] is None for b in focus_buckets)
+    # S3: the cap exists but defaults to permissive 100.0 (shipped config) → no breach.
+    assert all(b["limit_pct"] == 100.0 for b in focus_buckets)

@@ -212,3 +212,98 @@ def test_shadow_mode_never_blocks(guard: DiversificationGuard) -> None:
     assert d.action == "reject"
     assert d.enforced is False
     assert d.blocks is False
+
+
+def test_focus_field_cap_inert_by_default(guard: DiversificationGuard) -> None:
+    """S3: with the default permissive cap (100.0) the focus_field cluster is
+    reported but never breaches — observational, no behaviour change."""
+    report = guard.analyze_portfolio(_btc_eth_heavy())
+    focus_buckets = [b for b in report.buckets if b.dimension == "focus_field"]
+    assert focus_buckets  # blockchain cluster is present
+    assert all(b.over_limit is False for b in focus_buckets)
+
+
+# ── S3: focus-field enforce cap (isolated — only the focus_field cap is tight) ──
+FOCUS_OVERLAY = """
+version: 1
+limits:
+  max_single_asset_pct: 100.0
+  max_btc_eth_short_term_pct: 100.0
+  max_sector_pct: 100.0
+  max_narrative_pct: 100.0
+  max_correlation_group_pct: 100.0
+  max_focus_field_pct: 50.0
+assets:
+  SOL:
+    horizon: short_term
+    sector: smart_contract_l1
+    focus_field: blockchain
+    risk_tier: high
+    liquidity_tier: high
+    volatility_tier: high
+    data_quality: high
+    tradable: true
+    correlation_group: l1_alts
+  LINK:
+    horizon: short_term
+    sector: oracle_infra
+    focus_field: blockchain
+    risk_tier: high
+    liquidity_tier: high
+    volatility_tier: high
+    data_quality: high
+    tradable: true
+    correlation_group: defi_infra
+  XRP:
+    horizon: short_term
+    sector: payments
+    focus_field: fintech
+    risk_tier: high
+    liquidity_tier: high
+    volatility_tier: high
+    data_quality: high
+    tradable: true
+    correlation_group: payments_alts
+"""
+
+
+def _focus_guard(tmp_path: Path, *, mode: str = "shadow") -> DiversificationGuard:
+    wl = tmp_path / "watchlists.yml"
+    wl.write_text("crypto:\n  - symbol: SOL\n  - symbol: LINK\n  - symbol: XRP\n", encoding="utf-8")
+    ov = tmp_path / "asset_universe.yaml"
+    ov.write_text(FOCUS_OVERLAY, encoding="utf-8")
+    universe = AssetUniverse.load(watchlist_path=wl, overlay_path=ov)
+    return DiversificationGuard(universe=universe, mode=mode)
+
+
+def _blockchain_heavy() -> list[PositionExposure]:
+    # Both blockchain, distinct corr groups/sectors, each under the 100% single
+    # caps → focus_field is the ONLY dimension that can breach.
+    return [
+        PositionExposure("SOL/USDT", 6000.0, "cost"),
+        PositionExposure("LINK/USDT", 4000.0, "cost"),
+    ]
+
+
+def test_focus_field_cap_breaches_when_configured(tmp_path: Path) -> None:
+    guard = _focus_guard(tmp_path)
+    report = guard.analyze_portfolio(_blockchain_heavy())
+    over = {(b.dimension, b.key) for b in report.over_limit_buckets()}
+    assert ("focus_field", "blockchain") in over
+    # nothing else breaches (caps are permissive) — focus_field is isolated
+    assert all(dim == "focus_field" for dim, _ in over)
+
+
+def test_focus_field_breach_is_advisory_not_block(tmp_path: Path) -> None:
+    """A focus_field over-concentration advises (limit) + proposes alternatives,
+    but NEVER hard-blocks — even in enforce mode (only asset/BTC-ETH reject)."""
+    guard = _focus_guard(tmp_path, mode="enforce")
+    d = guard.evaluate_candidate(
+        _blockchain_heavy(), candidate_symbol="SOL/USDT", notional_usd=2000.0
+    )
+    assert d.action == "limit"
+    assert d.enforced is False
+    assert d.blocks is False
+    assert any("focus_field" in r for r in d.reasons)
+    # the diversified alternative is the non-blockchain name (XRP/fintech)
+    assert "XRP" in {a.symbol for a in d.alternatives}

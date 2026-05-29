@@ -131,6 +131,16 @@ def select_short_term_candidates(
             adjusted *= _CROWDED_PENALTY
             reasons.append(f"sector {sector} already represented — slight penalty")
 
+        # Thematic focus-field steering (S3). Only the over-cap penalty fires —
+        # there is intentionally NO blanket "present" penalty, because a focus
+        # field like "blockchain" covers most crypto and a crowded penalty would
+        # steer the scan away from everything. Inert until the operator sets a
+        # real max_focus_field_pct (default 100.0 → no over-cap bucket exists).
+        focus_field = meta.focus_field
+        if ("focus_field", focus_field) in over_keys:
+            adjusted *= _CONCENTRATION_PENALTY
+            reasons.append(f"focus_field {focus_field} already over cap — penalised")
+
         ranked.append(
             CandidateRanking(
                 symbol=f"{base}/{quote}",

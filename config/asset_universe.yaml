@@ -59,6 +59,14 @@ limits:
   max_correlation_group_pct: 50.0
   max_exchange_pct: 100.0          # paper engine is single-venue; permissive on purpose
   max_stablecoin_quote_pct: 100.0  # all paper pairs quote in USDT today; permissive
+  # Thematic focus-field cap (S3). 100.0 = observational/off: the focus_field
+  # cluster is reported but never breaches. After observing the shadow
+  # distribution (e.g. /api/diversification/overview → universe_summary), lower
+  # this to enforce thematic spread — a focus_field breach is advisory (advise
+  # alternatives + penalise the scan), never a hard cycle block. A sensible
+  # first enforce value once observed is ~55–65 ("blockchain" spans most crypto,
+  # so too low a value breaches constantly).
+  max_focus_field_pct: 100.0
 
 assets:
   # ── Crypto majors / store-of-value (reserve-eligible) ──────────────────────

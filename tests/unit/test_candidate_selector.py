@@ -7,6 +7,9 @@ reasons present.
 
 from __future__ import annotations
 
+from pathlib import Path
+
+from app.trading.asset_universe import AssetUniverse
 from app.trading.candidate_selector import (
     select_short_term_candidates,
     selected_symbols,
@@ -65,3 +68,67 @@ def test_quote_currency_applied() -> None:
     rankings = select_short_term_candidates(positions=[], limit=3, quote="USDC")
     for c in rankings:
         assert c.symbol.endswith("/USDC")
+
+
+_FOCUS_CAP_OVERLAY = """
+version: 1
+limits:
+  max_single_asset_pct: 100.0
+  max_sector_pct: 100.0
+  max_correlation_group_pct: 100.0
+  max_focus_field_pct: 50.0
+assets:
+  SOL:
+    horizon: short_term
+    sector: smart_contract_l1
+    focus_field: blockchain
+    risk_tier: high
+    liquidity_tier: high
+    volatility_tier: high
+    data_quality: high
+    tradable: true
+    correlation_group: l1_alts
+  LINK:
+    horizon: short_term
+    sector: oracle_infra
+    focus_field: blockchain
+    risk_tier: high
+    liquidity_tier: high
+    volatility_tier: high
+    data_quality: high
+    tradable: true
+    correlation_group: defi_infra
+  XRP:
+    horizon: short_term
+    sector: payments
+    focus_field: fintech
+    risk_tier: high
+    liquidity_tier: high
+    volatility_tier: high
+    data_quality: high
+    tradable: true
+    correlation_group: payments_alts
+"""
+
+
+def test_focus_field_over_cap_penalises_scan(tmp_path: Path) -> None:
+    """S3: when a focus_field is over its configured cap, blockchain candidates
+    are penalised so the scan steers toward the under-represented field."""
+    wl = tmp_path / "watchlists.yml"
+    wl.write_text("crypto:\n  - symbol: SOL\n  - symbol: LINK\n  - symbol: XRP\n", encoding="utf-8")
+    ov = tmp_path / "asset_universe.yaml"
+    ov.write_text(_FOCUS_CAP_OVERLAY, encoding="utf-8")
+    universe = AssetUniverse.load(watchlist_path=wl, overlay_path=ov)
+
+    # Book is 100% blockchain (SOL+LINK) → focus_field blockchain over the 50 cap.
+    pos = [
+        PositionExposure("SOL/USDT", 6000.0, "cost"),
+        PositionExposure("LINK/USDT", 4000.0, "cost"),
+    ]
+    rankings = select_short_term_candidates(positions=pos, universe=universe, limit=3)
+    by_base = {c.base: c for c in rankings}
+    # blockchain names carry the over-cap penalty reason; XRP (fintech) does not.
+    assert any("focus_field blockchain already over cap" in r for r in by_base["SOL"].reasons)
+    assert not any("focus_field" in r for r in by_base["XRP"].reasons)
+    # the fintech name should out-rank the penalised blockchain names on adjusted score.
+    assert by_base["XRP"].adjusted_score > by_base["SOL"].adjusted_score
