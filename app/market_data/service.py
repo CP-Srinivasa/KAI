@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import logging
+import os
+from dataclasses import replace
 from datetime import UTC, datetime
 
 from app.market_data.base import BaseMarketDataAdapter
@@ -15,6 +17,27 @@ from app.market_data.models import OHLCV, MarketDataPoint, MarketDataSnapshot, T
 from app.market_data.okx_adapter import OKXAdapter
 
 logger = logging.getLogger(__name__)
+
+# DS-20260529-V1: default cross-provider disagreement tolerance for the
+# fallback chain. Spot/futures venues agree on a liquid pair to well within
+# 1%; a divergence beyond this floor means at least one provider is pricing a
+# stale or wrong instrument (e.g. BitMEX kept a delisted "MATIC" ticker at
+# 0.40875 after the POL rebrand while every other venue priced ~0.088). The
+# 2026-05-28 paper book booked +73,548 USD of phantom PnL because entry and
+# monitor ticks were priced by *different* providers on this disagreement.
+# Env-tunable via MARKET_DATA_PROVIDER_DISAGREEMENT_PCT (fraction, e.g. 0.10).
+_DEFAULT_PROVIDER_DISAGREEMENT_PCT = 0.10
+
+
+def _provider_disagreement_pct() -> float:
+    raw = os.environ.get("MARKET_DATA_PROVIDER_DISAGREEMENT_PCT")
+    if raw is None:
+        return _DEFAULT_PROVIDER_DISAGREEMENT_PCT
+    try:
+        value = float(raw)
+    except ValueError:
+        return _DEFAULT_PROVIDER_DISAGREEMENT_PCT
+    return value if value > 0 else _DEFAULT_PROVIDER_DISAGREEMENT_PCT
 
 
 class FallbackMarketDataAdapter(BaseMarketDataAdapter):
@@ -32,10 +55,18 @@ class FallbackMarketDataAdapter(BaseMarketDataAdapter):
     but uses different rate-limit pools, so it adds true redundancy.
     """
 
-    def __init__(self, adapters: list[BaseMarketDataAdapter]) -> None:
+    def __init__(
+        self,
+        adapters: list[BaseMarketDataAdapter],
+        *,
+        disagreement_pct: float | None = None,
+    ) -> None:
         if not adapters:
             raise ValueError("FallbackMarketDataAdapter requires >=1 adapter")
         self._adapters = adapters
+        self._disagreement_pct = (
+            disagreement_pct if disagreement_pct is not None else _provider_disagreement_pct()
+        )
 
     @property
     def adapter_name(self) -> str:
@@ -60,11 +91,54 @@ class FallbackMarketDataAdapter(BaseMarketDataAdapter):
         return []
 
     async def get_market_data_point(self, symbol: str) -> MarketDataPoint | None:
+        """Return the first usable provider point, cross-checked for sanity.
+
+        DS-20260529-V1: the chain still resolves in priority order, but before
+        a point is trusted we collect at least one corroborating provider. If
+        two fresh providers disagree on price beyond ``self._disagreement_pct``
+        the symbol is being priced off a stale/wrong instrument on one venue —
+        we return the candidate tagged ``is_stale=True`` so the trading loop
+        (entry) and the position monitor (exit) both SKIP it instead of opening
+        or closing a position at a phantom price. Single-provider symbols can't
+        be cross-checked and are returned best-effort, unchanged.
+        """
+        resolved: list[MarketDataPoint] = []
         for adapter in self._adapters:
             point = await adapter.get_market_data_point(symbol)
             if point is not None and point.price > 0:
-                return point
-        return None
+                resolved.append(point)
+                fresh = [p for p in resolved if not p.is_stale]
+                # Two fresh quotes are enough to cross-check; stop early to
+                # bound latency rather than always querying the whole chain.
+                if len(fresh) >= 2:
+                    break
+
+        if not resolved:
+            return None
+
+        fresh = [p for p in resolved if not p.is_stale]
+        candidates = fresh or resolved
+        chosen = candidates[0]
+
+        if len(candidates) >= 2:
+            prices = [p.price for p in candidates]
+            lo, hi = min(prices), max(prices)
+            if lo > 0 and (hi / lo - 1.0) > self._disagreement_pct:
+                logger.warning(
+                    "[MARKET_DATA] provider disagreement for %s: %.6g..%.6g "
+                    "(>%.0f%%) — tagging stale so entry/monitor skip. providers=%s",
+                    symbol,
+                    lo,
+                    hi,
+                    self._disagreement_pct * 100,
+                    [p.source for p in candidates],
+                )
+                return replace(
+                    chosen,
+                    is_stale=True,
+                    source=f"{chosen.source}|provider_disagreement:{lo:.6g}vs{hi:.6g}",
+                )
+        return chosen
 
 
 def create_market_data_adapter(

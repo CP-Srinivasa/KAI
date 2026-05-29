@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from pathlib import Path
 
 from app.audit.stream_validation import PaperExecutionAuditStreamRow
@@ -40,6 +41,44 @@ from app.signals.models import (
 logger = logging.getLogger(__name__)
 
 _AUDIT_LOG = Path("artifacts/paper_execution_audit.jsonl")
+
+# DS-20260529-V1: close-price circuit breaker. A close whose implied per-trade
+# return exceeds this magnitude is almost never a real move on a 10-min monitor
+# cadence — it is the signature of a price-source disagreement (entry and exit
+# priced by different providers). On 2026-05-28 a delisted "MATIC" instrument on
+# BitMEX (0.40875) vs the real ~0.088 elsewhere closed +364% every cycle and
+# booked +73,548 USD of phantom PnL, whose fake profit then compounded the next
+# position's size. The cross-provider guard in FallbackMarketDataAdapter is the
+# upstream fix; this is the engine-level backstop for single-provider symbols
+# the upstream guard cannot cross-check. Reject (leave the position open) rather
+# than book a phantom close. Env-tunable via MAX_CLOSE_RETURN_PCT (fraction).
+_DEFAULT_MAX_CLOSE_RETURN_PCT = 2.0
+
+
+def _max_close_return_pct() -> float:
+    raw = os.environ.get("MAX_CLOSE_RETURN_PCT")
+    if raw is None:
+        return _DEFAULT_MAX_CLOSE_RETURN_PCT
+    try:
+        value = float(raw)
+    except ValueError:
+        return _DEFAULT_MAX_CLOSE_RETURN_PCT
+    return value if value > 0 else _DEFAULT_MAX_CLOSE_RETURN_PCT
+
+
+def _implied_close_return(
+    entry_price: float, close_price: float, position_side: str
+) -> float | None:
+    """Signed per-trade return a close at ``close_price`` would realize.
+
+    Returns None when prices are non-positive (cannot reason about the move).
+    Long: (close/entry - 1). Short: (entry/close - 1).
+    """
+    if entry_price <= 0 or close_price <= 0:
+        return None
+    if position_side == "short":
+        return entry_price / close_price - 1.0
+    return close_price / entry_price - 1.0
 
 
 class DuplicateOrderError(RuntimeError):
@@ -880,6 +919,35 @@ class PaperExecutionEngine:
             return None
 
         entry_price = pos.avg_entry_price
+        # DS-20260529-V1: same circuit breaker as close_position — a tier that
+        # only fires because the monitor price disagrees with the entry source
+        # must not book a phantom partial close.
+        implied = _implied_close_return(entry_price, current_price, pos.position_side)
+        cap = _max_close_return_pct()
+        if implied is not None and abs(implied) > cap:
+            self._append_audit(
+                "close_price_sanity_rejected",
+                {
+                    "symbol": symbol,
+                    "reason": "tp_tier",
+                    "tier_price": tier_price,
+                    "entry_price": entry_price,
+                    "close_price": current_price,
+                    "implied_return_pct": implied * 100.0,
+                    "max_close_return_pct": cap * 100.0,
+                    "position_side": pos.position_side,
+                },
+            )
+            logger.error(
+                "[PAPER] Tier-close REJECTED — implied return %.1f%% exceeds cap "
+                "%.1f%%: %s entry=%.6g close=%.6g (likely stale/wrong price source)",
+                implied * 100.0,
+                cap * 100.0,
+                symbol,
+                entry_price,
+                current_price,
+            )
+            return None
         close_side = "buy" if pos.position_side == "short" else "sell"
         order = self.create_order(
             symbol=symbol,
@@ -1031,6 +1099,32 @@ class PaperExecutionEngine:
             return None
 
         entry_price = pos.avg_entry_price
+        # DS-20260529-V1: reject phantom closes from price-source disagreement.
+        implied = _implied_close_return(entry_price, current_price, pos.position_side)
+        cap = _max_close_return_pct()
+        if implied is not None and abs(implied) > cap:
+            self._append_audit(
+                "close_price_sanity_rejected",
+                {
+                    "symbol": symbol,
+                    "reason": reason,
+                    "entry_price": entry_price,
+                    "close_price": current_price,
+                    "implied_return_pct": implied * 100.0,
+                    "max_close_return_pct": cap * 100.0,
+                    "position_side": pos.position_side,
+                },
+            )
+            logger.error(
+                "[PAPER] Close REJECTED — implied return %.1f%% exceeds cap %.1f%%: "
+                "%s entry=%.6g close=%.6g (likely stale/wrong price source)",
+                implied * 100.0,
+                cap * 100.0,
+                symbol,
+                entry_price,
+                current_price,
+            )
+            return None
         quantity = pos.quantity
         close_side = "buy" if pos.position_side == "short" else "sell"
         order = self.create_order(
