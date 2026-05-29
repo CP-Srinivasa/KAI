@@ -7,9 +7,9 @@
 # the laptop is faster (<30s) and avoids Pi service-disruption.
 #
 # Usage:
-#   bash scripts/pi_deploy_web.sh ubuntu@192.168.178.20
-#   bash scripts/pi_deploy_web.sh ubuntu@192.168.178.20 --skip-build  # use existing dist
-#   bash scripts/pi_deploy_web.sh --check ubuntu@192.168.178.20       # only verify staleness
+#   bash scripts/pi_deploy_web.sh ubuntu@192.168.178.23
+#   bash scripts/pi_deploy_web.sh ubuntu@192.168.178.23 --skip-build  # use existing dist
+#   bash scripts/pi_deploy_web.sh --check ubuntu@192.168.178.23       # only verify staleness
 #
 # Idempotent: if web/dist is fresh and Pi has matching dist, no transfer.
 # Verifies via sha256 of tarball after extract.
@@ -46,7 +46,7 @@ for arg in "$@"; do
 done
 
 if [[ -z "$REMOTE_HOST" ]]; then
-    echo "ERROR: remote host required (e.g. ubuntu@192.168.178.20)" >&2
+    echo "ERROR: remote host required (e.g. ubuntu@192.168.178.23)" >&2
     sed -n '8,15p' "$0" >&2
     exit 2
 fi

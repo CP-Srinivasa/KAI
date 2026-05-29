@@ -11,6 +11,7 @@ Rules:
 
 from __future__ import annotations
 
+import hashlib
 import logging
 
 from app.core.errors import ConfigurationError
@@ -20,12 +21,16 @@ logger = logging.getLogger(__name__)
 
 
 def _redact(value: str) -> str:
-    """Show only the first 4 chars of a secret for confirmation, rest redacted."""
+    """Confirm a secret is set WITHOUT leaking any plaintext (AUDIT-A18/F-6).
+
+    Returns ``(empty)`` when unset, else ``(set:<8-hex sha256 fingerprint>)``.
+    The fingerprint lets the operator confirm *which* key is loaded (it changes
+    when the key rotates) without exposing any plaintext prefix in logs.
+    """
     if not value:
         return "(empty)"
-    if len(value) <= 4:
-        return "****"
-    return value[:4] + "****"
+    fingerprint = hashlib.sha256(value.encode("utf-8")).hexdigest()[:8]
+    return f"(set:{fingerprint})"
 
 
 def validate_secrets(settings: AppSettings) -> None:

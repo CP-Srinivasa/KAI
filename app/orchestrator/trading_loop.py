@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from dataclasses import replace
@@ -1324,7 +1325,11 @@ async def run_trading_loop_once(
     if not allowed:
         raise ValueError(reason or "trading_loop_run_once blocked")
 
-    loop = build_trading_loop(
+    # AUDIT-A2: build_trading_loop rehydrates paper state by reading the loop
+    # audit JSONL synchronously; offload so the rehydration read does not block
+    # the event loop (proportional to audit-log size). Logic is unchanged.
+    loop = await asyncio.to_thread(
+        build_trading_loop,
         mode=normalized_mode,
         provider=provider,
         loop_audit_path=loop_audit_path,
@@ -1354,7 +1359,11 @@ async def run_position_monitor_once(
     Intended for cron invocation: fetches live prices for every open position,
     closes any position whose SL/TP fired, returns a summary dict.
     """
-    loop = build_trading_loop(
+    # AUDIT-A2: offload the synchronous build + audit-JSONL rehydration off the
+    # event loop so the position-monitor tick cannot wedge FastAPI as the audit
+    # log grows (esp. on the Pi's USB-SSD). Logic unchanged.
+    loop = await asyncio.to_thread(
+        build_trading_loop,
         mode=ExecutionMode.PAPER,
         provider=provider,
         loop_audit_path=loop_audit_path,

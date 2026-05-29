@@ -1,14 +1,14 @@
 # DECISION_LOG.md
 
-## Current State (2026-04-16)
+## Current State (2026-05-29)
 
-- phase: `PHASE 5`
-- status: `SUSPENDED` (D-125 TradingView-Pivot, 2026-04-16)
-- reason: `n=93 resolved alerts has 95%-CI ±10pp — optimization on this sample size is statistical noise, not signal`
-- active workstream: `TradingView integration (TV-1..TV-4) — provider-agnostic, fail-closed, gated`
-- still blocked: `signal-critical work tied to D-105/D-124 quality bar (live exchange relay, companion-ML reactivation, ML-driven precision tuning)`
-- re-entry to PHASE 5 quality-bar work: `not before 2026-05-16 AND (>=200 resolved alerts OR >=10 real paper fills with PnL)`
-- policy: `Operate pipeline daily for data accumulation; build TradingView audit + chart capabilities; no premature precision tuning`
+- phase: `Re-entry + Stabilisierung` (post-PHASE-5-suspension)
+- status: `ACTIVE` — Re-Entry vollzogen am 2026-05-07 (Pi-5-Cutover); `RE_ENTRY_MODE` live. Die D-125-Suspension (TradingView-Pivot) ist damit abgelöst.
+- source of truth: `Pi 5 (ubuntu@192.168.178.23), live seit 2026-05-07`
+- active workstream: `Asset-Reserve/Fokusfeld-Layer (D-228/S3), Dispatch-Recall-Proxy (D-227), Asset-Diversification enforce (D-226)`
+- live execution: `OFF — paper/approval-mode only; Live-Gates ungeöffnet`
+- policy: `Paper-Betrieb + kontrollierte additive Layer; keine vorschnelle Live-/Precision-Aktivierung; jede Risk-Gate-/Crypto-Änderung nur isoliert + getestet`
+- Hinweis: Header = aktueller Betriebszustand; volle Historie im Compact Decision Log unten (neueste zuerst, bis D-228-S3).
 
 ## Compact Decision Log
 

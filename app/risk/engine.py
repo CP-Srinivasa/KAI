@@ -154,9 +154,19 @@ class RiskEngine:
         if is_averaging_down and not self._limits.allow_averaging_down:
             violations.append("averaging_down_not_allowed")
 
-        if self._limits.allow_martingale is False:
-            # Trust the caller to flag this; we enforce the limit setting
-            pass
+        # AUDIT-A8/F-4: previously a no-op ("trust the caller"). An averaging-down
+        # order — adding to an existing (typically losing) position — is exactly
+        # the mechanism a martingale uses. We cannot verify *size escalation*
+        # in-engine without order-history (proposed vs. prior fill size), which
+        # would require plumbing through every caller; that fuller detection is
+        # tracked as a follow-up. Until then we enforce fail-safe: when martingale
+        # is disallowed, an averaging-down add is blocked rather than silently
+        # permitted. (Default config disallows averaging_down too, so this only
+        # changes the allow_averaging_down=True + allow_martingale=False case,
+        # which is precisely where the operator wants the stricter policy to bite.)
+        if self._limits.allow_martingale is False and is_averaging_down:
+            if "martingale_not_allowed" not in violations:
+                violations.append("martingale_not_allowed")
 
         # Gate 3: Stop loss required (Hard-Gate, no longer configurable)
         if stop_loss_price is None or stop_loss_price <= 0:

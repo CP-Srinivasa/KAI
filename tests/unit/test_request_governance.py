@@ -14,7 +14,7 @@ import json
 from pathlib import Path
 
 import pytest
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.testclient import TestClient
 
 from app.api.middleware.request_governance import (
@@ -113,6 +113,58 @@ def test_audit_log_multiple_requests(
 # ------------------------------------------------------------------
 # APIErrorResponse
 # ------------------------------------------------------------------
+
+
+# ------------------------------------------------------------------
+# Body-size limit (AUDIT-A6): hard cap, not just Content-Length trust
+# ------------------------------------------------------------------
+
+
+def _app_with_body_cap(tmp_path: Path, max_bytes: int = 100) -> TestClient:
+    from starlette.responses import Response
+
+    app = FastAPI()
+    app.add_middleware(
+        RequestGovernanceMiddleware,
+        audit_log_path=str(tmp_path / "api_audit.jsonl"),
+        max_body_bytes=max_bytes,
+    )
+
+    @app.post("/echo")
+    async def _echo(request: Request) -> Response:
+        body = await request.body()  # must see the cached/replayed bytes
+        return Response(content=body, media_type="application/octet-stream")
+
+    return TestClient(app)
+
+
+def test_body_under_limit_passes_and_is_intact(tmp_path: Path) -> None:
+    c = _app_with_body_cap(tmp_path, max_bytes=100)
+    payload = b"x" * 50
+    r = c.post("/echo", content=payload)
+    assert r.status_code == 200
+    assert r.content == payload  # downstream handler saw the full body
+
+
+def test_oversized_content_length_rejected(tmp_path: Path) -> None:
+    c = _app_with_body_cap(tmp_path, max_bytes=100)
+    r = c.post("/echo", content=b"x" * 500)  # httpx sets honest Content-Length
+    assert r.status_code == 413
+    assert r.json()["error"]["code"] == "request_body_too_large"
+
+
+def test_chunked_oversized_rejected_without_content_length(tmp_path: Path) -> None:
+    """A streamed body has no Content-Length (chunked). The hard byte cap must
+    still reject it — the Content-Length fast path alone would let it through."""
+    c = _app_with_body_cap(tmp_path, max_bytes=100)
+
+    def _gen():
+        for _ in range(10):
+            yield b"x" * 50  # 500 bytes total, sent chunked → no Content-Length
+
+    r = c.post("/echo", content=_gen())
+    assert r.status_code == 413
+    assert r.json()["error"]["code"] == "request_body_too_large"
 
 
 def test_error_response_frozen() -> None:

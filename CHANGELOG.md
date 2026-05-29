@@ -10,6 +10,12 @@
 
 ---
 
+## 2026-03-24 – 2026-05-28 — Sprint history consolidated in DECISION_LOG (gap notice)
+
+> **Doku-Hinweis (AUDIT-A17):** Zwischen `2026-03-24` und `2026-05-28` wurde der CHANGELOG nicht fortlaufend gepflegt. Die vollständige, evidenzbelegte Entscheidungs- und Sprint-Historie für diesen Zeitraum steht im **`DECISION_LOG.md`** (D-125 … D-228-S3) sowie in den Operator-Memos. Wichtigste Meilensteine dieser Periode: Pi-5-Cutover + Re-Entry (2026-05-07), Phase-0-Security-Stack, Premium-Signal-Pipeline (P0–P2), DuckDB-Pivot, Adaptive-Learning/Regime/Bayes-Stack, Asset-Diversification enforce (D-226), Dispatch-Recall-Proxy (D-227), Asset-Reserve/Fokusfeld-Layer (D-228/S3). Ab hier ist der CHANGELOG wieder append-only.
+
+---
+
 ## 2026-03-24 - Alert hit-rate metric (first quality metric)
 
 - **Enriched** `AlertAuditRecord` with prediction fields (sentiment_label, affected_assets, priority, actionable)

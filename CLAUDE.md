@@ -583,6 +583,11 @@ The repository should evolve into a platform with the following capability layer
 - `app/schemas/` → runtime validator, schema binding
 - `app/security/` → idempotency store, rate-limit store, brute-force guard, auth guards
 - `app/signals/` → SignalGenerator (6 filters, confluence, SL/TP), SignalCandidate models
+- `app/audit/` → tamper-evident audit primitives (decision hash-chain, audit replay)
+- `app/learning/` → adaptive-learning snapshots, reasoning journal, outcome correlation
+- `app/observability/` → metrics, provenance, pipeline-latency + health surfacing
+- `app/regime/` → market-regime classifier (observer; deterministic threshold + hysteresis)
+- `app/services/` → cross-cutting service helpers (e.g. timer-health)
 - `monitor/` → operator-curated source lists, watchlists, keyword/alias/rule definitions (trust-boundary: file-system ACL, D-181)
 
 ---

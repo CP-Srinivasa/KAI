@@ -3,19 +3,17 @@
 Production-oriented crypto/market intelligence pipeline:
 RSS + TradingView + Telegram ingestion → LLM/rule analysis → scoring → alerting → paper-trading signal bridge. Dashboard + Cloudflare Tunnel for remote operator access.
 
-## Current State (2026-04-24)
+## Current State (2026-05-29)
 
 | Field | Value |
 |---|---|
-| Phase | `PHASE 5` |
-| Status | `SUSPENDED` (TradingView-Pivot D-125, 2026-04-16) |
-| Re-entry | `not before 2026-05-16 AND (≥200 resolved directional alerts OR ≥10 real paper fills with PnL)` |
-| Re-entry data-side | ✅ data threshold met (305 resolved, 54 fills) — calendar half pending |
-| Active workstream | `TradingView integration (TV-1..TV-4, 4b) + operator-signal approval-mode` |
-| Next operator milestone | `Pi-Migration (D-7, 2026-05-01)` · `UptimeRobot setup (pending, D-188)` |
-| Live execution | OFF — paper/approval-mode only |
+| Phase | Re-entry + Stabilisierung (post-PHASE-5-suspension) |
+| Status | `ACTIVE` — Re-Entry vollzogen; `RE_ENTRY_MODE` live |
+| Source of truth | Pi 5 (`ubuntu@192.168.178.23`), live seit 2026-05-07 |
+| Active workstream | Asset-Reserve/Fokusfeld-Layer (D-228/S3), Dispatch-Recall-Proxy (D-227), Diversification enforce (D-226) |
+| Live execution | OFF — paper/approval-mode only; Live-Gates ungeöffnet |
 
-See `DECISION_LOG.md` for full decision history. Latest entries: D-188 (Liveness-Watchdog), D-186 (Multi-Agent-Gate → no re-activation until 2026-05-16).
+See `DECISION_LOG.md` for full decision history. Latest entries: **D-228/S3** (Asset-Reserve + Fokusfeld-Taxonomie + Enforce-Cap), **D-227** (Dispatch-Recall-Proxy + tunable bullish gate), **D-226** (Asset-Diversification enforce). Der frühere `SUSPENDED`-Zustand (D-125, TradingView-Pivot) ist seit dem Re-Entry am 2026-05-07 abgelöst.
 
 ## Stack at a Glance
 

@@ -29,6 +29,48 @@ def _default_engine(**limit_overrides) -> RiskEngine:
     return RiskEngine(_default_limits(**limit_overrides))
 
 
+# --- martingale / averaging-down (AUDIT-A8: no-op gate now enforces) ---
+
+
+def _ok_order(engine: RiskEngine, **overrides):
+    kwargs = {
+        "symbol": "BTC/USDT",
+        "side": "buy",
+        "signal_confidence": 0.9,
+        "signal_confluence_count": 3,
+        "stop_loss_price": 60000.0,
+        "entry_price": 61000.0,
+        "current_open_positions": 0,
+    }
+    kwargs.update(overrides)
+    return engine.check_order(**kwargs)
+
+
+def test_martingale_disallowed_blocks_averaging_down_add():
+    """allow_averaging_down=True but allow_martingale=False: scaling in is
+    permitted in general, but an averaging-down add is the martingale vector and
+    must be blocked fail-safe (was a silent no-op before)."""
+    engine = _default_engine(allow_averaging_down=True, allow_martingale=False)
+    result = _ok_order(engine, is_averaging_down=True)
+    assert not result.approved
+    assert "martingale_not_allowed" in result.violations
+    assert "averaging_down_not_allowed" not in result.violations  # averaging itself allowed
+
+
+def test_martingale_allowed_permits_averaging_down_add():
+    engine = _default_engine(allow_averaging_down=True, allow_martingale=True)
+    result = _ok_order(engine, is_averaging_down=True)
+    assert result.approved
+    assert "martingale_not_allowed" not in result.violations
+
+
+def test_non_averaging_order_unaffected_by_martingale_flag():
+    engine = _default_engine(allow_averaging_down=False, allow_martingale=False)
+    result = _ok_order(engine, is_averaging_down=False)
+    assert result.approved
+    assert "martingale_not_allowed" not in result.violations
+
+
 # --- kill switch ---
 
 
