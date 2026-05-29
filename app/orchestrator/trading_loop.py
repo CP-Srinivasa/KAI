@@ -29,6 +29,7 @@ from app.orchestrator.models import (
 )
 from app.risk.engine import RiskEngine
 from app.risk.models import RiskLimits
+from app.security.kyt.models import KytAssessment
 from app.signals.generator import SignalGenerator
 from app.signals.models import SignalCandidate, SignalDirection
 from app.storage.models.trading import PortfolioStateRecord, TradingCycleRecord
@@ -311,6 +312,42 @@ class TradingLoop:
                     started_at,
                     symbol,
                     CycleStatus.DIVERSIFICATION_REJECTED,
+                    market_data_fetched=True,
+                    signal_generated=True,
+                    risk_approved=True,
+                    decision_id=signal.decision_id,
+                    risk_check_id=risk_result.check_id,
+                    notes=notes,
+                )
+                await self._write_db(cycle)
+                return cycle
+
+        # KYT (Know Your Transaction) pre-transaction check (default-off,
+        # shadow-first). Screens symbol/venue + behavioural patterns, stamps the
+        # cycle audit, and only blocks in enforce mode on a hold/block/
+        # manual_review decision. Never crashes the loop. DS-20260529-V1.
+        kyt_assessment = self._evaluate_kyt(
+            cycle_id=cycle_id,
+            symbol=symbol,
+            side=order_side,
+            quantity=size_result.position_size_units,
+            entry_price=signal.entry_price,
+            source=signal.provenance.source if signal.provenance else "",
+            correlation_id=signal.decision_id,
+        )
+        if kyt_assessment is not None:
+            notes.append(
+                f"kyt:{kyt_assessment.decision.value}|risk:{kyt_assessment.risk_level.value}"
+                f"|score:{kyt_assessment.score}"
+            )
+            from app.security.kyt.gate import enforce_blocks
+
+            if enforce_blocks(kyt_assessment):
+                cycle = self._build_cycle(
+                    cycle_id,
+                    started_at,
+                    symbol,
+                    CycleStatus.KYT_REJECTED,
                     market_data_fetched=True,
                     signal_generated=True,
                     risk_approved=True,
@@ -623,6 +660,42 @@ class TradingLoop:
                 await self._write_db(cycle)
                 return cycle
 
+        # KYT (Know Your Transaction) pre-transaction check (default-off,
+        # shadow-first). Screens symbol/venue + behavioural patterns, stamps the
+        # cycle audit, and only blocks in enforce mode on a hold/block/
+        # manual_review decision. Never crashes the loop. DS-20260529-V1.
+        kyt_assessment = self._evaluate_kyt(
+            cycle_id=cycle_id,
+            symbol=symbol,
+            side=order_side,
+            quantity=size_result.position_size_units,
+            entry_price=signal.entry_price,
+            source=signal.provenance.source if signal.provenance else "",
+            correlation_id=signal.decision_id,
+        )
+        if kyt_assessment is not None:
+            notes.append(
+                f"kyt:{kyt_assessment.decision.value}|risk:{kyt_assessment.risk_level.value}"
+                f"|score:{kyt_assessment.score}"
+            )
+            from app.security.kyt.gate import enforce_blocks
+
+            if enforce_blocks(kyt_assessment):
+                cycle = self._build_cycle(
+                    cycle_id,
+                    started_at,
+                    symbol,
+                    CycleStatus.KYT_REJECTED,
+                    market_data_fetched=True,
+                    signal_generated=True,
+                    risk_approved=True,
+                    decision_id=signal.decision_id,
+                    risk_check_id=risk_result.check_id,
+                    notes=notes,
+                )
+                await self._write_db(cycle)
+                return cycle
+
         order = None
         fill = None
         try:
@@ -866,6 +939,40 @@ class TradingLoop:
             alts = ",".join(a.symbol for a in decision.alternatives)
             notes.append(f"diversification_alternatives:{alts}")
         return notes
+
+    def _evaluate_kyt(
+        self,
+        *,
+        cycle_id: str,
+        symbol: str,
+        side: str,
+        quantity: float | None,
+        entry_price: float | None,
+        source: str = "",
+        correlation_id: str = "",
+    ) -> KytAssessment | None:
+        """KYT pre-transaction screen (default-off, shadow-first).
+
+        Returns None when KYT is disabled or on any failure — the gate never
+        blocks by accident and never crashes the loop. Venue is the execution
+        venue (``paper``); symbol + behavioural patterns carry the signal.
+        """
+        try:
+            from app.security.kyt.gate import screen_order
+
+            return screen_order(
+                tx_id=cycle_id,
+                symbol=symbol,
+                venue="paper",
+                side=side,
+                quantity=quantity,
+                entry_price=entry_price,
+                source=source,
+                correlation_id=correlation_id,
+            )
+        except Exception as exc:  # noqa: BLE001 — never crash the loop on the gate
+            logger.warning("[LOOP] KYT check failed (non-fatal): %s", exc)
+            return None
 
     async def _write_db(self, cycle: LoopCycle) -> None:
         """Dual-write cycle to DB (session-per-cycle). Non-fatal: DB errors never stop the loop."""

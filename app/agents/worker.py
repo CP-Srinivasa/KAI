@@ -388,6 +388,52 @@ def _sentr_report(note: str | None) -> tuple[str, str]:
     return ("\n".join(lines), "warn" if warn or crit else "ok")
 
 
+def _sentr_kyt_review(note: str | None) -> tuple[str, str]:
+    """SENTR review of the KYT audit — surfaces open reviews + recent blocks.
+
+    Read-only over ``artifacts/kyt/assessments.jsonl``. Mirrors KYT's own
+    alerting but on operator demand: counts decisions, lists the most recent
+    hold/block/manual_review items (the ones awaiting a security verdict), and
+    raises a SENTR finding whose severity tracks the worst open decision.
+    """
+    audit = REPO_ROOT / "artifacts" / "kyt" / "assessments.jsonl"
+    rows = _read_jsonl_raw(audit) if audit.exists() else []
+    by_decision: dict[str, int] = {}
+    open_reviews: list[dict[str, Any]] = []
+    for r in rows:
+        d = str(r.get("decision", "?"))
+        by_decision[d] = by_decision.get(d, 0) + 1
+        if d in ("hold", "block", "manual_review"):
+            open_reviews.append(r)
+
+    has_block = by_decision.get("block", 0) > 0
+    has_review = (by_decision.get("hold", 0) + by_decision.get("manual_review", 0)) > 0
+    severity = "crit" if has_block else ("warn" if has_review else "info")
+    summary_counts = ", ".join(f"{k}={v}" for k, v in sorted(by_decision.items())) or "keine"
+
+    _append_finding(
+        "sentr",
+        severity,
+        "kyt_review",
+        f"KYT audit: {len(rows)} assessments ({summary_counts}); {len(open_reviews)} open reviews.",
+    )
+
+    lines = [f"SENTR KYT-Review — {len(rows)} Assessments ({summary_counts})."]
+    if note:
+        lines.append(f"Note: {note}")
+    lines.append(f"Offene Reviews (hold/block/manual_review): {len(open_reviews)}")
+    for r in open_reviews[-5:]:
+        ctx = r.get("context", {}) if isinstance(r.get("context"), dict) else {}
+        codes = ", ".join(str(c) for c in (r.get("reason_codes") or []))
+        lines.append(
+            f"  [{r.get('decision')}] {ctx.get('symbol', '?')} risk={r.get('risk_level')} "
+            f"score={r.get('score')} reasons=[{codes}]"
+        )
+    if not rows:
+        lines.append("  (KYT-Audit leer — Gate disabled oder noch keine Transaktion bewertet.)")
+    return ("\n".join(lines), severity if severity != "info" else "ok")
+
+
 def _architect_review(note: str | None) -> tuple[str, str]:
     modules = list((REPO_ROOT / "app").glob("*/"))
     modules = [m for m in modules if m.is_dir() and not m.name.startswith("_")]
@@ -448,6 +494,7 @@ HANDLERS: dict[tuple[str, str], Callable[[str | None], tuple[str, str]]] = {
     ("watchdog", "report"): _watchdog_report,
     ("sentr", "inspect"): _sentr_inspect,
     ("sentr", "report"): _sentr_report,
+    ("sentr", "kyt-review"): _sentr_kyt_review,
     ("architect", "review"): _architect_review,
     ("architect", "propose"): _architect_propose,
 }

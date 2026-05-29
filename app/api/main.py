@@ -32,6 +32,7 @@ from app.api.routers import (
     health,
     health_premium_pipeline,
     kai,
+    kyt,
     operator,
     premium_signals,
     query,
@@ -269,6 +270,7 @@ def create_app() -> FastAPI:
     app.include_router(dashboard.router)
     app.include_router(events.router)
     app.include_router(kai.router)
+    app.include_router(kyt.router)
     # 2026-05-12 Sprint E: Premium-Signal Operator-Actions (5 idempotente
     # POST-Endpoints + 1 GET für pending-envelopes — Datenquelle für UI-Buttons).
     app.include_router(premium_signals.router)
