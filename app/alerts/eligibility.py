@@ -642,6 +642,7 @@ def evaluate_directional_eligibility(
     actionable: bool | None = None,
     priority: int | None = None,
     source_name: str | None = None,
+    min_bullish_confidence: float | None = None,
 ) -> DirectionalEligibilityDecision:
     """Return directional eligibility for operational metrics.
 
@@ -770,17 +771,27 @@ def evaluate_directional_eligibility(
 
     # D-116 / D-121: Asymmetric directional confidence gate.
     # Bearish requires ≥0.92 (only concrete adverse events); bullish ≥0.8.
-    min_confidence = (
-        MIN_DIRECTIONAL_CONFIDENCE_BEARISH
-        if sentiment == "bearish"
-        else _bullish_confidence_threshold()
-    )
-    if directional_confidence is not None and directional_confidence < min_confidence:
-        return DirectionalEligibilityDecision(
-            is_directional=True,
-            directional_eligible=False,
-            directional_block_reason=BLOCK_REASON_LOW_DIRECTIONAL_CONFIDENCE,
-        )
+    # AUDIT-hotfix (event-loop wedge): the threshold is resolved ONLY when a
+    # directional_confidence is actually supplied. _bullish_confidence_threshold()
+    # calls the UNCACHED get_settings(), which re-parses the .env file on every
+    # call; build_hold_metrics_report evaluates hundreds of alerts in a loop
+    # (hit by the /dashboard/api/quality poll) and passes no directional_confidence,
+    # so resolving it unconditionally re-parsed .env per alert and wedged the
+    # event loop (observed: 99% CPU, /health dead). Loop callers that DO pass a
+    # confidence should resolve once and pass it via min_bullish_confidence.
+    if directional_confidence is not None:
+        if sentiment == "bearish":
+            min_confidence = MIN_DIRECTIONAL_CONFIDENCE_BEARISH
+        elif min_bullish_confidence is not None:
+            min_confidence = min_bullish_confidence
+        else:
+            min_confidence = _bullish_confidence_threshold()
+        if directional_confidence < min_confidence:
+            return DirectionalEligibilityDecision(
+                is_directional=True,
+                directional_eligible=False,
+                directional_block_reason=BLOCK_REASON_LOW_DIRECTIONAL_CONFIDENCE,
+            )
 
     # D-116: Backward-looking reports are not predictive signals.
     if event_timing in ("backward_report", "speculative"):
