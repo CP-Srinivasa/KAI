@@ -13,6 +13,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.execution.audit_replay import AuditReplayResult, replay_paper_audit
+from app.execution.phantom_filter import is_phantom_close
 from app.market_data.base import MarketDataSnapshot
 from app.market_data.service import get_market_data_snapshot
 from app.storage.models.trading import PortfolioStateRecord
@@ -720,8 +721,21 @@ def compute_realized_by_asset(audit_path: Path) -> dict[str, object]:
                 "partial_closes": 0,
                 "full_closes": 0,
                 "last_close_utc": None,
+                "quarantined_pnl_usd": 0.0,
+                "quarantined_closes": 0,
             },
         )
+        # DS-20260529-V1: exclude phantom closes (price-source disagreement, e.g.
+        # BitMEX's delisted MATIC @0.40875) from realized PnL so the dashboard
+        # shows the real number; surface the excluded amount for transparency.
+        if is_phantom_close(d.get("entry_price"), d.get("exit_price"), d.get("position_side")):
+            bucket["quarantined_pnl_usd"] = float(bucket["quarantined_pnl_usd"]) + pnl  # type: ignore[arg-type]
+            bucket["quarantined_closes"] = int(bucket["quarantined_closes"]) + 1  # type: ignore[arg-type]
+            if isinstance(ts, str) and ts:
+                prev_last = bucket["last_close_utc"]
+                if prev_last is None or ts > str(prev_last):
+                    bucket["last_close_utc"] = ts
+            continue
         bucket["realized_pnl_usd"] = float(bucket["realized_pnl_usd"]) + pnl  # type: ignore[arg-type]
         bucket["closed_trades"] = int(bucket["closed_trades"]) + 1  # type: ignore[arg-type]
         if pnl > 0:
@@ -743,17 +757,22 @@ def compute_realized_by_asset(audit_path: Path) -> dict[str, object]:
     total_pnl = 0.0
     total_trades = 0
     total_fees = 0.0
+    total_quarantined_pnl = 0.0
+    total_quarantined_closes = 0
     for _sym, bucket in per_asset.items():
         n = int(bucket["closed_trades"])  # type: ignore[arg-type]
         w = int(bucket["wins"])  # type: ignore[arg-type]
         win_rate = round((w / n * 100.0), 2) if n > 0 else None
         bucket["realized_pnl_usd"] = round(float(bucket["realized_pnl_usd"]), 4)  # type: ignore[arg-type]
         bucket["fees_usd_total"] = round(float(bucket["fees_usd_total"]), 4)  # type: ignore[arg-type]
+        bucket["quarantined_pnl_usd"] = round(float(bucket["quarantined_pnl_usd"]), 4)  # type: ignore[arg-type]
         bucket["win_rate_pct"] = win_rate
         by_asset.append(dict(bucket))
         total_pnl += float(bucket["realized_pnl_usd"])
         total_trades += n
         total_fees += float(bucket["fees_usd_total"])
+        total_quarantined_pnl += float(bucket["quarantined_pnl_usd"])
+        total_quarantined_closes += int(bucket["quarantined_closes"])  # type: ignore[arg-type]
 
     by_asset.sort(key=lambda b: float(b["realized_pnl_usd"]), reverse=True)
 
@@ -765,6 +784,9 @@ def compute_realized_by_asset(audit_path: Path) -> dict[str, object]:
         "fees_usd_total": round(total_fees, 4),
         "partial_close_events": partial_close_total,
         "full_close_events": full_close_total,
+        # DS-20260529-V1: phantom closes excluded from realized_pnl_usd above.
+        "quarantined_pnl_usd": round(total_quarantined_pnl, 4),
+        "quarantined_closes": total_quarantined_closes,
     }
     result["top_performer"] = by_asset[0] if by_asset else None
     result["worst_performer"] = by_asset[-1] if by_asset else None
