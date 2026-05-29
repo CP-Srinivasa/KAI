@@ -29,9 +29,7 @@ def _rec(doc_id: str, blocked_assets=None, age_days: float = 1.0, **extra) -> di
 
 def test_fills_empty_recent_record_from_tickers() -> None:
     records = [_rec("d1")]
-    out, stats = repair_records(
-        records, {"d1": ["BTC/USDT", "ETH/USDT"]}, since_days=5, now=NOW
-    )
+    out, stats = repair_records(records, {"d1": ["BTC/USDT", "ETH/USDT"]}, since_days=5, now=NOW)
     assert stats.repaired == 1
     assert out[0]["blocked_assets"] == ["BTC/USDT", "ETH/USDT"]
     assert out[0]["blocked_assets_repaired"] is True
