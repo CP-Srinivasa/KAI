@@ -227,7 +227,7 @@ install() {
     # absent or stale.
     if [[ ! -f "${REPO_ROOT}/web/dist/index.html" ]]; then
         echo "WARNING: web/dist/index.html missing — /dashboard/ will return 404." >&2
-        echo "         Run on the laptop: bash scripts/pi_deploy_web.sh ubuntu@192.168.178.20" >&2
+        echo "         Run on the laptop: bash scripts/pi_deploy_web.sh ubuntu@192.168.178.23" >&2
         echo ""
     fi
 
@@ -243,6 +243,20 @@ install() {
             read -r -p "Continue anyway? [y/N] " answer
             [[ "$answer" == "y" || "$answer" == "Y" ]] || exit 1
         fi
+    fi
+
+    # AUDIT-A4: the unit files hard-code $EXPECTED_ROOT (/home/kai/...), which on
+    # the Pi is a symlink to /home/ubuntu. If that path does not resolve, every
+    # unit boots into a non-existent WorkingDirectory/ReadWritePaths and fails
+    # (the 209/STDOUT cutover bug, 2026-05-07). Fail-fast at install time rather
+    # than discovering it after a silent boot failure.
+    if (( DRY_RUN == 0 )) && [[ ! -d "$EXPECTED_ROOT" ]]; then
+        echo "ERROR: unit path $EXPECTED_ROOT does not resolve on this host." >&2
+        echo "       The systemd units require it (directly or via the" >&2
+        echo "       /home/kai -> /home/ubuntu symlink). Fix before installing:" >&2
+        echo "         sudo ln -s /home/ubuntu /home/kai" >&2
+        echo "       or re-checkout at $EXPECTED_ROOT." >&2
+        exit 1
     fi
 
     for unit in "${UNITS[@]}"; do
