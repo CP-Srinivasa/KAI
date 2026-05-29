@@ -45,9 +45,7 @@ HORIZONS = frozenset({"short_term", "mid_term", "long_term_reserve", UNKNOWN})
 # paper venue). ``pre_ipo``/``ipo_pending``/``delisted`` mean the name is
 # research/watch-only and must never produce an order — even if some overlay
 # mislabels ``tradable``. That is the hard guard for SpaceX-style candidates.
-LIFECYCLE_STATES = frozenset(
-    {"active", "pre_ipo", "ipo_pending", "delisted", UNKNOWN}
-)
+LIFECYCLE_STATES = frozenset({"active", "pre_ipo", "ipo_pending", "delisted", UNKNOWN})
 _NON_ORDERABLE_LIFECYCLES = frozenset({"pre_ipo", "ipo_pending", "delisted"})
 
 # First-class asset-class taxonomy — the reserve/core/tradable/watch separation
