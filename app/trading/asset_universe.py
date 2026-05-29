@@ -29,6 +29,7 @@ from typing import Any
 import yaml
 
 from app.analysis.keywords.watchlist import WatchlistEntry, load_watchlist
+from app.trading.focus_fields import classify_focus_field
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +40,35 @@ _DEFAULT_WATCHLIST_PATH = _REPO_ROOT / "monitor" / "watchlists.yml"
 UNKNOWN = "unknown"
 
 HORIZONS = frozenset({"short_term", "mid_term", "long_term_reserve", UNKNOWN})
+
+# Lifecycle / tradability status of the *instrument itself* (independent of the
+# paper venue). ``pre_ipo``/``ipo_pending``/``delisted`` mean the name is
+# research/watch-only and must never produce an order — even if some overlay
+# mislabels ``tradable``. That is the hard guard for SpaceX-style candidates.
+LIFECYCLE_STATES = frozenset(
+    {"active", "pre_ipo", "ipo_pending", "delisted", UNKNOWN}
+)
+_NON_ORDERABLE_LIFECYCLES = frozenset({"pre_ipo", "ipo_pending", "delisted"})
+
+# First-class asset-class taxonomy — the reserve/core/tradable/watch separation
+# the goal asks for. Derived deterministically (see ``_derive_asset_class``); it
+# is never hand-set so it cannot drift from the underlying dimensions.
+#   reserve_stable  : stablecoin liquidity/settlement reserve (USDT/USDC/…)
+#   reserve_core    : strategic core reserve traded long-term (BTC/ETH on venue)
+#   tradable_short  : venue-tradable short/mid-term diversification carrier
+#   research        : not venue-tradable, kept for research/context (equities/ETFs)
+#   watch_only      : pre-IPO/IPO-pending/delisted — watch & research, never order
+#   unknown         : not classifiable from known dimensions
+ASSET_CLASSES = frozenset(
+    {
+        "reserve_stable",
+        "reserve_core",
+        "tradable_short",
+        "research",
+        "watch_only",
+        UNKNOWN,
+    }
+)
 
 # Only tradable/research asset categories belong in the universe. The watchlist
 # also carries persons/topics (for news matching) — those are not assets.
@@ -90,6 +120,47 @@ _MIN_KNOWN_DIMENSIONS = 2
 
 _STABLE_TAGS = frozenset({"stablecoin"})
 
+# Horizon-specific volatility preference. Short/mid-term trading wants *some*
+# volatility (the default table peaks at "medium"); reserve/long-term holdings
+# want the opposite — stability is the point of a reserve. These deterministic
+# tables encode that asymmetry instead of pretending one score fits all horizons.
+_VOLATILITY_VALUE_LONG = {
+    "very_low": 0.8,
+    "low": 0.9,
+    "medium": 0.8,
+    "high": 0.5,
+    "very_high": 0.3,
+}
+_VOLATILITY_VALUE_RESERVE = {
+    "very_low": 1.0,
+    "low": 0.85,
+    "medium": 0.5,
+    "high": 0.25,
+    "very_high": 0.1,
+}
+
+# Per-horizon scoring profiles: (weights, volatility_table). The short-term
+# profile is identical to the legacy ``_SCORE_WEIGHTS``/``_VOLATILITY_VALUE`` so
+# the existing ``score`` (= short-term structural suitability) is unchanged.
+_HORIZON_PROFILES: dict[str, tuple[dict[str, float], dict[str, float]]] = {
+    "short_term": (
+        {"liquidity": 0.30, "risk": 0.25, "volatility": 0.25, "data_quality": 0.20},
+        _VOLATILITY_VALUE,
+    ),
+    "mid_term": (
+        {"liquidity": 0.30, "risk": 0.30, "volatility": 0.20, "data_quality": 0.20},
+        _VOLATILITY_VALUE,
+    ),
+    "long_term": (
+        {"liquidity": 0.25, "risk": 0.35, "volatility": 0.15, "data_quality": 0.25},
+        _VOLATILITY_VALUE_LONG,
+    ),
+    "reserve": (
+        {"liquidity": 0.30, "risk": 0.35, "volatility": 0.15, "data_quality": 0.20},
+        _VOLATILITY_VALUE_RESERVE,
+    ),
+}
+
 
 @dataclass(frozen=True)
 class AssetMeta:
@@ -112,6 +183,10 @@ class AssetMeta:
     is_reserve: bool
     evaluable: bool
     score: float | None
+    focus_field: str = UNKNOWN
+    lifecycle: str = UNKNOWN
+    asset_class: str = UNKNOWN
+    horizon_scores: dict[str, float | None] = field(default_factory=dict)
     score_breakdown: dict[str, float] = field(default_factory=dict)
 
     @property
@@ -123,6 +198,19 @@ class AssetMeta:
     def is_short_term(self) -> bool:
         return self.horizon == "short_term"
 
+    @property
+    def is_watch_only(self) -> bool:
+        """Pre-IPO / IPO-pending / delisted — research/watch, never an order."""
+        return self.lifecycle in _NON_ORDERABLE_LIFECYCLES
+
+    @property
+    def is_orderable(self) -> bool:
+        """Hard gate: a position may only be opened when venue-tradable AND not
+        in a non-orderable lifecycle (pre-IPO/IPO-pending/delisted). This is the
+        belt-and-suspenders guard against fabricated orders in non-tradable names.
+        """
+        return self.is_tradable and not self.is_watch_only
+
     def to_json_dict(self) -> dict[str, object]:
         return {
             "symbol": self.symbol,
@@ -131,17 +219,22 @@ class AssetMeta:
             "horizon": self.horizon,
             "sector": self.sector,
             "narrative": self.narrative,
+            "focus_field": self.focus_field,
+            "lifecycle": self.lifecycle,
+            "asset_class": self.asset_class,
             "risk_tier": self.risk_tier,
             "liquidity_tier": self.liquidity_tier,
             "volatility_tier": self.volatility_tier,
             "data_quality": self.data_quality,
             "tradable": self.tradable,
+            "is_orderable": self.is_orderable,
             "correlation_group": self.correlation_group,
             "tags": list(self.tags),
             "is_stablecoin": self.is_stablecoin,
             "is_reserve": self.is_reserve,
             "evaluable": self.evaluable,
             "score": self.score,
+            "horizon_scores": dict(self.horizon_scores),
             "score_breakdown": dict(self.score_breakdown),
         }
 
@@ -251,6 +344,77 @@ def _compute_score(
     score = sum(contributions[dim] * weights[dim] for dim in contributions) / total_weight
     breakdown = {dim: round(contributions[dim], 4) for dim in contributions}
     return True, round(score, 4), breakdown
+
+
+def _compute_horizon_scores(
+    *,
+    liquidity_tier: str,
+    risk_tier: str,
+    volatility_tier: str,
+    data_quality: str,
+) -> dict[str, float | None]:
+    """Separate structural suitability per horizon (short/mid/long/reserve).
+
+    Each horizon uses its own weight profile and volatility table (reserve and
+    long-term reward stability, short/mid reward tradeable volatility). Honesty
+    is preserved per horizon: a horizon whose known dimensions fall below
+    ``_MIN_KNOWN_DIMENSIONS`` yields ``None`` — never an invented number.
+    """
+    scores: dict[str, float | None] = {}
+    for horizon, (weights, vol_table) in _HORIZON_PROFILES.items():
+        lookups = {
+            "liquidity": (liquidity_tier, _LIQUIDITY_VALUE),
+            "risk": (risk_tier, _RISK_VALUE),
+            "volatility": (volatility_tier, vol_table),
+            "data_quality": (data_quality, _DATA_QUALITY_VALUE),
+        }
+        contributions: dict[str, float] = {}
+        active_weights: dict[str, float] = {}
+        for dim, (tier, table) in lookups.items():
+            if tier in table:
+                contributions[dim] = table[tier]
+                active_weights[dim] = weights[dim]
+        total_weight = sum(active_weights.values())
+        if len(contributions) < _MIN_KNOWN_DIMENSIONS or total_weight <= 0:
+            scores[horizon] = None
+            continue
+        value = (
+            sum(contributions[dim] * active_weights[dim] for dim in contributions) / total_weight
+        )
+        scores[horizon] = round(value, 4)
+    return scores
+
+
+def _derive_asset_class(
+    *,
+    is_stablecoin: bool,
+    is_tradable: bool,
+    lifecycle: str,
+    horizon: str,
+) -> str:
+    """Deterministic reserve/core/tradable/research/watch classification.
+
+    Precedence is intentional:
+      1. non-orderable lifecycle (pre-IPO/IPO-pending/delisted) → ``watch_only``
+         — wins over everything so a watch candidate can never be miscategorised
+         as tradable.
+      2. stablecoin → ``reserve_stable`` (liquidity/settlement reserve).
+      3. venue-tradable long-term-reserve asset → ``reserve_core`` (BTC/ETH).
+      4. venue-tradable short/mid-term → ``tradable_short``.
+      5. not venue-tradable (equities/ETFs research context) → ``research``.
+      6. otherwise → ``unknown`` (e.g. tradability unknown, no horizon).
+    """
+    if lifecycle in _NON_ORDERABLE_LIFECYCLES:
+        return "watch_only"
+    if is_stablecoin:
+        return "reserve_stable"
+    if is_tradable and horizon == "long_term_reserve":
+        return "reserve_core"
+    if is_tradable and horizon in {"short_term", "mid_term"}:
+        return "tradable_short"
+    if not is_tradable and horizon != UNKNOWN:
+        return "research"
+    return UNKNOWN
 
 
 class AssetUniverse:
@@ -421,15 +585,38 @@ def _build_meta(
     tradable = _norm_tradable(
         _merged_field("tradable", overlay_entry=overlay_entry, defaults=defaults)
     )
+    lifecycle = _norm(
+        _merged_field("lifecycle", overlay_entry=overlay_entry, defaults=defaults),
+        allowed=LIFECYCLE_STATES,
+    )
 
     is_stablecoin = sector == "stablecoin" or bool(_STABLE_TAGS.intersection(entry.tags))
     is_reserve = horizon == "long_term_reserve"
+
+    focus_field = classify_focus_field(
+        explicit=_merged_field("focus_field", overlay_entry=overlay_entry, defaults=defaults),
+        sector=sector,
+        narrative=narrative,
+        tags=tuple(entry.tags),
+    )
 
     evaluable, score, breakdown = _compute_score(
         liquidity_tier=liquidity_tier,
         risk_tier=risk_tier,
         volatility_tier=volatility_tier,
         data_quality=data_quality,
+    )
+    horizon_scores = _compute_horizon_scores(
+        liquidity_tier=liquidity_tier,
+        risk_tier=risk_tier,
+        volatility_tier=volatility_tier,
+        data_quality=data_quality,
+    )
+    asset_class = _derive_asset_class(
+        is_stablecoin=is_stablecoin,
+        is_tradable=(tradable == "true"),
+        lifecycle=lifecycle,
+        horizon=horizon,
     )
 
     return AssetMeta(
@@ -450,6 +637,10 @@ def _build_meta(
         is_reserve=is_reserve,
         evaluable=evaluable,
         score=score,
+        focus_field=focus_field,
+        lifecycle=lifecycle,
+        asset_class=asset_class,
+        horizon_scores=horizon_scores,
         score_breakdown=breakdown,
     )
 

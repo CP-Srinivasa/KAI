@@ -179,3 +179,116 @@ def test_default_universe_loads_real_config() -> None:
     pool = u.tradable_short_term()
     assert len(pool) >= 4
     assert "BTC" not in {m.symbol for m in pool}  # majors are reserve, not the pool
+
+
+# ── Asset-class / lifecycle / focus-field / multi-horizon scoring ─────────────
+
+CLASSIFY_OVERLAY = """
+version: 1
+defaults:
+  horizon: unknown
+  tradable: unknown
+assets:
+  BTC:           # tradable + long_term_reserve -> reserve_core
+    horizon: long_term_reserve
+    sector: store_of_value
+    risk_tier: medium
+    liquidity_tier: very_high
+    volatility_tier: medium
+    data_quality: high
+    tradable: true
+  USDT:          # stablecoin -> reserve_stable
+    horizon: long_term_reserve
+    sector: stablecoin
+    risk_tier: medium
+    liquidity_tier: very_high
+    volatility_tier: very_low
+    data_quality: high
+    tradable: false
+  SOL:           # tradable short_term -> tradable_short
+    horizon: short_term
+    sector: smart_contract_l1
+    risk_tier: high
+    liquidity_tier: high
+    volatility_tier: high
+    data_quality: high
+    tradable: true
+  NVDA:          # listed, not venue-tradable -> research
+    horizon: long_term_reserve
+    sector: semiconductors
+    narrative: ai_compute
+    lifecycle: active
+    risk_tier: medium
+    liquidity_tier: very_high
+    volatility_tier: high
+    data_quality: high
+    tradable: false
+  SPACEX:        # pre_ipo -> watch_only, never orderable, no fabricated tiers
+    horizon: long_term_reserve
+    sector: aerospace
+    focus_field: space
+    lifecycle: pre_ipo
+    tradable: false
+    data_quality: low
+"""
+
+
+@pytest.fixture()
+def cuniverse(tmp_path: Path) -> AssetUniverse:
+    wl = tmp_path / "watchlists.yml"
+    wl.write_text(WATCHLIST_YML, encoding="utf-8")
+    ov = tmp_path / "asset_universe.yaml"
+    ov.write_text(CLASSIFY_OVERLAY, encoding="utf-8")
+    return AssetUniverse.load(watchlist_path=wl, overlay_path=ov)
+
+
+def test_asset_class_derivation(cuniverse: AssetUniverse) -> None:
+    assert cuniverse.get("BTC").asset_class == "reserve_core"
+    assert cuniverse.get("USDT").asset_class == "reserve_stable"
+    assert cuniverse.get("SOL").asset_class == "tradable_short"
+    assert cuniverse.get("NVDA").asset_class == "research"
+    assert cuniverse.get("SPACEX").asset_class == "watch_only"
+
+
+def test_watch_only_is_never_orderable(cuniverse: AssetUniverse) -> None:
+    """Hard gate: a pre-IPO name is research/watch only — never an order."""
+    spacex = cuniverse.get("SPACEX")
+    assert spacex is not None
+    assert spacex.lifecycle == "pre_ipo"
+    assert spacex.is_watch_only is True
+    assert spacex.is_orderable is False
+    # And no price/structural data is fabricated for an unlisted instrument.
+    assert all(v is None for v in spacex.horizon_scores.values())
+
+
+def test_orderable_requires_tradable_and_listed(cuniverse: AssetUniverse) -> None:
+    assert cuniverse.get("BTC").is_orderable is True  # tradable + active lifecycle ok
+    assert cuniverse.get("NVDA").is_orderable is False  # listed but tradable=false
+    assert cuniverse.get("USDT").is_orderable is False  # stablecoin, tradable=false
+
+
+def test_focus_field_explicit_and_inferred(cuniverse: AssetUniverse) -> None:
+    assert cuniverse.get("SPACEX").focus_field == "space"  # explicit
+    assert cuniverse.get("NVDA").focus_field == "ai"  # inferred from ai_compute
+    assert cuniverse.get("BTC").focus_field == "blockchain"  # inferred from store_of_value
+
+
+def test_horizon_scores_reward_stability_for_reserve(cuniverse: AssetUniverse) -> None:
+    """A very-low-vol stablecoin scores higher for reserve than for short-term;
+    a high-vol alt scores higher for short-term than for reserve."""
+    usdt = cuniverse.get("USDT")
+    assert usdt.horizon_scores["reserve"] > usdt.horizon_scores["short_term"]
+    sol = cuniverse.get("SOL")
+    assert sol.horizon_scores["short_term"] > sol.horizon_scores["reserve"]
+
+
+def test_horizon_scores_unknown_when_not_evaluable(cuniverse: AssetUniverse) -> None:
+    """ZZZ has no tiers → every horizon score is None, never invented."""
+    zzz = cuniverse.get("ZZZ")
+    assert zzz is not None
+    assert zzz.horizon_scores == {
+        "short_term": None,
+        "mid_term": None,
+        "long_term": None,
+        "reserve": None,
+    }
