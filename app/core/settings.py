@@ -617,6 +617,47 @@ class DiversificationSettings(BaseSettings):
         return "shadow"
 
 
+class KytSettings(BaseSettings):
+    """KYT (Know Your Transaction) transaction-risk prevention configuration.
+
+    Default-off, shadow-first — mirrors the diversification/Bayes rollout
+    discipline so the execution path is unchanged until the operator opts in.
+
+      - ``enabled=False`` (default): no gate is consulted anywhere; the trading
+        loop behaves exactly as before. Read-only API/CLI surfaces still work.
+      - ``enabled=True`` + ``shadow_only=True``: every transaction is assessed +
+        audited + alerted, but never blocked — pure observation.
+      - ``enabled=True`` + ``shadow_only=False``: enforce mode — a hold/block/
+        manual_review decision refuses execution.
+
+    ``provider`` selects the screening backend: ``local_lists`` (operator-curated
+    rule lists, no network) or ``null`` (no external intelligence → unknown).
+    External blockchain-analytics providers plug in behind the same Protocol.
+    ``fail_mode=conservative`` makes provider failure HOLD un-screenable
+    address/counterparty transactions and WARN exchange orders.
+    """
+
+    model_config = SettingsConfigDict(
+        env_prefix="APP_KYT_",
+        env_file=".env",
+        extra="ignore",
+    )
+
+    enabled: bool = Field(default=False)
+    shadow_only: bool = Field(default=True)
+    behavioral_enabled: bool = Field(default=True)
+    provider: str = Field(default="local_lists")
+    fail_mode: str = Field(default="conservative")
+    retention_days: int = Field(default=180, ge=1)
+
+    @property
+    def mode(self) -> str:
+        """Effective gate mode: 'enforce' only when enabled and not shadow-only."""
+        if self.enabled and not self.shadow_only:
+            return "enforce"
+        return "shadow"
+
+
 class AppSettings(BaseSettings):
     model_config = SettingsConfigDict(
         env_prefix="APP_",
@@ -764,6 +805,8 @@ class AppSettings(BaseSettings):
     learning: LearningSettings = Field(default_factory=LearningSettings)
     # Asset-diversification / concentration guard. Default-off, shadow-first.
     diversification: DiversificationSettings = Field(default_factory=DiversificationSettings)
+    # KYT transaction-risk prevention. Default-off, shadow-first.
+    kyt: KytSettings = Field(default_factory=KytSettings)
     # D-191 re-entry capability gate. Default disabled — see ReEntryModeProfile.
     re_entry_mode: ReEntryModeProfile = Field(default_factory=ReEntryModeProfile)
 
