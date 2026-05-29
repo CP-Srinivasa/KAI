@@ -28,6 +28,23 @@ def _pin_feature_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture(autouse=True)
+def _reset_settings_cache() -> None:
+    """Clear the get_settings() lru_cache around every test (settings-cache fix).
+
+    get_settings() is now process-cached (@lru_cache). Tests monkeypatch env per
+    case (see _pin_feature_defaults + the `client` fixture); without clearing the
+    cache the first cached AppSettings would leak across the whole session and
+    ignore those per-test env overrides. Clear before AND after each test so each
+    case resolves its own environment on the first get_settings() call.
+    """
+    from app.core.settings import get_settings
+
+    get_settings.cache_clear()
+    yield
+    get_settings.cache_clear()
+
+
+@pytest.fixture(autouse=True)
 def _reset_paper_engine_singleton() -> None:
     """Drop the PaperExecutionEngine singleton between tests (P1 #7).
 
