@@ -107,3 +107,44 @@ def test_fetch_full_text_fail_open_on_none() -> None:
 class _FakeConfig:
     def set(self, *args: object) -> None:
         pass
+
+
+# --- quick-win follow-up (#104): tighter defaults + extraction concurrency cap ---
+
+
+def test_quickwin_tighter_defaults() -> None:
+    # Regression-lock the bounded defaults: a single feed's extraction is capped
+    # at ~3 fetches × 4s, and cross-feed extraction is serialised (1).
+    assert rss_adapter._FULL_TEXT_TIMEOUT_S == 4
+    assert rss_adapter._FULL_TEXT_MAX_PER_FETCH == 3
+    assert rss_adapter._FULL_TEXT_CONCURRENCY == 1
+
+
+@pytest.mark.asyncio
+async def test_extraction_serialized_by_semaphore(monkeypatch: pytest.MonkeyPatch) -> None:
+    import asyncio
+    import threading
+    import time
+
+    monkeypatch.setattr(rss_adapter, "_EXTRACTION_SEM", asyncio.Semaphore(1))
+    state = {"concurrent": 0, "max": 0}
+    lock = threading.Lock()
+
+    def slow_build(self, entries, fetched_at):  # noqa: ANN001
+        with lock:
+            state["concurrent"] += 1
+            state["max"] = max(state["max"], state["concurrent"])
+        time.sleep(0.1)
+        with lock:
+            state["concurrent"] -= 1
+        return []
+
+    monkeypatch.setattr(RSSFeedAdapter, "_build_documents", slow_build)
+    a1, a2 = _make_adapter(), _make_adapter()
+    with (
+        patch.object(a1, "_fetch_raw", new=AsyncMock(return_value=_empty_body_feed(1))),
+        patch.object(a2, "_fetch_raw", new=AsyncMock(return_value=_empty_body_feed(1))),
+    ):
+        await asyncio.gather(a1.fetch(), a2.fetch())
+    # semaphore(1) → extraction never overlaps across the two concurrent feeds.
+    assert state["max"] == 1

@@ -54,8 +54,18 @@ def _int_env(name: str, default: int) -> int:
 #   - per-fetch budget (max fallback fetches per feed tick)
 # In addition fetch() runs the whole sync doc-conversion off the loop via
 # asyncio.to_thread, so even the bounded work never blocks request handling.
-_FULL_TEXT_TIMEOUT_S = _int_env("RSS_FULLTEXT_TIMEOUT_S", 8)
-_FULL_TEXT_MAX_PER_FETCH = _int_env("RSS_FULLTEXT_MAX_PER_FETCH", 10)
+# Quick-win follow-up to #104 (2026-05-29): the off-loop fix made the wedge
+# non-terminal, but a multi-feed tick still slowed /health for ~2min because the
+# shared thread-pool extraction contends for the GIL. Tighter defaults bound a
+# single feed's extraction to ~3×4s, and the semaphore serialises extraction
+# across feeds (default 1) so concurrent feeds can no longer pile up GIL
+# contention. All env-tunable.
+_FULL_TEXT_TIMEOUT_S = _int_env("RSS_FULLTEXT_TIMEOUT_S", 4)
+_FULL_TEXT_MAX_PER_FETCH = _int_env("RSS_FULLTEXT_MAX_PER_FETCH", 3)
+_FULL_TEXT_CONCURRENCY = _int_env("RSS_FULLTEXT_CONCURRENCY", 1)
+# Bounds concurrent off-loop extraction across feeds. Created at import; binds
+# to the running loop on first use (Python 3.10+).
+_EXTRACTION_SEM = asyncio.Semaphore(_FULL_TEXT_CONCURRENCY)
 
 
 class RSSFeedAdapter(BaseSourceAdapter):
@@ -80,7 +90,8 @@ class RSSFeedAdapter(BaseSourceAdapter):
             # synchronous fetch_url/extract for empty-body entries. Offload the
             # whole batch to a worker thread so it cannot block the event loop
             # (2026-05-29 incident: a 403/slow-article batch starved kai-server).
-            documents = await asyncio.to_thread(self._build_documents, feed.entries, fetched_at)
+            async with _EXTRACTION_SEM:
+                documents = await asyncio.to_thread(self._build_documents, feed.entries, fetched_at)
             return FetchResult(
                 source_id=self.source_id,
                 documents=documents,
