@@ -2,10 +2,8 @@
 
 ## Scope
 
-Canonical operator runbook for the **TradingView-Pivot period** (PHASE 5 suspended until 2026-05-16, D-125).
-Primary goals: (a) keep pipeline + TV ingestion + paper-bridge alive 24/7, (b) approve operator signals via Telegram, (c) accumulate directional evidence for Re-Entry gate, (d) prepare Pi-migration for 2026-05-01.
-
-**Re-Entry criterion** (2026-05-16): ≥200 resolved directional alerts OR ≥10 paper fills with PnL — **data-side already met** (305 resolved, 54 fills). Calendar half is the only remaining block.
+Canonical operator runbook for the **Re-entry + Stabilisierung** period (post-PHASE-5-suspension; the TradingView-Pivot suspension D-125 was lifted at the 2026-05-07 Pi-5 cutover).
+Primary goals: (a) keep pipeline + TV ingestion + paper-bridge alive 24/7 on the Pi 5 (`ubuntu@192.168.178.23`, source of truth), (b) approve operator signals via Telegram, (c) operate the diversification/asset-reserve layer (D-226/D-228) in paper, (d) keep live execution OFF until the live gates are explicitly opened.
 
 ## 1. Baseline Check
 
