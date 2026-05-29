@@ -313,6 +313,7 @@ class DiversificationGuard:
             "asset": self._limits.max_single_asset_pct,
             "sector": self._limits.max_sector_pct,
             "narrative": self._limits.max_narrative_pct,
+            "focus_field": self._limits.max_focus_field_pct,
             "correlation_group": self._limits.max_correlation_group_pct,
             "exchange": self._limits.max_exchange_pct,
             "stablecoin_quote": self._limits.max_stablecoin_quote_pct,
@@ -388,6 +389,7 @@ class DiversificationGuard:
             ("asset", cand_base, self._limits.max_single_asset_pct),
             ("sector", meta.sector, self._limits.max_sector_pct),
             ("narrative", meta.narrative, self._limits.max_narrative_pct),
+            ("focus_field", meta.focus_field, self._limits.max_focus_field_pct),
             ("correlation_group", meta.correlation_group, self._limits.max_correlation_group_pct),
         ]
         proj_single = None
@@ -500,6 +502,8 @@ class DiversificationGuard:
                 continue
             if ("sector", m.sector) in over_keys:
                 continue
+            if ("focus_field", m.focus_field) in over_keys:
+                continue  # don't propose into an already-breached focus field
             same_cluster = m.correlation_group == cand_corr and cand_corr != UNKNOWN
             reason = (
                 "diversifies away from breached cluster"

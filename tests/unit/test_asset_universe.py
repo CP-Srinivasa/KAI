@@ -156,6 +156,8 @@ def test_tradable_short_term_pool(universe: AssetUniverse) -> None:
 def test_limits_loaded_from_overlay(universe: AssetUniverse) -> None:
     assert universe.limits.max_single_asset_pct == 20.0
     assert universe.limits.max_btc_eth_short_term_pct == 35.0
+    # S3: focus-field cap defaults to permissive 100.0 when overlay omits it.
+    assert universe.limits.max_focus_field_pct == 100.0
 
 
 def test_missing_files_degrade_gracefully(tmp_path: Path) -> None:

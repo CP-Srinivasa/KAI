@@ -248,6 +248,12 @@ class UniverseLimits:
     max_correlation_group_pct: float = 50.0
     max_exchange_pct: float = 100.0
     max_stablecoin_quote_pct: float = 100.0
+    # Thematic focus-field cap (S3). Default 100.0 = permissive/observational: the
+    # focus_field cluster is reported but never breaches until the operator picks a
+    # real value in the overlay `limits` after observing the shadow distribution.
+    # A focus_field breach is advisory ("limit" action, never a hard block) — like
+    # sector/narrative; only single-asset and BTC/ETH dominance hard-reject.
+    max_focus_field_pct: float = 100.0
 
     @classmethod
     def from_mapping(cls, raw: object) -> UniverseLimits:
@@ -262,6 +268,7 @@ class UniverseLimits:
             "max_correlation_group_pct",
             "max_exchange_pct",
             "max_stablecoin_quote_pct",
+            "max_focus_field_pct",
         ):
             value = raw.get(fname)
             if isinstance(value, (int, float)) and value > 0:
