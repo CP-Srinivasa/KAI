@@ -164,6 +164,23 @@ def replay_paper_audit(audit_path: Path) -> AuditReplayResult:
             )
 
         event_type = _coerce_str(payload.get("event_type"))
+        if event_type == "portfolio_correction":
+            # DS-20260529-V1: explicit, auditable book correction. cash_usd and
+            # realized_pnl_usd are reconstructed as the *latest snapshot* from
+            # each fill (see below), so a correction appended after the affected
+            # fills shifts the running totals by an explicit delta. Used once to
+            # back out the MATIC phantom-PnL (+73,459) booked against BitMEX's
+            # delisted-instrument price. A later real fill overwrites the
+            # snapshot with the engine's corrected-forward cumulative, so the
+            # correction is not double-counted. See scripts/apply_phantom_correction.py.
+            realized_delta = _coerce_float(payload.get("realized_pnl_delta_usd"))
+            if realized_delta is not None:
+                realized_pnl_usd += realized_delta
+            cash_delta = _coerce_float(payload.get("cash_delta_usd"))
+            if cash_delta is not None:
+                cash_usd += cash_delta
+            continue
+
         if event_type == "lifecycle_transition":
             transition, error = _coerce_lifecycle_transition(payload, line_number=line_number)
             if transition is not None:
