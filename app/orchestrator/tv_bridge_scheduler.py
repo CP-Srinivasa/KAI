@@ -20,6 +20,7 @@ bucket free of test-payload noise.
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -78,7 +79,14 @@ class TVBridgeScheduler:
         from app.alerts.tv_bridge import persist_tv_events_as_alert_audits
 
         try:
-            counts = persist_tv_events_as_alert_audits(
+            # AUDIT-A1: persist_tv_events_as_alert_audits does a synchronous full
+            # read of two JSONL files + a write. Running it inline in this async
+            # tick would block the FastAPI event loop for the scan duration as
+            # the audit log grows — the same event-loop wedge class that hit RSS
+            # full-text extraction (#104). Offload to a worker thread so HTTP +
+            # Telegram stay responsive while the bridge runs.
+            counts = await asyncio.to_thread(
+                persist_tv_events_as_alert_audits,
                 tv_pending_path=self._artifacts_dir / "tradingview_pending_signals.jsonl",
                 alert_audit_path=self._artifacts_dir / "alert_audit.jsonl",
                 include_smoke=self._include_smoke,
