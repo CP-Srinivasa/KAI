@@ -1,4 +1,5 @@
 from collections.abc import Mapping
+from functools import lru_cache
 from pathlib import Path
 
 from pydantic import AliasChoices, Field, field_validator, model_validator
@@ -1074,5 +1075,20 @@ def validate_runtime_config_payload(payload: Mapping[str, object]) -> dict[str, 
     return _validate_runtime_config_payload(payload)
 
 
+@lru_cache(maxsize=1)
 def get_settings() -> AppSettings:
+    """Process-cached application settings.
+
+    AUDIT follow-up: previously this constructed a fresh ``AppSettings()`` on
+    EVERY call, which re-reads and re-parses the ``.env`` file each time. Callers
+    in hot loops (e.g. the hold-metrics / directional-eligibility path hit by the
+    dashboard quality poll) therefore re-parsed ``.env`` per item and wedged the
+    event loop. Settings are immutable for the process lifetime — env/.env changes
+    take effect on restart (the normal systemd flow) — so caching is correct and
+    eliminates the whole "get_settings() in a loop" performance landmine.
+
+    Tests that mutate the environment per case clear this cache via the autouse
+    ``_reset_settings_cache`` fixture (tests/conftest.py); call
+    ``get_settings.cache_clear()`` explicitly if you change env mid-test.
+    """
     return AppSettings()

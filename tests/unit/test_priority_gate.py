@@ -195,17 +195,27 @@ def test_priority_gate_summary_counts_by_status(tmp_path: Path) -> None:
 def test_priority_gate_summary_reflects_current_threshold(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """threshold field + gate_active mirror the active setting, not a cached value."""
+    """threshold field + gate_active mirror the active (applied) setting.
+
+    get_settings() is process-cached (settings-cache fix), so an EXECUTION_PAPER_
+    MIN_PRIORITY change takes effect once the cache is rebuilt — in production that
+    is the service restart; here we clear the cache to simulate it. The summary
+    must then reflect the new threshold.
+    """
+    from app.core.settings import get_settings
+
     audit = tmp_path / "loop_audit.jsonl"
     audit.parent.mkdir(parents=True, exist_ok=True)
     audit.touch()
 
     monkeypatch.setenv("EXECUTION_PAPER_MIN_PRIORITY", "1")
+    get_settings.cache_clear()
     summary_off = build_priority_gate_summary(audit_path=audit)
     assert summary_off.threshold == 1
     assert summary_off.gate_active is False
 
     monkeypatch.setenv("EXECUTION_PAPER_MIN_PRIORITY", "10")
+    get_settings.cache_clear()  # simulate the restart that applies the env change
     summary_on = build_priority_gate_summary(audit_path=audit)
     assert summary_on.threshold == 10
     assert summary_on.gate_active is True
