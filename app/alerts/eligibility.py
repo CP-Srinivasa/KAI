@@ -583,6 +583,53 @@ class DirectionalEligibilityDecision:
     blocked_assets: list[str] = field(default_factory=list)
 
 
+def resolve_eligible_symbols(affected_assets: list[str]) -> list[str]:
+    """Resolve raw affected-asset labels to supported trading symbols.
+
+    Mirrors the *eligible* branch of the asset-resolution loop in
+    ``evaluate_directional_eligibility`` (naked assets without ``/`` and
+    unresolvable tickers are dropped). Exposed so blocked-alert persistence can
+    record the candidate symbol even when an early gate (not_actionable,
+    low_directional_confidence, bearish_disabled, …) returns *before* the main
+    asset-resolution step. D-148 recall-proxy needs a resolvable symbol to
+    compute the would-have-been outcome; without it ``blocked_assets`` stays
+    empty and the proxy is silently dead (root-cause 2026-05-29).
+    """
+    eligible: list[str] = []
+    seen: set[str] = set()
+    for raw_asset in affected_assets:
+        candidate = raw_asset.strip().upper()
+        if not candidate or "/" not in candidate:
+            continue
+        resolved = _resolve_symbol(candidate)
+        if resolved is None:
+            continue
+        normalized_symbol, _coin_id = resolved
+        if normalized_symbol not in seen:
+            eligible.append(normalized_symbol)
+            seen.add(normalized_symbol)
+    return eligible
+
+
+def _bullish_confidence_threshold() -> float:
+    """Bullish directional-confidence gate, operator-tunable via env.
+
+    Default mirrors ``MIN_DIRECTIONAL_CONFIDENCE_BULLISH`` (0.8) — no behaviour
+    change unless the operator sets ``ALERT_MIN_DIRECTIONAL_CONFIDENCE_BULLISH``
+    in ``.env`` (reversible, no redeploy). Lowering it admits more bullish
+    directional alerts — only justified once the D-148 recall proxy shows
+    acceptable would-have-precision for the 0.7 bucket (DECISION_LOG D-227).
+    Bearish stays hard-pinned at 0.95 (D-122) — not env-tunable by design,
+    its 22% precision does not support loosening.
+    """
+    try:
+        from app.core.settings import get_settings  # lazy to avoid import cycles
+
+        return float(get_settings().alerts.min_directional_confidence_bullish)
+    except Exception:  # noqa: BLE001 — settings unavailable (tests, early-boot)
+        return MIN_DIRECTIONAL_CONFIDENCE_BULLISH
+
+
 def evaluate_directional_eligibility(
     *,
     sentiment_label: str | None,
@@ -726,7 +773,7 @@ def evaluate_directional_eligibility(
     min_confidence = (
         MIN_DIRECTIONAL_CONFIDENCE_BEARISH
         if sentiment == "bearish"
-        else MIN_DIRECTIONAL_CONFIDENCE_BULLISH
+        else _bullish_confidence_threshold()
     )
     if directional_confidence is not None and directional_confidence < min_confidence:
         return DirectionalEligibilityDecision(

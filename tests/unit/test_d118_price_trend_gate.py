@@ -405,3 +405,41 @@ async def test_bearish_blocked_by_eligibility_gate_even_with_aligned_7d(tmp_path
 
     deliveries = await service.process_document(doc, result)
     assert len(deliveries) == 0, "bearish_directional_disabled → blocked by D-146"
+
+
+# ── D-227 (2026-05-29): blocked-alert recall-proxy symbol persistence ────────
+
+
+@pytest.mark.asyncio
+async def test_gate_blocked_alert_persists_resolved_symbol(tmp_path: Path) -> None:
+    """Root-cause fix: a bullish alert blocked by the low_directional_confidence
+    gate must persist its resolved trading symbol to blocked_alerts.jsonl, so
+    the D-148 recall proxy has something to evaluate. Before the fix
+    blocked_assets was empty on every early-gate path and the proxy was dead."""
+    from app.alerts.blocked_audit import load_blocked_alerts
+
+    doc = _make_doc(title="BlackRock deposits 517M in Bitcoin to Coinbase Prime")
+    # 0.7 confidence is below the 0.8 bullish default -> low_directional_confidence
+    result = _make_result(
+        str(doc.id),
+        sentiment_label=SentimentLabel.BULLISH,
+        directional_confidence=0.7,
+        affected_assets=["BTC/USDT"],
+    )
+
+    service = AlertService(
+        channels=[_DryRunChannel()],  # type: ignore[list-item]
+        threshold=ThresholdEngine(min_priority=1),
+        audit_dir=tmp_path,
+    )
+
+    deliveries = await service.process_document(doc, result)
+    assert deliveries == [], "0.7-confidence bullish alert is blocked at the 0.8 gate"
+
+    blocked = load_blocked_alerts(tmp_path)
+    assert len(blocked) == 1
+    record = blocked[0]
+    assert record.block_reason == "low_directional_confidence"
+    assert record.blocked_assets == ["BTC/USDT"], (
+        "recall proxy needs the resolved symbol persisted on gate-block"
+    )

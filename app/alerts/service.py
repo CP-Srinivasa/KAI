@@ -42,6 +42,7 @@ from app.alerts.channels.telegram import TelegramAlertChannel
 from app.alerts.eligibility import (
     check_price_trend_alignment,
     evaluate_directional_eligibility,
+    resolve_eligible_symbols,
 )
 from app.alerts.threshold import ThresholdEngine
 from app.analysis.scoring import compute_priority
@@ -263,11 +264,21 @@ class AlertService:
                 # D-148: Persist blocked directional alerts so their
                 # would-have-been outcomes can be resolved later (recall proxy).
                 try:
+                    # D-148 root-cause fix (2026-05-29): early gates
+                    # (not_actionable, low_directional_confidence,
+                    # bearish_disabled, …) return before asset resolution, so
+                    # ``eligibility.blocked_assets`` is empty and the recall
+                    # proxy has no symbol to evaluate. Fall back to the resolved
+                    # tradeable symbols from the document's affected_assets so
+                    # the would-have-been outcome can actually be computed.
                     blocked_record = BlockedAlertRecord(
                         document_id=str(doc.id),
                         block_reason=eligibility.directional_block_reason or "unknown",
                         sentiment_label=message.sentiment_label,
-                        blocked_assets=list(eligibility.blocked_assets),
+                        blocked_assets=(
+                            list(eligibility.blocked_assets)
+                            or resolve_eligible_symbols(list(message.affected_assets))
+                        ),
                         priority=message.priority,
                         actionable=message.actionable,
                         title_hash=title_hash(message.title),

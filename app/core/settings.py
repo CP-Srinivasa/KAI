@@ -63,6 +63,12 @@ class AlertSettings(BaseSettings):
     dry_run: bool = Field(default=True)
     # Minimum priority score (1–10) required to trigger an alert.
     min_priority: int = Field(default=7)
+    # D-227: Operator-tunable bullish directional-confidence gate
+    # (app/alerts/eligibility.py). Default 0.8 = unchanged behaviour. Lower it
+    # (env ``ALERT_MIN_DIRECTIONAL_CONFIDENCE_BULLISH``) only once the D-148
+    # blocked-alert recall proxy shows acceptable would-have-precision for the
+    # 0.7 bucket. Bearish stays hard-pinned at 0.95 (D-122), not exposed here.
+    min_directional_confidence_bullish: float = Field(default=0.8, ge=0.0, le=1.0)
     # Digest mode: accumulate alerts and send as a batch instead of individually.
     digest_enabled: bool = Field(default=False)
     digest_interval_minutes: int = Field(default=60)
