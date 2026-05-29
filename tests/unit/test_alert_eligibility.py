@@ -1002,7 +1002,9 @@ def test_confidence_gate_still_enforced_when_supplied(monkeypatch: pytest.Monkey
     assert decision.directional_block_reason == elig.BLOCK_REASON_LOW_DIRECTIONAL_CONFIDENCE
 
 
-def test_min_bullish_confidence_param_overrides_lazy_resolve(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_min_bullish_confidence_param_overrides_lazy_resolve(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """A loop caller can pass the pre-resolved threshold; the lazy resolver must
     then NOT be called (avoids per-iteration get_settings())."""
     import app.alerts.eligibility as elig
