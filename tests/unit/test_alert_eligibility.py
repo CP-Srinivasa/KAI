@@ -958,3 +958,67 @@ def test_bullish_confidence_gate_honours_env_override(monkeypatch: pytest.Monkey
     )
     assert decision.directional_eligible is True
     assert decision.directional_block_reason is None
+
+
+# --- AUDIT-hotfix: event-loop wedge via per-alert get_settings() re-parse ---
+
+
+def test_no_settings_reparse_when_confidence_absent(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The bullish threshold (which calls the UNCACHED get_settings() → .env
+    re-parse) must NOT be resolved when no directional_confidence is supplied —
+    that per-alert re-parse wedged the event loop under the dashboard poll."""
+    import app.alerts.eligibility as elig
+
+    calls = {"n": 0}
+
+    def _spy() -> float:
+        calls["n"] += 1
+        return 0.8
+
+    monkeypatch.setattr(elig, "_bullish_confidence_threshold", _spy)
+    # hold-metrics style call: bullish, supported asset, NO directional_confidence
+    elig.evaluate_directional_eligibility(
+        sentiment_label="bullish",
+        affected_assets=["BTC/USDT"],
+        sentiment_score=0.9,
+        impact_score=0.9,
+        directional_confidence=None,
+    )
+    assert calls["n"] == 0  # threshold never resolved → no .env re-parse
+
+
+def test_confidence_gate_still_enforced_when_supplied(monkeypatch: pytest.MonkeyPatch) -> None:
+    import app.alerts.eligibility as elig
+
+    monkeypatch.setattr(elig, "_bullish_confidence_threshold", lambda: 0.8)
+    decision = elig.evaluate_directional_eligibility(
+        sentiment_label="bullish",
+        affected_assets=["BTC/USDT"],
+        sentiment_score=0.9,
+        impact_score=0.9,
+        directional_confidence=0.5,  # below 0.8 → blocked
+    )
+    assert decision.directional_eligible is False
+    assert decision.directional_block_reason == elig.BLOCK_REASON_LOW_DIRECTIONAL_CONFIDENCE
+
+
+def test_min_bullish_confidence_param_overrides_lazy_resolve(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A loop caller can pass the pre-resolved threshold; the lazy resolver must
+    then NOT be called (avoids per-iteration get_settings())."""
+    import app.alerts.eligibility as elig
+
+    calls = {"n": 0}
+    monkeypatch.setattr(
+        elig, "_bullish_confidence_threshold", lambda: calls.__setitem__("n", calls["n"] + 1)
+    )
+    decision = elig.evaluate_directional_eligibility(
+        sentiment_label="bullish",
+        affected_assets=["BTC/USDT"],
+        sentiment_score=0.9,
+        impact_score=0.9,
+        directional_confidence=0.6,
+        min_bullish_confidence=0.9,  # 0.6 < 0.9 → blocked, lazy resolver untouched
+    )
+    assert decision.directional_eligible is False
+    assert decision.directional_block_reason == elig.BLOCK_REASON_LOW_DIRECTIONAL_CONFIDENCE
+    assert calls["n"] == 0
