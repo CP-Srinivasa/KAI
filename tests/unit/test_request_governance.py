@@ -158,7 +158,7 @@ def test_chunked_oversized_rejected_without_content_length(tmp_path: Path) -> No
     still reject it — the Content-Length fast path alone would let it through."""
     c = _app_with_body_cap(tmp_path, max_bytes=100)
 
-    def _gen() -> "object":
+    def _gen():
         for _ in range(10):
             yield b"x" * 50  # 500 bytes total, sent chunked → no Content-Length
 

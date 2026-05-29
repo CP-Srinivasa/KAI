@@ -154,7 +154,7 @@ class RequestGovernanceMiddleware(BaseHTTPMiddleware):
             async def _replay_receive() -> dict[str, Any]:
                 return {"type": "http.request", "body": body, "more_body": False}
 
-            request._receive = _replay_receive  # type: ignore[attr-defined]
+            request._receive = _replay_receive
 
         start = time.monotonic()
         response = await call_next(request)
@@ -195,8 +195,7 @@ class RequestGovernanceMiddleware(BaseHTTPMiddleware):
                 "error": {
                     "code": "request_body_too_large",
                     "message": (
-                        f"Request body exceeds maximum allowed size "
-                        f"({self._max_body_bytes} bytes)"
+                        f"Request body exceeds maximum allowed size ({self._max_body_bytes} bytes)"
                     ),
                     "request_id": request_id,
                 },
