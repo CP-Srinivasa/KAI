@@ -116,3 +116,47 @@ def test_overview_empty_portfolio_does_not_crash() -> None:
     assert ov["concentration"]["evaluable"] is False
     # candidates still computed from the universe even with an empty book
     assert ov["candidates"]
+
+
+def test_overview_includes_universe_summary() -> None:
+    snap = _snapshot((_pos("BTC/USDT", 0.1, 60000, source="cron"),))
+    ov = build_diversification_overview_from_snapshot(snap)
+    summary = ov["universe_summary"]
+    # Reserve separation: BTC/ETH are core reserve, USDT/USDC stablecoin reserve.
+    assert "BTC" in summary["reserve"]["core"]
+    assert "ETH" in summary["reserve"]["core"]
+    assert "USDT" in summary["reserve"]["stablecoin"]
+    # Focus fields populated from the shipped overlay.
+    assert summary["focus_field_breakdown"].get("blockchain", 0) > 0
+    assert "ai" in summary["focus_field_breakdown"]
+    # Watchlist carries a watch-only (pre-IPO) name that is never orderable.
+    watch_only = [r for r in summary["watchlist"] if r["asset_class"] == "watch_only"]
+    assert watch_only
+    assert all(r["is_orderable"] is False for r in watch_only)
+    # Stablecoin reserve risk is surfaced with the curated dimensions.
+    assert summary["stablecoin_reserve_risk"]
+    assert all("depeg_risk" in s for s in summary["stablecoin_reserve_risk"])
+
+
+def test_asset_distribution_carries_focus_and_class() -> None:
+    snap = _snapshot((_pos("SOL/USDT", 5, 150, source="premium_telegram"),))
+    ov = build_diversification_overview_from_snapshot(snap)
+    sol_row = next(r for r in ov["asset_distribution"] if r["base"] == "SOL")
+    assert sol_row["focus_field"] == "blockchain"
+    assert sol_row["asset_class"] == "tradable_short"
+
+
+def test_focus_field_cluster_is_observational_only() -> None:
+    """focus_field buckets appear but never breach (no cap → enforce unchanged)."""
+    snap = _snapshot(
+        (
+            _pos("SOL/USDT", 100, 150, source="cron"),
+            _pos("ADA/USDT", 100, 1, source="cron"),
+        )
+    )
+    ov = build_diversification_overview_from_snapshot(snap)
+    buckets = ov["concentration"]["buckets"]
+    focus_buckets = [b for b in buckets if b["dimension"] == "focus_field"]
+    assert focus_buckets  # present
+    assert all(b["over_limit"] is False for b in focus_buckets)  # observational
+    assert all(b["limit_pct"] is None for b in focus_buckets)

@@ -25,6 +25,10 @@ from app.trading.diversification import (
     classify_position_horizon,
     exposures_from_snapshot,
 )
+from app.trading.stablecoin_risk import (
+    StablecoinRiskRegistry,
+    get_stablecoin_risk_registry,
+)
 
 
 @dataclass(frozen=True)
@@ -38,6 +42,8 @@ class _AssetRow:
     position_horizon: str
     sector: str
     narrative: str
+    focus_field: str
+    asset_class: str
     correlation_group: str
     risk_tier: str
     liquidity_tier: str
@@ -56,6 +62,8 @@ class _AssetRow:
             "position_horizon": self.position_horizon,
             "sector": self.sector,
             "narrative": self.narrative,
+            "focus_field": self.focus_field,
+            "asset_class": self.asset_class,
             "correlation_group": self.correlation_group,
             "risk_tier": self.risk_tier,
             "liquidity_tier": self.liquidity_tier,
@@ -91,6 +99,8 @@ def _asset_rows(
                 ),
                 sector=meta.sector,
                 narrative=meta.narrative,
+                focus_field=meta.focus_field,
+                asset_class=meta.asset_class,
                 correlation_group=meta.correlation_group,
                 risk_tier=meta.risk_tier,
                 liquidity_tier=meta.liquidity_tier,
@@ -122,6 +132,67 @@ def _by_source(exposures: list[PositionExposure]) -> list[dict[str, object]]:
     ]
     out.sort(key=lambda d: float(d["exposure_usd"] or 0.0), reverse=True)  # type: ignore[arg-type]
     return out
+
+
+def build_universe_summary(
+    universe: AssetUniverse,
+    *,
+    stablecoin_registry: StablecoinRiskRegistry | None = None,
+) -> dict[str, object]:
+    """Universe-level overview: focus fields, asset classes, reserve sleeve,
+    watch-only research list and stablecoin reserve risk.
+
+    Answers the operator's reporting asks independent of the current book:
+    asset universe, focus fields, watchlist, reserve holdings, stablecoin
+    liquidity/risk and the BTC/ETH core-reserve separation. Read-only.
+    """
+    registry = stablecoin_registry or get_stablecoin_risk_registry()
+    assets = universe.all()
+
+    by_class: dict[str, int] = defaultdict(int)
+    by_focus: dict[str, int] = defaultdict(int)
+    for m in assets:
+        by_class[m.asset_class] += 1
+        by_focus[m.focus_field] += 1
+
+    reserve_core = sorted(m.symbol for m in assets if m.asset_class == "reserve_core")
+    reserve_stable = sorted(m.symbol for m in assets if m.asset_class == "reserve_stable")
+
+    # Watchlist = research + watch-only (everything that is NOT venue-orderable
+    # but is curated context). watch_only (pre-IPO/etc.) is flagged distinctly.
+    watchlist = [
+        {
+            "symbol": m.symbol,
+            "name": m.name,
+            "asset_class": m.asset_class,
+            "focus_field": m.focus_field,
+            "lifecycle": m.lifecycle,
+            "category": m.category,
+            "is_orderable": m.is_orderable,
+        }
+        for m in assets
+        if m.asset_class in {"watch_only", "research"}
+    ]
+    watchlist.sort(key=lambda r: (r["asset_class"], str(r["focus_field"]), str(r["symbol"])))
+
+    stablecoin_reserve = [
+        registry.assess(m.symbol).to_json_dict()
+        for m in assets
+        if m.asset_class == "reserve_stable"
+    ]
+
+    return {
+        "universe_size": len(assets),
+        "asset_class_breakdown": dict(sorted(by_class.items())),
+        "focus_field_breakdown": dict(sorted(by_focus.items())),
+        "reserve": {
+            "core": reserve_core,  # BTC/ETH strategic core reserve
+            "stablecoin": reserve_stable,
+        },
+        "watchlist": watchlist,
+        "watch_only_count": sum(1 for r in watchlist if r["asset_class"] == "watch_only"),
+        "stablecoin_reserve_risk": stablecoin_reserve,
+    }
 
 
 def build_diversification_overview_from_snapshot(
@@ -163,6 +234,7 @@ def build_diversification_overview_from_snapshot(
         "candidates": [c.to_json_dict() for c in candidates],
         "cluster_warnings": list(report.warnings),
         "universe_size": len(uni.all()),
+        "universe_summary": build_universe_summary(uni),
     }
 
 
@@ -188,4 +260,5 @@ async def build_diversification_overview(
 __all__ = [
     "build_diversification_overview",
     "build_diversification_overview_from_snapshot",
+    "build_universe_summary",
 ]

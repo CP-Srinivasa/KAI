@@ -86,7 +86,10 @@ class PositionExposure:
 
 @dataclass(frozen=True)
 class ConcentrationBucket:
-    # dimension ∈ asset|sector|narrative|correlation_group|horizon|exchange|stablecoin_quote
+    # dimension ∈ asset | sector | narrative | focus_field | asset_class |
+    #             correlation_group | horizon | exchange | stablecoin_quote
+    # focus_field / asset_class are observational (no cap → never over_limit);
+    # they surface thematic/class clustering without changing enforce behaviour.
     dimension: str
     key: str
     exposure_usd: float
@@ -257,6 +260,8 @@ class DiversificationGuard:
             short_exposure[f"asset::{asset_key}"] += exp
             short_exposure[f"sector::{meta.sector}"] += exp
             short_exposure[f"narrative::{meta.narrative}"] += exp
+            short_exposure[f"focus_field::{meta.focus_field}"] += exp
+            short_exposure[f"asset_class::{meta.asset_class}"] += exp
             short_exposure[f"correlation_group::{meta.correlation_group}"] += exp
             short_exposure[f"stablecoin_quote::{_quote_currency(p.symbol)}"] += exp
             short_exposure[f"exchange::{(p.source or 'paper').strip().lower() or 'paper'}"] += exp
