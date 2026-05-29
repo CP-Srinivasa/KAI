@@ -117,7 +117,7 @@ def load_kyt_rules(path: Path | None = None) -> KytRules:
     if not target.exists():
         return base
     try:
-        import yaml  # type: ignore[import-untyped]
+        import yaml
 
         raw = yaml.safe_load(target.read_text(encoding="utf-8")) or {}
     except Exception as exc:  # noqa: BLE001 — config must never crash KYT
