@@ -26,6 +26,7 @@ from app.audit.stream_validation import (
     load_audit_stream,
     summarize_audit_stream_result,
 )
+from app.execution.phantom_filter import is_phantom_close
 
 logger = logging.getLogger(__name__)
 
@@ -329,21 +330,27 @@ async def dashboard_quality_api() -> JSONResponse:
     # trade_pnl_usd (siehe paper_engine.py:842). Vorher wurden sie ignoriert,
     # was zu einer systematischen PnL-Untererfassung führte (Codex-Beleg: Pi
     # hatte 24 partials vs 15 fulls; Quality-Endpoint zeigte $759 statt $2486).
-    closes = [
-        r
-        for r in exec_rows
-        if r.get("event_type") in ("position_closed", "position_partial_closed")
-    ]
-    realized_pnl_usd = round(
-        sum(
-            float(r.get("trade_pnl_usd", 0.0))
-            if r.get("schema_version") == "v2"
-            else (float(r.get("exit_price", 0.0)) - float(r.get("entry_price", 0.0)))
-            * float(r.get("quantity", 0.0))
-            for r in closes
-        ),
-        2,
-    )
+    # DS-20260529-V1: exclude phantom closes (price-source disagreement, e.g.
+    # BitMEX's delisted MATIC @0.40875) so the quality card shows real PnL.
+    closes: list[dict[str, Any]] = []
+    quarantined_closes_list: list[dict[str, Any]] = []
+    for r in exec_rows:
+        if r.get("event_type") not in ("position_closed", "position_partial_closed"):
+            continue
+        if is_phantom_close(r.get("entry_price"), r.get("exit_price"), r.get("position_side")):
+            quarantined_closes_list.append(r)
+        else:
+            closes.append(r)
+
+    def _close_pnl(r: dict[str, Any]) -> float:
+        if r.get("schema_version") == "v2":
+            return float(r.get("trade_pnl_usd", 0.0))
+        return (float(r.get("exit_price", 0.0)) - float(r.get("entry_price", 0.0))) * float(
+            r.get("quantity", 0.0)
+        )
+
+    realized_pnl_usd = round(sum(_close_pnl(r) for r in closes), 2)
+    quarantined_pnl_usd = round(sum(_close_pnl(r) for r in quarantined_closes_list), 2)
     positions_closed = sum(1 for r in closes if r.get("event_type") == "position_closed")
     positions_partial_closed = sum(
         1 for r in closes if r.get("event_type") == "position_partial_closed"
@@ -431,6 +438,8 @@ async def dashboard_quality_api() -> JSONResponse:
             "paper_fills": len(fills),
             "paper_fills_with_pnl": positions_closed + positions_partial_closed,
             "paper_realized_pnl_usd": realized_pnl_usd,
+            "paper_quarantined_pnl_usd": quarantined_pnl_usd,
+            "paper_quarantined_closes": len(quarantined_closes_list),
             "paper_positions_closed": positions_closed,
             "paper_positions_partial_closed": positions_partial_closed,
             "audit_v1_disqualified": audit_v1_disqualified,
