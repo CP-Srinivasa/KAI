@@ -886,3 +886,75 @@ def test_f1_whitelist_does_not_break_neutral_or_bearish_paths() -> None:
     )
     assert decision.is_directional is False
     assert decision.directional_eligible is None
+
+
+# ---------------------------------------------------------------------------
+# D-227 / 2026-05-29: recall-proxy symbol resolution + operator-tunable
+# bullish directional-confidence gate.
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_eligible_symbols_keeps_supported_drops_naked_and_unmapped() -> None:
+    """resolve_eligible_symbols mirrors the eligible branch: trading symbols
+    survive, naked assets (no ``/``) and unresolvable tickers are dropped."""
+    from app.alerts.eligibility import resolve_eligible_symbols
+
+    result = resolve_eligible_symbols(["BTC/USDT", "ETH/USDT", "BTC", "NOTACOIN/USDT"])
+    assert "BTC/USDT" in result
+    assert "ETH/USDT" in result
+    assert "BTC" not in result  # naked asset has no resolvable market
+    # de-duplicates and preserves only resolvable symbols
+    assert len(result) == len(set(result))
+
+
+def test_resolve_eligible_symbols_empty_for_no_assets() -> None:
+    from app.alerts.eligibility import resolve_eligible_symbols
+
+    assert resolve_eligible_symbols([]) == []
+    assert resolve_eligible_symbols(["", "  "]) == []
+
+
+def test_bullish_confidence_threshold_defaults_to_constant() -> None:
+    """Without env override the gate uses the historical 0.8 floor — no
+    behaviour change is the safe default (D-227)."""
+    from app.alerts.eligibility import (
+        MIN_DIRECTIONAL_CONFIDENCE_BULLISH,
+        _bullish_confidence_threshold,
+    )
+
+    assert _bullish_confidence_threshold() == MIN_DIRECTIONAL_CONFIDENCE_BULLISH
+
+
+def test_bullish_confidence_gate_blocks_below_default_threshold() -> None:
+    """A 0.7-confidence bullish alert is blocked under the 0.8 default — the
+    population the D-148 recall proxy must measure before any loosening."""
+    decision = evaluate_directional_eligibility(
+        sentiment_label="bullish",
+        affected_assets=["BTC/USDT"],
+        sentiment_score=0.9,
+        impact_score=0.9,
+        directional_confidence=0.7,
+        actionable=True,
+        priority=10,
+    )
+    assert decision.directional_eligible is False
+    assert decision.directional_block_reason == "low_directional_confidence"
+
+
+def test_bullish_confidence_gate_honours_env_override(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Lowering ALERT_MIN_DIRECTIONAL_CONFIDENCE_BULLISH admits the 0.7 alert
+    without a redeploy; bearish stays hard-pinned regardless."""
+    import app.alerts.eligibility as elig
+
+    monkeypatch.setattr(elig, "_bullish_confidence_threshold", lambda: 0.7)
+    decision = evaluate_directional_eligibility(
+        sentiment_label="bullish",
+        affected_assets=["BTC/USDT"],
+        sentiment_score=0.9,
+        impact_score=0.9,
+        directional_confidence=0.7,
+        actionable=True,
+        priority=10,
+    )
+    assert decision.directional_eligible is True
+    assert decision.directional_block_reason is None
