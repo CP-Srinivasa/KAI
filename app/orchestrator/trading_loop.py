@@ -917,11 +917,21 @@ class TradingLoop:
             return None
         try:
             guard = DiversificationGuard(mode=settings.mode)
-            exposures = exposures_from_paper_portfolio(self._exec.portfolio)
+            portfolio = self._exec.portfolio
+            exposures = exposures_from_paper_portfolio(portfolio)
+            # Cost-basis equity (cash + position value), consistent with the
+            # PortfolioStateRecord equity in _persist. Used as the concentration
+            # cap denominator so caps mean "% of total capital", not "% of
+            # already-deployed notional" — the latter dead-locks an empty book
+            # (every first position projects to 100% on every dimension).
+            equity = portfolio.cash + sum(
+                p.quantity * p.avg_entry_price for p in portfolio.positions.values()
+            )
             return guard.evaluate_candidate(
                 exposures,
                 candidate_symbol=symbol,
                 notional_usd=notional_usd,
+                portfolio_equity_usd=equity,
             )
         except Exception as exc:  # noqa: BLE001 — never crash the loop on the guard
             logger.warning("[LOOP] diversification check failed (non-fatal): %s", exc)
