@@ -70,7 +70,7 @@ def _isfinite_float(x: object) -> float | None:
     return f
 
 
-def quarantine_reason(close_row: dict) -> str | None:
+def quarantine_reason(close_row: dict[str, object]) -> str | None:
     """Return the quarantine reason if a ``position_closed`` row is corrupt.
 
     Matches the row's ``symbol`` + ``exit_price`` against the known corruption
@@ -90,7 +90,7 @@ def quarantine_reason(close_row: dict) -> str | None:
     return None
 
 
-def is_quarantined(close_row: dict) -> bool:
+def is_quarantined(close_row: dict[str, object]) -> bool:
     """True when the ``position_closed`` row matches a corruption signature."""
     return quarantine_reason(close_row) is not None
 
