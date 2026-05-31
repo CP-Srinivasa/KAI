@@ -313,13 +313,31 @@ def save_checkpoint(
     path.parent.mkdir(parents=True, exist_ok=True)
     state = load_checkpoint(path)
     canonical = _checkpoint_chat_id_marked(int(chat_id))
+    previous_candidates: list[Any] = [state.get(str(canonical), {}).get("last_message_id")]
     # Drop the legacy (unmarked) entry for the same chat if it exists,
     # regardless of whether chat_id was passed in marked or unmarked form.
     if canonical < 0:
         unmarked_legacy_key = str(_MARKED_CHANNEL_PREFIX - canonical)
-        state.pop(unmarked_legacy_key, None)
+        legacy_entry = state.pop(unmarked_legacy_key, None)
+        if isinstance(legacy_entry, dict):
+            previous_candidates.append(legacy_entry.get("last_message_id"))
+    previous_message_id = 0
+    for candidate in previous_candidates:
+        try:
+            previous_message_id = max(previous_message_id, int(candidate))
+        except (TypeError, ValueError):
+            continue
+    next_message_id = int(message_id)
+    if next_message_id < previous_message_id:
+        logger.warning(
+            "[channel-worker] checkpoint regression ignored chat_id=%s previous=%s next=%s",
+            canonical,
+            previous_message_id,
+            next_message_id,
+        )
+        next_message_id = previous_message_id
     state[str(canonical)] = {
-        "last_message_id": int(message_id),
+        "last_message_id": next_message_id,
         "last_seen_at": (now or datetime.now(UTC)).isoformat(),
     }
     tmp = path.with_suffix(path.suffix + ".tmp")
@@ -586,9 +604,9 @@ async def replay_missed_messages(
     - ``last_seen_id <= 0`` → no prior checkpoint exists; we do NOT replay
       historical messages on first run (would replay the channel's history).
       The first live message will establish the baseline.
-    - Telethon's ``iter_messages`` returns newest-first; we collect, sort
-      ascending by id, then process so the checkpoint advances monotonically
-      and the operator sees the same order Telegram delivered them in.
+    - Telethon is queried oldest-first. That makes a bounded replay limit safe:
+      large gaps are drained from the checkpoint forward instead of taking the
+      newest page and permanently skipping older unseen messages.
     - Per-message handler errors are logged and skipped so one bad message
       cannot abort the entire replay.
     - ``process_fn`` may be sync or async. If it returns a coroutine, the
@@ -603,6 +621,7 @@ async def replay_missed_messages(
         entity,
         min_id=last_seen_id,
         limit=max_replay,
+        reverse=True,
     ):
         msg_id = getattr(msg, "id", None)
         if not isinstance(msg_id, int) or msg_id <= last_seen_id:

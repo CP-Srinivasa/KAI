@@ -114,6 +114,35 @@ def test_execution_settings_live_requires_approval_and_no_dry_run():
         )
 
 
+def test_execution_settings_live_requires_approval_hmac_secret():
+    with pytest.raises(
+        ValueError,
+        match="EXECUTION_MODE=live requires EXECUTION_OPERATOR_SIGNAL_APPROVAL_HMAC_SECRET",
+    ):
+        ExecutionSettings(
+            mode="live",
+            live_enabled=True,
+            dry_run=False,
+            approval_required=True,
+            operator_signal_approval_hmac_secret="",
+            _env_file=None,
+        )
+
+
+def test_execution_settings_live_accepts_complete_guardrail_set():
+    settings = ExecutionSettings(
+        mode="live",
+        live_enabled=True,
+        dry_run=False,
+        approval_required=True,
+        operator_signal_approval_hmac_secret="test-secret-32-bytes-minimum-value",
+        _env_file=None,
+    )
+
+    assert settings.mode is ExecutionMode.LIVE
+    assert settings.operator_signal_approval_hmac_secret
+
+
 def test_execution_settings_live_enabled_requires_live_mode():
     with pytest.raises(
         ValueError,
