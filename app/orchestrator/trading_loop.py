@@ -1076,6 +1076,7 @@ def _build_risk_limits_from_settings() -> RiskLimits:
         atr_multiplier=risk.atr_multiplier,
         tp_atr_multiplier=risk.tp_atr_multiplier,
         min_notional_usd=risk.min_notional_usd,
+        max_position_size_pct=risk.max_position_size_pct,
     )
 
 
