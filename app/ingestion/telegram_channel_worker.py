@@ -642,6 +642,77 @@ async def list_dialogs(cfg: TelegramChannelIngestSettings) -> list[dict[str, obj
         await client.disconnect()
 
 
+_POLL_MAX_CONSECUTIVE_FAILURES = 5
+
+
+async def _poll_backstop_loop(
+    client: Any,
+    entity: Any,
+    checkpoint_path: Path,
+    process_fn: Callable[[int, str], Any],
+    chat_id_marked: int,
+    interval_s: int,
+) -> None:
+    """Active poll backstop against silent MTProto update-stream death.
+
+    run_until_disconnected only reacts to *push* updates; Telethon can
+    silently stop delivering them without raising (the heartbeat loop
+    keeps ticking so the process looks alive while the channel is dark).
+    This loop polls the channel every ``interval_s`` seconds via
+    ``replay_missed_messages`` against the *current* on-disk checkpoint,
+    so any message the push stream missed is pulled within one interval.
+    Idempotent (emit_parsed_signal dedups by idempotency_key) and
+    fail-soft. After ``_POLL_MAX_CONSECUTIVE_FAILURES`` consecutive
+    failures (total connection death) it disconnects the client so
+    systemd restarts the worker (Restart=always) and the next boot's
+    replay recovers the gap.
+    """
+    consecutive_failures = 0
+    while True:
+        try:
+            await asyncio.sleep(interval_s)
+            checkpoint = load_checkpoint(checkpoint_path)
+            last_seen = get_last_seen_id(checkpoint, chat_id_marked)
+            result = await replay_missed_messages(
+                client,
+                entity,
+                chat_id=chat_id_marked,
+                last_seen_id=last_seen,
+                process_fn=process_fn,
+            )
+            consecutive_failures = 0
+            processed = int(result.get("processed", 0))
+            if processed > 0:
+                logger.warning(
+                    "[channel-worker] poll-backstop recovered %s message(s) "
+                    "the push stream missed (last_seen=%s)",
+                    processed,
+                    last_seen,
+                )
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 — backstop must never crash listener
+            consecutive_failures += 1
+            logger.warning(
+                "[channel-worker] poll-backstop iteration failed (%s/%s consecutive): %s",
+                consecutive_failures,
+                _POLL_MAX_CONSECUTIVE_FAILURES,
+                exc,
+            )
+            if consecutive_failures >= _POLL_MAX_CONSECUTIVE_FAILURES:
+                logger.error(
+                    "[channel-worker] poll-backstop hit %s consecutive "
+                    "failures — disconnecting for systemd restart + "
+                    "boot-replay recovery",
+                    consecutive_failures,
+                )
+                try:
+                    await client.disconnect()
+                except Exception:  # noqa: BLE001
+                    pass
+                return
+
+
 async def run_worker(cfg: TelegramChannelIngestSettings | None = None) -> None:
     """Connect and listen for new messages on the target channel. Blocks."""
     if cfg is None:
@@ -683,6 +754,7 @@ async def run_worker(cfg: TelegramChannelIngestSettings | None = None) -> None:
     # touch (periodic), and record_message_observed (per Telegram update).
     _init_heartbeat(heartbeat_path)
     heartbeat_task: asyncio.Task[None] | None = None
+    poll_task: asyncio.Task[None] | None = None
     try:
         entity = await resolve_target_entity(client, cfg)
         logger.info(
@@ -879,6 +951,11 @@ async def run_worker(cfg: TelegramChannelIngestSettings | None = None) -> None:
                 result is not None,
             )
 
+        # 2026-05-31 (poll-backstop): wiring set inside the checkpoint
+        # block below; pre-declared so the names exist even when the
+        # entity has no integer id (poll then stays inactive).
+        poll_replay_handler: Callable[[int, str], Any] | None = None
+        poll_chat_id_marked: int | None = None
         entity_chat_id_raw = getattr(entity, "id", None)
         if isinstance(entity_chat_id_raw, int):
             # F6 (2026-05-04): Normalise to marked form so this matches the
@@ -933,6 +1010,10 @@ async def run_worker(cfg: TelegramChannelIngestSettings | None = None) -> None:
                 process_fn=_replay_handler,
             )
             _write_replay_marker(replay_result)
+            # 2026-05-31: hand the replay handler + marked chat-id to the
+            # poll-backstop so it pulls via the same checkpoint path.
+            poll_replay_handler = _replay_handler
+            poll_chat_id_marked = chat_id_marked
 
         @client.on(events.NewMessage(chats=entity))  # type: ignore[misc]
         async def _handler(event: Any) -> None:
@@ -1007,6 +1088,45 @@ async def run_worker(cfg: TelegramChannelIngestSettings | None = None) -> None:
         # 30 minutes into a perfectly healthy run.
         heartbeat_task = asyncio.create_task(_heartbeat_loop(heartbeat_path))
 
+        # 2026-05-31 (poll-backstop): run_until_disconnected is push-only.
+        # Telethon can silently stop delivering updates without raising
+        # (connection stays "connected") while the heartbeat loop keeps
+        # ticking — the process looks alive but the channel is dark. On
+        # 2026-05-31 this lost a NIGHT/USDT premium signal: messages_since_
+        # boot stuck at 1 for ~46h, the signal never reached _handler,
+        # nothing surfaced in external-signals or the portfolio. This loop
+        # actively PULLS via the same checkpoint+replay path so a dead push
+        # stream can no longer cause silent signal loss. Idempotent
+        # (emit_parsed_signal dedups by idempotency_key) + fail-soft.
+        poll_interval = int(getattr(cfg, "poll_backstop_seconds", 90) or 0)
+        if (
+            poll_interval > 0
+            and poll_replay_handler is not None
+            and poll_chat_id_marked is not None
+        ):
+            poll_task = asyncio.create_task(
+                _poll_backstop_loop(
+                    client,
+                    entity,
+                    checkpoint_path,
+                    poll_replay_handler,
+                    poll_chat_id_marked,
+                    poll_interval,
+                )
+            )
+            logger.info(
+                "[channel-worker] poll-backstop active interval=%ss",
+                poll_interval,
+            )
+        else:
+            logger.warning(
+                "[channel-worker] poll-backstop INACTIVE "
+                "(interval=%s handler=%s chat_id=%s) — push-only mode",
+                poll_interval,
+                poll_replay_handler is not None,
+                poll_chat_id_marked,
+            )
+
         # F2 (2026-05-04): structured exception handling around the long-
         # running run-loop. Pre-F2 a Telethon InvalidBufferError (HTTP 429
         # FloodWait, IOError on a TCP hiccup, ServerError on an MTProto
@@ -1052,14 +1172,15 @@ async def run_worker(cfg: TelegramChannelIngestSettings | None = None) -> None:
                 )
             raise
     finally:
-        if heartbeat_task is not None:
-            heartbeat_task.cancel()
-            try:
-                await heartbeat_task
-            except (asyncio.CancelledError, Exception):
-                # Cancellation is expected; any other tail-end error from
-                # the heartbeat loop must not mask the original disconnect.
-                pass
+        for _bg_task in (heartbeat_task, poll_task):
+            if _bg_task is not None:
+                _bg_task.cancel()
+                try:
+                    await _bg_task
+                except (asyncio.CancelledError, Exception):
+                    # Cancellation is expected; any other tail-end error
+                    # must not mask the original disconnect.
+                    pass
         await client.disconnect()
 
 

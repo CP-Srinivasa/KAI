@@ -553,6 +553,17 @@ class TelegramChannelIngestSettings(BaseSettings):
     # AND a logger config that surfaces DEBUG to actually see the output.
     # Intended for 24-48 h diagnostic windows, not production-default.
     verbose_observer: bool = Field(default=False)
+    # 2026-05-31 (poll-backstop): active poll interval (seconds).
+    # run_until_disconnected is push-only; Telethon can silently stop
+    # delivering updates without raising (heartbeat keeps ticking →
+    # process looks alive while the channel goes dark — this lost a
+    # NIGHT/USDT premium signal on 2026-05-31). The worker polls the
+    # channel via the checkpoint+replay path every N seconds so a dead
+    # push stream can no longer cause silent signal loss. Idempotent
+    # (emit dedups). 0 disables (push-only legacy). Default 90 s —
+    # cheap (one iter_messages RPC) and recovers a missed signal within
+    # ~1.5 min.
+    poll_backstop_seconds: int = Field(default=90, ge=0)
 
 
 class LearningSettings(BaseSettings):
