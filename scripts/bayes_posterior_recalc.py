@@ -41,6 +41,7 @@ from app.learning.bayes_posterior import (  # noqa: E402
     build_posterior_report,
     classify_outcome,
 )
+from app.learning.bayes_quarantine import quarantine_reason  # noqa: E402
 
 logging.basicConfig(
     level=os.environ.get("LOG_LEVEL", "INFO"),
@@ -74,6 +75,7 @@ def _load_outcomes_from_audit(audit_path: Path) -> list[TradeOutcome]:
 
     opens_by_symbol: dict[str, list[dict[str, Any]]] = {}
     outcomes: list[TradeOutcome] = []
+    quarantined_outcomes: list[dict[str, str]] = []
 
     with audit_path.open("r", encoding="utf-8") as fh:
         for raw_line in fh:
@@ -96,6 +98,30 @@ def _load_outcomes_from_audit(audit_path: Path) -> list[TradeOutcome]:
                 opens_by_symbol.setdefault(symbol, []).append(event)
             elif etype == "position_closed":
                 symbol = event.get("symbol")
+                # DS-20260529-V1 quarantine: corrupt closes (e.g. the MATIC
+                # stale-exit runaway, 2026-05-28) must not feed the posterior.
+                # We pop the matching open below anyway (FIFO integrity) but
+                # never emit a TradeOutcome for a quarantined close. The audit
+                # row stays on disk — we exclude, never delete.
+                q_reason = quarantine_reason(event)
+                if q_reason is not None:
+                    quarantined_outcomes.append(
+                        {
+                            "fill_id": str(event.get("fill_id") or ""),
+                            "timestamp_utc": str(event.get("timestamp_utc") or ""),
+                            "symbol": str(symbol or ""),
+                            "reason": q_reason,
+                        }
+                    )
+                    open_side_q = _open_side_for_position(
+                        (event.get("position_side") or "").lower()
+                    )
+                    queue_q = opens_by_symbol.get(symbol, [])
+                    for i in range(len(queue_q) - 1, -1, -1):
+                        if (queue_q[i].get("side") or "").lower() == open_side_q:
+                            queue_q.pop(i)
+                            break
+                    continue
                 # The position_closed schema v2 carries trade_pnl_usd
                 # (per-trade, fees-netted) and fee_usd (close-side fee).
                 # Older v1 rows only had realized_pnl_usd (cumulative) —
@@ -142,6 +168,27 @@ def _load_outcomes_from_audit(audit_path: Path) -> list[TradeOutcome]:
                         reason=str(event.get("reason") or ""),
                     )
                 )
+
+    if quarantined_outcomes:
+        quarantine_path = audit_path.parent / "bayes_posterior_quarantine.jsonl"
+        with quarantine_path.open("w", encoding="utf-8") as qfh:
+            for row in quarantined_outcomes:
+                qfh.write(
+                    json.dumps(
+                        {
+                            "schema_version": "v1",
+                            "report_type": "bayes_posterior_quarantined",
+                            **row,
+                        },
+                        ensure_ascii=False,
+                    )
+                    + "\n"
+                )
+        logger.warning(
+            "quarantined %d corrupt close(s) from posterior (logged to %s)",
+            len(quarantined_outcomes),
+            quarantine_path,
+        )
 
     return outcomes
 
