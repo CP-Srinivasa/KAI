@@ -89,6 +89,14 @@ def test_below_min_cycles_not_flagged(tmp_path: Path) -> None:
     assert _deadlock_issue(report) is None
 
 
+def test_zero_recent_cycles_with_zero_minimum_not_flagged(tmp_path: Path) -> None:
+    """Callers may disable the min-cycle warning with min_expected_cycles=0."""
+    adir = _make_artifacts(tmp_path, [])
+    report = run_health_check_report(artifacts_dir=adir, min_expected_cycles=0)
+    assert report.recent_cycles == 0
+    assert _deadlock_issue(report) is None
+
+
 def test_fires_under_re_entry_mode(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Unlike priority-saturation, the open-deadlock check is RE_ENTRY_MODE-independent."""
     monkeypatch.setenv("RE_ENTRY_MODE_ENABLED", "true")
