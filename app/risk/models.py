@@ -30,6 +30,14 @@ class RiskLimits:
     # DS-20260528-V2: reject orders whose notional falls below this floor.
     # Guards against dust fills when sizing equity (remaining cash) is depleted.
     min_notional_usd: float = 10.0
+    # DS-20260529-V2: hard upper cap on a single position's notional, expressed
+    # as % of equity. A tight stop (small ATR) yields huge units → notional can
+    # exceed the diversification asset-cap (25%) and the whole order is rejected,
+    # deadlocking the loop. This clamps notional to keep first positions tradeable.
+    # <= 0 disables the cap (backward-compatible). Productive source is Settings (20).
+    # Default 20.0 mirrors the productive Settings default so RiskLimits() built
+    # without args (legacy unit tests) gets the safe, enforced behaviour too.
+    max_position_size_pct: float = 20.0
 
 
 @dataclass(frozen=True)
