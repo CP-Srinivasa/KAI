@@ -346,9 +346,24 @@ class DiversificationGuard:
         *,
         candidate_symbol: str,
         notional_usd: float | None,
+        portfolio_equity_usd: float | None = None,
         max_alternatives: int = _DEFAULT_ALTERNATIVES,
     ) -> DiversificationDecision:
-        """Project adding ``candidate_symbol`` for ``notional_usd`` and decide."""
+        """Project adding ``candidate_symbol`` for ``notional_usd`` and decide.
+
+        Concentration caps are measured against ``portfolio_equity_usd`` (cash +
+        position value) when it is supplied and positive — i.e. "X% of total
+        capital", not "X% of already-deployed short-term notional". A trade
+        swaps cash for a position of equal size, so equity is the stable,
+        correct denominator and it stays constant across the trade.
+
+        Without it (``None``/<=0) the denominator falls back to the deployed
+        short-term gross + this candidate's notional, preserving the previous
+        behaviour for callers/tests that do not pass equity. The empty-book
+        deadlock (every first position projecting to 100% on every dimension)
+        only occurs on that legacy path; the equity path lets a first position
+        breach a cap only if it is genuinely oversized vs. total capital.
+        """
         meta = self._universe.get(candidate_symbol)
         cand_base = base_symbol(candidate_symbol)
 
@@ -371,10 +386,22 @@ class DiversificationGuard:
         report = self.analyze_portfolio(positions)
         new_short_gross = report.short_term_gross_usd + notional_usd
 
+        # Cap denominator. With a positive equity we measure concentration as a
+        # share of total capital (cash + positions). We take the max of equity
+        # and the deployed-gross-after-add so that mark-to-market gains lifting
+        # positions above cash-equity can never *shrink* the denominator and
+        # artificially inflate the projected percentages — the larger, more
+        # conservative base wins. When equity is unknown we fall back to the
+        # legacy deployed-gross denominator (backward compatible).
+        if portfolio_equity_usd is not None and portfolio_equity_usd > 0:
+            denom = max(portfolio_equity_usd, new_short_gross)
+        else:
+            denom = new_short_gross
+
         def projected_pct(current_usd: float) -> float:
-            if new_short_gross <= 0:
+            if denom <= 0:
                 return 0.0
-            return (current_usd + notional_usd) / new_short_gross * 100.0
+            return (current_usd + notional_usd) / denom * 100.0
 
         def current_usd_for(dimension: str, key: str) -> float:
             for b in report.buckets:
@@ -417,9 +444,7 @@ class DiversificationGuard:
         if cand_base in _BTC_ETH:
             cur_btc_eth = sum(current_usd_for("asset", a) for a in _BTC_ETH)
             proj_btc_eth = (
-                (cur_btc_eth + notional_usd) / new_short_gross * 100.0
-                if new_short_gross > 0
-                else 0.0
+                (cur_btc_eth + notional_usd) / denom * 100.0 if denom > 0 else 0.0
             )
             if proj_btc_eth > self._limits.max_btc_eth_short_term_pct:
                 breached.append(
