@@ -473,9 +473,7 @@ def run_health_check_report(
     # `risk_rejected` (max_open_positions), so the open-blocking ratio stays low.
     if recent_cycles >= min_expected_cycles and not stale:
         completed = status_breakdown.get("completed", 0)
-        open_blocked = sum(
-            status_breakdown.get(s, 0) for s in _OPEN_BLOCKING_STATUSES
-        )
+        open_blocked = sum(status_breakdown.get(s, 0) for s in _OPEN_BLOCKING_STATUSES)
         open_blocked_ratio = open_blocked / recent_cycles
         if completed == 0 and open_blocked_ratio >= max_open_blocking_ratio:
             dominant = max(

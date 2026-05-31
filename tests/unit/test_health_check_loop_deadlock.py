@@ -100,10 +100,7 @@ def test_fires_under_re_entry_mode(tmp_path: Path, monkeypatch: pytest.MonkeyPat
 
 def test_mixed_blocking_below_ratio_not_flagged(tmp_path: Path) -> None:
     """Open-blocking gates below the 50% ratio → not a clear open-deadlock."""
-    cycles = (
-        _cycles("diversification_rejected", 30)
-        + _cycles("risk_rejected", 70)
-    )
+    cycles = _cycles("diversification_rejected", 30) + _cycles("risk_rejected", 70)
     adir = _make_artifacts(tmp_path, cycles)
     report = run_health_check_report(artifacts_dir=adir)
     assert _deadlock_issue(report) is None
