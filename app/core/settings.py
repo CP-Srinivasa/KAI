@@ -292,6 +292,10 @@ class ExecutionSettings(BaseSettings):
                 raise ValueError("EXECUTION_MODE=live requires EXECUTION_DRY_RUN=false.")
             if not self.approval_required:
                 raise ValueError("EXECUTION_MODE=live requires EXECUTION_APPROVAL_REQUIRED=true.")
+            if not self.operator_signal_approval_hmac_secret.strip():
+                raise ValueError(
+                    "EXECUTION_MODE=live requires EXECUTION_OPERATOR_SIGNAL_APPROVAL_HMAC_SECRET."
+                )
         return self
 
 

@@ -192,6 +192,18 @@ class TestCheckpoint:
         state = load_checkpoint(path)
         assert state["-100"]["last_message_id"] == 25
 
+    def test_save_checkpoint_never_regresses_same_chat(self, tmp_path: Path) -> None:
+        path = tmp_path / "checkpoint.json"
+        first_seen = datetime(2026, 5, 31, 10, 0, tzinfo=UTC)
+        retry_seen = datetime(2026, 5, 31, 10, 1, tzinfo=UTC)
+        save_checkpoint(path, chat_id=-100, message_id=25, now=first_seen)
+        save_checkpoint(path, chat_id=-100, message_id=10, now=retry_seen)
+
+        state = load_checkpoint(path)
+
+        assert state["-100"]["last_message_id"] == 25
+        assert state["-100"]["last_seen_at"] == retry_seen.isoformat()
+
     def test_get_last_seen_id_handles_missing_and_garbage(self) -> None:
         assert get_last_seen_id({}, -100) == 0
         assert get_last_seen_id({"-100": {"last_message_id": "abc"}}, -100) == 0
@@ -238,6 +250,22 @@ class TestCheckpoint:
         assert "1275462917" not in state
         assert state["-1001275462917"]["last_message_id"] == 23830
 
+    def test_save_migrates_legacy_key_without_regressing_checkpoint(
+        self,
+        tmp_path: Path,
+    ) -> None:
+        path = tmp_path / "checkpoint.json"
+        path.write_text(
+            json.dumps({"1275462917": {"last_message_id": 23830, "last_seen_at": "old"}}),
+            encoding="utf-8",
+        )
+        save_checkpoint(path, chat_id=-1001275462917, message_id=23820)
+
+        state = load_checkpoint(path)
+
+        assert "1275462917" not in state
+        assert state["-1001275462917"]["last_message_id"] == 23830
+
 
 class _FakeMessage(SimpleNamespace):
     """Stand-in for a Telethon Message — supports getattr for id/raw_text."""
@@ -256,10 +284,13 @@ class _FakeClient:
         *,
         min_id: int = 0,
         limit: int | None = None,
+        reverse: bool = False,
     ) -> Any:
-        self.calls.append({"entity": entity, "min_id": min_id, "limit": limit})
-        # Telethon returns newest-first; we mimic that — replay must sort.
-        ordered = sorted(self._messages, key=lambda m: m.id, reverse=True)
+        self.calls.append({"entity": entity, "min_id": min_id, "limit": limit, "reverse": reverse})
+        ordered = [msg for msg in self._messages if msg.id > min_id]
+        ordered = sorted(ordered, key=lambda m: m.id, reverse=not reverse)
+        if limit is not None:
+            ordered = ordered[:limit]
 
         async def _gen() -> Any:
             for msg in ordered:
@@ -312,7 +343,9 @@ class TestReplayMissedMessages:
         # ascending msg-id order so the persisted checkpoint advances monotonically.
         assert [mid for mid, _ in seen] == [10, 11, 12]
         # Telethon was queried with the correct min_id.
-        assert client.calls == [{"entity": client.calls[0]["entity"], "min_id": 9, "limit": 200}]
+        assert client.calls == [
+            {"entity": client.calls[0]["entity"], "min_id": 9, "limit": 200, "reverse": True}
+        ]
 
     def test_replay_filters_messages_at_or_below_checkpoint(self) -> None:
         # Defense-in-depth: even if Telethon returns a stale msg with id <= min_id
@@ -337,6 +370,31 @@ class TestReplayMissedMessages:
         assert seen == [11]
         assert result["scanned"] == 1
         assert result["processed"] == 1
+
+    def test_replay_large_gap_starts_at_checkpoint_not_newest_page(self) -> None:
+        messages = [
+            _FakeMessage(id=msg_id, raw_text=str(msg_id), message=str(msg_id))
+            for msg_id in range(10, 260)
+        ]
+        client = _FakeClient(messages)
+        seen: list[int] = []
+
+        result = asyncio.run(
+            replay_missed_messages(
+                client,
+                entity=object(),
+                chat_id=-100,
+                last_seen_id=9,
+                process_fn=lambda mid, _t: seen.append(mid),
+                max_replay=200,
+            )
+        )
+
+        assert result["scanned"] == 200
+        assert result["processed"] == 200
+        assert seen[0] == 10
+        assert seen[-1] == 209
+        assert 210 not in seen
 
     def test_replay_supports_async_process_fn(self) -> None:
         # V25 (2026-05-04): Replay handler is async because it must call the
