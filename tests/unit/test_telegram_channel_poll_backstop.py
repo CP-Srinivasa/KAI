@@ -22,6 +22,23 @@ def _write_checkpoint(path: Path, chat_id: int, last_id: int) -> None:
     path.write_text(json.dumps({str(chat_id): {"last_message_id": last_id}}), encoding="utf-8")
 
 
+def test_semantic_canary_records_checkpoint_gap(tmp_path: Path) -> None:
+    path = tmp_path / "canary.json"
+    w._write_semantic_canary(
+        path=path,
+        chat_id=-100123,
+        checkpoint_message_id=10,
+        latest_message_id=12,
+        replay_processed=0,
+    )
+    data = json.loads(path.read_text(encoding="utf-8"))
+    assert data["source_platform"] == "telegram"
+    assert data["chat_id"] == -100123
+    assert data["checkpoint_message_id"] == 10
+    assert data["latest_message_id"] == 12
+    assert data["gap"] == 2
+
+
 @pytest.mark.asyncio
 async def test_poll_backstop_pulls_with_current_checkpoint(tmp_path, monkeypatch):
     """Each iteration reloads the on-disk checkpoint and replays from it."""

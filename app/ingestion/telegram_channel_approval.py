@@ -30,6 +30,7 @@ import hashlib
 import hmac
 import json
 import logging
+import re
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -535,7 +536,7 @@ def build_approval_record(
     Key differences vs the original:
     - ``source`` gets the ``_approved`` suffix → bridge allowlist match
     - ``payload.source`` also updated → canonical idempotency_key differs
-    - new ``envelope_id`` (fresh timestamp-based id)
+    - new ``envelope_id``; deterministic for source_uid-backed Telegram rows
     - ``origin_envelope_id`` references the original (audit-trail)
     - ``approved_by`` records the operator user id
 
@@ -554,7 +555,13 @@ def build_approval_record(
     new_payload["source"] = new_source
     new_payload["timestamp_utc"] = ts
 
-    new_env_id = _generate_envelope_id(ts)
+    source_uid = new_payload.get("source_uid")
+    if isinstance(source_uid, str) and source_uid:
+        digest = hashlib.sha256(f"approved:{source_uid}".encode()).hexdigest()[:8]
+        safe_source = re.sub(r"[^A-Za-z0-9]+", "-", source_uid).strip("-")
+        new_env_id = f"ENV-APP-{safe_source[-48:]}-{digest}"
+    else:
+        new_env_id = _generate_envelope_id(ts)
     new_idem = _canonical_idempotency_key(new_payload)
 
     rec: dict[str, Any] = {
@@ -574,6 +581,11 @@ def build_approval_record(
     }
     if "chat_id" in orig_record and orig_record["chat_id"] is not None:
         rec["chat_id"] = orig_record["chat_id"]
+    if "message_id" in orig_record and orig_record["message_id"] is not None:
+        rec["message_id"] = orig_record["message_id"]
+    if isinstance(source_uid, str) and source_uid:
+        rec["source_uid"] = source_uid
+        rec["source_platform"] = new_payload.get("source_platform") or "telegram"
     if approved_by is not None:
         rec["approved_by"] = approved_by
     return rec
@@ -674,6 +686,12 @@ def handle_signal_approval(
 
     rec = build_approval_record(orig, approved_by=approved_by, now=now)
     _append_jsonl(envelope_log, rec)
+    try:
+        from app.observability.premium_event_store import record_approval
+
+        record_approval(rec)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[approval] event-store write failed: %s", exc)
     new_id = rec.get("envelope_id")
     assert isinstance(new_id, str)
     return ApprovalOutcome(

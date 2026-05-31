@@ -48,9 +48,13 @@ DEFAULT_HEARTBEAT_MAX_AGE_SEC = 90
 # (no envelopes to process) don't append, so a stale audit-log does NOT
 # imply a dead pipeline. Threshold kept for diagnostic detail.
 DEFAULT_BRIDGE_AUDIT_INFO_AGE_SEC = 15 * 60
+# Poll-backstop writes the semantic canary every 90s by default. 3 minutes
+# allows one missed tick plus brief Telegram/network jitter.
+DEFAULT_SEMANTIC_CANARY_MAX_AGE_SEC = 3 * 60
 
 _BRIDGE_LOG = Path("artifacts/bridge_pending_orders.jsonl")
 _HEARTBEAT_FILE = Path("artifacts/telegram_listener_heartbeat")
+_SEMANTIC_CANARY_FILE = Path("artifacts/telegram_channel_semantic_canary.json")
 
 _SYSTEMD_OBJECT = "/org/freedesktop/systemd1"
 _SYSTEMD_BUS = "org.freedesktop.systemd1"
@@ -274,16 +278,87 @@ def _check_bridge_audit_freshness(
     )
 
 
+def _check_semantic_canary(
+    max_age_seconds: int, now: datetime | None = None, path: Path | None = None
+) -> CheckResult:
+    """Verify Telegram source head has converged into the checkpoint.
+
+    Heartbeat only proves the process loop is alive. The canary is written by
+    the listener's poll-backstop after comparing Telegram's latest message id
+    with the persisted checkpoint. Any positive gap means the source has
+    messages that the pipeline has not acknowledged.
+    """
+    target = path or _SEMANTIC_CANARY_FILE
+    if not target.exists():
+        return CheckResult(name="semantic_canary", ok=False, detail=f"missing: {target}")
+    try:
+        data = json.loads(target.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        return CheckResult(name="semantic_canary", ok=False, detail=f"read_error: {exc}")
+    checked_raw = data.get("checked_at")
+    if not isinstance(checked_raw, str):
+        return CheckResult(name="semantic_canary", ok=False, detail="missing checked_at")
+    try:
+        checked = datetime.fromisoformat(checked_raw)
+    except ValueError:
+        return CheckResult(
+            name="semantic_canary", ok=False, detail=f"invalid checked_at={checked_raw}"
+        )
+    if checked.tzinfo is None:
+        checked = checked.replace(tzinfo=UTC)
+    age = ((now or datetime.now(UTC)) - checked).total_seconds()
+    gap = data.get("gap")
+    if not isinstance(gap, int):
+        return CheckResult(name="semantic_canary", ok=False, detail="missing gap")
+    ok = age <= max_age_seconds and gap <= 0
+    return CheckResult(
+        name="semantic_canary",
+        ok=ok,
+        detail=(
+            f"checkpoint={data.get('checkpoint_message_id')} "
+            f"latest={data.get('latest_message_id')} gap={gap} "
+            f"threshold={max_age_seconds}s"
+        ),
+        age_seconds=age,
+    )
+
+
+def _check_approval_hmac() -> CheckResult:
+    """Approval callback tokens must be signed when approval mode is enabled."""
+    try:
+        from app.core.settings import get_settings
+
+        execution = get_settings().execution
+        approval_enabled = bool(execution.operator_signal_approval_enabled)
+        secret_set = bool((execution.operator_signal_approval_hmac_secret or "").strip())
+    except Exception as exc:  # noqa: BLE001
+        return CheckResult(
+            name="approval_hmac",
+            ok=False,
+            detail=f"settings_error: {type(exc).__name__}: {exc}",
+        )
+    if not approval_enabled:
+        return CheckResult(name="approval_hmac", ok=True, detail="approval_disabled")
+    return CheckResult(
+        name="approval_hmac",
+        ok=secret_set,
+        detail="signed_callbacks_enabled" if secret_set else "missing_hmac_secret",
+    )
+
+
 def compute_pipeline_health(
     *,
     paper_timer_max_age_sec: int = DEFAULT_PAPER_TIMER_TICK_MAX_AGE_SEC,
     heartbeat_max_age_sec: int = DEFAULT_HEARTBEAT_MAX_AGE_SEC,
     bridge_audit_info_age_sec: int = DEFAULT_BRIDGE_AUDIT_INFO_AGE_SEC,
+    semantic_canary_max_age_sec: int = DEFAULT_SEMANTIC_CANARY_MAX_AGE_SEC,
     now: datetime | None = None,
     _service_check_fn: Any = None,
     _paper_timer_check_fn: Any = None,
     _heartbeat_check_fn: Any = None,
     _bridge_audit_check_fn: Any = None,
+    _semantic_canary_check_fn: Any = None,
+    _approval_hmac_check_fn: Any = None,
 ) -> PipelineHealthReport:
     """Run all liveness checks and aggregate into a single report.
 
@@ -295,10 +370,14 @@ def compute_pipeline_health(
     timer_check = _paper_timer_check_fn or _check_paper_timer_last_trigger
     hb_check = _heartbeat_check_fn or _check_heartbeat
     audit_check = _bridge_audit_check_fn or _check_bridge_audit_freshness
+    canary_check = _semantic_canary_check_fn or _check_semantic_canary
+    hmac_check = _approval_hmac_check_fn or _check_approval_hmac
 
     checks: list[CheckResult] = [svc_check(svc) for svc in CRITICAL_SERVICES]
     checks.append(timer_check(paper_timer_max_age_sec, now=now))
     checks.append(hb_check(heartbeat_max_age_sec, now=now))
+    checks.append(canary_check(semantic_canary_max_age_sec, now=now))
+    checks.append(hmac_check())
     checks.append(audit_check(bridge_audit_info_age_sec, now=now))
 
     failure_modes = [c.name for c in checks if not c.ok]

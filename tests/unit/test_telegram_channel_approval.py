@@ -456,6 +456,24 @@ class TestBuildApprovalRecord:
         rec = build_approval_record(orig)
         assert rec["idempotency_key"] != orig["idempotency_key"]
 
+    def test_source_uid_approval_envelope_id_is_deterministic(self) -> None:
+        orig = _shadow_record()
+        orig["source_uid"] = "telegram:-1001275462917:23878"
+        orig["source_platform"] = "telegram"
+        orig["message_id"] = 23878
+        orig["payload"] = {
+            **orig["payload"],
+            "source_uid": "telegram:-1001275462917:23878",
+            "source_platform": "telegram",
+            "source_message_id": 23878,
+        }
+        first = build_approval_record(orig, now=datetime(2026, 4, 21, 11, 20, 0, tzinfo=UTC))
+        second = build_approval_record(orig, now=datetime(2026, 4, 21, 11, 21, 0, tzinfo=UTC))
+        assert first["envelope_id"] == second["envelope_id"]
+        assert first["source_uid"] == "telegram:-1001275462917:23878"
+        assert first["source_platform"] == "telegram"
+        assert first["message_id"] == 23878
+
     def test_envelope_id_is_fresh(self) -> None:
         orig = _shadow_record()
         later = datetime(2026, 4, 21, 11, 20, 0, tzinfo=UTC)

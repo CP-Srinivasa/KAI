@@ -24,6 +24,7 @@ from app.execution.envelope_to_paper_bridge import (
 from app.ingestion.telegram_channel_envelope import (
     DEFAULT_SOURCE,
     build_envelope_record,
+    build_source_uid,
     emit_parsed_signal,
 )
 from app.ingestion.telegram_channel_parser import parse_premium_channel_message
@@ -62,6 +63,11 @@ def parsed_btc_range():
     sig = parse_premium_channel_message(SAMPLE_BTC_RANGE)
     assert sig is not None
     return sig
+
+
+@pytest.fixture(autouse=True)
+def _isolated_event_store(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("KAI_PREMIUM_EVENT_STORE_PATH", str(tmp_path / "premium_events.sqlite3"))
 
 
 # ── build_envelope_record ───────────────────────────────────────────────────
@@ -124,6 +130,33 @@ class TestBuildRecord:
         assert rec["source"] == "test_channel"
         assert rec["payload"]["source"] == "test_channel"
 
+    def test_telegram_source_identity_is_stable(self, parsed_gun) -> None:
+        now_a = datetime(2026, 5, 30, 13, 43, 52, tzinfo=UTC)
+        now_b = datetime(2026, 5, 31, 13, 43, 52, tzinfo=UTC)
+        a = build_envelope_record(
+            parsed_gun,
+            chat_id=-1001275462917,
+            message_id=23878,
+            now=now_a,
+            scale_factor=100000.0,
+        )
+        b = build_envelope_record(
+            parsed_gun,
+            chat_id=-1001275462917,
+            message_id=23878,
+            now=now_b,
+            scale_factor=100000.0,
+        )
+        assert a["source_uid"] == "telegram:-1001275462917:23878"
+        assert b["source_uid"] == a["source_uid"]
+        assert b["envelope_id"] == a["envelope_id"]
+        assert b["idempotency_key"] == a["idempotency_key"]
+        assert b["payload"]["signal_id"] == a["payload"]["signal_id"]
+        assert b["payload"]["source_message_id"] == 23878
+
+    def test_build_source_uid(self) -> None:
+        assert build_source_uid(chat_id=-1001, message_id=42) == "telegram:-1001:42"
+
 
 # ── emit_parsed_signal (IO) ─────────────────────────────────────────────────
 
@@ -148,6 +181,52 @@ class TestEmit:
         assert second is None
         # Log should still contain exactly one line.
         assert len(log.read_text(encoding="utf-8").splitlines()) == 1
+
+    def test_deduplicates_same_telegram_source_uid_even_with_different_now(
+        self, parsed_gun, tmp_path: Path
+    ) -> None:
+        log = tmp_path / "envelope.jsonl"
+        first = emit_parsed_signal(
+            parsed_gun,
+            envelope_log=log,
+            chat_id=-1001275462917,
+            message_id=23878,
+            now=datetime(2026, 5, 30, 13, 43, 52, tzinfo=UTC),
+        )
+        assert first is not None
+        second = emit_parsed_signal(
+            parsed_gun,
+            envelope_log=log,
+            chat_id=-1001275462917,
+            message_id=23878,
+            now=datetime(2026, 5, 31, 13, 43, 52, tzinfo=UTC),
+        )
+        assert second is None
+        assert len(log.read_text(encoding="utf-8").splitlines()) == 1
+
+    def test_deduplicates_against_event_store_when_log_lookback_misses(
+        self, parsed_gun, tmp_path: Path
+    ) -> None:
+        log = tmp_path / "envelope.jsonl"
+        first = emit_parsed_signal(
+            parsed_gun,
+            envelope_log=log,
+            chat_id=-1001275462917,
+            message_id=23878,
+            now=datetime(2026, 5, 30, 13, 43, 52, tzinfo=UTC),
+        )
+        assert first is not None
+        log.unlink()
+
+        second = emit_parsed_signal(
+            parsed_gun,
+            envelope_log=log,
+            chat_id=-1001275462917,
+            message_id=23878,
+            now=datetime(2026, 5, 31, 13, 43, 52, tzinfo=UTC),
+        )
+        assert second is None
+        assert not log.exists()
 
     def test_dedup_scoped_to_accepted_only(self, parsed_gun, tmp_path: Path) -> None:
         """A prior non-accepted record with same key must NOT block emit."""

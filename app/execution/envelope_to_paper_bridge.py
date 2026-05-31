@@ -157,6 +157,13 @@ def _append_bridge_audit(record: dict[str, object]) -> None:
             fh.write(json.dumps(record, ensure_ascii=False) + "\n")
     except OSError as exc:
         logger.error("[bridge] audit write failed: %s", exc)
+        return
+    try:
+        from app.observability.premium_event_store import record_bridge_decision
+
+        record_bridge_decision(record)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[bridge] event-store write failed: %s", exc)
 
 
 def _latest_bridge_stage_by_envelope(
@@ -363,6 +370,9 @@ def _audit_base(
         or envelope_id
     )
     idem = envelope.get("idempotency_key")
+    payload = _payload(envelope)
+    source_uid = envelope.get("source_uid") or payload.get("source_uid")
+    source_platform = envelope.get("source_platform") or payload.get("source_platform")
     return {
         "timestamp_utc": datetime.now(UTC).isoformat(),
         "event": "operator_signal_bridge",
@@ -373,6 +383,12 @@ def _audit_base(
         "origin_envelope_stage": envelope.get("stage"),
         "origin_envelope_timestamp": envelope.get("timestamp_utc"),
         **({"idempotency_key": idem} if isinstance(idem, str) and idem else {}),
+        **({"source_uid": source_uid} if isinstance(source_uid, str) and source_uid else {}),
+        **(
+            {"source_platform": source_platform}
+            if isinstance(source_platform, str) and source_platform
+            else {}
+        ),
     }
 
 

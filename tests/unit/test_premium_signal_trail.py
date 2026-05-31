@@ -26,6 +26,26 @@ from app.observability.premium_signal_trail import (
 
 
 def _origin_env(env_id: str, symbol: str, ts: str, **payload_extra) -> dict:
+    source_uid = payload_extra.pop("source_uid", None)
+    source_platform = payload_extra.pop("source_platform", None)
+    payload = {
+        "symbol": symbol.replace("/", ""),
+        "display_symbol": symbol,
+        "side": "buy",
+        "direction": "long",
+        "entry_type": "at",
+        "entry_value": 1.0,
+        "stop_loss": 0.95,
+        "targets": [1.05, 1.10, 1.15, 1.20],
+        "leverage": 10,
+        "scale_factor": 1.0,
+        "scale_resolved_at_emit": True,
+        **payload_extra,
+    }
+    if source_uid is not None:
+        payload["source_uid"] = source_uid
+    if source_platform is not None:
+        payload["source_platform"] = source_platform
     return {
         "timestamp_utc": ts,
         "event": "telegram_channel_envelope",
@@ -35,20 +55,9 @@ def _origin_env(env_id: str, symbol: str, ts: str, **payload_extra) -> dict:
         "source": "telegram_premium_channel",
         "envelope_id": env_id,
         "idempotency_key": f"idem-{env_id}",
-        "payload": {
-            "symbol": symbol.replace("/", ""),
-            "display_symbol": symbol,
-            "side": "buy",
-            "direction": "long",
-            "entry_type": "at",
-            "entry_value": 1.0,
-            "stop_loss": 0.95,
-            "targets": [1.05, 1.10, 1.15, 1.20],
-            "leverage": 10,
-            "scale_factor": 1.0,
-            "scale_resolved_at_emit": True,
-            **payload_extra,
-        },
+        **({"source_uid": source_uid} if source_uid is not None else {}),
+        **({"source_platform": source_platform} if source_platform is not None else {}),
+        "payload": payload,
     }
 
 
@@ -231,6 +240,25 @@ def test_filled_and_closed_path():
     assert _stage(entry, "paper").ok
     assert _stage(entry, "closed").ok
     assert entry.next_action_hint == "none"
+
+
+def test_trail_exposes_source_identity():
+    origin = _origin_env(
+        "ENV-A",
+        "NIGHT/USDT",
+        "2026-05-30T13:43:52+00:00",
+        source_uid="telegram:-1001275462917:23878",
+        source_platform="telegram",
+    )
+    entries = build_trail(
+        envelope_records=[origin],
+        bridge_records=[],
+        paper_records=[],
+        limit=10,
+    )
+    assert entries[0].source_uid == "telegram:-1001275462917:23878"
+    assert entries[0].source_platform == "telegram"
+    assert entries[0].to_dict()["source_uid"] == "telegram:-1001275462917:23878"
 
 
 def test_filled_and_open_path():

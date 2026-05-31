@@ -61,9 +61,30 @@ def _fake_audit_check_fn(
     return _fake_audit_check()
 
 
+def _fake_canary_check_fn(
+    max_age_seconds: int,
+    now: datetime | None = None,
+    path: Path | None = None,
+):
+    return pph.CheckResult(name="semantic_canary", ok=True, detail="fake")
+
+
+def _fake_hmac_check_fn():
+    return pph.CheckResult(name="approval_hmac", ok=True, detail="fake")
+
+
+def _health_report(**kwargs):
+    defaults = {
+        "_semantic_canary_check_fn": _fake_canary_check_fn,
+        "_approval_hmac_check_fn": _fake_hmac_check_fn,
+    }
+    defaults.update(kwargs)
+    return pph.compute_pipeline_health(**defaults)
+
+
 def test_all_green_yields_healthy_true():
     now = datetime(2026, 5, 14, 12, 0, tzinfo=UTC)
-    report = pph.compute_pipeline_health(
+    report = _health_report(
         now=now,
         _service_check_fn=_fake_service_check_factory("active"),
         _paper_timer_check_fn=_fake_timer_check_factory(ok=True, age_seconds=60),
@@ -72,13 +93,13 @@ def test_all_green_yields_healthy_true():
     )
     assert report.healthy is True
     assert report.failure_modes == []
-    # 3 services + timer + heartbeat + audit-info = 6 checks
-    assert len(report.checks) == 6
+    # 3 services + timer + heartbeat + semantic-canary + HMAC + audit-info.
+    assert len(report.checks) == 8
 
 
 def test_any_service_inactive_marks_pipeline_unhealthy():
     now = datetime(2026, 5, 14, 12, 0, tzinfo=UTC)
-    report = pph.compute_pipeline_health(
+    report = _health_report(
         now=now,
         _service_check_fn=_fake_service_check_factory("inactive"),
         _paper_timer_check_fn=_fake_timer_check_factory(ok=True, age_seconds=60),
@@ -93,7 +114,7 @@ def test_any_service_inactive_marks_pipeline_unhealthy():
 
 def test_stale_paper_timer_marks_unhealthy_but_audit_stays_informational():
     now = datetime(2026, 5, 14, 12, 0, tzinfo=UTC)
-    report = pph.compute_pipeline_health(
+    report = _health_report(
         now=now,
         _service_check_fn=_fake_service_check_factory("active"),
         _paper_timer_check_fn=_fake_timer_check_factory(ok=False, age_seconds=99 * 60),
@@ -106,7 +127,7 @@ def test_stale_paper_timer_marks_unhealthy_but_audit_stays_informational():
 
 def test_stale_heartbeat_marks_unhealthy():
     now = datetime(2026, 5, 14, 12, 0, tzinfo=UTC)
-    report = pph.compute_pipeline_health(
+    report = _health_report(
         now=now,
         _service_check_fn=_fake_service_check_factory("active"),
         _paper_timer_check_fn=_fake_timer_check_factory(ok=True, age_seconds=60),
@@ -148,6 +169,39 @@ def test_real_heartbeat_check_with_missing_file(tmp_path: Path):
     assert "missing" in result.detail
 
 
+def test_real_semantic_canary_check_with_converged_checkpoint(tmp_path: Path):
+    canary = tmp_path / "telegram_channel_semantic_canary.json"
+    canary.write_text(
+        json.dumps(
+            {
+                "checked_at": datetime.now(UTC).isoformat(),
+                "checkpoint_message_id": 23878,
+                "latest_message_id": 23878,
+                "gap": 0,
+            }
+        )
+    )
+    result = pph._check_semantic_canary(max_age_seconds=180, path=canary)
+    assert result.ok is True
+
+
+def test_real_semantic_canary_check_with_gap_fails(tmp_path: Path):
+    canary = tmp_path / "telegram_channel_semantic_canary.json"
+    canary.write_text(
+        json.dumps(
+            {
+                "checked_at": datetime.now(UTC).isoformat(),
+                "checkpoint_message_id": 23878,
+                "latest_message_id": 23880,
+                "gap": 2,
+            }
+        )
+    )
+    result = pph._check_semantic_canary(max_age_seconds=180, path=canary)
+    assert result.ok is False
+    assert "gap=2" in result.detail
+
+
 def test_real_audit_check_with_stale_log_stays_ok(tmp_path: Path):
     """Stale audit log MUST NOT trip failure — silent ticks don't write."""
     log = tmp_path / "bridge_pending_orders.jsonl"
@@ -170,7 +224,7 @@ def test_real_audit_check_with_no_records_stays_ok(tmp_path: Path):
 
 def test_report_to_dict_roundtrip():
     now = datetime(2026, 5, 14, 12, 0, tzinfo=UTC)
-    report = pph.compute_pipeline_health(
+    report = _health_report(
         now=now,
         _service_check_fn=_fake_service_check_factory("active"),
         _paper_timer_check_fn=_fake_timer_check_factory(ok=True, age_seconds=60),

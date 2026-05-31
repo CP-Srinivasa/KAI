@@ -100,6 +100,8 @@ class TrailEntry:
     """End-to-End-Trail für ein Premium-Signal."""
 
     envelope_id: str
+    source_uid: str | None
+    source_platform: str | None
     symbol: str
     received_at: str | None
     direction: str | None
@@ -126,6 +128,8 @@ class TrailEntry:
     def to_dict(self) -> dict[str, Any]:
         return {
             "envelope_id": self.envelope_id,
+            "source_uid": self.source_uid,
+            "source_platform": self.source_platform,
             "symbol": self.symbol,
             "received_at": self.received_at,
             "direction": self.direction,
@@ -886,6 +890,9 @@ def build_trail(
 
         entry = TrailEntry(
             envelope_id=env_id,
+            source_uid=_safe_str(env.get("source_uid")) or _safe_str(payload.get("source_uid")),
+            source_platform=_safe_str(env.get("source_platform"))
+            or _safe_str(payload.get("source_platform")),
             symbol=symbol,
             received_at=_safe_str(env.get("timestamp_utc")),
             direction=_safe_str(payload.get("direction")),

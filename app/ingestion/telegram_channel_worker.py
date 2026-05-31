@@ -369,6 +369,7 @@ def process_message(
     *,
     source_tag: str,
     chat_id: int | None,
+    message_id: int | None = None,
     raw_log_path: Path,
     emit_fn: Callable[..., dict[str, object] | None] = emit_parsed_signal,
     now: datetime | None = None,
@@ -392,6 +393,7 @@ def process_message(
     base: dict[str, object] = {
         "timestamp_utc": ts,
         "chat_id": chat_id,
+        "message_id": message_id,
         "text_len": len(text or ""),
     }
     if parsed is None:
@@ -440,6 +442,8 @@ def process_message(
         parsed,
         source=source_tag,
         chat_id=chat_id,
+        message_id=message_id,
+        source_platform="telegram" if message_id is not None else None,
         now=now,
         scale_factor=scale_factor,
     )
@@ -502,6 +506,7 @@ async def resolve_target_entity(client: Any, cfg: TelegramChannelIngestSettings)
 
 
 _REPLAY_MARKER_PATH = Path("artifacts/.telegram_channel_replay.json")
+_SEMANTIC_CANARY_PATH = Path("artifacts/telegram_channel_semantic_canary.json")
 
 
 def _write_replay_marker(result: dict[str, int]) -> None:
@@ -521,6 +526,47 @@ def _write_replay_marker(result: dict[str, int]) -> None:
         _REPLAY_MARKER_PATH.write_text(json.dumps(payload), encoding="utf-8")
     except OSError as exc:
         logger.warning("[channel-worker] could not write replay marker: %s", exc)
+
+
+def _write_semantic_canary(
+    *,
+    path: Path = _SEMANTIC_CANARY_PATH,
+    chat_id: int,
+    checkpoint_message_id: int,
+    latest_message_id: int | None,
+    replay_processed: int,
+) -> None:
+    """Persist source-vs-checkpoint semantics for health probes.
+
+    Heartbeat answers "process alive"; this answers "Telegram source head is
+    at, or has been reconciled into, our checkpoint." The healthcheck reads it
+    without touching the Telethon session, avoiding SQLite session locks.
+    """
+    payload = {
+        "checked_at": datetime.now(UTC).isoformat(),
+        "source_platform": "telegram",
+        "chat_id": int(chat_id),
+        "checkpoint_message_id": int(checkpoint_message_id),
+        "latest_message_id": latest_message_id,
+        "gap": (
+            max(0, int(latest_message_id) - int(checkpoint_message_id))
+            if latest_message_id is not None
+            else None
+        ),
+        "replay_processed": int(replay_processed),
+    }
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    except OSError as exc:
+        logger.warning("[channel-worker] semantic canary write failed: %s", exc)
+
+
+async def _latest_message_id(client: Any, entity: Any) -> int | None:
+    async for msg in client.iter_messages(entity, limit=1):
+        msg_id = getattr(msg, "id", None)
+        return int(msg_id) if isinstance(msg_id, int) else None
+    return None
 
 
 async def replay_missed_messages(
@@ -679,6 +725,15 @@ async def _poll_backstop_loop(
                 chat_id=chat_id_marked,
                 last_seen_id=last_seen,
                 process_fn=process_fn,
+            )
+            updated_checkpoint = load_checkpoint(checkpoint_path)
+            updated_last_seen = get_last_seen_id(updated_checkpoint, chat_id_marked)
+            latest_id = await _latest_message_id(client, entity)
+            _write_semantic_canary(
+                chat_id=chat_id_marked,
+                checkpoint_message_id=updated_last_seen,
+                latest_message_id=latest_id,
+                replay_processed=int(result.get("processed", 0)),
             )
             consecutive_failures = 0
             processed = int(result.get("processed", 0))
@@ -983,6 +1038,7 @@ async def run_worker(cfg: TelegramChannelIngestSettings | None = None) -> None:
                     text,
                     source_tag=cfg.source_tag,
                     chat_id=chat_id_marked,
+                    message_id=msg_id,
                     raw_log_path=raw_log,
                     scale_factor=scale_factor,
                 )
@@ -1010,6 +1066,14 @@ async def run_worker(cfg: TelegramChannelIngestSettings | None = None) -> None:
                 process_fn=_replay_handler,
             )
             _write_replay_marker(replay_result)
+            latest_id = await _latest_message_id(client, entity)
+            checkpoint_after_replay = load_checkpoint(checkpoint_path)
+            _write_semantic_canary(
+                chat_id=chat_id_marked,
+                checkpoint_message_id=get_last_seen_id(checkpoint_after_replay, chat_id_marked),
+                latest_message_id=latest_id,
+                replay_processed=int(replay_result.get("processed", 0)),
+            )
             # 2026-05-31: hand the replay handler + marked chat-id to the
             # poll-backstop so it pulls via the same checkpoint path.
             poll_replay_handler = _replay_handler
@@ -1032,6 +1096,7 @@ async def run_worker(cfg: TelegramChannelIngestSettings | None = None) -> None:
                 text,
                 source_tag=cfg.source_tag,
                 chat_id=chat_id,
+                message_id=msg_id if isinstance(msg_id, int) else None,
                 raw_log_path=raw_log,
                 scale_factor=scale_factor,
             )

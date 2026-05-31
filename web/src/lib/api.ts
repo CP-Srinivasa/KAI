@@ -603,6 +603,8 @@ export type PremiumSignalAnalytics = {
 
 export type PremiumSignalTrailEntry = {
   envelope_id: string;
+  source_uid: string | null;
+  source_platform: string | null;
   symbol: string;
   received_at: string | null;
   direction: string | null;
