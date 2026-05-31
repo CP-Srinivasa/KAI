@@ -6,6 +6,7 @@ kept blocking, the heartbeat loop kept ticking, but no messages were observed
 lost. The poll-backstop pulls via the checkpoint+replay path so a dead push
 stream can no longer cause silent signal loss.
 """
+
 from __future__ import annotations
 
 import asyncio

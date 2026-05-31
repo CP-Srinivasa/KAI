@@ -694,8 +694,7 @@ async def _poll_backstop_loop(
         except Exception as exc:  # noqa: BLE001 — backstop must never crash listener
             consecutive_failures += 1
             logger.warning(
-                "[channel-worker] poll-backstop iteration failed "
-                "(%s/%s consecutive): %s",
+                "[channel-worker] poll-backstop iteration failed (%s/%s consecutive): %s",
                 consecutive_failures,
                 _POLL_MAX_CONSECUTIVE_FAILURES,
                 exc,
