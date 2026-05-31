@@ -165,6 +165,13 @@ class RiskSettings(BaseSettings):
     # as equity, so a nearly-deployed portfolio yields dust orders (~1e-16 units)
     # that fill but take no real position. Orders below this notional are rejected.
     min_notional_usd: float = Field(default=10.0)
+    # DS-20260529-V2: hard upper cap on a single position's notional, as % of
+    # equity. A tight stop (small ATR → huge units) can bind 50-70% of equity and
+    # trip the 25% diversification asset-cap → whole order rejected → loop deadlock.
+    # 20% sits strictly below the 25% diversification cap (buffer + headroom for
+    # ~5 positions at max_open_positions=6). <= 0 disables the cap.
+    # env: RISK_MAX_POSITION_SIZE_PCT
+    max_position_size_pct: float = Field(default=20.0)
 
     # Safety gates (must remain True)
     require_stop_loss: bool = Field(default=True)

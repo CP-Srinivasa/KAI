@@ -241,7 +241,12 @@ def test_position_size_with_stop_loss():
 
 
 def test_position_size_uses_signal_margin_and_leverage_when_safe():
-    engine = _default_engine(max_risk_per_trade_pct=10.0, max_leverage=20.0)
+    # DS-20260529-V2: with the 20% position cap active, disable the cap here so
+    # this test isolates the margin/leverage sizing path (a separate test below
+    # asserts the cap clamps this path). 10_000 * 5% * 10x = 5_000 notional.
+    engine = _default_engine(
+        max_risk_per_trade_pct=10.0, max_leverage=20.0, max_position_size_pct=0.0
+    )
     result = engine.calculate_position_size(
         symbol="BTC/USDT",
         entry_price=100.0,
@@ -256,6 +261,27 @@ def test_position_size_uses_signal_margin_and_leverage_when_safe():
     assert result.position_size_pct == 50.0
     assert result.max_loss_usd == 50.0
     assert "signal_margin_leverage" in result.rationale
+
+
+def test_position_size_cap_clamps_margin_leverage_path():
+    """DS-20260529-V2: the position cap also clamps the signal margin/leverage
+    path. Same inputs as the test above but with the 20% cap active → 5_000
+    notional (50% equity) is clamped to 2_000 (20% equity)."""
+    engine = _default_engine(
+        max_risk_per_trade_pct=10.0, max_leverage=20.0, max_position_size_pct=20.0
+    )
+    result = engine.calculate_position_size(
+        symbol="BTC/USDT",
+        entry_price=100.0,
+        stop_loss_price=99.0,
+        equity=10000.0,
+        leverage=10.0,
+        risk_allocation_pct=5.0,
+    )
+    assert result.approved
+    assert abs(result.position_size_pct - 20.0) < 1e-6
+    assert abs(result.position_size_units * result.entry_price - 2000.0) < 1e-6
+    assert "position_size_capped" in result.rationale
 
 
 def test_position_size_caps_signal_leverage_at_limit():

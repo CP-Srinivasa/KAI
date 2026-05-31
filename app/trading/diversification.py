@@ -443,9 +443,7 @@ class DiversificationGuard:
         proj_btc_eth = None
         if cand_base in _BTC_ETH:
             cur_btc_eth = sum(current_usd_for("asset", a) for a in _BTC_ETH)
-            proj_btc_eth = (
-                (cur_btc_eth + notional_usd) / denom * 100.0 if denom > 0 else 0.0
-            )
+            proj_btc_eth = (cur_btc_eth + notional_usd) / denom * 100.0 if denom > 0 else 0.0
             if proj_btc_eth > self._limits.max_btc_eth_short_term_pct:
                 breached.append(
                     ConcentrationBucket(

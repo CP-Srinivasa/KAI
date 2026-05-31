@@ -392,6 +392,29 @@ class RiskEngine:
                 units = max_risk_usd / entry_price
 
         position_value = units * entry_price
+
+        # DS-20260529-V2: hard upper notional cap (% of equity). Applied AFTER the
+        # risk-cap and SL-distance sizing (so the loss-cap still wins on the
+        # downside) but BEFORE the dust gate (a clamp may legitimately push a
+        # position below min_notional → then dust-reject is correct). A tight stop
+        # (small ATR → huge units) would otherwise bind 50-70% of equity and trip
+        # the 25% diversification asset-cap, deadlocking the loop. max_position_size_pct
+        # <= 0 disables the cap (backward-compatible).
+        position_capped = False
+        if self._limits.max_position_size_pct > 0:
+            max_position_value = equity * (self._limits.max_position_size_pct / 100)
+            if position_value > max_position_value:
+                uncapped_value = position_value
+                units = max_position_value / entry_price
+                position_value = units * entry_price
+                position_capped = True
+                sizing_mode = f"{sizing_mode}_position_capped"
+                position_cap_note = (
+                    f" position_size_capped: ${uncapped_value:.2f} -> "
+                    f"${position_value:.2f} ({self._limits.max_position_size_pct:.4g}% "
+                    f"equity cap)"
+                )
+
         # DS-20260528-V2: dust gate. Sizing equity is the portfolio's remaining
         # cash (trading_loop), so a nearly-deployed portfolio yields a near-zero
         # notional (~1e-16 units). Those fill but take no real position — they
@@ -409,6 +432,7 @@ class RiskEngine:
                 rationale=(
                     f"dust_below_min_notional: ${position_value:.4g} < "
                     f"${self._limits.min_notional_usd:.2f} (sizing_equity=${equity:.2f})"
+                    + (position_cap_note if position_capped else "")
                 ),
             )
         position_size_pct = (position_value / equity) * 100
@@ -431,6 +455,8 @@ class RiskEngine:
                 f"Risk-based sizing: {self._limits.max_risk_per_trade_pct}% equity risk, "
                 f"{units:.4f} units @ {entry_price:.2f}"
             )
+        if position_capped:
+            rationale += position_cap_note
 
         return PositionSizeResult(
             approved=True,
