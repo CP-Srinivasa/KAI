@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sqlite3
 from datetime import UTC, datetime
 from pathlib import Path
@@ -7,6 +8,7 @@ from pathlib import Path
 from app.ingestion.telegram_channel_envelope import build_envelope_record
 from app.ingestion.telegram_channel_parser import parse_premium_channel_message
 from app.observability import premium_event_store as store
+from app.observability.premium_event_store_backfill import backfill_event_store
 
 SAMPLE = """\
 Long/Buy #NIGHT/USDT
@@ -59,6 +61,7 @@ def test_event_store_persists_approval_and_bridge_decision(tmp_path: Path) -> No
         "event": "telegram_channel_approval",
         "source": "telegram_premium_channel_approved",
         "envelope_id": "ENV-APP-1",
+        "idempotency_key": "approved-idem",
         "origin_envelope_id": rec["envelope_id"],
         "approved_by": "auto-fill",
     }
@@ -93,3 +96,57 @@ def test_event_store_persists_approval_and_bridge_decision(tmp_path: Path) -> No
     assert decisions == 1
     assert orders == 1
     assert fills == 1
+
+
+def test_backfill_event_store_loads_jsonl_audits(tmp_path: Path) -> None:
+    db = tmp_path / "premium.sqlite3"
+    envelope_log = tmp_path / "telegram_message_envelope.jsonl"
+    bridge_log = tmp_path / "bridge_pending_orders.jsonl"
+    rec = _record()
+    approved = {
+        **rec,
+        "event": "telegram_channel_approval",
+        "source": "telegram_premium_channel_approved",
+        "envelope_id": "ENV-APP-1",
+        "idempotency_key": "approved-idem",
+        "origin_envelope_id": rec["envelope_id"],
+        "approved_by": "auto-fill",
+    }
+    bridge = {
+        "timestamp_utc": "2026-05-30T13:44:00+00:00",
+        "event": "operator_signal_bridge",
+        "envelope_id": "ENV-APP-1",
+        "source_uid": rec["source_uid"],
+        "stage": "filled",
+    }
+    envelope_log.write_text(
+        "\n".join(json.dumps(row) for row in [rec, approved]) + "\n",
+        encoding="utf-8",
+    )
+    bridge_log.write_text(json.dumps(bridge) + "\n", encoding="utf-8")
+
+    summary = backfill_event_store(
+        envelope_log=envelope_log,
+        bridge_log=bridge_log,
+        store_path=db,
+    )
+
+    conn = sqlite3.connect(db)
+    try:
+        signal_count = conn.execute("SELECT COUNT(*) FROM signals").fetchone()[0]
+        envelope_count = conn.execute("SELECT COUNT(*) FROM envelopes").fetchone()[0]
+        approvals = conn.execute("SELECT COUNT(*) FROM approvals").fetchone()[0]
+        decisions = conn.execute("SELECT COUNT(*) FROM bridge_decisions").fetchone()[0]
+    finally:
+        conn.close()
+
+    assert summary.to_dict() == {
+        "approval_records": 1,
+        "bridge_records": 1,
+        "envelope_records": 1,
+        "malformed_lines": 0,
+    }
+    assert signal_count == 1
+    assert envelope_count == 2
+    assert approvals == 1
+    assert decisions == 1
