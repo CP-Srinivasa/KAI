@@ -6,6 +6,7 @@ Checks:
 - Actionable-alert volume (P1: structural pipeline health, not just heartbeat)
 - Trading loop stale (no cycles in lookback window)
 - Trading loop priority_rejected saturation (P1: detects gate-induced silence)
+- Trading loop open-deadlock (V5: loop spins but opens no positions)
 - High error rate in trading cycles
 - Precision degradation below threshold
 - Outcome annotation backlog (unannotated directional alerts)
@@ -54,6 +55,25 @@ _FRESHNESS_PER_FILE_MIN: dict[str, int] = {
     "source_reliability.json": 1500,  # lives in monitor/, not artifacts/
 }
 _FRESHNESS_LAST_RECORD_WARN_HOURS = 4
+
+# V5 loop-deadlock watchdog (DS-20260531-V5). The 2026-05-31 incident: the loop
+# ran ~24h of cycles (trading_loop_audit fresh, so the freshness + min-cycles
+# checks stayed green) while EVERY cycle was rejected at the diversification /
+# sizing gate — zero orders opened, paper_execution_audit frozen for ~24h. No
+# existing check fired: the priority_rejected-saturation check only looks at
+# `priority_rejected` AND is disabled under RE_ENTRY_MODE. This watchdog catches
+# the general "loop spins but opens nothing" failure, RE_ENTRY_MODE-independent.
+#
+# Discriminator against a legitimately FULL book (also 0 completed): a full book
+# rejects new entries with `risk_rejected` (max_open_positions), NOT
+# diversification/size. So we only fire when the OPEN-blocking gates dominate.
+_OPEN_BLOCKING_STATUSES: frozenset[str] = frozenset(
+    {"diversification_rejected", "size_rejected", "sizing_anomaly_rejected"}
+)
+# paper_execution_audit is event-driven (writes only on a fill/close), so it is
+# deliberately NOT in the timer-driven freshness list. Its staleness is only
+# meaningful as a SECONDARY signal alongside an active-but-unproductive loop.
+_PAPER_EXECUTION_SILENCE_MIN = 180  # 3h — informative threshold for the message
 
 # Hostname substrings that identify the Pi-side authoritative host. Override
 # via env KAI_PI_HOSTNAME_MARKER for non-default deployments.
@@ -187,6 +207,24 @@ def _check_audit_stream_schemas(adir: Path) -> list[HealthIssue]:
     return issues
 
 
+def _paper_execution_silence_hint(adir: Path, now: datetime) -> str:
+    """Append-able hint about paper_execution_audit staleness (V5 secondary signal).
+
+    Returns ``""`` when the file is missing or fresh, otherwise a short
+    `; paper_execution_audit silent for Nh` suffix. Purely informative — the
+    deadlock trigger itself is the completed==0 + open-blocking-ratio condition.
+    """
+    path = adir / "paper_execution_audit.jsonl"
+    try:
+        mtime = datetime.fromtimestamp(path.stat().st_mtime, tz=UTC)
+    except (OSError, ValueError):
+        return ""
+    age_min = (now - mtime).total_seconds() / 60
+    if age_min < _PAPER_EXECUTION_SILENCE_MIN:
+        return ""
+    return f"; paper_execution_audit silent for {age_min / 60:.1f}h"
+
+
 def _re_entry_mode_active() -> bool:
     """P1 — respect RE_ENTRY_MODE env-flag so probe relaxes during gated window.
 
@@ -242,11 +280,14 @@ def run_health_check_report(
     min_precision_pct: float = 15.0,
     min_expected_actionable: int = 0,
     max_priority_rejected_ratio: float = 0.95,
+    max_open_blocking_ratio: float = 0.5,
 ) -> HealthReport:
-    """Run all health checks and return a structured report (P0+P1).
+    """Run all health checks and return a structured report (P0+P1+V5).
 
-    Adds data-freshness check (P0) and actionable + priority_rejected_ratio
-    checks (P1). Respects RE_ENTRY_MODE env-flag to relax thresholds.
+    Adds data-freshness check (P0), actionable + priority_rejected_ratio
+    checks (P1), and the loop open-deadlock watchdog (V5). Respects
+    RE_ENTRY_MODE env-flag to relax thresholds — except V5, which fires
+    regardless because a self-inflicted open-deadlock is never intended.
     """
     adir = artifacts_dir or _ARTIFACTS
     now = datetime.now(UTC)
@@ -417,6 +458,41 @@ def run_health_check_report(
                         f"{rejected}/{recent_cycles} cycles priority_rejected "
                         f"({ratio:.0%}) — pipeline runs but produces no signals; "
                         f"check priority gate / sentiment scoring"
+                    ),
+                )
+            )
+
+    # ── V5: loop open-deadlock watchdog (DS-20260531-V5) ─────────────
+    # "Loop spins but opens nothing." Fires when the loop is demonstrably
+    # active (>= min_expected_cycles) yet produced ZERO completed cycles AND
+    # the open-blocking gates (diversification / sizing) dominate. This is the
+    # exact 2026-05-31 deadlock signature; it is intentionally
+    # RE_ENTRY_MODE-INDEPENDENT because a self-inflicted open-deadlock is never
+    # a designed state (unlike priority_rejected saturation, which RE_ENTRY_MODE
+    # expects). A legitimately full book is excluded: it rejects with
+    # `risk_rejected` (max_open_positions), so the open-blocking ratio stays low.
+    if recent_cycles >= min_expected_cycles and not stale:
+        completed = status_breakdown.get("completed", 0)
+        open_blocked = sum(
+            status_breakdown.get(s, 0) for s in _OPEN_BLOCKING_STATUSES
+        )
+        open_blocked_ratio = open_blocked / recent_cycles
+        if completed == 0 and open_blocked_ratio >= max_open_blocking_ratio:
+            dominant = max(
+                _OPEN_BLOCKING_STATUSES,
+                key=lambda s: status_breakdown.get(s, 0),
+            )
+            paper_hint = _paper_execution_silence_hint(adir, now)
+            report.issues.append(
+                HealthIssue(
+                    severity="critical",
+                    component="trading_loop_open_deadlock",
+                    message=(
+                        f"{open_blocked}/{recent_cycles} cycles "
+                        f"{dominant} ({open_blocked_ratio:.0%}), 0 completed "
+                        f"— loop spins but opens no positions (self-deadlock at "
+                        f"the {dominant.replace('_rejected', '')} gate)"
+                        f"{paper_hint}"
                     ),
                 )
             )
