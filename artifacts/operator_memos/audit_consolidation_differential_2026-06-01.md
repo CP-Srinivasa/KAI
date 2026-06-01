@@ -64,13 +64,18 @@ Remediation-Strang wäre Duplikation und wurde bewusst **vermieden**.
 
 **Deploy-Doku:** `deploy/README.md` Install-Pfad `pip install -e .` → deterministischer `requirements.lock`-Install (Verweis auf `docs/security/lock_file_workflow.md`).
 
+**F3 — mypy-Burn-down begonnen (CI-verifiziert, 0 Code-Änderung):**
+- Wichtige Methodik-Korrektur: lokal war mypy **1.19.1**, CI pinnt **mypy==2.1.0** (`requirements.lock`). Unter 2.1.0 verschwinden Version-Artefakte (z.B. `watchlists.py:64` Literal-Narrowing); voller `mypy app/` unter 2.1.0 = **Success, 0 issues** = CI-`type-check` bestätigt grün (auch via `gh run list` auf p7).
+- 3 Module aus dem `ignore_errors`-Override entfernt, weil unter 2.1.0 strict **fehlerfrei**, voller `mypy app/` bleibt grün: **`app.execution.fees`, `app.orchestrator.trading_loop`, `app.messaging.kai_persona`** (37 → 34).
+- Echte Rest-Debt (strict, alle übrigen Module, mypy 2.1.0): **133 Fehler**. Hotspots: `signal_parser`=21, `envelope_to_paper_bridge`=18, `api/routers/signals`=16, `paper_engine`=10, `telegram_bot`/`portfolio_read`=6, `binance_adapter`/`audit_replay`=5.
+
 ---
 
 ## 4. Bewusst NICHT autonom umgesetzt (mit Begründung)
 
 | Item | Warum nicht jetzt | Korrekter Pfad |
 |---|---|---|
-| **F3 mypy-Burn-down** (paper_engine/bridge/loop/execution) | CI-`type-check` läuft `mypy app/` **blockierend**. Teil-Entfernung von `ignore_errors` ohne vollen verifizierten `mypy app/`-Lauf röte CI. Voller 3825-Test-Regressionsnachweis auf Windows nicht verlässlich (Output-Buffering, Laufzeit). Auf Trading-Core = Scheinsicherheit-Risiko, das der Auftrag ausdrücklich verbietet. | Eigener PR, Modul-für-Modul, je Modul `ignore_errors` raus + Fehler fixen + voller `mypy app/` + Test-Lauf grün in CI. Gemessener Floor: paper_engine=10, bridge=28, trading_loop=10, **fees=1 (Quick Win)**. |
+| **F3 mypy-Burn-down RESTLICHE 34 Module** | Restfehler (133) erfordern echte Code-Fixes (Typannotationen, Optionals, Narrowing) im Execution-/Messaging-/API-Core. Pro Modul: `ignore_errors` raus + Fehler fixen + voller `mypy app/` grün + Tests. Auf Trading-Core ohne pro-Modul-Test-Verifikation = Scheinsicherheit. **Begonnen:** 3 fehlerfreie Module bereits gelandet (s. §3). | Eigener PR, Reihenfolge nach Hebel/Risiko. Niedrig hängende echte Fixes zuerst (viele Module mit 1-2 Fehlern), dann Hotspots `signal_parser`(21)/`bridge`(18)/`signals`(16)/`paper_engine`(10). Verifikation **muss** unter mypy==2.1.0 laufen (CI-Pin), nicht lokalem 1.19.x. |
 | **F4 JSONL-Rotation** | Neue Subsystem-Logik mit Test-Pflicht; berührt Audit-Schreibpfade (audit-kritisch). Nicht ohne Tests + Review auf Live-System. | Eigener PR: size-cap/logrotate für `api_request_audit` (rehydrationsfrei → aggressiv rotierbar), Rehydration-Fenster optional für paper-audit. |
 | **Branch-Löschungen** | `claude/remediation-sprint-20260531` hat ungemergten Unique-Wert; `sprint/lock-file-migration-v2`-Substanz ist superseded, aber Unique-Commits (daily-strategy) nicht patch-identisch in p7. Autonome Löschung = Wertverlust-Risiko. | Operator-Review: Remediation-Branch gegen p7 rebasen + Unique-Commits cherry-picken, DANN beide Branches + Worktrees abräumen. |
 | **F5 lokale CRLF-Renormalisierung** | `git add --renormalize` ist schreibend über den ganzen Working-Tree; auf Windows mit 35 Worktrees + Parallel-Sessions Drift-Risiko. | Operator-getriggert lokal: `git add --renormalize .` + `Path(p).as_posix()` in `tests/integration/test_server_stop_cutover_bash.py`. Kein Prod-Effekt (Index ist bereits LF). |
@@ -83,21 +88,22 @@ Remediation-Strang wäre Duplikation und wurde bewusst **vermieden**.
 
 - `ruff check app/ tests/` → **All checks passed**
 - `ruff format --check app/ tests/` → **671 files already formatted**
-- `mypy app/` (lokal) → 8 „Fehler", davon 4 stub-missing (lokales Env, CI hat types-PyYAML via lock) + 1 watchlists-Literal (s.o.) + 3 weitere yaml-stub; **keine** durch die Doc-Änderungen verursacht (nur .md/Markdown geändert).
-- Geänderte Dateien dieses Sprints: ausschließlich Doku (`AGENTS.md`, `RUNBOOK.md`, `deploy/README.md`) + dieses Memo → **null Code-/Test-Regressionsfläche**.
+- `mypy app/` unter CI-Pin **mypy==2.1.0** → **Success: no issues found in 351 source files** (vor UND nach dem Entfernen der 3 Module). Lokales mypy 1.19.1 war für CI-Aussagen unzuverlässig (Versions-Drift).
+- Gezielte Test-Slice `tests/unit/test_venue_fees.py` + `tests/unit/test_risk_engine.py` (no-cache) → **63 passed**. (Volle 3825-Suite nicht gelaufen — Änderungen sind doc+config-only ohne Runtime-Effekt; nur das mypy-Gate ist betroffen und verifiziert.)
+- Geänderte Dateien dieses Sprints: `AGENTS.md`, `RUNBOOK.md`, `deploy/README.md`, `pyproject.toml` (nur ignore-Liste, kein Code), dieses Memo → **null Runtime-Code-Änderung**.
 
 ---
 
 ## 6. Verbleibende Risiken & technische Schulden
 
-- **Mittel:** 37 mypy-`ignore_errors`-Module (Execution-Core); JSONL-Rotation fehlt; Branch-/Worktree-Wildwuchs (35 Worktrees, ~70 Branches) erhöht Drift-Risiko.
+- **Mittel:** 34 mypy-`ignore_errors`-Module verbleibend = 133 echte Fehler (Execution-/Messaging-/API-Core); JSONL-Rotation fehlt; Branch-/Worktree-Wildwuchs (35 Worktrees, ~70 Branches) erhöht Drift-Risiko.
 - **Niedrig:** SSRF-DNS-Rebind-Rest; unauth Detail-Health (CF-mitigiert); KAI-Persona-Binaries im Git; rehydrate ohne Fenster.
 - **Prozess:** Mehrfach-parallele Remediation-Stränge (p7-merged vs remediation-branch unmerged) — Konsolidierung auf EINEN Pfad nötig, sonst wiederkehrende Audit-Fehleinschätzungen.
 
 ## 7. Empfohlene nächste Sprints (Reihenfolge)
 
 1. **Branch-/Worktree-Konsolidierung** (Operator + Claude): Remediation-Branch reconcilen, dann abräumen. Beseitigt die Wurzel der Audit-Drift.
-2. **mypy-Burn-down** als isolierter PR, Reihenfolge fees(1)→paper_engine(10)→trading_loop(10)→bridge(28)→API, jeweils CI-grün.
+2. **mypy-Burn-down** Fortsetzung (3 Module bereits gelandet): restliche 34 Module / 133 Fehler, low-hanging zuerst, dann Hotspots `signal_parser`/`bridge`/`signals`/`paper_engine`; Verifikation unter mypy==2.1.0, jeweils CI-grün.
 3. **JSONL-Rotation/Retention** (PR mit Tests).
 4. **F5 + Persona-Binaries + watchlists-Literal** als Hygiene-Sammel-PR.
 

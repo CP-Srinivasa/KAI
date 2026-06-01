@@ -156,7 +156,6 @@ module = [
     "app.execution.audit_replay",
     "app.execution.envelope_to_paper_bridge",
     "app.execution.exchanges.factory",
-    "app.execution.fees",
     "app.execution.operator_entry_watch",
     "app.execution.paper_engine",
     "app.execution.portfolio_read",
@@ -166,11 +165,9 @@ module = [
     "app.market_data.binance_adapter",
     "app.market_data.bybit_adapter",
     "app.messaging.kai_chat_engine",
-    "app.messaging.kai_persona",
     "app.messaging.signal_parser",
     "app.messaging.telegram_bot",
     "app.messaging.voice_transcriber",
-    "app.orchestrator.trading_loop",
     "app.trading.signal_consensus",
 ]
 ignore_errors = true
