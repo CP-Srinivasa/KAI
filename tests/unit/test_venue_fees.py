@@ -31,20 +31,25 @@ def test_lookup_normalizes_case_and_whitespace():
 
 def test_lookup_unknown_venue_uses_default_taker():
     f = fees.lookup_taker_fee("kraken")
-    # default_taker_pct in YAML is 0.60 (worst-case across configured venues)
+    # default_taker_pct in YAML is 0.60 (worst-case) for GENUINELY unknown
+    # venues — unchanged by Sprint B. Only the explicit `paper` entry is now
+    # realistic; a venue with no YAML row still gets the conservative default.
     assert f.bps_applied == pytest.approx(60.0)
     assert f.venue == "kraken"
 
 
-def test_lookup_paper_uses_default_taker():
+def test_lookup_paper_uses_realistic_default():
+    # Sprint B (CostModel): paper is now an explicit YAML venue = Binance-Spot
+    # 10 bp/side, NOT the 60 bp worst-case. Operator decision 2026-06-01.
     f = fees.lookup_taker_fee("paper")
-    assert f.bps_applied == pytest.approx(60.0)
+    assert f.bps_applied == pytest.approx(10.0)
 
 
 def test_lookup_empty_venue_falls_back_to_paper_default():
+    # empty venue -> "paper" -> realistic 10 bp (paper has an explicit entry).
     f = fees.lookup_taker_fee("")
     assert f.venue == "paper"
-    assert f.bps_applied == pytest.approx(60.0)
+    assert f.bps_applied == pytest.approx(10.0)
 
 
 def test_lookup_corrupt_config_falls_back_hard(tmp_path: Path):

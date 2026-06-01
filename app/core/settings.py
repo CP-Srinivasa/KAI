@@ -16,6 +16,24 @@ from app.core.schema_runtime import (
 )
 
 
+def _cost_model_paper_round_trip_pct() -> float:
+    """Default for RiskSettings.round_trip_fee_pct, derived from the CostModel.
+
+    Single source: the V1 cost-geometry gate must charge the SAME round-trip
+    cost the paper engine charges (Sprint B). Imported lazily to avoid any
+    import-order coupling between settings and execution. If the CostModel is
+    unavailable for any reason, fall back to a small positive number rather than
+    the legacy 1.2% worst-case (re-pinning 1.2 would re-introduce Gate/Engine
+    drift). 0.2% mirrors the realistic paper default (10 bp/side round-trip).
+    """
+    try:
+        from app.execution.cost_model import CostModel
+
+        return CostModel().round_trip_fee_pct(venue="paper")
+    except Exception:  # noqa: BLE001 — config default must never crash startup
+        return 0.20
+
+
 def _strip_secret(value: object) -> object:
     # SAT-C-006: trailing newline / BOM aus copy-paste killt sonst Signaturen
     # ohne klaren Fehler ("invalid_signature" sieht wie Angriff aus, ist aber Bug).
@@ -206,13 +224,25 @@ class RiskSettings(BaseSettings):
 
     # NEO-V1 (2026-06-01): cost-aware SL geometry gate. Reject orders whose stop
     # distance cannot clear the round-trip transaction cost
-    # (|entry-SL|/entry < min_sl_cost_multiple x round_trip_fee_pct). Fixes the
-    # structural loss where a ~0.8% stop sits inside the ~1.2% round-trip taker
-    # fee. round_trip_fee_pct mirrors the paper-venue worst-case (2 x 60 bps).
-    # env: RISK_MIN_SL_COST_MULTIPLE, RISK_ROUND_TRIP_FEE_PCT.
-    # OPERATOR-SIGN-OFF PARAMETER: 1.5 => min SL ~1.8%. Set 0 to disable.
+    # (|entry-SL|/entry < min_sl_cost_multiple x round_trip_fee_pct).
+    #
+    # Sprint B (CostModel, single source): round_trip_fee_pct is NO LONGER a
+    # hand-set 1.2% worst-case. Its default is DERIVED from the CostModel paper
+    # venue (10 bp/side -> 0.2% round-trip) so the gate, the paper engine and the
+    # backtest all charge the SAME cost — no Gate/Engine drift. With the
+    # realistic cost the gate becomes nearly inert (threshold 1.5*0.2% = 0.3%),
+    # which is the intended outcome: the bleed is NOT primarily fee-driven.
+    #
+    # RISK_ROUND_TRIP_FEE_PCT is DEPRECATED: it survives only as a thin Operator
+    # override. If unset, the CostModel-derived value wins. Do NOT re-pin it to
+    # 1.2 — that would re-introduce the drift this sprint removed.
+    # env: RISK_MIN_SL_COST_MULTIPLE, RISK_ROUND_TRIP_FEE_PCT (override only).
+    # OPERATOR-SIGN-OFF PARAMETER: min_sl_cost_multiple 1.5 => min SL ~0.3%.
     min_sl_cost_multiple: float = Field(default=1.5, ge=0.0)
-    round_trip_fee_pct: float = Field(default=1.2, gt=0.0)
+    round_trip_fee_pct: float = Field(
+        default_factory=lambda: _cost_model_paper_round_trip_pct(),
+        gt=0.0,
+    )
 
     # NEO-V2 (2026-06-01): per-symbol post-stop cooldown. After a stop-out the
     # same symbol may not be re-entered for this window (minutes). Source for the

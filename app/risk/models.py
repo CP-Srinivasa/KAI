@@ -43,9 +43,12 @@ class RiskLimits:
     # distance (~0.8-1.0%), making a stopped trade a structurally guaranteed net
     # loss. Reject when |entry-SL|/entry < min_sl_cost_multiple * round_trip_fee.
     #   round_trip_fee_pct: total round-trip cost in PERCENT (entry+exit fees).
-    #     1.2 mirrors the paper-venue worst-case taker fee (config/venue_fees.yaml
-    #     coinbase / hard-fallback 0.60% x 2). Source-of-truth for productive runs
-    #     is Settings; this default keeps RiskLimits() self-consistent.
+    #     Sprint B (CostModel): the PRODUCTIVE value is derived from the CostModel
+    #     paper venue (10 bp/side -> 0.2%) and injected via Settings ->
+    #     _build_risk_limits_from_settings. This standalone dataclass default
+    #     (1.2) only ever matters when the gate is OFF (min_sl_cost_multiple=0.0,
+    #     the dataclass default below), so it cannot affect productive gating. It
+    #     is intentionally NOT the source of truth — do not read fees from here.
     #   min_sl_cost_multiple: factor k. <= 0 DISABLES the gate (backward-compatible
     #     default — legacy unit tests build RiskLimits without this field). The
     #     productive value lives in Settings (RISK_MIN_SL_COST_MULTIPLE, default

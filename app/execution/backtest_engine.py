@@ -44,7 +44,12 @@ class BacktestConfig:
     """Immutable backtest configuration. All defaults are conservative."""
 
     initial_equity: float = 10_000.0
-    fee_pct: float = 0.1  # % charged per fill
+    # Sprint B (CostModel): the ACTUAL fill fee is charged by the paper engine
+    # via venue="paper" -> config/venue_fees.yaml (single source, 10 bp/side).
+    # This `fee_pct` is now ONLY a cash-sizing safety buffer (see slip_factor
+    # below) so a fill is never rejected for lack of headroom. Do NOT re-wire it
+    # as a second fee path — that would re-introduce Gate/Engine fee drift.
+    fee_pct: float = 0.1  # cash-sizing buffer only, NOT the fee source
     slippage_pct: float = 0.05  # % adverse slippage per fill
     stop_loss_pct: float = 2.0  # SL distance = entry * stop_loss_pct/100
     take_profit_multiplier: float = 2.0  # TP = SL_distance * multiplier

@@ -561,7 +561,9 @@ def test_default_order_uses_paper_fee_metadata(tmp_path):
     assert fill is not None
     assert fill.fee_venue == "paper"
     assert fill.fee_role == "maker"
-    assert fill.fee_bps_applied == pytest.approx(60.0)
+    # Sprint B (CostModel): paper default is now the realistic Binance-Spot
+    # 10 bp/side (was 60 bp worst-case). Operator decision 2026-06-01.
+    assert fill.fee_bps_applied == pytest.approx(10.0)
 
 
 def test_explicit_legacy_venue_preserves_constructor_fee(tmp_path):
@@ -589,16 +591,18 @@ def test_sell_close_trade_pnl_netto_correct(tmp_path):
     fill = eng.fill_order(sell, current_price=110.0)
     assert fill is not None
     assert fill.fee_venue == "paper"
-    assert fill.fee_bps_applied == pytest.approx(60.0)
-    assert 9.2 < fill.pnl_usd < 9.3, f"netto pnl off: {fill.pnl_usd}"
+    # Sprint B (CostModel): realistic 10 bp/side paper taker (was 60 bp). With
+    # lower fees the netto round-trip PnL rises from ~9.2 to ~9.8.
+    assert fill.fee_bps_applied == pytest.approx(10.0)
+    assert 9.7 < fill.pnl_usd < 9.9, f"netto pnl off: {fill.pnl_usd}"
     records = _read_audit_records(tmp_path / "audit.jsonl")
     sell_fills = [
         r for r in records if r.get("event_type") == "order_filled" and r.get("side") == "sell"
     ]
     assert len(sell_fills) == 1
     assert sell_fills[0]["fee_venue"] == "paper"
-    assert sell_fills[0]["fee_bps_applied"] == pytest.approx(60.0)
-    assert 9.2 < sell_fills[0]["pnl_usd"] < 9.3
+    assert sell_fills[0]["fee_bps_applied"] == pytest.approx(10.0)
+    assert 9.7 < sell_fills[0]["pnl_usd"] < 9.9
 
 
 def test_position_closed_event_has_fee_usd(tmp_path):
