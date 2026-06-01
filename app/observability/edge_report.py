@@ -51,6 +51,7 @@ from pathlib import Path
 from typing import Any
 
 from app.execution.cost_model import CostModel
+from app.learning.bayes_quarantine import quarantine_reason
 
 logger = logging.getLogger(__name__)
 
@@ -546,12 +547,16 @@ class EdgeReport:
     forward_coverage: list[ForwardCoverage]
     open_mtm: OpenMarkToMarket
     notes: list[str] = field(default_factory=list)
+    excluded_quarantined: QuarantineExclusion = field(
+        default_factory=lambda: QuarantineExclusion(0, {})
+    )
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "generated_at_utc": self.generated_at_utc,
             "venue": self.venue,
             "closed_trade_count": self.closed_trade_count,
+            "excluded_quarantined": self.excluded_quarantined.to_dict(),
             "overall": self.overall.to_dict(),
             "by_symbol": [c.to_dict() for c in self.by_symbol],
             "by_regime": [c.to_dict() for c in self.by_regime],
@@ -575,12 +580,18 @@ def build_edge_report(
     entry_times: dict[str, list[str]] | None = None,
     bootstrap_n: int = _DEFAULT_BOOTSTRAP_N,
     min_sample: int = MIN_SAMPLE_FOR_P,
+    excluded_quarantined: QuarantineExclusion | None = None,
 ) -> EdgeReport:
     """Build the full Sprint-C report from parsed records. Pure / IO-free.
 
     All cost numbers come from ``cost_model`` (default ``CostModel()``), so the
     report and the engine charge identical costs. Closed and open buckets are
     computed independently and never combined.
+
+    ``closed_trades`` must already EXCLUDE forensically-quarantined corrupt
+    closes (caller's responsibility; the audit loaders do this via
+    ``parse_closed_trades``). ``excluded_quarantined`` carries the honest tally
+    of what was dropped so it is reported, not silently swallowed.
     """
     cm = cost_model or CostModel()
     edges = [
@@ -637,6 +648,16 @@ def build_edge_report(
             "Verdict on edge sign is NOT statistically supported yet."
         )
 
+    excl = excluded_quarantined or QuarantineExclusion(0, {})
+    if excl.excluded_count > 0:
+        reason_str = ", ".join(f"{r}={c}" for r, c in sorted(excl.reasons.items()))
+        notes.append(
+            f"EXCLUDED {excl.excluded_count} forensically-quarantined corrupt close(s) "
+            f"from ALL edge/cohort figures ({reason_str}). Shared "
+            "app.learning.bayes_quarantine signatures (PR #112) — not deleted, "
+            "excluded so the release verdict is not poisoned by known-bad outcomes."
+        )
+
     return EdgeReport(
         generated_at_utc=datetime.now(UTC).isoformat(),
         venue=venue,
@@ -649,6 +670,7 @@ def build_edge_report(
         forward_coverage=forward_cov,
         open_mtm=open_mtm,
         notes=notes,
+        excluded_quarantined=excl,
     )
 
 
@@ -679,15 +701,48 @@ def _group_aggregate(
 # --- audit-stream loaders (thin IO at the edge) --------------------------------
 
 
-def parse_closed_trades(events: Iterable[dict[str, Any]]) -> list[ClosedTrade]:
-    """Extract ClosedTrade records from raw audit events.
+@dataclass(frozen=True)
+class QuarantineExclusion:
+    """Honest accounting of corrupt closes excluded from the edge statistics.
 
-    Only ``position_closed`` events with valid prices and quantity are kept.
-    Phantom/partial/sanity-rejected events are ignored (they are not realised
-    round-trips). Regime is read from a ``regime`` or ``regime_state`` key if
-    present, else 'unknown'.
+    A quarantined ``position_closed`` row (forensically-confirmed corruption,
+    e.g. the MATIC stale-exit runaway DS-20260529-V1) is NOT a real realised
+    round-trip and would poison the cost-adjusted edge / P(mu_net>0) verdict if
+    counted. It is excluded from EVERY edge and cohort figure — but it is never
+    deleted (append-only audit integrity) and its count + reasons are reported
+    so the operator sees exactly what was dropped and why.
+
+    The quarantine definition is owned solely by ``app.learning.bayes_quarantine``
+    (the same signatures the Bayes posterior recalc uses, PR #112) — this module
+    introduces NO second quarantine rule.
+    """
+
+    excluded_count: int
+    reasons: dict[str, int]  # reason -> count
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "excluded_count": self.excluded_count,
+            "reasons": dict(sorted(self.reasons.items())),
+        }
+
+
+def parse_closed_trades_with_exclusions(
+    events: Iterable[dict[str, Any]],
+) -> tuple[list[ClosedTrade], QuarantineExclusion]:
+    """Like :func:`parse_closed_trades` but also returns the quarantine tally.
+
+    Forensically-confirmed corrupt closes (matched by the shared
+    ``app.learning.bayes_quarantine`` signatures on the RAW audit row) are
+    excluded from the returned trades and counted in the
+    :class:`QuarantineExclusion`. The exclusion is applied AFTER the normal
+    validity filter, so a row without a usable ``exit_price`` is dropped as
+    invalid and never reaches the quarantine check (it has no signature to match
+    anyway — ``quarantine_reason`` returns None for it).
     """
     out: list[ClosedTrade] = []
+    excluded = 0
+    reasons: dict[str, int] = defaultdict(int)
     for ev in events:
         if ev.get("event_type") != "position_closed":
             continue
@@ -698,6 +753,11 @@ def parse_closed_trades(events: Iterable[dict[str, Any]]) -> list[ClosedTrade]:
         except (KeyError, TypeError, ValueError):
             continue
         if entry <= 0 or exit_px <= 0 or qty <= 0:
+            continue
+        q_reason = quarantine_reason(ev)
+        if q_reason is not None:
+            excluded += 1
+            reasons[q_reason] += 1
             continue
         regime = ev.get("regime") or ev.get("regime_state") or "unknown"
         out.append(
@@ -714,7 +774,22 @@ def parse_closed_trades(events: Iterable[dict[str, Any]]) -> list[ClosedTrade]:
                 regime=str(regime),
             )
         )
-    return out
+    return out, QuarantineExclusion(excluded_count=excluded, reasons=dict(reasons))
+
+
+def parse_closed_trades(events: Iterable[dict[str, Any]]) -> list[ClosedTrade]:
+    """Extract ClosedTrade records from raw audit events.
+
+    Only ``position_closed`` events with valid prices and quantity are kept.
+    Phantom/partial/sanity-rejected events are ignored (they are not realised
+    round-trips). Forensically-quarantined corrupt closes (shared
+    ``bayes_quarantine`` signatures) are ALSO excluded — they are not real
+    round-trips. Regime is read from a ``regime`` or ``regime_state`` key if
+    present, else 'unknown'. Use :func:`parse_closed_trades_with_exclusions`
+    when the excluded-count must be reported.
+    """
+    kept, _ = parse_closed_trades_with_exclusions(events)
+    return kept
 
 
 def extract_entry_times(events: Iterable[dict[str, Any]]) -> dict[str, list[str]]:
@@ -768,9 +843,14 @@ def build_report_from_audit(
     bootstrap_n: int = _DEFAULT_BOOTSTRAP_N,
     min_sample: int = MIN_SAMPLE_FOR_P,
 ) -> EdgeReport:
-    """Convenience: load the audit file and build the report end-to-end."""
+    """Convenience: load the audit file and build the report end-to-end.
+
+    Forensically-quarantined corrupt closes (shared ``bayes_quarantine``
+    signatures, e.g. the MATIC stale-exit runaway) are excluded from the edge
+    statistics here and the dropped count is reported in the result.
+    """
     events = load_audit_events(audit_path)
-    closed = parse_closed_trades(events)
+    closed, excluded = parse_closed_trades_with_exclusions(events)
     entry_times = extract_entry_times(events)
     return build_edge_report(
         closed,
@@ -783,6 +863,7 @@ def build_report_from_audit(
         entry_times=entry_times,
         bootstrap_n=bootstrap_n,
         min_sample=min_sample,
+        excluded_quarantined=excluded,
     )
 
 
@@ -800,6 +881,12 @@ def render_report(report: EdgeReport) -> str:
     lines.append("=" * 78)
     lines.append(f"EDGE REPORT (Sprint C)  venue={report.venue}  @ {report.generated_at_utc}")
     lines.append(f"closed trades: {report.closed_trade_count}")
+    excl = report.excluded_quarantined
+    if excl.excluded_count > 0:
+        reason_str = ", ".join(f"{r}={c}" for r, c in sorted(excl.reasons.items()))
+        lines.append(
+            f"excluded (quarantined corrupt closes): {excl.excluded_count}  [{reason_str}]"
+        )
     lines.append("=" * 78)
     lines.append("")
     lines.append("OVERALL (all closed round-trips, cost-adjusted)")
