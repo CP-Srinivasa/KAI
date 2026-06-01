@@ -206,6 +206,73 @@ def trading_edge_report(
         raise typer.Exit(1)
 
 
+@trading_app.command("edge-gate")
+def trading_edge_gate(
+    audit_path: str = typer.Option(
+        "artifacts/paper_execution_audit.jsonl",
+        "--audit-path",
+        help="Append-only paper execution audit JSONL path",
+    ),
+    venue: str = typer.Option("paper", "--venue", help="CostModel venue key"),
+    safety_margin_bps: float = typer.Option(
+        0.0,
+        "--safety-margin-bps",
+        help="Min net bps/notional a cohort must clear before any live recommendation",
+    ),
+    min_n: int = typer.Option(
+        20,
+        "--min-n",
+        help="Min closed round-trips before a release decision is defensible",
+    ),
+    oos_min_days: int = typer.Option(
+        2,
+        "--oos-min-days",
+        help="Disjoint qualifying day-cohorts required for out-of-sample stability",
+    ),
+    as_json: bool = typer.Option(False, "--json", help="Emit JSON instead of the verdict"),
+) -> None:
+    """Edge Release Policy decision (Sprint D) — periodic, NOT a runtime gate.
+
+    READ-ONLY. Consumes the Sprint-C edge report and EMITS a recommended
+    ``entry_mode`` (DISABLED / PAPER / PROBE / LIVE_LIMITED / LIVE_NORMAL) with a
+    human-readable reasoning. It does NOT change ``execution.entry_mode``; the
+    runtime kill-switch is that setting (Sprint A). Live recommendations always
+    require explicit operator sign-off; LIVE_NORMAL is never auto-promoted.
+    """
+    import json as _json
+
+    from app.core.settings import get_settings
+    from app.observability.edge_report import build_report_from_audit
+    from app.risk.edge_release_policy import decide_from_report, render_decision
+
+    try:
+        current_mode = get_settings().execution.entry_mode
+    except Exception:  # pragma: no cover - settings unavailable in some envs
+        current_mode = None
+
+    # min_sample for the bootstrap mirrors the release min_n so the overall
+    # cohort's posterior is computed on the same sample-size contract.
+    report = build_report_from_audit(
+        audit_path,
+        venue=venue,
+        safety_margin_bps=safety_margin_bps,
+        min_sample=min(min_n, 8),
+    )
+    decision = decide_from_report(
+        report,
+        current_mode=current_mode,
+        min_n=min_n,
+        safety_margin_bps=safety_margin_bps,
+        oos_min_disjoint_days=oos_min_days,
+    )
+    if as_json:
+        console.print(_json.dumps(decision.to_dict(), indent=2))
+    else:
+        console.print(render_decision(decision))
+    if report.closed_trade_count == 0:
+        console.print("[yellow]No closed trades in audit stream -> DISABLED.[/yellow]")
+
+
 @trading_app.command("paper-portfolio-snapshot")
 def trading_paper_portfolio_snapshot(
     audit_path: str = typer.Option(
