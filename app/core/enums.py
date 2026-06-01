@@ -29,6 +29,52 @@ class ExecutionMode(StrEnum):
     LIVE = "live"
 
 
+class EntryMode(StrEnum):
+    """Autonomous-loop entry-cadence gate (Goal 2026-06-01: Entry-Safety-Mode).
+
+    Orthogonal to ``ExecutionMode`` (paper vs live *venue*): this governs whether
+    — and at what cadence — the TradingLoop is allowed to OPEN new risk-increasing
+    positions. Exit- and risk-reduction paths are never gated by this.
+
+    Rationale: the current entry signal has a demonstrably negative cost-adjusted
+    edge (2026-06-01: 22 closes lose ~-283 USD even at 0 bp fees; 4/22 gross
+    winners). New full-cadence entries must not be treated as a normally tradable
+    signal until a cost-adjusted edge gate is passed.
+
+    Ladder (least → most permissive):
+      - DISABLED:     no new autonomous entries at all (exits still managed).
+      - PAPER:        paper entries allowed (legacy default; preserves behavior).
+      - PROBE:        throttled paper entries to gather forward-edge evidence
+                      (rate/turnover throttle lands with the churn-killer sprint).
+      - LIVE_LIMITED: live entries with hard drawdown/churn caps (requires
+                      ExecutionMode.LIVE + edge gate >= 0.80).
+      - LIVE_NORMAL:  full-cadence live (requires edge gate >= 0.95 + OOS stable).
+
+    Never auto-promote to LIVE_NORMAL — that is an explicit operator decision.
+    """
+
+    DISABLED = "disabled"
+    PAPER = "paper"
+    PROBE = "probe"
+    LIVE_LIMITED = "live_limited"
+    LIVE_NORMAL = "live_normal"
+
+    @property
+    def allows_autonomous_loop_entry(self) -> bool:
+        """True when the autonomous loop may open NEW positions in this mode.
+
+        Only ``DISABLED`` is a hard stop. ``PROBE``/``LIVE_LIMITED`` allow entries
+        but are throttled by the churn-killer (separate gate); that throttle does
+        not live here so this property stays a single, testable kill-switch.
+        """
+        return self is not EntryMode.DISABLED
+
+    @property
+    def is_live(self) -> bool:
+        """True for the two live entry modes (require ExecutionMode.LIVE)."""
+        return self in (EntryMode.LIVE_LIMITED, EntryMode.LIVE_NORMAL)
+
+
 class SourceStatus(StrEnum):
     ACTIVE = "active"
     PLANNED = "planned"

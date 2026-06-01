@@ -121,6 +121,25 @@ class TradingLoop:
         started_at = _now_utc()
         notes: list[str] = []
 
+        # Entry-Safety-Mode (Goal 2026-06-01). Highest-level kill-switch for the
+        # AUTONOMOUS loop: in DISABLED mode no new positions are opened at all.
+        # Cheapest possible reject — runs before market-data fetch / signal gen.
+        # Scope: only this autonomous analysis-driven path. Operator-/bridge-/
+        # premium-promoted entries (run_promoted_signal) are a different signal
+        # source and are intentionally NOT gated here; they keep their own risk
+        # gates + approval. Exits/risk-reductions are never gated by entry_mode.
+        entry_mode = get_settings().execution.entry_mode
+        if not entry_mode.allows_autonomous_loop_entry:
+            cycle = self._build_cycle(
+                cycle_id,
+                started_at,
+                symbol,
+                CycleStatus.ENTRY_MODE_BLOCKED,
+                notes=notes + [f"entry_mode_blocked:{entry_mode.value}"],
+            )
+            await self._write_db(cycle)
+            return cycle
+
         # D-182: priority-tier gate. Default min_priority=1 is a no-op; setting
         # it to 10 restricts paper fills to the high-conviction tier where
         # live hit-rate evidence is disjoint from standard tier (D-149).
