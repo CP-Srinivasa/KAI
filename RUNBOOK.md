@@ -8,7 +8,7 @@ Primary goals: (a) keep pipeline + TV ingestion + paper-bridge alive 24/7 on the
 ## 1. Baseline Check
 
 ```bash
-python -m pytest                                           # ~1946 tests
+python -m pytest                                           # ~3800 Testfunktionen (Stand 2026-06)
 python -m ruff check .
 ```
 
@@ -87,7 +87,7 @@ Artefacts under `artifacts/ph5_hold/`:
 - `quality_bar_<YYYYMMDD>.json` — per-source precision + Wilson 95% CI
 - `ph5_hold_metrics_report.json` — forward-simulation (actionable + priority gates)
 
-Primary checks toward Re-Entry (2026-05-16):
+Re-Entry-Gates (D-125; Re-Entry am 2026-05-07 vollzogen — diese Checks bleiben als laufende Quality-Bar):
 - `resolved_directional_documents ≥ 200` (D-125 condition)
 - `order_filled_count ≥ 3` (D-125 floor; target ≥ 10 with PnL)
 - Active-precision (ex `unknown`-source) trending above gate
