@@ -154,6 +154,14 @@ class PaperExecutionEngine:
         return self._portfolio
 
     @property
+    def audit_path(self) -> Path:
+        """Read-only path to this engine's audit JSONL.
+
+        NEO-V2: the post-stop cooldown gate reads `position_closed reason=stop`
+        events from exactly the stream this engine writes them to."""
+        return self._audit_path
+
+    @property
     def state(self) -> str:
         """PRE-C protocol state: paper mode is always armed for simulation."""
         return "paper"

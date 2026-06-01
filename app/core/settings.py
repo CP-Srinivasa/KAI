@@ -5,7 +5,7 @@ from pathlib import Path
 from pydantic import AliasChoices, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from app.core.enums import ExecutionMode
+from app.core.enums import EntryMode, ExecutionMode
 from app.core.errors import ConfigurationError
 from app.core.re_entry_mode import ReEntryModeProfile
 from app.core.schema_runtime import (
@@ -204,6 +204,23 @@ class RiskSettings(BaseSettings):
     cooldown_after_loss_minutes: int = Field(default=30)
     cooldown_after_error_minutes: int = Field(default=10)
 
+    # NEO-V1 (2026-06-01): cost-aware SL geometry gate. Reject orders whose stop
+    # distance cannot clear the round-trip transaction cost
+    # (|entry-SL|/entry < min_sl_cost_multiple x round_trip_fee_pct). Fixes the
+    # structural loss where a ~0.8% stop sits inside the ~1.2% round-trip taker
+    # fee. round_trip_fee_pct mirrors the paper-venue worst-case (2 x 60 bps).
+    # env: RISK_MIN_SL_COST_MULTIPLE, RISK_ROUND_TRIP_FEE_PCT.
+    # OPERATOR-SIGN-OFF PARAMETER: 1.5 => min SL ~1.8%. Set 0 to disable.
+    min_sl_cost_multiple: float = Field(default=1.5, ge=0.0)
+    round_trip_fee_pct: float = Field(default=1.2, gt=0.0)
+
+    # NEO-V2 (2026-06-01): per-symbol post-stop cooldown. After a stop-out the
+    # same symbol may not be re-entered for this window (minutes). Source for the
+    # last stop is the paper-execution audit (position_closed reason=stop) — no
+    # new persistence. env: RISK_POST_STOP_COOLDOWN_MIN.
+    # OPERATOR-SIGN-OFF PARAMETER: 180 (3h) recommended. 0 disables.
+    post_stop_cooldown_min: int = Field(default=180, ge=0)
+
 
 class ExecutionSettings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="EXECUTION_", env_file=".env", extra="ignore")
@@ -213,6 +230,15 @@ class ExecutionSettings(BaseSettings):
     live_enabled: bool = Field(default=False)
     dry_run: bool = Field(default=True)
     approval_required: bool = Field(default=True)
+
+    # Entry-Safety-Mode (Goal 2026-06-01). Governs whether the autonomous
+    # TradingLoop may OPEN new positions; exits/risk-reductions are never gated.
+    # NOTE: the goal spec names this `trading.entry_mode`; it lives under
+    # `execution.` (env EXECUTION_ENTRY_MODE) because every paper-execution gate
+    # already lives here — avoids a one-field top-level group and config drift.
+    # Default PAPER preserves legacy loop behavior (never live_normal). The Pi
+    # is set to DISABLED until the cost-adjusted edge gate is passed.
+    entry_mode: EntryMode = Field(default=EntryMode.PAPER)
 
     # Paper trading
     paper_initial_equity: float = Field(default=10000.0)
@@ -296,6 +322,14 @@ class ExecutionSettings(BaseSettings):
                 raise ValueError(
                     "EXECUTION_MODE=live requires EXECUTION_OPERATOR_SIGNAL_APPROVAL_HMAC_SECRET."
                 )
+        # Entry-Safety-Mode consistency: a live entry mode must not be configured
+        # while the execution venue is still paper/non-live. Fail-closed so a
+        # stray EXECUTION_ENTRY_MODE=live_* cannot silently imply live trading.
+        if self.entry_mode.is_live and self.mode is not ExecutionMode.LIVE:
+            raise ValueError(
+                f"EXECUTION_ENTRY_MODE={self.entry_mode.value} requires EXECUTION_MODE=live "
+                "(live entry cadence cannot run on a non-live execution venue)."
+            )
         return self
 
 

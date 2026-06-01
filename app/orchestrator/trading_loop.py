@@ -30,6 +30,7 @@ from app.orchestrator.models import (
 )
 from app.risk.engine import RiskEngine
 from app.risk.models import RiskLimits
+from app.risk.post_stop_cooldown import is_symbol_in_post_stop_cooldown
 from app.security.kyt.models import KytAssessment
 from app.signals.generator import SignalGenerator
 from app.signals.models import SignalCandidate, SignalDirection
@@ -119,6 +120,25 @@ class TradingLoop:
         cycle_id = _new_cycle_id()
         started_at = _now_utc()
         notes: list[str] = []
+
+        # Entry-Safety-Mode (Goal 2026-06-01). Highest-level kill-switch for the
+        # AUTONOMOUS loop: in DISABLED mode no new positions are opened at all.
+        # Cheapest possible reject — runs before market-data fetch / signal gen.
+        # Scope: only this autonomous analysis-driven path. Operator-/bridge-/
+        # premium-promoted entries (run_promoted_signal) are a different signal
+        # source and are intentionally NOT gated here; they keep their own risk
+        # gates + approval. Exits/risk-reductions are never gated by entry_mode.
+        entry_mode = get_settings().execution.entry_mode
+        if not entry_mode.allows_autonomous_loop_entry:
+            cycle = self._build_cycle(
+                cycle_id,
+                started_at,
+                symbol,
+                CycleStatus.ENTRY_MODE_BLOCKED,
+                notes=notes + [f"entry_mode_blocked:{entry_mode.value}"],
+            )
+            await self._write_db(cycle)
+            return cycle
 
         # D-182: priority-tier gate. Default min_priority=1 is a no-op; setting
         # it to 10 restricts paper fills to the high-conviction tier where
@@ -249,6 +269,25 @@ class TradingLoop:
                 notes.append(f"atr_geometry_error:{exc}")
 
         order_side = "buy" if signal.direction == SignalDirection.LONG else "sell"
+
+        # NEO-V2: per-symbol post-stop cooldown. Cheapest reject — runs before the
+        # risk gate so a symbol that just stopped out is not re-entered (and
+        # re-charged ~1.2% round-trip fees) within the cooldown window. Additive:
+        # placed before check_order, it does not touch any existing risk gate.
+        if self._in_post_stop_cooldown(symbol):
+            cycle = self._build_cycle(
+                cycle_id,
+                started_at,
+                symbol,
+                CycleStatus.COOLDOWN_REJECTED,
+                market_data_fetched=True,
+                signal_generated=True,
+                decision_id=signal.decision_id,
+                notes=notes + ["post_stop_cooldown"],
+            )
+            await self._write_db(cycle)
+            return cycle
+
         current_positions = len(self._exec.portfolio.positions)
         risk_result = self._risk.check_order(
             symbol=symbol,
@@ -589,6 +628,22 @@ class TradingLoop:
                 notes.append(f"atr_geometry_error:{exc}")
 
         order_side = "buy" if signal.direction == SignalDirection.LONG else "sell"
+
+        # NEO-V2: per-symbol post-stop cooldown (see run_cycle path for rationale).
+        if self._in_post_stop_cooldown(symbol):
+            cycle = self._build_cycle(
+                cycle_id,
+                started_at,
+                symbol,
+                CycleStatus.COOLDOWN_REJECTED,
+                market_data_fetched=True,
+                signal_generated=True,
+                decision_id=signal.decision_id,
+                notes=notes + ["post_stop_cooldown"],
+            )
+            await self._write_db(cycle)
+            return cycle
+
         current_positions = len(self._exec.portfolio.positions)
         risk_result = self._risk.check_order(
             symbol=symbol,
@@ -937,6 +992,26 @@ class TradingLoop:
             logger.warning("[LOOP] diversification check failed (non-fatal): %s", exc)
             return None
 
+    def _in_post_stop_cooldown(self, symbol: str) -> bool:
+        """NEO-V2: True iff `symbol` was stopped out within the cooldown window.
+
+        Reads the paper engine's own audit stream (position_closed reason=stop).
+        Disabled when post_stop_cooldown_min <= 0. Fail-open: any read problem
+        yields False so a transient I/O hiccup never deadlocks the loop.
+        """
+        window = get_settings().risk.post_stop_cooldown_min
+        if window <= 0:
+            return False
+        try:
+            return is_symbol_in_post_stop_cooldown(
+                symbol,
+                cooldown_minutes=window,
+                audit_path=self._exec.audit_path,
+            )
+        except Exception as exc:  # noqa: BLE001 — never crash the loop on the gate
+            logger.warning("[LOOP] post-stop cooldown check failed (non-fatal): %s", exc)
+            return False
+
     @staticmethod
     def _diversification_notes(decision: DiversificationDecision) -> list[str]:
         notes = [
@@ -1077,6 +1152,8 @@ def _build_risk_limits_from_settings() -> RiskLimits:
         tp_atr_multiplier=risk.tp_atr_multiplier,
         min_notional_usd=risk.min_notional_usd,
         max_position_size_pct=risk.max_position_size_pct,
+        round_trip_fee_pct=risk.round_trip_fee_pct,
+        min_sl_cost_multiple=risk.min_sl_cost_multiple,
     )
 
 
