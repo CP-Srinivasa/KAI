@@ -57,6 +57,21 @@ QUARANTINE_SIGNATURES: tuple[_QuarantineSignature, ...] = (
         reason="matic_stale_exit_runaway",
         incident_ref="DS-20260529-V1",
     ),
+    # 2026-06-01 forensics: single off-market close. ETH long entry ~$2100 closed
+    # at exit $3259.9692 (+55%) as "take" on 2026-05-26 20:41, while real ETH in
+    # that window traded $1960-$2100 (473 fills). Singleton (the price appears 2x:
+    # the sell-fill + its position_closed), NOT a repeating runaway like MATIC.
+    # Predates the #98 close-circuit-breaker (live 2026-05-31), which now sanity-
+    # rejects this class prospectively. Recorded here for deterministic exclusion
+    # incl. the Bayes path; the generic edge_report implausibility guard
+    # (|exit/entry-1| > threshold) is the primary class-level defence — this
+    # signature is the forensic record.
+    _QuarantineSignature(
+        symbol="ETH/USDT",
+        exit_price=3259.9692,
+        reason="eth_off_market_close",
+        incident_ref="DS-20260601-EDGE-OUTLIER",
+    ),
 )
 
 

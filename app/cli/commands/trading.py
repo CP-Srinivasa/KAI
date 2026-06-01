@@ -178,6 +178,11 @@ def trading_edge_report(
     min_sample: int = typer.Option(
         8, "--min-sample", help="Min closed trades before P(mu_net>0) is computed"
     ),
+    implausible_threshold: float = typer.Option(
+        0.40,
+        "--implausible-threshold",
+        help="Exclude closes with |exit/entry-1| above this as off-market (0=off; default 0.40)",
+    ),
     as_json: bool = typer.Option(False, "--json", help="Emit JSON instead of the table"),
 ) -> None:
     """Cohort- and forward-edge diagnostics (Sprint C).
@@ -196,6 +201,7 @@ def trading_edge_report(
         venue=venue,
         safety_margin_bps=safety_margin_bps,
         min_sample=min_sample,
+        implausible_move_threshold=implausible_threshold,
     )
     if as_json:
         console.print(_json.dumps(report.to_dict(), indent=2))
@@ -229,6 +235,11 @@ def trading_edge_gate(
         "--oos-min-days",
         help="Disjoint qualifying day-cohorts required for out-of-sample stability",
     ),
+    implausible_threshold: float = typer.Option(
+        0.40,
+        "--implausible-threshold",
+        help="Exclude closes with |exit/entry-1| above this as off-market (0=off; default 0.40)",
+    ),
     as_json: bool = typer.Option(False, "--json", help="Emit JSON instead of the verdict"),
 ) -> None:
     """Edge Release Policy decision (Sprint D) — periodic, NOT a runtime gate.
@@ -257,6 +268,7 @@ def trading_edge_gate(
         venue=venue,
         safety_margin_bps=safety_margin_bps,
         min_sample=min(min_n, 8),
+        implausible_move_threshold=implausible_threshold,
     )
     decision = decide_from_report(
         report,
@@ -304,6 +316,11 @@ def trading_evidence_window(
     min_sample: int = typer.Option(
         8, "--min-sample", help="Min closed trades before probabilities are computed"
     ),
+    implausible_threshold: float = typer.Option(
+        0.40,
+        "--implausible-threshold",
+        help="Exclude closes with |exit/entry-1| above this as off-market (0=off; default 0.40)",
+    ),
     as_json: bool = typer.Option(False, "--json", help="Emit JSON instead of the table"),
 ) -> None:
     """Evidence-Window report (Goal 2026-06-01) — one defensible edge answer.
@@ -346,6 +363,7 @@ def trading_evidence_window(
         safety_margin_bps=safety_margin_bps,
         p_threshold_bps=p_threshold_bps,
         min_sample=min_sample,
+        implausible_move_threshold=implausible_threshold,
     )
     if as_json:
         console.print(_json.dumps(report.to_dict(), indent=2))

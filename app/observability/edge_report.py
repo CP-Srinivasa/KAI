@@ -60,6 +60,17 @@ logger = logging.getLogger(__name__)
 # default — the operator can lower it but then must read the result as weak.
 MIN_SAMPLE_FOR_P = 8
 _DEFAULT_BOOTSTRAP_N = 5000
+# OPERATOR-SIGN-OFF PARAMETER (Goal 2026-06-01, B). A realised single-trade
+# round-trip whose |exit/entry - 1| exceeds this is treated as an off-market /
+# corrupt print (e.g. the 2026-05-26 ETH close at $3260 vs real $1960-$2100) and
+# excluded from the cost-adjusted edge, SYMMETRICALLY (both directions — never
+# used to scrub losses). Mirrors the #98 close-circuit-breaker's sanity logic in
+# the reporting layer. Default 0.40 (40%): single-bar |move| > 40% on the majors
+# KAI trades is almost certainly a bad price, not a real round-trip; legitimate
+# intraday >40% round-trips are vanishingly rare. Lower → also drops large but
+# plausible real moves (biases edge); higher → lets corrupt prints back in. 0
+# disables the guard (forensic signatures in bayes_quarantine still apply).
+DEFAULT_IMPLAUSIBLE_MOVE_THRESHOLD = 0.40
 # Forward horizons in minutes (C2). Side-adjusted AND cost-adjusted.
 FORWARD_HORIZONS_MIN: tuple[int, ...] = (1, 5, 15, 60)
 
@@ -729,20 +740,33 @@ class QuarantineExclusion:
 
 def parse_closed_trades_with_exclusions(
     events: Iterable[dict[str, Any]],
+    *,
+    implausible_move_threshold: float = DEFAULT_IMPLAUSIBLE_MOVE_THRESHOLD,
 ) -> tuple[list[ClosedTrade], QuarantineExclusion]:
-    """Like :func:`parse_closed_trades` but also returns the quarantine tally.
+    """Like :func:`parse_closed_trades` but also returns the exclusion tally.
 
-    Forensically-confirmed corrupt closes (matched by the shared
-    ``app.learning.bayes_quarantine`` signatures on the RAW audit row) are
-    excluded from the returned trades and counted in the
-    :class:`QuarantineExclusion`. The exclusion is applied AFTER the normal
-    validity filter, so a row without a usable ``exit_price`` is dropped as
-    invalid and never reaches the quarantine check (it has no signature to match
-    anyway — ``quarantine_reason`` returns None for it).
+    Two exclusion layers, applied AFTER the normal validity filter (so a row
+    without a usable ``exit_price`` is dropped as invalid and never reaches
+    either check):
+
+    1. **Forensic signatures** — rows matched by the shared
+       ``app.learning.bayes_quarantine`` signatures (e.g. MATIC stale-exit
+       runaway, the 2026-05-26 ETH off-market close). Reason = the signature's
+       reason string.
+    2. **Generic implausibility guard (B)** — any remaining close whose
+       ``|exit/entry - 1|`` exceeds ``implausible_move_threshold`` is an
+       off-market/corrupt print and is excluded SYMMETRICALLY (both directions).
+       Reason = ``implausible_move_gt_<pct>pct``. Set the threshold to 0 to
+       disable this layer (signatures still apply).
+
+    Excluded closes are counted in :class:`QuarantineExclusion` (never deleted —
+    append-only audit integrity) so the operator sees exactly what was dropped.
     """
     out: list[ClosedTrade] = []
     excluded = 0
     reasons: dict[str, int] = defaultdict(int)
+    guard_active = implausible_move_threshold > 0
+    guard_key = f"implausible_move_gt_{int(round(implausible_move_threshold * 100))}pct"
     for ev in events:
         if ev.get("event_type") != "position_closed":
             continue
@@ -758,6 +782,11 @@ def parse_closed_trades_with_exclusions(
         if q_reason is not None:
             excluded += 1
             reasons[q_reason] += 1
+            continue
+        # Generic off-market guard (B): symmetric, never scrubs plausible losers.
+        if guard_active and abs(exit_px / entry - 1.0) > implausible_move_threshold:
+            excluded += 1
+            reasons[guard_key] += 1
             continue
         regime = ev.get("regime") or ev.get("regime_state") or "unknown"
         out.append(
@@ -842,15 +871,19 @@ def build_report_from_audit(
     forward_samples: dict[int, list[float]] | None = None,
     bootstrap_n: int = _DEFAULT_BOOTSTRAP_N,
     min_sample: int = MIN_SAMPLE_FOR_P,
+    implausible_move_threshold: float = DEFAULT_IMPLAUSIBLE_MOVE_THRESHOLD,
 ) -> EdgeReport:
     """Convenience: load the audit file and build the report end-to-end.
 
-    Forensically-quarantined corrupt closes (shared ``bayes_quarantine``
-    signatures, e.g. the MATIC stale-exit runaway) are excluded from the edge
-    statistics here and the dropped count is reported in the result.
+    Corrupt closes are excluded from the edge statistics and the dropped count
+    is reported: (1) forensically-quarantined signatures (shared
+    ``bayes_quarantine``, e.g. the MATIC stale-exit runaway) and (2) generic
+    off-market prints exceeding ``implausible_move_threshold`` (Goal 2026-06-01 B).
     """
     events = load_audit_events(audit_path)
-    closed, excluded = parse_closed_trades_with_exclusions(events)
+    closed, excluded = parse_closed_trades_with_exclusions(
+        events, implausible_move_threshold=implausible_move_threshold
+    )
     entry_times = extract_entry_times(events)
     return build_edge_report(
         closed,
