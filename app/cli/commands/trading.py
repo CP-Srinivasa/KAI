@@ -164,6 +164,48 @@ def trading_paper_realized_by_asset(
         raise typer.Exit(1)
 
 
+@trading_app.command("edge-report")
+def trading_edge_report(
+    audit_path: str = typer.Option(
+        "artifacts/paper_execution_audit.jsonl",
+        "--audit-path",
+        help="Append-only paper execution audit JSONL path",
+    ),
+    venue: str = typer.Option("paper", "--venue", help="CostModel venue key"),
+    safety_margin_bps: float = typer.Option(
+        0.0, "--safety-margin-bps", help="Extra bps subtracted in net_edge (Sprint D margin)"
+    ),
+    min_sample: int = typer.Option(
+        8, "--min-sample", help="Min closed trades before P(mu_net>0) is computed"
+    ),
+    as_json: bool = typer.Option(False, "--json", help="Emit JSON instead of the table"),
+) -> None:
+    """Cohort- and forward-edge diagnostics (Sprint C).
+
+    Read-only. Reports cost-adjusted realised edge per symbol/regime/day,
+    P(mu_net>0) via bootstrap (winrate alone is not the verdict), churn, and
+    honest forward-return coverage. Open positions are marked-to-market in a
+    SEPARATE bucket — never summed with closed realised PnL.
+    """
+    import json as _json
+
+    from app.observability.edge_report import build_report_from_audit, render_report
+
+    report = build_report_from_audit(
+        audit_path,
+        venue=venue,
+        safety_margin_bps=safety_margin_bps,
+        min_sample=min_sample,
+    )
+    if as_json:
+        console.print(_json.dumps(report.to_dict(), indent=2))
+    else:
+        console.print(render_report(report))
+    if report.closed_trade_count == 0:
+        console.print("[yellow]No closed trades in audit stream.[/yellow]")
+        raise typer.Exit(1)
+
+
 @trading_app.command("paper-portfolio-snapshot")
 def trading_paper_portfolio_snapshot(
     audit_path: str = typer.Option(

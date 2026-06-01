@@ -1,0 +1,411 @@
+"""Sprint C (2026-06-01): cohort- and forward-edge diagnostics.
+
+Behaviour under test (kai-testing-regeln — behaviour, not implementation):
+
+- side-adjusted return math is correct for LONG and SHORT with known numbers.
+- net_bps subtracts exactly the CostModel round-trip cost (single source).
+- P(mu_net > 0) is high on a clearly-positive sample, low on a clearly-negative
+  one, and None below the minimum sample size (honest insufficiency).
+- closed realised PnL and open mark-to-market are NEVER combined.
+- open/closed fee separation is preserved (the +433-vs--283 bug stays dead).
+- forward-return gaps are reported as 0/N with a reason, never fabricated.
+- normal / edge / error cases for parsing and aggregation.
+"""
+
+from __future__ import annotations
+
+import pytest
+
+from app.execution import fees
+from app.execution.cost_model import CostModel
+from app.observability.edge_report import (
+    ClosedTrade,
+    OpenPosition,
+    aggregate_cohort,
+    bootstrap_p_mean_positive,
+    build_edge_report,
+    build_forward_coverage,
+    compute_churn,
+    compute_trade_edge,
+    extract_entry_times,
+    mark_to_market_open,
+    parse_closed_trades,
+    render_report,
+    side_adjusted_return_bps,
+)
+
+
+@pytest.fixture(autouse=True)
+def _clear_cache():
+    fees.reset_cache()
+    yield
+    fees.reset_cache()
+
+
+# --- side-adjusted return math (known numbers) --------------------------------
+
+
+def test_side_adjusted_long_positive():
+    # +1% price move on a long -> +100 bps.
+    assert side_adjusted_return_bps(100.0, 101.0, "long") == pytest.approx(100.0)
+
+
+def test_side_adjusted_long_negative():
+    assert side_adjusted_return_bps(100.0, 99.0, "long") == pytest.approx(-100.0)
+
+
+def test_side_adjusted_short_is_negated():
+    # price falls 1% on a short -> profit +100 bps.
+    assert side_adjusted_return_bps(100.0, 99.0, "short") == pytest.approx(100.0)
+    # price rises 1% on a short -> loss -100 bps.
+    assert side_adjusted_return_bps(100.0, 101.0, "short") == pytest.approx(-100.0)
+
+
+def test_side_adjusted_rejects_nonpositive_price():
+    with pytest.raises(ValueError):
+        side_adjusted_return_bps(0.0, 100.0, "long")
+    with pytest.raises(ValueError):
+        side_adjusted_return_bps(100.0, -5.0, "long")
+
+
+# --- net_bps = gross minus the SAME CostModel cost ----------------------------
+
+
+def test_net_bps_subtracts_round_trip_cost():
+    cm = CostModel()
+    # paper venue = 10 bp/side -> 20 bp round-trip, spread/slippage 0.
+    trade = ClosedTrade(
+        symbol="BTC/USDT",
+        position_side="long",
+        entry_price=100.0,
+        exit_price=101.0,
+        quantity=1.0,
+        reason="tp",
+        trade_pnl_usd=0.8,
+        fee_usd=0.2,
+        timestamp_utc="2026-06-01T10:00:00+00:00",
+    )
+    edge = compute_trade_edge(trade, cm, venue="paper")
+    assert edge.gross_bps == pytest.approx(100.0)
+    assert edge.fee_bps == pytest.approx(20.0)  # 10 entry + 10 exit
+    # net = 100 - 20 - 0 - 0 - 0 = 80
+    assert edge.net_bps == pytest.approx(80.0)
+
+
+def test_net_bps_can_be_negative_when_gross_below_cost():
+    cm = CostModel()
+    trade = ClosedTrade(
+        symbol="X/USDT",
+        position_side="long",
+        entry_price=100.0,
+        exit_price=100.1,
+        quantity=1.0,  # +10 bps gross
+        reason="tp",
+        trade_pnl_usd=0.0,
+        fee_usd=0.0,
+        timestamp_utc="2026-06-01T10:00:00+00:00",
+    )
+    edge = compute_trade_edge(trade, cm, venue="paper")
+    assert edge.gross_bps == pytest.approx(10.0)
+    assert edge.net_bps == pytest.approx(-10.0)  # 10 - 20 round-trip cost
+
+
+# --- P(mu_net > 0): positive, negative, insufficient --------------------------
+
+
+def test_p_mu_positive_on_clearly_positive_sample():
+    vals = [50.0, 60.0, 45.0, 70.0, 55.0, 65.0, 80.0, 40.0, 75.0, 52.0]
+    p = bootstrap_p_mean_positive(vals, n_resamples=2000)
+    assert p is not None
+    assert p > 0.95
+
+
+def test_p_mu_low_on_clearly_negative_sample():
+    vals = [-50.0, -60.0, -45.0, -70.0, -55.0, -65.0, -80.0, -40.0, -75.0, -52.0]
+    p = bootstrap_p_mean_positive(vals, n_resamples=2000)
+    assert p is not None
+    assert p < 0.05
+
+
+def test_p_mu_none_below_min_sample():
+    assert bootstrap_p_mean_positive([10.0, 20.0, 30.0], min_sample=8) is None
+
+
+def test_p_mu_is_deterministic_with_seed():
+    vals = [10.0, -5.0, 20.0, -3.0, 8.0, 1.0, -2.0, 4.0, 9.0]
+    a = bootstrap_p_mean_positive(vals, n_resamples=1000, seed=42)
+    b = bootstrap_p_mean_positive(vals, n_resamples=1000, seed=42)
+    assert a == b
+
+
+# --- closed vs open MTM are never combined ------------------------------------
+
+
+def test_open_mtm_kept_separate_from_closed():
+    closed = [
+        ClosedTrade(
+            "BTC/USDT", "long", 100.0, 110.0, 1.0, "tp", 9.8, 0.2, "2026-06-01T10:00:00+00:00"
+        ),
+    ]
+    open_pos = [OpenPosition("ETH/USDT", "long", 50.0, 2.0, "2026-06-01T09:00:00+00:00")]
+    report = build_edge_report(
+        closed,
+        open_pos,
+        mark_prices={"ETH/USDT": 60.0},
+        min_sample=1,
+    )
+    # closed realised pnl is the closed sum only.
+    assert report.overall.realized_pnl_usd_sum == pytest.approx(9.8)
+    # open MTM is its own bucket: (60-50)*2 = 20, NOT folded into realised.
+    assert report.open_mtm.unrealized_pnl_usd == pytest.approx(20.0)
+    assert report.open_mtm.count == 1
+    assert report.closed_trade_count == 1
+
+
+def test_open_mtm_unrealized_none_when_no_price():
+    open_pos = [OpenPosition("ZZZ/USDT", "long", 10.0, 1.0, "2026-06-01T09:00:00+00:00")]
+    mtm = mark_to_market_open(open_pos, mark_prices={})
+    # no price -> None, NOT 0 (0 would falsely imply flat).
+    assert mtm.unrealized_pnl_usd is None
+    assert mtm.count == 1
+    assert mtm.priced == 0
+
+
+def test_open_mtm_short_direction():
+    open_pos = [OpenPosition("S/USDT", "short", 100.0, 1.0, "2026-06-01T09:00:00+00:00")]
+    mtm = mark_to_market_open(open_pos, mark_prices={"S/USDT": 90.0})
+    # short profits when price falls: (100-90)*1 = 10.
+    assert mtm.unrealized_pnl_usd == pytest.approx(10.0)
+
+
+# --- cohort aggregation -------------------------------------------------------
+
+
+def test_cohort_winrate_and_means():
+    cm = CostModel()
+    trades = [
+        ClosedTrade(
+            "A/USDT", "long", 100.0, 110.0, 1.0, "tp", 9.0, 1.0, "2026-06-01T10:00:00+00:00"
+        ),  # +1000 gross -> +980 net
+        ClosedTrade(
+            "A/USDT", "long", 100.0, 99.0, 1.0, "sl", -1.2, 0.2, "2026-06-01T11:00:00+00:00"
+        ),  # -100 gross -> -120 net (loss)
+    ]
+    edges = [compute_trade_edge(t, cm) for t in trades]
+    cohort = aggregate_cohort("A/USDT", "symbol", edges, min_sample=2, bootstrap_n=500)
+    assert cohort.count == 2
+    assert cohort.winrate == pytest.approx(0.5)
+    assert cohort.avg_win_bps == pytest.approx(980.0)
+    assert cohort.avg_loss_bps == pytest.approx(-120.0)
+
+
+def test_cohort_net_per_notional_weights_by_size():
+    cm = CostModel()
+    # big loser, small winner: per-notional should lean negative.
+    trades = [
+        ClosedTrade(
+            "B/USDT", "long", 100.0, 99.0, 100.0, "sl", -100.0, 1.0, "2026-06-01T10:00:00+00:00"
+        ),  # notional 10000, net -120
+        ClosedTrade(
+            "B/USDT", "long", 100.0, 110.0, 0.1, "tp", 0.9, 0.1, "2026-06-01T11:00:00+00:00"
+        ),  # notional 10, net +980
+    ]
+    edges = [compute_trade_edge(t, cm) for t in trades]
+    cohort = aggregate_cohort("B/USDT", "symbol", edges, min_sample=2, bootstrap_n=200)
+    # unweighted mean would be +430; notional-weighted must be near the big -120.
+    assert cohort.net_bps_per_notional_mean < 0
+    assert cohort.net_bps_mean > cohort.net_bps_per_notional_mean
+
+
+# --- churn --------------------------------------------------------------------
+
+
+def test_churn_reentries_per_day():
+    trades = [
+        ClosedTrade("C/USDT", "long", 1.0, 1.1, 1.0, "tp", 0.0, 0.0, "2026-06-01T10:00:00+00:00"),
+        ClosedTrade("C/USDT", "long", 1.0, 1.1, 1.0, "tp", 0.0, 0.0, "2026-06-01T14:00:00+00:00"),
+        ClosedTrade("C/USDT", "long", 1.0, 1.1, 1.0, "tp", 0.0, 0.0, "2026-06-02T10:00:00+00:00"),
+    ]
+    churn = compute_churn(trades)
+    assert len(churn) == 1
+    c = churn[0]
+    assert c.closes == 3
+    assert c.distinct_days == 2
+    assert c.reentries_per_day == pytest.approx(1.5)
+    # no entry times supplied -> honest None, not a guessed hold.
+    assert c.mean_hold_minutes is None
+
+
+def test_churn_hold_minutes_when_entry_times_present():
+    trades = [
+        ClosedTrade("D/USDT", "long", 1.0, 1.1, 1.0, "tp", 0.0, 0.0, "2026-06-01T10:30:00+00:00"),
+    ]
+    churn = compute_churn(trades, entry_times={"D/USDT": ["2026-06-01T10:00:00+00:00"]})
+    assert churn[0].mean_hold_minutes == pytest.approx(30.0)
+
+
+# --- forward coverage: honest gaps, no fiction --------------------------------
+
+
+def test_forward_coverage_reports_zero_when_no_samples():
+    trades = [
+        ClosedTrade("E/USDT", "long", 1.0, 1.1, 1.0, "tp", 0.0, 0.0, "2026-06-01T10:00:00+00:00")
+    ]
+    cov = build_forward_coverage(trades, forward_samples=None)
+    assert {c.horizon_minutes for c in cov} == {1, 5, 15, 60}
+    for c in cov:
+        assert c.covered == 0
+        assert c.total == 1
+        assert c.net_bps_mean is None  # never fabricated
+        assert c.reason == "no_historical_minute_bars"
+
+
+def test_forward_coverage_cost_adjusts_present_samples():
+    trades = [
+        ClosedTrade("F/USDT", "long", 1.0, 1.1, 1.0, "tp", 0.0, 0.0, "2026-06-01T10:00:00+00:00")
+    ]
+    # one sampled 5m gross forward return of +50 bps; cost 20 bp -> net +30.
+    cov = build_forward_coverage(trades, forward_samples={5: [50.0]})
+    cov_5m = next(c for c in cov if c.horizon_minutes == 5)
+    assert cov_5m.covered == 1
+    assert cov_5m.net_bps_mean == pytest.approx(30.0)
+    assert cov_5m.reason == "sampled"
+
+
+# --- parsing: only realised closes, phantom/partial ignored -------------------
+
+
+def test_parse_closed_trades_filters_non_close_and_invalid():
+    events = [
+        {"event_type": "order_filled", "symbol": "X/USDT"},  # not a close
+        {
+            "event_type": "position_closed",
+            "symbol": "G/USDT",
+            "position_side": "long",
+            "entry_price": 100.0,
+            "exit_price": 105.0,
+            "quantity": 2.0,
+            "reason": "tp",
+            "trade_pnl_usd": 9.8,
+            "fee_usd": 0.2,
+            "timestamp_utc": "2026-06-01T10:00:00+00:00",
+        },
+        {
+            "event_type": "position_closed",
+            "symbol": "BAD/USDT",
+            "entry_price": 0.0,
+            "exit_price": 5.0,
+            "quantity": 1.0,
+        },  # invalid price -> dropped
+        {
+            "event_type": "position_partial_closed",
+            "symbol": "H/USDT",
+            "entry_price": 1.0,
+            "exit_price": 1.1,
+            "quantity": 1.0,
+        },  # partial -> dropped
+    ]
+    closed = parse_closed_trades(events)
+    assert len(closed) == 1
+    assert closed[0].symbol == "G/USDT"
+    assert closed[0].trade_pnl_usd == pytest.approx(9.8)
+
+
+def test_parse_reads_regime_when_present_else_unknown():
+    events = [
+        {
+            "event_type": "position_closed",
+            "symbol": "R/USDT",
+            "entry_price": 1.0,
+            "exit_price": 1.1,
+            "quantity": 1.0,
+            "timestamp_utc": "2026-06-01T10:00:00+00:00",
+            "regime": "bull_trend",
+        },
+        {
+            "event_type": "position_closed",
+            "symbol": "U/USDT",
+            "entry_price": 1.0,
+            "exit_price": 1.1,
+            "quantity": 1.0,
+            "timestamp_utc": "2026-06-01T10:00:00+00:00",
+        },
+    ]
+    closed = parse_closed_trades(events)
+    by_symbol = {c.symbol: c.regime for c in closed}
+    assert by_symbol["R/USDT"] == "bull_trend"
+    assert by_symbol["U/USDT"] == "unknown"
+
+
+def test_extract_entry_times_only_buy_entries():
+    events = [
+        {
+            "event_type": "order_filled",
+            "symbol": "K/USDT",
+            "side": "buy",
+            "pnl_usd": 0.0,
+            "filled_at": "2026-06-01T10:00:00+00:00",
+        },
+        {
+            "event_type": "order_filled",
+            "symbol": "K/USDT",
+            "side": "sell",
+            "pnl_usd": 5.0,
+            "filled_at": "2026-06-01T11:00:00+00:00",
+        },  # exit
+        {
+            "event_type": "order_filled",
+            "symbol": "K/USDT",
+            "side": "buy",
+            "pnl_usd": 3.0,
+            "filled_at": "2026-06-01T12:00:00+00:00",
+        },  # short-cover, not entry
+    ]
+    et = extract_entry_times(events)
+    assert et == {"K/USDT": ["2026-06-01T10:00:00+00:00"]}
+
+
+# --- full report: regime-unknown note, insufficiency note ---------------------
+
+
+def test_report_marks_regime_unknown_and_insufficient():
+    trades = [
+        ClosedTrade(
+            "Z/USDT", "long", 100.0, 101.0, 1.0, "tp", 0.8, 0.2, "2026-06-01T10:00:00+00:00"
+        ),
+    ]
+    report = build_edge_report(trades, min_sample=8)
+    notes = " ".join(report.notes)
+    assert "regime cohort = 'unknown'" in notes
+    assert "insufficient" in notes
+    assert report.overall.p_mu_net_positive is None
+
+
+def test_report_renders_human_table_without_error():
+    trades = [
+        ClosedTrade(
+            "BTC/USDT", "long", 100.0, 101.0, 1.0, "tp", 0.8, 0.2, "2026-06-01T10:00:00+00:00"
+        ),
+        ClosedTrade(
+            "ETH/USDT", "short", 100.0, 99.0, 1.0, "tp", 0.8, 0.2, "2026-06-01T11:00:00+00:00"
+        ),
+    ]
+    report = build_edge_report(trades, min_sample=2, bootstrap_n=200)
+    text = render_report(report)
+    assert "EDGE REPORT" in text
+    assert "P(mu_net > 0)" in text
+    assert "FORWARD-RETURN COVERAGE" in text
+    assert "MARK-TO-MARKET" in text
+    # JSON round-trips.
+    d = report.to_dict()
+    assert d["closed_trade_count"] == 2
+    assert "by_symbol" in d
+
+
+def test_empty_report_is_safe():
+    report = build_edge_report([], [])
+    assert report.closed_trade_count == 0
+    assert report.overall.count == 0
+    assert report.overall.p_mu_net_positive is None
+    # rendering empty must not raise.
+    render_report(report)
