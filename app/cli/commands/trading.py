@@ -273,6 +273,92 @@ def trading_edge_gate(
         console.print("[yellow]No closed trades in audit stream -> DISABLED.[/yellow]")
 
 
+@trading_app.command("evidence-window")
+def trading_evidence_window(
+    loop_audit_path: str = typer.Option(
+        "artifacts/trading_loop_audit.jsonl",
+        "--loop-audit-path",
+        help="Append-only trading-loop cycle audit JSONL path (counts + safety)",
+    ),
+    exec_audit_path: str = typer.Option(
+        "artifacts/paper_execution_audit.jsonl",
+        "--exec-audit-path",
+        help="Append-only paper execution audit JSONL path (fills + closes)",
+    ),
+    since_days: float = typer.Option(
+        0.0,
+        "--since-days",
+        help="Window = the last N days (0 = full streams; overridden by --from/--to)",
+    ),
+    from_iso: str = typer.Option(
+        "", "--from", help="Window start (ISO-8601 UTC, e.g. 2026-06-01T00:00:00+00:00)"
+    ),
+    to_iso: str = typer.Option("", "--to", help="Window end (ISO-8601 UTC)"),
+    venue: str = typer.Option("paper", "--venue", help="CostModel venue key"),
+    p_threshold_bps: float = typer.Option(
+        0.0, "--p-threshold-bps", help="Threshold T for the P(mu_net > T) figure"
+    ),
+    safety_margin_bps: float = typer.Option(
+        0.0, "--safety-margin-bps", help="Extra bps subtracted in net_edge"
+    ),
+    min_sample: int = typer.Option(
+        8, "--min-sample", help="Min closed trades before probabilities are computed"
+    ),
+    as_json: bool = typer.Option(False, "--json", help="Emit JSON instead of the table"),
+) -> None:
+    """Evidence-Window report (Goal 2026-06-01) — one defensible edge answer.
+
+    READ-ONLY. Joins the trading-loop status distribution (counts) and the paper
+    execution stream (fills + closes) into ONE typed window: counts, hard safety
+    assertions (live_orders_attempted MUST be 0, auto_promotions 0), and a
+    cost-adjusted, quarantine-cleaned edge with OUTLIER ROBUSTNESS
+    (result_without_best/worst trade, trimmed mean, bootstrap CI, P(mu>T)).
+
+    It DECIDES nothing — it is the evidence base on which a later probe/live
+    conversation happens. Forward returns are honestly marked
+    'pending prospective capture' (an explicit follow-up sprint).
+    """
+    import json as _json
+    from datetime import UTC, datetime, timedelta
+
+    from app.observability.evidence_window import build_window_from_audit, render_window
+
+    def _parse_iso(value: str) -> datetime | None:
+        if not value:
+            return None
+        try:
+            dt = datetime.fromisoformat(value)
+        except ValueError as exc:
+            raise typer.BadParameter(f"invalid ISO-8601 datetime: {value!r}") from exc
+        return dt if dt.tzinfo else dt.replace(tzinfo=UTC)
+
+    since = _parse_iso(from_iso)
+    until = _parse_iso(to_iso)
+    if since is None and until is None and since_days > 0:
+        since = datetime.now(UTC) - timedelta(days=since_days)
+
+    report = build_window_from_audit(
+        loop_audit_path=loop_audit_path,
+        exec_audit_path=exec_audit_path,
+        since=since,
+        until=until,
+        venue=venue,
+        safety_margin_bps=safety_margin_bps,
+        p_threshold_bps=p_threshold_bps,
+        min_sample=min_sample,
+    )
+    if as_json:
+        console.print(_json.dumps(report.to_dict(), indent=2))
+    else:
+        console.print(render_window(report))
+
+    # Honest exit signal: a non-paper fill in a paper window is an integrity
+    # alarm. Edge-emptiness is informational (exit 0) — absence of evidence is
+    # not a failure of the report.
+    if report.safety.live_orders_attempted > 0:
+        raise typer.Exit(2)
+
+
 @trading_app.command("paper-portfolio-snapshot")
 def trading_paper_portfolio_snapshot(
     audit_path: str = typer.Option(
@@ -656,7 +742,19 @@ def trading_recent_cycles(
 
 @trading_app.command("run-once")
 def trading_run_once(
-    symbol: str = typer.Option("BTC/USDT", "--symbol", help="Trading symbol"),
+    extra_positional: Annotated[
+        list[str] | None,
+        typer.Argument(
+            hidden=True,
+            metavar="",
+            help=(
+                "INTERNAL: captures stray positional args so a mistaken "
+                "`run-once BTC/USDT` fails with an actionable message instead of a "
+                "generic Click error. There is NO positional symbol argument."
+            ),
+        ),
+    ] = None,
+    symbol: str = typer.Option("BTC/USDT", "--symbol", help="Trading symbol (use this flag)"),
     mode: str = typer.Option(
         "paper",
         "--mode",
@@ -703,8 +801,26 @@ def trading_run_once(
         help="LLM model for consensus validation",
     ),
 ) -> None:
-    """Run one guarded paper/shadow cycle and append cycle audit output."""
+    """Run one guarded paper/shadow cycle and append cycle audit output.
+
+    There is NO positional symbol argument. Pass a symbol with ``--symbol``,
+    e.g. ``trading run-once --symbol ETH/USDT``. A stray positional arg
+    (``run-once ETH/USDT``) is rejected with an actionable error rather than
+    silently swallowed — a positional that looked like it ran a tick but did
+    not has caused operator mis-diagnosis (Goal 2026-06-01, NEO-F-411).
+    """
     import asyncio
+
+    # DX hard-stop: a stray positional symbol must NEVER look like a tick.
+    if extra_positional:
+        stray = " ".join(extra_positional)
+        raise typer.BadParameter(
+            f"no positional symbol argument: run-once does not take a positional "
+            f"symbol (got '{stray}'). Use the --symbol flag for a symbol-specific "
+            f"tick, e.g. 'trading run-once --symbol {extra_positional[0]}', or use "
+            f"'trading monitor-positions' to watch open positions. This tick did "
+            f"NOT run.",
+        )
 
     from app.orchestrator.trading_loop import run_trading_loop_once
 
