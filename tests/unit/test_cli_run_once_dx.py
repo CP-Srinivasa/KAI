@@ -15,11 +15,27 @@ These tests pin the corrected behaviour:
 
 from __future__ import annotations
 
+import re
+
 from typer.testing import CliRunner
 
 from app.cli.commands.trading import trading_app
 
 runner = CliRunner()
+
+_ANSI = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def _plain(text: str) -> str:
+    """Strip ANSI colour codes so substring assertions are CI-robust.
+
+    Rich (via Typer) injects colour escapes that split a token like ``--symbol``
+    into ``-`` + ``-symbol`` with escapes between them; under a non-TTY/narrow CI
+    terminal the raw output therefore does NOT contain the literal ``--symbol``.
+    Stripping the escapes rejoins the token. We assert on the message content,
+    not on terminal rendering.
+    """
+    return _ANSI.sub("", text)
 
 
 def test_positional_symbol_is_a_hard_error_not_a_silent_tick() -> None:
@@ -32,17 +48,18 @@ def test_positional_symbol_is_a_hard_error_not_a_silent_tick() -> None:
 def test_positional_symbol_error_is_actionable() -> None:
     result = runner.invoke(trading_app, ["run-once", "ETH/USDT", "--provider", "mock"])
     assert result.exit_code != 0
-    out = result.output.lower()
+    plain = _plain(result.output)
+    out = plain.lower()
     # names the cause + the remedy (so the operator does not misdiagnose)
     assert "symbol" in out
-    assert "--symbol" in result.output  # the correct flag is shown verbatim
+    assert "--symbol" in plain  # the correct flag is shown (ANSI-stripped)
     assert "monitor" in out  # the alternative path is named
 
 
 def test_help_shows_no_positional_symbol() -> None:
     result = runner.invoke(trading_app, ["run-once", "--help"])
     assert result.exit_code == 0
-    out = result.output
+    out = _plain(result.output)
     # --symbol is an OPTION; no bare [SYMBOL] positional argument is advertised.
     assert "--symbol" in out
     assert "[SYMBOL]" not in out
