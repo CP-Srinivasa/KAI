@@ -12,31 +12,89 @@
 # typischerweise jedes Quartal). Bei Aktualisierung version + effective_from
 # bumpen.
 
-version: "1.0.0"
+version: "1.1.0"
 effective_from: "2026-04-01"
 effective_until: "2026-09-30"  # forced re-check
 source_note: "Public spot trading fees, taker rate, no VIP/volume discount applied"
 
+# Sprint B (2026-06-01, CostModel): additive per-side bps fields + spread/
+# slippage assumptions. The *_pct fields stay the legacy source-of-truth; the
+# *_fee_bps_per_side fields are explicit derivations (pct * 100) so the CostModel
+# reads bps directly. market_type defaults to "spot". expected_spread_bps and
+# expected_slippage_bps are round-trip cost components consumed by the edge gate
+# (Sprint D); 0 keeps the cost honest until measured forward (Sprint C).
 venues:
   binance:
+    market_type: "spot"
     taker_pct: 0.10
     maker_pct: 0.10
+    taker_fee_bps_per_side: 10.0
+    maker_fee_bps_per_side: 10.0
+    expected_spread_bps: 0.0
+    expected_slippage_bps: 0.0
+    discount_flag: false
+    source_url: "https://www.binance.com/en/fee/schedule"
+  # Optional BNB-discount variant: taker/maker 7.5 bp/side. Activate by setting
+  # paper.* below to these values (or point the engine venue to "binance_bnb").
+  binance_bnb:
+    market_type: "spot"
+    taker_pct: 0.075
+    maker_pct: 0.075
+    taker_fee_bps_per_side: 7.5
+    maker_fee_bps_per_side: 7.5
+    expected_spread_bps: 0.0
+    expected_slippage_bps: 0.0
+    discount_flag: true
     source_url: "https://www.binance.com/en/fee/schedule"
   okx:
+    market_type: "spot"
     taker_pct: 0.10
     maker_pct: 0.08
+    taker_fee_bps_per_side: 10.0
+    maker_fee_bps_per_side: 8.0
+    expected_spread_bps: 0.0
+    expected_slippage_bps: 0.0
+    discount_flag: false
     source_url: "https://www.okx.com/fees"
   coinbase:
+    market_type: "spot"
     taker_pct: 0.60
     maker_pct: 0.40
+    taker_fee_bps_per_side: 60.0
+    maker_fee_bps_per_side: 40.0
+    expected_spread_bps: 0.0
+    expected_slippage_bps: 0.0
+    discount_flag: false
     source_url: "https://www.coinbase.com/advanced-trade/fees"
   bybit:
+    market_type: "spot"
     taker_pct: 0.10
     maker_pct: 0.10
+    taker_fee_bps_per_side: 10.0
+    maker_fee_bps_per_side: 10.0
+    expected_spread_bps: 0.0
+    expected_slippage_bps: 0.0
+    discount_flag: false
     source_url: "https://www.bybit.com/en/help-center/article/Trading-Fee-Structure"
+  # paper-Venue: realistischer Default = Binance-Spot 10 bp/side (Operator-
+  # Entscheidung 2026-06-01). NICHT mehr worst-case 60 bp. Das ist der
+  # Normalbetrieb-Default fuer den paper-Engine und das Edge-Gate. Wer
+  # konservativer rechnen will, setzt EXECUTION-Venue auf "coinbase".
+  paper:
+    market_type: "spot"
+    taker_pct: 0.10
+    maker_pct: 0.10
+    taker_fee_bps_per_side: 10.0
+    maker_fee_bps_per_side: 10.0
+    expected_spread_bps: 0.0
+    expected_slippage_bps: 0.0
+    discount_flag: false
+    source_url: "binance-spot-equivalent (realistic paper default)"
 
-# Default fuer venue="paper" oder unknown venue: worst-case ueber alle Venues.
-# So underestimieren wir realen Live-Aufwand nie, sondern leichtes
-# Overestimate-by-design (siehe Architecture-Red-Team Empfehlung).
+# Default fuer GENUINELY UNKNOWN venues (kein YAML-Eintrag): worst-case ueber
+# alle Venues. So underestimieren wir einen Venue, ueber den wir keine Daten
+# haben, nie. ACHTUNG: das ist NICHT der paper-Default mehr — paper hat einen
+# eigenen, realistischen Eintrag oben (10 bp). Diese Defaults greifen nur fuer
+# echte Unbekannte (z.B. "kraken" ohne Eintrag).
 default_taker_pct: 0.60
 default_maker_pct: 0.60

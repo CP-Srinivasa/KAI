@@ -307,9 +307,11 @@ class PaperExecutionEngine:
         to open/increase a simulated short, and side="buy", position_side="short"
         to close/reduce it.
 
-        NEO-P-106 Phase 2: venue defaults to "paper" (= worst-case default fee).
-        Callers that need constructor fee_pct compatibility must pass
-        venue="legacy" explicitly.
+        NEO-P-106 Phase 2 / Sprint B (CostModel): venue defaults to "paper",
+        which now resolves to the realistic Binance-Spot 10 bp/side entry in
+        config/venue_fees.yaml (NOT worst-case anymore) — the same per-side
+        source the CostModel and the V1 cost-geometry gate read. Callers that
+        need constructor fee_pct compatibility must pass venue="legacy".
 
         Sprint A (2026-05-12): leverage + source aus ExecutableOrderIntent
         durchgereicht damit PaperPosition + Frontend sie ohne audit-jsonl-
@@ -511,9 +513,11 @@ class PaperExecutionEngine:
             fill_price = current_price * (1 - self._slippage_pct)
 
         cost = fill_price * fill_quantity
-        # NEO-P-106: venue-spezifische Maker/Taker-Fee aus config/venue_fees.yaml.
-        # Market = taker; Limit mit limit_price = maker. Fallback bei unknown/paper
-        # venue = role-spezifischer worst-case Default aus YAML.
+        # NEO-P-106 / Sprint B (CostModel single source): venue-spezifische
+        # Maker/Taker-Fee aus config/venue_fees.yaml — dieselbe per-side-Quelle
+        # die CostModel und das V1-Kosten-Geometrie-Gate lesen. Market = taker;
+        # Limit mit limit_price = maker. paper -> realistischer 10 bp/side Eintrag.
+        # GENUINELY unknown venue -> role-spezifischer worst-case Default.
         # Constructor `fee_pct` wird ignoriert, sobald venue!="legacy"; legacy-Path
         # bleibt als explizite Opt-out fuer Property-Tests.
         from app.execution.fees import lookup_order_fee

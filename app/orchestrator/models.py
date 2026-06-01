@@ -20,6 +20,7 @@ class CycleStatus(StrEnum):
     DIVERSIFICATION_REJECTED = "diversification_rejected"  # concentration cap breach (enforce mode)
     KYT_REJECTED = "kyt_rejected"  # KYT hold/block/manual_review (enforce mode), DS-20260529
     COOLDOWN_REJECTED = "cooldown_rejected"  # NEO-V2: per-symbol post-stop cooldown active
+    CHURN_REJECTED = "churn_rejected"  # Sprint E: churn-killer rate/turnover limit (Goal §5)
     ENTRY_MODE_BLOCKED = "entry_mode_blocked"  # Goal 2026-06-01: Entry-Safety-Mode (disabled)
     ORDER_FAILED = "order_failed"
     ERROR = "error"

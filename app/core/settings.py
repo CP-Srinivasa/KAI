@@ -16,6 +16,24 @@ from app.core.schema_runtime import (
 )
 
 
+def _cost_model_paper_round_trip_pct() -> float:
+    """Default for RiskSettings.round_trip_fee_pct, derived from the CostModel.
+
+    Single source: the V1 cost-geometry gate must charge the SAME round-trip
+    cost the paper engine charges (Sprint B). Imported lazily to avoid any
+    import-order coupling between settings and execution. If the CostModel is
+    unavailable for any reason, fall back to a small positive number rather than
+    the legacy 1.2% worst-case (re-pinning 1.2 would re-introduce Gate/Engine
+    drift). 0.2% mirrors the realistic paper default (10 bp/side round-trip).
+    """
+    try:
+        from app.execution.cost_model import CostModel
+
+        return CostModel().round_trip_fee_pct(venue="paper")
+    except Exception:  # noqa: BLE001 — config default must never crash startup
+        return 0.20
+
+
 def _strip_secret(value: object) -> object:
     # SAT-C-006: trailing newline / BOM aus copy-paste killt sonst Signaturen
     # ohne klaren Fehler ("invalid_signature" sieht wie Angriff aus, ist aber Bug).
@@ -206,13 +224,25 @@ class RiskSettings(BaseSettings):
 
     # NEO-V1 (2026-06-01): cost-aware SL geometry gate. Reject orders whose stop
     # distance cannot clear the round-trip transaction cost
-    # (|entry-SL|/entry < min_sl_cost_multiple x round_trip_fee_pct). Fixes the
-    # structural loss where a ~0.8% stop sits inside the ~1.2% round-trip taker
-    # fee. round_trip_fee_pct mirrors the paper-venue worst-case (2 x 60 bps).
-    # env: RISK_MIN_SL_COST_MULTIPLE, RISK_ROUND_TRIP_FEE_PCT.
-    # OPERATOR-SIGN-OFF PARAMETER: 1.5 => min SL ~1.8%. Set 0 to disable.
+    # (|entry-SL|/entry < min_sl_cost_multiple x round_trip_fee_pct).
+    #
+    # Sprint B (CostModel, single source): round_trip_fee_pct is NO LONGER a
+    # hand-set 1.2% worst-case. Its default is DERIVED from the CostModel paper
+    # venue (10 bp/side -> 0.2% round-trip) so the gate, the paper engine and the
+    # backtest all charge the SAME cost — no Gate/Engine drift. With the
+    # realistic cost the gate becomes nearly inert (threshold 1.5*0.2% = 0.3%),
+    # which is the intended outcome: the bleed is NOT primarily fee-driven.
+    #
+    # RISK_ROUND_TRIP_FEE_PCT is DEPRECATED: it survives only as a thin Operator
+    # override. If unset, the CostModel-derived value wins. Do NOT re-pin it to
+    # 1.2 — that would re-introduce the drift this sprint removed.
+    # env: RISK_MIN_SL_COST_MULTIPLE, RISK_ROUND_TRIP_FEE_PCT (override only).
+    # OPERATOR-SIGN-OFF PARAMETER: min_sl_cost_multiple 1.5 => min SL ~0.3%.
     min_sl_cost_multiple: float = Field(default=1.5, ge=0.0)
-    round_trip_fee_pct: float = Field(default=1.2, gt=0.0)
+    round_trip_fee_pct: float = Field(
+        default_factory=lambda: _cost_model_paper_round_trip_pct(),
+        gt=0.0,
+    )
 
     # NEO-V2 (2026-06-01): per-symbol post-stop cooldown. After a stop-out the
     # same symbol may not be re-entered for this window (minutes). Source for the
@@ -220,6 +250,56 @@ class RiskSettings(BaseSettings):
     # new persistence. env: RISK_POST_STOP_COOLDOWN_MIN.
     # OPERATOR-SIGN-OFF PARAMETER: 180 (3h) recommended. 0 disables.
     post_stop_cooldown_min: int = Field(default=180, ge=0)
+
+    # Sprint E (Goal 2026-06-01 §5): churn-killer. Generalises the post-stop
+    # cooldown into a full re-entry throttle, driven entirely from the existing
+    # paper-execution audit (no new persistence). Only risk-INCREASING entries
+    # are gated — exits/SL/TP/reductions are never blocked (hard invariant,
+    # enforced by wiring the gate only into the entry path). All sub-gates fail
+    # OPEN and each `<= 0` value disables its own sub-gate.
+    #
+    # Real-data motivation: MATIC 4.25 re-entries/day, LINK 3.0, ETH 2.71 — the
+    # same loser re-entered minute-by-minute.
+    #
+    # OPERATOR-SIGN-OFF PARAMETERS (env: RISK_CHURN_*). Defaults are conservative
+    # (block obvious churn, do not throttle a healthy book):
+    #
+    # churn_cooldown_min — per-symbol min wait after ANY risk-reducing close
+    #   (stop/take/reversal), not only stop. Default 60 (1h). This is the §1/§2
+    #   base window. Sensitivity: too high starves legit re-entries on trending
+    #   names; too low re-opens the churn door. 0 disables (post_stop_cooldown_min
+    #   then remains the only cooldown).
+    churn_cooldown_min: int = Field(default=60, ge=0)
+    # churn_loss_streak_threshold — N consecutive losing closes of a symbol that
+    #   trigger the backoff. Default 3 (matches observed MATIC/LINK loss runs).
+    #   Sensitivity: 2 is aggressive (one bad pair of trades extends the lockout),
+    #   4+ rarely fires. 0 disables the backoff.
+    churn_loss_streak_threshold: int = Field(default=3, ge=0)
+    # churn_loss_streak_multiplier — window stretch once the streak threshold is
+    #   hit. Default 2.0 (3 losses -> 2h lockout at the 60-min base). Sensitivity:
+    #   linear on the lockout duration; <=1.0 makes the backoff inert.
+    churn_loss_streak_multiplier: float = Field(default=2.0, ge=1.0)
+    # churn_max_trades_per_symbol_per_hour — hard cap on ENTRY fills per symbol
+    #   per rolling hour. Default 2. Observed churn was 3-4/day per symbol but
+    #   clustered; 2/hour blocks the minute-by-minute pattern while leaving room
+    #   for a legitimate scale-in. Sensitivity: 1 is very tight (no averaging-in
+    #   ever), 3+ permits the observed churn. 0 disables.
+    churn_max_trades_per_symbol_per_hour: int = Field(default=2, ge=0)
+    # churn_max_notional_turnover_per_hour — global cap on summed ENTRY notional
+    #   (USD) across all symbols per rolling hour. Default 0.0 (DISABLED) because
+    #   the right value is equity-dependent and must be chosen by the operator;
+    #   a wrong global cap can silently starve the whole book. Recommended start
+    #   when enabled: ~1.5x initial_equity (e.g. 15000 at 10k equity), i.e. allow
+    #   ~1.5 full-book turnovers/hour. Sensitivity: this is the bluntest gate —
+    #   it blocks ALL new entries regardless of symbol once tripped. Treat as an
+    #   emergency brake, not a routine throttle. 0.0 disables.
+    churn_max_notional_turnover_per_hour: float = Field(default=0.0, ge=0.0)
+    # churn_probe_trades_per_hour — tighter per-symbol entry cap that applies when
+    #   entry_mode is PROBE (Goal Sprint A throttle hook). Default 1. Only used
+    #   when > 0 AND the active entry_mode is PROBE; otherwise the normal
+    #   churn_max_trades_per_symbol_per_hour applies. 0 = no PROBE-specific
+    #   tightening (fall back to the normal cap).
+    churn_probe_trades_per_hour: int = Field(default=1, ge=0)
 
 
 class ExecutionSettings(BaseSettings):
