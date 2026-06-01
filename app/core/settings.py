@@ -251,6 +251,56 @@ class RiskSettings(BaseSettings):
     # OPERATOR-SIGN-OFF PARAMETER: 180 (3h) recommended. 0 disables.
     post_stop_cooldown_min: int = Field(default=180, ge=0)
 
+    # Sprint E (Goal 2026-06-01 §5): churn-killer. Generalises the post-stop
+    # cooldown into a full re-entry throttle, driven entirely from the existing
+    # paper-execution audit (no new persistence). Only risk-INCREASING entries
+    # are gated — exits/SL/TP/reductions are never blocked (hard invariant,
+    # enforced by wiring the gate only into the entry path). All sub-gates fail
+    # OPEN and each `<= 0` value disables its own sub-gate.
+    #
+    # Real-data motivation: MATIC 4.25 re-entries/day, LINK 3.0, ETH 2.71 — the
+    # same loser re-entered minute-by-minute.
+    #
+    # OPERATOR-SIGN-OFF PARAMETERS (env: RISK_CHURN_*). Defaults are conservative
+    # (block obvious churn, do not throttle a healthy book):
+    #
+    # churn_cooldown_min — per-symbol min wait after ANY risk-reducing close
+    #   (stop/take/reversal), not only stop. Default 60 (1h). This is the §1/§2
+    #   base window. Sensitivity: too high starves legit re-entries on trending
+    #   names; too low re-opens the churn door. 0 disables (post_stop_cooldown_min
+    #   then remains the only cooldown).
+    churn_cooldown_min: int = Field(default=60, ge=0)
+    # churn_loss_streak_threshold — N consecutive losing closes of a symbol that
+    #   trigger the backoff. Default 3 (matches observed MATIC/LINK loss runs).
+    #   Sensitivity: 2 is aggressive (one bad pair of trades extends the lockout),
+    #   4+ rarely fires. 0 disables the backoff.
+    churn_loss_streak_threshold: int = Field(default=3, ge=0)
+    # churn_loss_streak_multiplier — window stretch once the streak threshold is
+    #   hit. Default 2.0 (3 losses -> 2h lockout at the 60-min base). Sensitivity:
+    #   linear on the lockout duration; <=1.0 makes the backoff inert.
+    churn_loss_streak_multiplier: float = Field(default=2.0, ge=1.0)
+    # churn_max_trades_per_symbol_per_hour — hard cap on ENTRY fills per symbol
+    #   per rolling hour. Default 2. Observed churn was 3-4/day per symbol but
+    #   clustered; 2/hour blocks the minute-by-minute pattern while leaving room
+    #   for a legitimate scale-in. Sensitivity: 1 is very tight (no averaging-in
+    #   ever), 3+ permits the observed churn. 0 disables.
+    churn_max_trades_per_symbol_per_hour: int = Field(default=2, ge=0)
+    # churn_max_notional_turnover_per_hour — global cap on summed ENTRY notional
+    #   (USD) across all symbols per rolling hour. Default 0.0 (DISABLED) because
+    #   the right value is equity-dependent and must be chosen by the operator;
+    #   a wrong global cap can silently starve the whole book. Recommended start
+    #   when enabled: ~1.5x initial_equity (e.g. 15000 at 10k equity), i.e. allow
+    #   ~1.5 full-book turnovers/hour. Sensitivity: this is the bluntest gate —
+    #   it blocks ALL new entries regardless of symbol once tripped. Treat as an
+    #   emergency brake, not a routine throttle. 0.0 disables.
+    churn_max_notional_turnover_per_hour: float = Field(default=0.0, ge=0.0)
+    # churn_probe_trades_per_hour — tighter per-symbol entry cap that applies when
+    #   entry_mode is PROBE (Goal Sprint A throttle hook). Default 1. Only used
+    #   when > 0 AND the active entry_mode is PROBE; otherwise the normal
+    #   churn_max_trades_per_symbol_per_hour applies. 0 = no PROBE-specific
+    #   tightening (fall back to the normal cap).
+    churn_probe_trades_per_hour: int = Field(default=1, ge=0)
+
 
 class ExecutionSettings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="EXECUTION_", env_file=".env", extra="ignore")

@@ -80,6 +80,17 @@ def _seed_stop(loop: TradingLoop, symbol: str, minutes_ago: int) -> None:
         fh.write(json.dumps(event) + "\n")
 
 
+def _disable_churn_killer(monkeypatch) -> None:
+    """Sprint E: the churn-killer is a SUPERSET gate that also covers the
+    post-stop case (its own cooldown, default 60 min). These tests verify the
+    *base* NEO-V2 post_stop_cooldown gate in isolation, so the overlapping
+    churn-killer sub-gates are disabled here. The churn-killer has its own
+    dedicated loop + unit tests."""
+    monkeypatch.setenv("RISK_CHURN_COOLDOWN_MIN", "0")
+    monkeypatch.setenv("RISK_CHURN_MAX_TRADES_PER_SYMBOL_PER_HOUR", "0")
+    monkeypatch.setenv("RISK_CHURN_MAX_NOTIONAL_TURNOVER_PER_HOUR", "0")
+
+
 def _strong_eth() -> AnalysisResult:
     return AnalysisResult(
         document_id="doc_eth_cooldown",
@@ -102,6 +113,7 @@ def _strong_eth() -> AnalysisResult:
 @pytest.mark.asyncio
 async def test_recent_stop_blocks_reentry(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("RISK_POST_STOP_COOLDOWN_MIN", "180")
+    _disable_churn_killer(monkeypatch)
     loop = _loop(tmp_path)
     _seed_stop(loop, "ETH/USDT", minutes_ago=10)
     cycle = await loop.run_cycle(_strong_eth(), "ETH/USDT")
@@ -113,6 +125,7 @@ async def test_recent_stop_blocks_reentry(tmp_path, monkeypatch) -> None:
 @pytest.mark.asyncio
 async def test_disabled_window_does_not_block_on_cooldown(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("RISK_POST_STOP_COOLDOWN_MIN", "0")
+    _disable_churn_killer(monkeypatch)
     loop = _loop(tmp_path)
     _seed_stop(loop, "ETH/USDT", minutes_ago=10)
     cycle = await loop.run_cycle(_strong_eth(), "ETH/USDT")
@@ -124,6 +137,7 @@ async def test_disabled_window_does_not_block_on_cooldown(tmp_path, monkeypatch)
 @pytest.mark.asyncio
 async def test_old_stop_outside_window_does_not_block(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("RISK_POST_STOP_COOLDOWN_MIN", "180")
+    _disable_churn_killer(monkeypatch)
     loop = _loop(tmp_path)
     _seed_stop(loop, "ETH/USDT", minutes_ago=300)  # outside 3h window
     cycle = await loop.run_cycle(_strong_eth(), "ETH/USDT")

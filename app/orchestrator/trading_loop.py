@@ -12,7 +12,7 @@ from pathlib import Path
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.core.domain.document import AnalysisResult
-from app.core.enums import ExecutionMode, SentimentLabel
+from app.core.enums import EntryMode, ExecutionMode, SentimentLabel
 from app.core.settings import get_settings
 from app.execution.models import PaperPortfolio
 from app.execution.paper_engine import PaperExecutionEngine
@@ -28,6 +28,7 @@ from app.orchestrator.models import (
     _new_cycle_id,
     _now_utc,
 )
+from app.risk.churn_killer import ChurnKillerConfig, ChurnVerdict, evaluate_churn_gate
 from app.risk.engine import RiskEngine
 from app.risk.models import RiskLimits
 from app.risk.post_stop_cooldown import is_symbol_in_post_stop_cooldown
@@ -284,6 +285,24 @@ class TradingLoop:
                 signal_generated=True,
                 decision_id=signal.decision_id,
                 notes=notes + ["post_stop_cooldown"],
+            )
+            await self._write_db(cycle)
+            return cycle
+
+        # Sprint E (Goal §5): churn-killer. Generalises the cooldown above (any
+        # risk-reducing close + loss-streak backoff) and adds global rate/turnover
+        # limits. Entry-only — exits are never gated here.
+        churn = self._evaluate_churn(symbol)
+        if churn.blocked:
+            cycle = self._build_cycle(
+                cycle_id,
+                started_at,
+                symbol,
+                self._churn_cycle_status(churn),
+                market_data_fetched=True,
+                signal_generated=True,
+                decision_id=signal.decision_id,
+                notes=notes + [f"churn:{churn.reason}|{churn.detail}"],
             )
             await self._write_db(cycle)
             return cycle
@@ -640,6 +659,22 @@ class TradingLoop:
                 signal_generated=True,
                 decision_id=signal.decision_id,
                 notes=notes + ["post_stop_cooldown"],
+            )
+            await self._write_db(cycle)
+            return cycle
+
+        # Sprint E (Goal §5): churn-killer (see run_cycle path for rationale).
+        churn = self._evaluate_churn(symbol)
+        if churn.blocked:
+            cycle = self._build_cycle(
+                cycle_id,
+                started_at,
+                symbol,
+                self._churn_cycle_status(churn),
+                market_data_fetched=True,
+                signal_generated=True,
+                decision_id=signal.decision_id,
+                notes=notes + [f"churn:{churn.reason}|{churn.detail}"],
             )
             await self._write_db(cycle)
             return cycle
@@ -1011,6 +1046,49 @@ class TradingLoop:
         except Exception as exc:  # noqa: BLE001 — never crash the loop on the gate
             logger.warning("[LOOP] post-stop cooldown check failed (non-fatal): %s", exc)
             return False
+
+    def _evaluate_churn(self, symbol: str) -> ChurnVerdict:
+        """Sprint E (Goal §5): churn-killer verdict for a NEW entry on `symbol`.
+
+        Generalises the post-stop cooldown: cooldown after ANY risk-reducing
+        close, loss-streak backoff, per-symbol entries/hour and global notional
+        turnover/hour. Only the entry path calls this — exits/SL/TP/reductions
+        run through monitor_positions/close_position and are never gated here
+        (hard invariant). PROBE entry_mode tightens the per-symbol entries/hour
+        cap. Fail-open: any read/error problem yields not-blocked so a transient
+        I/O hiccup never deadlocks the loop.
+        """
+        settings = get_settings()
+        risk = settings.risk
+        per_symbol = risk.churn_max_trades_per_symbol_per_hour
+        # PROBE: apply the tighter probe cap when configured (> 0). Other modes
+        # keep the normal cap. This is the Sprint A throttle hook landing here.
+        if (
+            settings.execution.entry_mode is EntryMode.PROBE
+            and risk.churn_probe_trades_per_hour > 0
+        ):
+            per_symbol = risk.churn_probe_trades_per_hour
+        config = ChurnKillerConfig(
+            cooldown_minutes=risk.churn_cooldown_min,
+            loss_streak_threshold=risk.churn_loss_streak_threshold,
+            loss_streak_multiplier=risk.churn_loss_streak_multiplier,
+            max_trades_per_symbol_per_hour=per_symbol,
+            max_notional_turnover_per_hour=risk.churn_max_notional_turnover_per_hour,
+        )
+        try:
+            return evaluate_churn_gate(symbol, config=config, audit_path=self._exec.audit_path)
+        except Exception as exc:  # noqa: BLE001 — never crash the loop on the gate
+            logger.warning("[LOOP] churn-killer check failed (non-fatal): %s", exc)
+            return ChurnVerdict(blocked=False, reason=None, detail="")
+
+    @staticmethod
+    def _churn_cycle_status(verdict: ChurnVerdict) -> CycleStatus:
+        """Map a churn verdict reason to the cycle status. `post_stop_cooldown`
+        reuses the existing COOLDOWN_REJECTED status (operator semantics
+        unchanged); rate/turnover limits use the new CHURN_REJECTED status."""
+        if verdict.reason == "post_stop_cooldown":
+            return CycleStatus.COOLDOWN_REJECTED
+        return CycleStatus.CHURN_REJECTED
 
     @staticmethod
     def _diversification_notes(decision: DiversificationDecision) -> list[str]:
