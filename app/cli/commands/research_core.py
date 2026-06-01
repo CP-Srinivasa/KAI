@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 from pathlib import Path
+from typing import Any
 
 import typer
 from rich.console import Console
@@ -71,7 +72,7 @@ def research_signals(
 ) -> None:
     """Generate actionable signal candidates."""
 
-    async def _run() -> list[dict]:
+    async def _run() -> list[dict[str, Any]]:
         settings = get_settings()
         registry = WatchlistRegistry.from_monitor_dir(Path(settings.monitor_dir))
         watchlist_boosts = None

@@ -169,11 +169,11 @@ class TwitterClient:
         return all_tweets
 
 
-def _index_users(raw_users: list[dict]) -> dict[str, dict]:
+def _index_users(raw_users: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
     return {u["id"]: u for u in raw_users if "id" in u}
 
 
-def _parse_user(raw: dict) -> TwitterUser:
+def _parse_user(raw: dict[str, Any]) -> TwitterUser:
     metrics = raw.get("public_metrics", {})
     return TwitterUser(
         user_id=raw["id"],
@@ -186,7 +186,7 @@ def _parse_user(raw: dict) -> TwitterUser:
     )
 
 
-def _parse_tweet(raw: dict, users: dict[str, dict]) -> Tweet:
+def _parse_tweet(raw: dict[str, Any], users: dict[str, dict[str, Any]]) -> Tweet:
     author_id = raw.get("author_id", "")
     author = users.get(author_id, {})
     metrics = raw.get("public_metrics", {})

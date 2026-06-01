@@ -59,7 +59,7 @@ class VoiceTranscriber:
                 resp = await client.get(url, params={"file_id": file_id})
                 data = resp.json()
                 if data.get("ok"):
-                    return data["result"]["file_path"]
+                    return str(data["result"]["file_path"])
                 logger.error("[VOICE] getFile failed: %s", data)
         except Exception as exc:  # noqa: BLE001
             logger.error("[VOICE] getFile error: %s", exc)
@@ -90,7 +90,7 @@ class VoiceTranscriber:
             async with httpx.AsyncClient(timeout=self._timeout) as client:
                 resp = await client.post(_WHISPER_URL, headers=headers, files=files, data=data)
                 resp.raise_for_status()
-                text = resp.json().get("text", "").strip()
+                text = str(resp.json().get("text", "")).strip()
                 if text:
                     logger.info("[VOICE] Transcribed %d chars", len(text))
                     return text

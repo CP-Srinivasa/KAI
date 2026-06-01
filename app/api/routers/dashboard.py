@@ -13,7 +13,7 @@ import logging
 import time
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import httpx
 from fastapi import APIRouter
@@ -184,7 +184,7 @@ async def _load_source_by_doc() -> dict[str, str]:
     now = time.monotonic()
     cached = _source_map_cache.get("map")
     if cached is not None and (now - _source_map_cache["at"]) < _SOURCE_MAP_TTL_S:
-        return cached
+        return cast(dict[str, str], cached)
 
     try:
         from sqlalchemy import select
@@ -236,7 +236,7 @@ async def _live_hold_report() -> dict[str, Any]:
     """
     now = time.monotonic()
     if _hold_cache["report"] is not None and (now - _hold_cache["at"]) < _HOLD_CACHE_TTL_S:
-        return _hold_cache["report"]
+        return cast(dict[str, Any], _hold_cache["report"])
     source_map = await _load_source_by_doc()
     _validate_dashboard_stream(_ALERT_AUDIT, "alert_audit")
     _validate_dashboard_stream(_PAPER_EXECUTION_AUDIT, "paper_execution_audit")
