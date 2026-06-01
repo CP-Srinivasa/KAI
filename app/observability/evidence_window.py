@@ -51,6 +51,7 @@ from typing import Any
 from app.execution.cost_model import CostModel
 from app.learning.bayes_quarantine import QUARANTINE_SIGNATURES
 from app.observability.edge_report import (
+    DEFAULT_IMPLAUSIBLE_MOVE_THRESHOLD,
     MIN_SAMPLE_FOR_P,
     CohortEdge,
     QuarantineExclusion,
@@ -382,6 +383,7 @@ def build_evidence_window(
     trim_fraction: float = _DEFAULT_TRIM_FRACTION,
     bootstrap_n: int = _DEFAULT_BOOTSTRAP_N,
     min_sample: int = MIN_SAMPLE_FOR_P,
+    implausible_move_threshold: float = DEFAULT_IMPLAUSIBLE_MOVE_THRESHOLD,
 ) -> EvidenceWindowReport:
     """Build the joined evidence window from parsed events. Pure / IO-free.
 
@@ -397,7 +399,9 @@ def build_evidence_window(
     counts, window_bounds = _build_counts(loop_list, exec_list)
     safety = _build_safety(loop_list, exec_list)
 
-    closed, excluded = parse_closed_trades_with_exclusions(exec_list)
+    closed, excluded = parse_closed_trades_with_exclusions(
+        exec_list, implausible_move_threshold=implausible_move_threshold
+    )
     # join the quarantine tally into the cycle-level count view
     counts = _with_quarantine_count(counts, excluded.excluded_count)
 
@@ -746,6 +750,7 @@ def build_window_from_audit(
     trim_fraction: float = _DEFAULT_TRIM_FRACTION,
     bootstrap_n: int = _DEFAULT_BOOTSTRAP_N,
     min_sample: int = MIN_SAMPLE_FOR_P,
+    implausible_move_threshold: float = DEFAULT_IMPLAUSIBLE_MOVE_THRESHOLD,
 ) -> EvidenceWindowReport:
     """Load both audit files and build the window end-to-end.
 
@@ -774,6 +779,7 @@ def build_window_from_audit(
         trim_fraction=trim_fraction,
         bootstrap_n=bootstrap_n,
         min_sample=min_sample,
+        implausible_move_threshold=implausible_move_threshold,
     )
 
 
