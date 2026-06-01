@@ -14,6 +14,8 @@ Behaviour under test (kai-testing-regeln — behaviour, not implementation):
 
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from app.execution import fees
@@ -25,11 +27,13 @@ from app.observability.edge_report import (
     bootstrap_p_mean_positive,
     build_edge_report,
     build_forward_coverage,
+    build_report_from_audit,
     compute_churn,
     compute_trade_edge,
     extract_entry_times,
     mark_to_market_open,
     parse_closed_trades,
+    parse_closed_trades_with_exclusions,
     render_report,
     side_adjusted_return_bps,
 )
@@ -409,3 +413,131 @@ def test_empty_report_is_safe():
     assert report.overall.p_mu_net_positive is None
     # rendering empty must not raise.
     render_report(report)
+
+
+# --- quarantine exclusion (DS-20260529-V1 MATIC stale-exit runaway) -----------
+# The all-time aggregate was poisoned by the +8295 bps MATIC phantom. The edge
+# report must reuse the SAME app.learning.bayes_quarantine signature the Bayes
+# recalc uses and drop those closes from net_bps / P(mu_net>0) / count, while
+# keeping legitimate closes and reporting the dropped count honestly.
+
+_MATIC_STALE_EXIT = 0.408545625  # the exact frozen corrupt exit price
+
+
+def _matic_phantom_close(ts: str) -> dict:
+    """One corrupt MATIC close: huge fake +bps against the frozen stale exit."""
+    return {
+        "event_type": "position_closed",
+        "symbol": "MATIC/USDT",
+        "position_side": "long",
+        "entry_price": 0.10,  # tiny entry vs frozen 0.4085 exit -> ~+300% fake gross
+        "exit_price": _MATIC_STALE_EXIT,
+        "quantity": 1000.0,
+        "reason": "stale_exit",
+        "trade_pnl_usd": 300.0,
+        "fee_usd": 0.0,
+        "timestamp_utc": ts,
+    }
+
+
+def _clean_loss_close(symbol: str, ts: str) -> dict:
+    """A legitimate small net-negative close (gross -100 bps < 20 bp cost)."""
+    return {
+        "event_type": "position_closed",
+        "symbol": symbol,
+        "position_side": "long",
+        "entry_price": 100.0,
+        "exit_price": 99.0,
+        "quantity": 1.0,
+        "reason": "sl",
+        "trade_pnl_usd": -1.2,
+        "fee_usd": 0.2,
+        "timestamp_utc": ts,
+    }
+
+
+def test_quarantined_matic_close_is_excluded_from_parse():
+    events = [
+        _matic_phantom_close("2026-05-28T17:42:00+00:00"),
+        _clean_loss_close("BTC/USDT", "2026-06-01T10:00:00+00:00"),
+    ]
+    kept, excl = parse_closed_trades_with_exclusions(events)
+    # the MATIC phantom is gone; the legit BTC close survives.
+    assert [t.symbol for t in kept] == ["BTC/USDT"]
+    assert excl.excluded_count == 1
+    assert excl.reasons == {"matic_stale_exit_runaway": 1}
+    # the back-compat wrapper drops it too.
+    assert [t.symbol for t in parse_closed_trades(events)] == ["BTC/USDT"]
+
+
+def test_quarantine_excluded_from_net_bps_p_and_count_aggregate(tmp_path):
+    """The poisoned aggregate must flip: with the phantom the edge looks great;
+    after exclusion it is the honest negative distribution."""
+    audit = tmp_path / "audit.jsonl"
+    lines = []
+    # 18 MATIC phantoms (the runaway) + 10 clean negative closes.
+    for i in range(18):
+        lines.append(json.dumps(_matic_phantom_close(f"2026-05-28T17:{i % 60:02d}:00+00:00")))
+    for i in range(10):
+        lines.append(
+            json.dumps(_clean_loss_close("BTC/USDT", f"2026-06-01T{10 + i:02d}:00:00+00:00"))
+        )
+    audit.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    report = build_report_from_audit(str(audit), venue="paper", min_sample=8)
+
+    # count excludes the 18 phantoms -> only the 10 clean closes remain.
+    assert report.closed_trade_count == 10
+    assert report.overall.count == 10
+    assert report.excluded_quarantined.excluded_count == 18
+    assert report.excluded_quarantined.reasons == {"matic_stale_exit_runaway": 18}
+    # the surviving aggregate is honestly NEGATIVE (no phantom +bps lift).
+    assert report.overall.net_bps_mean < 0
+    assert report.overall.p_mu_net_positive is not None
+    assert report.overall.p_mu_net_positive < 0.05
+    # MATIC must not appear in any cohort.
+    assert all(c.cohort_key != "MATIC/USDT" for c in report.by_symbol)
+    # the exclusion is reported, not swallowed.
+    assert report.to_dict()["excluded_quarantined"]["excluded_count"] == 18
+    assert any("EXCLUDED 18" in n for n in report.notes)
+
+
+def test_non_quarantined_close_stays_in():
+    """A MATIC close at a DIFFERENT (legitimate) exit price is NOT quarantined."""
+    events = [
+        {
+            "event_type": "position_closed",
+            "symbol": "MATIC/USDT",
+            "position_side": "long",
+            "entry_price": 0.09,
+            "exit_price": 0.0989,  # the legit 2026-05-06 close, not the frozen price
+            "quantity": 100.0,
+            "reason": "tp",
+            "trade_pnl_usd": 0.8,
+            "fee_usd": 0.1,
+            "timestamp_utc": "2026-05-06T10:00:00+00:00",
+        },
+    ]
+    kept, excl = parse_closed_trades_with_exclusions(events)
+    assert len(kept) == 1
+    assert kept[0].symbol == "MATIC/USDT"
+    assert excl.excluded_count == 0
+
+
+def test_row_without_exit_price_is_never_quarantined():
+    """Error case: a close missing exit_price is dropped as INVALID (no price),
+    never counted as quarantined (it has no signature to match)."""
+    events = [
+        {
+            "event_type": "position_closed",
+            "symbol": "MATIC/USDT",
+            "position_side": "long",
+            "entry_price": 0.10,
+            "quantity": 1000.0,
+            # exit_price missing entirely
+            "timestamp_utc": "2026-05-28T18:00:00+00:00",
+        },
+    ]
+    kept, excl = parse_closed_trades_with_exclusions(events)
+    assert kept == []  # dropped as invalid
+    assert excl.excluded_count == 0  # NOT a quarantine drop
