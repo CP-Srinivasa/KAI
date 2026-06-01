@@ -42,7 +42,7 @@ def create_exchange_adapter(
     if target == "binance":
         from app.execution.exchanges.binance import BinanceAdapter
 
-        adapter = BinanceAdapter(
+        adapter: BaseExchangeAdapter = BinanceAdapter(
             api_key=settings.binance_api_key,
             api_secret=settings.binance_secret,
             dry_run=settings.dry_run,
