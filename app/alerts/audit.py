@@ -11,7 +11,7 @@ import json
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 import portalocker
 
@@ -21,7 +21,7 @@ from app.signals.models import SignalProvenance
 from app.storage.jsonl_io import read_jsonl_tolerant
 
 
-def _read_jsonl_tolerant(path: Path) -> list[dict]:
+def _read_jsonl_tolerant(path: Path) -> list[dict[str, Any]]:
     """Backward-compat wrapper around :func:`app.storage.jsonl_io.read_jsonl_tolerant`.
 
     Kept as a private name so existing intra-module callers and tests that

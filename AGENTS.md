@@ -1,27 +1,28 @@
 
 
 
-## Current State (2026-04-24)
+## Current State (2026-06-01)
+
+> **Hinweis:** Der frühere `PHASE 5 SUSPENDED`-Zustand (D-125, TradingView-Pivot)
+> wurde mit dem **Pi-5-Cutover am 2026-05-07** abgelöst. Re-Entry ist vollzogen,
+> `RE_ENTRY_MODE` ist live. Kanonische Betriebswahrheit: `README.md` + `ARCHITECTURE.md`
+> + `DECISION_LOG.md`. Historischer April-Stand siehe Git-History dieser Datei.
 
 | Field | Value |
 |---|---|
-| current_phase | `PHASE 5 (SUSPENDED, D-125)` |
-| phase5_status | `SUSPENDED -- TradingView-Pivot active until 2026-05-16 (D-125, 2026-04-16)` |
-| re_entry_gate | `≥200 resolved directional alerts OR ≥10 paper fills with PnL at 2026-05-16` |
-| re_entry_data_side | `met (305 resolved / 54 fills) -- calendar half pending` |
-| re_entry_date | `2026-05-16` (calendar-fixed; no further deferral per D-125 condition 1) |
-| active_workstream | `TradingView-Pivot stages TV-1..TV-4b, operator-signal approval bridge, provenance-persistence V8 follow-ups` |
-| thirty_day_gate_d117 | `resolved (D-186, 2026-04-24) -- no re-activation of Codex/Antigravity; re-eval after TV-pivot re-entry` |
-| multi_agent_status | `paused -- D-186 decided no re-activation; re-eval 2026-05-16` |
-| live_execution | `OFF -- paper + operator-approval only` |
-| next_operator_milestone | `Pi-Migration cutover 2026-05-01 (D-7) -- see memory reminder_server_migration_pi.md` |
-| liveness_watchdog | `hardened D-188 (2026-04-24) -- full-stack restart via server_start.sh + JSONL incidents; external UptimeRobot layer operator-action pending` |
-| provenance_persistence | `V1 active (D-125/SAT-C-PROV-20260422-001, commit 66c638d) -- HMAC-seal, zero-downtime rotation D-183, replay-guard D-179; V8 follow-ups: signal_path_id in fresh rows, auth_method at TV-ingress, ReplayCache persistence, shared-token body-signing` |
-| living_architecture | `D-106 -- active architecture is CLAUDE.md + docs/contracts.md (slim); historical docs under docs/archive/` |
-| documentation_policy | `D-99 -- no sprint-contract docs; decisions live in DECISION_LOG.md or code comments only` |
-| baseline | `~1946 tests, ruff clean (Stand D-184, 2026-04-22)` |
-| cloudflare_tunnel | `kai-trader.org active (D-167, 2026-04-17); auto-started by scripts/server_start.sh` |
-| cron_status | `KAI-PaperTrading every 10 min (Windows Task Scheduler)` |
+| current_phase | `Re-Entry + Stabilisierung` (post-PHASE-5-suspension; D-125 aufgehoben am 2026-05-07-Cutover) |
+| re_entry_status | `vollzogen -- RE_ENTRY_MODE live; D-125-Gates erfüllt; Kalender-Termin 2026-05-16 historisch überholt` |
+| active_workstream | `Diversification/Asset-Reserve in paper (D-226/D-228/S3), Dispatch-Recall-Proxy (D-227), Deadlock-/Drift-Hardening (DS-20260531 V1-V5)` |
+| source_of_truth | `Pi 5 (ubuntu@192.168.178.23), live seit 2026-05-07` |
+| multi_agent_status | `Codex/Antigravity als externe LLMs nicht reaktiviert (D-186); KAI-interner 6-Agenten-Roster (Claude-Code-only) aktiv -- siehe § Agent Roster + Wiring-Realität` |
+| live_execution | `OFF -- paper + operator-approval only (Live-Gates bleiben bis explizite Öffnung zu)` |
+| liveness_watchdog | `hardened D-188; loop-open-deadlock-watchdog DS-20260531-V5 live (#113); externer 5-min Service-Watchdog auf Pi` |
+| provenance_persistence | `V1 active (D-125/SAT-C-PROV-20260422-001) -- HMAC-seal, zero-downtime rotation D-183, replay-guard D-179` |
+| living_architecture | `D-106 -- aktive Architektur ist CLAUDE.md + ARCHITECTURE.md; historische Doku unter docs/archive/` |
+| documentation_policy | `D-99 -- keine Sprint-Contract-Docs; Entscheidungen in DECISION_LOG.md oder Code-Kommentaren` |
+| baseline | `Testsuite + ruff + mypy + Frontend-Build sind CI-Gates (.github/workflows/ci.yml) -- maßgeblich ist der CI-Lauf, nicht eine eingefrorene Zahl` |
+| cloudflare_tunnel | `kai-trader.org active (D-167); Single-Origin-Regel: nur Pi 5 als Connector` |
+| cron_status | `Pi 5 systemd-Timer (paper-trading 10 min, daily-strategy, health-probes) -- Windows Task Scheduler nur für lokale Backups/Mirror` |
 
 > **Verbindliches Betriebsdokument für alle Coding-Agenten.**
 >
@@ -30,9 +31,9 @@
 >
 > Dieses Dokument lesen, bevor eine einzige Zeile Code angefasst wird.
 
-## Agent Roster (D-141, 2026-04-15)
+## Agent Roster (D-141, 2026-04-15; erweitert auf 6)
 
-Alle drei Agenten werden **ausschließlich von Claude Code** ausgeführt — nicht von Codex,
+Alle **sechs** Agenten werden **ausschließlich von Claude Code** ausgeführt — nicht von Codex,
 nicht von Antigravity, nicht von externen LLMs. Permissions-Boundary: read + report;
 write nur über `app/agents/tools/guarded_write.py` mit Audit-Trail.
 
@@ -57,6 +58,24 @@ write nur über `app/agents/tools/guarded_write.py` mit Audit-Trail.
 - Proposals außerhalb der Allowlist werden im `risk`-Feld als `out_of_scope` markiert und müssen explizit freigegeben werden.
 
 **Master-Rules** (gelten für alle Agenten): CLAUDE.md Core Rules + Deploy-Regeln + Testing-Regeln.
+
+### Wiring-Realität (ehrlich, Stand 2026-06-01)
+
+Der 6-Agenten-Roster existiert auf drei unterschiedlich tief verdrahteten Ebenen — das ist
+**bewusst so**, kein halbfertiges Feature. Wer den Code gegen die Doku prüft, soll die Grenze
+nicht erneut „entdecken" müssen:
+
+| Ebene | Mechanismus | Verdrahtete Agenten |
+|---|---|---|
+| **Interaktive Claude-Code-Subagenten** | `.claude/agents/*.md` (on-demand vom Hauptagent dispatcht) | alle 6 (sentr, architecture-red-team≈Architect, dali, neo, satoshi) + data-quality-inspector, source-scout |
+| **Autonomer JSONL-Queue-Worker** | `app/agents/worker.py` (`HANDLERS`, cron/systemd-getrieben) | **3**: `watchdog` (check/report), `sentr` (inspect/report/kyt-review), `architect` (review/propose) |
+| **Dashboard-API-Surface** | `app/api/routers/agents.py` (`_AGENTS`) | **4**: sentr, watchdog, architect, dali |
+
+**Konsequenz / Designentscheidung:** DALI, Neo und SATOSHI laufen als **interaktive** Subagenten
+(Operator-/Hauptagent-getriggert), nicht als autonome Queue-Worker — für Design-/Tiefenanalyse-/
+Krypto-Reviews ist das die richtige Granularität (kein sinnvoller cron-Default). DALI ist im
+Dashboard-API gelistet (Status-Sichtbarkeit), Neo/SATOSHI bewusst nicht. Wer autonome
+Worker-Handler für Neo/SATOSHI/DALI will, ist ein eigener Sprint mit Tests — **kein offener Bug.**
 
 ## Cross-Reference-Pattern (Gedankenaustausch)
 

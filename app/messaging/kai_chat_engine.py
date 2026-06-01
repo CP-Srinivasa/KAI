@@ -169,9 +169,17 @@ def _build_persona_system_prompt(language: str) -> str:
     try:
         persona = load_kai_persona()
         motto = persona.motto
-        archetypes = ", ".join((persona.identity.get("archetype") or [])[:3])
-        primary = ", ".join((persona.personality.get("primary_traits") or [])[:6])
-        forbidden = ", ".join((persona.personality.get("forbidden_traits") or [])[:5])
+        # Persona identity/personality live in the raw kai-config dict (KaiPersona
+        # exposes them via .raw, not as top-level attributes). The previous
+        # persona.identity / persona.personality access raised AttributeError on
+        # every call and silently fell through to the hardcoded fallback below —
+        # the configured persona was never actually used in the system prompt.
+        kai_cfg = persona.raw.get("kai", {})
+        identity = kai_cfg.get("identity", {})
+        personality = kai_cfg.get("personality", {})
+        archetypes = ", ".join((identity.get("archetype") or [])[:3])
+        primary = ", ".join((personality.get("primary_traits") or [])[:6])
+        forbidden = ", ".join((personality.get("forbidden_traits") or [])[:5])
     except (KaiPersonaConfigError, Exception):  # noqa: BLE001
         motto = "Persona non grata"
         archetypes = "rogue_ai_media_host, cyberpunk_news_anchor"

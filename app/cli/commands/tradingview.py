@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Any
 
 import typer
 from rich.console import Console
@@ -314,6 +315,6 @@ def tradingview_run(
     console.print(f"[bold]{len(cycles)} signals processed, {completed} completed (filled).[/bold]")
 
 
-def _format_event_dict(event_dict: dict) -> str:
+def _format_event_dict(event_dict: dict[str, Any]) -> str:
     """Stable JSON formatting for tests/diagnostics."""
     return json.dumps(event_dict, sort_keys=True, indent=2)

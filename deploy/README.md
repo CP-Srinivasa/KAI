@@ -9,7 +9,7 @@ Systemd-Units für den kompletten KAI-Stack auf dem Raspberry Pi 4b:
 | Unit | Zweck | Restart |
 |---|---|---|
 | `kai-server.service` | FastAPI + in-process Scheduler (RSS, PositionMonitor) | `on-failure`, 10 s |
-| `kai-agent-worker.service` | Agent-Queue-Worker (SENTR/Watchdog/Architect/DALI/Neo/SATOSHI) | `always`, 30 s |
+| `kai-agent-worker.service` | Agent-Queue-Worker (autonome Handler: SENTR/Watchdog/Architect — DALI/Neo/SATOSHI laufen interaktiv, s. `AGENTS.md` § Wiring-Realität) | `always`, 30 s |
 | `kai-tg-listener.service` | Telegram Premium-Channel MTProto Listener | `always`, 30 s |
 | `cloudflared.service` | Cloudflare Named Tunnel `kai-trader.org` | `always`, 10 s |
 | `kai-paper-trading.service` + `.timer` | 10-min Paper-Trading-Cron (Bash-Port von `paper_trading_cron.ps1`) | Timer |
@@ -22,7 +22,10 @@ Annahme: Checkout unter `/home/kai/ai_analyst_trading_bot`. Wenn woanders, Unit-
 
 ## Install
 
-Auf dem Pi, **nach** `git clone`, `python -m venv .venv`, `pip install -e .`, `.env`-Transfer:
+Auf dem Pi, **nach** `git clone`, `python -m venv .venv`, deterministischem Lockfile-Install
+(`.venv/bin/pip install --no-cache-dir -r requirements.lock` — Lock-File-Migration DS-20260527-V5,
+NICHT `pip install -e .`; vollständiger Pfad in `docs/security/lock_file_workflow.md` § Pi-Production-Deploy),
+`.env`-Transfer:
 
 ```bash
 sudo bash scripts/pi_install_systemd.sh               # install + enable + start

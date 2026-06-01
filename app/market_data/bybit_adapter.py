@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import logging
 from datetime import UTC, datetime
+from typing import Any
 
 import httpx
 
@@ -76,7 +77,7 @@ class BybitAdapter(BaseMarketDataAdapter):
     def adapter_name(self) -> str:
         return "bybit"
 
-    async def _get(self, path: str, params: dict[str, str]) -> dict | None:
+    async def _get(self, path: str, params: dict[str, str]) -> dict[str, Any] | None:
         url = f"{self._base}{path}"
         try:
             async with httpx.AsyncClient(timeout=self._timeout) as client:

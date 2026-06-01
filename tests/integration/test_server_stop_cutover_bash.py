@@ -88,7 +88,10 @@ def _run(
     if extra_path is not None:
         env["PATH"] = f"{extra_path}{os.pathsep}{env.get('PATH', '')}"
     return subprocess.run(
-        [bash, str(sandbox / "scripts" / "server_stop.sh"), *args],
+        # .as_posix(): bash treats backslashes in a Windows path string as escape
+        # chars (C:\Users\... -> C:Users...), so the script arg must use forward
+        # slashes for the bash integration to work on a Windows dev workstation.
+        [bash, (sandbox / "scripts" / "server_stop.sh").as_posix(), *args],
         capture_output=True,
         text=True,
         timeout=30,
@@ -100,7 +103,7 @@ def _run(
 def test_bash_syntax_check() -> None:
     bash = _require_bash()
     result = subprocess.run(
-        [bash, "-n", str(STOP_SCRIPT)],
+        [bash, "-n", STOP_SCRIPT.as_posix()],
         capture_output=True,
         text=True,
         timeout=10,

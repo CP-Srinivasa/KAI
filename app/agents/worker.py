@@ -509,7 +509,8 @@ def _load_state(state_path: Path) -> dict[str, Any]:
     if not state_path.exists():
         return {}
     try:
-        return json.loads(state_path.read_text(encoding="utf-8"))
+        data: dict[str, Any] = json.loads(state_path.read_text(encoding="utf-8"))
+        return data
     except json.JSONDecodeError:
         return {}
 

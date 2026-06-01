@@ -105,7 +105,7 @@ def _build_buckets(
                 hits_per_label[label] += 1
             elif doc_id in miss_docs:
                 miss_per_label[label] += 1
-    labels = set(hits_per_label) | set(miss_per_label)
+    labels = list(set(hits_per_label) | set(miss_per_label))
     buckets: list[FeatureBucket] = []
     for label in labels:
         hits = hits_per_label.get(label, 0)

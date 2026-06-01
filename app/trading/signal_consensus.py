@@ -37,6 +37,7 @@ import asyncio
 import json
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from typing import Any
 
 import structlog
 from openai import AsyncOpenAI
@@ -232,7 +233,7 @@ class SignalConsensusValidator:
         user_msg: str,
     ) -> SingleValidatorResult:
         """Query one validator backend."""
-        client_kwargs: dict = {
+        client_kwargs: dict[str, Any] = {
             "api_key": cfg.api_key,
             "timeout": cfg.timeout,
         }
