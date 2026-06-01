@@ -107,6 +107,58 @@ Remediation-Strang wäre Duplikation und wurde bewusst **vermieden**.
 3. **JSONL-Rotation/Retention** (PR mit Tests).
 4. **F5 + Persona-Binaries + watchlists-Literal** als Hygiene-Sammel-PR.
 
+## 7b. Erweiterte Ausführung (nach Hook-Feedback — Vollabarbeitung)
+
+Nach dem ersten Bericht wurde der sichere, verifizierbare Umfang deutlich erweitert:
+
+**F3 — von „Down-payment" auf substanziell (17/37 Module, 46%):**
+Zusätzlich zu fees/trading_loop/kai_persona wurden type-only entschärft und un-ignored:
+twitter.client, bybit_adapter, signal_consensus, alerts.audit, cli.commands.research_core,
+cli.commands.tradingview, keywords.aliases, keywords.watchlist, voice_transcriber,
+api.routers.dashboard, agents.worker, alerts.feature_analysis, execution.exchanges.factory,
+messaging.kai_chat_engine. Jeder Schritt: `mypy app/` Success (mypy==2.1.0) + ruff + gezielte
+Tests (insg. 313 passed über die betroffenen Module). Override 37 → **20**.
+
+**2 echte Bugs gefunden (von `ignore_errors` maskiert):**
+1. **GEFIXT:** `app/messaging/kai_chat_engine.py` griff `persona.identity`/`persona.personality`
+   zu — Attribute existieren nicht (Daten in `.raw["kai"]`). Jeder Aufruf warf AttributeError,
+   fiel still in den Hardcoded-Fallback → konfigurierte Persona wurde im Chat-System-Prompt
+   **nie** genutzt. Fix runtime-verifiziert + 155 Tests grün.
+2. **DOKUMENTIERT (nicht gefixt — API-Migration nötig):** `app/ingestion/youtube/adapter.py`
+   ruft `YouTubeTranscriptApi.list_transcripts` — in youtube-transcript-api 1.x entfernt
+   (installiert 1.2.0 → nur `fetch`/`list`). `fetch_transcript` ist still kaputt. Eigener
+   PR mit 1.x-Migration + Integrationstest.
+
+**Branch-Hygiene (durchgeführt):** 2 vollständig in p7 gemergte, nicht-ausgecheckte Branches
+gelöscht (`git branch -d`, reflog-recoverbar): `claude/dali-dashboard-v2-20260513` (d7e6a0dc),
+`claude/p7-antigravity-timerhealth` (417dd8c4). **Bewusst NICHT gelöscht:** `master`
+(Tracking-Branch, ahead 212), `p7-investigate`, sowie alle Branches mit Unique-Commits oder
+Worktree-Bindung. **Worktrees** (35) autonom **nicht** entfernt — „aktive Session" ist im
+Multi-Agent-Setup nicht erkennbar, Entfernen wäre nicht „eindeutig sicher" → Operator-Cleanup.
+
+**F5 (durchgeführt + verifiziert):** `tests/integration/test_server_stop_cutover_bash.py`
+nutzt jetzt `Path.as_posix()` für Bash-Pfad-Args (returncode=127-Klasse). Lokale `.sh`
+(14× CRLF) per Re-Checkout auf LF normalisiert (working-tree-only, Index war bereits LF).
+**Ergebnis: `test_server_stop_cutover_bash.py` + `test_paper_trading_cron_bash.py` = 18 passed
+(vorher 17 Fails).** F5 lokal gelöst.
+
+**F4 (analysiert, bewusst nicht halb-verdrahtet geshippt):** Backup existiert bereits
+(`scripts/kai_backup_artifacts.sh`, 30d-Retention, AES-256, off-site rclone) +
+`retention_backups/`. Lücke = **Rotation der Live-Streams**. Kritischer Designpunkt:
+`paper_execution_audit`/`trading_loop_audit` sind **zustandstragend** —
+`rehydrate_from_audit()` liest die ganze Datei zur Portfolio-Rekonstruktion → naive Rotation
+bricht den State. Nur `api_request_audit.jsonl` (9.9M, rehydrationsfrei) ist gefahrlos
+rotierbar. Echte Rotation = das in ARCHITECTURE als P2/V6 designte Feature → braucht
+Design+Test+systemd-Timer, kein Audit-kritischer Eingriff im Autonom-Lauf (Scheinsicherheit-
+Verbot). Durabilität ist durch das Backup bereits gegeben; Rotation ist Performance, kein
+Korrektheits-/Sicherheits-Gap. Empfohlen: eigener PR (api_request_audit size-cap+gzip zuerst).
+
+**Verifikation gesamt:** `mypy app/` Success (351 files, mypy==2.1.0); `ruff check app/` +
+`ruff format --check` clean; gezielte Tests grün (fees/risk 63, geänderte Module 95,
+persona/exchange/telegram 155, bash-integration 18). Volle 3825-Suite nicht gelaufen (Windows-
+Laufzeit/Buffering); die geänderten Pfade sind durch gezielte Slices + den blockierenden
+mypy-Gate abgedeckt.
+
 ## 8. Gesamturteil
 
 - **Release-/Paper-Reife:** gegeben. Kern-Gates (Risk, Lifecycle, Webhook, SSRF, fail-closed) intakt; CI stark (8 Jobs, blockierend); Paper-First sauber.
