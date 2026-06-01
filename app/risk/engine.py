@@ -201,6 +201,31 @@ class RiskEngine:
                         f"entry={entry_price}|tp={take_profit_price}"
                     )
 
+        # Gate 3c (NEO-V1): cost-aware SL geometry. A stop tighter than the
+        # round-trip transaction cost cannot win — the fee alone turns the trade
+        # net-negative on the way out. Reject when the stop distance fails to
+        # clear `min_sl_cost_multiple x round_trip_fee`. Default-off
+        # (min_sl_cost_multiple <= 0) for backward compatibility. Skipped when
+        # entry_price/SL are absent or non-positive (those are caught by Gate 3 /
+        # the missing-entry contract); strict `<` so a stop exactly at the
+        # threshold is allowed.
+        if (
+            self._limits.min_sl_cost_multiple > 0
+            and entry_price is not None
+            and entry_price > 0
+            and stop_loss_price is not None
+            and stop_loss_price > 0
+        ):
+            sl_distance_pct = abs(entry_price - stop_loss_price) / entry_price * 100.0
+            min_required_pct = self._limits.min_sl_cost_multiple * self._limits.round_trip_fee_pct
+            if sl_distance_pct < min_required_pct:
+                violations.append(
+                    f"sub_cost_geometry_rejected:sl_dist={sl_distance_pct:.4g}%<"
+                    f"{min_required_pct:.4g}%"
+                    f"(k={self._limits.min_sl_cost_multiple:.4g}x"
+                    f"rt_fee={self._limits.round_trip_fee_pct:.4g}%)"
+                )
+
         # Gate 4: Signal confidence
         if signal_confidence < self._limits.min_signal_confidence:
             violations.append(

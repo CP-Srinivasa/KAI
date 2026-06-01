@@ -38,6 +38,20 @@ class RiskLimits:
     # Default 20.0 mirrors the productive Settings default so RiskLimits() built
     # without args (legacy unit tests) gets the safe, enforced behaviour too.
     max_position_size_pct: float = 20.0
+    # NEO-V1 (2026-06-01): cost-aware SL geometry gate. The paper venue's
+    # round-trip taker fee (~1.2% = 2x60bps) can exceed the ATR-derived stop
+    # distance (~0.8-1.0%), making a stopped trade a structurally guaranteed net
+    # loss. Reject when |entry-SL|/entry < min_sl_cost_multiple * round_trip_fee.
+    #   round_trip_fee_pct: total round-trip cost in PERCENT (entry+exit fees).
+    #     1.2 mirrors the paper-venue worst-case taker fee (config/venue_fees.yaml
+    #     coinbase / hard-fallback 0.60% x 2). Source-of-truth for productive runs
+    #     is Settings; this default keeps RiskLimits() self-consistent.
+    #   min_sl_cost_multiple: factor k. <= 0 DISABLES the gate (backward-compatible
+    #     default — legacy unit tests build RiskLimits without this field). The
+    #     productive value lives in Settings (RISK_MIN_SL_COST_MULTIPLE, default
+    #     1.5). k=1.5 => min SL ~1.8%. OPERATOR-SIGN-OFF PARAMETER.
+    round_trip_fee_pct: float = 1.2
+    min_sl_cost_multiple: float = 0.0
 
 
 @dataclass(frozen=True)

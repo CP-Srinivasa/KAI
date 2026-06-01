@@ -19,6 +19,7 @@ class CycleStatus(StrEnum):
     PRIORITY_REJECTED = "priority_rejected"  # D-182: priority below paper_min_priority
     DIVERSIFICATION_REJECTED = "diversification_rejected"  # concentration cap breach (enforce mode)
     KYT_REJECTED = "kyt_rejected"  # KYT hold/block/manual_review (enforce mode), DS-20260529
+    COOLDOWN_REJECTED = "cooldown_rejected"  # NEO-V2: per-symbol post-stop cooldown active
     ORDER_FAILED = "order_failed"
     ERROR = "error"
 

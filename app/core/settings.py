@@ -204,6 +204,23 @@ class RiskSettings(BaseSettings):
     cooldown_after_loss_minutes: int = Field(default=30)
     cooldown_after_error_minutes: int = Field(default=10)
 
+    # NEO-V1 (2026-06-01): cost-aware SL geometry gate. Reject orders whose stop
+    # distance cannot clear the round-trip transaction cost
+    # (|entry-SL|/entry < min_sl_cost_multiple x round_trip_fee_pct). Fixes the
+    # structural loss where a ~0.8% stop sits inside the ~1.2% round-trip taker
+    # fee. round_trip_fee_pct mirrors the paper-venue worst-case (2 x 60 bps).
+    # env: RISK_MIN_SL_COST_MULTIPLE, RISK_ROUND_TRIP_FEE_PCT.
+    # OPERATOR-SIGN-OFF PARAMETER: 1.5 => min SL ~1.8%. Set 0 to disable.
+    min_sl_cost_multiple: float = Field(default=1.5, ge=0.0)
+    round_trip_fee_pct: float = Field(default=1.2, gt=0.0)
+
+    # NEO-V2 (2026-06-01): per-symbol post-stop cooldown. After a stop-out the
+    # same symbol may not be re-entered for this window (minutes). Source for the
+    # last stop is the paper-execution audit (position_closed reason=stop) — no
+    # new persistence. env: RISK_POST_STOP_COOLDOWN_MIN.
+    # OPERATOR-SIGN-OFF PARAMETER: 180 (3h) recommended. 0 disables.
+    post_stop_cooldown_min: int = Field(default=180, ge=0)
+
 
 class ExecutionSettings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="EXECUTION_", env_file=".env", extra="ignore")
