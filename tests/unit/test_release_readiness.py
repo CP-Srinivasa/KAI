@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from app.core.enums import ExecutionMode
 from app.release.readiness import (
+    POSSIBLE_BLOCKER_CODES,
     TRADING_CRITICAL_MODULES,
     ExecutionPosture,
     LiveReadinessEvidence,
@@ -33,6 +34,7 @@ def _all_pass_evidence() -> LiveReadinessEvidence:
         cost_model_single_source=True,
         pnl_fee_separation=True,
         net_edge_bps=12.5,
+        posterior_prob=0.62,
         churn_limits_active=True,
         remote_ci_green=True,
         out_of_sample_edge_positive=True,
@@ -84,17 +86,40 @@ def test_unproven_edge_blocks_live() -> None:
     assert any(b.code == "EDGE_UNPROVEN" for b in status.blockers)
 
 
-def test_negative_edge_blocks_live() -> None:
+def test_negative_edge_is_below_threshold() -> None:
     ev = LiveReadinessEvidence(**{**_all_pass_evidence().__dict__, "net_edge_bps": -3.0})
     status = classify_release(LIVE_GUARDED, ev)
     assert status.is_live_candidate is False
-    assert any(b.code == "EDGE_NEGATIVE" for b in status.blockers)
+    assert any(b.code == "EDGE_BELOW_LIVE_THRESHOLD" for b in status.blockers)
 
 
 def test_zero_edge_blocks_live() -> None:
     ev = LiveReadinessEvidence(**{**_all_pass_evidence().__dict__, "net_edge_bps": 0.0})
     status = classify_release(LIVE_GUARDED, ev)
     assert status.is_live_candidate is False
+    assert any(b.code == "EDGE_BELOW_LIVE_THRESHOLD" for b in status.blockers)
+
+
+def test_marginal_positive_edge_below_threshold_blocks() -> None:
+    # A marginal positive edge below the required live threshold is NOT negative,
+    # but still blocks (precise code, no false "negative" diagnosis).
+    ev = LiveReadinessEvidence(**{**_all_pass_evidence().__dict__, "net_edge_bps": 1.0})
+    status = classify_release(LIVE_GUARDED, ev, live_edge_threshold_bps=5.0)
+    assert status.is_live_candidate is False
+    assert any(b.code == "EDGE_BELOW_LIVE_THRESHOLD" for b in status.blockers)
+
+
+def test_weak_posterior_blocks_live() -> None:
+    ev = LiveReadinessEvidence(**{**_all_pass_evidence().__dict__, "posterior_prob": 0.5})
+    status = classify_release(LIVE_GUARDED, ev)
+    assert status.is_live_candidate is False
+    assert any(b.code == "EDGE_POSTERIOR_TOO_WEAK" for b in status.blockers)
+
+
+def test_missing_posterior_blocks_live() -> None:
+    ev = LiveReadinessEvidence(**{**_all_pass_evidence().__dict__, "posterior_prob": None})
+    status = classify_release(LIVE_GUARDED, ev)
+    assert any(b.code == "EDGE_POSTERIOR_TOO_WEAK" for b in status.blockers)
 
 
 def test_trading_core_mypy_ignored_blocks_live() -> None:
@@ -164,10 +189,34 @@ def test_to_dict_is_machine_readable() -> None:
     d = status.to_dict()
     assert d["classification"] == "live_blocked"
     assert d["is_live_candidate"] is False
-    assert isinstance(d["blockers"], list)
-    for b in d["blockers"]:
+    assert isinstance(d["active_blockers"], list)
+    for b in d["active_blockers"]:
         assert set(b) == {"code", "gate", "message"}
         assert b["code"] and b["code"].isupper()
+    # every active blocker code is part of the published catalogue
+    assert set(d["active_blocker_codes"]) <= set(d["possible_blocker_codes"])
+
+
+def test_possible_vs_active_blockers_separated() -> None:
+    # Remote CI green => REMOTE_CI_NOT_GREEN must NOT be an active blocker, but it
+    # stays in the possible-codes catalogue.
+    ev = LiveReadinessEvidence(**{**_all_pass_evidence().__dict__, "remote_ci_green": True})
+    status = classify_release(LIVE_GUARDED, ev)
+    d = status.to_dict()
+    assert "REMOTE_CI_NOT_GREEN" in d["possible_blocker_codes"]
+    assert "REMOTE_CI_NOT_GREEN" not in d["active_blocker_codes"]
+
+
+def test_possible_blocker_codes_cover_all_emitted() -> None:
+    # Drive a fully-blocked posture and assert every emitted code is catalogued.
+    status = classify_release(
+        ExecutionPosture(
+            mode=ExecutionMode.PAPER, live_enabled=True, dry_run=True, approval_required=True
+        ),
+        LiveReadinessEvidence(),
+        ignored_mypy_modules=["app.execution.paper_engine"],
+    )
+    assert {b.code for b in status.blockers} <= POSSIBLE_BLOCKER_CODES
 
 
 # --- Reality acceptance: current repo state is fail-closed ------------------

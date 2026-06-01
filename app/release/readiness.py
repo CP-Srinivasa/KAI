@@ -55,6 +55,34 @@ TRADING_CRITICAL_MODULES: frozenset[str] = frozenset(
 # Cost-adjusted edge safety margin (bps) applied on top of explicit costs.
 SAFETY_MARGIN_BPS_DEFAULT: float = 5.0
 
+# Minimum cost-adjusted net edge (bps) required for a live candidate. A marginal
+# positive net edge below this is "below live threshold", not "negative" — the
+# distinction matters for honest diagnosis (low fees are not edge either).
+LIVE_EDGE_THRESHOLD_BPS_DEFAULT: float = 0.0
+
+# Minimum posterior win-probability for a live candidate. e.g. a paper posterior
+# of ~0.546 is too weak to risk live cadence.
+MIN_POSTERIOR_PROB_DEFAULT: float = 0.55
+
+# Full catalogue of blocker codes this gate can emit. Lets consumers separate the
+# *possible* codes (this set) from the *active* ones (ReleaseStatus.blockers).
+POSSIBLE_BLOCKER_CODES: frozenset[str] = frozenset(
+    {
+        "MYPY_TRADING_CORE_IGNORED",
+        "COST_MODEL_NOT_SSOT",
+        "PNL_FEE_NOT_SEPARATED",
+        "EDGE_UNPROVEN",
+        "EDGE_BELOW_LIVE_THRESHOLD",
+        "EDGE_POSTERIOR_TOO_WEAK",
+        "EDGE_NOT_OOS_CONFIRMED",
+        "CHURN_LIMITS_INACTIVE",
+        "REMOTE_CI_NOT_GREEN",
+        "LIVE_ENABLEMENT_UNGUARDED",
+        "OPERATOR_APPROVAL_MISSING",
+        "PAPER_CONFIG_CONTRADICTORY",
+    }
+)
+
 
 class ReleaseClassification(StrEnum):
     """Coarse release posture. Ordered conceptually from safest to most-capable."""
@@ -100,6 +128,8 @@ class LiveReadinessEvidence:
     cost_model_single_source: bool = False
     pnl_fee_separation: bool = False
     net_edge_bps: float | None = None
+    # Posterior win-probability behind the edge. None == not on record.
+    posterior_prob: float | None = None
     churn_limits_active: bool = False
     remote_ci_green: bool = False
     out_of_sample_edge_positive: bool = False
@@ -154,7 +184,13 @@ class ReleaseStatus:
             "classification": self.classification.value,
             "is_live_candidate": self.is_live_candidate,
             "hard_gates": dict(self.hard_gates),
-            "blockers": [b.to_dict() for b in self.blockers],
+            # active_blockers = currently failing; possible_blocker_codes = full
+            # catalogue. A code in the catalogue is NOT a current blocker unless
+            # it also appears in active_blockers (e.g. REMOTE_CI_NOT_GREEN is only
+            # active when remote CI is not confirmed green).
+            "active_blockers": [b.to_dict() for b in self.blockers],
+            "active_blocker_codes": sorted(b.code for b in self.blockers),
+            "possible_blocker_codes": sorted(POSSIBLE_BLOCKER_CODES),
         }
 
 
@@ -203,6 +239,8 @@ def classify_release(
     evidence: LiveReadinessEvidence | None = None,
     *,
     ignored_mypy_modules: Sequence[str] = (),
+    live_edge_threshold_bps: float = LIVE_EDGE_THRESHOLD_BPS_DEFAULT,
+    min_posterior_prob: float = MIN_POSTERIOR_PROB_DEFAULT,
 ) -> ReleaseStatus:
     """Classify the current release posture, fail-closed.
 
@@ -254,23 +292,37 @@ def classify_release(
         "closed PnL / open MTM / fees_closed / fees_open are not separated",
     )
 
-    # --- Edge (negative or unproven edge is a hard blocker) -----------------
-    edge_known = ev.net_edge_bps is not None
-    edge_positive = edge_known and ev.net_edge_bps is not None and ev.net_edge_bps > 0.0
-    if not edge_known:
+    # --- Edge (unproven / below-threshold / weak-posterior are hard blockers).
+    # Precise codes prevent later misdiagnosis: a marginal positive edge below the
+    # live threshold is NOT "negative" — and low fees are not edge.
+    if ev.net_edge_bps is None:
         gate(
-            "net_edge_positive",
+            "net_edge_meets_threshold",
             False,
             "EDGE_UNPROVEN",
-            "no cost-adjusted posterior / EdgeGate report — net_edge_bps unknown",
+            "no cost-adjusted EdgeGate report — net_edge_bps is unknown",
         )
     else:
         gate(
-            "net_edge_positive",
-            edge_positive,
-            "EDGE_NEGATIVE",
-            f"cost-adjusted net_edge_bps={ev.net_edge_bps} is not > 0 (low fees are not edge)",
+            "net_edge_meets_threshold",
+            ev.net_edge_bps > live_edge_threshold_bps,
+            "EDGE_BELOW_LIVE_THRESHOLD",
+            (
+                f"cost-adjusted net_edge_bps={ev.net_edge_bps} is not > live threshold "
+                f"{live_edge_threshold_bps} (low fees are not edge)"
+            ),
         )
+    posterior_ok = ev.posterior_prob is not None and ev.posterior_prob >= min_posterior_prob
+    gate(
+        "posterior_meets_min",
+        posterior_ok,
+        "EDGE_POSTERIOR_TOO_WEAK",
+        (
+            "no posterior win-probability on record"
+            if ev.posterior_prob is None
+            else f"posterior win-prob {ev.posterior_prob} < required {min_posterior_prob}"
+        ),
+    )
     gate(
         "out_of_sample_edge_positive",
         ev.out_of_sample_edge_positive,
