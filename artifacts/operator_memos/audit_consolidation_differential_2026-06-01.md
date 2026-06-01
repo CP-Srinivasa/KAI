@@ -1,0 +1,108 @@
+# Audit-Konsolidierung & Differenzbericht — 2026-06-01
+
+**Auftrag:** Remediation-/Hardening-/Cleanup-Sprint (Operator-/goal 2026-06-01).
+**Modus:** Verifikation gegen aktuellen HEAD, keine blinde Umsetzung alter Findings.
+**HEAD bei Audit:** `73397e86` (Branch `claude/sl-fee-geometry-cooldown-20260601`, ahead 1 von `origin/claude/p7/reentry-ia-codex-cycle`).
+**Doc-/Wahrheits-Fixes dieses Sprints:** Branch `claude/audit-truth-alignment-20260601`.
+
+---
+
+## 1. Ursache der Audit-Abweichungen (warum „kritische" Vorbefunde nicht mehr stimmen)
+
+Die Codex- und Antigravity-Audits wurden gegen einen **veralteten Snapshot** erhoben:
+- Codex-Top-Findings beschreiben den Branch `sprint/lock-file-migration-v2` (ahead 4 / **behind 32** vs p7), inkl. „dreckiger Worktree / engine.py staged".
+- Parallel hat `origin/p7` über die Commits #107 („audit-driven cleanup sprint"), #108/#109 (event-loop) und die AUDIT-A3/A5/A6-Arbeit dieselben Fixes **bereits gemerged**.
+- Folge: Die gravierendsten „kritischen" Punkte sind auf HEAD **geschlossen**; die Audits maßen einen Stand, der zum Berichtszeitpunkt schon überholt war.
+
+Zusätzlich existiert ein **ungemergter** Remediation-Branch `claude/remediation-sprint-20260531`
+(ahead 10 / behind 32), der A1–A18 großflächig adressiert — überlappt stark mit dem, was p7
+bereits hat, enthält aber **Unique-Wert** (`app/audit/anchor.py`, `live_engine.py`-Hardening,
+`tv_bridge_scheduler`-Tests, daily-strategy V1/V3/V4/V8). Ein dritter, neu gestarteter
+Remediation-Strang wäre Duplikation und wurde bewusst **vermieden**.
+
+---
+
+## 2. Statusmatrix aller Findings (gegen HEAD verifiziert)
+
+| ID | Finding | Quelle | Status @HEAD | Evidenz |
+|---|---|---|---|---|
+| C1 | Docker baut mit `pip install .` | Codex | **ERLEDIGT** | `docker/Dockerfile`: `requirements.lock` + `pip install . --no-deps` (AUDIT-A5) |
+| C2 | Worktree dreckig/divergent, engine.py staged | Codex | **VERALTET** | aktueller Branch clean; war Snapshot von `sprint/lock-file-migration-v2` |
+| C3 | README/RUNBOOK/AGENTS widersprechen Realstand | Codex | **TEILS OFFEN → gefixt** | README/ARCH aktuell; **AGENTS.md war stale (2026-04-24)** → in diesem Sprint korrigiert |
+| C4 | Agent-Roster 6/4/3, DALI ohne Worker, Neo/Satoshi fehlen | Codex | **BESTÄTIGT (Designentscheidung) → dokumentiert** | `_AGENTS`=4, `HANDLERS`=3; jetzt in AGENTS.md § Wiring-Realität ehrlich erklärt |
+| C5 | Body-Limit nur Content-Length / chunked-Bypass | Codex | **ERLEDIGT** | `request_governance.py:136-157` Streaming-Hard-Cap (AUDIT-A6) |
+| C6 | Frontend nicht in CI | Codex | **ERLEDIGT** | `ci.yml` Job `web:` npm ci/lint/build (AUDIT-A3) |
+| C7 | Strict typing = Fassade | Codex/AG | **TEILS OFFEN** | mypy ist **blockierendes** CI-Gate, aber 37 Module via `ignore_errors` → Burn-down offen (s. §4) |
+| C8 | Docker = Altlast / baut kein web/dist | Codex/AG | **TEILS / Produktentscheidung** | Dockerfile kopiert kein web/; `main.py:282` mountet SPA nur falls vorhanden → Docker = Backend-/Dev-Pfad, Pi = Produktion |
+| A-mypy | „28 Overrides ignore_errors" | AG-Voll | **PRÄZISIERT** | tatsächlich 1 Override-Block, **37 Module** (`pyproject.toml:137-176`) |
+| A-env | `.env.backup*` = kritische Credential-Exposure | AG-Voll | **WENIGER KRITISCH** | untracked + `.gitignore .env*` + nie committet + CI-Secret-Guard blockt Commit |
+| A-crlf | CRLF in `.sh` bricht Pi-Deploy | AG-Voll | **WIDERLEGT (Repo)** | `git ls-files --eol`: Index=LF, `.gitattributes *.sh text eol=lf` erzwingt LF auf Pi; CRLF nur lokaler Windows-Working-Tree |
+| A-17fail | 17 Test-Fails = Win/Linux-Interop | AG-Voll | **TEILS (lokal)** | reines lokales Windows-Artefakt; nicht Pi-Prod |
+| A-imp | `test_importer.py` Dateileiche | AG | **ERLEDIGT** | nicht mehr im FS/getrackt |
+| A-bak | `phraseEngine.ts.bak.20260509` getrackt | Codex | **ERLEDIGT** | weder im FS noch getrackt (in p7 bereits gelöscht) |
+| A-rot | Audit-Stream-Rotation fehlt | AG | **OFFEN (moderat)** | `api_request_audit.jsonl`=9.9M, `trading_loop_audit`=5.6M; `retention_backups/` (38M) existiert; ARCHITECTURE P2/V6 |
+| A-rehyd | rehydrate_from_audit unbounded | AG | **TEILS (geringer)** | `paper_engine.py:179`→`replay_paper_audit` ohne Fenster; liest *paper*-Audit (per-Fill), nicht die 9.9M-Datei |
+| A-ssrf | SSRF-TOCTOU-Rest | Codex | **BESTÄTIGT (eng, low)** | `app/security/ssrf.py` starker Blocklist-Guard; DNS-Rebind nicht IP-gepinnt → Defense-in-Depth |
+| A-health | Unauth Detail-Health | Codex | **BESTÄTIGT (mitigiert)** | `/health/timers`,`/health/premium_pipeline` ohne Auth, aber nur hinter CF-Tunnel |
+| A-bayes | Bayes shadow_only Overengineering | beide | **PRODUKTENTSCHEIDUNG** | bewusst `shadow_only` (Datenbasis dünn) — belassen |
+| A-pers | KAI-Persona Binaries getrackt | Codex | **OFFEN (Hygiene)** | 21 Files inkl. `Me-KAI-Welcome.mp4` (1.16M), `Me_KAI.png` (2.5M) |
+| A-deploy | deploy-Doku `pip install -e .` | Codex | **GEFIXT (dieser Sprint)** | `deploy/README.md` auf `requirements.lock` angeglichen |
+| Q-tests | „1900 vs 3771 Tests" | Prüfpunkt | **GEKLÄRT** | `def test_`=3825; 47 parametrize → 3771 = kollektierte Funktionen minus testnet; „1946"=AGENTS-Altstand D-184 |
+
+---
+
+## 3. In diesem Sprint umgesetzt (sicher, reversibel, nicht-duplikativ)
+
+**F1 — Betriebswahrheit angeglichen** (Branch `claude/audit-truth-alignment-20260601`):
+- `AGENTS.md`: „Current State (2026-04-24) / PHASE 5 SUSPENDED" → „Current State (2026-06-01) / Re-Entry + Stabilisierung", Re-Entry vollzogen, Live OFF, Pi-5-SoT, CI-basierte Baseline.
+- `RUNBOOK.md`: stale „~1946 tests" → „~3800 Testfunktionen"; „Primary checks toward Re-Entry (2026-05-16)" → als laufende Quality-Bar (Re-Entry am 2026-05-07 vollzogen) umformuliert.
+
+**F2 — Roster-Wahrheit** (`AGENTS.md`):
+- Prosa „Alle drei Agenten" → „Alle sechs Agenten" (interne Inkonsistenz behoben).
+- Neue § **Wiring-Realität**: 6 interaktive Claude-Code-Subagenten / 3 autonome Worker-Handler / 4 Dashboard-API — als bewusste Designentscheidung dokumentiert (DALI/Neo/SATOSHI interaktiv, kein offener Bug).
+- `deploy/README.md`: Agent-Worker-Unit-Beschreibung auf real 3 Handler korrigiert.
+
+**Deploy-Doku:** `deploy/README.md` Install-Pfad `pip install -e .` → deterministischer `requirements.lock`-Install (Verweis auf `docs/security/lock_file_workflow.md`).
+
+---
+
+## 4. Bewusst NICHT autonom umgesetzt (mit Begründung)
+
+| Item | Warum nicht jetzt | Korrekter Pfad |
+|---|---|---|
+| **F3 mypy-Burn-down** (paper_engine/bridge/loop/execution) | CI-`type-check` läuft `mypy app/` **blockierend**. Teil-Entfernung von `ignore_errors` ohne vollen verifizierten `mypy app/`-Lauf röte CI. Voller 3825-Test-Regressionsnachweis auf Windows nicht verlässlich (Output-Buffering, Laufzeit). Auf Trading-Core = Scheinsicherheit-Risiko, das der Auftrag ausdrücklich verbietet. | Eigener PR, Modul-für-Modul, je Modul `ignore_errors` raus + Fehler fixen + voller `mypy app/` + Test-Lauf grün in CI. Gemessener Floor: paper_engine=10, bridge=28, trading_loop=10, **fees=1 (Quick Win)**. |
+| **F4 JSONL-Rotation** | Neue Subsystem-Logik mit Test-Pflicht; berührt Audit-Schreibpfade (audit-kritisch). Nicht ohne Tests + Review auf Live-System. | Eigener PR: size-cap/logrotate für `api_request_audit` (rehydrationsfrei → aggressiv rotierbar), Rehydration-Fenster optional für paper-audit. |
+| **Branch-Löschungen** | `claude/remediation-sprint-20260531` hat ungemergten Unique-Wert; `sprint/lock-file-migration-v2`-Substanz ist superseded, aber Unique-Commits (daily-strategy) nicht patch-identisch in p7. Autonome Löschung = Wertverlust-Risiko. | Operator-Review: Remediation-Branch gegen p7 rebasen + Unique-Commits cherry-picken, DANN beide Branches + Worktrees abräumen. |
+| **F5 lokale CRLF-Renormalisierung** | `git add --renormalize` ist schreibend über den ganzen Working-Tree; auf Windows mit 35 Worktrees + Parallel-Sessions Drift-Risiko. | Operator-getriggert lokal: `git add --renormalize .` + `Path(p).as_posix()` in `tests/integration/test_server_stop_cutover_bash.py`. Kein Prod-Effekt (Index ist bereits LF). |
+| **`.env.backup*` löschen** | Enthält **Secret-Material**; einzige Sicherung alter Credentials. Untracked + gitignored → keine Remote-Exposure. Autonomes Löschen von Secret-Backups = unumkehrbarer Datenverlust. | Operator entscheidet bewusst (außerhalb Repo sichern, dann löschen). |
+| **watchlists.py:64 mypy Literal-Fehler** | Lokal mypy 1.19.1 zeigt 1 echten + 4 stub-missing (types-PyYAML lokal nicht installiert). Unklar ob CI-Pin denselben Literal-Fehler wirft (Versions-Drift) → blind fixen kann CI röten. | gegen CI-mypy-Version verifizieren, dann ggf. fixen. |
+
+---
+
+## 5. Verifikation dieses Sprints
+
+- `ruff check app/ tests/` → **All checks passed**
+- `ruff format --check app/ tests/` → **671 files already formatted**
+- `mypy app/` (lokal) → 8 „Fehler", davon 4 stub-missing (lokales Env, CI hat types-PyYAML via lock) + 1 watchlists-Literal (s.o.) + 3 weitere yaml-stub; **keine** durch die Doc-Änderungen verursacht (nur .md/Markdown geändert).
+- Geänderte Dateien dieses Sprints: ausschließlich Doku (`AGENTS.md`, `RUNBOOK.md`, `deploy/README.md`) + dieses Memo → **null Code-/Test-Regressionsfläche**.
+
+---
+
+## 6. Verbleibende Risiken & technische Schulden
+
+- **Mittel:** 37 mypy-`ignore_errors`-Module (Execution-Core); JSONL-Rotation fehlt; Branch-/Worktree-Wildwuchs (35 Worktrees, ~70 Branches) erhöht Drift-Risiko.
+- **Niedrig:** SSRF-DNS-Rebind-Rest; unauth Detail-Health (CF-mitigiert); KAI-Persona-Binaries im Git; rehydrate ohne Fenster.
+- **Prozess:** Mehrfach-parallele Remediation-Stränge (p7-merged vs remediation-branch unmerged) — Konsolidierung auf EINEN Pfad nötig, sonst wiederkehrende Audit-Fehleinschätzungen.
+
+## 7. Empfohlene nächste Sprints (Reihenfolge)
+
+1. **Branch-/Worktree-Konsolidierung** (Operator + Claude): Remediation-Branch reconcilen, dann abräumen. Beseitigt die Wurzel der Audit-Drift.
+2. **mypy-Burn-down** als isolierter PR, Reihenfolge fees(1)→paper_engine(10)→trading_loop(10)→bridge(28)→API, jeweils CI-grün.
+3. **JSONL-Rotation/Retention** (PR mit Tests).
+4. **F5 + Persona-Binaries + watchlists-Literal** als Hygiene-Sammel-PR.
+
+## 8. Gesamturteil
+
+- **Release-/Paper-Reife:** gegeben. Kern-Gates (Risk, Lifecycle, Webhook, SSRF, fail-closed) intakt; CI stark (8 Jobs, blockierend); Paper-First sauber.
+- **Live-Reife:** noch nicht. Vor einem Live-Flip: mypy-Burn-down des Execution-Core + Roster/Doc-Konsolidierung abgeschlossen + Branch-Hygiene geklärt. Live bleibt zurecht OFF.
+- **Audit-Substanz:** Die positiven Vorbefunde halten; die kritischen waren mehrheitlich Snapshot-Artefakte. Größtes reales Risiko ist **Prozess-/Betriebsdrift**, nicht Code.
