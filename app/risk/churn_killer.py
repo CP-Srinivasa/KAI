@@ -103,7 +103,7 @@ def _parse_ts(raw: object) -> datetime | None:
     return ts.replace(tzinfo=UTC) if ts.tzinfo is None else ts
 
 
-def _is_entry_fill(event: dict) -> bool:
+def _is_entry_fill(event: dict[str, object]) -> bool:
     """True iff an order_filled event is a risk-INCREASING entry.
 
     long entry  = side buy  + position_side long
@@ -115,7 +115,7 @@ def _is_entry_fill(event: dict) -> bool:
     return (side == "buy" and pos_side == "long") or (side == "sell" and pos_side == "short")
 
 
-def _fill_notional(event: dict) -> float:
+def _fill_notional(event: dict[str, object]) -> float:
     price = event.get("fill_price")
     qty = event.get("filled_quantity", event.get("quantity"))
     try:
