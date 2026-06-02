@@ -79,6 +79,19 @@ class RiskLimits:
     #   min_target_distance_pct: nearest target must be at least this far from
     #     entry (favourable direction), in percent. <= 0 disables.
     min_target_distance_pct: float = 0.0
+    #   gates_mode: staged rollout for the Gate-10 reward/risk gates ONLY (the
+    #     legacy gates 1-9 always enforce). One of:
+    #       "off"     — Gate 10 not evaluated at all.
+    #       "audit"   — Gate 10 computed; sets would_reject + reason codes on the
+    #                   result for observability, but does NOT block the order.
+    #       "enforce" — Gate 10 violations block risk-increasing entries.
+    #     Default "audit": safe-by-default — even if an operator sets a threshold
+    #     it is observed (would_reject) before it ever starves the book. Going to
+    #     "enforce" is a deliberate, separate operator action. NOTE: this is the
+    #     denominator-safe definition — max_leveraged_risk_pct is
+    #     stop_distance_pct * leverage (signal geometry risk), NOT
+    #     account-equity-at-risk.
+    gates_mode: str = "audit"
 
 
 @dataclass(frozen=True)
@@ -96,6 +109,13 @@ class RiskCheckResult:
     # Stable machine-grade codes mapped from `violations` (see
     # app/risk/reason_codes.py). Additive: `violations` stays the human contract.
     reason_codes: list[str] = field(default_factory=list)
+    # Gate-10 audit surface. In "audit" mode the reward/risk gate fills these but
+    # does NOT add to `violations` (so `approved` is unaffected). In "enforce"
+    # mode the same violations ALSO appear in `violations`/`reason_codes`. This
+    # lets a report measure reject-rate/false-positives before enforcing.
+    would_reject: bool = False
+    would_reject_violations: list[str] = field(default_factory=list)
+    would_reject_codes: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)

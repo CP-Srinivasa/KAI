@@ -45,6 +45,9 @@ def _limits(**overrides: object) -> RiskLimits:
         "min_signal_confluence_count": 0,
         "regime_filter_enabled": False,
         "round_trip_fee_pct": 0.2,
+        # Default the helper to enforce so the "blocks" tests exercise blocking
+        # semantics; audit/off behaviour has its own dedicated tests.
+        "gates_mode": "enforce",
     }
     base.update(overrides)
     return RiskLimits(**base)  # type: ignore[arg-type]
@@ -199,6 +202,34 @@ def test_short_side_reward_is_favourable_direction() -> None:
 # --------------------------------------------------------------------------- #
 # Reason-code mapper
 # --------------------------------------------------------------------------- #
+
+
+def test_audit_mode_flags_but_does_not_block() -> None:
+    # audit mode: the bad US/USDT signal would_reject but is NOT blocked.
+    res = _check(_limits(max_leveraged_risk_pct=35.0, min_rr=0.5, gates_mode="audit"))
+    assert res.approved is True
+    assert res.violations == []
+    assert res.would_reject is True
+    assert RejectCode.RISK_TOO_HIGH.value in res.would_reject_codes
+    assert RejectCode.RR_TOO_LOW.value in res.would_reject_codes
+    assert res.details["gates_mode"] == "audit"
+
+
+def test_off_mode_does_not_evaluate() -> None:
+    res = _check(_limits(max_leveraged_risk_pct=35.0, min_rr=0.5, gates_mode="off"))
+    assert res.approved is True
+    assert res.would_reject is False
+    assert res.would_reject_codes == []
+    # geometry diagnostics still computed even in off mode
+    assert res.details["signal_geometry"] is not None
+
+
+def test_enforce_mode_blocks_and_also_sets_would_reject() -> None:
+    res = _check(_limits(max_leveraged_risk_pct=35.0, gates_mode="enforce"))
+    assert res.approved is False
+    assert res.would_reject is True
+    assert RejectCode.RISK_TOO_HIGH.value in res.reason_codes
+    assert RejectCode.RISK_TOO_HIGH.value in res.would_reject_codes
 
 
 def test_reason_code_mapper_is_total_and_dedupes() -> None:

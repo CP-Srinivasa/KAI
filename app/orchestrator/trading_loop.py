@@ -1239,6 +1239,7 @@ def _build_risk_limits_from_settings() -> RiskLimits:
         max_leveraged_risk_pct=risk.max_leveraged_risk_pct,
         min_net_edge_bps=risk.min_net_edge_bps,
         min_target_distance_pct=risk.min_target_distance_pct,
+        gates_mode=risk.gates_mode,
     )
 
 
