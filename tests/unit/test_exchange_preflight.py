@@ -132,18 +132,14 @@ def test_percent_price_band() -> None:
         percent_price_down=Decimal("0.95"),
     )
     # entry 1.20 vs reference 1.00 -> above 1.05 band
-    res = preflight_order(
-        filters=filt, side="buy", entry_price=1.20, reference_price=1.00
-    )
+    res = preflight_order(filters=filt, side="buy", entry_price=1.20, reference_price=1.00)
     assert res.ok is False
     assert any("percent_price_exceeded" in v for v in res.violations)
 
 
 def test_leverage_bracket() -> None:
     filt = SymbolFilters(symbol="X", tick_size=Decimal("0.01"), max_leverage=Decimal("20"))
-    res = preflight_order(
-        filters=filt, side="buy", entry_price=1.00, leverage=50
-    )
+    res = preflight_order(filters=filt, side="buy", entry_price=1.00, leverage=50)
     assert res.ok is False
     assert any("leverage_exceeds_max" in v for v in res.violations)
 

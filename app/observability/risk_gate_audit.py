@@ -99,9 +99,7 @@ class RiskGateAuditReport:
         }
 
 
-def build_risk_gate_audit_report(
-    *, log_path: str | Path | None = None
-) -> RiskGateAuditReport:
+def build_risk_gate_audit_report(*, log_path: str | Path | None = None) -> RiskGateAuditReport:
     """Aggregate the risk-gate audit JSONL.
 
     ``total_records`` counts the audit lines (all of which are would_reject

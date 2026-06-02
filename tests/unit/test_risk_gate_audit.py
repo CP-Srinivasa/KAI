@@ -41,9 +41,7 @@ def test_record_only_writes_when_flagged(tmp_path: Path) -> None:
     # flagged -> write
     assert (
         record_risk_gate_eval(
-            risk_result=_result(
-                would_reject=True, codes=["REJECT_RISK_TOO_HIGH"], mode="audit"
-            ),
+            risk_result=_result(would_reject=True, codes=["REJECT_RISK_TOO_HIGH"], mode="audit"),
             envelope_id="ENV-X",
             source="telegram_premium_channel_approved",
             symbol="US/USDT",

@@ -205,9 +205,7 @@ def _normalize_one(
     if tick is None or tick <= 0 or is_on_grid(value, tick):
         return value
     if not allow_normalization:
-        result.violations.append(
-            f"price_off_grid:{field_name}={value}|tick={tick}"
-        )
+        result.violations.append(f"price_off_grid:{field_name}={value}|tick={tick}")
         result.reason_code = RejectCode.INVALID_TICK_SIZE.value
         return None
     direction = _conservative_price_dir(field_name, side)
@@ -231,9 +229,7 @@ def _normalize_one(
             normalized=float(snapped),
             rounding_direction=direction,
             tolerance_pct=tolerance_pct,
-            risk_impact=(
-                "tighter" if field_name == "stop_loss" else "harder_to_reach"
-            )
+            risk_impact=("tighter" if field_name == "stop_loss" else "harder_to_reach")
             if field_name in {"stop_loss", "take_profit"}
             else "neutral",
         )
@@ -356,10 +352,7 @@ def preflight_order(
                 f"percent_price_exceeded:entry>{ref * filters.percent_price_up:.6g}"
             )
             result.reason_code = RejectCode.EXCHANGE_FILTER.value
-        if (
-            filters.percent_price_down is not None
-            and norm_entry < ref * filters.percent_price_down
-        ):
+        if filters.percent_price_down is not None and norm_entry < ref * filters.percent_price_down:
             result.violations.append(
                 f"percent_price_exceeded:entry<{ref * filters.percent_price_down:.6g}"
             )
