@@ -77,13 +77,13 @@ def record_risk_gate_eval(
 
 @dataclass
 class RiskGateAuditReport:
-    total_records: int
-    would_reject_count: int
+    total_records: int  # raw audit lines (one per bridge-tick eval)
+    would_reject_count: int  # DISTINCT flagged signals (deduped by correlation_id)
     reject_rate: float
     reason_code_distribution: dict[str, int]
     rejected_by_symbol: dict[str, int]
     rejected_by_source: dict[str, int]
-    enforced_count: int
+    enforced_count: int  # distinct signals seen under enforce mode
     notes: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
@@ -100,20 +100,16 @@ class RiskGateAuditReport:
 
 
 def build_risk_gate_audit_report(*, log_path: str | Path | None = None) -> RiskGateAuditReport:
-    """Aggregate the risk-gate audit JSONL.
+    """Aggregate the risk-gate audit JSONL — DEDUPED per distinct signal.
 
-    ``total_records`` counts the audit lines (all of which are would_reject
-    flags, since only flagged evals are written). The report's value is the
-    distribution: which codes dominate, which symbols/sources, and how many are
-    already in enforce mode — the inputs to the enforce-readiness decision.
+    The bridge writes one audit line per pending re-evaluation (every tick), so
+    a single bad pending signal produces hundreds of identical flags. Counting
+    raw lines yields a nonsensical "rate" > 1. We therefore dedup by a stable
+    signal key (``correlation_id`` -> ``envelope_id`` -> line index): each
+    distinct flagged SIGNAL counts once, its codes unioned across its evals.
+    ``total_records`` keeps the raw line count for transparency.
     """
     path = Path(log_path) if log_path else _DEFAULT_LOG
-    code_dist: Counter[str] = Counter()
-    by_symbol: Counter[str] = Counter()
-    by_source: Counter[str] = Counter()
-    total = 0
-    would_reject = 0
-    enforced = 0
     notes: list[str] = []
 
     if not path.exists():
@@ -124,7 +120,14 @@ def build_risk_gate_audit_report(*, log_path: str | Path | None = None) -> RiskG
     except OSError as exc:
         return RiskGateAuditReport(0, 0, 0.0, {}, {}, {}, 0, [f"read failed: {exc}"])
 
-    for raw in lines:
+    total = 0
+    # Per-distinct-signal accumulation.
+    sig_codes: dict[str, set[str]] = {}
+    sig_symbol: dict[str, str] = {}
+    sig_source: dict[str, str] = {}
+    sig_enforced: dict[str, bool] = {}
+
+    for idx, raw in enumerate(lines):
         line = raw.strip()
         if not line:
             continue
@@ -133,30 +136,42 @@ def build_risk_gate_audit_report(*, log_path: str | Path | None = None) -> RiskG
         except json.JSONDecodeError:
             continue
         total += 1
-        if rec.get("would_reject"):
-            would_reject += 1
-        if rec.get("enforced"):
-            enforced += 1
-        for code in rec.get("would_reject_codes", []) or []:
-            code_dist[str(code)] += 1
+        if not rec.get("would_reject"):
+            continue
+        key = rec.get("correlation_id") or rec.get("envelope_id") or f"_line{idx}"
+        key = str(key)
+        sig_codes.setdefault(key, set()).update(
+            str(c) for c in (rec.get("would_reject_codes") or [])
+        )
         sym = rec.get("symbol")
-        if isinstance(sym, str):
-            by_symbol[sym] += 1
+        if isinstance(sym, str) and key not in sig_symbol:
+            sig_symbol[key] = sym
         src = rec.get("source")
-        if isinstance(src, str):
-            by_source[src] += 1
+        if isinstance(src, str) and key not in sig_source:
+            sig_source[key] = src
+        sig_enforced[key] = sig_enforced.get(key, False) or bool(rec.get("enforced"))
 
-    reject_rate = (would_reject / total) if total else 0.0
+    distinct_flagged = len(sig_codes)
+    code_dist: Counter[str] = Counter()
+    for codes in sig_codes.values():
+        for c in codes:
+            code_dist[c] += 1
+    by_symbol: Counter[str] = Counter(sig_symbol.values())
+    by_source: Counter[str] = Counter(sig_source.values())
+    enforced = sum(1 for v in sig_enforced.values() if v)
+
     notes.append(
-        "would_reject_count is the count of flagged evals; pair with the total "
-        "signals processed (bridge audit) to get the true population reject-rate. "
-        "accepted_but_later_bad / rejected_but_would_have_been_good require "
-        "outcome correlation (alert_outcomes) — not computed here."
+        "would_reject_count = DISTINCT flagged signals (deduped by correlation_id); "
+        f"total_records={total} raw per-tick eval lines. reject_rate is computed "
+        "downstream against the bridge denominator (distinct evaluated signals). "
+        "False-positive ID needs outcome correlation (alert_outcomes) + human review."
     )
     return RiskGateAuditReport(
         total_records=total,
-        would_reject_count=would_reject,
-        reject_rate=round(reject_rate, 4),
+        would_reject_count=distinct_flagged,
+        # population rate is computed in the review layer (needs the bridge
+        # denominator); here we expose distinct-flagged, not a self-referential rate.
+        reject_rate=0.0,
         reason_code_distribution=dict(code_dist.most_common()),
         rejected_by_symbol=dict(by_symbol.most_common()),
         rejected_by_source=dict(by_source.most_common()),
