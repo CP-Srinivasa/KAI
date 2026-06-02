@@ -172,9 +172,7 @@ def heartbeat(
     return True
 
 
-def release(
-    lock_path: str | Path, *, host: str | None = None, pid: int | None = None
-) -> bool:
+def release(lock_path: str | Path, *, host: str | None = None, pid: int | None = None) -> bool:
     """Remove the lock if owned by this host+pid."""
     path = Path(lock_path)
     host = host or _host_fingerprint()

@@ -58,9 +58,7 @@ def test_bare_leverage_does_not_false_match_hex_or_words() -> None:
     assert r.leverage == 1
 
 
-@pytest.mark.parametrize(
-    "sep", ["·", "•", "|"]
-)
+@pytest.mark.parametrize("sep", ["·", "•", "|"])
 def test_separator_variants(sep: str) -> None:
     txt = f"US/USDT {sep} LONG {sep} 10x\nEntry: 0.00833\nSL: 0.00798\nTargets: 0.00837"
     r = parse_signal(txt)

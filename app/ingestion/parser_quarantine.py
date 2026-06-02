@@ -105,8 +105,10 @@ def is_signal_like(text: str) -> bool:
     """Heuristic: looked like a trading signal even if the parser missed it."""
     hits = set(signal_indicators(text))
     # Require a direction + a price + (a trade keyword or a symbol pair).
-    return "direction" in hits and "price" in hits and (
-        "trade_keyword" in hits or "symbol_pair" in hits
+    return (
+        "direction" in hits
+        and "price" in hits
+        and ("trade_keyword" in hits or "symbol_pair" in hits)
     )
 
 

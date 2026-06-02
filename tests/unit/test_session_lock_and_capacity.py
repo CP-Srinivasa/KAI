@@ -39,9 +39,7 @@ def test_stale_foreign_lock_is_taken_over(tmp_path: Path) -> None:
     now = datetime(2026, 6, 2, 12, 0, tzinfo=UTC)
     lock.acquire(p, host="pi", pid=100, now=now)
     # 31 min later (default stale window 30 min) a new host may take over
-    info = lock.acquire(
-        p, host="windows-dev", pid=200, now=now + timedelta(minutes=31)
-    )
+    info = lock.acquire(p, host="windows-dev", pid=200, now=now + timedelta(minutes=31))
     assert info.host == "windows-dev"
 
 
@@ -101,9 +99,7 @@ def test_book_full_detected(tmp_path: Path) -> None:
     audit = tmp_path / "paper.jsonl"
     pending = tmp_path / "pending.jsonl"
     _write_audit_open_positions(audit, ["BTC/USDT", "ETH/USDT", "SOL/USDT"])
-    rep = build_capacity_report(
-        max_open_positions=3, audit_path=audit, pending_path=pending
-    )
+    rep = build_capacity_report(max_open_positions=3, audit_path=audit, pending_path=pending)
     assert rep.open_count == 3
     assert rep.book_full is True
     assert rep.slots_free == 0
@@ -114,9 +110,7 @@ def test_slots_free_when_under_cap(tmp_path: Path) -> None:
     audit = tmp_path / "paper.jsonl"
     pending = tmp_path / "pending.jsonl"
     _write_audit_open_positions(audit, ["BTC/USDT"])
-    rep = build_capacity_report(
-        max_open_positions=6, audit_path=audit, pending_path=pending
-    )
+    rep = build_capacity_report(max_open_positions=6, audit_path=audit, pending_path=pending)
     assert rep.open_count == 1
     assert rep.slots_free == 5
     assert rep.book_full is False
@@ -165,8 +159,6 @@ def test_terminal_stage_not_counted_as_pending(tmp_path: Path) -> None:
         {"envelope_id": "ENV-1", "stage": "filled", "timestamp_utc": "2026-06-01T11:00:00+00:00"},
     ]
     pending.write_text("\n".join(json.dumps(r) for r in rows) + "\n", encoding="utf-8")
-    rep = build_capacity_report(
-        max_open_positions=6, audit_path=audit, pending_path=pending
-    )
+    rep = build_capacity_report(max_open_positions=6, audit_path=audit, pending_path=pending)
     # ENV-1's last stage is 'filled' (terminal) -> not pending
     assert rep.pending_count == 0

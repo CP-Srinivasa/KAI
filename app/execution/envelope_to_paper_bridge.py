@@ -949,10 +949,14 @@ async def _process_one(
         record_risk_gate_eval(
             risk_result=risk_result,
             envelope_id=envelope_id,
-            correlation_id=str(_audit_base(
-                envelope_id=envelope_id, stage="risk_gate_eval",
-                source=source, envelope=envelope,
-            ).get("correlation_id")),
+            correlation_id=str(
+                _audit_base(
+                    envelope_id=envelope_id,
+                    stage="risk_gate_eval",
+                    source=source,
+                    envelope=envelope,
+                ).get("correlation_id")
+            ),
             source=source,
             symbol=symbol,
             enforced=str(risk_result.details.get("gates_mode")) == "enforce",

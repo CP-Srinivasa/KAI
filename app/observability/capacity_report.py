@@ -151,11 +151,7 @@ def build_capacity_report(
         report.notes.append(f"portfolio replay unavailable: {replay.error}")
 
     latest = _latest_pending(Path(pending_path))
-    pending_rows = [
-        rec
-        for rec in latest.values()
-        if str(rec.get("stage")) not in _TERMINAL_STAGES
-    ]
+    pending_rows = [rec for rec in latest.values() if str(rec.get("stage")) not in _TERMINAL_STAGES]
     report.pending_count = len(pending_rows)
 
     cutoff = now_dt - timedelta(hours=ttl_hours)
@@ -202,8 +198,7 @@ def render_text(report: CapacityReport) -> str:
     ]
     for s in report.stale_pending:
         lines.append(
-            f"    - {s.symbol or '?'} {s.envelope_id} "
-            f"age={s.age_hours}h stage={s.last_stage}"
+            f"    - {s.symbol or '?'} {s.envelope_id} age={s.age_hours}h stage={s.last_stage}"
         )
     for note in report.notes:
         lines.append(f"  ! {note}")
