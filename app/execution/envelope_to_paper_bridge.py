@@ -368,6 +368,7 @@ def _build_risk_limits() -> RiskLimits:
         max_leveraged_risk_pct=r.max_leveraged_risk_pct,
         min_net_edge_bps=r.min_net_edge_bps,
         min_target_distance_pct=r.min_target_distance_pct,
+        gates_mode=r.gates_mode,
     )
 
 
@@ -938,6 +939,26 @@ async def _process_one(
         take_profit_targets=list(targets) if targets else None,
         leverage=leverage_for_risk,
     )
+    # Staged-rollout audit: in audit OR enforce mode, persist a reward/risk-gate
+    # evaluation when it flags the signal — even when the order is otherwise
+    # approved (audit mode). Lets the operator measure reject-rate before
+    # flipping RISK_GATES_MODE to enforce. Fail-soft; never blocks the bridge.
+    try:
+        from app.observability.risk_gate_audit import record_risk_gate_eval
+
+        record_risk_gate_eval(
+            risk_result=risk_result,
+            envelope_id=envelope_id,
+            correlation_id=str(_audit_base(
+                envelope_id=envelope_id, stage="risk_gate_eval",
+                source=source, envelope=envelope,
+            ).get("correlation_id")),
+            source=source,
+            symbol=symbol,
+            enforced=str(risk_result.details.get("gates_mode")) == "enforce",
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[bridge] risk_gate_audit record failed: %s", exc)
     if not risk_result.approved:
         rec = base("rejected_risk")
         rec["risk_check_id"] = risk_result.check_id

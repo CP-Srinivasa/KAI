@@ -319,10 +319,27 @@ class RiskSettings(BaseSettings):
     #   RISK_MIN_TARGET_DISTANCE_PCT=0.3
     min_rr: float = Field(default=0.0, ge=0.0)
     min_avg_rr: float = Field(default=0.0, ge=0.0)
+    # max_signal_risk_pct: UN-leveraged stop distance |entry-SL|/entry*100.
     max_signal_risk_pct: float = Field(default=0.0, ge=0.0)
+    # max_leveraged_risk_pct: DENOMINATOR-SAFE definition = stop_distance_pct *
+    # leverage (the signal-geometry "Risk 42%" a 10x channel reports). This is
+    # NOT account-equity-at-risk — do not interpret 35 as 35% of equity.
     max_leveraged_risk_pct: float = Field(default=0.0, ge=0.0)
     min_net_edge_bps: float | None = Field(default=None)
     min_target_distance_pct: float = Field(default=0.0, ge=0.0)
+    # Staged rollout for the reward/risk gates. off|audit|enforce. Default
+    # "audit": a set threshold is OBSERVED (would_reject + risk_gate_audit.jsonl)
+    # before it can ever block — the safe path against silent book-starvation.
+    # env: RISK_GATES_MODE.
+    gates_mode: str = Field(default="audit")
+
+    @field_validator("gates_mode")
+    @classmethod
+    def _validate_gates_mode(cls, v: str) -> str:
+        norm = (v or "").strip().lower()
+        if norm not in {"off", "audit", "enforce"}:
+            raise ValueError("RISK_GATES_MODE must be one of: off, audit, enforce")
+        return norm
 
 
 class ExecutionSettings(BaseSettings):

@@ -290,7 +290,16 @@ class RiskEngine:
             targets=list(take_profit_targets) if take_profit_targets else None,
             leverage=leverage,
         )
-        self._apply_reward_risk_gates(geometry, violations)
+        # Gate 10 honours gates_mode: "off" skips, "audit" records would_reject
+        # without blocking, "enforce" merges into the blocking violations.
+        gates_mode = (self._limits.gates_mode or "audit").strip().lower()
+        rr_violations: list[str] = []
+        if gates_mode != "off":
+            self._apply_reward_risk_gates(geometry, rr_violations)
+        would_reject = bool(rr_violations)
+        would_reject_codes = map_violations_to_codes(rr_violations)
+        if gates_mode == "enforce":
+            violations.extend(rr_violations)
 
         approved = len(violations) == 0
         reason = (
@@ -306,6 +315,9 @@ class RiskEngine:
             reason=reason,
             violations=violations,
             reason_codes=map_violations_to_codes(violations),
+            would_reject=would_reject,
+            would_reject_violations=rr_violations,
+            would_reject_codes=would_reject_codes,
             details={
                 "side": side,
                 "signal_confidence": signal_confidence,
@@ -314,6 +326,7 @@ class RiskEngine:
                 "daily_loss_pct": self._daily_loss_pct,
                 "drawdown_pct": self._total_drawdown_pct,
                 "signal_geometry": geometry,
+                "gates_mode": gates_mode,
             },
         )
 
