@@ -1,0 +1,14 @@
+[Unit]
+Description=One-shot trigger for KAI Risk-Gate Audit Review on 2026-06-04 18:00 Europe/Berlin
+
+[Timer]
+# 18:00 Europe/Berlin on 2026-06-04 == 16:00 UTC (CEST = UTC+2 in June).
+OnCalendar=2026-06-04 16:00:00 UTC
+# Persistent: if the Pi is off at the trigger moment, run at next boot.
+Persistent=true
+# One-shot semantics: the timer fires once for this dated OnCalendar and does
+# not repeat. Operator removes/disables it after the review (see runbook).
+Unit=kai-risk-gate-audit-review.service
+
+[Install]
+WantedBy=timers.target
