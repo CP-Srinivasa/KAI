@@ -360,6 +360,16 @@ class ExecutionSettings(BaseSettings):
     # is set to DISABLED until the cost-adjusted edge gate is passed.
     entry_mode: EntryMode = Field(default=EntryMode.PAPER)
 
+    # Phase-B Shadow-Candidate-Ledger (env EXECUTION_SHADOW_DIAGNOSTICS). When
+    # entry_mode=disabled, the autonomous loop normally short-circuits at the
+    # entry-mode gate before any analysis. With this flag ON, it instead runs the
+    # READ-ONLY pipeline (market-data + signal-gen + ATR geometry), records a
+    # hypothetical shadow candidate (no fill/position/order), then returns
+    # ENTRY_MODE_BLOCKED. Default OFF preserves the cheap early-return. Only has
+    # an effect while entry_mode=disabled (no effect when entries are allowed —
+    # those already produce real audit + outcomes).
+    shadow_diagnostics: bool = Field(default=False)
+
     # Paper trading
     paper_initial_equity: float = Field(default=10000.0)
     paper_fee_pct: float = Field(default=0.1)  # 0.1% fee

@@ -130,16 +130,23 @@ class TradingLoop:
         # source and are intentionally NOT gated here; they keep their own risk
         # gates + approval. Exits/risk-reductions are never gated by entry_mode.
         entry_mode = get_settings().execution.entry_mode
+        shadow_only = False
         if not entry_mode.allows_autonomous_loop_entry:
-            cycle = self._build_cycle(
-                cycle_id,
-                started_at,
-                symbol,
-                CycleStatus.ENTRY_MODE_BLOCKED,
-                notes=notes + [f"entry_mode_blocked:{entry_mode.value}"],
-            )
-            await self._write_db(cycle)
-            return cycle
+            # Phase B: when shadow-diagnostics is ON we DON'T early-return; we run
+            # the read-only pipeline below and record a hypothetical candidate
+            # (no execution) so the disabled signal keeps producing learning
+            # evidence. Flag OFF → original cheapest-possible reject.
+            if not get_settings().execution.shadow_diagnostics:
+                cycle = self._build_cycle(
+                    cycle_id,
+                    started_at,
+                    symbol,
+                    CycleStatus.ENTRY_MODE_BLOCKED,
+                    notes=notes + [f"entry_mode_blocked:{entry_mode.value}"],
+                )
+                await self._write_db(cycle)
+                return cycle
+            shadow_only = True
 
         # D-182: priority-tier gate. Default min_priority=1 is a no-op; setting
         # it to 10 restricts paper fills to the high-conviction tier where
@@ -270,6 +277,34 @@ class TradingLoop:
                 notes.append(f"atr_geometry_error:{exc}")
 
         order_side = "buy" if signal.direction == SignalDirection.LONG else "sell"
+
+        # Phase B shadow-only path: entry_mode is disabled but shadow-diagnostics
+        # is ON. We have the raw signal + geometry the loop WOULD have entered;
+        # record it as a hypothetical candidate (no entry-gates applied, so we
+        # measure the SIGNAL not the gates) and stop before any execution. This
+        # is captured BEFORE cooldown/churn/risk on purpose — those gates are
+        # what we are trying to fix, so shadow evidence must be gate-independent.
+        if shadow_only:
+            cycle = self._build_cycle(
+                cycle_id,
+                started_at,
+                symbol,
+                CycleStatus.ENTRY_MODE_BLOCKED,
+                market_data_fetched=True,
+                signal_generated=True,
+                decision_id=signal.decision_id,
+                notes=notes
+                + [f"entry_mode_blocked:{entry_mode.value}", "shadow_candidate_recorded"],
+            )
+            self._record_shadow_candidate(
+                cycle=cycle,
+                signal=signal,
+                order_side=order_side,
+                entry_mode_value=entry_mode.value,
+                recommended_priority=analysis.recommended_priority,
+            )
+            await self._write_db(cycle)
+            return cycle
 
         # NEO-V2: per-symbol post-stop cooldown. Cheapest reject — runs before the
         # risk gate so a symbol that just stopped out is not re-entered (and
@@ -899,6 +934,72 @@ class TradingLoop:
         if status != CycleStatus.COMPLETED:
             self._write_audit(cycle)
         return cycle
+
+    def _record_shadow_candidate(
+        self,
+        *,
+        cycle: LoopCycle,
+        signal: SignalCandidate,
+        order_side: str,
+        entry_mode_value: str,
+        recommended_priority: int | None,
+    ) -> None:
+        """Phase B: persist a hypothetical entry candidate (no execution).
+
+        Fully fail-soft — a shadow-ledger problem must never affect the cycle.
+        The read-only ``check_order`` records the gate verdict the signal WOULD
+        have hit, so the operator can later separate "signal bad" from "gate
+        rejected" without re-running anything.
+        """
+        try:
+            from app.observability.shadow_candidate_ledger import (
+                ShadowCandidate,
+                record_candidate,
+            )
+
+            side = "long" if signal.direction == SignalDirection.LONG else "short"
+            started = cycle.started_at
+            ts_utc = started if isinstance(started, str) else started.isoformat()
+            regime_stamp = self._regime_stamp_for_audit(cycle)
+
+            would_reject: bool | None = None
+            reason_codes: list[str] = []
+            try:
+                rr = self._risk.check_order(
+                    symbol=cycle.symbol,
+                    side=order_side,
+                    signal_confidence=signal.confidence_score,
+                    signal_confluence_count=signal.confluence_count,
+                    stop_loss_price=signal.stop_loss_price,
+                    current_open_positions=len(self._exec.portfolio.positions),
+                    entry_price=signal.entry_price,
+                    take_profit_price=signal.take_profit_price,
+                )
+                would_reject = not rr.approved
+                reason_codes = list(rr.reason_codes)
+            except Exception as exc:  # noqa: BLE001 — gate eval is best-effort
+                logger.debug("[LOOP] shadow gate-eval failed: %s", exc)
+
+            candidate = ShadowCandidate.from_geometry(
+                candidate_id=cycle.cycle_id,
+                ts_utc=ts_utc,
+                symbol=cycle.symbol,
+                side=side,
+                entry_price=signal.entry_price,
+                stop_price=signal.stop_loss_price,
+                take_price=signal.take_profit_price,
+                regime=regime_stamp.get("regime"),
+                regime_vol_class=regime_stamp.get("regime_vol_class"),
+                signal_confidence=signal.confidence_score,
+                recommended_priority=recommended_priority,
+                gate_would_reject=would_reject,
+                gate_reason_codes=reason_codes,
+                entry_mode=entry_mode_value,
+                source="autonomous_loop",
+            )
+            record_candidate(candidate)
+        except Exception as exc:  # noqa: BLE001 — never break the loop
+            logger.warning("[LOOP] shadow candidate record failed: %s", exc)
 
     def _write_audit(self, cycle: LoopCycle) -> None:
         try:
