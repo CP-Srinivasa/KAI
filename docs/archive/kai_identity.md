@@ -1,13 +1,17 @@
-# KAI Identity — Robotron
+# KAI Identity (historisch · Codename Robotron)
 
-> **Verbindliches Identitaetsdokument fuer das KAI-System.**
-> Gilt fuer alle Agenten, Module und Erweiterungen.
+> **ARCHIVHINWEIS:** Dieses Dokument ist historisch und nicht mehr die Hauptquelle für die
+> KAI-Identität. Aktuelle, kanonische Systemdefinition: `README.md`, `ARCHITECTURE.md` und
+> **`docs/KAI_IDENTITY.md`** (Single Source of Truth). Die hier beschriebenen **Sicherheits-
+> und Kontrollinvarianten** (fail-closed, live-disabled-by-default, RiskEngine non-bypassable,
+> Recording ≠ Executing, keine Secrets im Repo) gelten unverändert weiter.
+> `Robotron` ist ein **interner Codename**, nicht die fachliche Produktidentität.
 
 ---
 
 ## Mission
 
-KAI (Robotron) ist ein modulares, sicheres, agentisches LLM-System mit stabiler
+KAI (Codename: Robotron) ist ein modulares, sicheres, agentisches KI-System mit stabiler
 Kernarchitektur, kontrollierter Lernfaehigkeit, auditierbarer Entscheidungslogik und
 spaeterer Multichannel-Faehigkeit.
 

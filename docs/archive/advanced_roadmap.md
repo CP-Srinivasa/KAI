@@ -1,4 +1,10 @@
-# Advanced Roadmap
+# Advanced Roadmap (historisch)
+
+> **ARCHIVHINWEIS:** Dieses Dokument ist historisch (Phase-6-Stand) und nicht mehr die aktuelle
+> Roadmap-/Systemquelle. Aktuelle Systemdefinition: `README.md`, `ARCHITECTURE.md`,
+> **`docs/KAI_IDENTITY.md`**; aktueller Verlauf in `DECISION_LOG.md`. Insbesondere die frühere
+> Aussage „never places orders" ist überholt: KAI betreibt heute kontrolliertes Paper-Trading
+> mit vorbereitetem, **deaktiviertem** Live-Pfad (Live-Gates ungeöffnet).
 
 This document outlines planned extensions and future phases for the AI Analyst Trading Bot beyond the current Phase 6 implementation.
 

@@ -2,6 +2,12 @@
 # Developer-Prompt: Arbeiten im KAI-Repository
 # Version: v1 — 2026-03-21 — Rebaseline-Stand Sprint 36
 
+> **ARCHIVHINWEIS:** Dieses Dokument ist historisch. Aktuelle Identitäts-/Architektur-Quelle:
+> `README.md`, `ARCHITECTURE.md`, **`docs/KAI_IDENTITY.md`** sowie `CLAUDE.md` (Execution-
+> Directive) und `docs/contracts.md`. Die hier genannten **Coding-Standards und
+> Sicherheitsregeln** (frozen dataclasses, execution_enabled=False, MCP-Write-Guards,
+> append-only Audit) gelten weiter; einzelne Pfad-/Sprint-Stände können veraltet sein.
+
 ---
 
 ## Zweck dieses Prompts

@@ -8,13 +8,17 @@ Dieses Dokument ist der **Architektur-Einstieg für menschliche und KI-Bearbeite
 
 ## Projektidentität
 
-KAI ist eine **produktive Crypto-Analyse- und Signal-Pipeline** mit:
+KAI ist ein **modulares, sicheres und agentisches KI-System für globale Informations-, Markt-, Risiko- und Finanzanalyse** — kein einfacher Trading-Bot und keine Blackbox. Datenaufnahme, Analyse, Risiko, Entscheidung, Audit, Sicherheit, Benutzerinteraktion und optionale Ausführung sind klar getrennt. Die kanonische Identitäts- und Zielbild-Definition (Schichtenmodell A–H mit Reifegraden LIVE/VORBEREITET/ZIELBILD, Robotron=Codename, Persona≠Architektur) ist die **Single Source of Truth in [`docs/KAI_IDENTITY.md`](docs/KAI_IDENTITY.md)**.
+
+**Heute live (Paper-First, Live-Disabled)** ist davon die Crypto-Analyse- und Signal-Pipeline:
 - RSS + TradingView + Telegram-Ingestion
 - LLM- und regelbasierter Analyse
 - Priority-Scoring + Sentiment-Klassifikation
 - Premium-Telegram-Signal → Paper-Trade-Bridge
 - AuditStream als zentrale Vertrauensbasis
 - Dashboard + Cloudflare Tunnel für Operator-Remote-Zugang
+
+Zukunftsschichten (Lightning, DeFi, KYT, öffentliche Tor-Analyse im legalen Beobachtungsrahmen, App/Multichannel, Payment-/Spenden-/Investment-Flows) sind im Zielbild dokumentiert und durchgängig gegated — Details und Reifegrad je Schicht in `docs/KAI_IDENTITY.md`.
 
 **Nicht-Ziele:**
 - Kein Rewrite — Architektur ist tragfähig.
