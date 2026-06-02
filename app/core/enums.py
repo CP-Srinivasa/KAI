@@ -70,6 +70,21 @@ class EntryMode(StrEnum):
         return self is not EntryMode.DISABLED
 
     @property
+    def allows_risk_increasing_entry(self) -> bool:
+        """Source-AGNOSTIC kill-switch: True when ANY path may OPEN new
+        risk-increasing exposure (autonomous loop, premium/promoted bridge,
+        future live wiring). ``DISABLED`` is a hard global stop; exits and
+        risk-reductions are never gated by this.
+
+        ``allows_autonomous_loop_entry`` is the loop-specific alias kept for
+        call-site clarity at the autonomous gate; both share the same truth so a
+        ``disabled`` mode means *no new entries anywhere*, not merely no
+        autonomous entries (2026-06-02 safety-contract: a partial kill-switch is
+        not a kill-switch).
+        """
+        return self is not EntryMode.DISABLED
+
+    @property
     def is_live(self) -> bool:
         """True for the two live entry modes (require ExecutionMode.LIVE)."""
         return self in (EntryMode.LIVE_LIMITED, EntryMode.LIVE_NORMAL)
