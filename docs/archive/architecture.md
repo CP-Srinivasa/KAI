@@ -1,4 +1,9 @@
-# ARCHITECTURE.md
+# ARCHITECTURE.md (historisch — S45–S50-Stand)
+
+> **ARCHIVHINWEIS:** Dieses Dokument ist historisch und nicht der aktuelle Architektur-Einstieg.
+> Aktueller Architektur-Einstieg: das Root-`ARCHITECTURE.md`; kanonische Identität/Zielbild:
+> **`docs/KAI_IDENTITY.md`**. Die hier beschriebenen **Safety Invariants** (live default-off,
+> fail-closed, kein direkter Live-Pfad aus Operator-Surfaces) gelten unverändert weiter.
 
 ## Intent
 

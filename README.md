@@ -1,7 +1,11 @@
-# AI Analyst Trading Bot (KAI)
+# KAI (Repo-/Paketname: `ai_analyst_trading_bot`)
 
-Production-oriented crypto/market intelligence pipeline:
-RSS + TradingView + Telegram ingestion → LLM/rule analysis → scoring → alerting → paper-trading signal bridge. Dashboard + Cloudflare Tunnel for remote operator access.
+**KAI ist ein modulares, sicheres und agentisches KI-System für globale Informations-, Markt-, Risiko- und Finanzanalyse** — kein einfacher Trading-Bot und keine Blackbox. KAI trennt Datenaufnahme, Analyse, Risiko, Entscheidung, Audit, Sicherheit, Benutzerinteraktion und optionale Ausführung klar voneinander, mit Watchdog-Kontrolle und SENTR-Sicherheit. Die vollständige Identitäts- und Zielbild-Definition (inkl. Schichtenmodell und Reifegrade) ist die Single Source of Truth in **[`docs/KAI_IDENTITY.md`](docs/KAI_IDENTITY.md)**.
+
+`ai_analyst_trading_bot` ist der Legacy-/Repository-/Paketname; `Robotron` ist ein interner Codename — beide sind nicht die fachliche Produktidentität.
+
+**Heute live (Paper-First, Live-Execution disabled):** crypto/market intelligence pipeline —
+RSS + TradingView + Telegram ingestion → LLM/rule analysis → scoring → alerting → paper-trading signal bridge. Dashboard + Cloudflare Tunnel for remote operator access. Zukunftsschichten (Lightning, DeFi, KYT, öffentliche Tor-Analyse, App/Multichannel, Payment-/Spenden-/Investment-Flows) sind im Zielbild beschrieben und gegated — siehe `docs/KAI_IDENTITY.md`.
 
 ## Current State (2026-05-29)
 
@@ -82,6 +86,7 @@ TV-1..TV-4 stages audit-only, fail-closed, gated by shared-token + HMAC. TV-4b b
 
 ## Canonical Living Docs
 
+- `docs/KAI_IDENTITY.md` — **Single Source of Truth** für Projektidentität + Zielbild-Schichtenmodell
 - `AGENTS.md` — operator constraints, current phase state, agent roster
 - `RUNBOOK.md` — daily operator procedure, dashboard, agent chat
 - `DECISION_LOG.md` — compact decision history (D-1..D-188)

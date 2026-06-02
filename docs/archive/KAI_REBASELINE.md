@@ -1,6 +1,13 @@
 # KAI_REBASELINE.md
-# Kanonische Rebaseline — KAI (Robotron)
+# Rebaseline (historisch) — KAI (Codename: Robotron)
 # Datum: 2026-03-21 | Sprint-Stand: 36 | Tests: 1315 | Ruff: clean
+
+> **ARCHIVHINWEIS:** Dieser Rebaseline-Stand ist historisch (Sprint 36) und nicht mehr die
+> aktuelle Hauptquelle. Aktuelle, kanonische Identität/Architektur: `README.md`,
+> `ARCHITECTURE.md` und **`docs/KAI_IDENTITY.md`** (Single Source of Truth). `Robotron` ist
+> ein interner Codename; die Engführung „LLM-System" ist durch das breitere agentische
+> KI-System-Zielbild in `docs/KAI_IDENTITY.md` abgelöst. Die beschriebenen Sicherheits-
+> invarianten gelten weiter.
 
 ---
 

@@ -1,6 +1,15 @@
 # KAI_SYSTEM_PROMPT.md
-# Kanonischer System-Prompt — KAI (Robotron)
+# System-Prompt — KAI (Codename: Robotron)
 # Version: v1 — 2026-03-21 — Rebaseline-Stand Sprint 36
+
+> **ARCHIVHINWEIS:** Dieses Dokument ist historisch und darf nicht als aktuelle Hauptquelle
+> für die KAI-Identität verstanden werden — aktuelle Systemdefinition siehe `README.md`,
+> `ARCHITECTURE.md` und **`docs/KAI_IDENTITY.md`** (Single Source of Truth). Die hier
+> formulierten **Sicherheits- und Kontrollregeln** (absolute Grenzen, fail-closed,
+> live-disabled-by-default, RiskEngine non-bypassable, Recording ≠ Executing) bleiben
+> verbindlich. `Robotron` ist ein interner Codename, nicht die Produktidentität; die frühere
+> Engführung „LLM-System für Marktanalyse … Paper-Trading … Observability" ist durch das
+> breitere Zielbild in `docs/KAI_IDENTITY.md` abgelöst.
 
 ---
 

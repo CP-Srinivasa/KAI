@@ -2,8 +2,9 @@
 
 ## Project Identity
 
-**Project Name:** `ai_analyst_trading_bot`  
-**Mission:** Build a production-oriented, modular AI-powered monitoring, analysis, alerting, research, and signal-preparation platform for crypto and traditional financial markets.  
+**System Identity:** **KAI** — ein modulares, sicheres und agentisches KI-System für globale Informations-, Markt-, Risiko- und Finanzanalyse (kein einfacher Trading-Bot, keine Blackbox). Kanonische Identitäts- und Zielbild-Definition: **`docs/KAI_IDENTITY.md`** (Single Source of Truth, mit Schichtenmodell + Reifegraden).  
+**Repo-/Paketname:** `ai_analyst_trading_bot` (Legacy-/Pfadname, bewusst nicht umbenannt). **Codename:** `Robotron` (intern). Beide sind nicht die fachliche Produktidentität.  
+**Mission (heute live, Paper-First):** Build a production-oriented, modular AI-powered monitoring, analysis, alerting, research, and signal-preparation platform for crypto and traditional financial markets. Zukunftsschichten (Lightning, DeFi, KYT, öffentliche Tor-Analyse, App/Multichannel, Payment-/Spenden-/Investment-Flows) sind im Zielbild gegated — siehe `docs/KAI_IDENTITY.md`.  
 **Engineering Motto:** **Simple but Powerful**
 
 This repository is designed to support:
