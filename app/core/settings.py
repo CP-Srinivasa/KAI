@@ -301,6 +301,46 @@ class RiskSettings(BaseSettings):
     #   tightening (fall back to the normal cap).
     churn_probe_trades_per_hour: int = Field(default=1, ge=0)
 
+    # Sprint 2026-06-02 — reward/risk + risk-budget gates (Gate 10 in
+    # app/risk/engine.py). Root cause: a premium channel signal (US/USDT, 10x,
+    # stop 4.2% / leveraged risk 42%, T1 reward/risk ~0.11) was only ever stopped
+    # by the max_open_positions cap — there was NO reward/risk or per-signal risk
+    # ceiling. These gates close that gap.
+    #
+    # ALL default to the DISABLED sentinel (<= 0 / None). Turning them on changes
+    # productive gating globally and — like the diversification cap incident —
+    # a wrong threshold can starve the book. They are therefore OPERATOR-SIGN-OFF
+    # parameters, default-OFF, with recommended values documented in .env.example.
+    # Evaluation is fail-closed: an ENABLED gate with missing geometry rejects.
+    #
+    # Recommended starting values once signed off (env RISK_*):
+    #   RISK_MIN_RR=0.5  RISK_MIN_AVG_RR=0.8  RISK_MAX_SIGNAL_RISK_PCT=8.0
+    #   RISK_MAX_LEVERAGED_RISK_PCT=35.0  RISK_MIN_NET_EDGE_BPS=0.0
+    #   RISK_MIN_TARGET_DISTANCE_PCT=0.3
+    min_rr: float = Field(default=0.0, ge=0.0)
+    min_avg_rr: float = Field(default=0.0, ge=0.0)
+    # max_signal_risk_pct: UN-leveraged stop distance |entry-SL|/entry*100.
+    max_signal_risk_pct: float = Field(default=0.0, ge=0.0)
+    # max_leveraged_risk_pct: DENOMINATOR-SAFE definition = stop_distance_pct *
+    # leverage (the signal-geometry "Risk 42%" a 10x channel reports). This is
+    # NOT account-equity-at-risk — do not interpret 35 as 35% of equity.
+    max_leveraged_risk_pct: float = Field(default=0.0, ge=0.0)
+    min_net_edge_bps: float | None = Field(default=None)
+    min_target_distance_pct: float = Field(default=0.0, ge=0.0)
+    # Staged rollout for the reward/risk gates. off|audit|enforce. Default
+    # "audit": a set threshold is OBSERVED (would_reject + risk_gate_audit.jsonl)
+    # before it can ever block — the safe path against silent book-starvation.
+    # env: RISK_GATES_MODE.
+    gates_mode: str = Field(default="audit")
+
+    @field_validator("gates_mode")
+    @classmethod
+    def _validate_gates_mode(cls, v: str) -> str:
+        norm = (v or "").strip().lower()
+        if norm not in {"off", "audit", "enforce"}:
+            raise ValueError("RISK_GATES_MODE must be one of: off, audit, enforce")
+        return norm
+
 
 class ExecutionSettings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="EXECUTION_", env_file=".env", extra="ignore")

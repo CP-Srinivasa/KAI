@@ -1232,6 +1232,14 @@ def _build_risk_limits_from_settings() -> RiskLimits:
         max_position_size_pct=risk.max_position_size_pct,
         round_trip_fee_pct=risk.round_trip_fee_pct,
         min_sl_cost_multiple=risk.min_sl_cost_multiple,
+        # Sprint 2026-06-02 reward/risk gates — all default-OFF in Settings.
+        min_rr=risk.min_rr,
+        min_avg_rr=risk.min_avg_rr,
+        max_signal_risk_pct=risk.max_signal_risk_pct,
+        max_leveraged_risk_pct=risk.max_leveraged_risk_pct,
+        min_net_edge_bps=risk.min_net_edge_bps,
+        min_target_distance_pct=risk.min_target_distance_pct,
+        gates_mode=risk.gates_mode,
     )
 
 

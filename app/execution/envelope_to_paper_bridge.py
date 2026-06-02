@@ -54,6 +54,7 @@ from app.execution.paper_engine_singleton import get_paper_engine
 from app.market_data.service import get_market_data_snapshot
 from app.risk.engine import RiskEngine
 from app.risk.models import RiskLimits
+from app.risk.reason_codes import ExecutionBlockerCode
 
 if TYPE_CHECKING:
     from app.execution.paper_engine import PaperExecutionEngine
@@ -101,6 +102,7 @@ class BridgeTickResult:
     skipped_source: int = 0
     rejected_risk: int = 0
     rejected_size: int = 0
+    rejected_entry_mode: int = 0
     rejected_incomplete: int = 0
     # Historical counter — pre-V25 path. Active code never increments it any
     # more (SHORT signals open as native paper short via paper_engine).
@@ -121,6 +123,7 @@ class BridgeTickResult:
             "skipped_source": self.skipped_source,
             "rejected_risk": self.rejected_risk,
             "rejected_size": self.rejected_size,
+            "rejected_entry_mode": self.rejected_entry_mode,
             "rejected_incomplete": self.rejected_incomplete,
             "rejected_short": self.rejected_short,
             "rejected_fill": self.rejected_fill,
@@ -357,6 +360,18 @@ def _build_risk_limits() -> RiskLimits:
         min_signal_confidence=r.min_signal_confidence,
         min_signal_confluence_count=r.min_signal_confluence_count,
         min_notional_usd=r.min_notional_usd,
+        # round_trip_fee_pct is threaded so net-edge diagnostics use the real
+        # (CostModel-derived) cost. min_sl_cost_multiple is intentionally NOT
+        # passed here (stays 0.0/off on the bridge path — unchanged behaviour).
+        round_trip_fee_pct=r.round_trip_fee_pct,
+        # Sprint 2026-06-02 reward/risk gates — all default-OFF in Settings.
+        min_rr=r.min_rr,
+        min_avg_rr=r.min_avg_rr,
+        max_signal_risk_pct=r.max_signal_risk_pct,
+        max_leveraged_risk_pct=r.max_leveraged_risk_pct,
+        min_net_edge_bps=r.min_net_edge_bps,
+        min_target_distance_pct=r.min_target_distance_pct,
+        gates_mode=r.gates_mode,
     )
 
 
@@ -914,6 +929,7 @@ async def _process_one(
 
     # Gate 5: Risk Engine
     current_open = len(engine.portfolio.positions)
+    leverage_for_risk = _float(payload.get("leverage"))
     risk_result = risk.check_order(
         symbol=symbol,
         side=side_str,
@@ -923,11 +939,94 @@ async def _process_one(
         current_open_positions=current_open,
         entry_price=entry_price,
         take_profit_price=tp1,
+        take_profit_targets=list(targets) if targets else None,
+        leverage=leverage_for_risk,
     )
+    # Staged-rollout audit: in audit OR enforce mode, persist a reward/risk-gate
+    # evaluation when it flags the signal — even when the order is otherwise
+    # approved (audit mode). Lets the operator measure reject-rate before
+    # flipping RISK_GATES_MODE to enforce. Fail-soft; never blocks the bridge.
+    try:
+        from app.observability.risk_gate_audit import record_risk_gate_eval
+
+        record_risk_gate_eval(
+            risk_result=risk_result,
+            envelope_id=envelope_id,
+            correlation_id=str(
+                _audit_base(
+                    envelope_id=envelope_id,
+                    stage="risk_gate_eval",
+                    source=source,
+                    envelope=envelope,
+                ).get("correlation_id")
+            ),
+            source=source,
+            symbol=symbol,
+            enforced=str(risk_result.details.get("gates_mode")) == "enforce",
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("[bridge] risk_gate_audit record failed: %s", exc)
+
+    # Safety-contract kill-switch (2026-06-02): EXECUTION_ENTRY_MODE is a GLOBAL
+    # gate on risk-increasing entries. The autonomous loop honours it in
+    # trading_loop; the premium/promoted bridge MUST honour it too — otherwise
+    # ``disabled`` is only a partial kill-switch (autonomous blocked, premium
+    # through). Diagnostics (risk-gate audit above) are computed FIRST on
+    # purpose: under ``disabled`` we still emit full would_reject/geometry
+    # evidence — we report, then refuse to act. Exits/risk-reductions never reach
+    # here (this path opens NEW exposure only).
+    entry_mode = get_settings().execution.entry_mode
+    if not entry_mode.allows_risk_increasing_entry:
+        rec = base("rejected_entry_mode")
+        rec["reason"] = "entry_mode_disabled"
+        rec["reason_codes"] = [ExecutionBlockerCode.ENTRY_MODE_DISABLED.value]
+        rec["entry_mode"] = entry_mode.value
+        rec["risk_gates_mode"] = risk_result.details.get("gates_mode")
+        rec["risk_gate_would_reject"] = risk_result.would_reject
+        rec["signal_geometry"] = risk_result.details.get("signal_geometry")
+        rec["open_count"] = current_open
+        rec["max_open_positions"] = risk.limits.max_open_positions
+        rec["executable_intent"] = _build_executable_intent(
+            envelope_id=envelope_id,
+            correlation_id=str(rec["correlation_id"]),
+            source=source,
+            payload=payload,
+            symbol=symbol,
+            side=str(side_str),
+            entry_price=entry_price,
+            stop_loss=stop_loss,
+            targets=targets,
+        ).to_dict()
+        rec["order_intent"] = rec["executable_intent"]
+        # Lifecycle terminal is the coarse audit layer; the precise disposition is
+        # carried by stage="rejected_entry_mode" + reason_codes=[ENTRY_MODE_DISABLED].
+        # Block is post-validation / pre-entry-trigger: the signal is well-formed,
+        # the global kill-switch refuses to act. VALIDATED -> REJECTED is the legal
+        # (and honest) terminal — we never reach order-building.
+        _attach_lifecycle(
+            rec,
+            final_state=OrderLifecycleState.REJECTED_INVALID_SIGNAL,
+            states=[
+                OrderLifecycleState.RECEIVED,
+                OrderLifecycleState.PARSED,
+                OrderLifecycleState.VALIDATED,
+                OrderLifecycleState.REJECTED_INVALID_SIGNAL,
+            ],
+            reason="entry_mode_disabled",
+        )
+        _append_bridge_audit(rec)
+        result.rejected_entry_mode += 1
+        return
+
     if not risk_result.approved:
         rec = base("rejected_risk")
         rec["risk_check_id"] = risk_result.check_id
         rec["violations"] = list(risk_result.violations)
+        rec["reason_codes"] = list(risk_result.reason_codes)
+        rec["signal_geometry"] = risk_result.details.get("signal_geometry")
+        rec["open_count"] = current_open
+        rec["max_open_positions"] = risk.limits.max_open_positions
+        rec["open_symbols"] = sorted(engine.portfolio.positions.keys())
         rec["executable_intent"] = _build_executable_intent(
             envelope_id=envelope_id,
             correlation_id=str(rec["correlation_id"]),

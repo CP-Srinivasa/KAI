@@ -13,6 +13,7 @@ from app.risk.models import (
     _new_check_id,
     _now_utc,
 )
+from app.risk.reason_codes import map_violations_to_codes
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +43,11 @@ class RiskEngine:
     def is_halted(self) -> bool:
         """True when system is paused or kill switch is active."""
         return self._kill_switch_active or self._paused
+
+    @property
+    def limits(self) -> RiskLimits:
+        """Read-only access to the active risk limits (for audit/observability)."""
+        return self._limits
 
     def pause(self) -> None:
         """Operator-triggered pause. No new orders allowed."""
@@ -118,11 +124,17 @@ class RiskEngine:
         is_averaging_down: bool = False,
         entry_price: float | None = None,
         take_profit_price: float | None = None,
+        take_profit_targets: list[float] | tuple[float, ...] | None = None,
+        leverage: float | None = None,
         sma: float | None = None,
     ) -> RiskCheckResult:
         """
         Pre-order risk gate. Must return approved=True before any order is sent.
         All checks are evaluated; violations accumulate.
+
+        ``take_profit_targets`` (full tier list) and ``leverage`` feed the
+        reward/risk + risk-budget gates (Gate 10). They are optional and the
+        gates are default-off, so omitting them is backward compatible.
         """
         check_id = _new_check_id()
         violations: list[str] = []
@@ -267,6 +279,28 @@ class RiskEngine:
             elif entry_price < sma and side_norm in {"buy", "long"}:
                 violations.append(f"regime_conflict:downtrend_rejects_{side_norm}")
 
+        # Gate 10 (Sprint 2026-06-02): reward/risk + risk-budget gates.
+        # Geometry diagnostics are computed ALWAYS (even when an earlier gate
+        # already fired, e.g. max_open_positions) so the audit/UI can show WHY a
+        # signal is structurally good or bad independent of the first blocker.
+        geometry = self._signal_geometry(
+            side=normalized_side,
+            entry_price=entry_price,
+            stop_loss_price=stop_loss_price,
+            targets=list(take_profit_targets) if take_profit_targets else None,
+            leverage=leverage,
+        )
+        # Gate 10 honours gates_mode: "off" skips, "audit" records would_reject
+        # without blocking, "enforce" merges into the blocking violations.
+        gates_mode = (self._limits.gates_mode or "audit").strip().lower()
+        rr_violations: list[str] = []
+        if gates_mode != "off":
+            self._apply_reward_risk_gates(geometry, rr_violations)
+        would_reject = bool(rr_violations)
+        would_reject_codes = map_violations_to_codes(rr_violations)
+        if gates_mode == "enforce":
+            violations.extend(rr_violations)
+
         approved = len(violations) == 0
         reason = (
             "All risk gates passed" if approved else f"Risk violations: {'; '.join(violations)}"
@@ -280,6 +314,10 @@ class RiskEngine:
             check_type="pre_order",
             reason=reason,
             violations=violations,
+            reason_codes=map_violations_to_codes(violations),
+            would_reject=would_reject,
+            would_reject_violations=rr_violations,
+            would_reject_codes=would_reject_codes,
             details={
                 "side": side,
                 "signal_confidence": signal_confidence,
@@ -287,6 +325,8 @@ class RiskEngine:
                 "open_positions": current_open_positions,
                 "daily_loss_pct": self._daily_loss_pct,
                 "drawdown_pct": self._total_drawdown_pct,
+                "signal_geometry": geometry,
+                "gates_mode": gates_mode,
             },
         )
 
@@ -302,6 +342,148 @@ class RiskEngine:
             )
 
         return result
+
+    def _signal_geometry(
+        self,
+        *,
+        side: str,
+        entry_price: float | None,
+        stop_loss_price: float | None,
+        targets: list[float] | None,
+        leverage: float | None,
+    ) -> dict[str, object] | None:
+        """Compute reward/risk geometry for the reward-risk gates + audit.
+
+        Returns ``None`` when entry/SL are not usable (non-positive/missing) — a
+        sentinel the gate layer treats as "insufficient data". `targets` may be
+        ``None`` (some callers have only a single TP); reward fields are then
+        ``None`` but the risk-distance fields still populate.
+
+        Reward is signed in the *favourable* direction: for a long, target above
+        entry is positive; for a short, target below entry is positive. ``t1`` is
+        the first listed target (matches the channel's tier-1 convention).
+        """
+        if entry_price is None or entry_price <= 0:
+            return None
+        if stop_loss_price is None or stop_loss_price <= 0:
+            return None
+
+        lev = leverage if (leverage is not None and leverage > 0) else 1.0
+        stop_distance_pct = abs(entry_price - stop_loss_price) / entry_price * 100.0
+        leveraged_risk_pct = stop_distance_pct * lev
+
+        def _favourable_reward_pct(target: float) -> float:
+            if side == "buy":
+                return (target - entry_price) / entry_price * 100.0
+            # sell/short
+            return (entry_price - target) / entry_price * 100.0
+
+        geom: dict[str, object] = {
+            "side": side,
+            "leverage": lev,
+            "stop_distance_pct": round(stop_distance_pct, 6),
+            "leveraged_risk_pct": round(leveraged_risk_pct, 6),
+            "round_trip_fee_pct": self._limits.round_trip_fee_pct,
+        }
+
+        valid_targets = [t for t in (targets or []) if isinstance(t, (int, float)) and t > 0]
+        if valid_targets and stop_distance_pct > 0:
+            rewards = [_favourable_reward_pct(float(t)) for t in valid_targets]
+            t1_reward_pct = rewards[0]
+            avg_reward_pct = sum(rewards) / len(rewards)
+            net_edge_bps = (t1_reward_pct - self._limits.round_trip_fee_pct) * 100.0
+            geom.update(
+                {
+                    "t1_reward_pct": round(t1_reward_pct, 6),
+                    "avg_reward_pct": round(avg_reward_pct, 6),
+                    "nearest_target_distance_pct": round(t1_reward_pct, 6),
+                    "rr_t1": round(t1_reward_pct / stop_distance_pct, 6),
+                    "avg_rr": round(avg_reward_pct / stop_distance_pct, 6),
+                    "net_edge_bps_t1": round(net_edge_bps, 4),
+                    "n_targets": len(valid_targets),
+                }
+            )
+        return geom
+
+    def _apply_reward_risk_gates(
+        self, geometry: dict[str, object] | None, violations: list[str]
+    ) -> None:
+        """Append violations for the Sprint-2026-06-02 reward/risk gates.
+
+        Fail-closed: when a gate is ENABLED (threshold > 0 / not None) but the
+        required geometry is unavailable, the order is rejected with an
+        ``*:insufficient_data`` violation rather than silently passing.
+        """
+        lim = self._limits
+        gate_enabled = (
+            lim.min_rr > 0
+            or lim.min_avg_rr > 0
+            or lim.max_signal_risk_pct > 0
+            or lim.max_leveraged_risk_pct > 0
+            or lim.min_net_edge_bps is not None
+            or lim.min_target_distance_pct > 0
+        )
+        if not gate_enabled:
+            return
+
+        if geometry is None:
+            violations.append("signal_risk_too_high:insufficient_data:entry_or_sl_missing")
+            return
+
+        def _num(key: str) -> float | None:
+            v = geometry.get(key)
+            return float(v) if isinstance(v, (int, float)) else None
+
+        rr_t1 = _num("rr_t1")
+        avg_rr = _num("avg_rr")
+        stop_distance_pct = _num("stop_distance_pct")
+        leveraged_risk_pct = _num("leveraged_risk_pct")
+        net_edge_bps = _num("net_edge_bps_t1")
+        nearest_target_pct = _num("nearest_target_distance_pct")
+
+        # Reward/risk floors (need targets).
+        if lim.min_rr > 0:
+            if rr_t1 is None:
+                violations.append("rr_too_low:insufficient_data:no_targets")
+            elif rr_t1 < lim.min_rr:
+                violations.append(f"rr_too_low:{rr_t1:.4g}<{lim.min_rr:.4g}")
+        if lim.min_avg_rr > 0:
+            if avg_rr is None:
+                violations.append("avg_rr_too_low:insufficient_data:no_targets")
+            elif avg_rr < lim.min_avg_rr:
+                violations.append(f"avg_rr_too_low:{avg_rr:.4g}<{lim.min_avg_rr:.4g}")
+
+        # Risk-budget ceilings (need stop distance — always present when geometry
+        # is not None).
+        if lim.max_signal_risk_pct > 0 and stop_distance_pct is not None:
+            if stop_distance_pct > lim.max_signal_risk_pct:
+                violations.append(
+                    f"signal_risk_too_high:{stop_distance_pct:.4g}%>{lim.max_signal_risk_pct:.4g}%"
+                )
+        if lim.max_leveraged_risk_pct > 0 and leveraged_risk_pct is not None:
+            if leveraged_risk_pct > lim.max_leveraged_risk_pct:
+                violations.append(
+                    f"leveraged_risk_too_high:{leveraged_risk_pct:.4g}%"
+                    f">{lim.max_leveraged_risk_pct:.4g}%"
+                )
+
+        # Net edge after fees (need targets).
+        if lim.min_net_edge_bps is not None:
+            if net_edge_bps is None:
+                violations.append("net_edge_too_low:insufficient_data:no_targets")
+            elif net_edge_bps < lim.min_net_edge_bps:
+                violations.append(
+                    f"net_edge_too_low:{net_edge_bps:.4g}bps<{lim.min_net_edge_bps:.4g}bps"
+                )
+
+        # Minimum nearest-target distance (need targets).
+        if lim.min_target_distance_pct > 0:
+            if nearest_target_pct is None:
+                violations.append("target_too_close:insufficient_data:no_targets")
+            elif nearest_target_pct < lim.min_target_distance_pct:
+                violations.append(
+                    f"target_too_close:{nearest_target_pct:.4g}%<{lim.min_target_distance_pct:.4g}%"
+                )
 
     def calculate_risk_geometry(
         self,
