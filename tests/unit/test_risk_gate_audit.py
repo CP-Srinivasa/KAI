@@ -76,14 +76,39 @@ def test_report_aggregates_distribution(tmp_path: Path) -> None:
             fh.write(json.dumps(rec) + "\n")
 
     report = build_risk_gate_audit_report(log_path=log)
-    assert report.total_records == 3
+    assert report.total_records == 3  # raw lines
+    # No correlation_id on these rows -> each line is its own distinct signal.
     assert report.would_reject_count == 3
-    assert report.reject_rate == 1.0
+    # reject_rate is computed downstream (review layer, vs bridge denominator).
+    assert report.reject_rate == 0.0
     assert report.reason_code_distribution["REJECT_RISK_TOO_HIGH"] == 2
     assert report.reason_code_distribution["REJECT_RR_TOO_LOW"] == 2
     assert report.rejected_by_symbol["US/USDT"] == 2
     assert report.rejected_by_source["ch_b"] == 1
     assert report.enforced_count == 1
+
+
+def test_report_dedups_repeated_evals_of_same_signal(tmp_path: Path) -> None:
+    """A pending signal re-evaluated every tick must count ONCE (correlation_id)."""
+    log = tmp_path / "risk_gate_audit.jsonl"
+    for _ in range(413):  # mirrors the real APR/USDT pending-loop observation
+        rec = {
+            "event": "risk_gate_audit",
+            "correlation_id": "ENV-APR-1",
+            "symbol": "APR/USDT",
+            "source": "telegram_premium_channel_approved",
+            "enforced": False,
+            "would_reject": True,
+            "would_reject_codes": ["REJECT_RR_TOO_LOW", "REJECT_RISK_TOO_HIGH"],
+        }
+        with log.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(rec) + "\n")
+
+    report = build_risk_gate_audit_report(log_path=log)
+    assert report.total_records == 413  # raw lines preserved
+    assert report.would_reject_count == 1  # ONE distinct signal
+    assert report.reason_code_distribution["REJECT_RR_TOO_LOW"] == 1
+    assert report.rejected_by_symbol["APR/USDT"] == 1
 
 
 def test_report_missing_file_is_safe() -> None:
