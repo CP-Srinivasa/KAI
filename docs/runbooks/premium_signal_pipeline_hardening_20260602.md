@@ -18,21 +18,36 @@ Exchange waren **nicht** der finale Blocker — das volle Buch war es.
 | Session-Lock | `app/ingestion/telegram_session_lock.py` | opt-in | Host+PID-Lock gegen AuthKeyDuplicated-Dual-Host. |
 | Capacity-Report | `app/observability/capacity_report.py` | read-only | De-Stau-Sicht; markiert stale Pendings, löscht nie. |
 
-## Risk-Gates aktivieren (OPERATOR-SIGN-OFF)
+## Risk-Gates aktivieren — STAGED (off → audit → enforce)
 
-Die Gates sind bewusst **default-OFF** — Aktivierung verändert das produktive
-Gating global; ein falscher Schwellwert kann (wie der Diversification-Cap-
-Vorfall) das Buch aushungern. Empfohlene Startwerte in `.env`:
+Die Gates sind default-OFF; der Modus ist `RISK_GATES_MODE` (default **audit**).
+Reihenfolge — **niemals direkt enforce**:
 
+**Schritt 1 — audit (beobachten, nicht blocken):**
 ```
-RISK_MAX_LEVERAGED_RISK_PCT=35.0   # fängt das US/USDT-42%-Signal
-RISK_MIN_RR=0.5                    # fängt R/R 0.11
+RISK_GATES_MODE=audit
+RISK_MAX_LEVERAGED_RISK_PCT=35.0   # Nenner = stop_distance_pct*leverage, NICHT equity!
+RISK_MIN_RR=0.5
 RISK_MIN_TARGET_DISTANCE_PCT=0.3
 ```
+`systemctl restart kai-server`, dann ≥1 Tag laufen lassen. Auswerten:
+```bash
+python -m app.observability.risk_gate_audit   # reject-rate, code-distribution, by-symbol/source
+```
+Prüfen: Fängt es das US/USDT-Signal? Welche Codes dominieren? Wie viele
+*legitime* Signale würden fälschlich blockiert? Wäre das Buch zu oft leer?
 
-Nach dem Setzen: `systemctl restart kai-server` + Smoke (s.u.). Wirkung prüfen:
-ein abgelehntes Signal trägt jetzt `reason_codes:["REJECT_RISK_TOO_HIGH", …]` +
-`signal_geometry` im `bridge_pending_orders.jsonl`-Reject-Record.
+**Schritt 2 — enforce (erst wenn audit plausibel, nur paper):**
+```
+RISK_GATES_MODE=enforce
+```
+Dann trägt ein abgelehntes Signal `reason_codes:["REJECT_RISK_TOO_HIGH", …]` +
+`signal_geometry` im `bridge_pending_orders.jsonl`-Reject-Record; in `audit`
+steht dasselbe als `would_reject` in `artifacts/risk_gate_audit.jsonl`.
+
+**Wichtig:** Diese Gates sind Pipeline-Härtung, **keine** Edge-/Strategie-
+Reparatur. `EXECUTION_ENTRY_MODE` bleibt unverändert; sie sind kein Grund, den
+Entry-Loop zu reaktivieren.
 
 ## Capacity / Buch-Entstauung
 
