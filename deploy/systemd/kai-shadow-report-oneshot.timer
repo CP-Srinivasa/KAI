@@ -1,0 +1,14 @@
+[Unit]
+Description=Fire KAI Shadow-Report one-shot at 2026-06-04 21:00 CEST (Phase B T+48h)
+
+[Timer]
+# Absolute one-shot. Fires once at the calendar moment; does not repeat (the date
+# is in the past afterwards). Persistent=true so a Pi reboot near the time still
+# triggers the missed run.
+OnCalendar=2026-06-04 21:00:00 Europe/Berlin
+Persistent=true
+AccuracySec=1min
+Unit=kai-shadow-report-oneshot.service
+
+[Install]
+WantedBy=timers.target
