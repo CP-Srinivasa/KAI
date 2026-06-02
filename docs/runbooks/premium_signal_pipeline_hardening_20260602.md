@@ -83,6 +83,30 @@ Alle Code-Gates sind default-OFF bzw. additiv. Rollback = Gate-Env-Vars
 entfernen (Risk-Gates) bzw. Branch revert. Keine Schema-Migration, keine
 Daten-Mutation. Der Parser-Fix ist reine Erweiterung (212 Bestands-Tests grün).
 
+## Audit-Window-Review (One-Shot systemd Timer, Pi-lokal)
+
+Die Audit-Auswertung läuft, WO die Daten entstehen — auf dem Pi, nicht in der
+Cloud (`risk_gate_audit.jsonl` ist Pi-Runtime-State, kein Repo-Artefakt). Ein
+One-Shot-Timer feuert am **2026-06-04 18:00 Europe/Berlin (= 16:00 UTC)**:
+
+```bash
+# auf dem Pi, nach Deploy des p7-Trunks:
+sudo cp deploy/systemd/kai-risk-gate-audit-review.{service,timer} /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now kai-risk-gate-audit-review.timer
+systemctl list-timers kai-risk-gate-audit-review.timer   # verify next-run
+# manueller Probelauf (read-only, ändert nichts):
+sudo systemctl start kai-risk-gate-audit-review.service && journalctl -u kai-risk-gate-audit-review -n 40 --no-pager
+```
+
+Der Job ist **read-only**: schreibt `artifacts/risk_gate_audit_review_<date>.{json,md}`,
+sendet eine knappe Telegram-Zusammenfassung (über die etablierte
+`ALERT_TELEGRAM_TOKEN/CHAT_ID`-Schiene), und ändert **niemals** Gates oder
+`entry_mode`. Status-Staging: NO_DATA / INSUFFICIENT_DATA (n<10) / LOW_SAMPLE
+(n<30) / REVIEWABLE (n≥30). `enforce_ready` ist immer `NO` — Enforce ist ein
+separater Operator-Entscheid. Nach dem Review:
+`sudo systemctl disable kai-risk-gate-audit-review.timer` (One-Shot erledigt).
+
 ## Bekannte offene Punkte / TODO
 
 - Preflight ist gebaut + getestet, aber es existiert **kein** Live-Order-Send-
