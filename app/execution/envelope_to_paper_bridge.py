@@ -357,6 +357,17 @@ def _build_risk_limits() -> RiskLimits:
         min_signal_confidence=r.min_signal_confidence,
         min_signal_confluence_count=r.min_signal_confluence_count,
         min_notional_usd=r.min_notional_usd,
+        # round_trip_fee_pct is threaded so net-edge diagnostics use the real
+        # (CostModel-derived) cost. min_sl_cost_multiple is intentionally NOT
+        # passed here (stays 0.0/off on the bridge path — unchanged behaviour).
+        round_trip_fee_pct=r.round_trip_fee_pct,
+        # Sprint 2026-06-02 reward/risk gates — all default-OFF in Settings.
+        min_rr=r.min_rr,
+        min_avg_rr=r.min_avg_rr,
+        max_signal_risk_pct=r.max_signal_risk_pct,
+        max_leveraged_risk_pct=r.max_leveraged_risk_pct,
+        min_net_edge_bps=r.min_net_edge_bps,
+        min_target_distance_pct=r.min_target_distance_pct,
     )
 
 
@@ -914,6 +925,7 @@ async def _process_one(
 
     # Gate 5: Risk Engine
     current_open = len(engine.portfolio.positions)
+    leverage_for_risk = _float(payload.get("leverage"))
     risk_result = risk.check_order(
         symbol=symbol,
         side=side_str,
@@ -923,11 +935,18 @@ async def _process_one(
         current_open_positions=current_open,
         entry_price=entry_price,
         take_profit_price=tp1,
+        take_profit_targets=list(targets) if targets else None,
+        leverage=leverage_for_risk,
     )
     if not risk_result.approved:
         rec = base("rejected_risk")
         rec["risk_check_id"] = risk_result.check_id
         rec["violations"] = list(risk_result.violations)
+        rec["reason_codes"] = list(risk_result.reason_codes)
+        rec["signal_geometry"] = risk_result.details.get("signal_geometry")
+        rec["open_count"] = current_open
+        rec["max_open_positions"] = risk.limits.max_open_positions
+        rec["open_symbols"] = sorted(engine.portfolio.positions.keys())
         rec["executable_intent"] = _build_executable_intent(
             envelope_id=envelope_id,
             correlation_id=str(rec["correlation_id"]),

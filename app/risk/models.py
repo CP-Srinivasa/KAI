@@ -55,6 +55,30 @@ class RiskLimits:
     #     1.5). k=1.5 => min SL ~1.8%. OPERATOR-SIGN-OFF PARAMETER.
     round_trip_fee_pct: float = 1.2
     min_sl_cost_multiple: float = 0.0
+    # Sprint 2026-06-02 — reward/risk + risk-budget gates. ALL default-OFF
+    # (disabled sentinel) so this is a strict no-op for existing callers and
+    # tests; productive values are injected from Settings and are
+    # OPERATOR-SIGN-OFF parameters. Evaluation is fail-closed: when a gate is
+    # ENABLED but the inputs needed to evaluate it (targets / leverage / entry /
+    # SL) are missing or non-positive, the order is rejected rather than waved
+    # through. See app/risk/engine.py Gate 10.
+    #   min_rr: minimum reward/risk on the nearest target. <= 0 disables.
+    min_rr: float = 0.0
+    #   min_avg_rr: minimum reward/risk averaged over all targets. <= 0 disables.
+    min_avg_rr: float = 0.0
+    #   max_signal_risk_pct: max UN-leveraged stop distance |entry-SL|/entry*100.
+    #     <= 0 disables.
+    max_signal_risk_pct: float = 0.0
+    #   max_leveraged_risk_pct: max stop distance * leverage (the "Risk 42%"
+    #     figure a 10x channel reports). <= 0 disables.
+    max_leveraged_risk_pct: float = 0.0
+    #   min_net_edge_bps: minimum cost-adjusted edge on the nearest target,
+    #     net of the round-trip fee, in basis points. None disables. Uses
+    #     round_trip_fee_pct (the SAME cost the engine/CostModel charge).
+    min_net_edge_bps: float | None = None
+    #   min_target_distance_pct: nearest target must be at least this far from
+    #     entry (favourable direction), in percent. <= 0 disables.
+    min_target_distance_pct: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -69,6 +93,9 @@ class RiskCheckResult:
     reason: str
     violations: list[str] = field(default_factory=list)
     details: dict[str, object] = field(default_factory=dict)
+    # Stable machine-grade codes mapped from `violations` (see
+    # app/risk/reason_codes.py). Additive: `violations` stays the human contract.
+    reason_codes: list[str] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
