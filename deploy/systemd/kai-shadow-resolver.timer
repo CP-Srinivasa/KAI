@@ -1,0 +1,17 @@
+[Unit]
+# OPT-IN / OFF BY DEFAULT. Not installed or enabled by any deploy script — the
+# operator runs `systemctl enable --now kai-shadow-resolver.timer` manually only
+# when shadow diagnostics are active. Until then this file is inert template.
+Description=Trigger KAI Shadow-Candidate resolver every 30 min (Phase B)
+Requires=kai-server.service
+
+[Timer]
+# The MAE/MFE window is 60 min; a 30-min cadence resolves each candidate on the
+# first tick after its window completes. Read-only — no execution side effects.
+OnBootSec=35min
+OnUnitActiveSec=30min
+AccuracySec=2min
+Unit=kai-shadow-resolver.service
+
+[Install]
+WantedBy=timers.target
