@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import json
 import logging
+import statistics
 from collections.abc import Callable, Sequence
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
@@ -316,6 +317,9 @@ def resolve_pending(
             "symbol": c.get("symbol"),
             "side": side,
             "regime": c.get("regime"),
+            "stop_dist_bps": sd,
+            "take_dist_bps": td,
+            "gate_would_reject": c.get("gate_would_reject"),
             "resolved_at_utc": now.isoformat(),
             **fwd,
             "mae_bps": exc.mae_bps,
@@ -338,11 +342,156 @@ def resolve_pending(
     return counts
 
 
+# --------------------------------------------------------------------------- #
+# Report + root-cause classification
+# --------------------------------------------------------------------------- #
+
+# Heuristic verdict labels. These are HINTS over the raw distribution, never a
+# replacement for it — the report always carries the numbers so a human decides.
+CLASS_INSUFFICIENT = "INSUFFICIENT_DATA"
+CLASS_ADVERSE = "ADVERSE_SELECTION"
+CLASS_STOP_NOISE = "STOP_IN_NOISE_BAND"
+CLASS_TP_UNREACHABLE = "TP_UNREACHABLE"
+CLASS_PROFIT_NOT_HARVESTED = "PROFIT_NOT_HARVESTED"
+CLASS_UNCLASSIFIED = "UNCLASSIFIED"
+
+MIN_SAMPLE_FOR_CLASS = 20
+
+
+def _median(xs: Sequence[float]) -> float | None:
+    return statistics.median(xs) if xs else None
+
+
+def _rate(rows: list[dict[str, object]], key: str) -> float | None:
+    vals = [bool(r.get(key)) for r in rows if isinstance(r.get(key), bool)]
+    return round(sum(vals) / len(vals), 4) if vals else None
+
+
+def _f(v: object) -> float | None:
+    return float(v) if isinstance(v, (int, float)) else None
+
+
+def _split(rows: list[dict[str, object]], key: str) -> dict[str, dict[str, object]]:
+    buckets: dict[str, list[dict[str, object]]] = {}
+    for r in rows:
+        buckets.setdefault(str(r.get(key)), []).append(r)
+    out: dict[str, dict[str, object]] = {}
+    for k, rs in sorted(buckets.items(), key=lambda kv: -len(kv[1])):
+        mfe = [v for v in (_f(r.get("mfe_bps")) for r in rs) if v is not None]
+        fwd = [v for v in (_f(r.get("fwd_3600s_bps")) for r in rs) if v is not None]
+        out[k] = {
+            "count": len(rs),
+            "reached_take_rate": _rate(rs, "reached_take"),
+            "reached_stop_rate": _rate(rs, "reached_stop"),
+            "median_mfe_bps": _median(mfe),
+            "median_fwd_3600s_bps": _median(fwd),
+        }
+    return out
+
+
+def classify(stats: dict[str, object]) -> str:
+    """Heuristic primary root-cause class from aggregate stats (a hint)."""
+    n = int(_f(stats.get("n_resolved")) or 0)
+    if n < MIN_SAMPLE_FOR_CLASS:
+        return CLASS_INSUFFICIENT
+    mbm = _f(stats.get("mfe_before_mae_rate")) or 0.0
+    take_rate = _f(stats.get("reached_take_rate")) or 0.0
+    stop_rate = _f(stats.get("reached_stop_rate")) or 0.0
+    med_mfe = _f(stats.get("median_mfe_bps")) or 0.0
+    med_stop = _f(stats.get("median_stop_dist_bps")) or 0.0
+    med_take = _f(stats.get("median_take_dist_bps")) or 0.0
+    med_fwd_early = _f(stats.get("median_fwd_300s_bps")) or 0.0
+    med_fwd_late = _f(stats.get("median_fwd_3600s_bps")) or 0.0
+
+    # 1) Entry itself toxic: little favourable run, adverse comes first, early
+    #    forward return already negative.
+    if mbm < 0.40 and (med_stop <= 0 or med_mfe < 0.5 * med_stop) and med_fwd_early < 0:
+        return CLASS_ADVERSE
+    # 2) Favourable run is real and sizeable but the TP is set beyond it and the
+    #    late forward return gives it back → profit not harvested.
+    if (
+        mbm >= 0.60
+        and med_take > 0
+        and med_mfe >= 0.5 * med_take
+        and take_rate < 0.30
+        and med_fwd_late <= 0
+    ):
+        return CLASS_PROFIT_NOT_HARVESTED
+    # 3) Stop sits inside the favourable wiggle: price runs past the stop distance
+    #    favourably first, then stops out.
+    if mbm >= 0.60 and med_stop > 0 and med_mfe >= med_stop and stop_rate >= 0.50:
+        return CLASS_STOP_NOISE
+    # 4) TP simply rarely reached while the stop is hit often.
+    if take_rate < 0.30 and stop_rate >= 0.55 and med_take > 0 and med_mfe < med_take:
+        return CLASS_TP_UNREACHABLE
+    return CLASS_UNCLASSIFIED
+
+
+def build_shadow_report(
+    resolved: list[dict[str, object]],
+    *,
+    total_candidates: int | None = None,
+) -> dict[str, object]:
+    """Aggregate resolved shadow candidates into a root-cause report (pure)."""
+    n = len(resolved)
+    total = total_candidates if total_candidates is not None else n
+    mfe = [v for v in (_f(r.get("mfe_bps")) for r in resolved) if v is not None]
+    mae = [v for v in (_f(r.get("mae_bps")) for r in resolved) if v is not None]
+    sd = [v for v in (_f(r.get("stop_dist_bps")) for r in resolved) if v is not None]
+    td = [v for v in (_f(r.get("take_dist_bps")) for r in resolved) if v is not None]
+
+    def _trim_mean(xs: list[float]) -> float | None:
+        if not xs:
+            return None
+        s = sorted(xs)
+        k = max(1, len(s) // 10) if len(s) >= 10 else 0
+        core = s[k : len(s) - k] if k else s
+        return round(statistics.fmean(core), 2)
+
+    fwd_medians = {
+        f"median_fwd_{h}s_bps": _median(
+            [v for v in (_f(r.get(f"fwd_{h}s_bps")) for r in resolved) if v is not None]
+        )
+        for h in HORIZONS_S
+    }
+    stats: dict[str, object] = {
+        "n_resolved": n,
+        "total_candidates": total,
+        "pending": max(0, total - n),
+        "resolution_coverage_pct": round(100.0 * n / total, 1) if total else 0.0,
+        "mfe_before_mae_rate": _rate(resolved, "mfe_before_mae"),
+        "reached_take_rate": _rate(resolved, "reached_take"),
+        "reached_stop_rate": _rate(resolved, "reached_stop"),
+        "gate_would_reject_rate": _rate(resolved, "gate_would_reject"),
+        "median_mfe_bps": _median(mfe),
+        "median_mae_bps": _median(mae),
+        "trimmed_mfe_bps": _trim_mean(mfe),
+        "trimmed_mae_bps": _trim_mean(mae),
+        "median_stop_dist_bps": _median(sd),
+        "median_take_dist_bps": _median(td),
+        **fwd_medians,
+    }
+    stats["primary_class"] = classify(stats)
+    stats["by_symbol"] = _split(resolved, "symbol")
+    stats["by_side"] = _split(resolved, "side")
+    stats["by_regime"] = _split(resolved, "regime")
+    stats["by_gate_would_reject"] = _split(resolved, "gate_would_reject")
+    return stats
+
+
 __all__ = [
+    "CLASS_ADVERSE",
+    "CLASS_INSUFFICIENT",
+    "CLASS_PROFIT_NOT_HARVESTED",
+    "CLASS_STOP_NOISE",
+    "CLASS_TP_UNREACHABLE",
+    "CLASS_UNCLASSIFIED",
     "HORIZONS_S",
     "Bar",
     "ExcursionResult",
     "ShadowCandidate",
+    "build_shadow_report",
+    "classify",
     "compute_excursion",
     "compute_forward_returns",
     "record_candidate",

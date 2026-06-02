@@ -1525,3 +1525,97 @@ def trading_paper_duplicate_rejections(
                 str(entry["last_seen"]),
             )
         console.print(tbl)
+
+
+@trading_app.command("shadow-resolve")
+def trading_shadow_resolve() -> None:
+    """Resolve pending shadow candidates from Binance 1m klines (Phase B).
+
+    Read-only diagnostics. Pulls prices for candidates whose MAE/MFE window has
+    elapsed, computes forward returns (1m/5m/15m/60m) + MAE/MFE, and appends a
+    resolved record. Idempotent. NEVER touches paper_engine / orders / positions
+    — it only reads market data and writes diagnostic metrics. A failed fetch
+    leaves the candidate pending (counted as no_data).
+    """
+    from app.observability.shadow_resolver import resolve_with_binance
+
+    counts = resolve_with_binance()
+    console.print("[bold]Shadow Candidate Resolve[/bold]")
+    console.print(
+        f"resolved={counts['resolved']} skipped_recent={counts['skipped_recent']} "
+        f"already={counts['already']} no_data={counts['no_data']}"
+    )
+
+
+@trading_app.command("shadow-report")
+def trading_shadow_report(
+    as_json: bool = typer.Option(False, "--json", help="Emit JSON instead of the table"),
+) -> None:
+    """Root-cause classification over resolved shadow candidates (Phase B).
+
+    Read-only. Aggregates the resolved shadow ledger into MAE/MFE +
+    forward-return distributions and a heuristic primary class
+    (ADVERSE_SELECTION / STOP_IN_NOISE_BAND / TP_UNREACHABLE /
+    PROFIT_NOT_HARVESTED / INSUFFICIENT_DATA). The class is a HINT — the raw
+    distribution it carries is the actual evidence.
+    """
+    import json as _json
+
+    from app.observability.shadow_candidate_ledger import (
+        LEDGER_PATH,
+        RESOLVED_PATH,
+        build_shadow_report,
+    )
+
+    def _read(path: Path) -> list[dict[str, object]]:
+        if not path.exists():
+            return []
+        return [
+            _json.loads(line)
+            for line in path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
+
+    resolved = _read(RESOLVED_PATH)
+    total = len(_read(LEDGER_PATH))
+    report = build_shadow_report(resolved, total_candidates=total)
+
+    if as_json:
+        console.print(_json.dumps(report, indent=2, default=str))
+        return
+
+    console.print("[bold]Shadow Candidate Report[/bold]")
+    console.print(
+        f"resolved={report['n_resolved']} total={report['total_candidates']} "
+        f"pending={report['pending']} coverage={report['resolution_coverage_pct']}%"
+    )
+    console.print(f"[bold cyan]primary_class={report['primary_class']}[/bold cyan]")
+    console.print(
+        f"mfe_before_mae_rate={report['mfe_before_mae_rate']} "
+        f"reached_take_rate={report['reached_take_rate']} "
+        f"reached_stop_rate={report['reached_stop_rate']}"
+    )
+    console.print(
+        f"median_mfe={report['median_mfe_bps']}bps median_mae={report['median_mae_bps']}bps "
+        f"median_stop_dist={report['median_stop_dist_bps']}bps "
+        f"median_take_dist={report['median_take_dist_bps']}bps"
+    )
+    by_regime = report.get("by_regime")
+    if isinstance(by_regime, dict) and by_regime:
+        tbl = Table(title="by_regime", show_header=True, header_style="bold cyan")
+        tbl.add_column("regime", width=22)
+        tbl.add_column("n", justify="right")
+        tbl.add_column("take_rate", justify="right")
+        tbl.add_column("stop_rate", justify="right")
+        tbl.add_column("median_mfe", justify="right")
+        for regime, s in by_regime.items():
+            tbl.add_row(
+                regime,
+                str(s.get("count")),
+                str(s.get("reached_take_rate")),
+                str(s.get("reached_stop_rate")),
+                str(s.get("median_mfe_bps")),
+            )
+        console.print(tbl)
+    if report["n_resolved"] == 0:
+        console.print("[yellow]No resolved shadow candidates yet.[/yellow]")
