@@ -95,6 +95,17 @@ class ParsedSignal:
 
 # ── Helpers ─────────────────────────────────────────────────────────────────
 
+# Inline separators the channel uses between header fields
+# ("US/USDT · LONG · 10x"). Middle-dot (·, U+00B7), bullet (•, U+2022) and the
+# pipe never occur inside symbols, keywords or numbers, so collapsing them to a
+# space is safe and lets the layout-agnostic extractors see normal whitespace.
+_FIELD_SEPARATORS = re.compile(r"[·•∙|]")
+
+
+def _normalize_separators(text: str) -> str:
+    """Replace middle-dot / bullet / pipe field separators with spaces."""
+    return _FIELD_SEPARATORS.sub(" ", text)
+
 
 def _normalize_symbol(raw: str) -> tuple[str, str]:
     """'GUN/USDT' → ('GUNUSDT', 'GUN/USDT'); tolerant of '#', spaces, case."""
@@ -210,7 +221,12 @@ def _extract_entry(text: str) -> tuple[str, float | None, float | None, float | 
     return "at", None, None, None
 
 
-_STOP_LOSS = re.compile(rf"(?i)Stop\s*Loss\s*[:{_DASH_CHARS}]\s*(?P<sl>[\d.]+)")
+# Stop-loss: "Stop Loss:", "StopLoss -", "Stop-Loss:", and the short "SL:" form.
+# The short form requires the separator (colon/dash) + a number so a bare "SL"
+# in prose never false-matches. ``\bSL`` anchors on a word boundary.
+_STOP_LOSS = re.compile(
+    rf"(?i)(?:Stop[\s{_DASH_CHARS}]*Loss|\bSL)\s*[:{_DASH_CHARS}]\s*(?P<sl>[\d.]+)"
+)
 
 
 def _extract_stop_loss(text: str) -> float | None:
@@ -300,6 +316,10 @@ def _extract_targets(text: str) -> list[float]:
 
 
 _LEVERAGE = re.compile(rf"(?i)Leverage\s*[:{_DASH_CHARS}]\s*(?P<lev>\d+)\s*x?")
+# Fallback for the bare header form "· 10x ·" / "10x" when no explicit
+# "Leverage:" label is present. Tightly anchored: digit(s) immediately followed
+# by 'x', not embedded in a larger alnum token (so "0x1a" / "MAX" never match).
+_LEVERAGE_BARE = re.compile(r"(?i)(?<![A-Za-z0-9])(?P<lev>\d{1,3})\s*x(?![A-Za-z0-9])")
 _MARGIN_PCT = re.compile(
     rf"(?i)(?:Margin|Risk(?:\s+Allocation)?)\s*[:{_DASH_CHARS}]\s*"
     rf"(?P<pct>\d+(?:[,.]\d+)?)\s*%?"
@@ -307,14 +327,15 @@ _MARGIN_PCT = re.compile(
 
 
 def _extract_leverage(text: str) -> int:
-    m = _LEVERAGE.search(text)
+    m = _LEVERAGE.search(text) or _LEVERAGE_BARE.search(text)
     if m is None:
         return 1
     try:
         lev = int(m["lev"])
-        return lev if lev > 0 else 1
     except (ValueError, TypeError):
         return 1
+    # Clamp to a sane exchange range; out-of-range bare matches fall back to 1x.
+    return lev if 1 <= lev <= 125 else 1
 
 
 def _extract_margin_pct(text: str) -> float | None:
@@ -426,19 +447,23 @@ def parse_premium_channel_message(text: str) -> ParsedSignal | None:
     if not text or not text.strip():
         return None
 
-    sym_dir = _extract_symbol_and_direction(text)
+    # Field separators (·, •, |) collapse to spaces so the layout-agnostic
+    # extractors see normal whitespace. raw_text keeps the original verbatim.
+    work = _normalize_separators(text)
+
+    sym_dir = _extract_symbol_and_direction(work)
     if sym_dir is None:
         return None
     symbol_internal, symbol_display, direction, side = sym_dir
 
-    entry_type, entry_value, entry_min, entry_max = _extract_entry(text)
+    entry_type, entry_value, entry_min, entry_max = _extract_entry(work)
     if entry_type == "range":
         if entry_min is None or entry_max is None:
             return None
     elif entry_value is None:
         return None
 
-    stop_loss = _extract_stop_loss(text)
+    stop_loss = _extract_stop_loss(work)
     if stop_loss is None:
         return None
 
@@ -452,10 +477,10 @@ def parse_premium_channel_message(text: str) -> ParsedSignal | None:
         entry_min=entry_min,
         entry_max=entry_max,
         stop_loss=stop_loss,
-        targets=_extract_targets(text),
-        leverage=_extract_leverage(text),
-        margin_pct=_extract_margin_pct(text),
-        exchange_scope=_extract_exchange_scope(text),
+        targets=_extract_targets(work),
+        leverage=_extract_leverage(work),
+        margin_pct=_extract_margin_pct(work),
+        exchange_scope=_extract_exchange_scope(work),
         raw_text=text,
     )
 
