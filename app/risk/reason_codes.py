@@ -84,6 +84,22 @@ class RejectCode(StrEnum):
     UNCLASSIFIED = "REJECT_UNCLASSIFIED"
 
 
+class ExecutionBlockerCode(StrEnum):
+    """Execution-level blockers — DISTINCT from risk-gate ``RejectCode``.
+
+    These are NOT signal-quality / geometry rejects. They are global mode
+    blockers that override an otherwise-approvable signal. Kept separate so an
+    operator/report never confuses "the risk gate rejected this" with "the
+    global entry-mode kill-switch refused to act on it". The string value is the
+    wire/audit/UI contract.
+    """
+
+    # EXECUTION_ENTRY_MODE=disabled — global kill-switch on risk-increasing
+    # entries (autonomous loop AND premium/promoted bridge). Exits are never
+    # blocked by this.
+    ENTRY_MODE_DISABLED = "ENTRY_MODE_DISABLED"
+
+
 class FinalStatus(StrEnum):
     """Closed set of terminal dispositions for a signal/order in the pipeline.
 
@@ -164,6 +180,7 @@ def map_violations_to_codes(violations: list[str]) -> list[str]:
 
 
 __all__ = [
+    "ExecutionBlockerCode",
     "FinalStatus",
     "RejectCode",
     "map_violation_to_code",
