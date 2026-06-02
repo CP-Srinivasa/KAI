@@ -46,7 +46,9 @@ def binance_kline_fetcher(symbol: str, start_ms: int, end_ms: int) -> Sequence[B
         f"&startTime={int(start_ms)}&endTime={int(end_ms)}&limit=1000"
     )
     try:
-        with urllib.request.urlopen(url, timeout=10) as resp:  # noqa: S310 — fixed https host
+        # Host is the fixed https Binance endpoint; query params are
+        # ints/sanitised symbols — no user-controlled scheme/host.
+        with urllib.request.urlopen(url, timeout=10) as resp:  # noqa: S310  # nosec B310
             raw = json.loads(resp.read().decode())
     except Exception as exc:  # noqa: BLE001 — any network/parse error → pending
         logger.info("[shadow] kline fetch failed for %s: %s", symbol, exc)
