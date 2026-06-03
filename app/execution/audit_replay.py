@@ -279,6 +279,7 @@ def replay_paper_audit(audit_path: Path) -> AuditReplayResult:
                 correlation_id=existing.correlation_id,
                 leverage=existing.leverage,
                 source=existing.source,
+                document_id=existing.document_id,
             )
             continue
 
@@ -318,6 +319,10 @@ def replay_paper_audit(audit_path: Path) -> AuditReplayResult:
         take_profit: float | None = None
         leverage: float | None = None
         source: str = ""
+        # NEO-P-20260603-001: order_filled rows now carry source/document_id
+        # directly (via **fill.__dict__). Legacy rows lack both → default "".
+        document_id: str = _coerce_str(payload.get("document_id")) or ""
+        fill_source = _coerce_str(payload.get("source")) or ""
         correlation_id = _coerce_str(payload.get("correlation_id")) or ""
         if order_id is not None:
             meta = order_meta.get(order_id)
@@ -331,6 +336,9 @@ def replay_paper_audit(audit_path: Path) -> AuditReplayResult:
             idem_for_order = order_idem_by_id.get(order_id)
             if idem_for_order:
                 filled_keys.add(idem_for_order)
+        # Prefer the fill's own source when present (authoritative); fall back to
+        # the order_created meta for legacy rows that only carried it there.
+        source = fill_source or source
 
         # NEO-P-101-r2: v2 audit rows carry position_side; v1 rows default to long.
         position_side_val = _coerce_str(payload.get("position_side")) or "long"
@@ -356,6 +364,7 @@ def replay_paper_audit(audit_path: Path) -> AuditReplayResult:
                     correlation_id=correlation_id,
                     leverage=leverage,
                     source=source,
+                    document_id=document_id,
                 )
             else:
                 if existing.position_side != position_side_val:
@@ -389,6 +398,7 @@ def replay_paper_audit(audit_path: Path) -> AuditReplayResult:
                     correlation_id=existing.correlation_id or correlation_id,
                     leverage=existing.leverage if existing.leverage is not None else leverage,
                     source=existing.source or source,
+                    document_id=existing.document_id or document_id,
                 )
         elif is_close:
             if (
@@ -430,6 +440,7 @@ def replay_paper_audit(audit_path: Path) -> AuditReplayResult:
                     correlation_id=existing.correlation_id,
                     leverage=existing.leverage,
                     source=existing.source,
+                    document_id=existing.document_id,
                 )
         else:
             # 2026-05-25 Forensik-Fix: unbekannte side/position-Kombi skipt.

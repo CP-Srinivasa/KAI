@@ -299,6 +299,7 @@ class PaperExecutionEngine:
         correlation_id: str = "",
         leverage: float | None = None,
         source: str = "",
+        document_id: str = "",
         partial_fill_ratio: float = 1.0,
     ) -> PaperOrder:
         """Create an order record (does not fill immediately).
@@ -372,6 +373,7 @@ class PaperExecutionEngine:
             correlation_id=correlation_id,
             leverage=leverage,
             source=source,
+            document_id=document_id,
         )
         self._partial_fill_ratios[order.order_id] = float(partial_fill_ratio)
         self._append_audit(
@@ -575,6 +577,7 @@ class PaperExecutionEngine:
                     correlation_id=pos.correlation_id,
                     leverage=pos.leverage,
                     source=pos.source,
+                    document_id=pos.document_id,
                 )
             else:
                 self._portfolio.positions[order.symbol] = PaperPosition(
@@ -588,6 +591,7 @@ class PaperExecutionEngine:
                     correlation_id=order.correlation_id,
                     leverage=order.leverage,
                     source=order.source,
+                    document_id=order.document_id,
                 )
         elif order.position_side == "long" and order.side == "sell":
             pos = self._portfolio.positions.get(order.symbol)
@@ -619,6 +623,7 @@ class PaperExecutionEngine:
                     correlation_id=pos.correlation_id,
                     leverage=pos.leverage,
                     source=pos.source,
+                    document_id=pos.document_id,
                 )
         elif order.position_side == "short" and order.side == "sell":
             pos = self._portfolio.positions.get(order.symbol)
@@ -648,6 +653,7 @@ class PaperExecutionEngine:
                     correlation_id=pos.correlation_id,
                     leverage=pos.leverage,
                     source=pos.source,
+                    document_id=pos.document_id,
                 )
             else:
                 self._portfolio.positions[order.symbol] = PaperPosition(
@@ -661,6 +667,7 @@ class PaperExecutionEngine:
                     correlation_id=order.correlation_id,
                     leverage=order.leverage,
                     source=order.source,
+                    document_id=order.document_id,
                 )
         elif order.position_side == "short" and order.side == "buy":
             pos = self._portfolio.positions.get(order.symbol)
@@ -698,6 +705,7 @@ class PaperExecutionEngine:
                     correlation_id=pos.correlation_id,
                     leverage=pos.leverage,
                     source=pos.source,
+                    document_id=pos.document_id,
                 )
         else:
             logger.warning(
@@ -733,6 +741,8 @@ class PaperExecutionEngine:
             fee_bps_applied=fee_meta[2],
             fee_table_version=fee_meta[3],
             correlation_id=order.correlation_id,
+            source=order.source,
+            document_id=order.document_id,
         )
 
         self._append_audit(
@@ -969,6 +979,8 @@ class PaperExecutionEngine:
             risk_check_id=f"tp_tier:{tier_price}",
             position_side=pos.position_side,
             correlation_id=pos.correlation_id,
+            source=pos.source,
+            document_id=pos.document_id,
         )
         fill = self.fill_order(order, current_price)
         if fill is None:
@@ -1057,6 +1069,9 @@ class PaperExecutionEngine:
             take_profit_tiers=list(pos.take_profit_tiers),
             initial_quantity=pos.initial_quantity,
             correlation_id=pos.correlation_id,
+            leverage=pos.leverage,
+            source=pos.source,
+            document_id=pos.document_id,
         )
         self._append_audit(
             "position_adjusted",
@@ -1147,6 +1162,8 @@ class PaperExecutionEngine:
             risk_check_id=f"auto_close:{reason}",
             position_side=pos.position_side,
             correlation_id=pos.correlation_id,
+            source=pos.source,
+            document_id=pos.document_id,
         )
         fill = self.fill_order(order, current_price)
         if fill is None:
@@ -1168,6 +1185,10 @@ class PaperExecutionEngine:
                 "trade_pnl_usd": fill.pnl_usd,
                 "fee_usd": fill.fee_usd,
                 "position_side": fill.position_side,
+                # NEO-P-20260603-001: source attribution. "" = unknown (legacy/
+                # unattributed entry). Lets edge_report split closes by source.
+                "signal_source": pos.source,
+                "document_id": pos.document_id,
             },
         )
         logger.info(

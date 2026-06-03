@@ -51,6 +51,11 @@ class PaperOrder:
     # PaperPosition + Frontend sie ohne audit-jsonl-Crosswalk anzeigen kann.
     leverage: float | None = None
     source: str = ""
+    # NEO-P-20260603-001: signal-source attribution. document_id traces the fill
+    # back to the originating analysis/signal (e.g. "loop_control_btc_bullish" for
+    # the canary probe, an RSS doc UUID for the real generator, or "" = unknown for
+    # legacy/unattributed rows). Additive + optional → backward-compatible.
+    document_id: str = ""
 
 
 @dataclass(frozen=True)
@@ -75,6 +80,10 @@ class PaperFill:
     fee_bps_applied: float = 0.0
     fee_table_version: str = "unknown"
     correlation_id: str = ""
+    # NEO-P-20260603-001: signal-source attribution carried onto the fill so the
+    # order_filled audit event (emitted via **fill.__dict__) is source-resolvable.
+    source: str = ""
+    document_id: str = ""
 
 
 @dataclass
@@ -107,6 +116,9 @@ class PaperPosition:
     # haben — audit_replay setzt None/"" als Fallback.
     leverage: float | None = None
     source: str = ""
+    # NEO-P-20260603-001: document_id of the originating analysis/signal so a
+    # position_closed event can be attributed to its source.
+    document_id: str = ""
 
     def unrealized_pnl(self, current_price: float) -> float:
         if self.position_side == "short":
@@ -128,6 +140,7 @@ class PaperPosition:
             "correlation_id": self.correlation_id,
             "leverage": self.leverage,
             "source": self.source,
+            "document_id": self.document_id,
         }
 
 
