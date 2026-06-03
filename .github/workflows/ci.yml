@@ -338,6 +338,7 @@ jobs:
       - run: npm ci
       - run: npm run lint    # tsc -b --noEmit (type-check gate)
       - run: npm run build   # tsc -b && vite build (build gate)
+      - run: npm run test    # vitest run (dashboard component/unit tests, happy-dom)
 
   pr-claims-verify:
     # Härtet gegen Codex-CI-Drift-Pattern (siehe feedback_codex_ci_drift Memory):
