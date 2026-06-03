@@ -14,7 +14,7 @@ import { cn } from "@/lib/utils";
 // laufenden Read-Endpoints. Alles read-only, Paper-Mode, kein neuer Endpoint,
 // keine Chart-Library. Ehrliche Loading-/Empty-/Error-Zustände statt Fake-%.
 
-function fmtUsd(v: number | null | undefined): string {
+export function fmtUsd(v: number | null | undefined): string {
   if (typeof v !== "number" || !Number.isFinite(v)) return "—";
   return `${v >= 0 ? "" : "-"}$${Math.abs(v).toLocaleString("en-US", { maximumFractionDigits: 2 })}`;
 }
@@ -157,14 +157,28 @@ function RiskMeterTile() {
   );
 }
 
-function AllocationTile() {
-  const q = useApi(fetchPortfolioSnapshot, 30_000);
-  const positions: PaperPosition[] = q.state === "ready" ? q.data.positions : [];
+export type AllocationItem = { symbol: string; value: number; pct: number };
+
+// Pure: absolute market value per position, share of total, sorted desc. Skips
+// positions without a priced market value. Total 0 -> empty (caller shows empty).
+export function computeAllocation(positions: PaperPosition[]): {
+  items: AllocationItem[];
+  total: number;
+} {
   const priced = positions
     .map((p) => ({ symbol: p.symbol, value: Math.abs(p.market_value_usd ?? 0) }))
     .filter((p) => p.value > 0)
     .sort((a, b) => b.value - a.value);
   const total = priced.reduce((s, p) => s + p.value, 0);
+  const items: AllocationItem[] =
+    total > 0 ? priced.map((p) => ({ ...p, pct: (p.value / total) * 100 })) : [];
+  return { items, total };
+}
+
+function AllocationTile() {
+  const q = useApi(fetchPortfolioSnapshot, 30_000);
+  const positions: PaperPosition[] = q.state === "ready" ? q.data.positions : [];
+  const { items: priced, total } = computeAllocation(positions);
   return (
     <TileShell title="Allocation" right={<Badge tone="info" dot>Paper-Mode</Badge>}>
       {q.state !== "ready" ? (
@@ -173,20 +187,17 @@ function AllocationTile() {
         <p className="text-fg-subtle">Keine bewertbaren Positionen (Paper-Buch leer/ohne Preis).</p>
       ) : (
         <div className="space-y-1.5">
-          {priced.slice(0, 8).map((p) => {
-            const pct = (p.value / total) * 100;
-            return (
-              <div key={p.symbol}>
-                <div className="flex justify-between text-2xs">
-                  <span className="font-mono">{p.symbol}</span>
-                  <span className="text-fg-subtle tabular-nums">{pct.toFixed(1)}%</span>
-                </div>
-                <div className="h-1.5 w-full rounded-full bg-bg-3 overflow-hidden">
-                  <div className="h-full rounded-full bg-ai" style={{ width: `${pct}%` }} />
-                </div>
+          {priced.slice(0, 8).map((p) => (
+            <div key={p.symbol}>
+              <div className="flex justify-between text-2xs">
+                <span className="font-mono">{p.symbol}</span>
+                <span className="text-fg-subtle tabular-nums">{p.pct.toFixed(1)}%</span>
               </div>
-            );
-          })}
+              <div className="h-1.5 w-full rounded-full bg-bg-3 overflow-hidden">
+                <div className="h-full rounded-full bg-ai" style={{ width: `${p.pct}%` }} />
+              </div>
+            </div>
+          ))}
           <p className="text-2xs text-fg-subtle">Aus /operator/portfolio-snapshot abgeleitet</p>
         </div>
       )}
