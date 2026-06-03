@@ -148,6 +148,9 @@ class ClosedTrade:
     fee_usd: float
     timestamp_utc: str
     regime: str = "unknown"
+    # NEO-P-20260603-001: signal-source attribution. "" / "unknown" for legacy
+    # rows persisted before the attribution fields existed.
+    signal_source: str = "unknown"
 
     @property
     def notional_usd(self) -> float:
@@ -195,6 +198,7 @@ class TradeEdge:
     notional_usd: float
     reason: str
     regime: str
+    signal_source: str = "unknown"
 
 
 def compute_trade_edge(
@@ -229,6 +233,7 @@ def compute_trade_edge(
         notional_usd=trade.notional_usd,
         reason=trade.reason,
         regime=trade.regime,
+        signal_source=trade.signal_source,
     )
 
 
@@ -554,6 +559,10 @@ class EdgeReport:
     by_symbol: list[CohortEdge]
     by_regime: list[CohortEdge]
     by_day: list[CohortEdge]
+    # NEO-P-20260603-001: edge split by signal source (canary_probe vs
+    # autonomous_generator vs tv_promoted vs unknown). Lets the operator read
+    # the REAL generator's edge separately from the hardcoded test probe.
+    by_source: list[CohortEdge]
     churn: list[SymbolChurn]
     forward_coverage: list[ForwardCoverage]
     open_mtm: OpenMarkToMarket
@@ -572,6 +581,7 @@ class EdgeReport:
             "by_symbol": [c.to_dict() for c in self.by_symbol],
             "by_regime": [c.to_dict() for c in self.by_regime],
             "by_day": [c.to_dict() for c in self.by_day],
+            "by_source": [c.to_dict() for c in self.by_source],
             "churn": [c.to_dict() for c in self.churn],
             "forward_coverage": [f.to_dict() for f in self.forward_coverage],
             "open_mtm": self.open_mtm.to_dict(),
@@ -635,6 +645,13 @@ def build_edge_report(
         bootstrap_n=bootstrap_n,
         min_sample=min_sample,
     )
+    by_source = _group_aggregate(
+        edges,
+        key=lambda e: e.signal_source or "unknown",
+        cohort_type="source",
+        bootstrap_n=bootstrap_n,
+        min_sample=min_sample,
+    )
 
     churn = compute_churn(closed_trades, entry_times=entry_times)
     forward_cov = build_forward_coverage(closed_trades, forward_samples, cost_model=cm, venue=venue)
@@ -677,6 +694,7 @@ def build_edge_report(
         by_symbol=by_symbol,
         by_regime=by_regime,
         by_day=by_day,
+        by_source=by_source,
         churn=churn,
         forward_coverage=forward_cov,
         open_mtm=open_mtm,
@@ -789,6 +807,9 @@ def parse_closed_trades_with_exclusions(
             reasons[guard_key] += 1
             continue
         regime = ev.get("regime") or ev.get("regime_state") or "unknown"
+        # NEO-P-20260603-001: legacy position_closed rows lack signal_source →
+        # "unknown" so by_source stays well-defined without a backfill.
+        signal_source = ev.get("signal_source") or ev.get("source") or "unknown"
         out.append(
             ClosedTrade(
                 symbol=str(ev.get("symbol", "?")),
@@ -801,6 +822,7 @@ def parse_closed_trades_with_exclusions(
                 fee_usd=float(ev.get("fee_usd", 0.0) or 0.0),
                 timestamp_utc=str(ev.get("timestamp_utc", "")),
                 regime=str(regime),
+                signal_source=str(signal_source),
             )
         )
     return out, QuarantineExclusion(excluded_count=excluded, reasons=dict(reasons))
@@ -938,6 +960,8 @@ def render_report(report: EdgeReport) -> str:
     lines.append(_render_cohort_table("PER SYMBOL", report.by_symbol))
     lines.append("")
     lines.append(_render_cohort_table("PER REGIME", report.by_regime))
+    lines.append("")
+    lines.append(_render_cohort_table("PER SOURCE", report.by_source))
     lines.append("")
     lines.append(_render_cohort_table("PER DAY", report.by_day))
     lines.append("")

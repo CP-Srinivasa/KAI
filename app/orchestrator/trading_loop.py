@@ -454,6 +454,19 @@ class TradingLoop:
 
         order = None
         fill = None
+        # NEO-P-20260603-001: attribute the autonomous fill to its signal source.
+        # document_id traces the originating analysis (canary probes are
+        # "loop_control_<asset>_<profile>"; the real generator carries the RSS/
+        # news doc id). signal_source is a coarse bucket so edge_report can split
+        # canary-probe vs real-generator fills. "" stays the unknown default for
+        # any path that does not set source_document_id.
+        attribution_doc_id = signal.source_document_id or analysis.document_id or ""
+        if attribution_doc_id.startswith("loop_control_"):
+            signal_source = "canary_probe"
+        elif attribution_doc_id:
+            signal_source = "autonomous_generator"
+        else:
+            signal_source = ""
         try:
             order = self._exec.create_order(
                 symbol=symbol,
@@ -464,6 +477,8 @@ class TradingLoop:
                 take_profit=signal.take_profit_price,
                 idempotency_key=signal.decision_id,
                 risk_check_id=risk_result.check_id,
+                source=signal_source,
+                document_id=attribution_doc_id,
             )
             fill = self._exec.fill_order(order, current_price=signal.entry_price)
         except Exception as exc:  # noqa: BLE001
@@ -824,6 +839,11 @@ class TradingLoop:
 
         order = None
         fill = None
+        # NEO-P-20260603-001: promoted/bridge signals are their own source bucket.
+        # Prefer the structured provenance.source; fall back to "tv_promoted".
+        promoted_source = "tv_promoted"
+        if signal.provenance and signal.provenance.source:
+            promoted_source = signal.provenance.source
         try:
             order = self._exec.create_order(
                 symbol=symbol,
@@ -834,6 +854,8 @@ class TradingLoop:
                 take_profit=signal.take_profit_price,
                 idempotency_key=signal.decision_id,
                 risk_check_id=risk_result.check_id,
+                source=promoted_source,
+                document_id=signal.source_document_id or "",
             )
             fill = self._exec.fill_order(order, current_price=live_price)
         except Exception as exc:  # noqa: BLE001
