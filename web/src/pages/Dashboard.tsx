@@ -63,7 +63,7 @@ const PREPARED_PANELS: DashboardPreparedPanel[] = [
     detail: "Backend bereit: GET /operator/exposure-summary. Risk-Page nutzt es — Dashboard-Tile fehlt.",
     phase: "skeleton",
     progress: 55,
-    timeline: "Phase 2 — gekoppelt an Risk-Modul (S5)",
+    timeline: "Dashboard-Roadmap — gekoppelt an Risk-Modul (S5)",
   },
   {
     title: "Equity / PnL Kurve",
@@ -71,7 +71,7 @@ const PREPARED_PANELS: DashboardPreparedPanel[] = [
     detail: "Rohdaten in artifacts/paper_execution_audit.jsonl. Aggregations-Endpoint geplant.",
     phase: "planning",
     progress: 20,
-    timeline: "Phase 2 — nach Sub-Account-KYC",
+    timeline: "Dashboard-Roadmap — nach Sub-Account-KYC",
   },
   {
     title: "Sentiment Stream",
@@ -79,7 +79,7 @@ const PREPARED_PANELS: DashboardPreparedPanel[] = [
     detail: "Backend-Ingestion läuft. Aggregations-Endpoint für Frontend-Stream offen.",
     phase: "planning",
     progress: 25,
-    timeline: "Phase 2 — gekoppelt an News-Modul (S6)",
+    timeline: "Dashboard-Roadmap — gekoppelt an News-Modul (S6)",
   },
   {
     title: "Allocation",
@@ -87,7 +87,7 @@ const PREPARED_PANELS: DashboardPreparedPanel[] = [
     detail: "Daten in Portfolio-Snapshot vorhanden. UI-Visualisierung fehlt.",
     phase: "skeleton",
     progress: 45,
-    timeline: "Phase 2 — gekoppelt an Portfolio-Modul (S4)",
+    timeline: "Dashboard-Roadmap — gekoppelt an Portfolio-Modul (S4)",
   },
   {
     title: "AI Insights",

@@ -81,7 +81,7 @@ function ApisTab() {
     <PreparedPanel
       title="Exchange- & Provider-API-Keys"
       reason="API-Key-Management für Binance, Bybit, Kraken, Coinbase, CoinGecko, CryptoPanic, TradingView ist UI-seitig vorgesehen, hat aber noch keinen Backend-CRUD-Endpoint mit sicherer Secret-Ablage."
-      detail="Aktuelle Provider-Secrets werden über .env + KAI_* Variablen geladen (siehe RUNBOOK). Phase 2: verschlüsselte Secret-Vault-Integration + Test-Endpoint."
+      detail="Aktuelle Provider-Secrets werden über .env + KAI_* Variablen geladen (siehe RUNBOOK). Dashboard-Roadmap: verschlüsselte Secret-Vault-Integration + Test-Endpoint."
     />
   );
 }

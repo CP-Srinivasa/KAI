@@ -36,7 +36,7 @@ export function BacktestPage() {
         }
         phase="planning"
         progress={25}
-        timeline="Phase 2 — Replay-Engine als eigener Sprint"
+        timeline="Dashboard-Roadmap — Replay-Engine als eigener Sprint"
       />
 
       {/* DALI v2 S7 M8b: Strategie-Bibliothek (planning 15%). */}
@@ -52,7 +52,7 @@ export function BacktestPage() {
         }
         phase="planning"
         progress={15}
-        timeline="Phase 2 — nach Backtest-Endpoint"
+        timeline="Dashboard-Roadmap — nach Backtest-Endpoint"
       />
     </div>
   );

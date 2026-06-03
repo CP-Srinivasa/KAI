@@ -874,7 +874,7 @@ export function PortfolioPage() {
         }
         phase="planning"
         progress={20}
-        timeline="Phase 2 — gemeinsam mit Realized-PnL-Endpoint"
+        timeline="Dashboard-Roadmap — gemeinsam mit Realized-PnL-Endpoint"
       />
     </div>
   );

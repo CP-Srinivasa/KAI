@@ -35,7 +35,7 @@ export function MarketsPage() {
         }
         phase="planning"
         progress={15}
-        timeline="Phase 2 — Dashboard-Konsolidierung"
+        timeline="Dashboard-Roadmap — Dashboard-Konsolidierung"
       />
 
       {/* DALI v2 S7 M6b: Asset-Detail mit Signal-Verknuepfung (skeleton 40%). */}
@@ -51,7 +51,7 @@ export function MarketsPage() {
         }
         phase="planning"
         progress={20}
-        timeline="Phase 2 — nach Operator-Signals-Endpoint"
+        timeline="Dashboard-Roadmap — nach Operator-Signals-Endpoint"
       />
     </div>
   );
