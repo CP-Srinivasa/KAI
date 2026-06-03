@@ -10,6 +10,7 @@ import { PerSourcePrecisionPanel } from "@/components/panels/PerSourcePrecisionP
 import { PerSourceStabilityPanel } from "@/components/panels/PerSourceStabilityPanel";
 import { SourceReliabilityPanel } from "@/components/panels/SourceReliabilityPanel";
 import { RegimeStatusPanel } from "@/components/panels/RegimeStatusPanel";
+import { LivePortfolioTiles } from "@/components/panels/LivePortfolioTiles";
 import { PreparedPanel } from "@/components/panels/PreparedPanel";
 import { ReentryGatePanel } from "@/components/panels/ReentryGatePanel";
 import { SignalHeatmapPanel } from "@/components/panels/SignalHeatmap";
@@ -48,23 +49,10 @@ type DashboardPreparedPanel = {
   timeline?: string;
 };
 
+// Hinweis: "Portfolio Snapshot", "Risk Meter" und "Allocation" sind seit dem
+// Remediation-Sprint 2026-06-03 als echte Live-Tiles umgesetzt (siehe
+// <LivePortfolioTiles/>) und daher hier nicht mehr als Stub gelistet.
 const PREPARED_PANELS: DashboardPreparedPanel[] = [
-  {
-    title: "Portfolio Snapshot",
-    reason: "Paper-Portfolio mit Mark-to-Market und Exposure-Summary auf dem Dashboard.",
-    detail: "Backend bereit: GET /operator/portfolio-snapshot. Eigene Portfolio-Page liest das schon — Dashboard-Tile fehlt.",
-    phase: "skeleton",
-    progress: 60,
-    timeline: "geplant für Sprint nach Backtesting-Endpoint",
-  },
-  {
-    title: "Risk Meter",
-    reason: "Risiko-Score aus Exposure, Korrelation und Paper-PnL-Drawdown als Hero-KPI.",
-    detail: "Backend bereit: GET /operator/exposure-summary. Risk-Page nutzt es — Dashboard-Tile fehlt.",
-    phase: "skeleton",
-    progress: 55,
-    timeline: "Dashboard-Roadmap — gekoppelt an Risk-Modul (S5)",
-  },
   {
     title: "Equity / PnL Kurve",
     reason: "Kapital-Entwicklung über Zeit aus Paper-Execution-Audit (Ledger).",
@@ -82,20 +70,12 @@ const PREPARED_PANELS: DashboardPreparedPanel[] = [
     timeline: "Dashboard-Roadmap — gekoppelt an News-Modul (S6)",
   },
   {
-    title: "Allocation",
-    reason: "Asset-Allokation aus Portfolio-Snapshot als Donut/Treemap.",
-    detail: "Daten in Portfolio-Snapshot vorhanden. UI-Visualisierung fehlt.",
-    phase: "skeleton",
-    progress: 45,
-    timeline: "Dashboard-Roadmap — gekoppelt an Portfolio-Modul (S4)",
-  },
-  {
     title: "AI Insights",
     reason: "LLM-generierte Markt-Zusammenfassung mit Provider-Metadaten.",
-    detail: "Eigene AI-Insights-Page existiert. Dashboard-Tile als Kurzform fehlt.",
+    detail: "Eigene AI-Insights-Page existiert. Dashboard-Kurzkarte braucht erst einen stabilen Insight-Endpoint.",
     phase: "beta",
     progress: 70,
-    timeline: "Phase 3 — nach Insight-Endpoint-Stabilisierung",
+    timeline: "Dashboard-Roadmap — nach Insight-Endpoint-Stabilisierung",
   },
 ];
 
@@ -305,6 +285,13 @@ export function Dashboard() {
           Read-only-Phase, kein TradingLoop-Block — Operator-Validierung über 14 Tage. */}
       <PanelErrorBoundary name="Markt-Regime">
         <RegimeStatusPanel data={regime} />
+      </PanelErrorBoundary>
+
+      {/* Quick-Win-Live-Tiles (Remediation-Sprint 2026-06-03, Goal §3): Portfolio
+          Snapshot + Risk Meter + Allocation aus bestehenden Operator-Endpoints.
+          Ersetzt die gleichnamigen PreparedPanel-Stubs durch echte Live-Daten. */}
+      <PanelErrorBoundary name="Live-Kennzahlen">
+        <LivePortfolioTiles />
       </PanelErrorBoundary>
 
       {/* Aktiver Analytics-Grid — Symmetrie ab lg: linke Card streckt sich,
