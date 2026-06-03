@@ -605,6 +605,68 @@ async def get_operator_exposure_summary(
     )
 
 
+@router.get("/signals/{signal_id}")
+async def get_operator_signal_detail(
+    request: Request,
+    response: Response,
+    signal_id: str,
+    journal_path: str = "artifacts/decision_journal.jsonl",
+    audit_path: str = "artifacts/paper_execution_audit.jsonl",
+) -> dict[str, object]:
+    """Read-only signal detail by decision_id. 404 when unknown, 503 on a
+    malformed journal. Never trades, never changes execution state."""
+    from app.decisions.signal_detail import build_signal_detail
+
+    _set_context_headers(response, request)
+    try:
+        detail = build_signal_detail(signal_id, journal_path=journal_path, audit_path=audit_path)
+    except Exception as exc:
+        raise _operator_http_error(
+            request,
+            status_code=503,
+            code="signal_detail_unavailable",
+            message=f"Signal detail read surface unavailable: {exc.__class__.__name__}",
+        ) from exc
+    if detail is None:
+        raise _operator_http_error(
+            request,
+            status_code=404,
+            code="signal_not_found",
+            message=f"No signal with decision_id {signal_id!r}",
+        )
+    return detail
+
+
+@router.get("/signals/{signal_id}/explain")
+async def get_operator_signal_explain(
+    request: Request,
+    response: Response,
+    signal_id: str,
+    journal_path: str = "artifacts/decision_journal.jsonl",
+) -> dict[str, object]:
+    """Read-only decision-path / explainability view by decision_id."""
+    from app.decisions.signal_detail import build_signal_explain
+
+    _set_context_headers(response, request)
+    try:
+        detail = build_signal_explain(signal_id, journal_path=journal_path)
+    except Exception as exc:
+        raise _operator_http_error(
+            request,
+            status_code=503,
+            code="signal_explain_unavailable",
+            message=f"Signal explain read surface unavailable: {exc.__class__.__name__}",
+        ) from exc
+    if detail is None:
+        raise _operator_http_error(
+            request,
+            status_code=404,
+            code="signal_not_found",
+            message=f"No signal with decision_id {signal_id!r}",
+        )
+    return detail
+
+
 @router.get("/portfolio/realized-by-asset")
 async def get_realized_by_asset(
     request: Request,
