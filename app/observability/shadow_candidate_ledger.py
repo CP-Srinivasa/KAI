@@ -359,6 +359,11 @@ CLASS_TP_UNREACHABLE = "TP_UNREACHABLE"
 CLASS_PROFIT_NOT_HARVESTED = "PROFIT_NOT_HARVESTED"
 CLASS_UNCLASSIFIED = "UNCLASSIFIED"
 
+# Sources whose resolved candidates count as REAL signal evidence in the headline
+# edge stats / primary_class. ``canary_probe`` (hardcoded control-plane probe) and
+# pre-V1 records that carry no source are excluded — never read as real edge.
+REAL_SOURCES: frozenset[str] = frozenset({"autonomous_loop", "autonomous_generator"})
+
 MIN_SAMPLE_FOR_CLASS = 20
 
 
@@ -438,14 +443,22 @@ def build_shadow_report(
 ) -> dict[str, object]:
     """Aggregate resolved shadow candidates into a root-cause report (pure).
 
-    V1 canary attribution: rows tagged ``source == "canary_probe"`` are the
-    hardcoded control-plane probes (constant confidence ~0.85). They are EXCLUDED
-    from the headline edge stats and ``primary_class`` — those must measure the
-    REAL signal — and surfaced separately via ``canary_probe_resolved`` +
-    ``by_source``. Rows without a ``source`` are treated as real (backward-compat).
+    V1 source attribution: only records from an explicitly-attributed REAL source
+    (``REAL_SOURCES``) feed the headline edge stats and ``primary_class``. The
+    hardcoded canary probes (``source == "canary_probe"``) are excluded and shown
+    via ``canary_probe_resolved``; pre-V1 records that carry NO source (their
+    provenance is unverifiable and the loop only ever ran the canary probe) are
+    excluded too and counted as ``unattributed_resolved`` — they must NOT be read
+    as real edge. ``by_source`` keeps every bucket visible. A ``real_resolved`` of
+    0 means NO real-signal evidence yet (-> INSUFFICIENT_DATA), never "no edge".
     """
     canary = [r for r in resolved if r.get("source") == "canary_probe"]
-    real = [r for r in resolved if r.get("source") != "canary_probe"]
+    real = [r for r in resolved if r.get("source") in REAL_SOURCES]
+    unattributed = [
+        r
+        for r in resolved
+        if r.get("source") not in REAL_SOURCES and r.get("source") != "canary_probe"
+    ]
     n = len(real)
     total = total_candidates if total_candidates is not None else n
     mfe = [v for v in (_f(r.get("mfe_bps")) for r in real) if v is not None]
@@ -474,6 +487,7 @@ def build_shadow_report(
         "resolution_coverage_pct": round(100.0 * n / total, 1) if total else 0.0,
         "real_resolved": n,
         "canary_probe_resolved": len(canary),
+        "unattributed_resolved": len(unattributed),
         "mfe_before_mae_rate": _rate(real, "mfe_before_mae"),
         "reached_take_rate": _rate(real, "reached_take"),
         "reached_stop_rate": _rate(real, "reached_stop"),
@@ -503,6 +517,7 @@ __all__ = [
     "CLASS_TP_UNREACHABLE",
     "CLASS_UNCLASSIFIED",
     "HORIZONS_S",
+    "REAL_SOURCES",
     "Bar",
     "ExcursionResult",
     "ShadowCandidate",

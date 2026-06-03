@@ -71,12 +71,15 @@ def test_by_source_split_present() -> None:
     assert "autonomous_loop" in by_source
 
 
-def test_missing_source_treated_as_real_backward_compat() -> None:
-    # legacy rows without a source field stay in the headline (real)
+def test_missing_source_is_unattributed_not_real() -> None:
+    # Pre-V1 legacy rows carry NO source — their provenance is unverifiable (the
+    # loop only ever ran the canary probe), so they must NOT be counted as real
+    # edge. They are quarantined as 'unattributed' and excluded from the headline.
     legacy = _real_row()
     del legacy["source"]
     rep = build_shadow_report([legacy, legacy], total_candidates=10)
-    assert rep["n_resolved"] == 2
-    assert rep["real_resolved"] == 2
+    assert rep["real_resolved"] == 0
+    assert rep["unattributed_resolved"] == 2
     assert rep["canary_probe_resolved"] == 0
-    assert rep["pending"] == 8
+    assert rep["n_resolved"] == 0  # headline edge = real only -> INSUFFICIENT
+    assert rep["primary_class"] == "INSUFFICIENT_DATA"
