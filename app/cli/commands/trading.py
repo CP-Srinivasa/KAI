@@ -130,7 +130,7 @@ def trading_market_data_snapshot(
             timeout_seconds=timeout_seconds,
         )
     )
-    console.print(_json.dumps(snapshot.to_json_dict(), indent=2))
+    print(_json.dumps(snapshot.to_json_dict(), indent=2))
 
     if not snapshot.available:
         raise typer.Exit(1)
@@ -159,7 +159,7 @@ def trading_paper_realized_by_asset(
     from app.execution.portfolio_read import compute_realized_by_asset
 
     result = compute_realized_by_asset(Path(audit_path))
-    console.print(_json.dumps(result, indent=2))
+    print(_json.dumps(result, indent=2))
     if not result["available"]:
         raise typer.Exit(1)
 
@@ -204,7 +204,7 @@ def trading_edge_report(
         implausible_move_threshold=implausible_threshold,
     )
     if as_json:
-        console.print(_json.dumps(report.to_dict(), indent=2))
+        print(_json.dumps(report.to_dict(), indent=2))
     else:
         console.print(render_report(report))
     if report.closed_trade_count == 0:
@@ -278,7 +278,7 @@ def trading_edge_gate(
         oos_min_disjoint_days=oos_min_days,
     )
     if as_json:
-        console.print(_json.dumps(decision.to_dict(), indent=2))
+        print(_json.dumps(decision.to_dict(), indent=2))
     else:
         console.print(render_decision(decision))
     if report.closed_trade_count == 0:
@@ -366,7 +366,7 @@ def trading_evidence_window(
         implausible_move_threshold=implausible_threshold,
     )
     if as_json:
-        console.print(_json.dumps(report.to_dict(), indent=2))
+        print(_json.dumps(report.to_dict(), indent=2))
     else:
         console.print(render_window(report))
 
@@ -414,7 +414,7 @@ def trading_paper_portfolio_snapshot(
             timeout_seconds=timeout_seconds,
         )
     )
-    console.print(_json.dumps(snapshot.to_json_dict(), indent=2))
+    print(_json.dumps(snapshot.to_json_dict(), indent=2))
 
     if not snapshot.available:
         raise typer.Exit(1)
@@ -489,6 +489,123 @@ def trading_paper_positions_summary(
 
     if not snapshot.available:
         raise typer.Exit(1)
+
+
+@trading_app.command("positions-risk-snapshot")
+def trading_positions_risk_snapshot(
+    audit_path: str = typer.Option(
+        "artifacts/paper_execution_audit.jsonl",
+        "--audit-path",
+        help="Append-only paper execution audit JSONL path",
+    ),
+    provider: str = typer.Option(
+        "coingecko",
+        "--provider",
+        help="Read-only market data provider for mark-to-market",
+    ),
+    freshness_threshold_seconds: float = typer.Option(
+        120.0,
+        "--freshness-threshold-seconds",
+        help="Market data age threshold for stale flagging",
+    ),
+    timeout_seconds: int = typer.Option(
+        10,
+        "--timeout-seconds",
+        help="Provider request timeout in seconds",
+    ),
+    loss_threshold_pct: float = typer.Option(
+        1.0,
+        "--loss-threshold-pct",
+        help="Open-loss magnitude (percent) at which a position counts as risk_open",
+    ),
+    out: str = typer.Option(
+        "artifacts/open_positions_snapshot.json",
+        "--out",
+        help="Path for the persisted JSON risk-snapshot artifact",
+    ),
+) -> None:
+    """Read-only open-position risk snapshot (Blocker #3 + bleed detection).
+
+    Computes per-position unrealized PnL and a risk-status
+    (no_risk / risk_open / data_unknown), persists a JSON artifact and prints a
+    loud warning if any position is bleeding beyond ``--loss-threshold-pct``.
+    Never trades, never changes execution state.
+    """
+    import asyncio
+    import json
+    from pathlib import Path
+
+    from app.core.settings import get_settings
+    from app.execution.portfolio_read import build_portfolio_snapshot
+    from app.observability.position_risk import (
+        RISK_OPEN,
+        RISK_UNKNOWN,
+        build_positions_risk_snapshot,
+    )
+
+    snapshot = asyncio.run(
+        build_portfolio_snapshot(
+            audit_path=audit_path,
+            provider=provider,
+            freshness_threshold_seconds=freshness_threshold_seconds,
+            timeout_seconds=timeout_seconds,
+        )
+    )
+
+    try:
+        entry_mode = get_settings().execution.entry_mode.value
+    except Exception:  # pragma: no cover - settings should always load
+        entry_mode = "unknown"
+
+    report = build_positions_risk_snapshot(
+        snapshot,
+        entry_mode=entry_mode,
+        loss_threshold_pct=loss_threshold_pct,
+    )
+
+    out_path = Path(out)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_text(json.dumps(report, indent=2, sort_keys=True), encoding="utf-8")
+
+    console.print("[bold]Open Positions Risk Snapshot[/bold]")
+    console.print(
+        f"entry_mode={report['entry_mode']} "
+        f"execution_enabled={report['execution_enabled']}"
+    )
+    console.print(
+        f"position_count={report['position_count']} "
+        f"risk_open={report['risk_open_count']} data_unknown={report['data_unknown_count']}"
+    )
+    console.print(f"total_unrealized_pnl_usd={report['total_unrealized_pnl_usd']}")
+    console.print(f"overall_risk_status={report['overall_risk_status']}")
+    for position in report["positions"]:
+        console.print(
+            " | ".join(
+                [
+                    f"symbol={position['symbol']}",
+                    f"side={position['side']}",
+                    f"size={position['size']}",
+                    f"entry={position['entry']}",
+                    f"current={position['current']}",
+                    f"uPnL={position['unrealized_pnl_usd']}",
+                    f"uPnL%={position['unrealized_pnl_pct']}",
+                    f"source={position['source']}",
+                    f"risk={position['risk_status']}",
+                ]
+            )
+        )
+    console.print(f"artifact={out_path}")
+
+    if report["overall_risk_status"] == RISK_OPEN:
+        console.print(
+            "[bold red]WARN: offener Verlust erkannt (risk_open) — vor paper/probe/Re-Enable "
+            "Operator-Review erforderlich.[/bold red]"
+        )
+    elif report["overall_risk_status"] == RISK_UNKNOWN:
+        console.print(
+            "[bold yellow]WARN: Positionsdaten unbekannt (data_unknown) — Risiko nicht "
+            "bewertbar, kein Re-Enable ohne frische Preise.[/bold yellow]"
+        )
 
 
 @trading_app.command("paper-exposure-summary")
@@ -573,7 +690,7 @@ def trading_diversification_report(
 
     overview = asyncio.run(build_diversification_overview(audit_path=audit_path, provider=provider))
     if as_json:
-        console.print(_json.dumps(overview, indent=2))
+        print(_json.dumps(overview, indent=2))
         return
 
     conc = cast(dict[str, Any], overview.get("concentration") or {})
@@ -1581,7 +1698,7 @@ def trading_shadow_report(
     report = build_shadow_report(resolved, total_candidates=total)
 
     if as_json:
-        console.print(_json.dumps(report, indent=2, default=str))
+        print(_json.dumps(report, indent=2, default=str))
         return
 
     console.print("[bold]Shadow Candidate Report[/bold]")

@@ -221,7 +221,7 @@ export function AIInsightsPage() {
       <PreparedPanel
         title="Modell-Observationen & Entscheidungspfad"
         reason="Narrative Insights (warum ein Signal entstanden ist, welche Features dominierten, welche Gates durchlaufen wurden) brauchen einen neuen Explain-Endpoint."
-        detail="Geplant: GET /operator/signals/{id}/explain — ausbauen auf decision-pack-Level. Phase 2."
+        detail="Geplant: GET /operator/signals/{id}/explain — ausbauen auf decision-pack-Level. Dashboard-Roadmap."
       />
 
       <PreparedPanel
