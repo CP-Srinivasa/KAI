@@ -608,6 +608,122 @@ def trading_positions_risk_snapshot(
         )
 
 
+@trading_app.command("promotion-check")
+def trading_promotion_check(
+    target: str = typer.Option(
+        ...,
+        "--target",
+        help="Target EntryMode to promote to (disabled/paper/probe/live_limited/live_normal)",
+    ),
+    current: str = typer.Option(
+        "",
+        "--current",
+        help="Current EntryMode; defaults to the configured EXECUTION_ENTRY_MODE",
+    ),
+    bleed_usd_threshold: float = typer.Option(
+        0.0,
+        "--bleed-usd-threshold",
+        help="Aggregate unrealized-loss magnitude (USD) that trips an UNREALIZED_BLEED block",
+    ),
+    loss_threshold_pct: float = typer.Option(
+        1.0,
+        "--loss-threshold-pct",
+        help="Per-position open-loss percent at which a position counts as risk_open",
+    ),
+    audit_path: str = typer.Option(
+        "artifacts/paper_execution_audit.jsonl", "--audit-path"
+    ),
+    provider: str = typer.Option("coingecko", "--provider"),
+    freshness_threshold_seconds: float = typer.Option(120.0, "--freshness-threshold-seconds"),
+    timeout_seconds: int = typer.Option(10, "--timeout-seconds"),
+    out: str = typer.Option(
+        "artifacts/promotion_gate_decision.json",
+        "--out",
+        help="Path for the persisted JSON promotion-gate decision",
+    ),
+) -> None:
+    """Fail-closed bleed-breaker: block a risk-increasing EntryMode promotion.
+
+    Builds the open-position risk snapshot and evaluates the promotion gate. Exits
+    non-zero (fail-closed) when promotion is NOT allowed, so a promotion script
+    refuses to proceed. Read-only: never trades, never changes execution state.
+    Exits and de-risking transitions are never gated.
+    """
+    import asyncio
+    import json
+    from pathlib import Path
+
+    from app.core.enums import EntryMode
+    from app.core.settings import get_settings
+    from app.execution.portfolio_read import build_portfolio_snapshot
+    from app.observability.position_risk import build_positions_risk_snapshot
+    from app.risk.promotion_gate import STATUS_ALLOWED, evaluate_promotion
+
+    def _coerce_mode(raw: str) -> EntryMode:
+        try:
+            return EntryMode(raw.strip().lower())
+        except ValueError as exc:
+            valid = ", ".join(m.value for m in EntryMode)
+            raise typer.BadParameter(f"invalid EntryMode '{raw}'; valid: {valid}") from exc
+
+    target_mode = _coerce_mode(target)
+    if current.strip():
+        current_mode = _coerce_mode(current)
+    else:
+        try:
+            current_mode = get_settings().execution.entry_mode
+        except Exception:  # pragma: no cover - settings should always load
+            current_mode = EntryMode.DISABLED
+
+    snapshot = asyncio.run(
+        build_portfolio_snapshot(
+            audit_path=audit_path,
+            provider=provider,
+            freshness_threshold_seconds=freshness_threshold_seconds,
+            timeout_seconds=timeout_seconds,
+        )
+    )
+    risk_report = build_positions_risk_snapshot(
+        snapshot,
+        entry_mode=current_mode.value,
+        loss_threshold_pct=loss_threshold_pct,
+    )
+
+    decision = evaluate_promotion(
+        current_mode,
+        target_mode,
+        risk_report,
+        bleed_usd_threshold=bleed_usd_threshold,
+    )
+
+    out_path = Path(out)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    payload = decision.to_dict()
+    payload["risk_snapshot"] = risk_report
+    out_path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
+
+    console.print("[bold]Promotion Gate (Bleed-Breaker)[/bold]")
+    console.print(
+        f"current={decision.current_mode.value} -> target={decision.target_mode.value} "
+        f"(risk_increasing={decision.risk_increasing})"
+    )
+    console.print(f"status={decision.status} allowed={decision.allowed}")
+    console.print(f"reason_codes={decision.reason_codes}")
+    console.print(f"artifact={out_path}")
+
+    if not decision.allowed:
+        console.print(
+            "[bold red]BLOCKED: risk-increasing Promotion abgelehnt — manual_review_required. "
+            "Exits/De-Risking bleiben erlaubt; entry_mode bleibt unverändert.[/bold red]"
+        )
+        raise typer.Exit(1)
+    if decision.status == STATUS_ALLOWED and decision.risk_increasing:
+        console.print(
+            "[bold green]Promotion gate clear — Edge-Gate + Operator-Sign-off bleiben separat "
+            "erforderlich.[/bold green]"
+        )
+
+
 @trading_app.command("paper-exposure-summary")
 def trading_paper_exposure_summary(
     audit_path: str = typer.Option(
