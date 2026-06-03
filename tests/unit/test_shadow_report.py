@@ -16,7 +16,10 @@ def _row(**over: object) -> dict[str, object]:
         "symbol": "ETH/USDT",
         "side": "long",
         "regime": "chop_quiet/vol_low",
-        "source": "autonomous_loop",
+        # NEO-P-002 (Weg B): a resolved REAL candidate is v2 + autonomous_generator
+        # (legacy autonomous_loop v1 rows are fenced out of the headline).
+        "source": "autonomous_generator",
+        "schema_version": "v2",
         "stop_dist_bps": 72.0,
         "take_dist_bps": 125.0,
         "gate_would_reject": False,

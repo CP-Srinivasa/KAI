@@ -55,6 +55,35 @@ _ALLOWED_CONTROL_MODES = frozenset({ExecutionMode.PAPER, ExecutionMode.SHADOW})
 
 _TV_QUOTE_SUFFIXES = ("USDT", "USDC", "BUSD", "USD", "EUR", "BTC", "ETH")
 
+# NEO-P-002 (Weg B): ONE source taxonomy shared by the fill path (#132) and the
+# shadow path (#137). #137 used a second, divergent mapping in the shadow path
+# (event_type "control_plane" -> canary_probe, else "autonomous_loop"). That
+# split the fill bucket ("autonomous_generator") from the shadow bucket
+# ("autonomous_loop") for the very same real generator. This helper unifies BOTH
+# on the document_id-based detection so a single bucket name joins across fill,
+# close and shadow aggregations. "autonomous_loop" is never produced as a NEW
+# value again — it survives only as a read-back default for the 644 legacy
+# ledger rows (see legacy_counts in build_shadow_report).
+SOURCE_CANARY_PROBE = "canary_probe"
+SOURCE_AUTONOMOUS_GENERATOR = "autonomous_generator"
+SOURCE_UNKNOWN = ""
+
+
+def derive_autonomous_signal_source(document_id: str | None) -> str:
+    """Map an originating document_id to its coarse autonomous source bucket.
+
+    Pure / no side effects. ``loop_control_*`` doc-ids are the hardcoded
+    control-plane canary probes; any other non-empty doc-id is the real
+    generator; ``""``/None means the origin is genuinely unknown — never
+    silently relabelled as a real signal (CLAUDE.md: no silent assumptions).
+    """
+    doc_id = document_id or ""
+    if doc_id.startswith("loop_control_"):
+        return SOURCE_CANARY_PROBE
+    if doc_id:
+        return SOURCE_AUTONOMOUS_GENERATOR
+    return SOURCE_UNKNOWN
+
 
 def _normalize_tv_symbol(raw: str) -> str:
     """Convert TV-style ticker (BTCUSDT) to KAI canonical (BTC/USDT)."""
@@ -302,7 +331,7 @@ class TradingLoop:
                 order_side=order_side,
                 entry_mode_value=entry_mode.value,
                 recommended_priority=analysis.recommended_priority,
-                analysis_event_type=getattr(analysis, "event_type", None),
+                analysis=analysis,
             )
             await self._write_db(cycle)
             return cycle
@@ -461,13 +490,10 @@ class TradingLoop:
         # news doc id). signal_source is a coarse bucket so edge_report can split
         # canary-probe vs real-generator fills. "" stays the unknown default for
         # any path that does not set source_document_id.
+        # NEO-P-002 (Weg B): inline mapping replaced by the shared
+        # derive_autonomous_signal_source helper so fill + shadow use ONE taxonomy.
         attribution_doc_id = signal.source_document_id or analysis.document_id or ""
-        if attribution_doc_id.startswith("loop_control_"):
-            signal_source = "canary_probe"
-        elif attribution_doc_id:
-            signal_source = "autonomous_generator"
-        else:
-            signal_source = ""
+        signal_source = derive_autonomous_signal_source(attribution_doc_id)
         try:
             order = self._exec.create_order(
                 symbol=symbol,
@@ -966,7 +992,7 @@ class TradingLoop:
         order_side: str,
         entry_mode_value: str,
         recommended_priority: int | None,
-        analysis_event_type: str | None = None,
+        analysis: AnalysisResult,
     ) -> None:
         """Phase B: persist a hypothetical entry candidate (no execution).
 
@@ -986,15 +1012,34 @@ class TradingLoop:
             ts_utc = started if isinstance(started, str) else started.isoformat()
             regime_stamp = self._regime_stamp_for_audit(cycle)
 
-            # V1 canary attribution: the cron canary profiles inject a hardcoded
-            # control-plane analysis (constant confidence 0.85, event_type
-            # "control_plane_*"). Tag those candidates as ``canary_probe`` so the
-            # shadow report can exclude them from the real-edge measurement instead
-            # of learning the constant probe value.
-            is_canary = bool(analysis_event_type) and str(analysis_event_type).startswith(
-                "control_plane"
+            # NEO-P-002 (Weg B): ONE taxonomy via derive_autonomous_signal_source
+            # (document_id-based) — the same helper the fill path uses, so fill
+            # and shadow buckets join. Replaces #137's divergent event_type
+            # mapping (which produced "autonomous_loop"; that value is no longer
+            # emitted as a NEW source). The doc-id traces the originating
+            # analysis: canary probes carry "loop_control_*", the real generator
+            # carries the news doc-id, "" stays unknown.
+            attribution_doc_id = signal.source_document_id or analysis.document_id or ""
+            source = derive_autonomous_signal_source(attribution_doc_id)
+            is_canary = source == SOURCE_CANARY_PROBE
+
+            # NEO-P-002 rich fields — ONLY genuinely derivable values; the rest
+            # stay explicit unknown/missing rather than fabricated defaults.
+            #   candidate_kind  — this hook fires after the SignalGenerator
+            #                     produced geometry, so it is ALWAYS a real signal
+            #                     candidate. raw_scan/no_candidate/synthetic are
+            #                     never written here.
+            #   source_stage    — fixed: runs right after the generator, pre-gate.
+            #   score_source    — confidence origin is not distinguishable at the
+            #                     loop boundary; "missing" when no confidence, else
+            #                     "unknown" (honest, not invented).
+            #   signal_origin   — same coarse bucket as source (the report axis).
+            #   is_synthetic_default — always False: no pseudo candidate fabricated.
+            confidence = signal.confidence_score
+            score_source = "missing" if confidence is None else "unknown"
+            sentiment = (
+                analysis.sentiment_label.value if analysis.sentiment_label is not None else None
             )
-            source = "canary_probe" if is_canary else "autonomous_loop"
 
             would_reject: bool | None = None
             reason_codes: list[str] = []
@@ -1030,6 +1075,17 @@ class TradingLoop:
                 gate_reason_codes=reason_codes,
                 entry_mode=entry_mode_value,
                 source=source,
+                candidate_kind="signal_candidate",
+                source_stage="signal_generator",
+                score_source=score_source,
+                signal_origin=source,
+                document_id=attribution_doc_id or None,
+                cycle_id=cycle.cycle_id,
+                is_canary=is_canary,
+                is_synthetic_default=False,
+                priority=recommended_priority,
+                sentiment=sentiment,
+                directional_state=side,
             )
             record_candidate(candidate)
         except Exception as exc:  # noqa: BLE001 — never break the loop
