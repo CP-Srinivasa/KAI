@@ -263,9 +263,8 @@ export function RiskPage() {
             (z.B. "Position-Size reduzieren bei Vol &gt; 30d-Median").
           </>
         }
-        phase="planning"
-        progress={30}
-        timeline="Dashboard-Roadmap — nach Backtest-Endpoint"
+        status="roadmap"
+        roadmapNote="Roadmap: GET /operator/risk-summary (Exposure + Paper-Audit, Vol 7/30d, Max-DD)."
       />
 
       {/* DALI v2 S5 M4c: "Missed-Signal-Analyse" -> "Verpasste Trading-Chancen"
@@ -281,9 +280,8 @@ export function RiskPage() {
             Konzentration / Cooldown) + tatsaechlicher 24h-Performance.
           </>
         }
-        phase="planning"
-        progress={15}
-        timeline="Dashboard-Roadmap — nach Signal-Detail-Endpoint"
+        status="roadmap"
+        roadmapNote="Roadmap: blocked_alerts.jsonl × alert_outcomes.jsonl (Top-10 mit Blockgrund + 24h-Forward-PnL)."
       />
     </div>
   );

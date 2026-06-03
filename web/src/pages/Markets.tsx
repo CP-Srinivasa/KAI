@@ -33,9 +33,8 @@ export function MarketsPage() {
             Zielanzeige: Risiko-Badge pro Asset, Trend-Pfeile, Top-Movers, verknüpfte Signal-IDs.
           </>
         }
-        phase="planning"
-        progress={15}
-        timeline="Dashboard-Roadmap — Dashboard-Konsolidierung"
+        status="roadmap"
+        roadmapNote="Roadmap: GET /markets/overview (fehlende Provider erscheinen als unknown)."
       />
 
       {/* DALI v2 S7 M6b: Asset-Detail mit Signal-Verknuepfung (skeleton 40%). */}
@@ -49,9 +48,8 @@ export function MarketsPage() {
             Zielanzeige: Trendrichtung-Banner, Signal-History, News-Liste, Risiko-Badge.
           </>
         }
-        phase="planning"
-        progress={20}
-        timeline="Dashboard-Roadmap — nach Operator-Signals-Endpoint"
+        status="roadmap"
+        roadmapNote="Roadmap: nach Operator-Signals-Endpoint + Markets-Mapping."
       />
     </div>
   );
