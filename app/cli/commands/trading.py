@@ -208,7 +208,10 @@ def trading_edge_report(
     else:
         console.print(render_report(report))
     if report.closed_trade_count == 0:
-        console.print("[yellow]No closed trades in audit stream.[/yellow]")
+        # Keep stdout single-document valid JSON under --json (Blocker #5: the
+        # nightly artifact must always parse). The human note goes to stderr.
+        if not as_json:
+            console.print("[yellow]No closed trades in audit stream.[/yellow]")
         raise typer.Exit(1)
 
 
@@ -281,7 +284,7 @@ def trading_edge_gate(
         print(_json.dumps(decision.to_dict(), indent=2))
     else:
         console.print(render_decision(decision))
-    if report.closed_trade_count == 0:
+    if report.closed_trade_count == 0 and not as_json:
         console.print("[yellow]No closed trades in audit stream -> DISABLED.[/yellow]")
 
 
