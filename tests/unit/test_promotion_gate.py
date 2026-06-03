@@ -45,6 +45,7 @@ def _report(
 
 # --- ladder / direction -----------------------------------------------------
 
+
 def test_ladder_direction() -> None:
     assert is_risk_increasing(EntryMode.DISABLED, EntryMode.PAPER)
     assert is_risk_increasing(EntryMode.PAPER, EntryMode.PROBE)
@@ -54,6 +55,7 @@ def test_ladder_direction() -> None:
 
 
 # --- de-risking is never gated (exits/risk-reduction must always pass) -------
+
 
 def test_derisking_allowed_even_with_open_bleed() -> None:
     rep = _report(overall="risk_open", total_unrealized=-73.0)
@@ -69,6 +71,7 @@ def test_lateral_allowed() -> None:
 
 
 # --- risk-increasing promotions are gated -----------------------------------
+
 
 def test_promotion_blocked_when_position_bleeds() -> None:
     rep = _report(overall="risk_open", total_unrealized=-73.0)
@@ -86,6 +89,7 @@ def test_promotion_allowed_when_flat_no_risk() -> None:
 
 
 # --- fail-closed posture ----------------------------------------------------
+
 
 def test_missing_artifact_is_fail_closed() -> None:
     d = evaluate_promotion(EntryMode.DISABLED, EntryMode.PAPER, None)

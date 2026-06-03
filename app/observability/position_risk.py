@@ -64,13 +64,7 @@ def classify_position(
     pnl_usd: float | None = None
     pnl_pct: float | None = None
     price_f = float(price) if isinstance(price, (int, float)) else None
-    priceable = (
-        available
-        and not stale
-        and price_f is not None
-        and entry > 0
-        and qty != 0
-    )
+    priceable = available and not stale and price_f is not None and entry > 0 and qty != 0
     if priceable and price_f is not None:
         direction = -1.0 if side == "short" else 1.0
         pnl_usd = round(direction * (price_f - entry) * qty, 6)

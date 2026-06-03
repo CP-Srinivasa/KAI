@@ -572,8 +572,7 @@ def trading_positions_risk_snapshot(
 
     console.print("[bold]Open Positions Risk Snapshot[/bold]")
     console.print(
-        f"entry_mode={report['entry_mode']} "
-        f"execution_enabled={report['execution_enabled']}"
+        f"entry_mode={report['entry_mode']} execution_enabled={report['execution_enabled']}"
     )
     console.print(
         f"position_count={report['position_count']} "
@@ -633,9 +632,7 @@ def trading_promotion_check(
         "--loss-threshold-pct",
         help="Per-position open-loss percent at which a position counts as risk_open",
     ),
-    audit_path: str = typer.Option(
-        "artifacts/paper_execution_audit.jsonl", "--audit-path"
-    ),
+    audit_path: str = typer.Option("artifacts/paper_execution_audit.jsonl", "--audit-path"),
     provider: str = typer.Option("coingecko", "--provider"),
     freshness_threshold_seconds: float = typer.Option(120.0, "--freshness-threshold-seconds"),
     timeout_seconds: int = typer.Option(10, "--timeout-seconds"),
