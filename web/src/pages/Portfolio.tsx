@@ -332,9 +332,8 @@ export function PortfolioPage() {
             Konto-Cash als freie Margin. Vor Live-Mode keine sinnvolle Visualisierung.
           </>
         }
-        phase="planning"
-        progress={10}
-        timeline="Live-Mode — Sprint 39+"
+        status="live_only"
+        roadmapNote="Live-only: Börsen-Balance-Reader, freie Margin und Withdrawal-Audit — im Paper-Mode bewusst nicht anwendbar."
       />
 
       {/* DALI-P2: Per-Asset-Unrealized-PnL als Heatmap-Pills.
@@ -872,9 +871,8 @@ export function PortfolioPage() {
             Zielanzeige: kritische Phasen werden mit warn/neg-Tönen markiert.
           </>
         }
-        phase="planning"
-        progress={20}
-        timeline="Dashboard-Roadmap — gemeinsam mit Realized-PnL-Endpoint"
+        status="roadmap"
+        roadmapNote="Roadmap: Equity/Drawdown-Aggregation aus paper_execution_audit.jsonl."
       />
     </div>
   );

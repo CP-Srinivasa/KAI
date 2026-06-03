@@ -11,6 +11,7 @@ import { PerSourceStabilityPanel } from "@/components/panels/PerSourceStabilityP
 import { SourceReliabilityPanel } from "@/components/panels/SourceReliabilityPanel";
 import { RegimeStatusPanel } from "@/components/panels/RegimeStatusPanel";
 import { PreparedPanel } from "@/components/panels/PreparedPanel";
+import { LivePortfolioTiles } from "@/components/panels/LivePortfolioTiles";
 import { ReentryGatePanel } from "@/components/panels/ReentryGatePanel";
 import { SignalHeatmapPanel } from "@/components/panels/SignalHeatmap";
 import { AgentsStatusCard } from "@/components/panels/AgentsStatusCard";
@@ -36,66 +37,34 @@ import {
 } from "@/lib/tierLift";
 import { useRouter, type Route } from "@/state/Router";
 
-// DALI v2 S3 M1d: PREPARED_PANELS mit explizitem Entwicklungsstatus (Master-Spec G3).
-// Operator sieht sofort welches Modul in welcher Phase steckt - statt nur
-// "Integration ausstehend" als Pauschal-Badge.
+// Roadmap-Karten: ehrlich als Roadmap markiert (kein Reifegrad-Prozent mehr).
+// Portfolio Snapshot, Risk Meter und Allocation sind als echte Live-Tiles
+// umgesetzt (LivePortfolioTiles) und deshalb hier entfernt.
 type DashboardPreparedPanel = {
   title: string;
   reason: string;
   detail: string;
-  phase: "planning" | "skeleton" | "beta" | "stable";
-  progress?: number;
-  timeline?: string;
+  roadmapNote?: string;
 };
 
 const PREPARED_PANELS: DashboardPreparedPanel[] = [
   {
-    title: "Portfolio Snapshot",
-    reason: "Paper-Portfolio mit Mark-to-Market und Exposure-Summary auf dem Dashboard.",
-    detail: "Backend bereit: GET /operator/portfolio-snapshot. Eigene Portfolio-Page liest das schon — Dashboard-Tile fehlt.",
-    phase: "skeleton",
-    progress: 60,
-    timeline: "geplant für Sprint nach Backtesting-Endpoint",
-  },
-  {
-    title: "Risk Meter",
-    reason: "Risiko-Score aus Exposure, Korrelation und Paper-PnL-Drawdown als Hero-KPI.",
-    detail: "Backend bereit: GET /operator/exposure-summary. Risk-Page nutzt es — Dashboard-Tile fehlt.",
-    phase: "skeleton",
-    progress: 55,
-    timeline: "Dashboard-Roadmap — gekoppelt an Risk-Modul (S5)",
-  },
-  {
     title: "Equity / PnL Kurve",
-    reason: "Kapital-Entwicklung über Zeit aus Paper-Execution-Audit (Ledger).",
-    detail: "Rohdaten in artifacts/paper_execution_audit.jsonl. Aggregations-Endpoint geplant.",
-    phase: "planning",
-    progress: 20,
-    timeline: "Dashboard-Roadmap — nach Sub-Account-KYC",
+    reason: "Kapital-Entwicklung über Zeit aus dem Paper-Execution-Ledger.",
+    detail: "Rohdaten in artifacts/paper_execution_audit.jsonl. Aggregations-Endpoint noch offen.",
+    roadmapNote: "Roadmap: Equity/PnL-Aggregations-Endpoint.",
   },
   {
     title: "Sentiment Stream",
     reason: "Rolling Sentiment aus analysierten News- und Social-Dokumenten.",
-    detail: "Backend-Ingestion läuft. Aggregations-Endpoint für Frontend-Stream offen.",
-    phase: "planning",
-    progress: 25,
-    timeline: "Dashboard-Roadmap — gekoppelt an News-Modul (S6)",
-  },
-  {
-    title: "Allocation",
-    reason: "Asset-Allokation aus Portfolio-Snapshot als Donut/Treemap.",
-    detail: "Daten in Portfolio-Snapshot vorhanden. UI-Visualisierung fehlt.",
-    phase: "skeleton",
-    progress: 45,
-    timeline: "Dashboard-Roadmap — gekoppelt an Portfolio-Modul (S4)",
+    detail: "Backend-Ingestion läuft; Aggregations-Endpoint für den Frontend-Stream noch offen.",
+    roadmapNote: "Roadmap: GET /operator/recent-news.",
   },
   {
     title: "AI Insights",
     reason: "LLM-generierte Markt-Zusammenfassung mit Provider-Metadaten.",
-    detail: "Eigene AI-Insights-Page existiert. Dashboard-Tile als Kurzform fehlt.",
-    phase: "beta",
-    progress: 70,
-    timeline: "Phase 3 — nach Insight-Endpoint-Stabilisierung",
+    detail: "Eigene AI-Insights-Page existiert; eine Dashboard-Kurzkarte braucht einen stabilen Insight-Endpoint.",
+    roadmapNote: "Roadmap: stabiler Insight-Endpoint.",
   },
 ];
 
@@ -405,7 +374,12 @@ export function Dashboard() {
         />
       </PanelErrorBoundary>
 
-      {/* Vorbereitete Bereiche — default collapsed Ribbon, expandable zu vollem Grid */}
+      {/* Quick-Win-Tiles: echte Paper-Mode-Daten aus laufenden Read-Endpoints. */}
+      <PanelErrorBoundary name="Live-Portfolio-Tiles">
+        <LivePortfolioTiles />
+      </PanelErrorBoundary>
+
+      {/* Roadmap-Bereiche — default collapsed Ribbon, expandable zu vollem Grid */}
       <PreparedSection />
 
       <DashboardFooter />
@@ -472,7 +446,7 @@ function PreparedSection() {
           </h2>
           <span className="text-2xs text-fg-subtle font-mono shrink-0">
             {PREPARED_PANELS.length}
-            <span className="hidden sm:inline"> Bereiche · Integration ausstehend</span>
+            <span className="hidden sm:inline"> Bereiche · Roadmap</span>
           </span>
           {!expanded && (
             <div className="hidden md:flex items-center gap-1.5 flex-wrap min-w-0 overflow-hidden">
@@ -500,9 +474,8 @@ function PreparedSection() {
               title={p.title}
               reason={p.reason}
               detail={p.detail}
-              phase={p.phase}
-              progress={p.progress}
-              timeline={p.timeline}
+              status="roadmap"
+              roadmapNote={p.roadmapNote}
             />
           ))}
         </div>

@@ -30,9 +30,8 @@ export function NewsPage() {
             und verlinkten Signal-IDs.
           </>
         }
-        phase="skeleton"
-        progress={50}
-        timeline="Dashboard-Roadmap — nach Operator-News-Endpoint"
+        status="roadmap"
+        roadmapNote="Roadmap: GET /operator/recent-news (Ingestion läuft bereits)."
       />
 
       {/* DALI v2 S6 M7b: News-Detail mit Signal-Kontext (planning 20% - UI-Konzept). */}
@@ -46,9 +45,8 @@ export function NewsPage() {
             Signal-Linking-Tabelle.
           </>
         }
-        phase="planning"
-        progress={20}
-        timeline="Dashboard-Roadmap — nach Live-News-Stream"
+        status="roadmap"
+        roadmapNote="Roadmap: nach Live-News-Stream + Signal-Linking."
       />
     </div>
   );

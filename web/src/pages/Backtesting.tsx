@@ -34,9 +34,8 @@ export function BacktestPage() {
             Max-Drawdown, Risiko-Verteilung.
           </>
         }
-        phase="planning"
-        progress={25}
-        timeline="Dashboard-Roadmap — Replay-Engine als eigener Sprint"
+        status="roadmap"
+        roadmapNote="Roadmap: deterministische Replay-Engine (POST /operator/backtest/replay)."
       />
 
       {/* DALI v2 S7 M8b: Strategie-Bibliothek (planning 15%). */}
@@ -50,9 +49,8 @@ export function BacktestPage() {
             <span className="font-mono">high_confluence</span>. Geplant: UI-Liste mit Performance-Stats und Aktiv-Toggle.
           </>
         }
-        phase="planning"
-        progress={15}
-        timeline="Dashboard-Roadmap — nach Backtest-Endpoint"
+        status="roadmap"
+        roadmapNote="Roadmap: read-only Strategie-Bibliothek nach Backtest-Endpoint (kein Aktiv-Toggle ohne Backend)."
       />
     </div>
   );
