@@ -181,8 +181,26 @@ class ShadowCandidate:
     gate_would_reject: bool | None = None
     gate_reason_codes: list[str] = field(default_factory=list)
     entry_mode: str = "disabled"
+    # NEO-P-002 (Weg B) source/stage attribution. Only fields REALLY derivable in
+    # the shadow path are populated by the loop; the rest stay explicit
+    # unknown/missing rather than fabricated (CLAUDE.md: no silent assumptions).
+    # See _record_shadow_candidate in trading_loop.py for the field-by-field
+    # provenance. ``source`` default "autonomous_loop" is preserved ONLY so the
+    # 644 legacy v1 ledger rows read back unchanged — the loop now writes
+    # "canary_probe"/"autonomous_generator" via derive_autonomous_signal_source.
     source: str = "autonomous_loop"
-    schema_version: str = "v1"
+    candidate_kind: str | None = None
+    source_stage: str | None = None
+    score_source: str | None = None
+    signal_origin: str | None = None
+    document_id: str | None = None
+    cycle_id: str | None = None
+    is_canary: bool = False
+    is_synthetic_default: bool = False
+    priority: int | None = None
+    sentiment: str | None = None
+    directional_state: str | None = None
+    schema_version: str = "v2"
 
     @staticmethod
     def from_geometry(
@@ -264,6 +282,39 @@ def _read_jsonl(path: Path) -> list[dict[str, object]]:
     return out
 
 
+# NEO-P-002 (Weg B): candidate_kinds representing an actual hypothetical entry
+# worth resolving forward returns for. raw_scan / no_candidate / synthetic-default
+# carry no entry geometry of interest and (at ~372/441 near-identical canary scan
+# rows/day) would only burn kline-API calls. Legacy rows have candidate_kind None:
+# those are pre-NEO-P-002 real candidates, so they ARE resolved by default (None
+# treated as resolvable) to stay backward-compatible.
+RESOLVABLE_CANDIDATE_KINDS: frozenset[str] = frozenset(
+    {"signal_candidate", "gate_candidate", "would_have_traded"}
+)
+_SKIP_SOURCES: frozenset[str] = frozenset({"canary_probe"})
+
+
+def _is_resolvable_candidate(c: dict[str, object], *, include_canary: bool) -> bool:
+    """True if a ledger row should be resolved by default.
+
+    candidate_kind None == legacy real candidate -> resolvable. Explicit
+    non-resolvable kinds (raw_scan/no_candidate/synthetic-default) and
+    canary_probe source are skipped unless ``include_canary`` is set (the
+    explicit diagnostic option). ``is_synthetic_default`` rows are never resolved
+    by default.
+    """
+    if include_canary:
+        return True
+    kind = c.get("candidate_kind")
+    if kind is not None and str(kind) not in RESOLVABLE_CANDIDATE_KINDS:
+        return False
+    if str(c.get("source")) in _SKIP_SOURCES:
+        return False
+    if bool(c.get("is_synthetic_default")):
+        return False
+    return True
+
+
 def resolve_pending(
     *,
     fetch_klines: KlineFetcher,
@@ -271,23 +322,36 @@ def resolve_pending(
     ledger_path: Path = LEDGER_PATH,
     resolved_path: Path = RESOLVED_PATH,
     window_s: int = max(HORIZONS_S),
+    include_canary: bool = False,
 ) -> dict[str, int]:
     """Resolve candidates whose full MAE/MFE window has elapsed.
 
     Idempotent: candidates already present in ``resolved_path`` are skipped. Only
     candidates older than ``window_s`` are resolved (so the excursion window is
-    complete). Returns counts {resolved, skipped_recent, already, no_data}.
+    complete). By default only real entry candidates are resolved; raw_scan /
+    no_candidate / synthetic-default / canary_probe rows are skipped (counted in
+    ``skipped_kind``) unless ``include_canary=True`` (explicit diagnostic).
+    Returns counts {resolved, skipped_recent, skipped_kind, already, no_data}.
     """
     now = now or datetime.now(UTC)
     now_ms = int(now.timestamp() * 1000)
     candidates = _read_jsonl(ledger_path)
     done = {r.get("candidate_id") for r in _read_jsonl(resolved_path)}
-    counts = {"resolved": 0, "skipped_recent": 0, "already": 0, "no_data": 0}
+    counts = {
+        "resolved": 0,
+        "skipped_recent": 0,
+        "skipped_kind": 0,
+        "already": 0,
+        "no_data": 0,
+    }
 
     for c in candidates:
         cid = c.get("candidate_id")
         if cid in done:
             counts["already"] += 1
+            continue
+        if not _is_resolvable_candidate(c, include_canary=include_canary):
+            counts["skipped_kind"] += 1
             continue
         entry_ms = _parse_ts_ms(str(c.get("ts_utc", "")))
         if entry_ms is None:
@@ -317,10 +381,17 @@ def resolve_pending(
             "symbol": c.get("symbol"),
             "side": side,
             "regime": c.get("regime"),
-            # V1: carry attribution through so the report can separate the
-            # hardcoded canary probe (constant confidence) from real signals.
+            # #137/#140: carry source + signal_confidence so the report can
+            # separate the canary probe (constant confidence) from real signals.
             "source": c.get("source"),
             "signal_confidence": _as_float(c.get("signal_confidence")),
+            # NEO-P-002 (Weg B): carry the additional attribution axes forward so
+            # the resolved report can split by_candidate_kind / by_score_source.
+            # Legacy rows without these keys resolve to None and bucket cleanly.
+            "candidate_kind": c.get("candidate_kind"),
+            "score_source": c.get("score_source"),
+            "signal_origin": c.get("signal_origin"),
+            "is_canary": c.get("is_canary"),
             "stop_dist_bps": sd,
             "take_dist_bps": td,
             "gate_would_reject": c.get("gate_would_reject"),
@@ -334,7 +405,7 @@ def resolve_pending(
             "bars_seen": exc.bars_seen,
             "reached_take": (None if (td is None or exc.mfe_bps is None) else exc.mfe_bps >= td),
             "reached_stop": (None if (sd is None or exc.mae_bps is None) else exc.mae_bps <= -sd),
-            "schema_version": "v1",
+            "schema_version": "v2",
         }
         try:
             resolved_path.parent.mkdir(parents=True, exist_ok=True)
@@ -360,9 +431,17 @@ CLASS_PROFIT_NOT_HARVESTED = "PROFIT_NOT_HARVESTED"
 CLASS_UNCLASSIFIED = "UNCLASSIFIED"
 
 # Sources whose resolved candidates count as REAL signal evidence in the headline
-# edge stats / primary_class. ``canary_probe`` (hardcoded control-plane probe) and
-# pre-V1 records that carry no source are excluded — never read as real edge.
-REAL_SOURCES: frozenset[str] = frozenset({"autonomous_loop", "autonomous_generator"})
+# edge stats / primary_class.
+#
+# NEO-P-002 (Weg B) tightens #140 here: #140 kept the legacy hardcode
+# ``autonomous_loop`` in REAL_SOURCES, so the 644 alt-ledger rows (which ALL carry
+# the old hardcoded ``autonomous_loop``) still counted as real edge. The operator
+# requirement is explicit: those legacy rows must NOT enter headline/primary_class.
+# So REAL_SOURCES is now only the unified ``autonomous_generator`` AND a row must
+# additionally be ``schema_version >= 2`` (see _is_real_row). ``autonomous_loop``
+# is no longer real — it is fenced into the legacy buckets below. This is a
+# deliberate behaviour change relative to #140 (documented in the PR body).
+REAL_SOURCES: frozenset[str] = frozenset({"autonomous_generator"})
 
 # signal_confidence informativeness (NEO-P-128-INSTR-01). A constant feature
 # (e.g. the hardcoded canary 0.85) carries zero edge information and must disable
@@ -497,29 +576,84 @@ def _dedup_count(resolved: list[dict[str, object]]) -> int:
     return len(seen)
 
 
+def _schema_major(row: dict[str, object]) -> int:
+    """Best-effort major version of a resolved row. Missing/garbled -> 1 (legacy)."""
+    raw = row.get("schema_version")
+    if raw is None:
+        return 1
+    s = str(raw).lstrip("vV")
+    head = s.split(".", 1)[0]
+    try:
+        return int(head)
+    except ValueError:
+        return 1
+
+
+def _is_real_row(row: dict[str, object]) -> bool:
+    """NEO-P-002 (Weg B): a row counts as REAL edge only if attributed AND v2+."""
+    return row.get("source") in REAL_SOURCES and _schema_major(row) >= 2
+
+
+def _is_legacy_canary_suspect(row: dict[str, object]) -> bool:
+    """NEO-P-002 (Weg B): conservative heuristic for the 644 alt-ledger rows.
+
+    The legacy rows carry the old hardcoded ``source="autonomous_loop"`` with the
+    constant control-plane fingerprint (confidence 0.85, rr 2.0, gate not
+    rejecting) and no candidate_kind. We flag a row as a canary suspect ONLY when
+    ALL of those hold together, to avoid sweeping a genuine pre-NEO-P-002 real
+    candidate into the canary bucket. Anything else stays ``legacy_unattributed``.
+    """
+    if str(row.get("source")) != "autonomous_loop":
+        return False
+    if row.get("candidate_kind") is not None:
+        return False
+    conf = _f(row.get("signal_confidence"))
+    if conf is None or abs(conf - 0.85) > 1e-9:
+        return False
+    # rr is not persisted on the resolved row; reconstruct from stop/take dist.
+    sd = _f(row.get("stop_dist_bps"))
+    td = _f(row.get("take_dist_bps"))
+    if sd is None or td is None or sd <= 0:
+        return False
+    if abs((td / sd) - 2.0) > 1e-6:
+        return False
+    if bool(row.get("gate_would_reject")):
+        return False
+    return True
+
+
 def build_shadow_report(
     resolved: list[dict[str, object]],
     *,
     total_candidates: int | None = None,
+    include_legacy: bool = False,
 ) -> dict[str, object]:
     """Aggregate resolved shadow candidates into a root-cause report (pure).
 
-    V1 source attribution: only records from an explicitly-attributed REAL source
-    (``REAL_SOURCES``) feed the headline edge stats and ``primary_class``. The
-    hardcoded canary probes (``source == "canary_probe"``) are excluded and shown
-    via ``canary_probe_resolved``; pre-V1 records that carry NO source (their
-    provenance is unverifiable and the loop only ever ran the canary probe) are
-    excluded too and counted as ``unattributed_resolved`` — they must NOT be read
-    as real edge. ``by_source`` keeps every bucket visible. A ``real_resolved`` of
-    0 means NO real-signal evidence yet (-> INSUFFICIENT_DATA), never "no edge".
+    Attribution layering (most-restrictive headline):
+
+    * #137 split out ``source == "canary_probe"`` rows.
+    * #140 quarantined source-less pre-V1 rows as ``unattributed_resolved``.
+    * #139 added the confidence-informativeness guard + raw/deduped counts.
+    * NEO-P-002 (Weg B) additionally fences off the 644 LEGACY alt-ledger rows
+      (old hardcoded ``source="autonomous_loop"``, schema v1, no candidate_kind).
+      Headline + ``primary_class`` are computed ONLY over REAL rows: an
+      explicitly-attributed real source (``REAL_SOURCES`` = autonomous_generator)
+      AND ``schema_version >= 2`` (see ``_is_real_row``). canary -> separate;
+      everything else is legacy/unattributed, surfaced via ``legacy_counts``
+      (``legacy_canary_suspect`` / ``legacy_unattributed``) + the retained #140
+      ``unattributed_resolved`` total. Legacy rows are decision-irrelevant; they
+      enter the resolved ``by_source`` split only with ``include_legacy=True``
+      (diagnostic). Alt rows are NEVER rewritten. ``real_resolved`` of 0 means
+      NO real-signal evidence yet (-> INSUFFICIENT_DATA), never "no edge".
     """
     canary = [r for r in resolved if r.get("source") == "canary_probe"]
-    real = [r for r in resolved if r.get("source") in REAL_SOURCES]
-    unattributed = [
-        r
-        for r in resolved
-        if r.get("source") not in REAL_SOURCES and r.get("source") != "canary_probe"
-    ]
+    real = [r for r in resolved if _is_real_row(r)]
+    # Everything that is neither real nor canary is legacy/unattributed (#140's
+    # quarantine bucket, now further split for the 644 autonomous_loop rows).
+    legacy = [r for r in resolved if not _is_real_row(r) and r.get("source") != "canary_probe"]
+    legacy_canary_suspect = [r for r in legacy if _is_legacy_canary_suspect(r)]
+    legacy_unattributed = [r for r in legacy if not _is_legacy_canary_suspect(r)]
     n = len(real)
     total = total_candidates if total_candidates is not None else n
     mfe = [v for v in (_f(r.get("mfe_bps")) for r in real) if v is not None]
@@ -548,7 +682,8 @@ def build_shadow_report(
         "resolution_coverage_pct": round(100.0 * n / total, 1) if total else 0.0,
         "real_resolved": n,
         "canary_probe_resolved": len(canary),
-        "unattributed_resolved": len(unattributed),
+        # #140 field retained = total legacy/unattributed (now split below).
+        "unattributed_resolved": len(legacy),
         "raw_count": len(resolved),
         "deduped_count": _dedup_count(resolved),
         "mfe_before_mae_rate": _rate(real, "mfe_before_mae"),
@@ -564,12 +699,23 @@ def build_shadow_report(
         **fwd_medians,
         **_confidence_status(resolved),
     }
+    # NEO-P-002 (Weg B): legacy rows reported separately, decision-irrelevant.
+    stats["legacy_counts"] = {
+        "legacy_canary_suspect": len(legacy_canary_suspect),
+        "legacy_unattributed": len(legacy_unattributed),
+    }
     stats["primary_class"] = classify(stats)
     stats["by_symbol"] = _split(real, "symbol")
     stats["by_side"] = _split(real, "side")
     stats["by_regime"] = _split(real, "regime")
     stats["by_gate_would_reject"] = _split(real, "gate_would_reject")
-    stats["by_source"] = _split(resolved, "source")
+    # Attribution axes. by_source spans canary + real (+ legacy only when the
+    # operator asks for it) so the full bucket distribution stays visible; the
+    # NEO-P-002 axes split the real signal further by kind / score origin.
+    split_rows = resolved if include_legacy else (real + canary)
+    stats["by_source"] = _split(split_rows, "source")
+    stats["by_candidate_kind"] = _split(real, "candidate_kind")
+    stats["by_score_source"] = _split(real, "score_source")
     return stats
 
 
@@ -585,6 +731,7 @@ __all__ = [
     "CONF_NO_DATA",
     "HORIZONS_S",
     "REAL_SOURCES",
+    "RESOLVABLE_CANDIDATE_KINDS",
     "Bar",
     "ExcursionResult",
     "ShadowCandidate",

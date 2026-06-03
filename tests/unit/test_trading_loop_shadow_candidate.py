@@ -129,7 +129,18 @@ async def test_shadow_on_records_candidate_without_execution(tmp_path, monkeypat
     assert rec["symbol"] == "ETH/USDT"
     assert rec["side"] == "long"
     assert rec["entry_mode"] == "disabled"
-    assert rec["source"] == "autonomous_loop"
+    # NEO-P-002 (Weg B): a real generator signal (doc_id has no loop_control_
+    # prefix) is now attributed via the shared derive_autonomous_signal_source
+    # helper as "autonomous_generator" — the unified taxonomy with the fill path
+    # (#132). "autonomous_loop" is no longer emitted as a NEW source value.
+    assert rec["source"] == "autonomous_generator"
+    assert rec["candidate_kind"] == "signal_candidate"
+    assert rec["source_stage"] == "signal_generator"
+    assert rec["signal_origin"] == "autonomous_generator"
+    assert rec["is_canary"] is False
+    assert rec["is_synthetic_default"] is False
+    assert rec["document_id"] == "doc_eth_shadow"
+    assert rec["schema_version"] == "v2"
     assert rec["entry_price"] > 0
     assert rec["stop_price"] is not None
     assert rec["take_price"] is not None

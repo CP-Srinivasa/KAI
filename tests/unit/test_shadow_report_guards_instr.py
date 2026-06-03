@@ -44,7 +44,11 @@ def _real_row(i: int, *, conf: float) -> dict[str, object]:
         "symbol": "ETH/USDT",
         "side": "long",
         "regime": "bull",
-        "source": "autonomous_loop",
+        # NEO-P-002 (Weg B): a real row is now autonomous_generator + v2
+        # (autonomous_loop is legacy and no longer counts as real edge).
+        "source": "autonomous_generator",
+        "schema_version": "v2",
+        "candidate_kind": "signal_candidate",
         "signal_confidence": conf,
         "stop_dist_bps": 150.0 + i,  # vary so dedup keeps them distinct
         "take_dist_bps": 300.0,

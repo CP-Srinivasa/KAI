@@ -1761,21 +1761,30 @@ def trading_paper_duplicate_rejections(
 
 
 @trading_app.command("shadow-resolve")
-def trading_shadow_resolve() -> None:
+def trading_shadow_resolve(
+    include_canary: bool = typer.Option(
+        False,
+        "--include-canary",
+        help="Diagnostic: also resolve canary_probe / non-resolvable kinds (default off)",
+    ),
+) -> None:
     """Resolve pending shadow candidates from Binance 1m klines (Phase B).
 
     Read-only diagnostics. Pulls prices for candidates whose MAE/MFE window has
     elapsed, computes forward returns (1m/5m/15m/60m) + MAE/MFE, and appends a
     resolved record. Idempotent. NEVER touches paper_engine / orders / positions
     — it only reads market data and writes diagnostic metrics. A failed fetch
-    leaves the candidate pending (counted as no_data).
+    leaves the candidate pending (counted as no_data). NEO-P-002: by default
+    canary_probe / raw_scan / synthetic-default rows are skipped (skipped_kind);
+    pass --include-canary to resolve them too.
     """
     from app.observability.shadow_resolver import resolve_with_binance
 
-    counts = resolve_with_binance()
+    counts = resolve_with_binance(include_canary=include_canary)
     console.print("[bold]Shadow Candidate Resolve[/bold]")
     console.print(
         f"resolved={counts['resolved']} skipped_recent={counts['skipped_recent']} "
+        f"skipped_kind={counts.get('skipped_kind', 0)} "
         f"already={counts['already']} no_data={counts['no_data']}"
     )
 
@@ -1783,6 +1792,11 @@ def trading_shadow_resolve() -> None:
 @trading_app.command("shadow-report")
 def trading_shadow_report(
     as_json: bool = typer.Option(False, "--json", help="Emit JSON instead of the table"),
+    include_legacy: bool = typer.Option(
+        False,
+        "--include-legacy",
+        help="Diagnostic: include the 644 legacy v1 rows in the by_source split (default off)",
+    ),
 ) -> None:
     """Root-cause classification over resolved shadow candidates (Phase B).
 
@@ -1790,7 +1804,10 @@ def trading_shadow_report(
     forward-return distributions and a heuristic primary class
     (ADVERSE_SELECTION / STOP_IN_NOISE_BAND / TP_UNREACHABLE /
     PROFIT_NOT_HARVESTED / INSUFFICIENT_DATA). The class is a HINT — the raw
-    distribution it carries is the actual evidence.
+    distribution it carries is the actual evidence. NEO-P-002: headline +
+    primary_class are computed ONLY over real v2 rows (canary + legacy fenced
+    off); pass --include-legacy to fold the 644 legacy rows into the by_source
+    split for diagnostics.
     """
     import json as _json
 
@@ -1811,7 +1828,7 @@ def trading_shadow_report(
 
     resolved = _read(RESOLVED_PATH)
     total = len(_read(LEDGER_PATH))
-    report = build_shadow_report(resolved, total_candidates=total)
+    report = build_shadow_report(resolved, total_candidates=total, include_legacy=include_legacy)
 
     if as_json:
         print(_json.dumps(report, indent=2, default=str))
@@ -1819,9 +1836,18 @@ def trading_shadow_report(
 
     console.print("[bold]Shadow Candidate Report[/bold]")
     console.print(
-        f"resolved={report['n_resolved']} total={report['total_candidates']} "
+        f"resolved={report['n_resolved']} (real) total={report['total_candidates']} "
         f"pending={report['pending']} coverage={report['resolution_coverage_pct']}%"
     )
+    legacy_counts = report.get("legacy_counts")
+    if isinstance(legacy_counts, dict):
+        console.print(
+            f"real_resolved={report.get('real_resolved')} "
+            f"canary_probe_resolved={report.get('canary_probe_resolved')} "
+            f"legacy_unattributed={legacy_counts.get('legacy_unattributed')} "
+            f"legacy_canary_suspect={legacy_counts.get('legacy_canary_suspect')}"
+        )
+    console.print(f"confidence_analysis_status={report.get('confidence_analysis_status')}")
     console.print(f"[bold cyan]primary_class={report['primary_class']}[/bold cyan]")
     console.print(
         f"mfe_before_mae_rate={report['mfe_before_mae_rate']} "
@@ -1850,5 +1876,22 @@ def trading_shadow_report(
                 str(s.get("median_mfe_bps")),
             )
         console.print(tbl)
+    by_source = report.get("by_source")
+    if isinstance(by_source, dict) and by_source:
+        tbl_src = Table(title="by_source", show_header=True, header_style="bold magenta")
+        tbl_src.add_column("source", width=22)
+        tbl_src.add_column("n", justify="right")
+        tbl_src.add_column("take_rate", justify="right")
+        tbl_src.add_column("stop_rate", justify="right")
+        tbl_src.add_column("median_mfe", justify="right")
+        for src, s in by_source.items():
+            tbl_src.add_row(
+                src,
+                str(s.get("count")),
+                str(s.get("reached_take_rate")),
+                str(s.get("reached_stop_rate")),
+                str(s.get("median_mfe_bps")),
+            )
+        console.print(tbl_src)
     if report["n_resolved"] == 0:
-        console.print("[yellow]No resolved shadow candidates yet.[/yellow]")
+        console.print("[yellow]No resolved real shadow candidates yet.[/yellow]")

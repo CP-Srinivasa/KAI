@@ -67,13 +67,21 @@ def resolve_with_binance(
     now: datetime | None = None,
     ledger_path: Path = LEDGER_PATH,
     resolved_path: Path = RESOLVED_PATH,
+    include_canary: bool = False,
 ) -> dict[str, int]:
-    """Resolve all eligible pending candidates using Binance klines."""
+    """Resolve all eligible pending candidates using Binance klines.
+
+    NEO-P-002 (Weg B): by default the resolver skips canary_probe / raw_scan /
+    synthetic-default rows (counted as ``skipped_kind``) so it never burns kline
+    fetches on the ~372/441 near-identical canary clones. ``include_canary=True``
+    is the explicit diagnostic option to resolve them too.
+    """
     return resolve_pending(
         fetch_klines=binance_kline_fetcher,
         now=now or datetime.now(UTC),
         ledger_path=ledger_path,
         resolved_path=resolved_path,
+        include_canary=include_canary,
     )
 
 
