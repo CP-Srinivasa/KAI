@@ -364,6 +364,13 @@ CLASS_UNCLASSIFIED = "UNCLASSIFIED"
 # pre-V1 records that carry no source are excluded — never read as real edge.
 REAL_SOURCES: frozenset[str] = frozenset({"autonomous_loop", "autonomous_generator"})
 
+# signal_confidence informativeness (NEO-P-128-INSTR-01). A constant feature
+# (e.g. the hardcoded canary 0.85) carries zero edge information and must disable
+# any confidence-based conclusion downstream.
+CONF_INFORMATIVE = "INFORMATIVE"
+CONF_NON_INFORMATIVE_CONSTANT = "NON_INFORMATIVE_CONSTANT_FEATURE"
+CONF_NO_DATA = "NO_CONFIDENCE_DATA"
+
 MIN_SAMPLE_FOR_CLASS = 20
 
 
@@ -436,6 +443,60 @@ def classify(stats: dict[str, object]) -> str:
     return CLASS_UNCLASSIFIED
 
 
+def _confidence_status(resolved: list[dict[str, object]]) -> dict[str, object]:
+    """Classify signal_confidence informativeness (NEO-P-128-INSTR-01).
+
+    A constant feature (all-equal, e.g. the hardcoded canary 0.85) carries zero
+    edge information; the report flags it so no confidence-based conclusion is
+    drawn. Pure. Returns status + distinct-value count + the constant value.
+    """
+    vals = [v for v in (_f(r.get("signal_confidence")) for r in resolved) if v is not None]
+    distinct = sorted({round(v, 6) for v in vals})
+    if not vals:
+        return {
+            "confidence_analysis_status": CONF_NO_DATA,
+            "signal_confidence_distinct_count": 0,
+            "signal_confidence_constant_value": None,
+            "confidence_buckets_enabled": False,
+        }
+    if len(distinct) < 2:
+        return {
+            "confidence_analysis_status": CONF_NON_INFORMATIVE_CONSTANT,
+            "signal_confidence_distinct_count": 1,
+            "signal_confidence_constant_value": distinct[0],
+            "confidence_buckets_enabled": False,
+        }
+    return {
+        "confidence_analysis_status": CONF_INFORMATIVE,
+        "signal_confidence_distinct_count": len(distinct),
+        "signal_confidence_constant_value": None,
+        "confidence_buckets_enabled": True,
+    }
+
+
+def _dedup_count(resolved: list[dict[str, object]]) -> int:
+    """Conservative dedup count: collapse near-identical (canary/scan) rows.
+
+    Non-destructive — only counts distinct keys; the report keeps ``raw_count``
+    too. Keyed on geometry+source+confidence so real per-cycle candidates are not
+    merged while the ~N identical canary scan rows collapse to one.
+    """
+    seen: set[tuple[object, ...]] = set()
+    for r in resolved:
+        seen.add(
+            (
+                r.get("symbol"),
+                r.get("side"),
+                r.get("source"),
+                r.get("regime"),
+                _f(r.get("stop_dist_bps")),
+                _f(r.get("take_dist_bps")),
+                _f(r.get("signal_confidence")),
+            )
+        )
+    return len(seen)
+
+
 def build_shadow_report(
     resolved: list[dict[str, object]],
     *,
@@ -488,6 +549,8 @@ def build_shadow_report(
         "real_resolved": n,
         "canary_probe_resolved": len(canary),
         "unattributed_resolved": len(unattributed),
+        "raw_count": len(resolved),
+        "deduped_count": _dedup_count(resolved),
         "mfe_before_mae_rate": _rate(real, "mfe_before_mae"),
         "reached_take_rate": _rate(real, "reached_take"),
         "reached_stop_rate": _rate(real, "reached_stop"),
@@ -499,6 +562,7 @@ def build_shadow_report(
         "median_stop_dist_bps": _median(sd),
         "median_take_dist_bps": _median(td),
         **fwd_medians,
+        **_confidence_status(resolved),
     }
     stats["primary_class"] = classify(stats)
     stats["by_symbol"] = _split(real, "symbol")
@@ -516,6 +580,9 @@ __all__ = [
     "CLASS_STOP_NOISE",
     "CLASS_TP_UNREACHABLE",
     "CLASS_UNCLASSIFIED",
+    "CONF_INFORMATIVE",
+    "CONF_NON_INFORMATIVE_CONSTANT",
+    "CONF_NO_DATA",
     "HORIZONS_S",
     "REAL_SOURCES",
     "Bar",
