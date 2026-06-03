@@ -302,6 +302,7 @@ class TradingLoop:
                 order_side=order_side,
                 entry_mode_value=entry_mode.value,
                 recommended_priority=analysis.recommended_priority,
+                analysis_event_type=getattr(analysis, "event_type", None),
             )
             await self._write_db(cycle)
             return cycle
@@ -965,6 +966,7 @@ class TradingLoop:
         order_side: str,
         entry_mode_value: str,
         recommended_priority: int | None,
+        analysis_event_type: str | None = None,
     ) -> None:
         """Phase B: persist a hypothetical entry candidate (no execution).
 
@@ -983,6 +985,16 @@ class TradingLoop:
             started = cycle.started_at
             ts_utc = started if isinstance(started, str) else started.isoformat()
             regime_stamp = self._regime_stamp_for_audit(cycle)
+
+            # V1 canary attribution: the cron canary profiles inject a hardcoded
+            # control-plane analysis (constant confidence 0.85, event_type
+            # "control_plane_*"). Tag those candidates as ``canary_probe`` so the
+            # shadow report can exclude them from the real-edge measurement instead
+            # of learning the constant probe value.
+            is_canary = bool(analysis_event_type) and str(analysis_event_type).startswith(
+                "control_plane"
+            )
+            source = "canary_probe" if is_canary else "autonomous_loop"
 
             would_reject: bool | None = None
             reason_codes: list[str] = []
@@ -1017,7 +1029,7 @@ class TradingLoop:
                 gate_would_reject=would_reject,
                 gate_reason_codes=reason_codes,
                 entry_mode=entry_mode_value,
-                source="autonomous_loop",
+                source=source,
             )
             record_candidate(candidate)
         except Exception as exc:  # noqa: BLE001 — never break the loop

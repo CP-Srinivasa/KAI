@@ -317,6 +317,10 @@ def resolve_pending(
             "symbol": c.get("symbol"),
             "side": side,
             "regime": c.get("regime"),
+            # V1: carry attribution through so the report can separate the
+            # hardcoded canary probe (constant confidence) from real signals.
+            "source": c.get("source"),
+            "signal_confidence": _as_float(c.get("signal_confidence")),
             "stop_dist_bps": sd,
             "take_dist_bps": td,
             "gate_would_reject": c.get("gate_would_reject"),
@@ -432,13 +436,22 @@ def build_shadow_report(
     *,
     total_candidates: int | None = None,
 ) -> dict[str, object]:
-    """Aggregate resolved shadow candidates into a root-cause report (pure)."""
-    n = len(resolved)
+    """Aggregate resolved shadow candidates into a root-cause report (pure).
+
+    V1 canary attribution: rows tagged ``source == "canary_probe"`` are the
+    hardcoded control-plane probes (constant confidence ~0.85). They are EXCLUDED
+    from the headline edge stats and ``primary_class`` — those must measure the
+    REAL signal — and surfaced separately via ``canary_probe_resolved`` +
+    ``by_source``. Rows without a ``source`` are treated as real (backward-compat).
+    """
+    canary = [r for r in resolved if r.get("source") == "canary_probe"]
+    real = [r for r in resolved if r.get("source") != "canary_probe"]
+    n = len(real)
     total = total_candidates if total_candidates is not None else n
-    mfe = [v for v in (_f(r.get("mfe_bps")) for r in resolved) if v is not None]
-    mae = [v for v in (_f(r.get("mae_bps")) for r in resolved) if v is not None]
-    sd = [v for v in (_f(r.get("stop_dist_bps")) for r in resolved) if v is not None]
-    td = [v for v in (_f(r.get("take_dist_bps")) for r in resolved) if v is not None]
+    mfe = [v for v in (_f(r.get("mfe_bps")) for r in real) if v is not None]
+    mae = [v for v in (_f(r.get("mae_bps")) for r in real) if v is not None]
+    sd = [v for v in (_f(r.get("stop_dist_bps")) for r in real) if v is not None]
+    td = [v for v in (_f(r.get("take_dist_bps")) for r in real) if v is not None]
 
     def _trim_mean(xs: list[float]) -> float | None:
         if not xs:
@@ -450,7 +463,7 @@ def build_shadow_report(
 
     fwd_medians = {
         f"median_fwd_{h}s_bps": _median(
-            [v for v in (_f(r.get(f"fwd_{h}s_bps")) for r in resolved) if v is not None]
+            [v for v in (_f(r.get(f"fwd_{h}s_bps")) for r in real) if v is not None]
         )
         for h in HORIZONS_S
     }
@@ -459,10 +472,12 @@ def build_shadow_report(
         "total_candidates": total,
         "pending": max(0, total - n),
         "resolution_coverage_pct": round(100.0 * n / total, 1) if total else 0.0,
-        "mfe_before_mae_rate": _rate(resolved, "mfe_before_mae"),
-        "reached_take_rate": _rate(resolved, "reached_take"),
-        "reached_stop_rate": _rate(resolved, "reached_stop"),
-        "gate_would_reject_rate": _rate(resolved, "gate_would_reject"),
+        "real_resolved": n,
+        "canary_probe_resolved": len(canary),
+        "mfe_before_mae_rate": _rate(real, "mfe_before_mae"),
+        "reached_take_rate": _rate(real, "reached_take"),
+        "reached_stop_rate": _rate(real, "reached_stop"),
+        "gate_would_reject_rate": _rate(real, "gate_would_reject"),
         "median_mfe_bps": _median(mfe),
         "median_mae_bps": _median(mae),
         "trimmed_mfe_bps": _trim_mean(mfe),
@@ -472,10 +487,11 @@ def build_shadow_report(
         **fwd_medians,
     }
     stats["primary_class"] = classify(stats)
-    stats["by_symbol"] = _split(resolved, "symbol")
-    stats["by_side"] = _split(resolved, "side")
-    stats["by_regime"] = _split(resolved, "regime")
-    stats["by_gate_would_reject"] = _split(resolved, "gate_would_reject")
+    stats["by_symbol"] = _split(real, "symbol")
+    stats["by_side"] = _split(real, "side")
+    stats["by_regime"] = _split(real, "regime")
+    stats["by_gate_would_reject"] = _split(real, "gate_would_reject")
+    stats["by_source"] = _split(resolved, "source")
     return stats
 
 
