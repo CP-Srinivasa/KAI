@@ -32,7 +32,7 @@ export function NewsPage() {
         }
         phase="skeleton"
         progress={50}
-        timeline="Phase 2 — nach Operator-News-Endpoint"
+        timeline="Dashboard-Roadmap — nach Operator-News-Endpoint"
       />
 
       {/* DALI v2 S6 M7b: News-Detail mit Signal-Kontext (planning 20% - UI-Konzept). */}
@@ -48,7 +48,7 @@ export function NewsPage() {
         }
         phase="planning"
         progress={20}
-        timeline="Phase 2 — nach Live-News-Stream"
+        timeline="Dashboard-Roadmap — nach Live-News-Stream"
       />
     </div>
   );

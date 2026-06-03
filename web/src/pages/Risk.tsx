@@ -265,7 +265,7 @@ export function RiskPage() {
         }
         phase="planning"
         progress={30}
-        timeline="Phase 2 — nach Backtest-Endpoint"
+        timeline="Dashboard-Roadmap — nach Backtest-Endpoint"
       />
 
       {/* DALI v2 S5 M4c: "Missed-Signal-Analyse" -> "Verpasste Trading-Chancen"
@@ -283,7 +283,7 @@ export function RiskPage() {
         }
         phase="planning"
         progress={15}
-        timeline="Phase 2 — nach Signal-Detail-Endpoint"
+        timeline="Dashboard-Roadmap — nach Signal-Detail-Endpoint"
       />
     </div>
   );

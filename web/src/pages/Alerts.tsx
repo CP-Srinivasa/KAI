@@ -148,7 +148,7 @@ export function AlertsPage() {
               <strong className="text-neg">Unbekannt</strong> (kein Versand-Beleg).
             </div>
             <div className="text-2xs text-fg-subtle leading-relaxed">
-              Geplant in Phase 2: HTTP-Status pro Channel, Fehler-Grund (z.B. „Telegram 429
+              Geplant (Dashboard-Roadmap): HTTP-Status pro Channel, Fehler-Grund (z.B. „Telegram 429
               rate-limit"), Retry-Versuche. Voraussetzung: <span className="font-mono">AlertAuditRecord</span> in{" "}
               <span className="font-mono">app/alerts/audit.py</span> um Felder{" "}
               <span className="font-mono">delivery_status / http_status / error_reason</span> erweitern.

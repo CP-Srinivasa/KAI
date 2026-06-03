@@ -246,12 +246,12 @@ export function SignalsPage() {
         <PreparedPanel
           title="Signal-Detailansicht"
           reason="Rich-Metadaten pro Signal (Confidence, Impact, Priority, Quelle, verknüpfte News, Gate-Checks, Begründung)."
-          detail="Erfordert neuen Endpoint GET /operator/signals/{id} - in Phase 2 geplant."
+          detail="Erfordert neuen Endpoint GET /operator/signals/{id} - Dashboard-Roadmap (Integration ausstehend)."
         />
         <PreparedPanel
           title="Signal-Filter und Backtesting"
           reason="Query-DSL über historische Signale mit Treffer-Analyse."
-          detail="/query/validate ist verfügbar, historische Signal-Query fehlt - Phase 2."
+          detail="/query/validate ist verfügbar, historische Signal-Query fehlt - Dashboard-Roadmap."
         />
       </div>
     </div>
