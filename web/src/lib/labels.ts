@@ -222,7 +222,11 @@ export const PASTE_STATUS_SHORT: Record<string, string> = {
 
 // 2026-05-11 DALI-T7: Envelope-Stage-Klartext.
 export const ENVELOPE_STAGE_LABEL: Record<string, string> = {
-  accepted: "In Trading-Pipeline übergeben",
+  // 2026-06-04 RC-5: "accepted" = Parser + Schema-Validierung bestanden, Envelope
+  // gespeichert. Das ist KEINE Execution. Das alte Label "In Trading-Pipeline
+  // übergeben" suggerierte einen Trade, der nicht stattfand. Der Premium-Trail
+  // zeigt den echten Execution-State (Bridge/Paper/Position).
+  accepted: "Geparst & gespeichert (noch nicht ausgeführt)",
   idempotency_gate: "Duplikat-Erkennung",
   parse: "Nachricht analysiert",
   schema_validation: "Format-Prüfung",
