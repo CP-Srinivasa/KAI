@@ -42,8 +42,31 @@ msg = (
     f"med_take_dist={d.get('median_take_dist_bps')}\n"
     f"fwd 1m/5m/15m/60m={d.get('median_fwd_60s_bps')}/{d.get('median_fwd_300s_bps')}/"
     f"{d.get('median_fwd_900s_bps')}/{d.get('median_fwd_3600s_bps')}\n"
-    "-> An Claude weiterleiten fuer Triage. entry_mode bleibt disabled."
 )
+
+# DS-20260604-V2: Interpretations-Sprachregelung (Neo-V1, 04.06.). INSUFFICIENT_DATA
+# darf NICHT als "kein Edge" gelesen werden: der autonome Cron faehrt das statische
+# conservative-Probe-Profil (hartkodiert priority=1, unter dem strikten Gate blockiert);
+# der echte SignalGenerator wird in diesem Pfad nicht ausgefuehrt (trading_loop.py:1475,
+# D-182-Gate returnt vor _signals.generate). INSUFFICIENT_DATA = kein echtes
+# Generator-Signal gemessen, NICHT "Markt/Generator schweigt", NICHT "kein Edge".
+_pc = str(d.get("primary_class") or "")
+_INTERP = {
+    "INSUFFICIENT_DATA": (
+        "INTERPRETATION: INSUFFICIENT_DATA = kein echtes Generator-Signal gemessen. "
+        "Der autonome Cron faehrt das statische conservative-Probe-Profil (hartkodiert "
+        "priority=1, by-design unter dem Gate blockiert); der echte SignalGenerator "
+        "wird in diesem Pfad NICHT ausgefuehrt. Das heisst NICHT 'kein Edge' und NICHT "
+        "'Markt/Generator schweigt'. Naechster Schritt: echten Generator gate-unabhaengig "
+        "in den Shadow-Pfad verdrahten (NEO-P-002-r3)."
+    ),
+}
+if _pc in _INTERP:
+    msg += _INTERP[_pc] + "\n"
+elif _pc.startswith("report_load_error"):
+    msg += f"INTERPRETATION: Report-Load-Fehler ({_pc}) - Rohdaten manuell pruefen.\n"
+
+msg += "-> An Claude weiterleiten fuer Triage. entry_mode bleibt disabled."
 ok = asyncio.run(send_operator_notification(msg))
 print("notify:", ok)
 PY
