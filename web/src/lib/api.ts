@@ -456,6 +456,30 @@ export function fetchPriorityGate(
   return apiGet<PriorityGateSummary>("/dashboard/api/priority-gate", { signal });
 }
 
+// ---------------- Premium runtime status ----------------
+
+export type PremiumRuntimeStatus = {
+  entry_mode: string;
+  entry_mode_allows_risk_increasing_entry: boolean;
+  entry_mode_blocks_premium_paper: boolean;
+  can_open_paper_positions: boolean;
+  blocking_reasons: string[];
+  premium_paper_execution_enabled: boolean;
+  premium_live_execution_enabled: boolean;
+  premium_require_manual_approval_for_paper: boolean;
+  premium_require_manual_approval_for_live: boolean;
+  operator_signal_bridge_enabled: boolean;
+  operator_signal_source_allowlist: string[];
+  premium_auto_fill_enabled: boolean;
+  live_execution_enabled: boolean;
+  execution_mode: string;
+  warning: string | null;
+};
+
+export function fetchPremiumRuntime(signal?: AbortSignal): Promise<PremiumRuntimeStatus> {
+  return apiGet<PremiumRuntimeStatus>("/api/premium-signals/runtime", { signal });
+}
+
 // ---------------- Operator surfaces ----------------
 
 export type OperatorStatus = {

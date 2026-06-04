@@ -27,6 +27,8 @@ import { useDashboardQuality } from "@/lib/useDashboardQuality";
 import { useDashboardProvenance } from "@/lib/useDashboardProvenance";
 import { useDashboardRegime } from "@/lib/useDashboardRegime";
 import { usePriorityGate } from "@/lib/usePriorityGate";
+import { fetchPremiumRuntime } from "@/lib/api";
+import { useApi } from "@/lib/useApi";
 import { cn } from "@/lib/utils";
 import {
   tierLiftTone,
@@ -78,6 +80,10 @@ export function Dashboard() {
   const regime = r.state === "ready" ? r.data : null;
   const pg = usePriorityGate();
   const priorityGate = pg.state === "ready" ? pg.data : null;
+  const premiumRuntime = useApi(fetchPremiumRuntime, 30_000);
+  const premiumEntryBlocked =
+    premiumRuntime.state === "ready" &&
+    !premiumRuntime.data.can_open_paper_positions;
 
   const fp = data?.forward_precision_pct ?? null;
   const rc = data?.resolved_count ?? null;
@@ -134,6 +140,30 @@ export function Dashboard() {
                 {q.error.kind} · {q.error.message}
               </div>
               <div className="text-2xs text-fg-subtle mt-1 font-mono break-all">GET /dashboard/api/quality</div>
+            </div>
+          </div>
+        </Card>
+      )}
+
+      {premiumEntryBlocked && (
+        <Card padded className="border-neg/30 bg-neg/5">
+          <div className="flex items-start gap-3 text-xs text-neg">
+            <ShieldAlert size={16} className="mt-0.5 shrink-0" />
+            <div className="min-w-0">
+              <div className="font-semibold">
+                Premium Paper Execution blockiert
+              </div>
+              <div className="text-fg-muted mt-1">
+                {premiumRuntime.data.warning ??
+                  `entry_mode=${premiumRuntime.data.entry_mode}`}
+                {" "}· Signale können geparst und approved sein, ohne eine Paper-Position zu öffnen.
+              </div>
+              <div className="text-2xs text-fg-subtle mt-1 font-mono">
+                Gründe {premiumRuntime.data.blocking_reasons.join(", ") || "keine"} ·
+                Bridge {premiumRuntime.data.operator_signal_bridge_enabled ? "on" : "off"} ·
+                Auto-Fill {premiumRuntime.data.premium_auto_fill_enabled ? "on" : "off"} ·
+                Live {premiumRuntime.data.live_execution_enabled ? "on" : "off"}
+              </div>
             </div>
           </div>
         </Card>
