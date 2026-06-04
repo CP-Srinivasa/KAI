@@ -744,6 +744,36 @@ export function fetchPremiumSignalTrail(
   );
 }
 
+// ── Premium Runtime Truth (2026-06-04 DALI Premium-Truth-Sprint) ─────────────
+// GET /api/premium-signals/runtime — read-only Safety-Switch-Wahrheit. Erklärt,
+// warum Premium-Signale geparst/approved werden können, aber keine Position
+// öffnen (entry_mode, Bridge, Source-Allowlist, Paper/Live-Flags).
+export type PremiumRuntimeResponse = {
+  entry_mode: string;
+  entry_mode_allows_risk_increasing_entry: boolean;
+  entry_mode_blocks_premium_paper: boolean;
+  can_open_paper_positions: boolean;
+  blocking_reasons: string[];
+  premium_paper_execution_enabled: boolean;
+  premium_live_execution_enabled: boolean;
+  premium_require_manual_approval_for_paper: boolean;
+  premium_require_manual_approval_for_live: boolean;
+  operator_signal_bridge_enabled: boolean;
+  operator_signal_source_allowlist: string[];
+  premium_auto_fill_enabled: boolean;
+  live_execution_enabled: boolean;
+  execution_mode: string;
+  warning: string | null;
+};
+
+export function fetchPremiumRuntime(
+  signal?: AbortSignal,
+): Promise<PremiumRuntimeResponse> {
+  return apiGet<PremiumRuntimeResponse>("/api/premium-signals/runtime", {
+    signal,
+  });
+}
+
 export function fetchPortfolioSnapshot(signal?: AbortSignal): Promise<PortfolioSnapshot> {
   return apiGet<PortfolioSnapshot>("/operator/portfolio-snapshot", { signal });
 }

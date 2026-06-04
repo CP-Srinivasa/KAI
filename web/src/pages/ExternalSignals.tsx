@@ -29,6 +29,7 @@ import {
   SectionLabel,
 } from "@/components/ui/Primitives";
 import { useApi } from "@/lib/useApi";
+import { PremiumRuntimeBanner } from "@/components/panels/PremiumRuntimeBanner";
 import { cn } from "@/lib/utils";
 import {
   ENVELOPE_SOURCE_LABEL,
@@ -1210,6 +1211,10 @@ export function ExternalSignalsPage() {
         icon={<Upload size={18} />}
         divider={false}
       />
+
+      {/* Premium-Runtime-Wahrheit: macht entry_mode/Bridge/Source-Blockaden
+          sichtbar, bevor der Operator angenommene Signale fehlinterpretiert. */}
+      <PremiumRuntimeBanner />
 
       <TriageStrip records={records} />
 

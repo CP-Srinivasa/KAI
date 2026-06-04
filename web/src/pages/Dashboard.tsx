@@ -14,6 +14,7 @@ import { PreparedPanel } from "@/components/panels/PreparedPanel";
 import { LivePortfolioTiles } from "@/components/panels/LivePortfolioTiles";
 import { ReentryGatePanel } from "@/components/panels/ReentryGatePanel";
 import { SignalHeatmapPanel } from "@/components/panels/SignalHeatmap";
+import { PremiumRuntimeBanner } from "@/components/panels/PremiumRuntimeBanner";
 import { AgentsStatusCard } from "@/components/panels/AgentsStatusCard";
 import { TimerHealthCard } from "@/components/panels/TimerHealthCard";
 import { SignalQualityCard } from "@/components/panels/SignalQualityCard";
@@ -123,6 +124,12 @@ export function Dashboard() {
           </span>
         </div>
       </header>
+
+      {/* Premium-Runtime-Wahrheit — laut sichtbar wenn entry_mode/Bridge/Source
+          neue Premium-Paper-Entries blockiert. Read-only, kein Live-Eingriff. */}
+      <PanelErrorBoundary name="Premium-Runtime-Banner">
+        <PremiumRuntimeBanner />
+      </PanelErrorBoundary>
 
       {q.state === "error" && (
         <Card padded className="border-neg/30 bg-neg/5 attention-breathe-neg">

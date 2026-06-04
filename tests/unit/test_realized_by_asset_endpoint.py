@@ -77,6 +77,42 @@ def test_realized_by_asset_returns_aggregation(tmp_path):
     assert data["worst_performer"]["symbol"] == "ETH/USDT"
 
 
+def test_realized_by_asset_source_filter_is_applied(tmp_path):
+    """Regression (DALI 2026-06-04): der Router muss ``source_filter`` an die
+    Aggregation durchreichen. Vorher hat FastAPI den nicht-deklarierten Query-
+    Param verworfen → alle Portfolio-Tabs zeigten denselben Gesamtbestand, die
+    "Premium Telegram"-Tab listete auch autonome Trades.
+    """
+    audit = tmp_path / "audit.jsonl"
+    premium = _close_event("APR/USDT", 300.0, ts="2026-06-01T10:00:00+00:00")
+    premium["signal_source"] = "telegram_premium_channel"
+    autonomous = _close_event("BTC/USDT", 50.0, ts="2026-06-02T10:00:00+00:00")
+    autonomous["signal_source"] = "autonomous_generator"
+    audit.write_text(
+        "\n".join(json.dumps(e) for e in (premium, autonomous)) + "\n",
+        encoding="utf-8",
+    )
+    c = TestClient(_make_app())
+    # Ohne Filter: beide Trades.
+    r_all = c.get(
+        f"/operator/portfolio/realized-by-asset?audit_path={audit}",
+        headers={"Authorization": "Bearer test-key"},
+    )
+    assert r_all.status_code == 200, r_all.text
+    assert r_all.json()["totals"]["closed_trades"] == 2
+
+    # Premium-Filter: nur der telegram_premium-Trade darf übrig bleiben.
+    r_premium = c.get(
+        f"/operator/portfolio/realized-by-asset?audit_path={audit}&source_filter=premium_telegram",
+        headers={"Authorization": "Bearer test-key"},
+    )
+    assert r_premium.status_code == 200, r_premium.text
+    data = r_premium.json()
+    assert data["source_filter"] == "premium_telegram"
+    assert data["totals"]["closed_trades"] == 1
+    assert {row["symbol"] for row in data["by_asset"]} == {"APR/USDT"}
+
+
 def test_realized_by_asset_missing_audit_file_returns_200(tmp_path):
     """Even when audit file missing, endpoint must NOT 5xx — Forensik-Anforderung:
     "Operator sieht Diagnose statt Crash"."""
