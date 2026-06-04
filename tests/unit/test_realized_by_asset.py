@@ -227,3 +227,77 @@ def test_audit_last_event_utc_is_maximum(tmp_path):
     r = compute_realized_by_asset(audit)
     # last event ts overall (any event type, including order_filled)
     assert r["audit_last_event_utc"] == "2026-05-10T15:00:00+00:00"
+
+
+# ── RC-3 (2026-06-04): Source-Attribution-Filter ────────────────────────────
+
+
+def _closed_src(symbol: str, trade_pnl: float, *, ts: str, signal_source: str) -> dict:
+    return {
+        "schema_version": "v2",
+        "event_type": "position_closed",
+        "timestamp_utc": ts,
+        "symbol": symbol,
+        "quantity": 1.0,
+        "trade_pnl_usd": trade_pnl,
+        "fee_usd": 0.0,
+        "signal_source": signal_source,
+    }
+
+
+def test_source_prefix_filters_to_premium_only(tmp_path: Path) -> None:
+    """Premium-View darf NUR telegram_premium*-Closes summieren — autonome
+    Loop-/Canary-Closes und unattribuierte Legacy-Closes bleiben draußen."""
+    path = tmp_path / "audit.jsonl"
+    _write_jsonl(
+        path,
+        [
+            _closed_src(
+                "CYS/USDT",
+                7.0,
+                ts="2026-06-04T01:00:00+00:00",
+                signal_source="telegram_premium_channel_approved",
+            ),
+            _closed_src(
+                "BTC/USDT",
+                999.0,
+                ts="2026-06-04T01:01:00+00:00",
+                signal_source="autonomous_generator",
+            ),
+            _closed("ETH/USDT", 500.0, ts="2026-06-04T01:02:00+00:00"),  # unattributed
+        ],
+    )
+
+    premium = compute_realized_by_asset(path, source_prefix="telegram_premium")
+    assert premium["available"] is True
+    assert premium["source_prefix"] == "telegram_premium"
+    totals = premium["totals"]
+    assert totals["closed_trades"] == 1
+    assert totals["realized_pnl_usd"] == 7.0
+    symbols = {b["symbol"] for b in premium["by_asset"]}
+    assert symbols == {"CYS/USDT"}  # kein BTC (autonom), kein ETH (unattribuiert)
+
+
+def test_no_prefix_keeps_full_paper_book(tmp_path: Path) -> None:
+    """Ohne source_prefix bleibt das Legacy-Verhalten: alle Closes."""
+    path = tmp_path / "audit.jsonl"
+    _write_jsonl(
+        path,
+        [
+            _closed_src(
+                "CYS/USDT",
+                7.0,
+                ts="2026-06-04T01:00:00+00:00",
+                signal_source="telegram_premium_channel_approved",
+            ),
+            _closed_src(
+                "BTC/USDT",
+                3.0,
+                ts="2026-06-04T01:01:00+00:00",
+                signal_source="autonomous_generator",
+            ),
+        ],
+    )
+    full = compute_realized_by_asset(path)
+    assert full["totals"]["closed_trades"] == 2
+    assert full["source_prefix"] is None

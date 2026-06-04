@@ -28,6 +28,11 @@ def test_detect_returns_1e6_for_mid_range_pattern():
     assert factor == 1e6
 
 
+def test_detect_supports_small_tick_scales():
+    assert sr.detect_scale_factor(100.0, 10.0) == 1e1
+    assert sr.detect_scale_factor(100.0, 1.0) == 1e2
+
+
 def test_detect_returns_1_when_ratio_outside_tolerance():
     # 2× drift is real volatility, not a scale ladder
     assert sr.detect_scale_factor(120.0, 60.0) == 1.0

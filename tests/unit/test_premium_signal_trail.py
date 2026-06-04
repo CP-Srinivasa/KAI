@@ -226,7 +226,8 @@ def test_filled_and_closed_path():
     assert len(trail) == 1
     entry = trail[0]
     assert entry.symbol == "BIRB/USDT"
-    assert entry.overall == "CLOSED"
+    # 2026-06-04: State-Machine zerlegt CLOSED → CLOSED_TP (tp_tier-Close mit PnL).
+    assert entry.overall == "CLOSED_TP"
     assert entry.is_open is False
     assert entry.paper_position_state == "POSITION_CLOSED"
     assert entry.paper_close_reason == "tp_tier"
@@ -304,6 +305,76 @@ def test_bridge_rejected_risk_path():
     assert _stage(entry, "bridge").ok is False
     assert _stage(entry, "bridge").reason == "risk_gate_rejected"
     assert entry.next_action_hint == "review_reason"
+
+
+def test_entry_mode_disabled_path():
+    """RC-2 (2026-06-04): stage=rejected_entry_mode → overall=ENTRY_DISABLED.
+
+    Vorher fiel dieser Stage durch alle Klassifikations-Mengen → Bridge-Pill
+    "Not picked up", overall=UNKNOWN. Der globale Kill-Switch muss als
+    eigener, sichtbarer State erscheinen (kein Erfolg, kein 'Unklar')."""
+    env_id = "ENV-apr-origin"
+    approved_id = "ENV-apr-approved"
+    sym = "APR/USDT"
+
+    envelopes = [
+        _origin_env(env_id, sym, "2026-06-04T01:40:00+00:00"),
+        _approved_env(approved_id, env_id, sym, "2026-06-04T01:40:01+00:00"),
+    ]
+    bridge = [
+        {
+            "timestamp_utc": "2026-06-04T01:41:00+00:00",
+            "event": "operator_signal_bridge",
+            "envelope_id": approved_id,
+            "correlation_id": env_id,
+            "stage": "rejected_entry_mode",
+            "source": "telegram_premium_channel_approved",
+            "audit_reason": "entry_mode_disabled",
+            "symbol": sym,
+            "lifecycle_state": "REJECTED_INVALID_SIGNAL",
+        }
+    ]
+
+    [entry] = build_trail(envelope_records=envelopes, bridge_records=bridge, paper_records=[])
+    assert entry.overall == "ENTRY_DISABLED"
+    assert entry.is_open is False
+    assert entry.paper_position_state is None
+    assert _stage(entry, "bridge").ok is False
+    assert _stage(entry, "bridge").label == "Entry disabled"
+    assert entry.next_action_hint == "entry_disabled_global"
+
+
+def test_premium_paper_execution_disabled_path():
+    """Verify premium_paper_execution_disabled maps to ENTRY_DISABLED."""
+    env_id = "ENV-apr-origin2"
+    approved_id = "ENV-apr-approved2"
+    sym = "APR/USDT"
+
+    envelopes = [
+        _origin_env(env_id, sym, "2026-06-04T01:40:00+00:00"),
+        _approved_env(approved_id, env_id, sym, "2026-06-04T01:40:01+00:00"),
+    ]
+    bridge = [
+        {
+            "timestamp_utc": "2026-06-04T01:41:00+00:00",
+            "event": "operator_signal_bridge",
+            "envelope_id": approved_id,
+            "correlation_id": env_id,
+            "stage": "rejected_entry_mode",
+            "source": "telegram_premium_channel_approved",
+            "audit_reason": "premium_paper_execution_disabled",
+            "symbol": sym,
+            "lifecycle_state": "REJECTED_INVALID_SIGNAL",
+        }
+    ]
+
+    [entry] = build_trail(envelope_records=envelopes, bridge_records=bridge, paper_records=[])
+    assert entry.overall == "ENTRY_DISABLED"
+    assert entry.is_open is False
+    assert entry.paper_position_state is None
+    assert _stage(entry, "bridge").ok is False
+    assert _stage(entry, "bridge").label == "Entry disabled"
+    assert entry.next_action_hint == "entry_disabled_global"
 
 
 def test_pending_entry_path():

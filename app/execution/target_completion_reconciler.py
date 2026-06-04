@@ -41,6 +41,7 @@ from typing import Any
 
 from app.execution.paper_engine import PaperExecutionEngine
 from app.execution.paper_engine_singleton import get_paper_engine
+from app.execution.scale_resolver import detect_scale_factor
 from app.ingestion.telegram_channel_parser import TargetCompletionEvent
 
 logger = logging.getLogger(__name__)
@@ -51,12 +52,19 @@ _PAPER_AUDIT_LOG = Path("artifacts/paper_execution_audit.jsonl")
 
 @dataclass(frozen=True)
 class ReconcileOutcome:
-    status: str  # "closed" | "no_position" | "orphan_no_match" | "duplicate" | "error"
+    # closed | orphan_no_match | duplicate | error | requires_scale_review | requires_review
+    status: str
     reason: str
     symbol: str
     touch_price: float | None
     realized_pnl_usd: float | None
     audit_record: dict[str, Any] = field(default_factory=dict)
+
+
+# Terminal statuses block a re-reconcile. ``requires_scale_review`` and
+# ``error`` are intentionally retryable: the first attempt did NOT book PnL,
+# so a later run (after manual review / scale fix) must be able to proceed.
+_TERMINAL_RECONCILE_STATUSES = frozenset({"closed", "orphan_no_match", "duplicate"})
 
 
 def _iter_prior_reconciled_ids(path: Path, *, lookback: int = 500) -> set[str]:
@@ -77,6 +85,8 @@ def _iter_prior_reconciled_ids(path: Path, *, lookback: int = 500) -> set[str]:
         except json.JSONDecodeError:
             continue
         env_id = rec.get("source_envelope_id")
+        if rec.get("status") not in _TERMINAL_RECONCILE_STATUSES:
+            continue
         if isinstance(env_id, str) and env_id:
             seen.add(env_id)
     return seen
@@ -146,12 +156,6 @@ def reconcile_target_completion(
         )
 
     # Engine entweder vom Caller ODER aus dem Prozess-Singleton.
-    # 2026-05-14 P1 #7: das alte `PaperExecutionEngine(initial_equity=10000.0,
-    # ...)`-Konstrukt ignorierte settings.execution.paper_initial_equity und
-    # erzeugte stille Divergenz zwischen Reconciler-Portfolio und Bridge-
-    # Portfolio. Singleton zieht den Wert aus den Settings → konsistent über
-    # alle Konsumenten. rehydrate gegen die per Test ggf. überschriebene
-    # audit_path bleibt nötig, damit Test-Isolation via TempDir-Audit greift.
     eng = engine
     if eng is None:
         eng = get_paper_engine()
@@ -176,15 +180,96 @@ def reconcile_target_completion(
             audit_record=rec,
         )
 
+    position_source = (pos.source or "").strip()
+    position_correlation_id = (pos.correlation_id or "").strip()
+    match_strategy = (
+        "origin_signal_id"
+        if position_correlation_id and source_envelope_id == position_correlation_id
+        else "symbol_single_open_position"
+    )
+    if not position_source.lower().startswith("telegram_premium"):
+        rec = {
+            **base_record,
+            "status": "requires_review",
+            "reason": "non_premium_position_source",
+            "match_strategy": match_strategy,
+            "position_source": position_source or "unknown",
+            "position_correlation_id": position_correlation_id or None,
+        }
+        _append_audit(reconcile_path, rec)
+        return ReconcileOutcome(
+            status="requires_review",
+            reason="non_premium_position_source",
+            symbol=display_sym,
+            touch_price=event.touch_price,
+            realized_pnl_usd=None,
+            audit_record=rec,
+        )
+
     # Close-Pfad: market-close zum touch_price (oder avg_entry als Notfall-Wert
-    # wenn channel keine Zahl liefert UND market-data nicht verfügbar — sehr
-    # konservativ, realisiert dann PnL=0).
-    close_price = event.touch_price
-    if close_price is None or close_price <= 0:
+    # wenn channel keine Zahl liefert).
+    #
+    # RC-4 (2026-06-04): Der Channel-Touch-Price kommt ROH in Channel-Skala
+    # (z.B. CYS 4869, US 16790, APR 26892). Die Position wurde aber USD-skaliert
+    # eröffnet (entry ~0.4869). Vorher wurde der rohe Wert direkt als close_price
+    # genommen → realized PnL = (4869 - 0.4869)·qty = astronomischer Müll. Wir
+    # bringen den Touch-Price über DENSELBEN Scale-Resolver auf die Skala der
+    # offenen Position und buchen bei implausibler Skala KEINEN PnL.
+    scale_factor_applied = 1.0
+    raw_touch = event.touch_price
+    if raw_touch is None or raw_touch <= 0:
         close_price = pos.avg_entry_price  # Notfall: PnL=0 statt random scribble
         close_reason_extra = "touch_price_missing_fallback_to_avg_entry"
     else:
-        close_reason_extra = "touch_price_from_channel"
+        if pos.avg_entry_price and pos.avg_entry_price > 0:
+            scale_factor_applied = detect_scale_factor(raw_touch, pos.avg_entry_price)
+        close_price = raw_touch / scale_factor_applied if scale_factor_applied > 0 else raw_touch
+        # Plausibilitäts-Guard: eine all-TP-hit-Meldung kann nach korrekter
+        # Skalierung nicht um Faktor 10 vom Entry abweichen. Liegt sie es doch,
+        # ist die Skala unklar → KEIN Close, kein PnL, sichtbarer Review-Status.
+        ratio = (
+            close_price / pos.avg_entry_price
+            if pos.avg_entry_price and pos.avg_entry_price > 0
+            else 0.0
+        )
+        if ratio < 0.1 or ratio > 10.0:
+            rec = {
+                **base_record,
+                "status": "requires_scale_review",
+                "reason": "touch_price_scale_implausible",
+                "raw_touch_price": raw_touch,
+                "scaled_touch_price": close_price,
+                "scale_factor_applied": scale_factor_applied,
+                "avg_entry_price": pos.avg_entry_price,
+                "match_strategy": match_strategy,
+                "position_source": position_source,
+                "position_correlation_id": position_correlation_id or None,
+            }
+            _append_audit(reconcile_path, rec)
+            logger.warning(
+                "[reconcile] scale-review symbol=%s envelope=%s raw_touch=%.6g "
+                "avg_entry=%.6g factor=%.0e scaled=%.6g ratio=%.3g — kein PnL gebucht",
+                display_sym,
+                source_envelope_id,
+                raw_touch,
+                pos.avg_entry_price,
+                scale_factor_applied,
+                close_price,
+                ratio,
+            )
+            return ReconcileOutcome(
+                status="requires_scale_review",
+                reason="touch_price_scale_implausible",
+                symbol=display_sym,
+                touch_price=raw_touch,
+                realized_pnl_usd=None,
+                audit_record=rec,
+            )
+        close_reason_extra = (
+            "touch_price_from_channel_scaled"
+            if scale_factor_applied != 1.0
+            else "touch_price_from_channel"
+        )
 
     close_side = "sell" if pos.position_side == "long" else "buy"
     realized_before = eng.portfolio.realized_pnl_usd
@@ -199,7 +284,9 @@ def reconcile_target_completion(
             source=pos.source,
             leverage=pos.leverage,
         )
-        eng.fill_order(close_order, close_price)
+        fill = eng.fill_order(close_order, close_price)
+        if fill is None:
+            raise RuntimeError("close order fill returned None")
     except Exception as exc:  # noqa: BLE001 — reconcile must never propagate
         logger.warning(
             "[reconcile] close failed symbol=%s envelope=%s err=%s",
@@ -224,15 +311,40 @@ def reconcile_target_completion(
 
     realized_after = eng.portfolio.realized_pnl_usd
     realized_delta = realized_after - realized_before
+
+    # Keep portfolio-read aggregation in sync with target-completion closes.
+    paper_close_record = {
+        "event_type": "position_closed",
+        "timestamp_utc": ts,
+        "symbol": display_sym,
+        "reason": f"reconcile:{close_reason_extra}",
+        "quantity": pos.quantity,
+        "entry_price": pos.avg_entry_price,
+        "exit_price": close_price,
+        "fill_id": fill.fill_id,
+        "order_id": close_order.order_id,
+        "realized_pnl_usd": realized_after,
+        "trade_pnl_usd": realized_delta,
+        "fee_usd": fill.fee_usd,
+        "position_side": pos.position_side,
+        "signal_source": position_source,
+        "document_id": pos.document_id,
+    }
+    _append_audit(audit_path, paper_close_record)
+
     rec = {
         **base_record,
         "status": "closed",
         "reason": close_reason_extra,
         "close_price": close_price,
+        "scale_factor_applied": scale_factor_applied,
         "realized_pnl_usd": realized_delta,
         "portfolio_realized_total_usd": realized_after,
         "position_side": pos.position_side,
         "closed_quantity": pos.quantity,
+        "match_strategy": match_strategy,
+        "position_source": position_source,
+        "position_correlation_id": position_correlation_id or None,
     }
     _append_audit(reconcile_path, rec)
     logger.info(

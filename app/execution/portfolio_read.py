@@ -582,51 +582,26 @@ def build_exposure_summary(snapshot: PortfolioSnapshot) -> dict[str, object]:
 # kanonische, replay-unabhängige Aggregation. Sie ignoriert den portfolio-kumu-
 # lativen Snapshot-Field realized_pnl_usd (siehe Memory paper_audit_pnl_field_
 # semantics) und summiert ausschließlich per-trade trade_pnl_usd.
-def compute_realized_by_asset(audit_path: Path) -> dict[str, object]:
+def compute_realized_by_asset(
+    audit_path: Path,
+    *,
+    source_prefix: str | None = None,
+    source_filter: str | None = None,
+) -> dict[str, object]:
     """Aggregate realized PnL per asset from paper_execution_audit.jsonl.
 
+    RC-3 (2026-06-04): ``source_prefix`` and ``source_filter`` restrict the aggregation.
+    Supports 5 distinct portfolio views: Gesamt, Premium Telegram, Autonomous Loop,
+    Reconciled completions, and Demo/Legacy/Unknown.
+
     Returns a dict shaped as::
-
-        {
-            "as_of_utc": "...",
-            "audit_path": "...",
-            "audit_file_exists": bool,
-            "audit_last_event_utc": "..." | None,
-            "by_asset": [
-                {
-                    "symbol": "SOL/USDT",
-                    "realized_pnl_usd": 1486.98,
-                    "closed_trades": 2,
-                    "wins": 2,
-                    "losses": 0,
-                    "win_rate_pct": 100.0,
-                    "fees_usd_total": 0.0,
-                    "partial_closes": 0,
-                    "full_closes": 2,
-                    "last_close_utc": "...",
-                },
-                ...
-            ],
-            "totals": {
-                "realized_pnl_usd": 4447.83,
-                "closed_trades": 8,
-                "assets_count": 6,
-                "fees_usd_total": 0.0,
-                "partial_close_events": 0,
-                "full_close_events": 8,
-            },
-            "top_performer": {"symbol": ..., "realized_pnl_usd": ...} | None,
-            "worst_performer": {"symbol": ..., "realized_pnl_usd": ...} | None,
-            "available": True | False,
-            "error": None | "...",
-            "invalid_lines": [(line_no, reason), ...],
-        }
-
-    No Live-Exchange access. No mark-to-market. Read-only on local JSONL.
+    ...
     """
     result: dict[str, object] = {
         "as_of_utc": datetime.now(UTC).isoformat(),
         "audit_path": str(audit_path),
+        "source_prefix": source_prefix,
+        "source_filter": source_filter,
         "audit_file_exists": False,
         "audit_last_event_utc": None,
         "by_asset": [],
@@ -663,6 +638,9 @@ def compute_realized_by_asset(audit_path: Path) -> dict[str, object]:
         result["error"] = f"audit_read_error:{e}"
         return result
 
+    parsed_records: list[tuple[int, dict[str, object]]] = []
+    source_by_order: dict[str, str] = {}
+    source_by_correlation: dict[str, str] = {}
     for line_no, raw_line in enumerate(raw.splitlines(), start=1):
         line = raw_line.strip()
         if not line:
@@ -675,6 +653,18 @@ def compute_realized_by_asset(audit_path: Path) -> dict[str, object]:
         if not isinstance(d, dict):
             invalid.append((line_no, "non_object_payload"))
             continue
+        parsed_records.append((line_no, d))
+        source_raw = d.get("signal_source") or d.get("source")
+        source = source_raw.strip() if isinstance(source_raw, str) and source_raw.strip() else None
+        if source is not None:
+            order_id = d.get("order_id")
+            if isinstance(order_id, str) and order_id:
+                source_by_order.setdefault(order_id, source)
+            correlation_id = d.get("correlation_id")
+            if isinstance(correlation_id, str) and correlation_id:
+                source_by_correlation.setdefault(correlation_id, source)
+
+    for line_no, d in parsed_records:
         ts = d.get("timestamp_utc") or d.get("created_at") or d.get("filled_at")
         if isinstance(ts, str) and ts:
             if last_event_ts is None or ts > last_event_ts:
@@ -682,6 +672,49 @@ def compute_realized_by_asset(audit_path: Path) -> dict[str, object]:
         ev = d.get("event_type")
         if ev not in {"position_closed", "position_partial_closed"}:
             continue
+        # Resolve source attribution and close reason
+        sig_source = (
+            d.get("signal_source")
+            or d.get("source")
+            or source_by_order.get(str(d.get("order_id") or ""))
+            or source_by_correlation.get(str(d.get("correlation_id") or ""))
+        )
+        sig_source_str = (
+            sig_source.strip() if isinstance(sig_source, str) and sig_source.strip() else ""
+        )
+        sig_source_lower = sig_source_str.lower()
+
+        reason = str(d.get("reason") or d.get("close_reason") or "").strip().lower()
+        is_reconciled = "reconcile" in reason or "touch_price" in reason
+
+        # Apply source_prefix (legacy / backward compatibility)
+        if source_prefix is not None:
+            if not sig_source_str:
+                continue
+            if not sig_source_lower.startswith(source_prefix.strip().lower()):
+                continue
+
+        # Apply source_filter (five distinct portfolio views)
+        if source_filter is not None:
+            sf = source_filter.strip().lower()
+            if sf in {"gesamt", "all", "*"}:
+                pass
+            elif sf in {"telegram_premium", "premium_telegram", "telegram-premium"}:
+                if not sig_source_lower.startswith("telegram_premium"):
+                    continue
+            elif sf in {"autonomous", "autonomous_loop"}:
+                if (
+                    sig_source_lower.startswith("telegram_premium")
+                    or not sig_source_str
+                    or is_reconciled
+                ):
+                    continue
+            elif sf == "reconciled":
+                if not is_reconciled:
+                    continue
+            elif sf in {"legacy_unknown", "legacy", "unknown"}:
+                if sig_source_str or is_reconciled:
+                    continue
         sym = d.get("symbol")
         if not isinstance(sym, str) or not sym.strip():
             invalid.append((line_no, "close_event_missing_symbol"))

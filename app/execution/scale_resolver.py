@@ -33,9 +33,10 @@ from app.market_data.service import get_market_data_snapshot
 
 logger = logging.getLogger(__name__)
 
-# Power-of-ten bands we recognise. 1e2 is intentionally NOT included —
-# a 100× drift would more likely be a parsing error than a scale ladder.
-_RECOGNISED_SCALES = (1.0, 1e3, 1e4, 1e5, 1e6, 1e7, 1e8)
+# Power-of-ten bands we recognise. Small-cap premium-channel ticks use the
+# full 1e1..1e8 ladder; the tolerance guard below keeps 2x/3x drift from being
+# silently treated as a scale factor.
+_RECOGNISED_SCALES = (1.0, 1e1, 1e2, 1e3, 1e4, 1e5, 1e6, 1e7, 1e8)
 
 # Strict guardrail: a candidate factor is accepted only when the ratio sits
 # within ±50% of the factor. Anything looser would catch real 2× drifts.

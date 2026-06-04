@@ -33,6 +33,14 @@ from app.observability.premium_signal_analytics import (
     annotate_source_quality,
     derive_signal_analytics,
 )
+from app.premium.state_machine import (
+    PremiumSignalState,
+    bridge_stage_to_state,
+    close_reason_to_state,
+    normalized_source,
+    origin_signal_id,
+    state_tone,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -57,9 +65,17 @@ _BRIDGE_REJECT_STAGES = frozenset(
         "rejected_fill",
         "rejected_position_exists",
         "rejected_short_unsupported",
+        "rejected_entry_mode",
         "rejected_scale_review",  # 2026-05-21 IRYS-Bug-Härtung
     }
 )
+
+# 2026-06-04 RC-2: entry_mode=disabled erzeugt stage="rejected_entry_mode".
+# Das war vorher in KEINER Klassifikations-Menge → Bridge-Pill fiel auf
+# "Not picked up"/overall=UNKNOWN. Es ist KEIN Risk-/Scale-Reject sondern der
+# globale Kill-Switch und bekommt einen eigenen overall-State ENTRY_DISABLED,
+# damit das Dashboard "Execution global gestoppt" ehrlich zeigt.
+_BRIDGE_ENTRY_DISABLED_STAGES = frozenset({"rejected_entry_mode"})
 
 _BRIDGE_PENDING_STAGES = frozenset({"pending"})
 _BRIDGE_SKIPPED_STAGES = frozenset({"skipped_source"})
@@ -123,6 +139,11 @@ class TrailEntry:
     paper_position_state: str | None = None
     paper_close_reason: str | None = None
     quantity: float | None = None
+    origin_signal_id: str | None = None
+    raw_source: str | None = None
+    normalized_source: str | None = None
+    premium_state: str | None = None
+    premium_state_tone: str | None = None
     analytics: SignalAnalytics | None = None
 
     def to_dict(self) -> dict[str, Any]:
@@ -151,6 +172,11 @@ class TrailEntry:
             "paper_position_state": self.paper_position_state,
             "paper_close_reason": self.paper_close_reason,
             "quantity": self.quantity,
+            "origin_signal_id": self.origin_signal_id,
+            "raw_source": self.raw_source,
+            "normalized_source": self.normalized_source,
+            "premium_state": self.premium_state,
+            "premium_state_tone": self.premium_state_tone,
             "analytics": self.analytics.to_dict() if self.analytics is not None else None,
         }
 
@@ -500,6 +526,14 @@ def _derive_stages(
     if bridge_stage is None:
         for entry in bridge_history:
             s = entry.get("stage")
+            if s in _BRIDGE_ENTRY_DISABLED_STAGES:
+                bridge_stage = s
+                bridge_reason = entry.get("audit_reason") or "entry_mode_disabled"
+                bridge_ts = entry.get("ts")
+                break
+    if bridge_stage is None:
+        for entry in bridge_history:
+            s = entry.get("stage")
             if s in _BRIDGE_REJECT_STAGES:
                 bridge_stage = s
                 bridge_reason = entry.get("audit_reason")
@@ -538,6 +572,17 @@ def _derive_stages(
                 label="Filled",
                 ts=bridge_ts,
                 reason=bridge_reason,
+            )
+        )
+    elif bridge_stage in _BRIDGE_ENTRY_DISABLED_STAGES:
+        stages.append(
+            StageStatus(
+                name=STAGE_BRIDGE,
+                ok=False,
+                label="Entry disabled",
+                ts=bridge_ts,
+                reason=bridge_reason or "entry_mode_disabled",
+                detail={"bridge_stage": bridge_stage},
             )
         )
     elif bridge_stage in _BRIDGE_REJECT_STAGES:
@@ -600,6 +645,9 @@ def _derive_stages(
     paper_filled_ts: str | None = None
     paper_rejected_reason: str | None = None
     is_open = False
+    partial_close_count = 0
+    last_partial_remaining: float | None = None
+    last_partial_ts: str | None = None
 
     # Two pass: erst alle buy-fills (open the position), dann sells (TP-tier
     # close) oder explizite position_closed events (V4.1+). Wenn position_closed
@@ -649,13 +697,30 @@ def _derive_stages(
             trade_pnl = _safe_float(ev.get("trade_pnl_usd"))
             if trade_pnl is not None:
                 realized_pnl_usd = (realized_pnl_usd or 0.0) + trade_pnl
+        if event_type == "position_partial_closed":
+            partial_close_count += 1
+            last_partial_ts = ev.get("timestamp_utc")
+            remaining = _safe_float(ev.get("remaining_quantity"))
+            if remaining is not None:
+                last_partial_remaining = remaining
+            trade_pnl = _safe_float(ev.get("trade_pnl_usd"))
+            if trade_pnl is not None:
+                realized_pnl_usd = (realized_pnl_usd or 0.0) + trade_pnl
 
     # Synthese: was sagt die Audit-Trail-Spur? Drei Cases:
     # 1. position_closed events vorhanden → V4.1+, position_closed-Pfad gilt
     # 2. buy + sell fills, kein position_closed → pre-V4.1 close via TP/SL
     # 3. nur buy fills → noch open
     if paper_position_state not in {"REJECTED", "POSITION_CLOSED"}:
-        if buy_fills > 0 and sell_fills > 0 and not has_position_closed:
+        if partial_close_count > 0 and last_partial_remaining == 0:
+            paper_position_state = "POSITION_CLOSED"
+            paper_close_reason = "tp_tier"
+            paper_filled_ts = last_partial_ts or paper_filled_ts
+        elif partial_close_count > 0:
+            paper_position_state = "PARTIALLY_CLOSED"
+            paper_close_reason = "tp_tier"
+            paper_filled_ts = last_partial_ts or paper_filled_ts
+        elif buy_fills > 0 and sell_fills > 0 and not has_position_closed:
             # Pre-V4.1 paper-engine close. Der konkrete Close-Trigger wird
             # aus dem idempotency_key der order_created sell-side abgeleitet.
             # trade_pnl_usd ist nicht ableitbar — die sell-events tragen nur
@@ -666,7 +731,7 @@ def _derive_stages(
         elif buy_fills > 0:
             paper_position_state = "POSITION_OPEN"
 
-    is_open = paper_position_state == "POSITION_OPEN"
+    is_open = paper_position_state in {"POSITION_OPEN", "PARTIALLY_CLOSED"}
 
     if paper_position_state == "POSITION_OPEN" and is_open:
         stages.append(
@@ -678,11 +743,22 @@ def _derive_stages(
                 detail={"order_id": paper_order_id, "quantity": quantity},
             )
         )
-    elif paper_position_state == "POSITION_CLOSED":
+    elif paper_position_state == "PARTIALLY_CLOSED":
         stages.append(
             StageStatus(
                 name=STAGE_PAPER,
                 ok=True,
+                label="Partially closed",
+                ts=paper_filled_ts,
+                reason=paper_close_reason,
+                detail={"order_id": paper_order_id, "quantity": quantity},
+            )
+        )
+    elif paper_position_state == "POSITION_CLOSED":
+        stages.append(
+            StageStatus(
+                name=STAGE_PAPER,
+                ok=realized_pnl_usd is not None,
                 label="Position closed",
                 ts=paper_filled_ts,
                 reason=paper_close_reason,
@@ -725,9 +801,9 @@ def _derive_stages(
         stages.append(
             StageStatus(
                 name=STAGE_CLOSED,
-                ok=True,
+                ok=realized_pnl_usd is not None,
                 label=f"Closed ({paper_close_reason or 'n/a'})",
-                reason=paper_close_reason,
+                reason=paper_close_reason if realized_pnl_usd is not None else "unknown_pnl",
                 detail={"realized_pnl_usd": realized_pnl_usd},
             )
         )
@@ -754,10 +830,26 @@ def _derive_stages(
     overall: str
     if paper_position_state == "POSITION_OPEN":
         overall = "OPEN"
+    elif paper_position_state == "PARTIALLY_CLOSED":
+        overall = "PARTIALLY_CLOSED"
     elif paper_position_state == "POSITION_CLOSED":
-        overall = "CLOSED"
+        if paper_close_reason and "stop" in str(paper_close_reason).lower():
+            overall = "CLOSED_SL"
+        elif paper_close_reason and "manual" in str(paper_close_reason).lower():
+            overall = "CLOSED_MANUAL"
+        elif realized_pnl_usd is None:
+            overall = "REQUIRES_REVIEW"
+        else:
+            overall = "CLOSED_TP"
     elif paper_position_state == "REJECTED":
         overall = "PAPER_REJECTED"
+    elif bridge_stage in _BRIDGE_ENTRY_DISABLED_STAGES:
+        overall = "ENTRY_DISABLED"
+    elif bridge_stage == "rejected_entry_mode" or bridge_reason in {
+        "entry_mode_disabled",
+        "premium_paper_execution_disabled",
+    }:
+        overall = "ENTRY_DISABLED"
     elif bridge_stage in _BRIDGE_REJECT_STAGES:
         overall = "BRIDGE_REJECTED"
     elif bridge_stage in _BRIDGE_SKIPPED_STAGES:
@@ -794,6 +886,8 @@ def _next_action_hint(
         return "manual_fill"
     if overall == "PENDING_ENTRY":
         return "wait_or_reprocess"
+    if overall == "ENTRY_DISABLED":
+        return "entry_disabled_global"
     if overall == "BRIDGE_REJECTED":
         return "review_reason"
     if overall == "PAPER_REJECTED":
@@ -802,11 +896,51 @@ def _next_action_hint(
         return "expired_review"
     if overall == "SOURCE_SKIPPED":
         return "review_allowlist"
+    if overall == "PARTIALLY_CLOSED":
+        return "monitor"
+    if overall == "REQUIRES_REVIEW":
+        return "review_pnl"
     if overall == "OPEN":
         return "monitor"
-    if overall == "CLOSED":
+    if overall in {"CLOSED_TP", "CLOSED_SL", "CLOSED_MANUAL", "CLOSED"}:
         return "none"
     return "none"
+
+
+def _premium_state_from_overall(
+    *,
+    overall: str,
+    bridge_history: list[dict[str, Any]],
+    paper_close_reason: str | None,
+    realized_pnl_usd: float | None,
+    approved: dict[str, Any] | None,
+) -> PremiumSignalState:
+    if overall == "OPEN":
+        return PremiumSignalState.POSITION_OPEN
+    if overall == "PARTIALLY_CLOSED":
+        return PremiumSignalState.PARTIALLY_CLOSED
+    if overall in {"CLOSED_TP", "CLOSED_SL", "CLOSED_MANUAL", "CLOSED"}:
+        return close_reason_to_state(paper_close_reason, realized_pnl_usd=realized_pnl_usd)
+    if overall == "PAPER_REJECTED":
+        return PremiumSignalState.PAPER_EXECUTION_FAILED
+    if overall == "PENDING_ENTRY":
+        return PremiumSignalState.PENDING_ENTRY
+    if overall == "SOURCE_SKIPPED":
+        return PremiumSignalState.BRIDGE_REJECTED
+    if overall == "EXPIRED":
+        return PremiumSignalState.REQUIRES_REVIEW
+    if overall == "BRIDGE_REJECTED":
+        for event in reversed(bridge_history):
+            stage = event.get("stage")
+            reason = event.get("audit_reason")
+            return bridge_stage_to_state(
+                stage if isinstance(stage, str) else None,
+                reason if isinstance(reason, str) else None,
+            )
+        return PremiumSignalState.BRIDGE_REJECTED
+    if approved is None:
+        return PremiumSignalState.AWAITING_APPROVAL
+    return PremiumSignalState.APPROVED
 
 
 def build_trail(
@@ -918,7 +1052,19 @@ def build_trail(
             paper_position_state=paper_position_state,
             paper_close_reason=paper_close_reason,
             quantity=quantity,
+            origin_signal_id=origin_signal_id(env),
+            raw_source=_safe_str(env.get("source")),
+            normalized_source=normalized_source(_safe_str(env.get("source"))),
         )
+        premium_state = _premium_state_from_overall(
+            overall=overall,
+            bridge_history=bridge_history,
+            paper_close_reason=paper_close_reason,
+            realized_pnl_usd=realized_pnl_usd,
+            approved=approved,
+        )
+        entry.premium_state = premium_state.value
+        entry.premium_state_tone = state_tone(premium_state)
         entry.analytics = derive_signal_analytics(
             payload=payload,
             source=_safe_str(env.get("source")),

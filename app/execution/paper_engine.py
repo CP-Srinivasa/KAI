@@ -1010,6 +1010,8 @@ class PaperExecutionEngine:
                 "trade_pnl_usd": fill.pnl_usd,
                 "fee_usd": fill.fee_usd,
                 "realized_pnl_usd": self._portfolio.realized_pnl_usd,
+                "signal_source": pos.source,
+                "document_id": pos.document_id,
             },
         )
         logger.info(
