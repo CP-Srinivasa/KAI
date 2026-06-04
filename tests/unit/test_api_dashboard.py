@@ -9,8 +9,10 @@ Covers:
 from __future__ import annotations
 
 import json
+import os
 from collections.abc import Generator
 from contextlib import contextmanager
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from unittest.mock import patch
 
@@ -62,6 +64,11 @@ def _patch_artifacts(
             dashboard_mod,
             "_PAPER_EXECUTION_AUDIT",
             d / "paper_execution_audit.jsonl",
+        ),
+        patch.object(
+            dashboard_mod,
+            "_AUDIT_V1_DISQUALIFIED_FLAG",
+            d / "paper_execution_audit_v1_disqualified.flag",
         ),
         patch.object(
             dashboard_mod,
@@ -165,6 +172,15 @@ def test_quality_api_returns_metrics(
     # Sparse fixture → gate stays active with documented blocking reasons.
     assert data["gate_status"] == "hold_remains_active"
     assert "resolved_directional_below_200" in data["blocking_reasons"]
+    assert data["dashboard_truth_contract_version"] == 1
+    assert data["reentry"]["status"] == "expired"
+    assert data["reentry"]["target_date"] == "2026-05-16"
+    assert data["metric_contract"]["paper_fills_with_pnl"]["scope"] in {
+        "lifetime",
+        "cutoff_since",
+    }
+    assert data["metric_contract"]["paper_fills_with_pnl"]["quality_status"] == "historical_only"
+    assert data["metric_contract"]["paper_fills_recent_24h"]["scope"] == "rolling_24h"
 
 
 def test_quality_api_includes_alerts_with_outcomes(
@@ -230,6 +246,9 @@ def test_quality_api_includes_source_reliability_summary(
     assert rel["top_sources"][0]["source_name"] == "decrypt"
     assert rel["top_sources"][0]["point_estimate_pct"] == 72.0
     assert rel["unknown_bucket"]["tier"] == "low"
+    assert rel["trusted_count"] == 0
+    assert rel["quality_status"] in {"critical", "stale"}
+    assert rel["health_warning"]
 
 
 def test_quality_api_includes_position_partial_closed_in_pnl(tmp_path: Path) -> None:
@@ -281,6 +300,341 @@ def test_quality_api_includes_position_partial_closed_in_pnl(tmp_path: Path) -> 
     assert data["paper_positions_partial_closed"] == 2
     # Backwards-compat: paper_fills_with_pnl = closes + partials
     assert data["paper_fills_with_pnl"] == 3
+    assert data["paper_evidence"]["closed_total"] == 3
+    assert data["paper_evidence"]["scope"] == "lifetime"
+    assert data["paper_evidence"]["warning"]
+
+
+def test_quality_api_separates_historical_paper_fills_from_rolling_24h(
+    tmp_path: Path,
+) -> None:
+    old_ts = (datetime.now(UTC) - timedelta(days=7)).isoformat()
+    recent_ts = (datetime.now(UTC) - timedelta(hours=2)).isoformat()
+    (tmp_path / "alert_audit.jsonl").write_text("", encoding="utf-8")
+    (tmp_path / "alert_outcomes.jsonl").write_text("", encoding="utf-8")
+    (tmp_path / "trading_loop_audit.jsonl").write_text("", encoding="utf-8")
+    (tmp_path / "paper_execution_audit.jsonl").write_text(
+        "\n".join(
+            json.dumps(r)
+            for r in [
+                {"event_type": "order_filled", "timestamp_utc": old_ts},
+                {
+                    "schema_version": "v2",
+                    "event_type": "position_closed",
+                    "timestamp_utc": old_ts,
+                    "trade_pnl_usd": 25.0,
+                },
+                {"event_type": "order_filled", "timestamp_utc": recent_ts},
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    old_mtime = (datetime.now(UTC) - timedelta(hours=26)).timestamp()
+    os.utime(tmp_path / "paper_execution_audit.jsonl", (old_mtime, old_mtime))
+
+    app = _make_app()
+    with _patch_artifacts(tmp_path):
+        with TestClient(app) as client:
+            r = client.get("/dashboard/api/quality")
+
+    assert r.status_code == 200
+    data = r.json()
+    assert data["paper_fills"] == 2
+    assert data["paper_fills_with_pnl"] == 1
+    assert data["paper_evidence"]["fills_recent_24h"] == 1
+    assert data["paper_evidence"]["closed_recent_24h"] == 0
+    assert data["paper_evidence"]["stale_status"] == "stale"
+    assert data["metric_contract"]["paper_fills_with_pnl"]["scope"] == "lifetime"
+    assert data["metric_contract"]["paper_fills_recent_24h"]["scope"] == "rolling_24h"
+
+
+def test_priority_gate_endpoint_exposes_reject_semantics(tmp_path: Path) -> None:
+    recent = datetime.now(UTC).isoformat()
+    (tmp_path / "alert_audit.jsonl").write_text("", encoding="utf-8")
+    (tmp_path / "alert_outcomes.jsonl").write_text("", encoding="utf-8")
+    (tmp_path / "paper_execution_audit.jsonl").write_text("", encoding="utf-8")
+    (tmp_path / "trading_loop_audit.jsonl").write_text(
+        "\n".join(
+            json.dumps({"started_at": recent, "status": status})
+            for status in ["priority_rejected", "priority_rejected", "completed"]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    app = _make_app()
+    with _patch_artifacts(tmp_path):
+        with TestClient(app) as client:
+            r = client.get("/dashboard/api/priority-gate")
+
+    assert r.status_code == 200
+    data = r.json()
+    assert data["window_hours"] == 24
+    assert data["rejected_total"] == 2
+    assert data["rejected_pct"] == pytest.approx(66.67)
+    assert data["filled_total"] == 1
+    assert data["top_reject_reason"] == "below_priority_threshold"
+    assert data["priority_quality"]["current_quality_verdict"] in {
+        "insufficient_data",
+        "priority_unproven",
+        "priority_underperforming",
+        "priority_validated",
+    }
+
+
+def test_priority_gate_marks_negative_priority_lift_as_underperforming(tmp_path: Path) -> None:
+    recent = datetime.now(UTC).isoformat()
+    (tmp_path / "alert_audit.jsonl").write_text("", encoding="utf-8")
+    (tmp_path / "alert_outcomes.jsonl").write_text("", encoding="utf-8")
+    (tmp_path / "paper_execution_audit.jsonl").write_text("", encoding="utf-8")
+    (tmp_path / "trading_loop_audit.jsonl").write_text(
+        json.dumps({"started_at": recent, "status": "priority_rejected"}) + "\n",
+        encoding="utf-8",
+    )
+
+    async def fake_hold_report() -> dict[str, object]:
+        return {
+            "signal_quality_validation": {
+                "priority_tier_lift_pct": -12.5,
+                "priority_tier_high_conviction_resolved": 8,
+                "priority_tier_standard_resolved": 8,
+            }
+        }
+
+    app = _make_app()
+    with (
+        _patch_artifacts(tmp_path),
+        patch.object(
+            dashboard_mod,
+            "_live_hold_report",
+            fake_hold_report,
+        ),
+    ):
+        with TestClient(app) as client:
+            r = client.get("/dashboard/api/priority-gate")
+
+    assert r.status_code == 200
+    priority_quality = r.json()["priority_quality"]
+    assert priority_quality["high_priority_lift_pct"] == -12.5
+    assert priority_quality["current_quality_verdict"] == "priority_underperforming"
+    assert priority_quality["warning"]
+
+
+def test_regime_endpoint_marks_read_only_and_exposes_snapshot_age(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    regime_dir = tmp_path / "artifacts" / "regime_state"
+    regime_dir.mkdir(parents=True)
+    snapshot = {
+        "asset": "BTC",
+        "timestamp": datetime.now(UTC)
+        .replace(minute=0, second=0, microsecond=0)
+        .strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "regime": "chop_quiet",
+        "vol_class": "vol_low",
+        "confidence": 1.0,
+        "adx": 20.0,
+        "plus_di": 12.0,
+        "minus_di": 10.0,
+        "rv_24h": 0.01,
+        "atr_zscore": 0.1,
+    }
+    (regime_dir / "btc_regime.jsonl").write_text(json.dumps(snapshot) + "\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+
+    app = _make_app()
+    with TestClient(app) as client:
+        r = client.get("/dashboard/api/regime")
+
+    assert r.status_code == 200
+    data = r.json()
+    assert data["is_read_only"] is True
+    assert data["is_decision_relevant"] is False
+    assert data["semantic_status"] == "read_only"
+    assert data["warning"]
+    assert data["by_asset"]["BTC"]["regime"] == "chop_quiet"
+    assert data["by_asset_metadata"]["BTC"]["quality_status"] == "read_only"
+    assert data["by_asset_metadata"]["BTC"]["snapshot_age_hours"] is not None
+
+
+# ---------------------------------------------------------------------------
+# Truth-layer finalization sprint (2026-06-04): config re-entry, small-n
+# deemphasis, loop heartbeat, regime data-vs-response freshness, contract
+# consistency. These assert SEMANTICS, not mere field presence.
+# ---------------------------------------------------------------------------
+
+
+def test_reentry_status_config_and_failsafe_semantics() -> None:
+    # Future date → active, real positive delta.
+    future = dashboard_mod._reentry_status(target_date="2099-12-31")
+    assert future["status"] == "active"
+    assert future["days_delta"] > 0
+    assert future["target_source"] == "explicit"
+    # Past date → expired, NOT clamped to 0/today.
+    past = dashboard_mod._reentry_status(target_date="2020-01-01")
+    assert past["status"] == "expired"
+    assert past["days_delta"] < 0
+    # Empty/invalid → fail-safe requires_re_evaluation, no crash, no invented target.
+    empty = dashboard_mod._reentry_status(target_date="")
+    assert empty["status"] == "requires_re_evaluation"
+    assert empty["days_delta"] is None
+    # Default (from settings) → historical 2026-05-16 default is in the past → expired.
+    default = dashboard_mod._reentry_status()
+    assert default["target_date"] == "2026-05-16"
+    assert default["status"] == "expired"
+    assert default["target_source"] in {"config", "default_historical"}
+
+
+def test_source_reliability_flags_small_n_as_provisional(artifacts_dir: Path) -> None:
+    (artifacts_dir / "source_reliability.json").write_text(
+        json.dumps(
+            {
+                "report_type": "source_reliability",
+                "generated_at": datetime.now(UTC).isoformat(),
+                "window_days": 90,
+                "thresholds": {"min_n": 50},
+                "scores": {
+                    "btc_echo": {
+                        "source_name": "btc_echo",
+                        "hits": 1,
+                        "miss": 0,
+                        "n": 1,
+                        "point_estimate": 1.0,
+                        "wilson_lower_95": 0.05,
+                        "tier": "watch",
+                        "priority_modifier": 0,
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    app = _make_app()
+    with _patch_artifacts(artifacts_dir):
+        with TestClient(app) as client:
+            rel = client.get("/dashboard/api/quality").json()["source_reliability"]
+    # 100% at n=1 must NOT read as trusted, and must be flagged provisional.
+    assert rel["trusted_count"] == 0
+    assert rel["min_n"] == 50
+    assert rel["provisional_count"] == 1
+    src = rel["top_sources"][0]
+    assert src["source_name"] == "btc_echo"
+    assert src["is_provisional"] is True
+    assert src["sample_warning"]
+
+
+def test_priority_gate_heartbeat_unknown_when_no_cycles(tmp_path: Path) -> None:
+    (tmp_path / "alert_audit.jsonl").write_text("", encoding="utf-8")
+    (tmp_path / "alert_outcomes.jsonl").write_text("", encoding="utf-8")
+    (tmp_path / "paper_execution_audit.jsonl").write_text("", encoding="utf-8")
+    # Empty loop audit → zero cycles → loop liveness NOT verified.
+    (tmp_path / "trading_loop_audit.jsonl").write_text("", encoding="utf-8")
+
+    app = _make_app()
+    with _patch_artifacts(tmp_path):
+        with TestClient(app) as client:
+            data = client.get("/dashboard/api/priority-gate").json()
+    assert data["heartbeat_status"] == "unknown"
+    assert data["heartbeat_warning"]
+    # 0 filled must not be presented as healthy.
+    assert data["filled_total"] == 0
+
+
+def test_priority_gate_heartbeat_active_blocking_when_cycles_present(tmp_path: Path) -> None:
+    recent = datetime.now(UTC).isoformat()
+    (tmp_path / "alert_audit.jsonl").write_text("", encoding="utf-8")
+    (tmp_path / "alert_outcomes.jsonl").write_text("", encoding="utf-8")
+    (tmp_path / "paper_execution_audit.jsonl").write_text("", encoding="utf-8")
+    (tmp_path / "trading_loop_audit.jsonl").write_text(
+        "\n".join(
+            json.dumps({"started_at": recent, "status": s})
+            for s in ["priority_rejected", "priority_rejected"]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    app = _make_app()
+    with _patch_artifacts(tmp_path):
+        with TestClient(app) as client:
+            data = client.get("/dashboard/api/priority-gate").json()
+    # Cycles present + fresh audit → loop liveness IS verified (not unknown/stale).
+    assert data["heartbeat_status"] in {"active", "active_blocking"}
+    assert data["heartbeat_warning"] is None
+    assert data["loop_audit_present"] is True
+
+
+def test_regime_separates_response_from_data_freshness(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    regime_dir = tmp_path / "artifacts" / "regime_state"
+    regime_dir.mkdir(parents=True)
+    snapshot = {
+        "asset": "BTC",
+        "timestamp": datetime.now(UTC)
+        .replace(minute=0, second=0, microsecond=0)
+        .strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "regime": "chop_quiet",
+        "vol_class": "vol_low",
+        "confidence": 1.0,
+        "adx": 20.0,
+        "plus_di": 12.0,
+        "minus_di": 10.0,
+        "rv_24h": 0.01,
+        "atr_zscore": 0.1,
+    }
+    (regime_dir / "btc_regime.jsonl").write_text(json.dumps(snapshot) + "\n", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    app = _make_app()
+    with TestClient(app) as client:
+        data = client.get("/dashboard/api/regime").json()
+    # Response freshness must be distinct from data freshness.
+    assert "response_generated_at" in data
+    assert data["data_freshness_status"] in {"ok", "warning", "stale", "unverified", "no_data"}
+    assert data["data_freshness_status"] == "ok"  # snapshot is current
+    assert data["is_decision_relevant"] is False
+
+
+def test_metric_contract_does_not_contradict_parallel_truth_fields(artifacts_dir: Path) -> None:
+    (artifacts_dir / "source_reliability.json").write_text(
+        json.dumps(
+            {
+                "report_type": "source_reliability",
+                "generated_at": datetime.now(UTC).isoformat(),
+                "window_days": 90,
+                "thresholds": {"min_n": 50},
+                "scores": {
+                    "unknown": {
+                        "source_name": "unknown",
+                        "hits": 4,
+                        "miss": 16,
+                        "n": 20,
+                        "point_estimate": 0.2,
+                        "wilson_lower_95": 0.08,
+                        "tier": "low",
+                        "priority_modifier": -2,
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    app = _make_app()
+    with _patch_artifacts(artifacts_dir):
+        with TestClient(app) as client:
+            data = client.get("/dashboard/api/quality").json()
+    contract = data["metric_contract"]
+    # Contract must mirror, not contradict, the parallel truth fields.
+    assert contract["paper_fills_with_pnl"]["quality_status"] == "historical_only"
+    assert contract["paper_fills_recent_24h"]["scope"] == "rolling_24h"
+    assert contract["market_regime"]["is_read_only"] is True
+    assert contract["market_regime"]["is_decision_relevant"] is False
+    assert (
+        contract["source_reliability"]["quality_status"]
+        == data["source_reliability"]["quality_status"]
+    )
 
 
 # ---------------------------------------------------------------------------

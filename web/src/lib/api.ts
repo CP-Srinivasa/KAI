@@ -129,6 +129,37 @@ export function fetchTimerHealth(signal?: AbortSignal): Promise<TimerHealthRespo
 }
 
 export type DashboardQuality = {
+  dashboard_truth_contract_version?: number;
+  metric_contract?: Record<
+    string,
+    {
+      value: unknown;
+      unit: string;
+      semantic_type: string;
+      scope: string;
+      window_hours: number | null;
+      since: string | null;
+      until: string | null;
+      generated_at: string;
+      source_artifact: string;
+      source_artifact_updated_at: string | null;
+      stale_status: string;
+      sample_size: number | null;
+      confidence_interval: Record<string, number | null> | null;
+      is_decision_relevant: boolean;
+      is_read_only: boolean;
+      quality_status: string;
+      warning: string | null;
+      explanation: string | null;
+    }
+  >;
+  reentry?: {
+    target_date: string;
+    today: string;
+    status: "active" | "expired" | "unverified" | string;
+    days_delta: number | null;
+    warning: string | null;
+  };
   precision_pct: number | null;
   false_positive_pct: number | null;
   resolved_count: number;
@@ -161,7 +192,32 @@ export type DashboardQuality = {
   paper_fills: number;
   paper_fills_with_pnl: number;
   paper_realized_pnl_usd: number;
+  paper_quarantined_pnl_usd?: number;
+  paper_quarantined_closes?: number;
   paper_positions_closed: number;
+  paper_positions_partial_closed?: number;
+  paper_evidence?: {
+    scope: string;
+    since: string | null;
+    until: string;
+    window_hours: number;
+    fills_total: number;
+    fills_recent_24h: number;
+    closed_total: number;
+    closed_recent_24h: number;
+    realized_pnl_total_usd: number;
+    realized_pnl_recent_24h_usd: number;
+    expectancy_usd: number | null;
+    win_rate_pct: number | null;
+    avg_win_usd: number | null;
+    avg_loss_usd: number | null;
+    fees_slippage_included: string;
+    source_artifact: string;
+    source_artifact_updated_at: string | null;
+    stale_status: string;
+    quality_status: string;
+    warning: string | null;
+  };
   audit_v1_disqualified?: boolean;
   audit_provenance?: {
     cut_off_commit?: string;
@@ -230,6 +286,9 @@ export type DashboardQuality = {
     generated_at: string | null;
     window_days: number | null;
     thresholds?: Record<string, number>;
+    quality_status?: string;
+    health_warning?: string | null;
+    trusted_count?: number;
     source_count: number;
     tier_counts: Record<string, number>;
     top_sources: Array<{
@@ -338,7 +397,25 @@ export type RegimeSnapshot = {
 
 export type DashboardRegime = {
   generated_at: string;
+  semantic_status?: "read_only" | string;
+  is_read_only?: boolean;
+  is_decision_relevant?: boolean;
+  warning?: string | null;
   by_asset: Record<string, RegimeSnapshot>;
+  by_asset_metadata?: Record<
+    string,
+    {
+      source_artifact: string;
+      source_artifact_updated_at: string | null;
+      snapshot_timestamp: string;
+      snapshot_age_hours: number | null;
+      stale_status: string;
+      is_read_only: boolean;
+      is_decision_relevant: boolean;
+      quality_status: string;
+      warning: string | null;
+    }
+  >;
 };
 
 export function fetchDashboardRegime(
@@ -357,6 +434,18 @@ export type PriorityGateSummary = {
   priority_rejected: number;
   other_rejected: number;
   completed: number;
+  rejected_total?: number;
+  rejected_pct?: number;
+  filled_total?: number;
+  top_reject_reason?: string | null;
+  threshold_effect?: string;
+  priority_quality?: {
+    high_priority_lift_pct?: number | null;
+    high_priority_resolved?: number | null;
+    standard_resolved?: number | null;
+    current_quality_verdict: string;
+    warning?: string | null;
+  };
   window_start_utc: string;
   audit_path: string;
 };

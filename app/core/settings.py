@@ -91,6 +91,13 @@ class AlertSettings(BaseSettings):
     # Digest mode: accumulate alerts and send as a batch instead of individually.
     digest_enabled: bool = Field(default=False)
     digest_interval_minutes: int = Field(default=60)
+    # Re-Entry-Gate target date (TV-Pivot D-125). Operator-tunable via
+    # ``ALERT_REENTRY_TARGET_DATE`` so the historical 2026-05-16 default no
+    # longer rots silently as a backend module constant. KAI never invents a
+    # new target: if the configured date is in the past (today's default) the
+    # dashboard renders it ``expired``/historical; an empty/invalid value
+    # fails safe to ``requires_re_evaluation`` rather than crashing.
+    reentry_target_date: str = Field(default="2026-05-16")
     # D-125 / SAT-C-PROV-20260422-001 — HMAC secret for sealing
     # ``SignalProvenance.provenance_hash`` at alert/outcome write time. Empty
     # = hash stays None (source/version/signal_path_id still persist), which

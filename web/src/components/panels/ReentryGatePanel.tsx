@@ -24,7 +24,7 @@ const V1_DISQUALIFIED_TOOLTIP =
 function daysUntil(targetIso: string): number {
   const target = new Date(`${targetIso}T00:00:00Z`).getTime();
   const now = Date.now();
-  return Math.max(0, Math.ceil((target - now) / (1000 * 60 * 60 * 24)));
+  return Math.ceil((target - now) / (1000 * 60 * 60 * 24));
 }
 
 type GateState =
@@ -60,7 +60,9 @@ function ReentryGatePanelImpl({
   priorityGate?: PriorityGateSummary | null;
 }) {
   const { t } = useT();
-  const daysLeft = useMemo(() => daysUntil(REENTRY_DATE_ISO), []);
+  const targetDate = quality?.reentry?.target_date ?? REENTRY_DATE_ISO;
+  const daysLeft = useMemo(() => daysUntil(targetDate), [targetDate]);
+  const targetExpired = quality?.reentry?.status === "expired" || daysLeft < 0;
 
   const computed = useMemo(() => {
     if (qualityState !== "ready" || quality == null) return null;
@@ -69,8 +71,15 @@ function ReentryGatePanelImpl({
     const pnlUsd = quality.paper_realized_pnl_usd ?? 0;
     const v1Disqualified = quality.audit_v1_disqualified ?? false;
     const gate = evaluateGate(alerts, fills);
-    return { alerts, fills, pnlUsd, v1Disqualified, gate, banner: bannerProps(gate, daysLeft) };
-  }, [quality, qualityState, daysLeft]);
+    return {
+      alerts,
+      fills,
+      pnlUsd,
+      v1Disqualified,
+      gate,
+      banner: bannerProps(gate, daysLeft, targetExpired, targetDate),
+    };
+  }, [quality, qualityState, daysLeft, targetExpired, targetDate]);
 
   // DALI-F-028: bei loading/error keinen 0/0-Gate-Versagen-Visual zeigen,
   // sondern Skeleton bzw. Error-Banner. Countdown bleibt sichtbar, weil er
@@ -80,6 +89,8 @@ function ReentryGatePanelImpl({
       <ReentryGatePanelFallback
         state={qualityState}
         daysLeft={daysLeft}
+        targetExpired={targetExpired}
+        targetDate={targetDate}
         errorMessage={qualityError ?? null}
       />
     );
@@ -91,11 +102,15 @@ function ReentryGatePanelImpl({
     <Card padded>
       <CardHeader
         title="Re-Entry-Gate"
-        subtitle={`TV-Pivot D-125 · Ziel: ${REENTRY_DATE_ISO} · Pfad A (alerts ≥${ALERTS_TARGET}) ODER Pfad B (fills ≥${FILLS_TARGET})`}
+        subtitle={
+          targetExpired
+            ? `TV-Pivot D-125 · historisches Ziel ${targetDate} abgelaufen · neue Gate-Definition erforderlich`
+            : `TV-Pivot D-125 · Ziel: ${targetDate} · Pfad A (alerts ≥${ALERTS_TARGET}) ODER Pfad B (fills ≥${FILLS_TARGET})`
+        }
         right={
-          <Badge tone={daysLeft <= 7 ? "warn" : "muted"} dot>
+          <Badge tone={targetExpired ? "neg" : daysLeft <= 7 ? "warn" : "muted"} dot>
             <Calendar size={10} />
-            {daysLeft === 0 ? "heute" : `${daysLeft} Tage`}
+            {targetExpired ? "abgelaufen" : daysLeft === 0 ? "heute" : `${daysLeft} Tage`}
           </Badge>
         }
       />
@@ -161,6 +176,10 @@ function ReentryGatePanelImpl({
           met={gate.kind === "path_b_met" || gate.kind === "both_met"}
           helper={
             <>
+              <span className="text-warn">
+                {quality.paper_evidence?.scope === "cutoff_since" ? "Cutoff/lifetime" : "Lifetime"} · nicht 24h
+              </span>
+              {" · "}
               Realized PnL:{" "}
               <span className={cn("font-mono", pnlUsd > 0 ? "text-pos" : pnlUsd < 0 ? "text-neg" : "")}>
                 {pnlUsd >= 0 ? "+" : ""}
@@ -182,6 +201,12 @@ function ReentryGatePanelImpl({
               {quality ? (
                 <>
                   {" "}· {quality.paper_positions_closed} closed
+                  {quality.paper_evidence ? (
+                    <>
+                      {" "}· 24h fills {quality.paper_evidence.fills_recent_24h}
+                      {" "}· 24h PnL {quality.paper_evidence.realized_pnl_recent_24h_usd.toFixed(2)} USD
+                    </>
+                  ) : null}
                 </>
               ) : null}
             </>
@@ -193,6 +218,12 @@ function ReentryGatePanelImpl({
         Source-Vergleich und TV-4-Verdict: siehe <span className="text-fg-muted">Active Precision</span> unten.
       </div>
 
+      {quality?.reentry?.warning ? (
+        <div className="mt-3 rounded-sm border border-warn/30 bg-warn/10 px-3 py-2 text-2xs text-warn font-mono">
+          {quality.reentry.warning}
+        </div>
+      ) : null}
+
       {priorityGate ? <PriorityGateRow summary={priorityGate} /> : null}
     </Card>
   );
@@ -202,7 +233,7 @@ function PriorityGateRow({ summary }: { summary: PriorityGateSummary }) {
   // D-184: dual-state visibility for the D-182 paper-fill gate. Off-state
   // reminds the operator the gate is still at the no-op default; active-state
   // surfaces the 24h bucket counts so "no new fills" has context.
-  const { threshold, gate_active, priority_rejected, other_rejected, completed, total_cycles, window_hours } =
+  const { threshold, gate_active, priority_rejected, other_rejected, completed, total_cycles, window_hours, priority_quality } =
     summary;
 
   if (!gate_active) {
@@ -255,6 +286,16 @@ function PriorityGateRow({ summary }: { summary: PriorityGateSummary }) {
         )}
         <span className="text-fg-subtle">· {window_hours}h</span>
       </div>
+      {priority_quality?.warning && (
+        <div className="basis-full text-warn">
+          {priority_quality.current_quality_verdict}
+          {priority_quality.high_priority_lift_pct != null
+            ? ` · Lift ${priority_quality.high_priority_lift_pct.toFixed(2)}pp`
+            : ""}
+          {" · "}
+          {priority_quality.warning}
+        </div>
+      )}
     </div>
   );
 }
@@ -262,7 +303,16 @@ function PriorityGateRow({ summary }: { summary: PriorityGateSummary }) {
 function bannerProps(
   gate: GateState,
   daysLeft: number,
+  targetExpired: boolean,
+  targetDate: string,
 ): { title: string; detail: string; className: string } {
+  if (targetExpired) {
+    return {
+      title: "Historisches Ziel abgelaufen",
+      detail: "Re-Entry-Fortschritt bleibt Evidenz, aber das alte Ziel ist kein aktueller Freigabezustand.",
+      className: "border-warn/30 bg-warn/10 text-warn",
+    };
+  }
   if (gate.kind === "both_met" || gate.kind === "path_a_met" || gate.kind === "path_b_met") {
     return {
       title: gate.label,
@@ -275,7 +325,7 @@ function bannerProps(
   if (daysLeft <= 7) {
     return {
       title: "Gate offen · Deadline ≤7 Tage",
-      detail: `Nächster Pfad ${path} bei ${pct}% — bei Nichterreichen bis ${REENTRY_DATE_ISO} kein weiterer Aufschub.`,
+      detail: `Nächster Pfad ${path} bei ${pct}% — bei Nichterreichen bis ${targetDate} kein weiterer Aufschub.`,
       className: "border-neg/30 bg-neg/10 text-neg",
     };
   }
@@ -330,10 +380,14 @@ function ProgressRow({
 function ReentryGatePanelFallback({
   state,
   daysLeft,
+  targetExpired,
+  targetDate,
   errorMessage,
 }: {
   state: QualityFetchState;
   daysLeft: number;
+  targetExpired: boolean;
+  targetDate: string;
   errorMessage: string | null;
 }) {
   const { t } = useT();
@@ -358,11 +412,15 @@ function ReentryGatePanelFallback({
     <Card padded>
       <CardHeader
         title="Re-Entry-Gate"
-        subtitle={`TV-Pivot D-125 · Ziel: ${REENTRY_DATE_ISO} · Pfad A (alerts ≥${ALERTS_TARGET}) ODER Pfad B (fills ≥${FILLS_TARGET})`}
+        subtitle={
+          targetExpired
+            ? `TV-Pivot D-125 · historisches Ziel ${targetDate} abgelaufen`
+            : `TV-Pivot D-125 · Ziel: ${targetDate} · Pfad A (alerts ≥${ALERTS_TARGET}) ODER Pfad B (fills ≥${FILLS_TARGET})`
+        }
         right={
-          <Badge tone={daysLeft <= 7 ? "warn" : "muted"} dot>
+          <Badge tone={targetExpired ? "neg" : daysLeft <= 7 ? "warn" : "muted"} dot>
             <Calendar size={10} />
-            {daysLeft === 0 ? "heute" : `${daysLeft} Tage`}
+            {targetExpired ? "abgelaufen" : daysLeft === 0 ? "heute" : `${daysLeft} Tage`}
           </Badge>
         }
       />

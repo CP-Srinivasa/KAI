@@ -197,11 +197,16 @@ export function RegimeStatusPanel({ data }: { data: DashboardRegime | null }) {
         }
         subtitle="Wie sich BTC + ETH gerade verhalten, auf Stunden-Basis klassifiziert."
         right={
-          <Badge tone={total > 0 ? "info" : "muted"} dot>
-            R1 {total} Asset{total === 1 ? "" : "s"}
+          <Badge tone={data?.is_read_only ? "warn" : total > 0 ? "info" : "muted"} dot>
+            {data?.is_read_only ? "read-only" : "R1"} · {total} Asset{total === 1 ? "" : "s"}
           </Badge>
         }
       />
+      {data?.warning && (
+        <div className="mb-3 rounded-sm border border-warn/30 bg-warn/10 px-3 py-2 text-2xs font-mono text-warn">
+          {data.warning}
+        </div>
+      )}
       {total === 0 ? (
         <div className="rounded-md border border-line-subtle bg-bg-2 px-3 py-4 text-xs text-fg-muted leading-relaxed">
           <div className="font-medium text-fg mb-1">Noch keine Klassifikation.</div>
@@ -214,7 +219,20 @@ export function RegimeStatusPanel({ data }: { data: DashboardRegime | null }) {
         <div className="space-y-3">
           {assets.map((asset) => {
             const snap = data!.by_asset[asset];
-            return <AssetRow key={asset} snapshot={snap} />;
+            const meta = data!.by_asset_metadata?.[asset];
+            return (
+              <div key={asset} className="space-y-1">
+                <AssetRow snapshot={snap} />
+                {meta && (
+                  <div className="px-1 text-2xs font-mono text-fg-subtle">
+                    Snapshot {meta.snapshot_timestamp.substring(0, 16).replace("T", " ")}
+                    {" "}· Alter {meta.snapshot_age_hours == null ? "-" : meta.snapshot_age_hours.toFixed(1) + "h"}
+                    {" "}· {meta.stale_status}
+                    {" "}· read-only
+                  </div>
+                )}
+              </div>
+            );
           })}
         </div>
       )}
