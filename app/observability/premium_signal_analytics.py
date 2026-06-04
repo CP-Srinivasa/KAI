@@ -67,6 +67,9 @@ _CANCELLED_OVERALLS = frozenset(
         "SOURCE_SKIPPED",
         "EXPIRED",
         "NOT_APPROVED",
+        # 2026-06-04 RC-2: globaler Kill-Switch — das Signal ist nie als Trade
+        # gelaufen. Darf NICHT als Trading-Miss in die Source-Quality zählen.
+        "ENTRY_DISABLED",
     }
 )
 
@@ -451,11 +454,15 @@ def _compute_result(
     aus Fill-Preisen abgeleitete Wert genutzt (transparent als ``fills``
     markiert). Keiner vorhanden → ``unknown`` statt erfundenem Ergebnis.
     """
-    if overall in ("OPEN", "PENDING_ENTRY"):
+    if overall in ("OPEN", "PENDING_ENTRY", "PARTIALLY_CLOSED"):
         return "open", None, None, None
     if overall in _CANCELLED_OVERALLS:
         return "cancelled", None, None, None
-    if overall == "CLOSED":
+    # 2026-06-04: die State-Machine zerlegt den früheren Sammel-State "CLOSED"
+    # in CLOSED_TP/CLOSED_SL/CLOSED_MANUAL. Alle drei sind PnL-tragende Closes;
+    # "CLOSED" bleibt als Legacy-Alias akzeptiert. Ein Close ohne ableitbaren
+    # PnL kommt als overall=REQUIRES_REVIEW herein und fällt unten auf "unknown".
+    if overall in ("CLOSED", "CLOSED_TP", "CLOSED_SL", "CLOSED_MANUAL"):
         if engine_pnl is not None:
             pnl: float = engine_pnl
             source: str = "engine"

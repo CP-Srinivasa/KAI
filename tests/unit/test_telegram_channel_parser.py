@@ -149,6 +149,31 @@ class TestLayoutClassic:
         assert sig.stop_loss == 0.1880
         assert sig.targets == [0.1810, 0.1800, 0.1790, 0.1780]
 
+    def test_hash_symbol_bare_direction_long(self) -> None:
+        """RC-7/§7 (2026-06-04): "#US/USDT LONG" (hash-symbol + bare direction,
+        kein Slash) muss parsen — vorher fiel die bare-Form durch alle Muster."""
+        sig = parse_premium_channel_message(
+            "🟢 #US/USDT LONG\nEntry Point - 0.00833\nTargets: 0.0084 - 0.0085\n"
+            "Stop Loss - 0.0079\nLeverage - 10x"
+        )
+        assert sig is not None
+        assert sig.display_symbol == "US/USDT"
+        assert sig.direction == "long"
+        assert sig.side == "buy"
+        assert sig.entry_value == 0.00833
+        assert sig.stop_loss == 0.0079
+
+    def test_bare_direction_before_hash_symbol_short(self) -> None:
+        """Spiegelvariante: "SHORT #APR/USDT" (bare direction vor #-Symbol)."""
+        sig = parse_premium_channel_message(
+            "SHORT #APR/USDT\nEntry Point - 0.2319\nTargets: 0.2300 - 0.2280\n"
+            "Stop Loss - 0.2400\nLeverage - 10x"
+        )
+        assert sig is not None
+        assert sig.display_symbol == "APR/USDT"
+        assert sig.direction == "short"
+        assert sig.side == "sell"
+
 
 # ── Entry-variants ──────────────────────────────────────────────────────────
 
@@ -217,9 +242,26 @@ class TestEmojiInlineLayout:
         # Leverage field was blank in the sample → default 1
         assert sig.leverage == 1
         # Exchange header should be recognised
-        assert "binance" in sig.exchange_scope
+        assert "binance_futures" in sig.exchange_scope
         assert "bybit" in sig.exchange_scope
         assert "okx" in sig.exchange_scope
+
+    def test_single_exchange_header_is_scope(self) -> None:
+        sig = parse_premium_channel_message(
+            "BybitUSDT\n🚀 #CYS/USDT Long/BUY - 0.4869\n🎯 0.4900\n"
+            "🛑 Stop Loss - 0.4700\nLeverage - 10x"
+        )
+        assert sig is not None
+        assert sig.display_symbol == "CYS/USDT"
+        assert sig.exchange_scope == ["bybit"]
+
+    def test_binance_futures_normalizes_to_futures_scope(self) -> None:
+        sig = parse_premium_channel_message(
+            "Binance Futures\n🚀 #APR/USDT Long/BUY - 0.26892\n🎯 0.2700\n"
+            "🛑 Stop Loss - 0.2600\nLeverage - 10x"
+        )
+        assert sig is not None
+        assert sig.exchange_scope == ["binance_futures"]
 
 
 # ── Non-signal messages (must return None) ──────────────────────────────────
@@ -424,8 +466,46 @@ def test_operator_example_signals_2026_05_12(
             "TRUTH/USDT",
             15674.0,
         ),
+        # 2026-06-04 RC-4: Singular "profit target" (US/APR verbatim) — vorher
+        # ignoriert weil Regex nur "targets" (Plural) verlangte.
+        (
+            "🎯 #US/USDT has touched 16790 and has completed all the profit target",
+            "US/USDT",
+            16790.0,
+        ),
+        (
+            "🎯 #APR/USDT has touched 26892 and has completed all the profit target",
+            "APR/USDT",
+            26892.0,
+        ),
+        # Großschreibung "Targets" (BIRB verbatim).
+        (
+            "🎯 #BIRB/USDT has touched 13777 and has completed all the profit Targets",
+            "BIRB/USDT",
+            13777.0,
+        ),
+        # "almost completed" (OPG verbatim).
+        (
+            "🎯 #OPG/USDT has touched 3447 and has almost completed all the profit targets",
+            "OPG/USDT",
+            3447.0,
+        ),
+        (
+            "🎯#CYS/USDT has touched 4869 and has completed all the profit targets",
+            "CYS/USDT",
+            4869.0,
+        ),
     ],
-    ids=["ON", "Q", "TRUTH"],
+    ids=[
+        "ON",
+        "Q",
+        "TRUTH",
+        "US_singular",
+        "APR_singular",
+        "BIRB_bigT",
+        "OPG_almost",
+        "CYS_no_space",
+    ],
 )
 def test_target_completion_parser_operator_examples(
     raw: str, expected_display: str, expected_price: float

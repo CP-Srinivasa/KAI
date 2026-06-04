@@ -49,7 +49,43 @@ function priceDigits(v: number | null | undefined): number {
 // Liest GET /operator/portfolio/realized-by-asset — keine Live-/Backtest-Abhängigkeit.
 function RealizedByAssetPanel() {
   const { fmt } = useCurrency();
-  const data = useApi(fetchRealizedByAsset, 60_000);
+  const [sourceFilter, setSourceFilter] = useState<"all" | "premium_telegram" | "autonomous" | "reconciled" | "legacy_unknown">("all");
+  const data = useApi(
+    (signal) =>
+      fetchRealizedByAsset(
+        signal,
+        sourceFilter === "all" ? undefined : sourceFilter,
+      ),
+    60_000,
+    [sourceFilter],
+  );
+  const filterControls = (
+    <div className="inline-flex items-center rounded-sm border border-line-subtle bg-bg-2 p-0.5 flex-wrap gap-0.5">
+      {(["all", "premium_telegram", "autonomous", "reconciled", "legacy_unknown"] as const).map((value) => (
+        <button
+          key={value}
+          type="button"
+          onClick={() => setSourceFilter(value)}
+          className={cn(
+            "px-2 py-0.5 text-3xs font-mono rounded-xs transition-colors whitespace-nowrap",
+            sourceFilter === value
+              ? "bg-info/15 text-info"
+              : "text-fg-subtle hover:text-fg",
+          )}
+        >
+          {value === "all"
+            ? "Gesamt"
+            : value === "premium_telegram"
+            ? "Premium TG"
+            : value === "autonomous"
+            ? "Autonom"
+            : value === "reconciled"
+            ? "Reconciled"
+            : "Legacy/Unbekannt"}
+        </button>
+      ))}
+    </div>
+  );
 
   if (data.state !== "ready") {
     return (
@@ -57,6 +93,7 @@ function RealizedByAssetPanel() {
         <CardHeader
           title="Realisierte Gewinne nach Asset"
           subtitle="Live aus Paper-Execution-Audit"
+          right={filterControls}
         />
         <div className="text-sm text-fg-subtle py-6 text-center">
           {data.state === "error"
@@ -74,6 +111,7 @@ function RealizedByAssetPanel() {
         <CardHeader
           title="Realisierte Gewinne nach Asset"
           subtitle="Live aus Paper-Execution-Audit"
+          right={filterControls}
         />
         <div className="text-sm text-fg-subtle py-6 text-center">
           Audit nicht verfügbar: {d.error ?? "unbekannt"}
@@ -87,25 +125,40 @@ function RealizedByAssetPanel() {
         <CardHeader
           title="Realisierte Gewinne nach Asset"
           subtitle="Live aus Paper-Execution-Audit"
+          right={filterControls}
         />
         <div className="text-sm text-fg-subtle py-6 text-center">
-          Noch keine abgeschlossenen Trades — Paper-Engine hat keine
+          Noch keine abgeschlossenen Trades für diesen Filter — Paper-Engine hat keine passenden
           position_closed-Events.
         </div>
       </Card>
     );
   }
 
+  const activeFilterLabel =
+    sourceFilter === "all"
+      ? "volles Paper-Buch"
+      : sourceFilter === "premium_telegram"
+      ? "nur Premium Telegram"
+      : sourceFilter === "autonomous"
+      ? "nur Autonome Loop"
+      : sourceFilter === "reconciled"
+      ? "nur Reconciled Completions"
+      : "nur Legacy / Unbekannt";
+
   return (
     <Card padded>
       <CardHeader
         title="Realisierte Gewinne nach Asset"
-        subtitle={`${d.totals.closed_trades} abgeschlossene Trades über ${d.totals.assets_count} Assets · Paper-Mode, keine Live-Daten`}
+        subtitle={`${d.totals.closed_trades} abgeschlossene Trades über ${d.totals.assets_count} Assets · ${activeFilterLabel}`}
         right={
-          <Badge tone={d.totals.realized_pnl_usd >= 0 ? "pos" : "neg"}>
-            Gesamt {d.totals.realized_pnl_usd >= 0 ? "+" : ""}
-            {fmt(d.totals.realized_pnl_usd, undefined, 2)}
-          </Badge>
+          <div className="flex items-center gap-2 flex-wrap sm:flex-nowrap">
+            {filterControls}
+            <Badge tone={d.totals.realized_pnl_usd >= 0 ? "pos" : "neg"}>
+              Gesamt {d.totals.realized_pnl_usd >= 0 ? "+" : ""}
+              {fmt(d.totals.realized_pnl_usd, undefined, 2)}
+            </Badge>
+          </div>
         }
       />
       <div className="grid grid-cols-1 gap-1 mt-3">
@@ -163,6 +216,11 @@ function RealizedByAssetPanel() {
       <div className="mt-2 text-2xs text-fg-subtle">
         Letztes Close: {d.audit_last_event_utc ?? "—"} · Quelle:{" "}
         <span className="font-mono">{d.audit_path}</span>
+        {(d.source_prefix || d.source_filter) && (
+          <>
+            {" "}· Filter: <span className="font-mono">{d.source_prefix || d.source_filter}</span>
+          </>
+        )}
       </div>
     </Card>
   );

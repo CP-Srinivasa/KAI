@@ -672,6 +672,8 @@ async def get_realized_by_asset(
     request: Request,
     response: Response,
     audit_path: str = "artifacts/paper_execution_audit.jsonl",
+    source_prefix: str | None = None,
+    source_filter: str | None = None,
 ) -> dict[str, object]:
     """Per-asset realized PnL from paper_execution_audit.jsonl.
 
@@ -681,12 +683,31 @@ async def get_realized_by_asset(
     position_closed + position_partial_closed Events. KEIN Exchange-Call,
     KEIN Live-Trading, KEIN Mark-to-Market, read-only.
 
+    RC-3 (2026-06-04): ``source_prefix`` (z.B. ``telegram_premium``) liefert
+    eine source-attribuierte Sicht — nur Closes dieser Signalquelle, ohne
+    autonome-Loop-/Canary-/Legacy-Closes. Ohne Parameter = volles Paper-Buch.
+
     Schema: siehe app.execution.portfolio_read.compute_realized_by_asset.
     """
     from app.execution.portfolio_read import compute_realized_by_asset
 
     _set_context_headers(response, request)
-    return compute_realized_by_asset(Path(audit_path))
+    return compute_realized_by_asset(
+        Path(audit_path),
+        source_prefix=source_prefix,
+        source_filter=source_filter,
+    )
+
+
+def _realized_source_prefix(source_filter: str | None) -> str | None:
+    if source_filter is None:
+        return None
+    norm = source_filter.strip().lower()
+    if not norm or norm in {"all", "*"}:
+        return None
+    if norm in {"premium", "premium_telegram", "telegram-premium"}:
+        return "telegram_premium"
+    return norm
 
 
 def _realized_summary_block(by_asset_summary: dict[str, object]) -> dict[str, object]:

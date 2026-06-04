@@ -47,26 +47,46 @@ type OverallTone = "pos" | "neg" | "warn" | "info" | "muted" | "ai";
 
 const TRAIL_POLL_MS = 60_000;
 
+// 2026-06-04 RC-2/RC-5: die State-Machine zerlegt das frühere Sammel-"CLOSED"
+// (das IMMER grün war — auch bei Verlust/SL/unbekanntem PnL) in echte States.
+// Grün nur noch bei tatsächlichem Erfolg (TP/offen/teilgeschlossen). Verlust
+// (SL), globaler Kill-Switch und "PnL unbekannt" sind NICHT mehr grün.
 const OVERALL_TONE: Record<string, OverallTone> = {
   OPEN: "info",
-  CLOSED: "pos",
+  PARTIALLY_CLOSED: "pos",
+  CLOSED_TP: "pos",
+  CLOSED_SL: "neg",
+  CLOSED_MANUAL: "info",
+  CLOSED: "pos", // Legacy-Alias (alte Audit-Records)
+  ENTRY_DISABLED: "neg",
   BRIDGE_REJECTED: "neg",
   PAPER_REJECTED: "warn",
+  SCALE_REJECTED: "warn",
+  RISK_REJECTED: "neg",
   SOURCE_SKIPPED: "muted",
   NOT_APPROVED: "warn",
   PENDING_ENTRY: "muted",
+  REQUIRES_REVIEW: "warn",
   EXPIRED: "muted",
   UNKNOWN: "muted",
 };
 
 const OVERALL_LABEL: Record<string, string> = {
   OPEN: "Position offen",
-  CLOSED: "Trade fertig",
+  PARTIALLY_CLOSED: "Teilziel erreicht",
+  CLOSED_TP: "Trade abgeschlossen (TP)",
+  CLOSED_SL: "Stop Loss",
+  CLOSED_MANUAL: "Manuell geschlossen",
+  CLOSED: "Trade fertig", // Legacy-Alias
+  ENTRY_DISABLED: "Execution gestoppt (entry_mode)",
   BRIDGE_REJECTED: "Bridge abgelehnt",
   PAPER_REJECTED: "Paper-Engine abgelehnt",
+  SCALE_REJECTED: "Skalierung abgelehnt",
+  RISK_REJECTED: "Risk-Gate abgelehnt",
   SOURCE_SKIPPED: "Quelle übersprungen",
   NOT_APPROVED: "Nicht genehmigt",
   PENDING_ENTRY: "Wartet auf Entry",
+  REQUIRES_REVIEW: "Prüfung nötig",
   EXPIRED: "TTL abgelaufen",
   UNKNOWN: "Unklar",
 };
@@ -180,7 +200,7 @@ function TrailRow({
 
   // Closed-Reason als Sub-Label wenn Trade fertig ist
   const closedSub =
-    overall === "CLOSED" && entry.paper_close_reason
+    overall.startsWith("CLOSED") && entry.paper_close_reason
       ? ` · ${entry.paper_close_reason}`
       : "";
 

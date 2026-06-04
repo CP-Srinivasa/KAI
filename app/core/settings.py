@@ -470,6 +470,22 @@ class ExecutionSettings(BaseSettings):
         return self
 
 
+class PremiumSettings(BaseSettings):
+    """Premium Telegram execution policy.
+
+    These flags describe the premium pipeline's intended paper/live posture.
+    They do not bypass ``execution.entry_mode``; a disabled entry mode remains a
+    global safety stop and the bridge reports it as ENTRY_DISABLED.
+    """
+
+    model_config = SettingsConfigDict(env_prefix="PREMIUM_", env_file=".env", extra="ignore")
+
+    paper_execution_enabled: bool = Field(default=True)
+    live_execution_enabled: bool = Field(default=False)
+    require_manual_approval_for_live: bool = Field(default=True)
+    require_manual_approval_for_paper: bool = Field(default=False)
+
+
 class OperatorSettings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="OPERATOR_", env_file=".env", extra="ignore")
 
@@ -990,6 +1006,7 @@ class AppSettings(BaseSettings):
     sources: SourceSettings = Field(default_factory=SourceSettings)
     risk: RiskSettings = Field(default_factory=RiskSettings)
     execution: ExecutionSettings = Field(default_factory=ExecutionSettings)
+    premium: PremiumSettings = Field(default_factory=PremiumSettings)
     operator: OperatorSettings = Field(default_factory=OperatorSettings)
     tradingview: TradingViewSettings = Field(default_factory=TradingViewSettings)
     binance: BinanceMarketDataSettings = Field(default_factory=BinanceMarketDataSettings)

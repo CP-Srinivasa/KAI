@@ -44,6 +44,15 @@ from app.messaging.signal_parser import (
     parse_structured_message,
     split_validation_errors,
 )
+from app.premium.state_machine import (
+    PremiumSignalState,
+    approval_state,
+    bridge_stage_to_state,
+    normalized_source,
+    origin_signal_id,
+    state_label,
+    state_tone,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -407,6 +416,8 @@ class SignalSummary(BaseModel):
     leverage: int | None = None
     signal_status: str | None = None
     signal_timestamp: str | None = None
+    origin_signal_id: str | None = None
+    source_uid: str | None = None
 
 
 class EnvelopeRecord(BaseModel):
@@ -421,6 +432,16 @@ class EnvelopeRecord(BaseModel):
     errors: list[str] = Field(default_factory=list)
     signal: SignalSummary | None = None
     raw_text_preview: str | None = None
+    origin_signal_id: str | None = None
+    approval_state: str | None = None
+    raw_source: str | None = None
+    normalized_source: str | None = None
+    execution_source: str | None = None
+    premium_state: str | None = None
+    premium_state_label: str | None = None
+    premium_state_tone: str | None = None
+    bridge_stage: str | None = None
+    bridge_reason: str | None = None
 
 
 class EnvelopeRecentResponse(BaseModel):
@@ -428,7 +449,58 @@ class EnvelopeRecentResponse(BaseModel):
     records: list[EnvelopeRecord]
 
 
-def _project_record(raw: dict[str, object]) -> EnvelopeRecord:
+def _latest_bridge_by_envelope(path: Path) -> dict[str, dict[str, object]]:
+    if not path.exists():
+        return {}
+    try:
+        with path.open("r", encoding="utf-8") as fh:
+            lines = fh.readlines()
+    except OSError as exc:
+        logger.warning("[signals.recent] Bridge audit read failed: %s", exc)
+        return {}
+    by_key: dict[str, dict[str, object]] = {}
+    for line in lines:
+        stripped = line.strip()
+        if not stripped:
+            continue
+        try:
+            rec = json.loads(stripped)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(rec, dict):
+            continue
+        for key_name in ("envelope_id", "correlation_id"):
+            key = rec.get(key_name)
+            if isinstance(key, str) and key:
+                by_key[key] = rec
+    return by_key
+
+
+def _derive_premium_state(
+    raw: dict[str, object],
+    bridge: dict[str, object] | None,
+) -> PremiumSignalState:
+    if raw.get("status") in {"rejected", "blocked"}:
+        return PremiumSignalState.INVALID
+    if raw.get("status") == "duplicate":
+        return PremiumSignalState.REQUIRES_REVIEW
+    if bridge is not None:
+        stage = _as_str(bridge.get("stage"))
+        reason = _as_str(bridge.get("reason")) or _as_str(bridge.get("audit_reason"))
+        return bridge_stage_to_state(stage, reason)
+    if raw.get("message_type") == "signal" and raw.get("stage") == "accepted":
+        source = _as_str(raw.get("source"))
+        if source and source.endswith("_approved"):
+            return PremiumSignalState.APPROVED
+        return PremiumSignalState.ENVELOPE_ACCEPTED
+    return PremiumSignalState.PARSED_OK
+
+
+def _project_record(
+    raw: dict[str, object],
+    *,
+    bridge_by_envelope: dict[str, dict[str, object]] | None = None,
+) -> EnvelopeRecord:
     errors = raw.get("errors")
     errors_list = [str(e) for e in errors] if isinstance(errors, list) else []
     message_type = _as_str(raw.get("message_type"))
@@ -442,18 +514,42 @@ def _project_record(raw: dict[str, object]) -> EnvelopeRecord:
         payload = raw.get("payload")
         if isinstance(payload, dict):
             raw_text_preview = _as_str(payload.get("text_preview"))
+    bridge: dict[str, object] | None = None
+    bridge_by_envelope = bridge_by_envelope or {}
+    env_id = _as_str(raw.get("envelope_id"))
+    if env_id:
+        bridge = bridge_by_envelope.get(env_id)
+    origin_id_raw = _as_str(raw.get("origin_envelope_id"))
+    if bridge is None and origin_id_raw:
+        bridge = bridge_by_envelope.get(origin_id_raw)
+    p_state = _derive_premium_state(raw, bridge)
+    raw_source = _as_str(raw.get("source"))
     return EnvelopeRecord(
         timestamp_utc=_as_str(raw.get("timestamp_utc")),
         event=_as_str(raw.get("event")),
-        source=_as_str(raw.get("source")),
+        source=raw_source,
         stage=_as_str(raw.get("stage")),
         status=_as_str(raw.get("status")),
         message_type=message_type,
-        envelope_id=_as_str(raw.get("envelope_id")),
+        envelope_id=env_id,
         idempotency_key=_as_str(raw.get("idempotency_key")),
         errors=errors_list,
         signal=signal,
         raw_text_preview=raw_text_preview,
+        origin_signal_id=origin_signal_id(raw),
+        approval_state=approval_state(raw),
+        raw_source=raw_source,
+        normalized_source=normalized_source(raw_source),
+        execution_source=raw_source if raw_source and raw_source.endswith("_approved") else None,
+        premium_state=p_state.value,
+        premium_state_label=state_label(p_state),
+        premium_state_tone=state_tone(p_state),
+        bridge_stage=_as_str(bridge.get("stage")) if bridge is not None else None,
+        bridge_reason=(
+            _as_str(bridge.get("reason")) or _as_str(bridge.get("audit_reason"))
+            if bridge is not None
+            else None
+        ),
     )
 
 
@@ -472,6 +568,10 @@ def _project_signal(payload: dict[str, object]) -> SignalSummary:
         leverage=_as_int(payload.get("leverage")),
         signal_status=_as_str(payload.get("status")),
         signal_timestamp=_as_str(payload.get("timestamp_utc")),
+        origin_signal_id=_as_str(payload.get("origin_signal_id"))
+        or _as_str(payload.get("source_uid"))
+        or _as_str(payload.get("signal_id")),
+        source_uid=_as_str(payload.get("source_uid")),
     )
 
 
@@ -534,6 +634,7 @@ async def recent_envelopes(
         return EnvelopeRecentResponse(count=0, records=[])
 
     records: list[EnvelopeRecord] = []
+    bridge_by_envelope = _latest_bridge_by_envelope(Path("artifacts/bridge_pending_orders.jsonl"))
     # Walk from newest (end of file) backward, stop at limit
     for line in reversed(lines):
         stripped = line.strip()
@@ -545,7 +646,7 @@ async def recent_envelopes(
             continue
         if not isinstance(raw, dict):
             continue
-        records.append(_project_record(raw))
+        records.append(_project_record(raw, bridge_by_envelope=bridge_by_envelope))
         if len(records) >= limit:
             break
     return EnvelopeRecentResponse(count=len(records), records=records)

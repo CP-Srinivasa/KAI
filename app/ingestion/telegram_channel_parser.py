@@ -42,6 +42,9 @@ _DASH_CHARS = r"\u2012\u2013\u2014\u2015\-"
 # Known exchange tokens (lowercase canonical). Kept conservative — only
 # exchanges the channel actually names in its header line.
 _KNOWN_EXCHANGES = {
+    "binance futures": "binance_futures",
+    "bingx futures": "bingx",
+    "bybitusdt": "bybit",
     "binance": "binance",
     "okx": "okx",
     "deribit": "deribit",
@@ -116,6 +119,8 @@ def _normalize_symbol(raw: str) -> tuple[str, str]:
     for quote in ("USDT", "USDC", "USD", "BTC", "ETH"):
         if cleaned.endswith(quote) and len(cleaned) > len(quote):
             return cleaned, f"{cleaned[: -len(quote)]}/{quote}"
+    if re.fullmatch(r"[A-Z0-9]{2,}", cleaned):
+        return f"{cleaned}USDT", f"{cleaned}/USDT"
     return cleaned, cleaned
 
 
@@ -158,6 +163,18 @@ _SYMBOL_DIR_PLAIN_2 = re.compile(  # "LONG BTCUSDT" / "SHORT BTC/USDT"
     r"(?im)^\s*(?P<direction>Long|Short|Buy|Sell)\s+"
     r"(?P<symbol>[A-Z0-9]{2,}(?:\s*/\s*[A-Z0-9]+)?)\b"
 )
+# 2026-06-04 RC-7/§7: hash-prefixed symbol + BARE direction ("🟢 #US/USDT LONG",
+# "#APR/USDT SHORT"). Previously only the slash form ("Long/Buy #SYM") matched,
+# so a bare LONG/SHORT after a #-symbol fell through all four patterns and the
+# whole signal was dropped. The '#' anchor keeps false positives away.
+_SYMBOL_DIR_HASH_BARE_1 = re.compile(  # "#ABC/USDT LONG"
+    r"(?im)#\s*(?P<symbol>[A-Z0-9]{2,}(?:\s*/\s*[A-Z0-9]+)?)\s+"
+    r"(?P<direction>Long|Short|Buy|Sell)\b"
+)
+_SYMBOL_DIR_HASH_BARE_2 = re.compile(  # "LONG #ABC/USDT"
+    r"(?im)\b(?P<direction>Long|Short|Buy|Sell)\s+#\s*"
+    r"(?P<symbol>[A-Z0-9]{2,}(?:\s*/\s*[A-Z0-9]+)?)"
+)
 
 
 def _extract_symbol_and_direction(
@@ -167,6 +184,8 @@ def _extract_symbol_and_direction(
     for pat in (
         _SYMBOL_DIR_ORDER_1,
         _SYMBOL_DIR_ORDER_2,
+        _SYMBOL_DIR_HASH_BARE_1,
+        _SYMBOL_DIR_HASH_BARE_2,
         _SYMBOL_DIR_PLAIN_1,
         _SYMBOL_DIR_PLAIN_2,
     ):
@@ -351,8 +370,9 @@ def _extract_margin_pct(text: str) -> float | None:
 def _extract_exchange_scope(text: str) -> list[str]:
     """Scan leading lines for a known-exchange header (comma-separated).
 
-    Only the FIRST line containing multiple known exchange names counts —
-    avoids false positives when an exchange name appears inline later.
+    Only the FIRST leading line containing known exchange names counts. Single
+    exchange headers ("BybitUSDT", "Binance Futures") are valid premium-channel
+    scope, so one hit is enough.
     """
     for raw_line in text.splitlines():
         line = raw_line.strip().lower()
@@ -360,9 +380,11 @@ def _extract_exchange_scope(text: str) -> list[str]:
             continue
         hits: list[str] = []
         for needle, canonical in _KNOWN_EXCHANGES.items():
+            if needle == "binance" and "binance futures" in line:
+                continue
             if needle in line and canonical not in hits:
                 hits.append(canonical)
-        if len(hits) >= 2:
+        if hits:
             return hits
     return []
 
@@ -385,15 +407,27 @@ def _extract_exchange_scope(text: str) -> list[str]:
 #     fundamental anders ist (kein entry/SL/targets/leverage — nur eine Outcome-
 #     Bestätigung). Caller dispatcht: erst NewSignal-Parser, dann Completion-Parser.
 
+# Completion-Phrase-Toleranz (2026-06-04 Premium-Pipeline-Fix RC-4):
+# - Singular ("profit target") UND Plural ("profit targets") — Channel postet
+#   beide Varianten (US/APR verbatim: "completed all the profit target").
+# - "almost completed" muss matchen (OPG verbatim) → optionales almost.
+# - Großschreibung ("Targets") deckt das (?i)-Flag bereits ab.
+# - "the" ist optional ("completed all profit targets").
+_COMPLETION_PHRASE = r"(?:almost\s+)?completed\s+all\s+(?:the\s+)?profit\s+targets?"
+
 _TARGET_COMPLETION = re.compile(
-    r"(?im)🎯\s*#\s*(?P<symbol>[A-Z0-9]+\s*/\s*[A-Z0-9]+|[A-Z0-9]{2,}\s*/\s*[A-Z0-9]+)"
+    r"(?im)(?:🎯\s*)?#\s*(?P<symbol>[A-Z0-9]{1,}(?:\s*/\s*[A-Z0-9]+)?)"
     r"\s+has\s+touched\s+(?P<price>[\d.,]+)?\s*"
-    r".*?completed\s+all\s+the\s+profit\s+targets"
+    r".*?" + _COMPLETION_PHRASE
+)
+_TARGET_COMPLETION_TRAILING_PRICE = re.compile(
+    r"(?im)(?:🎯\s*)?#\s*(?P<symbol>[A-Z0-9]{1,}(?:\s*/\s*[A-Z0-9]+)?)"
+    r"\s+(?:has\s+)?" + _COMPLETION_PHRASE + r"(?:\s+at)?\s+(?P<price>[\d.,]+)\b"
 )
 # Variante ohne touch-price ("has completed all the profit targets")
 _TARGET_COMPLETION_NO_PRICE = re.compile(
-    r"(?im)🎯\s*#\s*(?P<symbol>[A-Z0-9]+\s*/\s*[A-Z0-9]+|[A-Z0-9]{2,}\s*/\s*[A-Z0-9]+)"
-    r"\s+(?:has\s+)?completed\s+all\s+(?:the\s+)?profit\s+targets"
+    r"(?im)(?:🎯\s*)?#\s*(?P<symbol>[A-Z0-9]{1,}(?:\s*/\s*[A-Z0-9]+)?)"
+    r"\s+(?:has\s+)?" + _COMPLETION_PHRASE
 )
 
 
@@ -424,6 +458,15 @@ def parse_target_completion(text: str) -> TargetCompletionEvent | None:
             symbol=symbol_internal,
             display_symbol=symbol_display,
             touch_price=price,
+            raw_text=text,
+        )
+    m = _TARGET_COMPLETION_TRAILING_PRICE.search(text)
+    if m is not None:
+        symbol_internal, symbol_display = _normalize_symbol(m["symbol"])
+        return TargetCompletionEvent(
+            symbol=symbol_internal,
+            display_symbol=symbol_display,
+            touch_price=_to_float(m["price"]),
             raw_text=text,
         )
     m = _TARGET_COMPLETION_NO_PRICE.search(text)

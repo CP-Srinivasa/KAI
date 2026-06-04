@@ -51,6 +51,7 @@ from typing import Any
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
+from app.core.settings import get_settings
 from app.execution.envelope_to_paper_bridge import run_tick
 from app.execution.target_completion_reconciler import reconcile_target_completion
 from app.ingestion.telegram_channel_approval import (
@@ -421,6 +422,62 @@ async def pending_envelopes(limit: int = 50) -> dict[str, Any]:
         "count": len(rows),
         "terminal_stages": sorted(_TERMINAL_STAGES),
         "envelopes": rows,
+    }
+
+
+@router.get("/runtime")
+async def runtime_status() -> dict[str, Any]:
+    """Runtime truth for the premium pipeline safety switches.
+
+    This endpoint is intentionally read-only and exposes the exact gates that
+    explain why premium paper orders can be parsed/approved but still not open a
+    position. Live execution remains disabled by default and separately gated.
+    """
+    settings = get_settings()
+    entry_mode = settings.execution.entry_mode
+    entry_blocks = not entry_mode.allows_risk_increasing_entry
+    allowlist = [
+        x.strip()
+        for x in settings.execution.operator_signal_source_allowlist.split(",")
+        if x.strip()
+    ]
+    allowlist_norm = {x.lower() for x in allowlist}
+    premium_sources_allowed = any(
+        x.startswith("telegram_premium_channel") or x.startswith("telegram") for x in allowlist_norm
+    )
+    blocking_reasons: list[str] = []
+    if not settings.premium.paper_execution_enabled:
+        blocking_reasons.append("premium_paper_execution_disabled")
+    if not settings.execution.operator_signal_bridge_enabled:
+        blocking_reasons.append("operator_signal_bridge_disabled")
+    if entry_blocks:
+        blocking_reasons.append(f"entry_mode={entry_mode.value}")
+    if not premium_sources_allowed:
+        blocking_reasons.append("telegram_premium_channel_not_allowlisted")
+    can_open_paper_positions = not blocking_reasons
+    warning = None
+    if blocking_reasons:
+        warning = "Premium Paper Execution blockiert: " + ", ".join(blocking_reasons)
+    return {
+        "entry_mode": entry_mode.value,
+        "entry_mode_allows_risk_increasing_entry": entry_mode.allows_risk_increasing_entry,
+        "entry_mode_blocks_premium_paper": entry_blocks,
+        "can_open_paper_positions": can_open_paper_positions,
+        "blocking_reasons": blocking_reasons,
+        "premium_paper_execution_enabled": settings.premium.paper_execution_enabled,
+        "premium_live_execution_enabled": settings.premium.live_execution_enabled,
+        "premium_require_manual_approval_for_paper": (
+            settings.premium.require_manual_approval_for_paper
+        ),
+        "premium_require_manual_approval_for_live": (
+            settings.premium.require_manual_approval_for_live
+        ),
+        "operator_signal_bridge_enabled": settings.execution.operator_signal_bridge_enabled,
+        "operator_signal_source_allowlist": allowlist,
+        "premium_auto_fill_enabled": (settings.execution.operator_signal_premium_auto_fill_enabled),
+        "live_execution_enabled": settings.execution.live_enabled,
+        "execution_mode": settings.execution.mode.value,
+        "warning": warning,
     }
 
 

@@ -846,7 +846,14 @@ async def run_worker(cfg: TelegramChannelIngestSettings | None = None) -> None:
         # 2026-05-12 Sprint B: Premium-Auto-Fill (paper-mode-only). Wenn aktiv,
         # triggert der Worker nach jedem accepted Envelope sofort den fill-Pfad
         # ohne Operator-Klick. ADR 0004.
-        auto_fill_enabled = full_settings.execution.operator_signal_premium_auto_fill_enabled
+        # Resolves auto_fill_enabled = True dynamically if paper mode is active
+        # and manual approval is disabled, matching settings.premium.
+        # require_manual_approval_for_paper.
+        is_paper_mode = full_settings.execution.mode.value == "paper"
+        require_manual_for_paper = full_settings.premium.require_manual_approval_for_paper
+        auto_fill_enabled = full_settings.execution.operator_signal_premium_auto_fill_enabled or (
+            is_paper_mode and not require_manual_for_paper
+        )
         bot_token = full_settings.operator.telegram_bot_token
         admin_chat_ids = full_settings.operator.admin_chat_id_list
         approval_chat_id = admin_chat_ids[0] if admin_chat_ids else 0

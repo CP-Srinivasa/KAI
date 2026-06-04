@@ -1,0 +1,74 @@
+{
+  "signals": [
+    {"signal": "APR", "parsed": true, "approved": true, "bridge": "rejected_entry_mode", "paper": "none", "position": "none", "completion": "parsed", "pnl": null, "matrix": "blocked", "quality": "technical_block", "final_state": "entry_disabled", "error": ""},
+    {"signal": "US", "parsed": true, "approved": true, "bridge": "rejected_risk", "paper": "none", "position": "none", "completion": "parsed", "pnl": null, "matrix": "blocked", "quality": "risk_rejected", "final_state": "risk_rejected", "error": ""},
+    {"signal": "NIGHT", "parsed": true, "approved": false, "bridge": "not_submitted", "paper": "none", "position": "none", "completion": "parsed", "pnl": null, "matrix": "awaiting", "quality": "not_executed", "final_state": "awaiting_approval", "error": ""},
+    {"signal": "CYS", "parsed": true, "approved": true, "bridge": "filled", "paper": "order_created", "position": "open", "completion": "parsed", "pnl": null, "matrix": "paper_open", "quality": "active", "final_state": "position_open", "error": ""},
+    {"signal": "AIO", "parsed": true, "approved": true, "bridge": "pending", "paper": "none", "position": "none", "completion": "none", "pnl": null, "matrix": "waiting_entry", "quality": "not_executed", "final_state": "pending_entry", "error": ""},
+    {"signal": "TRUTH", "parsed": true, "approved": true, "bridge": "filled", "paper": "order_created", "position": "closed", "completion": "parsed", "pnl": 4.2, "matrix": "closed_tp", "quality": "success", "final_state": "closed_tp", "error": ""},
+    {"signal": "BEAT", "parsed": true, "approved": true, "bridge": "no_market_data", "paper": "none", "position": "none", "completion": "none", "pnl": null, "matrix": "blocked", "quality": "technical_block", "final_state": "market_data_failed", "error": "no_market_data"},
+    {"signal": "HANA", "parsed": true, "approved": true, "bridge": "skipped_source", "paper": "none", "position": "none", "completion": "none", "pnl": null, "matrix": "blocked", "quality": "technical_block", "final_state": "source_skipped", "error": "source_not_allowlisted"},
+    {"signal": "PHAROS", "parsed": true, "approved": true, "bridge": "rejected_scale_review", "paper": "none", "position": "none", "completion": "none", "pnl": null, "matrix": "review", "quality": "requires_review", "final_state": "requires_scale_review", "error": "touch_price_scale_implausible"},
+    {"signal": "BIRB", "parsed": true, "approved": true, "bridge": "filled", "paper": "order_created", "position": "partial", "completion": "parsed", "pnl": 1.1, "matrix": "partial", "quality": "success", "final_state": "partially_closed", "error": ""},
+    {"signal": "DASH", "parsed": true, "approved": true, "bridge": "filled", "paper": "order_created", "position": "closed", "completion": "none", "pnl": -2.3, "matrix": "closed_sl", "quality": "loss", "final_state": "closed_sl", "error": ""},
+    {"signal": "OPG", "parsed": true, "approved": true, "bridge": "filled", "paper": "order_created", "position": "closed", "completion": "parsed", "pnl": 3.4, "matrix": "reconciled", "quality": "success", "final_state": "reconciled_completion", "error": ""},
+    {"signal": "IRYS", "parsed": true, "approved": true, "bridge": "rejected_scale_review", "paper": "none", "position": "none", "completion": "parsed", "pnl": null, "matrix": "review", "quality": "requires_review", "final_state": "requires_scale_review", "error": "scale_review"},
+    {"signal": "BILL", "parsed": true, "approved": true, "bridge": "rejected_fill", "paper": "failed", "position": "none", "completion": "none", "pnl": null, "matrix": "blocked", "quality": "technical_block", "final_state": "paper_execution_failed", "error": "paper_engine_returned_none"},
+    {"signal": "GUA", "parsed": true, "approved": true, "bridge": "pending", "paper": "none", "position": "none", "completion": "none", "pnl": null, "matrix": "waiting_entry", "quality": "not_executed", "final_state": "pending_entry", "error": ""}
+  ],
+  "new_signals": [
+    {
+      "id": "APR_canonical_slash_long",
+      "text": "Long/Buy #APR/USDT\nEntry Point - 0.2319\nTargets: 0.23305 - 0.2342 - 0.23535 - 0.23655\nLeverage - 10x\nStop Loss - 0.2226",
+      "display_symbol": "APR/USDT",
+      "direction": "long",
+      "entry_value": 0.2319,
+      "stop_loss": 0.2226,
+      "min_targets": 4
+    },
+    {
+      "id": "US_hash_bare_long",
+      "text": "🟢 #US/USDT LONG\nEntry Point - 0.00833\nTargets: 0.0084 - 0.0085\nStop Loss - 0.0079\nLeverage - 10x",
+      "display_symbol": "US/USDT",
+      "direction": "long",
+      "entry_value": 0.00833,
+      "stop_loss": 0.0079,
+      "min_targets": 2
+    },
+    {
+      "id": "CYS_bybit_header_no_space_completion_shape",
+      "text": "BybitUSDT\n🚀 #CYS/USDT Long/BUY - 0.4869\n🎯 0.4900\n🛑 Stop Loss - 0.4700\nLeverage - 10x",
+      "display_symbol": "CYS/USDT",
+      "direction": "long",
+      "entry_value": 0.4869,
+      "stop_loss": 0.47,
+      "min_targets": 1
+    },
+    {
+      "id": "APR_bare_short_before_hash",
+      "text": "SHORT #APR/USDT\nEntry Point - 0.2319\nTargets: 0.2300 - 0.2280\nStop Loss - 0.2400\nLeverage - 10x",
+      "display_symbol": "APR/USDT",
+      "direction": "short",
+      "entry_value": 0.2319,
+      "stop_loss": 0.24,
+      "min_targets": 2
+    }
+  ],
+  "completion_messages": [
+    {"id": "CYS_no_space", "text": "🎯#CYS/USDT has touched 4869 and has completed all the profit targets", "display_symbol": "CYS/USDT", "touch_price": 4869.0},
+    {"id": "NIGHT_plural", "text": "🎯#NIGHT/USDT has touched 4168 and has completed all the profit targets", "display_symbol": "NIGHT/USDT", "touch_price": 4168.0},
+    {"id": "US_singular", "text": "🎯 #US/USDT has touched 16790 and has completed all the profit target", "display_symbol": "US/USDT", "touch_price": 16790.0},
+    {"id": "APR_singular", "text": "🎯 #APR/USDT has touched 26892 and has completed all the profit target", "display_symbol": "APR/USDT", "touch_price": 26892.0},
+    {"id": "BIRB_big_target", "text": "🎯 #BIRB/USDT has touched 13777 and has completed all the profit Targets", "display_symbol": "BIRB/USDT", "touch_price": 13777.0},
+    {"id": "OPG_almost", "text": "🎯 #OPG/USDT has touched 3447 and has almost completed all the profit targets", "display_symbol": "OPG/USDT", "touch_price": 3447.0},
+    {"id": "BTC_no_price", "text": "🎯 #BTC/USDT completed all profit targets", "display_symbol": "BTC/USDT", "touch_price": null}
+  ],
+  "bridge_events": [
+    {"id": "APR_entry_disabled", "stage": "rejected_entry_mode", "reason": "entry_mode_disabled", "expected_state": "entry_disabled", "expected_tone": "neg"},
+    {"id": "US_risk_rejected", "stage": "rejected_risk", "reason": "max_open_positions", "expected_state": "risk_rejected", "expected_tone": "neg"},
+    {"id": "HANA_scale_review", "stage": "rejected_scale_review", "reason": "entry_far_from_spot", "expected_state": "requires_scale_review", "expected_tone": "warn"},
+    {"id": "PHAROS_source_skipped", "stage": "skipped_source", "reason": "source_not_allowlisted", "expected_state": "source_skipped", "expected_tone": "neg"},
+    {"id": "BILL_pending_entry", "stage": "pending", "reason": "entry_not_reached", "expected_state": "pending_entry", "expected_tone": "warn"},
+    {"id": "CYS_open", "stage": "filled", "reason": "paper_order_filled", "expected_state": "position_open", "expected_tone": "pos"}
+  ]
+}
