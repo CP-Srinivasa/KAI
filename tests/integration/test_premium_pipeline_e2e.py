@@ -96,6 +96,10 @@ def isolated_premium_artifacts(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
     )
     monkeypatch.setenv("EXECUTION_OPERATOR_SIGNAL_TTL_HOURS", "24")
     monkeypatch.setenv("EXECUTION_OPERATOR_SIGNAL_ENTRY_TOLERANCE_PCT", "0.5")
+    # premium.paper_execution_enabled now defaults to False (explicit opt-in);
+    # the positive-path premium tests must enable it. The disabled-blocks test
+    # overrides this back to "false" in its own body.
+    monkeypatch.setenv("PREMIUM_PAPER_EXECUTION_ENABLED", "true")
     yield artifacts_dir
     reset_paper_engine_cache()
 

@@ -689,7 +689,9 @@ def test_detect_scale_factor_recognises_bybit_tick_formats() -> None:
     assert _detect_scale_factor(10310.0, 0.10524) == 1e5  # 1000LUNC-style
     assert _detect_scale_factor(39.5, 39.05) == 1.0  # GIGGLE direct USD
     assert _detect_scale_factor(40.9, 42.063) == 1.0  # HYPE direct USD
-    assert _detect_scale_factor(100.0, 1.0) == 1e2
+    # 10×/100× are NOT recognised scales (likely parse errors) → fall through to 1.0
+    assert _detect_scale_factor(100.0, 10.0) == 1.0
+    assert _detect_scale_factor(100.0, 1.0) == 1.0
     # Pathological: ratio outside any recognised scale → fall through
     assert _detect_scale_factor(250.0, 1.0) == 1.0
 
