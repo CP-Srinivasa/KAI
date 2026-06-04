@@ -353,6 +353,9 @@ class DecisionRecord(BaseModel):
     data_sources_used: tuple[str, ...] = Field(min_length=1)
     model_version: str = Field(min_length=1)
     prompt_version: str = Field(min_length=1)
+    model_id: str | None = Field(default=None)
+    prompt_id: str | None = Field(default=None)
+    registry_hash: str | None = Field(default=None)
     approval_state: ApprovalState = ApprovalState.AUDIT_ONLY
     execution_state: DecisionExecutionState = DecisionExecutionState.NOT_EXECUTABLE
 
@@ -388,6 +391,12 @@ class DecisionRecord(BaseModel):
             and self.execution_state == DecisionExecutionState.EXECUTED
         ):
             raise ValueError("Rejected decisions must never be marked as executed.")
+
+        # Enforce registry gates and audit references for productive decisions
+        if self.mode in {ExecutionMode.PAPER, ExecutionMode.LIVE}:
+            from app.security.governance import validate_productive_decision
+            validate_productive_decision(self)
+
         validate_decision_schema_payload(self.to_json_dict())
         return self
 

@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
+from app.security.governance import get_registry_hash
 from app.core.enums import ExecutionMode
 from app.execution.models import (
     ApprovalState,
@@ -52,8 +53,11 @@ def _sample_decision(**overrides: object) -> DecisionRecord:
         "position_size_rationale": "Risk capped by 0.25% equity rule.",
         "max_loss_estimate": 25.0,
         "data_sources_used": ("mock_market_data", "research_signals"),
-        "model_version": "kai-paper-v1",
-        "prompt_version": "decision-pack-v1",
+        "model_id": "gpt-4o",
+        "model_version": "gpt-4o-2024-05-13",
+        "prompt_id": "system_prompt_v1",
+        "prompt_version": "v1",
+        "registry_hash": get_registry_hash(),
         "approval_state": ApprovalState.AUDIT_ONLY,
         "execution_state": DecisionExecutionState.PAPER_ONLY,
     }
@@ -68,7 +72,8 @@ def test_decision_record_to_json_matches_schema_required_fields():
 
     payload = record.to_json_dict()
 
-    assert set(payload) == set(schema["required"])
+    assert set(schema["required"]).issubset(set(payload))
+    assert set(payload).issubset(set(schema["properties"]))
     assert payload["mode"] == "paper"
     assert payload["approval_state"] == "audit_only"
     assert payload["execution_state"] == "paper_only"

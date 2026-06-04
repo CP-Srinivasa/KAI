@@ -1,0 +1,29 @@
+[
+  {
+    "model_id": "gpt-4o",
+    "version": "gpt-4o-2024-05-13",
+    "eval_suite_id": "eval_suite_v1",
+    "approval_status": "production_approved",
+    "risk_rating": "low",
+    "owner": "architect",
+    "last_validation_at": "2026-06-01T00:00:00Z"
+  },
+  {
+    "model_id": "claude-3-7-sonnet-20250219",
+    "version": "claude-3-7-sonnet",
+    "eval_suite_id": "eval_suite_v1",
+    "approval_status": "production_approved",
+    "risk_rating": "low",
+    "owner": "architect",
+    "last_validation_at": "2026-06-01T00:00:00Z"
+  },
+  {
+    "model_id": "mock-model",
+    "version": "v1",
+    "eval_suite_id": "eval_suite_mock",
+    "approval_status": "shadow_approved",
+    "risk_rating": "low",
+    "owner": "sentr",
+    "last_validation_at": "2026-06-01T00:00:00Z"
+  }
+]

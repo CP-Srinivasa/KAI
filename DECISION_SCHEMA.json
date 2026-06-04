@@ -82,6 +82,9 @@
         "executed",
         "failed"
       ]
-    }
+    },
+    "model_id": { "type": ["string", "null"] },
+    "prompt_id": { "type": ["string", "null"] },
+    "registry_hash": { "type": ["string", "null"] }
   }
 }

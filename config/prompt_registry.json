@@ -1,0 +1,39 @@
+[
+  {
+    "prompt_id": "system_prompt_v1",
+    "prompt_version": "v1",
+    "owner_agent": "sentr",
+    "allowed_tools": [
+      "get_watchlists",
+      "get_research_brief",
+      "get_signal_candidates",
+      "get_market_data_quote"
+    ],
+    "forbidden_tools": [
+      "read_live_keys",
+      "place_live_order",
+      "unlock_own_tools",
+      "change_registry_status",
+      "deactivate_audit"
+    ],
+    "output_contract": "LLMAnalysisOutput",
+    "prompt_injection_eval_status": "passed",
+    "approval_status": "freigegeben"
+  },
+  {
+    "prompt_id": "telegram_signal_handoff_prompt",
+    "prompt_version": "telegram_signal_handoff_v1",
+    "owner_agent": "architect",
+    "allowed_tools": [
+      "get_signals_for_execution",
+      "get_daily_operator_summary"
+    ],
+    "forbidden_tools": [
+      "read_live_keys",
+      "place_live_order"
+    ],
+    "output_contract": "DecisionRecord",
+    "prompt_injection_eval_status": "passed",
+    "approval_status": "freigegeben"
+  }
+]
