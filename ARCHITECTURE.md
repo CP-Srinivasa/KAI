@@ -206,6 +206,7 @@ Pflichtweg: `envelope.correlation_id` → `NormalizedTradeSignal.correlation_id`
 - **ADRs:** `docs/adr/0001..0004` (TradingView, Signal-Consensus-Experimental, DuckDB-Pivot, Premium-Signal-Auto-Fill)
 - **Architektur-Reports:** `docs/architecture/signal_to_execution_gap_analysis_20260510.md`, `signal_to_execution_implementation_report_20260510.md`
 - **Auto-Annotate-Reporting:** `docs/architecture/auto_annotate_reporting_split_spec.md` (V5-Folgepaket: Reporting-Split ohne Threshold-Tuning)
+- **Execution Gate Chain · Truth Layer v2 · RACI:** `docs/architecture/execution_gate_chain_and_truth_layer_v2.md` (Delta-Spec der Schicht H als non-bypassable Gate-Kette mit Owner/Fail-Modus/Audit/Tests je Gate + Metric-Registry-Vertrag + RACI-Matrix; subordiniert `docs/KAI_IDENTITY.md`)
 - **Decision-Log:** `DECISION_LOG.md` (kompakter Verlauf, 29KB)
 - **Operator-Memos:** `artifacts/operator_memos/` (laufende Entscheidungen + Forensik)
 - **Daily-Strategy:** `artifacts/daily_strategy/YYYY-MM-DD.md` (Bootstrap morgens 08:00 CEST)

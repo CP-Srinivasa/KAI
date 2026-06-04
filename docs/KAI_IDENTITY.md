@@ -101,5 +101,6 @@ Jede Architekturschicht wird mit ihrem Reifegrad markiert:
 - **Verträge/Invarianten:** `docs/contracts.md`, `docs/adr/`
 - **Entscheidungshistorie:** `DECISION_LOG.md`
 - **Externer Architektur-Crosscheck (2026-06-04):** `docs/audit/architecture_crosscheck_20260604.md` (Bewertung des „Institutional-Intelligence"-Papiers: was real fehlt vs. bereits gebaut vs. Overengineering)
+- **Delta-Spec Schicht H + D (2026-06-05):** `docs/architecture/execution_gate_chain_and_truth_layer_v2.md` — operationalisiert die non-bypassable Gate-Kette (Owner/Input/Output/Fail-Modus/Audit/Tests je Gate), den Truth-Layer v2 (`metric_id`+`calculation_version`) und die RACI-/Approval-Matrix. **Subordiniert** dieser SSOT; ersetzt das A–H-Modell nicht.
 - **Persona / Look & Feel (nicht-technisch):** `KAI-Persona/`, `docs/kai_persona/`
 - **Historische Identitäts-/Prompt-Artefakte:** `docs/archive/` (klar als Archiv markiert)
