@@ -1,6 +1,6 @@
 # KAI_IDENTITY.md — Single Source of Truth für die Projektidentität
 
-**Stand:** 2026-06-02 · **Status:** Kanonisch · **Gilt für:** alle Menschen, Agenten und KI-Systeme, die an KAI arbeiten.
+**Stand:** 2026-06-04 · **Status:** Kanonisch · **Gilt für:** alle Menschen, Agenten und KI-Systeme, die an KAI arbeiten.
 
 Dieses Dokument ist die **verbindliche Identitäts- und Zielbild-Definition** von KAI. Bei Widerspruch zwischen diesem Dokument und älteren/archivierten Beschreibungen gilt dieses Dokument. `README.md` und `ARCHITECTURE.md` müssen mit dieser Definition konsistent bleiben.
 
@@ -57,7 +57,8 @@ Jede Architekturschicht wird mit ihrem Reifegrad markiert:
 - **VORBEREITET/lernend:** adaptive Lernschicht (`app/learning/`), Bayes-Confidence (SHADOW_ONLY).
 
 ### D. Entscheidungs- und Audit-Schicht
-- **LIVE:** Entscheidungsjournal (`app/decisions/`), AuditStream (append-only JSONL, `correlation_id`-Kette), tamper-evidente Audit-Primitiven (`app/audit/`), Begründungsketten, Human-in-the-loop-Approval, Paper-Trading-Protokolle. **Recording ≠ Executing.** Keine Blackbox-Entscheidungen.
+- **LIVE:** Entscheidungsjournal (`app/decisions/`), AuditStream (append-only JSONL, `correlation_id`-Kette), tamper-evidente Audit-Primitiven (`app/audit/`), strukturiertes Reasoning ohne rohe Chain-of-Thought + PII/Secret-Redaction (`app/audit/structured_reasoning.py`, `sanitization.py`), Begründungsketten, Human-in-the-loop-Approval, Paper-Trading-Protokolle. **Recording ≠ Executing.** Keine Blackbox-Entscheidungen.
+- **VORBEREITET/Ausbau:** **Truth-Layer / formale Metric-Registry** — jede kritische Kennzahl (PnL, Exposure, Drawdown, VaR/CVaR, Sharpe/Sortino, Attribution) hat genau **eine** autoritative Berechnungsquelle mit `metric_id` + `calculation_version` + Owner + Toleranz; das Frontend zeigt nur an, berechnet nichts. Begonnen mit Dashboard-Truth-Layer (#147).
 
 ### E. Risiko-, Sicherheits- und Compliance-Schicht
 - **LIVE:** RiskEngine + Gate-Chain (`app/risk/`, non-bypassable), Kill-Switch (manueller Reset), Fail-closed-Prinzip, Security-Layer (`app/security/`: Idempotency, Rate-Limit, Brute-Force-Guard, Auth-Guards), **SENTR** (Security & Inspection, Agent) und **Watchdog** (Health & Drift, **Read-Only-Prüfer**), Secret-Management außerhalb Repo.
@@ -72,7 +73,10 @@ Jede Architekturschicht wird mit ihrem Reifegrad markiert:
 - **ZIELBILD:** dedizierte Smartphone-App, Sprachinteraktion, persönlicher KAI-Assistent als durchgängige Kommunikations- und Steuerungsoberfläche, breitere Multichannel-Präsenz.
 
 ### H. Kontrollierte Ausführungs-/Trading-Schicht
-- **LIVE:** Marktanalyse, Signalbewertung, Watchlist, Simulation, **kontrolliertes Paper-Trading** (`PaperExecutionEngine`, 16-State-Lifecycle, Slippage+Fees), Entscheidungsprotokollierung, Risikoauswertung, Operator-Signal-Bridge im **Approval-Mode**.
+- **Verbindliche Gate-Kette (non-bypassable):** Ein Signal darf **niemals** direkt zur Order werden. Pfad:
+  `Signal → DataQuality (Freshness/Plausibility/Cross-Exchange) → Regime → Korrelation/Cluster → Risk (VaR/CVaR/Exposure) → Liquidität/Slippage → Thesis-Invalidation → Approval (bei High-Impact) → Audit → Execution`.
+  Jedes Gate ist fail-closed; jede Ablehnung wird auditierbar mit `reason_code` geloggt.
+- **LIVE:** Marktanalyse, Signalbewertung, Watchlist, Simulation, **kontrolliertes Paper-Trading** (`PaperExecutionEngine`, 16-State-Lifecycle, Slippage+Fees), Entscheidungsprotokollierung, Risikoauswertung (`app/risk/`: VaR/CVaR mehrmethodisch, HRP/Risk-Parity-Optimizer, Korrelations-/Cluster-Gates, Manipulation-Detection), Operator-Signal-Bridge im **Approval-Mode**.
 - **VORBEREITET:** `LiveExecutionEngine` + `ExecutableOrderIntent` (einheitlicher Paper/Live-Vertrag), Live-Mode **disabled** — Gates ungeöffnet.
 - **ZIELBILD:** Execution-Flows nur mit Governance, Berechtigungen, Compliance, Logging und Human-in-the-loop. KAI ist **kein** autonomer Gewinnversprechen-Trading-Bot.
 
@@ -96,5 +100,6 @@ Jede Architekturschicht wird mit ihrem Reifegrad markiert:
 - **Execution-Directive für Agenten:** `CLAUDE.md`
 - **Verträge/Invarianten:** `docs/contracts.md`, `docs/adr/`
 - **Entscheidungshistorie:** `DECISION_LOG.md`
+- **Externer Architektur-Crosscheck (2026-06-04):** `docs/audit/architecture_crosscheck_20260604.md` (Bewertung des „Institutional-Intelligence"-Papiers: was real fehlt vs. bereits gebaut vs. Overengineering)
 - **Persona / Look & Feel (nicht-technisch):** `KAI-Persona/`, `docs/kai_persona/`
 - **Historische Identitäts-/Prompt-Artefakte:** `docs/archive/` (klar als Archiv markiert)
