@@ -403,10 +403,13 @@ def test_priority_gate_marks_negative_priority_lift_as_underperforming(tmp_path:
         }
 
     app = _make_app()
-    with _patch_artifacts(tmp_path), patch.object(
-        dashboard_mod,
-        "_live_hold_report",
-        fake_hold_report,
+    with (
+        _patch_artifacts(tmp_path),
+        patch.object(
+            dashboard_mod,
+            "_live_hold_report",
+            fake_hold_report,
+        ),
     ):
         with TestClient(app) as client:
             r = client.get("/dashboard/api/priority-gate")
@@ -426,9 +429,9 @@ def test_regime_endpoint_marks_read_only_and_exposes_snapshot_age(
     regime_dir.mkdir(parents=True)
     snapshot = {
         "asset": "BTC",
-        "timestamp": datetime.now(UTC).replace(minute=0, second=0, microsecond=0).strftime(
-            "%Y-%m-%dT%H:%M:%SZ"
-        ),
+        "timestamp": datetime.now(UTC)
+        .replace(minute=0, second=0, microsecond=0)
+        .strftime("%Y-%m-%dT%H:%M:%SZ"),
         "regime": "chop_quiet",
         "vol_class": "vol_low",
         "confidence": 1.0,
@@ -570,9 +573,9 @@ def test_regime_separates_response_from_data_freshness(
     regime_dir.mkdir(parents=True)
     snapshot = {
         "asset": "BTC",
-        "timestamp": datetime.now(UTC).replace(minute=0, second=0, microsecond=0).strftime(
-            "%Y-%m-%dT%H:%M:%SZ"
-        ),
+        "timestamp": datetime.now(UTC)
+        .replace(minute=0, second=0, microsecond=0)
+        .strftime("%Y-%m-%dT%H:%M:%SZ"),
         "regime": "chop_quiet",
         "vol_class": "vol_low",
         "confidence": 1.0,
@@ -628,9 +631,10 @@ def test_metric_contract_does_not_contradict_parallel_truth_fields(artifacts_dir
     assert contract["paper_fills_recent_24h"]["scope"] == "rolling_24h"
     assert contract["market_regime"]["is_read_only"] is True
     assert contract["market_regime"]["is_decision_relevant"] is False
-    assert contract["source_reliability"]["quality_status"] == data["source_reliability"][
-        "quality_status"
-    ]
+    assert (
+        contract["source_reliability"]["quality_status"]
+        == data["source_reliability"]["quality_status"]
+    )
 
 
 # ---------------------------------------------------------------------------

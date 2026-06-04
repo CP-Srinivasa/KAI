@@ -567,14 +567,12 @@ async def dashboard_quality_api() -> JSONResponse:
     recent_closes = [
         r
         for r in closes
-        if (ts := _first_present_ts(r, close_ts_keys)) is not None
-        and ts >= rolling_start
+        if (ts := _first_present_ts(r, close_ts_keys)) is not None and ts >= rolling_start
     ]
     recent_fills = [
         r
         for r in fills
-        if (ts := _first_present_ts(r, fill_ts_keys)) is not None
-        and ts >= rolling_start
+        if (ts := _first_present_ts(r, fill_ts_keys)) is not None and ts >= rolling_start
     ]
     recent_pnl_usd = round(sum(_close_pnl(r) for r in recent_closes), 2)
     pnl_values = [_close_pnl(r) for r in closes]
