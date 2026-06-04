@@ -377,6 +377,15 @@ class ExecutionSettings(BaseSettings):
     # those already produce real audit + outcomes).
     shadow_diagnostics: bool = Field(default=False)
 
+    # NEO-P-002-r3 (env EXECUTION_SHADOW_REAL_GENERATOR). Fail-safe Default OFF.
+    # When ON, the shadow-real feed driver replays REAL analyzed documents
+    # (DocumentRepository.get_recent_analyzed) through the existing
+    # run_trading_loop_once(analysis_result=...) seam so the real SignalGenerator
+    # produces source=autonomous_generator shadow candidates — read-only, no
+    # execution (the loop's entry_mode-disabled shadow path is unchanged). OFF
+    # preserves status quo (only the loop_control_* canary feeds the shadow path).
+    shadow_real_generator: bool = Field(default=False)
+
     # Paper trading
     paper_initial_equity: float = Field(default=10000.0)
     paper_fee_pct: float = Field(default=0.1)  # 0.1% fee
