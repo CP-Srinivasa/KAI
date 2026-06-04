@@ -215,6 +215,66 @@ def trading_edge_report(
         raise typer.Exit(1)
 
 
+@trading_app.command("generator-edge")
+def trading_generator_edge(
+    audit_path: str = typer.Option(
+        "artifacts/paper_execution_audit.jsonl",
+        "--audit-path",
+        help="Append-only paper execution audit JSONL path",
+    ),
+    cohort_type: str = typer.Option(
+        "generator",
+        "--cohort-type",
+        help="Grouping key: generator (signal_source) | regime | symbol",
+    ),
+    venue: str = typer.Option("paper", "--venue", help="CostModel venue key"),
+    min_resolved: int = typer.Option(
+        30,
+        "--min-resolved",
+        help="Below this many resolved trades the verdict is INSUFFICIENT, not NO_GO",
+    ),
+    implausible_threshold: float = typer.Option(
+        0.40,
+        "--implausible-threshold",
+        help="Exclude closes with |exit/entry-1| above this as off-market (0=off)",
+    ),
+) -> None:
+    """Generator edge measurement (NEO /goal) — prove/disprove tradeable edge.
+
+    READ-ONLY. Groups resolved trades by generator/regime/symbol and emits a
+    förderfähig Go/No-Go verdict per cohort with EV-after-costs, P(mu_net>0),
+    Sharpe/Sortino/MDD, cohort tail-CVaR and overtrading. Emits valid JSON on
+    stdout always. INSUFFICIENT (too few resolved) is reported distinctly from
+    NO_GO — the instrument never invents a verdict. IC-by-horizon and Brier/ECE
+    require side-channel inputs not present in the audit stream alone and are
+    honestly ``None`` here until a feeder supplies them.
+    """
+    import json as _json
+
+    from app.observability.edge_report import (
+        load_audit_events,
+        parse_closed_trades_with_exclusions,
+    )
+    from app.observability.generator_edge import (
+        EdgeGateConfig,
+        build_generator_edge_report,
+    )
+
+    events = load_audit_events(audit_path)
+    trades, _exclusions = parse_closed_trades_with_exclusions(
+        events, implausible_move_threshold=implausible_threshold
+    )
+    report = build_generator_edge_report(
+        trades,
+        cohort_type=cohort_type,
+        venue=venue,
+        config=EdgeGateConfig(min_resolved=min_resolved),
+    )
+    print(_json.dumps(report.to_dict(), indent=2))
+    if report.total_resolved == 0:
+        raise typer.Exit(1)
+
+
 @trading_app.command("edge-gate")
 def trading_edge_gate(
     audit_path: str = typer.Option(
