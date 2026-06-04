@@ -619,3 +619,41 @@ async def test_premium_telegram_entry_watcher_rejects_implausible_then_triggers(
     position = engine.portfolio.positions["SOL/USDT"]
     assert position.correlation_id == origin_envelope_id
     assert position.quantity > 0
+
+
+@pytest.mark.asyncio
+async def test_premium_paper_execution_disabled_blocks_e2e(
+    isolated_premium_artifacts: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Premium signals are blocked if premium.paper_execution_enabled is False (E2E)."""
+    monkeypatch.setenv("PREMIUM_PAPER_EXECUTION_ENABLED", "false")
+
+    envelope_log = isolated_premium_artifacts / "telegram_message_envelope.jsonl"
+    bridge_log = isolated_premium_artifacts / "bridge_pending_orders.jsonl"
+
+    emitted_at = datetime(2026, 5, 20, 12, 0, tzinfo=UTC)
+    approved_at = emitted_at + timedelta(minutes=3)
+
+    monkeypatch.setattr(bridge, "_fetch_price", _forbid_live_market_data)
+    monkeypatch.setattr(bridge, "datetime", _FixedBridgeDatetime)
+
+    origin_envelope_id, approved_envelope_id = _emit_and_approve(
+        PREMIUM_SOL_LONG,
+        envelope_log=envelope_log,
+        emitted_at=emitted_at,
+        approved_at=approved_at,
+    )
+
+    result = await bridge.run_tick(price_provider=_fixed_price_provider("SOL/USDT", 84.2))
+
+    assert result.filled == 0
+    assert result.rejected_entry_mode == 1
+
+    bridge_records = _read_jsonl(bridge_log)
+    assert bridge_records[-1]["stage"] == "rejected_entry_mode"
+    assert bridge_records[-1]["reason"] == "premium_paper_execution_disabled"
+    assert bridge_records[-1]["reason_codes"] == ["ENTRY_MODE_DISABLED"]
+
+    engine = get_paper_engine()
+    assert "SOL/USDT" not in engine.portfolio.positions

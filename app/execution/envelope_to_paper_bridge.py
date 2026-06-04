@@ -51,6 +51,7 @@ from app.execution.models import (
 from app.execution.order_intent import ExecutableOrderIntent
 from app.execution.paper_engine import DuplicateOrderError
 from app.execution.paper_engine_singleton import get_paper_engine
+from app.execution.scale_resolver import detect_scale_factor as _detect_scale_factor
 from app.market_data.service import get_market_data_snapshot
 from app.risk.engine import RiskEngine
 from app.risk.models import RiskLimits
@@ -507,43 +508,6 @@ async def _fetch_price(symbol: str) -> float | None:
     return snap.price
 
 
-# V25-D (2026-05-05) — Channel scale normalisation.
-#
-# The premium Telegram channel posts Bybit-Futures pairs in two distinct
-# formats: (a) direct USD for 1.0+-USD tokens (HYPE 40.9, GIGGLE 39.5),
-# (b) integer ticks for sub-cent tokens (SWARMS '32450' = $0.0003245,
-# 1000LUNC '10310' = $0.10310). The integer form keeps targets readable
-# but breaks any price comparison against a USD-priced provider.
-#
-# We detect the scale by comparing channel-entry against current_price:
-# the ratio falls into a power-of-ten band and we divide entry / SL /
-# targets by that factor. If the ratio is outside the recognised bands
-# we leave the values untouched and let the existing tolerance check
-# decide — better silent pass-through than a wrong scale.
-_RECOGNISED_SCALES = (1.0, 1e3, 1e4, 1e5, 1e6, 1e7, 1e8)
-
-
-def _detect_scale_factor(channel_value: float, provider_price: float) -> float:
-    """Return the power-of-ten factor that brings channel_value to provider scale.
-
-    Returns 1.0 if no recognised scale matches (fail-soft: bridge then
-    treats the values as-is and the tolerance gate will reject sensibly).
-    """
-    if channel_value <= 0 or provider_price <= 0:
-        return 1.0
-    ratio = channel_value / provider_price
-    # Find the recognised scale whose log-distance to the ratio is smallest
-    # AND within ±50% (strict guardrail so a 2× drift is not "rescaled").
-    best_factor = 1.0
-    best_dist = abs(ratio - 1.0)
-    for factor in _RECOGNISED_SCALES:
-        dist = abs(ratio - factor) / factor
-        if dist <= 0.5 and dist < best_dist:
-            best_factor = factor
-            best_dist = dist
-    return best_factor
-
-
 def _apply_scale(payload: dict[str, object], factor: float) -> None:
     """In-place rescale of entry/sl/targets by 1/factor. No-op when factor=1."""
     if factor <= 0 or factor == 1.0:
@@ -976,9 +940,15 @@ async def _process_one(
     # evidence — we report, then refuse to act. Exits/risk-reductions never reach
     # here (this path opens NEW exposure only).
     entry_mode = get_settings().execution.entry_mode
-    if not entry_mode.allows_risk_increasing_entry:
+    is_premium = isinstance(source, str) and source.startswith("telegram_premium")
+    premium_paper_enabled = get_settings().premium.paper_execution_enabled
+    if not entry_mode.allows_risk_increasing_entry or (is_premium and not premium_paper_enabled):
         rec = base("rejected_entry_mode")
-        rec["reason"] = "entry_mode_disabled"
+        rec["reason"] = (
+            "premium_paper_execution_disabled"
+            if (is_premium and not premium_paper_enabled)
+            else "entry_mode_disabled"
+        )
         rec["reason_codes"] = [ExecutionBlockerCode.ENTRY_MODE_DISABLED.value]
         rec["entry_mode"] = entry_mode.value
         rec["risk_gates_mode"] = risk_result.details.get("gates_mode")

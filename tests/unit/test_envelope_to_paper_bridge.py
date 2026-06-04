@@ -689,8 +689,9 @@ def test_detect_scale_factor_recognises_bybit_tick_formats() -> None:
     assert _detect_scale_factor(10310.0, 0.10524) == 1e5  # 1000LUNC-style
     assert _detect_scale_factor(39.5, 39.05) == 1.0  # GIGGLE direct USD
     assert _detect_scale_factor(40.9, 42.063) == 1.0  # HYPE direct USD
+    assert _detect_scale_factor(100.0, 1.0) == 1e2
     # Pathological: ratio outside any recognised scale → fall through
-    assert _detect_scale_factor(100.0, 1.0) == 1.0
+    assert _detect_scale_factor(250.0, 1.0) == 1.0
 
 
 def test_apply_scale_rescales_entry_sl_targets_in_place() -> None:
@@ -802,3 +803,29 @@ async def test_result_to_dict_shape() -> None:
         "errors",
     }
     assert required <= set(d.keys())
+
+
+@pytest.mark.asyncio
+async def test_premium_paper_execution_disabled_blocks_bridge(
+    tmp_artifacts: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """If premium.paper_execution_enabled is False, premium signals are blocked in the bridge."""
+    monkeypatch.setenv("EXECUTION_OPERATOR_SIGNAL_BRIDGE_ENABLED", "true")
+    monkeypatch.setenv("EXECUTION_OPERATOR_SIGNAL_SOURCE_ALLOWLIST", "telegram_premium_channel")
+    monkeypatch.setenv("PREMIUM_PAPER_EXECUTION_ENABLED", "false")
+
+    _write_envelope(
+        tmp_artifacts / "telegram_message_envelope.jsonl",
+        _accepted_envelope(source="telegram_premium_channel"),
+    )
+
+    with patch.object(bridge, "_fetch_price", new=AsyncMock(return_value=59950.0)):
+        result = await run_tick()
+
+    assert result.filled == 0
+    assert result.rejected_entry_mode == 1
+
+    records = _read_bridge_records(tmp_artifacts / "bridge_pending_orders.jsonl")
+    assert records[-1]["stage"] == "rejected_entry_mode"
+    assert records[-1]["reason"] == "premium_paper_execution_disabled"
+    assert records[-1]["reason_codes"] == ["ENTRY_MODE_DISABLED"]
