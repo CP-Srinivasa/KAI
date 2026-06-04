@@ -273,3 +273,79 @@ export const OUTCOME_LABEL_DE: Record<string, string> = {
 export function humanizeLabel(key: string): string {
   return LABEL_DE[key] ?? key;
 }
+
+// 2026-06-04 DALI Truth-Visibility-Sprint: P0 Truth-Layer-Microcopy.
+// Die Backend-Wahrheit (scope/stale_status/verdict) war typisiert, aber im UI
+// kaum sichtbar. Diese Maps uebersetzen die rohen Truth-Layer-Codes in
+// operator-lesbare Klartext-Labels — ohne den Neon-Cyberpunk-Stil zu aendern.
+
+// Scope eines Metrik-Werts: was misst diese Zahl ZEITLICH?
+export const METRIC_SCOPE_LABEL: Record<string, string> = {
+  rolling_24h: "rollende 24h",
+  cutoff_since: "seit Cutoff",
+  lifetime: "Lifetime",
+  historical: "historisch",
+  all_time: "gesamt",
+  session: "Session",
+};
+
+// Frische-Status eines Artefakts.
+export const STALE_STATUS_LABEL: Record<string, string> = {
+  fresh: "frisch",
+  ok: "frisch",
+  stale: "veraltet",
+  critical: "kritisch alt",
+  unverified: "unbestätigt",
+  unknown: "unbekannt",
+};
+
+// Priority-Gate-Verdict (dashboard.py priority_quality.current_quality_verdict
+// + heartbeat_status). 0 filled darf NICHT gesund wirken.
+export const PRIORITY_VERDICT_LABEL: Record<string, string> = {
+  priority_validated: "ACTIVE BLOCKING",
+  priority_underperforming: "UNDERPERFORMING",
+  priority_unproven: "UNPROVEN",
+  insufficient_data: "INSUFFICIENT",
+  unverified: "UNKNOWN",
+};
+
+export function metricScopeLabel(scope: string | null | undefined): string {
+  if (!scope) return "—";
+  return METRIC_SCOPE_LABEL[scope] ?? scope;
+}
+
+export function staleStatusLabel(status: string | null | undefined): string {
+  if (!status) return "—";
+  return STALE_STATUS_LABEL[status] ?? status;
+}
+
+// --- metric_contract Helper (DALI Truth-Sprint) ---
+// Der metric_contract ist API-seitig vollstaendig typisiert (api.ts), wurde
+// aber visuell nirgends konsumiert. Diese schlanken Helfer machen ihn an den
+// kritischen Stellen nutzbar, ohne einen vollen Contract-Renderer zu bauen
+// (Rest = P2). Sie sind tolerant: fehlt der Contract, kommt null/"" zurueck.
+type MetricContractMap = NonNullable<
+  import("@/lib/api").DashboardQuality["metric_contract"]
+>;
+export type MetricContractEntry = MetricContractMap[string];
+
+export function getMetricContract(
+  contract: MetricContractMap | undefined,
+  metricKey: string,
+): MetricContractEntry | null {
+  return contract?.[metricKey] ?? null;
+}
+
+export function getMetricWarning(
+  contract: MetricContractMap | undefined,
+  metricKey: string,
+): string | null {
+  return contract?.[metricKey]?.warning ?? null;
+}
+
+export function getMetricScopeLabel(
+  contract: MetricContractMap | undefined,
+  metricKey: string,
+): string {
+  return metricScopeLabel(contract?.[metricKey]?.scope);
+}

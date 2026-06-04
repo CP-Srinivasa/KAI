@@ -1,5 +1,6 @@
 import { Card, CardHeader, Badge, InfoHint } from "@/components/ui/Primitives";
 import { cn } from "@/lib/utils";
+import { staleStatusLabel } from "@/lib/labels";
 import type {
   DashboardRegime,
   RegimeClass,
@@ -197,9 +198,17 @@ export function RegimeStatusPanel({ data }: { data: DashboardRegime | null }) {
         }
         subtitle="Wie sich BTC + ETH gerade verhalten, auf Stunden-Basis klassifiziert."
         right={
-          <Badge tone={data?.is_read_only ? "warn" : total > 0 ? "info" : "muted"} dot>
-            {data?.is_read_only ? "read-only" : "R1"} · {total} Asset{total === 1 ? "" : "s"}
-          </Badge>
+          <div className="flex items-center gap-1.5 flex-wrap justify-end">
+            <Badge tone="info" dot title="Read-only Diagnose — beeinflusst aktuell keine Trades.">
+              read-only Diagnose
+            </Badge>
+            <Badge tone="muted" title="Markt-Regime ist noch nicht an Gates/Risk gekoppelt.">
+              no trade effect
+            </Badge>
+            <Badge tone={total > 0 ? "info" : "muted"}>
+              {total} Asset{total === 1 ? "" : "s"}
+            </Badge>
+          </div>
         }
       />
       {data?.warning && (
@@ -223,23 +232,43 @@ export function RegimeStatusPanel({ data }: { data: DashboardRegime | null }) {
             return (
               <div key={asset} className="space-y-1">
                 <AssetRow snapshot={snap} />
-                {meta && (
-                  <div className="px-1 text-2xs font-mono text-fg-subtle">
-                    Snapshot {meta.snapshot_timestamp.substring(0, 16).replace("T", " ")}
-                    {" "}· Alter {meta.snapshot_age_hours == null ? "-" : meta.snapshot_age_hours.toFixed(1) + "h"}
-                    {" "}· {meta.stale_status}
-                    {" "}· read-only
-                  </div>
-                )}
+                {meta && (() => {
+                  const fresh = meta.stale_status === "fresh" || meta.stale_status === "ok";
+                  return (
+                    <div className="px-1 text-2xs font-mono text-fg-subtle">
+                      Snapshot {meta.snapshot_timestamp.substring(0, 16).replace("T", " ")}
+                      {" "}· Alter {meta.snapshot_age_hours == null ? "-" : meta.snapshot_age_hours.toFixed(1) + "h"}
+                      {" "}· <span className={cn(!fresh && "text-warn")}>{staleStatusLabel(meta.stale_status)}</span>
+                      {" "}· read-only
+                    </div>
+                  );
+                })()}
               </div>
             );
           })}
         </div>
       )}
+      {total > 0 && (
+        <div className="mt-3 flex items-center gap-1.5 rounded-sm border border-line-subtle bg-bg-2/40 px-2.5 py-1.5 text-2xs text-fg-subtle">
+          <span className="font-mono uppercase tracking-wider">Regime-Timeline</span>
+          <span className="rounded-xs border border-line bg-bg-1 px-1 py-0 font-mono text-fg-muted">
+            Historie nicht verfügbar
+          </span>
+          <span className="rounded-xs border border-info/30 bg-info/5 px-1 py-0 font-mono text-info">
+            Roadmap P1
+          </span>
+        </div>
+      )}
       {data?.generated_at && (
         <div className="mt-4 pt-3 border-t border-line-subtle text-2xs text-fg-muted leading-relaxed space-y-1">
-          <div>
-            Aktualisiert: <span className="font-mono text-fg">{formatTimestamp(data.generated_at)}</span>
+          <div className="inline-flex items-center gap-1 flex-wrap">
+            <span>Antwort erzeugt:</span>
+            <span className="font-mono text-fg">{formatTimestamp(data.generated_at)}</span>
+            <InfoHint
+              label="Antwort erzeugt"
+              hint="Zeitpunkt, zu dem dieser API-Response generiert wurde — NICHT die Frische der Markt-Daten. Die echte Datenfrische steht pro Asset als Snapshot-Alter + Status."
+              side="left"
+            />
           </div>
           <div className="inline-flex items-center gap-1 flex-wrap">
             <span>6 Markt-Klassen + 3 Schwankungsstufen, gegen Schein-Wechsel ueber 2 Bars hinweg gefiltert.</span>

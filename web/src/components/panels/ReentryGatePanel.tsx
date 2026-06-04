@@ -4,6 +4,8 @@ import { Card, CardHeader, Badge, ProgressBar } from "@/components/ui/Primitives
 import { useT } from "@/i18n/I18nProvider";
 import { cn } from "@/lib/utils";
 import type { DashboardQuality, PriorityGateSummary } from "@/lib/api";
+import { resolvePriorityVerdict } from "@/lib/truthStatus";
+import { getMetricContract, getMetricWarning } from "@/lib/labels";
 
 // Re-Entry-Gate (TV-Pivot D-125, Ziel 2026-05-16):
 // Entweder ≥200 resolved directional alerts ODER ≥10 paper fills mit PnL.
@@ -115,18 +117,34 @@ function ReentryGatePanelImpl({
         }
       />
 
-      <div
-        className={cn(
-          "mt-1 mb-3 rounded-sm border px-3 py-2 text-xs flex items-center gap-2",
-          banner.className,
-        )}
-        role="status"
-      >
-        <Flag size={14} className="shrink-0" />
-        <span className="font-semibold">{banner.title}</span>
-        <span className="text-fg-muted">·</span>
-        <span className="text-fg-muted">{banner.detail}</span>
-      </div>
+      {targetExpired ? (
+        <div
+          className="mt-1 mb-3 rounded-sm border border-warn/40 bg-warn/10 px-3 py-2.5 attention-breathe-warn"
+          role="status"
+        >
+          <div className="flex items-center gap-2 text-warn">
+            <AlertTriangle size={16} className="shrink-0" />
+            <span className="text-sm font-semibold uppercase tracking-wide">{banner.title}</span>
+            <span className="ml-auto inline-flex items-center gap-1 rounded-xs border border-warn/40 bg-warn/10 px-1.5 py-0.5 text-2xs font-mono uppercase tracking-wider">
+              Historical
+            </span>
+          </div>
+          <p className="mt-1 text-2xs text-fg-muted leading-relaxed">{banner.detail}</p>
+        </div>
+      ) : (
+        <div
+          className={cn(
+            "mt-1 mb-3 rounded-sm border px-3 py-2 text-xs flex items-center gap-2",
+            banner.className,
+          )}
+          role="status"
+        >
+          <Flag size={14} className="shrink-0" />
+          <span className="font-semibold">{banner.title}</span>
+          <span className="text-fg-muted">·</span>
+          <span className="text-fg-muted">{banner.detail}</span>
+        </div>
+      )}
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
         <ProgressRow
@@ -214,6 +232,8 @@ function ReentryGatePanelImpl({
         />
       </div>
 
+      <PaperEvidenceSplit quality={quality} pnlUsd={pnlUsd} fills={fills} />
+
       <div className="mt-3 pt-3 border-t border-line-subtle text-2xs font-mono text-fg-subtle">
         Source-Vergleich und TV-4-Verdict: siehe <span className="text-fg-muted">Active Precision</span> unten.
       </div>
@@ -229,42 +249,161 @@ function ReentryGatePanelImpl({
   );
 }
 
-function PriorityGateRow({ summary }: { summary: PriorityGateSummary }) {
-  // D-184: dual-state visibility for the D-182 paper-fill gate. Off-state
-  // reminds the operator the gate is still at the no-op default; active-state
-  // surfaces the 24h bucket counts so "no new fills" has context.
-  const { threshold, gate_active, priority_rejected, other_rejected, completed, total_cycles, window_hours, priority_quality } =
-    summary;
+// DALI Truth-Sprint 2026-06-04: 144-vs-0 explizit als zwei Spalten — links die
+// historische Lifetime-Evidenz, rechts die aktuelle 24h-Lage. So liest niemand
+// mehr historische Fills als aktuellen Fortschritt.
+function PaperEvidenceSplit({
+  quality,
+  pnlUsd,
+  fills,
+}: {
+  quality: DashboardQuality;
+  pnlUsd: number;
+  fills: number;
+}) {
+  const ev = quality.paper_evidence;
+  const scopeBadge =
+    ev?.scope === "cutoff_since" ? "Cutoff/Lifetime" : "Lifetime";
+  const recent24h = ev?.fills_recent_24h ?? 0;
+  const pnl24h = ev?.realized_pnl_recent_24h_usd ?? 0;
+  const closed24h = ev?.closed_recent_24h ?? 0;
+  const feesNote = ev?.fees_slippage_included;
+  // metric_contract als autoritative Erklaerung (keine Doppel-Wahrheit, nur
+  // Tooltip-Quelle). Fehlt der Contract, bleibt das Feld leer.
+  const contract = quality.metric_contract;
+  const histExplain =
+    getMetricContract(contract, "paper_fills_with_pnl")?.explanation ?? undefined;
+  const recent24hWarn = getMetricWarning(contract, "paper_fills_recent_24h");
 
-  if (!gate_active) {
-    return (
-      <div
-        className="mt-2 pt-2 border-t border-line-subtle flex items-center gap-2 text-2xs font-mono text-fg-muted"
-        role="status"
-      >
-        <span className="text-fg-subtle uppercase tracking-wide">Priority-Gate</span>
-        <Badge tone="muted">aus · threshold=1</Badge>
-        <span className="text-fg-subtle">· alle Paper-Cycles laufen (D-182)</span>
+  return (
+    <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-2">
+      {/* Links: historische Evidenz (Archiv-Anmutung) */}
+      <div className="rounded-sm border border-line-subtle bg-bg-2/40 p-2.5 space-y-1.5">
+        <div className="flex items-center gap-1.5 flex-wrap">
+          <span
+            className="text-2xs font-mono uppercase tracking-wider text-fg-subtle"
+            title={histExplain}
+          >
+            Historische Evidenz
+          </span>
+          <span className="rounded-xs border border-warn/40 bg-warn/10 px-1 py-0 text-[9px] font-mono uppercase tracking-wider text-warn">
+            {scopeBadge}
+          </span>
+          <span className="rounded-xs border border-warn/40 bg-warn/10 px-1 py-0 text-[9px] font-mono uppercase tracking-wider text-warn">
+            not 24h
+          </span>
+        </div>
+        <div className="text-xs font-mono text-fg">
+          {fills} fills ·{" "}
+          <span className={cn(pnlUsd > 0 ? "text-pos" : pnlUsd < 0 ? "text-neg" : "")}>
+            {pnlUsd >= 0 ? "+" : ""}
+            {pnlUsd.toFixed(2)} USD
+          </span>
+        </div>
+        <div className="text-2xs text-fg-subtle">
+          {quality.paper_positions_closed} closed gesamt
+        </div>
       </div>
-    );
-  }
 
+      {/* Rechts: aktuelle 24h-Lage (Current-Pulse-Anmutung) */}
+      <div className="rounded-sm border border-line-subtle bg-bg-1 p-2.5 space-y-1.5">
+        <div className="flex items-center gap-1.5 flex-wrap">
+          <span className="text-2xs font-mono uppercase tracking-wider text-fg-subtle">
+            Aktuelle 24h-Lage
+          </span>
+          <span
+            className={cn(
+              "rounded-xs border px-1 py-0 text-[9px] font-mono uppercase tracking-wider",
+              recent24h > 0
+                ? "border-info/40 bg-info/10 text-info"
+                : "border-line bg-bg-2 text-fg-subtle",
+            )}
+          >
+            rolling 24h
+          </span>
+        </div>
+        <div className="text-xs font-mono text-fg">
+          {recent24h} fills ·{" "}
+          <span className={cn(pnl24h > 0 ? "text-pos" : pnl24h < 0 ? "text-neg" : "text-fg-subtle")}>
+            {pnl24h >= 0 ? "+" : ""}
+            {pnl24h.toFixed(2)} USD
+          </span>
+        </div>
+        <div className="text-2xs text-fg-subtle">{closed24h} closed (24h)</div>
+        {recent24hWarn && (
+          <div className="text-2xs text-warn leading-snug">{recent24hWarn}</div>
+        )}
+      </div>
+
+      <div className="sm:col-span-2 text-2xs text-fg-muted leading-relaxed">
+        Historische Evidence erfüllt; aktuelle 24h-Ausführung separat bewerten.
+        {feesNote && feesNote !== "yes" ? (
+          <span
+            className="ml-1.5 inline-flex items-center gap-0.5 rounded-xs border border-warn/40 bg-warn/10 px-1 py-0 text-[9px] font-mono uppercase tracking-wider text-warn align-middle cursor-help"
+            title="Paper-PnL ist diagnostisch — Gebühren/Slippage/Intrabar-Risiken sind nicht garantiert eingerechnet."
+          >
+            <Info size={9} aria-hidden />
+            Simulation Limits
+          </span>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function PriorityGateRow({ summary }: { summary: PriorityGateSummary }) {
+  // D-184 + DALI Truth-Sprint 2026-06-04: das Priority-Gate bekommt einen
+  // klaren Verdict + Heartbeat. 0 filled darf nur dann neutral statt gruen
+  // wirken, wenn der Loop nachweislich lebt — sonst HEARTBEAT UNKNOWN.
+  const {
+    threshold,
+    gate_active,
+    priority_rejected,
+    other_rejected,
+    completed,
+    total_cycles,
+    window_hours,
+    priority_quality,
+    top_reject_reason,
+    heartbeat_status,
+  } = summary;
+
+  const verdict = resolvePriorityVerdict(summary);
+  const verdictTone: "neg" | "warn" | "info" | "muted" =
+    verdict.tone === "critical"
+      ? "neg"
+      : verdict.tone === "warn"
+        ? "warn"
+        : verdict.tone === "info"
+          ? "info"
+          : "muted";
+  // filled nur gruen, wenn Loop verifiziert lebt UND nicht stale.
+  const heartbeatHealthy =
+    heartbeat_status === "active" || heartbeat_status === "active_blocking";
+  const filledTone = completed > 0 && heartbeatHealthy ? "text-pos" : "text-fg";
   const blockedPct =
     total_cycles > 0 ? Math.round((priority_rejected / total_cycles) * 100) : 0;
+  const lift = priority_quality?.high_priority_lift_pct;
 
   return (
     <div
-      className="mt-2 pt-2 border-t border-line-subtle flex items-center justify-between flex-wrap gap-2 text-2xs font-mono text-fg-muted"
+      className={cn(
+        "mt-2 pt-2 border-t border-line-subtle flex items-center justify-between flex-wrap gap-2 text-2xs font-mono text-fg-muted",
+        verdict.tone === "critical" && "attention-breathe-neg",
+      )}
       role="status"
-      aria-label={`Priority-Gate aktiv, Schwelle ${threshold}, ${priority_rejected} von ${total_cycles} Cycles in ${window_hours}h blockiert`}
+      aria-label={`Priority-Gate ${verdict.verdict}, ${priority_rejected} von ${total_cycles} Cycles in ${window_hours}h blockiert, ${completed} filled`}
     >
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-2 flex-wrap">
         <span className="text-fg-subtle uppercase tracking-wide">Priority-Gate</span>
-        <Badge tone="warn" dot>
-          aktiv · P≥{threshold}
+        <Badge tone={verdictTone} dot>
+          {verdict.verdict}
+        </Badge>
+        <Badge tone={gate_active ? "warn" : "muted"}>
+          {gate_active ? `aktiv · P≥${threshold}` : `aus · P≥${threshold}`}
         </Badge>
       </div>
-      <div className="flex items-center gap-3">
+      <div className="flex items-center gap-3 flex-wrap">
         <span>
           <span className="font-semibold">{priority_rejected}</span>
           <span className="text-fg-subtle"> rejected</span>
@@ -275,7 +414,7 @@ function PriorityGateRow({ summary }: { summary: PriorityGateSummary }) {
           )}
         </span>
         <span>
-          <span className="font-semibold text-pos">{completed}</span>
+          <span className={cn("font-semibold", filledTone)}>{completed}</span>
           <span className="text-fg-subtle"> filled</span>
         </span>
         {other_rejected > 0 && (
@@ -284,16 +423,25 @@ function PriorityGateRow({ summary }: { summary: PriorityGateSummary }) {
             <span className="text-fg-subtle"> other-reject</span>
           </span>
         )}
+        {lift != null && (
+          <span className={cn(lift > 0 ? "text-pos" : "text-warn")}>
+            Lift {lift > 0 ? "+" : ""}
+            {lift.toFixed(2)}pp
+          </span>
+        )}
         <span className="text-fg-subtle">· {window_hours}h</span>
       </div>
-      {priority_quality?.warning && (
-        <div className="basis-full text-warn">
-          {priority_quality.current_quality_verdict}
-          {priority_quality.high_priority_lift_pct != null
-            ? ` · Lift ${priority_quality.high_priority_lift_pct.toFixed(2)}pp`
-            : ""}
-          {" · "}
-          {priority_quality.warning}
+      {top_reject_reason && (
+        <div className="basis-full flex items-center gap-1.5 flex-wrap text-fg-subtle">
+          Top-Reject:
+          <span className="rounded-xs border border-line bg-bg-2 px-1 py-0 text-fg-muted">
+            {top_reject_reason}
+          </span>
+        </div>
+      )}
+      {verdict.tone !== "ok" && verdict.tone !== "info" && (
+        <div className={cn("basis-full", verdict.tone === "critical" ? "text-neg" : "text-warn")}>
+          {verdict.detail}
         </div>
       )}
     </div>
