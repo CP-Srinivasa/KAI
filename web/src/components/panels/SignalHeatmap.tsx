@@ -76,6 +76,15 @@ export function SignalHeatmapPanel() {
           </Badge>
         }
       />
+      {/* 2026-06-04 DALI: explizit machen, dass die Spalten Lifecycle-Stufen
+          sind — eine grüne Zahl in "Parsed"/"Appr" ist KEIN gehandelter Trade.
+          Grün bedeutet nur in "Open"/"Closed" echte Execution. */}
+      <div className="mb-2 -mt-1 text-2xs text-fg-subtle">
+        Envelope-Parsing <span className="text-fg-muted font-semibold">≠</span> Execution
+        {" — "}
+        <span className="text-fg-muted">Parsed/Appr</span> sind erkannt, nicht gehandelt;
+        echte Position erst ab <span className="text-pos">Open</span>/<span className="text-pos">Closed</span>.
+      </div>
       {state.state === "loading" && (
         <div className="py-6 text-center text-xs text-fg-subtle">Lade Signale …</div>
       )}

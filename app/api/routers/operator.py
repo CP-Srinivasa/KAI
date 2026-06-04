@@ -672,6 +672,8 @@ async def get_realized_by_asset(
     request: Request,
     response: Response,
     audit_path: str = "artifacts/paper_execution_audit.jsonl",
+    source_filter: str | None = None,
+    source_prefix: str | None = None,
 ) -> dict[str, object]:
     """Per-asset realized PnL from paper_execution_audit.jsonl.
 
@@ -681,12 +683,23 @@ async def get_realized_by_asset(
     position_closed + position_partial_closed Events. KEIN Exchange-Call,
     KEIN Live-Trading, KEIN Mark-to-Market, read-only.
 
+    2026-06-04 RC-3 (DALI Premium-Truth-Sprint): ``source_filter`` /
+    ``source_prefix`` werden jetzt durchgereicht. Das Dashboard hat den
+    Query-Param zwar geschickt, der Router hat ihn aber verworfen — die
+    Portfolio-Tabs (Premium Telegram / Autonomous / …) zeigten daher ALLE den
+    identischen, ungefilterten Gesamtbestand. Das war die "Premium-Erfolg"-
+    Illusion: die "Premium Telegram"-Tab listete auch autonome Trades.
+
     Schema: siehe app.execution.portfolio_read.compute_realized_by_asset.
     """
     from app.execution.portfolio_read import compute_realized_by_asset
 
     _set_context_headers(response, request)
-    return compute_realized_by_asset(Path(audit_path))
+    return compute_realized_by_asset(
+        Path(audit_path),
+        source_filter=source_filter,
+        source_prefix=source_prefix,
+    )
 
 
 def _realized_summary_block(by_asset_summary: dict[str, object]) -> dict[str, object]:

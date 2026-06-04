@@ -19,6 +19,7 @@ import { cn } from "@/lib/utils";
 import { PreparedPanel } from "@/components/panels/PreparedPanel";
 import { PremiumTradeCard } from "@/components/panels/PremiumTradeCard";
 import { PremiumSignalTrail } from "@/components/panels/PremiumSignalTrail";
+import { PremiumRuntimeBanner } from "@/components/panels/PremiumRuntimeBanner";
 import { DiversificationPanel } from "@/components/panels/DiversificationPanel";
 import { useCurrency } from "@/state/CurrencyProvider";
 
@@ -297,6 +298,10 @@ export function PortfolioPage() {
           </Button>
         }
       />
+
+      {/* Premium-Runtime-Wahrheit: erklärt warum Premium-Signale evtl. keine
+          Paper-Position öffnen, bevor der Operator den Trail/Portfolio liest. */}
+      <PremiumRuntimeBanner />
 
       {snap.state === "error" && <ErrorCard kind={snap.error.kind} message={snap.error.message} path="/operator/portfolio-snapshot" />}
 
