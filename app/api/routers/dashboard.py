@@ -154,21 +154,49 @@ def _first_present_ts(row: dict[str, Any], keys: tuple[str, ...]) -> datetime | 
     return None
 
 
-def _reentry_status(*, target_date: str = _REENTRY_TARGET_DATE) -> dict[str, Any]:
+def _reentry_target_from_settings() -> tuple[str, str]:
+    """Resolve the Re-Entry target date, preferring operator config.
+
+    Returns ``(target_date, source)`` where source is ``"config"`` when the
+    value comes from ``ALERT_REENTRY_TARGET_DATE`` and ``"default_historical"``
+    when it falls back to the module constant. Never invents a new target.
+    """
+    try:
+        from app.core.settings import get_settings
+
+        configured = (get_settings().alerts.reentry_target_date or "").strip()
+        if configured:
+            return configured, "config"
+    except Exception as exc:  # noqa: BLE001 — never break the dashboard on config load
+        logger.warning("reentry_target_settings_load_failed: %s", exc)
+    return _REENTRY_TARGET_DATE, "default_historical"
+
+
+def _reentry_status(*, target_date: str | None = None) -> dict[str, Any]:
     now = datetime.now(UTC)
+    if target_date is None:
+        target_date, target_source = _reentry_target_from_settings()
+    else:
+        target_source = "explicit"
     target = _parse_iso_utc(f"{target_date}T00:00:00+00:00")
     if target is None:
+        # Fail safe: an empty/invalid configured date must not crash and must
+        # not look current — it needs an operator re-evaluation.
         return {
             "target_date": target_date,
+            "target_source": target_source,
             "today": now.date().isoformat(),
-            "status": "unverified",
+            "status": "requires_re_evaluation",
             "days_delta": None,
-            "warning": "Re-Entry target date is not parseable.",
+            "warning": (
+                "Re-Entry target date is missing or not parseable; operator must set a new target."
+            ),
         }
     delta_days = (target.date() - now.date()).days
     if delta_days < 0:
         return {
             "target_date": target_date,
+            "target_source": target_source,
             "today": now.date().isoformat(),
             "status": "expired",
             "days_delta": delta_days,
@@ -179,6 +207,7 @@ def _reentry_status(*, target_date: str = _REENTRY_TARGET_DATE) -> dict[str, Any
         }
     return {
         "target_date": target_date,
+        "target_source": target_source,
         "today": now.date().isoformat(),
         "status": "active",
         "days_delta": delta_days,
@@ -260,26 +289,44 @@ def _load_source_reliability_summary() -> dict[str, Any]:
         return _empty_source_reliability("invalid")
 
     raw_scores = payload.get("scores")
+    raw_thresholds = payload.get("thresholds")
+    thresholds = raw_thresholds if isinstance(raw_thresholds, dict) else {}
+    # Minimum resolved-signal count below which a source's hit-rate is not
+    # statistically load-bearing — 100% at n=1 must never read as "trusted".
+    min_n = int(thresholds.get("min_n") or thresholds.get("min_resolved") or 50)
     scores: list[dict[str, Any]] = []
     tier_counts: dict[str, int] = {}
+    provisional_count = 0
     if isinstance(raw_scores, dict):
         for key, raw in raw_scores.items():
             if not isinstance(raw, dict):
                 continue
             source = str(raw.get("source_name") or key)
             tier = str(raw.get("tier") or "unknown")
+            n = int(raw.get("n") or 0)
+            is_provisional = n < min_n
             score = {
                 "source_name": source,
                 "hits": int(raw.get("hits") or 0),
                 "miss": int(raw.get("miss") or 0),
-                "n": int(raw.get("n") or 0),
+                "n": n,
                 "point_estimate_pct": _pct_fraction(raw.get("point_estimate")),
                 "wilson_lower_95_pct": _pct_fraction(raw.get("wilson_lower_95")),
                 "tier": tier,
                 "priority_modifier": int(raw.get("priority_modifier") or 0),
+                # small-n deemphasis: UI must render provisional sources muted
+                # and never as load-bearing quality (D-truth-layer).
+                "is_provisional": is_provisional,
+                "sample_warning": (
+                    f"Only {n} resolved signals (< {min_n}); hit-rate is provisional."
+                    if is_provisional
+                    else None
+                ),
             }
             scores.append(score)
             tier_counts[tier] = tier_counts.get(tier, 0) + 1
+            if is_provisional:
+                provisional_count += 1
 
     scores.sort(key=lambda score: int(score.get("n") or 0), reverse=True)
     unknown_bucket = next(
@@ -320,6 +367,8 @@ def _load_source_reliability_summary() -> dict[str, Any]:
         "health_warning": health_warning,
         "trusted_count": trusted_count,
         "source_count": len(scores),
+        "provisional_count": provisional_count,
+        "min_n": min_n,
         "tier_counts": tier_counts,
         "top_sources": scores[:8],
         "unknown_bucket": unknown_bucket,
@@ -581,6 +630,13 @@ async def dashboard_quality_api() -> JSONResponse:
 
     reentry = _reentry_status()
     source_reliability = _load_source_reliability_summary()
+    # P2-DECISION (truth-layer): ``metric_contract`` is intentionally kept as
+    # API-side metadata only. The UI renders truth via the parallel fields
+    # (``paper_evidence``, ``reentry``, regime ``is_read_only``,
+    # ``source_reliability.quality_status``) — the contract must NOT contradict
+    # them (guarded by test_api_dashboard::*contract*). Option for P2: either
+    # promote the contract to the single UI source of truth OR remove it. It is
+    # deliberately NOT expanded into a second, divergent truth layer here.
     metric_contract = {
         "paper_fills_with_pnl": _metric_contract(
             value=positions_closed + positions_partial_closed,
@@ -827,6 +883,30 @@ async def dashboard_priority_gate_api() -> JSONResponse:
         if summary.gate_active and summary.priority_rejected > 0
         else "no_recent_fill"
     )
+    # Loop heartbeat: distinguish "gate blocking actively" / "loop ran but
+    # rejected" from "no cycles at all" and "worker possibly down". 0 filled
+    # must NEVER read as healthy when we cannot prove the loop is alive.
+    audit_present = _TRADING_LOOP_AUDIT.exists()
+    audit_freshness = _artifact_stale_status(_TRADING_LOOP_AUDIT) if audit_present else "unverified"
+    if not audit_present or summary.total_cycles == 0:
+        heartbeat_status = "unknown"
+        heartbeat_warning = (
+            "Trading-loop activity is not verified (no cycles / no audit) — "
+            "0 fills is NOT a health signal."
+        )
+    elif audit_freshness in {"stale", "critical"}:
+        heartbeat_status = "stale"
+        heartbeat_warning = "Trading-loop audit is stale; recent activity is not verified."
+    elif summary.gate_active and summary.priority_rejected > 0:
+        heartbeat_status = "active_blocking"
+        heartbeat_warning = None
+    else:
+        heartbeat_status = "active"
+        heartbeat_warning = None
+    payload["heartbeat_status"] = heartbeat_status
+    payload["heartbeat_warning"] = heartbeat_warning
+    payload["loop_audit_present"] = audit_present
+    payload["loop_audit_freshness"] = audit_freshness
     try:
         report = await _live_hold_report()
         quality = report.get("signal_quality_validation", {})
@@ -1088,13 +1168,34 @@ async def dashboard_regime_api() -> JSONResponse:
                 "warning": "Read-only diagnosis; does not influence trades, gates, or risk.",
             }
 
+    # Separate RESPONSE freshness (this endpoint just answered) from DATA
+    # freshness (how old the underlying snapshots are). A fresh response must
+    # never imply fresh regime data. data_freshness_status = worst per-asset.
+    asset_states = [meta.get("stale_status") for meta in by_asset_meta.values()]
+    if not asset_states:
+        data_freshness_status = "no_data"
+    elif "stale" in asset_states:
+        data_freshness_status = "stale"
+    elif "warning" in asset_states:
+        data_freshness_status = "warning"
+    elif "unverified" in asset_states:
+        data_freshness_status = "unverified"
+    else:
+        data_freshness_status = "ok"
+    response_generated_at = now.strftime("%Y-%m-%dT%H:%M:%SZ")
     return JSONResponse(
         content={
-            "generated_at": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            # ``generated_at`` kept for backwards-compat == response time.
+            "generated_at": response_generated_at,
+            "response_generated_at": response_generated_at,
+            "data_freshness_status": data_freshness_status,
             "semantic_status": "read_only",
             "is_read_only": True,
             "is_decision_relevant": False,
-            "warning": "Market regime is diagnostic only; no gate/risk integration is active.",
+            "warning": (
+                "Market regime is diagnostic only; no gate/risk integration is active. "
+                "Response time is not data freshness — see per-asset snapshot_age_hours."
+            ),
             "by_asset": by_asset,
             "by_asset_metadata": by_asset_meta,
         },
