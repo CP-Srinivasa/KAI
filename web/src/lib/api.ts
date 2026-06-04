@@ -786,6 +786,10 @@ export type RealizedByAssetEntry = {
 export type RealizedByAssetResponse = {
   as_of_utc: string;
   audit_path: string;
+  // 2026-06-04: source-attributed view (RC-3). Backend liefert source_prefix
+  // wenn ?source_prefix= gesetzt ist; source_filter ist der UI-Fallback-Name.
+  source_prefix?: string | null;
+  source_filter?: string | null;
   audit_file_exists: boolean;
   audit_last_event_utc: string | null;
   by_asset: RealizedByAssetEntry[];
@@ -806,8 +810,10 @@ export type RealizedByAssetResponse = {
 
 export function fetchRealizedByAsset(
   signal?: AbortSignal,
+  sourceFilter?: string,
 ): Promise<RealizedByAssetResponse> {
-  return apiGet<RealizedByAssetResponse>("/operator/portfolio/realized-by-asset", { signal });
+  const q = sourceFilter ? `?source_filter=${encodeURIComponent(sourceFilter)}` : "";
+  return apiGet<RealizedByAssetResponse>(`/operator/portfolio/realized-by-asset${q}`, { signal });
 }
 
 export type PaperPipelineStatusResponse = {
@@ -1208,6 +1214,8 @@ export function postSignalPaste(
 
 export type SignalSummary = {
   signal_id: string | null;
+  origin_signal_id?: string | null;
+  source_uid?: string | null;
   symbol: string | null;
   direction: string | null;
   side: string | null;
@@ -1226,6 +1234,16 @@ export type EnvelopeRecord = {
   timestamp_utc: string | null;
   event: string | null;
   source: string | null;
+  raw_source?: string | null;
+  normalized_source?: string | null;
+  execution_source?: string | null;
+  origin_signal_id?: string | null;
+  approval_state?: "approved" | "awaiting_approval" | "none" | string | null;
+  premium_state?: string | null;
+  premium_state_label?: string | null;
+  premium_state_tone?: "pos" | "warn" | "neg" | "neutral" | string | null;
+  bridge_stage?: string | null;
+  bridge_reason?: string | null;
   stage: string | null;
   status: string | null;
   message_type: string | null;

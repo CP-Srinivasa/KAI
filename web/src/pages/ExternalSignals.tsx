@@ -98,9 +98,15 @@ const KNOWN_EXCHANGES = [
 ] as const;
 
 function envelopeTone(rec: EnvelopeRecord): Tone {
+  if (rec.premium_state_tone === "pos") return "pos";
+  if (rec.premium_state_tone === "warn") return "warn";
+  if (rec.premium_state_tone === "neg") return "neg";
   const { status, stage } = rec;
   if (status === "duplicate") return "warn";
-  if (status === "ok" || stage === "accepted") return "pos";
+  // 2026-06-04 RC-5: accepted/ok = nur Parser+Envelope, KEINE Execution.
+  // Daher "info" (blau), nicht "pos" (grün). Grün gehört dem Premium-Trail,
+  // der den echten Execution-State (Position/TP) führt.
+  if (status === "ok" || stage === "accepted") return "info";
   if (status === "rejected" || status === "blocked") return "neg";
   if (stage === "voice_confirm_gate" && status === "draft_pending") return "info";
   return "neutral";
@@ -108,7 +114,10 @@ function envelopeTone(rec: EnvelopeRecord): Tone {
 
 function statusHeadline(rec: EnvelopeRecord): string {
   if (rec.status === "duplicate") return "Duplikat verhindert";
-  if (rec.status === "ok" || rec.stage === "accepted") return "Sauber raus — OK";
+  if (rec.premium_state_label) return rec.premium_state_label;
+  // RC-5: ehrliche Semantik — geparst & gespeichert, aber NICHT ausgeführt.
+  if (rec.status === "ok" || rec.stage === "accepted")
+    return "Geparst & gespeichert — noch nicht ausgeführt";
   if (rec.status === "rejected" || rec.status === "blocked") return "Abgelehnt";
   if (rec.stage === "voice_confirm_gate") return "Wartet auf Bestätigung";
   return rec.status ?? "—";
@@ -962,6 +971,11 @@ function EnvelopeCard({ rec }: { rec: EnvelopeRecord }) {
               </div>
             )}
             <div className="flex flex-wrap items-center gap-2">
+              {rec.premium_state && (
+                <Badge tone={tone === "neutral" ? "muted" : tone} dot>
+                  {rec.premium_state}
+                </Badge>
+              )}
               <Badge tone={tone === "neutral" ? "muted" : tone} dot>
                 {rec.status ?? "—"}
               </Badge>
@@ -1051,6 +1065,17 @@ function EnvelopeCard({ rec }: { rec: EnvelopeRecord }) {
                 <span className="opacity-70">idem:</span> {rec.idempotency_key}
               </span>
             )}
+            {rec.origin_signal_id && (
+              <span className="break-all">
+                <span className="opacity-70">origin:</span> {rec.origin_signal_id}
+              </span>
+            )}
+            {rec.bridge_stage && (
+              <span className="break-all">
+                <span className="opacity-70">bridge:</span> {rec.bridge_stage}
+                {rec.bridge_reason ? `/${rec.bridge_reason}` : ""}
+              </span>
+            )}
           </div>
         </details>
       )}
@@ -1136,10 +1161,10 @@ function TriageStrip({ records }: { records: EnvelopeRecord[] }) {
   return (
     <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
       <Kpi
-        label="Heute akzeptiert"
+        label="Heute gespeichert"
         value={counts.accepted}
-        sub="erfolgreich verarbeitet"
-        tone="pos"
+        sub="geparst, nicht automatisch ausgeführt"
+        tone="info"
         size="lg"
       />
       <Kpi
