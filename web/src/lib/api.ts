@@ -439,6 +439,13 @@ export type PriorityGateSummary = {
   filled_total?: number;
   top_reject_reason?: string | null;
   threshold_effect?: string;
+  // Loop-heartbeat truth: backend (dashboard.py) distinguishes "gate blocking
+  // actively" from "loop possibly down". 0 filled must NEVER read as healthy
+  // when the loop cannot be proven alive.
+  heartbeat_status?: "active" | "active_blocking" | "stale" | "unknown" | string;
+  heartbeat_warning?: string | null;
+  loop_audit_present?: boolean;
+  loop_audit_freshness?: string;
   priority_quality?: {
     high_priority_lift_pct?: number | null;
     high_priority_resolved?: number | null;

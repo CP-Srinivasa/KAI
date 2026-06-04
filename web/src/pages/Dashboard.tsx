@@ -13,6 +13,7 @@ import { RegimeStatusPanel } from "@/components/panels/RegimeStatusPanel";
 import { PreparedPanel } from "@/components/panels/PreparedPanel";
 import { LivePortfolioTiles } from "@/components/panels/LivePortfolioTiles";
 import { ReentryGatePanel } from "@/components/panels/ReentryGatePanel";
+import { TruthStatusBar } from "@/components/panels/TruthStatusBar";
 import { SignalHeatmapPanel } from "@/components/panels/SignalHeatmap";
 import { AgentsStatusCard } from "@/components/panels/AgentsStatusCard";
 import { TimerHealthCard } from "@/components/panels/TimerHealthCard";
@@ -138,6 +139,17 @@ export function Dashboard() {
           </div>
         </Card>
       )}
+
+      {/* Wahrheitsstatus — kompakte Truth-Layer-Leiste (DALI 2026-06-04).
+          Macht historical/24h/read-only/blocked/unproven auf einen Blick sichtbar. */}
+      <PanelErrorBoundary name="Wahrheitsstatus">
+        <TruthStatusBar
+          quality={data}
+          regime={regime}
+          priorityGate={priorityGate}
+          qualityState={q.state}
+        />
+      </PanelErrorBoundary>
 
       {/* KAI LIVE — Persona non grata. Hero-Strip per DALI-Audit 2026-05-03. */}
       {kai.state === "ready" && (

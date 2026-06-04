@@ -17,6 +17,8 @@ type Props = {
 
 type QualityTone = "pos" | "neg" | "neutral";
 
+type RowTag = { text: string; tone: "warn" | "neg" | "muted" | "info" };
+
 type Row = {
   key: string;
   label: string;
@@ -24,6 +26,8 @@ type Row = {
   value: string;
   tone: QualityTone;
   hint: string;
+  /** Kleiner Status-Tag rechts neben dem Label (z.B. INSUFFICIENT, TAGGING VOLUME). */
+  tag?: RowTag;
 };
 
 function fmtPct(v: number | null | undefined): string {
@@ -35,6 +39,19 @@ function fmtOptionalPct(v: number | null | undefined, missing: string): string {
 }
 
 function buildRows(data: DashboardQuality): Row[] {
+  // DALI Truth-Sprint 2026-06-04: High-P ist nur dann "gut", wenn der
+  // Priority-Tier-Lift positiv UND belegt ist — sonst ist die Priorisierung
+  // nicht validiert. Low-P ohne Stichprobe = insufficient, nicht nacktes "-".
+  const lift = data.priority_tier_lift_pct;
+  const liftProven = lift != null && lift > 0;
+  const lowPInsufficient = data.low_priority_hit_rate_pct == null;
+
+  const highTag: RowTag | undefined = liftProven
+    ? undefined
+    : lift != null && lift <= 0
+      ? { text: "Lift ≤0", tone: "neg" }
+      : { text: "unbewiesen", tone: "warn" };
+
   return [
     {
       key: "actionable",
@@ -42,7 +59,8 @@ function buildRows(data: DashboardQuality): Row[] {
       sub: "Anteil verwertbarer Signale",
       value: fmtPct(data.actionable_rate_pct),
       tone: "neutral",
-      hint: "Anteil aller eingehenden Signale, die nach den Filtern als handelbar eingestuft wurden. Hohe Quote = viele Signale schaffen es durch die Quality-Gates. Sehr hohe Quote kann auch heissen: Gates zu locker.",
+      tag: { text: "kontext", tone: "muted" },
+      hint: "Anteil aller eingehenden Signale, die nach den Filtern als handelbar eingestuft wurden. Hohe Quote = viele Signale schaffen es durch die Quality-Gates. ACHTUNG: Eine sehr hohe Rate kann auch lockere Gates bedeuten, nicht bessere Qualitaet.",
     },
     {
       key: "fp",
@@ -57,8 +75,10 @@ function buildRows(data: DashboardQuality): Row[] {
       label: "High-Priority Hit Rate",
       sub: "Treffer der wichtigsten Signale",
       value: fmtPct(data.high_priority_hit_rate_pct),
-      tone: "pos",
-      hint: "Trefferquote der hoechsten Prioritaetsstufe (groesste Confluence, staerkste Source-Mix). Sollte deutlich ueber der Low-P-Quote liegen, sonst ist die Priorisierung kaputt.",
+      // Nur pos, wenn Lift belegt — sonst neutral mit Warn-Tag.
+      tone: liftProven ? "pos" : "neutral",
+      tag: highTag,
+      hint: "Trefferquote der hoechsten Prioritaetsstufe (groesste Confluence, staerkste Source-Mix). Nur positiv zu lesen, wenn der Priority-Tier-Lift positiv und belegt ist — sonst ist die Priorisierung nicht validiert.",
     },
     {
       key: "lo-hit",
@@ -66,6 +86,7 @@ function buildRows(data: DashboardQuality): Row[] {
       sub: "Treffer der schwaecheren Signale",
       value: fmtOptionalPct(data.low_priority_hit_rate_pct, "insufficient"),
       tone: "neutral",
+      tag: lowPInsufficient ? { text: "insufficient", tone: "warn" } : undefined,
       hint: "Trefferquote der niedrigeren Prioritaetsstufen. Wenn hier insufficient steht, gibt es keine belastbare Low-P-Stichprobe; die Priorisierung darf dann nicht als validiert gelten.",
     },
     {
@@ -74,7 +95,8 @@ function buildRows(data: DashboardQuality): Row[] {
       sub: "Long/Short-tagged Quellen heute",
       value: String(data.directional_count),
       tone: "neutral",
-      hint: "Wieviele Quelldokumente heute eine Richtung (Long/Short) bekommen haben. Indikator fuer das Tagging-Volumen, nicht fuer Qualitaet.",
+      tag: { text: "tagging volume", tone: "muted" },
+      hint: "Wieviele Quelldokumente heute eine Richtung (Long/Short) bekommen haben. Dies ist ein Tagging-VOLUMEN, kein Qualitaets-Indikator.",
     },
   ];
 }
@@ -101,9 +123,22 @@ function SignalQualityCardImpl({ data, state, generatedAt }: Props) {
           {rows.map((r) => (
             <div key={r.key} className="flex items-start justify-between gap-3 py-2 first:pt-0 last:pb-0">
               <div className="min-w-0">
-                <div className="flex items-center gap-1.5 text-xs text-fg">
+                <div className="flex items-center gap-1.5 text-xs text-fg flex-wrap">
                   <span className="font-medium">{r.label}</span>
                   <InfoHint label={r.label} hint={r.hint} />
+                  {r.tag && (
+                    <span
+                      className={cn(
+                        "rounded-xs border px-1 py-0 text-[9px] font-mono uppercase tracking-wider",
+                        r.tag.tone === "neg" && "border-neg/40 bg-neg/10 text-neg",
+                        r.tag.tone === "warn" && "border-warn/40 bg-warn/10 text-warn",
+                        r.tag.tone === "info" && "border-info/40 bg-info/10 text-info",
+                        r.tag.tone === "muted" && "border-line bg-bg-2 text-fg-subtle",
+                      )}
+                    >
+                      {r.tag.text}
+                    </span>
+                  )}
                 </div>
                 <div className="text-2xs text-fg-subtle leading-snug mt-0.5">{r.sub}</div>
               </div>
