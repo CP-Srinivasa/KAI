@@ -23,6 +23,13 @@ function fmtModifier(value: number): string {
   return String(value);
 }
 
+function healthTone(status: string | null | undefined): Tone {
+  if (status === "critical") return "neg";
+  if (status === "warning" || status === "stale") return "warn";
+  if (status === "ok") return "pos";
+  return "muted";
+}
+
 const DOT: Record<Tone, string> = {
   pos: "bg-pos",
   warn: "bg-warn",
@@ -88,6 +95,8 @@ export function SourceReliabilityPanel({ data }: { data: DashboardQuality | null
   const riskSources = (tierCounts.low ?? 0) + (tierCounts.watch ?? 0);
   const topSources = rel.top_sources ?? [];
   const unknown = rel.unknown_bucket;
+  const statusTone = healthTone(rel.quality_status);
+  const trustedCount = rel.trusted_count ?? tierCounts.trusted ?? 0;
 
   return (
     <Card padded>
@@ -108,14 +117,21 @@ export function SourceReliabilityPanel({ data }: { data: DashboardQuality | null
           " Tage"
         }
         right={
-          <Badge tone={riskSources > 0 ? "warn" : rel.source_count > 0 ? "pos" : "muted"} dot>
-            {riskSources} riskant
+          <Badge tone={statusTone} dot>
+            {rel.quality_status ?? "unverified"}
           </Badge>
         }
       />
 
+      {rel.health_warning ? (
+        <div className="mb-3 rounded-sm border border-warn/30 bg-warn/10 px-3 py-2 text-2xs font-mono text-warn">
+          {trustedCount === 0 ? "0 trusted Quellen - " : ""}
+          {rel.health_warning}
+        </div>
+      ) : null}
+
       <div className="grid grid-cols-3 gap-2">
-        <MiniStat label="trusted" value={tierCounts.trusted ?? 0} tone="pos" />
+        <MiniStat label="trusted" value={trustedCount} tone={trustedCount > 0 ? "pos" : "warn"} />
         <MiniStat label="watch/low" value={riskSources} tone={riskSources > 0 ? "warn" : "muted"} />
         <MiniStat label="insuff." value={tierCounts.insufficient ?? 0} tone="muted" />
       </div>

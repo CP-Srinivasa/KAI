@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 import logging
 import time
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, cast
 
@@ -69,6 +69,10 @@ _provenance_cache: dict[str, Any] = {"at": 0.0, "payload": None}
 _SOURCE_MAP_TTL_S = 300.0
 _source_map_cache: dict[str, Any] = {"at": 0.0, "map": None}
 
+_REENTRY_TARGET_DATE = "2026-05-16"
+_ARTIFACT_STALE_WARNING_HOURS = 3.0
+_ARTIFACT_STALE_CRITICAL_HOURS = 24.0
+
 
 def _warn_on_audit_stream_issues(result: AuditStreamReadResult) -> None:
     if not result.issues:
@@ -105,6 +109,124 @@ def _load_jsonl(path: Path, tail: int = 0) -> list[dict[str, Any]]:
     return rows[-tail:] if tail else rows
 
 
+def _parse_iso_utc(value: object) -> datetime | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    raw = value.strip()
+    if raw.endswith("Z"):
+        raw = raw[:-1] + "+00:00"
+    try:
+        parsed = datetime.fromisoformat(raw)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
+
+
+def _artifact_updated_at(path: Path) -> str | None:
+    try:
+        return datetime.fromtimestamp(path.stat().st_mtime, UTC).isoformat()
+    except OSError:
+        return None
+
+
+def _artifact_stale_status(path: Path, *, now: datetime | None = None) -> str:
+    updated_at = _artifact_updated_at(path)
+    if updated_at is None:
+        return "unverified"
+    updated_dt = _parse_iso_utc(updated_at)
+    if updated_dt is None:
+        return "unverified"
+    age_hours = ((now or datetime.now(UTC)) - updated_dt).total_seconds() / 3600.0
+    if age_hours >= _ARTIFACT_STALE_CRITICAL_HOURS:
+        return "stale"
+    if age_hours >= _ARTIFACT_STALE_WARNING_HOURS:
+        return "warning"
+    return "ok"
+
+
+def _first_present_ts(row: dict[str, Any], keys: tuple[str, ...]) -> datetime | None:
+    for key in keys:
+        parsed = _parse_iso_utc(row.get(key))
+        if parsed is not None:
+            return parsed
+    return None
+
+
+def _reentry_status(*, target_date: str = _REENTRY_TARGET_DATE) -> dict[str, Any]:
+    now = datetime.now(UTC)
+    target = _parse_iso_utc(f"{target_date}T00:00:00+00:00")
+    if target is None:
+        return {
+            "target_date": target_date,
+            "today": now.date().isoformat(),
+            "status": "unverified",
+            "days_delta": None,
+            "warning": "Re-Entry target date is not parseable.",
+        }
+    delta_days = (target.date() - now.date()).days
+    if delta_days < 0:
+        return {
+            "target_date": target_date,
+            "today": now.date().isoformat(),
+            "status": "expired",
+            "days_delta": delta_days,
+            "warning": (
+                "Historical Re-Entry target has expired; current readiness needs a new "
+                "target or gate definition."
+            ),
+        }
+    return {
+        "target_date": target_date,
+        "today": now.date().isoformat(),
+        "status": "active",
+        "days_delta": delta_days,
+        "warning": None,
+    }
+
+
+def _metric_contract(
+    *,
+    value: object,
+    unit: str,
+    semantic_type: str,
+    scope: str,
+    source_artifact: Path,
+    generated_at: str,
+    window_hours: int | None = None,
+    since: str | None = None,
+    until: str | None = None,
+    sample_size: int | None = None,
+    is_decision_relevant: bool = False,
+    is_read_only: bool = True,
+    quality_status: str = "ok",
+    warning: str | None = None,
+    explanation: str | None = None,
+    confidence_interval: dict[str, float | None] | None = None,
+) -> dict[str, Any]:
+    return {
+        "value": value,
+        "unit": unit,
+        "semantic_type": semantic_type,
+        "scope": scope,
+        "window_hours": window_hours,
+        "since": since,
+        "until": until,
+        "generated_at": generated_at,
+        "source_artifact": str(source_artifact),
+        "source_artifact_updated_at": _artifact_updated_at(source_artifact),
+        "stale_status": _artifact_stale_status(source_artifact),
+        "sample_size": sample_size,
+        "confidence_interval": confidence_interval,
+        "is_decision_relevant": is_decision_relevant,
+        "is_read_only": is_read_only,
+        "quality_status": quality_status,
+        "warning": warning,
+        "explanation": explanation,
+    }
+
+
 def _pct_fraction(value: object) -> float | None:
     if not isinstance(value, (int, float)):
         return None
@@ -116,6 +238,9 @@ def _empty_source_reliability(status: str) -> dict[str, Any]:
         "status": status,
         "generated_at": None,
         "window_days": None,
+        "quality_status": "unverified",
+        "health_warning": "source_reliability.json is not available.",
+        "trusted_count": 0,
         "source_count": 0,
         "tier_counts": {},
         "top_sources": [],
@@ -161,11 +286,39 @@ def _load_source_reliability_summary() -> dict[str, Any]:
         (score for score in scores if str(score.get("source_name", "")).lower() == "unknown"),
         None,
     )
+    trusted_count = tier_counts.get("trusted", 0)
+    low_count = tier_counts.get("low", 0)
+    generated_at = payload.get("generated_at")
+    generated_dt = _parse_iso_utc(generated_at)
+    stale = False
+    if generated_dt is not None:
+        stale = (datetime.now(UTC) - generated_dt).total_seconds() > 36 * 3600
+    unknown_low = bool(unknown_bucket and unknown_bucket.get("tier") == "low")
+    quality_status = "ok"
+    health_warning = None
+    if stale:
+        quality_status = "stale"
+        health_warning = "Source-Reliability report is older than 36h."
+    elif trusted_count == 0 and low_count > 0:
+        quality_status = "warning"
+        health_warning = (
+            "No trusted source currently exists; source reliability is a quality constraint, "
+            "not a positive readiness signal."
+        )
+    if unknown_low:
+        quality_status = "critical" if trusted_count == 0 else "warning"
+        health_warning = (
+            "Unknown/legacy bucket is low quality; active and legacy source evidence must stay "
+            "separated."
+        )
     return {
         "status": "ok",
-        "generated_at": payload.get("generated_at"),
+        "generated_at": generated_at,
         "window_days": payload.get("window_days"),
         "thresholds": payload.get("thresholds", {}),
+        "quality_status": quality_status,
+        "health_warning": health_warning,
+        "trusted_count": trusted_count,
         "source_count": len(scores),
         "tier_counts": tier_counts,
         "top_sources": scores[:8],
@@ -349,6 +502,41 @@ async def dashboard_quality_api() -> JSONResponse:
             r.get("quantity", 0.0)
         )
 
+    generated_at = str(report.get("generated_at", datetime.now(UTC).isoformat()))
+    now_utc = datetime.now(UTC)
+    rolling_window_hours = 24
+    rolling_start = now_utc - timedelta(hours=rolling_window_hours)
+    close_ts_keys = (
+        "closed_at",
+        "timestamp_utc",
+        "filled_at",
+        "executed_at",
+        "created_at",
+        "updated_at",
+    )
+    fill_ts_keys = ("filled_at", "timestamp_utc", "created_at", "executed_at")
+    recent_closes = [
+        r
+        for r in closes
+        if (ts := _first_present_ts(r, close_ts_keys)) is not None
+        and ts >= rolling_start
+    ]
+    recent_fills = [
+        r
+        for r in fills
+        if (ts := _first_present_ts(r, fill_ts_keys)) is not None
+        and ts >= rolling_start
+    ]
+    recent_pnl_usd = round(sum(_close_pnl(r) for r in recent_closes), 2)
+    pnl_values = [_close_pnl(r) for r in closes]
+    wins = [pnl for pnl in pnl_values if pnl > 0]
+    losses = [pnl for pnl in pnl_values if pnl < 0]
+    decided_closes = len(wins) + len(losses)
+    expectancy = round(sum(pnl_values) / len(pnl_values), 2) if pnl_values else None
+    win_rate = round(len(wins) / decided_closes * 100.0, 2) if decided_closes else None
+    avg_win = round(sum(wins) / len(wins), 2) if wins else None
+    avg_loss = round(sum(losses) / len(losses), 2) if losses else None
+
     realized_pnl_usd = round(sum(_close_pnl(r) for r in closes), 2)
     quarantined_pnl_usd = round(sum(_close_pnl(r) for r in quarantined_closes_list), 2)
     positions_closed = sum(1 for r in closes if r.get("event_type") == "position_closed")
@@ -391,8 +579,107 @@ async def dashboard_quality_api() -> JSONResponse:
             logger.warning("audit_v1_disqualified_flag_unreadable: %s", exc)
             audit_provenance = {"error": "flag_unreadable"}
 
+    reentry = _reentry_status()
+    source_reliability = _load_source_reliability_summary()
+    metric_contract = {
+        "paper_fills_with_pnl": _metric_contract(
+            value=positions_closed + positions_partial_closed,
+            unit="count",
+            semantic_type="paper_closed_trade_activity",
+            scope="cutoff_since" if audit_provenance else "lifetime",
+            since=(
+                str(audit_provenance.get("cut_off_ts_utc"))
+                if isinstance(audit_provenance, dict) and audit_provenance.get("cut_off_ts_utc")
+                else None
+            ),
+            until=generated_at,
+            generated_at=generated_at,
+            source_artifact=_PAPER_EXECUTION_AUDIT,
+            sample_size=positions_closed + positions_partial_closed,
+            quality_status="historical_only",
+            warning=(
+                "Historical/cutoff paper close count; not a rolling-24h execution-success metric."
+            ),
+            explanation=(
+                "This proves historical paper activity only. Current execution state comes from "
+                "/dashboard/api/priority-gate."
+            ),
+        ),
+        "paper_fills_recent_24h": _metric_contract(
+            value=len(recent_fills),
+            unit="count",
+            semantic_type="paper_fill_activity",
+            scope="rolling_24h",
+            window_hours=rolling_window_hours,
+            since=rolling_start.isoformat(),
+            until=now_utc.isoformat(),
+            generated_at=generated_at,
+            source_artifact=_PAPER_EXECUTION_AUDIT,
+            sample_size=len(recent_fills),
+            quality_status="warning" if len(recent_fills) == 0 else "ok",
+            warning=(
+                "No paper fills were observed in the rolling 24h window."
+                if len(recent_fills) == 0
+                else None
+            ),
+        ),
+        "priority_tier_lift_pct": _metric_contract(
+            value=quality.get("priority_tier_lift_pct"),
+            unit="percentage_points",
+            semantic_type="priority_quality_lift",
+            scope="cutoff_since",
+            generated_at=generated_at,
+            source_artifact=_ALERT_AUDIT,
+            sample_size=(
+                int(quality.get("priority_tier_high_conviction_resolved") or 0)
+                + int(quality.get("priority_tier_standard_resolved") or 0)
+            ),
+            confidence_interval=None,
+            is_decision_relevant=True,
+            quality_status=(
+                "critical"
+                if isinstance(quality.get("priority_tier_lift_pct"), (int, float))
+                and float(quality.get("priority_tier_lift_pct")) < 0
+                else "warning"
+            ),
+            warning=(
+                "High-priority is not outperforming standard priority; do not present it as a "
+                "validated quality label."
+            ),
+            explanation="P10 hit-rate minus P7-P9 hit-rate.",
+        ),
+        "market_regime": _metric_contract(
+            value="read_only",
+            unit="state",
+            semantic_type="market_context",
+            scope="snapshot",
+            generated_at=generated_at,
+            source_artifact=Path("artifacts/regime_state"),
+            is_decision_relevant=False,
+            is_read_only=True,
+            quality_status="read_only",
+            warning="Market regime is diagnostic only and does not gate trades or risk yet.",
+        ),
+        "source_reliability": _metric_contract(
+            value=source_reliability.get("trusted_count", 0),
+            unit="trusted_sources",
+            semantic_type="source_quality_health",
+            scope="rolling_90d",
+            generated_at=generated_at,
+            source_artifact=_SOURCE_RELIABILITY_REPORT,
+            sample_size=source_reliability.get("source_count", 0),
+            is_decision_relevant=True,
+            quality_status=str(source_reliability.get("quality_status", "unverified")),
+            warning=source_reliability.get("health_warning"),
+            explanation="Wilson-based source tiers consumed by eligibility priority modifiers.",
+        ),
+    }
+
     return JSONResponse(
         content={
+            "dashboard_truth_contract_version": 1,
+            "metric_contract": metric_contract,
+            "reentry": reentry,
             "precision_pct": quality.get("resolved_precision_pct"),
             "false_positive_pct": quality.get("resolved_false_positive_rate_pct"),
             "resolved_count": hit_rate.get("resolved_directional_documents", 0),
@@ -442,6 +729,35 @@ async def dashboard_quality_api() -> JSONResponse:
             "paper_quarantined_closes": len(quarantined_closes_list),
             "paper_positions_closed": positions_closed,
             "paper_positions_partial_closed": positions_partial_closed,
+            "paper_evidence": {
+                "scope": "cutoff_since" if audit_provenance else "lifetime",
+                "since": metric_contract["paper_fills_with_pnl"]["since"],
+                "until": generated_at,
+                "window_hours": rolling_window_hours,
+                "fills_total": len(fills),
+                "fills_recent_24h": len(recent_fills),
+                "closed_total": positions_closed + positions_partial_closed,
+                "closed_recent_24h": len(recent_closes),
+                "realized_pnl_total_usd": realized_pnl_usd,
+                "realized_pnl_recent_24h_usd": recent_pnl_usd,
+                "expectancy_usd": expectancy,
+                "win_rate_pct": win_rate,
+                "avg_win_usd": avg_win,
+                "avg_loss_usd": avg_loss,
+                "fees_slippage_included": "partial",
+                "source_artifact": str(_PAPER_EXECUTION_AUDIT),
+                "source_artifact_updated_at": _artifact_updated_at(_PAPER_EXECUTION_AUDIT),
+                "stale_status": _artifact_stale_status(_PAPER_EXECUTION_AUDIT),
+                "quality_status": (
+                    "warning"
+                    if not pnl_values or expectancy is None or expectancy <= 0
+                    else "historical_only"
+                ),
+                "warning": (
+                    "Paper fill count is historical/cutoff evidence; rolling execution is reported "
+                    "separately by priority-gate."
+                ),
+            },
             "audit_v1_disqualified": audit_v1_disqualified,
             "audit_provenance": audit_provenance,
             "paper_cycles": paper.get("loop_metrics", {}).get("total_cycles", 0),
@@ -458,7 +774,7 @@ async def dashboard_quality_api() -> JSONResponse:
             "per_source_active_precision": report.get("per_source_active_precision", {}),
             # V-DB4e 2026-05-08: Per-source rolling 30-day stability windows.
             "per_source_stability": report.get("per_source_stability", {}),
-            "source_reliability": _load_source_reliability_summary(),
+            "source_reliability": source_reliability,
             "recent_alerts": [
                 {
                     "doc_id": r.get("document_id", "")[:12],
@@ -470,7 +786,7 @@ async def dashboard_quality_api() -> JSONResponse:
                 }
                 for r in reversed(recent_alerts)
             ],
-            "generated_at": report.get("generated_at", ""),
+            "generated_at": generated_at,
         },
         headers={"Cache-Control": "no-store, max-age=0"},
     )
@@ -494,8 +810,58 @@ async def dashboard_priority_gate_api() -> JSONResponse:
             content={"error": "priority_gate_unavailable", "detail": str(exc)},
             status_code=503,
         )
+    payload = summary.to_json_dict()
+    rejected_total = summary.priority_rejected + summary.other_rejected
+    payload["rejected_total"] = rejected_total
+    payload["rejected_pct"] = (
+        round(rejected_total / summary.total_cycles * 100.0, 2) if summary.total_cycles else 0.0
+    )
+    payload["filled_total"] = summary.completed
+    payload["top_reject_reason"] = (
+        "below_priority_threshold"
+        if summary.priority_rejected >= summary.other_rejected and summary.priority_rejected > 0
+        else ("other_rejected" if summary.other_rejected > 0 else None)
+    )
+    payload["threshold_effect"] = (
+        "active_blocking"
+        if summary.gate_active and summary.priority_rejected > 0
+        else "no_recent_fill"
+    )
+    try:
+        report = await _live_hold_report()
+        quality = report.get("signal_quality_validation", {})
+        lift = quality.get("priority_tier_lift_pct")
+        high_n = quality.get("priority_tier_high_conviction_resolved")
+        standard_n = quality.get("priority_tier_standard_resolved")
+        if not isinstance(lift, (int, float)):
+            verdict = "insufficient_data"
+        elif float(lift) < 0:
+            verdict = "priority_underperforming"
+        elif high_n and standard_n:
+            verdict = "priority_validated"
+        else:
+            verdict = "priority_unproven"
+        payload["priority_quality"] = {
+            "high_priority_lift_pct": lift,
+            "high_priority_resolved": high_n,
+            "standard_resolved": standard_n,
+            "current_quality_verdict": verdict,
+            "warning": (
+                "Priority gate is blocking conservatively, but High-P is not a validated "
+                "quality label in the current evidence window."
+                if verdict in {"priority_underperforming", "priority_unproven", "insufficient_data"}
+                else None
+            ),
+        }
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("priority_quality_load_failed: %s", exc)
+        payload["priority_quality"] = {
+            "high_priority_lift_pct": None,
+            "current_quality_verdict": "unverified",
+            "warning": "Priority quality evidence could not be loaded.",
+        }
     return JSONResponse(
-        content=summary.to_json_dict(),
+        content=payload,
         headers={"Cache-Control": "no-store, max-age=0"},
     )
 
@@ -684,10 +1050,13 @@ async def dashboard_regime_api() -> JSONResponse:
     JSONL → asset is omitted from ``by_asset`` (the tile shows a "noch keine
     Klassifikation"-empty-state).
     """
-    from app.regime.storage import latest_regime_snapshot
+    from app.regime.storage import latest_regime_snapshot, resolve_regime_path
 
     by_asset: dict[str, dict[str, Any]] = {}
+    by_asset_meta: dict[str, dict[str, Any]] = {}
+    now = datetime.now(UTC)
     for asset in _REGIME_DASHBOARD_ASSETS:
+        artifact_path = resolve_regime_path(asset)
         try:
             snap = latest_regime_snapshot(asset)
         except Exception as exc:  # noqa: BLE001 — never break the dashboard
@@ -695,11 +1064,39 @@ async def dashboard_regime_api() -> JSONResponse:
             continue
         if snap is not None:
             by_asset[asset] = snap.to_json_dict()
+            snap_dt = _parse_iso_utc(snap.timestamp)
+            age_hours = (
+                round((now - snap_dt).total_seconds() / 3600.0, 2) if snap_dt is not None else None
+            )
+            by_asset_meta[asset] = {
+                "source_artifact": str(artifact_path),
+                "source_artifact_updated_at": _artifact_updated_at(artifact_path),
+                "snapshot_timestamp": snap.timestamp,
+                "snapshot_age_hours": age_hours,
+                "stale_status": (
+                    "unverified"
+                    if age_hours is None
+                    else (
+                        "stale"
+                        if age_hours >= _ARTIFACT_STALE_CRITICAL_HOURS
+                        else ("warning" if age_hours >= _ARTIFACT_STALE_WARNING_HOURS else "ok")
+                    )
+                ),
+                "is_read_only": True,
+                "is_decision_relevant": False,
+                "quality_status": "read_only",
+                "warning": "Read-only diagnosis; does not influence trades, gates, or risk.",
+            }
 
     return JSONResponse(
         content={
-            "generated_at": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "generated_at": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
+            "semantic_status": "read_only",
+            "is_read_only": True,
+            "is_decision_relevant": False,
+            "warning": "Market regime is diagnostic only; no gate/risk integration is active.",
             "by_asset": by_asset,
+            "by_asset_metadata": by_asset_meta,
         },
         headers={"Cache-Control": "no-store, max-age=0"},
     )

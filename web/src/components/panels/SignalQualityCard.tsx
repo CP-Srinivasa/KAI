@@ -30,6 +30,10 @@ function fmtPct(v: number | null | undefined): string {
   return v != null ? v.toFixed(2) + "%" : "-";
 }
 
+function fmtOptionalPct(v: number | null | undefined, missing: string): string {
+  return v != null ? v.toFixed(2) + "%" : missing;
+}
+
 function buildRows(data: DashboardQuality): Row[] {
   return [
     {
@@ -60,9 +64,9 @@ function buildRows(data: DashboardQuality): Row[] {
       key: "lo-hit",
       label: "Low-Priority Hit Rate",
       sub: "Treffer der schwaecheren Signale",
-      value: fmtPct(data.low_priority_hit_rate_pct),
+      value: fmtOptionalPct(data.low_priority_hit_rate_pct, "insufficient"),
       tone: "neutral",
-      hint: "Trefferquote der niedrigeren Prioritaetsstufen. Dient als Baseline-Vergleich: wenn Low-P fast so gut wie High-P, leistet die Priorisierung wenig.",
+      hint: "Trefferquote der niedrigeren Prioritaetsstufen. Wenn hier insufficient steht, gibt es keine belastbare Low-P-Stichprobe; die Priorisierung darf dann nicht als validiert gelten.",
     },
     {
       key: "dir-docs",
