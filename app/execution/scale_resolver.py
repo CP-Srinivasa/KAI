@@ -33,10 +33,14 @@ from app.market_data.service import get_market_data_snapshot
 
 logger = logging.getLogger(__name__)
 
-# Power-of-ten bands we recognise. Small-cap premium-channel ticks use the
-# full 1e1..1e8 ladder; the tolerance guard below keeps 2x/3x drift from being
-# silently treated as a scale factor.
-_RECOGNISED_SCALES = (1.0, 1e1, 1e2, 1e3, 1e4, 1e5, 1e6, 1e7, 1e8)
+# Power-of-ten bands we recognise. 1e1 and 1e2 are intentionally NOT included:
+# a 10× or 100× drift is far more likely a parsing error than a genuine scale
+# ladder, and silently rescaling it would book wrong PnL in the reconciler.
+# The documented sub-cent tick format uses large factors (1e3..1e8, e.g.
+# "32450" = $0.0003245 ≈ 1e8). Out-of-band ratios fall through to 1.0 → the
+# reconciler then routes them to requires_scale_review (no PnL). Re-add 1e1/1e2
+# only with verified channel examples that actually post 10×/100× ticks.
+_RECOGNISED_SCALES = (1.0, 1e3, 1e4, 1e5, 1e6, 1e7, 1e8)
 
 # Strict guardrail: a candidate factor is accepted only when the ratio sits
 # within ±50% of the factor. Anything looser would catch real 2× drifts.

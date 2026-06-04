@@ -68,7 +68,8 @@ def test_implausible_scale_blocks_pnl(engine: PaperExecutionEngine, tmp_path: Pa
     """Touch-Price ohne erkennbare Skala (Faktor 1.0, aber 100× über Entry) →
     requires_scale_review, KEIN PnL, Position bleibt offen."""
     _open_long(engine, "WTF/USDT", entry=1.0, qty=10.0)
-    # 250 / 1.0 → auch mit 1e2-Support implausibel außerhalb der Toleranz.
+    # 250 / 1.0 = ratio 250 → außerhalb aller erkannten Bänder (1e1/1e2 sind
+    # bewusst nicht erkannt) → Faktor 1.0 → implausibel → requires_scale_review.
     event = TargetCompletionEvent(
         symbol="WTFUSDT", display_symbol="WTF/USDT", touch_price=250.0, raw_text="🎯"
     )
