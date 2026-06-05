@@ -26,6 +26,7 @@ def _make_blocked(
     assets: list[str] | None = None,
     hours_ago: float = 12.0,
     block_reason: str = "low_precision_source",
+    directional_confidence: float | None = None,
 ) -> BlockedAlertRecord:
     ts = datetime.now(UTC) - timedelta(hours=hours_ago)
     return BlockedAlertRecord(
@@ -35,6 +36,7 @@ def _make_blocked(
         sentiment_label=sentiment,
         blocked_assets=assets or ["BTC/USDT"],
         source_name="unknown",
+        directional_confidence=directional_confidence,
     )
 
 
@@ -51,6 +53,33 @@ async def test_bullish_price_up_is_would_have_hit(tmp_path: Path) -> None:
     assert len(results) == 1
     assert results[0].outcome == "hit"
     assert "blocked:low_precision_source" in (results[0].note or "")
+
+
+async def test_low_confidence_bullish_bucket_is_machine_filterable(tmp_path: Path) -> None:
+    """D-227: 0.6-0.8 bullish low-confidence blocks become measurable."""
+    _write_blocked(
+        tmp_path,
+        _make_blocked(
+            doc_id="doc-low-conf",
+            sentiment="bullish",
+            block_reason="low_directional_confidence",
+            directional_confidence=0.68,
+        ),
+    )
+
+    with patch("app.alerts.blocked_annotator.CoinGeckoAdapter") as mock_cls:
+        adapter = mock_cls.return_value
+        adapter.get_ticker = AsyncMock(return_value=None)
+        adapter.get_price_change_between = AsyncMock(return_value=(65000.0, 66625.0, 2.5))
+        results = await auto_annotate_blocked(tmp_path, min_age_hours=6)
+
+    assert len(results) == 1
+    assert results[0].block_reason == "low_directional_confidence"
+    assert results[0].sentiment_label == "bullish"
+    assert results[0].directional_confidence == 0.68
+    persisted = load_blocked_outcomes(tmp_path)
+    assert persisted[0].block_reason == "low_directional_confidence"
+    assert persisted[0].directional_confidence == 0.68
 
 
 async def test_bearish_price_down_is_would_have_hit(tmp_path: Path) -> None:

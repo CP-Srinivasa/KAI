@@ -8,8 +8,11 @@ from pathlib import Path
 from app.alerts.blocked_audit import (
     BLOCKED_ALERTS_JSONL_FILENAME,
     BlockedAlertRecord,
+    BlockedOutcomeAnnotation,
     append_blocked_alert,
+    append_blocked_outcome,
     load_blocked_alerts,
+    load_blocked_outcomes,
 )
 
 
@@ -157,3 +160,24 @@ def test_blocked_alert_record_load_legacy_record_without_confidence(tmp_path: Pa
     loaded = load_blocked_alerts(tmp_path)
     assert len(loaded) == 1
     assert loaded[0].directional_confidence is None
+
+
+def test_blocked_outcome_persists_gate_context(tmp_path: Path):
+    """D-227: blocked outcomes must be machine-filterable by gate population."""
+    annotation = BlockedOutcomeAnnotation(
+        document_id="doc-low-conf",
+        outcome="hit",
+        asset="BTC/USDT",
+        block_reason="low_directional_confidence",
+        sentiment_label="bullish",
+        directional_confidence=0.72,
+        source_name="cointelegraph",
+    )
+    append_blocked_outcome(annotation, tmp_path)
+
+    loaded = load_blocked_outcomes(tmp_path)
+    assert len(loaded) == 1
+    assert loaded[0].block_reason == "low_directional_confidence"
+    assert loaded[0].sentiment_label == "bullish"
+    assert loaded[0].directional_confidence == 0.72
+    assert loaded[0].source_name == "cointelegraph"

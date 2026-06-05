@@ -121,6 +121,10 @@ class BlockedOutcomeAnnotation:
     annotated_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
     asset: str | None = None
     note: str | None = None
+    block_reason: str | None = None
+    sentiment_label: str | None = None
+    directional_confidence: float | None = None
+    source_name: str | None = None
 
     def to_json_dict(self) -> dict[str, object]:
         d: dict[str, object] = {
@@ -132,6 +136,14 @@ class BlockedOutcomeAnnotation:
             d["asset"] = self.asset
         if self.note is not None:
             d["note"] = self.note
+        if self.block_reason is not None:
+            d["block_reason"] = self.block_reason
+        if self.sentiment_label is not None:
+            d["sentiment_label"] = self.sentiment_label
+        if self.directional_confidence is not None:
+            d["directional_confidence"] = self.directional_confidence
+        if self.source_name is not None:
+            d["source_name"] = self.source_name
         return d
 
 
@@ -160,6 +172,10 @@ def load_blocked_outcomes(input_path: str | Path) -> list[BlockedOutcomeAnnotati
                     annotated_at=data.get("annotated_at", datetime.now(UTC).isoformat()),
                     asset=data.get("asset"),
                     note=data.get("note"),
+                    block_reason=data.get("block_reason"),
+                    sentiment_label=data.get("sentiment_label"),
+                    directional_confidence=data.get("directional_confidence"),
+                    source_name=data.get("source_name"),
                 )
             )
         except KeyError:
