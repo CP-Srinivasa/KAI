@@ -48,6 +48,34 @@ def _clamp_signed(v: float | None) -> float:
     return max(-1.0, min(1.0, float(v)))
 
 
+def _has_confidence_signal(doc: CanonicalDocument) -> bool:
+    """True iff the document carries ANY persisted confidence axis.
+
+    ``credibility_score`` and ``spam_probability`` both default to ``None``. When
+    neither is set, confidence is *not calibratable* — such a document must never
+    be treated as high-confidence (see ``_confidence_proxy`` / ``is_eligible``).
+    """
+    return doc.credibility_score is not None or doc.spam_probability is not None
+
+
+def _confidence_proxy(doc: CanonicalDocument) -> float:
+    """confidence_score proxy from the closest persisted axis.
+
+    Order: persisted ``credibility_score`` (= 1 - spam_prob), else derived from
+    ``spam_probability``. When NEITHER is persisted, confidence is unknown and we
+    return a conservative ``0.0`` — NEVER ``1.0``: an unknown score must not read
+    as maximal confidence, which would optimistically bias the very edge
+    measurement r3 exists to keep honest (CLAUDE.md: no fabricated optimistic
+    defaults). ``is_eligible`` additionally excludes such docs, so this 0.0 is a
+    defensive floor, not a signal that should reach the generator.
+    """
+    if doc.credibility_score is not None:
+        return _clamp01(doc.credibility_score)
+    if doc.spam_probability is not None:
+        return _clamp01(1.0 - _clamp01(doc.spam_probability))
+    return 0.0
+
+
 def canonical_to_analysis_result(doc: CanonicalDocument) -> AnalysisResult:
     """Reconstruct a schema-valid ``AnalysisResult`` from a stored document.
 
@@ -66,12 +94,9 @@ def canonical_to_analysis_result(doc: CanonicalDocument) -> AnalysisResult:
         sentiment_score=_clamp_signed(doc.sentiment_score),
         relevance_score=_clamp01(doc.relevance_score),
         impact_score=_clamp01(doc.impact_score),
-        # confidence_score proxy: persisted credibility_score (= 1 - spam_prob).
-        confidence_score=_clamp01(
-            doc.credibility_score
-            if doc.credibility_score is not None
-            else (1.0 - _clamp01(doc.spam_probability))
-        ),
+        # confidence_score proxy: persisted credibility/spam axis, conservative
+        # 0.0 when neither is known (never 1.0). See _confidence_proxy.
+        confidence_score=_confidence_proxy(doc),
         novelty_score=_clamp01(doc.novelty_score),
         market_scope=doc.market_scope,
         affected_assets=affected,
@@ -107,13 +132,18 @@ def is_eligible(
 ) -> tuple[bool, str]:
     """Read-only eligibility verdict. Returns (eligible, reject_reason).
 
-    Eligible = has a tradable symbol AND a directional signal. Priority gating is
-    intentionally left to the loop's existing D-182 gate (we do not bypass or
-    re-implement it). ``min_directional_confidence`` lets the driver tighten the
-    directional filter without touching the loop.
+    Eligible = has a tradable symbol AND a calibratable confidence signal AND a
+    directional signal. A document with no persisted confidence axis is excluded
+    (``no_confidence_signal``) so unknown-confidence docs never reach the
+    generator as edge candidates. Priority gating is intentionally left to the
+    loop's existing D-182 gate (we do not bypass or re-implement it).
+    ``min_directional_confidence`` lets the driver tighten the directional filter
+    without touching the loop.
     """
     if _symbol_for(doc) is None:
         return False, "no_symbol"
+    if not _has_confidence_signal(doc):
+        return False, "no_confidence_signal"
     dc = _clamp01(doc.directional_confidence)
     if dc <= min_directional_confidence:
         return False, "non_directional"
@@ -165,7 +195,14 @@ def select_pending(
     The caller marks each injected candidate via ``mark_fed`` after the loop ran.
     """
     fed = _read_fed_ids(fed_ledger_path)
-    funnel = {"seen": 0, "already_fed": 0, "no_symbol": 0, "non_directional": 0, "eligible": 0}
+    funnel = {
+        "seen": 0,
+        "already_fed": 0,
+        "no_symbol": 0,
+        "no_confidence_signal": 0,
+        "non_directional": 0,
+        "eligible": 0,
+    }
     out: list[FeedCandidate] = []
     for doc in docs:
         funnel["seen"] += 1
