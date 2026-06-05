@@ -50,7 +50,7 @@ bash scripts/paper_trading_cron.sh
 
 ```bash
 # Health + diagnostics
-python -m app.cli.main /status
+python -m app.cli.main alerts ops-status
 python -m app.cli.main alerts pending-annotations --limit 20 --min-age-hours 0
 python -m app.cli.main alerts tv4-quality-bar --output-path artifacts/ph5_hold/quality_bar_<YYYYMMDD>.json
 python -m app.cli.main alerts hold-report
