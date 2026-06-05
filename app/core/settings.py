@@ -580,6 +580,13 @@ class PremiumFastlaneSettings(BaseSettings):
     max_per_symbol_open_positions: int = Field(default=1, ge=1)
     paper_equity_usdt: float = Field(default=10000.0, gt=0.0)
 
+    # ── Backfill policy (Goal 2026-06-05 §8) ──
+    # A post-deploy backfill may re-create a retrospective paper/pending record
+    # for a premium signal that has aged past the live TTL. Default True for the
+    # 30-day window so missed signals can be reprocessed; live is never affected
+    # (the bridge is paper). Set False to make the backfill honour the live TTL.
+    backfill_ignore_ttl_for_paper: bool = Field(default=True)
+
     # ── Order / bracket policy ──
     duplicate_window_minutes: int = Field(default=180, ge=1)
     order_mode: str = Field(default="bracket_limit")

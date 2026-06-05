@@ -587,6 +587,128 @@ async def run_tick(*, price_provider: PriceProvider | None = None) -> BridgeTick
     return result
 
 
+def _select_backfill_envelopes(
+    envelope_records: list[dict[str, object]],
+    *,
+    symbols: frozenset[str] | None = None,
+    date: str | None = None,
+    envelope_ids: frozenset[str] | None = None,
+) -> list[dict[str, object]]:
+    """Pick premium signal envelopes for a retrospective backfill, regardless of
+    any prior terminal bridge stage (unlike ``_collect_pending_signals``).
+
+    Selection: accepted/ok signal envelopes. When ``envelope_ids`` is given it
+    wins. Otherwise filter by ``symbols`` (display_symbol, upper) and/or ``date``
+    (``timestamp_utc`` ISO date prefix). Per (display_symbol) the latest
+    ``*_approved`` envelope wins, else the latest raw one — so a signal that was
+    auto-approved is backfilled exactly once.
+    """
+    sym_set = {s.strip().upper() for s in symbols} if symbols else None
+    candidates: list[dict[str, object]] = []
+    for rec in envelope_records:
+        if rec.get("message_type") != "signal" or rec.get("stage") != "accepted":
+            continue
+        if rec.get("status") != "ok":
+            continue
+        env_id = rec.get("envelope_id")
+        if not isinstance(env_id, str):
+            continue
+        if envelope_ids is not None:
+            if env_id in envelope_ids:
+                candidates.append(rec)
+            continue
+        payload = rec.get("payload") if isinstance(rec.get("payload"), dict) else {}
+        disp = str(payload.get("display_symbol") or payload.get("symbol") or "").upper()
+        if sym_set is not None and disp not in sym_set:
+            continue
+        ts = rec.get("timestamp_utc")
+        if date is not None and not (isinstance(ts, str) and ts.startswith(date)):
+            continue
+        candidates.append(rec)
+
+    if envelope_ids is not None:
+        return candidates
+
+    # Dedup per display_symbol: prefer the latest ``*_approved`` envelope.
+    best: dict[str, dict[str, object]] = {}
+    for rec in candidates:
+        payload = rec.get("payload") if isinstance(rec.get("payload"), dict) else {}
+        disp = str(payload.get("display_symbol") or payload.get("symbol") or "").upper()
+        src = str(rec.get("source") or "")
+        prev = best.get(disp)
+        if prev is None:
+            best[disp] = rec
+            continue
+        prev_src = str(prev.get("source") or "")
+        prev_approved = prev_src.endswith("_approved")
+        cur_approved = src.endswith("_approved")
+        # Prefer approved over raw; among same approval-state prefer the later ts.
+        if (cur_approved and not prev_approved) or (
+            cur_approved == prev_approved
+            and str(rec.get("timestamp_utc") or "") >= str(prev.get("timestamp_utc") or "")
+        ):
+            best[disp] = rec
+    return list(best.values())
+
+
+async def backfill_run(
+    *,
+    symbols: list[str] | None = None,
+    date: str | None = None,
+    envelope_ids: list[str] | None = None,
+    ignore_ttl: bool | None = None,
+    price_provider: PriceProvider | None = None,
+) -> BridgeTickResult:
+    """Retrospectively (re)process selected premium envelopes through the bridge
+    — even ones with a prior terminal stage (Goal 2026-06-05 §7).
+
+    Idempotent: the paper-engine ``idempotency_key=opbridge:<envelope_id>`` plus
+    the per-symbol ``position_exists`` guard prevent a second fill; a re-run that
+    yields ``pending`` just rewrites the (non-terminal) pending record. ``route``
+    is always paper here (this is the paper bridge); live is never reachable.
+    """
+    settings = get_settings()
+    if not settings.execution.operator_signal_bridge_enabled:
+        return BridgeTickResult(enabled=False)
+    if ignore_ttl is None:
+        ignore_ttl = settings.premium_fastlane.backfill_ignore_ttl_for_paper
+
+    result = BridgeTickResult(enabled=True)
+    allowlist = _parse_allowlist(settings.execution.operator_signal_source_allowlist)
+    ttl_hours = settings.execution.operator_signal_ttl_hours
+    tolerance_pct = settings.execution.operator_signal_entry_tolerance_pct
+
+    envelope_records = _read_jsonl(_ENVELOPE_LOG)
+    selected = _select_backfill_envelopes(
+        envelope_records,
+        symbols=frozenset(symbols) if symbols else None,
+        date=date,
+        envelope_ids=frozenset(envelope_ids) if envelope_ids else None,
+    )
+    result.envelopes_scanned = len(selected)
+    if not selected:
+        return result
+
+    engine = get_paper_engine()
+    engine.rehydrate_from_audit()
+    risk = RiskEngine(_build_risk_limits())
+
+    for envelope in selected:
+        await _process_one(
+            envelope=envelope,
+            engine=engine,
+            risk=risk,
+            allowlist=allowlist,
+            ttl_hours=ttl_hours,
+            tolerance_pct=tolerance_pct,
+            result=result,
+            price_provider=price_provider,
+            ignore_ttl=ignore_ttl,
+        )
+
+    return result
+
+
 async def _process_one(
     *,
     envelope: dict[str, object],
@@ -597,6 +719,7 @@ async def _process_one(
     tolerance_pct: float,
     result: BridgeTickResult,
     price_provider: PriceProvider | None = None,
+    ignore_ttl: bool = False,
 ) -> None:
     envelope_id = str(envelope.get("envelope_id") or "")
     source = _extract_source(envelope)
@@ -644,10 +767,20 @@ async def _process_one(
             result.skipped_source += 1
             return
 
-    # Gate 2: TTL
+    # Gate 2: TTL. For premium-fastlane PAPER backfill (Goal 2026-06-05 §8) the
+    # operator may re-create a retrospective paper/pending record for a signal
+    # that has aged past the live TTL — ``ignore_ttl`` skips this gate and the
+    # backfill audits ``ttl_expired_but_backfill_allowed_for_paper``. Live is
+    # never affected (this is the paper bridge). Normal live ticks keep TTL.
     ts_raw = envelope.get("timestamp_utc")
     ts_str = ts_raw if isinstance(ts_raw, str) else None
-    if _ttl_exceeded(ts_str, ttl_hours):
+    if ignore_ttl and _ttl_exceeded(ts_str, ttl_hours):
+        ttl_note = base("fastlane_ttl_backfill_allowed")
+        ttl_note["event"] = "premium_fastlane_ttl_expired_but_backfill_allowed_for_paper"
+        ttl_note["ttl_hours"] = ttl_hours
+        ttl_note["origin_timestamp"] = ts_str
+        _append_bridge_audit(ttl_note)
+    elif _ttl_exceeded(ts_str, ttl_hours):
         rec = base("expired")
         rec["ttl_hours"] = ttl_hours
         _attach_lifecycle(
@@ -830,7 +963,10 @@ async def _process_one(
     # rejected mit ``long_sl_at_or_above_price`` und Bridge schrieb nur opaken
     # ``paper_engine_returned_none``. validate_scaled_signal liefert jetzt einen
     # aussagekräftigen Reason der direkt in den Trail-Audit landet.
-    from app.execution.scale_resolver import validate_scaled_signal
+    from app.execution.scale_resolver import (
+        is_structural_scale_reason,
+        validate_scaled_signal,
+    )
 
     validation_reason = validate_scaled_signal(
         direction=str(direction or ""),
@@ -839,6 +975,56 @@ async def _process_one(
         targets=list(targets),
         spot=current_price,
     )
+    # Premium-Fastlane non-fatal scale-hint (Goal 2026-06-05 §10). A market-
+    # plausibility reason (SL at/below current spot, entry far from spot) is a
+    # *market* condition, not a scale-detection bug: for fastlane PAPER it must
+    # NOT terminally reject (forbidden ``fatal_requires_scale_review``). Instead
+    # the signal is kept as a PENDING entry and re-evaluated every tick — a
+    # not-yet-triggered breakout whose SL is currently below spot fills once the
+    # market actually breaks above the entry. Structural reasons (scale collapse,
+    # SL on the wrong side of entry, targets on the wrong side) stay terminal for
+    # everyone — they are genuine geometry errors. Live is unaffected.
+    if (
+        validation_reason is not None
+        and fl_routable
+        and not is_structural_scale_reason(validation_reason)
+    ):
+        rec = base("pending")
+        rec["reason"] = "price_outside_tolerance"
+        rec["scale_hint"] = validation_reason
+        rec["event"] = "premium_fastlane_scale_hint_nonfatal"
+        rec["scale_factor_applied"] = scale_factor
+        rec["scaled_entry"] = entry_price
+        rec["scaled_stop_loss"] = stop_loss
+        rec["scaled_targets"] = list(targets)
+        rec["current_price"] = current_price
+        rec["target_entry"] = entry_price
+        rec["executable_intent"] = _build_executable_intent(
+            envelope_id=envelope_id,
+            correlation_id=str(rec["correlation_id"]),
+            source=source,
+            payload=payload,
+            symbol=symbol,
+            side=str(side_str),
+            entry_price=entry_price,
+            stop_loss=stop_loss,
+            targets=targets,
+        ).to_dict()
+        rec["order_intent"] = rec["executable_intent"]
+        _attach_lifecycle(
+            rec,
+            final_state=OrderLifecycleState.WAITING_FOR_ENTRY,
+            states=[
+                OrderLifecycleState.RECEIVED,
+                OrderLifecycleState.PARSED,
+                OrderLifecycleState.VALIDATED,
+                OrderLifecycleState.WAITING_FOR_ENTRY,
+            ],
+            reason=f"fastlane_scale_hint:{validation_reason}",
+        )
+        _append_bridge_audit(rec)
+        result.newly_pending += 1
+        return
     if validation_reason is not None:
         rec = base("rejected_scale_review")
         rec["reason"] = validation_reason
@@ -1401,4 +1587,4 @@ async def _process_one(
     )
 
 
-__all__ = ["BridgeTickResult", "run_tick"]
+__all__ = ["BridgeTickResult", "backfill_run", "run_tick"]
