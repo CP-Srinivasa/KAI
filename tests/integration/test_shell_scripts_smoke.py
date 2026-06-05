@@ -120,6 +120,13 @@ def test_pi_install_systemd_installs_health_units() -> None:
     assert "kai-service-watchdog.timer" in text
 
 
+def test_pi_install_systemd_installs_blocked_auto_annotate_units() -> None:
+    text = (SCRIPTS / "pi_install_systemd.sh").read_text(encoding="utf-8")
+    assert '"kai-auto-annotate-blocked.service"' in text
+    assert '"kai-auto-annotate-blocked.timer"' in text
+    assert "kai-auto-annotate-blocked.timer" in text
+
+
 def test_pi_install_systemd_uses_external_install_command() -> None:
     text = (SCRIPTS / "pi_install_systemd.sh").read_text(encoding="utf-8")
     assert "install()" in text

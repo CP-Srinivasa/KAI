@@ -20,12 +20,24 @@ The Windows scheduled task `KAI-PaperTrading` runs every 10 min and performs:
 - `trading operator-signal-bridge-tick` (approved signals → paper fills)
 - `trading run-once` BTC/USDT + ETH/USDT (paper mode, CoinGecko)
 - Every 6th tick (~hourly): `alerts auto-annotate`
+- Systemd timer every 6h: `alerts auto-annotate-blocked` (D-227 recall proxy,
+  writes `artifacts/blocked_outcomes.jsonl` so blocked 0.6-0.8 bullish
+  low-confidence candidates become measurable before any gate change)
 - Every 4th tick (~40 min): `pipeline run-all`
 - Every 3rd tick (~30 min): `pipeline newsdata`
 - Every 12th tick (~2h): `pipeline youtube`
 - Every 6th tick (~hourly): `pipeline twitter`
 - Each tick: `tradingview run` (TV-4 bridge), `freshness_check.py`
 - First run after 08:00: `alerts daily-briefing`, `alerts health-check`, `daily-strategy bootstrap`
+
+Universe scan status: when `APP_DIVERSIFICATION_UNIVERSE_SCAN_ENABLED=true`,
+the Pi cron additionally scans a diversified candidate set after BTC/ETH.
+This is a **Shadow/Canary scan**, not a re-enable decision: candidates still
+flow through the full `run-once` gates, and recent Pi ticks show
+`priority_rejected` rather than fills. Keep `EXECUTION_ENTRY_MODE=disabled`
+until `trading edge-gate` and operator review support a change.
+Pi observation 2026-06-05: `SOL/USDT XRP/USDT ADA/USDT LINK/USDT MATIC/USDT
+BTC/USDT` were scanned; the non-core candidates were `priority_rejected`.
 
 Manual re-trigger:
 
@@ -68,6 +80,7 @@ python -m app.cli.main trading operator-signal-bridge-tick
 
 # Alerts + annotation
 python -m app.cli.main alerts auto-annotate
+python -m app.cli.main alerts auto-annotate-blocked
 python -m app.cli.main alerts annotate <document_id> <hit|miss|inconclusive>
 python -m app.cli.main alerts backfill-provenance --dry-run
 

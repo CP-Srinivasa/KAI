@@ -385,6 +385,47 @@ def test_report_marks_regime_unknown_and_insufficient():
     assert report.overall.p_mu_net_positive is None
 
 
+def test_report_surfaces_unknown_attribution_as_diagnostic_blockers():
+    trades = [
+        ClosedTrade(
+            "BTC/USDT",
+            "long",
+            100.0,
+            101.0,
+            1.0,
+            "tp",
+            0.8,
+            0.2,
+            "2026-06-01T10:00:00+00:00",
+            regime="unknown",
+            signal_source="unknown",
+        ),
+        ClosedTrade(
+            "ETH/USDT",
+            "long",
+            100.0,
+            99.0,
+            1.0,
+            "sl",
+            -1.2,
+            0.2,
+            "2026-06-01T11:00:00+00:00",
+            regime="trend_up",
+            signal_source="telegram_premium_channel_approved",
+        ),
+    ]
+
+    report = build_edge_report(trades, min_sample=2, bootstrap_n=200)
+    blockers = {b["code"]: b for b in report.to_dict()["diagnostic_blockers"]}
+
+    assert blockers["source_unknown"]["affected_count"] == 1
+    assert blockers["source_unknown"]["share"] == pytest.approx(0.5)
+    assert blockers["source_unknown"]["severity"] == "blocker"
+    assert blockers["regime_unknown"]["affected_count"] == 1
+    assert blockers["forward_return_coverage_gap"]["affected_count"] == 8
+    assert "DIAGNOSTIC BLOCKERS" in render_report(report)
+
+
 def test_report_renders_human_table_without_error():
     trades = [
         ClosedTrade(

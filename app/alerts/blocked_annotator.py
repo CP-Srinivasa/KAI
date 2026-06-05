@@ -219,6 +219,10 @@ async def auto_annotate_blocked(
             outcome=outcome,  # type: ignore[arg-type]
             asset=symbol,
             note=note,
+            block_reason=rec.block_reason,
+            sentiment_label=rec.sentiment_label,
+            directional_confidence=rec.directional_confidence,
+            source_name=rec.source_name,
         )
 
         log.info(

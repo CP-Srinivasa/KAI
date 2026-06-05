@@ -61,6 +61,8 @@ UNITS=(
     "kai-hold-report.timer"
     "kai-auto-annotate.service"
     "kai-auto-annotate.timer"
+    "kai-auto-annotate-blocked.service"
+    "kai-auto-annotate-blocked.timer"
     "kai-recalc-cycle.service"
     "kai-recalc-cycle.timer"
 )
@@ -83,6 +85,7 @@ ENABLE_ON_INSTALL=(
     "kai-service-watchdog.timer"
     "kai-hold-report.timer"
     "kai-auto-annotate.timer"
+    "kai-auto-annotate-blocked.timer"
     "kai-recalc-cycle.timer"
 )
 

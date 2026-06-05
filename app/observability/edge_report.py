@@ -543,6 +543,30 @@ def mark_to_market_open(
 # --- top-level report ----------------------------------------------------------
 
 
+@dataclass(frozen=True)
+class DiagnosticBlocker:
+    """Explicitly surface missing attribution that blocks edge root-cause work."""
+
+    code: str
+    affected_count: int
+    total_count: int
+    share: float
+    severity: str
+    detail: str
+    meta: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "code": self.code,
+            "affected_count": self.affected_count,
+            "total_count": self.total_count,
+            "share": round(self.share, 4),
+            "severity": self.severity,
+            "detail": self.detail,
+            "meta": self.meta,
+        }
+
+
 @dataclass
 class EdgeReport:
     """Typed, JSON-serialisable Sprint-C diagnostic report.
@@ -567,6 +591,7 @@ class EdgeReport:
     forward_coverage: list[ForwardCoverage]
     open_mtm: OpenMarkToMarket
     notes: list[str] = field(default_factory=list)
+    diagnostic_blockers: list[DiagnosticBlocker] = field(default_factory=list)
     excluded_quarantined: QuarantineExclusion = field(
         default_factory=lambda: QuarantineExclusion(0, {})
     )
@@ -585,6 +610,7 @@ class EdgeReport:
             "churn": [c.to_dict() for c in self.churn],
             "forward_coverage": [f.to_dict() for f in self.forward_coverage],
             "open_mtm": self.open_mtm.to_dict(),
+            "diagnostic_blockers": [b.to_dict() for b in self.diagnostic_blockers],
             "notes": self.notes,
         }
 
@@ -676,6 +702,21 @@ def build_edge_report(
             "Verdict on edge sign is NOT statistically supported yet."
         )
 
+    diagnostic_blockers = _build_diagnostic_blockers(edges, forward_cov)
+    for blocker in diagnostic_blockers:
+        if blocker.code == "source_unknown":
+            notes.append(
+                f"source attribution blocker: {blocker.affected_count}/{blocker.total_count} "
+                "closed trades have source='unknown'; generator/premium/canary edge cannot be "
+                "separated until close events carry signal_source."
+            )
+        elif blocker.code == "regime_unknown":
+            notes.append(
+                f"regime attribution blocker: {blocker.affected_count}/{blocker.total_count} "
+                "closed trades have regime='unknown'; regime-specific edge cannot be judged "
+                "until close events carry a regime stamp."
+            )
+
     excl = excluded_quarantined or QuarantineExclusion(0, {})
     if excl.excluded_count > 0:
         reason_str = ", ".join(f"{r}={c}" for r, c in sorted(excl.reasons.items()))
@@ -699,6 +740,7 @@ def build_edge_report(
         forward_coverage=forward_cov,
         open_mtm=open_mtm,
         notes=notes,
+        diagnostic_blockers=diagnostic_blockers,
         excluded_quarantined=excl,
     )
 
@@ -725,6 +767,89 @@ def _group_aggregate(
         aggregate_cohort(k, cohort_type, g, bootstrap_n=bootstrap_n, min_sample=min_sample)
         for k, g in sorted(groups.items())
     ]
+
+
+def _diagnostic_severity(share: float) -> str:
+    if share >= 0.50:
+        return "blocker"
+    if share > 0.0:
+        return "warning"
+    return "ok"
+
+
+def _unknownish(value: str | None) -> bool:
+    return (value or "").strip().lower() in {"", "unknown", "?", "none", "null"}
+
+
+def _build_diagnostic_blockers(
+    edges: Sequence[TradeEdge],
+    forward_coverage: Sequence[ForwardCoverage],
+) -> list[DiagnosticBlocker]:
+    total = len(edges)
+    blockers: list[DiagnosticBlocker] = []
+    if total > 0:
+        source_unknown = sum(1 for e in edges if _unknownish(e.signal_source))
+        if source_unknown:
+            share = source_unknown / total
+            blockers.append(
+                DiagnosticBlocker(
+                    code="source_unknown",
+                    affected_count=source_unknown,
+                    total_count=total,
+                    share=share,
+                    severity=_diagnostic_severity(share),
+                    detail=(
+                        "Closed trades without signal_source prevent source-level edge separation."
+                    ),
+                )
+            )
+
+        regime_unknown = sum(1 for e in edges if _unknownish(e.regime))
+        if regime_unknown:
+            share = regime_unknown / total
+            blockers.append(
+                DiagnosticBlocker(
+                    code="regime_unknown",
+                    affected_count=regime_unknown,
+                    total_count=total,
+                    share=share,
+                    severity=_diagnostic_severity(share),
+                    detail=(
+                        "Closed trades without regime prevent regime-specific edge diagnostics."
+                    ),
+                )
+            )
+
+    total_forward = sum(f.total for f in forward_coverage)
+    missing_forward = sum(max(f.total - f.covered, 0) for f in forward_coverage)
+    if total_forward > 0 and missing_forward > 0:
+        share = missing_forward / total_forward
+        blockers.append(
+            DiagnosticBlocker(
+                code="forward_return_coverage_gap",
+                affected_count=missing_forward,
+                total_count=total_forward,
+                share=share,
+                severity=_diagnostic_severity(share),
+                detail=(
+                    "Missing forward-return samples prevent entry-quality diagnosis on "
+                    "the uncovered horizons."
+                ),
+                meta={
+                    "horizons": [
+                        {
+                            "minutes": f.horizon_minutes,
+                            "covered": f.covered,
+                            "total": f.total,
+                            "reason": f.reason,
+                        }
+                        for f in forward_coverage
+                        if f.covered < f.total
+                    ]
+                },
+            )
+        )
+    return blockers
 
 
 # --- audit-stream loaders (thin IO at the edge) --------------------------------
@@ -984,6 +1109,14 @@ def render_report(report: EdgeReport) -> str:
             f"net={mean}  ({f.reason})"
         )
     lines.append("")
+
+    if report.diagnostic_blockers:
+        lines.append("DIAGNOSTIC BLOCKERS (root-cause visibility)")
+        lines.append(f"  {'code':<30}{'severity':>10}{'affected':>12}{'share':>9}")
+        for b in report.diagnostic_blockers:
+            affected = f"{b.affected_count}/{b.total_count}"
+            lines.append(f"  {b.code:<30}{b.severity:>10}{affected:>12}{b.share:>8.1%}")
+        lines.append("")
 
     m = report.open_mtm
     upnl = "n/a (no live price)" if m.unrealized_pnl_usd is None else f"{m.unrealized_pnl_usd:+.2f}"
