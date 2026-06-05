@@ -454,15 +454,43 @@ async def runtime_status() -> dict[str, Any]:
         blocking_reasons.append(f"entry_mode={entry_mode.value}")
     if not premium_sources_allowed:
         blocking_reasons.append("telegram_premium_channel_not_allowlisted")
-    can_open_paper_positions = not blocking_reasons
-    warning = None
-    if blocking_reasons:
+    classic_can_open_paper_positions = not blocking_reasons
+
+    # Premium-Fastlane overlay (Goal 2026-06-05). When the fastlane is active it
+    # OVERRIDES the classic premium-paper block for authentic premium signals on
+    # a non-live route: the classic blocking_reasons remain visible (they are
+    # still true for the classic path) but they are no longer the FINAL verdict.
+    from app.execution.premium_fastlane import fastlane_status
+
+    fl_status = fastlane_status(settings)
+    fastlane_overrides = bool(fl_status["overrides_classic_block"])
+    # The premium pipeline can open paper positions if EITHER the classic path is
+    # clear OR the fastlane overrides the block.
+    can_open_paper_positions = classic_can_open_paper_positions or fastlane_overrides
+
+    if fastlane_overrides:
+        warning = (
+            "Premium Fastlane aktiv — Classic Execution ist blockiert "
+            f"({', '.join(blocking_reasons) or 'keine'}); Fastlane Paper läuft "
+            f"(Route: {fl_status['route']}); Live bleibt geschützt."
+        )
+    elif fl_status["enabled"] and not fl_status["active"]:
+        warning = (
+            "Premium Fastlane aus — "
+            f"Grund: {fl_status['window_reason'] or 'inaktiv'}; "
+            "Aktion: Config prüfen (PREMIUM_FASTLANE_*)."
+        )
+    elif blocking_reasons:
         warning = "Premium Paper Execution blockiert: " + ", ".join(blocking_reasons)
+    else:
+        warning = None
+
     return {
         "entry_mode": entry_mode.value,
         "entry_mode_allows_risk_increasing_entry": entry_mode.allows_risk_increasing_entry,
         "entry_mode_blocks_premium_paper": entry_blocks,
         "can_open_paper_positions": can_open_paper_positions,
+        "classic_can_open_paper_positions": classic_can_open_paper_positions,
         "blocking_reasons": blocking_reasons,
         "premium_paper_execution_enabled": settings.premium.paper_execution_enabled,
         "premium_live_execution_enabled": settings.premium.live_execution_enabled,
@@ -477,6 +505,7 @@ async def runtime_status() -> dict[str, Any]:
         "premium_auto_fill_enabled": (settings.execution.operator_signal_premium_auto_fill_enabled),
         "live_execution_enabled": settings.execution.live_enabled,
         "execution_mode": settings.execution.mode.value,
+        "premium_fastlane": fl_status,
         "warning": warning,
     }
 

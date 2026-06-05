@@ -16,6 +16,23 @@
     {"signal": "BILL", "parsed": true, "approved": true, "bridge": "rejected_fill", "paper": "failed", "position": "none", "completion": "none", "pnl": null, "matrix": "blocked", "quality": "technical_block", "final_state": "paper_execution_failed", "error": "paper_engine_returned_none"},
     {"signal": "GUA", "parsed": true, "approved": true, "bridge": "pending", "paper": "none", "position": "none", "completion": "none", "pnl": null, "matrix": "waiting_entry", "quality": "not_executed", "final_state": "pending_entry", "error": ""}
   ],
+  "fastlane_signals": [
+    {"symbol": "APRUSDT", "display_symbol": "APR/USDT", "direction": "long", "side": "buy", "entry_type": "limit", "entry_value": 26892, "stop_loss": 25500, "targets": [28000, 29500, 31000], "leverage": 10, "chat_id": -1001234567890, "message_id": 5001, "mock_spot": 0.0269},
+    {"symbol": "USUSDT", "display_symbol": "US/USDT", "direction": "long", "side": "buy", "entry_type": "limit", "entry_value": 16790, "stop_loss": 16000, "targets": [17500, 18500], "leverage": 10, "chat_id": -1001234567890, "message_id": 5002, "mock_spot": 0.1679},
+    {"symbol": "NIGHTUSDT", "display_symbol": "NIGHT/USDT", "direction": "long", "side": "buy", "entry_type": "limit", "entry_value": 4168, "stop_loss": 4000, "targets": [4300, 4500], "leverage": 10, "chat_id": -1001234567890, "message_id": 5003, "mock_spot": 0.4168},
+    {"symbol": "CYSUSDT", "display_symbol": "CYS/USDT", "direction": "long", "side": "buy", "entry_type": "limit", "entry_value": 4869, "stop_loss": 4650, "targets": [5100, 5400], "leverage": 10, "chat_id": -1001234567890, "message_id": 5004, "mock_spot": 0.0487},
+    {"symbol": "AIOUSDT", "display_symbol": "AIO/USDT", "direction": "long", "side": "buy", "entry_type": "limit", "entry_value": 2.50, "stop_loss": 2.40, "targets": [2.65, 2.80], "leverage": 10, "chat_id": -1001234567890, "message_id": 5005, "mock_spot": 2.50},
+    {"symbol": "TRUTHUSDT", "display_symbol": "TRUTH/USDT", "direction": "long", "side": "buy", "entry_type": "limit", "entry_value": 0.85, "stop_loss": 0.80, "targets": [0.90, 0.95], "leverage": 25, "chat_id": -1001234567890, "message_id": 5006, "mock_spot": 0.85},
+    {"symbol": "BEATUSDT", "display_symbol": "BEAT/USDT", "direction": "long", "side": "buy", "entry_type": "limit", "entry_value": 7180, "stop_loss": 6900, "targets": [7500, 8000], "leverage": 10, "chat_id": -1001234567890, "message_id": 5007, "mock_spot": 0.7180},
+    {"symbol": "HANAUSDT", "display_symbol": "HANA/USDT", "direction": "long", "side": "buy", "entry_type": "limit", "entry_value": 1.20, "stop_loss": 1.12, "targets": [1.30, 1.40], "leverage": 10, "chat_id": -1001234567890, "message_id": 5008, "mock_spot": 1.20},
+    {"symbol": "PHAROSUSDT", "display_symbol": "PHAROS/USDT", "direction": "long", "side": "buy", "entry_type": "limit", "entry_value": 0.45, "stop_loss": 0.42, "targets": [0.50, 0.55], "leverage": 10, "chat_id": -1001234567890, "message_id": 5009, "mock_spot": 0.45},
+    {"symbol": "DASHUSDT", "display_symbol": "DASH/USDT", "direction": "short", "side": "sell", "entry_type": "limit", "entry_value": 35.0, "stop_loss": 37.0, "targets": [33.0, 31.0], "leverage": 10, "chat_id": -1001234567890, "message_id": 5010, "mock_spot": 35.0},
+    {"symbol": "BIRBUSDT", "display_symbol": "BIRB/USDT", "direction": "long", "side": "buy", "entry_type": "limit", "entry_value": 1230, "stop_loss": 1180, "targets": [1300, 1400], "leverage": 10, "chat_id": -1001234567890, "message_id": 5011, "mock_spot": 0.1230},
+    {"symbol": "OPGUSDT", "display_symbol": "OPG/USDT", "direction": "long", "side": "buy", "entry_type": "limit", "entry_value": 0.075, "stop_loss": 0.070, "targets": [0.082, 0.090], "leverage": 10, "chat_id": -1001234567890, "message_id": 5012, "mock_spot": 0.075},
+    {"symbol": "IRYSUSDT", "display_symbol": "IRYS/USDT", "direction": "long", "side": "buy", "entry_type": "limit", "entry_value": 5455, "stop_loss": 5200, "targets": [5800, 6200], "leverage": 10, "chat_id": -1001234567890, "message_id": 5013, "mock_spot": 0.05455},
+    {"symbol": "BILLUSDT", "display_symbol": "BILL/USDT", "direction": "long", "side": "buy", "entry_type": "limit", "entry_value": 0.030, "stop_loss": 0.028, "targets": [0.033, 0.036], "leverage": 10, "chat_id": -1001234567890, "message_id": 5014, "mock_spot": 0.040},
+    {"symbol": "GUAUSDT", "display_symbol": "GUA/USDT", "direction": "long", "side": "buy", "entry_type": "limit", "entry_value": 9999, "stop_loss": 9500, "targets": [10500, 11000], "leverage": 10, "chat_id": -1001234567890, "message_id": 5015, "mock_spot": 4.5}
+  ],
   "new_signals": [
     {
       "id": "APR_canonical_slash_long",

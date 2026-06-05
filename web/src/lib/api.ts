@@ -755,11 +755,35 @@ export function fetchPremiumSignalTrail(
 // GET /api/premium-signals/runtime — read-only Safety-Switch-Wahrheit. Erklärt,
 // warum Premium-Signale geparst/approved werden können, aber keine Position
 // öffnen (entry_mode, Bridge, Source-Allowlist, Paper/Live-Flags).
+export type PremiumFastlaneStatus = {
+  enabled: boolean;
+  active: boolean;
+  window_reason: string | null;
+  mode: string;
+  route: string;
+  duration_days: number;
+  start_date: string | null;
+  end_date: string | null;
+  days_remaining: number | null;
+  bypassed_gates: string[];
+  live_armed: boolean;
+  live_protected: boolean;
+  overrides_classic_block: boolean;
+  default_notional_usdt: number;
+  min_notional_usdt: number;
+  max_notional_usdt: number;
+  max_leverage: number;
+  max_open_positions: number;
+  paper_equity_usdt: number;
+  observe_only_metrics: string[];
+};
+
 export type PremiumRuntimeResponse = {
   entry_mode: string;
   entry_mode_allows_risk_increasing_entry: boolean;
   entry_mode_blocks_premium_paper: boolean;
   can_open_paper_positions: boolean;
+  classic_can_open_paper_positions?: boolean;
   blocking_reasons: string[];
   premium_paper_execution_enabled: boolean;
   premium_live_execution_enabled: boolean;
@@ -770,6 +794,7 @@ export type PremiumRuntimeResponse = {
   premium_auto_fill_enabled: boolean;
   live_execution_enabled: boolean;
   execution_mode: string;
+  premium_fastlane?: PremiumFastlaneStatus;
   warning: string | null;
 };
 
