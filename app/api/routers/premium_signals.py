@@ -506,6 +506,19 @@ async def runtime_status() -> dict[str, Any]:
         "live_execution_enabled": settings.execution.live_enabled,
         "execution_mode": settings.execution.mode.value,
         "premium_fastlane": fl_status,
+        # Flat structured fields (Goal 2026-06-05 §5) so the Trail/UI never has to
+        # infer Classic-Bridge behaviour when a Fastlane state exists.
+        "premium_fastlane_enabled": fl_status["enabled"],
+        "route": fl_status["route"],
+        "premium_fastlane_paper_effective_enabled": bool(
+            fl_status["enabled"]
+            and fl_status["active"]
+            and settings.premium.paper_execution_enabled
+        ),
+        "entry_mode_bypassed_for_fastlane_paper": bool(fl_status["overrides_classic_block"]),
+        "bridge_enabled": settings.execution.operator_signal_bridge_enabled,
+        "source_allowlisted": premium_sources_allowed,
+        "live_protected": fl_status["live_protected"],
         "warning": warning,
     }
 

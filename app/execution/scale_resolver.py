@@ -187,6 +187,48 @@ def validate_scaled_signal(
     return None
 
 
+# Market-plausibility reasons depend on the *current* spot, not on the signal's
+# internal scale geometry. For premium-fastlane PAPER they must NOT terminally
+# reject a signal (Goal 2026-06-05 §10): a not-yet-triggered breakout whose SL
+# sits at/below current spot, or an entry that looks far from spot, is a market
+# condition — the signal stays a pending entry and is re-evaluated each tick.
+# Structural reasons (below) indicate a genuine scale/geometry error and stay
+# terminal even for fastlane.
+_MARKET_PLAUSIBILITY_REASONS = frozenset(
+    {
+        "long_sl_at_or_above_spot",
+        "short_sl_at_or_below_spot",
+        "entry_far_from_spot",
+    }
+)
+
+# Structural reasons: the scaled geometry is internally broken (independent of
+# market price). These remain hard rejects everywhere — they catch real
+# scale-detection bugs (e.g. a collapse to zero, or SL on the wrong side of
+# entry).
+_STRUCTURAL_SCALE_REASONS = frozenset(
+    {
+        "scale_collapses_to_zero",
+        "long_sl_at_or_above_entry",
+        "short_sl_at_or_below_entry",
+        "long_targets_at_or_below_entry",
+        "short_targets_at_or_above_entry",
+    }
+)
+
+
+def is_structural_scale_reason(reason: str | None) -> bool:
+    """True when ``reason`` is a structural geometry error (terminal even for
+    fastlane). A market-plausibility reason returns False → fastlane paper may
+    keep the signal pending instead of terminally rejecting it. An unknown
+    reason is treated as structural (fail-closed)."""
+    if reason is None:
+        return False
+    if reason in _MARKET_PLAUSIBILITY_REASONS:
+        return False
+    return True
+
+
 async def resolve_scale_for_symbol(
     symbol: str,
     reference_value: float,
@@ -214,6 +256,7 @@ __all__ = [
     "apply_scale_to_payload",
     "detect_scale_factor",
     "fetch_price",
+    "is_structural_scale_reason",
     "resolve_scale_for_symbol",
     "validate_scaled_signal",
 ]
