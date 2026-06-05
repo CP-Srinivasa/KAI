@@ -39,6 +39,29 @@ class PremiumSignalState(StrEnum):
     SCALE_REJECTED = "scale_rejected"
     RISK_REJECTED = "risk_rejected"
 
+    # Premium-Fastlane states (Goal 2026-06-05 §16). Immediate-routing lane for
+    # authentic premium signals in paper/testnet/demo.
+    FASTLANE_RECEIVED = "fastlane_received"
+    FASTLANE_VALIDATED = "fastlane_validated"
+    FASTLANE_AUTO_APPROVED = "fastlane_auto_approved"
+    FASTLANE_BYPASSED_APPROVAL = "fastlane_bypassed_approval"
+    FASTLANE_BYPASSED_ALLOWLIST = "fastlane_bypassed_allowlist"
+    FASTLANE_BYPASSED_ENTRY_MODE = "fastlane_bypassed_entry_mode"
+    FASTLANE_ORDER_INTENT_CREATED = "fastlane_order_intent_created"
+    FASTLANE_ORDER_SUBMITTED = "fastlane_order_submitted"
+    FASTLANE_BRACKET_ATTACHED = "fastlane_bracket_attached"
+    FASTLANE_PENDING_ENTRY = "fastlane_pending_entry"
+    FASTLANE_POSITION_OPEN = "fastlane_position_open"
+    FASTLANE_PARTIALLY_CLOSED = "fastlane_partially_closed"
+    FASTLANE_CLOSED_TP = "fastlane_closed_tp"
+    FASTLANE_CLOSED_SL = "fastlane_closed_sl"
+    FASTLANE_CLOSED_MANUAL = "fastlane_closed_manual"
+    FASTLANE_ORPHAN_COMPLETION = "fastlane_orphan_completion"
+    FASTLANE_REQUIRES_SCALE_REVIEW = "fastlane_requires_scale_review"
+    FASTLANE_REJECTED_SCHEMA = "fastlane_rejected_schema"
+    FASTLANE_REJECTED_DUPLICATE = "fastlane_rejected_duplicate"
+    FASTLANE_REJECTED_ROUTING = "fastlane_rejected_routing"
+
 
 GREEN_STATES = frozenset(
     {
@@ -46,6 +69,9 @@ GREEN_STATES = frozenset(
         PremiumSignalState.PARTIALLY_CLOSED,
         PremiumSignalState.CLOSED_TP,
         PremiumSignalState.RECONCILED_COMPLETION,
+        PremiumSignalState.FASTLANE_POSITION_OPEN,
+        PremiumSignalState.FASTLANE_PARTIALLY_CLOSED,
+        PremiumSignalState.FASTLANE_CLOSED_TP,
     }
 )
 WARN_STATES = frozenset(
@@ -59,6 +85,18 @@ WARN_STATES = frozenset(
         PremiumSignalState.ORPHAN_COMPLETION,
         PremiumSignalState.REQUIRES_REVIEW,
         PremiumSignalState.REQUIRES_SCALE_REVIEW,
+        PremiumSignalState.FASTLANE_RECEIVED,
+        PremiumSignalState.FASTLANE_VALIDATED,
+        PremiumSignalState.FASTLANE_AUTO_APPROVED,
+        PremiumSignalState.FASTLANE_BYPASSED_APPROVAL,
+        PremiumSignalState.FASTLANE_BYPASSED_ALLOWLIST,
+        PremiumSignalState.FASTLANE_BYPASSED_ENTRY_MODE,
+        PremiumSignalState.FASTLANE_ORDER_INTENT_CREATED,
+        PremiumSignalState.FASTLANE_ORDER_SUBMITTED,
+        PremiumSignalState.FASTLANE_BRACKET_ATTACHED,
+        PremiumSignalState.FASTLANE_PENDING_ENTRY,
+        PremiumSignalState.FASTLANE_ORPHAN_COMPLETION,
+        PremiumSignalState.FASTLANE_REQUIRES_SCALE_REVIEW,
     }
 )
 RED_STATES = frozenset(
@@ -73,6 +111,10 @@ RED_STATES = frozenset(
         PremiumSignalState.MARKET_DATA_FAILED,
         PremiumSignalState.SCALE_REJECTED,
         PremiumSignalState.RISK_REJECTED,
+        PremiumSignalState.FASTLANE_CLOSED_SL,
+        PremiumSignalState.FASTLANE_REJECTED_SCHEMA,
+        PremiumSignalState.FASTLANE_REJECTED_DUPLICATE,
+        PremiumSignalState.FASTLANE_REJECTED_ROUTING,
     }
 )
 
@@ -139,6 +181,10 @@ def approval_state(record: dict[str, Any]) -> str:
 def bridge_stage_to_state(stage: str | None, reason: str | None = None) -> PremiumSignalState:
     if stage in {"filled", "filled_duplicate_suppressed"}:
         return PremiumSignalState.POSITION_OPEN
+    if stage == "fastlane_allowlist_bypassed":
+        return PremiumSignalState.FASTLANE_BYPASSED_ALLOWLIST
+    if stage == "fastlane_entry_mode_bypassed_for_paper":
+        return PremiumSignalState.FASTLANE_BYPASSED_ENTRY_MODE
     if stage == "pending":
         return PremiumSignalState.PENDING_ENTRY
     if stage == "rejected_entry_mode" or reason in {
@@ -207,6 +253,26 @@ def state_label(state: PremiumSignalState | str | None) -> str:
         PremiumSignalState.MARKET_DATA_FAILED: "Marktdaten fehlen",
         PremiumSignalState.SCALE_REJECTED: "Skalierung abgelehnt",
         PremiumSignalState.RISK_REJECTED: "Risk-Gate abgelehnt",
+        PremiumSignalState.FASTLANE_RECEIVED: "Fastlane empfangen",
+        PremiumSignalState.FASTLANE_VALIDATED: "Fastlane validiert",
+        PremiumSignalState.FASTLANE_AUTO_APPROVED: "Fastlane auto-freigegeben",
+        PremiumSignalState.FASTLANE_BYPASSED_APPROVAL: "Fastlane: Approval übersprungen",
+        PremiumSignalState.FASTLANE_BYPASSED_ALLOWLIST: "Fastlane: Allowlist übersprungen",
+        PremiumSignalState.FASTLANE_BYPASSED_ENTRY_MODE: "Fastlane: entry_mode übersprungen",
+        PremiumSignalState.FASTLANE_ORDER_INTENT_CREATED: "Fastlane Order-Intent erzeugt",
+        PremiumSignalState.FASTLANE_ORDER_SUBMITTED: "Fastlane Order gesendet",
+        PremiumSignalState.FASTLANE_BRACKET_ATTACHED: "Fastlane SL/TP-Bracket gesetzt",
+        PremiumSignalState.FASTLANE_PENDING_ENTRY: "Fastlane wartet auf Entry",
+        PremiumSignalState.FASTLANE_POSITION_OPEN: "Fastlane Position eröffnet",
+        PremiumSignalState.FASTLANE_PARTIALLY_CLOSED: "Fastlane Teilziel erreicht",
+        PremiumSignalState.FASTLANE_CLOSED_TP: "Fastlane Trade abgeschlossen",
+        PremiumSignalState.FASTLANE_CLOSED_SL: "Fastlane Stop Loss",
+        PremiumSignalState.FASTLANE_CLOSED_MANUAL: "Fastlane manuell geschlossen",
+        PremiumSignalState.FASTLANE_ORPHAN_COMPLETION: "Fastlane Completion ohne Match",
+        PremiumSignalState.FASTLANE_REQUIRES_SCALE_REVIEW: "Fastlane Skalenprüfung nötig",
+        PremiumSignalState.FASTLANE_REJECTED_SCHEMA: "Fastlane Schema abgelehnt",
+        PremiumSignalState.FASTLANE_REJECTED_DUPLICATE: "Fastlane Duplikat abgelehnt",
+        PremiumSignalState.FASTLANE_REJECTED_ROUTING: "Fastlane Routing abgelehnt",
     }[s]
 
 

@@ -490,6 +490,127 @@ class PremiumSettings(BaseSettings):
     require_manual_approval_for_live: bool = Field(default=True)
     require_manual_approval_for_paper: bool = Field(default=False)
 
+    # Live triple-flag arming token (Goal 2026-06-05 Premium-Fastlane §4). The
+    # premium-fastlane LIVE path stays hard-blocked unless ALL THREE hold:
+    #   premium_fastlane.live_enabled=True
+    #   premium.live_execution_enabled=True
+    #   premium.live_canary_explicit_ack == LIVE_CANARY_ACK_SENTINEL
+    # The sentinel is an explicit human acknowledgement of real-capital risk;
+    # an empty/incorrect value keeps live execution refused. Default empty →
+    # live can never auto-arm from a flag flip alone.
+    live_canary_explicit_ack: str = Field(default="", repr=False)
+
+
+# Explicit human-typed acknowledgement required to arm premium-fastlane LIVE.
+# Kept as a module constant so tests + the runtime gate share one source of
+# truth and a typo cannot silently weaken the guard.
+LIVE_CANARY_ACK_SENTINEL = "I_UNDERSTAND_REAL_CAPITAL_RISK"
+
+
+class PremiumFastlaneSettings(BaseSettings):
+    """30-day Premium-Telegram Fastlane (Goal 2026-06-05).
+
+    Purpose: during a controlled 30-day test window, authentic premium-channel
+    signals are routed *immediately* into PAPER/TESTNET/DEMO execution so real
+    forward-data is generated — instead of being killed pre-trade by quality,
+    priority, forward-precision, approval, source-allowlist or the global
+    ``entry_mode=disabled`` kill-switch.
+
+    Hard invariants (never relaxed by this block):
+    - LIVE stays protected by the triple-flag gate (see PremiumSettings).
+    - Minimum guards always apply: schema-valid, entry/SL/targets/side/symbol
+      present, duplicate suppression, quantity>0, notional in [min,max],
+      SL/TP geometry, resolvable scale (else requires_scale_review).
+    - The bypasses below ONLY apply to authentic premium-telegram sources in a
+      non-live route. The classic bridge path for every other source is
+      unchanged.
+
+    Fail-closed: ``enabled`` defaults to **False**. The runtime (.env / Pi)
+    opts in explicitly via ``PREMIUM_FASTLANE_ENABLED=true``.
+    """
+
+    model_config = SettingsConfigDict(
+        env_prefix="PREMIUM_FASTLANE_", env_file=".env", extra="ignore"
+    )
+
+    enabled: bool = Field(default=False)
+    duration_days: int = Field(default=30, ge=1, le=365)
+    # ISO-8601 start date. Empty → treat the window as open-ended-from-now
+    # (active as long as ``enabled``); set it to pin a concrete 30-day end.
+    start_date: str = Field(default="")
+    mode: str = Field(default="paper_testnet_demo")
+
+    # LIVE arming (one of the three required flags; see PremiumSettings).
+    live_enabled: bool = Field(default=False)
+
+    # ── Gate bypasses (only ever applied to authentic premium / non-live) ──
+    bypass_manual_approval: bool = Field(default=True)
+    bypass_source_allowlist: bool = Field(default=True)
+    bypass_entry_mode_for_paper: bool = Field(default=True)
+    bypass_risk_quality_gates: bool = Field(default=True)
+    bypass_source_quality_gates: bool = Field(default=True)
+    bypass_priority_tier_gates: bool = Field(default=True)
+    bypass_forward_precision_gates: bool = Field(default=True)
+
+    # ── Minimum required guards (never bypassed) ──
+    require_schema_valid: bool = Field(default=True)
+    require_entry: bool = Field(default=True)
+    require_sl: bool = Field(default=True)
+    require_targets: bool = Field(default=True)
+    require_leverage: bool = Field(default=True)
+
+    # ── Leverage policy ──
+    default_leverage: float = Field(default=10.0, gt=0.0)
+    max_leverage: float = Field(default=10.0, gt=0.0)
+
+    # ── Notional / sizing policy (USDT) ──
+    default_notional_usdt: float = Field(default=100.0, gt=0.0)
+    min_notional_usdt: float = Field(default=10.0, gt=0.0)
+    max_notional_usdt: float = Field(default=250.0, gt=0.0)
+    max_open_positions: int = Field(default=50, ge=1)
+    max_per_symbol_open_positions: int = Field(default=1, ge=1)
+    paper_equity_usdt: float = Field(default=10000.0, gt=0.0)
+
+    # ── Order / bracket policy ──
+    duplicate_window_minutes: int = Field(default=180, ge=1)
+    order_mode: str = Field(default="bracket_limit")
+    attach_sl_tp: bool = Field(default=True)
+    use_reduce_only_tps: bool = Field(default=True)
+    use_oco_if_available: bool = Field(default=True)
+    fallback_to_local_tp_sl_monitor: bool = Field(default=True)
+
+    # ── Routing ──
+    routing_priority: str = Field(default="paper,testnet,demo,simulated_exchange")
+    simulated_exchange_fallback: bool = Field(default=True)
+    allowed_exchanges: str = Field(default="bybit,okx,binance_futures,bitget,kucoin,huobi,bingx")
+
+    @property
+    def routing_priority_list(self) -> list[str]:
+        return [x.strip().lower() for x in self.routing_priority.split(",") if x.strip()]
+
+    @property
+    def allowed_exchange_list(self) -> list[str]:
+        return [x.strip().lower() for x in self.allowed_exchanges.split(",") if x.strip()]
+
+    @property
+    def is_live_route_allowed(self) -> bool:
+        """``live_enabled`` is necessary but NOT sufficient — the full triple
+        flag is checked at the call-site against PremiumSettings."""
+        return self.live_enabled
+
+    @model_validator(mode="after")
+    def _clamp_notional_bounds(self) -> "PremiumFastlaneSettings":
+        if self.min_notional_usdt > self.max_notional_usdt:
+            raise ValueError(
+                "PREMIUM_FASTLANE_MIN_NOTIONAL_USDT must be <= PREMIUM_FASTLANE_MAX_NOTIONAL_USDT."
+            )
+        if self.default_leverage > self.max_leverage:
+            # A default above the cap would always clamp — surface the misconfig.
+            raise ValueError(
+                "PREMIUM_FASTLANE_DEFAULT_LEVERAGE must be <= PREMIUM_FASTLANE_MAX_LEVERAGE."
+            )
+        return self
+
 
 class OperatorSettings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="OPERATOR_", env_file=".env", extra="ignore")
@@ -1012,6 +1133,7 @@ class AppSettings(BaseSettings):
     risk: RiskSettings = Field(default_factory=RiskSettings)
     execution: ExecutionSettings = Field(default_factory=ExecutionSettings)
     premium: PremiumSettings = Field(default_factory=PremiumSettings)
+    premium_fastlane: PremiumFastlaneSettings = Field(default_factory=PremiumFastlaneSettings)
     operator: OperatorSettings = Field(default_factory=OperatorSettings)
     tradingview: TradingViewSettings = Field(default_factory=TradingViewSettings)
     binance: BinanceMarketDataSettings = Field(default_factory=BinanceMarketDataSettings)

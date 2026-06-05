@@ -38,7 +38,7 @@ from __future__ import annotations
 import json
 import logging
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -51,6 +51,12 @@ from app.execution.models import (
 from app.execution.order_intent import ExecutableOrderIntent
 from app.execution.paper_engine import DuplicateOrderError
 from app.execution.paper_engine_singleton import get_paper_engine
+from app.execution.premium_fastlane import (
+    FastlaneDecision,
+    resolve_leverage,
+    resolve_notional,
+    should_route_premium_fastlane,
+)
 from app.execution.scale_resolver import detect_scale_factor as _detect_scale_factor
 from app.market_data.service import get_market_data_snapshot
 from app.risk.engine import RiskEngine
@@ -111,6 +117,11 @@ class BridgeTickResult:
     rejected_fill: int = 0
     rejected_position_exists: int = 0
     no_market_data: int = 0
+    # Premium-Fastlane (Goal 2026-06-05): count signals routed via the fastlane
+    # bypass so the dashboard can distinguish classic fills from fastlane fills.
+    fastlane_routed: int = 0
+    fastlane_bypassed_allowlist: int = 0
+    fastlane_bypassed_entry_mode: int = 0
     errors: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, object]:
@@ -130,6 +141,9 @@ class BridgeTickResult:
             "rejected_fill": self.rejected_fill,
             "rejected_position_exists": self.rejected_position_exists,
             "no_market_data": self.no_market_data,
+            "fastlane_routed": self.fastlane_routed,
+            "fastlane_bypassed_allowlist": self.fastlane_bypassed_allowlist,
+            "fastlane_bypassed_entry_mode": self.fastlane_bypassed_entry_mode,
             "errors": list(self.errors),
         }
 
@@ -596,22 +610,39 @@ async def _process_one(
         or envelope_id
     )
 
+    # Premium-Fastlane decision (Goal 2026-06-05). Pure, settings-driven. When
+    # routable it authorises (a) the allowlist bypass and (b) the entry_mode /
+    # premium-paper bypass below — for authentic premium-telegram signals on a
+    # non-live route ONLY. Every other guard (schema, scale, geometry, dup,
+    # notional, qty>0) is unchanged. Live is never reachable from this paper
+    # bridge, and the decision additionally carries ``live_protected``.
+    fl_decision: FastlaneDecision = should_route_premium_fastlane(envelope, get_settings())
+    fl_routable = fl_decision.is_routable
+
     # Gate 1: allowlist
     if source not in allowlist:
-        rec = base("skipped_source")
-        rec["allowlist"] = sorted(allowlist)
-        _attach_lifecycle(
-            rec,
-            final_state=OrderLifecycleState.REJECTED_INVALID_SIGNAL,
-            states=[
-                OrderLifecycleState.RECEIVED,
-                OrderLifecycleState.REJECTED_INVALID_SIGNAL,
-            ],
-            reason="source_not_allowlisted",
-        )
-        _append_bridge_audit(rec)
-        result.skipped_source += 1
-        return
+        if fl_routable and "source_allowlist" in fl_decision.bypassed_gates:
+            rec = base("fastlane_allowlist_bypassed")
+            rec["event"] = "premium_fastlane_allowlist_bypassed"
+            rec["fastlane"] = fl_decision.to_dict()
+            rec["allowlist"] = sorted(allowlist)
+            _append_bridge_audit(rec)
+            result.fastlane_bypassed_allowlist += 1
+        else:
+            rec = base("skipped_source")
+            rec["allowlist"] = sorted(allowlist)
+            _attach_lifecycle(
+                rec,
+                final_state=OrderLifecycleState.REJECTED_INVALID_SIGNAL,
+                states=[
+                    OrderLifecycleState.RECEIVED,
+                    OrderLifecycleState.REJECTED_INVALID_SIGNAL,
+                ],
+                reason="source_not_allowlisted",
+            )
+            _append_bridge_audit(rec)
+            result.skipped_source += 1
+            return
 
     # Gate 2: TTL
     ts_raw = envelope.get("timestamp_utc")
@@ -942,7 +973,37 @@ async def _process_one(
     entry_mode = get_settings().execution.entry_mode
     is_premium = isinstance(source, str) and source.startswith("telegram_premium")
     premium_paper_enabled = get_settings().premium.paper_execution_enabled
-    if not entry_mode.allows_risk_increasing_entry or (is_premium and not premium_paper_enabled):
+    classic_entry_blocks = not entry_mode.allows_risk_increasing_entry or (
+        is_premium and not premium_paper_enabled
+    )
+    # Premium-Fastlane entry-mode bypass (Goal 2026-06-05 §9). When the fastlane
+    # is routable for this authentic premium signal AND bypass_entry_mode_for_paper
+    # is set, the global entry_mode=disabled / premium_paper_execution_disabled
+    # block is downgraded to an OBSERVED note for a non-live route — the signal
+    # proceeds to the (paper) fill. The classic kill-switch semantics are
+    # untouched for every non-fastlane source. Live is unaffected: this bridge
+    # never submits a live order, and fl_decision.live_protected is recorded.
+    if (
+        classic_entry_blocks
+        and fl_routable
+        and "entry_mode_for_paper" in fl_decision.bypassed_gates
+    ):
+        bypass_rec = base("fastlane_entry_mode_bypassed_for_paper")
+        bypass_rec["event"] = "premium_fastlane_entry_mode_bypassed_for_paper"
+        bypass_rec["entry_mode"] = entry_mode.value
+        bypass_rec["premium_paper_execution_enabled"] = premium_paper_enabled
+        bypass_rec["classic_block_reason"] = (
+            "premium_paper_execution_disabled"
+            if (is_premium and not premium_paper_enabled)
+            else "entry_mode_disabled"
+        )
+        bypass_rec["fastlane"] = fl_decision.to_dict()
+        bypass_rec["route"] = fl_decision.route
+        bypass_rec["live_protected"] = fl_decision.live_protected
+        _append_bridge_audit(bypass_rec)
+        result.fastlane_bypassed_entry_mode += 1
+        classic_entry_blocks = False
+    if classic_entry_blocks:
         rec = base("rejected_entry_mode")
         rec["reason"] = (
             "premium_paper_execution_disabled"
@@ -988,7 +1049,33 @@ async def _process_one(
         result.rejected_entry_mode += 1
         return
 
-    if not risk_result.approved:
+    # Gate 5b: risk-engine reward/risk QUALITY gates. Under the premium-fastlane
+    # (Goal §5/§10) these are OBSERVE-ONLY: they are recorded but never block, so
+    # real forward-data is generated. The fastlane still enforces its OWN hard
+    # caps below (max_open_positions; per-symbol is the Gate-3.5 position_exists
+    # guard). Classic (non-fastlane) sources keep the original hard reject.
+    fl_cfg = get_settings().premium_fastlane
+    if fl_routable and current_open >= fl_cfg.max_open_positions:
+        rec = base("rejected_risk")
+        rec["reason"] = "fastlane_max_open_positions"
+        rec["open_count"] = current_open
+        rec["max_open_positions"] = fl_cfg.max_open_positions
+        rec["open_symbols"] = sorted(engine.portfolio.positions.keys())
+        _attach_lifecycle(
+            rec,
+            final_state=OrderLifecycleState.REJECTED_INVALID_SIGNAL,
+            states=[
+                OrderLifecycleState.RECEIVED,
+                OrderLifecycleState.PARSED,
+                OrderLifecycleState.VALIDATED,
+                OrderLifecycleState.REJECTED_INVALID_SIGNAL,
+            ],
+            reason="fastlane_max_open_positions",
+        )
+        _append_bridge_audit(rec)
+        result.rejected_risk += 1
+        return
+    if not risk_result.approved and not fl_routable:
         rec = base("rejected_risk")
         rec["risk_check_id"] = risk_result.check_id
         rec["violations"] = list(risk_result.violations)
@@ -1026,22 +1113,84 @@ async def _process_one(
         _append_bridge_audit(rec)
         result.rejected_risk += 1
         return
+    if not risk_result.approved and fl_routable:
+        obs = base("fastlane_risk_observed")
+        obs["event"] = "premium_fastlane_risk_observed"
+        obs["violations"] = list(risk_result.violations)
+        obs["reason_codes"] = list(risk_result.reason_codes)
+        obs["metric_role"] = "observe_only"
+        _append_bridge_audit(obs)
 
-    # Gate 6: Position sizing
+    # Gate 6: Position sizing. Classic path uses the risk-engine sizing. The
+    # fastlane path uses notional-based sizing (Goal §12): a fixed test notional
+    # (clamped to [min,max]) → quantity = notional/entry, with leverage clamped
+    # to the fastlane cap. This keeps fastlane stakes small, uniform and capital
+    # -separated from the autonomous loop's risk-per-trade sizing.
     equity = engine.portfolio.cash
     leverage_val = _float(payload.get("leverage"))
     risk_allocation_pct = _float(payload.get("margin_pct"))
     if risk_allocation_pct is None:
         risk_allocation_pct = _float(payload.get("position_size_suggestion"))
 
-    size_result = risk.calculate_position_size(
-        symbol=symbol,
-        entry_price=entry_price,
-        stop_loss_price=stop_loss,
-        equity=equity,
-        leverage=leverage_val,
-        risk_allocation_pct=risk_allocation_pct,
-    )
+    if fl_routable:
+        fl_leverage, lev_note = resolve_leverage(leverage_val, fl_cfg)
+        notional, fl_qty, notional_reject = resolve_notional(entry_price, fl_cfg)
+        if notional_reject is not None or fl_qty <= 0:
+            rec = base("rejected_size")
+            rec["reason"] = notional_reject or "fastlane_quantity_non_positive"
+            rec["fastlane_notional_usdt"] = notional
+            rec["signal_leverage"] = leverage_val
+            rec["fastlane_leverage"] = fl_leverage
+            _attach_lifecycle(
+                rec,
+                final_state=OrderLifecycleState.REJECTED_INVALID_SIGNAL,
+                states=[
+                    OrderLifecycleState.RECEIVED,
+                    OrderLifecycleState.PARSED,
+                    OrderLifecycleState.VALIDATED,
+                    OrderLifecycleState.REJECTED_INVALID_SIGNAL,
+                ],
+                reason=notional_reject or "fastlane_quantity_non_positive",
+            )
+            _append_bridge_audit(rec)
+            result.rejected_size += 1
+            return
+        engine_size = risk.calculate_position_size(
+            symbol=symbol,
+            entry_price=entry_price,
+            stop_loss_price=stop_loss,
+            equity=equity,
+            leverage=fl_leverage,
+            risk_allocation_pct=risk_allocation_pct,
+        )
+        # Fastlane overrides the engine sizing with the fixed notional stake
+        # (PositionSizeResult is frozen → rebuild via replace). approved=True
+        # because the fastlane notional guard already validated min/max + qty>0.
+        size_result = replace(
+            engine_size,
+            approved=True,
+            position_size_units=fl_qty,
+            position_size_pct=(notional / equity * 100.0) if equity > 0 else 0.0,
+            rationale=f"fastlane_notional_usdt={notional:.2f}",
+        )
+        leverage_val = fl_leverage
+        if lev_note:
+            note_rec = base("fastlane_leverage_policy")
+            note_rec["event"] = "premium_fastlane_leverage_policy"
+            note_rec["note"] = lev_note
+            note_rec["signal_leverage"] = _float(payload.get("leverage"))
+            note_rec["fastlane_leverage"] = fl_leverage
+            _append_bridge_audit(note_rec)
+        result.fastlane_routed += 1
+    else:
+        size_result = risk.calculate_position_size(
+            symbol=symbol,
+            entry_price=entry_price,
+            stop_loss_price=stop_loss,
+            equity=equity,
+            leverage=leverage_val,
+            risk_allocation_pct=risk_allocation_pct,
+        )
     if not size_result.approved or size_result.position_size_units <= 0:
         rec = base("rejected_size")
         rec["rationale"] = size_result.rationale

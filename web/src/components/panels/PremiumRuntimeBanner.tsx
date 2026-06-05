@@ -6,6 +6,7 @@ import {
   Radio,
   AlertTriangle,
   ChevronRight,
+  Zap,
 } from "lucide-react";
 import { fetchPremiumRuntime, type PremiumRuntimeResponse } from "@/lib/api";
 import { usePolling } from "@/lib/usePolling";
@@ -152,6 +153,105 @@ export function PremiumRuntimeBanner({ className }: Props): JSX.Element | null {
   }
 
   const rt = polling.data;
+  const fl = rt.premium_fastlane;
+
+  // Premium-Fastlane überschreibt den klassischen Block (Goal 2026-06-05):
+  // Classic Execution bleibt blockiert + sichtbar, aber Fastlane Paper läuft und
+  // Live bleibt geschützt. Eigener violetter "aktiv trotz Block"-Banner.
+  if (fl?.overrides_classic_block) {
+    return (
+      <div
+        className={cn(
+          "overflow-hidden rounded-md border border-info/40 bg-info/[0.07] px-4 py-3 glow-info",
+          className,
+        )}
+      >
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="flex items-start gap-2.5 min-w-0">
+            <Zap size={18} className="text-info shrink-0 mt-0.5" />
+            <div className="min-w-0 space-y-1">
+              <div className="text-sm font-bold tracking-wide text-info uppercase">
+                Premium Fastlane aktiv
+              </div>
+              <div className="text-2xs text-fg-muted leading-relaxed max-w-prose">
+                Classic Execution ist blockiert; Premium Fastlane Paper läuft
+                trotzdem (Route: <span className="font-mono">{fl.route}</span>
+                {fl.days_remaining != null
+                  ? `, noch ${fl.days_remaining} Tage`
+                  : ""}
+                ). Live bleibt geschützt.
+              </div>
+            </div>
+          </div>
+          <div className="flex flex-wrap items-center gap-1.5">
+            <FlagPill
+              label="Fastlane"
+              value="active"
+              tone="info"
+              icon={<Zap size={10} />}
+            />
+            <FlagPill
+              label="Paper"
+              value="enabled"
+              tone="pos"
+            />
+            <FlagPill
+              label="Entry"
+              value={`${rt.entry_mode} (bypass)`}
+              tone="warn"
+              icon={<Radio size={10} />}
+            />
+            <FlagPill
+              label="Live"
+              value={fl.live_protected ? "protected" : "ARMED"}
+              tone={fl.live_protected ? "muted" : "warn"}
+              icon={<Lock size={10} />}
+            />
+          </div>
+        </div>
+        {/* Classic-Blocker bleiben als gedämpfter Hinweis sichtbar (nicht final). */}
+        {rt.blocking_reasons.length > 0 && (
+          <div className="mt-2.5 pt-2.5 border-t border-info/25 space-y-1">
+            <div className="text-2xs text-fg-subtle">
+              Classic-Hinweise (nicht blockierend für Fastlane Paper):
+            </div>
+            {rt.blocking_reasons.map((reason) => {
+              const d = reasonDetail(reason);
+              return (
+                <div
+                  key={reason}
+                  className="flex items-start gap-1.5 text-2xs font-mono"
+                >
+                  <ChevronRight
+                    size={11}
+                    className="text-fg-subtle shrink-0 mt-0.5"
+                  />
+                  <span className="text-fg-muted">{d.label}</span>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // Fastlane eingeschaltet, aber nicht aktiv (z.B. Fenster abgelaufen).
+  if (fl?.enabled && !fl.active) {
+    return (
+      <div
+        className={cn(
+          "rounded-md border border-warn/30 bg-warn/5 px-3 py-2 text-2xs font-mono text-warn flex items-center gap-2",
+          className,
+        )}
+      >
+        <AlertTriangle size={12} />
+        Premium Fastlane aus — Grund: {fl.window_reason ?? "inaktiv"}. Aktion:
+        Config prüfen (PREMIUM_FASTLANE_*).
+      </div>
+    );
+  }
+
   const blocked = !rt.can_open_paper_positions;
 
   if (!blocked) {
