@@ -5,21 +5,6 @@ listet Kandidaten mit Pfad, Grund und Sicherheitsbeweis. Löschung ist eine
 explizite Operator-Aktion. Grundsatz: nur **sicher regenerierbare** Daten; keine
 DBs, Secrets, Sessions, Live-Audits oder ungesicherten Logs.
 
-## SAFE — regenerierbar, jederzeit löschbar
-
-| Pfad | Größe | Grund | Sicherheitsbeweis |
-|---|---|---|---|
-| `.mypy_cache/` | ~200M | mypy-Inkrement-Cache | Wird bei nächstem `mypy`-Lauf neu erzeugt; kein Quellinhalt. |
-| `.pytest_cache/` | ~387K | pytest-Lastlauf-Cache | Regeneriert bei nächstem `pytest`. |
-| `.ruff_cache/` | ~354K | ruff-Cache | Regeneriert bei nächstem `ruff`. |
-| `__pycache__/` (74 dirs) | — | Python-Bytecode | Aus `.py` regeneriert. `find . -type d -name __pycache__ -not -path './.git/*' -prune -exec rm -rf {} +` |
-
-Sichere Bereinigung (idempotent):
-```bash
-rm -rf .mypy_cache .pytest_cache .ruff_cache
-find . -type d -name __pycache__ -not -path './.git/*' -prune -exec rm -rf {} +
-```
-
 ## REQUIRES OPERATOR REVIEW — nicht automatisch anfassen
 
 | Pfad | Grund | Auflage |
