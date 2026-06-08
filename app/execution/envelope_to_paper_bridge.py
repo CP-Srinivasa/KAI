@@ -1212,6 +1212,17 @@ async def _process_one(
         rec["entry_min"] = payload.get("entry_min")
         rec["entry_max"] = payload.get("entry_max")
         rec["tolerance_pct"] = tolerance_pct
+        # BUG-3 (trail/API): when a real scale was resolved this tick, carry the
+        # resolved geometry on the pending record so the trail shows the scaled
+        # plan (0.248), not the raw channel value (24800). Only attach when a
+        # factor was actually applied so a later factor=1.0 tick can't overwrite
+        # the good resolved values.
+        if scale_factor != 1.0:
+            rec["scale_factor_applied"] = scale_factor
+            rec["scaled_entry"] = entry_price
+            rec["scaled_stop_loss"] = stop_loss
+            rec["scaled_targets"] = list(targets)
+            rec["scale_unknown"] = False
         rec["executable_intent"] = _build_executable_intent(
             envelope_id=envelope_id,
             correlation_id=str(rec["correlation_id"]),

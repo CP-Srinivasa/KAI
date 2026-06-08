@@ -636,6 +636,56 @@ def test_bug4_pure_entry_mode_still_shows_entry_disabled():
     assert entry.overall == "ENTRY_DISABLED"
 
 
+def test_bug3_trail_shows_scaled_plan_not_raw():
+    """BUG-3: a pending bridge record that resolved the integer-tick scale
+    (24800 → 0.248 via 1e5) makes the trail show entry 0.248, not raw 24800,
+    and clears scale_unknown."""
+    env_id = "ENV-scale-origin"
+    approved_id = "ENV-scale-approved"
+    sym = "SKYAI/USDT"
+    envelopes = [
+        # raw envelope still carries 24800 + scale_unknown=True (receive-time)
+        _origin_env(
+            env_id,
+            sym,
+            "2026-06-06T15:33:29+00:00",
+            entry_value=24800.0,
+            stop_loss=23800.0,
+            targets=[24925.0, 25050.0],
+            scale_factor=None,
+            scale_unknown=True,
+            scale_resolved_at_emit=False,
+        ),
+        _approved_env(approved_id, env_id, sym, "2026-06-06T15:33:30+00:00"),
+    ]
+    bridge = [
+        {
+            "timestamp_utc": "2026-06-07T01:29:26+00:00",
+            "event": "operator_signal_bridge",
+            "envelope_id": approved_id,
+            "correlation_id": env_id,
+            "stage": "pending",
+            "source": "telegram_premium_channel_approved",
+            "audit_reason": "entry_not_reached",
+            "symbol": sym,
+            "current_price": 0.35609,
+            "target_entry": 0.248,
+            "scale_factor_applied": 100000.0,
+            "scaled_entry": 0.248,
+            "scaled_stop_loss": 0.238,
+            "scaled_targets": [0.24925, 0.2505],
+            "scale_unknown": False,
+            "lifecycle_state": "WAITING_FOR_ENTRY",
+        }
+    ]
+    [entry] = build_trail(envelope_records=envelopes, bridge_records=bridge, paper_records=[])
+    assert entry.entry_value == 0.248
+    assert entry.stop_loss == 0.238
+    assert entry.targets == [0.24925, 0.2505]
+    assert entry.scale_unknown is False
+    assert entry.scale_factor == 100000.0
+
+
 def test_bug4_bad_tick_ignored_stage_counts_as_pending():
     """V-1: a pending_entry_with_bad_tick_ignored stage keeps overall PENDING_ENTRY."""
     env_id = "ENV-badtick-origin"

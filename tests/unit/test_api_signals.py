@@ -366,9 +366,7 @@ def test_recent_envelopes_dedupes_raw_and_approved(client: TestClient) -> None:
         _premium_raw(sig, "2026-06-06T15:33:29+00:00"),
         _premium_approved(sig, "2026-06-06T15:33:30+00:00"),
     ]
-    audit_path.write_text(
-        "\n".join(json.dumps(x) for x in lines) + "\n", encoding="utf-8"
-    )
+    audit_path.write_text("\n".join(json.dumps(x) for x in lines) + "\n", encoding="utf-8")
 
     listing = client.get("/signals/envelope/recent", headers=_hdr())
     assert listing.status_code == 200
