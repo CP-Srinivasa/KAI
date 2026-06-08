@@ -183,6 +183,21 @@ def trading_edge_report(
         "--implausible-threshold",
         help="Exclude closes with |exit/entry-1| above this as off-market (0=off; default 0.40)",
     ),
+    shadow_resolved_path: str = typer.Option(
+        "artifacts/shadow_candidate_resolved.jsonl",
+        "--shadow-resolved-path",
+        help="Read-only shadow resolved ledger for forward-return samples",
+    ),
+    shadow_ledger_path: str = typer.Option(
+        "artifacts/shadow_candidate_ledger.jsonl",
+        "--shadow-ledger-path",
+        help="Read-only shadow candidate ledger for feature-variance blockers",
+    ),
+    shadow_drift: bool = typer.Option(
+        True,
+        "--shadow-drift/--no-shadow-drift",
+        help="Include shadow feature-variance health as an edge-learning blocker",
+    ),
     as_json: bool = typer.Option(False, "--json", help="Emit JSON instead of the table"),
 ) -> None:
     """Cohort- and forward-edge diagnostics (Sprint C).
@@ -194,7 +209,20 @@ def trading_edge_report(
     """
     import json as _json
 
-    from app.observability.edge_report import build_report_from_audit, render_report
+    from app.observability.edge_report import (
+        build_report_from_audit,
+        load_forward_samples_from_shadow_resolved,
+        render_report,
+    )
+    from app.observability.shadow_drift import build_shadow_drift_report
+
+    resolved_path = Path(shadow_resolved_path)
+    forward_samples = (
+        load_forward_samples_from_shadow_resolved(resolved_path) if resolved_path.exists() else None
+    )
+    drift_report = (
+        build_shadow_drift_report(ledger_path=Path(shadow_ledger_path)) if shadow_drift else None
+    )
 
     report = build_report_from_audit(
         audit_path,
@@ -202,6 +230,8 @@ def trading_edge_report(
         safety_margin_bps=safety_margin_bps,
         min_sample=min_sample,
         implausible_move_threshold=implausible_threshold,
+        forward_samples=forward_samples,
+        shadow_drift_report=drift_report,
     )
     if as_json:
         print(_json.dumps(report.to_dict(), indent=2))
@@ -1955,3 +1985,80 @@ def trading_shadow_report(
         console.print(tbl_src)
     if report["n_resolved"] == 0:
         console.print("[yellow]No resolved real shadow candidates yet.[/yellow]")
+
+
+@trading_app.command("shadow-drift-check")
+def trading_shadow_drift_check(
+    ledger_path: str = typer.Option(
+        "artifacts/shadow_candidate_ledger.jsonl",
+        "--ledger-path",
+        help="Append-only shadow candidate ledger JSONL path",
+    ),
+    window_hours: float = typer.Option(
+        24.0,
+        "--window-hours",
+        help="Window for growth and feature-variance checks",
+    ),
+    min_rows: int = typer.Option(
+        1,
+        "--min-rows",
+        help="Minimum rows required in the window before warning",
+    ),
+    min_variance_samples: int = typer.Option(
+        5,
+        "--min-variance-samples",
+        help="Minimum numeric samples before a feature can be called degenerate",
+    ),
+    variance_epsilon: float = typer.Option(
+        1e-9,
+        "--variance-epsilon",
+        help="Variance at or below this value is treated as degenerate",
+    ),
+    as_json: bool = typer.Option(False, "--json", help="Emit JSON instead of the table"),
+) -> None:
+    """Read-only health check for the shadow learning stream.
+
+    Warns when the ledger stopped growing or core features are constant in the
+    selected window. It never changes entry mode, orders, positions, or the
+    ledger; a non-zero exit means "manual review required".
+    """
+    import json as _json
+
+    from app.observability.shadow_drift import STATUS_WARN, build_shadow_drift_report
+
+    report = build_shadow_drift_report(
+        ledger_path=Path(ledger_path),
+        window_hours=window_hours,
+        min_rows=min_rows,
+        min_variance_samples=min_variance_samples,
+        variance_epsilon=variance_epsilon,
+    )
+
+    if as_json:
+        print(_json.dumps(report.to_dict(), indent=2))
+    else:
+        console.print("[bold]Shadow Drift Check[/bold]")
+        console.print(
+            f"status={report.status} rows_in_window={report.rows_in_window} "
+            f"total_rows={report.total_rows} latest_ts_utc={report.latest_ts_utc}"
+        )
+        if report.reasons:
+            console.print(f"reasons={','.join(report.reasons)}")
+        tbl = Table(title="feature_variance", show_header=True, header_style="bold cyan")
+        tbl.add_column("field")
+        tbl.add_column("samples", justify="right")
+        tbl.add_column("variance", justify="right")
+        tbl.add_column("distinct", justify="right")
+        tbl.add_column("degenerate", justify="right")
+        for var in report.feature_variance:
+            tbl.add_row(
+                var.field,
+                str(var.sample_count),
+                "None" if var.variance is None else str(var.variance),
+                "None" if var.distinct_count is None else str(var.distinct_count),
+                str(var.is_degenerate),
+            )
+        console.print(tbl)
+
+    if report.status == STATUS_WARN:
+        raise typer.Exit(1)

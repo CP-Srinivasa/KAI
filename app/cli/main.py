@@ -1908,6 +1908,32 @@ def alerts_auto_annotate_blocked(
     )
 
 
+@alerts_app.command("blocked-outcome-report")
+def alerts_blocked_outcome_report(
+    artifacts_dir: str = typer.Option(
+        "artifacts",
+        "--artifacts-dir",
+        help="Artifacts directory or blocked_outcomes.jsonl path",
+    ),
+    as_json: bool = typer.Option(False, "--json", help="Emit JSON instead of the text report"),
+) -> None:
+    """Read-only D-227 blocked outcome idempotency and hit/miss report."""
+    import json as _json
+
+    from app.alerts.blocked_outcome_report import (
+        build_blocked_outcome_report,
+        render_blocked_outcome_report,
+    )
+
+    report = build_blocked_outcome_report(artifacts_dir)
+    if as_json:
+        print(_json.dumps(report, indent=2))
+    else:
+        console.print(render_blocked_outcome_report(report))
+    if report["raw_events_count"] == 0:
+        raise typer.Exit(1)
+
+
 @alerts_app.command("daily-briefing")
 def alerts_daily_briefing(
     lookback_hours: int = typer.Option(
