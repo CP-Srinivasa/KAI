@@ -292,7 +292,7 @@ def _bridge_history_for_envelope(
             entry["quantity"] = rec.get("quantity")
         # BUG-3 (2026-06-08): carry the resolved-scale geometry so build_trail can
         # show the scaled plan (0.248) instead of the raw channel value (24800).
-        for key in (
+        for scale_key in (
             "current_price",
             "target_entry",
             "scale_factor",
@@ -304,8 +304,8 @@ def _bridge_history_for_envelope(
             "scale_resolved_at",
             "scale_source",
         ):
-            if key in rec:
-                entry[key] = rec.get(key)
+            if scale_key in rec:
+                entry[scale_key] = rec.get(scale_key)
         history.append(entry)
     history.sort(key=lambda r: r.get("ts") or "")
     return history
@@ -1052,8 +1052,11 @@ def build_trail(
                 stop_loss = _sl
             _bt = _latest.get("scaled_targets")
             if isinstance(_bt, list):
-                _scaled_targets = [_safe_float(t) for t in _bt]
-                _scaled_targets = [t for t in _scaled_targets if t is not None]
+                _scaled_targets: list[float] = []
+                for t in _bt:
+                    _f = _safe_float(t)
+                    if _f is not None:
+                        _scaled_targets.append(_f)
                 if _scaled_targets:
                     targets = _scaled_targets
             scale_factor = (
