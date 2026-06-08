@@ -27,6 +27,10 @@ from app.audit.stream_validation import (
     summarize_audit_stream_result,
 )
 from app.execution.phantom_filter import is_phantom_close
+from app.observability.dashboard_metric_registry import (
+    build_dashboard_metric_registry,
+    reconcile_dashboard_snapshot,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -729,10 +733,56 @@ async def dashboard_quality_api() -> JSONResponse:
         ),
     }
 
+    # Truth-Layer v2 wiring (Issue #170 Part A): serve the canonical scalar
+    # dashboard metrics through the formal MetricRegistry — ONE calculation
+    # source. The registry is built from the SAME values the contract above
+    # computed (no second, divergent path). Unsourced risk scalars serve
+    # ``degraded`` (value withheld), never a fabricated number. The frontend is
+    # expected to render ``metric_registry`` verbatim; ``frontend_calculation_allowed``
+    # is False on every definition.
+    _priority_lift = quality.get("priority_tier_lift_pct")
+    registry_values: dict[str, float | None] = {
+        "paper_fills_with_pnl": float(positions_closed + positions_partial_closed),
+        "paper_fills_recent_24h": float(len(recent_fills)),
+        "priority_tier_lift_pct": (
+            float(_priority_lift) if isinstance(_priority_lift, (int, float)) else None
+        ),
+        "source_reliability_trusted_count": float(source_reliability.get("trusted_count", 0) or 0),
+    }
+    _registry = build_dashboard_metric_registry(registry_values)
+    _now_ms = int(now_utc.timestamp() * 1000)
+    metric_registry = {
+        mid: _registry.serve(mid, now_ms=_now_ms, timestamp_utc=generated_at).model_dump()
+        for mid in _registry.metric_ids()
+    }
+    # Inline reconciliation: the contract's numeric values must equal the SSOT
+    # within declared tolerance. Drift → warning (logged), never a hard fail.
+    _reconcile_snapshot = {
+        mid: v for mid, v in registry_values.items() if isinstance(v, (int, float))
+    }
+    metric_registry_reconciliation = [
+        r.model_dump()
+        for r in reconcile_dashboard_snapshot(_registry, _reconcile_snapshot, now_ms=_now_ms)
+    ]
+    for _r in metric_registry_reconciliation:
+        if not _r["within_tolerance"]:
+            logger.warning(
+                "dashboard_metric_registry_drift: %s ssot=%s external=%s reason=%s",
+                _r["metric_id"],
+                _r["ssot_value"],
+                _r["external_value"],
+                _r["reason"],
+            )
+
     return JSONResponse(
         content={
-            "dashboard_truth_contract_version": 1,
+            # v2: the metric_registry block is now the single source of truth for
+            # the scalar metrics; metric_contract stays for its richer per-metric
+            # provenance/quality metadata and is reconciled against the registry.
+            "dashboard_truth_contract_version": 2,
             "metric_contract": metric_contract,
+            "metric_registry": metric_registry,
+            "metric_registry_reconciliation": metric_registry_reconciliation,
             "reentry": reentry,
             "precision_pct": quality.get("resolved_precision_pct"),
             "false_positive_pct": quality.get("resolved_false_positive_rate_pct"),

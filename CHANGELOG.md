@@ -20,6 +20,15 @@ Folge zu Phase 2 (Real-Analysen-Feeder): die Phase-2-Funnel zeigte nur Pre-Loop-
 - **Invarianten**: Default-OFF (Flag unverändert), keine Fills/Positionen/Orders, `entry_mode` disabled; Report trennt Feeder-Level vs In-Loop.
 - **Tests**: `test_shadow_inloop_funnel.py` (15: Klassifizierer je Achse, Zero-Candidate/rejected/success-Pfade, Mixed-Counts, Report surfaced `rejected_funnel` ∧ bleibt INSUFFICIENT, Report ohne Funnel unverändert). 86 Shadow-Tests grün; ruff + format + mypy clean.
 
+## 2026-06-08 - Truth-Layer v2: Dashboard-MetricRegistry-Verdrahtung (Issue #170 Part A)
+
+Folge-Verdrahtung zu #162 (formale `MetricRegistry`, ohne Live-Read-Pfad): die kanonischen skalaren Dashboard-Metriken werden jetzt **additiv** über die Registry serviert — eine Berechnungsquelle, Frontend rendert nur, nie selbst rechnen.
+
+- **`app/observability/dashboard_metric_registry.py`** (neu, rein/IO-frei): `build_dashboard_metric_registry(values)` deklariert die kanonischen skalaren Truth-Metriken (live-sourced: `paper_fills_with_pnl`, `paper_fills_recent_24h`, `priority_tier_lift_pct`, `source_reliability_trusted_count`) + die noch ungebundenen Risiko-Skalare (`pnl_realized/unrealized`, `fees`, `exposure_gross/net`, `drawdown_max`, `var`, `cvar`, `sharpe`, `sortino`, `win_rate`). Jede Definition `frontend_calculation_allowed=False`. `reconcile_dashboard_snapshot()` vergleicht Contract-Werte gegen die SSOT → Drift = Warning, kein Hard-Fail.
+- **`app/api/routers/dashboard.py`**: Truth-Contract-Endpoint baut die Registry aus **denselben** bereits berechneten Werten (kein zweiter Pfad), serviert `metric_registry` (verbatim `MetricResponse` je Metrik) + `metric_registry_reconciliation`; Contract-Version `1` → **`2`**. Ungebundene Risiko-Skalare servieren ehrlich `degraded` (value withheld), nie eine Fantasiezahl.
+- **Tests**: `test_dashboard_metric_registry.py` (Frontend-Guard fail-closed, live-sourced servt Wert, unsourced → degraded, Builder pur, Reconcile within/drift/unsourced-never-ok) + erweiterter `test_api_dashboard` (Version 2, Registry-Wert == Contract-Wert, `var_usd` degraded, Reconciliation within-tolerance). 27 grün; ruff + format + mypy clean.
+- **Bewusst nicht (Issue #170 Teil B)**: Generator-Edge-Collector (Side-Channel-Feeder für IC/Brier) bleibt geparkt — sinnvoll **erst nach dem NEO-P-002-r3-Feeder** (sonst `real_resolved≈0`, Canary-Artefakt). Die Risiko-Skalar-Bindings (var/cvar/sharpe/sortino aus Equity-Return-Serie) sind als `degraded` deklariert und folgen mit der Plumbing.
+
 ## 2026-06-01 - Entry-Safety-Mode + cost-adjusted Edge-Release-Gate (/goal sprint, A–F)
 
 Negative kostenbereinigte Live-Edge bestätigt (Pi 2026-06-01: P(mu_net>0)=0%, net ≈ −69 bps/notional, n=22). Antwort: messbares Entry-Gate statt Bauchgefühl. Default-Verhalten im Paper-Betrieb unverändert ausser dem Churn-Throttle; vollständig über Env rückrollbar; nie Auto-Live. Siehe `DECISION_LOG.md` D-229 für die volle Begründung.
