@@ -1955,3 +1955,78 @@ def trading_shadow_report(
         console.print(tbl_src)
     if report["n_resolved"] == 0:
         console.print("[yellow]No resolved real shadow candidates yet.[/yellow]")
+
+
+@trading_app.command("shadow-drift-check")
+def trading_shadow_drift_check(
+    ledger_path: str = typer.Option(
+        "artifacts/shadow_candidate_ledger.jsonl",
+        "--ledger-path",
+        help="Append-only shadow candidate ledger JSONL path",
+    ),
+    window_hours: float = typer.Option(
+        24.0,
+        "--window-hours",
+        help="Window for growth and feature-variance checks",
+    ),
+    min_rows: int = typer.Option(
+        1,
+        "--min-rows",
+        help="Minimum rows required in the window before warning",
+    ),
+    min_variance_samples: int = typer.Option(
+        5,
+        "--min-variance-samples",
+        help="Minimum numeric samples before a feature can be called degenerate",
+    ),
+    variance_epsilon: float = typer.Option(
+        1e-9,
+        "--variance-epsilon",
+        help="Variance at or below this value is treated as degenerate",
+    ),
+    as_json: bool = typer.Option(False, "--json", help="Emit JSON instead of the table"),
+) -> None:
+    """Read-only health check for the shadow learning stream.
+
+    Warns when the ledger stopped growing or core features are constant in the
+    selected window. It never changes entry mode, orders, positions, or the
+    ledger; a non-zero exit means "manual review required".
+    """
+    import json as _json
+
+    from app.observability.shadow_drift import STATUS_WARN, build_shadow_drift_report
+
+    report = build_shadow_drift_report(
+        ledger_path=Path(ledger_path),
+        window_hours=window_hours,
+        min_rows=min_rows,
+        min_variance_samples=min_variance_samples,
+        variance_epsilon=variance_epsilon,
+    )
+
+    if as_json:
+        print(_json.dumps(report.to_dict(), indent=2))
+    else:
+        console.print("[bold]Shadow Drift Check[/bold]")
+        console.print(
+            f"status={report.status} rows_in_window={report.rows_in_window} "
+            f"total_rows={report.total_rows} latest_ts_utc={report.latest_ts_utc}"
+        )
+        if report.reasons:
+            console.print(f"reasons={','.join(report.reasons)}")
+        tbl = Table(title="feature_variance", show_header=True, header_style="bold cyan")
+        tbl.add_column("field")
+        tbl.add_column("samples", justify="right")
+        tbl.add_column("variance", justify="right")
+        tbl.add_column("degenerate", justify="right")
+        for var in report.feature_variance:
+            tbl.add_row(
+                var.field,
+                str(var.sample_count),
+                "None" if var.variance is None else str(var.variance),
+                str(var.is_degenerate),
+            )
+        console.print(tbl)
+
+    if report.status == STATUS_WARN:
+        raise typer.Exit(1)
