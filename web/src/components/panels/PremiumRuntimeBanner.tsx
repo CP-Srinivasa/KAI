@@ -7,6 +7,7 @@ import {
   AlertTriangle,
   ChevronRight,
   Zap,
+  Power,
 } from "lucide-react";
 import { fetchPremiumRuntime, type PremiumRuntimeResponse } from "@/lib/api";
 import { usePolling } from "@/lib/usePolling";
@@ -18,16 +19,54 @@ import { cn } from "@/lib/utils";
  * Wurzel 2026-06-04 (DALI Premium-Truth-Sprint): Premium-Signale können geparst,
  * gespeichert und sogar approved werden, ohne je eine Paper-Position zu öffnen —
  * weil ein globaler Safety-Switch (entry_mode / Bridge / Source-Allowlist /
- * Paper-Flag) blockt. Dieser Zustand war im Dashboard NICHT sichtbar. Der Banner
- * macht ihn laut und eindeutig: rot/orange-Glow bei Blockade, ruhiges Cyan wenn
- * Premium-Paper-Execution offen ist. Live bleibt geschützt und ist KEIN Fehler.
+ * Paper-Flag) blockt. Dieser Zustand war im Dashboard NICHT sichtbar.
+ *
+ * FS-1 (2026-06-08, Issue #197 / Audit §7a): vier EXKLUSIVE, getestete Zustände
+ * statt einer 2-Wege-Verzweigung. Insbesondere:
+ *  - der Alltags-Zustand „Premium absichtlich AUS" ist NEUTRAL (grau), kein
+ *    alarmierendes Rot — Rot ist nur für „opted-in, aber gegated".
+ *  - ein Fastlane-OVERRIDE (Paper offen TROTZ entry_mode=disabled) ist LAUT
+ *    amber und nennt den umgangenen Kill-Switch — nicht ruhig-cyan wie
+ *    Normalbetrieb (sonst sieht ein Bypass aus wie ein gesunder Zustand).
  *
  * Datenquelle: GET /api/premium-signals/runtime (read-only). Polling 60s.
+ * Reiner Frontend-Fix — keine neuen Backend-Felder; alle Felder existieren.
  */
 
 type Props = { className?: string };
 
 const RUNTIME_POLL_MS = 60_000;
+
+/** Exklusive Runtime-Banner-Zustände (FS-1). */
+export type BannerStateKind =
+  | "active_via_fastlane_override" // Paper offen via Fastlane-Bypass trotz entry_mode-Block
+  | "fastlane_window_expired" // Fastlane konfiguriert, aber Fenster aus
+  | "active_clean" // Paper offen, weil entry_mode es regulär erlaubt
+  | "inactive_off" // Premium absichtlich AUS (kein Fehler)
+  | "blocked_by_entry_mode"; // Premium opted-in, aber ein Gate blockt (Achtung)
+
+/**
+ * Reine Ableitung des Banner-Zustands aus dem Runtime-Payload. Exportiert für
+ * Unit-Tests (Snapshot je Zustand + Invariante: entry_mode=disabled ∧
+ * Fastlane-OFF ⇒ niemals „aktiv").
+ *
+ * Präzedenz (oben gewinnt):
+ *  1. Fastlane-Override aktiv  → active_via_fastlane_override (Bypass, laut)
+ *  2. Fastlane an, Fenster aus → fastlane_window_expired
+ *  3. can_open_paper_positions → active_clean (reguläre Freigabe)
+ *  4. Premium absichtlich aus  → inactive_off (Paper-Flag aus ∧ Fastlane aus)
+ *  5. sonst                    → blocked_by_entry_mode (opted-in, gegated)
+ */
+export function deriveBannerState(rt: PremiumRuntimeResponse): BannerStateKind {
+  const fl = rt.premium_fastlane;
+  if (fl?.overrides_classic_block) return "active_via_fastlane_override";
+  if (fl?.enabled && !fl.active) return "fastlane_window_expired";
+  if (rt.can_open_paper_positions) return "active_clean";
+  const premiumDeliberatelyOff =
+    !rt.premium_paper_execution_enabled && !(fl?.enabled ?? false);
+  if (premiumDeliberatelyOff) return "inactive_off";
+  return "blocked_by_entry_mode";
+}
 
 // Maschinen-Reason → Operator-Klartext + empfohlene Prüf-Aktion.
 const REASON_DETAIL: Record<string, { label: string; action: string }> = {
@@ -154,29 +193,35 @@ export function PremiumRuntimeBanner({ className }: Props): JSX.Element | null {
 
   const rt = polling.data;
   const fl = rt.premium_fastlane;
+  const state = deriveBannerState(rt);
 
-  // Premium-Fastlane überschreibt den klassischen Block (Goal 2026-06-05):
-  // Classic Execution bleibt blockiert + sichtbar, aber Fastlane Paper läuft und
-  // Live bleibt geschützt. Eigener violetter "aktiv trotz Block"-Banner.
-  if (fl?.overrides_classic_block) {
+  // ── 1. Fastlane-Override: Paper offen TROTZ Classic-Block (Kill-Switch
+  // umgangen). LAUT amber + expliziter Bypass-Hinweis — NICHT ruhig-cyan, sonst
+  // sieht ein Bypass aus wie Normalbetrieb (Audit FS-1 / #181-Lehre).
+  if (state === "active_via_fastlane_override") {
     return (
       <div
         className={cn(
-          "overflow-hidden rounded-md border border-info/40 bg-info/[0.07] px-4 py-3 glow-info",
+          "overflow-hidden rounded-md border border-warn/50 bg-warn/[0.08] px-4 py-3 glow-warn",
           className,
         )}
+        role="alert"
       >
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="flex items-start gap-2.5 min-w-0">
-            <Zap size={18} className="text-info shrink-0 mt-0.5" />
+            <Zap size={18} className="text-warn shrink-0 mt-0.5" />
             <div className="min-w-0 space-y-1">
-              <div className="text-sm font-bold tracking-wide text-info uppercase">
-                Premium Fastlane aktiv
+              <div className="text-sm font-bold tracking-wide text-warn uppercase">
+                Fastlane-Bypass aktiv
               </div>
               <div className="text-2xs text-fg-muted leading-relaxed max-w-prose">
-                Classic Execution ist blockiert; Premium Fastlane Paper läuft
-                trotzdem (Route: <span className="font-mono">{fl.route}</span>
-                {fl.days_remaining != null
+                Premium-Paper-Entries laufen TROTZ{" "}
+                <span className="font-mono text-warn">
+                  entry_mode={rt.entry_mode}
+                </span>{" "}
+                — der globale Kill-Switch ist für die Fastlane umgangen (Route:{" "}
+                <span className="font-mono">{fl?.route}</span>
+                {fl?.days_remaining != null
                   ? `, noch ${fl.days_remaining} Tage`
                   : ""}
                 ). Live bleibt geschützt.
@@ -184,48 +229,32 @@ export function PremiumRuntimeBanner({ className }: Props): JSX.Element | null {
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-1.5">
-            <FlagPill
-              label="Fastlane"
-              value="active"
-              tone="info"
-              icon={<Zap size={10} />}
-            />
-            <FlagPill
-              label="Paper"
-              value="enabled"
-              tone="pos"
-            />
+            <FlagPill label="Fastlane" value="OVERRIDE" tone="warn" icon={<Zap size={10} />} />
+            <FlagPill label="Paper" value="open" tone="warn" />
             <FlagPill
               label="Entry"
-              value={`${rt.entry_mode} (bypass)`}
+              value={`${rt.entry_mode} (bypassed)`}
               tone="warn"
               icon={<Radio size={10} />}
             />
             <FlagPill
               label="Live"
-              value={fl.live_protected ? "protected" : "ARMED"}
-              tone={fl.live_protected ? "muted" : "warn"}
+              value={fl?.live_protected ? "protected" : "ARMED"}
+              tone={fl?.live_protected ? "muted" : "warn"}
               icon={<Lock size={10} />}
             />
           </div>
         </div>
-        {/* Classic-Blocker bleiben als gedämpfter Hinweis sichtbar (nicht final). */}
         {rt.blocking_reasons.length > 0 && (
-          <div className="mt-2.5 pt-2.5 border-t border-info/25 space-y-1">
+          <div className="mt-2.5 pt-2.5 border-t border-warn/25 space-y-1">
             <div className="text-2xs text-fg-subtle">
-              Classic-Hinweise (nicht blockierend für Fastlane Paper):
+              Classic-Block (von der Fastlane umgangen):
             </div>
             {rt.blocking_reasons.map((reason) => {
               const d = reasonDetail(reason);
               return (
-                <div
-                  key={reason}
-                  className="flex items-start gap-1.5 text-2xs font-mono"
-                >
-                  <ChevronRight
-                    size={11}
-                    className="text-fg-subtle shrink-0 mt-0.5"
-                  />
+                <div key={reason} className="flex items-start gap-1.5 text-2xs font-mono">
+                  <ChevronRight size={11} className="text-warn shrink-0 mt-0.5" />
                   <span className="text-fg-muted">{d.label}</span>
                 </div>
               );
@@ -236,8 +265,8 @@ export function PremiumRuntimeBanner({ className }: Props): JSX.Element | null {
     );
   }
 
-  // Fastlane eingeschaltet, aber nicht aktiv (z.B. Fenster abgelaufen).
-  if (fl?.enabled && !fl.active) {
+  // ── 2. Fastlane eingeschaltet, aber nicht aktiv (z.B. Fenster abgelaufen).
+  if (state === "fastlane_window_expired") {
     return (
       <div
         className={cn(
@@ -246,16 +275,14 @@ export function PremiumRuntimeBanner({ className }: Props): JSX.Element | null {
         )}
       >
         <AlertTriangle size={12} />
-        Premium Fastlane aus — Grund: {fl.window_reason ?? "inaktiv"}. Aktion:
+        Premium Fastlane aus — Grund: {fl?.window_reason ?? "inaktiv"}. Aktion:
         Config prüfen (PREMIUM_FASTLANE_*).
       </div>
     );
   }
 
-  const blocked = !rt.can_open_paper_positions;
-
-  if (!blocked) {
-    // Ruhiger Cyan-Strip: Premium-Paper-Execution offen.
+  // ── 3. Reguläre Freigabe (entry_mode erlaubt Entries): ruhiger Cyan-Strip.
+  if (state === "active_clean") {
     return (
       <div
         className={cn(
@@ -278,7 +305,37 @@ export function PremiumRuntimeBanner({ className }: Props): JSX.Element | null {
     );
   }
 
-  // Blockade: lauter rot/orange Cyberpunk-Warnbanner.
+  // ── 4. Premium absichtlich AUS: NEUTRAL/grau — kein Fehler, kein Alarm.
+  // Das ist der Normal-Posture-Zustand (Paper-Flag aus ∧ Fastlane aus), z.B. bei
+  // entry_mode=disabled. Bewusst ruhig, damit der Alltag nicht wie ein Incident
+  // aussieht.
+  if (state === "inactive_off") {
+    return (
+      <div
+        className={cn(
+          "rounded-md border border-line-subtle bg-bg-2 px-3 py-2",
+          "flex flex-wrap items-center justify-between gap-2",
+          className,
+        )}
+      >
+        <div className="flex items-center gap-2 min-w-0">
+          <Power size={14} className="text-fg-muted shrink-0" />
+          <span className="text-xs font-semibold tracking-wide text-fg-muted uppercase">
+            Premium Paper: AUS
+          </span>
+          <span className="text-2xs text-fg-subtle hidden sm:inline">
+            Kein Premium-Paper-Entry konfiguriert (entry_mode={rt.entry_mode}) —
+            Live geschützt. Kein Fehler.
+          </span>
+        </div>
+        <RuntimeFlags rt={rt} />
+      </div>
+    );
+  }
+
+  // ── 5. Blockade TROTZ Opt-in: lauter rot/orange Cyberpunk-Warnbanner.
+  // Premium-Paper wurde eingeschaltet, aber ein Gate (entry_mode/Bridge/Source)
+  // verhindert das Öffnen — das verdient Aufmerksamkeit.
   return (
     <div
       className={cn(
@@ -297,7 +354,7 @@ export function PremiumRuntimeBanner({ className }: Props): JSX.Element | null {
             </div>
             <div className="text-2xs text-fg-muted leading-relaxed max-w-prose">
               {rt.warning ??
-                "Premium-Signale werden geparst und gespeichert, aber es wird keine Paper-Position geöffnet."}
+                "Premium-Paper ist eingeschaltet, aber ein Gate verhindert das Öffnen einer Paper-Position."}
             </div>
           </div>
         </div>
@@ -309,10 +366,7 @@ export function PremiumRuntimeBanner({ className }: Props): JSX.Element | null {
         {rt.blocking_reasons.map((reason) => {
           const d = reasonDetail(reason);
           return (
-            <div
-              key={reason}
-              className="flex items-start gap-1.5 text-2xs font-mono"
-            >
+            <div key={reason} className="flex items-start gap-1.5 text-2xs font-mono">
               <ChevronRight size={11} className="text-neg shrink-0 mt-0.5" />
               <span className="text-fg">{d.label}</span>
               <span className="text-fg-subtle">— {d.action}</span>
