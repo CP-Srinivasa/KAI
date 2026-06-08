@@ -1,4 +1,12 @@
 
+## 2026-06-08 - D-227 Block-Reason Suppression-Quality (read-only)
+
+Vervollständigt die Über-Blocking-Achsen-Trias: Reconciliation prüfte *overall*+*by_sentiment* (#202), Source-Cross-Check *by_source* (#205) — dieser Block prüft **by_block_reason**: *welche Gate-Regel* über-blockt. Eine Regel, deren *unterdrückte* Alerts später oft treffen, killt gute Alerts (Über-Blocking); treffen sie meist nicht, ist die Suppression kalibriert. Rein read-only.
+
+- **`app/alerts/d227_blockreason_quality.py`** (neu, rein/IO-frei): `assess_blockreason_quality(blocked_report, min_sample=20, over_block_threshold_pct=50.0)` → per block_reason blocked-Recall + Verdict (`OVER_BLOCKING_REASON` ≥ Schwelle, `CALIBRATED_REASON`, `INSUFFICIENT_DATA`), **worst-first gerankt** + Liste der über-blockenden Regeln. `influences_execution=False`.
+- **`app/cli/main.py`**: `alerts d227-blockreason-quality --json/--out-json`; `--json`-stdout rein.
+- **Tests**: 5 grün (over-blocking/calibrated/insufficient/worst-first-Ranking/render). ruff + format + mypy clean; CLI-Surface-Test grün.
+
 ## 2026-06-08 - D-227 blocked vs Source-Reliability per-source Cross-Check (read-only)
 
 Nächster Diagnoseblock: schließt die **per-source**-Lücke der D-227-vs-hit_rate-Reconciliation (dispatched hit_rate hat keine by_source-Achse). Cross-Check des blocked-outcome-Recalls je Quelle (D-227, `hit_miss_by_source`) gegen die Source-Reliability-Tiers (FS-3, #203). Deckt **Über-Blocking guter Quellen** auf: trifft eine `trusted`/`neutral`-Quelle in ihren *blockierten* Alerts oft, unterdrückt das Gate Quellen, denen das System sonst vertraut. Rein read-only.
