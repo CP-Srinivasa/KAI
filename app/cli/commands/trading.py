@@ -183,6 +183,21 @@ def trading_edge_report(
         "--implausible-threshold",
         help="Exclude closes with |exit/entry-1| above this as off-market (0=off; default 0.40)",
     ),
+    shadow_resolved_path: str = typer.Option(
+        "artifacts/shadow_candidate_resolved.jsonl",
+        "--shadow-resolved-path",
+        help="Read-only shadow resolved ledger for forward-return samples",
+    ),
+    shadow_ledger_path: str = typer.Option(
+        "artifacts/shadow_candidate_ledger.jsonl",
+        "--shadow-ledger-path",
+        help="Read-only shadow candidate ledger for feature-variance blockers",
+    ),
+    shadow_drift: bool = typer.Option(
+        True,
+        "--shadow-drift/--no-shadow-drift",
+        help="Include shadow feature-variance health as an edge-learning blocker",
+    ),
     as_json: bool = typer.Option(False, "--json", help="Emit JSON instead of the table"),
 ) -> None:
     """Cohort- and forward-edge diagnostics (Sprint C).
@@ -194,7 +209,24 @@ def trading_edge_report(
     """
     import json as _json
 
-    from app.observability.edge_report import build_report_from_audit, render_report
+    from app.observability.edge_report import (
+        build_report_from_audit,
+        load_forward_samples_from_shadow_resolved,
+        render_report,
+    )
+    from app.observability.shadow_drift import build_shadow_drift_report
+
+    resolved_path = Path(shadow_resolved_path)
+    forward_samples = (
+        load_forward_samples_from_shadow_resolved(resolved_path)
+        if resolved_path.exists()
+        else None
+    )
+    drift_report = (
+        build_shadow_drift_report(ledger_path=Path(shadow_ledger_path))
+        if shadow_drift
+        else None
+    )
 
     report = build_report_from_audit(
         audit_path,
@@ -202,6 +234,8 @@ def trading_edge_report(
         safety_margin_bps=safety_margin_bps,
         min_sample=min_sample,
         implausible_move_threshold=implausible_threshold,
+        forward_samples=forward_samples,
+        shadow_drift_report=drift_report,
     )
     if as_json:
         print(_json.dumps(report.to_dict(), indent=2))

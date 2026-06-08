@@ -52,6 +52,7 @@ from typing import Any
 
 from app.execution.cost_model import CostModel
 from app.learning.bayes_quarantine import quarantine_reason
+from app.storage.jsonl_io import read_jsonl_tolerant
 
 logger = logging.getLogger(__name__)
 
@@ -73,6 +74,12 @@ _DEFAULT_BOOTSTRAP_N = 5000
 DEFAULT_IMPLAUSIBLE_MOVE_THRESHOLD = 0.40
 # Forward horizons in minutes (C2). Side-adjusted AND cost-adjusted.
 FORWARD_HORIZONS_MIN: tuple[int, ...] = (1, 5, 15, 60)
+_SHADOW_FORWARD_BPS_KEYS: dict[int, str] = {
+    1: "fwd_60s_bps",
+    5: "fwd_300s_bps",
+    15: "fwd_900s_bps",
+    60: "fwd_3600s_bps",
+}
 
 
 # --- core math (pure, IO-free, unit-tested with known numbers) ----------------
@@ -592,6 +599,7 @@ class EdgeReport:
     open_mtm: OpenMarkToMarket
     notes: list[str] = field(default_factory=list)
     diagnostic_blockers: list[DiagnosticBlocker] = field(default_factory=list)
+    shadow_drift_report: dict[str, Any] | None = None
     excluded_quarantined: QuarantineExclusion = field(
         default_factory=lambda: QuarantineExclusion(0, {})
     )
@@ -611,6 +619,7 @@ class EdgeReport:
             "forward_coverage": [f.to_dict() for f in self.forward_coverage],
             "open_mtm": self.open_mtm.to_dict(),
             "diagnostic_blockers": [b.to_dict() for b in self.diagnostic_blockers],
+            "shadow_drift_report": self.shadow_drift_report,
             "notes": self.notes,
         }
 
@@ -627,6 +636,7 @@ def build_edge_report(
     entry_times: dict[str, list[str]] | None = None,
     bootstrap_n: int = _DEFAULT_BOOTSTRAP_N,
     min_sample: int = MIN_SAMPLE_FOR_P,
+    shadow_drift_report: Any | None = None,
     excluded_quarantined: QuarantineExclusion | None = None,
 ) -> EdgeReport:
     """Build the full Sprint-C report from parsed records. Pure / IO-free.
@@ -702,7 +712,12 @@ def build_edge_report(
             "Verdict on edge sign is NOT statistically supported yet."
         )
 
-    diagnostic_blockers = _build_diagnostic_blockers(edges, forward_cov)
+    shadow_drift_payload = _shadow_drift_payload(shadow_drift_report)
+    diagnostic_blockers = _build_diagnostic_blockers(
+        edges,
+        forward_cov,
+        shadow_drift_report=shadow_drift_report,
+    )
     for blocker in diagnostic_blockers:
         if blocker.code == "source_unknown":
             notes.append(
@@ -715,6 +730,11 @@ def build_edge_report(
                 f"regime attribution blocker: {blocker.affected_count}/{blocker.total_count} "
                 "closed trades have regime='unknown'; regime-specific edge cannot be judged "
                 "until close events carry a regime stamp."
+            )
+        elif blocker.code == "shadow_feature_degenerate":
+            notes.append(
+                "shadow feature variance blocker: constant confidence/rr/gate fields "
+                "block edge learning until the shadow stream shows feature variance."
             )
 
     excl = excluded_quarantined or QuarantineExclusion(0, {})
@@ -741,6 +761,7 @@ def build_edge_report(
         open_mtm=open_mtm,
         notes=notes,
         diagnostic_blockers=diagnostic_blockers,
+        shadow_drift_report=shadow_drift_payload,
         excluded_quarantined=excl,
     )
 
@@ -781,9 +802,57 @@ def _unknownish(value: str | None) -> bool:
     return (value or "").strip().lower() in {"", "unknown", "?", "none", "null"}
 
 
+def _shadow_drift_payload(shadow_drift_report: Any | None) -> dict[str, Any] | None:
+    if shadow_drift_report is None:
+        return None
+    if hasattr(shadow_drift_report, "to_dict"):
+        payload = shadow_drift_report.to_dict()
+        return payload if isinstance(payload, dict) else None
+    return shadow_drift_report if isinstance(shadow_drift_report, dict) else None
+
+
+def _shadow_feature_blocker(shadow_drift_report: Any | None) -> DiagnosticBlocker | None:
+    if shadow_drift_report is None:
+        return None
+    features = getattr(shadow_drift_report, "feature_variance", None)
+    if features is None and isinstance(shadow_drift_report, dict):
+        features = shadow_drift_report.get("feature_variance")
+    if not isinstance(features, list) or not features:
+        return None
+
+    degenerate: list[dict[str, Any]] = []
+    for feature in features:
+        if isinstance(feature, dict):
+            is_degenerate = bool(feature.get("is_degenerate"))
+            payload = dict(feature)
+        else:
+            is_degenerate = bool(getattr(feature, "is_degenerate", False))
+            payload = feature.to_dict() if hasattr(feature, "to_dict") else {}
+        if is_degenerate:
+            degenerate.append(payload)
+
+    if not degenerate:
+        return None
+    total = len(features)
+    return DiagnosticBlocker(
+        code="shadow_feature_degenerate",
+        affected_count=len(degenerate),
+        total_count=total,
+        share=len(degenerate) / total,
+        severity="blocker",
+        detail=(
+            "Zero-variance or constant shadow features block edge learning; "
+            "the report stays diagnostic-only until feature variance recovers."
+        ),
+        meta={"features": degenerate},
+    )
+
+
 def _build_diagnostic_blockers(
     edges: Sequence[TradeEdge],
     forward_coverage: Sequence[ForwardCoverage],
+    *,
+    shadow_drift_report: Any | None = None,
 ) -> list[DiagnosticBlocker]:
     total = len(edges)
     blockers: list[DiagnosticBlocker] = []
@@ -849,7 +918,28 @@ def _build_diagnostic_blockers(
                 },
             )
         )
+    shadow_blocker = _shadow_feature_blocker(shadow_drift_report)
+    if shadow_blocker is not None:
+        blockers.append(shadow_blocker)
     return blockers
+
+
+def load_forward_samples_from_shadow_resolved(path: str | Path) -> dict[int, list[float]]:
+    """Load side-adjusted gross forward bps from the shadow resolved ledger.
+
+    This is a read-only bridge into the EdgeReport's forward coverage table. It
+    reduces ``forward_return_coverage_gap`` when the prospective shadow capture
+    stream already has horizon samples.
+    """
+    rows = read_jsonl_tolerant(Path(path))
+    samples: dict[int, list[float]] = {horizon: [] for horizon in FORWARD_HORIZONS_MIN}
+    for row in rows:
+        for horizon, key in _SHADOW_FORWARD_BPS_KEYS.items():
+            value = row.get(key)
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                continue
+            samples[horizon].append(float(value))
+    return {horizon: values for horizon, values in samples.items() if values}
 
 
 # --- audit-stream loaders (thin IO at the edge) --------------------------------
@@ -931,10 +1021,23 @@ def parse_closed_trades_with_exclusions(
             excluded += 1
             reasons[guard_key] += 1
             continue
-        regime = ev.get("regime") or ev.get("regime_state") or "unknown"
+        regime = (
+            ev.get("regime")
+            or ev.get("regime_state")
+            or ev.get("regime_label")
+            or ev.get("market_regime")
+            or ev.get("volatility_regime")
+            or "unknown"
+        )
         # NEO-P-20260603-001: legacy position_closed rows lack signal_source →
         # "unknown" so by_source stays well-defined without a backfill.
-        signal_source = ev.get("signal_source") or ev.get("source") or "unknown"
+        signal_source = (
+            ev.get("signal_source")
+            or ev.get("source")
+            or ev.get("source_name")
+            or ev.get("candidate_source")
+            or "unknown"
+        )
         out.append(
             ClosedTrade(
                 symbol=str(ev.get("symbol", "?")),
@@ -1019,6 +1122,7 @@ def build_report_from_audit(
     bootstrap_n: int = _DEFAULT_BOOTSTRAP_N,
     min_sample: int = MIN_SAMPLE_FOR_P,
     implausible_move_threshold: float = DEFAULT_IMPLAUSIBLE_MOVE_THRESHOLD,
+    shadow_drift_report: Any | None = None,
 ) -> EdgeReport:
     """Convenience: load the audit file and build the report end-to-end.
 
@@ -1043,6 +1147,7 @@ def build_report_from_audit(
         entry_times=entry_times,
         bootstrap_n=bootstrap_n,
         min_sample=min_sample,
+        shadow_drift_report=shadow_drift_report,
         excluded_quarantined=excluded,
     )
 
