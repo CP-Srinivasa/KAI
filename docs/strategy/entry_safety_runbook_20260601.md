@@ -83,3 +83,19 @@ vom Entry-Gate oder Churn-Killer blockiert. Auch bei `EXECUTION_ENTRY_MODE=disab
 maximal aggressiver Churn-Konfiguration stoppt eine offene Position aus. Getestet in
 `tests/unit/test_trading_loop_churn_killer.py::test_hard_invariant_exits_never_blocked_by_churn`
 und `tests/unit/test_goal_acceptance_20260601.py::test_step2_churn_rejects_entry_while_exit_still_de_risks`.
+
+## Premium-Fastlane: OFF + Re-Enable-Gate (D-231 / D-232, Issue #181)
+
+Premium-Fastlane-Paper ist die **kanonisch OFF**-Betriebswahrheit:
+`PREMIUM_FASTLANE_ENABLED=false` + `PREMIUM_PAPER_EXECUTION_ENABLED=false` auf der
+Pi, `EXECUTION_ENTRY_MODE=disabled` unverändert. **Nicht** reaktivieren — weder
+per Flag-Flip, `.env`, noch aus Memory.
+
+Seit Issue #181 (PR #185) sind die Bypass-Defaults fail-closed und der
+Entry-Mode-Override braucht einen zweiten expliziten Arm; das Enabling der
+Fastlane allein hebt den Kill-Switch **nicht** mehr auf. Ein künftiger
+Re-Enable ist **nur** über den bindenden Merge-Gate erlaubt — die fünf Pflicht-
+Kriterien (bounded operatorlesbarer Modus, fail-closed Preflight, 0-Fill/Order/
+Position-Tests, per-source/notional-Limits, reason_codes + Operator-Sichtbarkeit)
+stehen in `docs/adr/0006-fastlane-fail-closed-bypass-defaults.md`
+§ Re-Enable-Merge-Gate. Fehlt einer → fail-closed, kein Merge, Fastlane bleibt OFF.

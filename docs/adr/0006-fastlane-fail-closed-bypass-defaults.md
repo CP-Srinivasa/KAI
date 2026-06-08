@@ -79,3 +79,43 @@ fünf Safety-Layer auf einmal umging.
 
 Beide sind durch die fail-closed-Posture nicht-dringlich (der Pfad bleibt ohne
 explizites Arming OFF) und gehören in einen Folge-Sprint.
+
+## Re-Enable-Merge-Gate (BINDEND)
+
+Premium-Fastlane-Paper bleibt **OFF** als kanonische Betriebswahrheit (D-231 /
+D-232). Dieser PR (#185) liefert den fail-closed-Kern des in D-231 geforderten
+#181-Safety-Sprints — er **re-aktiviert nichts**.
+
+**Kein** PR darf Premium-Fastlane oder Premium-Paper-Execution scharfschalten
+(weder per Default-Flip, Runtime-Flag, `.env`, noch aus Memory), solange nicht
+**alle** folgenden Punkte in *einem* operator-reviewten PR erfüllt und durch
+Tests belegt sind:
+
+1. **Expliziter, bounded, operatorlesbarer Modus** statt impliziter Bypass-Kaskade
+   — z.B. `EXECUTION_ENTRY_MODE=premium_paper_limited` (nur authentische
+   Premium-Paper-Kandidaten, mit Limits + Audit, kein Live, keine Auto-Promotion).
+2. **Fail-closed Preflight**: `EXECUTION_ENTRY_MODE == "disabled"` ∧
+   `PREMIUM_FASTLANE_ENABLED` ⇒ fail-closed, außer der bounded Modus aus (1) ist
+   explizit gesetzt. (In diesem PR via `fastlane_entry_mode_override` + Zwei-Flag-Arm
+   gelegt; ein künftiger Re-Enable ersetzt den Zwei-Flag-Arm durch den expliziten
+   Modus, lockert ihn nicht.)
+3. **Tests** für `disabled` (∧ Fastlane scharf, ohne bounded Modus) ⇒
+   **0 Fills / 0 Orders / 0 Positionen** — plus per-Achse-Refusal-Tests.
+4. **Per-Source-/Rate-/Notional-Limits**: max trades/hour, max notional/day,
+   max open positions, per-source-Cap (Issue #181 §5).
+5. **reason_codes + Operator-Sichtbarkeit**: jede Fastlane-Routing-/Refusal-
+   Entscheidung trägt einen stabilen `reason_code` und ist im Dashboard/Audit
+   sichtbar (`overrides_classic_block` == Laufzeit-Wahrheit).
+
+Fehlt einer dieser Punkte → **fail-closed**: der PR wird nicht gemerged und
+Fastlane bleibt OFF. Dieser Gate ist die operationalisierte Form von D-231s
+„Reaktivierung nur über den #181-Safety-Sprint".
+
+**Erzwingung (Zähne, nicht nur Doku):** Die fail-closed-Posture ist code-seitig
+durch Tests gepinnt — `tests/unit/test_premium_fastlane_settings.py::test_fastlane_defaults_are_fail_closed`
+(alle sieben Bypass-Defaults + `allow_entry_mode_disabled_override` == False) und
+`tests/unit/test_premium_fastlane_bridge.py::test_fastlane_enabled_defaults_do_not_bypass_entry_mode`
+(disabled ∧ Fastlane ohne Arm → 0 Fills). Ein PR, der einen Default zurück auf
+`True` flippt oder den Preflight aushebelt, dreht CI **rot** und ist damit nicht
+mergebar — die Kriterien (1)–(3) sind also nicht nur Review-Politik, sondern
+Test-erzwungen.
