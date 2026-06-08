@@ -31,6 +31,13 @@ def _row(hours_ago: float, *, confidence: float, priority: int, rr: float) -> di
     }
 
 
+def _gate_row(hours_ago: float, *, would_reject: bool, reason_codes: list[str]) -> dict:
+    row = _row(hours_ago, confidence=0.6 + hours_ago * 0.01, priority=7, rr=1.2 + hours_ago * 0.1)
+    row["gate_would_reject"] = would_reject
+    row["gate_reason_codes"] = reason_codes
+    return row
+
+
 def test_missing_ledger_warns(tmp_path: Path) -> None:
     report = build_shadow_drift_report(
         ledger_path=tmp_path / "missing.jsonl",
@@ -75,6 +82,28 @@ def test_degenerate_feature_variance_warns(tmp_path: Path) -> None:
     assert "feature_degenerate:signal_confidence" in report.reasons
     assert "feature_degenerate:recommended_priority" in report.reasons
     assert "feature_degenerate:rr" not in report.reasons
+
+
+def test_degenerate_gate_fields_warn(tmp_path: Path) -> None:
+    ledger = tmp_path / "shadow.jsonl"
+    _write(
+        ledger,
+        *[
+            _gate_row(i, would_reject=True, reason_codes=["ENTRY_MODE_DISABLED"])
+            for i in range(5)
+        ],
+    )
+
+    report = build_shadow_drift_report(
+        ledger_path=ledger,
+        now=NOW,
+        window_hours=24,
+        min_variance_samples=5,
+    )
+
+    assert report.status == STATUS_WARN
+    assert "feature_degenerate:gate_would_reject" in report.reasons
+    assert "feature_degenerate:gate_reason_codes" in report.reasons
 
 
 def test_varied_recent_ledger_is_ok(tmp_path: Path) -> None:

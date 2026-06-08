@@ -6,10 +6,10 @@ It evaluates whether the bullish/bearish directional-confidence thresholds have
 enough outcome evidence for a 14-day shadow recalibration. It never changes
 ``MIN_DIRECTIONAL_CONFIDENCE_*`` and never enables a shadow/live patch.
 
-Data reality marker: the spec names ``canonical_documents`` as primary source,
-but dispatch-time ``actionable`` and outcome linkage are already present in
-``alert_audit.jsonl`` + ``alert_outcomes.jsonl``. This script uses those
-append-only streams so the result is reproducible on the Pi without DB writes.
+Data reality marker: D-227 made the suppressed population measurable through
+``blocked_alerts.jsonl`` + ``blocked_outcomes.jsonl``. This script uses those
+append-only streams so F3 can evaluate the gate's counterfactual hit/miss shape
+without changing thresholds, env flags or runtime state.
 """
 
 from __future__ import annotations
@@ -39,8 +39,9 @@ class ConfidenceOutcome:
     document_id: str
     label: str
     confidence: float
+    source_name: str
     outcome: str | None
-    dispatched_at: datetime | None
+    observed_at: datetime | None
 
 
 @dataclass(frozen=True)
@@ -91,6 +92,8 @@ class CurvePoint:
 class _Universe:
     records: list[ConfidenceOutcome] = field(default_factory=list)
     total_directional_confidence_known: int = 0
+    raw_outcomes: int = 0
+    distinct_outcomes: int = 0
 
 
 def rolling_window_start(today: date) -> date:
@@ -123,45 +126,66 @@ def _as_confidence(value: object) -> float | None:
     return val
 
 
+def _source_name(*rows: dict) -> str:
+    for row in rows:
+        val = row.get("source_name") or row.get("source")
+        if isinstance(val, str) and val.strip():
+            return val.strip()
+    return "unknown"
+
+
+def _latest_by_document(rows: list[dict], *, ts_field: str) -> dict[str, dict]:
+    latest: dict[str, tuple[datetime | None, int, dict]] = {}
+    for idx, row in enumerate(rows):
+        doc_id = row.get("document_id")
+        if not isinstance(doc_id, str) or not doc_id.strip():
+            continue
+        ts = _parse_iso(row.get(ts_field))
+        prior = latest.get(doc_id)
+        if prior is None or (ts or datetime.min.replace(tzinfo=UTC), idx) >= (
+            prior[0] or datetime.min.replace(tzinfo=UTC),
+            prior[1],
+        ):
+            latest[doc_id] = (ts, idx, row)
+    return {doc_id: row for doc_id, (_ts, _idx, row) in latest.items()}
+
+
 def build_universe(
-    audit_rows: list[dict],
+    blocked_rows: list[dict],
     outcome_rows: list[dict],
     today: date,
 ) -> _Universe:
-    latest_outcome: dict[str, str] = {}
-    for row in outcome_rows:
-        doc_id = row.get("document_id")
-        outcome = row.get("outcome")
-        if isinstance(doc_id, str) and isinstance(outcome, str):
-            latest_outcome[doc_id] = outcome
-
     start = rolling_window_start(today)
-    seen: set[str] = set()
-    uni = _Universe()
-    for row in audit_rows:
-        label = str(row.get("sentiment_label") or "").lower()
+    meta_by_doc = _latest_by_document(blocked_rows, ts_field="blocked_at")
+    outcome_by_doc = _latest_by_document(outcome_rows, ts_field="annotated_at")
+    uni = _Universe(
+        raw_outcomes=len(outcome_rows),
+        distinct_outcomes=len(outcome_by_doc),
+    )
+
+    for doc_id, outcome_row in outcome_by_doc.items():
+        meta = meta_by_doc.get(doc_id, {})
+        label = str(outcome_row.get("sentiment_label") or meta.get("sentiment_label") or "").lower()
         if label not in ("bullish", "bearish"):
             continue
-        if row.get("actionable") is False:
-            continue
-        conf = _as_confidence(row.get("directional_confidence"))
+        conf = _as_confidence(
+            outcome_row.get("directional_confidence", meta.get("directional_confidence"))
+        )
         if conf is None:
             continue
-        doc_id = row.get("document_id")
-        if not isinstance(doc_id, str) or doc_id in seen:
-            continue
-        dt = _parse_iso(row.get("dispatched_at"))
+        dt = _parse_iso(outcome_row.get("annotated_at")) or _parse_iso(meta.get("blocked_at"))
         if not _in_window(dt, start, today):
             continue
-        seen.add(doc_id)
         uni.total_directional_confidence_known += 1
+        outcome = outcome_row.get("outcome")
         uni.records.append(
             ConfidenceOutcome(
                 document_id=doc_id,
                 label=label,
                 confidence=conf,
-                outcome=latest_outcome.get(doc_id),
-                dispatched_at=dt,
+                source_name=_source_name(outcome_row, meta),
+                outcome=outcome if isinstance(outcome, str) else None,
+                observed_at=dt,
             )
         )
     return uni
@@ -196,6 +220,50 @@ def label_resolved_counts(records: list[ConfidenceOutcome]) -> dict[str, int]:
         if r.label in out and r.outcome in ("hit", "miss"):
             out[r.label] += 1
     return out
+
+
+def _bucket_for_confidence(confidence: float) -> str:
+    lo = int(confidence * 10) / 10
+    hi = min(lo + 0.1, 1.0)
+    if confidence >= 1.0:
+        return "1.0"
+    return f"{lo:.1f}-{hi:.1f}"
+
+
+def _hit_miss_summary(records: list[ConfidenceOutcome], key: str) -> list[dict[str, object]]:
+    buckets: dict[str, dict[str, int]] = {}
+    for rec in records:
+        if key == "confidence_bucket":
+            bucket = _bucket_for_confidence(rec.confidence)
+        elif key == "source_name":
+            bucket = rec.source_name
+        elif key == "sentiment_label":
+            bucket = rec.label
+        else:
+            raise ValueError(f"unsupported summary key: {key}")
+        cur = buckets.setdefault(bucket, {"hit": 0, "miss": 0, "inconclusive": 0})
+        outcome = rec.outcome if rec.outcome in ("hit", "miss") else "inconclusive"
+        cur[outcome] += 1
+
+    rows: list[dict[str, object]] = []
+    for bucket, counts in sorted(
+        buckets.items(),
+        key=lambda item: (-(item[1]["hit"] + item[1]["miss"]), item[0]),
+    ):
+        resolved = counts["hit"] + counts["miss"]
+        rows.append(
+            {
+                key: bucket,
+                "hit": counts["hit"],
+                "miss": counts["miss"],
+                "inconclusive": counts["inconclusive"],
+                "resolved": resolved,
+                "precision_pct": None
+                if resolved == 0
+                else round(counts["hit"] / resolved * 100.0, 2),
+            }
+        )
+    return rows
 
 
 def evaluate_triggers(today: date, records: list[ConfidenceOutcome]) -> dict[str, object]:
@@ -300,8 +368,8 @@ def _read_jsonl(path: Path) -> list[dict]:
     return rows
 
 
-def analyze(audit_path: Path, outcomes_path: Path, today: date) -> dict[str, object]:
-    uni = build_universe(_read_jsonl(audit_path), _read_jsonl(outcomes_path), today)
+def analyze(blocked_path: Path, outcomes_path: Path, today: date) -> dict[str, object]:
+    uni = build_universe(_read_jsonl(blocked_path), _read_jsonl(outcomes_path), today)
     triggers = evaluate_triggers(today, uni.records)
     labels: dict[str, object] = {}
     for label in ("bullish", "bearish"):
@@ -323,12 +391,19 @@ def analyze(audit_path: Path, outcomes_path: Path, today: date) -> dict[str, obj
         "today": today.isoformat(),
         "window_start": rolling_window_start(today).isoformat(),
         "spec": "docs/strategy/f3_confidence_recalibration_spec_20260525.md",
-        "source": "alert_audit.jsonl + alert_outcomes.jsonl",
+        "source": "blocked_alerts.jsonl + blocked_outcomes.jsonl",
         "universe": {
+            "raw_blocked_outcomes": uni.raw_outcomes,
+            "distinct_blocked_outcomes": uni.distinct_outcomes,
             "directional_confidence_known": uni.total_directional_confidence_known,
             "records": len(uni.records),
         },
         "triggers": triggers,
+        "blocked_outcome_tables": {
+            "by_confidence_bucket": _hit_miss_summary(uni.records, "confidence_bucket"),
+            "by_source_name": _hit_miss_summary(uni.records, "source_name"),
+            "by_sentiment_label": _hit_miss_summary(uni.records, "sentiment_label"),
+        },
         "labels": labels,
     }
 
@@ -364,13 +439,36 @@ def render_memo(result: dict[str, object]) -> str:
             f"- optimal: {opt}",
             f"- recommendation: `{rec['decision']}` ({rec['stage']}) — {rec['reason']}",
         ]
+    tables = result["blocked_outcome_tables"]
+    lines += [
+        "",
+        "## Blocked-Outcome Hit/Miss Buckets",
+        "### Confidence Bucket",
+    ]
+    for row in tables["by_confidence_bucket"]:
+        lines.append(
+            f"- {row['confidence_bucket']}: hit={row['hit']} miss={row['miss']} "
+            f"inc={row['inconclusive']} precision={row['precision_pct']}"
+        )
+    lines.append("### Source")
+    for row in tables["by_source_name"][:15]:
+        lines.append(
+            f"- {row['source_name']}: hit={row['hit']} miss={row['miss']} "
+            f"inc={row['inconclusive']} precision={row['precision_pct']}"
+        )
+    lines.append("### Sentiment")
+    for row in tables["by_sentiment_label"]:
+        lines.append(
+            f"- {row['sentiment_label']}: hit={row['hit']} miss={row['miss']} "
+            f"inc={row['inconclusive']} precision={row['precision_pct']}"
+        )
     return "\n".join(lines) + "\n"
 
 
 def main() -> int:
     ap = argparse.ArgumentParser(description="F3-V2 confidence recalibration (read-only).")
-    ap.add_argument("--audit", default="artifacts/alert_audit.jsonl", type=Path)
-    ap.add_argument("--outcomes", default="artifacts/alert_outcomes.jsonl", type=Path)
+    ap.add_argument("--blocked", default="artifacts/blocked_alerts.jsonl", type=Path)
+    ap.add_argument("--outcomes", default="artifacts/blocked_outcomes.jsonl", type=Path)
     ap.add_argument("--out-json", type=Path, default=None)
     ap.add_argument("--out-memo", type=Path, default=None)
     ap.add_argument(
@@ -381,7 +479,7 @@ def main() -> int:
     )
     args = ap.parse_args()
 
-    result = analyze(args.audit, args.outcomes, args.today)
+    result = analyze(args.blocked, args.outcomes, args.today)
     if args.out_json:
         args.out_json.parent.mkdir(parents=True, exist_ok=True)
         args.out_json.write_text(json.dumps(result, indent=2), encoding="utf-8")

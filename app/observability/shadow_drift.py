@@ -25,6 +25,7 @@ class FeatureVariance:
     field: str
     sample_count: int
     variance: float | None
+    distinct_count: int | None
     is_degenerate: bool
 
     def to_dict(self) -> dict[str, Any]:
@@ -32,6 +33,7 @@ class FeatureVariance:
             "field": self.field,
             "sample_count": self.sample_count,
             "variance": self.variance,
+            "distinct_count": self.distinct_count,
             "is_degenerate": self.is_degenerate,
         }
 
@@ -82,6 +84,18 @@ def _as_float(value: object) -> float | None:
     return None
 
 
+def _normalise_value(value: object) -> object | None:
+    if value is None:
+        return None
+    if isinstance(value, list):
+        return tuple(str(item) for item in value)
+    if isinstance(value, dict):
+        return tuple(sorted((str(k), str(v)) for k, v in value.items()))
+    if isinstance(value, (str, bool, int, float)):
+        return value
+    return str(value)
+
+
 def _feature_variance(
     rows: list[dict[str, Any]],
     *,
@@ -92,13 +106,32 @@ def _feature_variance(
     out: list[FeatureVariance] = []
     for field_name in fields:
         vals = [num for row in rows if (num := _as_float(row.get(field_name))) is not None]
-        var = statistics.pvariance(vals) if len(vals) >= 2 else None
+        if vals:
+            var = statistics.pvariance(vals) if len(vals) >= 2 else None
+            out.append(
+                FeatureVariance(
+                    field=field_name,
+                    sample_count=len(vals),
+                    variance=None if var is None else round(var, 12),
+                    distinct_count=len(set(vals)),
+                    is_degenerate=len(vals) >= min_samples and var is not None and var <= epsilon,
+                )
+            )
+            continue
+
+        cat_vals = [
+            value
+            for row in rows
+            if (value := _normalise_value(row.get(field_name))) is not None
+        ]
+        distinct_count = len(set(cat_vals))
         out.append(
             FeatureVariance(
                 field=field_name,
-                sample_count=len(vals),
-                variance=None if var is None else round(var, 12),
-                is_degenerate=len(vals) >= min_samples and var is not None and var <= epsilon,
+                sample_count=len(cat_vals),
+                variance=None,
+                distinct_count=distinct_count,
+                is_degenerate=len(cat_vals) >= min_samples and distinct_count <= 1,
             )
         )
     return out
@@ -112,7 +145,13 @@ def build_shadow_drift_report(
     min_rows: int = 1,
     min_variance_samples: int = 5,
     variance_epsilon: float = 1e-9,
-    feature_fields: tuple[str, ...] = ("signal_confidence", "recommended_priority", "rr"),
+    feature_fields: tuple[str, ...] = (
+        "signal_confidence",
+        "recommended_priority",
+        "rr",
+        "gate_would_reject",
+        "gate_reason_codes",
+    ),
 ) -> ShadowDriftReport:
     """Build a read-only ledger-health report.
 

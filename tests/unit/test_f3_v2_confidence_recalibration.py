@@ -18,8 +18,9 @@ def _rec(label: str, confidence: float, outcome: str | None) -> ConfidenceOutcom
         document_id=f"{label}-{confidence}-{outcome}",
         label=label,
         confidence=confidence,
+        source_name="fixture",
         outcome=outcome,
-        dispatched_at=datetime(2026, 6, 16, tzinfo=UTC),
+        observed_at=datetime(2026, 6, 16, tzinfo=UTC),
     )
 
 
@@ -81,44 +82,40 @@ def test_recommendation_confirms_current_threshold_when_delta_small() -> None:
 
 def test_build_universe_joins_latest_outcome_and_filters() -> None:
     ts = datetime(2026, 6, 16, tzinfo=UTC).isoformat()
-    audit = [
+    blocked = [
         {
             "document_id": "b1",
             "sentiment_label": "bullish",
-            "actionable": True,
             "directional_confidence": 0.8,
-            "dispatched_at": ts,
+            "blocked_at": ts,
+            "source_name": "cryptobriefing",
         },
         {
             "document_id": "b2",
             "sentiment_label": "bearish",
-            "actionable": True,
             "directional_confidence": 0.9,
-            "dispatched_at": ts,
+            "blocked_at": ts,
+            "source_name": "cointelegraph",
         },
         {
             "document_id": "ignored-no-conf",
             "sentiment_label": "bullish",
-            "actionable": True,
-            "dispatched_at": ts,
-        },
-        {
-            "document_id": "ignored-not-actionable",
-            "sentiment_label": "bullish",
-            "actionable": False,
-            "directional_confidence": 0.9,
-            "dispatched_at": ts,
+            "blocked_at": ts,
         },
     ]
     outcomes = [
-        {"document_id": "b1", "outcome": "miss"},
-        {"document_id": "b1", "outcome": "hit"},
-        {"document_id": "b2", "outcome": "miss"},
+        {"document_id": "b1", "outcome": "miss", "annotated_at": ts},
+        {"document_id": "b1", "outcome": "hit", "annotated_at": ts},
+        {"document_id": "b2", "outcome": "miss", "annotated_at": ts},
+        {"document_id": "ignored-no-conf", "outcome": "hit", "annotated_at": ts},
     ]
 
-    uni = build_universe(audit, outcomes, date(2026, 6, 16))
+    uni = build_universe(blocked, outcomes, date(2026, 6, 16))
 
     assert uni.total_directional_confidence_known == 2
+    assert uni.raw_outcomes == 4
+    assert uni.distinct_outcomes == 3
     by_id = {r.document_id: r for r in uni.records}
     assert by_id["b1"].outcome == "hit"
+    assert by_id["b1"].source_name == "cryptobriefing"
     assert by_id["b2"].outcome == "miss"
