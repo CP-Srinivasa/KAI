@@ -1,4 +1,12 @@
 
+## 2026-06-08 - D-227 vs hit_rate Reconciliation (read-only Diagnose)
+
+Nächster Diagnoseblock: Cross-Check des blocked-outcome-Stroms (D-227, unterdrückte Alerts) gegen den dispatched hit_rate-Strom. Deckt **Über-Blocking** auf — wenn blockierte Alerts so oft treffen wie dispatchte, hat das Block-Gate gute Alerts unterdrückt. Rein read-only, kein Runtime/Env/Flag.
+
+- **`app/alerts/d227_hitrate_reconciliation.py`** (neu, rein/IO-frei): `reconcile_d227_vs_hitrate(blocked_report, hitrate_report, min_sample=20, tolerance_pct=5.0)` vergleicht overall + per-sentiment blocked-precision vs dispatched hit-rate. Verdicts fail-closed: `INSUFFICIENT_DATA` (eine Seite < min_sample), `OVER_BLOCKING_SUSPECT` (blocked ≥ dispatched − tolerance), `SUPPRESSION_CALIBRATED` (blocked klar darunter). `influences_execution=False`.
+- **`app/cli/main.py`**: `alerts d227-reconcile --json/--out-json` baut beide Reports (`build_blocked_outcome_report` + `compute_hit_rate(build_outcomes_from_records(...))`) und serviert die Reconciliation; `--json`-stdout rein (wrote-Notiz auf stderr).
+- **Tests**: 6 grün (insufficient/over-blocking/calibrated overall + per-sentiment, fehlende Sentiment-Seite → insufficient, Render). ruff + format + mypy clean.
+
 ## 2026-06-08 - D-227 Outcome-Report: persistenter Artifact-Emitter (read-only)
 
 Folge-Block zum D-227-Outcome-Report-Kern (in p7 via #196). Macht den Report als Zeitreihe pullbar — wie der Shadow-Report. Rein read-only, kein Runtime/Env/Flag.
