@@ -8,6 +8,7 @@ outcomes for hit/miss analysis.
 
 from __future__ import annotations
 
+import json
 from collections import defaultdict
 from datetime import UTC, datetime
 from pathlib import Path
@@ -15,6 +16,10 @@ from typing import Any
 
 from app.alerts.blocked_audit import BLOCKED_OUTCOMES_JSONL_FILENAME
 from app.storage.jsonl_io import read_jsonl_tolerant
+
+# Canonical artifact path for the persisted D-227 outcome report (pullable like
+# the shadow report). Read-only diagnostics — written by the CLI emitter only.
+BLOCKED_OUTCOME_REPORT_PATH = Path("artifacts/blocked_outcome_report.json")
 
 _OUTCOMES = {"hit", "miss", "inconclusive"}
 
@@ -183,4 +188,24 @@ def render_blocked_outcome_report(report: dict[str, Any]) -> str:
     return "\n".join(lines).rstrip()
 
 
-__all__ = ["build_blocked_outcome_report", "render_blocked_outcome_report"]
+def write_blocked_outcome_report(
+    report: dict[str, Any], out_path: str | Path = BLOCKED_OUTCOME_REPORT_PATH
+) -> Path:
+    """Persist a built report as pretty JSON (read-only diagnostics emitter).
+
+    Creates parent dirs and overwrites atomically-ish via a single write. Returns
+    the resolved path. This only writes a *report artifact* — it touches no
+    runtime, no execution state, no env.
+    """
+    resolved = Path(out_path)
+    resolved.parent.mkdir(parents=True, exist_ok=True)
+    resolved.write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
+    return resolved
+
+
+__all__ = [
+    "BLOCKED_OUTCOME_REPORT_PATH",
+    "build_blocked_outcome_report",
+    "render_blocked_outcome_report",
+    "write_blocked_outcome_report",
+]

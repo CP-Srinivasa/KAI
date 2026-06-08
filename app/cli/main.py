@@ -1916,6 +1916,11 @@ def alerts_blocked_outcome_report(
         help="Artifacts directory or blocked_outcomes.jsonl path",
     ),
     as_json: bool = typer.Option(False, "--json", help="Emit JSON instead of the text report"),
+    out_json: str = typer.Option(
+        "",
+        "--out-json",
+        help="Also persist the report JSON to this path (pullable artifact)",
+    ),
 ) -> None:
     """Read-only D-227 blocked outcome idempotency and hit/miss report."""
     import json as _json
@@ -1923,13 +1928,20 @@ def alerts_blocked_outcome_report(
     from app.alerts.blocked_outcome_report import (
         build_blocked_outcome_report,
         render_blocked_outcome_report,
+        write_blocked_outcome_report,
     )
 
     report = build_blocked_outcome_report(artifacts_dir)
+    written = write_blocked_outcome_report(report, out_json) if out_json else None
     if as_json:
+        # stdout stays pure JSON — the persisted-path note goes to stderr only.
         print(_json.dumps(report, indent=2))
+        if written is not None:
+            typer.echo(f"wrote {written}", err=True)
     else:
         console.print(render_blocked_outcome_report(report))
+        if written is not None:
+            console.print(f"wrote {written}")
     if report["raw_events_count"] == 0:
         raise typer.Exit(1)
 
