@@ -72,6 +72,16 @@ Leverage - 10x
 Risk: 5%
 """
 
+PREMIUM_SKYAI_BREAKOUT = """\
+Binance Futures, OKX, Bybit
+#SKYAI/USDT Long/BUY
+Entry Above - 0.40
+Targets : 0.50 - 0.60
+Stop Loss : 0.30
+Leverage - 10x
+Risk: 5%
+"""
+
 
 @pytest.fixture
 def isolated_premium_artifacts(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
@@ -125,6 +135,10 @@ async def _forbid_live_market_data(symbol: str) -> float | None:
     raise AssertionError(f"unexpected live market-data lookup for {symbol}")
 
 
+async def _unavailable_market_data(symbol: str) -> float | None:
+    return None
+
+
 class _FixedBridgeDatetime(datetime):
     @classmethod
     def now(cls, tz: Any = None) -> _FixedBridgeDatetime:
@@ -139,6 +153,16 @@ def _fixed_price_provider(expected_symbol: str, price: float) -> PriceProvider:
     async def _provider(symbol: str) -> float | None:
         assert symbol == expected_symbol
         return price
+
+    return _provider
+
+
+def _sequence_price_provider(expected_symbol: str, prices: list[float | None]) -> PriceProvider:
+    remaining = iter(prices)
+
+    async def _provider(symbol: str) -> float | None:
+        assert symbol == expected_symbol
+        return next(remaining)
 
     return _provider
 
@@ -390,6 +414,48 @@ async def test_premium_telegram_range_entry_multi_tick_fills_on_second_tick(
     position = engine.portfolio.positions["SOL/USDT"]
     assert position.correlation_id == origin_envelope_id
     assert position.quantity > 0
+
+
+@pytest.mark.asyncio
+async def test_premium_skyai_bad_tick_replay_stays_pending_not_terminal(
+    isolated_premium_artifacts: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    envelope_log = isolated_premium_artifacts / "telegram_message_envelope.jsonl"
+    bridge_log = isolated_premium_artifacts / "bridge_pending_orders.jsonl"
+    paper_audit_log = isolated_premium_artifacts / "paper_execution_audit.jsonl"
+    emitted_at = datetime(2026, 6, 8, 10, 0, tzinfo=UTC)
+    approved_at = emitted_at + timedelta(minutes=2)
+
+    monkeypatch.setattr(bridge, "_fetch_price", _unavailable_market_data)
+    monkeypatch.setattr(bridge, "datetime", _freeze_bridge_now(emitted_at + timedelta(minutes=10)))
+
+    _, approved_envelope_id = _emit_and_approve(
+        PREMIUM_SKYAI_BREAKOUT,
+        envelope_log=envelope_log,
+        emitted_at=emitted_at,
+        approved_at=approved_at,
+    )
+    prices = _sequence_price_provider("SKYAI/USDT", [0.356, None, 0.356, 101.94])
+
+    for _ in range(4):
+        result = await bridge.run_tick(price_provider=prices)
+        assert result.filled == 0, result.to_dict()
+
+    bridge_records = _read_jsonl(bridge_log)
+    approved_bridge = [
+        rec for rec in bridge_records if rec.get("envelope_id") == approved_envelope_id
+    ]
+    outliers = [
+        rec
+        for rec in approved_bridge
+        if rec.get("event") == "premium_market_price_outlier_rejected"
+    ]
+    assert len(outliers) == 1
+    assert outliers[0]["current_price"] == pytest.approx(101.94)
+    assert outliers[0]["reason"] == "pending_entry_with_bad_tick_ignored"
+    assert not [rec for rec in approved_bridge if rec.get("stage") == "rejected_scale_review"]
+    assert not [rec for rec in _read_jsonl(paper_audit_log) if rec.get("symbol") == "SKYAI/USDT"]
 
 
 @pytest.mark.asyncio

@@ -28,12 +28,15 @@ def test_detect_returns_1e6_for_mid_range_pattern():
     assert factor == 1e6
 
 
-def test_detect_rejects_10x_and_100x_as_likely_parse_errors():
-    # 1e1/1e2 are intentionally NOT recognised scales: a 10×/100× drift is
-    # treated as a likely parsing error → pass-through 1.0 (the reconciler then
-    # routes such a touch to requires_scale_review, booking no PnL).
+def test_detect_rejects_10x_and_loose_100x_as_likely_parse_errors():
+    # 1e1 remains intentionally unrecognised. 1e2 is accepted only when it is
+    # nearly exact; loose 100x-ish drift falls through to scale review.
     assert sr.detect_scale_factor(100.0, 10.0) == 1.0
-    assert sr.detect_scale_factor(100.0, 1.0) == 1.0
+    assert sr.detect_scale_factor(100.0, 0.98) == 1.0
+
+
+def test_detect_accepts_exact_100x_tick_pattern():
+    assert sr.detect_scale_factor(24.8, 0.248) == 1e2
 
 
 def test_detect_returns_1_when_ratio_outside_tolerance():

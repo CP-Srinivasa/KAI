@@ -281,6 +281,22 @@ def _bridge_history_for_envelope(
             entry["fill_price"] = rec.get("fill_price")
         if "quantity" in rec:
             entry["quantity"] = rec.get("quantity")
+        for key in (
+            "event",
+            "secondary_event",
+            "audit_events",
+            "current_price",
+            "scale_factor",
+            "scale_factor_applied",
+            "scale_unknown",
+            "scaled_entry",
+            "scaled_stop_loss",
+            "scaled_targets",
+            "scale_resolved_at",
+            "scale_source",
+        ):
+            if key in rec:
+                entry[key] = rec.get(key)
         history.append(entry)
     history.sort(key=lambda r: r.get("ts") or "")
     return history
@@ -1005,6 +1021,34 @@ def build_trail(
                 f = _safe_float(t)
                 if f is not None:
                     targets.append(f)
+        bridge_scale_records = [
+            rec
+            for rec in bridge_history
+            if _safe_float(rec.get("scaled_entry")) is not None
+            or _safe_float(rec.get("scale_factor_applied")) is not None
+        ]
+        latest_bridge_scale = bridge_scale_records[-1] if bridge_scale_records else {}
+        entry_value = _safe_float(latest_bridge_scale.get("scaled_entry")) or _safe_float(
+            payload.get("entry_value")
+        )
+        stop_loss = _safe_float(latest_bridge_scale.get("scaled_stop_loss")) or _safe_float(
+            payload.get("stop_loss")
+        )
+        bridge_targets = latest_bridge_scale.get("scaled_targets")
+        if isinstance(bridge_targets, list):
+            scaled_targets = [_safe_float(t) for t in bridge_targets]
+            targets = [t for t in scaled_targets if t is not None]
+        scale_factor = (
+            _safe_float(latest_bridge_scale.get("scale_factor"))
+            or _safe_float(latest_bridge_scale.get("scale_factor_applied"))
+            or _safe_float(payload.get("scale_factor"))
+        )
+        scale_unknown_raw = latest_bridge_scale.get("scale_unknown")
+        scale_unknown = (
+            bool(scale_unknown_raw)
+            if isinstance(scale_unknown_raw, bool)
+            else bool(payload.get("scale_unknown"))
+        )
 
         (
             stages,
@@ -1031,12 +1075,12 @@ def build_trail(
             received_at=_safe_str(env.get("timestamp_utc")),
             direction=_safe_str(payload.get("direction")),
             side=_safe_str(payload.get("side")),
-            entry_value=_safe_float(payload.get("entry_value")),
-            stop_loss=_safe_float(payload.get("stop_loss")),
+            entry_value=entry_value,
+            stop_loss=stop_loss,
             targets=targets,
             leverage=_safe_float(payload.get("leverage")),
-            scale_factor=_safe_float(payload.get("scale_factor")),
-            scale_unknown=bool(payload.get("scale_unknown")),
+            scale_factor=scale_factor,
+            scale_unknown=scale_unknown,
             stages=stages,
             overall=overall,
             is_open=is_open,

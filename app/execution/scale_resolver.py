@@ -33,18 +33,17 @@ from app.market_data.service import get_market_data_snapshot
 
 logger = logging.getLogger(__name__)
 
-# Power-of-ten bands we recognise. 1e1 and 1e2 are intentionally NOT included:
-# a 10× or 100× drift is far more likely a parsing error than a genuine scale
-# ladder, and silently rescaling it would book wrong PnL in the reconciler.
-# The documented sub-cent tick format uses large factors (1e3..1e8, e.g.
-# "32450" = $0.0003245 ≈ 1e8). Out-of-band ratios fall through to 1.0 → the
-# reconciler then routes them to requires_scale_review (no PnL). Re-add 1e1/1e2
-# only with verified channel examples that actually post 10×/100× ticks.
-_RECOGNISED_SCALES = (1.0, 1e3, 1e4, 1e5, 1e6, 1e7, 1e8)
+# Power-of-ten bands we recognise. 1e1 is intentionally NOT included: a 10×
+# drift is far more likely a parsing error than a genuine scale ladder.
+# A tightly exact 1e2 pattern is now accepted for premium-channel integer
+# ticks such as 24.800 -> 0.248; loose 100×-ish drifts still fall through to
+# scale_unresolved_or_bad_price before market plausibility checks.
+_RECOGNISED_SCALES = (1.0, 1e2, 1e3, 1e4, 1e5, 1e6, 1e7, 1e8)
 
 # Strict guardrail: a candidate factor is accepted only when the ratio sits
 # within ±50% of the factor. Anything looser would catch real 2× drifts.
 _SCALE_TOLERANCE = 0.5
+_SCALE_TOLERANCE_BY_FACTOR = {1e2: 0.005}
 
 
 PriceFetcher = Callable[[str], Awaitable[float | None]]
@@ -70,7 +69,8 @@ def detect_scale_factor(channel_value: float, provider_price: float) -> float:
     best_dist = abs(ratio - 1.0)
     for factor in _RECOGNISED_SCALES:
         dist = abs(ratio - factor) / factor
-        if dist <= _SCALE_TOLERANCE and dist < best_dist:
+        tolerance = _SCALE_TOLERANCE_BY_FACTOR.get(factor, _SCALE_TOLERANCE)
+        if dist <= tolerance and dist < best_dist:
             best_factor = factor
             best_dist = dist
     return best_factor
