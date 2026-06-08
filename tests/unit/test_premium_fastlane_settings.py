@@ -28,11 +28,17 @@ def test_fastlane_defaults_are_fail_closed() -> None:
     assert fl.live_enabled is False
     assert fl.duration_days == 30
     assert fl.mode == "paper_testnet_demo"
-    # bypasses default ON (the lane's purpose) but only ever apply to authentic
-    # premium / non-live — proven in the router + bridge tests.
-    assert fl.bypass_entry_mode_for_paper is True
-    assert fl.bypass_source_allowlist is True
-    assert fl.bypass_manual_approval is True
+    # Issue #181: ALL bypasses now default OFF (fail-closed). Enabling the
+    # fastlane relaxes nothing; each bypass is an explicit per-flag opt-in.
+    assert fl.bypass_entry_mode_for_paper is False
+    assert fl.bypass_source_allowlist is False
+    assert fl.bypass_manual_approval is False
+    assert fl.bypass_risk_quality_gates is False
+    assert fl.bypass_source_quality_gates is False
+    assert fl.bypass_priority_tier_gates is False
+    assert fl.bypass_forward_precision_gates is False
+    # the independent entry-mode override is also fail-closed
+    assert fl.allow_entry_mode_disabled_override is False
     # hard guards default ON
     assert fl.require_schema_valid is True
     assert fl.require_sl is True

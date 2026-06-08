@@ -1,4 +1,15 @@
 
+## 2026-06-08 - Premium-Fastlane fail-closed Bypass-Defaults + Entry-Mode-Override-Preflight (Issue #181, P0)
+
+Follow-up zum #179-Incident (ADR 0006). Die Fastlane-Bypass-Kaskade defaultete vollständig `True`, sodass `PREMIUM_FASTLANE_ENABLED=true` den globalen Kill-Switch `entry_mode=disabled` durch einen einzigen Flag-Flip neutralisierte. Behoben: fail-closed Defaults + zweistufiger expliziter Override.
+
+- **`app/core/settings.py`**: Alle sieben `bypass_*`-Defaults von `True` → **`False`** (fail-closed). Neuer unabhängiger Arm `PREMIUM_FASTLANE_ALLOW_ENTRY_MODE_DISABLED_OVERRIDE` (default `False`). Enabling der Fastlane relaxt für sich genommen kein Gate mehr.
+- **`app/execution/premium_fastlane.py`**: Neue reine SSOT-Funktion `fastlane_entry_mode_override(settings) -> (allowed, refusal_code)`. `fastlane_status.overrides_classic_block` meldet nur noch `True`, wenn der zweistufige Override real scharf ist (Dashboard-Wahrheit == Laufzeit).
+- **`app/execution/envelope_to_paper_bridge.py`**: Preflight-Gate am Entry-Mode-Bypass — Bypass nur bei vollständig scharfem Zwei-Flag-Arm; sonst fail-closed in `rejected_entry_mode` + Refusal-Record `premium_fastlane_entry_mode_override_refused` mit Reason-Code. Neuer Result-Counter `fastlane_entry_mode_override_refused`.
+- **`app/risk/reason_codes.py`**: Neuer `ExecutionBlockerCode.FASTLANE_ENTRY_MODE_OVERRIDE_NOT_ARMED`.
+- **Tests**: `test_premium_fastlane_settings` (Defaults jetzt fail-closed), zwei neue Bridge-Tests — `disabled`+`FASTLANE_ENABLED=true` ohne Arm → 0 Fills/0 Orders/0 Positionen (Issue §4); einzelnes Bypass-Flag ohne Override → fail-closed + Refusal-Record (Issue §7). Abhängige Tests auf explizites Arming umgestellt. 44 Premium-Fastlane-Tests + 80 angrenzende grün; ruff + ruff-format + mypy clean.
+- **Bewusst nicht in diesem PR** (Issue §5/§8, durch fail-closed-Posture nicht-dringlich): Per-Source-Limits/max trades-h/notional-day; Remodelling als expliziter `entry_mode`-Enum (`premium_paper_limited`). Siehe ADR 0006.
+
 ## 2026-06-01 - Entry-Safety-Mode + cost-adjusted Edge-Release-Gate (/goal sprint, A–F)
 
 Negative kostenbereinigte Live-Edge bestätigt (Pi 2026-06-01: P(mu_net>0)=0%, net ≈ −69 bps/notional, n=22). Antwort: messbares Entry-Gate statt Bauchgefühl. Default-Verhalten im Paper-Betrieb unverändert ausser dem Churn-Throttle; vollständig über Env rückrollbar; nie Auto-Live. Siehe `DECISION_LOG.md` D-229 für die volle Begründung.

@@ -53,6 +53,7 @@ from app.execution.paper_engine import DuplicateOrderError
 from app.execution.paper_engine_singleton import get_paper_engine
 from app.execution.premium_fastlane import (
     FastlaneDecision,
+    fastlane_entry_mode_override,
     resolve_leverage,
     resolve_notional,
     should_route_premium_fastlane,
@@ -122,6 +123,9 @@ class BridgeTickResult:
     fastlane_routed: int = 0
     fastlane_bypassed_allowlist: int = 0
     fastlane_bypassed_entry_mode: int = 0
+    # Issue #181: the fastlane wanted to bypass entry_mode=disabled but the
+    # two-flag override was not armed → kill-switch held (fail-closed).
+    fastlane_entry_mode_override_refused: int = 0
     errors: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, object]:
@@ -144,6 +148,7 @@ class BridgeTickResult:
             "fastlane_routed": self.fastlane_routed,
             "fastlane_bypassed_allowlist": self.fastlane_bypassed_allowlist,
             "fastlane_bypassed_entry_mode": self.fastlane_bypassed_entry_mode,
+            "fastlane_entry_mode_override_refused": self.fastlane_entry_mode_override_refused,
             "errors": list(self.errors),
         }
 
@@ -1169,11 +1174,18 @@ async def _process_one(
     # proceeds to the (paper) fill. The classic kill-switch semantics are
     # untouched for every non-fastlane source. Live is unaffected: this bridge
     # never submits a live order, and fl_decision.live_protected is recorded.
-    if (
+    fl_wants_entry_mode_bypass = (
         classic_entry_blocks
         and fl_routable
         and "entry_mode_for_paper" in fl_decision.bypassed_gates
-    ):
+    )
+    # Issue #181 §7 preflight: the bypass is honoured ONLY when the two-flag
+    # override is fully armed (bypass_entry_mode_for_paper +
+    # allow_entry_mode_disabled_override). Otherwise the global kill-switch holds
+    # and the would-be bypass is recorded as a fail-closed refusal — enabling the
+    # fastlane (or a single flag) can no longer neuter entry_mode=disabled.
+    fl_override_allowed, fl_override_refusal = fastlane_entry_mode_override(get_settings())
+    if fl_wants_entry_mode_bypass and fl_override_allowed:
         bypass_rec = base("fastlane_entry_mode_bypassed_for_paper")
         bypass_rec["event"] = "premium_fastlane_entry_mode_bypassed_for_paper"
         bypass_rec["entry_mode"] = entry_mode.value
@@ -1189,6 +1201,21 @@ async def _process_one(
         _append_bridge_audit(bypass_rec)
         result.fastlane_bypassed_entry_mode += 1
         classic_entry_blocks = False
+    elif fl_wants_entry_mode_bypass and not fl_override_allowed:
+        # Bypass requested but override not armed → fail-closed. Surface the
+        # refusal so the dashboard shows the kill-switch held; the signal then
+        # falls through to the normal rejected_entry_mode terminal below.
+        refusal_rec = base("fastlane_entry_mode_override_refused")
+        refusal_rec["event"] = "premium_fastlane_entry_mode_override_refused"
+        refusal_rec["reason"] = fl_override_refusal
+        refusal_rec["reason_codes"] = [
+            ExecutionBlockerCode.FASTLANE_ENTRY_MODE_OVERRIDE_NOT_ARMED.value
+        ]
+        refusal_rec["entry_mode"] = entry_mode.value
+        refusal_rec["fastlane"] = fl_decision.to_dict()
+        refusal_rec["live_protected"] = fl_decision.live_protected
+        _append_bridge_audit(refusal_rec)
+        result.fastlane_entry_mode_override_refused += 1
     if classic_entry_blocks:
         rec = base("rejected_entry_mode")
         rec["reason"] = (

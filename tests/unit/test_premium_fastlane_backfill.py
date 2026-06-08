@@ -82,6 +82,12 @@ def _enable(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("EXECUTION_ENTRY_MODE", "disabled")
     monkeypatch.setenv("PREMIUM_PAPER_EXECUTION_ENABLED", "true")
     monkeypatch.setenv("PREMIUM_FASTLANE_ENABLED", "true")
+    # Issue #181: bypasses are fail-closed; backfill routes premium (not on the
+    # classic allowlist) via the explicitly-armed source-allowlist bypass, and
+    # fills at-entry signals via the two-flag entry-mode override.
+    monkeypatch.setenv("PREMIUM_FASTLANE_BYPASS_SOURCE_ALLOWLIST", "true")
+    monkeypatch.setenv("PREMIUM_FASTLANE_BYPASS_ENTRY_MODE_FOR_PAPER", "true")
+    monkeypatch.setenv("PREMIUM_FASTLANE_ALLOW_ENTRY_MODE_DISABLED_OVERRIDE", "true")
 
 
 def _price(value: float):

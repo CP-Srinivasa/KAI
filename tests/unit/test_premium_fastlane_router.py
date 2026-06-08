@@ -30,6 +30,15 @@ from app.execution.premium_fastlane import (
 def _settings(**fl_kwargs: Any) -> AppSettings:
     s = AppSettings()
     fl_kwargs.setdefault("start_date", "")
+    # Bypasses are fail-closed by default (Issue #181); the router tests prove
+    # they SHOW UP in bypassed_gates when explicitly armed, so arm them here.
+    fl_kwargs.setdefault("bypass_entry_mode_for_paper", True)
+    fl_kwargs.setdefault("bypass_source_allowlist", True)
+    fl_kwargs.setdefault("bypass_manual_approval", True)
+    fl_kwargs.setdefault("bypass_risk_quality_gates", True)
+    fl_kwargs.setdefault("bypass_source_quality_gates", True)
+    fl_kwargs.setdefault("bypass_priority_tier_gates", True)
+    fl_kwargs.setdefault("bypass_forward_precision_gates", True)
     s.premium_fastlane = PremiumFastlaneSettings(enabled=True, **fl_kwargs)
     s.premium = PremiumSettings(paper_execution_enabled=True)
     return s

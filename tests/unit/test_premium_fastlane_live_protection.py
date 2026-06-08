@@ -104,6 +104,10 @@ async def test_fastlane_fill_is_paper_only_even_with_live_flags(
     monkeypatch.setenv("EXECUTION_OPERATOR_SIGNAL_SOURCE_ALLOWLIST", "dashboard")
     monkeypatch.setenv("EXECUTION_ENTRY_MODE", "disabled")
     monkeypatch.setenv("PREMIUM_FASTLANE_ENABLED", "true")
+    # Issue #181: arm the fail-closed bypasses explicitly so the signal fills.
+    monkeypatch.setenv("PREMIUM_FASTLANE_BYPASS_SOURCE_ALLOWLIST", "true")
+    monkeypatch.setenv("PREMIUM_FASTLANE_BYPASS_ENTRY_MODE_FOR_PAPER", "true")
+    monkeypatch.setenv("PREMIUM_FASTLANE_ALLOW_ENTRY_MODE_DISABLED_OVERRIDE", "true")
     # NB: execution venue stays paper (default). The premium-fastlane live flags
     # only gate a *future* live router; this bridge is paper by construction.
     monkeypatch.setenv("PREMIUM_FASTLANE_LIVE_ENABLED", "true")

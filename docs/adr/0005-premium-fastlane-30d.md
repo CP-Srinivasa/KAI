@@ -1,8 +1,15 @@
 # ADR 0005 — Premium-Telegram Fastlane (30-Tage-Testfenster)
 
-- Status: accepted
+- Status: accepted (Bypass-Default-Posture **superseded durch ADR 0006**, Issue #181)
 - Datum: 2026-06-05
 - Kontext-Goal: „Telegram Premium Signal Fastlane" (Operator-Auftrag)
+
+> **Hinweis 2026-06-08 (ADR 0006 / Issue #181):** Die hier beschriebenen
+> Bypässe defaulteten ursprünglich `True`. Das machte `entry_mode=disabled`
+> durch einen einzigen Flag-Flip neutralisierbar (#179-Incident). ADR 0006 stellt
+> **alle Bypass-Defaults auf `False` (fail-closed)** und führt einen zweiten,
+> unabhängigen Entry-Mode-Override-Arm + Preflight-Guard ein. Die Beispiele
+> `_BYPASS_*=true` unten sind seither **explizite Opt-ins**, keine Defaults mehr.
 
 ## Problem
 

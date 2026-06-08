@@ -99,6 +99,12 @@ class ExecutionBlockerCode(StrEnum):
     # blocked by this.
     ENTRY_MODE_DISABLED = "ENTRY_MODE_DISABLED"
 
+    # Premium-Fastlane wanted to bypass entry_mode=disabled for the paper route
+    # but the two-flag override (bypass_entry_mode_for_paper +
+    # allow_entry_mode_disabled_override) was not fully armed (Issue #181). The
+    # kill-switch held — recorded so the dashboard shows the fail-closed refusal.
+    FASTLANE_ENTRY_MODE_OVERRIDE_NOT_ARMED = "FASTLANE_ENTRY_MODE_OVERRIDE_NOT_ARMED"
+
 
 class FinalStatus(StrEnum):
     """Closed set of terminal dispositions for a signal/order in the pipeline.
