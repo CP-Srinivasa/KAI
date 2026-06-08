@@ -1960,7 +1960,7 @@ def alerts_d227_reconcile(
         "", "--out-json", help="Also persist the report JSON to this path"
     ),
 ) -> None:
-    """Read-only D-227 blocked-outcome vs dispatched hit-rate reconciliation."""
+    """Read-only D-227 blocked-outcome vs dispatched recall reconciliation."""
     import json as _json
 
     from app.alerts.blocked_outcome_report import build_blocked_outcome_report
