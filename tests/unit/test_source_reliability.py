@@ -258,6 +258,32 @@ def test_report_classifies_trusted_tier_for_strong_evidence() -> None:
     assert score["priority_modifier"] == 1
 
 
+def test_report_legacy_unknown_never_trusted_and_counts_separated() -> None:
+    """FS-3 (#199): the legacy/'unknown' bucket must never be promoted to
+    trusted nor carry a positive modifier, and must be counted separately from
+    active sources."""
+    audits = [_audit(f"a{i}", "ActiveSrc") for i in range(40)]
+    audits += [_audit(f"u{i}", "unknown") for i in range(40)]
+    annotations = [_ann(f"a{i}", "hit" if i < 35 else "miss") for i in range(40)]
+    annotations += [_ann(f"u{i}", "hit" if i < 35 else "miss") for i in range(40)]
+    source_by_doc = {f"a{i}": "ActiveSrc" for i in range(40)}
+    source_by_doc.update({f"u{i}": "unknown" for i in range(40)})
+    report = build_source_reliability_report(audits, annotations, source_by_doc=source_by_doc)
+
+    active = report["scores"]["ActiveSrc"]
+    legacy = report["scores"]["unknown"]
+    # Active strong source → trusted, +1.
+    assert active["tier"] == "trusted"
+    assert active["priority_modifier"] == 1
+    # Same evidence on the legacy bucket → forced neutral, never +1.
+    assert legacy["tier"] != "trusted"
+    assert legacy["priority_modifier"] <= 0
+    # Explicit separation in the report header.
+    assert report["trusted_count"] == 1  # only the active source
+    assert report["active_source_count"] == 1
+    assert report["legacy_source_count"] == 1
+
+
 def test_report_returns_insufficient_for_small_n() -> None:
     """A cold-start source with n<20 stays at modifier=0."""
     audits = [_audit(f"d{i}", "NewSource") for i in range(5)]

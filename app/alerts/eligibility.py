@@ -157,7 +157,20 @@ _reliability_cache: dict[str, Any] = {
     "data": {},  # dict[str, int] — lower-cased source_name → priority_modifier
     "path": None,
     "resolved_path": None,
+    "status": "unavailable",  # ok | unavailable | corrupt | stale | empty
 }
+
+# FS-3 (2026-06-08, #199): source-reliability must be fail-CLOSED for trust
+# BOOSTS. A missing / corrupt / stale / empty reliability file must NOT grant a
+# positive priority lift (demotes may still apply — penalising a known-bad
+# source on slightly-old data is the safe direction). The recalc runs daily;
+# anything older than this is stale and its +1 promotes are suppressed. No env
+# flag (Operator-Vorgabe) — a fixed, documented threshold.
+_RELIABILITY_STALE_SECONDS: float = 36 * 3600
+
+# Source-name tokens representing the pre-attribution / legacy bucket. They must
+# NEVER produce a trust boost and are reported separately from active sources.
+_LEGACY_SOURCE_TOKENS: frozenset[str] = frozenset({"unknown", ""})
 
 
 def _resolve_reliability_path() -> Path:
@@ -175,12 +188,19 @@ def _resolve_reliability_path() -> Path:
 
 
 def _load_source_reliability_modifiers() -> dict[str, int]:
-    """Read source_reliability.json with mtime-based reload.
+    """Read source_reliability.json with mtime-based reload, fail-CLOSED for boosts.
 
-    Returns a mapping ``source_name.lower() → priority_modifier`` from the
-    most recent recalc. Empty dict when the file is missing or unparsable
-    (fail-open — no modifier is safer than a wrong modifier).
+    Returns a mapping ``source_name.lower() → priority_modifier`` and records a
+    health ``status`` (ok | unavailable | corrupt | stale | empty) in the cache.
+
+    FS-3: legacy/unknown tokens never carry a positive modifier, and a missing /
+    corrupt / stale / empty file must not grant a trust boost — the consumer
+    (``source_reliability_status``) suppresses positive lifts when status != ok.
+    Demotes (negative modifiers) are preserved; penalising a known-bad source is
+    the safe direction.
     """
+    import time as _time
+
     path = _resolve_reliability_path()
     try:
         mtime = path.stat().st_mtime if path.exists() else 0.0
@@ -193,7 +213,9 @@ def _load_source_reliability_modifiers() -> dict[str, int]:
     if _reliability_cache["path"] == str(path) and mtime == _reliability_cache["mtime"]:
         return cast(dict[str, int], _reliability_cache["data"])
     if not path.exists():
-        _reliability_cache.update({"mtime": 0.0, "data": {}, "path": str(path)})
+        _reliability_cache.update(
+            {"mtime": 0.0, "data": {}, "path": str(path), "status": "unavailable"}
+        )
         return cast(dict[str, int], _reliability_cache["data"])
 
     modifiers: dict[str, int] = {}
@@ -206,22 +228,46 @@ def _load_source_reliability_modifiers() -> dict[str, int]:
             if not isinstance(raw_source, str) or not isinstance(score, dict):
                 continue
             mod = score.get("priority_modifier")
-            if isinstance(mod, int) and mod != 0:
-                modifiers[raw_source.lower()] = mod
+            if not isinstance(mod, int) or mod == 0:
+                continue
+            # Legacy/unknown bucket must never grant a trust boost.
+            if raw_source.strip().lower() in _LEGACY_SOURCE_TOKENS and mod > 0:
+                continue
+            modifiers[raw_source.lower()] = mod
     except (OSError, ValueError, TypeError):
-        cached_path = _reliability_cache.get("path")
-        return cast(
-            dict[str, int],
-            _reliability_cache["data"] if cached_path == str(path) else {},
+        _reliability_cache.update(
+            {"mtime": mtime, "data": {}, "path": str(path), "status": "corrupt"}
         )
+        return cast(dict[str, int], _reliability_cache["data"])
 
-    _reliability_cache.update({"mtime": mtime, "data": modifiers, "path": str(path)})
+    # Status: empty (parsed but no usable scores) / stale (recalc too old) / ok.
+    if not modifiers and not scores:
+        status = "empty"
+    elif (_time.time() - mtime) > _RELIABILITY_STALE_SECONDS:
+        status = "stale"
+    else:
+        status = "ok"
+
+    _reliability_cache.update(
+        {"mtime": mtime, "data": modifiers, "path": str(path), "status": status}
+    )
     _log.info(
         "source_reliability.loaded",
         count=len(modifiers),
         path=str(path),
+        status=status,
     )
     return modifiers
+
+
+def source_reliability_status() -> str:
+    """Health status of the source-reliability input after the latest load.
+
+    One of ``ok | unavailable | corrupt | stale | empty``. When != ``ok`` the
+    eligibility consumer suppresses positive (trust-boost) modifiers — fail-CLOSED.
+    """
+    _load_source_reliability_modifiers()
+    return cast(str, _reliability_cache.get("status", "unavailable"))
 
 
 def _invalidate_source_reliability_cache() -> None:
@@ -232,6 +278,7 @@ def _invalidate_source_reliability_cache() -> None:
             "data": {},
             "path": None,
             "resolved_path": None,
+            "status": "unavailable",
         }
     )
 
@@ -701,6 +748,10 @@ def evaluate_directional_eligibility(
     if effective_priority is not None and source_name:
         reliability_modifiers = _load_source_reliability_modifiers()
         mod = reliability_modifiers.get(source_name.lower(), 0)
+        # FS-3 fail-CLOSED: when the reliability input is unavailable/corrupt/
+        # stale/empty, never grant a positive trust boost. Demotes still apply.
+        if source_reliability_status() != "ok" and mod > 0:
+            mod = 0
         if mod != 0:
             effective_priority = effective_priority + mod
 

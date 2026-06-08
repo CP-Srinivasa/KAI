@@ -267,14 +267,24 @@ def _pct_fraction(value: object) -> float | None:
 
 
 def _empty_source_reliability(status: str) -> dict[str, Any]:
+    # FS-3 (#199): a missing/unreadable/invalid report is fail-CLOSED — explicitly
+    # NOT a neutral-good state. reliability_status carries the fail-closed vocab so
+    # the UI never reads absence as "all fine".
+    _status_map = {"missing": "unavailable", "unreadable": "corrupt", "invalid": "corrupt"}
     return {
         "status": status,
+        "reliability_status": _status_map.get(status, "unavailable"),
         "generated_at": None,
         "window_days": None,
         "quality_status": "unverified",
-        "health_warning": "source_reliability.json is not available.",
+        "health_warning": (
+            "source_reliability.json is not available — no trust boosts applied (fail-closed)."
+        ),
         "trusted_count": 0,
         "source_count": 0,
+        "active_sources_count": 0,
+        "legacy_sources_count": 0,
+        "unknown_sources_count": 0,
         "tier_counts": {},
         "top_sources": [],
         "unknown_bucket": None,
@@ -362,8 +372,21 @@ def _load_source_reliability_summary() -> dict[str, Any]:
             "Unknown/legacy bucket is low quality; active and legacy source evidence must stay "
             "separated."
         )
+    # FS-3 (#199): explicit active/legacy/unknown separation so legacy never
+    # inflates trusted and 0-trusted-with-evidence never reads as healthy.
+    _legacy_tokens = {"unknown", ""}
+    legacy_sources_count = sum(
+        1 for s in scores if str(s.get("source_name", "")).strip().lower() in _legacy_tokens
+    )
+    unknown_sources_count = sum(
+        1 for s in scores if str(s.get("source_name", "")).strip().lower() == "unknown"
+    )
+    active_sources_count = len(scores) - legacy_sources_count
+    # reliability_status: fail-closed vocab. stale wins; otherwise ok.
+    reliability_status = "stale" if stale else "ok"
     return {
         "status": "ok",
+        "reliability_status": reliability_status,
         "generated_at": generated_at,
         "window_days": payload.get("window_days"),
         "thresholds": payload.get("thresholds", {}),
@@ -371,6 +394,9 @@ def _load_source_reliability_summary() -> dict[str, Any]:
         "health_warning": health_warning,
         "trusted_count": trusted_count,
         "source_count": len(scores),
+        "active_sources_count": active_sources_count,
+        "legacy_sources_count": legacy_sources_count,
+        "unknown_sources_count": unknown_sources_count,
         "provisional_count": provisional_count,
         "min_n": min_n,
         "tier_counts": tier_counts,
