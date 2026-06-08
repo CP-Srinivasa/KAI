@@ -1946,6 +1946,56 @@ def alerts_blocked_outcome_report(
         raise typer.Exit(1)
 
 
+@alerts_app.command("d227-reconcile")
+def alerts_d227_reconcile(
+    artifacts_dir: str = typer.Option("artifacts", "--artifacts-dir", help="Artifacts directory"),
+    min_sample: int = typer.Option(
+        20, "--min-sample", help="Min resolved count per side before a verdict"
+    ),
+    tolerance_pct: float = typer.Option(
+        5.0, "--tolerance-pct", help="How close blocked may come to dispatched before over-blocking"
+    ),
+    as_json: bool = typer.Option(False, "--json", help="Emit JSON instead of the text report"),
+    out_json: str = typer.Option(
+        "", "--out-json", help="Also persist the report JSON to this path"
+    ),
+) -> None:
+    """Read-only D-227 blocked-outcome vs dispatched recall reconciliation."""
+    import json as _json
+
+    from app.alerts.blocked_outcome_report import build_blocked_outcome_report
+    from app.alerts.d227_hitrate_reconciliation import (
+        reconcile_d227_vs_hitrate,
+        render_reconciliation,
+    )
+    from app.alerts.hit_rate import build_outcomes_from_records, compute_hit_rate
+
+    blocked = build_blocked_outcome_report(artifacts_dir)
+    records = load_alert_audits(Path(artifacts_dir))
+    annotations = load_outcome_annotations(Path(artifacts_dir))
+    outcomes = build_outcomes_from_records(list(records), annotations=list(annotations))
+    hitrate = compute_hit_rate(outcomes, min_sample=min_sample).to_dict()
+    report = reconcile_d227_vs_hitrate(
+        blocked, hitrate, min_sample=min_sample, tolerance_pct=tolerance_pct
+    )
+
+    written = None
+    if out_json:
+        out_path = Path(out_json)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_text(_json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
+        written = out_path
+    if as_json:
+        # stdout stays pure JSON — the persisted-path note goes to stderr only.
+        print(_json.dumps(report, indent=2))
+        if written is not None:
+            typer.echo(f"wrote {written}", err=True)
+    else:
+        console.print(render_reconciliation(report))
+        if written is not None:
+            console.print(f"wrote {written}")
+
+
 @alerts_app.command("daily-briefing")
 def alerts_daily_briefing(
     lookback_hours: int = typer.Option(
