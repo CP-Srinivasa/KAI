@@ -4,13 +4,15 @@ Sprint: `KAI-RUNTIME-TRUTH-GATE-AUDIT` · reine Delta-Analyse gegen p7-Tip `d191
 
 > **Wichtigster Kontext-Befund:** Die Truth-Layer-/Dashboard-Schicht ist **größtenteils bereits ehrlich gebaut** (D-191 / PR #147/#157). Die meisten vom Operator zitierten Anzeigen (`0 trusted`, `Re-Entry abgelaufen`, `Paper 1226 hist · 0/24h`, `Priority UNDERPERFORMING`, `Regime read-only`) sind **korrekte, absichtliche Labels**, keine Bugs. Der einzige potenziell sicherheitsrelevante Punkt (`Premium Runtime aktiv` trotz `entry_mode=disabled`) ist **kein Code-Bug**, sondern ein **verifikations-gated State/Posture-Verdacht**: er kann laut Code nur auftreten, wenn die Premium-Fastlane auf der Pi wieder eingeschaltet ist (Widerspruch zu D-231).
 
+> **VERIFIKATION 2026-06-08 (read-only Pi, Operator-freigegeben) — Befund A AUFGELÖST:** Die Pi-`.env`-Flags sind **korrekt OFF**: `EXECUTION_ENTRY_MODE=disabled`, `PREMIUM_FASTLANE_ENABLED=false`, `PREMIUM_PAPER_EXECUTION_ENABLED=false`, `EXECUTION_OPERATOR_SIGNAL_BRIDGE_ENABLED=true`. Damit ist laut deterministischer Code-Logik (`premium_signals.py:438-469`: `entry_blocks=True` ⇒ `classic_can_open=False`; `fl.enabled=false` ⇒ `fastlane_overrides=False`) `can_open_paper_positions` **zwingend `False`** — der Banner rendert „Premium Execution blockiert". **Kein Safety-Incident, keine Fastlane-Reaktivierung, kein Live-API-Bug.** Der Runtime-Endpoint ist auth-geschützt (HTTP 401 ohne Token; Token bewusst nicht gelesen). **Konsequenz:** Befund A wird von „P1/P0-IF-confirmed" auf **P3 (stale Anzeige)** herabgestuft; eine etwaige „Premium Runtime aktiv"-Sichtung war eine veraltete UI-/Screenshot-Beobachtung von **vor** dem Flag-OFF (06-05 ~17:58). Der **echte** verbleibende Punkt ist rein UI-Klarheit (Befund B, 3-State-Banner).
+
 ---
 
 ## 1. Executive Summary (max. 10 Punkte)
 
 1. **[FAKT]** Unter `entry_mode=disabled` blockiert der Bridge Premium-Paper-Entries hart (`envelope_to_paper_bridge.py:1316` `classic_entry_blocks`); der einzige Override ist die Fastlane (`premium_fastlane.py:447`). Live-Schutz ist davon **getrennt** und zusätzlich gegated.
-2. **[FAKT/HYPOTHESE]** Die Banner-Aussage „Premium Runtime aktiv / Premium-Paper-Entries werden ausgeführt" (`PremiumRuntimeBanner.tsx:270`) kann unter `entry_mode=disabled` **nur** erscheinen, wenn `can_open_paper_positions=True`, und das setzt `fastlane_overrides=True` voraus (`premium_signals.py:469`). ⇒ **Verdacht: Fastlane ist auf der Pi wieder aktiv** (Widerspruch zu D-231 „dauerhaft OFF"). Pi-Verifikation Pflicht.
-3. **[FAKT]** Code ist hier **korrekt** (truthful): der Banner zeigt eine reale Fastlane-Paper-Offenheit, kein Fail-Open. Das Problem ist **Posture/State-Drift** (falls Fastlane an) bzw. eine **stale Anzeige** (falls aus seit 06-05 ~17:58).
+2. **[FAKT, verifiziert 06-08]** Die Banner-Aussage „Premium Runtime aktiv" (`PremiumRuntimeBanner.tsx:270`) kann unter `entry_mode=disabled` **nur** bei `fastlane_overrides=True` erscheinen (`premium_signals.py:469`). Pi-`.env` **verifiziert OFF** (`PREMIUM_FASTLANE_ENABLED=false`, `PREMIUM_PAPER_EXECUTION_ENABLED=false`, `EXECUTION_ENTRY_MODE=disabled`) ⇒ `can_open_paper_positions=False` zwingend ⇒ Banner = „blockiert". **Kein aktiver Verstoß**; etwaige „aktiv"-Sichtung war stale.
+3. **[FAKT]** Code ist hier **korrekt** (truthful, kein Fail-Open). Verbleibendes Real-Problem ist nur **UI-Klarheit**: der Banner unterscheidet nicht sauber `blocked_by_entry_mode` / `active_via_fastlane_override` / `inactive_off` (Befund B, P2).
 4. **[FAKT]** Re-Entry-Status „expired" ist **fail-safe** berechnet (`dashboard.py:179`); `_reentry_status` liefert `expired`/`requires_re_evaluation`/`active`, **kein Freigabe-Pfad**. „2026-05-16" ist ein konfigurierbares Datum (`ALERT_REENTRY_TARGET_DATE`, sonst `_REENTRY_TARGET_DATE` Default). Keine Datums-Logik im `re_entry_mode.py`-Capability-Gate.
 5. **[FAKT]** „0 trusted sources" ist korrekt + absichtlich: Wilson-Lower-Bound, „100% bei n=1 darf nie ‚trusted' lesen" (`dashboard.py:299`), `quality_status=critical`. Wird als **Quality-Constraint** gelabelt, nicht als Block.
 6. **[RISIKO/FAKT]** Source-Reliability-Priority-Modifier ist **fail-open**: fehlende/leere/korrupte `source_reliability.json` ⇒ **kein** Modifier (`eligibility.py:182` „no modifier is safer than a wrong modifier"). Durch `entry_mode=disabled` aktuell entschärft, aber latentes Risiko bei Re-Enable.
@@ -25,7 +27,7 @@ Sprint: `KAI-RUNTIME-TRUTH-GATE-AUDIT` · reine Delta-Analyse gegen p7-Tip `d191
 
 | # | Problem/Bug | Evidenz im Code/Log | Ursache | Risiko | Schweregrad | Fix | Prävention | Modul/Agent |
 |---|---|---|---|---|---|---|---|---|
-| A | „Premium Runtime aktiv" trotz `entry_mode=disabled` möglich | `premium_signals.py:457-469` (`can_open = classic OR fastlane_overrides`); `premium_fastlane.py:447`; `PremiumRuntimeBanner.tsx:255,270` | Banner truthful, ABER nur via Fastlane-Override; **Verdacht Fastlane auf Pi=ON** (vs D-231) | Re-Öffnung der #181-Kill-Switch-Bypass-Kaskade, falls live | **P1** (P0-IF-confirmed) | Pi `GET /api/premium-signals/runtime` lesen → `premium_fastlane_enabled`/`entry_mode_bypassed_for_fastlane_paper`; falls true: Flags OFF (D-231); Banner-Headline für Bypass-State visuell trennen | Invariant-Test: `entry_mode=disabled` ∧ Fastlane-OFF ⇒ `can_open_paper_positions=False`; Alert bei Bypass-State | SENTR + Neo (+ DALI Banner) |
+| A | „Premium Runtime aktiv" trotz `entry_mode=disabled` möglich | `premium_signals.py:457-469`; `premium_fastlane.py:447`; **Pi-`.env` 06-08: Fastlane+Paper=false, entry_mode=disabled** | Verdacht widerlegt — Flags OFF, `can_open_paper_positions=False` zwingend; etwaige „aktiv"-Sichtung war stale | Keiner (kein aktiver Bypass) | ~~P1~~ → **P3 (resolved/stale)** | Keine Runtime-Aktion; nur UI-Klarheit (→ Befund B). Invariant-Test trotzdem als Regressionsschutz | Invariant-Test: `entry_mode=disabled` ∧ Fastlane-OFF ⇒ `can_open_paper_positions=False` | SENTR (verifiziert) |
 | B | Fastlane-Override-State sieht aus wie normaler „aktiv"-Zustand | `PremiumRuntimeBanner.tsx:257-278` ruhiger Cyan-Strip „aktiv", Bypass nur in `RuntimeFlags` | Headline unterscheidet nicht „entry_mode erlaubt" vs „Fastlane bypassed disabled" | Operator-Fehlinterpretation eines Bypass als Normalbetrieb | **P2** | Eigene laute Banner-Variante „Fastlane-Bypass aktiv trotz entry_mode=disabled" | Snapshot-Test je Runtime-Verdict-Variante | DALI |
 | C | Source-Reliability-Modifier fail-open bei fehlender/korrupter Datei | `eligibility.py:177-182` „fail-open — no modifier is safer"; `:66` „Datei nicht vorhanden/leer → kein Effekt" | Bewusste fail-open-Wahl; kein Integritäts-/Freshness-Check der `source_reliability.json` | Bei Re-Enable: Signale ohne Source-Penalty durchs Gate (stille Degradation) | **P2** (durch disabled entschärft) | Freshness-/Schema-Guard: Datei älter als N Tage oder Schema-Mismatch ⇒ konservativer Default + Warnung statt no-op | Test: stale/korrupte Datei ⇒ degraded-Flag, nicht silent-pass | data-quality-inspector + Watchdog |
 | D | Timer-Fehler nur passiv, kein aktiver Alert | `timer_health.py:111-156` (`has_inactive`/`stale`); `health.py:42` nur GET-Endpoint; kein Push in `telegram_bot.py` | Health-Surface ist pull-only; kein Watchdog-Push auf `has_inactive`/`stale` | `kai-risk-gate-audit-review.timer inactive` bleibt unbemerkt bis jemand das Dashboard öffnet | **P2** | Watchdog-Timer/Hook: bei `state∈{has_inactive,stale}` Telegram-Warnung (1×/Tag, dedupe) | Self-Monitoring: Timer-Health-Audit-Staleness selbst alarmieren | Watchdog |
@@ -78,11 +80,26 @@ Sprint: `KAI-RUNTIME-TRUTH-GATE-AUDIT` · reine Delta-Analyse gegen p7-Tip `d191
 
 ---
 
+## 7a. Spec — PremiumRuntimeBanner 3-State-Wahrheit (Befund B, für FS-1)
+
+**Problem:** `PremiumRuntimeBanner.tsx` kennt heute nur 2 visuelle Zustände (ruhig „aktiv" vs laut „blockiert") plus Fastlane-Sonderfälle. Ein Fastlane-**Override** (Paper offen *trotz* `entry_mode=disabled`) sieht aus wie Normalbetrieb.
+
+**Ziel-Zustände (drei, exklusiv, aus `/runtime`-Payload ableitbar, KEINE neuen Backend-Felder nötig):**
+
+| State | Bedingung (vorhandene Felder) | Visuell | Headline |
+|---|---|---|---|
+| `inactive_off` | `!can_open_paper_positions` ∧ `!premium_fastlane_enabled` | neutral/grau | „Premium Paper: AUS (entry_mode=`{entry_mode}`)" + `blocking_reasons` |
+| `blocked_by_entry_mode` | `!can_open_paper_positions` ∧ `entry_mode_blocks_premium_paper` | rot, role=alert | „Premium Execution blockiert — entry_mode=`{entry_mode}`" (heutiger Block-Banner) |
+| `active_via_fastlane_override` | `can_open_paper_positions` ∧ `entry_mode_bypassed_for_fastlane_paper` | **laut amber/Bypass-Stil, nicht ruhig-cyan** | „⚠ Fastlane-Bypass aktiv — Paper offen TROTZ entry_mode=`{entry_mode}` (Live geschützt)" |
+| (Normalfall) `active_clean` | `can_open_paper_positions` ∧ `!entry_mode_bypassed_for_fastlane_paper` | ruhig cyan (heutiger „aktiv") | „Premium Runtime aktiv" |
+
+**Regel:** „aktiv" (ruhig) nur bei `active_clean`. Jeder Bypass-Zustand ist optisch von Normalbetrieb getrennt und nennt explizit den umgangenen Kill-Switch. Reiner Frontend-Fix (Felder existieren: `can_open_paper_positions`, `entry_mode_blocks_premium_paper`, `entry_mode_bypassed_for_fastlane_paper`, `premium_fastlane_enabled`, `entry_mode`). Snapshot-Test je State.
+
 ## 8. Follow-up Fix-Sprints (kein Code in diesem Sprint)
 
-- **FS-1 (P1, SENTR+Neo):** Premium-Runtime-Bypass-Wahrheit — Pi-Verifikation Fastlane-State; Invariant-Test A; falls aktiv: Flags OFF (D-231) + Banner-Bypass-Variante (B). *P0-IF-confirmed-live.*
+- **FS-1 (P2, DALI+Neo) — Runtime-Safety-Teil ERLEDIGT 06-08:** Pi-Flags verifiziert OFF (kein Bypass, kein Incident → Befund A auf P3 herabgestuft). Verbleibt rein UI: PremiumRuntimeBanner 3-State-Wahrheit (§7a) + Invariant-Test (`entry_mode=disabled` ∧ Fastlane-OFF ⇒ `can_open_paper_positions=False`) als Regressionsschutz. **Kein P0/P1 mehr.**
 - **FS-2 (P2, Watchdog):** Active Health-Alerting — Timer `has_inactive`/`stale` + `source_reliability.json`-Staleness → Telegram-Push (D, F) + `kai-risk-gate-audit-review.timer` reaktivieren (E, separater Deploy-Auftrag).
 - **FS-3 (P2, data-quality-inspector):** Source-Reliability-Härtung — Freshness/Schema-Guard gegen fail-open (C) + active/legacy-Trennung im Recalc (H).
 - **FS-4 (P2, Architect):** Re-Entry-Gate-Redefinition — `expired` ⇒ `no_current_authorization`, an `entry_mode` gebunden (G).
 
-**Schweregrad-Disziplin:** Kein Zielbild-Feature als P0. Höchster Live-Safety-Punkt (A) ist **P1/verifikations-gated**, P0 nur falls Pi-Read Fastlane-aktiv bestätigt. Alles übrige ist durch `entry_mode=disabled` entschärft (P2/P3).
+**Schweregrad-Disziplin:** Kein Zielbild-Feature als P0. Der zunächst als Live-Safety-Verdacht eingestufte Punkt (A) ist **06-08 read-only verifiziert: Fastlane+Paper OFF, entry_mode=disabled ⇒ kein Bypass, kein Incident** → A auf P3 (stale Anzeige) herabgestuft. Es verbleibt **kein P0/P1**; höchste offene Items sind P2 (UI-3-State, Source-fail-closed, Timer-Taxonomie+Alerting, Re-Entry-Redefinition). Alles ist durch `entry_mode=disabled` execution-seitig entschärft.
