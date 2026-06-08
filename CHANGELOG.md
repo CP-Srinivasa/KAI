@@ -1,4 +1,12 @@
 
+## 2026-06-08 - D-227 Outcome-Report: persistenter Artifact-Emitter (read-only)
+
+Folge-Block zum D-227-Outcome-Report-Kern (in p7 via #196). Macht den Report als Zeitreihe pullbar — wie der Shadow-Report. Rein read-only, kein Runtime/Env/Flag.
+
+- **`app/alerts/blocked_outcome_report.py`**: neuer reiner Writer `write_blocked_outcome_report(report, out_path=BLOCKED_OUTCOME_REPORT_PATH)` schreibt den gebauten Report als Pretty-JSON (mkdir parents), kanonischer Pfad `artifacts/blocked_outcome_report.json`. Schreibt nur ein Report-Artefakt — kein Execution-/Env-Touch.
+- **`app/cli/main.py`**: `alerts blocked-outcome-report --out-json <path>` persistiert zusätzlich; bei `--json` bleibt **stdout reines JSON** (die „wrote …"-Notiz geht nach stderr).
+- **Tests**: Writer round-trippt zu validem JSON ohne Fabrikation, Default-Pfad unter `artifacts/`. 3 grün; ruff + format + mypy clean.
+
 ## 2026-06-08 - Premium-Fastlane fail-closed Bypass-Defaults + Entry-Mode-Override-Preflight (Issue #181, P0)
 
 Follow-up zum #179-Incident (ADR 0006). Die Fastlane-Bypass-Kaskade defaultete vollständig `True`, sodass `PREMIUM_FASTLANE_ENABLED=true` den globalen Kill-Switch `entry_mode=disabled` durch einen einzigen Flag-Flip neutralisierte. Behoben: fail-closed Defaults + zweistufiger expliziter Override.
