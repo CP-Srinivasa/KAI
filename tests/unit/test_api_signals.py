@@ -229,7 +229,8 @@ def test_recent_envelopes_empty_when_no_audit(client: TestClient) -> None:
     resp = client.get("/signals/envelope/recent", headers=_hdr())
     assert resp.status_code == 200
     body = resp.json()
-    assert body == {"count": 0, "records": []}
+    assert body["count"] == 0
+    assert body["records"] == []
 
 
 def test_recent_envelopes_returns_newest_first(client: TestClient) -> None:
@@ -318,3 +319,67 @@ def test_recent_envelopes_signal_null_for_news(client: TestClient) -> None:
     record = listing.json()["records"][0]
     assert record["message_type"] == "news"
     assert record["signal"] is None
+
+
+def _premium_raw(sig_id: str, ts: str) -> dict:
+    return {
+        "timestamp_utc": ts,
+        "event": "telegram_channel_envelope",
+        "message_type": "signal",
+        "stage": "accepted",
+        "status": "ok",
+        "source": "telegram_premium_channel",
+        "envelope_id": "ENV-TG-1",
+        "source_uid": "telegram:-100:5",
+        "message_id": 5,
+        "payload": {
+            "signal_id": sig_id,
+            "source": "telegram_premium_channel",
+            "symbol": "SKYAIUSDT",
+            "display_symbol": "SKYAI/USDT",
+            "side": "buy",
+            "direction": "long",
+            "entry_value": 24800.0,
+            "source_uid": "telegram:-100:5",
+            "source_message_id": 5,
+            "timestamp_utc": ts,
+        },
+    }
+
+
+def _premium_approved(sig_id: str, ts: str) -> dict:
+    rec = _premium_raw(sig_id, ts)
+    rec["event"] = "telegram_channel_approval"
+    rec["source"] = "telegram_premium_channel_approved"
+    rec["envelope_id"] = "ENV-APP-1"
+    rec["origin_envelope_id"] = "ENV-TG-1"
+    rec["payload"]["source"] = "telegram_premium_channel_approved"
+    return rec
+
+
+def test_recent_envelopes_dedupes_raw_and_approved(client: TestClient) -> None:
+    """Dashboard double-count fix: raw + approved of the SAME signal collapse to
+    ONE row, flagged double_sourced so the UI groups them as Rohsignal+Approved."""
+    audit_path: Path = client.audit_path  # type: ignore[attr-defined]
+    sig = "SIG-TGCH-DEDUPE-SKYAIUSDT"
+    lines = [
+        _premium_raw(sig, "2026-06-06T15:33:29+00:00"),
+        _premium_approved(sig, "2026-06-06T15:33:30+00:00"),
+    ]
+    audit_path.write_text(
+        "\n".join(json.dumps(x) for x in lines) + "\n", encoding="utf-8"
+    )
+
+    listing = client.get("/signals/envelope/recent", headers=_hdr())
+    assert listing.status_code == 200
+    body = listing.json()
+    assert body["count"] == 1, body  # raw+approved counted ONCE
+    assert body["deduped_from"] == 2
+    rec = body["records"][0]
+    assert rec["double_sourced"] is True
+    assert rec["has_raw_event"] is True
+    assert rec["has_approved_event"] is True
+    assert rec["merged_event_count"] == 2
+    # canonical row is the approved (actionable) one
+    assert rec["source"] == "telegram_premium_channel_approved"
+    assert rec["dedup_key"] == f"sig:{sig}"
