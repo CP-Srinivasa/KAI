@@ -54,7 +54,6 @@ def main() -> None:
     bear_p10_h = bear_p10_m = 0
     bear_low_p_h = bear_low_p_m = 0
     bear_sources: dict[str, int] = {}
-    bear_assets: dict[str, int] = {}
     unannotated = 0
 
     for r in rows:

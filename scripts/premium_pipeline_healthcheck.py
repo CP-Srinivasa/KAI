@@ -37,13 +37,12 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
-import json
-import logging
-import urllib.parse
-import urllib.request
+import logging  # noqa: E402 — imports follow the sys.path bootstrap above
+import urllib.parse  # noqa: E402
+import urllib.request  # noqa: E402
 
-from app.execution.envelope_to_paper_bridge import run_tick
-from app.observability.premium_pipeline_health import compute_pipeline_health
+from app.execution.envelope_to_paper_bridge import run_tick  # noqa: E402
+from app.observability.premium_pipeline_health import compute_pipeline_health  # noqa: E402
 
 logging.basicConfig(
     level=os.environ.get("LOG_LEVEL", "INFO"),
