@@ -172,7 +172,7 @@ def test_quality_api_returns_metrics(
     # Sparse fixture → gate stays active with documented blocking reasons.
     assert data["gate_status"] == "hold_remains_active"
     assert "resolved_directional_below_200" in data["blocking_reasons"]
-    assert data["dashboard_truth_contract_version"] == 1
+    assert data["dashboard_truth_contract_version"] == 2
     assert data["reentry"]["status"] == "expired"
     assert data["reentry"]["target_date"] == "2026-05-16"
     assert data["metric_contract"]["paper_fills_with_pnl"]["scope"] in {
@@ -181,6 +181,20 @@ def test_quality_api_returns_metrics(
     }
     assert data["metric_contract"]["paper_fills_with_pnl"]["quality_status"] == "historical_only"
     assert data["metric_contract"]["paper_fills_recent_24h"]["scope"] == "rolling_24h"
+    # Truth-Layer v2 (Issue #170 Part A): registry serves the scalar metrics from
+    # ONE source; the frontend is never permitted to recompute them, and the
+    # contract value reconciles against the SSOT within tolerance.
+    registry = data["metric_registry"]
+    assert registry["paper_fills_with_pnl"]["status"] == "ok"
+    assert registry["paper_fills_recent_24h"]["value"] == float(
+        data["metric_contract"]["paper_fills_recent_24h"]["value"]
+    )
+    # an unsourced risk scalar is served degraded (value withheld), never faked
+    assert registry["var_usd"]["status"] == "degraded"
+    assert registry["var_usd"]["value"] is None
+    # every reconciliation entry is within tolerance (contract == SSOT)
+    assert data["metric_registry_reconciliation"]
+    assert all(r["within_tolerance"] for r in data["metric_registry_reconciliation"])
 
 
 def test_quality_api_includes_alerts_with_outcomes(
