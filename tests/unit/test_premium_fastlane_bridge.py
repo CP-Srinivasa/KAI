@@ -82,12 +82,25 @@ def _enable_bridge_classic_blocked(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("PREMIUM_PAPER_EXECUTION_ENABLED", "false")
 
 
+def _arm_fastlane_bypasses(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Explicitly arm the bypasses needed to fill despite the classic block.
+
+    Issue #181 made every bypass fail-closed, so a fill now requires the
+    source-allowlist bypass AND the two-flag entry-mode override (per-bypass flag
+    + independent override arm). This is the deliberate, operator-readable opt-in.
+    """
+    monkeypatch.setenv("PREMIUM_FASTLANE_BYPASS_SOURCE_ALLOWLIST", "true")
+    monkeypatch.setenv("PREMIUM_FASTLANE_BYPASS_ENTRY_MODE_FOR_PAPER", "true")
+    monkeypatch.setenv("PREMIUM_FASTLANE_ALLOW_ENTRY_MODE_DISABLED_OVERRIDE", "true")
+
+
 @pytest.mark.asyncio
 async def test_fastlane_fills_premium_despite_classic_block(
     tmp_artifacts: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _enable_bridge_classic_blocked(monkeypatch)
     monkeypatch.setenv("PREMIUM_FASTLANE_ENABLED", "true")
+    _arm_fastlane_bypasses(monkeypatch)
     _write(tmp_artifacts / "telegram_message_envelope.jsonl", _premium_envelope())
 
     result = await run_tick(price_provider=_price)
@@ -96,6 +109,7 @@ async def test_fastlane_fills_premium_despite_classic_block(
     assert result.rejected_entry_mode == 0, result.to_dict()
     assert result.fastlane_bypassed_allowlist == 1, result.to_dict()
     assert result.fastlane_bypassed_entry_mode == 1, result.to_dict()
+    assert result.fastlane_entry_mode_override_refused == 0, result.to_dict()
     assert result.fastlane_routed == 1, result.to_dict()
 
     records = _read(tmp_artifacts / "bridge_pending_orders.jsonl")
@@ -177,6 +191,7 @@ async def test_fastlane_no_dust_or_zero_position(
     """The filled paper position carries a positive quantity (no 0-USD fill)."""
     _enable_bridge_classic_blocked(monkeypatch)
     monkeypatch.setenv("PREMIUM_FASTLANE_ENABLED", "true")
+    _arm_fastlane_bypasses(monkeypatch)
     _write(tmp_artifacts / "telegram_message_envelope.jsonl", _premium_envelope())
 
     result = await run_tick(price_provider=_price)
@@ -185,3 +200,68 @@ async def test_fastlane_no_dust_or_zero_position(
     records = _read(tmp_artifacts / "bridge_pending_orders.jsonl")
     filled = next(r for r in records if r["stage"] == "filled")
     assert filled["quantity"] > 0
+
+
+@pytest.mark.asyncio
+async def test_fastlane_enabled_defaults_do_not_bypass_entry_mode(
+    tmp_artifacts: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Issue #181 §4: entry_mode=disabled + PREMIUM_FASTLANE_ENABLED=true with the
+    fail-closed defaults (no bypass flags armed) → 0 fills / 0 orders / 0 positions.
+    The kill-switch means disabled again, even for the premium paper path.
+
+    Premium is allowlisted here so the signal passes Gate 1 and actually reaches
+    the entry-mode gate — isolating the entry_mode fail-closed behaviour.
+    """
+    monkeypatch.setenv("EXECUTION_OPERATOR_SIGNAL_BRIDGE_ENABLED", "true")
+    monkeypatch.setenv("EXECUTION_OPERATOR_SIGNAL_SOURCE_ALLOWLIST", "telegram_premium_channel")
+    monkeypatch.setenv("EXECUTION_ENTRY_MODE", "disabled")
+    monkeypatch.setenv("PREMIUM_PAPER_EXECUTION_ENABLED", "false")
+    monkeypatch.setenv("PREMIUM_FASTLANE_ENABLED", "true")
+    # deliberately NO bypass / override flags → fail-closed
+    _write(tmp_artifacts / "telegram_message_envelope.jsonl", _premium_envelope())
+
+    result = await run_tick(price_provider=_price)
+
+    assert result.filled == 0, result.to_dict()
+    assert result.rejected_entry_mode == 1, result.to_dict()
+    assert result.fastlane_bypassed_entry_mode == 0, result.to_dict()
+    # the bypass flag itself is off → nothing was even requested to override
+    assert result.fastlane_entry_mode_override_refused == 0, result.to_dict()
+
+    records = _read(tmp_artifacts / "bridge_pending_orders.jsonl")
+    assert not any(r["stage"] == "filled" for r in records), records
+    reject = next(r for r in records if r["stage"] == "rejected_entry_mode")
+    assert "ENTRY_MODE_DISABLED" in reject["reason_codes"]
+
+
+@pytest.mark.asyncio
+async def test_fastlane_entry_mode_bypass_without_override_is_refused(
+    tmp_artifacts: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Issue #181 §7: arming the per-bypass flag alone is NOT enough. Under
+    entry_mode=disabled the bypass is honoured ONLY together with the independent
+    ``allow_entry_mode_disabled_override``. With the override unarmed the signal
+    is refused fail-closed and the refusal is recorded with a reason_code.
+    """
+    monkeypatch.setenv("EXECUTION_OPERATOR_SIGNAL_BRIDGE_ENABLED", "true")
+    monkeypatch.setenv("EXECUTION_OPERATOR_SIGNAL_SOURCE_ALLOWLIST", "telegram_premium_channel")
+    monkeypatch.setenv("EXECUTION_ENTRY_MODE", "disabled")
+    monkeypatch.setenv("PREMIUM_PAPER_EXECUTION_ENABLED", "false")
+    monkeypatch.setenv("PREMIUM_FASTLANE_ENABLED", "true")
+    # single flag armed, but the independent override is NOT → fail-closed
+    monkeypatch.setenv("PREMIUM_FASTLANE_BYPASS_ENTRY_MODE_FOR_PAPER", "true")
+    _write(tmp_artifacts / "telegram_message_envelope.jsonl", _premium_envelope())
+
+    result = await run_tick(price_provider=_price)
+
+    assert result.filled == 0, result.to_dict()
+    assert result.rejected_entry_mode == 1, result.to_dict()
+    assert result.fastlane_bypassed_entry_mode == 0, result.to_dict()
+    assert result.fastlane_entry_mode_override_refused == 1, result.to_dict()
+
+    records = _read(tmp_artifacts / "bridge_pending_orders.jsonl")
+    refusal = next(r for r in records if r["stage"] == "fastlane_entry_mode_override_refused")
+    assert refusal["reason"] == "fastlane_entry_mode_override_not_armed"
+    assert "FASTLANE_ENTRY_MODE_OVERRIDE_NOT_ARMED" in refusal["reason_codes"]
+    assert not any(r["stage"] == "filled" for r in records), records

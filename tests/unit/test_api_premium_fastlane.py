@@ -34,6 +34,10 @@ async def test_runtime_fastlane_overrides_classic_block(monkeypatch: pytest.Monk
     monkeypatch.setenv("PREMIUM_PAPER_EXECUTION_ENABLED", "false")
     monkeypatch.setenv("EXECUTION_OPERATOR_SIGNAL_BRIDGE_ENABLED", "true")
     monkeypatch.setenv("PREMIUM_FASTLANE_ENABLED", "true")
+    # Issue #181: overriding the classic block now requires the explicit two-flag
+    # arm (per-bypass flag + independent override).
+    monkeypatch.setenv("PREMIUM_FASTLANE_BYPASS_ENTRY_MODE_FOR_PAPER", "true")
+    monkeypatch.setenv("PREMIUM_FASTLANE_ALLOW_ENTRY_MODE_DISABLED_OVERRIDE", "true")
 
     out = await runtime_status()
 

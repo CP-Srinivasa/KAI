@@ -536,6 +536,16 @@ class PremiumFastlaneSettings(BaseSettings):
 
     Fail-closed: ``enabled`` defaults to **False**. The runtime (.env / Pi)
     opts in explicitly via ``PREMIUM_FASTLANE_ENABLED=true``.
+
+    Fail-closed bypasses (Issue #181, 2026-06-08): every gate bypass below now
+    defaults to **False**. Enabling the fastlane no longer auto-relaxes any gate;
+    each relaxation is an explicit per-bypass opt-in. In particular the dangerous
+    ``bypass_entry_mode_for_paper`` no longer silently neuters the global
+    ``EXECUTION_ENTRY_MODE=disabled`` kill-switch (#179 incident) — under
+    ``disabled`` it is honoured ONLY together with the explicit second
+    acknowledgement ``allow_entry_mode_disabled_override`` (a two-flag arm that
+    mirrors the live triple-flag pattern; see ``fastlane_entry_mode_override``
+    in app/execution/premium_fastlane.py).
     """
 
     model_config = SettingsConfigDict(
@@ -553,13 +563,23 @@ class PremiumFastlaneSettings(BaseSettings):
     live_enabled: bool = Field(default=False)
 
     # ── Gate bypasses (only ever applied to authentic premium / non-live) ──
-    bypass_manual_approval: bool = Field(default=True)
-    bypass_source_allowlist: bool = Field(default=True)
-    bypass_entry_mode_for_paper: bool = Field(default=True)
-    bypass_risk_quality_gates: bool = Field(default=True)
-    bypass_source_quality_gates: bool = Field(default=True)
-    bypass_priority_tier_gates: bool = Field(default=True)
-    bypass_forward_precision_gates: bool = Field(default=True)
+    # ALL default False (fail-closed, Issue #181). Each is an explicit per-bypass
+    # opt-in; enabling the fastlane alone relaxes nothing.
+    bypass_manual_approval: bool = Field(default=False)
+    bypass_source_allowlist: bool = Field(default=False)
+    bypass_entry_mode_for_paper: bool = Field(default=False)
+    bypass_risk_quality_gates: bool = Field(default=False)
+    bypass_source_quality_gates: bool = Field(default=False)
+    bypass_priority_tier_gates: bool = Field(default=False)
+    bypass_forward_precision_gates: bool = Field(default=False)
+
+    # ── Explicit entry-mode override (Issue #181 §7) ──
+    # Second, independent acknowledgement required before the fastlane may
+    # downgrade a GLOBAL ``EXECUTION_ENTRY_MODE=disabled`` to an observed note for
+    # the premium paper route. Even with ``bypass_entry_mode_for_paper=True`` the
+    # kill-switch stays in force unless this is ALSO explicitly armed. Default
+    # False → ``disabled`` means disabled for the premium path too.
+    allow_entry_mode_disabled_override: bool = Field(default=False)
 
     # ── Minimum required guards (never bypassed) ──
     require_schema_valid: bool = Field(default=True)

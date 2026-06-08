@@ -161,6 +161,32 @@ def live_fastlane_armed(settings: AppSettings) -> bool:
     )
 
 
+# ── Entry-mode override preflight (Issue #181 §7) ───────────────────────────
+
+
+def fastlane_entry_mode_override(settings: AppSettings) -> tuple[bool, str | None]:
+    """Fail-closed preflight: may the fastlane downgrade a GLOBAL
+    ``entry_mode=disabled`` to an observed note for the premium paper route?
+
+    Returns ``(allowed, refusal_code)``. ``allowed`` is True ONLY when BOTH
+    explicit acknowledgements are armed:
+      - ``bypass_entry_mode_for_paper`` (the per-bypass opt-in), AND
+      - ``allow_entry_mode_disabled_override`` (the independent override arm).
+
+    Either missing → the kill-switch holds (fail-closed) and a refusal code is
+    returned for the audit trail. This is the #179-incident remedy: enabling the
+    fastlane, or even a single bypass flag, can no longer neuter ``disabled``.
+    """
+    fl = settings.premium_fastlane
+    if not fl.enabled:
+        return False, "fastlane_disabled"
+    if not fl.bypass_entry_mode_for_paper:
+        return False, "fastlane_entry_mode_bypass_off"
+    if not fl.allow_entry_mode_disabled_override:
+        return False, "fastlane_entry_mode_override_not_armed"
+    return True, None
+
+
 # ── Source authenticity ─────────────────────────────────────────────────────
 
 
@@ -414,11 +440,11 @@ def fastlane_status(settings: AppSettings, *, now: datetime | None = None) -> di
         if flag
     ]
     route = _select_route(fl, live_armed=live_armed) if (fl.enabled and active) else None
-    # The fastlane overrides the classic premium-paper block when it is enabled,
-    # inside its window, routable, and configured to bypass entry-mode for paper.
-    overrides_classic_block = bool(
-        fl.enabled and active and route is not None and fl.bypass_entry_mode_for_paper
-    )
+    # The fastlane overrides the classic premium-paper block ONLY when it is
+    # enabled, inside its window, routable, AND the two-flag entry-mode override
+    # is explicitly armed (Issue #181). Reports the same truth the bridge enforces.
+    override_allowed, _override_reason = fastlane_entry_mode_override(settings)
+    overrides_classic_block = bool(fl.enabled and active and route is not None and override_allowed)
     return {
         "enabled": fl.enabled,
         "active": bool(fl.enabled and active),
@@ -447,6 +473,7 @@ __all__ = [
     "OBSERVE_ONLY_METRICS",
     "FastlaneDecision",
     "check_required_fields",
+    "fastlane_entry_mode_override",
     "fastlane_status",
     "fastlane_window",
     "is_authorized_premium_fastlane_source",
