@@ -1996,6 +1996,63 @@ def alerts_d227_reconcile(
             console.print(f"wrote {written}")
 
 
+@alerts_app.command("d227-source-crosscheck")
+def alerts_d227_source_crosscheck(
+    artifacts_dir: str = typer.Option("artifacts", "--artifacts-dir", help="Artifacts directory"),
+    window_days: int = typer.Option(90, "--window-days", help="Source-reliability window"),
+    min_sample: int = typer.Option(
+        20, "--min-sample", help="Min blocked-resolved count per source before a verdict"
+    ),
+    over_block_threshold_pct: float = typer.Option(
+        50.0,
+        "--over-block-threshold-pct",
+        help="Blocked recall at/above which a good source over-blocks",
+    ),
+    as_json: bool = typer.Option(False, "--json", help="Emit JSON instead of the text report"),
+    out_json: str = typer.Option(
+        "", "--out-json", help="Also persist the report JSON to this path"
+    ),
+) -> None:
+    """Read-only per-source cross-check: D-227 blocked recall vs source reliability."""
+    import json as _json
+
+    from app.alerts.blocked_outcome_report import build_blocked_outcome_report
+    from app.alerts.d227_source_reliability_crosscheck import (
+        crosscheck_blocked_vs_reliability,
+        render_crosscheck,
+    )
+    from app.learning.source_reliability import build_source_reliability_report
+
+    blocked = build_blocked_outcome_report(artifacts_dir)
+    audits = load_alert_audits(Path(artifacts_dir))
+    annotations = load_outcome_annotations(Path(artifacts_dir))
+    source_map, _title_map = _load_doc_metadata(audits)
+    reliability = build_source_reliability_report(
+        list(audits), list(annotations), source_map or {}, window_days=window_days
+    )
+    report = crosscheck_blocked_vs_reliability(
+        blocked,
+        reliability,
+        min_sample=min_sample,
+        over_block_threshold_pct=over_block_threshold_pct,
+    )
+
+    written = None
+    if out_json:
+        out_path = Path(out_json)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_text(_json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
+        written = out_path
+    if as_json:
+        print(_json.dumps(report, indent=2))
+        if written is not None:
+            typer.echo(f"wrote {written}", err=True)
+    else:
+        console.print(render_crosscheck(report))
+        if written is not None:
+            console.print(f"wrote {written}")
+
+
 @alerts_app.command("daily-briefing")
 def alerts_daily_briefing(
     lookback_hours: int = typer.Option(

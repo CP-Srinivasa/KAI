@@ -1,4 +1,12 @@
 
+## 2026-06-08 - D-227 blocked vs Source-Reliability per-source Cross-Check (read-only)
+
+Nächster Diagnoseblock: schließt die **per-source**-Lücke der D-227-vs-hit_rate-Reconciliation (dispatched hit_rate hat keine by_source-Achse). Cross-Check des blocked-outcome-Recalls je Quelle (D-227, `hit_miss_by_source`) gegen die Source-Reliability-Tiers (FS-3, #203). Deckt **Über-Blocking guter Quellen** auf: trifft eine `trusted`/`neutral`-Quelle in ihren *blockierten* Alerts oft, unterdrückt das Gate Quellen, denen das System sonst vertraut. Rein read-only.
+
+- **`app/alerts/d227_source_reliability_crosscheck.py`** (neu, rein/IO-frei): `crosscheck_blocked_vs_reliability(blocked_report, reliability_report, min_sample=20, over_block_threshold_pct=50.0)` → per-source blocked-recall vs tier/point_estimate. Verdicts fail-closed: `INSUFFICIENT_DATA` (blocked < min_sample), `SOURCE_UNRATED` (kein/insufficient Reliability), `OVER_BLOCKED_GOOD_SOURCE` (good tier ∧ blocked-recall ≥ Schwelle), `SUPPRESSION_CALIBRATED`. `influences_execution=False`.
+- **`app/cli/main.py`**: `alerts d227-source-crosscheck --json/--out-json` baut beide Reports (`build_blocked_outcome_report` + `build_source_reliability_report`); `--json`-stdout rein.
+- **Tests**: 7 grün (over-blocked-good, calibrated low/good-miss, insufficient, unrated/insufficient-tier, render). ruff + format + mypy clean; CLI-Surface-Test grün (kein „hit-rate"-Token).
+
 ## 2026-06-08 - D-227 vs hit_rate Reconciliation (read-only Diagnose)
 
 Nächster Diagnoseblock: Cross-Check des blocked-outcome-Stroms (D-227, unterdrückte Alerts) gegen den dispatched hit_rate-Strom. Deckt **Über-Blocking** auf — wenn blockierte Alerts so oft treffen wie dispatchte, hat das Block-Gate gute Alerts unterdrückt. Rein read-only, kein Runtime/Env/Flag.
