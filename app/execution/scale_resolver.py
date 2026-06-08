@@ -46,8 +46,46 @@ _RECOGNISED_SCALES = (1.0, 1e3, 1e4, 1e5, 1e6, 1e7, 1e8)
 # within ±50% of the factor. Anything looser would catch real 2× drifts.
 _SCALE_TOLERANCE = 0.5
 
+# BUG-1 (2026-06-08): when scale detection fails soft to 1.0 AND the raw entry
+# is implausibly far from spot (ratio beyond this factor in either direction),
+# the cause is an UNRESOLVED SCALE or a BAD PRICE — not a market condition. We
+# must label this structurally as ``scale_unresolved_or_bad_price`` BEFORE the
+# market-plausibility checks (which would otherwise emit a misleading
+# ``long_sl_at_or_above_spot``). SKYAI 2026-06-07: raw entry 24800 vs garbage
+# spot 101.94 → ratio 243 → scale stayed 1.0 → wrong "SL above spot" reject.
+SCALE_UNRESOLVED_REASON = "scale_unresolved_or_bad_price"
+_BAD_PRICE_RATIO_THRESHOLD = 100.0
+
 
 PriceFetcher = Callable[[str], Awaitable[float | None]]
+
+
+def classify_scale_failure(
+    *,
+    entry: float | None,
+    spot: float | None,
+    scale_factor_applied: float,
+    ratio_threshold: float = _BAD_PRICE_RATIO_THRESHOLD,
+) -> str | None:
+    """Return ``scale_unresolved_or_bad_price`` when the scaled geometry is the
+    product of a failed scale resolution / bad price, else None.
+
+    Triggers only when no power-of-ten factor was applied (``scale_factor_applied
+    == 1.0``) yet the (still-raw) entry sits more than ``ratio_threshold``× away
+    from spot in either direction. That combination cannot be a real market move
+    — it is an unresolved integer-tick scale or a garbage spot. This is a
+    STRUCTURAL reason (terminal everywhere); it must be checked before
+    ``validate_scaled_signal`` so the misleading market-plausibility reasons are
+    never reached for this case.
+    """
+    if entry is None or spot is None or entry <= 0 or spot <= 0:
+        return None
+    if scale_factor_applied != 1.0:
+        return None
+    ratio = entry / spot
+    if ratio > ratio_threshold or ratio < (1.0 / ratio_threshold):
+        return SCALE_UNRESOLVED_REASON
+    return None
 
 
 def detect_scale_factor(channel_value: float, provider_price: float) -> float:
@@ -110,8 +148,36 @@ async def fetch_price(symbol: str) -> float | None:
     if not provider or provider == "coingecko":
         provider = "fallback"
     snap = await get_market_data_snapshot(symbol=symbol, provider=provider)
-    if not snap.available or snap.is_stale:
+    if not snap.available or snap.is_stale or snap.price is None:
         return None
+    # BUG-2: outlier gate. A spot that jumps implausibly versus this symbol's
+    # last known-good spot is a wrong-instrument/feed glitch (SKYAI 101.94).
+    # Reject it BEFORE it can drive scale/validation/PnL, and never let the
+    # garbage value become the last-good reference.
+    from app.market_data.price_sanity import evaluate_price_sanity, get_last_good_store
+    from app.observability.premium_audit import (
+        EVENT_OUTLIER_REJECTED,
+        append_premium_audit,
+    )
+
+    store = get_last_good_store()
+    verdict = evaluate_price_sanity(
+        symbol=symbol,
+        candidate_price=snap.price,
+        last_good_price=store.get(symbol),
+    )
+    if not verdict.ok:
+        append_premium_audit(
+            EVENT_OUTLIER_REJECTED,
+            symbol=symbol,
+            provider=provider,
+            candidate_price=snap.price,
+            last_good_price=store.get(symbol),
+            outlier_score=verdict.outlier_score,
+            reference=verdict.reference,
+        )
+        return None
+    store.record(symbol, snap.price)
     return snap.price
 
 
@@ -213,6 +279,7 @@ _STRUCTURAL_SCALE_REASONS = frozenset(
         "short_sl_at_or_below_entry",
         "long_targets_at_or_below_entry",
         "short_targets_at_or_above_entry",
+        SCALE_UNRESOLVED_REASON,
     }
 )
 
@@ -252,8 +319,10 @@ async def resolve_scale_for_symbol(
 
 
 __all__ = [
+    "SCALE_UNRESOLVED_REASON",
     "PriceFetcher",
     "apply_scale_to_payload",
+    "classify_scale_failure",
     "detect_scale_factor",
     "fetch_price",
     "is_structural_scale_reason",
