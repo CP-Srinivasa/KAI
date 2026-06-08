@@ -33,6 +33,7 @@ from app.observability.real_analysis_provider import (
     mark_fed,
     select_pending,
 )
+from app.observability.shadow_inloop_funnel import build_inloop_funnel
 
 logger = logging.getLogger(__name__)
 
@@ -106,6 +107,9 @@ async def run_shadow_real_feed(
     injected = 0
     run_errors = 0
     status_buckets: dict[str, int] = {}
+    # Per-cycle (status, notes) for the in-loop funnel (#175): explains WHERE
+    # inside the loop/generator each injected candidate died.
+    cycle_outcomes: list[tuple[str, list[str]]] = []
 
     for cand in candidates[: max(0, limit)]:
         assert isinstance(cand, FeedCandidate)
@@ -118,8 +122,14 @@ async def run_shadow_real_feed(
         injected += 1
         status = str(getattr(cycle, "status", "unknown"))
         status_buckets[status] = status_buckets.get(status, 0) + 1
+        raw_notes = getattr(cycle, "notes", None)
+        notes = [str(n) for n in raw_notes] if isinstance(raw_notes, (list, tuple)) else []
+        cycle_outcomes.append((status, notes))
         # Idempotency: mark fed only after a successful (no-exception) run.
         mark_fed(cand.analysis.document_id, path=fed_ledger_path)
+
+    # In-loop funnel axes (#175) — distinct from the feeder-level ``counts`` above.
+    in_loop = build_inloop_funnel(cycle_outcomes)
 
     funnel = {
         **counts,
@@ -129,6 +139,7 @@ async def run_shadow_real_feed(
             n for s, n in status_buckets.items() if any(h in s for h in _SHADOW_RECORDED_HINTS)
         ),
         "by_cycle_status": status_buckets,
+        "in_loop": in_loop,
         "timestamp_utc": ts,
         "enabled": True,
     }

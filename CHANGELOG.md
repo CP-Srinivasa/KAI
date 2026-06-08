@@ -9,6 +9,15 @@ Follow-up zum #179-Incident (ADR 0006). Die Fastlane-Bypass-Kaskade defaultete v
 - **`app/risk/reason_codes.py`**: Neuer `ExecutionBlockerCode.FASTLANE_ENTRY_MODE_OVERRIDE_NOT_ARMED`.
 - **Tests**: `test_premium_fastlane_settings` (Defaults jetzt fail-closed), zwei neue Bridge-Tests — `disabled`+`FASTLANE_ENABLED=true` ohne Arm → 0 Fills/0 Orders/0 Positionen (Issue §4); einzelnes Bypass-Flag ohne Override → fail-closed + Refusal-Record (Issue §7). Abhängige Tests auf explizites Arming umgestellt. 44 Premium-Fastlane-Tests + 80 angrenzende grün; ruff + ruff-format + mypy clean.
 - **Bewusst nicht in diesem PR** (Issue §5/§8, durch fail-closed-Posture nicht-dringlich): Per-Source-Limits/max trades-h/notional-day; Remodelling als expliziter `entry_mode`-Enum (`premium_paper_limited`). Siehe ADR 0006.
+## 2026-06-08 - NEO-P-002-r3 Phase 3: In-Loop-Funnel-Achsen (Issue #175)
+
+Folge zu Phase 2 (Real-Analysen-Feeder): die Phase-2-Funnel zeigte nur Pre-Loop-Selektion + terminale `by_cycle_status`. Sie konnte nicht erklären, **wo im Loop/Generator** ein Real-Kandidat starb. Damit `real_resolved=0` *erklärbar* bleibt (nie still als `EDGE_NEGATIVE`).
+
+- **`app/observability/shadow_inloop_funnel.py`** (neu, rein): `classify_cycle(status, notes)` mappt jeden injizierten Zyklus-Terminal (`CycleStatus`) auf eine In-Loop-Achse; `build_inloop_funnel(cycles)` liefert die kumulativen Achsen (`real_analyses_seen`/`eligible_for_shadow`/`priority_rejected`/`sentiment_rejected`/`non_directional`/`directional_accepted`/`reached_signal_generator`/`generator_returned_none`/`shadow_candidate_written`/`resolver_resolved_real`) + eine `rejected_funnel`-Aufschlüsselung. **Reine Instrumentierung** — kein Loop-Verhalten geändert (keine Directional-Gate-Lockerung, keine Priority-Threshold-Änderung, kein D-182-Bypass).
+- **`app/observability/shadow_real_feed.py`**: sammelt `(status, notes)` je injiziertem Zyklus und ergänzt einen `in_loop`-Block im Funnel-Record — **getrennt** von den Feeder-Level-`counts`.
+- **`app/observability/shadow_candidate_ledger.py`**: `build_shadow_report(..., inloop_funnel=None)` surfaced `in_loop_funnel` + `rejected_funnel`; **diagnostisch only**, ändert `primary_class` nicht → `real_resolved=0` bleibt `INSUFFICIENT_DATA`.
+- **Invarianten**: Default-OFF (Flag unverändert), keine Fills/Positionen/Orders, `entry_mode` disabled; Report trennt Feeder-Level vs In-Loop.
+- **Tests**: `test_shadow_inloop_funnel.py` (15: Klassifizierer je Achse, Zero-Candidate/rejected/success-Pfade, Mixed-Counts, Report surfaced `rejected_funnel` ∧ bleibt INSUFFICIENT, Report ohne Funnel unverändert). 86 Shadow-Tests grün; ruff + format + mypy clean.
 
 ## 2026-06-01 - Entry-Safety-Mode + cost-adjusted Edge-Release-Gate (/goal sprint, A–F)
 
