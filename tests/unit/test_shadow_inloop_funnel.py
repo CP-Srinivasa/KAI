@@ -20,7 +20,6 @@ from app.observability.shadow_inloop_funnel import (
     classify_cycle,
 )
 
-
 # --- classifier -------------------------------------------------------------
 
 

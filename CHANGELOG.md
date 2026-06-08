@@ -9,6 +9,7 @@ Follow-up zum #179-Incident (ADR 0006). Die Fastlane-Bypass-Kaskade defaultete v
 - **`app/risk/reason_codes.py`**: Neuer `ExecutionBlockerCode.FASTLANE_ENTRY_MODE_OVERRIDE_NOT_ARMED`.
 - **Tests**: `test_premium_fastlane_settings` (Defaults jetzt fail-closed), zwei neue Bridge-Tests — `disabled`+`FASTLANE_ENABLED=true` ohne Arm → 0 Fills/0 Orders/0 Positionen (Issue §4); einzelnes Bypass-Flag ohne Override → fail-closed + Refusal-Record (Issue §7). Abhängige Tests auf explizites Arming umgestellt. 44 Premium-Fastlane-Tests + 80 angrenzende grün; ruff + ruff-format + mypy clean.
 - **Bewusst nicht in diesem PR** (Issue §5/§8, durch fail-closed-Posture nicht-dringlich): Per-Source-Limits/max trades-h/notional-day; Remodelling als expliziter `entry_mode`-Enum (`premium_paper_limited`). Siehe ADR 0006.
+
 ## 2026-06-08 - NEO-P-002-r3 Phase 3: In-Loop-Funnel-Achsen (Issue #175)
 
 Folge zu Phase 2 (Real-Analysen-Feeder): die Phase-2-Funnel zeigte nur Pre-Loop-Selektion + terminale `by_cycle_status`. Sie konnte nicht erklären, **wo im Loop/Generator** ein Real-Kandidat starb. Damit `real_resolved=0` *erklärbar* bleibt (nie still als `EDGE_NEGATIVE`).
