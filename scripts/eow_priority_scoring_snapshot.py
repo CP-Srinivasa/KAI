@@ -20,7 +20,7 @@ import json
 import os
 import subprocess
 import sys
-from collections import Counter, defaultdict
+from collections import Counter
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 

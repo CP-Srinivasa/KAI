@@ -76,7 +76,7 @@ def _format_digest(stats) -> str:
             "(siehe artifacts/p2_11_trigger.json + memory kai_premium_pipeline_backlog_20260514)",
         ])
     else:
-        body.append(f"trigger #11: NO (threshold p95>20min, samples>=5)")
+        body.append("trigger #11: NO (threshold p95>20min, samples>=5)")
     return "\n".join(body)
 
 

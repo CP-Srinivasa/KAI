@@ -27,8 +27,8 @@ import statistics
 import sys
 import urllib.request
 from collections import Counter, defaultdict
-from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -312,7 +312,7 @@ def main() -> None:
 
     report = {
         "report_type": "root_cause_stopout_cascade_phase_a",
-        "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+        "generated_at_utc": datetime.now(UTC).isoformat(),
         "source_experiment": "forward_edge_experiment_frozen_20260602.json",
         "cohort": "quarantine-clean (edge_report exclusions applied)",
         "n_trades": len(trades),

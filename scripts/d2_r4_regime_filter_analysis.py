@@ -5,9 +5,9 @@ Cross-Tab precision per regime, identifies regimes with significantly worse prec
 
 Run on Pi: python3 /tmp/d2_r4_analyze.py
 """
+import datetime
 import json
 import sqlite3
-import datetime
 from collections import Counter, defaultdict
 from pathlib import Path
 
@@ -142,7 +142,7 @@ def main():
         sentiment_regime_tab[(regime, sentiment)][outcome] += 1
 
     print(flush=True)
-    print(f"=== Join Statistics ===", flush=True)
+    print("=== Join Statistics ===", flush=True)
     print(f"total outcomes: {n_total}", flush=True)
     print(f"  no BTC/ETH asset: {n_no_asset}", flush=True)
     print(f"  missing doc_id mapping: {n_missing_doc}", flush=True)
@@ -151,7 +151,7 @@ def main():
     print(f"  successfully joined: {n_joined}", flush=True)
     print(flush=True)
 
-    print(f"=== Cross-Tab: Precision per (Asset, Regime) ===", flush=True)
+    print("=== Cross-Tab: Precision per (Asset, Regime) ===", flush=True)
     print(f"{'asset':5s} {'regime':18s} {'hit':>5s} {'miss':>5s} {'inc':>5s} {'n_res':>5s} {'prec':>7s} {'wilson_lo':>10s}", flush=True)
     for key in sorted(cross_tab.keys()):
         asset, regime = key
@@ -163,7 +163,7 @@ def main():
         print(f"{asset:5s} {regime:18s} {hits:>5d} {misses:>5d} {incs:>5d} {n_res:>5d} {prec*100:>6.1f}% {wlo*100:>9.1f}%", flush=True)
 
     print(flush=True)
-    print(f"=== Cross-Tab: Precision per (Asset, Vol-Class) ===", flush=True)
+    print("=== Cross-Tab: Precision per (Asset, Vol-Class) ===", flush=True)
     print(f"{'asset':5s} {'vol_class':12s} {'hit':>5s} {'miss':>5s} {'inc':>5s} {'n_res':>5s} {'prec':>7s} {'wilson_lo':>10s}", flush=True)
     for key in sorted(vol_tab.keys()):
         asset, vol_class = key
@@ -175,7 +175,7 @@ def main():
         print(f"{asset:5s} {vol_class:12s} {hits:>5d} {misses:>5d} {incs:>5d} {n_res:>5d} {prec*100:>6.1f}% {wlo*100:>9.1f}%", flush=True)
 
     print(flush=True)
-    print(f"=== Sentiment x Regime ===", flush=True)
+    print("=== Sentiment x Regime ===", flush=True)
     print(f"{'regime':18s} {'sent':8s} {'hit':>5s} {'miss':>5s} {'n_res':>5s} {'prec':>7s}", flush=True)
     for key in sorted(sentiment_regime_tab.keys()):
         regime, sent = key
@@ -188,14 +188,14 @@ def main():
         print(f"{regime:18s} {sent:8s} {hits:>5d} {misses:>5d} {n_res:>5d} {prec*100:>6.1f}%", flush=True)
 
     print(flush=True)
-    print(f"=== Baseline (all joined) ===", flush=True)
+    print("=== Baseline (all joined) ===", flush=True)
     all_hits = sum(c["hit"] for c in cross_tab.values())
     all_misses = sum(c["miss"] for c in cross_tab.values())
     all_n = all_hits + all_misses
     if all_n:
         print(f"overall: {all_hits} hit / {all_misses} miss / n_res {all_n} / precision {all_hits/all_n*100:.1f}%", flush=True)
     else:
-        print(f"overall: 0 joined records — D2-R4 not analyzable with current data", flush=True)
+        print("overall: 0 joined records — D2-R4 not analyzable with current data", flush=True)
 
 
 if __name__ == "__main__":
