@@ -8,7 +8,7 @@ Primary goals: (a) keep pipeline + TV ingestion + paper-bridge alive 24/7 on the
 ## 1. Baseline Check
 
 ```bash
-python -m pytest                                           # ~3800 Testfunktionen (Stand 2026-06)
+python -m pytest                                           # ~4585 Testfunktionen (Stand 2026-06)
 python -m ruff check .
 ```
 

@@ -58,6 +58,8 @@ def _bash_path(path: Path) -> str:
 
 
 def _require_bash() -> str:
+    if os.name == "nt":
+        pytest.skip("Skipping Bash integration tests on Windows to minimize artifacts")
     bash = shutil.which("bash")
     if bash is None:
         pytest.skip("bash not on PATH")

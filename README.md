@@ -7,7 +7,7 @@
 **Heute live (Paper-First, Live-Execution disabled):** crypto/market intelligence pipeline —
 RSS + TradingView + Telegram ingestion → LLM/rule analysis → scoring → alerting → paper-trading signal bridge. Dashboard + Cloudflare Tunnel for remote operator access. Zukunftsschichten (Lightning, DeFi, KYT, öffentliche Tor-Analyse, App/Multichannel, Payment-/Spenden-/Investment-Flows) sind im Zielbild beschrieben und gegated — siehe `docs/KAI_IDENTITY.md`.
 
-## Current State (2026-05-29)
+## Current State (2026-06-08)
 
 | Field | Value |
 |---|---|
@@ -17,7 +17,7 @@ RSS + TradingView + Telegram ingestion → LLM/rule analysis → scoring → ale
 | Active workstream | Asset-Reserve/Fokusfeld-Layer (D-228/S3), Dispatch-Recall-Proxy (D-227), Diversification enforce (D-226) |
 | Live execution | OFF — paper/approval-mode only; Live-Gates ungeöffnet |
 
-See `DECISION_LOG.md` for full decision history. Latest entries: **D-228/S3** (Asset-Reserve + Fokusfeld-Taxonomie + Enforce-Cap), **D-227** (Dispatch-Recall-Proxy + tunable bullish gate), **D-226** (Asset-Diversification enforce). Der frühere `SUSPENDED`-Zustand (D-125, TradingView-Pivot) ist seit dem Re-Entry am 2026-05-07 abgelöst.
+See `DECISION_LOG.md` for full decision history. Latest entries: **D-228/S3** (Asset-Reserve + Fokusfeld-Taxonomie + Enforce-Cap), **D-227** (Dispatch-Recall-Proxy + tunable bullish gate), **D-226** (Asset-Diversification enforce). Der frühere `SUSPENDED`-Zustand (D-125, TradingView-Pivot) is seit dem Re-Entry am 2026-05-07 abgelöst.
 
 ## Stack at a Glance
 
@@ -99,7 +99,7 @@ Historical governance artifacts archived in `docs/archive/`.
 
 ```bash
 pip install -e .                                           # editable install
-python -m pytest                                           # ~1946 tests baseline
+python -m pytest                                           # ~4585 tests baseline
 python -m ruff check .
 cd web && npm install && npm run build                     # dashboard SPA
 ```

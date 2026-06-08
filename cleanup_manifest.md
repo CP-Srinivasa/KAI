@@ -1,4 +1,4 @@
-# Cleanup Manifest — 2026-06-02 (Premium-Signal-Pipeline-Hardening Sprint)
+# Cleanup Manifest — 2026-06-08 (Premium-Signal-Pipeline-Hardening Sprint)
 
 **Status: PROPOSAL ONLY. Nichts wurde automatisch gelöscht.** Dieses Manifest
 listet Kandidaten mit Pfad, Grund und Sicherheitsbeweis. Löschung ist eine
@@ -13,10 +13,13 @@ DBs, Secrets, Sessions, Live-Audits oder ungesicherten Logs.
 | `.pytest_cache/` | ~387K | pytest-Lastlauf-Cache | Regeneriert bei nächstem `pytest`. |
 | `.ruff_cache/` | ~354K | ruff-Cache | Regeneriert bei nächstem `ruff`. |
 | `__pycache__/` (74 dirs) | — | Python-Bytecode | Aus `.py` regeneriert. `find . -type d -name __pycache__ -not -path './.git/*' -prune -exec rm -rf {} +` |
+| `test_e2e.db` | ~94K | Lokale Test-Datenbank (Windows) | Wird bei end-to-end/integration Tests neu initialisiert; siehe [windows_test_artifacts.md](file:///C:/Users/sasch/.local/bin/ai_analyst_trading_bot/docs/qa/windows_test_artifacts.md). |
+| `.coverage` | ~114K | Coverage-Datendatei | Generiert durch pytest-cov; kann gelöscht werden. |
+| `.hypothesis/` | — | Cache für Hypothesis-Tests | Wird bei property-based Tests neu erzeugt. |
 
 Sichere Bereinigung (idempotent):
 ```bash
-rm -rf .mypy_cache .pytest_cache .ruff_cache
+rm -rf .mypy_cache .pytest_cache .ruff_cache .hypothesis .coverage test_e2e.db
 find . -type d -name __pycache__ -not -path './.git/*' -prune -exec rm -rf {} +
 ```
 
@@ -24,7 +27,7 @@ find . -type d -name __pycache__ -not -path './.git/*' -prune -exec rm -rf {} +
 
 | Pfad | Grund | Auflage |
 |---|---|---|
-| 36 git-Worktrees (`git worktree list`) | Viele alte Sprint-Worktrees; einige evtl. merged/stale. | Pro Worktree erst `git -C <wt> status` + Merge-Status gegen Integrationsbranch prüfen. **Windows:** `node_modules`-Locks → `worktree remove --force` kann fehlschlagen (siehe Memory). |
+| 48 git-Worktrees (`git worktree list`) | Viele alte Sprint-Worktrees; einige evtl. merged/stale. | Pro Worktree erst `git -C <wt> status` + Merge-Status gegen Integrationsbranch prüfen. **Windows:** `node_modules`-Locks → `worktree remove --force` kann fehlschlagen (siehe Memory). |
 | **`/c/tmp/kai-premium-ledger-sprint-20260531`** | **16 uncommittete Codex-Dateien** (telegram_channel_*, bridge, premium_event_store etc.). | **NICHT LÖSCHEN/BEREINIGEN.** Backup liegt unter `KAI-mirror/sprint-backups/20260602_premium_hardening/`. Erst nach Commit/Merge durch Eigentümer. |
 
 ## NEVER DELETE — Trust-Boundary / Live-State
