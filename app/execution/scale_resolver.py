@@ -284,6 +284,20 @@ _STRUCTURAL_SCALE_REASONS = frozenset(
 )
 
 
+def is_tick_flaky_reason(reason: str | None) -> bool:
+    """True when ``reason`` depends on the *current spot* and can therefore be
+    produced by a single garbage market-data tick (V-1 stabilization candidates):
+    the market-plausibility reasons plus ``scale_unresolved_or_bad_price``.
+
+    Pure internal-geometry reasons (collapse to zero, SL on the wrong side of
+    entry, targets on the wrong side) are deterministic from the scaled signal
+    alone and are NOT tick-flaky — they stay immediately terminal.
+    """
+    if reason is None:
+        return False
+    return reason in _MARKET_PLAUSIBILITY_REASONS or reason == SCALE_UNRESOLVED_REASON
+
+
 def is_structural_scale_reason(reason: str | None) -> bool:
     """True when ``reason`` is a structural geometry error (terminal even for
     fastlane). A market-plausibility reason returns False → fastlane paper may
@@ -326,6 +340,7 @@ __all__ = [
     "detect_scale_factor",
     "fetch_price",
     "is_structural_scale_reason",
+    "is_tick_flaky_reason",
     "resolve_scale_for_symbol",
     "validate_scaled_signal",
 ]

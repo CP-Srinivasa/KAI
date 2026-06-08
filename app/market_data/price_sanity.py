@@ -137,7 +137,11 @@ def evaluate_price_sanity(
                 reference="last_good",
             )
         return PriceSanityVerdict(
-            ok=True, reason=None, outlier_score=round(score, 6), verified=True, reference="last_good"
+            ok=True,
+            reason=None,
+            outlier_score=round(score, 6),
+            verified=True,
+            reference="last_good",
         )
 
     # 4. No reference — accept best-effort, mark unverified.

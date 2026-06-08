@@ -77,7 +77,16 @@ _BRIDGE_REJECT_STAGES = frozenset(
 # damit das Dashboard "Execution global gestoppt" ehrlich zeigt.
 _BRIDGE_ENTRY_DISABLED_STAGES = frozenset({"rejected_entry_mode"})
 
-_BRIDGE_PENDING_STAGES = frozenset({"pending"})
+# BUG-4 (2026-06-08): operative reject stages EXCLUDING the entry_mode posture.
+# entry_mode=disabled is a global runtime posture, not the operative terminal of
+# a signal that actually failed scale/market checks. The trail headline must
+# show the operative terminal (e.g. rejected_scale_review /
+# scale_unresolved_or_bad_price); entry_disabled only surfaces when it is the
+# sole thing that happened (a clean signal blocked purely by the kill-switch).
+_BRIDGE_OPERATIVE_REJECT_STAGES = _BRIDGE_REJECT_STAGES - _BRIDGE_ENTRY_DISABLED_STAGES
+
+# V-1 (2026-06-08): a garbage-tick that was ignored keeps the signal pending.
+_BRIDGE_PENDING_STAGES = frozenset({"pending", "pending_entry_with_bad_tick_ignored"})
 _BRIDGE_SKIPPED_STAGES = frozenset({"skipped_source"})
 _BRIDGE_EXPIRED_STAGES = frozenset({"expired"})
 
@@ -523,18 +532,12 @@ def _derive_stages(
             bridge_reason = entry.get("audit_reason")
             bridge_ts = entry.get("ts")
             break
+    # BUG-4: operative reject (scale/risk/size/…) ranks ABOVE the entry_mode
+    # posture so the headline shows what actually failed, not the kill-switch.
     if bridge_stage is None:
         for entry in bridge_history:
             s = entry.get("stage")
-            if s in _BRIDGE_ENTRY_DISABLED_STAGES:
-                bridge_stage = s
-                bridge_reason = entry.get("audit_reason") or "entry_mode_disabled"
-                bridge_ts = entry.get("ts")
-                break
-    if bridge_stage is None:
-        for entry in bridge_history:
-            s = entry.get("stage")
-            if s in _BRIDGE_REJECT_STAGES:
+            if s in _BRIDGE_OPERATIVE_REJECT_STAGES:
                 bridge_stage = s
                 bridge_reason = entry.get("audit_reason")
                 bridge_ts = entry.get("ts")
@@ -561,6 +564,16 @@ def _derive_stages(
             if s in _BRIDGE_PENDING_STAGES:
                 bridge_stage = s
                 bridge_reason = entry.get("audit_reason")
+                bridge_ts = entry.get("ts")
+                break
+    # entry_mode posture LAST: only surfaces when nothing operative happened
+    # (a clean signal blocked purely by the global kill-switch = truly terminal).
+    if bridge_stage is None:
+        for entry in bridge_history:
+            s = entry.get("stage")
+            if s in _BRIDGE_ENTRY_DISABLED_STAGES:
+                bridge_stage = s
+                bridge_reason = entry.get("audit_reason") or "entry_mode_disabled"
                 bridge_ts = entry.get("ts")
                 break
 

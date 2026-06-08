@@ -184,6 +184,18 @@ def _append_bridge_audit(record: dict[str, object]) -> None:
         logger.warning("[bridge] event-store write failed: %s", exc)
 
 
+def _bridge_history_for_correlation(correlation_id: str) -> list[dict[str, object]]:
+    """Prior bridge records for one signal (oldest→newest), for V-1 stabilization."""
+    if not correlation_id:
+        return []
+    out: list[dict[str, object]] = []
+    for rec in _read_jsonl(_BRIDGE_LOG):
+        cid = str(rec.get("correlation_id") or "")
+        if cid == correlation_id:
+            out.append(rec)
+    return out
+
+
 def _latest_bridge_stage_by_envelope(
     records: list[dict[str, object]],
 ) -> dict[str, str]:
@@ -957,6 +969,38 @@ async def _process_one(
         # just gated on.
         scaled_payload = envelope.get("payload")
         _apply_scale(scaled_payload if isinstance(scaled_payload, dict) else {}, scale_factor)
+        # BUG-3 (2026-06-08): persist the RESOLVED scale lifecycle onto the
+        # envelope payload so the UI/analytics show the real entry (0.248), not
+        # the raw channel value (24800), and the stale receive-time
+        # scale_unknown=True flag is cleared. Emit a one-shot audit marker.
+        from app.execution.premium_scale_lifecycle import build_scale_resolution_patch
+        from app.observability.premium_audit import (
+            EVENT_SCALE_RESOLVED_PERSISTED,
+            append_premium_audit,
+        )
+
+        _scale_patch = build_scale_resolution_patch(
+            scale_factor=scale_factor,
+            scaled_entry=entry_price,
+            scaled_stop_loss=stop_loss,
+            scaled_targets=list(targets),
+        )
+        if _scale_patch and isinstance(scaled_payload, dict):
+            was_unknown = bool(scaled_payload.get("scale_unknown"))
+            scaled_payload.update(_scale_patch)
+            if isinstance(payload, dict):
+                payload.update(_scale_patch)
+            if was_unknown:
+                append_premium_audit(
+                    EVENT_SCALE_RESOLVED_PERSISTED,
+                    envelope_id=envelope_id,
+                    correlation_id=correlation_id,
+                    symbol=symbol,
+                    scale_factor=scale_factor,
+                    scaled_entry=entry_price,
+                    scaled_stop_loss=stop_loss,
+                    scaled_targets=list(targets),
+                )
 
     # Gate 4.5 (2026-05-21): plausibility-check der skalierten Werte gegen spot.
     # Adressiert IRYS 2026-05-12: SL nach Skalierung lag über spot, paper-engine
@@ -964,11 +1008,21 @@ async def _process_one(
     # ``paper_engine_returned_none``. validate_scaled_signal liefert jetzt einen
     # aussagekräftigen Reason der direkt in den Trail-Audit landet.
     from app.execution.scale_resolver import (
+        SCALE_UNRESOLVED_REASON,
+        classify_scale_failure,
         is_structural_scale_reason,
+        is_tick_flaky_reason,
         validate_scaled_signal,
     )
 
-    validation_reason = validate_scaled_signal(
+    # BUG-1 (2026-06-08): an unresolved scale / bad price (raw entry implausibly
+    # far from spot while scale stayed 1.0) is a STRUCTURAL data error, not a
+    # market condition. It takes precedence over validate_scaled_signal so we
+    # never emit a misleading ``long_sl_at_or_above_spot`` for the SKYAI case.
+    bad_price_reason = classify_scale_failure(
+        entry=entry_price, spot=current_price, scale_factor_applied=scale_factor
+    )
+    validation_reason = bad_price_reason or validate_scaled_signal(
         direction=str(direction or ""),
         entry=entry_price,
         stop_loss=stop_loss,
@@ -1026,6 +1080,90 @@ async def _process_one(
         result.newly_pending += 1
         return
     if validation_reason is not None:
+        # V-1 (2026-06-08): a tick-flaky reason (spot-dependent / bad-price) must
+        # not terminally reject a signal that was previously a healthy pending
+        # entry on the strength of a single garbage tick. Ignore it and keep the
+        # signal pending until N consecutive bad ticks accumulate; only then
+        # terminate (premium_terminal_stabilized). Pure internal-geometry reasons
+        # are not tick-flaky and stay immediately terminal.
+        if is_tick_flaky_reason(validation_reason):
+            from app.execution.premium_scale_lifecycle import (
+                PENDING_BAD_TICK_STAGE,
+                analyze_bridge_history,
+                decide_terminal_or_ignore,
+            )
+            from app.observability.premium_audit import (
+                EVENT_BAD_TICK_IGNORED,
+                EVENT_SCALE_UNRESOLVED,
+                EVENT_TERMINAL_STABILIZED,
+                append_premium_audit,
+            )
+
+            _prior_bad, _had_valid = analyze_bridge_history(
+                _bridge_history_for_correlation(correlation_id)
+            )
+            _decision = decide_terminal_or_ignore(
+                prior_consecutive_bad=_prior_bad, had_prior_valid_pending=_had_valid
+            )
+            if validation_reason == SCALE_UNRESOLVED_REASON:
+                append_premium_audit(
+                    EVENT_SCALE_UNRESOLVED,
+                    envelope_id=envelope_id,
+                    correlation_id=correlation_id,
+                    symbol=symbol,
+                    entry=entry_price,
+                    spot=current_price,
+                    scale_factor_applied=scale_factor,
+                )
+            if _decision.action == "ignore":
+                rec = base(PENDING_BAD_TICK_STAGE)
+                rec["reason"] = validation_reason
+                rec["scale_factor_applied"] = scale_factor
+                rec["current_price"] = current_price
+                rec["consecutive_bad_ticks"] = _decision.consecutive_bad
+                rec["target_entry"] = entry_price
+                rec["executable_intent"] = _build_executable_intent(
+                    envelope_id=envelope_id,
+                    correlation_id=str(rec["correlation_id"]),
+                    source=source,
+                    payload=payload,
+                    symbol=symbol,
+                    side=str(side_str),
+                    entry_price=entry_price,
+                    stop_loss=stop_loss,
+                    targets=targets,
+                ).to_dict()
+                rec["order_intent"] = rec["executable_intent"]
+                _attach_lifecycle(
+                    rec,
+                    final_state=OrderLifecycleState.WAITING_FOR_ENTRY,
+                    states=[
+                        OrderLifecycleState.RECEIVED,
+                        OrderLifecycleState.PARSED,
+                        OrderLifecycleState.VALIDATED,
+                        OrderLifecycleState.WAITING_FOR_ENTRY,
+                    ],
+                    reason=f"bad_tick_ignored:{validation_reason}",
+                )
+                _append_bridge_audit(rec)
+                append_premium_audit(
+                    EVENT_BAD_TICK_IGNORED,
+                    envelope_id=envelope_id,
+                    correlation_id=correlation_id,
+                    symbol=symbol,
+                    reason=validation_reason,
+                    consecutive_bad=_decision.consecutive_bad,
+                )
+                result.newly_pending += 1
+                return
+            append_premium_audit(
+                EVENT_TERMINAL_STABILIZED,
+                envelope_id=envelope_id,
+                correlation_id=correlation_id,
+                symbol=symbol,
+                reason=validation_reason,
+                consecutive_bad=_decision.consecutive_bad,
+            )
         rec = base("rejected_scale_review")
         rec["reason"] = validation_reason
         rec["scale_factor_applied"] = scale_factor

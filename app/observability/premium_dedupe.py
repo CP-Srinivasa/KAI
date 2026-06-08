@@ -47,25 +47,28 @@ def _first_str(*values: Any) -> str | None:
     return None
 
 
+def _num(value: Any) -> str:
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return f"{float(value):.10g}"
+    return ""
+
+
 def normalized_raw_hash(record: dict[str, Any]) -> str:
     """Stable hash over the signal's defining fields (key 4)."""
     p = _payload(record)
     symbol = _first_str(p.get("symbol"), p.get("display_symbol")) or ""
     side = _first_str(p.get("side"), p.get("direction")) or ""
-    entry = p.get("entry_value")
-    sl = p.get("stop_loss")
-    leverage = p.get("leverage")
-    targets = p.get("targets")
-    targets_norm = ",".join(
-        f"{float(t):.10g}" for t in targets if isinstance(t, (int, float)) and not isinstance(t, bool)
-    ) if isinstance(targets, list) else ""
+    raw_targets = p.get("targets")
+    targets_norm = (
+        ",".join(_num(t) for t in raw_targets if _num(t)) if isinstance(raw_targets, list) else ""
+    )
     basis = "|".join(
         [
             symbol.upper().replace("/", ""),
             side.lower(),
-            f"{float(entry):.10g}" if isinstance(entry, (int, float)) and not isinstance(entry, bool) else "",
-            f"{float(sl):.10g}" if isinstance(sl, (int, float)) and not isinstance(sl, bool) else "",
-            f"{float(leverage):.10g}" if isinstance(leverage, (int, float)) and not isinstance(leverage, bool) else "",
+            _num(p.get("entry_value")),
+            _num(p.get("stop_loss")),
+            _num(p.get("leverage")),
             targets_norm,
         ]
     )
@@ -76,9 +79,7 @@ def compute_dedup_key(record: dict[str, Any]) -> str:
     """Resolve the strongest stable identity key for ``record`` (keys 1→5)."""
     p = _payload(record)
     # 1. origin_signal_id (shared by raw + approved)
-    sig = _first_str(
-        record.get("origin_signal_id"), p.get("origin_signal_id"), p.get("signal_id")
-    )
+    sig = _first_str(record.get("origin_signal_id"), p.get("origin_signal_id"), p.get("signal_id"))
     if sig:
         return f"sig:{sig}"
     # 2. source_uid
@@ -125,8 +126,10 @@ class DedupGroup:
     @property
     def canonical(self) -> dict[str, Any]:
         """The record to count/display once: approved if present, else raw."""
-        return self.approved_event or self.raw_event or (
-            self.other_events[0] if self.other_events else {}
+        return (
+            self.approved_event
+            or self.raw_event
+            or (self.other_events[0] if self.other_events else {})
         )
 
     @property
@@ -139,9 +142,7 @@ class DedupGroup:
             "double_sourced": self.is_double_sourced,
             "has_raw": self.raw_event is not None,
             "has_approved": self.approved_event is not None,
-            "event_count": sum(
-                1 for e in (self.raw_event, self.approved_event) if e is not None
-            )
+            "event_count": sum(1 for e in (self.raw_event, self.approved_event) if e is not None)
             + len(self.other_events),
         }
 
