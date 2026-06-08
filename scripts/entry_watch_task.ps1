@@ -3,8 +3,8 @@
 
   Usage (manual):  powershell -ExecutionPolicy Bypass -File scripts\entry_watch_task.ps1
 
-  Install task:    scripts\entry_watch_task.ps1 -Install
-  Remove task:     scripts\entry_watch_task.ps1 -Remove
+  Install task:    powershell -ExecutionPolicy Bypass -File scripts\entry_watch_task.ps1 -Install
+  Remove task:     powershell -ExecutionPolicy Bypass -File scripts\entry_watch_task.ps1 -Remove
 
   Safety:
   - fail-closed when EXECUTION_OPERATOR_SIGNAL_BRIDGE_ENABLED=false

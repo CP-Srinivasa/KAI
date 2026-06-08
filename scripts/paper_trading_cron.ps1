@@ -5,7 +5,7 @@
   Usage (manual):  powershell -ExecutionPolicy Bypass -File scripts\paper_trading_cron.ps1
 
   Install task:    Run the schtasks command at the bottom of this file, or:
-                   scripts\paper_trading_cron.ps1 -Install
+                   powershell -ExecutionPolicy Bypass -File scripts\paper_trading_cron.ps1 -Install
   Remove task:     schtasks /Delete /TN "KAI-PaperTrading" /F
 #>
 
