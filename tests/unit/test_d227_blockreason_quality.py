@@ -44,7 +44,8 @@ def test_over_blocking_reason_flagged() -> None:
 
 def test_calibrated_reason_when_suppressed_mostly_miss() -> None:
     r = assess_blockreason_quality(
-        _blocked([_reason("spam_filter", 5, 45)]), min_sample=20  # 10%
+        _blocked([_reason("spam_filter", 5, 45)]),
+        min_sample=20,  # 10%
     )
     assert r["by_block_reason"][0]["verdict"] == VERDICT_CALIBRATED
     assert r["over_blocking_count"] == 0
