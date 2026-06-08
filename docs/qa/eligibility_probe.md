@@ -30,12 +30,24 @@ The probe outputs a verdict based on the number of documents in the **last 48 ho
 
 ### 🟢 **GO** (`eligible_AND_gate_ge_10 >= 10`)
 * **Interpretation:** There is a robust volume of high-conviction, eligible signals (at least 10 in 48 hours).
-* **Action:** Activating `EXECUTION_SHADOW_REAL_GENERATOR=true` is recommended. It will produce a substantial sample of shadow candidates for execution and calibration analysis.
+* **Execution Context:** In this state, enabling the feeder yields a substantial sample of shadow candidates for execution and calibration analysis.
 
 ### 🟡 **DÜNN** (`0 < eligible_AND_gate_ge_10 < 10`)
 * **Interpretation:** The pipeline is active, but very few signals pass the high-conviction priority threshold.
-* **Action:** Activating the feeder is safe, but it will mostly remain silent ("honest silence"). This is expected during quiet market regimes, but it will yield fewer ledger samples for analysis.
+* **Execution Context:** In this state, enabling the feeder results in "honest silence" during quiet market regimes, yielding fewer ledger samples for analysis.
 
 ### 🔴 **NO-GO heute** (`eligible_AND_gate_ge_10 == 0`)
 * **Interpretation:** Zero high-conviction signals were matched in the last 48 hours.
-* **Action:** Do not activate the feeder. Either the ingestion/analysis pipeline is stale, or market volatility is extremely low. Enabling the feeder in this state will result in an empty ledger. Verify pipeline health first using `scripts/server_status.sh`.
+* **Execution Context:** In this state, the feeder remains inactive or, if enabled, results in an empty ledger. Pipeline health should be verified first using `scripts/server_status.sh`.
+
+---
+
+## 4. Windows and Console Compatibility
+
+The Live-Eligibility-Probe script is fully compatible with Windows legacy command prompt and PowerShell host encodings (such as **cp1252**):
+- **ASCII-Only Outputs:** Stdout does not output mathematical or Unicode-only symbols (e.g., `∧`, `≥`) that trigger `UnicodeEncodeError` or `UnicodeDecodeError` in standard Windows consoles.
+- **Run Command:** Developers can safely run the probe locally on Windows workstations using:
+  ```powershell
+  python scripts/eligibility_probe.py
+  ```
+
