@@ -15,21 +15,32 @@ class HealthResponse(BaseModel):
     version: str
 
 
-TimerHealthState = Literal["ok", "has_inactive", "stale", "no_data", "corrupt"]
+# FS-2 (#198): "critical" added so a genuinely-stuck recurring timer is distinct
+# from the benign "has_inactive" (which now only counts attention-worthy timers).
+TimerHealthState = Literal["ok", "has_inactive", "stale", "no_data", "corrupt", "critical"]
 
 
 class TimerHealthInactiveEntry(BaseModel):
     unit: str
     state: str
+    # FS-2 taxonomy: recurring_required | one_shot_expected_inactive | disabled_by_design
+    category: str | None = None
+    # ok | expected_inactive | critical
+    severity: str | None = None
     last_trigger: str | None = None
 
 
 class TimerHealthResponse(BaseModel):
     state: TimerHealthState
+    # FS-2: overall severity (ok | warning | critical) + taxonomy counts so the
+    # dashboard can show "expected_inactive vs failed" instead of a blanket alarm.
+    severity: str = "ok"
     checked_at: str | None = None
     stale_minutes: int | None = None
     total: int
     active: int
+    critical_count: int = 0
+    expected_inactive_count: int = 0
     inactive: list[TimerHealthInactiveEntry]
 
 

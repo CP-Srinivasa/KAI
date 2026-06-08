@@ -9,13 +9,15 @@ const POLL_MS = 60_000;
 
 function getTimerHealthTone(state: TimerHealthResponse["state"]): "pos" | "warn" | "neg" | "muted" {
   if (state === "ok") return "pos";
-  if (state === "has_inactive") return "neg";
+  if (state === "critical") return "neg";
+  if (state === "has_inactive") return "warn";
   if (state === "stale" || state === "corrupt") return "warn";
   return "muted";
 }
 
 function getTimerHealthLabel(state: TimerHealthResponse["state"]): string {
   if (state === "ok") return "Aktiv";
+  if (state === "critical") return "Kritischer Timer-Fehler";
   if (state === "has_inactive") return "Inaktive Timer";
   if (state === "stale") return "Verzögert (>2h)";
   if (state === "corrupt") return "Log-Fehler";
@@ -31,6 +33,11 @@ export function TimerHealthCard() {
 
   const health = state.state === "ready" ? state.data : null;
   const tone = health ? getTimerHealthTone(health.state) : "muted";
+  // FS-2 (#198): separate genuinely-failed timers from expected-inactive one-shots.
+  const inactive = health?.inactive ?? [];
+  const criticalEntries = inactive.filter((i) => i.severity === "critical");
+  const expectedEntries = inactive.filter((i) => i.severity === "expected_inactive");
+  const criticalCount = health?.critical_count ?? criticalEntries.length;
 
   return (
     <Card padded>
@@ -86,22 +93,22 @@ export function TimerHealthCard() {
               <div
                 className={cn(
                   "text-xs font-semibold mt-1",
-                  health.inactive.length > 0 ? "text-neg animate-pulse font-bold" : "text-fg-muted",
+                  criticalCount > 0 ? "text-neg animate-pulse font-bold" : "text-fg-muted",
                 )}
               >
-                {health.inactive.length} Fehler
+                {criticalCount} Fehler
               </div>
             </div>
           </div>
 
-          {health.inactive.length > 0 && (
+          {criticalEntries.length > 0 && (
             <div className="rounded-sm border border-neg/30 bg-neg/5 p-3 space-y-2">
               <div className="text-2xs font-semibold text-neg uppercase tracking-wider flex items-center gap-1.5">
                 <ShieldAlert size={12} className="animate-bounce shrink-0" />
-                Kritisch: Inaktive systemd-Timer detektiert!
+                Kritisch: Recurring/failed Timer inaktiv!
               </div>
               <div className="space-y-1.5">
-                {health.inactive.map((item, idx) => (
+                {criticalEntries.map((item, idx) => (
                   <div
                     key={idx}
                     className="flex items-center justify-between p-2 rounded-sm bg-bg-1 border border-line-subtle text-2xs gap-2"
@@ -111,6 +118,30 @@ export function TimerHealthCard() {
                     </span>
                     <Badge tone="neg" dot className="uppercase font-semibold shrink-0">
                       {item.state}
+                    </Badge>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {expectedEntries.length > 0 && (
+            <div className="rounded-sm border border-line-subtle bg-bg-2 p-3 space-y-2">
+              <div className="text-2xs font-semibold text-fg-subtle uppercase tracking-wider flex items-center gap-1.5">
+                <Clock size={12} className="shrink-0" />
+                Erwartbar inaktiv (One-Shot nach Lauf) — kein Fehler
+              </div>
+              <div className="space-y-1.5">
+                {expectedEntries.map((item, idx) => (
+                  <div
+                    key={idx}
+                    className="flex items-center justify-between p-2 rounded-sm bg-bg-1 border border-line-subtle text-2xs gap-2"
+                  >
+                    <span className="text-fg-muted truncate flex-1" title={item.unit}>
+                      {item.unit}
+                    </span>
+                    <Badge tone="muted" className="uppercase shrink-0">
+                      one-shot
                     </Badge>
                   </div>
                 ))}

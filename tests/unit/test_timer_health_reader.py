@@ -50,8 +50,10 @@ def test_timer_health_all_active(tmp_path: Path) -> None:
     assert res["inactive"] == []
 
 
-def test_timer_health_has_inactive(tmp_path: Path) -> None:
-    # has_inactive: 2 inactive units -> state="has_inactive", explicit total/active
+def test_timer_health_recurring_inactive_is_critical(tmp_path: Path) -> None:
+    # FS-2 (#198): two RECURRING timers inactive -> state="critical" (not the old
+    # blanket "has_inactive"). kai-auto-annotate (OnBootSec) + kai-pi-health
+    # (wildcard OnCalendar) are both recurring_required.
     audit_file = tmp_path / "timer_health.jsonl"
     t_now = datetime.now(UTC).isoformat()
 
@@ -66,12 +68,15 @@ def test_timer_health_has_inactive(tmp_path: Path) -> None:
         f.write(json.dumps(r) + "\n")
 
     res = read_latest_timer_audit(audit_file)
-    assert res["state"] == "has_inactive"
+    assert res["state"] == "critical"
+    assert res["severity"] == "critical"
+    assert res["critical_count"] == 2
+    assert res["expected_inactive_count"] == 0
     assert len(res["inactive"]) == 2
     assert res["inactive"][0]["unit"] == "kai-auto-annotate.timer"
-    assert res["inactive"][0]["state"] == "inactive"
+    assert res["inactive"][0]["category"] == "recurring_required"
+    assert res["inactive"][0]["severity"] == "critical"
     assert res["inactive"][1]["unit"] == "kai-pi-health.timer"
-    assert res["inactive"][1]["state"] == "inactive"
     assert res["total"] == 8
     assert res["active"] == 6
 
