@@ -661,3 +661,105 @@ async def test_premium_paper_execution_disabled_blocks_e2e(
 
     engine = get_paper_engine()
     assert "SOL/USDT" not in engine.portfolio.positions
+
+
+# ── SKYAI 2026-06-07 garbage-spot replay (BUG-1/BUG-3/V-1) ────────────────────
+
+PREMIUM_SKYAI_LONG = """\
+Binance Futures, OKX, Bybit
+#SKYAI/USDT Long/BUY - 24800
+Targets : 24925 - 25050 - 25170 - 25295
+Stop Loss : 23800
+Leverage - 10x
+Risk: 5%
+"""
+
+
+@pytest.mark.asyncio
+async def test_skyai_garbage_spot_replay_no_terminal_reject_and_scale_resolved(
+    isolated_premium_artifacts: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Replays SKYAI: integer-tick scale (24800 → $0.248 via 1e5), real spot
+    ~0.356, with a garbage 101.94 tick. The garbage tick must NOT terminally
+    reject the previously-pending signal (V-1), must be labelled
+    scale_unresolved_or_bad_price (BUG-1, not long_sl_at_or_above_spot), and the
+    good tick must resolve+persist the scale (BUG-3 → entry 0.248, scale_unknown
+    flips false)."""
+    from app.execution.premium_scale_lifecycle import PENDING_BAD_TICK_STAGE
+    from app.ingestion.telegram_channel_envelope import emit_parsed_signal
+    from app.observability.premium_audit import (
+        EVENT_SCALE_RESOLVED_PERSISTED,
+        EVENT_SCALE_UNRESOLVED,
+    )
+
+    envelope_log = isolated_premium_artifacts / "telegram_message_envelope.jsonl"
+    bridge_log = isolated_premium_artifacts / "bridge_pending_orders.jsonl"
+    audit_log = isolated_premium_artifacts / "premium_market_data_audit.jsonl"
+    monkeypatch.setenv("KAI_PREMIUM_AUDIT_PATH", str(audit_log))
+
+    emitted_at = datetime(2026, 6, 6, 15, 33, tzinfo=UTC)
+    approved_at = emitted_at + timedelta(minutes=3)
+
+    # _fetch_price returns None (the "unavailable" tick path), never raises.
+    async def _none_price(symbol: str) -> float | None:
+        return None
+
+    monkeypatch.setattr(bridge, "_fetch_price", _none_price)
+    monkeypatch.setattr(bridge, "datetime", _freeze_bridge_now(emitted_at + timedelta(minutes=10)))
+
+    # Emit with scale_factor=None → payload keeps raw 24800 + scale_unknown=True
+    # (exactly the SKYAI receive-time state where market data was unreachable).
+    parsed = parse_premium_channel_message(PREMIUM_SKYAI_LONG)
+    assert parsed is not None
+    origin_record = emit_parsed_signal(
+        parsed, envelope_log=envelope_log, now=emitted_at, scale_factor=None
+    )
+    assert origin_record is not None
+    assert origin_record["payload"]["scale_unknown"] is True
+    origin_envelope_id = str(origin_record["envelope_id"])
+    outcome = handle_signal_approval(
+        "fill",
+        origin_envelope_id,
+        envelope_log=envelope_log,
+        ttl_minutes=60,
+        approved_by="integration-test",
+        now=approved_at,
+    )
+    assert outcome.status == "filled"
+    approved_envelope_id = outcome.new_envelope_id
+
+    # Tick sequence: 0.35609 → unavailable → 0.35561 → 101.94 (garbage)
+    tick_prices: list[float | None] = [0.35609, None, 0.35561, 101.94]
+    for px in tick_prices:
+        if px is None:
+            provider = _none_price  # price_provider returns None → no_market_data
+        else:
+            provider = _fixed_price_provider("SKYAI/USDT", px)
+        await bridge.run_tick(price_provider=provider)
+
+    bridge_records = _read_jsonl(bridge_log)
+    mine = [r for r in bridge_records if r.get("envelope_id") == approved_envelope_id]
+    stages = [r.get("stage") for r in mine]
+
+    # V-1: the garbage tick did NOT produce a terminal rejected_scale_review.
+    assert "rejected_scale_review" not in stages, stages
+    # the garbage tick was ignored, signal stays pending.
+    assert mine[-1]["stage"] in {PENDING_BAD_TICK_STAGE, "pending"}, stages
+    assert mine[-1]["lifecycle_state"] == "WAITING_FOR_ENTRY"
+
+    # BUG-3: a good tick resolved scale 1e5 → entry 0.248 (not raw 24800).
+    resolved_entries = [r.get("target_entry") for r in mine if r.get("stage") == "pending"]
+    assert any(e is not None and abs(float(e) - 0.248) < 1e-6 for e in resolved_entries), (
+        resolved_entries
+    )
+
+    # Audit: BUG-3 persist + BUG-1 scale-unresolved events fired.
+    audit = _read_jsonl(audit_log)
+    events = [r.get("event") for r in audit]
+    assert EVENT_SCALE_RESOLVED_PERSISTED in events, events
+    assert EVENT_SCALE_UNRESOLVED in events, events
+
+    # Never opened a position (entry 0.248 never reached at spot ~0.356).
+    engine = get_paper_engine()
+    assert "SKYAI/USDT" not in engine.portfolio.positions

@@ -77,7 +77,16 @@ _BRIDGE_REJECT_STAGES = frozenset(
 # damit das Dashboard "Execution global gestoppt" ehrlich zeigt.
 _BRIDGE_ENTRY_DISABLED_STAGES = frozenset({"rejected_entry_mode"})
 
-_BRIDGE_PENDING_STAGES = frozenset({"pending"})
+# BUG-4 (2026-06-08): operative reject stages EXCLUDING the entry_mode posture.
+# entry_mode=disabled is a global runtime posture, not the operative terminal of
+# a signal that actually failed scale/market checks. The trail headline must
+# show the operative terminal (e.g. rejected_scale_review /
+# scale_unresolved_or_bad_price); entry_disabled only surfaces when it is the
+# sole thing that happened (a clean signal blocked purely by the kill-switch).
+_BRIDGE_OPERATIVE_REJECT_STAGES = _BRIDGE_REJECT_STAGES - _BRIDGE_ENTRY_DISABLED_STAGES
+
+# V-1 (2026-06-08): a garbage-tick that was ignored keeps the signal pending.
+_BRIDGE_PENDING_STAGES = frozenset({"pending", "pending_entry_with_bad_tick_ignored"})
 _BRIDGE_SKIPPED_STAGES = frozenset({"skipped_source"})
 _BRIDGE_EXPIRED_STAGES = frozenset({"expired"})
 
@@ -281,6 +290,22 @@ def _bridge_history_for_envelope(
             entry["fill_price"] = rec.get("fill_price")
         if "quantity" in rec:
             entry["quantity"] = rec.get("quantity")
+        # BUG-3 (2026-06-08): carry the resolved-scale geometry so build_trail can
+        # show the scaled plan (0.248) instead of the raw channel value (24800).
+        for scale_key in (
+            "current_price",
+            "target_entry",
+            "scale_factor",
+            "scale_factor_applied",
+            "scale_unknown",
+            "scaled_entry",
+            "scaled_stop_loss",
+            "scaled_targets",
+            "scale_resolved_at",
+            "scale_source",
+        ):
+            if scale_key in rec:
+                entry[scale_key] = rec.get(scale_key)
         history.append(entry)
     history.sort(key=lambda r: r.get("ts") or "")
     return history
@@ -523,18 +548,12 @@ def _derive_stages(
             bridge_reason = entry.get("audit_reason")
             bridge_ts = entry.get("ts")
             break
+    # BUG-4: operative reject (scale/risk/size/…) ranks ABOVE the entry_mode
+    # posture so the headline shows what actually failed, not the kill-switch.
     if bridge_stage is None:
         for entry in bridge_history:
             s = entry.get("stage")
-            if s in _BRIDGE_ENTRY_DISABLED_STAGES:
-                bridge_stage = s
-                bridge_reason = entry.get("audit_reason") or "entry_mode_disabled"
-                bridge_ts = entry.get("ts")
-                break
-    if bridge_stage is None:
-        for entry in bridge_history:
-            s = entry.get("stage")
-            if s in _BRIDGE_REJECT_STAGES:
+            if s in _BRIDGE_OPERATIVE_REJECT_STAGES:
                 bridge_stage = s
                 bridge_reason = entry.get("audit_reason")
                 bridge_ts = entry.get("ts")
@@ -561,6 +580,16 @@ def _derive_stages(
             if s in _BRIDGE_PENDING_STAGES:
                 bridge_stage = s
                 bridge_reason = entry.get("audit_reason")
+                bridge_ts = entry.get("ts")
+                break
+    # entry_mode posture LAST: only surfaces when nothing operative happened
+    # (a clean signal blocked purely by the global kill-switch = truly terminal).
+    if bridge_stage is None:
+        for entry in bridge_history:
+            s = entry.get("stage")
+            if s in _BRIDGE_ENTRY_DISABLED_STAGES:
+                bridge_stage = s
+                bridge_reason = entry.get("audit_reason") or "entry_mode_disabled"
                 bridge_ts = entry.get("ts")
                 break
 
@@ -1006,6 +1035,37 @@ def build_trail(
                 if f is not None:
                     targets.append(f)
 
+        # BUG-3 (2026-06-08): show the SCALED plan, not the raw channel value.
+        # Prefer the latest bridge record that resolved a real scale (carries
+        # ``scaled_entry``); fall back to the raw envelope payload. This is why
+        # the SKYAI trail shows entry 0.248 instead of 24800.
+        entry_value = _safe_float(payload.get("entry_value"))
+        stop_loss = _safe_float(payload.get("stop_loss"))
+        scale_factor = _safe_float(payload.get("scale_factor"))
+        scale_unknown = bool(payload.get("scale_unknown"))
+        _scaled_recs = [r for r in bridge_history if _safe_float(r.get("scaled_entry")) is not None]
+        if _scaled_recs:
+            _latest = _scaled_recs[-1]
+            entry_value = _safe_float(_latest.get("scaled_entry")) or entry_value
+            _sl = _safe_float(_latest.get("scaled_stop_loss"))
+            if _sl is not None:
+                stop_loss = _sl
+            _bt = _latest.get("scaled_targets")
+            if isinstance(_bt, list):
+                _scaled_targets: list[float] = []
+                for t in _bt:
+                    _f = _safe_float(t)
+                    if _f is not None:
+                        _scaled_targets.append(_f)
+                if _scaled_targets:
+                    targets = _scaled_targets
+            scale_factor = (
+                _safe_float(_latest.get("scale_factor"))
+                or _safe_float(_latest.get("scale_factor_applied"))
+                or scale_factor
+            )
+            scale_unknown = False
+
         (
             stages,
             overall,
@@ -1031,12 +1091,12 @@ def build_trail(
             received_at=_safe_str(env.get("timestamp_utc")),
             direction=_safe_str(payload.get("direction")),
             side=_safe_str(payload.get("side")),
-            entry_value=_safe_float(payload.get("entry_value")),
-            stop_loss=_safe_float(payload.get("stop_loss")),
+            entry_value=entry_value,
+            stop_loss=stop_loss,
             targets=targets,
             leverage=_safe_float(payload.get("leverage")),
-            scale_factor=_safe_float(payload.get("scale_factor")),
-            scale_unknown=bool(payload.get("scale_unknown")),
+            scale_factor=scale_factor,
+            scale_unknown=scale_unknown,
             stages=stages,
             overall=overall,
             is_open=is_open,

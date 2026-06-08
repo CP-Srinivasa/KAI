@@ -22,7 +22,7 @@ import logging
 from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Query, Request
 from pydantic import BaseModel, Field
@@ -442,11 +442,22 @@ class EnvelopeRecord(BaseModel):
     premium_state_tone: str | None = None
     bridge_stage: str | None = None
     bridge_reason: str | None = None
+    # Dedupe (2026-06-08): raw (telegram_premium_channel) + approved
+    # (…_approved) are ONE business signal. The record shown is the canonical
+    # (approved if present); these fields let the UI render "Rohsignal +
+    # Approved Event" as one grouped row instead of two double-counted rows.
+    dedup_key: str | None = None
+    double_sourced: bool = False
+    has_raw_event: bool = False
+    has_approved_event: bool = False
+    merged_event_count: int = 1
 
 
 class EnvelopeRecentResponse(BaseModel):
     count: int
     records: list[EnvelopeRecord]
+    # Number of raw business signals collapsed (raw+approved) for transparency.
+    deduped_from: int | None = None
 
 
 def _latest_bridge_by_envelope(path: Path) -> dict[str, dict[str, object]]:
@@ -633,9 +644,14 @@ async def recent_envelopes(
         logger.warning("[signals.recent] Audit read failed: %s", exc)
         return EnvelopeRecentResponse(count=0, records=[])
 
-    records: list[EnvelopeRecord] = []
     bridge_by_envelope = _latest_bridge_by_envelope(Path("artifacts/bridge_pending_orders.jsonl"))
-    # Walk from newest (end of file) backward, stop at limit
+
+    # Parse newest-first, then dedupe raw+approved into one business signal
+    # (Dashboard double-count fix 2026-06-08). We over-read so that after
+    # collapsing pairs we can still return up to ``limit`` distinct signals.
+    from app.observability.premium_dedupe import compute_dedup_key
+
+    parsed_raws: list[dict[str, object]] = []
     for line in reversed(lines):
         stripped = line.strip()
         if not stripped:
@@ -646,7 +662,44 @@ async def recent_envelopes(
             continue
         if not isinstance(raw, dict):
             continue
-        records.append(_project_record(raw, bridge_by_envelope=bridge_by_envelope))
+        parsed_raws.append(raw)
+        if len(parsed_raws) >= limit * 2:
+            break
+
+    # Group by stable signal identity, preserving newest-first order.
+    groups: dict[str, dict[str, Any]] = {}
+    order: list[str] = []
+    for raw in parsed_raws:
+        key = compute_dedup_key(raw)
+        grp = groups.get(key)
+        if grp is None:
+            grp = {"key": key, "raw": None, "approved": None, "first": raw}
+            groups[key] = grp
+            order.append(key)
+        src = _as_str(raw.get("source")) or ""
+        if src.endswith("_approved"):
+            grp["approved"] = raw
+        elif src.startswith("telegram_premium_channel"):
+            grp["raw"] = raw
+        else:
+            grp.setdefault("other", raw)
+
+    records: list[EnvelopeRecord] = []
+    for key in order:
         if len(records) >= limit:
             break
-    return EnvelopeRecentResponse(count=len(records), records=records)
+        grp = groups[key]
+        canonical = grp["approved"] or grp["raw"] or grp["first"]
+        rec = _project_record(canonical, bridge_by_envelope=bridge_by_envelope)
+        has_raw = grp["raw"] is not None
+        has_approved = grp["approved"] is not None
+        rec.dedup_key = key
+        rec.has_raw_event = has_raw
+        rec.has_approved_event = has_approved
+        rec.double_sourced = has_raw and has_approved
+        rec.merged_event_count = sum(1 for v in (grp["raw"], grp["approved"]) if v is not None) or 1
+        records.append(rec)
+
+    return EnvelopeRecentResponse(
+        count=len(records), records=records, deduped_from=len(parsed_raws)
+    )
