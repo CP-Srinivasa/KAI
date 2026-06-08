@@ -29,6 +29,16 @@ Folge-Verdrahtung zu #162 (formale `MetricRegistry`, ohne Live-Read-Pfad): die k
 - **Tests**: `test_dashboard_metric_registry.py` (Frontend-Guard fail-closed, live-sourced servt Wert, unsourced → degraded, Builder pur, Reconcile within/drift/unsourced-never-ok) + erweiterter `test_api_dashboard` (Version 2, Registry-Wert == Contract-Wert, `var_usd` degraded, Reconciliation within-tolerance). 27 grün; ruff + format + mypy clean.
 - **Bewusst nicht (Issue #170 Teil B)**: Generator-Edge-Collector (Side-Channel-Feeder für IC/Brier) bleibt geparkt — sinnvoll **erst nach dem NEO-P-002-r3-Feeder** (sonst `real_resolved≈0`, Canary-Artefakt). Die Risiko-Skalar-Bindings (var/cvar/sharpe/sortino aus Equity-Return-Serie) sind als `degraded` deklariert und folgen mit der Plumbing.
 
+## 2026-06-08 - SENTR Governance-Gates produktiv verdrahtet (Issue #165)
+
+Folge-Sprint zu PR #164 (Gate-Primitive standalone): Verdrahtung in den Decision-Journal-Pfad — additiv, fail-closed, kein `entry_mode`-Change.
+
+- **`app/security/governance/registry_store.py`** (neu): append-only JSONL-Persistenz unter `artifacts/governance/` für Model-/Prompt-Registry (keyed `(id, version)`, last-write-wins) + Decision-Governance-Audit-Sidecar. Loader fail-closed (unbekannt → `None` → Gate refuse; malformed Row übersprungen). `save_*`-Writer **operator/CLI-only** — Agenten haben keinen Import-Pfad, `mutate_registry` bleibt forbidden.
+- **`app/orchestrator/governed_decision.py`** (neu): `authorize_and_append_decision(...)` führt `authorize_productive_decision` + `validate_decision_audit` als **Hard-Gate vor dem Append** aus. Pass → Journal-Record + `DecisionRegistryReference` (inkl. `registry_hash`) in den Sidecar (keyed `decision_id`). Fail → Refusal-Audit-Record, **kein** Journal-Record, `GovernanceRejectedError`. `resolve_and_append_decision(...)` löst Entries aus den persistierten Registries auf. Sidecar statt Record-Mutation, weil `DecisionRecord` `extra=forbid, frozen` ist → additiv + Legacy-tolerant.
+- **`app/agents/worker.py`**: SENTR-Worker-Mode `governance-audit` (read-only Report über Journal + Sidecar: governed/refused/ungoverned-legacy-Counts, Severity trackt Refusals; analog `sentr kyt-review`).
+- **Invarianten**: Agenten kein Registry-Mutationsrecht (Test pinnt `mutate_registry` forbidden + Capability-Gate denied); Gates pure/read-only; `EXECUTION_ENTRY_MODE` unberührt; bestehendes `append_decision_jsonl` unverändert (Back-compat).
+- **Tests**: `test_governance_registry_store` + `test_governed_decision` + `test_worker_governance_audit` (18 neu) + bestehende 38 Gate-Cases grün = 56; ruff + format + mypy clean. Doku `docs/security/governance_gates.md` § Integration aktualisiert (follow-up → wired).
+
 ## 2026-06-01 - Entry-Safety-Mode + cost-adjusted Edge-Release-Gate (/goal sprint, A–F)
 
 Negative kostenbereinigte Live-Edge bestätigt (Pi 2026-06-01: P(mu_net>0)=0%, net ≈ −69 bps/notional, n=22). Antwort: messbares Entry-Gate statt Bauchgefühl. Default-Verhalten im Paper-Betrieb unverändert ausser dem Churn-Throttle; vollständig über Env rückrollbar; nie Auto-Live. Siehe `DECISION_LOG.md` D-229 für die volle Begründung.

@@ -434,6 +434,59 @@ def _sentr_kyt_review(note: str | None) -> tuple[str, str]:
     return ("\n".join(lines), severity if severity != "info" else "ok")
 
 
+def _sentr_governance_audit(note: str | None) -> tuple[str, str]:
+    """SENTR review of the decision-governance posture (Issue #165).
+
+    Read-only over the decision journal + governance audit sidecar
+    (``artifacts/governance/decision_governance_audit.jsonl``). Reports gate
+    coverage and flags violations: decisions that were governance-rejected
+    (fail-closed refusals) and journal decisions with no governance audit record
+    (legacy/ungoverned — tolerated as a counted gap, analog to the decision_chain
+    legacy gap, never a crash). Agents have no registry-mutation right; this mode
+    only reads.
+    """
+    journal = REPO_ROOT / "artifacts" / "decision_journal.jsonl"
+    sidecar = REPO_ROOT / "artifacts" / "governance" / "decision_governance_audit.jsonl"
+    journal_rows = _read_jsonl_raw(journal) if journal.exists() else []
+    audit_rows = _read_jsonl_raw(sidecar) if sidecar.exists() else []
+
+    governed_ids = {str(r.get("decision_id")) for r in audit_rows if r.get("authorized") is True}
+    refused = [r for r in audit_rows if r.get("authorized") is False]
+    journal_ids = {str(r.get("decision_id")) for r in journal_rows if r.get("decision_id")}
+    ungoverned = sorted(journal_ids - governed_ids)
+
+    has_refusals = len(refused) > 0
+    has_ungoverned = len(ungoverned) > 0
+    severity = "crit" if has_refusals else ("warn" if has_ungoverned else "info")
+
+    _append_finding(
+        "sentr",
+        severity,
+        "governance_audit",
+        f"Decisions: {len(journal_rows)} journal, {len(governed_ids)} governed, "
+        f"{len(refused)} refused, {len(ungoverned)} ungoverned(legacy).",
+    )
+
+    lines = [
+        f"SENTR Governance-Audit — {len(journal_rows)} Journal-Decisions, "
+        f"{len(governed_ids)} governed, {len(refused)} refused, "
+        f"{len(ungoverned)} ungoverned (legacy)."
+    ]
+    if note:
+        lines.append(f"Note: {note}")
+    for r in refused[-5:]:
+        codes = ", ".join(str(c) for c in (r.get("blocker_codes") or []))
+        lines.append(f"  [REFUSED] decision={r.get('decision_id', '?')} blockers=[{codes}]")
+    if ungoverned:
+        lines.append(
+            f"  Ungoverned (legacy, kein Registry-Reference): {len(ungoverned)} "
+            f"— erstes: {ungoverned[0]}"
+        )
+    if not audit_rows:
+        lines.append("  (Governance-Audit leer — noch keine governte Decision geschrieben.)")
+    return ("\n".join(lines), severity if severity != "info" else "ok")
+
+
 def _architect_review(note: str | None) -> tuple[str, str]:
     modules = list((REPO_ROOT / "app").glob("*/"))
     modules = [m for m in modules if m.is_dir() and not m.name.startswith("_")]
@@ -495,6 +548,7 @@ HANDLERS: dict[tuple[str, str], Callable[[str | None], tuple[str, str]]] = {
     ("sentr", "inspect"): _sentr_inspect,
     ("sentr", "report"): _sentr_report,
     ("sentr", "kyt-review"): _sentr_kyt_review,
+    ("sentr", "governance-audit"): _sentr_governance_audit,
     ("architect", "review"): _architect_review,
     ("architect", "propose"): _architect_propose,
 }
