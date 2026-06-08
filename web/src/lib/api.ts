@@ -112,15 +112,23 @@ export function fetchHealth(signal?: AbortSignal): Promise<HealthResponse> {
 export type TimerHealthInactiveEntry = {
   unit: string;
   state: string;
+  // FS-2 (#198) taxonomy: recurring_required | one_shot_expected_inactive | disabled_by_design
+  category?: string | null;
+  // ok | expected_inactive | critical
+  severity?: string | null;
   last_trigger: string | null;
 };
 
 export type TimerHealthResponse = {
-  state: "ok" | "has_inactive" | "stale" | "no_data" | "corrupt";
+  state: "ok" | "has_inactive" | "stale" | "no_data" | "corrupt" | "critical";
+  // FS-2: overall severity + taxonomy counts (expected_inactive vs failed).
+  severity?: string;
   checked_at: string | null;
   stale_minutes: number | null;
   total: number;
   active: number;
+  critical_count?: number;
+  expected_inactive_count?: number;
   inactive: TimerHealthInactiveEntry[];
 };
 
