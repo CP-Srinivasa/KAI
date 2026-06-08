@@ -260,6 +260,59 @@ def test_recent_envelopes_respects_limit(client: TestClient) -> None:
     assert len(body["records"]) == 2
 
 
+def test_recent_envelopes_dedupes_raw_and_approved_premium_signal(client: TestClient) -> None:
+    path: Path = client.audit_path  # type: ignore[attr-defined]
+    payload = {
+        "display_symbol": "SKYAI/USDT",
+        "symbol": "SKYAIUSDT",
+        "side": "buy",
+        "direction": "long",
+        "entry_value": 0.40,
+        "stop_loss": 0.30,
+        "targets": [0.50, 0.60],
+        "leverage": 10,
+        "source_uid": "telegram:-1001:23878",
+        "source_message_id": 23878,
+    }
+    raw = {
+        "timestamp_utc": "2026-06-08T10:00:00+00:00",
+        "event": "telegram_channel_envelope",
+        "message_type": "signal",
+        "stage": "accepted",
+        "status": "ok",
+        "source": "telegram_premium_channel",
+        "envelope_id": "ENV-RAW",
+        "source_uid": "telegram:-1001:23878",
+        "message_id": 23878,
+        "payload": payload,
+    }
+    approved = {
+        **raw,
+        "timestamp_utc": "2026-06-08T10:01:00+00:00",
+        "event": "telegram_channel_approval",
+        "source": "telegram_premium_channel_approved",
+        "envelope_id": "ENV-APPROVED",
+        "origin_envelope_id": "ENV-RAW",
+        "payload": dict(payload),
+    }
+    path.write_text(
+        json.dumps(raw, separators=(",", ":"))
+        + "\n"
+        + json.dumps(approved, separators=(",", ":"))
+        + "\n",
+        encoding="utf-8",
+    )
+
+    resp = client.get("/signals/envelope/recent", headers=_hdr())
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["count"] == 1
+    assert body["records"][0]["envelope_id"] == "ENV-APPROVED"
+    assert body["records"][0]["source"] == "telegram_premium_channel_approved"
+    assert body["records"][0]["signal"]["source_uid"] == "telegram:-1001:23878"
+
+
 def test_recent_envelopes_limit_bounds_enforced(client: TestClient) -> None:
     resp = client.get("/signals/envelope/recent?limit=0", headers=_hdr())
     assert resp.status_code == 422

@@ -44,6 +44,7 @@ from app.messaging.signal_parser import (
     parse_structured_message,
     split_validation_errors,
 )
+from app.observability.premium_signal_dedupe import dedupe_premium_signal_records
 from app.premium.state_machine import (
     PremiumSignalState,
     approval_state,
@@ -634,6 +635,7 @@ async def recent_envelopes(
         return EnvelopeRecentResponse(count=0, records=[])
 
     records: list[EnvelopeRecord] = []
+    raw_records: list[dict[str, object]] = []
     bridge_by_envelope = _latest_bridge_by_envelope(Path("artifacts/bridge_pending_orders.jsonl"))
     # Walk from newest (end of file) backward, stop at limit
     for line in reversed(lines):
@@ -646,7 +648,13 @@ async def recent_envelopes(
             continue
         if not isinstance(raw, dict):
             continue
-        records.append(_project_record(raw, bridge_by_envelope=bridge_by_envelope))
-        if len(records) >= limit:
+        raw_records.append(raw)
+        deduped = dedupe_premium_signal_records(raw_records)
+        if len(deduped.records) >= limit:
             break
+    deduped = dedupe_premium_signal_records(raw_records)
+    records = [
+        _project_record(raw, bridge_by_envelope=bridge_by_envelope)
+        for raw in deduped.records[:limit]
+    ]
     return EnvelopeRecentResponse(count=len(records), records=records)

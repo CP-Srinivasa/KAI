@@ -57,6 +57,19 @@ from app.execution.premium_fastlane import (
     resolve_notional,
     should_route_premium_fastlane,
 )
+from app.execution.premium_market_guard import (
+    BAD_TICK_IGNORED_EVENT,
+    BAD_TICK_TERMINAL_THRESHOLD,
+    PRICE_OUTLIER_EVENT,
+    REQUIRES_QUOTE_SOURCE_EVENT,
+    SCALE_RESOLVED_EVENT,
+    SCALE_UNRESOLVED_EVENT,
+    TERMINAL_STABILIZED_EVENT,
+    consecutive_bad_ticks,
+    latest_valid_spot,
+    scale_unresolved_or_bad_price,
+    validate_spot_price,
+)
 from app.execution.scale_resolver import detect_scale_factor as _detect_scale_factor
 from app.market_data.service import get_market_data_snapshot
 from app.risk.engine import RiskEngine
@@ -539,6 +552,26 @@ def _apply_scale(payload: dict[str, object], factor: float) -> None:
         payload["targets"] = scaled
 
 
+def _mark_scale_resolved(
+    payload: dict[str, object],
+    *,
+    factor: float,
+    entry: float,
+    stop_loss: float,
+    targets: list[float],
+    source: str,
+) -> str:
+    resolved_at = datetime.now(UTC).isoformat()
+    payload["scale_unknown"] = False
+    payload["scale_factor"] = factor
+    payload["scaled_entry"] = entry
+    payload["scaled_stop_loss"] = stop_loss
+    payload["scaled_targets"] = list(targets)
+    payload["scale_resolved_at"] = resolved_at
+    payload["scale_source"] = source
+    return resolved_at
+
+
 PriceProvider = Callable[[str], Awaitable[float | None]]
 
 
@@ -581,6 +614,7 @@ async def run_tick(*, price_provider: PriceProvider | None = None) -> BridgeTick
             ttl_hours=ttl_hours,
             tolerance_pct=tolerance_pct,
             result=result,
+            bridge_records=bridge_records,
             price_provider=price_provider,
         )
 
@@ -702,6 +736,7 @@ async def backfill_run(
             ttl_hours=ttl_hours,
             tolerance_pct=tolerance_pct,
             result=result,
+            bridge_records=_read_jsonl(_BRIDGE_LOG),
             price_provider=price_provider,
             ignore_ttl=ignore_ttl,
         )
@@ -718,6 +753,7 @@ async def _process_one(
     ttl_hours: int,
     tolerance_pct: float,
     result: BridgeTickResult,
+    bridge_records: list[dict[str, object]] | None = None,
     price_provider: PriceProvider | None = None,
     ignore_ttl: bool = False,
 ) -> None:
@@ -896,6 +932,7 @@ async def _process_one(
         current_price = await _fetch_price(symbol)
     if current_price is None:
         rec = base("pending")
+        rec["event"] = REQUIRES_QUOTE_SOURCE_EVENT
         rec["reason"] = "no_market_data"
         rec["target_entry"] = entry_price
         rec["executable_intent"] = _build_executable_intent(
@@ -925,6 +962,94 @@ async def _process_one(
         result.no_market_data += 1
         return
 
+    prior_bridge_records = bridge_records or []
+    previous_valid_price = latest_valid_spot(
+        prior_bridge_records,
+        envelope_id=envelope_id,
+        correlation_id=correlation_id,
+        symbol=symbol,
+    )
+    price_decision = validate_spot_price(
+        current_price,
+        previous_valid_price=previous_valid_price,
+    )
+    if not price_decision.accepted:
+        bad_tick_count = (
+            consecutive_bad_ticks(
+                prior_bridge_records,
+                envelope_id=envelope_id,
+                correlation_id=correlation_id,
+                symbol=symbol,
+            )
+            + 1
+        )
+        if bad_tick_count >= BAD_TICK_TERMINAL_THRESHOLD:
+            rec = base("rejected_scale_review")
+            rec["event"] = TERMINAL_STABILIZED_EVENT
+            rec["reason"] = "repeated_bad_market_ticks"
+            rec["current_price"] = current_price
+            rec["previous_valid_price"] = previous_valid_price
+            rec["bad_tick_count"] = bad_tick_count
+            rec["outlier_reason"] = price_decision.reason
+            rec["outlier_reference_price"] = price_decision.reference_price
+            rec["outlier_reference_source"] = price_decision.reference_source
+            rec["outlier_deviation_pct"] = price_decision.deviation_pct
+            _attach_lifecycle(
+                rec,
+                final_state=OrderLifecycleState.REJECTED_INVALID_SIGNAL,
+                states=[
+                    OrderLifecycleState.RECEIVED,
+                    OrderLifecycleState.PARSED,
+                    OrderLifecycleState.VALIDATED,
+                    OrderLifecycleState.REJECTED_INVALID_SIGNAL,
+                ],
+                reason="repeated_bad_market_ticks",
+            )
+            _append_bridge_audit(rec)
+            result.rejected_size += 1
+            return
+
+        rec = base("pending")
+        rec["event"] = PRICE_OUTLIER_EVENT
+        rec["secondary_event"] = BAD_TICK_IGNORED_EVENT
+        rec["audit_events"] = [PRICE_OUTLIER_EVENT, BAD_TICK_IGNORED_EVENT]
+        rec["reason"] = "pending_entry_with_bad_tick_ignored"
+        rec["current_price"] = current_price
+        rec["target_entry"] = entry_price
+        rec["previous_valid_price"] = previous_valid_price
+        rec["bad_tick_count"] = bad_tick_count
+        rec["outlier_reason"] = price_decision.reason
+        rec["outlier_reference_price"] = price_decision.reference_price
+        rec["outlier_reference_source"] = price_decision.reference_source
+        rec["outlier_deviation_pct"] = price_decision.deviation_pct
+        rec["executable_intent"] = _build_executable_intent(
+            envelope_id=envelope_id,
+            correlation_id=str(rec["correlation_id"]),
+            source=source,
+            payload=payload,
+            symbol=symbol,
+            side=str(side_str),
+            entry_price=entry_price,
+            stop_loss=stop_loss,
+            targets=targets,
+        ).to_dict()
+        rec["order_intent"] = rec["executable_intent"]
+        _attach_lifecycle(
+            rec,
+            final_state=OrderLifecycleState.WAITING_FOR_ENTRY,
+            states=[
+                OrderLifecycleState.RECEIVED,
+                OrderLifecycleState.PARSED,
+                OrderLifecycleState.VALIDATED,
+                OrderLifecycleState.WAITING_FOR_ENTRY,
+            ],
+            reason="pending_entry_with_bad_tick_ignored",
+        )
+        _append_bridge_audit(rec)
+        result.re_pending += 1 if bad_tick_count > 1 else 0
+        result.newly_pending += 0 if bad_tick_count > 1 else 1
+        return
+
     # V25-D (2026-05-05): rescale Bybit-Futures integer-tick entries to USD
     # before the tolerance check. Channel posts e.g. SWARMS 32450 (×10^6) /
     # 1000LUNC 10310 (×10^5) which would otherwise blow past every gate.
@@ -939,6 +1064,46 @@ async def _process_one(
         scale_factor = 1.0
     else:
         scale_factor = _detect_scale_factor(entry_price, current_price)
+    if scale_unresolved_or_bad_price(
+        entry=entry_price,
+        spot=current_price,
+        scale_factor=scale_factor,
+    ):
+        rec = base("rejected_scale_review")
+        rec["event"] = SCALE_UNRESOLVED_EVENT
+        rec["reason"] = "scale_unresolved_or_bad_price"
+        rec["scale_factor_applied"] = scale_factor
+        rec["raw_entry"] = entry_price
+        rec["raw_stop_loss"] = stop_loss
+        rec["raw_targets"] = list(targets)
+        rec["current_price"] = current_price
+        rec["entry_spot_ratio"] = entry_price / current_price
+        rec["executable_intent"] = _build_executable_intent(
+            envelope_id=envelope_id,
+            correlation_id=str(rec["correlation_id"]),
+            source=source,
+            payload=payload,
+            symbol=symbol,
+            side=str(side_str),
+            entry_price=entry_price,
+            stop_loss=stop_loss,
+            targets=targets,
+        ).to_dict()
+        rec["order_intent"] = rec["executable_intent"]
+        _attach_lifecycle(
+            rec,
+            final_state=OrderLifecycleState.REJECTED_INVALID_SIGNAL,
+            states=[
+                OrderLifecycleState.RECEIVED,
+                OrderLifecycleState.PARSED,
+                OrderLifecycleState.VALIDATED,
+                OrderLifecycleState.REJECTED_INVALID_SIGNAL,
+            ],
+            reason="scale_unresolved_or_bad_price",
+        )
+        _append_bridge_audit(rec)
+        result.rejected_size += 1
+        return
     if scale_factor != 1.0:
         logger.info(
             "[bridge] scale-detect symbol=%s entry=%.6g current=%.6g "
@@ -956,7 +1121,31 @@ async def _process_one(
         # consumers (engine, tier ladder, audit) see the same numbers we
         # just gated on.
         scaled_payload = envelope.get("payload")
-        _apply_scale(scaled_payload if isinstance(scaled_payload, dict) else {}, scale_factor)
+        if isinstance(scaled_payload, dict):
+            _apply_scale(scaled_payload, scale_factor)
+            resolved_at = _mark_scale_resolved(
+                scaled_payload,
+                factor=scale_factor,
+                entry=entry_price,
+                stop_loss=stop_loss,
+                targets=targets,
+                source="bridge_market_price",
+            )
+            rec = base("scale_resolved")
+            rec["event"] = SCALE_RESOLVED_EVENT
+            rec["scale_factor"] = scale_factor
+            rec["scale_factor_applied"] = scale_factor
+            rec["scale_unknown"] = False
+            rec["scaled_entry"] = entry_price
+            rec["scaled_stop_loss"] = stop_loss
+            rec["scaled_targets"] = list(targets)
+            rec["scale_resolved_at"] = resolved_at
+            rec["scale_source"] = "bridge_market_price"
+            rec["current_price"] = current_price
+            rec["raw_entry"] = entry_price * scale_factor
+            rec["raw_stop_loss"] = stop_loss * scale_factor
+            rec["raw_targets"] = [t * scale_factor for t in targets]
+            _append_bridge_audit(rec)
 
     # Gate 4.5 (2026-05-21): plausibility-check der skalierten Werte gegen spot.
     # Adressiert IRYS 2026-05-12: SL nach Skalierung lag über spot, paper-engine

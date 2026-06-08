@@ -262,6 +262,82 @@ def test_trail_exposes_source_identity():
     assert entries[0].to_dict()["source_uid"] == "telegram:-1001275462917:23878"
 
 
+def test_trail_prefers_bridge_scaled_plan_over_raw_payload():
+    origin = _origin_env(
+        "ENV-SCALE-RAW",
+        "TICK/USDT",
+        "2026-06-08T11:00:00+00:00",
+        entry_value=24.800,
+        stop_loss=20.0,
+        targets=[30.0, 35.0],
+        scale_unknown=True,
+    )
+    approved = _approved_env(
+        "ENV-SCALE-APPROVED",
+        "ENV-SCALE-RAW",
+        "TICK/USDT",
+        "2026-06-08T11:01:00+00:00",
+    )
+    bridge_records = [
+        {
+            "timestamp_utc": "2026-06-08T11:01:10+00:00",
+            "event": "premium_scale_resolved_persisted",
+            "envelope_id": "ENV-SCALE-APPROVED",
+            "correlation_id": "ENV-SCALE-RAW",
+            "stage": "scale_resolved",
+            "source": "telegram_premium_channel_approved",
+            "scale_factor": 100.0,
+            "scale_factor_applied": 100.0,
+            "scale_unknown": False,
+            "scaled_entry": 0.248,
+            "scaled_stop_loss": 0.2,
+            "scaled_targets": [0.3, 0.35],
+        }
+    ]
+
+    [entry] = build_trail(
+        envelope_records=[origin, approved],
+        bridge_records=bridge_records,
+        paper_records=[],
+    )
+
+    assert entry.entry_value == 0.248
+    assert entry.stop_loss == 0.2
+    assert entry.targets == [0.3, 0.35]
+    assert entry.scale_factor == 100.0
+    assert entry.scale_unknown is False
+
+
+def test_trail_keeps_operational_terminal_separate_from_entry_mode_posture():
+    env_id = "ENV-SCALE-BAD"
+    approved_id = "ENV-SCALE-BAD-APPROVED"
+    origin = _origin_env(env_id, "BAD/USDT", "2026-06-08T12:00:00+00:00")
+    approved = _approved_env(approved_id, env_id, "BAD/USDT", "2026-06-08T12:01:00+00:00")
+    bridge_records = [
+        {
+            "timestamp_utc": "2026-06-08T12:02:00+00:00",
+            "event": "premium_scale_unresolved_or_bad_price",
+            "envelope_id": approved_id,
+            "correlation_id": env_id,
+            "stage": "rejected_scale_review",
+            "source": "telegram_premium_channel_approved",
+            "reason": "scale_unresolved_or_bad_price",
+            "audit_reason": "scale_unresolved_or_bad_price",
+            "lifecycle_state": "REJECTED_INVALID_SIGNAL",
+        }
+    ]
+
+    [entry] = build_trail(
+        envelope_records=[origin, approved],
+        bridge_records=bridge_records,
+        paper_records=[],
+    )
+
+    assert entry.overall == "BRIDGE_REJECTED"
+    assert entry.premium_state == "requires_scale_review"
+    assert _stage(entry, "bridge").reason == "scale_unresolved_or_bad_price"
+
+
 def test_filled_and_open_path():
     """BAS-Pfad: filled, kein position_closed event — position is still open."""
     env_id = "ENV-bas-origin"
