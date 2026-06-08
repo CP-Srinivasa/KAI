@@ -40,6 +40,7 @@ class ConfidenceOutcome:
     label: str
     confidence: float
     source_name: str
+    block_reason: str
     outcome: str | None
     observed_at: datetime | None
 
@@ -134,6 +135,14 @@ def _source_name(*rows: dict) -> str:
     return "unknown"
 
 
+def _block_reason(*rows: dict) -> str:
+    for row in rows:
+        val = row.get("block_reason")
+        if isinstance(val, str) and val.strip():
+            return val.strip()
+    return "unknown"
+
+
 def _latest_by_document(rows: list[dict], *, ts_field: str) -> dict[str, dict]:
     latest: dict[str, tuple[datetime | None, int, dict]] = {}
     for idx, row in enumerate(rows):
@@ -184,6 +193,7 @@ def build_universe(
                 label=label,
                 confidence=conf,
                 source_name=_source_name(outcome_row, meta),
+                block_reason=_block_reason(outcome_row, meta),
                 outcome=outcome if isinstance(outcome, str) else None,
                 observed_at=dt,
             )
@@ -239,6 +249,8 @@ def _hit_miss_summary(records: list[ConfidenceOutcome], key: str) -> list[dict[s
             bucket = rec.source_name
         elif key == "sentiment_label":
             bucket = rec.label
+        elif key == "block_reason":
+            bucket = rec.block_reason
         else:
             raise ValueError(f"unsupported summary key: {key}")
         cur = buckets.setdefault(bucket, {"hit": 0, "miss": 0, "inconclusive": 0})
@@ -403,6 +415,7 @@ def analyze(blocked_path: Path, outcomes_path: Path, today: date) -> dict[str, o
             "by_confidence_bucket": _hit_miss_summary(uni.records, "confidence_bucket"),
             "by_source_name": _hit_miss_summary(uni.records, "source_name"),
             "by_sentiment_label": _hit_miss_summary(uni.records, "sentiment_label"),
+            "by_block_reason": _hit_miss_summary(uni.records, "block_reason"),
         },
         "labels": labels,
     }
@@ -460,6 +473,12 @@ def render_memo(result: dict[str, object]) -> str:
     for row in tables["by_sentiment_label"]:
         lines.append(
             f"- {row['sentiment_label']}: hit={row['hit']} miss={row['miss']} "
+            f"inc={row['inconclusive']} precision={row['precision_pct']}"
+        )
+    lines.append("### Block Reason")
+    for row in tables["by_block_reason"]:
+        lines.append(
+            f"- {row['block_reason']}: hit={row['hit']} miss={row['miss']} "
             f"inc={row['inconclusive']} precision={row['precision_pct']}"
         )
     return "\n".join(lines) + "\n"

@@ -2018,12 +2018,14 @@ def trading_shadow_drift_check(
         tbl.add_column("field")
         tbl.add_column("samples", justify="right")
         tbl.add_column("variance", justify="right")
+        tbl.add_column("distinct", justify="right")
         tbl.add_column("degenerate", justify="right")
         for var in report.feature_variance:
             tbl.add_row(
                 var.field,
                 str(var.sample_count),
                 "None" if var.variance is None else str(var.variance),
+                "None" if var.distinct_count is None else str(var.distinct_count),
                 str(var.is_degenerate),
             )
         console.print(tbl)
