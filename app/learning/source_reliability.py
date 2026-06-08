@@ -55,6 +55,11 @@ _WILSON_HIGH_THRESHOLD: float = 0.65  # > 65% lower-bound → soft promote
 # Window over which outcomes are considered fresh.
 _DEFAULT_WINDOW_DAYS: int = 90
 
+# FS-3 (#199): source-name tokens for the pre-attribution / legacy bucket. These
+# never count as trusted and never carry a positive modifier — legacy evidence
+# is not attributable to an active source and must stay separated.
+_LEGACY_SOURCE_TOKENS: frozenset[str] = frozenset({"unknown", ""})
+
 ReliabilityTier = Literal["trusted", "neutral", "watch", "low", "insufficient"]
 
 
@@ -238,6 +243,9 @@ def build_source_reliability_report(
         # numerator nor denominator (matches ph5_feature_analysis convention).
 
     scores: dict[str, SourceReliabilityScore] = {}
+    trusted_count = 0
+    active_source_count = 0
+    legacy_source_count = 0
     for source in sorted(n_per_source.keys()):
         hits = hits_per_source.get(source, 0)
         miss = miss_per_source.get(source, 0)
@@ -245,6 +253,20 @@ def build_source_reliability_report(
         point = hits / n if n > 0 else None
         wilson = wilson_lower_bound(hits, n)
         tier, modifier = _classify_tier(n, wilson)
+        # FS-3 (#199): the legacy/pre-attribution bucket ("unknown"/empty) must
+        # NEVER be promoted to trusted nor carry a positive modifier — its
+        # evidence is not attributable to an active source. Demotes are kept.
+        is_legacy = source.strip().lower() in _LEGACY_SOURCE_TOKENS
+        if is_legacy:
+            legacy_source_count += 1
+            if tier == "trusted":
+                tier = "neutral"
+            if modifier > 0:
+                modifier = 0
+        else:
+            active_source_count += 1
+            if tier == "trusted":
+                trusted_count += 1
         scores[source] = SourceReliabilityScore(
             source_name=source,
             hits=hits,
@@ -267,6 +289,11 @@ def build_source_reliability_report(
             "wilson_low": _WILSON_LOW_THRESHOLD,
             "wilson_high": _WILSON_HIGH_THRESHOLD,
         },
+        # FS-3: explicit active/legacy separation so 0-trusted-but-evidence-exists
+        # never reads as healthy, and legacy never inflates the trusted count.
+        "trusted_count": trusted_count,
+        "active_source_count": active_source_count,
+        "legacy_source_count": legacy_source_count,
         "scores": {s: scores[s].to_json_dict() for s in scores},
     }
 
