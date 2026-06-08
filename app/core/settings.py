@@ -1099,6 +1099,15 @@ class AppSettings(BaseSettings):
     # knob. Setting `coingecko` here would silently regress to the unsafe
     # default if `.env` ever loses the line again.
     market_data_provider: str = Field(default="fallback")
+    # Cross-exchange weighted-median price VALIDATION (Issue #169, default OFF).
+    # When True, the aggregation hook in
+    # ``app/market_data/cross_exchange_aggregator.py`` may run per-venue quotes
+    # through ``validate_cross_exchange`` as a read-only diagnostic. This is a
+    # validation/observability layer ONLY — it never opens, sizes, or blocks an
+    # order, and it does not touch ``entry_mode``. Fail-closed default False so
+    # live behaviour is unchanged until an operator opts in
+    # (``APP_CROSS_EXCHANGE_VALIDATION_ENABLED=true``).
+    cross_exchange_validation_enabled: bool = Field(default=False)
     # Optional CoinGecko Pro/Lite API key. When set, the adapter switches to
     # the pro-api.coingecko.com endpoint and sends the key via the
     # x-cg-pro-api-key header. Leave empty for free-tier.

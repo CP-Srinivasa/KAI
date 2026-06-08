@@ -39,6 +39,17 @@ Folge-Sprint zu PR #164 (Gate-Primitive standalone): Verdrahtung in den Decision
 - **Invarianten**: Agenten kein Registry-Mutationsrecht (Test pinnt `mutate_registry` forbidden + Capability-Gate denied); Gates pure/read-only; `EXECUTION_ENTRY_MODE` unberührt; bestehendes `append_decision_jsonl` unverändert (Back-compat).
 - **Tests**: `test_governance_registry_store` + `test_governed_decision` + `test_worker_governance_audit` (18 neu) + bestehende 38 Gate-Cases grün = 56; ruff + format + mypy clean. Doku `docs/security/governance_gates.md` § Integration aktualisiert (follow-up → wired).
 
+## 2026-06-08 - Cross-Exchange Per-Venue-Quote-Plumbing (Issue #169)
+
+Folge-Sprint zu PR #168 (pure Weighted-Median-Validierung, nicht verdrahtet, weil `MarketDataPoint` keine Mikrostruktur trägt). Diese PR liefert den Plumbing-Kern — additiv, default-OFF, **keine Execution-Beeinflussung**.
+
+- **`app/market_data/venue_trust.py`** (neu): statischer Venue-Trust-SSOT (`venue_trust_score(provider_id) → [0,1]`), fail-closed (unbekannte Venue → konservativ niedrig `0.3`, nie hoher Default). Item #2.
+- **`app/market_data/quote_builder.py`** (neu): `build_provider_quote(point, microstructure, now_ms)` mappt `MarketDataPoint` + optionale `Microstructure` (bid/ask/depth/latency) auf `ProviderQuote`. Trust aus dem SSOT, `timestamp_ms` aus ISO oder Freshness (nie als „now" erfunden). **Keine gefakte Mikrostruktur**: fehlt bid/ask/depth → Venue wird *ausgeschlossen* (None), nicht mit Zero-Spread-Full-Credit reingemogelt. Item #1.
+- **`app/market_data/cross_exchange_aggregator.py`** (neu): `aggregate_and_validate(asset_id, venue_inputs, ...)` baut N Venue-Quotes für *dasselbe* Symbol, droppt Venues ohne Mikrostruktur, ruft `validate_cross_exchange` und liefert Funnel-Zähler (providers_in/quotes_built/excluded). `run_cross_exchange_validation(..., settings)` gated hinter Default-OFF-Flag → `disabled`-Envelope ohne Median-Run solange aus. **No-Execution-Invariante**: importiert nichts aus execution/orchestrator/risk, `influences_execution=False`. Items #3+#4.
+- **`app/core/settings.py`**: `cross_exchange_validation_enabled` (default False, env `APP_CROSS_EXCHANGE_VALIDATION_ENABLED`).
+- **Tests**: `test_cross_exchange_plumbing.py` (13: Trust-SSOT known/unknown, Quote-Mapping + honest exclusion + Timestamp-Ableitung, Aggregation + Funnel, Flag-OFF/ON-Invariante) + 14 bestehende Validierungs-Tests grün = 27; ruff + format + mypy clean.
+- **Bewusst nicht (Issue #169 §1-Adapter / §5)**: reale bid/ask/depth aus den Live-Exchange-APIs in `bybit`/`okx`/`binance_futures`-Adaptern (Network-Layer-Umbau) + Kalibrierung der `CrossExchangeConfig`-Defaults gegen reale Tick/Spread/Depth-Verteilungen — beides braucht Live-API-Arbeit + reale Daten und ist nicht im sicheren Scope dieser PR. Bis dahin schließt die Aggregation Venues ohne Mikrostruktur ehrlich aus (heute alle → inert), `entry_mode` bleibt disabled.
+
 ## 2026-06-01 - Entry-Safety-Mode + cost-adjusted Edge-Release-Gate (/goal sprint, A–F)
 
 Negative kostenbereinigte Live-Edge bestätigt (Pi 2026-06-01: P(mu_net>0)=0%, net ≈ −69 bps/notional, n=22). Antwort: messbares Entry-Gate statt Bauchgefühl. Default-Verhalten im Paper-Betrieb unverändert ausser dem Churn-Throttle; vollständig über Env rückrollbar; nie Auto-Live. Siehe `DECISION_LOG.md` D-229 für die volle Begründung.
