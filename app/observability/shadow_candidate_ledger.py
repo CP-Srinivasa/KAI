@@ -627,6 +627,7 @@ def build_shadow_report(
     *,
     total_candidates: int | None = None,
     include_legacy: bool = False,
+    inloop_funnel: dict[str, object] | None = None,
 ) -> dict[str, object]:
     """Aggregate resolved shadow candidates into a root-cause report (pure).
 
@@ -716,6 +717,15 @@ def build_shadow_report(
     stats["by_source"] = _split(split_rows, "source")
     stats["by_candidate_kind"] = _split(real, "candidate_kind")
     stats["by_score_source"] = _split(real, "score_source")
+    # #175: surface the in-loop funnel + its rejected_funnel breakdown so a
+    # real_resolved=0 headline stays explainable (priority-gate? generator-none?)
+    # rather than an unexplained INSUFFICIENT_DATA. Diagnostic only — it never
+    # changes primary_class (computed above over real rows).
+    if inloop_funnel is not None:
+        stats["in_loop_funnel"] = inloop_funnel
+        rejected = inloop_funnel.get("rejected_funnel")
+        if rejected is not None:
+            stats["rejected_funnel"] = rejected
     return stats
 
 
