@@ -558,3 +558,108 @@ def test_multiple_targets_passed_through():
     assert entry.leverage == 10.0
     assert entry.entry_value == 1.0
     assert entry.stop_loss == 0.95
+
+
+# ── BUG-4 (2026-06-08): operative terminal vs entry_mode posture ───────────
+
+
+def _bridge_scale_review(env_id, approved_env_id, symbol, ts, reason):
+    return {
+        "timestamp_utc": ts,
+        "event": "operator_signal_bridge",
+        "envelope_id": approved_env_id,
+        "correlation_id": env_id,
+        "stage": "rejected_scale_review",
+        "source": "telegram_premium_channel_approved",
+        "audit_reason": reason,
+        "symbol": symbol,
+        "lifecycle_state": "REJECTED_INVALID_SIGNAL",
+    }
+
+
+def test_bug4_operative_scale_review_beats_entry_mode_posture():
+    """A signal that also hit entry_mode must show the OPERATIVE terminal
+    (rejected_scale_review / scale_unresolved_or_bad_price), not the posture."""
+    env_id = "ENV-skyai-origin"
+    approved_id = "ENV-skyai-approved"
+    sym = "SKYAI/USDT"
+    envelopes = [
+        _origin_env(env_id, sym, "2026-06-06T15:33:29+00:00"),
+        _approved_env(approved_id, env_id, sym, "2026-06-06T15:33:30+00:00"),
+    ]
+    bridge = [
+        _bridge_pending(env_id, approved_id, sym, "2026-06-07T01:29:26+00:00"),
+        {
+            "timestamp_utc": "2026-06-07T01:29:30+00:00",
+            "event": "operator_signal_bridge",
+            "envelope_id": approved_id,
+            "correlation_id": env_id,
+            "stage": "rejected_entry_mode",
+            "source": "telegram_premium_channel_approved",
+            "audit_reason": "entry_mode_disabled",
+            "symbol": sym,
+            "lifecycle_state": "REJECTED_INVALID_SIGNAL",
+        },
+        _bridge_scale_review(
+            env_id, approved_id, sym, "2026-06-07T01:29:56+00:00", "scale_unresolved_or_bad_price"
+        ),
+    ]
+    [entry] = build_trail(envelope_records=envelopes, bridge_records=bridge, paper_records=[])
+    assert entry.overall == "BRIDGE_REJECTED"  # operative terminal, NOT ENTRY_DISABLED
+    assert _stage(entry, "bridge").reason == "scale_unresolved_or_bad_price"
+    assert entry.next_action_hint != "entry_disabled_global"
+
+
+def test_bug4_pure_entry_mode_still_shows_entry_disabled():
+    """When entry_mode is the ONLY thing that happened it stays terminal."""
+    env_id = "ENV-pure-origin"
+    approved_id = "ENV-pure-approved"
+    sym = "PURE/USDT"
+    envelopes = [
+        _origin_env(env_id, sym, "2026-06-07T01:00:00+00:00"),
+        _approved_env(approved_id, env_id, sym, "2026-06-07T01:00:01+00:00"),
+    ]
+    bridge = [
+        {
+            "timestamp_utc": "2026-06-07T01:01:00+00:00",
+            "event": "operator_signal_bridge",
+            "envelope_id": approved_id,
+            "correlation_id": env_id,
+            "stage": "rejected_entry_mode",
+            "source": "telegram_premium_channel_approved",
+            "audit_reason": "entry_mode_disabled",
+            "symbol": sym,
+            "lifecycle_state": "REJECTED_INVALID_SIGNAL",
+        }
+    ]
+    [entry] = build_trail(envelope_records=envelopes, bridge_records=bridge, paper_records=[])
+    assert entry.overall == "ENTRY_DISABLED"
+
+
+def test_bug4_bad_tick_ignored_stage_counts_as_pending():
+    """V-1: a pending_entry_with_bad_tick_ignored stage keeps overall PENDING_ENTRY."""
+    env_id = "ENV-badtick-origin"
+    approved_id = "ENV-badtick-approved"
+    sym = "BADT/USDT"
+    envelopes = [
+        _origin_env(env_id, sym, "2026-06-07T01:00:00+00:00"),
+        _approved_env(approved_id, env_id, sym, "2026-06-07T01:00:01+00:00"),
+    ]
+    bridge = [
+        _bridge_pending(env_id, approved_id, sym, "2026-06-07T01:01:00+00:00"),
+        {
+            "timestamp_utc": "2026-06-07T01:01:30+00:00",
+            "event": "operator_signal_bridge",
+            "envelope_id": approved_id,
+            "correlation_id": env_id,
+            "stage": "pending_entry_with_bad_tick_ignored",
+            "source": "telegram_premium_channel_approved",
+            "audit_reason": "scale_unresolved_or_bad_price",
+            "symbol": sym,
+            "consecutive_bad_ticks": 1,
+            "lifecycle_state": "WAITING_FOR_ENTRY",
+        },
+    ]
+    [entry] = build_trail(envelope_records=envelopes, bridge_records=bridge, paper_records=[])
+    assert entry.overall == "PENDING_ENTRY"
+    assert entry.is_open is False

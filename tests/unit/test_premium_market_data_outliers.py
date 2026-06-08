@@ -62,9 +62,7 @@ def test_none_or_nonpositive_is_no_price() -> None:
 
 def test_normal_volatility_not_rejected() -> None:
     # 3% move tick-to-tick is real, must pass.
-    v = evaluate_price_sanity(
-        symbol="BTC/USDT", candidate_price=60000.0, last_good_price=58300.0
-    )
+    v = evaluate_price_sanity(symbol="BTC/USDT", candidate_price=60000.0, last_good_price=58300.0)
     assert v.ok is True
     assert v.verified is True
 

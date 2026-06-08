@@ -28,20 +28,17 @@ FACTOR = 1e5
 
 # ---- BUG-1: scale_unresolved_or_bad_price -----------------------------------
 
+
 def test_bug1_raw_entry_vs_garbage_spot_is_scale_unresolved() -> None:
     # scale stayed 1.0 (detection failed on garbage spot), raw 24800 vs 101.94
-    reason = classify_scale_failure(
-        entry=RAW_ENTRY, spot=GARBAGE_SPOT, scale_factor_applied=1.0
-    )
+    reason = classify_scale_failure(entry=RAW_ENTRY, spot=GARBAGE_SPOT, scale_factor_applied=1.0)
     assert reason == SCALE_UNRESOLVED_REASON
     assert is_structural_scale_reason(reason) is True  # terminal everywhere
 
 
 def test_bug1_not_triggered_when_scale_was_applied() -> None:
     # entry already rescaled to 0.248, spot 0.356 — factor !=1.0 path
-    reason = classify_scale_failure(
-        entry=0.248, spot=GOOD_SPOT, scale_factor_applied=FACTOR
-    )
+    reason = classify_scale_failure(entry=0.248, spot=GOOD_SPOT, scale_factor_applied=FACTOR)
     assert reason is None
 
 
@@ -51,6 +48,7 @@ def test_bug1_not_triggered_for_normal_already_usd_signal() -> None:
 
 
 # ---- BUG-3: scale lifecycle persistence -------------------------------------
+
 
 def test_bug3_patch_clears_scale_unknown_and_persists_resolved() -> None:
     patch = build_scale_resolution_patch(
@@ -69,9 +67,15 @@ def test_bug3_patch_clears_scale_unknown_and_persists_resolved() -> None:
 
 
 def test_bug3_no_patch_when_factor_is_one() -> None:
-    assert build_scale_resolution_patch(
-        scale_factor=1.0, scaled_entry=24800.0, scaled_stop_loss=23800.0, scaled_targets=RAW_TARGETS
-    ) == {}
+    assert (
+        build_scale_resolution_patch(
+            scale_factor=1.0,
+            scaled_entry=24800.0,
+            scaled_stop_loss=23800.0,
+            scaled_targets=RAW_TARGETS,
+        )
+        == {}
+    )
 
 
 def test_bug3_envelope_scale_unknown_flips_false_after_resolution() -> None:
@@ -86,10 +90,9 @@ def test_bug3_envelope_scale_unknown_flips_false_after_resolution() -> None:
 
 # ---- V-1: terminal stabilization --------------------------------------------
 
+
 def test_v1_single_bad_tick_after_valid_pending_is_ignored() -> None:
-    decision = decide_terminal_or_ignore(
-        prior_consecutive_bad=0, had_prior_valid_pending=True
-    )
+    decision = decide_terminal_or_ignore(prior_consecutive_bad=0, had_prior_valid_pending=True)
     assert decision.action == "ignore"
     assert decision.consecutive_bad == 1
 
@@ -103,9 +106,7 @@ def test_v1_terminates_after_n_consecutive_bad_ticks() -> None:
 
 
 def test_v1_structural_from_first_tick_terminates_immediately() -> None:
-    decision = decide_terminal_or_ignore(
-        prior_consecutive_bad=0, had_prior_valid_pending=False
-    )
+    decision = decide_terminal_or_ignore(prior_consecutive_bad=0, had_prior_valid_pending=False)
     assert decision.action == "terminate"
 
 

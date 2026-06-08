@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from app.observability.premium_dedupe import (
     compute_dedup_key,
-    deduped_count,
     dedupe_premium_signals,
+    deduped_count,
     normalized_raw_hash,
 )
 
@@ -111,11 +111,18 @@ def test_fallback_key_uses_source_uid_then_message_then_hash() -> None:
     }
     assert compute_dedup_key(no_uid) == "msg:-100:7"
 
-    bare = {"source": "telegram_premium_channel", "payload": {"symbol": "X/USDT", "side": "long", "entry_value": 1.0}}
+    bare = {
+        "source": "telegram_premium_channel",
+        "payload": {"symbol": "X/USDT", "side": "long", "entry_value": 1.0},
+    }
     assert compute_dedup_key(bare).startswith("raw:")
 
 
 def test_normalized_raw_hash_stable_and_symbol_insensitive_to_slash() -> None:
-    a = normalized_raw_hash({"payload": {"symbol": "SKYAIUSDT", "side": "buy", "entry_value": 24800.0}})
-    b = normalized_raw_hash({"payload": {"display_symbol": "SKYAI/USDT", "side": "buy", "entry_value": 24800.0}})
+    a = normalized_raw_hash(
+        {"payload": {"symbol": "SKYAIUSDT", "side": "buy", "entry_value": 24800.0}}
+    )
+    b = normalized_raw_hash(
+        {"payload": {"display_symbol": "SKYAI/USDT", "side": "buy", "entry_value": 24800.0}}
+    )
     assert a == b
