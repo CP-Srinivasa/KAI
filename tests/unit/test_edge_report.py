@@ -31,12 +31,14 @@ from app.observability.edge_report import (
     compute_churn,
     compute_trade_edge,
     extract_entry_times,
+    load_forward_samples_from_shadow_resolved,
     mark_to_market_open,
     parse_closed_trades,
     parse_closed_trades_with_exclusions,
     render_report,
     side_adjusted_return_bps,
 )
+from app.observability.shadow_drift import FeatureVariance, ShadowDriftReport
 
 
 @pytest.fixture(autouse=True)
@@ -341,6 +343,26 @@ def test_parse_reads_regime_when_present_else_unknown():
     assert by_symbol["U/USDT"] == "unknown"
 
 
+def test_parse_uses_source_name_and_regime_fallbacks_to_reduce_unknowns():
+    events = [
+        {
+            "event_type": "position_closed",
+            "symbol": "FB/USDT",
+            "entry_price": 100.0,
+            "exit_price": 101.0,
+            "quantity": 1.0,
+            "timestamp_utc": "2026-06-01T10:00:00+00:00",
+            "source_name": "cryptobriefing",
+            "market_regime": "trend_up",
+        }
+    ]
+
+    closed = parse_closed_trades(events)
+
+    assert closed[0].signal_source == "cryptobriefing"
+    assert closed[0].regime == "trend_up"
+
+
 def test_extract_entry_times_only_buy_entries():
     events = [
         {
@@ -424,6 +446,93 @@ def test_report_surfaces_unknown_attribution_as_diagnostic_blockers():
     assert blockers["regime_unknown"]["affected_count"] == 1
     assert blockers["forward_return_coverage_gap"]["affected_count"] == 8
     assert "DIAGNOSTIC BLOCKERS" in render_report(report)
+
+
+def test_report_blocks_edge_learning_on_degenerate_shadow_drift():
+    trades = [
+        ClosedTrade(
+            "BTC/USDT",
+            "long",
+            100.0,
+            101.0,
+            1.0,
+            "tp",
+            0.8,
+            0.2,
+            "2026-06-01T10:00:00+00:00",
+            regime="trend_up",
+            signal_source="autonomous_generator",
+        )
+    ]
+    drift = ShadowDriftReport(
+        generated_at="2026-06-08T10:00:00+00:00",
+        ledger_path="ledger.jsonl",
+        window_hours=24.0,
+        min_rows=1,
+        total_rows=10,
+        rows_in_window=10,
+        latest_ts_utc="2026-06-08T09:00:00+00:00",
+        status="warn",
+        reasons=["feature_degenerate:signal_confidence"],
+        feature_variance=[
+            FeatureVariance(
+                field="signal_confidence",
+                sample_count=10,
+                variance=0.0,
+                distinct_count=1,
+                is_degenerate=True,
+            )
+        ],
+    )
+
+    report = build_edge_report(
+        trades,
+        forward_samples={1: [50.0], 5: [50.0], 15: [50.0], 60: [50.0]},
+        shadow_drift_report=drift,
+        min_sample=1,
+    )
+    blockers = {b["code"]: b for b in report.to_dict()["diagnostic_blockers"]}
+
+    assert blockers["shadow_feature_degenerate"]["severity"] == "blocker"
+    assert blockers["shadow_feature_degenerate"]["affected_count"] == 1
+    assert report.to_dict()["shadow_drift_report"]["status"] == "warn"
+    assert "shadow feature variance blocker" in " ".join(report.notes)
+
+
+def test_shadow_resolved_samples_reduce_forward_coverage_gap(tmp_path):
+    path = tmp_path / "shadow_candidate_resolved.jsonl"
+    rows = [
+        {
+            "document_id": "s1",
+            "fwd_60s_bps": 30.0,
+            "fwd_300s_bps": 40.0,
+            "fwd_900s_bps": 50.0,
+            "fwd_3600s_bps": 60.0,
+        },
+        {
+            "document_id": "s2",
+            "fwd_60s_bps": 20.0,
+            "fwd_300s_bps": 30.0,
+            "fwd_900s_bps": 40.0,
+            "fwd_3600s_bps": 50.0,
+        },
+    ]
+    path.write_text("\n".join(json.dumps(row) for row in rows) + "\n", encoding="utf-8")
+    trades = [
+        ClosedTrade(
+            "BTC/USDT", "long", 100.0, 101.0, 1.0, "tp", 0.8, 0.2, "2026-06-01T10:00:00+00:00"
+        ),
+        ClosedTrade(
+            "ETH/USDT", "long", 100.0, 101.0, 1.0, "tp", 0.8, 0.2, "2026-06-01T11:00:00+00:00"
+        ),
+    ]
+
+    samples = load_forward_samples_from_shadow_resolved(path)
+    report = build_edge_report(trades, forward_samples=samples, min_sample=2)
+    blockers = {b["code"] for b in report.to_dict()["diagnostic_blockers"]}
+
+    assert {cov.covered for cov in report.forward_coverage} == {2}
+    assert "forward_return_coverage_gap" not in blockers
 
 
 def test_report_renders_human_table_without_error():
