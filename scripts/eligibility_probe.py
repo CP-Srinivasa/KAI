@@ -126,19 +126,19 @@ def main() -> None:
         print(
             f"{w:>4}: analyzed={x['total_analyzed']:>5}  "
             f"eligible(feeder)={x['eligible_feeder']:>4}  "
-            f"eligible∧gate≥10={x['eligible_AND_gate_ge_10']:>4}"
+            f"eligible AND gate>=10={x['eligible_AND_gate_ge_10']:>4}"
         )
     g = res["windows"]["48h"]["eligible_AND_gate_ge_10"]
     verdict = (
-        "GO (substanzielles Real-Sample möglich)"
+        "GO (substanzielles Real-Sample moeglich)"
         if g >= 10
         else (
-            "DÜNN — ehrliches Schweigen wahrscheinlich, Feeder-ON bringt wenig"
+            "DUENN - ehrliches Schweigen wahrscheinlich, Feeder-ON bringt wenig"
             if g > 0
-            else "NO-GO heute — 0 eligible∧gate in 48h (Feeder-ON = leeres Ledger)"
+            else "NO-GO heute - 0 eligible AND gate in 48h (Feeder-ON = leeres Ledger)"
         )
     )
-    print(f"\n48h eligible∧gate≥10 = {g}  →  {verdict}")
+    print(f"\n48h eligible AND gate>=10 = {g}  ->  {verdict}")
 
 
 if __name__ == "__main__":
