@@ -1071,6 +1071,14 @@ function EnvelopeCard({ rec }: { rec: EnvelopeRecord }) {
                 <span className="opacity-70">origin:</span> {rec.origin_signal_id}
               </span>
             )}
+            {rec.double_sourced && (
+              <span
+                className="break-all rounded bg-amber-500/15 px-1.5 py-0.5 text-amber-300"
+                title="Rohsignal und Approved-Event desselben Signals — als ein Signal gezählt, nicht doppelt"
+              >
+                Rohsignal + Approved Event
+              </span>
+            )}
             {rec.bridge_stage && (
               <span className="break-all">
                 <span className="opacity-70">bridge:</span> {rec.bridge_stage}

@@ -1314,11 +1314,18 @@ export type EnvelopeRecord = {
   errors: string[];
   signal: SignalSummary | null;
   raw_text_preview: string | null;
+  // Dedupe (2026-06-08): raw + approved collapsed into one business signal.
+  dedup_key?: string | null;
+  double_sourced?: boolean;
+  has_raw_event?: boolean;
+  has_approved_event?: boolean;
+  merged_event_count?: number;
 };
 
 export type EnvelopeRecentResponse = {
   count: number;
   records: EnvelopeRecord[];
+  deduped_from?: number | null;
 };
 
 export function fetchRecentEnvelopes(
