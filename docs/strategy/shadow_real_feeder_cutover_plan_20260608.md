@@ -6,6 +6,27 @@
 - Treiber: `app/observability/shadow_real_feed.py::run_shadow_real_feed`
 - Ziel: den echten `SignalGenerator` auf **realen** analysierten Dokumenten messen (Shadow-Kandidaten, `source=autonomous_generator`), damit `edge_report`/`shadow_candidate_ledger` echte Samples auflösen können — **ohne jede Execution**.
 
+## 0. Deploy-Hygiene (p7→Pi, VOR allem anderen)
+
+Der Feeder-Flip setzt einen sauberen p7→Pi-Deploy voraus. Dieser Deploy ist
+**vom Feeder-Flip getrennt** und folgt der Build-/Release-Disziplin:
+
+- **Isolierter Worktree**: Deploy-Artefakte aus einem dedizierten, sauberen
+  Worktree/Checkout des p7-Tips bauen — **nicht** im aktiven Entwicklungs-Tree
+  (verhindert die wiederholten Branch-Drift-/Parallel-Session-Vorfälle).
+- **Kein Frontend-Build auf der Pi**: `web/`-Bundle **lokal** bauen
+  (`npm ci && npm run build`), das fertige `web/dist/` zur Pi shippen. Die Pi
+  baut **kein** Frontend (kein `npm` auf der Pi, kein Node-Toolchain-Drift, kein
+  RAM-/CPU-Spike auf dem Trading-Host).
+- **Rollback-`dist`**: vor dem Überschreiben das aktuelle `web/dist/` auf der Pi
+  sichern (`web/dist.bak_<ts>`), damit das Frontend unabhängig vom Backend
+  zurückrollbar ist.
+- **Backend-Deploy**: Code via isoliertem Worktree → Pi (regulärer
+  `pi_install_systemd.sh --reactivate`-Pfad), Services kontrolliert neu starten.
+
+Erst wenn der Deploy grün ist (Abschnitt 4 Smokes), wird über den Feeder-Flip
+(Abschnitt 5) entschieden — **nie** im selben Schritt.
+
 ## 1. Was der Feeder ist — und was nicht
 
 - **Ist**: ein read-only Mess-/Shadow-Pfad. Replayt reale Analysen durch die bestehende `run_trading_loop_once(mode=SHADOW, analysis_result=…)`-Naht; der Loop schreibt im `entry_mode=disabled`-Shadow-Pfad einen *hypothetischen* Kandidaten.
@@ -38,31 +59,77 @@ Der Feeder darf **nicht** scharfgeschaltet werden, solange nicht **alle** erfül
 
 Solange (1)–(4) nicht alle gelten: Feeder bleibt OFF.
 
-## 4. Pre-Cutover Smoke (read-only, vor dem Flag-Flip)
+## 4. Post-Deploy Smoke (Feeder noch OFF, read-only)
 
-Alles read-only — verändert nichts:
+Läuft **nach** dem p7→Pi-Deploy (Abschnitt 0) und **vor** dem Feeder-Flip — der
+Feeder ist hier weiterhin OFF. Alles read-only.
 
+**4a — Backend-Smoke**
 ```bash
-# Auf der Pi (ubuntu@192.168.178.23), Repo-Root, venv aktiv:
-# a) Invarianten-Ist-Zustand
-grep -E 'EXECUTION_ENTRY_MODE|PREMIUM_FASTLANE_ENABLED|PREMIUM_PAPER_EXECUTION_ENABLED|EXECUTION_SHADOW_REAL_GENERATOR' .env
-
-# b) Health + Failed-Units
-curl -fsS localhost:8000/health | head
-systemctl --state=failed
-
-# c) Eligibility-Probe (Go/No-Go: liefern reale Analysen überhaupt Kandidaten?)
-#    erwartet mind. >0 eligible; 0 → Feeder hätte nichts zu tun (No-Go, kein Flip)
-python -m app.cli ... eligibility-probe   # bzw. der etablierte Probe-Command (#184)
-
-# d) Baseline-Snapshots (für Delta-Vergleich nach Cutover)
-wc -l artifacts/paper_execution_audit.jsonl artifacts/shadow_candidate_ledger.jsonl
-#    Positions-Snapshot sichern
+curl -fsS localhost:8000/health | head        # 200
+systemctl --state=failed                       # 0 loaded units
+journalctl -u kai-server --since "-5min" | grep -iE "error|traceback" | head  # leer erwartet
 ```
 
-Go-Kriterien: a) entry_mode=disabled ∧ beide Premium-Flags false; b) health 200 ∧ 0 failed units; c) eligible > 0.
+**4b — Frontend-Smoke** (kein Build auf der Pi — nur das geshippte `dist` prüfen)
+```bash
+test -f web/dist/index.html && echo "dist present"
+curl -fsS localhost:8000/dashboard | grep -qi "<div id=\"root\"" && echo "SPA served"
+# Browser/Operator: Dashboard lädt, keine 404 auf Assets
+```
 
-## 5. Cutover (Flag-Flip + kontrollierter Restart)
+**4c — Fastlane-OFF-Smoke** (Invariante: Fastlane bleibt aus, kein Bypass scharf)
+```bash
+grep -E 'PREMIUM_FASTLANE_ENABLED|PREMIUM_PAPER_EXECUTION_ENABLED|EXECUTION_ENTRY_MODE' .env
+#   erwartet: FASTLANE=false, PAPER=false, ENTRY_MODE=disabled
+curl -fsS localhost:8000/api/premium-signals/runtime | \
+  python -c 'import sys,json; d=json.load(sys.stdin)["premium_fastlane"]; print("enabled",d["enabled"],"overrides",d["overrides_classic_block"])'
+#   erwartet: enabled False, overrides_classic_block False
+```
+
+**4d — D-227-Smoke** (Dispatch-Recall-Proxy lebt — Regression-Guard)
+```bash
+# Dispatch-Recall-Proxy (D-227) liefert weiter Recall-Metriken, nicht degeneriert
+curl -fsS "localhost:8000/dashboard/api/quality" | \
+  python -c 'import sys,json; d=json.load(sys.stdin); print("resolved", d.get("resolved_count"), "precision", d.get("precision_pct"))'
+#   erwartet: konsistente Werte, kein Crash / kein Null-Kollaps
+```
+
+**4e — Eligibility-Probe** (Go/No-Go für den Feeder selbst)
+```bash
+python -m app.cli ... eligibility-probe   # etablierter Probe-Command (#184)
+#   erwartet >0 eligible; 0 → Feeder hätte nichts zu tun (No-Go, kein Flip)
+```
+
+**4f — Baseline-Snapshots** (für Delta-Vergleich nach Feeder-ON)
+```bash
+wc -l artifacts/paper_execution_audit.jsonl artifacts/shadow_candidate_ledger.jsonl
+# Positions-Snapshot sichern
+```
+
+Go-Kriterien (ALLE): 4a health 200 ∧ 0 failed; 4b dist present ∧ SPA served;
+4c Fastlane/Paper false ∧ entry_mode disabled ∧ overrides False; 4d D-227 nicht
+degeneriert; 4e eligible > 0. Ein „nein" → **kein** Feeder-Flip.
+
+## 5. Real-Feeder ON (separate, explizite Phase — Flag-Flip + Restart)
+
+**Bewusst getrennt von OFF**: Abschnitt 0–4 lassen den Feeder OFF (Status quo).
+Erst hier, als eigene Operator-Entscheidung nach grünem Smoke, wird `…ON`
+gesetzt. OFF und ON sind nie im selben Schritt.
+
+```bash
+# .env-Backup ZUERST
+cp .env ~/kai-deploy-backups/env_pre_feeder_on_$(date +%Y%m%d_%H%M%S).bak
+
+# Flag setzen — NUR diese eine Zeile; Fastlane/Premium/entry_mode NICHT anfassen
+#   EXECUTION_SHADOW_REAL_GENERATOR=true
+# (kontrolliert editieren, nicht andere Flags mitziehen)
+
+# Kontrollierter Restart der betroffenen Services
+sudo systemctl restart kai-server kai-tg-listener kai-agent-worker
+```
+
+Erste Feeder-Ticks abwarten (der Treiber läuft im bestehenden Zyklus/Cron).
 
 ```bash
 # .env-Backup ZUERST
@@ -103,6 +170,9 @@ Akzeptanz: Invarianten gehalten (0 Fills/Orders/Positionen-Delta), Funnel zeigt 
 
 ## 7. Rollback (jederzeit, sofort bei Invarianz-Bruch)
 
+Zwei unabhängige Ebenen — Feeder und Deploy getrennt rollbar:
+
+**7a — Feeder-Rollback** (häufigster Fall, env-only, sofort)
 ```bash
 # Flag zurück auf false (oder .env-Backup zurückspielen)
 #   EXECUTION_SHADOW_REAL_GENERATOR=false
@@ -110,6 +180,22 @@ cp ~/kai-deploy-backups/env_pre_feeder_on_<ts>.bak .env   # alternativ
 sudo systemctl restart kai-server kai-tg-listener kai-agent-worker
 systemctl --state=failed   # 0 erwartet
 ```
+
+**7b — Frontend-Rollback (`dist`)** (unabhängig vom Backend)
+```bash
+# das vor dem Deploy gesicherte dist zurückspielen
+rm -rf web/dist && mv web/dist.bak_<ts> web/dist
+# kein Rebuild auf der Pi — nur das alte Bundle zurück
+```
+
+**7c — Backend-Code-Rollback** (Git-Pin auf den letzten guten p7-Stand)
+```bash
+# auf den vorherigen p7-Deploy-Pin zurück (aus isoliertem Worktree gebaut)
+#   git checkout <previous-p7-pin> + scripts/pi_install_systemd.sh --reactivate
+```
+
+OFF stellt den Status quo her (nur der `loop_control_*`-Canary speist den
+Shadow-Pfad). Feeder-Rollback ist rein Env-gesteuert und reversibel.
 
 OFF stellt den Status quo her (nur der `loop_control_*`-Canary speist den Shadow-Pfad). Kein Git-Rollback nötig — rein Env-gesteuert, reversibel.
 
