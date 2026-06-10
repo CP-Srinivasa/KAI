@@ -144,3 +144,114 @@ async def test_paper_mode_still_fills_premium_entry(
     assert result.rejected_entry_mode == 0
     records = _read_records(tmp_artifacts / "bridge_pending_orders.jsonl")
     assert records[-1]["stage"] == "filled"
+
+
+# --- Pfad-3 decoupling: classic premium paper while entry_mode=disabled ------ #
+
+_PREMIUM_SOURCE = "telegram_premium_channel_approved"
+_ACK = "I_UNDERSTAND_PREMIUM_PAPER_WHILE_DISABLED"
+
+
+def _premium_envelope() -> dict[str, Any]:
+    env = _accepted_envelope()
+    env["source"] = _PREMIUM_SOURCE
+    return env
+
+
+def _enable_premium_bridge(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("EXECUTION_OPERATOR_SIGNAL_BRIDGE_ENABLED", "true")
+    monkeypatch.setenv("EXECUTION_OPERATOR_SIGNAL_SOURCE_ALLOWLIST", _PREMIUM_SOURCE)
+    monkeypatch.setenv("EXECUTION_OPERATOR_SIGNAL_TTL_HOURS", "24")
+    monkeypatch.setenv("EXECUTION_ENTRY_MODE", "disabled")
+    monkeypatch.setenv("PREMIUM_PAPER_EXECUTION_ENABLED", "true")
+
+
+@pytest.mark.asyncio
+async def test_pfad3_fills_premium_paper_while_entry_disabled_when_fully_armed(
+    tmp_artifacts: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Two-arm override fully set → classic premium signal opens PAPER even
+    though entry_mode=disabled; the autonomous loop is untouched (kill-switch
+    value is unchanged)."""
+    _enable_premium_bridge(monkeypatch)
+    monkeypatch.setenv("PREMIUM_ALLOW_PAPER_WHILE_ENTRY_DISABLED", "true")
+    monkeypatch.setenv("PREMIUM_ENTRY_DISABLED_OVERRIDE_ACK", _ACK)
+    _write_envelope(tmp_artifacts / "telegram_message_envelope.jsonl", _premium_envelope())
+
+    with patch.object(bridge, "_fetch_price", new=AsyncMock(return_value=59950.0)):
+        result = await run_tick()
+
+    assert result.filled == 1, result.to_dict()
+    assert result.premium_paper_entry_disabled_bypassed == 1, result.to_dict()
+    assert result.rejected_entry_mode == 0, result.to_dict()
+    records = _read_records(tmp_artifacts / "bridge_pending_orders.jsonl")
+    assert any(r["stage"] == "premium_paper_entry_disabled_bypassed" for r in records)
+    assert records[-1]["stage"] == "filled"
+
+
+@pytest.mark.asyncio
+async def test_pfad3_failclosed_without_ack(
+    tmp_artifacts: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Opt-in bool set but ack sentinel missing → kill-switch HOLDS (fail-closed):
+    no fill, refusal recorded, terminal rejected_entry_mode."""
+    _enable_premium_bridge(monkeypatch)
+    monkeypatch.setenv("PREMIUM_ALLOW_PAPER_WHILE_ENTRY_DISABLED", "true")
+    # no PREMIUM_ENTRY_DISABLED_OVERRIDE_ACK
+    _write_envelope(tmp_artifacts / "telegram_message_envelope.jsonl", _premium_envelope())
+
+    with patch.object(bridge, "_fetch_price", new=AsyncMock(return_value=59950.0)):
+        result = await run_tick()
+
+    assert result.filled == 0, result.to_dict()
+    assert result.premium_paper_entry_disabled_bypassed == 0, result.to_dict()
+    assert result.premium_paper_entry_disabled_refused == 1, result.to_dict()
+    assert result.rejected_entry_mode == 1, result.to_dict()
+    records = _read_records(tmp_artifacts / "bridge_pending_orders.jsonl")
+    assert any(r["stage"] == "premium_paper_entry_disabled_override_refused" for r in records)
+    assert records[-1]["stage"] == "rejected_entry_mode"
+
+
+@pytest.mark.asyncio
+async def test_pfad3_single_bool_insufficient(
+    tmp_artifacts: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Ack set but opt-in bool off → still fail-closed (a single flag can never
+    neuter the kill-switch)."""
+    _enable_premium_bridge(monkeypatch)
+    monkeypatch.setenv("PREMIUM_ENTRY_DISABLED_OVERRIDE_ACK", _ACK)
+    # PREMIUM_ALLOW_PAPER_WHILE_ENTRY_DISABLED stays default false
+    _write_envelope(tmp_artifacts / "telegram_message_envelope.jsonl", _premium_envelope())
+
+    with patch.object(bridge, "_fetch_price", new=AsyncMock(return_value=59950.0)):
+        result = await run_tick()
+
+    assert result.filled == 0, result.to_dict()
+    assert result.rejected_entry_mode == 1, result.to_dict()
+
+
+@pytest.mark.asyncio
+async def test_pfad3_does_not_leak_to_non_premium_source(
+    tmp_artifacts: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Critical invariant: the premium-paper decoupling is is_premium-gated. A
+    NON-premium (e.g. dashboard/autonomous-style) source stays blocked by
+    entry_mode=disabled even with the premium override fully armed — so the
+    autonomous loop's kill-switch is never weakened by this flag."""
+    monkeypatch.setenv("EXECUTION_OPERATOR_SIGNAL_BRIDGE_ENABLED", "true")
+    monkeypatch.setenv("EXECUTION_OPERATOR_SIGNAL_SOURCE_ALLOWLIST", "dashboard")
+    monkeypatch.setenv("EXECUTION_OPERATOR_SIGNAL_TTL_HOURS", "24")
+    monkeypatch.setenv("EXECUTION_ENTRY_MODE", "disabled")
+    monkeypatch.setenv("PREMIUM_PAPER_EXECUTION_ENABLED", "true")
+    monkeypatch.setenv("PREMIUM_ALLOW_PAPER_WHILE_ENTRY_DISABLED", "true")
+    monkeypatch.setenv("PREMIUM_ENTRY_DISABLED_OVERRIDE_ACK", _ACK)
+    _write_envelope(tmp_artifacts / "telegram_message_envelope.jsonl", _accepted_envelope())
+
+    with patch.object(bridge, "_fetch_price", new=AsyncMock(return_value=59950.0)):
+        result = await run_tick()
+
+    assert result.filled == 0, result.to_dict()
+    assert result.premium_paper_entry_disabled_bypassed == 0, result.to_dict()
+    assert result.rejected_entry_mode == 1, result.to_dict()
+    records = _read_records(tmp_artifacts / "bridge_pending_orders.jsonl")
+    assert records[-1]["stage"] == "rejected_entry_mode"

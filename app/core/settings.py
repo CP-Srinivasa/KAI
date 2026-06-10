@@ -522,11 +522,34 @@ class PremiumSettings(BaseSettings):
     # live can never auto-arm from a flag flip alone.
     live_canary_explicit_ack: str = Field(default="", repr=False)
 
+    # 2026-06-10 Pfad-3 (Decoupling): allow CLASSIC premium paper fills while the
+    # GLOBAL ``entry_mode=disabled`` kill-switch stays set — WITHOUT touching the
+    # autonomous loop (which honours entry_mode in trading_loop and remains
+    # killed) and WITHOUT re-enabling the Fastlane (operator-decision #179/#181:
+    # Fastlane permanently OFF). Purpose: generate fresh premium-paper data with
+    # zero autonomous-loop collateral.
+    #
+    # Fail-closed TWO-ARM, mirroring the #181 fastlane override so a single env
+    # flip can never neuter the kill-switch:
+    #   - allow_paper_while_entry_disabled (the per-bypass opt-in), AND
+    #   - entry_disabled_override_ack == PREMIUM_PAPER_WHILE_DISABLED_ACK_SENTINEL
+    #     (an explicit human-typed acknowledgement of un-gating the kill-switch
+    #     for the premium paper route).
+    # It additionally requires paper_execution_enabled=True. Live is never
+    # reachable from the paper bridge. Both default off/empty.
+    allow_paper_while_entry_disabled: bool = Field(default=False)
+    entry_disabled_override_ack: str = Field(default="", repr=False)
+
 
 # Explicit human-typed acknowledgement required to arm premium-fastlane LIVE.
 # Kept as a module constant so tests + the runtime gate share one source of
 # truth and a typo cannot silently weaken the guard.
 LIVE_CANARY_ACK_SENTINEL = "I_UNDERSTAND_REAL_CAPITAL_RISK"
+
+# Explicit human-typed acknowledgement required to let CLASSIC premium PAPER
+# fills proceed while the global entry_mode kill-switch is ``disabled`` (Pfad 3).
+# Paper-only; never arms live. A typo keeps the kill-switch holding.
+PREMIUM_PAPER_WHILE_DISABLED_ACK_SENTINEL = "I_UNDERSTAND_PREMIUM_PAPER_WHILE_DISABLED"
 
 
 class PremiumFastlaneSettings(BaseSettings):

@@ -54,6 +54,7 @@ from app.execution.paper_engine_singleton import get_paper_engine
 from app.execution.premium_fastlane import (
     FastlaneDecision,
     fastlane_entry_mode_override,
+    premium_paper_entry_disabled_override,
     resolve_leverage,
     resolve_notional,
     should_route_premium_fastlane,
@@ -126,6 +127,11 @@ class BridgeTickResult:
     # Issue #181: the fastlane wanted to bypass entry_mode=disabled but the
     # two-flag override was not armed → kill-switch held (fail-closed).
     fastlane_entry_mode_override_refused: int = 0
+    # Pfad-3 (2026-06-10): a CLASSIC premium signal opened paper while
+    # entry_mode=disabled via the premium-paper decoupling override (autonomous
+    # loop untouched); and the fail-closed refusal when it was not fully armed.
+    premium_paper_entry_disabled_bypassed: int = 0
+    premium_paper_entry_disabled_refused: int = 0
     errors: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, object]:
@@ -149,6 +155,8 @@ class BridgeTickResult:
             "fastlane_bypassed_allowlist": self.fastlane_bypassed_allowlist,
             "fastlane_bypassed_entry_mode": self.fastlane_bypassed_entry_mode,
             "fastlane_entry_mode_override_refused": self.fastlane_entry_mode_override_refused,
+            "premium_paper_entry_disabled_bypassed": self.premium_paper_entry_disabled_bypassed,
+            "premium_paper_entry_disabled_refused": self.premium_paper_entry_disabled_refused,
             "errors": list(self.errors),
         }
 
@@ -1365,6 +1373,45 @@ async def _process_one(
         refusal_rec["live_protected"] = fl_decision.live_protected
         _append_bridge_audit(refusal_rec)
         result.fastlane_entry_mode_override_refused += 1
+    # Pfad-3 decoupling (2026-06-10): allow a CLASSIC (non-fastlane) premium PAPER
+    # signal to open while the GLOBAL entry_mode kill-switch is disabled — WITHOUT
+    # touching the autonomous loop (it honours entry_mode in trading_loop and
+    # stays killed) and WITHOUT re-enabling the Fastlane (operator-decision: OFF).
+    # Only fires when the block is PURELY the entry_mode kill-switch (premium
+    # paper is enabled, so the premium-paper-disabled term is already False) and
+    # the fastlane bypass did not already clear it. Fail-closed two-arm override
+    # (premium.allow_paper_while_entry_disabled + entry_disabled_override_ack);
+    # a single flag can never neuter the kill-switch. Live is never reachable.
+    premium_wants_entry_disabled_bypass = (
+        classic_entry_blocks
+        and is_premium
+        and premium_paper_enabled
+        and not entry_mode.allows_risk_increasing_entry
+        and not fl_wants_entry_mode_bypass
+    )
+    if premium_wants_entry_disabled_bypass:
+        prem_override_allowed, prem_override_refusal = premium_paper_entry_disabled_override(
+            get_settings()
+        )
+        if prem_override_allowed:
+            bypass_rec = base("premium_paper_entry_disabled_bypassed")
+            bypass_rec["event"] = "premium_paper_entry_disabled_bypassed_for_paper"
+            bypass_rec["entry_mode"] = entry_mode.value
+            bypass_rec["premium_paper_execution_enabled"] = premium_paper_enabled
+            bypass_rec["classic_block_reason"] = "entry_mode_disabled"
+            bypass_rec["route"] = "paper"
+            bypass_rec["autonomous_loop_protected"] = True
+            _append_bridge_audit(bypass_rec)
+            result.premium_paper_entry_disabled_bypassed += 1
+            classic_entry_blocks = False
+        else:
+            refusal_rec = base("premium_paper_entry_disabled_override_refused")
+            refusal_rec["event"] = "premium_paper_entry_disabled_override_refused"
+            refusal_rec["reason"] = prem_override_refusal
+            refusal_rec["reason_codes"] = [ExecutionBlockerCode.ENTRY_MODE_DISABLED.value]
+            refusal_rec["entry_mode"] = entry_mode.value
+            _append_bridge_audit(refusal_rec)
+            result.premium_paper_entry_disabled_refused += 1
     if classic_entry_blocks:
         rec = base("rejected_entry_mode")
         rec["reason"] = (
