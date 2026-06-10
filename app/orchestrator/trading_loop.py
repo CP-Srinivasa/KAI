@@ -308,7 +308,15 @@ class TradingLoop:
         # D-182: priority-tier gate. Default min_priority=1 is a no-op; setting
         # it to 10 restricts paper fills to the high-conviction tier where
         # live hit-rate evidence is disjoint from standard tier (D-149).
-        min_priority = settings.execution.paper_min_priority
+        #
+        # Paper-Learning P3 (Goal 2026-06-10): for source=real_analysis ONLY, the
+        # threshold is the feeder-specific real_analysis_paper.min_priority
+        # instead of the global execution.paper_min_priority. Every other source
+        # (autonomous loop etc.) keeps the global value byte-identically.
+        if is_real_analysis_source(analysis_source):
+            min_priority = settings.real_analysis_paper.min_priority
+        else:
+            min_priority = settings.execution.paper_min_priority
         if min_priority > 1:
             observed = analysis.recommended_priority
             if observed is None or observed < min_priority:

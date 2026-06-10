@@ -690,6 +690,7 @@ def evaluate_directional_eligibility(
     priority: int | None = None,
     source_name: str | None = None,
     min_bullish_confidence: float | None = None,
+    low_priority_max: int | None = None,
 ) -> DirectionalEligibilityDecision:
     """Return directional eligibility for operational metrics.
 
@@ -699,10 +700,16 @@ def evaluate_directional_eligibility(
     crypto symbol; otherwise they are blocked.
 
     Strict by construction: the D-142 bearish-disabled hard block is ALWAYS
-    applied here. The real-analysis paper feeder (Goal 2026-06-10) does NOT
-    parametrise this function; it calls the extracted, shared
-    ``evaluate_directional_quality_gates`` directly for its paper-only bearish
-    relaxation, so the dispatch/metrics path stays strictly bearish-blocked.
+    applied here. The real-analysis paper feeder (Goal 2026-06-10) calls the
+    extracted, shared ``evaluate_directional_quality_gates`` directly for its
+    paper-only bearish relaxation, so the dispatch/metrics path stays strictly
+    bearish-blocked.
+
+    ``low_priority_max`` (Paper-Learning P3, Goal 2026-06-10) is an OPTIONAL
+    override for the D-122 LOW_PRIORITY gate. Default ``None`` preserves the hard
+    ``<=7`` block byte-for-byte. ONLY the real-analysis paper feeder supplies it
+    (``min_priority - 1``) to relax the priority floor for source=real_analysis
+    paper learning; every other caller leaves it None → unchanged ``<=7``.
     """
     sentiment = (sentiment_label or "").strip().lower()
     if sentiment not in _DIRECTIONAL_SENTIMENTS:
@@ -741,6 +748,7 @@ def evaluate_directional_eligibility(
         priority=priority,
         source_name=source_name,
         min_bullish_confidence=min_bullish_confidence,
+        low_priority_max=low_priority_max,
     )
 
 
@@ -756,6 +764,7 @@ def evaluate_directional_quality_gates(
     priority: int | None = None,
     source_name: str | None = None,
     min_bullish_confidence: float | None = None,
+    low_priority_max: int | None = None,
 ) -> DirectionalEligibilityDecision:
     """Apply EVERY directional quality gate EXCEPT the D-142 bearish-disabled
     mode-block and the non-actionable pre-filter.
@@ -772,6 +781,12 @@ def evaluate_directional_quality_gates(
     reactive narrative, asymmetric confidence, asset resolution) fully active.
     It does NOT relax this function — it merely skips the D-142 pre-gate. The
     dispatch/metrics path is unaffected and stays strictly bearish-blocked.
+
+    ``low_priority_max`` (Paper-Learning P3, Goal 2026-06-10): OPTIONAL override
+    for the D-122 LOW_PRIORITY threshold. Default ``None`` ⇒ the hard ``<=7``
+    block is preserved byte-for-byte for every non-feeder caller. The feeder
+    selector passes ``min_priority - 1`` so the gate blocks ``<= min_priority-1``
+    (⇔ ``< min_priority``) ONLY for source=real_analysis.
     """
     # V-DB4c 2026-05-08: Soft-Confidence-Adjuster.
     # Sources auf monitor/source_watch.txt bekommen priority -= 1, BEVOR
@@ -806,7 +821,10 @@ def evaluate_directional_quality_gates(
 
     # D-122: Low-priority alerts lack predictive value for directional tracking.
     # Empirical: P7 had 21% precision.  Minimum P8 required.
-    if effective_priority is not None and effective_priority <= 7:
+    # Paper-Learning P3: ``low_priority_max`` overrides the hard ``7`` ONLY for
+    # the real-analysis paper feeder; None preserves the byte-identical ``<=7``.
+    low_priority_threshold = 7 if low_priority_max is None else low_priority_max
+    if effective_priority is not None and effective_priority <= low_priority_threshold:
         return DirectionalEligibilityDecision(
             is_directional=True,
             directional_eligible=False,

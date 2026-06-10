@@ -142,6 +142,80 @@ def test_no_symbol_excluded() -> None:
     assert funnel["no_symbol"] == 1
 
 
+# ── Paper-Learning P3: feeder min_priority threshold (Goal 2026-06-10) ────────
+
+
+def test_p3_feeder_default_strict_blocks_p5_bearish() -> None:
+    """Default min_priority=10 keeps the feeder strict: a P5 bearish doc is
+    blocked at Gate 1 (the current 0-fill behaviour)."""
+    cands, funnel = select_real_analysis_candidates([_doc(priority=5)], freshness_max_age_hours=48)
+    assert cands == []
+    assert funnel["quality_blocked"] == 1
+
+
+def test_p3_feeder_threshold5_unblocks_p5_bearish() -> None:
+    """With min_priority=5 a P5 bearish doc becomes eligible (block < 5)."""
+    cands, funnel = select_real_analysis_candidates(
+        [_doc(priority=5)], freshness_max_age_hours=48, min_priority=5
+    )
+    assert len(cands) == 1
+    assert cands[0].direction == "short"
+    assert funnel["eligible"] == 1
+
+
+def test_p3_feeder_threshold5_unblocks_p5_bullish() -> None:
+    """Long side too: a P5 bullish doc becomes eligible at min_priority=5."""
+    cands, funnel = select_real_analysis_candidates(
+        [_doc(sentiment=SentimentLabel.BULLISH, sscore=0.9, dconf=0.85, priority=5)],
+        freshness_max_age_hours=48,
+        min_priority=5,
+    )
+    assert len(cands) == 1
+    assert cands[0].direction == "long"
+    assert funnel["eligible"] == 1
+
+
+def test_p3_feeder_threshold5_still_blocks_p4() -> None:
+    """min_priority=5 blocks strictly below 5: a P4 doc is still blocked."""
+    cands, funnel = select_real_analysis_candidates(
+        [_doc(priority=4)], freshness_max_age_hours=48, min_priority=5
+    )
+    assert cands == []
+    assert funnel["quality_blocked"] == 1
+
+
+def test_p3_gate1_dispatch_path_unchanged_p7_blocked_p8_eligible() -> None:
+    """Gate-1 INVARIANT: the public dispatch/metrics eligibility function, called
+    WITHOUT low_priority_max, keeps the hard <=7 — P7 blocked, P8 eligible.
+    Uses bullish to isolate the LOW_PRIORITY gate from D-142."""
+    from app.alerts.eligibility import BLOCK_REASON_LOW_PRIORITY
+
+    p7 = evaluate_directional_eligibility(
+        sentiment_label="bullish",
+        affected_assets=["BTC/USDT"],
+        sentiment_score=0.9,
+        impact_score=0.9,
+        directional_confidence=0.85,
+        actionable=True,
+        priority=7,
+        source_name="coindesk",
+    )
+    assert p7.directional_eligible is False
+    assert p7.directional_block_reason == BLOCK_REASON_LOW_PRIORITY
+
+    p8 = evaluate_directional_eligibility(
+        sentiment_label="bullish",
+        affected_assets=["BTC/USDT"],
+        sentiment_score=0.9,
+        impact_score=0.9,
+        directional_confidence=0.85,
+        actionable=True,
+        priority=8,
+        source_name="coindesk",
+    )
+    assert p8.directional_eligible is True
+
+
 # ── live-unreachable invariant at the injection seam ──────────────────────────
 
 
