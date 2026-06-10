@@ -38,7 +38,10 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
-from app.core.settings import LIVE_CANARY_ACK_SENTINEL
+from app.core.settings import (
+    LIVE_CANARY_ACK_SENTINEL,
+    PREMIUM_PAPER_WHILE_DISABLED_ACK_SENTINEL,
+)
 
 if TYPE_CHECKING:
     from app.core.settings import AppSettings, PremiumFastlaneSettings
@@ -184,6 +187,33 @@ def fastlane_entry_mode_override(settings: AppSettings) -> tuple[bool, str | Non
         return False, "fastlane_entry_mode_bypass_off"
     if not fl.allow_entry_mode_disabled_override:
         return False, "fastlane_entry_mode_override_not_armed"
+    return True, None
+
+
+def premium_paper_entry_disabled_override(settings: AppSettings) -> tuple[bool, str | None]:
+    """Fail-closed preflight for Pfad-3 (2026-06-10): may a CLASSIC (non-fastlane)
+    premium signal open a PAPER position while ``entry_mode=disabled``?
+
+    Returns ``(allowed, refusal_code)``. ``allowed`` is True ONLY when ALL hold:
+      - ``premium.paper_execution_enabled`` (the premium paper opt-in), AND
+      - ``premium.allow_paper_while_entry_disabled`` (the per-bypass opt-in), AND
+      - ``premium.entry_disabled_override_ack`` == the ack sentinel (independent
+        human-typed acknowledgement that the global kill-switch is being un-gated
+        for the premium paper route).
+
+    Any missing → the kill-switch holds (fail-closed) with a refusal code. This
+    is the controlled alternative to flipping the GLOBAL ``entry_mode`` (which
+    would also re-arm the autonomous loop) or re-enabling the Fastlane (operator-
+    decision: permanently OFF). It confines the un-gate to the premium paper
+    bridge; the autonomous loop is untouched and live is never reachable.
+    """
+    prem = settings.premium
+    if not prem.paper_execution_enabled:
+        return False, "premium_paper_execution_disabled"
+    if not prem.allow_paper_while_entry_disabled:
+        return False, "premium_paper_while_entry_disabled_off"
+    if prem.entry_disabled_override_ack != PREMIUM_PAPER_WHILE_DISABLED_ACK_SENTINEL:
+        return False, "premium_paper_entry_disabled_override_not_armed"
     return True, None
 
 
