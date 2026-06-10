@@ -1024,3 +1024,90 @@ def test_min_bullish_confidence_param_overrides_lazy_resolve(
     assert decision.directional_eligible is False
     assert decision.directional_block_reason == elig.BLOCK_REASON_LOW_DIRECTIONAL_CONFIDENCE
     assert calls["n"] == 0
+
+
+# ── Goal 2026-06-10 (B): mode-aware bearish relaxation ────────────────────────
+
+
+def _strong_bearish_kwargs() -> dict[str, object]:
+    """Bearish signal that passes every gate EXCEPT the D-142 bearish-disabled
+    block — so that block is the sole discriminator in the tests below."""
+    return {
+        "sentiment_label": "bearish",
+        "affected_assets": ["BTC/USDT"],
+        "sentiment_score": -0.9,
+        "impact_score": 0.9,  # >= MIN_IMPACT_SCORE_BEARISH (0.80)
+        "title": "Major exchange hacked, funds drained",  # not a reactive pattern
+        "directional_confidence": 0.97,  # >= MIN_DIRECTIONAL_CONFIDENCE_BEARISH (0.95)
+        "actionable": True,
+        "priority": 10,
+        "source_name": "coindesk",  # not a low-precision source
+    }
+
+
+def test_bearish_blocked_by_default_no_context() -> None:
+    """No paper_learning_context kwarg → strict D-142 block (no caller regression)."""
+    decision = evaluate_directional_eligibility(**_strong_bearish_kwargs())
+    assert decision.directional_eligible is False
+    assert decision.directional_block_reason == BLOCK_REASON_BEARISH_DISABLED
+
+
+def test_bearish_blocked_when_context_false_explicit() -> None:
+    """Live/metric callers pass context=False → bearish stays blocked (D-142)."""
+    decision = evaluate_directional_eligibility(
+        **_strong_bearish_kwargs(),
+        paper_learning_context=False,
+    )
+    assert decision.directional_eligible is False
+    assert decision.directional_block_reason == BLOCK_REASON_BEARISH_DISABLED
+
+
+def test_bearish_eligible_under_paper_learning_context() -> None:
+    """Paper-learning context relaxes ONLY the D-142 block → bearish passes."""
+    decision = evaluate_directional_eligibility(
+        **_strong_bearish_kwargs(),
+        paper_learning_context=True,
+    )
+    assert decision.directional_eligible is True
+    assert decision.directional_block_reason is None
+    assert decision.eligible_assets == ["BTC/USDT"]
+
+
+def test_bearish_paper_context_does_not_bypass_other_gates() -> None:
+    """The relaxation is narrow: a weak bearish signal is STILL blocked even with
+    paper_learning_context — only the D-142 mode-block is relaxed, not quality."""
+    kwargs = _strong_bearish_kwargs()
+    kwargs["impact_score"] = 0.1  # below MIN_IMPACT_SCORE_BEARISH → weak
+    decision = evaluate_directional_eligibility(
+        **kwargs,
+        paper_learning_context=True,
+    )
+    assert decision.directional_eligible is False
+    assert decision.directional_block_reason == BLOCK_REASON_WEAK_SIGNAL
+
+
+def test_bearish_paper_context_still_respects_low_priority() -> None:
+    """A low-priority bearish signal stays blocked under paper-learning context."""
+    kwargs = _strong_bearish_kwargs()
+    kwargs["priority"] = 7  # <= 7 → low-priority gate
+    decision = evaluate_directional_eligibility(
+        **kwargs,
+        paper_learning_context=True,
+    )
+    assert decision.directional_eligible is False
+    assert decision.directional_block_reason == BLOCK_REASON_LOW_PRIORITY
+
+
+def test_bullish_unaffected_by_paper_learning_context() -> None:
+    """The flag is bearish-specific; bullish behaviour is identical either way."""
+    base = {
+        "sentiment_label": "bullish",
+        "affected_assets": ["BTC/USDT"],
+        "sentiment_score": 0.9,
+        "impact_score": 0.9,
+        "priority": 10,
+    }
+    strict = evaluate_directional_eligibility(**base)
+    relaxed = evaluate_directional_eligibility(**base, paper_learning_context=True)
+    assert strict.directional_eligible is True
+    assert relaxed.directional_eligible is True

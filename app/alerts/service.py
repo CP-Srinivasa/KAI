@@ -242,6 +242,18 @@ class AlertService:
             "bullish",
             "bearish",
         ):
+            # Goal 2026-06-10: this is the DISPATCH gate — it decides whether a
+            # directional alert is surfaced into the downstream (paper-learning)
+            # funnel. Under a paper entry mode (PAPER/PROBE) we relax the D-142
+            # bearish hard-block so bearish signals can feed paper learning;
+            # under disabled or live the strict block holds. The active entry
+            # mode is read here (NOT the field default) so flipping
+            # EXECUTION_ENTRY_MODE is what turns the relaxation on. The
+            # downstream metrics caller below keeps the strict default — D-142
+            # precision accounting is unchanged.
+            from app.core.settings import get_settings as _get_settings_for_gate
+
+            _paper_learning = _get_settings_for_gate().execution.entry_mode.is_paper_learning
             eligibility = evaluate_directional_eligibility(
                 sentiment_label=message.sentiment_label,
                 affected_assets=list(message.affected_assets),
@@ -253,6 +265,7 @@ class AlertService:
                 actionable=message.actionable,
                 priority=message.priority,
                 source_name=message.source_name,
+                paper_learning_context=_paper_learning,
             )
             if eligibility.directional_eligible is False:
                 log.info(

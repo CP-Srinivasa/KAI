@@ -89,6 +89,18 @@ class EntryMode(StrEnum):
         """True for the two live entry modes (require ExecutionMode.LIVE)."""
         return self in (EntryMode.LIVE_LIMITED, EntryMode.LIVE_NORMAL)
 
+    @property
+    def is_paper_learning(self) -> bool:
+        """True for paper entry modes that feed the paper-learning stream.
+
+        Goal 2026-06-10: a mode that opens NEW risk-increasing exposure on a
+        NON-live route — i.e. PAPER and PROBE. DISABLED (no entries) and the two
+        LIVE modes are all False. Used to gate the bearish paper-learning
+        relaxation: bearish directional signals are only un-blocked when the
+        active entry mode is paper-learning, never for live or disabled.
+        """
+        return self.allows_risk_increasing_entry and not self.is_live
+
 
 class SourceStatus(StrEnum):
     ACTIVE = "active"

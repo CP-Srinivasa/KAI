@@ -690,6 +690,7 @@ def evaluate_directional_eligibility(
     priority: int | None = None,
     source_name: str | None = None,
     min_bullish_confidence: float | None = None,
+    paper_learning_context: bool = False,
 ) -> DirectionalEligibilityDecision:
     """Return directional eligibility for operational metrics.
 
@@ -697,6 +698,16 @@ def evaluate_directional_eligibility(
     Directional sentiments must pass score-strength gates, a reactive-narrative
     filter (bearish only), AND resolve to at least one supported tradeable
     crypto symbol; otherwise they are blocked.
+
+    ``paper_learning_context`` (Goal 2026-06-10): when True, the D-142 hard
+    bearish-disabled block is RELAXED so bearish directional signals can feed the
+    paper-learning stream (and only the paper-learning stream). It must be set
+    ONLY for paper entry modes (EntryMode.PAPER / PROBE) — NEVER for live or
+    disabled. Every OTHER gate (priority, low-precision source, reactive
+    narrative, confidence, asset resolution) still applies to bearish signals;
+    this flag relaxes the single D-142 mode-block, not the quality filters. The
+    default ``False`` preserves the strict D-142 behaviour for every existing
+    caller (alert-audit metrics, hit-rate, CLI, briefings, …) — no regression.
     """
     sentiment = (sentiment_label or "").strip().lower()
     if sentiment not in _DIRECTIONAL_SENTIMENTS:
@@ -717,7 +728,10 @@ def evaluate_directional_eligibility(
     # D-142: Bearish directional disabled — 4% precision (1/24) on eligible
     # resolved outcomes.  Bearish news is not price-predictive in current
     # market conditions.  Re-enable when market-context analysis is added.
-    if BEARISH_DIRECTIONAL_DISABLED and sentiment == "bearish":
+    # Goal 2026-06-10: under an explicit paper-learning context (paper entry
+    # mode only) this hard block is relaxed so bearish signals can generate
+    # forward paper-learning evidence; live (D-142) and disabled keep the block.
+    if BEARISH_DIRECTIONAL_DISABLED and sentiment == "bearish" and not paper_learning_context:
         return DirectionalEligibilityDecision(
             is_directional=True,
             directional_eligible=False,

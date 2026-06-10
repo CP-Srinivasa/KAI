@@ -105,6 +105,13 @@ class ExecutionBlockerCode(StrEnum):
     # kill-switch held — recorded so the dashboard shows the fail-closed refusal.
     FASTLANE_ENTRY_MODE_OVERRIDE_NOT_ARMED = "FASTLANE_ENTRY_MODE_OVERRIDE_NOT_ARMED"
 
+    # EXECUTION_MAX_DAILY_PAPER_ENTRIES reached (Goal 2026-06-10): the
+    # paper-learning daily-entry volume cap refused a new autonomous entry
+    # because the configured number of opening paper fills already settled today
+    # (UTC). A volume blocker, not a risk/quality reject. Default 0 == unlimited,
+    # so this code is never emitted unless the operator sets a positive cap.
+    PAPER_DAILY_CAP_REACHED = "PAPER_DAILY_CAP_REACHED"
+
 
 class FinalStatus(StrEnum):
     """Closed set of terminal dispositions for a signal/order in the pipeline.

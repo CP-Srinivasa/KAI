@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.core.domain.document import AnalysisResult
 from app.core.enums import EntryMode, ExecutionMode, SentimentLabel
 from app.core.settings import get_settings
-from app.execution.models import PaperPortfolio
+from app.execution.models import PaperFill, PaperOrder, PaperPortfolio
 from app.execution.paper_engine import PaperExecutionEngine
 from app.market_data.base import BaseMarketDataAdapter
 from app.market_data.indicators import compute_atr
@@ -32,6 +32,7 @@ from app.risk.churn_killer import ChurnKillerConfig, ChurnVerdict, evaluate_chur
 from app.risk.engine import RiskEngine
 from app.risk.models import RiskLimits
 from app.risk.post_stop_cooldown import is_symbol_in_post_stop_cooldown
+from app.risk.reason_codes import ExecutionBlockerCode
 from app.security.kyt.models import KytAssessment
 from app.signals.generator import SignalGenerator
 from app.signals.models import SignalCandidate, SignalDirection
@@ -83,6 +84,64 @@ def derive_autonomous_signal_source(document_id: str | None) -> str:
     if doc_id:
         return SOURCE_AUTONOMOUS_GENERATOR
     return SOURCE_UNKNOWN
+
+
+def _is_opening_fill(record: dict[str, object]) -> bool:
+    """True when an ``order_filled`` audit row represents a NEW entry (opening).
+
+    An opening fill increases exposure: a long is opened by a ``buy`` with
+    ``position_side="long"``; a short by a ``sell`` with ``position_side="short"``.
+    The opposite side/position_side combinations are exits (TP/SL/manual close)
+    and are deliberately NOT counted by the daily paper-entry cap. Rows that
+    predate the ``position_side`` audit field default to ``"long"`` (the engine
+    default), matching their historical long-only behaviour.
+    """
+    if record.get("event_type") != "order_filled":
+        return False
+    side = str(record.get("side") or "").lower()
+    position_side = str(record.get("position_side") or "long").lower()
+    return (side == "buy" and position_side == "long") or (
+        side == "sell" and position_side == "short"
+    )
+
+
+def count_paper_entries_today(audit_path: Path, *, now: datetime | None = None) -> int:
+    """Count autonomous opening paper fills that settled today (UTC).
+
+    Pure read of the paper-execution audit JSONL — no engine state mutation, no
+    side effects beyond reading the file. Mirrors the spirit of the
+    ``max_daily_loss`` day-bounded accounting: the window is the calendar UTC
+    day of ``now``. A missing/unreadable audit file yields 0 (fail-open ONLY for
+    the *count*; the caller decides the gate). Used by the
+    ``max_daily_paper_entries`` cap so a re-activated paper-learning stream
+    cannot open an unbounded number of positions per day.
+    """
+    now_utc = now or datetime.now(UTC)
+    today_prefix = now_utc.date().isoformat()
+    if not audit_path.exists():
+        return 0
+    count = 0
+    try:
+        with audit_path.open("r", encoding="utf-8") as handle:
+            for line in handle:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    record = json.loads(line)
+                except (ValueError, TypeError):
+                    continue
+                if not isinstance(record, dict):
+                    continue
+                ts = record.get("timestamp_utc")
+                if not isinstance(ts, str) or not ts.startswith(today_prefix):
+                    continue
+                if _is_opening_fill(record):
+                    count += 1
+    except OSError as exc:
+        logger.warning("[LOOP] paper-entry count read failed: %s", exc)
+        return 0
+    return count
 
 
 def _normalize_tv_symbol(raw: str) -> str:
@@ -190,6 +249,31 @@ class TradingLoop:
                     symbol,
                     CycleStatus.PRIORITY_REJECTED,
                     notes=notes + [f"priority_gate_reject:{observed}|threshold:{min_priority}"],
+                )
+                await self._write_db(cycle)
+                return cycle
+
+        # Paper-Learning daily-entry cap (Goal 2026-06-10). Default 0 == unlimited
+        # → this whole branch is skipped, so without
+        # EXECUTION_MAX_DAILY_PAPER_ENTRIES there is no behavioural change. When a
+        # positive cap is set and that many opening paper fills already settled
+        # today (UTC), the loop refuses to open a new entry. Cheapest hard stop —
+        # placed alongside the priority gate, before market-data fetch / signal
+        # gen. Exits/risk-reductions never reach this autonomous-entry path.
+        max_daily_paper_entries = get_settings().execution.max_daily_paper_entries
+        if max_daily_paper_entries > 0:
+            entries_today = count_paper_entries_today(self._exec.audit_path)
+            if entries_today >= max_daily_paper_entries:
+                cycle = self._build_cycle(
+                    cycle_id,
+                    started_at,
+                    symbol,
+                    CycleStatus.PAPER_CAP_REACHED,
+                    notes=notes
+                    + [
+                        f"paper_daily_cap_reached:{entries_today}|cap:{max_daily_paper_entries}",
+                        f"reason_code:{ExecutionBlockerCode.PAPER_DAILY_CAP_REACHED.value}",
+                    ],
                 )
                 await self._write_db(cycle)
                 return cycle
@@ -566,6 +650,22 @@ class TradingLoop:
             risk_check_id=risk_result.check_id,
             order_id=order.order_id if order else None,
             notes=notes,
+        )
+        # Goal 2026-06-10 (C): emit a fully-labelled paper-trade record so every
+        # autonomous paper fill is unambiguously attributable by mode / direction
+        # / source / confidence / threshold / regime — the axes the
+        # paper-learning analysis splits on (production_paper vs a later
+        # exploration label). Fail-soft: a labelling problem must never break the
+        # cycle (the fill already happened).
+        self._record_paper_trade_label(
+            cycle=cycle,
+            signal=signal,
+            order=order,
+            fill=fill,
+            entry_mode_value=entry_mode.value,
+            signal_source=signal_source,
+            source_document_id=attribution_doc_id,
+            threshold_used=min_priority,
         )
         self._write_audit(cycle)
         await self._write_db(cycle)
@@ -1090,6 +1190,64 @@ class TradingLoop:
             record_candidate(candidate)
         except Exception as exc:  # noqa: BLE001 — never break the loop
             logger.warning("[LOOP] shadow candidate record failed: %s", exc)
+
+    def _record_paper_trade_label(
+        self,
+        *,
+        cycle: LoopCycle,
+        signal: SignalCandidate,
+        order: PaperOrder,
+        fill: PaperFill,
+        entry_mode_value: str,
+        signal_source: str,
+        source_document_id: str,
+        threshold_used: int,
+    ) -> None:
+        """Emit a labelled paper-trade record for an autonomous fill (Goal §C).
+
+        Additive + loop-owned: appended to the paper-execution audit log as a
+        dedicated ``paper_trade_label`` event keyed by order_id/fill_id, so it
+        joins to the canonical ``order_filled`` row without changing that row's
+        schema or touching the shared paper-engine / premium-fastlane path.
+
+        Carries the axes the paper-learning analysis needs and that the
+        ``order_filled`` event does NOT already provide:
+          - mode         — the active entry_mode (paper / probe / …)
+          - direction    — long / short
+          - source_id    — originating document id (canary vs real generator)
+          - source_name  — coarse source bucket (derive_autonomous_signal_source)
+          - confidence   — signal confidence_score (None stays explicit null)
+          - threshold_used — paper_min_priority in force when this trade passed
+          - regime       — regime stamp active at fill time
+        ``trade_class="production_paper"`` distinguishes these from a future
+        ``exploration`` label. Fully fail-soft.
+        """
+        try:
+            direction = "long" if signal.direction == SignalDirection.LONG else "short"
+            regime_stamp = self._regime_stamp_for_audit(cycle)
+            record = {
+                "schema_version": "v2",
+                "event_type": "paper_trade_label",
+                "timestamp_utc": _now_utc(),
+                "trade_class": "production_paper",
+                "cycle_id": cycle.cycle_id,
+                "decision_id": signal.decision_id,
+                "order_id": order.order_id,
+                "fill_id": fill.fill_id,
+                "symbol": cycle.symbol,
+                "mode": entry_mode_value,
+                "direction": direction,
+                "source_id": source_document_id or None,
+                "source_name": signal_source,
+                "confidence": signal.confidence_score,
+                "threshold_used": threshold_used,
+                "regime": regime_stamp.get("regime"),
+                "regime_vol_class": regime_stamp.get("regime_vol_class"),
+            }
+            with self._exec.audit_path.open("a", encoding="utf-8") as handle:
+                handle.write(json.dumps(record) + "\n")
+        except Exception as exc:  # noqa: BLE001 — never break the loop
+            logger.warning("[LOOP] paper trade-label write failed: %s", exc)
 
     def _write_audit(self, cycle: LoopCycle) -> None:
         try:

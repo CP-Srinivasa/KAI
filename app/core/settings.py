@@ -399,6 +399,17 @@ class ExecutionSettings(BaseSettings):
     # on n=186). Analyses with priority=None are blocked when threshold>1.
     paper_min_priority: int = Field(default=1, ge=1, le=10)
 
+    # Paper-Learning (Goal 2026-06-10): per-UTC-day cap on the number of NEW
+    # autonomous paper *entries* the loop may open. This bounds the volume of
+    # the paper-learning stream when EXECUTION_ENTRY_MODE is flipped to paper,
+    # so a re-activated stream cannot open an unbounded number of positions in a
+    # single day. Default 0 == UNLIMITED (no-op): without
+    # EXECUTION_MAX_DAILY_PAPER_ENTRIES set there is NO behavioural change. A
+    # value > 0 blocks new entries once that many opening fills have already
+    # settled today (UTC). Exits / risk-reductions are never counted or gated.
+    # This is a volume cap, not a risk cap (max_daily_loss_pct stays orthogonal).
+    max_daily_paper_entries: int = Field(default=0, ge=0)
+
     # Order parameters
     order_ttl_seconds: int = Field(default=300)
     max_order_retries: int = Field(default=3)
