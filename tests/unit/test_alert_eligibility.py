@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import pytest
 
+from app.alerts import eligibility as elig
 from app.alerts.eligibility import (
     BLOCK_REASON_BEARISH_DISABLED,
+    BLOCK_REASON_LOW_DIRECTIONAL_CONFIDENCE,
     BLOCK_REASON_LOW_PRECISION_SOURCE,
     BLOCK_REASON_LOW_PRIORITY,
     BLOCK_REASON_MISSING_ASSETS,
@@ -1026,12 +1028,12 @@ def test_min_bullish_confidence_param_overrides_lazy_resolve(
     assert calls["n"] == 0
 
 
-# ── Goal 2026-06-10 (B): mode-aware bearish relaxation ────────────────────────
+# ── Goal 2026-06-10 (B): extracted quality-gate chain + strict D-142 ──────────
 
 
 def _strong_bearish_kwargs() -> dict[str, object]:
-    """Bearish signal that passes every gate EXCEPT the D-142 bearish-disabled
-    block — so that block is the sole discriminator in the tests below."""
+    """Bearish signal that passes every quality gate; only the D-142 mode-block
+    in the strict path discriminates."""
     return {
         "sentiment_label": "bearish",
         "affected_assets": ["BTC/USDT"],
@@ -1045,69 +1047,92 @@ def _strong_bearish_kwargs() -> dict[str, object]:
     }
 
 
-def test_bearish_blocked_by_default_no_context() -> None:
-    """No paper_learning_context kwarg → strict D-142 block (no caller regression)."""
+def test_bearish_strict_path_always_blocked() -> None:
+    """REVERT-invariant: the public evaluate_directional_eligibility path is now
+    parameter-free and ALWAYS applies the D-142 bearish block (dispatch/metrics
+    callers stay strictly bearish-blocked — Red-Team B-001)."""
     decision = evaluate_directional_eligibility(**_strong_bearish_kwargs())
     assert decision.directional_eligible is False
     assert decision.directional_block_reason == BLOCK_REASON_BEARISH_DISABLED
 
 
-def test_bearish_blocked_when_context_false_explicit() -> None:
-    """Live/metric callers pass context=False → bearish stays blocked (D-142)."""
-    decision = evaluate_directional_eligibility(
-        **_strong_bearish_kwargs(),
-        paper_learning_context=False,
-    )
-    assert decision.directional_eligible is False
-    assert decision.directional_block_reason == BLOCK_REASON_BEARISH_DISABLED
-
-
-def test_bearish_eligible_under_paper_learning_context() -> None:
-    """Paper-learning context relaxes ONLY the D-142 block → bearish passes."""
-    decision = evaluate_directional_eligibility(
-        **_strong_bearish_kwargs(),
-        paper_learning_context=True,
+def test_bearish_eligible_via_quality_gate_chain() -> None:
+    """The extracted shared chain (used ONLY by the paper feeder) un-blocks D-142
+    for a strong bearish signal — every quality gate still applies."""
+    kwargs = _strong_bearish_kwargs()
+    decision = elig.evaluate_directional_quality_gates(
+        sentiment="bearish",
+        affected_assets=kwargs["affected_assets"],  # type: ignore[arg-type]
+        sentiment_score=kwargs["sentiment_score"],  # type: ignore[arg-type]
+        impact_score=kwargs["impact_score"],  # type: ignore[arg-type]
+        title=kwargs["title"],  # type: ignore[arg-type]
+        directional_confidence=kwargs["directional_confidence"],  # type: ignore[arg-type]
+        priority=kwargs["priority"],  # type: ignore[arg-type]
+        source_name=kwargs["source_name"],  # type: ignore[arg-type]
     )
     assert decision.directional_eligible is True
     assert decision.directional_block_reason is None
     assert decision.eligible_assets == ["BTC/USDT"]
 
 
-def test_bearish_paper_context_does_not_bypass_other_gates() -> None:
-    """The relaxation is narrow: a weak bearish signal is STILL blocked even with
-    paper_learning_context — only the D-142 mode-block is relaxed, not quality."""
-    kwargs = _strong_bearish_kwargs()
-    kwargs["impact_score"] = 0.1  # below MIN_IMPACT_SCORE_BEARISH → weak
-    decision = evaluate_directional_eligibility(
-        **kwargs,
-        paper_learning_context=True,
+def test_quality_gate_chain_still_blocks_weak_bearish() -> None:
+    """The chain is NOT a bypass: a weak bearish signal is still blocked even on
+    the paper-feeder path — only the D-142 pre-gate is skipped, not quality."""
+    decision = elig.evaluate_directional_quality_gates(
+        sentiment="bearish",
+        affected_assets=["BTC/USDT"],
+        sentiment_score=-0.9,
+        impact_score=0.1,  # below MIN_IMPACT_SCORE_BEARISH → weak
+        directional_confidence=0.97,
+        priority=10,
+        source_name="coindesk",
     )
     assert decision.directional_eligible is False
     assert decision.directional_block_reason == BLOCK_REASON_WEAK_SIGNAL
 
 
-def test_bearish_paper_context_still_respects_low_priority() -> None:
-    """A low-priority bearish signal stays blocked under paper-learning context."""
-    kwargs = _strong_bearish_kwargs()
-    kwargs["priority"] = 7  # <= 7 → low-priority gate
-    decision = evaluate_directional_eligibility(
-        **kwargs,
-        paper_learning_context=True,
+def test_quality_gate_chain_still_blocks_low_priority_bearish() -> None:
+    """A low-priority bearish signal stays blocked on the paper-feeder path."""
+    decision = elig.evaluate_directional_quality_gates(
+        sentiment="bearish",
+        affected_assets=["BTC/USDT"],
+        sentiment_score=-0.9,
+        impact_score=0.9,
+        directional_confidence=0.97,
+        priority=7,  # <= 7 → low-priority gate
+        source_name="coindesk",
     )
     assert decision.directional_eligible is False
     assert decision.directional_block_reason == BLOCK_REASON_LOW_PRIORITY
 
 
-def test_bullish_unaffected_by_paper_learning_context() -> None:
-    """The flag is bearish-specific; bullish behaviour is identical either way."""
+def test_quality_gate_chain_keeps_bearish_confidence_asymmetry() -> None:
+    """Asymmetric bearish confidence (>=0.95) still applies on the chain path: a
+    0.85 bearish directional_confidence is blocked, proving the chain did not lose
+    the bearish-specific thresholds."""
+    decision = elig.evaluate_directional_quality_gates(
+        sentiment="bearish",
+        affected_assets=["BTC/USDT"],
+        sentiment_score=-0.9,
+        impact_score=0.9,
+        directional_confidence=0.85,  # < MIN_DIRECTIONAL_CONFIDENCE_BEARISH
+        priority=10,
+        source_name="coindesk",
+    )
+    assert decision.directional_eligible is False
+    assert decision.directional_block_reason == BLOCK_REASON_LOW_DIRECTIONAL_CONFIDENCE
+
+
+def test_strict_and_chain_agree_for_bullish() -> None:
+    """For bullish the strict path and the chain produce the same verdict (the
+    extracted chain is the same code, no duplicated thresholds)."""
     base = {
-        "sentiment_label": "bullish",
         "affected_assets": ["BTC/USDT"],
         "sentiment_score": 0.9,
         "impact_score": 0.9,
         "priority": 10,
     }
-    strict = evaluate_directional_eligibility(**base)
-    relaxed = evaluate_directional_eligibility(**base, paper_learning_context=True)
+    strict = evaluate_directional_eligibility(sentiment_label="bullish", **base)  # type: ignore[arg-type]
+    chain = elig.evaluate_directional_quality_gates(sentiment="bullish", **base)  # type: ignore[arg-type]
     assert strict.directional_eligible is True
-    assert relaxed.directional_eligible is True
+    assert chain.directional_eligible is True

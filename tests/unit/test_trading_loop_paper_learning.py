@@ -284,3 +284,145 @@ async def test_no_label_emitted_when_no_fill(tmp_path: Path, monkeypatch) -> Non
     assert cycle.status != CycleStatus.COMPLETED
     labels = [r for r in _read_jsonl(audit_path) if r.get("event_type") == "paper_trade_label"]
     assert labels == []
+
+
+# ── Goal 2026-06-10: real-analysis paper DECOUPLING under entry_mode=disabled ─
+
+_ACK = "I_UNDERSTAND_REAL_ANALYSIS_PAPER_WHILE_DISABLED"
+
+
+def _bearish(document_id: str) -> AnalysisResult:
+    return AnalysisResult(
+        document_id=document_id,
+        sentiment_label=SentimentLabel.BEARISH,
+        sentiment_score=-0.85,
+        relevance_score=0.90,
+        impact_score=0.90,
+        confidence_score=0.85,
+        novelty_score=0.70,
+        actionable=True,
+        affected_assets=["BTC", "BTC/USDT"],
+        tags=["hack", "bearish"],
+        spam_probability=0.02,
+        explanation_short="Strong bearish catalyst.",
+        explanation_long="Detail.",
+        recommended_priority=10,
+        directional_confidence=0.97,
+    )
+
+
+def _arm_override(monkeypatch) -> None:
+    monkeypatch.setenv("EXECUTION_ENTRY_MODE", "disabled")
+    monkeypatch.setenv("EXECUTION_SHADOW_DIAGNOSTICS", "false")
+    monkeypatch.setenv("REAL_ANALYSIS_PAPER_ENABLED", "true")
+    monkeypatch.setenv("REAL_ANALYSIS_PAPER_ALLOW_PAPER_WHILE_ENTRY_DISABLED", "true")
+    monkeypatch.setenv("REAL_ANALYSIS_PAPER_ENTRY_DISABLED_OVERRIDE_ACK", _ACK)
+
+
+@pytest.mark.asyncio
+async def test_disabled_without_source_tag_stays_blocked(tmp_path: Path, monkeypatch) -> None:
+    """entry_mode=disabled + fully-armed override BUT no real_analysis source tag
+    → the ordinary autonomous path is still blocked (no leak)."""
+    _arm_override(monkeypatch)
+    loop = _loop(tmp_path)
+    cycle = await loop.run_cycle(_bullish("doc_x"), "BTC/USDT")  # no analysis_source
+    assert cycle.status == CycleStatus.ENTRY_MODE_BLOCKED
+
+
+@pytest.mark.asyncio
+async def test_real_analysis_blocked_without_full_ack(tmp_path: Path, monkeypatch) -> None:
+    """source=real_analysis but the override is NOT fully armed (ack missing) →
+    fail-closed: the kill-switch holds, no fill."""
+    monkeypatch.setenv("EXECUTION_ENTRY_MODE", "disabled")
+    monkeypatch.setenv("EXECUTION_SHADOW_DIAGNOSTICS", "false")
+    monkeypatch.setenv("REAL_ANALYSIS_PAPER_ENABLED", "true")
+    monkeypatch.setenv("REAL_ANALYSIS_PAPER_ALLOW_PAPER_WHILE_ENTRY_DISABLED", "true")
+    monkeypatch.delenv("REAL_ANALYSIS_PAPER_ENTRY_DISABLED_OVERRIDE_ACK", raising=False)
+    loop = _loop(tmp_path)
+    cycle = await loop.run_cycle(_bullish("doc_real"), "BTC/USDT", analysis_source="real_analysis")
+    assert cycle.status == CycleStatus.ENTRY_MODE_BLOCKED
+    assert any("real_analysis_decouple_refused" in n for n in cycle.notes)
+
+
+@pytest.mark.asyncio
+async def test_real_analysis_fills_under_disabled_with_full_ack(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """The core decoupling: source=real_analysis + fully-armed three-arm override
+    → a PAPER fill proceeds while entry_mode stays disabled."""
+    _arm_override(monkeypatch)
+    audit_path = tmp_path / "exec_audit.jsonl"
+    loop = _loop(tmp_path)
+    cycle = await loop.run_cycle(_bullish("doc_real"), "BTC/USDT", analysis_source="real_analysis")
+    assert cycle.status == CycleStatus.COMPLETED
+    assert cycle.fill_simulated is True
+    assert any("real_analysis_paper_decoupled" in n for n in cycle.notes)
+
+    labels = [r for r in _read_jsonl(audit_path) if r.get("event_type") == "paper_trade_label"]
+    assert len(labels) == 1
+    # B-002: the fill is attributed real_analysis, NOT autonomous_generator.
+    assert labels[0]["feed_source"] == "real_analysis"
+    assert labels[0]["source_name"] == "real_analysis"
+    assert labels[0]["mode"] == "disabled"  # honest: entry_mode is still disabled
+
+    # And the order_filled audit also carries source=real_analysis (B-002 flows
+    # through to the headline-excluding reports).
+    fills = [r for r in _read_jsonl(audit_path) if r.get("event_type") == "order_filled"]
+    assert fills, "expected an order_filled row"
+    assert all(f.get("source") == "real_analysis" for f in fills)
+
+
+@pytest.mark.asyncio
+async def test_synthetic_probe_never_decoupled_even_with_ack(tmp_path: Path, monkeypatch) -> None:
+    """HARD INVARIANT: a synthetic loop_control_* probe can NEVER fill via the
+    real-analysis path, even if mis-tagged as real_analysis AND fully armed."""
+    _arm_override(monkeypatch)
+    loop = _loop(tmp_path)
+    cycle = await loop.run_cycle(
+        _bullish("loop_control_btc_bullish"),
+        "BTC/USDT",
+        analysis_source="real_analysis",
+    )
+    assert cycle.status == CycleStatus.ENTRY_MODE_BLOCKED
+    assert any("synthetic_probe_not_decoupleable" in n for n in cycle.notes)
+
+
+@pytest.mark.asyncio
+async def test_real_analysis_bearish_short_fills_under_disabled(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Paper-learning needs SHORTS too: a bearish real-analysis signal opens a
+    real short paper fill under the decoupled path. The position side is threaded
+    so the sell OPENS a short (not mis-closes a long)."""
+    _arm_override(monkeypatch)
+    audit_path = tmp_path / "exec_audit.jsonl"
+    loop = _loop(tmp_path)
+    cycle = await loop.run_cycle(
+        _bearish("doc_bearish"), "BTC/USDT", analysis_source="real_analysis"
+    )
+    assert cycle.status == CycleStatus.COMPLETED
+    assert cycle.fill_simulated is True
+
+    labels = [r for r in _read_jsonl(audit_path) if r.get("event_type") == "paper_trade_label"]
+    assert len(labels) == 1
+    assert labels[0]["direction"] == "short"
+    assert labels[0]["feed_source"] == "real_analysis"
+
+    # The opening fill is recorded as a short (sell / short).
+    fills = [r for r in _read_jsonl(audit_path) if r.get("event_type") == "order_filled"]
+    assert fills
+    assert fills[0]["side"] == "sell"
+    assert fills[0]["position_side"] == "short"
+
+
+@pytest.mark.asyncio
+async def test_real_analysis_respects_feeder_daily_cap(tmp_path: Path, monkeypatch) -> None:
+    """The feeder-specific cap tightens the decoupled stream: cap=1 → 2nd entry
+    blocked with PAPER_CAP_REACHED."""
+    _arm_override(monkeypatch)
+    monkeypatch.setenv("REAL_ANALYSIS_PAPER_MAX_DAILY_PAPER_ENTRIES", "1")
+    loop = _loop(tmp_path)
+    c1 = await loop.run_cycle(_bullish("d1"), "BTC/USDT", analysis_source="real_analysis")
+    c2 = await loop.run_cycle(_bullish("d2"), "ETH/USDT", analysis_source="real_analysis")
+    assert c1.status == CycleStatus.COMPLETED
+    assert c2.status == CycleStatus.PAPER_CAP_REACHED

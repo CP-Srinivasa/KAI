@@ -291,7 +291,12 @@ def _read_jsonl(path: Path) -> list[dict[str, object]]:
 RESOLVABLE_CANDIDATE_KINDS: frozenset[str] = frozenset(
     {"signal_candidate", "gate_candidate", "would_have_traded"}
 )
-_SKIP_SOURCES: frozenset[str] = frozenset({"canary_probe"})
+# Sources excluded from the default (headline) resolution. ``canary_probe`` is
+# the hardcoded synthetic probe (#137); ``real_analysis`` (Goal 2026-06-10) is
+# the new decoupled paper-learning feeder — a separately-evaluated stream that
+# must not silently merge into the autonomous-generator headline (B-002). Both
+# are still resolvable via the explicit ``include_canary`` diagnostic option.
+_SKIP_SOURCES: frozenset[str] = frozenset({"canary_probe", "real_analysis"})
 
 
 def _is_resolvable_candidate(c: dict[str, object], *, include_canary: bool) -> bool:
@@ -649,10 +654,22 @@ def build_shadow_report(
       NO real-signal evidence yet (-> INSUFFICIENT_DATA), never "no edge".
     """
     canary = [r for r in resolved if r.get("source") == "canary_probe"]
+    # Goal 2026-06-10: the decoupled real-analysis paper feeder is its OWN stream
+    # (B-002) — separated from the autonomous-generator headline exactly like
+    # canary, so it is neither counted as real-generator edge nor mis-bucketed as
+    # legacy/unattributed.
+    real_analysis = [r for r in resolved if r.get("source") == "real_analysis"]
     real = [r for r in resolved if _is_real_row(r)]
-    # Everything that is neither real nor canary is legacy/unattributed (#140's
-    # quarantine bucket, now further split for the 644 autonomous_loop rows).
-    legacy = [r for r in resolved if not _is_real_row(r) and r.get("source") != "canary_probe"]
+    # Everything that is neither real nor canary nor real_analysis is
+    # legacy/unattributed (#140's quarantine bucket, now further split for the 644
+    # autonomous_loop rows).
+    legacy = [
+        r
+        for r in resolved
+        if not _is_real_row(r)
+        and r.get("source") != "canary_probe"
+        and r.get("source") != "real_analysis"
+    ]
     legacy_canary_suspect = [r for r in legacy if _is_legacy_canary_suspect(r)]
     legacy_unattributed = [r for r in legacy if not _is_legacy_canary_suspect(r)]
     n = len(real)
@@ -683,6 +700,7 @@ def build_shadow_report(
         "resolution_coverage_pct": round(100.0 * n / total, 1) if total else 0.0,
         "real_resolved": n,
         "canary_probe_resolved": len(canary),
+        "real_analysis_resolved": len(real_analysis),
         # #140 field retained = total legacy/unattributed (now split below).
         "unattributed_resolved": len(legacy),
         "raw_count": len(resolved),
