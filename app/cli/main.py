@@ -2053,6 +2053,52 @@ def alerts_d227_source_crosscheck(
             console.print(f"wrote {written}")
 
 
+@alerts_app.command("d227-blockreason-quality")
+def alerts_d227_blockreason_quality(
+    artifacts_dir: str = typer.Option("artifacts", "--artifacts-dir", help="Artifacts directory"),
+    min_sample: int = typer.Option(
+        20, "--min-sample", help="Min resolved count per reason before a verdict"
+    ),
+    over_block_threshold_pct: float = typer.Option(
+        50.0,
+        "--over-block-threshold-pct",
+        help="Blocked recall at/above which a reason over-blocks",
+    ),
+    as_json: bool = typer.Option(False, "--json", help="Emit JSON instead of the text report"),
+    out_json: str = typer.Option(
+        "", "--out-json", help="Also persist the report JSON to this path"
+    ),
+) -> None:
+    """Read-only D-227 block-reason suppression-quality (which gate rule over-blocks)."""
+    import json as _json
+
+    from app.alerts.blocked_outcome_report import build_blocked_outcome_report
+    from app.alerts.d227_blockreason_quality import (
+        assess_blockreason_quality,
+        render_blockreason_quality,
+    )
+
+    blocked = build_blocked_outcome_report(artifacts_dir)
+    report = assess_blockreason_quality(
+        blocked, min_sample=min_sample, over_block_threshold_pct=over_block_threshold_pct
+    )
+
+    written = None
+    if out_json:
+        out_path = Path(out_json)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_text(_json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
+        written = out_path
+    if as_json:
+        print(_json.dumps(report, indent=2))
+        if written is not None:
+            typer.echo(f"wrote {written}", err=True)
+    else:
+        console.print(render_blockreason_quality(report))
+        if written is not None:
+            console.print(f"wrote {written}")
+
+
 @alerts_app.command("daily-briefing")
 def alerts_daily_briefing(
     lookback_hours: int = typer.Option(
