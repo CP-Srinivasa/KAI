@@ -271,15 +271,30 @@ class PaperExecutionEngine:
         intent: ExecutableOrderIntent,
         current_price: float,
         risk_check_id: str,
+        fill_price: float | None = None,
     ) -> tuple[PaperOrder, PaperFill | None]:
-        """Parity interface: execute an ExecutableOrderIntent on paper."""
+        """Parity interface: execute an ExecutableOrderIntent on paper.
+
+        ``fill_price`` (2026-06-10) overrides the price the simulated fill is
+        booked at. Callers pass it to model LIMIT/STOP semantics — e.g. the
+        premium bridge fills at the signal's stated entry price rather than the
+        current spot, so a target-touch close realises the signal's intended
+        PnL. ``None`` (default) preserves the legacy fill-at-spot behaviour, so
+        the autonomous loop and every existing caller are unchanged. Slippage
+        and the geometry guards in ``fill_order`` apply to whichever price is
+        used, keeping the fill realistic (a long SL at/above the fill price is
+        still rejected).
+        """
         kwargs = executable_intent_to_paper_kwargs(intent)
         kwargs["risk_check_id"] = risk_check_id
 
         order = self.create_order(**kwargs)
-        # Limit or market? In paper, fill_order requires current_price.
-        # We pass the current_price regardless of type.
-        fill = self.fill_order(order, current_price)
+        # Limit or market? In paper, fill_order requires a price. We fill at the
+        # explicit override when given, else at the current spot.
+        effective_fill_price = (
+            fill_price if fill_price is not None and fill_price > 0 else current_price
+        )
+        fill = self.fill_order(order, effective_fill_price)
         return order, fill
 
     def create_order(

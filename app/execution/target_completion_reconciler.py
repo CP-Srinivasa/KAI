@@ -265,6 +265,54 @@ def reconcile_target_completion(
                 realized_pnl_usd=None,
                 audit_record=rec,
             )
+        # 2026-06-10 PnL-truth: a "completed ALL profit targets" event is by
+        # definition a profitable close — a long must realise ABOVE its entry,
+        # a short BELOW it. If the scaled touch lands on the WRONG side of entry
+        # the close would book a loss on a signal the channel reported as a full
+        # win — the unmistakable signature of a still-misresolved scale (entry
+        # and touch booked on different scales) that the coarse 0.1–10× ratio
+        # guard above let through. Refuse to book a wrong-sign PnL: surface a
+        # retryable scale-review instead of a phantom loss. A tiny epsilon
+        # absorbs rounding/slippage so a legitimately flat touch is not flagged.
+        _eps = 1e-3  # 0.1% tolerance for rounding/slippage at the boundary
+        wrong_side = (
+            pos.position_side == "long" and close_price < pos.avg_entry_price * (1.0 - _eps)
+        ) or (pos.position_side == "short" and close_price > pos.avg_entry_price * (1.0 + _eps))
+        if pos.avg_entry_price and pos.avg_entry_price > 0 and wrong_side:
+            rec = {
+                **base_record,
+                "status": "requires_scale_review",
+                "reason": "touch_price_wrong_side_of_entry",
+                "raw_touch_price": raw_touch,
+                "scaled_touch_price": close_price,
+                "scale_factor_applied": scale_factor_applied,
+                "avg_entry_price": pos.avg_entry_price,
+                "position_side": pos.position_side,
+                "match_strategy": match_strategy,
+                "position_source": position_source,
+                "position_correlation_id": position_correlation_id or None,
+            }
+            _append_audit(reconcile_path, rec)
+            logger.warning(
+                "[reconcile] wrong-side-review symbol=%s envelope=%s side=%s "
+                "raw_touch=%.6g avg_entry=%.6g factor=%.0e scaled=%.6g — "
+                "all-TP-hit cannot close at a loss, kein PnL gebucht",
+                display_sym,
+                source_envelope_id,
+                pos.position_side,
+                raw_touch,
+                pos.avg_entry_price,
+                scale_factor_applied,
+                close_price,
+            )
+            return ReconcileOutcome(
+                status="requires_scale_review",
+                reason="touch_price_wrong_side_of_entry",
+                symbol=display_sym,
+                touch_price=raw_touch,
+                realized_pnl_usd=None,
+                audit_record=rec,
+            )
         close_reason_extra = (
             "touch_price_from_channel_scaled"
             if scale_factor_applied != 1.0

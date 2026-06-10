@@ -361,6 +361,63 @@ async def test_short_direction_fills_short_paper_order(
 
 
 @pytest.mark.asyncio
+async def test_premium_fills_at_signal_entry_not_spot(
+    tmp_artifacts: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """2026-06-10 PnL-truth: a premium paper fill is booked at the signal's
+    stated entry (LIMIT/STOP semantics), not the current spot, so a later
+    target-touch close realises the signal's intended PnL. The observed spot is
+    still recorded on the audit (spot_at_fill) for honesty."""
+    monkeypatch.setenv("EXECUTION_OPERATOR_SIGNAL_BRIDGE_ENABLED", "true")
+    monkeypatch.setenv("EXECUTION_OPERATOR_SIGNAL_SOURCE_ALLOWLIST", "telegram_premium_channel")
+    monkeypatch.setenv("PREMIUM_PAPER_EXECUTION_ENABLED", "true")
+    monkeypatch.setenv("EXECUTION_ENTRY_MODE", "paper")
+    _write_envelope(
+        tmp_artifacts / "telegram_message_envelope.jsonl",
+        _accepted_envelope(source="telegram_premium_channel"),
+    )
+    spot = 60050.0  # within the 0.5% entry tolerance of entry_value=60000
+    with patch.object(bridge, "_fetch_price", new=AsyncMock(return_value=spot)):
+        result = await run_tick()
+
+    assert result.filled == 1
+    rec = _read_bridge_records(tmp_artifacts / "bridge_pending_orders.jsonl")[-1]
+    assert rec["stage"] == "filled"
+    assert rec["fill_basis"] == "signal_entry"
+    assert rec["spot_at_fill"] == spot
+    assert rec["entry_price_target"] == 60000.0
+    # Fill is booked off entry (60000, +slippage), strictly below the spot.
+    assert 60000.0 <= rec["fill_price"] <= spot
+
+
+@pytest.mark.asyncio
+async def test_premium_fill_at_entry_can_be_disabled(
+    tmp_artifacts: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The fix is gated by PREMIUM_FILL_AT_SIGNAL_ENTRY — flipping it off
+    restores the legacy fill-at-spot behaviour (fill above entry toward spot)."""
+    monkeypatch.setenv("EXECUTION_OPERATOR_SIGNAL_BRIDGE_ENABLED", "true")
+    monkeypatch.setenv("EXECUTION_OPERATOR_SIGNAL_SOURCE_ALLOWLIST", "telegram_premium_channel")
+    monkeypatch.setenv("PREMIUM_PAPER_EXECUTION_ENABLED", "true")
+    monkeypatch.setenv("EXECUTION_ENTRY_MODE", "paper")
+    monkeypatch.setenv("PREMIUM_FILL_AT_SIGNAL_ENTRY", "false")
+    _write_envelope(
+        tmp_artifacts / "telegram_message_envelope.jsonl",
+        _accepted_envelope(source="telegram_premium_channel"),
+    )
+    spot = 60050.0
+    with patch.object(bridge, "_fetch_price", new=AsyncMock(return_value=spot)):
+        result = await run_tick()
+
+    assert result.filled == 1
+    rec = _read_bridge_records(tmp_artifacts / "bridge_pending_orders.jsonl")[-1]
+    assert rec["fill_basis"] == "spot"
+    assert rec["spot_at_fill"] == spot
+    # Legacy: fill booked off spot (60050, +slippage), at or above the spot.
+    assert rec["fill_price"] >= spot
+
+
+@pytest.mark.asyncio
 async def test_incomplete_envelope_rejected(
     tmp_artifacts: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
