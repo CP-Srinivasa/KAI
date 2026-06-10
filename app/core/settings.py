@@ -499,6 +499,19 @@ class PremiumSettings(BaseSettings):
     require_manual_approval_for_live: bool = Field(default=True)
     require_manual_approval_for_paper: bool = Field(default=False)
 
+    # 2026-06-10 PnL-truth fix: a premium "Entry point" is a LIMIT/STOP at the
+    # stated price, not "fill at whatever the spot is when the tolerance gate
+    # opens". The legacy bridge filled the paper position at the current spot,
+    # so a signal processed after the breakout already moved could open ABOVE
+    # its own targets — the channel then reports "all targets hit" while the
+    # paper position books a LOSS. With this flag (paper-only, premium-only) the
+    # bridge fills at the resolved signal entry price instead, so a target-touch
+    # close realises the plan's intended PnL. The observed spot is still recorded
+    # on the fill audit (spot_at_fill) for honesty. Live is never affected — the
+    # paper bridge never submits a live order. Default True; flip off to restore
+    # the legacy fill-at-spot behaviour.
+    fill_at_signal_entry: bool = Field(default=True)
+
     # Live triple-flag arming token (Goal 2026-06-05 Premium-Fastlane §4). The
     # premium-fastlane LIVE path stays hard-blocked unless ALL THREE hold:
     #   premium_fastlane.live_enabled=True

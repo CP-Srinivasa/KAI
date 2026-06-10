@@ -1604,11 +1604,22 @@ async def _process_one(
         targets=targets,
         quantity=size_result.position_size_units,
     )
+    # 2026-06-10 PnL-truth: fill premium paper at the signal's stated entry
+    # price (LIMIT/STOP semantics), not the current spot. The entry-tolerance
+    # gate above only proves spot is *near* entry; for a breakout-above signal
+    # processed late, spot can already sit above the targets, so a fill-at-spot
+    # opens the position above its own take-profits and a target-touch close
+    # books a loss even though the channel reports "all targets hit". Filling at
+    # the resolved entry makes the realised PnL match the signal's plan. Paper-
+    # and premium-only; the observed spot is still recorded for honesty.
+    fill_at_entry = is_premium and get_settings().premium.fill_at_signal_entry
+    fill_price_override = entry_price if fill_at_entry else None
     try:
         order, fill = engine.execute_intent(
             intent=executable_intent,
             current_price=current_price,
             risk_check_id=risk_result.check_id,
+            fill_price=fill_price_override,
         )
     except DuplicateOrderError as exc:
         # Sprint C (2026-05-12): cross-process Race-Guard hat eine zweite
@@ -1707,6 +1718,14 @@ async def _process_one(
     rec["signal_leverage"] = leverage_val
     rec["entry_price_target"] = entry_price
     rec["fill_price"] = fill.fill_price
+    # 2026-06-10 PnL-truth transparency: record the basis the fill was booked on
+    # and the spot observed at fill time, so a target-hit-but-loss (or the
+    # absence of one) is always explainable from the audit without guessing.
+    rec["fill_basis"] = "signal_entry" if fill_at_entry else "spot"
+    rec["spot_at_fill"] = current_price
+    rec["filled_off_entry_pct"] = (
+        round((current_price - entry_price) / entry_price * 100.0, 4) if entry_price > 0 else None
+    )
     rec["stop_loss"] = stop_loss
     rec["take_profit"] = tp1
     rec["take_profit_tiers"] = (

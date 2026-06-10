@@ -103,6 +103,84 @@ def test_requires_scale_review_is_retryable(engine: PaperExecutionEngine, tmp_pa
     assert second.status != "duplicate"
 
 
+def _open_short(engine: PaperExecutionEngine, symbol: str, entry: float, qty: float) -> None:
+    order = engine.create_order(
+        symbol=symbol,
+        side="sell",
+        quantity=qty,
+        order_type="market",
+        idempotency_key=f"open:{symbol}",
+        position_side="short",
+        source="telegram_premium_channel_approved",
+    )
+    engine.fill_order(order, entry)
+    assert symbol in engine.portfolio.positions
+
+
+def test_long_all_targets_below_entry_is_wrong_side_review(
+    engine: PaperExecutionEngine, tmp_path: Path
+) -> None:
+    """2026-06-10 PnL-truth: an 'all profit targets completed' long whose scaled
+    touch lands BELOW entry cannot be a real win — it is a misresolved scale.
+    Refuse to book the phantom loss: requires_scale_review, position stays open."""
+    _open_long(engine, "FOO/USDT", entry=1.0, qty=10.0)
+    # touch 0.85 same scale as entry (factor 1.0) but below entry → wrong side
+    event = TargetCompletionEvent(
+        symbol="FOOUSDT", display_symbol="FOO/USDT", touch_price=0.85, raw_text="🎯"
+    )
+    out = reconcile_target_completion(
+        event,
+        source_envelope_id="ENV-foo-1",
+        engine=engine,
+        reconcile_log_path=tmp_path / "reconcile.jsonl",
+    )
+    assert out.status == "requires_scale_review"
+    assert out.reason == "touch_price_wrong_side_of_entry"
+    assert out.realized_pnl_usd is None
+    assert "FOO/USDT" in engine.portfolio.positions  # NICHT als Verlust geschlossen
+
+
+def test_short_all_targets_above_entry_is_wrong_side_review(
+    engine: PaperExecutionEngine, tmp_path: Path
+) -> None:
+    """Symmetric guard for shorts: a completed-targets short must close BELOW
+    entry; a scaled touch above entry is a wrong-sign scale error."""
+    _open_short(engine, "BAR/USDT", entry=2.0, qty=10.0)
+    event = TargetCompletionEvent(
+        symbol="BARUSDT", display_symbol="BAR/USDT", touch_price=2.4, raw_text="🎯"
+    )
+    out = reconcile_target_completion(
+        event,
+        source_envelope_id="ENV-bar-1",
+        engine=engine,
+        reconcile_log_path=tmp_path / "reconcile.jsonl",
+    )
+    assert out.status == "requires_scale_review"
+    assert out.reason == "touch_price_wrong_side_of_entry"
+    assert out.realized_pnl_usd is None
+    assert "BAR/USDT" in engine.portfolio.positions
+
+
+def test_long_profitable_close_still_books_pnl(
+    engine: PaperExecutionEngine, tmp_path: Path
+) -> None:
+    """Regression guard: the wrong-side check must NOT block a genuine winning
+    close (long touch above entry books a positive PnL as before)."""
+    _open_long(engine, "WIN/USDT", entry=1.0, qty=10.0)
+    event = TargetCompletionEvent(
+        symbol="WINUSDT", display_symbol="WIN/USDT", touch_price=1.08, raw_text="🎯"
+    )
+    out = reconcile_target_completion(
+        event,
+        source_envelope_id="ENV-win-1",
+        engine=engine,
+        reconcile_log_path=tmp_path / "reconcile.jsonl",
+    )
+    assert out.status == "closed"
+    assert out.realized_pnl_usd is not None and out.realized_pnl_usd > 0
+    assert "WIN/USDT" not in engine.portfolio.positions
+
+
 def test_clean_close_is_idempotent(engine: PaperExecutionEngine, tmp_path: Path) -> None:
     """Ein erfolgreich geschlossener Reconcile blockiert den zweiten als duplicate."""
     log = tmp_path / "reconcile.jsonl"
