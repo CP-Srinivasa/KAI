@@ -22,6 +22,7 @@ class CycleStatus(StrEnum):
     COOLDOWN_REJECTED = "cooldown_rejected"  # NEO-V2: per-symbol post-stop cooldown active
     CHURN_REJECTED = "churn_rejected"  # Sprint E: churn-killer rate/turnover limit (Goal §5)
     ENTRY_MODE_BLOCKED = "entry_mode_blocked"  # Goal 2026-06-01: Entry-Safety-Mode (disabled)
+    PAPER_CAP_REACHED = "paper_cap_reached"  # Goal 2026-06-10: max_daily_paper_entries reached
     ORDER_FAILED = "order_failed"
     ERROR = "error"
 

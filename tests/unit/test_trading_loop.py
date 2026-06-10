@@ -196,23 +196,25 @@ async def test_run_cycle_audit_written(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_run_cycle_unfilled_order_is_order_failed(tmp_path):
+async def test_run_cycle_bearish_opens_a_short(tmp_path):
+    """Goal 2026-06-10 (long+short): a bearish signal now OPENS a real short
+    instead of failing as a long-close. Before the position_side wiring this same
+    cycle produced ORDER_FAILED ("insufficient position") — that was the bug that
+    kept the loop long-only."""
     loop = _loop(tmp_path)
     cycle = await loop.run_cycle(_strong_bearish_analysis(), "ETH/USDT")
 
-    assert cycle.status == CycleStatus.ORDER_FAILED
+    assert cycle.status == CycleStatus.COMPLETED
     assert cycle.market_data_fetched
     assert cycle.signal_generated
     assert cycle.risk_approved
     assert cycle.order_created
-    assert not cycle.fill_simulated
+    assert cycle.fill_simulated
     assert cycle.order_id is not None
-    assert "fill_not_simulated" in cycle.notes
-    assert loop.portfolio.trade_count == 0
 
     audit_path = tmp_path / "loop_audit.jsonl"
     record = json.loads(audit_path.read_text().strip().splitlines()[-1])
-    assert record["status"] == CycleStatus.ORDER_FAILED.value
+    assert record["status"] == CycleStatus.COMPLETED.value
 
 
 @pytest.mark.asyncio

@@ -697,6 +697,12 @@ def evaluate_directional_eligibility(
     Directional sentiments must pass score-strength gates, a reactive-narrative
     filter (bearish only), AND resolve to at least one supported tradeable
     crypto symbol; otherwise they are blocked.
+
+    Strict by construction: the D-142 bearish-disabled hard block is ALWAYS
+    applied here. The real-analysis paper feeder (Goal 2026-06-10) does NOT
+    parametrise this function; it calls the extracted, shared
+    ``evaluate_directional_quality_gates`` directly for its paper-only bearish
+    relaxation, so the dispatch/metrics path stays strictly bearish-blocked.
     """
     sentiment = (sentiment_label or "").strip().lower()
     if sentiment not in _DIRECTIONAL_SENTIMENTS:
@@ -724,6 +730,49 @@ def evaluate_directional_eligibility(
             directional_block_reason=BLOCK_REASON_BEARISH_DISABLED,
         )
 
+    return evaluate_directional_quality_gates(
+        sentiment=sentiment,
+        affected_assets=affected_assets,
+        sentiment_score=sentiment_score,
+        impact_score=impact_score,
+        title=title,
+        directional_confidence=directional_confidence,
+        event_timing=event_timing,
+        priority=priority,
+        source_name=source_name,
+        min_bullish_confidence=min_bullish_confidence,
+    )
+
+
+def evaluate_directional_quality_gates(
+    *,
+    sentiment: str,
+    affected_assets: list[str],
+    sentiment_score: float | None = None,
+    impact_score: float | None = None,
+    title: str | None = None,
+    directional_confidence: float | None = None,
+    event_timing: str | None = None,
+    priority: int | None = None,
+    source_name: str | None = None,
+    min_bullish_confidence: float | None = None,
+) -> DirectionalEligibilityDecision:
+    """Apply EVERY directional quality gate EXCEPT the D-142 bearish-disabled
+    mode-block and the non-actionable pre-filter.
+
+    This is the gate chain that runs *after* D-142 in
+    ``evaluate_directional_eligibility`` — extracted verbatim so it is a single
+    source of truth (no duplicated thresholds). ``sentiment`` must already be the
+    lowercased directional label (``"bullish"``/``"bearish"``); callers that want
+    the full strict semantics use ``evaluate_directional_eligibility`` instead.
+
+    The ONLY sanctioned direct caller is the real-analysis paper feeder
+    (Goal 2026-06-10): it un-blocks D-142 for bearish *paper-only* signals while
+    keeping every quality gate (priority, low-precision source, promo, weak,
+    reactive narrative, asymmetric confidence, asset resolution) fully active.
+    It does NOT relax this function — it merely skips the D-142 pre-gate. The
+    dispatch/metrics path is unaffected and stays strictly bearish-blocked.
+    """
     # V-DB4c 2026-05-08: Soft-Confidence-Adjuster.
     # Sources auf monitor/source_watch.txt bekommen priority -= 1, BEVOR
     # der LOW_PRIORITY-Gate prueft. Damit kippen P8-Watchlist-Sources nach

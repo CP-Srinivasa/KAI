@@ -399,6 +399,17 @@ class ExecutionSettings(BaseSettings):
     # on n=186). Analyses with priority=None are blocked when threshold>1.
     paper_min_priority: int = Field(default=1, ge=1, le=10)
 
+    # Paper-Learning (Goal 2026-06-10): per-UTC-day cap on the number of NEW
+    # autonomous paper *entries* the loop may open. This bounds the volume of
+    # the paper-learning stream when EXECUTION_ENTRY_MODE is flipped to paper,
+    # so a re-activated stream cannot open an unbounded number of positions in a
+    # single day. Default 0 == UNLIMITED (no-op): without
+    # EXECUTION_MAX_DAILY_PAPER_ENTRIES set there is NO behavioural change. A
+    # value > 0 blocks new entries once that many opening fills have already
+    # settled today (UTC). Exits / risk-reductions are never counted or gated.
+    # This is a volume cap, not a risk cap (max_daily_loss_pct stays orthogonal).
+    max_daily_paper_entries: int = Field(default=0, ge=0)
+
     # Order parameters
     order_ttl_seconds: int = Field(default=300)
     max_order_retries: int = Field(default=3)
@@ -550,6 +561,60 @@ LIVE_CANARY_ACK_SENTINEL = "I_UNDERSTAND_REAL_CAPITAL_RISK"
 # fills proceed while the global entry_mode kill-switch is ``disabled`` (Pfad 3).
 # Paper-only; never arms live. A typo keeps the kill-switch holding.
 PREMIUM_PAPER_WHILE_DISABLED_ACK_SENTINEL = "I_UNDERSTAND_PREMIUM_PAPER_WHILE_DISABLED"
+
+# Explicit human-typed acknowledgement required to let the REAL-ANALYSIS paper
+# feeder open PAPER fills while the global entry_mode kill-switch is
+# ``disabled`` (Goal 2026-06-10, "paper-learning reactivation"). This is the
+# parallel, ORTHOGONAL twin of PREMIUM_PAPER_WHILE_DISABLED_ACK_SENTINEL: it
+# decouples ONLY the real-analysis feeder (source=real_analysis), never the
+# synthetic autonomous loop and never the premium path. Paper-only; never arms
+# live. A typo keeps the kill-switch holding.
+REAL_ANALYSIS_PAPER_WHILE_DISABLED_ACK_SENTINEL = "I_UNDERSTAND_REAL_ANALYSIS_PAPER_WHILE_DISABLED"
+
+
+class RealAnalysisPaperSettings(BaseSettings):
+    """Real-analysis paper-learning feeder policy (Goal 2026-06-10).
+
+    Purpose: let the REAL-analysis feeder (``source=real_analysis``, i.e. stored
+    LLM-analyzed news documents — long AND short) open PAPER fills so the system
+    finally collects *usable* forward paper-learning data — WITHOUT flipping the
+    global ``entry_mode`` to ``paper`` (which would also re-arm the degenerate
+    synthetic autonomous loop) and WITHOUT touching the premium path (#207/#208)
+    or the permanently-OFF Fastlane (#179/#181).
+
+    Fail-closed THREE-ARM, mirroring the #181/#208 overrides so a single env flip
+    can never neuter the kill-switch:
+      - ``enabled`` — the feeder master opt-in, AND
+      - ``allow_paper_while_entry_disabled`` — the per-bypass opt-in, AND
+      - ``entry_disabled_override_ack`` == REAL_ANALYSIS_PAPER_WHILE_DISABLED_ACK_SENTINEL
+        (an explicit human-typed acknowledgement of un-gating the kill-switch for
+        the real-analysis paper route).
+
+    Any arm missing → the kill-switch holds (fail-closed). All three default
+    off/empty → ZERO behavioural change without an explicit operator ack. Live is
+    never reachable (the feeder runs mode=PAPER, ``_run_once_guard`` allows only
+    paper/shadow). The synthetic loop is unaffected: it is NOT source=real_analysis
+    and ``loop_control_*`` document_ids are hard-excluded from the decoupled path.
+    """
+
+    model_config = SettingsConfigDict(
+        env_prefix="REAL_ANALYSIS_PAPER_", env_file=".env", extra="ignore"
+    )
+
+    enabled: bool = Field(default=False)
+    allow_paper_while_entry_disabled: bool = Field(default=False)
+    entry_disabled_override_ack: str = Field(default="", repr=False)
+
+    # Per-UTC-day cap on the number of NEW real-analysis paper *entries* the
+    # feeder may open. 0 == unlimited (no extra cap; the orthogonal
+    # execution.max_daily_paper_entries still applies if set). A positive value
+    # bounds the real-analysis stream specifically.
+    max_daily_paper_entries: int = Field(default=0, ge=0)
+
+    # Only feed documents whose published_at is within this many hours of now.
+    # Stale analyses do not produce honest forward-learning data. Default 48h
+    # matches the eligibility-probe window.
+    freshness_max_age_hours: int = Field(default=48, ge=1)
 
 
 class PremiumFastlaneSettings(BaseSettings):
@@ -1215,6 +1280,11 @@ class AppSettings(BaseSettings):
     execution: ExecutionSettings = Field(default_factory=ExecutionSettings)
     premium: PremiumSettings = Field(default_factory=PremiumSettings)
     premium_fastlane: PremiumFastlaneSettings = Field(default_factory=PremiumFastlaneSettings)
+    # Real-analysis paper-learning feeder (Goal 2026-06-10). Orthogonal to the
+    # premium path; fail-closed three-arm, all default off → no behavioural drift.
+    real_analysis_paper: RealAnalysisPaperSettings = Field(
+        default_factory=RealAnalysisPaperSettings
+    )
     operator: OperatorSettings = Field(default_factory=OperatorSettings)
     tradingview: TradingViewSettings = Field(default_factory=TradingViewSettings)
     binance: BinanceMarketDataSettings = Field(default_factory=BinanceMarketDataSettings)

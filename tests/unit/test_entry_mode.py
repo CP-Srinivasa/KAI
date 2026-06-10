@@ -41,6 +41,15 @@ class TestEntryModeEnum:
             "live_normal",
         }
 
+    def test_is_paper_learning_only_paper_and_probe(self) -> None:
+        """Goal 2026-06-10: paper-learning context is PAPER/PROBE only —
+        never disabled (no entries) and never the two live modes."""
+        assert EntryMode.PAPER.is_paper_learning is True
+        assert EntryMode.PROBE.is_paper_learning is True
+        assert EntryMode.DISABLED.is_paper_learning is False
+        assert EntryMode.LIVE_LIMITED.is_paper_learning is False
+        assert EntryMode.LIVE_NORMAL.is_paper_learning is False
+
 
 class TestEntryModeSettings:
     def _settings(self):
