@@ -65,8 +65,14 @@ UNITS=(
     "kai-auto-annotate-blocked.timer"
     "kai-recalc-cycle.service"
     "kai-recalc-cycle.timer"
+    "kai-real-analysis-paper-feed.service"
+    "kai-real-analysis-paper-feed.timer"
 )
 
+# NOTE: kai-real-analysis-paper-feed.timer is intentionally ABSENT from
+# ENABLE_ON_INSTALL below — it is installed (daemon-reload aware) but stays
+# disabled until the operator deliberately enables it. Even when enabled it is a
+# no-op until the three-arm REAL_ANALYSIS_PAPER override is armed (Goal 2026-06-10).
 ENABLE_ON_INSTALL=(
     "kai-server.service"
     "kai-agent-worker.service"

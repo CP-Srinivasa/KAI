@@ -1,0 +1,17 @@
+# Fires the real-analysis paper feeder every 15 min. Installed but NOT enabled
+# by default — enabling is a deliberate operator step AND only has effect once
+# the three-arm override is armed (otherwise each fire is a side-effect-free
+# no-op). Cadence is tunable; 15 min keeps the feed responsive to fresh news
+# without hammering the DB / paper engine.
+[Unit]
+Description=KAI Real-Analysis Paper Feeder — fire every 15 min (disarmed by default)
+Requires=kai-real-analysis-paper-feed.service
+
+[Timer]
+OnBootSec=10min
+OnUnitActiveSec=15min
+AccuracySec=1min
+RandomizedDelaySec=60s
+
+[Install]
+WantedBy=timers.target
