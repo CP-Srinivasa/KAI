@@ -317,6 +317,12 @@ def _arm_override(monkeypatch) -> None:
     monkeypatch.setenv("REAL_ANALYSIS_PAPER_ENABLED", "true")
     monkeypatch.setenv("REAL_ANALYSIS_PAPER_ALLOW_PAPER_WHILE_ENTRY_DISABLED", "true")
     monkeypatch.setenv("REAL_ANALYSIS_PAPER_ENTRY_DISABLED_OVERRIDE_ACK", _ACK)
+    # P3: these tests exercise the DECOUPLING / cap / labels — not the priority
+    # gate. Arm a permissive feeder priority threshold so a None/low-priority
+    # bullish probe is not incidentally PRIORITY_REJECTED by Gate 2 (which now
+    # uses real_analysis_paper.min_priority, default 10). The threshold behaviour
+    # itself is covered by test_priority_gate / test_real_analysis_paper_selector.
+    monkeypatch.setenv("REAL_ANALYSIS_PAPER_MIN_PRIORITY", "1")
 
 
 @pytest.mark.asyncio
