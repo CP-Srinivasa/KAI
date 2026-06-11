@@ -3,6 +3,7 @@
 Pi-Run-Only. Wiederholt den F2-Recalc vom 24.05. einen Tag später, um die
 Operator-Anforderung 'F1-sample-recalc fehlt' final zu schließen.
 """
+
 from __future__ import annotations
 
 import json
@@ -120,9 +121,15 @@ def main() -> None:
     )
     print()
     print("=== Bearish Per-Priority ===")
-    print(f"bearish p<8:  hit={bear_low_p_h} miss={bear_low_p_m} n={bplow_n}  precision={prec(bear_low_p_h, bplow_n)}%")
-    print(f"bearish p=8/9: hit={bear_p8_h} miss={bear_p8_m} n={bp8_n}  precision={prec(bear_p8_h, bp8_n)}%")
-    print(f"bearish p>=10: hit={bear_p10_h} miss={bear_p10_m} n={bp10_n}  precision={prec(bear_p10_h, bp10_n)}%")
+    print(
+        f"bearish p<8:  hit={bear_low_p_h} miss={bear_low_p_m} n={bplow_n}  precision={prec(bear_low_p_h, bplow_n)}%"
+    )
+    print(
+        f"bearish p=8/9: hit={bear_p8_h} miss={bear_p8_m} n={bp8_n}  precision={prec(bear_p8_h, bp8_n)}%"
+    )
+    print(
+        f"bearish p>=10: hit={bear_p10_h} miss={bear_p10_m} n={bp10_n}  precision={prec(bear_p10_h, bp10_n)}%"
+    )
     print()
     print("=== Bearish Sources (top 10) ===")
     for s, n in sorted(bear_sources.items(), key=lambda x: -x[1])[:10]:

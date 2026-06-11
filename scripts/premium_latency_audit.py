@@ -53,8 +53,8 @@ def _fmt_seconds(s: float | None) -> str:
     if s < 60:
         return f"{s:.0f}s"
     if s < 3600:
-        return f"{s/60:.1f}min"
-    return f"{s/3600:.1f}h"
+        return f"{s / 60:.1f}min"
+    return f"{s / 3600:.1f}h"
 
 
 def _format_digest(stats) -> str:
@@ -68,13 +68,15 @@ def _format_digest(stats) -> str:
         f"max={_fmt_seconds(stats.max_seconds)}",
     ]
     if stats.trigger_fired:
-        body.extend([
-            "",
-            "⚠️  P2 #11 TRIGGER FIRED",
-            stats.trigger_reason,
-            "Next: nächste Claude-Session sollte P2 #11 starten",
-            "(siehe artifacts/p2_11_trigger.json + memory kai_premium_pipeline_backlog_20260514)",
-        ])
+        body.extend(
+            [
+                "",
+                "⚠️  P2 #11 TRIGGER FIRED",
+                stats.trigger_reason,
+                "Next: nächste Claude-Session sollte P2 #11 starten",
+                "(siehe artifacts/p2_11_trigger.json + memory kai_premium_pipeline_backlog_20260514)",
+            ]
+        )
     else:
         body.append("trigger #11: NO (threshold p95>20min, samples>=5)")
     return "\n".join(body)

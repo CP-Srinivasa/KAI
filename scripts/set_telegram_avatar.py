@@ -8,6 +8,7 @@ Aufruf (auf Pi 5):
     .venv/bin/python scripts/set_telegram_avatar.py /tmp/kai_avatar_square.mp4 \
         /home/kai/ai_analyst_trading_bot/web/public/assets/kai/master/kai_master_v1.png
 """
+
 from __future__ import annotations
 
 import asyncio

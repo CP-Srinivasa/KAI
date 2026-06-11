@@ -20,6 +20,7 @@ MAE/MFE: not persisted intra-trade. Optionally reconstructed from Binance 1m
 klines for liquid symbols (best-effort, network-gated). Everything else is
 marked not_reconstructable with a reason.
 """
+
 from __future__ import annotations
 
 import json
@@ -122,13 +123,16 @@ def _entry_index(events: list[dict]) -> dict:
             continue
         key = (sym, round(float(fp), 10))
         c = created_by_oid.get(o.get("order_id", ""), {})
-        idx.setdefault(key, {
-            "filled_at": o.get("filled_at") or o.get("timestamp_utc"),
-            "stop": c.get("stop_loss"),
-            "take": c.get("take_profit"),
-            "limit": c.get("limit_price"),
-            "order_id": o.get("order_id", ""),
-        })
+        idx.setdefault(
+            key,
+            {
+                "filled_at": o.get("filled_at") or o.get("timestamp_utc"),
+                "stop": c.get("stop_loss"),
+                "take": c.get("take_profit"),
+                "limit": c.get("limit_price"),
+                "order_id": o.get("order_id", ""),
+            },
+        )
     return idx
 
 
@@ -241,7 +245,7 @@ def compute_mae_mfe(trades: list[Trade]) -> None:
                 worst_adv, adv_t = adv, ms
         t.mfe_bps = round(best_fav, 1)
         t.mae_bps = round(worst_adv, 1)
-        t.mfe_before_mae = (fav_t is not None and adv_t is not None and fav_t <= adv_t)
+        t.mfe_before_mae = fav_t is not None and adv_t is not None and fav_t <= adv_t
         if t.take_dist_bps is not None:
             t.reached_take = best_fav >= t.take_dist_bps
         if t.stop_dist_bps is not None:
@@ -254,7 +258,7 @@ def agg(values: list[float]) -> dict:
         return {}
     vs = sorted(values)
     n = len(vs)
-    trim = vs[max(1, n // 10): n - max(1, n // 10)] if n >= 10 else vs
+    trim = vs[max(1, n // 10) : n - max(1, n // 10)] if n >= 10 else vs
     return {
         "n": n,
         "mean": round(statistics.fmean(vs), 1),
@@ -288,9 +292,13 @@ def main() -> None:
     events = load_events(AUDIT)
     # Cohort: quarantine-clean closed trades (same exclusions as edge_report).
     from app.observability import edge_report as er
+
     parsed = er.parse_closed_trades_with_exclusions(events)
-    clean = parsed.trades if hasattr(parsed, "trades") else (
-        parsed[0] if isinstance(parsed, tuple) else parsed)
+    clean = (
+        parsed.trades
+        if hasattr(parsed, "trades")
+        else (parsed[0] if isinstance(parsed, tuple) else parsed)
+    )
     excluded_n = None
     for attr in ("excluded", "excluded_trades", "quarantined", "exclusions", "excluded_count"):
         v = getattr(parsed, attr, None)
@@ -325,8 +333,16 @@ def main() -> None:
             "total_pnl_usd": round(total, 1),
             "total_pnl_without_best_trade": round(wo_best, 1),
             "total_pnl_without_worst_trade": round(wo_worst, 1),
-            "best_trade": {"symbol": best.symbol, "pnl": round(best.trade_pnl_usd, 1), "gross_bps": round(best.gross_bps, 1)},
-            "worst_trade": {"symbol": worst.symbol, "pnl": round(worst.trade_pnl_usd, 1), "gross_bps": round(worst.gross_bps, 1)},
+            "best_trade": {
+                "symbol": best.symbol,
+                "pnl": round(best.trade_pnl_usd, 1),
+                "gross_bps": round(best.gross_bps, 1),
+            },
+            "worst_trade": {
+                "symbol": worst.symbol,
+                "pnl": round(worst.trade_pnl_usd, 1),
+                "gross_bps": round(worst.gross_bps, 1),
+            },
         },
         "geometry": {
             "stop_dist_bps": agg([t.stop_dist_bps for t in trades if t.stop_dist_bps is not None]),
@@ -349,12 +365,24 @@ def main() -> None:
             "n_reconstructed": len(ok),
             "mae_bps": agg([t.mae_bps for t in ok if t.mae_bps is not None]),
             "mfe_bps": agg([t.mfe_bps for t in ok if t.mfe_bps is not None]),
-            "pct_mfe_reached_take": round(sum(1 for t in ok if t.reached_take) / len(ok), 3) if ok else None,
-            "pct_mae_reached_stop": round(sum(1 for t in ok if t.reached_stop) / len(ok), 3) if ok else None,
-            "pct_mfe_before_mae": round(sum(1 for t in ok if t.mfe_before_mae) / len(ok), 3) if ok else None,
+            "pct_mfe_reached_take": round(sum(1 for t in ok if t.reached_take) / len(ok), 3)
+            if ok
+            else None,
+            "pct_mae_reached_stop": round(sum(1 for t in ok if t.reached_stop) / len(ok), 3)
+            if ok
+            else None,
+            "pct_mfe_before_mae": round(sum(1 for t in ok if t.mfe_before_mae) / len(ok), 3)
+            if ok
+            else None,
             "median_mfe_of_stopped_trades": (
-                round(statistics.median([t.mfe_bps for t in ok if "stop" in t.reason and t.mfe_bps is not None]), 1)
-                if [t for t in ok if "stop" in t.reason] else None
+                round(
+                    statistics.median(
+                        [t.mfe_bps for t in ok if "stop" in t.reason and t.mfe_bps is not None]
+                    ),
+                    1,
+                )
+                if [t for t in ok if "stop" in t.reason]
+                else None
             ),
         }
 

@@ -32,8 +32,7 @@ async def main() -> int:
     cfg = get_settings().telegram_channel_ingest
     if not cfg.api_id or not cfg.api_hash:
         print(
-            "ERROR: INGESTION_TELEGRAM_CHANNEL_API_ID und _API_HASH "
-            "muessen in .env gesetzt sein.",
+            "ERROR: INGESTION_TELEGRAM_CHANNEL_API_ID und _API_HASH muessen in .env gesetzt sein.",
             file=sys.stderr,
         )
         return 1

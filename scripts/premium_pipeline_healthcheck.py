@@ -59,11 +59,7 @@ def _format_alert(report) -> str:
     ]
     for check in report.checks:
         marker = "OK  " if check.ok else "FAIL"
-        age = (
-            f" age={check.age_seconds:.1f}s"
-            if check.age_seconds is not None
-            else ""
-        )
+        age = f" age={check.age_seconds:.1f}s" if check.age_seconds is not None else ""
         lines.append(f"{marker} {check.name}: {check.detail}{age}")
     lines.append("")
     lines.append("Next: sudo bash scripts/pi_install_systemd.sh --reactivate")
@@ -76,9 +72,7 @@ def _send_telegram(text: str) -> bool:
     if not token or not chat_id:
         logger.warning("ALERT_TELEGRAM_TOKEN/CHAT_ID missing — skipping send")
         return False
-    payload = urllib.parse.urlencode(
-        {"chat_id": chat_id, "text": text}
-    ).encode("utf-8")
+    payload = urllib.parse.urlencode({"chat_id": chat_id, "text": text}).encode("utf-8")
     req = urllib.request.Request(
         f"https://api.telegram.org/bot{token}/sendMessage",
         data=payload,

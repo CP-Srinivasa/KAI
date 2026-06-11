@@ -1,0 +1,15 @@
+# Daily audit-stream rotation at 04:40 (quiet window, after recalc/annotate
+# jobs). Installed but NOT enabled by default — enabling is a deliberate
+# operator step. Each run only rotates allowlisted streams above their size
+# thresholds; under-threshold runs are no-ops.
+[Unit]
+Description=KAI Audit Rotation — daily (archiving, off by default)
+Requires=kai-audit-rotate.service
+
+[Timer]
+OnCalendar=*-*-* 04:40:00
+Persistent=true
+AccuracySec=5min
+
+[Install]
+WantedBy=timers.target
