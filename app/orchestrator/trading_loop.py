@@ -93,74 +93,16 @@ def derive_autonomous_signal_source(document_id: str | None) -> str:
     return SOURCE_UNKNOWN
 
 
-def _is_opening_fill(record: dict[str, object]) -> bool:
-    """True when an ``order_filled`` audit row represents a NEW entry (opening).
-
-    An opening fill increases exposure: a long is opened by a ``buy`` with
-    ``position_side="long"``; a short by a ``sell`` with ``position_side="short"``.
-    The opposite side/position_side combinations are exits (TP/SL/manual close)
-    and are deliberately NOT counted by the daily paper-entry cap. Rows that
-    predate the ``position_side`` audit field default to ``"long"`` (the engine
-    default), matching their historical long-only behaviour.
-    """
-    if record.get("event_type") != "order_filled":
-        return False
-    side = str(record.get("side") or "").lower()
-    position_side = str(record.get("position_side") or "long").lower()
-    return (side == "buy" and position_side == "long") or (
-        side == "sell" and position_side == "short"
-    )
-
-
-def count_paper_entries_today(audit_path: Path, *, now: datetime | None = None) -> int:
-    """Count autonomous opening paper fills that settled today (UTC).
-
-    Pure read of the paper-execution audit JSONL — no engine state mutation, no
-    side effects beyond reading the file. Mirrors the spirit of the
-    ``max_daily_loss`` day-bounded accounting: the window is the calendar UTC
-    day of ``now``. A missing/unreadable audit file yields 0 (fail-open ONLY for
-    the *count*; the caller decides the gate). Used by the
-    ``max_daily_paper_entries`` cap so a re-activated paper-learning stream
-    cannot open an unbounded number of positions per day.
-    """
-    now_utc = now or datetime.now(UTC)
-    today_prefix = now_utc.date().isoformat()
-    if not audit_path.exists():
-        return 0
-    count = 0
-    try:
-        with audit_path.open("r", encoding="utf-8") as handle:
-            for line in handle:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    record = json.loads(line)
-                except (ValueError, TypeError):
-                    continue
-                if not isinstance(record, dict):
-                    continue
-                ts = record.get("timestamp_utc")
-                if not isinstance(ts, str) or not ts.startswith(today_prefix):
-                    continue
-                if _is_opening_fill(record):
-                    count += 1
-    except OSError as exc:
-        logger.warning("[LOOP] paper-entry count read failed: %s", exc)
-        return 0
-    return count
-
-
-def _effective_daily_paper_cap(global_cap: int, feeder_cap: int) -> int:
-    """Combine two daily-entry caps to the stricter (smallest positive) bound.
-
-    Each cap uses 0 == UNLIMITED for its own axis. The effective cap is the
-    smallest positive of the two; if both are 0 the result is 0 (no cap). This
-    keeps either knob a no-op when left at default and lets the feeder-specific
-    cap tighten — never loosen — the global one.
-    """
-    positives = [c for c in (global_cap, feeder_cap) if c > 0]
-    return min(positives) if positives else 0
+# Sprint S7 god-file ratchet (D-234): paper-entry accounting lives in
+# app/execution/paper_entry_accounting.py now — ONE opening-fill truth shared
+# with the entry-policy route limiter (which previously carried its own copy).
+# Re-exported here because tests + the daily-cap call sites import from the loop.
+from app.execution.paper_entry_accounting import (  # noqa: E402
+    count_paper_entries_today,
+)
+from app.execution.paper_entry_accounting import (  # noqa: E402
+    effective_daily_paper_cap as _effective_daily_paper_cap,
+)
 
 
 def _normalize_tv_symbol(raw: str) -> str:

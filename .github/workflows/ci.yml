@@ -34,6 +34,10 @@ jobs:
       # failures were fixed, so any new file is held to the same bar.
       - run: ruff check .
       - run: ruff format --check .
+      # S7 god-file ratchet (D-234): the five named god-files may only shrink.
+      # Growth requires an extraction in the same PR - or a conscious,
+      # diff-visible baseline raise the review has to justify.
+      - run: python scripts/godfile_ratchet.py
 
   test:
     name: Tests
