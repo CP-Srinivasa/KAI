@@ -1,0 +1,30 @@
+# KAI Shadow-Real Feed (Issue #175 wiring, Sprint S4 2026-06-11).
+#
+# Replays REAL analyzed documents through the SHADOW-mode loop so the real
+# SignalGenerator produces measurable shadow candidates (real_resolved starts
+# counting). Fail-safe: the driver is a no-op unless
+# EXECUTION_SHADOW_REAL_GENERATOR=true (default false); mode is hard-forced to
+# SHADOW — no order, no position, no fill. Installed but NOT enabled by default
+# (see pi_install_systemd.sh: present in UNITS, absent from ENABLE_ON_INSTALL).
+# Enabling the .timer is a deliberate operator step.
+[Unit]
+Description=KAI Shadow-Real Feed — replay real analyses through the shadow loop (flag-gated, off by default)
+After=network-online.target kai-server.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/ubuntu/ai_analyst_trading_bot
+Environment=PYTHONPATH=/home/ubuntu/ai_analyst_trading_bot
+EnvironmentFile=-/home/ubuntu/ai_analyst_trading_bot/.env
+
+ExecStart=/home/ubuntu/ai_analyst_trading_bot/.venv/bin/python /home/ubuntu/ai_analyst_trading_bot/scripts/shadow_real_feed_tick.py
+
+StandardOutput=journal
+StandardError=journal
+# The tick is bounded (limit=20 injections); systemd backstop so it can never wedge.
+TimeoutStartSec=600
+MemoryMax=512M
+CPUQuota=80%
