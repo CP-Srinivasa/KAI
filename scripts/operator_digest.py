@@ -212,6 +212,45 @@ def collect_v5_freshness() -> dict[str, Any]:
     return out
 
 
+def collect_promotion_gate(target: str = "paper") -> dict[str, Any]:
+    """Tägliche Routine-Konsultation des fail-closed Promotion-Gates (MUST-USE
+    Punkt 2, 2026-06-11): würde eine risiko-erhöhende Promotion auf ``target``
+    JETZT durchgehen? Read-only; das Gate ändert nie Zustand. Exit≠0 == BLOCKED
+    (fail-closed by design)."""
+    out_path = _ARTIFACTS / "promotion_gate_decision.json"
+    try:
+        proc = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "app.cli.main",
+                "trading",
+                "promotion-check",
+                "--target",
+                target,
+                "--out",
+                str(out_path),
+            ],
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        decision: dict[str, Any] = {}
+        if out_path.exists():
+            try:
+                decision = json.loads(out_path.read_text(encoding="utf-8"))
+            except (ValueError, OSError):
+                decision = {}
+        return {
+            "target": target,
+            "allowed": proc.returncode == 0,
+            "status": decision.get("status"),
+            "reason_codes": decision.get("reason_codes") or decision.get("reasons") or [],
+        }
+    except Exception as exc:  # noqa: BLE001
+        return {"target": target, "error": str(exc)}
+
+
 # ── Compose (pure, getestet) ─────────────────────────────────────────────────
 
 
@@ -226,6 +265,7 @@ def compose_digest_message(
     d227: dict[str, Any],
     v5_freshness: dict[str, Any],
     v5_activated_on: date,
+    promotion: dict[str, Any] | None = None,
 ) -> str:
     """Baut die EINE lesbare Operator-Nachricht. Pure Funktion — testbar."""
     lines: list[str] = [f"📡 *KAI Operator-Digest* — {today.isoformat()}"]
@@ -277,6 +317,48 @@ def compose_digest_message(
         lines.append(f"🧾 *D-227:* {raw} Events / {distinct} Docs (Details im Pull-Report)")
     else:
         lines.append(f"🧾 *D-227:* Fehler — {d227['error'][:80]}")
+
+    # Promotion-Gate Routine-Check (MUST-USE Punkt 2): das fail-closed Gate
+    # wird täglich konsultiert statt nur ad-hoc vor Promotionen.
+    if promotion is not None:
+        if promotion.get("error"):
+            lines.append(f"🛡️ *Promotion-Gate:* nicht prüfbar — {str(promotion['error'])[:80]}")
+        elif promotion.get("allowed"):
+            lines.append(
+                f"🛡️ *Promotion-Gate (→{promotion.get('target', '?')}):* ALLOWED — "
+                "eine Promotion wäre aktuell nicht durch Bleed/Unknown-Positionen blockiert."
+            )
+        else:
+            reasons = ", ".join(str(r) for r in (promotion.get("reason_codes") or [])[:4])
+            lines.append(
+                f"🛡️ *Promotion-Gate (→{promotion.get('target', '?')}):* BLOCKED"
+                + (f" — {reasons}" if reasons else " (fail-closed)")
+            )
+
+    # Wöchentlicher D-227-Auswertungs-Loop (MUST-USE Punkt 1): montags die
+    # Block-Reason-Präzision als Entscheidungs-Futter für Gate-/Threshold-
+    # Reviews — die Entscheidung selbst bleibt beim Operator.
+    if today.isoweekday() == 1 and "error" not in d227:
+        axis = d227.get("hit_miss_by_block_reason") or []
+        reviewable = [
+            r
+            for r in axis
+            if isinstance(r, dict)
+            and (r.get("resolved") or 0) >= 5
+            and r.get("precision_pct") is not None
+        ]
+        if reviewable:
+            reviewable.sort(key=lambda r: -(r.get("resolved") or 0))
+            lines.append("📊 *D-227-Wochenreview (Block-Reason → Precision):*")
+            for r in reviewable[:5]:
+                lines.append(
+                    f"  • {r.get('block_reason')}: {r.get('precision_pct')}% "
+                    f"({r.get('hit')}/{r.get('resolved')} hits, n={r.get('resolved')})"
+                )
+            lines.append(
+                "  ↳ hohe Precision bei hartem Block = Kandidat für Gate-Review; "
+                "niedrige bestätigt den Block."
+            )
 
     # V5-Evidence-Frische.
     fund_age, oi_age = v5_freshness.get("funding"), v5_freshness.get("oi")
@@ -364,6 +446,7 @@ def main(argv: list[str] | None = None) -> int:
             shadow_report=collect_shadow_report(),
             d227=collect_d227(),
             v5_freshness=collect_v5_freshness(),
+            promotion=collect_promotion_gate(),
             v5_activated_on=v5_activated_on,
         )
     except Exception:  # noqa: BLE001 — entrypoint boundary
