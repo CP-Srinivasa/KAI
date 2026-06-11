@@ -38,6 +38,7 @@ _REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
+from app.core.domain.document import CanonicalDocument  # noqa: E402
 from app.core.settings import get_settings  # noqa: E402
 from app.observability.shadow_real_feed import run_shadow_real_feed  # noqa: E402
 from app.storage.db.session import build_session_factory  # noqa: E402
@@ -58,7 +59,7 @@ _MAX_DOC_FETCH = 20000
 _LIMIT_PER_TICK = 20
 
 
-async def _fetch_recent_analyzed() -> list[object]:
+async def _fetch_recent_analyzed() -> list[CanonicalDocument]:
     """Fetch recent analyzed, non-duplicate documents (only called flag-ON)."""
     settings = get_settings()
     oldest = datetime.now(UTC) - timedelta(hours=_FRESHNESS_HOURS)
