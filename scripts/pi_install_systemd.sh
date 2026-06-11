@@ -73,6 +73,8 @@ UNITS=(
     "kai-shadow-real-feed.timer"
     "kai-audit-rotate.service"
     "kai-audit-rotate.timer"
+    "kai-operator-digest.service"
+    "kai-operator-digest.timer"
 )
 
 # NOTE: kai-funding-refresh.timer (V5 microstructure evidence) is intentionally
@@ -94,6 +96,9 @@ UNITS=(
 # ABSENT from ENABLE_ON_INSTALL — installed but disabled by default. Even when
 # enabled it only ARCHIVES allowlisted oversized streams (tail-preserving,
 # nothing deleted; paper_execution_audit hard-excluded as engine replay-SSOT).
+# NOTE: kai-operator-digest.timer (S6) is intentionally ABSENT from
+# ENABLE_ON_INSTALL — installed but disabled by default. Read-only digest;
+# sends one Telegram message per day once the operator enables it.
 ENABLE_ON_INSTALL=(
     "kai-server.service"
     "kai-agent-worker.service"

@@ -163,3 +163,94 @@ describe("highestTruthTone", () => {
     expect(highestTruthTone(deriveTruthChips(quality(), regime, gate()))).toBe("critical");
   });
 });
+
+describe("entryModeChip (S6, #157 Scope-Luecke + D-233-Modi)", () => {
+  it("zeigt disabled mit Alias-Routen als kontrollierten Info-Zustand", () => {
+    const q = quality({
+      runtime: {
+        entry_mode: "disabled",
+        entry_mode_label: "disabled — Kill-Switch",
+        autonomous_loop_open: false,
+        open_routes: [
+          { route: "premium_paper", alias_used: "premium_three_arm_ack" },
+          { route: "real_analysis_paper", alias_used: "real_analysis_three_arm_ack" },
+        ],
+        contradictions: [],
+      },
+    });
+    const chip = deriveTruthChips(q, regime, gate()).find((c) => c.key === "entry-mode")!;
+    expect(chip.value).toBe("disabled · 2 Route(n) via Ack");
+    expect(chip.tone).toBe("info");
+    expect(chip.hint).toContain("D-233");
+  });
+
+  it("zeigt disabled ohne offene Routen als warn (alles zu)", () => {
+    const q = quality({
+      runtime: {
+        entry_mode: "disabled",
+        entry_mode_label: "disabled — Kill-Switch",
+        autonomous_loop_open: false,
+        open_routes: [],
+        contradictions: [],
+      },
+    });
+    const chip = deriveTruthChips(q, regime, gate()).find((c) => c.key === "entry-mode")!;
+    expect(chip.value).toBe("disabled · alles zu");
+    expect(chip.tone).toBe("warn");
+  });
+
+  it("zeigt die neuen D-233-Modi als info mit Label", () => {
+    const q = quality({
+      runtime: {
+        entry_mode: "paper_learning",
+        entry_mode_label: "paper-learning (Premium + Real-Analysis)",
+        autonomous_loop_open: false,
+        open_routes: [
+          { route: "premium_paper", alias_used: null },
+          { route: "real_analysis_paper", alias_used: null },
+        ],
+        contradictions: [],
+      },
+    });
+    const chip = deriveTruthChips(q, regime, gate()).find((c) => c.key === "entry-mode")!;
+    expect(chip.value).toBe("paper-learning (Premium + Real-Analysis)");
+    expect(chip.tone).toBe("info");
+    expect(chip.hint).toContain("Loop zu");
+  });
+
+  it("zeigt Kontradiktionen als critical", () => {
+    const q = quality({
+      runtime: {
+        entry_mode: "paper_premium_limited",
+        entry_mode_label: "paper (nur Premium-Route)",
+        open_routes: [],
+        contradictions: ["fastlane_enabled_in_limited_paper_mode"],
+      },
+    });
+    const chip = deriveTruthChips(q, regime, gate()).find((c) => c.key === "entry-mode")!;
+    expect(chip.tone).toBe("critical");
+    expect(chip.value).toContain("KONTRADIKTION");
+  });
+
+  it("degradiert ehrlich ohne Runtime-Block", () => {
+    const chip = deriveTruthChips(quality(), regime, gate()).find((c) => c.key === "entry-mode")!;
+    expect(chip.value).toBe("unbekannt");
+    expect(chip.tone).toBe("muted");
+  });
+});
+
+describe("shadowAttributionChip (S6 Canary-Attribution)", () => {
+  it("warnt, wenn alle 24h-Kandidaten Proben sind (Vorfallklasse 2026-06-03)", () => {
+    const q = quality({ shadow_attribution: { real_candidates_24h: 0, probe_candidates_24h: 42 } });
+    const chip = deriveTruthChips(q, regime, gate()).find((c) => c.key === "shadow-attribution")!;
+    expect(chip.value).toBe("0 real · 42 probe");
+    expect(chip.tone).toBe("warn");
+  });
+
+  it("zeigt real-vs-probe als info, sobald echte Kandidaten da sind", () => {
+    const q = quality({ shadow_attribution: { real_candidates_24h: 7, probe_candidates_24h: 393 } });
+    const chip = deriveTruthChips(q, regime, gate()).find((c) => c.key === "shadow-attribution")!;
+    expect(chip.value).toBe("7 real · 393 probe");
+    expect(chip.tone).toBe("info");
+  });
+});

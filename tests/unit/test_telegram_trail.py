@@ -9,9 +9,11 @@ from app.messaging.signal_trail import format_signal_trail_message
 
 
 def test_format_signal_trail_empty_logs(tmp_path: Path) -> None:
-    # No logs exist -> should return helpful instructions
+    # No logs exist -> should return helpful instructions. Since S6 the no-arg
+    # answer is premium-first: an honest empty premium summary + usage hint.
     res = format_signal_trail_message("", tmp_path)
-    assert "Keine kürzlichen Signale gefunden" in res
+    assert "keine Premium-Signale" in res
+    assert "/trail <signal_id>" in res
 
 
 def test_format_signal_trail_recent_list(tmp_path: Path) -> None:

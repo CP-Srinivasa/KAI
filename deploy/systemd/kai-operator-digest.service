@@ -1,0 +1,27 @@
+# KAI Operator-Digest (Sprint S6, 2026-06-11).
+#
+# Composes ONE readable Telegram message per day: entry-mode/routes (D-233),
+# paper learning streams (24h fills by source), premium bridge stages, the
+# shadow-real funnel (#175), D-227 totals, V5 evidence freshness AND the
+# evaluation milestones with auto-detection (V5 day X/7 review, edge-report
+# due at real_resolved >= 25). Read-only; sends via ALERT_TELEGRAM_TOKEN/
+# ALERT_TELEGRAM_CHAT_ID. Installed but NOT enabled by default.
+[Unit]
+Description=KAI Operator-Digest — one readable daily status message (off by default)
+After=network-online.target kai-server.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/ubuntu/ai_analyst_trading_bot
+Environment=PYTHONPATH=/home/ubuntu/ai_analyst_trading_bot
+EnvironmentFile=-/home/ubuntu/ai_analyst_trading_bot/.env
+
+ExecStart=/home/ubuntu/ai_analyst_trading_bot/.venv/bin/python /home/ubuntu/ai_analyst_trading_bot/scripts/operator_digest.py
+
+StandardOutput=journal
+StandardError=journal
+TimeoutStartSec=300
+MemoryMax=512M
