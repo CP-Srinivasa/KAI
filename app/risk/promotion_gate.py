@@ -39,15 +39,17 @@ PROMOTION_BLOCKED_MISSING_ARTIFACT = "PROMOTION_BLOCKED_MISSING_ARTIFACT"
 STATUS_ALLOWED = "allowed"
 STATUS_MANUAL_REVIEW = "manual_review_required"
 
-# Ladder rank (least -> most permissive). A promotion is risk-increasing when the
-# target rank is strictly greater than the current rank.
-_LADDER: tuple[EntryMode, ...] = (
-    EntryMode.DISABLED,
-    EntryMode.PAPER,
-    EntryMode.PROBE,
-    EntryMode.LIVE_LIMITED,
-    EntryMode.LIVE_NORMAL,
-)
+# Ladder rank (least -> most permissive). A promotion is risk-increasing when
+# the target rank is strictly greater than the current rank.
+#
+# D-233 follow-up fix (2026-06-11): derived from the EntryMode declaration
+# order instead of a hand-maintained copy — the enum IS the ladder (S3
+# deliberately inserted the limited paper modes between DISABLED and PAPER).
+# The hand-copied tuple missed paper_premium_limited/paper_learning, so
+# ``_rank`` raised ValueError for the very mode the Pi now runs; deriving it
+# makes a future mode unrankable only if it is missing from the enum itself,
+# which the invariant test below pins.
+_LADDER: tuple[EntryMode, ...] = tuple(EntryMode)
 
 
 def _rank(mode: EntryMode) -> int:

@@ -133,3 +133,55 @@ def test_message_respects_telegram_limit() -> None:
     msg = _compose(fills_by_source=huge)
     assert len(msg) <= 4001
     assert "gekürzt" in msg
+
+
+def test_promotion_gate_line_allowed_and_blocked() -> None:
+    msg = _compose(promotion={"target": "paper", "allowed": True, "reason_codes": []})
+    assert "Promotion-Gate (→paper):* ALLOWED" in msg
+    msg = _compose(
+        promotion={
+            "target": "paper",
+            "allowed": False,
+            "reason_codes": ["UNREALIZED_BLEED", "DATA_UNKNOWN"],
+        }
+    )
+    assert "Promotion-Gate (→paper):* BLOCKED — UNREALIZED_BLEED, DATA_UNKNOWN" in msg
+
+
+def test_weekly_d227_review_only_on_mondays_with_sufficient_n() -> None:
+    d227 = {
+        "raw_events_count": 100,
+        "distinct_document_id_count": 50,
+        "hit_miss_by_block_reason": [
+            {
+                "block_reason": "bearish_directional_disabled",
+                "hit": 6,
+                "miss": 4,
+                "resolved": 10,
+                "precision_pct": 60.0,
+            },
+            {
+                "block_reason": "not_actionable",
+                "hit": 1,
+                "miss": 19,
+                "resolved": 20,
+                "precision_pct": 5.0,
+            },
+            {
+                "block_reason": "tiny_bucket",
+                "hit": 1,
+                "miss": 1,
+                "resolved": 2,
+                "precision_pct": 50.0,
+            },
+        ],
+    }
+    # Montag 2026-06-15 → Review-Sektion, n>=5-Buckets, größte zuerst, tiny raus
+    msg = _compose(today=date(2026, 6, 15), d227=d227)
+    assert "D-227-Wochenreview" in msg
+    assert msg.index("not_actionable") < msg.index("bearish_directional_disabled")
+    assert "tiny_bucket" not in msg
+    assert "Kandidat für Gate-Review" in msg
+    # Dienstag → keine Review-Sektion
+    msg = _compose(today=date(2026, 6, 16), d227=d227)
+    assert "D-227-Wochenreview" not in msg

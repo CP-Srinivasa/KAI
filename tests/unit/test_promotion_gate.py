@@ -182,3 +182,23 @@ def test_decision_to_dict_shape() -> None:
     assert out["target_mode"] == "paper"
     assert out["risk_increasing"] is True
     assert isinstance(out["reason_codes"], list)
+
+
+def test_every_entry_mode_is_rankable_and_ladder_order_holds() -> None:
+    """D-233 follow-up (2026-06-11): the hand-copied ladder missed the limited
+    paper modes — _rank(paper_learning) raised ValueError, so the gate could
+    not even evaluate the mode the Pi actually runs. The ladder is now derived
+    from the enum; this pins (a) every mode is rankable, (b) the limited modes
+    sit strictly between disabled and paper, (c) live stays on top."""
+    from app.risk.promotion_gate import _rank
+
+    for mode in EntryMode:
+        _rank(mode)  # must never raise
+
+    assert is_risk_increasing(EntryMode.DISABLED, EntryMode.PAPER_PREMIUM_LIMITED)
+    assert is_risk_increasing(EntryMode.PAPER_PREMIUM_LIMITED, EntryMode.PAPER_LEARNING)
+    assert is_risk_increasing(EntryMode.PAPER_LEARNING, EntryMode.PAPER)
+    assert is_risk_increasing(EntryMode.PAPER_LEARNING, EntryMode.LIVE_LIMITED)
+    # de-risking directions are never gated
+    assert not is_risk_increasing(EntryMode.PAPER_LEARNING, EntryMode.DISABLED)
+    assert not is_risk_increasing(EntryMode.PAPER, EntryMode.PAPER_LEARNING)
