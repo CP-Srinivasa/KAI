@@ -25,6 +25,7 @@ from app.market_data.base import BaseMarketDataAdapter
 from app.market_data.models import (
     OHLCV,
     FundingRateSnapshot,
+    LongShortRatioSnapshot,
     OpenInterestSnapshot,
     Ticker,
 )
@@ -275,6 +276,46 @@ class BinanceFuturesAdapter(BaseMarketDataAdapter):
             timestamp_utc=observed,
             open_interest=latest_oi,
             oi_change_zscore=zscore,
+            source="binance",
+        )
+
+    async def get_long_short_ratio(
+        self, symbol: str, *, interval: str = "1h"
+    ) -> LongShortRatioSnapshot | None:
+        """Long/Short-Account-Ratio (Goal V5 Phase 3).
+
+        Source: ``GET /futures/data/globalLongShortAccountRatio?period=<interval>``
+        which returns a list ordered **oldest-first**, each row
+        ``{"longAccount": "<0..1>", "shortAccount": "<0..1>",
+        "longShortRatio": "<x>", "timestamp": <ms>}``. We take the **last**
+        element (freshest bucket). ``longAccount`` is already a *fraction*
+        (Anteil long-Accounts) — no ×100, no double scaling.
+
+        Fail-safe: any transport/HTTP/parse/empty case ⇒ ``None``. Never raises.
+        """
+        sym = _normalize_symbol(symbol)
+        if not sym:
+            self.last_error = "empty_symbol"
+            return None
+        rows = await self._get_json(
+            "/futures/data/globalLongShortAccountRatio",
+            {"symbol": sym, "period": interval, "limit": "1"},
+        )
+        if rows is None:
+            return None
+        if not isinstance(rows, list) or not rows:
+            self.last_error = "no_account_ratio"
+            return None
+        tail = rows[-1] if isinstance(rows[-1], dict) else {}
+        ratio = _opt_float(tail.get("longAccount"))
+        if ratio is None:
+            self.last_error = "ls_ratio_parse_error"
+            return None
+        observed = _ms_to_iso(tail.get("timestamp")) or datetime.now(UTC).isoformat()
+        return LongShortRatioSnapshot(
+            symbol=_canonical_symbol(sym),
+            timestamp_utc=observed,
+            long_account_ratio=ratio,
             source="binance",
         )
 

@@ -13,12 +13,22 @@ import pytest
 
 from app.core.domain.document import AnalysisResult
 from app.core.enums import SentimentLabel
-from app.core.settings import FundingEvidenceSettings, OpenInterestEvidenceSettings
-from app.market_data.models import FundingRateSnapshot, MarketDataPoint, OpenInterestSnapshot
+from app.core.settings import (
+    FundingEvidenceSettings,
+    LongShortRatioEvidenceSettings,
+    OpenInterestEvidenceSettings,
+)
+from app.market_data.models import (
+    FundingRateSnapshot,
+    LongShortRatioSnapshot,
+    MarketDataPoint,
+    OpenInterestSnapshot,
+)
 from app.signals.bayesian_confidence import EvidenceKind
 from app.signals.composite_evidence_wiring import build_composite_evidence_provider
 from app.signals.funding_snapshot_store import FundingSnapshotStore
 from app.signals.funding_wiring import build_funding_evidence_provider
+from app.signals.ls_snapshot_store import LongShortRatioSnapshotStore
 from app.signals.models import SignalDirection
 from app.signals.oi_snapshot_store import OpenInterestSnapshotStore
 
@@ -91,6 +101,28 @@ def _seed_oi(tmp_path: Path) -> None:
                 timestamp_utc=datetime.now(UTC).isoformat(),
                 open_interest=12345.0,
                 oi_change_zscore=2.0,
+                source="bybit",
+            )
+        ]
+    )
+
+
+def _ls_settings(tmp_path: Path, *, enabled: bool) -> LongShortRatioEvidenceSettings:
+    return LongShortRatioEvidenceSettings(
+        enabled=enabled,
+        source_trust=0.5,
+        snapshot_path=tmp_path / "ls.json",
+        shadow_log_path=tmp_path / "ls_shadow.jsonl",
+    )
+
+
+def _seed_ls(tmp_path: Path) -> None:
+    LongShortRatioSnapshotStore(tmp_path / "ls.json").write_many(
+        [
+            LongShortRatioSnapshot(
+                symbol="BTC/USDT",
+                timestamp_utc=datetime.now(UTC).isoformat(),
+                long_account_ratio=0.70,
                 source="bybit",
             )
         ]
@@ -170,3 +202,96 @@ def test_both_on_one_missing_snapshot_still_yields_other(tmp_path: Path) -> None
     assert composite is not None
     ev = composite(_analysis(), _md(), SignalDirection.LONG)
     assert [e.kind for e in ev] == [EvidenceKind.FUNDING_RATE]
+
+
+# ── Phase 3: 3-source composite — all 8 enable-combinations ───────────────────
+# Beweist: die 4 bestehenden Funding/OI-Kombinationen regressen NICHT (gleiche
+# Evidence-Kinds/Reihenfolge), und L/S häng deterministisch als dritte Quelle
+# hinten an (Reihenfolge Funding → OI → LS).
+
+_F = EvidenceKind.FUNDING_RATE
+_O = EvidenceKind.OPEN_INTEREST
+_L = EvidenceKind.LONG_SHORT_RATIO
+
+
+@pytest.mark.parametrize(
+    ("f_on", "o_on", "l_on", "expected_kinds"),
+    [
+        (False, False, False, None),  # nichts an → None
+        (True, False, False, [_F]),  # nur Funding (Phase-1, unverändert)
+        (False, True, False, [_O]),  # nur OI (Phase-2, unverändert)
+        (False, False, True, [_L]),  # nur LS (Phase-3)
+        (True, True, False, [_F, _O]),  # Funding+OI (Phase-1+2, unverändert)
+        (True, False, True, [_F, _L]),  # Funding+LS
+        (False, True, True, [_O, _L]),  # OI+LS
+        (True, True, True, [_F, _O, _L]),  # alle drei, feste Reihenfolge
+    ],
+)
+def test_all_eight_combinations(
+    tmp_path: Path,
+    f_on: bool,
+    o_on: bool,
+    l_on: bool,
+    expected_kinds: list[EvidenceKind] | None,
+) -> None:
+    if f_on:
+        _seed_funding(tmp_path)
+    if o_on:
+        _seed_oi(tmp_path)
+    if l_on:
+        _seed_ls(tmp_path)
+    composite = build_composite_evidence_provider(
+        _funding_settings(tmp_path, enabled=f_on),
+        _oi_settings(tmp_path, enabled=o_on),
+        _ls_settings(tmp_path, enabled=l_on),
+    )
+    if expected_kinds is None:
+        assert composite is None
+        return
+    assert composite is not None
+    ev = composite(_analysis(), _md(), SignalDirection.LONG)
+    assert [e.kind for e in ev] == expected_kinds
+
+
+def test_phase12_no_regression_with_ls_off(tmp_path: Path) -> None:
+    # Mit explizit ausgeschalteter LS-Quelle ist der Funding+OI-Pfad
+    # IDENTISCH zum Phase-2-Verhalten (byte-gleiche Evidence-Sequenz).
+    _seed_funding(tmp_path)
+    _seed_oi(tmp_path)
+    with_ls_arg = build_composite_evidence_provider(
+        _funding_settings(tmp_path, enabled=True),
+        _oi_settings(tmp_path, enabled=True),
+        _ls_settings(tmp_path, enabled=False),
+    )
+    legacy_2arg = build_composite_evidence_provider(
+        _funding_settings(tmp_path, enabled=True),
+        _oi_settings(tmp_path, enabled=True),
+    )
+    assert with_ls_arg is not None and legacy_2arg is not None
+    ev_a = with_ls_arg(_analysis(), _md(), SignalDirection.LONG)
+    ev_b = legacy_2arg(_analysis(), _md(), SignalDirection.LONG)
+    assert [e.kind for e in ev_a] == [e.kind for e in ev_b] == [_F, _O]
+    assert ev_a[0].value == pytest.approx(ev_b[0].value)
+    assert ev_a[1].value == pytest.approx(ev_b[1].value)
+
+
+def test_only_ls_on_does_not_regress(tmp_path: Path) -> None:
+    # Nur LS → der unveränderte LS-Sub-Provider wird DIREKT durchgereicht
+    # (keine Composite-Hülle), byte-identisch zum standalone-Provider.
+    from app.signals.ls_wiring import build_ls_evidence_provider
+
+    _seed_ls(tmp_path)
+    ls = _ls_settings(tmp_path, enabled=True)
+    composite = build_composite_evidence_provider(
+        _funding_settings(tmp_path, enabled=False),
+        _oi_settings(tmp_path, enabled=False),
+        ls,
+    )
+    standalone = build_ls_evidence_provider(ls)
+    assert composite is not None and standalone is not None
+    comp_ev = composite(_analysis(), _md(), SignalDirection.LONG)
+    std_ev = standalone(_analysis(), _md(), SignalDirection.LONG)
+    assert len(comp_ev) == len(std_ev) == 1
+    assert comp_ev[0].kind == std_ev[0].kind == EvidenceKind.LONG_SHORT_RATIO
+    assert comp_ev[0].value == pytest.approx(std_ev[0].value)
+    assert comp_ev[0].direction_aligned == std_ev[0].direction_aligned

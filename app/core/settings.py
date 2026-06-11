@@ -1147,6 +1147,44 @@ class OpenInterestEvidenceSettings(BaseSettings):
     refresh_timeout_seconds: float = Field(default=8.0, gt=0.0)
 
 
+class LongShortRatioEvidenceSettings(BaseSettings):
+    """Goal V5 Phase 3 — Long/Short-Account-Ratio als dritte orthogonale Evidence.
+
+    Default-off, measure-first — identische Disziplin wie
+    ``FundingEvidenceSettings`` / ``OpenInterestEvidenceSettings``: ein frisches
+    Deployment ändert NICHTS, bis der Operator opt-in macht.
+
+      - ``enabled=False`` (default): kein L/S-Provider → SignalGenerator
+        unverändert. Kein L/S-Refresh, kein Cache, kein Verhaltenswechsel.
+      - ``enabled=True``: der Loop liest den *warmen* L/S-Snapshot von Platte
+        (``snapshot_path``, geschrieben vom entkoppelten L/S-Refresh) und
+        verdrahtet den Provider. KEIN Inline-Netz-I/O im Loop.
+
+    ``source_trust`` konservativ 0.5: L/S-Account-Ratio ist retail-lastig und
+    verrauschter als OI/Funding → soll die Confidence anfangs nur leicht
+    verschieben. ``ttl_seconds`` (default 1 h) gated stale Snapshots aus (L/S-
+    Buckets sind 1h-Kadenz → 1h TTL ist der natürliche Frische-Rahmen).
+    ``interval`` ist die Bucket-Granularität, die der Refresh anfragt (nie der
+    Loop).
+    """
+
+    model_config = SettingsConfigDict(
+        env_prefix="APP_LS_EVIDENCE_",
+        env_file=".env",
+        extra="ignore",
+    )
+
+    enabled: bool = Field(default=False)
+    source_trust: float = Field(default=0.5, ge=0.0, le=1.0)
+    ttl_seconds: float = Field(default=3600.0, gt=0.0)
+    snapshot_path: Path = Field(default=Path("artifacts/ls_cache.json"))
+    shadow_log_path: Path = Field(default=Path("artifacts/ls_evidence_shadow.jsonl"))
+    # L/S bucket interval requested from the venues (refresh only).
+    interval: str = Field(default="1h")
+    # Per-venue HTTP timeout for the *refresh service* (never the loop).
+    refresh_timeout_seconds: float = Field(default=8.0, gt=0.0)
+
+
 class DiversificationSettings(BaseSettings):
     """Asset-diversification / concentration guard configuration.
 
@@ -1393,6 +1431,10 @@ class AppSettings(BaseSettings):
     funding_evidence: FundingEvidenceSettings = Field(default_factory=FundingEvidenceSettings)
     # Goal V5 Phase 2 — Open-Interest evidence. Default-off, measure-first.
     oi_evidence: OpenInterestEvidenceSettings = Field(default_factory=OpenInterestEvidenceSettings)
+    # Goal V5 Phase 3 — Long/Short-ratio evidence. Default-off, measure-first.
+    ls_evidence: LongShortRatioEvidenceSettings = Field(
+        default_factory=LongShortRatioEvidenceSettings
+    )
     # Asset-diversification / concentration guard. Default-off, shadow-first.
     diversification: DiversificationSettings = Field(default_factory=DiversificationSettings)
     # KYT transaction-risk prevention. Default-off, shadow-first.

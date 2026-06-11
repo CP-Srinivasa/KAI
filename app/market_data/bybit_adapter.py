@@ -32,6 +32,7 @@ from app.market_data.base import BaseMarketDataAdapter
 from app.market_data.models import (
     OHLCV,
     FundingRateSnapshot,
+    LongShortRatioSnapshot,
     MarketDataSnapshot,
     OpenInterestSnapshot,
     Ticker,
@@ -304,6 +305,53 @@ class BybitAdapter(BaseMarketDataAdapter):
             timestamp_utc=observed,
             open_interest=latest_oi,
             oi_change_zscore=zscore,
+            source="bybit",
+        )
+
+    async def get_long_short_ratio(
+        self, symbol: str, *, interval: str = "1h"
+    ) -> LongShortRatioSnapshot | None:
+        """Long/Short-Account-Ratio via ``GET /v5/market/account-ratio``.
+
+        Bybit returns ``result.list`` ordered **newest-first**, each row
+        ``{"buyRatio": "<0..1>", "sellRatio": "<0..1>", "timestamp": "<ms>"}``.
+        We take ``rows[0]`` (the freshest bucket). ``buyRatio`` is already a
+        *fraction* (Anteil long-Accounts) — no ×100, no double scaling.
+
+        Fail-safe: any transport/parse/empty case ⇒ ``None`` (the refresh
+        service skips the symbol; the loop never sees an exception). Never
+        raises.
+        """
+        bybit_sym = _normalize_symbol(symbol)
+        if not bybit_sym:
+            self.last_error = "empty_symbol"
+            return None
+        data = await self._get(
+            "/v5/market/account-ratio",
+            {
+                "category": "linear",
+                "symbol": bybit_sym,
+                "period": interval,
+                "limit": "1",
+            },
+        )
+        if data is None:
+            return None
+        result = data.get("result") or {}
+        rows = result.get("list") or []
+        if not isinstance(rows, list) or not rows or not isinstance(rows[0], dict):
+            self.last_error = "no_account_ratio"
+            return None
+        head = rows[0]
+        ratio = _opt_float(head.get("buyRatio"))
+        if ratio is None:
+            self.last_error = "ls_ratio_parse_error"
+            return None
+        observed = _ms_to_iso(head.get("timestamp")) or datetime.now(UTC).isoformat()
+        return LongShortRatioSnapshot(
+            symbol=_canonical_symbol(bybit_sym),
+            timestamp_utc=observed,
+            long_account_ratio=ratio,
             source="bybit",
         )
 

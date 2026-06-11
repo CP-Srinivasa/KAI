@@ -89,6 +89,28 @@ class OpenInterestSnapshot:
 
 
 @dataclass(frozen=True)
+class LongShortRatioSnapshot:
+    """Perpetual-Futures Long/Short-Account-Ratio-Beobachtung (Goal V5 Phase 3).
+
+    ``long_account_ratio`` ist der Anteil der Accounts, die long positioniert
+    sind, als **Anteil** ∈ [0, 1] — Binance ``/futures/data/globalLongShort
+    AccountRatio`` liefert ``longAccount`` bereits als Anteil, Bybit
+    ``/v5/market/account-ratio`` ``buyRatio`` ebenfalls. KEINE Prozent-
+    Skalierung (kein ×100): beide Quellen sind bereits 0..1.
+
+    Es ist der **aktuellste** Datenpunkt der Quelle (latest bucket). Anders als
+    OI braucht L/S keinen z-score — die contrarian-Evidence wird direkt aus dem
+    Abstand zu 0.5 abgeleitet (siehe ``build_long_short_ratio_evidence``). Der
+    Loop liest nur diesen Skalar von Platte — kein Netz-I/O.
+    """
+
+    symbol: str
+    timestamp_utc: str
+    long_account_ratio: float  # 0..1 (Anteil long-Accounts), NICHT Prozent
+    source: str = "unknown"
+
+
+@dataclass(frozen=True)
 class MarketDataPoint:
     """Single market data observation used in analysis."""
 

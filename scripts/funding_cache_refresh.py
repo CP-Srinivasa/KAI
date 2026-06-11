@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Entkoppelter Funding+OI Refresh-Service (Goal V5 Phase 1+2).
+"""Entkoppelter Funding+OI+L/S Refresh-Service (Goal V5 Phase 1+2+3).
 
 Zieht die aktuellen Perp-Funding-Raten (Bybit-first → Binance-Futures-
 Fallback) für eine bounded Symbol-Liste und schreibt sie atomar in den
@@ -11,6 +11,13 @@ und schreibt OI-Snapshots in den separaten ``OpenInterestSnapshotStore``
 (default ``artifacts/oi_cache.json``). Der z-score wird HIER vorberechnet, der
 Loop liest nur den Skalar — kein Loop-Bottleneck. Eigene Datei, weil OI/Funding
 verschiedene Kadenz/TTL haben (orthogonal).
+
+Phase 3: zieht zusätzlich die Long/Short-Account-Ratio (aktuellster Bucket) je
+Symbol und schreibt L/S-Snapshots in den separaten
+``LongShortRatioSnapshotStore`` (default ``artifacts/ls_cache.json``). L/S
+braucht keine Vorberechnung (roher ``long_account_ratio`` 0..1 genügt). Eigene
+Datei + eigene Kadenz/TTL — orthogonal zu Funding/OI. Ein Quell-Fehler blockt
+die jeweils anderen Caches NICHT (separate Läufe, worst exit wins).
 
 Warum ein eigener Service statt inline im Trading-Loop
 ======================================================
@@ -56,11 +63,16 @@ if str(_REPO_ROOT) not in sys.path:
 from app.core.settings import get_settings  # noqa: E402
 from app.market_data.models import (  # noqa: E402
     FundingRateSnapshot,
+    LongShortRatioSnapshot,
     OpenInterestSnapshot,
 )
 from app.signals.funding_snapshot_store import (  # noqa: E402
     FundingSnapshotStore,
     build_default_multi_venue_adapter,
+)
+from app.signals.ls_snapshot_store import (  # noqa: E402
+    LongShortRatioSnapshotStore,
+    build_default_ls_multi_venue_adapter,
 )
 from app.signals.oi_snapshot_store import (  # noqa: E402
     OpenInterestSnapshotStore,
@@ -216,13 +228,79 @@ def _run_oi(symbols: list[str]) -> int:
     return 0
 
 
+async def _refresh_ls(
+    symbols: list[str], timeout_seconds: float, *, interval: str
+) -> list[LongShortRatioSnapshot]:
+    adapter = build_default_ls_multi_venue_adapter(
+        timeout_seconds=timeout_seconds, interval=interval
+    )
+    out: list[LongShortRatioSnapshot] = []
+    for sym in symbols:
+        try:
+            snap = await adapter.get_long_short_ratio(sym)
+        except Exception as exc:  # noqa: BLE001 — ein Symbol darf den Lauf nie killen
+            logger.warning("[ls-refresh] %s failed: %s", sym, exc)
+            continue
+        if snap is None:
+            logger.info("[ls-refresh] %s → no long/short ratio (skipped)", sym)
+            continue
+        out.append(snap)
+        logger.info(
+            "[ls-refresh] %s ratio=%.4f source=%s",
+            snap.symbol,
+            snap.long_account_ratio,
+            snap.source,
+        )
+    return out
+
+
+def _run_ls(symbols: list[str]) -> int:
+    settings = get_settings()
+    ls = settings.ls_evidence
+    store = LongShortRatioSnapshotStore(ls.snapshot_path)
+
+    logger.info(
+        "[ls-refresh] start symbols=%s timeout=%.1fs interval=%s snapshot=%s",
+        symbols,
+        ls.refresh_timeout_seconds,
+        ls.interval,
+        ls.snapshot_path,
+    )
+    try:
+        snaps = asyncio.run(
+            asyncio.wait_for(
+                _refresh_ls(symbols, ls.refresh_timeout_seconds, interval=ls.interval),
+                timeout=_GLOBAL_DEADLINE_SECONDS,
+            )
+        )
+    except TimeoutError:
+        logger.warning(
+            "[ls-refresh] global deadline %ss hit — old snapshot kept",
+            _GLOBAL_DEADLINE_SECONDS,
+        )
+        return 0
+    except Exception:  # noqa: BLE001
+        logger.exception("[ls-refresh] unexpected error")
+        return 2
+
+    if not snaps:
+        logger.warning("[ls-refresh] 0 symbols resolved — old snapshot kept")
+        return 0
+
+    written = store.write_many(snaps)
+    logger.info("[ls-refresh] wrote %d snapshots → %s", written, ls.snapshot_path)
+    return 0
+
+
 def main() -> int:
     symbols = _resolve_symbols()
-    # Funding + OI are warmed in one unit but write SEPARATE caches. A failure
-    # in one must not block the other (orthogonal evidences). Worst exit wins.
+    # Funding + OI + L/S are warmed in one unit but write SEPARATE caches. A
+    # failure in one must not block the others (orthogonal evidences). Each
+    # _run_* isolates its own exceptions; worst exit wins.
     rc_funding = _run_funding(symbols)
     rc_oi = _run_oi(symbols)
-    return max(rc_funding, rc_oi)
+    rc_ls = _run_ls(symbols)
+    return max(rc_funding, rc_oi, rc_ls)
 
 
 if __name__ == "__main__":
