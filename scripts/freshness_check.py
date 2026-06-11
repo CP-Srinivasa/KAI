@@ -99,9 +99,8 @@ def _read_external_skip() -> set[str]:
     Comma-separated probe names via env `KAI_FRESHNESS_EXTERNAL_SKIP` or in
     `.env`. Empty set → no skip (legacy behavior).
     """
-    raw = (
-        os.environ.get("KAI_FRESHNESS_EXTERNAL_SKIP", "").strip()
-        or _read_env_key("KAI_FRESHNESS_EXTERNAL_SKIP")
+    raw = os.environ.get("KAI_FRESHNESS_EXTERNAL_SKIP", "").strip() or _read_env_key(
+        "KAI_FRESHNESS_EXTERNAL_SKIP"
     )
     if not raw:
         return set()
@@ -191,9 +190,8 @@ def _request_sent_cf_access_token(response: httpx.Response) -> bool:
         request = response.request
     except RuntimeError:
         return False
-    return (
-        bool(request.headers.get("CF-Access-Client-Id"))
-        and bool(request.headers.get("CF-Access-Client-Secret"))
+    return bool(request.headers.get("CF-Access-Client-Id")) and bool(
+        request.headers.get("CF-Access-Client-Secret")
     )
 
 
@@ -277,7 +275,9 @@ def probe_one(
 
     if p.timestamp_field is None:
         if _is_cloudflare_access_login(r):
-            return Result(p.name, p.path, 200, None, None, "down", _cloudflare_access_note(r), scope)
+            return Result(
+                p.name, p.path, 200, None, None, "down", _cloudflare_access_note(r), scope
+            )
         return Result(p.name, p.path, 200, None, None, "no_ts", "", scope)
 
     try:
@@ -411,10 +411,7 @@ def main() -> int:
                 "no_ts": "[--]  ",
             }[r.state]
             extra = f"  ({r.note})" if r.note else ""
-            print(
-                f"  {tag}  {r.scope:8s} {r.name:24s} "
-                f"age={age}  http={r.http_status}{extra}"
-            )
+            print(f"  {tag}  {r.scope:8s} {r.name:24s} age={age}  http={r.http_status}{extra}")
 
     return exit_code
 

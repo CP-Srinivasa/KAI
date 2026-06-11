@@ -71,6 +71,8 @@ UNITS=(
     "kai-funding-refresh.timer"
     "kai-shadow-real-feed.service"
     "kai-shadow-real-feed.timer"
+    "kai-audit-rotate.service"
+    "kai-audit-rotate.timer"
 )
 
 # NOTE: kai-funding-refresh.timer (V5 microstructure evidence) is intentionally
@@ -88,6 +90,10 @@ UNITS=(
 # from ENABLE_ON_INSTALL below — installed but disabled by default. Even when
 # enabled it is a cheap no-op until EXECUTION_SHADOW_REAL_GENERATOR=true; the
 # armed tick runs SHADOW mode only (no order/position/fill, entry_mode untouched).
+# NOTE: kai-audit-rotate.timer (S5 audit-stream rotation) is intentionally
+# ABSENT from ENABLE_ON_INSTALL — installed but disabled by default. Even when
+# enabled it only ARCHIVES allowlisted oversized streams (tail-preserving,
+# nothing deleted; paper_execution_audit hard-excluded as engine replay-SSOT).
 ENABLE_ON_INSTALL=(
     "kai-server.service"
     "kai-agent-worker.service"

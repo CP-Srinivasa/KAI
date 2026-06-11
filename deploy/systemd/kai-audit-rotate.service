@@ -1,0 +1,25 @@
+# KAI Audit-Stream Rotation (Sprint S5, 2026-06-11).
+#
+# Size-based, ARCHIVING rotation of allowlisted artifacts/*.jsonl streams —
+# nothing is ever deleted; oversized files move to artifacts/archive/ and the
+# live file keeps its recent tail (TTL-window consumers unaffected).
+# paper_execution_audit.jsonl is HARD-EXCLUDED (engine replay-SSOT) — see
+# docs/runbooks/repo_hygiene_policy.md. Installed but NOT enabled by default.
+[Unit]
+Description=KAI Audit Rotation — archive oversized audit streams (allowlisted, tail-preserving)
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/ubuntu/ai_analyst_trading_bot
+Environment=PYTHONPATH=/home/ubuntu/ai_analyst_trading_bot
+EnvironmentFile=-/home/ubuntu/ai_analyst_trading_bot/.env
+
+ExecStart=/home/ubuntu/ai_analyst_trading_bot/.venv/bin/python /home/ubuntu/ai_analyst_trading_bot/scripts/audit_rotate.py --apply
+
+StandardOutput=journal
+StandardError=journal
+TimeoutStartSec=300
+MemoryMax=256M

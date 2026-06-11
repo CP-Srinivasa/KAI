@@ -29,8 +29,11 @@ jobs:
       # MAL-/CVE-Hidden-Inject-Pattern (MAL-2026-4750-Klasse, fastapi 0.136.3).
       - run: pip install --no-cache-dir -r requirements.lock
       - run: pip install -e . --no-deps
-      - run: ruff check app/ tests/
-      - run: ruff format --check app/ tests/
+      # S5 repo hygiene (Issue #172): lint gate covers the FULL repo (scripts/,
+      # brand/, monitor/, deploy helpers included) — pre-existing full-ruff
+      # failures were fixed, so any new file is held to the same bar.
+      - run: ruff check .
+      - run: ruff format --check .
 
   test:
     name: Tests

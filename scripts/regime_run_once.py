@@ -102,9 +102,7 @@ async def _run(args: argparse.Namespace) -> int:
     market_data = create_market_data_adapter(provider=args.provider)
     symbol_map = _parse_symbol_map(args.symbol_map)
     storage_dir = (
-        Path(args.storage_dir)
-        if not args.dry_run
-        else Path("/tmp/regime_dry_run")  # noqa: S108 — dry-run only
+        Path(args.storage_dir) if not args.dry_run else Path("/tmp/regime_dry_run")  # noqa: S108 — dry-run only
     )
     storage_dir.mkdir(parents=True, exist_ok=True)
 

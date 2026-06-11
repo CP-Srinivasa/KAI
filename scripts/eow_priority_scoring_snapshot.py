@@ -73,7 +73,15 @@ def cross_tab_alert_audit() -> str:
     }
     for rec in iter_jsonl(path):
         total += 1
-        ts = parse_ts(rec.get("timestamp_utc") or rec.get("dispatched_at") or rec.get("annotated_at") or rec.get("timestamp") or rec.get("ts") or rec.get("created_at") or rec.get("decided_at"))
+        ts = parse_ts(
+            rec.get("timestamp_utc")
+            or rec.get("dispatched_at")
+            or rec.get("annotated_at")
+            or rec.get("timestamp")
+            or rec.get("ts")
+            or rec.get("created_at")
+            or rec.get("decided_at")
+        )
         if ts and ts < WINDOW_START:
             continue
         in_window += 1
@@ -216,16 +224,24 @@ def env_snapshot() -> str:
 
 def git_head() -> str:
     try:
-        head = subprocess.check_output(
-            ["git", "-C", str(REPO), "log", "-1", "--oneline"],
-            stderr=subprocess.STDOUT,
-            timeout=5,
-        ).decode().strip()
-        branch = subprocess.check_output(
-            ["git", "-C", str(REPO), "branch", "--show-current"],
-            stderr=subprocess.STDOUT,
-            timeout=5,
-        ).decode().strip()
+        head = (
+            subprocess.check_output(
+                ["git", "-C", str(REPO), "log", "-1", "--oneline"],
+                stderr=subprocess.STDOUT,
+                timeout=5,
+            )
+            .decode()
+            .strip()
+        )
+        branch = (
+            subprocess.check_output(
+                ["git", "-C", str(REPO), "branch", "--show-current"],
+                stderr=subprocess.STDOUT,
+                timeout=5,
+            )
+            .decode()
+            .strip()
+        )
         return f"## Repo-Stand\n\n- branch: `{branch}`\n- HEAD: `{head}`\n"
     except (subprocess.CalledProcessError, subprocess.TimeoutExpired, FileNotFoundError) as e:
         return f"## Repo-Stand\n\n- git read failed: {e}\n"

@@ -3,6 +3,7 @@
 Listet alle Profilbilder des authenticated User-Accounts.
 Aendert NICHTS.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -32,7 +33,9 @@ async def main() -> int:
         return 4
 
     me = await client.get_me()
-    print(f"Account: first_name={me.first_name!r} last_name={me.last_name!r} username={me.username!r}")
+    print(
+        f"Account: first_name={me.first_name!r} last_name={me.last_name!r} username={me.username!r}"
+    )
     print(f"  id={me.id} premium={getattr(me, 'premium', False)}")
     print(f"  photo_attr={me.photo}")
 

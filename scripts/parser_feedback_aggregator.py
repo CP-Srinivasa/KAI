@@ -121,9 +121,7 @@ def format_alert(records: list[dict[str, object]], *, window_minutes: int = _WIN
             f"artifacts/telegram_channel_raw.jsonl)"
         )
     body_lines.append("")
-    body_lines.append(
-        "Next: Parser-Regex prüfen (app/ingestion/telegram_channel_parser.py)"
-    )
+    body_lines.append("Next: Parser-Regex prüfen (app/ingestion/telegram_channel_parser.py)")
     return head + "\n".join(body_lines)
 
 
@@ -132,9 +130,7 @@ def send_telegram(text: str) -> bool:
     token = os.environ.get("ALERT_TELEGRAM_TOKEN", "").strip()
     chat_id = os.environ.get("ALERT_TELEGRAM_CHAT_ID", "").strip()
     if not token or not chat_id:
-        logger.warning(
-            "ALERT_TELEGRAM_TOKEN/CHAT_ID missing — printing to stdout only"
-        )
+        logger.warning("ALERT_TELEGRAM_TOKEN/CHAT_ID missing — printing to stdout only")
         return False
     payload = urllib.parse.urlencode({"chat_id": chat_id, "text": text}).encode("utf-8")
     req = urllib.request.Request(
