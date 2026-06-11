@@ -94,3 +94,19 @@ def test_run_respects_allowlist_only(tmp_path: Path) -> None:
     results = audit_rotate.run(tmp_path, apply=True)  # thresholds are 20MB → no-ops
     assert all(r.rotated is False for r in results)
     assert rogue.exists() and allow.exists()
+
+
+def test_no_shrink_guard_skips_when_tail_covers_whole_file(tmp_path: Path) -> None:
+    """Calibration guard (first live run 2026-06-11): when keep_lines >= total
+    lines, rotation would archive a full copy WITHOUT shrinking the live file
+    every run — it must skip with an actionable reason instead."""
+    f = tmp_path / "stream.jsonl"
+    _write_lines(f, 50)
+    before = f.read_text(encoding="utf-8")
+    result = audit_rotate.rotate_stream(
+        f, max_bytes=100, keep_lines=50, archive_dir=tmp_path / "archive", apply=True
+    )
+    assert result.rotated is False
+    assert result.reason.startswith("tail_covers_whole_file:lines=50<=keep_lines=50")
+    assert f.read_text(encoding="utf-8") == before
+    assert not (tmp_path / "archive").exists()

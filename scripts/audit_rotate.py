@@ -53,14 +53,15 @@ ROTATION_RULES: tuple[RotationRule, ...] = (
     RotationRule(
         filename="bridge_pending_orders.jsonl",
         max_bytes=20 * _MB,
-        keep_lines=20_000,
+        keep_lines=5_000,
         rationale="bridge stage-lookup + trail join need the TTL window (24h); "
-        "20k lines cover multiple days at current volume",
+        "bridge rows average ~2.6KB (executable_intent payloads) and ~670 rows/day "
+        "— 5k lines ≈ a week (first live run 2026-06-11: 20k > whole file)",
     ),
     RotationRule(
         filename="telegram_message_envelope.jsonl",
         max_bytes=20 * _MB,
-        keep_lines=20_000,
+        keep_lines=5_000,
         rationale="bridge pending-scan honours a 24h TTL; older envelopes are inert",
     ),
     RotationRule(
@@ -119,10 +120,25 @@ def rotate_stream(
 
     with path.open("r", encoding="utf-8", errors="replace") as fh:
         tail: list[str] = []
+        total_lines = 0
         for line in fh:
+            total_lines += 1
             tail.append(line)
             if len(tail) > keep_lines:
                 tail.pop(0)
+
+    # No-shrink guard (calibration finding, first live run 2026-06-11): when the
+    # tail covers the WHOLE file, rotating would archive a full copy every run
+    # without shrinking the live file — archive bloat instead of hygiene. Skip
+    # and tell the operator to lower keep_lines for this stream.
+    if total_lines <= keep_lines:
+        return RotationResult(
+            path.name,
+            False,
+            f"tail_covers_whole_file:lines={total_lines}<=keep_lines={keep_lines}"
+            " — lower keep_lines for this stream",
+            size_bytes=size,
+        )
 
     archive_dir.mkdir(parents=True, exist_ok=True)
     path.rename(archive_path)
