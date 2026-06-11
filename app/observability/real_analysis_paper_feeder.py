@@ -106,6 +106,7 @@ async def run_real_analysis_paper_feed_once(
     candidates, funnel = select_real_analysis_candidates(
         docs,
         freshness_max_age_hours=cfg.freshness_max_age_hours,
+        min_priority=cfg.min_priority,
         now=now,
     )
 

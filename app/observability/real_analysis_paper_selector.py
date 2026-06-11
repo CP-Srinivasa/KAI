@@ -73,7 +73,7 @@ def _sentiment_str(doc: CanonicalDocument) -> str:
     return doc.sentiment_label.value if doc.sentiment_label else ""
 
 
-def _passes_quality_gates(doc: CanonicalDocument) -> tuple[bool, str | None]:
+def _passes_quality_gates(doc: CanonicalDocument, *, min_priority: int) -> tuple[bool, str | None]:
     """Run the directional quality gates for one document.
 
     - Bullish: the strict public ``evaluate_directional_eligibility`` (no D-142
@@ -83,10 +83,17 @@ def _passes_quality_gates(doc: CanonicalDocument) -> tuple[bool, str | None]:
       (priority, low-precision source, promo, weak, reactive narrative,
       asymmetric bearish confidence, asset resolution) still applies.
 
+    Paper-Learning P3 (Goal 2026-06-10): the D-122 LOW_PRIORITY gate is
+    parametrised for THIS feeder path only via ``low_priority_max=min_priority-1``
+    (block ``<= min_priority-1`` ⇔ block ``< min_priority``). The dispatch/metrics
+    callers never pass this and keep the hard ``<=7``. The other quality gates are
+    untouched.
+
     Returns ``(eligible, block_reason)``. ``block_reason`` is None when eligible.
     """
     sentiment = _sentiment_str(doc).lower()
     assets = list(doc.tickers or []) or list(getattr(doc, "crypto_assets", []) or [])
+    low_priority_max = min_priority - 1
     if sentiment == "bearish":
         decision = evaluate_directional_quality_gates(
             sentiment="bearish",
@@ -97,6 +104,7 @@ def _passes_quality_gates(doc: CanonicalDocument) -> tuple[bool, str | None]:
             directional_confidence=doc.directional_confidence,
             priority=doc.priority_score,
             source_name=doc.source_name,
+            low_priority_max=low_priority_max,
         )
     else:
         decision = evaluate_directional_eligibility(
@@ -109,6 +117,7 @@ def _passes_quality_gates(doc: CanonicalDocument) -> tuple[bool, str | None]:
             actionable=bool(doc.priority_score and doc.directional_confidence),
             priority=doc.priority_score,
             source_name=doc.source_name,
+            low_priority_max=low_priority_max,
         )
     if decision.directional_eligible is True:
         return True, None
@@ -119,6 +128,7 @@ def select_real_analysis_candidates(
     docs: Iterable[CanonicalDocument],
     *,
     freshness_max_age_hours: int,
+    min_priority: int = 10,
     now: datetime | None = None,
 ) -> tuple[list[RealAnalysisCandidate], dict[str, int]]:
     """Pure selection over already-fetched analysed docs. No DB / no IO.
@@ -129,6 +139,11 @@ def select_real_analysis_candidates(
     Dedup (B-004): documents are processed newest-first by published_at; the
     FIRST eligible candidate per document_id wins and later duplicates of the
     same id are counted as ``duplicate``. Returns (candidates, funnel counters).
+
+    Paper-Learning P3 (Goal 2026-06-10): ``min_priority`` is the feeder's
+    min-allowed-priority (default 10 ⇒ strict, current 0-fill behaviour). It is
+    forwarded to the Gate-1 LOW_PRIORITY override; only this feeder path is
+    affected.
     """
     now_utc = now or datetime.now(UTC)
     ordered = sorted(
@@ -164,7 +179,7 @@ def select_real_analysis_candidates(
         if symbol is None:
             funnel["no_symbol"] += 1
             continue
-        ok, _reason = _passes_quality_gates(doc)
+        ok, _reason = _passes_quality_gates(doc, min_priority=min_priority)
         if not ok:
             funnel["quality_blocked"] += 1
             continue

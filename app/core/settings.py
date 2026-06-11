@@ -616,6 +616,23 @@ class RealAnalysisPaperSettings(BaseSettings):
     # matches the eligibility-probe window.
     freshness_max_age_hours: int = Field(default=48, ge=1)
 
+    # Paper-Learning P3 (Goal 2026-06-10): the MINIMUM allowed priority for the
+    # real-analysis feeder, applied ONLY to source=real_analysis. Semantics:
+    # block when effective priority < min_priority (min-allowed-priority).
+    # This single threshold drives BOTH feeder gates:
+    #   - Gate 1 (eligibility selector): the directional LOW_PRIORITY block is
+    #     parametrised to ``min_priority - 1`` (block <= min_priority-1 ⇔
+    #     block < min_priority) ONLY for the feeder; every other caller keeps
+    #     the hard D-122 ``<=7``.
+    #   - Gate 2 (D-182 priority-tier gate in run_cycle): real_analysis cycles
+    #     use this threshold instead of the global execution.paper_min_priority;
+    #     all other sources keep the global value unchanged.
+    # Default 10 keeps the feeder STRICT (= current 0-fill behaviour). The
+    # operator sets REAL_ANALYSIS_PAPER_MIN_PRIORITY=5 to let P>=5 candidates
+    # (long AND short) through. The non-feeder dispatch/metrics/autonomous-loop
+    # paths are byte-identical regardless of this value.
+    min_priority: int = Field(default=10, ge=1, le=10)
+
 
 class PremiumFastlaneSettings(BaseSettings):
     """30-day Premium-Telegram Fastlane (Goal 2026-06-05).

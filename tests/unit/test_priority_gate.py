@@ -139,6 +139,71 @@ async def test_none_priority_allowed_at_default_threshold(
     assert cycle.status != CycleStatus.PRIORITY_REJECTED
 
 
+# --- Paper-Learning P3: Gate-2 source-aware threshold (Goal 2026-06-10) ---
+#
+# For source=real_analysis the D-182 gate uses real_analysis_paper.min_priority;
+# every other source keeps the global execution.paper_min_priority. entry_mode
+# defaults to PAPER here so the decoupling branch is skipped and Gate 2 is hit
+# directly — isolating the threshold-selection logic.
+
+
+@pytest.mark.asyncio
+async def test_p3_gate2_real_analysis_uses_feeder_threshold_blocks_p5(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """source=real_analysis + feeder min_priority=10 → a P5 analysis is rejected
+    at Gate 2, even though the GLOBAL paper_min_priority is the no-op 1."""
+    monkeypatch.setenv("EXECUTION_PAPER_MIN_PRIORITY", "1")
+    monkeypatch.setenv("REAL_ANALYSIS_PAPER_MIN_PRIORITY", "10")
+    loop = _loop(tmp_path)
+    cycle = await loop.run_cycle(_analysis(priority=5), "BTC/USDT", analysis_source="real_analysis")
+    assert cycle.status == CycleStatus.PRIORITY_REJECTED
+    assert any("priority_gate_reject:5" in n for n in cycle.notes)
+    assert any("threshold:10" in n for n in cycle.notes)
+
+
+@pytest.mark.asyncio
+async def test_p3_gate2_real_analysis_threshold5_allows_p5(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """source=real_analysis + feeder min_priority=5 → a P5 analysis passes Gate 2
+    (block < 5), while the global paper_min_priority stays at the strict 10."""
+    monkeypatch.setenv("EXECUTION_PAPER_MIN_PRIORITY", "10")
+    monkeypatch.setenv("REAL_ANALYSIS_PAPER_MIN_PRIORITY", "5")
+    loop = _loop(tmp_path)
+    cycle = await loop.run_cycle(_analysis(priority=5), "BTC/USDT", analysis_source="real_analysis")
+    assert cycle.status != CycleStatus.PRIORITY_REJECTED
+
+
+@pytest.mark.asyncio
+async def test_p3_gate2_other_source_keeps_global_threshold(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """INVARIANT: a non-feeder source (analysis_source=None, autonomous loop)
+    keeps the GLOBAL paper_min_priority and ignores the feeder threshold.
+    Global=10 blocks P8; the lenient feeder=5 must NOT leak into this path."""
+    monkeypatch.setenv("EXECUTION_PAPER_MIN_PRIORITY", "10")
+    monkeypatch.setenv("REAL_ANALYSIS_PAPER_MIN_PRIORITY", "5")
+    loop = _loop(tmp_path)
+    cycle = await loop.run_cycle(_analysis(priority=8), "BTC/USDT")
+    assert cycle.status == CycleStatus.PRIORITY_REJECTED
+    assert any("threshold:10" in n for n in cycle.notes)
+
+
+@pytest.mark.asyncio
+async def test_p3_gate2_feeder_default_strict_blocks_p5(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Default REAL_ANALYSIS_PAPER_MIN_PRIORITY (10) keeps the feeder strict:
+    a P5 real_analysis cycle is rejected without any env opt-in."""
+    monkeypatch.setenv("EXECUTION_PAPER_MIN_PRIORITY", "1")
+    monkeypatch.delenv("REAL_ANALYSIS_PAPER_MIN_PRIORITY", raising=False)
+    loop = _loop(tmp_path)
+    cycle = await loop.run_cycle(_analysis(priority=5), "BTC/USDT", analysis_source="real_analysis")
+    assert cycle.status == CycleStatus.PRIORITY_REJECTED
+    assert any("threshold:10" in n for n in cycle.notes)
+
+
 # --- D-184: operator-visibility summary ---
 
 
