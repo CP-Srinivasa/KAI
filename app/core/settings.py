@@ -551,6 +551,16 @@ class PremiumSettings(BaseSettings):
     allow_paper_while_entry_disabled: bool = Field(default=False)
     entry_disabled_override_ack: str = Field(default="", repr=False)
 
+    # Route-volume limits for the classic premium paper route (#181 §5,
+    # Sprint S3). 0 == unlimited per axis. In the explicit limited modes
+    # (EXECUTION_ENTRY_MODE=paper_premium_limited / paper_learning) the policy
+    # injects conservative DEFAULT limits when all three are left at 0
+    # (DEFAULT_PREMIUM_ROUTE_LIMITS in app/execution/entry_policy.py); in every
+    # legacy mode 0 stays unlimited (behaviour-neutral migration).
+    paper_route_max_trades_per_hour: int = Field(default=0, ge=0)
+    paper_route_max_notional_per_day_usd: float = Field(default=0.0, ge=0.0)
+    paper_route_max_open_positions: int = Field(default=0, ge=0)
+
 
 # Explicit human-typed acknowledgement required to arm premium-fastlane LIVE.
 # Kept as a module constant so tests + the runtime gate share one source of
@@ -632,6 +642,15 @@ class RealAnalysisPaperSettings(BaseSettings):
     # (long AND short) through. The non-feeder dispatch/metrics/autonomous-loop
     # paths are byte-identical regardless of this value.
     min_priority: int = Field(default=10, ge=1, le=10)
+
+    # Route-volume limits for the real-analysis paper route (#181 §5, Sprint S3).
+    # 0 == unlimited per axis. In EXECUTION_ENTRY_MODE=paper_learning the policy
+    # injects conservative DEFAULT limits when all three are left at 0
+    # (DEFAULT_LEARNING_ROUTE_LIMITS in app/execution/entry_policy.py); in every
+    # legacy mode 0 stays unlimited (behaviour-neutral migration).
+    paper_route_max_trades_per_hour: int = Field(default=0, ge=0)
+    paper_route_max_notional_per_day_usd: float = Field(default=0.0, ge=0.0)
+    paper_route_max_open_positions: int = Field(default=0, ge=0)
 
 
 class PremiumFastlaneSettings(BaseSettings):

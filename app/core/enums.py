@@ -43,6 +43,11 @@ class EntryMode(StrEnum):
 
     Ladder (least → most permissive):
       - DISABLED:     no new autonomous entries at all (exits still managed).
+      - PAPER_PREMIUM_LIMITED: ONLY the premium paper route is open (with
+                      route limits); autonomous loop + learning feeder closed.
+                      (#181 explicit-mode consolidation, Sprint S3 2026-06-11.)
+      - PAPER_LEARNING: premium paper + real-analysis paper-learning routes
+                      open (with route limits); autonomous loop closed.
       - PAPER:        paper entries allowed (legacy default; preserves behavior).
       - PROBE:        throttled paper entries to gather forward-edge evidence
                       (rate/turnover throttle lands with the churn-killer sprint).
@@ -51,9 +56,13 @@ class EntryMode(StrEnum):
       - LIVE_NORMAL:  full-cadence live (requires edge gate >= 0.95 + OOS stable).
 
     Never auto-promote to LIVE_NORMAL — that is an explicit operator decision.
+    Per-route truth lives in ``app.execution.entry_policy.resolve_entry_policy``
+    — the properties below stay the coarse kill-switch layer.
     """
 
     DISABLED = "disabled"
+    PAPER_PREMIUM_LIMITED = "paper_premium_limited"
+    PAPER_LEARNING = "paper_learning"
     PAPER = "paper"
     PROBE = "probe"
     LIVE_LIMITED = "live_limited"
@@ -61,13 +70,21 @@ class EntryMode(StrEnum):
 
     @property
     def allows_autonomous_loop_entry(self) -> bool:
-        """True when the autonomous loop may open NEW positions in this mode.
+        """True when the AUTONOMOUS loop may open NEW positions in this mode.
 
-        Only ``DISABLED`` is a hard stop. ``PROBE``/``LIVE_LIMITED`` allow entries
-        but are throttled by the churn-killer (separate gate); that throttle does
-        not live here so this property stays a single, testable kill-switch.
+        ``DISABLED`` is the hard stop; the two limited paper modes
+        (``PAPER_PREMIUM_LIMITED``/``PAPER_LEARNING``) keep the loop closed by
+        design — they open only their named bridge/feeder routes (#181).
+        ``PROBE``/``LIVE_LIMITED`` allow entries but are throttled by the
+        churn-killer (separate gate); that throttle does not live here so this
+        property stays a single, testable kill-switch.
         """
-        return self is not EntryMode.DISABLED
+        return self in (
+            EntryMode.PAPER,
+            EntryMode.PROBE,
+            EntryMode.LIVE_LIMITED,
+            EntryMode.LIVE_NORMAL,
+        )
 
     @property
     def allows_risk_increasing_entry(self) -> bool:
@@ -76,11 +93,13 @@ class EntryMode(StrEnum):
         future live wiring). ``DISABLED`` is a hard global stop; exits and
         risk-reductions are never gated by this.
 
-        ``allows_autonomous_loop_entry`` is the loop-specific alias kept for
-        call-site clarity at the autonomous gate; both share the same truth so a
-        ``disabled`` mode means *no new entries anywhere*, not merely no
-        autonomous entries (2026-06-02 safety-contract: a partial kill-switch is
-        not a kill-switch).
+        ``disabled`` means *no new entries anywhere* (modulo the explicitly
+        armed three-arm migration aliases resolved in ``entry_policy``), not
+        merely no autonomous entries (2026-06-02 safety-contract: a partial
+        kill-switch is not a kill-switch). The two limited paper modes return
+        True here — SOME risk-increasing entries are allowed — while the
+        per-route refinement (which routes exactly) lives in
+        ``app.execution.entry_policy`` (#181).
         """
         return self is not EntryMode.DISABLED
 

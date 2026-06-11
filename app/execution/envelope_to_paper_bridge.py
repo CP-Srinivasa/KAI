@@ -43,7 +43,13 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from app.core.enums import EntryMode
 from app.core.settings import get_settings
+from app.execution.entry_policy import (
+    EntryRoute,
+    check_route_limits,
+    resolve_entry_policy,
+)
 from app.execution.models import (
     OrderLifecycleState,
     make_lifecycle_transition,
@@ -132,6 +138,11 @@ class BridgeTickResult:
     # loop untouched); and the fail-closed refusal when it was not fully armed.
     premium_paper_entry_disabled_bypassed: int = 0
     premium_paper_entry_disabled_refused: int = 0
+    # Sprint S3 (#181): refusals from the explicit limited-paper-mode entry
+    # policy — route not open in the active mode / contradiction (fail-closed),
+    # and route-volume-limit refusals (#181 §5).
+    route_policy_rejected: int = 0
+    route_limit_rejected: int = 0
     errors: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, object]:
@@ -157,6 +168,8 @@ class BridgeTickResult:
             "fastlane_entry_mode_override_refused": self.fastlane_entry_mode_override_refused,
             "premium_paper_entry_disabled_bypassed": self.premium_paper_entry_disabled_bypassed,
             "premium_paper_entry_disabled_refused": self.premium_paper_entry_disabled_refused,
+            "route_policy_rejected": self.route_policy_rejected,
+            "route_limit_rejected": self.route_limit_rejected,
             "errors": list(self.errors),
         }
 
@@ -1412,14 +1425,65 @@ async def _process_one(
             refusal_rec["entry_mode"] = entry_mode.value
             _append_bridge_audit(refusal_rec)
             result.premium_paper_entry_disabled_refused += 1
+    # Sprint S3 (#181): explicit limited paper modes. The per-route entry
+    # policy is AUTHORITATIVE here — it runs AFTER the legacy fastlane/Pfad-3
+    # branches so no legacy bypass can re-open a route the policy refuses
+    # (e.g. a contradictory fastlane arming under paper_premium_limited).
+    # Legacy modes (disabled/paper/probe/live_*) never enter this block, so
+    # their behaviour — including the three-arm migration aliases — is
+    # byte-identical (Pi-neutral migration).
+    policy_block_reason: str | None = None
+    policy_block_codes: list[str] | None = None
+    if entry_mode in (EntryMode.PAPER_PREMIUM_LIMITED, EntryMode.PAPER_LEARNING):
+        entry_policy = resolve_entry_policy(get_settings())
+        if not is_premium:
+            classic_entry_blocks = True
+            policy_block_reason = "route_not_open_in_mode"
+            policy_block_codes = [ExecutionBlockerCode.ROUTE_NOT_OPEN_IN_MODE.value]
+            result.route_policy_rejected += 1
+        else:
+            verdict = entry_policy.verdict(EntryRoute.PREMIUM_PAPER)
+            if not verdict.allowed:
+                classic_entry_blocks = True
+                policy_block_reason = verdict.reason_code or "route_refused_by_entry_policy"
+                policy_block_codes = [
+                    ExecutionBlockerCode.ENTRY_POLICY_CONTRADICTION.value
+                    if entry_policy.contradictions
+                    else ExecutionBlockerCode.ROUTE_NOT_OPEN_IN_MODE.value
+                ]
+                result.route_policy_rejected += 1
+            else:
+                limits_ok, limit_detail, limits_snapshot = check_route_limits(
+                    route=EntryRoute.PREMIUM_PAPER,
+                    limits=verdict.limits,
+                    audit_path=engine.audit_path,
+                    current_open_positions=current_open,
+                )
+                if limits_ok:
+                    # Route explicitly open in this mode (no ack required —
+                    # the mode itself is the operator statement, #181 §8).
+                    classic_entry_blocks = False
+                else:
+                    classic_entry_blocks = True
+                    policy_block_reason = f"route_limit_exceeded:{limit_detail}"
+                    policy_block_codes = [ExecutionBlockerCode.ROUTE_LIMIT_EXCEEDED.value]
+                    limit_rec = base("rejected_route_limit")
+                    limit_rec["event"] = "entry_policy_route_limit_rejected"
+                    limit_rec["entry_mode"] = entry_mode.value
+                    limit_rec["reason"] = policy_block_reason
+                    limit_rec["reason_codes"] = list(policy_block_codes)
+                    limit_rec["route_limits"] = limits_snapshot
+                    limit_rec["entry_policy"] = entry_policy.to_dict()
+                    _append_bridge_audit(limit_rec)
+                    result.route_limit_rejected += 1
     if classic_entry_blocks:
         rec = base("rejected_entry_mode")
-        rec["reason"] = (
+        rec["reason"] = policy_block_reason or (
             "premium_paper_execution_disabled"
             if (is_premium and not premium_paper_enabled)
             else "entry_mode_disabled"
         )
-        rec["reason_codes"] = [ExecutionBlockerCode.ENTRY_MODE_DISABLED.value]
+        rec["reason_codes"] = policy_block_codes or [ExecutionBlockerCode.ENTRY_MODE_DISABLED.value]
         rec["entry_mode"] = entry_mode.value
         rec["risk_gates_mode"] = risk_result.details.get("gates_mode")
         rec["risk_gate_would_reject"] = risk_result.would_reject

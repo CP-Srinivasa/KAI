@@ -432,3 +432,116 @@ async def test_real_analysis_respects_feeder_daily_cap(tmp_path: Path, monkeypat
     c2 = await loop.run_cycle(_bullish("d2"), "ETH/USDT", analysis_source="real_analysis")
     assert c1.status == CycleStatus.COMPLETED
     assert c2.status == CycleStatus.PAPER_CAP_REACHED
+
+
+# ── Sprint S3 (#181): explicit paper_learning / paper_premium_limited modes ──
+
+
+def _paper_learning_mode(monkeypatch) -> None:
+    monkeypatch.setenv("EXECUTION_ENTRY_MODE", "paper_learning")
+    monkeypatch.setenv("EXECUTION_SHADOW_DIAGNOSTICS", "false")
+    monkeypatch.setenv("REAL_ANALYSIS_PAPER_ENABLED", "true")
+    # NO acks: the explicit mode is the operator statement (#181 §8).
+    monkeypatch.delenv("REAL_ANALYSIS_PAPER_ALLOW_PAPER_WHILE_ENTRY_DISABLED", raising=False)
+    monkeypatch.delenv("REAL_ANALYSIS_PAPER_ENTRY_DISABLED_OVERRIDE_ACK", raising=False)
+    monkeypatch.setenv("REAL_ANALYSIS_PAPER_MIN_PRIORITY", "1")
+    # Disable the injected learning-mode default limits for the plain-fill
+    # tests; the dedicated limit test below re-enables an explicit limit.
+    monkeypatch.setenv("REAL_ANALYSIS_PAPER_PAPER_ROUTE_MAX_TRADES_PER_HOUR", "1000")
+    monkeypatch.setenv("REAL_ANALYSIS_PAPER_PAPER_ROUTE_MAX_NOTIONAL_PER_DAY_USD", "0")
+    monkeypatch.setenv("REAL_ANALYSIS_PAPER_PAPER_ROUTE_MAX_OPEN_POSITIONS", "0")
+
+
+@pytest.mark.asyncio
+async def test_paper_learning_mode_fills_real_analysis_without_acks(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """S3: EXECUTION_ENTRY_MODE=paper_learning opens the real-analysis route
+    WITHOUT the legacy three-arm ack (master enable still required)."""
+    _paper_learning_mode(monkeypatch)
+    loop = _loop(tmp_path)
+    cycle = await loop.run_cycle(_bullish("doc_real"), "BTC/USDT", analysis_source="real_analysis")
+    assert cycle.status == CycleStatus.COMPLETED, cycle.notes
+    assert cycle.fill_simulated is True
+    assert any("real_analysis_paper_decoupled:paper_learning" in n for n in cycle.notes)
+
+
+@pytest.mark.asyncio
+async def test_paper_learning_mode_keeps_autonomous_loop_closed(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """S3 invariant: paper_learning never re-arms the synthetic autonomous loop
+    — an untagged cycle stays ENTRY_MODE_BLOCKED."""
+    _paper_learning_mode(monkeypatch)
+    loop = _loop(tmp_path)
+    cycle = await loop.run_cycle(_bullish("doc_x"), "BTC/USDT")  # no analysis_source
+    assert cycle.status == CycleStatus.ENTRY_MODE_BLOCKED
+    assert any("entry_mode_blocked:paper_learning" in n for n in cycle.notes)
+
+
+@pytest.mark.asyncio
+async def test_paper_learning_without_master_enable_stays_blocked(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """S3 fail-closed: the mode alone does NOT open the route — the feeder
+    master enable is still required."""
+    _paper_learning_mode(monkeypatch)
+    monkeypatch.setenv("REAL_ANALYSIS_PAPER_ENABLED", "false")
+    loop = _loop(tmp_path)
+    cycle = await loop.run_cycle(_bullish("doc_real"), "BTC/USDT", analysis_source="real_analysis")
+    assert cycle.status == CycleStatus.ENTRY_MODE_BLOCKED
+    assert any("real_analysis_paper_disabled" in n for n in cycle.notes)
+
+
+@pytest.mark.asyncio
+async def test_paper_premium_limited_keeps_learning_route_closed(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """S3: paper_premium_limited opens ONLY the premium route — a real-analysis
+    cycle stays blocked even with the feeder master enabled."""
+    _paper_learning_mode(monkeypatch)
+    monkeypatch.setenv("EXECUTION_ENTRY_MODE", "paper_premium_limited")
+    loop = _loop(tmp_path)
+    cycle = await loop.run_cycle(_bullish("doc_real"), "BTC/USDT", analysis_source="real_analysis")
+    assert cycle.status == CycleStatus.ENTRY_MODE_BLOCKED
+    assert any("learning_route_closed_in_paper_premium_limited" in n for n in cycle.notes)
+
+
+@pytest.mark.asyncio
+async def test_paper_learning_route_hourly_limit_blocks(tmp_path: Path, monkeypatch) -> None:
+    """S3 (#181 §5): an explicit hourly route limit refuses the next
+    real-analysis entry once reached (PAPER_CAP_REACHED + ROUTE_LIMIT_EXCEEDED)."""
+    _paper_learning_mode(monkeypatch)
+    monkeypatch.setenv("REAL_ANALYSIS_PAPER_PAPER_ROUTE_MAX_TRADES_PER_HOUR", "1")
+    audit_path = tmp_path / "exec_audit.jsonl"
+    now = datetime.now(UTC)
+    with audit_path.open("a", encoding="utf-8") as fh:
+        fh.write(
+            json.dumps(
+                {
+                    "event_type": "order_filled",
+                    "timestamp_utc": now.isoformat(),
+                    "order_id": "ord_prior",
+                    "side": "buy",
+                    "position_side": "long",
+                    "quantity": 1.0,
+                    "fill_price": 100.0,
+                }
+            )
+            + "\n"
+        )
+        fh.write(
+            json.dumps(
+                {
+                    "event_type": "paper_trade_label",
+                    "order_id": "ord_prior",
+                    "source_name": "real_analysis",
+                }
+            )
+            + "\n"
+        )
+    loop = _loop(tmp_path)
+    cycle = await loop.run_cycle(_bullish("doc_real2"), "BTC/USDT", analysis_source="real_analysis")
+    assert cycle.status == CycleStatus.PAPER_CAP_REACHED, cycle.notes
+    assert any("route_limit_reject:max_trades_per_hour" in n for n in cycle.notes)
+    assert any("reason_code:ROUTE_LIMIT_EXCEEDED" in n for n in cycle.notes)
