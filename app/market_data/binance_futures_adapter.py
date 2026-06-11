@@ -22,11 +22,19 @@ from typing import Any
 import httpx
 
 from app.market_data.base import BaseMarketDataAdapter
-from app.market_data.models import OHLCV, FundingRateSnapshot, Ticker
+from app.market_data.models import (
+    OHLCV,
+    FundingRateSnapshot,
+    OpenInterestSnapshot,
+    Ticker,
+)
+from app.market_data.oi_zscore import oi_change_zscore
 
 logger = logging.getLogger(__name__)
 
 _DEFAULT_BASE_URL = "https://fapi.binance.com"
+# Mirror of oi_zscore's minimum; requesting fewer points can never yield a z.
+_MIN_OI_POINTS = 3
 
 
 def _normalize_symbol(raw_symbol: str) -> str:
@@ -214,6 +222,84 @@ class BinanceFuturesAdapter(BaseMarketDataAdapter):
             next_funding_time_utc=next_funding,
             source="binance",
         )
+
+    async def get_open_interest(
+        self, symbol: str, *, interval: str = "1h", window: int = 24
+    ) -> OpenInterestSnapshot | None:
+        """Open-Interest + change-z-score (Goal V5 Phase 2).
+
+        Series source: ``GET /futures/data/openInterestHist?period=<interval>``
+        which returns a list ordered **oldest-first**, each row
+        ``{"sumOpenInterest": "<coins>", "sumOpenInterestValue": "<usd>",
+        "timestamp": <ms>}``. The latest level + timestamp come from the last
+        element; the freshest *spot* level (``/fapi/v1/openInterest``) is not
+        needed for the z-score and would only add a second round-trip — the
+        hist tail (≤ ``interval`` old) is sufficient for the snapshot.
+
+        ``open_interest`` is the latest ``sumOpenInterest`` in **base coins**
+        (Binance native unit). The z-score is unit-free.
+
+        Fail-safe: any transport/HTTP/parse/empty case ⇒ ``None``. Never raises.
+        """
+        sym = _normalize_symbol(symbol)
+        if not sym:
+            self.last_error = "empty_symbol"
+            return None
+        limit = max(_MIN_OI_POINTS, int(window))
+        rows = await self._get_json(
+            "/futures/data/openInterestHist",
+            {"symbol": sym, "period": interval, "limit": str(limit)},
+        )
+        if rows is None:
+            return None
+        if not isinstance(rows, list) or not rows:
+            self.last_error = "no_open_interest"
+            return None
+        # Binance hist is oldest-first → use as-is for the change-series.
+        series: list[float] = []
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            oi = _opt_float(row.get("sumOpenInterest"))
+            if oi is not None:
+                series.append(oi)
+        if not series:
+            self.last_error = "oi_parse_error"
+            return None
+        tail = rows[-1] if isinstance(rows[-1], dict) else {}
+        latest_oi = _opt_float(tail.get("sumOpenInterest")) or series[-1]
+        observed = _ms_to_iso(tail.get("timestamp")) or datetime.now(UTC).isoformat()
+        zscore = oi_change_zscore(series)
+        return OpenInterestSnapshot(
+            symbol=_canonical_symbol(sym),
+            timestamp_utc=observed,
+            open_interest=latest_oi,
+            oi_change_zscore=zscore,
+            source="binance",
+        )
+
+    async def _get_json(self, path: str, params: dict[str, str]) -> Any:
+        """Fail-safe GET → parsed JSON (list|dict) or ``None``. Never raises."""
+        try:
+            async with httpx.AsyncClient(timeout=self._timeout) as client:
+                resp = await client.get(f"{self._base}{path}", params=params)
+        except (httpx.HTTPError, OSError) as exc:
+            self.last_error = f"transport_error:{exc}"
+            return None
+        if resp.status_code in (400, 404):
+            self.last_error = "symbol_not_found"
+            return None
+        if resp.status_code in (418, 429):
+            self.last_error = "rate_limited"
+            return None
+        if resp.status_code != 200:
+            self.last_error = f"http_{resp.status_code}"
+            return None
+        try:
+            return resp.json()
+        except ValueError:
+            self.last_error = "json_decode_error"
+            return None
 
     async def get_ohlcv(self, symbol: str, timeframe: str = "1h", limit: int = 100) -> list[OHLCV]:
         del symbol, timeframe, limit

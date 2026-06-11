@@ -1107,6 +1107,46 @@ class FundingEvidenceSettings(BaseSettings):
     refresh_timeout_seconds: float = Field(default=8.0, gt=0.0)
 
 
+class OpenInterestEvidenceSettings(BaseSettings):
+    """Goal V5 Phase 2 — Open-Interest als zweite orthogonale Signal-Evidence.
+
+    Default-off, measure-first — identische Disziplin wie
+    ``FundingEvidenceSettings``: ein frisches Deployment ändert NICHTS, bis der
+    Operator opt-in macht.
+
+      - ``enabled=False`` (default): kein OI-Provider → SignalGenerator
+        unverändert. Kein OI-Refresh, kein Cache, kein Verhaltenswechsel.
+      - ``enabled=True``: der Loop liest den *warmen* OI-Snapshot von Platte
+        (``snapshot_path``, geschrieben vom entkoppelten OI-Refresh) und
+        verdrahtet den Provider. KEIN Inline-Netz-I/O im Loop.
+
+    ``source_trust`` konservativ 0.5: OI soll die Confidence anfangs nur leicht
+    verschieben. ``zscore_window`` (Punkte der OI-Serie, default 24 ≈ 24h bei
+    1h-Intervall) wird vom Refresh genutzt, NICHT vom Loop — der Loop liest nur
+    den fertig berechneten z-score. ``ttl_seconds`` (default 1 h) gated stale
+    Snapshots aus (OI-Kadenz ist 1h → 1h TTL ist der natürliche Frische-Rahmen).
+    """
+
+    model_config = SettingsConfigDict(
+        env_prefix="APP_OI_EVIDENCE_",
+        env_file=".env",
+        extra="ignore",
+    )
+
+    enabled: bool = Field(default=False)
+    source_trust: float = Field(default=0.5, ge=0.0, le=1.0)
+    ttl_seconds: float = Field(default=3600.0, gt=0.0)
+    snapshot_path: Path = Field(default=Path("artifacts/oi_cache.json"))
+    shadow_log_path: Path = Field(default=Path("artifacts/oi_evidence_shadow.jsonl"))
+    # Window (number of OI history points) used by the *refresh service* to
+    # compute the change-z-score. Never read by the loop.
+    zscore_window: int = Field(default=24, ge=3, le=200)
+    # OI history bucket interval requested from the venues (refresh only).
+    interval: str = Field(default="1h")
+    # Per-venue HTTP timeout for the *refresh service* (never the loop).
+    refresh_timeout_seconds: float = Field(default=8.0, gt=0.0)
+
+
 class DiversificationSettings(BaseSettings):
     """Asset-diversification / concentration guard configuration.
 
@@ -1351,6 +1391,8 @@ class AppSettings(BaseSettings):
     learning: LearningSettings = Field(default_factory=LearningSettings)
     # Goal V5 Phase 1 — Funding-Rate evidence. Default-off, measure-first.
     funding_evidence: FundingEvidenceSettings = Field(default_factory=FundingEvidenceSettings)
+    # Goal V5 Phase 2 — Open-Interest evidence. Default-off, measure-first.
+    oi_evidence: OpenInterestEvidenceSettings = Field(default_factory=OpenInterestEvidenceSettings)
     # Asset-diversification / concentration guard. Default-off, shadow-first.
     diversification: DiversificationSettings = Field(default_factory=DiversificationSettings)
     # KYT transaction-risk prevention. Default-off, shadow-first.

@@ -33,12 +33,16 @@ from app.market_data.models import (
     OHLCV,
     FundingRateSnapshot,
     MarketDataSnapshot,
+    OpenInterestSnapshot,
     Ticker,
 )
+from app.market_data.oi_zscore import oi_change_zscore
 
 logger = logging.getLogger(__name__)
 
 _DEFAULT_BASE_URL = "https://api.bybit.com"
+# Mirror of oi_zscore's minimum; requesting fewer points can never yield a z.
+_MIN_OI_POINTS = 3
 
 
 def _normalize_symbol(raw_symbol: str) -> str:
@@ -236,6 +240,70 @@ class BybitAdapter(BaseMarketDataAdapter):
             mark_price=mark_price,
             index_price=index_price,
             next_funding_time_utc=next_funding,
+            source="bybit",
+        )
+
+    async def get_open_interest(
+        self, symbol: str, *, interval: str = "1h", window: int = 24
+    ) -> OpenInterestSnapshot | None:
+        """Open-Interest + change-z-score via ``GET /v5/market/open-interest``.
+
+        Bybit returns ``result.list`` ordered **newest-first**, each row
+        ``{"openInterest": "<coins>", "timestamp": "<ms>"}``. We request up to
+        ``window`` points (``limit``), reverse to oldest-first, and feed the
+        series to the shared ``oi_change_zscore`` helper. ``open_interest`` is
+        the latest level in **base coins** (Bybit native unit); the z-score is
+        unit-free.
+
+        Fail-safe: any transport/parse/empty case ⇒ ``None`` (the refresh
+        service skips the symbol; the loop never sees an exception — no new
+        bottleneck). Never raises.
+        """
+        bybit_sym = _normalize_symbol(symbol)
+        if not bybit_sym:
+            self.last_error = "empty_symbol"
+            return None
+        limit = max(_MIN_OI_POINTS, int(window))
+        data = await self._get(
+            "/v5/market/open-interest",
+            {
+                "category": "linear",
+                "symbol": bybit_sym,
+                "intervalTime": interval,
+                "limit": str(limit),
+            },
+        )
+        if data is None:
+            return None
+        result = data.get("result") or {}
+        rows = result.get("list") or []
+        if not isinstance(rows, list) or not rows:
+            self.last_error = "no_open_interest"
+            return None
+        # Bybit is newest-first; reverse to oldest-first for the change-series.
+        series: list[float] = []
+        for row in reversed(rows):
+            if not isinstance(row, dict):
+                continue
+            oi = _opt_float(row.get("openInterest"))
+            if oi is None:
+                continue
+            series.append(oi)
+        if not series:
+            self.last_error = "oi_parse_error"
+            return None
+        # newest row (rows[0]) carries the freshest timestamp + level
+        head = rows[0] if isinstance(rows[0], dict) else {}
+        latest_oi = _opt_float(head.get("openInterest"))
+        if latest_oi is None:
+            latest_oi = series[-1]
+        observed = _ms_to_iso(head.get("timestamp")) or datetime.now(UTC).isoformat()
+        zscore = oi_change_zscore(series)
+        return OpenInterestSnapshot(
+            symbol=_canonical_symbol(bybit_sym),
+            timestamp_utc=observed,
+            open_interest=latest_oi,
+            oi_change_zscore=zscore,
             source="bybit",
         )
 
