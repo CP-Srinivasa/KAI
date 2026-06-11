@@ -268,6 +268,12 @@ def trading_generator_edge(
         "--implausible-threshold",
         help="Exclude closes with |exit/entry-1| above this as off-market (0=off)",
     ),
+    resolved_path: str = typer.Option(
+        "artifacts/shadow_candidate_resolved.jsonl",
+        "--resolved-path",
+        help="Shadow-resolution ledger feeding IC/Brier side-channels (#170 Part B); "
+        "empty string disables the collector",
+    ),
 ) -> None:
     """Generator edge measurement (NEO /goal) — prove/disprove tradeable edge.
 
@@ -294,13 +300,34 @@ def trading_generator_edge(
     trades, _exclusions = parse_closed_trades_with_exclusions(
         events, implausible_move_threshold=implausible_threshold
     )
+    # #170 Part B: feed IC-by-horizon + Brier/ECE from the resolved shadow
+    # ledger (REAL generator candidates only, canary hard-excluded). Without
+    # the ledger the side-channels stay honestly None — exactly as before.
+    collector_audit: dict[str, object] | None = None
+    ic_by_cohort = None
+    pairs_by_cohort = None
+    if resolved_path:
+        from pathlib import Path as _Path
+
+        from app.observability.generator_edge_collector import (
+            collect_edge_inputs_from_resolved,
+        )
+
+        collected = collect_edge_inputs_from_resolved(_Path(resolved_path), cohort_type=cohort_type)
+        ic_by_cohort = collected.ic_aligned_by_cohort or None
+        pairs_by_cohort = collected.outcome_pairs_by_cohort or None
+        collector_audit = collected.to_audit_dict()
     report = build_generator_edge_report(
         trades,
         cohort_type=cohort_type,
         venue=venue,
+        ic_aligned_by_cohort=ic_by_cohort,
+        outcome_pairs_by_cohort=pairs_by_cohort,
         config=EdgeGateConfig(min_resolved=min_resolved),
     )
-    print(_json.dumps(report.to_dict(), indent=2))
+    payload = report.to_dict()
+    payload["side_channel_collector"] = collector_audit
+    print(_json.dumps(payload, indent=2))
     if report.total_resolved == 0:
         raise typer.Exit(1)
 

@@ -441,12 +441,21 @@ def build_cohort_profile(
 
     if resolved == 0:
         ic = compute_ic_by_horizon(ic_aligned)
+        # #170 Part B: a SHADOW-measured cohort has no closed trades by design,
+        # but its side-channel evidence (IC alignment + calibration pairs from
+        # the resolver) is real measurement — report it instead of muting it.
+        zero_brier: float | None = None
+        zero_ece: float | None = None
+        if outcome_pairs:
+            zero_calib = compute_calibration(list(outcome_pairs))
+            zero_brier = zero_calib.brier_score
+            zero_ece = zero_calib.expected_calibration_error
         verdict, reasons = evaluate_verdict(
             resolved_count=0,
             ev_after_costs_bps=None,
             p_mu_net_positive=None,
             ic_by_horizon=ic,
-            calibration_error=None,
+            calibration_error=zero_ece,
             max_dd_bps=None,
             distinct_regimes=0,
             config=cfg,
@@ -466,8 +475,8 @@ def build_cohort_profile(
             p_mu_net_positive=None,
             ic_by_horizon=ic,
             signal_decay=compute_signal_decay(ic),
-            brier_score=None,
-            calibration_error=None,
+            brier_score=zero_brier,
+            calibration_error=zero_ece,
             sharpe=None,
             sortino=None,
             max_drawdown_bps=None,
@@ -587,6 +596,16 @@ def build_generator_edge_report(
     grouped: dict[str, list[ClosedTrade]] = {}
     for t in trades:
         grouped.setdefault(_key(t), []).append(t)
+
+    # #170 Part B: cohorts that exist ONLY in the side-channel evidence (the
+    # shadow-measured generator stream produces no closed trades by design)
+    # still get a profile — IC/Brier are real measurement; the trade-based
+    # metrics degrade honestly to None/INSUFFICIENT.
+    side_only = (set(ic_aligned_by_cohort or {}) | set(outcome_pairs_by_cohort or {})) - set(
+        grouped
+    )
+    for key in side_only:
+        grouped[key] = []
 
     profiles: list[GeneratorEdgeProfile] = []
     for key in sorted(grouped):
