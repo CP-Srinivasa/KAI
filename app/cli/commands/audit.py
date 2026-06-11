@@ -242,3 +242,65 @@ def list_recent(
 
 
 __all__ = ["audit_app"]
+
+
+@audit_app.command("watchdog-report")
+def audit_watchdog_report(
+    reliability_path: str = typer.Option(
+        "monitor/source_reliability.json",
+        "--reliability-path",
+        help="Realised Wilson-bound source-reliability report",
+    ),
+    audit_path: str = typer.Option(
+        "artifacts/paper_execution_audit.jsonl",
+        "--audit-path",
+        help="Paper execution audit (closed trades for the agent cohorts)",
+    ),
+    resolved_path: str = typer.Option(
+        "artifacts/shadow_candidate_resolved.jsonl",
+        "--resolved-path",
+        help="Resolved shadow ledger (activation gate + IC/Brier side-channels)",
+    ),
+    with_d227: bool = typer.Option(
+        True,
+        "--with-d227/--no-d227",
+        help="Fold D-227 per-source precision into the reputation inputs",
+    ),
+    dry_run: bool = typer.Option(
+        False,
+        "--dry-run",
+        help="Build + print the summary without writing to the dropbox",
+    ),
+) -> None:
+    """Watchdog collector (#167): Source-Reputation + Agent-Scoreboard.
+
+    READ-ONLY scoring over realised artifacts; appends one report line each to
+    artifacts/agents/watchdog/*.jsonl (the honest agent-dropbox pattern).
+    HARD GATE: emits nothing while the resolved shadow ledger has zero REAL
+    generator resolutions (canary-contamination prevention). Both engines are
+    advisory by construction — no source/agent ranking can trigger execution.
+    """
+    import json as _json
+    from pathlib import Path as _Path
+
+    from app.observability.watchdog_collector import emit_watchdog_reports
+
+    d227_axis = None
+    if with_d227:
+        try:
+            from app.alerts.blocked_outcome_report import build_blocked_outcome_report
+
+            d227_axis = build_blocked_outcome_report().get("hit_miss_by_source")
+        except Exception as exc:  # noqa: BLE001 — reputation degrades, never blocks
+            console.print(f"[yellow]D-227 unavailable, continuing without: {exc}[/yellow]")
+
+    result = emit_watchdog_reports(
+        reliability_path=_Path(reliability_path),
+        audit_path=_Path(audit_path),
+        resolved_path=_Path(resolved_path),
+        d227_by_source=d227_axis,
+        dry_run=dry_run,
+    )
+    print(_json.dumps(result, indent=2, ensure_ascii=False))
+    if not result.get("emitted") and not result.get("dry_run"):
+        raise typer.Exit(1)
