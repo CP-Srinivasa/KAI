@@ -16,8 +16,16 @@ from app.core.enums import EntryMode
 
 
 class TestEntryModeEnum:
-    def test_only_disabled_blocks_autonomous_entries(self) -> None:
-        assert EntryMode.DISABLED.allows_autonomous_loop_entry is False
+    def test_loop_closed_in_disabled_and_limited_paper_modes(self) -> None:
+        # Sprint S3 (#181): the two explicit limited paper modes keep the
+        # AUTONOMOUS loop closed just like disabled — they open only their
+        # named bridge/feeder routes (per-route truth in entry_policy).
+        for mode in (
+            EntryMode.DISABLED,
+            EntryMode.PAPER_PREMIUM_LIMITED,
+            EntryMode.PAPER_LEARNING,
+        ):
+            assert mode.allows_autonomous_loop_entry is False, mode
         for mode in (
             EntryMode.PAPER,
             EntryMode.PROBE,
@@ -32,20 +40,25 @@ class TestEntryModeEnum:
         for mode in (EntryMode.DISABLED, EntryMode.PAPER, EntryMode.PROBE):
             assert mode.is_live is False, mode
 
-    def test_all_five_modes_present(self) -> None:
+    def test_all_seven_modes_present(self) -> None:
         assert {m.value for m in EntryMode} == {
             "disabled",
+            "paper_premium_limited",
+            "paper_learning",
             "paper",
             "probe",
             "live_limited",
             "live_normal",
         }
 
-    def test_is_paper_learning_only_paper_and_probe(self) -> None:
-        """Goal 2026-06-10: paper-learning context is PAPER/PROBE only —
-        never disabled (no entries) and never the two live modes."""
+    def test_is_paper_learning_covers_paper_modes_never_live_or_disabled(self) -> None:
+        """Goal 2026-06-10 (+S3): paper-learning context = any mode that opens
+        SOME risk-increasing entries on a non-live route — never disabled (no
+        entries) and never the two live modes."""
         assert EntryMode.PAPER.is_paper_learning is True
         assert EntryMode.PROBE.is_paper_learning is True
+        assert EntryMode.PAPER_PREMIUM_LIMITED.is_paper_learning is True
+        assert EntryMode.PAPER_LEARNING.is_paper_learning is True
         assert EntryMode.DISABLED.is_paper_learning is False
         assert EntryMode.LIVE_LIMITED.is_paper_learning is False
         assert EntryMode.LIVE_NORMAL.is_paper_learning is False

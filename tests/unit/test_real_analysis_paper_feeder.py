@@ -182,3 +182,73 @@ async def test_armed_feeder_counts_blocked_cycles(monkeypatch: pytest.MonkeyPatc
     assert result.armed is True
     assert result.fills == 0
     assert result.blocked == 1
+
+
+@pytest.mark.asyncio
+async def test_feeder_armed_in_paper_learning_mode_without_acks(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Sprint S3 (#181): EXECUTION_ENTRY_MODE=paper_learning arms the feeder
+    WITHOUT the legacy three-arm ack (master enable suffices). The disarmed
+    short-circuit contract is unchanged for every legacy mode."""
+    from app.core.enums import EntryMode
+    from app.core.settings import ExecutionSettings
+
+    settings = AppSettings(
+        execution=ExecutionSettings(entry_mode=EntryMode.PAPER_LEARNING),
+        real_analysis_paper=RealAnalysisPaperSettings(enabled=True),
+    )
+    monkeypatch.setattr(feeder, "get_settings", lambda: settings)
+
+    class _FakeRepo:
+        def __init__(self, _session):
+            pass
+
+        async def list(self, **_kw):
+            return []
+
+    class _FakeCtx:
+        async def __aenter__(self):
+            return object()
+
+        async def __aexit__(self, *exc):
+            return False
+
+    class _FakeFactory:
+        def begin(self):
+            return _FakeCtx()
+
+    monkeypatch.setattr(feeder, "build_session_factory", lambda _db: _FakeFactory())
+    monkeypatch.setattr(feeder, "DocumentRepository", _FakeRepo)
+    monkeypatch.setattr(
+        feeder, "select_real_analysis_candidates", lambda docs, **kw: ([], {"eligible": 0})
+    )
+
+    result = await feeder.run_real_analysis_paper_feed_once()
+    assert result.armed is True
+    assert result.refusal_code is None
+
+
+@pytest.mark.asyncio
+async def test_feeder_disarmed_in_paper_premium_limited_mode(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Sprint S3 (#181): paper_premium_limited keeps the learning route CLOSED
+    even with the feeder master enabled — fail-closed no-op."""
+    from app.core.enums import EntryMode
+    from app.core.settings import ExecutionSettings
+
+    settings = AppSettings(
+        execution=ExecutionSettings(entry_mode=EntryMode.PAPER_PREMIUM_LIMITED),
+        real_analysis_paper=RealAnalysisPaperSettings(enabled=True),
+    )
+    monkeypatch.setattr(feeder, "get_settings", lambda: settings)
+
+    def _boom(*a, **k):  # pragma: no cover - must never be called
+        raise AssertionError("DB must not be touched when disarmed")
+
+    monkeypatch.setattr(feeder, "build_session_factory", _boom)
+
+    result = await feeder.run_real_analysis_paper_feed_once()
+    assert result.armed is False
+    assert result.refusal_code == "learning_route_closed_in_paper_premium_limited"

@@ -30,10 +30,8 @@ from datetime import UTC, datetime, timedelta
 
 from app.core.enums import ExecutionMode
 from app.core.settings import get_settings
-from app.execution.real_analysis_paper import (
-    REAL_ANALYSIS_SOURCE,
-    real_analysis_paper_entry_disabled_override,
-)
+from app.execution.entry_policy import EntryRoute, resolve_entry_policy
+from app.execution.real_analysis_paper import REAL_ANALYSIS_SOURCE
 from app.observability.real_analysis_paper_selector import (
     RealAnalysisCandidate,
     select_real_analysis_candidates,
@@ -68,9 +66,11 @@ async def run_real_analysis_paper_feed_once(
 ) -> FeederResult:
     """Run one real-analysis paper-feed pass.
 
-    Returns a :class:`FeederResult`. When the three-arm override is not armed the
-    pass short-circuits BEFORE any loop injection (``armed=False`` + the refusal
-    code) so a disarmed feeder is a cheap, side-effect-free no-op.
+    Returns a :class:`FeederResult`. When the entry policy keeps the
+    real-analysis route closed (legacy three-arm override not armed, or the
+    active mode does not open the route) the pass short-circuits BEFORE any
+    loop injection (``armed=False`` + the refusal code) so a disarmed feeder is
+    a cheap, side-effect-free no-op.
 
     ``symbol_override`` forces every candidate onto one symbol (test seam); in
     normal operation each candidate keeps its document-derived symbol.
@@ -79,7 +79,13 @@ async def run_real_analysis_paper_feed_once(
     settings = get_settings()
     cfg = settings.real_analysis_paper
 
-    armed, refusal = real_analysis_paper_entry_disabled_override(settings)
+    # Sprint S3 (#181): arming is the entry-policy verdict for the
+    # real-analysis route. Under ``disabled`` that delegates to the legacy
+    # three-arm override (migration alias, byte-identical); under
+    # ``paper_learning`` the mode itself opens the route (master enable still
+    # required); ``paper_premium_limited`` keeps it closed.
+    verdict = resolve_entry_policy(settings).verdict(EntryRoute.REAL_ANALYSIS_PAPER)
+    armed, refusal = verdict.allowed, verdict.reason_code
     if not armed:
         logger.info("[real-analysis-feeder] disarmed → no-op (%s)", refusal)
         return FeederResult(

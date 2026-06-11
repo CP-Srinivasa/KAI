@@ -112,6 +112,23 @@ class ExecutionBlockerCode(StrEnum):
     # so this code is never emitted unless the operator sets a positive cap.
     PAPER_DAILY_CAP_REACHED = "PAPER_DAILY_CAP_REACHED"
 
+    # Sprint S3 (#181): the active EXECUTION_ENTRY_MODE is one of the explicit
+    # limited paper modes and the signal's route is not open in that mode
+    # (e.g. a non-premium source under paper_premium_limited). Fail-closed
+    # refusal at the entry-policy layer — not a quality/risk reject.
+    ROUTE_NOT_OPEN_IN_MODE = "ROUTE_NOT_OPEN_IN_MODE"
+
+    # Sprint S3 (#181 §5): a route-volume limit (max_trades_per_hour /
+    # max_notional_per_day_usd / max_open_positions) refused a new entry on an
+    # otherwise-open route. The audit record carries the measured usage.
+    ROUTE_LIMIT_EXCEEDED = "ROUTE_LIMIT_EXCEEDED"
+
+    # Sprint S3 (#181 §7): the runtime configuration contradicts the active
+    # entry mode (e.g. fastlane enabled while paper_premium_limited is active).
+    # The entry policy refuses ALL routes fail-closed until the operator
+    # resolves the contradiction.
+    ENTRY_POLICY_CONTRADICTION = "ENTRY_POLICY_CONTRADICTION"
+
 
 class FinalStatus(StrEnum):
     """Closed set of terminal dispositions for a signal/order in the pipeline.

@@ -36,8 +36,22 @@ def test_entry_mode_disabled_blocks_risk_increasing_entry() -> None:
     # everything above DISABLED permits entries (cadence is a separate gate)
     for mode in (EntryMode.PAPER, EntryMode.PROBE, EntryMode.LIVE_LIMITED, EntryMode.LIVE_NORMAL):
         assert mode.allows_risk_increasing_entry is True
-    # mirrors the loop-specific alias exactly — no partial kill-switch
-    for mode in EntryMode:
+    # Sprint S3 (#181): the explicit limited paper modes allow SOME
+    # risk-increasing entries (their named routes, refined per-route in
+    # app.execution.entry_policy) but keep the AUTONOMOUS loop closed — the
+    # two properties intentionally diverge there.
+    for mode in (EntryMode.PAPER_PREMIUM_LIMITED, EntryMode.PAPER_LEARNING):
+        assert mode.allows_risk_increasing_entry is True
+        assert mode.allows_autonomous_loop_entry is False
+    # for every legacy mode the two properties still agree (no partial
+    # kill-switch: disabled means disabled everywhere)
+    for mode in (
+        EntryMode.DISABLED,
+        EntryMode.PAPER,
+        EntryMode.PROBE,
+        EntryMode.LIVE_LIMITED,
+        EntryMode.LIVE_NORMAL,
+    ):
         assert mode.allows_risk_increasing_entry == mode.allows_autonomous_loop_entry
 
 
@@ -255,3 +269,151 @@ async def test_pfad3_does_not_leak_to_non_premium_source(
     assert result.rejected_entry_mode == 1, result.to_dict()
     records = _read_records(tmp_artifacts / "bridge_pending_orders.jsonl")
     assert records[-1]["stage"] == "rejected_entry_mode"
+
+
+# --- Sprint S3 (#181): explicit limited paper modes -------------------------- #
+
+
+def _enable_premium_bridge_in_mode(monkeypatch: pytest.MonkeyPatch, mode: str) -> None:
+    monkeypatch.setenv("EXECUTION_OPERATOR_SIGNAL_BRIDGE_ENABLED", "true")
+    monkeypatch.setenv("EXECUTION_OPERATOR_SIGNAL_SOURCE_ALLOWLIST", _PREMIUM_SOURCE)
+    monkeypatch.setenv("EXECUTION_OPERATOR_SIGNAL_TTL_HOURS", "24")
+    monkeypatch.setenv("EXECUTION_ENTRY_MODE", mode)
+    monkeypatch.setenv("PREMIUM_PAPER_EXECUTION_ENABLED", "true")
+
+
+@pytest.mark.asyncio
+async def test_paper_premium_limited_fills_premium_without_acks(
+    tmp_artifacts: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The explicit mode IS the operator statement (#181 §8): a premium signal
+    fills in paper_premium_limited WITHOUT the legacy three-arm ack."""
+    _enable_premium_bridge_in_mode(monkeypatch, "paper_premium_limited")
+    _write_envelope(tmp_artifacts / "telegram_message_envelope.jsonl", _premium_envelope())
+
+    with patch.object(bridge, "_fetch_price", new=AsyncMock(return_value=59950.0)):
+        result = await run_tick()
+
+    assert result.filled == 1, result.to_dict()
+    assert result.rejected_entry_mode == 0, result.to_dict()
+    assert result.premium_paper_entry_disabled_bypassed == 0, result.to_dict()
+
+
+@pytest.mark.asyncio
+async def test_paper_premium_limited_blocks_non_premium_source(
+    tmp_artifacts: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Limited mode opens ONLY the premium route: any other bridge source is
+    refused with ROUTE_NOT_OPEN_IN_MODE (fail-closed)."""
+    monkeypatch.setenv("EXECUTION_OPERATOR_SIGNAL_BRIDGE_ENABLED", "true")
+    monkeypatch.setenv("EXECUTION_OPERATOR_SIGNAL_SOURCE_ALLOWLIST", "dashboard")
+    monkeypatch.setenv("EXECUTION_OPERATOR_SIGNAL_TTL_HOURS", "24")
+    monkeypatch.setenv("EXECUTION_ENTRY_MODE", "paper_premium_limited")
+    monkeypatch.setenv("PREMIUM_PAPER_EXECUTION_ENABLED", "true")
+    _write_envelope(tmp_artifacts / "telegram_message_envelope.jsonl", _accepted_envelope())
+
+    with patch.object(bridge, "_fetch_price", new=AsyncMock(return_value=59950.0)):
+        result = await run_tick()
+
+    assert result.filled == 0, result.to_dict()
+    assert result.rejected_entry_mode == 1, result.to_dict()
+    assert result.route_policy_rejected == 1, result.to_dict()
+    records = _read_records(tmp_artifacts / "bridge_pending_orders.jsonl")
+    terminal = records[-1]
+    assert terminal["stage"] == "rejected_entry_mode"
+    assert terminal["reason"] == "route_not_open_in_mode"
+    assert terminal["reason_codes"] == ["ROUTE_NOT_OPEN_IN_MODE"]
+
+
+@pytest.mark.asyncio
+async def test_paper_premium_limited_with_fastlane_enabled_is_contradiction(
+    tmp_artifacts: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#181 §7: a contradictory config (fastlane armed while a limited paper
+    mode is active) refuses ALL routes fail-closed — even an otherwise valid
+    premium signal must NOT fill."""
+    _enable_premium_bridge_in_mode(monkeypatch, "paper_premium_limited")
+    monkeypatch.setenv("PREMIUM_FASTLANE_ENABLED", "true")
+    _write_envelope(tmp_artifacts / "telegram_message_envelope.jsonl", _premium_envelope())
+
+    with patch.object(bridge, "_fetch_price", new=AsyncMock(return_value=59950.0)):
+        result = await run_tick()
+
+    assert result.filled == 0, result.to_dict()
+    assert result.rejected_entry_mode == 1, result.to_dict()
+    records = _read_records(tmp_artifacts / "bridge_pending_orders.jsonl")
+    terminal = records[-1]
+    assert terminal["reason_codes"] == ["ENTRY_POLICY_CONTRADICTION"]
+    assert "fastlane_enabled_in_limited_paper_mode" in terminal["reason"]
+    paper_audit = _read_records(tmp_artifacts / "artifacts" / "paper_execution_audit.jsonl")
+    assert not any(r.get("event_type") == "order_filled" for r in paper_audit)
+
+
+@pytest.mark.asyncio
+async def test_paper_premium_limited_enforces_trades_per_hour_limit(
+    tmp_artifacts: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#181 §5: with the hourly route limit reached, the next premium signal is
+    refused with ROUTE_LIMIT_EXCEEDED and the usage snapshot is audited."""
+    _enable_premium_bridge_in_mode(monkeypatch, "paper_premium_limited")
+    monkeypatch.setenv("PREMIUM_PAPER_ROUTE_MAX_TRADES_PER_HOUR", "1")
+    # Pre-existing premium opening fill within the last hour (audit truth).
+    audit = tmp_artifacts / "artifacts" / "paper_execution_audit.jsonl"
+    audit.parent.mkdir(parents=True, exist_ok=True)
+    now = datetime.now(UTC)
+    with audit.open("a", encoding="utf-8") as fh:
+        fh.write(
+            json.dumps(
+                {
+                    "event_type": "order_filled",
+                    "timestamp_utc": now.isoformat(),
+                    "order_id": "ord_prior",
+                    "side": "buy",
+                    "position_side": "long",
+                    "quantity": 1.0,
+                    "fill_price": 100.0,
+                }
+            )
+            + "\n"
+        )
+        fh.write(
+            json.dumps(
+                {
+                    "event_type": "paper_trade_label",
+                    "order_id": "ord_prior",
+                    "source_name": _PREMIUM_SOURCE,
+                }
+            )
+            + "\n"
+        )
+    _write_envelope(tmp_artifacts / "telegram_message_envelope.jsonl", _premium_envelope())
+
+    with patch.object(bridge, "_fetch_price", new=AsyncMock(return_value=59950.0)):
+        result = await run_tick()
+
+    assert result.filled == 0, result.to_dict()
+    assert result.route_limit_rejected == 1, result.to_dict()
+    records = _read_records(tmp_artifacts / "bridge_pending_orders.jsonl")
+    assert any(
+        r["stage"] == "rejected_route_limit"
+        and r["reason_codes"] == ["ROUTE_LIMIT_EXCEEDED"]
+        and r["route_limits"]["usage"]["trades_last_hour"] == 1
+        for r in records
+    )
+    terminal = records[-1]
+    assert terminal["stage"] == "rejected_entry_mode"
+    assert terminal["reason"].startswith("route_limit_exceeded:max_trades_per_hour")
+
+
+@pytest.mark.asyncio
+async def test_paper_learning_mode_fills_premium_without_acks(
+    tmp_artifacts: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _enable_premium_bridge_in_mode(monkeypatch, "paper_learning")
+    _write_envelope(tmp_artifacts / "telegram_message_envelope.jsonl", _premium_envelope())
+
+    with patch.object(bridge, "_fetch_price", new=AsyncMock(return_value=59950.0)):
+        result = await run_tick()
+
+    assert result.filled == 1, result.to_dict()
+    assert result.rejected_entry_mode == 0, result.to_dict()

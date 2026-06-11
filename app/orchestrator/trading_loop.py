@@ -19,7 +19,6 @@ from app.execution.paper_engine import PaperExecutionEngine
 from app.execution.real_analysis_paper import (
     is_real_analysis_source,
     is_synthetic_probe_document,
-    real_analysis_paper_entry_disabled_override,
 )
 from app.market_data.base import BaseMarketDataAdapter
 from app.market_data.indicators import compute_atr
@@ -302,7 +301,11 @@ class TradingLoop:
                 # Decoupled real-analysis paper cycle: annotate the audit so the
                 # fill is unambiguously attributable and the kill-switch override
                 # is visible in the trail. Execution proceeds below in PAPER mode.
-                notes.append("real_analysis_paper_decoupled:entry_disabled_override")
+                notes.append(
+                    "real_analysis_paper_decoupled:entry_disabled_override"
+                    if entry_mode is EntryMode.DISABLED
+                    else f"real_analysis_paper_decoupled:{entry_mode.value}"
+                )
                 real_analysis_feed = True
 
         # D-182: priority-tier gate. Default min_priority=1 is a no-op; setting
@@ -358,6 +361,41 @@ class TradingLoop:
                     + [
                         f"paper_daily_cap_reached:{entries_today}|cap:{max_daily_paper_entries}",
                         f"reason_code:{ExecutionBlockerCode.PAPER_DAILY_CAP_REACHED.value}",
+                    ],
+                )
+                await self._write_db(cycle)
+                return cycle
+
+        # Sprint S3 (#181 §5): route-volume limits for the real-analysis paper
+        # route (max_trades_per_hour / max_notional_per_day_usd /
+        # max_open_positions). Only evaluated for decoupled real-analysis
+        # cycles; every other source is untouched. Limits come from the entry
+        # policy: explicit env values, or the conservative defaults injected in
+        # EXECUTION_ENTRY_MODE=paper_learning. No limits configured → no-op.
+        if real_analysis_feed:
+            from app.execution.entry_policy import (
+                EntryRoute,
+                check_route_limits,
+                resolve_entry_policy,
+            )
+
+            ra_verdict = resolve_entry_policy(settings).verdict(EntryRoute.REAL_ANALYSIS_PAPER)
+            limits_ok, limit_detail, limits_snapshot = check_route_limits(
+                route=EntryRoute.REAL_ANALYSIS_PAPER,
+                limits=ra_verdict.limits,
+                audit_path=self._exec.audit_path,
+                current_open_positions=len(self._exec.portfolio.positions),
+            )
+            if not limits_ok:
+                cycle = self._build_cycle(
+                    cycle_id,
+                    started_at,
+                    symbol,
+                    CycleStatus.PAPER_CAP_REACHED,
+                    notes=notes
+                    + [
+                        f"route_limit_reject:{limit_detail}|{limits_snapshot.get('usage')}",
+                        f"reason_code:{ExecutionBlockerCode.ROUTE_LIMIT_EXCEEDED.value}",
                     ],
                 )
                 await self._write_db(cycle)
@@ -1312,14 +1350,20 @@ class TradingLoop:
               1. the caller tagged ``analysis_source == "real_analysis"``, AND
               2. the analysis document is NOT a synthetic ``loop_control_*`` probe
                  (defense-in-depth against a mis-tagged probe), AND
-              3. the fail-closed three-arm override is fully armed.
+              3. the entry policy opens the real-analysis route (Sprint S3 #181):
+                 under ``disabled`` that is the fail-closed three-arm override
+                 (migration alias, byte-identical to the pre-S3 behaviour);
+                 under ``paper_learning`` the mode itself opens the route (the
+                 feeder master ``real_analysis_paper.enabled`` is still
+                 required); ``paper_premium_limited`` keeps it closed.
           - ``(False, code)`` otherwise, where ``code`` explains the refusal for
             the audit trail (None when the cycle simply is not a real-analysis
             feed at all — i.e. the ordinary autonomous/synthetic path).
 
-        This is the ONLY place ``entry_mode=disabled`` may yield a paper fill via
-        the loop. It never touches live (the caller runs ExecutionMode.PAPER and
-        ``_run_once_guard`` forbids live) and never re-arms the synthetic loop.
+        This is the ONLY place a closed-loop entry mode may yield a paper fill
+        via the loop. It never touches live (the caller runs ExecutionMode.PAPER
+        and ``_run_once_guard`` forbids live) and never re-arms the synthetic
+        loop.
         """
         if not is_real_analysis_source(analysis_source):
             # Not the real-analysis feeder → no decoupling, no refusal noise; the
@@ -1329,9 +1373,11 @@ class TradingLoop:
             # Hard invariant: a synthetic probe can NEVER be decoupled, even if a
             # caller mis-tags it as real_analysis.
             return False, "synthetic_probe_not_decoupleable"
-        allowed, refusal = real_analysis_paper_entry_disabled_override(settings)
-        if not allowed:
-            return False, refusal
+        from app.execution.entry_policy import EntryRoute, resolve_entry_policy
+
+        verdict = resolve_entry_policy(settings).verdict(EntryRoute.REAL_ANALYSIS_PAPER)
+        if not verdict.allowed:
+            return False, verdict.reason_code
         return True, None
 
     def _record_paper_trade_label(
