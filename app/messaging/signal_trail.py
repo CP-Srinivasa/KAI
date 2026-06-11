@@ -141,13 +141,91 @@ def find_matching_signal_data(query_id: str, artifacts_dir: Path) -> dict[str, A
     return data
 
 
+# Operator-readable German labels for the bridge stages a premium envelope can
+# terminate in (Sprint S6 — Telegram-Lesbarkeit, bekannte Lücke #8). Unknown
+# stages fall back to the raw value — never hide a state behind "?".
+_PREMIUM_STAGE_LABELS: dict[str, str] = {
+    "filled": "✅ gefüllt",
+    "premium_paper_entry_disabled_bypassed": "🟢 Paper via Ack geöffnet",
+    "pending": "⏳ wartet auf Entry-Range",
+    "rejected_entry_mode": "🚫 Kill-Switch (entry_mode)",
+    "rejected_route_limit": "🚦 Route-Limit erreicht",
+    "rejected_risk": "🛑 Risk-Gate",
+    "rejected_scale_review": "⚠️ Scale-Review nötig",
+    "rejected_position_exists": "↩️ Position existiert schon",
+    "rejected_incomplete": "✂️ Signal unvollständig",
+    "expired": "⌛ TTL abgelaufen",
+    "skipped_source": "⏭️ Quelle übersprungen",
+}
+
+
+def format_premium_trails_summary(artifacts_dir: Path, *, limit: int = 8) -> str:
+    """Readable summary of the most recent PREMIUM signal trails (S6, Lücke #8).
+
+    One line per envelope: symbol/side → operator-readable terminal stage with
+    reason, sorted latest-first. Built from the latest bridge stage per
+    envelope_id in ``bridge_pending_orders.jsonl`` — the same stream the trail
+    API joins, so Telegram and dashboard can never tell different stories.
+    """
+    records = load_jsonl_records(artifacts_dir / "bridge_pending_orders.jsonl")
+    latest: dict[str, dict[str, Any]] = {}
+    stage_counts: dict[str, int] = {}
+    for r in records:
+        source = str(r.get("source", ""))
+        if not source.startswith("telegram_premium"):
+            continue
+        envelope_id = r.get("envelope_id")
+        if isinstance(envelope_id, str):
+            latest[envelope_id] = r  # file is append-ordered → last write wins
+    if not latest:
+        return (
+            "*Premium-Trail:* keine Premium-Signale im Bridge-Audit.\n"
+            "Nutze `/trail <signal_id>` für den TradingView-Pfad."
+        )
+
+    ordered = sorted(
+        latest.values(),
+        key=lambda r: str(r.get("timestamp_utc", "")),
+        reverse=True,
+    )
+    lines: list[str] = []
+    for r in ordered[:limit]:
+        stage = str(r.get("stage", "?"))
+        label = _PREMIUM_STAGE_LABELS.get(stage, stage)
+        symbol = r.get("symbol") or "?"
+        side = r.get("side") or ""
+        ts = str(r.get("timestamp_utc", ""))[:16].replace("T", " ")
+        reason = r.get("reason")
+        reason_str = f" — {reason}" if isinstance(reason, str) and stage.startswith("rej") else ""
+        lines.append(f"• {ts} `{symbol}` {side} → {label}{reason_str}")
+
+    for r in latest.values():
+        stage = str(r.get("stage", "?"))
+        stage_counts[stage] = stage_counts.get(stage, 0) + 1
+    counts_str = " · ".join(
+        f"{_PREMIUM_STAGE_LABELS.get(s, s).split(' ', 1)[-1]}: {n}"
+        for s, n in sorted(stage_counts.items(), key=lambda kv: -kv[1])
+        if n > 0
+    )
+    return (
+        "*Premium-Trail (letzte Signale):*\n\n"
+        + "\n".join(lines)
+        + f"\n\n*Gesamt nach Stage:* {counts_str}\n"
+        + "Details: `/trail <envelope_id>` (TV-Pfad: `/trail <signal_id>`)."
+    )
+
+
 def format_signal_trail_message(query_id: str, artifacts_dir: Path) -> str:
     """Reconstruct and format the visual gate-trail for Telegram."""
     if not query_id.strip():
-        # Get list of recent signals from ingress
+        # Sprint S6 (Lücke #8): no-arg `/trail` answers with the PREMIUM
+        # pipeline summary first — that is the active stream the operator
+        # actually monitors; the TradingView list stays available below.
+        premium = format_premium_trails_summary(artifacts_dir)
+
         ingress_records = load_jsonl_records(artifacts_dir / "tradingview_signal_audit.jsonl")
         if not ingress_records:
-            return "Keine kürzlichen Signale gefunden. Bitte eine Signal ID angeben (z. B. `/trail SIG-20260415-BTCUSDT-001`)."
+            return premium
 
         recent = []
         seen = set()
@@ -164,6 +242,7 @@ def format_signal_trail_message(query_id: str, artifacts_dir: Path) -> str:
 
         recent_str = "\n".join(recent)
         return (
+            f"{premium}\n\n"
             f"*Kürzliche TradingView Signale:*\n\n"
             f"{recent_str}\n\n"
             f"Nutze `/trail <signal_id>` für Details zum Gate-Durchlauf."

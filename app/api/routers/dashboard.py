@@ -540,6 +540,84 @@ async def dashboard_fx_api() -> JSONResponse:
     )
 
 
+_SHADOW_LEDGER = _ARTIFACTS / "shadow_candidate_ledger.jsonl"
+
+# Operator-readable labels for every EXECUTION_ENTRY_MODE (incl. the D-233
+# limited paper modes). The badge must never show a raw enum the operator has
+# to decode.
+_ENTRY_MODE_LABELS: dict[str, str] = {
+    "disabled": "disabled — Kill-Switch",
+    "paper_premium_limited": "paper (nur Premium-Route)",
+    "paper_learning": "paper-learning (Premium + Real-Analysis)",
+    "paper": "paper (voll)",
+    "probe": "probe (gedrosselt)",
+    "live_limited": "LIVE limited",
+    "live_normal": "LIVE",
+}
+
+
+def _entry_runtime_block() -> dict[str, Any]:
+    """Live entry-mode truth for the dashboard badge (S6, D-233 modes incl.).
+
+    Uses the same ``resolve_entry_policy`` SSOT the bridge/loop/feeder enforce
+    — including the legacy three-arm migration aliases, so a Pi on
+    ``disabled``+Acks shows its routes as open via alias instead of pretending
+    the kill-switch closed everything.
+    """
+    try:
+        from app.core.settings import get_settings
+        from app.execution.entry_policy import resolve_entry_policy
+
+        policy = resolve_entry_policy(get_settings())
+        open_routes = [
+            {
+                "route": route.value,
+                "alias_used": verdict.alias_used,
+            }
+            for route, verdict in policy.verdicts.items()
+            if verdict.allowed
+        ]
+        return {
+            "entry_mode": policy.mode.value,
+            "entry_mode_label": _ENTRY_MODE_LABELS.get(policy.mode.value, policy.mode.value),
+            "autonomous_loop_open": policy.mode.allows_autonomous_loop_entry,
+            "open_routes": open_routes,
+            "contradictions": list(policy.contradictions),
+        }
+    except Exception as exc:  # noqa: BLE001 — badge must degrade, never 500 the endpoint
+        logger.warning("entry runtime block failed: %s", exc)
+        return {"entry_mode": None, "entry_mode_label": "unbekannt", "error": str(exc)}
+
+
+def _shadow_attribution_24h() -> dict[str, Any]:
+    """Real-vs-canary attribution of shadow candidates in the last 24h (S6).
+
+    REAL == ``source=autonomous_generator`` (the fail-closed REAL_SOURCES set);
+    every other source (autonomous_loop, canary_probe, …) counts as probe. A
+    missing/empty ledger returns zeros — honest absence, no fabrication.
+    """
+    cutoff = datetime.now(UTC) - timedelta(hours=24)
+    real = 0
+    probe = 0
+    for record in _load_jsonl(_SHADOW_LEDGER, tail=8000):
+        ts_raw = record.get("ts_utc")
+        if not isinstance(ts_raw, str):
+            continue
+        try:
+            ts = datetime.fromisoformat(ts_raw)
+        except ValueError:
+            continue
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=UTC)
+        if ts < cutoff:
+            continue
+        if record.get("source") == "autonomous_generator":
+            real += 1
+        else:
+            probe += 1
+    return {"real_candidates_24h": real, "probe_candidates_24h": probe}
+
+
 @router.get("/dashboard/api/quality", tags=["dashboard"])
 async def dashboard_quality_api() -> JSONResponse:
     """Return quality-bar metrics as JSON for the dashboard SPA."""
@@ -800,6 +878,15 @@ async def dashboard_quality_api() -> JSONResponse:
                 _r["reason"],
             )
 
+    # Sprint S6 (#157 scope gap): entry-mode badge + canary attribution.
+    # ``runtime`` mirrors the LIVE entry policy (D-233 SSOT — same resolver the
+    # bridge/loop/feeder enforce, so the badge can never drift from runtime
+    # truth). ``shadow_attribution`` separates REAL generator candidates from
+    # canary/loop probes in the last 24h so a healthy-looking shadow stream
+    # can never silently be 100% canary again (the 2026-06-03 incident class).
+    runtime_block = _entry_runtime_block()
+    shadow_attribution = _shadow_attribution_24h()
+
     return JSONResponse(
         content={
             # v2: the metric_registry block is now the single source of truth for
@@ -809,6 +896,8 @@ async def dashboard_quality_api() -> JSONResponse:
             "metric_contract": metric_contract,
             "metric_registry": metric_registry,
             "metric_registry_reconciliation": metric_registry_reconciliation,
+            "runtime": runtime_block,
+            "shadow_attribution": shadow_attribution,
             "reentry": reentry,
             "precision_pct": quality.get("resolved_precision_pct"),
             "false_positive_pct": quality.get("resolved_false_positive_rate_pct"),

@@ -268,6 +268,118 @@ function signalQualityChip(quality: DashboardQuality | null): TruthChip {
   };
 }
 
+// S6 (#157 Scope-Luecke): entry_mode-Badge inkl. der D-233-Modi. Tone-Logik:
+// Kontradiktion = critical (fail-closed, Operator muss handeln); disabled ohne
+// offene Routen = warn (alles zu); disabled mit Alias-Routen = info (Lernstroeme
+// laufen kontrolliert); limited/learning-Modi = info; paper/probe = ok;
+// live_* = critical zur Sichtbarkeit (Echtgeld-Modus nie unauffaellig).
+function entryModeChip(quality: DashboardQuality | null): TruthChip {
+  const rt = quality?.runtime;
+  if (!rt || !rt.entry_mode) {
+    return {
+      key: "entry-mode",
+      label: "Entry-Mode",
+      value: "unbekannt",
+      tone: "muted",
+      hint: "Kein Runtime-Block vom Backend — Badge degradiert ehrlich statt zu raten.",
+    };
+  }
+  const routes = rt.open_routes ?? [];
+  const aliasCount = routes.filter((r) => r.alias_used).length;
+  if ((rt.contradictions ?? []).length > 0) {
+    return {
+      key: "entry-mode",
+      label: "Entry-Mode",
+      value: `${rt.entry_mode} · KONTRADIKTION`,
+      tone: "critical",
+      hint: `Konfiguration widerspricht dem Modus — alle Routen fail-closed zu: ${(rt.contradictions ?? []).join(", ")}`,
+    };
+  }
+  if (rt.entry_mode.startsWith("live")) {
+    return {
+      key: "entry-mode",
+      label: "Entry-Mode",
+      value: rt.entry_mode_label,
+      tone: "critical",
+      hint: "Live-Entry-Modus aktiv — Echtgeld-Pfad. Muss bewusst und sichtbar sein.",
+    };
+  }
+  if (rt.entry_mode === "disabled") {
+    if (routes.length === 0) {
+      return {
+        key: "entry-mode",
+        label: "Entry-Mode",
+        value: "disabled · alles zu",
+        tone: "warn",
+        hint: "Globaler Kill-Switch: keine Route darf neue Positionen oeffnen.",
+      };
+    }
+    return {
+      key: "entry-mode",
+      label: "Entry-Mode",
+      value: `disabled · ${routes.length} Route(n) via Ack`,
+      tone: "info",
+      hint:
+        `Kill-Switch gesetzt; ${routes.map((r) => r.route).join(" + ")} laufen kontrolliert ueber ` +
+        `${aliasCount} Three-Arm-Migrations-Alias(e) (D-233). Loop bleibt zu.`,
+    };
+  }
+  return {
+    key: "entry-mode",
+    label: "Entry-Mode",
+    value: rt.entry_mode_label,
+    tone:
+      rt.entry_mode === "paper_premium_limited" || rt.entry_mode === "paper_learning"
+        ? "info"
+        : "ok",
+    hint: rt.autonomous_loop_open
+      ? "Autonomer Loop darf neue Positionen oeffnen (paper)."
+      : `Limitierter Paper-Modus (D-233): nur ${routes.map((r) => r.route).join(" + ")} offen, Loop zu.`,
+  };
+}
+
+// S6: Canary-Attribution (Scope-Luecke aus #157). Verhindert, dass ein
+// "gesund" aussehender Shadow-Strom unbemerkt wieder 100% Canary ist
+// (Vorfallklasse 2026-06-03).
+function shadowAttributionChip(quality: DashboardQuality | null): TruthChip {
+  const att = quality?.shadow_attribution;
+  if (!att) {
+    return {
+      key: "shadow-attribution",
+      label: "Shadow 24h",
+      value: "keine Daten",
+      tone: "muted",
+      hint: "Kein Attribution-Block vom Backend.",
+    };
+  }
+  const { real_candidates_24h: real, probe_candidates_24h: probe } = att;
+  if (real === 0 && probe > 0) {
+    return {
+      key: "shadow-attribution",
+      label: "Shadow 24h",
+      value: `0 real · ${probe} probe`,
+      tone: "warn",
+      hint: "Alle Shadow-Kandidaten der letzten 24h sind Canary/Loop-Proben — der echte Generator-Strom liefert gerade nichts (Feed/Flag pruefen).",
+    };
+  }
+  if (real === 0 && probe === 0) {
+    return {
+      key: "shadow-attribution",
+      label: "Shadow 24h",
+      value: "0 Kandidaten",
+      tone: "muted",
+      hint: "Keine Shadow-Kandidaten in den letzten 24h.",
+    };
+  }
+  return {
+    key: "shadow-attribution",
+    label: "Shadow 24h",
+    value: `${real} real · ${probe} probe`,
+    tone: "info",
+    hint: "Echte Generator-Kandidaten (source=autonomous_generator) vs Canary-/Loop-Proben der letzten 24h — nur 'real' zaehlt fuer den Edge-Beweis.",
+  };
+}
+
 /**
  * Leitet die kompakten Truth-Status-Chips fuer die obere Dashboard-Leiste ab.
  * Sortiert nach Dringlichkeit (critical zuerst), aber stabil innerhalb gleicher
@@ -279,12 +391,14 @@ export function deriveTruthChips(
   priorityGate: PriorityGateSummary | null,
 ): TruthChip[] {
   const chips = [
+    entryModeChip(quality),
     reentryChip(quality),
     paperEvidenceChip(quality),
     priorityChip(priorityGate),
     sourceReliabilityChip(quality),
     regimeChip(regime),
     signalQualityChip(quality),
+    shadowAttributionChip(quality),
   ];
   return chips
     .map((chip, idx) => ({ chip, idx }))

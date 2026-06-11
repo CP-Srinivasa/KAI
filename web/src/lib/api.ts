@@ -136,8 +136,26 @@ export function fetchTimerHealth(signal?: AbortSignal): Promise<TimerHealthRespo
   return apiGet<TimerHealthResponse>("/health/timers", { signal });
 }
 
+export type EntryRuntime = {
+  entry_mode: string | null;
+  entry_mode_label: string;
+  autonomous_loop_open?: boolean;
+  open_routes?: { route: string; alias_used: string | null }[];
+  contradictions?: string[];
+  error?: string;
+};
+
+export type ShadowAttribution = {
+  real_candidates_24h: number;
+  probe_candidates_24h: number;
+};
+
 export type DashboardQuality = {
   dashboard_truth_contract_version?: number;
+  /** S6 (#157 scope gap): live entry-mode truth incl. D-233 limited modes. */
+  runtime?: EntryRuntime;
+  /** S6: real-vs-canary attribution of shadow candidates (24h). */
+  shadow_attribution?: ShadowAttribution;
   metric_contract?: Record<
     string,
     {

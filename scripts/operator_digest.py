@@ -1,0 +1,379 @@
+#!/usr/bin/env python3
+"""Täglicher Operator-Digest (Sprint S6, 2026-06-11).
+
+EINE lesbare Telegram-Nachricht statt vier Report-Silos: Entry-Mode/Routen
+(D-233-Wahrheit), Paper-Lernströme (Fills nach Quelle, 24h), Premium-Bridge-
+Stages (24h), Shadow-Real-Funnel (#175) und D-227-Blocked-Outcomes — plus die
+**Auswertungs-Meilensteine** mit Auto-Erkennung:
+
+  - V5-Messphase: „Tag X/7" seit Evidence-Aktivierung; ab Tag 7 explizite
+    Aufforderung, die Shadow-Logs auszuwerten (trust-Entscheidung).
+  - Edge-Report: „real_resolved n/25"; ab n≥25 explizite Aufforderung, den
+    Edge-Report zu fahren.
+
+Versand über die etablierten ``ALERT_TELEGRAM_TOKEN``/``ALERT_TELEGRAM_CHAT_ID``
+Env-Variablen (gleicher Vertrag wie pi_health_digest.sh). ``--dry-run`` druckt
+die Nachricht nur (Test-/Lokal-Pfad, kein Netz). Read-only: der Digest ändert
+nie Zustand, er berichtet ihn.
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import logging
+import os
+import subprocess
+import sys
+from datetime import UTC, date, datetime, timedelta
+from pathlib import Path
+from typing import Any
+
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+logger = logging.getLogger("operator-digest")
+
+_ARTIFACTS = Path("artifacts")
+# Meilenstein-Schwellen (Operator-Vorgabe 2026-06-11).
+V5_REVIEW_AFTER_DAYS = 7
+EDGE_REVIEW_AT_N = 25
+# Telegram hard limit is 4096 chars — truncate honestly instead of failing.
+_TELEGRAM_LIMIT = 4000
+
+
+# ── Collectors (read-only) ───────────────────────────────────────────────────
+
+
+def _read_jsonl_tail(path: Path, max_lines: int = 20_000) -> list[dict[str, Any]]:
+    if not path.exists():
+        return []
+    out: list[dict[str, Any]] = []
+    try:
+        with path.open("r", encoding="utf-8", errors="replace") as fh:
+            lines = fh.readlines()[-max_lines:]
+        for line in lines:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                rec = json.loads(line)
+            except (ValueError, TypeError):
+                continue
+            if isinstance(rec, dict):
+                out.append(rec)
+    except OSError as exc:
+        logger.warning("read failed %s: %s", path, exc)
+    return out
+
+
+def _parse_ts(raw: Any) -> datetime | None:
+    if not isinstance(raw, str):
+        return None
+    try:
+        ts = datetime.fromisoformat(raw)
+    except ValueError:
+        return None
+    return ts if ts.tzinfo else ts.replace(tzinfo=UTC)
+
+
+def collect_runtime() -> dict[str, Any]:
+    try:
+        from app.core.settings import get_settings
+        from app.execution.entry_policy import resolve_entry_policy
+
+        policy = resolve_entry_policy(get_settings())
+        return {
+            "entry_mode": policy.mode.value,
+            "open_routes": [r.value for r, v in policy.verdicts.items() if v.allowed],
+            "contradictions": list(policy.contradictions),
+        }
+    except Exception as exc:  # noqa: BLE001 — Digest degradiert, bricht nie
+        return {"entry_mode": "unbekannt", "error": str(exc)}
+
+
+def collect_paper_fills_24h(now: datetime | None = None) -> dict[str, dict[str, Any]]:
+    """Fills/Closes der letzten 24h nach Quelle (Label-Join wie S1b-Report)."""
+    now_utc = now or datetime.now(UTC)
+    cutoff = now_utc - timedelta(hours=24)
+    labels: dict[str, str] = {}
+    rows = _read_jsonl_tail(_ARTIFACTS / "paper_execution_audit.jsonl")
+    by_source: dict[str, dict[str, Any]] = {}
+    for r in rows:
+        if r.get("event_type") == "paper_trade_label":
+            oid, src = r.get("order_id"), r.get("source_name") or r.get("feed_source")
+            if isinstance(oid, str) and isinstance(src, str):
+                labels[oid] = src
+    for r in rows:
+        et = r.get("event_type")
+        if et not in ("order_filled", "position_closed"):
+            continue
+        ts = _parse_ts(r.get("timestamp_utc"))
+        if ts is None or ts < cutoff:
+            continue
+        oid = r.get("order_id")
+        src = labels.get(oid) if isinstance(oid, str) else None
+        src = src or (r.get("source") if isinstance(r.get("source"), str) else "unlabeled")
+        b = by_source.setdefault(str(src), {"fills": 0, "closes": 0, "pnl_usd": 0.0})
+        if et == "order_filled":
+            side = str(r.get("side") or "").lower()
+            pos = str(r.get("position_side") or "long").lower()
+            if (side == "buy" and pos == "long") or (side == "sell" and pos == "short"):
+                b["fills"] += 1
+        else:
+            b["closes"] += 1
+            for key in ("trade_pnl_usd", "realized_pnl_usd"):
+                if r.get(key) is not None:
+                    try:
+                        b["pnl_usd"] += float(r[key])
+                    except (TypeError, ValueError):
+                        pass
+                    break
+    return by_source
+
+
+def collect_bridge_stages_24h(now: datetime | None = None) -> dict[str, int]:
+    now_utc = now or datetime.now(UTC)
+    cutoff = now_utc - timedelta(hours=24)
+    counts: dict[str, int] = {}
+    for r in _read_jsonl_tail(_ARTIFACTS / "bridge_pending_orders.jsonl"):
+        if not str(r.get("source", "")).startswith("telegram_premium"):
+            continue
+        ts = _parse_ts(r.get("timestamp_utc"))
+        if ts is None or ts < cutoff:
+            continue
+        stage = str(r.get("stage", "?"))
+        counts[stage] = counts.get(stage, 0) + 1
+    return counts
+
+
+def collect_shadow_funnel() -> dict[str, Any] | None:
+    rows = _read_jsonl_tail(_ARTIFACTS / "shadow_real_feed_funnel.jsonl", max_lines=50)
+    for r in reversed(rows):
+        if r.get("enabled"):
+            return r
+    return rows[-1] if rows else None
+
+
+def collect_shadow_report() -> dict[str, Any]:
+    """real_resolved & Co. über die kanonische CLI (eine Berechnungsquelle)."""
+    try:
+        proc = subprocess.run(
+            [sys.executable, "-m", "app.cli.main", "trading", "shadow-report", "--json"],
+            capture_output=True,
+            text=True,
+            timeout=180,
+        )
+        parsed = json.loads(proc.stdout)
+        return parsed if isinstance(parsed, dict) else {"error": "unexpected payload"}
+    except Exception as exc:  # noqa: BLE001
+        return {"error": str(exc)}
+
+
+def collect_d227() -> dict[str, Any]:
+    try:
+        from app.alerts.blocked_outcome_report import build_blocked_outcome_report
+
+        report = build_blocked_outcome_report()
+        return report if isinstance(report, dict) else json.loads(json.dumps(report, default=str))
+    except Exception:
+        # Fallback: CLI (gleiche Quelle, nur teurer).
+        try:
+            proc = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "app.cli.main",
+                    "alerts",
+                    "blocked-outcome-report",
+                    "--json",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=180,
+            )
+            parsed = json.loads(proc.stdout)
+            return parsed if isinstance(parsed, dict) else {"error": "unexpected payload"}
+        except Exception as exc:  # noqa: BLE001
+            return {"error": str(exc)}
+
+
+def collect_v5_freshness() -> dict[str, Any]:
+    out: dict[str, Any] = {}
+    for name, fn in (("funding", "funding_cache.json"), ("oi", "oi_cache.json")):
+        p = _ARTIFACTS / fn
+        out[name] = (
+            round((datetime.now(UTC).timestamp() - p.stat().st_mtime) / 60, 1)
+            if p.exists()
+            else None
+        )
+    return out
+
+
+# ── Compose (pure, getestet) ─────────────────────────────────────────────────
+
+
+def compose_digest_message(
+    *,
+    today: date,
+    runtime: dict[str, Any],
+    fills_by_source: dict[str, dict[str, Any]],
+    bridge_stages: dict[str, int],
+    shadow_funnel: dict[str, Any] | None,
+    shadow_report: dict[str, Any],
+    d227: dict[str, Any],
+    v5_freshness: dict[str, Any],
+    v5_activated_on: date,
+) -> str:
+    """Baut die EINE lesbare Operator-Nachricht. Pure Funktion — testbar."""
+    lines: list[str] = [f"📡 *KAI Operator-Digest* — {today.isoformat()}"]
+
+    # Runtime / Modus (D-233).
+    mode = runtime.get("entry_mode", "unbekannt")
+    routes = runtime.get("open_routes") or []
+    if runtime.get("contradictions"):
+        lines.append(f"🛑 *Modus:* {mode} — KONTRADIKTION: {', '.join(runtime['contradictions'])}")
+    else:
+        route_str = ", ".join(routes) if routes else "keine Route offen"
+        lines.append(f"⚙️ *Modus:* {mode} · offen: {route_str}")
+
+    # Paper-Lernströme 24h.
+    if fills_by_source:
+        parts = []
+        for src, b in sorted(fills_by_source.items()):
+            pnl = b.get("pnl_usd", 0.0)
+            pnl_str = f", PnL {pnl:+.0f}$" if b.get("closes") else ""
+            parts.append(f"{src}: {b.get('fills', 0)} Fills/{b.get('closes', 0)} Closes{pnl_str}")
+        lines.append("📒 *Paper 24h:* " + " · ".join(parts))
+    else:
+        lines.append("📒 *Paper 24h:* keine Fills/Closes")
+
+    # Premium-Bridge 24h.
+    if bridge_stages:
+        top = sorted(bridge_stages.items(), key=lambda kv: -kv[1])[:4]
+        lines.append("📨 *Premium-Bridge 24h:* " + " · ".join(f"{s}: {n}" for s, n in top))
+    else:
+        lines.append("📨 *Premium-Bridge 24h:* keine Premium-Events")
+
+    # Shadow-Real-Funnel (#175).
+    if shadow_funnel and shadow_funnel.get("enabled"):
+        in_loop = shadow_funnel.get("in_loop") or {}
+        lines.append(
+            "🔬 *Shadow-Feed:* "
+            f"seen {shadow_funnel.get('seen', '?')} → eligible {shadow_funnel.get('eligible', '?')} "
+            f"→ injiziert {shadow_funnel.get('injected', '?')} → Kandidat "
+            f"{in_loop.get('shadow_candidate_written', '?')} "
+            f"(prio-rej {in_loop.get('priority_rejected', '?')})"
+        )
+    else:
+        lines.append("🔬 *Shadow-Feed:* aus / noch kein armed Tick")
+
+    # D-227 kompakt.
+    if "error" not in d227:
+        raw = d227.get("raw_events_count", "?")
+        distinct = d227.get("distinct_document_id_count", "?")
+        lines.append(f"🧾 *D-227:* {raw} Events / {distinct} Docs (Details im Pull-Report)")
+    else:
+        lines.append(f"🧾 *D-227:* Fehler — {d227['error'][:80]}")
+
+    # V5-Evidence-Frische.
+    fund_age, oi_age = v5_freshness.get("funding"), v5_freshness.get("oi")
+    if fund_age is not None:
+        v5_state = "frisch" if fund_age < 60 else f"STALE ({fund_age:.0f} min)"
+        lines.append(
+            f"🧲 *V5-Evidence:* funding {v5_state}, OI {oi_age if oi_age is not None else '?'} min"
+        )
+    else:
+        lines.append("🧲 *V5-Evidence:* Cache fehlt")
+
+    # ── Meilensteine (Auto-Erkennung, Operator-Vorgabe 2026-06-11) ──
+    lines.append("")
+    lines.append("🎯 *Meilensteine:*")
+    v5_day = (today - v5_activated_on).days
+    if v5_day >= V5_REVIEW_AFTER_DAYS:
+        lines.append(
+            f"  ➡️ *V5-Auswertung FÄLLIG* (Tag {v5_day}/{V5_REVIEW_AFTER_DAYS}): "
+            "Shadow-Logs (funding/oi_evidence_shadow.jsonl) gegen Outcomes auswerten, "
+            "dann trust-Entscheidung (0.5 → ?)."
+        )
+    else:
+        lines.append(f"  • V5-Messphase: Tag {v5_day}/{V5_REVIEW_AFTER_DAYS}")
+
+    real_resolved = shadow_report.get("real_resolved")
+    if isinstance(real_resolved, int):
+        if real_resolved >= EDGE_REVIEW_AT_N:
+            lines.append(
+                f"  ➡️ *EDGE-REPORT FÄLLIG*: real_resolved n={real_resolved}≥{EDGE_REVIEW_AT_N} — "
+                "`trading edge-report` auf dem echten Generator-Strom fahren."
+            )
+        else:
+            lines.append(
+                f"  • Edge-Beweis: real_resolved n={real_resolved}/{EDGE_REVIEW_AT_N} "
+                f"(canary={shadow_report.get('canary_probe_resolved', '?')}, "
+                f"Verdict: {shadow_report.get('primary_class', '?')})"
+            )
+    else:
+        lines.append(
+            f"  • Edge-Beweis: shadow-report nicht lesbar ({shadow_report.get('error', '?')})"
+        )
+
+    msg = "\n".join(lines)
+    if len(msg) > _TELEGRAM_LIMIT:
+        msg = msg[: _TELEGRAM_LIMIT - 25] + "\n… (gekürzt, 4096-Limit)"
+    return msg
+
+
+# ── Send ─────────────────────────────────────────────────────────────────────
+
+
+def send_telegram(message: str) -> bool:
+    token = os.environ.get("ALERT_TELEGRAM_TOKEN", "")
+    chat_id = os.environ.get("ALERT_TELEGRAM_CHAT_ID", "")
+    if not token or not chat_id:
+        logger.warning("ALERT_TELEGRAM_TOKEN/CHAT_ID fehlen — kein Versand")
+        return False
+    import httpx
+
+    resp = httpx.post(
+        f"https://api.telegram.org/bot{token}/sendMessage",
+        data={"chat_id": chat_id, "text": message, "parse_mode": "Markdown"},
+        timeout=15,
+    )
+    ok = resp.status_code == 200
+    if not ok:
+        logger.error("telegram send failed: %s %s", resp.status_code, resp.text[:200])
+    return ok
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="Täglicher KAI Operator-Digest")
+    parser.add_argument("--dry-run", action="store_true", help="nur drucken, nicht senden")
+    args = parser.parse_args(argv)
+    try:
+        v5_activated_on = date.fromisoformat(
+            os.environ.get("APP_V5_EVIDENCE_ACTIVATED_AT", "2026-06-11")
+        )
+        message = compose_digest_message(
+            today=datetime.now(UTC).date(),
+            runtime=collect_runtime(),
+            fills_by_source=collect_paper_fills_24h(),
+            bridge_stages=collect_bridge_stages_24h(),
+            shadow_funnel=collect_shadow_funnel(),
+            shadow_report=collect_shadow_report(),
+            d227=collect_d227(),
+            v5_freshness=collect_v5_freshness(),
+            v5_activated_on=v5_activated_on,
+        )
+    except Exception:  # noqa: BLE001 — entrypoint boundary
+        logger.exception("digest compose failed")
+        return 1
+    if args.dry_run:
+        print(message)
+        return 0
+    return 0 if send_telegram(message) else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
