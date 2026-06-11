@@ -52,7 +52,22 @@ Ohne `--apply` ist jeder Lauf ein Dry-Run.
 Ein neuer Stream kommt NUR auf die Allowlist, wenn alle bekannten Konsumenten
 höchstens ein rezentes Fenster lesen — Konsumenten-Audit im PR dokumentieren.
 
-## 4. MEMORY.md (Session-Gedächtnis)
+## 4. God-File-Ratchet (Sprint S7, D-234)
+
+Die fünf God-Files (`telegram_bot.py` · `cli/main.py` · `orchestrator/trading_loop.py`
+· `envelope_to_paper_bridge.py` · `core/settings.py`) dürfen nur **schrumpfen**.
+CI-Gate `scripts/godfile_ratchet.py` gegen `scripts/godfile_baseline.json`:
+
+- **Regel:** Wer ein God-File anfasst, extrahiert das berührte Segment in ein
+  eigenes Modul **mit Tests** (Präzedenz: `app/execution/paper_entry_accounting.py`
+  — dedupliziert zugleich die opening-fill-Definition von Loop und Route-Limiter).
+- Wachstum über die Baseline = CI-Fail. Ausnahme nur über eine bewusste,
+  im Diff sichtbare Baseline-Erhöhung, die der PR-Body rechtfertigen muss.
+- Nach jeder Extraktion `python scripts/godfile_ratchet.py --update` (zieht die
+  Baseline runter und verriegelt den Fortschritt; --update erhöht NIE).
+- Kein Big-Bang-Refactor: Abbau über Monate, opportunistisch beim Anfassen.
+
+## 5. MEMORY.md (Session-Gedächtnis)
 
 Index-Zeilen ≤ ~200 Zeichen, ein Eintrag pro Memory, Details gehören in die
 Topic-Files. Limit 24 KB — Überschreitung degradiert nachweislich die

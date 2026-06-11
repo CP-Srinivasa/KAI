@@ -47,6 +47,11 @@ from typing import TYPE_CHECKING, Any
 
 from app.core.enums import EntryMode
 
+# Sprint S7 (D-234): the opening-fill predicate is the SHARED truth in
+# paper_entry_accounting — the route limiter and the daily cap can never
+# disagree about what counts as an entry, because there is only one copy.
+from app.execution.paper_entry_accounting import is_opening_fill as _is_opening_fill
+
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
 
@@ -346,19 +351,6 @@ class RouteUsage:
             "trades_last_hour": self.trades_last_hour,
             "notional_today_usd": round(self.notional_today_usd, 2),
         }
-
-
-def _is_opening_fill(record: dict[str, Any]) -> bool:
-    """Opening (risk-increasing) fill — mirrors the daily-cap definition in
-    ``trading_loop`` so the route limiter and the daily cap can never disagree
-    about what counts as an entry."""
-    if record.get("event_type") != "order_filled":
-        return False
-    side = str(record.get("side") or "").lower()
-    position_side = str(record.get("position_side") or "long").lower()
-    return (side == "buy" and position_side == "long") or (
-        side == "sell" and position_side == "short"
-    )
 
 
 def _parse_ts(raw: Any) -> datetime | None:
