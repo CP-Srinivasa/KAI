@@ -63,6 +63,54 @@ class FundingRateSnapshot:
 
 
 @dataclass(frozen=True)
+class OpenInterestSnapshot:
+    """Perpetual-Futures Open-Interest-Beobachtung (Goal V5 Phase 2).
+
+    ``open_interest`` ist der aktuelle OI-Stand der Venue in ihrer nativen
+    Einheit — Bybit liefert OI in **Basis-Coins** (z. B. BTC-Kontrakte),
+    Binance-Futures ``/fapi/v1/openInterest`` ebenfalls in **Basis-Coins**.
+    Die absolute Einheit ist für die Evidence irrelevant: ``oi_change_zscore``
+    ist ein **einheitenfreier** Standardscore (latest vs rolling mean/std über
+    das Refresh-Fenster), berechnet im entkoppelten Refresh-Service. Der Loop
+    liest nur diesen vorberechneten z-score — keine Serie, kein Netz-I/O.
+
+    ``oi_change_zscore`` ist NICHT der z-score des OI-Levels, sondern der
+    z-score der OI-**Änderungen** (Δ zwischen aufeinanderfolgenden Punkten):
+    ein positiver z heißt „OI wächst aktuell ungewöhnlich schnell" → neue
+    Positionen strömen ein. Das ist exakt das Signal, das
+    ``build_open_interest_evidence`` erwartet.
+    """
+
+    symbol: str
+    timestamp_utc: str
+    open_interest: float
+    oi_change_zscore: float
+    source: str = "unknown"
+
+
+@dataclass(frozen=True)
+class LongShortRatioSnapshot:
+    """Perpetual-Futures Long/Short-Account-Ratio-Beobachtung (Goal V5 Phase 3).
+
+    ``long_account_ratio`` ist der Anteil der Accounts, die long positioniert
+    sind, als **Anteil** ∈ [0, 1] — Binance ``/futures/data/globalLongShort
+    AccountRatio`` liefert ``longAccount`` bereits als Anteil, Bybit
+    ``/v5/market/account-ratio`` ``buyRatio`` ebenfalls. KEINE Prozent-
+    Skalierung (kein ×100): beide Quellen sind bereits 0..1.
+
+    Es ist der **aktuellste** Datenpunkt der Quelle (latest bucket). Anders als
+    OI braucht L/S keinen z-score — die contrarian-Evidence wird direkt aus dem
+    Abstand zu 0.5 abgeleitet (siehe ``build_long_short_ratio_evidence``). Der
+    Loop liest nur diesen Skalar von Platte — kein Netz-I/O.
+    """
+
+    symbol: str
+    timestamp_utc: str
+    long_account_ratio: float  # 0..1 (Anteil long-Accounts), NICHT Prozent
+    source: str = "unknown"
+
+
+@dataclass(frozen=True)
 class MarketDataPoint:
     """Single market data observation used in analysis."""
 

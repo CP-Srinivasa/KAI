@@ -1940,9 +1940,26 @@ def build_trading_loop(
     # opts in via settings — no silent activation.
     from app.signals.bayes_activation import build_bayes_signal_kwargs
 
+    # Goal V5 Phase 1+2+3 — orthogonal Bayes evidence (Funding + Open-Interest
+    # + Long/Short-ratio). Default-off, measure-first. When all *_evidence.enabled
+    # are False (default) the composite returns None → build_bayes_signal_kwargs
+    # wires nothing → exact legacy behaviour. With exactly one source on, the
+    # composite returns that unchanged sub-provider directly (no regression).
+    # Every provider only ever does a fast disk-read of its warm snapshot
+    # (written by the decoupled refresh services) — no inline network I/O in
+    # the loop, no new bottleneck.
+    from app.signals.composite_evidence_wiring import build_composite_evidence_provider
+
+    extra_evidences_provider = build_composite_evidence_provider(
+        settings.funding_evidence,
+        settings.oi_evidence,
+        settings.ls_evidence,
+    )
+
     bayes_kwargs = build_bayes_signal_kwargs(
         settings.risk,
         learning_settings=settings.learning,
+        extra_evidences_provider=extra_evidences_provider,
     )
     signal_generator = SignalGenerator(
         min_confidence=settings.risk.min_signal_confidence,

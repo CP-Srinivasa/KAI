@@ -30,6 +30,7 @@ from app.signals.bayesian_confidence import (
     build_funding_rate_evidence,
     build_historical_hit_rate_evidence,
     build_liquidations_evidence,
+    build_long_short_ratio_evidence,
     build_market_regime_evidence,
     build_news_evidence,
     build_on_chain_evidence,
@@ -320,6 +321,74 @@ class TestSemanticHelpers:
         r_contra = engine.evaluate([contra], prior_probability=0.5, now=now)
         assert r_pro.posterior_probability > 0.5
         assert r_contra.posterior_probability < 0.5
+
+    def test_ls_crowded_long_is_short_evidence(
+        self, engine: BayesianConfidenceEngine, now: datetime
+    ) -> None:
+        # buyRatio 0.72 → long-überfüllt. Für ein LONG-Signal contrarian → contra
+        # (Posterior < 0.5). Für ein SHORT-Signal pro (Posterior > 0.5).
+        ev_long = build_long_short_ratio_evidence(
+            long_account_ratio=0.72, signal_is_long=True, observed_at=now
+        )
+        ev_short = build_long_short_ratio_evidence(
+            long_account_ratio=0.72, signal_is_long=False, observed_at=now
+        )
+        assert ev_long.direction_aligned == -1
+        assert ev_short.direction_aligned == 1
+        r_long = engine.evaluate([ev_long], prior_probability=0.5, now=now)
+        r_short = engine.evaluate([ev_short], prior_probability=0.5, now=now)
+        assert r_long.posterior_probability < 0.5
+        assert r_short.posterior_probability > 0.5
+
+    def test_ls_crowded_short_is_long_evidence(
+        self, engine: BayesianConfidenceEngine, now: datetime
+    ) -> None:
+        # buyRatio 0.30 → short-überfüllt. Für LONG pro, für SHORT contra.
+        ev_long = build_long_short_ratio_evidence(
+            long_account_ratio=0.30, signal_is_long=True, observed_at=now
+        )
+        ev_short = build_long_short_ratio_evidence(
+            long_account_ratio=0.30, signal_is_long=False, observed_at=now
+        )
+        assert ev_long.direction_aligned == 1
+        assert ev_short.direction_aligned == -1
+        r_long = engine.evaluate([ev_long], prior_probability=0.5, now=now)
+        r_short = engine.evaluate([ev_short], prior_probability=0.5, now=now)
+        assert r_long.posterior_probability > 0.5
+        assert r_short.posterior_probability < 0.5
+
+    def test_ls_neutral_midfield_is_discarded(
+        self, engine: BayesianConfidenceEngine, now: datetime
+    ) -> None:
+        # 0.45–0.55 Deadzone → value≈0 → direction neutral → discarded.
+        for ratio in (0.50, 0.47, 0.53):
+            ev = build_long_short_ratio_evidence(
+                long_account_ratio=ratio, signal_is_long=True, observed_at=now
+            )
+            assert ev.value == pytest.approx(0.0)
+            assert ev.direction_aligned == 0
+            report = engine.evaluate([ev], prior_probability=0.5, now=now)
+            # Neutral evidence does not move the posterior off the prior.
+            assert report.posterior_probability == pytest.approx(0.5, abs=1e-9)
+
+    def test_ls_magnitude_scales_with_distance_from_half(self) -> None:
+        # Weiter weg von 0.5 → größere Magnitude. Extrem (1.0) → value 1.0.
+        near = build_long_short_ratio_evidence(long_account_ratio=0.60, signal_is_long=True)
+        far = build_long_short_ratio_evidence(long_account_ratio=0.90, signal_is_long=True)
+        extreme = build_long_short_ratio_evidence(long_account_ratio=1.0, signal_is_long=True)
+        assert 0.0 < near.value < far.value < extreme.value
+        assert extreme.value == pytest.approx(1.0)
+        # Units: 0..1 in, kein Prozent — value bleibt im erlaubten [0,1]-Band.
+        assert 0.0 <= near.value <= 1.0
+
+    def test_ls_ratio_clamped_outside_unit(self) -> None:
+        # Defensive: ratio > 1 / < 0 (sollte nie passieren) wird geclamped, kein raise.
+        hi = build_long_short_ratio_evidence(long_account_ratio=1.5, signal_is_long=True)
+        lo = build_long_short_ratio_evidence(long_account_ratio=-0.3, signal_is_long=True)
+        assert hi.value == pytest.approx(1.0)
+        assert lo.value == pytest.approx(1.0)
+        assert hi.direction_aligned == -1  # clamp→1.0 long-crowded → contra für LONG
+        assert lo.direction_aligned == 1  # clamp→0.0 short-crowded → pro für LONG
 
     def test_market_regime_trending_with_supports_signal(
         self, engine: BayesianConfidenceEngine, now: datetime

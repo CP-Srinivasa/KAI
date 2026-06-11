@@ -86,6 +86,7 @@ class EvidenceKind(StrEnum):
     VOLUME_REACTION = "volume_reaction"
     FUNDING_RATE = "funding_rate"
     OPEN_INTEREST = "open_interest"
+    LONG_SHORT_RATIO = "long_short_ratio"
     LIQUIDATIONS = "liquidations"
     MARKET_REGIME = "market_regime"
     SOURCE_TRUST = "source_trust"  # nur als Modulator; eigener Update-Beitrag = 0
@@ -107,6 +108,7 @@ _KIND_STRENGTH: Final[Mapping[EvidenceKind, float]] = {
     EvidenceKind.VOLUME_REACTION: 1.0,
     EvidenceKind.FUNDING_RATE: 0.8,
     EvidenceKind.OPEN_INTEREST: 0.7,
+    EvidenceKind.LONG_SHORT_RATIO: 0.6,
     EvidenceKind.LIQUIDATIONS: 1.1,
     EvidenceKind.MARKET_REGIME: 0.5,
     EvidenceKind.SOURCE_TRUST: 0.0,
@@ -231,6 +233,19 @@ def _calibrate_funding(value: float) -> float:
     return math.tanh(_clamp(value, -1.0, 1.0) * 1.5) * L_MAX
 
 
+def _calibrate_long_short(value: float) -> float:
+    """Long/Short-Account-Ratio-Mapping (contrarian crowded-trade).
+
+    Erwartung: Caller hat ``direction_aligned`` so gesetzt, dass ein
+    *positiver* ``value`` bereits "crowd ist auf der Signalseite überfüllt →
+    contra" bedeutet (siehe ``build_long_short_ratio_evidence``). Hier nur
+    Sättigung — wie ``_calibrate_funding``, damit ein extrem überfülltes
+    Buch (ratio nahe 0/1) nicht überproportional durchschlägt. Gleiche
+    tanh-Form wie Funding, weil beide Crowd-Positionierungs-Contrarians sind.
+    """
+    return math.tanh(_clamp(value, -1.0, 1.0) * 1.5) * L_MAX
+
+
 def _calibrate_regime(value: float) -> float:
     """Marktregime-Modulator — bewusst gedämpft.
 
@@ -263,6 +278,7 @@ _CALIBRATORS: Final[Mapping[EvidenceKind, Callable[[float], float]]] = {
     EvidenceKind.VOLUME_REACTION: _calibrate_linear,
     EvidenceKind.FUNDING_RATE: _calibrate_funding,
     EvidenceKind.OPEN_INTEREST: _calibrate_linear,
+    EvidenceKind.LONG_SHORT_RATIO: _calibrate_long_short,
     EvidenceKind.LIQUIDATIONS: _calibrate_linear,
     EvidenceKind.MARKET_REGIME: _calibrate_regime,
     EvidenceKind.SOURCE_TRUST: _calibrate_zero,
@@ -673,6 +689,63 @@ def build_open_interest_evidence(
     )
 
 
+def build_long_short_ratio_evidence(
+    *,
+    long_account_ratio: float,
+    signal_is_long: bool,
+    source_trust: float = 1.0,
+    observed_at: datetime | None = None,
+    source_id: str | None = None,
+) -> Evidence:
+    """Long/Short-Account-Ratio (perpetuals) — contrarian crowded-trade.
+
+    ``long_account_ratio`` ∈ [0, 1] ist der Anteil der Accounts, die long
+    positioniert sind (Binance ``longAccount`` / Bybit ``buyRatio`` — beide
+    bereits Anteil, KEINE Prozent-Skalierung).
+
+    Semantik (contrarian, spiegelt ``build_funding_rate_evidence``):
+      - ratio > 0.5  ⇒ Buch ist *long-überfüllt* ⇒ Long-Squeeze-Risiko ⇒
+        SHORT-Evidence (contra zu einem LONG-Signal, pro für SHORT).
+      - ratio < 0.5  ⇒ Buch ist *short-überfüllt* ⇒ Short-Squeeze-Fuel ⇒
+        LONG-Evidence (pro für LONG, contra für SHORT).
+      - Mittelfeld (0.45–0.55) ⇒ neutral ⇒ ``value ≈ 0`` (Deadzone, keine
+        richtungslose Mikro-Evidence aus Rauschen).
+
+    Magnitude skaliert mit dem Abstand von 0.5: |ratio − 0.5| / 0.5 ∈ [0, 1]
+    (ratio 0 oder 1 ⇒ Magnitude 1.0). Die Deadzone wird *vor* der Skalierung
+    abgezogen, sodass z. B. ratio 0.60 (Operator-Schwelle „crowded") bereits
+    eine klare, aber nicht extreme Evidence ergibt.
+
+    ``direction_aligned`` kodiert — wie bei Funding — bereits die contrarian-
+    Inversion, der Calibrator (``_calibrate_long_short``) sieht nur eine
+    nicht-negative Magnitude und sättigt sie.
+    """
+    r = _clamp(long_account_ratio, 0.0, 1.0)
+    deviation = r - 0.5  # >0 = long-crowded, <0 = short-crowded
+    deadzone = 0.05  # |ratio−0.5| ≤ 0.05 (0.45–0.55) → neutral
+    if abs(deviation) <= deadzone:
+        magnitude = 0.0
+        crowd_sign = 0  # neutral → no direction
+    else:
+        # Restabstand nach Deadzone, normiert auf den verbleibenden Bereich
+        # [0.05, 0.5] → [0, 1]. ratio 0/1 → 1.0.
+        magnitude = _clamp((abs(deviation) - deadzone) / (0.5 - deadzone), 0.0, 1.0)
+        crowd_sign = 1 if deviation > 0 else -1  # +1 = long-crowded, -1 = short-crowded
+    # Contrarian-Inversion: long-crowded (crowd_sign=+1) ist contra für LONG.
+    # invert = -1 für LONG, +1 für SHORT (identisch zur Funding-Konvention).
+    invert = -1 if signal_is_long else +1
+    aligned = invert * crowd_sign
+    return Evidence(
+        kind=EvidenceKind.LONG_SHORT_RATIO,
+        value=magnitude,
+        direction_aligned=aligned,
+        source_trust=source_trust,
+        observed_at=observed_at,
+        source_id=source_id,
+        note=f"ls_ratio={r:.3f} signal_long={signal_is_long}",
+    )
+
+
 def build_liquidations_evidence(
     *,
     liquidation_volume_usd: float,
@@ -785,6 +858,7 @@ __all__ = [
     "build_funding_rate_evidence",
     "build_historical_hit_rate_evidence",
     "build_liquidations_evidence",
+    "build_long_short_ratio_evidence",
     "build_market_regime_evidence",
     "build_news_evidence",
     "build_on_chain_evidence",

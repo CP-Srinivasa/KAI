@@ -29,11 +29,21 @@ from typing import Any
 import httpx
 
 from app.market_data.base import BaseMarketDataAdapter
-from app.market_data.models import OHLCV, MarketDataSnapshot, Ticker
+from app.market_data.models import (
+    OHLCV,
+    FundingRateSnapshot,
+    LongShortRatioSnapshot,
+    MarketDataSnapshot,
+    OpenInterestSnapshot,
+    Ticker,
+)
+from app.market_data.oi_zscore import oi_change_zscore
 
 logger = logging.getLogger(__name__)
 
 _DEFAULT_BASE_URL = "https://api.bybit.com"
+# Mirror of oi_zscore's minimum; requesting fewer points can never yield a z.
+_MIN_OI_POINTS = 3
 
 
 def _normalize_symbol(raw_symbol: str) -> str:
@@ -56,6 +66,29 @@ def _canonical_symbol(raw_symbol: str) -> str:
         if candidate.endswith(quote) and len(candidate) > len(quote):
             return f"{candidate[: -len(quote)]}/{quote}"
     return candidate
+
+
+def _opt_float(raw: Any) -> float | None:
+    """Parse an optional numeric field; None/empty/garbage ⇒ None (no raise)."""
+    if raw in (None, ""):
+        return None
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        return None
+
+
+def _ms_to_iso(raw: Any) -> str | None:
+    """ms-epoch (int|float|numeric-string) → ISO-UTC; anything else ⇒ None."""
+    if raw in (None, ""):
+        return None
+    try:
+        ms = int(float(raw))
+    except (TypeError, ValueError):
+        return None
+    if ms <= 0:
+        return None
+    return datetime.fromtimestamp(ms / 1000, tz=UTC).isoformat()
 
 
 class BybitAdapter(BaseMarketDataAdapter):
@@ -155,6 +188,172 @@ class BybitAdapter(BaseMarketDataAdapter):
     async def get_price(self, symbol: str) -> float | None:
         ticker = await self.get_ticker(symbol)
         return ticker.last if ticker is not None else None
+
+    async def get_funding_rate(self, symbol: str) -> FundingRateSnapshot | None:
+        """Funding-Rate für linear-perp.  Quelle ist exakt der gleiche
+        ``/v5/market/tickers``-Response, der schon Bid/Ask/Volume liefert:
+        Bybit gibt ``fundingRate`` (bereits Fraction, z. B. '0.0001') und
+        ``nextFundingTime`` (ms-epoch-String) im selben Row mit.  Kein
+        zusätzlicher Endpoint, keine neue Dependency.
+
+        Fail-safe: jeder Transport-/Parse-/Miss-Fall ⇒ ``None`` (der
+        Funding-Cache verschluckt None ohnehin).  Niemals Exception nach
+        oben — sonst wäre der Refresh ein neuer Flaschenhals.
+        """
+        bybit_sym = _normalize_symbol(symbol)
+        if not bybit_sym:
+            self.last_error = "empty_symbol"
+            return None
+        data = await self._get(
+            "/v5/market/tickers",
+            {"category": "linear", "symbol": bybit_sym},
+        )
+        if data is None:
+            return None
+        result = data.get("result") or {}
+        rows = result.get("list") or []
+        if not rows or not isinstance(rows[0], dict):
+            self.last_error = "symbol_not_found"
+            return None
+        row = rows[0]
+        raw_rate = row.get("fundingRate")
+        if raw_rate is None or raw_rate == "":
+            # Spot/symbol without perpetual funding — not an error, just no data.
+            self.last_error = "no_funding_rate"
+            return None
+        try:
+            rate = float(raw_rate)  # Bybit liefert bereits Fraction
+        except (TypeError, ValueError):
+            self.last_error = "funding_parse_error"
+            return None
+        mark_price = _opt_float(row.get("markPrice"))
+        index_price = _opt_float(row.get("indexPrice"))
+        next_funding = _ms_to_iso(row.get("nextFundingTime"))
+        observed_ms = data.get("time")
+        if isinstance(observed_ms, (int, float)) and observed_ms > 0:
+            observed = datetime.fromtimestamp(int(observed_ms) / 1000, tz=UTC).isoformat()
+        else:
+            observed = datetime.now(UTC).isoformat()
+        return FundingRateSnapshot(
+            symbol=_canonical_symbol(bybit_sym),
+            timestamp_utc=observed,
+            rate=rate,
+            mark_price=mark_price,
+            index_price=index_price,
+            next_funding_time_utc=next_funding,
+            source="bybit",
+        )
+
+    async def get_open_interest(
+        self, symbol: str, *, interval: str = "1h", window: int = 24
+    ) -> OpenInterestSnapshot | None:
+        """Open-Interest + change-z-score via ``GET /v5/market/open-interest``.
+
+        Bybit returns ``result.list`` ordered **newest-first**, each row
+        ``{"openInterest": "<coins>", "timestamp": "<ms>"}``. We request up to
+        ``window`` points (``limit``), reverse to oldest-first, and feed the
+        series to the shared ``oi_change_zscore`` helper. ``open_interest`` is
+        the latest level in **base coins** (Bybit native unit); the z-score is
+        unit-free.
+
+        Fail-safe: any transport/parse/empty case ⇒ ``None`` (the refresh
+        service skips the symbol; the loop never sees an exception — no new
+        bottleneck). Never raises.
+        """
+        bybit_sym = _normalize_symbol(symbol)
+        if not bybit_sym:
+            self.last_error = "empty_symbol"
+            return None
+        limit = max(_MIN_OI_POINTS, int(window))
+        data = await self._get(
+            "/v5/market/open-interest",
+            {
+                "category": "linear",
+                "symbol": bybit_sym,
+                "intervalTime": interval,
+                "limit": str(limit),
+            },
+        )
+        if data is None:
+            return None
+        result = data.get("result") or {}
+        rows = result.get("list") or []
+        if not isinstance(rows, list) or not rows:
+            self.last_error = "no_open_interest"
+            return None
+        # Bybit is newest-first; reverse to oldest-first for the change-series.
+        series: list[float] = []
+        for row in reversed(rows):
+            if not isinstance(row, dict):
+                continue
+            oi = _opt_float(row.get("openInterest"))
+            if oi is None:
+                continue
+            series.append(oi)
+        if not series:
+            self.last_error = "oi_parse_error"
+            return None
+        # newest row (rows[0]) carries the freshest timestamp + level
+        head = rows[0] if isinstance(rows[0], dict) else {}
+        latest_oi = _opt_float(head.get("openInterest"))
+        if latest_oi is None:
+            latest_oi = series[-1]
+        observed = _ms_to_iso(head.get("timestamp")) or datetime.now(UTC).isoformat()
+        zscore = oi_change_zscore(series)
+        return OpenInterestSnapshot(
+            symbol=_canonical_symbol(bybit_sym),
+            timestamp_utc=observed,
+            open_interest=latest_oi,
+            oi_change_zscore=zscore,
+            source="bybit",
+        )
+
+    async def get_long_short_ratio(
+        self, symbol: str, *, interval: str = "1h"
+    ) -> LongShortRatioSnapshot | None:
+        """Long/Short-Account-Ratio via ``GET /v5/market/account-ratio``.
+
+        Bybit returns ``result.list`` ordered **newest-first**, each row
+        ``{"buyRatio": "<0..1>", "sellRatio": "<0..1>", "timestamp": "<ms>"}``.
+        We take ``rows[0]`` (the freshest bucket). ``buyRatio`` is already a
+        *fraction* (Anteil long-Accounts) — no ×100, no double scaling.
+
+        Fail-safe: any transport/parse/empty case ⇒ ``None`` (the refresh
+        service skips the symbol; the loop never sees an exception). Never
+        raises.
+        """
+        bybit_sym = _normalize_symbol(symbol)
+        if not bybit_sym:
+            self.last_error = "empty_symbol"
+            return None
+        data = await self._get(
+            "/v5/market/account-ratio",
+            {
+                "category": "linear",
+                "symbol": bybit_sym,
+                "period": interval,
+                "limit": "1",
+            },
+        )
+        if data is None:
+            return None
+        result = data.get("result") or {}
+        rows = result.get("list") or []
+        if not isinstance(rows, list) or not rows or not isinstance(rows[0], dict):
+            self.last_error = "no_account_ratio"
+            return None
+        head = rows[0]
+        ratio = _opt_float(head.get("buyRatio"))
+        if ratio is None:
+            self.last_error = "ls_ratio_parse_error"
+            return None
+        observed = _ms_to_iso(head.get("timestamp")) or datetime.now(UTC).isoformat()
+        return LongShortRatioSnapshot(
+            symbol=_canonical_symbol(bybit_sym),
+            timestamp_utc=observed,
+            long_account_ratio=ratio,
+            source="bybit",
+        )
 
     async def get_ohlcv(self, symbol: str, timeframe: str = "1h", limit: int = 100) -> list[OHLCV]:
         # OHLCV not required by the bridge; deliberate no-op so we keep

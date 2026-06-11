@@ -1067,6 +1067,124 @@ class LearningSettings(BaseSettings):
     reasoning_journal_path: Path = Field(default=Path("artifacts/structured_reasoning.jsonl"))
 
 
+class FundingEvidenceSettings(BaseSettings):
+    """Goal V5 Phase 1 — Funding-Rate als orthogonale Signal-Evidence.
+
+    Default-off, measure-first — spiegelt die Bayes/Diversification-Rollout-
+    Disziplin: ein frisches Deployment ändert NICHTS am Verhalten, bis der
+    Operator bewusst opt-in macht.
+
+      - ``enabled=False`` (default): ``build_bayes_signal_kwargs`` bekommt
+        KEINEN Funding-Provider → SignalGenerator läuft exakt wie vorher.
+        Kein Refresh-Service, kein Cache, kein Verhaltenswechsel.
+      - ``enabled=True``: der Loop liest beim Bauen den *warmen* Funding-
+        Snapshot von Platte (``snapshot_path``, geschrieben vom entkoppelten
+        ``funding_cache_refresh``-Service) und verdrahtet den Provider.
+        Inline-Netz-I/O im Loop findet NICHT statt — nur ein Disk-Read.
+
+    ``source_trust`` ist bewusst konservativ (0.5 default): Funding soll
+    die Confidence anfangs nur leicht verschieben, nicht dominieren. Erst
+    nach Auswertung des Shadow-Logs (``shadow_log_path``) wird der Trust
+    nach Operator-Sign-off angehoben.
+
+    ``ttl_seconds`` (default 1 h) bestimmt, ab wann ein Disk-Snapshot als
+    stale gilt und der Provider keine Evidence mehr liefert — fail-safe,
+    falls der Refresh-Service ausfällt (kein Trade auf veraltetem Funding).
+    """
+
+    model_config = SettingsConfigDict(
+        env_prefix="APP_FUNDING_EVIDENCE_",
+        env_file=".env",
+        extra="ignore",
+    )
+
+    enabled: bool = Field(default=False)
+    source_trust: float = Field(default=0.5, ge=0.0, le=1.0)
+    ttl_seconds: float = Field(default=3600.0, gt=0.0)
+    snapshot_path: Path = Field(default=Path("artifacts/funding_cache.json"))
+    shadow_log_path: Path = Field(default=Path("artifacts/funding_evidence_shadow.jsonl"))
+    # Per-venue HTTP timeout for the *refresh service* (never the loop).
+    refresh_timeout_seconds: float = Field(default=8.0, gt=0.0)
+
+
+class OpenInterestEvidenceSettings(BaseSettings):
+    """Goal V5 Phase 2 — Open-Interest als zweite orthogonale Signal-Evidence.
+
+    Default-off, measure-first — identische Disziplin wie
+    ``FundingEvidenceSettings``: ein frisches Deployment ändert NICHTS, bis der
+    Operator opt-in macht.
+
+      - ``enabled=False`` (default): kein OI-Provider → SignalGenerator
+        unverändert. Kein OI-Refresh, kein Cache, kein Verhaltenswechsel.
+      - ``enabled=True``: der Loop liest den *warmen* OI-Snapshot von Platte
+        (``snapshot_path``, geschrieben vom entkoppelten OI-Refresh) und
+        verdrahtet den Provider. KEIN Inline-Netz-I/O im Loop.
+
+    ``source_trust`` konservativ 0.5: OI soll die Confidence anfangs nur leicht
+    verschieben. ``zscore_window`` (Punkte der OI-Serie, default 24 ≈ 24h bei
+    1h-Intervall) wird vom Refresh genutzt, NICHT vom Loop — der Loop liest nur
+    den fertig berechneten z-score. ``ttl_seconds`` (default 1 h) gated stale
+    Snapshots aus (OI-Kadenz ist 1h → 1h TTL ist der natürliche Frische-Rahmen).
+    """
+
+    model_config = SettingsConfigDict(
+        env_prefix="APP_OI_EVIDENCE_",
+        env_file=".env",
+        extra="ignore",
+    )
+
+    enabled: bool = Field(default=False)
+    source_trust: float = Field(default=0.5, ge=0.0, le=1.0)
+    ttl_seconds: float = Field(default=3600.0, gt=0.0)
+    snapshot_path: Path = Field(default=Path("artifacts/oi_cache.json"))
+    shadow_log_path: Path = Field(default=Path("artifacts/oi_evidence_shadow.jsonl"))
+    # Window (number of OI history points) used by the *refresh service* to
+    # compute the change-z-score. Never read by the loop.
+    zscore_window: int = Field(default=24, ge=3, le=200)
+    # OI history bucket interval requested from the venues (refresh only).
+    interval: str = Field(default="1h")
+    # Per-venue HTTP timeout for the *refresh service* (never the loop).
+    refresh_timeout_seconds: float = Field(default=8.0, gt=0.0)
+
+
+class LongShortRatioEvidenceSettings(BaseSettings):
+    """Goal V5 Phase 3 — Long/Short-Account-Ratio als dritte orthogonale Evidence.
+
+    Default-off, measure-first — identische Disziplin wie
+    ``FundingEvidenceSettings`` / ``OpenInterestEvidenceSettings``: ein frisches
+    Deployment ändert NICHTS, bis der Operator opt-in macht.
+
+      - ``enabled=False`` (default): kein L/S-Provider → SignalGenerator
+        unverändert. Kein L/S-Refresh, kein Cache, kein Verhaltenswechsel.
+      - ``enabled=True``: der Loop liest den *warmen* L/S-Snapshot von Platte
+        (``snapshot_path``, geschrieben vom entkoppelten L/S-Refresh) und
+        verdrahtet den Provider. KEIN Inline-Netz-I/O im Loop.
+
+    ``source_trust`` konservativ 0.5: L/S-Account-Ratio ist retail-lastig und
+    verrauschter als OI/Funding → soll die Confidence anfangs nur leicht
+    verschieben. ``ttl_seconds`` (default 1 h) gated stale Snapshots aus (L/S-
+    Buckets sind 1h-Kadenz → 1h TTL ist der natürliche Frische-Rahmen).
+    ``interval`` ist die Bucket-Granularität, die der Refresh anfragt (nie der
+    Loop).
+    """
+
+    model_config = SettingsConfigDict(
+        env_prefix="APP_LS_EVIDENCE_",
+        env_file=".env",
+        extra="ignore",
+    )
+
+    enabled: bool = Field(default=False)
+    source_trust: float = Field(default=0.5, ge=0.0, le=1.0)
+    ttl_seconds: float = Field(default=3600.0, gt=0.0)
+    snapshot_path: Path = Field(default=Path("artifacts/ls_cache.json"))
+    shadow_log_path: Path = Field(default=Path("artifacts/ls_evidence_shadow.jsonl"))
+    # L/S bucket interval requested from the venues (refresh only).
+    interval: str = Field(default="1h")
+    # Per-venue HTTP timeout for the *refresh service* (never the loop).
+    refresh_timeout_seconds: float = Field(default=8.0, gt=0.0)
+
+
 class DiversificationSettings(BaseSettings):
     """Asset-diversification / concentration guard configuration.
 
@@ -1309,6 +1427,14 @@ class AppSettings(BaseSettings):
         default_factory=TelegramChannelIngestSettings
     )
     learning: LearningSettings = Field(default_factory=LearningSettings)
+    # Goal V5 Phase 1 — Funding-Rate evidence. Default-off, measure-first.
+    funding_evidence: FundingEvidenceSettings = Field(default_factory=FundingEvidenceSettings)
+    # Goal V5 Phase 2 — Open-Interest evidence. Default-off, measure-first.
+    oi_evidence: OpenInterestEvidenceSettings = Field(default_factory=OpenInterestEvidenceSettings)
+    # Goal V5 Phase 3 — Long/Short-ratio evidence. Default-off, measure-first.
+    ls_evidence: LongShortRatioEvidenceSettings = Field(
+        default_factory=LongShortRatioEvidenceSettings
+    )
     # Asset-diversification / concentration guard. Default-off, shadow-first.
     diversification: DiversificationSettings = Field(default_factory=DiversificationSettings)
     # KYT transaction-risk prevention. Default-off, shadow-first.

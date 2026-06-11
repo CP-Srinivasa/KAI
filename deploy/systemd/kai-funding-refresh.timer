@@ -1,0 +1,20 @@
+[Unit]
+Description=KAI Funding-Refresh — warm funding snapshot every 5 min
+Requires=kai-funding-refresh.service
+
+[Timer]
+# Funding cadence is 8h on the exchanges; a 5-minute refresh is already far
+# more than enough and keeps the warm snapshot fresh relative to the
+# funding_evidence.ttl_seconds gate (default 1h). NOT enabled by default —
+# the operator runs `systemctl enable --now kai-funding-refresh.timer` only
+# after flipping funding_evidence.enabled=true.
+OnBootSec=2min
+OnUnitActiveSec=5min
+# Persistent: if the Pi was down during a slot, run once on next boot rather
+# than waiting a full interval.
+Persistent=true
+AccuracySec=30s
+RandomizedDelaySec=30s
+
+[Install]
+WantedBy=timers.target
