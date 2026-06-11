@@ -67,7 +67,15 @@ UNITS=(
     "kai-recalc-cycle.timer"
     "kai-real-analysis-paper-feed.service"
     "kai-real-analysis-paper-feed.timer"
+    "kai-funding-refresh.service"
+    "kai-funding-refresh.timer"
 )
+
+# NOTE: kai-funding-refresh.timer (V5 microstructure evidence) is intentionally
+# ABSENT from ENABLE_ON_INSTALL below — installed (daemon-reload aware) but
+# disabled by default. Even when enabled it only warms read-only disk caches
+# (artifacts/{funding,oi,ls}_cache.json) that the Bayes evidence providers
+# consume ONLY when their per-source *_EVIDENCE_ENABLED flags are set.
 
 # NOTE: kai-real-analysis-paper-feed.timer is intentionally ABSENT from
 # ENABLE_ON_INSTALL below — it is installed (daemon-reload aware) but stays
