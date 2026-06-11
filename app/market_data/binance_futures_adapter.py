@@ -17,11 +17,12 @@ from __future__ import annotations
 
 import logging
 from datetime import UTC, datetime
+from typing import Any
 
 import httpx
 
 from app.market_data.base import BaseMarketDataAdapter
-from app.market_data.models import OHLCV, Ticker
+from app.market_data.models import OHLCV, FundingRateSnapshot, Ticker
 
 logger = logging.getLogger(__name__)
 
@@ -47,6 +48,27 @@ def _canonical_symbol(raw_symbol: str) -> str:
         if candidate.endswith(quote) and len(candidate) > len(quote):
             return f"{candidate[: -len(quote)]}/{quote}"
     return candidate
+
+
+def _opt_float(raw: Any) -> float | None:
+    if raw in (None, ""):
+        return None
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        return None
+
+
+def _ms_to_iso(raw: Any) -> str | None:
+    if raw in (None, ""):
+        return None
+    try:
+        ms = int(float(raw))
+    except (TypeError, ValueError):
+        return None
+    if ms <= 0:
+        return None
+    return datetime.fromtimestamp(ms / 1000, tz=UTC).isoformat()
 
 
 class BinanceFuturesAdapter(BaseMarketDataAdapter):
@@ -130,6 +152,68 @@ class BinanceFuturesAdapter(BaseMarketDataAdapter):
     async def get_price(self, symbol: str) -> float | None:
         ticker = await self.get_ticker(symbol)
         return ticker.last if ticker is not None else None
+
+    async def get_funding_rate(self, symbol: str) -> FundingRateSnapshot | None:
+        """Funding-Rate via ``GET /fapi/v1/premiumIndex?symbol=...``.
+
+        Felder: ``lastFundingRate`` (Fraction), ``nextFundingTime``
+        (ms-epoch), ``markPrice``, ``indexPrice``, ``time`` (ms-epoch).
+
+        Fail-safe: jeder Transport-/HTTP-/Parse-/Miss-Fall ⇒ ``None``.
+        Niemals Exception nach oben (kein neuer Flaschenhals im Refresh).
+        """
+        sym = _normalize_symbol(symbol)
+        if not sym:
+            self.last_error = "empty_symbol"
+            return None
+        try:
+            async with httpx.AsyncClient(timeout=self._timeout) as client:
+                resp = await client.get(
+                    f"{self._base}/fapi/v1/premiumIndex",
+                    params={"symbol": sym},
+                )
+        except (httpx.HTTPError, OSError) as exc:
+            self.last_error = f"transport_error:{exc}"
+            return None
+        if resp.status_code in (400, 404):
+            self.last_error = "symbol_not_found"
+            return None
+        if resp.status_code in (418, 429):
+            self.last_error = "rate_limited"
+            return None
+        if resp.status_code != 200:
+            self.last_error = f"http_{resp.status_code}"
+            return None
+        try:
+            row = resp.json()
+        except ValueError:
+            self.last_error = "json_decode_error"
+            return None
+        if not isinstance(row, dict) or "lastFundingRate" not in row:
+            self.last_error = "unexpected_payload"
+            return None
+        raw_rate = row.get("lastFundingRate")
+        if raw_rate is None or raw_rate == "":
+            self.last_error = "no_funding_rate"
+            return None
+        try:
+            rate = float(raw_rate)  # Binance liefert bereits Fraction
+        except (TypeError, ValueError):
+            self.last_error = "funding_parse_error"
+            return None
+        mark_price = _opt_float(row.get("markPrice"))
+        index_price = _opt_float(row.get("indexPrice"))
+        next_funding = _ms_to_iso(row.get("nextFundingTime"))
+        observed = _ms_to_iso(row.get("time")) or datetime.now(UTC).isoformat()
+        return FundingRateSnapshot(
+            symbol=_canonical_symbol(sym),
+            timestamp_utc=observed,
+            rate=rate,
+            mark_price=mark_price,
+            index_price=index_price,
+            next_funding_time_utc=next_funding,
+            source="binance",
+        )
 
     async def get_ohlcv(self, symbol: str, timeframe: str = "1h", limit: int = 100) -> list[OHLCV]:
         del symbol, timeframe, limit

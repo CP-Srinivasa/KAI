@@ -1940,9 +1940,20 @@ def build_trading_loop(
     # opts in via settings — no silent activation.
     from app.signals.bayes_activation import build_bayes_signal_kwargs
 
+    # Goal V5 Phase 1 — Funding-Rate evidence. Default-off, measure-first.
+    # When funding_evidence.enabled is False (default) the provider is None
+    # and build_bayes_signal_kwargs wires nothing → exact legacy behaviour.
+    # The provider only ever does a fast disk-read of the warm funding
+    # snapshot (written by the decoupled funding_cache_refresh service) — no
+    # inline network I/O in the loop, no new bottleneck.
+    from app.signals.funding_wiring import build_funding_evidence_provider
+
+    funding_provider = build_funding_evidence_provider(settings.funding_evidence)
+
     bayes_kwargs = build_bayes_signal_kwargs(
         settings.risk,
         learning_settings=settings.learning,
+        extra_evidences_provider=funding_provider,
     )
     signal_generator = SignalGenerator(
         min_confidence=settings.risk.min_signal_confidence,

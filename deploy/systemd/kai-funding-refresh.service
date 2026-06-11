@@ -1,0 +1,29 @@
+[Unit]
+Description=KAI Funding-Refresh — warm the decoupled funding-rate snapshot (Goal V5 Phase 1)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/ubuntu/ai_analyst_trading_bot
+Environment=PYTHONPATH=/home/ubuntu/ai_analyst_trading_bot
+EnvironmentFile=-/home/ubuntu/ai_analyst_trading_bot/.env
+
+# Decoupled refresh: writes artifacts/funding_cache.json. The trading loop
+# only ever reads that warm file (fast disk-read, no inline network I/O).
+# "-" prefix: a failed refresh must not propagate; the loop keeps reading the
+# last known snapshot until it goes stale (then it simply skips funding
+# evidence — fail-safe, no trade on dead funding data).
+ExecStart=-/home/ubuntu/ai_analyst_trading_bot/.venv/bin/python /home/ubuntu/ai_analyst_trading_bot/scripts/funding_cache_refresh.py
+
+StandardOutput=journal
+StandardError=journal
+# Hard ceiling: the script itself has an internal 120s asyncio deadline; this
+# is the systemd backstop so the unit can never wedge.
+TimeoutStartSec=180
+
+# Refresh is light (a handful of public REST calls). Conservative caps.
+MemoryMax=128M
+CPUQuota=50%

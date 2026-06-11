@@ -1067,6 +1067,46 @@ class LearningSettings(BaseSettings):
     reasoning_journal_path: Path = Field(default=Path("artifacts/structured_reasoning.jsonl"))
 
 
+class FundingEvidenceSettings(BaseSettings):
+    """Goal V5 Phase 1 — Funding-Rate als orthogonale Signal-Evidence.
+
+    Default-off, measure-first — spiegelt die Bayes/Diversification-Rollout-
+    Disziplin: ein frisches Deployment ändert NICHTS am Verhalten, bis der
+    Operator bewusst opt-in macht.
+
+      - ``enabled=False`` (default): ``build_bayes_signal_kwargs`` bekommt
+        KEINEN Funding-Provider → SignalGenerator läuft exakt wie vorher.
+        Kein Refresh-Service, kein Cache, kein Verhaltenswechsel.
+      - ``enabled=True``: der Loop liest beim Bauen den *warmen* Funding-
+        Snapshot von Platte (``snapshot_path``, geschrieben vom entkoppelten
+        ``funding_cache_refresh``-Service) und verdrahtet den Provider.
+        Inline-Netz-I/O im Loop findet NICHT statt — nur ein Disk-Read.
+
+    ``source_trust`` ist bewusst konservativ (0.5 default): Funding soll
+    die Confidence anfangs nur leicht verschieben, nicht dominieren. Erst
+    nach Auswertung des Shadow-Logs (``shadow_log_path``) wird der Trust
+    nach Operator-Sign-off angehoben.
+
+    ``ttl_seconds`` (default 1 h) bestimmt, ab wann ein Disk-Snapshot als
+    stale gilt und der Provider keine Evidence mehr liefert — fail-safe,
+    falls der Refresh-Service ausfällt (kein Trade auf veraltetem Funding).
+    """
+
+    model_config = SettingsConfigDict(
+        env_prefix="APP_FUNDING_EVIDENCE_",
+        env_file=".env",
+        extra="ignore",
+    )
+
+    enabled: bool = Field(default=False)
+    source_trust: float = Field(default=0.5, ge=0.0, le=1.0)
+    ttl_seconds: float = Field(default=3600.0, gt=0.0)
+    snapshot_path: Path = Field(default=Path("artifacts/funding_cache.json"))
+    shadow_log_path: Path = Field(default=Path("artifacts/funding_evidence_shadow.jsonl"))
+    # Per-venue HTTP timeout for the *refresh service* (never the loop).
+    refresh_timeout_seconds: float = Field(default=8.0, gt=0.0)
+
+
 class DiversificationSettings(BaseSettings):
     """Asset-diversification / concentration guard configuration.
 
@@ -1309,6 +1349,8 @@ class AppSettings(BaseSettings):
         default_factory=TelegramChannelIngestSettings
     )
     learning: LearningSettings = Field(default_factory=LearningSettings)
+    # Goal V5 Phase 1 — Funding-Rate evidence. Default-off, measure-first.
+    funding_evidence: FundingEvidenceSettings = Field(default_factory=FundingEvidenceSettings)
     # Asset-diversification / concentration guard. Default-off, shadow-first.
     diversification: DiversificationSettings = Field(default_factory=DiversificationSettings)
     # KYT transaction-risk prevention. Default-off, shadow-first.
