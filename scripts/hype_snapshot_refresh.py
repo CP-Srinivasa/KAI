@@ -71,6 +71,10 @@ async def _load_mentions(now: datetime, config: HypeScoreConfig, max_rows: int) 
     session_factory = build_session_factory(settings.db)
     cutoff = now - timedelta(days=config.baseline_days, hours=config.recent_window_hours)
 
+    # Asset-Tags: die Analyse-Pipeline schreibt Handelspaare in `tickers`
+    # (z. B. "BTC/USDT"); `crypto_assets` ist in der Praxis leer (Pi-Befund
+    # 2026-06-12: 0/3805 vs. tickers 1823/3805). Beide Spalten lesen, Union
+    # pro Dokument — die Aggregation normalisiert auf Base-Assets.
     stmt = (
         select(
             CanonicalDocumentModel.published_at,
@@ -78,12 +82,12 @@ async def _load_mentions(now: datetime, config: HypeScoreConfig, max_rows: int) 
             CanonicalDocumentModel.source_name,
             CanonicalDocumentModel.sentiment_label,
             CanonicalDocumentModel.crypto_assets,
+            CanonicalDocumentModel.tickers,
         )
         .where(
             CanonicalDocumentModel.is_analyzed.is_(True),
             CanonicalDocumentModel.is_duplicate.is_(False),
             CanonicalDocumentModel.fetched_at >= cutoff,
-            CanonicalDocumentModel.crypto_assets.is_not(None),
         )
         .order_by(CanonicalDocumentModel.fetched_at.desc())
         .limit(max_rows)
@@ -92,13 +96,14 @@ async def _load_mentions(now: datetime, config: HypeScoreConfig, max_rows: int) 
     mentions: list[DocMention] = []
     async with session_factory() as session:
         rows = (await session.execute(stmt)).all()
-    for published_at, fetched_at, source_name, sentiment_label, crypto_assets in rows:
+    for published_at, fetched_at, source_name, sentiment_label, crypto_assets, tickers in rows:
         observed = published_at or fetched_at
         if observed is None:
             continue
         if observed.tzinfo is None:
             observed = observed.replace(tzinfo=UTC)
-        assets = tuple(str(a) for a in (crypto_assets or []) if isinstance(a, str) and a.strip())
+        raw_tags = list(crypto_assets or []) + list(tickers or [])
+        assets = tuple(str(a) for a in raw_tags if isinstance(a, str) and a.strip())
         if not assets:
             continue
         mentions.append(
