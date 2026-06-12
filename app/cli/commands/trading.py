@@ -740,9 +740,16 @@ def trading_promotion_check(
         help="Current EntryMode; defaults to the configured EXECUTION_ENTRY_MODE",
     ),
     bleed_usd_threshold: float = typer.Option(
-        0.0,
+        # Literal because typer reads it at decoration time and this module
+        # defers app.* imports; must equal promotion_gate.DEFAULT_BLEED_USD_THRESHOLD
+        # (invariant-pinned in tests/unit/test_promotion_gate.py).
+        75.0,
         "--bleed-usd-threshold",
-        help="Aggregate unrealized-loss magnitude (USD) that trips an UNREALIZED_BLEED block",
+        help=(
+            "Aggregate unrealized-loss magnitude (USD) that trips an UNREALIZED_BLEED"
+            " block; default sits above the paper-fill slippage/fee noise floor,"
+            " pass 0 for the strict any-cent-blocks behaviour"
+        ),
     ),
     loss_threshold_pct: float = typer.Option(
         1.0,
@@ -816,6 +823,7 @@ def trading_promotion_check(
     out_path = Path(out)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     payload = decision.to_dict()
+    payload["bleed_usd_threshold"] = bleed_usd_threshold
     payload["risk_snapshot"] = risk_report
     out_path.write_text(json.dumps(payload, indent=2, sort_keys=True), encoding="utf-8")
 
