@@ -39,6 +39,16 @@ PROMOTION_BLOCKED_MISSING_ARTIFACT = "PROMOTION_BLOCKED_MISSING_ARTIFACT"
 STATUS_ALLOWED = "allowed"
 STATUS_MANUAL_REVIEW = "manual_review_required"
 
+# V2-Befund 2026-06-12: with a 0.0 threshold the bleed check measured "any open
+# position is a few cents red", not bleed — the paper engine fills every entry
+# with +5bps adverse slippage, so a fresh position starts negative by
+# construction (observed block: -23.93 USD on ~7.8k USD open notional, -0.31%).
+# 75 USD ~= 1% of the typical open notional and sits well above the worst-case
+# entry slippage+fee drag (~15bps x 10 open route-limited positions), while a
+# genuinely bleeding book still trips it. Per-position losses >= 1% keep
+# blocking independently via RISK_OPEN (loss_threshold_pct).
+DEFAULT_BLEED_USD_THRESHOLD = 75.0
+
 # Ladder rank (least -> most permissive). A promotion is risk-increasing when
 # the target rank is strictly greater than the current rank.
 #
@@ -93,7 +103,7 @@ def evaluate_promotion(
     target_mode: EntryMode,
     risk_report: dict[str, Any] | None,
     *,
-    bleed_usd_threshold: float = 0.0,
+    bleed_usd_threshold: float = DEFAULT_BLEED_USD_THRESHOLD,
 ) -> PromotionGateDecision:
     """Decide whether promoting ``current_mode`` -> ``target_mode`` is allowed.
 

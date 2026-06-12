@@ -6,6 +6,7 @@ from typing import Any
 
 from app.core.enums import EntryMode
 from app.risk.promotion_gate import (
+    DEFAULT_BLEED_USD_THRESHOLD,
     PROMOTION_BLOCKED_MISSING_ARTIFACT,
     PROMOTION_BLOCKED_POSITION_DATA_UNKNOWN,
     PROMOTION_BLOCKED_POSITION_SOURCE_STALE,
@@ -74,7 +75,9 @@ def test_lateral_allowed() -> None:
 
 
 def test_promotion_blocked_when_position_bleeds() -> None:
-    rep = _report(overall="risk_open", total_unrealized=-73.0)
+    # -120 USD: clearly past DEFAULT_BLEED_USD_THRESHOLD so both the
+    # per-position and the aggregate reason code must fire
+    rep = _report(overall="risk_open", total_unrealized=-120.0)
     d = evaluate_promotion(EntryMode.DISABLED, EntryMode.PAPER, rep)
     assert d.allowed is False
     assert d.status == STATUS_MANUAL_REVIEW
@@ -171,6 +174,49 @@ def test_aggregate_bleed_within_threshold_passes() -> None:
     )
     d = evaluate_promotion(EntryMode.DISABLED, EntryMode.PAPER, rep, bleed_usd_threshold=50.0)
     assert d.allowed is True
+
+
+def test_default_threshold_ignores_entry_slippage_noise() -> None:
+    """V2-Befund 2026-06-12: paper fills carry +5bps adverse slippage, so a
+    fresh book is always a few USD red. The observed false-positive block
+    (-23.93 USD on ~7.8k notional) must pass under the calibrated default."""
+    rep = _report(total_unrealized=-23.93)
+    d = evaluate_promotion(EntryMode.PAPER_LEARNING, EntryMode.PAPER, rep)
+    assert d.allowed is True
+    assert d.status == STATUS_ALLOWED
+
+
+def test_default_threshold_blocks_genuine_bleed() -> None:
+    rep = _report(total_unrealized=-120.0)
+    d = evaluate_promotion(EntryMode.PAPER_LEARNING, EntryMode.PAPER, rep)
+    assert d.allowed is False
+    assert PROMOTION_BLOCKED_UNREALIZED_BLEED in d.reason_codes
+
+
+def test_default_threshold_boundary_blocks_inclusively() -> None:
+    # the gate uses <= -threshold: exactly -75.0 must still block (fail-closed)
+    rep = _report(total_unrealized=-DEFAULT_BLEED_USD_THRESHOLD)
+    d = evaluate_promotion(EntryMode.PAPER_LEARNING, EntryMode.PAPER, rep)
+    assert d.allowed is False
+    assert PROMOTION_BLOCKED_UNREALIZED_BLEED in d.reason_codes
+
+
+def test_explicit_zero_threshold_restores_strict_behaviour() -> None:
+    rep = _report(total_unrealized=-0.01)
+    d = evaluate_promotion(EntryMode.PAPER_LEARNING, EntryMode.PAPER, rep, bleed_usd_threshold=0.0)
+    assert d.allowed is False
+    assert PROMOTION_BLOCKED_UNREALIZED_BLEED in d.reason_codes
+
+
+def test_cli_default_matches_gate_constant() -> None:
+    """trading.py must use a typer literal (deferred app.* imports); this pins
+    the literal to DEFAULT_BLEED_USD_THRESHOLD so they cannot drift apart."""
+    import inspect
+
+    from app.cli.commands.trading import trading_promotion_check
+
+    param = inspect.signature(trading_promotion_check).parameters["bleed_usd_threshold"]
+    assert param.default.default == DEFAULT_BLEED_USD_THRESHOLD
 
 
 def test_decision_to_dict_shape() -> None:
