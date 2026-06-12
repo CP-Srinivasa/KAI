@@ -50,11 +50,13 @@ from app.execution.entry_policy import (
     check_route_limits,
     resolve_entry_policy,
 )
+from app.execution.intent_builder import build_executable_intent as _build_executable_intent
+from app.execution.intent_builder import entry_bounds as _entry_bounds
+from app.execution.intent_builder import float_or_none as _float
 from app.execution.models import (
     OrderLifecycleState,
     make_lifecycle_transition,
 )
-from app.execution.order_intent import ExecutableOrderIntent
 from app.execution.paper_engine import DuplicateOrderError
 from app.execution.paper_engine_singleton import get_paper_engine
 from app.execution.premium_fastlane import (
@@ -282,12 +284,6 @@ def _payload(envelope: dict[str, object]) -> dict[str, object]:
     return payload if isinstance(payload, dict) else {}
 
 
-def _float(value: object) -> float | None:
-    if isinstance(value, (int, float)) and not isinstance(value, bool):
-        return float(value)
-    return None
-
-
 def _resolve_entry_price(payload: dict[str, object]) -> float | None:
     """Single representative entry price for limit-check.
 
@@ -302,16 +298,6 @@ def _resolve_entry_price(payload: dict[str, object]) -> float | None:
             return (emin + emax) / 2
         return None
     return _float(payload.get("entry_value"))
-
-
-def _entry_bounds(payload: dict[str, object]) -> tuple[float | None, float | None]:
-    if payload.get("entry_type") != "range":
-        return None, None
-    emin = _float(payload.get("entry_min"))
-    emax = _float(payload.get("entry_max"))
-    if emin is None or emax is None or emax <= emin <= 0:
-        return None, None
-    return emin, emax
 
 
 def _within_tolerance(
@@ -493,47 +479,6 @@ def _attach_lifecycle(
         correlation_id=correlation_id,
         states=states,
         reason=reason,
-    )
-
-
-def _build_executable_intent(
-    *,
-    envelope_id: str,
-    correlation_id: str | None = None,
-    source: str,
-    payload: dict[str, object],
-    symbol: str,
-    side: str,
-    entry_price: float | None,
-    stop_loss: float,
-    targets: list[float],
-    quantity: float | None = None,
-) -> ExecutableOrderIntent:
-    leverage = _float(payload.get("leverage")) or 1.0
-    risk_allocation_pct = _float(payload.get("margin_pct"))
-    if risk_allocation_pct is None:
-        risk_allocation_pct = _float(payload.get("position_size_suggestion"))
-    entry_min, entry_max = _entry_bounds(payload)
-    entry_type = str(payload.get("entry_type") or "market").lower()
-    order_type = "market" if entry_type == "market" else "limit"
-    return ExecutableOrderIntent(
-        symbol=symbol,
-        side=side.upper(),
-        order_type=order_type,
-        entry_type=entry_type,
-        entry_value=entry_price,
-        entry_min=entry_min,
-        entry_max=entry_max,
-        quantity=quantity,
-        risk_allocation_pct=risk_allocation_pct,
-        leverage=leverage,
-        margin_mode=str(payload.get("risk_mode") or "isolated"),
-        stop_loss=stop_loss,
-        take_profit_targets=tuple(targets),
-        reduce_only=bool(payload.get("reduce_only", False)),
-        source=source,
-        correlation_id=correlation_id or envelope_id,
-        idempotency_key=f"opbridge:{envelope_id}",
     )
 
 

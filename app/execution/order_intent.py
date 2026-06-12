@@ -32,6 +32,9 @@ class ExecutableOrderIntent:
     correlation_id: str
     idempotency_key: str
     order_intent: str = "OPEN_POSITION"
+    # Stable originating-signal identity (premium: payload.signal_id) so audit
+    # events stay joinable to the business signal; "" when the source has none.
+    document_id: str = ""
 
     def to_dict(self) -> dict[str, object]:
         return {
@@ -53,4 +56,5 @@ class ExecutableOrderIntent:
             "correlation_id": self.correlation_id,
             "idempotency_key": self.idempotency_key,
             "order_intent": self.order_intent,
+            "document_id": self.document_id,
         }

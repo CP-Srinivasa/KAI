@@ -130,6 +130,9 @@ def executable_intent_to_paper_kwargs(intent: ExecutableOrderIntent) -> dict[str
         # damit PaperPosition + Frontend ohne audit-jsonl-Crosswalk anzeigen kann.
         "leverage": intent.leverage,
         "source": intent.source or "",
+        # 2026-06-12 V2-Nebenbefund: stable signal identity for audit joins
+        # (premium closes were unlabeled — document_id never left the bridge).
+        "document_id": intent.document_id or "",
     }
 
 

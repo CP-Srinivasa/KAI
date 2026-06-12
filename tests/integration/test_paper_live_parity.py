@@ -63,6 +63,9 @@ def test_paper_adapter_emits_full_kwargs_set() -> None:
     Updated 2026-05-14: PR #12 (Premium-Signal-Pipeline-E2E-Fix, Sprint A 2026-05-12)
     added `source` + `leverage` kwargs from ExecutableOrderIntent — kwargs-set
     expanded accordingly. See [[kai_premium_signal_pipeline_e2e_fix_20260512]].
+
+    Updated 2026-06-12 (V2-Nebenbefund): `document_id` added so premium audit
+    events stay joinable to the originating signal (closes were unlabeled).
     """
     kwargs = executable_intent_to_paper_kwargs(_intent())
     expected_keys = {
@@ -78,6 +81,7 @@ def test_paper_adapter_emits_full_kwargs_set() -> None:
         "position_side",
         "source",
         "leverage",
+        "document_id",
     }
     assert set(kwargs.keys()) == expected_keys
 
