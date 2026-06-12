@@ -1,0 +1,20 @@
+[Unit]
+Description=KAI Hype-Refresh — warm sentiment-overheat snapshot every 15 min
+Requires=kai-hype-refresh.service
+
+[Timer]
+# Hype moves on an hours scale (recent window default 6h); a 15-minute
+# refresh keeps the warm snapshot fresh relative to the
+# hype_evidence.ttl_seconds gate (default 2h). NOT enabled by default —
+# the operator runs `systemctl enable --now kai-hype-refresh.timer` only
+# after flipping hype_evidence.enabled=true.
+OnBootSec=3min
+OnUnitActiveSec=15min
+# Persistent: if the Pi was down during a slot, run once on next boot rather
+# than waiting a full interval.
+Persistent=true
+AccuracySec=1min
+RandomizedDelaySec=1min
+
+[Install]
+WantedBy=timers.target

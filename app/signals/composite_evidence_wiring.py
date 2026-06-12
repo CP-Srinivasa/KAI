@@ -1,10 +1,11 @@
-"""Composite-Provider für die orthogonalen Bayes-Extra-Evidenzen (Goal V5).
+"""Composite-Provider für die orthogonalen Bayes-Extra-Evidenzen (Goal V5 + HYPE-S1).
 
 Der ``SignalGenerator`` nimmt genau EINEN
 ``bayes_extra_evidences_provider``. Phase 1 verdrahtete dort Funding, Phase 2
-fügte Open-Interest hinzu, Phase 3 fügt Long/Short-Ratio hinzu — jeweils ohne
-die früheren Pfade zu brechen. Lösung: ein dünner Composite, der die je-Phase-
-Provider baut und ihre Evidence-Sequenzen in fester Reihenfolge verkettet.
+fügte Open-Interest hinzu, Phase 3 fügt Long/Short-Ratio hinzu, HYPE-S1 fügt
+Sentiment-Überhitzung hinzu — jeweils ohne die früheren Pfade zu brechen.
+Lösung: ein dünner Composite, der die je-Phase-Provider baut und ihre
+Evidence-Sequenzen in fester Reihenfolge verkettet.
 
 Harte Invariante (kein früherer Pfad regresst)
 ==============================================
@@ -13,7 +14,7 @@ Harte Invariante (kein früherer Pfad regresst)
   zurückgegeben (keine Composite-Hülle, kein Verhaltens-Delta gegenüber der
   jeweiligen Phase — byte-identische Evidence + Shadow-Log).
 - ≥ 2 aktiv ⇒ ein Composite, der pro Call die Evidenzen in fester Reihenfolge
-  Funding → OI → LS anhängt. Die Bayes-Engine ist gegen die Reihenfolge
+  Funding → OI → LS → Hype anhängt. Die Bayes-Engine ist gegen die Reihenfolge
   invariant (Produkt der Likelihoods), aber eine feste Reihenfolge hält
   Shadow-Logs/Tests stabil.
 
@@ -26,10 +27,12 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Sequence
+from typing import TYPE_CHECKING
 
 from app.core.domain.document import AnalysisResult
-from app.core.settings import (
+from app.core.evidence_settings import (
     FundingEvidenceSettings,
+    HypeEvidenceSettings,
     LongShortRatioEvidenceSettings,
     OpenInterestEvidenceSettings,
 )
@@ -37,9 +40,13 @@ from app.market_data.models import MarketDataPoint
 from app.signals.bayesian_confidence import Evidence
 from app.signals.funding_wiring import build_funding_evidence_provider
 from app.signals.generator import ExtraEvidencesProvider
+from app.signals.hype_wiring import build_hype_evidence_provider
 from app.signals.ls_wiring import build_ls_evidence_provider
 from app.signals.models import SignalDirection
 from app.signals.oi_wiring import build_oi_evidence_provider
+
+if TYPE_CHECKING:
+    from app.core.settings import AppSettings
 
 logger = logging.getLogger(__name__)
 
@@ -48,20 +55,26 @@ def build_composite_evidence_provider(
     funding_settings: FundingEvidenceSettings,
     oi_settings: OpenInterestEvidenceSettings,
     ls_settings: LongShortRatioEvidenceSettings | None = None,
+    hype_settings: HypeEvidenceSettings | None = None,
 ) -> ExtraEvidencesProvider | None:
     """Baue den kombinierten Extra-Evidences-Provider (oder ``None``).
 
-    Deterministische Reihenfolge der Sub-Provider: Funding → OI → LS. Ein
-    fehlendes ``ls_settings`` (Aufrufer vor Phase 3) verhält sich wie L/S-off
-    — Phase-1/2-Verhalten bleibt unberührt.
+    Deterministische Reihenfolge der Sub-Provider: Funding → OI → LS → Hype.
+    Fehlende ``ls_settings`` / ``hype_settings`` (Aufrufer früherer Phasen)
+    verhalten sich wie off — das Verhalten der jeweils älteren Phasen bleibt
+    unberührt.
     """
-    # Reihenfolge fixiert: Funding zuerst, dann OI, dann LS.
+    # Reihenfolge fixiert: Funding zuerst, dann OI, dann LS, dann Hype.
     candidates: tuple[tuple[str, ExtraEvidencesProvider | None], ...] = (
         ("funding", build_funding_evidence_provider(funding_settings)),
         ("open_interest", build_oi_evidence_provider(oi_settings)),
         (
             "long_short_ratio",
             build_ls_evidence_provider(ls_settings) if ls_settings is not None else None,
+        ),
+        (
+            "sentiment_overheat",
+            build_hype_evidence_provider(hype_settings) if hype_settings is not None else None,
         ),
     )
 
@@ -96,4 +109,26 @@ def build_composite_evidence_provider(
     return _composite
 
 
-__all__ = ["build_composite_evidence_provider"]
+def build_composite_evidence_provider_from_settings(
+    settings: AppSettings,
+) -> ExtraEvidencesProvider | None:
+    """Settings-Level-Einstieg für den Trading-Loop (S7-Extraktion, HYPE-S1).
+
+    Bündelt die Auswahl der vier Evidence-Settings-Blöcke an EINER Stelle,
+    damit der Loop-Code (God-File, Ratchet D-234) beim nächsten Evidence-
+    Layer nicht wieder wächst. Verhalten identisch zu
+    ``build_composite_evidence_provider`` mit den vier Blöcken aus
+    ``AppSettings``.
+    """
+    return build_composite_evidence_provider(
+        settings.funding_evidence,
+        settings.oi_evidence,
+        settings.ls_evidence,
+        settings.hype_evidence,
+    )
+
+
+__all__ = [
+    "build_composite_evidence_provider",
+    "build_composite_evidence_provider_from_settings",
+]

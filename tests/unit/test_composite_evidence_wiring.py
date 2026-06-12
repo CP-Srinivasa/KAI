@@ -15,6 +15,7 @@ from app.core.domain.document import AnalysisResult
 from app.core.enums import SentimentLabel
 from app.core.settings import (
     FundingEvidenceSettings,
+    HypeEvidenceSettings,
     LongShortRatioEvidenceSettings,
     OpenInterestEvidenceSettings,
 )
@@ -28,6 +29,7 @@ from app.signals.bayesian_confidence import EvidenceKind
 from app.signals.composite_evidence_wiring import build_composite_evidence_provider
 from app.signals.funding_snapshot_store import FundingSnapshotStore
 from app.signals.funding_wiring import build_funding_evidence_provider
+from app.signals.hype_snapshot_store import HypeSnapshot, HypeSnapshotStore
 from app.signals.ls_snapshot_store import LongShortRatioSnapshotStore
 from app.signals.models import SignalDirection
 from app.signals.oi_snapshot_store import OpenInterestSnapshotStore
@@ -295,3 +297,98 @@ def test_only_ls_on_does_not_regress(tmp_path: Path) -> None:
     assert comp_ev[0].kind == std_ev[0].kind == EvidenceKind.LONG_SHORT_RATIO
     assert comp_ev[0].value == pytest.approx(std_ev[0].value)
     assert comp_ev[0].direction_aligned == std_ev[0].direction_aligned
+
+
+# ── HYPE-S1: vierte Quelle — kein Regress der V5-Pfade ────────────────────────
+
+_H = EvidenceKind.SENTIMENT_OVERHEAT
+
+
+def _hype_settings(tmp_path: Path, *, enabled: bool) -> HypeEvidenceSettings:
+    return HypeEvidenceSettings(
+        enabled=enabled,
+        source_trust=0.5,
+        snapshot_path=tmp_path / "hype.json",
+        shadow_log_path=tmp_path / "hype_shadow.jsonl",
+        min_score_for_evidence=0.3,
+    )
+
+
+def _seed_hype(tmp_path: Path, *, score: float = 0.8) -> None:
+    HypeSnapshotStore(tmp_path / "hype.json").write_many(
+        [
+            HypeSnapshot(
+                asset="BTC",
+                timestamp_utc=datetime.now(UTC).isoformat(),
+                hype_score=score,
+                velocity_ratio=4.0,
+                mentions_recent=20,
+                distinct_sources_recent=6,
+                one_sidedness=0.9,
+                insufficient_data=False,
+            )
+        ]
+    )
+
+
+def test_legacy_three_arg_call_unchanged_with_hype_param_absent(tmp_path: Path) -> None:
+    # Aufrufer früherer Phasen (ohne hype_settings) → Verhalten exakt wie vor
+    # HYPE-S1: alle drei V5-Quellen an, KEINE Hype-Evidence in der Kette.
+    _seed_funding(tmp_path)
+    _seed_oi(tmp_path)
+    _seed_ls(tmp_path)
+    composite = build_composite_evidence_provider(
+        _funding_settings(tmp_path, enabled=True),
+        _oi_settings(tmp_path, enabled=True),
+        _ls_settings(tmp_path, enabled=True),
+    )
+    assert composite is not None
+    ev = composite(_analysis(), _md(), SignalDirection.LONG)
+    assert [e.kind for e in ev] == [_F, _O, _L]
+
+
+def test_only_hype_on_passes_sub_provider_through(tmp_path: Path) -> None:
+    # Nur Hype → der unveränderte Hype-Sub-Provider wird DIREKT durchgereicht.
+    from app.signals.hype_wiring import build_hype_evidence_provider
+
+    _seed_hype(tmp_path)
+    hs = _hype_settings(tmp_path, enabled=True)
+    composite = build_composite_evidence_provider(
+        _funding_settings(tmp_path, enabled=False),
+        _oi_settings(tmp_path, enabled=False),
+        _ls_settings(tmp_path, enabled=False),
+        hs,
+    )
+    standalone = build_hype_evidence_provider(hs)
+    assert composite is not None and standalone is not None
+    comp_ev = composite(_analysis(), _md(), SignalDirection.LONG)
+    std_ev = standalone(_analysis(), _md(), SignalDirection.LONG)
+    assert len(comp_ev) == len(std_ev) == 1
+    assert comp_ev[0].kind == std_ev[0].kind == _H
+    assert comp_ev[0].direction_aligned == std_ev[0].direction_aligned == -1
+
+
+def test_all_four_on_chains_in_fixed_order(tmp_path: Path) -> None:
+    _seed_funding(tmp_path)
+    _seed_oi(tmp_path)
+    _seed_ls(tmp_path)
+    _seed_hype(tmp_path)
+    composite = build_composite_evidence_provider(
+        _funding_settings(tmp_path, enabled=True),
+        _oi_settings(tmp_path, enabled=True),
+        _ls_settings(tmp_path, enabled=True),
+        _hype_settings(tmp_path, enabled=True),
+    )
+    assert composite is not None
+    ev = composite(_analysis(), _md(), SignalDirection.LONG)
+    assert [e.kind for e in ev] == [_F, _O, _L, _H]
+
+
+def test_all_four_off_returns_none(tmp_path: Path) -> None:
+    composite = build_composite_evidence_provider(
+        _funding_settings(tmp_path, enabled=False),
+        _oi_settings(tmp_path, enabled=False),
+        _ls_settings(tmp_path, enabled=False),
+        _hype_settings(tmp_path, enabled=False),
+    )
+    assert composite is None

@@ -87,6 +87,7 @@ class EvidenceKind(StrEnum):
     FUNDING_RATE = "funding_rate"
     OPEN_INTEREST = "open_interest"
     LONG_SHORT_RATIO = "long_short_ratio"
+    SENTIMENT_OVERHEAT = "sentiment_overheat"
     LIQUIDATIONS = "liquidations"
     MARKET_REGIME = "market_regime"
     SOURCE_TRUST = "source_trust"  # nur als Modulator; eigener Update-Beitrag = 0
@@ -109,6 +110,7 @@ _KIND_STRENGTH: Final[Mapping[EvidenceKind, float]] = {
     EvidenceKind.FUNDING_RATE: 0.8,
     EvidenceKind.OPEN_INTEREST: 0.7,
     EvidenceKind.LONG_SHORT_RATIO: 0.6,
+    EvidenceKind.SENTIMENT_OVERHEAT: 0.6,
     EvidenceKind.LIQUIDATIONS: 1.1,
     EvidenceKind.MARKET_REGIME: 0.5,
     EvidenceKind.SOURCE_TRUST: 0.0,
@@ -246,6 +248,19 @@ def _calibrate_long_short(value: float) -> float:
     return math.tanh(_clamp(value, -1.0, 1.0) * 1.5) * L_MAX
 
 
+def _calibrate_sentiment_overheat(value: float) -> float:
+    """Sentiment-Überhitzungs-Mapping (contrarian crowd-attention).
+
+    Erwartung: Caller (``build_sentiment_overheat_evidence``) hat
+    ``direction_aligned`` bereits so gesetzt, dass Überhitzung contra zur
+    Signalrichtung kodiert ist. Hier nur Sättigung — gleiche tanh-Form wie
+    Funding/L/S, weil Hype derselben contrarian-Familie angehört (überfüllte
+    Aufmerksamkeit statt überfülltes Orderbuch) und extreme Score-Spitzen
+    nicht überproportional durchschlagen dürfen.
+    """
+    return math.tanh(_clamp(value, -1.0, 1.0) * 1.5) * L_MAX
+
+
 def _calibrate_regime(value: float) -> float:
     """Marktregime-Modulator — bewusst gedämpft.
 
@@ -279,6 +294,7 @@ _CALIBRATORS: Final[Mapping[EvidenceKind, Callable[[float], float]]] = {
     EvidenceKind.FUNDING_RATE: _calibrate_funding,
     EvidenceKind.OPEN_INTEREST: _calibrate_linear,
     EvidenceKind.LONG_SHORT_RATIO: _calibrate_long_short,
+    EvidenceKind.SENTIMENT_OVERHEAT: _calibrate_sentiment_overheat,
     EvidenceKind.LIQUIDATIONS: _calibrate_linear,
     EvidenceKind.MARKET_REGIME: _calibrate_regime,
     EvidenceKind.SOURCE_TRUST: _calibrate_zero,
@@ -746,6 +762,51 @@ def build_long_short_ratio_evidence(
     )
 
 
+def build_sentiment_overheat_evidence(
+    *,
+    hype_score: float,
+    signal_is_long: bool,
+    dampen_only: bool = True,
+    source_trust: float = 1.0,
+    observed_at: datetime | None = None,
+    source_id: str | None = None,
+) -> Evidence:
+    """Sentiment-Überhitzung (Hype) — contrarian crowd-attention (HYPE-S1).
+
+    ``hype_score`` ∈ [0, 1] kommt aus ``app.risk.hype_score`` (abnormale
+    Mention-Velocity × Quellen-Breite × Sentiment-Einseitigkeit). Hoher Score
+    heißt: das Asset ist medial überhitzt — die Aufmerksamkeits-Crowd ist
+    bereits eingestiegen. Das ist eine WARNUNG gegen neue Long-Einstiege,
+    keine Bestätigung („gutes Unternehmen ≠ guter Einstieg").
+
+    Semantik:
+      - LONG-Signal + Überhitzung ⇒ contra-Evidence (``direction_aligned=-1``)
+        — der Posterior sinkt, Kelly-Sizing schrumpft, ggf. kein Signal.
+      - SHORT-Signal: mit ``dampen_only=True`` (S1-Default) wird KEINE
+        Evidence-Richtung gesetzt (``direction_aligned=0`` ⇒ Engine
+        verwirft den Beitrag, bleibt aber im Audit sichtbar). Hype darf
+        Positionen nur dämpfen, nie neue (Short-)Positionen begründen.
+        ``dampen_only=False`` aktiviert die symmetrische contrarian-Lesart
+        (pro-Short, analog Funding/L/S) — bewusste SPÄTER-Entscheidung.
+    """
+    score = _clamp(hype_score, 0.0, 1.0)
+    if signal_is_long:
+        aligned = -1 if score > 0 else 0
+    elif dampen_only:
+        aligned = 0
+    else:
+        aligned = 1 if score > 0 else 0
+    return Evidence(
+        kind=EvidenceKind.SENTIMENT_OVERHEAT,
+        value=score,
+        direction_aligned=aligned,
+        source_trust=source_trust,
+        observed_at=observed_at,
+        source_id=source_id,
+        note=(f"hype_score={score:.3f} signal_long={signal_is_long} dampen_only={dampen_only}"),
+    )
+
+
 def build_liquidations_evidence(
     *,
     liquidation_volume_usd: float,
@@ -863,5 +924,6 @@ __all__ = [
     "build_news_evidence",
     "build_on_chain_evidence",
     "build_open_interest_evidence",
+    "build_sentiment_overheat_evidence",
     "build_volume_evidence",
 ]
