@@ -1,3 +1,16 @@
+## 2026-06-12 - HYPE-S1: Sentiment-Überhitzung als vierte Bayes-Evidence (default-off, shadow-first)
+
+Operationalisiert den Leitsatz „ein starkes Asset bekommt nicht automatisch ein Buy-Signal": medial überhitzte Assets (abnormale Mention-Velocity × Quellen-Breite × Sentiment-Einseitigkeit) erzeugen eine contrarian-Evidence GEGEN neue Long-Einstiege — Posterior sinkt, Kelly-Sizing schrumpft, ggf. kein Signal. Datenbasis sind ausschließlich KAIs EIGENE analysierte Dokumente (Sentiment + crypto_assets-Tags) — keine neue externe Quelle. Identische V5-Disziplin: default-off, entkoppelter Disk-Refresh, Shadow-Log, trust 0.5.
+
+- **`app/risk/hype_score.py`** (neu, rein/IO-frei): `compute_hype_score` — Velocity vs. EIGENE Baseline (7d→6h-Fenster, min 5 Mentions Floor, 5×-Sättigung) × Amplifikation aus Quellen-Breite + Einseitigkeit; `aggregate_hype_inputs` (pures Bucketing). Alle Komponenten im Ergebnis ausgewiesen.
+- **`app/signals/bayesian_confidence.py`**: neuer `EvidenceKind.SENTIMENT_OVERHEAT` (Stärke 0.6, tanh-Calibrator wie Funding/LS — gleiche contrarian-Familie) + Factory `build_sentiment_overheat_evidence`. **dampen_only-Sicherheitsvertrag (S1-Default): Hype dämpft nur Longs, begründet NIE Shorts** (direction_aligned=0 → Engine verwirft, bleibt im Audit sichtbar).
+- **`app/signals/hype_snapshot_store.py` / `hype_wiring.py`** (neu): atomarer JSON-Store (Key = Base-Asset, `BTC/USDT`→`BTC`), TTL-Staleness-Gate (default 2h), Shadow-Log loggt AUCH nicht-emittierte Beiträge (`evidence_emitted=false`) — Datenbasis für die Trust-/Schwellwert-Entscheidung nach ~7d. Emission erst ab `min_score_for_evidence` (default 0.3).
+- **`app/signals/composite_evidence_wiring.py`**: vierte Quelle (Reihenfolge Funding → OI → LS → Hype), Alt-Aufrufer (3-arg) byte-identisch; neu `build_composite_evidence_provider_from_settings(settings)` als Settings-Level-Einstieg.
+- **`scripts/hype_snapshot_refresh.py`** + **`deploy/systemd/kai-hype-refresh.{service,timer}`** (neu, Timer NICHT enabled): bounded DB-Aggregation (Spalten-Subset, Row-Limit, 120s-Deadline), 15-min-Kadenz; 0 Assets ⇒ alte Snapshot-Datei bleibt (kein Leerschreiben).
+- **S7-Ratchet-Extraktion**: `app/core/evidence_settings.py` (neu) bündelt Funding/OI/LS/Hype-Settings (explizite Re-Exports aus `app.core.settings`); `settings.py` 1744→1644, `trading_loop.py` 2251→2246 (Composite-Auswahl ins Wiring-Modul verschoben). Baseline entsprechend gesenkt.
+- **Tests**: 47 neue/erweiterte grün (Score-Floor/Sättigung/kalte Baseline, Aggregations-Bucketing, default-off, Staleness, dampen_only, Engine-Posterior-Senkung, Composite-4-Quellen-Kette + 3-arg-No-Regression, Settings-Re-Export + env-Prefix). ruff + format + mypy (418 files) clean.
+- **Bewusst NICHT in S1**: Aktien/IPO-Datenpfad (neue Asset-Klasse), Unlock-/Lockup-Kalender (neue Datenquelle, S3 nach source-scout), symmetrische pro-Short-Nutzung, gestaffelte Tranchen-Entries, jede Gate-/Live-Änderung.
+
 
 ## 2026-06-08 - D-227 Block-Reason Suppression-Quality (read-only)
 
