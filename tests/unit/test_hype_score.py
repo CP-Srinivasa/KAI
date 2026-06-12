@@ -177,5 +177,26 @@ def test_aggregate_normalizes_asset_tags_and_skips_naive_timestamps() -> None:
     assert out["ETH"].mentions_recent == 1
 
 
+def test_aggregate_merges_pair_tickers_into_base_asset_bucket() -> None:
+    # Die tickers-Spalte liefert Paare ("BTC/USDT"); crypto_assets ggf.
+    # Base-Tags ("BTC") — beide müssen in EINEN Bucket fallen.
+    mentions = [
+        _mention(1.0, assets=("BTC/USDT",)),
+        _mention(2.0, assets=("btc",)),
+        _mention(3.0, assets=("BTC/USDC",)),
+    ]
+    out = aggregate_hype_inputs(mentions, now=_NOW, config=_CFG)
+    assert set(out.keys()) == {"BTC"}
+    assert out["BTC"].mentions_recent == 3
+
+
+def test_aggregate_counts_double_tagged_document_once_per_asset() -> None:
+    # Ein Dokument mit "BTC" UND "BTC/USDT" ist EINE Mention, nicht zwei.
+    mentions = [_mention(1.0, assets=("BTC", "BTC/USDT", "ETH/USDT"))]
+    out = aggregate_hype_inputs(mentions, now=_NOW, config=_CFG)
+    assert out["BTC"].mentions_recent == 1
+    assert out["ETH"].mentions_recent == 1
+
+
 def test_aggregate_empty_input_yields_empty_dict() -> None:
     assert aggregate_hype_inputs([], now=_NOW, config=_CFG) == {}

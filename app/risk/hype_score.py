@@ -190,9 +190,13 @@ def aggregate_hype_inputs(
 ) -> dict[str, HypeInputs]:
     """Aggregiere Dokument-Mentions zu per-Asset ``HypeInputs`` (pure).
 
-    Asset-Schlüssel = upper-cased Tag (Base-Asset, z. B. ``BTC``). Dokumente
-    außerhalb des Baseline-Zeitraums werden ignoriert; tz-naive Timestamps
-    werden übersprungen (kein stilles Fehl-Bucketing).
+    Asset-Schlüssel = Base-Asset, upper-cased: Paar-Tags wie ``BTC/USDT``
+    (so liefert sie die ``tickers``-Spalte) werden auf ``BTC`` normalisiert,
+    damit ``BTC`` und ``BTC/USDT`` in EINEN Bucket fallen. Pro Dokument zählt
+    jedes Asset höchstens einmal (Doppel-Tagging ``BTC`` + ``BTC/USDT`` ist
+    EINE Mention). Dokumente außerhalb des Baseline-Zeitraums werden
+    ignoriert; tz-naive Timestamps werden übersprungen (kein stilles
+    Fehl-Bucketing).
     """
     recent_cutoff = now - timedelta(hours=config.recent_window_hours)
     baseline_cutoff = now - timedelta(days=config.baseline_days, hours=config.recent_window_hours)
@@ -209,10 +213,12 @@ def aggregate_hype_inputs(
             continue
         is_recent = ts >= recent_cutoff
         label = (mention.sentiment_label or "").strip().lower()
+        seen_assets: set[str] = set()
         for raw_asset in mention.assets:
-            asset = raw_asset.strip().upper()
-            if not asset:
+            asset = raw_asset.strip().upper().split("/", 1)[0]
+            if not asset or asset in seen_assets:
                 continue
+            seen_assets.add(asset)
             if is_recent:
                 recent_count[asset] = recent_count.get(asset, 0) + 1
                 if mention.source_name:
