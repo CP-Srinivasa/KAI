@@ -66,6 +66,22 @@ def _max_close_return_pct() -> float:
     return value if value > 0 else _DEFAULT_MAX_CLOSE_RETURN_PCT
 
 
+def _liquidation_price(entry: float, leverage: float | None, side: str) -> float | None:
+    """Isolated-margin liquidation price (A-Fix 2026-06-13).
+
+    A leveraged position is wiped out when an adverse move consumes the margin,
+    i.e. roughly 1/leverage away from entry (maintenance margin ignored —
+    conservative, slightly later than a real exchange). Returns None for
+    spot/1x positions (no liquidation). Long liquidates below entry, short above.
+    """
+    if entry <= 0 or leverage is None or leverage <= 1.0:
+        return None
+    frac = 1.0 / leverage
+    if side == "short":
+        return entry * (1.0 + frac)
+    return entry * (1.0 - frac)
+
+
 def _implied_close_return(
     entry_price: float, close_price: float, position_side: str
 ) -> float | None:
@@ -1279,8 +1295,23 @@ class PaperExecutionEngine:
             price = prices_by_symbol.get(symbol)
             if price is None or price <= 0:
                 continue
-            # Stop-loss has priority over tiers — it kills the whole residual.
             pos = self._portfolio.positions.get(symbol)
+            # A-Fix 2026-06-13: liquidation has the HIGHEST priority — a leveraged
+            # position whose margin is wiped out is force-closed at the liquidation
+            # price (≈ total margin loss) before any stop/TP. Only when leverage>1
+            # (isolated-margin model). For stops nearer than 1/leverage the stop
+            # still fires first, so this only bites genuinely wide-stop signals.
+            if pos and pos.leverage and pos.leverage > 1.0:
+                liq = _liquidation_price(pos.avg_entry_price, pos.leverage, pos.position_side)
+                if liq is not None and (
+                    (pos.position_side == "short" and price >= liq)
+                    or (pos.position_side != "short" and price <= liq)
+                ):
+                    fill = self.close_position(symbol, liq, reason="liquidation")
+                    if fill:
+                        fills.append(fill)
+                    continue
+            # Stop-loss has priority over tiers — it kills the whole residual.
             if pos and pos.position_side == "short" and pos.stop_loss and price >= pos.stop_loss:
                 fill = self.close_position(symbol, price, reason="stop")
                 if fill:

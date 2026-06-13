@@ -539,6 +539,15 @@ class PremiumSettings(BaseSettings):
     # the legacy fill-at-spot behaviour.
     fill_at_signal_entry: bool = Field(default=True)
 
+    # A-Fix 2026-06-13 (Operator): execute premium signals 1:1 with their stated
+    # leverage so paper PnL reflects the real leveraged result (intake quality).
+    # The risk-based size becomes the MARGIN, leverage multiplies the notional,
+    # the per-position notional cap is skipped, and loss is bounded by the
+    # liquidation check in PaperExecutionEngine.monitor_positions. Leverage stays
+    # clamped to risk.max_leverage. Default True (Operator-ordered); flip off to
+    # restore conservative 1x paper sizing. Paper-only — live never affected.
+    apply_signal_leverage: bool = Field(default=True)
+
     # Live triple-flag arming token (Goal 2026-06-05 Premium-Fastlane §4). The
     # premium-fastlane LIVE path stays hard-blocked unless ALL THREE hold:
     #   premium_fastlane.live_enabled=True

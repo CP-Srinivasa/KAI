@@ -525,12 +525,25 @@ class RiskEngine:
         equity: float,
         leverage: float | None = None,
         risk_allocation_pct: float | None = None,
+        apply_signal_leverage: bool = False,
     ) -> PositionSizeResult:
         """
         Calculate safe position size based on risk limits or explicit channel sizing.
         If `risk_allocation_pct` and `leverage` are provided, computes deterministically.
         Otherwise, Risk per trade = max_risk_per_trade_pct % of equity.
         If no stop loss, uses minimum position size.
+
+        ``apply_signal_leverage`` (A-Fix 2026-06-13, Operator): execute the signal
+        1:1 with its stated leverage so paper PnL reflects the real leveraged
+        result (premium-learning intake). The risk-based size is treated as the
+        MARGIN; the leverage multiplies it (notional = margin × leverage). The
+        per-position notional cap (``max_position_size_pct``) and the
+        signal-margin risk-cap are SKIPPED in this mode — the leverage must not
+        be silently undone. Loss is instead bounded by the liquidation check in
+        ``PaperExecutionEngine.monitor_positions`` (totaler Margin-Verlust).
+        Leverage is still clamped to ``max_leverage``. Off (default) keeps the
+        unchanged conservative sizing for the autonomous loop and every other
+        caller.
         """
         if entry_price <= 0 or equity <= 0:
             return PositionSizeResult(
@@ -564,39 +577,44 @@ class RiskEngine:
 
         sizing_mode = "risk_based"
         leverage_capped = False
+        # eff_leverage shared by both sizing branches; clamped to max_leverage.
+        eff_leverage = leverage if leverage is not None and leverage > 0 else 1.0
+        if eff_leverage > self._limits.max_leverage:
+            logger.warning(
+                "[RISK] Capping leverage from %s to %s for %s",
+                eff_leverage,
+                self._limits.max_leverage,
+                symbol,
+            )
+            eff_leverage = self._limits.max_leverage
+            leverage_capped = True
         if risk_allocation_pct is not None and risk_allocation_pct > 0:
             # Channel-stated fixed margin and leverage (Antigravity 2026-05-10).
-            # Risk caps still win: requested notional is clipped to
-            # max_risk_per_trade_pct whenever stop-distance implies a larger
-            # worst-case loss.
+            # Risk caps still win UNLESS apply_signal_leverage (1:1 intake): then
+            # the requested notional stands and liquidation bounds the loss.
             sizing_mode = "signal_margin_leverage"
-            eff_leverage = leverage if leverage is not None and leverage > 0 else 1.0
-            if eff_leverage > self._limits.max_leverage:
-                logger.warning(
-                    "[RISK] Capping leverage from %s to %s for %s",
-                    eff_leverage,
-                    self._limits.max_leverage,
-                    symbol,
-                )
-                eff_leverage = self._limits.max_leverage
-                leverage_capped = True
             margin_usd = equity * (risk_allocation_pct / 100.0)
             notional_usd = margin_usd * eff_leverage
             requested_units = notional_usd / entry_price
             units = requested_units
             risk_per_unit = abs(entry_price - stop_loss_price)
-            if risk_per_unit > 0:
+            if risk_per_unit > 0 and not apply_signal_leverage:
                 risk_capped_units = max_risk_usd / risk_per_unit
                 if units > risk_capped_units:
                     sizing_mode = "signal_margin_leverage_risk_capped"
                     units = risk_capped_units
         else:
             # V-DB5-Default: SL-distanzbasiertes Sizing (kein channel-margin gegeben).
+            # A-Fix: the risk-based size is the MARGIN; signal leverage multiplies
+            # it so paper PnL reflects the real leveraged result (1:1 intake).
             risk_per_unit = abs(entry_price - stop_loss_price)
             if risk_per_unit > 0:
                 units = max_risk_usd / risk_per_unit
             else:
                 units = max_risk_usd / entry_price
+            if apply_signal_leverage and eff_leverage > 1.0:
+                sizing_mode = "risk_based_signal_leverage"
+                units *= eff_leverage
 
         position_value = units * entry_price
 
@@ -608,7 +626,9 @@ class RiskEngine:
         # the 25% diversification asset-cap, deadlocking the loop. max_position_size_pct
         # <= 0 disables the cap (backward-compatible).
         position_capped = False
-        if self._limits.max_position_size_pct > 0:
+        # A-Fix: in 1:1 signal-leverage intake the per-position notional cap is
+        # skipped so the leverage is not silently undone; liquidation bounds loss.
+        if self._limits.max_position_size_pct > 0 and not apply_signal_leverage:
             max_position_value = equity * (self._limits.max_position_size_pct / 100)
             if position_value > max_position_value:
                 uncapped_value = position_value

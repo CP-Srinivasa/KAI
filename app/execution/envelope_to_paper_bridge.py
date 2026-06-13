@@ -1601,6 +1601,10 @@ async def _process_one(
             _append_bridge_audit(note_rec)
         result.fastlane_routed += 1
     else:
+        # A-Fix 2026-06-13: premium signals execute 1:1 with stated leverage so
+        # paper PnL reflects the real leveraged result (intake quality). Flag-
+        # gated + premium-only; liquidation in monitor_positions bounds the loss.
+        apply_lev = is_premium and get_settings().premium.apply_signal_leverage
         size_result = risk.calculate_position_size(
             symbol=symbol,
             entry_price=entry_price,
@@ -1608,6 +1612,7 @@ async def _process_one(
             equity=equity,
             leverage=leverage_val,
             risk_allocation_pct=risk_allocation_pct,
+            apply_signal_leverage=apply_lev,
         )
     if not size_result.approved or size_result.position_size_units <= 0:
         rec = base("rejected_size")
