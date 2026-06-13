@@ -357,13 +357,16 @@ export function fetchDashboardQuality(signal?: AbortSignal): Promise<DashboardQu
 // SSOT-Disambiguierung der fünf verschiedenen „resolved/n"-Zähler. Nur das
 // Gate-n (resolved_real) zählt fürs #167-Edge-Gate; die anderen vier messen
 // andere Pipelines. Backend: /dashboard/api/n-overview.
+export type NStatusTone = "pos" | "warn" | "muted" | "neg";
+
 export type NOverviewEntry = {
   key: string;
   label: string;
   value: number | null;
   source: string;
   measures: string;
-  note?: string | null;
+  status_tag?: string | null;
+  status_tone?: NStatusTone;
 };
 
 export type NOverviewGate = {
@@ -374,13 +377,18 @@ export type NOverviewGate = {
   ratio_pct: number | null;
   sufficient: boolean;
   source: string;
-  filter: string;
   measures: string;
   watch_hint: string;
+  // gate 1 only:
+  filter?: string;
+  // ev_gate only:
+  verdict?: string | null;
+  ev_after_costs_bps?: number | null;
 };
 
 export type NOverview = {
   gate: NOverviewGate;
+  ev_gate: NOverviewGate;
   others: NOverviewEntry[];
   trap_note: string;
 };

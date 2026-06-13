@@ -1027,6 +1027,7 @@ async def dashboard_n_overview_api() -> JSONResponse:
     # 1) Gate-n (#167): resolved_real + Gesamt-Zeilen des resolved-Ledgers.
     resolved_real: int | None = None
     resolved_ledger_lines: int | None = None
+    collected = None
     try:
         collected = collect_edge_inputs_from_resolved()
         resolved_real = collected.resolved_real
@@ -1039,23 +1040,56 @@ async def dashboard_n_overview_api() -> JSONResponse:
     except Exception as exc:  # noqa: BLE001 — Panel degradiert, kein 500
         logger.warning("n_overview_gate_read_failed: %s", exc)
 
-    # 2) total_resolved — EXAKT die Quelle des `trading generator-edge`-Reports
-    # (eine Berechnungsquelle): closed trades aus dem Paper-Audit nach dem
-    # Implausibilitäts-Filter (|exit/entry-1| ≤ 0.40). NICHT der phantom-filter.
+    # 2) total_resolved + EV-Gate — der VOLLE `trading generator-edge`-Report
+    # (eine Berechnungsquelle, identisch zur CLI): liefert total_resolved (closed
+    # trades nach Implausibilitäts-Filter |exit/entry-1|≤0.40) UND die Per-Cohort-
+    # Profile. Daraus das autonomous_generator-Profil → AUSGEFÜHRTE Generator-
+    # Trades + EV-Verdict (der bindende Engpass, nicht die all-sources-Zahl).
     total_resolved: int | None = None
+    generator_executed: int | None = None
+    generator_threshold: int | None = None
+    generator_verdict: str | None = None
+    generator_ev_bps: float | None = None
     try:
         from app.observability.edge_report import (
             load_audit_events,
             parse_closed_trades_with_exclusions,
+        )
+        from app.observability.generator_edge import (
+            EdgeGateConfig,
+            build_generator_edge_report,
         )
 
         events = load_audit_events(str(_PAPER_EXECUTION_AUDIT))
         trades, _exclusions = parse_closed_trades_with_exclusions(
             events, implausible_move_threshold=0.40
         )
-        total_resolved = len(trades)
+        edge_report = build_generator_edge_report(
+            trades,
+            cohort_type="generator",
+            venue="paper",
+            ic_aligned_by_cohort=(collected.ic_aligned_by_cohort or None) if collected else None,
+            outcome_pairs_by_cohort=(collected.outcome_pairs_by_cohort or None)
+            if collected
+            else None,
+            config=EdgeGateConfig(),
+        ).to_dict()
+        total_resolved = edge_report.get("total_resolved")
+        generator_threshold = edge_report.get("gate_config", {}).get("min_resolved")
+        gen_profile = next(
+            (
+                p
+                for p in edge_report.get("profiles", [])
+                if p.get("cohort_key") == "autonomous_generator"
+            ),
+            None,
+        )
+        if gen_profile is not None:
+            generator_executed = gen_profile.get("resolved_count")
+            generator_verdict = gen_profile.get("verdict")
+            generator_ev_bps = gen_profile.get("expected_value_after_costs_bps")
     except Exception as exc:  # noqa: BLE001
-        logger.warning("n_overview_total_resolved_read_failed: %s", exc)
+        logger.warning("n_overview_edge_report_read_failed: %s", exc)
 
     # 5) paper_trades_all_time — EXAKT der Daily-Digest-Zähler `_paper_fills_count`
     # (position_closed + position_partial_closed, ungefiltert; ein Event pro Trade).
@@ -1085,6 +1119,10 @@ async def dashboard_n_overview_api() -> JSONResponse:
         total_resolved=total_resolved,
         paper_trades_all_time=paper_trades_all_time,
         resolved_directional_alerts=resolved_directional_alerts,
+        generator_executed=generator_executed,
+        generator_threshold=generator_threshold,
+        generator_verdict=generator_verdict,
+        generator_ev_bps=generator_ev_bps,
     )
     return JSONResponse(content=payload, headers={"Cache-Control": "no-store, max-age=0"})
 
