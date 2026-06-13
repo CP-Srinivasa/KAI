@@ -82,6 +82,12 @@ def _cohort_key(row: dict[str, Any], cohort_type: str) -> str:
         return str(row.get("regime") or "unknown")
     if cohort_type == "symbol":
         return str(row.get("symbol") or "unknown")
+    # NOT folded here (2026-06-13): the shadow resolver only ever emits
+    # ``autonomous_generator`` (``real_analysis`` is an audit-fill tag, never a
+    # shadow-candidate tag), so folding would be a no-op for real data — and this
+    # key is shared with the watchdog agent-scoreboard, which intentionally
+    # scores any future real_analysis shadow row as its own agent. The
+    # cohort-mismatch fold lives only in the edge report's trade-side _key.
     return str(row.get("source") or "unknown")
 
 

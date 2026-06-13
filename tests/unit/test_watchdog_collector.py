@@ -158,12 +158,17 @@ def test_agent_inputs_exclude_canary_cohorts(tmp_path: Path) -> None:
     ids = {i.agent_id for i in inputs}
     assert "canary_probe" not in ids
     assert "canary_probe" in meta["excluded_cohorts"]
-    assert "real_analysis" in ids
-    assert "autonomous_generator" in ids  # side-channel-only Kohorte
+    # Cohort-key-mismatch fix (2026-06-13): the executed real_analysis fill is
+    # folded onto the autonomous_generator agent — the same logical generator is
+    # ONE agent, not two half-agents (EV-only + IC/Brier-only). No standalone
+    # real_analysis agent any more.
+    assert "real_analysis" not in ids
+    assert "autonomous_generator" in ids
     assert meta["real_resolved"] == 4
     gen = next(i for i in inputs if i.agent_id == "autonomous_generator")
-    assert gen.n_trades == 0  # shadow: keine Closed-Trades
-    assert gen.brier is not None  # aber Kalibration aus dem Ledger
+    # the folded real_analysis closed trade now lands on the generator agent …
+    assert gen.n_trades == 1
+    assert gen.brier is not None  # … alongside calibration from the shadow ledger
 
 
 # ── activation gate + emission ───────────────────────────────────────────────
