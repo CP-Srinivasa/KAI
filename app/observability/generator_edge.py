@@ -66,6 +66,41 @@ VERDICT_GO = "GO"
 VERDICT_NO_GO = "NO_GO"
 VERDICT_INSUFFICIENT = "INSUFFICIENT"
 
+# ─── Generator-cohort taxonomy ────────────────────────────────────────────────
+#
+# Cohort-key-mismatch fix (2026-06-13). The IC/Brier side-channel is fed from
+# the SHADOW resolution stream, where the real generator's candidates carry
+# ``source=autonomous_generator``. But the SAME generator's *executed* paper
+# fills carry ``signal_source=real_analysis`` in the audit stream — the decoupled
+# real-analysis feeder (Goal 2026-06-10, B-002) deliberately re-tags the fill at
+# the source so it stays out of the D-227 / hit-rate headlines.
+#
+# Consequence for the generator-edge report ONLY: EV (from audit fills, tagged
+# ``real_analysis``) and IC/Brier (from shadow, tagged ``autonomous_generator``)
+# landed in two separate cohorts that never joined — so the autonomous_generator
+# profile showed IC/Brier with resolved_count=0, and the real_analysis profile
+# showed EV with no IC/Brier, regardless of sample size.
+#
+# These two tags are the SAME logical generator (same analysed documents, shadow
+# vs. executed fill), so the edge report folds them onto one canonical cohort.
+# This is read-time normalisation confined to the edge instrument: the written
+# tags are untouched and the B-002 exclusion in D-227 / hit-rate stays intact.
+COHORT_AUTONOMOUS_GENERATOR = "autonomous_generator"
+_REAL_ANALYSIS_SOURCE = "real_analysis"
+
+
+def canonical_generator_cohort(source: str | None) -> str:
+    """Fold the executed-fill tag onto the shadow generator cohort.
+
+    ``real_analysis`` (decoupled executed paper fills) and
+    ``autonomous_generator`` (shadow-measured candidates) are the same logical
+    generator; everything else passes through unchanged (legacy ``unknown``,
+    ``canary_probe``, ``tv_promoted`` stay distinct). Idempotent.
+    """
+    if source == _REAL_ANALYSIS_SOURCE:
+        return COHORT_AUTONOMOUS_GENERATOR
+    return source or "unknown"
+
 
 # ─── Go/No-Go gate configuration ──────────────────────────────────────────────
 
@@ -591,7 +626,9 @@ def build_generator_edge_report(
             return t.regime or "unknown"
         if cohort_type == "symbol":
             return t.symbol
-        return t.signal_source or "unknown"
+        # generator cohort: fold real_analysis fills onto the shadow generator
+        # cohort so EV (audit) and IC/Brier (shadow) share one profile.
+        return canonical_generator_cohort(t.signal_source)
 
     grouped: dict[str, list[ClosedTrade]] = {}
     for t in trades:
