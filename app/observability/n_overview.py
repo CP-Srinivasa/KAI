@@ -3,22 +3,17 @@
 Operator-Befund: Es existieren **fünf verschiedene „n"**, die unterschiedliche
 Pipelines zählen und alle ähnlich „resolved" heißen — genau die UX-Falle, über
 die der Edge-Re-Run selbst gestolpert ist. Diese Funktion bündelt sie an EINER
-Stelle mit Klartext-Label, Quelle und „misst …", und hebt das einzige n hervor,
-das fürs **#167-Edge-Gate** zählt: ``resolved_real`` (Re-Run-Schwelle n≥100).
+Stelle mit Klartext-Label, Quelle und „misst …", und hebt die ZWEI offenen
+Gates hervor, auf die der Operator hin handelt:
 
-Zuordnung (Stand 2026-06-13):
+  1. ``resolved_real`` — IC/Brier-Shadow-Sample fürs #167-Gate (Schwelle 100).
+  2. ``autonomous_generator``-EV — AUSGEFÜHRTE Generator-Trades fürs EV-Verdict
+     (Schwelle = generator-edge ``min_resolved``). DAS ist der bindende Engpass
+     (Prioritäts-Doktrin 2026-06-13): nicht das Shadow-n, nicht die all-sources
+     ``total_resolved``, sondern wieviele ECHTE Generator-Trades geschlossen sind.
 
-  * ``resolved_real``               — shadow_candidate_resolved.jsonl, nur
-    source=autonomous_generator, Canary hart raus → IC/Brier des Generators.
-    DAS ist das n fürs #167-Gate.
-  * ``total_resolved``              — paper_execution_audit, geschlossene Trades
-    NACH Implausibilitäts-Filter → realisierte EV/PnL aller Quellen.
-  * ``resolved_ledger_lines``       — komplettes Shadow-resolved-Ledger inkl. der
-    Nicht-Real-Candidates, die fürs Gate geskippt werden.
-  * ``resolved_directional_alerts`` — News-/Alert-Outcome-Pipeline (D-227):
-    News-Treffer, nichts mit Trading.
-  * ``paper_trades_all_time``       — geschlossene Paper-Trades ungefiltert
-    (reiner Trade-Zähler über alle Zeit).
+Die übrigen Zähler sind Kontext OHNE offenes Trading-Gate (Diagnose, News-only,
+oder bereits erreicht) — sie bekommen ehrliche Status-Tags statt Fake-Balken.
 
 Rein (keine I/O): der Endpoint liest die Artefakte und reicht die Rohwerte
 hinein, sodass Zuordnung + Labels an EINER testbaren Stelle gepflegt sind und
@@ -49,35 +44,76 @@ def build_n_overview(
     total_resolved: int | None,
     paper_trades_all_time: int | None,
     resolved_directional_alerts: int | None,
+    generator_executed: int | None = None,
+    generator_threshold: int | None = None,
+    generator_verdict: str | None = None,
+    generator_ev_bps: float | None = None,
+    paper_fills_min: int = 3,
     gate_threshold: int = RE_RUN_THRESHOLD,
 ) -> dict[str, Any]:
-    """Bündelt die fünf n in EINE Operator-lesbare Struktur (pure).
+    """Bündelt die fünf n + zwei offene Gates in EINE Struktur (pure).
 
     Jeder Wert darf ``None`` sein (unlesbares/leeres Artefakt) — das Frontend
-    zeigt dann ehrlich „—" statt einer erfundenen Zahl. Das Gate-n trägt
-    zusätzlich Schwelle, Fortschritt und Suffizienz, weil es das einzige ist,
-    auf das der Operator hin handelt.
+    zeigt dann ehrlich „—" statt einer erfundenen Zahl. Die zwei Gates tragen
+    Schwelle, Fortschritt und Suffizienz; die Kontext-Zeilen tragen ehrliche
+    Status-Tags (erreicht / Diagnose / kein Trading-Gate) — keine Fortschritts-
+    balken auf Größen, die gar kein Gate haben.
     """
-    ratio = _ratio_pct(resolved_real, gate_threshold)
-
-    # Wie viele Ledger-Zeilen sind Nicht-Real (werden fürs Gate geskippt)?
-    non_real_note: str | None = None
-    if resolved_ledger_lines is not None and resolved_real is not None:
-        skipped = max(0, resolved_ledger_lines - resolved_real)
-        non_real_note = f"{skipped} Nicht-Real (geskippt)"
-
+    # --- Gate 1: IC/Brier-Shadow-Sample (#167) ---
     gate = {
         "key": "resolved_real",
         "label": "resolved_real",
         "value": resolved_real,
         "threshold": gate_threshold,
-        "ratio_pct": ratio,
+        "ratio_pct": _ratio_pct(resolved_real, gate_threshold),
         "sufficient": resolved_real is not None and resolved_real >= gate_threshold,
-        "source": "shadow_candidate_resolved.jsonl",
+        "source": "shadow-report · real_resolved",
         "filter": "source=autonomous_generator · Canary hart raus",
-        "measures": "IC / Brier des Generators — #167 Edge-Gate",
-        "watch_hint": "Das ist das n, das du beobachtest.",
+        "measures": "IC / Brier-Shadow-Sample — #167 Edge-Gate",
+        "watch_hint": "Shadow-Sample für die Kalibrierung.",
     }
+
+    # --- Gate 2: EV-Verdict aus AUSGEFÜHRTEN Generator-Trades (der Engpass) ---
+    gen_threshold = generator_threshold if generator_threshold and generator_threshold > 0 else 30
+    ev_gate = {
+        "key": "autonomous_generator_executed",
+        "label": "autonomous_generator",
+        "value": generator_executed,
+        "threshold": gen_threshold,
+        "ratio_pct": _ratio_pct(generator_executed, gen_threshold),
+        "sufficient": generator_executed is not None and generator_executed >= gen_threshold,
+        "verdict": generator_verdict,
+        "ev_after_costs_bps": (
+            round(generator_ev_bps, 1) if isinstance(generator_ev_bps, (int, float)) else None
+        ),
+        "source": "trading generator-edge · profile autonomous_generator",
+        "measures": "ausgeführte Generator-Trades fürs EV-Verdict",
+        "watch_hint": "DAS ist der echte Engpass — nicht die all-sources-Zahl.",
+    }
+
+    # --- Kontext-Zeilen: ehrliche Status-Tags, KEINE Fake-Balken ---
+    # total_resolved ist all-sources; davon ist nur ``generator_executed`` der
+    # echte Generator — der Rest sind unknown/Legacy/Probe-Closes. Das laut zu
+    # sagen verhindert die Mini-Falle „115 sieht fertig aus".
+    if generator_executed is not None and total_resolved is not None:
+        total_tag = f"⚠ davon nur {generator_executed} echter Generator"
+        total_tone = "warn"
+    else:
+        total_tag = None
+        total_tone = "muted"
+
+    # Wie viele Ledger-Zeilen sind Nicht-Real (werden fürs Gate geskippt)?
+    if resolved_ledger_lines is not None and resolved_real is not None:
+        ledger_tag = f"Diagnose · {max(0, resolved_ledger_lines - resolved_real)} Nicht-Real"
+    else:
+        ledger_tag = "Diagnose · kein Gate"
+
+    if paper_trades_all_time is None:
+        paper_tag, paper_tone = None, "muted"
+    elif paper_trades_all_time >= paper_fills_min:
+        paper_tag, paper_tone = f"Re-Entry ≥{paper_fills_min} ✓", "pos"
+    else:
+        paper_tag, paper_tone = f"Re-Entry {paper_trades_all_time}/{paper_fills_min}", "warn"
 
     others = [
         {
@@ -86,7 +122,8 @@ def build_n_overview(
             "value": total_resolved,
             "source": "trading generator-edge · total_resolved (impl.≤0.40)",
             "measures": "realisierte EV/PnL aller Quellen · nach Implausibilitäts-Filter",
-            "note": None,
+            "status_tag": total_tag,
+            "status_tone": total_tone,
         },
         {
             "key": "resolved_ledger_lines",
@@ -94,7 +131,8 @@ def build_n_overview(
             "value": resolved_ledger_lines,
             "source": "shadow-report · raw_count (shadow_candidate_resolved.jsonl)",
             "measures": "komplettes resolved-Ledger inkl. Nicht-Real-Candidates",
-            "note": non_real_note,
+            "status_tag": ledger_tag,
+            "status_tone": "muted",
         },
         {
             "key": "resolved_directional_alerts",
@@ -102,7 +140,8 @@ def build_n_overview(
             "value": resolved_directional_alerts,
             "source": "alert_outcomes.jsonl · hit+miss (D-227)",
             "measures": "entschiedene directional News-Outcomes — nichts mit Trading",
-            "note": None,
+            "status_tag": "kein Trading-Gate",
+            "status_tone": "muted",
         },
         {
             "key": "paper_trades_all_time",
@@ -110,17 +149,20 @@ def build_n_overview(
             "value": paper_trades_all_time,
             "source": "paper_execution_audit.jsonl · position_closed+partial",
             "measures": "reiner Trade-Zähler über alle Zeit (ungefiltert)",
-            "note": None,
+            "status_tag": paper_tag,
+            "status_tone": paper_tone,
         },
     ]
 
     return {
         "gate": gate,
+        "ev_gate": ev_gate,
         "others": others,
         "trap_note": (
-            "Alle heißen „resolved“ und sehen ähnlich aus — aber nur "
-            "resolved_real zählt fürs #167-Edge-Gate. Die anderen messen andere "
-            "Pipelines (nicht falsch, nur nicht das Gate)."
+            "Zwei offene Gates: resolved_real (IC/Brier-Sample) und die "
+            "ausgeführten Generator-Trades (EV-Verdict). Die anderen Zähler "
+            "messen andere Pipelines — Diagnose, News-only oder bereits erreicht, "
+            "KEIN offenes Trading-Gate."
         ),
     }
 
