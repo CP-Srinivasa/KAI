@@ -64,6 +64,17 @@ class PositionSummary:
     opened_at: str | None = None
     correlation_id: str = ""
     realized_pnl_usd: float = 0.0
+    # C-Fix 2026-06-13: display-only Mark-to-Market fallback for symbols the
+    # price provider does not list (Bybit microcaps: SKYAI, COAI, …). When no
+    # LIVE price is available, ``display_value_usd`` carries the entry-cost value
+    # (quantity × avg_entry_price) so the Portfolio view shows a number instead
+    # of blank. CRITICAL: the gate-relevant fields (market_price,
+    # market_value_usd, unrealized_pnl_usd, market_data_available) stay
+    # None/False, so position_risk / promotion_gate stay fail-closed and never
+    # treat the entry-cost fallback as a real quote. ``mark_basis`` tells the UI
+    # which case applies: "live" | "entry_fallback".
+    display_value_usd: float | None = None
+    mark_basis: str = "live"
     # Multi-target staged-exit ladder. List of (price, qty_share)-Tuples.
     take_profit_tiers: list[tuple[float, float]] = field(default_factory=list)
     initial_quantity: float = 0.0
@@ -91,6 +102,8 @@ class PositionSummary:
             "opened_at": self.opened_at,
             "correlation_id": self.correlation_id,
             "realized_pnl_usd": self.realized_pnl_usd,
+            "display_value_usd": self.display_value_usd,
+            "mark_basis": self.mark_basis,
             "take_profit_tiers": [{"price": p, "qty_share": q} for p, q in self.take_profit_tiers],
             "initial_quantity": self.initial_quantity,
         }
@@ -285,6 +298,13 @@ def _build_snapshot_from_portfolio_state(
                 opened_at=_coerce_str(pos_raw.get("opened_at")),
                 correlation_id=str(pos_raw.get("correlation_id") or ""),
                 realized_pnl_usd=float(pos_raw.get("realized_pnl_usd") or 0.0),
+                # DB-snapshot path never has a live price → entry-cost fallback.
+                display_value_usd=round(
+                    float(pos_raw.get("quantity", 0.0))
+                    * float(pos_raw.get("avg_entry_price", 0.0)),
+                    8,
+                ),
+                mark_basis="entry_fallback",
                 take_profit_tiers=tiers,
                 initial_quantity=float(pos_raw.get("initial_quantity") or 0.0),
             )
@@ -490,6 +510,17 @@ async def build_portfolio_snapshot(
             else None
         )
 
+        # C-Fix 2026-06-13: display-only fallback for unlistable symbols. The
+        # gate-relevant fields above stay None when there is no live price; this
+        # only fills a separate display value (entry cost) so the Portfolio view
+        # is not blank. mark_basis lets the UI flag it as non-live.
+        if market_value is not None:
+            display_value = market_value
+            mark_basis = "live"
+        else:
+            display_value = round(position.quantity * position.avg_entry_price, 8)
+            mark_basis = "entry_fallback"
+
         position_summaries.append(
             PositionSummary(
                 symbol=position.symbol,
@@ -515,6 +546,8 @@ async def build_portfolio_snapshot(
                 opened_at=position.opened_at,
                 correlation_id=position.correlation_id,
                 realized_pnl_usd=position.realized_pnl_usd,
+                display_value_usd=display_value,
+                mark_basis=mark_basis,
                 take_profit_tiers=list(position.take_profit_tiers),
                 initial_quantity=position.initial_quantity,
             )
