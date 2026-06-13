@@ -72,6 +72,17 @@ _DEFAULT_BOOTSTRAP_N = 5000
 # plausible real moves (biases edge); higher → lets corrupt prints back in. 0
 # disables the guard (forensic signatures in bayes_quarantine still apply).
 DEFAULT_IMPLAUSIBLE_MOVE_THRESHOLD = 0.40
+
+# B-Fix 2026-06-13 (Operator): every premium paper trade BEFORE this cutoff was
+# sized 1x because the stated signal leverage was audit-only
+# (leverage_mode="paper_audit_only"). Their PnL is systematically too small and
+# would drag down Premium-EV / forward hit-rate / premium-bonus / re-entry-gate.
+# A (#232, premium.apply_signal_leverage) went live at this instant, so premium
+# closes timestamped before it are excluded from edge/EV metrics (audit rows are
+# NEVER deleted — append-only integrity; they are skipped + counted). Set to ""
+# to disable the exclusion. Only premium sources are affected; the autonomous
+# generator / real_analysis trades were never leverage-distorted.
+PREMIUM_LEVERAGE_CUTOFF_UTC = "2026-06-13T14:09:49Z"
 # Forward horizons in minutes (C2). Side-adjusted AND cost-adjusted.
 FORWARD_HORIZONS_MIN: tuple[int, ...] = (1, 5, 15, 60)
 _SHADOW_FORWARD_BPS_KEYS: dict[int, str] = {
@@ -975,6 +986,7 @@ def parse_closed_trades_with_exclusions(
     events: Iterable[dict[str, Any]],
     *,
     implausible_move_threshold: float = DEFAULT_IMPLAUSIBLE_MOVE_THRESHOLD,
+    premium_leverage_cutoff_utc: str | None = PREMIUM_LEVERAGE_CUTOFF_UTC,
 ) -> tuple[list[ClosedTrade], QuarantineExclusion]:
     """Like :func:`parse_closed_trades` but also returns the exclusion tally.
 
@@ -1000,6 +1012,15 @@ def parse_closed_trades_with_exclusions(
     reasons: dict[str, int] = defaultdict(int)
     guard_active = implausible_move_threshold > 0
     guard_key = f"implausible_move_gt_{int(round(implausible_move_threshold * 100))}pct"
+    # B-Fix: pre-leverage 1x premium-close cutoff (parsed once).
+    cutoff_dt: datetime | None = None
+    if premium_leverage_cutoff_utc:
+        try:
+            cutoff_dt = datetime.fromisoformat(
+                premium_leverage_cutoff_utc.replace("Z", "+00:00")
+            ).astimezone(UTC)
+        except ValueError:
+            cutoff_dt = None
     for ev in events:
         if ev.get("event_type") != "position_closed":
             continue
@@ -1021,6 +1042,20 @@ def parse_closed_trades_with_exclusions(
             excluded += 1
             reasons[guard_key] += 1
             continue
+        # B-Fix 2026-06-13: drop premium closes from the 1x-only era (their PnL
+        # is leverage-distorted downward). Premium-only + before the A cutoff.
+        if cutoff_dt is not None:
+            src_for_cutoff = str(ev.get("signal_source") or ev.get("source") or "")
+            if src_for_cutoff.startswith("telegram_premium"):
+                ts_raw = str(ev.get("timestamp_utc", ""))
+                try:
+                    ts_dt = datetime.fromisoformat(ts_raw.replace("Z", "+00:00")).astimezone(UTC)
+                except ValueError:
+                    ts_dt = None
+                if ts_dt is not None and ts_dt < cutoff_dt:
+                    excluded += 1
+                    reasons["premium_pre_leverage_1x"] += 1
+                    continue
         regime = (
             ev.get("regime")
             or ev.get("regime_state")
