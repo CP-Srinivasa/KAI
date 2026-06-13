@@ -353,6 +353,42 @@ export function fetchDashboardQuality(signal?: AbortSignal): Promise<DashboardQu
   return apiGet<DashboardQuality>("/dashboard/api/quality", { signal });
 }
 
+// --- Die 5 „n" (Dali 2026-06-13) -------------------------------------------
+// SSOT-Disambiguierung der fünf verschiedenen „resolved/n"-Zähler. Nur das
+// Gate-n (resolved_real) zählt fürs #167-Edge-Gate; die anderen vier messen
+// andere Pipelines. Backend: /dashboard/api/n-overview.
+export type NOverviewEntry = {
+  key: string;
+  label: string;
+  value: number | null;
+  source: string;
+  measures: string;
+  note?: string | null;
+};
+
+export type NOverviewGate = {
+  key: string;
+  label: string;
+  value: number | null;
+  threshold: number;
+  ratio_pct: number | null;
+  sufficient: boolean;
+  source: string;
+  filter: string;
+  measures: string;
+  watch_hint: string;
+};
+
+export type NOverview = {
+  gate: NOverviewGate;
+  others: NOverviewEntry[];
+  trap_note: string;
+};
+
+export function fetchNOverview(signal?: AbortSignal): Promise<NOverview> {
+  return apiGet<NOverview>("/dashboard/api/n-overview", { signal });
+}
+
 export type ProvenanceMetrics = {
   source: string;
   resolved: number;

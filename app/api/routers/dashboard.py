@@ -1011,6 +1011,77 @@ async def dashboard_quality_api() -> JSONResponse:
     )
 
 
+@router.get("/dashboard/api/n-overview", tags=["dashboard"])
+async def dashboard_n_overview_api() -> JSONResponse:
+    """Die fünf „n" an EINER Stelle (Dali 2026-06-13).
+
+    Es gibt fünf verschiedene „resolved/n", die unterschiedliche Pipelines
+    zählen und alle ähnlich heißen — genau die UX-Falle, über die der Edge-
+    Re-Run gestolpert ist. Dieser Endpoint liest jede Quelle einzeln und reicht
+    die Rohwerte an den reinen Assembler ``build_n_overview`` (SSOT für Labels/
+    Zuordnung). Jede Quelle degradiert auf ``None`` statt eine Zahl zu erfinden.
+    """
+    from app.observability.generator_edge_collector import collect_edge_inputs_from_resolved
+    from app.observability.n_overview import build_n_overview
+
+    # 1) Gate-n (#167): resolved_real + Gesamt-Zeilen des resolved-Ledgers.
+    resolved_real: int | None = None
+    resolved_ledger_lines: int | None = None
+    try:
+        collected = collect_edge_inputs_from_resolved()
+        resolved_real = collected.resolved_real
+        resolved_ledger_lines = (
+            collected.resolved_real
+            + collected.skipped_non_real
+            + collected.skipped_canary
+            + collected.skipped_no_score
+        )
+    except Exception as exc:  # noqa: BLE001 — Panel degradiert, kein 500
+        logger.warning("n_overview_gate_read_failed: %s", exc)
+
+    # 2)/5) Paper-Closes: gefiltert (total_resolved) vs. roh (all-time). Einziger
+    # Unterschied ist der Implausibilitäts-Filter — genau die Operator-Distinktion.
+    total_resolved: int | None = None
+    paper_trades_all_time: int | None = None
+    try:
+        exec_rows = _load_jsonl(_PAPER_EXECUTION_AUDIT)
+        raw_closes = [
+            r
+            for r in exec_rows
+            if r.get("event_type") in ("position_closed", "position_partial_closed")
+        ]
+        paper_trades_all_time = len(raw_closes)
+        total_resolved = sum(
+            1
+            for r in raw_closes
+            if not is_phantom_close(
+                r.get("entry_price"), r.get("exit_price"), r.get("position_side")
+            )
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("n_overview_paper_read_failed: %s", exc)
+
+    # 4) D-227 resolved directional alerts (gecachter Hold-Report).
+    resolved_directional_alerts: int | None = None
+    try:
+        report = await _live_hold_report()
+        hit_rate = report.get("alert_hit_rate_evidence", {})
+        value = hit_rate.get("resolved_directional_documents")
+        if isinstance(value, int):
+            resolved_directional_alerts = value
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("n_overview_d227_read_failed: %s", exc)
+
+    payload = build_n_overview(
+        resolved_real=resolved_real,
+        resolved_ledger_lines=resolved_ledger_lines,
+        total_resolved=total_resolved,
+        paper_trades_all_time=paper_trades_all_time,
+        resolved_directional_alerts=resolved_directional_alerts,
+    )
+    return JSONResponse(content=payload, headers={"Cache-Control": "no-store, max-age=0"})
+
+
 @router.get("/dashboard/api/priority-gate", tags=["dashboard"])
 async def dashboard_priority_gate_api() -> JSONResponse:
     """D-184: operator-visibility for the D-182 priority-tier paper-fill gate.
