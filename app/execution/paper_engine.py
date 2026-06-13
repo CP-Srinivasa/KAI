@@ -315,6 +315,7 @@ class PaperExecutionEngine:
         leverage: float | None = None,
         source: str = "",
         document_id: str = "",
+        regime: str = "",
         partial_fill_ratio: float = 1.0,
     ) -> PaperOrder:
         """Create an order record (does not fill immediately).
@@ -389,6 +390,7 @@ class PaperExecutionEngine:
             leverage=leverage,
             source=source,
             document_id=document_id,
+            regime=regime,
         )
         self._partial_fill_ratios[order.order_id] = float(partial_fill_ratio)
         self._append_audit(
@@ -593,6 +595,7 @@ class PaperExecutionEngine:
                     leverage=pos.leverage,
                     source=pos.source,
                     document_id=pos.document_id,
+                    regime=pos.regime,
                 )
             else:
                 self._portfolio.positions[order.symbol] = PaperPosition(
@@ -607,6 +610,7 @@ class PaperExecutionEngine:
                     leverage=order.leverage,
                     source=order.source,
                     document_id=order.document_id,
+                    regime=order.regime,
                 )
         elif order.position_side == "long" and order.side == "sell":
             pos = self._portfolio.positions.get(order.symbol)
@@ -639,6 +643,7 @@ class PaperExecutionEngine:
                     leverage=pos.leverage,
                     source=pos.source,
                     document_id=pos.document_id,
+                    regime=pos.regime,
                 )
         elif order.position_side == "short" and order.side == "sell":
             pos = self._portfolio.positions.get(order.symbol)
@@ -669,6 +674,7 @@ class PaperExecutionEngine:
                     leverage=pos.leverage,
                     source=pos.source,
                     document_id=pos.document_id,
+                    regime=pos.regime,
                 )
             else:
                 self._portfolio.positions[order.symbol] = PaperPosition(
@@ -683,6 +689,7 @@ class PaperExecutionEngine:
                     leverage=order.leverage,
                     source=order.source,
                     document_id=order.document_id,
+                    regime=order.regime,
                 )
         elif order.position_side == "short" and order.side == "buy":
             pos = self._portfolio.positions.get(order.symbol)
@@ -721,6 +728,7 @@ class PaperExecutionEngine:
                     leverage=pos.leverage,
                     source=pos.source,
                     document_id=pos.document_id,
+                    regime=pos.regime,
                 )
         else:
             logger.warning(
@@ -758,6 +766,7 @@ class PaperExecutionEngine:
             correlation_id=order.correlation_id,
             source=order.source,
             document_id=order.document_id,
+            regime=order.regime,
         )
 
         self._append_audit(
@@ -996,6 +1005,7 @@ class PaperExecutionEngine:
             correlation_id=pos.correlation_id,
             source=pos.source,
             document_id=pos.document_id,
+            regime=pos.regime,
         )
         fill = self.fill_order(order, current_price)
         if fill is None:
@@ -1027,6 +1037,7 @@ class PaperExecutionEngine:
                 "realized_pnl_usd": self._portfolio.realized_pnl_usd,
                 "signal_source": pos.source,
                 "document_id": pos.document_id,
+                "regime": pos.regime,
             },
         )
         logger.info(
@@ -1089,6 +1100,7 @@ class PaperExecutionEngine:
             leverage=pos.leverage,
             source=pos.source,
             document_id=pos.document_id,
+            regime=pos.regime,
         )
         self._append_audit(
             "position_adjusted",
@@ -1181,6 +1193,7 @@ class PaperExecutionEngine:
             correlation_id=pos.correlation_id,
             source=pos.source,
             document_id=pos.document_id,
+            regime=pos.regime,
         )
         fill = self.fill_order(order, current_price)
         if fill is None:
@@ -1206,6 +1219,7 @@ class PaperExecutionEngine:
                 # unattributed entry). Lets edge_report split closes by source.
                 "signal_source": pos.source,
                 "document_id": pos.document_id,
+                "regime": pos.regime,
             },
         )
         logger.info(

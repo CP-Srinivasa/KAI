@@ -280,6 +280,7 @@ def replay_paper_audit(audit_path: Path) -> AuditReplayResult:
                 leverage=existing.leverage,
                 source=existing.source,
                 document_id=existing.document_id,
+                regime=existing.regime,
             )
             continue
 
@@ -322,6 +323,9 @@ def replay_paper_audit(audit_path: Path) -> AuditReplayResult:
         # NEO-P-20260603-001: order_filled rows now carry source/document_id
         # directly (via **fill.__dict__). Legacy rows lack both → default "".
         document_id: str = _coerce_str(payload.get("document_id")) or ""
+        # 2026-06-13: regime-at-entry travels on the order_filled row (PaperFill
+        # carries it via **fill.__dict__). Legacy rows lack it → default "".
+        regime: str = _coerce_str(payload.get("regime")) or ""
         fill_source = _coerce_str(payload.get("source")) or ""
         correlation_id = _coerce_str(payload.get("correlation_id")) or ""
         if order_id is not None:
@@ -365,6 +369,7 @@ def replay_paper_audit(audit_path: Path) -> AuditReplayResult:
                     leverage=leverage,
                     source=source,
                     document_id=document_id,
+                    regime=regime,
                 )
             else:
                 if existing.position_side != position_side_val:
@@ -399,6 +404,7 @@ def replay_paper_audit(audit_path: Path) -> AuditReplayResult:
                     leverage=existing.leverage if existing.leverage is not None else leverage,
                     source=existing.source or source,
                     document_id=existing.document_id or document_id,
+                    regime=existing.regime or regime,
                 )
         elif is_close:
             if (
@@ -441,6 +447,7 @@ def replay_paper_audit(audit_path: Path) -> AuditReplayResult:
                     leverage=existing.leverage,
                     source=existing.source,
                     document_id=existing.document_id,
+                    regime=existing.regime,
                 )
         else:
             # 2026-05-25 Forensik-Fix: unbekannte side/position-Kombi skipt.
