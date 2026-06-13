@@ -14,6 +14,7 @@ import { PreparedPanel } from "@/components/panels/PreparedPanel";
 import { LivePortfolioTiles } from "@/components/panels/LivePortfolioTiles";
 import { ReentryGatePanel } from "@/components/panels/ReentryGatePanel";
 import { TruthStatusBar } from "@/components/panels/TruthStatusBar";
+import { NOverviewPanel } from "@/components/panels/NOverviewPanel";
 import { SignalHeatmapPanel } from "@/components/panels/SignalHeatmap";
 import { PremiumRuntimeBanner } from "@/components/panels/PremiumRuntimeBanner";
 import { AgentsStatusCard } from "@/components/panels/AgentsStatusCard";
@@ -156,6 +157,14 @@ export function Dashboard() {
           priorityGate={priorityGate}
           qualityState={q.state}
         />
+      </PanelErrorBoundary>
+
+      {/* Die 5 „n" — SSOT-Disambiguierung der fünf resolved/n-Zähler (Dali
+          2026-06-13). Hebt das einzige n hervor, das fürs #167-Edge-Gate zählt
+          (resolved_real), und dämpft die vier anderen Pipelines bewusst ab.
+          Top-Platzierung: Operator soll es ohne Seitenwechsel sehen. */}
+      <PanelErrorBoundary name="n-Übersicht">
+        <NOverviewPanel />
       </PanelErrorBoundary>
 
       {/* KAI LIVE — Persona non grata. Hero-Strip per DALI-Audit 2026-05-03. */}
