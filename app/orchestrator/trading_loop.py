@@ -1414,32 +1414,15 @@ class TradingLoop:
 
     @staticmethod
     def _entry_regime_label(symbol: str, timestamp: str | None) -> str:
-        """Resolve the market-regime class active at entry for the position stamp.
+        """Regime-AT-ENTRY stamp for the autonomous-loop position.
 
-        Persisted on the PaperPosition so the eventual position_closed event is
-        regime-attributable (edge_report PER REGIME reads ``ev.get("regime")``).
-        Regime-AT-ENTRY is the correct attribution axis ("did signals generated
-        in regime X have edge"), not regime-at-close. Best-effort + fail-soft:
-        any lookup failure returns "" (unknown) — this is a forensic tag for
-        edge diagnostics, never a gate, and must never crash the loop.
+        Thin wrapper over the shared ``regime_label_at`` SSOT so the autonomous
+        and premium-bridge stamping paths use ONE taxonomy. Fail-soft "" on any
+        lookup failure — forensic tag, never a gate, never crashes the loop.
         """
-        if not symbol or not timestamp:
-            return ""
-        try:
-            from app.regime.lookup import (
-                DEFAULT_MAX_AGE_SECONDS,
-                get_regime_at,
-                symbol_to_regime_asset,
-            )
+        from app.regime.lookup import regime_label_at
 
-            snap = get_regime_at(
-                symbol_to_regime_asset(symbol),
-                timestamp,
-                max_age_seconds=DEFAULT_MAX_AGE_SECONDS,
-            ).snapshot
-            return str(snap.regime) if snap is not None else ""
-        except Exception:  # noqa: BLE001 — attribution tag, never crash the loop
-            return ""
+        return regime_label_at(symbol, timestamp)
 
     @staticmethod
     def _regime_stamp_for_audit(cycle: LoopCycle) -> dict[str, object]:

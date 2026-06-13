@@ -31,6 +31,7 @@ from app.execution.models import (
     make_lifecycle_transition,
 )
 from app.execution.order_intent import ExecutableOrderIntent
+from app.regime.lookup import now_utc_iso, regime_label_at
 from app.signals.models import (
     IllegalStateTransitionError,
     SignalState,
@@ -303,6 +304,12 @@ class PaperExecutionEngine:
         """
         kwargs = executable_intent_to_paper_kwargs(intent)
         kwargs["risk_check_id"] = risk_check_id
+        # 2026-06-13: regime-AT-ENTRY for premium/bridge intents. The autonomous
+        # loop stamps this in trading_loop; intent-executed (premium-channel)
+        # entries resolve it here at execution time so their position_closed
+        # events are regime-attributable too instead of collapsing to "unknown".
+        # Fail-soft "" via the shared helper — never blocks the fill.
+        kwargs["regime"] = regime_label_at(intent.symbol, now_utc_iso())
 
         order = self.create_order(**kwargs)
         # Limit or market? In paper, fill_order requires a price. We fill at the

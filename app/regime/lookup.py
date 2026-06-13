@@ -251,11 +251,38 @@ def now_utc_iso() -> str:
     return datetime.now(UTC).isoformat()
 
 
+def regime_label_at(symbol: str, timestamp: str | None) -> str:
+    """Resolve the market-regime class for ``symbol`` at ``timestamp``.
+
+    Single source of truth for the regime-AT-ENTRY attribution stamp persisted
+    on a PaperPosition (so the eventual position_closed event is regime-
+    attributable in edge_report PER REGIME). Used by BOTH the autonomous
+    trading-loop entry and the premium-bridge intent execution so the two
+    stamping paths can never drift into different taxonomies.
+
+    Best-effort + fail-soft: any lookup failure (no snapshot, parse error,
+    missing classifier output) returns "" (unknown). This is a forensic
+    attribution tag, never a gate — it must never raise into the caller.
+    """
+    if not symbol or not timestamp:
+        return ""
+    try:
+        snap = get_regime_at(
+            symbol_to_regime_asset(symbol),
+            timestamp,
+            max_age_seconds=DEFAULT_MAX_AGE_SECONDS,
+        ).snapshot
+        return str(snap.regime) if snap is not None else ""
+    except Exception:  # noqa: BLE001 — attribution tag, never crash the caller
+        return ""
+
+
 __all__ = [
     "DEFAULT_MAX_AGE_SECONDS",
     "SUPPORTED_REGIME_ASSETS",
     "RegimeLookupResult",
     "get_regime_at",
     "now_utc_iso",
+    "regime_label_at",
     "symbol_to_regime_asset",
 ]
