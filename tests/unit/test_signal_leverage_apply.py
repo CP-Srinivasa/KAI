@@ -68,12 +68,20 @@ def test_sl_distance_branch_applies_leverage_when_flagged() -> None:
 def test_leverage_clamped_to_max_leverage() -> None:
     eng = RiskEngine(_limits(max_leverage=5.0))
     base = eng.calculate_position_size(
-        symbol="X/USDT", entry_price=10.0, stop_loss_price=9.5, equity=20000.0,
-        leverage=1.0, apply_signal_leverage=True,
+        symbol="X/USDT",
+        entry_price=10.0,
+        stop_loss_price=9.5,
+        equity=20000.0,
+        leverage=1.0,
+        apply_signal_leverage=True,
     )
     levd = eng.calculate_position_size(
-        symbol="X/USDT", entry_price=10.0, stop_loss_price=9.5, equity=20000.0,
-        leverage=50.0, apply_signal_leverage=True,
+        symbol="X/USDT",
+        entry_price=10.0,
+        stop_loss_price=9.5,
+        equity=20000.0,
+        leverage=50.0,
+        apply_signal_leverage=True,
     )
     # 50x requested but clamped to 5x → exactly 5x the 1x size
     assert levd.position_size_units == base.position_size_units * 5.0
@@ -83,8 +91,12 @@ def test_signal_leverage_skips_position_size_cap() -> None:
     # 10x notional would be ~62% equity, far over the 20% cap; flag skips it
     eng = RiskEngine(_limits(max_position_size_pct=20.0))
     levd = eng.calculate_position_size(
-        symbol="COAI/USDT", entry_price=0.365, stop_loss_price=0.35,
-        equity=20000.0, leverage=10.0, apply_signal_leverage=True,
+        symbol="COAI/USDT",
+        entry_price=0.365,
+        stop_loss_price=0.35,
+        equity=20000.0,
+        leverage=10.0,
+        apply_signal_leverage=True,
     )
     notional = levd.position_size_units * 0.365
     assert notional > 20000.0 * 0.20  # exceeds the cap → cap was skipped
@@ -94,7 +106,10 @@ def test_signal_leverage_skips_position_size_cap() -> None:
 def test_default_off_keeps_conservative_sizing() -> None:
     eng = RiskEngine(_limits())
     res = eng.calculate_position_size(
-        symbol="X/USDT", entry_price=10.0, stop_loss_price=9.5, equity=20000.0,
+        symbol="X/USDT",
+        entry_price=10.0,
+        stop_loss_price=9.5,
+        equity=20000.0,
         leverage=10.0,  # leverage given but flag OFF → ignored
     )
     # unchanged: max-loss ≈ max_risk_per_trade (0.25% of equity)
@@ -119,8 +134,14 @@ def test_monitor_liquidates_leveraged_position_before_wide_stop() -> None:
     the stop would ever trigger — the realistic futures outcome."""
     eng = PaperExecutionEngine(initial_equity=100000.0, live_enabled=False)
     order = eng.create_order(
-        symbol="WIDE/USDT", side="buy", quantity=100.0, order_type="market",
-        stop_loss=80.0, take_profit=130.0, position_side="long", leverage=10.0,
+        symbol="WIDE/USDT",
+        side="buy",
+        quantity=100.0,
+        order_type="market",
+        stop_loss=80.0,
+        take_profit=130.0,
+        position_side="long",
+        leverage=10.0,
     )
     eng.fill_order(order, 100.0)
     # price drops 12% — past the 10% liquidation, but not yet the 20% stop
@@ -135,8 +156,14 @@ def test_monitor_stop_still_wins_when_nearer_than_liquidation() -> None:
     """COAI-like: 10x but a tight 4% stop fires before the 10% liquidation."""
     eng = PaperExecutionEngine(initial_equity=100000.0, live_enabled=False)
     order = eng.create_order(
-        symbol="TIGHT/USDT", side="buy", quantity=100.0, order_type="market",
-        stop_loss=96.0, take_profit=110.0, position_side="long", leverage=10.0,
+        symbol="TIGHT/USDT",
+        side="buy",
+        quantity=100.0,
+        order_type="market",
+        stop_loss=96.0,
+        take_profit=110.0,
+        position_side="long",
+        leverage=10.0,
     )
     eng.fill_order(order, 100.0)
     fills = eng.monitor_positions({"TIGHT/USDT": 95.5})  # past 96 stop, not 90 liq
