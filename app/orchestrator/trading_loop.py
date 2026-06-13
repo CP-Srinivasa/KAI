@@ -675,6 +675,7 @@ class TradingLoop:
                 source=signal_source,
                 document_id=attribution_doc_id,
                 position_side=position_side,
+                regime=self._entry_regime_label(symbol, started_at),
             )
             fill = self._exec.fill_order(order, current_price=signal.entry_price)
         except Exception as exc:  # noqa: BLE001
@@ -1069,6 +1070,7 @@ class TradingLoop:
                 risk_check_id=risk_result.check_id,
                 source=promoted_source,
                 document_id=signal.source_document_id or "",
+                regime=self._entry_regime_label(symbol, started_at),
             )
             fill = self._exec.fill_order(order, current_price=live_price)
         except Exception as exc:  # noqa: BLE001
@@ -1409,6 +1411,35 @@ class TradingLoop:
                 handle.write(json.dumps(record) + "\n")
         except Exception as exc:  # noqa: BLE001
             logger.error("[LOOP] Audit write failed: %s", exc)
+
+    @staticmethod
+    def _entry_regime_label(symbol: str, timestamp: str | None) -> str:
+        """Resolve the market-regime class active at entry for the position stamp.
+
+        Persisted on the PaperPosition so the eventual position_closed event is
+        regime-attributable (edge_report PER REGIME reads ``ev.get("regime")``).
+        Regime-AT-ENTRY is the correct attribution axis ("did signals generated
+        in regime X have edge"), not regime-at-close. Best-effort + fail-soft:
+        any lookup failure returns "" (unknown) — this is a forensic tag for
+        edge diagnostics, never a gate, and must never crash the loop.
+        """
+        if not symbol or not timestamp:
+            return ""
+        try:
+            from app.regime.lookup import (
+                DEFAULT_MAX_AGE_SECONDS,
+                get_regime_at,
+                symbol_to_regime_asset,
+            )
+
+            snap = get_regime_at(
+                symbol_to_regime_asset(symbol),
+                timestamp,
+                max_age_seconds=DEFAULT_MAX_AGE_SECONDS,
+            ).snapshot
+            return str(snap.regime) if snap is not None else ""
+        except Exception:  # noqa: BLE001 — attribution tag, never crash the loop
+            return ""
 
     @staticmethod
     def _regime_stamp_for_audit(cycle: LoopCycle) -> dict[str, object]:

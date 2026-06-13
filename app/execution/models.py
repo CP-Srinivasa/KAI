@@ -56,6 +56,11 @@ class PaperOrder:
     # the canary probe, an RSS doc UUID for the real generator, or "" = unknown for
     # legacy/unattributed rows). Additive + optional → backward-compatible.
     document_id: str = ""
+    # 2026-06-13: market-regime-at-entry stamp so the eventual position_closed
+    # event is regime-attributable (edge_report PER REGIME). "" = unknown
+    # (legacy / non-autonomous paths that do not resolve a regime). Additive +
+    # optional → backward-compatible.
+    regime: str = ""
 
 
 @dataclass(frozen=True)
@@ -84,6 +89,9 @@ class PaperFill:
     # order_filled audit event (emitted via **fill.__dict__) is source-resolvable.
     source: str = ""
     document_id: str = ""
+    # 2026-06-13: regime-at-entry carried onto the fill so the order_filled audit
+    # row (and audit_replay reconstruction) preserves it across restarts.
+    regime: str = ""
 
 
 @dataclass
@@ -119,6 +127,11 @@ class PaperPosition:
     # NEO-P-20260603-001: document_id of the originating analysis/signal so a
     # position_closed event can be attributed to its source.
     document_id: str = ""
+    # 2026-06-13: market-regime-at-entry, persisted on the position so the
+    # position_closed event (fired potentially many cycles later in
+    # monitor_positions) can stamp the regime that was active at decision time.
+    # "" = unknown. edge_report PER REGIME reads ev.get("regime").
+    regime: str = ""
 
     def unrealized_pnl(self, current_price: float) -> float:
         if self.position_side == "short":
@@ -141,6 +154,7 @@ class PaperPosition:
             "leverage": self.leverage,
             "source": self.source,
             "document_id": self.document_id,
+            "regime": self.regime,
         }
 
 
