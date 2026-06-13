@@ -1039,36 +1039,43 @@ async def dashboard_n_overview_api() -> JSONResponse:
     except Exception as exc:  # noqa: BLE001 — Panel degradiert, kein 500
         logger.warning("n_overview_gate_read_failed: %s", exc)
 
-    # 2)/5) Paper-Closes: gefiltert (total_resolved) vs. roh (all-time). Einziger
-    # Unterschied ist der Implausibilitäts-Filter — genau die Operator-Distinktion.
+    # 2) total_resolved — EXAKT die Quelle des `trading generator-edge`-Reports
+    # (eine Berechnungsquelle): closed trades aus dem Paper-Audit nach dem
+    # Implausibilitäts-Filter (|exit/entry-1| ≤ 0.40). NICHT der phantom-filter.
     total_resolved: int | None = None
+    try:
+        from app.observability.edge_report import (
+            load_audit_events,
+            parse_closed_trades_with_exclusions,
+        )
+
+        events = load_audit_events(str(_PAPER_EXECUTION_AUDIT))
+        trades, _exclusions = parse_closed_trades_with_exclusions(
+            events, implausible_move_threshold=0.40
+        )
+        total_resolved = len(trades)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("n_overview_total_resolved_read_failed: %s", exc)
+
+    # 5) paper_trades_all_time — EXAKT der Daily-Digest-Zähler `_paper_fills_count`
+    # (position_closed + position_partial_closed, ungefiltert; ein Event pro Trade).
     paper_trades_all_time: int | None = None
     try:
-        exec_rows = _load_jsonl(_PAPER_EXECUTION_AUDIT)
-        raw_closes = [
-            r
-            for r in exec_rows
-            if r.get("event_type") in ("position_closed", "position_partial_closed")
-        ]
-        paper_trades_all_time = len(raw_closes)
-        total_resolved = sum(
-            1
-            for r in raw_closes
-            if not is_phantom_close(
-                r.get("entry_price"), r.get("exit_price"), r.get("position_side")
-            )
-        )
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("n_overview_paper_read_failed: %s", exc)
+        from app.cli.commands.daily_strategy import _paper_fills_count
 
-    # 4) D-227 resolved directional alerts (gecachter Hold-Report).
+        paper_trades_all_time = _paper_fills_count()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("n_overview_paper_fills_read_failed: %s", exc)
+
+    # 4) resolved directional alerts (D-227) — EXAKT der Daily-Digest-Zähler
+    # `_resolved_directional_count` über die volle alert_outcomes.jsonl:
+    # resolved == entschieden == hit + miss (ohne Legacy-Cutoff des Hold-Reports).
     resolved_directional_alerts: int | None = None
     try:
-        report = await _live_hold_report()
-        hit_rate = report.get("alert_hit_rate_evidence", {})
-        value = hit_rate.get("resolved_directional_documents")
-        if isinstance(value, int):
-            resolved_directional_alerts = value
+        from app.cli.commands.daily_strategy import _resolved_directional_count
+
+        d227 = _resolved_directional_count()
+        resolved_directional_alerts = int(d227.get("hit", 0)) + int(d227.get("miss", 0))
     except Exception as exc:  # noqa: BLE001
         logger.warning("n_overview_d227_read_failed: %s", exc)
 
