@@ -156,7 +156,7 @@
         "max_open_positions": { "type": "integer", "minimum": 0, "maximum": 6 },
         "max_sector_or_theme_exposure_pct": { "type": "number", "minimum": 0.0 },
         "max_correlated_exposure_pct": { "type": "number", "minimum": 0.0 },
-        "max_leverage": { "type": "number", "minimum": 0.0, "maximum": 1.0 },
+        "max_leverage": { "type": "number", "minimum": 0.0, "maximum": 10.0 },
         "require_stop_loss": { "type": "boolean", "const": true },
         "allow_averaging_down": { "type": "boolean", "const": false },
         "allow_martingale": { "type": "boolean", "const": false },
