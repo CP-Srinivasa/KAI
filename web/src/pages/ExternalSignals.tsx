@@ -980,9 +980,16 @@ function EnvelopeCard({ rec }: { rec: EnvelopeRecord }) {
               <Badge tone={tone === "neutral" ? "muted" : tone} dot>
                 {rec.status ?? "—"}
               </Badge>
-              <Badge tone="muted">
-                {humanizeStage(rec.stage)}
-              </Badge>
+              {/* Fix 5 (2026-06-13): den envelope-stage-Chip NICHT zeigen, sobald
+                  die Bridge das Envelope weiterverarbeitet hat. Sonst widerspricht
+                  "Geparst & gespeichert (noch nicht ausgeführt)" (stage="accepted")
+                  der premium_state-Headline "Paper Position eröffnet" — der
+                  echte Execution-Fortschritt steht im bridge-Chip weiter unten. */}
+              {!rec.bridge_stage && (
+                <Badge tone="muted">
+                  {humanizeStage(rec.stage)}
+                </Badge>
+              )}
               {rec.message_type && (
                 <Badge tone="info">{rec.message_type}</Badge>
               )}

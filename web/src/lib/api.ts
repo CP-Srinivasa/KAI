@@ -599,6 +599,12 @@ export type PaperPosition = {
   market_price: number | null;
   market_value_usd: number | null;
   unrealized_pnl_usd: number | null;
+  // C-Fix 2026-06-13: display-only Mark-to-Market fallback. Wenn der Provider
+  // keinen Live-Kurs liefert, traegt display_value_usd den Einstandswert
+  // (quantity × avg_entry_price); mark_basis = "live" | "entry_fallback".
+  // market_value_usd/unrealized_pnl_usd bleiben null (gate-safe).
+  display_value_usd?: number | null;
+  mark_basis?: string | null;
   // Sprint A (2026-05-12) Premium-Signal-Pipeline: erweiterte Felder so dass
   // Portfolio.tsx Side/Leverage/Source/Status/Tiers ohne Backend-Crosswalk
   // anzeigen kann. Alle optional weil pre-Sprint-A audit-records sie nicht

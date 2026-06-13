@@ -846,7 +846,20 @@ export function PortfolioPage() {
                         </>
                       )}
                     </td>
-                    <td className="px-3 py-2 text-right font-mono">{fmt$(p.market_value_usd)}</td>
+                    <td className="px-3 py-2 text-right font-mono">
+                      {/* C-Fix 2026-06-13: kein Live-Kurs → Einstandswert (≈)
+                          statt leer. mark_basis kennzeichnet die Quelle. */}
+                      {p.market_value_usd == null && p.mark_basis === "entry_fallback" && p.display_value_usd != null ? (
+                        <span
+                          className="text-info"
+                          title="Kein Live-Kurs vom Provider — angezeigt ist der Einstandswert (Menge × Einstieg), NICHT Live-bewertet."
+                        >
+                          ≈ {fmt$(p.display_value_usd)}
+                        </span>
+                      ) : (
+                        fmt$(p.market_value_usd)
+                      )}
+                    </td>
                     <td className={cn(
                       "px-3 py-2 text-right font-mono",
                       unreal > 0 && "text-pos",
