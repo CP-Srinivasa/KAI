@@ -35,6 +35,27 @@ BLOCK_REASON_BEARISH_DISABLED = "bearish_directional_disabled"
 BLOCK_REASON_LOW_PRECISION_SOURCE = "low_precision_source"
 BLOCK_REASON_NAKED_ASSET = "naked_asset_no_trading_pair"
 BLOCK_REASON_PROMO_PATTERN = "promotional_or_speculative_listicle"
+BLOCK_REASON_WEAK_TECHNICAL = "weak_technical_signal"
+
+# WP-B (2026-06-15): Signal-path abstraction. The whole gate chain below was
+# tuned for NARRATIVE (news/LLM) signals — reactive-title regexes, LLM
+# directional-confidence, news-source precision tiers, promo/listicle filters.
+# Asset-agnostic PRICE/FLOW signals (TradingView webhooks, momentum/relative-
+# strength screeners) must NOT be judged by those gates — e.g. ``tradingview_
+# webhook`` literally sits in ``_LOW_PRECISION_SOURCES`` and would hard-block
+# every TV signal on the narrative path. The ``signal_path`` parameter routes
+# them instead through a small, documented technical-strength gate, while the
+# PATH-INDEPENDENT safety gates (asset resolution, majority-non-crypto) still
+# apply to both. Default ``narrative`` keeps every existing caller byte-for-byte
+# unchanged. Bearish (D-142) stays blocked on both paths here; WP-E opens it for
+# ``technical`` separately.
+SIGNAL_PATH_NARRATIVE = "narrative"
+SIGNAL_PATH_TECHNICAL = "technical"
+_VALID_SIGNAL_PATHS = frozenset({SIGNAL_PATH_NARRATIVE, SIGNAL_PATH_TECHNICAL})
+
+# Default technical-strength floor when settings are unavailable (tests/early-
+# boot). Mirrors AlertSettings.min_technical_strength (0.0 = shadow-first no-op).
+MIN_TECHNICAL_STRENGTH = 0.0
 
 # D-133/D-139: Sources with persistently low directional precision.
 # Based on 229 resolved directional outcomes (2026-04-14 after D-138 backfill):
@@ -677,116 +698,43 @@ def _bullish_confidence_threshold() -> float:
         return MIN_DIRECTIONAL_CONFIDENCE_BULLISH
 
 
-def evaluate_directional_eligibility(
-    *,
-    sentiment_label: str | None,
-    affected_assets: list[str],
-    sentiment_score: float | None = None,
-    impact_score: float | None = None,
-    title: str | None = None,
-    directional_confidence: float | None = None,
-    event_timing: str | None = None,
-    actionable: bool | None = None,
-    priority: int | None = None,
-    source_name: str | None = None,
-    min_bullish_confidence: float | None = None,
-    low_priority_max: int | None = None,
-) -> DirectionalEligibilityDecision:
-    """Return directional eligibility for operational metrics.
+def _min_technical_strength_threshold() -> float:
+    """Technical-path signal-strength floor, operator-tunable via env.
 
-    Non-directional sentiments return ``directional_eligible=None``.
-    Directional sentiments must pass score-strength gates, a reactive-narrative
-    filter (bearish only), AND resolve to at least one supported tradeable
-    crypto symbol; otherwise they are blocked.
-
-    Strict by construction: the D-142 bearish-disabled hard block is ALWAYS
-    applied here. The real-analysis paper feeder (Goal 2026-06-10) calls the
-    extracted, shared ``evaluate_directional_quality_gates`` directly for its
-    paper-only bearish relaxation, so the dispatch/metrics path stays strictly
-    bearish-blocked.
-
-    ``low_priority_max`` (Paper-Learning P3, Goal 2026-06-10) is an OPTIONAL
-    override for the D-122 LOW_PRIORITY gate. Default ``None`` preserves the hard
-    ``<=7`` block byte-for-byte. ONLY the real-analysis paper feeder supplies it
-    (``min_priority - 1``) to relax the priority floor for source=real_analysis
-    paper learning; every other caller leaves it None → unchanged ``<=7``.
+    Default mirrors ``MIN_TECHNICAL_STRENGTH`` (0.0 = shadow-first no-op) unless
+    the operator sets ``ALERT_MIN_TECHNICAL_STRENGTH`` in ``.env`` (reversible,
+    no redeploy). This is the technical-path analogue of
+    ``_bullish_confidence_threshold`` — it gates price/flow signal strength, NOT
+    LLM confidence. WP-D calibrates it once real technical outcomes exist.
     """
-    sentiment = (sentiment_label or "").strip().lower()
-    if sentiment not in _DIRECTIONAL_SENTIMENTS:
-        return DirectionalEligibilityDecision(
-            is_directional=False,
-            directional_eligible=None,
-        )
+    try:
+        from app.core.settings import get_settings  # lazy to avoid import cycles
 
-    # D-122: Non-actionable alerts are noise for directional tracking.
-    # Empirical: actionable=false had 22% precision vs 52% for actionable=true.
-    if actionable is False:
-        return DirectionalEligibilityDecision(
-            is_directional=True,
-            directional_eligible=False,
-            directional_block_reason=BLOCK_REASON_NOT_ACTIONABLE,
-        )
-
-    # D-142: Bearish directional disabled — 4% precision (1/24) on eligible
-    # resolved outcomes.  Bearish news is not price-predictive in current
-    # market conditions.  Re-enable when market-context analysis is added.
-    if BEARISH_DIRECTIONAL_DISABLED and sentiment == "bearish":
-        return DirectionalEligibilityDecision(
-            is_directional=True,
-            directional_eligible=False,
-            directional_block_reason=BLOCK_REASON_BEARISH_DISABLED,
-        )
-
-    return evaluate_directional_quality_gates(
-        sentiment=sentiment,
-        affected_assets=affected_assets,
-        sentiment_score=sentiment_score,
-        impact_score=impact_score,
-        title=title,
-        directional_confidence=directional_confidence,
-        event_timing=event_timing,
-        priority=priority,
-        source_name=source_name,
-        min_bullish_confidence=min_bullish_confidence,
-        low_priority_max=low_priority_max,
-    )
+        return float(get_settings().alerts.min_technical_strength)
+    except Exception:  # noqa: BLE001 — settings unavailable (tests, early-boot)
+        return MIN_TECHNICAL_STRENGTH
 
 
-def evaluate_directional_quality_gates(
+def _narrative_gate_block(
     *,
     sentiment: str,
-    affected_assets: list[str],
-    sentiment_score: float | None = None,
-    impact_score: float | None = None,
-    title: str | None = None,
-    directional_confidence: float | None = None,
-    event_timing: str | None = None,
-    priority: int | None = None,
-    source_name: str | None = None,
-    min_bullish_confidence: float | None = None,
-    low_priority_max: int | None = None,
-) -> DirectionalEligibilityDecision:
-    """Apply EVERY directional quality gate EXCEPT the D-142 bearish-disabled
-    mode-block and the non-actionable pre-filter.
+    sentiment_score: float | None,
+    impact_score: float | None,
+    title: str | None,
+    directional_confidence: float | None,
+    event_timing: str | None,
+    priority: int | None,
+    source_name: str | None,
+    min_bullish_confidence: float | None,
+    low_priority_max: int | None,
+) -> DirectionalEligibilityDecision | None:
+    """The NARRATIVE-specific gate chain (WP-B extraction, verbatim).
 
-    This is the gate chain that runs *after* D-142 in
-    ``evaluate_directional_eligibility`` — extracted verbatim so it is a single
-    source of truth (no duplicated thresholds). ``sentiment`` must already be the
-    lowercased directional label (``"bullish"``/``"bearish"``); callers that want
-    the full strict semantics use ``evaluate_directional_eligibility`` instead.
-
-    The ONLY sanctioned direct caller is the real-analysis paper feeder
-    (Goal 2026-06-10): it un-blocks D-142 for bearish *paper-only* signals while
-    keeping every quality gate (priority, low-precision source, promo, weak,
-    reactive narrative, asymmetric confidence, asset resolution) fully active.
-    It does NOT relax this function — it merely skips the D-142 pre-gate. The
-    dispatch/metrics path is unaffected and stays strictly bearish-blocked.
-
-    ``low_priority_max`` (Paper-Learning P3, Goal 2026-06-10): OPTIONAL override
-    for the D-122 LOW_PRIORITY threshold. Default ``None`` ⇒ the hard ``<=7``
-    block is preserved byte-for-byte for every non-feeder caller. The feeder
-    selector passes ``min_priority - 1`` so the gate blocks ``<= min_priority-1``
-    (⇔ ``< min_priority``) ONLY for source=real_analysis.
+    Returns the first block decision hit, or ``None`` if every narrative gate
+    passes (the caller then runs the path-independent asset gates). These gates
+    are news/LLM-tuned — source-reputation tiers, promo/reactive-title regexes,
+    LLM directional-confidence, backward-report timing — and must NOT run for the
+    technical path (``tradingview_webhook`` is even in ``_LOW_PRECISION_SOURCES``).
     """
     # V-DB4c 2026-05-08: Soft-Confidence-Adjuster.
     # Sources auf monitor/source_watch.txt bekommen priority -= 1, BEVOR
@@ -919,6 +867,180 @@ def evaluate_directional_quality_gates(
             directional_block_reason=BLOCK_REASON_REACTIVE_NARRATIVE,
         )
 
+    return None
+
+
+def evaluate_directional_eligibility(
+    *,
+    sentiment_label: str | None,
+    affected_assets: list[str],
+    sentiment_score: float | None = None,
+    impact_score: float | None = None,
+    title: str | None = None,
+    directional_confidence: float | None = None,
+    event_timing: str | None = None,
+    actionable: bool | None = None,
+    priority: int | None = None,
+    source_name: str | None = None,
+    min_bullish_confidence: float | None = None,
+    low_priority_max: int | None = None,
+    signal_path: str = SIGNAL_PATH_NARRATIVE,
+    technical_strength: float | None = None,
+    min_technical_strength: float | None = None,
+) -> DirectionalEligibilityDecision:
+    """Return directional eligibility for operational metrics.
+
+    Non-directional sentiments return ``directional_eligible=None``.
+    Directional sentiments must pass score-strength gates, a reactive-narrative
+    filter (bearish only), AND resolve to at least one supported tradeable
+    crypto symbol; otherwise they are blocked.
+
+    Strict by construction: the D-142 bearish-disabled hard block is ALWAYS
+    applied here. The real-analysis paper feeder (Goal 2026-06-10) calls the
+    extracted, shared ``evaluate_directional_quality_gates`` directly for its
+    paper-only bearish relaxation, so the dispatch/metrics path stays strictly
+    bearish-blocked.
+
+    ``low_priority_max`` (Paper-Learning P3, Goal 2026-06-10) is an OPTIONAL
+    override for the D-122 LOW_PRIORITY gate. Default ``None`` preserves the hard
+    ``<=7`` block byte-for-byte. ONLY the real-analysis paper feeder supplies it
+    (``min_priority - 1``) to relax the priority floor for source=real_analysis
+    paper learning; every other caller leaves it None → unchanged ``<=7``.
+    """
+    if signal_path not in _VALID_SIGNAL_PATHS:
+        signal_path = SIGNAL_PATH_NARRATIVE
+
+    sentiment = (sentiment_label or "").strip().lower()
+    if sentiment not in _DIRECTIONAL_SENTIMENTS:
+        return DirectionalEligibilityDecision(
+            is_directional=False,
+            directional_eligible=None,
+        )
+
+    # D-122: Non-actionable alerts are noise for directional tracking.
+    # Empirical: actionable=false had 22% precision vs 52% for actionable=true.
+    # NOTE: technical signals carry no LLM ``actionable`` field (None) → this
+    # narrative pre-filter only fires on an explicit False, so it is naturally
+    # inert for the technical path.
+    if actionable is False:
+        return DirectionalEligibilityDecision(
+            is_directional=True,
+            directional_eligible=False,
+            directional_block_reason=BLOCK_REASON_NOT_ACTIONABLE,
+        )
+
+    # D-142: Bearish directional disabled — 4% precision (1/24) on eligible
+    # resolved outcomes.  Bearish news is not price-predictive in current
+    # market conditions.  Re-enable when market-context analysis is added.
+    if BEARISH_DIRECTIONAL_DISABLED and sentiment == "bearish":
+        return DirectionalEligibilityDecision(
+            is_directional=True,
+            directional_eligible=False,
+            directional_block_reason=BLOCK_REASON_BEARISH_DISABLED,
+        )
+
+    return evaluate_directional_quality_gates(
+        sentiment=sentiment,
+        affected_assets=affected_assets,
+        sentiment_score=sentiment_score,
+        impact_score=impact_score,
+        title=title,
+        directional_confidence=directional_confidence,
+        event_timing=event_timing,
+        priority=priority,
+        source_name=source_name,
+        min_bullish_confidence=min_bullish_confidence,
+        low_priority_max=low_priority_max,
+        signal_path=signal_path,
+        technical_strength=technical_strength,
+        min_technical_strength=min_technical_strength,
+    )
+
+
+def evaluate_directional_quality_gates(
+    *,
+    sentiment: str,
+    affected_assets: list[str],
+    sentiment_score: float | None = None,
+    impact_score: float | None = None,
+    title: str | None = None,
+    directional_confidence: float | None = None,
+    event_timing: str | None = None,
+    priority: int | None = None,
+    source_name: str | None = None,
+    min_bullish_confidence: float | None = None,
+    low_priority_max: int | None = None,
+    signal_path: str = SIGNAL_PATH_NARRATIVE,
+    technical_strength: float | None = None,
+    min_technical_strength: float | None = None,
+) -> DirectionalEligibilityDecision:
+    """Apply EVERY directional quality gate EXCEPT the D-142 bearish-disabled
+    mode-block and the non-actionable pre-filter.
+
+    This is the gate chain that runs *after* D-142 in
+    ``evaluate_directional_eligibility`` — extracted verbatim so it is a single
+    source of truth (no duplicated thresholds). ``sentiment`` must already be the
+    lowercased directional label (``"bullish"``/``"bearish"``); callers that want
+    the full strict semantics use ``evaluate_directional_eligibility`` instead.
+
+    The ONLY sanctioned direct caller is the real-analysis paper feeder
+    (Goal 2026-06-10): it un-blocks D-142 for bearish *paper-only* signals while
+    keeping every quality gate (priority, low-precision source, promo, weak,
+    reactive narrative, asymmetric confidence, asset resolution) fully active.
+    It does NOT relax this function — it merely skips the D-142 pre-gate. The
+    dispatch/metrics path is unaffected and stays strictly bearish-blocked.
+
+    ``low_priority_max`` (Paper-Learning P3, Goal 2026-06-10): OPTIONAL override
+    for the D-122 LOW_PRIORITY threshold. Default ``None`` ⇒ the hard ``<=7``
+    block is preserved byte-for-byte for every non-feeder caller. The feeder
+    selector passes ``min_priority - 1`` so the gate blocks ``<= min_priority-1``
+    (⇔ ``< min_priority``) ONLY for source=real_analysis.
+
+    ``signal_path`` (WP-B, 2026-06-15): ``"narrative"`` (default) runs the full
+    news/LLM gate chain via ``_narrative_gate_block`` — byte-for-byte unchanged.
+    ``"technical"`` bypasses those gates and applies only the asset-agnostic
+    ``technical_strength`` floor (``min_technical_strength`` override, else
+    ``ALERT_MIN_TECHNICAL_STRENGTH``). The asset-resolution / majority-non-crypto
+    gates are path-independent and run for both.
+    """
+    if signal_path not in _VALID_SIGNAL_PATHS:
+        signal_path = SIGNAL_PATH_NARRATIVE
+
+    if signal_path == SIGNAL_PATH_TECHNICAL:
+        # Technical path: bypass EVERY narrative gate (news/LLM-tuned); judge
+        # only the asset-agnostic technical-strength floor. The PATH-INDEPENDENT
+        # asset gates below still run for both paths. ``technical_strength=None``
+        # passes through (consistent with every other optional gate); a supplied
+        # value below the threshold blocks. Bearish (D-142) stays blocked here;
+        # WP-E opens it for the technical path separately.
+        threshold = (
+            min_technical_strength
+            if min_technical_strength is not None
+            else _min_technical_strength_threshold()
+        )
+        if technical_strength is not None and technical_strength < threshold:
+            return DirectionalEligibilityDecision(
+                is_directional=True,
+                directional_eligible=False,
+                directional_block_reason=BLOCK_REASON_WEAK_TECHNICAL,
+            )
+    else:
+        narrative_block = _narrative_gate_block(
+            sentiment=sentiment,
+            sentiment_score=sentiment_score,
+            impact_score=impact_score,
+            title=title,
+            directional_confidence=directional_confidence,
+            event_timing=event_timing,
+            priority=priority,
+            source_name=source_name,
+            min_bullish_confidence=min_bullish_confidence,
+            low_priority_max=low_priority_max,
+        )
+        if narrative_block is not None:
+            return narrative_block
+
+    # ===== PATH-INDEPENDENT: asset resolution (both narrative + technical) =====
     eligible_assets: list[str] = []
     blocked_assets: list[str] = []
     seen_eligible: set[str] = set()

@@ -104,6 +104,11 @@ class AlertSettings(BaseSettings):
     # blocked-alert recall proxy shows acceptable would-have-precision for the
     # 0.7 bucket. Bearish stays hard-pinned at 0.95 (D-122), not exposed here.
     min_directional_confidence_bullish: float = Field(default=0.8, ge=0.0, le=1.0)
+    # WP-B (2026-06-15): technical-path signal-strength floor (eligibility.py,
+    # signal_path="technical") — asset-agnostic price/flow strength, NOT an LLM
+    # confidence. Default 0.0 = shadow-first no-op until WP-D calibrates it; env
+    # ``ALERT_MIN_TECHNICAL_STRENGTH``. Narrative path unaffected.
+    min_technical_strength: float = Field(default=0.0, ge=0.0, le=1.0)
     # Digest mode: accumulate alerts and send as a batch instead of individually.
     digest_enabled: bool = Field(default=False)
     digest_interval_minutes: int = Field(default=60)
