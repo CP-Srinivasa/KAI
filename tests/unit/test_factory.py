@@ -18,7 +18,7 @@ def _settings(openai_key="", anthropic_key="", gemini_key="") -> MagicMock:
     s.providers.openai_model = "gpt-4o"
     s.providers.openai_timeout = 30
     s.providers.anthropic_api_key = anthropic_key
-    s.providers.anthropic_model = "claude-3-7-sonnet-20250219"
+    s.providers.anthropic_model = "claude-sonnet-4-6"
     s.providers.anthropic_timeout = 30
     s.providers.gemini_api_key = gemini_key
     s.providers.gemini_model = "gemini-2.5-flash"

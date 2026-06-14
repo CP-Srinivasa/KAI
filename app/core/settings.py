@@ -156,7 +156,7 @@ class ProviderSettings(BaseSettings):
     openai_timeout: int = Field(default=30)
 
     anthropic_api_key: str = Field(default="", repr=False)
-    anthropic_model: str = Field(default="claude-3-7-sonnet-20250219")
+    anthropic_model: str = Field(default="claude-sonnet-4-6")
     anthropic_timeout: int = Field(default=30)
 
     gemini_api_key: str = Field(default="", repr=False)
