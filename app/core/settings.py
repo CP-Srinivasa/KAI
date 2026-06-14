@@ -110,6 +110,13 @@ class AlertSettings(BaseSettings):
     # confidence. Default 0.0 = shadow-first no-op until WP-D calibrates it; env
     # ``ALERT_MIN_TECHNICAL_STRENGTH``. Narrative path unaffected.
     min_technical_strength: float = Field(default=0.0, ge=0.0, le=1.0)
+    # WP-D part 2 (2026-06-15): asset-agnostic technical screener (shadow-first,
+    # default OFF). ``..._symbols`` = comma-separated universe (empty → module
+    # default broad-liquid list); reuses ``min_technical_strength`` as the rank
+    # floor. Env: ``ALERT_TECHNICAL_SCREENER_*``. No execution — shadow ledger only.
+    technical_screener_enabled: bool = Field(default=False)
+    technical_screener_symbols: str = Field(default="")
+    technical_screener_top_n: int = Field(default=20, ge=1, le=200)
     # Digest mode: accumulate alerts and send as a batch instead of individually.
     digest_enabled: bool = Field(default=False)
     digest_interval_minutes: int = Field(default=60)
