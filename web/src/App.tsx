@@ -5,21 +5,24 @@ import { CurrencyProvider } from "@/state/CurrencyProvider";
 import { RouterProvider } from "@/state/Router";
 import { AppShell } from "@/layout/AppShell";
 import { ToastProvider } from "@/components/Toast";
+import { RootErrorBoundary } from "@/components/RootErrorBoundary";
 
 export default function App() {
   return (
-    <ThemeProvider>
-      <I18nProvider>
-        <CurrencyProvider>
-          <AppStateProvider>
-            <RouterProvider>
-              <ToastProvider>
-                <AppShell />
-              </ToastProvider>
-            </RouterProvider>
-          </AppStateProvider>
-        </CurrencyProvider>
-      </I18nProvider>
-    </ThemeProvider>
+    <RootErrorBoundary>
+      <ThemeProvider>
+        <I18nProvider>
+          <CurrencyProvider>
+            <AppStateProvider>
+              <RouterProvider>
+                <ToastProvider>
+                  <AppShell />
+                </ToastProvider>
+              </RouterProvider>
+            </AppStateProvider>
+          </CurrencyProvider>
+        </I18nProvider>
+      </ThemeProvider>
+    </RootErrorBoundary>
   );
 }

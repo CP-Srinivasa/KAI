@@ -8,15 +8,17 @@ import {
   type PaperPosition,
 } from "@/lib/api";
 import { cn } from "@/lib/utils";
+import { toNum } from "@/lib/num";
 
 // Quick-Win-Tiles: ersetzen die früheren PreparedPanel-Stubs (Portfolio Snapshot,
 // Risk Meter, Allocation, Recent Cycles) durch ECHTE Daten aus bereits live
 // laufenden Read-Endpoints. Alles read-only, Paper-Mode, kein neuer Endpoint,
 // keine Chart-Library. Ehrliche Loading-/Empty-/Error-Zustände statt Fake-%.
 
-export function fmtUsd(v: number | null | undefined): string {
-  if (typeof v !== "number" || !Number.isFinite(v)) return "—";
-  return `${v >= 0 ? "" : "-"}$${Math.abs(v).toLocaleString("en-US", { maximumFractionDigits: 2 })}`;
+export function fmtUsd(v: number | string | null | undefined): string {
+  const n = toNum(v);
+  if (n === null) return "—";
+  return `${n >= 0 ? "" : "-"}$${Math.abs(n).toLocaleString("en-US", { maximumFractionDigits: 2 })}`;
 }
 
 function TileShell({

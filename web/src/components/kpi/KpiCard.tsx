@@ -2,7 +2,7 @@ import type { ReactNode } from "react";
 import { ArrowDownRight, ArrowUpRight, Minus } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Card } from "@/components/ui/Primitives";
-import { LineChart, Line, ResponsiveContainer, YAxis } from "recharts";
+import { Sparkline } from "@/components/kpi/Sparkline";
 
 type Props = {
   label: string;
@@ -124,19 +124,7 @@ export function KpiCard({
 
         {spark && (
           <div className="w-[92px] h-10 -mr-1 opacity-90 pointer-events-none">
-            <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={spark} margin={{ top: 4, bottom: 2, left: 0, right: 0 }}>
-                <YAxis hide domain={["dataMin - 5", "dataMax + 5"]} />
-                <Line
-                  type="monotone"
-                  dataKey="y"
-                  stroke={stroke}
-                  strokeWidth={1.5}
-                  dot={false}
-                  isAnimationActive={false}
-                />
-              </LineChart>
-            </ResponsiveContainer>
+            <Sparkline data={spark} stroke={stroke} />
           </div>
         )}
       </div>
