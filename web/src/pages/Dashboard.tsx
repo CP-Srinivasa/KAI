@@ -91,7 +91,7 @@ export function Dashboard() {
   const kai = useKaiState();
 
   return (
-    <div className="p-5 xl:p-6 space-y-5 xl:space-y-6 max-w-[1680px] mx-auto">
+    <div className="p-4 xl:p-5 space-y-4 xl:space-y-5 max-w-[1680px] mx-auto">
       <header className="flex items-center justify-between flex-wrap gap-3">
         <div>
           <h1 className="text-display text-fg">
@@ -379,7 +379,7 @@ export function Dashboard() {
             ) : (
               <Card padded>
                 <CardHeader title="Markt-Snapshot" right={<Badge tone="muted">offline</Badge>} />
-                <div className="py-8 text-center text-xs text-fg-subtle">
+                <div className="py-6 text-center text-xs text-fg-subtle">
                   TradingView deaktiviert — Chart unter „Märkte" verfügbar.
                 </div>
               </Card>
