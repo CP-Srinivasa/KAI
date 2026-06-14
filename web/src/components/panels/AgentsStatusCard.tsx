@@ -1,3 +1,4 @@
+// @data-source: /operator/agents
 import { Bot, ExternalLink } from "lucide-react";
 import { Card, CardHeader, Badge, StatusDot } from "@/components/ui/Primitives";
 import { AgentIcon } from "@/components/agents/AgentIcon";

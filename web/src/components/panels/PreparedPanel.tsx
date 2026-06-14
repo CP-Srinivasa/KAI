@@ -1,3 +1,4 @@
+// @data-source: props (parent-provided)
 import type { ReactNode } from "react";
 import { Wrench } from "lucide-react";
 import { Card, CardHeader, Badge } from "@/components/ui/Primitives";

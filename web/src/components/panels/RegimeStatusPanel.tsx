@@ -1,3 +1,4 @@
+// @data-source: props (parent-provided)
 import { Card, CardHeader, Badge, InfoHint } from "@/components/ui/Primitives";
 import { cn } from "@/lib/utils";
 import { staleStatusLabel } from "@/lib/labels";

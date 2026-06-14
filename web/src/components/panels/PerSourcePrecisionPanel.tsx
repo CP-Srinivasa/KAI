@@ -1,3 +1,4 @@
+// @data-source: props (parent-provided)
 import { Card, CardHeader, Badge, ProgressBar, InfoHint } from "@/components/ui/Primitives";
 import type { DashboardQuality } from "@/lib/api";
 import { cn } from "@/lib/utils";

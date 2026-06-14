@@ -1,3 +1,4 @@
+// @data-source: props (parent-provided)
 import { memo, useMemo, useState } from "react";
 import { Card, CardHeader, Badge, ProgressBar } from "@/components/ui/Primitives";
 import { useT } from "@/i18n/I18nProvider";

@@ -1,3 +1,4 @@
+// @data-source: /api/diversification/overview
 import { Layers, AlertTriangle, Compass } from "lucide-react";
 import { Badge, Card, CardHeader } from "@/components/ui/Primitives";
 import { useApi } from "@/lib/useApi";
