@@ -8,8 +8,11 @@ Stages (24h), Shadow-Real-Funnel (#175) und D-227-Blocked-Outcomes — plus die
 
   - V5-Messphase: „Tag X/7" seit Evidence-Aktivierung; ab Tag 7 explizite
     Aufforderung, die Shadow-Logs auszuwerten (trust-Entscheidung).
-  - Edge-Report: „real_resolved n/25"; ab n≥25 explizite Aufforderung, den
-    Edge-Report zu fahren.
+  - Edge-Report: „autonomous_generator resolved n/30" (das Edge-Gate
+    min_resolved); ab Erreichen explizite Aufforderung, den Edge-Report zu
+    fahren. Bewusst auf AUSGEFÜHRTE Generator-Closes statt shadow-resolved n
+    — der bindende Engpass sind geschlossene Trades (Operator-Vorgabe
+    2026-06-14). shadow-resolved n bleibt als Kontext sichtbar.
 
 Versand über die etablierten ``ALERT_TELEGRAM_TOKEN``/``ALERT_TELEGRAM_CHAT_ID``
 Env-Variablen (gleicher Vertrag wie pi_health_digest.sh). ``--dry-run`` druckt
@@ -37,9 +40,13 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(mess
 logger = logging.getLogger("operator-digest")
 
 _ARTIFACTS = Path("artifacts")
-# Meilenstein-Schwellen (Operator-Vorgabe 2026-06-11).
+# Meilenstein-Schwellen (Operator-Vorgabe 2026-06-11/06-14).
 V5_REVIEW_AFTER_DAYS = 7
-EDGE_REVIEW_AT_N = 25
+# Edge-Report-Meilenstein feuert auf AUSGEFÜHRTE Generator-Closes
+# (autonomous_generator erreicht das Edge-Gate), NICHT auf shadow-resolved n.
+# Der bindende Engpass sind geschlossene Trades, nicht Forward-Samples
+# (Operator-Vorgabe 2026-06-14). Fallback, falls gate_config.min_resolved fehlt.
+EDGE_GATE_MIN_RESOLVED = 30
 # Telegram hard limit is 4096 chars — truncate honestly instead of failing.
 _TELEGRAM_LIMIT = 4000
 
@@ -172,6 +179,38 @@ def collect_shadow_report() -> dict[str, Any]:
         return {"error": str(exc)}
 
 
+def collect_generator_edge() -> dict[str, Any]:
+    """autonomous_generator resolved_count + Edge-Gate-Schwelle über die
+    kanonische CLI (gleiche Quelle wie der Edge-Report). Read-only.
+
+    Liefert {min_resolved, autonomous_generator_resolved, ..._verdict} oder
+    {error}. Der Meilenstein hängt am AUSGEFÜHRTEN Generator-Strom, nicht an
+    der shadow-resolved Forward-Zahl (Operator-Vorgabe 2026-06-14)."""
+    try:
+        proc = subprocess.run(
+            [sys.executable, "-m", "app.cli.main", "trading", "generator-edge"],
+            capture_output=True,
+            text=True,
+            timeout=180,
+        )
+        parsed = json.loads(proc.stdout)
+    except Exception as exc:  # noqa: BLE001
+        return {"error": str(exc)}
+    if not isinstance(parsed, dict):
+        return {"error": "unexpected payload"}
+    out: dict[str, Any] = {
+        "min_resolved": (parsed.get("gate_config") or {}).get(
+            "min_resolved", EDGE_GATE_MIN_RESOLVED
+        ),
+    }
+    for prof in parsed.get("profiles") or []:
+        if prof.get("cohort_key") == "autonomous_generator":
+            out["autonomous_generator_resolved"] = prof.get("resolved_count")
+            out["autonomous_generator_verdict"] = prof.get("verdict")
+            break
+    return out
+
+
 def collect_d227() -> dict[str, Any]:
     try:
         from app.alerts.blocked_outcome_report import build_blocked_outcome_report
@@ -262,6 +301,7 @@ def compose_digest_message(
     bridge_stages: dict[str, int],
     shadow_funnel: dict[str, Any] | None,
     shadow_report: dict[str, Any],
+    generator_edge: dict[str, Any],
     d227: dict[str, Any],
     v5_freshness: dict[str, Any],
     v5_activated_on: date,
@@ -383,22 +423,32 @@ def compose_digest_message(
     else:
         lines.append(f"  • V5-Messphase: Tag {v5_day}/{V5_REVIEW_AFTER_DAYS}")
 
-    real_resolved = shadow_report.get("real_resolved")
-    if isinstance(real_resolved, int):
-        if real_resolved >= EDGE_REVIEW_AT_N:
+    # Edge-Report-Meilenstein: feuert auf AUSGEFÜHRTE Generator-Closes
+    # (autonomous_generator erreicht das Edge-Gate min_resolved), NICHT auf
+    # shadow-resolved n. shadow-n bleibt als sichtbarer Kontext, damit die
+    # Diskrepanz (Forward-Samples ≫ geschlossene Trades) nicht verschwindet
+    # (Operator-Vorgabe 2026-06-14).
+    shadow_n = shadow_report.get("real_resolved")
+    shadow_ctx = f"shadow-resolved n={shadow_n}" if isinstance(shadow_n, int) else "shadow-n n/a"
+    gate = generator_edge.get("min_resolved", EDGE_GATE_MIN_RESOLVED)
+    gen_resolved = generator_edge.get("autonomous_generator_resolved")
+    if isinstance(gen_resolved, int):
+        if gen_resolved >= gate:
             lines.append(
-                f"  ➡️ *EDGE-REPORT FÄLLIG*: real_resolved n={real_resolved}≥{EDGE_REVIEW_AT_N} — "
-                "`trading edge-report` auf dem echten Generator-Strom fahren."
+                f"  ➡️ *EDGE-REPORT FÄLLIG*: autonomous_generator resolved n={gen_resolved}≥{gate} "
+                "(Edge-Gate erreicht) — `trading generator-edge` / `trading edge-report` für "
+                f"belastbares Verdict fahren. [{shadow_ctx}]"
             )
         else:
+            verdict = generator_edge.get("autonomous_generator_verdict", "?")
             lines.append(
-                f"  • Edge-Beweis: real_resolved n={real_resolved}/{EDGE_REVIEW_AT_N} "
-                f"(canary={shadow_report.get('canary_probe_resolved', '?')}, "
-                f"Verdict: {shadow_report.get('primary_class', '?')})"
+                f"  • Edge-Beweis: autonomous_generator resolved n={gen_resolved}/{gate} "
+                f"(Verdict: {verdict}) · {shadow_ctx}"
             )
     else:
         lines.append(
-            f"  • Edge-Beweis: shadow-report nicht lesbar ({shadow_report.get('error', '?')})"
+            f"  • Edge-Beweis: generator-edge nicht lesbar "
+            f"({generator_edge.get('error', '?')}) · {shadow_ctx}"
         )
 
     msg = "\n".join(lines)
@@ -444,6 +494,7 @@ def main(argv: list[str] | None = None) -> int:
             bridge_stages=collect_bridge_stages_24h(),
             shadow_funnel=collect_shadow_funnel(),
             shadow_report=collect_shadow_report(),
+            generator_edge=collect_generator_edge(),
             d227=collect_d227(),
             v5_freshness=collect_v5_freshness(),
             promotion=collect_promotion_gate(),
