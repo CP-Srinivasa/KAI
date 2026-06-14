@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { AlertCircle, RefreshCw, Play, Target, X, Briefcase } from "lucide-react";
+import { AlertCircle, RefreshCw, Play, Target, X, Briefcase, ChevronDown, ChevronUp } from "lucide-react";
 import { useT } from "@/i18n/I18nProvider";
 import { Badge, Button, Card, CardHeader } from "@/components/ui/Primitives";
 import { PageHeader } from "@/layout/PageHeader";
@@ -51,6 +51,10 @@ function priceDigits(v: number | null | undefined): number {
 function RealizedByAssetPanel() {
   const { fmt } = useCurrency();
   const [sourceFilter, setSourceFilter] = useState<"all" | "premium_telegram" | "autonomous" | "reconciled" | "legacy_unknown">("all");
+  // Lange Asset-Liste (oft 25+ Zeilen) standardmäßig auf die Top-5 eingeklappt,
+  // damit die Card die Dashboard-Übersicht nicht sprengt (Operator 2026-06-14).
+  const [showAllAssets, setShowAllAssets] = useState(false);
+  const ASSETS_COLLAPSE_N = 5;
   const data = useApi(
     (signal) =>
       fetchRealizedByAsset(
@@ -147,23 +151,27 @@ function RealizedByAssetPanel() {
       ? "nur Reconciled Completions"
       : "nur Legacy / Unbekannt";
 
+  const visibleAssets = showAllAssets ? d.by_asset : d.by_asset.slice(0, ASSETS_COLLAPSE_N);
+
   return (
     <Card padded>
+      {/* Filter aus dem Header-right gezogen: dort verdrängten die 5 Filter-
+          Buttons + Badge die Subtitle-Zeile und erzwangen den hässlichen
+          Umbruch von "168 … über 27 Assets …". Jetzt: Header = Titel + Total,
+          Filter eine eigene volle Zeile, Subtitle hat die ganze Breite. */}
       <CardHeader
         title="Realisierte Gewinne nach Asset"
-        subtitle={`${d.totals.closed_trades} abgeschlossene Trades über ${d.totals.assets_count} Assets · ${activeFilterLabel}`}
+        subtitle={`${d.totals.closed_trades} abgeschlossene Trades · ${d.totals.assets_count} Assets · ${activeFilterLabel}`}
         right={
-          <div className="flex items-center gap-2 flex-wrap sm:flex-nowrap">
-            {filterControls}
-            <Badge tone={d.totals.realized_pnl_usd >= 0 ? "pos" : "neg"}>
-              Gesamt {d.totals.realized_pnl_usd >= 0 ? "+" : ""}
-              {fmt(d.totals.realized_pnl_usd, undefined, 2)}
-            </Badge>
-          </div>
+          <Badge tone={d.totals.realized_pnl_usd >= 0 ? "pos" : "neg"}>
+            Gesamt {d.totals.realized_pnl_usd >= 0 ? "+" : ""}
+            {fmt(d.totals.realized_pnl_usd, undefined, 2)}
+          </Badge>
         }
       />
-      <div className="grid grid-cols-1 gap-1 mt-3">
-        {d.by_asset.map((row) => {
+      <div className="mb-3">{filterControls}</div>
+      <div className="grid grid-cols-1 gap-1">
+        {visibleAssets.map((row) => {
           const pos = row.realized_pnl_usd >= 0;
           return (
             <div
@@ -196,6 +204,15 @@ function RealizedByAssetPanel() {
           );
         })}
       </div>
+      {d.by_asset.length > ASSETS_COLLAPSE_N && (
+        <ShowMoreToggle
+          expanded={showAllAssets}
+          totalCount={d.by_asset.length}
+          hiddenCount={d.by_asset.length - ASSETS_COLLAPSE_N}
+          noun="Assets"
+          onToggle={() => setShowAllAssets((s) => !s)}
+        />
+      )}
       {d.top_performer && d.worst_performer && d.by_asset.length >= 2 && (
         <div className="mt-3 grid grid-cols-2 gap-3 text-2xs text-fg-subtle">
           <div>
@@ -239,6 +256,19 @@ export function PortfolioPage() {
 
   const positions: PaperPosition[] = snap.state === "ready" ? snap.data.positions : [];
   const unrealized = positions.reduce((sum, p) => sum + (p.unrealized_pnl_usd ?? 0), 0);
+  // Offene-Positionen-Tabelle einklappbar: standardmäßig nur die 5 neuesten
+  // (nach opened_at), Rest hinter einem Toggle — sonst sprengt das Buch bei
+  // vielen Positionen die Übersicht (Operator 2026-06-14).
+  const [showAllPositions, setShowAllPositions] = useState(false);
+  const POSITIONS_COLLAPSE_N = 5;
+  const positionsByRecent = [...positions].sort((a, b) => {
+    const ta = a.opened_at ? Date.parse(a.opened_at) : 0;
+    const tb = b.opened_at ? Date.parse(b.opened_at) : 0;
+    return (Number.isFinite(tb) ? tb : 0) - (Number.isFinite(ta) ? ta : 0);
+  });
+  const visiblePositions = showAllPositions
+    ? positionsByRecent
+    : positionsByRecent.slice(0, POSITIONS_COLLAPSE_N);
   // Sprint E (2026-05-12): Operator-Actions — Per-Action busy-flag + last-outcome.
   const [actionBusy, setActionBusy] = useState<string | null>(null);
   const [actionMsg, setActionMsg] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
@@ -747,7 +777,11 @@ export function PortfolioPage() {
         <div className="flex items-center justify-between gap-3 px-4 py-3 border-b border-line-subtle">
           <div className="text-sm font-semibold tracking-tight text-fg">Offene Positionen</div>
           <div className="text-2xs text-fg-subtle font-mono">
-            {snap.state === "ready" ? `${snap.data.position_count} Positionen` : ""}
+            {snap.state === "ready"
+              ? showAllPositions || positions.length <= POSITIONS_COLLAPSE_N
+                ? `${positions.length} Positionen`
+                : `${POSITIONS_COLLAPSE_N} von ${positions.length} · neueste zuerst`
+              : ""}
           </div>
         </div>
         <div className="relative">
@@ -780,7 +814,7 @@ export function PortfolioPage() {
               {snap.state === "ready" && positions.length === 0 && (
                 <tr><td colSpan={13} className="px-4 py-6 text-center text-fg-subtle">{t("common.no_data")}</td></tr>
               )}
-              {positions.map((p) => {
+              {visiblePositions.map((p) => {
                 const side = (p.position_side ?? "long").toUpperCase();
                 const sideTone = side === "SHORT" ? "neg" : "pos";
                 const lev = p.leverage;
@@ -931,6 +965,17 @@ export function PortfolioPage() {
             aria-hidden
           />
         </div>
+        {snap.state === "ready" && positions.length > POSITIONS_COLLAPSE_N && (
+          <div className="px-4 py-2.5 border-t border-line-subtle">
+            <ShowMoreToggle
+              expanded={showAllPositions}
+              totalCount={positions.length}
+              hiddenCount={positions.length - POSITIONS_COLLAPSE_N}
+              noun="Positionen"
+              onToggle={() => setShowAllPositions((s) => !s)}
+            />
+          </div>
+        )}
       </Card>
 
       {/* DALI v2 S4 M2b: Equity-Kurve mit DevelopmentStatus.
@@ -989,6 +1034,43 @@ function PriceStatusRow({
         <div className="text-2xs text-fg-subtle leading-relaxed mt-0.5">{hint}</div>
       </div>
     </div>
+  );
+}
+
+/**
+ * Einheitlicher Einklapp-Toggle für lange Listen/Tabellen (DALI 2026-06-14).
+ * Eingeklappt sind nur die ersten N Einträge sichtbar; der Toggle nennt die
+ * Gesamtzahl und wie viele verborgen sind, damit der Operator nichts übersieht.
+ */
+function ShowMoreToggle({
+  expanded,
+  totalCount,
+  hiddenCount,
+  noun,
+  onToggle,
+}: {
+  expanded: boolean;
+  totalCount: number;
+  hiddenCount: number;
+  noun: string;
+  onToggle: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      aria-expanded={expanded}
+      className={cn(
+        "mt-2 inline-flex items-center gap-1.5 rounded-sm px-2 py-1 text-2xs font-medium",
+        "text-fg-subtle hover:text-fg hover:bg-bg-2 transition-colors",
+        "focus:outline-none focus-visible:ring-1 focus-visible:ring-accent/40",
+      )}
+    >
+      {expanded ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+      {expanded
+        ? "Weniger anzeigen"
+        : `Alle ${totalCount} ${noun} anzeigen · +${hiddenCount}`}
+    </button>
   );
 }
 
