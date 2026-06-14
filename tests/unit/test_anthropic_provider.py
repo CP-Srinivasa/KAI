@@ -71,7 +71,7 @@ def test_provider_name(provider):
 
 
 def test_provider_model_default(provider):
-    assert provider.model == "claude-3-7-sonnet-20250219"
+    assert provider.model == "claude-sonnet-4-6"
 
 
 def test_provider_model_custom():
