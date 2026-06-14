@@ -1,3 +1,4 @@
+// @data-source: props (parent-provided)
 import { memo, useMemo, useState } from "react";
 import { ShieldCheck, ChevronDown, ChevronUp, Activity } from "lucide-react";
 import { Card, InfoHint } from "@/components/ui/Primitives";

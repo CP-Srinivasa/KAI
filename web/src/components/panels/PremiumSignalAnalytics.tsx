@@ -1,3 +1,4 @@
+// @data-source: props (/api/premium-signals/trail)
 import {
   AlertTriangle,
   Check,

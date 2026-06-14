@@ -1,3 +1,4 @@
+// @data-source: /api/premium-signals/runtime
 import { useCallback } from "react";
 import {
   ShieldAlert,

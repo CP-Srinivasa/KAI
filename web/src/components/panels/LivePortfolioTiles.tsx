@@ -1,3 +1,4 @@
+// @data-source: /operator/portfolio-snapshot · /operator/exposure-summary · /operator/trading-loop/recent-cycles
 import type { ReactNode } from "react";
 import { Card, CardHeader, Badge } from "@/components/ui/Primitives";
 import { useApi } from "@/lib/useApi";

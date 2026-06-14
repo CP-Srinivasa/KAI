@@ -1,3 +1,4 @@
+// @data-source: props (/dashboard/api/quality)
 import { memo, useMemo } from "react";
 import { AlertTriangle, Flag, Target, Coins, Calendar, Info } from "lucide-react";
 import { Card, CardHeader, Badge, ProgressBar } from "@/components/ui/Primitives";

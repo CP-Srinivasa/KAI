@@ -1,3 +1,4 @@
+// @data-source: /api/alerts/auto-annotate-report
 import { memo, useCallback, useState } from "react";
 import { ChevronDown, ChevronRight, FlaskConical } from "lucide-react";
 import { Badge, Button, Card } from "@/components/ui/Primitives";

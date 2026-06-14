@@ -1,3 +1,4 @@
+// @data-source: props (parent-provided)
 import { AlertTriangle } from "lucide-react";
 import { Badge, Card, CardHeader, InfoHint, ProgressBar } from "@/components/ui/Primitives";
 import type { DashboardQuality } from "@/lib/api";

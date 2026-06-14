@@ -8,6 +8,7 @@
     "build": "tsc -b && vite build",
     "preview": "vite preview",
     "lint": "tsc -b --noEmit",
+    "lint:data-sources": "node scripts/check-data-sources.mjs",
     "test": "vitest run"
   },
   "dependencies": {

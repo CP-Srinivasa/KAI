@@ -1,3 +1,4 @@
+// @data-source: props (/dashboard/api/quality)
 import { Card, CardHeader, Badge, ProgressBar } from "@/components/ui/Primitives";
 import { useT } from "@/i18n/I18nProvider";
 import { cn } from "@/lib/utils";
