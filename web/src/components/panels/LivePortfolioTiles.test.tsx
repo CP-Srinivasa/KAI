@@ -18,6 +18,17 @@ vi.mock("@/lib/api", async (importOriginal) => {
 });
 
 import { LivePortfolioTiles } from "./LivePortfolioTiles";
+import { CurrencyProvider } from "@/state/CurrencyProvider";
+
+// Tiles format money via useCurrency() → render inside the provider. Force USD
+// so the $-grouping assertions are deterministic regardless of test-env locale.
+function renderTiles() {
+  return render(
+    <CurrencyProvider>
+      <LivePortfolioTiles />
+    </CurrencyProvider>,
+  );
+}
 
 const flatPortfolio = {
   report_type: "paper_portfolio_snapshot",
@@ -51,6 +62,11 @@ const flatExposure = {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  try {
+    localStorage.setItem("kai-currency", "USD");
+  } catch {
+    /* no-op in envs without localStorage */
+  }
 });
 afterEach(cleanup);
 
@@ -65,7 +81,7 @@ describe("LivePortfolioTiles", () => {
       recent_cycles: [],
     });
 
-    render(<LivePortfolioTiles />);
+    renderTiles();
 
     // Portfolio tile reached the ready state (labels are deterministic; the exact
     // currency grouping is Intl/env-dependent so we assert the $-value loosely).
@@ -85,7 +101,7 @@ describe("LivePortfolioTiles", () => {
     fetchExposureSummary.mockRejectedValue(new Error("boom"));
     fetchRecentCycles.mockRejectedValue(new Error("boom"));
 
-    render(<LivePortfolioTiles />);
+    renderTiles();
 
     const errs = await screen.findAllByText(/nicht erreichbar/);
     expect(errs.length).toBeGreaterThanOrEqual(1);

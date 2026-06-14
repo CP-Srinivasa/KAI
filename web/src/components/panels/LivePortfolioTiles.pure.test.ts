@@ -1,6 +1,8 @@
 import { describe, it, expect } from "vitest";
-import { fmtUsd, computeAllocation } from "./LivePortfolioTiles";
+import { computeAllocation } from "./LivePortfolioTiles";
 import type { PaperPosition } from "@/lib/api";
+
+// Money formatting moved to the canonical SSOT — covered by lib/money.test.ts.
 
 function pos(symbol: string, market_value_usd: number | null): PaperPosition {
   return {
@@ -14,19 +16,6 @@ function pos(symbol: string, market_value_usd: number | null): PaperPosition {
     unrealized_pnl_usd: null,
   } as PaperPosition;
 }
-
-describe("fmtUsd", () => {
-  it("returns em-dash for non-finite", () => {
-    expect(fmtUsd(null)).toBe("—");
-    expect(fmtUsd(undefined)).toBe("—");
-    expect(fmtUsd(Number.NaN)).toBe("—");
-  });
-  it("formats positive, zero and negative", () => {
-    expect(fmtUsd(1234.5)).toBe("$1,234.5");
-    expect(fmtUsd(0)).toBe("$0");
-    expect(fmtUsd(-50)).toBe("-$50");
-  });
-});
 
 describe("computeAllocation", () => {
   it("empty positions -> empty/total 0", () => {
