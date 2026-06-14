@@ -26,11 +26,19 @@ class LightningNodeStatus:
 
     ``state`` is one of: ``disabled`` (feature off), ``unavailable`` (enabled but
     the node could not be reached), ``ok`` (reachable). ``reason`` carries the
-    error detail for the unavailable case.
+    error detail for the unavailable/degraded case.
+
+    Liveness is established via the cheap ``/v1/state`` probe; ``getinfo`` is
+    best-effort enrichment. If ``getinfo`` fails (it can be slow on a Tor node
+    right after a restart) while the node is reachable, ``state`` stays ``ok``,
+    ``reachable`` is True, and ``info_available`` is False with the detail in
+    ``reason`` — the node is up, we just lack the detail fields.
     """
 
     state: str
     reachable: bool
+    server_state: str = ""
+    info_available: bool = False
     synced_to_chain: bool = False
     block_height: int = 0
     num_peers: int = 0
@@ -72,14 +80,30 @@ async def get_node_status(cfg: LightningSettings | None = None) -> LightningNode
         return LightningNodeStatus.disabled()
     try:
         client = _build_client(cfg)
-        info = await client.get_info()
+        server_state = await client.get_state()
     except LightningUnavailableError as exc:
         return LightningNodeStatus.unavailable(str(exc))
     except Exception as exc:  # noqa: BLE001 — adapter must never leak into the loop
         return LightningNodeStatus.unavailable(f"unexpected: {exc}")
+
+    # Node is reachable. getinfo is best-effort enrichment — never downgrade a
+    # reachable node to "unavailable" just because the (sometimes slow) getinfo
+    # call failed.
+    try:
+        info = await client.get_info()
+    except Exception as exc:  # noqa: BLE001 — getinfo failure must not flip liveness
+        return LightningNodeStatus(
+            state="ok",
+            reachable=True,
+            server_state=server_state,
+            info_available=False,
+            reason=f"getinfo unavailable: {exc}",
+        )
     return LightningNodeStatus(
         state="ok",
         reachable=True,
+        server_state=server_state,
+        info_available=True,
         synced_to_chain=info.synced_to_chain,
         block_height=info.block_height,
         num_peers=info.num_peers,

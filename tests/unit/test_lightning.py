@@ -18,9 +18,22 @@ from app.lightning import (
     LndRestClient,
     get_node_status,
 )
+from app.lightning import adapter as adapter_mod
 
 
 def _transport(handler) -> httpx.MockTransport:
+    return httpx.MockTransport(handler)
+
+
+def _routing_transport(responses: dict[str, httpx.Response]) -> httpx.MockTransport:
+    """Route by URL path; unmapped paths raise to surface test gaps."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        resp = responses.get(request.url.path)
+        if resp is None:
+            raise AssertionError(f"unexpected path {request.url.path}")
+        return resp
+
     return httpx.MockTransport(handler)
 
 
@@ -103,6 +116,69 @@ async def test_transport_error_raises_unavailable() -> None:
 
 
 # --- adapter: default-off + fail-closed ------------------------------------------
+
+
+async def test_get_state_happy_path() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/v1/state"
+        return httpx.Response(200, json={"state": "SERVER_ACTIVE"})
+
+    client = LndRestClient(
+        base_url="https://x:8080", macaroon_hex="ab", transport=_transport(handler)
+    )
+    assert await client.get_state() == "SERVER_ACTIVE"
+
+
+async def test_adapter_degraded_when_getinfo_fails(monkeypatch) -> None:
+    # /v1/state OK (reachable) but getinfo errors -> node stays reachable/ok,
+    # info_available False. Mirrors the live Tor-node getinfo-hang finding.
+    transport = _routing_transport(
+        {
+            "/v1/state": httpx.Response(200, json={"state": "SERVER_ACTIVE"}),
+            "/v1/getinfo": httpx.Response(503, text="slow"),
+        }
+    )
+    monkeypatch.setattr(
+        adapter_mod,
+        "_build_client",
+        lambda cfg: LndRestClient(
+            base_url="https://x:8080", macaroon_hex="ab", transport=transport
+        ),
+    )
+    status = await get_node_status(LightningSettings(enabled=True, macaroon_hex="ab"))
+    assert status.state == "ok"
+    assert status.reachable is True
+    assert status.server_state == "SERVER_ACTIVE"
+    assert status.info_available is False
+    assert "getinfo" in status.reason
+
+
+async def test_adapter_ok_full(monkeypatch) -> None:
+    transport = _routing_transport(
+        {
+            "/v1/state": httpx.Response(200, json={"state": "SERVER_ACTIVE"}),
+            "/v1/getinfo": httpx.Response(
+                200,
+                json={
+                    "identity_pubkey": "024a7f",
+                    "block_height": 953644,
+                    "synced_to_chain": True,
+                },
+            ),
+        }
+    )
+    monkeypatch.setattr(
+        adapter_mod,
+        "_build_client",
+        lambda cfg: LndRestClient(
+            base_url="https://x:8080", macaroon_hex="ab", transport=transport
+        ),
+    )
+    status = await get_node_status(LightningSettings(enabled=True, macaroon_hex="ab"))
+    assert status.state == "ok"
+    assert status.info_available is True
+    assert status.block_height == 953644
+    assert status.synced_to_chain is True
 
 
 async def test_adapter_disabled_makes_no_call() -> None:

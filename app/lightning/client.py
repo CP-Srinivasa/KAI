@@ -120,6 +120,16 @@ class LndRestClient:
         except ValueError as exc:
             raise LightningUnavailableError(f"lnd returned non-JSON for {path}") from exc
 
+    async def get_state(self) -> str:
+        """GET /v1/state — cheap readiness probe (no wallet/chain work).
+
+        Returns the wallet/server state string (e.g. ``SERVER_ACTIVE``). This is
+        the lnd-recommended liveness signal: it stays fast even when ``getinfo``
+        is slow (e.g. while lnd resolves its Tor ``uris`` after a restart).
+        """
+        data = await self._get("/v1/state")
+        return str(data.get("state", ""))
+
     async def get_info(self) -> LndInfo:
         """GET /v1/getinfo — node identity + chain/graph sync state."""
         data = await self._get("/v1/getinfo")
