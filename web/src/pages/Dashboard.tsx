@@ -274,14 +274,19 @@ export function Dashboard() {
               <span>
                 <span className="font-mono">{data.paper_cycles}</span> cycles ·{" "}
                 <span className="font-mono">{data.real_price_cycles}</span> real-price
-                <button
-                  type="button"
-                  aria-label="Daten vor 2026-05-02 14:30 UTC unter Schema v1 (NEO-P-101-r2 disqualified, via Backfill rekonstruiert). v2-only-Werte ab Cutover."
-                  title="Daten vor 2026-05-02 14:30 UTC unter Schema v1 (NEO-P-101-r2 disqualified, via Backfill rekonstruiert). v2-only-Werte ab Cutover."
-                  className="ml-1 inline-flex items-center align-middle text-fg-subtle hover:text-fg-muted cursor-help"
-                >
-                  <Info size={11} aria-hidden />
-                </button>
+                {/* v1→v2-Cutover-Hinweis nur solange das Backend v1-Daten als
+                    disqualifiziert meldet — sonst ist der 6-Wochen-alte
+                    Schema-Hinweis nicht mehr relevant (Operator 2026-06-15). */}
+                {data.audit_v1_disqualified && (
+                  <button
+                    type="button"
+                    aria-label="Daten vor 2026-05-02 14:30 UTC unter Schema v1 (NEO-P-101-r2 disqualified, via Backfill rekonstruiert). v2-only-Werte ab Cutover."
+                    title="Daten vor 2026-05-02 14:30 UTC unter Schema v1 (NEO-P-101-r2 disqualified, via Backfill rekonstruiert). v2-only-Werte ab Cutover."
+                    className="ml-1 inline-flex items-center align-middle text-fg-subtle hover:text-fg-muted cursor-help"
+                  >
+                    <Info size={11} aria-hidden />
+                  </button>
+                )}
               </span>
             ) : undefined
           }

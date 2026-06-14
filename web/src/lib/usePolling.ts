@@ -3,7 +3,10 @@ import { ApiError } from "./api";
 
 export type PollingState<T> =
   | { state: "loading"; data: null; error: null }
-  | { state: "ready"; data: T; error: null }
+  // fetchedAt: epoch-ms of the last successful fetch. Lets a panel show honest
+  // "zuletzt aktualisiert vor Xs" even when the backend payload carries no
+  // generated_at — no silent stale-freeze.
+  | { state: "ready"; data: T; error: null; fetchedAt: number }
   | { state: "error"; data: null; error: { kind: string; message: string } };
 
 export interface PollingOptions {
@@ -61,7 +64,7 @@ export function usePolling<T>(
         const data = await fetcherRef.current(ctrl.signal);
         if (cancelled) return;
         attempt = 0;
-        setState({ state: "ready", data, error: null });
+        setState({ state: "ready", data, error: null, fetchedAt: Date.now() });
         schedule(intervalMs);
       } catch (e) {
         if (cancelled) return;

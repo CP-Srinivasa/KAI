@@ -64,7 +64,7 @@ Targets: 70000
 Stop Loss: 62000
 Leverage: 10x
 Status: NEW
-Timestamp: 2026-04-15T10:00:00Z
+Timestamp: YYYY-MM-DDThh:mm:ssZ
 `;
 
 const SAMPLE_FREEFORM = `🟢 #BTC/USDT LONG/BUY
