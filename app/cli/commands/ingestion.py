@@ -483,3 +483,33 @@ def ingestion_okx_announcements(
             console.print(f"  Priority:  {dist}")
 
     asyncio.run(run())
+
+
+@ingestion_app.command("technical-screen")
+def technical_screen() -> None:
+    """Run the asset-agnostic technical screener (SHADOW-ONLY, default OFF).
+
+    Gated by ``ALERT_TECHNICAL_SCREENER_ENABLED``. Fetches OHLCV for the
+    configured liquid universe, ranks by relative-strength-vs-BTC, evaluates the
+    WP-B technical eligibility path, and records shadow candidates — no
+    execution. Intended for a systemd timer / operator invocation.
+    """
+    configure_logging()
+    from app.observability.technical_screener_feed import run_from_settings
+
+    summary = asyncio.run(run_from_settings())
+    if not summary.get("enabled"):
+        console.print(
+            "[yellow]Technical screener is OFF[/yellow] "
+            "(set ALERT_TECHNICAL_SCREENER_ENABLED=true to enable)."
+        )
+        raise typer.Exit(code=0)
+    console.print("[bold green]Technical screener run complete[/bold green]")
+    for key in (
+        "scanned",
+        "signals",
+        "written",
+        "non_btc_signals",
+        "eligible_on_technical_path",
+    ):
+        console.print(f"  {key}: {summary.get(key)}")
