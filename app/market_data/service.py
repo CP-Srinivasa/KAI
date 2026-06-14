@@ -28,6 +28,11 @@ logger = logging.getLogger(__name__)
 # Env-tunable via MARKET_DATA_PROVIDER_DISAGREEMENT_PCT (fraction, e.g. 0.10).
 _DEFAULT_PROVIDER_DISAGREEMENT_PCT = 0.10
 
+# MockMarketDataAdapter.adapter_name. Synthetic last-resort data: it must never
+# corroborate or veto a real venue in the disagreement cross-check (see
+# get_market_data_point). Pinned against drift by a unit test.
+_MOCK_SOURCE = "mock"
+
 
 def _provider_disagreement_pct() -> float:
     raw = os.environ.get("MARKET_DATA_PROVIDER_DISAGREEMENT_PCT")
@@ -107,21 +112,38 @@ class FallbackMarketDataAdapter(BaseMarketDataAdapter):
             point = await adapter.get_market_data_point(symbol)
             if point is not None and point.price > 0:
                 resolved.append(point)
-                fresh = [p for p in resolved if not p.is_stale]
-                # Two fresh quotes are enough to cross-check; stop early to
-                # bound latency rather than always querying the whole chain.
-                if len(fresh) >= 2:
+                # Early-stop quorum counts only REAL fresh quotes. Synthetic
+                # mock must not satisfy the 2-provider cross-check, else we stop
+                # querying real venues the moment mock chimes in and let a
+                # phantom quote veto a real one.
+                fresh_real = [
+                    p for p in resolved if not p.is_stale and p.source != _MOCK_SOURCE
+                ]
+                if len(fresh_real) >= 2:
                     break
 
         if not resolved:
             return None
 
+        # Synthetic mock data is a last-resort price source ONLY: it must never
+        # corroborate or veto a real venue. Otherwise a single-real-venue micro-
+        # cap (SKYAI, COAI, …) is permanently disagreement-stale-tagged by the
+        # mock's phantom second opinion and can be neither entered NOR exited.
+        # (2026-06-14: a SKYAI paper position was frozen at ~40% of the book this
+        # way — binance_futures 0.355 vs mock 101.3 → is_stale forever.)
+        real = [p for p in resolved if p.source != _MOCK_SOURCE]
         fresh = [p for p in resolved if not p.is_stale]
-        candidates = fresh or resolved
-        chosen = candidates[0]
+        fresh_real = [p for p in real if not p.is_stale]
 
-        if len(candidates) >= 2:
-            prices = [p.price for p in candidates]
+        # Prefer a fresh real quote; then any real quote; only fall through to a
+        # mock point when no real provider produced one at all.
+        chosen = (fresh_real or real or fresh or resolved)[0]
+
+        # Cross-check disagreement among REAL fresh providers only — the
+        # MATIC/POL delisting protection (DS-20260529-V1) still fires when two
+        # genuine venues disagree, but mock can no longer trigger it.
+        if len(fresh_real) >= 2:
+            prices = [p.price for p in fresh_real]
             lo, hi = min(prices), max(prices)
             if lo > 0 and (hi / lo - 1.0) > self._disagreement_pct:
                 logger.warning(
@@ -131,7 +153,7 @@ class FallbackMarketDataAdapter(BaseMarketDataAdapter):
                     lo,
                     hi,
                     self._disagreement_pct * 100,
-                    [p.source for p in candidates],
+                    [p.source for p in fresh_real],
                 )
                 return replace(
                     chosen,
