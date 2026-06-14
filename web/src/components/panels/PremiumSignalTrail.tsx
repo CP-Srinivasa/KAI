@@ -11,6 +11,7 @@ import {
   X,
 } from "lucide-react";
 import { Badge, Card, CardHeader } from "@/components/ui/Primitives";
+import { LiveDot } from "@/components/ui/LiveDot";
 import { SignalAnalyticsBlock } from "@/components/panels/PremiumSignalAnalytics";
 import {
   fetchPremiumSignalTrail,
@@ -480,7 +481,20 @@ export const PremiumSignalTrail = memo(function PremiumSignalTrail({
 
   return (
     <Card padded className="synthwave-pulse-edge overflow-hidden">
-      <CardHeader title="Premium-Signal Trail" subtitle={subtitle} />
+      <CardHeader
+        title="Premium-Signal Trail"
+        subtitle={subtitle}
+        right={
+          <LiveDot
+            state={polling.state}
+            generatedAt={
+              polling.state === "ready" ? new Date(polling.fetchedAt).toISOString() : null
+            }
+            staleAfterMs={90_000}
+            downAfterMs={240_000}
+          />
+        }
+      />
 
       {polling.state === "loading" && (
         <div className="space-y-2">

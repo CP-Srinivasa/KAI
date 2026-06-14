@@ -3,7 +3,9 @@ import { ApiError } from "./api";
 
 export type AsyncState<T> =
   | { state: "loading"; data: null; error: null; reload: () => void }
-  | { state: "ready"; data: T; error: null; reload: () => void }
+  // fetchedAt: epoch-ms des letzten erfolgreichen Fetch → ehrliche
+  // "zuletzt aktualisiert vor Xs"-Anzeige auch ohne Backend-generated_at.
+  | { state: "ready"; data: T; error: null; reload: () => void; fetchedAt: number }
   | { state: "error"; data: null; error: { kind: string; message: string; status: number }; reload: () => void };
 
 // Generischer Polling-Hook für async-Fetcher. Jeder aktive Dashboard-Bereich nutzt
@@ -32,7 +34,7 @@ export function useApi<T>(
       try {
         const data = await fetcher(ctrl.signal);
         if (cancelled) return;
-        setState({ state: "ready", data, error: null, reload });
+        setState({ state: "ready", data, error: null, reload, fetchedAt: Date.now() });
       } catch (e) {
         if (cancelled) return;
         if (e instanceof ApiError) {

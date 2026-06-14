@@ -6,6 +6,7 @@ import { fetchDiversificationOverview } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { useCurrency } from "@/state/CurrencyProvider";
 import { formatMoneyCompact } from "@/lib/money";
+import { LiveDot } from "@/components/ui/LiveDot";
 
 // Asset-Diversification / Klumpenrisiko-Panel.
 // Beantwortet: Wie breit ist das Buch gestreut, wo sind Cluster, welche
@@ -52,13 +53,21 @@ export function DiversificationPanel() {
         title="Diversifikation & Klumpenrisiko"
         subtitle={`Short-Term-Sleeve · Guard: ${d.guard_enabled ? d.guard_mode : "aus"} · Universe ${d.universe_size ?? "?"} Assets`}
         right={
-          btcEth != null ? (
-            <Badge tone={btcEthOver ? "warn" : "pos"}>
-              BTC/ETH kurzfristig {btcEth.toFixed(0)}%
-            </Badge>
-          ) : (
-            <Badge tone="muted">BTC/ETH n/a</Badge>
-          )
+          <div className="flex items-center gap-2">
+            <LiveDot
+              state={data.state}
+              generatedAt={data.state === "ready" ? new Date(data.fetchedAt).toISOString() : null}
+              staleAfterMs={90_000}
+              downAfterMs={240_000}
+            />
+            {btcEth != null ? (
+              <Badge tone={btcEthOver ? "warn" : "pos"}>
+                BTC/ETH kurzfristig {btcEth.toFixed(0)}%
+              </Badge>
+            ) : (
+              <Badge tone="muted">BTC/ETH n/a</Badge>
+            )}
+          </div>
         }
       />
 
