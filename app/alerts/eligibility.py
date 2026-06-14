@@ -887,6 +887,7 @@ def evaluate_directional_eligibility(
     signal_path: str = SIGNAL_PATH_NARRATIVE,
     technical_strength: float | None = None,
     min_technical_strength: float | None = None,
+    allow_short: bool = False,
 ) -> DirectionalEligibilityDecision:
     """Return directional eligibility for operational metrics.
 
@@ -930,9 +931,17 @@ def evaluate_directional_eligibility(
         )
 
     # D-142: Bearish directional disabled — 4% precision (1/24) on eligible
-    # resolved outcomes.  Bearish news is not price-predictive in current
-    # market conditions.  Re-enable when market-context analysis is added.
-    if BEARISH_DIRECTIONAL_DISABLED and sentiment == "bearish":
+    # resolved outcomes.  Bearish NEWS is not price-predictive in current market
+    # conditions.  WP-E (2026-06-15): that 4% was a *narrative* result — technical
+    # bearish signals (momentum/breakdown/relative-weakness vs BTC) are a
+    # different beast. ``allow_short`` (default False, env
+    # ``ALERT_ALLOW_SHORT_TECHNICAL``) opens bearish ONLY for the technical path,
+    # ONLY for eligibility/shadow-measurement. The narrative path stays strictly
+    # bearish-blocked. Defense in depth: even when admitted here, the EXECUTION
+    # path remains independently gated by entry_mode — a short cannot reach a real
+    # fill from this flag alone (risk-review preserved).
+    bearish_open_for_technical = allow_short and signal_path == SIGNAL_PATH_TECHNICAL
+    if BEARISH_DIRECTIONAL_DISABLED and sentiment == "bearish" and not bearish_open_for_technical:
         return DirectionalEligibilityDecision(
             is_directional=True,
             directional_eligible=False,

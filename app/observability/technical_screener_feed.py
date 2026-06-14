@@ -100,6 +100,7 @@ async def run_technical_screen(
     lookback: int = DEFAULT_LOOKBACK,
     top_n: int = 20,
     min_strength: float = 0.0,
+    allow_short: bool = False,
     write: bool = True,
     ledger_path: Path = LEDGER_PATH,
     now_utc: str | None = None,
@@ -107,7 +108,9 @@ async def run_technical_screen(
     """Fetch → screen → eligibility → SHADOW-record. Never executes anything.
 
     Returns a summary dict. Fail-soft per symbol: a fetch error drops that symbol
-    rather than aborting the run.
+    rather than aborting the run. ``allow_short`` (WP-E) opens bearish on the
+    technical path for shadow measurement only — every admitted short is audit-
+    logged; the execution path stays gated by entry_mode.
     """
     ts = now_utc or datetime.now(UTC).isoformat()
     limit = lookback + 5
@@ -130,6 +133,7 @@ async def run_technical_screen(
     written = 0
     non_btc = 0
     eligible = 0
+    shorts_admitted = 0
     for sig in signals:
         entry = _last_close(candles_by_symbol.get(sig.symbol, []))
         if entry is None or entry <= 0:
@@ -139,17 +143,32 @@ async def run_technical_screen(
             affected_assets=[sig.symbol],
             signal_path=SIGNAL_PATH_TECHNICAL,
             technical_strength=sig.strength,
+            allow_short=allow_short,
         )
         rejected = decision.directional_eligible is False
+        side = "long" if sig.direction == "bullish" else "short"
         if not rejected:
             eligible += 1
+            # WP-E risk-review anchor: every short admitted via the flag is
+            # audit-logged so the operator can review the new loss-direction.
+            # Shadow-only — no execution results from this.
+            if side == "short":
+                shorts_admitted += 1
+                logger.warning(
+                    "technical_screener.short_admitted_shadow",
+                    symbol=sig.symbol,
+                    strength=sig.strength,
+                    relative_strength=sig.relative_strength,
+                    note="bearish technical eligible via ALERT_ALLOW_SHORT_TECHNICAL "
+                    "— SHADOW only, execution still gated by entry_mode",
+                )
         if not sig.symbol.upper().startswith("BTC/"):
             non_btc += 1
         candidate = ShadowCandidate.from_geometry(
             candidate_id=f"tech-{sig.symbol.replace('/', '')}-{ts}",
             ts_utc=ts,
             symbol=sig.symbol,
-            side="long" if sig.direction == "bullish" else "short",
+            side=side,
             entry_price=entry,
             stop_price=None,
             take_price=None,
@@ -173,6 +192,7 @@ async def run_technical_screen(
         "written": written,
         "non_btc_signals": non_btc,
         "eligible_on_technical_path": eligible,
+        "shorts_admitted_shadow": shorts_admitted,
         "btc_candles": len(btc_candles),
     }
     logger.info("technical_screener.run", **summary)
@@ -213,4 +233,5 @@ async def run_from_settings(adapter: _OhlcvSource | None = None) -> dict[str, ob
         symbols=_configured_symbols(alerts.technical_screener_symbols),
         top_n=alerts.technical_screener_top_n,
         min_strength=alerts.min_technical_strength,
+        allow_short=alerts.allow_short_technical,
     )
