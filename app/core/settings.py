@@ -23,6 +23,7 @@ from app.core.evidence_settings import (
 from app.core.evidence_settings import (
     OpenInterestEvidenceSettings as OpenInterestEvidenceSettings,
 )
+from app.core.lightning_settings import LightningSettings as LightningSettings
 from app.core.re_entry_mode import ReEntryModeProfile
 from app.core.schema_runtime import (
     validate_json_schema_payload as _validate_json_schema_payload,
@@ -1372,6 +1373,7 @@ class AppSettings(BaseSettings):
     diversification: DiversificationSettings = Field(default_factory=DiversificationSettings)
     # KYT transaction-risk prevention. Default-off, shadow-first.
     kyt: KytSettings = Field(default_factory=KytSettings)
+    lightning: LightningSettings = Field(default_factory=LightningSettings)
     # D-191 re-entry capability gate. Default disabled — see ReEntryModeProfile.
     re_entry_mode: ReEntryModeProfile = Field(default_factory=ReEntryModeProfile)
 
