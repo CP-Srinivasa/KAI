@@ -44,6 +44,16 @@ logger = logging.getLogger(__name__)
 
 _DIRECTIONAL_LABELS = (SentimentLabel.BULLISH, SentimentLabel.BEARISH)
 
+# D-142 source guard (Operator 2026-06-14). The feeder is the ONE sanctioned
+# bearish-OPEN paper path. Structured exchange/regulatory sources skew bearish
+# (SEC enforcement, OKX delistings) — they must stay bearish-BLOCKED even here,
+# so bearish exchange/reg news can never re-enter the directional stream via the
+# narrative/paper path. D-142 bleibt. Bullish from these sources is still allowed
+# (desirable throughput). Matched on source_name because the analysis stage
+# overwrites doc.provider with the LLM provider name. The live dispatch path is
+# already strict via evaluate_directional_eligibility (D-142 hard block).
+_D142_STRICT_SOURCE_NAMES = frozenset({"sec_edgar", "okx announcements"})
+
 
 @dataclass(frozen=True)
 class RealAnalysisCandidate:
@@ -156,6 +166,7 @@ def select_real_analysis_candidates(
         "stale": 0,
         "duplicate": 0,
         "non_directional": 0,
+        "bearish_d142_blocked": 0,
         "no_symbol": 0,
         "quality_blocked": 0,
         "eligible": 0,
@@ -174,6 +185,14 @@ def select_real_analysis_candidates(
             continue
         if doc.sentiment_label not in _DIRECTIONAL_LABELS:
             funnel["non_directional"] += 1
+            continue
+        # D-142 source guard: bearish from structured exchange/regulatory sources
+        # stays blocked even on this bearish-open paper path (Operator 2026-06-14).
+        if (
+            doc.sentiment_label == SentimentLabel.BEARISH
+            and (doc.source_name or "").strip().lower() in _D142_STRICT_SOURCE_NAMES
+        ):
+            funnel["bearish_d142_blocked"] += 1
             continue
         symbol = _symbol_for(doc)
         if symbol is None:

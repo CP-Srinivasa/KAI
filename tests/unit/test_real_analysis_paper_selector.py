@@ -230,3 +230,43 @@ def test_run_once_guard_refuses_live(mode: ExecutionMode) -> None:
     allowed, reason = _run_once_guard(mode)
     assert allowed is False
     assert reason is not None
+
+
+# ── D-142 source guard (Operator 2026-06-14) ──────────────────────────────────
+# Structured exchange/regulatory sources (SEC enforcement, OKX delistings) must
+# stay bearish-BLOCKED even on the bearish-open paper path, so bearish news from
+# them never re-enters the directional stream via the narrative/paper path.
+
+
+def _src_doc(source_name: str, sentiment: SentimentLabel, **kw) -> CanonicalDocument:
+    return _doc(sentiment=sentiment, **kw).model_copy(update={"source_name": source_name})
+
+
+@pytest.mark.parametrize("source_name", ["sec_edgar", "OKX Announcements", "okx announcements"])
+def test_bearish_from_structured_source_blocked_on_paper_path(source_name: str) -> None:
+    cands, funnel = select_real_analysis_candidates(
+        [_src_doc(source_name, SentimentLabel.BEARISH)], freshness_max_age_hours=48
+    )
+    assert funnel["bearish_d142_blocked"] == 1
+    assert cands == []
+
+
+def test_bullish_from_structured_source_not_blocked_by_d142_guard() -> None:
+    # Bullish exchange/reg news (listing / ETF approval) stays selectable — the
+    # guard is bearish-only.
+    cands, funnel = select_real_analysis_candidates(
+        [_src_doc("sec_edgar", SentimentLabel.BULLISH, sscore=0.9)], freshness_max_age_hours=48
+    )
+    assert funnel["bearish_d142_blocked"] == 0
+    assert funnel["eligible"] == 1
+    assert len(cands) == 1
+
+
+def test_bearish_from_generic_source_still_paper_eligible() -> None:
+    # Pre-existing bearish-open behaviour for non-structured sources is preserved.
+    cands, funnel = select_real_analysis_candidates(
+        [_src_doc("coindesk", SentimentLabel.BEARISH)], freshness_max_age_hours=48
+    )
+    assert funnel["bearish_d142_blocked"] == 0
+    assert funnel["eligible"] == 1
+    assert len(cands) == 1
