@@ -61,6 +61,18 @@ FEEDS: list[dict[str, str]] = [
         "provider": "cryptobriefing",
         "notes": "Crypto Briefing - WordPress RSS, ~75% directional yield",
     },
+    # 2026-06-14 source-scout Top-Pick (DALI-Edge-Funnel): regulatorische
+    # Primärquelle. SEC-Press-Releases tragen ETF-Approvals/-Rejections und
+    # Enforcement — diskrete, datierte, named-entity Events, die in
+    # eligibility._SUBSTANTIVE_TRIGGER_PATTERNS bereits gewhitelistet sind und
+    # darum die p>=10-Prioritaetslatte organisch erreichen (statt sie zu lockern).
+    # Live verifiziert 2026-06-14: HTTP 200 mit generischem Feed-UA. Atom/RSS →
+    # RSSFeedAdapter ohne neuen Code. Mo-Fr aktualisiert (~10 min).
+    {
+        "url": "https://www.sec.gov/news/pressreleases.rss",
+        "provider": "sec_edgar",
+        "notes": "SEC Press Releases - ETF-Approvals/Enforcement (Regulatorik-Primärquelle, source-scout 2026-06-14)",
+    },
 ]
 
 
