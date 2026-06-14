@@ -1,0 +1,145 @@
+"""Minimal async client for the lnd REST API (read-only, Phase 1).
+
+KAI talks to the RaspiBlitz node as a *client* only. Phase 1 uses the
+``readonly.macaroon`` and never touches any write/send endpoint. Authentication
+is the standard lnd scheme: the hex-encoded macaroon in the
+``Grpc-Metadata-macaroon`` header, TLS verified against the node's ``tls.cert``.
+
+lnd REST docs: https://lightning.engineering/api-docs/api/lnd/
+
+Resilience: every call raises :class:`LightningUnavailableError` on any transport,
+TLS, auth or non-2xx error. Callers (the adapter) translate that into a
+fail-closed status so the trading loop is never blocked by Lightning.
+"""
+
+from __future__ import annotations
+
+import binascii
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any
+
+import httpx
+
+
+class LightningUnavailableError(RuntimeError):
+    """Raised when the lnd node cannot be reached or returns an error."""
+
+
+@dataclass(frozen=True)
+class LndInfo:
+    identity_pubkey: str
+    alias: str
+    version: str
+    block_height: int
+    synced_to_chain: bool
+    synced_to_graph: bool
+    num_peers: int
+    num_active_channels: int
+    num_pending_channels: int
+    extra: dict[str, Any] = field(default_factory=dict)
+
+
+def _load_macaroon_hex(*, macaroon_hex: str, macaroon_path: str) -> str:
+    """Resolve the macaroon to a hex string.
+
+    Prefers an explicit hex value; otherwise reads the binary macaroon file and
+    hex-encodes it. Raises LightningUnavailableError if neither is usable so the
+    failure is fail-closed rather than a silent unauthenticated request.
+    """
+    hexed = (macaroon_hex or "").strip()
+    if hexed:
+        return hexed
+    path = (macaroon_path or "").strip()
+    if not path:
+        raise LightningUnavailableError("no macaroon configured (hex or path)")
+    try:
+        raw = Path(path).read_bytes()
+    except OSError as exc:
+        raise LightningUnavailableError(f"macaroon file unreadable: {exc}") from exc
+    return binascii.hexlify(raw).decode("ascii")
+
+
+class LndRestClient:
+    """Read-only async client for a subset of the lnd REST API.
+
+    Args:
+        base_url:      e.g. ``https://192.168.178.51:8080``.
+        macaroon_hex:  hex-encoded macaroon (takes precedence over the path).
+        macaroon_path: path to a binary macaroon file (e.g. readonly.macaroon).
+        tls_cert_path: path to the node's ``tls.cert`` used as the CA. Empty
+                       string disables verification (NOT recommended; only for
+                       throwaway local testing).
+        timeout:       per-request timeout in seconds.
+    """
+
+    def __init__(
+        self,
+        *,
+        base_url: str,
+        macaroon_hex: str = "",
+        macaroon_path: str = "",
+        tls_cert_path: str = "",
+        timeout: float = 10.0,
+        transport: httpx.AsyncBaseTransport | None = None,
+    ) -> None:
+        self._base_url = base_url.rstrip("/")
+        self._macaroon_hex = _load_macaroon_hex(
+            macaroon_hex=macaroon_hex, macaroon_path=macaroon_path
+        )
+        # httpx verify: a path string is used as the CA bundle; False disables.
+        self._verify: str | bool = tls_cert_path if tls_cert_path else False
+        self._timeout = timeout
+        # Test seam: an injected transport bypasses real TLS/network.
+        self._transport = transport
+
+    @property
+    def _headers(self) -> dict[str, str]:
+        return {"Grpc-Metadata-macaroon": self._macaroon_hex}
+
+    async def _get(self, path: str) -> dict[str, Any]:
+        url = f"{self._base_url}{path}"
+        try:
+            if self._transport is not None:
+                client_kwargs: dict[str, Any] = {
+                    "transport": self._transport,
+                    "timeout": self._timeout,
+                }
+            else:
+                client_kwargs = {"verify": self._verify, "timeout": self._timeout}
+            async with httpx.AsyncClient(**client_kwargs) as client:
+                resp = await client.get(url, headers=self._headers)
+        except httpx.HTTPError as exc:
+            raise LightningUnavailableError(f"lnd request failed: {exc}") from exc
+        if resp.status_code != 200:
+            raise LightningUnavailableError(
+                f"lnd returned {resp.status_code} for {path}: {resp.text[:200]}"
+            )
+        try:
+            return resp.json()
+        except ValueError as exc:
+            raise LightningUnavailableError(f"lnd returned non-JSON for {path}") from exc
+
+    async def get_info(self) -> LndInfo:
+        """GET /v1/getinfo — node identity + chain/graph sync state."""
+        data = await self._get("/v1/getinfo")
+        return LndInfo(
+            identity_pubkey=str(data.get("identity_pubkey", "")),
+            alias=str(data.get("alias", "")),
+            version=str(data.get("version", "")),
+            block_height=int(data.get("block_height", 0) or 0),
+            synced_to_chain=bool(data.get("synced_to_chain", False)),
+            synced_to_graph=bool(data.get("synced_to_graph", False)),
+            num_peers=int(data.get("num_peers", 0) or 0),
+            num_active_channels=int(data.get("num_active_channels", 0) or 0),
+            num_pending_channels=int(data.get("num_pending_channels", 0) or 0),
+            extra=data,
+        )
+
+    async def channel_balance(self) -> dict[str, Any]:
+        """GET /v1/balance/channels — off-chain balances (read-only)."""
+        return await self._get("/v1/balance/channels")
+
+    async def fee_report(self) -> dict[str, Any]:
+        """GET /v1/fees — routing fee report (read-only)."""
+        return await self._get("/v1/fees")
