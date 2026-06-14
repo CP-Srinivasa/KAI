@@ -1480,3 +1480,23 @@ async def dashboard_regime_api() -> JSONResponse:
         },
         headers={"Cache-Control": "no-store, max-age=0"},
     )
+
+
+@router.get("/dashboard/api/lightning", tags=["dashboard"])
+async def dashboard_lightning_api() -> JSONResponse:
+    """Read-only Lightning-Node-Status (Phase 1, default-off).
+
+    Spiegelt ``app.lightning.adapter.get_node_status()`` — fail-closed, wirft
+    nie. ``state`` ist ``disabled`` (Feature aus, kein Netzwerk-Call),
+    ``unavailable`` (an, aber Node nicht erreichbar) oder ``ok`` (erreichbar;
+    ``info_available`` zeigt, ob ``getinfo``-Detailfelder gefüllt sind). Kein
+    schreibender/kapitalrelevanter Pfad.
+    """
+    from dataclasses import asdict
+
+    from app.lightning.adapter import get_node_status
+
+    status = await get_node_status()
+    payload = asdict(status)
+    payload["generated_at"] = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return JSONResponse(content=payload, headers={"Cache-Control": "no-store, max-age=0"})

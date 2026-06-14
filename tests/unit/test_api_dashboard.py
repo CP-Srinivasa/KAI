@@ -718,3 +718,15 @@ def test_dashboard_routes_in_main_app(tmp_path: Path, monkeypatch: pytest.Monkey
     paths = {route.path for route in app.routes}
     assert "/dashboard" in paths
     assert "/dashboard/api/quality" in paths
+
+
+def test_lightning_endpoint_disabled_by_default() -> None:
+    """Default-off: /dashboard/api/lightning meldet `disabled` ohne Netzwerk-Call."""
+    client = TestClient(_make_app())
+    resp = client.get("/dashboard/api/lightning")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["state"] == "disabled"
+    assert body["reachable"] is False
+    assert "generated_at" in body
+    assert "num_active_channels" in body
