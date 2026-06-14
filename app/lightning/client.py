@@ -116,9 +116,12 @@ class LndRestClient:
                 f"lnd returned {resp.status_code} for {path}: {resp.text[:200]}"
             )
         try:
-            return resp.json()
+            data = resp.json()
         except ValueError as exc:
             raise LightningUnavailableError(f"lnd returned non-JSON for {path}") from exc
+        if not isinstance(data, dict):
+            raise LightningUnavailableError(f"lnd returned non-object JSON for {path}")
+        return data
 
     async def get_state(self) -> str:
         """GET /v1/state — cheap readiness probe (no wallet/chain work).
