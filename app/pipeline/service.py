@@ -788,6 +788,195 @@ async def run_newsdata_pipeline(
     )
 
 
+async def run_okx_announcements_pipeline(
+    *,
+    session_factory: async_sessionmaker[AsyncSession],
+    keyword_engine: KeywordEngine,
+    provider: BaseAnalysisProvider | None = None,
+    shadow_provider: BaseAnalysisProvider | None = None,
+    source_id: str = "okx_announcements",
+    source_name: str = "OKX Announcements",
+    url: str | None = None,
+    dry_run: bool = False,
+) -> PipelineRunStats:
+    """Fetch OKX exchange announcements, persist, analyze, and alert.
+
+    Drop-in equivalent of run_newsdata_pipeline for the OKX announcements API
+    (source-scout 2026-06-14: exchange listings = highest-impact directional
+    class). Non-directional notices are filtered downstream by eligibility.
+    """
+
+    from app.core.enums import SourceType
+    from app.ingestion.base.interfaces import SourceMetadata
+    from app.integrations.okx_announcements.adapter import (
+        OKX_ANNOUNCEMENTS_URL,
+        OKXAnnouncementsAdapter,
+    )
+
+    okx_url = url or OKX_ANNOUNCEMENTS_URL
+    adapter = OKXAnnouncementsAdapter(
+        SourceMetadata(
+            source_id=source_id,
+            source_name=source_name,
+            source_type=SourceType.NEWS_API,
+            url=okx_url,
+        )
+    )
+
+    # Stage 1: Fetch via OKX announcements API
+    fetch_result = await adapter.fetch()
+    if not fetch_result.success:
+        logger.warning("okx_announcements_pipeline_fetch_failed", error=fetch_result.error)
+        return PipelineRunStats(
+            source_id=source_id,
+            url=okx_url,
+            fetched_count=0,
+            saved_count=0,
+            analyzed_count=0,
+            failed_count=1,
+            skipped_count=0,
+            alerts_fired_count=0,
+            priority_distribution={},
+        )
+
+    logger.info(
+        "okx_announcements_pipeline_fetched",
+        announcements=len(fetch_result.documents),
+    )
+
+    # Stage 2: Persist
+    ingest_stats = await persist_fetch_result(session_factory, fetch_result, dry_run=dry_run)
+    saved_docs = ingest_stats.preview_documents
+    skipped = ingest_stats.batch_duplicates + ingest_stats.existing_duplicates
+
+    if not saved_docs:
+        return PipelineRunStats(
+            source_id=source_id,
+            url=okx_url,
+            fetched_count=ingest_stats.fetched_count,
+            saved_count=ingest_stats.saved_count,
+            analyzed_count=0,
+            failed_count=ingest_stats.failed_count,
+            skipped_count=skipped,
+            alerts_fired_count=0,
+            priority_distribution={},
+        )
+
+    # Stage 3-5: Analyze + Alert
+    market_adapter = create_market_data_adapter(provider="coingecko")
+    pipeline = AnalysisPipeline(
+        keyword_engine=keyword_engine,
+        provider=provider,
+        run_llm=provider is not None,
+        shadow_provider=shadow_provider,
+        market_data_adapter=market_adapter,
+        trusted_social_handles=load_trusted_social_handles(Path(get_settings().monitor_dir)),
+    )
+    pipeline_results = await pipeline.run_batch(saved_docs)
+
+    analyzed_count = 0
+    failed_count = ingest_stats.failed_count
+    alerts_fired_count = 0
+    alert_service = AlertService.from_settings(get_settings())
+
+    if not dry_run:
+        async with session_factory.begin() as session:
+            repo = DocumentRepository(session)
+            for res in pipeline_results:
+                if not res.success:
+                    failed_count += 1
+                    try:
+                        await repo.update_status(str(res.document.id), DocumentStatus.FAILED)
+                    except StorageError:
+                        pass
+                    continue
+                res.apply_to_document()
+                try:
+                    if res.analysis_result is not None:
+                        await repo.update_analysis(
+                            str(res.document.id),
+                            res.analysis_result,
+                            provider_name=res.document.provider,
+                            metadata_updates=res.document.metadata,
+                        )
+                        if res.llm_output and res.llm_output.raw_prompt:
+                            await repo.save_llm_audit(
+                                document_id=str(res.document.id),
+                                provider=res.provider_name or "unknown",
+                                model="unknown",
+                                prompt_text=res.llm_output.raw_prompt,
+                                raw_response=res.llm_output.raw_response or "",
+                                prompt_tokens=res.llm_output.prompt_tokens,
+                                completion_tokens=res.llm_output.completion_tokens,
+                            )
+                    else:
+                        await repo.update_status(str(res.document.id), DocumentStatus.ANALYZED)
+                    analyzed_count += 1
+                    if res.analysis_result is not None:
+                        spam_prob = (
+                            res.llm_output.spam_probability
+                            if res.llm_output
+                            else res.analysis_result.spam_probability
+                        )
+                        deliveries = await alert_service.process_document(
+                            res.document, res.analysis_result, spam_probability=spam_prob
+                        )
+                        if deliveries:
+                            alerts_fired_count += 1
+                            await _maybe_trigger_paper_trade(res.document, res.analysis_result)
+                except StorageError as exc:
+                    logger.warning(
+                        "okx_announcements_pipeline_update_failed",
+                        doc_id=str(res.document.id),
+                        error=str(exc),
+                    )
+                    failed_count += 1
+    else:
+        for res in pipeline_results:
+            if res.success:
+                res.apply_to_document()
+                analyzed_count += 1
+                if res.analysis_result is not None:
+                    spam_prob = (
+                        res.llm_output.spam_probability
+                        if res.llm_output
+                        else res.analysis_result.spam_probability
+                    )
+                    deliveries = await alert_service.process_document(
+                        res.document, res.analysis_result, spam_probability=spam_prob
+                    )
+                    if deliveries:
+                        alerts_fired_count += 1
+
+    priority_distribution: dict[int, int] = {}
+    for res in pipeline_results:
+        if not res.success:
+            continue
+        score = res.document.priority_score
+        if score is None:
+            continue
+        priority_distribution[score] = priority_distribution.get(score, 0) + 1
+
+    top_results = sorted(
+        pipeline_results,
+        key=lambda r: r.document.priority_score or 0,
+        reverse=True,
+    )
+
+    return PipelineRunStats(
+        source_id=source_id,
+        url=okx_url,
+        fetched_count=ingest_stats.fetched_count,
+        saved_count=ingest_stats.saved_count,
+        analyzed_count=analyzed_count,
+        failed_count=failed_count,
+        skipped_count=skipped,
+        alerts_fired_count=alerts_fired_count,
+        priority_distribution=priority_distribution,
+        top_results=top_results,
+    )
+
+
 async def run_twitter_pipeline(
     *,
     session_factory: async_sessionmaker[AsyncSession],
