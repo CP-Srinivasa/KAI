@@ -2,7 +2,8 @@
 
 Pure-function tests: the message is readable German, all sections appear, and
 the evaluation milestones auto-trigger EXACTLY at their thresholds (V5 review
-at day >= 7, edge report at real_resolved >= 25 — Operator-Vorgabe 2026-06-11).
+at day >= 7, edge report when the autonomous_generator cohort reaches the
+Edge-Gate min_resolved — Operator-Vorgabe 2026-06-14, switched off shadow-n).
 """
 
 from __future__ import annotations
@@ -37,9 +38,14 @@ def _compose(**over) -> str:
             "in_loop": {"shadow_candidate_written": 1, "priority_rejected": 19},
         },
         "shadow_report": {
-            "real_resolved": 3,
+            "real_resolved": 86,
             "canary_probe_resolved": 110,
             "primary_class": "INSUFFICIENT_DATA",
+        },
+        "generator_edge": {
+            "min_resolved": 30,
+            "autonomous_generator_resolved": 6,
+            "autonomous_generator_verdict": "INSUFFICIENT",
         },
         "d227": {"raw_events_count": 2319, "distinct_document_id_count": 924},
         "v5_freshness": {"funding": 4.2, "oi": 4.0},
@@ -63,7 +69,11 @@ def test_all_sections_present_and_readable() -> None:
     ):
         assert marker in msg, f"missing section: {marker}"
     assert "telegram_premium_channel_approved: 2 Fills/1 Closes" in msg
-    assert "real_resolved n=3/25" in msg
+    # Edge-Meilenstein hängt jetzt an autonomous_generator (n=6/30), shadow-n
+    # bleibt als Kontext sichtbar.
+    assert "autonomous_generator resolved n=6/30" in msg
+    assert "shadow-resolved n=86" in msg
+    assert "EDGE-REPORT FÄLLIG" not in msg
 
 
 def test_v5_milestone_counts_days_before_threshold() -> None:
@@ -79,27 +89,43 @@ def test_v5_milestone_triggers_at_day_seven() -> None:
 
 
 def test_edge_milestone_below_threshold_shows_progress() -> None:
+    # Hohe shadow-n darf NICHT triggern, solange die ausgeführten
+    # Generator-Closes das Gate nicht erreichen (Kern der 06-14-Umstellung).
     msg = _compose(
-        shadow_report={
-            "real_resolved": 24,
-            "canary_probe_resolved": 0,
-            "primary_class": "INSUFFICIENT_DATA",
-        }
+        shadow_report={"real_resolved": 86, "primary_class": "INSUFFICIENT_DATA"},
+        generator_edge={
+            "min_resolved": 30,
+            "autonomous_generator_resolved": 29,
+            "autonomous_generator_verdict": "INSUFFICIENT",
+        },
     )
-    assert "real_resolved n=24/25" in msg
+    assert "autonomous_generator resolved n=29/30" in msg
+    assert "Verdict: INSUFFICIENT" in msg
+    assert "shadow-resolved n=86" in msg
     assert "EDGE-REPORT FÄLLIG" not in msg
 
 
-def test_edge_milestone_triggers_at_25() -> None:
+def test_edge_milestone_triggers_at_gate() -> None:
     msg = _compose(
-        shadow_report={
-            "real_resolved": 25,
-            "canary_probe_resolved": 0,
-            "primary_class": "INSUFFICIENT_DATA",
-        }
+        shadow_report={"real_resolved": 90, "primary_class": "INSUFFICIENT_DATA"},
+        generator_edge={
+            "min_resolved": 30,
+            "autonomous_generator_resolved": 30,
+            "autonomous_generator_verdict": "PASS",
+        },
     )
     assert "EDGE-REPORT FÄLLIG" in msg
-    assert "n=25" in msg
+    assert "n=30≥30" in msg
+    assert "shadow-resolved n=90" in msg
+
+
+def test_edge_milestone_degrades_when_generator_edge_unreadable() -> None:
+    msg = _compose(
+        shadow_report={"real_resolved": 86},
+        generator_edge={"error": "cli timeout"},
+    )
+    assert "generator-edge nicht lesbar (cli timeout)" in msg
+    assert "EDGE-REPORT FÄLLIG" not in msg
 
 
 def test_contradiction_is_loud() -> None:
@@ -119,12 +145,14 @@ def test_degrades_honestly_without_data() -> None:
         bridge_stages={},
         shadow_funnel=None,
         shadow_report={"error": "cli timeout"},
+        generator_edge={"error": "cli timeout"},
         d227={"error": "boom"},
         v5_freshness={"funding": None, "oi": None},
     )
     assert "keine Fills/Closes" in msg
     assert "aus / noch kein armed Tick" in msg
-    assert "shadow-report nicht lesbar" in msg
+    assert "generator-edge nicht lesbar" in msg
+    assert "shadow-n n/a" in msg
     assert "Cache fehlt" in msg
 
 
