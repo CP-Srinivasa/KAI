@@ -533,9 +533,9 @@ export const PremiumSignalTrail = memo(function PremiumSignalTrail({
 
       {polling.state === "ready" && polling.data.trail.length > 0 && (
         <div className="space-y-2 max-h-[600px] overflow-y-auto pr-1">
-          {polling.data.trail.map((entry) => (
+          {polling.data.trail.map((entry, i) => (
             <TrailRow
-              key={entry.envelope_id}
+              key={`${entry.envelope_id}-${i}`}
               entry={entry}
               busy={busyEnv === entry.envelope_id}
               highlighted={highlightedEnvelopeId === entry.envelope_id}

@@ -5,6 +5,8 @@
 //   (Cf-Access-Authenticated-User-Email), den die Server-Middleware prüft.
 // - Einheitliches Error-Objekt, damit Pages konsistent reagieren können.
 
+import { toNum, toNumOr } from "@/lib/num";
+
 export type ApiErrorKind =
   | "network"
   | "unauthorized"
@@ -540,14 +542,29 @@ export type OperatorStatus = {
   execution_enabled: boolean;
   write_back_allowed: boolean;
   status: string;
-  position_count?: number | string;
-  cash_usd?: number | string;
-  total_equity_usd?: number | string;
-  realized_pnl_usd?: number | string;
+  // Backend may serialize these as Decimal strings; fetchOperatorStatus coerces
+  // them to numbers (or null when absent/unparseable) before they reach a consumer.
+  position_count?: number | null;
+  cash_usd?: number | null;
+  total_equity_usd?: number | null;
+  realized_pnl_usd?: number | null;
 };
 
-export function fetchOperatorStatus(signal?: AbortSignal): Promise<OperatorStatus> {
-  return apiGet<OperatorStatus>("/operator/status", { signal });
+// Same Decimal-as-string defense as the portfolio snapshot: these money fields
+// are already honestly typed `number | string`; coerce so consumers get numbers.
+function normalizeOperatorStatus(raw: OperatorStatus): OperatorStatus {
+  return {
+    ...raw,
+    position_count: raw.position_count === undefined ? undefined : toNum(raw.position_count),
+    cash_usd: raw.cash_usd === undefined ? undefined : toNum(raw.cash_usd),
+    total_equity_usd: raw.total_equity_usd === undefined ? undefined : toNum(raw.total_equity_usd),
+    realized_pnl_usd:
+      raw.realized_pnl_usd === undefined ? undefined : toNum(raw.realized_pnl_usd),
+  };
+}
+
+export async function fetchOperatorStatus(signal?: AbortSignal): Promise<OperatorStatus> {
+  return normalizeOperatorStatus(await apiGet<OperatorStatus>("/operator/status", { signal }));
 }
 
 export function fetchOperatorReadiness(signal?: AbortSignal): Promise<OperatorStatus> {
@@ -882,8 +899,37 @@ export function fetchPremiumRuntime(
   });
 }
 
-export function fetchPortfolioSnapshot(signal?: AbortSignal): Promise<PortfolioSnapshot> {
-  return apiGet<PortfolioSnapshot>("/operator/portfolio-snapshot", { signal });
+// Decimal-as-string defense: the backend serializes money as JSON strings, so
+// coerce every numeric field once here before any consumer does arithmetic on
+// it. See lib/num.ts.
+function normalizePaperPosition(p: PaperPosition): PaperPosition {
+  return {
+    ...p,
+    quantity: toNumOr(p.quantity),
+    avg_entry_price: toNumOr(p.avg_entry_price),
+    stop_loss: toNum(p.stop_loss),
+    take_profit: toNum(p.take_profit),
+    market_price: toNum(p.market_price),
+    market_value_usd: toNum(p.market_value_usd),
+    unrealized_pnl_usd: toNum(p.unrealized_pnl_usd),
+    display_value_usd: p.display_value_usd === undefined ? undefined : toNum(p.display_value_usd),
+    realized_pnl_usd: p.realized_pnl_usd === undefined ? undefined : toNum(p.realized_pnl_usd),
+    leverage: p.leverage === undefined ? undefined : toNum(p.leverage),
+    initial_quantity: p.initial_quantity === undefined ? undefined : toNum(p.initial_quantity),
+  };
+}
+
+export async function fetchPortfolioSnapshot(signal?: AbortSignal): Promise<PortfolioSnapshot> {
+  const raw = await apiGet<PortfolioSnapshot>("/operator/portfolio-snapshot", { signal });
+  return {
+    ...raw,
+    cash_usd: toNumOr(raw.cash_usd),
+    realized_pnl_usd: toNumOr(raw.realized_pnl_usd),
+    total_market_value_usd: toNumOr(raw.total_market_value_usd),
+    total_equity_usd: toNumOr(raw.total_equity_usd),
+    position_count: toNumOr(raw.position_count),
+    positions: (raw.positions ?? []).map(normalizePaperPosition),
+  };
 }
 
 export type ExposureSummary = {

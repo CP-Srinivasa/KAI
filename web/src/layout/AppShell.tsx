@@ -3,6 +3,7 @@ import { Sidebar } from "./Sidebar";
 import { Topbar } from "./Topbar";
 import { BackendStatusBanner } from "./BackendStatusBanner";
 import { CommandPalette } from "@/components/CommandPalette";
+import { PanelErrorBoundary } from "@/components/PanelErrorBoundary";
 import { useRouter } from "@/state/Router";
 import { Dashboard } from "@/pages/Dashboard";
 import { useAppState } from "@/state/AppState";
@@ -60,7 +61,13 @@ export function AppShell() {
         <BackendStatusBanner />
         <Topbar onMobileMenuToggle={() => setMobileNavOpen((v) => !v)} />
         <main className="flex-1 min-w-0 overflow-x-hidden" key={route}>
-          <Suspense fallback={<RouteFallback />}>{renderRoute(route)}</Suspense>
+          {/* Boundary OUTSIDE Suspense so it catches both lazy-load and render
+              errors; keyed by route via the parent <main key={route}> so it
+              resets on navigation. A crash in one page degrades to a reset card
+              instead of blanking the whole shell. */}
+          <PanelErrorBoundary name={route}>
+            <Suspense fallback={<RouteFallback />}>{renderRoute(route)}</Suspense>
+          </PanelErrorBoundary>
         </main>
       </div>
       <CommandPalette />
