@@ -662,6 +662,53 @@ def pipeline_newsdata(
     asyncio.run(run())
 
 
+@pipeline_app.command("okx-announcements")
+def pipeline_okx_announcements(
+    source_id: str = typer.Option("okx_announcements", help="Source ID"),
+    source_name: str = typer.Option("OKX Announcements", help="Source name"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Skip DB writes"),
+    top_n: int = typer.Option(5, help="Top results to display"),
+) -> None:
+    """Fetch OKX exchange announcements (listings/delistings), analyze, and alert."""
+    import asyncio
+
+    async def run() -> None:
+        from app.analysis.keywords.engine import KeywordEngine
+        from app.pipeline.service import run_okx_announcements_pipeline
+
+        settings = get_settings()
+        monitor_dir = Path(settings.monitor_dir)
+
+        keyword_engine = KeywordEngine.from_monitor_dir(monitor_dir)
+        provider = _build_primary_provider()
+        session_factory = build_session_factory(settings.db)
+        shadow = _maybe_gemini_shadow()
+
+        stats = await run_okx_announcements_pipeline(
+            session_factory=session_factory,
+            keyword_engine=keyword_engine,
+            provider=provider,
+            shadow_provider=shadow,
+            source_id=source_id,
+            source_name=source_name,
+            dry_run=dry_run,
+        )
+
+        console.print("\n[bold green]OKX announcements pipeline complete[/bold green]")
+        console.print(f"  Fetched:   {stats.fetched_count}")
+        console.print(f"  Saved:     {stats.saved_count}")
+        console.print(f"  Analyzed:  {stats.analyzed_count}")
+        console.print(f"  Alerts:    {stats.alerts_fired_count}")
+        console.print(f"  Skipped:   {stats.skipped_count}")
+        if stats.priority_distribution:
+            dist = ", ".join(
+                f"P{score}:{count}" for score, count in sorted(stats.priority_distribution.items())
+            )
+            console.print(f"  Priority:  {dist}")
+
+    asyncio.run(run())
+
+
 # ── query analyze-pending ─────────────────────────────────────────────────────
 
 
