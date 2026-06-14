@@ -116,9 +116,7 @@ class FallbackMarketDataAdapter(BaseMarketDataAdapter):
                 # mock must not satisfy the 2-provider cross-check, else we stop
                 # querying real venues the moment mock chimes in and let a
                 # phantom quote veto a real one.
-                fresh_real = [
-                    p for p in resolved if not p.is_stale and p.source != _MOCK_SOURCE
-                ]
+                fresh_real = [p for p in resolved if not p.is_stale and p.source != _MOCK_SOURCE]
                 if len(fresh_real) >= 2:
                     break
 
