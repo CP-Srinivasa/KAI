@@ -117,6 +117,11 @@ class AlertSettings(BaseSettings):
     technical_screener_enabled: bool = Field(default=False)
     technical_screener_symbols: str = Field(default="")
     technical_screener_top_n: int = Field(default=20, ge=1, le=200)
+    # WP-E (2026-06-15): open bearish SHORTS on the technical path only (D-142
+    # narrative bearish stays blocked). Default FALSE → unchanged. Eligibility/
+    # shadow-measurement only; execution stays gated by entry_mode so this flag
+    # alone cannot produce a real short fill. Env ``ALERT_ALLOW_SHORT_TECHNICAL``.
+    allow_short_technical: bool = Field(default=False)
     # Digest mode: accumulate alerts and send as a batch instead of individually.
     digest_enabled: bool = Field(default=False)
     digest_interval_minutes: int = Field(default=60)
