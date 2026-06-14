@@ -433,3 +433,53 @@ def telegram_channel_probe(
             console.print(f"  · {f}")
         raise typer.Exit(code=1)
     console.print("\n[bold green]PROBE GREEN[/bold green] — all 6 gates passed")
+
+
+@ingestion_app.command("okx-announcements")
+def ingestion_okx_announcements(
+    source_id: str = typer.Option("okx_announcements", help="Source ID"),
+    source_name: str = typer.Option("OKX Announcements", help="Source name"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Skip DB writes"),
+) -> None:
+    """Fetch OKX exchange announcements (listings/delistings), analyze, and alert.
+
+    source-scout 2026-06-14: exchange listings are the highest-impact directional
+    event class — raises eligible throughput at the same quality bar. Intended to
+    be driven periodically by a Pi timer (analog to the NewsData CLI+timer).
+    """
+    configure_logging()
+    from pathlib import Path
+
+    # Lazy import of the shared provider builders avoids a circular import
+    # (app.cli.main imports ingestion_app at module load).
+    from app.analysis.keywords.engine import KeywordEngine
+    from app.cli.main import _build_primary_provider, _maybe_gemini_shadow
+    from app.pipeline.service import run_okx_announcements_pipeline
+    from app.storage.db.session import build_session_factory
+
+    async def run() -> None:
+        settings = get_settings()
+        keyword_engine = KeywordEngine.from_monitor_dir(Path(settings.monitor_dir))
+        session_factory = build_session_factory(settings.db)
+        stats = await run_okx_announcements_pipeline(
+            session_factory=session_factory,
+            keyword_engine=keyword_engine,
+            provider=_build_primary_provider(),
+            shadow_provider=_maybe_gemini_shadow(),
+            source_id=source_id,
+            source_name=source_name,
+            dry_run=dry_run,
+        )
+        console.print("\n[bold green]OKX announcements pipeline complete[/bold green]")
+        console.print(f"  Fetched:   {stats.fetched_count}")
+        console.print(f"  Saved:     {stats.saved_count}")
+        console.print(f"  Analyzed:  {stats.analyzed_count}")
+        console.print(f"  Alerts:    {stats.alerts_fired_count}")
+        console.print(f"  Skipped:   {stats.skipped_count}")
+        if stats.priority_distribution:
+            dist = ", ".join(
+                f"P{score}:{count}" for score, count in sorted(stats.priority_distribution.items())
+            )
+            console.print(f"  Priority:  {dist}")
+
+    asyncio.run(run())

@@ -13,8 +13,9 @@ from __future__ import annotations
 import pytest
 
 from app.market_data.base import BaseMarketDataAdapter
+from app.market_data.mock_adapter import MockMarketDataAdapter
 from app.market_data.models import OHLCV, MarketDataPoint, Ticker
-from app.market_data.service import FallbackMarketDataAdapter
+from app.market_data.service import _MOCK_SOURCE, FallbackMarketDataAdapter
 
 
 class _FakeAdapter(BaseMarketDataAdapter):
@@ -133,3 +134,60 @@ async def test_explicit_disagreement_pct_arg() -> None:
     point = await chain.get_market_data_point("MATIC/USDT")
     assert point is not None
     assert point.is_stale is True
+
+
+# --- 2026-06-14: synthetic mock must never corroborate/veto a real venue. ---
+# A SKYAI paper position was frozen at ~40% of the book because the only real
+# venue (binance_futures 0.355) was cross-checked against the last-resort mock
+# adapter's phantom 101.3 → permanently disagreement-stale → never exitable.
+
+
+def test_mock_source_constant_pinned() -> None:
+    # If the mock adapter's source label ever drifts, the exclusion silently
+    # breaks — pin it so this test fails loudly instead.
+    assert MockMarketDataAdapter().adapter_name == _MOCK_SOURCE
+
+
+@pytest.mark.asyncio
+async def test_mock_does_not_corroborate_real_quote() -> None:
+    # The exact SKYAI incident: one real venue + the synthetic mock last resort.
+    chain = FallbackMarketDataAdapter(
+        [
+            _FakeAdapter("bybit", None),
+            _FakeAdapter("binance_futures", _pt("binance_futures", 0.35485)),
+            _FakeAdapter("okx", None),
+            _FakeAdapter(_MOCK_SOURCE, _pt(_MOCK_SOURCE, 101.3)),
+        ]
+    )
+    point = await chain.get_market_data_point("MATIC/USDT")
+    assert point is not None
+    assert point.is_stale is False  # was True before the fix → position frozen
+    assert point.source == "binance_futures"
+
+
+@pytest.mark.asyncio
+async def test_mock_used_only_as_last_resort_when_no_real_provider() -> None:
+    chain = FallbackMarketDataAdapter(
+        [_FakeAdapter("bybit", None), _FakeAdapter(_MOCK_SOURCE, _pt(_MOCK_SOURCE, 101.3))]
+    )
+    point = await chain.get_market_data_point("MATIC/USDT")
+    assert point is not None
+    assert point.source == _MOCK_SOURCE
+    assert point.is_stale is False
+
+
+@pytest.mark.asyncio
+async def test_real_disagreement_still_fires_with_mock_present() -> None:
+    # MATIC protection must survive: two genuine venues disagree, mock present
+    # but irrelevant — the point is still tagged stale.
+    chain = FallbackMarketDataAdapter(
+        [
+            _FakeAdapter("bitmex", _pt("bitmex", 0.40875)),
+            _FakeAdapter("cg", _pt("cg", 0.087817)),
+            _FakeAdapter(_MOCK_SOURCE, _pt(_MOCK_SOURCE, 101.3)),
+        ]
+    )
+    point = await chain.get_market_data_point("MATIC/USDT")
+    assert point is not None
+    assert point.is_stale is True
+    assert "provider_disagreement" in point.source

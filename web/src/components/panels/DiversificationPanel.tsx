@@ -1,14 +1,18 @@
+// @data-source: /api/diversification/overview
 import { Layers, AlertTriangle, Compass } from "lucide-react";
 import { Badge, Card, CardHeader } from "@/components/ui/Primitives";
 import { useApi } from "@/lib/useApi";
 import { fetchDiversificationOverview } from "@/lib/api";
 import { cn } from "@/lib/utils";
+import { useCurrency } from "@/state/CurrencyProvider";
+import { formatMoneyCompact } from "@/lib/money";
 
 // Asset-Diversification / Klumpenrisiko-Panel.
 // Beantwortet: Wie breit ist das Buch gestreut, wo sind Cluster, welche
 // diversifizierten Alternativen gibt es, wie ist Short-Term vs Reserve.
 // Read-only, keine teuren Render-Berechnungen (eine flache Map über <=N Rows).
 export function DiversificationPanel() {
+  const { currency, fx } = useCurrency();
   const data = useApi(fetchDiversificationOverview, 60_000);
 
   if (data.state !== "ready") {
@@ -62,10 +66,13 @@ export function DiversificationPanel() {
       <div className="mt-3 grid grid-cols-3 gap-2 text-2xs">
         <SplitTile
           label="Short-Term"
-          value={`$${fmtUsd(conc.short_term_gross_usd)}`}
+          value={formatMoneyCompact(conc.short_term_gross_usd, { currency, fx })}
           icon={<Layers size={12} />}
         />
-        <SplitTile label="Reserve" value={`$${fmtUsd(conc.reserve_gross_usd)}`} />
+        <SplitTile
+          label="Reserve"
+          value={formatMoneyCompact(conc.reserve_gross_usd, { currency, fx })}
+        />
         <SplitTile
           label="Positionen"
           value={`${conc.priced_position_count}${conc.unpriced_position_count ? ` (+${conc.unpriced_position_count} ohne Preis)` : ""}`}
@@ -190,8 +197,3 @@ function SplitTile({
   );
 }
 
-function fmtUsd(v: number): string {
-  if (!Number.isFinite(v)) return "0";
-  if (Math.abs(v) >= 1000) return (v / 1000).toFixed(1) + "k";
-  return v.toFixed(0);
-}

@@ -1,3 +1,4 @@
+// @data-source: props (parent-provided)
 import { Card, CardHeader, Badge } from "@/components/ui/Primitives";
 import { useT } from "@/i18n/I18nProvider";
 import { clamp } from "@/lib/utils";

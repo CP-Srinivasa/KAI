@@ -1,3 +1,4 @@
+// @data-source: props (/api/premium-signals/trail)
 import {
   AlertTriangle,
   Check,
@@ -10,6 +11,7 @@ import {
 import { Badge, ProgressBar, SectionLabel } from "@/components/ui/Primitives";
 import type { PremiumSignalAnalytics, PremiumSignalTargetStatus } from "@/lib/api";
 import { cn } from "@/lib/utils";
+import { useCurrency } from "@/state/CurrencyProvider";
 
 /**
  * PremiumSignalAnalytics — operatorzentrierte Auswertungs-Kacheln pro Signal.
@@ -27,34 +29,8 @@ import { cn } from "@/lib/utils";
 
 type Tone = "pos" | "neg" | "warn" | "info" | "muted" | "ai";
 
-// ── Formatter ────────────────────────────────────────────────────────────────
-
-function fmtUsd(v: number | null | undefined): string {
-  if (v == null || Number.isNaN(v)) return "—";
-  const sign = v > 0 ? "+" : "";
-  return `${sign}${v.toLocaleString("de-DE", {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  })} USD`;
-}
-
-function fmtUsdPlain(v: number | null | undefined): string {
-  if (v == null || Number.isNaN(v)) return "—";
-  return `${v.toLocaleString("de-DE", { maximumFractionDigits: 2 })} USD`;
-}
-
-function fmtPct(v: number | null | undefined): string {
-  if (v == null || Number.isNaN(v)) return "—";
-  const sign = v > 0 ? "+" : "";
-  return `${sign}${v.toLocaleString("de-DE", { maximumFractionDigits: 1 })} %`;
-}
-
-function fmtPrice(v: number | null | undefined): string {
-  if (v == null || Number.isNaN(v)) return "—";
-  if (Math.abs(v) >= 1000) return v.toLocaleString("de-DE", { maximumFractionDigits: 2 });
-  if (Math.abs(v) >= 1) return v.toFixed(4);
-  return v.toFixed(6);
-}
+// Geld/Preis/Prozent über die kanonische SSOT (useCurrency) — EUR/USD-Toggle,
+// adaptive Preis-Dezimalstellen. Frühere lokale de-DE/USD-Formatter entfernt.
 
 // ── Status-Maps ──────────────────────────────────────────────────────────────
 
@@ -123,6 +99,7 @@ function Tile({
 // ── Kacheln ──────────────────────────────────────────────────────────────────
 
 function CapitalTile({ a }: { a: PremiumSignalAnalytics }): JSX.Element {
+  const { fmt, fmtPct } = useCurrency();
   const pct = a.invested_capital_pct;
   const hasBase = a.available_capital_at_entry != null && pct != null;
   // Hoher Kapitalanteil = Risiko → Tone steigt mit %.
@@ -131,13 +108,13 @@ function CapitalTile({ a }: { a: PremiumSignalAnalytics }): JSX.Element {
   return (
     <Tile label="Kapital">
       <div className="font-mono text-sm font-semibold text-fg">
-        {fmtUsdPlain(a.invested_capital)}
+        {fmt(a.invested_capital)}
       </div>
       {hasBase ? (
         <>
           <div className="mt-1 flex items-center justify-between text-2xs font-mono text-fg-subtle">
-            <span>{pct!.toLocaleString("de-DE", { maximumFractionDigits: 1 })}% vom Kapital</span>
-            <span>{fmtUsdPlain(a.available_capital_at_entry)}</span>
+            <span>{fmtPct(pct)} vom Kapital</span>
+            <span>{fmt(a.available_capital_at_entry)}</span>
           </div>
           <ProgressBar
             className="mt-1"
@@ -160,6 +137,7 @@ function CapitalTile({ a }: { a: PremiumSignalAnalytics }): JSX.Element {
 }
 
 function ResultTile({ a }: { a: PremiumSignalAnalytics }): JSX.Element {
+  const { fmt, fmtPct } = useCurrency();
   const meta = RESULT_META[a.trade_result_status] ?? RESULT_META.unknown;
   const pnl = a.final_pnl_usd;
   const pnlTone =
@@ -173,18 +151,22 @@ function ResultTile({ a }: { a: PremiumSignalAnalytics }): JSX.Element {
           title={derived ? "PnL aus Fill-Preisen berechnet (Engine-Wert fehlte)" : undefined}
         >
           {derived && pnl != null ? "≈ " : ""}
-          {fmtUsd(pnl)}
+          {pnl != null && pnl > 0 ? "+" : ""}
+          {fmt(pnl)}
         </span>
         <Badge tone={meta.tone}>{meta.label}</Badge>
       </div>
       <div className="mt-1 text-2xs font-mono text-fg-subtle">
-        {a.final_pnl_pct != null ? `${fmtPct(a.final_pnl_pct)} auf Einsatz` : "kein PnL-Wert"}
+        {a.final_pnl_pct != null
+          ? `${fmtPct(a.final_pnl_pct, { signed: true })} auf Einsatz`
+          : "kein PnL-Wert"}
       </div>
     </Tile>
   );
 }
 
 function EntryTile({ a }: { a: PremiumSignalAnalytics }): JSX.Element {
+  const { fmtPrice } = useCurrency();
   const meta = ENTRY_META[a.entry_status] ?? ENTRY_META.unknown;
   const Icon = meta.Icon;
   return (
@@ -231,6 +213,7 @@ function TargetStepper({
 }: {
   targets: PremiumSignalTargetStatus[];
 }): JSX.Element | null {
+  const { fmtPrice } = useCurrency();
   if (!targets || targets.length === 0) return null;
   return (
     <div className="mt-2">

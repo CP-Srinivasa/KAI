@@ -1,3 +1,4 @@
+// @data-source: /operator/portfolio-snapshot · /operator/exposure-summary · /operator/trading-loop/recent-cycles
 import type { ReactNode } from "react";
 import { Card, CardHeader, Badge } from "@/components/ui/Primitives";
 import { useApi } from "@/lib/useApi";
@@ -8,16 +9,13 @@ import {
   type PaperPosition,
 } from "@/lib/api";
 import { cn } from "@/lib/utils";
+import { useCurrency } from "@/state/CurrencyProvider";
 
 // Quick-Win-Tiles: ersetzen die früheren PreparedPanel-Stubs (Portfolio Snapshot,
 // Risk Meter, Allocation, Recent Cycles) durch ECHTE Daten aus bereits live
 // laufenden Read-Endpoints. Alles read-only, Paper-Mode, kein neuer Endpoint,
 // keine Chart-Library. Ehrliche Loading-/Empty-/Error-Zustände statt Fake-%.
-
-export function fmtUsd(v: number | null | undefined): string {
-  if (typeof v !== "number" || !Number.isFinite(v)) return "—";
-  return `${v >= 0 ? "" : "-"}$${Math.abs(v).toLocaleString("en-US", { maximumFractionDigits: 2 })}`;
-}
+// Geld-Formatierung über die kanonische SSOT (useCurrency().fmt) — EUR/USD-Toggle.
 
 function TileShell({
   title,
@@ -81,6 +79,7 @@ function Metric({ label, value, tone }: { label: string; value: string; tone?: "
 }
 
 function PortfolioTile() {
+  const { fmt } = useCurrency();
   const q = useApi(fetchPortfolioSnapshot, 30_000);
   return (
     <TileShell
@@ -99,11 +98,11 @@ function PortfolioTile() {
         />
       ) : (
         <div>
-          <Metric label="Equity" value={fmtUsd(q.data.total_equity_usd)} />
-          <Metric label="Cash" value={fmtUsd(q.data.cash_usd)} />
+          <Metric label="Equity" value={fmt(q.data.total_equity_usd)} />
+          <Metric label="Cash" value={fmt(q.data.cash_usd)} />
           <Metric
             label="Realized PnL"
-            value={fmtUsd(q.data.realized_pnl_usd)}
+            value={fmt(q.data.realized_pnl_usd)}
             tone={q.data.realized_pnl_usd >= 0 ? "pos" : "neg"}
           />
           <Metric label="Offene Positionen" value={String(q.data.position_count)} />
@@ -115,6 +114,7 @@ function PortfolioTile() {
 }
 
 function RiskMeterTile() {
+  const { fmt } = useCurrency();
   const q = useApi(fetchExposureSummary, 30_000);
   const data = q.state === "ready" ? q.data : null;
   const biasPct =
@@ -138,8 +138,8 @@ function RiskMeterTile() {
         <p className="text-fg-subtle">Kein Markteinsatz — Buch ist flach (Paper-Mode).</p>
       ) : (
         <div>
-          <Metric label="Gross Exposure" value={fmtUsd(data.gross_exposure_usd)} />
-          <Metric label="Net Exposure" value={fmtUsd(data.net_exposure_usd)} />
+          <Metric label="Gross Exposure" value={fmt(data.gross_exposure_usd)} />
+          <Metric label="Net Exposure" value={fmt(data.net_exposure_usd)} />
           <Metric
             label="Directional Bias"
             value={`${biasPct.toFixed(0)}% ${data.net_exposure_usd >= 0 ? "long" : "short"}`}

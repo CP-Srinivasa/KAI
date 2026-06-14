@@ -1,3 +1,4 @@
+// @data-source: /api/premium-signals/trail
 import { memo, useCallback, useEffect, useRef, useState } from "react";
 import {
   AlertTriangle,
@@ -22,6 +23,7 @@ import {
 } from "@/lib/api";
 import { usePolling } from "@/lib/usePolling";
 import { cn } from "@/lib/utils";
+import { useCurrency } from "@/state/CurrencyProvider";
 
 /**
  * PremiumSignalTrail — End-to-End-Sicht pro Premium-Telegram-Signal.
@@ -125,19 +127,6 @@ function _formatRelativeAge(iso: string | null | undefined): string {
   return `${Math.floor(secs / 86400)}d`;
 }
 
-function _formatPrice(v: number | null): string {
-  if (v == null || Number.isNaN(v)) return "—";
-  if (v >= 1000) return v.toLocaleString("de-DE", { maximumFractionDigits: 2 });
-  if (v >= 1) return v.toFixed(4);
-  return v.toFixed(6);
-}
-
-function _formatPnl(v: number | null): string {
-  if (v == null || Number.isNaN(v)) return "—";
-  const sign = v > 0 ? "+" : "";
-  return `${sign}${v.toFixed(2)} USD`;
-}
-
 function StageDot({ stage }: { stage: PremiumSignalTrailStage }): JSX.Element {
   // Mapping: stage.ok=true → grün, ok=false aber name in [closed,paper] mit
   // reason "position_never_opened" → muted (nie geöffnet ist OK kontextabhängig)
@@ -187,6 +176,7 @@ function TrailRow({
   highlighted: boolean;
   onAction: (entry: PremiumSignalTrailEntry, action: "manual_fill" | "reprocess") => void;
 }): JSX.Element {
+  const { fmt, fmtPrice } = useCurrency();
   const overall = entry.overall;
   const overallTone = OVERALL_TONE[overall] ?? "muted";
   const overallLabel = OVERALL_LABEL[overall] ?? overall;
@@ -255,24 +245,24 @@ function TrailRow({
           <SignalAnalyticsBlock analytics={entry.analytics} />
           <div className="mt-1.5 text-2xs font-mono text-fg-subtle">
             <span className="text-fg-muted">SL </span>
-            {_formatPrice(entry.stop_loss)}
+            {fmtPrice(entry.stop_loss)}
           </div>
         </>
       ) : (
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-2xs">
           <div className="font-mono">
             <span className="text-fg-subtle">Entry </span>
-            <span className="text-fg">{_formatPrice(entry.entry_value)}</span>
+            <span className="text-fg">{fmtPrice(entry.entry_value)}</span>
           </div>
           <div className="font-mono">
             <span className="text-fg-subtle">SL </span>
-            <span className="text-fg">{_formatPrice(entry.stop_loss)}</span>
+            <span className="text-fg">{fmtPrice(entry.stop_loss)}</span>
           </div>
           <div className="font-mono">
             <span className="text-fg-subtle">TPs </span>
             <span className="text-fg">
               {entry.targets.length > 0
-                ? entry.targets.map((t) => _formatPrice(t)).join(" / ")
+                ? entry.targets.map((t) => fmtPrice(t)).join(" / ")
                 : "—"}
             </span>
           </div>
@@ -286,7 +276,8 @@ function TrailRow({
                   "text-fg-muted",
               )}
             >
-              {_formatPnl(entry.realized_pnl_usd)}
+              {entry.realized_pnl_usd != null && entry.realized_pnl_usd > 0 ? "+" : ""}
+              {fmt(entry.realized_pnl_usd)}
             </span>
           </div>
         </div>
@@ -348,6 +339,7 @@ function OrphanRow({
   busy: boolean;
   onReconcile: (o: PremiumSignalOrphanCompletion) => void;
 }): JSX.Element {
+  const { fmtPrice } = useCurrency();
   return (
     <div className="rounded-md border border-warn/30 bg-warn/5 p-3 flex items-center justify-between gap-3 flex-wrap">
       <div className="flex items-center gap-2 flex-wrap min-w-0">
@@ -355,7 +347,7 @@ function OrphanRow({
         <span className="font-mono text-sm font-semibold">{orphan.symbol}</span>
         <Badge tone="warn">Orphan TP-Hit</Badge>
         <span className="text-2xs text-fg-subtle font-mono">
-          touched {_formatPrice(orphan.touch_price)}
+          touched {fmtPrice(orphan.touch_price)}
         </span>
         <span className="text-2xs text-fg-subtle font-mono" title={orphan.timestamp_utc ?? ""}>
           {_formatTs(orphan.timestamp_utc)} · {_formatRelativeAge(orphan.timestamp_utc)} her
@@ -533,9 +525,9 @@ export const PremiumSignalTrail = memo(function PremiumSignalTrail({
 
       {polling.state === "ready" && polling.data.trail.length > 0 && (
         <div className="space-y-2 max-h-[600px] overflow-y-auto pr-1">
-          {polling.data.trail.map((entry) => (
+          {polling.data.trail.map((entry, i) => (
             <TrailRow
-              key={entry.envelope_id}
+              key={`${entry.envelope_id}-${i}`}
               entry={entry}
               busy={busyEnv === entry.envelope_id}
               highlighted={highlightedEnvelopeId === entry.envelope_id}

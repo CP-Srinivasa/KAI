@@ -1,3 +1,4 @@
+// @data-source: props (parent-provided)
 import { memo } from "react";
 import { Inbox } from "lucide-react";
 import { Card, CardHeader, Badge } from "@/components/ui/Primitives";

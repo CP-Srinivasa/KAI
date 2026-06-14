@@ -1,3 +1,4 @@
+// @data-source: /signals/envelope/recent
 import { useMemo } from "react";
 import { Radio, ExternalLink } from "lucide-react";
 import { Card, CardHeader, Badge } from "@/components/ui/Primitives";

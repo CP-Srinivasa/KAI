@@ -1,3 +1,4 @@
+// @data-source: props (parent-provided)
 import { memo, useMemo } from "react";
 import { Card, CardHeader, InfoHint } from "@/components/ui/Primitives";
 import { LiveDot } from "@/components/ui/LiveDot";

@@ -1,8 +1,10 @@
+// @data-source: props (/dashboard/api/quality)
 import { memo, useMemo } from "react";
 import { AlertTriangle, Flag, Target, Coins, Calendar, Info } from "lucide-react";
 import { Card, CardHeader, Badge, ProgressBar } from "@/components/ui/Primitives";
 import { useT } from "@/i18n/I18nProvider";
 import { cn } from "@/lib/utils";
+import { useCurrency } from "@/state/CurrencyProvider";
 import type { DashboardQuality, PriorityGateSummary } from "@/lib/api";
 import { resolvePriorityVerdict } from "@/lib/truthStatus";
 import { getMetricContract, getMetricWarning } from "@/lib/labels";
@@ -62,6 +64,7 @@ function ReentryGatePanelImpl({
   priorityGate?: PriorityGateSummary | null;
 }) {
   const { t } = useT();
+  const { fmt } = useCurrency();
   const targetDate = quality?.reentry?.target_date ?? REENTRY_DATE_ISO;
   const daysLeft = useMemo(() => daysUntil(targetDate), [targetDate]);
   const targetExpired = quality?.reentry?.status === "expired" || daysLeft < 0;
@@ -201,7 +204,7 @@ function ReentryGatePanelImpl({
               Realized PnL:{" "}
               <span className={cn("font-mono", pnlUsd > 0 ? "text-pos" : pnlUsd < 0 ? "text-neg" : "")}>
                 {pnlUsd >= 0 ? "+" : ""}
-                {pnlUsd.toFixed(2)} USD
+                {fmt(pnlUsd)}
               </span>
               {v1Disqualified && (
                 <>
@@ -222,7 +225,7 @@ function ReentryGatePanelImpl({
                   {quality.paper_evidence ? (
                     <>
                       {" "}· 24h fills {quality.paper_evidence.fills_recent_24h}
-                      {" "}· 24h PnL {quality.paper_evidence.realized_pnl_recent_24h_usd.toFixed(2)} USD
+                      {" "}· 24h PnL {fmt(quality.paper_evidence.realized_pnl_recent_24h_usd)}
                     </>
                   ) : null}
                 </>
@@ -261,6 +264,7 @@ function PaperEvidenceSplit({
   pnlUsd: number;
   fills: number;
 }) {
+  const { fmt } = useCurrency();
   const ev = quality.paper_evidence;
   const scopeBadge =
     ev?.scope === "cutoff_since" ? "Cutoff/Lifetime" : "Lifetime";
@@ -297,7 +301,7 @@ function PaperEvidenceSplit({
           {fills} fills ·{" "}
           <span className={cn(pnlUsd > 0 ? "text-pos" : pnlUsd < 0 ? "text-neg" : "")}>
             {pnlUsd >= 0 ? "+" : ""}
-            {pnlUsd.toFixed(2)} USD
+            {fmt(pnlUsd)}
           </span>
         </div>
         <div className="text-2xs text-fg-subtle">
@@ -326,7 +330,7 @@ function PaperEvidenceSplit({
           {recent24h} fills ·{" "}
           <span className={cn(pnl24h > 0 ? "text-pos" : pnl24h < 0 ? "text-neg" : "text-fg-subtle")}>
             {pnl24h >= 0 ? "+" : ""}
-            {pnl24h.toFixed(2)} USD
+            {fmt(pnl24h)}
           </span>
         </div>
         <div className="text-2xs text-fg-subtle">{closed24h} closed (24h)</div>

@@ -17,6 +17,7 @@ import {
   Target,
 } from "lucide-react";
 import { useRouter } from "@/state/Router";
+import { useCurrency } from "@/state/CurrencyProvider";
 import { useT } from "@/i18n/I18nProvider";
 import { PageHeader } from "@/layout/PageHeader";
 import {
@@ -137,17 +138,14 @@ function humanizeStage(stage: string | null | undefined): string {
   return ENVELOPE_STAGE_LABEL[stage] ?? stage;
 }
 
-function formatNumber(value: number | null | undefined): string {
-  if (value == null || !Number.isFinite(value)) return "—";
-  return value.toLocaleString("de-DE", {
-    maximumFractionDigits: 8,
-    useGrouping: false,
-  });
-}
+// Currency-aware Preis-Formatter (useCurrency().fmtPrice) wird in die Modul-
+// Helper durchgereicht, damit externe Signal-Preise (X/USDT-Quotes ≈ USD) dem
+// EUR/USD-Toggle folgen — eine kanonische Quelle (lib/money).
+type PriceFmt = (v: number | null | undefined) => string;
 
-function formatEntryRule(signal: SignalSummary): string {
+function formatEntryRule(signal: SignalSummary, fmtPrice: PriceFmt): string {
   if (signal.entry_value == null) return "—";
-  const price = formatNumber(signal.entry_value);
+  const price = fmtPrice(signal.entry_value);
   switch ((signal.entry_type ?? "").toLowerCase()) {
     case "below":
       return `BELOW ${price}`;
@@ -173,21 +171,21 @@ function formatDirection(signal: SignalSummary): string {
   return dir || side || "—";
 }
 
-function signalHeadline(signal: SignalSummary): string {
+function signalHeadline(signal: SignalSummary, fmtPrice: PriceFmt): string {
   const parts: string[] = [];
   const symbol = signal.symbol ?? "—";
   const dir = formatDirection(signal);
   parts.push(dir && dir !== "—" ? `${symbol} ${dir}` : symbol);
   if (signal.entry_value != null) {
-    parts.push(`@ ${formatEntryRule(signal)}`);
+    parts.push(`@ ${formatEntryRule(signal, fmtPrice)}`);
   }
   if (signal.targets.length > 0) {
-    const tgt = signal.targets.slice(0, 3).map(formatNumber).join(" · ");
+    const tgt = signal.targets.slice(0, 3).map((t) => fmtPrice(t)).join(" · ");
     const tail = signal.targets.length > 3 ? ` +${signal.targets.length - 3}` : "";
     parts.push(`🎯 ${tgt}${tail}`);
   }
   if (signal.stop_loss != null) {
-    parts.push(`SL ${formatNumber(signal.stop_loss)}`);
+    parts.push(`SL ${fmtPrice(signal.stop_loss)}`);
   }
   if (signal.leverage != null && signal.leverage > 1) {
     parts.push(`${signal.leverage}x`);
@@ -890,10 +888,11 @@ function SignalDetails({
   signal: SignalSummary;
   duplicate: boolean;
 }) {
+  const { fmtPrice } = useCurrency();
   const exchanges =
     signal.exchange_scope.length > 0 ? signal.exchange_scope.join(", ") : "—";
   const targets =
-    signal.targets.length > 0 ? signal.targets.map(formatNumber).join(", ") : "—";
+    signal.targets.length > 0 ? signal.targets.map((t) => fmtPrice(t)).join(", ") : "—";
   const statusLabel = (signal.signal_status ?? "—").toUpperCase();
   const duplicateLabel = duplicate ? "Ja — Wiederholung blockiert" : "Nein";
 
@@ -914,9 +913,9 @@ function SignalDetails({
         <SignalDetailRow label="Direction" value={formatDirection(signal)} />
         <SignalDetailRow label="Exchange" value={exchanges} mono />
         <SignalDetailRow label="Market" value={signal.market_type ?? "—"} />
-        <SignalDetailRow label="Entry Rule" value={formatEntryRule(signal)} mono />
+        <SignalDetailRow label="Entry Rule" value={formatEntryRule(signal, fmtPrice)} mono />
         <SignalDetailRow label="Targets" value={targets} mono />
-        <SignalDetailRow label="Stop Loss" value={formatNumber(signal.stop_loss)} mono />
+        <SignalDetailRow label="Stop Loss" value={fmtPrice(signal.stop_loss)} mono />
         <SignalDetailRow label="Leverage" value={formatLeverage(signal.leverage)} />
         <SignalDetailRow label="Status" value={statusLabel} />
         <SignalDetailRow
@@ -934,6 +933,7 @@ function EnvelopeCard({ rec }: { rec: EnvelopeRecord }) {
   const tone = envelopeTone(rec);
   const isDuplicate = rec.status === "duplicate";
   const router = useRouter();
+  const { fmtPrice } = useCurrency();
 
   // DALI-P-103: Trail-Deep-Link aus Signal-Feed.
   // sessionStorage statt URL-Hash, weil der KAI-Router (state/Router.tsx)
@@ -968,7 +968,7 @@ function EnvelopeCard({ rec }: { rec: EnvelopeRecord }) {
             </div>
             {rec.signal && (
               <div className="text-sm font-mono text-fg break-words">
-                {signalHeadline(rec.signal)}
+                {signalHeadline(rec.signal, fmtPrice)}
               </div>
             )}
             <div className="flex flex-wrap items-center gap-2">

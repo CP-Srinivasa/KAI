@@ -1,3 +1,4 @@
+// @data-source: props (/operator/portfolio-snapshot)
 import { memo, useMemo } from "react";
 import { ArrowDownRight, ArrowUpRight, Minus, Target, X, Zap } from "lucide-react";
 import { Badge, Card, CardHeader } from "@/components/ui/Primitives";

@@ -1,3 +1,4 @@
+// @data-source: /api/premium-signals/runtime
 import { useCallback } from "react";
 import {
   ShieldAlert,
@@ -174,8 +175,26 @@ export function PremiumRuntimeBanner({ className }: Props): JSX.Element | null {
     pauseWhenHidden: true,
   });
 
-  // Lade-/Fehlerzustand: kein lauter Platzhalter, der Banner ist eine Beilage.
-  if (polling.state === "loading") return null;
+  // Loading: dezenter Skeleton statt `null`. Dieser Banner ist die erste
+  // Truth-Schicht (warum Premium evtl. nicht handelt) — ein leeres `null`
+  // ließe einen still hängenden Fetch wie „alles normal / kein Premium"
+  // aussehen. Der Skeleton reserviert den Platz (kein Layout-Shift) und
+  // signalisiert sichtbar „Status wird geprüft".
+  if (polling.state === "loading") {
+    return (
+      <div
+        className={cn(
+          "rounded-md border border-line/40 bg-bg-2/40 px-3 py-2 text-2xs font-mono text-fg-subtle flex items-center gap-2 animate-pulse",
+          className,
+        )}
+        role="status"
+        aria-live="polite"
+      >
+        <Lock size={12} aria-hidden />
+        Premium-Runtime-Status wird geprüft …
+      </div>
+    );
+  }
   if (polling.state === "error") {
     return (
       <div

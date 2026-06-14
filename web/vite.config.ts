@@ -29,9 +29,11 @@ export default defineConfig(({ mode }) => {
       rollupOptions: {
         output: {
           // Vendor-Splitting: hält Initial-Bundle klein, cached Vendor-Chunks separat.
+          // recharts entfernt (PR Dashboard-Truth/Resilience): war app-weit nur für
+          // eine KPI-Sparkline genutzt und zog ~510 kB in den eager First-Paint —
+          // ersetzt durch dependency-freies Inline-SVG (components/kpi/Sparkline).
           manualChunks: {
             "vendor-react": ["react", "react-dom"],
-            "vendor-charts": ["recharts"],
             "vendor-icons": ["lucide-react"],
           },
         },

@@ -1,7 +1,17 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
+import {
+  convertUsd,
+  formatMoney,
+  formatPct,
+  formatPrice,
+  type Currency,
+  type FxSnapshot,
+} from "@/lib/money";
 
-export type Currency = "USD" | "EUR";
-export type FxSnapshot = { USD: 1; EUR: number };
+// Re-exported for backward-compat: consumers import these from here.
+export type { Currency, FxSnapshot } from "@/lib/money";
+
+type MoneyArg = number | string | null | undefined;
 
 // Static fallback — used as initial value before the live fetch resolves and
 // whenever /dashboard/api/fx is unreachable. Mirrors the backend constant.
@@ -22,10 +32,16 @@ type FxMeta = {
 type Ctx = {
   currency: Currency;
   setCurrency: (c: Currency) => void;
-  /** Format a USD-denominated amount in the active display currency.
-   *  If `fx` is provided it is used as the historical rate at capture time;
-   *  otherwise the live (current) rate is used. */
-  fmt: (usdAmount: number, fx?: FxSnapshot, digits?: number) => string;
+  /** Format a USD-denominated capital amount (PnL/equity/cash/value) in the
+   *  active display currency. If `fx` is provided it is used as the historical
+   *  rate at capture time; otherwise the live (current) rate is used. */
+  fmt: (usdAmount: MoneyArg, fx?: FxSnapshot, digits?: number) => string;
+  /** Format a quoted instrument price (entry/stop/target/market) with adaptive
+   *  decimals (sub-cent micro-caps stay readable), currency-converted. */
+  fmtPrice: (usdPrice: MoneyArg, fx?: FxSnapshot) => string;
+  /** Format a percentage in the active number locale (never currency-converted).
+   *  `signed` prefixes "+" on positives. */
+  fmtPct: (value: MoneyArg, opts?: { digits?: number; signed?: boolean }) => string;
   /** Raw conversion without formatting — for chart tooltips etc. */
   convert: (usdAmount: number, fx?: FxSnapshot) => number;
   /** The active currency's symbol. */
@@ -102,34 +118,35 @@ export function CurrencyProvider({ children }: { children: ReactNode }) {
 
   const setCurrency = useCallback((c: Currency) => _set(c), []);
 
+  // All formatting delegates to the pure SSOT in lib/money.ts so panels and the
+  // provider render identically.
   const convert = useCallback(
-    (usd: number, snap?: FxSnapshot) => {
-      const rate = (snap ?? fx)[currency];
-      return usd * rate;
-    },
+    (usd: number, snap?: FxSnapshot) => convertUsd(usd, currency, snap ?? fx),
     [currency, fx],
   );
 
   const fmt = useCallback(
-    (usd: number, snap?: FxSnapshot, digits = 2) => {
-      const value = convert(usd, snap);
-      const locale = currency === "EUR" ? "de-DE" : "en-US";
-      const abs = Math.abs(value).toLocaleString(locale, {
-        minimumFractionDigits: digits,
-        maximumFractionDigits: digits,
-      });
-      const sym = currency === "EUR" ? "€" : "$";
-      const sign = value < 0 ? "-" : "";
-      return currency === "EUR" ? `${sign}${abs} ${sym}` : `${sign}${sym}${abs}`;
-    },
-    [convert, currency],
+    (usd: MoneyArg, snap?: FxSnapshot, digits = 2) =>
+      formatMoney(usd, { currency, fx: snap ?? fx, digits }),
+    [currency, fx],
+  );
+
+  const fmtPrice = useCallback(
+    (usd: MoneyArg, snap?: FxSnapshot) => formatPrice(usd, { currency, fx: snap ?? fx }),
+    [currency, fx],
+  );
+
+  const fmtPct = useCallback(
+    (v: MoneyArg, opts?: { digits?: number; signed?: boolean }) =>
+      formatPct(v, { currency, ...opts }),
+    [currency],
   );
 
   const symbol = currency === "EUR" ? "€" : "$";
 
   const value = useMemo(
-    () => ({ currency, setCurrency, fmt, convert, symbol, fx, fxMeta }),
-    [currency, setCurrency, fmt, convert, symbol, fx, fxMeta],
+    () => ({ currency, setCurrency, fmt, fmtPrice, fmtPct, convert, symbol, fx, fxMeta }),
+    [currency, setCurrency, fmt, fmtPrice, fmtPct, convert, symbol, fx, fxMeta],
   );
 
   return <Context.Provider value={value}>{children}</Context.Provider>;

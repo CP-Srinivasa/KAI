@@ -1,3 +1,4 @@
+// @data-source: /dashboard/api/n-overview
 import { Target, Info, ChevronRight, Gauge } from "lucide-react";
 import { Card, CardHeader, Badge, ProgressBar } from "@/components/ui/Primitives";
 import { type NOverview, type NOverviewGate, type NOverviewEntry } from "@/lib/api";
