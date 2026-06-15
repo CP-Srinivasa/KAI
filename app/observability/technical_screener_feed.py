@@ -38,6 +38,10 @@ logger = get_logger(__name__)
 
 _BTC = "BTC/USDT"
 DEFAULT_TIMEFRAME = "1h"
+# WP-H: |Recommend.All| at/above this = a strong TV opinion (TV's own strong-buy/
+# strong-sell band). Local constant so the core feed stays decoupled from the
+# unofficial TradingView module (that import lives only in run_from_settings).
+_TV_STRONG = 0.5
 
 # Broad liquid universe — the anti-monoculture lever. Deliberately wider than the
 # ~7 majors the narrative engine touches; the operator widens it via
@@ -103,6 +107,7 @@ async def run_technical_screen(
     top_n: int = 20,
     min_strength: float = 0.0,
     allow_short: bool = False,
+    tv_ratings: dict[str, float] | None = None,
     write: bool = True,
     ledger_path: Path = LEDGER_PATH,
     now_utc: str | None = None,
@@ -136,6 +141,7 @@ async def run_technical_screen(
     non_btc = 0
     eligible = 0
     shorts_admitted = 0
+    tv_contradictions = 0
     for sig in signals:
         entry = _last_close(candles_by_symbol.get(sig.symbol, []))
         if entry is None or entry <= 0:
@@ -166,6 +172,16 @@ async def run_technical_screen(
                 )
         if not sig.symbol.upper().startswith("BTC/"):
             non_btc += 1
+        # WP-H: TradingView Recommend.All evidence (record-only, never mutates
+        # strength). Contradiction = TV strongly opposes the signal direction.
+        tv_rating = tv_ratings.get(sig.symbol) if tv_ratings else None
+        tv_contradiction: bool | None = None
+        if tv_rating is not None:
+            tv_contradiction = (sig.direction == "bullish" and tv_rating <= -_TV_STRONG) or (
+                sig.direction == "bearish" and tv_rating >= _TV_STRONG
+            )
+            if tv_contradiction:
+                tv_contradictions += 1
         candidate = ShadowCandidate.from_geometry(
             candidate_id=f"tech-{sig.symbol.replace('/', '')}-{ts}",
             ts_utc=ts,
@@ -183,6 +199,8 @@ async def run_technical_screen(
             gate_reason_codes=(
                 [decision.directional_block_reason] if decision.directional_block_reason else []
             ),
+            tv_rating=tv_rating,
+            tv_contradiction=tv_contradiction,
         )
         if write and record_candidate(candidate, path=ledger_path):
             written += 1
@@ -195,6 +213,7 @@ async def run_technical_screen(
         "non_btc_signals": non_btc,
         "eligible_on_technical_path": eligible,
         "shorts_admitted_shadow": shorts_admitted,
+        "tv_contradictions": tv_contradictions,
         "btc_candles": len(btc_candles),
     }
     logger.info("technical_screener.run", **summary)
@@ -244,10 +263,24 @@ async def run_from_settings(adapter: _OhlcvSource | None = None) -> dict[str, ob
             except Exception as exc:  # noqa: BLE001 — never abort on a universe fetch
                 logger.warning("technical_screener.dynamic_universe_failed", error=str(exc)[:200])
 
+    # WP-H: optional TradingView Recommend.All evidence (unofficial datafeed,
+    # default-off). Fail-soft → no ratings on any error; never affects the run.
+    tv_ratings: dict[str, float] | None = None
+    if settings.tradingview.datafeed_enabled:
+        try:
+            from app.integrations.tradingview.datafeed import TradingViewDatafeed
+
+            feed = TradingViewDatafeed(exchange=settings.tradingview.datafeed_exchange)
+            rows = await feed.top_rows(limit=min(alerts.technical_screener_top_n * 8, 400))
+            tv_ratings = {r.symbol: r.rating for r in rows if r.rating is not None}
+        except Exception as exc:  # noqa: BLE001 — unofficial source must never break the run
+            logger.warning("technical_screener.tv_ratings_failed", error=str(exc)[:200])
+
     return await run_technical_screen(
         adapter,
         symbols=symbols,
         top_n=alerts.technical_screener_top_n,
         min_strength=alerts.min_technical_strength,
         allow_short=alerts.allow_short_technical,
+        tv_ratings=tv_ratings,
     )
