@@ -47,9 +47,7 @@ def get_paper_engine() -> PaperExecutionEngine:
         slippage_pct=s.paper_slippage_pct,
         live_enabled=False,
         # WP-A: regime-konditionierter Time-Stop nur wenn explizit aktiviert.
-        regime_max_hold_seconds=(
-            s.regime_exit_max_hold_seconds if s.regime_exit_enabled else None
-        ),
+        regime_max_hold_seconds=(s.regime_exit_max_hold_seconds if s.regime_exit_enabled else None),
     )
 
 
