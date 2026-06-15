@@ -215,6 +215,10 @@ def test_dashboard_route_inventory_is_canonical_in_main_app() -> None:
         return found
 
     paths = _collect_paths(app.routes)
+    # Belt-and-braces: the OpenAPI schema aggregates every path operation
+    # regardless of internal router nesting, so /dashboard appears here even on
+    # FastAPI versions whose route tree we cannot fully walk.
+    paths |= set(app.openapi().get("paths", {}).keys())
 
     assert "/dashboard" in paths
     assert "/static/dashboard.html" not in paths
