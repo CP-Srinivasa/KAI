@@ -329,7 +329,7 @@ def tradingview_auto_promote() -> None:
     ``ALERT_ALLOW_SHORT_TECHNICAL``. Idempotent via the decision log. Execution
     stays gated by entry_mode. Intended for a systemd timer / operator run.
     """
-    from app.signals.tradingview_auto_promote import run_from_settings
+    from app.observability.tradingview_auto_promote import run_from_settings
 
     summary = run_from_settings()
     if not summary.get("enabled"):

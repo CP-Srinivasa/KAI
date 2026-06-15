@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from app.signals.tradingview_auto_promote import auto_promote_pending
+from app.observability.tradingview_auto_promote import auto_promote_pending
 
 
 def _write_pending(path: Path, rows: list[dict]) -> None:
@@ -119,7 +119,7 @@ def test_unsupported_action_rejected_not_retried(tmp_path: Path) -> None:
 
 
 def test_run_from_settings_disabled_is_noop() -> None:
-    from app.signals.tradingview_auto_promote import run_from_settings
+    from app.observability.tradingview_auto_promote import run_from_settings
 
     summary = run_from_settings()
     assert summary["enabled"] is False
