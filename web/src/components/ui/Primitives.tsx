@@ -17,7 +17,7 @@ export const Card = forwardRef<HTMLDivElement, CardProps>(function Card(
       ref={ref}
       className={cn(
         "rounded-lg border border-line-subtle bg-bg-1 shadow-panel kai-fade",
-        padded && "p-5",
+        padded && "p-4",
         className,
       )}
       {...rest}
@@ -41,7 +41,7 @@ export function CardHeader({
   return (
     <div
       className={cn(
-        "flex flex-col sm:flex-row sm:items-start sm:justify-between gap-2 sm:gap-4 mb-4",
+        "flex flex-col sm:flex-row sm:items-start sm:justify-between gap-2 sm:gap-4 mb-3",
         className,
       )}
     >

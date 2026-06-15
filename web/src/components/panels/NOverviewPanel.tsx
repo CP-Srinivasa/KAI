@@ -1,6 +1,7 @@
 // @data-source: /dashboard/api/n-overview
 import { Target, Info, ChevronRight, Gauge } from "lucide-react";
 import { Card, CardHeader, Badge, ProgressBar } from "@/components/ui/Primitives";
+import { LiveDot } from "@/components/ui/LiveDot";
 import { type NOverview, type NOverviewGate, type NOverviewEntry } from "@/lib/api";
 import { useNOverview } from "@/lib/useNOverview";
 import { cn } from "@/lib/utils";
@@ -132,10 +133,18 @@ export function NOverviewPanel() {
           "Zwei offene Gates steuern den Edge-Beweis. Die anderen Zähler sind Kontext (Diagnose / News / erreicht) — kein offenes Trading-Gate."
         }
         right={
-          <Badge tone="info" title={data?.trap_note}>
-            <Info size={10} />
-            UX-Falle erklärt
-          </Badge>
+          <div className="flex items-center gap-2">
+            <LiveDot
+              state={state.state}
+              generatedAt={state.state === "ready" ? new Date(state.fetchedAt).toISOString() : null}
+              staleAfterMs={90_000}
+              downAfterMs={240_000}
+            />
+            <Badge tone="info" title={data?.trap_note}>
+              <Info size={10} />
+              UX-Falle erklärt
+            </Badge>
+          </div>
         }
       />
 

@@ -1,6 +1,6 @@
 // @data-source: props (/dashboard/api/quality)
-import { memo, useMemo } from "react";
-import { AlertTriangle, Flag, Target, Coins, Calendar, Info } from "lucide-react";
+import { memo, useMemo, type ReactNode } from "react";
+import { AlertTriangle, Flag, Target, Coins, Calendar, Info, ChevronRight } from "lucide-react";
 import { Card, CardHeader, Badge, ProgressBar } from "@/components/ui/Primitives";
 import { useT } from "@/i18n/I18nProvider";
 import { cn } from "@/lib/utils";
@@ -149,6 +149,7 @@ function ReentryGatePanelImpl({
         </div>
       )}
 
+      <ExpiredCollapse expired={targetExpired}>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
         <ProgressRow
           icon={<Target size={12} />}
@@ -236,6 +237,7 @@ function ReentryGatePanelImpl({
       </div>
 
       <PaperEvidenceSplit quality={quality} pnlUsd={pnlUsd} fills={fills} />
+      </ExpiredCollapse>
 
       <div className="mt-3 pt-3 border-t border-line-subtle text-2xs font-mono text-fg-subtle">
         Source-Vergleich und TV-4-Verdict: siehe <span className="text-fg-muted">Active Precision</span> unten.
@@ -249,6 +251,22 @@ function ReentryGatePanelImpl({
 
       {priorityGate ? <PriorityGateRow summary={priorityGate} /> : null}
     </Card>
+  );
+}
+
+// Abgelaufenes Ziel verschwendet keinen Prime-Platz mehr: die toten Pfad-A/B-
+// Progressbars (historischer 200/10-Maßstab) wandern in ein eingeklapptes
+// Neon-<details>; Logik/Evidenz bleiben on-demand erreichbar (Operator 2026-06-15).
+function ExpiredCollapse({ expired, children }: { expired: boolean; children: ReactNode }) {
+  if (!expired) return <>{children}</>;
+  return (
+    <details className="group mt-1 rounded-sm border border-line-subtle bg-bg-2/30">
+      <summary className="flex cursor-pointer select-none list-none items-center gap-1.5 px-3 py-2 text-2xs font-mono uppercase tracking-wider text-fg-subtle attention-breathe-warn hover:text-warn">
+        <ChevronRight size={12} className="shrink-0 transition-transform group-open:rotate-90" aria-hidden />
+        Historischer Fortschritt · Ziel abgelaufen — aufklappen
+      </summary>
+      <div className="px-1 pb-2 pt-1 opacity-90">{children}</div>
+    </details>
   );
 }
 

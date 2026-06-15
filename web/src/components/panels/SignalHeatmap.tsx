@@ -1,8 +1,9 @@
 // @data-source: /signals/envelope/recent
 import { useMemo } from "react";
 import { Radio, ExternalLink } from "lucide-react";
-import { Card, CardHeader, Badge } from "@/components/ui/Primitives";
+import { Card, CardHeader } from "@/components/ui/Primitives";
 import { EmptyState } from "@/components/ui/EmptyState";
+import { LiveDot } from "@/components/ui/LiveDot";
 import {
   fetchRecentEnvelopes,
   type EnvelopeRecord,
@@ -72,9 +73,12 @@ export function SignalHeatmapPanel() {
             : "Welche fachlichen Premium-Signale sind aktuell aktiv?"
         }
         right={
-          <Badge tone="info" dot>
-            Live
-          </Badge>
+          <LiveDot
+            state={state.state}
+            generatedAt={state.state === "ready" ? new Date(state.fetchedAt).toISOString() : null}
+            staleAfterMs={POLL_MS * 1.5}
+            downAfterMs={POLL_MS * 4}
+          />
         }
       />
       {/* 2026-06-04 DALI: explizit machen, dass die Spalten Lifecycle-Stufen

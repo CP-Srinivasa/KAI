@@ -92,7 +92,7 @@ export function Dashboard() {
   const kai = useKaiState();
 
   return (
-    <div className="p-5 xl:p-6 space-y-5 xl:space-y-6 max-w-[1680px] mx-auto">
+    <div className="p-4 xl:p-5 space-y-4 xl:space-y-5 max-w-[1680px] mx-auto">
       <header className="flex items-center justify-between flex-wrap gap-3">
         <div>
           <h1 className="text-display text-fg">
@@ -275,14 +275,19 @@ export function Dashboard() {
               <span>
                 <span className="font-mono">{data.paper_cycles}</span> cycles ·{" "}
                 <span className="font-mono">{data.real_price_cycles}</span> real-price
-                <button
-                  type="button"
-                  aria-label="Daten vor 2026-05-02 14:30 UTC unter Schema v1 (NEO-P-101-r2 disqualified, via Backfill rekonstruiert). v2-only-Werte ab Cutover."
-                  title="Daten vor 2026-05-02 14:30 UTC unter Schema v1 (NEO-P-101-r2 disqualified, via Backfill rekonstruiert). v2-only-Werte ab Cutover."
-                  className="ml-1 inline-flex items-center align-middle text-fg-subtle hover:text-fg-muted cursor-help"
-                >
-                  <Info size={11} aria-hidden />
-                </button>
+                {/* v1→v2-Cutover-Hinweis nur solange das Backend v1-Daten als
+                    disqualifiziert meldet — sonst ist der 6-Wochen-alte
+                    Schema-Hinweis nicht mehr relevant (Operator 2026-06-15). */}
+                {data.audit_v1_disqualified && (
+                  <button
+                    type="button"
+                    aria-label="Daten vor 2026-05-02 14:30 UTC unter Schema v1 (NEO-P-101-r2 disqualified, via Backfill rekonstruiert). v2-only-Werte ab Cutover."
+                    title="Daten vor 2026-05-02 14:30 UTC unter Schema v1 (NEO-P-101-r2 disqualified, via Backfill rekonstruiert). v2-only-Werte ab Cutover."
+                    className="ml-1 inline-flex items-center align-middle text-fg-subtle hover:text-fg-muted cursor-help"
+                  >
+                    <Info size={11} aria-hidden />
+                  </button>
+                )}
               </span>
             ) : undefined
           }
@@ -383,7 +388,7 @@ export function Dashboard() {
             ) : (
               <Card padded>
                 <CardHeader title="Markt-Snapshot" right={<Badge tone="muted">offline</Badge>} />
-                <div className="py-8 text-center text-xs text-fg-subtle">
+                <div className="py-6 text-center text-xs text-fg-subtle">
                   TradingView deaktiviert — Chart unter „Märkte" verfügbar.
                 </div>
               </Card>
