@@ -399,6 +399,28 @@ export function fetchNOverview(signal?: AbortSignal): Promise<NOverview> {
   return apiGet<NOverview>("/dashboard/api/n-overview", { signal });
 }
 
+// Lightning Phase-1 (read-only, default-off). Spiegelt LightningNodeStatus.
+export type LightningStatus = {
+  state: "disabled" | "unavailable" | "ok";
+  reachable: boolean;
+  server_state: string;
+  info_available: boolean;
+  synced_to_chain: boolean;
+  block_height: number;
+  num_peers: number;
+  num_active_channels: number;
+  identity_pubkey: string;
+  alias: string;
+  version: string;
+  reason: string;
+  extra: Record<string, unknown>;
+  generated_at: string;
+};
+
+export function fetchLightningStatus(signal?: AbortSignal): Promise<LightningStatus> {
+  return apiGet<LightningStatus>("/dashboard/api/lightning", { signal });
+}
+
 export type ProvenanceMetrics = {
   source: string;
   resolved: number;

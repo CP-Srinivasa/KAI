@@ -10,6 +10,7 @@ import { PerSourcePrecisionPanel } from "@/components/panels/PerSourcePrecisionP
 import { PerSourceStabilityPanel } from "@/components/panels/PerSourceStabilityPanel";
 import { SourceReliabilityPanel } from "@/components/panels/SourceReliabilityPanel";
 import { RegimeStatusPanel } from "@/components/panels/RegimeStatusPanel";
+import { LightningPanel } from "@/components/panels/LightningPanel";
 import { PreparedPanel } from "@/components/panels/PreparedPanel";
 import { LivePortfolioTiles } from "@/components/panels/LivePortfolioTiles";
 import { ReentryGatePanel } from "@/components/panels/ReentryGatePanel";
@@ -303,6 +304,14 @@ export function Dashboard() {
       <PanelErrorBoundary name="Markt-Regime">
         <RegimeStatusPanel data={regime} />
       </PanelErrorBoundary>
+
+      <div className="grid grid-cols-12 gap-4">
+        <div className="col-span-12 md:col-span-6 lg:col-span-4">
+          <PanelErrorBoundary name="Lightning-Node">
+            <LightningPanel />
+          </PanelErrorBoundary>
+        </div>
+      </div>
 
       {/* Aktiver Analytics-Grid — Symmetrie ab lg: linke Card streckt sich,
           rechter Stack teilt sich die Hoehe via flex-1. Mobile bleibt block-stack. */}
