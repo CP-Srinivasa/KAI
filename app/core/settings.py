@@ -117,6 +117,10 @@ class AlertSettings(BaseSettings):
     technical_screener_enabled: bool = Field(default=False)
     technical_screener_symbols: str = Field(default="")
     technical_screener_top_n: int = Field(default=20, ge=1, le=200)
+    # WP-F (2026-06-15): dynamic universe — pull the most-liquid pairs by 24h
+    # volume from the (sanctioned) exchange adapter instead of the static list.
+    # Default FALSE → static behaviour. Env ``ALERT_TECHNICAL_SCREENER_DYNAMIC_UNIVERSE``.
+    technical_screener_dynamic_universe: bool = Field(default=False)
     # WP-E (2026-06-15): open bearish SHORTS on the technical path only (D-142
     # narrative bearish stays blocked). Default FALSE → unchanged. Eligibility/
     # shadow-measurement only; execution stays gated by entry_mode so this flag

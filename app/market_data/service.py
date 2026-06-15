@@ -95,6 +95,13 @@ class FallbackMarketDataAdapter(BaseMarketDataAdapter):
                 return data
         return []
 
+    async def top_symbols_by_volume(self, limit: int = 50) -> list[str]:
+        for adapter in self._adapters:
+            symbols = await adapter.top_symbols_by_volume(limit)
+            if symbols:
+                return symbols
+        return []
+
     async def get_market_data_point(self, symbol: str) -> MarketDataPoint | None:
         """Return the first usable provider point, cross-checked for sanity.
 

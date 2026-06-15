@@ -61,6 +61,16 @@ class BaseMarketDataAdapter(ABC):
         except Exception:
             return False
 
+    async def top_symbols_by_volume(self, limit: int = 50) -> list[str]:
+        """Return the most-liquid canonical symbols (``BASE/USDT``) by 24h volume.
+
+        WP-F (2026-06-15): the dynamic-universe source for the technical screener
+        — sanctioned exchange data, no third-party scraping. Default returns ``[]``
+        (adapter does not expose a markets list); concrete adapters override. Must
+        be fail-soft: any transport/parse error → ``[]``, never raises.
+        """
+        return []
+
     async def get_market_data_snapshot(self, symbol: str) -> MarketDataSnapshot:
         """Return a read-only snapshot with explicit availability and stale metadata."""
         retrieved_at = datetime.now(UTC).isoformat()
