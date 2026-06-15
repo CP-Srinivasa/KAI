@@ -104,7 +104,7 @@ def test_scrape_util_extracts_price_and_volume_from_meta() -> None:
     html = (
         "<html><head><title>Bitcoin</title>"
         '<meta name="description" content="The live Bitcoin price today is '
-        "$66,814.13 USD with a 24-hour trading volume of $36,855,080,681.02 USD.\">"
+        '$66,814.13 USD with a 24-hour trading volume of $36,855,080,681.02 USD.">'
         "</head><body></body></html>"
     )
     rec = parse_html_signals(html)
@@ -177,9 +177,7 @@ async def test_coinglass_api_parses_funding(monkeypatch: pytest.MonkeyPatch) -> 
             {"exchangeName": "OKX", "fundingRate": -0.0002, "symbol": "BTC"},
         ]
     }
-    monkeypatch.setattr(
-        coinglass, "fetch", _stub(HttpResponse(ok=True, status=200, json=payload))
-    )
+    monkeypatch.setattr(coinglass, "fetch", _stub(HttpResponse(ok=True, status=200, json=payload)))
     probe = coinglass.CoinGlassApiProbe(_settings(coinglass_api_key="k", sample_symbol="BTC"))
     result = await probe.probe()
     assert result.success is True

@@ -49,8 +49,7 @@ def test_production_does_not_import_exploration() -> None:
         if re.search(r"\bapp\.exploration\b", text):
             offenders.append(str(path.relative_to(_APP_ROOT.parent)))
     assert not offenders, (
-        "Production modules must not import app.exploration "
-        f"(isolation breach): {offenders}"
+        f"Production modules must not import app.exploration (isolation breach): {offenders}"
     )
 
 
@@ -63,8 +62,8 @@ def test_exploration_does_not_import_runtime_modules() -> None:
             for forbidden in _FORBIDDEN_FOR_EXPLORATION:
                 if module == forbidden or module.startswith(forbidden + "."):
                     offenders.append((str(path.relative_to(_APP_ROOT.parent)), module))
-    assert not offenders, (
-        "app.exploration must not import high-level runtime modules: " + repr(offenders)
+    assert not offenders, "app.exploration must not import high-level runtime modules: " + repr(
+        offenders
     )
 
 
@@ -81,6 +80,5 @@ def test_exploration_only_uses_allowed_shared_modules() -> None:
             ):
                 offenders.append((str(path.relative_to(_APP_ROOT.parent)), module))
     assert not offenders, (
-        "app.exploration may only import app.exploration/app.security/app.core: "
-        + repr(offenders)
+        "app.exploration may only import app.exploration/app.security/app.core: " + repr(offenders)
     )
