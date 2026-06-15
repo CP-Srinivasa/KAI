@@ -67,6 +67,16 @@ class ExplorationSettings(BaseSettings):
         """UA scrapers should use: browser-like when opted in, else honest."""
         return self.browser_user_agent if self.scrape_browser_ua_enabled else self.user_agent
 
+    @property
+    def symbol_list(self) -> list[str]:
+        """Parsed, upper-cased watchlist for snapshot probes (deduped, order-kept)."""
+        seen: dict[str, None] = {}
+        for raw in self.sample_symbols.split(","):
+            sym = raw.strip().upper()
+            if sym:
+                seen.setdefault(sym, None)
+        return list(seen)
+
     # -- per-source enable flags (all default-off) ----------------------------
     coinglass_enabled: bool = Field(default=False)
     coinglass_scrape_enabled: bool = Field(default=False)
@@ -95,8 +105,16 @@ class ExplorationSettings(BaseSettings):
     nansen_api_key: str = Field(default="", repr=False)
 
     # -- probe-specific knobs --------------------------------------------------
-    # Default sample symbol(s) for price/metric probes.
+    # Default sample symbol for coverage-sampler probes.
     sample_symbol: str = Field(default="BTC")
+    # Watchlist for rich snapshot probes (comma-separated). Each symbol yields one
+    # rich IndicatorSnapshot record.
+    sample_symbols: str = Field(default="BTC,ETH,SOL")
+    # Snapshot probes (access_mode="snapshot") are registered only when this is on
+    # (in addition to each source's own _enabled flag).
+    snapshots_enabled: bool = Field(default=False)
+    # Compute TA (RSI/SMA/volatility) from OHLC where the source provides it.
+    snapshot_ta_enabled: bool = Field(default=True)
     # Dune query id whose cached results to fetch when dune_enabled
     # (operator-curated; no default). Kept as str so long/leading-zero ids and
     # accidental quoting in .env never break settings load.

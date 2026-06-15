@@ -240,6 +240,84 @@ async def test_dune_parses_rows_with_fallback(monkeypatch: pytest.MonkeyPatch) -
 # ── Registry wiring: all flags on -> all probes constructible ──────────────
 
 
+def test_ta_functions() -> None:
+    from app.exploration import ta
+
+    closes = [float(x) for x in range(1, 21)]  # 1..20 monotonic up
+    assert ta.sma(closes, 5) == 18.0  # mean of 16..20
+    assert ta.sma([1.0, 2.0], 5) is None
+    assert ta.rsi(closes, 14) == 100.0  # only gains
+    assert ta.rsi([1.0], 14) is None
+    hi, lo = ta.high_low(closes)
+    assert (hi, lo) == (20.0, 1.0)
+    assert ta.realized_volatility(closes) is not None
+
+
+async def test_coingecko_snapshot_builds_per_symbol_with_ta(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from app.exploration import snapshots
+
+    markets = HttpResponse(
+        ok=True,
+        status=200,
+        json=[
+            {
+                "id": "bitcoin",
+                "current_price": 66000,
+                "market_cap": 1_300_000_000_000,
+                "market_cap_rank": 1,
+                "ath": 73000,
+                "circulating_supply": 19_700_000,
+            }
+        ],
+    )
+    candles = [[i, 1.0, 2.0, 0.5, float(100 + i)] for i in range(20)]
+    ohlc = HttpResponse(ok=True, status=200, json=candles)
+    monkeypatch.setattr(snapshots, "fetch", _stub_sequence([markets, ohlc]))
+
+    probe = snapshots.CoinGeckoSnapshotProbe(
+        _settings(sample_symbols="BTC", min_request_interval_seconds=0.0)
+    )
+    result = await probe.probe()
+    assert result.success is True
+    assert len(result.records) == 1
+    rec = result.records[0]
+    assert rec["symbol"] == "BTC"
+    assert rec["current_price"] == 66000
+    assert rec["ta_available"] is True
+    assert rec["sma_14"] is not None
+    assert rec["rsi_14"] == 100.0  # monotonic-up closes
+
+
+async def test_gated_snapshot_reports_wall_without_key() -> None:
+    from app.exploration import snapshots
+
+    s = _settings(nansen_enabled=True, snapshots_enabled=True)
+    result = await snapshots.NansenSnapshotProbe(s).probe()
+    assert result.success is False
+    assert result.error == "disabled_no_api_key"
+
+
+def test_snapshot_registry_gated_by_flag() -> None:
+    from app.exploration.sources import build_registry
+
+    off = _settings(enabled=True, coingecko_enabled=True, snapshots_enabled=False)
+    assert "coingecko:snapshot" not in build_registry(off)
+
+    on = _settings(
+        enabled=True,
+        coingecko_enabled=True,
+        messari_enabled=True,
+        nansen_enabled=True,
+        snapshots_enabled=True,
+    )
+    reg = build_registry(on)
+    assert "coingecko:snapshot" in reg
+    assert "messari:snapshot" in reg
+    assert "nansen:snapshot" in reg
+
+
 def test_registry_builds_all_probes_when_enabled() -> None:
     from app.exploration.sources import build_registry
 

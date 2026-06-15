@@ -27,6 +27,11 @@ def build_registry(settings: ExplorationSettings) -> dict[str, ExplorationProbe]
 
     if settings.enabled:
         probes.extend(_build_source_probes(settings))
+        # Rich per-symbol snapshot probes (access_mode="snapshot"). Lazy import
+        # avoids a circular import (snapshots imports source submodules).
+        from app.exploration.snapshots import build_snapshot_probes
+
+        probes.extend(build_snapshot_probes(settings))
 
     return {p.probe_id: p for p in probes}
 

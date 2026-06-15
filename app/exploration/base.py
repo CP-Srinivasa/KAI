@@ -18,9 +18,12 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
-AccessMode = Literal["api", "scrape"]
+if TYPE_CHECKING:
+    from app.exploration.settings import ExplorationSettings
+
+AccessMode = Literal["api", "scrape", "snapshot"]
 
 
 @dataclass
@@ -146,3 +149,22 @@ class ExplorationProbe(ABC):
             records=[],
             meta=meta or ProbeMeta(),
         )
+
+
+class SnapshotProbe(ExplorationProbe):
+    """Base for rich per-symbol indicator snapshots (access_mode="snapshot").
+
+    A snapshot probe emits one rich record per watchlist symbol — the production/
+    graduation shape, vs. the thin single-sample coverage probes. Gated sources
+    (no usable key) still register as snapshots but report their access wall
+    honestly, so the scaffold exists for all seven sources.
+    """
+
+    access_mode: AccessMode = "snapshot"
+
+    def __init__(self, settings: ExplorationSettings) -> None:
+        self._s = settings
+
+    @property
+    def symbols(self) -> list[str]:
+        return self._s.symbol_list
