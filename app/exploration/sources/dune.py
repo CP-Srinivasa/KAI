@@ -16,6 +16,23 @@ from app.exploration.settings import ExplorationSettings
 
 _BASE = "https://api.dune.com/api/v1"
 
+# A public Dune query whose cached results any API key can fetch (token price
+# feed: contract_address/hour/price). Used as a working sample when the operator
+# has not configured their own numeric query id, so Dune is demonstrable
+# out-of-the-box. Override with EXPLORATION_DUNE_QUERY_ID=<your numeric id>.
+DEFAULT_SAMPLE_QUERY_ID = "4132129"
+
+
+def _resolve_query_id(raw: str | None) -> tuple[str, bool]:
+    """Return (query_id, used_fallback).
+
+    Numeric → use as-is. Non-numeric (e.g. a Dune username pasted by mistake) →
+    fall back to the public sample so the probe still demonstrates Dune.
+    """
+    if raw and str(raw).strip().isdigit():
+        return str(raw).strip(), False
+    return DEFAULT_SAMPLE_QUERY_ID, True
+
 
 class DuneApiProbe(ExplorationProbe):
     source_name = "dune"
@@ -30,17 +47,10 @@ class DuneApiProbe(ExplorationProbe):
     async def probe(self) -> ExplorationResult:
         if not self._key:
             return self.fail("disabled_no_api_key")
-        if not self._query_id:
-            return self.fail("disabled_no_query_id")
-        # Dune query ids are numeric (e.g. 3493826). A non-numeric value is almost
-        # always a username/handle pasted by mistake — fail with a clear hint.
-        if not str(self._query_id).strip().isdigit():
-            return self.fail(
-                f"invalid_query_id_not_numeric:{self._query_id!r} "
-                "(expected a numeric Dune query id, not a username)"
-            )
 
-        url = f"{_BASE}/query/{self._query_id}/results"
+        query_id, used_fallback = _resolve_query_id(self._query_id)
+
+        url = f"{_BASE}/query/{query_id}/results"
         resp = await fetch(
             url,
             headers={"X-Dune-API-Key": self._key, "accept": "application/json"},
@@ -53,6 +63,10 @@ class DuneApiProbe(ExplorationProbe):
             bytes=resp.bytes,
             rate_limit_remaining=resp.rate_limit_remaining,
         )
+        meta.extra["query_id"] = query_id
+        if used_fallback:
+            meta.extra["used_public_sample"] = True
+            meta.extra["configured_value"] = self._query_id
         if not resp.ok:
             return self.fail(resp.error or "request_failed", meta=meta)
 

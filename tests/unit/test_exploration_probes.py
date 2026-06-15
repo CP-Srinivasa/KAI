@@ -147,12 +147,15 @@ async def test_key_required_probe_disabled_without_key(module_name: str, class_n
     assert result.error.startswith("disabled")
 
 
-async def test_dune_disabled_without_query_id() -> None:
-    from app.exploration.sources import dune
+def test_dune_query_id_resolver() -> None:
+    from app.exploration.sources.dune import DEFAULT_SAMPLE_QUERY_ID, _resolve_query_id
 
-    probe = dune.DuneApiProbe(_settings(dune_api_key="k"))
-    result = await probe.probe()
-    assert result.error == "disabled_no_query_id"
+    # numeric id used as-is
+    assert _resolve_query_id("3493826") == ("3493826", False)
+    # non-numeric (username pasted by mistake) -> public sample fallback
+    assert _resolve_query_id("Cryptopheonix80") == (DEFAULT_SAMPLE_QUERY_ID, True)
+    # missing -> public sample fallback (Dune still demonstrable)
+    assert _resolve_query_id(None) == (DEFAULT_SAMPLE_QUERY_ID, True)
 
 
 # ── CoinGlass parsing with key ─────────────────────────────────────────────
@@ -212,14 +215,19 @@ async def test_coinglass_api_surfaces_plan_gating(monkeypatch: pytest.MonkeyPatc
     assert result.error == "api_error:401:Upgrade plan"
 
 
-async def test_dune_invalid_query_id_when_non_numeric() -> None:
+async def test_dune_parses_rows_with_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
     from app.exploration.sources import dune
 
+    payload = {
+        "result": {"rows": [{"contract_address": "0xabc", "hour": "2026-06-15", "price": 1.0}]}
+    }
+    monkeypatch.setattr(dune, "fetch", _stub(HttpResponse(ok=True, status=200, json=payload)))
+    # non-numeric configured value -> probe falls back to the public sample and parses
     probe = dune.DuneApiProbe(_settings(dune_api_key="k", dune_query_id="Cryptopheonix80"))
     result = await probe.probe()
-    assert result.success is False
-    assert result.error is not None
-    assert result.error.startswith("invalid_query_id_not_numeric")
+    assert result.success is True
+    assert result.records[0]["price"] == 1.0
+    assert result.meta.extra.get("used_public_sample") is True
 
 
 # ── Registry wiring: all flags on -> all probes constructible ──────────────
