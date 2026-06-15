@@ -38,6 +38,11 @@ if str(_REPO_ROOT) not in sys.path:
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger("operator-digest")
+# httpx loggt auf INFO die volle Request-URL — beim Telegram-Send enthielte das
+# den Bot-Token (…/bot<TOKEN>/sendMessage) im journald. Auf WARNING heben, damit
+# das Secret nicht in die Logs leakt; eigene Digest-Logs bleiben INFO.
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
 
 _ARTIFACTS = Path("artifacts")
 # Meilenstein-Schwellen (Operator-Vorgabe 2026-06-11/06-14).
