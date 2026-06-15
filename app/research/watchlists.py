@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Literal, cast
 from urllib.parse import urlparse
 
-import yaml  # type: ignore[import-untyped]
+import yaml
 
 from app.analysis.keywords.watchlist import WatchlistEntry, load_watchlist
 from app.core.domain.document import CanonicalDocument
@@ -61,7 +61,7 @@ def parse_watchlist_type(value: str) -> WatchlistType:
     if normalized not in SUPPORTED_WATCHLIST_TYPES:
         supported = ", ".join(SUPPORTED_WATCHLIST_TYPES)
         raise ValueError(f"Unsupported watchlist type '{value}'. Expected one of: {supported}.")
-    return cast(WatchlistType, normalized)
+    return normalized
 
 
 def _normalize_text(value: str) -> str:
