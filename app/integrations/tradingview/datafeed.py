@@ -36,6 +36,23 @@ _DEFAULT_EXCHANGE = "BYBIT"
 RATING_STRONG_BUY = 0.5
 RATING_BUY = 0.1
 
+# WP-I: per-symbol technical-indicator snapshot columns (TV-computed, 1-day TF).
+# A webhook-independent data pull. Verified live against the scanner endpoint.
+DEFAULT_TECH_COLUMNS: tuple[str, ...] = (
+    "close",
+    "change",
+    "RSI",
+    "MACD.macd",
+    "MACD.signal",
+    "ADX",
+    "EMA50",
+    "EMA200",
+    "Stoch.K",
+    "Recommend.All",
+    "Recommend.MA",
+    "Recommend.Other",
+)
+
 
 @dataclass(frozen=True)
 class TradingViewRow:
@@ -173,6 +190,45 @@ class TradingViewDatafeed:
     async def top_symbols_by_volume(self, limit: int = 50) -> list[str]:
         """Canonical symbols by volume — same shape as the sanctioned adapters."""
         return [r.symbol for r in await self.top_rows(limit=limit)]
+
+    async def technicals(
+        self, symbols: list[str], *, columns: tuple[str, ...] = DEFAULT_TECH_COLUMNS
+    ) -> dict[str, dict[str, float | None]]:
+        """Per-symbol technical-indicator snapshot (RSI/MACD/ADX/EMAs/…). Fail-soft.
+
+        A webhook-INDEPENDENT data pull: queries TV for the exact ``symbols`` and
+        returns ``{canonical_symbol: {column: value}}`` (TV-computed indicators,
+        1-day timeframe). Unparseable cells become ``None``; any error → ``{}``.
+        """
+        ticker_to_canonical: dict[str, str] = {}
+        for s in symbols:
+            ticker = self._to_ticker(s)
+            if ticker is not None:
+                ticker_to_canonical[ticker] = s
+        if not ticker_to_canonical:
+            return {}
+        # "name" is requested first so d[0] is the raw ticker; the rest align to columns.
+        request_cols = ["name", *columns]
+        rows = await self._post(
+            {"symbols": {"tickers": list(ticker_to_canonical)}, "columns": request_cols}
+        )
+        out: dict[str, dict[str, float | None]] = {}
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            d = row.get("d")
+            if not isinstance(d, list) or not d:
+                continue
+            canonical = _canonical(str(row.get("s") or "")) or ticker_to_canonical.get(
+                str(row.get("s") or "")
+            )
+            if canonical is None:
+                continue
+            # d[0] is "name"; columns map to d[1:].
+            out[canonical] = {
+                col: _fnum(d[i + 1]) for i, col in enumerate(columns) if i + 1 < len(d)
+            }
+        return out
 
 
 def _fnum(v: object) -> float | None:

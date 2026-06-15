@@ -378,3 +378,42 @@ def tradingview_datafeed_probe(
         console.print(
             f"  {r.symbol:14} chg={r.change_pct}  rating={r.rating} ({rating_label(r.rating)})"
         )
+
+
+@tradingview_app.command("technicals")
+def tradingview_technicals(
+    symbols: str = typer.Option(
+        "BTC/USDT,ETH/USDT,SOL/USDT", help="Comma-separated canonical symbols"
+    ),
+) -> None:
+    """Per-symbol TV technical-indicator snapshot (WP-I, default OFF).
+
+    Gated by ``TRADINGVIEW_DATAFEED_ENABLED``. Webhook-independent data pull
+    (RSI/MACD/ADX/EMAs/Recommend.*). Public scanner, no login, fail-soft.
+    """
+    import asyncio
+
+    from app.core.settings import get_settings
+
+    tv = get_settings().tradingview
+    if not tv.datafeed_enabled:
+        console.print(
+            "[yellow]TradingView datafeed is OFF[/yellow] "
+            "(set TRADINGVIEW_DATAFEED_ENABLED=true to enable)."
+        )
+        raise typer.Exit(code=0)
+
+    from app.integrations.tradingview.datafeed import TradingViewDatafeed
+
+    syms = [s.strip().upper() for s in symbols.split(",") if s.strip()]
+    feed = TradingViewDatafeed(exchange=tv.datafeed_exchange)
+    snap = asyncio.run(feed.technicals(syms))
+    if not snap:
+        console.print("[red]No data returned[/red] (endpoint error or unknown symbols).")
+        raise typer.Exit(code=0)
+    for sym, cols in snap.items():
+        rsi = cols.get("RSI")
+        macd = cols.get("MACD.macd")
+        adx = cols.get("ADX")
+        rec = cols.get("Recommend.All")
+        console.print(f"  {sym:12} RSI={rsi} MACD={macd} ADX={adx} Recommend.All={rec}")
