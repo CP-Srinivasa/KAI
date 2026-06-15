@@ -318,3 +318,26 @@ def tradingview_run(
 def _format_event_dict(event_dict: dict[str, Any]) -> str:
     """Stable JSON formatting for tests/diagnostics."""
     return json.dumps(event_dict, sort_keys=True, indent=2)
+
+
+@tradingview_app.command("auto-promote")
+def tradingview_auto_promote() -> None:
+    """Auto-promote eligible accepted TV events (WP-C, default OFF).
+
+    Gated by ``TRADINGVIEW_WEBHOOK_AUTO_PROMOTE``. Routes each event through the
+    technical-path eligibility gate; bearish promotes only with
+    ``ALERT_ALLOW_SHORT_TECHNICAL``. Idempotent via the decision log. Execution
+    stays gated by entry_mode. Intended for a systemd timer / operator run.
+    """
+    from app.observability.tradingview_auto_promote import run_from_settings
+
+    summary = run_from_settings()
+    if not summary.get("enabled"):
+        console.print(
+            "[yellow]TV auto-promote is OFF[/yellow] "
+            "(set TRADINGVIEW_WEBHOOK_AUTO_PROMOTE=true to enable)."
+        )
+        raise typer.Exit(code=0)
+    console.print("[bold green]TV auto-promote run complete[/bold green]")
+    for key in ("open_events", "promoted", "rejected"):
+        console.print(f"  {key}: {summary.get(key)}")

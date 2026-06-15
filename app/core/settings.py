@@ -980,6 +980,13 @@ class TradingViewSettings(BaseSettings):
     bridge_scheduler_enabled: bool = Field(default=False)
     bridge_scheduler_interval_seconds: int = Field(default=300, ge=30)
     bridge_scheduler_include_smoke: bool = Field(default=False)
+    # WP-C (2026-06-15): auto-promote accepted TV webhook events to
+    # SignalCandidates WITHOUT the manual operator step (TV-3.1). Default OFF —
+    # promotion is operator-gated by design; this opts into automation. Each
+    # auto-promoted candidate is routed through the technical-path eligibility
+    # gate and recorded with a decision; execution stays gated by entry_mode.
+    # Env ``TRADINGVIEW_WEBHOOK_AUTO_PROMOTE``.
+    webhook_auto_promote_enabled: bool = Field(default=False)
     # SENTR-F-004: HMAC tamper-detection on tradingview_pending_signals.jsonl.
     # When set, the router signs each appended row and the bridge verifies
     # the signature before promoting the event into alert_audit.jsonl.
