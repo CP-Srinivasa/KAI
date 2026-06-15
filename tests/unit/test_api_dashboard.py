@@ -198,7 +198,10 @@ def test_dashboard_contains_static_drilldown_reference_section() -> None:
 
 def test_dashboard_route_inventory_is_canonical_in_main_app() -> None:
     app = create_app()
-    paths = {route.path for route in app.routes}
+    # Some FastAPI versions expose included sub-routers as objects without a
+    # ``.path`` attribute; skip those defensively so route inventory stays
+    # version-robust.
+    paths = {getattr(route, "path", None) for route in app.routes}
 
     assert "/dashboard" in paths
     assert "/static/dashboard.html" not in paths
