@@ -25,6 +25,17 @@ _NEXT_DATA_RE = re.compile(
 )
 # A loose price token finder for the "did static HTML even contain a price" signal.
 _PRICE_RE = re.compile(r"\$\s?([0-9][0-9,]*\.?[0-9]*)")
+# Dollar amounts inside a meta description (e.g. CoinMarketCap embeds the live
+# price + 24h volume there: "$66,814.13 USD with a 24-hour trading volume of
+# $36,855,080,681.02 USD"). The first amount is the price, the second the volume.
+_DOLLAR_AMOUNT_RE = re.compile(r"\$\s?([0-9][0-9,]*\.?[0-9]+)")
+
+
+def _to_float(token: str) -> float | None:
+    try:
+        return float(token.replace(",", ""))
+    except (ValueError, AttributeError):
+        return None
 
 
 def parse_html_signals(html: str) -> dict[str, Any]:
@@ -44,6 +55,8 @@ def parse_html_signals(html: str) -> dict[str, Any]:
         "has_next_data": False,
         "next_data_bytes": 0,
         "first_price_guess": None,
+        "meta_price_usd": None,
+        "meta_volume_usd": None,
     }
     if not html:
         return record
@@ -97,5 +110,15 @@ def parse_html_signals(html: str) -> dict[str, Any]:
     price_match = _PRICE_RE.search(html)
     if price_match:
         record["first_price_guess"] = price_match.group(1)
+
+    # Pull usable numbers out of the meta description when present (CoinMarketCap
+    # et al. embed live price + 24h volume there — a real keyless data win).
+    desc = record["meta_description"] or record["og_description"]
+    if desc:
+        amounts = _DOLLAR_AMOUNT_RE.findall(desc)
+        if amounts:
+            record["meta_price_usd"] = _to_float(amounts[0])
+        if len(amounts) > 1:
+            record["meta_volume_usd"] = _to_float(amounts[1])
 
     return record

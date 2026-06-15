@@ -93,5 +93,9 @@ def _build_source_probes(settings: ExplorationSettings) -> list[ExplorationProbe
         from app.exploration.sources.nansen import NansenApiProbe
 
         probes.append(NansenApiProbe(settings))
+        if settings.nansen_scrape_enabled:
+            from app.exploration.sources.nansen import NansenScrapeProbe
+
+            probes.append(NansenScrapeProbe(settings))
 
     return probes

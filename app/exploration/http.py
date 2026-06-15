@@ -71,7 +71,11 @@ async def fetch(
     except Exception as exc:  # noqa: BLE001 — SSRF rejection is an expected outcome
         return HttpResponse(ok=False, error=f"ssrf_rejected:{exc}")
 
-    merged_headers = {"User-Agent": user_agent}
+    # Default to identity encoding: some APIs (e.g. Dune) return a raw deflate
+    # body that httpx then fails to decompress ("incorrect header check").
+    # Requesting uncompressed avoids the whole class of decode errors; callers
+    # may override Accept-Encoding explicitly if they need compression.
+    merged_headers = {"User-Agent": user_agent, "Accept-Encoding": "identity"}
     if headers:
         merged_headers.update(headers)
 

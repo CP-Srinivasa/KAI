@@ -1,8 +1,10 @@
 """Messari exploration probes (api + scrape) — P1 research + metrics.
 
-Two layers from one source: asset metrics (market-data) and a news feed. The
-classic ``data.messari.io/api/v1`` metrics endpoint works on the free tier
-(rate-limited); an ``x-messari-api-key`` is sent when configured to lift limits.
+The legacy keyless ``data.messari.io/api/v1`` endpoints are gone (404). The
+current ``api.messari.io/metrics/v2/assets`` endpoint works WITHOUT a key and
+returns rich per-asset metadata (symbol, sector/sub-sector, tags, rank, and
+capability flags hasMarketData/hasNews/hasResearch/...). A key, when present, is
+sent to lift rate limits and unlock key-gated market-data endpoints.
 """
 
 from __future__ import annotations
@@ -14,25 +16,27 @@ from app.exploration.http import fetch
 from app.exploration.scrape_util import parse_html_signals
 from app.exploration.settings import ExplorationSettings
 
-_BASE = "https://data.messari.io/api"
+_BASE = "https://api.messari.io"
 
-_SYMBOL_TO_SLUG = {
-    "BTC": "bitcoin",
-    "ETH": "ethereum",
-    "SOL": "solana",
-    "XRP": "xrp",
-    "ADA": "cardano",
-}
-
-
-def _slug(symbol: str) -> str:
-    return _SYMBOL_TO_SLUG.get(symbol.strip().upper(), symbol.strip().lower())
+_METADATA_FIELDS = (
+    "id",
+    "name",
+    "slug",
+    "symbol",
+    "category",
+    "sector",
+    "rank",
+    "hasMarketData",
+    "hasNews",
+    "hasResearch",
+    "hasIntel",
+)
 
 
 class MessariApiProbe(ExplorationProbe):
     source_name = "messari"
     access_mode = "api"
-    requires_key = False
+    requires_key = False  # the assets metrics endpoint is keyless
 
     def __init__(self, settings: ExplorationSettings) -> None:
         self._s = settings
@@ -45,62 +49,44 @@ class MessariApiProbe(ExplorationProbe):
         return h
 
     async def probe(self) -> ExplorationResult:
-        slug = _slug(self._s.sample_symbol)
-        records: list[dict[str, Any]] = []
-        raw: dict[str, Any] = {}
-
-        md = await fetch(
-            f"{_BASE}/v1/assets/{slug}/metrics/market-data",
+        symbol = self._s.sample_symbol.strip().upper()
+        limit = min(self._s.max_records_per_probe, 100)
+        resp = await fetch(
+            f"{_BASE}/metrics/v2/assets",
+            params={"limit": limit},
             headers=self._headers(),
             timeout=self._s.timeout_seconds,
             user_agent=self._s.user_agent,
         )
         meta = ProbeMeta(
-            http_status=md.status,
-            latency_ms=md.latency_ms,
-            bytes=md.bytes,
-            rate_limit_remaining=md.rate_limit_remaining,
+            http_status=resp.status,
+            latency_ms=resp.latency_ms,
+            bytes=resp.bytes,
+            rate_limit_remaining=resp.rate_limit_remaining,
         )
-        raw["market_data"] = md.json
-        if not md.ok:
-            return self.fail(f"market_data:{md.error}", meta=meta)
-        if isinstance(md.json, dict):
-            data = md.json.get("data") or {}
-            market = data.get("market_data") or {}
-            records.append(
-                {
-                    "_endpoint": "metrics/market-data",
-                    "slug": slug,
-                    "price_usd": market.get("price_usd"),
-                    "volume_24h_usd": market.get("volume_last_24_hours"),
-                    "pct_change_24h": market.get("percent_change_usd_last_24_hours"),
-                }
-            )
+        if not resp.ok:
+            return self.fail(resp.error or "request_failed", meta=meta)
+        if not isinstance(resp.json, dict):
+            return self.fail("unexpected_payload", meta=meta)
 
-        news = await fetch(
-            f"{_BASE}/v1/news",
-            params={"page": 1},
-            headers=self._headers(),
-            timeout=self._s.timeout_seconds,
-            user_agent=self._s.user_agent,
-        )
-        raw["news"] = news.json
-        if news.ok and isinstance(news.json, dict):
-            for article in (news.json.get("data") or [])[:10]:
-                if isinstance(article, dict):
-                    records.append(
-                        {
-                            "_endpoint": "news",
-                            "title": article.get("title"),
-                            "published_at": article.get("published_at"),
-                            "author": (article.get("author") or {}).get("name"),
-                            "url": article.get("url"),
-                        }
-                    )
+        assets = resp.json.get("data")
+        if not isinstance(assets, list) or not assets:
+            return self.fail("no_assets_in_payload", meta=meta)
 
-        if not records:
-            return self.fail("no_records_parsed", meta=meta)
-        return self.ok(records, raw=raw, meta=meta)
+        records: list[dict[str, Any]] = []
+        for asset in assets:
+            if not isinstance(asset, dict):
+                continue
+            rec: dict[str, Any] = {"_endpoint": "metrics/v2/assets"}
+            rec.update({k: asset.get(k) for k in _METADATA_FIELDS})
+            tags = asset.get("tags")
+            rec["tags"] = ",".join(tags) if isinstance(tags, list) else None
+            records.append(rec)
+
+        # Surface the configured sample symbol first if present.
+        records.sort(key=lambda r: (str(r.get("symbol")) != symbol, r.get("rank") or 1e9))
+        meta.extra["tier"] = "keyed" if self._key else "keyless"
+        return self.ok(records, raw=resp.json, meta=meta)
 
 
 class MessariScrapeProbe(ExplorationProbe):
@@ -112,7 +98,10 @@ class MessariScrapeProbe(ExplorationProbe):
         self._s = settings
 
     async def probe(self) -> ExplorationResult:
-        url = "https://messari.io/research"
+        # The research index is bot-gated (403); the marketing root serves 200
+        # server-rendered HTML, so the scrape honestly reports what static HTML
+        # exposes (title/OpenGraph/JSON-LD) without any bot-evasion.
+        url = "https://messari.io/"
         resp = await fetch(
             url,
             expect="text",

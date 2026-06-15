@@ -50,6 +50,15 @@ class CoinGlassApiProbe(ExplorationProbe):
         if not resp.ok:
             return self.fail(resp.error or "request_failed", meta=meta)
 
+        # CoinGlass signals success with body code "0"; any other code is an API
+        # error returned over HTTP 200 (e.g. {"code":"401","msg":"Upgrade plan"}
+        # on free-tier plan gating). Surface it honestly instead of "no records".
+        if isinstance(resp.json, dict):
+            code = str(resp.json.get("code", "0"))
+            if code not in ("0", "200", "success"):
+                msg = resp.json.get("msg") or "unknown"
+                return self.fail(f"api_error:{code}:{msg}", meta=meta)
+
         records = _flatten_funding(resp.json, symbol, limit=self._s.max_records_per_probe)
         if not records:
             return self.fail("no_records_parsed", meta=meta)

@@ -62,7 +62,10 @@ class GlassnodeScrapeProbe(ExplorationProbe):
         self._s = settings
 
     async def probe(self) -> ExplorationResult:
-        url = "https://studio.glassnode.com/charts/market/price_usd_close"
+        # The Studio app is a key-gated SPA with no inline metric data; the
+        # marketing root serves 200 server-rendered HTML. The scrape honestly
+        # reports the static surface (which for Glassnode is thin — a finding).
+        url = "https://glassnode.com/"
         resp = await fetch(
             url,
             expect="text",

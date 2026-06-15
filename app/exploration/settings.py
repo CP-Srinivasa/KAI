@@ -64,6 +64,7 @@ class ExplorationSettings(BaseSettings):
     coinmarketcap_enabled: bool = Field(default=False)
     coinmarketcap_scrape_enabled: bool = Field(default=False)
     nansen_enabled: bool = Field(default=False)
+    nansen_scrape_enabled: bool = Field(default=False)
 
     # Always-available demonstration probe used for the durchstich + tests.
     dummy_enabled: bool = Field(default=True)
@@ -80,8 +81,10 @@ class ExplorationSettings(BaseSettings):
     # -- probe-specific knobs --------------------------------------------------
     # Default sample symbol(s) for price/metric probes.
     sample_symbol: str = Field(default="BTC")
-    # Dune query id to execute when dune_enabled (operator-curated; no default run).
-    dune_query_id: int | None = Field(default=None)
+    # Dune query id whose cached results to fetch when dune_enabled
+    # (operator-curated; no default). Kept as str so long/leading-zero ids and
+    # accidental quoting in .env never break settings load.
+    dune_query_id: str | None = Field(default=None)
 
     _strip_secrets = field_validator(
         "coinglass_api_key",

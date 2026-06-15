@@ -23,7 +23,8 @@ def _settings(tmp_path: Path, **overrides: object) -> ExplorationSettings:
         "min_request_interval_seconds": 0.0,
     }
     base.update(overrides)
-    return ExplorationSettings(**base)  # type: ignore[arg-type]
+    # _env_file=None keeps these tests hermetic — never read the developer's .env.
+    return ExplorationSettings(_env_file=None, **base)  # type: ignore[call-arg]
 
 
 async def test_dummy_probe_runs_and_succeeds(tmp_path: Path) -> None:

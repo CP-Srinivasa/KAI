@@ -15,6 +15,7 @@ from typing import Any
 
 from app.exploration.base import ExplorationProbe, ExplorationResult, ProbeMeta
 from app.exploration.http import fetch
+from app.exploration.scrape_util import parse_html_signals
 from app.exploration.settings import ExplorationSettings
 
 _BASE = "https://api.nansen.ai/api/v1"
@@ -56,6 +57,32 @@ class NansenApiProbe(ExplorationProbe):
         if not records:
             return self.fail("no_records_parsed", meta=meta)
         return self.ok(records, raw=resp.json, meta=meta)
+
+
+class NansenScrapeProbe(ExplorationProbe):
+    source_name = "nansen"
+    access_mode = "scrape"
+    requires_key = False
+
+    def __init__(self, settings: ExplorationSettings) -> None:
+        self._s = settings
+
+    async def probe(self) -> ExplorationResult:
+        # Nansen's product is auth-gated; the public site is the only keyless
+        # surface. The scrape reports the static HTML signal honestly — it will
+        # NOT bypass the login wall (hard line under DEC-SRC-EXPLORE-001).
+        url = "https://www.nansen.ai/"
+        resp = await fetch(
+            url,
+            expect="text",
+            timeout=self._s.timeout_seconds,
+            user_agent=self._s.user_agent,
+        )
+        meta = ProbeMeta(http_status=resp.status, latency_ms=resp.latency_ms, bytes=resp.bytes)
+        if not resp.ok or not resp.text:
+            return self.fail(resp.error or "empty_html", meta=meta)
+        record = {"_url": url, **parse_html_signals(resp.text)}
+        return self.ok([record], raw={"html_bytes": len(resp.text)}, meta=meta)
 
 
 def _flatten(payload: Any, *, limit: int) -> list[dict[str, Any]]:

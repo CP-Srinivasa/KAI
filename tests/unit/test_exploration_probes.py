@@ -17,7 +17,9 @@ from app.exploration.settings import ExplorationSettings
 def _settings(**overrides: Any) -> ExplorationSettings:
     base: dict[str, Any] = {"enabled": True, "min_request_interval_seconds": 0.0}
     base.update(overrides)
-    return ExplorationSettings(**base)
+    # _env_file=None keeps unit tests hermetic — never read the developer's .env
+    # (which carries real keys/ids that would mask the no-key/invalid paths).
+    return ExplorationSettings(_env_file=None, **base)  # type: ignore[call-arg]
 
 
 def _stub(response: HttpResponse):
@@ -87,6 +89,20 @@ async def test_coingecko_api_fails_on_http_error(monkeypatch: pytest.MonkeyPatch
     result = await coingecko.CoinGeckoApiProbe(_settings()).probe()
     assert result.success is False
     assert "429" in (result.error or "")
+
+
+def test_scrape_util_extracts_price_and_volume_from_meta() -> None:
+    from app.exploration.scrape_util import parse_html_signals
+
+    html = (
+        "<html><head><title>Bitcoin</title>"
+        '<meta name="description" content="The live Bitcoin price today is '
+        "$66,814.13 USD with a 24-hour trading volume of $36,855,080,681.02 USD.\">"
+        "</head><body></body></html>"
+    )
+    rec = parse_html_signals(html)
+    assert rec["meta_price_usd"] == 66814.13
+    assert rec["meta_volume_usd"] == 36855080681.02
 
 
 async def test_coingecko_scrape_parses_html(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -164,24 +180,46 @@ async def test_coinglass_api_parses_funding(monkeypatch: pytest.MonkeyPatch) -> 
 # ── Messari parsing ────────────────────────────────────────────────────────
 
 
-async def test_messari_api_parses_market_data_and_news(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_messari_api_parses_assets_keyless(monkeypatch: pytest.MonkeyPatch) -> None:
     from app.exploration.sources import messari
 
-    md = HttpResponse(
+    assets = HttpResponse(
         ok=True,
         status=200,
-        json={"data": {"market_data": {"price_usd": 65000, "volume_last_24_hours": 1e9}}},
+        json={
+            "data": [
+                {"symbol": "ETH", "name": "Ethereum", "rank": 2, "tags": ["Smart Contract"]},
+                {"symbol": "BTC", "name": "Bitcoin", "rank": 1, "tags": ["Proof-of-Work"]},
+            ]
+        },
     )
-    news = HttpResponse(
-        ok=True,
-        status=200,
-        json={"data": [{"title": "BTC news", "published_at": "2026-06-15", "url": "http://x"}]},
-    )
-    monkeypatch.setattr(messari, "fetch", _stub_sequence([md, news]))
+    monkeypatch.setattr(messari, "fetch", _stub(assets))
     result = await messari.MessariApiProbe(_settings(sample_symbol="BTC")).probe()
     assert result.success is True
-    endpoints = {r["_endpoint"] for r in result.records}
-    assert endpoints == {"metrics/market-data", "news"}
+    # sample symbol is surfaced first
+    assert result.records[0]["symbol"] == "BTC"
+    assert result.records[0]["_endpoint"] == "metrics/v2/assets"
+    assert result.records[0]["tags"] == "Proof-of-Work"
+
+
+async def test_coinglass_api_surfaces_plan_gating(monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.exploration.sources import coinglass
+
+    gated = HttpResponse(ok=True, status=200, json={"code": "401", "msg": "Upgrade plan"})
+    monkeypatch.setattr(coinglass, "fetch", _stub(gated))
+    result = await coinglass.CoinGlassApiProbe(_settings(coinglass_api_key="k")).probe()
+    assert result.success is False
+    assert result.error == "api_error:401:Upgrade plan"
+
+
+async def test_dune_invalid_query_id_when_non_numeric() -> None:
+    from app.exploration.sources import dune
+
+    probe = dune.DuneApiProbe(_settings(dune_api_key="k", dune_query_id="Cryptopheonix80"))
+    result = await probe.probe()
+    assert result.success is False
+    assert result.error is not None
+    assert result.error.startswith("invalid_query_id_not_numeric")
 
 
 # ── Registry wiring: all flags on -> all probes constructible ──────────────
@@ -204,6 +242,7 @@ def test_registry_builds_all_probes_when_enabled() -> None:
         coinmarketcap_enabled=True,
         coinmarketcap_scrape_enabled=True,
         nansen_enabled=True,
+        nansen_scrape_enabled=True,
     )
     registry = build_registry(settings)
     expected = {
@@ -220,5 +259,6 @@ def test_registry_builds_all_probes_when_enabled() -> None:
         "coinmarketcap:api",
         "coinmarketcap:scrape",
         "nansen:api",
+        "nansen:scrape",
     }
     assert set(registry) == expected

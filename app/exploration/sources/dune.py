@@ -32,6 +32,13 @@ class DuneApiProbe(ExplorationProbe):
             return self.fail("disabled_no_api_key")
         if not self._query_id:
             return self.fail("disabled_no_query_id")
+        # Dune query ids are numeric (e.g. 3493826). A non-numeric value is almost
+        # always a username/handle pasted by mistake — fail with a clear hint.
+        if not str(self._query_id).strip().isdigit():
+            return self.fail(
+                f"invalid_query_id_not_numeric:{self._query_id!r} "
+                "(expected a numeric Dune query id, not a username)"
+            )
 
         url = f"{_BASE}/query/{self._query_id}/results"
         resp = await fetch(
