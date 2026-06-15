@@ -69,6 +69,21 @@ _PROPERTIES_IFACE = "org.freedesktop.DBus.Properties"
 # (StartLimitBurst-protected post-2026-05-14), so this is safe.
 _HEALTHY_ACTIVE_STATES = frozenset({"active", "activating", "reloading"})
 
+# Bounded-duration workers run under Restart=always and exit cleanly each cycle.
+# kai-entry-watch runs ``--duration-seconds 55`` then deactivates, so for the
+# RestartSec window (~5 s of every ~60 s cycle) its ActiveState is ``inactive``
+# even though the pipeline is perfectly healthy — a restart job is pending. A
+# point-in-time ActiveState probe samples that gap ~8 % of the time and would
+# otherwise emit a false ``premium-pipeline FAIL``. For these units we accept a
+# *recent* ``inactive`` (restart pending) but still fail a *stale* one: a genuine
+# outage — operator ``systemctl stop`` or StartLimitBurst exhaustion (which flips
+# ActiveState to ``failed``, never tolerated here) — is caught once the inactive
+# dwell exceeds the cycle tolerance, i.e. within ~1.5 min.
+_CYCLING_SERVICES = frozenset({"kai-entry-watch.service"})
+_CYCLING_TOLERATED_STATES = frozenset({"inactive", "deactivating"})
+# duration(55) + RestartSec(5) + slack for GC/scheduling jitter.
+_CYCLING_SERVICE_MAX_INACTIVE_SEC = 90
+
 
 @dataclass(frozen=True)
 class CheckResult:
@@ -151,20 +166,76 @@ def _dbus_get_timer_last_trigger_usec(unit_path: str) -> int:
         conn.close()
 
 
-def _check_service_active(unit: str) -> CheckResult:
+def _dbus_get_unit_inactive_enter_usec(unit_path: str) -> int:
+    """Read InactiveEnterTimestamp (usec since epoch, CLOCK_REALTIME) for a unit.
+
+    Returns 0 if the unit has not entered the inactive state since boot.
+    """
+    from jeepney import DBusAddress, new_method_call
+    from jeepney.io.blocking import open_dbus_connection
+
+    conn = open_dbus_connection(bus="SYSTEM")
     try:
-        _, state = _dbus_get_unit_path_and_state(unit)
-        return CheckResult(
-            name=f"systemd:{unit}",
-            ok=(state in _HEALTHY_ACTIVE_STATES),
-            detail=f"ActiveState={state}",
+        reply = conn.send_and_get_reply(
+            new_method_call(
+                DBusAddress(
+                    object_path=unit_path,
+                    bus_name=_SYSTEMD_BUS,
+                    interface=_PROPERTIES_IFACE,
+                ),
+                "Get",
+                "ss",
+                ("org.freedesktop.systemd1.Unit", "InactiveEnterTimestamp"),
+            )
         )
+        return int(reply.body[0][1])
+    finally:
+        conn.close()
+
+
+def _check_service_active(
+    unit: str,
+    now: datetime | None = None,
+    _state_fn: Any = None,
+    _inactive_usec_fn: Any = None,
+) -> CheckResult:
+    state_fn = _state_fn or _dbus_get_unit_path_and_state
+    inactive_usec_fn = _inactive_usec_fn or _dbus_get_unit_inactive_enter_usec
+    try:
+        unit_path, state = state_fn(unit)
     except Exception as exc:  # noqa: BLE001 — DBus failures must not crash the report
         return CheckResult(
             name=f"systemd:{unit}",
             ok=False,
             detail=f"dbus_error: {type(exc).__name__}: {exc}",
         )
+
+    if state in _HEALTHY_ACTIVE_STATES:
+        return CheckResult(name=f"systemd:{unit}", ok=True, detail=f"ActiveState={state}")
+
+    # Cycling worker: tolerate a *recent* inactive (restart pending), fail a stale one.
+    if unit in _CYCLING_SERVICES and state in _CYCLING_TOLERATED_STATES:
+        try:
+            inactive_usec = inactive_usec_fn(unit_path)
+        except Exception as exc:  # noqa: BLE001
+            return CheckResult(
+                name=f"systemd:{unit}",
+                ok=False,
+                detail=f"ActiveState={state}; inactive_ts dbus_error: {type(exc).__name__}: {exc}",
+            )
+        if inactive_usec > 0:
+            inactive_since = datetime.fromtimestamp(inactive_usec / 1_000_000, tz=UTC)
+            age = ((now or datetime.now(UTC)) - inactive_since).total_seconds()
+            ok = age <= _CYCLING_SERVICE_MAX_INACTIVE_SEC
+            detail = (
+                f"ActiveState={state} cycling (inactive {age:.0f}s, restart pending)"
+                if ok
+                else f"ActiveState={state} inactive {age:.0f}s "
+                f"> {_CYCLING_SERVICE_MAX_INACTIVE_SEC}s tolerance"
+            )
+            return CheckResult(name=f"systemd:{unit}", ok=ok, detail=detail, age_seconds=age)
+
+    return CheckResult(name=f"systemd:{unit}", ok=False, detail=f"ActiveState={state}")
 
 
 def _check_paper_timer_last_trigger(
@@ -373,7 +444,7 @@ def compute_pipeline_health(
     canary_check = _semantic_canary_check_fn or _check_semantic_canary
     hmac_check = _approval_hmac_check_fn or _check_approval_hmac
 
-    checks: list[CheckResult] = [svc_check(svc) for svc in CRITICAL_SERVICES]
+    checks: list[CheckResult] = [svc_check(svc, now=now) for svc in CRITICAL_SERVICES]
     checks.append(timer_check(paper_timer_max_age_sec, now=now))
     checks.append(hb_check(heartbeat_max_age_sec, now=now))
     checks.append(canary_check(semantic_canary_max_age_sec, now=now))

@@ -16,7 +16,7 @@ from app.observability import premium_pipeline_health as pph
 
 
 def _fake_service_check_factory(state: str):
-    def _check(unit: str) -> pph.CheckResult:
+    def _check(unit: str, now: datetime | None = None) -> pph.CheckResult:
         return pph.CheckResult(
             name=f"systemd:{unit}",
             ok=(state == "active"),
@@ -220,6 +220,73 @@ def test_real_audit_check_with_no_records_stays_ok(tmp_path: Path):
     log.write_text("")
     result = pph._check_bridge_audit_freshness(info_age_seconds=15 * 60, path=log)
     assert result.ok is True
+
+
+def _usec(now: datetime, *, seconds_ago: float) -> int:
+    return int((now - timedelta(seconds=seconds_ago)).timestamp() * 1_000_000)
+
+
+def test_cycling_service_recent_inactive_is_healthy():
+    """kai-entry-watch in its ~5s RestartSec gap must NOT trip a FAIL."""
+    now = datetime(2026, 6, 15, 12, 0, tzinfo=UTC)
+    result = pph._check_service_active(
+        "kai-entry-watch.service",
+        now=now,
+        _state_fn=lambda unit: ("/u/entry", "inactive"),
+        _inactive_usec_fn=lambda path: _usec(now, seconds_ago=4),
+    )
+    assert result.ok is True
+    assert "cycling" in result.detail
+    assert result.age_seconds is not None and result.age_seconds < 90
+
+
+def test_cycling_service_stale_inactive_fails():
+    """A genuine outage (operator stop) dwells inactive past the cycle tolerance."""
+    now = datetime(2026, 6, 15, 12, 0, tzinfo=UTC)
+    result = pph._check_service_active(
+        "kai-entry-watch.service",
+        now=now,
+        _state_fn=lambda unit: ("/u/entry", "inactive"),
+        _inactive_usec_fn=lambda path: _usec(now, seconds_ago=300),
+    )
+    assert result.ok is False
+    assert "tolerance" in result.detail
+
+
+def test_cycling_service_failed_state_always_fails():
+    """ActiveState=failed (StartLimitBurst exhausted) is never tolerated."""
+    now = datetime(2026, 6, 15, 12, 0, tzinfo=UTC)
+    result = pph._check_service_active(
+        "kai-entry-watch.service",
+        now=now,
+        _state_fn=lambda unit: ("/u/entry", "failed"),
+        _inactive_usec_fn=lambda path: _usec(now, seconds_ago=1),
+    )
+    assert result.ok is False
+    assert result.detail == "ActiveState=failed"
+
+
+def test_non_cycling_service_inactive_still_fails():
+    """The cycling tolerance MUST NOT leak to the always-on listener service."""
+    now = datetime(2026, 6, 15, 12, 0, tzinfo=UTC)
+    result = pph._check_service_active(
+        "kai-tg-listener.service",
+        now=now,
+        _state_fn=lambda unit: ("/u/listener", "inactive"),
+        _inactive_usec_fn=lambda path: _usec(now, seconds_ago=1),
+    )
+    assert result.ok is False
+    assert result.detail == "ActiveState=inactive"
+
+
+def test_cycling_service_active_is_healthy():
+    result = pph._check_service_active(
+        "kai-entry-watch.service",
+        _state_fn=lambda unit: ("/u/entry", "active"),
+        _inactive_usec_fn=lambda path: 0,
+    )
+    assert result.ok is True
+    assert result.detail == "ActiveState=active"
 
 
 def test_report_to_dict_roundtrip():
