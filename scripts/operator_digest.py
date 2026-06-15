@@ -460,6 +460,16 @@ def compose_digest_message(
 # ── Send ─────────────────────────────────────────────────────────────────────
 
 
+# Telegram-Legacy-Markdown-Härtung: dynamische Bezeichner tragen `_` (z.B.
+# paper_learning, autonomous_generator), und der Digest nutzt `[…]` als Klartext-
+# Klammern — beides sind Markdown-Entities, die den Parser brechen ("Bad Request:
+# can't parse entities"). Strukturell genutzt werden NUR *bold* und `code` (deren
+# Spans enthalten kein `_`/`[`); daher escapen wir die NICHT-strukturellen
+# Specials `_ [ ]` im fertigen Text, ohne Bold/Code zu beschädigen.
+def _telegram_safe(text: str) -> str:
+    return text.replace("_", "\\_").replace("[", "\\[").replace("]", "\\]")
+
+
 def send_telegram(message: str) -> bool:
     token = os.environ.get("ALERT_TELEGRAM_TOKEN", "")
     chat_id = os.environ.get("ALERT_TELEGRAM_CHAT_ID", "")
@@ -470,7 +480,7 @@ def send_telegram(message: str) -> bool:
 
     resp = httpx.post(
         f"https://api.telegram.org/bot{token}/sendMessage",
-        data={"chat_id": chat_id, "text": message, "parse_mode": "Markdown"},
+        data={"chat_id": chat_id, "text": _telegram_safe(message), "parse_mode": "Markdown"},
         timeout=15,
     )
     ok = resp.status_code == 200
