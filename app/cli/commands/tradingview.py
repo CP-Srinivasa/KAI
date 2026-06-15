@@ -341,3 +341,40 @@ def tradingview_auto_promote() -> None:
     console.print("[bold green]TV auto-promote run complete[/bold green]")
     for key in ("open_events", "promoted", "rejected"):
         console.print(f"  {key}: {summary.get(key)}")
+
+
+@tradingview_app.command("datafeed-probe")
+def tradingview_datafeed_probe(
+    limit: int = typer.Option(10, help="How many top rows to show"),
+) -> None:
+    """Probe the UNOFFICIAL TradingView datafeed (WP-G, default OFF).
+
+    Gated by ``TRADINGVIEW_DATAFEED_ENABLED``. Public scanner, no login. ToS-grey,
+    isolated, fail-soft — supplements (never replaces) the sanctioned exchange data.
+    """
+    import asyncio
+
+    from app.core.settings import get_settings
+
+    tv = get_settings().tradingview
+    if not tv.datafeed_enabled:
+        console.print(
+            "[yellow]TradingView datafeed is OFF[/yellow] "
+            "(set TRADINGVIEW_DATAFEED_ENABLED=true to enable)."
+        )
+        raise typer.Exit(code=0)
+
+    from app.integrations.tradingview.datafeed import TradingViewDatafeed, rating_label
+
+    feed = TradingViewDatafeed(exchange=tv.datafeed_exchange)
+    rows = asyncio.run(feed.top_rows(limit=limit))
+    if not rows:
+        console.print("[red]No rows returned[/red] (endpoint error or empty).")
+        raise typer.Exit(code=0)
+    console.print(
+        f"[bold green]TradingView {tv.datafeed_exchange} top {len(rows)} by volume[/bold green]"
+    )
+    for r in rows:
+        console.print(
+            f"  {r.symbol:14} chg={r.change_pct}  rating={r.rating} ({rating_label(r.rating)})"
+        )

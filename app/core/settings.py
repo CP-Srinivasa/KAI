@@ -991,6 +991,12 @@ class TradingViewSettings(BaseSettings):
     # gate and recorded with a decision; execution stays gated by entry_mode.
     # Env ``TRADINGVIEW_WEBHOOK_AUTO_PROMOTE``.
     webhook_auto_promote_enabled: bool = Field(default=False)
+    # WP-G / Track 2 (2026-06-15): UNOFFICIAL TradingView datafeed (public scanner,
+    # no login). Default OFF, isolated + fail-soft. ToS-grey (operator-accepted);
+    # supplements the sanctioned exchange data, never replaces it. Env
+    # ``TRADINGVIEW_DATAFEED_ENABLED`` / ``TRADINGVIEW_DATAFEED_EXCHANGE``.
+    datafeed_enabled: bool = Field(default=False)
+    datafeed_exchange: str = Field(default="BYBIT")
     # SENTR-F-004: HMAC tamper-detection on tradingview_pending_signals.jsonl.
     # When set, the router signs each appended row and the bridge verifies
     # the signature before promoting the event into alert_audit.jsonl.
