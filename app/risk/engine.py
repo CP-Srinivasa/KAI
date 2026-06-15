@@ -516,6 +516,29 @@ class RiskEngine:
 
         return stop_loss, take_profit
 
+    def _regime_size_multiplier(self, symbol: str) -> float:
+        """WP-B: regime-konditionierter Sizing-Multiplier (default 1.0).
+
+        Fail-safe: bei deaktiviertem Feature, leerer Map oder Lookup-Fehler 1.0
+        (= keine Größenänderung). Der Regime-Lookup passiert NUR wenn aktiviert.
+        """
+        from app.core.settings import get_settings
+
+        rs = get_settings().risk
+        if not getattr(rs, "regime_size_enabled", False):
+            return 1.0
+        mults = getattr(rs, "regime_size_multipliers", {}) or {}
+        if not mults:
+            return 1.0
+        try:
+            from app.regime.lookup import now_utc_iso, regime_label_at
+
+            regime = regime_label_at(symbol, now_utc_iso())
+        except Exception:  # noqa: BLE001 — Sizing darf nie an einem Regime-Lookup scheitern
+            return 1.0
+        mult = mults.get(regime, 1.0)
+        return float(mult) if mult and mult > 0 else 1.0
+
     def calculate_position_size(
         self,
         *,
@@ -641,6 +664,19 @@ class RiskEngine:
                     f"${position_value:.2f} ({self._limits.max_position_size_pct:.4g}% "
                     f"equity cap)"
                 )
+
+        # WP-B (regime-edge-capture 2026-06-15): regime-konditionierter Sizing-
+        # Multiplier. Befund: Edge trägt in breakout_up, ist in chop_quiet thin/
+        # revertierend → dort kleiner sizen. VOR dem Dust-Gate, damit ein
+        # heruntergesizter Trade korrekt als dust rejecten kann. Default-off ⇒
+        # mult=1.0 ⇒ unverändert. NICHT im apply_signal_leverage-Modus (Premium
+        # 1:1 darf nicht verzerrt werden).
+        if not apply_signal_leverage:
+            regime_mult = self._regime_size_multiplier(symbol)
+            if regime_mult != 1.0:
+                units *= regime_mult
+                position_value = units * entry_price
+                sizing_mode = f"{sizing_mode}_regime_x{regime_mult:.2g}"
 
         # DS-20260528-V2: dust gate. Sizing equity is the portfolio's remaining
         # cash (trading_loop), so a nearly-deployed portfolio yields a near-zero

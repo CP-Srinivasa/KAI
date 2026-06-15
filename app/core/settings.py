@@ -224,6 +224,13 @@ class RiskSettings(BaseSettings):
     max_total_drawdown_pct: float = Field(default=5.0)  # max 5% drawdown
     max_open_positions: int = Field(default=3)
     max_leverage: float = Field(default=1.0)
+    # WP-B regime-edge-capture (2026-06-15). Regime-konditionierter Sizing-
+    # Multiplier: kleiner sizen, wo der Edge dünn ist (chop_quiet), volle Größe
+    # wo er trägt (breakout_up). DEFAULT-OFF (enabled=False ⇒ mult=1.0, keine
+    # Regime-Lookups). Env JSON, z.B. RISK_REGIME_SIZE_MULTIPLIERS=
+    # '{"chop_quiet":0.5,"breakout_up":1.0}'. Fokus, KEINE Gate-Lockerung.
+    regime_size_enabled: bool = Field(default=False)
+    regime_size_multipliers: dict[str, float] = Field(default_factory=dict)
     # DS-20260528-V2: minimum order notional (USD). Sizing uses remaining cash
     # as equity, so a nearly-deployed portfolio yields dust orders (~1e-16 units)
     # that fill but take no real position. Orders below this notional are rejected.

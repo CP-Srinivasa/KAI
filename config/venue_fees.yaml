@@ -90,6 +90,24 @@ venues:
     expected_slippage_bps: 0.0
     discount_flag: false
     source_url: "binance-spot-equivalent (realistic paper default)"
+  # WP-C regime-edge-capture (2026-06-15): Maker-Kosten-Venue für die EV-Messung.
+  # Befund: der broad Richtungs-Edge (~+12 bps brutto) trägt die ~20-bps-Taker-
+  # Round-Trip nicht, eine ~4-bps-Maker-Round-Trip aber schon. Diese Venue
+  # modelliert "wir zahlen durchgehend Maker" (Limit-Orders) — taker bewusst
+  # ebenfalls auf die Maker-Rate gesetzt, da der CostModel-Default side=taker ist.
+  # Reines Mess-Venue: `edge-report --venue paper_maker`. KEIN Default (paper
+  # bleibt 10 bp/Seite); ändert kein Live-Verhalten. Live-Maker-Order-Routing ist
+  # die separate Folge-Arbeit.
+  paper_maker:
+    market_type: "spot"
+    taker_pct: 0.02
+    maker_pct: 0.02
+    taker_fee_bps_per_side: 2.0
+    maker_fee_bps_per_side: 2.0
+    expected_spread_bps: 0.0
+    expected_slippage_bps: 0.0
+    discount_flag: true
+    source_url: "binance-spot maker tier (limit-order execution, measurement-only)"
 
 # Default fuer GENUINELY UNKNOWN venues (kein YAML-Eintrag): worst-case ueber
 # alle Venues. So underestimieren wir einen Venue, ueber den wir keine Daten
