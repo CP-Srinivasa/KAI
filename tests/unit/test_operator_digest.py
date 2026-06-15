@@ -213,3 +213,18 @@ def test_weekly_d227_review_only_on_mondays_with_sufficient_n() -> None:
     # Dienstag → keine Review-Sektion
     msg = _compose(today=date(2026, 6, 16), d227=d227)
     assert "D-227-Wochenreview" not in msg
+
+
+def test_telegram_safe_escapes_markdown_breaking_entities() -> None:
+    # Unterstriche (paper_learning/autonomous_generator) und [..]-Klammern brechen
+    # sonst den Telegram-Markdown-Parser ("can't parse entities"); *bold* und
+    # `code` (strukturell) bleiben unangetastet.
+    safe = od._telegram_safe(
+        "*Modus:* paper_learning · autonomous_generator n=6/30 "
+        "[shadow-resolved n=88] `trading edge-report`"
+    )
+    assert r"paper\_learning" in safe
+    assert r"autonomous\_generator" in safe
+    assert r"\[shadow-resolved n=88\]" in safe
+    assert "*Modus:*" in safe  # bold-Delimiter unverändert
+    assert "`trading edge-report`" in safe  # code-Span unverändert
