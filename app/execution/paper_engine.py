@@ -67,6 +67,22 @@ def _max_close_return_pct() -> float:
     return value if value > 0 else _DEFAULT_MAX_CLOSE_RETURN_PCT
 
 
+def _position_age_seconds(opened_at: str) -> float | None:
+    """Sekunden seit ``opened_at`` (ISO). None bei unparsebarem Timestamp.
+
+    WP-A (regime-edge-capture): Basis für den regime-konditionierten Time-Stop.
+    """
+    from datetime import UTC, datetime
+
+    try:
+        t = datetime.fromisoformat(str(opened_at).replace("Z", "+00:00"))
+    except (ValueError, TypeError):
+        return None
+    if t.tzinfo is None:
+        t = t.replace(tzinfo=UTC)
+    return (datetime.now(UTC) - t).total_seconds()
+
+
 def _liquidation_price(entry: float, leverage: float | None, side: str) -> float | None:
     """Isolated-margin liquidation price (A-Fix 2026-06-13).
 
@@ -150,6 +166,7 @@ class PaperExecutionEngine:
         slippage_pct: float = 0.05,
         live_enabled: bool = False,
         audit_log_path: str | None = None,
+        regime_max_hold_seconds: dict[str, int] | None = None,
     ) -> None:
         if live_enabled:
             raise ValueError(
@@ -158,6 +175,11 @@ class PaperExecutionEngine:
             )
         self._fee_pct = fee_pct / 100
         self._slippage_pct = slippage_pct / 100
+        # WP-A (regime-edge-capture 2026-06-15): regime-konditionierter Time-Stop.
+        # Default LEER ⇒ AUS ⇒ heutiges Verhalten unverändert. Befund: chop_quiet
+        # revertiert nach ~300s ins Negative, breakout_up läuft länger — also
+        # frühes Schließen NUR für konfigurierte (revertierende) Regimes.
+        self._regime_max_hold: dict[str, int] = dict(regime_max_hold_seconds or {})
         self._portfolio = PaperPortfolio(initial_equity=initial_equity, cash=initial_equity)
         self._filled_keys: set[str] = set()
         self._partial_fill_ratios: dict[str, float] = {}
@@ -1318,6 +1340,21 @@ class PaperExecutionEngine:
                     if fill:
                         fills.append(fill)
                     continue
+            # WP-A (regime-edge-capture 2026-06-15): regime-konditionierter
+            # Time-Stop. Schließt Positionen, deren Regime-at-Entry ein
+            # konfiguriertes Max-Hold hat, sobald das Alter überschritten ist
+            # (Befund: chop_quiet revertiert nach ~300s). Default-LEER ⇒ AUS.
+            # Nach Liquidation, vor Stop/TP — ein Time-Stop ist ein bewusster
+            # Exit, aber Liquidation/echter Stop dürfen davor feuern.
+            if pos and self._regime_max_hold:
+                _max_hold = self._regime_max_hold.get(pos.regime)
+                if _max_hold is not None:
+                    _age = _position_age_seconds(pos.opened_at)
+                    if _age is not None and _age >= _max_hold:
+                        fill = self.close_position(symbol, price, reason="time_stop")
+                        if fill:
+                            fills.append(fill)
+                        continue
             # Stop-loss has priority over tiers — it kills the whole residual.
             if pos and pos.position_side == "short" and pos.stop_loss and price >= pos.stop_loss:
                 fill = self.close_position(symbol, price, reason="stop")
