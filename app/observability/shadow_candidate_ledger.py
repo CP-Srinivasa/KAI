@@ -200,6 +200,13 @@ class ShadowCandidate:
     priority: int | None = None
     sentiment: str | None = None
     directional_state: str | None = None
+    # WP-H (2026-06-15): TradingView Recommend.All evidence (unofficial datafeed,
+    # default-off). Recorded for measurement only — does NOT mutate
+    # signal_confidence (keeps WP-D calibration pure). ``tv_contradiction`` = TV
+    # strongly opposes the signal direction (a future execution-time dampening
+    # candidate, once confluence is shown to add edge).
+    tv_rating: float | None = None
+    tv_contradiction: bool | None = None
     schema_version: str = "v2"
 
     @staticmethod
