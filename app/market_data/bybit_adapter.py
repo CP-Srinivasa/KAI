@@ -189,6 +189,43 @@ class BybitAdapter(BaseMarketDataAdapter):
         ticker = await self.get_ticker(symbol)
         return ticker.last if ticker is not None else None
 
+    async def top_symbols_by_volume(self, limit: int = 50) -> list[str]:
+        """Top-``limit`` linear-perp USDT pairs by 24h quote turnover (WP-F).
+
+        One ``/v5/market/tickers?category=linear`` call (no symbol) returns the
+        full ticker list; we rank by ``turnover24h`` (quote volume, the liquidity
+        proxy), keep USDT pairs, and return canonical ``BASE/USDT``. Fail-soft.
+        """
+        if limit <= 0:
+            return []
+        data = await self._get("/v5/market/tickers", {"category": "linear"})
+        if data is None:
+            return []
+        rows = (data.get("result") or {}).get("list") or []
+        scored: list[tuple[float, str]] = []
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            sym = row.get("symbol")
+            if not isinstance(sym, str) or not sym.endswith("USDT"):
+                continue
+            turnover = _opt_float(row.get("turnover24h"))
+            if turnover is None or turnover <= 0:
+                continue
+            canonical = _canonical_symbol(sym)
+            if "/" in canonical:
+                scored.append((turnover, canonical))
+        scored.sort(key=lambda t: t[0], reverse=True)
+        out: list[str] = []
+        seen: set[str] = set()
+        for _turnover, canonical in scored:
+            if canonical not in seen:
+                seen.add(canonical)
+                out.append(canonical)
+            if len(out) >= limit:
+                break
+        return out
+
     async def get_funding_rate(self, symbol: str) -> FundingRateSnapshot | None:
         """Funding-Rate für linear-perp.  Quelle ist exakt der gleiche
         ``/v5/market/tickers``-Response, der schon Bid/Ask/Volume liefert:

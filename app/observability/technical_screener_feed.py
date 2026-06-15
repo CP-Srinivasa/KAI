@@ -8,9 +8,11 @@ strength (relative-strength vs BTC), evaluates each candidate on the WP-B
 candidate (no execution, no order, no position). Default OFF
 (``ALERT_TECHNICAL_SCREENER_ENABLED``) — until calibrated, it only measures.
 
-Universe sourcing is a static, operator-tunable list here (the lever to break
-the 7-major narrative monoculture: widen the list). A dynamic top-N-by-volume
-source needs a new exchange "list markets" adapter method and is a follow-up.
+Universe sourcing is an operator-tunable static list by default; with
+``ALERT_TECHNICAL_SCREENER_DYNAMIC_UNIVERSE`` (WP-F) it pulls the most-liquid
+pairs by 24h volume from the sanctioned exchange adapter (``top_symbols_by_volume``)
+instead — broad coverage without third-party scraping. An explicit static list
+always wins; the dynamic fetch is fail-soft (falls back to static on any error).
 """
 
 from __future__ import annotations
@@ -228,9 +230,23 @@ async def run_from_settings(adapter: _OhlcvSource | None = None) -> dict[str, ob
 
         adapter = create_market_data_adapter(provider=settings.market_data_provider)
 
+    # WP-F: dynamic universe. An explicitly-set static list always wins; otherwise
+    # (and only with the flag on) pull the most-liquid pairs by 24h volume from the
+    # sanctioned exchange adapter. Fail-soft → static fallback on any error.
+    symbols = _configured_symbols(alerts.technical_screener_symbols)
+    if alerts.technical_screener_dynamic_universe and not alerts.technical_screener_symbols.strip():
+        fetch = getattr(adapter, "top_symbols_by_volume", None)
+        if fetch is not None:
+            try:
+                dynamic = await fetch(min(alerts.technical_screener_top_n * 5, 200))
+                if dynamic:
+                    symbols = dynamic
+            except Exception as exc:  # noqa: BLE001 — never abort on a universe fetch
+                logger.warning("technical_screener.dynamic_universe_failed", error=str(exc)[:200])
+
     return await run_technical_screen(
         adapter,
-        symbols=_configured_symbols(alerts.technical_screener_symbols),
+        symbols=symbols,
         top_n=alerts.technical_screener_top_n,
         min_strength=alerts.min_technical_strength,
         allow_short=alerts.allow_short_technical,
