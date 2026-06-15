@@ -50,6 +50,22 @@ class ExplorationSettings(BaseSettings):
     user_agent: str = Field(
         default="KAI-Exploration/0.1 (+research; contact: operator)",
     )
+    # Opt-in (default-off) browser-like UA for scrapers. Some sites 403/429 the
+    # honest research UA (e.g. Messari); a browser UA gets through. This is
+    # grey-area cloaking — explicitly operator-gated, never silent. Note: it does
+    # NOT defeat strong bot walls (CoinGecko stays 403 via TLS fingerprinting).
+    scrape_browser_ua_enabled: bool = Field(default=False)
+    browser_user_agent: str = Field(
+        default=(
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+        ),
+    )
+
+    @property
+    def scrape_user_agent(self) -> str:
+        """UA scrapers should use: browser-like when opted in, else honest."""
+        return self.browser_user_agent if self.scrape_browser_ua_enabled else self.user_agent
 
     # -- per-source enable flags (all default-off) ----------------------------
     coinglass_enabled: bool = Field(default=False)

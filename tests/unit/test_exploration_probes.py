@@ -91,6 +91,13 @@ async def test_coingecko_api_fails_on_http_error(monkeypatch: pytest.MonkeyPatch
     assert "429" in (result.error or "")
 
 
+def test_scrape_user_agent_toggle() -> None:
+    honest = _settings(scrape_browser_ua_enabled=False)
+    assert "KAI-Exploration" in honest.scrape_user_agent
+    browser = _settings(scrape_browser_ua_enabled=True)
+    assert "Mozilla" in browser.scrape_user_agent
+
+
 def test_scrape_util_extracts_price_and_volume_from_meta() -> None:
     from app.exploration.scrape_util import parse_html_signals
 

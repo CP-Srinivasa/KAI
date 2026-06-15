@@ -78,7 +78,7 @@ class CoinMarketCapScrapeProbe(ExplorationProbe):
             url,
             expect="text",
             timeout=self._s.timeout_seconds,
-            user_agent=self._s.user_agent,
+            user_agent=self._s.scrape_user_agent,
         )
         meta = ProbeMeta(http_status=resp.status, latency_ms=resp.latency_ms, bytes=resp.bytes)
         if not resp.ok or not resp.text:
