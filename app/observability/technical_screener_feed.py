@@ -271,8 +271,9 @@ async def run_from_settings(adapter: _OhlcvSource | None = None) -> dict[str, ob
             from app.integrations.tradingview.datafeed import TradingViewDatafeed
 
             feed = TradingViewDatafeed(exchange=settings.tradingview.datafeed_exchange)
-            rows = await feed.top_rows(limit=min(alerts.technical_screener_top_n * 8, 400))
-            tv_ratings = {r.symbol: r.rating for r in rows if r.rating is not None}
+            # Query TV for the screener's EXACT universe so every candidate can
+            # carry its rating (not TV's base-volume ranking, which barely overlaps).
+            tv_ratings = await feed.ratings_for(symbols)
         except Exception as exc:  # noqa: BLE001 — unofficial source must never break the run
             logger.warning("technical_screener.tv_ratings_failed", error=str(exc)[:200])
 

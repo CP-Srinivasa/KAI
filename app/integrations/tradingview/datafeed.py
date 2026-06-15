@@ -70,15 +70,8 @@ class TradingViewDatafeed:
         self._exchange = exchange
         self._timeout = timeout_seconds
 
-    async def _scan(
-        self, columns: list[str], *, limit: int, sort_by: str
-    ) -> list[dict[str, object]]:
-        body: dict[str, object] = {
-            "filter": [{"left": "exchange", "operation": "in_range", "right": [self._exchange]}],
-            "columns": columns,
-            "sort": {"sortBy": sort_by, "sortOrder": "desc"},
-            "range": [0, max(1, limit)],
-        }
+    async def _post(self, body: dict[str, object]) -> list[dict[str, object]]:
+        """POST a scanner body, return the ``data`` rows. Fail-soft → []."""
         url = f"{self._base}/crypto/scan"
         try:
             async with httpx.AsyncClient(timeout=self._timeout) as client:
@@ -92,6 +85,63 @@ class TradingViewDatafeed:
             return []
         rows = data.get("data") if isinstance(data, dict) else None
         return rows if isinstance(rows, list) else []
+
+    async def _scan(
+        self, columns: list[str], *, limit: int, sort_by: str
+    ) -> list[dict[str, object]]:
+        return await self._post(
+            {
+                "filter": [
+                    {"left": "exchange", "operation": "in_range", "right": [self._exchange]}
+                ],
+                "columns": columns,
+                "sort": {"sortBy": sort_by, "sortOrder": "desc"},
+                "range": [0, max(1, limit)],
+            }
+        )
+
+    def _to_ticker(self, canonical: str) -> str | None:
+        """``ADA/USDT`` → ``BYBIT:ADAUSDT`` (exchange-prefixed scanner ticker)."""
+        c = canonical.strip().upper()
+        base, sep, quote = c.partition("/")
+        if not sep or not base or not quote:
+            return None
+        return f"{self._exchange}:{base}{quote}"
+
+    async def ratings_for(self, symbols: list[str]) -> dict[str, float]:
+        """Recommend.All for an EXACT symbol set (not a volume ranking). Fail-soft.
+
+        Joins TV's rating onto the screener's own universe so every candidate can
+        carry it — unlike ``top_rows`` (TV's base-volume ranking) which rarely
+        overlaps a turnover-ranked universe.
+        """
+        ticker_to_canonical: dict[str, str] = {}
+        for s in symbols:
+            ticker = self._to_ticker(s)
+            if ticker is not None:
+                ticker_to_canonical[ticker] = s
+        if not ticker_to_canonical:
+            return {}
+        rows = await self._post(
+            {
+                "symbols": {"tickers": list(ticker_to_canonical)},
+                "columns": ["name", "Recommend.All"],
+            }
+        )
+        out: dict[str, float] = {}
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            d = row.get("d")
+            if not isinstance(d, list) or len(d) < 2:
+                continue
+            rating = _fnum(d[1])
+            canonical = _canonical(str(row.get("s") or "")) or ticker_to_canonical.get(
+                str(row.get("s") or "")
+            )
+            if canonical is not None and rating is not None:
+                out[canonical] = rating
+        return out
 
     async def top_rows(self, *, limit: int = 50) -> list[TradingViewRow]:
         """Top-``limit`` USDT pairs by volume with close/change/rating. Fail-soft."""
