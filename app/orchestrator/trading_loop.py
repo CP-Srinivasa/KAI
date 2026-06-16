@@ -179,14 +179,10 @@ class TradingLoop:
         canary loop can never reach a fill through this path. Default None →
         unchanged behaviour for every existing caller.
 
-        ``execution_mode`` (V2 2026-06-16): the run's ExecutionMode. The D-182
-        priority-tier gate reads ``analysis_source`` to pick the feeder-specific
-        ``real_analysis_paper.min_priority``, but the entry-mode DECOUPLING path
-        must additionally require PAPER mode — a ``SHADOW`` cycle measures the
-        funnel and must NEVER yield a real paper fill. This lets the SHADOW
-        real-analysis feed tag itself ``real_analysis`` (so its priority gate uses
-        the intended relaxed threshold) without opening a fill. Default PAPER
-        preserves behaviour for the existing real-analysis paper feeder.
+        ``execution_mode`` (V2 2026-06-16): the entry-mode DECOUPLING path
+        additionally requires PAPER mode, so a SHADOW real-analysis cycle may tag
+        itself ``real_analysis`` for the relaxed priority threshold WITHOUT ever
+        opening a fill. Default PAPER preserves the real-analysis paper feeder.
         """
         cycle_id = _new_cycle_id()
         started_at = _now_utc()
@@ -1326,12 +1322,9 @@ class TradingLoop:
             # ordinary entry_mode kill-switch applies as before.
             return False, None
         if execution_mode is not ExecutionMode.PAPER:
-            # V2 2026-06-16: a SHADOW real-analysis cycle (the shadow_real_feed
-            # measurement funnel) tags itself ``real_analysis`` only to select the
-            # relaxed priority threshold — it must NEVER be decoupled into a real
-            # paper fill. Refuse here so the cycle falls through to the shadow-
-            # diagnostics / candidate-recording path. PAPER mode (the real
-            # real-analysis paper feeder) is unaffected.
+            # V2 2026-06-16: a SHADOW real-analysis cycle tags ``real_analysis``
+            # only for the relaxed priority threshold — never a real fill. Refuse
+            # so it falls through to the shadow-diagnostics path. PAPER unaffected.
             return False, "shadow_mode_no_decouple"
         if is_synthetic_probe_document(analysis.document_id):
             # Hard invariant: a synthetic probe can NEVER be decoupled, even if a
