@@ -60,6 +60,7 @@ from pathlib import Path
 from typing import Any
 
 from app.analysis.base.interfaces import BaseAnalysisProvider, LLMAnalysisOutput
+from app.analysis.crypto_relevance import crypto_relevance_verdict
 from app.analysis.keywords.engine import KeywordEngine, KeywordHit
 from app.analysis.rules.rule_analyzer import compute_spam_probability
 from app.core.domain.document import AnalysisResult, CanonicalDocument, EntityMention
@@ -429,6 +430,7 @@ class AnalysisPipeline:
         shadow_provider: BaseAnalysisProvider | None = None,
         market_data_adapter: BaseMarketDataAdapter | None = None,
         trusted_social_handles: frozenset[str] | None = None,
+        crypto_gate_mode: str | None = None,
     ) -> None:
         self._keyword_engine = keyword_engine
         self._provider = provider
@@ -438,6 +440,10 @@ class AnalysisPipeline:
         self._cached_market_context: dict[str, Any] | None = None
         # D-174 Phase I (2Y): curated twitter watchlist bypasses stub + low-relevance gates.
         self._trusted_social_handles: frozenset[str] = trusted_social_handles or frozenset()
+        # Pre-analysis crypto-relevance gate (2026-06-16). Resolved once at
+        # construction (one pipeline per batch, not per doc). None → read the
+        # SOURCE_CRYPTO_RELEVANCE_GATE_MODE setting (default ``shadow``).
+        self._crypto_gate_mode = self._resolve_crypto_gate_mode(crypto_gate_mode)
 
         if self._shadow_overlaps_ensemble() and shadow_provider is not None:
             # CLAUDE.md §6 requires Konsens/Dissens/Red-Team. A shadow that
@@ -455,6 +461,25 @@ class AnalysisPipeline:
                     "provider. Consider a distinct shadow (e.g. Anthropic)."
                 ),
             )
+
+    @staticmethod
+    def _resolve_crypto_gate_mode(explicit: str | None) -> str:
+        """Resolve the crypto-relevance gate mode (off|shadow|enforce).
+
+        Fail-SAFE: an explicit value is honoured (lowercased); otherwise read the
+        setting. Any error or unknown value degrades to ``off`` so a config
+        glitch never silently starts skipping the LLM.
+        """
+        if explicit is not None:
+            mode = explicit.strip().lower()
+            return mode if mode in {"off", "shadow", "enforce"} else "off"
+        try:
+            from app.core.settings import get_settings
+
+            mode = get_settings().sources.crypto_relevance_gate_mode.strip().lower()
+            return mode if mode in {"off", "shadow", "enforce"} else "off"
+        except Exception:  # noqa: BLE001 — config glitch must not break analysis
+            return "off"
 
     def _is_trusted_social_author(self, doc: CanonicalDocument) -> bool:
         """True if doc is a tweet whose author is in the curated watchlist."""
@@ -580,6 +605,30 @@ class AnalysisPipeline:
                 pre_llm_relevance=pre_llm_relevance,
                 title=doc.title[:80] if doc.title else "",
             )
+
+        # Pre-analysis crypto-relevance gate (2026-06-16). Only acts on documents
+        # that would otherwise reach the LLM (fallback_reason still None) and are
+        # NOT trusted-author bypasses. Fail-open: a crypto-irrelevant verdict
+        # means no ticker, no crypto_asset, and zero crypto keyword hits.
+        if self._crypto_gate_mode != "off" and fallback_reason is None and not trusted_author:
+            crypto_relevant, crypto_reason = crypto_relevance_verdict(doc, keyword_hits)
+            if not crypto_relevant:
+                if self._crypto_gate_mode == "enforce":
+                    fallback_reason = f"crypto_relevance_gate: {crypto_reason}"
+                    logger.info(
+                        "crypto_relevance_gate_skipped_llm",
+                        doc_id=str(doc.id),
+                        reason=crypto_reason,
+                        title=doc.title[:80] if doc.title else "",
+                    )
+                else:  # shadow — measure only, no behaviour change
+                    logger.info(
+                        "crypto_relevance_gate_shadow",
+                        doc_id=str(doc.id),
+                        would_skip=True,
+                        reason=crypto_reason,
+                        title=doc.title[:80] if doc.title else "",
+                    )
 
         if fallback_reason is not None:
             analysis_result = self._build_fallback_analysis(
