@@ -28,9 +28,9 @@ def test_timer_health_probe_real_systemctl_inactive_single_token(tmp_path) -> No
     # Mimic real systemd: is-active prints the state to stdout AND exits 3 for
     # non-active units. Any other subcommand exits 0 cleanly.
     fake_systemctl.write_text(
-        '#!/usr/bin/env bash\n'
+        "#!/usr/bin/env bash\n"
         'if [[ "$1" == "is-active" ]]; then echo "inactive"; exit 3; fi\n'
-        'exit 0\n',
+        "exit 0\n",
         encoding="utf-8",
     )
     fake_systemctl.chmod(0o755)
