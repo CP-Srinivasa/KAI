@@ -20,7 +20,7 @@ from app.core.domain.document import CanonicalDocument
 from app.core.enums import DocumentType, SourceType
 from app.core.logging import get_logger
 from app.ingestion.base.interfaces import BaseSourceAdapter, FetchResult, SourceMetadata
-from app.security.ssrf import validate_url
+from app.security.ssrf import ssrf_redirect_hook, validate_url
 
 _log = get_logger(__name__)
 
@@ -124,7 +124,10 @@ class OKXAnnouncementsAdapter(BaseSourceAdapter):
     )
     async def _fetch_raw(self) -> dict[str, Any]:
         async with httpx.AsyncClient(
-            timeout=self._timeout, headers=_HEADERS, follow_redirects=True
+            timeout=self._timeout,
+            headers=_HEADERS,
+            follow_redirects=True,
+            event_hooks={"response": [ssrf_redirect_hook]},
         ) as client:
             response = await client.get(self._url)
             response.raise_for_status()

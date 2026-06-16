@@ -295,7 +295,7 @@ def _verify_shared_token(provided_token: str | None, expected_token: str) -> boo
     NOTE: shared-token mode does NOT verify body integrity — only that the
     caller knows the secret. Use HMAC mode whenever the client can compute it.
     """
-    if not provided_token or not expected_token:
+    if not isinstance(provided_token, str) or not provided_token or not expected_token:
         return False
     return hmac.compare_digest(provided_token.strip(), expected_token)
 
@@ -553,7 +553,12 @@ async def tradingview_webhook(
         try:
             body_obj = json.loads(raw_body.decode("utf-8")) if raw_body else {}
             if isinstance(body_obj, dict):
-                body_token = body_obj.get("token") or body_obj.get("_token")
+                candidate = body_obj.get("token") or body_obj.get("_token")
+                # A JSON ``token`` field may be any type (int, list, dict). The
+                # constant-time compare expects a string; coerce non-str values
+                # to None so a malformed body fails auth cleanly (401) instead
+                # of raising AttributeError → unauthenticated 500.
+                body_token = candidate if isinstance(candidate, str) else None
         except (UnicodeDecodeError, json.JSONDecodeError):
             pass
 
