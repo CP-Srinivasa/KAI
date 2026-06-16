@@ -18,6 +18,7 @@ import {
   Zap,
   Bot,
   Bitcoin,
+  Database,
   X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -35,6 +36,7 @@ const LIVE: Item[] = [
   { id: "dashboard", labelKey: "nav.dashboard", icon: <LayoutDashboard size={16} /> },
   { id: "signals", labelKey: "nav.signals", icon: <Radio size={16} /> },
   { id: "external", labelKey: "nav.external", icon: <Upload size={16} /> },
+  { id: "sources", labelKey: "nav.sources", icon: <Database size={16} /> },
   { id: "trades", labelKey: "nav.trades", icon: <ArrowLeftRight size={16} /> },
   { id: "portfolio", labelKey: "nav.portfolio", icon: <Briefcase size={16} /> },
   { id: "alerts", labelKey: "nav.alerts", icon: <Bell size={16} /> },

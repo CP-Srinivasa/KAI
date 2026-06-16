@@ -12,6 +12,7 @@ export const ROUTES = [
   "news",
   "backtest",
   "external",
+  "sources",
   "node",
   "agents",
   "settings",
