@@ -18,6 +18,7 @@ import { TruthStatusBar } from "@/components/panels/TruthStatusBar";
 import { CommandHeader } from "@/components/layout/CommandHeader";
 import { ExecutiveSnapshot } from "@/components/panels/ExecutiveSnapshot";
 import { AcutePointsBoard } from "@/components/panels/AcutePointsBoard";
+import { NodeStatusKpi } from "@/components/panels/NodeStatusKpi";
 import { NOverviewPanel } from "@/components/panels/NOverviewPanel";
 import { SignalHeatmapPanel } from "@/components/panels/SignalHeatmap";
 import { PremiumRuntimeBanner } from "@/components/panels/PremiumRuntimeBanner";
@@ -321,6 +322,10 @@ export function Dashboard() {
             ) : undefined
           }
         />
+        {/* WP-1.4: Node-/Chain-Status-KPI (ehrlich gegen bestehendes Lightning-Endpoint). */}
+        <PanelErrorBoundary name="Node-Status-KPI">
+          <NodeStatusKpi />
+        </PanelErrorBoundary>
       </div>
 
       {/* Re-Entry-Gate (TV-Pivot D-125 · Stichtag 2026-05-16) */}
