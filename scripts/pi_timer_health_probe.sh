@@ -115,12 +115,24 @@ for t in "${TIMERS[@]}"; do
         fi
     else
         if command -v systemctl >/dev/null 2>&1; then
-            state="$(systemctl is-active "$t" 2>/dev/null || echo "inactive")"
+            # `systemctl is-active` PRINTS the state (e.g. "inactive") AND exits
+            # non-zero for non-active units. A previous `|| echo "inactive"`
+            # therefore appended a SECOND "inactive", so state became
+            # "inactive\ninactive" → the finding "<timer> (inactive\ninactive)"
+            # split into two JSON elements, and the orphan "inactive)" fragment
+            # failed timer-taxonomy lookup → mis-classified as a critical
+            # recurring timer (false-positive alert for an expired one-shot).
+            # `head -n1` collapses any multi-line output to a single token;
+            # empty output (systemctl present but no value) defaults to inactive.
+            state="$(systemctl is-active "$t" 2>/dev/null | head -n1)"
+            [[ -z "$state" ]] && state="inactive"
         else
             state="inactive"
         fi
     fi
-    
+    # Defense-in-depth: never let a stray newline mangle the finding token.
+    state="${state%%$'\n'*}"
+
     if [[ "$state" != "active" ]]; then
         NON_ACTIVE+=("$t ($state)")
     fi
