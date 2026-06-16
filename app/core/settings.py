@@ -1,6 +1,7 @@
 from collections.abc import Mapping
 from functools import lru_cache
 from pathlib import Path
+from typing import Literal
 
 from pydantic import AliasChoices, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -214,6 +215,12 @@ class SourceSettings(BaseSettings):
     fetch_timeout: int = Field(default=15)
     max_retries: int = Field(default=3)
     user_agent: str = Field(default="ai-analyst-bot/0.1")
+
+    # Pre-analysis crypto-relevance gate (2026-06-16). Skips the LLM for docs
+    # with no tradable crypto signal (~58% of volume, mostly the cryptobriefing
+    # site-wide feed). off=disabled · shadow=log-only · enforce=skip. Default
+    # shadow so the would-skip set can be validated before flipping to enforce.
+    crypto_relevance_gate_mode: Literal["off", "shadow", "enforce"] = Field(default="shadow")
 
 
 class RiskSettings(BaseSettings):
