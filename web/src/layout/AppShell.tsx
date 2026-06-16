@@ -30,6 +30,7 @@ const ExternalSignalsPage = lazy(() =>
 );
 const AgentsPage = lazy(() => import("@/pages/Agents").then((m) => ({ default: m.AgentsPage })));
 const NodePage = lazy(() => import("@/pages/Node").then((m) => ({ default: m.NodePage })));
+const SourcesPage = lazy(() => import("@/pages/Sources").then((m) => ({ default: m.SourcesPage })));
 const SettingsPage = lazy(() =>
   import("@/pages/Settings").then((m) => ({ default: m.SettingsPage })),
 );
@@ -102,6 +103,8 @@ function renderRoute(r: string) {
       return <ExternalSignalsPage />;
     case "node":
       return <NodePage />;
+    case "sources":
+      return <SourcesPage />;
     case "agents":
       return <AgentsPage />;
     case "settings":
