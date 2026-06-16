@@ -16,6 +16,7 @@ import { PageHeader } from "@/layout/PageHeader";
 import { Card, Badge, SectionLabel, InfoHint } from "@/components/ui/Primitives";
 import { PreparedPanel } from "@/components/panels/PreparedPanel";
 import { LightningPanel } from "@/components/panels/LightningPanel";
+import { ChainPanel } from "@/components/panels/ChainPanel";
 import { cn } from "@/lib/utils";
 
 // Node & Chain — KAIs souveräne Bitcoin/Lightning-Schicht, ehrlich phasiert.
@@ -172,7 +173,7 @@ export function NodePage() {
                 und Fees. CostModel und Truth-Layer aus eigener Node statt Schätzung/API.
               </>
             }
-            hint="Code gemerged (PR #273, app/chain/, read-only JSON-RPC), default-off. Noch kein Wiring in market-data/CostModel und kein Dashboard-Endpoint → hier Build-Status, keine Live-Zahlen."
+            hint="Code gemerged (PR #273, app/chain/, read-only JSON-RPC), default-off. Dashboard-Endpoint /dashboard/api/chain + Live-Panel (unten) verdrahtet — echte Höhe/Sync/Fee/Mempool, sobald APP_CHAIN_* gewired + aktiviert ist."
           />
           <Pillar
             layer="L3"
@@ -227,6 +228,7 @@ export function NodePage() {
         <SectionLabel>Node-Status</SectionLabel>
         <div className="grid gap-3 lg:grid-cols-2">
           <div className="space-y-3">
+            <ChainPanel />
             <LightningPanel />
             <div className="rounded-sm border border-info/25 bg-info/5 px-3 py-2.5 text-2xs text-fg-muted leading-relaxed">
               <span className="flex items-center gap-1.5 font-semibold text-info">

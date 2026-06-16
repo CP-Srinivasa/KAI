@@ -1512,3 +1512,23 @@ async def dashboard_lightning_api() -> JSONResponse:
 
     payload["generated_at"] = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
     return JSONResponse(content=payload, headers={"Cache-Control": "no-store, max-age=0"})
+
+
+@router.get("/dashboard/api/chain", tags=["dashboard"])
+async def dashboard_chain_api() -> JSONResponse:
+    """Read-only Chain-Status aus KAIs EIGENER bitcoind (L1, default-off).
+
+    Spiegelt ``app.chain.adapter.get_chain_status()`` — souveräne On-Chain-
+    Wahrheit (Tip-Höhe, Sync, Fee-Estimate, Mempool) aus der eigenen Node statt
+    aus einer Dritt-API. ``state`` ist ``disabled`` (Feature aus, kein Netzcall),
+    ``unavailable`` (an, aber Node nicht erreichbar) oder ``ok``. Fail-closed,
+    kein schreibender/kapitalrelevanter Pfad.
+    """
+    from dataclasses import asdict
+
+    from app.chain.adapter import get_chain_status
+
+    status = await get_chain_status()
+    payload = asdict(status)
+    payload["generated_at"] = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return JSONResponse(content=payload, headers={"Cache-Control": "no-store, max-age=0"})
