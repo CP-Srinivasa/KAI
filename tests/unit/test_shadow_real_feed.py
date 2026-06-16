@@ -196,3 +196,9 @@ async def test_default_run_once_forces_shadow_mode() -> None:
     assert captured["mode"] == ExecutionMode.SHADOW
     assert captured["symbol"] == "BTC/USDT"
     assert captured["analysis_result"].document_id == "x"
+    # V2 2026-06-16: the runner tags real_analysis so the D-182 priority gate uses
+    # the feeder threshold (5), not the global 10. The SHADOW mode floor + the
+    # decoupling mode-guard ensure this tag can never produce a real fill.
+    from app.execution.real_analysis_paper import REAL_ANALYSIS_SOURCE
+
+    assert captured["analysis_source"] == REAL_ANALYSIS_SOURCE
