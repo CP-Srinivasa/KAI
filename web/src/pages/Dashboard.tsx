@@ -15,6 +15,7 @@ import { PreparedPanel } from "@/components/panels/PreparedPanel";
 import { LivePortfolioTiles } from "@/components/panels/LivePortfolioTiles";
 import { ReentryGatePanel } from "@/components/panels/ReentryGatePanel";
 import { TruthStatusBar } from "@/components/panels/TruthStatusBar";
+import { CommandHeader } from "@/components/layout/CommandHeader";
 import { NOverviewPanel } from "@/components/panels/NOverviewPanel";
 import { SignalHeatmapPanel } from "@/components/panels/SignalHeatmap";
 import { PremiumRuntimeBanner } from "@/components/panels/PremiumRuntimeBanner";
@@ -93,6 +94,17 @@ export function Dashboard() {
 
   return (
     <div className="p-4 xl:p-5 space-y-4 xl:space-y-5 max-w-[1680px] mx-auto">
+      {/* WP-1.1: sticky Command Header — verdichtete, nie wegscrollende Lage-Leiste. */}
+      <PanelErrorBoundary name="Command-Header">
+        <CommandHeader
+          kai={kai.state === "ready" ? kai.data : null}
+          quality={data}
+          regime={regime}
+          priorityGate={priorityGate}
+          qualityState={q.state}
+        />
+      </PanelErrorBoundary>
+
       <header className="flex items-center justify-between flex-wrap gap-3">
         <div>
           <h1 className="text-display text-fg">
