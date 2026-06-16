@@ -143,6 +143,44 @@ def test_expired_records_counted_separately(tmp_path: Path, baseline_path: Path)
     assert stats.sample_size == 1
     assert stats.expired_count == 3
     assert stats.expired_pct == 75.0  # 3 expired / (3+1 terminal) * 100
+    assert stats.stale_expired_count == 0  # no origin/ttl → unclassifiable → genuine
+
+
+def test_stale_on_arrival_expiries_excluded_from_pct(tmp_path: Path, baseline_path: Path):
+    """A signal already far older than its TTL when ingested expired on first
+    contact (backlog/replay) — it must not inflate expired_pct. Regression for
+    the 2026-06-11 sweep that drove the digest to a misleading 90.6%."""
+    log = tmp_path / "bridge.jsonl"
+    records = [_fill_record(fill_offset_sec=100, origin_offset_sec=300)]
+    # 1 genuine expiry: waited out its 24h TTL (age == ttl ≤ 2×ttl).
+    records.append(
+        {
+            "timestamp_utc": (_NOW - timedelta(seconds=100)).isoformat(),
+            "stage": "expired",
+            "ttl_hours": 24,
+            "origin_envelope_timestamp": (_NOW - timedelta(hours=24, seconds=100)).isoformat(),
+        }
+    )
+    # 2 stale-on-arrival expiries: origin ~31 days before expiry (age ≫ 2×ttl).
+    records.extend(
+        [
+            {
+                "timestamp_utc": (_NOW - timedelta(seconds=200 + i)).isoformat(),
+                "stage": "expired",
+                "ttl_hours": 24,
+                "origin_envelope_timestamp": (
+                    _NOW - timedelta(days=31, seconds=200 + i)
+                ).isoformat(),
+            }
+            for i in range(2)
+        ]
+    )
+    _write_audit(log, records)
+    stats = pl.compute_latency_stats(audit_path=log, baseline_path=baseline_path, now=_NOW)
+    assert stats.sample_size == 1
+    assert stats.expired_count == 1  # only the genuine 24h-wait expiry
+    assert stats.stale_expired_count == 2  # backlog replay, excluded
+    assert stats.expired_pct == 50.0  # 1 genuine expired / (1 fill + 1 genuine) * 100
 
 
 def test_filled_duplicate_suppressed_counts_as_sample(tmp_path: Path, baseline_path: Path):

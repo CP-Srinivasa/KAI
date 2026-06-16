@@ -40,6 +40,19 @@ DEFAULT_LOOKBACK_HOURS = 168  # 7 days
 DEFAULT_TRIGGER_P95_SECONDS = 20 * 60
 DEFAULT_TRIGGER_MIN_SAMPLES = 5
 
+# An "expired" record only reflects pipeline fill performance when the signal
+# entered fresh and waited out its TTL — i.e. age(origin→expiry) ≈ ttl_hours.
+# A signal that was already far older than its TTL when first ingested expires
+# on first contact and says nothing about whether the pipeline can fill: it was
+# never fillable. The 2026-06-11 backlog sweep (57 signals, median age ~31 days,
+# up to ~54 days) inflated expired_pct to 90.6% this way. We classify any expiry
+# whose origin→expiry age exceeds ``ttl_hours * STALE_ON_ARRIVAL_TTL_FACTOR`` as
+# stale-on-arrival and exclude it from ``expired_pct`` (counting it separately so
+# it stays visible, never silently dropped). Factor 2.0 is deliberately generous
+# — a fresh signal expires at age≈ttl, so only clearly-stale backlog (>2× ttl)
+# is excluded.
+STALE_ON_ARRIVAL_TTL_FACTOR = 2.0
+
 _BRIDGE_LOG = Path("artifacts/bridge_pending_orders.jsonl")
 _BASELINE_PATH = Path("artifacts/premium_latency_audit_baseline.json")
 
@@ -49,6 +62,7 @@ class LatencyStats:
     sample_size: int
     expired_count: int
     expired_pct: float
+    stale_expired_count: int  # expiries excluded from expired_pct (stale-on-arrival)
     p50_seconds: float | None
     p95_seconds: float | None
     p99_seconds: float | None
@@ -150,6 +164,7 @@ def compute_latency_stats(
 
     latencies: list[float] = []
     expired_count = 0
+    stale_expired_count = 0
 
     if path.exists():
         try:
@@ -170,6 +185,18 @@ def compute_latency_stats(
                 continue
             stage = rec.get("stage")
             if stage == "expired":
+                # Stale-on-arrival expiries (origin→expiry age >> ttl) reflect
+                # backlog/replay of long-dead signals, not pipeline fill ability.
+                # Exclude them from expired_pct but count them separately so the
+                # operator still sees them. When origin or ttl is missing we
+                # cannot classify → count as genuine (never hide an expiry).
+                origin_ts = _parse_iso(rec.get("origin_envelope_timestamp"))
+                ttl_hours_rec = rec.get("ttl_hours")
+                if origin_ts is not None and isinstance(ttl_hours_rec, (int, float)):
+                    age_hours = (ts - origin_ts).total_seconds() / 3600.0
+                    if age_hours > ttl_hours_rec * STALE_ON_ARRIVAL_TTL_FACTOR:
+                        stale_expired_count += 1
+                        continue
                 expired_count += 1
                 continue
             if stage not in ("filled", "filled_duplicate_suppressed"):
@@ -204,6 +231,7 @@ def compute_latency_stats(
         sample_size=n,
         expired_count=expired_count,
         expired_pct=round(expired_pct, 2),
+        stale_expired_count=stale_expired_count,
         p50_seconds=round(p50, 2) if p50 is not None else None,
         p95_seconds=round(p95, 2) if p95 is not None else None,
         p99_seconds=round(p99, 2) if p99 is not None else None,
@@ -218,6 +246,7 @@ __all__ = [
     "DEFAULT_LOOKBACK_HOURS",
     "DEFAULT_TRIGGER_MIN_SAMPLES",
     "DEFAULT_TRIGGER_P95_SECONDS",
+    "STALE_ON_ARRIVAL_TTL_FACTOR",
     "LatencyStats",
     "compute_latency_stats",
 ]
