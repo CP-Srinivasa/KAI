@@ -176,6 +176,60 @@ async def test_p3_gate2_real_analysis_threshold5_allows_p5(
 
 
 @pytest.mark.asyncio
+async def test_shadow_real_analysis_never_decouples(tmp_path) -> None:
+    """V2 2026-06-16: a SHADOW real_analysis cycle must refuse entry-mode
+    decoupling — the measurement feed tags real_analysis only to relax its
+    priority threshold and must NEVER yield a real paper fill. The PAPER feeder
+    path is unaffected (the mode-guard is not its refusal reason)."""
+    from app.core.enums import ExecutionMode
+    from app.core.settings import get_settings
+
+    loop = _loop(tmp_path)
+    settings = get_settings()
+    analysis = _analysis(priority=8)  # non-probe document_id
+
+    decoupled, code = loop._real_analysis_decoupling_verdict(
+        analysis=analysis,
+        analysis_source="real_analysis",
+        settings=settings,
+        execution_mode=ExecutionMode.SHADOW,
+    )
+    assert decoupled is False
+    assert code == "shadow_mode_no_decouple"
+
+    # PAPER → the mode-guard is never the reason (verdict proceeds to the policy
+    # check, which may allow or refuse, but never with the shadow code).
+    _, code_paper = loop._real_analysis_decoupling_verdict(
+        analysis=analysis,
+        analysis_source="real_analysis",
+        settings=settings,
+        execution_mode=ExecutionMode.PAPER,
+    )
+    assert code_paper != "shadow_mode_no_decouple"
+
+
+@pytest.mark.asyncio
+async def test_shadow_real_analysis_uses_feeder_threshold(
+    tmp_path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """V2 2026-06-16: under SHADOW the real_analysis tag still selects the feeder
+    priority threshold (5), so a P5 analysis passes Gate 2 — previously it was
+    silently gated at the global 10 because the shadow feed sent no source tag."""
+    monkeypatch.setenv("EXECUTION_PAPER_MIN_PRIORITY", "10")
+    monkeypatch.setenv("REAL_ANALYSIS_PAPER_MIN_PRIORITY", "5")
+    from app.core.enums import ExecutionMode
+
+    loop = _loop(tmp_path)
+    cycle = await loop.run_cycle(
+        _analysis(priority=5),
+        "BTC/USDT",
+        analysis_source="real_analysis",
+        execution_mode=ExecutionMode.SHADOW,
+    )
+    assert cycle.status != CycleStatus.PRIORITY_REJECTED
+
+
+@pytest.mark.asyncio
 async def test_p3_gate2_other_source_keeps_global_threshold(
     tmp_path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

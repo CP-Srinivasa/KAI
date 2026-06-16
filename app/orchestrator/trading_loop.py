@@ -163,6 +163,7 @@ class TradingLoop:
         symbol: str,
         *,
         analysis_source: str | None = None,
+        execution_mode: ExecutionMode = ExecutionMode.PAPER,
     ) -> LoopCycle:
         """
         Execute one cycle for a symbol and return the immutable cycle audit record.
@@ -177,6 +178,11 @@ class TradingLoop:
         ``loop_control_*`` probe document_ids are hard-excluded, so the degenerate
         canary loop can never reach a fill through this path. Default None →
         unchanged behaviour for every existing caller.
+
+        ``execution_mode`` (V2 2026-06-16): the entry-mode DECOUPLING path
+        additionally requires PAPER mode, so a SHADOW real-analysis cycle may tag
+        itself ``real_analysis`` for the relaxed priority threshold WITHOUT ever
+        opening a fill. Default PAPER preserves the real-analysis paper feeder.
         """
         cycle_id = _new_cycle_id()
         started_at = _now_utc()
@@ -219,6 +225,7 @@ class TradingLoop:
                 analysis=analysis,
                 analysis_source=analysis_source,
                 settings=settings,
+                execution_mode=execution_mode,
             )
             if not decoupled:
                 # Phase B: when shadow-diagnostics is ON we DON'T early-return; we
@@ -1285,6 +1292,7 @@ class TradingLoop:
         analysis: AnalysisResult,
         analysis_source: str | None,
         settings: AppSettings,
+        execution_mode: ExecutionMode = ExecutionMode.PAPER,
     ) -> tuple[bool, str | None]:
         """Decide whether THIS cycle may be decoupled from ``entry_mode=disabled``
         as a real-analysis paper fill (Goal 2026-06-10).
@@ -1313,6 +1321,11 @@ class TradingLoop:
             # Not the real-analysis feeder → no decoupling, no refusal noise; the
             # ordinary entry_mode kill-switch applies as before.
             return False, None
+        if execution_mode is not ExecutionMode.PAPER:
+            # V2 2026-06-16: a SHADOW real-analysis cycle tags ``real_analysis``
+            # only for the relaxed priority threshold — never a real fill. Refuse
+            # so it falls through to the shadow-diagnostics path. PAPER unaffected.
+            return False, "shadow_mode_no_decouple"
         if is_synthetic_probe_document(analysis.document_id):
             # Hard invariant: a synthetic probe can NEVER be decoupled, even if a
             # caller mis-tags it as real_analysis.
@@ -2035,7 +2048,9 @@ async def run_trading_loop_once(
         symbol=symbol,
         analysis_profile=analysis_profile,
     )
-    return await loop.run_cycle(analysis, symbol, analysis_source=analysis_source)
+    return await loop.run_cycle(
+        analysis, symbol, analysis_source=analysis_source, execution_mode=normalized_mode
+    )
 
 
 async def run_position_monitor_once(
