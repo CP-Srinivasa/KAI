@@ -17,6 +17,7 @@ import { ReentryGatePanel } from "@/components/panels/ReentryGatePanel";
 import { TruthStatusBar } from "@/components/panels/TruthStatusBar";
 import { CommandHeader } from "@/components/layout/CommandHeader";
 import { ExecutiveSnapshot } from "@/components/panels/ExecutiveSnapshot";
+import { AcutePointsBoard } from "@/components/panels/AcutePointsBoard";
 import { NOverviewPanel } from "@/components/panels/NOverviewPanel";
 import { SignalHeatmapPanel } from "@/components/panels/SignalHeatmap";
 import { PremiumRuntimeBanner } from "@/components/panels/PremiumRuntimeBanner";
@@ -144,6 +145,16 @@ export function Dashboard() {
       {/* WP-1.2: Executive Snapshot — prominente Lageübersicht direkt unter dem Header. */}
       <PanelErrorBoundary name="Executive-Snapshot">
         <ExecutiveSnapshot />
+      </PanelErrorBoundary>
+
+      {/* WP-1.3: Akute Punkte — handlungsorientierte Triage der blockierenden Gates/Probleme. */}
+      <PanelErrorBoundary name="Akute-Punkte">
+        <AcutePointsBoard
+          quality={data}
+          regime={regime}
+          priorityGate={priorityGate}
+          qualityState={q.state}
+        />
       </PanelErrorBoundary>
 
       {/* Premium-Runtime-Wahrheit — laut sichtbar wenn entry_mode/Bridge/Source
