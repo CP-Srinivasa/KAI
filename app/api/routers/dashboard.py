@@ -1484,19 +1484,51 @@ async def dashboard_regime_api() -> JSONResponse:
 
 @router.get("/dashboard/api/lightning", tags=["dashboard"])
 async def dashboard_lightning_api() -> JSONResponse:
-    """Read-only Lightning-Node-Status (Phase 1, default-off).
+    """Read-only Lightning-Node-Status + souveräne Chain-Wahrheit (L1, default-off).
 
-    Spiegelt ``app.lightning.adapter.get_node_status()`` — fail-closed, wirft
-    nie. ``state`` ist ``disabled`` (Feature aus, kein Netzwerk-Call),
-    ``unavailable`` (an, aber Node nicht erreichbar) oder ``ok`` (erreichbar;
-    ``info_available`` zeigt, ob ``getinfo``-Detailfelder gefüllt sind). Kein
-    schreibender/kapitalrelevanter Pfad.
+    Spiegelt ``app.lightning.adapter.get_node_status()`` (lnd) und reichert
+    Block-Höhe/Sync aus KAIs EIGENER bitcoind
+    (``app.chain.adapter.get_chain_status()``, L1) an — so bleiben Höhe/Sync
+    truthful, selbst wenn lnds ``getinfo`` (Tor) hängt. ``state`` ist
+    ``disabled`` / ``unavailable`` / ``ok`` (``info_available`` zeigt, ob die
+    lnd-``getinfo``-Detailfelder Peers/Channels/Alias gefüllt sind). Beide
+    Quellen fail-closed/default-off; kein schreibender/kapitalrelevanter Pfad.
     """
     from dataclasses import asdict
 
+    from app.chain.adapter import get_chain_status
     from app.lightning.adapter import get_node_status
 
     status = await get_node_status()
+    payload = asdict(status)
+
+    # Souveräne Chain-Wahrheit: Höhe/Sync bevorzugt aus der eigenen bitcoind
+    # (schnell, immer verfügbar) statt aus lnds langsamem/Tor-hängendem getinfo.
+    chain = await get_chain_status()
+    payload["chain"] = asdict(chain)
+    if chain.state == "ok":
+        payload["block_height"] = chain.blocks
+        payload["synced_to_chain"] = chain.synced
+
+    payload["generated_at"] = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return JSONResponse(content=payload, headers={"Cache-Control": "no-store, max-age=0"})
+
+
+@router.get("/dashboard/api/chain", tags=["dashboard"])
+async def dashboard_chain_api() -> JSONResponse:
+    """Read-only Chain-Status aus KAIs EIGENER bitcoind (L1, default-off).
+
+    Spiegelt ``app.chain.adapter.get_chain_status()`` — souveräne On-Chain-
+    Wahrheit (Tip-Höhe, Sync, Fee-Estimate, Mempool) aus der eigenen Node statt
+    aus einer Dritt-API. ``state`` ist ``disabled`` (Feature aus, kein Netzcall),
+    ``unavailable`` (an, aber Node nicht erreichbar) oder ``ok``. Fail-closed,
+    kein schreibender/kapitalrelevanter Pfad.
+    """
+    from dataclasses import asdict
+
+    from app.chain.adapter import get_chain_status
+
+    status = await get_chain_status()
     payload = asdict(status)
     payload["generated_at"] = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
     return JSONResponse(content=payload, headers={"Cache-Control": "no-store, max-age=0"})

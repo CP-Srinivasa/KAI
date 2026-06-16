@@ -730,3 +730,76 @@ def test_lightning_endpoint_disabled_by_default() -> None:
     assert body["reachable"] is False
     assert "generated_at" in body
     assert "num_active_channels" in body
+    # L1: chain-Wahrheit ist mit drin und ebenfalls default-off.
+    assert body["chain"]["state"] == "disabled"
+
+
+def test_lightning_endpoint_chain_truth_overrides_height(monkeypatch) -> None:
+    """L1: Block-Höhe/Sync kommen aus der eigenen bitcoind, auch wenn lnd-getinfo leer ist."""
+    from app.chain.adapter import ChainStatus
+    from app.lightning.adapter import LightningNodeStatus
+
+    async def _fake_node(cfg=None):  # lnd erreichbar, aber getinfo-Details fehlen
+        return LightningNodeStatus(
+            state="ok",
+            reachable=True,
+            server_state="SERVER_ACTIVE",
+            info_available=False,
+            block_height=0,
+            synced_to_chain=False,
+        )
+
+    async def _fake_chain(cfg=None):  # eigene bitcoind liefert die Wahrheit
+        return ChainStatus(
+            state="ok",
+            reachable=True,
+            chain="main",
+            blocks=953902,
+            headers=953902,
+            synced=True,
+            fee_sat_vb=2.0,
+            mempool_tx=5,
+        )
+
+    monkeypatch.setattr("app.lightning.adapter.get_node_status", _fake_node)
+    monkeypatch.setattr("app.chain.adapter.get_chain_status", _fake_chain)
+
+    body = TestClient(_make_app()).get("/dashboard/api/lightning").json()
+    assert body["state"] == "ok" and body["reachable"] is True
+    assert body["block_height"] == 953902  # aus bitcoind, nicht aus lnd-getinfo
+    assert body["synced_to_chain"] is True
+    assert body["chain"]["state"] == "ok" and body["chain"]["blocks"] == 953902
+
+
+def test_chain_endpoint_disabled_by_default() -> None:
+    """Default-off: /dashboard/api/chain meldet `disabled` ohne Netzwerk-Call."""
+    resp = TestClient(_make_app()).get("/dashboard/api/chain")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["state"] == "disabled"
+    assert body["reachable"] is False
+    assert "generated_at" in body
+    assert "blocks" in body and "mempool_tx" in body
+
+
+def test_chain_endpoint_ok_when_reachable(monkeypatch) -> None:
+    """Erreichbare bitcoind → ok mit Tip-Höhe/Sync/Fee/Mempool aus der Node."""
+    from app.chain.adapter import ChainStatus
+
+    async def _fake_chain(cfg=None):
+        return ChainStatus(
+            state="ok",
+            reachable=True,
+            chain="main",
+            blocks=953902,
+            headers=953902,
+            synced=True,
+            fee_sat_vb=2.5,
+            mempool_tx=7,
+        )
+
+    monkeypatch.setattr("app.chain.adapter.get_chain_status", _fake_chain)
+    body = TestClient(_make_app()).get("/dashboard/api/chain").json()
+    assert body["state"] == "ok" and body["reachable"] is True
+    assert body["blocks"] == 953902 and body["synced"] is True
+    assert body["fee_sat_vb"] == 2.5 and body["mempool_tx"] == 7
