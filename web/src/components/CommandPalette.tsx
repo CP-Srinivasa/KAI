@@ -23,6 +23,7 @@ import {
   Zap,
   Bitcoin,
   Database,
+  Activity,
 } from "lucide-react";
 import { useRouter, ROUTES, type Route } from "@/state/Router";
 import { useTheme } from "@/theme/ThemeProvider";
@@ -59,6 +60,7 @@ const ROUTE_ICONS: Record<Route, ReactNode> = {
   sources: <Database size={14} />,
   node: <Bitcoin size={14} />,
   agents: <Bot size={14} />,
+  system: <Activity size={14} />,
   settings: <Settings size={14} />,
 };
 
