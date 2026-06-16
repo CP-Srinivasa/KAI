@@ -17,6 +17,7 @@ import {
   Shield,
   Zap,
   Bot,
+  Bitcoin,
   X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -46,6 +47,11 @@ const PREPARED: Item[] = [
   { id: "markets", labelKey: "nav.markets", icon: <LineChart size={16} />, prepared: true },
   { id: "news", labelKey: "nav.news", icon: <Newspaper size={16} />, prepared: true },
   { id: "backtest", labelKey: "nav.backtest", icon: <Rewind size={16} />, prepared: true },
+];
+
+// Souveränität (eigene Bitcoin/Lightning-Node, Truth-Layer)
+const SOVEREIGN: Item[] = [
+  { id: "node", labelKey: "nav.node", icon: <Bitcoin size={16} /> },
 ];
 
 // Kontroll-Ebene (Claude-Code-only Agenten)
@@ -142,6 +148,8 @@ export function Sidebar({ mobileOpen = false, onMobileClose }: SidebarProps) {
 
       <nav className="flex-1 overflow-y-auto py-3 px-2 space-y-0.5">
         <NavGroup label="Live" items={LIVE} collapsed={collapsed} route={route} navigate={handleNavigate} />
+        <div className="h-2" />
+        <NavGroup label="Souveränität" items={SOVEREIGN} collapsed={collapsed} route={route} navigate={handleNavigate} />
         <div className="h-2" />
         <NavGroup label="Kontrolle" items={CONTROL} collapsed={collapsed} route={route} navigate={handleNavigate} />
         <div className="h-2" />

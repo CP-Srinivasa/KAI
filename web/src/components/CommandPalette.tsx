@@ -21,6 +21,7 @@ import {
   ArrowLeftRight,
   Wallet,
   Zap,
+  Bitcoin,
 } from "lucide-react";
 import { useRouter, ROUTES, type Route } from "@/state/Router";
 import { useTheme } from "@/theme/ThemeProvider";
@@ -54,6 +55,7 @@ const ROUTE_ICONS: Record<Route, ReactNode> = {
   news: <Newspaper size={14} />,
   backtest: <Rewind size={14} />,
   external: <Upload size={14} />,
+  node: <Bitcoin size={14} />,
   agents: <Bot size={14} />,
   settings: <Settings size={14} />,
 };
