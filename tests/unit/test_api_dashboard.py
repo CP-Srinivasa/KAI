@@ -749,26 +749,30 @@ def test_lightning_endpoint_chain_truth_overrides_height(monkeypatch) -> None:
             synced_to_chain=False,
         )
 
-    async def _fake_chain(cfg=None):  # eigene bitcoind liefert die Wahrheit
-        return ChainStatus(
-            state="ok",
-            reachable=True,
-            chain="main",
-            blocks=953902,
-            headers=953902,
-            synced=True,
-            fee_sat_vb=2.0,
-            mempool_tx=5,
+    async def _fake_cached():  # Hintergrund-Cache liefert die Chain-Wahrheit
+        return (
+            ChainStatus(
+                state="ok",
+                reachable=True,
+                chain="main",
+                blocks=953902,
+                headers=953902,
+                synced=True,
+                fee_sat_vb=2.0,
+                mempool_tx=5,
+            ),
+            12.0,
         )
 
     monkeypatch.setattr("app.lightning.adapter.get_node_status", _fake_node)
-    monkeypatch.setattr("app.chain.adapter.get_chain_status", _fake_chain)
+    monkeypatch.setattr("app.chain.cache.get_cached_chain_status", _fake_cached)
 
     body = TestClient(_make_app()).get("/dashboard/api/lightning").json()
     assert body["state"] == "ok" and body["reachable"] is True
     assert body["block_height"] == 953902  # aus bitcoind, nicht aus lnd-getinfo
     assert body["synced_to_chain"] is True
     assert body["chain"]["state"] == "ok" and body["chain"]["blocks"] == 953902
+    assert body["chain_age_seconds"] == 12.0
 
 
 def test_chain_endpoint_disabled_by_default() -> None:
@@ -786,20 +790,24 @@ def test_chain_endpoint_ok_when_reachable(monkeypatch) -> None:
     """Erreichbare bitcoind → ok mit Tip-Höhe/Sync/Fee/Mempool aus der Node."""
     from app.chain.adapter import ChainStatus
 
-    async def _fake_chain(cfg=None):
-        return ChainStatus(
-            state="ok",
-            reachable=True,
-            chain="main",
-            blocks=953902,
-            headers=953902,
-            synced=True,
-            fee_sat_vb=2.5,
-            mempool_tx=7,
+    async def _fake_cached():
+        return (
+            ChainStatus(
+                state="ok",
+                reachable=True,
+                chain="main",
+                blocks=953902,
+                headers=953902,
+                synced=True,
+                fee_sat_vb=2.5,
+                mempool_tx=7,
+            ),
+            8.0,
         )
 
-    monkeypatch.setattr("app.chain.adapter.get_chain_status", _fake_chain)
+    monkeypatch.setattr("app.chain.cache.get_cached_chain_status", _fake_cached)
     body = TestClient(_make_app()).get("/dashboard/api/chain").json()
     assert body["state"] == "ok" and body["reachable"] is True
     assert body["blocks"] == 953902 and body["synced"] is True
     assert body["fee_sat_vb"] == 2.5 and body["mempool_tx"] == 7
+    assert body["age_seconds"] == 8.0

@@ -1496,16 +1496,19 @@ async def dashboard_lightning_api() -> JSONResponse:
     """
     from dataclasses import asdict
 
-    from app.chain.adapter import get_chain_status
+    from app.chain.cache import get_cached_chain_status
     from app.lightning.adapter import get_node_status
 
     status = await get_node_status()
     payload = asdict(status)
 
-    # Souveräne Chain-Wahrheit: Höhe/Sync bevorzugt aus der eigenen bitcoind
-    # (schnell, immer verfügbar) statt aus lnds langsamem/Tor-hängendem getinfo.
-    chain = await get_chain_status()
+    # Souveräne Chain-Wahrheit: Höhe/Sync bevorzugt aus der eigenen bitcoind.
+    # Über den Hintergrund-Cache gelesen — bitcoind-RPC kann auf dem Pi minutenlang
+    # cs_main halten; der Request darf dafür NIE blockieren. ``chain_age_seconds``
+    # zeigt das Alter des Snapshots (None solange Cache kalt / ``pending``).
+    chain, chain_age = await get_cached_chain_status()
     payload["chain"] = asdict(chain)
+    payload["chain_age_seconds"] = chain_age
     if chain.state == "ok":
         payload["block_height"] = chain.blocks
         payload["synced_to_chain"] = chain.synced
@@ -1518,17 +1521,21 @@ async def dashboard_lightning_api() -> JSONResponse:
 async def dashboard_chain_api() -> JSONResponse:
     """Read-only Chain-Status aus KAIs EIGENER bitcoind (L1, default-off).
 
-    Spiegelt ``app.chain.adapter.get_chain_status()`` — souveräne On-Chain-
-    Wahrheit (Tip-Höhe, Sync, Fee-Estimate, Mempool) aus der eigenen Node statt
-    aus einer Dritt-API. ``state`` ist ``disabled`` (Feature aus, kein Netzcall),
-    ``unavailable`` (an, aber Node nicht erreichbar) oder ``ok``. Fail-closed,
-    kein schreibender/kapitalrelevanter Pfad.
+    Spiegelt ``app.chain.adapter.get_chain_status()`` über den Hintergrund-Cache
+    (``app.chain.cache``) — souveräne On-Chain-Wahrheit (Tip-Höhe, Sync,
+    Fee-Estimate, Mempool) aus der eigenen Node statt aus einer Dritt-API. Der
+    Request blockiert NIE auf bitcoind; ``age_seconds`` zeigt das Snapshot-Alter.
+    ``state`` ist ``disabled`` (Feature aus, kein Netzcall), ``pending`` (an, aber
+    noch kein erfolgreicher Fetch — Cache kalt), ``unavailable`` (an, aber Node
+    nicht erreichbar) oder ``ok``. Fail-closed, kein schreibender/
+    kapitalrelevanter Pfad.
     """
     from dataclasses import asdict
 
-    from app.chain.adapter import get_chain_status
+    from app.chain.cache import get_cached_chain_status
 
-    status = await get_chain_status()
+    status, age = await get_cached_chain_status()
     payload = asdict(status)
+    payload["age_seconds"] = age
     payload["generated_at"] = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
     return JSONResponse(content=payload, headers={"Cache-Control": "no-store, max-age=0"})
