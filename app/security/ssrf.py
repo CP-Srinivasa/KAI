@@ -110,8 +110,7 @@ def _check_ip(ip: ipaddress.IPv4Address | ipaddress.IPv6Address, url: str) -> No
         or ip.is_unspecified
     ):
         raise SecurityError(
-            f"URL '{url}' resolves to non-global IP {ip} — SSRF protection "
-            "blocked this request."
+            f"URL '{url}' resolves to non-global IP {ip} — SSRF protection blocked this request."
         )
 
 
