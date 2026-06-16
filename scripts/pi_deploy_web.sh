@@ -27,7 +27,10 @@ cd "$ROOT"
 SKIP_BUILD=0
 CHECK_ONLY=0
 REMOTE_HOST=""
-REMOTE_ROOT="/home/kai/ai_analyst_trading_bot"
+# Prod-Pi-Repo-Pfad. Korrektur 2026-06-16: die Prod-Node läuft als User `ubuntu`
+# unter /home/ubuntu/... — der alte /home/kai-Default war falsch und liess den
+# remote `cd` (set -e) scheitern. Per Env überschreibbar, falls die Umgebung driftet.
+REMOTE_ROOT="${REMOTE_ROOT:-/home/ubuntu/ai_analyst_trading_bot}"
 
 for arg in "$@"; do
     case "$arg" in
