@@ -1,6 +1,6 @@
 // @data-source: props (/dashboard/api/quality)
 import { memo, useMemo, type ReactNode } from "react";
-import { AlertTriangle, Flag, Target, Coins, Calendar, Info, ChevronRight } from "lucide-react";
+import { AlertTriangle, Flag, Target, Coins, Calendar, Info, ChevronRight, Archive } from "lucide-react";
 import { Card, CardHeader, Badge, ProgressBar } from "@/components/ui/Primitives";
 import { useT } from "@/i18n/I18nProvider";
 import { cn } from "@/lib/utils";
@@ -109,30 +109,30 @@ function ReentryGatePanelImpl({
         title="Re-Entry-Gate"
         subtitle={
           targetExpired
-            ? `TV-Pivot D-125 · historisches Ziel ${targetDate} abgelaufen · neue Gate-Definition erforderlich`
+            ? `TV-Pivot D-125 · Ziel ${targetDate} archiviert · historische Evidenz`
             : `TV-Pivot D-125 · Ziel: ${targetDate} · Pfad A (alerts ≥${ALERTS_TARGET}) ODER Pfad B (fills ≥${FILLS_TARGET})`
         }
         right={
-          <Badge tone={targetExpired ? "neg" : daysLeft <= 7 ? "warn" : "muted"} dot>
-            <Calendar size={10} />
-            {targetExpired ? "abgelaufen" : daysLeft === 0 ? "heute" : `${daysLeft} Tage`}
+          <Badge tone={targetExpired ? "muted" : daysLeft <= 7 ? "warn" : "muted"} dot>
+            {targetExpired ? <Archive size={10} /> : <Calendar size={10} />}
+            {targetExpired ? "archiviert" : daysLeft === 0 ? "heute" : `${daysLeft} Tage`}
           </Badge>
         }
       />
 
       {targetExpired ? (
         <div
-          className="mt-1 mb-3 rounded-sm border border-warn/40 bg-warn/10 px-3 py-2.5 attention-breathe-warn"
+          className="mt-1 mb-3 rounded-sm border border-line-subtle bg-bg-2 px-3 py-2"
           role="status"
         >
-          <div className="flex items-center gap-2 text-warn">
-            <AlertTriangle size={16} className="shrink-0" />
-            <span className="text-sm font-semibold uppercase tracking-wide">{banner.title}</span>
-            <span className="ml-auto inline-flex items-center gap-1 rounded-xs border border-warn/40 bg-warn/10 px-1.5 py-0.5 text-2xs font-mono uppercase tracking-wider">
-              Historical
+          <div className="flex items-center gap-2 text-fg-muted">
+            <Archive size={14} className="shrink-0" />
+            <span className="text-xs font-medium">{banner.title}</span>
+            <span className="ml-auto inline-flex items-center gap-1 rounded-xs border border-line-subtle px-1.5 py-0.5 text-2xs font-mono uppercase tracking-wider text-fg-subtle">
+              Historie
             </span>
           </div>
-          <p className="mt-1 text-2xs text-fg-muted leading-relaxed">{banner.detail}</p>
+          <p className="mt-1 text-2xs text-fg-subtle leading-relaxed">{banner.detail}</p>
         </div>
       ) : (
         <div
@@ -244,7 +244,14 @@ function ReentryGatePanelImpl({
       </div>
 
       {quality?.reentry?.warning ? (
-        <div className="mt-3 rounded-sm border border-warn/30 bg-warn/10 px-3 py-2 text-2xs text-warn font-mono">
+        <div
+          className={cn(
+            "mt-3 rounded-sm border px-3 py-2 text-2xs font-mono",
+            targetExpired
+              ? "border-line-subtle bg-bg-2 text-fg-subtle"
+              : "border-warn/30 bg-warn/10 text-warn",
+          )}
+        >
           {quality.reentry.warning}
         </div>
       ) : null}
@@ -478,9 +485,9 @@ function bannerProps(
 ): { title: string; detail: string; className: string } {
   if (targetExpired) {
     return {
-      title: "Historisches Ziel abgelaufen",
-      detail: "Re-Entry-Fortschritt bleibt Evidenz, aber das alte Ziel ist kein aktueller Freigabezustand.",
-      className: "border-warn/30 bg-warn/10 text-warn",
+      title: "Historisches Ziel · archiviert",
+      detail: "Re-Entry-Fortschritt bleibt als Evidenz erhalten; das alte Ziel ist kein aktueller Freigabezustand.",
+      className: "border-line-subtle bg-bg-2 text-fg-muted",
     };
   }
   if (gate.kind === "both_met" || gate.kind === "path_a_met" || gate.kind === "path_b_met") {
@@ -584,13 +591,13 @@ function ReentryGatePanelFallback({
         title="Re-Entry-Gate"
         subtitle={
           targetExpired
-            ? `TV-Pivot D-125 · historisches Ziel ${targetDate} abgelaufen`
+            ? `TV-Pivot D-125 · Ziel ${targetDate} archiviert · historische Evidenz`
             : `TV-Pivot D-125 · Ziel: ${targetDate} · Pfad A (alerts ≥${ALERTS_TARGET}) ODER Pfad B (fills ≥${FILLS_TARGET})`
         }
         right={
-          <Badge tone={targetExpired ? "neg" : daysLeft <= 7 ? "warn" : "muted"} dot>
-            <Calendar size={10} />
-            {targetExpired ? "abgelaufen" : daysLeft === 0 ? "heute" : `${daysLeft} Tage`}
+          <Badge tone={targetExpired ? "muted" : daysLeft <= 7 ? "warn" : "muted"} dot>
+            {targetExpired ? <Archive size={10} /> : <Calendar size={10} />}
+            {targetExpired ? "archiviert" : daysLeft === 0 ? "heute" : `${daysLeft} Tage`}
           </Badge>
         }
       />
