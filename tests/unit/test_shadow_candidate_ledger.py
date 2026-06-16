@@ -202,3 +202,52 @@ def test_resolve_pending_reached_take_and_stop_flags(tmp_path: Path) -> None:
     assert r["reached_take"] is True
     assert r["reached_stop"] is False
     assert r["mfe_bps"] == 250.0
+
+
+# --- WP-A: technical-screener candidates must be resolvable ----------------- #
+
+
+def test_is_resolvable_includes_technical_but_headline_excludes_it() -> None:
+    # WP-A 2026-06-16: the technical screener writes candidate_kind="technical".
+    # It must be resolvable (forward returns) yet stay OUT of the autonomous-
+    # generator headline (B-002): resolved for measurement, never a REAL source.
+    assert "technical" in scl.RESOLVABLE_CANDIDATE_KINDS
+    tech_row = {"candidate_kind": "technical", "source": "technical_screener"}
+    assert scl._is_resolvable_candidate(tech_row, include_canary=False) is True
+    # headline isolation: technical_screener is not a REAL (headline) source
+    assert "technical_screener" not in scl.REAL_SOURCES
+
+
+def test_resolve_pending_resolves_technical_screener_candidate(tmp_path: Path) -> None:
+    # Regression: before WP-A, candidate_kind="technical" was silently skipped
+    # (skipped_kind) so the technical path produced ZERO edge evidence.
+    ledger = tmp_path / "ledger.jsonl"
+    resolved = tmp_path / "resolved.jsonl"
+    c = ShadowCandidate.from_geometry(
+        candidate_id="tech-1",
+        ts_utc=T0.isoformat(),
+        symbol="TRX/USDT",
+        side="long",
+        entry_price=100.0,
+        stop_price=None,
+        take_price=None,
+        source="technical_screener",
+        candidate_kind="technical",
+    )
+    record_candidate(c, path=ledger)
+
+    bars = [_bar(60, 101.0, 100.0, 100.5), _bar(3600, 101.0, 99.5, 100.8)]
+
+    def fetch(symbol: str, start_ms: int, end_ms: int) -> list[scl.Bar]:
+        return bars
+
+    counts = resolve_pending(
+        fetch_klines=fetch, now=T0 + timedelta(hours=2), ledger_path=ledger, resolved_path=resolved
+    )
+    assert counts["resolved"] == 1
+    assert counts["skipped_kind"] == 0
+    import json
+
+    rec = json.loads(resolved.read_text(encoding="utf-8").splitlines()[0])
+    assert rec["candidate_kind"] == "technical"
+    assert rec["source"] == "technical_screener"
