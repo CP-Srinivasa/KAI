@@ -19,6 +19,7 @@ import {
   Bot,
   Bitcoin,
   Database,
+  Activity,
   X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -61,7 +62,10 @@ const CONTROL: Item[] = [
   { id: "agents", labelKey: "nav.agents", icon: <Bot size={16} /> },
 ];
 
-const SYSTEM: Item[] = [{ id: "settings", labelKey: "nav.settings", icon: <Settings size={16} /> }];
+const SYSTEM: Item[] = [
+  { id: "system", labelKey: "nav.system", icon: <Activity size={16} /> },
+  { id: "settings", labelKey: "nav.settings", icon: <Settings size={16} /> },
+];
 
 type SidebarProps = {
   mobileOpen?: boolean;
