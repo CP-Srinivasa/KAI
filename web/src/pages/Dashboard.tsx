@@ -16,6 +16,7 @@ import { LivePortfolioTiles } from "@/components/panels/LivePortfolioTiles";
 import { ReentryGatePanel } from "@/components/panels/ReentryGatePanel";
 import { TruthStatusBar } from "@/components/panels/TruthStatusBar";
 import { CommandHeader } from "@/components/layout/CommandHeader";
+import { ExecutiveSnapshot } from "@/components/panels/ExecutiveSnapshot";
 import { NOverviewPanel } from "@/components/panels/NOverviewPanel";
 import { SignalHeatmapPanel } from "@/components/panels/SignalHeatmap";
 import { PremiumRuntimeBanner } from "@/components/panels/PremiumRuntimeBanner";
@@ -139,6 +140,11 @@ export function Dashboard() {
           </span>
         </div>
       </header>
+
+      {/* WP-1.2: Executive Snapshot — prominente Lageübersicht direkt unter dem Header. */}
+      <PanelErrorBoundary name="Executive-Snapshot">
+        <ExecutiveSnapshot />
+      </PanelErrorBoundary>
 
       {/* Premium-Runtime-Wahrheit — laut sichtbar wenn entry_mode/Bridge/Source
           neue Premium-Paper-Entries blockiert. Read-only, kein Live-Eingriff. */}
