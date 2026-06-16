@@ -20,6 +20,7 @@ import {
   Bitcoin,
   Database,
   Activity,
+  Map,
   X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -60,6 +61,7 @@ const SOVEREIGN: Item[] = [
 // Kontroll-Ebene (Claude-Code-only Agenten)
 const CONTROL: Item[] = [
   { id: "agents", labelKey: "nav.agents", icon: <Bot size={16} /> },
+  { id: "roadmaps", labelKey: "nav.roadmaps", icon: <Map size={16} /> },
 ];
 
 const SYSTEM: Item[] = [
