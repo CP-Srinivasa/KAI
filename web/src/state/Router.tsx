@@ -15,6 +15,7 @@ export const ROUTES = [
   "sources",
   "node",
   "agents",
+  "roadmaps",
   "system",
   "settings",
 ] as const;

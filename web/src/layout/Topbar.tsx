@@ -25,6 +25,7 @@ const CONTEXT: Record<Route, string> = {
   sources: "nav.sources",
   node: "nav.node",
   agents: "nav.agents",
+  roadmaps: "nav.roadmaps",
   system: "nav.system",
   settings: "nav.settings",
 };
