@@ -138,8 +138,10 @@ class BitcoindRpcClient:
         return round(float(feerate_btc_kvb) * 100_000, 3)
 
     async def get_mempool_info(self) -> dict[str, Any]:
-        return await self._call("getmempoolinfo")
+        result: dict[str, Any] = await self._call("getmempoolinfo")
+        return result
 
     async def get_txout(self, txid: str, vout: int) -> dict[str, Any] | None:
         """gettxout — returns the UTXO, or None if spent/absent (read-only)."""
-        return await self._call("gettxout", [txid, vout])
+        result: dict[str, Any] | None = await self._call("gettxout", [txid, vout])
+        return result

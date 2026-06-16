@@ -16,7 +16,7 @@ import json
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Protocol
+from typing import BinaryIO, Protocol
 
 from app.core.integrity_settings import IntegritySettings
 from app.integrity.digest import compute_audit_digest
@@ -87,7 +87,7 @@ class OpenTimestampsStamper:
 class _FileWriter:
     """Tiny adapter so opentimestamps' serializer can write to a file object."""
 
-    def __init__(self, fh) -> None:
+    def __init__(self, fh: BinaryIO) -> None:
         self._fh = fh
 
     def write(self, data: bytes) -> None:
