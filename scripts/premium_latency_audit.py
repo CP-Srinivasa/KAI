@@ -59,9 +59,15 @@ def _fmt_seconds(s: float | None) -> str:
 
 def _format_digest(stats) -> str:
     head = f"KAI premium-latency audit (last {stats.lookback_hours}h)"
+    stale_note = (
+        f"  (+{stats.stale_expired_count} stale-on-arrival excluded)"
+        if getattr(stats, "stale_expired_count", 0)
+        else ""
+    )
     body = [
         head,
-        f"samples={stats.sample_size}  expired={stats.expired_count} ({stats.expired_pct:.1f}%)",
+        f"samples={stats.sample_size}  expired={stats.expired_count} "
+        f"({stats.expired_pct:.1f}%){stale_note}",
         f"receive→fill: p50={_fmt_seconds(stats.p50_seconds)}  "
         f"p95={_fmt_seconds(stats.p95_seconds)}  "
         f"p99={_fmt_seconds(stats.p99_seconds)}  "
