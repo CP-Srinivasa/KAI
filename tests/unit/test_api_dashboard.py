@@ -730,3 +730,32 @@ def test_lightning_endpoint_disabled_by_default() -> None:
     assert body["reachable"] is False
     assert "generated_at" in body
     assert "num_active_channels" in body
+    # L1: chain-Wahrheit ist mit drin und ebenfalls default-off.
+    assert body["chain"]["state"] == "disabled"
+
+
+def test_lightning_endpoint_chain_truth_overrides_height(monkeypatch) -> None:
+    """L1: Block-Höhe/Sync kommen aus der eigenen bitcoind, auch wenn lnd-getinfo leer ist."""
+    from app.chain.adapter import ChainStatus
+    from app.lightning.adapter import LightningNodeStatus
+
+    async def _fake_node(cfg=None):  # lnd erreichbar, aber getinfo-Details fehlen
+        return LightningNodeStatus(
+            state="ok", reachable=True, server_state="SERVER_ACTIVE",
+            info_available=False, block_height=0, synced_to_chain=False,
+        )
+
+    async def _fake_chain(cfg=None):  # eigene bitcoind liefert die Wahrheit
+        return ChainStatus(
+            state="ok", reachable=True, chain="main", blocks=953902,
+            headers=953902, synced=True, fee_sat_vb=2.0, mempool_tx=5,
+        )
+
+    monkeypatch.setattr("app.lightning.adapter.get_node_status", _fake_node)
+    monkeypatch.setattr("app.chain.adapter.get_chain_status", _fake_chain)
+
+    body = TestClient(_make_app()).get("/dashboard/api/lightning").json()
+    assert body["state"] == "ok" and body["reachable"] is True
+    assert body["block_height"] == 953902  # aus bitcoind, nicht aus lnd-getinfo
+    assert body["synced_to_chain"] is True
+    assert body["chain"]["state"] == "ok" and body["chain"]["blocks"] == 953902
