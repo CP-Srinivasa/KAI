@@ -84,6 +84,24 @@ export function formatMoneyCompact(
   return withSymbol(body, value < 0 ? "-" : "", currency);
 }
 
+/** Plain numbers that are NOT money: resolved-counts, n-values, instrument
+ *  quantities. Follows the active number locale (de-DE/en-US grouping) so they
+ *  match the money rendered alongside them under the currency toggle — but is
+ *  never currency-converted and carries no symbol. Defaults to a grouped integer
+ *  (0 fraction digits); pass `maxDigits` for fractional quantities. Returns
+ *  em-dash for null/unparseable. */
+export function formatNumber(
+  v: number | string | null | undefined,
+  { currency, minDigits = 0, maxDigits = 0 }: { currency: Currency; minDigits?: number; maxDigits?: number },
+): string {
+  const n = toNum(v);
+  if (n === null) return EM_DASH;
+  return n.toLocaleString(localeFor(currency), {
+    minimumFractionDigits: minDigits,
+    maximumFractionDigits: Math.max(minDigits, maxDigits),
+  });
+}
+
 /** Percent — never currency-converted, but follows the active number locale so
  *  it matches the money around it. `signed` prefixes a "+" on positives. */
 export function formatPct(
