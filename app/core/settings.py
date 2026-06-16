@@ -5,6 +5,7 @@ from pathlib import Path
 from pydantic import AliasChoices, Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from app.core.chain_settings import ChainSettings as ChainSettings
 from app.core.enums import EntryMode, ExecutionMode
 from app.core.errors import ConfigurationError
 
@@ -23,6 +24,7 @@ from app.core.evidence_settings import (
 from app.core.evidence_settings import (
     OpenInterestEvidenceSettings as OpenInterestEvidenceSettings,
 )
+from app.core.integrity_settings import IntegritySettings as IntegritySettings
 from app.core.lightning_settings import LightningSettings as LightningSettings
 from app.core.re_entry_mode import ReEntryModeProfile
 from app.core.schema_runtime import (
@@ -1420,6 +1422,8 @@ class AppSettings(BaseSettings):
     # KYT transaction-risk prevention. Default-off, shadow-first.
     kyt: KytSettings = Field(default_factory=KytSettings)
     lightning: LightningSettings = Field(default_factory=LightningSettings)
+    chain: ChainSettings = Field(default_factory=ChainSettings)
+    integrity: IntegritySettings = Field(default_factory=IntegritySettings)
     # D-191 re-entry capability gate. Default disabled — see ReEntryModeProfile.
     re_entry_mode: ReEntryModeProfile = Field(default_factory=ReEntryModeProfile)
 
