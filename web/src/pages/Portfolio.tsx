@@ -22,6 +22,7 @@ import { PremiumSignalTrail } from "@/components/panels/PremiumSignalTrail";
 import { PremiumRuntimeBanner } from "@/components/panels/PremiumRuntimeBanner";
 import { DiversificationPanel } from "@/components/panels/DiversificationPanel";
 import { useCurrency } from "@/state/CurrencyProvider";
+import { formatNumber, type Currency } from "@/lib/money";
 
 /**
  * Adaptive Decimal-Digits für Preis-Anzeige.
@@ -246,7 +247,7 @@ function RealizedByAssetPanel() {
 
 export function PortfolioPage() {
   const { t } = useT();
-  const { fmt } = useCurrency();
+  const { fmt, currency } = useCurrency();
   // Adaptive Decimals als Default — Operator-Auftrag 2026-05-12 Sektion 7
   // verlangt "keine automatische Umwandlung auf 0.01" für Display.
   const fmt$ = (v: number | null | undefined, digits?: number) =>
@@ -852,7 +853,7 @@ export function PortfolioPage() {
                     <td className="px-3 py-2 text-right font-mono">
                       {lev != null && lev > 0 ? `${lev}x` : "—"}
                     </td>
-                    <td className="px-3 py-2 text-right font-mono">{formatQty(p.quantity)}</td>
+                    <td className="px-3 py-2 text-right font-mono">{formatQty(p.quantity, currency)}</td>
                     <td className="px-3 py-2 text-right font-mono">{fmt$(p.avg_entry_price)}</td>
                     <td className={cn(
                       "px-3 py-2 text-right font-mono",
@@ -1114,12 +1115,11 @@ function BucketLabel({
  * (e.g. Q/USDT 85488.547329). High-price-Tokens (BTC) haben 0.01-stellige
  * Qty. fixed `toFixed(6)` macht beides unleserlich.
  */
-function formatQty(v: number | null | undefined): string {
+function formatQty(v: number | null | undefined, currency: Currency): string {
   if (v == null || !Number.isFinite(v)) return "—";
   const abs = Math.abs(v);
-  if (abs >= 1000) return v.toLocaleString("de-DE", { maximumFractionDigits: 2 });
-  if (abs >= 1) return v.toLocaleString("de-DE", { maximumFractionDigits: 4 });
-  return v.toLocaleString("de-DE", { maximumFractionDigits: 6 });
+  const maxDigits = abs >= 1000 ? 2 : abs >= 1 ? 4 : 6;
+  return formatNumber(v, { currency, maxDigits });
 }
 
 function formatOpenedAt(iso: string): string {

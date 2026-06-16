@@ -2,6 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState, t
 import {
   convertUsd,
   formatMoney,
+  formatNumber,
   formatPct,
   formatPrice,
   type Currency,
@@ -42,6 +43,10 @@ type Ctx = {
   /** Format a percentage in the active number locale (never currency-converted).
    *  `signed` prefixes "+" on positives. */
   fmtPct: (value: MoneyArg, opts?: { digits?: number; signed?: boolean }) => string;
+  /** Format a plain number (count / n-value / quantity) in the active number
+   *  locale. Never currency-converted, no symbol. Integer by default; pass
+   *  `maxDigits` for fractional quantities. */
+  fmtNum: (value: MoneyArg, opts?: { minDigits?: number; maxDigits?: number }) => string;
   /** Raw conversion without formatting — for chart tooltips etc. */
   convert: (usdAmount: number, fx?: FxSnapshot) => number;
   /** The active currency's symbol. */
@@ -142,11 +147,17 @@ export function CurrencyProvider({ children }: { children: ReactNode }) {
     [currency],
   );
 
+  const fmtNum = useCallback(
+    (v: MoneyArg, opts?: { minDigits?: number; maxDigits?: number }) =>
+      formatNumber(v, { currency, ...opts }),
+    [currency],
+  );
+
   const symbol = currency === "EUR" ? "€" : "$";
 
   const value = useMemo(
-    () => ({ currency, setCurrency, fmt, fmtPrice, fmtPct, convert, symbol, fx, fxMeta }),
-    [currency, setCurrency, fmt, fmtPrice, fmtPct, convert, symbol, fx, fxMeta],
+    () => ({ currency, setCurrency, fmt, fmtPrice, fmtPct, fmtNum, convert, symbol, fx, fxMeta }),
+    [currency, setCurrency, fmt, fmtPrice, fmtPct, fmtNum, convert, symbol, fx, fxMeta],
   );
 
   return <Context.Provider value={value}>{children}</Context.Provider>;
