@@ -401,7 +401,7 @@ export function fetchNOverview(signal?: AbortSignal): Promise<NOverview> {
 
 // Lightning Phase-1 (read-only, default-off). Spiegelt LightningNodeStatus.
 export type LightningStatus = {
-  state: "disabled" | "unavailable" | "ok";
+  state: "disabled" | "pending" | "unavailable" | "ok";
   reachable: boolean;
   server_state: string;
   info_available: boolean;
@@ -412,8 +412,15 @@ export type LightningStatus = {
   identity_pubkey: string;
   alias: string;
   version: string;
+  // Balances (read-only, fetched independent of the Tor-slow getinfo).
+  balances_available: boolean;
+  channel_local_sat: number; // off-chain outbound liquidity
+  channel_remote_sat: number; // off-chain inbound liquidity
+  wallet_confirmed_sat: number; // on-chain confirmed
+  wallet_total_sat: number; // on-chain confirmed + unconfirmed
   reason: string;
   extra: Record<string, unknown>;
+  node_age_seconds: number | null; // age of the cached snapshot (null while warming)
   generated_at: string;
 };
 

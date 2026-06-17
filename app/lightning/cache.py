@@ -38,21 +38,29 @@ def _pending() -> LightningNodeStatus:
     return LightningNodeStatus(state="pending", reachable=False, reason="node status warming up")
 
 
-def _merge(fresh: LightningNodeStatus, cached: LightningNodeStatus | None) -> LightningNodeStatus:
-    """Anti-flicker: keep the last full snapshot over a degraded getinfo-flake.
+def _richness(s: LightningNodeStatus) -> int:
+    """Detail richness of a snapshot: getinfo fields + balance fields."""
+    return (1 if s.info_available else 0) + (1 if s.balances_available else 0)
 
-    A fresh poll wins when it carries full detail (``info_available``) or when it
-    reports a genuine non-``ok`` state (``unavailable``/``disabled`` — the node is
-    really down/off). But when the node is merely reachable without getinfo detail
-    (``ok`` + not ``info_available``) and we already hold a full snapshot, we
-    retain that snapshot so the panel keeps its identity/peers/channels instead of
-    blanking out.
+
+def _merge(fresh: LightningNodeStatus, cached: LightningNodeStatus | None) -> LightningNodeStatus:
+    """Anti-flicker: keep the richest recent snapshot over a degraded poll.
+
+    lnd's ``getinfo`` (Tor) AND the balance calls can each intermittently time
+    out. A fresh poll wins when it reports a genuine non-``ok`` state
+    (``unavailable``/``disabled`` — the node is really down/off) or when it is at
+    least as detail-rich as what we already hold (getinfo fields + balances). But
+    a reachable poll that lost detail (getinfo *or* balances flaked) does NOT
+    overwrite a richer cached snapshot, so the panel keeps its identity/peers/
+    channels AND its wallet/channel balances instead of blanking out.
     """
-    if fresh.info_available:
+    if cached is None:
         return fresh
-    if fresh.state == "ok" and cached is not None and cached.info_available:
-        return cached
-    return fresh
+    if fresh.state in ("unavailable", "disabled"):
+        return fresh
+    if _richness(fresh) >= _richness(cached):
+        return fresh
+    return cached
 
 
 async def _refresh() -> None:
