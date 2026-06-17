@@ -542,13 +542,15 @@ export function fetchSentiment(signal?: AbortSignal): Promise<SentimentSnapshot>
   return apiGet<SentimentSnapshot>("/dashboard/api/markets/sentiment", { signal });
 }
 
-// Perp-Liquidationen (OKX public liquidation-orders, frei/read-only). long_sz/
-// short_sz = liquidierte Long- bzw. Short-Größe (OKX-Kontrakte) — Richtungs-Pressure.
+// Perp-Liquidationen (OKX public liquidation-orders, frei/read-only). *_sz =
+// liquidierte Größe in OKX-Kontrakten; *_usd = USD-Notional (sz × ctVal × bkPx).
 // available=false solange Cache kalt / Fetch fehlschlägt → kein erfundener Wert.
 export type LiquidationRow = {
   symbol: string;
   long_sz: number;
   short_sz: number;
+  long_usd: number;
+  short_usd: number;
   events: number;
   last_ts_utc: string;
 };

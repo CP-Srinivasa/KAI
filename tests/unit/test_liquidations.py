@@ -25,17 +25,25 @@ def _ok_payload() -> dict:
         "data": [
             {
                 "details": [
-                    {"posSide": "long", "sz": "5", "bkPx": "100", "ts": "1781721899148"},
-                    {"posSide": "long", "sz": "2.5", "bkPx": "100", "ts": "1781721899000"},
-                    {"posSide": "short", "sz": "3", "bkPx": "100", "ts": "1781721899200"},
+                    {"posSide": "long", "sz": "5", "bkPx": "60000", "ts": "1781721899148"},
+                    {"posSide": "long", "sz": "2.5", "bkPx": "60000", "ts": "1781721899000"},
+                    {"posSide": "short", "sz": "3", "bkPx": "60000", "ts": "1781721899200"},
                 ]
             }
         ],
     }
 
 
+# ctVal payload for the /instruments call (BTC-USDT-SWAP = 0.01 BTC/contract).
+_CTVAL_PAYLOAD = {"code": "0", "data": [{"ctVal": "0.01", "ctValCcy": "BTC"}]}
+
+
 def _transport(status: int, body: object) -> httpx.MockTransport:
-    def handler(_req: httpx.Request) -> httpx.Response:
+    """Routes /instruments (→ ctVal) vs /liquidation-orders (→ test body)."""
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        if "instruments" in req.url.path:
+            return httpx.Response(200, json=_CTVAL_PAYLOAD)
         if isinstance(body, (dict, list)):
             return httpx.Response(status, json=body)
         return httpx.Response(status, text=str(body))
@@ -43,11 +51,13 @@ def _transport(status: int, body: object) -> httpx.MockTransport:
     return httpx.MockTransport(handler)
 
 
-async def test_fetch_aggregates_long_short() -> None:
+async def test_fetch_aggregates_long_short_and_usd() -> None:
     snap = await liq.fetch_liquidations(transport=_transport(200, _ok_payload()))
     assert snap.available is True and len(snap.rows) == 3  # BTC/ETH/SOL
     btc = next(r for r in snap.rows if r.symbol == "BTC/USDT")
     assert btc.long_sz == 7.5 and btc.short_sz == 3.0 and btc.events == 3
+    # USD notional = sz × ctVal(0.01) × bkPx(60000): long 7.5→4500, short 3→1800.
+    assert btc.long_usd == 4500.0 and btc.short_usd == 1800.0
     assert btc.last_ts_utc.endswith("Z") and snap.source == "okx"
 
 
@@ -67,7 +77,13 @@ async def test_cache_cold_then_warms(monkeypatch) -> None:
             available=True,
             rows=(
                 liq.LiquidationRow(
-                    symbol="BTC/USDT", long_sz=7.5, short_sz=3.0, events=3, last_ts_utc="x"
+                    symbol="BTC/USDT",
+                    long_sz=7.5,
+                    short_sz=3.0,
+                    long_usd=4500.0,
+                    short_usd=1800.0,
+                    events=3,
+                    last_ts_utc="x",
                 ),
             ),
         )
@@ -88,7 +104,13 @@ async def test_cache_keeps_last_good_on_failure(monkeypatch) -> None:
         available=True,
         rows=(
             liq.LiquidationRow(
-                symbol="BTC/USDT", long_sz=1.0, short_sz=0.0, events=1, last_ts_utc="x"
+                symbol="BTC/USDT",
+                long_sz=1.0,
+                short_sz=0.0,
+                long_usd=600.0,
+                short_usd=0.0,
+                events=1,
+                last_ts_utc="x",
             ),
         ),
     )
