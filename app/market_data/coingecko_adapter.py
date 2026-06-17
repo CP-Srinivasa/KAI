@@ -198,6 +198,27 @@ def _nearest_price(
     return best_price
 
 
+def _overview_from_payload(
+    payload: dict[str, object], normalized_symbol: str
+) -> CoinGeckoMarketOverview:
+    """Build a G1 overview record from one ``/coins/markets`` row (None-tolerant)."""
+    last_updated = payload.get("last_updated")
+    if isinstance(last_updated, str) and last_updated:
+        timestamp_utc = last_updated
+    else:
+        timestamp_utc = datetime.now(UTC).isoformat()
+    rank = payload.get("market_cap_rank")
+    market_cap = payload.get("market_cap")
+    change_30d = payload.get("price_change_percentage_30d_in_currency")
+    return CoinGeckoMarketOverview(
+        symbol=normalized_symbol,
+        timestamp_utc=timestamp_utc,
+        market_cap_rank=int(rank) if isinstance(rank, (int, float)) else None,
+        market_cap=float(market_cap) if isinstance(market_cap, (int, float)) else None,
+        price_change_pct_30d=(float(change_30d) if isinstance(change_30d, (int, float)) else None),
+    )
+
+
 class CoinGeckoAdapter(BaseMarketDataAdapter):
     """Read-only CoinGecko market data adapter with stale detection."""
 
@@ -518,26 +539,55 @@ class CoinGeckoAdapter(BaseMarketDataAdapter):
             self._set_error("missing_coin_payload")
             return None
 
-        last_updated = payload.get("last_updated")
-        if isinstance(last_updated, str) and last_updated:
-            timestamp_utc = last_updated
-        else:
-            timestamp_utc = datetime.now(UTC).isoformat()
-
-        rank = payload.get("market_cap_rank")
-        market_cap = payload.get("market_cap")
-        change_30d = payload.get("price_change_percentage_30d_in_currency")
-
         self._clear_error()
-        return CoinGeckoMarketOverview(
-            symbol=normalized_symbol,
-            timestamp_utc=timestamp_utc,
-            market_cap_rank=int(rank) if isinstance(rank, (int, float)) else None,
-            market_cap=float(market_cap) if isinstance(market_cap, (int, float)) else None,
-            price_change_pct_30d=(
-                float(change_30d) if isinstance(change_30d, (int, float)) else None
-            ),
+        return _overview_from_payload(payload, normalized_symbol)
+
+    async def get_market_overview_batch(self, symbols: list[str]) -> list[CoinGeckoMarketOverview]:
+        """G1 batch: market-cap rank/value + 30d for many symbols in ONE call.
+
+        CoinGecko's ``/coins/markets`` accepts a comma-separated ``ids`` list and
+        returns all coins in a single response — so N symbols cost ONE request,
+        not N. That is essential on the free tier: N sequential single-symbol
+        calls trip the rate limit (429 → 15/30/60s backoff) and blow the
+        refresh deadline, writing nothing. Unresolvable symbols are skipped
+        silently (fail-safe). Read-only; returns ``[]`` on any non-list payload.
+        """
+        id_to_symbol: dict[str, str] = {}
+        for raw in symbols:
+            resolved = _resolve_symbol(raw)
+            if resolved is None:
+                continue
+            normalized_symbol, coin_id = resolved
+            id_to_symbol[coin_id] = normalized_symbol
+        if not id_to_symbol:
+            self._set_error("no_resolvable_symbols")
+            return []
+
+        data = await self._get_json(
+            f"{self._base_url}/coins/markets",
+            params={
+                "vs_currency": "usd",
+                "ids": ",".join(sorted(id_to_symbol)),
+                "price_change_percentage": "30d",
+                "per_page": "250",
+                "page": "1",
+            },
         )
+        if not isinstance(data, list):
+            self._set_error("missing_coin_payload")
+            return []
+
+        out: list[CoinGeckoMarketOverview] = []
+        for payload in data:
+            if not isinstance(payload, dict):
+                continue
+            mapped_symbol = id_to_symbol.get(str(payload.get("id")))
+            if mapped_symbol is None:
+                continue
+            out.append(_overview_from_payload(payload, mapped_symbol))
+        if out:
+            self._clear_error()
+        return out
 
     async def _get_json(
         self,

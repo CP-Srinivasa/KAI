@@ -108,6 +108,96 @@ async def test_get_market_overview_fail_closed_on_empty_list() -> None:
 
 
 # ---------------------------------------------------------------------------
+# get_market_overview_batch (ONE call for many symbols)
+# ---------------------------------------------------------------------------
+
+
+def _markets_batch_response() -> list[dict]:
+    """Mock /coins/markets list for ids=bitcoin,ethereum,solana (any order)."""
+    return [
+        {
+            "id": "ethereum",
+            "market_cap_rank": 2,
+            "market_cap": 2.1e11,
+            "price_change_percentage_30d_in_currency": -18.0,
+            "last_updated": "2026-06-17T08:00:00+00:00",
+        },
+        {
+            "id": "bitcoin",
+            "market_cap_rank": 1,
+            "market_cap": 1.3e12,
+            "price_change_percentage_30d_in_currency": -16.0,
+            "last_updated": "2026-06-17T08:00:00+00:00",
+        },
+        {
+            "id": "solana",
+            "market_cap_rank": 7,
+            "market_cap": 4.2e10,
+            "price_change_percentage_30d_in_currency": -15.0,
+            "last_updated": "2026-06-17T08:00:00+00:00",
+        },
+    ]
+
+
+@pytest.mark.asyncio
+async def test_batch_success_maps_by_id() -> None:
+    adapter = _adapter()
+    with patch.object(
+        adapter, "_get_json", new_callable=AsyncMock, return_value=_markets_batch_response()
+    ):
+        out = await adapter.get_market_overview_batch(["BTC/USDT", "ETH/USDT", "SOL/USDT"])
+    by_symbol = {ov.symbol: ov for ov in out}
+    assert set(by_symbol) == {"BTC/USDT", "ETH/USDT", "SOL/USDT"}
+    assert by_symbol["BTC/USDT"].market_cap_rank == 1
+    assert by_symbol["ETH/USDT"].market_cap_rank == 2
+    assert by_symbol["SOL/USDT"].market_cap_rank == 7
+
+
+@pytest.mark.asyncio
+async def test_batch_single_call_for_many_symbols() -> None:
+    # The whole point: N symbols → exactly ONE HTTP call.
+    adapter = _adapter()
+    mock = AsyncMock(return_value=_markets_batch_response())
+    with patch.object(adapter, "_get_json", mock):
+        await adapter.get_market_overview_batch(["BTC/USDT", "ETH/USDT", "SOL/USDT"])
+    assert mock.await_count == 1
+    # all ids travel in a single comma-separated `ids` param
+    _args, kwargs = mock.await_args
+    assert "," in kwargs["params"]["ids"]
+
+
+@pytest.mark.asyncio
+async def test_batch_skips_unresolvable_symbols() -> None:
+    adapter = _adapter()
+    mock = AsyncMock(return_value=[_markets_batch_response()[1]])  # only bitcoin
+    with patch.object(adapter, "_get_json", mock):
+        out = await adapter.get_market_overview_batch(["BTC/USDT", "NOTACOIN/USDT"])
+    # unresolvable symbol never reaches the API id list
+    _args, kwargs = mock.await_args
+    assert kwargs["params"]["ids"] == "bitcoin"
+    assert [ov.symbol for ov in out] == ["BTC/USDT"]
+
+
+@pytest.mark.asyncio
+async def test_batch_no_resolvable_symbols_returns_empty() -> None:
+    adapter = _adapter()
+    with patch.object(adapter, "_get_json", new_callable=AsyncMock) as mock:
+        out = await adapter.get_market_overview_batch(["NOTACOIN/USDT"])
+    assert out == []
+    assert adapter.last_error == "no_resolvable_symbols"
+    mock.assert_not_awaited()  # no network call when nothing resolves
+
+
+@pytest.mark.asyncio
+async def test_batch_fail_closed_on_non_list() -> None:
+    adapter = _adapter()
+    with patch.object(adapter, "_get_json", new_callable=AsyncMock, return_value=None):
+        out = await adapter.get_market_overview_batch(["BTC/USDT"])
+    assert out == []
+    assert adapter.last_error == "missing_coin_payload"
+
+
+# ---------------------------------------------------------------------------
 # Settings — default-off contract
 # ---------------------------------------------------------------------------
 
