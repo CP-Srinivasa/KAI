@@ -564,6 +564,25 @@ export function fetchLiquidations(signal?: AbortSignal): Promise<LiquidationsSna
   return apiGet<LiquidationsSnapshot>("/dashboard/api/markets/liquidations", { signal });
 }
 
+// Preis-Momentum (Binance 24h-Ticker, frei/read-only). change_pct_24h = echte
+// 24h-Änderung in %. available=false solange Cache kalt / Fetch fehlschlägt.
+export type MomentumRow = {
+  symbol: string;
+  last_price: number;
+  change_pct_24h: number;
+};
+export type MomentumSnapshot = {
+  available: boolean;
+  rows: MomentumRow[];
+  source: string;
+  reason: string;
+  age_seconds: number | null;
+  generated_at: string;
+};
+export function fetchMomentum(signal?: AbortSignal): Promise<MomentumSnapshot> {
+  return apiGet<MomentumSnapshot>("/dashboard/api/markets/momentum", { signal });
+}
+
 export type ProvenanceMetrics = {
   source: string;
   resolved: number;
