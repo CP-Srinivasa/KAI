@@ -947,7 +947,13 @@ def test_markets_liquidations_endpoint(monkeypatch) -> None:
                 available=True,
                 rows=(
                     LiquidationRow(
-                        symbol="BTC/USDT", long_sz=7.5, short_sz=3.0, events=3, last_ts_utc="x"
+                        symbol="BTC/USDT",
+                        long_sz=7.5,
+                        short_sz=3.0,
+                        long_usd=4500.0,
+                        short_usd=1800.0,
+                        events=3,
+                        last_ts_utc="x",
                     ),
                 ),
             ),
@@ -959,6 +965,7 @@ def test_markets_liquidations_endpoint(monkeypatch) -> None:
     assert body["available"] is True and body["source"] == "okx"
     assert body["rows"][0]["symbol"] == "BTC/USDT"
     assert body["rows"][0]["long_sz"] == 7.5 and body["rows"][0]["short_sz"] == 3.0
+    assert body["rows"][0]["long_usd"] == 4500.0 and body["rows"][0]["short_usd"] == 1800.0
     assert body["age_seconds"] == 12.0
 
 

@@ -68,6 +68,11 @@ function fmtOi(oi: number | null): string {
 function fmtSz(sz: number): string {
   return sz.toLocaleString("de-DE", { maximumFractionDigits: 2 });
 }
+function fmtUsd(v: number): string {
+  if (v >= 1_000_000) return `$${(v / 1_000_000).toLocaleString("de-DE", { maximumFractionDigits: 2 })}M`;
+  if (v >= 1_000) return `$${(v / 1_000).toLocaleString("de-DE", { maximumFractionDigits: 1 })}k`;
+  return `$${v.toLocaleString("de-DE", { maximumFractionDigits: 0 })}`;
+}
 function fmtPrice(p: number): string {
   return p.toLocaleString("de-DE", { maximumFractionDigits: p >= 100 ? 0 : 2 });
 }
@@ -238,8 +243,14 @@ export function MarketMicrostructurePanel() {
         {liqRows.length > 0 ? (
           <div className="space-y-1.5">
             {liqRows.map((r) => {
-              const total = r.long_sz + r.short_sz;
-              const longPct = total > 0 ? (r.long_sz / total) * 100 : 0;
+              // USD-Notional bevorzugt (sz × ctVal × bkPx); Fallback sz, falls
+              // ctVal nicht auflösbar war (long_usd+short_usd == 0).
+              const usdMode = r.long_usd + r.short_usd > 0;
+              const longVal = usdMode ? r.long_usd : r.long_sz;
+              const shortVal = usdMode ? r.short_usd : r.short_sz;
+              const total = longVal + shortVal;
+              const longPct = total > 0 ? (longVal / total) * 100 : 0;
+              const fmt = usdMode ? fmtUsd : fmtSz;
               return (
                 <div key={r.symbol} className="text-xs">
                   <div className="flex items-baseline justify-between gap-2">
@@ -252,17 +263,17 @@ export function MarketMicrostructurePanel() {
                     <div
                       className="bg-neg/70"
                       style={{ width: `${longPct}%` }}
-                      title={`Long-Liqs ${fmtSz(r.long_sz)}`}
+                      title={`Long-Liqs ${fmt(longVal)}`}
                     />
                     <div
                       className="bg-pos/70"
                       style={{ width: `${100 - longPct}%` }}
-                      title={`Short-Liqs ${fmtSz(r.short_sz)}`}
+                      title={`Short-Liqs ${fmt(shortVal)}`}
                     />
                   </div>
                   <div className="mt-0.5 flex justify-between text-[10px]">
-                    <span className="text-neg">Long-Liqs {fmtSz(r.long_sz)}</span>
-                    <span className="text-pos">Short-Liqs {fmtSz(r.short_sz)}</span>
+                    <span className="text-neg">Long-Liqs {fmt(longVal)}</span>
+                    <span className="text-pos">Short-Liqs {fmt(shortVal)}</span>
                   </div>
                 </div>
               );
@@ -276,8 +287,8 @@ export function MarketMicrostructurePanel() {
           </div>
         )}
         <p className="mt-1 text-[10px] text-fg-subtle">
-          Quelle: OKX public liquidation-orders (frei, kein Key); sz in Kontrakten. Long-Liqs (rot) =
-          Longs rekt; Short-Liqs (grün) = Shorts rekt.
+          Quelle: OKX public liquidation-orders (frei, kein Key); USD-Notional = sz × ctVal × bkPx.
+          Long-Liqs (rot) = Longs rekt; Short-Liqs (grün) = Shorts rekt.
         </p>
       </div>
 
