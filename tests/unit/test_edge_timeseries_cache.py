@@ -56,9 +56,7 @@ async def test_single_flight_under_concurrency(monkeypatch) -> None:
 
     monkeypatch.setattr(cache, "load_edge_timeseries", _slow)
 
-    results = await asyncio.gather(
-        *(cache.get_cached_edge_timeseries() for _ in range(5))
-    )
+    results = await asyncio.gather(*(cache.get_cached_edge_timeseries() for _ in range(5)))
     assert all(r[0] == [] and r[1] is None for r in results)  # all non-blocking
 
     await cache._refresh_task
