@@ -1,16 +1,15 @@
-// @data-source: /dashboard/api/chain (live) · /dashboard/api/markets/derivatives (live) · /dashboard/api/markets/sentiment (live) · /dashboard/api/markets/liquidations (live)
+// @data-source: /dashboard/api/chain (live) · /dashboard/api/markets/derivatives (live) · /dashboard/api/markets/sentiment (live) · /dashboard/api/markets/liquidations (live) · /dashboard/api/markets/momentum (live)
 //
-// Markt-Mikrostruktur für die Märkte-Seite — strikt das, was KAI WAHR weiß:
+// Markt-Mikrostruktur für die Märkte-Seite — strikt das, was KAI WAHR weiß, alle
+// aus freien/eigenen Quellen (No-Fake, kein erfundener Wert):
 //   • On-Chain (Fee-Gauge, Mempool, Tip) aus der EIGENEN bitcoind.
 //   • Perp-Funding + Open Interest aus KAIs EIGENER Ingestion (bybit-Snapshot).
 //   • Sentiment aus dem freien Fear-&-Greed-Index (alternative.me, server-gecacht).
 //   • Liquidationen (Long/Short-Pressure) aus OKX public liquidation-orders.
-// Metriken ohne verdrahteten Datenpfad (Momentum) bleiben ehrlich „ausstehend"
-// in einer Quellen-Matrix statt erfundener Werte (No-Fake).
+//   • Momentum (24h-Änderung) aus dem freien Binance-24h-Ticker.
 import type { ReactNode } from "react";
-import { Activity, Database, TrendingUp, Gauge as GaugeIcon, Flame } from "lucide-react";
+import { Activity, TrendingUp, TrendingDown, Gauge as GaugeIcon, Flame } from "lucide-react";
 import { Card, CardHeader, Badge } from "@/components/ui/Primitives";
-import { StatusPill } from "@/components/ui/StatusPill";
 import { LiveDot } from "@/components/ui/LiveDot";
 import { Gauge } from "@/components/viz/Gauge";
 import {
@@ -18,12 +17,15 @@ import {
   fetchDerivatives,
   fetchSentiment,
   fetchLiquidations,
+  fetchMomentum,
   type ChainStatus,
   type DerivativesSnapshot,
   type DerivativeRow,
   type SentimentSnapshot,
   type LiquidationsSnapshot,
   type LiquidationRow,
+  type MomentumSnapshot,
+  type MomentumRow,
 } from "@/lib/api";
 import { usePolling } from "@/lib/usePolling";
 import type { Tone } from "@/lib/tone";
@@ -66,11 +68,9 @@ function fmtOi(oi: number | null): string {
 function fmtSz(sz: number): string {
   return sz.toLocaleString("de-DE", { maximumFractionDigits: 2 });
 }
-
-// Metriken ohne eigenen Datenpfad — ehrlich „ausstehend".
-const EXTERNAL_SOURCES: ReadonlyArray<{ metric: string; src: string }> = [
-  { metric: "Momentum", src: "Dune" },
-];
+function fmtPrice(p: number): string {
+  return p.toLocaleString("de-DE", { maximumFractionDigits: p >= 100 ? 0 : 2 });
+}
 
 export function MarketMicrostructurePanel() {
   const polling = usePolling<ChainStatus>((signal) => fetchChainStatus(signal), {
@@ -93,6 +93,11 @@ export function MarketMicrostructurePanel() {
     pauseWhenHidden: true,
     retry: { maxAttempts: 3, baseMs: 2_000 },
   });
+  const mom = usePolling<MomentumSnapshot>((signal) => fetchMomentum(signal), {
+    intervalMs: POLL_MS,
+    pauseWhenHidden: true,
+    retry: { maxAttempts: 3, baseMs: 2_000 },
+  });
   const data = polling.state === "ready" ? polling.data : null;
   const ok = data?.state === "ok";
   const fee = ok ? data.fee_sat_vb : null;
@@ -100,6 +105,7 @@ export function MarketMicrostructurePanel() {
   const sentiment = sent.state === "ready" && sent.data.available ? sent.data : null;
   const liqRows: LiquidationRow[] =
     liq.state === "ready" && liq.data.available ? liq.data.rows : [];
+  const momRows: MomentumRow[] = mom.state === "ready" && mom.data.available ? mom.data.rows : [];
 
   return (
     <Card padded className="synthwave-pulse-edge overflow-hidden">
@@ -275,24 +281,43 @@ export function MarketMicrostructurePanel() {
         </p>
       </div>
 
-      {/* Metriken ohne eigenen Datenpfad — ehrlich „ausstehend". */}
+      {/* Momentum — echte 24h-Änderung je Symbol (Binance, frei). */}
       <div className="mt-4">
         <div className="mb-1.5 flex items-center gap-1.5 text-2xs uppercase tracking-wider text-fg-subtle">
-          <Database size={11} /> Weitere Markt-Metriken · Quellen-Matrix
+          <TrendingUp size={11} /> Momentum · 24h-Änderung (Binance)
         </div>
-        <div className="grid grid-cols-1 gap-2">
-          {EXTERNAL_SOURCES.map((s) => (
-            <div key={s.metric} className="rounded-sm border border-line-subtle bg-bg-2/40 px-2 py-1.5">
-              <div className="truncate text-2xs font-medium text-fg">{s.metric}</div>
-              <div className="mt-0.5 flex items-center justify-between gap-1">
-                <span className="truncate font-mono text-[10px] text-fg-subtle">{s.src}</span>
-                <StatusPill kind="pending" showIcon={false} />
-              </div>
-            </div>
-          ))}
-        </div>
-        <p className="mt-1.5 text-[10px] leading-relaxed text-fg-subtle">
-          No-Fake: Metriken ohne verdrahteten Datenpfad zeigen „ausstehend" statt erfundener Werte.
+        {momRows.length > 0 ? (
+          <div className="grid grid-cols-1 gap-1.5 sm:grid-cols-3">
+            {momRows.map((r) => {
+              const up = r.change_pct_24h >= 0;
+              return (
+                <div
+                  key={r.symbol}
+                  className="flex items-center justify-between gap-2 rounded-sm border border-line-subtle bg-bg-2/40 px-2.5 py-1.5"
+                >
+                  <div className="min-w-0">
+                    <div className="font-mono text-xs text-fg">{r.symbol}</div>
+                    <div className="font-mono text-[10px] text-fg-subtle">{fmtPrice(r.last_price)}</div>
+                  </div>
+                  <div className={`flex items-center gap-1 font-mono tabular-nums text-sm ${up ? "text-pos" : "text-neg"}`}>
+                    {up ? <TrendingUp size={12} /> : <TrendingDown size={12} />}
+                    {up ? "+" : ""}
+                    {r.change_pct_24h.toFixed(2)}%
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        ) : (
+          <div className="rounded-sm border border-line-subtle bg-bg-2/40 px-2.5 py-2 text-2xs text-fg-subtle">
+            {mom.state === "error"
+              ? "Momentum-Endpoint nicht erreichbar."
+              : "Momentum-Daten werden geladen."}
+          </div>
+        )}
+        <p className="mt-1 text-[10px] text-fg-subtle">
+          Quelle: Binance 24h-Ticker (frei, kein Key) — echte 24h-Preisänderung, kein abgeleiteter
+          Score.
         </p>
       </div>
     </Card>

@@ -984,3 +984,34 @@ def test_operator_board_api_returns_curated_lists() -> None:
     assert isinstance(data["todos"], list)
     assert isinstance(data["phases"], list)
     assert isinstance(data["improvements"], list)
+
+
+def test_markets_momentum_endpoint(monkeypatch) -> None:
+    """Binance-Momentum über den server-gecachten Adapter; 24h-Änderung je Symbol."""
+    from app.market_data.momentum import MomentumRow, MomentumSnapshot
+
+    async def _fake_cached():  # noqa: ANN202
+        return (
+            MomentumSnapshot(
+                available=True,
+                rows=(MomentumRow(symbol="BTC/USDT", last_price=65000.0, change_pct_24h=-0.72),),
+            ),
+            9.0,
+        )
+
+    monkeypatch.setattr("app.market_data.momentum.get_cached_momentum", _fake_cached)
+    body = TestClient(_make_app()).get("/dashboard/api/markets/momentum").json()
+    assert body["available"] is True and body["source"] == "binance"
+    assert body["rows"][0]["symbol"] == "BTC/USDT"
+    assert body["rows"][0]["change_pct_24h"] == -0.72 and body["age_seconds"] == 9.0
+
+
+def test_markets_momentum_cold_is_honest(monkeypatch) -> None:
+    from app.market_data.momentum import MomentumSnapshot
+
+    async def _fake_cold():  # noqa: ANN202
+        return MomentumSnapshot.unavailable("warming up"), None
+
+    monkeypatch.setattr("app.market_data.momentum.get_cached_momentum", _fake_cold)
+    body = TestClient(_make_app()).get("/dashboard/api/markets/momentum").json()
+    assert body["available"] is False and body["rows"] == [] and body["age_seconds"] is None

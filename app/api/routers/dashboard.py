@@ -1664,6 +1664,28 @@ async def dashboard_markets_liquidations_api() -> JSONResponse:
     return JSONResponse(content=payload, headers={"Cache-Control": "no-store, max-age=0"})
 
 
+@router.get("/dashboard/api/markets/momentum", tags=["dashboard"])
+async def dashboard_markets_momentum_api() -> JSONResponse:
+    """Read-only Preis-Momentum (Binance 24h-Ticker, kein Key).
+
+    Liest einen TTL-gecachten Snapshot (``app.market_data.momentum``) des freien,
+    öffentlichen Binance-Endpoints (fixe Provider-URL → SSRF-safe, kein Scraping).
+    Je Symbol: letzter Preis + echte 24h-Änderung in %. Der Request blockiert NIE
+    auf dem Provider; ``available`` ist False solange der Cache kalt ist oder der
+    Fetch fehlschlägt → KEIN erfundener Wert. Read-only, kein schreibender/
+    kapitalrelevanter Pfad.
+    """
+    from dataclasses import asdict
+
+    from app.market_data.momentum import get_cached_momentum
+
+    snap, age = await get_cached_momentum()
+    payload = asdict(snap)
+    payload["age_seconds"] = age
+    payload["generated_at"] = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return JSONResponse(content=payload, headers={"Cache-Control": "no-store, max-age=0"})
+
+
 @router.get("/dashboard/api/integrity", tags=["dashboard"])
 async def dashboard_integrity_api() -> JSONResponse:
     """Read-only L3 Audit-Integritäts-Status (OpenTimestamps-Anchoring, default-off).
