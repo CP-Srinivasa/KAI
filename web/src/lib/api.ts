@@ -490,6 +490,23 @@ export function fetchDerivatives(signal?: AbortSignal): Promise<DerivativesSnaps
   return apiGet<DerivativesSnapshot>("/dashboard/api/markets/derivatives", { signal });
 }
 
+// Krypto-Markt-Sentiment (Fear & Greed Index, alternative.me — frei/öffentlich,
+// read-only). value 0..100; available=false solange Cache kalt / Fetch fehlschlägt
+// → dann KEIN erfundener Wert.
+export type SentimentSnapshot = {
+  available: boolean;
+  value: number;
+  classification: string;
+  timestamp_utc: string;
+  source: string;
+  reason: string;
+  age_seconds: number | null;
+  generated_at: string;
+};
+export function fetchSentiment(signal?: AbortSignal): Promise<SentimentSnapshot> {
+  return apiGet<SentimentSnapshot>("/dashboard/api/markets/sentiment", { signal });
+}
+
 export type ProvenanceMetrics = {
   source: string;
   resolved: number;
