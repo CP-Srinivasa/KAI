@@ -43,6 +43,7 @@ class LightningNodeStatus:
     block_height: int = 0
     num_peers: int = 0
     num_active_channels: int = 0
+    num_pending_channels: int = 0
     identity_pubkey: str = ""
     alias: str = ""
     version: str = ""
@@ -144,6 +145,7 @@ async def get_node_status(cfg: LightningSettings | None = None) -> LightningNode
         block_height=info.block_height,
         num_peers=info.num_peers,
         num_active_channels=info.num_active_channels,
+        num_pending_channels=info.num_pending_channels,
         identity_pubkey=info.identity_pubkey,
         alias=info.alias,
         version=info.version,
