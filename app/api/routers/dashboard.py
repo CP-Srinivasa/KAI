@@ -1552,6 +1552,73 @@ async def dashboard_chain_api() -> JSONResponse:
     return JSONResponse(content=payload, headers={"Cache-Control": "no-store, max-age=0"})
 
 
+@router.get("/dashboard/api/markets/derivatives", tags=["dashboard"])
+async def dashboard_markets_derivatives_api() -> JSONResponse:
+    """Read-only Perp-Derivate-Snapshot (Funding + Open Interest) aus KAIs EIGENER Ingestion.
+
+    Liest die entkoppelt aktualisierten Snapshot-Caches (``funding_cache.json`` /
+    ``oi_cache.json``, geschrieben vom Funding/OI-Refresh-Service; Quelle z. B.
+    bybit) — KEINE Live-Dritt-API im Request-Pfad und KEINE erfundenen Werte.
+    Fehlt ein Cache, bleibt die Liste leer (fail-closed/ehrlich). ``funding_rate``
+    ist der 8h-Satz als Anteil (0.0001 = 1bp). Read-only, kein schreibender/
+    kapitalrelevanter Pfad.
+    """
+    from dataclasses import asdict
+
+    from app.core.evidence_settings import (
+        FundingEvidenceSettings,
+        OpenInterestEvidenceSettings,
+    )
+    from app.signals.funding_snapshot_store import FundingSnapshotStore
+    from app.signals.oi_snapshot_store import OpenInterestSnapshotStore
+
+    funding_map: dict[str, Any] = {}
+    oi_map: dict[str, Any] = {}
+    try:
+        funding_map = {
+            sym: asdict(snap)
+            for sym, snap in FundingSnapshotStore(FundingEvidenceSettings().snapshot_path)
+            .read_all()
+            .items()
+        }
+    except Exception:  # noqa: BLE001 — read-only surface must never raise into the request
+        funding_map = {}
+    try:
+        oi_map = {
+            sym: asdict(snap)
+            for sym, snap in OpenInterestSnapshotStore(OpenInterestEvidenceSettings().snapshot_path)
+            .read_all()
+            .items()
+        }
+    except Exception:  # noqa: BLE001
+        oi_map = {}
+
+    rows: list[dict[str, Any]] = []
+    for sym in sorted(set(funding_map) | set(oi_map)):
+        f = funding_map.get(sym) or {}
+        o = oi_map.get(sym) or {}
+        rows.append(
+            {
+                "symbol": sym,
+                "funding_rate": f.get("rate"),
+                "mark_price": f.get("mark_price"),
+                "funding_source": f.get("source"),
+                "funding_ts": f.get("timestamp_utc"),
+                "open_interest": o.get("open_interest"),
+                "oi_change_zscore": o.get("oi_change_zscore"),
+                "oi_source": o.get("source"),
+                "oi_ts": o.get("timestamp_utc"),
+            }
+        )
+
+    payload = {
+        "available": bool(rows),
+        "rows": rows,
+        "generated_at": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+    }
+    return JSONResponse(content=payload, headers={"Cache-Control": "no-store, max-age=0"})
+
+
 @router.get("/dashboard/api/integrity", tags=["dashboard"])
 async def dashboard_integrity_api() -> JSONResponse:
     """Read-only L3 Audit-Integritäts-Status (OpenTimestamps-Anchoring, default-off).

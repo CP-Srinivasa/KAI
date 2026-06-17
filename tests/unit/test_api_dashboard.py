@@ -848,3 +848,64 @@ def test_chain_endpoint_ok_when_reachable(monkeypatch) -> None:
     assert body["blocks"] == 953902 and body["synced"] is True
     assert body["fee_sat_vb"] == 2.5 and body["mempool_tx"] == 7
     assert body["age_seconds"] == 8.0
+
+
+def test_markets_derivatives_empty_is_honest(monkeypatch) -> None:
+    """Ohne Snapshot-Cache: ehrlich leer (available False), kein erfundener Wert."""
+
+    class _Empty:
+        def __init__(self, _path) -> None:  # noqa: ANN001
+            pass
+
+        def read_all(self):  # noqa: ANN201
+            return {}
+
+    monkeypatch.setattr("app.signals.funding_snapshot_store.FundingSnapshotStore", _Empty)
+    monkeypatch.setattr("app.signals.oi_snapshot_store.OpenInterestSnapshotStore", _Empty)
+    body = TestClient(_make_app()).get("/dashboard/api/markets/derivatives").json()
+    assert body["available"] is False and body["rows"] == []
+
+
+def test_markets_derivatives_serves_own_ingestion(monkeypatch) -> None:
+    """Funding + OI aus KAIs eigenen Snapshot-Stores werden je Symbol gemerged."""
+    from app.market_data.models import FundingRateSnapshot, OpenInterestSnapshot
+
+    class _Funding:
+        def __init__(self, _path) -> None:  # noqa: ANN001
+            pass
+
+        def read_all(self):  # noqa: ANN201
+            return {
+                "BTC/USDT": FundingRateSnapshot(
+                    symbol="BTC/USDT",
+                    timestamp_utc="2026-06-17T15:41:10Z",
+                    rate=7.06e-06,
+                    mark_price=65436.6,
+                    source="bybit",
+                )
+            }
+
+    class _OI:
+        def __init__(self, _path) -> None:  # noqa: ANN001
+            pass
+
+        def read_all(self):  # noqa: ANN201
+            return {
+                "BTC/USDT": OpenInterestSnapshot(
+                    symbol="BTC/USDT",
+                    timestamp_utc="2026-06-17T15:00:00Z",
+                    open_interest=51176.86,
+                    oi_change_zscore=-1.21,
+                    source="bybit",
+                )
+            }
+
+    monkeypatch.setattr("app.signals.funding_snapshot_store.FundingSnapshotStore", _Funding)
+    monkeypatch.setattr("app.signals.oi_snapshot_store.OpenInterestSnapshotStore", _OI)
+    body = TestClient(_make_app()).get("/dashboard/api/markets/derivatives").json()
+    assert body["available"] is True and len(body["rows"]) == 1
+    row = body["rows"][0]
+    assert row["symbol"] == "BTC/USDT"
+    assert row["funding_rate"] == 7.06e-06 and row["mark_price"] == 65436.6
+    assert row["open_interest"] == 51176.86 and row["oi_change_zscore"] == -1.21
+    assert row["funding_source"] == "bybit" and row["oi_source"] == "bybit"
