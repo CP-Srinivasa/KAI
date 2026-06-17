@@ -3,9 +3,14 @@ import { useT } from "@/i18n/I18nProvider";
 import { PageHeader } from "@/layout/PageHeader";
 import { PreparedPanel } from "@/components/panels/PreparedPanel";
 import { TradingViewChart } from "@/components/trading/tradingview";
+import { RegimeStatusPanel } from "@/components/panels/RegimeStatusPanel";
+import { PanelErrorBoundary } from "@/components/PanelErrorBoundary";
+import { useDashboardRegime } from "@/lib/useDashboardRegime";
 
 export function MarketsPage() {
   const { t } = useT();
+  const r = useDashboardRegime();
+  const regime = r.state === "ready" ? r.data : null;
   return (
     <div className="p-5 xl:p-6 space-y-5 max-w-[1680px] mx-auto">
       <PageHeader
@@ -19,6 +24,11 @@ export function MarketsPage() {
       />
 
       <TradingViewChart title="TradingView-Chart" />
+
+      {/* WP-3.1: echter Markt-Kontext — Regime read-only (§11), kein Platzhalter. */}
+      <PanelErrorBoundary name="Markt-Regime">
+        <RegimeStatusPanel data={regime} />
+      </PanelErrorBoundary>
 
       {/* DALI v2 S7 M6b: Marktübersicht-Panel mit DevelopmentStatus.
           Operator-Brief: "Marktstatus, aktive Assets, verknüpfte Signale,
