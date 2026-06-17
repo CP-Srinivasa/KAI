@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from "react";
+import { Maximize2, Minimize2 } from "lucide-react";
 import { Card, CardHeader, Badge } from "@/components/ui/Primitives";
 import { useTheme } from "@/theme/ThemeProvider";
+import { cn } from "@/lib/utils";
 import {
   DEFAULT_INTERVAL,
   DEFAULT_SYMBOL,
@@ -54,6 +56,16 @@ export function TradingViewChart({
 
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [status, setStatus] = useState<TradingViewChartStatus>({ state: "loading" });
+  // WP-4: Vollbild-Chart (§21). Escape verlässt Vollbild.
+  const [fullscreen, setFullscreen] = useState(false);
+  useEffect(() => {
+    if (!fullscreen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setFullscreen(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [fullscreen]);
 
   useEffect(() => {
     if (!enabled) {
@@ -130,13 +142,29 @@ export function TradingViewChart({
   }, [enabled, effectiveMode, effectiveSymbol, effectiveInterval, theme]);
 
   return (
-    <Card padded className="overflow-hidden">
+    <Card
+      padded
+      className={cn("overflow-hidden", fullscreen && "fixed inset-0 z-50 m-0 flex flex-col rounded-none")}
+    >
       <CardHeader
         title={title}
         subtitle={`${effectiveSymbol} · ${effectiveInterval}`}
-        right={<StatusBadge status={status} mode={effectiveMode} />}
+        right={
+          <div className="flex items-center gap-2">
+            <StatusBadge status={status} mode={effectiveMode} />
+            <button
+              type="button"
+              onClick={() => setFullscreen((v) => !v)}
+              className="h-7 w-7 grid place-items-center rounded-sm border border-line-subtle bg-bg-2 text-fg-muted hover:text-fg hover:bg-bg-3 transition-colors"
+              aria-label={fullscreen ? "Vollbild verlassen (Esc)" : "Chart im Vollbild"}
+              title={fullscreen ? "Vollbild verlassen (Esc)" : "Vollbild"}
+            >
+              {fullscreen ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
+            </button>
+          </div>
+        }
       />
-      <div className={`relative w-full ${heightClass} rounded-md bg-bg-1 border border-line-subtle overflow-hidden`}>
+      <div className={cn("relative w-full rounded-md bg-bg-1 border border-line-subtle overflow-hidden", fullscreen ? "flex-1 min-h-0" : heightClass)}>
         {status.state === "disabled" && <DisabledOverlay />}
         {status.state === "unsupported" && (
           <UnsupportedOverlay message={status.message ?? ""} />
