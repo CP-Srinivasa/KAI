@@ -46,6 +46,14 @@ class LightningNodeStatus:
     identity_pubkey: str = ""
     alias: str = ""
     version: str = ""
+    # Balances (Phase-1.5 observation, read-only). Fetched independent of the
+    # Tor-slow getinfo, so liquidity/wallet numbers show even when info is stale.
+    # ``balances_available`` is False if the (cheap) balance calls failed.
+    balances_available: bool = False
+    channel_local_sat: int = 0  # off-chain outbound liquidity
+    channel_remote_sat: int = 0  # off-chain inbound liquidity
+    wallet_confirmed_sat: int = 0  # on-chain confirmed
+    wallet_total_sat: int = 0  # on-chain confirmed + unconfirmed
     reason: str = ""
     extra: dict[str, Any] = field(default_factory=dict)
 
@@ -56,6 +64,17 @@ class LightningNodeStatus:
     @classmethod
     def unavailable(cls, reason: str) -> LightningNodeStatus:
         return cls(state="unavailable", reachable=False, reason=reason)
+
+
+def _amt_sat(value: Any) -> int:
+    """Parse an lnd sat amount: a plain int/str, or an Amount object
+    ``{"sat": "123", "msat": "..."}``. Returns 0 on anything unparseable."""
+    if isinstance(value, dict):
+        value = value.get("sat")
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
 
 
 def _build_client(cfg: LightningSettings) -> LndRestClient:
@@ -86,9 +105,25 @@ async def get_node_status(cfg: LightningSettings | None = None) -> LightningNode
     except Exception as exc:  # noqa: BLE001 — adapter must never leak into the loop
         return LightningNodeStatus.unavailable(f"unexpected: {exc}")
 
-    # Node is reachable. getinfo is best-effort enrichment — never downgrade a
-    # reachable node to "unavailable" just because the (sometimes slow) getinfo
-    # call failed.
+    # Node reachable. Balances are cheap (no Tor/graph dependency) → fetch them
+    # best-effort and INDEPENDENT of the (sometimes Tor-slow) getinfo call, so
+    # liquidity/wallet numbers stay truthful even when getinfo is unavailable.
+    bal: dict[str, Any] = {}
+    try:
+        cb = await client.channel_balance()
+        wb = await client.wallet_balance()
+        bal = {
+            "balances_available": True,
+            "channel_local_sat": _amt_sat(cb.get("local_balance")),
+            "channel_remote_sat": _amt_sat(cb.get("remote_balance")),
+            "wallet_confirmed_sat": _amt_sat(wb.get("confirmed_balance")),
+            "wallet_total_sat": _amt_sat(wb.get("total_balance")),
+        }
+    except LightningUnavailableError:
+        bal = {}  # balances best-effort — never flip liveness
+
+    # getinfo is best-effort enrichment — never downgrade a reachable node to
+    # "unavailable" just because the (sometimes slow) getinfo call failed.
     try:
         info = await client.get_info()
     except Exception as exc:  # noqa: BLE001 — getinfo failure must not flip liveness
@@ -98,6 +133,7 @@ async def get_node_status(cfg: LightningSettings | None = None) -> LightningNode
             server_state=server_state,
             info_available=False,
             reason=f"getinfo unavailable: {exc}",
+            **bal,
         )
     return LightningNodeStatus(
         state="ok",
@@ -111,4 +147,5 @@ async def get_node_status(cfg: LightningSettings | None = None) -> LightningNode
         identity_pubkey=info.identity_pubkey,
         alias=info.alias,
         version=info.version,
+        **bal,
     )

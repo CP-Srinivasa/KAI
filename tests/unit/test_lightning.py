@@ -132,9 +132,17 @@ async def test_get_state_happy_path() -> None:
 async def test_adapter_degraded_when_getinfo_fails(monkeypatch) -> None:
     # /v1/state OK (reachable) but getinfo errors -> node stays reachable/ok,
     # info_available False. Mirrors the live Tor-node getinfo-hang finding.
+    # Balances are fetched independent of getinfo, so they stay present even
+    # when getinfo hangs — the whole point of the Phase-1.5 split.
     transport = _routing_transport(
         {
             "/v1/state": httpx.Response(200, json={"state": "SERVER_ACTIVE"}),
+            "/v1/balance/channels": httpx.Response(
+                200, json={"local_balance": {"sat": "800"}, "remote_balance": {"sat": "200"}}
+            ),
+            "/v1/balance/blockchain": httpx.Response(
+                200, json={"confirmed_balance": "1643768", "total_balance": "1643768"}
+            ),
             "/v1/getinfo": httpx.Response(503, text="slow"),
         }
     )
@@ -151,12 +159,23 @@ async def test_adapter_degraded_when_getinfo_fails(monkeypatch) -> None:
     assert status.server_state == "SERVER_ACTIVE"
     assert status.info_available is False
     assert "getinfo" in status.reason
+    # balances survive the getinfo hang
+    assert status.balances_available is True
+    assert status.channel_local_sat == 800
+    assert status.channel_remote_sat == 200
+    assert status.wallet_confirmed_sat == 1643768
 
 
 async def test_adapter_ok_full(monkeypatch) -> None:
     transport = _routing_transport(
         {
             "/v1/state": httpx.Response(200, json={"state": "SERVER_ACTIVE"}),
+            "/v1/balance/channels": httpx.Response(
+                200, json={"local_balance": {"sat": "5000"}, "remote_balance": {"sat": "1500"}}
+            ),
+            "/v1/balance/blockchain": httpx.Response(
+                200, json={"confirmed_balance": "798269", "total_balance": "800000"}
+            ),
             "/v1/getinfo": httpx.Response(
                 200,
                 json={
@@ -179,6 +198,35 @@ async def test_adapter_ok_full(monkeypatch) -> None:
     assert status.info_available is True
     assert status.block_height == 953644
     assert status.synced_to_chain is True
+    assert status.balances_available is True
+    assert status.channel_local_sat == 5000
+    assert status.channel_remote_sat == 1500
+    assert status.wallet_total_sat == 800000
+
+
+async def test_adapter_balances_fail_soft(monkeypatch) -> None:
+    # Balance endpoints error but state+getinfo OK -> node stays ok, balances
+    # simply absent (balances_available False). Best-effort never flips liveness.
+    transport = _routing_transport(
+        {
+            "/v1/state": httpx.Response(200, json={"state": "SERVER_ACTIVE"}),
+            "/v1/balance/channels": httpx.Response(503, text="busy"),
+            "/v1/balance/blockchain": httpx.Response(503, text="busy"),
+            "/v1/getinfo": httpx.Response(200, json={"identity_pubkey": "024a7f"}),
+        }
+    )
+    monkeypatch.setattr(
+        adapter_mod,
+        "_build_client",
+        lambda cfg: LndRestClient(
+            base_url="https://x:8080", macaroon_hex="ab", transport=transport
+        ),
+    )
+    status = await get_node_status(LightningSettings(enabled=True, macaroon_hex="ab"))
+    assert status.state == "ok"
+    assert status.info_available is True
+    assert status.balances_available is False
+    assert status.channel_local_sat == 0 and status.wallet_total_sat == 0
 
 
 async def test_adapter_disabled_makes_no_call() -> None:
