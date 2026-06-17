@@ -1,11 +1,11 @@
-import { Moon, Search, Sun, Languages, Menu } from "lucide-react";
+import { Moon, Search, Sun, Languages, Menu, Rows3, Rows2 } from "lucide-react";
 import { useState } from "react";
 import { useTheme } from "@/theme/ThemeProvider";
 import { Badge } from "@/components/ui/Primitives";
 import { ModeSelector } from "@/components/trading/ModeSelector";
 import { useT } from "@/i18n/I18nProvider";
 import { useCurrency, type Currency } from "@/state/CurrencyProvider";
-import { useAppState, TIMEFRAMES } from "@/state/AppState";
+import { useAppState, TIMEFRAMES, nextDensity } from "@/state/AppState";
 import { useRouter, type Route } from "@/state/Router";
 import { cn } from "@/lib/utils";
 import { NotificationsBell } from "./NotificationsBell";
@@ -36,7 +36,7 @@ export function Topbar({ onMobileMenuToggle }: TopbarProps = {}) {
   const { theme, toggle } = useTheme();
   const { t, lang, setLang } = useT();
   const { currency, setCurrency } = useCurrency();
-  const { timeframe, setTimeframe } = useAppState();
+  const { timeframe, setTimeframe, density, setDensity } = useAppState();
   const { route } = useRouter();
   const [langOpen, setLangOpen] = useState(false);
 
@@ -107,6 +107,17 @@ export function Topbar({ onMobileMenuToggle }: TopbarProps = {}) {
             </button>
           ))}
         </div>
+
+        {/* WP-4: Dichte-Umschaltung (komfortabel ⇄ kompakt), app-weit persistiert. */}
+        <button
+          onClick={() => setDensity(nextDensity(density))}
+          className="h-8 w-8 grid place-items-center rounded-sm border border-line-subtle bg-bg-2 text-fg-muted hover:text-fg hover:bg-bg-3 transition-colors"
+          aria-label={density === "compact" ? "Dichte: kompakt — zu komfortabel wechseln" : "Dichte: komfortabel — zu kompakt wechseln"}
+          aria-pressed={density === "compact"}
+          title={density === "compact" ? "Dichte: kompakt" : "Dichte: komfortabel"}
+        >
+          {density === "compact" ? <Rows2 size={15} /> : <Rows3 size={15} />}
+        </button>
 
         <div className="relative">
           <button
