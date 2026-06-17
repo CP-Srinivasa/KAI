@@ -94,6 +94,9 @@ export function Dashboard() {
   const ptl = data?.priority_tier_lift_pct ?? null;
   const pf = data?.paper_fills ?? null;
   const kai = useKaiState();
+  // WP-4: Fokus-Modus. "problem" blendet die Detail-Panels aus; Lage (Command
+  // Header, Executive Snapshot, Akute Punkte, Truth) bleibt immer sichtbar.
+  const [focus, setFocus] = useState<"alles" | "problem">("alles");
 
   return (
     <div className="p-4 xl:p-5 space-y-4 xl:space-y-5 max-w-[1680px] mx-auto">
@@ -190,6 +193,28 @@ export function Dashboard() {
         />
       </PanelErrorBoundary>
 
+      {/* WP-4: Fokus-Modus — Problem-Fokus blendet die Detail-Panels aus; Lage
+          (Command Header, Executive Snapshot, Akute Punkte, Truth) bleibt. */}
+      <div className="flex items-center gap-2">
+        <span className="text-2xs uppercase tracking-wider text-fg-subtle">Ansicht</span>
+        <div className="inline-flex rounded-sm border border-line-subtle bg-bg-2 p-0.5" role="group" aria-label="Fokus-Modus">
+          {(["alles", "problem"] as const).map((f) => (
+            <button
+              key={f}
+              onClick={() => setFocus(f)}
+              aria-pressed={focus === f}
+              className={cn(
+                "px-2.5 h-6 rounded-xs text-2xs font-medium",
+                focus === f ? "bg-bg-1 text-fg shadow-panel" : "text-fg-muted hover:text-fg",
+              )}
+            >
+              {f === "alles" ? "Alles" : "Problem-Fokus"}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className={cn(focus === "problem" ? "hidden" : "space-y-4 xl:space-y-5")}>
       {/* Die 5 „n" — SSOT-Disambiguierung der fünf resolved/n-Zähler (Dali
           2026-06-13). Hebt das einzige n hervor, das fürs #167-Edge-Gate zählt
           (resolved_real), und dämpft die vier anderen Pipelines bewusst ab.
@@ -457,6 +482,7 @@ export function Dashboard() {
 
       {/* Roadmap-Bereiche — default collapsed Ribbon, expandable zu vollem Grid */}
       <PreparedSection />
+      </div>
 
       <DashboardFooter />
     </div>
