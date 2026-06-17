@@ -152,6 +152,10 @@ export type EdgeTimeseries = {
   windows: EdgeWindow[];
   bucket_days: number;
   min_resolved: number;
+  /** Alter des hintergrund-gecachten Serien-Stands in Sekunden; null = Cache kalt. */
+  cache_age_seconds?: number | null;
+  /** true: Cache wärmt sich auf (Serie wird im Hintergrund berechnet), noch leer. */
+  warming?: boolean;
   generated_at: string;
 };
 export function fetchEdgeTimeseries(signal?: AbortSignal): Promise<EdgeTimeseries> {

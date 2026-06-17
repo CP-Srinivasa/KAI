@@ -63,6 +63,7 @@ export function EdgeTrendCard() {
   const data = q.state === "ready" ? q.data : null;
   const windows = data?.windows ?? [];
   const anyData = windows.some((w) => w.precision_pct != null || w.brier != null || w.ic_1h != null);
+  const warming = !!data?.warming;
 
   return (
     <Card padded>
@@ -78,6 +79,10 @@ export function EdgeTrendCard() {
             <Badge tone="neg" dot>
               Endpoint-Fehler
             </Badge>
+          ) : warming ? (
+            <Badge tone="info" dot>
+              berechne…
+            </Badge>
           ) : !anyData ? (
             <Badge tone="muted" dot>
               keine belastbare Stichprobe
@@ -87,6 +92,10 @@ export function EdgeTrendCard() {
       />
       {q.state === "error" ? (
         <div className="py-2 text-xs text-neg">/dashboard/api/edge-timeseries unerreichbar.</div>
+      ) : warming ? (
+        <div className="py-2 text-xs text-fg-muted">
+          Edge-Verlauf wird im Hintergrund berechnet — erscheint beim nächsten Refresh.
+        </div>
       ) : !anyData ? (
         <div className="py-2 text-xs text-fg-muted">
           Noch kein Zeitfenster über der Mindest-Stichprobe — Trend erscheint, sobald genug aufgelöste Signale je Fenster vorliegen.

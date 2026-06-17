@@ -1667,26 +1667,32 @@ async def dashboard_integrity_api() -> JSONResponse:
 async def dashboard_edge_timeseries_api() -> JSONResponse:
     """Edge-Verlauf (#319): Precision/Brier/IC je Zeitfenster aus dem resolved-Ledger.
 
-    Reicht ``load_edge_timeseries()`` durch — exakt dieselbe Outcome-/Real-Source-
-    Logik wie der Edge-Collector. Fenster unter ``min_resolved`` liefern ``None``
-    (kein Chart-Punkt auf dünner Stichprobe — keine irreführenden Trendlinien).
-    Fail-soft: leere Serie statt 500.
+    Reicht den hintergrund-gecachten Serien-Stand durch — exakt dieselbe Outcome-/
+    Real-Source-Logik wie der Edge-Collector. Fenster unter ``min_resolved`` liefern
+    ``None`` (kein Chart-Punkt auf dünner Stichprobe — keine irreführenden Trendlinien).
+    Der Ledger-Read (>5s auf dem Pi) läuft im Hintergrund (``edge_timeseries_cache``),
+    nie auf dem Request-Pfad. Cold-Start: ``warming=true`` mit leerer Serie statt
+    Blockieren. Fail-soft: leere Serie statt 500.
     """
     from app.observability.edge_timeseries import (
         DEFAULT_BUCKET_DAYS,
         DEFAULT_MIN_RESOLVED,
-        load_edge_timeseries,
     )
+    from app.observability.edge_timeseries_cache import get_cached_edge_timeseries
 
     windows: list[dict[str, Any]] = []
+    age: float | None = None
     try:
-        windows = [w.to_dict() for w in load_edge_timeseries()]
+        series, age = await get_cached_edge_timeseries()
+        windows = [w.to_dict() for w in series]
     except Exception as exc:  # noqa: BLE001 — Panel degradiert, kein 500
         logger.warning("edge_timeseries_read_failed: %s", exc)
     payload: dict[str, Any] = {
         "windows": windows,
         "bucket_days": DEFAULT_BUCKET_DAYS,
         "min_resolved": DEFAULT_MIN_RESOLVED,
+        "cache_age_seconds": round(age, 1) if age is not None else None,
+        "warming": age is None and not windows,
         "generated_at": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
     }
     return JSONResponse(content=payload, headers={"Cache-Control": "no-store, max-age=0"})
