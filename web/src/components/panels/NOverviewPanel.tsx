@@ -4,6 +4,7 @@ import { Card, CardHeader, Badge, ProgressBar } from "@/components/ui/Primitives
 import { LiveDot } from "@/components/ui/LiveDot";
 import { type NOverview, type NOverviewGate, type NOverviewEntry } from "@/lib/api";
 import { useNOverview } from "@/lib/useNOverview";
+import { useCurrency } from "@/state/CurrencyProvider";
 import { cn } from "@/lib/utils";
 
 /** Tonalität des Gate-Fortschritts (pure, getestet).
@@ -16,10 +17,6 @@ export function nGateTone(
   if (sufficient) return "pos";
   if (ratioPct >= 50) return "warn";
   return "neg";
-}
-
-function fmt(value: number | null): string {
-  return value == null ? "—" : value.toLocaleString("de-DE");
 }
 
 const TONE_TEXT: Record<string, string> = {
@@ -40,6 +37,7 @@ function GateBlock({
   icon: React.ReactNode;
   sublabel: string;
 }) {
+  const { fmtNum } = useCurrency();
   const tone = nGateTone(gate.ratio_pct, gate.sufficient);
   const toneText = TONE_TEXT[tone];
 
@@ -60,7 +58,7 @@ function GateBlock({
 
       <div className="flex items-baseline gap-2">
         <span className={cn("text-3xl font-mono font-semibold tabular-nums", toneText)}>
-          {fmt(gate.value)}
+          {fmtNum(gate.value)}
         </span>
         <span className="text-lg font-mono text-fg-subtle">/ {gate.threshold}</span>
         {gate.ratio_pct != null && (
@@ -101,11 +99,12 @@ function GateBlock({
 }
 
 function OtherRow({ entry }: { entry: NOverviewEntry }) {
+  const { fmtNum } = useCurrency();
   const tone = entry.status_tone ?? "muted";
   return (
     <div className="flex items-center gap-3 py-1.5">
       <span className="w-14 shrink-0 text-right font-mono text-base tabular-nums text-fg-muted">
-        {fmt(entry.value)}
+        {fmtNum(entry.value)}
       </span>
       <ChevronRight size={12} className="shrink-0 text-fg-subtle" />
       <div className="min-w-0 flex-1">

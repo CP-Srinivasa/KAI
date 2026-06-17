@@ -15,6 +15,10 @@ import { PreparedPanel } from "@/components/panels/PreparedPanel";
 import { LivePortfolioTiles } from "@/components/panels/LivePortfolioTiles";
 import { ReentryGatePanel } from "@/components/panels/ReentryGatePanel";
 import { TruthStatusBar } from "@/components/panels/TruthStatusBar";
+import { CommandHeader } from "@/components/layout/CommandHeader";
+import { ExecutiveSnapshot } from "@/components/panels/ExecutiveSnapshot";
+import { AcutePointsBoard } from "@/components/panels/AcutePointsBoard";
+import { NodeStatusKpi } from "@/components/panels/NodeStatusKpi";
 import { NOverviewPanel } from "@/components/panels/NOverviewPanel";
 import { SignalHeatmapPanel } from "@/components/panels/SignalHeatmap";
 import { PremiumRuntimeBanner } from "@/components/panels/PremiumRuntimeBanner";
@@ -93,6 +97,17 @@ export function Dashboard() {
 
   return (
     <div className="p-4 xl:p-5 space-y-4 xl:space-y-5 max-w-[1680px] mx-auto">
+      {/* WP-1.1: sticky Command Header — verdichtete, nie wegscrollende Lage-Leiste. */}
+      <PanelErrorBoundary name="Command-Header">
+        <CommandHeader
+          kai={kai.state === "ready" ? kai.data : null}
+          quality={data}
+          regime={regime}
+          priorityGate={priorityGate}
+          qualityState={q.state}
+        />
+      </PanelErrorBoundary>
+
       <header className="flex items-center justify-between flex-wrap gap-3">
         <div>
           <h1 className="text-display text-fg">
@@ -127,6 +142,21 @@ export function Dashboard() {
           </span>
         </div>
       </header>
+
+      {/* WP-1.2: Executive Snapshot — prominente Lageübersicht direkt unter dem Header. */}
+      <PanelErrorBoundary name="Executive-Snapshot">
+        <ExecutiveSnapshot />
+      </PanelErrorBoundary>
+
+      {/* WP-1.3: Akute Punkte — handlungsorientierte Triage der blockierenden Gates/Probleme. */}
+      <PanelErrorBoundary name="Akute-Punkte">
+        <AcutePointsBoard
+          quality={data}
+          regime={regime}
+          priorityGate={priorityGate}
+          qualityState={q.state}
+        />
+      </PanelErrorBoundary>
 
       {/* Premium-Runtime-Wahrheit — laut sichtbar wenn entry_mode/Bridge/Source
           neue Premium-Paper-Entries blockiert. Read-only, kein Live-Eingriff. */}
@@ -292,6 +322,10 @@ export function Dashboard() {
             ) : undefined
           }
         />
+        {/* WP-1.4: Node-/Chain-Status-KPI (ehrlich gegen bestehendes Lightning-Endpoint). */}
+        <PanelErrorBoundary name="Node-Status-KPI">
+          <NodeStatusKpi />
+        </PanelErrorBoundary>
       </div>
 
       {/* Re-Entry-Gate (TV-Pivot D-125 · Stichtag 2026-05-16) */}

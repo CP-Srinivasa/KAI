@@ -1,6 +1,7 @@
 // @data-source: props (parent-provided)
 import { memo, useMemo } from "react";
 import { Card, CardHeader } from "@/components/ui/Primitives";
+import { Explainer } from "@/components/ui/InfoOverlay";
 import { LiveDot } from "@/components/ui/LiveDot";
 import type { DashboardQuality } from "@/lib/api";
 import { cn } from "@/lib/utils";
@@ -219,6 +220,12 @@ function TradingLoopCardImpl({ data, state, generatedAt }: Props) {
           Noch keine Cycles im aktuellen Fenster
         </div>
       )}
+      <Explainer
+        className="mt-3"
+        summary="Was sagt der Trading-Loop-Status?"
+        what="Der autonome Loop analysiert zyklisch und entscheidet je Cycle, ob ein Trade-Anlass besteht. Die Zahlen zeigen die Cycles im aktuellen Fenster und wie viele davon zu einer Aktion vs. 'kein Anlass' führten."
+        why="Null Trades bei laufendem Loop ist KEIN Defekt, sondern oft korrektes Stillhalten (kein Anlass / Gate blockt). Heartbeat-Frische trennt 'ruhig' von 'Loop steht' — nur ein veralteter Heartbeat ist ein echtes Problem."
+      />
     </Card>
   );
 }

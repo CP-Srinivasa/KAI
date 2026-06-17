@@ -1,6 +1,7 @@
 // @data-source: props (parent-provided)
 import { memo, useMemo } from "react";
 import { Card, CardHeader, InfoHint } from "@/components/ui/Primitives";
+import { Explainer } from "@/components/ui/InfoOverlay";
 import { LiveDot } from "@/components/ui/LiveDot";
 import type { DashboardQuality } from "@/lib/api";
 import { cn } from "@/lib/utils";
@@ -161,6 +162,12 @@ function SignalQualityCardImpl({ data, state, generatedAt }: Props) {
           Quality-Report laedt...
         </div>
       )}
+      <Explainer
+        className="mt-3"
+        summary="Wie lese ich die Signalqualität?"
+        what="Fünf rollende Kennzahlen aus dem letzten Hold-Report: Trefferquote, Stichprobengröße, Wilson-Untergrenze, Tier-Lift (High- vs Standard-Priorität) und Frische. Sie messen, wie gut die jüngsten Signale aufgelöst haben."
+        why="Hohe Priorität ist nur dann ein Qualitätslabel, wenn der Tier-Lift positiv und belegt ist. Ohne belastbare Low-P-Baseline gilt Priorisierung als unbewiesen — nicht als Edge."
+      />
     </Card>
   );
 }

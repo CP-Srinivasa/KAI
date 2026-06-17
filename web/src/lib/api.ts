@@ -421,6 +421,25 @@ export function fetchLightningStatus(signal?: AbortSignal): Promise<LightningSta
   return apiGet<LightningStatus>("/dashboard/api/lightning", { signal });
 }
 
+// L1 — souveräne On-Chain-Wahrheit aus KAIs eigener bitcoind (read-only, default-off).
+export type ChainStatus = {
+  state: "disabled" | "unavailable" | "ok";
+  reachable: boolean;
+  chain: string;
+  blocks: number;
+  headers: number;
+  synced: boolean;
+  fee_sat_vb: number | null;
+  mempool_tx: number;
+  reason: string;
+  extra: Record<string, unknown>;
+  generated_at: string;
+};
+
+export function fetchChainStatus(signal?: AbortSignal): Promise<ChainStatus> {
+  return apiGet<ChainStatus>("/dashboard/api/chain", { signal });
+}
+
 export type ProvenanceMetrics = {
   source: string;
   resolved: number;

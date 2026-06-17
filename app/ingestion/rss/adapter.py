@@ -26,7 +26,7 @@ from app.ingestion.base.interfaces import (
     normalize_fetch_item,
 )
 from app.normalization.cleaner import clean_text
-from app.security.ssrf import validate_url
+from app.security.ssrf import ssrf_redirect_hook, validate_url
 
 _log = get_logger(__name__)
 
@@ -126,6 +126,7 @@ class RSSFeedAdapter(BaseSourceAdapter):
             timeout=self._timeout,
             headers=_DEFAULT_HEADERS,
             follow_redirects=True,
+            event_hooks={"response": [ssrf_redirect_hook]},
         ) as client:
             response = await client.get(self.metadata.url)
             response.raise_for_status()

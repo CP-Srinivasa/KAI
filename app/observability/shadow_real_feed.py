@@ -54,13 +54,23 @@ RunOnce = Callable[..., Awaitable[Any]]
 
 async def _default_run_once(*, symbol: str, analysis_result: Any) -> Any:
     from app.core.enums import ExecutionMode
+    from app.execution.real_analysis_paper import REAL_ANALYSIS_SOURCE
     from app.orchestrator.trading_loop import run_trading_loop_once
 
     # mode=SHADOW is a hard floor: the feed never drives paper/live execution.
+    # The decoupling verdict additionally refuses any non-PAPER cycle, so the
+    # ``real_analysis`` tag below can NOT turn this into a fill.
+    #
+    # V2 2026-06-16: tag analysis_source=real_analysis so the D-182 priority gate
+    # uses the operator-configured real_analysis_paper.min_priority (5) instead of
+    # the global paper_min_priority (10). Without the tag the shadow funnel was
+    # silently gated at 10 — rejecting ~88% of eligible directional analyses
+    # (priority 5–9) and starving the closed-trade / edge-resolution funnel.
     return await run_trading_loop_once(
         symbol=symbol,
         mode=ExecutionMode.SHADOW,
         analysis_result=analysis_result,
+        analysis_source=REAL_ANALYSIS_SOURCE,
     )
 
 

@@ -3,6 +3,7 @@ import { ArrowDownRight, ArrowUpRight, Minus } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Card } from "@/components/ui/Primitives";
 import { Sparkline } from "@/components/kpi/Sparkline";
+import { useCurrency } from "@/state/CurrencyProvider";
 
 type Props = {
   label: string;
@@ -33,6 +34,7 @@ export function KpiCard({
   valueNumeric,
   gapUnit = "",
 }: Props) {
+  const { fmtNum } = useCurrency();
   const deltaTone = delta === undefined ? "neutral" : delta > 0 ? "pos" : delta < 0 ? "neg" : "neutral";
   const stroke = strokeFor(tone);
 
@@ -106,7 +108,7 @@ export function KpiCard({
                     gapTone === "pos" && "bg-pos/10 text-pos",
                     gapTone === "neg" && "bg-neg/10 text-neg",
                   )}
-                  title={`Differenz Wert minus Ziel · Ziel: ${(target as number).toLocaleString("de-DE")}${gapUnit}`}
+                  title={`Differenz Wert minus Ziel · Ziel: ${fmtNum(target as number)}${gapUnit}`}
                 >
                   <span className="text-fg-subtle/80 mr-0.5">Δ</span>
                   {gap >= 0 ? "+" : ""}

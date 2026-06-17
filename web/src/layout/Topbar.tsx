@@ -22,7 +22,11 @@ const CONTEXT: Record<Route, string> = {
   news: "nav.news",
   backtest: "nav.backtest",
   external: "nav.external",
+  sources: "nav.sources",
+  node: "nav.node",
   agents: "nav.agents",
+  roadmaps: "nav.roadmaps",
+  system: "nav.system",
   settings: "nav.settings",
 };
 

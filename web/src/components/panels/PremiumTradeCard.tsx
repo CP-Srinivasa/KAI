@@ -3,6 +3,7 @@ import { memo, useMemo } from "react";
 import { ArrowDownRight, ArrowUpRight, Minus, Target, X, Zap } from "lucide-react";
 import { Badge, Card, CardHeader } from "@/components/ui/Primitives";
 import type { PaperPosition, PaperPositionTpTier } from "@/lib/api";
+import { useCurrency } from "@/state/CurrencyProvider";
 import { cn } from "@/lib/utils";
 
 /**
@@ -85,6 +86,7 @@ export const PremiumTradeCard = memo(function PremiumTradeCard({
   onClose,
   busy,
 }: Props): JSX.Element {
+  const { fmtNum } = useCurrency();
   const isLong = (p.position_side ?? "long").toLowerCase() === "long";
   const sideTone = isLong ? "pos" : "neg";
   const sideLabel = isLong ? "LONG" : "SHORT";
@@ -175,7 +177,7 @@ export const PremiumTradeCard = memo(function PremiumTradeCard({
           </div>
           <div className="font-mono text-base font-semibold text-fg">{fmt$(p.avg_entry_price)}</div>
           <div className="mt-0.5 text-2xs text-fg-subtle">
-            {p.quantity != null ? p.quantity.toLocaleString("de-DE", { maximumFractionDigits: 2 }) : "—"} Stk
+            {fmtNum(p.quantity, { maxDigits: 2 })} Stk
           </div>
         </div>
         <div className="rounded-md border border-line-subtle bg-bg-2 p-2.5">

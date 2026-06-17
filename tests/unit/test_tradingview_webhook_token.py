@@ -125,6 +125,25 @@ def test_shared_token_missing_header_rejected(shared_token_client: TestClient) -
     assert resp.status_code == 401
 
 
+@pytest.mark.parametrize("token_value", ["12345", "[1,2,3]", '{"nested":true}', "true"])
+def test_shared_token_non_string_body_token_rejected_not_500(
+    shared_token_client: TestClient, token_value: str
+) -> None:
+    """A non-string JSON ``token`` field must fail auth with 401, never 500.
+
+    Regression: the body-token fallback used to pass an int/list/dict straight
+    into the constant-time compare, raising AttributeError on ``.strip()`` and
+    surfacing as an unauthenticated 500.
+    """
+    body = f'{{"alert":"trigger","token":{token_value}}}'.encode()
+    resp = shared_token_client.post(
+        "/tradingview/webhook",
+        content=body,
+        headers={"Content-Type": "application/json"},
+    )
+    assert resp.status_code == 401
+
+
 def test_shared_token_unconfigured_returns_404(audit_path: Path) -> None:
     # No shared token set + auth_mode=shared_token would fail validation,
     # so we skip the validator by constructing settings directly.

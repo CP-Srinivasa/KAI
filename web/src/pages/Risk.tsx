@@ -3,6 +3,7 @@ import { useT } from "@/i18n/I18nProvider";
 import { PageHeader } from "@/layout/PageHeader";
 import { PreparedPanel } from "@/components/panels/PreparedPanel";
 import { Badge, Card, CardHeader } from "@/components/ui/Primitives";
+import { Gauge } from "@/components/viz/Gauge";
 import { useApi } from "@/lib/useApi";
 import { fetchExposureSummary, fetchOperatorReadiness } from "@/lib/api";
 import { cn } from "@/lib/utils";
@@ -137,6 +138,44 @@ export function RiskPage() {
                   Keine akuten Auffälligkeiten — Konzentration, Bewertungs-Frische und Richtungs-Bias im grünen Bereich.
                 </div>
               )}
+            </div>
+          </div>
+        </Card>
+      )}
+
+      {/* Risk-Meter: Klumpenrisiko + Richtungs-Bias als Pegel (Konzept §16). */}
+      {exp && (
+        <Card padded>
+          <CardHeader
+            title="Risk-Meter"
+            subtitle="Klumpenrisiko und Richtungs-Bias als Pegel — je weiter ausgeschlagen, desto heikler."
+          />
+          <div className="grid grid-cols-2 gap-4">
+            <div className="flex flex-col items-center">
+              <Gauge
+                value={concentrationPct}
+                min={0}
+                max={100}
+                tone={concTone}
+                label={`${concentrationPct.toFixed(0)}%`}
+                className="h-16 w-32"
+              />
+              <div className="mt-1 text-2xs text-fg-subtle">
+                Konzentration{exp.largest_position_symbol ? ` · ${exp.largest_position_symbol}` : ""}
+              </div>
+            </div>
+            <div className="flex flex-col items-center">
+              <Gauge
+                value={directionalBiasPct}
+                min={0}
+                max={100}
+                tone={biasTone}
+                label={`${directionalBiasPct.toFixed(0)}%`}
+                className="h-16 w-32"
+              />
+              <div className="mt-1 text-2xs text-fg-subtle">
+                Richtungs-Bias · {exp.gross_exposure_usd > 0 ? (isLongBiased ? "long" : "short") : "ohne Einsatz"}
+              </div>
             </div>
           </div>
         </Card>

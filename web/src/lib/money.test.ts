@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { convertUsd, formatMoney, formatPct, formatPrice, type FxSnapshot } from "./money";
+import { convertUsd, formatMoney, formatNumber, formatPct, formatPrice, type FxSnapshot } from "./money";
 
 const USD_FX: FxSnapshot = { USD: 1, EUR: 0.9 };
 
@@ -49,6 +49,28 @@ describe("formatPct", () => {
   });
   it("em-dash for absent", () => {
     expect(formatPct(null, { currency: "USD" })).toBe("—");
+  });
+});
+
+describe("formatNumber — plain counts / quantities (locale-aware, not money)", () => {
+  it("groups integers in the active locale, no symbol, not converted", () => {
+    expect(formatNumber(953905, { currency: "USD" })).toBe("953,905");
+    expect(formatNumber(953905, { currency: "EUR" })).toBe("953.905");
+    // EUR must NOT apply the fx rate — a count is not money.
+    expect(formatNumber(1000, { currency: "EUR" })).toBe("1.000");
+  });
+
+  it("honors maxDigits for fractional quantities", () => {
+    expect(formatNumber(85488.547329, { currency: "USD", maxDigits: 2 })).toBe("85,488.55");
+    expect(formatNumber(85488.547329, { currency: "EUR", maxDigits: 2 })).toBe("85.488,55");
+    // trailing zeros are dropped when only maxDigits is set
+    expect(formatNumber(12, { currency: "USD", maxDigits: 2 })).toBe("12");
+  });
+
+  it("coerces Decimal strings and returns em-dash for absent values", () => {
+    expect(formatNumber("1234", { currency: "USD" })).toBe("1,234");
+    expect(formatNumber(null, { currency: "USD" })).toBe("—");
+    expect(formatNumber("", { currency: "USD" })).toBe("—");
   });
 });
 

@@ -295,8 +295,16 @@ def _read_jsonl(path: Path) -> list[dict[str, object]]:
 # rows/day) would only burn kline-API calls. Legacy rows have candidate_kind None:
 # those are pre-NEO-P-002 real candidates, so they ARE resolved by default (None
 # treated as resolvable) to stay backward-compatible.
+#
+# WP-A (2026-06-16): "technical" = the WP-D technical-screener shadow candidates.
+# They carry a real entry_price + side (distinct symbols, not near-identical scan
+# rows), so resolving forward returns is exactly the intended measurement — without
+# this, every screener candidate was silently skipped (skipped_kind) and the
+# technical path produced ZERO edge evidence. They bucket into by_source /
+# by_candidate_kind only; source "technical_screener" is NOT in REAL_SOURCES, so
+# they never enter the autonomous-generator headline / primary_class (B-002).
 RESOLVABLE_CANDIDATE_KINDS: frozenset[str] = frozenset(
-    {"signal_candidate", "gate_candidate", "would_have_traded"}
+    {"signal_candidate", "gate_candidate", "would_have_traded", "technical"}
 )
 # Sources excluded from the default (headline) resolution. ``canary_probe`` is
 # the hardcoded synthetic probe (#137); ``real_analysis`` (Goal 2026-06-10) is

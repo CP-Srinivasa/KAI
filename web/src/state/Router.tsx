@@ -12,7 +12,11 @@ export const ROUTES = [
   "news",
   "backtest",
   "external",
+  "sources",
+  "node",
   "agents",
+  "roadmaps",
+  "system",
   "settings",
 ] as const;
 

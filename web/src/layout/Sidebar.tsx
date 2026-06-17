@@ -17,6 +17,10 @@ import {
   Shield,
   Zap,
   Bot,
+  Bitcoin,
+  Database,
+  Activity,
+  Map,
   X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -34,6 +38,7 @@ const LIVE: Item[] = [
   { id: "dashboard", labelKey: "nav.dashboard", icon: <LayoutDashboard size={16} /> },
   { id: "signals", labelKey: "nav.signals", icon: <Radio size={16} /> },
   { id: "external", labelKey: "nav.external", icon: <Upload size={16} /> },
+  { id: "sources", labelKey: "nav.sources", icon: <Database size={16} /> },
   { id: "trades", labelKey: "nav.trades", icon: <ArrowLeftRight size={16} /> },
   { id: "portfolio", labelKey: "nav.portfolio", icon: <Briefcase size={16} /> },
   { id: "alerts", labelKey: "nav.alerts", icon: <Bell size={16} /> },
@@ -48,12 +53,21 @@ const PREPARED: Item[] = [
   { id: "backtest", labelKey: "nav.backtest", icon: <Rewind size={16} />, prepared: true },
 ];
 
+// Souveränität (eigene Bitcoin/Lightning-Node, Truth-Layer)
+const SOVEREIGN: Item[] = [
+  { id: "node", labelKey: "nav.node", icon: <Bitcoin size={16} /> },
+];
+
 // Kontroll-Ebene (Claude-Code-only Agenten)
 const CONTROL: Item[] = [
   { id: "agents", labelKey: "nav.agents", icon: <Bot size={16} /> },
+  { id: "roadmaps", labelKey: "nav.roadmaps", icon: <Map size={16} /> },
 ];
 
-const SYSTEM: Item[] = [{ id: "settings", labelKey: "nav.settings", icon: <Settings size={16} /> }];
+const SYSTEM: Item[] = [
+  { id: "system", labelKey: "nav.system", icon: <Activity size={16} /> },
+  { id: "settings", labelKey: "nav.settings", icon: <Settings size={16} /> },
+];
 
 type SidebarProps = {
   mobileOpen?: boolean;
@@ -142,6 +156,8 @@ export function Sidebar({ mobileOpen = false, onMobileClose }: SidebarProps) {
 
       <nav className="flex-1 overflow-y-auto py-3 px-2 space-y-0.5">
         <NavGroup label="Live" items={LIVE} collapsed={collapsed} route={route} navigate={handleNavigate} />
+        <div className="h-2" />
+        <NavGroup label="Souveränität" items={SOVEREIGN} collapsed={collapsed} route={route} navigate={handleNavigate} />
         <div className="h-2" />
         <NavGroup label="Kontrolle" items={CONTROL} collapsed={collapsed} route={route} navigate={handleNavigate} />
         <div className="h-2" />

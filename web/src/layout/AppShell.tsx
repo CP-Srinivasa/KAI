@@ -29,6 +29,10 @@ const ExternalSignalsPage = lazy(() =>
   import("@/pages/ExternalSignals").then((m) => ({ default: m.ExternalSignalsPage })),
 );
 const AgentsPage = lazy(() => import("@/pages/Agents").then((m) => ({ default: m.AgentsPage })));
+const SourcesPage = lazy(() => import("@/pages/Sources").then((m) => ({ default: m.SourcesPage })));
+const NodePage = lazy(() => import("@/pages/Node").then((m) => ({ default: m.NodePage })));
+const SystemPage = lazy(() => import("@/pages/System").then((m) => ({ default: m.SystemPage })));
+const RoadmapsPage = lazy(() => import("@/pages/Roadmaps").then((m) => ({ default: m.RoadmapsPage })));
 const SettingsPage = lazy(() =>
   import("@/pages/Settings").then((m) => ({ default: m.SettingsPage })),
 );
@@ -99,8 +103,16 @@ function renderRoute(r: string) {
       return <BacktestPage />;
     case "external":
       return <ExternalSignalsPage />;
+    case "sources":
+      return <SourcesPage />;
+    case "node":
+      return <NodePage />;
     case "agents":
       return <AgentsPage />;
+    case "roadmaps":
+      return <RoadmapsPage />;
+    case "system":
+      return <SystemPage />;
     case "settings":
       return <SettingsPage />;
     default:

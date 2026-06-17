@@ -2,9 +2,70 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
 import time
 from pathlib import Path
+
+import pytest
+
+
+def test_timer_health_probe_real_systemctl_inactive_single_token(tmp_path) -> None:
+    """Regression: the REAL systemctl branch must yield ONE clean finding token.
+
+    `systemctl is-active <x>` prints "inactive" AND exits non-zero. The old
+    `|| echo "inactive"` doubled it to "inactive\\ninactive", so the finding
+    "<timer> (inactive\\ninactive)" split into two JSON elements and the orphan
+    "inactive)" fragment was mis-classified as a critical recurring timer
+    (false-positive). This drives the real branch via a fake systemctl on PATH.
+    """
+    if shutil.which("bash") is None:
+        pytest.skip("bash unavailable")
+
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_systemctl = fake_bin / "systemctl"
+    # Mimic real systemd: is-active prints the state to stdout AND exits 3 for
+    # non-active units. Any other subcommand exits 0 cleanly.
+    fake_systemctl.write_text(
+        "#!/usr/bin/env bash\n"
+        'if [[ "$1" == "is-active" ]]; then echo "inactive"; exit 3; fi\n'
+        "exit 0\n",
+        encoding="utf-8",
+    )
+    fake_systemctl.chmod(0o755)
+
+    audit_file_rel = Path("artifacts") / f"timer_health_audit_test_{tmp_path.name}.jsonl"
+    audit_file_abs = Path(__file__).resolve().parents[2] / audit_file_rel
+    if audit_file_abs.exists():
+        audit_file_abs.unlink()
+
+    test_env = {
+        **os.environ,
+        "PATH": f"{fake_bin}{os.pathsep}{os.environ.get('PATH', '')}",
+        "KAI_TIMER_PROBE_TIMERS": "kai-risk-gate-audit-review.timer",
+        # NO TEST_STATES → forces the real `systemctl is-active` branch.
+        "KAI_TIMER_PROBE_AUDIT_FILE": str(audit_file_rel.as_posix()),
+        "KAI_TIMER_PROBE_IGNORE_DOTENV": "1",
+        "KAI_TIMER_PROBE_DRY_RUN": "1",
+    }
+
+    try:
+        res = subprocess.run(
+            ["bash", "scripts/pi_timer_health_probe.sh"],
+            env=test_env,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+        )
+        assert res.returncode == 0, res.stderr
+        lines = audit_file_abs.read_text(encoding="utf-8").splitlines()
+        data = json.loads(lines[-1])
+        # The finding MUST be a single, well-formed token (no orphan fragment).
+        assert data["findings"] == ["kai-risk-gate-audit-review.timer (inactive)"]
+    finally:
+        if audit_file_abs.exists():
+            audit_file_abs.unlink()
 
 
 def test_timer_health_probe_all_active(tmp_path) -> None:
