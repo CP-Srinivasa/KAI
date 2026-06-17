@@ -138,6 +138,26 @@ export function fetchTimerHealth(signal?: AbortSignal): Promise<TimerHealthRespo
   return apiGet<TimerHealthResponse>("/health/timers", { signal });
 }
 
+// Edge-Verlauf (#319): Precision/Brier/IC je Zeitfenster. Werte sind null, wenn
+// das Fenster unter min_resolved liegt (kein Chart-Punkt auf dünner Stichprobe).
+export type EdgeWindow = {
+  window_start: string;
+  window_end: string;
+  resolved: number;
+  precision_pct: number | null;
+  brier: number | null;
+  ic_1h: number | null;
+};
+export type EdgeTimeseries = {
+  windows: EdgeWindow[];
+  bucket_days: number;
+  min_resolved: number;
+  generated_at: string;
+};
+export function fetchEdgeTimeseries(signal?: AbortSignal): Promise<EdgeTimeseries> {
+  return apiGet<EdgeTimeseries>("/dashboard/api/edge-timeseries", { signal });
+}
+
 export type EntryRuntime = {
   entry_mode: string | null;
   entry_mode_label: string;

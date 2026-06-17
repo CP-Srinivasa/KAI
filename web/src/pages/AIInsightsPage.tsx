@@ -4,6 +4,7 @@ import { PageHeader } from "@/layout/PageHeader";
 import { PreparedPanel } from "@/components/panels/PreparedPanel";
 import { Badge, Card, CardHeader } from "@/components/ui/Primitives";
 import { Funnel } from "@/components/viz/Funnel";
+import { EdgeTrendCard } from "@/components/panels/EdgeTrendCard";
 import { useDashboardQuality } from "@/lib/useDashboardQuality";
 import { cn } from "@/lib/utils";
 import { tierLiftTone } from "@/lib/tone";
@@ -119,6 +120,9 @@ export function AIInsightsPage() {
           </div>
         </Card>
       )}
+
+      {/* #319: Edge-Verlauf (Precision/Brier/IC über die Zeit) aus /dashboard/api/edge-timeseries. */}
+      <EdgeTrendCard />
 
       {q.state === "ready" && (
         <Card padded>
