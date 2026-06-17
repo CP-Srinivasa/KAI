@@ -16,10 +16,11 @@ from pathlib import Path
 from typing import Any, cast
 
 import httpx
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
 
 from app.alerts.hold_metrics import build_hold_metrics_report
+from app.api.deps import get_document_repo
 from app.audit.stream_validation import (
     AuditStreamName,
     AuditStreamReadResult,
@@ -31,6 +32,7 @@ from app.observability.dashboard_metric_registry import (
     build_dashboard_metric_registry,
     reconcile_dashboard_snapshot,
 )
+from app.storage.repositories.document_repo import DocumentRepository
 
 logger = logging.getLogger(__name__)
 
@@ -1569,4 +1571,27 @@ async def dashboard_integrity_api() -> JSONResponse:
     status = get_integrity_status()
     payload = asdict(status)
     payload["generated_at"] = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return JSONResponse(content=payload, headers={"Cache-Control": "no-store, max-age=0"})
+
+
+@router.get("/dashboard/api/source-activity", tags=["dashboard"])
+async def dashboard_source_activity_api(
+    window_hours: int = 24,
+    repo: DocumentRepository = Depends(get_document_repo),  # noqa: B008
+) -> JSONResponse:
+    """Read-only per-source ingestion activity (Quellen-Live-Zyklus).
+
+    Aggregiert den kanonischen Dokumenten-Store nach Quelle: Lifetime-Count,
+    Count im ``window_hours``-Fenster und letzter ``fetched_at`` je Quelle —
+    so sieht der Operator, welche Quelle gerade liefert und welche stillsteht.
+    Reiner Read über die DB; kein Eingriff in den Ingestion-Schreibpfad.
+    """
+    from dataclasses import asdict
+
+    rows = await repo.source_activity(window_hours=window_hours)
+    payload = {
+        "window_hours": window_hours,
+        "sources": [asdict(r) for r in rows],
+        "generated_at": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+    }
     return JSONResponse(content=payload, headers={"Cache-Control": "no-store, max-age=0"})
