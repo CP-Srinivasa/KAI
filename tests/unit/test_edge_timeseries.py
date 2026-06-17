@@ -37,7 +37,9 @@ def _row(
 def test_buckets_by_time_and_gates_min_resolved():
     # 12 Rows im jüngsten 7d-Fenster (alle entscheidbar) → über min_resolved=10.
     # conf variiert + fwd korreliert → IC ist definiert (nicht-konstantes Feature).
-    rows = [_row(1.0 + i * 0.1, 0.5 + i * 0.02, fwd=float(i + 1), outcome_fwd=5.0) for i in range(12)]
+    rows = [
+        _row(1.0 + i * 0.1, 0.5 + i * 0.02, fwd=float(i + 1), outcome_fwd=5.0) for i in range(12)
+    ]
     series = build_edge_timeseries(rows, now=NOW, bucket_days=7, num_buckets=2, min_resolved=10)
     assert len(series) == 2
     recent = series[-1]
