@@ -129,6 +129,14 @@ class AlertSettings(BaseSettings):
     # shadow-measurement only; execution stays gated by entry_mode so this flag
     # alone cannot produce a real short fill. Env ``ALERT_ALLOW_SHORT_TECHNICAL``.
     allow_short_technical: bool = Field(default=False)
+    # IC-Hebel (2026-06-17): bearish-short gate for the NEWS/real-analysis paper
+    # path. Edge basis (shadow_candidate_resolved, n=593 shorts): news longs carry
+    # (+36bps signed @3600s) while shorts are ~breakeven/negative (+1/-7bps) →
+    # suppressing shorts concentrates the measured generator cohort on the long
+    # edge and lifts IC. Default TRUE = status quo (shorts still flow) so a fresh
+    # deploy changes nothing (measure-first); the operator sets it FALSE to act.
+    # Distinct from allow_short_technical (technical path). Env ``ALERT_ALLOW_SHORT_NEWS``.
+    allow_short_news: bool = Field(default=True)
     # Digest mode: accumulate alerts and send as a batch instead of individually.
     digest_enabled: bool = Field(default=False)
     digest_interval_minutes: int = Field(default=60)
