@@ -1619,6 +1619,28 @@ async def dashboard_markets_derivatives_api() -> JSONResponse:
     return JSONResponse(content=payload, headers={"Cache-Control": "no-store, max-age=0"})
 
 
+@router.get("/dashboard/api/markets/sentiment", tags=["dashboard"])
+async def dashboard_markets_sentiment_api() -> JSONResponse:
+    """Read-only Krypto-Markt-Sentiment (Fear & Greed Index, alternative.me).
+
+    Liest einen TTL-gecachten Snapshot (``app.market_data.sentiment``) der freien,
+    öffentlichen Fear-&-Greed-API (fixe Provider-URL, kein Key, kein Scraping,
+    SSRF-safe). Der Request blockiert NIE auf dem Provider; ``age_seconds`` zeigt
+    das Snapshot-Alter. ``available`` ist False, solange der Cache kalt ist oder
+    der Fetch fehlschlägt — dann KEIN erfundener Wert (No-Fake). ``value`` 0..100.
+    Read-only, kein schreibender/kapitalrelevanter Pfad.
+    """
+    from dataclasses import asdict
+
+    from app.market_data.sentiment import get_cached_sentiment
+
+    snap, age = await get_cached_sentiment()
+    payload = asdict(snap)
+    payload["age_seconds"] = age
+    payload["generated_at"] = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return JSONResponse(content=payload, headers={"Cache-Control": "no-store, max-age=0"})
+
+
 @router.get("/dashboard/api/integrity", tags=["dashboard"])
 async def dashboard_integrity_api() -> JSONResponse:
     """Read-only L3 Audit-Integritäts-Status (OpenTimestamps-Anchoring, default-off).

@@ -1,14 +1,13 @@
-// @data-source: /dashboard/api/chain (live) · /dashboard/api/markets/derivatives (live)
+// @data-source: /dashboard/api/chain (live) · /dashboard/api/markets/derivatives (live) · /dashboard/api/markets/sentiment (live)
 //
 // Markt-Mikrostruktur für die Märkte-Seite — strikt das, was KAI WAHR weiß:
 //   • On-Chain (Fee-Gauge, Mempool, Tip) aus der EIGENEN bitcoind.
-//   • Perp-Funding + Open Interest aus KAIs EIGENER Ingestion (bybit-Snapshot,
-//     gespeist vom Funding/OI-Refresh-Service) — echte Werte, kein Dritt-API-Call
-//     im Request-Pfad.
-// Metriken ohne verdrahteten Datenpfad (Liquidations/Sentiment/Momentum) bleiben
-// ehrlich „ausstehend" in einer Quellen-Matrix statt erfundener Werte (No-Fake).
+//   • Perp-Funding + Open Interest aus KAIs EIGENER Ingestion (bybit-Snapshot).
+//   • Sentiment aus dem freien Fear-&-Greed-Index (alternative.me, server-gecacht).
+// Metriken ohne verdrahteten Datenpfad (Liquidations/Momentum) bleiben ehrlich
+// „ausstehend" in einer Quellen-Matrix statt erfundener Werte (No-Fake).
 import type { ReactNode } from "react";
-import { Activity, Database, TrendingUp } from "lucide-react";
+import { Activity, Database, TrendingUp, Gauge as GaugeIcon } from "lucide-react";
 import { Card, CardHeader, Badge } from "@/components/ui/Primitives";
 import { StatusPill } from "@/components/ui/StatusPill";
 import { LiveDot } from "@/components/ui/LiveDot";
@@ -16,9 +15,11 @@ import { Gauge } from "@/components/viz/Gauge";
 import {
   fetchChainStatus,
   fetchDerivatives,
+  fetchSentiment,
   type ChainStatus,
   type DerivativesSnapshot,
   type DerivativeRow,
+  type SentimentSnapshot,
 } from "@/lib/api";
 import { usePolling } from "@/lib/usePolling";
 import type { Tone } from "@/lib/tone";
@@ -32,6 +33,13 @@ function feeTone(fee: number | null): Tone {
   if (fee < 20) return "info";
   if (fee < 50) return "warn";
   return "neg";
+}
+
+// Fear & Greed 0..100 → Ton (Extreme an beiden Enden = Vorsicht).
+function sentimentTone(v: number): Tone {
+  if (v < 25 || v >= 75) return "neg";
+  if (v < 45 || v >= 55) return "warn";
+  return "info";
 }
 
 // Funding-Rate (8h-Anteil) → Basispunkte. 0.0001 = 1bp.
@@ -55,7 +63,6 @@ function fmtOi(oi: number | null): string {
 // Metriken ohne eigenen Datenpfad — ehrlich „ausstehend".
 const EXTERNAL_SOURCES: ReadonlyArray<{ metric: string; src: string }> = [
   { metric: "Liquidations", src: "CoinGlass" },
-  { metric: "Sentiment", src: "Glassnode" },
   { metric: "Momentum", src: "Dune" },
 ];
 
@@ -70,10 +77,16 @@ export function MarketMicrostructurePanel() {
     pauseWhenHidden: true,
     retry: { maxAttempts: 3, baseMs: 2_000 },
   });
+  const sent = usePolling<SentimentSnapshot>((signal) => fetchSentiment(signal), {
+    intervalMs: POLL_MS,
+    pauseWhenHidden: true,
+    retry: { maxAttempts: 3, baseMs: 2_000 },
+  });
   const data = polling.state === "ready" ? polling.data : null;
   const ok = data?.state === "ok";
   const fee = ok ? data.fee_sat_vb : null;
   const rows: DerivativeRow[] = deriv.state === "ready" ? deriv.data.rows : [];
+  const sentiment = sent.state === "ready" && sent.data.available ? sent.data : null;
 
   return (
     <Card padded className="synthwave-pulse-edge overflow-hidden">
@@ -95,8 +108,8 @@ export function MarketMicrostructurePanel() {
         }
       />
 
-      {/* On-Chain — echte Werte aus KAIs eigener Node. */}
-      <div className="grid grid-cols-1 items-end gap-3 sm:grid-cols-3">
+      {/* On-Chain (eigene Node) + Sentiment (Fear & Greed) — zwei Gauges, echte Werte. */}
+      <div className="grid grid-cols-2 items-end gap-3 lg:grid-cols-4">
         <div className="flex flex-col items-center">
           <Gauge
             value={fee}
@@ -109,6 +122,22 @@ export function MarketMicrostructurePanel() {
           <span className="mt-0.5 text-2xs uppercase tracking-wider text-fg-subtle">
             On-Chain Fee · sat/vB
           </span>
+        </div>
+        <div className="flex flex-col items-center">
+          <Gauge
+            value={sentiment ? sentiment.value : null}
+            min={0}
+            max={100}
+            tone={sentiment ? sentimentTone(sentiment.value) : "neutral"}
+            label={sentiment ? String(sentiment.value) : "—"}
+            className="w-28 h-16"
+          />
+          <span className="mt-0.5 flex items-center gap-1 text-2xs uppercase tracking-wider text-fg-subtle">
+            <GaugeIcon size={9} /> Fear &amp; Greed
+          </span>
+          {sentiment && (
+            <span className="text-[10px] text-fg-muted">{sentiment.classification}</span>
+          )}
         </div>
         <Tile label="Mempool" value={ok ? `${data.mempool_tx.toLocaleString("de-DE")} tx` : "—"} />
         <Tile
@@ -187,7 +216,7 @@ export function MarketMicrostructurePanel() {
         <div className="mb-1.5 flex items-center gap-1.5 text-2xs uppercase tracking-wider text-fg-subtle">
           <Database size={11} /> Weitere Markt-Metriken · Quellen-Matrix
         </div>
-        <div className="grid grid-cols-3 gap-2">
+        <div className="grid grid-cols-2 gap-2">
           {EXTERNAL_SOURCES.map((s) => (
             <div key={s.metric} className="rounded-sm border border-line-subtle bg-bg-2/40 px-2 py-1.5">
               <div className="truncate text-2xs font-medium text-fg">{s.metric}</div>

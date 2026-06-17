@@ -909,3 +909,29 @@ def test_markets_derivatives_serves_own_ingestion(monkeypatch) -> None:
     assert row["funding_rate"] == 7.06e-06 and row["mark_price"] == 65436.6
     assert row["open_interest"] == 51176.86 and row["oi_change_zscore"] == -1.21
     assert row["funding_source"] == "bybit" and row["oi_source"] == "bybit"
+
+
+def test_markets_sentiment_endpoint(monkeypatch) -> None:
+    """Fear & Greed über den server-gecachten Adapter; Wert + Alter im Payload."""
+    from app.market_data.sentiment import SentimentSnapshot
+
+    async def _fake_cached():  # noqa: ANN202
+        return SentimentSnapshot(available=True, value=61, classification="Greed"), 42.0
+
+    monkeypatch.setattr("app.market_data.sentiment.get_cached_sentiment", _fake_cached)
+    body = TestClient(_make_app()).get("/dashboard/api/markets/sentiment").json()
+    assert body["available"] is True and body["value"] == 61
+    assert body["classification"] == "Greed" and body["age_seconds"] == 42.0
+    assert body["source"] == "alternative.me"
+
+
+def test_markets_sentiment_cold_is_honest(monkeypatch) -> None:
+    """Kalter Cache: ehrlich available False, kein erfundener Wert."""
+    from app.market_data.sentiment import SentimentSnapshot
+
+    async def _fake_cold():  # noqa: ANN202
+        return SentimentSnapshot.unavailable("warming up"), None
+
+    monkeypatch.setattr("app.market_data.sentiment.get_cached_sentiment", _fake_cold)
+    body = TestClient(_make_app()).get("/dashboard/api/markets/sentiment").json()
+    assert body["available"] is False and body["age_seconds"] is None
