@@ -187,3 +187,50 @@ async def test_update_analysis_sets_analyzed_status(session_factory) -> None:
     assert stored.sentiment_label == SentimentLabel.BULLISH
     assert stored.priority_score == analysis_result.recommended_priority
     assert stored.categories == ["defi", "layer1"]
+
+
+@pytest.mark.asyncio
+async def test_source_activity_aggregates_per_source(session_factory) -> None:
+    from datetime import timedelta
+
+    from app.storage.models.document import CanonicalDocumentModel
+
+    now = datetime(2026, 6, 17, 12, 0, 0, tzinfo=UTC)
+    rows = [
+        ("rss", now - timedelta(hours=1)),
+        ("rss", now - timedelta(hours=2)),
+        ("rss", now - timedelta(hours=50)),  # outside the 24h window
+        ("okx", now - timedelta(hours=3)),
+        (None, now - timedelta(hours=4)),  # null source → "unknown"
+    ]
+    async with session_factory.begin() as session:
+        for i, (src, fetched) in enumerate(rows):
+            session.add(
+                CanonicalDocumentModel(
+                    id=f"doc-{i}",
+                    url=f"https://example.com/{i}",
+                    title=f"t{i}",
+                    document_type="news",
+                    source_name=src,
+                    fetched_at=fetched,
+                )
+            )
+
+    async with session_factory() as session:
+        repo = DocumentRepository(session)
+        result = await repo.source_activity(window_hours=24, now=now)
+
+    by = {r.source_name: r for r in result}
+    assert by["rss"].total == 3 and by["rss"].window_count == 2  # 50h-old excluded
+    assert by["okx"].total == 1 and by["okx"].window_count == 1
+    assert by["unknown"].total == 1  # null source coalesced
+    assert by["rss"].last_fetched_at is not None
+    # newest source first: rss (last fetch 1h ago) before okx (3h ago)
+    assert result[0].source_name == "rss"
+
+
+@pytest.mark.asyncio
+async def test_source_activity_empty_store(session_factory) -> None:
+    async with session_factory() as session:
+        repo = DocumentRepository(session)
+        assert await repo.source_activity() == []
