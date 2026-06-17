@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Send, RefreshCw, AlertCircle, Inbox, Bell, Info, CheckCircle2, XCircle } from "lucide-react";
 import { useT } from "@/i18n/I18nProvider";
 import { Badge, Button, Card } from "@/components/ui/Primitives";
+import { Funnel } from "@/components/viz/Funnel";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { AutoAnnotateCohortDrawer } from "@/components/panels/AutoAnnotateCohortDrawer";
 import { PageHeader } from "@/layout/PageHeader";
@@ -192,6 +193,21 @@ export function AlertsPage() {
             </div>
           </Card>
         </div>
+      )}
+
+      {/* WP-3.5: Delivery-Funnel — wie viele der sichtbaren Alerts sauber versendet wurden (§15). */}
+      {audit.state === "ready" && rows.length > 0 && (
+        <Card padded>
+          <div className="mb-2 text-2xs uppercase tracking-wider text-fg-subtle font-semibold">
+            Delivery-Funnel — sichtbar → sauber versendet (Retention = Versand-Rate)
+          </div>
+          <Funnel
+            stages={[
+              { label: "Sichtbar", value: rows.length, tone: "info" },
+              { label: "Sauber versendet", value: sendHealth.sent, tone: "pos" },
+            ]}
+          />
+        </Card>
       )}
 
       {/* DALI-A4: Test-Result als persistente Card mit klarem Erfolgs-Indikator,
