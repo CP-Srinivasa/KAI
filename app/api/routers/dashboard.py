@@ -1574,6 +1574,35 @@ async def dashboard_integrity_api() -> JSONResponse:
     return JSONResponse(content=payload, headers={"Cache-Control": "no-store, max-age=0"})
 
 
+@router.get("/dashboard/api/edge-timeseries", tags=["dashboard"])
+async def dashboard_edge_timeseries_api() -> JSONResponse:
+    """Edge-Verlauf (#319): Precision/Brier/IC je Zeitfenster aus dem resolved-Ledger.
+
+    Reicht ``load_edge_timeseries()`` durch — exakt dieselbe Outcome-/Real-Source-
+    Logik wie der Edge-Collector. Fenster unter ``min_resolved`` liefern ``None``
+    (kein Chart-Punkt auf dünner Stichprobe — keine irreführenden Trendlinien).
+    Fail-soft: leere Serie statt 500.
+    """
+    from app.observability.edge_timeseries import (
+        DEFAULT_BUCKET_DAYS,
+        DEFAULT_MIN_RESOLVED,
+        load_edge_timeseries,
+    )
+
+    windows: list[dict[str, Any]] = []
+    try:
+        windows = [w.to_dict() for w in load_edge_timeseries()]
+    except Exception as exc:  # noqa: BLE001 — Panel degradiert, kein 500
+        logger.warning("edge_timeseries_read_failed: %s", exc)
+    payload: dict[str, Any] = {
+        "windows": windows,
+        "bucket_days": DEFAULT_BUCKET_DAYS,
+        "min_resolved": DEFAULT_MIN_RESOLVED,
+        "generated_at": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+    }
+    return JSONResponse(content=payload, headers={"Cache-Control": "no-store, max-age=0"})
+
+
 @router.get("/dashboard/api/source-activity", tags=["dashboard"])
 async def dashboard_source_activity_api(
     window_hours: int = 24,
