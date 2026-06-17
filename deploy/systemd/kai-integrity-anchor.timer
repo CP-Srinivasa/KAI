@@ -1,0 +1,11 @@
+[Unit]
+Description=Trigger KAI L3 Audit-Integrity Anchor daily at 04:20 UTC
+
+[Timer]
+OnCalendar=*-*-* 04:20:00 UTC
+AccuracySec=5min
+Persistent=true
+Unit=kai-integrity-anchor.service
+
+[Install]
+WantedBy=timers.target

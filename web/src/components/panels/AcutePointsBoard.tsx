@@ -14,6 +14,8 @@ import { Card, CardHeader, Badge } from "@/components/ui/Primitives";
 import { deriveTruthChips } from "@/lib/truthStatus";
 import { acuteChips, recommendedAction } from "@/lib/acutePoints";
 import { truthToneToStatusTone } from "@/lib/commandStatus";
+import { useApi } from "@/lib/useApi";
+import { fetchOperatorBoard } from "@/lib/api";
 import type {
   DashboardQuality,
   DashboardRegime,
@@ -33,6 +35,9 @@ export function AcutePointsBoard({
 }) {
   const acute = acuteChips(deriveTruthChips(quality, regime, priorityGate));
   const hasCritical = acute.some((c) => c.tone === "critical");
+  const board = useApi(fetchOperatorBoard, 300_000);
+  const b = board.state === "ready" ? board.data : null;
+  const hasBoard = !!b && (b.todos.length > 0 || b.phases.length > 0 || b.improvements.length > 0);
 
   return (
     <Card padded>
@@ -88,9 +93,59 @@ export function AcutePointsBoard({
         </ul>
       )}
 
-      <p className="mt-2 border-t border-line-subtle pt-2 text-2xs text-fg-subtle">
-        Todos / offene Phasen / Verbesserungen: strukturierte Quelle ausstehend (Operator-Board-Endpoint) — bewusst nicht aus Platzhaltern erfunden.
-      </p>
+      {hasBoard && b ? (
+        <div className="mt-3 grid grid-cols-1 gap-3 border-t border-line-subtle pt-3 md:grid-cols-3">
+          <div>
+            <div className="mb-1 text-2xs font-semibold uppercase tracking-wider text-fg-subtle">To-dos</div>
+            <ul className="space-y-1 text-2xs text-fg-muted">
+              {b.todos.length === 0 ? (
+                <li className="text-fg-subtle">—</li>
+              ) : (
+                b.todos.map((t, i) => (
+                  <li key={i} className="flex items-start gap-1.5">
+                    {t.priority && <Badge tone="muted">{t.priority}</Badge>}
+                    <span className="min-w-0">{t.text}</span>
+                  </li>
+                ))
+              )}
+            </ul>
+          </div>
+          <div>
+            <div className="mb-1 text-2xs font-semibold uppercase tracking-wider text-fg-subtle">Offene Phasen</div>
+            <ul className="space-y-1 text-2xs text-fg-muted">
+              {b.phases.length === 0 ? (
+                <li className="text-fg-subtle">—</li>
+              ) : (
+                b.phases.map((p, i) => (
+                  <li key={i} className="flex items-center gap-1.5">
+                    <Badge tone={p.status === "done" ? "pos" : p.status === "active" ? "info" : "muted"}>{p.status}</Badge>
+                    <span className="min-w-0 truncate">{p.label}</span>
+                  </li>
+                ))
+              )}
+            </ul>
+          </div>
+          <div>
+            <div className="mb-1 text-2xs font-semibold uppercase tracking-wider text-fg-subtle">Verbesserungen</div>
+            <ul className="space-y-1 text-2xs text-fg-muted">
+              {b.improvements.length === 0 ? (
+                <li className="text-fg-subtle">—</li>
+              ) : (
+                b.improvements.map((im, i) => <li key={i}>{im.text}</li>)
+              )}
+            </ul>
+          </div>
+          {b.stand && (
+            <p className="text-2xs text-fg-subtle md:col-span-3">
+              Kuratierter Snapshot · Stand {b.stand} · gepflegt in docs/operator_board.json (nicht live-berechnet).
+            </p>
+          )}
+        </div>
+      ) : (
+        <p className="mt-2 border-t border-line-subtle pt-2 text-2xs text-fg-subtle">
+          Todos / offene Phasen / Verbesserungen: kuratierte Quelle (docs/operator_board.json) noch leer/ausstehend — bewusst nicht aus Platzhaltern erfunden.
+        </p>
+      )}
     </Card>
   );
 }
