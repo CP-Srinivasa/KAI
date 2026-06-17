@@ -790,6 +790,39 @@ def test_chain_endpoint_disabled_by_default() -> None:
     assert "blocks" in body and "mempool_tx" in body
 
 
+def test_integrity_endpoint_disabled_by_default() -> None:
+    """Default-off: /dashboard/api/integrity meldet `disabled` ohne FS-Touch."""
+    resp = TestClient(_make_app()).get("/dashboard/api/integrity")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["state"] == "disabled"
+    assert body["enabled"] is False
+    assert "generated_at" in body
+    assert "last_digest" in body and "proof_available" in body
+
+
+def test_integrity_endpoint_ok(monkeypatch) -> None:
+    """Vorhandener Anchor-Record → ok mit Digest + Proof-Status."""
+    from app.integrity.status import IntegrityStatus
+
+    def _fake_status(cfg=None):
+        return IntegrityStatus(
+            state="ok",
+            enabled=True,
+            stamper="opentimestamps",
+            anchor_count=3,
+            last_digest="abc123",
+            last_anchored_at="2026-06-17T00:00:00+00:00",
+            proof_available=True,
+        )
+
+    monkeypatch.setattr("app.integrity.get_integrity_status", _fake_status)
+    body = TestClient(_make_app()).get("/dashboard/api/integrity").json()
+    assert body["state"] == "ok" and body["enabled"] is True
+    assert body["last_digest"] == "abc123" and body["proof_available"] is True
+    assert body["anchor_count"] == 3
+
+
 def test_chain_endpoint_ok_when_reachable(monkeypatch) -> None:
     """Erreichbare bitcoind → ok mit Tip-Höhe/Sync/Fee/Mempool aus der Node."""
     from app.chain.adapter import ChainStatus

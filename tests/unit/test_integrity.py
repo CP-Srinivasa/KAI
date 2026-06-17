@@ -92,3 +92,66 @@ def test_anchor_captures_stamper_error(tmp_path, monkeypatch) -> None:
     )
     r = anchor_audit_digest(cfg)
     assert r.state == "error" and "no ots lib" in r.reason
+
+
+# --- read-only status surface (get_integrity_status) ---------------------------
+
+from app.integrity import get_integrity_status  # noqa: E402
+
+
+def test_status_disabled_no_fs_touch() -> None:
+    s = get_integrity_status(IntegritySettings(enabled=False, proofs_dir="/does/not/exist"))
+    assert s.state == "disabled" and s.enabled is False
+
+
+def test_status_no_anchor_when_empty(tmp_path) -> None:
+    s = get_integrity_status(IntegritySettings(enabled=True, proofs_dir=str(tmp_path / "empty")))
+    assert s.state == "no_anchor" and s.enabled is True and s.anchor_count == 0
+
+
+def test_status_ok_reflects_latest_anchor_record(tmp_path) -> None:
+    # Write a real record via the anchor action (null stamper → no .ots proof),
+    # then the read-only status must reflect it without re-computing anything.
+    a = _write(tmp_path, "a.jsonl", "alpha")
+    out = str(tmp_path / "out")
+    cfg = IntegritySettings(enabled=True, stamper="null", audit_paths=[a], proofs_dir=out)
+    r = anchor_audit_digest(cfg)
+    s = get_integrity_status(cfg)
+    assert s.state == "ok"
+    assert s.anchor_count == 1
+    assert s.last_digest == r.digest
+    assert s.last_anchored_at != ""
+    assert s.proof_available is False  # null stamper writes no .ots
+
+
+def test_status_proof_available_and_latest_by_ts(tmp_path) -> None:
+    out = tmp_path / "out"
+    out.mkdir()
+    older = "a" * 64
+    newer = "b" * 64
+    (out / f"audit-{older[:16]}.json").write_text(
+        json.dumps({"ts": "2026-06-01T00:00:00+00:00", "digest": older}), encoding="utf-8"
+    )
+    (out / f"audit-{newer[:16]}.json").write_text(
+        json.dumps({"ts": "2026-06-17T00:00:00+00:00", "digest": newer}), encoding="utf-8"
+    )
+    (out / f"audit-{newer[:16]}.ots").write_bytes(b"\x00ots-proof")  # OTS proof for newer
+    s = get_integrity_status(IntegritySettings(enabled=True, proofs_dir=str(out)))
+    assert s.state == "ok"
+    assert s.anchor_count == 2
+    assert s.last_digest == newer  # picked by latest ts
+    assert s.proof_available is True
+
+
+def test_status_skips_corrupt_record(tmp_path) -> None:
+    out = tmp_path / "out"
+    out.mkdir()
+    good = "c" * 64
+    (out / f"audit-{good[:16]}.json").write_text(
+        json.dumps({"ts": "2026-06-10T00:00:00+00:00", "digest": good}), encoding="utf-8"
+    )
+    (out / "audit-deadbeefdeadbeef.json").write_text("{not json", encoding="utf-8")
+    s = get_integrity_status(IntegritySettings(enabled=True, proofs_dir=str(out)))
+    assert s.state == "ok"
+    assert s.anchor_count == 1  # corrupt record skipped, not crashed
+    assert s.last_digest == good

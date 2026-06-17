@@ -13,13 +13,16 @@ from app.integrity.anchor import (
     anchor_audit_digest,
 )
 from app.integrity.digest import AuditDigest, compute_audit_digest
+from app.integrity.status import IntegrityStatus, get_integrity_status
 
 __all__ = [
     "AnchorResult",
     "AnchorUnavailableError",
     "AuditDigest",
+    "IntegrityStatus",
     "NullStamper",
     "OpenTimestampsStamper",
     "anchor_audit_digest",
     "compute_audit_digest",
+    "get_integrity_status",
 ]

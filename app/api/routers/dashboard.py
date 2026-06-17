@@ -1548,3 +1548,25 @@ async def dashboard_chain_api() -> JSONResponse:
     payload["age_seconds"] = age
     payload["generated_at"] = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
     return JSONResponse(content=payload, headers={"Cache-Control": "no-store, max-age=0"})
+
+
+@router.get("/dashboard/api/integrity", tags=["dashboard"])
+async def dashboard_integrity_api() -> JSONResponse:
+    """Read-only L3 Audit-Integritäts-Status (OpenTimestamps-Anchoring, default-off).
+
+    Spiegelt ``app.integrity.get_integrity_status()`` — reiner Datei-Read der
+    bereits geschriebenen Anchor-Records (kein Digest-Compute, kein Stamping, kein
+    Netzcall → blockiert nie). ``state`` ist ``disabled`` (Feature aus),
+    ``no_anchor`` (an, aber noch nichts verankert), ``ok`` (letzter Anchor
+    gefunden; ``proof_available`` zeigt, ob ein OTS-Proof on-chain-verankerbar
+    vorliegt) oder ``unavailable`` (Proofs-Dir unlesbar). Fail-soft, kein
+    schreibender Pfad.
+    """
+    from dataclasses import asdict
+
+    from app.integrity import get_integrity_status
+
+    status = get_integrity_status()
+    payload = asdict(status)
+    payload["generated_at"] = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return JSONResponse(content=payload, headers={"Cache-Control": "no-store, max-age=0"})
