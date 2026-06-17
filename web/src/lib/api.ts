@@ -176,6 +176,23 @@ export function fetchIntegrity(signal?: AbortSignal): Promise<IntegrityStatus> {
   return apiGet<IntegrityStatus>("/dashboard/api/integrity", { signal });
 }
 
+// Kuratiertes Operator-Board (#315): Todos/Phasen/Verbesserungen aus der gepflegten
+// SSOT docs/operator_board.json (deklarativ, nicht live). Gates/Probleme sind separat.
+export type OperatorTodo = { text: string; priority?: string };
+export type OperatorPhase = { label: string; status: string };
+export type OperatorImprovement = { text: string };
+export type OperatorBoard = {
+  stand: string;
+  note: string;
+  todos: OperatorTodo[];
+  phases: OperatorPhase[];
+  improvements: OperatorImprovement[];
+  generated_at: string;
+};
+export function fetchOperatorBoard(signal?: AbortSignal): Promise<OperatorBoard> {
+  return apiGet<OperatorBoard>("/dashboard/api/operator-board", { signal });
+}
+
 export type EntryRuntime = {
   entry_mode: string | null;
   entry_mode_label: string;
