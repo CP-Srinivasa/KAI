@@ -158,6 +158,24 @@ export function fetchEdgeTimeseries(signal?: AbortSignal): Promise<EdgeTimeserie
   return apiGet<EdgeTimeseries>("/dashboard/api/edge-timeseries", { signal });
 }
 
+// L3 Audit-Integrität (OpenTimestamps-Anchoring, default-off). state:
+// disabled | no_anchor | ok | unavailable. proof_available = OTS-Proof on-chain.
+export type IntegrityStatus = {
+  state: string;
+  enabled: boolean;
+  stamper: string;
+  proofs_dir: string;
+  anchor_count: number;
+  last_digest: string;
+  last_anchored_at: string;
+  proof_available: boolean;
+  reason: string;
+  generated_at: string;
+};
+export function fetchIntegrity(signal?: AbortSignal): Promise<IntegrityStatus> {
+  return apiGet<IntegrityStatus>("/dashboard/api/integrity", { signal });
+}
+
 export type EntryRuntime = {
   entry_mode: string | null;
   entry_mode_label: string;

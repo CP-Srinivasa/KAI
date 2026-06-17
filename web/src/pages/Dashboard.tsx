@@ -19,6 +19,7 @@ import { CommandHeader } from "@/components/layout/CommandHeader";
 import { ExecutiveSnapshot } from "@/components/panels/ExecutiveSnapshot";
 import { AcutePointsBoard } from "@/components/panels/AcutePointsBoard";
 import { NodeStatusKpi } from "@/components/panels/NodeStatusKpi";
+import { AuditIntegrityKpi } from "@/components/panels/AuditIntegrityKpi";
 import { NOverviewPanel } from "@/components/panels/NOverviewPanel";
 import { SignalHeatmapPanel } from "@/components/panels/SignalHeatmap";
 import { PremiumRuntimeBanner } from "@/components/panels/PremiumRuntimeBanner";
@@ -350,6 +351,10 @@ export function Dashboard() {
         {/* WP-1.4: Node-/Chain-Status-KPI (ehrlich gegen bestehendes Lightning-Endpoint). */}
         <PanelErrorBoundary name="Node-Status-KPI">
           <NodeStatusKpi />
+        </PanelErrorBoundary>
+        {/* #314: Audit-Integritäts-KPI (ehrlich gegen bestehendes /dashboard/api/integrity). */}
+        <PanelErrorBoundary name="Audit-Integrität-KPI">
+          <AuditIntegrityKpi />
         </PanelErrorBoundary>
       </div>
 
