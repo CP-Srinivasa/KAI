@@ -1,17 +1,25 @@
-// @data-source: /dashboard/api/chain (live, KAIs eigene bitcoind)
+// @data-source: /dashboard/api/chain (live) · /dashboard/api/markets/derivatives (live)
 //
-// Markt-Mikrostruktur für die Märkte-Seite: das, was KAI WAHR weiß, kommt aus der
-// eigenen Full Node (On-Chain-Fee als Gauge, Mempool, Tip-Höhe). Externe
-// Derivate-/Sentiment-Metriken (Funding/OI/Liquidations/Sentiment/Momentum) haben
-// noch keinen verdrahteten Live-Endpoint → sie erscheinen ehrlich als
-// "ausstehend" in einer Quellen-Matrix statt mit erfundenen Werten (No-Fake-Doktrin).
+// Markt-Mikrostruktur für die Märkte-Seite — strikt das, was KAI WAHR weiß:
+//   • On-Chain (Fee-Gauge, Mempool, Tip) aus der EIGENEN bitcoind.
+//   • Perp-Funding + Open Interest aus KAIs EIGENER Ingestion (bybit-Snapshot,
+//     gespeist vom Funding/OI-Refresh-Service) — echte Werte, kein Dritt-API-Call
+//     im Request-Pfad.
+// Metriken ohne verdrahteten Datenpfad (Liquidations/Sentiment/Momentum) bleiben
+// ehrlich „ausstehend" in einer Quellen-Matrix statt erfundener Werte (No-Fake).
 import type { ReactNode } from "react";
-import { Activity, Database } from "lucide-react";
+import { Activity, Database, TrendingUp } from "lucide-react";
 import { Card, CardHeader, Badge } from "@/components/ui/Primitives";
 import { StatusPill } from "@/components/ui/StatusPill";
 import { LiveDot } from "@/components/ui/LiveDot";
 import { Gauge } from "@/components/viz/Gauge";
-import { fetchChainStatus, type ChainStatus } from "@/lib/api";
+import {
+  fetchChainStatus,
+  fetchDerivatives,
+  type ChainStatus,
+  type DerivativesSnapshot,
+  type DerivativeRow,
+} from "@/lib/api";
 import { usePolling } from "@/lib/usePolling";
 import type { Tone } from "@/lib/tone";
 
@@ -26,10 +34,26 @@ function feeTone(fee: number | null): Tone {
   return "neg";
 }
 
-// Externe Markt-Mikrostruktur — Metrik → Quelle. Read-only, noch nicht verdrahtet.
+// Funding-Rate (8h-Anteil) → Basispunkte. 0.0001 = 1bp.
+function fundingBps(rate: number | null): string {
+  if (rate == null) return "—";
+  const bps = rate * 10_000;
+  const sign = bps > 0 ? "+" : "";
+  return `${sign}${bps.toFixed(3)} bp`;
+}
+function fundingColor(rate: number | null): string {
+  if (rate == null) return "text-fg-subtle";
+  if (rate > 0) return "text-pos";
+  if (rate < 0) return "text-warn";
+  return "text-fg";
+}
+function fmtOi(oi: number | null): string {
+  if (oi == null) return "—";
+  return oi.toLocaleString("de-DE", { maximumFractionDigits: 0 });
+}
+
+// Metriken ohne eigenen Datenpfad — ehrlich „ausstehend".
 const EXTERNAL_SOURCES: ReadonlyArray<{ metric: string; src: string }> = [
-  { metric: "Funding-Rate", src: "CoinGlass" },
-  { metric: "Open Interest", src: "CoinGlass" },
   { metric: "Liquidations", src: "CoinGlass" },
   { metric: "Sentiment", src: "Glassnode" },
   { metric: "Momentum", src: "Dune" },
@@ -41,9 +65,15 @@ export function MarketMicrostructurePanel() {
     pauseWhenHidden: true,
     retry: { maxAttempts: 3, baseMs: 2_000 },
   });
+  const deriv = usePolling<DerivativesSnapshot>((signal) => fetchDerivatives(signal), {
+    intervalMs: POLL_MS,
+    pauseWhenHidden: true,
+    retry: { maxAttempts: 3, baseMs: 2_000 },
+  });
   const data = polling.state === "ready" ? polling.data : null;
   const ok = data?.state === "ok";
   const fee = ok ? data.fee_sat_vb : null;
+  const rows: DerivativeRow[] = deriv.state === "ready" ? deriv.data.rows : [];
 
   return (
     <Card padded className="synthwave-pulse-edge overflow-hidden">
@@ -54,7 +84,7 @@ export function MarketMicrostructurePanel() {
             Markt-Mikrostruktur
           </span>
         }
-        subtitle="On-Chain aus eigener bitcoind · externe Derivate-Quellen read-only"
+        subtitle="On-Chain (eigene bitcoind) · Perp-Funding/OI (eigene Ingestion) · read-only"
         right={
           <LiveDot
             state={polling.state}
@@ -65,8 +95,8 @@ export function MarketMicrostructurePanel() {
         }
       />
 
-      {/* On-Chain — echte Werte aus KAIs eigener Node (kein Dritter). */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 items-end">
+      {/* On-Chain — echte Werte aus KAIs eigener Node. */}
+      <div className="grid grid-cols-1 items-end gap-3 sm:grid-cols-3">
         <div className="flex flex-col items-center">
           <Gauge
             value={fee}
@@ -104,12 +134,60 @@ export function MarketMicrostructurePanel() {
         </div>
       )}
 
-      {/* Externe Derivate-/Sentiment-Metriken — ehrlich nicht verdrahtet. */}
+      {/* Perp-Derivate — echte Funding/OI aus eigener Ingestion (bybit-Snapshot). */}
       <div className="mt-4">
         <div className="mb-1.5 flex items-center gap-1.5 text-2xs uppercase tracking-wider text-fg-subtle">
-          <Database size={11} /> Externe Markt-Metriken · Quellen-Matrix
+          <TrendingUp size={11} /> Perp-Derivate · Funding &amp; Open Interest (eigene Ingestion)
         </div>
-        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-5">
+        {rows.length > 0 ? (
+          <div className="overflow-hidden rounded-sm border border-line-subtle">
+            <div className="grid grid-cols-[auto_1fr_1fr_auto] gap-x-3 bg-bg-2/40 px-2.5 py-1 text-[10px] uppercase tracking-wider text-fg-subtle">
+              <span>Symbol</span>
+              <span className="text-right">Funding · 8h</span>
+              <span className="text-right">Open Interest</span>
+              <span className="text-right">OI-z</span>
+            </div>
+            {rows.map((r) => (
+              <div
+                key={r.symbol}
+                className="grid grid-cols-[auto_1fr_1fr_auto] items-baseline gap-x-3 border-t border-line-subtle px-2.5 py-1 text-xs"
+              >
+                <span className="font-mono text-fg">{r.symbol}</span>
+                <span className={`text-right font-mono tabular-nums ${fundingColor(r.funding_rate)}`}>
+                  {fundingBps(r.funding_rate)}
+                </span>
+                <span className="text-right font-mono tabular-nums text-fg">{fmtOi(r.open_interest)}</span>
+                <span
+                  className={`text-right font-mono tabular-nums ${
+                    r.oi_change_zscore != null && Math.abs(r.oi_change_zscore) >= 2
+                      ? "text-warn"
+                      : "text-fg-subtle"
+                  }`}
+                >
+                  {r.oi_change_zscore != null ? r.oi_change_zscore.toFixed(2) : "—"}
+                </span>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="rounded-sm border border-line-subtle bg-bg-2/40 px-2.5 py-2 text-2xs text-fg-subtle">
+            {deriv.state === "error"
+              ? "Derivate-Endpoint nicht erreichbar."
+              : "Keine Funding/OI-Snapshots im Cache — erscheint, sobald der Refresh-Service Daten schreibt."}
+          </div>
+        )}
+        <p className="mt-1 text-[10px] text-fg-subtle">
+          Quelle: KAIs eigener Funding/OI-Snapshot-Cache (read-only), kein Dritt-API-Call im
+          Request-Pfad. Positives Funding = Longs zahlen.
+        </p>
+      </div>
+
+      {/* Metriken ohne eigenen Datenpfad — ehrlich „ausstehend". */}
+      <div className="mt-4">
+        <div className="mb-1.5 flex items-center gap-1.5 text-2xs uppercase tracking-wider text-fg-subtle">
+          <Database size={11} /> Weitere Markt-Metriken · Quellen-Matrix
+        </div>
+        <div className="grid grid-cols-3 gap-2">
           {EXTERNAL_SOURCES.map((s) => (
             <div key={s.metric} className="rounded-sm border border-line-subtle bg-bg-2/40 px-2 py-1.5">
               <div className="truncate text-2xs font-medium text-fg">{s.metric}</div>
@@ -121,9 +199,7 @@ export function MarketMicrostructurePanel() {
           ))}
         </div>
         <p className="mt-1.5 text-[10px] leading-relaxed text-fg-subtle">
-          No-Fake: externe Quellen ohne verdrahteten Live-Endpoint zeigen „ausstehend" statt
-          erfundener Werte. Funding/OI sind als Bayes-Evidence (shadow) vorhanden, hier noch nicht
-          als Markt-Chart.
+          No-Fake: Metriken ohne verdrahteten Datenpfad zeigen „ausstehend" statt erfundener Werte.
         </p>
       </div>
     </Card>

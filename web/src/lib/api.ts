@@ -467,6 +467,29 @@ export function fetchChainStatus(signal?: AbortSignal): Promise<ChainStatus> {
   return apiGet<ChainStatus>("/dashboard/api/chain", { signal });
 }
 
+// Perp-Derivate (Funding + Open Interest) aus KAIs EIGENER Ingestion (read-only).
+// funding_rate = 8h-Satz als Anteil (0.0001 = 1bp). Werte sind null, wenn der
+// jeweilige Snapshot-Cache (noch) keinen Eintrag hat — keine erfundenen Zahlen.
+export type DerivativeRow = {
+  symbol: string;
+  funding_rate: number | null;
+  mark_price: number | null;
+  funding_source: string | null;
+  funding_ts: string | null;
+  open_interest: number | null;
+  oi_change_zscore: number | null;
+  oi_source: string | null;
+  oi_ts: string | null;
+};
+export type DerivativesSnapshot = {
+  available: boolean;
+  rows: DerivativeRow[];
+  generated_at: string;
+};
+export function fetchDerivatives(signal?: AbortSignal): Promise<DerivativesSnapshot> {
+  return apiGet<DerivativesSnapshot>("/dashboard/api/markets/derivatives", { signal });
+}
+
 export type ProvenanceMetrics = {
   source: string;
   resolved: number;
