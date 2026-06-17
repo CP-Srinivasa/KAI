@@ -4,7 +4,7 @@
 // Trefferquote — sonst ist ein Ranking nicht belastbar (kein Fake-Ranking auf
 // 1-2 Resolves). Getrennt von der Seite → testbar.
 import { sourceLabel } from "@/lib/sourceLabels";
-import type { DashboardQuality } from "@/lib/api";
+import type { DashboardQuality, ProvenanceMetrics } from "@/lib/api";
 
 type BySource = NonNullable<DashboardQuality["per_source_active_precision"]>["by_source"];
 
@@ -38,4 +38,34 @@ export function topFlopSources(
   const top = ranked.slice(0, n);
   const flop = ranked.slice(-n).sort((a, b) => a.hitRate - b.hitRate);
   return { top, flop };
+}
+
+// Zweite, eigenständige Trefferquoten-Sicht: Provenance (by_source) ist eine
+// ANDERE SSOT als per_source_active_precision — sie misst den getaggten
+// Signalfluss (resolved/hits) ohne den unknown-Bucket. Als Ranking-Bars auf der
+// Quellen-Seite zeigt sie, ob beide Sichten konvergieren. Kein Gate-Filter hier:
+// schwache Stichproben werden NICHT versteckt, sondern als `sufficient=false`
+// markiert (die Bar rendert dann gedämpft, kein Fake-Vertrauen). Pure/testbar.
+export type ProvenanceRank = {
+  name: string;
+  label: string;
+  hitRate: number | null;
+  resolved: number;
+  sufficient: boolean;
+};
+
+export function rankProvenanceSources(
+  bySource: ProvenanceMetrics[] | undefined,
+): ProvenanceRank[] {
+  if (!bySource) return [];
+  return bySource
+    .filter((m) => m.source && m.source !== "unknown")
+    .map((m) => ({
+      name: m.source,
+      label: sourceLabel(m.source).label,
+      hitRate: m.hit_rate_pct,
+      resolved: m.resolved,
+      sufficient: m.sample_sufficient,
+    }))
+    .sort((a, b) => (b.hitRate ?? -1) - (a.hitRate ?? -1));
 }
