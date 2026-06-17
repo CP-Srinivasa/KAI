@@ -2,6 +2,7 @@
 import { memo, useMemo, type ReactNode } from "react";
 import { AlertTriangle, Flag, Target, Coins, Calendar, Info, ChevronRight, Archive } from "lucide-react";
 import { Card, CardHeader, Badge, ProgressBar } from "@/components/ui/Primitives";
+import { Explainer } from "@/components/ui/InfoOverlay";
 import { useT } from "@/i18n/I18nProvider";
 import { cn } from "@/lib/utils";
 import { useCurrency } from "@/state/CurrencyProvider";
@@ -257,6 +258,12 @@ function ReentryGatePanelImpl({
       ) : null}
 
       {priorityGate ? <PriorityGateRow summary={priorityGate} /> : null}
+      <Explainer
+        className="mt-3"
+        summary="Was ist das Re-Entry-Gate?"
+        what="Ein TV-Pivot-Ziel (D-125) mit zwei Pfaden: Pfad A (genug Alerts) ODER Pfad B (genug Paper-Fills). Erfüllt ein Pfad sein Kriterium, kann am Stichtag eine Re-Entry-Entscheidung getroffen werden."
+        why="Ist das historische Ziel abgelaufen, bleibt der Fortschritt Evidenz, ist aber KEIN aktueller Freigabezustand — es braucht dann eine neue Gate-Definition. Lifetime-Fortschritt nicht mit aktueller 24h-Lage verwechseln."
+      />
     </Card>
   );
 }
