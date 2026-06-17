@@ -105,9 +105,7 @@ def test_status_disabled_no_fs_touch() -> None:
 
 
 def test_status_no_anchor_when_empty(tmp_path) -> None:
-    s = get_integrity_status(
-        IntegritySettings(enabled=True, proofs_dir=str(tmp_path / "empty"))
-    )
+    s = get_integrity_status(IntegritySettings(enabled=True, proofs_dir=str(tmp_path / "empty")))
     assert s.state == "no_anchor" and s.enabled is True and s.anchor_count == 0
 
 
