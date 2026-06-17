@@ -21,6 +21,8 @@ import { PremiumTradeCard } from "@/components/panels/PremiumTradeCard";
 import { PremiumSignalTrail } from "@/components/panels/PremiumSignalTrail";
 import { PremiumRuntimeBanner } from "@/components/panels/PremiumRuntimeBanner";
 import { DiversificationPanel } from "@/components/panels/DiversificationPanel";
+import { Waterfall } from "@/components/viz/Waterfall";
+import { realizedToWaterfall } from "@/lib/pnlWaterfall";
 import { useCurrency } from "@/state/CurrencyProvider";
 import { formatNumber, type Currency } from "@/lib/money";
 
@@ -171,6 +173,14 @@ function RealizedByAssetPanel() {
         }
       />
       <div className="mb-3">{filterControls}</div>
+      {d.by_asset.length > 1 && (
+        <div className="mb-4">
+          <div className="mb-1 text-2xs uppercase tracking-wider text-fg-subtle">
+            PnL-Wasserfall — Beitrag je Asset bis zur Netto-Summe
+          </div>
+          <Waterfall items={realizedToWaterfall(d.by_asset)} format={(v) => fmt(v, undefined, 0)} />
+        </div>
+      )}
       <div className="grid grid-cols-1 gap-1">
         {visibleAssets.map((row) => {
           const pos = row.realized_pnl_usd >= 0;
