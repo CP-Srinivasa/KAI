@@ -937,6 +937,42 @@ def test_markets_sentiment_cold_is_honest(monkeypatch) -> None:
     assert body["available"] is False and body["age_seconds"] is None
 
 
+def test_markets_liquidations_endpoint(monkeypatch) -> None:
+    """OKX-Liquidationen über den server-gecachten Adapter; Long/Short je Symbol."""
+    from app.market_data.liquidations import LiquidationRow, LiquidationsSnapshot
+
+    async def _fake_cached():  # noqa: ANN202
+        return (
+            LiquidationsSnapshot(
+                available=True,
+                rows=(
+                    LiquidationRow(
+                        symbol="BTC/USDT", long_sz=7.5, short_sz=3.0, events=3, last_ts_utc="x"
+                    ),
+                ),
+            ),
+            12.0,
+        )
+
+    monkeypatch.setattr("app.market_data.liquidations.get_cached_liquidations", _fake_cached)
+    body = TestClient(_make_app()).get("/dashboard/api/markets/liquidations").json()
+    assert body["available"] is True and body["source"] == "okx"
+    assert body["rows"][0]["symbol"] == "BTC/USDT"
+    assert body["rows"][0]["long_sz"] == 7.5 and body["rows"][0]["short_sz"] == 3.0
+    assert body["age_seconds"] == 12.0
+
+
+def test_markets_liquidations_cold_is_honest(monkeypatch) -> None:
+    from app.market_data.liquidations import LiquidationsSnapshot
+
+    async def _fake_cold():  # noqa: ANN202
+        return LiquidationsSnapshot.unavailable("warming up"), None
+
+    monkeypatch.setattr("app.market_data.liquidations.get_cached_liquidations", _fake_cold)
+    body = TestClient(_make_app()).get("/dashboard/api/markets/liquidations").json()
+    assert body["available"] is False and body["rows"] == [] and body["age_seconds"] is None
+
+
 def test_operator_board_api_returns_curated_lists() -> None:
     """GET /dashboard/api/operator-board liefert die kuratierten Listen (fail-soft)."""
     client = TestClient(_make_app())

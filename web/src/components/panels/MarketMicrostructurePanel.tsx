@@ -1,13 +1,14 @@
-// @data-source: /dashboard/api/chain (live) · /dashboard/api/markets/derivatives (live) · /dashboard/api/markets/sentiment (live)
+// @data-source: /dashboard/api/chain (live) · /dashboard/api/markets/derivatives (live) · /dashboard/api/markets/sentiment (live) · /dashboard/api/markets/liquidations (live)
 //
 // Markt-Mikrostruktur für die Märkte-Seite — strikt das, was KAI WAHR weiß:
 //   • On-Chain (Fee-Gauge, Mempool, Tip) aus der EIGENEN bitcoind.
 //   • Perp-Funding + Open Interest aus KAIs EIGENER Ingestion (bybit-Snapshot).
 //   • Sentiment aus dem freien Fear-&-Greed-Index (alternative.me, server-gecacht).
-// Metriken ohne verdrahteten Datenpfad (Liquidations/Momentum) bleiben ehrlich
-// „ausstehend" in einer Quellen-Matrix statt erfundener Werte (No-Fake).
+//   • Liquidationen (Long/Short-Pressure) aus OKX public liquidation-orders.
+// Metriken ohne verdrahteten Datenpfad (Momentum) bleiben ehrlich „ausstehend"
+// in einer Quellen-Matrix statt erfundener Werte (No-Fake).
 import type { ReactNode } from "react";
-import { Activity, Database, TrendingUp, Gauge as GaugeIcon } from "lucide-react";
+import { Activity, Database, TrendingUp, Gauge as GaugeIcon, Flame } from "lucide-react";
 import { Card, CardHeader, Badge } from "@/components/ui/Primitives";
 import { StatusPill } from "@/components/ui/StatusPill";
 import { LiveDot } from "@/components/ui/LiveDot";
@@ -16,10 +17,13 @@ import {
   fetchChainStatus,
   fetchDerivatives,
   fetchSentiment,
+  fetchLiquidations,
   type ChainStatus,
   type DerivativesSnapshot,
   type DerivativeRow,
   type SentimentSnapshot,
+  type LiquidationsSnapshot,
+  type LiquidationRow,
 } from "@/lib/api";
 import { usePolling } from "@/lib/usePolling";
 import type { Tone } from "@/lib/tone";
@@ -59,10 +63,12 @@ function fmtOi(oi: number | null): string {
   if (oi == null) return "—";
   return oi.toLocaleString("de-DE", { maximumFractionDigits: 0 });
 }
+function fmtSz(sz: number): string {
+  return sz.toLocaleString("de-DE", { maximumFractionDigits: 2 });
+}
 
 // Metriken ohne eigenen Datenpfad — ehrlich „ausstehend".
 const EXTERNAL_SOURCES: ReadonlyArray<{ metric: string; src: string }> = [
-  { metric: "Liquidations", src: "CoinGlass" },
   { metric: "Momentum", src: "Dune" },
 ];
 
@@ -82,11 +88,18 @@ export function MarketMicrostructurePanel() {
     pauseWhenHidden: true,
     retry: { maxAttempts: 3, baseMs: 2_000 },
   });
+  const liq = usePolling<LiquidationsSnapshot>((signal) => fetchLiquidations(signal), {
+    intervalMs: POLL_MS,
+    pauseWhenHidden: true,
+    retry: { maxAttempts: 3, baseMs: 2_000 },
+  });
   const data = polling.state === "ready" ? polling.data : null;
   const ok = data?.state === "ok";
   const fee = ok ? data.fee_sat_vb : null;
   const rows: DerivativeRow[] = deriv.state === "ready" ? deriv.data.rows : [];
   const sentiment = sent.state === "ready" && sent.data.available ? sent.data : null;
+  const liqRows: LiquidationRow[] =
+    liq.state === "ready" && liq.data.available ? liq.data.rows : [];
 
   return (
     <Card padded className="synthwave-pulse-edge overflow-hidden">
@@ -211,12 +224,63 @@ export function MarketMicrostructurePanel() {
         </p>
       </div>
 
+      {/* Liquidationen — OKX public (frei), Long/Short-Pressure je Symbol. */}
+      <div className="mt-4">
+        <div className="mb-1.5 flex items-center gap-1.5 text-2xs uppercase tracking-wider text-fg-subtle">
+          <Flame size={11} className="text-warn" /> Liquidationen · Long/Short-Pressure (OKX)
+        </div>
+        {liqRows.length > 0 ? (
+          <div className="space-y-1.5">
+            {liqRows.map((r) => {
+              const total = r.long_sz + r.short_sz;
+              const longPct = total > 0 ? (r.long_sz / total) * 100 : 0;
+              return (
+                <div key={r.symbol} className="text-xs">
+                  <div className="flex items-baseline justify-between gap-2">
+                    <span className="font-mono text-fg">{r.symbol}</span>
+                    <span className="font-mono tabular-nums text-[10px] text-fg-subtle">
+                      {r.events} Events
+                    </span>
+                  </div>
+                  <div className="mt-0.5 flex h-2 overflow-hidden rounded-xs bg-bg-2">
+                    <div
+                      className="bg-neg/70"
+                      style={{ width: `${longPct}%` }}
+                      title={`Long-Liqs ${fmtSz(r.long_sz)}`}
+                    />
+                    <div
+                      className="bg-pos/70"
+                      style={{ width: `${100 - longPct}%` }}
+                      title={`Short-Liqs ${fmtSz(r.short_sz)}`}
+                    />
+                  </div>
+                  <div className="mt-0.5 flex justify-between text-[10px]">
+                    <span className="text-neg">Long-Liqs {fmtSz(r.long_sz)}</span>
+                    <span className="text-pos">Short-Liqs {fmtSz(r.short_sz)}</span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        ) : (
+          <div className="rounded-sm border border-line-subtle bg-bg-2/40 px-2.5 py-2 text-2xs text-fg-subtle">
+            {liq.state === "error"
+              ? "Liquidations-Endpoint nicht erreichbar."
+              : "Keine aktuellen Liquidationen im Cache."}
+          </div>
+        )}
+        <p className="mt-1 text-[10px] text-fg-subtle">
+          Quelle: OKX public liquidation-orders (frei, kein Key); sz in Kontrakten. Long-Liqs (rot) =
+          Longs rekt; Short-Liqs (grün) = Shorts rekt.
+        </p>
+      </div>
+
       {/* Metriken ohne eigenen Datenpfad — ehrlich „ausstehend". */}
       <div className="mt-4">
         <div className="mb-1.5 flex items-center gap-1.5 text-2xs uppercase tracking-wider text-fg-subtle">
           <Database size={11} /> Weitere Markt-Metriken · Quellen-Matrix
         </div>
-        <div className="grid grid-cols-2 gap-2">
+        <div className="grid grid-cols-1 gap-2">
           {EXTERNAL_SOURCES.map((s) => (
             <div key={s.metric} className="rounded-sm border border-line-subtle bg-bg-2/40 px-2 py-1.5">
               <div className="truncate text-2xs font-medium text-fg">{s.metric}</div>
