@@ -1,5 +1,6 @@
 // @data-source: props (parent-provided)
 import { Card, CardHeader, Badge, InfoHint } from "@/components/ui/Primitives";
+import { Explainer } from "@/components/ui/InfoOverlay";
 import { cn } from "@/lib/utils";
 import { staleStatusLabel } from "@/lib/labels";
 import type {
@@ -281,6 +282,12 @@ export function RegimeStatusPanel({ data }: { data: DashboardRegime | null }) {
           </div>
         </div>
       )}
+      <Explainer
+        className="mt-3"
+        summary="Was ist das Markt-Regime — und warum read-only?"
+        what="Stündliche Einordnung von BTC/ETH in eine von sechs Markt-Klassen (Trend rauf/runter, Ausbruch rauf/runter, Seitwärts ruhig/wild) plus drei Schwankungsstufen. Hysterese: ein Wechsel zählt erst, wenn er über zwei Bars hält."
+        why="Es ist aktuell reine Diagnose und an KEIN Gate/Risk gekoppelt (no trade effect). Es erklärt das Marktumfeld, triggert aber keine Trades — erst nach Validierung würde es wirken."
+      />
     </Card>
   );
 }

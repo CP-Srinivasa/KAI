@@ -1,29 +1,13 @@
-// Explainer-System (WP-0.3 / Konzept §10): didaktische Mikro-Erklärungen statt
-// Textblöcke. Zwei dependency-freie Bausteine:
-//   - <InfoHint>   : kleines Info-Icon mit Tooltip (schnelle Klartext-Erklärung).
-//   - <Explainer>  : einklappbares <details> mit "Was bedeutet das?"/"Warum wichtig?".
-// Bewusst ohne Popover-Lib (kein Bundle-Zuwachs); kritische Zustände werden NIE
-// hinter dem Explainer versteckt — er ergänzt nur, verbirgt nichts.
+// Explainer-System (WP-0.3 / Konzept §10): didaktische Mikro-Erklärung statt
+// Textblöcken. <Explainer> = einklappbares <details> mit "Was bedeutet das?" /
+// "Warum wichtig?". Bewusst ohne Popover-Lib (kein Bundle-Zuwachs); kritische
+// Zustände werden NIE dahinter versteckt — der Explainer ergänzt, verbirgt nichts.
+//
+// Für die kurze Inline-Tooltip-Hilfe gibt es bereits `InfoHint` in Primitives.tsx
+// (DALI-P-026) — kein Duplikat hier.
 import { useId } from "react";
-import { Info, HelpCircle } from "lucide-react";
+import { HelpCircle } from "lucide-react";
 import { cn } from "@/lib/utils";
-
-/** Inline-Info-Icon mit Tooltip. Für die "Was bedeutet dieser Zustand?"-Kurzhilfe. */
-export function InfoHint({ text, className }: { text: string; className?: string }) {
-  return (
-    <span
-      role="note"
-      aria-label={text}
-      title={text}
-      className={cn(
-        "inline-flex cursor-help items-center text-fg-subtle hover:text-fg-muted",
-        className,
-      )}
-    >
-      <Info size={12} aria-hidden />
-    </span>
-  );
-}
 
 /** Einklappbarer Erklärer. `what` = "Was bedeutet das?", `why` = "Warum wichtig?".
  *  Default eingeklappt — verbraucht keinen Prime-Platz, bleibt on-demand erreichbar. */
