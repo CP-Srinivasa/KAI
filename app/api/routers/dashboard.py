@@ -1486,21 +1486,30 @@ async def dashboard_regime_api() -> JSONResponse:
 async def dashboard_lightning_api() -> JSONResponse:
     """Read-only Lightning-Node-Status + souveräne Chain-Wahrheit (L1, default-off).
 
-    Spiegelt ``app.lightning.adapter.get_node_status()`` (lnd) und reichert
-    Block-Höhe/Sync aus KAIs EIGENER bitcoind
-    (``app.chain.adapter.get_chain_status()``, L1) an — so bleiben Höhe/Sync
-    truthful, selbst wenn lnds ``getinfo`` (Tor) hängt. ``state`` ist
-    ``disabled`` / ``unavailable`` / ``ok`` (``info_available`` zeigt, ob die
-    lnd-``getinfo``-Detailfelder Peers/Channels/Alias gefüllt sind). Beide
-    Quellen fail-closed/default-off; kein schreibender/kapitalrelevanter Pfad.
+    Liest den lnd-Node-Status über den Hintergrund-Cache
+    (``app.lightning.cache.get_cached_node_status()``) und reichert Block-Höhe/
+    Sync aus KAIs EIGENER bitcoind (``app.chain.cache``, L1) an — so bleiben
+    Höhe/Sync truthful, selbst wenn lnds ``getinfo`` (Tor) hängt, und das
+    Node-Panel flackert nicht (Anti-Flacker-Merge hält den letzten vollen
+    ``getinfo``-Snapshot). Der Request blockiert NIE auf lnd/bitcoind;
+    ``node_age_seconds``/``chain_age_seconds`` zeigen das Snapshot-Alter. ``state``
+    ist ``disabled`` / ``pending`` (Cache kalt) / ``unavailable`` / ``ok``
+    (``info_available`` zeigt, ob die ``getinfo``-Detailfelder Peers/Channels/
+    Alias gefüllt sind). Beide Quellen fail-closed/default-off; kein
+    schreibender/kapitalrelevanter Pfad.
     """
     from dataclasses import asdict
 
     from app.chain.cache import get_cached_chain_status
-    from app.lightning.adapter import get_node_status
+    from app.lightning.cache import get_cached_node_status
 
-    status = await get_node_status()
+    # lnd-Node-Status über den Hintergrund-Cache — lnds getinfo (Tor) ist langsam/
+    # intermittierend; der Request darf dafür NIE blockieren und das Panel soll
+    # nicht zwischen gefüllt/leer flackern. ``node_age_seconds`` zeigt das Alter
+    # des Snapshots (None solange Cache kalt / ``pending``).
+    status, node_age = await get_cached_node_status()
     payload = asdict(status)
+    payload["node_age_seconds"] = node_age
 
     # Souveräne Chain-Wahrheit: Höhe/Sync bevorzugt aus der eigenen bitcoind.
     # Über den Hintergrund-Cache gelesen — bitcoind-RPC kann auf dem Pi minutenlang

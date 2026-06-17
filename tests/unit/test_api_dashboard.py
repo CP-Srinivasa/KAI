@@ -739,14 +739,17 @@ def test_lightning_endpoint_chain_truth_overrides_height(monkeypatch) -> None:
     from app.chain.adapter import ChainStatus
     from app.lightning.adapter import LightningNodeStatus
 
-    async def _fake_node(cfg=None):  # lnd erreichbar, aber getinfo-Details fehlen
-        return LightningNodeStatus(
-            state="ok",
-            reachable=True,
-            server_state="SERVER_ACTIVE",
-            info_available=False,
-            block_height=0,
-            synced_to_chain=False,
+    async def _fake_cached_node():  # lnd erreichbar (aus Cache), getinfo-Details fehlen
+        return (
+            LightningNodeStatus(
+                state="ok",
+                reachable=True,
+                server_state="SERVER_ACTIVE",
+                info_available=False,
+                block_height=0,
+                synced_to_chain=False,
+            ),
+            5.0,
         )
 
     async def _fake_cached():  # Hintergrund-Cache liefert die Chain-Wahrheit
@@ -764,13 +767,14 @@ def test_lightning_endpoint_chain_truth_overrides_height(monkeypatch) -> None:
             12.0,
         )
 
-    monkeypatch.setattr("app.lightning.adapter.get_node_status", _fake_node)
+    monkeypatch.setattr("app.lightning.cache.get_cached_node_status", _fake_cached_node)
     monkeypatch.setattr("app.chain.cache.get_cached_chain_status", _fake_cached)
 
     body = TestClient(_make_app()).get("/dashboard/api/lightning").json()
     assert body["state"] == "ok" and body["reachable"] is True
     assert body["block_height"] == 953902  # aus bitcoind, nicht aus lnd-getinfo
     assert body["synced_to_chain"] is True
+    assert body["node_age_seconds"] == 5.0
     assert body["chain"]["state"] == "ok" and body["chain"]["blocks"] == 953902
     assert body["chain_age_seconds"] == 12.0
 
