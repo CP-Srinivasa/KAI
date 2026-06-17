@@ -3,6 +3,7 @@ import { useT } from "@/i18n/I18nProvider";
 import { PageHeader } from "@/layout/PageHeader";
 import { PreparedPanel } from "@/components/panels/PreparedPanel";
 import { TradingViewChart } from "@/components/trading/tradingview";
+import { MarketMicrostructurePanel } from "@/components/panels/MarketMicrostructurePanel";
 import { RegimeStatusPanel } from "@/components/panels/RegimeStatusPanel";
 import { PanelErrorBoundary } from "@/components/PanelErrorBoundary";
 import { useDashboardRegime } from "@/lib/useDashboardRegime";
@@ -24,6 +25,12 @@ export function MarketsPage() {
       />
 
       <TradingViewChart title="TradingView-Chart" />
+
+      {/* On-Chain Markt-Mikrostruktur (echt, eigene bitcoind) + ehrliche externe
+          Quellen-Matrix — Fee-Gauge/Mempool/Tip statt Textblock, No-Fake. */}
+      <PanelErrorBoundary name="Markt-Mikrostruktur">
+        <MarketMicrostructurePanel />
+      </PanelErrorBoundary>
 
       {/* WP-3.1: echter Markt-Kontext — Regime read-only (§11), kein Platzhalter. */}
       <PanelErrorBoundary name="Markt-Regime">
