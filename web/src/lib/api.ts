@@ -450,7 +450,7 @@ export function fetchLightningStatus(signal?: AbortSignal): Promise<LightningSta
 
 // L1 — souveräne On-Chain-Wahrheit aus KAIs eigener bitcoind (read-only, default-off).
 export type ChainStatus = {
-  state: "disabled" | "unavailable" | "ok";
+  state: "disabled" | "pending" | "unavailable" | "ok";
   reachable: boolean;
   chain: string;
   blocks: number;
