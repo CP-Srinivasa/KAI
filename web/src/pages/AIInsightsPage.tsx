@@ -3,6 +3,7 @@ import { useT } from "@/i18n/I18nProvider";
 import { PageHeader } from "@/layout/PageHeader";
 import { PreparedPanel } from "@/components/panels/PreparedPanel";
 import { Badge, Card, CardHeader } from "@/components/ui/Primitives";
+import { Funnel } from "@/components/viz/Funnel";
 import { useDashboardQuality } from "@/lib/useDashboardQuality";
 import { cn } from "@/lib/utils";
 import { tierLiftTone } from "@/lib/tone";
@@ -87,6 +88,36 @@ export function AIInsightsPage() {
           </span>
           <span className="text-fg-subtle/80">Precision-Schwellen · Production-Gate 60%</span>
         </div>
+      )}
+
+      {/* WP-3.7: Auflösungs-Funnel — aufgelöste Signale → Treffer (Retention = Trefferquote), §17. */}
+      {q.state === "ready" && (q.data.active_resolved_count > 0 || q.data.forward_resolved > 0) && (
+        <Card padded>
+          <CardHeader
+            title="Auflösungs-Funnel"
+            subtitle="Aufgelöste Signale → Treffer (Retention = Trefferquote) — ehrlich/kalibriert, kein Vorhersageversprechen."
+          />
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <div className="mb-1 text-2xs uppercase tracking-wider text-fg-subtle">Active (ohne Legacy)</div>
+              <Funnel
+                stages={[
+                  { label: "Aufgelöst", value: q.data.active_resolved_count, tone: "info" },
+                  { label: "Treffer", value: q.data.active_hits, tone: "pos" },
+                ]}
+              />
+            </div>
+            <div>
+              <div className="mb-1 text-2xs uppercase tracking-wider text-fg-subtle">Forward</div>
+              <Funnel
+                stages={[
+                  { label: "Aufgelöst", value: q.data.forward_resolved, tone: "info" },
+                  { label: "Treffer", value: q.data.forward_hits, tone: "pos" },
+                ]}
+              />
+            </div>
+          </div>
+        </Card>
       )}
 
       {q.state === "ready" && (
