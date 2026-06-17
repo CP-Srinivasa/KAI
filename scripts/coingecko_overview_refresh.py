@@ -61,21 +61,25 @@ _GLOBAL_DEADLINE_SECONDS = 120.0
 
 
 async def _refresh(adapter: CoinGeckoAdapter, symbols: list[str]) -> list[CoinGeckoMarketOverview]:
-    out: list[CoinGeckoMarketOverview] = []
-    for sym in symbols:
-        try:
-            ov = await adapter.get_market_overview(sym)
-        except Exception as exc:  # noqa: BLE001 — ein Symbol darf den Lauf nie killen
-            logger.warning("[cg-overview-refresh] %s failed: %s", sym, exc)
-            continue
-        if ov is None:
-            logger.info(
-                "[cg-overview-refresh] %s → no overview (%s, skipped)",
-                sym,
-                adapter.last_error,
-            )
-            continue
-        out.append(ov)
+    # ONE batched /coins/markets call for ALL symbols — not N sequential calls.
+    # N single-symbol calls trip the free-tier rate limit (429 backoff) and blow
+    # the global deadline, writing nothing. The batch is a single request.
+    try:
+        out = await adapter.get_market_overview_batch(symbols)
+    except Exception as exc:  # noqa: BLE001 — der Batch darf den Lauf nie killen
+        logger.warning("[cg-overview-refresh] batch failed: %s", exc)
+        return []
+    if not out:
+        logger.info(
+            "[cg-overview-refresh] batch returned 0 (%s)",
+            adapter.last_error,
+        )
+        return []
+    seen = {ov.symbol for ov in out}
+    missing = [s for s in symbols if s.strip().upper() not in seen]
+    if missing:
+        logger.info("[cg-overview-refresh] not returned by API: %s", ",".join(missing))
+    for ov in out:
         logger.info(
             "[cg-overview-refresh] %s rank=%s mcap=%s chg30d=%s",
             ov.symbol,
