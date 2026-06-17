@@ -60,9 +60,7 @@ logger = logging.getLogger("coingecko_overview_refresh")
 _GLOBAL_DEADLINE_SECONDS = 120.0
 
 
-async def _refresh(
-    adapter: CoinGeckoAdapter, symbols: list[str]
-) -> list[CoinGeckoMarketOverview]:
+async def _refresh(adapter: CoinGeckoAdapter, symbols: list[str]) -> list[CoinGeckoMarketOverview]:
     out: list[CoinGeckoMarketOverview] = []
     for sym in symbols:
         try:
@@ -91,9 +89,7 @@ async def _refresh(
 def main() -> int:
     settings = CoinGeckoOverviewSettings()
     if not settings.enabled:
-        logger.info(
-            "[cg-overview-refresh] disabled (APP_COINGECKO_OVERVIEW_ENABLED!=true) — no-op"
-        )
+        logger.info("[cg-overview-refresh] disabled (APP_COINGECKO_OVERVIEW_ENABLED!=true) — no-op")
         return 0
 
     symbols = settings.symbols

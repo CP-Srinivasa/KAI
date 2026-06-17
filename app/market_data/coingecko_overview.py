@@ -172,9 +172,7 @@ class CoinGeckoOverviewStore:
         return self.read_all().get(symbol.strip().upper())
 
 
-def append_overview_shadow_log(
-    path: Path | str, *, overview: CoinGeckoMarketOverview
-) -> None:
+def append_overview_shadow_log(path: Path | str, *, overview: CoinGeckoMarketOverview) -> None:
     """Append-only read-only Mess-Spur für Overview-Beiträge.
 
     Fail-safe: Schreibfehler werden geloggt + verschluckt (die Mess-Spur darf

@@ -74,9 +74,7 @@ async def test_get_market_overview_none_tolerant_fields() -> None:
     # Missing 30d change + market_cap must NOT void the record; rank is the core.
     adapter = _adapter()
     payload = _markets_response(market_cap=None, change_30d=None)
-    with patch.object(
-        adapter, "_get_json", new_callable=AsyncMock, return_value=payload
-    ):
+    with patch.object(adapter, "_get_json", new_callable=AsyncMock, return_value=payload):
         ov = await adapter.get_market_overview("BTC/USDT")
     assert ov is not None
     assert ov.market_cap_rank == 1
