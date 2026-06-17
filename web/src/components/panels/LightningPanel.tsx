@@ -21,6 +21,10 @@ function Stat({ label, value, mono = true }: { label: string; value: string; mon
   );
 }
 
+const fmtSats = (sat: number) => `${sat.toLocaleString("de-DE")} sats`;
+const fmtBtc = (sat: number) =>
+  `${(sat / 1e8).toLocaleString("de-DE", { minimumFractionDigits: 8, maximumFractionDigits: 8 })} BTC`;
+
 export function LightningPanel() {
   const polling = usePolling<LightningStatus>(
     (signal) => fetchLightningStatus(signal),
@@ -32,6 +36,10 @@ export function LightningPanel() {
     data == null ? null : data.state === "ok" ? (
       <Badge tone="pos" dot>
         <ShieldCheck size={10} /> erreichbar
+      </Badge>
+    ) : data.state === "pending" ? (
+      <Badge tone="info" dot>
+        <Zap size={10} /> lädt
       </Badge>
     ) : data.state === "disabled" ? (
       <Badge tone="muted" dot>
@@ -77,6 +85,12 @@ export function LightningPanel() {
         </div>
       )}
 
+      {data?.state === "pending" && (
+        <div className="py-4 text-center text-xs text-fg-subtle">
+          Node-Status wird geladen … <span className="text-2xs">(Hintergrund-Cache wärmt auf)</span>
+        </div>
+      )}
+
       {data?.state === "disabled" && (
         <div className="rounded-sm border border-line-subtle bg-bg-2/40 px-3 py-2.5 text-2xs text-fg-muted leading-relaxed">
           Lightning ist <span className="text-fg">deaktiviert</span> (default-off). Phase-1-Adapter
@@ -110,6 +124,29 @@ export function LightningPanel() {
           <Stat label="Block" value={data.block_height ? data.block_height.toLocaleString("de-DE") : "—"} />
           <Stat label="Peers" value={String(data.num_peers)} />
           <Stat label="Channels" value={String(data.num_active_channels)} />
+
+          {data.balances_available ? (
+            <div className="mt-2 rounded-sm border border-line-subtle bg-bg-2/40 px-2.5 py-2 space-y-0.5">
+              <div className="flex items-baseline justify-between gap-3">
+                <span className="text-2xs uppercase tracking-wider text-fg-subtle">Funds · read-only</span>
+                <span className="font-mono tabular-nums text-2xs text-fg-subtle">
+                  {fmtBtc(data.wallet_confirmed_sat)}
+                </span>
+              </div>
+              <Stat label="On-Chain" value={fmtSats(data.wallet_confirmed_sat)} />
+              {data.wallet_total_sat !== data.wallet_confirmed_sat && (
+                <Stat
+                  label="On-Chain unbest."
+                  value={fmtSats(data.wallet_total_sat - data.wallet_confirmed_sat)}
+                />
+              )}
+              <Stat label="Channels outbound" value={fmtSats(data.channel_local_sat)} />
+              <Stat label="Channels inbound" value={fmtSats(data.channel_remote_sat)} />
+            </div>
+          ) : data.info_available ? (
+            <div className="mt-1 text-2xs text-fg-subtle">Balances ausstehend (read-only)</div>
+          ) : null}
+
           {data.version && <Stat label="Version" value={data.version} mono={false} />}
           {data.identity_pubkey && (
             <div className="pt-1">

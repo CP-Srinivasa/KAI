@@ -32,6 +32,7 @@ def _enable(monkeypatch, enabled: bool = True) -> None:
 
 
 def _full(alias: str = "kai-node", peers: int = 3) -> LightningNodeStatus:
+    """Richest snapshot: getinfo detail AND balances present (richness 2)."""
     return LightningNodeStatus(
         state="ok",
         reachable=True,
@@ -40,12 +41,32 @@ def _full(alias: str = "kai-node", peers: int = 3) -> LightningNodeStatus:
         num_peers=peers,
         alias=alias,
         identity_pubkey="024a7f9c",
+        balances_available=True,
+        wallet_confirmed_sat=1_949_654,
+        wallet_total_sat=1_949_654,
+        channel_local_sat=0,
+        channel_remote_sat=0,
     )
 
 
 def _reachable_no_info() -> LightningNodeStatus:
+    """Liveness only — getinfo and balances both flaked (richness 0)."""
     return LightningNodeStatus(
         state="ok", reachable=True, server_state="SERVER_ACTIVE", info_available=False
+    )
+
+
+def _info_no_balances() -> LightningNodeStatus:
+    """getinfo succeeded but the balance calls flaked (richness 1)."""
+    return LightningNodeStatus(
+        state="ok",
+        reachable=True,
+        server_state="SERVER_ACTIVE",
+        info_available=True,
+        num_peers=3,
+        alias="kai-node",
+        identity_pubkey="024a7f9c",
+        balances_available=False,
     )
 
 
@@ -148,3 +169,27 @@ async def test_genuine_unavailable_overwrites(monkeypatch) -> None:
     await ln_cache._refresh_task
     status, _ = await ln_cache.get_cached_node_status()
     assert status.state == "unavailable" and status.reachable is False
+
+
+async def test_anti_flicker_keeps_balances_on_balance_flake(monkeypatch) -> None:
+    """getinfo ok but balances flaked must NOT blank the cached wallet/channel sats."""
+    _enable(monkeypatch)
+    seq = [_full(), _info_no_balances(), _info_no_balances()]
+
+    async def _fetch() -> LightningNodeStatus:
+        return seq.pop(0)
+
+    monkeypatch.setattr(ln_cache, "get_node_status", _fetch)
+
+    # Warm with the richest snapshot (info + balances).
+    await ln_cache.get_cached_node_status()
+    await ln_cache._refresh_task
+    assert (await ln_cache.get_cached_node_status())[0].wallet_confirmed_sat == 1_949_654
+
+    # Subsequent polls keep getinfo but lose balances -> retain the full snapshot.
+    monkeypatch.setattr(ln_cache, "_TTL_SECONDS", -1.0)
+    await ln_cache.get_cached_node_status()
+    await ln_cache._refresh_task
+    status, _ = await ln_cache.get_cached_node_status()
+    assert status.balances_available is True  # NOT blanked
+    assert status.wallet_confirmed_sat == 1_949_654
