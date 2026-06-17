@@ -1713,3 +1713,37 @@ async def dashboard_source_activity_api(
         "generated_at": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
     }
     return JSONResponse(content=payload, headers={"Cache-Control": "no-store, max-age=0"})
+
+
+@router.get("/dashboard/api/operator-board", tags=["dashboard"])
+async def dashboard_operator_board_api() -> JSONResponse:
+    """Kuratiertes Operator-Board (#315): Todos / Phasen / Verbesserungen aus der
+    gepflegten SSOT ``docs/operator_board.json`` (read-only, deklarativ — NICHT
+    live-berechnet). Fehlt/kaputt → ehrlich leer (kein erfundener Inhalt). Die
+    blockierenden Gates + akuten Probleme kommen separat LIVE aus den Truth-Chips
+    (AcutePointsBoard); diese Datei liefert nur die kuratierten Listen.
+    """
+    import json
+    from pathlib import Path
+
+    payload: dict[str, Any] = {
+        "stand": "",
+        "note": "",
+        "todos": [],
+        "phases": [],
+        "improvements": [],
+    }
+    path = Path("docs/operator_board.json")
+    try:
+        if path.exists():
+            data = json.loads(path.read_text(encoding="utf-8"))
+            if isinstance(data, dict):
+                payload["stand"] = str(data.get("stand", ""))
+                payload["note"] = str(data.get("note", ""))
+                payload["todos"] = data.get("todos") or []
+                payload["phases"] = data.get("phases") or []
+                payload["improvements"] = data.get("improvements") or []
+    except Exception as exc:  # noqa: BLE001 — Panel degradiert, kein 500
+        logger.warning("operator_board_read_failed: %s", exc)
+    payload["generated_at"] = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return JSONResponse(content=payload, headers={"Cache-Control": "no-store, max-age=0"})

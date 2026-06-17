@@ -935,3 +935,16 @@ def test_markets_sentiment_cold_is_honest(monkeypatch) -> None:
     monkeypatch.setattr("app.market_data.sentiment.get_cached_sentiment", _fake_cold)
     body = TestClient(_make_app()).get("/dashboard/api/markets/sentiment").json()
     assert body["available"] is False and body["age_seconds"] is None
+
+
+def test_operator_board_api_returns_curated_lists() -> None:
+    """GET /dashboard/api/operator-board liefert die kuratierten Listen (fail-soft)."""
+    client = TestClient(_make_app())
+    r = client.get("/dashboard/api/operator-board")
+    assert r.status_code == 200
+    data = r.json()
+    for key in ("stand", "todos", "phases", "improvements", "generated_at"):
+        assert key in data
+    assert isinstance(data["todos"], list)
+    assert isinstance(data["phases"], list)
+    assert isinstance(data["improvements"], list)
