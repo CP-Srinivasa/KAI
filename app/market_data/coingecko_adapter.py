@@ -11,6 +11,7 @@ from datetime import UTC, datetime, timedelta
 import httpx
 
 from app.market_data.base import BaseMarketDataAdapter
+from app.market_data.coingecko_overview import CoinGeckoMarketOverview
 from app.market_data.models import OHLCV, MarketDataPoint, MarketDataSnapshot, Ticker
 
 logger = logging.getLogger(__name__)
@@ -484,6 +485,58 @@ class CoinGeckoAdapter(BaseMarketDataAdapter):
             freshness_seconds=(round(age_seconds, 2) if age_seconds is not None else None),
             available=True,
             error=("stale_data" if is_stale else None),
+        )
+
+    async def get_market_overview(self, symbol: str) -> CoinGeckoMarketOverview | None:
+        """G1: market-cap rank/value + 30d momentum from ``/coins/markets``.
+
+        Reuses the exact same proven endpoint as ``get_ticker`` (same call,
+        same response shape) but surfaces the rank/market-cap/30d fields that
+        the price path discards. Read-only; fail-closed to ``None`` on any
+        missing/invalid payload. ``None``-tolerant per field (rank is the core
+        value; a missing 30d change does not invalidate the record).
+        """
+        resolved = _resolve_symbol(symbol)
+        if resolved is None:
+            self._set_error("unsupported_symbol")
+            return None
+        normalized_symbol, coin_id = resolved
+
+        data = await self._get_json(
+            f"{self._base_url}/coins/markets",
+            params={
+                "vs_currency": "usd",
+                "ids": coin_id,
+                "price_change_percentage": "30d",
+            },
+        )
+        if not isinstance(data, list) or len(data) == 0:
+            self._set_error("missing_coin_payload")
+            return None
+        payload = data[0]
+        if not isinstance(payload, dict):
+            self._set_error("missing_coin_payload")
+            return None
+
+        last_updated = payload.get("last_updated")
+        if isinstance(last_updated, str) and last_updated:
+            timestamp_utc = last_updated
+        else:
+            timestamp_utc = datetime.now(UTC).isoformat()
+
+        rank = payload.get("market_cap_rank")
+        market_cap = payload.get("market_cap")
+        change_30d = payload.get("price_change_percentage_30d_in_currency")
+
+        self._clear_error()
+        return CoinGeckoMarketOverview(
+            symbol=normalized_symbol,
+            timestamp_utc=timestamp_utc,
+            market_cap_rank=int(rank) if isinstance(rank, (int, float)) else None,
+            market_cap=float(market_cap) if isinstance(market_cap, (int, float)) else None,
+            price_change_pct_30d=(
+                float(change_30d) if isinstance(change_30d, (int, float)) else None
+            ),
         )
 
     async def _get_json(
