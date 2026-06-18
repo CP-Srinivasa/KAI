@@ -1083,9 +1083,7 @@ def _patch_settings(settings: AppSettings) -> Generator[None, None, None]:
 
 def test_integrations_tradingview_active_when_enabled_and_secret() -> None:
     app = _make_app()
-    settings = _integrations_settings(
-        tv_enabled=True, tv_secret="s3cr3t", auto_promote=True
-    )
+    settings = _integrations_settings(tv_enabled=True, tv_secret="s3cr3t", auto_promote=True)
     with _patch_settings(settings), TestClient(app) as client:
         r = client.get("/dashboard/api/integrations")
 
