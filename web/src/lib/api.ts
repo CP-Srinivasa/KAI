@@ -668,6 +668,41 @@ export function fetchDashboardProvenance(
   return apiGet<DashboardProvenance>("/dashboard/api/provenance", { signal });
 }
 
+// Echter Konfigurations-/Aktiv-Zustand der externen Integrationen
+// (Settings-Tab „Integrationen"). Status kommt aus den Backend-Settings-Flags,
+// NICHT mehr aus hartkodierten UI-Literalen (No-Fake-Doktrin).
+export type IntegrationStatus = "active" | "disabled" | "unavailable";
+
+export type IntegrationsSnapshot = {
+  generated_at: string;
+  integrations: {
+    telegram: { status: IntegrationStatus; configured: boolean };
+    llm: { status: IntegrationStatus; providers: string[] };
+    tradingview: {
+      status: IntegrationStatus;
+      webhook_enabled: boolean;
+      secret_configured: boolean;
+      mounted: boolean;
+      auth_mode: string;
+      signal_routing_enabled: boolean;
+      auto_promote_enabled: boolean;
+      pipeline: {
+        pending_events: number;
+        smoke_test_events: number;
+        real_events: number;
+        unique_signal_path_ids: number;
+      } | null;
+    };
+    email: { status: IntegrationStatus; configured: boolean };
+  };
+};
+
+export function fetchIntegrations(
+  signal?: AbortSignal,
+): Promise<IntegrationsSnapshot> {
+  return apiGet<IntegrationsSnapshot>("/dashboard/api/integrations", { signal });
+}
+
 // REGIME-R1 (2026-05-09): per-asset regime classification, hourly cron.
 // Backend: app/regime/ — six classes (trend_up/down, breakout_up/down,
 // chop_quiet/volatile) + three vol classes (vol_low/normal/high). Read-only

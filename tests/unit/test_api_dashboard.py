@@ -22,6 +22,13 @@ from fastapi.testclient import TestClient
 
 from app.api.routers import dashboard as dashboard_mod
 from app.api.routers.dashboard import _load_jsonl, router
+from app.core.settings import (
+    AlertSettings,
+    AppSettings,
+    OperatorSettings,
+    ProviderSettings,
+    TradingViewSettings,
+)
 from app.security.auth import setup_auth
 
 # ---------------------------------------------------------------------------
@@ -1022,3 +1029,123 @@ def test_markets_momentum_cold_is_honest(monkeypatch) -> None:
     monkeypatch.setattr("app.market_data.momentum.get_cached_momentum", _fake_cold)
     body = TestClient(_make_app()).get("/dashboard/api/markets/momentum").json()
     assert body["available"] is False and body["rows"] == [] and body["age_seconds"] is None
+
+
+# ---------------------------------------------------------------------------
+# GET /dashboard/api/integrations -- echter Config-Status (No-Fake-Doktrin)
+#
+# Regression-Guard: das Settings-Tab-Badge war früher hartkodiert
+# ("vorbereitet"), egal ob der TradingView-Webhook live war. Der Status muss
+# aus den fail-closed Settings-Flags kommen.
+# ---------------------------------------------------------------------------
+
+
+def _integrations_settings(
+    *,
+    tv_enabled: bool = False,
+    tv_secret: str = "",
+    telegram_token: str = "",
+    operator_token: str = "",
+    openai_key: str = "",
+    gemini_key: str = "",
+    auto_promote: bool = False,
+) -> AppSettings:
+    """AppSettings mit explizit gepinnten Sub-Settings.
+
+    Init-kwargs schlagen ein ambient ``.env`` (pydantic-Priorität: init > env),
+    damit der Test deterministisch ist.
+    """
+    settings = AppSettings()
+    settings.tradingview = TradingViewSettings(
+        webhook_enabled=tv_enabled,
+        webhook_secret=tv_secret,
+        webhook_auth_mode="hmac",
+        webhook_shared_token="",
+        webhook_auto_promote_enabled=auto_promote,
+    )
+    settings.alerts = AlertSettings(telegram_token=telegram_token)
+    settings.operator = OperatorSettings(telegram_bot_token=operator_token)
+    settings.providers = ProviderSettings(
+        openai_api_key=openai_key,
+        anthropic_api_key="",
+        gemini_api_key=gemini_key,
+    )
+    return settings
+
+
+@contextmanager
+def _patch_settings(settings: AppSettings) -> Generator[None, None, None]:
+    # Der Endpoint importiert get_settings lokal aus app.core.settings —
+    # daher dort patchen (nicht im dashboard-Modul).
+    with patch("app.core.settings.get_settings", lambda: settings):
+        yield
+
+
+def test_integrations_tradingview_active_when_enabled_and_secret() -> None:
+    app = _make_app()
+    settings = _integrations_settings(
+        tv_enabled=True, tv_secret="s3cr3t", auto_promote=True
+    )
+    with _patch_settings(settings), TestClient(app) as client:
+        r = client.get("/dashboard/api/integrations")
+
+    assert r.status_code == 200
+    tv = r.json()["integrations"]["tradingview"]
+    assert tv["status"] == "active"
+    assert tv["mounted"] is True
+    assert tv["webhook_enabled"] is True
+    assert tv["secret_configured"] is True
+    assert tv["auto_promote_enabled"] is True
+    assert tv["auth_mode"] == "hmac"
+
+
+def test_integrations_tradingview_disabled_without_secret() -> None:
+    """Fail-closed: enabled aber KEIN Secret -> Router unmounted -> disabled."""
+    app = _make_app()
+    settings = _integrations_settings(tv_enabled=True, tv_secret="")
+    with _patch_settings(settings), TestClient(app) as client:
+        r = client.get("/dashboard/api/integrations")
+
+    tv = r.json()["integrations"]["tradingview"]
+    assert tv["status"] == "disabled"
+    assert tv["mounted"] is False
+    assert tv["webhook_enabled"] is True
+    assert tv["secret_configured"] is False
+
+
+def test_integrations_tradingview_disabled_when_flag_off() -> None:
+    app = _make_app()
+    settings = _integrations_settings(tv_enabled=False, tv_secret="s3cr3t")
+    with _patch_settings(settings), TestClient(app) as client:
+        r = client.get("/dashboard/api/integrations")
+
+    assert r.json()["integrations"]["tradingview"]["status"] == "disabled"
+
+
+def test_integrations_telegram_and_llm_derive_from_config() -> None:
+    app = _make_app()
+    settings = _integrations_settings(
+        telegram_token="tg-token", openai_key="sk-x", gemini_key="g-x"
+    )
+    with _patch_settings(settings), TestClient(app) as client:
+        r = client.get("/dashboard/api/integrations")
+
+    integ = r.json()["integrations"]
+    assert integ["telegram"]["status"] == "active"
+    assert integ["llm"]["status"] == "active"
+    assert set(integ["llm"]["providers"]) == {"openai", "gemini"}
+    # SMTP ist nicht backend-konfigurierbar -> ehrlich disabled.
+    assert integ["email"]["status"] == "disabled"
+
+
+def test_integrations_disabled_when_nothing_configured() -> None:
+    app = _make_app()
+    settings = _integrations_settings()
+    with _patch_settings(settings), TestClient(app) as client:
+        r = client.get("/dashboard/api/integrations")
+
+    integ = r.json()["integrations"]
+    assert integ["telegram"]["status"] == "disabled"
+    assert integ["llm"]["status"] == "disabled"
+    assert integ["llm"]["providers"] == []
+    assert integ["tradingview"]["status"] == "disabled"

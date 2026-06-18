@@ -1281,6 +1281,92 @@ async def dashboard_provenance_api() -> JSONResponse:
     )
 
 
+@router.get("/dashboard/api/integrations", tags=["dashboard"])
+async def dashboard_integrations_api() -> JSONResponse:
+    """Echter Konfigurations-/Aktiv-Zustand der externen Integrationen.
+
+    Ersetzt die früher hartkodierten Status-Badges im Settings-Tab
+    „Integrationen". Jeder Status wird ausschließlich aus den (fail-closed)
+    Settings-Flags abgeleitet — keine erfundenen „aktiv"/„vorbereitet"-Labels
+    mehr (No-Fake-Doktrin). Für TradingView werden die Live-Pipeline-Zähler
+    aus dem bereits gecachten Provenance-Report angereichert, sofern frisch;
+    dieser Endpoint baut den schweren Report bewusst NICHT selbst und ist damit
+    von dessen Fehlerpfaden entkoppelt.
+
+    status ∈ {"active", "disabled"}.
+    """
+    from app.core.settings import get_settings
+
+    settings = get_settings()
+
+    # Telegram: aktiv, sobald irgendein Bot-Token konfiguriert ist (Alert- oder
+    # Operator-Kanal).
+    telegram_configured = bool(
+        settings.alerts.telegram_token or settings.operator.telegram_bot_token
+    )
+
+    # LLM-Consensus-Gate: aktiv, sobald mindestens ein Provider-Key gesetzt ist.
+    llm_providers = [
+        name
+        for name, key in (
+            ("openai", settings.providers.openai_api_key),
+            ("anthropic", settings.providers.anthropic_api_key),
+            ("gemini", settings.providers.gemini_api_key),
+        )
+        if key
+    ]
+
+    # TradingView-Webhook: der Router wird NUR gemountet, wenn webhook_enabled
+    # UND ein nicht-leeres Secret gesetzt sind (fail-closed, siehe
+    # TradingViewSettings + app/api/routers/tradingview.py). Genau dieser
+    # Zustand bedeutet „Endpoint live/aktiv".
+    tv = settings.tradingview
+    tv_mounted = bool(tv.webhook_enabled and tv.webhook_secret)
+    tv_pipeline: dict[str, Any] | None = None
+    cached = _provenance_cache.get("payload")
+    if (
+        tv_mounted
+        and cached is not None
+        and (time.monotonic() - _provenance_cache["at"]) < _PROVENANCE_CACHE_TTL_S
+    ):
+        # Read-only Anreicherung aus dem bereits gebauten Provenance-Payload —
+        # kein zusätzlicher Report-Build.
+        tv_pipeline = cached.get("tradingview_pipeline")
+
+    payload = {
+        "generated_at": datetime.now(UTC).isoformat(),
+        "integrations": {
+            "telegram": {
+                "status": "active" if telegram_configured else "disabled",
+                "configured": telegram_configured,
+            },
+            "llm": {
+                "status": "active" if llm_providers else "disabled",
+                "providers": llm_providers,
+            },
+            "tradingview": {
+                "status": "active" if tv_mounted else "disabled",
+                "webhook_enabled": bool(tv.webhook_enabled),
+                "secret_configured": bool(tv.webhook_secret),
+                "mounted": tv_mounted,
+                "auth_mode": tv.webhook_auth_mode,
+                "signal_routing_enabled": bool(tv.webhook_signal_routing_enabled),
+                "auto_promote_enabled": bool(tv.webhook_auto_promote_enabled),
+                "pipeline": tv_pipeline,
+            },
+            "email": {
+                # Kein SMTP-Setting im Backend → ehrlich „nicht konfiguriert".
+                "status": "disabled",
+                "configured": False,
+            },
+        },
+    }
+    return JSONResponse(
+        content=payload,
+        headers={"Cache-Control": "no-store, max-age=0"},
+    )
+
+
 # ─── Bayesian Confidence Audit (Schatten-Vergleich-Spalte) ────────────────────
 
 _BAYES_AUDIT = _ARTIFACTS / "bayes_confidence_audit.jsonl"
