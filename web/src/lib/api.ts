@@ -525,6 +525,28 @@ export function fetchChainStatus(signal?: AbortSignal): Promise<ChainStatus> {
   return apiGet<ChainStatus>("/dashboard/api/chain", { signal });
 }
 
+// Per-source ingestion activity (Quellen-Live-Zyklus). Read-only aggregate over
+// the canonical document store: which source is delivering, which went silent.
+export type SourceActivityRow = {
+  source_name: string;
+  total: number; // lifetime document count
+  window_count: number; // documents fetched within window_hours
+  last_fetched_at: string | null; // ISO-8601 UTC of the most recent fetch
+  silent: boolean; // last fetch older than silent_after_hours (gone quiet/dead)
+};
+
+export type SourceActivity = {
+  window_hours: number;
+  silent_after_hours: number;
+  silent_count: number;
+  sources: SourceActivityRow[];
+  generated_at: string;
+};
+
+export function fetchSourceActivity(signal?: AbortSignal): Promise<SourceActivity> {
+  return apiGet<SourceActivity>("/dashboard/api/source-activity", { signal });
+}
+
 // Perp-Derivate (Funding + Open Interest) aus KAIs EIGENER Ingestion (read-only).
 // funding_rate = 8h-Satz als Anteil (0.0001 = 1bp). Werte sind null, wenn der
 // jeweilige Snapshot-Cache (noch) keinen Eintrag hat — keine erfundenen Zahlen.
