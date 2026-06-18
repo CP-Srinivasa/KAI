@@ -55,6 +55,17 @@ class RiskLimits:
     #     1.5). k=1.5 => min SL ~1.8%. OPERATOR-SIGN-OFF PARAMETER.
     round_trip_fee_pct: float = 1.2
     min_sl_cost_multiple: float = 0.0
+    # Paper-Learning sizing patch (2026-06-18): collect MORE paper outcomes for
+    # edge measurement without raising the daily notional cap. Both <=0 = OFF
+    # (default → backward-compatible; legacy RiskLimits() unaffected). Apply only
+    # on the risk-based path (premium signal-leverage untouched). Productive
+    # values injected from Settings (RISK_*), OPERATOR-SIGN-OFF.
+    #   min_stop_pct_for_sizing: floor (in %) on the stop distance USED FOR SIZING
+    #     so a tight ATR stop cannot inflate notional; the REAL stop is unchanged.
+    min_stop_pct_for_sizing: float = 0.0
+    #   max_notional_per_trade_usd: absolute per-trade notional ceiling (USD) so a
+    #     few trades cannot exhaust the daily budget. Smaller than the % cap.
+    max_notional_per_trade_usd: float = 0.0
     # Sprint 2026-06-02 — reward/risk + risk-budget gates. ALL default-OFF
     # (disabled sentinel) so this is a strict no-op for existing callers and
     # tests; productive values are injected from Settings and are
