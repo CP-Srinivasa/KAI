@@ -1800,10 +1800,13 @@ async def dashboard_integrity_api() -> JSONResponse:
     """
     from dataclasses import asdict
 
-    from app.integrity import get_integrity_status
+    from app.integrity import check_l3_integrity_freshness, get_integrity_status
 
     status = get_integrity_status()
     payload = asdict(status)
+    # Freshness/replay watchdog: a green KPI must not hide a stale timer or a
+    # tampered audit log. stamper=null / proof_available=false stay non-errors.
+    payload["freshness"] = asdict(check_l3_integrity_freshness())
     payload["generated_at"] = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
     return JSONResponse(content=payload, headers={"Cache-Control": "no-store, max-age=0"})
 

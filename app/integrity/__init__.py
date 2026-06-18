@@ -13,6 +13,7 @@ from app.integrity.anchor import (
     anchor_audit_digest,
 )
 from app.integrity.digest import AuditDigest, compute_audit_digest
+from app.integrity.freshness import L3FreshnessProbe, check_l3_integrity_freshness
 from app.integrity.status import IntegrityStatus, get_integrity_status
 
 __all__ = [
@@ -20,9 +21,11 @@ __all__ = [
     "AnchorUnavailableError",
     "AuditDigest",
     "IntegrityStatus",
+    "L3FreshnessProbe",
     "NullStamper",
     "OpenTimestampsStamper",
     "anchor_audit_digest",
+    "check_l3_integrity_freshness",
     "compute_audit_digest",
     "get_integrity_status",
 ]
