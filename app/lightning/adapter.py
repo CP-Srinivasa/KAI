@@ -40,6 +40,7 @@ class LightningNodeStatus:
     server_state: str = ""
     info_available: bool = False
     synced_to_chain: bool = False
+    synced_to_graph: bool = False  # lnd gossip-graph sync (routing readiness)
     block_height: int = 0
     num_peers: int = 0
     num_active_channels: int = 0
@@ -142,6 +143,7 @@ async def get_node_status(cfg: LightningSettings | None = None) -> LightningNode
         server_state=server_state,
         info_available=True,
         synced_to_chain=info.synced_to_chain,
+        synced_to_graph=info.synced_to_graph,
         block_height=info.block_height,
         num_peers=info.num_peers,
         num_active_channels=info.num_active_channels,
