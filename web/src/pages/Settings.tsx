@@ -8,6 +8,8 @@ import { Field, Input, Toggle, SegmentedControl } from "@/components/ui/Form";
 import { cn } from "@/lib/utils";
 import { PageHeader } from "@/layout/PageHeader";
 import { PreparedPanel } from "@/components/panels/PreparedPanel";
+import { useApi } from "@/lib/useApi";
+import { fetchIntegrations, type IntegrationStatus } from "@/lib/api";
 
 type TabId = "general" | "apis" | "integrations" | "trading" | "display";
 
@@ -86,31 +88,90 @@ function ApisTab() {
   );
 }
 
+// Status kommt jetzt LIVE aus /dashboard/api/integrations (echte Settings-Flags),
+// nicht mehr aus hartkodierten Literalen. "active" → aktiv, "disabled" →
+// vorbereitet (gebaut, aber nicht konfiguriert/aktiviert), "unavailable" →
+// Backend nicht erreichbar. So spiegelt das Badge die Realität (No-Fake-Doktrin).
 function IntegrationsTab() {
   const { t } = useT();
+  const tk = (k: string) => t(`pages.settings.integrations_tab.${k}`);
+  const state = useApi(fetchIntegrations, 60_000);
+  const it = state.state === "ready" ? state.data.integrations : null;
+  const unreachable = state.state === "error";
+
+  const rowStatus = (s: IntegrationStatus | undefined): IntegrationStatus =>
+    unreachable ? "unavailable" : (s ?? "disabled");
+
+  // Generische Notiz: aktiv → spezifischer Original-Text, sonst ehrlicher Hinweis.
+  const note = (activeKey: string, active: boolean): string => {
+    if (unreachable) return tk("note_unreachable");
+    return active ? tk(activeKey) : tk("note_disabled");
+  };
+
+  // TradingView: dynamische Live-Notiz inkl. Auth-Mode, Auto-Promote + Events.
+  const tvNote = (): string => {
+    if (unreachable) return tk("note_unreachable");
+    const tv = it?.tradingview;
+    if (!tv || tv.status !== "active") return tk("tv_note");
+    const parts = [
+      tk("tv_note_active"),
+      tv.auth_mode.toUpperCase(),
+      tv.auto_promote_enabled ? tk("tv_auto_promote_on") : tk("tv_auto_promote_off"),
+    ];
+    if (tv.pipeline) parts.push(`${tv.pipeline.real_events} ${tk("tv_live_events")}`);
+    return parts.join(" · ");
+  };
+
   return (
     <Card>
-      <CardHeader title={t("pages.settings.integrations_tab.title")} subtitle={t("pages.settings.integrations_tab.sub")} />
+      <CardHeader title={tk("title")} subtitle={tk("sub")} />
       <div className="space-y-3">
-        <IntegrationRow label={t("pages.settings.integrations_tab.tg_label")} provider={t("pages.settings.integrations_tab.tg_provider")} status="ok" note={t("pages.settings.integrations_tab.tg_note")} />
-        <IntegrationRow label={t("pages.settings.integrations_tab.llm_label")} provider={t("pages.settings.integrations_tab.llm_provider")} status="ok" note={t("pages.settings.integrations_tab.llm_note")} />
-        <IntegrationRow label={t("pages.settings.integrations_tab.tv_label")} provider={t("pages.settings.integrations_tab.tv_provider")} status="prepared" note={t("pages.settings.integrations_tab.tv_note")} />
-        <IntegrationRow label={t("pages.settings.integrations_tab.email_label")} provider={t("pages.settings.integrations_tab.email_provider")} status="prepared" note={t("pages.settings.integrations_tab.email_note")} />
+        <IntegrationRow
+          label={tk("tg_label")}
+          provider={tk("tg_provider")}
+          status={rowStatus(it?.telegram.status)}
+          note={note("tg_note", it?.telegram.status === "active")}
+        />
+        <IntegrationRow
+          label={tk("llm_label")}
+          provider={tk("llm_provider")}
+          status={rowStatus(it?.llm.status)}
+          note={note("llm_note", it?.llm.status === "active")}
+        />
+        <IntegrationRow
+          label={tk("tv_label")}
+          provider={tk("tv_provider")}
+          status={rowStatus(it?.tradingview.status)}
+          note={tvNote()}
+        />
+        <IntegrationRow
+          label={tk("email_label")}
+          provider={tk("email_provider")}
+          status={rowStatus(it?.email.status)}
+          note={unreachable ? tk("note_unreachable") : tk("email_note")}
+        />
       </div>
     </Card>
   );
 }
 
-function IntegrationRow({ label, provider, status, note }: { label: string; provider: string; status: "ok" | "warn" | "prepared"; note: string }) {
+function IntegrationRow({ label, provider, status, note }: { label: string; provider: string; status: IntegrationStatus; note: string }) {
   const { t } = useT();
+  const tone = status === "active" ? "pos" : status === "unavailable" ? "warn" : "muted";
+  const stateLabel =
+    status === "active"
+      ? t("pages.settings.integrations_tab.state_active")
+      : status === "unavailable"
+        ? t("pages.settings.integrations_tab.state_unavailable")
+        : t("pages.settings.integrations_tab.state_prepared");
   return (
     <div className="flex items-center justify-between gap-4 rounded-sm border border-line-subtle bg-bg-2 p-3">
       <div className="min-w-0">
         <div className="text-sm font-semibold text-fg truncate">{label}</div>
         <div className="text-2xs text-fg-subtle mt-0.5 font-mono break-words">{provider} · {note}</div>
       </div>
-      <Badge tone={status === "ok" ? "pos" : status === "warn" ? "warn" : "muted"} dot>
-        {status === "ok" ? t("pages.settings.integrations_tab.state_active") : status === "warn" ? t("pages.settings.integrations_tab.state_warn") : t("pages.settings.integrations_tab.state_prepared")}
+      <Badge tone={tone} dot>
+        {stateLabel}
       </Badge>
     </div>
   );
