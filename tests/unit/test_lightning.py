@@ -182,6 +182,7 @@ async def test_adapter_ok_full(monkeypatch) -> None:
                     "identity_pubkey": "024a7f",
                     "block_height": 953644,
                     "synced_to_chain": True,
+                    "synced_to_graph": True,
                     "num_active_channels": 4,
                     "num_pending_channels": 3,
                 },
@@ -200,6 +201,7 @@ async def test_adapter_ok_full(monkeypatch) -> None:
     assert status.info_available is True
     assert status.block_height == 953644
     assert status.synced_to_chain is True
+    assert status.synced_to_graph is True  # lnd gossip-graph sync surfaced
     assert status.num_active_channels == 4
     assert status.num_pending_channels == 3  # surfaced from getinfo (B2 force-closes)
     assert status.balances_available is True
