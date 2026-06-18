@@ -105,6 +105,7 @@ _BASE_ASSET_TO_COINGECKO: dict[str, str] = {
     "SEI": "sei-network",
     "JUP": "jupiter-exchange-solana",
     "LTC": "litecoin",
+    "DASH": "dash",
     "ATOM": "cosmos",
     "FIL": "filecoin",
     "RNDR": "render-token",

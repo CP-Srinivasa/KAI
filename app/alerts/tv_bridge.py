@@ -70,6 +70,17 @@ def _sanitize_for_log(value: object) -> str | None:
 
 def _split_ticker(ticker: str) -> tuple[str, str] | None:
     up = ticker.strip().upper()
+    # Normalize common TradingView chart-symbol forms so the base asset still
+    # resolves when the operator alerts on a perp/exchange-prefixed chart:
+    #   - exchange prefix:  "BYBIT:SOLUSDT" -> "SOLUSDT"
+    #   - perp suffix:      "BTCUSD.P" / "ETHUSDT.PERP" -> "BTCUSD" / "ETHUSDT"
+    # Dated-futures codes (e.g. "SOLM2026") carry no clean base/quote and stay
+    # unmapped ON PURPOSE — alert on the perp/spot symbol for those instead.
+    up = up.split(":", 1)[-1]
+    for _suffix in (".PERP", ".P"):  # ".PERP" first so ".P" doesn't truncate it
+        if up.endswith(_suffix):
+            up = up[: -len(_suffix)]
+            break
     for quote in _KNOWN_QUOTES:
         if up.endswith(quote) and len(up) > len(quote):
             return up[: -len(quote)], quote
