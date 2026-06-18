@@ -1316,12 +1316,25 @@ async def dashboard_integrations_api() -> JSONResponse:
         if key
     ]
 
-    # TradingView-Webhook: der Router wird NUR gemountet, wenn webhook_enabled
-    # UND ein nicht-leeres Secret gesetzt sind (fail-closed, siehe
-    # TradingViewSettings + app/api/routers/tradingview.py). Genau dieser
-    # Zustand bedeutet „Endpoint live/aktiv".
+    # TradingView-Webhook: „live/aktiv" == der POST-Endpoint ist erreichbar.
+    # Das ist EXAKT die Mount-Bedingung aus app/api/routers/tradingview.py
+    # (_settings_gate): webhook_enabled UND — je nach auth_mode — das passende
+    # Credential (webhook_secret für hmac, webhook_shared_token für die
+    # token-basierten Modi inkl. hmac_strict_event_id/hmac_or_token). Wir rufen
+    # den Gate direkt auf, statt die Bedingung hier zu duplizieren — sonst driftet
+    # der Status vom echten 404-/202-Verhalten ab (auf der Pi läuft
+    # hmac_strict_event_id ohne webhook_secret; die alte `enabled AND secret`-
+    # Heuristik meldete fälschlich „disabled").
+    from fastapi import HTTPException
+
+    from app.api.routers.tradingview import _settings_gate as _tv_settings_gate
+
     tv = settings.tradingview
-    tv_mounted = bool(tv.webhook_enabled and tv.webhook_secret)
+    try:
+        _tv_settings_gate(settings)
+        tv_mounted = True
+    except HTTPException:
+        tv_mounted = False
     tv_pipeline: dict[str, Any] | None = None
     cached = _provenance_cache.get("payload")
     if (
@@ -1348,6 +1361,7 @@ async def dashboard_integrations_api() -> JSONResponse:
                 "status": "active" if tv_mounted else "disabled",
                 "webhook_enabled": bool(tv.webhook_enabled),
                 "secret_configured": bool(tv.webhook_secret),
+                "shared_token_configured": bool(tv.webhook_shared_token),
                 "mounted": tv_mounted,
                 "auth_mode": tv.webhook_auth_mode,
                 "signal_routing_enabled": bool(tv.webhook_signal_routing_enabled),
