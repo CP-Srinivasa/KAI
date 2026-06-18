@@ -1,8 +1,13 @@
 [Unit]
 Description=Cloudflare Tunnel (kai-trader.org)
-After=network-online.target kai-server.service
+# Decoupled from kai-server (2026-06-18): a prior Requires=kai-server.service
+# propagated EVERY kai-server restart (i.e. every deploy) to cloudflared, so the
+# tunnel dropped for ~60s each time → external HTTP 530 windows → lost
+# TradingView webhooks (TV does not retry). The tunnel must stay up independently
+# of app restarts; a brief kai-server restart just yields a short origin 502, not
+# a tunnel drop. After= for boot ordering only (no restart propagation).
+After=network-online.target
 Wants=network-online.target
-Requires=kai-server.service
 
 [Service]
 Type=simple
