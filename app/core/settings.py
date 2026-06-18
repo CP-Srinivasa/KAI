@@ -1342,6 +1342,14 @@ class AppSettings(BaseSettings):
     # knob. Setting `coingecko` here would silently regress to the unsafe
     # default if `.env` ever loses the line again.
     market_data_provider: str = Field(default="fallback")
+    # TradingView price fallback (2026-06-18): when True, append a
+    # TradingViewMarketDataAdapter to the END of the `fallback` chain (before
+    # Mock) so symbols the crypto venues + CoinGecko cannot quote (operator's TV
+    # Pro coverage / RWA) still resolve, AND CoinGecko is no longer the last real
+    # source. Default-OFF (measure-first): the TV scanner is an unofficial
+    # endpoint (ToS gray-area, may break) and must never be the primary path.
+    # env: APP_TRADINGVIEW_PRICE_FALLBACK_ENABLED.
+    tradingview_price_fallback_enabled: bool = Field(default=False)
     # Cross-exchange weighted-median price VALIDATION (Issue #169, default OFF).
     # When True, the aggregation hook in
     # ``app/market_data/cross_exchange_aggregator.py`` may run per-venue quotes
