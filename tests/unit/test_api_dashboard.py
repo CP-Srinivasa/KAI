@@ -1044,6 +1044,8 @@ def _integrations_settings(
     *,
     tv_enabled: bool = False,
     tv_secret: str = "",
+    tv_auth_mode: str = "hmac",
+    tv_shared_token: str = "",
     telegram_token: str = "",
     operator_token: str = "",
     openai_key: str = "",
@@ -1059,8 +1061,8 @@ def _integrations_settings(
     settings.tradingview = TradingViewSettings(
         webhook_enabled=tv_enabled,
         webhook_secret=tv_secret,
-        webhook_auth_mode="hmac",
-        webhook_shared_token="",
+        webhook_auth_mode=tv_auth_mode,
+        webhook_shared_token=tv_shared_token,
         webhook_auto_promote_enabled=auto_promote,
     )
     settings.alerts = AlertSettings(telegram_token=telegram_token)
@@ -1109,6 +1111,28 @@ def test_integrations_tradingview_disabled_without_secret() -> None:
     assert tv["mounted"] is False
     assert tv["webhook_enabled"] is True
     assert tv["secret_configured"] is False
+
+
+def test_integrations_tradingview_active_token_mode_without_secret() -> None:
+    """Pi-Realität: hmac_strict_event_id nutzt den Shared-Token, KEIN
+    webhook_secret. Der Endpoint ist trotzdem gemountet -> aktiv. Regression
+    gegen die alte `enabled AND webhook_secret`-Heuristik (meldete fälschlich
+    'disabled')."""
+    app = _make_app()
+    settings = _integrations_settings(
+        tv_enabled=True,
+        tv_secret="",
+        tv_auth_mode="hmac_strict_event_id",
+        tv_shared_token="tok",
+    )
+    with _patch_settings(settings), TestClient(app) as client:
+        r = client.get("/dashboard/api/integrations")
+
+    tv = r.json()["integrations"]["tradingview"]
+    assert tv["status"] == "active"
+    assert tv["mounted"] is True
+    assert tv["secret_configured"] is False
+    assert tv["shared_token_configured"] is True
 
 
 def test_integrations_tradingview_disabled_when_flag_off() -> None:
