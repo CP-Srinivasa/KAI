@@ -246,10 +246,10 @@ function DisabledOverlay() {
       <div className="max-w-md space-y-2 text-xs text-fg-muted">
         <p className="text-sm font-medium text-fg">TradingView-Chart deaktiviert</p>
         <p>
-          Aktivieren über{" "}
-          <span className="font-mono">VITE_TRADINGVIEW_ENABLED=1</span> in
-          <span className="font-mono"> web/.env</span>. In TV-1 nur
-          Visualisierung; keine Signal-Pipeline-Anbindung.
+          Standardmäßig AN — hier explizit über{" "}
+          <span className="font-mono">VITE_TRADINGVIEW_ENABLED=0</span>{" "}
+          abgeschaltet. Zeile entfernen, um den Chart (TV-1, nur Visualisierung;
+          keine Signal-Pipeline-Anbindung) wieder anzuzeigen.
         </p>
       </div>
     </div>
