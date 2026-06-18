@@ -117,13 +117,21 @@ export function LightningPanel() {
           {data.alias && <Stat label="Alias" value={data.alias} mono={false} />}
           <div className="flex items-baseline justify-between gap-3 py-0.5">
             <span className="text-2xs uppercase tracking-wider text-fg-subtle">Sync</span>
-            <Badge tone={data.synced_to_chain ? "pos" : "warn"}>
-              {data.synced_to_chain ? "synced" : "syncing"}
-            </Badge>
+            <div className="flex items-center gap-1.5">
+              <Badge tone={data.synced_to_chain ? "pos" : "warn"}>
+                {data.synced_to_chain ? "chain" : "chain…"}
+              </Badge>
+              <Badge tone={data.synced_to_graph ? "pos" : "warn"}>
+                {data.synced_to_graph ? "graph" : "graph…"}
+              </Badge>
+            </div>
           </div>
           <Stat label="Block" value={data.block_height ? data.block_height.toLocaleString("de-DE") : "—"} />
           <Stat label="Peers" value={String(data.num_peers)} />
           <Stat label="Channels" value={String(data.num_active_channels)} />
+          {data.num_pending_channels > 0 && (
+            <Stat label="Channels pending" value={String(data.num_pending_channels)} />
+          )}
 
           {data.balances_available ? (
             <div className="mt-2 rounded-sm border border-line-subtle bg-bg-2/40 px-2.5 py-2 space-y-0.5">
