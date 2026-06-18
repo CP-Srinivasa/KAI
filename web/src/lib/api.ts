@@ -484,9 +484,11 @@ export type LightningStatus = {
   server_state: string;
   info_available: boolean;
   synced_to_chain: boolean;
+  synced_to_graph: boolean; // lnd gossip-graph sync (routing readiness)
   block_height: number;
   num_peers: number;
   num_active_channels: number;
+  num_pending_channels: number; // e.g. force-closes awaiting their CSV timelock
   identity_pubkey: string;
   alias: string;
   version: string;
