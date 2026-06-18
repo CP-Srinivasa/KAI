@@ -29,6 +29,26 @@ def _sha256_file(path: Path) -> str:
     return h.hexdigest()
 
 
+def sha256_prefix(path: Path, size: int) -> str:
+    """SHA256 over the first ``size`` bytes of ``path`` (append-only prefix check).
+
+    For an append-only audit log, hashing the first ``size`` bytes (the file's
+    state when it was anchored at that size) must reproduce the recorded per-file
+    digest — otherwise the historical content changed (tamper/truncation), not a
+    normal append. Reads at most ``size`` bytes; raises OSError on read failure.
+    """
+    h = hashlib.sha256()
+    remaining = max(0, size)
+    with path.open("rb") as fh:
+        while remaining > 0:
+            chunk = fh.read(min(1024 * 1024, remaining))
+            if not chunk:
+                break
+            h.update(chunk)
+            remaining -= len(chunk)
+    return h.hexdigest()
+
+
 def compute_audit_digest(paths: list[str]) -> AuditDigest:
     """Return a deterministic SHA256 digest over the given audit files.
 

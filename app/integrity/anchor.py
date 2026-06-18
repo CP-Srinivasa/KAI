@@ -107,10 +107,21 @@ def anchor_audit_digest(cfg: IntegritySettings) -> AnchorResult:
 
     ad = compute_audit_digest(cfg.audit_paths)
     out_dir = Path(cfg.proofs_dir)
+    # Per-file byte sizes at anchor time enable the append-only prefix check in
+    # the freshness probe: an append-only audit log may only GROW, so its bytes
+    # up to ``sizes[path]`` must still hash to ``files[path]`` — a shrink or a
+    # changed prefix is tamper, not normal growth.
+    sizes: dict[str, int] = {}
+    for path in ad.files:
+        try:
+            sizes[path] = Path(path).stat().st_size
+        except OSError:
+            continue
     record = {
         "ts": datetime.now(UTC).isoformat(),
         "digest": ad.digest,
         "files": ad.files,
+        "sizes": sizes,
         "missing": ad.missing,
         "stamper": cfg.stamper,
     }

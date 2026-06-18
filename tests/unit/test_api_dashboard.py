@@ -806,6 +806,9 @@ def test_integrity_endpoint_disabled_by_default() -> None:
     assert body["enabled"] is False
     assert "generated_at" in body
     assert "last_digest" in body and "proof_available" in body
+    # freshness/replay watchdog is surfaced on the same endpoint (disabled → ok)
+    assert body["freshness"]["reason_code"] == "L3_DISABLED"
+    assert body["freshness"]["status"] == "ok"
 
 
 def test_integrity_endpoint_ok(monkeypatch) -> None:
