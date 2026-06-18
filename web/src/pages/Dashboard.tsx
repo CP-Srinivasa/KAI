@@ -21,6 +21,7 @@ import { AcutePointsBoard } from "@/components/panels/AcutePointsBoard";
 import { NodeStatusKpi } from "@/components/panels/NodeStatusKpi";
 import { AuditIntegrityKpi } from "@/components/panels/AuditIntegrityKpi";
 import { ReplayStatusKpi } from "@/components/panels/ReplayStatusKpi";
+import { TruthLayerKpi } from "@/components/panels/TruthLayerKpi";
 import { NOverviewPanel } from "@/components/panels/NOverviewPanel";
 import { SignalHeatmapPanel } from "@/components/panels/SignalHeatmap";
 import { PremiumRuntimeBanner } from "@/components/panels/PremiumRuntimeBanner";
@@ -360,6 +361,10 @@ export function Dashboard() {
         {/* #314: Replay-SSOT-Status-KPI (Integrität des Audit-Replays, hintergrund-gecacht). */}
         <PanelErrorBoundary name="Replay-SSOT-KPI">
           <ReplayStatusKpi />
+        </PanelErrorBoundary>
+        {/* #314: Truth-Layer-Status-KPI (aus dem gepollten quality-Vertrag abgeleitet). */}
+        <PanelErrorBoundary name="Truth-Layer-KPI">
+          <TruthLayerKpi quality={data} qualityState={q.state} />
         </PanelErrorBoundary>
       </div>
 
