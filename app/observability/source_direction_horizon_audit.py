@@ -8,8 +8,18 @@ already-recorded forward returns and reports.
 Data source: ``artifacts/shadow_candidate_resolved.jsonl`` (the only stream with
 per-horizon forward bps). Horizons present in that stream are 1m/5m/15m/1h; 4h/24h
 are NOT resolved → reported as ``bps_unavailable`` (never estimated/backfilled).
-Sources that never enter this stream (e.g. news alerts: thedefiant, cointelegraph,
-decrypt, …) have hit/miss only (see provenance) → ``bps_unavailable`` here.
+
+LINEAGE CAVEAT (see ADR 0007): the ``source`` field in this raw stream is the
+*resolver/generator* identity (technical_screener / autonomous_generator / none),
+NOT the originating news ``source_name``. News alerts (thedefiant, cointelegraph,
+decrypt, …) therefore surface here as ``bps_unavailable`` — but that is a property
+of THIS raw path, not a claim that their events were never measured. Those events
+DO get forward bps once resolved (attributed to the generator); the news
+source_name is recoverable only via the DB-join
+``candidate_id → shadow_candidate_ledger.document_id → canonical_documents.source_name``
+(that is Track 2.4, which measured e.g. thedefiant-long ≈ +3 bps median, sub-cost;
+PR #355 bakes the join into future rows). This tool reports only what the raw
+stream's own ``source`` column carries — it never estimates the missing attribution.
 
 side-adjustment: a SHORT profits when price falls, so the realised return is
 ``+fwd`` for long and ``-fwd`` for short. The bearish counterfactual inverts the
