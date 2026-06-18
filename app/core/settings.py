@@ -259,6 +259,18 @@ class RiskSettings(BaseSettings):
     # ~5 positions at max_open_positions=6). <= 0 disables the cap.
     # env: RISK_MAX_POSITION_SIZE_PCT
     max_position_size_pct: float = Field(default=20.0)
+    # Paper-Learning sizing patch (2026-06-18): collect more paper outcomes for
+    # edge measurement WITHOUT raising max_notional_per_day_usd. Both default 0.0
+    # = OFF (no behaviour change on deploy; measure-first). Operator activates via
+    # env. Apply only on the risk-based path (premium signal-leverage untouched).
+    #   min_stop_pct_for_sizing: floor (%) on the stop distance used for SIZING so
+    #     a tight ATR stop cannot inflate notional; the REAL stop stays unchanged.
+    #     Empfehlung bei Aktivierung 3-5. env RISK_MIN_STOP_PCT_FOR_SIZING.
+    min_stop_pct_for_sizing: float = Field(default=0.0, ge=0.0)
+    #   max_notional_per_trade_usd: absolute per-trade notional ceiling (USD) so a
+    #     few trades cannot exhaust the daily budget. Empfehlung 150-300.
+    #     env RISK_MAX_NOTIONAL_PER_TRADE_USD.
+    max_notional_per_trade_usd: float = Field(default=0.0, ge=0.0)
 
     # Safety gates (must remain True)
     require_stop_loss: bool = Field(default=True)

@@ -631,8 +631,19 @@ class RiskEngine:
             # A-Fix: the risk-based size is the MARGIN; signal leverage multiplies
             # it so paper PnL reflects the real leveraged result (1:1 intake).
             risk_per_unit = abs(entry_price - stop_loss_price)
-            if risk_per_unit > 0:
-                units = max_risk_usd / risk_per_unit
+            # Paper-Learning sizing floor: a tight stop inflates risk-based notional
+            # (notional = risk_usd / stop_dist) so 2-3 trades exhaust the daily
+            # notional cap. Sizing AS IF the stop were >= min_stop_pct_for_sizing %
+            # away yields smaller positions / more fills; the REAL stop_loss_price
+            # (and the real exit + max_loss below) is unchanged. <=0 disables (default).
+            sizing_risk_per_unit = risk_per_unit
+            if self._limits.min_stop_pct_for_sizing > 0:
+                sizing_risk_per_unit = max(
+                    risk_per_unit,
+                    entry_price * self._limits.min_stop_pct_for_sizing / 100.0,
+                )
+            if sizing_risk_per_unit > 0:
+                units = max_risk_usd / sizing_risk_per_unit
             else:
                 units = max_risk_usd / entry_price
             if apply_signal_leverage and eff_leverage > 1.0:
@@ -664,6 +675,23 @@ class RiskEngine:
                     f"${position_value:.2f} ({self._limits.max_position_size_pct:.4g}% "
                     f"equity cap)"
                 )
+
+        # Paper-Learning per-trade notional cap (absolute USD). Decouples trade
+        # count from stop distance so a handful of trades cannot exhaust the daily
+        # notional budget. Risk-based path only (premium signal-leverage keeps its
+        # full size). <=0 disables (default → backward-compatible).
+        per_trade_cap = self._limits.max_notional_per_trade_usd
+        if per_trade_cap > 0 and not apply_signal_leverage and position_value > per_trade_cap:
+            prior_note = position_cap_note if position_capped else ""
+            uncapped_value = position_value
+            units = per_trade_cap / entry_price
+            position_value = units * entry_price
+            position_capped = True
+            sizing_mode = f"{sizing_mode}_per_trade_capped"
+            position_cap_note = (
+                prior_note + f" per_trade_notional_capped: ${uncapped_value:.2f} -> "
+                f"${position_value:.2f} (${per_trade_cap:.2f} cap)"
+            )
 
         # WP-B (regime-edge-capture 2026-06-15): regime-konditionierter Sizing-
         # Multiplier. Befund: Edge trägt in breakout_up, ist in chop_quiet thin/
