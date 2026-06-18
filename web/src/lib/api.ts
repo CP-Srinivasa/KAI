@@ -197,6 +197,25 @@ export function fetchOperatorBoard(signal?: AbortSignal): Promise<OperatorBoard>
   return apiGet<OperatorBoard>("/dashboard/api/operator-board", { signal });
 }
 
+// Replay-SSOT-Status (#314): Integrität des Paper-Execution-Audit-Replays.
+// state: warming (Cache kalt) | ok | degraded | unavailable. Misst Replay-
+// *Integrität* (Skips/Lifecycle-Fehler), nicht Performance.
+export type ReplayStatus = {
+  state: "warming" | "ok" | "degraded" | "unavailable";
+  available: boolean;
+  positions: number;
+  fills_replayed: number;
+  skipped_events: number;
+  lifecycle_errors: number;
+  reason: string;
+  cache_age_seconds: number | null;
+  warming: boolean;
+  generated_at: string;
+};
+export function fetchReplayStatus(signal?: AbortSignal): Promise<ReplayStatus> {
+  return apiGet<ReplayStatus>("/dashboard/api/replay-status", { signal });
+}
+
 export type EntryRuntime = {
   entry_mode: string | null;
   entry_mode_label: string;

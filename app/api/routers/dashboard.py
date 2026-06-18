@@ -1743,6 +1743,44 @@ async def dashboard_edge_timeseries_api() -> JSONResponse:
     return JSONResponse(content=payload, headers={"Cache-Control": "no-store, max-age=0"})
 
 
+@router.get("/dashboard/api/replay-status", tags=["dashboard"])
+async def dashboard_replay_status_api() -> JSONResponse:
+    """Replay-SSOT-Status (#314): Integrität des Paper-Execution-Audit-Replays.
+
+    ``artifacts/paper_execution_audit.jsonl`` ist die Replay-SSOT. Der Endpoint
+    reicht den hintergrund-gecachten Status durch (``replay_status_cache`` — der
+    Replay-Read läuft via ``to_thread`` off the event loop, nie blockierend).
+    State: ``ok`` (sauber) / ``degraded`` (Skips oder Lifecycle-Fehler) /
+    ``unavailable`` (Replay fehlgeschlagen/Datei fehlt). Cold-Start: ``warming``.
+    Fail-soft: nie 500.
+    """
+    from app.observability.replay_status_cache import get_cached_replay_status
+
+    payload: dict[str, Any] = {
+        "state": "warming",
+        "available": False,
+        "positions": 0,
+        "fills_replayed": 0,
+        "skipped_events": 0,
+        "lifecycle_errors": 0,
+        "reason": "",
+        "cache_age_seconds": None,
+        "warming": True,
+    }
+    try:
+        status, age = await get_cached_replay_status()
+        if status is not None:
+            payload = {
+                **status.to_dict(),
+                "cache_age_seconds": round(age, 1) if age is not None else None,
+                "warming": False,
+            }
+    except Exception as exc:  # noqa: BLE001 — Panel degradiert, kein 500
+        logger.warning("replay_status_read_failed: %s", exc)
+    payload["generated_at"] = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return JSONResponse(content=payload, headers={"Cache-Control": "no-store, max-age=0"})
+
+
 @router.get("/dashboard/api/source-activity", tags=["dashboard"])
 async def dashboard_source_activity_api(
     window_hours: int = 24,
