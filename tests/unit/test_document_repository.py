@@ -225,8 +225,42 @@ async def test_source_activity_aggregates_per_source(session_factory) -> None:
     assert by["okx"].total == 1 and by["okx"].window_count == 1
     assert by["unknown"].total == 1  # null source coalesced
     assert by["rss"].last_fetched_at is not None
+    assert by["rss"].silent is False  # within the 7d silence threshold
     # newest source first: rss (last fetch 1h ago) before okx (3h ago)
     assert result[0].source_name == "rss"
+
+
+@pytest.mark.asyncio
+async def test_source_activity_silent_flag(session_factory) -> None:
+    from datetime import timedelta
+
+    from app.storage.models.document import CanonicalDocumentModel
+
+    now = datetime(2026, 6, 17, 12, 0, 0, tzinfo=UTC)
+    rows = [
+        ("fresh", now - timedelta(hours=2)),  # recent → not silent
+        ("dead", now - timedelta(hours=200)),  # > 168h → silent
+    ]
+    async with session_factory.begin() as session:
+        for i, (src, fetched) in enumerate(rows):
+            session.add(
+                CanonicalDocumentModel(
+                    id=f"sil-{i}",
+                    url=f"https://example.com/sil/{i}",
+                    title=f"t{i}",
+                    document_type="news",
+                    source_name=src,
+                    fetched_at=fetched,
+                )
+            )
+
+    async with session_factory() as session:
+        repo = DocumentRepository(session)
+        result = await repo.source_activity(silent_after_hours=168, now=now)
+
+    by = {r.source_name: r for r in result}
+    assert by["fresh"].silent is False
+    assert by["dead"].silent is True  # nothing in 7 days → went quiet
 
 
 @pytest.mark.asyncio

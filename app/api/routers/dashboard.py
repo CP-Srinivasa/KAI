@@ -1746,20 +1746,27 @@ async def dashboard_edge_timeseries_api() -> JSONResponse:
 @router.get("/dashboard/api/source-activity", tags=["dashboard"])
 async def dashboard_source_activity_api(
     window_hours: int = 24,
+    silent_after_hours: int = 168,
     repo: DocumentRepository = Depends(get_document_repo),  # noqa: B008
 ) -> JSONResponse:
     """Read-only per-source ingestion activity (Quellen-Live-Zyklus).
 
     Aggregiert den kanonischen Dokumenten-Store nach Quelle: Lifetime-Count,
-    Count im ``window_hours``-Fenster und letzter ``fetched_at`` je Quelle —
-    so sieht der Operator, welche Quelle gerade liefert und welche stillsteht.
-    Reiner Read über die DB; kein Eingriff in den Ingestion-Schreibpfad.
+    Count im ``window_hours``-Fenster, letzter ``fetched_at`` und ein ``silent``-
+    Flag (letzter Fetch älter als ``silent_after_hours``, default 7 Tage) je
+    Quelle — so sieht der Operator, welche Quelle liefert und welche verstummt/
+    tot ist. ``silent_count`` zählt die verstummten. Reiner Read über die DB;
+    kein Eingriff in den Ingestion-Schreibpfad.
     """
     from dataclasses import asdict
 
-    rows = await repo.source_activity(window_hours=window_hours)
+    rows = await repo.source_activity(
+        window_hours=window_hours, silent_after_hours=silent_after_hours
+    )
     payload = {
         "window_hours": window_hours,
+        "silent_after_hours": silent_after_hours,
+        "silent_count": sum(1 for r in rows if r.silent),
         "sources": [asdict(r) for r in rows],
         "generated_at": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
     }
