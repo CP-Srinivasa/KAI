@@ -48,7 +48,7 @@ Remote access: `https://kai-trader.org/dashboard/` (if WARP paused on client —
 
 ```bash
 # Health + diagnostics
-python -m app.cli.main /status                             # operator summary (positions, backlog, alert-rate, cycles)
+python -m app.cli.main alerts ops-status                   # operator summary (positions, backlog, alert-rate, cycles)
 python -m app.cli.main alerts pending-annotations          # directional alerts awaiting outcome
 python -m app.cli.main alerts tv4-quality-bar              # per-source precision with Wilson 95% CI
 
