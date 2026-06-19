@@ -1,4 +1,4 @@
-// @data-source: /dashboard/api/chain (live) · /dashboard/api/markets/derivatives (live) · /dashboard/api/markets/sentiment (live) · /dashboard/api/markets/liquidations (live) · /dashboard/api/markets/momentum (live)
+// @data-source: /dashboard/api/chain (live) · /dashboard/api/markets/derivatives (live) · /dashboard/api/markets/sentiment (live) · /dashboard/api/markets/liquidations (live) · /dashboard/api/markets/liquidations-stream (live) · /dashboard/api/markets/momentum (live)
 //
 // Markt-Mikrostruktur für die Märkte-Seite — strikt das, was KAI WAHR weiß, alle
 // aus freien/eigenen Quellen (No-Fake, kein erfundener Wert):
@@ -17,6 +17,7 @@ import {
   fetchDerivatives,
   fetchSentiment,
   fetchLiquidations,
+  fetchLiquidationsStream,
   fetchMomentum,
   type ChainStatus,
   type DerivativesSnapshot,
@@ -24,6 +25,7 @@ import {
   type SentimentSnapshot,
   type LiquidationsSnapshot,
   type LiquidationRow,
+  type LiquidationStreamSnapshot,
   type MomentumSnapshot,
   type MomentumRow,
 } from "@/lib/api";
@@ -103,6 +105,11 @@ export function MarketMicrostructurePanel() {
     pauseWhenHidden: true,
     retry: { maxAttempts: 3, baseMs: 2_000 },
   });
+  const lstr = usePolling<LiquidationStreamSnapshot>((signal) => fetchLiquidationsStream(signal), {
+    intervalMs: POLL_MS,
+    pauseWhenHidden: true,
+    retry: { maxAttempts: 3, baseMs: 2_000 },
+  });
   const data = polling.state === "ready" ? polling.data : null;
   const ok = data?.state === "ok";
   const fee = ok ? data.fee_sat_vb : null;
@@ -111,6 +118,7 @@ export function MarketMicrostructurePanel() {
   const liqRows: LiquidationRow[] =
     liq.state === "ready" && liq.data.available ? liq.data.rows : [];
   const momRows: MomentumRow[] = mom.state === "ready" && mom.data.available ? mom.data.rows : [];
+  const liqStream = lstr.state === "ready" ? lstr.data : null;
 
   return (
     <Card padded className="synthwave-pulse-edge overflow-hidden">
@@ -289,6 +297,74 @@ export function MarketMicrostructurePanel() {
         <p className="mt-1 text-[10px] text-fg-subtle">
           Quelle: OKX public liquidation-orders (frei, kein Key); USD-Notional = sz × ctVal × bkPx.
           Long-Liqs (rot) = Longs rekt; Short-Liqs (grün) = Shorts rekt.
+        </p>
+      </div>
+
+      {/* Liquidations-Canary — Binance all-market !forceOrder@arr (#316, read-only). */}
+      <div className="mt-4">
+        <div className="mb-1.5 flex items-center gap-1.5 text-2xs uppercase tracking-wider text-fg-subtle">
+          <Flame size={11} className="text-warn" /> Liquidations-Canary · Binance all-market
+          {liqStream && (
+            <Badge tone={liqStream.stream_connected ? "pos" : "neg"}>
+              {liqStream.stream_connected ? "live" : "offline"}
+            </Badge>
+          )}
+          <Badge tone="warn">snapshot-limited</Badge>
+        </div>
+        {liqStream && liqStream.metrics.total_events > 0 ? (
+          (() => {
+            const m = liqStream.metrics;
+            const total = m.long_notional_usd_15m + m.short_notional_usd_15m;
+            const longPct = total > 0 ? (m.long_notional_usd_15m / total) * 100 : 0;
+            return (
+              <div className="space-y-2">
+                <div className="grid grid-cols-3 gap-2">
+                  <Tile label="Events/min" value={String(m.events_per_min)} />
+                  <Tile label="Notional 5m" value={fmtUsd(m.notional_usd["5m"] ?? 0)} />
+                  <Tile label="Notional 15m" value={fmtUsd(m.notional_usd["15m"] ?? 0)} />
+                </div>
+                {total > 0 && (
+                  <div>
+                    <div className="flex h-2 overflow-hidden rounded-xs bg-bg-2">
+                      <div
+                        className="bg-neg/70"
+                        style={{ width: `${longPct}%` }}
+                        title={`Long-Liqs ${fmtUsd(m.long_notional_usd_15m)}`}
+                      />
+                      <div
+                        className="bg-pos/70"
+                        style={{ width: `${100 - longPct}%` }}
+                        title={`Short-Liqs ${fmtUsd(m.short_notional_usd_15m)}`}
+                      />
+                    </div>
+                    <div className="mt-0.5 flex justify-between text-[10px]">
+                      <span className="text-neg">Long-Liqs 15m {fmtUsd(m.long_notional_usd_15m)}</span>
+                      <span className="text-pos">Short-Liqs 15m {fmtUsd(m.short_notional_usd_15m)}</span>
+                    </div>
+                  </div>
+                )}
+                <div className="text-[10px] text-fg-subtle">
+                  Größte Einzel-Liq 15m: {fmtUsd(m.largest_event_usd_15m)}
+                  {m.imbalance_15m != null && (
+                    <> · Imbalance {(m.imbalance_15m * 100).toFixed(0)}% {m.imbalance_15m > 0 ? "Long-lastig" : "Short-lastig"}</>
+                  )}
+                </div>
+              </div>
+            );
+          })()
+        ) : (
+          <div className="rounded-sm border border-line-subtle bg-bg-2/40 px-2.5 py-2 text-2xs text-fg-subtle">
+            {lstr.state === "error"
+              ? "Canary-Endpoint nicht erreichbar."
+              : liqStream && !liqStream.stream_connected
+                ? "Stream offline — kai-liquidation-stream nicht aktiv."
+                : "Verbunden, noch keine Liquidationen erfasst (ruhiger Markt)."}
+          </div>
+        )}
+        <p className="mt-1 text-[10px] text-fg-subtle">
+          Quelle: Binance !forceOrder@arr (frei, kein Key). Snapshot-limitiert (nur größte
+          Liquidation pro Symbol/1000 ms) → unterzählt, kein Markt-Total. Read-only, kein
+          Trade-Signal (erst Edge-Messung).
         </p>
       </div>
 

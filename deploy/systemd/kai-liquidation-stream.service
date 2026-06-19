@@ -1,0 +1,32 @@
+[Unit]
+Description=KAI Liquidation Stream — Binance all-market !forceOrder@arr canary (read-only, #316)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/ubuntu/ai_analyst_trading_bot
+Environment=PYTHONPATH=/home/ubuntu/ai_analyst_trading_bot
+EnvironmentFile=-/home/ubuntu/ai_analyst_trading_bot/.env
+
+# Read-only canary: consumes the FREE public Binance USDT-M futures liquidation
+# stream (wss://fstream.binance.com/ws/!forceOrder@arr, no key) and appends
+# normalized LiquidationEvents to artifacts/liquidation_events.jsonl plus a
+# heartbeat. NO trading, NO gates, NO capital path. The consumer reconnects with
+# exponential backoff on its own; Restart=always is the systemd backstop for a
+# hard process exit.
+ExecStart=/home/ubuntu/ai_analyst_trading_bot/.venv/bin/python -m app.ingestion.liquidations.binance_stream
+
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+# Light: a single WebSocket connection + small JSONL appends. Conservative caps.
+MemoryMax=192M
+CPUQuota=40%
+
+[Install]
+WantedBy=multi-user.target
