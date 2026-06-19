@@ -35,5 +35,12 @@ export function resolveMode(): ChartMode {
 }
 
 export function isEnabled(): boolean {
-  return import.meta.env.VITE_TRADINGVIEW_ENABLED === "1";
+  // TV-1 ist reine Visualisierung (kein Signal-Pipeline-Pfad) und standardmäßig
+  // AN. Bewusst opt-OUT statt opt-in: der Chart wird über `vite build` ohne
+  // gesetztes Flag sonst bei jedem Deploy stumm abgeschaltet (web/.env ist
+  // gitignored und im Pi-Build nicht vorhanden — dreimal so verschwunden).
+  // CSP erlaubt die TV-Origins per Default (security_headers_allow_tradingview).
+  // Abschalten nur explizit über VITE_TRADINGVIEW_ENABLED=0 (oder "false").
+  const v = import.meta.env.VITE_TRADINGVIEW_ENABLED;
+  return v !== "0" && v?.toLowerCase() !== "false";
 }

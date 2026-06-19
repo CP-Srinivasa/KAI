@@ -58,6 +58,28 @@ class FeederResult:
     errors: int
     funnel: dict[str, int] = field(default_factory=dict)
     fill_document_ids: list[str] = field(default_factory=list)
+    # IC-Hebel: count of short (bearish) candidates dropped by the bearish-short
+    # gate this pass (0 when the gate is open / allow_short_news=True).
+    short_suppressed: int = 0
+
+
+def _apply_bearish_short_gate(
+    candidates: list[RealAnalysisCandidate], *, allow_short_news: bool
+) -> tuple[list[RealAnalysisCandidate], int]:
+    """Drop short (bearish) news candidates when the gate is closed.
+
+    Edge basis (2026-06-17, ``shadow_candidate_resolved``): news/real-analysis
+    LONGs carry (+36bps signed @3600s) while SHORTs are ~breakeven/negative
+    (+1/-7bps). Suppressing shorts concentrates the measured generator cohort on
+    the long edge → lifts the IC. Pure + side-effect-free so it is unit-testable
+    in isolation. Default-open (``allow_short_news=True``) returns the input
+    unchanged so a fresh deploy is inert (measure-first); the operator closes the
+    gate to act.
+    """
+    if allow_short_news:
+        return candidates, 0
+    kept = [c for c in candidates if c.direction != "short"]
+    return kept, len(candidates) - len(kept)
 
 
 async def run_real_analysis_paper_feed_once(
@@ -116,6 +138,19 @@ async def run_real_analysis_paper_feed_once(
         now=now,
     )
 
+    # IC-Hebel: bearish-short gate (news path). Default-open; closes via
+    # ALERT_ALLOW_SHORT_NEWS=false. Applied BEFORE injection so suppressed
+    # shorts never reach a paper fill (they are ~breakeven/negative edge).
+    candidates, short_suppressed = _apply_bearish_short_gate(
+        candidates, allow_short_news=settings.alerts.allow_short_news
+    )
+    if short_suppressed:
+        logger.info(
+            "[real-analysis-feeder] bearish-short-gate suppressed %d short candidate(s) "
+            "(allow_short_news=False)",
+            short_suppressed,
+        )
+
     fills = 0
     blocked = 0
     errors = 0
@@ -151,6 +186,7 @@ async def run_real_analysis_paper_feed_once(
         errors=errors,
         funnel=funnel,
         fill_document_ids=fill_ids,
+        short_suppressed=short_suppressed,
     )
 
 

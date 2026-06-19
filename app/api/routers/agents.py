@@ -76,6 +76,39 @@ _AGENTS: dict[str, AgentDefinition] = {
         modes=["audit", "propose", "implement"],
         permissions=["read", "report"],
     ),
+    "neo": AgentDefinition(
+        slug="neo",
+        name="Neo",
+        agent_id=None,
+        role=(
+            "Code-Level Root-Cause & Refactor — Debugging, Concurrency/Races, "
+            "Datenfluss-Analyse, Performance-Hotspots"
+        ),
+        modes=["analyze", "fix"],
+        permissions=["read", "report"],
+    ),
+    "satoshi": AgentDefinition(
+        slug="satoshi",
+        name="Satoshi",
+        agent_id=None,
+        role=(
+            "Krypto & Custody — Signaturen/HMAC/Webhooks, Wallet/Seed, "
+            "Smart-Contracts, Tokenomics, On-Chain-Provenance"
+        ),
+        modes=["review", "verify"],
+        permissions=["read", "report"],
+    ),
+    "kai-finder": AgentDefinition(
+        slug="kai-finder",
+        name="KAI-Finder",
+        agent_id=None,
+        role=(
+            "Quellen- & Daten-Discovery — neue Feeds/APIs recherchieren, "
+            "bewerten, vorschlagen (Legal/Stabilität/Kosten)"
+        ),
+        modes=["search", "propose"],
+        permissions=["read", "report"],
+    ),
 }
 
 

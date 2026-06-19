@@ -1743,6 +1743,9 @@ def _build_risk_limits_from_settings() -> RiskLimits:
         tp_atr_multiplier=risk.tp_atr_multiplier,
         min_notional_usd=risk.min_notional_usd,
         max_position_size_pct=risk.max_position_size_pct,
+        # Paper-Learning sizing patch (2026-06-18) — both default-OFF in Settings.
+        min_stop_pct_for_sizing=risk.min_stop_pct_for_sizing,
+        max_notional_per_trade_usd=risk.max_notional_per_trade_usd,
         round_trip_fee_pct=risk.round_trip_fee_pct,
         min_sl_cost_multiple=risk.min_sl_cost_multiple,
         # Sprint 2026-06-02 reward/risk gates — all default-OFF in Settings.

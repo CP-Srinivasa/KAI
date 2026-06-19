@@ -12,6 +12,7 @@ import {
   type PipelineStepKey,
 } from "@/lib/labels";
 import { Badge, Button, Card, InfoHint, SectionLabel, StatusDot } from "@/components/ui/Primitives";
+import { StatusPill } from "@/components/ui/StatusPill";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { PageHeader } from "@/layout/PageHeader";
 import { useApi } from "@/lib/useApi";
@@ -102,6 +103,24 @@ export function SignalsPage() {
           </Button>
         }
       />
+
+      {/* WP-3.2: Kontroll-Matrix — operativer Zustand als Status-Pills statt Fließtext (§12). */}
+      {readiness.state === "ready" && (
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-2xs uppercase tracking-wider text-fg-subtle">Kontroll-Matrix</span>
+          <Badge tone={readiness.data.status === "operational" ? "pos" : "muted"} dot>
+            {readiness.data.status}
+          </Badge>
+          <StatusPill
+            kind={readiness.data.execution_enabled ? "live" : "execution-off"}
+            label={readiness.data.execution_enabled ? "Execution an" : "Execution aus"}
+          />
+          <StatusPill
+            kind={readiness.data.write_back_allowed ? "operational" : "write-back-locked"}
+            label={readiness.data.write_back_allowed ? "Write-Back frei" : "Write-Back gesperrt"}
+          />
+        </div>
+      )}
 
       {cycles.state === "ready" && allCycles.length > 0 && (
         <TriageStrip

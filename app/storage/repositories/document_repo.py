@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from datetime import datetime
+from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from sqlalchemy import select, update
@@ -13,6 +14,20 @@ from app.core.domain.document import AnalysisResult, CanonicalDocument
 from app.core.enums import AnalysisSource, DocumentStatus, DocumentType, SourceType
 from app.core.errors import StorageError
 from app.storage.models.document import CanonicalDocumentModel
+
+
+@dataclass(frozen=True)
+class SourceActivityRow:
+    """Per-source ingestion activity aggregate (read-only observability)."""
+
+    source_name: str
+    total: int  # lifetime document count for this source
+    window_count: int  # documents fetched within the requested window
+    last_fetched_at: str | None  # ISO-8601 UTC of the most recent fetch, or None
+    # True when the last fetch is older than the silence threshold — a source that
+    # delivered before but went quiet. A generous default (7d) keeps it
+    # cadence-independent: nearly any live source delivers *something* within a week.
+    silent: bool
 
 
 class DocumentRepository:
@@ -71,6 +86,58 @@ class DocumentRepository:
         )
         result = await self._session.execute(stmt)
         return result.scalar_one()
+
+    async def source_activity(
+        self,
+        *,
+        window_hours: int = 24,
+        silent_after_hours: int = 168,
+        now: datetime | None = None,
+    ) -> list[SourceActivityRow]:
+        """Per-source ingestion activity (read-only aggregate over the canonical
+        documents store). Groups by ``source_name``; returns the lifetime count,
+        the count fetched within ``window_hours``, the most recent ``fetched_at``,
+        and a ``silent`` flag (last fetch older than ``silent_after_hours``, default
+        7 days) per source, newest source first. Pure read — touches no ingestion
+        write path.
+        """
+        from sqlalchemy import case, func
+
+        current = now or datetime.now(UTC)
+        cutoff = current - timedelta(hours=max(1, window_hours))
+        silence_cutoff = current - timedelta(hours=max(1, silent_after_hours))
+        window_count = func.sum(case((CanonicalDocumentModel.fetched_at >= cutoff, 1), else_=0))
+        stmt = (
+            select(
+                CanonicalDocumentModel.source_name,
+                func.count(CanonicalDocumentModel.id),
+                func.max(CanonicalDocumentModel.fetched_at),
+                window_count,
+            )
+            .group_by(CanonicalDocumentModel.source_name)
+            .order_by(func.max(CanonicalDocumentModel.fetched_at).desc())
+        )
+        result = await self._session.execute(stmt)
+
+        rows: list[SourceActivityRow] = []
+        for source_name, total, last_fetched, win in result.all():
+            last_iso: str | None = None
+            silent = True  # no timestamp at all → treat as silent
+            if last_fetched is not None:
+                if last_fetched.tzinfo is None:
+                    last_fetched = last_fetched.replace(tzinfo=UTC)
+                last_iso = last_fetched.astimezone(UTC).isoformat()
+                silent = last_fetched < silence_cutoff
+            rows.append(
+                SourceActivityRow(
+                    source_name=source_name or "unknown",
+                    total=int(total or 0),
+                    window_count=int(win or 0),
+                    last_fetched_at=last_iso,
+                    silent=silent,
+                )
+            )
+        return rows
 
     async def update_status(self, document_id: str, status: DocumentStatus) -> None:
         """Explicitly advance a document to a new lifecycle status."""

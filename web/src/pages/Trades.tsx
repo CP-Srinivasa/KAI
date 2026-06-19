@@ -15,6 +15,8 @@ import {
 } from "lucide-react";
 import { useT } from "@/i18n/I18nProvider";
 import { Badge, Button, Card, CardHeader } from "@/components/ui/Primitives";
+import { TimelineRail } from "@/components/viz/TimelineRail";
+import { cyclesToRail } from "@/lib/cycleTimeline";
 import { PageHeader } from "@/layout/PageHeader";
 import { useApi } from "@/lib/useApi";
 import { fetchTradingLoopStatus, fetchRecentCycles, type TradingCycle, type TradingLoopStatus, type RecentCyclesSummary } from "@/lib/api";
@@ -460,6 +462,15 @@ function CyclesHealthcheckCard({
         {health.total > 0 && (
           <div className="mt-3 text-xs text-fg-muted leading-relaxed">
             {synopsis}
+          </div>
+        )}
+
+        {cyclesList.length > 0 && (
+          <div className="mt-3">
+            <div className="mb-1 text-2xs uppercase tracking-wider text-fg-subtle">
+              Cycle-Verlauf (älteste → neueste)
+            </div>
+            <TimelineRail items={cyclesToRail(cyclesList)} />
           </div>
         )}
 

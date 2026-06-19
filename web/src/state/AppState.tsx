@@ -1,7 +1,13 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
 
 export type TradingMode = "paper" | "live" | "sim";
+export type Density = "comfortable" | "compact";
 export type Timeframe = "24h" | "7d" | "30d" | "90d";
+
+/** Pure Dichte-Umschaltung (testbar). */
+export function nextDensity(d: Density): Density {
+  return d === "compact" ? "comfortable" : "compact";
+}
 export const TIMEFRAMES: readonly Timeframe[] = ["24h", "7d", "30d", "90d"] as const;
 export const TF_DAYS: Record<Timeframe, number> = { "24h": 1, "7d": 7, "30d": 30, "90d": 90 };
 
@@ -16,6 +22,8 @@ type AppStateCtx = {
   setCooldownSec: (v: number) => void;
   timeframe: Timeframe;
   setTimeframe: (tf: Timeframe) => void;
+  density: Density;
+  setDensity: (d: Density) => void;
 };
 
 const Ctx = createContext<AppStateCtx | null>(null);
@@ -27,6 +35,7 @@ type Persisted = {
   sizeCapPct: number;
   cooldownSec: number;
   timeframe: Timeframe;
+  density: Density;
 };
 
 function readInitial(): Persisted {
@@ -38,7 +47,7 @@ function readInitial(): Persisted {
 }
 
 function defaults(): Persisted {
-  return { mode: "paper", confirmLive: true, sizeCapPct: 5, cooldownSec: 30, timeframe: "30d" };
+  return { mode: "paper", confirmLive: true, sizeCapPct: 5, cooldownSec: 30, timeframe: "30d", density: "comfortable" };
 }
 
 export function AppStateProvider({ children }: { children: ReactNode }) {
@@ -55,10 +64,11 @@ export function AppStateProvider({ children }: { children: ReactNode }) {
   const setSizeCapPct = useCallback((sizeCapPct: number) => setState((s) => ({ ...s, sizeCapPct })), []);
   const setCooldownSec = useCallback((cooldownSec: number) => setState((s) => ({ ...s, cooldownSec })), []);
   const setTimeframe = useCallback((timeframe: Timeframe) => setState((s) => ({ ...s, timeframe })), []);
+  const setDensity = useCallback((density: Density) => setState((s) => ({ ...s, density })), []);
 
   const value = useMemo<AppStateCtx>(
-    () => ({ ...state, setMode, setConfirmLive, setSizeCapPct, setCooldownSec, setTimeframe }),
-    [state, setMode, setConfirmLive, setSizeCapPct, setCooldownSec, setTimeframe],
+    () => ({ ...state, setMode, setConfirmLive, setSizeCapPct, setCooldownSec, setTimeframe, setDensity }),
+    [state, setMode, setConfirmLive, setSizeCapPct, setCooldownSec, setTimeframe, setDensity],
   );
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;
 }

@@ -22,6 +22,13 @@ from fastapi.testclient import TestClient
 
 from app.api.routers import dashboard as dashboard_mod
 from app.api.routers.dashboard import _load_jsonl, router
+from app.core.settings import (
+    AlertSettings,
+    AppSettings,
+    OperatorSettings,
+    ProviderSettings,
+    TradingViewSettings,
+)
 from app.security.auth import setup_auth
 
 # ---------------------------------------------------------------------------
@@ -739,14 +746,17 @@ def test_lightning_endpoint_chain_truth_overrides_height(monkeypatch) -> None:
     from app.chain.adapter import ChainStatus
     from app.lightning.adapter import LightningNodeStatus
 
-    async def _fake_node(cfg=None):  # lnd erreichbar, aber getinfo-Details fehlen
-        return LightningNodeStatus(
-            state="ok",
-            reachable=True,
-            server_state="SERVER_ACTIVE",
-            info_available=False,
-            block_height=0,
-            synced_to_chain=False,
+    async def _fake_cached_node():  # lnd erreichbar (aus Cache), getinfo-Details fehlen
+        return (
+            LightningNodeStatus(
+                state="ok",
+                reachable=True,
+                server_state="SERVER_ACTIVE",
+                info_available=False,
+                block_height=0,
+                synced_to_chain=False,
+            ),
+            5.0,
         )
 
     async def _fake_cached():  # Hintergrund-Cache liefert die Chain-Wahrheit
@@ -764,13 +774,14 @@ def test_lightning_endpoint_chain_truth_overrides_height(monkeypatch) -> None:
             12.0,
         )
 
-    monkeypatch.setattr("app.lightning.adapter.get_node_status", _fake_node)
+    monkeypatch.setattr("app.lightning.cache.get_cached_node_status", _fake_cached_node)
     monkeypatch.setattr("app.chain.cache.get_cached_chain_status", _fake_cached)
 
     body = TestClient(_make_app()).get("/dashboard/api/lightning").json()
     assert body["state"] == "ok" and body["reachable"] is True
     assert body["block_height"] == 953902  # aus bitcoind, nicht aus lnd-getinfo
     assert body["synced_to_chain"] is True
+    assert body["node_age_seconds"] == 5.0
     assert body["chain"]["state"] == "ok" and body["chain"]["blocks"] == 953902
     assert body["chain_age_seconds"] == 12.0
 
@@ -784,6 +795,42 @@ def test_chain_endpoint_disabled_by_default() -> None:
     assert body["reachable"] is False
     assert "generated_at" in body
     assert "blocks" in body and "mempool_tx" in body
+
+
+def test_integrity_endpoint_disabled_by_default() -> None:
+    """Default-off: /dashboard/api/integrity meldet `disabled` ohne FS-Touch."""
+    resp = TestClient(_make_app()).get("/dashboard/api/integrity")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["state"] == "disabled"
+    assert body["enabled"] is False
+    assert "generated_at" in body
+    assert "last_digest" in body and "proof_available" in body
+    # freshness/replay watchdog is surfaced on the same endpoint (disabled → ok)
+    assert body["freshness"]["reason_code"] == "L3_DISABLED"
+    assert body["freshness"]["status"] == "ok"
+
+
+def test_integrity_endpoint_ok(monkeypatch) -> None:
+    """Vorhandener Anchor-Record → ok mit Digest + Proof-Status."""
+    from app.integrity.status import IntegrityStatus
+
+    def _fake_status(cfg=None):
+        return IntegrityStatus(
+            state="ok",
+            enabled=True,
+            stamper="opentimestamps",
+            anchor_count=3,
+            last_digest="abc123",
+            last_anchored_at="2026-06-17T00:00:00+00:00",
+            proof_available=True,
+        )
+
+    monkeypatch.setattr("app.integrity.get_integrity_status", _fake_status)
+    body = TestClient(_make_app()).get("/dashboard/api/integrity").json()
+    assert body["state"] == "ok" and body["enabled"] is True
+    assert body["last_digest"] == "abc123" and body["proof_available"] is True
+    assert body["anchor_count"] == 3
 
 
 def test_chain_endpoint_ok_when_reachable(monkeypatch) -> None:
@@ -811,3 +858,319 @@ def test_chain_endpoint_ok_when_reachable(monkeypatch) -> None:
     assert body["blocks"] == 953902 and body["synced"] is True
     assert body["fee_sat_vb"] == 2.5 and body["mempool_tx"] == 7
     assert body["age_seconds"] == 8.0
+
+
+def test_markets_derivatives_empty_is_honest(monkeypatch) -> None:
+    """Ohne Snapshot-Cache: ehrlich leer (available False), kein erfundener Wert."""
+
+    class _Empty:
+        def __init__(self, _path) -> None:  # noqa: ANN001
+            pass
+
+        def read_all(self):  # noqa: ANN201
+            return {}
+
+    monkeypatch.setattr("app.signals.funding_snapshot_store.FundingSnapshotStore", _Empty)
+    monkeypatch.setattr("app.signals.oi_snapshot_store.OpenInterestSnapshotStore", _Empty)
+    body = TestClient(_make_app()).get("/dashboard/api/markets/derivatives").json()
+    assert body["available"] is False and body["rows"] == []
+
+
+def test_markets_derivatives_serves_own_ingestion(monkeypatch) -> None:
+    """Funding + OI aus KAIs eigenen Snapshot-Stores werden je Symbol gemerged."""
+    from app.market_data.models import FundingRateSnapshot, OpenInterestSnapshot
+
+    class _Funding:
+        def __init__(self, _path) -> None:  # noqa: ANN001
+            pass
+
+        def read_all(self):  # noqa: ANN201
+            return {
+                "BTC/USDT": FundingRateSnapshot(
+                    symbol="BTC/USDT",
+                    timestamp_utc="2026-06-17T15:41:10Z",
+                    rate=7.06e-06,
+                    mark_price=65436.6,
+                    source="bybit",
+                )
+            }
+
+    class _OI:
+        def __init__(self, _path) -> None:  # noqa: ANN001
+            pass
+
+        def read_all(self):  # noqa: ANN201
+            return {
+                "BTC/USDT": OpenInterestSnapshot(
+                    symbol="BTC/USDT",
+                    timestamp_utc="2026-06-17T15:00:00Z",
+                    open_interest=51176.86,
+                    oi_change_zscore=-1.21,
+                    source="bybit",
+                )
+            }
+
+    monkeypatch.setattr("app.signals.funding_snapshot_store.FundingSnapshotStore", _Funding)
+    monkeypatch.setattr("app.signals.oi_snapshot_store.OpenInterestSnapshotStore", _OI)
+    body = TestClient(_make_app()).get("/dashboard/api/markets/derivatives").json()
+    assert body["available"] is True and len(body["rows"]) == 1
+    row = body["rows"][0]
+    assert row["symbol"] == "BTC/USDT"
+    assert row["funding_rate"] == 7.06e-06 and row["mark_price"] == 65436.6
+    assert row["open_interest"] == 51176.86 and row["oi_change_zscore"] == -1.21
+    assert row["funding_source"] == "bybit" and row["oi_source"] == "bybit"
+
+
+def test_markets_sentiment_endpoint(monkeypatch) -> None:
+    """Fear & Greed über den server-gecachten Adapter; Wert + Alter im Payload."""
+    from app.market_data.sentiment import SentimentSnapshot
+
+    async def _fake_cached():  # noqa: ANN202
+        return SentimentSnapshot(available=True, value=61, classification="Greed"), 42.0
+
+    monkeypatch.setattr("app.market_data.sentiment.get_cached_sentiment", _fake_cached)
+    body = TestClient(_make_app()).get("/dashboard/api/markets/sentiment").json()
+    assert body["available"] is True and body["value"] == 61
+    assert body["classification"] == "Greed" and body["age_seconds"] == 42.0
+    assert body["source"] == "alternative.me"
+
+
+def test_markets_sentiment_cold_is_honest(monkeypatch) -> None:
+    """Kalter Cache: ehrlich available False, kein erfundener Wert."""
+    from app.market_data.sentiment import SentimentSnapshot
+
+    async def _fake_cold():  # noqa: ANN202
+        return SentimentSnapshot.unavailable("warming up"), None
+
+    monkeypatch.setattr("app.market_data.sentiment.get_cached_sentiment", _fake_cold)
+    body = TestClient(_make_app()).get("/dashboard/api/markets/sentiment").json()
+    assert body["available"] is False and body["age_seconds"] is None
+
+
+def test_markets_liquidations_endpoint(monkeypatch) -> None:
+    """OKX-Liquidationen über den server-gecachten Adapter; Long/Short je Symbol."""
+    from app.market_data.liquidations import LiquidationRow, LiquidationsSnapshot
+
+    async def _fake_cached():  # noqa: ANN202
+        return (
+            LiquidationsSnapshot(
+                available=True,
+                rows=(
+                    LiquidationRow(
+                        symbol="BTC/USDT",
+                        long_sz=7.5,
+                        short_sz=3.0,
+                        long_usd=4500.0,
+                        short_usd=1800.0,
+                        events=3,
+                        last_ts_utc="x",
+                    ),
+                ),
+            ),
+            12.0,
+        )
+
+    monkeypatch.setattr("app.market_data.liquidations.get_cached_liquidations", _fake_cached)
+    body = TestClient(_make_app()).get("/dashboard/api/markets/liquidations").json()
+    assert body["available"] is True and body["source"] == "okx"
+    assert body["rows"][0]["symbol"] == "BTC/USDT"
+    assert body["rows"][0]["long_sz"] == 7.5 and body["rows"][0]["short_sz"] == 3.0
+    assert body["rows"][0]["long_usd"] == 4500.0 and body["rows"][0]["short_usd"] == 1800.0
+    assert body["age_seconds"] == 12.0
+
+
+def test_markets_liquidations_cold_is_honest(monkeypatch) -> None:
+    from app.market_data.liquidations import LiquidationsSnapshot
+
+    async def _fake_cold():  # noqa: ANN202
+        return LiquidationsSnapshot.unavailable("warming up"), None
+
+    monkeypatch.setattr("app.market_data.liquidations.get_cached_liquidations", _fake_cold)
+    body = TestClient(_make_app()).get("/dashboard/api/markets/liquidations").json()
+    assert body["available"] is False and body["rows"] == [] and body["age_seconds"] is None
+
+
+def test_operator_board_api_returns_curated_lists() -> None:
+    """GET /dashboard/api/operator-board liefert die kuratierten Listen (fail-soft)."""
+    client = TestClient(_make_app())
+    r = client.get("/dashboard/api/operator-board")
+    assert r.status_code == 200
+    data = r.json()
+    for key in ("stand", "todos", "phases", "improvements", "generated_at"):
+        assert key in data
+    assert isinstance(data["todos"], list)
+    assert isinstance(data["phases"], list)
+    assert isinstance(data["improvements"], list)
+
+
+def test_markets_momentum_endpoint(monkeypatch) -> None:
+    """Binance-Momentum über den server-gecachten Adapter; 24h-Änderung je Symbol."""
+    from app.market_data.momentum import MomentumRow, MomentumSnapshot
+
+    async def _fake_cached():  # noqa: ANN202
+        return (
+            MomentumSnapshot(
+                available=True,
+                rows=(MomentumRow(symbol="BTC/USDT", last_price=65000.0, change_pct_24h=-0.72),),
+            ),
+            9.0,
+        )
+
+    monkeypatch.setattr("app.market_data.momentum.get_cached_momentum", _fake_cached)
+    body = TestClient(_make_app()).get("/dashboard/api/markets/momentum").json()
+    assert body["available"] is True and body["source"] == "binance"
+    assert body["rows"][0]["symbol"] == "BTC/USDT"
+    assert body["rows"][0]["change_pct_24h"] == -0.72 and body["age_seconds"] == 9.0
+
+
+def test_markets_momentum_cold_is_honest(monkeypatch) -> None:
+    from app.market_data.momentum import MomentumSnapshot
+
+    async def _fake_cold():  # noqa: ANN202
+        return MomentumSnapshot.unavailable("warming up"), None
+
+    monkeypatch.setattr("app.market_data.momentum.get_cached_momentum", _fake_cold)
+    body = TestClient(_make_app()).get("/dashboard/api/markets/momentum").json()
+    assert body["available"] is False and body["rows"] == [] and body["age_seconds"] is None
+
+
+# ---------------------------------------------------------------------------
+# GET /dashboard/api/integrations -- echter Config-Status (No-Fake-Doktrin)
+#
+# Regression-Guard: das Settings-Tab-Badge war früher hartkodiert
+# ("vorbereitet"), egal ob der TradingView-Webhook live war. Der Status muss
+# aus den fail-closed Settings-Flags kommen.
+# ---------------------------------------------------------------------------
+
+
+def _integrations_settings(
+    *,
+    tv_enabled: bool = False,
+    tv_secret: str = "",
+    tv_auth_mode: str = "hmac",
+    tv_shared_token: str = "",
+    telegram_token: str = "",
+    operator_token: str = "",
+    openai_key: str = "",
+    gemini_key: str = "",
+    auto_promote: bool = False,
+) -> AppSettings:
+    """AppSettings mit explizit gepinnten Sub-Settings.
+
+    Init-kwargs schlagen ein ambient ``.env`` (pydantic-Priorität: init > env),
+    damit der Test deterministisch ist.
+    """
+    settings = AppSettings()
+    settings.tradingview = TradingViewSettings(
+        webhook_enabled=tv_enabled,
+        webhook_secret=tv_secret,
+        webhook_auth_mode=tv_auth_mode,
+        webhook_shared_token=tv_shared_token,
+        webhook_auto_promote_enabled=auto_promote,
+    )
+    settings.alerts = AlertSettings(telegram_token=telegram_token)
+    settings.operator = OperatorSettings(telegram_bot_token=operator_token)
+    settings.providers = ProviderSettings(
+        openai_api_key=openai_key,
+        anthropic_api_key="",
+        gemini_api_key=gemini_key,
+    )
+    return settings
+
+
+@contextmanager
+def _patch_settings(settings: AppSettings) -> Generator[None, None, None]:
+    # Der Endpoint importiert get_settings lokal aus app.core.settings —
+    # daher dort patchen (nicht im dashboard-Modul).
+    with patch("app.core.settings.get_settings", lambda: settings):
+        yield
+
+
+def test_integrations_tradingview_active_when_enabled_and_secret() -> None:
+    app = _make_app()
+    settings = _integrations_settings(tv_enabled=True, tv_secret="s3cr3t", auto_promote=True)
+    with _patch_settings(settings), TestClient(app) as client:
+        r = client.get("/dashboard/api/integrations")
+
+    assert r.status_code == 200
+    tv = r.json()["integrations"]["tradingview"]
+    assert tv["status"] == "active"
+    assert tv["mounted"] is True
+    assert tv["webhook_enabled"] is True
+    assert tv["secret_configured"] is True
+    assert tv["auto_promote_enabled"] is True
+    assert tv["auth_mode"] == "hmac"
+
+
+def test_integrations_tradingview_disabled_without_secret() -> None:
+    """Fail-closed: enabled aber KEIN Secret -> Router unmounted -> disabled."""
+    app = _make_app()
+    settings = _integrations_settings(tv_enabled=True, tv_secret="")
+    with _patch_settings(settings), TestClient(app) as client:
+        r = client.get("/dashboard/api/integrations")
+
+    tv = r.json()["integrations"]["tradingview"]
+    assert tv["status"] == "disabled"
+    assert tv["mounted"] is False
+    assert tv["webhook_enabled"] is True
+    assert tv["secret_configured"] is False
+
+
+def test_integrations_tradingview_active_token_mode_without_secret() -> None:
+    """Pi-Realität: hmac_strict_event_id nutzt den Shared-Token, KEIN
+    webhook_secret. Der Endpoint ist trotzdem gemountet -> aktiv. Regression
+    gegen die alte `enabled AND webhook_secret`-Heuristik (meldete fälschlich
+    'disabled')."""
+    app = _make_app()
+    settings = _integrations_settings(
+        tv_enabled=True,
+        tv_secret="",
+        tv_auth_mode="hmac_strict_event_id",
+        tv_shared_token="tok",
+    )
+    with _patch_settings(settings), TestClient(app) as client:
+        r = client.get("/dashboard/api/integrations")
+
+    tv = r.json()["integrations"]["tradingview"]
+    assert tv["status"] == "active"
+    assert tv["mounted"] is True
+    assert tv["secret_configured"] is False
+    assert tv["shared_token_configured"] is True
+
+
+def test_integrations_tradingview_disabled_when_flag_off() -> None:
+    app = _make_app()
+    settings = _integrations_settings(tv_enabled=False, tv_secret="s3cr3t")
+    with _patch_settings(settings), TestClient(app) as client:
+        r = client.get("/dashboard/api/integrations")
+
+    assert r.json()["integrations"]["tradingview"]["status"] == "disabled"
+
+
+def test_integrations_telegram_and_llm_derive_from_config() -> None:
+    app = _make_app()
+    settings = _integrations_settings(
+        telegram_token="tg-token", openai_key="sk-x", gemini_key="g-x"
+    )
+    with _patch_settings(settings), TestClient(app) as client:
+        r = client.get("/dashboard/api/integrations")
+
+    integ = r.json()["integrations"]
+    assert integ["telegram"]["status"] == "active"
+    assert integ["llm"]["status"] == "active"
+    assert set(integ["llm"]["providers"]) == {"openai", "gemini"}
+    # SMTP ist nicht backend-konfigurierbar -> ehrlich disabled.
+    assert integ["email"]["status"] == "disabled"
+
+
+def test_integrations_disabled_when_nothing_configured() -> None:
+    app = _make_app()
+    settings = _integrations_settings()
+    with _patch_settings(settings), TestClient(app) as client:
+        r = client.get("/dashboard/api/integrations")
+
+    integ = r.json()["integrations"]
+    assert integ["telegram"]["status"] == "disabled"
+    assert integ["llm"]["status"] == "disabled"
+    assert integ["llm"]["providers"] == []
+    assert integ["tradingview"]["status"] == "disabled"

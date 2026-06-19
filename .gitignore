@@ -85,6 +85,12 @@ web/.dist-snapshots/
 # Generated lern-recalc outputs (kai-recalc-cycle.timer überschreibt daily 04:00)
 monitor/source_reliability.json
 
+# L3 audit-integrity anchor records (runtime output of kai-integrity-anchor.timer)
+monitor/integrity/
+
+# d227 outcome-report upload staging (transient)
+d227_upload_tmp/
+
 # E2E test database (root-level)
 test_e2e.db
 

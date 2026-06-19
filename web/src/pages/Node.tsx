@@ -1,4 +1,4 @@
-// @data-source: /dashboard/api/lightning (live) · L1/L3 status = build-state (kein Live-Endpoint)
+// @data-source: /dashboard/api/lightning + /dashboard/api/chain (L1) + /dashboard/api/integrity (L3)
 import type { ReactNode } from "react";
 import {
   Bitcoin,
@@ -17,6 +17,7 @@ import { Card, Badge, SectionLabel, InfoHint } from "@/components/ui/Primitives"
 import { PreparedPanel } from "@/components/panels/PreparedPanel";
 import { LightningPanel } from "@/components/panels/LightningPanel";
 import { ChainPanel } from "@/components/panels/ChainPanel";
+import { AuditIntegrityKpi } from "@/components/panels/AuditIntegrityKpi";
 import { cn } from "@/lib/utils";
 
 // Node & Chain — KAIs souveräne Bitcoin/Lightning-Schicht, ehrlich phasiert.
@@ -246,6 +247,7 @@ export function NodePage() {
                 Wiring in die Prod-<span className="font-mono">.env</span> steht noch aus.
               </p>
             </div>
+            <AuditIntegrityKpi />
           </div>
 
           <div className="space-y-3">

@@ -156,3 +156,7 @@ class LndRestClient:
     async def fee_report(self) -> dict[str, Any]:
         """GET /v1/fees — routing fee report (read-only)."""
         return await self._get("/v1/fees")
+
+    async def wallet_balance(self) -> dict[str, Any]:
+        """GET /v1/balance/blockchain — on-chain wallet balance (read-only)."""
+        return await self._get("/v1/balance/blockchain")

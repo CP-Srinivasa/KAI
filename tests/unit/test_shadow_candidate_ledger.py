@@ -251,3 +251,79 @@ def test_resolve_pending_resolves_technical_screener_candidate(tmp_path: Path) -
     rec = json.loads(resolved.read_text(encoding="utf-8").splitlines()[0])
     assert rec["candidate_kind"] == "technical"
     assert rec["source"] == "technical_screener"
+
+
+# --- source attribution (measure-only) -------------------------------------- #
+
+
+def _resolve_one(tmp_path: Path, candidate: ShadowCandidate) -> dict:
+    import json
+
+    ledger = tmp_path / "ledger.jsonl"
+    resolved = tmp_path / "resolved.jsonl"
+    record_candidate(candidate, path=ledger)
+    bars = [_bar(60, 101.0, 100.0, 100.5), _bar(3600, 101.0, 99.5, 100.8)]
+
+    def fetch(symbol: str, start_ms: int, end_ms: int) -> list[scl.Bar]:
+        return bars
+
+    counts = resolve_pending(
+        fetch_klines=fetch, now=T0 + timedelta(hours=2), ledger_path=ledger, resolved_path=resolved
+    )
+    assert counts["resolved"] == 1
+    return json.loads(resolved.read_text(encoding="utf-8").splitlines()[0])
+
+
+def test_resolve_pending_carries_document_id(tmp_path: Path) -> None:
+    """The resolver propagates the originating document_id so the resolved row is
+    self-contained for the source x direction x forward-bps bridge."""
+    rec = _resolve_one(
+        tmp_path,
+        ShadowCandidate.from_geometry(
+            candidate_id="cyc_doc_attr",
+            ts_utc=T0.isoformat(),
+            symbol="ETH/USDT",
+            side="long",
+            entry_price=100.0,
+            stop_price=98.0,
+            take_price=104.0,
+            signal_origin="autonomous_generator",
+            source="autonomous_generator",
+            candidate_kind="signal_candidate",
+            document_id="doc-abc-123",
+        ),
+    )
+    assert rec["document_id"] == "doc-abc-123"
+
+
+def test_resolve_pending_document_id_missing_is_none(tmp_path: Path) -> None:
+    """Backward-compat: a candidate without document_id resolves to None, no crash."""
+    rec = _resolve_one(
+        tmp_path,
+        ShadowCandidate.from_geometry(
+            candidate_id="cyc_no_doc",
+            ts_utc=T0.isoformat(),
+            symbol="BTC/USDT",
+            side="long",
+            entry_price=100.0,
+            stop_price=98.0,
+            take_price=104.0,
+            candidate_kind="signal_candidate",
+        ),
+    )
+    assert rec["document_id"] is None
+
+
+def test_normalize_source_name() -> None:
+    from app.observability.shadow_candidate_ledger import normalize_source_name
+
+    # casing splits re-join (decrypt/Decrypt, cointelegraph/CoinTelegraph)
+    assert normalize_source_name("Decrypt") == "decrypt"
+    assert normalize_source_name("decrypt") == "decrypt"
+    assert normalize_source_name("CoinTelegraph") == "cointelegraph"
+    # whitespace collapse
+    assert normalize_source_name("  The   Defiant ") == "the defiant"
+    # missing/blank -> unknown, never fabricated
+    assert normalize_source_name(None) == "unknown"
+    assert normalize_source_name("") == "unknown"
+    assert normalize_source_name("   ") == "unknown"

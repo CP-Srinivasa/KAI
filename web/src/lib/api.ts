@@ -138,6 +138,84 @@ export function fetchTimerHealth(signal?: AbortSignal): Promise<TimerHealthRespo
   return apiGet<TimerHealthResponse>("/health/timers", { signal });
 }
 
+// Edge-Verlauf (#319): Precision/Brier/IC je Zeitfenster. Werte sind null, wenn
+// das Fenster unter min_resolved liegt (kein Chart-Punkt auf dünner Stichprobe).
+export type EdgeWindow = {
+  window_start: string;
+  window_end: string;
+  resolved: number;
+  precision_pct: number | null;
+  brier: number | null;
+  ic_1h: number | null;
+};
+export type EdgeTimeseries = {
+  windows: EdgeWindow[];
+  bucket_days: number;
+  min_resolved: number;
+  /** Alter des hintergrund-gecachten Serien-Stands in Sekunden; null = Cache kalt. */
+  cache_age_seconds?: number | null;
+  /** true: Cache wärmt sich auf (Serie wird im Hintergrund berechnet), noch leer. */
+  warming?: boolean;
+  generated_at: string;
+};
+export function fetchEdgeTimeseries(signal?: AbortSignal): Promise<EdgeTimeseries> {
+  return apiGet<EdgeTimeseries>("/dashboard/api/edge-timeseries", { signal });
+}
+
+// L3 Audit-Integrität (OpenTimestamps-Anchoring, default-off). state:
+// disabled | no_anchor | ok | unavailable. proof_available = OTS-Proof on-chain.
+export type IntegrityStatus = {
+  state: string;
+  enabled: boolean;
+  stamper: string;
+  proofs_dir: string;
+  anchor_count: number;
+  last_digest: string;
+  last_anchored_at: string;
+  proof_available: boolean;
+  reason: string;
+  generated_at: string;
+};
+export function fetchIntegrity(signal?: AbortSignal): Promise<IntegrityStatus> {
+  return apiGet<IntegrityStatus>("/dashboard/api/integrity", { signal });
+}
+
+// Kuratiertes Operator-Board (#315): Todos/Phasen/Verbesserungen aus der gepflegten
+// SSOT docs/operator_board.json (deklarativ, nicht live). Gates/Probleme sind separat.
+export type OperatorTodo = { text: string; priority?: string };
+export type OperatorPhase = { label: string; status: string };
+export type OperatorImprovement = { text: string };
+export type OperatorBoard = {
+  stand: string;
+  note: string;
+  todos: OperatorTodo[];
+  phases: OperatorPhase[];
+  improvements: OperatorImprovement[];
+  generated_at: string;
+};
+export function fetchOperatorBoard(signal?: AbortSignal): Promise<OperatorBoard> {
+  return apiGet<OperatorBoard>("/dashboard/api/operator-board", { signal });
+}
+
+// Replay-SSOT-Status (#314): Integrität des Paper-Execution-Audit-Replays.
+// state: warming (Cache kalt) | ok | degraded | unavailable. Misst Replay-
+// *Integrität* (Skips/Lifecycle-Fehler), nicht Performance.
+export type ReplayStatus = {
+  state: "warming" | "ok" | "degraded" | "unavailable";
+  available: boolean;
+  positions: number;
+  fills_replayed: number;
+  skipped_events: number;
+  lifecycle_errors: number;
+  reason: string;
+  cache_age_seconds: number | null;
+  warming: boolean;
+  generated_at: string;
+};
+export function fetchReplayStatus(signal?: AbortSignal): Promise<ReplayStatus> {
+  return apiGet<ReplayStatus>("/dashboard/api/replay-status", { signal });
+}
+
 export type EntryRuntime = {
   entry_mode: string | null;
   entry_mode_label: string;
@@ -401,19 +479,28 @@ export function fetchNOverview(signal?: AbortSignal): Promise<NOverview> {
 
 // Lightning Phase-1 (read-only, default-off). Spiegelt LightningNodeStatus.
 export type LightningStatus = {
-  state: "disabled" | "unavailable" | "ok";
+  state: "disabled" | "pending" | "unavailable" | "ok";
   reachable: boolean;
   server_state: string;
   info_available: boolean;
   synced_to_chain: boolean;
+  synced_to_graph: boolean; // lnd gossip-graph sync (routing readiness)
   block_height: number;
   num_peers: number;
   num_active_channels: number;
+  num_pending_channels: number; // e.g. force-closes awaiting their CSV timelock
   identity_pubkey: string;
   alias: string;
   version: string;
+  // Balances (read-only, fetched independent of the Tor-slow getinfo).
+  balances_available: boolean;
+  channel_local_sat: number; // off-chain outbound liquidity
+  channel_remote_sat: number; // off-chain inbound liquidity
+  wallet_confirmed_sat: number; // on-chain confirmed
+  wallet_total_sat: number; // on-chain confirmed + unconfirmed
   reason: string;
   extra: Record<string, unknown>;
+  node_age_seconds: number | null; // age of the cached snapshot (null while warming)
   generated_at: string;
 };
 
@@ -423,7 +510,7 @@ export function fetchLightningStatus(signal?: AbortSignal): Promise<LightningSta
 
 // L1 — souveräne On-Chain-Wahrheit aus KAIs eigener bitcoind (read-only, default-off).
 export type ChainStatus = {
-  state: "disabled" | "unavailable" | "ok";
+  state: "disabled" | "pending" | "unavailable" | "ok";
   reachable: boolean;
   chain: string;
   blocks: number;
@@ -438,6 +525,111 @@ export type ChainStatus = {
 
 export function fetchChainStatus(signal?: AbortSignal): Promise<ChainStatus> {
   return apiGet<ChainStatus>("/dashboard/api/chain", { signal });
+}
+
+// Per-source ingestion activity (Quellen-Live-Zyklus). Read-only aggregate over
+// the canonical document store: which source is delivering, which went silent.
+export type SourceActivityRow = {
+  source_name: string;
+  total: number; // lifetime document count
+  window_count: number; // documents fetched within window_hours
+  last_fetched_at: string | null; // ISO-8601 UTC of the most recent fetch
+  silent: boolean; // last fetch older than silent_after_hours (gone quiet/dead)
+};
+
+export type SourceActivity = {
+  window_hours: number;
+  silent_after_hours: number;
+  silent_count: number;
+  sources: SourceActivityRow[];
+  generated_at: string;
+};
+
+export function fetchSourceActivity(signal?: AbortSignal): Promise<SourceActivity> {
+  return apiGet<SourceActivity>("/dashboard/api/source-activity", { signal });
+}
+
+// Perp-Derivate (Funding + Open Interest) aus KAIs EIGENER Ingestion (read-only).
+// funding_rate = 8h-Satz als Anteil (0.0001 = 1bp). Werte sind null, wenn der
+// jeweilige Snapshot-Cache (noch) keinen Eintrag hat — keine erfundenen Zahlen.
+export type DerivativeRow = {
+  symbol: string;
+  funding_rate: number | null;
+  mark_price: number | null;
+  funding_source: string | null;
+  funding_ts: string | null;
+  open_interest: number | null;
+  oi_change_zscore: number | null;
+  oi_source: string | null;
+  oi_ts: string | null;
+};
+export type DerivativesSnapshot = {
+  available: boolean;
+  rows: DerivativeRow[];
+  generated_at: string;
+};
+export function fetchDerivatives(signal?: AbortSignal): Promise<DerivativesSnapshot> {
+  return apiGet<DerivativesSnapshot>("/dashboard/api/markets/derivatives", { signal });
+}
+
+// Krypto-Markt-Sentiment (Fear & Greed Index, alternative.me — frei/öffentlich,
+// read-only). value 0..100; available=false solange Cache kalt / Fetch fehlschlägt
+// → dann KEIN erfundener Wert.
+export type SentimentSnapshot = {
+  available: boolean;
+  value: number;
+  classification: string;
+  timestamp_utc: string;
+  source: string;
+  reason: string;
+  age_seconds: number | null;
+  generated_at: string;
+};
+export function fetchSentiment(signal?: AbortSignal): Promise<SentimentSnapshot> {
+  return apiGet<SentimentSnapshot>("/dashboard/api/markets/sentiment", { signal });
+}
+
+// Perp-Liquidationen (OKX public liquidation-orders, frei/read-only). *_sz =
+// liquidierte Größe in OKX-Kontrakten; *_usd = USD-Notional (sz × ctVal × bkPx).
+// available=false solange Cache kalt / Fetch fehlschlägt → kein erfundener Wert.
+export type LiquidationRow = {
+  symbol: string;
+  long_sz: number;
+  short_sz: number;
+  long_usd: number;
+  short_usd: number;
+  events: number;
+  last_ts_utc: string;
+};
+export type LiquidationsSnapshot = {
+  available: boolean;
+  rows: LiquidationRow[];
+  source: string;
+  reason: string;
+  age_seconds: number | null;
+  generated_at: string;
+};
+export function fetchLiquidations(signal?: AbortSignal): Promise<LiquidationsSnapshot> {
+  return apiGet<LiquidationsSnapshot>("/dashboard/api/markets/liquidations", { signal });
+}
+
+// Preis-Momentum (Binance 24h-Ticker, frei/read-only). change_pct_24h = echte
+// 24h-Änderung in %. available=false solange Cache kalt / Fetch fehlschlägt.
+export type MomentumRow = {
+  symbol: string;
+  last_price: number;
+  change_pct_24h: number;
+};
+export type MomentumSnapshot = {
+  available: boolean;
+  rows: MomentumRow[];
+  source: string;
+  reason: string;
+  age_seconds: number | null;
+  generated_at: string;
+};
+export function fetchMomentum(signal?: AbortSignal): Promise<MomentumSnapshot> {
+  return apiGet<MomentumSnapshot>("/dashboard/api/markets/momentum", { signal });
 }
 
 export type ProvenanceMetrics = {
@@ -476,6 +668,41 @@ export function fetchDashboardProvenance(
   signal?: AbortSignal,
 ): Promise<DashboardProvenance> {
   return apiGet<DashboardProvenance>("/dashboard/api/provenance", { signal });
+}
+
+// Echter Konfigurations-/Aktiv-Zustand der externen Integrationen
+// (Settings-Tab „Integrationen"). Status kommt aus den Backend-Settings-Flags,
+// NICHT mehr aus hartkodierten UI-Literalen (No-Fake-Doktrin).
+export type IntegrationStatus = "active" | "disabled" | "unavailable";
+
+export type IntegrationsSnapshot = {
+  generated_at: string;
+  integrations: {
+    telegram: { status: IntegrationStatus; configured: boolean };
+    llm: { status: IntegrationStatus; providers: string[] };
+    tradingview: {
+      status: IntegrationStatus;
+      webhook_enabled: boolean;
+      secret_configured: boolean;
+      mounted: boolean;
+      auth_mode: string;
+      signal_routing_enabled: boolean;
+      auto_promote_enabled: boolean;
+      pipeline: {
+        pending_events: number;
+        smoke_test_events: number;
+        real_events: number;
+        unique_signal_path_ids: number;
+      } | null;
+    };
+    email: { status: IntegrationStatus; configured: boolean };
+  };
+};
+
+export function fetchIntegrations(
+  signal?: AbortSignal,
+): Promise<IntegrationsSnapshot> {
+  return apiGet<IntegrationsSnapshot>("/dashboard/api/integrations", { signal });
 }
 
 // REGIME-R1 (2026-05-09): per-asset regime classification, hourly cron.

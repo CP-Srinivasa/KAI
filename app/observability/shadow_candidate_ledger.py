@@ -243,6 +243,22 @@ class ShadowCandidate:
         )
 
 
+def normalize_source_name(raw: str | None) -> str:
+    """Canonicalize a news source_name for stable cohort bucketing.
+
+    Measure-only hygiene for the source x direction x forward-bps bridge: the
+    observed splits are pure casing (``decrypt``/``Decrypt``,
+    ``cointelegraph``/``CoinTelegraph``), so lowercasing + whitespace-collapsing
+    re-joins them without risking over-merge of genuinely distinct sources.
+    Missing/blank -> ``"unknown"`` (never a fabricated source). Does NOT mutate
+    any signal, gate, or execution state.
+    """
+    if raw is None:
+        return "unknown"
+    norm = " ".join(str(raw).strip().lower().split())
+    return norm or "unknown"
+
+
 def record_candidate(candidate: ShadowCandidate, *, path: Path = LEDGER_PATH) -> bool:
     """Append a candidate to the ledger. Fail-soft: never raises into the loop."""
     try:
@@ -398,6 +414,13 @@ def resolve_pending(
         td = _as_float(c.get("take_dist_bps"))
         resolution = {
             "candidate_id": cid,
+            # Source-attribution (measure-only): carry the originating
+            # document_id so the resolved row is self-contained for the
+            # source x direction x forward-bps bridge. ``source_name`` is NOT
+            # snapshotted here (the resolver stays DB-free / offline-pure) — it
+            # derives deterministically + immutably from document_id via
+            # canonical_documents at report time (normalize_source_name).
+            "document_id": c.get("document_id"),
             "symbol": c.get("symbol"),
             "side": side,
             "regime": c.get("regime"),

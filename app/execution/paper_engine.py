@@ -56,6 +56,59 @@ _AUDIT_LOG = Path("artifacts/paper_execution_audit.jsonl")
 _DEFAULT_MAX_CLOSE_RETURN_PCT = 2.0
 
 
+# ── Lifecycle-Emission-Idempotency (#314) ─────────────────────────────────────
+# Befund 2026-06-18 (Replay-SSOT-KPI): eine SKYAI/USDT-Envelope hatte ihre
+# Order-Open-Sequenz (ORDER_BUILDING→SUBMITTED→ACCEPTED→POSITION_OPEN) DOPPELT im
+# Audit (~30ms auseinander) → 3 „discontinuous"-Lifecycle-Replay-Fehler. Ursache:
+# zwei Engine-Instanzen mit je leerer In-Memory-Map emittierten beide die saubere
+# Sequenz. Der Fill selbst war idempotent dedupt (filled_keys), die
+# lifecycle_transition-Zeilen nicht. Dieser Guard macht die Emission idempotent:
+# eine Open-Phase-Stufe wird nie erneut emittiert, sobald die correlation_id sie
+# bereits erreicht/überschritten hat (Reprocess im selben Prozess + Post-Restart-
+# Reprocess via rehydrate sauber abgefangen). Hinweis: ein ECHT-paralleler zweiter
+# Live-Prozess in denselben Millisekunden (Map beidseitig leer) ist ein
+# Prozess-Singleton-Verstoß und außerhalb dieses Emit-Guards — kai-server läuft
+# als Single-Service genau dafür.
+#
+# Nur der monoton-vorwärts Happy-Path bis POSITION_OPEN bekommt einen Rang;
+# Off-Path-/terminale States (SL_HIT, EXPIRED, CANCELLED, FAILED, REJECTED) und
+# post-open States (PARTIAL_TP_HIT, TP_HIT) stehen NICHT drin und werden nie
+# geguardet — wiederholte PARTIAL_TP_HIT-Tiers bleiben erlaubt.
+_LIFECYCLE_PROGRESSION: tuple[OrderLifecycleState, ...] = (
+    OrderLifecycleState.RECEIVED,
+    OrderLifecycleState.PARSED,
+    OrderLifecycleState.VALIDATED,
+    OrderLifecycleState.WAITING_FOR_ENTRY,
+    OrderLifecycleState.ENTRY_TRIGGERED,
+    OrderLifecycleState.ORDER_BUILDING,
+    OrderLifecycleState.ORDER_SUBMITTED,
+    OrderLifecycleState.ORDER_ACCEPTED,
+    OrderLifecycleState.POSITION_OPEN,
+)
+_PROGRESSION_RANK: dict[OrderLifecycleState, int] = {
+    state: rank for rank, state in enumerate(_LIFECYCLE_PROGRESSION)
+}
+
+
+def _is_redundant_open_transition(
+    current: OrderLifecycleState, to_state: OrderLifecycleState
+) -> bool:
+    """True, wenn ``to_state`` eine Order-Open-Phase-Stufe ist, die ``current``
+    bereits erreicht/überschritten hat — also eine doppelte/rückwärtige
+    (Re-)Emission der Eröffnungssequenz (idempotenter No-op).
+
+    ``to_state`` ohne Rang (post-open/off-path) → nie idempotent-skippen.
+    ``current`` ohne Rang (post-open/terminal) bei Open-Phase-``to_state`` →
+    redundant (die Open-Phase liegt definitiv hinter uns)."""
+    to_rank = _PROGRESSION_RANK.get(to_state)
+    if to_rank is None:
+        return False
+    cur_rank = _PROGRESSION_RANK.get(current)
+    if cur_rank is None:
+        return True
+    return to_rank <= cur_rank
+
+
 def _max_close_return_pct() -> float:
     raw = os.environ.get("MAX_CLOSE_RETURN_PCT")
     if raw is None:
@@ -278,6 +331,20 @@ class PaperExecutionEngine:
         reason: str,
     ) -> bool:
         if not correlation_id:
+            return False
+        # Idempotency-Guard (#314): keine doppelte/rückwärtige (Re-)Emission der
+        # Order-Open-Sequenz, sobald die correlation_id diese Stufe schon erreicht
+        # hat (z.B. Reprocess oder rehydrierte Instanz nach Restart). Sauberer
+        # No-op statt einer gefangenen IllegalLifecycleTransition.
+        known_state = self._lifecycle_state_by_correlation_id.get(correlation_id)
+        if known_state is not None and _is_redundant_open_transition(known_state, to_state):
+            logger.debug(
+                "[PAPER] Skipping redundant lifecycle emission for %s: already at %s, "
+                "target %s (idempotent no-op)",
+                correlation_id,
+                known_state.value,
+                to_state.value,
+            )
             return False
         from_state = self._lifecycle_state_by_correlation_id.get(
             correlation_id,

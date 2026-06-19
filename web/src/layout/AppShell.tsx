@@ -47,11 +47,11 @@ function RouteFallback() {
 
 export function AppShell() {
   const { route } = useRouter();
-  const { mode } = useAppState();
+  const { mode, density } = useAppState();
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
 
   return (
-    <div className="min-h-screen flex bg-bg-0 text-fg">
+    <div className="min-h-screen flex bg-bg-0 text-fg" data-density={density}>
       <Sidebar mobileOpen={mobileNavOpen} onMobileClose={() => setMobileNavOpen(false)} />
       <div className="flex-1 min-w-0 flex flex-col">
         {mode === "live" && (

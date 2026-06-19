@@ -254,10 +254,30 @@ def create_market_data_adapter(
                 timeout_seconds=timeout_seconds,
                 api_key=api_key or None,
             ),
+        ]
+        # TradingView price fallback (default-OFF): resolves symbols the crypto
+        # venues + CoinGecko don't quote (the operator's TV Pro covers far more
+        # pairs / RWA). Inserted ADDITIVELY before Mock so synthetic data stays
+        # the true last resort. The TV scanner is an UNOFFICIAL endpoint
+        # (ToS gray-area, may break) → never primary; opt-in via
+        # APP_TRADINGVIEW_PRICE_FALLBACK_ENABLED.
+        from app.core.settings import get_settings as _get_settings
+
+        _settings = _get_settings()
+        if _settings.tradingview_price_fallback_enabled:
+            from app.market_data.tradingview_adapter import TradingViewMarketDataAdapter
+
+            chain.append(
+                TradingViewMarketDataAdapter(
+                    exchange=_settings.tradingview.datafeed_exchange,
+                    timeout_seconds=timeout_seconds,
+                )
+            )
+        chain.append(
             MockMarketDataAdapter(
                 freshness_threshold_seconds=freshness_threshold_seconds,
-            ),
-        ]
+            )
+        )
         return FallbackMarketDataAdapter(chain)
     if normalized == "mock":
         logger.warning(

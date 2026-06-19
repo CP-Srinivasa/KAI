@@ -471,3 +471,11 @@ body {
     animation: none;
   }
 }
+
+/* WP-4 Dichteoption (Konzept §21): kompakter Modus verdichtet den Seiten-Content
+   app-weit (mehr auf einen Blick), ohne Nav/Topbar zu schrumpfen und ohne jede
+   Komponente einzeln anzufassen. Persistiert via AppState (data-density am Root).
+   zoom statt transform: kein Layout-Offset, sticky-Header bleiben funktional. */
+[data-density="compact"] main {
+  zoom: 0.9;
+}

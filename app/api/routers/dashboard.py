@@ -16,10 +16,11 @@ from pathlib import Path
 from typing import Any, cast
 
 import httpx
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
 
 from app.alerts.hold_metrics import build_hold_metrics_report
+from app.api.deps import get_document_repo
 from app.audit.stream_validation import (
     AuditStreamName,
     AuditStreamReadResult,
@@ -31,6 +32,7 @@ from app.observability.dashboard_metric_registry import (
     build_dashboard_metric_registry,
     reconcile_dashboard_snapshot,
 )
+from app.storage.repositories.document_repo import DocumentRepository
 
 logger = logging.getLogger(__name__)
 
@@ -1279,6 +1281,106 @@ async def dashboard_provenance_api() -> JSONResponse:
     )
 
 
+@router.get("/dashboard/api/integrations", tags=["dashboard"])
+async def dashboard_integrations_api() -> JSONResponse:
+    """Echter Konfigurations-/Aktiv-Zustand der externen Integrationen.
+
+    Ersetzt die früher hartkodierten Status-Badges im Settings-Tab
+    „Integrationen". Jeder Status wird ausschließlich aus den (fail-closed)
+    Settings-Flags abgeleitet — keine erfundenen „aktiv"/„vorbereitet"-Labels
+    mehr (No-Fake-Doktrin). Für TradingView werden die Live-Pipeline-Zähler
+    aus dem bereits gecachten Provenance-Report angereichert, sofern frisch;
+    dieser Endpoint baut den schweren Report bewusst NICHT selbst und ist damit
+    von dessen Fehlerpfaden entkoppelt.
+
+    status ∈ {"active", "disabled"}.
+    """
+    from app.core.settings import get_settings
+
+    settings = get_settings()
+
+    # Telegram: aktiv, sobald irgendein Bot-Token konfiguriert ist (Alert- oder
+    # Operator-Kanal).
+    telegram_configured = bool(
+        settings.alerts.telegram_token or settings.operator.telegram_bot_token
+    )
+
+    # LLM-Consensus-Gate: aktiv, sobald mindestens ein Provider-Key gesetzt ist.
+    llm_providers = [
+        name
+        for name, key in (
+            ("openai", settings.providers.openai_api_key),
+            ("anthropic", settings.providers.anthropic_api_key),
+            ("gemini", settings.providers.gemini_api_key),
+        )
+        if key
+    ]
+
+    # TradingView-Webhook: „live/aktiv" == der POST-Endpoint ist erreichbar.
+    # Das ist EXAKT die Mount-Bedingung aus app/api/routers/tradingview.py
+    # (_settings_gate): webhook_enabled UND — je nach auth_mode — das passende
+    # Credential (webhook_secret für hmac, webhook_shared_token für die
+    # token-basierten Modi inkl. hmac_strict_event_id/hmac_or_token). Wir rufen
+    # den Gate direkt auf, statt die Bedingung hier zu duplizieren — sonst driftet
+    # der Status vom echten 404-/202-Verhalten ab (auf der Pi läuft
+    # hmac_strict_event_id ohne webhook_secret; die alte `enabled AND secret`-
+    # Heuristik meldete fälschlich „disabled").
+    from fastapi import HTTPException
+
+    from app.api.routers.tradingview import _settings_gate as _tv_settings_gate
+
+    tv = settings.tradingview
+    try:
+        _tv_settings_gate(settings)
+        tv_mounted = True
+    except HTTPException:
+        tv_mounted = False
+    tv_pipeline: dict[str, Any] | None = None
+    cached = _provenance_cache.get("payload")
+    if (
+        tv_mounted
+        and cached is not None
+        and (time.monotonic() - _provenance_cache["at"]) < _PROVENANCE_CACHE_TTL_S
+    ):
+        # Read-only Anreicherung aus dem bereits gebauten Provenance-Payload —
+        # kein zusätzlicher Report-Build.
+        tv_pipeline = cached.get("tradingview_pipeline")
+
+    payload = {
+        "generated_at": datetime.now(UTC).isoformat(),
+        "integrations": {
+            "telegram": {
+                "status": "active" if telegram_configured else "disabled",
+                "configured": telegram_configured,
+            },
+            "llm": {
+                "status": "active" if llm_providers else "disabled",
+                "providers": llm_providers,
+            },
+            "tradingview": {
+                "status": "active" if tv_mounted else "disabled",
+                "webhook_enabled": bool(tv.webhook_enabled),
+                "secret_configured": bool(tv.webhook_secret),
+                "shared_token_configured": bool(tv.webhook_shared_token),
+                "mounted": tv_mounted,
+                "auth_mode": tv.webhook_auth_mode,
+                "signal_routing_enabled": bool(tv.webhook_signal_routing_enabled),
+                "auto_promote_enabled": bool(tv.webhook_auto_promote_enabled),
+                "pipeline": tv_pipeline,
+            },
+            "email": {
+                # Kein SMTP-Setting im Backend → ehrlich „nicht konfiguriert".
+                "status": "disabled",
+                "configured": False,
+            },
+        },
+    }
+    return JSONResponse(
+        content=payload,
+        headers={"Cache-Control": "no-store, max-age=0"},
+    )
+
+
 # ─── Bayesian Confidence Audit (Schatten-Vergleich-Spalte) ────────────────────
 
 _BAYES_AUDIT = _ARTIFACTS / "bayes_confidence_audit.jsonl"
@@ -1486,21 +1588,30 @@ async def dashboard_regime_api() -> JSONResponse:
 async def dashboard_lightning_api() -> JSONResponse:
     """Read-only Lightning-Node-Status + souveräne Chain-Wahrheit (L1, default-off).
 
-    Spiegelt ``app.lightning.adapter.get_node_status()`` (lnd) und reichert
-    Block-Höhe/Sync aus KAIs EIGENER bitcoind
-    (``app.chain.adapter.get_chain_status()``, L1) an — so bleiben Höhe/Sync
-    truthful, selbst wenn lnds ``getinfo`` (Tor) hängt. ``state`` ist
-    ``disabled`` / ``unavailable`` / ``ok`` (``info_available`` zeigt, ob die
-    lnd-``getinfo``-Detailfelder Peers/Channels/Alias gefüllt sind). Beide
-    Quellen fail-closed/default-off; kein schreibender/kapitalrelevanter Pfad.
+    Liest den lnd-Node-Status über den Hintergrund-Cache
+    (``app.lightning.cache.get_cached_node_status()``) und reichert Block-Höhe/
+    Sync aus KAIs EIGENER bitcoind (``app.chain.cache``, L1) an — so bleiben
+    Höhe/Sync truthful, selbst wenn lnds ``getinfo`` (Tor) hängt, und das
+    Node-Panel flackert nicht (Anti-Flacker-Merge hält den letzten vollen
+    ``getinfo``-Snapshot). Der Request blockiert NIE auf lnd/bitcoind;
+    ``node_age_seconds``/``chain_age_seconds`` zeigen das Snapshot-Alter. ``state``
+    ist ``disabled`` / ``pending`` (Cache kalt) / ``unavailable`` / ``ok``
+    (``info_available`` zeigt, ob die ``getinfo``-Detailfelder Peers/Channels/
+    Alias gefüllt sind). Beide Quellen fail-closed/default-off; kein
+    schreibender/kapitalrelevanter Pfad.
     """
     from dataclasses import asdict
 
     from app.chain.cache import get_cached_chain_status
-    from app.lightning.adapter import get_node_status
+    from app.lightning.cache import get_cached_node_status
 
-    status = await get_node_status()
+    # lnd-Node-Status über den Hintergrund-Cache — lnds getinfo (Tor) ist langsam/
+    # intermittierend; der Request darf dafür NIE blockieren und das Panel soll
+    # nicht zwischen gefüllt/leer flackern. ``node_age_seconds`` zeigt das Alter
+    # des Snapshots (None solange Cache kalt / ``pending``).
+    status, node_age = await get_cached_node_status()
     payload = asdict(status)
+    payload["node_age_seconds"] = node_age
 
     # Souveräne Chain-Wahrheit: Höhe/Sync bevorzugt aus der eigenen bitcoind.
     # Über den Hintergrund-Cache gelesen — bitcoind-RPC kann auf dem Pi minutenlang
@@ -1537,5 +1648,301 @@ async def dashboard_chain_api() -> JSONResponse:
     status, age = await get_cached_chain_status()
     payload = asdict(status)
     payload["age_seconds"] = age
+    payload["generated_at"] = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return JSONResponse(content=payload, headers={"Cache-Control": "no-store, max-age=0"})
+
+
+@router.get("/dashboard/api/markets/derivatives", tags=["dashboard"])
+async def dashboard_markets_derivatives_api() -> JSONResponse:
+    """Read-only Perp-Derivate-Snapshot (Funding + Open Interest) aus KAIs EIGENER Ingestion.
+
+    Liest die entkoppelt aktualisierten Snapshot-Caches (``funding_cache.json`` /
+    ``oi_cache.json``, geschrieben vom Funding/OI-Refresh-Service; Quelle z. B.
+    bybit) — KEINE Live-Dritt-API im Request-Pfad und KEINE erfundenen Werte.
+    Fehlt ein Cache, bleibt die Liste leer (fail-closed/ehrlich). ``funding_rate``
+    ist der 8h-Satz als Anteil (0.0001 = 1bp). Read-only, kein schreibender/
+    kapitalrelevanter Pfad.
+    """
+    from dataclasses import asdict
+
+    from app.core.evidence_settings import (
+        FundingEvidenceSettings,
+        OpenInterestEvidenceSettings,
+    )
+    from app.signals.funding_snapshot_store import FundingSnapshotStore
+    from app.signals.oi_snapshot_store import OpenInterestSnapshotStore
+
+    funding_map: dict[str, Any] = {}
+    oi_map: dict[str, Any] = {}
+    try:
+        funding_map = {
+            sym: asdict(snap)
+            for sym, snap in FundingSnapshotStore(FundingEvidenceSettings().snapshot_path)
+            .read_all()
+            .items()
+        }
+    except Exception:  # noqa: BLE001 — read-only surface must never raise into the request
+        funding_map = {}
+    try:
+        oi_map = {
+            sym: asdict(snap)
+            for sym, snap in OpenInterestSnapshotStore(OpenInterestEvidenceSettings().snapshot_path)
+            .read_all()
+            .items()
+        }
+    except Exception:  # noqa: BLE001
+        oi_map = {}
+
+    rows: list[dict[str, Any]] = []
+    for sym in sorted(set(funding_map) | set(oi_map)):
+        f = funding_map.get(sym) or {}
+        o = oi_map.get(sym) or {}
+        rows.append(
+            {
+                "symbol": sym,
+                "funding_rate": f.get("rate"),
+                "mark_price": f.get("mark_price"),
+                "funding_source": f.get("source"),
+                "funding_ts": f.get("timestamp_utc"),
+                "open_interest": o.get("open_interest"),
+                "oi_change_zscore": o.get("oi_change_zscore"),
+                "oi_source": o.get("source"),
+                "oi_ts": o.get("timestamp_utc"),
+            }
+        )
+
+    payload = {
+        "available": bool(rows),
+        "rows": rows,
+        "generated_at": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+    }
+    return JSONResponse(content=payload, headers={"Cache-Control": "no-store, max-age=0"})
+
+
+@router.get("/dashboard/api/markets/sentiment", tags=["dashboard"])
+async def dashboard_markets_sentiment_api() -> JSONResponse:
+    """Read-only Krypto-Markt-Sentiment (Fear & Greed Index, alternative.me).
+
+    Liest einen TTL-gecachten Snapshot (``app.market_data.sentiment``) der freien,
+    öffentlichen Fear-&-Greed-API (fixe Provider-URL, kein Key, kein Scraping,
+    SSRF-safe). Der Request blockiert NIE auf dem Provider; ``age_seconds`` zeigt
+    das Snapshot-Alter. ``available`` ist False, solange der Cache kalt ist oder
+    der Fetch fehlschlägt — dann KEIN erfundener Wert (No-Fake). ``value`` 0..100.
+    Read-only, kein schreibender/kapitalrelevanter Pfad.
+    """
+    from dataclasses import asdict
+
+    from app.market_data.sentiment import get_cached_sentiment
+
+    snap, age = await get_cached_sentiment()
+    payload = asdict(snap)
+    payload["age_seconds"] = age
+    payload["generated_at"] = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return JSONResponse(content=payload, headers={"Cache-Control": "no-store, max-age=0"})
+
+
+@router.get("/dashboard/api/markets/liquidations", tags=["dashboard"])
+async def dashboard_markets_liquidations_api() -> JSONResponse:
+    """Read-only Perp-Liquidationen (OKX public liquidation-orders, kein Key).
+
+    Liest einen TTL-gecachten Snapshot (``app.market_data.liquidations``) der
+    freien, öffentlichen OKX-API (fixe Provider-URL → SSRF-safe, kein Scraping).
+    Je Symbol: liquidierte Long- vs Short-Größe (``sz`` in OKX-Kontrakten,
+    einheitenfreie Richtungs-Pressure), Event-Anzahl, letzter Zeitstempel. Der
+    Request blockiert NIE auf dem Provider; ``available`` ist False solange der
+    Cache kalt ist oder der Fetch fehlschlägt → KEIN erfundener Wert (No-Fake).
+    Read-only, kein schreibender/kapitalrelevanter Pfad.
+    """
+    from dataclasses import asdict
+
+    from app.market_data.liquidations import get_cached_liquidations
+
+    snap, age = await get_cached_liquidations()
+    payload = asdict(snap)
+    payload["age_seconds"] = age
+    payload["generated_at"] = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return JSONResponse(content=payload, headers={"Cache-Control": "no-store, max-age=0"})
+
+
+@router.get("/dashboard/api/markets/momentum", tags=["dashboard"])
+async def dashboard_markets_momentum_api() -> JSONResponse:
+    """Read-only Preis-Momentum (Binance 24h-Ticker, kein Key).
+
+    Liest einen TTL-gecachten Snapshot (``app.market_data.momentum``) des freien,
+    öffentlichen Binance-Endpoints (fixe Provider-URL → SSRF-safe, kein Scraping).
+    Je Symbol: letzter Preis + echte 24h-Änderung in %. Der Request blockiert NIE
+    auf dem Provider; ``available`` ist False solange der Cache kalt ist oder der
+    Fetch fehlschlägt → KEIN erfundener Wert. Read-only, kein schreibender/
+    kapitalrelevanter Pfad.
+    """
+    from dataclasses import asdict
+
+    from app.market_data.momentum import get_cached_momentum
+
+    snap, age = await get_cached_momentum()
+    payload = asdict(snap)
+    payload["age_seconds"] = age
+    payload["generated_at"] = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return JSONResponse(content=payload, headers={"Cache-Control": "no-store, max-age=0"})
+
+
+@router.get("/dashboard/api/integrity", tags=["dashboard"])
+async def dashboard_integrity_api() -> JSONResponse:
+    """Read-only L3 Audit-Integritäts-Status (OpenTimestamps-Anchoring, default-off).
+
+    Spiegelt ``app.integrity.get_integrity_status()`` — reiner Datei-Read der
+    bereits geschriebenen Anchor-Records (kein Digest-Compute, kein Stamping, kein
+    Netzcall → blockiert nie). ``state`` ist ``disabled`` (Feature aus),
+    ``no_anchor`` (an, aber noch nichts verankert), ``ok`` (letzter Anchor
+    gefunden; ``proof_available`` zeigt, ob ein OTS-Proof on-chain-verankerbar
+    vorliegt) oder ``unavailable`` (Proofs-Dir unlesbar). Fail-soft, kein
+    schreibender Pfad.
+    """
+    from dataclasses import asdict
+
+    from app.integrity import check_l3_integrity_freshness, get_integrity_status
+
+    status = get_integrity_status()
+    payload = asdict(status)
+    # Freshness/replay watchdog: a green KPI must not hide a stale timer or a
+    # tampered audit log. stamper=null / proof_available=false stay non-errors.
+    payload["freshness"] = asdict(check_l3_integrity_freshness())
+    payload["generated_at"] = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return JSONResponse(content=payload, headers={"Cache-Control": "no-store, max-age=0"})
+
+
+@router.get("/dashboard/api/edge-timeseries", tags=["dashboard"])
+async def dashboard_edge_timeseries_api() -> JSONResponse:
+    """Edge-Verlauf (#319): Precision/Brier/IC je Zeitfenster aus dem resolved-Ledger.
+
+    Reicht den hintergrund-gecachten Serien-Stand durch — exakt dieselbe Outcome-/
+    Real-Source-Logik wie der Edge-Collector. Fenster unter ``min_resolved`` liefern
+    ``None`` (kein Chart-Punkt auf dünner Stichprobe — keine irreführenden Trendlinien).
+    Der Ledger-Read (>5s auf dem Pi) läuft im Hintergrund (``edge_timeseries_cache``),
+    nie auf dem Request-Pfad. Cold-Start: ``warming=true`` mit leerer Serie statt
+    Blockieren. Fail-soft: leere Serie statt 500.
+    """
+    from app.observability.edge_timeseries import (
+        DEFAULT_BUCKET_DAYS,
+        DEFAULT_MIN_RESOLVED,
+    )
+    from app.observability.edge_timeseries_cache import get_cached_edge_timeseries
+
+    windows: list[dict[str, Any]] = []
+    age: float | None = None
+    try:
+        series, age = await get_cached_edge_timeseries()
+        windows = [w.to_dict() for w in series]
+    except Exception as exc:  # noqa: BLE001 — Panel degradiert, kein 500
+        logger.warning("edge_timeseries_read_failed: %s", exc)
+    payload: dict[str, Any] = {
+        "windows": windows,
+        "bucket_days": DEFAULT_BUCKET_DAYS,
+        "min_resolved": DEFAULT_MIN_RESOLVED,
+        "cache_age_seconds": round(age, 1) if age is not None else None,
+        "warming": age is None and not windows,
+        "generated_at": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+    }
+    return JSONResponse(content=payload, headers={"Cache-Control": "no-store, max-age=0"})
+
+
+@router.get("/dashboard/api/replay-status", tags=["dashboard"])
+async def dashboard_replay_status_api() -> JSONResponse:
+    """Replay-SSOT-Status (#314): Integrität des Paper-Execution-Audit-Replays.
+
+    ``artifacts/paper_execution_audit.jsonl`` ist die Replay-SSOT. Der Endpoint
+    reicht den hintergrund-gecachten Status durch (``replay_status_cache`` — der
+    Replay-Read läuft via ``to_thread`` off the event loop, nie blockierend).
+    State: ``ok`` (sauber) / ``degraded`` (Skips oder Lifecycle-Fehler) /
+    ``unavailable`` (Replay fehlgeschlagen/Datei fehlt). Cold-Start: ``warming``.
+    Fail-soft: nie 500.
+    """
+    from app.observability.replay_status_cache import get_cached_replay_status
+
+    payload: dict[str, Any] = {
+        "state": "warming",
+        "available": False,
+        "positions": 0,
+        "fills_replayed": 0,
+        "skipped_events": 0,
+        "lifecycle_errors": 0,
+        "reason": "",
+        "cache_age_seconds": None,
+        "warming": True,
+    }
+    try:
+        status, age = await get_cached_replay_status()
+        if status is not None:
+            payload = {
+                **status.to_dict(),
+                "cache_age_seconds": round(age, 1) if age is not None else None,
+                "warming": False,
+            }
+    except Exception as exc:  # noqa: BLE001 — Panel degradiert, kein 500
+        logger.warning("replay_status_read_failed: %s", exc)
+    payload["generated_at"] = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return JSONResponse(content=payload, headers={"Cache-Control": "no-store, max-age=0"})
+
+
+@router.get("/dashboard/api/source-activity", tags=["dashboard"])
+async def dashboard_source_activity_api(
+    window_hours: int = 24,
+    silent_after_hours: int = 168,
+    repo: DocumentRepository = Depends(get_document_repo),  # noqa: B008
+) -> JSONResponse:
+    """Read-only per-source ingestion activity (Quellen-Live-Zyklus).
+
+    Aggregiert den kanonischen Dokumenten-Store nach Quelle: Lifetime-Count,
+    Count im ``window_hours``-Fenster, letzter ``fetched_at`` und ein ``silent``-
+    Flag (letzter Fetch älter als ``silent_after_hours``, default 7 Tage) je
+    Quelle — so sieht der Operator, welche Quelle liefert und welche verstummt/
+    tot ist. ``silent_count`` zählt die verstummten. Reiner Read über die DB;
+    kein Eingriff in den Ingestion-Schreibpfad.
+    """
+    from dataclasses import asdict
+
+    rows = await repo.source_activity(
+        window_hours=window_hours, silent_after_hours=silent_after_hours
+    )
+    payload = {
+        "window_hours": window_hours,
+        "silent_after_hours": silent_after_hours,
+        "silent_count": sum(1 for r in rows if r.silent),
+        "sources": [asdict(r) for r in rows],
+        "generated_at": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+    }
+    return JSONResponse(content=payload, headers={"Cache-Control": "no-store, max-age=0"})
+
+
+@router.get("/dashboard/api/operator-board", tags=["dashboard"])
+async def dashboard_operator_board_api() -> JSONResponse:
+    """Kuratiertes Operator-Board (#315): Todos / Phasen / Verbesserungen aus der
+    gepflegten SSOT ``docs/operator_board.json`` (read-only, deklarativ — NICHT
+    live-berechnet). Fehlt/kaputt → ehrlich leer (kein erfundener Inhalt). Die
+    blockierenden Gates + akuten Probleme kommen separat LIVE aus den Truth-Chips
+    (AcutePointsBoard); diese Datei liefert nur die kuratierten Listen.
+    """
+    import json
+    from pathlib import Path
+
+    payload: dict[str, Any] = {
+        "stand": "",
+        "note": "",
+        "todos": [],
+        "phases": [],
+        "improvements": [],
+    }
+    path = Path("docs/operator_board.json")
+    try:
+        if path.exists():
+            data = json.loads(path.read_text(encoding="utf-8"))
+            if isinstance(data, dict):
+                payload["stand"] = str(data.get("stand", ""))
+                payload["note"] = str(data.get("note", ""))
+                payload["todos"] = data.get("todos") or []
+                payload["phases"] = data.get("phases") or []
+                payload["improvements"] = data.get("improvements") or []
+    except Exception as exc:  # noqa: BLE001 — Panel degradiert, kein 500
+        logger.warning("operator_board_read_failed: %s", exc)
     payload["generated_at"] = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
     return JSONResponse(content=payload, headers={"Cache-Control": "no-store, max-age=0"})

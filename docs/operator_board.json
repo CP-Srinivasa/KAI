@@ -1,0 +1,17 @@
+{
+  "stand": "2026-06-17",
+  "note": "Kuratierter Operator-Board-Snapshot (SSOT) — deklarativ, NICHT live-berechnet. Vom Operator/Agenten hier gepflegt; das Dashboard liest diese Datei read-only über /dashboard/api/operator-board. Gates/Probleme kommen separat live aus den Truth-Chips (AcutePointsBoard), hier stehen Todos/Phasen/Verbesserungen.",
+  "todos": [
+    { "text": "#316 Liquidations: freie Quelle finden oder paid CoinGlass-API entscheiden (Funding/OI/Sentiment bereits intern)", "priority": "P3" },
+    { "text": "#313 Chain-Truth-KPI verdrahten, sobald L1-Infra (bitcoind-RPC über WireGuard) live ist", "priority": "P2" },
+    { "text": "#314 Replay-/Truth-Layer-KPIs, sobald Endpoints existieren (Audit-Layer ist erledigt)", "priority": "P3" },
+    { "text": "#318 Live/Replay-Umschaltung + Shadow/Live-Vergleich (braucht Replay-/Dual-Stream-Daten)", "priority": "P3" }
+  ],
+  "phases": [
+    { "label": "Dashboard UI-Update 2026.06 — Phasen 0–4", "status": "done" },
+    { "label": "Backend-Backlog #313–#319 (UI-gated Reste)", "status": "active" }
+  ],
+  "improvements": [
+    { "text": "Datums-Locale-SSOT in time.ts (Folge von #271, Zahlen-Locale war Zahlen-only)" }
+  ]
+}

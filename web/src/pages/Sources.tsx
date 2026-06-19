@@ -12,6 +12,7 @@ import { PanelErrorBoundary } from "@/components/PanelErrorBoundary";
 import { SourceReliabilityPanel } from "@/components/panels/SourceReliabilityPanel";
 import { PerSourcePrecisionPanel } from "@/components/panels/PerSourcePrecisionPanel";
 import { PerSourceStabilityPanel } from "@/components/panels/PerSourceStabilityPanel";
+import { SourceActivityPanel } from "@/components/panels/SourceActivityPanel";
 import { useDashboardQuality } from "@/lib/useDashboardQuality";
 import { useDashboardProvenance } from "@/lib/useDashboardProvenance";
 import { topFlopSources, rankProvenanceSources, type SourceRank } from "@/lib/sourceRanking";
@@ -51,6 +52,10 @@ export function SourcesPage() {
   return (
     <div className="p-4 xl:p-5 space-y-4 max-w-[1680px] mx-auto">
       <PageHeader title="Quellen" sub="Welche Quellen liefern gute Signale — und welche brauchen einen Fix." />
+
+      <PanelErrorBoundary name="Source-Activity">
+        <SourceActivityPanel />
+      </PanelErrorBoundary>
 
       <Card padded>
         <CardHeader
