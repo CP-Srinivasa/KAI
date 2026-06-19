@@ -2,12 +2,15 @@
 
 **Status:** Accepted (2026-06-19)
 **Stufe:** Edge-Diagnose **Track 3.4** (docs-only, read-only — KEINE Runtime-Änderung in dieser ADR)
-**Supersedes:** die **Latenz-Kernthese** von ADR 0008 (Upstream Latency Bottleneck). Der Rest von
-0008 (NO_EDGE-Befund, Mess-Disziplin) bleibt; nur die Aussage „die ~67–94 min sind reale,
-quellseitige Publish→sichtbar-Latenz, **kein** Timezone-/Parse-Artefakt" ist **falsch**.
+**Korrigiert:** den in der Mainline gemergten 0009-Vorinhalt (#361 — artefakt-basierte
+Freshness-/Timestamp-Tiers), der auf den falschen +60-min-Latenzzahlen beruhte.
+**Bezug ADR 0008:** dessen Latenz-Kernthese („die ~67–94 min sind reale, quellseitige Latenz,
+**kein** Timezone-/Parse-Artefakt") war falsch und wurde von der Parallel-Session bereits per
+**Revert #360 aus der Mainline entfernt**; diese ADR hält die korrekte Lesart fest.
 **Baut auf / bestätigt:** ADR 0007 (Generator NO_EDGE/NO_GO); die 06-18-Recon der Parallel-Session,
-die den `mktime`-Artefakt bereits identifiziert hatte und von 0008 versehentlich überschrieben wurde.
-**Code-Fix:** PR #364 (`rss/adapter.py` `mktime`→`calendar.timegm`).
+die den `mktime`-Artefakt zuerst identifiziert hatte.
+**Code-Fix:** bereits in der Mainline via **PR #362** (`rss/adapter.py` `mktime`→`calendar.timegm`,
+inkl. TZ-erzwingendem Regressionstest).
 
 ## Kontext
 
@@ -58,7 +61,8 @@ Feed-Lag-Plateau" über *alle* RSS-Quellen war durchgehend der konstante +60-min
 ## Was diese Korrektur invalidiert
 
 1. **ADR 0008, Kernthese:** „Damit ist die Latenz reale Publish→KAI-sichtbar-Latenz, kein
-   Timezone-/Parse-Artefakt." → **falsch**; es WAR ein Timezone-Parse-Artefakt.
+   Timezone-/Parse-Artefakt." → **falsch**; es WAR ein Timezone-Parse-Artefakt (0008 wurde
+   deshalb bereits via Revert #360 aus der Mainline entfernt).
 2. **Original-ADR-0009 (Vor-Inhalt dieser Datei):** die Tier-Zuordnung „cryptobriefing =
    FIXED_FEED_LAG ~67 m", „keine Quelle erfüllt FAST/FRESH", „~53 % strukturell fix-verspätet" —
    beruhte auf den artefakt-behafteten Zahlen und ist hinfällig.
@@ -83,14 +87,14 @@ Feed-Lag-Plateau" über *alle* RSS-Quellen war durchgehend der konstante +60-min
 
 ## Entscheidung / Konsequenz
 
-1. Der Code-Fix (`mktime`→`calendar.timegm`, PR #364) ist die einzige produktive Änderung; er
+1. Der Code-Fix (`mktime`→`calendar.timegm`) ist bereits via **PR #362** in der Mainline; er
    wurde read-only blast-radius-geprüft: **kein sub-hour-Freshness-Gate** liest `published_at`
    (einziges hartes Gate `real_analysis_paper_selector._is_fresh` = 48 h; `_novelty`/
    `_fallback_novelty` = grobe 24 h/7 d-Stufen; Narrative-Velocity/Acceleration = 24 h, advisory).
    Der Live-Decision-Effekt von 60 min ist vernachlässigbar; der Fix korrigiert gespeicherte
    Timestamps und Offline-Messfenster (`offline_baseline.py`).
 2. **Bestehende DB-`published_at` bleiben historisch +1 h verschoben.** Reine Latenz-/Timing-
-   Auswertungen über den Misch-Zeitraum müssen den Cutoff (Deploy-Zeitpunkt PR #364) beachten.
+   Auswertungen über den Misch-Zeitraum müssen den Cutoff (Pi-Deploy-Zeitpunkt von PR #362) beachten.
 3. Die nächste Edge-Arbeit zielt **nicht** auf Latenz, sondern auf **Signalqualität** (ADR 0007):
    Eventtyp-Magnitude, Asset-Reaktion, Novelty — segmentiert, gegen korrigierte Timestamps.
 
@@ -98,7 +102,7 @@ Feed-Lag-Plateau" über *alle* RSS-Quellen war durchgehend der konstante +60-min
 
 - Keine Quelle wird geblockt, geboostet, downranked.
 - Keine Runtime-/Gate-/Execution-/Sizing-/Poll-Änderung **aus dieser ADR** (der Timestamp-Fix ist
-  separat in PR #364, mit eigener Blast-Radius-Begründung).
+  separat in PR #362, bereits gemergt, mit eigener Blast-Radius-Begründung).
 - Kein Overclaim „News ist tot": die enge Aussage ist umgekehrt — die RSS-Quellen sind **frischer**
   als 0008/0009-Vorinhalt behauptete; das NO_EDGE liegt an der Signalseite, nicht an der Latenz.
 
