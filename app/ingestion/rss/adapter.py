@@ -7,8 +7,8 @@ and returns a list of CanonicalDocuments.
 from __future__ import annotations
 
 import asyncio
+import calendar
 import os
-import time
 from datetime import UTC, datetime
 from typing import Any
 
@@ -197,11 +197,18 @@ class RSSFeedAdapter(BaseSourceAdapter):
                     )
                     text = full_text
 
-        # Parse publication date
+        # Parse publication date.
+        # feedparser's ``published_parsed`` is a struct_time already normalised to
+        # UTC. ``calendar.timegm`` interprets it as UTC; ``time.mktime`` would
+        # (wrongly) treat it as host-local time and shift the timestamp by the
+        # host's UTC offset — on a CET/CEST host that silently moved every RSS
+        # ``published_at`` ~1h earlier, inflating all measured ingestion latency.
         published: datetime | None = None
         if entry.get("published_parsed"):
             try:
-                published = datetime.fromtimestamp(time.mktime(entry.published_parsed), tz=UTC)
+                published = datetime.fromtimestamp(
+                    calendar.timegm(entry.published_parsed), tz=UTC
+                )
             except (ValueError, OverflowError, OSError):
                 published = None
 

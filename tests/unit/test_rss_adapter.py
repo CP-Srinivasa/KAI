@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import os
+import time
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import feedparser
@@ -110,3 +113,35 @@ def test_feedparser_parses_sample() -> None:
     feed = feedparser.parse(SAMPLE_RSS)
     assert len(feed.entries) == 2
     assert feed.entries[0].title == "Bitcoin hits new high"
+
+
+@pytest.mark.asyncio
+async def test_published_at_is_utc_regardless_of_host_timezone() -> None:
+    """Regression: feedparser's ``published_parsed`` is a UTC struct_time. The
+    adapter must convert it with ``calendar.timegm`` (UTC), NOT ``time.mktime``
+    (host-local) — the latter silently shifted every RSS ``published_at`` by the
+    host's UTC offset (~1h on a CET/CEST host), inflating measured ingestion
+    latency. The sample pubDate is 12:00:00 UTC and must round-trip to exactly
+    12:00:00 UTC even when the host runs in a non-UTC timezone.
+    """
+    expected = datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC)
+    adapter = _make_adapter()
+
+    # Force a non-UTC host TZ where the old (buggy) mktime path would shift hours.
+    # tzset is POSIX-only; where it is unavailable the timegm path is host-TZ-
+    # independent anyway, so the assertion still holds without forcing.
+    saved_tz = os.environ.get("TZ")
+    if hasattr(time, "tzset"):
+        os.environ["TZ"] = "America/New_York"  # UTC-5/-4
+        time.tzset()
+    try:
+        with patch.object(adapter, "_fetch_raw", new=AsyncMock(return_value=SAMPLE_RSS)):
+            result = await adapter.fetch()
+        assert result.documents[0].published_at == expected
+    finally:
+        if hasattr(time, "tzset"):
+            if saved_tz is None:
+                os.environ.pop("TZ", None)
+            else:
+                os.environ["TZ"] = saved_tz
+            time.tzset()
