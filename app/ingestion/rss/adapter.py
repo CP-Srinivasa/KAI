@@ -206,9 +206,7 @@ class RSSFeedAdapter(BaseSourceAdapter):
         published: datetime | None = None
         if entry.get("published_parsed"):
             try:
-                published = datetime.fromtimestamp(
-                    calendar.timegm(entry.published_parsed), tz=UTC
-                )
+                published = datetime.fromtimestamp(calendar.timegm(entry.published_parsed), tz=UTC)
             except (ValueError, OverflowError, OSError):
                 published = None
 
