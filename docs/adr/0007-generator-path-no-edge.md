@@ -69,6 +69,26 @@ Wahrheiten** und werden **nicht** ineinander umgerechnet.
 - Runtime-/Gate-Änderung
 - bps aus Hit/Miss schätzen oder backfillen
 
+## Track 2.5b — MFE/MAE Whipsaw Finding
+
+Track 2.5b ergänzt die NO_EDGE/NO_GO-Entscheidung um eine Exit-Geometrie-Prüfung
+(liquid, side-adjusted, 1h-Fenster) — sie schließt die Hypothese „nur die Exits/TP/
+Horizon sind falsch" aus:
+
+- ALL: n=564, fwdMED +1 bps, MFE median +32 bps, MAE median −28 bps
+- LONG: n=348, fwdMED +1 bps, MFE median +32 bps, MAE median −25 bps
+- MFE_before_MAE ≈ 47–51 %
+- TP@+20 bps vor adverser Bewegung nur ca. 21–25 %
+- own_take ca. 2–3 %, own_stop ca. 19–22 %
+
+**Interpretation:** Die Signale erzeugen Bewegung, aber keine gerichtete, zuverlässig
+erntbare. Günstige und adverse Bewegung treten nahezu zufällig geordnet auf — der
+Generator markiert **Volatilität, nicht Richtung**.
+
+**Konsequenz:** Ein Exit-/Take-Profit-/Horizon-Sprint ist für diesen Signalpfad nicht
+gerechtfertigt; die NO_EDGE/NO_GO-Entscheidung bleibt. (Quelle: read-only
+Track-2.5b-Messung über die `shadow_candidate_resolved`-MFE/MAE-Felder.)
+
 ## Konsequenz
 
 Downstream-Tuning (Exit, Horizon, Source-Gewicht, Invert) ist als Edge-Hebel
