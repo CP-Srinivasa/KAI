@@ -135,7 +135,14 @@ function RiskMeterTile() {
       {!data ? (
         <StateLine state={q.state} error={q.error} emptyLabel="Risk-Backend nicht erreichbar" />
       ) : data.gross_exposure_usd <= 0 ? (
-        <p className="text-fg-subtle">Kein Markteinsatz — Buch ist flach (Paper-Mode).</p>
+        data.unavailable_price_count > 0 ? (
+          <p className="text-warn">
+            {data.unavailable_price_count} Position(en) im Buch, aber ohne Live-Kurs — nicht
+            mark-to-market bewertbar (Einstandswert im Allocation-Tile).
+          </p>
+        ) : (
+          <p className="text-fg-subtle">Kein Markteinsatz — Buch ist flach (Paper-Mode).</p>
+        )
       ) : (
         <div>
           <Metric label="Gross Exposure" value={fmt(data.gross_exposure_usd)} />
@@ -157,21 +164,30 @@ function RiskMeterTile() {
   );
 }
 
-export type AllocationItem = { symbol: string; value: number; pct: number };
+export type AllocationItem = { symbol: string; value: number; pct: number; marked: boolean };
 
-// Pure: absolute market value per position, share of total, sorted desc. Skips
-// positions without a priced market value. Total 0 -> empty (caller shows empty).
+// Pure: absolute value per position, share of total, sorted desc.
+// Uses mark-to-market (market_value_usd) when the price provider covers the
+// symbol; otherwise falls back to the backend's entry-basis display_value_usd
+// (e.g. Microcaps wie ZEREBRO, die CoinGecko nicht kennt) statt die Position
+// stillschweigend zu verstecken. `marked=false` markiert Einstands-Basis (nicht
+// mark-to-market), damit das UI es ehrlich beschriften kann. Positionen ohne
+// jeden Wert (beide null) fallen raus. Total 0 -> empty (caller shows empty).
 export function computeAllocation(positions: PaperPosition[]): {
   items: AllocationItem[];
   total: number;
 } {
-  const priced = positions
-    .map((p) => ({ symbol: p.symbol, value: Math.abs(p.market_value_usd ?? 0) }))
+  const valued = positions
+    .map((p) => {
+      const marked = p.market_value_usd != null;
+      const raw = marked ? p.market_value_usd : p.display_value_usd ?? null;
+      return { symbol: p.symbol, value: Math.abs(raw ?? 0), marked };
+    })
     .filter((p) => p.value > 0)
     .sort((a, b) => b.value - a.value);
-  const total = priced.reduce((s, p) => s + p.value, 0);
+  const total = valued.reduce((s, p) => s + p.value, 0);
   const items: AllocationItem[] =
-    total > 0 ? priced.map((p) => ({ ...p, pct: (p.value / total) * 100 })) : [];
+    total > 0 ? valued.map((p) => ({ ...p, pct: (p.value / total) * 100 })) : [];
   return { items, total };
 }
 
@@ -190,14 +206,23 @@ function AllocationTile() {
           {priced.slice(0, 8).map((p) => (
             <div key={p.symbol}>
               <div className="flex justify-between text-2xs">
-                <span className="font-mono">{p.symbol}</span>
+                <span className="font-mono">
+                  {p.symbol}
+                  {!p.marked && <span className="ml-1 text-warn">· Einstand</span>}
+                </span>
                 <span className="text-fg-subtle tabular-nums">{p.pct.toFixed(1)}%</span>
               </div>
               <div className="h-1.5 w-full rounded-full bg-bg-3 overflow-hidden">
-                <div className="h-full rounded-full bg-ai" style={{ width: `${p.pct}%` }} />
+                <div
+                  className={cn("h-full rounded-full", p.marked ? "bg-ai" : "bg-warn")}
+                  style={{ width: `${p.pct}%` }}
+                />
               </div>
             </div>
           ))}
+          {priced.some((p) => !p.marked) && (
+            <p className="text-2xs text-warn">· Einstand = ohne Live-Kurs, Einstandswert (nicht M2M)</p>
+          )}
           <p className="text-2xs text-fg-subtle">Aus /operator/portfolio-snapshot abgeleitet</p>
         </div>
       )}
