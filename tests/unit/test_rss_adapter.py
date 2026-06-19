@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import time
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import feedparser
@@ -68,6 +70,36 @@ async def test_fetch_document_fields() -> None:
     assert doc.source_type == SourceType.RSS_FEED
     assert doc.author == "Test Author"
     assert doc.published_at is not None
+
+
+@pytest.mark.skipif(
+    not hasattr(time, "tzset"), reason="local-TZ manipulation requires POSIX time.tzset"
+)
+@pytest.mark.asyncio
+async def test_published_at_is_utc_independent_of_local_tz(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The pubDate is ``+0000`` (UTC); ``published_at`` must equal it exactly,
+    regardless of the host timezone.
+
+    Regression guard: a prior ``time.mktime(published_parsed)`` interpreted the
+    UTC ``struct_time`` as *local* time, adding a constant offset (e.g. +1h under
+    CET, since tm_isdst=0 forces standard time) to every RSS ``published_at``.
+    We force a non-UTC local timezone so a reintroduced ``mktime`` would yield
+    11:00 instead of the correct 12:00 and fail this test even on a UTC CI host.
+    """
+    monkeypatch.setenv("TZ", "Europe/Berlin")
+    time.tzset()
+    try:
+        adapter = _make_adapter()
+        with patch.object(adapter, "_fetch_raw", new=AsyncMock(return_value=SAMPLE_RSS)):
+            result = await adapter.fetch()
+    finally:
+        monkeypatch.delenv("TZ", raising=False)
+        time.tzset()
+
+    doc = result.documents[0]
+    assert doc.published_at == datetime(2024, 1, 1, 12, 0, 0, tzinfo=UTC)
 
 
 @pytest.mark.asyncio
