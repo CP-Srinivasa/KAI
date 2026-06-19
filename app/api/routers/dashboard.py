@@ -1764,6 +1764,61 @@ async def dashboard_markets_liquidations_api() -> JSONResponse:
     return JSONResponse(content=payload, headers={"Cache-Control": "no-store, max-age=0"})
 
 
+# Binance all-market liquidation canary (#316). Local-file read → small TTL cache
+# so rapid dashboard polls don't re-parse the ledger every request.
+_LIQ_STREAM_TTL_S = 15.0
+_liq_stream_cache: dict[str, Any] = {"at": 0.0, "payload": None}
+
+
+@router.get("/dashboard/api/markets/liquidations-stream", tags=["dashboard"])
+async def dashboard_markets_liquidations_stream_api() -> JSONResponse:
+    """Read-only Binance all-market Liquidations-Canary (#316, ``!forceOrder@arr``).
+
+    Liest den lokalen Event-Ledger (vom ``kai-liquidation-stream``-Consumer
+    geschrieben) + einen Heartbeat und liefert windowed Metriken. KEIN Live-
+    Provider-Call im Request, KEIN schreibender/kapitalrelevanter Pfad. Das
+    Heartbeat trennt ehrlich „verbunden, aber ruhiger Markt" (idle) von „Feed
+    down". ``is_snapshot_limited`` ist immer True: der All-Market-Stream pusht nur
+    die größte Liquidation pro Symbol/1000 ms → unterzählt, nie als Markt-Total.
+    """
+    from datetime import timedelta
+
+    from app.ingestion.liquidations.binance_stream import HEARTBEAT_PATH
+    from app.market_data.liquidation_ledger import DEFAULT_PATH as _LIQ_LEDGER
+    from app.market_data.liquidation_ledger import load_events
+    from app.market_data.liquidation_metrics import compute_liquidation_metrics
+
+    mono = time.monotonic()
+    cached = _liq_stream_cache.get("payload")
+    if cached is not None and (mono - _liq_stream_cache["at"]) < _LIQ_STREAM_TTL_S:
+        return JSONResponse(content=cached, headers={"Cache-Control": "no-store, max-age=0"})
+
+    now = datetime.now(UTC)
+    events = load_events(_LIQ_LEDGER, since=now - timedelta(hours=1), max_lines=20_000)
+    metrics = compute_liquidation_metrics(events, now)
+
+    heartbeat_age: float | None = None
+    try:
+        ts = datetime.fromisoformat(HEARTBEAT_PATH.read_text(encoding="utf-8").strip())
+        heartbeat_age = round((now - ts).total_seconds(), 1)
+    except (OSError, ValueError):
+        heartbeat_age = None
+    stream_connected = heartbeat_age is not None and heartbeat_age <= 120.0
+
+    payload = {
+        "available": stream_connected,
+        "source": "binance_forceorder",
+        "is_snapshot_limited": True,
+        "stream_connected": stream_connected,
+        "heartbeat_age_seconds": heartbeat_age,
+        "metrics": metrics.to_dict(),
+        "generated_at": now.isoformat(),
+    }
+    _liq_stream_cache["payload"] = payload
+    _liq_stream_cache["at"] = mono
+    return JSONResponse(content=payload, headers={"Cache-Control": "no-store, max-age=0"})
+
+
 @router.get("/dashboard/api/markets/momentum", tags=["dashboard"])
 async def dashboard_markets_momentum_api() -> JSONResponse:
     """Read-only Preis-Momentum (Binance 24h-Ticker, kein Key).

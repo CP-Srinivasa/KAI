@@ -613,6 +613,43 @@ export function fetchLiquidations(signal?: AbortSignal): Promise<LiquidationsSna
   return apiGet<LiquidationsSnapshot>("/dashboard/api/markets/liquidations", { signal });
 }
 
+// Binance all-market Liquidations-Canary (#316, !forceOrder@arr, read-only).
+// is_snapshot_limited=true: nur die GRÖSSTE Liquidation pro Symbol/1000ms wird
+// gepusht → unterzählt, NIE als Markt-Total lesen. stream_connected kommt aus dem
+// Heartbeat (trennt „verbunden aber ruhig" von „Feed down").
+export type LiquidationStreamMetrics = {
+  generated_at: string;
+  total_events: number;
+  events_per_min: number;
+  window_events: Record<string, number>;
+  notional_usd: Record<string, number>;
+  long_notional_usd_15m: number;
+  short_notional_usd_15m: number;
+  imbalance_15m: number | null;
+  largest_event_usd_15m: number;
+  asset_bucket_15m: Record<string, number>;
+  exchange_count_15m: number;
+  data_gap_seconds: number | null;
+  feed_health: string;
+  is_snapshot_limited: boolean;
+};
+export type LiquidationStreamSnapshot = {
+  available: boolean;
+  source: string;
+  is_snapshot_limited: boolean;
+  stream_connected: boolean;
+  heartbeat_age_seconds: number | null;
+  metrics: LiquidationStreamMetrics;
+  generated_at: string;
+};
+export function fetchLiquidationsStream(
+  signal?: AbortSignal,
+): Promise<LiquidationStreamSnapshot> {
+  return apiGet<LiquidationStreamSnapshot>("/dashboard/api/markets/liquidations-stream", {
+    signal,
+  });
+}
+
 // Preis-Momentum (Binance 24h-Ticker, frei/read-only). change_pct_24h = echte
 // 24h-Änderung in %. available=false solange Cache kalt / Fetch fehlschlägt.
 export type MomentumRow = {
