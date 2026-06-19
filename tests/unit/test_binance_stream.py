@@ -6,6 +6,8 @@ the bounded reconnect loop via injected fakes.
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import json
 from datetime import datetime
 from pathlib import Path
@@ -91,6 +93,38 @@ async def test_consume_drains_and_heartbeats(tmp_path: Path) -> None:
     assert len(load_events(led)) == 2  # garbage skipped
     # heartbeat written + parseable as ISO timestamp
     assert datetime.fromisoformat(hb.read_text(encoding="utf-8").strip()).tzinfo is not None
+
+
+class _SilentWS:
+    """Connected ws that never yields a message (calm market)."""
+
+    def __aiter__(self) -> _SilentWS:
+        return self
+
+    async def __anext__(self) -> str:
+        await asyncio.sleep(3600)  # block until cancelled
+        raise StopAsyncIteration  # pragma: no cover
+
+
+@pytest.mark.asyncio
+async def test_consume_heartbeat_ticks_without_messages(tmp_path: Path) -> None:
+    """Regression: the heartbeat must refresh even with zero messages, else a
+    calm market would look like a dead feed (false 'down')."""
+    led = tmp_path / "liq.jsonl"
+    hb = tmp_path / "hb.txt"
+    task = asyncio.create_task(bs._consume(_SilentWS(), led, hb, heartbeat_tick_s=0.05))
+    try:
+        await asyncio.sleep(0.12)
+        first = hb.read_text(encoding="utf-8")
+        await asyncio.sleep(0.15)
+        second = hb.read_text(encoding="utf-8")
+    finally:
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+    assert first and second
+    assert first != second  # ticker advanced the timestamp without any message
+    assert load_events(led) == []  # no messages → nothing written
 
 
 @pytest.mark.asyncio

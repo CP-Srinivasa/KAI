@@ -76,12 +76,40 @@ def write_heartbeat(path: Path = HEARTBEAT_PATH, *, force: bool = False) -> None
         pass  # heartbeat is best-effort; never crash the consumer over it
 
 
-async def _consume(ws: Any, ledger_path: Path, heartbeat_path: Path) -> None:
-    """Drain messages from a connected ws into the ledger; heartbeat each frame."""
+_HEARTBEAT_TICK_S = 15.0
+
+
+async def _consume(
+    ws: Any,
+    ledger_path: Path,
+    heartbeat_path: Path,
+    *,
+    heartbeat_tick_s: float = _HEARTBEAT_TICK_S,
+) -> None:
+    """Drain messages from a connected ws into the ledger; heartbeat each frame.
+
+    A concurrent ticker also refreshes the heartbeat every ``heartbeat_tick_s``
+    while connected — ``!forceOrder@arr`` is silent during calm markets (minutes
+    with zero messages), so a message-only heartbeat would go stale and the
+    dashboard would falsely report the feed as 'down'. The ticker is bound to the
+    connection lifetime: it is cancelled the moment the stream ends/errors, so a
+    real disconnect still lets the heartbeat go stale (honest 'down')."""
     write_heartbeat(heartbeat_path, force=True)  # mark 'connected' immediately
-    async for raw in ws:
-        process_raw(raw, ledger_path)
-        write_heartbeat(heartbeat_path)
+
+    async def _ticker() -> None:
+        while True:
+            await asyncio.sleep(heartbeat_tick_s)
+            write_heartbeat(heartbeat_path, force=True)
+
+    ticker = asyncio.create_task(_ticker())
+    try:
+        async for raw in ws:
+            process_raw(raw, ledger_path)
+            write_heartbeat(heartbeat_path)
+    finally:
+        ticker.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await ticker
 
 
 async def run(
