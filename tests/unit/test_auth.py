@@ -75,6 +75,35 @@ def _app_with_auth(api_key: str, env: str = "production") -> FastAPI:
     return app
 
 
+def _app_with_oracle(*, l402_enabled: bool) -> FastAPI:
+    app = FastAPI()
+
+    @app.get("/oracle/onchain-facts")
+    async def _oracle() -> dict[str, str]:
+        return {"ok": "true"}
+
+    @app.get("/protected")
+    async def _protected() -> dict[str, str]:
+        return {"ok": "true"}
+
+    setup_auth(app, api_key="secret-key", env="production", l402_enabled=l402_enabled)
+    return app
+
+
+def test_oracle_public_only_when_l402_enabled() -> None:
+    # Enabled → /oracle is public (its own L402 paywall is the auth) → reaches route.
+    with TestClient(_app_with_oracle(l402_enabled=True)) as client:
+        assert client.get("/oracle/onchain-facts").status_code == 200
+        # non-oracle paths stay protected even when the oracle is public.
+        assert client.get("/protected").status_code == 401
+
+
+def test_oracle_stays_behind_global_auth_when_disabled() -> None:
+    # Disabled → /oracle is NOT exempt → global Bearer auth applies (defense-in-depth).
+    with TestClient(_app_with_oracle(l402_enabled=False)) as client:
+        assert client.get("/oracle/onchain-facts").status_code == 401
+
+
 def test_bearer_auth_accepts_valid_token() -> None:
     app = _app_with_auth("secret-key")
     with TestClient(app) as client:

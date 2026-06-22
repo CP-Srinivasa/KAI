@@ -248,6 +248,7 @@ def create_app() -> FastAPI:
             e.strip() for e in settings.cf_access_allowed_emails.split(",") if e.strip()
         ],
         tv_webhook_enabled=settings.tradingview.webhook_enabled,
+        l402_enabled=settings.lightning.l402_enabled,
         rate_limit_threshold=settings.auth_rate_limit_threshold,
         rate_limit_window_seconds=settings.auth_rate_limit_window_seconds,
         api_key_next=settings.api_key_next,
