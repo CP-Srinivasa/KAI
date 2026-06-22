@@ -40,6 +40,7 @@ from app.api.routers import (
     signals,
     sources,
     tradingview,
+    truth_oracle,
 )
 from app.core.logging import configure_logging, get_logger
 from app.core.settings import get_settings
@@ -288,6 +289,7 @@ def create_app() -> FastAPI:
     # POST-Endpoints + 1 GET für pending-envelopes — Datenquelle für UI-Buttons).
     app.include_router(premium_signals.router)
     app.include_router(diversification.router)
+    app.include_router(truth_oracle.router)
 
     # React-SPA (Vite-Build) unter /dashboard. JSON-Route /dashboard/api/quality
     # wurde oben über include_router zuerst registriert und hat dadurch Vorrang
