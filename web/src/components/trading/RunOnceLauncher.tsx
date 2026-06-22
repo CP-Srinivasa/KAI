@@ -178,6 +178,10 @@ export function RunOnceLauncher({ status, onCycleStarted, onStateChange }: Props
         const res: RunOnceResponse = await postRunOnce({
           idempotency_key: idempKey,
           symbol: symbol.trim() || undefined,
+          // Explicit real provider: never fall through to the backend's
+          // (now removed) "mock" default, which would write synthetic-price
+          // paper trades into the real audit/quality metrics.
+          provider: "coingecko",
         });
         const cycleSym =
           (typeof res.symbol === "string" && res.symbol) || symbol.trim() || "BTC/USDT";

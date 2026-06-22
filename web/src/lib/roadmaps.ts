@@ -52,7 +52,7 @@ export function phaseStatusTone(s: PhaseStatus): Tone {
   }
 }
 
-export const ROADMAP_SNAPSHOT_DATE = "2026-06-17";
+export const ROADMAP_SNAPSHOT_DATE = "2026-06-22";
 
 export const ROADMAPS: Roadmap[] = [
   {
@@ -62,9 +62,9 @@ export const ROADMAPS: Roadmap[] = [
     phases: [
       { id: "p0", label: "Phase 0 · Design-System", status: "done", note: "Status-SSOT, Viz-Primitives, Explainer" },
       { id: "p1", label: "Phase 1 · Command Center", status: "done", note: "Command Header, Executive Snapshot, Akute Punkte, Node-KPI — live" },
-      { id: "p2", label: "Phase 2 · Neue Seiten", status: "active", note: "Quellen ✓ · System ✓ · Node ✓ · Roadmaps in Arbeit" },
-      { id: "p3", label: "Phase 3 · Per-Seite-Overhaul", status: "planned", note: "Märkte/Signale/Trades/Portfolio/Alerts/Risiko/KI/Agenten" },
-      { id: "p4", label: "Phase 4 · Interaktion & Politur", status: "planned", note: "Fokus-Modi, Live/Replay, Shadow/Live-Vergleich" },
+      { id: "p2", label: "Phase 2 · Neue Seiten", status: "done", note: "Quellen ✓ · System ✓ · Node ✓ · Roadmaps ✓ — live" },
+      { id: "p3", label: "Phase 3 · Per-Seite-Overhaul", status: "done", note: "Märkte/Signale/Trades/Portfolio/Alerts/Risiko/KI/Agenten — gemerged+deployed" },
+      { id: "p4", label: "Phase 4 · Interaktion & Politur", status: "done", note: "Dichte/Fokus/Vollbild — live" },
     ],
   },
   {

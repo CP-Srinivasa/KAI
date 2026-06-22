@@ -192,6 +192,12 @@ export type OperatorBoard = {
   phases: OperatorPhase[];
   improvements: OperatorImprovement[];
   generated_at: string;
+  /** Alter des kuratierten Snapshots in Tagen (null wenn stand fehlt/unparsebar). */
+  age_days?: number | null;
+  /** true wenn der Snapshot älter als die Frische-Schwelle ist (Backend: >7d). */
+  is_stale?: boolean;
+  /** Markiert die Quelle als manuell gepflegt, nicht live-berechnet. */
+  content_type?: string;
 };
 export function fetchOperatorBoard(signal?: AbortSignal): Promise<OperatorBoard> {
   return apiGet<OperatorBoard>("/dashboard/api/operator-board", { signal });
@@ -262,9 +268,10 @@ export type DashboardQuality = {
   reentry?: {
     target_date: string;
     today: string;
-    status: "active" | "expired" | "unverified" | string;
+    status: "active" | "expired" | "no_active_target" | "requires_re_evaluation" | "unverified" | string;
     days_delta: number | null;
     warning: string | null;
+    target_source?: string;
   };
   precision_pct: number | null;
   false_positive_pct: number | null;

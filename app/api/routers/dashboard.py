@@ -200,15 +200,21 @@ def _reentry_status(*, target_date: str | None = None) -> dict[str, Any]:
         }
     delta_days = (target.date() - now.date()).days
     if delta_days < 0:
+        # A target in the past means there is no CURRENTLY ACTIVE re-entry target.
+        # Present it neutrally (config pending) rather than as an alarming
+        # "expired/error": the operator simply has not set a new target yet. The
+        # lapsed date is still surfaced for context; a genuinely future target
+        # below reads as "active".
         return {
             "target_date": target_date,
             "target_source": target_source,
             "today": now.date().isoformat(),
-            "status": "expired",
+            "status": "no_active_target",
             "days_delta": delta_days,
             "warning": (
-                "Historical Re-Entry target has expired; current readiness needs a new "
-                "target or gate definition."
+                f"Kein aktives Re-Entry-Target — das letzte Ziel ({target_date}) liegt "
+                "in der Vergangenheit, Konfiguration ausstehend (kein Fehler). Operator "
+                "setzt ALERT_REENTRY_TARGET_DATE, sobald ein neues Ziel feststeht."
             ),
         }
     return {
@@ -1475,8 +1481,23 @@ async def dashboard_calibration_api(n_bins: int = 10) -> JSONResponse:
             status_code=503,
         )
 
+    # Honesty: the outcome-map that joins bayes predictions to realised outcomes
+    # is not wired in production yet (_BAYES_OUTCOME_MAP is empty), so n_pairs is
+    # always 0 live. Mark that explicitly as a wiring gap (state "disabled") so a
+    # null/empty report is not misread as "perfectly calibrated on 0 samples".
+    wired = bool(_BAYES_OUTCOME_MAP)
+    notes = list(report.notes)
+    if not wired:
+        notes.insert(
+            0,
+            "Outcome-Map nicht verdrahtet (wiring_status=not_connected): n_pairs "
+            "bleibt 0, bis der Bayes→Outcome-Join existiert — das ist KEIN "
+            "'perfekt kalibriert', sondern ein noch nicht angeschlossener Pfad.",
+        )
     payload = {
         "generated_at": datetime.now(UTC).isoformat(),
+        "state": "ok" if wired else "disabled",
+        "wiring_status": "connected" if wired else "not_connected",
         "n_pairs": report.n_pairs,
         "total_weight": report.total_weight,
         "brier_score": report.brier_score,
@@ -1486,7 +1507,7 @@ async def dashboard_calibration_api(n_bins: int = 10) -> JSONResponse:
         "mean_observed": report.mean_observed,
         "sample_sufficient": report.sample_sufficient,
         "bins": [b.model_dump() for b in report.bins],
-        "notes": list(report.notes),
+        "notes": notes,
         "outcome_map_size": len(_BAYES_OUTCOME_MAP),
     }
     return JSONResponse(
@@ -2000,4 +2021,17 @@ async def dashboard_operator_board_api() -> JSONResponse:
     except Exception as exc:  # noqa: BLE001 — Panel degradiert, kein 500
         logger.warning("operator_board_read_failed: %s", exc)
     payload["generated_at"] = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    # Honesty: this board is hand-curated (not live-computed), so expose how old
+    # the snapshot is instead of letting a 5-day-old "stand" read as current.
+    age_days: int | None = None
+    stand_raw = payload["stand"]
+    if isinstance(stand_raw, str) and stand_raw.strip():
+        try:
+            stand_date = datetime.strptime(stand_raw.strip()[:10], "%Y-%m-%d").date()
+            age_days = (datetime.now(UTC).date() - stand_date).days
+        except ValueError:
+            age_days = None
+    payload["age_days"] = age_days
+    payload["is_stale"] = bool(age_days is not None and age_days > 7)
+    payload["content_type"] = "curated_static"
     return JSONResponse(content=payload, headers={"Cache-Control": "no-store, max-age=0"})

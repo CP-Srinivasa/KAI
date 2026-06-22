@@ -81,17 +81,26 @@ class KaiStateInput(BaseModel):
 async def get_current_kai_state() -> JSONResponse:
     """Return the current resolved runtime state.
 
-    Phase 1 implementation: resolves to IDLE with a fresh phrase. Later phases
-    will aggregate inputs from agent-worker, exposure summary and hold metrics
-    to compute the actual state. The endpoint contract stays stable.
+    Phase 1 implementation: resolves to a FIXED IDLE state — it is not derived
+    from live system inputs yet. The response is therefore flagged
+    ``is_stub: true`` / ``phase: 1`` so the UI renders it honestly as a
+    placeholder instead of pretending a live status. Later phases will aggregate
+    inputs from agent-worker, exposure summary and hold metrics; the contract
+    stays stable and ``is_stub`` flips to false once the resolver is wired.
     """
+    is_stub = True
     try:
         persona = load_kai_persona()
         comment = get_kai_phrase("IDLE", persona.language_default, persona=persona)
         rt = create_fallback_state("IDLE", comment)
     except KaiPersonaConfigError as exc:
         rt = fail_closed_state(str(exc))
-    return JSONResponse(content=rt.to_dict())
+        # A real fail-closed error is truthful, not a placeholder.
+        is_stub = False
+    content = rt.to_dict()
+    content["is_stub"] = is_stub
+    content["phase"] = 1
+    return JSONResponse(content=content)
 
 
 class KaiAuditEventInput(BaseModel):

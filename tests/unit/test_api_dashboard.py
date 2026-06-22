@@ -180,7 +180,9 @@ def test_quality_api_returns_metrics(
     assert data["gate_status"] == "hold_remains_active"
     assert "resolved_directional_below_200" in data["blocking_reasons"]
     assert data["dashboard_truth_contract_version"] == 2
-    assert data["reentry"]["status"] == "expired"
+    # A past target reads as neutral "no_active_target" (config pending), NOT an
+    # alarming "expired" — the operator simply has not set a new target yet.
+    assert data["reentry"]["status"] == "no_active_target"
     assert data["reentry"]["target_date"] == "2026-05-16"
     assert data["metric_contract"]["paper_fills_with_pnl"]["scope"] in {
         "lifetime",
@@ -493,18 +495,19 @@ def test_reentry_status_config_and_failsafe_semantics() -> None:
     assert future["status"] == "active"
     assert future["days_delta"] > 0
     assert future["target_source"] == "explicit"
-    # Past date → expired, NOT clamped to 0/today.
+    # Past date → no_active_target (config pending), NOT an alarming "expired"
+    # and NOT clamped to 0/today. days_delta stays the true negative value.
     past = dashboard_mod._reentry_status(target_date="2020-01-01")
-    assert past["status"] == "expired"
+    assert past["status"] == "no_active_target"
     assert past["days_delta"] < 0
     # Empty/invalid → fail-safe requires_re_evaluation, no crash, no invented target.
     empty = dashboard_mod._reentry_status(target_date="")
     assert empty["status"] == "requires_re_evaluation"
     assert empty["days_delta"] is None
-    # Default (from settings) → historical 2026-05-16 default is in the past → expired.
+    # Default (from settings) → 2026-05-16 lies in the past → neutral no_active_target.
     default = dashboard_mod._reentry_status()
     assert default["target_date"] == "2026-05-16"
-    assert default["status"] == "expired"
+    assert default["status"] == "no_active_target"
     assert default["target_source"] in {"config", "default_historical"}
 
 

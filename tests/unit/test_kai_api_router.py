@@ -52,6 +52,10 @@ def test_state_endpoint_returns_idle_runtime(client: TestClient):
     assert body["state"] == "IDLE"
     assert "comment" in body
     assert body["statusLabel"] == "IDLE"
+    # Phase-1 stub must be flagged honestly so the UI does not present it as a
+    # live-derived status (regression guard for the "Live · IDLE" deception).
+    assert body["is_stub"] is True
+    assert body["phase"] == 1
 
 
 def test_audit_post_persists_event(client: TestClient):

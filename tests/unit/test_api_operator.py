@@ -392,6 +392,50 @@ def test_operator_run_once_requires_idempotency_key(client: TestClient) -> None:
     )
 
 
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"symbol": "BTC/USDT", "mode": "paper"},  # provider key omitted entirely
+        {"symbol": "BTC/USDT", "mode": "paper", "provider": ""},  # empty string
+        {"symbol": "BTC/USDT", "mode": "paper", "provider": "   "},  # whitespace only
+    ],
+)
+def test_operator_run_once_without_provider_is_rejected_without_mock_fill(
+    client: TestClient,
+    monkeypatch: pytest.MonkeyPatch,
+    body: dict[str, str],
+) -> None:
+    """Regression: run-once must not silently fall back to mock prices.
+
+    A request that omits (or blanks) the provider must fail loud with
+    400 missing_provider and must NEVER reach run_trading_loop_once, so no
+    synthetic-price paper trade can contaminate the real audit/quality metrics.
+    """
+    _set_operator_api_key(client.app, "operator-token")
+
+    fill_attempted = False
+
+    async def fake_run_once(**kwargs: object) -> dict[str, object]:
+        nonlocal fill_attempted
+        fill_attempted = True
+        return {"status": "cycle_completed"}
+
+    monkeypatch.setattr(operator_router.mcp_server, "run_trading_loop_once", fake_run_once)
+
+    response = client.post(
+        "/operator/trading-loop/run-once",
+        headers=_auth_headers(idempotency_key="idem-no-provider"),
+        json=body,
+    )
+
+    _assert_error_payload(
+        response,
+        status_code=400,
+        error_code="missing_provider",
+    )
+    assert fill_attempted is False
+
+
 @pytest.mark.parametrize("mode", ["paper", "shadow"])
 def test_operator_run_once_guarded_endpoint_accepts_only_controlled_modes(
     client: TestClient,
