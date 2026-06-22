@@ -19,6 +19,7 @@ from app.observability.generator_edge import (
     cohort_cvar_bps,
     compute_ic_by_horizon,
     compute_signal_decay,
+    evaluate_verdict,
     max_drawdown_bps,
     sharpe_ratio,
     sortino_ratio,
@@ -208,6 +209,44 @@ def test_single_regime_blocks_go():
     )
     assert prof.verdict == VERDICT_NO_GO
     assert any("distinct_regimes" in r for r in prof.reason_codes)
+
+
+def _all_pass_kwargs(**overrides):
+    """evaluate_verdict kwargs where every gate passes; override to isolate one."""
+    base = {
+        "resolved_count": 40,
+        "ev_after_costs_bps": 50.0,
+        "net_bps_median": 10.0,
+        "p_mu_net_positive": 0.99,
+        "ic_by_horizon": {"1h": 0.2, "4h": 0.2},
+        "calibration_error": 0.05,
+        "max_dd_bps": 100.0,
+        "distinct_regimes": 2,
+        "config": EdgeGateConfig(min_resolved=30),
+    }
+    base.update(overrides)
+    return base
+
+
+def test_median_gate_blocks_mean_artefact():
+    # Mean is positive (+50) but the MEDIAN trade loses (-5): a few outliers
+    # inflated the mean. The median gate must turn this into NO_GO so a mean
+    # artefact can never manufacture a GO (edge-hardening 2026-06-22).
+    verdict, reasons = evaluate_verdict(**_all_pass_kwargs(net_bps_median=-5.0))
+    assert verdict == VERDICT_NO_GO
+    assert any("net_bps_median" in r for r in reasons)
+
+
+def test_median_gate_passes_when_median_positive():
+    verdict, reasons = evaluate_verdict(**_all_pass_kwargs(net_bps_median=10.0))
+    assert verdict == VERDICT_GO, reasons
+
+
+def test_median_gate_none_is_honest_block():
+    # Missing median is unavailable data, not a pass: it must block GO honestly.
+    verdict, reasons = evaluate_verdict(**_all_pass_kwargs(net_bps_median=None))
+    assert verdict == VERDICT_NO_GO
+    assert any("net_bps_median=None" in r for r in reasons)
 
 
 def test_payoff_ratio_none_without_losses():

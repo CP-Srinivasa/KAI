@@ -120,6 +120,18 @@ class EdgeGateConfig:
     min_ev_after_costs_bps: float = 0.0
     """EV after costs must be strictly above this (bps)."""
 
+    min_net_bps_median: float = 0.0
+    """Median net edge after costs must be strictly above this (bps).
+
+    Edge-hardening (2026-06-22). The EV gate above uses the cohort MEAN, which a
+    handful of glitch-scale prints can hijack into a phantom positive (the
+    "+32bps generator" of 2026-06-18/22 was a microcap mean artefact; its median
+    was ~+1bps). Requiring a positive MEDIAN — which outliers cannot move — means
+    a mean artefact can no longer manufacture a GO. Default 0.0: the cohort must
+    be net-positive for the *typical* trade, not merely on average. Raise this to
+    a benchmark+cost floor (e.g. a liquid-major buy-and-hold baseline) to demand
+    the generator beat a trivial strategy, not just zero."""
+
     min_p_mu_net_positive: float = 0.60
     """Bootstrap probability that the mean net edge is > 0."""
 
@@ -159,6 +171,7 @@ class GeneratorEdgeProfile:
     payoff_ratio: float | None
     expected_value_before_costs_bps: float | None
     expected_value_after_costs_bps: float | None
+    expected_value_median_after_costs_bps: float | None
     fees_impact_bps: float | None
     slippage_impact_bps: float | None
     latency_impact_bps: float | None
@@ -194,6 +207,7 @@ class GeneratorEdgeProfile:
             "payoff_ratio": _r(self.payoff_ratio),
             "expected_value_before_costs_bps": _r(self.expected_value_before_costs_bps),
             "expected_value_after_costs_bps": _r(self.expected_value_after_costs_bps),
+            "expected_value_median_after_costs_bps": _r(self.expected_value_median_after_costs_bps),
             "fees_impact_bps": _r(self.fees_impact_bps),
             "slippage_impact_bps": _r(self.slippage_impact_bps),
             "latency_impact_bps": _r(self.latency_impact_bps),
@@ -232,6 +246,7 @@ class GeneratorEdgeReport:
             "gate_config": {
                 "min_resolved": self.gate_config.min_resolved,
                 "min_ev_after_costs_bps": self.gate_config.min_ev_after_costs_bps,
+                "min_net_bps_median": self.gate_config.min_net_bps_median,
                 "min_p_mu_net_positive": self.gate_config.min_p_mu_net_positive,
                 "min_ic_horizons_positive": self.gate_config.min_ic_horizons_positive,
                 "max_ece": self.gate_config.max_ece,
@@ -384,6 +399,7 @@ def evaluate_verdict(
     *,
     resolved_count: int,
     ev_after_costs_bps: float | None,
+    net_bps_median: float | None = None,
     p_mu_net_positive: float | None,
     ic_by_horizon: Mapping[str, float | None],
     calibration_error: float | None,
@@ -408,6 +424,13 @@ def evaluate_verdict(
         reasons.append(
             f"ev_after_costs={ev_after_costs_bps:.2f}bps<={config.min_ev_after_costs_bps}"
         )
+
+    # Mean-artefact guard (2026-06-22): the MEDIAN net edge must also clear the
+    # bar, so a mean inflated by a few outliers cannot manufacture a GO.
+    if net_bps_median is None:
+        reasons.append("net_bps_median=None")
+    elif net_bps_median <= config.min_net_bps_median:
+        reasons.append(f"net_bps_median={net_bps_median:.2f}bps<={config.min_net_bps_median}")
 
     if p_mu_net_positive is None:
         reasons.append("p_mu_net_positive=None")
@@ -504,6 +527,7 @@ def build_cohort_profile(
             payoff_ratio=None,
             expected_value_before_costs_bps=None,
             expected_value_after_costs_bps=None,
+            expected_value_median_after_costs_bps=None,
             fees_impact_bps=None,
             slippage_impact_bps=None,
             latency_impact_bps=latency_impact_bps,
@@ -527,6 +551,7 @@ def build_cohort_profile(
     # EV decomposition — net comes from the SAME CostModel the engine charges.
     ev_before = cohort.gross_bps_mean
     ev_after = cohort.net_bps_mean
+    ev_median = cohort.net_bps_median  # outlier-robust companion to ev_after
     fees_impact = cohort.fee_bps_mean
     slippage_impact = cohort.slippage_bps_mean
 
@@ -560,6 +585,7 @@ def build_cohort_profile(
     verdict, reasons = evaluate_verdict(
         resolved_count=resolved,
         ev_after_costs_bps=ev_after,
+        net_bps_median=ev_median,
         p_mu_net_positive=cohort.p_mu_net_positive,
         ic_by_horizon=ic,
         calibration_error=ece,
@@ -577,6 +603,7 @@ def build_cohort_profile(
         payoff_ratio=payoff,
         expected_value_before_costs_bps=ev_before,
         expected_value_after_costs_bps=ev_after,
+        expected_value_median_after_costs_bps=ev_median,
         fees_impact_bps=fees_impact,
         slippage_impact_bps=slippage_impact,
         latency_impact_bps=latency_impact_bps,

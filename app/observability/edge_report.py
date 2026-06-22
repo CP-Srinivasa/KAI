@@ -73,6 +73,19 @@ _DEFAULT_BOOTSTRAP_N = 5000
 # disables the guard (forensic signatures in bayes_quarantine still apply).
 DEFAULT_IMPLAUSIBLE_MOVE_THRESHOLD = 0.40
 
+# Robust-statistics guard (2026-06-22, edge-hardening). The per-trade implausible
+# guard above DROPS off-market round-trips at parse time. This second, softer
+# bound protects the *cohort mean* from plausible-but-extreme survivors: a small
+# number of large real (or stale-microcap) moves can hijack an arithmetic mean
+# and manufacture a phantom edge (the 2026-06-18/22 "+32bps generator" was a
+# pure mean artefact from a few microcap prints; the MEDIAN was ~+1bps). We
+# therefore ALWAYS report the median (which a handful of outliers cannot move)
+# and a winsorized mean alongside the raw mean. ``WINSOR_LIMIT_BPS`` clips each
+# per-trade net/gross bps to ±limit before averaging; 500 bps (5%) is far beyond
+# any per-trade edge KAI realistically captures on liquid assets, so clipping
+# only touches glitch-scale survivors, never genuine edge.
+WINSOR_LIMIT_BPS = 500.0
+
 # B-Fix 2026-06-13 (Operator): every premium paper trade BEFORE this cutoff was
 # sized 1x because the stated signal leverage was audit-only
 # (leverage_mode="paper_audit_only"). Their PnL is systematically too small and
@@ -147,6 +160,27 @@ def bootstrap_p_mean_positive(
 
 def _mean(xs: Sequence[float]) -> float:
     return sum(xs) / len(xs) if xs else 0.0
+
+
+def _median(xs: Sequence[float]) -> float:
+    """Outlier-robust central tendency. 0.0 for an empty sequence (like _mean)."""
+    n = len(xs)
+    if n == 0:
+        return 0.0
+    s = sorted(xs)
+    mid = n // 2
+    return s[mid] if n % 2 else (s[mid - 1] + s[mid]) / 2.0
+
+
+def _winsorized_mean(xs: Sequence[float], limit_bps: float = WINSOR_LIMIT_BPS) -> float:
+    """Mean after clipping each value to ±limit_bps. Neutralises glitch-scale
+    survivors that the implausible-move guard let through, without discarding
+    the trade entirely. limit_bps <= 0 disables clipping (returns plain mean)."""
+    if not xs:
+        return 0.0
+    if limit_bps <= 0:
+        return _mean(xs)
+    return _mean([max(-limit_bps, min(limit_bps, float(x))) for x in xs])
 
 
 # --- parsed audit records ------------------------------------------------------
@@ -278,6 +312,12 @@ class CohortEdge:
     avg_loss_bps: float
     p_mu_net_positive: float | None
     realized_pnl_usd_sum: float
+    # Robust statistics (2026-06-22 hardening): outlier-resistant companions to
+    # the arithmetic means above. The median and winsorized mean cannot be moved
+    # by a handful of glitch-scale prints, so they expose mean artefacts.
+    net_bps_median: float = 0.0
+    gross_bps_median: float = 0.0
+    net_bps_mean_winsorized: float = 0.0
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -286,11 +326,14 @@ class CohortEdge:
             "count": self.count,
             "gross_bps_sum": round(self.gross_bps_sum, 4),
             "gross_bps_mean": round(self.gross_bps_mean, 4),
+            "gross_bps_median": round(self.gross_bps_median, 4),
             "fee_bps_mean": round(self.fee_bps_mean, 4),
             "spread_bps_mean": round(self.spread_bps_mean, 4),
             "slippage_bps_mean": round(self.slippage_bps_mean, 4),
             "net_bps_sum": round(self.net_bps_sum, 4),
             "net_bps_mean": round(self.net_bps_mean, 4),
+            "net_bps_median": round(self.net_bps_median, 4),
+            "net_bps_mean_winsorized": round(self.net_bps_mean_winsorized, 4),
             "net_bps_per_notional_mean": round(self.net_bps_per_notional_mean, 4),
             "winrate": round(self.winrate, 4),
             "avg_win_bps": round(self.avg_win_bps, 4),
@@ -340,6 +383,9 @@ def aggregate_cohort(
         slippage_bps_mean=_mean([e.slippage_bps for e in edges]),
         net_bps_sum=sum(net_list),
         net_bps_mean=_mean(net_list),
+        net_bps_median=_median(net_list),
+        gross_bps_median=_median(gross_list),
+        net_bps_mean_winsorized=_winsorized_mean(net_list),
         net_bps_per_notional_mean=net_per_notional,
         winrate=len(wins) / n,
         avg_win_bps=_mean(wins),
@@ -1219,6 +1265,16 @@ def render_report(report: EdgeReport) -> str:
         f"  winrate={o.winrate:.1%}  avg_win={o.avg_win_bps:+.1f}  "
         f"avg_loss={o.avg_loss_bps:+.1f}  realized_pnl_usd={o.realized_pnl_usd_sum:+.2f}"
     )
+    lines.append(
+        f"  ROBUST  net median={o.net_bps_median:+.1f}  "
+        f"net winsorized mean={o.net_bps_mean_winsorized:+.1f}  "
+        f"gross median={o.gross_bps_median:+.1f}"
+    )
+    if abs(o.net_bps_mean - o.net_bps_median) > 10.0:
+        lines.append(
+            "  ⚠ mean ≫ median: the mean is outlier-driven — trust the MEDIAN, "
+            "not the mean (mean-artefact guard)."
+        )
     lines.append(f"  P(mu_net > 0) = {_fmt_p(o.p_mu_net_positive)}   <-- the verdict")
     lines.append("")
 
@@ -1277,7 +1333,7 @@ def render_report(report: EdgeReport) -> str:
 def _render_cohort_table(title: str, cohorts: Sequence[CohortEdge]) -> str:
     rows = [title]
     rows.append(
-        f"  {'cohort':<14}{'n':>4}{'net_mean':>10}{'net/notnl':>11}"
+        f"  {'cohort':<14}{'n':>4}{'net_mean':>10}{'net_med':>9}{'net/notnl':>11}"
         f"{'gross':>9}{'winrate':>9}{'P(mu>0)':>13}"
     )
     if not cohorts:
@@ -1285,7 +1341,7 @@ def _render_cohort_table(title: str, cohorts: Sequence[CohortEdge]) -> str:
         return "\n".join(rows)
     for c in cohorts:
         rows.append(
-            f"  {c.cohort_key:<14}{c.count:>4}{c.net_bps_mean:>+10.1f}"
+            f"  {c.cohort_key:<14}{c.count:>4}{c.net_bps_mean:>+10.1f}{c.net_bps_median:>+9.1f}"
             f"{c.net_bps_per_notional_mean:>+11.1f}{c.gross_bps_mean:>+9.1f}"
             f"{c.winrate:>8.0%}{_fmt_p(c.p_mu_net_positive):>13}"
         )
