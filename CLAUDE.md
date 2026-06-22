@@ -7,6 +7,9 @@
 **Mission (heute live, Paper-First):** Build a production-oriented, modular AI-powered monitoring, analysis, alerting, research, and signal-preparation platform for crypto and traditional financial markets. Zukunftsschichten (Lightning, DeFi, KYT, öffentliche Tor-Analyse, App/Multichannel, Payment-/Spenden-/Investment-Flows) sind im Zielbild gegated — siehe `docs/KAI_IDENTITY.md`.  
 **Engineering Motto:** **Simple but Powerful**
 
+## Code-Map (Anker-Index — zuerst hier schauen statt Worktree durchsuchen)
+Bevor du den Worktree nach einem bekannten Pfad durchsuchst: erst **`docs/CODEMAP.md`** konsultieren — der Verify-Pointer-Index der Hochfrequenz-Code-Pfade, Kern-Artefakte und Env-Flags. **Pflicht:** wer einen dort gemappten Pfad ändert/verschiebt, aktualisiert `docs/CODEMAP.md` im SELBEN PR. Einträge sind Pointer (Code kann sich bewegt haben) → vor dem Zitieren als Fakt gegen den aktuellen Code verifizieren. Subagenten erhalten die relevanten Anker zusätzlich über die Dispatch-Kapsel.
+
 This repository is designed to support:
 - multi-source market intelligence ingestion,
 - structured AI analysis,
