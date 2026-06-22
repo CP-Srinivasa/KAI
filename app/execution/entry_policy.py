@@ -67,6 +67,7 @@ class EntryRoute(StrEnum):
     PREMIUM_PAPER = "premium_paper"
     REAL_ANALYSIS_PAPER = "real_analysis_paper"
     PREMIUM_FASTLANE = "premium_fastlane"
+    TRADINGVIEW_PAPER = "tradingview_paper"
 
 
 # Audit `source` prefixes per route — used by the route-usage limiter to
@@ -74,6 +75,7 @@ class EntryRoute(StrEnum):
 ROUTE_SOURCE_PREFIXES: dict[EntryRoute, tuple[str, ...]] = {
     EntryRoute.PREMIUM_PAPER: ("telegram_premium",),
     EntryRoute.REAL_ANALYSIS_PAPER: ("real_analysis",),
+    EntryRoute.TRADINGVIEW_PAPER: ("tradingview_webhook",),
 }
 
 
@@ -314,6 +316,30 @@ def resolve_entry_policy(settings: AppSettings) -> EntryPolicy:
             reason_code=refusal,
             alias_used=ALIAS_REAL_ANALYSIS_THREE_ARM if allowed else None,
             limits=_learning_route_limits(settings, mode) if allowed else None,
+        )
+
+    # ── TradingView paper route (2026-06-22) ───────────────────────────────
+    # A dedicated, flag-armed PAPER route for TV-webhook alerts so they fill via
+    # the envelope bridge as an isolated cohort (source=tradingview_webhook) —
+    # measurement only, never live. Master switch is the AlertSettings flag;
+    # only the explicit limited paper modes open it (legacy modes never enter
+    # the bridge's per-route block). Fail-closed: flag off → route refused.
+    tv_feed_on = bool(getattr(settings.alerts, "tradingview_paper_feed_enabled", False))
+    if tv_feed_on and mode in _LIMITED_MODES:
+        verdicts[EntryRoute.TRADINGVIEW_PAPER] = RouteVerdict(
+            route=EntryRoute.TRADINGVIEW_PAPER,
+            allowed=True,
+            limits=_learning_route_limits(settings, mode),
+        )
+    else:
+        verdicts[EntryRoute.TRADINGVIEW_PAPER] = RouteVerdict(
+            route=EntryRoute.TRADINGVIEW_PAPER,
+            allowed=False,
+            reason_code=(
+                "tradingview_paper_feed_disabled"
+                if not tv_feed_on
+                else "tradingview_route_closed_in_mode"
+            ),
         )
 
     # ── premium fastlane ───────────────────────────────────────────────────

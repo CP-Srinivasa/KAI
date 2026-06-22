@@ -26,6 +26,7 @@ from app.core.enums import EntryMode
 from app.core.settings import (
     PREMIUM_PAPER_WHILE_DISABLED_ACK_SENTINEL,
     REAL_ANALYSIS_PAPER_WHILE_DISABLED_ACK_SENTINEL,
+    AlertSettings,
     AppSettings,
     ExecutionSettings,
     PremiumFastlaneSettings,
@@ -61,8 +62,10 @@ def _settings(
     premium_live: bool = False,
     premium_limits: tuple[int, float, int] = (0, 0.0, 0),
     rap_limits: tuple[int, float, int] = (0, 0.0, 0),
+    tv_paper: bool = False,
 ) -> AppSettings:
     return AppSettings(
+        alerts=AlertSettings(tradingview_paper_feed_enabled=tv_paper),
         execution=ExecutionSettings(entry_mode=mode),
         premium=PremiumSettings(
             paper_execution_enabled=premium_paper,
@@ -222,6 +225,26 @@ def test_paper_learning_opens_premium_and_learning_routes_without_acks() -> None
     assert policy.verdict(EntryRoute.REAL_ANALYSIS_PAPER).alias_used is None
     assert policy.allows(EntryRoute.AUTONOMOUS_LOOP) is False
     assert policy.allows(EntryRoute.PREMIUM_FASTLANE) is False
+
+
+def test_tradingview_route_armed_under_paper_learning_with_flag() -> None:
+    policy = resolve_entry_policy(_settings(mode=EntryMode.PAPER_LEARNING, tv_paper=True))
+    v = policy.verdict(EntryRoute.TRADINGVIEW_PAPER)
+    assert v.allowed is True
+    assert v.limits is not None  # learning route limits attached
+
+
+def test_tradingview_route_closed_without_flag_failclosed() -> None:
+    v = resolve_entry_policy(_settings(mode=EntryMode.PAPER_LEARNING, tv_paper=False)).verdict(
+        EntryRoute.TRADINGVIEW_PAPER
+    )
+    assert v.allowed is False and v.reason_code == "tradingview_paper_feed_disabled"
+    # Flag on but a non-limited mode also stays closed (route opens only in the
+    # explicit limited paper modes).
+    v2 = resolve_entry_policy(_settings(mode=EntryMode.DISABLED, tv_paper=True)).verdict(
+        EntryRoute.TRADINGVIEW_PAPER
+    )
+    assert v2.allowed is False
 
 
 def test_paper_learning_requires_route_master_enables() -> None:
