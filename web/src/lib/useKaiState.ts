@@ -21,12 +21,27 @@ export function useKaiState(): KaiStateState {
     async function fetchOnce(): Promise<void> {
       try {
         const res = await fetch("/api/kai/state", { headers: { Accept: "application/json" } });
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        if (!res.ok) {
+          // Auth/permission failures are NOT "node offline" — surface them as a
+          // real error so the header shows an honest "unavailable" pill instead
+          // of a fake OFFLINE state that looks like a valid runtime status.
+          if (res.status === 401 || res.status === 403) {
+            if (!cancelled) {
+              setStateValue({
+                state: "error",
+                error: { kind: "unauthorized", message: `HTTP ${res.status}` },
+              });
+            }
+            return;
+          }
+          throw new Error(`HTTP ${res.status}`);
+        }
         const body = (await res.json()) as KaiRuntimeState;
-        if (!cancelled) setStateValue({ state: "ready", data: body });
+        if (cancelled) return;
+        setStateValue({ state: "ready", data: body });
       } catch (err) {
         if (cancelled) return;
-        // Fail-closed: surface ERROR rather than pretending IDLE.
+        // Network / 5xx: genuinely treat as OFFLINE (fail-closed, not pretending IDLE).
         const fallback = createFallbackState(
           "OFFLINE",
           err instanceof Error ? err.message : "kai state fetch failed",

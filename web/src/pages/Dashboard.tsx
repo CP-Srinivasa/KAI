@@ -107,6 +107,7 @@ export function Dashboard() {
       <PanelErrorBoundary name="Command-Header">
         <CommandHeader
           kai={kai.state === "ready" ? kai.data : null}
+          kaiError={kai.state === "error"}
           quality={data}
           regime={regime}
           priorityGate={priorityGate}
