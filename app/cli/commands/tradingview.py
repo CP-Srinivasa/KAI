@@ -444,3 +444,30 @@ def tradingview_shadow_feed() -> None:
         f"unmappable={summary.get('unmappable')}  no_price={summary.get('no_price')}  "
         f"short_skipped={summary.get('short_skipped')}  already={summary.get('already')}"
     )
+
+
+@tradingview_app.command("paper-feed")
+def tradingview_paper_feed() -> None:
+    """Turn open TV alerts into PAPER trades via the envelope bridge.
+
+    Gated by ``ALERT_TRADINGVIEW_PAPER_FEED_ENABLED`` (default OFF). PAPER only
+    (no real capital). Requires source ``tradingview_webhook`` in
+    ``EXECUTION_OPERATOR_SIGNAL_SOURCE_ALLOWLIST`` for the bridge to fill.
+    """
+    import asyncio
+
+    from app.observability.tradingview_paper_feeder import run_from_settings
+
+    summary = asyncio.run(run_from_settings())
+    if not summary.get("enabled"):
+        console.print(
+            "[yellow]TV paper feed is OFF[/yellow] "
+            "(set ALERT_TRADINGVIEW_PAPER_FEED_ENABLED=true to enable)."
+        )
+        raise typer.Exit(code=0)
+    console.print("[bold]TradingView Paper Feed[/bold]")
+    console.print(
+        f"  open_events={summary.get('open_events')}  emitted={summary.get('emitted')}  "
+        f"unmappable={summary.get('unmappable')}  no_price={summary.get('no_price')}  "
+        f"short_skipped={summary.get('short_skipped')}  already={summary.get('already')}"
+    )
