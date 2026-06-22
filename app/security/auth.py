@@ -173,6 +173,7 @@ def setup_auth(
     env: str = "development",
     cf_allowed_emails: Iterable[str] = (),
     tv_webhook_enabled: bool = False,
+    l402_enabled: bool = False,
     rate_limit_threshold: int = 5,
     rate_limit_window_seconds: float = 300.0,
     api_key_next: str = "",
@@ -259,6 +260,15 @@ def setup_auth(
             # metadata only (no operator secrets) — see app/observability/
             # premium_pipeline_health.py.
             _audit_access(decision="granted", reason="public", request=request)
+            return await call_next(request)
+
+        # L402 Truth-Oracle (UC-3/UC-4): public ONLY when the oracle is enabled.
+        # The endpoints carry their OWN auth — the L402 paywall (invoice+token+
+        # preimage). While ``l402_enabled`` is False they stay behind global auth
+        # (defense-in-depth, no public surface). The flag is captured at setup, so
+        # toggling it takes effect on the next kai-server restart (config change).
+        if l402_enabled and path.startswith("/oracle/"):
+            _audit_access(decision="granted", reason="l402_public", request=request)
             return await call_next(request)
 
         # SENTR-F-003: brute-force guard. Check BEFORE any auth decision so a
