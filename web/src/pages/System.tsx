@@ -16,6 +16,8 @@ import { useBackendHealth } from "@/lib/useBackendHealth";
 import { fetchTimerHealth, fetchOperatorStatus } from "@/lib/api";
 import { backendHealthToStatus } from "@/lib/commandStatus";
 import { timerStateToStatus } from "@/lib/systemHealth";
+import { LiveDot } from "@/components/ui/LiveDot";
+import { liveDotProps } from "@/lib/freshness";
 
 function StatCard({
   label,
@@ -41,7 +43,11 @@ export function SystemPage() {
 
   return (
     <div className="p-4 xl:p-5 space-y-4 max-w-[1680px] mx-auto">
-      <PageHeader title="System & Health" sub="Betriebszustand auf einen Blick — Backend, Timer, Ausführungs-Readiness." />
+      <PageHeader
+        title="System & Health"
+        sub="Betriebszustand auf einen Blick — Backend, Timer, Ausführungs-Readiness."
+        right={<LiveDot {...liveDotProps(op)} staleAfterMs={75_000} />}
+      />
 
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
         <StatCard label="Backend">

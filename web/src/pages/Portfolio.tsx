@@ -4,6 +4,8 @@ import { useT } from "@/i18n/I18nProvider";
 import { Badge, Button, Card, CardHeader } from "@/components/ui/Primitives";
 import { PageHeader } from "@/layout/PageHeader";
 import { useApi } from "@/lib/useApi";
+import { LiveDot } from "@/components/ui/LiveDot";
+import { liveDotProps } from "@/lib/freshness";
 import {
   fetchPortfolioSnapshot,
   fetchExposureSummary,
@@ -367,7 +369,10 @@ export function PortfolioPage() {
                 {fmt$(totalEquity)}
               </div>
             </div>
-            <Badge tone="info" dot>Paper-Konto · {snap.data.source}</Badge>
+            <div className="flex items-center gap-2">
+              <LiveDot {...liveDotProps(snap)} staleAfterMs={75_000} />
+              <Badge tone="info" dot>Paper-Konto · {snap.data.source}</Badge>
+            </div>
           </div>
           <div className="flex h-3 w-full overflow-hidden rounded-xs border border-line-subtle bg-bg-2">
             <div

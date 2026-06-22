@@ -17,6 +17,8 @@ import { Card, CardHeader, Badge } from "@/components/ui/Primitives";
 import { AgentIcon } from "@/components/agents/AgentIcon";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { useApi } from "@/lib/useApi";
+import { LiveDot } from "@/components/ui/LiveDot";
+import { liveDotProps } from "@/lib/freshness";
 import {
   fetchAgents,
   fetchAgentDetail,
@@ -64,6 +66,7 @@ export function AgentsPage() {
         // DALI-v2 S1: divider=false - Lichtkante landet auf der ersten
         // Agenten-Erklaerungs-Card (Master-Spec G4).
         divider={false}
+        right={<LiveDot {...liveDotProps(list)} staleAfterMs={75_000} />}
       />
 
       <Card padded className="synthwave-pulse-edge">

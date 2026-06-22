@@ -5,6 +5,8 @@ import { PreparedPanel } from "@/components/panels/PreparedPanel";
 import { Badge, Card, CardHeader } from "@/components/ui/Primitives";
 import { Gauge } from "@/components/viz/Gauge";
 import { useApi } from "@/lib/useApi";
+import { LiveDot } from "@/components/ui/LiveDot";
+import { liveDotProps } from "@/lib/freshness";
 import { fetchExposureSummary, fetchOperatorReadiness } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { useCurrency } from "@/state/CurrencyProvider";
@@ -123,6 +125,7 @@ export function RiskPage() {
                 >
                   {overallHeadline}
                 </span>
+                <LiveDot {...liveDotProps(exposure)} staleAfterMs={75_000} className="ml-auto self-center" />
               </div>
               {dangerNotes.length > 0 ? (
                 <ul className="mt-2 space-y-1 text-xs text-fg-muted">

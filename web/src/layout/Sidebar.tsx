@@ -250,7 +250,7 @@ function NavItem({
           <span className={cn("flex-1 text-left truncate font-medium", item.prepared && !active && "text-fg-muted/70")}>{label}</span>
           {item.prepared && (
             <span className="ml-auto rounded-xs border border-line-subtle bg-bg-2 px-1.5 py-0.5 text-[9px] font-mono text-fg-subtle uppercase tracking-wider">
-              wip
+              geplant
             </span>
           )}
           {item.count !== undefined && !item.prepared && (
