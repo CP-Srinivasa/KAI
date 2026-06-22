@@ -64,7 +64,9 @@ def _last_close(candles: list[OHLCV]) -> float | None:
     return sorted(candles, key=lambda c: c.timestamp_utc)[-1].close
 
 
-async def _resolve_entry(ev: Any, pair: str, adapter: _OhlcvSource | None, timeframe: str):
+async def _resolve_entry(
+    ev: Any, pair: str, adapter: _OhlcvSource | None, timeframe: str
+) -> float | None:
     price = getattr(ev, "price", None)
     try:
         if price is not None and float(price) > 0:
