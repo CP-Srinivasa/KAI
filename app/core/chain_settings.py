@@ -42,6 +42,11 @@ class ChainSettings(BaseSettings):
     # Alternative to user/password: path to bitcoind's .cookie file.
     cookie_path: str = Field(default="")
     timeout_seconds: float = Field(default=8.0, gt=0)
+    # L1 fee-shadow capture cadence (sovereign on-chain fee truth → its own shadow
+    # stream; read-only, decoupled from the trading CostModel). Env
+    # ``APP_CHAIN_FEE_SHADOW_INTERVAL_SECONDS``. 900s (15min) — fees/mempool move
+    # slowly, so this is ample; only runs when ``enabled``.
+    fee_shadow_interval_seconds: int = Field(default=900, gt=0)
 
     @property
     def base_url(self) -> str:

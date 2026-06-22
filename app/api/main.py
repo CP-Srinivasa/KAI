@@ -107,6 +107,16 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         )
         app.state.tv_bridge_scheduler.start()
 
+    # L1 sovereign on-chain fee-truth capture (read-only shadow; no capital path).
+    app.state.chain_fee_shadow_scheduler = None
+    if settings.chain.enabled:
+        from app.orchestrator.chain_fee_shadow_scheduler import ChainFeeShadowScheduler
+
+        app.state.chain_fee_shadow_scheduler = ChainFeeShadowScheduler(
+            interval_seconds=settings.chain.fee_shadow_interval_seconds,
+        )
+        app.state.chain_fee_shadow_scheduler.start()
+
     # Telegram operator bot — receives commands and free text via long-polling
     op = settings.operator
     text_processor = None
@@ -189,6 +199,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         _tvb = getattr(app.state, "tv_bridge_scheduler", None)
         if _tvb is not None:
             _tvb.stop()
+        _cfs = getattr(app.state, "chain_fee_shadow_scheduler", None)
+        if _cfs is not None:
+            _cfs.stop()
 
 
 def create_app() -> FastAPI:
