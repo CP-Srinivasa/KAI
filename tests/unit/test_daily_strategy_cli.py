@@ -8,7 +8,7 @@ idempotent per day via a marker file.
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -18,6 +18,8 @@ from app.cli.commands.daily_strategy import (
     _STUB_MARKERS,
     _blocked_alerts_summary,
     _format_dispatch_health_section,
+    _last_filled_review_date,
+    _staleness_line,
     daily_strategy_app,
 )
 
@@ -414,3 +416,53 @@ def test_reminder_partial_fill_still_flags_remaining_stubs(
     assert result.exit_code == 1
     # The kind should reflect the remaining stub count.
     assert "Sektion" in result.stdout
+
+
+# --- staleness surfacing (V3 2026-06-22) ----------------------------------
+
+
+def test_last_filled_review_date_picks_newest_filled_before_cutoff(
+    repo_cwd: Path,
+) -> None:
+    d = repo_cwd / "artifacts" / "daily_strategy"
+    d.mkdir(parents=True, exist_ok=True)
+    # An old filled review, a newer stub-only review, plus noise files.
+    (d / "2026-01-01.md").write_text("## 1. Lagebild\nDone.\n", encoding="utf-8")
+    (d / "2026-02-01.md").write_text(
+        "## 1. Lagebild\n" + _STUB_MARKERS[0] + "_\n", encoding="utf-8"
+    )
+    (d / ".reminder_sent_2026-02-01").write_text("{}", encoding="utf-8")
+    # Newest FILLED before cutoff is 2026-01-01 (the 02-01 file is stub-only).
+    assert _last_filled_review_date(before=date(2026, 3, 1)) == date(2026, 1, 1)
+    # No filled review at all -> None.
+    (d / "2026-01-01.md").write_text(
+        _STUB_MARKERS[0] + "_\n", encoding="utf-8"
+    )
+    assert _last_filled_review_date(before=date(2026, 3, 1)) is None
+
+
+def test_staleness_line_reports_days_since_last_filled(repo_cwd: Path) -> None:
+    d = repo_cwd / "artifacts" / "daily_strategy"
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "2026-01-01.md").write_text("## 1. Lagebild\nDone.\n", encoding="utf-8")
+    line = _staleness_line(date(2026, 1, 11))
+    assert "2026-01-01" in line
+    assert "vor 10 Tag(en)" in line
+
+
+def test_staleness_line_reports_never_when_no_filled(repo_cwd: Path) -> None:
+    assert "noch keiner" in _staleness_line(date(2026, 6, 22))
+
+
+def test_reminder_surfaces_staleness_in_output(
+    runner: CliRunner, repo_cwd: Path
+) -> None:
+    d = repo_cwd / "artifacts" / "daily_strategy"
+    d.mkdir(parents=True, exist_ok=True)
+    # A long-ago filled review, then today's stub skeleton.
+    (d / "2025-01-01.md").write_text("## 1. Lagebild\nDone.\n", encoding="utf-8")
+    runner.invoke(daily_strategy_app, ["bootstrap", "--no-notify", "--no-sync"])
+    result = runner.invoke(daily_strategy_app, ["reminder", "--no-notify"])
+    assert result.exit_code == 1
+    assert "Letzter ausgefüllter Review: 2025-01-01" in result.stdout
+    assert "vor" in result.stdout
