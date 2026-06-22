@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 from collections import Counter
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
@@ -407,6 +408,60 @@ def _stub_section_count(text: str) -> int:
     return sum(text.count(marker) for marker in _STUB_MARKERS)
 
 
+# Review files are named ``YYYY-MM-DD.md``; anything else in the dir (e.g. the
+# ``.reminder_sent_*`` markers) is ignored when scanning for past reviews.
+_REVIEW_FILE_RE = re.compile(r"^(\d{4})-(\d{2})-(\d{2})\.md$")
+
+
+def _iter_review_files() -> list[tuple[date, Path]]:
+    """All daily-strategy review files as ``(date, path)``, newest first."""
+    d = _daily_dir()
+    if not d.exists():
+        return []
+    out: list[tuple[date, Path]] = []
+    for p in d.glob("*.md"):
+        m = _REVIEW_FILE_RE.match(p.name)
+        if not m:
+            continue
+        try:
+            out.append((date(int(m[1]), int(m[2]), int(m[3])), p))
+        except ValueError:
+            continue
+    return sorted(out, key=lambda t: t[0], reverse=True)
+
+
+def _last_filled_review_date(before: date | None = None) -> date | None:
+    """Most recent review whose sections are fully filled (0 stub markers).
+
+    ``before`` excludes the cutoff date (typically today) so the reminder
+    reports the last *previously completed* review, not the one it is nagging
+    about right now.
+    """
+    for d, p in _iter_review_files():
+        if before is not None and d >= before:
+            continue
+        try:
+            text = p.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        if _stub_section_count(text) == 0:
+            return d
+    return None
+
+
+def _staleness_line(today: date) -> str:
+    """One honest line on how long the review discipline has lapsed.
+
+    Surfaces the *magnitude* of a lapse — a flat daily "X Sektionen leer" nag
+    never revealed that the discipline had been dead since 2026-04-17.
+    """
+    last = _last_filled_review_date(before=today)
+    if last is None:
+        return "Letzter ausgefüllter Review: noch keiner — Disziplin überfällig."
+    days = (today - last).days
+    return f"Letzter ausgefüllter Review: {last.isoformat()} (vor {days} Tag(en))."
+
+
 _SYNC_FILES = (
     "artifacts/alert_outcomes.jsonl",
     "artifacts/paper_execution_audit.jsonl",
@@ -649,9 +704,13 @@ def cmd_reminder(
         typer.echo(f"reminder already sent today: {marker}")
         raise typer.Exit(code=0)
 
+    stale = _staleness_line(today)
     if not path.exists():
         kind = "Skeleton fehlt komplett"
-        detail = "Der Bootstrap lief heute nicht. `trading-bot daily-strategy bootstrap` ausführen."
+        detail = (
+            "Der Bootstrap lief heute nicht. "
+            "`trading-bot daily-strategy bootstrap` ausführen. " + stale
+        )
         exit_code = 2
     else:
         text = path.read_text(encoding="utf-8")
@@ -662,11 +721,12 @@ def cmd_reminder(
         kind = f"{stub_count} Sektion(en) leer"
         detail = (
             f"Skeleton seit Bootstrap mit {stub_count} unausgefüllten "
-            f"Stub-Markern. Claude-Session öffnen."
+            f"Stub-Markern. Claude-Session öffnen. " + stale
         )
         exit_code = 1
 
     typer.echo(f"reminder needed: {kind}")
+    typer.echo(stale)
     if notify:
         try:
             ok = asyncio.run(_ping_reminder(today, path, kind, detail))
