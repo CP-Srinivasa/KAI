@@ -1382,10 +1382,42 @@ async def _process_one(
     if entry_mode in (EntryMode.PAPER_PREMIUM_LIMITED, EntryMode.PAPER_LEARNING):
         entry_policy = resolve_entry_policy(get_settings())
         if not is_premium:
-            classic_entry_blocks = True
-            policy_block_reason = "route_not_open_in_mode"
-            policy_block_codes = [ExecutionBlockerCode.ROUTE_NOT_OPEN_IN_MODE.value]
-            result.route_policy_rejected += 1
+            # TV paper route (2026-06-22): tradingview_webhook alerts open a
+            # dedicated, flag-armed PAPER route (isolated cohort, never live).
+            if source == "tradingview_webhook":
+                tv_verdict = entry_policy.verdict(EntryRoute.TRADINGVIEW_PAPER)
+                if not tv_verdict.allowed:
+                    classic_entry_blocks = True
+                    policy_block_reason = tv_verdict.reason_code or "route_refused_by_entry_policy"
+                    policy_block_codes = [ExecutionBlockerCode.ROUTE_NOT_OPEN_IN_MODE.value]
+                    result.route_policy_rejected += 1
+                else:
+                    tv_ok, tv_detail, tv_snapshot = check_route_limits(
+                        route=EntryRoute.TRADINGVIEW_PAPER,
+                        limits=tv_verdict.limits,
+                        audit_path=engine.audit_path,
+                        current_open_positions=current_open,
+                    )
+                    if tv_ok:
+                        classic_entry_blocks = False
+                    else:
+                        classic_entry_blocks = True
+                        policy_block_reason = f"route_limit_exceeded:{tv_detail}"
+                        policy_block_codes = [ExecutionBlockerCode.ROUTE_LIMIT_EXCEEDED.value]
+                        tv_limit_rec = base("rejected_route_limit")
+                        tv_limit_rec["event"] = "entry_policy_route_limit_rejected"
+                        tv_limit_rec["entry_mode"] = entry_mode.value
+                        tv_limit_rec["reason"] = policy_block_reason
+                        tv_limit_rec["reason_codes"] = list(policy_block_codes)
+                        tv_limit_rec["route_limits"] = tv_snapshot
+                        tv_limit_rec["entry_policy"] = entry_policy.to_dict()
+                        _append_bridge_audit(tv_limit_rec)
+                        result.route_limit_rejected += 1
+            else:
+                classic_entry_blocks = True
+                policy_block_reason = "route_not_open_in_mode"
+                policy_block_codes = [ExecutionBlockerCode.ROUTE_NOT_OPEN_IN_MODE.value]
+                result.route_policy_rejected += 1
         else:
             verdict = entry_policy.verdict(EntryRoute.PREMIUM_PAPER)
             if not verdict.allowed:
