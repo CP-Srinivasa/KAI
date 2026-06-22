@@ -37,12 +37,17 @@ function freshness(iso: string | null | undefined): string {
 
 export function CommandHeader({
   kai,
+  kaiError = false,
   quality,
   regime,
   priorityGate,
   qualityState,
 }: {
   kai: KaiRuntimeState | null;
+  /** true when /api/kai/state failed with an auth/permission error — render an
+   *  honest "unavailable" pill instead of a permanent "lädt" (which would imply
+   *  the request is still in flight). */
+  kaiError?: boolean;
   quality: DashboardQuality | null;
   regime: DashboardRegime | null;
   priorityGate: PriorityGateSummary | null;
@@ -76,6 +81,10 @@ export function CommandHeader({
         ) : (
           <StatusPill kind={kaiStateToStatus(kai.state)} label={`Live · ${kai.state}`} />
         )
+      ) : kaiError ? (
+        <span title="KAI-Status-Endpoint nicht verfügbar (Auth/Zugriff). Kein live abgeleiteter Zustand — bewusst kein Handeln.">
+          <StatusPill kind="fail-closed" label="KAI · n/v" />
+        </span>
       ) : (
         <StatusPill kind="pending" label="Live · lädt" />
       )}

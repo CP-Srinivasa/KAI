@@ -1,5 +1,5 @@
-import { useEffect, useState } from "react";
 import { cn } from "@/lib/utils";
+import { useSharedNow } from "@/lib/useSharedNow";
 
 // DALI-F-032 — Liveness-Indikator pro Karte. Ableitung aus
 // (state, generatedAt, now). Erste sichtbare Bewegung auf der Seite ist der
@@ -47,11 +47,8 @@ export function LiveDot({
   downAfterMs = 300_000,
   className,
 }: Props) {
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    const id = window.setInterval(() => setNow(Date.now()), 5000);
-    return () => window.clearInterval(id);
-  }, []);
+  // One shared 5s clock for all LiveDots instead of one timer per instance.
+  const now = useSharedNow();
 
   const ageMs =
     generatedAt && state === "ready"
