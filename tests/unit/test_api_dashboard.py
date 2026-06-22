@@ -93,6 +93,7 @@ def _patch_artifacts(
             d / "source_reliability.json",
         ),
         patch.dict(dashboard_mod._hold_cache, {"report": None, "at": 0.0}),
+        patch.dict(dashboard_mod._quality_cache, {"payload": None, "at": 0.0}),
     ):
         yield
 

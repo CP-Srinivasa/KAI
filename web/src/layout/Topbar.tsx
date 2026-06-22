@@ -177,12 +177,19 @@ export function Topbar({ onMobileMenuToggle }: TopbarProps = {}) {
           <span className="text-2xs text-fg-subtle font-mono">D-137</span>
         </div>
 
-        <button className="flex items-center gap-2 h-8 pl-1 pr-1 sm:pr-2.5 rounded-sm border border-line-subtle bg-bg-2 hover:bg-bg-3 transition-colors">
+        {/* Identitäts-Badge, KEIN Button: es gibt (noch) keine Profil-/Logout-
+            Aktion im Backend, also keine klickbare Optik vortäuschen (war ein
+            toter Button mit Hover-Affordance). Identität kommt via Cloudflare
+            Access am Edge. */}
+        <div
+          className="flex items-center gap-2 h-8 pl-1 pr-1 sm:pr-2.5 rounded-sm border border-line-subtle bg-bg-2"
+          title="Operator-Identität (via Cloudflare Access)"
+        >
           <div className="h-6 w-6 rounded-xs bg-gradient-to-br from-accent to-ai grid place-items-center text-[10px] font-semibold text-white">
             SK
           </div>
           <span className="hidden sm:inline text-xs font-medium">Sascha</span>
-        </button>
+        </div>
       </div>
     </header>
   );
