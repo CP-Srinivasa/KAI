@@ -166,6 +166,8 @@ mypy-extensions==1.1.0
     # via mypy
 openai==2.38.0
     # via ai-analyst-trading-bot (pyproject.toml)
+opentimestamps==0.4.5
+    # via ai-analyst-trading-bot (pyproject.toml)
 packaging==26.2
     # via pytest
 pathspec==1.1.1
@@ -190,6 +192,8 @@ pyasn1-modules==0.4.2
     # via google-auth
 pycparser==3.0 ; implementation_name != 'PyPy' and platform_python_implementation != 'PyPy'
     # via cffi
+pycryptodomex==3.23.0
+    # via opentimestamps
 pydantic==2.13.4
     # via
     #   ai-analyst-trading-bot (pyproject.toml)
@@ -225,6 +229,8 @@ pytest-cov==7.1.0
     # via ai-analyst-trading-bot (pyproject.toml)
 pytest-mock==3.15.1
     # via ai-analyst-trading-bot (pyproject.toml)
+python-bitcoinlib==0.12.2
+    # via opentimestamps
 python-dateutil==2.9.0.post0
     # via
     #   ai-analyst-trading-bot (pyproject.toml)

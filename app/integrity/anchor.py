@@ -16,10 +16,17 @@ import json
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import BinaryIO, Protocol
+from typing import Protocol
 
 from app.core.integrity_settings import IntegritySettings
 from app.integrity.digest import compute_audit_digest
+
+# Public OpenTimestamps calendars (redundant: a proof is usable if ANY commits).
+_OTS_CALENDARS: tuple[str, ...] = (
+    "https://alice.btc.calendar.opentimestamps.org",
+    "https://bob.btc.calendar.opentimestamps.org",
+)
+_OTS_TIMEOUT_S = 15.0
 
 
 class AnchorUnavailableError(RuntimeError):
@@ -61,6 +68,7 @@ class OpenTimestampsStamper:
             import opentimestamps  # noqa: F401
             from opentimestamps.calendar import RemoteCalendar
             from opentimestamps.core.op import OpSHA256
+            from opentimestamps.core.serialize import BytesSerializationContext
             from opentimestamps.core.timestamp import (
                 DetachedTimestampFile,
                 Timestamp,
@@ -72,26 +80,33 @@ class OpenTimestampsStamper:
 
         digest = bytes.fromhex(digest_hex)
         ts = Timestamp(digest)
-        # Submit to a public calendar; the proof becomes verifiable once a
-        # calendar commitment is bitcoin-anchored (upgrade later via `ots upgrade`).
-        calendar = RemoteCalendar("https://alice.btc.calendar.opentimestamps.org")
-        calendar.submit(digest)
+        # Submit to public calendars and MERGE each returned commitment INTO the
+        # timestamp. Without the merge the serialized .ots carries no calendar
+        # attestation and can never be upgraded to a Bitcoin proof — i.e. it would
+        # prove nothing (the whole point of L3). Best-effort per calendar (one may
+        # be down); at least one commitment is required for a usable proof. The
+        # proof becomes Bitcoin-verifiable later via ``ots upgrade`` once the
+        # calendar's aggregation is mined.
+        committed = 0
+        for url in _OTS_CALENDARS:
+            try:
+                calendar_ts = RemoteCalendar(url).submit(digest, timeout=_OTS_TIMEOUT_S)
+                ts.merge(calendar_ts)
+                committed += 1
+            except Exception:  # noqa: BLE001 — a single calendar outage is tolerable
+                continue
+        if committed == 0:
+            raise AnchorUnavailableError("no OpenTimestamps calendar accepted the digest")
+        # Serialize via the OTS BytesSerializationContext (the prior _FileWriter
+        # adapter only had .write() and crashed on the serializer's write_bytes/
+        # varuint API — the stamper never actually produced a proof).
         detached = DetachedTimestampFile(OpSHA256(), ts)
+        ctx = BytesSerializationContext()
+        detached.serialize(ctx)
         out_dir.mkdir(parents=True, exist_ok=True)
         proof_path = out_dir / f"audit-{digest_hex[:16]}.ots"
-        with proof_path.open("wb") as fh:
-            detached.serialize(_FileWriter(fh))
+        proof_path.write_bytes(ctx.getbytes())
         return str(proof_path)
-
-
-class _FileWriter:
-    """Tiny adapter so opentimestamps' serializer can write to a file object."""
-
-    def __init__(self, fh: BinaryIO) -> None:
-        self._fh = fh
-
-    def write(self, data: bytes) -> None:
-        self._fh.write(data)
 
 
 def _make_stamper(name: str) -> Stamper:
