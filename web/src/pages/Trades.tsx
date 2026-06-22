@@ -235,12 +235,12 @@ export function TradesPage() {
                 Bypass-Flag eingefuehrt wird, hier auf status.data.X
                 mappen. activeTone=pos, weil aktive Schutzfunktion. */}
             <GuardrailPill
-              label="Sicherheits-Blocker"
+              label="Sicherheits-Blocker (Invariante)"
               active={true}
-              onText="AKTIV"
+              onText="IMMER AN"
               offText="DEAKTIVIERT"
               activeTone="pos"
-              hint="Risk-Engine blockiert gefaehrliche oder unvollstaendige Orders automatisch."
+              hint="Architektur-Invariante, kein live-gepollter Status: die Risk-Engine laeuft immer mit (kein abschaltbares Feature). Blockiert gefaehrliche oder unvollstaendige Orders automatisch."
             />
             {/* 2026-05-12 DALI-arcade-T5: Schutzschalter-Pille spiegelt jetzt
                 den Launcher-State (idle/submitting/cooldown), zusaetzlich zum

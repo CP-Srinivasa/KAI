@@ -68,11 +68,15 @@ function GeneralTab() {
   return (
     <Card>
       <CardHeader title={t("pages.settings.general.profile")} subtitle={t("pages.settings.general.profile_sub")} />
+      <div className="mb-3 rounded-sm border border-line-subtle bg-bg-2 px-3 py-2 text-2xs text-fg-subtle">
+        Demo-Profil — nur Anzeige, wird NICHT gespeichert (kein Backend-Persist). Read-only, bis ein
+        Profil-Endpoint existiert.
+      </div>
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-        <Field label={t("pages.settings.general.operator")}><Input defaultValue="Operator" placeholder="Operator" /></Field>
-        <Field label={t("pages.settings.general.role")}><Input defaultValue="Principal Engineer" /></Field>
-        <Field label={t("pages.settings.general.timezone")}><Input defaultValue="Europe/Berlin" /></Field>
-        <Field label={t("pages.settings.general.email")}><Input defaultValue="ops@example.local" /></Field>
+        <Field label={t("pages.settings.general.operator")}><Input defaultValue="Operator" placeholder="Operator" readOnly /></Field>
+        <Field label={t("pages.settings.general.role")}><Input defaultValue="Principal Engineer" readOnly /></Field>
+        <Field label={t("pages.settings.general.timezone")}><Input defaultValue="Europe/Berlin" readOnly /></Field>
+        <Field label={t("pages.settings.general.email")}><Input defaultValue="ops@example.local" readOnly /></Field>
       </div>
     </Card>
   );
@@ -183,6 +187,13 @@ function TradingTab() {
 
   return (
     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <div className="md:col-span-2 rounded-sm border border-warn/30 bg-warn/10 px-3 py-2 text-2xs leading-relaxed text-warn">
+        <span className="font-semibold">⚠ Lokale Anzeige-Präferenz — kein Backend-Effekt.</span>{" "}
+        Diese Schalter (Modus inkl. „live", Live-Bestätigung, Size-Cap, Cooldown) ändern nur die
+        Ansicht dieses Browsers. Sie schalten das echte Execution-Gate NICHT scharf und setzen
+        KEINE Risk-Guards. Paper-/Live-Steuerung läuft serverseitig (.env + Operator-Endpoints);
+        das Dashboard zeigt sie read-only.
+      </div>
       <Card>
         <CardHeader title={t("pages.settings.trading_page.mode_title")} subtitle={t("pages.settings.trading_page.mode_sub")} />
         <SegmentedControl<TradingMode>
