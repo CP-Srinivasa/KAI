@@ -72,6 +72,10 @@ export interface KaiRuntimeState {
   timestamp: string;
   source?: string;
   nextAction?: string;
+  /** Phase-1 stub marker: the state is a fixed placeholder, not derived from
+   *  live system inputs. The UI renders it as a stub, not as a live status. */
+  is_stub?: boolean;
+  phase?: number;
 }
 
 export interface KaiSignalCardData {

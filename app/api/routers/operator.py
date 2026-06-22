@@ -132,7 +132,12 @@ class _IdempotencyRecord:
 class TradingLoopRunOnceRequest(BaseModel):
     symbol: str = "BTC/USDT"
     mode: str = "paper"
-    provider: str = "mock"
+    # No implicit default: a missing provider used to fall through to "mock",
+    # which silently wrote synthetic-price paper trades into the real audit and
+    # contaminated the quality metrics (same failure class as the SKYAI
+    # mock-pricing freeze). Run-once must now name its provider explicitly;
+    # _validate_provider() rejects an absent provider with 400.
+    provider: str | None = None
     analysis_profile: str = "conservative"
     loop_audit_path: str = "artifacts/trading_loop_audit.jsonl"
     execution_audit_path: str = "artifacts/paper_execution_audit.jsonl"
@@ -298,6 +303,23 @@ def _validate_idempotency_key(request: Request, key: str | None) -> str:
             status_code=400,
             code="invalid_idempotency_key",
             message="Idempotency-Key must match [A-Za-z0-9._:-]{1,128}",
+        )
+    return candidate
+
+
+def _validate_provider(request: Request, provider: str | None) -> str:
+    """Reject guarded run-once requests that omit an explicit market-data provider.
+
+    Defense-in-depth against silent mock-price contamination: a missing provider
+    fails loud with 400 instead of falling back to synthetic "mock" prices.
+    """
+    candidate = (provider or "").strip()
+    if not candidate:
+        raise _operator_http_error(
+            request,
+            status_code=400,
+            code="missing_provider",
+            message="provider is required for guarded run-once (no implicit mock fallback)",
         )
     return candidate
 
@@ -964,6 +986,7 @@ async def post_operator_trading_loop_run_once(
 
     try:
         safe_idempotency_key = _validate_idempotency_key(request, idempotency_key)
+        _validate_provider(request, payload.provider)
         fingerprint = _request_fingerprint(payload)
 
         replay_payload = _load_idempotent_replay(

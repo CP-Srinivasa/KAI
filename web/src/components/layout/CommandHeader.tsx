@@ -64,9 +64,18 @@ export function CommandHeader({
     >
       <span className="text-2xs font-bold uppercase tracking-widest text-fg-subtle">KAI</span>
 
-      {/* KAI-Live-Zustand — kompakter Status statt Dauerschleifen-Text. */}
+      {/* KAI-Live-Zustand — kompakter Status statt Dauerschleifen-Text.
+          Phase-1-Stub wird ehrlich als Platzhalter gekennzeichnet, nicht als
+          „Live ·"-Status getarnt (sonst stünde dort dauerhaft „Live · IDLE",
+          obwohl der Zustand gar nicht aus echten System-Inputs abgeleitet ist). */}
       {kai ? (
-        <StatusPill kind={kaiStateToStatus(kai.state)} label={`Live · ${kai.state}`} />
+        kai.is_stub ? (
+          <span title="Phase-1-Platzhalter: KAI-Laufzeit-Zustand ist noch nicht an echte System-Inputs (Loop/Alerts/Exposure) verdrahtet und steht konstant auf IDLE — kein live abgeleiteter Status.">
+            <StatusPill kind="pending" label={`KAI · Stub (P${kai.phase ?? 1})`} />
+          </span>
+        ) : (
+          <StatusPill kind={kaiStateToStatus(kai.state)} label={`Live · ${kai.state}`} />
+        )
       ) : (
         <StatusPill kind="pending" label="Live · lädt" />
       )}
