@@ -417,3 +417,30 @@ def tradingview_technicals(
         adx = cols.get("ADX")
         rec = cols.get("Recommend.All")
         console.print(f"  {sym:12} RSI={rsi} MACD={macd} ADX={adx} Recommend.All={rec}")
+
+
+@tradingview_app.command("shadow-feed")
+def tradingview_shadow_feed() -> None:
+    """Record open TV alerts as SHADOW candidates for forward-return measurement.
+
+    Gated by ``ALERT_TRADINGVIEW_SHADOW_FEED_ENABLED`` (default OFF). No
+    execution, no order, no capital — it only writes to the shadow ledger so the
+    resolver can measure how effective the TV buy/sell alerts actually are.
+    """
+    import asyncio
+
+    from app.observability.tradingview_shadow_feed import run_from_settings
+
+    summary = asyncio.run(run_from_settings())
+    if not summary.get("enabled"):
+        console.print(
+            "[yellow]TV shadow feed is OFF[/yellow] "
+            "(set ALERT_TRADINGVIEW_SHADOW_FEED_ENABLED=true to enable)."
+        )
+        raise typer.Exit(code=0)
+    console.print("[bold]TradingView Shadow Feed[/bold]")
+    console.print(
+        f"  open_events={summary.get('open_events')}  recorded={summary.get('recorded')}  "
+        f"unmappable={summary.get('unmappable')}  no_price={summary.get('no_price')}  "
+        f"short_skipped={summary.get('short_skipped')}  already={summary.get('already')}"
+    )

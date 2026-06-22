@@ -124,6 +124,9 @@ class AlertSettings(BaseSettings):
     # volume from the (sanctioned) exchange adapter instead of the static list.
     # Default FALSE → static behaviour. Env ``ALERT_TECHNICAL_SCREENER_DYNAMIC_UNIVERSE``.
     technical_screener_dynamic_universe: bool = Field(default=False)
+    # TV-shadow feed (2026-06-22): record TV webhook alerts as SHADOW candidates,
+    # measurement-only (no execution). Env ``ALERT_TRADINGVIEW_SHADOW_FEED_ENABLED``.
+    tradingview_shadow_feed_enabled: bool = Field(default=False)
     # WP-E (2026-06-15): open bearish SHORTS on the technical path only (D-142
     # narrative bearish stays blocked). Default FALSE → unchanged. Eligibility/
     # shadow-measurement only; execution stays gated by entry_mode so this flag
