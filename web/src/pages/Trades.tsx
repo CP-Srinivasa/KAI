@@ -127,7 +127,7 @@ function humanizeNote(note: string): string {
 
 export function TradesPage() {
   const { t } = useT();
-  const status = useApi(fetchTradingLoopStatus, 20_000);
+  const status = useApi(fetchTradingLoopStatus, 20_000, [], { maxAttempts: 2, baseMs: 1500 });
   const cycles = useApi((s) => fetchRecentCycles(30, s), 15_000);
 
   const cyclesList = cycles.state === "ready" ? cycles.data.recent_cycles : [];
