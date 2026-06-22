@@ -233,7 +233,7 @@ export function NodePage() {
             <LightningPanel />
             <div className="rounded-sm border border-info/25 bg-info/5 px-3 py-2.5 text-2xs text-fg-muted leading-relaxed">
               <span className="flex items-center gap-1.5 font-semibold text-info">
-                <Network size={11} /> Wiring-Stand (gemessen 2026-06-16)
+                <Network size={11} /> Wiring-Stand (Doku-Stand, manuell gepflegt · 2026-06-16)
                 <InfoHint
                   label="Zwei Schritte bis Live"
                   hint="Live-Daten brauchen (1) Macaroon/base_url/TLS in der Prod-.env auf .23 UND (2) settings.lightning.enabled=true. Flag-Flip allein liefert nur 'unavailable: no macaroon'."

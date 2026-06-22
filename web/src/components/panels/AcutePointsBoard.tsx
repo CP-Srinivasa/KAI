@@ -136,8 +136,12 @@ export function AcutePointsBoard({
             </ul>
           </div>
           {b.stand && (
-            <p className="text-2xs text-fg-subtle md:col-span-3">
-              Kuratierter Snapshot · Stand {b.stand} · gepflegt in docs/operator_board.json (nicht live-berechnet).
+            <p className={`text-2xs md:col-span-3 ${b.is_stale ? "text-warn" : "text-fg-subtle"}`}>
+              Kuratierter Snapshot · Stand {b.stand}
+              {typeof b.age_days === "number"
+                ? ` · ${b.age_days} ${b.age_days === 1 ? "Tag" : "Tage"} alt${b.is_stale ? " — veraltet, bitte pflegen" : ""}`
+                : ""}{" "}
+              · gepflegt in docs/operator_board.json (nicht live-berechnet).
             </p>
           )}
         </div>

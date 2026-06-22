@@ -41,6 +41,15 @@ const TONE_RANK: Record<TruthTone, number> = {
 
 function reentryChip(quality: DashboardQuality | null): TruthChip {
   const status = quality?.reentry?.status;
+  if (status === "no_active_target") {
+    return {
+      key: "reentry",
+      label: "Re-Entry",
+      value: "nicht gesetzt",
+      tone: "muted",
+      hint: "Kein aktives Re-Entry-Target konfiguriert (Konfiguration ausstehend) — kein Fehler und kein abgelaufenes Ziel. Operator setzt ein Ziel, sobald es feststeht.",
+    };
+  }
   if (status === "expired") {
     return {
       key: "reentry",

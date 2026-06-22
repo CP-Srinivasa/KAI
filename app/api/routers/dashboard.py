@@ -200,15 +200,21 @@ def _reentry_status(*, target_date: str | None = None) -> dict[str, Any]:
         }
     delta_days = (target.date() - now.date()).days
     if delta_days < 0:
+        # A target in the past means there is no CURRENTLY ACTIVE re-entry target.
+        # Present it neutrally (config pending) rather than as an alarming
+        # "expired/error": the operator simply has not set a new target yet. The
+        # lapsed date is still surfaced for context; a genuinely future target
+        # below reads as "active".
         return {
             "target_date": target_date,
             "target_source": target_source,
             "today": now.date().isoformat(),
-            "status": "expired",
+            "status": "no_active_target",
             "days_delta": delta_days,
             "warning": (
-                "Historical Re-Entry target has expired; current readiness needs a new "
-                "target or gate definition."
+                f"Kein aktives Re-Entry-Target — das letzte Ziel ({target_date}) liegt "
+                "in der Vergangenheit, Konfiguration ausstehend (kein Fehler). Operator "
+                "setzt ALERT_REENTRY_TARGET_DATE, sobald ein neues Ziel feststeht."
             ),
         }
     return {
@@ -2000,4 +2006,17 @@ async def dashboard_operator_board_api() -> JSONResponse:
     except Exception as exc:  # noqa: BLE001 — Panel degradiert, kein 500
         logger.warning("operator_board_read_failed: %s", exc)
     payload["generated_at"] = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    # Honesty: this board is hand-curated (not live-computed), so expose how old
+    # the snapshot is instead of letting a 5-day-old "stand" read as current.
+    age_days: int | None = None
+    stand_raw = payload["stand"]
+    if isinstance(stand_raw, str) and stand_raw.strip():
+        try:
+            stand_date = datetime.strptime(stand_raw.strip()[:10], "%Y-%m-%d").date()
+            age_days = (datetime.now(UTC).date() - stand_date).days
+        except ValueError:
+            age_days = None
+    payload["age_days"] = age_days
+    payload["is_stale"] = bool(age_days is not None and age_days > 7)
+    payload["content_type"] = "curated_static"
     return JSONResponse(content=payload, headers={"Cache-Control": "no-store, max-age=0"})

@@ -91,6 +91,22 @@ describe("deriveTruthChips", () => {
     expect(byKey.signal.value).toBe("Low-P insufficient");
   });
 
+  it("renders an unconfigured re-entry target as neutral (not an expired warning)", () => {
+    const q = quality({
+      reentry: {
+        target_date: "2026-05-16",
+        today: "2026-06-22",
+        status: "no_active_target",
+        days_delta: -37,
+        warning: "Kein aktives Re-Entry-Target gesetzt — Konfiguration ausstehend.",
+        target_source: "default_historical",
+      },
+    });
+    const byKey = Object.fromEntries(deriveTruthChips(q, regime, gate()).map((c) => [c.key, c]));
+    expect(byKey.reentry.value).toBe("nicht gesetzt");
+    expect(byKey.reentry.tone).toBe("muted");
+  });
+
   it("sorts critical tones before healthy/read-only", () => {
     const chips = deriveTruthChips(quality(), regime, gate());
     const firstCritical = chips.findIndex((c) => c.tone === "critical");
