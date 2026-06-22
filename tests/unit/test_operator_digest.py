@@ -209,7 +209,10 @@ def test_weekly_d227_review_only_on_mondays_with_sufficient_n() -> None:
     assert "D-227-Wochenreview" in msg
     assert msg.index("not_actionable") < msg.index("bearish_directional_disabled")
     assert "tiny_bucket" not in msg
-    assert "Kandidat für Gate-Review" in msg
+    # Precision-Zeile ist ehrlicher Caveat, KEIN Gate-Review-Trigger
+    # (blocked-cohort-vetting 2026-06-22: ~28h-Batch-Horizont, kein handelbarer Edge).
+    assert "Kandidat für Gate-Review" not in msg
+    assert "KEIN handelbarer Edge" in msg
     # Dienstag → keine Review-Sektion
     msg = _compose(today=date(2026, 6, 16), d227=d227)
     assert "D-227-Wochenreview" not in msg
