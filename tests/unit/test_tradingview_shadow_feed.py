@@ -14,7 +14,11 @@ from pathlib import Path
 
 import pytest
 
-from app.observability.tradingview_shadow_feed import feed_tv_shadow, tv_pair
+from app.observability.tradingview_shadow_feed import (
+    feed_tv_shadow,
+    run_from_settings,
+    tv_pair,
+)
 
 
 @dataclass
@@ -148,3 +152,40 @@ async def test_no_price_is_not_consumed_for_retry(tmp_path: Path):
     )
     assert summary["no_price"] == 1 and summary["recorded"] == 0
     assert "e6" not in consumed  # retryable next tick
+
+
+@pytest.mark.asyncio
+async def test_run_from_settings_sources_all_pending_not_promote_filtered(tmp_path: Path):
+    """Regression: the feeder must measure alerts auto-promote REJECTS — so it
+    sources ALL pending events, never filtering on the promote decision log."""
+    from types import SimpleNamespace
+
+    pending = tmp_path / "pending.jsonl"
+    pending.write_text(
+        json.dumps(
+            {
+                "event_id": "ev-rejected-by-autopromote",
+                "received_at": "2026-06-22T11:00:00+00:00",
+                "ticker": "BTCUSD.P",
+                "action": "buy",
+                "source_request_id": "req1",
+                "source_payload_hash": "h1",
+                "provenance": {"source": "tradingview_webhook", "version": "tv-3"},
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    settings = SimpleNamespace(
+        alerts=SimpleNamespace(tradingview_shadow_feed_enabled=True, allow_short_technical=False),
+        tradingview=SimpleNamespace(webhook_pending_signals_log=str(pending)),
+        market_data_provider="binance",
+    )
+    summary = await run_from_settings(
+        settings=settings,
+        adapter=_FakeAdapter([_Bar("2026-06-22T11:00:00+00:00", 65000.0)]),
+        pending_path=pending,
+        consumed_path=tmp_path / "consumed.json",
+    )
+    assert summary["enabled"] is True
+    assert summary["open_events"] == 1 and summary["recorded"] == 1
