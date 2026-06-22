@@ -189,9 +189,21 @@ async def feed_tv_shadow(
 
 
 async def run_from_settings(
-    *, settings: Any | None = None, adapter: _OhlcvSource | None = None, write: bool = True
+    *,
+    settings: Any | None = None,
+    adapter: _OhlcvSource | None = None,
+    write: bool = True,
+    pending_path: Path | None = None,
+    consumed_path: Path | None = None,
 ) -> dict[str, object]:
-    """Gated entrypoint for CLI / timer. No-op summary when the flag is OFF."""
+    """Gated entrypoint for CLI / timer. No-op summary when the flag is OFF.
+
+    Sources ALL TV webhook events (not the auto-promote ``filter_open_events``):
+    those alerts are exactly what auto-promote *rejects* as ``unsupported_event``,
+    so filtering on its decision log would hide the very signals we want to
+    measure. Idempotency is the feeder's OWN consumed-id file, independent of the
+    promote pipeline.
+    """
     from app.core.settings import get_settings
 
     settings = settings or get_settings()
@@ -199,22 +211,18 @@ async def run_from_settings(
     if not getattr(alerts, "tradingview_shadow_feed_enabled", False):
         return {"enabled": False}
 
-    from app.signals.tradingview_promotion import (
-        filter_open_events,
-        load_decisions,
-        load_pending_events,
-    )
+    from app.signals.tradingview_promotion import load_pending_events
 
-    pending_path = Path(settings.tradingview.webhook_pending_signals_log)
-    decisions_path = Path(settings.tradingview.pending_decisions_log)
-    events = filter_open_events(load_pending_events(pending_path), load_decisions(decisions_path))
+    p_path = Path(pending_path or settings.tradingview.webhook_pending_signals_log)
+    events = load_pending_events(p_path)
 
     if adapter is None:
         from app.market_data.service import create_market_data_adapter
 
         adapter = create_market_data_adapter(provider=settings.market_data_provider)
 
-    consumed = load_consumed()
+    c_path = Path(consumed_path) if consumed_path else CONSUMED_PATH
+    consumed = load_consumed(c_path)
     before = len(consumed)
     summary = await feed_tv_shadow(
         events=events,
@@ -224,7 +232,7 @@ async def run_from_settings(
         write=write,
     )
     if write and len(consumed) != before:
-        save_consumed(consumed)
+        save_consumed(consumed, c_path)
     summary["enabled"] = True
     summary["open_events"] = len(events)
     return summary
