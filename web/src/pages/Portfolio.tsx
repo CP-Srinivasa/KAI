@@ -264,8 +264,9 @@ export function PortfolioPage() {
   // verlangt "keine automatische Umwandlung auf 0.01" für Display.
   const fmt$ = (v: number | null | undefined, digits?: number) =>
     v == null ? "—" : fmt(v, undefined, digits ?? priceDigits(v));
-  const snap = useApi(fetchPortfolioSnapshot, 30_000);
-  const exposure = useApi(fetchExposureSummary, 30_000);
+  // Retry transient blips fast (capital view shouldn't sit in "error" 30s).
+  const snap = useApi(fetchPortfolioSnapshot, 30_000, [], { maxAttempts: 2, baseMs: 1500 });
+  const exposure = useApi(fetchExposureSummary, 30_000, [], { maxAttempts: 2, baseMs: 1500 });
 
   const positions: PaperPosition[] = snap.state === "ready" ? snap.data.positions : [];
   const unrealized = positions.reduce((sum, p) => sum + (p.unrealized_pnl_usd ?? 0), 0);

@@ -394,14 +394,30 @@ export type DashboardQuality = {
       }
     >;
   };
+  // v2 metric-registry block (single source of truth for scalar metrics) +
+  // reconciliation log + signal-execution status. Backend always emits these;
+  // typed loosely until a panel needs the full shape.
+  metric_registry?: Record<string, unknown>;
+  metric_registry_reconciliation?: unknown[];
+  signal_execution?: Record<string, unknown>;
   source_reliability?: {
     status: "ok" | "missing" | "unreadable" | "invalid" | string;
+    // FS-3 (#199) extended fields — backend always emits these; consumers must
+    // not read them as undefined.
+    reliability_status?: string;
     generated_at: string | null;
     window_days: number | null;
-    thresholds?: Record<string, number>;
+    // Backend may send threshold values as strings (e.g. min_n: "50"), so the
+    // value type is unknown, not number.
+    thresholds?: Record<string, unknown>;
     quality_status?: string;
     health_warning?: string | null;
     trusted_count?: number;
+    active_sources_count?: number;
+    legacy_sources_count?: number;
+    unknown_sources_count?: number;
+    provisional_count?: number;
+    min_n?: number;
     source_count: number;
     tier_counts: Record<string, number>;
     top_sources: Array<{
@@ -413,6 +429,8 @@ export type DashboardQuality = {
       wilson_lower_95_pct: number | null;
       tier: string;
       priority_modifier: number;
+      is_provisional?: boolean;
+      sample_warning?: string | null;
     }>;
     unknown_bucket: {
       source_name: string;
@@ -728,6 +746,7 @@ export type IntegrationsSnapshot = {
       status: IntegrationStatus;
       webhook_enabled: boolean;
       secret_configured: boolean;
+      shared_token_configured?: boolean;
       mounted: boolean;
       auth_mode: string;
       signal_routing_enabled: boolean;

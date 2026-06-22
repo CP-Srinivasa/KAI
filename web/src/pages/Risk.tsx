@@ -31,7 +31,7 @@ export function RiskPage() {
   const { fmt } = useCurrency();
   const fmt$ = (v: number | null | undefined, d = 2) =>
     v == null ? "—" : fmt(v, undefined, d);
-  const exposure = useApi(fetchExposureSummary, 30_000);
+  const exposure = useApi(fetchExposureSummary, 30_000, [], { maxAttempts: 2, baseMs: 1500 });
   const readiness = useApi(fetchOperatorReadiness, 60_000);
 
   // 2026-05-10 DALI-R-Heroes: 3 Risiko-KPIs aus Exposure-Data abgeleitet.

@@ -487,9 +487,17 @@ router = APIRouter(
 )
 
 
+# Canonical read-surface aliases (W-002): the six GET endpoints below all expose
+# the SAME canonical daily-operator-summary payload via get_daily_operator_summary.
+# This is deliberate (and enforced by test_operator_read_endpoints_passthrough_
+# canonical_payloads), NOT distinct data sources — the semantic path names are
+# ergonomic aliases for operator/MCP/CLI consumers. Per-purpose loaders
+# (review-journal / resolution-summary) were documented historically but never
+# implemented; until a real distinct aggregator exists these stay honest aliases.
+# The dashboard only consumes /status, /readiness, /decision-pack.
 @router.get("/status")
 async def get_operator_status(request: Request, response: Response) -> dict[str, object]:
-    """Canonical operator status surface (read-only)."""
+    """Canonical operator read surface (read-only). Shared daily-summary payload."""
     return await _resolve_read_payload(
         request,
         response,
@@ -500,7 +508,7 @@ async def get_operator_status(request: Request, response: Response) -> dict[str,
 
 @router.get("/readiness")
 async def get_operator_readiness(request: Request, response: Response) -> dict[str, object]:
-    """Canonical operator readiness surface (read-only)."""
+    """Read-only alias of the canonical daily-summary payload (see note above)."""
     return await _resolve_read_payload(
         request,
         response,
@@ -511,7 +519,7 @@ async def get_operator_readiness(request: Request, response: Response) -> dict[s
 
 @router.get("/decision-pack")
 async def get_operator_decision_pack(request: Request, response: Response) -> dict[str, object]:
-    """Canonical operator decision-pack surface (read-only)."""
+    """Read-only alias of the canonical daily-summary payload (see note above)."""
     return await _resolve_read_payload(
         request,
         response,
@@ -525,7 +533,7 @@ async def get_operator_daily_summary(
     request: Request,
     response: Response,
 ) -> dict[str, object]:
-    """Canonical operator daily summary surface (read-only)."""
+    """Canonical daily operator summary (read-only). The other read paths alias this."""
     return await _resolve_read_payload(
         request,
         response,
@@ -540,7 +548,12 @@ async def get_operator_review_journal(
     response: Response,
     journal_path: str = "artifacts/operator_review_journal.jsonl",
 ) -> dict[str, object]:
-    """Canonical operator review-journal surface (read-only)."""
+    """Read-only alias of the canonical daily-summary payload (see note above).
+
+    NOTE: journal_path is currently accepted for backward-compat but ignored —
+    the shared loader does not read it. A distinct review-journal aggregator is
+    not implemented yet.
+    """
     return await _resolve_read_payload(
         request,
         response,
@@ -555,7 +568,12 @@ async def get_operator_resolution_summary(
     response: Response,
     journal_path: str = "artifacts/operator_review_journal.jsonl",
 ) -> dict[str, object]:
-    """Canonical operator resolution summary surface (read-only)."""
+    """Read-only alias of the canonical daily-summary payload (see note above).
+
+    NOTE: journal_path is currently accepted for backward-compat but ignored —
+    the shared loader does not read it. A distinct resolution aggregator is not
+    implemented yet.
+    """
     return await _resolve_read_payload(
         request,
         response,
