@@ -223,6 +223,47 @@ def test_cohort_net_per_notional_weights_by_size():
     assert cohort.net_bps_mean > cohort.net_bps_per_notional_mean
 
 
+def test_cohort_robust_stats_expose_mean_artefact():
+    """Edge-hardening 2026-06-22: a handful of glitch-scale winners can hijack the
+    arithmetic MEAN into a phantom positive while the typical trade loses. The
+    MEDIAN (outliers cannot move it) and the winsorized mean must expose this."""
+    cm = CostModel()
+    trades = [
+        # 9 flat round-trips: gross 0 -> net ≈ -cost (a small per-trade loss).
+        ClosedTrade(
+            "M/USDT",
+            "long",
+            100.0,
+            100.0,
+            1.0,
+            "tp",
+            0.0,
+            0.0,
+            f"2026-06-01T{i:02d}:00:00+00:00",
+        )
+        for i in range(9)
+    ]
+    # One plausible-but-extreme survivor (+39% < 40% guard) that the parse-time
+    # implausible filter does NOT drop: ~+3880 net bps.
+    trades.append(
+        ClosedTrade(
+            "M/USDT", "long", 100.0, 139.0, 1.0, "tp", 39.0, 0.0, "2026-06-01T23:00:00+00:00"
+        )
+    )
+    edges = [compute_trade_edge(t, cm) for t in trades]
+    cohort = aggregate_cohort("M/USDT", "symbol", edges, min_sample=2, bootstrap_n=200)
+    # The mean is dragged strongly positive by the single outlier ...
+    assert cohort.net_bps_mean > 100.0
+    # ... but the MEDIAN trade still loses (the truth about the typical trade) ...
+    assert cohort.net_bps_median < 0.0
+    # ... and the winsorized mean (clip ±500bps) no longer lets the glitch dominate.
+    assert cohort.net_bps_mean_winsorized < cohort.net_bps_mean
+    assert cohort.net_bps_mean_winsorized < 100.0
+    # Serialised view carries the robust fields too.
+    d = cohort.to_dict()
+    assert d["net_bps_median"] < 0.0 and d["net_bps_mean"] > 100.0
+
+
 # --- churn --------------------------------------------------------------------
 
 
