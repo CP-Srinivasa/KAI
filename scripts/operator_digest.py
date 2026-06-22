@@ -381,8 +381,11 @@ def compose_digest_message(
             )
 
     # Wöchentlicher D-227-Auswertungs-Loop (MUST-USE Punkt 1): montags die
-    # Block-Reason-Präzision als Entscheidungs-Futter für Gate-/Threshold-
-    # Reviews — die Entscheidung selbst bleibt beim Operator.
+    # Block-Reason-Präzision als KONTEXT (nicht als Gate-Lockerungs-Trigger).
+    # Diese Precision ist über einen langen, variablen Batch-Horizont gemessen
+    # (Median ~Stunden) und ist KEIN handelbarer Edge — Gate-Entscheidungen
+    # brauchen side-adjusted Median-Return vs. Kosten. Befund 2026-06-22
+    # (blocked-cohort-vetting). Die Entscheidung bleibt beim Operator.
     if today.isoweekday() == 1 and "error" not in d227:
         axis = d227.get("hit_miss_by_block_reason") or []
         reviewable = [
@@ -401,8 +404,10 @@ def compose_digest_message(
                     f"({r.get('hit')}/{r.get('resolved')} hits, n={r.get('resolved')})"
                 )
             lines.append(
-                "  ↳ hohe Precision bei hartem Block = Kandidat für Gate-Review; "
-                "niedrige bestätigt den Block."
+                "  ↳ ACHTUNG: Precision hier = Richtung über langen, variablen "
+                "Batch-Horizont (Median Stunden), KEIN handelbarer Edge und "
+                "allein KEIN Grund für Gate-Lockerung. Tradeable Edge nur via "
+                "side-adjusted Median-Return gegen Kostenhürde belegbar (separat)."
             )
 
     # V5-Evidence-Frische.
