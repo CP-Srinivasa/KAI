@@ -160,3 +160,50 @@ class LndRestClient:
     async def wallet_balance(self) -> dict[str, Any]:
         """GET /v1/balance/blockchain — on-chain wallet balance (read-only)."""
         return await self._get("/v1/balance/blockchain")
+
+    # ── write surface (value layer; gated) ────────────────────────────────────
+    # Used ONLY by app.lightning.value_layer behind the pay_enabled kill-switch.
+    # Requires a SCOPE-MINIMAL macaroon (invoices / channel-open) — NEVER the
+    # readonly macaroon, NEVER admin. Read-only Phase-1 deployments never reach
+    # these (the value layer refuses while pay_enabled is False).
+    async def _post(self, path: str, body: dict[str, Any]) -> dict[str, Any]:
+        url = f"{self._base_url}{path}"
+        try:
+            if self._transport is not None:
+                client_kwargs: dict[str, Any] = {
+                    "transport": self._transport,
+                    "timeout": self._timeout,
+                }
+            else:
+                client_kwargs = {"verify": self._verify, "timeout": self._timeout}
+            async with httpx.AsyncClient(**client_kwargs) as client:
+                resp = await client.post(url, headers=self._headers, json=body)
+        except httpx.HTTPError as exc:
+            raise LightningUnavailableError(f"lnd request failed: {exc}") from exc
+        if resp.status_code != 200:
+            raise LightningUnavailableError(
+                f"lnd returned {resp.status_code} for {path}: {resp.text[:200]}"
+            )
+        try:
+            data = resp.json()
+        except ValueError as exc:
+            raise LightningUnavailableError(f"lnd returned non-JSON for {path}") from exc
+        if not isinstance(data, dict):
+            raise LightningUnavailableError(f"lnd returned non-object JSON for {path}")
+        return data
+
+    async def add_invoice(self, *, value_sat: int, memo: str = "") -> dict[str, Any]:
+        """POST /v1/invoices — create a BOLT11 invoice (RECEIVE side, no spend)."""
+        return await self._post("/v1/invoices", {"value": str(int(value_sat)), "memo": memo})
+
+    async def open_channel(
+        self, *, node_pubkey_hex: str, local_funding_sat: int, sat_per_vbyte: int = 0
+    ) -> dict[str, Any]:
+        """POST /v1/channels — open a channel (SPENDS on-chain; irreversible)."""
+        body: dict[str, Any] = {
+            "node_pubkey_string": node_pubkey_hex,
+            "local_funding_amount": str(int(local_funding_sat)),
+        }
+        if sat_per_vbyte > 0:
+            body["sat_per_vbyte"] = str(int(sat_per_vbyte))
+        return await self._post("/v1/channels", body)
