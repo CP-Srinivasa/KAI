@@ -209,7 +209,10 @@ export const AutoAnnotateCohortDrawer = memo(function AutoAnnotateCohortDrawer()
             <Button
               variant="ghost"
               onClick={() => {
-                window.open("/api/alerts/auto-annotate-report", "_blank");
+                // Route is /alerts/... (alerts.router prefix="/alerts", no extra
+                // /api/ mount) — the old /api/ prefix 404'd. Matches the data
+                // fetch in lib/api.ts which already uses /alerts/...
+                window.open("/alerts/auto-annotate-report", "_blank");
               }}
             >
               Roh-JSON öffnen

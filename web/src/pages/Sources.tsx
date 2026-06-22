@@ -15,6 +15,8 @@ import { PerSourceStabilityPanel } from "@/components/panels/PerSourceStabilityP
 import { SourceActivityPanel } from "@/components/panels/SourceActivityPanel";
 import { useDashboardQuality } from "@/lib/useDashboardQuality";
 import { useDashboardProvenance } from "@/lib/useDashboardProvenance";
+import { LiveDot } from "@/components/ui/LiveDot";
+import { liveDotProps } from "@/lib/freshness";
 import { topFlopSources, rankProvenanceSources, type SourceRank } from "@/lib/sourceRanking";
 import { cn } from "@/lib/utils";
 
@@ -51,7 +53,11 @@ export function SourcesPage() {
 
   return (
     <div className="p-4 xl:p-5 space-y-4 max-w-[1680px] mx-auto">
-      <PageHeader title="Quellen" sub="Welche Quellen liefern gute Signale — und welche brauchen einen Fix." />
+      <PageHeader
+        title="Quellen"
+        sub="Welche Quellen liefern gute Signale — und welche brauchen einen Fix."
+        right={<LiveDot {...liveDotProps(q, q.data?.generated_at)} staleAfterMs={75_000} />}
+      />
 
       <PanelErrorBoundary name="Source-Activity">
         <SourceActivityPanel />

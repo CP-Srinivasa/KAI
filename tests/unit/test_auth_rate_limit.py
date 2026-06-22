@@ -101,6 +101,29 @@ def test_health_endpoint_never_rate_limited() -> None:
     assert r.status_code != 429
 
 
+def test_public_local_dashboard_not_blocked_by_unrelated_lockout() -> None:
+    """F-002: a brute-force lockout tripped by failed auth on protected paths must
+    NOT collateral-block the public LOCAL dashboard (no Cf-Ray / no allowlist) —
+    it requires no auth, so a locked IP could otherwise black out the whole
+    dashboard for the lockout window."""
+    app = _app(threshold=2)
+
+    @app.get("/dashboard/api/quality")
+    async def _dash() -> dict[str, str]:
+        return {"ok": "true"}
+
+    client = TestClient(app)
+    # Trip the lockout via failed auth on a protected (auth-required) path.
+    for _ in range(2):
+        client.get("/protected", headers={"Authorization": "Bearer wrong"})
+    # The protected path is now locked.
+    assert client.get("/protected", headers={"Authorization": "Bearer secret"}).status_code == 429
+    # ...but the public local dashboard must still serve, not 429.
+    r = client.get("/dashboard/api/quality")
+    assert r.status_code == 200
+    assert r.json() == {"ok": "true"}
+
+
 def test_window_expiry_allows_retry_after_aging_out(monkeypatch: pytest.MonkeyPatch) -> None:
     """A failure older than the window must not count toward the threshold."""
     import app.security.auth as auth_mod

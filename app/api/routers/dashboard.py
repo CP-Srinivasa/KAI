@@ -69,6 +69,14 @@ _hold_cache: dict[str, Any] = {"at": 0.0, "report": None}
 _PROVENANCE_CACHE_TTL_S = 30.0
 _provenance_cache: dict[str, Any] = {"at": 0.0, "payload": None}
 
+# NEO-P-201/202: the quality endpoint full-scans paper/alert/loop audit JSONL
+# (trading_loop_audit ~27 MB) and had no top-level cache -> 2-4s on the Pi on
+# EVERY request, even repeats, and it is polled by ~6 components in parallel.
+# Cache the assembled response so repeat polls are served instantly; TTL matches
+# the inner _hold/_provenance caches it depends on.
+_QUALITY_CACHE_TTL_S = 20.0
+_quality_cache: dict[str, Any] = {"at": 0.0, "payload": None}
+
 # Source-by-doc map (for the active-precision legacy split). Loading it means
 # one DB query over directional doc-ids — not hot-path safe without a cache.
 # 5 min TTL: docs are rarely re-classified, and the map is additive.
@@ -629,6 +637,12 @@ def _shadow_attribution_24h() -> dict[str, Any]:
 @router.get("/dashboard/api/quality", tags=["dashboard"])
 async def dashboard_quality_api() -> JSONResponse:
     """Return quality-bar metrics as JSON for the dashboard SPA."""
+    cache_now = time.monotonic()
+    cached_quality = _quality_cache.get("payload")
+    if cached_quality is not None and (cache_now - _quality_cache["at"]) < _QUALITY_CACHE_TTL_S:
+        return JSONResponse(
+            content=cached_quality, headers={"Cache-Control": "no-store, max-age=0"}
+        )
     report = await _live_hold_report()
 
     quality = report.get("signal_quality_validation", {})
@@ -895,126 +909,127 @@ async def dashboard_quality_api() -> JSONResponse:
     runtime_block = _entry_runtime_block()
     shadow_attribution = _shadow_attribution_24h()
 
-    return JSONResponse(
-        content={
-            # v2: the metric_registry block is now the single source of truth for
-            # the scalar metrics; metric_contract stays for its richer per-metric
-            # provenance/quality metadata and is reconciled against the registry.
-            "dashboard_truth_contract_version": 2,
-            "metric_contract": metric_contract,
-            "metric_registry": metric_registry,
-            "metric_registry_reconciliation": metric_registry_reconciliation,
-            "runtime": runtime_block,
-            "shadow_attribution": shadow_attribution,
-            "reentry": reentry,
-            "precision_pct": quality.get("resolved_precision_pct"),
-            "false_positive_pct": quality.get("resolved_false_positive_rate_pct"),
-            "resolved_count": hit_rate.get("resolved_directional_documents", 0),
-            "directional_count": hit_rate.get("directional_alert_documents", 0),
-            "hits": hit_rate.get("alert_hits", 0),
-            "misses": hit_rate.get("alert_misses", 0),
-            "active_precision_pct": quality.get("active_precision_pct"),
-            "active_resolved_count": hit_rate.get("active_resolved_directional_documents", 0),
-            "active_hits": hit_rate.get("active_alert_hits", 0),
-            "active_misses": hit_rate.get("active_alert_misses", 0),
-            "legacy_resolved_count": hit_rate.get("legacy_resolved_documents", 0),
-            "legacy_unknown_cutoff": hit_rate.get("legacy_unknown_cutoff"),
-            # priority_corr ist als deprecated markiert (D-149) — Pearson auf
-            # P7-P10-Band misst nichts Sinnvolles. Bleibt fuer Backwards-Compat
-            # exposed, das Dashboard nutzt jetzt priority_tier_lift_pct.
-            "priority_corr": quality.get("priority_hit_correlation"),
-            "priority_tier_lift_pct": quality.get("priority_tier_lift_pct"),
-            "priority_tier_high_conviction_threshold": quality.get(
-                "priority_tier_high_conviction_threshold"
+    quality_payload: dict[str, Any] = {
+        # v2: the metric_registry block is now the single source of truth for
+        # the scalar metrics; metric_contract stays for its richer per-metric
+        # provenance/quality metadata and is reconciled against the registry.
+        "dashboard_truth_contract_version": 2,
+        "metric_contract": metric_contract,
+        "metric_registry": metric_registry,
+        "metric_registry_reconciliation": metric_registry_reconciliation,
+        "runtime": runtime_block,
+        "shadow_attribution": shadow_attribution,
+        "reentry": reentry,
+        "precision_pct": quality.get("resolved_precision_pct"),
+        "false_positive_pct": quality.get("resolved_false_positive_rate_pct"),
+        "resolved_count": hit_rate.get("resolved_directional_documents", 0),
+        "directional_count": hit_rate.get("directional_alert_documents", 0),
+        "hits": hit_rate.get("alert_hits", 0),
+        "misses": hit_rate.get("alert_misses", 0),
+        "active_precision_pct": quality.get("active_precision_pct"),
+        "active_resolved_count": hit_rate.get("active_resolved_directional_documents", 0),
+        "active_hits": hit_rate.get("active_alert_hits", 0),
+        "active_misses": hit_rate.get("active_alert_misses", 0),
+        "legacy_resolved_count": hit_rate.get("legacy_resolved_documents", 0),
+        "legacy_unknown_cutoff": hit_rate.get("legacy_unknown_cutoff"),
+        # priority_corr ist als deprecated markiert (D-149) — Pearson auf
+        # P7-P10-Band misst nichts Sinnvolles. Bleibt fuer Backwards-Compat
+        # exposed, das Dashboard nutzt jetzt priority_tier_lift_pct.
+        "priority_corr": quality.get("priority_hit_correlation"),
+        "priority_tier_lift_pct": quality.get("priority_tier_lift_pct"),
+        "priority_tier_high_conviction_threshold": quality.get(
+            "priority_tier_high_conviction_threshold"
+        ),
+        "priority_tier_high_conviction_resolved": quality.get(
+            "priority_tier_high_conviction_resolved"
+        ),
+        "priority_tier_high_conviction_hit_rate_pct": quality.get(
+            "priority_tier_high_conviction_hit_rate_pct"
+        ),
+        "priority_tier_high_conviction_ci_low_pct": quality.get(
+            "priority_tier_high_conviction_ci_low_pct"
+        ),
+        "priority_tier_high_conviction_ci_high_pct": quality.get(
+            "priority_tier_high_conviction_ci_high_pct"
+        ),
+        "priority_tier_standard_resolved": quality.get("priority_tier_standard_resolved"),
+        "priority_tier_standard_hit_rate_pct": quality.get("priority_tier_standard_hit_rate_pct"),
+        "priority_tier_standard_ci_low_pct": quality.get("priority_tier_standard_ci_low_pct"),
+        "priority_tier_standard_ci_high_pct": quality.get("priority_tier_standard_ci_high_pct"),
+        "forward_precision_pct": fwd.get("precision_pct"),
+        "forward_resolved": fwd.get("resolved", 0),
+        "forward_hits": fwd.get("hits", 0),
+        "forward_miss": fwd.get("miss", 0),
+        "paper_fills": len(fills),
+        "paper_fills_with_pnl": positions_closed + positions_partial_closed,
+        "paper_realized_pnl_usd": realized_pnl_usd,
+        "paper_quarantined_pnl_usd": quarantined_pnl_usd,
+        "paper_quarantined_closes": len(quarantined_closes_list),
+        "paper_positions_closed": positions_closed,
+        "paper_positions_partial_closed": positions_partial_closed,
+        "paper_evidence": {
+            "scope": "cutoff_since" if audit_provenance else "lifetime",
+            "since": metric_contract["paper_fills_with_pnl"]["since"],
+            "until": generated_at,
+            "window_hours": rolling_window_hours,
+            "fills_total": len(fills),
+            "fills_recent_24h": len(recent_fills),
+            "closed_total": positions_closed + positions_partial_closed,
+            "closed_recent_24h": len(recent_closes),
+            "realized_pnl_total_usd": realized_pnl_usd,
+            "realized_pnl_recent_24h_usd": recent_pnl_usd,
+            "expectancy_usd": expectancy,
+            "win_rate_pct": win_rate,
+            "avg_win_usd": avg_win,
+            "avg_loss_usd": avg_loss,
+            "fees_slippage_included": "partial",
+            "source_artifact": str(_PAPER_EXECUTION_AUDIT),
+            "source_artifact_updated_at": _artifact_updated_at(_PAPER_EXECUTION_AUDIT),
+            "stale_status": _artifact_stale_status(_PAPER_EXECUTION_AUDIT),
+            "quality_status": (
+                "warning"
+                if not pnl_values or expectancy is None or expectancy <= 0
+                else "historical_only"
             ),
-            "priority_tier_high_conviction_resolved": quality.get(
-                "priority_tier_high_conviction_resolved"
+            "warning": (
+                "Paper fill count is historical/cutoff evidence; rolling execution is reported "
+                "separately by priority-gate."
             ),
-            "priority_tier_high_conviction_hit_rate_pct": quality.get(
-                "priority_tier_high_conviction_hit_rate_pct"
-            ),
-            "priority_tier_high_conviction_ci_low_pct": quality.get(
-                "priority_tier_high_conviction_ci_low_pct"
-            ),
-            "priority_tier_high_conviction_ci_high_pct": quality.get(
-                "priority_tier_high_conviction_ci_high_pct"
-            ),
-            "priority_tier_standard_resolved": quality.get("priority_tier_standard_resolved"),
-            "priority_tier_standard_hit_rate_pct": quality.get(
-                "priority_tier_standard_hit_rate_pct"
-            ),
-            "priority_tier_standard_ci_low_pct": quality.get("priority_tier_standard_ci_low_pct"),
-            "priority_tier_standard_ci_high_pct": quality.get("priority_tier_standard_ci_high_pct"),
-            "forward_precision_pct": fwd.get("precision_pct"),
-            "forward_resolved": fwd.get("resolved", 0),
-            "forward_hits": fwd.get("hits", 0),
-            "forward_miss": fwd.get("miss", 0),
-            "paper_fills": len(fills),
-            "paper_fills_with_pnl": positions_closed + positions_partial_closed,
-            "paper_realized_pnl_usd": realized_pnl_usd,
-            "paper_quarantined_pnl_usd": quarantined_pnl_usd,
-            "paper_quarantined_closes": len(quarantined_closes_list),
-            "paper_positions_closed": positions_closed,
-            "paper_positions_partial_closed": positions_partial_closed,
-            "paper_evidence": {
-                "scope": "cutoff_since" if audit_provenance else "lifetime",
-                "since": metric_contract["paper_fills_with_pnl"]["since"],
-                "until": generated_at,
-                "window_hours": rolling_window_hours,
-                "fills_total": len(fills),
-                "fills_recent_24h": len(recent_fills),
-                "closed_total": positions_closed + positions_partial_closed,
-                "closed_recent_24h": len(recent_closes),
-                "realized_pnl_total_usd": realized_pnl_usd,
-                "realized_pnl_recent_24h_usd": recent_pnl_usd,
-                "expectancy_usd": expectancy,
-                "win_rate_pct": win_rate,
-                "avg_win_usd": avg_win,
-                "avg_loss_usd": avg_loss,
-                "fees_slippage_included": "partial",
-                "source_artifact": str(_PAPER_EXECUTION_AUDIT),
-                "source_artifact_updated_at": _artifact_updated_at(_PAPER_EXECUTION_AUDIT),
-                "stale_status": _artifact_stale_status(_PAPER_EXECUTION_AUDIT),
-                "quality_status": (
-                    "warning"
-                    if not pnl_values or expectancy is None or expectancy <= 0
-                    else "historical_only"
-                ),
-                "warning": (
-                    "Paper fill count is historical/cutoff evidence; rolling execution is reported "
-                    "separately by priority-gate."
-                ),
-            },
-            "audit_v1_disqualified": audit_v1_disqualified,
-            "audit_provenance": audit_provenance,
-            "paper_cycles": paper.get("loop_metrics", {}).get("total_cycles", 0),
-            "real_price_cycles": quality.get("paper_real_price_cycle_count", 0),
-            "gate_status": gate.get("overall_status"),
-            "blocking_reasons": gate.get("blocking_reasons", []),
-            "actionable_rate_pct": quality.get("directional_actionable_rate_pct"),
-            "high_priority_hit_rate_pct": quality.get("high_priority_hit_rate_pct"),
-            "low_priority_hit_rate_pct": quality.get("low_priority_hit_rate_pct"),
-            "loop_status_counts": status_counts,
-            "signal_execution": signal_execution,
-            # V-DB4a 2026-05-08: Per-source active precision fuer Quality-Tile.
-            # Liefert n / hit-rate / Wilson-CI / passes_gate je Source.
-            "per_source_active_precision": report.get("per_source_active_precision", {}),
-            # V-DB4e 2026-05-08: Per-source rolling 30-day stability windows.
-            "per_source_stability": report.get("per_source_stability", {}),
-            "source_reliability": source_reliability,
-            "recent_alerts": [
-                {
-                    "doc_id": r.get("document_id", "")[:12],
-                    "sentiment": r.get("sentiment_label", ""),
-                    "priority": r.get("priority"),
-                    "assets": r.get("affected_assets", []),
-                    "dispatched_at": r.get("dispatched_at", "")[:16],
-                    "outcome": outcomes_by_doc.get(r.get("document_id", ""), ""),
-                }
-                for r in reversed(recent_alerts)
-            ],
-            "generated_at": generated_at,
         },
+        "audit_v1_disqualified": audit_v1_disqualified,
+        "audit_provenance": audit_provenance,
+        "paper_cycles": paper.get("loop_metrics", {}).get("total_cycles", 0),
+        "real_price_cycles": quality.get("paper_real_price_cycle_count", 0),
+        "gate_status": gate.get("overall_status"),
+        "blocking_reasons": gate.get("blocking_reasons", []),
+        "actionable_rate_pct": quality.get("directional_actionable_rate_pct"),
+        "high_priority_hit_rate_pct": quality.get("high_priority_hit_rate_pct"),
+        "low_priority_hit_rate_pct": quality.get("low_priority_hit_rate_pct"),
+        "loop_status_counts": status_counts,
+        "signal_execution": signal_execution,
+        # V-DB4a 2026-05-08: Per-source active precision fuer Quality-Tile.
+        # Liefert n / hit-rate / Wilson-CI / passes_gate je Source.
+        "per_source_active_precision": report.get("per_source_active_precision", {}),
+        # V-DB4e 2026-05-08: Per-source rolling 30-day stability windows.
+        "per_source_stability": report.get("per_source_stability", {}),
+        "source_reliability": source_reliability,
+        "recent_alerts": [
+            {
+                "doc_id": r.get("document_id", "")[:12],
+                "sentiment": r.get("sentiment_label", ""),
+                "priority": r.get("priority"),
+                "assets": r.get("affected_assets", []),
+                "dispatched_at": r.get("dispatched_at", "")[:16],
+                "outcome": outcomes_by_doc.get(r.get("document_id", ""), ""),
+            }
+            for r in reversed(recent_alerts)
+        ],
+        "generated_at": generated_at,
+    }
+    _quality_cache["payload"] = quality_payload
+    _quality_cache["at"] = cache_now
+    return JSONResponse(
+        content=quality_payload,
         headers={"Cache-Control": "no-store, max-age=0"},
     )
 

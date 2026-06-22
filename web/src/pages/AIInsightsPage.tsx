@@ -6,6 +6,8 @@ import { Badge, Card, CardHeader } from "@/components/ui/Primitives";
 import { Funnel } from "@/components/viz/Funnel";
 import { EdgeTrendCard } from "@/components/panels/EdgeTrendCard";
 import { useDashboardQuality } from "@/lib/useDashboardQuality";
+import { LiveDot } from "@/components/ui/LiveDot";
+import { liveDotProps } from "@/lib/freshness";
 import { cn } from "@/lib/utils";
 import { tierLiftTone } from "@/lib/tone";
 
@@ -33,6 +35,7 @@ export function AIInsightsPage() {
         sub="Welche Quellen liefern zuverlässige Signale — und wie sicher sind wir."
         tone="ai"
         icon={<Sparkles size={18} />}
+        right={<LiveDot {...liveDotProps(q, q.data?.generated_at)} staleAfterMs={75_000} />}
       />
 
       {q.state === "ready" && (

@@ -266,6 +266,21 @@ def setup_auth(
         # differences. Public paths above are exempt (no auth → no failures).
         client_ip = _client_ip(request)
         now = time.monotonic()
+
+        # F-002: public LOCAL dashboard reads require no auth and cannot generate
+        # auth failures, so they must NOT be collateral-blocked by a brute-force
+        # lockout triggered elsewhere (e.g. failed /operator/* probes from the
+        # same IP would otherwise 429 the whole public dashboard for 300s). Serve
+        # them BEFORE the lockout gate; tunnel dashboard traffic (Cf-Ray present
+        # with a configured allowlist) still falls through to the CF-Access checks
+        # and the lockout below.
+        if (path == "/dashboard" or path.startswith("/dashboard/")) and (
+            not cf_allowed or not request.headers.get("Cf-Ray")
+        ):
+            _reset_auth_failures(client_ip)
+            _audit_access(decision="granted", reason="dashboard_local", request=request)
+            return await call_next(request)
+
         locked, retry_after = _is_rate_limited(
             client_ip, rate_limit_threshold, rate_limit_window_seconds, now
         )
@@ -298,10 +313,9 @@ def setup_auth(
         # future "/dashboardv2"-style route from silently inheriting the
         # dashboard-defense-in-depth policy instead of Bearer auth.
         if path == "/dashboard" or path.startswith("/dashboard/"):
-            if not cf_allowed or not request.headers.get("Cf-Ray"):
-                _reset_auth_failures(client_ip)
-                _audit_access(decision="granted", reason="dashboard_local", request=request)
-                return await call_next(request)
+            # F-002: local dashboard traffic was already granted above (before the
+            # lockout gate); only tunnel (Cf-Ray + configured allowlist) traffic
+            # reaches here → enforce CF-Access defense-in-depth.
             # NEO-P-001 (A): Cloudflare sets both Cf-Ray AND Cf-Connecting-IP
             # on every edge-authenticated request. A non-CF reverse proxy that
             # only forwards Cf-Ray (without Cf-Connecting-IP) is suspicious —
