@@ -986,7 +986,7 @@ async def post_operator_trading_loop_run_once(
 
     try:
         safe_idempotency_key = _validate_idempotency_key(request, idempotency_key)
-        _validate_provider(request, payload.provider)
+        checked_provider = _validate_provider(request, payload.provider)
         fingerprint = _request_fingerprint(payload)
 
         replay_payload = _load_idempotent_replay(
@@ -1019,7 +1019,7 @@ async def post_operator_trading_loop_run_once(
         result = await mcp_server.run_trading_loop_once(
             symbol=payload.symbol,
             mode=payload.mode,
-            provider=payload.provider,
+            provider=checked_provider,
             analysis_profile=payload.analysis_profile,
             loop_audit_path=payload.loop_audit_path,
             execution_audit_path=payload.execution_audit_path,
