@@ -133,6 +133,11 @@ def test_calibration_endpoint_empty_returns_zero_report(audit_path: Path) -> Non
     assert body["brier_score"] is None
     assert body["bins"] == []
     assert body["sample_sufficient"] is False
+    # Honesty: an empty/unwired outcome-map must read as a wiring gap, not as a
+    # valid "perfectly calibrated on 0 samples" result.
+    assert body["state"] == "disabled"
+    assert body["wiring_status"] == "not_connected"
+    assert any("nicht verdrahtet" in n for n in body["notes"])
 
 
 def test_bayes_audit_endpoint_surfaces_stream_validation(audit_path: Path) -> None:
@@ -182,6 +187,8 @@ def test_calibration_endpoint_with_outcomes_returns_metrics(audit_path: Path) ->
             r = client.get("/dashboard/api/calibration")
     assert r.status_code == 200
     body = r.json()
+    assert body["state"] == "ok"
+    assert body["wiring_status"] == "connected"
     assert body["n_pairs"] == 40
     assert body["brier_score"] is not None
     assert body["expected_calibration_error"] is not None

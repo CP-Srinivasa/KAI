@@ -1481,8 +1481,23 @@ async def dashboard_calibration_api(n_bins: int = 10) -> JSONResponse:
             status_code=503,
         )
 
+    # Honesty: the outcome-map that joins bayes predictions to realised outcomes
+    # is not wired in production yet (_BAYES_OUTCOME_MAP is empty), so n_pairs is
+    # always 0 live. Mark that explicitly as a wiring gap (state "disabled") so a
+    # null/empty report is not misread as "perfectly calibrated on 0 samples".
+    wired = bool(_BAYES_OUTCOME_MAP)
+    notes = list(report.notes)
+    if not wired:
+        notes.insert(
+            0,
+            "Outcome-Map nicht verdrahtet (wiring_status=not_connected): n_pairs "
+            "bleibt 0, bis der Bayes→Outcome-Join existiert — das ist KEIN "
+            "'perfekt kalibriert', sondern ein noch nicht angeschlossener Pfad.",
+        )
     payload = {
         "generated_at": datetime.now(UTC).isoformat(),
+        "state": "ok" if wired else "disabled",
+        "wiring_status": "connected" if wired else "not_connected",
         "n_pairs": report.n_pairs,
         "total_weight": report.total_weight,
         "brier_score": report.brier_score,
@@ -1492,7 +1507,7 @@ async def dashboard_calibration_api(n_bins: int = 10) -> JSONResponse:
         "mean_observed": report.mean_observed,
         "sample_sufficient": report.sample_sufficient,
         "bins": [b.model_dump() for b in report.bins],
-        "notes": list(report.notes),
+        "notes": notes,
         "outcome_map_size": len(_BAYES_OUTCOME_MAP),
     }
     return JSONResponse(
