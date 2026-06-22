@@ -435,9 +435,7 @@ def test_last_filled_review_date_picks_newest_filled_before_cutoff(
     # Newest FILLED before cutoff is 2026-01-01 (the 02-01 file is stub-only).
     assert _last_filled_review_date(before=date(2026, 3, 1)) == date(2026, 1, 1)
     # No filled review at all -> None.
-    (d / "2026-01-01.md").write_text(
-        _STUB_MARKERS[0] + "_\n", encoding="utf-8"
-    )
+    (d / "2026-01-01.md").write_text(_STUB_MARKERS[0] + "_\n", encoding="utf-8")
     assert _last_filled_review_date(before=date(2026, 3, 1)) is None
 
 
@@ -454,9 +452,7 @@ def test_staleness_line_reports_never_when_no_filled(repo_cwd: Path) -> None:
     assert "noch keiner" in _staleness_line(date(2026, 6, 22))
 
 
-def test_reminder_surfaces_staleness_in_output(
-    runner: CliRunner, repo_cwd: Path
-) -> None:
+def test_reminder_surfaces_staleness_in_output(runner: CliRunner, repo_cwd: Path) -> None:
     d = repo_cwd / "artifacts" / "daily_strategy"
     d.mkdir(parents=True, exist_ok=True)
     # A long-ago filled review, then today's stub skeleton.
