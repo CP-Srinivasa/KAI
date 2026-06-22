@@ -10,7 +10,7 @@ swallows exceptions, and that stop() does not block.
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -80,6 +80,39 @@ async def test_tick_swallows_exception_and_logs(tmp_path: Path) -> None:
         raise RuntimeError("jsonl boom")
 
     with patch("app.alerts.tv_bridge.persist_tv_events_as_alert_audits", side_effect=boom):
+        await sched._tick()  # must NOT raise
+
+
+@pytest.mark.asyncio
+async def test_tick_runs_tv_paper_feed(tmp_path: Path) -> None:
+    """Each tick also emits PAPER envelopes for fresh TV alerts (gated feeder)."""
+    sched = TVBridgeScheduler(interval_seconds=300, artifacts_dir=tmp_path)
+    feed = AsyncMock(return_value={"enabled": True, "emitted": 1})
+    with (
+        patch(
+            "app.alerts.tv_bridge.persist_tv_events_as_alert_audits",
+            side_effect=lambda **_: {"written": 0},
+        ),
+        patch("app.observability.tradingview_paper_feeder.run_from_settings", feed),
+    ):
+        await sched._tick()
+    feed.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_tick_tv_paper_feed_failure_is_swallowed(tmp_path: Path) -> None:
+    """A feeder error must not break the scheduler tick (fail-soft)."""
+    sched = TVBridgeScheduler(interval_seconds=300, artifacts_dir=tmp_path)
+    with (
+        patch(
+            "app.alerts.tv_bridge.persist_tv_events_as_alert_audits",
+            side_effect=lambda **_: {"written": 0},
+        ),
+        patch(
+            "app.observability.tradingview_paper_feeder.run_from_settings",
+            AsyncMock(side_effect=RuntimeError("feed boom")),
+        ),
+    ):
         await sched._tick()  # must NOT raise
 
 

@@ -100,3 +100,22 @@ class TVBridgeScheduler:
             logger.info("tv_bridge_tick_complete", **counts)
         else:
             logger.debug("tv_bridge_tick_complete", **counts)
+
+        # TV→paper feed (2026-06-22): emit bridge envelopes for FRESH TV alerts so
+        # the next bridge fill-tick turns them into paper positions in time. Gated
+        # by ALERT_TRADINGVIEW_PAPER_FEED_ENABLED (no-op when off); fail-soft so a
+        # feed error never breaks the scheduler tick.
+        try:
+            from app.observability.tradingview_paper_feeder import run_from_settings
+
+            tv = await run_from_settings()
+            if tv.get("emitted"):
+                logger.info(
+                    "tv_paper_feed_tick",
+                    emitted=tv.get("emitted"),
+                    unmappable=tv.get("unmappable"),
+                    no_price=tv.get("no_price"),
+                    short_skipped=tv.get("short_skipped"),
+                )
+        except Exception as exc:  # noqa: BLE001 — never break the scheduler tick
+            logger.error("tv_paper_feed_tick_failed", error=str(exc))
