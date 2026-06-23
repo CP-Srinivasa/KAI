@@ -85,10 +85,10 @@ describe("deriveTruthChips", () => {
     expect(byKey.reentry.tone).toBe("warn");
     expect(byKey.paper.value).toContain("144 hist");
     expect(byKey.paper.value).toContain("0 / 24h");
-    expect(byKey.source.value).toBe("0 trusted");
-    expect(byKey.source.tone).toBe("critical");
+    expect(byKey.source.value).toBe("0/3 trusted");
+    expect(byKey.source.tone).toBe("warn");
     expect(byKey.regime.tone).toBe("readonly");
-    expect(byKey.signal.value).toBe("Low-P insufficient");
+    expect(byKey.signal.value).toBe("Lift n/a");
   });
 
   it("renders an unconfigured re-entry target as neutral (not an expired warning)", () => {
@@ -153,7 +153,7 @@ describe("resolvePriorityVerdict", () => {
     expect(r.tone).toBe("info");
   });
 
-  it("returns UNDERPERFORMING (warn) when lift negative", () => {
+  it("returns UNDERPERFORMING (critical) when lift inverse — worse than merely unproven", () => {
     const r = resolvePriorityVerdict(
       gate({
         heartbeat_status: "active",
@@ -164,6 +164,30 @@ describe("resolvePriorityVerdict", () => {
       }),
     );
     expect(r.verdict).toBe("UNDERPERFORMING");
+    expect(r.tone).toBe("critical");
+    expect(r.detail).toContain("invers");
+  });
+
+  it("returns UNPROVEN (warn, not critical) when a tier bucket is empty", () => {
+    const r = resolvePriorityVerdict(
+      gate({
+        heartbeat_status: "active",
+        priority_quality: { current_quality_verdict: "priority_unproven" },
+      }),
+    );
+    expect(r.verdict).toBe("UNPROVEN");
+    expect(r.tone).toBe("warn");
+    expect(r.detail).toContain("nicht invers");
+  });
+
+  it("returns INSUFFICIENT (warn) when no lift is measurable", () => {
+    const r = resolvePriorityVerdict(
+      gate({
+        heartbeat_status: "active",
+        priority_quality: { current_quality_verdict: "insufficient_data" },
+      }),
+    );
+    expect(r.verdict).toBe("INSUFFICIENT");
     expect(r.tone).toBe("warn");
   });
 
@@ -268,5 +292,39 @@ describe("shadowAttributionChip (S6 Canary-Attribution)", () => {
     const chip = deriveTruthChips(q, regime, gate()).find((c) => c.key === "shadow-attribution")!;
     expect(chip.value).toBe("7 real · 393 probe");
     expect(chip.tone).toBe("info");
+  });
+});
+
+describe("sourceReliabilityChip (Frühphasen-Evidenz, kein Integritätsbruch)", () => {
+  it("zeigt 0 trusted quantifiziert als warn statt critical", () => {
+    const chip = deriveTruthChips(quality(), regime, gate()).find((c) => c.key === "source")!;
+    expect(chip.value).toBe("0/3 trusted");
+    expect(chip.tone).toBe("warn");
+    expect(chip.hint).toContain("fail-closed");
+    expect(chip.hint).not.toContain("institutionell");
+  });
+});
+
+describe("signalQualityChip (Tier-Lift-konsistent statt Low-P-Sackgasse)", () => {
+  it("zeigt positiven Tier-Lift als ok, unabhängig von der Low-P-Baseline", () => {
+    const q = quality({ priority_tier_lift_pct: 4.2, low_priority_hit_rate_pct: null });
+    const chip = deriveTruthChips(q, regime, gate()).find((c) => c.key === "signal")!;
+    expect(chip.value).toBe("Lift +4.2pp");
+    expect(chip.tone).toBe("ok");
+    expect(chip.hint).toContain("by-design nicht messbar");
+  });
+
+  it("zeigt nicht-positiven Tier-Lift als warn", () => {
+    const q = quality({ priority_tier_lift_pct: -1.5 });
+    const chip = deriveTruthChips(q, regime, gate()).find((c) => c.key === "signal")!;
+    expect(chip.value).toBe("Lift -1.5pp");
+    expect(chip.tone).toBe("warn");
+  });
+
+  it("zeigt fehlenden Lift als 'Lift n/a', nicht als Low-P-Gate", () => {
+    const q = quality({ priority_tier_lift_pct: null });
+    const chip = deriveTruthChips(q, regime, gate()).find((c) => c.key === "signal")!;
+    expect(chip.value).toBe("Lift n/a");
+    expect(chip.tone).toBe("warn");
   });
 });

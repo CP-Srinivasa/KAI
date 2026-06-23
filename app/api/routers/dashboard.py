@@ -328,7 +328,16 @@ def _load_source_reliability_summary() -> dict[str, Any]:
     thresholds = raw_thresholds if isinstance(raw_thresholds, dict) else {}
     # Minimum resolved-signal count below which a source's hit-rate is not
     # statistically load-bearing — 100% at n=1 must never read as "trusted".
-    min_n = int(thresholds.get("min_n") or thresholds.get("min_resolved") or 50)
+    # The producer (source_reliability.build_source_reliability_report) serializes
+    # this as `min_n_for_promote`; the legacy `min_n`/`min_resolved` keys are kept
+    # for backward compatibility. Fallback default mirrors the promote gate (30),
+    # NOT an unrelated 50 (which silently over-flagged sources as provisional).
+    min_n = int(
+        thresholds.get("min_n_for_promote")
+        or thresholds.get("min_n")
+        or thresholds.get("min_resolved")
+        or 30
+    )
     scores: list[dict[str, Any]] = []
     tier_counts: dict[str, int] = {}
     provisional_count = 0

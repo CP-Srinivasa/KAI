@@ -17,11 +17,14 @@ export function acuteChips(chips: TruthChip[]): TruthChip[] {
 
 const ACTION_BY_KEY: Record<string, string> = {
   "entry-mode": "Entry-Mode + offene Routen im Schutzschalter prüfen.",
-  priority: "Trading-Loop-Heartbeat + High-P-Beleg verifizieren.",
-  source: "Quellenbasis prüfen — 0 trusted ist nicht institutionell belastbar.",
+  priority:
+    "High-P-Qualität am Tier-Lift (P10 vs P7–P9) lesen; bei Lift < 0 (invers) High-P NICHT als Qualität nutzen.",
+  source:
+    "Mehr aufgelöste Outcomes je Quelle sammeln — Trust-Gate (n≥30 + Wilson≥0,65) noch unerreicht; kein Integritätsbruch.",
   paper: "Lifetime-Zahlen nicht als aktuellen 24h-Fortschritt lesen.",
   reentry: "Neue Gate-Definition setzen oder als Historie akzeptieren.",
-  signal: "Low-P-Baseline / Tier-Lift belegen, bevor High-P als Qualität gilt.",
+  signal:
+    "Tier-Lift (P10 vs P7–P9) ist die belegbare Metrik; Low-P-Baseline ist by-design nicht messbar (Gate filtert P<7).",
   "shadow-attribution": "Generator-Feed/Flag prüfen — nur 'real' zählt fürs Edge-Gate.",
 };
 
