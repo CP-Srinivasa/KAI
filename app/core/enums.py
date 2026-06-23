@@ -128,6 +128,11 @@ class SourceStatus(StrEnum):
     REQUIRES_API = "requires_api"
     MANUAL_RESOLUTION = "manual_resolution"
     UNRESOLVED = "unresolved"
+    # Source-lifecycle system (2026-06-23): autonomous rotation/ranking.
+    PROBATION = "probation"  # newly onboarded, shadow/eval, never trust-boosted
+    SILENT = "silent"  # stopped delivering signals (auto-detected)
+    ARCHIVED = "archived"  # rotated out — only via replace-when-ready gate
+    PINNED = "pinned"  # durable top performer, never auto-demoted
 
 
 class SentimentLabel(StrEnum):
