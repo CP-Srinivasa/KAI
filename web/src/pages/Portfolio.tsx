@@ -23,6 +23,7 @@ import { PremiumTradeCard } from "@/components/panels/PremiumTradeCard";
 import { PremiumSignalTrail } from "@/components/panels/PremiumSignalTrail";
 import { PremiumRuntimeBanner } from "@/components/panels/PremiumRuntimeBanner";
 import { DiversificationPanel } from "@/components/panels/DiversificationPanel";
+import { EdgeTruthPanel } from "@/components/panels/EdgeTruthPanel";
 import { Waterfall } from "@/components/viz/Waterfall";
 import { realizedToWaterfall } from "@/lib/pnlWaterfall";
 import { useCurrency } from "@/state/CurrencyProvider";
@@ -175,6 +176,13 @@ function RealizedByAssetPanel() {
         }
       />
       <div className="mb-3">{filterControls}</div>
+      {(d.totals.quarantined_closes ?? 0) > 0 && (
+        <div className="mb-3 text-2xs text-fg-subtle">
+          <span className="text-warn">{d.totals.quarantined_closes} korrupte Close(s)</span> (
+          {fmt(d.totals.quarantined_pnl_usd ?? 0, undefined, 0)}) forensisch quarantäniert und aus
+          den Summen ausgeschlossen — siehe Edge-Wahrheit.
+        </div>
+      )}
       {d.by_asset.length > 1 && (
         <div className="mb-4">
           <div className="mb-1 text-2xs uppercase tracking-wider text-fg-subtle">
@@ -491,6 +499,11 @@ export function PortfolioPage() {
           </div>
         </Card>
       )}
+
+      {/* 2026-06-23: Edge-Wahrheit sicht- + nachvollziehbar im Dashboard
+          (canonical vs voller Stream, Quarantäne-Transparenz) — schließt die
+          Lücke aus der Edge-Epochen-Forensik (canonical-Edge lag nur in der CLI). */}
+      <EdgeTruthPanel />
 
       {/* 2026-05-25 Forensik-Patch: PreparedPanel ersetzt durch echte Visualisierung.
           Endpoint GET /operator/portfolio/realized-by-asset existiert jetzt,

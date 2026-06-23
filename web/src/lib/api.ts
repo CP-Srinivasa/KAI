@@ -162,6 +162,35 @@ export function fetchEdgeTimeseries(signal?: AbortSignal): Promise<EdgeTimeserie
   return apiGet<EdgeTimeseries>("/dashboard/api/edge-timeseries", { signal });
 }
 
+// Edge-Truth-Verdikt (2026-06-23): die kosten-bereinigte Edge-Aussage + ihr
+// Ehrlichkeits-Kontext. canonical=true (Default) misst NUR den echten Generator
+// (autonomous_generator/real_analysis) — kontaminationssicher. canonical=false
+// zeigt den vollen Stream und wird als contaminated geflaggt (Mai-Canary gemischt).
+export type EdgeVerdict = {
+  available: boolean;
+  canonical: boolean;
+  contaminated: boolean;
+  source_allowlist: string[] | null;
+  closes_excluded_by_source: number;
+  trade_count: number;
+  /** Wahrscheinlichkeit, dass der mittlere Netto-Edge > 0 ist. null = zu wenige Trades. */
+  p_mu_net_positive: number | null;
+  median_net_bps: number;
+  mean_net_bps: number;
+  realized_pnl_usd_sum: number;
+  quarantine_excluded_count: number;
+  live_orders_attempted: number;
+  window_started_at: string | null;
+  window_ended_at: string | null;
+  error: string | null;
+};
+export function fetchEdgeVerdict(
+  canonical: boolean,
+  signal?: AbortSignal,
+): Promise<EdgeVerdict> {
+  return apiGet<EdgeVerdict>(`/dashboard/api/edge-window?canonical=${canonical}`, { signal });
+}
+
 // L3 Audit-Integrität (OpenTimestamps-Anchoring, default-off). state:
 // disabled | no_anchor | ok | unavailable. proof_available = OTS-Proof on-chain.
 export type IntegrityStatus = {
@@ -1315,6 +1344,11 @@ export type RealizedByAssetResponse = {
     fees_usd_total: number;
     partial_close_events: number;
     full_close_events: number;
+    // Forensisch quarantänierte korrupte Closes (DS-20260529-V1 MATIC stale-exit,
+    // DS-20260601 ETH off-market) — aus realized_pnl_usd ausgeschlossen, hier
+    // transparent ausgewiesen (2026-06-23 Nachvollziehbarkeit).
+    quarantined_pnl_usd?: number;
+    quarantined_closes?: number;
   };
   top_performer: RealizedByAssetEntry | null;
   worst_performer: RealizedByAssetEntry | null;
