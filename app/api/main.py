@@ -118,6 +118,18 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         )
         app.state.chain_fee_shadow_scheduler.start()
 
+    # P0 automation link: drive the LONG-only technical-paper feeder on an
+    # interval (PAPER only, doubly gated — scheduler_enabled here + the feeder's
+    # own enabled check; all feeder filters stay in force; fail-soft).
+    app.state.technical_paper_scheduler = None
+    if settings.technical_paper.scheduler_enabled:
+        from app.orchestrator.technical_paper_scheduler import TechnicalPaperScheduler
+
+        app.state.technical_paper_scheduler = TechnicalPaperScheduler(
+            interval_seconds=settings.technical_paper.scheduler_interval_seconds,
+        )
+        app.state.technical_paper_scheduler.start()
+
     # Telegram operator bot — receives commands and free text via long-polling
     op = settings.operator
     text_processor = None
@@ -203,6 +215,9 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         _cfs = getattr(app.state, "chain_fee_shadow_scheduler", None)
         if _cfs is not None:
             _cfs.stop()
+        _tps = getattr(app.state, "technical_paper_scheduler", None)
+        if _tps is not None:
+            _tps.stop()
 
 
 def create_app() -> FastAPI:
