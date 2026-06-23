@@ -1,0 +1,26 @@
+[Unit]
+Description=KAI Source-Discovery — observe/decide/audit autonomous source rotation (dry by default)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/ubuntu/ai_analyst_trading_bot
+Environment=PYTHONPATH=/home/ubuntu/ai_analyst_trading_bot
+EnvironmentFile=-/home/ubuntu/ai_analyst_trading_bot/.env
+
+# DRY by default (SOURCE_DISCOVERY_ENABLED off): reads proposals + the lifecycle
+# ranking, gates candidates, decides graduation (replace-only-when-ready), and
+# writes the PROPOSED actions to the lifecycle audit — no outbound fetch, no DB
+# mutation. "-" prefix so a failure never wedges the timer.
+ExecStart=-/home/ubuntu/ai_analyst_trading_bot/.venv/bin/python /home/ubuntu/ai_analyst_trading_bot/scripts/source_discovery_scheduler.py
+
+StandardOutput=journal
+StandardError=journal
+TimeoutStartSec=300
+
+# Read-heavy, decision-only. Modest caps.
+MemoryMax=256M
+CPUQuota=50%

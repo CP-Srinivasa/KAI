@@ -238,6 +238,10 @@ class SourceSettings(BaseSettings):
     # shadow so the would-skip set can be validated before flipping to enforce.
     crypto_relevance_gate_mode: Literal["off", "shadow", "enforce"] = Field(default="shadow")
 
+    # Autonomous source-discovery/rotation kill-switch (Phase 3). OFF by default
+    # (gated+inert): the scheduler then runs DRY — no outbound probe, no DB mutation.
+    discovery_enabled: bool = Field(default=False)
+
 
 class RiskSettings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="RISK_", env_file=".env", extra="ignore")
