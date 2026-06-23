@@ -136,6 +136,4 @@ def load_audit_chain_status(
             cross_checked=False,
             reason=f"Chain-Read-Fehler: {exc}",
         )
-    return derive_audit_chain_status(
-        entries=entries, errors=errors, cross_checked=cross_checked
-    )
+    return derive_audit_chain_status(entries=entries, errors=errors, cross_checked=cross_checked)

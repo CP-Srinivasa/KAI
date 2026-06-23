@@ -19,9 +19,7 @@ from app.observability.audit_chain_status import (
 
 
 def _journal(path: Path, records: list[dict]) -> None:
-    path.write_text(
-        "\n".join(json.dumps(r) for r in records) + "\n", encoding="utf-8"
-    )
+    path.write_text("\n".join(json.dumps(r) for r in records) + "\n", encoding="utf-8")
 
 
 def _build_valid_chain(chain_path: Path, journal_path: Path, n: int = 3) -> list[dict]:
