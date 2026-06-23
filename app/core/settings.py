@@ -238,13 +238,8 @@ class SourceSettings(BaseSettings):
     # shadow so the would-skip set can be validated before flipping to enforce.
     crypto_relevance_gate_mode: Literal["off", "shadow", "enforce"] = Field(default="shadow")
 
-    # Autonomous source-discovery/rotation kill-switch (Phase 3, 2026-06-24).
-    # OFF by default (KAI "gated+inert" doctrine, like APP_LN_PAY_ENABLED): the
-    # discovery scheduler then runs in DRY mode — it reads proposals + the ranking,
-    # decides what it WOULD onboard/graduate, and writes those decisions to the
-    # lifecycle audit, but performs NO outbound probe and NO DB mutation. Flip to
-    # true only once the loop is trusted; the safety rails (SSRF/intake-gate/
-    # replace-only-when-ready) stay code-enforced in BOTH modes.
+    # Autonomous source-discovery/rotation kill-switch (Phase 3). OFF by default
+    # (gated+inert): the scheduler then runs DRY — no outbound probe, no DB mutation.
     discovery_enabled: bool = Field(default=False)
 
 
