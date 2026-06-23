@@ -91,6 +91,11 @@ async def run_feeder(
     now_utc = now or datetime.now(UTC)
     max_age_hours = settings.technical_paper.freshness_max_age_hours
     age_limit = now_utc - timedelta(hours=max_age_hours)
+    # Per-run cap (0 = unlimited): bound how many candidates a single tick feeds
+    # so the first scheduled run doesn't burst hundreds of run_trading_loop_once
+    # cycles on the resource-constrained Pi. Remaining fresh candidates are picked
+    # up on the next tick (fed_ids dedup makes this a measured ramp).
+    max_per_run = settings.technical_paper.max_per_run
 
     candidates = load_shadow_candidates(ledger_path)
     fed_ids = load_fed_ids(fed_path)
@@ -103,6 +108,7 @@ async def run_feeder(
     skipped_already = 0
     skipped_weak = 0
     failed = 0
+    stopped_at_cap = False
 
     for c in candidates:
         if c.get("candidate_kind") != "technical":
@@ -188,6 +194,13 @@ async def run_feeder(
         except Exception as exc:
             failed += 1
             logger.exception("[tech-feeder] failed to run cycle for candidate %s: %s", cid, exc)
+            continue
+
+        # Per-run cap: stop after feeding max_per_run candidates this tick. The
+        # rest stay unfed and are picked up next tick (measured ramp, Pi-safe).
+        if max_per_run and fed_count >= max_per_run:
+            stopped_at_cap = True
+            break
 
     return {
         "enabled": True,
@@ -199,4 +212,5 @@ async def run_feeder(
         "skipped_stale": skipped_stale,
         "skipped_weak": skipped_weak,
         "failed": failed,
+        "stopped_at_cap": stopped_at_cap,
     }
