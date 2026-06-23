@@ -44,6 +44,11 @@ def summarize_net_bps(net_bps: list[float]) -> NetSummary:
     if n == 0:
         return NetSummary(n=0, mean_bps=0.0, std_bps=0.0, hit_rate=0.0, t_stat=0.0, p_value=1.0)
 
+    if not all(math.isfinite(x) for x in net_bps):
+        # Corrupt / non-finite sample (NaN/Infinity slipped from a feed): refuse
+        # any significance claim. Never let inf->mean>0 or NaN->p=0 fake an edge.
+        return NetSummary(n=n, mean_bps=0.0, std_bps=0.0, hit_rate=0.0, t_stat=0.0, p_value=1.0)
+
     mean = sum(net_bps) / n
     hit_rate = sum(1 for x in net_bps if x > 0) / n
 

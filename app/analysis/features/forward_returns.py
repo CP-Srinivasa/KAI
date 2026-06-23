@@ -22,6 +22,8 @@ keep the ratio well-defined.
 
 from __future__ import annotations
 
+import math
+
 _BPS = 10_000.0
 
 
@@ -47,7 +49,7 @@ def compute_forward_return_bps(closes: list[float], horizon: int) -> list[float 
     for i in range(n - horizon):
         base = closes[i]
         future = closes[i + horizon]
-        if base <= 0 or future <= 0:
+        if base <= 0 or future <= 0 or not math.isfinite(base) or not math.isfinite(future):
             continue
         out[i] = _BPS * (future / base - 1.0)
     return out
