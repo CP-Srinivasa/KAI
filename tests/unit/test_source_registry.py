@@ -112,3 +112,33 @@ class TestSourceStatus:
             "pinned",
         }
         assert {s.value for s in SourceStatus} == expected
+
+
+class TestSourceLifecycleColumns:
+    """PR5a: the additive source-lifecycle columns are mapped and serialised."""
+
+    _LIFECYCLE_COLS = {
+        "probation_start_at",
+        "last_activity_at",
+        "pinned_at",
+        "lifecycle_tier",
+    }
+
+    def test_model_maps_lifecycle_columns(self):
+        from app.storage.models.source import SourceModel
+
+        assert self._LIFECYCLE_COLS.issubset(set(SourceModel.__table__.columns.keys()))
+
+    def test_to_dict_includes_lifecycle_columns_defaulting_none(self):
+        from app.storage.models.source import SourceModel
+
+        model = SourceModel(
+            source_type=SourceType.RSS_FEED,
+            status=SourceStatus.PROBATION,
+            auth_mode=AuthMode.NONE,
+            original_url="https://feeds.example.com/x.xml",
+        )
+        d = model.to_dict()
+        assert self._LIFECYCLE_COLS.issubset(set(d.keys()))
+        # Unset → None (additive, no default), never a crash.
+        assert all(d[col] is None for col in self._LIFECYCLE_COLS)
