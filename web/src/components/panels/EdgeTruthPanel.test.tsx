@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, cleanup } from "@testing-library/react";
+import { render, screen, cleanup, fireEvent } from "@testing-library/react";
 
 // Mock only the network fetcher; keep ApiError + types from the real module.
 const fetchEdgeVerdict = vi.fn();
@@ -44,10 +44,28 @@ describe("EdgeTruthPanel", () => {
 
     const text = container.textContent ?? "";
     expect(text).toContain("24,9 %"); // P(mu_net>0) ehrlich gerundet (de-DE Komma)
+    expect(text).toContain("Verdient KAI nach Kosten Geld"); // Klartext-Satz für Nicht-Quants
+    expect(text).toContain("0,8 %"); // Median -77,7 bps -> ~0,8 % verständlich übersetzt
     expect(text).toContain("Canonical"); // source-filter-status sichtbar
     expect(text).toContain("119 Close"); // closes_excluded_by_source nachvollziehbar
     expect(text).toContain("14 korrupte Close"); // quarantine-transparenz
     expect(text).not.toContain("kontaminiert"); // canonical = NICHT kontaminiert
+    expect(text).not.toContain("reine Beweislage"); // Info-Feld standardmäßig eingeklappt
+  });
+
+  it("Info-Feld ist standardmäßig eingeklappt und öffnet die Nachlese-Erklärung auf Klick", async () => {
+    fetchEdgeVerdict.mockResolvedValue(canonicalVerdict);
+    render(<EdgeTruthPanel />);
+    await screen.findByText(/Kein bewiesener Edge/);
+
+    // eingeklappt -> Erklärtext nicht im DOM
+    expect(screen.queryByText(/reine Beweislage/)).toBeNull();
+
+    fireEvent.click(screen.getByRole("button", { name: /Was bedeutet das/ }));
+
+    // aufgeklappt -> Erklärung lesbar
+    expect(await screen.findByText(/reine Beweislage/)).toBeTruthy();
+    expect(screen.getByText(/über alles entscheidet/)).toBeTruthy();
   });
 
   it("warnt im vollen Stream, dass er kontaminiert ist", async () => {
