@@ -1,5 +1,12 @@
 import { useState } from "react";
-import { AlertTriangle, ShieldCheck, TrendingUp, Minus, HelpCircle } from "lucide-react";
+import {
+  AlertTriangle,
+  ShieldCheck,
+  TrendingUp,
+  Minus,
+  HelpCircle,
+  ChevronDown,
+} from "lucide-react";
 import { Card, CardHeader } from "@/components/ui/Primitives";
 import { useApi } from "@/lib/useApi";
 import { fetchEdgeVerdict } from "@/lib/api";
@@ -40,6 +47,32 @@ function fmtDay(s: string | null): string {
     : dt.toLocaleDateString("de-DE", { day: "2-digit", month: "2-digit" });
 }
 
+function fmtMedianPct(bps: number): string {
+  return Math.abs(bps / 100).toLocaleString("de-DE", {
+    minimumFractionDigits: 1,
+    maximumFractionDigits: 1,
+  });
+}
+
+// Übersetzt das Verdikt in einen Klartext-Satz für Nicht-Quants.
+function plainSentence(args: {
+  insufficient: boolean;
+  proven: boolean;
+  median_net_bps: number;
+  trade_count: number;
+}): string {
+  const { insufficient, proven, median_net_bps, trade_count } = args;
+  if (insufficient) {
+    return `Zu wenige abgeschlossene Trades (n=${trade_count}), um einen Vorteil überhaupt zu belegen.`;
+  }
+  const pct = fmtMedianPct(median_net_bps);
+  const verb = median_net_bps >= 0 ? `liegt bei ~+${pct} %` : `verliert ~${pct} %`;
+  if (proven) {
+    return `Verdient KAI nach Kosten Geld? Aktuell plausibel ja — der typische Trade ${verb} nach Gebühren.`;
+  }
+  return `Verdient KAI nach Kosten Geld? Noch nicht bewiesen — der typische Trade ${verb} nach Gebühren.`;
+}
+
 function Metric({ label, value, tone }: { label: string; value: string; tone?: string }) {
   return (
     <div className="flex flex-col gap-0.5">
@@ -64,6 +97,7 @@ const MODES = [
 
 export function EdgeTruthPanel() {
   const [canonical, setCanonical] = useState(true);
+  const [showInfo, setShowInfo] = useState(false);
   const data = useApi((signal) => fetchEdgeVerdict(canonical, signal), 60_000, [canonical], {
     maxAttempts: 2,
     baseMs: 1500,
@@ -141,30 +175,33 @@ export function EdgeTruthPanel() {
     <Card padded>
       {header}
 
-      {/* Verdikt-Hero — der eine Satz, den der Operator lesen muss. Icon trägt die
-          Semantik redundant zur Farbe (WCAG 1.4.1). */}
-      <div className="mb-3 flex items-center gap-2.5">
-        <VerdictIcon className={cn("h-5 w-5 shrink-0", verdictColor)} aria-hidden />
-        <div>
-          <div className={cn("font-mono text-2xl font-semibold leading-none", verdictColor)}>
+      {/* Verdikt-Hero, Klartext zuerst: Ampel-Headline -> Plain-Satz -> große
+          Wahrscheinlichkeit mit verständlichem Label. Icon trägt die Semantik
+          redundant zur Farbe (WCAG 1.4.1). */}
+      <div className="mb-3">
+        <div className="mb-1.5 flex items-center gap-2">
+          <VerdictIcon className={cn("h-5 w-5 shrink-0", verdictColor)} aria-hidden />
+          <span className={cn("text-base font-semibold leading-tight", verdictColor)}>
+            {verdictText}
+          </span>
+        </div>
+        <p className="mb-2 text-xs leading-relaxed text-fg">
+          {plainSentence({
+            insufficient,
+            proven,
+            median_net_bps: d.median_net_bps,
+            trade_count: d.trade_count,
+          })}
+        </p>
+        <div className="flex items-baseline gap-2">
+          <span className={cn("font-mono text-2xl font-semibold leading-none", verdictColor)}>
             {fmtPct(d.p_mu_net_positive)}
-          </div>
-          <div className="mt-1 text-xs text-fg">
-            {verdictText} ·{" "}
-            <span className="text-fg-subtle">
-              P(Netto-Edge &gt; 0), n = {d.trade_count}
-            </span>
-          </div>
+          </span>
+          <span className="text-2xs leading-snug text-fg-subtle">
+            Wahrscheinlichkeit, dass der Vorteil wirklich positiv ist · n = {d.trade_count}
+          </span>
         </div>
       </div>
-
-      {/* Ehrlichkeit: Abwesenheit von Beweis ist korrekt + gewollt, kein Defekt. */}
-      {!proven && !insufficient && (
-        <p className="mb-3 text-2xs leading-relaxed text-fg-subtle">
-          Die Daten belegen (noch) keinen kosten-bereinigten Vorteil — das ist eine ehrliche
-          Messung, kein Fehler. KAI handelt nicht auf unbewiesenem Edge.
-        </p>
-      )}
 
       {/* Kennzahlen */}
       <div className="mb-3 grid grid-cols-3 gap-3">
@@ -225,6 +262,61 @@ export function EdgeTruthPanel() {
         <div className="text-fg-muted">
           Fenster: {fmtDay(d.window_started_at)}–{fmtDay(d.window_ended_at)}
         </div>
+      </div>
+
+      {/* Info-Feld zum Nachlesen: was Edge/Wahrheit/die Zahlen bedeuten. Klappt
+          aus, damit die Hauptansicht ruhig bleibt. */}
+      <div className="mt-3 border-t border-line-subtle pt-3">
+        <button
+          type="button"
+          onClick={() => setShowInfo((s) => !s)}
+          aria-expanded={showInfo}
+          className="inline-flex items-center gap-1.5 text-2xs text-fg-subtle hover:text-fg"
+        >
+          <HelpCircle className="h-3 w-3" aria-hidden />
+          Was bedeutet das?
+          <ChevronDown
+            className={cn("h-3 w-3 transition-transform", showInfo && "rotate-180")}
+            aria-hidden
+          />
+        </button>
+        {showInfo && (
+          <div className="mt-2 space-y-1.5 text-2xs leading-relaxed text-fg-subtle">
+            <p>
+              <span className="text-fg">Edge</span> — Verdient die Strategie nach Abzug aller Kosten
+              (Gebühren/Spread) systematisch Geld pro abgeschlossenem Trade? Das ist die eine Frage,
+              die über alles entscheidet.
+            </p>
+            <p>
+              <span className="text-fg">Wahrheit / Canonical</span> — Gezeigt wird die saubere Zahl:
+              nur echte Generator-Quellen, die korrupten Mai-Canary-Trades (z. B. ein MATIC-Fake)
+              sind rausgerechnet. „Voller Stream" ist dieselbe Zahl mit dem Fake drin — nur zum
+              Vergleich, als kontaminiert markiert.
+            </p>
+            <p>
+              <span className="text-fg">Die große Prozentzahl</span> — Wahrscheinlichkeit, dass der
+              wahre Vorteil positiv ist. Unter ~50 % heißt: eher Verlust als Gewinn. Für „bewiesen"
+              bräuchte es klar über 90 %.
+            </p>
+            <p>
+              <span className="text-fg">Median Netto</span> — der typische Trade nach Kosten
+              (100 bps = 1 %). Negativ = der mittlere Trade verliert.
+            </p>
+            <p>
+              <span className="text-fg">Mittel Netto</span> — der Durchschnitt. Liegt er über dem
+              Median, ziehen wenige Ausreißer den Schnitt hoch — dann ist der Median ehrlicher.
+            </p>
+            <p>
+              <span className="text-fg">Realized Σ</span> — die tatsächlich realisierte Summe in USD
+              über das angezeigte Fenster.
+            </p>
+            <p>
+              <span className="text-fg">„Entscheidet nichts, belegt Evidenz"</span> — das Panel löst
+              keine Trades aus; es ist reine Beweislage. „Kein bewiesener Edge" ist eine ehrliche
+              Messung, kein Fehler — KAI handelt nicht auf unbewiesenem Edge.
+            </p>
+          </div>
+        )}
       </div>
     </Card>
   );
