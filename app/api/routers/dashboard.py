@@ -77,6 +77,11 @@ _provenance_cache: dict[str, Any] = {"at": 0.0, "payload": None}
 _QUALITY_CACHE_TTL_S = 20.0
 _quality_cache: dict[str, Any] = {"at": 0.0, "payload": None}
 
+# Edge-window build parses both audit streams (trading_loop_audit ~27 MB), so the
+# Edge-Truth panel's 60 s poll must not re-parse every tick. Keyed by mode.
+_EDGE_WINDOW_CACHE_TTL_S = 60.0
+_edge_window_cache: dict[str, dict[str, Any]] = {}
+
 # Source-by-doc map (for the active-precision legacy split). Loading it means
 # one DB query over directional doc-ids — not hot-path safe without a cache.
 # 5 min TTL: docs are rarely re-classified, and the map is additive.
@@ -1034,6 +1039,66 @@ async def dashboard_quality_api() -> JSONResponse:
         content=quality_payload,
         headers={"Cache-Control": "no-store, max-age=0"},
     )
+
+
+@router.get("/dashboard/api/edge-window", tags=["dashboard"])
+async def dashboard_edge_window_api(canonical: bool = True) -> JSONResponse:
+    """Edge-Truth panel data — the cost-adjusted edge verdict + its honesty context.
+
+    ``canonical=true`` (default) restricts the edge to the REAL generator's
+    attributed sources (``CANONICAL_EDGE_SOURCES`` = autonomous_generator /
+    real_analysis) — the contamination-proof answer (forensic 2026-06-23,
+    memory kai_edge_epoch_contamination_20260623). ``canonical=false`` shows the
+    FULL stream and is flagged ``contaminated=true`` so the UI can warn that the
+    unattributed May-canary closes are mixed in. READ-ONLY, fail-closed.
+    """
+    mode = "canonical" if canonical else "full"
+    cache_now = time.monotonic()
+    cached = _edge_window_cache.get(mode)
+    if cached is not None and (cache_now - cached["at"]) < _EDGE_WINDOW_CACHE_TTL_S:
+        return JSONResponse(
+            content=cached["payload"], headers={"Cache-Control": "no-store, max-age=0"}
+        )
+
+    try:
+        from app.observability.evidence_window import (
+            CANONICAL_EDGE_SOURCES,
+            build_window_from_audit,
+        )
+
+        report = build_window_from_audit(
+            loop_audit_path=_TRADING_LOOP_AUDIT,
+            exec_audit_path=_PAPER_EXECUTION_AUDIT,
+            source_allowlist=CANONICAL_EDGE_SOURCES if canonical else None,
+        )
+        w, e = report.window, report.edge
+        payload: dict[str, Any] = {
+            "available": True,
+            "canonical": canonical,
+            # The full stream is honestly flagged contaminated — its edge mixes the
+            # unattributed May-canary epoch; canonical is the defensible answer.
+            "contaminated": not canonical,
+            "source_allowlist": list(w.source_allowlist) if w.source_allowlist else None,
+            "closes_excluded_by_source": w.closes_excluded_by_source,
+            "trade_count": e.trade_count,
+            "p_mu_net_positive": e.p_mu_net_positive,
+            "median_net_bps": round(e.median_net_bps, 1),
+            "mean_net_bps": round(e.mean_net_bps, 1),
+            "realized_pnl_usd_sum": round(e.realized_pnl_usd_sum, 2),
+            "quarantine_excluded_count": e.quarantine_excluded.excluded_count,
+            "live_orders_attempted": report.safety.live_orders_attempted,
+            "window_started_at": w.started_at,
+            "window_ended_at": w.ended_at,
+            "error": None,
+        }
+        _edge_window_cache[mode] = {"at": cache_now, "payload": payload}
+        return JSONResponse(content=payload, headers={"Cache-Control": "no-store, max-age=0"})
+    except Exception as exc:  # noqa: BLE001 — endpoint must never 500 the dashboard
+        logger.warning("dashboard_edge_window_failed", exc_info=True)
+        return JSONResponse(
+            content={"available": False, "canonical": canonical, "error": str(exc)},
+            headers={"Cache-Control": "no-store, max-age=0"},
+        )
 
 
 @router.get("/dashboard/api/n-overview", tags=["dashboard"])

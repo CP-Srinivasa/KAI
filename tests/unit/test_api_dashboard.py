@@ -1178,3 +1178,69 @@ def test_integrations_disabled_when_nothing_configured() -> None:
     assert integ["llm"]["status"] == "disabled"
     assert integ["llm"]["providers"] == []
     assert integ["tradingview"]["status"] == "disabled"
+
+
+# --- Edge-Truth panel endpoint (2026-06-23 edge-window) -------------------------
+
+
+def _edge_close(symbol: str, exit_px: float, ts: str, pnl: float, source: str | None) -> dict:
+    row = {
+        "event_type": "position_closed",
+        "symbol": symbol,
+        "position_side": "long",
+        "entry_price": 100.0,
+        "exit_price": exit_px,
+        "quantity": 1.0,
+        "reason": "tp" if pnl > 0 else "sl",
+        "trade_pnl_usd": pnl,
+        "fee_usd": 0.1,
+        "timestamp_utc": ts,
+    }
+    if source is not None:
+        row["signal_source"] = source
+    return row
+
+
+def test_edge_window_canonical_restricts_to_real_generator(tmp_path: Path) -> None:
+    """canonical=true restricts the edge to attributed generator sources;
+    canonical=false shows the full stream and flags it contaminated."""
+    dashboard_mod._edge_window_cache.clear()
+    exec_rows = [
+        _edge_close("BTC/USDT", 101.0, "2026-06-12T10:00:00+00:00", 1.0, "autonomous_generator"),
+        _edge_close("LTC/USDT", 102.0, "2026-06-12T11:00:00+00:00", 2.0, "real_analysis"),
+        # unattributed May-canary-style close — excluded from canonical, kept in full:
+        _edge_close("ETH/USDT", 130.0, "2026-05-20T10:00:00+00:00", 300.0, None),
+    ]
+    (tmp_path / "paper_execution_audit.jsonl").write_text(
+        "\n".join(json.dumps(r) for r in exec_rows) + "\n", encoding="utf-8"
+    )
+    (tmp_path / "trading_loop_audit.jsonl").write_text("", encoding="utf-8")
+
+    app = _make_app()
+    with _patch_artifacts(tmp_path), TestClient(app) as client:
+        canon = client.get("/dashboard/api/edge-window?canonical=true").json()
+        full = client.get("/dashboard/api/edge-window?canonical=false").json()
+
+    assert canon["available"] is True
+    assert canon["canonical"] is True
+    assert canon["contaminated"] is False
+    assert canon["trade_count"] == 2  # only the two attributed generator closes
+    assert canon["closes_excluded_by_source"] == 1
+    assert canon["source_allowlist"] == ["autonomous_generator", "real_analysis"]
+
+    assert full["canonical"] is False
+    assert full["contaminated"] is True  # full stream is honestly flagged
+    assert full["trade_count"] == 3  # all closes incl. the unattributed one
+    assert full["source_allowlist"] is None
+
+
+def test_edge_window_fail_closed_on_missing_audit(tmp_path: Path) -> None:
+    """Missing audit must not 500 the dashboard — fail-closed to available:false-ish."""
+    dashboard_mod._edge_window_cache.clear()
+    # no files written -> build runs over empty streams; endpoint must still 200.
+    app = _make_app()
+    with _patch_artifacts(tmp_path), TestClient(app) as client:
+        r = client.get("/dashboard/api/edge-window?canonical=true")
+    assert r.status_code == 200
+    body = r.json()
+    assert "canonical" in body
