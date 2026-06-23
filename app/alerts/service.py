@@ -69,6 +69,19 @@ _FUZZY_JACCARD_THRESHOLD = 0.4
 _ASSET_RATE_LIMIT_HOURS = 6
 
 
+def _resolve_rss_source(source_name: str | None) -> str:
+    """RSS-alert provenance source: the feed's source_name, or generic ``"rss"``.
+
+    Treats empty AND the legacy ``"unknown"`` placeholder as missing so these
+    RSS alerts land in a real (if generic) source bucket instead of the
+    attribution-filtered ``unknown`` bucket that the per-source metrics drop.
+    """
+    cleaned = (source_name or "").strip()
+    if not cleaned or cleaned.lower() == "unknown":
+        return "rss"
+    return cleaned
+
+
 class AlertService:
     """Orchestrates threshold evaluation and multi-channel alert delivery."""
 
@@ -488,7 +501,7 @@ def _log_result(
 
             from app.core.settings import get_settings as _get_settings
 
-            rss_source = (message.source_name if message else None) or "rss"
+            rss_source = _resolve_rss_source(message.source_name if message else None)
             provenance = SignalProvenance(
                 source=rss_source,
                 version="rss-1",
