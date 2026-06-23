@@ -251,6 +251,25 @@ export function fetchReplayStatus(signal?: AbortSignal): Promise<ReplayStatus> {
   return apiGet<ReplayStatus>("/dashboard/api/replay-status", { signal });
 }
 
+// Audit-Chain Tamper-Evidence (#314): Integrität der Decision-Journal Hash-Chain.
+// state: ok (tamper-frei) | empty (noch nichts verkettet) | broken (Manipulation)
+// | unavailable (Datei unlesbar). journal_gaps = fehlende Journal-Payloads aus
+// Rotation (informativ, KEIN Tamper).
+export type AuditChainStatus = {
+  state: "ok" | "empty" | "broken" | "unavailable";
+  available: boolean;
+  entries: number;
+  errors: number;
+  first_error: string | null;
+  journal_gaps: number;
+  cross_checked: boolean;
+  reason: string;
+  generated_at: string;
+};
+export function fetchAuditChain(signal?: AbortSignal): Promise<AuditChainStatus> {
+  return apiGet<AuditChainStatus>("/dashboard/api/audit-chain", { signal });
+}
+
 export type EntryRuntime = {
   entry_mode: string | null;
   entry_mode_label: string;

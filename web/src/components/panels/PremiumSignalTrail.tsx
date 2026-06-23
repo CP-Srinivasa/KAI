@@ -23,6 +23,7 @@ import {
   type PremiumSignalTrailStage,
 } from "@/lib/api";
 import { usePolling } from "@/lib/usePolling";
+import { formatDayTime } from "@/lib/time";
 import { cn } from "@/lib/utils";
 import { useCurrency } from "@/state/CurrencyProvider";
 
@@ -106,15 +107,7 @@ const ACTION_LABEL: Record<string, string> = {
 };
 
 function _formatTs(iso: string | null | undefined): string {
-  if (!iso) return "—";
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return iso;
-  return d.toLocaleString("de-DE", {
-    day: "2-digit",
-    month: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
+  return formatDayTime(iso);
 }
 
 function _formatRelativeAge(iso: string | null | undefined): string {

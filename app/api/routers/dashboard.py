@@ -1969,6 +1969,42 @@ async def dashboard_integrity_api() -> JSONResponse:
     return JSONResponse(content=payload, headers={"Cache-Control": "no-store, max-age=0"})
 
 
+@router.get("/dashboard/api/audit-chain", tags=["dashboard"])
+async def dashboard_audit_chain_api() -> JSONResponse:
+    """Decision-Journal Tamper-Evidence (#314): Integrität der Hash-Chain.
+
+    Dritte Truth-Layer-KPI neben Replay-Status (Portfolio-Rekonstruierbarkeit) und
+    OTS-Integrity (On-Chain-Anchoring). Verifiziert ``decision_journal_chain.jsonl``
+    (Genesis, lückenlose Verkettung, Chain-/Record-Hash-Konsistenz) gegen die
+    Journal-Payloads. State: ``ok`` (tamper-frei) / ``empty`` (noch nichts verkettet)
+    / ``broken`` (Manipulation erkannt) / ``unavailable`` (Datei unlesbar). Eine
+    Journal-Rotation ist ``journal_gaps`` (informativ), KEIN Tamper. Reiner Datei-
+    Read via ``to_thread`` (off the event loop, blockiert nie); fail-soft, nie 500.
+    """
+    import asyncio
+
+    from app.observability.audit_chain_status import load_audit_chain_status
+
+    payload: dict[str, Any] = {
+        "state": "unavailable",
+        "available": False,
+        "entries": 0,
+        "errors": 0,
+        "first_error": None,
+        "journal_gaps": 0,
+        "cross_checked": False,
+        "reason": "",
+    }
+    try:
+        status = await asyncio.to_thread(load_audit_chain_status)
+        payload = status.to_dict()
+    except Exception as exc:  # noqa: BLE001 — Panel degradiert, kein 500
+        logger.warning("audit_chain_status_read_failed: %s", exc)
+        payload["reason"] = f"Status-Fehler: {exc}"
+    payload["generated_at"] = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return JSONResponse(content=payload, headers={"Cache-Control": "no-store, max-age=0"})
+
+
 @router.get("/dashboard/api/edge-timeseries", tags=["dashboard"])
 async def dashboard_edge_timeseries_api() -> JSONResponse:
     """Edge-Verlauf (#319): Precision/Brier/IC je Zeitfenster aus dem resolved-Ledger.

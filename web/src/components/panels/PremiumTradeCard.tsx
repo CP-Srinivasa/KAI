@@ -5,6 +5,7 @@ import { Badge, Card, CardHeader } from "@/components/ui/Primitives";
 import type { PaperPosition, PaperPositionTpTier } from "@/lib/api";
 import { useCurrency } from "@/state/CurrencyProvider";
 import { cn } from "@/lib/utils";
+import { formatDayTime } from "@/lib/time";
 
 /**
  * PremiumTradeCard — Hero-Komponente für aktive Premium-Telegram-Signal-Positionen.
@@ -41,14 +42,7 @@ function _sourceLabel(source: string | null | undefined): string {
 
 function _formatOpenedAt(iso: string | null | undefined): string {
   if (!iso) return "";
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return iso;
-  return d.toLocaleString("de-DE", {
-    day: "2-digit",
-    month: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
+  return formatDayTime(iso);
 }
 
 /**

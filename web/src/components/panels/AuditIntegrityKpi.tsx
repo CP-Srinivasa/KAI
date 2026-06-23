@@ -3,8 +3,9 @@
 // Audit-Integritäts-KPI (#314, Audit-Layer-Slice / Konzept §8/§9). Ehrlich gegen
 // das BESTEHENDE L3-Endpoint: disabled (default-off) / no_anchor (an, noch nichts
 // verankert) / ok (Anchor gefunden; proof_available = OTS-Proof on-chain). Kein
-// Fake, kein neuer Backend-Pfad. Replay-/Truth-Layer-KPIs bleiben offen (#314),
-// solange dafür kein Endpoint existiert.
+// Fake, kein neuer Backend-Pfad. Eine von drei Truth-Layer-KPIs (#314): hier
+// OTS-Anchoring; daneben ReplayStatusKpi (Portfolio-Rekonstruierbarkeit) und
+// AuditChainKpi (Decision-Journal Tamper-Evidence).
 import { Card, Badge } from "@/components/ui/Primitives";
 import { StatusPill } from "@/components/ui/StatusPill";
 import { useApi } from "@/lib/useApi";

@@ -815,6 +815,48 @@ def test_integrity_endpoint_disabled_by_default() -> None:
     assert body["freshness"]["status"] == "ok"
 
 
+def test_audit_chain_endpoint_contract() -> None:
+    """/dashboard/api/audit-chain returns the tamper-evidence KPI contract (#314)."""
+    resp = TestClient(_make_app()).get("/dashboard/api/audit-chain")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["state"] in {"ok", "empty", "broken", "unavailable"}
+    for key in (
+        "available",
+        "entries",
+        "errors",
+        "journal_gaps",
+        "cross_checked",
+        "generated_at",
+    ):
+        assert key in body
+
+
+def test_audit_chain_endpoint_reflects_broken(monkeypatch) -> None:
+    """A tampered chain surfaces as state=broken with the first error (#314)."""
+    import app.observability.audit_chain_status as acs
+    from app.observability.audit_chain_status import AuditChainStatus
+
+    def _fake() -> AuditChainStatus:
+        return AuditChainStatus(
+            state="broken",
+            available=True,
+            entries=7,
+            errors=2,
+            first_error="chain_break idx=1 decision_id=dec-1 expected_prev=… got=…",
+            journal_gaps=0,
+            cross_checked=True,
+            reason="Tamper erkannt — Decision-Audit-Trail kompromittiert.",
+        )
+
+    monkeypatch.setattr(acs, "load_audit_chain_status", _fake)
+    body = TestClient(_make_app()).get("/dashboard/api/audit-chain").json()
+    assert body["state"] == "broken"
+    assert body["entries"] == 7
+    assert body["errors"] == 2
+    assert body["first_error"].startswith("chain_break")
+
+
 def test_integrity_endpoint_ok(monkeypatch) -> None:
     """Vorhandener Anchor-Record → ok mit Digest + Proof-Status."""
     from app.integrity.status import IntegrityStatus

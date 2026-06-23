@@ -20,6 +20,7 @@ import { ExecutiveSnapshot } from "@/components/panels/ExecutiveSnapshot";
 import { AcutePointsBoard } from "@/components/panels/AcutePointsBoard";
 import { NodeStatusKpi } from "@/components/panels/NodeStatusKpi";
 import { AuditIntegrityKpi } from "@/components/panels/AuditIntegrityKpi";
+import { AuditChainKpi } from "@/components/panels/AuditChainKpi";
 import { ReplayStatusKpi } from "@/components/panels/ReplayStatusKpi";
 import { TruthLayerKpi } from "@/components/panels/TruthLayerKpi";
 import { NOverviewPanel } from "@/components/panels/NOverviewPanel";
@@ -362,6 +363,10 @@ export function Dashboard() {
         {/* #314: Replay-SSOT-Status-KPI (Integrität des Audit-Replays, hintergrund-gecacht). */}
         <PanelErrorBoundary name="Replay-SSOT-KPI">
           <ReplayStatusKpi />
+        </PanelErrorBoundary>
+        {/* #314: Audit-Chain Tamper-Evidence-KPI (Decision-Journal Hash-Chain verify). */}
+        <PanelErrorBoundary name="Audit-Chain-KPI">
+          <AuditChainKpi />
         </PanelErrorBoundary>
         {/* #314: Truth-Layer-Status-KPI (aus dem gepollten quality-Vertrag abgeleitet). */}
         <PanelErrorBoundary name="Truth-Layer-KPI">
