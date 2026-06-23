@@ -32,6 +32,7 @@ import pytest
 
 from app.execution.cost_model import CostModel
 from app.observability.evidence_window import (
+    CANONICAL_EDGE_SOURCES,
     build_evidence_window,
     build_window_from_audit,
     render_window,
@@ -370,3 +371,111 @@ def test_build_from_audit_files_end_to_end(tmp_path) -> None:
     assert report.counts.quarantine_rejected == 1
     assert report.edge.trade_count == 1  # only the valid BTC close
     assert report.safety.live_orders_attempted == 0
+
+
+# --- CANONICAL SOURCE FILTER (2026-06-23 edge-epoch fix) ------------------------
+# The full stream mixes the May canary epoch (unattributed closes) into the edge,
+# which fabricated a fake positive ETH cohort. The canonical edge restricts the
+# EDGE to the real generator's attributed sources; counts + safety stay full.
+
+
+def _close_src(
+    symbol: str, entry: float, exit_px: float, ts: str, pnl: float, source: str | None
+) -> dict:
+    row = _close(symbol, entry, exit_px, ts, pnl)
+    if source is not None:
+        row["signal_source"] = source
+    return row
+
+
+def test_canonical_edge_sources_is_the_real_generator() -> None:
+    assert CANONICAL_EDGE_SOURCES == frozenset({"autonomous_generator", "real_analysis"})
+
+
+def test_source_allowlist_restricts_edge_to_canonical_sources() -> None:
+    closes = [
+        _close_src(
+            "BTC/USDT", 100.0, 101.0, "2026-06-12T10:00:00+00:00", 1.0, "autonomous_generator"
+        ),
+        _close_src("BTC/USDT", 100.0, 102.0, "2026-06-12T11:00:00+00:00", 2.0, "real_analysis"),
+        # epoch-foreign, unattributed (May-canary style) — excluded from canonical edge:
+        _close_src("ETH/USDT", 100.0, 130.0, "2026-05-20T10:00:00+00:00", 300.0, None),
+        # other attributed, non-canonical source (webhook, not a forensically
+        # quarantined class) — excluded from the canonical edge purely by source:
+        _close_src(
+            "SOL/USDT", 100.0, 90.0, "2026-05-21T10:00:00+00:00", -10.0, "tradingview_webhook"
+        ),
+    ]
+    report = build_evidence_window(
+        loop_events=[], exec_events=closes, source_allowlist=CANONICAL_EDGE_SOURCES
+    )
+    assert report.edge.trade_count == 2  # only the two canonical-source closes
+    assert report.window.source_allowlist == ("autonomous_generator", "real_analysis")
+    assert report.window.closes_excluded_by_source == 2
+
+
+def test_no_source_allowlist_is_backward_compatible() -> None:
+    closes = [
+        _close_src(
+            "BTC/USDT", 100.0, 101.0, "2026-06-12T10:00:00+00:00", 1.0, "autonomous_generator"
+        ),
+        _close_src("ETH/USDT", 100.0, 130.0, "2026-05-20T10:00:00+00:00", 300.0, None),
+    ]
+    report = build_evidence_window(loop_events=[], exec_events=closes)
+    assert report.edge.trade_count == 2  # default unchanged: all closes count
+    assert report.window.source_allowlist is None
+    assert report.window.closes_excluded_by_source == 0
+
+
+def test_source_filter_shapes_edge_only_not_counts_or_safety() -> None:
+    loop = [
+        _loop_cycle("completed", "BTC/USDT", "2026-06-12T10:00:00+00:00"),
+        _loop_cycle("completed", "ETH/USDT", "2026-05-20T10:00:00+00:00"),
+    ]
+    closes = [
+        _close_src(
+            "BTC/USDT", 100.0, 101.0, "2026-06-12T10:00:00+00:00", 1.0, "autonomous_generator"
+        ),
+        _close_src("ETH/USDT", 100.0, 130.0, "2026-05-20T10:00:00+00:00", 300.0, None),
+    ]
+    report = build_evidence_window(
+        loop_events=loop, exec_events=closes, source_allowlist=CANONICAL_EDGE_SOURCES
+    )
+    assert report.edge.trade_count == 1  # only the canonical close in the edge
+    assert report.counts.cycles_completed == 2  # BOTH cycles still counted
+    assert report.safety.live_orders_attempted == 0
+
+
+def test_canonical_filter_threads_through_build_from_audit(tmp_path) -> None:
+    exec_events = [
+        _close_src(
+            "BTC/USDT", 100.0, 101.0, "2026-06-12T10:00:00+00:00", 1.0, "autonomous_generator"
+        ),
+        _close_src("ETH/USDT", 100.0, 130.0, "2026-05-20T10:00:00+00:00", 300.0, None),
+    ]
+    loop_path, exec_path = _write_streams(tmp_path, [], exec_events)
+    report = build_window_from_audit(
+        loop_audit_path=loop_path,
+        exec_audit_path=exec_path,
+        source_allowlist=CANONICAL_EDGE_SOURCES,
+    )
+    assert report.edge.trade_count == 1
+    assert report.window.closes_excluded_by_source == 1
+
+
+def test_render_makes_the_source_filter_status_visible() -> None:
+    # Honesty: a contaminated (unfiltered) read must announce itself; the
+    # canonical read must show which sources shaped the edge.
+    closes = [
+        _close_src(
+            "BTC/USDT", 100.0, 101.0, "2026-06-12T10:00:00+00:00", 1.0, "autonomous_generator"
+        )
+    ]
+    full = render_window(build_evidence_window(loop_events=[], exec_events=closes))
+    canon = render_window(
+        build_evidence_window(
+            loop_events=[], exec_events=closes, source_allowlist=CANONICAL_EDGE_SOURCES
+        )
+    )
+    assert "FULL STREAM" in full
+    assert "CANONICAL" in canon and "autonomous_generator" in canon
