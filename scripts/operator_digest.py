@@ -298,6 +298,39 @@ def collect_promotion_gate(target: str = "paper") -> dict[str, Any]:
 # ── Compose (pure, getestet) ─────────────────────────────────────────────────
 
 
+def collect_edge_discovery(research_dir: Path | None = None) -> dict[str, Any]:
+    """Latest edge-discovery run summary from ``artifacts/research/``. Read-only.
+
+    Returns ``{"available": False}`` if no run exists yet, ``{"error": ...}`` on
+    failure, else a compact summary of the most recent ``edge_search_*.json``
+    (timeframe, lookback, symbols, survivors, best rule, cumulative count). The
+    engine searches for a tradable edge on own OHLCV; zero survivors is the
+    honest expected outcome, not an error.
+    """
+    base = research_dir if research_dir is not None else _ARTIFACTS / "research"
+    try:
+        runs = sorted(base.glob("edge_search_*.json"))
+        if not runs:
+            return {"available": False}
+        doc = json.loads(runs[-1].read_text(encoding="utf-8"))
+        hyps = doc.get("hypotheses") or []
+        survivors = sum(int(h.get("symbols_survived", 0)) for h in hyps)
+        best = max(hyps, key=lambda h: h.get("mean_net_bps", float("-inf")), default=None)
+        return {
+            "available": True,
+            "timeframe": doc.get("timeframe"),
+            "lookback_days": doc.get("lookback_days"),
+            "n_symbols": len(doc.get("symbols") or []),
+            "n_hypotheses": len(hyps),
+            "survivors": survivors,
+            "cumulative_tested": doc.get("hypotheses_tested_cumulative"),
+            "best_name": best.get("name") if best else None,
+            "best_mean_bps": best.get("mean_net_bps") if best else None,
+        }
+    except Exception as exc:  # noqa: BLE001 — Digest degradiert, bricht nie
+        return {"error": str(exc)}
+
+
 def compose_digest_message(
     *,
     today: date,
@@ -311,6 +344,7 @@ def compose_digest_message(
     v5_freshness: dict[str, Any],
     v5_activated_on: date,
     promotion: dict[str, Any] | None = None,
+    edge_discovery: dict[str, Any] | None = None,
 ) -> str:
     """Baut die EINE lesbare Operator-Nachricht. Pure Funktion — testbar."""
     lines: list[str] = [f"📡 *KAI Operator-Digest* — {today.isoformat()}"]
@@ -461,6 +495,32 @@ def compose_digest_message(
             f"({generator_edge.get('error', '?')}) · {shadow_ctx}"
         )
 
+    # Edge-Discovery-Engine: systematische Hypothesen-Suche auf eigenem OHLCV.
+    ed = edge_discovery or {}
+    if ed.get("error"):
+        lines.append(f"🔎 *Edge-Discovery:* nicht lesbar — {str(ed['error'])[:80]}")
+    elif not ed.get("available"):
+        lines.append("🔎 *Edge-Discovery:* noch kein Lauf (`python -m app.research.runner`)")
+    else:
+        cum = ed.get("cumulative_tested")
+        cum_str = f" · {cum} Configs kumulativ" if isinstance(cum, int) else ""
+        lines.append(
+            f"🔎 *Edge-Discovery:* {ed.get('timeframe', '?')}/{ed.get('lookback_days', '?')}d, "
+            f"{ed.get('n_symbols', 0)} Symbole · "
+            f"{ed.get('survivors', 0)}/{ed.get('n_hypotheses', 0)} Survivors{cum_str}"
+        )
+        best_name = ed.get("best_name")
+        best_bps = ed.get("best_mean_bps")
+        if best_name is not None and isinstance(best_bps, (int, float)):
+            if ed.get("survivors", 0) == 0:
+                lines.append(
+                    f"  • kein robuster Edge — beste Regel {best_name} {best_bps:+.1f}bps netto"
+                )
+            else:
+                lines.append(
+                    f"  ➡️ *KANDIDAT(EN) PRÜFEN* — beste Regel {best_name} {best_bps:+.1f}bps netto"
+                )
+
     msg = "\n".join(lines)
     if len(msg) > _TELEGRAM_LIMIT:
         msg = msg[: _TELEGRAM_LIMIT - 25] + "\n… (gekürzt, 4096-Limit)"
@@ -518,6 +578,7 @@ def main(argv: list[str] | None = None) -> int:
             d227=collect_d227(),
             v5_freshness=collect_v5_freshness(),
             promotion=collect_promotion_gate(),
+            edge_discovery=collect_edge_discovery(),
             v5_activated_on=v5_activated_on,
         )
     except Exception:  # noqa: BLE001 — entrypoint boundary

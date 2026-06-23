@@ -39,7 +39,7 @@ Zweck: die meist-gesuchten Code-Pfade an EINEM Ort, damit Agenten/Helfer den Wor
 - `app/ingestion/rss/adapter.py` → `RSSFeedAdapter` (published_at via `calendar.timegm`, NICHT `mktime` — TZ-Bug #362) · `app/ingestion/classifier.py` · API-Adapter `app/integration/{cryptopanic,messari}/adapter.py`
 
 ### Digest / CLI / API / Audit / Regime
-- `scripts/operator_digest.py` (tägl. Telegram-Digest) · `app/cli/commands/daily_strategy.py` → `daily_strategy_app`
+- `scripts/operator_digest.py` (tägl. Telegram-Digest; `collect_*`→`compose_digest_message`; inkl. `collect_edge_discovery` = jüngster `artifacts/research/edge_search_*.json` als 🔎-Sektion) · `app/cli/commands/daily_strategy.py` → `daily_strategy_app`
 - `app/cli/main.py` → Typer-Entry (Gruppen: ingest / pipeline / signals / alerts / analyze / trading / audit / learning)
 - `app/api/routers/` → `dashboard`, `signals`, `premium_signals`, `operator`, `alerts`, `health`, `tradingview`, `kyt`, `agents` …
 - `app/audit/kai_audit_service.py` → `KaiAuditService` (Tamper-evident Hash-Chain)
