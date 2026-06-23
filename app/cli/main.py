@@ -55,12 +55,7 @@ def _safe_text(text: str) -> str:
 
 
 def _build_primary_provider() -> Any:
-    """Build an Ensemble (OpenAI -> Gemini -> [Grok]) provider with automatic fallback.
-
-    Grok is appended only when XAI_FALLBACK_ENABLED=true and a key is set,
-    and only acts when OpenAI and Gemini have both failed (D-174 Phase I).
-    Returns None if no API keys are configured.
-    """
+    """Build Ensemble (OpenAI -> Gemini -> Grok) provider with fallback. None if unconfigured."""
     settings = get_settings()
     providers: list[Any] = []
     if settings.providers.openai_api_key:
@@ -85,15 +80,7 @@ def _build_primary_provider() -> Any:
 
 
 def _maybe_gemini_shadow() -> Any:
-    """Return a shadow analysis provider, preferring Anthropic for red-team value.
-
-    The primary ensemble chain runs OpenAI → Gemini. If the shadow were also
-    Gemini, the shadow call duplicates the ensemble fallback whenever OpenAI
-    drops — burning quota and producing no Konsens/Dissens signal
-    (CLAUDE.md §6). Prefer Anthropic (Claude) when configured so the shadow
-    stays independent. Fall back to Gemini only if Anthropic is unavailable.
-    Return None if neither key is configured.
-    """
+    """Return shadow analysis provider, preferring Anthropic/Claude for independent signal."""
     settings = get_settings()
     if settings.providers.anthropic_api_key:
         from app.integrations.anthropic.provider import AnthropicAnalysisProvider
@@ -660,6 +647,21 @@ def pipeline_newsdata(
         console.print(table)
 
     asyncio.run(run())
+
+
+@pipeline_app.command("messari")
+def pipeline_messari(
+    source_id: str = typer.Option("messari", help="Source ID"),
+    source_name: str = typer.Option("Messari", help="Source name"),
+    limit: int = typer.Option(100, help="Max assets to fetch"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Skip DB writes"),
+) -> None:
+    """Fetch Messari asset metrics, analyze, and alert."""
+    import asyncio
+
+    from app.cli.commands.ingestion import run_messari_command_logic
+
+    asyncio.run(run_messari_command_logic(source_id, source_name, limit, dry_run))
 
 
 # ── query analyze-pending ─────────────────────────────────────────────────────

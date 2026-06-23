@@ -51,6 +51,7 @@ from app.core.enums import EntryMode
 # paper_entry_accounting — the route limiter and the daily cap can never
 # disagree about what counts as an entry, because there is only one copy.
 from app.execution.paper_entry_accounting import is_opening_fill as _is_opening_fill
+from app.risk.reason_codes import ExecutionBlockerCode
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -68,6 +69,7 @@ class EntryRoute(StrEnum):
     REAL_ANALYSIS_PAPER = "real_analysis_paper"
     PREMIUM_FASTLANE = "premium_fastlane"
     TRADINGVIEW_PAPER = "tradingview_paper"
+    TECHNICAL_PAPER = "technical_paper"
 
 
 # Audit `source` prefixes per route — used by the route-usage limiter to
@@ -76,6 +78,7 @@ ROUTE_SOURCE_PREFIXES: dict[EntryRoute, tuple[str, ...]] = {
     EntryRoute.PREMIUM_PAPER: ("telegram_premium",),
     EntryRoute.REAL_ANALYSIS_PAPER: ("real_analysis",),
     EntryRoute.TRADINGVIEW_PAPER: ("tradingview_webhook",),
+    EntryRoute.TECHNICAL_PAPER: ("technical_paper",),
 }
 
 
@@ -112,6 +115,11 @@ DEFAULT_PREMIUM_ROUTE_LIMITS = RouteLimits(
     max_open_positions=10,
 )
 DEFAULT_LEARNING_ROUTE_LIMITS = RouteLimits(
+    max_trades_per_hour=6,
+    max_notional_per_day_usd=5_000.0,
+    max_open_positions=10,
+)
+DEFAULT_TECHNICAL_ROUTE_LIMITS = RouteLimits(
     max_trades_per_hour=6,
     max_notional_per_day_usd=5_000.0,
     max_open_positions=10,
@@ -217,6 +225,17 @@ def _learning_route_limits(settings: AppSettings, mode: EntryMode) -> RouteLimit
     if explicit is not None:
         return explicit
     return DEFAULT_LEARNING_ROUTE_LIMITS if mode is EntryMode.PAPER_LEARNING else None
+
+
+def _technical_route_limits(settings: AppSettings, mode: EntryMode) -> RouteLimits | None:
+    explicit = _explicit_limits(
+        settings.technical_paper.paper_route_max_trades_per_hour,
+        settings.technical_paper.paper_route_max_notional_per_day_usd,
+        settings.technical_paper.paper_route_max_open_positions,
+    )
+    if explicit is not None:
+        return explicit
+    return DEFAULT_TECHNICAL_ROUTE_LIMITS if settings.technical_paper.enabled else None
 
 
 def resolve_entry_policy(settings: AppSettings) -> EntryPolicy:
@@ -357,6 +376,20 @@ def resolve_entry_policy(settings: AppSettings) -> EntryPolicy:
             route=EntryRoute.PREMIUM_FASTLANE,
             allowed=False,
             reason_code="fastlane_not_policy_managed",
+        )
+
+    # ── technical paper feeder ─────────────────────────────────────────────
+    if not settings.technical_paper.enabled:
+        verdicts[EntryRoute.TECHNICAL_PAPER] = RouteVerdict(
+            route=EntryRoute.TECHNICAL_PAPER,
+            allowed=False,
+            reason_code="technical_paper_disabled",
+        )
+    else:
+        verdicts[EntryRoute.TECHNICAL_PAPER] = RouteVerdict(
+            route=EntryRoute.TECHNICAL_PAPER,
+            allowed=True,
+            limits=_technical_route_limits(settings, mode),
         )
 
     return EntryPolicy(mode=mode, verdicts=verdicts, contradictions=())
@@ -506,6 +539,62 @@ def check_route_limits(
     return True, None, snapshot
 
 
+@dataclass(frozen=True)
+class RouteGateRejection:
+    """A route-gate refusal carrying the audit notes and the reject class.
+
+    ``blocked`` distinguishes the two cycle outcomes the caller must emit without
+    this module having to import the orchestrator's ``CycleStatus`` (which would
+    be a circular dependency): ``True`` → entry-mode/route-disabled block,
+    ``False`` → a volume/route cap was hit.
+    """
+
+    blocked: bool
+    notes: tuple[str, ...]
+
+
+def evaluate_route_gate(
+    *,
+    settings: AppSettings,
+    route: EntryRoute,
+    audit_path: Path,
+    current_open_positions: int | None = None,
+    now: datetime | None = None,
+) -> RouteGateRejection | None:
+    """Combine the per-route policy verdict and its volume limits into ONE gate.
+
+    Returns ``None`` when ``route`` may open a new position, else a
+    :class:`RouteGateRejection` with the audit notes the caller appends to the
+    rejected cycle. Extracted from ``TradingLoop`` (S7 god-file ratchet, D-234):
+    the verdict→limits glue now lives next to :func:`resolve_entry_policy` and
+    :func:`check_route_limits` so it is unit-testable in isolation and the same
+    logic cannot drift between the disabled-decoupling and enabled-loop paths.
+    """
+    verdict = resolve_entry_policy(settings).verdict(route)
+    if not verdict.allowed:
+        return RouteGateRejection(
+            blocked=True,
+            notes=(f"route_blocked:{verdict.reason_code or f'{route.value}_disabled'}",),
+        )
+
+    limits_ok, limit_detail, limits_snapshot = check_route_limits(
+        route=route,
+        limits=verdict.limits,
+        audit_path=audit_path,
+        current_open_positions=current_open_positions,
+        now=now,
+    )
+    if not limits_ok:
+        return RouteGateRejection(
+            blocked=False,
+            notes=(
+                f"route_limit_reject:{limit_detail}|{limits_snapshot.get('usage')}",
+                f"reason_code:{ExecutionBlockerCode.ROUTE_LIMIT_EXCEEDED.value}",
+            ),
+        )
+    return None
+
+
 __all__ = [
     "ALIAS_PREMIUM_THREE_ARM",
     "ALIAS_REAL_ANALYSIS_THREE_ARM",
@@ -514,11 +603,13 @@ __all__ = [
     "ROUTE_SOURCE_PREFIXES",
     "EntryPolicy",
     "EntryRoute",
+    "RouteGateRejection",
     "RouteLimits",
     "RouteUsage",
     "RouteVerdict",
     "check_route_limits",
     "detect_contradictions",
+    "evaluate_route_gate",
     "measure_route_usage",
     "resolve_entry_policy",
 ]

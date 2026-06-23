@@ -469,3 +469,59 @@ def test_check_route_limits_under_all_caps_is_ok(tmp_path: Path) -> None:
         now=now,
     )
     assert ok is True and detail is None
+
+
+# ── evaluate_route_gate (D-234 extraction: verdict + limits → one decision) ──
+
+
+def _technical_settings(enabled: bool) -> AppSettings:
+    from app.core.settings import TechnicalPaperSettings
+
+    settings = AppSettings()
+    settings.execution = ExecutionSettings(entry_mode=EntryMode.PAPER)
+    settings.technical_paper = TechnicalPaperSettings(enabled=enabled)
+    return settings
+
+
+def test_evaluate_route_gate_blocks_when_route_disabled(tmp_path: Path) -> None:
+    from app.execution.entry_policy import RouteGateRejection, evaluate_route_gate
+
+    reject = evaluate_route_gate(
+        settings=_technical_settings(enabled=False),
+        route=EntryRoute.TECHNICAL_PAPER,
+        audit_path=tmp_path / "audit.jsonl",
+        current_open_positions=0,
+    )
+    assert isinstance(reject, RouteGateRejection)
+    assert reject.blocked is True
+    assert reject.notes == ("route_blocked:technical_paper_disabled",)
+
+
+def test_evaluate_route_gate_rejects_on_volume_cap(tmp_path: Path) -> None:
+    from app.execution.entry_policy import evaluate_route_gate
+
+    # DEFAULT_TECHNICAL_ROUTE_LIMITS caps open positions at 10.
+    reject = evaluate_route_gate(
+        settings=_technical_settings(enabled=True),
+        route=EntryRoute.TECHNICAL_PAPER,
+        audit_path=tmp_path / "audit.jsonl",
+        current_open_positions=10,
+    )
+    assert reject is not None
+    assert reject.blocked is False
+    assert reject.notes[0].startswith("route_limit_reject:max_open_positions")
+    assert reject.notes[1].startswith("reason_code:")
+
+
+def test_evaluate_route_gate_allows_under_caps(tmp_path: Path) -> None:
+    from app.execution.entry_policy import evaluate_route_gate
+
+    assert (
+        evaluate_route_gate(
+            settings=_technical_settings(enabled=True),
+            route=EntryRoute.TECHNICAL_PAPER,
+            audit_path=tmp_path / "audit.jsonl",
+            current_open_positions=0,
+        )
+        is None
+    )

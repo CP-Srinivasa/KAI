@@ -189,3 +189,98 @@ async def test_run_once_does_not_enable_background_autoloop(tmp_path: Path) -> N
 
     summary_after_wait = build_recent_cycles_summary(audit_path=loop_audit, last_n=20)
     assert summary_after_wait.total_cycles == 1
+
+
+@pytest.mark.asyncio
+async def test_run_trading_loop_once_technical_paper_disabled(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """When settings.technical_paper.enabled is False, a technical paper signal
+    must be blocked even when global entry_mode allows autonomous loop entry."""
+    from app.core.domain.document import AnalysisResult
+    from app.core.enums import EntryMode, SentimentLabel
+    from app.core.settings import AppSettings, ExecutionSettings, TechnicalPaperSettings
+
+    settings = AppSettings()
+    settings.technical_paper = TechnicalPaperSettings(enabled=False)
+    settings.execution = ExecutionSettings(entry_mode=EntryMode.PAPER)
+
+    monkeypatch.setattr("app.orchestrator.trading_loop.get_settings", lambda: settings)
+
+    analysis = AnalysisResult(
+        document_id="test_tech_doc",
+        sentiment_label=SentimentLabel.BULLISH,
+        sentiment_score=0.8,
+        relevance_score=1.0,
+        impact_score=1.0,
+        confidence_score=0.85,
+        actionable=True,
+        novelty_score=0.0,
+        explanation_short="short explanation",
+        explanation_long="long explanation",
+    )
+
+    cycle = await run_trading_loop_once(
+        symbol="BTC/USDT",
+        mode="paper",
+        provider="mock",
+        analysis_result=analysis,
+        analysis_source="technical_paper",
+        loop_audit_path=tmp_path / "loop_tech_disabled.jsonl",
+        execution_audit_path=tmp_path / "exec_tech_disabled.jsonl",
+    )
+
+    assert cycle.status == CycleStatus.ENTRY_MODE_BLOCKED
+    assert "route_blocked:technical_paper_disabled" in cycle.notes
+
+
+@pytest.mark.asyncio
+async def test_run_trading_loop_once_technical_paper_enabled_excluded_from_edge(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """B-002 edge-attribution: when the autonomous loop is ENABLED (entry_mode=
+    paper) a technical_paper fill must still be hard-attributed feed_source=
+    'technical_paper' so it is excluded from the edge/D-227 headline like canary
+    — NOT mislabelled 'autonomous_loop' and counted in the honest forward edge."""
+    from app.core.domain.document import AnalysisResult
+    from app.core.enums import EntryMode, SentimentLabel
+    from app.core.settings import AppSettings, ExecutionSettings, TechnicalPaperSettings
+
+    settings = AppSettings()
+    settings.technical_paper = TechnicalPaperSettings(enabled=True)
+    settings.execution = ExecutionSettings(entry_mode=EntryMode.PAPER)
+    monkeypatch.setattr("app.orchestrator.trading_loop.get_settings", lambda: settings)
+
+    analysis = AnalysisResult(
+        document_id="test_tech_doc_enabled",
+        sentiment_label=SentimentLabel.BULLISH,
+        sentiment_score=0.9,
+        relevance_score=1.0,
+        impact_score=1.0,
+        confidence_score=0.9,
+        actionable=True,
+        novelty_score=0.0,
+        explanation_short="short explanation",
+        explanation_long="long explanation",
+    )
+
+    execution_audit = tmp_path / "exec_tech_enabled.jsonl"
+    cycle = await run_trading_loop_once(
+        symbol="BTC/USDT",
+        mode="paper",
+        provider="mock",
+        analysis_result=analysis,
+        analysis_source="technical_paper",
+        loop_audit_path=tmp_path / "loop_tech_enabled.jsonl",
+        execution_audit_path=execution_audit,
+    )
+
+    assert cycle.status == CycleStatus.COMPLETED
+    rows = [
+        json.loads(line)
+        for line in execution_audit.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    label = next(r for r in rows if r["event_type"] == "paper_trade_label")
+    assert label["feed_source"] == "technical_paper"
+    assert label["source_name"] == "technical_paper"
