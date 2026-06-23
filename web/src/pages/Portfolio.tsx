@@ -27,6 +27,7 @@ import { Waterfall } from "@/components/viz/Waterfall";
 import { realizedToWaterfall } from "@/lib/pnlWaterfall";
 import { useCurrency } from "@/state/CurrencyProvider";
 import { formatNumber, type Currency } from "@/lib/money";
+import { formatClock, formatShortDate } from "@/lib/time";
 
 /**
  * Adaptive Decimal-Digits für Preis-Anzeige.
@@ -1145,10 +1146,9 @@ function formatOpenedAt(iso: string): string {
     const today = new Date();
     const sameDay = d.toDateString() === today.toDateString();
     if (sameDay) {
-      return d.toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" });
+      return formatClock(iso);
     }
-    return d.toLocaleDateString("de-DE", { day: "2-digit", month: "2-digit" }) +
-      " " + d.toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" });
+    return formatShortDate(iso) + " " + formatClock(iso);
   } catch {
     return iso.slice(0, 16);
   }
