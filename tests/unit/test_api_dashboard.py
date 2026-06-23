@@ -550,6 +550,41 @@ def test_source_reliability_flags_small_n_as_provisional(artifacts_dir: Path) ->
     assert src["sample_warning"]
 
 
+def test_source_reliability_min_n_reads_promote_threshold_key(artifacts_dir: Path) -> None:
+    # F-001/F-005 regression: the producer serializes the promote threshold as
+    # `min_n_for_promote`; the dashboard must read THAT (30), not silently fall
+    # back to an unrelated 50 that over-flags sources as provisional.
+    (artifacts_dir / "source_reliability.json").write_text(
+        json.dumps(
+            {
+                "report_type": "source_reliability",
+                "generated_at": datetime.now(UTC).isoformat(),
+                "window_days": 90,
+                "thresholds": {"min_n_for_promote": 30, "min_n_for_demote": 20},
+                "scores": {
+                    "decrypt": {
+                        "source_name": "decrypt",
+                        "hits": 18,
+                        "miss": 7,
+                        "n": 25,
+                        "point_estimate": 0.72,
+                        "wilson_lower_95": 0.52,
+                        "tier": "neutral",
+                        "priority_modifier": 0,
+                    },
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    app = _make_app()
+    with _patch_artifacts(artifacts_dir):
+        with TestClient(app) as client:
+            rel = client.get("/dashboard/api/quality").json()["source_reliability"]
+    assert rel["min_n"] == 30  # promote threshold, NOT the 50 fallback
+    assert rel["top_sources"][0]["is_provisional"] is True  # n=25 < 30
+
+
 def test_priority_gate_heartbeat_unknown_when_no_cycles(tmp_path: Path) -> None:
     (tmp_path / "alert_audit.jsonl").write_text("", encoding="utf-8")
     (tmp_path / "alert_outcomes.jsonl").write_text("", encoding="utf-8")

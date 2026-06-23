@@ -157,13 +157,25 @@ export function resolvePriorityVerdict(
       detail: "Gate arbeitet; High-P-Lift im aktuellen Fenster belegt.",
     };
   }
-  return {
-    verdict: label,
-    tone: "warn",
-    detail:
-      pg.priority_quality?.warning ??
-      "Priority-Gate blockiert, aber High-P ist im aktuellen Fenster nicht als Qualitaet belegt.",
-  };
+  if (v === "priority_underperforming") {
+    // Tier-Lift < 0: High-P trifft AKTIV SCHLECHTER als Standard-Priorität —
+    // invers, nicht nur unbelegt. Schwerwiegender als "unproven" → critical,
+    // damit es nicht im selben warn-Topf verschwindet (sonst Untertreibung).
+    return {
+      verdict: label,
+      tone: "critical",
+      detail:
+        "High-P trifft aktuell AKTIV SCHLECHTER als Standard-Priorität (Tier-Lift < 0, invers) — " +
+        "High-P darf NICHT als Qualität gelten; Ursache der inversen Priorisierung prüfen.",
+    };
+  }
+  // priority_unproven (ein Tier-Bucket leer) vs insufficient_data (kein Lift
+  // berechenbar) — beide unentschieden, NICHT invers; distinkte Erklärung.
+  const detail =
+    v === "insufficient_data"
+      ? "Noch kein High-P-Lift messbar (zu wenig aufgelöste Tier-Daten) — unentschieden, nicht invers."
+      : "High-P-Lift noch nicht belegt (ein Tier-Bucket leer) — unbewiesen, nicht invers.";
+  return { verdict: label, tone: "warn", detail };
 }
 
 function priorityChip(pg: PriorityGateSummary | null): TruthChip {
@@ -188,14 +200,22 @@ function sourceReliabilityChip(quality: DashboardQuality | null): TruthChip {
       hint: "Source-Reliability-Report noch nicht verfuegbar (DATEN-LÜCKE).",
     };
   }
+  const total = rel.source_count ?? 0;
   const trusted = rel.trusted_count ?? rel.tier_counts?.trusted ?? 0;
   if (trusted === 0) {
+    // Frühphasen-Messzustand, KEIN Integritätsbruch: keine Quelle hat genug
+    // Hard-Outcome-Evidenz für das Trust-Gate (n≥30 + Wilson-Lower≥0,65)
+    // akkumuliert. Die Trust-Boosts sind fail-closed (wirkungslos), richten
+    // also keinen Schaden an → warn statt critical, ehrlich quantifiziert.
     return {
       key: "source",
       label: "Sources",
-      value: "0 trusted",
-      tone: "critical",
-      hint: "0 vertrauenswuerdige Quellen — Quellenbasis aktuell nicht institutionell belastbar.",
+      value: total > 0 ? `0/${total} trusted` : "0 trusted",
+      tone: "warn",
+      hint:
+        "Keine Quelle erreicht das Trust-Gate (n≥30 Hard-Outcomes + Wilson-Lower≥0,65) — " +
+        "Frühphasen-Evidenz, kein Integritätsbruch (Trust-Boosts sind fail-closed wirkungslos). " +
+        "Es braucht mehr aufgelöste Outcomes je Quelle.",
     };
   }
   const status = rel.quality_status;
@@ -248,32 +268,45 @@ function signalQualityChip(quality: DashboardQuality | null): TruthChip {
       hint: "Quality-Report nicht geladen.",
     };
   }
-  const lowP = quality.low_priority_hit_rate_pct;
+  // Konsistent mit dem Backend-Verdict (dashboard.py): „Priorität belegt" haengt
+  // am Tier-Lift (P10 vs P7–P9), NICHT an der Low-P-Baseline. Low-P ist
+  // by-design oft nicht messbar (der Prio-Gate filtert P<7), daher KEIN
+  // blockierendes Gate, sondern Kontext-Hinweis — sonst widerspraeche der Chip
+  // dauerhaft dem Backend (VALID vs insufficient).
   const lift = quality.priority_tier_lift_pct;
-  if (lowP == null) {
+  const lowP = quality.low_priority_hit_rate_pct;
+  const lowPNote =
+    lowP == null ? " Low-P-Baseline by-design nicht messbar (Gate filtert P<7)." : "";
+  if (lift == null) {
     return {
       key: "signal",
       label: "Signal-Q",
-      value: "Low-P insufficient",
+      value: "Lift n/a",
       tone: "warn",
-      hint: "Keine belastbare Low-P-Stichprobe — Priorisierung nicht als validiert lesen.",
+      hint:
+        "Tier-Lift (P10 vs P7–P9) noch nicht messbar — zu wenig aufgelöste Tier-Daten." + lowPNote,
     };
   }
-  if (lift == null || lift <= 0) {
+  const liftStr = `${lift >= 0 ? "+" : ""}${lift.toFixed(1)}pp`;
+  if (lift <= 0) {
     return {
       key: "signal",
       label: "Signal-Q",
-      value: "Lift unbewiesen",
+      value: `Lift ${liftStr}`,
       tone: "warn",
-      hint: "Priority-Tier-Lift nicht positiv/belegt — High-P darf nicht als Qualitaet gelten.",
+      hint:
+        "Priority-Tier-Lift ≤ 0 — High-P trifft nicht besser als Standard; nicht als Qualität lesen." +
+        lowPNote,
     };
   }
   return {
     key: "signal",
     label: "Signal-Q",
-    value: "valid",
+    value: `Lift ${liftStr}`,
     tone: "ok",
-    hint: "Low-P-Baseline vorhanden und Priority-Lift positiv.",
+    hint:
+      "High-P trifft besser als Standard-Priorität (Tier-Lift positiv); Signifikanz via Tier-CIs separat." +
+      lowPNote,
   };
 }
 

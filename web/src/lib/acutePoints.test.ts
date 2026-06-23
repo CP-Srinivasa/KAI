@@ -26,8 +26,9 @@ describe("acuteChips", () => {
 describe("recommendedAction", () => {
   it("kennt die wichtigsten Chip-Keys", () => {
     expect(recommendedAction("entry-mode")).toMatch(/Schutzschalter/);
-    expect(recommendedAction("source")).toMatch(/trusted/);
-    expect(recommendedAction("priority")).toMatch(/Heartbeat/);
+    expect(recommendedAction("source")).toMatch(/Trust-Gate/);
+    expect(recommendedAction("priority")).toMatch(/Tier-Lift/);
+    expect(recommendedAction("signal")).toMatch(/Tier-Lift/);
   });
   it("Fallback für unbekannte Keys", () => {
     expect(recommendedAction("etwas-neues")).toBe("Status prüfen und Ursache klären.");
