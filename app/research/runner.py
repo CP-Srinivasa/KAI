@@ -19,7 +19,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -30,6 +30,7 @@ from app.market_data.history_loader import FetchKlines, load_ohlcv_history
 from app.market_data.kline_windows import interval_to_ms
 from app.market_data.models import OHLCV
 from app.research.evaluate import SearchReport, search_hypotheses
+from app.research.ledger import HypothesisLedger, LedgerEntry, hypothesis_key
 from app.research.samples import Decider
 
 logger = logging.getLogger(__name__)
@@ -40,6 +41,8 @@ DEFAULT_HORIZON = 4  # forward-return horizon in bars
 DEFAULT_LOOKBACK_DAYS = 180
 MAX_LOOKBACK_DAYS = 730  # hard cap (~2y): bounds backfill cost / memory
 DEFAULT_MIN_TRADES = 50
+DEFAULT_ALPHA = 0.05
+LEDGER_PATH = Path("artifacts/research/hypothesis_ledger.jsonl")
 _MS_PER_DAY = 86_400_000
 _PAPER_VENUE = "paper"
 _FALLBACK_COST_BPS = 20.0  # 2 x 10bp/side paper, if CostModel/config is unavailable
@@ -186,6 +189,52 @@ def summarize_universe(results: list[SymbolSearchResult]) -> list[HypothesisAggr
 # --- live entry ----------------------------------------------------------------
 
 
+def aggregates_to_ledger_entries(
+    aggregates: list[HypothesisAggregate],
+    *,
+    timeframe: str,
+    horizon: int,
+    round_trip_cost_bps: float,
+    universe: Sequence[str],
+    min_trades: int,
+    alpha: float,
+    as_of_utc: str,
+    lookback_days: int,
+    recorded_at_utc: str,
+) -> list[LedgerEntry]:
+    """Map cross-symbol aggregates to ledger entries (survived = any symbol survived)."""
+    universe_list = sorted(universe)
+    entries: list[LedgerEntry] = []
+    for agg in aggregates:
+        key = hypothesis_key(
+            name=agg.name,
+            timeframe=timeframe,
+            horizon=horizon,
+            round_trip_cost_bps=round_trip_cost_bps,
+            universe=universe,
+            min_trades=min_trades,
+            alpha=alpha,
+        )
+        entries.append(
+            LedgerEntry(
+                key=key,
+                name=agg.name,
+                timeframe=timeframe,
+                horizon=horizon,
+                round_trip_cost_bps=round_trip_cost_bps,
+                universe=universe_list,
+                survived=agg.n_symbols_survived > 0,
+                mean_net_bps=agg.mean_net_bps,
+                total_trades=agg.total_trades,
+                n_symbols_survived=agg.n_symbols_survived,
+                as_of_utc=as_of_utc,
+                lookback_days=lookback_days,
+                recorded_at_utc=recorded_at_utc,
+            )
+        )
+    return entries
+
+
 def build_fetch(get_ohlcv: Callable[..., Awaitable[list[OHLCV]]]) -> FetchKlines:
     """Adapt an adapter's ``get_ohlcv`` into the loader's FetchKlines contract."""
 
@@ -247,16 +296,47 @@ async def main(
         )
 
     aggregates = summarize_universe(results)
+    as_of = datetime.fromtimestamp(end_ms / 1000, tz=UTC).isoformat()
+
+    # Cumulative hypothesis ledger: record every (hypothesis x config) so the
+    # search never blindly re-tests and the total test count stays visible.
+    ledger = HypothesisLedger(LEDGER_PATH)
+    seen_before = ledger.keys()
+    entries = aggregates_to_ledger_entries(
+        aggregates,
+        timeframe=timeframe,
+        horizon=horizon,
+        round_trip_cost_bps=cost_bps,
+        universe=universe,
+        min_trades=DEFAULT_MIN_TRADES,
+        alpha=DEFAULT_ALPHA,
+        as_of_utc=as_of,
+        lookback_days=lookback_days,
+        recorded_at_utc=as_of,
+    )
+    repeats = sum(1 for entry in entries if entry.key in seen_before)
+    for entry in entries:
+        ledger.record(entry)
+    logger.info(
+        "ledger: %d recorded (%d new, %d repeat-config) -> %d distinct configs total",
+        len(entries),
+        len(entries) - repeats,
+        repeats,
+        ledger.tested_count(),
+    )
+
     out_dir = Path("artifacts/research")
     out_dir.mkdir(parents=True, exist_ok=True)
     stamp = datetime.fromtimestamp(end_ms / 1000, tz=UTC).strftime("%Y%m%dT%H%M%SZ")
     out_path = out_dir / f"edge_search_{stamp}.json"
     doc = {
-        "generated_at_utc": datetime.fromtimestamp(end_ms / 1000, tz=UTC).isoformat(),
+        "generated_at_utc": as_of,
         "timeframe": timeframe,
         "lookback_days": lookback_days,
         "horizon": horizon,
         "round_trip_cost_bps": cost_bps,
+        "repeats_this_run": repeats,
+        "hypotheses_tested_cumulative": ledger.tested_count(),
         "symbols": [
             {"symbol": r.symbol, "n_candles": r.n_candles, "gap_bars": r.gap_bars} for r in results
         ],
