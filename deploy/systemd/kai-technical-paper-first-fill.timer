@@ -1,0 +1,15 @@
+[Unit]
+Description=Check every 10 min for the first technical_paper paper-fill (fire-once notifier)
+Requires=kai-server.service
+
+[Timer]
+# First check 15 min after boot, then every 10 min. Cheap + idempotent: once
+# the first fill is found and the operator is notified, a marker file makes
+# every later run a no-op, so the timer can stay enabled harmlessly.
+OnBootSec=15min
+OnUnitActiveSec=10min
+AccuracySec=1min
+Unit=kai-technical-paper-first-fill.service
+
+[Install]
+WantedBy=timers.target
