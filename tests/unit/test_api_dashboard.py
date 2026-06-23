@@ -1388,3 +1388,22 @@ def test_source_lifecycle_api_returns_ranking_and_events(
     assert [e["source_name"] for e in body["ranked"]] == ["thedefiant", "theblock"]
     assert len(body["recent_events"]) == 1
     assert body["recent_events"][0]["to_status"] == "silent"
+
+
+def test_ln_channels_api_disabled_shape() -> None:
+    """Default-off: /dashboard/api/ln/channels returns a fail-closed disabled shape.
+
+    Lightning is default-off in the test env, so the endpoint must answer 200 with
+    an honest empty/disabled payload and never touch the network.
+    """
+    app = _make_app()
+    with TestClient(app) as client:
+        r = client.get("/dashboard/api/ln/channels")
+    assert r.status_code == 200
+    data = r.json()
+    assert data["state"] == "disabled"
+    assert data["channels"] == []
+    assert data["num_channels"] == 0
+    assert data["total_local_sat"] == 0
+    assert data["total_remote_sat"] == 0
+    assert "generated_at" in data
