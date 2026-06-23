@@ -75,6 +75,7 @@ SOURCE_UNKNOWN = ""
 # Goal 2026-06-10: hard source tag for decoupled real-analysis paper fills.
 # Excluded from edge/D-227/hit-rate headlines by default (B-002), like canary.
 SOURCE_REAL_ANALYSIS = "real_analysis"
+SOURCE_TECHNICAL_PAPER = "technical_paper"
 
 
 def derive_autonomous_signal_source(document_id: str | None) -> str:
@@ -207,55 +208,52 @@ class TradingLoop:
         # so these fills are excluded from edge/D-227/hit-rate headlines (as
         # canary already is) and never poison the honest forward-edge figure.
         real_analysis_feed = False
+        technical_paper_feed = False
         if not entry_mode.allows_autonomous_loop_entry:
-            # Goal 2026-06-10 — real-analysis paper DECOUPLING. Before the kill-
-            # switch early-returns, check whether THIS cycle is the real-analysis
-            # feeder under a fully-armed fail-closed three-arm override. If so we
-            # let the cycle proceed to a PAPER fill WITHOUT flipping the global
-            # entry_mode (the synthetic loop stays killed). Hard preconditions,
-            # ALL required (defense-in-depth):
-            #   1. analysis_source == "real_analysis" (explicit caller tag), AND
-            #   2. the document is NOT a synthetic loop_control_* probe, AND
-            #   3. the three-arm override (enabled ∧ allow_paper_while_disabled ∧
-            #      ack-sentinel) is armed.
-            # Any miss → fall through to the existing shadow-diagnostics / reject
-            # behaviour. Live is unaffected: this branch is only reached for a
-            # DISABLED entry_mode and the loop runs ExecutionMode.PAPER only.
             decoupled, decouple_refusal = self._real_analysis_decoupling_verdict(
                 analysis=analysis,
                 analysis_source=analysis_source,
                 settings=settings,
                 execution_mode=execution_mode,
             )
-            if not decoupled:
-                # Phase B: when shadow-diagnostics is ON we DON'T early-return; we
-                # run the read-only pipeline below and record a hypothetical
-                # candidate (no execution) so the disabled signal keeps producing
-                # learning evidence. Flag OFF → original cheapest-possible reject.
-                if not settings.execution.shadow_diagnostics:
-                    reject_notes = [f"entry_mode_blocked:{entry_mode.value}"]
-                    if decouple_refusal is not None:
-                        reject_notes.append(f"real_analysis_decouple_refused:{decouple_refusal}")
-                    cycle = self._build_cycle(
-                        cycle_id,
-                        started_at,
-                        symbol,
-                        CycleStatus.ENTRY_MODE_BLOCKED,
-                        notes=notes + reject_notes,
-                    )
-                    await self._write_db(cycle)
-                    return cycle
-                shadow_only = True
-            else:
-                # Decoupled real-analysis paper cycle: annotate the audit so the
-                # fill is unambiguously attributable and the kill-switch override
-                # is visible in the trail. Execution proceeds below in PAPER mode.
+            if decoupled:
                 notes.append(
                     "real_analysis_paper_decoupled:entry_disabled_override"
                     if entry_mode is EntryMode.DISABLED
                     else f"real_analysis_paper_decoupled:{entry_mode.value}"
                 )
                 real_analysis_feed = True
+            else:
+                decoupled_tech, decouple_tech_refusal = self._technical_paper_decoupling_verdict(
+                    analysis=analysis,
+                    analysis_source=analysis_source,
+                    settings=settings,
+                    execution_mode=execution_mode,
+                )
+                if decoupled_tech:
+                    notes.append(
+                        "technical_paper_decoupled:entry_disabled_override"
+                        if entry_mode is EntryMode.DISABLED
+                        else f"technical_paper_decoupled:{entry_mode.value}"
+                    )
+                    technical_paper_feed = True
+                else:
+                    if not settings.execution.shadow_diagnostics:
+                        reject_notes = [f"entry_mode_blocked:{entry_mode.value}"]
+                        if decouple_refusal is not None:
+                            reject_notes.append(f"real_analysis_decouple_refused:{decouple_refusal}")
+                        if decouple_tech_refusal is not None:
+                            reject_notes.append(f"technical_paper_decouple_refused:{decouple_tech_refusal}")
+                        cycle = self._build_cycle(
+                            cycle_id,
+                            started_at,
+                            symbol,
+                            CycleStatus.ENTRY_MODE_BLOCKED,
+                            notes=notes + reject_notes,
+                        )
+                        await self._write_db(cycle)
+                        return cycle
+                    shadow_only = True
 
         # D-182: priority-tier gate. Default min_priority=1 is a no-op; setting
         # it to 10 restricts paper fills to the high-conviction tier where
@@ -267,6 +265,8 @@ class TradingLoop:
         # (autonomous loop etc.) keeps the global value byte-identically.
         if is_real_analysis_source(analysis_source):
             min_priority = settings.real_analysis_paper.min_priority
+        elif analysis_source == "technical_paper":
+            min_priority = 1
         else:
             min_priority = settings.execution.paper_min_priority
         if min_priority > 1:
@@ -332,6 +332,55 @@ class TradingLoop:
             limits_ok, limit_detail, limits_snapshot = check_route_limits(
                 route=EntryRoute.REAL_ANALYSIS_PAPER,
                 limits=ra_verdict.limits,
+                audit_path=self._exec.audit_path,
+                current_open_positions=len(self._exec.portfolio.positions),
+            )
+            if not limits_ok:
+                cycle = self._build_cycle(
+                    cycle_id,
+                    started_at,
+                    symbol,
+                    CycleStatus.PAPER_CAP_REACHED,
+                    notes=notes
+                    + [
+                        f"route_limit_reject:{limit_detail}|{limits_snapshot.get('usage')}",
+                        f"reason_code:{ExecutionBlockerCode.ROUTE_LIMIT_EXCEEDED.value}",
+                    ],
+                )
+                await self._write_db(cycle)
+                return cycle
+
+        technical_route_active = (
+            technical_paper_feed
+            or entry_mode.allows_autonomous_loop_entry
+            and analysis_source == "technical_paper"
+        )
+        if technical_route_active:
+            from app.execution.entry_policy import (
+                EntryRoute,
+                check_route_limits,
+                resolve_entry_policy,
+            )
+
+            tech_verdict = resolve_entry_policy(settings).verdict(EntryRoute.TECHNICAL_PAPER)
+            if not tech_verdict.allowed:
+                cycle = self._build_cycle(
+                    cycle_id,
+                    started_at,
+                    symbol,
+                    CycleStatus.ENTRY_MODE_BLOCKED,
+                    notes=notes
+                    + [
+                        "route_blocked:"
+                        f"{tech_verdict.reason_code or 'technical_paper_disabled'}"
+                    ],
+                )
+                await self._write_db(cycle)
+                return cycle
+
+            limits_ok, limit_detail, limits_snapshot = check_route_limits(
+                route=EntryRoute.TECHNICAL_PAPER,
+                limits=tech_verdict.limits,
                 audit_path=self._exec.audit_path,
                 current_open_positions=len(self._exec.portfolio.positions),
             )
@@ -658,6 +707,8 @@ class TradingLoop:
         # honest forward-edge figure.
         if real_analysis_feed:
             signal_source = SOURCE_REAL_ANALYSIS
+        elif technical_paper_feed:
+            signal_source = SOURCE_TECHNICAL_PAPER
         # Goal 2026-06-10 (long+short): thread the position side through to the
         # engine. The autonomous loop historically only opened longs; for a SHORT
         # signal it emitted side="sell" WITHOUT position_side, so the engine read
@@ -760,6 +811,7 @@ class TradingLoop:
             source_document_id=attribution_doc_id,
             threshold_used=min_priority,
             real_analysis_feed=real_analysis_feed,
+            technical_paper_feed=technical_paper_feed,
         )
         self._write_audit(cycle)
         await self._write_db(cycle)
@@ -1337,6 +1389,26 @@ class TradingLoop:
             return False, verdict.reason_code
         return True, None
 
+    def _technical_paper_decoupling_verdict(
+        self,
+        *,
+        analysis: AnalysisResult,
+        analysis_source: str | None,
+        settings: AppSettings,
+        execution_mode: ExecutionMode = ExecutionMode.PAPER,
+    ) -> tuple[bool, str | None]:
+        """Decide if THIS cycle may bypass disabled entry mode as technical paper."""
+        if analysis_source != "technical_paper":
+            return False, None
+        if execution_mode is not ExecutionMode.PAPER:
+            return False, "shadow_mode_no_decouple"
+        from app.execution.entry_policy import EntryRoute, resolve_entry_policy
+
+        verdict = resolve_entry_policy(settings).verdict(EntryRoute.TECHNICAL_PAPER)
+        if not verdict.allowed:
+            return False, verdict.reason_code
+        return True, None
+
     def _record_paper_trade_label(
         self,
         *,
@@ -1349,33 +1421,21 @@ class TradingLoop:
         source_document_id: str,
         threshold_used: int,
         real_analysis_feed: bool = False,
+        technical_paper_feed: bool = False,
     ) -> None:
-        """Emit a labelled paper-trade record for an autonomous fill (Goal §C).
-
-        Additive + loop-owned: appended to the paper-execution audit log as a
-        dedicated ``paper_trade_label`` event keyed by order_id/fill_id, so it
-        joins to the canonical ``order_filled`` row without changing that row's
-        schema or touching the shared paper-engine / premium-fastlane path.
-
-        Carries the axes the paper-learning analysis needs and that the
-        ``order_filled`` event does NOT already provide:
-          - mode         — the active entry_mode (paper / probe / …)
-          - direction    — long / short
-          - source_id    — originating document id (canary vs real generator)
-          - source_name  — coarse source bucket (derive_autonomous_signal_source)
-          - feed_source  — B-002 hard attribution: ``real_analysis`` for the
-                           decoupled feeder, else ``autonomous_loop``. Reports key
-                           off THIS field to exclude real-analysis fills from the
-                           edge/D-227/hit-rate headline (like canary).
-          - confidence   — signal confidence_score (None stays explicit null)
-          - threshold_used — paper_min_priority in force when this trade passed
-          - regime       — regime stamp active at fill time
-        ``trade_class="production_paper"`` distinguishes these from a future
-        ``exploration`` label. Fully fail-soft.
+        """Emit a labelled paper-trade record for an autonomous fill.
+        Appended to paper-execution audit log as a paper_trade_label event.
         """
         try:
             direction = "long" if signal.direction == SignalDirection.LONG else "short"
             regime_stamp = self._regime_stamp_for_audit(cycle)
+
+            feed_source = "autonomous_loop"
+            if real_analysis_feed:
+                feed_source = "real_analysis"
+            elif technical_paper_feed:
+                feed_source = "technical_paper"
+
             record = {
                 "schema_version": "v2",
                 "event_type": "paper_trade_label",
@@ -1390,7 +1450,7 @@ class TradingLoop:
                 "direction": direction,
                 "source_id": source_document_id or None,
                 "source_name": signal_source,
-                "feed_source": "real_analysis" if real_analysis_feed else "autonomous_loop",
+                "feed_source": feed_source,
                 "confidence": signal.confidence_score,
                 "threshold_used": threshold_used,
                 "regime": regime_stamp.get("regime"),
@@ -1508,13 +1568,7 @@ class TradingLoop:
         symbol: str,
         notional_usd: float | None,
     ) -> DiversificationDecision | None:
-        """Shadow/enforce concentration check against the current paper book.
-
-        Default-off: returns None when the guard is disabled (no behaviour
-        change). Uses cost-basis exposure from the in-memory portfolio — no
-        market calls, no N+1. Any failure is swallowed (forensic side-channel,
-        never a gate by accident).
-        """
+        """Concentration check against current paper book. None if disabled."""
         settings = get_settings().diversification
         if not settings.enabled:
             return None
@@ -1522,11 +1576,7 @@ class TradingLoop:
             guard = DiversificationGuard(mode=settings.mode)
             portfolio = self._exec.portfolio
             exposures = exposures_from_paper_portfolio(portfolio)
-            # Cost-basis equity (cash + position value), consistent with the
-            # PortfolioStateRecord equity in _persist. Used as the concentration
-            # cap denominator so caps mean "% of total capital", not "% of
-            # already-deployed notional" — the latter dead-locks an empty book
-            # (every first position projects to 100% on every dimension).
+            # Cost-basis equity cap denominator
             equity = portfolio.cash + sum(
                 p.quantity * p.avg_entry_price for p in portfolio.positions.values()
             )
@@ -1541,12 +1591,7 @@ class TradingLoop:
             return None
 
     def _in_post_stop_cooldown(self, symbol: str) -> bool:
-        """NEO-V2: True iff `symbol` was stopped out within the cooldown window.
-
-        Reads the paper engine's own audit stream (position_closed reason=stop).
-        Disabled when post_stop_cooldown_min <= 0. Fail-open: any read problem
-        yields False so a transient I/O hiccup never deadlocks the loop.
-        """
+        """True if symbol was stopped out within post-stop cooldown window."""
         window = get_settings().risk.post_stop_cooldown_min
         if window <= 0:
             return False
@@ -1561,16 +1606,7 @@ class TradingLoop:
             return False
 
     def _evaluate_churn(self, symbol: str) -> ChurnVerdict:
-        """Sprint E (Goal §5): churn-killer verdict for a NEW entry on `symbol`.
-
-        Generalises the post-stop cooldown: cooldown after ANY risk-reducing
-        close, loss-streak backoff, per-symbol entries/hour and global notional
-        turnover/hour. Only the entry path calls this — exits/SL/TP/reductions
-        run through monitor_positions/close_position and are never gated here
-        (hard invariant). PROBE entry_mode tightens the per-symbol entries/hour
-        cap. Fail-open: any read/error problem yields not-blocked so a transient
-        I/O hiccup never deadlocks the loop.
-        """
+        """Evaluate churn-killer gate verdict for a new entry on symbol."""
         settings = get_settings()
         risk = settings.risk
         per_symbol = risk.churn_max_trades_per_symbol_per_hour
@@ -1596,9 +1632,7 @@ class TradingLoop:
 
     @staticmethod
     def _churn_cycle_status(verdict: ChurnVerdict) -> CycleStatus:
-        """Map a churn verdict reason to the cycle status. `post_stop_cooldown`
-        reuses the existing COOLDOWN_REJECTED status (operator semantics
-        unchanged); rate/turnover limits use the new CHURN_REJECTED status."""
+        """Map a churn verdict reason to the cycle status."""
         if verdict.reason == "post_stop_cooldown":
             return CycleStatus.COOLDOWN_REJECTED
         return CycleStatus.CHURN_REJECTED
@@ -1628,12 +1662,7 @@ class TradingLoop:
         source: str = "",
         correlation_id: str = "",
     ) -> KytAssessment | None:
-        """KYT pre-transaction screen (default-off, shadow-first).
-
-        Returns None when KYT is disabled or on any failure — the gate never
-        blocks by accident and never crashes the loop. Venue is the execution
-        venue (``paper``); symbol + behavioural patterns carry the signal.
-        """
+        """KYT pre-transaction screen (default-off, shadow-first)."""
         try:
             from app.security.kyt.gate import screen_order
 
@@ -1919,15 +1948,7 @@ def build_trading_loop(
     consensus_model: str = "gpt-4o-mini",
     rehydrate_from_audit: bool = True,
 ) -> TradingLoop:
-    """Build the canonical trading loop for explicit paper/shadow run-once execution.
-
-    provider: market data provider name. If None, reads from APP_MARKET_DATA_PROVIDER
-    (default: "coingecko"). Pass "mock" explicitly in tests.
-
-    rehydrate_from_audit: when True (default), replay the execution audit JSONL
-    into the fresh engine so previously opened positions are observable across
-    process invocations (required for cron-driven SL/TP monitoring).
-    """
+    """Build the canonical trading loop for explicit paper/shadow run-once execution."""
     normalized_mode = _normalize_loop_mode(mode)
     allowed, reason = _run_once_guard(normalized_mode)
     if not allowed:
@@ -2136,12 +2157,7 @@ def build_priority_gate_summary(
     audit_path: str | Path = _AUDIT_LOG,
     window_hours: int = 24,
 ) -> PriorityGateSummary:
-    """D-184: summarize D-182 priority-gate activity over a rolling window.
-
-    Reads the trading-loop JSONL, filters by ``started_at`` ISO timestamp,
-    and buckets cycles by status. Settings are re-read fresh each call so
-    operator rotation of the threshold is visible without restart.
-    """
+    """D-184: summarize priority-gate activity over a rolling window."""
     from datetime import UTC, datetime, timedelta
 
     from app.core.settings import get_settings
@@ -2239,12 +2255,7 @@ async def run_promoted_signals_once(
     enable_consensus: bool = False,
     consensus_model: str = "gpt-4o-mini",
 ) -> list[LoopCycle]:
-    """Load all pending promoted TV signals and run each through the paper loop.
-
-    Returns one LoopCycle per signal. Consumed IDs are marked after each
-    successful processing (regardless of cycle outcome — consumed means
-    the signal was attempted, not that it filled).
-    """
+    """Load pending promoted TradingView signals and run each through the paper loop."""
     from app.signals.tv_consumer import load_pending_promoted, mark_consumed
 
     candidates = load_pending_promoted()

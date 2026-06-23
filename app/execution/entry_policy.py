@@ -67,6 +67,7 @@ class EntryRoute(StrEnum):
     PREMIUM_PAPER = "premium_paper"
     REAL_ANALYSIS_PAPER = "real_analysis_paper"
     PREMIUM_FASTLANE = "premium_fastlane"
+    TECHNICAL_PAPER = "technical_paper"
 
 
 # Audit `source` prefixes per route — used by the route-usage limiter to
@@ -74,6 +75,7 @@ class EntryRoute(StrEnum):
 ROUTE_SOURCE_PREFIXES: dict[EntryRoute, tuple[str, ...]] = {
     EntryRoute.PREMIUM_PAPER: ("telegram_premium",),
     EntryRoute.REAL_ANALYSIS_PAPER: ("real_analysis",),
+    EntryRoute.TECHNICAL_PAPER: ("technical_paper",),
 }
 
 
@@ -110,6 +112,11 @@ DEFAULT_PREMIUM_ROUTE_LIMITS = RouteLimits(
     max_open_positions=10,
 )
 DEFAULT_LEARNING_ROUTE_LIMITS = RouteLimits(
+    max_trades_per_hour=6,
+    max_notional_per_day_usd=5_000.0,
+    max_open_positions=10,
+)
+DEFAULT_TECHNICAL_ROUTE_LIMITS = RouteLimits(
     max_trades_per_hour=6,
     max_notional_per_day_usd=5_000.0,
     max_open_positions=10,
@@ -215,6 +222,17 @@ def _learning_route_limits(settings: AppSettings, mode: EntryMode) -> RouteLimit
     if explicit is not None:
         return explicit
     return DEFAULT_LEARNING_ROUTE_LIMITS if mode is EntryMode.PAPER_LEARNING else None
+
+
+def _technical_route_limits(settings: AppSettings, mode: EntryMode) -> RouteLimits | None:
+    explicit = _explicit_limits(
+        settings.technical_paper.paper_route_max_trades_per_hour,
+        settings.technical_paper.paper_route_max_notional_per_day_usd,
+        settings.technical_paper.paper_route_max_open_positions,
+    )
+    if explicit is not None:
+        return explicit
+    return DEFAULT_TECHNICAL_ROUTE_LIMITS if settings.technical_paper.enabled else None
 
 
 def resolve_entry_policy(settings: AppSettings) -> EntryPolicy:
@@ -331,6 +349,20 @@ def resolve_entry_policy(settings: AppSettings) -> EntryPolicy:
             route=EntryRoute.PREMIUM_FASTLANE,
             allowed=False,
             reason_code="fastlane_not_policy_managed",
+        )
+
+    # ── technical paper feeder ─────────────────────────────────────────────
+    if not settings.technical_paper.enabled:
+        verdicts[EntryRoute.TECHNICAL_PAPER] = RouteVerdict(
+            route=EntryRoute.TECHNICAL_PAPER,
+            allowed=False,
+            reason_code="technical_paper_disabled",
+        )
+    else:
+        verdicts[EntryRoute.TECHNICAL_PAPER] = RouteVerdict(
+            route=EntryRoute.TECHNICAL_PAPER,
+            allowed=True,
+            limits=_technical_route_limits(settings, mode),
         )
 
     return EntryPolicy(mode=mode, verdicts=verdicts, contradictions=())

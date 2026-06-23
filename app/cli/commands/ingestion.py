@@ -513,3 +513,59 @@ def technical_screen() -> None:
         "eligible_on_technical_path",
     ):
         console.print(f"  {key}: {summary.get(key)}")
+
+
+async def run_messari_command_logic(
+    source_id: str,
+    source_name: str,
+    limit: int,
+    dry_run: bool,
+) -> None:
+    """Core logic to run Messari pipeline from CLI."""
+    from pathlib import Path
+
+    from app.analysis.keywords.engine import KeywordEngine
+    from app.cli.main import _build_primary_provider, _maybe_gemini_shadow
+    from app.pipeline.service import run_messari_pipeline
+    from app.storage.db.session import build_session_factory
+
+    settings = get_settings()
+    keyword_engine = KeywordEngine.from_monitor_dir(Path(settings.monitor_dir))
+    session_factory = build_session_factory(settings.db)
+    stats = await run_messari_pipeline(
+        session_factory=session_factory,
+        keyword_engine=keyword_engine,
+        provider=_build_primary_provider(),
+        shadow_provider=_maybe_gemini_shadow(),
+        api_key=settings.providers.messari_api_key,
+        source_id=source_id,
+        source_name=source_name,
+        limit=limit,
+        dry_run=dry_run,
+    )
+    console.print("\n[bold green]Messari pipeline complete[/bold green]")
+    console.print(f"  Fetched:   {stats.fetched_count}")
+    console.print(f"  Saved:     {stats.saved_count}")
+    console.print(f"  Analyzed:  {stats.analyzed_count}")
+    console.print(f"  Alerts:    {stats.alerts_fired_count}")
+    console.print(f"  Skipped:   {stats.skipped_count}")
+    if stats.priority_distribution:
+        dist = ", ".join(
+            f"P{score}:{count}" for score, count in sorted(stats.priority_distribution.items())
+        )
+        console.print(f"  Priority:  {dist}")
+
+
+@ingestion_app.command("messari")
+def ingestion_messari(
+    source_id: str = typer.Option("messari", help="Source ID"),
+    source_name: str = typer.Option("Messari", help="Source name"),
+    limit: int = typer.Option(100, help="Max assets to fetch"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Skip DB writes"),
+) -> None:
+    """Fetch Messari asset metrics, analyze, and alert.
+
+    Intended to be driven periodically by a timer.
+    """
+    configure_logging()
+    asyncio.run(run_messari_command_logic(source_id, source_name, limit, dry_run))
