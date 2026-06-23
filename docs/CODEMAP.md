@@ -27,6 +27,7 @@ Zweck: die meist-gesuchten Code-Pfade an EINEM Ort, damit Agenten/Helfer den Wor
 - `app/observability/shadow_resolver.py` → `resolve_with_binance` (Kline-Forward-Returns)
 - `app/observability/edge_report.py` → Cohort-Edge + `_median`/`_winsorized_mean` (`WINSOR_LIMIT_BPS=500`, Median-GO-Gate)
 - `app/observability/generator_edge_collector.py` → `collect_edge_inputs_from_resolved` (IC/Brier-Paare) · `generator_edge.py`
+- **Edge-Discovery-Engine** (systematische Hypothesen-Suche auf eigenem OHLCV, NICHT live-Shadow): `app/research/{runner,evaluate,samples,stats,multiple_testing}.py` (Benjamini-Hochberg-FDR + Survival-Gates) ← `app/analysis/features/{feature_matrix,forward_returns}.py` (kausale Features + Forward-Label, No-Lookahead) ← `app/market_data/{history_loader,kline_windows}.py` (paginierter Backfill). Lauf: `python -m app.research.runner` → `artifacts/research/edge_search_*.json`. ⚠ Features kausal ≤i, Label vorwärts i+h — nie vermischen.
 
 ### Signal / Evidence
 - `app/signals/generator.py` → `SignalGenerator` (6 Filter) · `app/signals/models.py` → `SignalCandidate`
@@ -34,7 +35,7 @@ Zweck: die meist-gesuchten Code-Pfade an EINEM Ort, damit Agenten/Helfer den Wor
 - Evidence-Settings: `app/core/evidence_settings.py` (`HypeEvidenceSettings` u.a.) + Wiring `app/signals/*_wiring.py`
 
 ### Markets / Sources
-- `app/market_data/{momentum,oi_zscore,sentiment,liquidations,coingecko_adapter,binance_adapter}.py`
+- `app/market_data/{momentum,oi_zscore,sentiment,liquidations,coingecko_adapter,binance_adapter}.py` (`binance_adapter.get_ohlcv(start_time_ms=…)` = historischer Backfill-Anker; Payload-Validierung in `_parse_kline_rows`, fail-closed vs NaN/Inf)
 - `app/ingestion/rss/adapter.py` → `RSSFeedAdapter` (published_at via `calendar.timegm`, NICHT `mktime` — TZ-Bug #362) · `app/ingestion/classifier.py` · API-Adapter `app/integration/{cryptopanic,messari}/adapter.py`
 
 ### Digest / CLI / API / Audit / Regime

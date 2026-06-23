@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import time
 from datetime import UTC, datetime
 
@@ -63,6 +64,52 @@ def _canonical_symbol(raw_symbol: str) -> str:
             base = candidate[: -len(quote)]
             return f"{base}/{quote}"
     return candidate
+
+
+def _parse_kline_rows(data: list[object], canonical_symbol: str, timeframe: str) -> list[OHLCV]:
+    """Parse + VALIDATE raw Binance kline rows into OHLCV candles.
+
+    Fail-closed at the trust boundary. ``json.loads`` accepts the JSON tokens
+    ``NaN``/``Infinity``, so a hostile or corrupt upstream row can carry a
+    non-finite price that the legacy ``<= 0`` guard does NOT catch
+    (``inf <= 0`` and ``nan <= 0`` are both False). Such a value would later
+    forge a "p = 0.0" edge. We therefore drop any candle that is non-finite,
+    non-positive, has negative volume, or is OHLC-inconsistent.
+    """
+    candles: list[OHLCV] = []
+    for row in data:
+        # Binance kline row: [open_time, open, high, low, close, volume,
+        # close_time, quote_volume, num_trades, ...] — first 7 always present.
+        if not isinstance(row, list) or len(row) < 7:
+            continue
+        try:
+            open_time_ms = int(row[0])
+            open_p = float(row[1])
+            high_p = float(row[2])
+            low_p = float(row[3])
+            close_p = float(row[4])
+            volume = float(row[5])
+        except (TypeError, ValueError):
+            continue
+        if not all(math.isfinite(v) for v in (open_p, high_p, low_p, close_p, volume)):
+            continue
+        if open_p <= 0 or high_p <= 0 or low_p <= 0 or close_p <= 0 or volume < 0:
+            continue
+        if high_p < max(open_p, close_p) or low_p > min(open_p, close_p):
+            continue
+        candles.append(
+            OHLCV(
+                symbol=canonical_symbol,
+                timestamp_utc=datetime.fromtimestamp(open_time_ms / 1000, tz=UTC).isoformat(),
+                timeframe=timeframe,
+                open=open_p,
+                high=high_p,
+                low=low_p,
+                close=close_p,
+                volume=volume,
+            )
+        )
+    return candles
 
 
 class BinanceAdapter(BaseMarketDataAdapter):
@@ -153,6 +200,7 @@ class BinanceAdapter(BaseMarketDataAdapter):
         symbol: str,
         timeframe: str = "1h",
         limit: int = 100,
+        start_time_ms: int | None = None,
     ) -> list[OHLCV]:
         pair = _normalize_symbol(symbol)
         if not pair:
@@ -165,48 +213,27 @@ class BinanceAdapter(BaseMarketDataAdapter):
         # Binance hard-cap: 1000 candles per request.
         capped_limit = max(1, min(limit, 1000))
 
+        params: dict[str, str] = {
+            "symbol": pair,
+            "interval": interval,
+            "limit": str(capped_limit),
+        }
+        # Historical backfill: anchor the window start (Binance returns up to
+        # `limit` candles from startTime forward). Omitted -> latest candles.
+        # Negative/invalid anchors are dropped (treated as "latest") rather than
+        # blindly forwarded to the exchange.
+        if start_time_ms is not None and start_time_ms >= 0:
+            params["startTime"] = str(start_time_ms)
+
         data = await self._get_json(
             f"{self._base_url}/api/v3/klines",
-            params={
-                "symbol": pair,
-                "interval": interval,
-                "limit": str(capped_limit),
-            },
+            params=params,
         )
         if not isinstance(data, list):
             self._set_error(self._last_error or "invalid_klines_payload")
             return []
 
-        canonical = _canonical_symbol(pair)
-        candles: list[OHLCV] = []
-        for row in data:
-            # Binance kline row: [open_time, open, high, low, close, volume,
-            # close_time, quote_volume, num_trades, ...] — first 7 always present.
-            if not isinstance(row, list) or len(row) < 7:
-                continue
-            try:
-                open_time_ms = int(row[0])
-                open_p = float(row[1])
-                high_p = float(row[2])
-                low_p = float(row[3])
-                close_p = float(row[4])
-                volume = float(row[5])
-            except (TypeError, ValueError):
-                continue
-            if open_p <= 0 or close_p <= 0:
-                continue
-            candles.append(
-                OHLCV(
-                    symbol=canonical,
-                    timestamp_utc=datetime.fromtimestamp(open_time_ms / 1000, tz=UTC).isoformat(),
-                    timeframe=timeframe,
-                    open=open_p,
-                    high=high_p,
-                    low=low_p,
-                    close=close_p,
-                    volume=volume,
-                )
-            )
+        candles = _parse_kline_rows(data, _canonical_symbol(pair), timeframe)
         if candles:
             self._clear_error()
         else:
