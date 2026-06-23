@@ -746,6 +746,10 @@ class TechnicalPaperSettings(BaseSettings):
     enabled: bool = Field(default=False)
     min_strength: float = Field(default=0.0)
     freshness_max_age_hours: int = Field(default=48, ge=1)
+    # Per-run cap (0 = unlimited): max candidates a single scheduler tick feeds,
+    # so the first activation doesn't burst hundreds of loop cycles on the Pi.
+    # The rest are picked up on the next tick (fed-dedup → measured ramp).
+    max_per_run: int = Field(default=10, ge=0)
 
     paper_route_max_trades_per_hour: int = Field(default=0, ge=0)
     paper_route_max_notional_per_day_usd: float = Field(default=0.0, ge=0.0)
