@@ -196,6 +196,41 @@ def compute_per_source_active_precision(
     return out
 
 
+def _build_enriched_source_lookup(
+    latest_directional_by_doc: dict[str, Any],
+    source_by_doc: dict[str, str] | None,
+) -> dict[str, str]:
+    """Resolve doc_id -> source via DB join -> source_name -> provenance.source.
+
+    The DB join (``source_by_doc``) leaves ~93% of directional docs as
+    ``unknown`` (pre-D-139 + thin flat ``source_name`` population), but the
+    append-only audit rows carry the real source in ``source_name`` /
+    ``provenance.source`` (provenance is ~100% populated on directional rows).
+    Resolving the full chain stops the active bucket AND the per-source metrics
+    (per-source precision / stability / Top-Flop ranking) from being starved.
+    An explicit ``unknown`` is preserved so ``_is_active`` still excludes it.
+    """
+    db = source_by_doc or {}
+    out: dict[str, str] = {}
+    for doc_id, rec in latest_directional_by_doc.items():
+        db_src = db.get(doc_id)
+        if db_src and db_src.strip().lower() != LEGACY_UNKNOWN_SOURCE:
+            out[doc_id] = db_src
+            continue
+        name = getattr(rec, "source_name", None)
+        if name and name.strip():
+            out[doc_id] = name
+            continue
+        prov = getattr(rec, "provenance", None)
+        prov_src = getattr(prov, "source", None) if prov is not None else None
+        if prov_src and prov_src.strip().lower() != LEGACY_UNKNOWN_SOURCE:
+            out[doc_id] = prov_src
+            continue
+        if db_src:  # keep explicit "unknown" so the active-filter still drops it
+            out[doc_id] = db_src
+    return out
+
+
 def compute_per_source_stability(
     *,
     active_resolved_docs: set[str],
@@ -382,7 +417,10 @@ def build_hold_metrics_report(
     # no persisted CanonicalDocument row, a pre-D-139 artefact). When a
     # source_by_doc lookup is provided we filter exactly on source=unknown;
     # without a lookup we fall back to a conservative date cutoff.
-    _source_lookup = source_by_doc or {}
+    # Enriched attribution: the thin DB join alone starves the active bucket
+    # and per-source metrics (~93% land in "unknown"); recover the real source
+    # from the audit rows' source_name / provenance.source.
+    _source_lookup = _build_enriched_source_lookup(latest_directional_by_doc, source_by_doc)
 
     def _is_active(doc_id: str) -> bool:
         if _source_lookup:
@@ -621,7 +659,11 @@ def build_hold_metrics_report(
         if rec is None:
             continue
         # Prefer fields from audit record; fall back to DB lookup
-        src = rec.source_name or (source_by_doc or {}).get(doc_id)
+        src = (
+            rec.source_name
+            or (rec.provenance.source if rec.provenance is not None else None)
+            or (source_by_doc or {}).get(doc_id)
+        )
         ttl = rec.normalized_title or (title_by_doc or {}).get(doc_id)
         fwd_check = evaluate_directional_eligibility(
             sentiment_label=rec.sentiment_label,

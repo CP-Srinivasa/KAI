@@ -5,6 +5,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from app.alerts.hold_metrics import (
+    LEGACY_UNKNOWN_SOURCE,
     MIN_ACTIVE_PRECISION_PCT,
     MIN_PER_SOURCE_RESOLVED,
     MIN_PER_SOURCE_RESOLVED_PER_WINDOW,
@@ -12,10 +13,48 @@ from app.alerts.hold_metrics import (
     MIN_RESOLVED_DIRECTIONAL_ALERTS,
     STABILITY_WINDOW_COUNT,
     STABILITY_WINDOW_DAYS,
+    _build_enriched_source_lookup,
     build_hold_metrics_report,
     compute_per_source_active_precision,
     compute_per_source_stability,
 )
+
+
+def test_enriched_source_lookup_priority_db_name_provenance() -> None:
+    from types import SimpleNamespace
+
+    def _rec(source_name: str | None = None, prov_source: str | None = None) -> SimpleNamespace:
+        prov = SimpleNamespace(source=prov_source) if prov_source is not None else None
+        return SimpleNamespace(source_name=source_name, provenance=prov)
+
+    latest = {
+        "d_db": _rec(source_name="ignored", prov_source="ignored"),
+        "d_name": _rec(source_name="coindesk", prov_source="other"),
+        "d_prov": _rec(source_name=None, prov_source="cointelegraph"),
+        "d_unknown": _rec(source_name=None, prov_source="unknown"),
+    }
+    source_by_doc = {
+        "d_db": "reuters",
+        "d_name": "unknown",
+        "d_prov": "unknown",
+        "d_unknown": "unknown",
+    }
+    out = _build_enriched_source_lookup(latest, source_by_doc)
+    assert out["d_db"] == "reuters"  # a real DB join wins
+    assert out["d_name"] == "coindesk"  # DB unknown -> flat source_name
+    assert out["d_prov"] == "cointelegraph"  # DB+name empty -> provenance.source
+    assert out["d_unknown"] == LEGACY_UNKNOWN_SOURCE  # all unknown -> stays excluded
+
+
+def test_enriched_source_lookup_recovers_provenance_only_doc() -> None:
+    # The crux: a directional doc with NO flat source_name and NO DB row, but
+    # WITH provenance.source, must resolve to its real source instead of being
+    # dropped into the unknown bucket (the ~93% attribution gap).
+    from types import SimpleNamespace
+
+    latest = {"d": SimpleNamespace(source_name=None, provenance=SimpleNamespace(source="decrypt"))}
+    out = _build_enriched_source_lookup(latest, {})
+    assert out["d"] == "decrypt"
 
 
 def _write_jsonl(path: Path, rows: list[dict[str, object]]) -> None:
