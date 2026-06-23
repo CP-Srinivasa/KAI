@@ -231,3 +231,94 @@ def test_telegram_safe_escapes_markdown_breaking_entities() -> None:
     assert r"\[shadow-resolved n=88\]" in safe
     assert "*Modus:*" in safe  # bold-Delimiter unverändert
     assert "`trading edge-report`" in safe  # code-Span unverändert
+
+
+def test_edge_discovery_no_run_is_shown_honestly() -> None:
+    msg = _compose()  # edge_discovery defaults to None
+    assert "Edge-Discovery:" in msg
+    assert "noch kein Lauf" in msg
+
+
+def test_edge_discovery_no_edge_verdict() -> None:
+    msg = _compose(
+        edge_discovery={
+            "available": True,
+            "timeframe": "1h",
+            "lookback_days": 180,
+            "n_symbols": 5,
+            "n_hypotheses": 6,
+            "survivors": 0,
+            "cumulative_tested": 6,
+            "best_name": "adx_trend",
+            "best_mean_bps": -15.1,
+        }
+    )
+    assert "Edge-Discovery:* 1h/180d, 5 Symbole · 0/6 Survivors · 6 Configs kumulativ" in msg
+    assert "kein robuster Edge — beste Regel adx_trend -15.1bps netto" in msg
+    assert "KANDIDAT" not in msg
+
+
+def test_edge_discovery_candidate_is_flagged() -> None:
+    msg = _compose(
+        edge_discovery={
+            "available": True,
+            "timeframe": "4h",
+            "lookback_days": 90,
+            "n_symbols": 3,
+            "n_hypotheses": 6,
+            "survivors": 2,
+            "cumulative_tested": 12,
+            "best_name": "macd_trend",
+            "best_mean_bps": 8.3,
+        }
+    )
+    assert "2/6 Survivors" in msg
+    assert "KANDIDAT(EN) PRÜFEN" in msg
+    assert "macd_trend +8.3bps netto" in msg
+
+
+def test_edge_discovery_degrades_on_error() -> None:
+    msg = _compose(edge_discovery={"error": "boom"})
+    assert "Edge-Discovery:* nicht lesbar — boom" in msg
+
+
+def test_collect_edge_discovery_reads_latest_run(tmp_path: Path) -> None:
+    import json
+
+    (tmp_path / "edge_search_20260101T000000Z.json").write_text(
+        json.dumps(
+            {
+                "timeframe": "1h",
+                "lookback_days": 180,
+                "symbols": [{}, {}],
+                "hypotheses": [{"name": "a", "symbols_survived": 0, "mean_net_bps": -20.0}],
+                "hypotheses_tested_cumulative": 6,
+            }
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "edge_search_20260201T000000Z.json").write_text(
+        json.dumps(
+            {
+                "timeframe": "4h",
+                "lookback_days": 90,
+                "symbols": [{}],
+                "hypotheses": [
+                    {"name": "b", "symbols_survived": 1, "mean_net_bps": 3.0},
+                    {"name": "c", "symbols_survived": 0, "mean_net_bps": -1.0},
+                ],
+                "hypotheses_tested_cumulative": 12,
+            }
+        ),
+        encoding="utf-8",
+    )
+    out = od.collect_edge_discovery(research_dir=tmp_path)
+    assert out["available"] is True
+    assert out["timeframe"] == "4h"  # latest by filename
+    assert out["survivors"] == 1
+    assert out["best_name"] == "b"  # highest mean_net_bps
+    assert out["cumulative_tested"] == 12
+
+
+def test_collect_edge_discovery_no_runs(tmp_path: Path) -> None:
+    assert od.collect_edge_discovery(research_dir=tmp_path) == {"available": False}
