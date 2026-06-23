@@ -153,6 +153,7 @@ class BinanceAdapter(BaseMarketDataAdapter):
         symbol: str,
         timeframe: str = "1h",
         limit: int = 100,
+        start_time_ms: int | None = None,
     ) -> list[OHLCV]:
         pair = _normalize_symbol(symbol)
         if not pair:
@@ -165,13 +166,19 @@ class BinanceAdapter(BaseMarketDataAdapter):
         # Binance hard-cap: 1000 candles per request.
         capped_limit = max(1, min(limit, 1000))
 
+        params: dict[str, str] = {
+            "symbol": pair,
+            "interval": interval,
+            "limit": str(capped_limit),
+        }
+        # Historical backfill: anchor the window start (Binance returns up to
+        # `limit` candles from startTime forward). Omitted -> latest candles.
+        if start_time_ms is not None:
+            params["startTime"] = str(start_time_ms)
+
         data = await self._get_json(
             f"{self._base_url}/api/v3/klines",
-            params={
-                "symbol": pair,
-                "interval": interval,
-                "limit": str(capped_limit),
-            },
+            params=params,
         )
         if not isinstance(data, list):
             self._set_error(self._last_error or "invalid_klines_payload")
