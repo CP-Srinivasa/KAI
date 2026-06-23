@@ -8,6 +8,7 @@ Edge-Gate min_resolved — Operator-Vorgabe 2026-06-14, switched off shadow-n).
 
 from __future__ import annotations
 
+import json
 import sys
 from datetime import date
 from pathlib import Path
@@ -322,3 +323,55 @@ def test_collect_edge_discovery_reads_latest_run(tmp_path: Path) -> None:
 
 def test_collect_edge_discovery_no_runs(tmp_path: Path) -> None:
     assert od.collect_edge_discovery(research_dir=tmp_path) == {"available": False}
+
+
+# ── source-lifecycle digest hook ───────────────────────────────────────────
+
+
+def test_source_lifecycle_line_present_with_data() -> None:
+    msg = _compose(
+        source_lifecycle={
+            "available": True,
+            "counts": {"ranked": 12, "provisional": 11, "pinned": 0, "rotation_flagged": 6},
+            "top_name": "thedefiant",
+            "top_wilson": 0.63,
+            "top_provisional": True,
+        }
+    )
+    assert "Quellen-Lifecycle:" in msg
+    assert "12 gerankt" in msg
+    assert "6 Rotation-Flag" in msg
+    assert "thedefiant" in msg
+    assert "provisorisch" in msg
+
+
+def test_source_lifecycle_line_honest_when_missing() -> None:
+    assert "noch kein Ranking" in _compose(source_lifecycle=None)
+
+
+def test_source_lifecycle_line_degrades_on_error() -> None:
+    msg = _compose(source_lifecycle={"error": "boom"})
+    assert "Quellen-Lifecycle:" in msg
+    assert "nicht lesbar" in msg
+
+
+def test_collect_source_lifecycle_reads_file(tmp_path: Path) -> None:
+    p = tmp_path / "source_ranking.json"
+    p.write_text(
+        json.dumps(
+            {
+                "counts": {"ranked": 3, "provisional": 3},
+                "ranked": [{"source_name": "x", "wilson_lower_95": 0.5, "provisional": False}],
+            }
+        ),
+        encoding="utf-8",
+    )
+    out = od.collect_source_lifecycle(ranking_path=p)
+    assert out["available"] is True
+    assert out["counts"]["ranked"] == 3
+    assert out["top_name"] == "x"
+    assert out["top_provisional"] is False
+
+
+def test_collect_source_lifecycle_unavailable_when_missing(tmp_path: Path) -> None:
+    assert od.collect_source_lifecycle(ranking_path=tmp_path / "nope.json") == {"available": False}

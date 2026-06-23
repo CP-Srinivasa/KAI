@@ -622,6 +622,50 @@ export function fetchSourceActivity(signal?: AbortSignal): Promise<SourceActivit
   return apiGet<SourceActivity>("/dashboard/api/source-activity", { signal });
 }
 
+// Source-Lifecycle-Ranking (Phase 4). Liest das deterministische Top-N-Ranking
+// aus monitor/source_ranking.json (provisional/silent/pinned/rotation-Flags +
+// Tier) plus jüngste Statuswechsel. Zeigt — anders als Top/Flop (Gate-gefiltert)
+// — AUCH provisorische Quellen, ehrlich markiert.
+export type SourceRankEntry = {
+  source_name: string;
+  rank: number;
+  lifecycle_tier: string; // top10 | top50 | top100 | ranked
+  reliability_tier: string; // trusted | neutral | watch | low | insufficient
+  provisional: boolean; // n unter Validierungs-Schwelle → nie Eligibility-Boost
+  wilson_lower_95: number | null;
+  n: number;
+  hits: number;
+  point_estimate: number | null;
+  silent: boolean;
+  pinned: boolean;
+  rotation_flagged: boolean;
+  consecutive_top_runs: number;
+  logical_status: string; // active | silent | pinned
+  last_signal_at: string | null;
+};
+
+export type SourceLifecycleEvent = {
+  source: string;
+  from_status: string;
+  to_status: string;
+  reason: string;
+  recorded_at_utc: string;
+};
+
+export type SourceLifecycle = {
+  available: boolean;
+  generated_at: string | null;
+  counts: Record<string, number>;
+  ranked: SourceRankEntry[];
+  recent_events: SourceLifecycleEvent[];
+  silent_after_days: number | null;
+  error: string | null;
+};
+
+export function fetchSourceLifecycle(signal?: AbortSignal): Promise<SourceLifecycle> {
+  return apiGet<SourceLifecycle>("/dashboard/api/source-lifecycle", { signal });
+}
+
 // Perp-Derivate (Funding + Open Interest) aus KAIs EIGENER Ingestion (read-only).
 // funding_rate = 8h-Satz als Anteil (0.0001 = 1bp). Werte sind null, wenn der
 // jeweilige Snapshot-Cache (noch) keinen Eintrag hat — keine erfundenen Zahlen.
