@@ -205,6 +205,7 @@ class ProviderSettings(BaseSettings):
     youtube_api_key: str = Field(default="", repr=False)
     newsdata_api_key: str = Field(default="", repr=False)
     x_bearer_token: str = Field(default="", repr=False)
+    messari_api_key: str = Field(default="", repr=False)
 
     xai_api_key: str = Field(default="", repr=False)
     xai_model: str = Field(default="grok-4")
@@ -218,6 +219,7 @@ class ProviderSettings(BaseSettings):
         "youtube_api_key",
         "newsdata_api_key",
         "x_bearer_token",
+        "messari_api_key",
         "xai_api_key",
         mode="before",
     )(_strip_secret)
@@ -683,27 +685,9 @@ REAL_ANALYSIS_PAPER_WHILE_DISABLED_ACK_SENTINEL = "I_UNDERSTAND_REAL_ANALYSIS_PA
 
 class RealAnalysisPaperSettings(BaseSettings):
     """Real-analysis paper-learning feeder policy (Goal 2026-06-10).
-
-    Purpose: let the REAL-analysis feeder (``source=real_analysis``, i.e. stored
-    LLM-analyzed news documents — long AND short) open PAPER fills so the system
-    finally collects *usable* forward paper-learning data — WITHOUT flipping the
-    global ``entry_mode`` to ``paper`` (which would also re-arm the degenerate
-    synthetic autonomous loop) and WITHOUT touching the premium path (#207/#208)
-    or the permanently-OFF Fastlane (#179/#181).
-
-    Fail-closed THREE-ARM, mirroring the #181/#208 overrides so a single env flip
-    can never neuter the kill-switch:
-      - ``enabled`` — the feeder master opt-in, AND
-      - ``allow_paper_while_entry_disabled`` — the per-bypass opt-in, AND
-      - ``entry_disabled_override_ack`` == REAL_ANALYSIS_PAPER_WHILE_DISABLED_ACK_SENTINEL
-        (an explicit human-typed acknowledgement of un-gating the kill-switch for
-        the real-analysis paper route).
-
-    Any arm missing → the kill-switch holds (fail-closed). All three default
-    off/empty → ZERO behavioural change without an explicit operator ack. Live is
-    never reachable (the feeder runs mode=PAPER, ``_run_once_guard`` allows only
-    paper/shadow). The synthetic loop is unaffected: it is NOT source=real_analysis
-    and ``loop_control_*`` document_ids are hard-excluded from the decoupled path.
+    Allows real-analysis feeder to open PAPER fills without changing global entry_mode.
+    Fail-closed three-arm: enabled, allow_paper_while_entry_disabled, and
+    entry_disabled_override_ack == sentinel.
     """
 
     model_config = SettingsConfigDict(
@@ -747,6 +731,22 @@ class RealAnalysisPaperSettings(BaseSettings):
     # injects conservative DEFAULT limits when all three are left at 0
     # (DEFAULT_LEARNING_ROUTE_LIMITS in app/execution/entry_policy.py); in every
     # legacy mode 0 stays unlimited (behaviour-neutral migration).
+    paper_route_max_trades_per_hour: int = Field(default=0, ge=0)
+    paper_route_max_notional_per_day_usd: float = Field(default=0.0, ge=0.0)
+    paper_route_max_open_positions: int = Field(default=0, ge=0)
+
+
+class TechnicalPaperSettings(BaseSettings):
+    """LONG-only technical paper feeder settings (Proposal 2)."""
+
+    model_config = SettingsConfigDict(
+        env_prefix="TECHNICAL_PAPER_", env_file=".env", extra="ignore"
+    )
+
+    enabled: bool = Field(default=False)
+    min_strength: float = Field(default=0.0)
+    freshness_max_age_hours: int = Field(default=48, ge=1)
+
     paper_route_max_trades_per_hour: int = Field(default=0, ge=0)
     paper_route_max_notional_per_day_usd: float = Field(default=0.0, ge=0.0)
     paper_route_max_open_positions: int = Field(default=0, ge=0)
@@ -1441,6 +1441,7 @@ class AppSettings(BaseSettings):
     real_analysis_paper: RealAnalysisPaperSettings = Field(
         default_factory=RealAnalysisPaperSettings
     )
+    technical_paper: TechnicalPaperSettings = Field(default_factory=TechnicalPaperSettings)
     operator: OperatorSettings = Field(default_factory=OperatorSettings)
     tradingview: TradingViewSettings = Field(default_factory=TradingViewSettings)
     binance: BinanceMarketDataSettings = Field(default_factory=BinanceMarketDataSettings)
@@ -1475,12 +1476,8 @@ class AppSettings(BaseSettings):
     @model_validator(mode="after")
     def validate_bind_host_against_env(self) -> "AppSettings":
         """NEO-P-001 (B): reject non-loopback bind in production envs.
-
-        A 0.0.0.0 / :: / * bind directly exposes the API to whatever
-        network the host sits on — which is fine locally, catastrophic
-        in production where the Cloudflare tunnel is the single intended
-        ingress. Opt-out via APP_ALLOW_NON_LOOPBACK_BIND=1 for container
-        setups that rely on a downstream firewall.
+        A 0.0.0.0 / :: / * bind exposes the API beyond the Cloudflare tunnel.
+        Opt-out via APP_ALLOW_NON_LOOPBACK_BIND=1 for container/downstream firewalls.
         """
         prod_envs = {"production", "prod", "live"}
         loopback = {"127.0.0.1", "localhost", "::1"}
@@ -1507,11 +1504,7 @@ class AppSettings(BaseSettings):
     @model_validator(mode="after")
     def _enforce_re_entry_invariants(self) -> "AppSettings":
         """D-191 re-entry-gate enforcement.
-
-        When ``re_entry_mode.enabled`` is False (today's default) this is a
-        no-op and the laptop boot is unchanged. When True, every selected
-        ``enforce_*`` invariant must hold or boot fails with
-        ``ConfigurationError`` — fail-closed, never fail-open.
+        If re_entry_mode is enabled, enforce_* invariants must hold or boot fails.
         """
         gate = self.re_entry_mode
         if not gate.enabled:
@@ -1735,17 +1728,8 @@ def validate_runtime_config_payload(payload: Mapping[str, object]) -> dict[str, 
 @lru_cache(maxsize=1)
 def get_settings() -> AppSettings:
     """Process-cached application settings.
-
-    AUDIT follow-up: previously this constructed a fresh ``AppSettings()`` on
-    EVERY call, which re-reads and re-parses the ``.env`` file each time. Callers
-    in hot loops (e.g. the hold-metrics / directional-eligibility path hit by the
-    dashboard quality poll) therefore re-parsed ``.env`` per item and wedged the
-    event loop. Settings are immutable for the process lifetime — env/.env changes
-    take effect on restart (the normal systemd flow) — so caching is correct and
-    eliminates the whole "get_settings() in a loop" performance landmine.
-
-    Tests that mutate the environment per case clear this cache via the autouse
-    ``_reset_settings_cache`` fixture (tests/conftest.py); call
-    ``get_settings.cache_clear()`` explicitly if you change env mid-test.
+    Settings are immutable for the process lifetime — env/.env changes
+    take effect on restart — so caching eliminates the performance landmine
+    of re-parsing on every call in hot loops.
     """
     return AppSettings()
