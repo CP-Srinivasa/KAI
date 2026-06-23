@@ -105,5 +105,10 @@ class TestSourceStatus:
             "requires_api",
             "manual_resolution",
             "unresolved",
+            # Lifecycle additions (Phase 1, #405): the source-lifecycle FSM.
+            "probation",
+            "silent",
+            "archived",
+            "pinned",
         }
         assert {s.value for s in SourceStatus} == expected
