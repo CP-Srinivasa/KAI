@@ -1740,6 +1740,29 @@ async def dashboard_lightning_api() -> JSONResponse:
     return JSONResponse(content=payload, headers={"Cache-Control": "no-store, max-age=0"})
 
 
+@router.get("/dashboard/api/ln/channels", tags=["dashboard"])
+async def dashboard_ln_channels_api() -> JSONResponse:
+    """Read-only Per-Channel-Aufschlüsselung (lnd ``listchannels``, default-off).
+
+    Spiegelt ``app.lightning.adapter.get_channels()`` — pro Channel Kapazität,
+    Outbound (``local_sat``) / Inbound (``remote_sat``) und Aktiv-Status, plus
+    aggregierte Summen. Liefert ``disabled`` (Feature aus, kein Netzcall),
+    ``unavailable`` (an, aber Node nicht erreichbar) oder ``ok``. Fail-closed,
+    KEIN schreibender/kapitalrelevanter Pfad (read-only ``listchannels``).
+    """
+    from dataclasses import asdict
+
+    from app.lightning.adapter import get_channels
+
+    status = await get_channels()
+    payload = asdict(status)
+    payload["num_channels"] = len(status.channels)
+    payload["total_local_sat"] = sum(c.local_sat for c in status.channels)
+    payload["total_remote_sat"] = sum(c.remote_sat for c in status.channels)
+    payload["generated_at"] = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return JSONResponse(content=payload, headers={"Cache-Control": "no-store, max-age=0"})
+
+
 @router.get("/dashboard/api/chain", tags=["dashboard"])
 async def dashboard_chain_api() -> JSONResponse:
     """Read-only Chain-Status aus KAIs EIGENER bitcoind (L1, default-off).

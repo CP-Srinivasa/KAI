@@ -161,6 +161,10 @@ class LndRestClient:
         """GET /v1/balance/blockchain — on-chain wallet balance (read-only)."""
         return await self._get("/v1/balance/blockchain")
 
+    async def list_channels(self) -> dict[str, Any]:
+        """GET /v1/channels — open channels with per-channel balances (read-only)."""
+        return await self._get("/v1/channels")
+
     # ── write surface (value layer; gated) ────────────────────────────────────
     # Used ONLY by app.lightning.value_layer behind the pay_enabled kill-switch.
     # Requires a SCOPE-MINIMAL macaroon (invoices / channel-open) — NEVER the

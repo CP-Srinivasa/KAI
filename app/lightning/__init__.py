@@ -4,13 +4,22 @@ Default-off, shadow-first, fail-closed. See
 KAI-mirror/kai_lightning_integration_plan_20260614.md for the full phased plan.
 """
 
-from app.lightning.adapter import LightningNodeStatus, get_node_status
+from app.lightning.adapter import (
+    LightningChannel,
+    LightningChannels,
+    LightningNodeStatus,
+    get_channels,
+    get_node_status,
+)
 from app.lightning.client import LightningUnavailableError, LndInfo, LndRestClient
 
 __all__ = [
+    "LightningChannel",
+    "LightningChannels",
     "LightningNodeStatus",
     "LightningUnavailableError",
     "LndInfo",
     "LndRestClient",
+    "get_channels",
     "get_node_status",
 ]

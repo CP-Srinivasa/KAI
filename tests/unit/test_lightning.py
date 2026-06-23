@@ -16,6 +16,7 @@ from app.lightning import (
     LightningNodeStatus,
     LightningUnavailableError,
     LndRestClient,
+    get_channels,
     get_node_status,
 )
 from app.lightning import adapter as adapter_mod
@@ -259,3 +260,101 @@ def test_status_constructors() -> None:
 def test_base_url_built_from_host_port() -> None:
     cfg = LightningSettings(host="10.0.0.9", rest_port=8081)
     assert cfg.base_url == "https://10.0.0.9:8081"
+
+
+# --- channels: per-channel breakdown (read-only listchannels) --------------------
+
+
+async def test_list_channels_happy_path() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.path == "/v1/channels"
+        return httpx.Response(200, json={"channels": [{"chan_id": "1", "capacity": "100"}]})
+
+    client = LndRestClient(
+        base_url="https://x:8080", macaroon_hex="ab", transport=_transport(handler)
+    )
+    raw = await client.list_channels()
+    assert raw["channels"][0]["chan_id"] == "1"
+
+
+async def test_get_channels_disabled_makes_no_call() -> None:
+    status = await get_channels(LightningSettings(enabled=False))
+    assert status.state == "disabled"
+    assert status.reachable is False
+    assert status.channels == []
+
+
+async def test_get_channels_ok_parses_and_sorts(monkeypatch) -> None:
+    # Two active + one inactive, varying capacity → active-first, capacity desc.
+    transport = _routing_transport(
+        {
+            "/v1/channels": httpx.Response(
+                200,
+                json={
+                    "channels": [
+                        {
+                            "chan_id": "small",
+                            "remote_pubkey": "02aa",
+                            "capacity": "1000",
+                            "local_balance": "600",
+                            "remote_balance": "400",
+                            "active": True,
+                        },
+                        {
+                            "channel_point": "txid:0",
+                            "remote_pubkey": "02bb",
+                            "capacity": "9000",
+                            "local_balance": "9000",
+                            "remote_balance": "0",
+                            "active": False,
+                        },
+                        {
+                            "chan_id": "big",
+                            "remote_pubkey": "02cc",
+                            "capacity": "5000",
+                            "local_balance": "2500",
+                            "remote_balance": "2500",
+                            "active": True,
+                        },
+                    ]
+                },
+            ),
+        }
+    )
+    monkeypatch.setattr(
+        adapter_mod,
+        "_build_client",
+        lambda cfg: LndRestClient(
+            base_url="https://x:8080", macaroon_hex="ab", transport=transport
+        ),
+    )
+    status = await get_channels(LightningSettings(enabled=True, macaroon_hex="ab"))
+    assert status.state == "ok"
+    assert status.reachable is True
+    # active-first, then capacity desc: big(5000) > small(1000) > inactive(9000)
+    assert [c.channel_id for c in status.channels] == ["big", "small", "txid:0"]
+    assert status.channels[0].local_sat == 2500
+    assert status.channels[0].remote_sat == 2500
+    assert status.channels[2].active is False
+    assert status.channels[1].capacity_sat == 1000
+
+
+async def test_get_channels_unavailable_when_misconfigured() -> None:
+    status = await get_channels(LightningSettings(enabled=True, macaroon_hex="", macaroon_path=""))
+    assert status.state == "unavailable"
+    assert status.reachable is False
+    assert status.reason
+
+
+async def test_get_channels_fail_closed_on_error(monkeypatch) -> None:
+    transport = _routing_transport({"/v1/channels": httpx.Response(503, text="busy")})
+    monkeypatch.setattr(
+        adapter_mod,
+        "_build_client",
+        lambda cfg: LndRestClient(
+            base_url="https://x:8080", macaroon_hex="ab", transport=transport
+        ),
+    )
+    status = await get_channels(LightningSettings(enabled=True, macaroon_hex="ab"))
+    assert status.state == "unavailable"
+    assert status.channels == []

@@ -581,6 +581,30 @@ export function fetchLightningStatus(signal?: AbortSignal): Promise<LightningSta
   return apiGet<LightningStatus>("/dashboard/api/lightning", { signal });
 }
 
+// Per-channel breakdown (lnd listchannels, read-only, default-off, fail-closed).
+export type LnChannel = {
+  channel_id: string;
+  remote_pubkey: string;
+  capacity_sat: number;
+  local_sat: number; // outbound liquidity (KAI can send)
+  remote_sat: number; // inbound liquidity (KAI can receive)
+  active: boolean;
+};
+export type LnChannels = {
+  state: "disabled" | "unavailable" | "ok";
+  reachable: boolean;
+  channels: LnChannel[];
+  num_channels: number;
+  total_local_sat: number;
+  total_remote_sat: number;
+  reason: string;
+  generated_at: string;
+};
+
+export function fetchLnChannels(signal?: AbortSignal): Promise<LnChannels> {
+  return apiGet<LnChannels>("/dashboard/api/ln/channels", { signal });
+}
+
 // L1 — souveräne On-Chain-Wahrheit aus KAIs eigener bitcoind (read-only, default-off).
 export type ChainStatus = {
   state: "disabled" | "pending" | "unavailable" | "ok";

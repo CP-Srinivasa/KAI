@@ -16,6 +16,7 @@ import { PageHeader } from "@/layout/PageHeader";
 import { Card, Badge, SectionLabel, InfoHint } from "@/components/ui/Primitives";
 import { PreparedPanel } from "@/components/panels/PreparedPanel";
 import { LightningPanel } from "@/components/panels/LightningPanel";
+import { ChannelsPanel } from "@/components/panels/ChannelsPanel";
 import { ChainPanel } from "@/components/panels/ChainPanel";
 import { AuditIntegrityKpi } from "@/components/panels/AuditIntegrityKpi";
 import { cn } from "@/lib/utils";
@@ -251,32 +252,19 @@ export function NodePage() {
           </div>
 
           <div className="space-y-3">
+            <ChannelsPanel />
             <PreparedPanel
-              title="Channels & Liquidität (Inbound/Outbound)"
-              reason="Wie viel kann KAI empfangen, wie viel senden? Welche Channels stehen, wie ist die Balance verteilt? Grundlage für BOLT12-Empfang und LSP-Strategie."
+              title="B2-Funds-Recovery"
+              reason="On-Chain-Balance (confirmed/unconfirmed) und Channel-Inbound/Outbound sind jetzt LIVE (read-only) im Lightning- und Channels-Panel. Offen bleibt der Recovery-Status der letzten Channel-Mittel."
               detail={
                 <>
-                  Nicht im Phase-1-Adapter (heute <span className="font-mono">getinfo</span>-only:
-                  state/sync/block/peers/active-channels/alias). Inbound/Outbound, Channel-Detail und
-                  LSP/Amboss-Magma/Loop-Status brauchen eine Adapter-Erweiterung.
+                  B2 (<span className="font-mono">sweeptimelock</span>) der letzten ~306k sats —
+                  erscheint künftig als ehrlicher <span className="font-mono">recovering/syncing</span>-
+                  Zustand, getrennt von bereits bestätigter Balance. Keine Fake-Zahl.
                 </>
               }
               status="roadmap"
-              roadmapNote="Phase-2: app/lightning/adapter um channelbalance + listchannels erweitern."
-            />
-            <PreparedPanel
-              title="On-Chain-Balance & B2-Funds-Recovery"
-              reason="Wie viel liegt on-chain in eigener bitcoind-Wallet? Wo steht die laufende Funds-Recovery der letzten Channel-Mittel?"
-              detail={
-                <>
-                  On-Chain-Balance ist heute kein Adapter-Feld. B2 (
-                  <span className="font-mono">sweeptimelock</span>) der letzten ~306k sats reift ~06-17 —
-                  erscheint als ehrlicher <span className="font-mono">recovering/syncing</span>-Zustand,
-                  getrennt von bereits bestätigter Balance. Keine Fake-Zahl.
-                </>
-              }
-              status="roadmap"
-              roadmapNote="Phase-2: Wallet-Balance-Feld + B2-Recovery-Status (operator-exekutiert)."
+              roadmapNote="Phase-2 (Resilienz-Sprint): SCB-Monitoring + B2-Recovery-Status (operator-exekutiert)."
             />
             <PreparedPanel
               title="Node-Reputation"

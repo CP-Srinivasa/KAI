@@ -68,6 +68,42 @@ class LightningNodeStatus:
         return cls(state="unavailable", reachable=False, reason=reason)
 
 
+@dataclass(frozen=True)
+class LightningChannel:
+    """One open channel from KAI's read-only perspective (lnd ``listchannels``).
+
+    ``local_sat`` is outbound liquidity (what KAI can SEND), ``remote_sat`` is
+    inbound (what KAI can RECEIVE). ``channel_id`` prefers the numeric ``chan_id``
+    and falls back to the ``channel_point`` (funding txid:index).
+    """
+
+    channel_id: str
+    remote_pubkey: str
+    capacity_sat: int
+    local_sat: int  # outbound liquidity
+    remote_sat: int  # inbound liquidity
+    active: bool
+
+
+@dataclass(frozen=True)
+class LightningChannels:
+    """Per-channel breakdown snapshot. ``state`` mirrors the node adapter:
+    ``disabled`` (feature off), ``unavailable`` (enabled but unreachable), ``ok``."""
+
+    state: str
+    reachable: bool
+    channels: list[LightningChannel] = field(default_factory=list)
+    reason: str = ""
+
+    @classmethod
+    def disabled(cls) -> LightningChannels:
+        return cls(state="disabled", reachable=False, reason="lightning disabled")
+
+    @classmethod
+    def unavailable(cls, reason: str) -> LightningChannels:
+        return cls(state="unavailable", reachable=False, reason=reason)
+
+
 def _amt_sat(value: Any) -> int:
     """Parse an lnd sat amount: a plain int/str, or an Amount object
     ``{"sat": "123", "msat": "..."}``. Returns 0 on anything unparseable."""
@@ -153,3 +189,39 @@ async def get_node_status(cfg: LightningSettings | None = None) -> LightningNode
         version=info.version,
         **bal,
     )
+
+
+async def get_channels(cfg: LightningSettings | None = None) -> LightningChannels:
+    """Return the per-channel breakdown, never raising (default-off / fail-closed).
+
+    Read-only (``listchannels``); no write/send surface. ``disabled`` short-circuits
+    without a network call. Channels are sorted active-first, then by capacity desc,
+    for a stable display order.
+    """
+    cfg = cfg or get_settings().lightning
+    if not cfg.enabled:
+        return LightningChannels.disabled()
+    try:
+        client = _build_client(cfg)
+        raw = await client.list_channels()
+    except LightningUnavailableError as exc:
+        return LightningChannels.unavailable(str(exc))
+    except Exception as exc:  # noqa: BLE001 — adapter must never leak into the loop
+        return LightningChannels.unavailable(f"unexpected: {exc}")
+
+    items: list[LightningChannel] = []
+    for ch in raw.get("channels", []) or []:
+        if not isinstance(ch, dict):
+            continue
+        items.append(
+            LightningChannel(
+                channel_id=str(ch.get("chan_id") or ch.get("channel_point") or ""),
+                remote_pubkey=str(ch.get("remote_pubkey", "")),
+                capacity_sat=_amt_sat(ch.get("capacity")),
+                local_sat=_amt_sat(ch.get("local_balance")),
+                remote_sat=_amt_sat(ch.get("remote_balance")),
+                active=bool(ch.get("active", False)),
+            )
+        )
+    items.sort(key=lambda c: (not c.active, -c.capacity_sat))
+    return LightningChannels(state="ok", reachable=True, channels=items)
