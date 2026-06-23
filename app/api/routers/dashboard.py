@@ -2117,6 +2117,61 @@ async def dashboard_source_activity_api(
     return JSONResponse(content=payload, headers={"Cache-Control": "no-store, max-age=0"})
 
 
+@router.get("/dashboard/api/source-lifecycle", tags=["dashboard"])
+async def dashboard_source_lifecycle_api(events_limit: int = 15) -> JSONResponse:
+    """Read-only Source-Lifecycle-Ranking + jüngste Statuswechsel (Phase 4).
+
+    Liest das vom ``source_lifecycle_recalc``-Job geschriebene
+    ``monitor/source_ranking.json`` (deterministisches Top-N-Ranking mit
+    ``provisional``/``silent``/``pinned``/``rotation_flagged``-Flags + Tier) plus
+    die letzten ``events_limit`` Lifecycle-Audit-Events (newest-first). Anders als
+    die Gate-gefilterte Top-5/Flop-5-Liste zeigt dieses Ranking AUCH provisorische
+    Quellen (n unter Validierungs-Schwelle) — ehrlich markiert, nie als belastbar.
+    Fail-closed: fehlt/kaputt → ``available: false``, nie ein 500.
+    """
+    import json
+    from pathlib import Path
+
+    from app.learning.source_lifecycle_audit import read_lifecycle_events
+
+    payload: dict[str, Any] = {
+        "available": False,
+        "generated_at": None,
+        "counts": {},
+        "ranked": [],
+        "recent_events": [],
+        "silent_after_days": None,
+        "error": None,
+    }
+    try:
+        ranking_path = Path("monitor/source_ranking.json")
+        if ranking_path.exists():
+            data = json.loads(ranking_path.read_text(encoding="utf-8"))
+            if isinstance(data, dict):
+                payload["available"] = True
+                payload["generated_at"] = data.get("generated_at")
+                payload["counts"] = data.get("counts") or {}
+                payload["ranked"] = data.get("ranked") or []
+                payload["silent_after_days"] = data.get("silent_after_days")
+        events = read_lifecycle_events(Path("artifacts"))
+        limit = max(0, events_limit)
+        recent = events[-limit:] if (limit and events) else []
+        payload["recent_events"] = [
+            {
+                "source": e.source,
+                "from_status": e.from_status,
+                "to_status": e.to_status,
+                "reason": e.reason,
+                "recorded_at_utc": e.recorded_at_utc,
+            }
+            for e in reversed(recent)
+        ]
+    except Exception as exc:  # noqa: BLE001 — endpoint must never 500 the dashboard
+        logger.warning("dashboard_source_lifecycle_failed", exc_info=True)
+        payload["error"] = str(exc)
+    return JSONResponse(content=payload, headers={"Cache-Control": "no-store, max-age=0"})
+
+
 @router.get("/dashboard/api/operator-board", tags=["dashboard"])
 async def dashboard_operator_board_api() -> JSONResponse:
     """Kuratiertes Operator-Board (#315): Todos / Phasen / Verbesserungen aus der

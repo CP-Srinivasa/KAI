@@ -1321,3 +1321,70 @@ def test_edge_window_fail_closed_on_missing_audit(tmp_path: Path) -> None:
     assert r.status_code == 200
     body = r.json()
     assert "canonical" in body
+
+
+# ---------------------------------------------------------------------------
+# GET /dashboard/api/source-lifecycle -- Phase 4 ranking + recent transitions
+# ---------------------------------------------------------------------------
+
+
+def test_source_lifecycle_api_unavailable_when_missing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """No source_ranking.json yet → fail-closed available:false, never a 500."""
+    monkeypatch.chdir(tmp_path)
+    app = _make_app()
+    with TestClient(app) as client:
+        r = client.get("/dashboard/api/source-lifecycle")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["available"] is False
+    assert body["ranked"] == []
+    assert body["recent_events"] == []
+    assert body["error"] is None
+
+
+def test_source_lifecycle_api_returns_ranking_and_events(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "monitor").mkdir()
+    (tmp_path / "monitor" / "source_ranking.json").write_text(
+        json.dumps(
+            {
+                "generated_at": "2026-06-23T20:00:00+00:00",
+                "silent_after_days": 7,
+                "counts": {"ranked": 2, "provisional": 2, "pinned": 0, "rotation_flagged": 1},
+                "ranked": [
+                    {"source_name": "thedefiant", "rank": 1, "provisional": True, "n": 27},
+                    {"source_name": "theblock", "rank": 2, "provisional": True, "n": 24},
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    (tmp_path / "artifacts").mkdir()
+    (tmp_path / "artifacts" / "source_lifecycle_audit.jsonl").write_text(
+        json.dumps(
+            {
+                "source": "theblock",
+                "from_status": "active",
+                "to_status": "silent",
+                "reason": "lifecycle_recalc",
+                "recorded_at_utc": "2026-06-23T20:00:00+00:00",
+                "evidence": {},
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    app = _make_app()
+    with TestClient(app) as client:
+        r = client.get("/dashboard/api/source-lifecycle")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["available"] is True
+    assert body["counts"]["ranked"] == 2
+    assert [e["source_name"] for e in body["ranked"]] == ["thedefiant", "theblock"]
+    assert len(body["recent_events"]) == 1
+    assert body["recent_events"][0]["to_status"] == "silent"

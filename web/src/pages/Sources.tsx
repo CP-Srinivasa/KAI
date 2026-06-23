@@ -13,6 +13,7 @@ import { SourceReliabilityPanel } from "@/components/panels/SourceReliabilityPan
 import { PerSourcePrecisionPanel } from "@/components/panels/PerSourcePrecisionPanel";
 import { PerSourceStabilityPanel } from "@/components/panels/PerSourceStabilityPanel";
 import { SourceActivityPanel } from "@/components/panels/SourceActivityPanel";
+import { SourceLifecyclePanel } from "@/components/panels/SourceLifecyclePanel";
 import { useDashboardQuality } from "@/lib/useDashboardQuality";
 import { useDashboardProvenance } from "@/lib/useDashboardProvenance";
 import { LiveDot } from "@/components/ui/LiveDot";
@@ -63,10 +64,14 @@ export function SourcesPage() {
         <SourceActivityPanel />
       </PanelErrorBoundary>
 
+      <PanelErrorBoundary name="Source-Lifecycle">
+        <SourceLifecyclePanel />
+      </PanelErrorBoundary>
+
       <Card padded>
         <CardHeader
-          title="Top-5 / Flop-5 nach Trefferquote"
-          subtitle="Nur Quellen mit ausreichender Stichprobe (Gate-n) — kein Ranking auf 1–2 Resolves."
+          title="Top-5 / Flop-5 nach Trefferquote (validiert)"
+          subtitle="Nur Quellen mit ausreichender Stichprobe (Gate-n ≥ 50) — die provisorischen Quellen stehen im Lifecycle-Ranking oben."
           right={
             top.length === 0 ? (
               <Badge tone="muted" dot>
@@ -79,7 +84,7 @@ export function SourcesPage() {
           <div className="py-2 text-xs text-fg-muted">
             {q.state === "error"
               ? "Quality-Endpoint unerreichbar."
-              : "Noch keine Quelle mit ausreichender Stichprobe für ein belastbares Ranking."}
+              : "Noch keine Quelle mit ausreichender Stichprobe (Gate-n) — die provisorische Rangliste steht im Lifecycle-Ranking oben."}
           </div>
         ) : (
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2">

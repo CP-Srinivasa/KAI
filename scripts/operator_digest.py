@@ -331,6 +331,33 @@ def collect_edge_discovery(research_dir: Path | None = None) -> dict[str, Any]:
         return {"error": str(exc)}
 
 
+def collect_source_lifecycle(ranking_path: Path | None = None) -> dict[str, Any]:
+    """Latest source-lifecycle ranking summary from ``monitor/source_ranking.json``.
+
+    Read-only. ``{"available": False}`` if the recalc job hasn't written it yet,
+    ``{"error": ...}`` on failure, else the counts (ranked/provisional/pinned/
+    rotation_flagged) plus the current top source. Most sources are honestly
+    ``provisional`` (n below the validated floor) — that is the expected state,
+    not an error.
+    """
+    path = ranking_path if ranking_path is not None else Path("monitor/source_ranking.json")
+    try:
+        if not path.exists():
+            return {"available": False}
+        doc = json.loads(path.read_text(encoding="utf-8"))
+        ranked = doc.get("ranked") or []
+        top = ranked[0] if ranked and isinstance(ranked[0], dict) else None
+        return {
+            "available": True,
+            "counts": doc.get("counts") or {},
+            "top_name": top.get("source_name") if top else None,
+            "top_wilson": top.get("wilson_lower_95") if top else None,
+            "top_provisional": top.get("provisional") if top else None,
+        }
+    except Exception as exc:  # noqa: BLE001 — Digest degradiert, bricht nie
+        return {"error": str(exc)}
+
+
 def compose_digest_message(
     *,
     today: date,
@@ -345,6 +372,7 @@ def compose_digest_message(
     v5_activated_on: date,
     promotion: dict[str, Any] | None = None,
     edge_discovery: dict[str, Any] | None = None,
+    source_lifecycle: dict[str, Any] | None = None,
 ) -> str:
     """Baut die EINE lesbare Operator-Nachricht. Pure Funktion — testbar."""
     lines: list[str] = [f"📡 *KAI Operator-Digest* — {today.isoformat()}"]
@@ -521,6 +549,25 @@ def compose_digest_message(
                     f"  ➡️ *KANDIDAT(EN) PRÜFEN* — beste Regel {best_name} {best_bps:+.1f}bps netto"
                 )
 
+    # Source-Lifecycle: Quellen-Ranking + Rotation/Pin-Flags aus dem recalc-Job.
+    sl = source_lifecycle or {}
+    if sl.get("error"):
+        lines.append(f"📚 *Quellen-Lifecycle:* nicht lesbar — {str(sl['error'])[:80]}")
+    elif not sl.get("available"):
+        lines.append("📚 *Quellen-Lifecycle:* noch kein Ranking (source_lifecycle_recalc)")
+    else:
+        c = sl.get("counts") or {}
+        top = sl.get("top_name")
+        tw = sl.get("top_wilson")
+        tw_str = f" @ {tw * 100:.0f}%" if isinstance(tw, (int, float)) else ""
+        prov = " (provisorisch)" if sl.get("top_provisional") else ""
+        lines.append(
+            f"📚 *Quellen-Lifecycle:* {c.get('ranked', 0)} gerankt "
+            f"({c.get('provisional', 0)} provisorisch, {c.get('pinned', 0)} pinned, "
+            f"{c.get('rotation_flagged', 0)} Rotation-Flag)"
+            + (f" · Top: {top}{tw_str}{prov}" if top else "")
+        )
+
     msg = "\n".join(lines)
     if len(msg) > _TELEGRAM_LIMIT:
         msg = msg[: _TELEGRAM_LIMIT - 25] + "\n… (gekürzt, 4096-Limit)"
@@ -579,6 +626,7 @@ def main(argv: list[str] | None = None) -> int:
             v5_freshness=collect_v5_freshness(),
             promotion=collect_promotion_gate(),
             edge_discovery=collect_edge_discovery(),
+            source_lifecycle=collect_source_lifecycle(),
             v5_activated_on=v5_activated_on,
         )
     except Exception:  # noqa: BLE001 — entrypoint boundary
