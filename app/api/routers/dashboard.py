@@ -27,7 +27,7 @@ from app.audit.stream_validation import (
     load_audit_stream,
     summarize_audit_stream_result,
 )
-from app.execution.phantom_filter import is_phantom_close
+from app.learning.bayes_quarantine import is_corrupt_close
 from app.observability.dashboard_metric_registry import (
     build_dashboard_metric_registry,
     reconcile_dashboard_snapshot,
@@ -662,14 +662,16 @@ async def dashboard_quality_api() -> JSONResponse:
     # trade_pnl_usd (siehe paper_engine.py:842). Vorher wurden sie ignoriert,
     # was zu einer systematischen PnL-Untererfassung führte (Codex-Beleg: Pi
     # hatte 24 partials vs 15 fulls; Quality-Endpoint zeigte $759 statt $2486).
-    # DS-20260529-V1: exclude phantom closes (price-source disagreement, e.g.
-    # BitMEX's delisted MATIC @0.40875) so the quality card shows real PnL.
+    # Exclude corrupt closes so the quality card shows real PnL. Unified verdict
+    # (bayes_quarantine.is_corrupt_close) = exact forensic signatures (DS-20260529-V1
+    # MATIC stale-exit, DS-20260601 ETH off-market) OVER the generic phantom-return
+    # guard — same set as the realized-by-asset path (2026-06-23 leak fix).
     closes: list[dict[str, Any]] = []
     quarantined_closes_list: list[dict[str, Any]] = []
     for r in exec_rows:
         if r.get("event_type") not in ("position_closed", "position_partial_closed"):
             continue
-        if is_phantom_close(r.get("entry_price"), r.get("exit_price"), r.get("position_side")):
+        if is_corrupt_close(r):
             quarantined_closes_list.append(r)
         else:
             closes.append(r)

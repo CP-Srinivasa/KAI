@@ -69,6 +69,15 @@ _DEFAULT_BOOTSTRAP_N = 5000
 _DEFAULT_TRIM_FRACTION = 0.10
 _VERSION = "evidence_window/1.0"
 
+# Attributed signal_source values that identify the REAL autonomous generator.
+# The canonical edge restricts the EDGE figures to these so the epoch-foreign,
+# unattributed May-canary closes (which fabricated a fake positive ETH cohort —
+# see memory kai_edge_epoch_contamination_20260623) can never re-contaminate the
+# one defensible edge answer. ``real_analysis`` is the pre-#226 label for the
+# same generator (memory kai_edge_cohort_key_fix). Structural (attribution), not
+# date-magic, so it stays correct as new data arrives.
+CANONICAL_EDGE_SOURCES: frozenset[str] = frozenset({"autonomous_generator", "real_analysis"})
+
 # Loop statuses (must mirror app.orchestrator.models.CycleStatus). Kept as a
 # local mapping so a renamed status surfaces as an unmapped raw count rather than
 # silently vanishing — the raw status_breakdown is always preserved in full.
@@ -249,6 +258,12 @@ class WindowMeta:
     gate_version: str
     quarantine_version: str
     quarantine_signature_count: int
+    # Canonical-edge source filter (None = full stream, every source counts).
+    # When set, the EDGE figures are restricted to these signal_source values;
+    # counts + safety still see ALL rows. Surfaced so a contaminated (unfiltered)
+    # measurement is always visible rather than silently mixed.
+    source_allowlist: tuple[str, ...] | None = None
+    closes_excluded_by_source: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -259,6 +274,10 @@ class WindowMeta:
             "gate_version": self.gate_version,
             "quarantine_version": self.quarantine_version,
             "quarantine_signature_count": self.quarantine_signature_count,
+            "source_allowlist": list(self.source_allowlist)
+            if self.source_allowlist is not None
+            else None,
+            "closes_excluded_by_source": self.closes_excluded_by_source,
         }
 
 
@@ -384,6 +403,7 @@ def build_evidence_window(
     bootstrap_n: int = _DEFAULT_BOOTSTRAP_N,
     min_sample: int = MIN_SAMPLE_FOR_P,
     implausible_move_threshold: float = DEFAULT_IMPLAUSIBLE_MOVE_THRESHOLD,
+    source_allowlist: frozenset[str] | None = None,
 ) -> EvidenceWindowReport:
     """Build the joined evidence window from parsed events. Pure / IO-free.
 
@@ -391,6 +411,10 @@ def build_evidence_window(
     ``exec_events`` are raw ``paper_execution_audit`` rows (``order_filled`` /
     ``position_closed``). Both must already be windowed by the caller if a
     sub-range is wanted; this function reports over exactly what it is handed.
+
+    ``source_allowlist`` (e.g. ``CANONICAL_EDGE_SOURCES``) restricts the EDGE to
+    closes whose ``signal_source`` is in the set; counts + safety still see ALL
+    rows. ``None`` = full stream (every close counts) — backward-compatible.
     """
     cm = cost_model or CostModel()
     loop_list = [e for e in loop_events if isinstance(e, dict)]
@@ -404,6 +428,18 @@ def build_evidence_window(
     )
     # join the quarantine tally into the cycle-level count view
     counts = _with_quarantine_count(counts, excluded.excluded_count)
+
+    # Canonical-edge source filter: restrict the EDGE to the real generator's
+    # attributed sources. counts + safety above already saw every row, so this
+    # shapes ONLY the edge. Closes the 2026-06-23 epoch contamination where
+    # unattributed May-canary closes faked a positive ETH cohort.
+    source_filter_tuple: tuple[str, ...] | None = None
+    closes_excluded_by_source = 0
+    if source_allowlist is not None:
+        source_filter_tuple = tuple(sorted(source_allowlist))
+        kept = [t for t in closed if t.signal_source in source_allowlist]
+        closes_excluded_by_source = len(closed) - len(kept)
+        closed = kept
 
     edge = _build_edge(
         closed,
@@ -425,6 +461,8 @@ def build_evidence_window(
         gate_version="edge_release_policy/sprint-D",
         quarantine_version="bayes_quarantine/PR-112",
         quarantine_signature_count=len(QUARANTINE_SIGNATURES),
+        source_allowlist=source_filter_tuple,
+        closes_excluded_by_source=closes_excluded_by_source,
     )
 
     notes = _build_notes(counts, safety, edge, min_sample)
@@ -751,11 +789,14 @@ def build_window_from_audit(
     bootstrap_n: int = _DEFAULT_BOOTSTRAP_N,
     min_sample: int = MIN_SAMPLE_FOR_P,
     implausible_move_threshold: float = DEFAULT_IMPLAUSIBLE_MOVE_THRESHOLD,
+    source_allowlist: frozenset[str] | None = None,
 ) -> EvidenceWindowReport:
     """Load both audit files and build the window end-to-end.
 
     ``since`` / ``until`` (tz-aware UTC) bound the window; rows outside are
     dropped before aggregation. With no bounds the full streams are used.
+    ``source_allowlist`` is threaded to :func:`build_evidence_window` (canonical
+    edge); ``None`` = full stream.
     """
     loop_events = _filter_window(
         _load_jsonl(loop_audit_path),
@@ -780,6 +821,7 @@ def build_window_from_audit(
         bootstrap_n=bootstrap_n,
         min_sample=min_sample,
         implausible_move_threshold=implausible_move_threshold,
+        source_allowlist=source_allowlist,
     )
 
 
@@ -803,6 +845,16 @@ def render_window(report: EvidenceWindowReport) -> str:
     lines.append(
         f"  quarantine:        {w.quarantine_version} ({w.quarantine_signature_count} sigs)"
     )
+    if w.source_allowlist is not None:
+        lines.append(
+            f"  edge_source_filter: CANONICAL ({', '.join(w.source_allowlist)}) — "
+            f"{w.closes_excluded_by_source} close(s) excluded from edge by source"
+        )
+    else:
+        lines.append(
+            "  edge_source_filter: FULL STREAM (all sources, incl. unattributed) — "
+            "use `canonical-edge` for the real-generator answer"
+        )
     lines.append("")
 
     lines.append("COUNTS (from trading_loop_audit status distribution)")

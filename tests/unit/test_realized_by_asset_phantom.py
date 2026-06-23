@@ -71,3 +71,27 @@ def test_legit_close_below_cap_kept(tmp_path: Path) -> None:
     assert by_sym["SOL/USDT"]["realized_pnl_usd"] == 50.0
     assert by_sym["SOL/USDT"]["quarantined_closes"] == 0
     assert r["totals"]["quarantined_pnl_usd"] == 0.0
+
+
+def test_eth_off_market_signature_excluded_from_realized(tmp_path: Path) -> None:
+    """2026-06-23 edge-epoch leak: the ETH off-market signature (+55%, UNDER the
+    200% phantom cap) leaked into realized PnL and made ETH look like the top
+    performer. The exact forensic signature must now quarantine it here too."""
+    path = tmp_path / "audit.jsonl"
+    _write(
+        path,
+        [
+            _close("ETH/USDT", 2000.0, 2100.0, 100.0, "2026-06-12T10:00:00+00:00"),
+            # ETH off-market signature: exit 3259.9692, +55% — phantom guard MISSES it.
+            _close("ETH/USDT", 2100.0, 3259.9692, 5643.3, "2026-05-26T20:41:40+00:00"),
+        ],
+    )
+    r = compute_realized_by_asset(path)
+    eth = {b["symbol"]: b for b in r["by_asset"]}["ETH/USDT"]
+    # The legit +100 close survives; the +5643 off-market fake is quarantined.
+    assert eth["realized_pnl_usd"] == 100.0
+    assert eth["closed_trades"] == 1
+    assert eth["quarantined_closes"] == 1
+    assert eth["quarantined_pnl_usd"] == 5643.3
+    assert r["totals"]["realized_pnl_usd"] == 100.0
+    assert r["totals"]["quarantined_pnl_usd"] == 5643.3

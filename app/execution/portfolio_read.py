@@ -13,7 +13,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.execution.audit_replay import AuditReplayResult, replay_paper_audit
-from app.execution.phantom_filter import is_phantom_close
+from app.learning.bayes_quarantine import is_corrupt_close
 from app.market_data.base import MarketDataSnapshot
 from app.market_data.service import get_market_data_snapshot
 from app.storage.models.trading import PortfolioStateRecord
@@ -791,10 +791,14 @@ def compute_realized_by_asset(
                 "quarantined_closes": 0,
             },
         )
-        # DS-20260529-V1: exclude phantom closes (price-source disagreement, e.g.
-        # BitMEX's delisted MATIC @0.40875) from realized PnL so the dashboard
-        # shows the real number; surface the excluded amount for transparency.
-        if is_phantom_close(d.get("entry_price"), d.get("exit_price"), d.get("position_side")):
+        # Exclude corrupt closes from realized PnL so the dashboard shows the real
+        # number; surface the excluded amount for transparency. Unified verdict
+        # (bayes_quarantine.is_corrupt_close) = exact forensic signatures (DS-
+        # 20260529-V1 MATIC stale-exit, DS-20260601 ETH off-market) OVER the generic
+        # phantom-return guard. Closes the 2026-06-23 leak where this path used only
+        # the generic guard and let the ETH off-market signature (+55%, under the
+        # 200% cap) leak into realized PnL.
+        if is_corrupt_close(d):
             bucket["quarantined_pnl_usd"] = float(bucket["quarantined_pnl_usd"]) + pnl  # type: ignore[arg-type]
             bucket["quarantined_closes"] = int(bucket["quarantined_closes"]) + 1  # type: ignore[arg-type]
             if isinstance(ts, str) and ts:

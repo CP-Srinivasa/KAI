@@ -497,6 +497,61 @@ def trading_evidence_window(
         raise typer.Exit(2)
 
 
+@trading_app.command("canonical-edge")
+def trading_canonical_edge(
+    exec_audit_path: str = typer.Option(
+        "artifacts/paper_execution_audit.jsonl",
+        "--exec-audit-path",
+        help="Append-only paper execution audit JSONL path (fills + closes)",
+    ),
+    loop_audit_path: str = typer.Option(
+        "artifacts/trading_loop_audit.jsonl",
+        "--loop-audit-path",
+        help="Append-only trading-loop cycle audit JSONL path (counts + safety)",
+    ),
+    min_sample: int = typer.Option(
+        8, "--min-sample", help="Min closed trades before probabilities are computed"
+    ),
+    p_threshold_bps: float = typer.Option(
+        0.0, "--p-threshold-bps", help="Threshold T for the P(mu_net > T) figure"
+    ),
+    as_json: bool = typer.Option(False, "--json", help="Emit JSON instead of the table"),
+) -> None:
+    """Canonical edge — the ONE defensible edge answer over the REAL generator.
+
+    Same machinery as ``evidence-window`` but restricts the EDGE figures to the
+    attributed autonomous-generator sources (``CANONICAL_EDGE_SOURCES``:
+    autonomous_generator / real_analysis). The epoch-foreign, unattributed
+    May-canary closes — which fabricated a fake positive ETH cohort in the full
+    stream (memory kai_edge_epoch_contamination_20260623) — can NEVER
+    re-contaminate this answer. Counts + safety still cover the full stream.
+
+    READ-ONLY. Prefer this over ``evidence-window --since-days 0`` whenever the
+    question is "does the generator have an edge".
+    """
+    import json as _json
+
+    from app.observability.evidence_window import (
+        CANONICAL_EDGE_SOURCES,
+        build_window_from_audit,
+        render_window,
+    )
+
+    report = build_window_from_audit(
+        loop_audit_path=loop_audit_path,
+        exec_audit_path=exec_audit_path,
+        p_threshold_bps=p_threshold_bps,
+        min_sample=min_sample,
+        source_allowlist=CANONICAL_EDGE_SOURCES,
+    )
+    if as_json:
+        print(_json.dumps(report.to_dict(), indent=2))
+    else:
+        console.print(render_window(report))
+    if report.safety.live_orders_attempted > 0:
+        raise typer.Exit(2)
+
+
 @trading_app.command("paper-portfolio-snapshot")
 def trading_paper_portfolio_snapshot(
     audit_path: str = typer.Option(
