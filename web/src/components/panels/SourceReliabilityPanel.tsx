@@ -165,15 +165,16 @@ export function SourceReliabilityPanel({ data }: { data: DashboardQuality | null
 
       {trustedCount === 0 ? (
         <div
-          className="mb-3 rounded-sm border border-neg/40 bg-neg/10 px-3 py-2.5 attention-breathe-neg"
+          className="mb-3 rounded-sm border border-warn/40 bg-warn/10 px-3 py-2.5"
           role="status"
         >
-          <div className="flex items-center gap-2 text-neg">
+          <div className="flex items-center gap-2 text-warn">
             <AlertTriangle size={16} className="shrink-0" />
-            <span className="text-sm font-semibold">0 trusted Sources</span>
+            <span className="text-sm font-semibold">0/{rel.source_count} trusted Sources</span>
           </div>
           <p className="mt-1 text-2xs text-fg-muted leading-relaxed">
-            Quellenbasis aktuell nicht institutionell belastbar.
+            Frühphasen-Evidenz, kein Integritätsbruch: keine Quelle erreicht das Trust-Gate
+            (n≥30 Hard-Outcomes + Wilson-Lower≥0,65); Trust-Boosts sind fail-closed (wirkungslos).
             {rel.health_warning ? ` ${rel.health_warning}` : ""}
           </p>
         </div>
