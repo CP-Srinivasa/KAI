@@ -751,6 +751,15 @@ class TechnicalPaperSettings(BaseSettings):
     paper_route_max_notional_per_day_usd: float = Field(default=0.0, ge=0.0)
     paper_route_max_open_positions: int = Field(default=0, ge=0)
 
+    # P0 automation link: the feeder was merged without a scheduler (CLI-only).
+    # When enabled, an in-process APScheduler tick runs run_feeder() on an
+    # interval so technical candidates flow to PAPER automatically — gated,
+    # fail-soft, no capital path; all feeder filters (min_strength/freshness/
+    # route-limits) and run_feeder's own ``enabled`` check stay in force.
+    # Default-off (opt-in via TECHNICAL_PAPER_SCHEDULER_*).
+    scheduler_enabled: bool = Field(default=False)
+    scheduler_interval_seconds: int = Field(default=300, ge=30)
+
 
 class PremiumFastlaneSettings(BaseSettings):
     """30-day Premium-Telegram Fastlane (Goal 2026-06-05).
