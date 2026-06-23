@@ -32,6 +32,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from app.execution.phantom_filter import is_phantom_close
+
 # Float tolerance for matching the frozen exit price. The stale price is a
 # fixed float constant; 1e-9 is far tighter than any legitimate price spacing
 # yet absorbs binary round-trip noise.
@@ -110,8 +112,45 @@ def is_quarantined(close_row: dict[str, object]) -> bool:
     return quarantine_reason(close_row) is not None
 
 
+def corruption_reason(close_row: dict[str, object]) -> str | None:
+    """Unified corruption verdict for read-side edge/PnL aggregators.
+
+    Layers the two defences so EVERY edge path excludes the SAME set of corrupt
+    closes (2026-06-23 edge-epoch forensic — read aggregators that used only the
+    generic phantom guard leaked the ETH off-market signature into realized PnL):
+
+      1. the exact forensic ``quarantine_reason`` signatures (deterministic;
+         catches known incidents that sit *under* the generic cap, e.g. the ETH
+         off-market close at +55%);
+      2. the generic ``is_phantom_close`` return-magnitude guard (catches *new*,
+         not-yet-signatured price-source disagreements, e.g. MATIC at +364%).
+
+    Returns the reason string (signature reason, else ``"phantom_implied_return"``)
+    or ``None`` when the close is trustworthy. Conservative: a row with no usable
+    prices and no signature is never dropped. Does NOT change the Bayes path,
+    which intentionally uses only the exact signatures via ``is_quarantined``.
+    """
+    sig = quarantine_reason(close_row)
+    if sig is not None:
+        return sig
+    if is_phantom_close(
+        close_row.get("entry_price"),
+        close_row.get("exit_price"),
+        close_row.get("position_side"),
+    ):
+        return "phantom_implied_return"
+    return None
+
+
+def is_corrupt_close(close_row: dict[str, object]) -> bool:
+    """True when a close is corrupt by EITHER defence (signature or phantom guard)."""
+    return corruption_reason(close_row) is not None
+
+
 __all__ = [
     "QUARANTINE_SIGNATURES",
+    "corruption_reason",
+    "is_corrupt_close",
     "is_quarantined",
     "quarantine_reason",
 ]
