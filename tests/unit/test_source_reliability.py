@@ -348,6 +348,92 @@ def test_score_to_json_dict_round_trips_all_fields() -> None:
     assert d["priority_modifier"] == 0
 
 
+# ── ranked array (Top-N lifecycle ranking) ─────────────────────────────────
+
+
+def test_ranked_array_sorted_by_wilson_then_n() -> None:
+    """`ranked` orders by Wilson-Lower desc; stronger evidence ranks first."""
+    # StrongSource: 24/25 hits → high Wilson. WeakSource: 5/25 → low Wilson.
+    audits = [_audit(f"s{i}", "StrongSource") for i in range(25)]
+    audits += [_audit(f"w{i}", "WeakSource") for i in range(25)]
+    annotations = [_ann(f"s{i}", "hit" if i < 24 else "miss") for i in range(25)]
+    annotations += [_ann(f"w{i}", "hit" if i < 5 else "miss") for i in range(25)]
+    source_by_doc = {f"s{i}": "StrongSource" for i in range(25)}
+    source_by_doc.update({f"w{i}": "WeakSource" for i in range(25)})
+    report = build_source_reliability_report(audits, annotations, source_by_doc=source_by_doc)
+
+    ranked = report["ranked"]
+    assert [e["source_name"] for e in ranked] == ["StrongSource", "WeakSource"]
+    assert [e["rank"] for e in ranked] == [1, 2]
+    assert ranked[0]["lifecycle_tier"] == "top10"
+    # Wilson-Lower is monotone with the ranking.
+    assert ranked[0]["wilson_lower_95"] > ranked[1]["wilson_lower_95"]
+
+
+def test_ranked_excludes_legacy_and_zero_n() -> None:
+    """The unknown/legacy bucket can never hold a rank."""
+    audits = [_audit(f"a{i}", "ActiveSrc") for i in range(25)]
+    audits += [_audit(f"u{i}", "unknown") for i in range(25)]
+    annotations = [_ann(f"a{i}", "hit" if i < 20 else "miss") for i in range(25)]
+    annotations += [_ann(f"u{i}", "hit" if i < 20 else "miss") for i in range(25)]
+    source_by_doc = {f"a{i}": "ActiveSrc" for i in range(25)}
+    source_by_doc.update({f"u{i}": "unknown" for i in range(25)})
+    report = build_source_reliability_report(audits, annotations, source_by_doc=source_by_doc)
+
+    names = [e["source_name"] for e in report["ranked"]]
+    assert names == ["ActiveSrc"]
+
+
+def test_ranked_flags_provisional_below_validated_floor() -> None:
+    """n below the validated floor ranks but is flagged provisional (no boost)."""
+    from app.learning.source_reliability import _MIN_N_FOR_VALIDATED_RANK
+
+    # Small (n=25 < 50) provisional vs. large (n=60 >= 50) validated.
+    audits = [_audit(f"p{i}", "SmallSrc") for i in range(25)]
+    audits += [_audit(f"v{i}", "BigSrc") for i in range(60)]
+    annotations = [_ann(f"p{i}", "hit" if i < 12 else "miss") for i in range(25)]
+    annotations += [_ann(f"v{i}", "hit" if i < 30 else "miss") for i in range(60)]
+    source_by_doc = {f"p{i}": "SmallSrc" for i in range(25)}
+    source_by_doc.update({f"v{i}": "BigSrc" for i in range(60)})
+    report = build_source_reliability_report(audits, annotations, source_by_doc=source_by_doc)
+
+    by_name = {e["source_name"]: e for e in report["ranked"]}
+    assert by_name["SmallSrc"]["n"] < _MIN_N_FOR_VALIDATED_RANK
+    assert by_name["SmallSrc"]["provisional"] is True
+    assert by_name["BigSrc"]["n"] >= _MIN_N_FOR_VALIDATED_RANK
+    assert by_name["BigSrc"]["provisional"] is False
+    # Provisional never carries an eligibility boost (Rail 5 — modifier stays <= 0).
+    small_score = report["scores"]["SmallSrc"]
+    assert small_score["priority_modifier"] <= 0
+
+
+def test_validated_floor_matches_hold_metrics_constant() -> None:
+    """Drift guard: the local validated floor must equal the hold_metrics gate."""
+    from app.alerts.hold_metrics import MIN_PER_SOURCE_RESOLVED
+    from app.learning.source_reliability import _MIN_N_FOR_VALIDATED_RANK
+
+    assert _MIN_N_FOR_VALIDATED_RANK == MIN_PER_SOURCE_RESOLVED
+
+
+def test_rank_to_lifecycle_tier_buckets() -> None:
+    """Position-based Top-10/50/100 buckets, then a plain `ranked` tail."""
+    from app.learning.source_reliability import _rank_to_lifecycle_tier
+
+    assert _rank_to_lifecycle_tier(1) == "top10"
+    assert _rank_to_lifecycle_tier(10) == "top10"
+    assert _rank_to_lifecycle_tier(11) == "top50"
+    assert _rank_to_lifecycle_tier(50) == "top50"
+    assert _rank_to_lifecycle_tier(51) == "top100"
+    assert _rank_to_lifecycle_tier(100) == "top100"
+    assert _rank_to_lifecycle_tier(101) == "ranked"
+
+
+def test_ranked_empty_when_no_evidence() -> None:
+    """Empty inputs → empty ranking, never a crash."""
+    report = build_source_reliability_report([], [], {})
+    assert report["ranked"] == []
+
+
 # ── Eligibility integration ────────────────────────────────────────────────
 
 

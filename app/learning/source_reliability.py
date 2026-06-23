@@ -55,6 +55,19 @@ _WILSON_HIGH_THRESHOLD: float = 0.65  # > 65% lower-bound → soft promote
 # Window over which outcomes are considered fresh.
 _DEFAULT_WINDOW_DAYS: int = 90
 
+# Validated-sample floor for the public Top-N ranking. Mirrors
+# hold_metrics.MIN_PER_SOURCE_RESOLVED (kept as a local literal to avoid an
+# import cycle; test_source_reliability asserts the two stay equal). A source
+# with n below this floor is RANKED but flagged ``provisional`` — it appears in
+# the lifecycle ranking without ever earning an eligibility boost (Rail 5,
+# fail-closed: a positive priority_modifier already needs n >= MIN_N_FOR_PROMOTE,
+# so provisional sources stay neutral by construction).
+_MIN_N_FOR_VALIDATED_RANK: int = 50
+
+# Rank-bucket boundaries for the lifecycle tier (Top-10/50/100 per operator
+# request 2026-06-23). Position-based, distinct from the reliability tier.
+_RANK_TIER_BOUNDS: tuple[tuple[int, str], ...] = ((10, "top10"), (50, "top50"), (100, "top100"))
+
 # FS-3 (#199): source-name tokens for the pre-attribution / legacy bucket. These
 # never count as trusted and never carry a positive modifier — legacy evidence
 # is not attributable to an active source and must stay separated.
@@ -146,6 +159,50 @@ def _classify_tier(
     if wilson_lower >= _WILSON_HIGH_THRESHOLD and n >= _MIN_N_FOR_PROMOTE:
         return "trusted", 1
     return "neutral", 0
+
+
+def _rank_to_lifecycle_tier(rank: int) -> str:
+    """Map a 1-based ranking position to its Top-N lifecycle bucket."""
+    for bound, label in _RANK_TIER_BOUNDS:
+        if rank <= bound:
+            return label
+    return "ranked"
+
+
+def _build_ranked(scores: dict[str, SourceReliabilityScore]) -> list[dict[str, object]]:
+    """Order non-legacy, evidenced sources into a deterministic Top-N ranking.
+
+    Sort key: Wilson-Lower descending (the confidence floor, load-bearing),
+    then n descending (more evidence breaks ties), then source_name ascending
+    (stable, reproducible across runs — no Date/random in scope). Legacy/unknown
+    and n==0 sources are excluded — they cannot hold a rank. Each entry is
+    flagged ``provisional`` when its sample is below the validated floor: it
+    ranks, but honestly as not-yet-validated and never as an eligibility boost.
+    """
+    eligible = [
+        s
+        for s in scores.values()
+        if s.n > 0
+        and s.wilson_lower_95 is not None
+        and s.source_name.strip().lower() not in _LEGACY_SOURCE_TOKENS
+    ]
+    eligible.sort(key=lambda s: (-(s.wilson_lower_95 or 0.0), -s.n, s.source_name))
+    ranked: list[dict[str, object]] = []
+    for idx, s in enumerate(eligible, start=1):
+        ranked.append(
+            {
+                "source_name": s.source_name,
+                "rank": idx,
+                "lifecycle_tier": _rank_to_lifecycle_tier(idx),
+                "provisional": s.n < _MIN_N_FOR_VALIDATED_RANK,
+                "wilson_lower_95": s.wilson_lower_95,
+                "n": s.n,
+                "hits": s.hits,
+                "point_estimate": s.point_estimate,
+                "reliability_tier": s.tier,
+            }
+        )
+    return ranked
 
 
 def _parse_iso(ts: str | None) -> datetime | None:
@@ -295,6 +352,10 @@ def build_source_reliability_report(
         "active_source_count": active_source_count,
         "legacy_source_count": legacy_source_count,
         "scores": {s: scores[s].to_json_dict() for s in scores},
+        # Deterministic Top-N ranking (operator request 2026-06-23). Distinct
+        # from ``scores`` (a keyed snapshot): ``ranked`` is the ordered list the
+        # lifecycle engine and dashboard read for Top-10/50/100 + provisional.
+        "ranked": _build_ranked(scores),
     }
 
 

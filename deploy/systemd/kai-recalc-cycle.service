@@ -1,5 +1,5 @@
 [Unit]
-Description=KAI Recalc-Cycle — daily refresh of source-reliability/bayes/confluence/ph5
+Description=KAI Recalc-Cycle — daily refresh of source-reliability/lifecycle/bayes/confluence/ph5
 After=network-online.target
 Wants=network-online.target
 
@@ -15,6 +15,7 @@ EnvironmentFile=-/home/ubuntu/ai_analyst_trading_bot/.env
 # ein Failure den nächsten Recalc nicht killt. Operator sieht Failures im
 # Journal und über die kai-pi-health.timer-Output-mtime-Alarme.
 ExecStart=-/home/ubuntu/ai_analyst_trading_bot/.venv/bin/python /home/ubuntu/ai_analyst_trading_bot/scripts/source_reliability_recalc.py
+ExecStart=-/home/ubuntu/ai_analyst_trading_bot/.venv/bin/python /home/ubuntu/ai_analyst_trading_bot/scripts/source_lifecycle_recalc.py
 ExecStart=-/home/ubuntu/ai_analyst_trading_bot/.venv/bin/python /home/ubuntu/ai_analyst_trading_bot/scripts/source_confluence_recalc.py
 ExecStart=-/home/ubuntu/ai_analyst_trading_bot/.venv/bin/python /home/ubuntu/ai_analyst_trading_bot/scripts/bayes_posterior_recalc.py
 ExecStart=-/home/ubuntu/ai_analyst_trading_bot/.venv/bin/python /home/ubuntu/ai_analyst_trading_bot/scripts/ph5_feature_analysis_recalc.py
