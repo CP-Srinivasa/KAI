@@ -161,7 +161,15 @@ async def run_feeder(
             sentiment_score=0.8,
             relevance_score=1.0,
             impact_score=1.0,
-            confidence_score=c.get("signal_confidence") or 0.8,
+            # Fixed actionable confidence — NOT the screener's raw signal_confidence.
+            # The screener strength is a different scale (median ~0.11 on the Pi)
+            # and feeding it here failed the news-tuned SignalGenerator min_confidence
+            # gate (0.75) → every technical candidate died as no_signal (0 fills, 0
+            # evidence). The screener already qualified this as a directional
+            # candidate; its raw strength stays the feeder's ``min_strength``
+            # selectivity input above (signal_confidence), so the two axes are
+            # decoupled: gate-passing confidence here, screener-scale selectivity there.
+            confidence_score=0.8,
             novelty_score=0.0,
             explanation_short=f"Technical screener signal for {symbol}",
             explanation_long=(

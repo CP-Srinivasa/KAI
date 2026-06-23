@@ -178,7 +178,9 @@ async def test_feeder_filters_and_feeds_candidates(
     assert seen_runs[0]["mode"] == "paper"
     assert seen_runs[0]["analysis_source"] == "technical_paper"
     assert seen_runs[0]["analysis_result"].sentiment_label.value == "bullish"
-    assert seen_runs[0]["analysis_result"].confidence_score == 0.85
+    # confidence_score is a FIXED actionable value (0.8), decoupled from the
+    # screener's raw signal_confidence (which drives min_strength selectivity).
+    assert seen_runs[0]["analysis_result"].confidence_score == 0.8
 
     # Verify that fed registry now includes c6 (and c5) but not c7
     fed_ids = feeder.load_fed_ids(fed_file)
@@ -235,3 +237,60 @@ async def test_feeder_respects_max_per_run(tmp_path: Path, monkeypatch: pytest.M
     assert result["stopped_at_cap"] is True
     assert len(seen) == 2  # only 2 loop cycles this tick, not all 5
     assert len(feeder.load_fed_ids(fed_file)) == 2  # remaining 3 stay unfed
+
+
+@pytest.mark.asyncio
+async def test_feeder_decouples_low_screener_confidence_from_signal_gate(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Regression: a candidate with LOW screener signal_confidence (the Pi median
+    is ~0.11) must still be fed with a gate-passing analysis confidence_score=0.8.
+    Before the fix the raw 0.11 was passed through and died at the SignalGenerator
+    min_confidence (0.75) gate → no_signal → 0 fills / 0 evidence."""
+    settings = AppSettings()
+    settings.technical_paper = TechnicalPaperSettings(
+        enabled=True, min_strength=0.0, freshness_max_age_hours=48
+    )
+    monkeypatch.setattr(feeder, "get_settings", lambda: settings)
+
+    now_utc = datetime(2026, 6, 19, 10, 0, 0, tzinfo=UTC)
+    fresh = (now_utc - timedelta(hours=1)).isoformat().replace("+00:00", "Z")
+    ledger = tmp_path / "ledger.jsonl"
+    ledger.write_text(
+        json.dumps(
+            {
+                "candidate_id": "weak1",
+                "candidate_kind": "technical",
+                "symbol": "XRP/USDT",
+                "side": "long",
+                "ts_utc": fresh,
+                "signal_confidence": 0.11,  # well below the 0.75 news gate
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    captured: list[float] = []
+
+    async def fake_run_once(*, symbol, mode, analysis_result, analysis_source):
+        captured.append(analysis_result.confidence_score)
+        return LoopCycle(
+            cycle_id="c",
+            started_at=now_utc.isoformat(),
+            completed_at=now_utc.isoformat(),
+            symbol=symbol,
+            status=CycleStatus.COMPLETED,
+            fill_simulated=True,
+        )
+
+    with patch(
+        "app.observability.technical_paper_feeder.run_trading_loop_once",
+        AsyncMock(side_effect=fake_run_once),
+    ):
+        result = await feeder.run_feeder(
+            ledger_path=ledger, fed_path=tmp_path / "fed.jsonl", now=now_utc
+        )
+
+    assert result["fed"] == 1
+    assert captured == [0.8]  # gate-passing, not the raw 0.11
