@@ -1,6 +1,6 @@
 {
   "app/cli/main.py": 2460,
-  "app/core/settings.py": 1773,
+  "app/core/settings.py": 1783,
   "app/execution/envelope_to_paper_bridge.py": 1878,
   "app/messaging/telegram_bot.py": 3359,
   "app/orchestrator/trading_loop.py": 2297

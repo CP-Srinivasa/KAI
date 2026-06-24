@@ -1,8 +1,19 @@
 # ADR 0010 — Live/Replay-Umschaltung + Shadow/Live-Vergleich (#318)
 
-**Status:** Proposed — sicherer Phase-1-Schritt freigabefähig; Live-Switching GATED (Operator-Entscheidungen offen)
+**Status:** Phase 1 IMPLEMENTIERT (default-off, read-only); Phase 2 (Live-Switching) GATED
 **Datum:** 2026-06-24
 **Bezug:** TODO #318 (Folge-Architektur-Sprint)
+
+> **Update 2026-06-24:** Phase 1 gebaut — `app/observability/counterfactual_replay_logger.py`
+> (pure: `bar_covering`/`build_comparison`/`run_counterfactual_pass`) +
+> `scripts/counterfactual_replay.py` (flag-gated, reuse `binance_kline_fetcher`).
+> Vergleicht je Shadow-Kandidat den **Live**-Entry-Preis gegen die **gesettelte**
+> 1m-Kline (Replay) der Entry-Minute → `in_settled_range` + Drift-bps →
+> `artifacts/counterfactual_comparison.jsonl`. Flag `EXECUTION_DUAL_STREAM_DIAGNOSTICS`
+> (default off), Schwelle `EXECUTION_DUAL_STREAM_DRIFT_BPS` (default 30). Read-only,
+> kein Live-/Paper-Pfad. Konservativer Default „Binance-Klines re-fetch" gewählt
+> (Entscheidung 1+2 mit gekennzeichnetem Default belegt). Aktivierung = Operator
+> setzt das Flag. Phase 2 (per-Zyklus-Live-Switching) bleibt gated.
 
 ## Kontext
 

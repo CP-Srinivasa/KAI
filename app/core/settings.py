@@ -490,6 +490,16 @@ class ExecutionSettings(BaseSettings):
     # preserves status quo (only the loop_control_* canary feeds the shadow path).
     shadow_real_generator: bool = Field(default=False)
 
+    # Counterfactual Live∥Replay drift diagnostics (ADR 0010 / #318 Phase 1).
+    # OFF by default. When ON, scripts/counterfactual_replay.py compares each
+    # shadow candidate's LIVE entry price against the settled 1m kline (replay
+    # view, re-fetched from Binance) and appends a drift record to
+    # artifacts/counterfactual_comparison.jsonl. READ-ONLY: never touches the
+    # live/paper path, never places an order. dual_stream_drift_bps is the
+    # out-of-settled-range drift threshold flagged as anomalous.
+    dual_stream_diagnostics: bool = Field(default=False)
+    dual_stream_drift_bps: float = Field(default=30.0, gt=0)
+
     # Paper trading
     paper_initial_equity: float = Field(default=10000.0)
     paper_fee_pct: float = Field(default=0.1)  # 0.1% fee
