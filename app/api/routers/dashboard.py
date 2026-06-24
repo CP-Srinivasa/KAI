@@ -1850,6 +1850,35 @@ async def dashboard_ln_earnings_api() -> JSONResponse:
     return JSONResponse(content=payload, headers={"Cache-Control": "no-store, max-age=0"})
 
 
+@router.get("/dashboard/api/ln/treasury", tags=["dashboard"])
+async def dashboard_ln_treasury_api() -> JSONResponse:
+    """Read-only Self-Funding-Treasury-Bilanz (UC-7, shadow, sats-only/B-004).
+
+    Aggregiert den Earnings-Ledger + die eigenen Node-Balancen (Cache) zu
+    earnings/operating/tradable. ``operating`` = Reserve-Floor aus der Policy
+    (souveräne Reserve). KEINE Allokation/Spend (gegated bei G2), kein USD
+    (separate Dimension, nicht co-mingled).
+    """
+    from app.lightning.cache import get_cached_node_status
+    from app.lightning.earnings_ledger import read_recent_ln_earnings
+    from app.lightning.policy import PolicyStore
+    from app.lightning.treasury import compute_treasury_snapshot
+
+    earnings = read_recent_ln_earnings()
+    status, _ = await get_cached_node_status()
+    onchain = int(getattr(status, "wallet_total_sat", 0) or 0)
+    channel = int(getattr(status, "channel_local_sat", 0) or 0)
+    reserve = PolicyStore().load().reserve_floor_sat
+    snap = compute_treasury_snapshot(
+        earnings,
+        onchain_sat=onchain,
+        channel_local_sat=channel,
+        operating_reserve_sat=reserve,
+    )
+    snap["generated_at"] = datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return JSONResponse(content=snap, headers={"Cache-Control": "no-store, max-age=0"})
+
+
 @router.get("/dashboard/api/chain", tags=["dashboard"])
 async def dashboard_chain_api() -> JSONResponse:
     """Read-only Chain-Status aus KAIs EIGENER bitcoind (L1, default-off).
