@@ -1,4 +1,10 @@
-"""Unit tests for premium_latency.compute_latency_stats (P2 #11 trigger-watch)."""
+"""Unit tests for premium_latency.compute_latency_stats (informational digest).
+
+2026-06-24: the auto-escalation trigger was RETIRED — receive→fill latency is
+limit-order price-wait, not a pipeline fault (forensic in
+kai_premium_pipeline_backlog_20260514). These tests pin the fill-latency /
+expiry / baseline maths and that ``trigger_fired`` is always False.
+"""
 
 from __future__ import annotations
 
@@ -31,11 +37,7 @@ def _fill_record(*, fill_offset_sec: int, origin_offset_sec: int) -> dict:
 @pytest.fixture
 def baseline_path(tmp_path: Path) -> Path:
     """Per-test isolated baseline, pre-written far before _NOW so tests
-    only exercise the lookback-window cutoff (not the baseline cutoff).
-
-    Tests that specifically exercise baseline-suppression manage their own
-    fresh baseline file inside the test body.
-    """
+    only exercise the lookback-window cutoff (not the baseline cutoff)."""
     path = tmp_path / "baseline.json"
     payload = {
         "baseline_at": (_NOW - timedelta(days=365)).isoformat(),
@@ -66,50 +68,25 @@ def test_single_fill_yields_one_sample(tmp_path: Path, baseline_path: Path):
     assert stats.max_seconds == 300
 
 
-def test_below_min_samples_does_not_trigger(tmp_path: Path, baseline_path: Path):
+def test_trigger_retired_never_fires(tmp_path: Path, baseline_path: Path):
+    """Regression: even high receive→fill latency with plenty of samples does
+    NOT auto-escalate — that latency is legitimate limit-order price-wait, and
+    the trigger is retired (real outages → kai-premium-healthcheck liveness)."""
     log = tmp_path / "bridge.jsonl"
-    # 4 samples all 30 min — high latency but n < min_samples
+    # 8 fills, all 30 min latency — would have fired the old trigger.
     _write_audit(
         log,
-        [_fill_record(fill_offset_sec=100 + i, origin_offset_sec=100 + i + 1800) for i in range(4)],
+        [_fill_record(fill_offset_sec=100 + i, origin_offset_sec=100 + i + 1800) for i in range(8)],
     )
     stats = pl.compute_latency_stats(audit_path=log, baseline_path=baseline_path, now=_NOW)
-    assert stats.sample_size == 4
-    assert stats.p95_seconds >= 20 * 60
-    assert stats.trigger_fired is False
-
-
-def test_high_p95_with_enough_samples_fires_trigger(tmp_path: Path, baseline_path: Path):
-    log = tmp_path / "bridge.jsonl"
-    # 5 fills, all 30 min latency → p95 = 1800s > 20min, n=5 >= 5 → fires
-    _write_audit(
-        log,
-        [_fill_record(fill_offset_sec=100 + i, origin_offset_sec=100 + i + 1800) for i in range(5)],
-    )
-    stats = pl.compute_latency_stats(audit_path=log, baseline_path=baseline_path, now=_NOW)
-    assert stats.sample_size == 5
-    assert stats.p95_seconds == 1800
-    assert stats.trigger_fired is True
-    assert "p95=" in stats.trigger_reason
-    assert "samples=5" in stats.trigger_reason
-
-
-def test_low_p95_does_not_trigger_even_with_many_samples(tmp_path: Path, baseline_path: Path):
-    log = tmp_path / "bridge.jsonl"
-    # 20 fills, all 5 min latency
-    _write_audit(
-        log,
-        [_fill_record(fill_offset_sec=100 + i, origin_offset_sec=100 + i + 300) for i in range(20)],
-    )
-    stats = pl.compute_latency_stats(audit_path=log, baseline_path=baseline_path, now=_NOW)
-    assert stats.sample_size == 20
-    assert stats.p95_seconds == 300
-    assert stats.trigger_fired is False
+    assert stats.sample_size == 8
+    assert stats.p95_seconds >= 20 * 60  # high fill-latency...
+    assert stats.trigger_fired is False  # ...but no auto-escalation
+    assert "retired" in stats.trigger_reason
 
 
 def test_records_outside_lookback_excluded(tmp_path: Path, baseline_path: Path):
     log = tmp_path / "bridge.jsonl"
-    # 10 fills 30 days ago — outside 7-day lookback
     ts_old = (_NOW - timedelta(days=30)).isoformat()
     _write_audit(
         log,
@@ -142,17 +119,15 @@ def test_expired_records_counted_separately(tmp_path: Path, baseline_path: Path)
     stats = pl.compute_latency_stats(audit_path=log, baseline_path=baseline_path, now=_NOW)
     assert stats.sample_size == 1
     assert stats.expired_count == 3
-    assert stats.expired_pct == 75.0  # 3 expired / (3+1 terminal) * 100
-    assert stats.stale_expired_count == 0  # no origin/ttl → unclassifiable → genuine
+    assert stats.expired_pct == 75.0
+    assert stats.stale_expired_count == 0
 
 
 def test_stale_on_arrival_expiries_excluded_from_pct(tmp_path: Path, baseline_path: Path):
     """A signal already far older than its TTL when ingested expired on first
-    contact (backlog/replay) — it must not inflate expired_pct. Regression for
-    the 2026-06-11 sweep that drove the digest to a misleading 90.6%."""
+    contact (backlog/replay) — it must not inflate expired_pct."""
     log = tmp_path / "bridge.jsonl"
     records = [_fill_record(fill_offset_sec=100, origin_offset_sec=300)]
-    # 1 genuine expiry: waited out its 24h TTL (age == ttl ≤ 2×ttl).
     records.append(
         {
             "timestamp_utc": (_NOW - timedelta(seconds=100)).isoformat(),
@@ -161,7 +136,6 @@ def test_stale_on_arrival_expiries_excluded_from_pct(tmp_path: Path, baseline_pa
             "origin_envelope_timestamp": (_NOW - timedelta(hours=24, seconds=100)).isoformat(),
         }
     )
-    # 2 stale-on-arrival expiries: origin ~31 days before expiry (age ≫ 2×ttl).
     records.extend(
         [
             {
@@ -178,9 +152,9 @@ def test_stale_on_arrival_expiries_excluded_from_pct(tmp_path: Path, baseline_pa
     _write_audit(log, records)
     stats = pl.compute_latency_stats(audit_path=log, baseline_path=baseline_path, now=_NOW)
     assert stats.sample_size == 1
-    assert stats.expired_count == 1  # only the genuine 24h-wait expiry
-    assert stats.stale_expired_count == 2  # backlog replay, excluded
-    assert stats.expired_pct == 50.0  # 1 genuine expired / (1 fill + 1 genuine) * 100
+    assert stats.expired_count == 1
+    assert stats.stale_expired_count == 2
+    assert stats.expired_pct == 50.0
 
 
 def test_filled_duplicate_suppressed_counts_as_sample(tmp_path: Path, baseline_path: Path):
@@ -208,7 +182,7 @@ def test_malformed_lines_tolerated(tmp_path: Path, baseline_path: Path):
         + json.dumps(valid)
         + "\n"
         + "{broken\n"
-        + json.dumps({"stage": "filled"})  # missing required fields
+        + json.dumps({"stage": "filled"})
         + "\n",
         encoding="utf-8",
     )
@@ -218,7 +192,6 @@ def test_malformed_lines_tolerated(tmp_path: Path, baseline_path: Path):
 
 def test_negative_latency_dropped_clock_skew(tmp_path: Path, baseline_path: Path):
     log = tmp_path / "bridge.jsonl"
-    # Fill timestamp BEFORE origin — impossible without clock skew
     _write_audit(
         log,
         [
@@ -234,24 +207,14 @@ def test_negative_latency_dropped_clock_skew(tmp_path: Path, baseline_path: Path
 
 
 def test_baseline_suppresses_pre_fix_outliers(tmp_path: Path):
-    """Records older than the audit baseline are excluded regardless of lookback.
-
-    Real-world driver (2026-05-14): the 12.5.-14.5. bridge-cron outage
-    produced 7 fills with 10h latency. Without baseline cutoff, the
-    trigger would permanently fire on those even after the fix.
-
-    Uses a fresh baseline path (NOT the autouse fixture) so the init
-    code path runs and writes baseline_at=_NOW.
-    """
-    # Pre-fix outliers — 5h ago, 8h latency each → would fire trigger
+    """Records older than the audit baseline are excluded regardless of lookback."""
     log = tmp_path / "bridge.jsonl"
-    fresh_baseline = tmp_path / "fresh-baseline.json"  # not pre-written
+    fresh_baseline = tmp_path / "fresh-baseline.json"
     pre_fix_records = [
         _fill_record(fill_offset_sec=18000 + i, origin_offset_sec=18000 + i + 8 * 3600)
         for i in range(7)
     ]
     _write_audit(log, pre_fix_records)
-    # First call writes baseline = _NOW → all pre-fix records get cut
     stats = pl.compute_latency_stats(audit_path=log, baseline_path=fresh_baseline, now=_NOW)
     assert stats.sample_size == 0
     assert stats.trigger_fired is False
@@ -259,17 +222,11 @@ def test_baseline_suppresses_pre_fix_outliers(tmp_path: Path):
 
 
 def test_baseline_file_persists_across_runs(tmp_path: Path, baseline_path: Path):
-    """First call writes the baseline; second call reads the same baseline.
-
-    Idempotency contract: the baseline anchor never shifts without operator
-    action (manual delete of the marker file).
-    """
     log = tmp_path / "bridge.jsonl"
     _write_audit(log, [_fill_record(fill_offset_sec=100, origin_offset_sec=400)])
     pl.compute_latency_stats(audit_path=log, baseline_path=baseline_path, now=_NOW)
     assert baseline_path.exists()
     first_payload = baseline_path.read_text(encoding="utf-8")
-    # Second run at a later "now" must keep the original baseline timestamp
     later = _NOW + timedelta(days=2)
     pl.compute_latency_stats(audit_path=log, baseline_path=baseline_path, now=later)
     second_payload = baseline_path.read_text(encoding="utf-8")
@@ -277,7 +234,6 @@ def test_baseline_file_persists_across_runs(tmp_path: Path, baseline_path: Path)
 
 
 def test_percentile_at_boundary():
-    # _percentile is internal but covered indirectly here via known data
     assert pl._percentile([], 50) is None
     assert pl._percentile([42.0], 50) == 42.0
     assert pl._percentile([1.0, 2.0, 3.0, 4.0, 5.0], 50) == 3.0

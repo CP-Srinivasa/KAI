@@ -1,26 +1,31 @@
-"""Premium-Pipeline Receive→Fill latency stats + auto-eskalations-trigger (P2 #11 watch).
+"""Premium-Pipeline latency stats (informational) — auto-escalation trigger RETIRED.
 
-Why: 2026-05-14 P2-decision was "wait for trigger before building event-driven
-inotify bridge". This module is the trigger-watcher itself — it sweeps the
-bridge-audit log on a daily cron, computes the latency distribution, and
-writes a marker file when the operator-defined threshold is crossed.
+2026-06-24 forensic (kai_premium_pipeline_backlog_20260514): the old
+``p95(receive→fill) > 20min`` auto-trigger was a daily FALSE alarm. The reasons,
+each verified against the live ``bridge_pending_orders.jsonl``:
 
-Trigger definition (rationale in kai_premium_pipeline_backlog_20260514):
-- ``p95(receive_to_fill_seconds) > 20 minutes``
-- AND ``sample_size >= 5`` over the last 7 days
-Both clauses must hold — a single slow tick on n=2 is not a signal.
+- **receive→fill latency is price-wait, not a pipeline fault.** Premium/webhook
+  signals are LIMIT orders. The entry-watch loop re-checks every pending order
+  every ~5s (``operator_entry_watch`` ``poll_interval_seconds=5``) — there is NO
+  processing/cron gap. 1997/2000 recent bridge events are ``pending /
+  price_outside_tolerance``: the order sits until the market price drifts into the
+  entry band (p95 = hours) or the TTL expires (~50%). That is correct limit-order
+  behaviour. The originally-planned P2 #11 fix (event-driven inotify) would not
+  change it — there is no tick-gap to close.
 
-What we measure:
-- ``origin_envelope_timestamp`` = approval re-emit time (envelope handed
-  to bridge) — proxy for "receive into pipeline" since worker→envelope
-  latency is sub-second.
-- ``timestamp_utc`` of stage="filled" bridge audit record = fill time.
-- ``latency_seconds = fill_ts - origin_envelope_ts``.
+- **a "pipeline pickup" metric (origin→first-bridge-touch) is not reliably
+  computable here.** It is contaminated by backlog sweeps (single ``expired``
+  records, origin days old) that evade every filter, and the engaged-signal
+  sample is too small (~17/week) for a percentile trigger — one outlier drives
+  p95 to hours. Three filter attempts all leaked; see the forensic memory.
 
-What we DON'T claim to measure: end-to-end (channel-post→fill). That would
-require joining telegram_message_envelope.jsonl, which the trigger does
-not need — the latency P2 #11 would improve is exactly the bridge-tick
-gap, and that's what ``origin_envelope_timestamp`` to fill measures.
+Real pipeline OUTAGES (the 2026-05 failure mode: bridge units down) are caught by
+liveness — ``kai-premium-healthcheck`` (services + paper-tick) — not by latency.
+So this module now produces an INFORMATIONAL digest only; it never auto-escalates.
+``trigger_fired`` is retained (always False) for report/digest backward-compat.
+
+``origin_envelope_timestamp`` = approval re-emit time (envelope handed to bridge);
+worker→envelope latency is sub-second so this is a faithful "received" anchor.
 """
 
 from __future__ import annotations
@@ -35,10 +40,7 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-# Thresholds — tunable but the defaults match the 2026-05-14 backlog spec.
 DEFAULT_LOOKBACK_HOURS = 168  # 7 days
-DEFAULT_TRIGGER_P95_SECONDS = 20 * 60
-DEFAULT_TRIGGER_MIN_SAMPLES = 5
 
 # An "expired" record only reflects pipeline fill performance when the signal
 # entered fresh and waited out its TTL — i.e. age(origin→expiry) ≈ ttl_hours.
@@ -52,6 +54,12 @@ DEFAULT_TRIGGER_MIN_SAMPLES = 5
 # — a fresh signal expires at age≈ttl, so only clearly-stale backlog (>2× ttl)
 # is excluded.
 STALE_ON_ARRIVAL_TTL_FACTOR = 2.0
+
+# Why the auto-trigger is retired rather than re-tuned (see module docstring).
+_TRIGGER_RETIRED_REASON = (
+    "auto-trigger retired 2026-06-24: receive→fill is limit-order price-wait, not a "
+    "pipeline fault; real outages are caught by kai-premium-healthcheck liveness"
+)
 
 _BRIDGE_LOG = Path("artifacts/bridge_pending_orders.jsonl")
 _BASELINE_PATH = Path("artifacts/premium_latency_audit_baseline.json")
@@ -68,8 +76,8 @@ class LatencyStats:
     p99_seconds: float | None
     max_seconds: float | None
     lookback_hours: int
-    trigger_fired: bool
-    trigger_reason: str  # "" if not fired
+    trigger_fired: bool  # retired — always False (kept for report/digest compat)
+    trigger_reason: str
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -92,15 +100,9 @@ def _percentile(sorted_values: list[float], pct: float) -> float | None:
 def _get_or_init_baseline(path: Path, now: datetime) -> datetime:
     """Return the audit baseline timestamp; create it if missing.
 
-    The baseline exists to suppress false-positive triggers from historical
-    pre-fix data. Example (2026-05-14): the 12.5.-14.5. bridge-cron outage
-    produced 10h+ Receive→Fill latencies that would otherwise permanently
-    fire the trigger even after the fix is in place. By cutting off audit
-    stats at the first-run timestamp, the trigger watches the future,
-    not the past.
-
-    Idempotent: a present file is honoured, never overwritten — that lets
-    the operator pin a baseline manually if they want to reset the window.
+    The baseline cuts off pre-baseline records so historical pre-fix outliers do
+    not pollute the (informational) distribution. Idempotent: a present file is
+    honoured, never overwritten — the operator may delete it to reset the window.
     """
     if path.exists():
         try:
@@ -114,11 +116,9 @@ def _get_or_init_baseline(path: Path, now: datetime) -> datetime:
     payload = {
         "baseline_at": now.isoformat(),
         "rationale": (
-            "Audit baseline (P2 #11 trigger-watch). Latency samples from "
-            "before this timestamp are not counted, so historical pre-fix "
-            "outliers cannot fire a false-positive trigger. Operator may "
-            "delete this file to reset the window; the next audit run will "
-            "create a fresh baseline at that moment."
+            "Audit baseline (premium-latency digest). Samples from before this "
+            "timestamp are not counted. Operator may delete this file to reset "
+            "the window; the next audit run will create a fresh baseline."
         ),
     }
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -140,21 +140,16 @@ def compute_latency_stats(
     audit_path: Path | None = None,
     *,
     lookback_hours: int = DEFAULT_LOOKBACK_HOURS,
-    trigger_p95_seconds: int = DEFAULT_TRIGGER_P95_SECONDS,
-    trigger_min_samples: int = DEFAULT_TRIGGER_MIN_SAMPLES,
     now: datetime | None = None,
     baseline_path: Path | None = None,
 ) -> LatencyStats:
-    """Sweep the bridge-audit log, compute latency distribution, eval trigger.
+    """Sweep the bridge-audit log and compute the receive→fill distribution.
 
-    Tolerant against malformed JSON lines + missing fields. An audit log
-    that doesn't exist yet returns a zero-sample LatencyStats (trigger
-    can never fire at n=0).
+    INFORMATIONAL ONLY — ``trigger_fired`` is always False (auto-escalation
+    retired, see module docstring). Tolerant against malformed JSON lines +
+    missing fields; a missing audit log returns a zero-sample LatencyStats.
 
     The effective lookback window is ``max(now - lookback_hours, baseline)``.
-    On first run, ``baseline`` is initialised to ``now``, so the trigger
-    starts measuring forward only — historical pre-fix outliers cannot
-    fire a false-positive (see ``_get_or_init_baseline``).
     """
     path = audit_path or _BRIDGE_LOG
     current = now or datetime.now(UTC)
@@ -187,9 +182,8 @@ def compute_latency_stats(
             if stage == "expired":
                 # Stale-on-arrival expiries (origin→expiry age >> ttl) reflect
                 # backlog/replay of long-dead signals, not pipeline fill ability.
-                # Exclude them from expired_pct but count them separately so the
-                # operator still sees them. When origin or ttl is missing we
-                # cannot classify → count as genuine (never hide an expiry).
+                # Exclude from expired_pct but count separately (never hidden).
+                # When origin or ttl is missing we cannot classify → count genuine.
                 origin_ts = _parse_iso(rec.get("origin_envelope_timestamp"))
                 ttl_hours_rec = rec.get("ttl_hours")
                 if origin_ts is not None and isinstance(ttl_hours_rec, (int, float)):
@@ -219,14 +213,6 @@ def compute_latency_stats(
     total_terminal = n + expired_count
     expired_pct = (expired_count / total_terminal * 100) if total_terminal else 0.0
 
-    trigger_fired = False
-    trigger_reason = ""
-    if p95 is not None and n >= trigger_min_samples and p95 > trigger_p95_seconds:
-        trigger_fired = True
-        trigger_reason = (
-            f"p95={p95:.0f}s > {trigger_p95_seconds}s AND samples={n} >= {trigger_min_samples}"
-        )
-
     return LatencyStats(
         sample_size=n,
         expired_count=expired_count,
@@ -237,15 +223,13 @@ def compute_latency_stats(
         p99_seconds=round(p99, 2) if p99 is not None else None,
         max_seconds=round(max_lat, 2) if max_lat is not None else None,
         lookback_hours=lookback_hours,
-        trigger_fired=trigger_fired,
-        trigger_reason=trigger_reason,
+        trigger_fired=False,  # retired
+        trigger_reason=_TRIGGER_RETIRED_REASON,
     )
 
 
 __all__ = [
     "DEFAULT_LOOKBACK_HOURS",
-    "DEFAULT_TRIGGER_MIN_SAMPLES",
-    "DEFAULT_TRIGGER_P95_SECONDS",
     "STALE_ON_ARRIVAL_TTL_FACTOR",
     "LatencyStats",
     "compute_latency_stats",
