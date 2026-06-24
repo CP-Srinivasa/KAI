@@ -95,13 +95,12 @@ diese Probe **immer false**.
   übergeben; nur Methoden in `RECEIVE_ACTIONS` dürfen `receive` deklarieren — strukturell
   erzwungen, damit der Invariant einen Refactor überlebt.
 - **Receive-Pfad-Härtung (gleicher PR):**
-  - **Invoice-Expiry** in `add_invoice` setzen (~60–300s, an die L402-Token-TTL in `l402.py`
-    angeglichen) gegen unbezahlt akkumulierende Invoices (DB-/HTLC-Last).
-  - **Mint-Limiter-Reichweite:** Client-IP via `CF-Connecting-IP`/erste `X-Forwarded-For` auflösen
-    (hinter cloudflared ist `request.client.host` der Tunnel → der per-key-Cap ist sonst wirkungslos
-    und nur der globale 60/min-Cap schützt); zudem sicherstellen, dass auch der
-    `ln_control.py`-`create_invoice`-Execute-Pfad dem Mint-Limiter unterliegt (Limiter
-    konzeptionell an den Receive-Chokepoint ziehen, nicht nur in den Oracle-Router).
+  - **Invoice-Expiry** in `add_invoice` setzen (Default 300s, beschränkt ≤600s) gegen unbezahlt
+    akkumulierende Invoices (DB-/HTLC-Last).
+  - *(Verschoben nach U2:)* Die **Mint-Limiter-Reichweite** (Client-IP via
+    `CF-Connecting-IP`/`X-Forwarded-For` + `ln_control`-Execute-Pfad) wird in U2 gebaut, weil dort
+    der gleiche vertrauenswürdige Client-IP-Helfer für den Demand-Fingerprint entsteht — eine SSOT
+    für „wer ist der Anfrager" statt zwei.
 - **Akzeptanz / Negativ-Regressionstest (Kern-Invariant):** mit `receive_enabled=true,
   pay_enabled=false` → `create_invoice` **executes**, ABER `pay_invoice`/`keysend`/`send_coins`/
   `open_channel`/`close_channel` ALLE `disabled` (Build-Client `assert_not_called`). Dauerhafter
@@ -123,6 +122,12 @@ Neues `app/lightning/demand_ledger.py` → `artifacts/ln_demand_ledger.jsonl`.
   vertrauenswürdigen Forward-Header (`CF-Connecting-IP`, sonst erste `X-Forwarded-For`)
   gewonnen werden, sonst kollabieren alle Fingerprints auf einen Wert und der ≥2-FP-Guard (§5)
   ist wirkungslos.
+- **Shared Client-IP-SSOT + Mint-Limiter-Reichweite (aus U1 hierher gezogen, satoshi-Auflage 6):**
+  Der gleiche vertrauenswürdige `client_ip`-Helfer speist (a) den Demand-Fingerprint und (b) den
+  S-002 Mint-Limiter-Key in `_gate_mint` (heute `request.client.host` → hinter dem Tunnel
+  wirkungslos). Zusätzlich: der `ln_control.py`-`create_invoice`-Execute-Pfad muss ebenfalls
+  rate-limitiert sein (oder bewusst nur authentifizierten Operatoren offenstehen), damit der
+  Limiter nicht über die Cockpit-Surface umgangen wird.
 - Append-only, fail-soft (Telemetrie-Fehler darf die Antwort nie blockieren).
 - **Akzeptanz:** beide Hooks feuern korrekt; Ledger-Zeile validiert gegen Schema; keine Roh-IP
   im Output; Telemetrie-Exception bricht die Request nicht ab.

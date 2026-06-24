@@ -15,8 +15,8 @@ from app.core.lightning_settings import LightningSettings
 from app.lightning.value_layer import create_invoice, open_channel
 
 
-def _cfg(pay_enabled: bool) -> LightningSettings:
-    return LightningSettings(enabled=True, pay_enabled=pay_enabled)
+def _cfg(pay_enabled: bool, receive_enabled: bool = False) -> LightningSettings:
+    return LightningSettings(enabled=True, pay_enabled=pay_enabled, receive_enabled=receive_enabled)
 
 
 def _fake_client() -> MagicMock:
@@ -37,7 +37,9 @@ async def test_invoice_disabled_when_kill_switch_off() -> None:
 @pytest.mark.asyncio
 async def test_invoice_dry_run_default_plans_without_node_call() -> None:
     with patch("app.lightning.value_layer._build_client") as build:
-        r = await create_invoice(value_sat=1000, cfg=_cfg(True))  # dry_run defaults True
+        r = await create_invoice(
+            value_sat=1000, cfg=_cfg(True, receive_enabled=True)
+        )  # dry_run defaults True
     assert r.state == "planned"
     build.assert_not_called()
 
@@ -46,7 +48,9 @@ async def test_invoice_dry_run_default_plans_without_node_call() -> None:
 async def test_invoice_executes_only_when_enabled_and_not_dry_run() -> None:
     client = _fake_client()
     with patch("app.lightning.value_layer._build_client", return_value=client):
-        r = await create_invoice(value_sat=1000, memo="m", dry_run=False, cfg=_cfg(True))
+        r = await create_invoice(
+            value_sat=1000, memo="m", dry_run=False, cfg=_cfg(True, receive_enabled=True)
+        )
     assert r.state == "executed" and r.response["payment_request"].startswith("lnbc")
     client.add_invoice.assert_awaited_once()
 

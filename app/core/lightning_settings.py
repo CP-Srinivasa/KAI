@@ -48,6 +48,11 @@ class LightningSettings(BaseSettings):
     timeout_seconds: float = Field(default=10.0, gt=0)
     # Placeholder kill-switch for the future send path (Phase 4). Not wired yet.
     pay_enabled: bool = Field(default=False)
+    # Receive-side capability (capital-free): mint inbound BOLT11 invoices. Decoupled
+    # from ``pay_enabled`` so "Empfangen vor Senden" can be enabled WITHOUT un-gating
+    # any spend path. Default OFF; flipped independently for the L402 demand probe.
+    # Env ``APP_LN_RECEIVE_ENABLED``.
+    receive_enabled: bool = Field(default=False)
     # L402 Truth-API (UC-3/UC-4): pay-per-call paywall over KAI's sovereign truth.
     # Default OFF; ``l402_secret`` signs the access tokens (HMAC) and MUST be set
     # before enabling. Env ``APP_LN_L402_ENABLED`` / ``APP_LN_L402_SECRET``.

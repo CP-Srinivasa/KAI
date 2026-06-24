@@ -196,9 +196,19 @@ class LndRestClient:
             raise LightningUnavailableError(f"lnd returned non-object JSON for {path}")
         return data
 
-    async def add_invoice(self, *, value_sat: int, memo: str = "") -> dict[str, Any]:
-        """POST /v1/invoices — create a BOLT11 invoice (RECEIVE side, no spend)."""
-        return await self._post("/v1/invoices", {"value": str(int(value_sat)), "memo": memo})
+    async def add_invoice(
+        self, *, value_sat: int, memo: str = "", expiry_seconds: int = 300
+    ) -> dict[str, Any]:
+        """POST /v1/invoices — create a BOLT11 invoice (RECEIVE side, no spend).
+
+        ``expiry_seconds`` caps how long an UNPAID invoice lingers on the node (DB row
+        + HTLC-slot expectation). Short by default so unpaid L402 challenges cannot
+        accumulate; the caller simply re-mints on demand. ``<=0`` falls back to the
+        node default (not recommended)."""
+        body: dict[str, Any] = {"value": str(int(value_sat)), "memo": memo}
+        if expiry_seconds > 0:
+            body["expiry"] = str(int(expiry_seconds))
+        return await self._post("/v1/invoices", body)
 
     async def open_channel(
         self, *, node_pubkey_hex: str, local_funding_sat: int, sat_per_vbyte: int = 0
