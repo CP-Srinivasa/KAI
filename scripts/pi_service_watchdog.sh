@@ -19,6 +19,20 @@ THROTTLE_SECONDS="${KAI_SERVICE_WATCHDOG_THROTTLE_SECONDS:-3600}"
 AUTO_RESTART="${KAI_SERVICE_WATCHDOG_AUTO_RESTART:-1}"
 STATE_DIR="${KAI_SERVICE_WATCHDOG_STATE_DIR:-artifacts/pi_service_watchdog}"
 
+# Timer reconcile (defense-in-depth): any *enabled* kai-*.timer that drifts to
+# inactive — e.g. a stray `systemctl stop kai-server` cascade, a bad Requires=, a
+# manual stop — is restarted here within one watchdog cycle (~5 min) instead of
+# staying silently dead until the next reboot. Respects `is-enabled` so deliberately
+# disabled timers (e.g. kai-hype-refresh) are left alone. Excluded by default:
+#   - fire-once timers (kai-technical-paper-first-fill) stay inactive by design
+#     after firing and must never be re-armed;
+#   - kai-server-health-watchdog.timer is intentionally lifecycle-coupled to
+#     kai-server — force-resurrecting it during a deliberate server stop would let
+#     it restart the server mid-maintenance (3-failure hysteresis), fighting the
+#     operator. Its own recovery is by design, not via this generic reconciler.
+RECONCILE_TIMERS="${KAI_WATCHDOG_RECONCILE_TIMERS:-1}"
+TIMER_EXCLUDE="${KAI_WATCHDOG_TIMER_EXCLUDE:-kai-technical-paper-first-fill.timer kai-server-health-watchdog.timer}"
+
 mkdir -p "$STATE_DIR"
 
 ALARMS=()
@@ -81,6 +95,28 @@ for unit in "${UNITS[@]}"; do
     ALARMS+=("[svc] ${unit}=${state}; restart=${restart_result}")
 done
 
+if [[ "$RECONCILE_TIMERS" == "1" ]]; then
+    while read -r timer _; do
+        [[ "$timer" == kai-*.timer ]] || continue
+        case " $TIMER_EXCLUDE " in *" $timer "*) continue ;; esac
+        tstate="$(systemctl is-active "$timer" 2>&1 || true)"
+        if [[ "$tstate" == "active" ]]; then
+            rm -f "${STATE_DIR}/$(sanitize_unit_name "$timer").last_alert" 2>/dev/null || true
+            continue
+        fi
+        restart_result="not_attempted"
+        if [[ "$AUTO_RESTART" == "1" ]]; then
+            if systemctl start "$timer" >/dev/null 2>&1; then
+                sleep 1
+                restart_result="start_ok:$(systemctl is-active "$timer" 2>&1 || true)"
+            else
+                restart_result="start_failed"
+            fi
+        fi
+        ALARMS+=("[timer] ${timer}=${tstate}; restart=${restart_result}")
+    done < <(systemctl list-unit-files 'kai-*.timer' --state=enabled --no-legend --no-pager 2>/dev/null)
+fi
+
 if (( ${#ALARMS[@]} == 0 )); then
     echo "KAI service-watchdog: OK ($(IFS=' | '; echo "${NOTES[*]}")) @ ${HOSTNAME_SHORT} ${DATE_NOW}"
     exit 0
@@ -94,7 +130,7 @@ MSG+=$'\n'"Next: journalctl -u kai-agent-worker -u kai-tg-listener --since '2026
 
 SEND_MSG=""
 for alarm in "${ALARMS[@]}"; do
-    unit="${alarm#\[svc\] }"
+    unit="${alarm#\[*\] }"
     unit="${unit%%=*}"
     if should_notify "$unit"; then
         SEND_MSG="$MSG"

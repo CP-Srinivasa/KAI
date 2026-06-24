@@ -1,6 +1,10 @@
 [Unit]
 Description=Check every 10 min for the first technical_paper paper-fill (fire-once notifier)
-Requires=kai-server.service
+# NO `Requires=kai-server.service` here ON PURPOSE. `Requires=` on a *timer* makes
+# `systemctl stop kai-server` deactivate this timer too (Requires= stop-propagation)
+# and it is NOT restarted when the server returns — silently dead until reboot. The
+# kai-server dependency lives on the paired .service (After= + Requires=), which still
+# gates the actual work. Do not re-add Requires= here.
 
 [Timer]
 # First check 15 min after boot, then every 10 min. Cheap + idempotent: once
