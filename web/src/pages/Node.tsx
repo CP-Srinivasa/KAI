@@ -17,6 +17,8 @@ import { Card, Badge, SectionLabel, InfoHint } from "@/components/ui/Primitives"
 import { PreparedPanel } from "@/components/panels/PreparedPanel";
 import { LightningPanel } from "@/components/panels/LightningPanel";
 import { ChannelsPanel } from "@/components/panels/ChannelsPanel";
+import { NodeReputationPanel } from "@/components/panels/NodeReputationPanel";
+import { LnOpsAuditPanel } from "@/components/panels/LnOpsAuditPanel";
 import { ChainPanel } from "@/components/panels/ChainPanel";
 import { AuditIntegrityKpi } from "@/components/panels/AuditIntegrityKpi";
 import { cn } from "@/lib/utils";
@@ -266,13 +268,8 @@ export function NodePage() {
               status="roadmap"
               roadmapNote="Phase-2 (Resilienz-Sprint): SCB-Monitoring + B2-Recovery-Status (operator-exekutiert)."
             />
-            <PreparedPanel
-              title="Node-Reputation"
-              reason="Wie vertrauenswürdig ist die Node im Netz? On-Chain-Track-Record als Trust-Signal für Inbound-Channels und Oracle-Use-Cases."
-              detail="Reputation/Track-Record-Aggregation ist kein Phase-1-Feld. Folgt aus L3-Anchor-Historie + Channel-Uptime."
-              status="roadmap"
-              roadmapNote="Phase-2: nach L3-Anchor-Live + Channel-Telemetrie."
-            />
+            <NodeReputationPanel />
+            <LnOpsAuditPanel />
           </div>
         </div>
       </section>

@@ -104,6 +104,25 @@ class LightningChannels:
         return cls(state="unavailable", reachable=False, reason=reason)
 
 
+@dataclass(frozen=True)
+class LightningFeeReport:
+    """Routing-fee income summary (lnd ``feereport``), read-only.
+
+    ``available`` is False when the feature is off or the node was unreachable —
+    callers must not read the sums as "zero income" in that case. With no channels
+    the sums are legitimately 0. Amounts are routing fees EARNED, in sats.
+    """
+
+    available: bool
+    day_fee_sat: int = 0
+    week_fee_sat: int = 0
+    month_fee_sat: int = 0
+
+    @classmethod
+    def unavailable(cls) -> LightningFeeReport:
+        return cls(available=False)
+
+
 def _amt_sat(value: Any) -> int:
     """Parse an lnd sat amount: a plain int/str, or an Amount object
     ``{"sat": "123", "msat": "..."}``. Returns 0 on anything unparseable."""
@@ -225,3 +244,28 @@ async def get_channels(cfg: LightningSettings | None = None) -> LightningChannel
         )
     items.sort(key=lambda c: (not c.active, -c.capacity_sat))
     return LightningChannels(state="ok", reachable=True, channels=items)
+
+
+async def get_fee_report(cfg: LightningSettings | None = None) -> LightningFeeReport:
+    """Return the routing-fee income summary, never raising (default-off / fail-closed).
+
+    Read-only (lnd ``feereport``); no write/send surface. ``disabled`` short-circuits
+    without a network call. Any node/transport error → ``available=False`` so a
+    failure is never misread as "zero routing income".
+    """
+    cfg = cfg or get_settings().lightning
+    if not cfg.enabled:
+        return LightningFeeReport.unavailable()
+    try:
+        client = _build_client(cfg)
+        raw = await client.fee_report()
+    except LightningUnavailableError:
+        return LightningFeeReport.unavailable()
+    except Exception:  # noqa: BLE001 — adapter must never leak into the loop
+        return LightningFeeReport.unavailable()
+    return LightningFeeReport(
+        available=True,
+        day_fee_sat=_amt_sat(raw.get("day_fee_sum")),
+        week_fee_sat=_amt_sat(raw.get("week_fee_sum")),
+        month_fee_sat=_amt_sat(raw.get("month_fee_sum")),
+    )

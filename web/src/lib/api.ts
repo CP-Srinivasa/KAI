@@ -605,6 +605,53 @@ export function fetchLnChannels(signal?: AbortSignal): Promise<LnChannels> {
   return apiGet<LnChannels>("/dashboard/api/ln/channels", { signal });
 }
 
+// Node-Reputation-Telemetrie (read-only, default-off). Append-only Shadow-Stream;
+// `unavailable`-Ticks werden mitgezählt (Downtime = Reputations-Signal).
+export type LnReputationRecord = {
+  ts: string;
+  state: "ok" | "unavailable";
+  reachable: boolean;
+  info_available: boolean;
+  num_peers: number;
+  num_active_channels: number;
+  num_pending_channels: number;
+  synced_to_chain: boolean;
+  synced_to_graph: boolean;
+  channel_local_sat: number;
+  channel_remote_sat: number;
+  wallet_confirmed_sat: number;
+  wallet_total_sat: number;
+  routing_fee_day_sat: number | null; // null = feereport nicht lesbar (≠ 0 Income)
+  routing_fee_week_sat: number | null;
+  routing_fee_month_sat: number | null;
+  alias: string;
+  identity_pubkey: string;
+};
+export type LnReputation = {
+  count: number;
+  uptime_pct: number | null; // Anteil erreichbarer Ticks über das Fenster; null ohne Daten
+  latest: LnReputationRecord | null;
+  records: LnReputationRecord[];
+  generated_at: string;
+};
+
+export function fetchLnReputation(signal?: AbortSignal): Promise<LnReputation> {
+  return apiGet<LnReputation>("/dashboard/api/ln/reputation", { signal });
+}
+
+// Wert-Schicht-Ops-Audit-Trail (read-only). Leer bis die gegatete Wert-Schicht
+// (Sprint 4/5) schreibt. Ein Op-Record-Schema steht erst mit dem Writer fest.
+export type LnOp = Record<string, unknown>;
+export type LnOps = {
+  count: number;
+  ops: LnOp[];
+  generated_at: string;
+};
+
+export function fetchLnOps(signal?: AbortSignal): Promise<LnOps> {
+  return apiGet<LnOps>("/dashboard/api/ln/ops", { signal });
+}
+
 // L1 — souveräne On-Chain-Wahrheit aus KAIs eigener bitcoind (read-only, default-off).
 export type ChainStatus = {
   state: "disabled" | "pending" | "unavailable" | "ok";

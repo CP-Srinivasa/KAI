@@ -836,6 +836,44 @@ def test_chain_endpoint_disabled_by_default() -> None:
     assert "blocks" in body and "mempool_tx" in body
 
 
+def test_ln_reputation_endpoint_empty_window(monkeypatch) -> None:
+    """Kein Collector-Datensatz → ehrliches leeres Fenster (uptime_pct=None), 200."""
+    monkeypatch.setattr("app.lightning.reputation.read_recent_ln_reputation", lambda: [])
+    resp = TestClient(_make_app()).get("/dashboard/api/ln/reputation")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["count"] == 0
+    assert body["uptime_pct"] is None  # kein erfundener 100%-Wert ohne Daten
+    assert body["latest"] is None
+    assert body["records"] == []
+    assert "generated_at" in body
+
+
+def test_ln_reputation_endpoint_summarises_window(monkeypatch) -> None:
+    """uptime_pct = Anteil erreichbarer Ticks über das Fenster; latest=jüngster Record."""
+    recs = [
+        {"ts": "t0", "reachable": True, "num_peers": 4},
+        {"ts": "t1", "reachable": False, "num_peers": 0},
+        {"ts": "t2", "reachable": True, "num_peers": 4},
+    ]
+    monkeypatch.setattr("app.lightning.reputation.read_recent_ln_reputation", lambda: recs)
+    body = TestClient(_make_app()).get("/dashboard/api/ln/reputation").json()
+    assert body["count"] == 3
+    assert body["uptime_pct"] == 66.67  # 2/3 reachable
+    assert body["latest"]["ts"] == "t2"
+
+
+def test_ln_ops_endpoint_empty_until_value_layer(monkeypatch) -> None:
+    """Ops-Audit-Trail ist ehrlich leer, solange die gegatete Wert-Schicht nichts schreibt."""
+    monkeypatch.setattr("app.lightning.ops_ledger.read_recent_ln_ops", lambda: [])
+    resp = TestClient(_make_app()).get("/dashboard/api/ln/ops")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["count"] == 0
+    assert body["ops"] == []
+    assert "generated_at" in body
+
+
 def test_integrity_endpoint_disabled_by_default() -> None:
     """Default-off: /dashboard/api/integrity meldet `disabled` ohne FS-Touch."""
     resp = TestClient(_make_app()).get("/dashboard/api/integrity")

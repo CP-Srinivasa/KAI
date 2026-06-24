@@ -1763,6 +1763,55 @@ async def dashboard_ln_channels_api() -> JSONResponse:
     return JSONResponse(content=payload, headers={"Cache-Control": "no-store, max-age=0"})
 
 
+@router.get("/dashboard/api/ln/reputation", tags=["dashboard"])
+async def dashboard_ln_reputation_api() -> JSONResponse:
+    """Read-only Node-Reputations-Telemetrie (Uptime/Konnektivität/Routing-Income-
+    Trend; default-off, kein Kapitalpfad).
+
+    Liest den append-only Shadow-Stream ``artifacts/ln_reputation.jsonl`` (vom
+    Reputation-Scheduler geschrieben, nur wenn ``lightning.enabled``) und liefert
+    die jüngsten Records plus eine ehrliche Fenster-Zusammenfassung: ``uptime_pct``
+    = Anteil erreichbarer Ticks ÜBER DAS AUFGEZEICHNETE FENSTER (``None`` ohne
+    Daten — kein erfundener 100%-Wert). ``ok`` UND ``unavailable`` werden
+    aufgezeichnet (Downtime ist Reputations-Signal); ``count``=0 solange der
+    Collector noch nichts geschrieben hat. Kein schreibender/kapitalrelevanter Pfad.
+    """
+    from app.lightning.reputation import read_recent_ln_reputation
+
+    records = read_recent_ln_reputation()
+    count = len(records)
+    reachable = sum(1 for r in records if r.get("reachable"))
+    uptime_pct = round(100.0 * reachable / count, 2) if count else None
+    payload = {
+        "count": count,
+        "uptime_pct": uptime_pct,
+        "latest": records[-1] if records else None,
+        "records": records,
+        "generated_at": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+    }
+    return JSONResponse(content=payload, headers={"Cache-Control": "no-store, max-age=0"})
+
+
+@router.get("/dashboard/api/ln/ops", tags=["dashboard"])
+async def dashboard_ln_ops_api() -> JSONResponse:
+    """Read-only Audit-Trail der Lightning-Wert-Schicht-Aktionen (default leer).
+
+    Liest ``artifacts/ln_ops_ledger.jsonl`` — jede gegatete Wert-Schicht-Aktion
+    (Plan + Ausführung) wird dort tamper-evident protokolliert. Der WRITER kommt
+    mit der gegateten Wert-Schicht (Sprint 4/5); bis dahin ehrlich ``ops: []``.
+    Kein schreibender/kapitalrelevanter Pfad.
+    """
+    from app.lightning.ops_ledger import read_recent_ln_ops
+
+    ops = read_recent_ln_ops()
+    payload = {
+        "count": len(ops),
+        "ops": ops,
+        "generated_at": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+    }
+    return JSONResponse(content=payload, headers={"Cache-Control": "no-store, max-age=0"})
+
+
 @router.get("/dashboard/api/chain", tags=["dashboard"])
 async def dashboard_chain_api() -> JSONResponse:
     """Read-only Chain-Status aus KAIs EIGENER bitcoind (L1, default-off).
