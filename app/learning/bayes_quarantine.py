@@ -32,7 +32,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from app.execution.phantom_filter import is_phantom_close
+# NOTE: `is_phantom_close` is imported LAZILY inside `corruption_reason()`, not at
+# module top, to break a circular import (introduced by #389): app.execution.__init__
+# eagerly imports portfolio_read, which does `from app.learning.bayes_quarantine import
+# is_corrupt_close`. A top-level `from app.execution.phantom_filter import …` here would
+# re-enter app.execution while THIS module is still mid-initialization → ImportError on
+# any bayes_quarantine-first import (e.g. scripts/bayes_posterior_recalc.py). Keep it lazy.
 
 # Float tolerance for matching the frozen exit price. The stale price is a
 # fixed float constant; 1e-9 is far tighter than any legitimate price spacing
@@ -133,6 +138,9 @@ def corruption_reason(close_row: dict[str, object]) -> str | None:
     sig = quarantine_reason(close_row)
     if sig is not None:
         return sig
+    # Lazy import (see module-top note) — breaks the bayes_quarantine ↔ app.execution cycle.
+    from app.execution.phantom_filter import is_phantom_close
+
     if is_phantom_close(
         close_row.get("entry_price"),
         close_row.get("exit_price"),

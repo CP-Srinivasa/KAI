@@ -138,3 +138,28 @@ def test_corrupt_close_conservative_on_missing_prices() -> None:
     row = {"event_type": "position_closed", "symbol": "XRP/USDT", "trade_pnl_usd": 1.0}
     assert is_corrupt_close(row) is False
     assert corruption_reason(row) is None
+
+
+def test_module_imports_standalone_no_circular_import() -> None:
+    """Regression (#389): importing bayes_quarantine FIRST must not deadlock.
+
+    app.execution.__init__ eagerly imports portfolio_read, which imports
+    is_corrupt_close from this module. A top-level `from app.execution… import`
+    here re-entered app.execution mid-init → ImportError on any
+    bayes_quarantine-first import (scripts/bayes_posterior_recalc.py crashed at
+    04:00, leaving bayes_posterior_state.json stale). Must reproduce the real
+    import ORDER → fresh interpreter via subprocess (the pytest process has
+    app.execution already loaded, so an in-process import would not reproduce).
+    """
+    import subprocess
+    import sys
+
+    result = subprocess.run(
+        [sys.executable, "-c", "import app.learning.bayes_quarantine"],
+        capture_output=True,
+        text=True,
+        timeout=60,
+    )
+    assert result.returncode == 0, (
+        f"bayes_quarantine-first import failed (circular import regression):\n{result.stderr}"
+    )
