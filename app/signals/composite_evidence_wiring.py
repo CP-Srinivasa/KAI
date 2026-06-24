@@ -33,6 +33,7 @@ from app.core.domain.document import AnalysisResult
 from app.core.evidence_settings import (
     FundingEvidenceSettings,
     HypeEvidenceSettings,
+    L2OnChainEvidenceSettings,
     LongShortRatioEvidenceSettings,
     OpenInterestEvidenceSettings,
 )
@@ -41,6 +42,7 @@ from app.signals.bayesian_confidence import Evidence
 from app.signals.funding_wiring import build_funding_evidence_provider
 from app.signals.generator import ExtraEvidencesProvider
 from app.signals.hype_wiring import build_hype_evidence_provider
+from app.signals.l2_wiring import build_l2_onchain_evidence_provider
 from app.signals.ls_wiring import build_ls_evidence_provider
 from app.signals.models import SignalDirection
 from app.signals.oi_wiring import build_oi_evidence_provider
@@ -56,15 +58,16 @@ def build_composite_evidence_provider(
     oi_settings: OpenInterestEvidenceSettings,
     ls_settings: LongShortRatioEvidenceSettings | None = None,
     hype_settings: HypeEvidenceSettings | None = None,
+    l2_settings: L2OnChainEvidenceSettings | None = None,
 ) -> ExtraEvidencesProvider | None:
     """Baue den kombinierten Extra-Evidences-Provider (oder ``None``).
 
-    Deterministische Reihenfolge der Sub-Provider: Funding → OI → LS → Hype.
-    Fehlende ``ls_settings`` / ``hype_settings`` (Aufrufer früherer Phasen)
-    verhalten sich wie off — das Verhalten der jeweils älteren Phasen bleibt
-    unberührt.
+    Deterministische Reihenfolge der Sub-Provider: Funding → OI → LS → Hype → L2.
+    Fehlende ``ls_settings`` / ``hype_settings`` / ``l2_settings`` (Aufrufer
+    früherer Phasen) verhalten sich wie off — das Verhalten der jeweils älteren
+    Phasen bleibt unberührt.
     """
-    # Reihenfolge fixiert: Funding zuerst, dann OI, dann LS, dann Hype.
+    # Reihenfolge fixiert: Funding → OI → LS → Hype → L2 (neueste Quelle zuletzt).
     candidates: tuple[tuple[str, ExtraEvidencesProvider | None], ...] = (
         ("funding", build_funding_evidence_provider(funding_settings)),
         ("open_interest", build_oi_evidence_provider(oi_settings)),
@@ -75,6 +78,10 @@ def build_composite_evidence_provider(
         (
             "sentiment_overheat",
             build_hype_evidence_provider(hype_settings) if hype_settings is not None else None,
+        ),
+        (
+            "l2_onchain",
+            build_l2_onchain_evidence_provider(l2_settings) if l2_settings is not None else None,
         ),
     )
 
@@ -125,6 +132,7 @@ def build_composite_evidence_provider_from_settings(
         settings.oi_evidence,
         settings.ls_evidence,
         settings.hype_evidence,
+        settings.l2_evidence,
     )
 
 

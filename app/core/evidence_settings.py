@@ -211,9 +211,47 @@ class HypeEvidenceSettings(BaseSettings):
     refresh_max_documents: int = Field(default=20000, ge=100, le=200000)
 
 
+class L2OnChainEvidenceSettings(BaseSettings):
+    """Sprint 2 — L2 On-Chain (Fee/Mempool-Flow) als 5. orthogonale Evidence.
+
+    Default-off, shadow-first, **richtungs-agnostisch** (B-003). Quelle = KAIs
+    EIGENE L1-Serie ``artifacts/onchain_fee_shadow.jsonl`` (vom L1 Fee-Truth-
+    Scheduler geschrieben) — kein neuer Provider, kein neuer Key.
+
+      - ``enabled=False`` (default): kein L2-Provider → SignalGenerator unverändert.
+      - ``enabled=True``: der Provider liest den warmen L1-Stream (Disk-Read, kein
+        Netz), berechnet rohe Fee-/Mempool-Percentile gegen das ``window`` und
+        schreibt sie in ``shadow_log_path``. Er trägt KEINE vorbestimmte Richtung
+        bei (``direction_aligned=0``), bis die Auswertung
+        (``scripts/evaluate_l2_evidence.py``) eine Richtung gelernt hat.
+
+    ``source_trust`` konservativ (0.5) — wie V5; Anhebung nur nach Shadow-
+    Auswertung + Operator-Sign-off + Edge-Beweis (kein Trust-Promote ohne Beweis).
+    ``ttl_seconds``: ist der jüngste Stream-Record älter, liefert der Provider
+    keine Features (fail-safe, falls der L1-Scheduler ausfällt).
+    """
+
+    model_config = SettingsConfigDict(
+        env_prefix="APP_L2_EVIDENCE_",
+        env_file=".env",
+        extra="ignore",
+    )
+
+    enabled: bool = Field(default=False)
+    source_trust: float = Field(default=0.5, ge=0.0, le=1.0)
+    ttl_seconds: float = Field(default=3600.0, gt=0.0)
+    stream_path: Path = Field(default=Path("artifacts/onchain_fee_shadow.jsonl"))
+    shadow_log_path: Path = Field(default=Path("artifacts/l2_evidence_shadow.jsonl"))
+    # Recent L1 records used to rank the current fee/mempool (percentile window).
+    window: int = Field(default=200, ge=2, le=10000)
+    # Minimum history points for a meaningful percentile; below it → no features.
+    min_window: int = Field(default=20, ge=2, le=10000)
+
+
 __all__ = [
     "FundingEvidenceSettings",
     "HypeEvidenceSettings",
+    "L2OnChainEvidenceSettings",
     "LongShortRatioEvidenceSettings",
     "OpenInterestEvidenceSettings",
 ]
