@@ -764,6 +764,59 @@ export function fetchSourceLifecycle(signal?: AbortSignal): Promise<SourceLifecy
   return apiGet<SourceLifecycle>("/dashboard/api/source-lifecycle", { signal });
 }
 
+// Autonome Quellen-Discovery (Phase 3 + 3b): Scout-Vorschläge, Quellen in
+// PROBATION (mit Evidenz + Graduation-Fortschritt) und jüngste Discovery-Läufe.
+// discovery_enabled/scout_enabled zeigen, ob die Schleife scharf ist.
+export type SourceProposal = {
+  provider: string | null;
+  url: string | null;
+  access: string | null;
+  source_type: string | null;
+  score: number | null;
+  item_count: number | null;
+  latest_age_days: number | null;
+  notes: string | null;
+};
+
+export type ProbationSource = {
+  provider: string;
+  original_url: string | null;
+  n: number;
+  hit_rate_pct: number | null;
+  wilson_lower_pct: number | null;
+  runs: number;
+  runs_met: boolean;
+  deliveries_met: boolean;
+  graduation_eligible: boolean;
+};
+
+export type SourceDiscoveryRun = {
+  recorded_at_utc: string | null;
+  mode: string | null; // "live" | "dry"
+  proposals_seen: number | null;
+  accepted: number | null;
+  onboarded: number | null;
+  rejected: number | null;
+  graduation_swaps: number | null;
+  swaps_executed: number | null;
+};
+
+export type SourceDiscovery = {
+  discovery_enabled: boolean;
+  scout_enabled: boolean;
+  min_probation_runs: number;
+  min_deliveries: number;
+  proposals: SourceProposal[];
+  probation: ProbationSource[];
+  recent_runs: SourceDiscoveryRun[];
+  counts: Record<string, number>;
+  error: string | null;
+};
+
+export function fetchSourceDiscovery(signal?: AbortSignal): Promise<SourceDiscovery> {
+  return apiGet<SourceDiscovery>("/dashboard/api/source-discovery", { signal });
+}
+
 // Perp-Derivate (Funding + Open Interest) aus KAIs EIGENER Ingestion (read-only).
 // funding_rate = 8h-Satz als Anteil (0.0001 = 1bp). Werte sind null, wenn der
 // jeweilige Snapshot-Cache (noch) keinen Eintrag hat — keine erfundenen Zahlen.

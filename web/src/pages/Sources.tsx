@@ -13,6 +13,7 @@ import { PerSourcePrecisionPanel } from "@/components/panels/PerSourcePrecisionP
 import { PerSourceStabilityPanel } from "@/components/panels/PerSourceStabilityPanel";
 import { SourceActivityPanel } from "@/components/panels/SourceActivityPanel";
 import { SourceLifecyclePanel } from "@/components/panels/SourceLifecyclePanel";
+import { SourceDiscoveryPanel } from "@/components/panels/SourceDiscoveryPanel";
 import { useDashboardQuality } from "@/lib/useDashboardQuality";
 import { LiveDot } from "@/components/ui/LiveDot";
 import { liveDotProps } from "@/lib/freshness";
@@ -35,6 +36,10 @@ export function SourcesPage() {
 
       <PanelErrorBoundary name="Quellen-Güte">
         <SourceLifecyclePanel />
+      </PanelErrorBoundary>
+
+      <PanelErrorBoundary name="Quellen-Discovery">
+        <SourceDiscoveryPanel />
       </PanelErrorBoundary>
 
       <SectionLabel className="pt-2">Detail-Diagnostik</SectionLabel>

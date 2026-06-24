@@ -20,7 +20,7 @@ from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
 
 from app.alerts.hold_metrics import build_hold_metrics_report
-from app.api.deps import get_document_repo
+from app.api.deps import get_document_repo, get_source_repo
 from app.audit.stream_validation import (
     AuditStreamName,
     AuditStreamReadResult,
@@ -33,6 +33,7 @@ from app.observability.dashboard_metric_registry import (
     reconcile_dashboard_snapshot,
 )
 from app.storage.repositories.document_repo import DocumentRepository
+from app.storage.repositories.source_repo import SourceRepository
 
 logger = logging.getLogger(__name__)
 
@@ -2248,6 +2249,136 @@ async def dashboard_source_lifecycle_api(events_limit: int = 15) -> JSONResponse
         ]
     except Exception as exc:  # noqa: BLE001 — endpoint must never 500 the dashboard
         logger.warning("dashboard_source_lifecycle_failed", exc_info=True)
+        payload["error"] = str(exc)
+    return JSONResponse(content=payload, headers={"Cache-Control": "no-store, max-age=0"})
+
+
+@router.get("/dashboard/api/source-discovery", tags=["dashboard"])
+async def dashboard_source_discovery_api(
+    runs_limit: int = 8,
+    repo: SourceRepository = Depends(get_source_repo),  # noqa: B008
+) -> JSONResponse:
+    """Read-only Sicht auf die autonome Quellen-Discovery (Phase 3 + 3b).
+
+    Zeigt, was der Scout vorschlägt, welche Quellen in ``PROBATION`` evaluiert
+    werden (mit Evidenz + Graduation-Fortschritt) und die jüngsten Discovery-Läufe.
+    ``discovery_enabled``/``scout_enabled`` machen sichtbar, ob die Schleife scharf
+    ist oder nur beobachtet. Fail-closed: fehlt/kaputt etwas → leeres Feld, nie 500.
+    """
+    import json
+    from pathlib import Path
+
+    from app.core.enums import SourceStatus
+    from app.learning.source_graduation import (
+        DEFAULT_MIN_DELIVERIES,
+        DEFAULT_MIN_PROBATION_RUNS,
+    )
+    from app.storage.jsonl_io import read_jsonl_tolerant
+
+    payload: dict[str, Any] = {
+        "discovery_enabled": False,
+        "scout_enabled": False,
+        "min_probation_runs": DEFAULT_MIN_PROBATION_RUNS,
+        "min_deliveries": DEFAULT_MIN_DELIVERIES,
+        "proposals": [],
+        "probation": [],
+        "recent_runs": [],
+        "counts": {},
+        "error": None,
+    }
+    try:
+        from app.core.settings import SourceSettings
+
+        cfg = SourceSettings()
+        payload["discovery_enabled"] = bool(cfg.discovery_enabled)
+        payload["scout_enabled"] = bool(cfg.scout_enabled)
+    except Exception:  # noqa: BLE001 — settings unavailable → stay fail-closed
+        pass
+
+    try:
+        # Ranking-Evidenz (n / Wilson / Trefferquote) je source_name == provider.
+        evidence: dict[str, dict[str, Any]] = {}
+        ranking_path = Path("monitor/source_ranking.json")
+        if ranking_path.exists():
+            data = json.loads(ranking_path.read_text(encoding="utf-8"))
+            for e in data.get("ranked", []) if isinstance(data, dict) else []:
+                if isinstance(e, dict) and isinstance(e.get("source_name"), str):
+                    evidence[e["source_name"]] = e
+
+        # Probation-Run-Zähler.
+        runs_by_source: dict[str, int] = {}
+        state_path = Path("monitor/source_probation_state.json")
+        if state_path.exists():
+            sdata = json.loads(state_path.read_text(encoding="utf-8"))
+            raw = sdata.get("runs", {}) if isinstance(sdata, dict) else {}
+            runs_by_source = {str(k): int(v) for k, v in raw.items() if isinstance(v, (int, float))}
+
+        # Scout-Vorschläge (was als nächstes onboardbar wäre).
+        proposals: list[dict[str, Any]] = []
+        for row in read_jsonl_tolerant(Path("monitor/source_proposals.jsonl")):
+            proposals.append(
+                {
+                    "provider": row.get("provider"),
+                    "url": row.get("url"),
+                    "access": row.get("access"),
+                    "source_type": row.get("source_type"),
+                    "score": row.get("score"),
+                    "item_count": row.get("item_count"),
+                    "latest_age_days": row.get("latest_age_days"),
+                    "notes": row.get("notes"),
+                }
+            )
+        proposals.sort(key=lambda p: (p.get("score") is None, -(p.get("score") or 0.0)))
+        payload["proposals"] = proposals
+
+        # PROBATION-Quellen aus der DB + Evidenz + Graduation-Fortschritt.
+        probation: list[dict[str, Any]] = []
+        for s in await repo.list(status=SourceStatus.PROBATION):
+            name = s.provider or ""
+            ev = evidence.get(name) or {}
+            n = int(ev.get("n") or 0)
+            runs = int(runs_by_source.get(name, 0))
+            runs_met = runs >= DEFAULT_MIN_PROBATION_RUNS
+            deliveries_met = n >= DEFAULT_MIN_DELIVERIES
+            probation.append(
+                {
+                    "provider": name,
+                    "original_url": s.original_url,
+                    "n": n,
+                    "hit_rate_pct": _pct_fraction(ev.get("point_estimate")),
+                    "wilson_lower_pct": _pct_fraction(ev.get("wilson_lower_95")),
+                    "runs": runs,
+                    "runs_met": runs_met,
+                    "deliveries_met": deliveries_met,
+                    "graduation_eligible": runs_met and deliveries_met,
+                }
+            )
+        probation.sort(key=lambda p: (-(p.get("wilson_lower_pct") or 0.0), p.get("provider") or ""))
+        payload["probation"] = probation
+
+        # Jüngste Discovery-Läufe (newest-first).
+        run_rows = list(read_jsonl_tolerant(Path("monitor/source_discovery_runs.jsonl")))
+        limit = max(0, runs_limit)
+        payload["recent_runs"] = [
+            {
+                "recorded_at_utc": r.get("recorded_at_utc"),
+                "mode": r.get("mode"),
+                "proposals_seen": r.get("proposals_seen"),
+                "accepted": r.get("accepted"),
+                "onboarded": r.get("onboarded"),
+                "rejected": r.get("rejected"),
+                "graduation_swaps": r.get("graduation_swaps"),
+                "swaps_executed": r.get("swaps_executed"),
+            }
+            for r in reversed(run_rows[-limit:] if limit else [])
+        ]
+        payload["counts"] = {
+            "proposals": len(proposals),
+            "probation": len(probation),
+            "graduation_eligible": sum(1 for p in probation if p["graduation_eligible"]),
+        }
+    except Exception as exc:  # noqa: BLE001 — endpoint must never 500 the dashboard
+        logger.warning("dashboard_source_discovery_failed", exc_info=True)
         payload["error"] = str(exc)
     return JSONResponse(content=payload, headers={"Cache-Control": "no-store, max-age=0"})
 
