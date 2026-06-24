@@ -86,6 +86,10 @@ web/.dist-snapshots/
 monitor/source_reliability.json
 monitor/source_ranking.json
 monitor/source_rotation_state.json
+# Source-discovery runtime (scout writes proposals; scheduler writes runs).
+# The candidate SEED (source_candidates_seed.json) IS tracked — it is curated input.
+monitor/source_proposals.jsonl
+monitor/source_discovery_runs.jsonl
 
 # L3 audit-integrity anchor records (runtime output of kai-integrity-anchor.timer)
 monitor/integrity/
