@@ -118,6 +118,16 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         )
         app.state.chain_fee_shadow_scheduler.start()
 
+    # Lightning node-reputation telemetry capture (read-only; no capital path).
+    app.state.ln_reputation_scheduler = None
+    if settings.lightning.enabled:
+        from app.orchestrator.ln_reputation_scheduler import LnReputationScheduler
+
+        app.state.ln_reputation_scheduler = LnReputationScheduler(
+            interval_seconds=settings.lightning.reputation_interval_seconds,
+        )
+        app.state.ln_reputation_scheduler.start()
+
     # P0 automation link: drive the LONG-only technical-paper feeder on an
     # interval (PAPER only, doubly gated — scheduler_enabled here + the feeder's
     # own enabled check; all feeder filters stay in force; fail-soft).

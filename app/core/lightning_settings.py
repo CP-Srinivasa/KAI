@@ -54,6 +54,12 @@ class LightningSettings(BaseSettings):
     l402_enabled: bool = Field(default=False)
     l402_secret: str = Field(default="", repr=False)
     l402_default_price_sat: int = Field(default=10, ge=1)
+    # Node-reputation telemetry capture cadence (read-only uptime/connectivity/
+    # routing-income trend → its own shadow stream ``artifacts/ln_reputation.jsonl``;
+    # no capital path). Only runs when ``enabled``. Env
+    # ``APP_LN_REPUTATION_INTERVAL_SECONDS``. 900s (15min) — node health moves
+    # slowly, so this is ample.
+    reputation_interval_seconds: int = Field(default=900, gt=0)
 
     @property
     def base_url(self) -> str:
