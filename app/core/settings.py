@@ -245,6 +245,13 @@ class SourceSettings(BaseSettings):
     # (gated+inert): the scheduler then runs DRY — no outbound probe, no DB mutation.
     discovery_enabled: bool = Field(default=False)
 
+    # Autonomous lifecycle-apply kill-switch (Phase 1). OFF by default → the
+    # apply step (scripts/source_lifecycle_apply.py) runs DRY: it logs + audits
+    # which sources WOULD be silenced/disabled/recovered, but mutates no DB row.
+    # ON (SOURCE_LIFECYCLE_APPLY_ENABLED=true) writes sources.status — the real
+    # control point the RSS scheduler reads. Reversible + audited + FSM-validated.
+    lifecycle_apply_enabled: bool = Field(default=False)
+
 
 class RiskSettings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="RISK_", env_file=".env", extra="ignore")

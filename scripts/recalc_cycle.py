@@ -29,6 +29,10 @@ from pathlib import Path
 RECALC_STEPS: tuple[str, ...] = (
     "source_reliability_recalc.py",
     "source_lifecycle_recalc.py",
+    # Phase 1: transponiert das frische Ranking in den DB-Status (Dry-Run, solange
+    # SOURCE_LIFECYCLE_APPLY_ENABLED nicht gesetzt). Direkt nach dem Lifecycle-
+    # Recalc, damit es auf der eben geschriebenen source_ranking.json arbeitet.
+    "source_lifecycle_apply.py",
     "source_confluence_recalc.py",
     "bayes_posterior_recalc.py",
     "ph5_feature_analysis_recalc.py",

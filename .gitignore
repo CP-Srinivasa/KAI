@@ -84,6 +84,8 @@ web/.dist-snapshots/
 
 # Generated lern-recalc outputs (kai-recalc-cycle.timer überschreibt daily 04:00)
 monitor/source_reliability.json
+monitor/source_ranking.json
+monitor/source_rotation_state.json
 
 # L3 audit-integrity anchor records (runtime output of kai-integrity-anchor.timer)
 monitor/integrity/
