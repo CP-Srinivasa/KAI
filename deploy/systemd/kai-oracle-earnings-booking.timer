@@ -1,0 +1,18 @@
+[Unit]
+Description=KAI Oracle Earnings-Booking — scan settled oracle invoices every 10 min
+Requires=kai-oracle-earnings-booking.service
+
+[Timer]
+# Read-only invoice scan; 10 min is ample for booking settled L402 payments into the
+# earnings ledger. NOT enabled by default — the operator runs
+# `systemctl enable --now kai-oracle-earnings-booking.timer` only after flipping
+# APP_LN_ENABLED=true at G0 go-live. Deliberately NO Requires=kai-server on the timer:
+# a kai-server stop must not strand this scheduler (lesson from #414).
+OnBootSec=3min
+OnUnitActiveSec=10min
+Persistent=true
+AccuracySec=30s
+RandomizedDelaySec=30s
+
+[Install]
+WantedBy=timers.target
