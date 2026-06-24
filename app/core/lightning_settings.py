@@ -60,6 +60,12 @@ class LightningSettings(BaseSettings):
     # global budget per 60s window; <=0 disables that dimension.
     l402_mint_per_min: int = Field(default=5, ge=0)
     l402_mint_budget_per_min: int = Field(default=60, ge=0)
+    # B-005 capital-confirm 2nd factor (HOTP) for irreversible value-layer POSTs.
+    # ``hotp_seed_path`` empty (default) → no confirm is possible → no capital
+    # execute can ever pass needs_confirm (safe-by-default). Operator provisions the
+    # base32 seed (mode 600) only at G1.
+    hotp_seed_path: str = Field(default="", repr=False)
+    hotp_journal_path: str = Field(default="artifacts/ln_hotp_journal.jsonl")
     # Node-reputation telemetry capture cadence (read-only uptime/connectivity/
     # routing-income trend → its own shadow stream ``artifacts/ln_reputation.jsonl``;
     # no capital path). Only runs when ``enabled``. Env

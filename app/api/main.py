@@ -33,6 +33,7 @@ from app.api.routers import (
     health_premium_pipeline,
     kai,
     kyt,
+    ln_control,
     operator,
     premium_signals,
     query,
@@ -316,6 +317,7 @@ def create_app() -> FastAPI:
     app.include_router(premium_signals.router)
     app.include_router(diversification.router)
     app.include_router(truth_oracle.router)
+    app.include_router(ln_control.router)
 
     # React-SPA (Vite-Build) unter /dashboard. JSON-Route /dashboard/api/quality
     # wurde oben über include_router zuerst registriert und hat dadurch Vorrang
