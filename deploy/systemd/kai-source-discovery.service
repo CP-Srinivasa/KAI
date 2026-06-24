@@ -11,10 +11,14 @@ WorkingDirectory=/home/ubuntu/ai_analyst_trading_bot
 Environment=PYTHONPATH=/home/ubuntu/ai_analyst_trading_bot
 EnvironmentFile=-/home/ubuntu/ai_analyst_trading_bot/.env
 
-# DRY by default (SOURCE_DISCOVERY_ENABLED off): reads proposals + the lifecycle
-# ranking, gates candidates, decides graduation (replace-only-when-ready), and
-# writes the PROPOSED actions to the lifecycle audit — no outbound fetch, no DB
-# mutation. "-" prefix so a failure never wedges the timer.
+# Step 1 — Scout: füllt monitor/source_proposals.jsonl aus dem Kandidaten-Seed
+# (dedup gegen Registry; Outbound-Probe nur wenn SOURCE_SCOUT_ENABLED=true, sonst
+# unvalidiert durchgereicht). Schreibt nur die prüfbare Proposals-Datei.
+ExecStart=-/home/ubuntu/ai_analyst_trading_bot/.venv/bin/python /home/ubuntu/ai_analyst_trading_bot/scripts/source_scout.py
+# Step 2 — Scheduler: DRY by default (SOURCE_DISCOVERY_ENABLED off): liest die
+# Proposals + das Lifecycle-Ranking, gatet Kandidaten, entscheidet Graduation
+# (replace-only-when-ready) und auditiert die VORGESCHLAGENEN Aktionen — kein
+# DB-Write. "-" prefix so a failure never wedges the timer.
 ExecStart=-/home/ubuntu/ai_analyst_trading_bot/.venv/bin/python /home/ubuntu/ai_analyst_trading_bot/scripts/source_discovery_scheduler.py
 
 StandardOutput=journal

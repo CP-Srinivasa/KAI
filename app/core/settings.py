@@ -252,6 +252,14 @@ class SourceSettings(BaseSettings):
     # control point the RSS scheduler reads. Reversible + audited + FSM-validated.
     lifecycle_apply_enabled: bool = Field(default=False)
 
+    # Source-scout outbound-probe kill-switch (Phase 3). OFF by default → the
+    # scout (scripts/source_scout.py) dedups the candidate seed against the
+    # registry and writes proposals UNVALIDATED (no network). ON
+    # (SOURCE_SCOUT_ENABLED=true) fetches each candidate feed once to validate
+    # liveness + score freshness, dropping dead/empty feeds. Writes only the
+    # reviewable proposals file — onboarding stays gated by discovery_enabled.
+    scout_enabled: bool = Field(default=False)
+
 
 class RiskSettings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="RISK_", env_file=".env", extra="ignore")
