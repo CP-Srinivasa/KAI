@@ -1,21 +1,19 @@
 #!/usr/bin/env python3
-"""Daily premium-pipeline latency audit (P2 #11 trigger-watch — 2026-05-14).
+"""Daily premium-pipeline latency digest (INFORMATIONAL — auto-trigger retired).
 
-Reads bridge_pending_orders.jsonl, computes p50/p95/p99/max for the last
-7 days, writes:
+Reads bridge_pending_orders.jsonl, computes the receive→fill distribution for
+the last 7 days, writes artifacts/premium_latency_report.json, and sends one
+Telegram digest per run.
 
-- artifacts/premium_latency_report.json — most-recent stats (overwritten daily)
-- artifacts/p2_11_trigger.json — ONLY when trigger condition holds
-  (p95 > 20 min AND n >= 5). Once written, the marker stays until the
-  operator removes it. Next Claude session reads kai_premium_pipeline_backlog
-  + this marker as First-Action and proceeds with P2 #11 implementation.
-
-Always sends one Telegram digest per run so the operator sees the
-distribution evolution (no rate-limit; cron fires once per day).
+The auto-escalation trigger was RETIRED 2026-06-24 (see premium_latency.py):
+receive→fill latency is limit-order price-wait, not a pipeline fault, so the old
+``p95 > 20min`` trigger was a daily false alarm. This run no longer writes
+artifacts/p2_11_trigger.json; instead it CLEARS any leftover marker. Real
+pipeline outages are caught by kai-premium-healthcheck liveness, not by latency.
 
 Exit codes:
-- 0 healthy (no trigger or trigger fired and successfully alerted)
-- 1 hard error (audit read failed, telegram send broken — journal captures)
+- 0 healthy
+- 1 hard error (audit read failed — journal captures)
 """
 
 from __future__ import annotations
@@ -68,23 +66,15 @@ def _format_digest(stats) -> str:
         head,
         f"samples={stats.sample_size}  expired={stats.expired_count} "
         f"({stats.expired_pct:.1f}%){stale_note}",
-        f"receive→fill: p50={_fmt_seconds(stats.p50_seconds)}  "
+        f"receive→fill (informational, incl. limit-order price-wait): "
+        f"p50={_fmt_seconds(stats.p50_seconds)}  "
         f"p95={_fmt_seconds(stats.p95_seconds)}  "
         f"p99={_fmt_seconds(stats.p99_seconds)}  "
         f"max={_fmt_seconds(stats.max_seconds)}",
+        "ℹ️ informational only — receive→fill is limit-order price-wait, not a "
+        "pipeline fault; pipeline outages are caught by kai-premium-healthcheck "
+        "liveness (auto-escalation trigger retired 2026-06-24).",
     ]
-    if stats.trigger_fired:
-        body.extend(
-            [
-                "",
-                "⚠️  P2 #11 TRIGGER FIRED",
-                stats.trigger_reason,
-                "Next: nächste Claude-Session sollte P2 #11 starten",
-                "(siehe artifacts/p2_11_trigger.json + memory kai_premium_pipeline_backlog_20260514)",
-            ]
-        )
-    else:
-        body.append("trigger #11: NO (threshold p95>20min, samples>=5)")
     return "\n".join(body)
 
 
@@ -117,31 +107,20 @@ def _write_report(stats) -> None:
     _REPORT_PATH.write_text(json.dumps(payload, indent=2), encoding="utf-8")
 
 
-def _write_trigger_marker(stats) -> None:
-    """Persist the trigger event — once written, stays until operator removes.
+def _clear_stale_trigger_marker() -> None:
+    """Remove a leftover p2_11_trigger.json from the retired auto-trigger.
 
-    File is read by the next Claude-session as First-Action (memory pin
-    session_pin_p2_11_auto_eskalation lists this path). Idempotent: re-running
-    the audit on the same day will overwrite the marker with the latest stats,
-    not duplicate it.
+    The latency audit no longer auto-escalates (the receive→fill trigger was a
+    false alarm on limit-order price-wait — see premium_latency.py). Any marker
+    on disk is a stale relic of the old trigger; clear it on each run so nothing
+    treats it as a live escalation.
     """
-    _TRIGGER_PATH.parent.mkdir(parents=True, exist_ok=True)
-    payload = {
-        "fired_at": datetime.now(UTC).isoformat(),
-        "reason": stats.trigger_reason,
-        "stats": stats.to_dict(),
-        "next_action": (
-            "Start P2 #11 (event-driven inotify bridge) implementation. "
-            "See kai_premium_pipeline_backlog_20260514.md for design + "
-            "architecture-decision (Worker stays separate or merge into FastAPI)."
-        ),
-    }
-    _TRIGGER_PATH.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-    logger.warning(
-        "P2 #11 TRIGGER FIRED — marker written to %s reason=%s",
-        _TRIGGER_PATH,
-        stats.trigger_reason,
-    )
+    try:
+        if _TRIGGER_PATH.exists():
+            _TRIGGER_PATH.unlink()
+            logger.info("cleared stale retired-trigger marker %s", _TRIGGER_PATH)
+    except OSError as exc:
+        logger.warning("could not clear stale trigger marker: %s", exc)
 
 
 def main() -> int:
@@ -152,18 +131,16 @@ def main() -> int:
         return 1
 
     _write_report(stats)
+    _clear_stale_trigger_marker()
     digest = _format_digest(stats)
     print(digest)
 
-    if stats.trigger_fired:
-        _write_trigger_marker(stats)
-
     _send_telegram(digest)
     logger.info(
-        "audit complete samples=%d p95=%s trigger=%s",
+        "audit complete (informational) samples=%d fill_p95=%s expired=%d",
         stats.sample_size,
         stats.p95_seconds,
-        stats.trigger_fired,
+        stats.expired_count,
     )
     return 0
 
