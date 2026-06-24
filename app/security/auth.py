@@ -122,13 +122,15 @@ def _hash_email(email: str) -> str:
 
 
 def _client_ip(request: Request) -> str:
-    """Best-effort client IP. Cf-Connecting-IP (tunnel), X-Forwarded-For, peer."""
+    """Client IP for rate-limiting/audit. ONLY ``Cf-Connecting-IP`` (set by the
+    cloudflared tunnel) is trusted; in the local (non-tunnel) path the real socket peer
+    is used. ``X-Forwarded-For`` is deliberately NOT trusted — it is attacker-settable
+    locally / via SSRF (no upstream strips it here), so keying rate-limiting on it would
+    let an attacker forge the key: target the operator's IP for a lockout, or rotate it
+    to dodge the brute-force guard entirely (S-001 / satoshi auflage 2)."""
     cf = request.headers.get("Cf-Connecting-IP", "").strip()
     if cf:
         return cf
-    xff = request.headers.get("X-Forwarded-For", "").strip()
-    if xff:
-        return xff.split(",")[0].strip()
     if request.client is not None:
         return request.client.host
     return ""
@@ -165,6 +167,33 @@ def _audit_access(
 _DEV_TEST_ENVS: frozenset[str] = frozenset({"development", "dev", "test", "testing"})
 
 _AUTH_DISABLED_WARNED = False
+
+# S-001 (satoshi auflage 1 — fail-closed): the LN value-layer cockpit can mint invoices
+# / plan-execute spends, so its control path must NEVER pass via the unauthenticated
+# "dashboard_local" bypass. Rather than denylist the spend path (a string trap — a
+# future LN mutation would silently inherit the bypass), we INVERT it: EVERY
+# ``/dashboard/api/ln/*`` path requires real auth UNLESS it is an explicitly
+# allowlisted READ-ONLY endpoint below. A new LN endpoint thus defaults to strong auth.
+_LN_CONTROL_PREFIX = "/dashboard/api/ln/"
+_LN_LOCAL_BYPASS_READS: frozenset[str] = frozenset(
+    {
+        "/dashboard/api/ln/demand",
+        "/dashboard/api/ln/channels",
+        "/dashboard/api/ln/reputation",
+        "/dashboard/api/ln/ops",
+        "/dashboard/api/ln/earnings",
+        "/dashboard/api/ln/treasury",
+    }
+)
+
+
+def _requires_strong_auth(path: str) -> bool:
+    """Fail-closed: any ``/dashboard/api/ln/*`` path needs real auth (CF-Access OR
+    Bearer) even locally, UNLESS it is an allowlisted read-only endpoint. A new LN
+    mutation cannot silently inherit the local-bypass (S-001)."""
+    if path.startswith(_LN_CONTROL_PREFIX):
+        return path not in _LN_LOCAL_BYPASS_READS
+    return False
 
 
 def setup_auth(
@@ -284,8 +313,10 @@ def setup_auth(
         # them BEFORE the lockout gate; tunnel dashboard traffic (Cf-Ray present
         # with a configured allowlist) still falls through to the CF-Access checks
         # and the lockout below.
-        if (path == "/dashboard" or path.startswith("/dashboard/")) and (
-            not cf_allowed or not request.headers.get("Cf-Ray")
+        if (
+            (path == "/dashboard" or path.startswith("/dashboard/"))
+            and not _requires_strong_auth(path)  # S-001: sensitive LN control never local-bypasses
+            and (not cf_allowed or not request.headers.get("Cf-Ray"))
         ):
             _reset_auth_failures(client_ip)
             _audit_access(decision="granted", reason="dashboard_local", request=request)
@@ -322,10 +353,14 @@ def setup_auth(
         # NEO-F-004: exact "/dashboard" or "/dashboard/*" only — prevent a
         # future "/dashboardv2"-style route from silently inheriting the
         # dashboard-defense-in-depth policy instead of Bearer auth.
-        if path == "/dashboard" or path.startswith("/dashboard/"):
+        if (path == "/dashboard" or path.startswith("/dashboard/")) and not _requires_strong_auth(
+            path
+        ):
             # F-002: local dashboard traffic was already granted above (before the
             # lockout gate); only tunnel (Cf-Ray + configured allowlist) traffic
-            # reaches here → enforce CF-Access defense-in-depth.
+            # reaches here → enforce CF-Access defense-in-depth. S-001: sensitive LN
+            # control paths are EXCLUDED here so they fall through to the general
+            # CF-Access/Bearer auth (real auth required even locally).
             # NEO-P-001 (A): Cloudflare sets both Cf-Ray AND Cf-Connecting-IP
             # on every edge-authenticated request. A non-CF reverse proxy that
             # only forwards Cf-Ray (without Cf-Connecting-IP) is suspicious —
