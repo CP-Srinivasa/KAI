@@ -90,6 +90,7 @@ monitor/source_rotation_state.json
 # The candidate SEED (source_candidates_seed.json) IS tracked — it is curated input.
 monitor/source_proposals.jsonl
 monitor/source_discovery_runs.jsonl
+monitor/source_probation_state.json
 
 # L3 audit-integrity anchor records (runtime output of kai-integrity-anchor.timer)
 monitor/integrity/
