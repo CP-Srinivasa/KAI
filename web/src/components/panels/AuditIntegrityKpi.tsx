@@ -12,12 +12,15 @@ import { useApi } from "@/lib/useApi";
 import { fetchIntegrity } from "@/lib/api";
 import type { StatusKind } from "@/lib/status";
 
-/** Integritäts-State (+ Proof) → kanonischer StatusKind. "disabled" wird separat
- *  als ruhiger muted-Badge gezeigt (nicht hierüber). Pure/testbar. */
-export function integrityStateToStatus(state: string, proofAvailable: boolean): StatusKind {
+/** Integritäts-State (+ Proof-State) → kanonischer StatusKind. "disabled" wird
+ *  separat als ruhiger muted-Badge gezeigt (nicht hierüber). Ehrlich: nur ein
+ *  Bitcoin-confirmed Proof gilt als "verified" — ein bloß eingereichter (pending)
+ *  OTS-Proof bleibt "pending", bis die Bitcoin-Attestation gemined ist.
+ *  Pure/testbar. */
+export function integrityStateToStatus(state: string, proofState: string): StatusKind {
   switch (state) {
     case "ok":
-      return proofAvailable ? "verified" : "pending";
+      return proofState === "confirmed" ? "verified" : "pending";
     case "no_anchor":
       return "pending";
     case "unavailable":
@@ -45,12 +48,16 @@ export function AuditIntegrityKpi() {
           </Badge>
         ) : (
           <StatusPill
-            kind={integrityStateToStatus(d.state, d.proof_available)}
+            kind={integrityStateToStatus(d.state, d.proof_state)}
             label={
               d.state === "ok"
-                ? d.proof_available
-                  ? "verankert"
-                  : "aufgezeichnet"
+                ? d.proof_state === "confirmed"
+                  ? "Bitcoin-verankert"
+                  : d.proof_state === "pending"
+                    ? "OTS pending"
+                    : d.proof_available
+                      ? "OTS-Proof"
+                      : "aufgezeichnet"
                 : d.state === "no_anchor"
                   ? "kein Anchor"
                   : d.state
@@ -63,7 +70,13 @@ export function AuditIntegrityKpi() {
           <span className="font-mono break-all">
             {d.anchor_count} Anchor{d.anchor_count === 1 ? "" : "s"}
             {d.last_anchored_at ? ` · ${d.last_anchored_at.substring(0, 16).replace("T", " ")}` : ""}
-            {d.proof_available ? " · OTS-Proof" : " · noch kein Proof"}
+            {d.proof_state === "confirmed"
+              ? ` · Bitcoin #${d.bitcoin_height ?? "?"}`
+              : d.proof_state === "pending"
+                ? " · wartet auf Bitcoin-Bestätigung"
+                : d.proof_available
+                  ? " · OTS-Proof"
+                  : " · noch kein Proof"}
           </span>
         ) : d?.state === "no_anchor" ? (
           <span>aktiviert, noch nichts verankert</span>

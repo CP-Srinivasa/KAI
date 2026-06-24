@@ -2,15 +2,18 @@ import { describe, expect, it } from "vitest";
 import { integrityStateToStatus } from "./AuditIntegrityKpi";
 
 describe("integrityStateToStatus", () => {
-  it("ok mit Proof = verifiziert, ohne Proof nur ausstehend", () => {
-    expect(integrityStateToStatus("ok", true)).toBe("verified");
-    expect(integrityStateToStatus("ok", false)).toBe("pending");
+  it("ok: nur Bitcoin-confirmed = verifiziert; pending/ohne Proof nur ausstehend", () => {
+    // Ehrlich: ein nur eingereichter (pending) OTS-Proof ist NICHT verifiziert,
+    // erst die Bitcoin-Attestation zählt als 'verified'.
+    expect(integrityStateToStatus("ok", "confirmed")).toBe("verified");
+    expect(integrityStateToStatus("ok", "pending")).toBe("pending");
+    expect(integrityStateToStatus("ok", "")).toBe("pending");
   });
   it("no_anchor = ausstehend, unavailable = degradiert", () => {
-    expect(integrityStateToStatus("no_anchor", false)).toBe("pending");
-    expect(integrityStateToStatus("unavailable", false)).toBe("degraded");
+    expect(integrityStateToStatus("no_anchor", "")).toBe("pending");
+    expect(integrityStateToStatus("unavailable", "")).toBe("degraded");
   });
   it("unbekannter State = unverifiziert (ehrlich, nicht erfunden)", () => {
-    expect(integrityStateToStatus("etwas", false)).toBe("unverified");
+    expect(integrityStateToStatus("etwas", "")).toBe("unverified");
   });
 });
