@@ -578,11 +578,34 @@ export type LightningStatus = {
   reason: string;
   extra: Record<string, unknown>;
   node_age_seconds: number | null; // age of the cached snapshot (null while warming)
+  pay_enabled: boolean; // value-layer kill-switch — false = NO capital action can execute
+  l402_enabled: boolean; // paid oracle active?
   generated_at: string;
 };
 
 export function fetchLightningStatus(signal?: AbortSignal): Promise<LightningStatus> {
   return apiGet<LightningStatus>("/dashboard/api/lightning", { signal });
+}
+
+// Value-layer control (Sprint 5). plan-mode previews; execute-mode runs (inert
+// until pay_enabled). Confirm (B-005) only needed for needs_confirm decisions.
+export type LnActionConfirm = { hotp: string; plan_hash: string; idempotency_key: string };
+export type LnActionRequest = {
+  action: string;
+  params: Record<string, unknown>;
+  confirm?: LnActionConfirm;
+};
+export type LnActionResult = {
+  mode: "plan" | "execute";
+  action: string;
+  policy?: { decision: "auto_execute" | "needs_confirm" | "denied"; reason: string };
+  plan_hash?: string;
+  plan?: { action: string; state: string; detail: string; plan: Record<string, unknown> };
+  result?: { action: string; state: string; detail: string };
+};
+
+export function lnValueAction(req: LnActionRequest): Promise<LnActionResult> {
+  return apiPost<LnActionResult>("/dashboard/api/ln/value-action", req);
 }
 
 // Per-channel breakdown (lnd listchannels, read-only, default-off, fail-closed).
