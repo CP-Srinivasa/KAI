@@ -8,7 +8,7 @@ All commands are read-only or guarded-write (paper/shadow only).
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Any
 
 import typer
 from rich.console import Console
@@ -2152,3 +2152,155 @@ def trading_shadow_drift_check(
 
     if report.status == STATUS_WARN:
         raise typer.Exit(1)
+
+
+@trading_app.command("source-intelligence")
+def trading_source_intelligence(
+    as_json: bool = typer.Option(False, "--json", help="Maschinen-JSON statt Tabelle"),
+) -> None:
+    """Kanonische Quellen-Güte-Rangliste + Discovery-/Probation-Stand (read-only).
+
+    EINE Quelle der Wahrheit (``monitor/source_ranking.json``) — exakt die Zahlen,
+    die das Dashboard-Panel „Quellen-Güte" zeigt — plus der autonome Discovery-
+    Loop (Vorschläge, Quellen in Probation mit Graduation-Fortschritt, Flags).
+    """
+    import asyncio
+    import json as _json
+
+    from app.core.enums import SourceStatus
+    from app.core.settings import get_settings
+    from app.learning.source_graduation import (
+        DEFAULT_MIN_DELIVERIES,
+        DEFAULT_MIN_PROBATION_RUNS,
+    )
+    from app.storage.db.session import build_session_factory
+    from app.storage.repositories.source_repo import SourceRepository
+
+    def _load_json(path: str, default: Any) -> Any:
+        try:
+            return _json.loads(Path(path).read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return default
+
+    ranking = _load_json("monitor/source_ranking.json", {})
+    ranked = ranking.get("ranked", []) if isinstance(ranking, dict) else []
+    counts = ranking.get("counts", {}) if isinstance(ranking, dict) else {}
+    state = _load_json("monitor/source_probation_state.json", {})
+    runs_by = state.get("runs", {}) if isinstance(state, dict) else {}
+    proposals: list[dict[str, Any]] = []
+    try:
+        for line in Path("monitor/source_proposals.jsonl").read_text(encoding="utf-8").splitlines():
+            stripped = line.strip()
+            if stripped:
+                try:
+                    proposals.append(_json.loads(stripped))
+                except ValueError:
+                    pass
+    except OSError:
+        pass
+
+    settings = get_settings()
+    discovery_enabled = bool(settings.sources.discovery_enabled)
+    scout_enabled = bool(settings.sources.scout_enabled)
+    evidence = {e.get("source_name"): e for e in ranked if isinstance(e, dict)}
+
+    async def _probation_rows() -> list[dict[str, Any]]:
+        factory = build_session_factory(settings.db)
+        rows: list[dict[str, Any]] = []
+        async with factory() as session:
+            repo = SourceRepository(session)
+            for s in await repo.list(status=SourceStatus.PROBATION):
+                name = s.provider or ""
+                ev = evidence.get(name) or {}
+                n = int(ev.get("n") or 0)
+                runs = int(runs_by.get(name, 0))
+                rows.append(
+                    {
+                        "provider": name,
+                        "n": n,
+                        "runs": runs,
+                        "wilson_lower_95": ev.get("wilson_lower_95"),
+                        "point_estimate": ev.get("point_estimate"),
+                        "eligible": runs >= DEFAULT_MIN_PROBATION_RUNS
+                        and n >= DEFAULT_MIN_DELIVERIES,
+                    }
+                )
+        return rows
+
+    try:
+        probation = asyncio.run(_probation_rows())
+    except Exception as exc:  # noqa: BLE001 — DB optional, Ranking allein ist nützlich
+        console.print(f"[yellow]Probation aus DB nicht lesbar: {exc}[/yellow]")
+        probation = []
+
+    if as_json:
+        console.print_json(
+            data={
+                "discovery_enabled": discovery_enabled,
+                "scout_enabled": scout_enabled,
+                "generated_at": ranking.get("generated_at"),
+                "counts": counts,
+                "ranked": ranked,
+                "probation": probation,
+                "proposals": len(proposals),
+            }
+        )
+        return
+
+    status = "[green]scharf[/green]" if discovery_enabled else "[dim]nur Beobachtung[/dim]"
+    console.print(
+        f"[bold]Quellen-Güte[/bold] — Discovery {status} · Scout "
+        f"{'an' if scout_enabled else 'aus'} · generiert {ranking.get('generated_at', '?')}"
+    )
+    tbl = Table(show_header=True, header_style="bold cyan")
+    tbl.add_column("#", justify="right")
+    tbl.add_column("Quelle")
+    tbl.add_column("Treffer", justify="right")
+    tbl.add_column("≥sicher", justify="right")
+    tbl.add_column("n", justify="right")
+    tbl.add_column("Tier")
+    tbl.add_column("Flags")
+    for e in ranked:
+        if not isinstance(e, dict):
+            continue
+        pe = e.get("point_estimate")
+        wl = e.get("wilson_lower_95")
+        flags = []
+        if e.get("pinned"):
+            flags.append("pinned")
+        if e.get("silent"):
+            flags.append("still")
+        if e.get("rotation_flagged"):
+            flags.append("Rotation")
+        if e.get("provisional"):
+            flags.append("dünn")
+        tbl.add_row(
+            str(e.get("rank", "?")),
+            str(e.get("source_name", "?")),
+            "—" if not isinstance(pe, (int, float)) else f"{pe * 100:.0f}%",
+            "—" if not isinstance(wl, (int, float)) else f"{wl * 100:.0f}%",
+            str(e.get("n", 0)),
+            str(e.get("reliability_tier", "?")),
+            ", ".join(flags),
+        )
+    console.print(tbl)
+
+    elig = sum(1 for p in probation if p["eligible"])
+    console.print(
+        f"[bold]Discovery:[/bold] {len(proposals)} Vorschläge · {len(probation)} in Probation "
+        f"({elig} bereit zum Einwechseln)"
+    )
+    if probation:
+        ptbl = Table(title="In Probation", show_header=True, header_style="bold magenta")
+        ptbl.add_column("Quelle")
+        ptbl.add_column("Läufe", justify="right")
+        ptbl.add_column("Signale", justify="right")
+        ptbl.add_column("bereit")
+        for p in sorted(probation, key=lambda x: (-int(x["runs"]), str(x["provider"]))):
+            ptbl.add_row(
+                str(p["provider"]),
+                f"{p['runs']}/{DEFAULT_MIN_PROBATION_RUNS}",
+                f"{p['n']}/{DEFAULT_MIN_DELIVERIES}",
+                "ja" if p["eligible"] else "—",
+            )
+        console.print(ptbl)

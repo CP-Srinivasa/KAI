@@ -358,6 +358,61 @@ def collect_source_lifecycle(ranking_path: Path | None = None) -> dict[str, Any]
         return {"error": str(exc)}
 
 
+def collect_source_discovery(
+    proposals_path: Path | None = None,
+    runs_path: Path | None = None,
+    state_path: Path | None = None,
+) -> dict[str, Any]:
+    """Autonomer Discovery-Loop-Stand aus den monitor-Files (read-only, fail-soft).
+
+    ``{"available": False}`` solange weder ein Lauf noch eine Probation-Quelle
+    existiert. Zeigt sonst: Vorschläge-Zahl, Quellen in Probation (+ wie viele nahe
+    der Graduation: ≥ Run-Schwelle), letzten Lauf (mode/onboardet/eingewechselt)
+    und ob die Schleife scharf ist. Datei-basiert — kein DB-Zugriff im Digest.
+    """
+    out: dict[str, Any] = {"available": False, "discovery_enabled": False, "scout_enabled": False}
+    try:
+        from app.core.settings import SourceSettings
+
+        cfg = SourceSettings()
+        out["discovery_enabled"] = bool(cfg.discovery_enabled)
+        out["scout_enabled"] = bool(cfg.scout_enabled)
+    except Exception:  # noqa: BLE001 — Digest degradiert, bricht nie
+        pass
+
+    try:
+        from app.learning.source_graduation import DEFAULT_MIN_PROBATION_RUNS
+
+        min_runs = int(DEFAULT_MIN_PROBATION_RUNS)
+    except Exception:  # noqa: BLE001
+        min_runs = 3
+
+    pp = proposals_path or Path("monitor/source_proposals.jsonl")
+    rp = runs_path or Path("monitor/source_discovery_runs.jsonl")
+    sp = state_path or Path("monitor/source_probation_state.json")
+
+    out["proposals"] = len(_read_jsonl_tail(pp))
+    runs = _read_jsonl_tail(rp)
+    last = runs[-1] if runs else None
+    if last:
+        out["available"] = True
+        out["last_mode"] = last.get("mode")
+        out["last_onboarded"] = last.get("onboarded")
+        out["last_swaps"] = last.get("swaps_executed")
+    try:
+        sdata = json.loads(sp.read_text(encoding="utf-8")) if sp.exists() else {}
+        runs_map = sdata.get("runs", {}) if isinstance(sdata, dict) else {}
+        out["probation"] = len(runs_map)
+        out["near_graduation"] = sum(
+            1 for v in runs_map.values() if isinstance(v, (int, float)) and v >= min_runs
+        )
+        if runs_map:
+            out["available"] = True
+    except (OSError, ValueError):
+        pass
+    return out
+
+
 def compose_digest_message(
     *,
     today: date,
@@ -373,6 +428,7 @@ def compose_digest_message(
     promotion: dict[str, Any] | None = None,
     edge_discovery: dict[str, Any] | None = None,
     source_lifecycle: dict[str, Any] | None = None,
+    source_discovery: dict[str, Any] | None = None,
 ) -> str:
     """Baut die EINE lesbare Operator-Nachricht. Pure Funktion — testbar."""
     lines: list[str] = [f"📡 *KAI Operator-Digest* — {today.isoformat()}"]
@@ -568,6 +624,25 @@ def compose_digest_message(
             + (f" · Top: {top}{tw_str}{prov}" if top else "")
         )
 
+    # Source-Discovery: der autonome Loop (Scout → Probation → Graduation),
+    # konsistent mit dem Dashboard-Panel „Quellen-Discovery".
+    sd = source_discovery or {}
+    if not sd.get("available"):
+        lines.append("🔭 *Quellen-Discovery:* kein Lauf / Loop aus")
+    else:
+        armed = "scharf" if sd.get("discovery_enabled") else "Beobachtung"
+        last_str = ""
+        if sd.get("last_mode"):
+            last_str = (
+                f" · letzte Runde: {sd.get('last_onboarded', 0)} onboardet, "
+                f"{sd.get('last_swaps', 0)} eingewechselt"
+            )
+        lines.append(
+            f"🔭 *Quellen-Discovery ({armed}):* {sd.get('probation', 0)} in Probation "
+            f"({sd.get('near_graduation', 0)} nahe Graduation) · "
+            f"{sd.get('proposals', 0)} Vorschläge{last_str}"
+        )
+
     msg = "\n".join(lines)
     if len(msg) > _TELEGRAM_LIMIT:
         msg = msg[: _TELEGRAM_LIMIT - 25] + "\n… (gekürzt, 4096-Limit)"
@@ -627,6 +702,7 @@ def main(argv: list[str] | None = None) -> int:
             promotion=collect_promotion_gate(),
             edge_discovery=collect_edge_discovery(),
             source_lifecycle=collect_source_lifecycle(),
+            source_discovery=collect_source_discovery(),
             v5_activated_on=v5_activated_on,
         )
     except Exception:  # noqa: BLE001 — entrypoint boundary
