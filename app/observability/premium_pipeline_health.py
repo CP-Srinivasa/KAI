@@ -239,36 +239,94 @@ def _check_service_active(
 
 
 def _check_paper_timer_last_trigger(
-    max_age_seconds: int, now: datetime | None = None
+    max_age_seconds: int,
+    now: datetime | None = None,
+    _path_fn: Any = None,
+    _timer_trigger_fn: Any = None,
+    _service_inactive_fn: Any = None,
 ) -> CheckResult:
-    """Verify kai-paper-trading.timer triggered within the last N seconds.
+    """Verify the paper-trading pipeline ticked within the last N seconds.
 
-    This is the authoritative bridge-liveness signal — independent of whether
-    envelopes were processed during the last tick. The audit-log (silent on
-    no-op ticks) cannot answer this question.
+    Liveness signal — independent of whether envelopes were processed during the
+    last tick (the audit-log is silent on no-op ticks and cannot answer this).
+
+    Two equally-valid liveness proofs, OR'd together:
+      1. the timer's ``LastTriggerUSec`` (timer-initiated ticks), and
+      2. the kai-paper-trading.SERVICE's ``InactiveEnterTimestamp`` (the service
+         actually ran and finished — via timer, manual, OR entry-watch re-entry).
+
+    Why the fallback (2026-06-24 intermittent false-positive): systemd bumps
+    ``LastTriggerUSec`` ONLY on timer-initiated starts. A manual or
+    entry-watch-driven ``systemctl start kai-paper-trading.service`` runs the
+    pipeline yet leaves ``LastTriggerUSec`` untouched AND re-anchors
+    ``OnUnitActiveSec=10min``, pushing the next auto-tick out — so the
+    timer-trigger age can legitimately reach ~15-20 min while the bridge is
+    healthy. A recent *service run* (any trigger source) is real liveness, so we
+    accept it. A genuine outage (timer dead AND service not running — the
+    2026-05-12 48h case) still fails within the window, and a fully-inactive
+    timer is independently caught by the CRITICAL_SERVICES liveness check.
     """
+    path_fn = _path_fn or _dbus_get_unit_path_and_state
+    trigger_fn = _timer_trigger_fn or _dbus_get_timer_last_trigger_usec
+    service_inactive_fn = _service_inactive_fn or _dbus_get_unit_inactive_enter_usec
+    ref_now = now or datetime.now(UTC)
+
+    # Primary proof: timer LastTriggerUSec.
     try:
-        unit_path, _ = _dbus_get_unit_path_and_state("kai-paper-trading.timer")
-        last_trigger_usec = _dbus_get_timer_last_trigger_usec(unit_path)
-    except Exception as exc:  # noqa: BLE001
+        timer_path, _ = path_fn("kai-paper-trading.timer")
+        last_trigger_usec = trigger_fn(timer_path)
+    except Exception as exc:  # noqa: BLE001 — DBus failures must not crash the report
         return CheckResult(
             name="paper_timer_last_trigger",
             ok=False,
             detail=f"dbus_error: {type(exc).__name__}: {exc}",
         )
-    if last_trigger_usec == 0:
-        return CheckResult(
-            name="paper_timer_last_trigger",
-            ok=False,
-            detail="LastTriggerUSec=0 (timer has not fired since boot)",
-        )
-    last_trigger = datetime.fromtimestamp(last_trigger_usec / 1_000_000, tz=UTC)
-    age = ((now or datetime.now(UTC)) - last_trigger).total_seconds()
+
+    timer_age: float | None = None
+    if last_trigger_usec > 0:
+        last_trigger = datetime.fromtimestamp(last_trigger_usec / 1_000_000, tz=UTC)
+        timer_age = (ref_now - last_trigger).total_seconds()
+        if timer_age <= max_age_seconds:
+            return CheckResult(
+                name="paper_timer_last_trigger",
+                ok=True,
+                detail=f"timer fired {timer_age:.0f}s ago (threshold={max_age_seconds}s)",
+                age_seconds=timer_age,
+            )
+
+    # Fallback proof: did the SERVICE actually run recently (any trigger source)?
+    svc_err = ""
+    svc_inactive_usec = 0
+    try:
+        svc_path, _ = path_fn("kai-paper-trading.service")
+        svc_inactive_usec = service_inactive_fn(svc_path)
+    except Exception as exc:  # noqa: BLE001
+        svc_err = f"; service_run dbus_error: {type(exc).__name__}"
+
+    timer_desc = "never" if timer_age is None else f"{timer_age:.0f}s ago"
+    if svc_inactive_usec > 0:
+        svc_ran = datetime.fromtimestamp(svc_inactive_usec / 1_000_000, tz=UTC)
+        svc_age = (ref_now - svc_ran).total_seconds()
+        if svc_age <= max_age_seconds:
+            return CheckResult(
+                name="paper_timer_last_trigger",
+                ok=True,
+                detail=(
+                    f"service ran {svc_age:.0f}s ago via non-timer start "
+                    f"(timer trigger {timer_desc}); threshold={max_age_seconds}s"
+                ),
+                age_seconds=svc_age,
+            )
+
+    # Both signals stale → genuine stall.
     return CheckResult(
         name="paper_timer_last_trigger",
-        ok=(age <= max_age_seconds),
-        detail=f"last_trigger={last_trigger.isoformat()} threshold={max_age_seconds}s",
-        age_seconds=age,
+        ok=False,
+        detail=(
+            f"no tick: timer trigger {timer_desc} and service run stale "
+            f"(threshold={max_age_seconds}s){svc_err}"
+        ),
+        age_seconds=timer_age,
     )
 
 

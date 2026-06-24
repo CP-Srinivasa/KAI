@@ -303,3 +303,75 @@ def test_report_to_dict_roundtrip():
     assert payload["timestamp_utc"] == now.isoformat()
     assert isinstance(payload["checks"], list)
     assert isinstance(payload["failure_modes"], list)
+
+
+# ── _check_paper_timer_last_trigger: timer-OR-service liveness (2026-06-24) ──
+
+_NOW = datetime(2026, 6, 24, 12, 0, 0, tzinfo=UTC)
+
+
+def _usec_ago(seconds: float) -> int:
+    return int((_NOW - timedelta(seconds=seconds)).timestamp() * 1_000_000)
+
+
+def _fake_path_fn(unit: str):
+    return (f"/org/freedesktop/systemd1/unit/{unit}", "active")
+
+
+def test_paper_timer_fresh_trigger_is_ok() -> None:
+    """Primary proof: a recent timer trigger passes (service not even consulted)."""
+
+    def _no_service(_path: str) -> int:
+        raise AssertionError("service fallback must not be consulted when timer is fresh")
+
+    result = pph._check_paper_timer_last_trigger(
+        900,
+        now=_NOW,
+        _path_fn=_fake_path_fn,
+        _timer_trigger_fn=lambda _p: _usec_ago(120),
+        _service_inactive_fn=_no_service,
+    )
+    assert result.ok is True
+    assert "timer fired" in result.detail
+
+
+def test_stale_timer_but_recent_service_run_is_ok() -> None:
+    """The fix: non-timer start (manual / entry-watch) lagged LastTriggerUSec to
+    ~18min, but the SERVICE ran 2min ago → live, no false-positive FAIL."""
+    result = pph._check_paper_timer_last_trigger(
+        900,
+        now=_NOW,
+        _path_fn=_fake_path_fn,
+        _timer_trigger_fn=lambda _p: _usec_ago(18 * 60),
+        _service_inactive_fn=lambda _p: _usec_ago(120),
+    )
+    assert result.ok is True
+    assert "service ran" in result.detail
+
+
+def test_both_timer_and_service_stale_fails() -> None:
+    """Genuine stall: timer trigger AND service run both stale → FAIL (real outage
+    still caught within the window)."""
+    result = pph._check_paper_timer_last_trigger(
+        900,
+        now=_NOW,
+        _path_fn=_fake_path_fn,
+        _timer_trigger_fn=lambda _p: _usec_ago(48 * 3600),
+        _service_inactive_fn=lambda _p: _usec_ago(40 * 60),
+    )
+    assert result.ok is False
+    assert "no tick" in result.detail
+
+
+def test_timer_never_fired_but_service_recent_is_ok() -> None:
+    """LastTriggerUSec=0 (never timer-fired since boot) but the service ran 1min
+    ago via a manual/entry-watch start → live."""
+    result = pph._check_paper_timer_last_trigger(
+        900,
+        now=_NOW,
+        _path_fn=_fake_path_fn,
+        _timer_trigger_fn=lambda _p: 0,
+        _service_inactive_fn=lambda _p: _usec_ago(60),
+    )
+    assert result.ok is True
+    assert "service ran" in result.detail
