@@ -375,3 +375,61 @@ def test_collect_source_lifecycle_reads_file(tmp_path: Path) -> None:
 
 def test_collect_source_lifecycle_unavailable_when_missing(tmp_path: Path) -> None:
     assert od.collect_source_lifecycle(ranking_path=tmp_path / "nope.json") == {"available": False}
+
+
+# ── source-discovery digest hook ────────────────────────────────────────────
+
+
+def test_source_discovery_line_present_when_armed() -> None:
+    msg = _compose(
+        source_discovery={
+            "available": True,
+            "discovery_enabled": True,
+            "scout_enabled": True,
+            "proposals": 11,
+            "probation": 11,
+            "near_graduation": 2,
+            "last_mode": "live",
+            "last_onboarded": 11,
+            "last_swaps": 0,
+        }
+    )
+    assert "Quellen-Discovery (scharf):" in msg
+    assert "11 in Probation" in msg
+    assert "2 nahe Graduation" in msg
+    assert "11 Vorschläge" in msg
+    assert "11 onboardet" in msg
+
+
+def test_source_discovery_line_honest_when_unavailable() -> None:
+    assert "kein Lauf / Loop aus" in _compose()  # source_discovery default None
+
+
+def test_collect_source_discovery_reads_files(tmp_path: Path) -> None:
+    (tmp_path / "proposals.jsonl").write_text(
+        json.dumps({"url": "https://a.com/feed", "provider": "a"}) + "\n", encoding="utf-8"
+    )
+    (tmp_path / "runs.jsonl").write_text(
+        json.dumps({"mode": "live", "onboarded": 3, "swaps_executed": 1}) + "\n", encoding="utf-8"
+    )
+    (tmp_path / "state.json").write_text(json.dumps({"runs": {"a": 4, "b": 1}}), encoding="utf-8")
+    out = od.collect_source_discovery(
+        proposals_path=tmp_path / "proposals.jsonl",
+        runs_path=tmp_path / "runs.jsonl",
+        state_path=tmp_path / "state.json",
+    )
+    assert out["available"] is True
+    assert out["proposals"] == 1
+    assert out["probation"] == 2
+    assert out["near_graduation"] == 1  # only "a" (runs 4 >= 3)
+    assert out["last_onboarded"] == 3
+    assert out["last_swaps"] == 1
+
+
+def test_collect_source_discovery_empty_when_no_files(tmp_path: Path) -> None:
+    out = od.collect_source_discovery(
+        proposals_path=tmp_path / "no.jsonl",
+        runs_path=tmp_path / "no.jsonl",
+        state_path=tmp_path / "no.json",
+    )
+    assert out["available"] is False
