@@ -874,6 +874,22 @@ def test_ln_ops_endpoint_empty_until_value_layer(monkeypatch) -> None:
     assert "generated_at" in body
 
 
+def test_ln_earnings_endpoint_aggregates_by_source(monkeypatch) -> None:
+    """Einnahmen-Übersicht summiert je Quelle (UC-7 Treasury-Quelle)."""
+    monkeypatch.setattr(
+        "app.lightning.earnings_ledger.read_recent_ln_earnings",
+        lambda: [
+            {"payment_hash": "a", "amount_sat": 500, "source": "l402"},
+            {"payment_hash": "b", "amount_sat": 700, "source": "l402"},
+            {"payment_hash": "c", "amount_sat": 300, "source": "bolt12"},
+        ],
+    )
+    body = TestClient(_make_app()).get("/dashboard/api/ln/earnings").json()
+    assert body["count"] == 3
+    assert body["total_sat"] == 1500
+    assert body["by_source"] == {"l402": 1200, "bolt12": 300}
+
+
 def test_integrity_endpoint_disabled_by_default() -> None:
     """Default-off: /dashboard/api/integrity meldet `disabled` ohne FS-Touch."""
     resp = TestClient(_make_app()).get("/dashboard/api/integrity")

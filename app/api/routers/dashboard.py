@@ -1820,6 +1820,35 @@ async def dashboard_ln_ops_api() -> JSONResponse:
     return JSONResponse(content=payload, headers={"Cache-Control": "no-store, max-age=0"})
 
 
+@router.get("/dashboard/api/ln/earnings", tags=["dashboard"])
+async def dashboard_ln_earnings_api() -> JSONResponse:
+    """Read-only souveräne Einnahmen-Übersicht (UC-7 Treasury-Quelle, default leer).
+
+    Liest ``artifacts/ln_earnings_ledger.jsonl`` — jede settled inbound Zahlung
+    (Oracle/L402/BOLT12/Direkt) einmalig verbucht (idempotent via payment_hash).
+    Liefert Einnahmen je Quelle + Summe. Reine Buchhaltung, kein Kapitalpfad.
+    """
+    from app.lightning.earnings_ledger import read_recent_ln_earnings
+
+    earnings = read_recent_ln_earnings()
+    by_source: dict[str, int] = {}
+    total = 0
+    for e in earnings:
+        amt = int(e.get("amount_sat", 0) or 0)
+        total += amt
+        by_source[str(e.get("source", "unknown"))] = (
+            by_source.get(str(e.get("source", "unknown")), 0) + amt
+        )
+    payload = {
+        "count": len(earnings),
+        "total_sat": total,
+        "by_source": by_source,
+        "earnings": earnings,
+        "generated_at": datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+    }
+    return JSONResponse(content=payload, headers={"Cache-Control": "no-store, max-age=0"})
+
+
 @router.get("/dashboard/api/chain", tags=["dashboard"])
 async def dashboard_chain_api() -> JSONResponse:
     """Read-only Chain-Status aus KAIs EIGENER bitcoind (L1, default-off).
