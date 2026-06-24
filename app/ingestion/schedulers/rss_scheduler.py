@@ -89,15 +89,26 @@ class RSSScheduler:
         logger.info("rss_scheduler_stopped")
 
     async def _poll_all(self) -> None:
-        """Fetch all active RSS sources. Called by scheduler."""
+        """Fetch all ACTIVE + PROBATION RSS sources. Called by scheduler.
+
+        PROBATION sources (autonom entdeckt, noch nicht bewährt) werden im Shadow
+        mitgepollt: sie liefern Dokumente, damit sich Evidenz (Trefferquote/n)
+        aufbaut, die die Graduation braucht — bekommen aber über die
+        Reliability-Tiers (insufficient bei kleinem n) keinen Eligibility-Boost.
+        """
         async with self._session_factory() as session:
             repo = SourceRepository(session)
-            sources = await repo.list(
+            active = await repo.list(
                 source_type=SourceType.RSS_FEED,
                 status=SourceStatus.ACTIVE,
             )
+            probation = await repo.list(
+                source_type=SourceType.RSS_FEED,
+                status=SourceStatus.PROBATION,
+            )
+        sources = active + probation
 
-        logger.info("rss_poll_started", source_count=len(sources))
+        logger.info("rss_poll_started", source_count=len(sources), probation_count=len(probation))
         for source in sources:
             await self._poll_one(source)
 
