@@ -155,6 +155,11 @@ async def value_action(request: Request, body: ActionBody) -> dict[str, Any]:
         if not verdict.ok:
             raise HTTPException(status_code=403, detail=f"confirm rejected: {verdict.reason}")
 
+    # NOTE (satoshi U2/auflage-6): create_invoice mints a real invoice here WITHOUT the
+    # public S-002 mint-limiter (that guards the unauthenticated /oracle path). This is
+    # deliberate: this cockpit surface is operator-only (the /dashboard/* email-allowlist
+    # middleware), so it is not an anonymous mint-flood vector. The public mint path
+    # (truth_oracle) carries the rate-limit + the trusted-client-IP key.
     result = (
         await _call(dry_run=False, confirm=True)
         if spec.irreversible

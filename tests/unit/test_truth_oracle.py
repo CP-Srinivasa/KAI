@@ -9,6 +9,7 @@ from __future__ import annotations
 import base64
 import hashlib
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -16,6 +17,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from app.api.routers import truth_oracle
+from app.lightning.demand_ledger import ACCESS_GRANTED, CHALLENGE_MINTED, requester_fingerprint
 from app.lightning.l402 import mint_token
 from app.lightning.value_layer import ValueLayerResult
 
@@ -109,3 +111,61 @@ def test_paid_wrong_scope_is_rechallenged(client: TestClient) -> None:
             headers={"Authorization": f"L402 {token}:{_PREIMAGE}"},
         )
     assert r.status_code == 402  # scope mismatch → re-challenge
+
+
+# --- U2 demand telemetry ---------------------------------------------------------
+
+
+def test_unpaid_request_logs_challenge_minted_with_fingerprint(client: TestClient) -> None:
+    """An unpaid request logs ``challenge_minted`` with the salted requester
+    fingerprint (resolved from X-Forwarded-For behind the proxy), NOT a raw IP."""
+    inv = ValueLayerResult(
+        "create_invoice",
+        "executed",
+        "",
+        response={
+            "r_hash": base64.b64encode(bytes.fromhex(_PH_HEX)).decode(),
+            "payment_request": "lnbc10n1...",
+        },
+    )
+    events: list[tuple[str, dict[str, Any]]] = []
+
+    def _capture(event: str, **kw: Any) -> bool:
+        events.append((event, kw))
+        return True
+
+    with (
+        patch.object(truth_oracle, "get_settings", return_value=_settings(enabled=True)),
+        patch.object(truth_oracle, "create_invoice", AsyncMock(return_value=inv)),
+        patch.object(truth_oracle, "append_demand_event", _capture),
+    ):
+        r = client.get("/oracle/onchain-facts", headers={"X-Forwarded-For": "203.0.113.9"})
+    assert r.status_code == 402
+    minted = [kw for ev, kw in events if ev == CHALLENGE_MINTED]
+    assert len(minted) == 1
+    kw = minted[0]
+    assert kw["scope"] == "onchain-facts" and kw["payment_hash"] == _PH_HEX
+    assert kw["requester_fp"] and kw["requester_fp"] != "203.0.113.9"
+    assert kw["requester_fp"] == requester_fingerprint("203.0.113.9", secret=_SECRET)
+
+
+def test_paid_request_logs_access_granted(client: TestClient) -> None:
+    token = mint_token(_PH_HEX, secret=_SECRET, scope="onchain-facts")
+    chain = SimpleNamespace(chain="main", blocks=954871, synced=True, fee_sat_vb=1.2, mempool_tx=42)
+    events: list[tuple[str, dict[str, Any]]] = []
+
+    def _capture(event: str, **kw: Any) -> bool:
+        events.append((event, kw))
+        return True
+
+    with (
+        patch.object(truth_oracle, "get_settings", return_value=_settings(enabled=True)),
+        patch("app.chain.cache.get_cached_chain_status", AsyncMock(return_value=(chain, 5.0))),
+        patch.object(truth_oracle, "append_demand_event", _capture),
+    ):
+        r = client.get(
+            "/oracle/onchain-facts", headers={"Authorization": f"L402 {token}:{_PREIMAGE}"}
+        )
+    assert r.status_code == 200
+    granted = [kw for ev, kw in events if ev == ACCESS_GRANTED]
+    assert len(granted) == 1 and granted[0]["payment_hash"] == _PH_HEX
