@@ -10,8 +10,9 @@ Each call is gated by L402 (``app.lightning.l402``): an unpaid request gets a
 ``402`` with a Lightning invoice + signed token; the caller pays, then retries
 with ``Authorization: L402 <token>:<preimage>``. Default OFF
 (``APP_LN_L402_ENABLED``); minting the invoice uses the gated value layer
-(needs ``pay_enabled`` + node liquidity) — so the oracle only truly transacts
-once the operator provisions the pay path. No capital risk to KAI (receive-side).
+(needs ``receive_enabled`` + a reachable node) — so the oracle only truly transacts
+once the operator provisions the receive path. No capital risk to KAI (receive-side,
+decoupled from the spend kill-switch via U1).
 """
 
 from __future__ import annotations
@@ -23,7 +24,14 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
+from app.api.client_ip import resolve_client_ip
 from app.core.settings import get_settings
+from app.lightning.demand_ledger import (
+    ACCESS_GRANTED,
+    CHALLENGE_MINTED,
+    append_demand_event,
+    requester_fingerprint,
+)
 from app.lightning.l402 import (
     L402Error,
     build_challenge_header,
@@ -64,13 +72,17 @@ async def _gate_mint(request: Request, scope: str) -> None:
     Raises 429 when the window cap is exhausted — so an unauthenticated flood cannot
     mint unbounded real invoices against the node (DoS/HTLC-flood guard).
     """
-    ip = request.client.host if request.client else "unknown"
+    ip = resolve_client_ip(request)  # real caller behind the proxy (not the tunnel IP)
     if not _get_mint_limiter().allow(f"{ip}:{scope}", now=time.monotonic()):
         raise HTTPException(status_code=429, detail="mint rate limit exceeded")
 
 
-async def _issue_challenge(scope: str) -> None:
-    """Mint an invoice + token and raise a 402 challenge. Never returns."""
+async def _issue_challenge(scope: str, *, requester_fp: str = "") -> None:
+    """Mint an invoice + token and raise a 402 challenge. Never returns.
+
+    On a successful mint, logs a ``challenge_minted`` demand event (the interest
+    signal for the G0 probe) — fail-soft, never blocks the challenge.
+    """
     settings = get_settings()
     price = settings.lightning.l402_default_price_sat
     inv = await create_invoice(value_sat=price, memo=f"kai-oracle:{scope}", dry_run=False)
@@ -86,6 +98,13 @@ async def _issue_challenge(scope: str) -> None:
     except (ValueError, TypeError) as exc:
         raise HTTPException(status_code=502, detail="invalid invoice from node") from exc
     token = mint_token(payment_hash_hex, secret=settings.lightning.l402_secret, scope=scope)
+    append_demand_event(
+        CHALLENGE_MINTED,
+        scope=scope,
+        requester_fp=requester_fp,
+        price_sat=int(price),
+        payment_hash=payment_hash_hex,
+    )
     raise HTTPException(
         status_code=402,
         detail="payment required",
@@ -100,16 +119,20 @@ async def _require_paid(request: Request, scope: str) -> None:
         raise HTTPException(status_code=503, detail="truth oracle disabled")
     if not settings.lightning.l402_secret:
         raise HTTPException(status_code=503, detail="l402 secret not configured")
+    fp = requester_fingerprint(resolve_client_ip(request), secret=settings.lightning.l402_secret)
     try:
         token, preimage = parse_authorization(request.headers.get("Authorization", ""))
     except L402Error:
         await _gate_mint(request, scope)  # S-002: rate-limit BEFORE minting
-        await _issue_challenge(scope)
+        await _issue_challenge(scope, requester_fp=fp)
         return  # unreachable (challenge raises)
     v = verify(token, preimage, secret=settings.lightning.l402_secret)
     if not v.valid or v.scope != scope:
         await _gate_mint(request, scope)  # S-002: rate-limit BEFORE minting
-        await _issue_challenge(scope)
+        await _issue_challenge(scope, requester_fp=fp)
+        return  # unreachable (challenge raises)
+    # Paid + scope-matched → serve. Log the conversion (access_granted), fail-soft.
+    append_demand_event(ACCESS_GRANTED, scope=scope, payment_hash=v.payment_hash)
 
 
 @router.get("/onchain-facts")
