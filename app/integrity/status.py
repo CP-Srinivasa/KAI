@@ -42,6 +42,11 @@ class IntegrityStatus:
     last_digest: str = ""
     last_anchored_at: str = ""
     proof_available: bool = False
+    # OTS proof state of the latest digest: "" (no proof / null stamper),
+    # "pending" (calendar commitment, not yet Bitcoin-mined), "confirmed"
+    # (Bitcoin attestation present), "unreadable"/"unknown" (corrupt / lib absent).
+    proof_state: str = ""
+    bitcoin_height: int | None = None
     reason: str = ""
 
 
@@ -91,7 +96,21 @@ def get_integrity_status(cfg: IntegritySettings | None = None) -> IntegrityStatu
     latest = max(parsed, key=lambda d: str(d.get("ts", "")))
     digest = str(latest.get("digest", ""))
     # The OTS stamper writes audit-<digest[:16]>.ots alongside the json record.
-    proof_available = bool(digest) and (out_dir / f"audit-{digest[:16]}.ots").exists()
+    proof_path = out_dir / f"audit-{digest[:16]}.ots"
+    proof_available = bool(digest) and proof_path.exists()
+    # Classify pending vs Bitcoin-confirmed — fail-soft: a corrupt proof or a
+    # missing opentimestamps lib must never crash this read-only surface.
+    proof_state = ""
+    bitcoin_height: int | None = None
+    if proof_available:
+        try:
+            from app.integrity.upgrade import read_proof_info
+
+            info = read_proof_info(proof_path)
+            proof_state = info.state
+            bitcoin_height = info.bitcoin_height
+        except Exception:  # noqa: BLE001 — lib absent / any error → don't crash the read
+            proof_state = "unknown"
     return IntegrityStatus(
         state="ok",
         enabled=True,
@@ -101,4 +120,6 @@ def get_integrity_status(cfg: IntegritySettings | None = None) -> IntegrityStatu
         last_digest=digest,
         last_anchored_at=str(latest.get("ts", "")),
         proof_available=proof_available,
+        proof_state=proof_state,
+        bitcoin_height=bitcoin_height,
     )

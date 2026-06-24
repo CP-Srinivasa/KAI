@@ -192,7 +192,9 @@ export function fetchEdgeVerdict(
 }
 
 // L3 Audit-Integrität (OpenTimestamps-Anchoring, default-off). state:
-// disabled | no_anchor | ok | unavailable. proof_available = OTS-Proof on-chain.
+// disabled | no_anchor | ok | unavailable. proof_available = .ots vorhanden;
+// proof_state unterscheidet "pending" (Calendar-Commitment, noch nicht
+// Bitcoin-gemined) von "confirmed" (Bitcoin-Attestation, bitcoin_height gesetzt).
 export type IntegrityStatus = {
   state: string;
   enabled: boolean;
@@ -202,6 +204,8 @@ export type IntegrityStatus = {
   last_digest: string;
   last_anchored_at: string;
   proof_available: boolean;
+  proof_state: string; // "" | "pending" | "confirmed" | "unreadable" | "unknown"
+  bitcoin_height: number | null;
   reason: string;
   generated_at: string;
 };
