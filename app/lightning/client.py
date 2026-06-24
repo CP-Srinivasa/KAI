@@ -210,6 +210,15 @@ class LndRestClient:
             body["expiry"] = str(int(expiry_seconds))
         return await self._post("/v1/invoices", body)
 
+    async def list_invoices(self, *, num_max_invoices: int = 1000) -> list[dict[str, Any]]:
+        """GET /v1/invoices — list this node's OWN invoices (read-only, capital-free).
+
+        Returns the ``invoices`` array (``[]`` on a malformed response). Used by the
+        earnings-booking job to find settled inbound payments."""
+        data = await self._get(f"/v1/invoices?num_max_invoices={int(num_max_invoices)}")
+        invoices = data.get("invoices", [])
+        return invoices if isinstance(invoices, list) else []
+
     async def open_channel(
         self, *, node_pubkey_hex: str, local_funding_sat: int, sat_per_vbyte: int = 0
     ) -> dict[str, Any]:
