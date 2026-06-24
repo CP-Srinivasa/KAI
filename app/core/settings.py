@@ -20,6 +20,9 @@ from app.core.evidence_settings import (
     HypeEvidenceSettings as HypeEvidenceSettings,
 )
 from app.core.evidence_settings import (
+    L2OnChainEvidenceSettings as L2OnChainEvidenceSettings,
+)
+from app.core.evidence_settings import (
     LongShortRatioEvidenceSettings as LongShortRatioEvidenceSettings,
 )
 from app.core.evidence_settings import (
@@ -1476,6 +1479,9 @@ class AppSettings(BaseSettings):
     )
     # HYPE-S1 — sentiment-overheat (hype) evidence. Default-off, measure-first.
     hype_evidence: HypeEvidenceSettings = Field(default_factory=HypeEvidenceSettings)
+    # Sprint 2 — L2 on-chain (fee/mempool) evidence. Default-off, shadow-first,
+    # direction-agnostic (B-003). Source = KAI's own L1 fee-shadow stream.
+    l2_evidence: L2OnChainEvidenceSettings = Field(default_factory=L2OnChainEvidenceSettings)
     # Asset-diversification / concentration guard. Default-off, shadow-first.
     diversification: DiversificationSettings = Field(default_factory=DiversificationSettings)
     # KYT transaction-risk prevention. Default-off, shadow-first.

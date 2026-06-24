@@ -89,6 +89,7 @@ class EvidenceKind(StrEnum):
     LONG_SHORT_RATIO = "long_short_ratio"
     SENTIMENT_OVERHEAT = "sentiment_overheat"
     LIQUIDATIONS = "liquidations"
+    L2_ONCHAIN = "l2_onchain"  # Sprint 2: fee/mempool flow, direction-agnostic (B-003)
     MARKET_REGIME = "market_regime"
     SOURCE_TRUST = "source_trust"  # nur als Modulator; eigener Update-Beitrag = 0
 
@@ -112,6 +113,7 @@ _KIND_STRENGTH: Final[Mapping[EvidenceKind, float]] = {
     EvidenceKind.LONG_SHORT_RATIO: 0.6,
     EvidenceKind.SENTIMENT_OVERHEAT: 0.6,
     EvidenceKind.LIQUIDATIONS: 1.1,
+    EvidenceKind.L2_ONCHAIN: 0.7,  # conservative — shadow-first, edge-gated trust
     EvidenceKind.MARKET_REGIME: 0.5,
     EvidenceKind.SOURCE_TRUST: 0.0,
 }
@@ -296,6 +298,9 @@ _CALIBRATORS: Final[Mapping[EvidenceKind, Callable[[float], float]]] = {
     EvidenceKind.LONG_SHORT_RATIO: _calibrate_long_short,
     EvidenceKind.SENTIMENT_OVERHEAT: _calibrate_sentiment_overheat,
     EvidenceKind.LIQUIDATIONS: _calibrate_linear,
+    # L2 on-chain: neutral saturation; the direction lives ONLY in
+    # direction_aligned (data-driven, B-003) — never baked into the calibrator.
+    EvidenceKind.L2_ONCHAIN: _calibrate_linear,
     EvidenceKind.MARKET_REGIME: _calibrate_regime,
     EvidenceKind.SOURCE_TRUST: _calibrate_zero,
 }
@@ -672,6 +677,42 @@ def build_funding_rate_evidence(
     )
 
 
+def build_l2_onchain_evidence(
+    *,
+    fee_percentile: float | None,
+    mempool_percentile: float | None,
+    direction_aligned: int = 0,
+    source_trust: float = 1.0,
+    observed_at: datetime | None = None,
+    source_id: str | None = None,
+) -> Evidence:
+    """L2 on-chain flow (fee/mempool) → Evidence. **DIRECTION-AGNOSTIC (B-003).**
+
+    Deliberately UNLIKE :func:`build_funding_rate_evidence`: there is NO
+    ``signal_is_long`` here. The magnitude is the on-chain *extremity* — how far the
+    current fee / mempool percentiles sit from their median (0.5) — while the
+    direction is supplied by the caller via ``direction_aligned`` (learned from
+    evaluation, never hardcoded contrarian/pro-trend). v1 passes
+    ``direction_aligned=0`` (undetermined) → zero contribution, so this is a pure
+    shadow measurement until ``scripts/evaluate_l2_evidence.py`` learns a sign.
+
+    A ``None`` percentile (no window yet) is treated as the median → 0 extremity,
+    i.e. "nothing to say", never a fabricated signal.
+    """
+    fee_dev = abs((fee_percentile if fee_percentile is not None else 0.5) - 0.5)
+    mempool_dev = abs((mempool_percentile if mempool_percentile is not None else 0.5) - 0.5)
+    value = _clamp(fee_dev + mempool_dev, 0.0, 1.0)  # 0..1 on-chain extremity
+    return Evidence(
+        kind=EvidenceKind.L2_ONCHAIN,
+        value=value,
+        direction_aligned=direction_aligned,
+        source_trust=source_trust,
+        observed_at=observed_at,
+        source_id=source_id,
+        note=f"fee_pct={fee_percentile} mempool_pct={mempool_percentile} dir={direction_aligned}",
+    )
+
+
 def build_open_interest_evidence(
     *,
     oi_change_zscore: float,
@@ -918,6 +959,7 @@ __all__ = [
     "build_default_engine",
     "build_funding_rate_evidence",
     "build_historical_hit_rate_evidence",
+    "build_l2_onchain_evidence",
     "build_liquidations_evidence",
     "build_long_short_ratio_evidence",
     "build_market_regime_evidence",
