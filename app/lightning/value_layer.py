@@ -24,6 +24,7 @@ from typing import Any
 from app.core.lightning_settings import LightningSettings
 from app.lightning.adapter import _build_client
 from app.lightning.client import LightningUnavailableError
+from app.lightning.ops_ledger import append_ln_op
 
 
 @dataclass(frozen=True)
@@ -147,5 +148,168 @@ async def open_channel(
             sat_per_vbyte=sat_per_vbyte,
         )
     except LightningUnavailableError as exc:
-        return ValueLayerResult("open_channel", "error", str(exc), plan)
-    return ValueLayerResult("open_channel", "executed", "", plan, resp)
+        return _audit(ValueLayerResult("open_channel", "error", str(exc), plan))
+    return _audit(ValueLayerResult("open_channel", "executed", "", plan, resp))
+
+
+def _audit(result: ValueLayerResult) -> ValueLayerResult:
+    """Append node-touching outcomes (executed/error) to the tamper-evident ops
+    ledger. ``disabled``/``planned`` are non-events (no node touch) → not logged, so
+    the inert default + dry-run previews don't spam the audit trail."""
+    if result.state in ("executed", "error"):
+        append_ln_op(result.action, result.state, plan=result.plan, response=result.response)
+    return result
+
+
+async def pay_invoice(
+    *,
+    payment_request: str,
+    fee_limit_sat: int = 0,
+    dry_run: bool = True,
+    confirm: bool = False,
+    cfg: LightningSettings | None = None,
+) -> ValueLayerResult:
+    """Pay a BOLT11 invoice — SPENDS, irreversible. Max-gated (confirm required)."""
+    cfg = _settings(cfg)
+    plan = {"payment_request": payment_request, "fee_limit_sat": int(fee_limit_sat)}
+    blocked = _assert_send_allowed(
+        "pay_invoice", cfg=cfg, dry_run=dry_run, confirm=confirm, irreversible=True, plan=plan
+    )
+    if blocked is not None:
+        return blocked
+    if not payment_request:
+        return _audit(ValueLayerResult("pay_invoice", "error", "payment_request required", plan))
+    try:
+        resp = await _build_client(cfg).pay_invoice(
+            payment_request=payment_request, fee_limit_sat=fee_limit_sat
+        )
+    except LightningUnavailableError as exc:
+        return _audit(ValueLayerResult("pay_invoice", "error", str(exc), plan))
+    return _audit(ValueLayerResult("pay_invoice", "executed", "", plan, resp))
+
+
+async def keysend(
+    *,
+    dest_pubkey_hex: str,
+    amt_sat: int,
+    fee_limit_sat: int = 0,
+    dry_run: bool = True,
+    confirm: bool = False,
+    cfg: LightningSettings | None = None,
+) -> ValueLayerResult:
+    """Spontaneous keysend payment — SPENDS, irreversible. Max-gated."""
+    cfg = _settings(cfg)
+    plan = {
+        "dest_pubkey_hex": dest_pubkey_hex,
+        "amt_sat": int(amt_sat),
+        "fee_limit_sat": int(fee_limit_sat),
+    }
+    blocked = _assert_send_allowed(
+        "keysend", cfg=cfg, dry_run=dry_run, confirm=confirm, irreversible=True, plan=plan
+    )
+    if blocked is not None:
+        return blocked
+    if not dest_pubkey_hex or amt_sat <= 0:
+        return _audit(
+            ValueLayerResult("keysend", "error", "dest_pubkey_hex + positive amt required", plan)
+        )
+    try:
+        resp = await _build_client(cfg).keysend(
+            dest_pubkey_hex=dest_pubkey_hex, amt_sat=amt_sat, fee_limit_sat=fee_limit_sat
+        )
+    except LightningUnavailableError as exc:
+        return _audit(ValueLayerResult("keysend", "error", str(exc), plan))
+    return _audit(ValueLayerResult("keysend", "executed", "", plan, resp))
+
+
+async def send_coins(
+    *,
+    addr: str,
+    amount_sat: int,
+    sat_per_vbyte: int = 0,
+    dry_run: bool = True,
+    confirm: bool = False,
+    cfg: LightningSettings | None = None,
+) -> ValueLayerResult:
+    """On-chain withdraw — SPENDS on-chain, irreversible. Max-gated."""
+    cfg = _settings(cfg)
+    plan = {"addr": addr, "amount_sat": int(amount_sat), "sat_per_vbyte": int(sat_per_vbyte)}
+    blocked = _assert_send_allowed(
+        "send_coins", cfg=cfg, dry_run=dry_run, confirm=confirm, irreversible=True, plan=plan
+    )
+    if blocked is not None:
+        return blocked
+    if not addr or amount_sat <= 0:
+        return _audit(
+            ValueLayerResult("send_coins", "error", "addr + positive amount required", plan)
+        )
+    try:
+        resp = await _build_client(cfg).send_coins(
+            addr=addr, amount_sat=amount_sat, sat_per_vbyte=sat_per_vbyte
+        )
+    except LightningUnavailableError as exc:
+        return _audit(ValueLayerResult("send_coins", "error", str(exc), plan))
+    return _audit(ValueLayerResult("send_coins", "executed", "", plan, resp))
+
+
+async def close_channel(
+    *,
+    funding_txid: str,
+    output_index: int,
+    force: bool = False,
+    sat_per_vbyte: int = 0,
+    dry_run: bool = True,
+    confirm: bool = False,
+    cfg: LightningSettings | None = None,
+) -> ValueLayerResult:
+    """Close a channel — irreversible (on-chain settle). Max-gated."""
+    cfg = _settings(cfg)
+    plan = {
+        "funding_txid": funding_txid,
+        "output_index": int(output_index),
+        "force": bool(force),
+        "sat_per_vbyte": int(sat_per_vbyte),
+    }
+    blocked = _assert_send_allowed(
+        "close_channel", cfg=cfg, dry_run=dry_run, confirm=confirm, irreversible=True, plan=plan
+    )
+    if blocked is not None:
+        return blocked
+    if not funding_txid:
+        return _audit(ValueLayerResult("close_channel", "error", "funding_txid required", plan))
+    try:
+        resp = await _build_client(cfg).close_channel(
+            funding_txid=funding_txid,
+            output_index=output_index,
+            force=force,
+            sat_per_vbyte=sat_per_vbyte,
+        )
+    except LightningUnavailableError as exc:
+        return _audit(ValueLayerResult("close_channel", "error", str(exc), plan))
+    return _audit(ValueLayerResult("close_channel", "executed", "", plan, resp))
+
+
+async def rebalance_plan(
+    *,
+    out_channel: str,
+    in_channel: str,
+    amount_sat: int,
+    cfg: LightningSettings | None = None,
+) -> ValueLayerResult:
+    """Plan a circular rebalance — PLAN ONLY, never executes (dry_run forced True).
+
+    Rebalancing is a circular self-payment; this helper returns the intended plan
+    and never touches the node. It still routes through the central send-gate (so
+    the kill-switch reports ``disabled`` when off) — the reflection test requires it.
+    """
+    cfg = _settings(cfg)
+    plan = {"out_channel": out_channel, "in_channel": in_channel, "amount_sat": int(amount_sat)}
+    blocked = _assert_send_allowed(
+        "rebalance_plan", cfg=cfg, dry_run=True, confirm=False, irreversible=True, plan=plan
+    )
+    # dry_run forced True → the gate always returns a terminal disabled/planned result.
+    return (
+        blocked
+        if blocked is not None
+        else ValueLayerResult("rebalance_plan", "planned", "plan-only", plan)
+    )

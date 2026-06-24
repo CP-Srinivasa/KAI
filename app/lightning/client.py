@@ -211,3 +211,84 @@ class LndRestClient:
         if sat_per_vbyte > 0:
             body["sat_per_vbyte"] = str(int(sat_per_vbyte))
         return await self._post("/v1/channels", body)
+
+    async def _delete(self, path: str) -> dict[str, Any]:
+        """HTTP DELETE for the lnd REST write surface (e.g. close channel)."""
+        url = f"{self._base_url}{path}"
+        try:
+            if self._transport is not None:
+                client_kwargs: dict[str, Any] = {
+                    "transport": self._transport,
+                    "timeout": self._timeout,
+                }
+            else:
+                client_kwargs = {"verify": self._verify, "timeout": self._timeout}
+            async with httpx.AsyncClient(**client_kwargs) as client:
+                resp = await client.delete(url, headers=self._headers)
+        except httpx.HTTPError as exc:
+            raise LightningUnavailableError(f"lnd request failed: {exc}") from exc
+        if resp.status_code != 200:
+            raise LightningUnavailableError(
+                f"lnd returned {resp.status_code} for {path}: {resp.text[:200]}"
+            )
+        try:
+            data = resp.json()
+        except ValueError as exc:
+            raise LightningUnavailableError(f"lnd returned non-JSON for {path}") from exc
+        if not isinstance(data, dict):
+            raise LightningUnavailableError(f"lnd returned non-object JSON for {path}")
+        return data
+
+    async def pay_invoice(self, *, payment_request: str, fee_limit_sat: int = 0) -> dict[str, Any]:
+        """POST /v1/channels/transactions — pay a BOLT11 invoice (SPENDS; irreversible)."""
+        body: dict[str, Any] = {"payment_request": payment_request}
+        if fee_limit_sat > 0:
+            body["fee_limit"] = {"fixed": str(int(fee_limit_sat))}
+        return await self._post("/v1/channels/transactions", body)
+
+    async def keysend(
+        self, *, dest_pubkey_hex: str, amt_sat: int, fee_limit_sat: int = 0
+    ) -> dict[str, Any]:
+        """POST /v1/channels/transactions — spontaneous keysend (SPENDS; irreversible).
+
+        Generates a random preimage client-side; the keysend TLV record (5482373484)
+        carries it so the destination can settle without a pre-issued invoice.
+        """
+        import base64
+        import hashlib
+        import os
+
+        preimage = os.urandom(32)
+        payment_hash = hashlib.sha256(preimage).digest()
+        body: dict[str, Any] = {
+            "dest": base64.b64encode(bytes.fromhex(dest_pubkey_hex)).decode("ascii"),
+            "amt": str(int(amt_sat)),
+            "payment_hash": base64.b64encode(payment_hash).decode("ascii"),
+            "dest_custom_records": {"5482373484": base64.b64encode(preimage).decode("ascii")},
+        }
+        if fee_limit_sat > 0:
+            body["fee_limit"] = {"fixed": str(int(fee_limit_sat))}
+        return await self._post("/v1/channels/transactions", body)
+
+    async def send_coins(
+        self, *, addr: str, amount_sat: int, sat_per_vbyte: int = 0
+    ) -> dict[str, Any]:
+        """POST /v1/transactions — on-chain withdraw (SPENDS on-chain; irreversible)."""
+        body: dict[str, Any] = {"addr": addr, "amount": str(int(amount_sat))}
+        if sat_per_vbyte > 0:
+            body["sat_per_vbyte"] = str(int(sat_per_vbyte))
+        return await self._post("/v1/transactions", body)
+
+    async def close_channel(
+        self, *, funding_txid: str, output_index: int, force: bool = False, sat_per_vbyte: int = 0
+    ) -> dict[str, Any]:
+        """DELETE /v1/channels/{txid}/{index} — close a channel (irreversible)."""
+        path = f"/v1/channels/{funding_txid}/{int(output_index)}"
+        params: list[str] = []
+        if force:
+            params.append("force=true")
+        if sat_per_vbyte > 0:
+            params.append(f"sat_per_vbyte={int(sat_per_vbyte)}")
+        if params:
+            path = f"{path}?{'&'.join(params)}"
+        return await self._delete(path)
