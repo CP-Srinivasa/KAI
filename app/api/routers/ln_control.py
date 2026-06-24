@@ -28,6 +28,7 @@ from pydantic import BaseModel, Field
 from app.core.settings import get_settings
 from app.lightning import value_layer as vl
 from app.lightning.control_gate import plan_hash, verify_capital_confirm
+from app.lightning.demand_evaluator import evaluate_l402_demand
 from app.lightning.policy import PolicyStore, evaluate_policy
 
 logger = logging.getLogger(__name__)
@@ -166,3 +167,12 @@ async def value_action(request: Request, body: ActionBody) -> dict[str, Any]:
         else await _call(dry_run=False)
     )
     return {"mode": "execute", "action": body.action, "result": result.to_dict()}
+
+
+@router.get("/demand")
+async def demand_verdict() -> dict[str, Any]:
+    """G0 demand-probe verdict (U4) — read-only over the demand + earnings ledgers.
+
+    Surfaces the pre-registered G0 metrics (challenges, settled payments, distinct
+    fingerprints/days) + the PASS/NO-PASS verdict. No node, no capital."""
+    return evaluate_l402_demand()
