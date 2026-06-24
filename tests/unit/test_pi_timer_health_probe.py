@@ -229,3 +229,69 @@ def test_timer_health_probe_inactive_alert_and_throttling(tmp_path) -> None:
     finally:
         if audit_file_abs.exists():
             audit_file_abs.unlink()
+
+
+def test_timer_health_probe_skips_disabled_timer(tmp_path) -> None:
+    """A deliberately-disabled timer that is inactive is OFF by design, not a
+    finding — it must NOT raise a Timer-Health alert (daily false-positive fix
+    for kai-hype-refresh / kai-risk-gate-audit-review)."""
+    audit_file_rel = Path("artifacts") / f"timer_health_audit_test_{tmp_path.name}_dis.jsonl"
+    audit_file_abs = Path(__file__).resolve().parents[2] / audit_file_rel
+    if audit_file_abs.exists():
+        audit_file_abs.unlink()
+    test_env = {
+        **os.environ,
+        "KAI_TIMER_PROBE_TIMERS": "kai-hype-refresh.timer",
+        "KAI_TIMER_PROBE_TEST_STATES": "kai-hype-refresh.timer:inactive",
+        "KAI_TIMER_PROBE_TEST_ENABLED": "kai-hype-refresh.timer:disabled",
+        "KAI_TIMER_PROBE_AUDIT_FILE": str(audit_file_rel.as_posix()),
+        "KAI_TIMER_PROBE_IGNORE_DOTENV": "1",
+        "KAI_TIMER_PROBE_DRY_RUN": "1",
+    }
+    try:
+        res = subprocess.run(
+            ["bash", "scripts/pi_timer_health_probe.sh"],
+            env=test_env,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+        )
+        assert res.returncode == 0, res.stderr
+        data = json.loads(audit_file_abs.read_text(encoding="utf-8").splitlines()[-1])
+        assert data["findings"] == []
+        assert data["event"] == "timer_health_probe.ok"
+    finally:
+        if audit_file_abs.exists():
+            audit_file_abs.unlink()
+
+
+def test_timer_health_probe_enabled_inactive_still_flagged(tmp_path) -> None:
+    """Control: an ENABLED timer that is inactive IS a real finding — the
+    disabled-skip must not swallow genuine faults."""
+    audit_file_rel = Path("artifacts") / f"timer_health_audit_test_{tmp_path.name}_en.jsonl"
+    audit_file_abs = Path(__file__).resolve().parents[2] / audit_file_rel
+    if audit_file_abs.exists():
+        audit_file_abs.unlink()
+    test_env = {
+        **os.environ,
+        "KAI_TIMER_PROBE_TIMERS": "kai-paper-trading.timer",
+        "KAI_TIMER_PROBE_TEST_STATES": "kai-paper-trading.timer:inactive",
+        "KAI_TIMER_PROBE_TEST_ENABLED": "kai-paper-trading.timer:enabled",
+        "KAI_TIMER_PROBE_AUDIT_FILE": str(audit_file_rel.as_posix()),
+        "KAI_TIMER_PROBE_IGNORE_DOTENV": "1",
+        "KAI_TIMER_PROBE_DRY_RUN": "1",
+    }
+    try:
+        res = subprocess.run(
+            ["bash", "scripts/pi_timer_health_probe.sh"],
+            env=test_env,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+        )
+        assert res.returncode == 0, res.stderr
+        data = json.loads(audit_file_abs.read_text(encoding="utf-8").splitlines()[-1])
+        assert data["findings"] == ["kai-paper-trading.timer (inactive)"]
+    finally:
+        if audit_file_abs.exists():
+            audit_file_abs.unlink()

@@ -75,6 +75,14 @@ send_telegram() {
 
 for unit in "${UNITS[@]}"; do
     state="$(systemctl is-active "$unit" 2>&1 || true)"
+    # Transient states during a normal restart (deploy / health-watchdog /
+    # reload) are NOT a failure — racing them produced noisy
+    # "kai-server=deactivating; restart=start_ok" alarms and a redundant restart.
+    # Re-check once after a short settle before declaring the unit down.
+    if [[ "$state" == "activating" || "$state" == "deactivating" || "$state" == "reloading" ]]; then
+        sleep "${KAI_SERVICE_WATCHDOG_TRANSIENT_SETTLE_SEC:-3}"
+        state="$(systemctl is-active "$unit" 2>&1 || true)"
+    fi
     if [[ "$state" == "active" ]]; then
         NOTES+=("${unit}=active")
         rm -f "${STATE_DIR}/$(sanitize_unit_name "$unit").last_alert" 2>/dev/null || true
