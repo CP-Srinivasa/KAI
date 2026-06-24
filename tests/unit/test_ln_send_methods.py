@@ -8,6 +8,7 @@ node-touching outcome is written to the ops audit-ledger.
 
 from __future__ import annotations
 
+import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
@@ -119,3 +120,22 @@ async def test_client_close_channel_delete_wire() -> None:
     )
     r = await c.close_channel(funding_txid="abcd", output_index=0, force=True)
     assert r["close_pending"]["txid"] == "cc"
+
+
+async def test_client_add_invoice_sets_short_expiry() -> None:
+    """U1 receive-path hardening: unpaid invoices must NOT linger on the node (DB row +
+    HTLC-slot expectation), so add_invoice posts a bounded ``expiry`` by default."""
+    captured: dict[str, object] = {}
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        assert req.method == "POST" and req.url.path == "/v1/invoices"
+        captured["body"] = json.loads(req.content)
+        return httpx.Response(200, json={"payment_request": "lnbc1", "r_hash": "aa"})
+
+    c = LndRestClient(
+        base_url="https://x:8080", macaroon_hex="ab", transport=httpx.MockTransport(handler)
+    )
+    await c.add_invoice(value_sat=100, memo="kai-oracle:fee-series")
+    body = captured["body"]
+    assert isinstance(body, dict) and "expiry" in body
+    assert 0 < int(body["expiry"]) <= 600

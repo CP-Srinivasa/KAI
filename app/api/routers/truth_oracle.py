@@ -75,8 +75,9 @@ async def _issue_challenge(scope: str) -> None:
     price = settings.lightning.l402_default_price_sat
     inv = await create_invoice(value_sat=price, memo=f"kai-oracle:{scope}", dry_run=False)
     if inv.state != "executed":
-        # Oracle enabled but the pay path isn't provisioned (pay_enabled off / no
-        # node liquidity yet) → honest 503, never a fake invoice.
+        # Oracle enabled but the receive path isn't provisioned (receive_enabled off /
+        # node unreachable) → honest 503, never a fake invoice. The receive gate is
+        # decoupled from the spend kill-switch (U1), so minting needs receive_enabled.
         raise HTTPException(status_code=503, detail=f"oracle pay path unavailable: {inv.detail}")
     r_hash_b64 = str(inv.response.get("r_hash", ""))
     payment_request = str(inv.response.get("payment_request", ""))

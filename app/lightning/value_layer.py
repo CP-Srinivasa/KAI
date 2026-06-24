@@ -55,6 +55,13 @@ def _settings(cfg: LightningSettings | None) -> LightningSettings:
     return get_settings().lightning
 
 
+# U1 fail-closed allowlist: the ONLY actions that may be classified receive-side
+# (capital-free, gated by ``receive_enabled``). EVERYTHING else is a spend and gates
+# on ``pay_enabled``. Keeping this a 1-element set of a spend-free action name means a
+# future misclassification falls to the SAFE side (receive breaks, no spend opens).
+RECEIVE_ACTIONS = frozenset({"create_invoice"})
+
+
 def _assert_send_allowed(
     action: str,
     *,
@@ -63,23 +70,38 @@ def _assert_send_allowed(
     confirm: bool,
     irreversible: bool,
     plan: dict[str, Any],
+    direction: str = "send",
 ) -> ValueLayerResult | None:
     """B-002 — the SINGLE chokepoint every value-layer write must pass BEFORE the
     node is touched. Returns a terminal ``ValueLayerResult`` (disabled/planned) to
     short-circuit, or ``None`` when the action is cleared to execute.
 
-    Centralising the three gates here (instead of copy-pasting per method) means a
-    new write method cannot silently forget one — and the reflection test
+    Centralising the gates here (instead of copy-pasting per method) means a new
+    write method cannot silently forget one — and the reflection test
     (test_ln_value_layer_send_gate) structurally enforces that every public write
     routes through this function:
 
-      * ``pay_enabled`` master kill-switch (``APP_LN_PAY_ENABLED``) → ``disabled``;
+      * ``direction`` is declared EXPLICITLY by each call-site (next to
+        ``irreversible=``). ``receive`` (capital-free invoice minting) gates on
+        ``receive_enabled``; everything else gates on the ``pay_enabled`` kill-switch.
+      * Fail-closed backstop: a non-allowlisted action declaring ``receive`` is a
+        programming error and RAISES; any unrecognised ``direction`` uses the stricter
+        send gate.
       * ``dry_run`` default → ``planned`` (plan only, no node write);
       * ``irreversible`` actions (on-chain spend / channel ops) additionally need an
         explicit ``confirm=True`` → else ``planned``.
     """
-    if not cfg.pay_enabled:
-        return ValueLayerResult(action, "disabled", "pay_enabled is False", plan)
+    if direction == "receive":
+        if action not in RECEIVE_ACTIONS:
+            raise ValueError(
+                f"action {action!r} declared direction='receive' but is not in RECEIVE_ACTIONS"
+            )
+        if not cfg.receive_enabled:
+            return ValueLayerResult(action, "disabled", "receive_enabled is False", plan)
+    else:
+        # send (default) — also the fail-closed branch for any unrecognised direction.
+        if not cfg.pay_enabled:
+            return ValueLayerResult(action, "disabled", "pay_enabled is False", plan)
     if dry_run:
         return ValueLayerResult(action, "planned", "dry_run", plan)
     if irreversible and not confirm:
@@ -98,7 +120,13 @@ async def create_invoice(
     cfg = _settings(cfg)
     plan = {"value_sat": int(value_sat), "memo": memo}
     blocked = _assert_send_allowed(
-        "create_invoice", cfg=cfg, dry_run=dry_run, confirm=True, irreversible=False, plan=plan
+        "create_invoice",
+        cfg=cfg,
+        dry_run=dry_run,
+        confirm=True,
+        irreversible=False,
+        plan=plan,
+        direction="receive",
     )
     if blocked is not None:
         return blocked
@@ -133,7 +161,13 @@ async def open_channel(
         "sat_per_vbyte": int(sat_per_vbyte),
     }
     blocked = _assert_send_allowed(
-        "open_channel", cfg=cfg, dry_run=dry_run, confirm=confirm, irreversible=True, plan=plan
+        "open_channel",
+        cfg=cfg,
+        dry_run=dry_run,
+        confirm=confirm,
+        irreversible=True,
+        plan=plan,
+        direction="send",
     )
     if blocked is not None:
         return blocked
@@ -173,7 +207,13 @@ async def pay_invoice(
     cfg = _settings(cfg)
     plan = {"payment_request": payment_request, "fee_limit_sat": int(fee_limit_sat)}
     blocked = _assert_send_allowed(
-        "pay_invoice", cfg=cfg, dry_run=dry_run, confirm=confirm, irreversible=True, plan=plan
+        "pay_invoice",
+        cfg=cfg,
+        dry_run=dry_run,
+        confirm=confirm,
+        irreversible=True,
+        plan=plan,
+        direction="send",
     )
     if blocked is not None:
         return blocked
@@ -205,7 +245,13 @@ async def keysend(
         "fee_limit_sat": int(fee_limit_sat),
     }
     blocked = _assert_send_allowed(
-        "keysend", cfg=cfg, dry_run=dry_run, confirm=confirm, irreversible=True, plan=plan
+        "keysend",
+        cfg=cfg,
+        dry_run=dry_run,
+        confirm=confirm,
+        irreversible=True,
+        plan=plan,
+        direction="send",
     )
     if blocked is not None:
         return blocked
@@ -235,7 +281,13 @@ async def send_coins(
     cfg = _settings(cfg)
     plan = {"addr": addr, "amount_sat": int(amount_sat), "sat_per_vbyte": int(sat_per_vbyte)}
     blocked = _assert_send_allowed(
-        "send_coins", cfg=cfg, dry_run=dry_run, confirm=confirm, irreversible=True, plan=plan
+        "send_coins",
+        cfg=cfg,
+        dry_run=dry_run,
+        confirm=confirm,
+        irreversible=True,
+        plan=plan,
+        direction="send",
     )
     if blocked is not None:
         return blocked
@@ -271,7 +323,13 @@ async def close_channel(
         "sat_per_vbyte": int(sat_per_vbyte),
     }
     blocked = _assert_send_allowed(
-        "close_channel", cfg=cfg, dry_run=dry_run, confirm=confirm, irreversible=True, plan=plan
+        "close_channel",
+        cfg=cfg,
+        dry_run=dry_run,
+        confirm=confirm,
+        irreversible=True,
+        plan=plan,
+        direction="send",
     )
     if blocked is not None:
         return blocked
@@ -305,7 +363,13 @@ async def rebalance_plan(
     cfg = _settings(cfg)
     plan = {"out_channel": out_channel, "in_channel": in_channel, "amount_sat": int(amount_sat)}
     blocked = _assert_send_allowed(
-        "rebalance_plan", cfg=cfg, dry_run=True, confirm=False, irreversible=True, plan=plan
+        "rebalance_plan",
+        cfg=cfg,
+        dry_run=True,
+        confirm=False,
+        irreversible=True,
+        plan=plan,
+        direction="send",
     )
     # dry_run forced True → the gate always returns a terminal disabled/planned result.
     return (
