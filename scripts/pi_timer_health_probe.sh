@@ -103,7 +103,23 @@ fi
 NON_ACTIVE=()
 for t in "${TIMERS[@]}"; do
     [[ -z "$t" ]] && continue
-    
+
+    # Skip deliberately-disabled/masked timers: an inactive timer that is NOT
+    # enabled is OFF by design (e.g. kai-hype-refresh, kai-risk-gate-audit-review),
+    # not a fault — flagging them produced a daily false-positive Timer-Health alert.
+    # Only enabled timers that drift inactive are real findings. Mockable via
+    # KAI_TIMER_PROBE_TEST_ENABLED ("timer:state,...") for tests.
+    enabled_state=""
+    if [[ -n "${KAI_TIMER_PROBE_TEST_ENABLED:-}" ]]; then
+        tmp="${KAI_TIMER_PROBE_TEST_ENABLED#*$t:}"
+        [[ "$tmp" != "$KAI_TIMER_PROBE_TEST_ENABLED" ]] && enabled_state="${tmp%%,*}"
+    elif [[ -z "${KAI_TIMER_PROBE_TEST_STATES:-}" ]] && command -v systemctl >/dev/null 2>&1; then
+        enabled_state="$(systemctl is-enabled "$t" 2>/dev/null | head -n1)"
+    fi
+    if [[ "$enabled_state" == "disabled" || "$enabled_state" == "masked" ]]; then
+        continue
+    fi
+
     state=""
     if [[ -n "${KAI_TIMER_PROBE_TEST_STATES:-}" ]]; then
         # Mock-Format: timer1:state1,timer2:state2
