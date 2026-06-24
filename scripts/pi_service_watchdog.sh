@@ -23,10 +23,15 @@ STATE_DIR="${KAI_SERVICE_WATCHDOG_STATE_DIR:-artifacts/pi_service_watchdog}"
 # inactive — e.g. a stray `systemctl stop kai-server` cascade, a bad Requires=, a
 # manual stop — is restarted here within one watchdog cycle (~5 min) instead of
 # staying silently dead until the next reboot. Respects `is-enabled` so deliberately
-# disabled timers (e.g. kai-hype-refresh) are left alone. fire-once timers stay
-# inactive by design after firing and must never be re-armed → excluded.
+# disabled timers (e.g. kai-hype-refresh) are left alone. Excluded by default:
+#   - fire-once timers (kai-technical-paper-first-fill) stay inactive by design
+#     after firing and must never be re-armed;
+#   - kai-server-health-watchdog.timer is intentionally lifecycle-coupled to
+#     kai-server — force-resurrecting it during a deliberate server stop would let
+#     it restart the server mid-maintenance (3-failure hysteresis), fighting the
+#     operator. Its own recovery is by design, not via this generic reconciler.
 RECONCILE_TIMERS="${KAI_WATCHDOG_RECONCILE_TIMERS:-1}"
-TIMER_EXCLUDE="${KAI_WATCHDOG_TIMER_EXCLUDE:-kai-technical-paper-first-fill.timer}"
+TIMER_EXCLUDE="${KAI_WATCHDOG_TIMER_EXCLUDE:-kai-technical-paper-first-fill.timer kai-server-health-watchdog.timer}"
 
 mkdir -p "$STATE_DIR"
 
