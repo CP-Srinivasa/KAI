@@ -54,6 +54,38 @@ def _settings(cfg: LightningSettings | None) -> LightningSettings:
     return get_settings().lightning
 
 
+def _assert_send_allowed(
+    action: str,
+    *,
+    cfg: LightningSettings,
+    dry_run: bool,
+    confirm: bool,
+    irreversible: bool,
+    plan: dict[str, Any],
+) -> ValueLayerResult | None:
+    """B-002 — the SINGLE chokepoint every value-layer write must pass BEFORE the
+    node is touched. Returns a terminal ``ValueLayerResult`` (disabled/planned) to
+    short-circuit, or ``None`` when the action is cleared to execute.
+
+    Centralising the three gates here (instead of copy-pasting per method) means a
+    new write method cannot silently forget one — and the reflection test
+    (test_ln_value_layer_send_gate) structurally enforces that every public write
+    routes through this function:
+
+      * ``pay_enabled`` master kill-switch (``APP_LN_PAY_ENABLED``) → ``disabled``;
+      * ``dry_run`` default → ``planned`` (plan only, no node write);
+      * ``irreversible`` actions (on-chain spend / channel ops) additionally need an
+        explicit ``confirm=True`` → else ``planned``.
+    """
+    if not cfg.pay_enabled:
+        return ValueLayerResult(action, "disabled", "pay_enabled is False", plan)
+    if dry_run:
+        return ValueLayerResult(action, "planned", "dry_run", plan)
+    if irreversible and not confirm:
+        return ValueLayerResult(action, "planned", "confirm=False", plan)
+    return None
+
+
 async def create_invoice(
     *,
     value_sat: int,
@@ -64,12 +96,13 @@ async def create_invoice(
     """Create a BOLT11 invoice (receive-side, no spend) — gated + dry-run-default."""
     cfg = _settings(cfg)
     plan = {"value_sat": int(value_sat), "memo": memo}
-    if not cfg.pay_enabled:
-        return ValueLayerResult("create_invoice", "disabled", "pay_enabled is False", plan)
+    blocked = _assert_send_allowed(
+        "create_invoice", cfg=cfg, dry_run=dry_run, confirm=True, irreversible=False, plan=plan
+    )
+    if blocked is not None:
+        return blocked
     if value_sat <= 0:
         return ValueLayerResult("create_invoice", "error", "value_sat must be > 0", plan)
-    if dry_run:
-        return ValueLayerResult("create_invoice", "planned", "dry_run", plan)
     try:
         resp = await _build_client(cfg).add_invoice(value_sat=value_sat, memo=memo)
     except LightningUnavailableError as exc:
@@ -98,15 +131,15 @@ async def open_channel(
         "local_funding_sat": int(local_funding_sat),
         "sat_per_vbyte": int(sat_per_vbyte),
     }
-    if not cfg.pay_enabled:
-        return ValueLayerResult("open_channel", "disabled", "pay_enabled is False", plan)
+    blocked = _assert_send_allowed(
+        "open_channel", cfg=cfg, dry_run=dry_run, confirm=confirm, irreversible=True, plan=plan
+    )
+    if blocked is not None:
+        return blocked
     if not node_pubkey_hex or local_funding_sat <= 0:
         return ValueLayerResult(
             "open_channel", "error", "node_pubkey_hex + positive sats required", plan
         )
-    if dry_run or not confirm:
-        reason = "dry_run" if dry_run else "confirm=False"
-        return ValueLayerResult("open_channel", "planned", reason, plan)
     try:
         resp = await _build_client(cfg).open_channel(
             node_pubkey_hex=node_pubkey_hex,
