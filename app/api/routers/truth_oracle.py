@@ -17,6 +17,7 @@ once the operator provisions the pay path. No capital risk to KAI (receive-side)
 from __future__ import annotations
 
 import base64
+import time
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
@@ -30,9 +31,42 @@ from app.lightning.l402 import (
     parse_authorization,
     verify,
 )
+from app.lightning.mint_limiter import MintLimiter
 from app.lightning.value_layer import create_invoice
 
 router = APIRouter(prefix="/oracle", tags=["truth-oracle"])
+
+# S-002 — process-local invoice-mint rate limiter. Built lazily from settings so a
+# config change (caps) takes effect on next build; ``reset_mint_limiter`` is the
+# test seam.
+_mint_limiter: MintLimiter | None = None
+
+
+def _get_mint_limiter() -> MintLimiter:
+    global _mint_limiter
+    if _mint_limiter is None:
+        ln = get_settings().lightning
+        _mint_limiter = MintLimiter(
+            per_key_max=ln.l402_mint_per_min, global_max=ln.l402_mint_budget_per_min
+        )
+    return _mint_limiter
+
+
+def reset_mint_limiter() -> None:
+    """Test seam: drop the limiter so the next request rebuilds it from settings."""
+    global _mint_limiter
+    _mint_limiter = None
+
+
+async def _gate_mint(request: Request, scope: str) -> None:
+    """S-002: cap invoice mints BEFORE one is issued (per ip:scope + global budget).
+
+    Raises 429 when the window cap is exhausted — so an unauthenticated flood cannot
+    mint unbounded real invoices against the node (DoS/HTLC-flood guard).
+    """
+    ip = request.client.host if request.client else "unknown"
+    if not _get_mint_limiter().allow(f"{ip}:{scope}", now=time.monotonic()):
+        raise HTTPException(status_code=429, detail="mint rate limit exceeded")
 
 
 async def _issue_challenge(scope: str) -> None:
@@ -68,10 +102,12 @@ async def _require_paid(request: Request, scope: str) -> None:
     try:
         token, preimage = parse_authorization(request.headers.get("Authorization", ""))
     except L402Error:
+        await _gate_mint(request, scope)  # S-002: rate-limit BEFORE minting
         await _issue_challenge(scope)
         return  # unreachable (challenge raises)
     v = verify(token, preimage, secret=settings.lightning.l402_secret)
     if not v.valid or v.scope != scope:
+        await _gate_mint(request, scope)  # S-002: rate-limit BEFORE minting
         await _issue_challenge(scope)
 
 
@@ -91,6 +127,21 @@ async def onchain_facts(request: Request) -> dict[str, Any]:
         "mempool_tx": status.mempool_tx,
         "as_of_age_seconds": age,
     }
+
+
+@router.get("/fee-series")
+async def fee_series(request: Request) -> dict[str, Any]:
+    """UC-5: sovereign fee/mempool time series from KAI's own L1 stream (L402-paid).
+
+    Verifiable FACTS only — raw observations + deterministic min/median/max, never a
+    forecast. Source is the L1 fee-shadow stream the chain scheduler already writes.
+    """
+    await _require_paid(request, "fee-series")
+    from app.chain.fee_series import build_fee_series
+    from app.signals.l2_features import read_onchain_fee_shadow
+
+    records = read_onchain_fee_shadow("artifacts/onchain_fee_shadow.jsonl")
+    return build_fee_series(records)
 
 
 class TimestampRequest(BaseModel):

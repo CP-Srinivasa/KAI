@@ -54,6 +54,12 @@ class LightningSettings(BaseSettings):
     l402_enabled: bool = Field(default=False)
     l402_secret: str = Field(default="", repr=False)
     l402_default_price_sat: int = Field(default=10, ge=1)
+    # S-002 receive-side DoS guard: cap L402 invoice MINTS per window. dry-run does
+    # NOT protect the receive side (every unpaid request mints a real invoice), so
+    # these caps MUST be in force before L402 is enabled. Per-key (ip:scope) and a
+    # global budget per 60s window; <=0 disables that dimension.
+    l402_mint_per_min: int = Field(default=5, ge=0)
+    l402_mint_budget_per_min: int = Field(default=60, ge=0)
     # Node-reputation telemetry capture cadence (read-only uptime/connectivity/
     # routing-income trend → its own shadow stream ``artifacts/ln_reputation.jsonl``;
     # no capital path). Only runs when ``enabled``. Env

@@ -27,13 +27,19 @@ _PH_HEX = hashlib.sha256(bytes.fromhex(_PREIMAGE)).hexdigest()
 def _settings(*, enabled: bool, secret: str = _SECRET) -> SimpleNamespace:
     return SimpleNamespace(
         lightning=SimpleNamespace(
-            l402_enabled=enabled, l402_secret=secret, l402_default_price_sat=10
+            l402_enabled=enabled,
+            l402_secret=secret,
+            l402_default_price_sat=10,
+            # S-002 mint caps (generous here so single-request tests never hit them).
+            l402_mint_per_min=100,
+            l402_mint_budget_per_min=100,
         )
     )
 
 
 @pytest.fixture
 def client() -> TestClient:
+    truth_oracle.reset_mint_limiter()  # fresh per-test limiter (module-level state)
     app = FastAPI()
     app.include_router(truth_oracle.router)
     return TestClient(app, raise_server_exceptions=False)
