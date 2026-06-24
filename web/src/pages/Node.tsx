@@ -19,6 +19,7 @@ import { LightningPanel } from "@/components/panels/LightningPanel";
 import { ChannelsPanel } from "@/components/panels/ChannelsPanel";
 import { NodeReputationPanel } from "@/components/panels/NodeReputationPanel";
 import { LnOpsAuditPanel } from "@/components/panels/LnOpsAuditPanel";
+import { LnControlPanel } from "@/components/panels/LnControlPanel";
 import { ChainPanel } from "@/components/panels/ChainPanel";
 import { AuditIntegrityKpi } from "@/components/panels/AuditIntegrityKpi";
 import { cn } from "@/lib/utils";
@@ -269,6 +270,7 @@ export function NodePage() {
               roadmapNote="Phase-2 (Resilienz-Sprint): SCB-Monitoring + B2-Recovery-Status (operator-exekutiert)."
             />
             <NodeReputationPanel />
+            <LnControlPanel />
             <LnOpsAuditPanel />
           </div>
         </div>

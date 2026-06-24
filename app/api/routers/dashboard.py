@@ -1725,6 +1725,14 @@ async def dashboard_lightning_api() -> JSONResponse:
     payload = asdict(status)
     payload["node_age_seconds"] = node_age
 
+    # Value-layer kill-switch state (read-only) so the cockpit can show truthfully
+    # whether ANY capital action could execute. Both default False (inert).
+    from app.core.settings import get_settings as _gs
+
+    _ln = _gs().lightning
+    payload["pay_enabled"] = _ln.pay_enabled
+    payload["l402_enabled"] = _ln.l402_enabled
+
     # Souveräne Chain-Wahrheit: Höhe/Sync bevorzugt aus der eigenen bitcoind.
     # Über den Hintergrund-Cache gelesen — bitcoind-RPC kann auf dem Pi minutenlang
     # cs_main halten; der Request darf dafür NIE blockieren. ``chain_age_seconds``
