@@ -11,14 +11,13 @@ WorkingDirectory=/home/ubuntu/ai_analyst_trading_bot
 Environment=PYTHONPATH=/home/ubuntu/ai_analyst_trading_bot
 EnvironmentFile=-/home/ubuntu/ai_analyst_trading_bot/.env
 
-# Sequenz: jeder Script-Lauf ist eigenständig; "-" prefix sorgt dafür dass
-# ein Failure den nächsten Recalc nicht killt. Operator sieht Failures im
-# Journal und über die kai-pi-health.timer-Output-mtime-Alarme.
-ExecStart=-/home/ubuntu/ai_analyst_trading_bot/.venv/bin/python /home/ubuntu/ai_analyst_trading_bot/scripts/source_reliability_recalc.py
-ExecStart=-/home/ubuntu/ai_analyst_trading_bot/.venv/bin/python /home/ubuntu/ai_analyst_trading_bot/scripts/source_lifecycle_recalc.py
-ExecStart=-/home/ubuntu/ai_analyst_trading_bot/.venv/bin/python /home/ubuntu/ai_analyst_trading_bot/scripts/source_confluence_recalc.py
-ExecStart=-/home/ubuntu/ai_analyst_trading_bot/.venv/bin/python /home/ubuntu/ai_analyst_trading_bot/scripts/bayes_posterior_recalc.py
-ExecStart=-/home/ubuntu/ai_analyst_trading_bot/.venv/bin/python /home/ubuntu/ai_analyst_trading_bot/scripts/ph5_feature_analysis_recalc.py
+# Wrapper runs all 5 recalc steps best-effort (a crashed step does NOT abort the
+# rest — that independence is why we used ExecStart=- per line). It then exits
+# non-zero if ANY step failed, so the unit is marked `failed` immediately instead
+# of reporting success while an output silently goes stale (2026-06-24: a bayes
+# circular-import crash stayed invisible at the unit level for ~31h under the old
+# `-` lines). Per-step stdout/stderr still flows to the journal.
+ExecStart=/home/ubuntu/ai_analyst_trading_bot/.venv/bin/python /home/ubuntu/ai_analyst_trading_bot/scripts/recalc_cycle.py
 
 StandardOutput=journal
 StandardError=journal
