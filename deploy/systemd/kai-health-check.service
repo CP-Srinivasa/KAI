@@ -16,5 +16,9 @@ StandardError=journal
 TimeoutStartSec=90
 
 # Resource caps — probe is read-only and short.
-MemoryMax=256M
+# MemoryMax 256M→512M (2026-06-23): der App-Import wuchs durch #387/#388 über
+# 256M → der health-check lief OOM (Result=oom-kill, exit 2). Auf dem Pi war
+# /etc bereits live auf 512M gehoben+verifiziert ("All systems healthy"); hier
+# nachgezogen, damit ein Repo→/etc-Redeploy nicht auf 256M zurückregressiert.
+MemoryMax=512M
 CPUQuota=50%
