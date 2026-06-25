@@ -28,6 +28,7 @@ def _all_node_ok() -> dict:
         "node_reachable": True,
         "macaroon_scope_minimal": True,
         "macaroon_can_mint": True,
+        "inbound_liquidity_sat": 1000,
         "booking_unit_present": True,
         "telemetry_writable": True,
     }
@@ -59,6 +60,12 @@ def test_no_go_when_macaroon_cannot_mint() -> None:
     assert out["verdict"] == "NO-GO" and "macaroon_can_mint" in out["blocking"]
 
 
+def test_no_go_when_no_inbound_liquidity() -> None:
+    """0 inbound = the node physically cannot receive any payment → hard NO-GO."""
+    out = golive_preflight(_ready_cfg(), **{**_all_node_ok(), "inbound_liquidity_sat": 0})
+    assert out["verdict"] == "NO-GO" and "inbound_liquidity" in out["blocking"]
+
+
 def test_no_go_when_node_unprobed_fail_closed() -> None:
     out = golive_preflight(_ready_cfg(), **{**_all_node_ok(), "node_reachable": None})
     assert out["verdict"] == "NO-GO" and "node_reachable" in out["blocking"]
@@ -82,6 +89,7 @@ def test_blocking_lists_every_failure_on_a_blank_config() -> None:
         "node_reachable",
         "macaroon_scope_minimal",
         "macaroon_can_mint",
+        "inbound_liquidity",
         "booking_unit_present",
         "telemetry_writable",
     ):
