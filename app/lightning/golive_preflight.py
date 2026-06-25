@@ -31,6 +31,7 @@ def golive_preflight(
     *,
     node_reachable: bool | None = None,
     macaroon_scope_minimal: bool | None = None,
+    macaroon_can_mint: bool | None = None,
     booking_unit_present: bool | None = None,
     telemetry_writable: bool | None = None,
 ) -> dict[str, Any]:
@@ -65,6 +66,12 @@ def golive_preflight(
             "macaroon_scope_minimal",
             macaroon_scope_minimal is True,
             "a pay_invoice probe MUST be permission-denied (macaroon carries NO spend scope)",
+        ),
+        PreflightCheck(
+            "macaroon_can_mint",
+            macaroon_can_mint is True,
+            "the macaroon MUST be able to mint invoices (invoices:write) — a readonly "
+            "macaroon passes the no-spend check but cannot RECEIVE (paid path would 503)",
         ),
         PreflightCheck(
             "booking_unit_present",

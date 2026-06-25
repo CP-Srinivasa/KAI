@@ -22,8 +22,10 @@ Install it as the KAI macaroon (`APP_LN_MACAROON_PATH` / `APP_LN_MACAROON_HEX`) 
     python scripts/ln_golive_preflight.py
 
 It probes: node reachable (`getinfo`); **macaroon scope** (a raw `pay_invoice` probe
-MUST be permission-denied — proving no spend scope); booking timer installed; telemetry
-writable; and `pay_enabled` OFF. Exit 0 / `"verdict": "GO"` is required before step 3.
+MUST be permission-denied — proving no spend scope); **macaroon can mint** (a raw `add_invoice`
+probe MUST succeed; a `readonly.macaroon` has no spend scope BUT also cannot receive,
+which would `503` the paid path, so this check catches that trap); booking timer
+installed; telemetry writable; and `pay_enabled` OFF. Exit 0 / `"verdict": "GO"` is required before step 3.
 
 ## 3. Flip the receive path (operator)
 In the Pi `.env` — **NEVER** `pay_enabled`:

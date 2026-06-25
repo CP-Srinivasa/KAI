@@ -27,6 +27,7 @@ def _all_node_ok() -> dict:
     return {
         "node_reachable": True,
         "macaroon_scope_minimal": True,
+        "macaroon_can_mint": True,
         "booking_unit_present": True,
         "telemetry_writable": True,
     }
@@ -51,6 +52,13 @@ def test_no_go_when_macaroon_not_scope_minimal() -> None:
     assert out["verdict"] == "NO-GO" and "macaroon_scope_minimal" in out["blocking"]
 
 
+def test_no_go_when_macaroon_cannot_mint() -> None:
+    """The readonly-macaroon trap: a macaroon can pass the no-spend check yet still be
+    unable to MINT invoices (no invoices:write) — then the paid path 503s. Hard NO-GO."""
+    out = golive_preflight(_ready_cfg(), **{**_all_node_ok(), "macaroon_can_mint": False})
+    assert out["verdict"] == "NO-GO" and "macaroon_can_mint" in out["blocking"]
+
+
 def test_no_go_when_node_unprobed_fail_closed() -> None:
     out = golive_preflight(_ready_cfg(), **{**_all_node_ok(), "node_reachable": None})
     assert out["verdict"] == "NO-GO" and "node_reachable" in out["blocking"]
@@ -73,6 +81,7 @@ def test_blocking_lists_every_failure_on_a_blank_config() -> None:
         "macaroon_configured",
         "node_reachable",
         "macaroon_scope_minimal",
+        "macaroon_can_mint",
         "booking_unit_present",
         "telemetry_writable",
     ):
