@@ -182,6 +182,17 @@ class TestEmit:
         # Log should still contain exactly one line.
         assert len(log.read_text(encoding="utf-8").splitlines()) == 1
 
+    def test_signal_id_is_deterministic_with_fixed_now(self, parsed_gun, tmp_path: Path) -> None:
+        """Root cause of the dedup flake: the signal_id (and thus the idempotency_key it
+        feeds) MUST derive from the passed ``now``, not the real wall-clock — else two
+        emits of the same signal straddling a second boundary get different ids and fail
+        to dedup. Without a source_uid the id falls back to the time-stamped generator."""
+        log = tmp_path / "envelope.jsonl"
+        fixed = datetime(2026, 4, 20, 12, 0, 0, tzinfo=UTC)
+        rec = emit_parsed_signal(parsed_gun, envelope_log=log, now=fixed)
+        assert rec is not None
+        assert "20260420120000" in rec["payload"]["signal_id"], rec["payload"]["signal_id"]
+
     def test_deduplicates_same_telegram_source_uid_even_with_different_now(
         self, parsed_gun, tmp_path: Path
     ) -> None:
