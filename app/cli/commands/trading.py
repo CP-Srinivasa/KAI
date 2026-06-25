@@ -552,6 +552,66 @@ def trading_canonical_edge(
         raise typer.Exit(2)
 
 
+@trading_app.command("edge-validation")
+def trading_edge_validation(
+    exec_audit_path: str = typer.Option(
+        "artifacts/paper_execution_audit.jsonl",
+        "--exec-audit-path",
+        help="Append-only paper execution audit JSONL path",
+    ),
+    trials: int = typer.Option(
+        ...,
+        "--trials",
+        help="Number of distinct hypotheses/configs ever evaluated (drives the DSR "
+        "deflation). Be honest: count EVERY rule/feature/threshold tried.",
+    ),
+    min_n: int = typer.Option(100, "--min-n", help="Hard sample floor before promotion."),
+    confidence: float = typer.Option(0.95, "--confidence", help="DSR / MinTRL confidence bar."),
+    venue: str = typer.Option("paper", "--venue", help="CostModel venue key."),
+    implausible_threshold: float = typer.Option(
+        0.40, "--implausible-threshold", help="Exclude |exit/entry-1| above this (0=off)."
+    ),
+    as_json: bool = typer.Option(False, "--json", help="Emit JSON instead of the table."),
+) -> None:
+    """Statistical edge-validation gate for LIVE/capital promotion over the canonical edge.
+
+    READ-ONLY and a LIVE-PROMOTION tool ONLY — it never gates paper trading
+    (the paper-learning directive is binding; complementary to the operational
+    bleed-breaker ``app/risk/promotion_gate.py``). Restricts to the attributed
+    canonical sources, computes the per-trade net edge, and applies the pragmatic
+    14-point validation gate (sample floor, cost-net, Deflated Sharpe deflated by
+    ``--trials``, MinTRL, outlier-robustness). On the current n=51 canonical
+    cohort this MUST report NOT ready (n<100) — proving the gate refuses correctly
+    while blocking nothing in paper.
+    """
+    import json as _json
+
+    from app.execution.cost_model import CostModel
+    from app.observability.edge_report import (
+        compute_trade_edge,
+        load_audit_events,
+        parse_closed_trades_with_exclusions,
+    )
+    from app.observability.edge_validation_gate import (
+        evaluate_edge_validation,
+        render_edge_validation,
+    )
+    from app.observability.evidence_window import CANONICAL_EDGE_SOURCES
+
+    events = load_audit_events(exec_audit_path)
+    trades, _exclusions = parse_closed_trades_with_exclusions(
+        events, implausible_move_threshold=implausible_threshold
+    )
+    canonical = [t for t in trades if (t.signal_source or "unknown") in CANONICAL_EDGE_SOURCES]
+    cm = CostModel()
+    net_bps = [compute_trade_edge(t, cm, venue=venue).net_bps for t in canonical]
+    verdict = evaluate_edge_validation(net_bps, trials=trials, min_n=min_n, confidence=confidence)
+    if as_json:
+        print(_json.dumps(verdict.to_dict(), indent=2))
+    else:
+        console.print(render_edge_validation(verdict))
+
+
 @trading_app.command("churn-report")
 def trading_churn_report(
     audit_path: str = typer.Option(
