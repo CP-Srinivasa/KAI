@@ -277,6 +277,64 @@ def test_compute_realized_by_asset_recent_trades(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_build_portfolio_snapshot_quarantines_60bps_fee_artifact(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """60-bps Mai-error-path fees go to total_fees_artifact_usd, NOT real total_fees_usd."""
+    audit_path = tmp_path / "paper_execution_audit.jsonl"
+    _write_audit(
+        audit_path,
+        [
+            {
+                "event_type": "order_filled",
+                "order_id": "ord_old",
+                "symbol": "BTC/USDT",
+                "side": "buy",
+                "quantity": 0.1,
+                "fill_price": 50000.0,
+                "fee_usd": 5.0,
+                "fee_bps_applied": 60.0,  # May error-path artifact
+                "filled_at": "2026-05-15T10:00:00+00:00",
+                "portfolio_cash": 9000.0,
+                "realized_pnl_usd": 0.0,
+            },
+            {
+                "event_type": "order_filled",
+                "order_id": "ord_new",
+                "symbol": "ETH/USDT",
+                "side": "buy",
+                "quantity": 1.0,
+                "fill_price": 3000.0,
+                "fee_usd": 2.0,
+                "fee_bps_applied": 10.0,  # realistic era
+                "filled_at": "2026-06-20T10:00:00+00:00",
+                "portfolio_cash": 6000.0,
+                "realized_pnl_usd": 0.0,
+            },
+        ],
+    )
+
+    async def fake_market_data_snapshot(**kwargs):  # noqa: ANN003
+        price = 50000.0 if kwargs["symbol"] == "BTC/USDT" else 3000.0
+        return _market_snapshot(
+            symbol=kwargs["symbol"], price=price, is_stale=False, available=True, error=None
+        )
+
+    monkeypatch.setattr(
+        "app.execution.portfolio_read.get_market_data_snapshot",
+        fake_market_data_snapshot,
+    )
+
+    snapshot = await build_portfolio_snapshot(audit_path=audit_path)
+    assert snapshot.total_fees_usd == pytest.approx(2.0)  # real only
+    assert snapshot.total_fees_artifact_usd == pytest.approx(5.0)  # 60-bps quarantined
+    d = snapshot.to_json_dict()
+    assert d["total_fees_usd"] == pytest.approx(2.0)
+    assert d["total_fees_artifact_usd"] == pytest.approx(5.0)
+
+
+@pytest.mark.asyncio
 async def test_build_portfolio_snapshot_marks_stale_market_data(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

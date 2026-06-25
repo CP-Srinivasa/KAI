@@ -17,6 +17,7 @@ from pathlib import Path
 
 from app.audit.stream_validation import PaperExecutionAuditStreamRow
 from app.core.file_lock import append_lock
+from app.core.symbol_guard import is_tradeable_symbol
 from app.execution.audit_replay import replay_paper_audit
 from app.execution.execution_protocol import executable_intent_to_paper_kwargs
 from app.execution.models import (
@@ -672,7 +673,31 @@ class PaperExecutionEngine:
         fee = cost * fee_pct_eff
         pnl = 0.0  # NEO-P-101-r2: per-trade pnl; sell-branch overwrites with netto
 
+        # 2026-06-25 DQ-Backstop: reject orders that would OPEN/ADD to an untradeable
+        # symbol (self-pair like USDT/USDT, stablecoin/stablecoin). Closes still pass
+        # so any pre-existing junk position can be wound down. Generator already skips
+        # these (Filter 0); this catches any other source.
+        _opens = (order.position_side == "long" and order.side == "buy") or (
+            order.position_side == "short" and order.side == "sell"
+        )
+        if _opens and not is_tradeable_symbol(order.symbol):
+            logger.warning(
+                "[PAPER] Rejecting open on untradeable symbol %s (self-pair/stablecoin pair)",
+                order.symbol,
+            )
+            return None
+
         if order.position_side == "long" and order.side == "buy":
+            # 2026-06-25 DQ-Fix: no long entry while a SHORT is open on the same
+            # symbol (symmetric to the short-sell guard below). Prevents the false
+            # blended avg that produced 4 ETH/BTC side-conflicts on 06-23/24.
+            existing_pos = self._portfolio.positions.get(order.symbol)
+            if existing_pos is not None and existing_pos.position_side != "long":
+                logger.warning(
+                    "[PAPER] Cannot open long %s — short position already open (side-conflict)",
+                    order.symbol,
+                )
+                return None
             if self._portfolio.cash < cost + fee:
                 logger.warning(
                     "[PAPER] Insufficient cash for order %s: need=%.2f have=%.2f",

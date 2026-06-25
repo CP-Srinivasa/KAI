@@ -34,10 +34,16 @@ class AuditReplayResult:
     realized_pnl_usd: float
     available: bool
     error: str | None = None
-    # 2026-06-25: kumulative Paper-Fees (Σ fee_usd über alle gültigen Fills).
+    # 2026-06-25: kumulative Paper-Fees (Σ fee_usd über gültige Fills).
     # Read-Pfad-Pendant zu PaperPortfolio.total_fees_usd (engine SSOT), damit das
     # Dashboard "Fees ausgegeben" ohne Live-Engine-Objekt ehrlich anzeigen kann.
+    # total_fees_usd = REALE Fees (10-bps-Ära). total_fees_artifact_usd = Mai-
+    # Artefakt: fee_bps_applied==60 war der "conservative worst-case error-path
+    # hard fallback" (cost_model.py), der bis ~2026-06-01 bei fast jedem Fill griff
+    # (Fee-Tabelle v1.0.0 löste nicht auf). Separat ausgewiesen statt in die reale
+    # Summe gemischt — sonst sieht die kumulative Fee wie 1/3 des Portfolios aus.
     total_fees_usd: float = 0.0
+    total_fees_artifact_usd: float = 0.0
     # 2026-05-12 Sprint C: persistente idempotency-Spur aus Audit damit
     # cross-process & cross-engine-instance Race-Conditions die zu doppelten
     # PaperFills geführt haben (Q/USDT 2026-05-09 Bug) nicht mehr durchkommen.
@@ -138,6 +144,7 @@ def replay_paper_audit(audit_path: Path) -> AuditReplayResult:
     cash_usd = 0.0
     realized_pnl_usd = 0.0
     total_fees_usd = 0.0
+    total_fees_artifact_usd = 0.0
     # 2026-05-25 Forensik-Fix: skipped events sammeln statt Replay abzubrechen.
     skipped: list[tuple[int, str]] = []
 
@@ -322,8 +329,14 @@ def replay_paper_audit(audit_path: Path) -> AuditReplayResult:
             continue
 
         # 2026-06-25: Fees über alle gültigen Fills summieren (Entry + Exit).
-        # Spiegelt PaperPortfolio.total_fees_usd der Live-Engine.
-        total_fees_usd += _coerce_float(payload.get("fee_usd")) or 0.0
+        # 60-bps-Fills = Mai-error-path-Artefakt (Tabelle v1.0.0) → separat, nicht
+        # in die reale Summe (sonst kumulativ ~1/3 des Portfolios). Spiegelt
+        # PaperPortfolio.total_fees_usd der Live-Engine (10-bps-Ära).
+        _fee = _coerce_float(payload.get("fee_usd")) or 0.0
+        if _coerce_float(payload.get("fee_bps_applied")) == 60.0:
+            total_fees_artifact_usd += _fee
+        else:
+            total_fees_usd += _fee
 
         stop_loss: float | None = None
         take_profit: float | None = None
@@ -486,6 +499,7 @@ def replay_paper_audit(audit_path: Path) -> AuditReplayResult:
         available=True,
         error=None,
         total_fees_usd=round(total_fees_usd, 8),
+        total_fees_artifact_usd=round(total_fees_artifact_usd, 8),
         filled_idempotency_keys=frozenset(filled_keys),
         skipped_events=tuple(skipped),
         lifecycle_history={
