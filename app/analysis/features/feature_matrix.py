@@ -35,6 +35,22 @@ from app.market_data.models import OHLCV
 # MACD-style fast/slow EMA periods (standard 12/26).
 EMA_FAST_PERIOD = 12
 EMA_SLOW_PERIOD = 26
+# Time-series-momentum lookback (bars) for the trailing-return feature.
+TRAIL_RETURN_WINDOW = 20
+
+
+def compute_trailing_returns(closes: list[float], window: int) -> list[float | None]:
+    """Causal trailing simple return over ``window`` bars: close[i]/close[i-window]-1.
+
+    None for the first ``window`` bars (no prior anchor) and where the anchor close
+    is non-positive. Pure; one value per input close.
+    """
+    out: list[float | None] = [None] * len(closes)
+    for i in range(window, len(closes)):
+        anchor = closes[i - window]
+        if anchor > 0:
+            out[i] = closes[i] / anchor - 1.0
+    return out
 
 
 @dataclass(frozen=True)
@@ -53,6 +69,10 @@ class FeatureRow:
     ema_26: float | None
     macd: float | None
     bollinger_z_20: float | None
+    # Time-series momentum: trailing simple return over TRAIL_RETURN_WINDOW bars
+    # (the canonical TS-momentum signal, Liu-Tsyvinski-Wu). None during warm-up.
+    # Defaulted so existing keyword/test constructors stay valid.
+    trail_return_20: float | None = None
 
 
 def build_feature_matrix(candles: list[OHLCV]) -> list[FeatureRow]:
@@ -79,6 +99,7 @@ def build_feature_matrix(candles: list[OHLCV]) -> list[FeatureRow]:
     ema_fast = compute_ema(closes, period=EMA_FAST_PERIOD)
     ema_slow = compute_ema(closes, period=EMA_SLOW_PERIOD)
     boll = compute_bollinger_z(closes, window=BOLLINGER_DEFAULT_WINDOW)
+    trail_ret = compute_trailing_returns(closes, TRAIL_RETURN_WINDOW)
 
     rows: list[FeatureRow] = []
     for i in range(n):
@@ -99,6 +120,7 @@ def build_feature_matrix(candles: list[OHLCV]) -> list[FeatureRow]:
                 ema_26=slow,
                 macd=macd,
                 bollinger_z_20=boll[i],
+                trail_return_20=trail_ret[i],
             )
         )
     return rows

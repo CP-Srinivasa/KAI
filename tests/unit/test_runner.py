@@ -123,3 +123,35 @@ def test_default_hypotheses_are_none_safe() -> None:
     )
     for _name, decide in default_hypotheses():
         assert decide(blank) == 0
+
+
+def test_ts_momentum_hypotheses_present_and_directional() -> None:
+    """The TS-momentum hypotheses are in the BH-FDR set and read trail_return_20:
+    long-only goes long on positive trailing return, the long/short variant flips."""
+    from app.analysis.features.feature_matrix import FeatureRow
+
+    deciders = dict(default_hypotheses())
+    assert "ts_momentum_long" in deciders and "ts_momentum" in deciders
+
+    def _row(trail: float | None) -> FeatureRow:
+        return FeatureRow(
+            timestamp_utc="t",
+            close=100.0,
+            log_return=None,
+            rsi_14=None,
+            adx_14=None,
+            plus_di_14=None,
+            minus_di_14=None,
+            realized_vol_24=None,
+            ema_12=None,
+            ema_26=None,
+            macd=None,
+            bollinger_z_20=None,
+            trail_return_20=trail,
+        )
+
+    assert deciders["ts_momentum_long"](_row(0.05)) == 1
+    assert deciders["ts_momentum_long"](_row(-0.05)) == 0  # long-only: no short
+    assert deciders["ts_momentum"](_row(0.05)) == 1
+    assert deciders["ts_momentum"](_row(-0.05)) == -1
+    assert deciders["ts_momentum"](_row(None)) == 0

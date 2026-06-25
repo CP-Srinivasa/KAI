@@ -80,6 +80,18 @@ def default_hypotheses() -> list[tuple[str, Decider]]:
             return 0
         return 1 if r.plus_di_14 > r.minus_di_14 else -1
 
+    # Time-series momentum (Liu-Tsyvinski-Wu): the most credible documented crypto
+    # factor. Trailing-return SIGN predicts the forward return. Added to the SAME
+    # BH-FDR set so the multiple-testing bar rises honestly (research doctrine,
+    # docs/research/edge_discovery_strategy_20260625.md) — no free pass.
+    def ts_momentum_long(r: FeatureRow) -> int:
+        return 1 if (r.trail_return_20 is not None and r.trail_return_20 > 0.0) else 0
+
+    def ts_momentum(r: FeatureRow) -> int:
+        if r.trail_return_20 is None:
+            return 0
+        return 1 if r.trail_return_20 > 0.0 else -1
+
     return [
         ("rsi_oversold_long", rsi_oversold_long),
         ("rsi_overbought_short", rsi_overbought_short),
@@ -87,6 +99,8 @@ def default_hypotheses() -> list[tuple[str, Decider]]:
         ("bollinger_revert_long", bollinger_revert_long),
         ("bollinger_revert_short", bollinger_revert_short),
         ("adx_trend", adx_trend),
+        ("ts_momentum_long", ts_momentum_long),
+        ("ts_momentum", ts_momentum),
     ]
 
 
