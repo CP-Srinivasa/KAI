@@ -318,6 +318,11 @@ class CohortEdge:
     net_bps_median: float = 0.0
     gross_bps_median: float = 0.0
     net_bps_mean_winsorized: float = 0.0
+    # Kosten-Wahrheit (2026-06-26): P(mu_gross > 0) on the PRE-cost return. Lets
+    # the panel say whether the *signal itself* (before fees) is plausibly
+    # positive — separating a signal problem from a pure cost problem. Defaulted
+    # so the positional empty-cohort construction stays valid.
+    p_mu_gross_positive: float | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -340,6 +345,9 @@ class CohortEdge:
             "avg_loss_bps": round(self.avg_loss_bps, 4),
             "p_mu_net_positive": (
                 None if self.p_mu_net_positive is None else round(self.p_mu_net_positive, 4)
+            ),
+            "p_mu_gross_positive": (
+                None if self.p_mu_gross_positive is None else round(self.p_mu_gross_positive, 4)
             ),
             "realized_pnl_usd_sum": round(self.realized_pnl_usd_sum, 4),
         }
@@ -392,6 +400,9 @@ def aggregate_cohort(
         avg_loss_bps=_mean(losses),
         p_mu_net_positive=bootstrap_p_mean_positive(
             net_list, n_resamples=bootstrap_n, min_sample=min_sample
+        ),
+        p_mu_gross_positive=bootstrap_p_mean_positive(
+            gross_list, n_resamples=bootstrap_n, min_sample=min_sample
         ),
         realized_pnl_usd_sum=sum(e.trade_pnl_usd for e in edges),
     )

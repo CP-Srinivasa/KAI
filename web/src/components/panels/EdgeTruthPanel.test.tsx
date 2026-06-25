@@ -36,6 +36,15 @@ const canonicalVerdict = {
   without_best_p: 0.0402,
   without_best_mean_bps: -37.3,
   bootstrap_ci_95: [-68.6, 24.7] as [number, number],
+  // Kosten-Wahrheit: Brutto-Edge auch ~0/negativ → Break-even-Kosten < Maker-
+  // Untergrenze → cost_reachable=false = SIGNAL-Problem, nicht Kostenproblem.
+  p_mu_gross_positive: 0.3,
+  gross_mean_bps: -4.4,
+  gross_median_bps: -65.7,
+  breakeven_roundtrip_bps: -4.4,
+  current_cost_roundtrip_bps: 22.3,
+  maker_floor_roundtrip_bps: 4.0,
+  cost_reachable: false,
   error: null,
 };
 
@@ -56,11 +65,33 @@ describe("EdgeTruthPanel", () => {
     expect(text).toContain("Stichproben-Gate n≥30 erreicht"); // Gate sichtbar
     expect(text).toContain("Ausreißer-Test"); // Robustheit sichtbar
     expect(text).toContain("4,0 %"); // without_best_p 0.0402 -> nicht ausreißer-getragen
+    // Kosten-Wahrheit: cost_reachable=false → Signalproblem, Execution-Alpha-Illusion benannt.
+    expect(text).toContain("Kosten-Wahrheit");
+    expect(text).toContain("Signalproblem");
+    expect(text).toContain("Execution-Alpha kann das nicht retten");
+    expect(text).not.toContain("Kostenproblem möglich"); // nicht der reachable-Zweig
     expect(text).toContain("Canonical");
     expect(text).toContain("157 Close");
     expect(text).toContain("14 korrupte Close");
     expect(text).not.toContain("kontaminiert"); // canonical = NICHT kontaminiert
     expect(text).not.toContain("reine Beweislage"); // Info-Feld eingeklappt
+  });
+
+  it("bei tragfähigem Brutto-Edge (cost_reachable) zeigt es 'Kostenproblem möglich', nicht Signalproblem", async () => {
+    fetchEdgeVerdict.mockResolvedValue({
+      ...canonicalVerdict,
+      p_mu_gross_positive: 0.97,
+      gross_mean_bps: 18.0,
+      gross_median_bps: 12.0,
+      breakeven_roundtrip_bps: 18.0,
+      cost_reachable: true,
+    });
+    const { container } = render(<EdgeTruthPanel />);
+    await screen.findByText(/Edge belastbar widerlegt/);
+    const text = container.textContent ?? "";
+    expect(text).toContain("Kostenproblem möglich");
+    expect(text).not.toContain("Signalproblem");
+    expect(text).not.toContain("Execution-Alpha kann das nicht retten");
   });
 
   it("unter dem Gate (n<30) sagt es 'Stichprobe zu klein', nicht widerlegt", async () => {

@@ -212,6 +212,14 @@ class WindowEdge:
     realized_pnl_usd_sum: float
     quarantine_excluded: QuarantineExclusion
     forward_return_status: dict[str, Any]
+    # Kosten-Wahrheit (2026-06-26): the PRE-cost (gross) edge + the modelled
+    # round-trip cost, so the panel can answer "is the loss a signal problem or
+    # a cost problem?". breakeven cost = gross_mean_bps. Defaulted to keep
+    # existing keyword/test constructors valid.
+    gross_mean_bps: float = 0.0
+    gross_median_bps: float = 0.0
+    p_mu_gross_positive: float | None = None
+    cost_roundtrip_bps: float = 0.0
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -241,6 +249,12 @@ class WindowEdge:
             "realized_pnl_usd_sum": round(self.realized_pnl_usd_sum, 4),
             "quarantine_excluded": self.quarantine_excluded.to_dict(),
             "forward_return_status": self.forward_return_status,
+            "gross_mean_bps": round(self.gross_mean_bps, 4),
+            "gross_median_bps": round(self.gross_median_bps, 4),
+            "p_mu_gross_positive": (
+                None if self.p_mu_gross_positive is None else round(self.p_mu_gross_positive, 4)
+            ),
+            "cost_roundtrip_bps": round(self.cost_roundtrip_bps, 4),
         }
 
 
@@ -659,6 +673,12 @@ def _build_edge(
         realized_pnl_usd_sum=overall.realized_pnl_usd_sum,
         quarantine_excluded=excluded,
         forward_return_status=forward_status,
+        gross_mean_bps=overall.gross_bps_mean,
+        gross_median_bps=overall.gross_bps_median,
+        p_mu_gross_positive=overall.p_mu_gross_positive,
+        cost_roundtrip_bps=(
+            overall.fee_bps_mean + overall.spread_bps_mean + overall.slippage_bps_mean
+        ),
     )
 
 
