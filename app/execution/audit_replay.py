@@ -17,6 +17,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 
+from app.core.symbol_guard import untradeable_reason
 from app.execution.models import (
     LifecycleTransition,
     OrderLifecycleState,
@@ -44,6 +45,13 @@ class AuditReplayResult:
     # Summe gemischt — sonst sieht die kumulative Fee wie 1/3 des Portfolios aus.
     total_fees_usd: float = 0.0
     total_fees_artifact_usd: float = 0.0
+    # 2026-06-25: Phantom-Fees = Fees auf nicht-handelbaren Symbolen (Self-Pair wie
+    # USDT/USDT, Stablecoin-Paar wie MIM/USDT). Diese Positionen waren nie ein echter
+    # gebührenpflichtiger Markt → ihre Fees sind fiktiv und gehören NICHT in die
+    # ehrliche "Fees ausgegeben"-Summe (Operator 2026-06-25). Separat ausgewiesen,
+    # nicht still gedroppt. Der symbol_guard-Open-Backstop verhindert künftige Opens.
+    total_fees_phantom_usd: float = 0.0
+    phantom_fills: int = 0
     # 2026-06-25: Fees + Fill-Zahl des heutigen Trading-Tags (UTC), damit der
     # Operator die Tages-Fee-Last und ihre Schwankung neben der Gesamtsumme sieht.
     # Nur gefüllt, wenn replay_paper_audit mit today_utc="YYYY-MM-DD" aufgerufen wird.
@@ -155,6 +163,8 @@ def replay_paper_audit(audit_path: Path, *, today_utc: str | None = None) -> Aud
     realized_pnl_usd = 0.0
     total_fees_usd = 0.0
     total_fees_artifact_usd = 0.0
+    total_fees_phantom_usd = 0.0
+    phantom_fills = 0
     total_fees_today_usd = 0.0
     fills_today = 0
     # 2026-05-25 Forensik-Fix: skipped events sammeln statt Replay abzubrechen.
@@ -350,14 +360,21 @@ def replay_paper_audit(audit_path: Path, *, today_utc: str | None = None) -> Aud
                 today_utc or ""
             )
         )
-        if _is_today:
-            fills_today += 1
-        if _coerce_float(payload.get("fee_bps_applied")) == 60.0:
+        # 2026-06-25: Phantom-Symbol (Self-Pair / Stablecoin-Paar) — nie ein echter
+        # gebührenpflichtiger Markt. Fee separat ausweisen, NICHT in die ehrliche
+        # Real-/Artefakt-/Heute-Summe oder fills_today mischen (Operator).
+        if untradeable_reason(symbol) is not None:
+            total_fees_phantom_usd += _fee
+            phantom_fills += 1
+        elif _coerce_float(payload.get("fee_bps_applied")) == 60.0:
+            if _is_today:
+                fills_today += 1
             total_fees_artifact_usd += _fee
         else:
-            total_fees_usd += _fee
             if _is_today:
+                fills_today += 1
                 total_fees_today_usd += _fee
+            total_fees_usd += _fee
 
         stop_loss: float | None = None
         take_profit: float | None = None
@@ -521,6 +538,8 @@ def replay_paper_audit(audit_path: Path, *, today_utc: str | None = None) -> Aud
         error=None,
         total_fees_usd=round(total_fees_usd, 8),
         total_fees_artifact_usd=round(total_fees_artifact_usd, 8),
+        total_fees_phantom_usd=round(total_fees_phantom_usd, 8),
+        phantom_fills=phantom_fills,
         total_fees_today_usd=round(total_fees_today_usd, 8),
         fills_today=fills_today,
         filled_idempotency_keys=frozenset(filled_keys),

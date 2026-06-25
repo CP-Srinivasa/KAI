@@ -166,6 +166,10 @@ class PortfolioSnapshot:
     total_fees_usd: float = 0.0
     # 2026-06-25: Mai-60-bps-error-path-Artefakt separat ausgewiesen (audit_replay).
     total_fees_artifact_usd: float = 0.0
+    # 2026-06-25: Phantom-Fees = Fees auf nicht-handelbaren Symbolen (Self-Pair /
+    # Stablecoin-Paar) — nie ein echter gebührenpflichtiger Markt, aus der ehrlichen
+    # Gesamtsumme ausgeschlossen, hier transparent ausgewiesen (Operator).
+    total_fees_phantom_usd: float = 0.0
     # 2026-06-25: Fees + Fill-Zahl des heutigen Trading-Tags (UTC) für die
     # Tages-Fee-Last neben der Gesamtsumme.
     total_fees_today_usd: float = 0.0
@@ -184,6 +188,7 @@ class PortfolioSnapshot:
             "total_unrealized_pnl_usd": self.total_unrealized_pnl_usd,
             "total_fees_usd": self.total_fees_usd,
             "total_fees_artifact_usd": self.total_fees_artifact_usd,
+            "total_fees_phantom_usd": self.total_fees_phantom_usd,
             "total_fees_today_usd": self.total_fees_today_usd,
             "fills_today": self.fills_today,
             "position_count": self.position_count,
@@ -372,6 +377,7 @@ def _build_snapshot_from_portfolio_state(
         total_unrealized_pnl_usd=0.0,
         total_fees_usd=round(total_fees_db, 8),
         total_fees_artifact_usd=0.0,
+        total_fees_phantom_usd=0.0,
         total_fees_today_usd=0.0,
         fills_today=0,
     )
@@ -642,6 +648,7 @@ async def build_portfolio_snapshot(
         total_unrealized_pnl_usd=total_unrealized,
         total_fees_usd=round(replay.total_fees_usd, 8),
         total_fees_artifact_usd=round(replay.total_fees_artifact_usd, 8),
+        total_fees_phantom_usd=round(replay.total_fees_phantom_usd, 8),
         total_fees_today_usd=round(replay.total_fees_today_usd, 8),
         fills_today=replay.fills_today,
     )

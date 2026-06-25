@@ -133,6 +133,11 @@ class ChurnReport:
     final_close_count: int
     partial_count: int
     excluded_count: int
+    # Phantom = nicht-handelbare Symbole (Self-Pair / Stablecoin-Paar): nie ein
+    # echter gebührenpflichtiger Markt → Fees fiktiv, aus allen ehrlichen Zahlen
+    # ausgeschlossen, hier transparent ausgewiesen (Operator 2026-06-25).
+    phantom_realization_count: int
+    phantom_fees_usd: float
     # USD-Ökonomie (echte Audit-Fees)
     gross_usd: float
     open_fees_usd: float
@@ -166,6 +171,8 @@ class ChurnReport:
             "final_close_count": self.final_close_count,
             "partial_count": self.partial_count,
             "excluded_count": self.excluded_count,
+            "phantom_realization_count": self.phantom_realization_count,
+            "phantom_fees_usd": round(self.phantom_fees_usd, 2),
             "gross_usd": round(self.gross_usd, 2),
             "open_fees_usd": round(self.open_fees_usd, 2),
             "close_fees_usd": round(self.close_fees_usd, 2),
@@ -201,6 +208,8 @@ def _empty(since: str | None, note: str) -> ChurnReport:
         final_close_count=0,
         partial_count=0,
         excluded_count=0,
+        phantom_realization_count=0,
+        phantom_fees_usd=0.0,
         gross_usd=0.0,
         open_fees_usd=0.0,
         close_fees_usd=0.0,
@@ -255,6 +264,8 @@ def build_churn_report(
     """
     # Lazy import: bayes_quarantine zieht (eager) portfolio_read → Zirkular-Risiko
     # (memory kai_bayes_circular_import_recalc). Hier lokal halten.
+    # symbol_guard ist dependency-frei (kein app-Import) → SSOT für „nicht handelbar".
+    from app.core.symbol_guard import untradeable_reason
     from app.learning.bayes_quarantine import quarantine_reason
 
     events = load_audit_events(audit_path)
@@ -282,6 +293,11 @@ def build_churn_report(
 
     gross_usd = open_fees = close_fees = 0.0
     realization_count = final_close = partial = excluded = 0
+    # Phantom = nicht-handelbares Symbol (Self-Pair / Stablecoin-Paar): nie ein
+    # echter gebührenpflichtiger Markt → Fees sind fiktiv und gehören NICHT in die
+    # ehrliche Rechnung (Operator 2026-06-25). Separat ausgewiesen, nicht still gedroppt.
+    phantom_realization_count = 0
+    phantom_fees = 0.0
     holds_min: list[float] = []
     reason_net: dict[str, float] = defaultdict(float)
     reason_count: dict[str, int] = defaultdict(int)
@@ -338,6 +354,13 @@ def build_churn_report(
         if matched <= 1e-9 or not in_window:
             continue  # Orphan (kontaminierte Legacy) oder außerhalb Fenster
 
+        # Phantom-Symbol (Self-Pair / Stablecoin-Paar): nie eine echte Börsen-
+        # Position → Open- + Close-Fee sind fiktiv. Aus der ehrlichen Rechnung
+        # ausschließen, aber transparent ausweisen (Alignment-Pop ist schon passiert).
+        if untradeable_reason(sym) is not None:
+            phantom_realization_count += 1
+            continue
+
         # Quarantäne + Implausibilitäts-Guard (Alignment-Pop ist schon passiert).
         if quarantine_reason(ev) is not None or (
             guard_active and abs(exit_px / entry - 1.0) > implausible_move_threshold
@@ -383,6 +406,14 @@ def build_churn_report(
         if day == "unknown" or (since is not None and day < since):
             continue
         fee = _f(ev.get("fee_usd")) or 0.0
+        # Phantom-Symbol-Fills (Self-Pair / Stablecoin-Paar): fiktive Fees → aus der
+        # ehrlichen Tages-Kadenz raus, separat als phantom_fees ausgewiesen. NUR aus
+        # order_filled summieren (das position_(partial_)closed-Event trägt dieselbe
+        # Close-Fee → sonst Doppelzählung, genau wie bei den realen Tages-Fees).
+        if untradeable_reason(str(ev.get("symbol", "?"))) is not None:
+            if et == "order_filled":
+                phantom_fees += fee
+            continue
         # Fee-SPEND nur aus order_filled (jeder Open- UND Close-Leg ist ein Fill);
         # das position_(partial_)closed-Event trägt DIESELBE Close-Fee → würde
         # sonst doppelt zählen. Realisierungen/Brutto kommen aus den Events.
@@ -430,6 +461,12 @@ def build_churn_report(
     )
     if gross_near_zero:
         note += " Brutto ≈ 0 → Fees sind der dominante Ergebnis-Faktor (Fee-Drag instabil)."
+    if phantom_realization_count or phantom_fees:
+        note += (
+            f" {phantom_realization_count} Phantom-Realisierung(en) (nicht-handelbare "
+            f"Self-Pair/Stablecoin-Paare) mit {phantom_fees:.2f} USD fiktiven Fees aus allen "
+            "Zahlen ausgeschlossen (nie eine echte gebührenpflichtige Position)."
+        )
 
     return ChurnReport(
         available=True,
@@ -441,6 +478,8 @@ def build_churn_report(
         final_close_count=final_close,
         partial_count=partial,
         excluded_count=excluded,
+        phantom_realization_count=phantom_realization_count,
+        phantom_fees_usd=phantom_fees,
         gross_usd=gross_usd,
         open_fees_usd=open_fees,
         close_fees_usd=close_fees,
@@ -482,6 +521,11 @@ def render_churn_report(r: ChurnReport) -> str:
         f"  (Open {r.open_fees_usd:.2f} + Close {r.close_fees_usd:.2f})"
     )
     lines.append(f"    NETTO (nach Fees) : {r.net_usd:+10.2f}")
+    if r.phantom_realization_count or r.phantom_fees_usd:
+        lines.append(
+            f"    Phantom (excl.)   : {r.phantom_fees_usd:10.2f}  fiktive Fees "
+            f"({r.phantom_realization_count} nicht-handelbare Self-Pair/Stablecoin-Realis.)"
+        )
     if r.fee_drag_pct is not None:
         lines.append(f"    Fee-Drag          : {r.fee_drag_pct:.0f}% der |Brutto|")
     else:

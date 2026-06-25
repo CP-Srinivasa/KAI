@@ -18,6 +18,11 @@ silently drops a valid exotic symbol.
 from __future__ import annotations
 
 # Stablecoins (and fiat USD) — a pair of two of these has no tradeable direction.
+# 2026-06-25: extended with further well-known USD-pegged stablecoins after a
+# ``MIM/USDT`` short (entry ~101.95, a phantom price for a ~$1 token) reached the
+# paper book and incurred a self-close fee. MIM (Magic Internet Money) and the
+# others below are USD-pegged → a pair of two of them is not a real directional
+# market, so the open is now blocked at source and its fees never accrue.
 STABLECOINS: frozenset[str] = frozenset(
     {
         "USDT",
@@ -32,6 +37,17 @@ STABLECOINS: frozenset[str] = frozenset(
         "USDE",
         "PYUSD",
         "USD",
+        # 2026-06-25 additions — all USD-pegged stablecoins:
+        "MIM",
+        "FRAX",
+        "LUSD",
+        "SUSD",
+        "USDS",
+        "GHO",
+        "CRVUSD",
+        "USD0",
+        "USDX",
+        "USDJ",
     }
 )
 

@@ -383,6 +383,54 @@ def test_replay_tracks_today_fees_and_fills(tmp_path: Path) -> None:
     assert r2.total_fees_today_usd == 0.0
 
 
+def test_replay_quarantines_phantom_untradeable_fees(tmp_path: Path) -> None:
+    """Operator 2026-06-25: Fees auf nicht-handelbaren Symbolen (Self-Pair /
+    Stablecoin-Paar wie MIM/USDT) sind fiktiv → in total_fees_phantom_usd, NICHT in
+    die ehrliche total_fees_usd."""
+    audit_path = tmp_path / "paper_execution_audit.jsonl"
+    _write_audit(
+        audit_path,
+        [
+            {
+                "event_type": "order_filled",
+                "order_id": "ord_real",
+                "symbol": "BTC/USDT",
+                "side": "buy",
+                "quantity": 0.1,
+                "fill_price": 50000.0,
+                "fee_usd": 2.0,
+                "fee_bps_applied": 10.0,
+                "timestamp_utc": "2026-06-20T09:00:00+00:00",
+                "filled_at": "2026-06-20T09:00:00+00:00",
+                "portfolio_cash": 9000.0,
+                "realized_pnl_usd": 0.0,
+            },
+            {
+                "event_type": "order_filled",
+                "order_id": "ord_phantom",
+                "symbol": "MIM/USDT",  # MIM is USD-pegged -> stablecoin pair = phantom
+                "side": "sell",
+                "quantity": 10.0,
+                "fill_price": 101.95,
+                "fee_usd": 1.54,
+                "fee_bps_applied": 10.0,
+                "timestamp_utc": "2026-06-20T10:00:00+00:00",
+                "filled_at": "2026-06-20T10:00:00+00:00",
+                "portfolio_cash": 9000.0,
+                "realized_pnl_usd": 0.0,
+            },
+        ],
+    )
+
+    r = replay_paper_audit(audit_path, today_utc="2026-06-20")
+    assert r.total_fees_usd == pytest.approx(2.0)  # only the real BTC fill
+    assert r.total_fees_phantom_usd == pytest.approx(1.54)  # MIM/USDT excluded
+    assert r.phantom_fills == 1
+    assert r.fills_today == 1  # phantom fill NOT counted in honest today-count
+    d = r  # snapshot to_json_dict surfaces it
+    assert d.total_fees_phantom_usd == pytest.approx(1.54)
+
+
 @pytest.mark.asyncio
 async def test_build_portfolio_snapshot_marks_stale_market_data(
     tmp_path: Path,
