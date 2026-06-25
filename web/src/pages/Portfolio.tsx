@@ -24,6 +24,7 @@ import { PremiumSignalTrail } from "@/components/panels/PremiumSignalTrail";
 import { PremiumRuntimeBanner } from "@/components/panels/PremiumRuntimeBanner";
 import { DiversificationPanel } from "@/components/panels/DiversificationPanel";
 import { EdgeTruthPanel } from "@/components/panels/EdgeTruthPanel";
+import { ChurnPanel } from "@/components/panels/ChurnPanel";
 import { Waterfall } from "@/components/viz/Waterfall";
 import { realizedToWaterfall } from "@/lib/pnlWaterfall";
 import { useCurrency } from "@/state/CurrencyProvider";
@@ -568,6 +569,11 @@ export function PortfolioPage() {
           (canonical vs voller Stream, Quarantäne-Transparenz) — schließt die
           Lücke aus der Edge-Epochen-Forensik (canonical-Edge lag nur in der CLI). */}
       <EdgeTruthPanel />
+
+      {/* /goal 2026-06-25 Churn-Frage: Fee-Effizienz sicht-/nachvollziehbar —
+          Brutto-vor-Fees vs Netto-nach-Fees, Fee-Drag, Fees/Handelstag-Trend.
+          Reine Messung (kein Min-Hold/Frequenz-Gate; Daten widerlegten beides). */}
+      <ChurnPanel />
 
       {/* 2026-05-25 Forensik-Patch: PreparedPanel ersetzt durch echte Visualisierung.
           Endpoint GET /operator/portfolio/realized-by-asset existiert jetzt,

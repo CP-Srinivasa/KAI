@@ -83,6 +83,11 @@ _quality_cache: dict[str, Any] = {"at": 0.0, "payload": None}
 _EDGE_WINDOW_CACHE_TTL_S = 60.0
 _edge_window_cache: dict[str, dict[str, Any]] = {}
 
+# Churn/Fee-Effizienz-Panel parst den (großen) Execution-Stream → cachen wie die
+# Edge-Truth (60 s), damit der 60 s-Poll nicht jedes Tick re-parst. Keyed by since.
+_CHURN_CACHE_TTL_S = 60.0
+_churn_cache: dict[str, dict[str, Any]] = {}
+
 # Source-by-doc map (for the active-precision legacy split). Loading it means
 # one DB query over directional doc-ids — not hot-path safe without a cache.
 # 5 min TTL: docs are rarely re-classified, and the map is additive.
@@ -1107,6 +1112,38 @@ async def dashboard_edge_window_api(canonical: bool = True) -> JSONResponse:
         logger.warning("dashboard_edge_window_failed", exc_info=True)
         return JSONResponse(
             content={"available": False, "canonical": canonical, "error": str(exc)},
+            headers={"Cache-Control": "no-store, max-age=0"},
+        )
+
+
+@router.get("/dashboard/api/churn", tags=["dashboard"])
+async def dashboard_churn_api(since: str | None = None) -> JSONResponse:
+    """Churn / Fee-Effizienz-Panel — Brutto-vor-Fees vs Netto-nach-Fees + Fee-Drag.
+
+    READ-ONLY Mess-Artefakt (Operator /goal 2026-06-25), ändert KEIN
+    Handelsverhalten. Default-Fenster = ab der sauberen Epoche
+    (``CONTAMINATION_CUTOFF_DATE``), damit die Mai-Canary-Korruption die USD-
+    Zahlen nicht verfälscht; ``?since=YYYY-MM-DD`` überschreibt das. Echte
+    Audit-Fees inkl. ``position_partial_closed``. Fail-closed.
+    """
+    from app.observability.churn_report import CONTAMINATION_CUTOFF_DATE, build_churn_report
+
+    window_since = since or CONTAMINATION_CUTOFF_DATE
+    cache_now = time.monotonic()
+    cached = _churn_cache.get(window_since)
+    if cached is not None and (cache_now - cached["at"]) < _CHURN_CACHE_TTL_S:
+        return JSONResponse(
+            content=cached["payload"], headers={"Cache-Control": "no-store, max-age=0"}
+        )
+    try:
+        report = build_churn_report(str(_PAPER_EXECUTION_AUDIT), since=window_since)
+        payload = report.to_dict()
+        _churn_cache[window_since] = {"at": cache_now, "payload": payload}
+        return JSONResponse(content=payload, headers={"Cache-Control": "no-store, max-age=0"})
+    except Exception as exc:  # noqa: BLE001 — endpoint must never 500 the dashboard
+        logger.warning("dashboard_churn_failed", exc_info=True)
+        return JSONResponse(
+            content={"available": False, "since": window_since, "error": str(exc)},
             headers={"Cache-Control": "no-store, max-age=0"},
         )
 

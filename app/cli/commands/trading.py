@@ -552,6 +552,50 @@ def trading_canonical_edge(
         raise typer.Exit(2)
 
 
+@trading_app.command("churn-report")
+def trading_churn_report(
+    audit_path: str = typer.Option(
+        "artifacts/paper_execution_audit.jsonl",
+        "--audit-path",
+        help="Append-only paper execution audit JSONL path",
+    ),
+    since: str = typer.Option(
+        "",
+        "--since",
+        help="Window start as ISO date YYYY-MM-DD (empty = full stream)",
+    ),
+    implausible_threshold: float = typer.Option(
+        0.40,
+        "--implausible-threshold",
+        help="Exclude closes with |exit/entry-1| above this as off-market (0=off)",
+    ),
+    as_json: bool = typer.Option(False, "--json", help="Emit JSON instead of the table"),
+) -> None:
+    """Churn / Fee-Effizienz (Operator /goal 2026-06-25) — gross-vs-net + Fee-Drag.
+
+    READ-ONLY Mess-Artefakt, ändert KEIN Handelsverhalten. Zeigt Brutto-vor-Fees
+    gegen Netto-nach-Fees, den Fee-Drag und die Fees/Handelstag-Kadenz aus den
+    ECHTEN Audit-Fees (nicht modelliert), inkl. ``position_partial_closed``
+    (TP-Tiers). Haltedauer + Open-Fee je Round-Trip via zeitsortiertem FIFO;
+    korrupte Closes per Quarantäne-Signatur ausgeschlossen.
+    """
+    import json as _json
+
+    from app.observability.churn_report import build_churn_report, render_churn_report
+
+    report = build_churn_report(
+        audit_path,
+        since=since or None,
+        implausible_move_threshold=implausible_threshold,
+    )
+    if as_json:
+        print(_json.dumps(report.to_dict(), indent=2))
+    else:
+        console.print(render_churn_report(report))
+    if not report.available:
+        raise typer.Exit(1)
+
+
 @trading_app.command("paper-portfolio-snapshot")
 def trading_paper_portfolio_snapshot(
     audit_path: str = typer.Option(

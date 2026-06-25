@@ -1461,3 +1461,87 @@ def test_ln_channels_api_disabled_shape() -> None:
     assert data["total_local_sat"] == 0
     assert data["total_remote_sat"] == 0
     assert "generated_at" in data
+
+
+def test_churn_api_reports_gross_net_with_partials(tmp_path: Path) -> None:
+    """Churn-Endpoint (/goal 2026-06-25): Brutto-vor-Fees vs Netto-nach-Fees aus
+    ECHTEN Audit-Fees inkl. position_partial_closed (qty=None → arithmetisch
+    abgeleitet). Read-only, fail-closed, kein Handelseingriff."""
+    (tmp_path / "paper_execution_audit.jsonl").write_text(
+        "\n".join(
+            json.dumps(r)
+            for r in [
+                {
+                    "event_type": "order_filled",
+                    "symbol": "AAA/USDT",
+                    "side": "buy",
+                    "position_side": "long",
+                    "filled_quantity": 100,
+                    "fee_usd": 10.0,
+                    "filled_at": "2026-06-12T10:00:00+00:00",
+                },
+                # Partial TP-Tier: KEIN quantity (reale Struktur)
+                {
+                    "event_type": "position_partial_closed",
+                    "symbol": "AAA/USDT",
+                    "position_side": "long",
+                    "entry_price": 1.0,
+                    "exit_price": 1.1,
+                    "quantity": None,
+                    "fee_usd": 1.0,
+                    "trade_pnl_usd": 3.0,
+                    "reason": "tp_tier",
+                    "timestamp_utc": "2026-06-12T11:00:00+00:00",
+                },
+                {
+                    "event_type": "order_filled",
+                    "symbol": "AAA/USDT",
+                    "side": "sell",
+                    "position_side": "long",
+                    "filled_quantity": 40,
+                    "fee_usd": 1.0,
+                    "pnl_usd": 3.0,
+                    "filled_at": "2026-06-12T11:00:00+00:00",
+                },
+                {
+                    "event_type": "order_filled",
+                    "symbol": "AAA/USDT",
+                    "side": "sell",
+                    "position_side": "long",
+                    "filled_quantity": 60,
+                    "fee_usd": 1.5,
+                    "pnl_usd": 10.5,
+                    "filled_at": "2026-06-12T13:00:00+00:00",
+                },
+                {
+                    "event_type": "position_closed",
+                    "symbol": "AAA/USDT",
+                    "position_side": "long",
+                    "entry_price": 1.0,
+                    "exit_price": 1.2,
+                    "quantity": 60,
+                    "fee_usd": 1.5,
+                    "trade_pnl_usd": 10.5,
+                    "reason": "take",
+                    "timestamp_utc": "2026-06-12T13:00:00+00:00",
+                },
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    dashboard_mod._churn_cache.clear()
+    app = _make_app()
+    with _patch_artifacts(tmp_path):
+        with TestClient(app) as client:
+            r = client.get("/dashboard/api/churn?since=2026-06-11")
+
+    assert r.status_code == 200
+    data = r.json()
+    assert data["available"] is True
+    assert data["realization_count"] == 2  # Partial + finaler Close
+    assert data["partial_count"] == 1
+    assert data["gross_usd"] == 16.0  # (3+1) + (10.5+1.5)
+    assert data["round_trip_fees_usd"] == 12.5  # open 10 + close 2.5
+    assert data["net_usd"] == 3.5  # gross - rt
