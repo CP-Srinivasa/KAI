@@ -158,6 +158,12 @@ class PortfolioSnapshot:
     error: str | None = None
     execution_enabled: bool = False
     write_back_allowed: bool = False
+    # 2026-06-25: explizite Echtzeit-Wahrheit für das Portfolio-Panel.
+    # total_unrealized_pnl_usd = Σ vorzeichen-korrektes unrealized (long: price-entry,
+    # short: entry-price). total_fees_usd = kumulative Paper-Fees (Entry+Exit).
+    # total_equity_usd ist jetzt short-aware (cash + long_mv - short_mv).
+    total_unrealized_pnl_usd: float = 0.0
+    total_fees_usd: float = 0.0
 
     def to_json_dict(self) -> dict[str, object]:
         return {
@@ -169,6 +175,8 @@ class PortfolioSnapshot:
             "realized_pnl_usd": self.realized_pnl_usd,
             "total_market_value_usd": self.total_market_value_usd,
             "total_equity_usd": self.total_equity_usd,
+            "total_unrealized_pnl_usd": self.total_unrealized_pnl_usd,
+            "total_fees_usd": self.total_fees_usd,
             "position_count": self.position_count,
             "positions": [position.to_json_dict() for position in self.positions],
             "exposure_summary": self.exposure_summary.to_json_dict(),
@@ -194,6 +202,19 @@ def _coerce_str(value: object) -> str | None:
     return None
 
 
+def _signed_market_value(position: PositionSummary) -> float:
+    """Equity contribution of a position's market value: + for long, - for short.
+
+    ``market_value_usd`` is stored gross-positive per position; a short position is a
+    liability and contributes NEGATIVELY to equity / net exposure. Mirrors the engine
+    SSOT ``PaperPortfolio.total_equity`` (app/execution/models.py:176-184). Without this
+    the read path double-counted shorts (cash already holds the sale proceeds AND the
+    position was added positively) → the 2026-06 equity-swing bug (20k→60k→20k).
+    """
+    mv = position.market_value_usd or 0.0
+    return -mv if position.position_side == "short" else mv
+
+
 def _replay_paper_audit(audit_path: Path) -> AuditReplayResult:
     return replay_paper_audit(audit_path)
 
@@ -203,7 +224,10 @@ def _build_exposure_summary(positions: tuple[PositionSummary, ...]) -> ExposureS
     stale_count = sum(1 for position in positions if position.market_data_is_stale)
     unavailable_count = sum(1 for position in positions if not position.market_data_available)
     gross_exposure = sum(abs(position.market_value_usd or 0.0) for position in priced_positions)
-    net_exposure = sum(position.market_value_usd or 0.0 for position in priced_positions)
+    # 2026-06-25 short-aware: net exposure = long market value MINUS short market
+    # value. market_value_usd is stored gross-positive per position, so the sign is
+    # applied here from position_side. Fixes the "always long" directional bias.
+    net_exposure = sum(_signed_market_value(position) for position in priced_positions)
 
     largest_symbol: str | None = None
     largest_weight: float | None = None
@@ -311,7 +335,14 @@ def _build_snapshot_from_portfolio_state(
         )
 
     exposure = _build_exposure_summary(tuple(position_summaries))
+    # Gross entry-basis value (display) vs. short-aware NET for equity. No live
+    # price in the DB path → entry basis; short positions still subtract.
     total_market_value = sum(p.quantity * p.avg_entry_price for p in position_summaries)
+    net_entry_value = sum(
+        (-1.0 if p.position_side == "short" else 1.0) * p.quantity * p.avg_entry_price
+        for p in position_summaries
+    )
+    total_fees_db = float(raw.get("total_fees_usd") or 0.0) if isinstance(raw, dict) else 0.0
 
     return PortfolioSnapshot(
         generated_at_utc=generated_at,
@@ -320,7 +351,7 @@ def _build_snapshot_from_portfolio_state(
         cash_usd=cash_usd,
         realized_pnl_usd=realized_pnl_usd,
         total_market_value_usd=round(total_market_value, 8),
-        total_equity_usd=round(cash_usd + total_market_value, 8),
+        total_equity_usd=round(cash_usd + net_entry_value, 8),
         position_count=len(position_summaries),
         positions=tuple(position_summaries),
         exposure_summary=exposure,
@@ -328,6 +359,9 @@ def _build_snapshot_from_portfolio_state(
         error=None,
         execution_enabled=False,
         write_back_allowed=False,
+        # DB path has no live price → unrealized not computable here (stays 0).
+        total_unrealized_pnl_usd=0.0,
+        total_fees_usd=round(total_fees_db, 8),
     )
 
 
@@ -504,11 +538,16 @@ async def build_portfolio_snapshot(
         market_value = (
             round(position.quantity * market_price, 8) if market_price is not None else None
         )
-        unrealized_pnl = (
-            round((market_price - position.avg_entry_price) * position.quantity, 8)
-            if market_price is not None
-            else None
-        )
+        # 2026-06-25 short-aware unrealized PnL (mirrors PaperPosition.unrealized_pnl,
+        # app/execution/models.py:136-139): long profits when price rises, short when
+        # price falls. Previously always (price-entry) → shorts in profit were shown
+        # as a loss (red) and the equity swing bug double-counted them.
+        if market_price is None:
+            unrealized_pnl = None
+        elif position.position_side == "short":
+            unrealized_pnl = round((position.avg_entry_price - market_price) * position.quantity, 8)
+        else:
+            unrealized_pnl = round((market_price - position.avg_entry_price) * position.quantity, 8)
 
         # C-Fix 2026-06-13: display-only fallback for unlistable symbols. The
         # gate-relevant fields above stay None when there is no live price; this
@@ -555,11 +594,23 @@ async def build_portfolio_snapshot(
 
     positions_tuple = tuple(position_summaries)
     exposure_summary = _build_exposure_summary(positions_tuple)
+    # total_market_value_usd stays GROSS (Σ |market value|) for the "in Position"
+    # display + daily-briefing. Equity uses the short-aware SIGNED sum so a short is
+    # a liability, not a positive asset (the 2026-06 equity-swing fix). For an
+    # all-long book gross == net, so Equity = Cash + In-Position still holds.
     total_market_value = round(
         sum(position.market_value_usd or 0.0 for position in positions_tuple),
         8,
     )
-    total_equity = round(replay.cash_usd + total_market_value, 8)
+    net_market_value = round(
+        sum(_signed_market_value(position) for position in positions_tuple),
+        8,
+    )
+    total_unrealized = round(
+        sum(position.unrealized_pnl_usd or 0.0 for position in positions_tuple),
+        8,
+    )
+    total_equity = round(replay.cash_usd + net_market_value, 8)
     has_unpriced_positions = bool(positions_tuple) and exposure_summary.priced_position_count == 0
 
     return PortfolioSnapshot(
@@ -575,6 +626,8 @@ async def build_portfolio_snapshot(
         exposure_summary=exposure_summary,
         available=not has_unpriced_positions,
         error=("market_data_unavailable_for_open_positions" if has_unpriced_positions else None),
+        total_unrealized_pnl_usd=total_unrealized,
+        total_fees_usd=round(replay.total_fees_usd, 8),
     )
 
 
@@ -648,6 +701,10 @@ def compute_realized_by_asset(
         },
         "top_performer": None,
         "worst_performer": None,
+        # 2026-06-25: chronologische Liste der jüngsten Einzel-Trades (Operator-
+        # Wunsch "Übersicht der letzten Trades"). Vorzeichen-korrekt (trade_pnl_usd
+        # aus dem Engine-Close-Event), quarantänierte Closes ausgeschlossen.
+        "recent_trades": [],
         "available": False,
         "error": None,
         "invalid_lines": [],
@@ -664,6 +721,7 @@ def compute_realized_by_asset(
     last_event_ts: str | None = None
     full_close_total = 0
     partial_close_total = 0
+    recent_trades: list[dict[str, object]] = []
 
     try:
         raw = audit_path.read_text(encoding="utf-8")
@@ -823,6 +881,25 @@ def compute_realized_by_asset(
         if isinstance(ts, str) and ts and (prev_last is None or ts > str(prev_last)):
             bucket["last_close_utc"] = ts
 
+        # 2026-06-25: Einzel-Trade für die "letzte Trades"-Liste. trade_pnl_usd (pnl)
+        # ist bereits vorzeichen-korrekt aus dem Engine-Close-Event; fee separat.
+        entry_p = d.get("entry_price")
+        exit_p = d.get("exit_price") or d.get("fill_price")
+        recent_trades.append(
+            {
+                "symbol": sym,
+                "position_side": str(d.get("position_side") or "long"),
+                "trade_pnl_usd": round(pnl, 4),
+                "fee_usd": round(fee, 4),
+                "entry_price": float(entry_p) if isinstance(entry_p, (int, float)) else None,
+                "exit_price": float(exit_p) if isinstance(exit_p, (int, float)) else None,
+                "closed_at_utc": ts if isinstance(ts, str) else None,
+                "source": sig_source_str or None,
+                "is_partial": ev == "position_partial_closed",
+                "win": pnl > 0,
+            }
+        )
+
     by_asset: list[dict[str, object]] = []
     total_pnl = 0.0
     total_trades = 0
@@ -860,6 +937,9 @@ def compute_realized_by_asset(
     }
     result["top_performer"] = by_asset[0] if by_asset else None
     result["worst_performer"] = by_asset[-1] if by_asset else None
+    # Letzte Trades chronologisch absteigend, auf 20 begrenzt (Übersicht, kein Audit).
+    recent_trades.sort(key=lambda r: str(r.get("closed_at_utc") or ""), reverse=True)
+    result["recent_trades"] = recent_trades[:20]
     result["audit_last_event_utc"] = last_event_ts
     result["available"] = True
     result["invalid_lines"] = invalid

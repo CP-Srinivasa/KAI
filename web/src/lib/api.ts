@@ -1231,6 +1231,10 @@ export type PortfolioSnapshot = {
   realized_pnl_usd: number;
   total_market_value_usd: number;
   total_equity_usd: number;
+  // 2026-06-25: Echtzeit-Aufschlüsselung. total_unrealized_pnl_usd ist vorzeichen-
+  // korrekt (long+short); total_fees_usd = kumulative Paper-Fees (Entry+Exit).
+  total_unrealized_pnl_usd: number;
+  total_fees_usd: number;
   position_count: number;
   positions: PaperPosition[];
 };
@@ -1501,6 +1505,8 @@ export async function fetchPortfolioSnapshot(signal?: AbortSignal): Promise<Port
     realized_pnl_usd: toNumOr(raw.realized_pnl_usd),
     total_market_value_usd: toNumOr(raw.total_market_value_usd),
     total_equity_usd: toNumOr(raw.total_equity_usd),
+    total_unrealized_pnl_usd: toNumOr(raw.total_unrealized_pnl_usd),
+    total_fees_usd: toNumOr(raw.total_fees_usd),
     position_count: toNumOr(raw.position_count),
     positions: (raw.positions ?? []).map(normalizePaperPosition),
   };
@@ -1541,6 +1547,20 @@ export type RealizedByAssetEntry = {
   last_close_utc: string | null;
 };
 
+// 2026-06-25: Einzel-Trade in der "letzte Trades"-Liste (Operator-Wunsch).
+export type RecentTrade = {
+  symbol: string;
+  position_side: "long" | "short" | string;
+  trade_pnl_usd: number;
+  fee_usd: number;
+  entry_price: number | null;
+  exit_price: number | null;
+  closed_at_utc: string | null;
+  source: string | null;
+  is_partial: boolean;
+  win: boolean;
+};
+
 export type RealizedByAssetResponse = {
   as_of_utc: string;
   audit_path: string;
@@ -1566,6 +1586,7 @@ export type RealizedByAssetResponse = {
   };
   top_performer: RealizedByAssetEntry | null;
   worst_performer: RealizedByAssetEntry | null;
+  recent_trades?: RecentTrade[];
   available: boolean;
   error: string | null;
   invalid_lines: [number, string][];
