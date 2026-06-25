@@ -358,6 +358,9 @@ export function PortfolioPage() {
   // Mai-60-bps-error-path-Artefakt (Tabelle v1.0.0, bis ~01.06.) — separat,
   // damit die reale 10-bps-Fee nicht wie 1/3 des Portfolios aussieht.
   const feesArtifact = snap.state === "ready" ? snap.data.total_fees_artifact_usd ?? 0 : 0;
+  // Phantom-Fees: fiktive Fees auf nicht-handelbaren Symbolen (Self-Pair /
+  // Stablecoin-Paar) — nie ein echter gebührenpflichtiger Markt, ausgeschlossen.
+  const feesPhantom = snap.state === "ready" ? snap.data.total_fees_phantom_usd ?? 0 : 0;
   // Tages-Fee-Last (heute, UTC) + Fill-Zahl — zeigt, wie viel ein Trading-Tag
   // an Fees verschlingt und ob es stark variiert.
   const feesToday = snap.state === "ready" ? snap.data.total_fees_today_usd ?? 0 : 0;
@@ -480,9 +483,13 @@ export function PortfolioPage() {
               label="Fees ausgegeben"
               value={fmt$(feesSpent)}
               sub={
-                feesArtifact > 0
-                  ? `gesamt · +${fmt$(feesArtifact)} Mai-60bps-Artefakt ausgeschl.`
-                  : "gesamt (Entry+Exit)"
+                [
+                  "gesamt (Entry+Exit)",
+                  feesArtifact > 0 ? `+${fmt$(feesArtifact)} Mai-60bps-Artefakt ausgeschl.` : "",
+                  feesPhantom > 0 ? `+${fmt$(feesPhantom)} Phantom (nicht handelbar) ausgeschl.` : "",
+                ]
+                  .filter(Boolean)
+                  .join(" · ")
               }
             />
             <BucketLabel

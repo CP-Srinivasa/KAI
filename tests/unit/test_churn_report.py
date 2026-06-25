@@ -195,3 +195,28 @@ def test_gross_near_zero_fee_drag_none(tmp_path: Path) -> None:
     assert r.gross_near_zero
     assert r.fee_drag_pct is None
     assert r.net_usd == -10.0  # nur die Open-Fee
+
+
+def test_phantom_untradeable_fees_excluded(tmp_path: Path) -> None:
+    """Operator 2026-06-25: Fees auf nicht-handelbaren Symbolen (Self-Pair /
+    Stablecoin-Paar) sind fiktiv (nie eine echte gebührenpflichtige Position) und
+    müssen aus der ehrlichen Rechnung raus — separat als phantom ausgewiesen."""
+    events = [
+        # echter Trade (zählt)
+        _open("AAA/USDT", 100, 10.0, "2026-06-12T10:00:00+00:00"),
+        _close_leg("AAA/USDT", 100, 2.0, 18.0, "2026-06-12T12:00:00+00:00"),
+        _close("AAA/USDT", 1.0, 1.2, 100, 2.0, 18.0, "2026-06-12T12:00:00+00:00"),
+        # Self-Pair USDT/USDT (Phantom): open-leg 5 + close-leg 2 = 7 fiktive Fees
+        _open("USDT/USDT", 100, 5.0, "2026-06-12T10:00:00+00:00"),
+        _close_leg("USDT/USDT", 100, 2.0, 8.0, "2026-06-12T12:30:00+00:00"),
+        _close("USDT/USDT", 1.0, 1.1, 100, 2.0, 8.0, "2026-06-12T12:30:00+00:00", reason="manual"),
+    ]
+    r = build_churn_report(_write(tmp_path, events))
+    assert r.realization_count == 1  # nur AAA
+    assert r.phantom_realization_count == 1
+    assert round(r.phantom_fees_usd, 6) == 7.0  # nur order_filled-Legs, kein Event-Doppel
+    assert round(r.gross_usd, 6) == 20.0  # AAA 18+2; USDT/USDT raus
+    assert round(r.round_trip_fees_usd, 6) == 12.0  # AAA open 10 + close 2; phantom raus
+    # Tages-Fee-Kadenz enthält die Phantom-Fees NICHT
+    day = {d.date: d for d in r.per_day}["2026-06-12"]
+    assert day.fee_spend_usd == 12.0  # nur AAA open10+close2, USDT/USDT-7 ausgeschlossen

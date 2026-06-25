@@ -32,6 +32,8 @@ const report = {
   final_close_count: 98,
   partial_count: 18,
   excluded_count: 0,
+  phantom_realization_count: 2,
+  phantom_fees_usd: 5.35,
   gross_usd: 153.0,
   open_fees_usd: 477.66,
   close_fees_usd: 476.86,
@@ -73,6 +75,8 @@ describe("ChurnPanel", () => {
     expect(text).toContain("116 Realisierungen"); // Partials mitgezählt (S-001)
     expect(text).toContain("partielle 18");
     expect(text).toContain("stop"); // Exit-Grund-Split
+    // Phantom-Fee-Transparenz (Operator 2026-06-25): nicht-handelbare ausgeschlossen
+    expect(text).toContain("fiktive Fees auf 2 nicht-handelbaren");
   });
 
   it("Info-Feld eingeklappt, öffnet die Erklärung inkl. Paper-Caveat auf Klick", async () => {

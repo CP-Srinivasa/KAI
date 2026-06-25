@@ -120,6 +120,12 @@ function PortfolioTile() {
             value={fmt(q.data.total_fees_today_usd ?? 0)}
             tone="neg"
           />
+          {(q.data.total_fees_phantom_usd ?? 0) > 0 && (
+            <p className="text-2xs text-fg-subtle">
+              + {fmt(q.data.total_fees_phantom_usd ?? 0)} fiktive Fees auf nicht-handelbaren Symbolen
+              (Self-Pair/Stablecoin) ausgeschlossen
+            </p>
+          )}
           <Metric label="Offene Positionen" value={String(q.data.position_count)} />
           <p className="text-2xs text-fg-subtle mt-1">Live aus /operator/portfolio-snapshot</p>
         </div>

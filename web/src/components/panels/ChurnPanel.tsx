@@ -176,6 +176,13 @@ export function ChurnPanel() {
           Haltedauer median {fmtMin(d.hold_minutes_median)} · &lt;1h{" "}
           {d.hold_under_1h_pct?.toFixed(0) ?? "—"}%.
         </div>
+        {d.phantom_fees_usd > 0 && (
+          <div className="text-warn">
+            {fmt(d.phantom_fees_usd)} fiktive Fees auf {d.phantom_realization_count} nicht-handelbaren
+            Position(en) (Self-Pair / Stablecoin-Paar) ausgeschlossen — nie ein echter
+            gebührenpflichtiger Markt.
+          </div>
+        )}
         {d.by_reason.length > 0 && (
           <div className="flex flex-wrap gap-x-3 gap-y-0.5">
             {d.by_reason.map((r) => (

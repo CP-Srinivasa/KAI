@@ -217,6 +217,10 @@ export type ChurnReport = {
   final_close_count: number;
   partial_count: number;
   excluded_count: number;
+  /** Nicht-handelbare Self-Pair/Stablecoin-Realisierungen (fiktiv, ausgeschlossen). */
+  phantom_realization_count: number;
+  /** Fiktive Fees auf nicht-handelbaren Symbolen — aus allen Zahlen ausgeschlossen. */
+  phantom_fees_usd: number;
   gross_usd: number;
   open_fees_usd: number;
   close_fees_usd: number;
@@ -1287,6 +1291,9 @@ export type PortfolioSnapshot = {
   total_unrealized_pnl_usd: number;
   total_fees_usd: number;
   total_fees_artifact_usd?: number;
+  // 2026-06-25: Phantom-Fees = fiktive Fees auf nicht-handelbaren Symbolen
+  // (Self-Pair / Stablecoin-Paar), aus der ehrlichen Gesamtsumme ausgeschlossen.
+  total_fees_phantom_usd?: number;
   // 2026-06-25: Fees + Fill-Zahl des heutigen Trading-Tags (UTC) zur Tages-Fee-Last.
   total_fees_today_usd?: number;
   fills_today?: number;
@@ -1563,6 +1570,7 @@ export async function fetchPortfolioSnapshot(signal?: AbortSignal): Promise<Port
     total_unrealized_pnl_usd: toNumOr(raw.total_unrealized_pnl_usd),
     total_fees_usd: toNumOr(raw.total_fees_usd),
     total_fees_artifact_usd: toNumOr(raw.total_fees_artifact_usd),
+    total_fees_phantom_usd: toNumOr(raw.total_fees_phantom_usd),
     total_fees_today_usd: toNumOr(raw.total_fees_today_usd),
     fills_today: toNumOr(raw.fills_today),
     position_count: toNumOr(raw.position_count),
