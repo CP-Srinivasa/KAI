@@ -52,7 +52,7 @@ export function phaseStatusTone(s: PhaseStatus): Tone {
   }
 }
 
-export const ROADMAP_SNAPSHOT_DATE = "2026-06-22";
+export const ROADMAP_SNAPSHOT_DATE = "2026-06-25";
 
 export const ROADMAPS: Roadmap[] = [
   {
@@ -72,10 +72,10 @@ export const ROADMAPS: Roadmap[] = [
     title: "Souveränität — Bitcoin / Lightning / Truth",
     subtitle: "Vier Säulen der Wahrheits-Verankerung",
     phases: [
-      { id: "l1", label: "L1 · Souveräne On-Chain-Wahrheit", status: "done", note: "eigener bitcoind-Provider, default-off" },
-      { id: "l3", label: "L3 · Audit-Integrität (OpenTimestamps)", status: "done", note: "Anchoring-Gerüst, default-off" },
-      { id: "l2", label: "L2 · On-Chain als 5. Bayes-Evidence", status: "planned", note: "shadow-first, edge-gated" },
-      { id: "l45", label: "L4/L5 · Agentische Wert-Schicht", status: "gated", note: "BOLT12 / L402 — hinter Kapital-Gate" },
+      { id: "l1", label: "L1 · Souveräne On-Chain-Wahrheit", status: "done", note: "live: eigener bitcoind-Provider, Fee-Shadow akkumuliert" },
+      { id: "l3", label: "L3 · Audit-Integrität (OpenTimestamps)", status: "done", note: "live: OTS-Stamper + tägliche Anchor-/Upgrade-Timer aktiv" },
+      { id: "l2", label: "L2 · On-Chain als 5. Bayes-Evidence", status: "active", note: "gebaut + läuft shadow-only (akkumuliert), inert/edge-gated" },
+      { id: "l45", label: "L4/L5 · Agentische Wert-Schicht", status: "gated", note: "gebaut (U1–U5) + inert: Empfang kapitalfrei, Senden hinter Kapital-Gate" },
     ],
   },
 ];
