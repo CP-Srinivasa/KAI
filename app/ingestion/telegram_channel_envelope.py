@@ -36,11 +36,18 @@ _DEFAULT_ENVELOPE_LOG = Path("artifacts/telegram_message_envelope.jsonl")
 DEFAULT_SOURCE = "telegram_premium_channel"
 
 
-def _make_signal_id(symbol: str) -> str:
-    """Channel-scoped signal id: SIG-TGCH-YYYYMMDDHHMMSS-SYMBOL."""
-    now = datetime.now(UTC)
+def _make_signal_id(symbol: str, now: datetime | None = None) -> str:
+    """Channel-scoped signal id: SIG-TGCH-YYYYMMDDHHMMSS-SYMBOL.
+
+    ``now`` MUST be honored when provided: this id flows into the payload and
+    thus into the content-derived idempotency_key. Deriving it from the real
+    wall-clock instead of the caller's clock makes dedup non-deterministic — two
+    emits of the same signal straddling a second boundary get different ids and
+    fail to collapse (the source of the ``test_deduplicates_same_signal`` flake).
+    """
+    resolved = now or datetime.now(UTC)
     clean = re.sub(r"[^A-Z0-9]", "", symbol.upper())
-    return f"SIG-TGCH-{now.strftime('%Y%m%d%H%M%S')}-{clean}"
+    return f"SIG-TGCH-{resolved.strftime('%Y%m%d%H%M%S')}-{clean}"
 
 
 def build_source_uid(*, chat_id: int, message_id: int) -> str:
@@ -48,9 +55,9 @@ def build_source_uid(*, chat_id: int, message_id: int) -> str:
     return f"telegram:{int(chat_id)}:{int(message_id)}"
 
 
-def _make_stable_signal_id(symbol: str, source_uid: str | None) -> str:
+def _make_stable_signal_id(symbol: str, source_uid: str | None, now: datetime | None = None) -> str:
     if not source_uid:
-        return _make_signal_id(symbol)
+        return _make_signal_id(symbol, now)
     clean = re.sub(r"[^A-Z0-9]", "", symbol.upper())
     digest = hashlib.sha256(source_uid.encode("utf-8")).hexdigest()[:12].upper()
     return f"SIG-TGCH-{digest}-{clean}"
@@ -113,12 +120,13 @@ def build_envelope_record(
         TradingSignal,
     )
 
-    ts = (now or datetime.now(UTC)).isoformat()
+    resolved_now = now or datetime.now(UTC)
+    ts = resolved_now.isoformat()
     stable_source_uid = source_uid
     if stable_source_uid is None and chat_id is not None and message_id is not None:
         stable_source_uid = build_source_uid(chat_id=chat_id, message_id=message_id)
     source_platform_value = source_platform or ("telegram" if stable_source_uid else None)
-    signal_id = _make_stable_signal_id(parsed.symbol, stable_source_uid)
+    signal_id = _make_stable_signal_id(parsed.symbol, stable_source_uid, resolved_now)
 
     signal = TradingSignal(
         signal_id=signal_id,
