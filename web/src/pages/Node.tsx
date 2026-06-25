@@ -28,12 +28,13 @@ import { cn } from "@/lib/utils";
 //
 // Designprinzip (KAI-Doktrin): KEINE Fake-Live-Zahlen. Jede Kachel rendert
 // ihren WAHREN Stand:
-//   - Lightning-Liveness  → echter /dashboard/api/lightning-Adapter (Phase 1,
-//     heute disabled/unavailable bis Macaroon in Prod-.env gewired ist).
-//   - L1/L3               → Code gemerged (PR #273), default-off, NICHT
-//     live-aktiviert, KEIN Dashboard-Endpoint → als Build-Status, nicht Live.
-//   - Channels/Balance/Reputation → NICHT im Phase-1-Adapter → Phase-2-Roadmap.
-//   - L2/L4/L5            → geplant bzw. hinter Kapital-Gate + Human-in-the-Loop.
+//   - Lightning  → echter /dashboard/api/lightning-Adapter, LIVE (readonly-Macaroon
+//     in Prod-.env gewired, Node erreichbar). Wert-Schicht (L402/Empfang) gebaut, inert.
+//   - L1 (Chain) → LIVE: APP_CHAIN_ENABLED, eigener bitcoind, Fee-Shadow akkumuliert.
+//   - L3 (OTS)   → LIVE: APP_INTEGRITY_ENABLED, OTS-Stamper, tägliche Anchor-/Upgrade-Timer.
+//   - L2 (5. Bayes-Evidence) → gebaut, shadow-only, akkumuliert (edge-gated).
+//   - L4/L5 (Wert-Schicht) → gebaut; Empfang kapitalfrei (receive_enabled), Senden/Channels
+//     hart hinter pay_enabled (false) + Human-in-the-Loop.
 // Rechtfertigung dieser Schicht = Souveränität/Integrität/Resilienz, NICHT ein
 // romantisches Trading-Edge-Versprechen (Edge nur wenn shadow-bewiesen).
 
@@ -170,7 +171,7 @@ export function NodePage() {
             title="Souveräne On-Chain-Wahrheit"
             icon={<Database size={18} />}
             tone="info"
-            badge="gebaut · default-off"
+            badge="live"
             badgeTone="info"
             body={
               <>
@@ -178,14 +179,14 @@ export function NodePage() {
                 und Fees. CostModel und Truth-Layer aus eigener Node statt Schätzung/API.
               </>
             }
-            hint="Code gemerged (PR #273, app/chain/, read-only JSON-RPC), default-off. Dashboard-Endpoint /dashboard/api/chain + Live-Panel (unten) verdrahtet — echte Höhe/Sync/Fee/Mempool, sobald APP_CHAIN_* gewired + aktiviert ist."
+            hint="LIVE: APP_CHAIN_ENABLED=true gegen den eigenen bitcoind (10.27.0.51), read-only JSON-RPC (PR #273/#313). /dashboard/api/chain + Live-Panel zeigen echte Höhe/Sync/Fee/Mempool; Fee-Shadow-Stream akkumuliert."
           />
           <Pillar
             layer="L3"
             title="Audit-Integrität (OpenTimestamps)"
             icon={<Anchor size={18} />}
             tone="info"
-            badge="gebaut · default-off"
+            badge="live"
             badgeTone="info"
             body={
               <>
@@ -193,37 +194,37 @@ export function NodePage() {
                 Aufzeichnungen (Replay-SSOT) unverändert sind.
               </>
             }
-            hint="Stamper/Anchor gemerged (PR #273, app/integrity/), default-off. OTS-Lib + Live-Anchor-Aktivierung ausstehend."
+            hint="LIVE: APP_INTEGRITY_ENABLED=true, OTS-Stamper (echte .ots seit #415), tägliche Anchor- + ots-upgrade-Timer aktiv. Verankert artifacts/paper_execution_audit.jsonl."
           />
           <Pillar
             layer="L2"
             title="On-Chain als 5. Bayes-Evidence"
             icon={<Waypoints size={18} />}
             tone="ai"
-            badge="geplant · Phase-2"
+            badge="gebaut · shadow-only"
             badgeTone="ai"
             body={
               <>
-                Mempool-, Fee- und Flow-Signale wie Funding, OI oder Hype als zusätzliche Evidence —
-                shadow-first, edge-gated. Keine Kapitalfreigabe ohne Beweis.
+                Mempool- und Fee-Perzentile aus der eigenen Node als 5. Evidence (neben Funding, OI,
+                LS, Hype) — richtungs-agnostisch, edge-gated. Keine Kapitalfreigabe ohne Beweis.
               </>
             }
-            hint="Analog HYPE-S1: default-off, shadow-only, trust erst nach Shadow-Auswertung. Noch nicht gebaut."
+            hint="GEBAUT + läuft: APP_L2_EVIDENCE_ENABLED=true, shadow-only/inert (direction_aligned=0 → LLR=0, null Sizing-Impact, mathematisch erzwungen), akkumuliert l2_evidence_shadow.jsonl. Evaluator (evaluate_l2_evidence.py, moving-block-bootstrap autokorrelations-robust) ready; Trust-Promote erst nach Edge-Beweis (operator-gated)."
           />
           <Pillar
             layer="L4/L5"
             title="Agentische Wert-Schicht"
             icon={<Lock size={18} />}
             tone="warn"
-            badge="gated · Kapital-Gate"
+            badge="gebaut · gegated"
             badgeTone="neg"
             body={
               <>
-                BOLT12-Empfang, L402 (sats-per-API-call), KAI-Intelligenz hinter L402. Strikt hinter
-                zwei Kapital-Gates + Human-in-the-Loop.
+                L402 (sats-per-API-call) + Empfang gebaut. Empfangen ist kapitalfrei vom Senden
+                entkoppelt; Senden/Channels strikt hinter dem Kapital-Gate + Human-in-the-Loop.
               </>
             }
-            hint="Kapital-Bewegung nur bei (a) Edge bewiesen n≳100/EV>0 UND (b) Kapital live. Echte Coins nie autonom — Operator führt aus."
+            hint="Wert-Schicht U1–U5 gebaut + inert: Empfang via receive_enabled (kapitalfrei, pay_enabled bleibt false), L402-Demand-Probe + Earnings/Evaluator + Go-Live-Preflight. Senden/Channels nur bei (a) Edge bewiesen UND (b) Kapital live — echte Coins nie autonom, Operator führt aus."
           />
         </div>
       </section>
@@ -237,18 +238,20 @@ export function NodePage() {
             <LightningPanel />
             <div className="rounded-sm border border-info/25 bg-info/5 px-3 py-2.5 text-2xs text-fg-muted leading-relaxed">
               <span className="flex items-center gap-1.5 font-semibold text-info">
-                <Network size={11} /> Wiring-Stand (Doku-Stand, manuell gepflegt · 2026-06-16)
+                <Network size={11} /> Wiring-Stand (verifiziert · 2026-06-25)
                 <InfoHint
-                  label="Zwei Schritte bis Live"
-                  hint="Live-Daten brauchen (1) Macaroon/base_url/TLS in der Prod-.env auf .23 UND (2) settings.lightning.enabled=true. Flag-Flip allein liefert nur 'unavailable: no macaroon'."
+                  label="Read-Wiring live · Value-Wiring offen"
+                  hint="Read-Pfad ist LIVE: readonly-Macaroon + base_url + TLS in der Prod-.env auf .23, settings.lightning.enabled=true, Node per getinfo erreichbar. Für die Wert-Schicht (L402-Empfang) fehlt nur ein scope-minimales invoices:write-Macaroon auf dem Node — pay_enabled bleibt strikt false."
                 />
               </span>
               <p className="mt-1">
                 Node-seitig laufen <span className="font-mono text-fg">bitcoind</span> +{" "}
                 <span className="font-mono text-fg">lnd</span> (WireGuard verbunden). Der Prod-Adapter
-                liefert aktuell ehrlich <span className="font-mono text-warn">disabled</span> bzw.{" "}
-                <span className="font-mono text-warn">unavailable: no macaroon</span> — das Credential-
-                Wiring in die Prod-<span className="font-mono">.env</span> steht noch aus.
+                ist <span className="font-mono text-pos">live</span> und liefert echte Read-Daten
+                (Macaroon seit 16.06 gewired, <span className="font-mono text-fg">node_reachable</span>{" "}
+                verifiziert 25.06). Offen ist nur das{" "}
+                <span className="font-mono text-warn">invoices:write</span>-Macaroon für den gegateten
+                L402-Empfang.
               </p>
             </div>
             <AuditIntegrityKpi />

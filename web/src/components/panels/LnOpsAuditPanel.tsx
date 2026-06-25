@@ -7,8 +7,9 @@ import { usePolling } from "@/lib/usePolling";
 
 // Wert-Schicht-Ops-Audit-Trail (read-only). Jede gegatete Wert-Schicht-Aktion
 // (Plan + Ausführung) landet tamper-evident in artifacts/ln_ops_ledger.jsonl,
-// täglich L3-OTS-verankert. Der WRITER kommt mit der gegateten Wert-Schicht
-// (Sprint 4/5) — bis dahin ehrlich leer. Kein schreibender/kapitalrelevanter Pfad.
+// täglich L3-OTS-verankert. Writer + Wert-Schicht (U1–U5) sind GEBAUT; der Trail
+// bleibt leer, bis eine Aktion bei receive_enabled/pay_enabled erfolgt (Default
+// false = inert). Kein schreibender/kapitalrelevanter Pfad im Default.
 
 const POLL_MS = 60_000;
 
@@ -85,11 +86,13 @@ export function LnOpsAuditPanel() {
       {data != null && data.count === 0 && (
         <div className="rounded-sm border border-warn/25 bg-warn/5 px-3 py-2.5 text-2xs text-fg-muted leading-relaxed">
           <span className="flex items-center gap-1.5 font-semibold text-warn">
-            <Lock size={11} /> Wert-Schicht gegated
+            <Lock size={11} /> Wert-Schicht gebaut · inert
           </span>
           <p className="mt-1">
-            Keine Wert-Schicht-Aktionen. Empfangen/Senden/Channels sind hinter dem Kapital-Gate
-            (Sprint 4/5). Sobald eine gegatete Aktion erfolgt (Plan/Ausführung), erscheint sie hier mit
+            Noch keine Wert-Schicht-Aktion ausgeführt (Default inert:{" "}
+            <span className="font-mono">receive_enabled</span> + <span className="font-mono">pay_enabled</span>{" "}
+            false). Empfangen ist kapitalfrei vom Senden entkoppelt; Senden/Channels bleiben hinter dem
+            Kapital-Gate. Sobald eine gegatete Aktion erfolgt (Plan/Ausführung), erscheint sie hier mit
             Status — tamper-evident und täglich OTS-verankert.
           </p>
         </div>

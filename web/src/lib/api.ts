@@ -666,8 +666,8 @@ export function fetchLnReputation(signal?: AbortSignal): Promise<LnReputation> {
   return apiGet<LnReputation>("/dashboard/api/ln/reputation", { signal });
 }
 
-// Wert-Schicht-Ops-Audit-Trail (read-only). Leer bis die gegatete Wert-Schicht
-// (Sprint 4/5) schreibt. Ein Op-Record-Schema steht erst mit dem Writer fest.
+// Wert-Schicht-Ops-Audit-Trail (read-only). Writer gebaut (ln_ops_ledger); bleibt leer,
+// bis eine gegatete Aktion bei receive_enabled/pay_enabled erfolgt (Default false = inert).
 export type LnOp = Record<string, unknown>;
 export type LnOps = {
   count: number;
