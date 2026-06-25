@@ -284,6 +284,48 @@ export function EdgeTruthPanel() {
         </div>
       )}
 
+      {/* Kosten-Wahrheit (2026-06-26): Signal- vs Kostenproblem. Tötet die
+          „Execution-Alpha rettet uns"-Illusion — wenn der Brutto-Edge nicht mal
+          die Maker-Kostenuntergrenze trägt, ist es ein Signalproblem. */}
+      {d.gross_mean_bps != null && d.breakeven_roundtrip_bps != null && (
+        <div
+          className={cn(
+            "mb-3 rounded-sm border px-2.5 py-2 text-2xs leading-relaxed",
+            d.cost_reachable
+              ? "border-line-subtle bg-bg-2 text-fg-subtle"
+              : "border-warn/30 bg-warn/10 text-warn",
+          )}
+        >
+          <div className="mb-1 flex items-center gap-1.5">
+            {d.cost_reachable ? (
+              <Minus className="h-3 w-3 shrink-0" aria-hidden />
+            ) : (
+              <AlertTriangle className="h-3 w-3 shrink-0" aria-hidden />
+            )}
+            <span className="font-semibold">
+              Kosten-Wahrheit: {d.cost_reachable ? "Kostenproblem möglich" : "Signalproblem"}
+            </span>
+          </div>
+          <div className="text-fg-subtle">
+            Brutto-Edge (vor Kosten): P(µ&gt;0) ={" "}
+            <span className="font-mono text-fg">{fmtPct(d.p_mu_gross_positive ?? null)}</span>, Median{" "}
+            <span className="font-mono text-fg">{fmtBps(d.gross_median_bps ?? 0)}</span>. Break-even-Kosten
+            ={" "}
+            <span className="font-mono text-fg">{d.breakeven_roundtrip_bps.toFixed(1)} bps RT</span>;
+            günstigste Maker-Untergrenze ≈{" "}
+            <span className="font-mono text-fg">
+              {(d.maker_floor_roundtrip_bps ?? 4).toFixed(1)} bps RT
+            </span>
+            .
+          </div>
+          <div className="mt-1">
+            {d.cost_reachable
+              ? "Der Brutto-Edge trägt zumindest die Maker-Untergrenze — Kostenoptimierung (Taker→Maker, weniger Churn) kann hier etwas bewegen."
+              : "Selbst perfektes Maker-Routing erreicht kein break-even — der Verlust ist ein SIGNAL-Problem, kein Kostenproblem. Execution-Alpha kann das nicht retten."}
+          </div>
+        </div>
+      )}
+
       {/* Quellen-/Ehrlichkeits-Kontext */}
       <div className="space-y-1.5 border-t border-line-subtle pt-3 text-2xs text-fg-subtle">
         {d.canonical ? (
@@ -365,6 +407,14 @@ export function EdgeTruthPanel() {
             <p>
               <span className="text-fg">Realized Σ</span> — die tatsächlich realisierte Summe in USD
               über das angezeigte Fenster.
+            </p>
+            <p>
+              <span className="text-fg">Kosten-Wahrheit</span> — trennt Signal- von Kostenproblem.
+              Der Brutto-Edge ist die Bewegung VOR Gebühren; die Break-even-Kosten sind genau das,
+              was dieser Brutto-Edge maximal an Gebühren tragen könnte. Liegt das unter der
+              günstigsten realistischen Maker-Untergrenze (≈4 bps Round-Trip), kann selbst perfektes
+              Maker-Routing den Verlust nicht drehen — dann ist das Signal das Problem, nicht die
+              Kosten, und „Execution-Alpha" wäre eine Illusion.
             </p>
             <p>
               <span className="text-fg">„Entscheidet nichts, belegt Evidenz"</span> — das Panel löst

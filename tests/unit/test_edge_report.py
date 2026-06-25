@@ -264,6 +264,51 @@ def test_cohort_robust_stats_expose_mean_artefact():
     assert d["net_bps_median"] < 0.0 and d["net_bps_mean"] > 100.0
 
 
+def test_cohort_p_mu_gross_positive_separates_signal_from_cost():
+    """Kosten-Wahrheit 2026-06-26: P(mu_gross>0) on the PRE-cost return separates a
+    SIGNAL problem from a COST problem. All-winners → gross robustly positive;
+    all-losers → gross robustly negative; the serialised view carries the field."""
+    cm = CostModel()
+    winners = [
+        ClosedTrade(
+            "W/USDT", "long", 100.0, 101.0, 1.0, "tp", 0.9, 0.1, f"2026-06-01T{i:02d}:00:00+00:00"
+        )
+        for i in range(12)
+    ]
+    cohort_w = aggregate_cohort(
+        "W/USDT",
+        "symbol",
+        [compute_trade_edge(t, cm) for t in winners],
+        min_sample=2,
+        bootstrap_n=400,
+    )
+    assert cohort_w.p_mu_gross_positive is not None
+    assert cohort_w.p_mu_gross_positive > 0.95  # gross +100 bps each → robustly positive
+    assert cohort_w.to_dict()["p_mu_gross_positive"] is not None
+
+    losers = [
+        ClosedTrade(
+            "L/USDT", "long", 100.0, 99.0, 1.0, "sl", -1.1, 0.1, f"2026-06-01T{i:02d}:00:00+00:00"
+        )
+        for i in range(12)
+    ]
+    cohort_l = aggregate_cohort(
+        "L/USDT",
+        "symbol",
+        [compute_trade_edge(t, cm) for t in losers],
+        min_sample=2,
+        bootstrap_n=400,
+    )
+    assert cohort_l.p_mu_gross_positive is not None
+    assert cohort_l.p_mu_gross_positive < 0.05  # gross -100 bps each → robustly negative
+
+    # Below min_sample the probability is honestly None, never invented.
+    tiny = aggregate_cohort(
+        "T/USDT", "symbol", [compute_trade_edge(winners[0], cm)], min_sample=5, bootstrap_n=100
+    )
+    assert tiny.p_mu_gross_positive is None
+
+
 # --- churn --------------------------------------------------------------------
 
 

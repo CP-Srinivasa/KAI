@@ -87,6 +87,12 @@ _edge_window_cache: dict[str, dict[str, Any]] = {}
 # DISPROVAL ("belastbar widerlegt"), not merely "unproven". (Operator 2026-06-25.)
 _EDGE_GATE_N = 30
 _EDGE_PROVEN_P = 0.90  # P(mu_net>0) bar to call an edge plausibly proven (info-text).
+# Kosten-Wahrheit (2026-06-26): the cheapest realistic round-trip cost floor.
+# config/venue_fees.yaml paper_maker = 2 bps/side ⇒ 4 bps round-trip, BEFORE any
+# spread/slippage. If the gross edge cannot even cover this, no cost optimisation
+# (not even perfect maker routing) reaches break-even — the loss is a SIGNAL
+# problem, not a cost problem. Verified on canonical data 2026-06-25/26.
+_MAKER_FLOOR_ROUNDTRIP_BPS = 4.0
 
 # Churn/Fee-Effizienz-Panel parst den (großen) Execution-Stream → cachen wie die
 # Edge-Truth (60 s), damit der 60 s-Poll nicht jedes Tick re-parst. Keyed by since.
@@ -1106,6 +1112,12 @@ async def dashboard_edge_window_api(canonical: bool = True) -> JSONResponse:
         else:
             verdict = "inconclusive"
         _wb = e.result_without_best_trade
+        # Kosten-Wahrheit: is the loss a signal problem or a cost problem? The
+        # break-even round-trip cost the gross edge can afford == gross_mean_bps.
+        # If that is below the maker floor (4 bps RT), even perfect maker routing
+        # cannot reach break-even ⇒ cost_reachable=False ⇒ it is a SIGNAL problem.
+        _breakeven_rt = e.gross_mean_bps
+        _cost_reachable = _breakeven_rt >= _MAKER_FLOOR_ROUNDTRIP_BPS
         payload: dict[str, Any] = {
             "available": True,
             "canonical": canonical,
@@ -1135,6 +1147,15 @@ async def dashboard_edge_window_api(canonical: bool = True) -> JSONResponse:
                 if e.bootstrap_ci_95 is None
                 else [round(e.bootstrap_ci_95[0], 1), round(e.bootstrap_ci_95[1], 1)]
             ),
+            # Kosten-Wahrheit: gross (pre-cost) edge + break-even-fee context, so
+            # the panel kills the "execution-alpha will save us" illusion.
+            "p_mu_gross_positive": e.p_mu_gross_positive,
+            "gross_mean_bps": round(e.gross_mean_bps, 1),
+            "gross_median_bps": round(e.gross_median_bps, 1),
+            "breakeven_roundtrip_bps": round(_breakeven_rt, 1),
+            "current_cost_roundtrip_bps": round(e.cost_roundtrip_bps, 1),
+            "maker_floor_roundtrip_bps": _MAKER_FLOOR_ROUNDTRIP_BPS,
+            "cost_reachable": _cost_reachable,
             "error": None,
         }
         _edge_window_cache[mode] = {"at": cache_now, "payload": payload}

@@ -1364,6 +1364,9 @@ def test_edge_window_canonical_restricts_to_real_generator(tmp_path: Path) -> No
     assert canon["gate_reached"] is False
     assert canon["verdict"] == "insufficient"
     assert "without_best_p" in canon and "bootstrap_ci_95" in canon
+    # Kosten-Wahrheit fields are always present (gross winners here → reachable).
+    assert "p_mu_gross_positive" in canon and "breakeven_roundtrip_bps" in canon
+    assert canon["maker_floor_roundtrip_bps"] == 4.0
 
     assert full["canonical"] is False
     assert full["contaminated"] is True  # full stream is honestly flagged
@@ -1395,6 +1398,13 @@ def test_edge_window_gate_reached_low_p_is_disproven(tmp_path: Path) -> None:
     assert canon["gate_reached"] is True
     assert canon["p_mu_net_positive"] is not None and canon["p_mu_net_positive"] < 0.5
     assert canon["verdict"] == "disproven"
+    # Kosten-Wahrheit: exit<entry → gross edge is ALSO negative, break-even cost
+    # is below the maker floor → cost_reachable=False = a SIGNAL problem, not a
+    # cost problem (execution-alpha cannot save it).
+    assert canon["p_mu_gross_positive"] is not None and canon["p_mu_gross_positive"] < 0.5
+    assert canon["gross_mean_bps"] < 0
+    assert canon["breakeven_roundtrip_bps"] == canon["gross_mean_bps"]
+    assert canon["cost_reachable"] is False
 
 
 def test_edge_window_fail_closed_on_missing_audit(tmp_path: Path) -> None:

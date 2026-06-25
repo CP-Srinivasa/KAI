@@ -191,6 +191,17 @@ export type EdgeVerdict = {
   without_best_p?: number | null;
   without_best_mean_bps?: number;
   bootstrap_ci_95?: [number, number] | null;
+  /** Kosten-Wahrheit: P(mu_gross>0) auf dem PRE-Kosten-Return (Signal- vs Kostenproblem). */
+  p_mu_gross_positive?: number | null;
+  gross_mean_bps?: number;
+  gross_median_bps?: number;
+  /** Break-even-Round-Trip-Kosten, die der Brutto-Edge tragen kann (= gross_mean_bps). */
+  breakeven_roundtrip_bps?: number;
+  current_cost_roundtrip_bps?: number;
+  /** Günstigste realistische RT-Kosten (Maker 2 bps/Seite = 4 bps RT). */
+  maker_floor_roundtrip_bps?: number;
+  /** true = Brutto-Edge trägt zumindest die Maker-Kostenuntergrenze; false = Signalproblem. */
+  cost_reachable?: boolean;
   error: string | null;
 };
 export function fetchEdgeVerdict(
