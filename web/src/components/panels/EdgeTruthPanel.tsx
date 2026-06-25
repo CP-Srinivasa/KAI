@@ -3,6 +3,7 @@ import {
   AlertTriangle,
   ShieldCheck,
   TrendingUp,
+  TrendingDown,
   Minus,
   HelpCircle,
   ChevronDown,
@@ -54,20 +55,25 @@ function fmtMedianPct(bps: number): string {
   });
 }
 
+type Tier = "insufficient" | "disproven" | "inconclusive" | "proven";
+
 // Übersetzt das Verdikt in einen Klartext-Satz für Nicht-Quants.
 function plainSentence(args: {
-  insufficient: boolean;
-  proven: boolean;
+  tier: Tier;
   median_net_bps: number;
   trade_count: number;
+  gate_n: number;
 }): string {
-  const { insufficient, proven, median_net_bps, trade_count } = args;
-  if (insufficient) {
-    return `Zu wenige abgeschlossene Trades (n=${trade_count}), um einen Vorteil überhaupt zu belegen.`;
+  const { tier, median_net_bps, trade_count, gate_n } = args;
+  if (tier === "insufficient") {
+    return `Noch zu wenige abgeschlossene Trades (n=${trade_count} von ${gate_n} nötig), um den Vorteil zu be- oder widerlegen.`;
   }
   const pct = fmtMedianPct(median_net_bps);
   const verb = median_net_bps >= 0 ? `liegt bei ~+${pct} %` : `verliert ~${pct} %`;
-  if (proven) {
+  if (tier === "disproven") {
+    return `Verdient KAI nach Kosten Geld? Nein — über n=${trade_count} Trades (Gate n≥${gate_n} erreicht) belastbar widerlegt: der typische Trade ${verb} nach Gebühren. Kein Stichproben-Problem mehr, sondern ein gemessener Negativ-Befund.`;
+  }
+  if (tier === "proven") {
     return `Verdient KAI nach Kosten Geld? Aktuell plausibel ja — der typische Trade ${verb} nach Gebühren.`;
   }
   return `Verdient KAI nach Kosten Geld? Noch nicht bewiesen — der typische Trade ${verb} nach Gebühren.`;
@@ -156,20 +162,48 @@ export function EdgeTruthPanel() {
     );
   }
 
-  const proven = d.p_mu_net_positive != null && d.p_mu_net_positive >= 0.5;
-  const insufficient = d.p_mu_net_positive == null;
-  // "kein Beweis" ist NICHT "negativer Edge" -> warn (gelb), nicht neg (rot).
-  const verdictTone = insufficient ? "muted" : proven ? "pos" : "warn";
+  const gateN = d.edge_gate_n ?? 30;
+  const gateReached = d.gate_reached ?? d.trade_count >= gateN;
+  // Verdikt-Tier: <Gate = "insufficient" (zu dünn); ab Gate ist P<50% ein
+  // MESSBARER Negativ-Befund ("disproven"/belastbar widerlegt), nicht nur
+  // "noch nicht bewiesen". Backend liefert das Tier; lokale Ableitung als Fallback.
+  const tier: Tier =
+    d.verdict ??
+    (d.p_mu_net_positive == null || !gateReached
+      ? "insufficient"
+      : d.p_mu_net_positive >= 0.9
+        ? "proven"
+        : d.p_mu_net_positive < 0.5
+          ? "disproven"
+          : "inconclusive");
+  // "kein Beweis"/"widerlegt" ist eine ehrliche Messung, kein System-Fehler ->
+  // warn (gelb), nicht neg (rot). Nur "proven" pos, nur "insufficient" muted.
   const verdictColor =
-    verdictTone === "pos" ? "text-pos" : verdictTone === "warn" ? "text-warn" : "text-fg-muted";
-  const verdictText = insufficient
-    ? `Zu wenige Trades (n=${d.trade_count})`
-    : proven
-      ? "Edge plausibel positiv"
-      : "Kein bewiesener Edge";
-  const VerdictIcon = insufficient ? HelpCircle : proven ? TrendingUp : Minus;
+    tier === "proven" ? "text-pos" : tier === "insufficient" ? "text-fg-muted" : "text-warn";
+  const verdictText =
+    tier === "insufficient"
+      ? `Stichprobe zu klein (n=${d.trade_count}/${gateN})`
+      : tier === "disproven"
+        ? "Edge belastbar widerlegt"
+        : tier === "proven"
+          ? "Edge plausibel positiv"
+          : "Kein bewiesener Edge";
+  const VerdictIcon =
+    tier === "insufficient"
+      ? HelpCircle
+      : tier === "disproven"
+        ? TrendingDown
+        : tier === "proven"
+          ? TrendingUp
+          : Minus;
   // Ausreißer-Artefakt: Mittel > 0 aber Median < 0 -> Schnitt von wenigen Trades getragen.
   const meanOutlierArtifact = d.median_net_bps < 0 && d.mean_net_bps > 0;
+  const robustnessNote =
+    d.without_best_p != null
+      ? tier === "disproven"
+        ? "der negative Befund ist robust — kein Ausreißer-Artefakt."
+        : "prüft, ob der Vorteil an einem einzelnen Trade hängt."
+      : null;
 
   return (
     <Card padded>
@@ -187,10 +221,10 @@ export function EdgeTruthPanel() {
         </div>
         <p className="mb-2 text-xs leading-relaxed text-fg">
           {plainSentence({
-            insufficient,
-            proven,
+            tier,
             median_net_bps: d.median_net_bps,
             trade_count: d.trade_count,
+            gate_n: gateN,
           })}
         </p>
         <div className="flex items-baseline gap-2">
@@ -199,6 +233,20 @@ export function EdgeTruthPanel() {
           </span>
           <span className="text-2xs leading-snug text-fg-subtle">
             Wahrscheinlichkeit, dass der Vorteil wirklich positiv ist · n = {d.trade_count}
+          </span>
+        </div>
+        {/* Stichproben-Gate sichtbar: ab n>=Gate ist das Verdikt belastbar (kein
+            „zu dünn" mehr). Icon trägt die Semantik redundant zur Farbe (WCAG). */}
+        <div className="mt-2 inline-flex items-center gap-1.5 text-2xs">
+          {gateReached ? (
+            <ShieldCheck className="h-3 w-3 shrink-0 text-pos" aria-hidden />
+          ) : (
+            <HelpCircle className="h-3 w-3 shrink-0 text-fg-muted" aria-hidden />
+          )}
+          <span className={gateReached ? "text-pos" : "text-fg-muted"}>
+            {gateReached
+              ? `Stichproben-Gate n≥${gateN} erreicht — Verdikt belastbar`
+              : `Stichproben-Gate n≥${gateN} noch nicht erreicht (n=${d.trade_count})`}
           </span>
         </div>
       </div>
@@ -225,6 +273,14 @@ export function EdgeTruthPanel() {
         <div className="mb-3 text-2xs text-warn">
           Mittel positiv, Median negativ — der Schnitt wird von wenigen Ausreißern getragen, nicht
           von der Mehrheit der Trades. Median ist hier ehrlicher.
+        </div>
+      )}
+      {robustnessNote && (
+        <div className="mb-3 text-2xs text-fg-subtle">
+          <span className="text-fg">Ausreißer-Test:</span> ohne den besten Trade{" "}
+          {fmtPct(d.without_best_p ?? null)}
+          {d.without_best_mean_bps != null ? ` (Mittel ${fmtBps(d.without_best_mean_bps)})` : ""} —{" "}
+          {robustnessNote}
         </div>
       )}
 

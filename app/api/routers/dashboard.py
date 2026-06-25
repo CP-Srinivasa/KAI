@@ -82,6 +82,11 @@ _quality_cache: dict[str, Any] = {"at": 0.0, "payload": None}
 # Edge-Truth panel's 60 s poll must not re-parse every tick. Keyed by mode.
 _EDGE_WINDOW_CACHE_TTL_S = 60.0
 _edge_window_cache: dict[str, dict[str, Any]] = {}
+# n>=30 closed trades → a verdict is statistically DEFENSIBLE; below it the honest
+# answer is "insufficient sample" ("zu dünn"), at/above it a low P is a MEASURED
+# DISPROVAL ("belastbar widerlegt"), not merely "unproven". (Operator 2026-06-25.)
+_EDGE_GATE_N = 30
+_EDGE_PROVEN_P = 0.90  # P(mu_net>0) bar to call an edge plausibly proven (info-text).
 
 # Churn/Fee-Effizienz-Panel parst den (großen) Execution-Stream → cachen wie die
 # Edge-Truth (60 s), damit der 60 s-Poll nicht jedes Tick re-parst. Keyed by since.
@@ -1087,6 +1092,20 @@ async def dashboard_edge_window_api(canonical: bool = True) -> JSONResponse:
             source_allowlist=CANONICAL_EDGE_SOURCES if canonical else None,
         )
         w, e = report.window, report.edge
+        # Verdict tiers (Operator 2026-06-25): n>=gate makes the answer DEFENSIBLE.
+        # Below gate → "insufficient" (zu dünn). At/above gate: P<0.5 → "disproven"
+        # (belastbar widerlegt), P>=proven_bar → "proven", else "inconclusive".
+        gate_reached = e.trade_count >= _EDGE_GATE_N
+        _p = e.p_mu_net_positive
+        if _p is None or not gate_reached:
+            verdict = "insufficient"
+        elif _p >= _EDGE_PROVEN_P:
+            verdict = "proven"
+        elif _p < 0.5:
+            verdict = "disproven"
+        else:
+            verdict = "inconclusive"
+        _wb = e.result_without_best_trade
         payload: dict[str, Any] = {
             "available": True,
             "canonical": canonical,
@@ -1104,6 +1123,18 @@ async def dashboard_edge_window_api(canonical: bool = True) -> JSONResponse:
             "live_orders_attempted": report.safety.live_orders_attempted,
             "window_started_at": w.started_at,
             "window_ended_at": w.ended_at,
+            # Edge-gate + outlier-robustness so the UI can say "gate reached →
+            # robustly disproven" instead of the weaker "not yet proven / too thin".
+            "edge_gate_n": _EDGE_GATE_N,
+            "gate_reached": gate_reached,
+            "verdict": verdict,
+            "without_best_p": _wb.p_mu_net_positive,
+            "without_best_mean_bps": round(_wb.mean_net_bps, 1),
+            "bootstrap_ci_95": (
+                None
+                if e.bootstrap_ci_95 is None
+                else [round(e.bootstrap_ci_95[0], 1), round(e.bootstrap_ci_95[1], 1)]
+            ),
             "error": None,
         }
         _edge_window_cache[mode] = {"at": cache_now, "payload": payload}

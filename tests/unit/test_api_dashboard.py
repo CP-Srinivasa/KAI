@@ -1358,11 +1358,43 @@ def test_edge_window_canonical_restricts_to_real_generator(tmp_path: Path) -> No
     assert canon["trade_count"] == 2  # only the two attributed generator closes
     assert canon["closes_excluded_by_source"] == 1
     assert canon["source_allowlist"] == ["autonomous_generator", "real_analysis"]
+    # n=2 is below the n>=30 gate → verdict is "insufficient" (zu dünn), NOT a
+    # measured disproval; the new gate/robustness fields are present.
+    assert canon["edge_gate_n"] == 30
+    assert canon["gate_reached"] is False
+    assert canon["verdict"] == "insufficient"
+    assert "without_best_p" in canon and "bootstrap_ci_95" in canon
 
     assert full["canonical"] is False
     assert full["contaminated"] is True  # full stream is honestly flagged
     assert full["trade_count"] == 3  # all closes incl. the unattributed one
     assert full["source_allowlist"] is None
+
+
+def test_edge_window_gate_reached_low_p_is_disproven(tmp_path: Path) -> None:
+    """n>=gate with P(mu_net>0)<0.5 → verdict 'disproven' (belastbar widerlegt),
+    not the weaker 'insufficient'/'not yet proven'. (Operator 2026-06-25.)"""
+    dashboard_mod._edge_window_cache.clear()
+    # 32 attributed losing closes → above the n>=30 gate, P well below 0.5.
+    exec_rows = [
+        _edge_close(
+            "BTC/USDT", 99.0, f"2026-06-12T10:{i:02d}:00+00:00", -1.0, "autonomous_generator"
+        )
+        for i in range(32)
+    ]
+    (tmp_path / "paper_execution_audit.jsonl").write_text(
+        "\n".join(json.dumps(r) for r in exec_rows) + "\n", encoding="utf-8"
+    )
+    (tmp_path / "trading_loop_audit.jsonl").write_text("", encoding="utf-8")
+
+    app = _make_app()
+    with _patch_artifacts(tmp_path), TestClient(app) as client:
+        canon = client.get("/dashboard/api/edge-window?canonical=true").json()
+
+    assert canon["trade_count"] == 32
+    assert canon["gate_reached"] is True
+    assert canon["p_mu_net_positive"] is not None and canon["p_mu_net_positive"] < 0.5
+    assert canon["verdict"] == "disproven"
 
 
 def test_edge_window_fail_closed_on_missing_audit(tmp_path: Path) -> None:
