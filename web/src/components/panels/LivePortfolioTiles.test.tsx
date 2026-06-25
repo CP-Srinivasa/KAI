@@ -39,6 +39,8 @@ const flatPortfolio = {
   realized_pnl_usd: 0,
   total_market_value_usd: 0,
   total_equity_usd: 100000,
+  total_unrealized_pnl_usd: 0,
+  total_fees_usd: 0,
   position_count: 0,
   positions: [],
 };
@@ -85,7 +87,7 @@ describe("LivePortfolioTiles", () => {
 
     // Portfolio tile reached the ready state (labels are deterministic; the exact
     // currency grouping is Intl/env-dependent so we assert the $-value loosely).
-    expect((await screen.findAllByText("Equity")).length).toBeGreaterThanOrEqual(1);
+    expect((await screen.findAllByText("Gesamt-Equity")).length).toBeGreaterThanOrEqual(1);
     expect((await screen.findAllByText(/\$100[,.]?000/)).length).toBeGreaterThanOrEqual(1);
     expect((await screen.findAllByText(/Kein Markteinsatz/)).length).toBeGreaterThanOrEqual(1);
     expect(

@@ -235,6 +235,41 @@ function RealizedByAssetPanel() {
           onToggle={() => setShowAllAssets((s) => !s)}
         />
       )}
+      {/* 2026-06-25: Übersicht der letzten Einzel-Trades (Operator-Wunsch).
+          Vorzeichen-korrekt; SHORT-Gewinne grün wie LONG. */}
+      {(d.recent_trades?.length ?? 0) > 0 && (
+        <div className="mt-4 border-t border-line-subtle/40 pt-3">
+          <div className="mb-2 text-2xs uppercase tracking-wider text-fg-subtle">
+            Letzte Trades ({d.recent_trades!.length})
+          </div>
+          <div className="grid grid-cols-1 gap-0.5">
+            {d.recent_trades!.map((tr, i) => {
+              const win = tr.trade_pnl_usd >= 0;
+              const side = (tr.position_side ?? "long").toUpperCase();
+              return (
+                <div
+                  key={`${tr.symbol}-${tr.closed_at_utc ?? i}`}
+                  className="grid grid-cols-[auto_auto_1fr_auto] items-center gap-2 px-2 py-1 rounded-sm hover:bg-bg-2 text-2xs"
+                >
+                  <span className="font-mono font-semibold">{tr.symbol}</span>
+                  <Badge tone={side === "SHORT" ? "warn" : "info"}>{side}</Badge>
+                  <span className="text-fg-subtle truncate">
+                    {tr.closed_at_utc ? formatOpenedAt(tr.closed_at_utc) : "—"}
+                    {tr.is_partial ? " · partial" : ""}
+                    {tr.source ? ` · ${formatSource(tr.source)}` : ""}
+                  </span>
+                  <span
+                    className={cn("font-mono font-semibold text-right", win ? "text-pos" : "text-neg")}
+                  >
+                    {win ? "+" : ""}
+                    {fmt(tr.trade_pnl_usd, undefined, 2)}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
       {d.top_performer && d.worst_performer && d.by_asset.length >= 2 && (
         <div className="mt-3 grid grid-cols-2 gap-3 text-2xs text-fg-subtle">
           <div>
@@ -314,6 +349,11 @@ export function PortfolioPage() {
   const cash = snap.state === "ready" ? snap.data.cash_usd : 0;
   const positionsValue = snap.state === "ready" ? snap.data.total_market_value_usd : 0;
   const realized = snap.state === "ready" ? snap.data.realized_pnl_usd : 0;
+  // 2026-06-25: short-aware Backend-Wahrheit. unrealizedTotal aus dem Snapshot
+  // (vorzeichen-korrekt long+short) statt nur lokaler Summe; feesSpent kumuliert.
+  const unrealizedTotal =
+    snap.state === "ready" ? snap.data.total_unrealized_pnl_usd ?? unrealized : unrealized;
+  const feesSpent = snap.state === "ready" ? snap.data.total_fees_usd ?? 0 : 0;
   // Stacked-Bar: nur die positiven Anteile, realized kann negativ sein → Anteil clamp.
   const denomForBar = Math.max(positionsValue + cash + Math.max(realized, 0), 1);
   const pctPositions = (positionsValue / denomForBar) * 100;
@@ -401,38 +441,44 @@ export function PortfolioPage() {
               title={`Realized PnL (kumuliert positiv): ${fmt$(Math.max(realized, 0))}`}
             />
           </div>
-          <div className="mt-3 grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
+          <div className="mt-3 grid grid-cols-2 sm:grid-cols-3 gap-3 text-xs">
             <BucketLabel
               tone="info"
-              label="In Positionen"
+              label="In Position (Marktwert)"
               value={fmt$(positionsValue)}
               sub={`${snap.data.position_count} offen`}
             />
             <BucketLabel
               tone="pos"
-              label="Cash (Paper)"
+              label="Cash (frei)"
               value={fmt$(cash)}
               sub="liquide"
             />
             <BucketLabel
               tone={realized < 0 ? "neg" : "ai"}
-              label="Realized PnL"
-              value={fmt$(realized)}
+              label="Realisiert (G/V)"
+              value={`${realized >= 0 ? "+" : ""}${fmt$(realized)}`}
               sub="kumuliert"
             />
+            {/* Im Trade / unrealisiert — short-aware, grün bei Plus, rot bei Minus. */}
+            <BucketLabel
+              tone={unrealizedTotal > 0 ? "pos" : unrealizedTotal < 0 ? "neg" : "info"}
+              label="Im Trade (unrealisiert)"
+              value={`${unrealizedTotal >= 0 ? "+" : ""}${fmt$(unrealizedTotal)}`}
+              sub={unrealizedTotal >= 0 ? "offener Gewinn" : "offener Verlust"}
+            />
+            <BucketLabel
+              tone="neg"
+              label="Fees ausgegeben"
+              value={fmt$(feesSpent)}
+              sub="kumuliert (Entry+Exit)"
+            />
           </div>
-          <div className="mt-3 pt-3 border-t border-line-subtle/40 flex items-baseline justify-between text-xs">
-            <span className="text-fg-subtle">Unrealized PnL (offene Positionen)</span>
-            <span
-              className={cn(
-                "font-mono font-semibold",
-                unrealized > 0 ? "text-pos" : unrealized < 0 ? "text-neg" : "text-fg-muted",
-              )}
-            >
-              {unrealized >= 0 ? "+" : ""}
-              {fmt$(unrealized)}
-            </span>
-          </div>
+          <p className="mt-3 pt-3 border-t border-line-subtle/40 text-2xs text-fg-subtle">
+            Gesamt-Equity = Cash + Marktwert offener Positionen (Short = Verbindlichkeit),
+            inkl. realisierter + unrealisierter G/V; Fees sind bereits abgezogen. Echtzeit aus
+            /operator/portfolio-snapshot.
+          </p>
         </Card>
       )}
 

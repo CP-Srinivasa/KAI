@@ -98,13 +98,23 @@ function PortfolioTile() {
         />
       ) : (
         <div>
-          <Metric label="Equity" value={fmt(q.data.total_equity_usd)} />
-          <Metric label="Cash" value={fmt(q.data.cash_usd)} />
+          {/* Gesamt-Equity = was wirklich drin ist (Cash + Marktwert offener
+              Positionen, short-aware), inkl. realisierter + unrealisierter G/V,
+              Fees sind bereits abgezogen. */}
+          <Metric label="Gesamt-Equity" value={fmt(q.data.total_equity_usd)} />
+          <Metric label="In Position (Marktwert)" value={fmt(q.data.total_market_value_usd)} />
+          <Metric label="Cash (frei)" value={fmt(q.data.cash_usd)} />
           <Metric
-            label="Realized PnL"
+            label="Realisiert (G/V)"
             value={fmt(q.data.realized_pnl_usd)}
             tone={q.data.realized_pnl_usd >= 0 ? "pos" : "neg"}
           />
+          <Metric
+            label="Im Trade (unrealisiert)"
+            value={fmt(q.data.total_unrealized_pnl_usd)}
+            tone={q.data.total_unrealized_pnl_usd >= 0 ? "pos" : "neg"}
+          />
+          <Metric label="Fees ausgegeben" value={fmt(q.data.total_fees_usd)} tone="neg" />
           <Metric label="Offene Positionen" value={String(q.data.position_count)} />
           <p className="text-2xs text-fg-subtle mt-1">Live aus /operator/portfolio-snapshot</p>
         </div>
