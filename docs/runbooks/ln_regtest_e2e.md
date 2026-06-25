@@ -15,7 +15,18 @@ compose.
 Proves the SAME flow against a real lnd — the mocked node touches become real. Use a
 throwaway **regtest** (instant blocks) or **signet**; NO real coins move.
 
-### Setup
+### Automated (recommended) — `test/regtest-ln/`
+One command spins up bitcoind + 2 lnd, funds a payer, opens a channel (inbound
+liquidity), bakes an `invoices:write` macaroon, and drives KAI's own code through
+mint → pay → settle → L402-verify → book:
+
+    bash test/regtest-ln/run.sh
+
+Requires Docker; capital-free. This is the harness that proved the round-trip works
+against a real lnd (vs. the mocked in-process `tests/unit/test_ln_l402_e2e.py`). The
+manual steps below document the same flow for a custom/signet setup.
+
+### Setup (manual)
 - `bitcoind -regtest` (or signet) + lnd (the payee = KAI's node) wired to it.
 - A payer: a 2nd lnd or an `lncli` wallet with a funded channel to the payee.
 - Bake the scope-minimal invoice macaroon (`docs/runbooks/ln_g0_golive.md` §1) and point
