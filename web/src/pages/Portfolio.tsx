@@ -354,6 +354,9 @@ export function PortfolioPage() {
   const unrealizedTotal =
     snap.state === "ready" ? snap.data.total_unrealized_pnl_usd ?? unrealized : unrealized;
   const feesSpent = snap.state === "ready" ? snap.data.total_fees_usd ?? 0 : 0;
+  // Mai-60-bps-error-path-Artefakt (Tabelle v1.0.0, bis ~01.06.) — separat,
+  // damit die reale 10-bps-Fee nicht wie 1/3 des Portfolios aussieht.
+  const feesArtifact = snap.state === "ready" ? snap.data.total_fees_artifact_usd ?? 0 : 0;
   // Stacked-Bar: nur die positiven Anteile, realized kann negativ sein → Anteil clamp.
   const denomForBar = Math.max(positionsValue + cash + Math.max(realized, 0), 1);
   const pctPositions = (positionsValue / denomForBar) * 100;
@@ -471,7 +474,11 @@ export function PortfolioPage() {
               tone="neg"
               label="Fees ausgegeben"
               value={fmt$(feesSpent)}
-              sub="kumuliert (Entry+Exit)"
+              sub={
+                feesArtifact > 0
+                  ? `real 10 bps · +${fmt$(feesArtifact)} Mai-60bps-Artefakt ausgeschl.`
+                  : "kumuliert (Entry+Exit)"
+              }
             />
           </div>
           <p className="mt-3 pt-3 border-t border-line-subtle/40 text-2xs text-fg-subtle">

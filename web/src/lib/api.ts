@@ -1232,9 +1232,11 @@ export type PortfolioSnapshot = {
   total_market_value_usd: number;
   total_equity_usd: number;
   // 2026-06-25: Echtzeit-Aufschlüsselung. total_unrealized_pnl_usd ist vorzeichen-
-  // korrekt (long+short); total_fees_usd = kumulative Paper-Fees (Entry+Exit).
+  // korrekt (long+short); total_fees_usd = REALE Paper-Fees (10-bps-Ära, Entry+Exit).
+  // total_fees_artifact_usd = Mai-60-bps-error-path-Artefakt, separat ausgewiesen.
   total_unrealized_pnl_usd: number;
   total_fees_usd: number;
+  total_fees_artifact_usd?: number;
   position_count: number;
   positions: PaperPosition[];
 };
@@ -1507,6 +1509,7 @@ export async function fetchPortfolioSnapshot(signal?: AbortSignal): Promise<Port
     total_equity_usd: toNumOr(raw.total_equity_usd),
     total_unrealized_pnl_usd: toNumOr(raw.total_unrealized_pnl_usd),
     total_fees_usd: toNumOr(raw.total_fees_usd),
+    total_fees_artifact_usd: toNumOr(raw.total_fees_artifact_usd),
     position_count: toNumOr(raw.position_count),
     positions: (raw.positions ?? []).map(normalizePaperPosition),
   };

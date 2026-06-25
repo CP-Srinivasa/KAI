@@ -23,6 +23,7 @@ from app.audit.structured_reasoning import (
 )
 from app.core.domain.document import AnalysisResult
 from app.core.enums import SentimentLabel
+from app.core.symbol_guard import is_tradeable_symbol
 from app.learning.active_calibrator import ActiveCalibrator
 from app.learning.active_threshold import ActiveThreshold
 from app.market_data.models import MarketDataPoint
@@ -163,6 +164,13 @@ class SignalGenerator:
         Generate a SignalCandidate from analysis + market data.
         Returns None if any filter rejects the signal.
         """
+        # Filter 0: untradeable symbol — self-pair (USDT/USDT) or stablecoin/
+        # stablecoin. DQ-Fix 2026-06-25: the generator emitted a USDT/USDT short;
+        # reject such degenerate pairs before any work (root cause = no symbol check).
+        if not is_tradeable_symbol(symbol):
+            logger.debug("[SIGNAL] Untradeable symbol %s — skipping", symbol)
+            return None
+
         # Filter 1: market data required for entry price
         if market_data is None:
             logger.debug("[SIGNAL] No market data for %s — skipping", symbol)

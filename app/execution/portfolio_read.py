@@ -164,6 +164,8 @@ class PortfolioSnapshot:
     # total_equity_usd ist jetzt short-aware (cash + long_mv - short_mv).
     total_unrealized_pnl_usd: float = 0.0
     total_fees_usd: float = 0.0
+    # 2026-06-25: Mai-60-bps-error-path-Artefakt separat ausgewiesen (audit_replay).
+    total_fees_artifact_usd: float = 0.0
 
     def to_json_dict(self) -> dict[str, object]:
         return {
@@ -177,6 +179,7 @@ class PortfolioSnapshot:
             "total_equity_usd": self.total_equity_usd,
             "total_unrealized_pnl_usd": self.total_unrealized_pnl_usd,
             "total_fees_usd": self.total_fees_usd,
+            "total_fees_artifact_usd": self.total_fees_artifact_usd,
             "position_count": self.position_count,
             "positions": [position.to_json_dict() for position in self.positions],
             "exposure_summary": self.exposure_summary.to_json_dict(),
@@ -362,6 +365,7 @@ def _build_snapshot_from_portfolio_state(
         # DB path has no live price → unrealized not computable here (stays 0).
         total_unrealized_pnl_usd=0.0,
         total_fees_usd=round(total_fees_db, 8),
+        total_fees_artifact_usd=0.0,
     )
 
 
@@ -628,6 +632,7 @@ async def build_portfolio_snapshot(
         error=("market_data_unavailable_for_open_positions" if has_unpriced_positions else None),
         total_unrealized_pnl_usd=total_unrealized,
         total_fees_usd=round(replay.total_fees_usd, 8),
+        total_fees_artifact_usd=round(replay.total_fees_artifact_usd, 8),
     )
 
 
