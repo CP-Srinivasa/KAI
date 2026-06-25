@@ -22,7 +22,7 @@ _BOOKING_UNIT = Path("deploy/systemd/kai-oracle-earnings-booking.timer")
 _DEMAND_DIR = Path("artifacts")
 
 
-async def _probe_node(cfg: LightningSettings) -> tuple[bool, bool, bool]:
+async def _probe_node(cfg: LightningSettings) -> tuple[bool, bool, bool, int]:
     """Return (node_reachable, macaroon_scope_minimal, macaroon_can_mint).
 
     Two RAW probes (bypassing the value-layer gate):
@@ -35,7 +35,7 @@ async def _probe_node(cfg: LightningSettings) -> tuple[bool, bool, bool]:
     try:
         await client.get_info()
     except LightningUnavailableError:
-        return False, False, False
+        return False, False, False, 0
     try:
         await client.pay_invoice(payment_request="probe-not-a-real-invoice", fee_limit_sat=0)
         scope_minimal = False  # node ACCEPTED a spend attempt → macaroon too broad
@@ -47,7 +47,14 @@ async def _probe_node(cfg: LightningSettings) -> tuple[bool, bool, bool]:
         can_mint = True
     except LightningUnavailableError:
         can_mint = False  # no invoices:write (e.g. a readonly macaroon) → cannot receive
-    return True, scope_minimal, can_mint
+    # inbound liquidity (read-only): remote_balance = what others can send us. lnd returns
+    # it flat (older) or nested {sat,msat} (newer) — handle both. 0 inbound = nobody can pay.
+    try:
+        rb = (await client.channel_balance()).get("remote_balance", 0)
+        inbound_sat = int(rb.get("sat", 0) if isinstance(rb, dict) else rb)
+    except (LightningUnavailableError, TypeError, ValueError):
+        inbound_sat = 0
+    return True, scope_minimal, can_mint, inbound_sat
 
 
 def _telemetry_writable() -> bool:
@@ -66,15 +73,17 @@ async def _main() -> int:
     reachable: bool | None
     scope_minimal: bool | None
     can_mint: bool | None
+    inbound_sat: int | None
     if cfg.enabled:
-        reachable, scope_minimal, can_mint = await _probe_node(cfg)
+        reachable, scope_minimal, can_mint, inbound_sat = await _probe_node(cfg)
     else:
-        reachable, scope_minimal, can_mint = None, None, None  # node inert → cannot probe
+        reachable, scope_minimal, can_mint, inbound_sat = None, None, None, None  # node inert
     report = golive_preflight(
         cfg,
         node_reachable=reachable,
         macaroon_scope_minimal=scope_minimal,
         macaroon_can_mint=can_mint,
+        inbound_liquidity_sat=inbound_sat,
         booking_unit_present=_BOOKING_UNIT.exists(),
         telemetry_writable=_telemetry_writable(),
     )

@@ -32,6 +32,7 @@ def golive_preflight(
     node_reachable: bool | None = None,
     macaroon_scope_minimal: bool | None = None,
     macaroon_can_mint: bool | None = None,
+    inbound_liquidity_sat: int | None = None,
     booking_unit_present: bool | None = None,
     telemetry_writable: bool | None = None,
 ) -> dict[str, Any]:
@@ -72,6 +73,13 @@ def golive_preflight(
             macaroon_can_mint is True,
             "the macaroon MUST be able to mint invoices (invoices:write) — a readonly "
             "macaroon passes the no-spend check but cannot RECEIVE (paid path would 503)",
+        ),
+        PreflightCheck(
+            "inbound_liquidity",
+            inbound_liquidity_sat is not None
+            and inbound_liquidity_sat >= cfg.l402_default_price_sat,
+            f"the node needs >= {cfg.l402_default_price_sat} sat INBOUND liquidity to receive "
+            "a payment (0 inbound = nobody can pay); getinfo-green does NOT prove this",
         ),
         PreflightCheck(
             "booking_unit_present",
