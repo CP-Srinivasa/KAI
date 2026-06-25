@@ -8,7 +8,10 @@ both at signal generation (skip early) and at the paper engine (open-side backst
 
 Rejected:
 - ``base == quote`` (e.g. USDT/USDT, BTC/BTC) — a self-pair, nonsensical.
-- stablecoin/stablecoin (e.g. USDC/USDT) — no directional edge, pure noise.
+- true-peg-stablecoin/true-peg-stablecoin (e.g. USDC/USDT) — no directional edge.
+
+NOT rejected (SAT-C-465, 2026-06-26): depeg-capable tokens (MIM/FRAX/GHO/sUSD …)
+are real directional markets and incur real fees — see ``DEPEG_CAPABLE_TOKENS``.
 
 Permissive on parse failure: an unrecognized but well-formed pair is allowed
 through (we only block the two clearly-degenerate classes), so this never
@@ -17,12 +20,16 @@ silently drops a valid exotic symbol.
 
 from __future__ import annotations
 
-# Stablecoins (and fiat USD) — a pair of two of these has no tradeable direction.
-# 2026-06-25: extended with further well-known USD-pegged stablecoins after a
-# ``MIM/USDT`` short (entry ~101.95, a phantom price for a ~$1 token) reached the
-# paper book and incurred a self-close fee. MIM (Magic Internet Money) and the
-# others below are USD-pegged → a pair of two of them is not a real directional
-# market, so the open is now blocked at source and its fees never accrue.
+# True 1:1 USD pegs (and fiat USD) — a pair of two of these has no tradeable
+# direction, so it is degenerate noise (USDC/USDT etc.) and never a real market.
+#
+# SAT-C-465 (security review 2026-06-26): this set is the SSOT for "phantom"
+# (fees/PnL excluded from the honest, G2-relevant fee truth). It must therefore
+# contain ONLY genuinely peg-locked coins. The 2026-06-25 expansion wrongly added
+# DEPEG-CAPABLE tokens (MIM/FRAX/GHO/sUSD/LUSD/crvUSD/USDS/USDX/USDJ/USD0) — those
+# have real directional markets (a depeg is a tradeable move) and real fees, so
+# classifying them as phantom would HIDE real losses from the fee truth. They are
+# kept OUT of STABLECOINS below and listed in ``DEPEG_CAPABLE_TOKENS`` for the record.
 STABLECOINS: frozenset[str] = frozenset(
     {
         "USDT",
@@ -37,18 +44,17 @@ STABLECOINS: frozenset[str] = frozenset(
         "USDE",
         "PYUSD",
         "USD",
-        # 2026-06-25 additions — all USD-pegged stablecoins:
-        "MIM",
-        "FRAX",
-        "LUSD",
-        "SUSD",
-        "USDS",
-        "GHO",
-        "CRVUSD",
-        "USD0",
-        "USDX",
-        "USDJ",
     }
+)
+
+# Documented, deliberately NOT part of STABLECOINS (SAT-C-465). These are
+# USD-referenced but depeg-capable / algorithmically-backed tokens: they have real
+# directional markets and incur real fees, so a pair like ``FRAX/USDT`` is a REAL
+# (possibly loss-making) trade whose fees/PnL must count toward the honest fee
+# truth — NOT be silently excluded as "phantom". Kept here purely as a reference so
+# the knowledge is not lost; ``untradeable_reason`` intentionally does not use it.
+DEPEG_CAPABLE_TOKENS: frozenset[str] = frozenset(
+    {"MIM", "FRAX", "LUSD", "SUSD", "USDS", "GHO", "CRVUSD", "USD0", "USDX", "USDJ"}
 )
 
 # Known quote assets for slash-less symbols ("BTCUSDT" -> base BTC, quote USDT).

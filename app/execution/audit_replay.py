@@ -46,10 +46,12 @@ class AuditReplayResult:
     total_fees_usd: float = 0.0
     total_fees_artifact_usd: float = 0.0
     # 2026-06-25: Phantom-Fees = Fees auf nicht-handelbaren Symbolen (Self-Pair wie
-    # USDT/USDT, Stablecoin-Paar wie MIM/USDT). Diese Positionen waren nie ein echter
-    # gebührenpflichtiger Markt → ihre Fees sind fiktiv und gehören NICHT in die
-    # ehrliche "Fees ausgegeben"-Summe (Operator 2026-06-25). Separat ausgewiesen,
+    # USDT/USDT, echtes 1:1-Peg-Paar wie USDC/USDT). Diese Positionen waren nie ein
+    # echter gebührenpflichtiger Markt → ihre Fees sind fiktiv und gehören NICHT in
+    # die ehrliche "Fees ausgegeben"-Summe (Operator 2026-06-25). Separat ausgewiesen,
     # nicht still gedroppt. Der symbol_guard-Open-Backstop verhindert künftige Opens.
+    # SAT-C-465 (2026-06-26): depeg-fähige Tokens (MIM/FRAX/GHO/…) sind KEINE Phantome
+    # mehr — reale Märkte, reale Fees (siehe app/core/symbol_guard.DEPEG_CAPABLE_TOKENS).
     total_fees_phantom_usd: float = 0.0
     phantom_fills: int = 0
     # 2026-06-25: Fees + Fill-Zahl des heutigen Trading-Tags (UTC), damit der
@@ -367,8 +369,11 @@ def replay_paper_audit(audit_path: Path, *, today_utc: str | None = None) -> Aud
             total_fees_phantom_usd += _fee
             phantom_fills += 1
         elif _coerce_float(payload.get("fee_bps_applied")) == 60.0:
-            if _is_today:
-                fills_today += 1
+            # NEO-F-203 (Security-Review 2026-06-26): 60-bps-Fills sind das Mai-
+            # error-path-Artefakt → NICHT in der realen Heute-Fee-Summe. fills_today
+            # muss exakt zu total_fees_today_usd passen (beide rein real), also zählt
+            # der Artefakt-Zweig fills_today NICHT mit (60 bps trat nur in der Mai-
+            # Ära auf → heute ohnehin inert; der Zähler bliebe sonst inkonsistent).
             total_fees_artifact_usd += _fee
         else:
             if _is_today:
