@@ -357,6 +357,10 @@ export function PortfolioPage() {
   // Mai-60-bps-error-path-Artefakt (Tabelle v1.0.0, bis ~01.06.) — separat,
   // damit die reale 10-bps-Fee nicht wie 1/3 des Portfolios aussieht.
   const feesArtifact = snap.state === "ready" ? snap.data.total_fees_artifact_usd ?? 0 : 0;
+  // Tages-Fee-Last (heute, UTC) + Fill-Zahl — zeigt, wie viel ein Trading-Tag
+  // an Fees verschlingt und ob es stark variiert.
+  const feesToday = snap.state === "ready" ? snap.data.total_fees_today_usd ?? 0 : 0;
+  const fillsToday = snap.state === "ready" ? snap.data.fills_today ?? 0 : 0;
   // Stacked-Bar: nur die positiven Anteile, realized kann negativ sein → Anteil clamp.
   const denomForBar = Math.max(positionsValue + cash + Math.max(realized, 0), 1);
   const pctPositions = (positionsValue / denomForBar) * 100;
@@ -476,9 +480,15 @@ export function PortfolioPage() {
               value={fmt$(feesSpent)}
               sub={
                 feesArtifact > 0
-                  ? `real 10 bps · +${fmt$(feesArtifact)} Mai-60bps-Artefakt ausgeschl.`
-                  : "kumuliert (Entry+Exit)"
+                  ? `gesamt · +${fmt$(feesArtifact)} Mai-60bps-Artefakt ausgeschl.`
+                  : "gesamt (Entry+Exit)"
               }
+            />
+            <BucketLabel
+              tone="neg"
+              label="Fees heute"
+              value={fmt$(feesToday)}
+              sub={`${fillsToday} Fills heute (UTC)`}
             />
           </div>
           <p className="mt-3 pt-3 border-t border-line-subtle/40 text-2xs text-fg-subtle">

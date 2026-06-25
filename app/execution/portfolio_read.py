@@ -166,6 +166,10 @@ class PortfolioSnapshot:
     total_fees_usd: float = 0.0
     # 2026-06-25: Mai-60-bps-error-path-Artefakt separat ausgewiesen (audit_replay).
     total_fees_artifact_usd: float = 0.0
+    # 2026-06-25: Fees + Fill-Zahl des heutigen Trading-Tags (UTC) für die
+    # Tages-Fee-Last neben der Gesamtsumme.
+    total_fees_today_usd: float = 0.0
+    fills_today: int = 0
 
     def to_json_dict(self) -> dict[str, object]:
         return {
@@ -180,6 +184,8 @@ class PortfolioSnapshot:
             "total_unrealized_pnl_usd": self.total_unrealized_pnl_usd,
             "total_fees_usd": self.total_fees_usd,
             "total_fees_artifact_usd": self.total_fees_artifact_usd,
+            "total_fees_today_usd": self.total_fees_today_usd,
+            "fills_today": self.fills_today,
             "position_count": self.position_count,
             "positions": [position.to_json_dict() for position in self.positions],
             "exposure_summary": self.exposure_summary.to_json_dict(),
@@ -218,8 +224,8 @@ def _signed_market_value(position: PositionSummary) -> float:
     return -mv if position.position_side == "short" else mv
 
 
-def _replay_paper_audit(audit_path: Path) -> AuditReplayResult:
-    return replay_paper_audit(audit_path)
+def _replay_paper_audit(audit_path: Path, *, today_utc: str | None = None) -> AuditReplayResult:
+    return replay_paper_audit(audit_path, today_utc=today_utc)
 
 
 def _build_exposure_summary(positions: tuple[PositionSummary, ...]) -> ExposureSummary:
@@ -366,6 +372,8 @@ def _build_snapshot_from_portfolio_state(
         total_unrealized_pnl_usd=0.0,
         total_fees_usd=round(total_fees_db, 8),
         total_fees_artifact_usd=0.0,
+        total_fees_today_usd=0.0,
+        fills_today=0,
     )
 
 
@@ -500,7 +508,8 @@ async def build_portfolio_snapshot(
         # DB empty or query failed → fall through to JSONL
 
     resolved_path = Path(audit_path).resolve()
-    replay = _replay_paper_audit(resolved_path)
+    # today_utc derived from the snapshot's generation time → per-day fee tracking.
+    replay = _replay_paper_audit(resolved_path, today_utc=generated_at[:10])
 
     if not replay.available:
         empty_exposure = _build_exposure_summary(())
@@ -633,6 +642,8 @@ async def build_portfolio_snapshot(
         total_unrealized_pnl_usd=total_unrealized,
         total_fees_usd=round(replay.total_fees_usd, 8),
         total_fees_artifact_usd=round(replay.total_fees_artifact_usd, 8),
+        total_fees_today_usd=round(replay.total_fees_today_usd, 8),
+        fills_today=replay.fills_today,
     )
 
 
