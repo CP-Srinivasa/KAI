@@ -182,6 +182,15 @@ export type EdgeVerdict = {
   live_orders_attempted: number;
   window_started_at: string | null;
   window_ended_at: string | null;
+  /** Stichproben-Gate: ab n>=edge_gate_n ist ein Verdikt statistisch belastbar. */
+  edge_gate_n?: number;
+  gate_reached?: boolean;
+  /** insufficient (n<Gate) | disproven (Gate erreicht, P<50%) | inconclusive | proven */
+  verdict?: "insufficient" | "disproven" | "inconclusive" | "proven";
+  /** Ausreißer-Robustheit: P(mu_net>0) NACH Entfernen des besten Trades. */
+  without_best_p?: number | null;
+  without_best_mean_bps?: number;
+  bootstrap_ci_95?: [number, number] | null;
   error: string | null;
 };
 export function fetchEdgeVerdict(

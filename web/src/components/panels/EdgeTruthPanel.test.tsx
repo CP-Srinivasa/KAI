@@ -13,21 +13,29 @@ vi.mock("@/lib/api", async (importOriginal) => {
 
 import { EdgeTruthPanel } from "./EdgeTruthPanel";
 
+// Reale Lage 2026-06-25: Gate n>=30 ERREICHT (n=51) → Edge belastbar WIDERLEGT
+// (P=16,5%), und ausreißer-robust (ohne besten Trade fällt P auf 4,0%).
 const canonicalVerdict = {
   available: true,
   canonical: true,
   contaminated: false,
   source_allowlist: ["autonomous_generator", "real_analysis"],
-  closes_excluded_by_source: 119,
-  trade_count: 28,
-  p_mu_net_positive: 0.2488,
-  median_net_bps: -77.7,
-  mean_net_bps: -21.0,
-  realized_pnl_usd_sum: -103.7,
+  closes_excluded_by_source: 157,
+  trade_count: 51,
+  p_mu_net_positive: 0.1648,
+  median_net_bps: -85.7,
+  mean_net_bps: -24.4,
+  realized_pnl_usd_sum: -11.31,
   quarantine_excluded_count: 14,
   live_orders_attempted: 0,
-  window_started_at: "2026-06-11T00:00:00Z",
-  window_ended_at: "2026-06-23T12:00:00Z",
+  window_started_at: "2026-03-22T20:04:53Z",
+  window_ended_at: "2026-06-25T16:38:40Z",
+  edge_gate_n: 30,
+  gate_reached: true,
+  verdict: "disproven" as const,
+  without_best_p: 0.0402,
+  without_best_mean_bps: -37.3,
+  bootstrap_ci_95: [-68.6, 24.7] as [number, number],
   error: null,
 };
 
@@ -35,35 +43,49 @@ beforeEach(() => vi.clearAllMocks());
 afterEach(cleanup);
 
 describe("EdgeTruthPanel", () => {
-  it("zeigt das canonical-Verdikt EHRLICH (kein bewiesener Edge bei P<50%) + Quellen-/Quarantäne-Transparenz", async () => {
+  it("zeigt bei erreichtem Gate (n>=30, P<50%) 'belastbar widerlegt' + Gate-Badge + Ausreißer-Test", async () => {
     fetchEdgeVerdict.mockResolvedValue(canonicalVerdict);
     const { container } = render(<EdgeTruthPanel />);
 
-    // erscheint erst im ready-state -> wartet das Laden ab
-    await screen.findByText(/Kein bewiesener Edge/);
+    await screen.findByText(/Edge belastbar widerlegt/);
 
     const text = container.textContent ?? "";
-    expect(text).toContain("24,9 %"); // P(mu_net>0) ehrlich gerundet (de-DE Komma)
-    expect(text).toContain("Verdient KAI nach Kosten Geld"); // Klartext-Satz für Nicht-Quants
-    expect(text).toContain("0,8 %"); // Median -77,7 bps -> ~0,8 % verständlich übersetzt
-    expect(text).toContain("Canonical"); // source-filter-status sichtbar
-    expect(text).toContain("119 Close"); // closes_excluded_by_source nachvollziehbar
-    expect(text).toContain("14 korrupte Close"); // quarantine-transparenz
+    expect(text).toContain("16,5 %"); // P(mu_net>0) de-DE
+    expect(text).toContain("belastbar widerlegt"); // Klartext: Negativ-Befund, nicht "zu dünn"
+    expect(text).toContain("0,9 %"); // Median -85,7 bps -> ~0,9 % verständlich
+    expect(text).toContain("Stichproben-Gate n≥30 erreicht"); // Gate sichtbar
+    expect(text).toContain("Ausreißer-Test"); // Robustheit sichtbar
+    expect(text).toContain("4,0 %"); // without_best_p 0.0402 -> nicht ausreißer-getragen
+    expect(text).toContain("Canonical");
+    expect(text).toContain("157 Close");
+    expect(text).toContain("14 korrupte Close");
     expect(text).not.toContain("kontaminiert"); // canonical = NICHT kontaminiert
-    expect(text).not.toContain("reine Beweislage"); // Info-Feld standardmäßig eingeklappt
+    expect(text).not.toContain("reine Beweislage"); // Info-Feld eingeklappt
+  });
+
+  it("unter dem Gate (n<30) sagt es 'Stichprobe zu klein', nicht widerlegt", async () => {
+    fetchEdgeVerdict.mockResolvedValue({
+      ...canonicalVerdict,
+      trade_count: 20,
+      gate_reached: false,
+      verdict: "insufficient" as const,
+      p_mu_net_positive: 0.3,
+    });
+    const { container } = render(<EdgeTruthPanel />);
+    await screen.findByText(/Stichprobe zu klein/);
+    const text = container.textContent ?? "";
+    expect(text).toContain("n=20");
+    expect(text).toContain("noch nicht erreicht"); // Gate-Badge im Negativ-Zustand
+    expect(text).not.toContain("belastbar widerlegt");
   });
 
   it("Info-Feld ist standardmäßig eingeklappt und öffnet die Nachlese-Erklärung auf Klick", async () => {
     fetchEdgeVerdict.mockResolvedValue(canonicalVerdict);
     render(<EdgeTruthPanel />);
-    await screen.findByText(/Kein bewiesener Edge/);
+    await screen.findByText(/Edge belastbar widerlegt/);
 
-    // eingeklappt -> Erklärtext nicht im DOM
     expect(screen.queryByText(/reine Beweislage/)).toBeNull();
-
     fireEvent.click(screen.getByRole("button", { name: /Was bedeutet das/ }));
-
-    // aufgeklappt -> Erklärung lesbar
     expect(await screen.findByText(/reine Beweislage/)).toBeTruthy();
     expect(screen.getByText(/über alles entscheidet/)).toBeTruthy();
   });
