@@ -51,6 +51,28 @@ def test_matrix_length_matches_input() -> None:
     assert len(matrix) == len(candles)
 
 
+def test_trail_return_20_is_causal_and_correct() -> None:
+    from app.analysis.features.feature_matrix import (
+        TRAIL_RETURN_WINDOW,
+        compute_trailing_returns,
+    )
+
+    closes = [float(100 + i) for i in range(60)]  # strictly increasing
+    matrix = build_feature_matrix(_make_candles(closes))
+    # Warm-up: the first TRAIL_RETURN_WINDOW rows have no anchor → None.
+    for i in range(TRAIL_RETURN_WINDOW):
+        assert matrix[i].trail_return_20 is None
+    # Causal value: close[i]/close[i-window]-1, using only past data.
+    i = 40
+    expected = closes[i] / closes[i - TRAIL_RETURN_WINDOW] - 1.0
+    assert matrix[i].trail_return_20 is not None
+    assert math.isclose(matrix[i].trail_return_20, expected)
+    # Direct helper matches the matrix wiring.
+    helper = compute_trailing_returns(closes, TRAIL_RETURN_WINDOW)
+    assert helper[i] is not None and math.isclose(helper[i], expected)
+    assert helper[:TRAIL_RETURN_WINDOW] == [None] * TRAIL_RETURN_WINDOW
+
+
 def test_empty_candles_returns_empty_matrix() -> None:
     assert build_feature_matrix([]) == []
 
