@@ -191,6 +191,56 @@ export function fetchEdgeVerdict(
   return apiGet<EdgeVerdict>(`/dashboard/api/edge-window?canonical=${canonical}`, { signal });
 }
 
+// Churn / Fee-Effizienz (Operator /goal 2026-06-25): Brutto-vor-Fees vs
+// Netto-nach-Fees, Fee-Drag, Fees/Handelstag-Trend — aus den ECHTEN Audit-Fees
+// inkl. position_partial_closed (TP-Tiers). READ-ONLY, kein Handelseingriff.
+export type ChurnDay = {
+  date: string;
+  fills: number;
+  realizations: number;
+  fee_spend_usd: number;
+  realized_gross_usd: number;
+};
+export type ChurnReasonStat = {
+  reason: string;
+  count: number;
+  net_usd: number;
+  winrate: number;
+};
+export type ChurnReport = {
+  available: boolean;
+  since: string | null;
+  window_start: string | null;
+  window_end: string | null;
+  trading_days: number;
+  realization_count: number;
+  final_close_count: number;
+  partial_count: number;
+  excluded_count: number;
+  gross_usd: number;
+  open_fees_usd: number;
+  close_fees_usd: number;
+  round_trip_fees_usd: number;
+  net_usd: number;
+  /** RT-Fees als % der |Brutto|. null wenn Brutto ≈ 0 (Drag instabil). */
+  fee_drag_pct: number | null;
+  gross_near_zero: boolean;
+  trades_per_trading_day: number;
+  fee_spend_per_trading_day: number;
+  per_day: ChurnDay[];
+  hold_minutes_median: number | null;
+  hold_minutes_p25: number | null;
+  hold_minutes_p75: number | null;
+  hold_under_15min_pct: number | null;
+  hold_under_1h_pct: number | null;
+  by_reason: ChurnReasonStat[];
+  note: string;
+  error?: string | null;
+};
+export function fetchChurnReport(signal?: AbortSignal): Promise<ChurnReport> {
+  return apiGet<ChurnReport>("/dashboard/api/churn", { signal });
+}
+
 // L3 Audit-Integrität (OpenTimestamps-Anchoring, default-off). state:
 // disabled | no_anchor | ok | unavailable. proof_available = .ots vorhanden;
 // proof_state unterscheidet "pending" (Calendar-Commitment, noch nicht
