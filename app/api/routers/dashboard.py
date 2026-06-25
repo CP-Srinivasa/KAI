@@ -90,7 +90,12 @@ _EDGE_PROVEN_P = 0.90  # P(mu_net>0) bar to call an edge plausibly proven (info-
 
 # Churn/Fee-Effizienz-Panel parst den (großen) Execution-Stream → cachen wie die
 # Edge-Truth (60 s), damit der 60 s-Poll nicht jedes Tick re-parst. Keyed by since.
+# SAT-C-462/NEO-F-202 (Security-Review 2026-06-26): ``since`` wird am Endpoint
+# streng als YYYY-MM-DD validiert (ungültig → 400, KEIN Cache-Eintrag); der Cache
+# ist zusätzlich gedeckelt (oldest-eviction), damit auch viele GÜLTIGE Datums-Keys
+# den Speicher nicht unbegrenzt füllen können.
 _CHURN_CACHE_TTL_S = 60.0
+_CHURN_CACHE_MAX = 32
 _churn_cache: dict[str, dict[str, Any]] = {}
 
 # Source-by-doc map (for the active-precision legacy split). Loading it means
@@ -1139,10 +1144,16 @@ async def dashboard_edge_window_api(canonical: bool = True) -> JSONResponse:
         }
         _edge_window_cache[mode] = {"at": cache_now, "payload": payload}
         return JSONResponse(content=payload, headers={"Cache-Control": "no-store, max-age=0"})
-    except Exception as exc:  # noqa: BLE001 — endpoint must never 500 the dashboard
+    except Exception:  # noqa: BLE001 — endpoint must never 500 the dashboard
         logger.warning("dashboard_edge_window_failed", exc_info=True)
+        # INFO (Security-Review 2026-06-26): generische Meldung statt str(exc), das
+        # sonst den absoluten Audit-Pfad leaken könnte. Details nur im Server-Log.
         return JSONResponse(
-            content={"available": False, "canonical": canonical, "error": str(exc)},
+            content={
+                "available": False,
+                "canonical": canonical,
+                "error": "edge_window_unavailable",
+            },
             headers={"Cache-Control": "no-store, max-age=0"},
         )
 
@@ -1160,6 +1171,18 @@ async def dashboard_churn_api(since: str | None = None) -> JSONResponse:
     from app.observability.churn_report import CONTAMINATION_CUTOFF_DATE, build_churn_report
 
     window_since = since or CONTAMINATION_CUTOFF_DATE
+    # SAT-C-462/NEO-F-202: ``since`` streng als YYYY-MM-DD validieren BEVOR ein
+    # Cache-Key angelegt oder die (große) Audit-Datei geparst wird. Sonst erzeugt
+    # beliebiger Müll (``?since=aaa``) unbegrenzt distinkte Cache-Einträge +
+    # Full-File-Parses (DoS). Ungültig → 400, fail-closed, kein Cache, kein Parse.
+    try:
+        datetime.strptime(window_since, "%Y-%m-%d")
+    except (ValueError, TypeError):
+        return JSONResponse(
+            status_code=400,
+            content={"available": False, "error": "invalid_since_expected_YYYY-MM-DD"},
+            headers={"Cache-Control": "no-store, max-age=0"},
+        )
     cache_now = time.monotonic()
     cached = _churn_cache.get(window_since)
     if cached is not None and (cache_now - cached["at"]) < _CHURN_CACHE_TTL_S:
@@ -1169,12 +1192,23 @@ async def dashboard_churn_api(since: str | None = None) -> JSONResponse:
     try:
         report = build_churn_report(str(_PAPER_EXECUTION_AUDIT), since=window_since)
         payload = report.to_dict()
+        # Defense-in-Depth (SAT-C-462): Cache deckeln — ältesten Eintrag verdrängen,
+        # falls über viele GÜLTIGE Datums-Keys iteriert wird.
+        if window_since not in _churn_cache and len(_churn_cache) >= _CHURN_CACHE_MAX:
+            oldest = min(_churn_cache, key=lambda k: _churn_cache[k]["at"])
+            _churn_cache.pop(oldest, None)
         _churn_cache[window_since] = {"at": cache_now, "payload": payload}
         return JSONResponse(content=payload, headers={"Cache-Control": "no-store, max-age=0"})
-    except Exception as exc:  # noqa: BLE001 — endpoint must never 500 the dashboard
+    except Exception:  # noqa: BLE001 — endpoint must never 500 the dashboard
         logger.warning("dashboard_churn_failed", exc_info=True)
+        # INFO (Security-Review 2026-06-26): KEIN str(exc) zurückgeben — würde den
+        # absoluten Audit-Pfad leaken. Generisch; Details nur im Server-Log.
         return JSONResponse(
-            content={"available": False, "since": window_since, "error": str(exc)},
+            content={
+                "available": False,
+                "since": window_since,
+                "error": "churn_report_unavailable",
+            },
             headers={"Cache-Control": "no-store, max-age=0"},
         )
 

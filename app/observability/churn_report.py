@@ -322,15 +322,20 @@ def build_churn_report(
             continue
         trade_pnl = _f(ev.get("trade_pnl_usd")) or 0.0
         close_fee = _f(ev.get("fee_usd")) or 0.0  # == das Close-Leg-Fill-Fee (verifiziert)
-        side = str(ev.get("position_side", "long")).lower()
-        # position_partial_closed trägt KEIN quantity (qty=None). Da das Event-fee_usd
-        # exakt das Close-Leg-Fee ist, gilt gross = trade_pnl + close_fee = price_move·qty
-        # → qty arithmetisch ableiten (verifiziert gegen die Close-Leg-Fills).
+        # position_partial_closed trägt KEIN quantity (qty=None) UND KEIN
+        # position_side (alle Partials: position_side=None). qty arithmetisch
+        # ableiten: das Event-fee_usd ist exakt das Close-Leg-Fee, also
+        # gross = trade_pnl + close_fee = ±(exit−entry)·qty (Vorzeichen = Richtung).
+        # NEO-F-201 (Security-Review 2026-06-26): die frühere Ableitung las die
+        # Richtung aus dem (fehlenden) position_side → Default „long" → für SHORT-
+        # Partials wurde qty negativ und das Event STILL verworfen. Fix seiten-
+        # AGNOSTISCH über die Beträge: |gross| = |exit−entry|·qty gilt für long
+        # UND short (qty > 0).
         qty = _f(ev.get("quantity")) or 0.0
         if qty <= 0:
-            price_move = (exit_px - entry) if side != "short" else (entry - exit_px)
-            if abs(price_move) > 1e-12:
-                qty = (trade_pnl + close_fee) / price_move
+            price_span = abs(exit_px - entry)
+            if price_span > 1e-12:
+                qty = abs(trade_pnl + close_fee) / price_span
         if qty <= 0:
             continue
         day = ts.date().isoformat()

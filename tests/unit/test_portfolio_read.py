@@ -385,8 +385,9 @@ def test_replay_tracks_today_fees_and_fills(tmp_path: Path) -> None:
 
 def test_replay_quarantines_phantom_untradeable_fees(tmp_path: Path) -> None:
     """Operator 2026-06-25: Fees auf nicht-handelbaren Symbolen (Self-Pair /
-    Stablecoin-Paar wie MIM/USDT) sind fiktiv → in total_fees_phantom_usd, NICHT in
-    die ehrliche total_fees_usd."""
+    echtes Peg-Paar wie USDC/USDT) sind fiktiv → in total_fees_phantom_usd, NICHT
+    in die ehrliche total_fees_usd. (SAT-C-465: nur ECHTE 1:1-Pegs, nicht depeg-
+    fähige Tokens — siehe test_replay_depeg_capable_token_is_real_not_phantom.)"""
     audit_path = tmp_path / "paper_execution_audit.jsonl"
     _write_audit(
         audit_path,
@@ -408,10 +409,10 @@ def test_replay_quarantines_phantom_untradeable_fees(tmp_path: Path) -> None:
             {
                 "event_type": "order_filled",
                 "order_id": "ord_phantom",
-                "symbol": "MIM/USDT",  # MIM is USD-pegged -> stablecoin pair = phantom
+                "symbol": "USDC/USDT",  # true 1:1 peg/peg pair = phantom (no direction)
                 "side": "sell",
-                "quantity": 10.0,
-                "fill_price": 101.95,
+                "quantity": 1000.0,
+                "fill_price": 1.0,
                 "fee_usd": 1.54,
                 "fee_bps_applied": 10.0,
                 "timestamp_utc": "2026-06-20T10:00:00+00:00",
@@ -424,11 +425,89 @@ def test_replay_quarantines_phantom_untradeable_fees(tmp_path: Path) -> None:
 
     r = replay_paper_audit(audit_path, today_utc="2026-06-20")
     assert r.total_fees_usd == pytest.approx(2.0)  # only the real BTC fill
-    assert r.total_fees_phantom_usd == pytest.approx(1.54)  # MIM/USDT excluded
+    assert r.total_fees_phantom_usd == pytest.approx(1.54)  # USDC/USDT excluded
     assert r.phantom_fills == 1
     assert r.fills_today == 1  # phantom fill NOT counted in honest today-count
     d = r  # snapshot to_json_dict surfaces it
     assert d.total_fees_phantom_usd == pytest.approx(1.54)
+
+
+def test_replay_depeg_capable_token_is_real_not_phantom(tmp_path: Path) -> None:
+    """SAT-C-465 (security review 2026-06-26): a depeg-capable USD-referenced token
+    (MIM/FRAX/GHO/…) is a REAL directional market — its fee is real, NOT phantom.
+    Locks the narrowing so real losses can never again be hidden as 'fiktiv'."""
+    audit_path = tmp_path / "paper_execution_audit.jsonl"
+    _write_audit(
+        audit_path,
+        [
+            {
+                "event_type": "order_filled",
+                "order_id": "ord_frax",
+                "symbol": "FRAX/USDT",  # depeg-capable -> REAL trade, real fee
+                "side": "buy",
+                "quantity": 1000.0,
+                "fill_price": 0.98,
+                "fee_usd": 0.98,
+                "fee_bps_applied": 10.0,
+                "timestamp_utc": "2026-06-20T09:00:00+00:00",
+                "filled_at": "2026-06-20T09:00:00+00:00",
+                "portfolio_cash": 9000.0,
+                "realized_pnl_usd": 0.0,
+            },
+        ],
+    )
+
+    r = replay_paper_audit(audit_path, today_utc="2026-06-20")
+    assert r.total_fees_usd == pytest.approx(0.98)  # counted as REAL
+    assert r.total_fees_phantom_usd == 0.0  # NOT phantom
+    assert r.phantom_fills == 0
+
+
+def test_replay_artifact_60bps_today_excluded_from_fills_today(tmp_path: Path) -> None:
+    """NEO-F-203 (security review 2026-06-26): a 60-bps May error-path artifact fill
+    dated today must NOT bump fills_today (its fee is excluded from
+    total_fees_today_usd), so the two counters stay consistent (both real-only)."""
+    audit_path = tmp_path / "paper_execution_audit.jsonl"
+    _write_audit(
+        audit_path,
+        [
+            {
+                "event_type": "order_filled",
+                "order_id": "ord_real_today",
+                "symbol": "BTC/USDT",
+                "side": "buy",
+                "quantity": 0.1,
+                "fill_price": 50000.0,
+                "fee_usd": 2.0,
+                "fee_bps_applied": 10.0,  # real era
+                "timestamp_utc": "2026-06-20T09:00:00+00:00",
+                "filled_at": "2026-06-20T09:00:00+00:00",
+                "portfolio_cash": 9000.0,
+                "realized_pnl_usd": 0.0,
+            },
+            {
+                "event_type": "order_filled",
+                "order_id": "ord_artifact_today",
+                "symbol": "ETH/USDT",
+                "side": "buy",
+                "quantity": 1.0,
+                "fill_price": 3000.0,
+                "fee_usd": 18.0,
+                "fee_bps_applied": 60.0,  # May error-path artifact
+                "timestamp_utc": "2026-06-20T10:00:00+00:00",
+                "filled_at": "2026-06-20T10:00:00+00:00",
+                "portfolio_cash": 6000.0,
+                "realized_pnl_usd": 0.0,
+            },
+        ],
+    )
+
+    r = replay_paper_audit(audit_path, today_utc="2026-06-20")
+    # fills_today counts ONLY the real fill; the artifact fill is excluded from both.
+    assert r.fills_today == 1
+    assert r.total_fees_today_usd == pytest.approx(2.0)
+    assert r.total_fees_artifact_usd == pytest.approx(18.0)
+    assert r.total_fees_usd == pytest.approx(2.0)
 
 
 @pytest.mark.asyncio

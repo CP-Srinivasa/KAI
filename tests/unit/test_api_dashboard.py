@@ -1577,3 +1577,35 @@ def test_churn_api_reports_gross_net_with_partials(tmp_path: Path) -> None:
     assert data["gross_usd"] == 16.0  # (3+1) + (10.5+1.5)
     assert data["round_trip_fees_usd"] == 12.5  # open 10 + close 2.5
     assert data["net_usd"] == 3.5  # gross - rt
+
+
+def test_churn_api_rejects_invalid_since(tmp_path: Path) -> None:
+    """SAT-C-462/NEO-F-202 (security review 2026-06-26): ein ungültiger ?since=
+    muss mit 400 abgelehnt werden BEVOR ein Cache-Eintrag angelegt oder die (große)
+    Audit-Datei geparst wird — sonst füllt beliebiger Müll den Cache unbegrenzt."""
+    (tmp_path / "paper_execution_audit.jsonl").write_text("", encoding="utf-8")
+    dashboard_mod._churn_cache.clear()
+    app = _make_app()
+    with _patch_artifacts(tmp_path):
+        with TestClient(app) as client:
+            r = client.get("/dashboard/api/churn?since=not-a-date")
+
+    assert r.status_code == 400
+    assert r.json()["error"] == "invalid_since_expected_YYYY-MM-DD"
+    # KEIN Cache-Eintrag angelegt (kein unbegrenztes Wachstum durch Müll-Keys).
+    assert len(dashboard_mod._churn_cache) == 0
+
+
+def test_churn_cache_is_bounded(tmp_path: Path) -> None:
+    """SAT-C-462: auch viele GÜLTIGE Datums-Keys dürfen den Cache nicht unbegrenzt
+    füllen — ältester Eintrag wird verdrängt, sobald _CHURN_CACHE_MAX erreicht ist."""
+    (tmp_path / "paper_execution_audit.jsonl").write_text("", encoding="utf-8")
+    dashboard_mod._churn_cache.clear()
+    app = _make_app()
+    with _patch_artifacts(tmp_path):
+        with TestClient(app) as client:
+            for i in range(dashboard_mod._CHURN_CACHE_MAX + 10):
+                day = f"2026-{(i % 12) + 1:02d}-{(i % 28) + 1:02d}"
+                client.get(f"/dashboard/api/churn?since={day}")
+
+    assert len(dashboard_mod._churn_cache) <= dashboard_mod._CHURN_CACHE_MAX

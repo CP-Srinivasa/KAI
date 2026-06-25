@@ -220,3 +220,33 @@ def test_phantom_untradeable_fees_excluded(tmp_path: Path) -> None:
     # Tages-Fee-Kadenz enthält die Phantom-Fees NICHT
     day = {d.date: d for d in r.per_day}["2026-06-12"]
     assert day.fee_spend_usd == 12.0  # nur AAA open10+close2, USDT/USDT-7 ausgeschlossen
+
+
+def test_short_partial_without_side_is_not_dropped(tmp_path: Path) -> None:
+    # NEO-F-201 (security review 2026-06-26): a SHORT position_partial_closed carries
+    # neither quantity NOR position_side (both None in the real audit). qty must be
+    # derived side-AGNOSTICALLY. The old code defaulted to "long", produced a
+    # negative qty for the short close and SILENTLY DROPPED the realization.
+    partial = _close(
+        "ZZZ/USDT",
+        100.0,  # entry
+        90.0,  # exit (Preis fällt -> Short im Gewinn)
+        2,
+        1.0,  # close_fee
+        19.0,  # trade_pnl = gross(20) - close_fee(1)
+        "2026-06-12T11:00:00+00:00",
+        reason="tp_tier",
+        partial=True,
+    )
+    partial["quantity"] = None  # reale Struktur: kein qty
+    partial["position_side"] = None  # reale Struktur: kein side
+    events = [
+        _open("ZZZ/USDT", 5, 2.0, "2026-06-12T10:00:00+00:00", side="sell", pside="short"),
+        partial,
+    ]
+    r = build_churn_report(_write(tmp_path, events))
+    assert r.available
+    assert r.realization_count == 1  # NICHT still verworfen
+    assert r.partial_count == 1
+    # |gross| = |exit-entry| * qty -> 20 = 10 * 2 ; Short-Gewinn zählt positiv.
+    assert round(r.gross_usd, 6) == 20.0
