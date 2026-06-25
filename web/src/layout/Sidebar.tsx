@@ -1,14 +1,11 @@
 import {
   LayoutDashboard,
   Radio,
-  LineChart,
   ArrowLeftRight,
   Briefcase,
   ShieldAlert,
   Sparkles,
   Bell,
-  Newspaper,
-  Rewind,
   Settings,
   Upload,
   ChevronLeft,
@@ -44,13 +41,6 @@ const LIVE: Item[] = [
   { id: "alerts", labelKey: "nav.alerts", icon: <Bell size={16} /> },
   { id: "risk", labelKey: "nav.risk", icon: <ShieldAlert size={16} /> },
   { id: "ai", labelKey: "nav.ai", icon: <Sparkles size={16} /> },
-];
-
-// Integration ausstehend (Phase 2)
-const PREPARED: Item[] = [
-  { id: "markets", labelKey: "nav.markets", icon: <LineChart size={16} />, prepared: true },
-  { id: "news", labelKey: "nav.news", icon: <Newspaper size={16} />, prepared: true },
-  { id: "backtest", labelKey: "nav.backtest", icon: <Rewind size={16} />, prepared: true },
 ];
 
 // Souveränität (eigene Bitcoin/Lightning-Node, Truth-Layer)
@@ -160,8 +150,6 @@ export function Sidebar({ mobileOpen = false, onMobileClose }: SidebarProps) {
         <NavGroup label="Souveränität" items={SOVEREIGN} collapsed={collapsed} route={route} navigate={handleNavigate} />
         <div className="h-2" />
         <NavGroup label="Kontrolle" items={CONTROL} collapsed={collapsed} route={route} navigate={handleNavigate} />
-        <div className="h-2" />
-        <NavGroup label="Vorbereitet" items={PREPARED} collapsed={collapsed} route={route} navigate={handleNavigate} />
       </nav>
 
       <div className="border-t border-line-subtle px-2 py-2 space-y-0.5">

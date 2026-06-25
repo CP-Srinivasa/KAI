@@ -11,7 +11,6 @@ import { useAppState } from "@/state/AppState";
 // Dashboard bleibt eager (Default-Route, First-Paint).
 // Alle anderen Routen werden on-demand geladen → kleinerer Initial-Bundle.
 const SignalsPage = lazy(() => import("@/pages/Signals").then((m) => ({ default: m.SignalsPage })));
-const MarketsPage = lazy(() => import("@/pages/Markets").then((m) => ({ default: m.MarketsPage })));
 const TradesPage = lazy(() => import("@/pages/Trades").then((m) => ({ default: m.TradesPage })));
 const PortfolioPage = lazy(() =>
   import("@/pages/Portfolio").then((m) => ({ default: m.PortfolioPage })),
@@ -21,10 +20,6 @@ const AIInsightsPage = lazy(() =>
   import("@/pages/AIInsightsPage").then((m) => ({ default: m.AIInsightsPage })),
 );
 const AlertsPage = lazy(() => import("@/pages/Alerts").then((m) => ({ default: m.AlertsPage })));
-const NewsPage = lazy(() => import("@/pages/News").then((m) => ({ default: m.NewsPage })));
-const BacktestPage = lazy(() =>
-  import("@/pages/Backtesting").then((m) => ({ default: m.BacktestPage })),
-);
 const ExternalSignalsPage = lazy(() =>
   import("@/pages/ExternalSignals").then((m) => ({ default: m.ExternalSignalsPage })),
 );
@@ -85,8 +80,6 @@ function renderRoute(r: string) {
       return <Dashboard />;
     case "signals":
       return <SignalsPage />;
-    case "markets":
-      return <MarketsPage />;
     case "trades":
       return <TradesPage />;
     case "portfolio":
@@ -97,10 +90,6 @@ function renderRoute(r: string) {
       return <AIInsightsPage />;
     case "alerts":
       return <AlertsPage />;
-    case "news":
-      return <NewsPage />;
-    case "backtest":
-      return <BacktestPage />;
     case "external":
       return <ExternalSignalsPage />;
     case "sources":
