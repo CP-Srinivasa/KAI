@@ -114,7 +114,12 @@ function PortfolioTile() {
             value={fmt(q.data.total_unrealized_pnl_usd)}
             tone={q.data.total_unrealized_pnl_usd >= 0 ? "pos" : "neg"}
           />
-          <Metric label="Fees ausgegeben" value={fmt(q.data.total_fees_usd)} tone="neg" />
+          <Metric label="Fees ausgegeben (gesamt)" value={fmt(q.data.total_fees_usd)} tone="neg" />
+          <Metric
+            label={`Fees heute (${q.data.fills_today ?? 0} Fills)`}
+            value={fmt(q.data.total_fees_today_usd ?? 0)}
+            tone="neg"
+          />
           <Metric label="Offene Positionen" value={String(q.data.position_count)} />
           <p className="text-2xs text-fg-subtle mt-1">Live aus /operator/portfolio-snapshot</p>
         </div>

@@ -1237,6 +1237,9 @@ export type PortfolioSnapshot = {
   total_unrealized_pnl_usd: number;
   total_fees_usd: number;
   total_fees_artifact_usd?: number;
+  // 2026-06-25: Fees + Fill-Zahl des heutigen Trading-Tags (UTC) zur Tages-Fee-Last.
+  total_fees_today_usd?: number;
+  fills_today?: number;
   position_count: number;
   positions: PaperPosition[];
 };
@@ -1510,6 +1513,8 @@ export async function fetchPortfolioSnapshot(signal?: AbortSignal): Promise<Port
     total_unrealized_pnl_usd: toNumOr(raw.total_unrealized_pnl_usd),
     total_fees_usd: toNumOr(raw.total_fees_usd),
     total_fees_artifact_usd: toNumOr(raw.total_fees_artifact_usd),
+    total_fees_today_usd: toNumOr(raw.total_fees_today_usd),
+    fills_today: toNumOr(raw.fills_today),
     position_count: toNumOr(raw.position_count),
     positions: (raw.positions ?? []).map(normalizePaperPosition),
   };

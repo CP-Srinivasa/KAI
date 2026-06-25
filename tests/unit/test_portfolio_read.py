@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from app.execution.audit_replay import replay_paper_audit
 from app.execution.portfolio_read import (
     build_exposure_summary,
     build_portfolio_snapshot,
@@ -332,6 +333,54 @@ async def test_build_portfolio_snapshot_quarantines_60bps_fee_artifact(
     d = snapshot.to_json_dict()
     assert d["total_fees_usd"] == pytest.approx(2.0)
     assert d["total_fees_artifact_usd"] == pytest.approx(5.0)
+
+
+def test_replay_tracks_today_fees_and_fills(tmp_path: Path) -> None:
+    """today_utc enables per-day fee/fill tracking next to the cumulative total."""
+    audit_path = tmp_path / "paper_execution_audit.jsonl"
+    _write_audit(
+        audit_path,
+        [
+            {
+                "event_type": "order_filled",
+                "order_id": "ord_today",
+                "symbol": "BTC/USDT",
+                "side": "buy",
+                "quantity": 0.1,
+                "fill_price": 50000.0,
+                "fee_usd": 2.0,
+                "fee_bps_applied": 10.0,
+                "timestamp_utc": "2026-06-20T09:00:00+00:00",
+                "filled_at": "2026-06-20T09:00:00+00:00",
+                "portfolio_cash": 9000.0,
+                "realized_pnl_usd": 0.0,
+            },
+            {
+                "event_type": "order_filled",
+                "order_id": "ord_yesterday",
+                "symbol": "ETH/USDT",
+                "side": "buy",
+                "quantity": 1.0,
+                "fill_price": 3000.0,
+                "fee_usd": 1.5,
+                "fee_bps_applied": 10.0,
+                "timestamp_utc": "2026-06-19T09:00:00+00:00",
+                "filled_at": "2026-06-19T09:00:00+00:00",
+                "portfolio_cash": 6000.0,
+                "realized_pnl_usd": 0.0,
+            },
+        ],
+    )
+
+    r = replay_paper_audit(audit_path, today_utc="2026-06-20")
+    assert r.fills_today == 1
+    assert r.total_fees_today_usd == pytest.approx(2.0)
+    assert r.total_fees_usd == pytest.approx(3.5)  # both real (10 bps)
+
+    # No today_utc → per-day tracking stays zero (back-compat for state recovery).
+    r2 = replay_paper_audit(audit_path)
+    assert r2.fills_today == 0
+    assert r2.total_fees_today_usd == 0.0
 
 
 @pytest.mark.asyncio

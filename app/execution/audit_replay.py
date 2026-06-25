@@ -44,6 +44,11 @@ class AuditReplayResult:
     # Summe gemischt — sonst sieht die kumulative Fee wie 1/3 des Portfolios aus.
     total_fees_usd: float = 0.0
     total_fees_artifact_usd: float = 0.0
+    # 2026-06-25: Fees + Fill-Zahl des heutigen Trading-Tags (UTC), damit der
+    # Operator die Tages-Fee-Last und ihre Schwankung neben der Gesamtsumme sieht.
+    # Nur gefüllt, wenn replay_paper_audit mit today_utc="YYYY-MM-DD" aufgerufen wird.
+    total_fees_today_usd: float = 0.0
+    fills_today: int = 0
     # 2026-05-12 Sprint C: persistente idempotency-Spur aus Audit damit
     # cross-process & cross-engine-instance Race-Conditions die zu doppelten
     # PaperFills geführt haben (Q/USDT 2026-05-09 Bug) nicht mehr durchkommen.
@@ -118,8 +123,13 @@ def _coerce_lifecycle_transition(
     )
 
 
-def replay_paper_audit(audit_path: Path) -> AuditReplayResult:
-    """Replay the paper execution audit JSONL into an AuditReplayResult."""
+def replay_paper_audit(audit_path: Path, *, today_utc: str | None = None) -> AuditReplayResult:
+    """Replay the paper execution audit JSONL into an AuditReplayResult.
+
+    ``today_utc`` (an ISO date "YYYY-MM-DD") enables per-day fee tracking: fills whose
+    timestamp falls on that date populate ``total_fees_today_usd`` / ``fills_today``.
+    Left None by state-recovery callers (rehydrate) that don't need it.
+    """
     if not audit_path.exists():
         return AuditReplayResult(
             positions={},
@@ -145,6 +155,8 @@ def replay_paper_audit(audit_path: Path) -> AuditReplayResult:
     realized_pnl_usd = 0.0
     total_fees_usd = 0.0
     total_fees_artifact_usd = 0.0
+    total_fees_today_usd = 0.0
+    fills_today = 0
     # 2026-05-25 Forensik-Fix: skipped events sammeln statt Replay abzubrechen.
     skipped: list[tuple[int, str]] = []
 
@@ -333,10 +345,19 @@ def replay_paper_audit(audit_path: Path) -> AuditReplayResult:
         # in die reale Summe (sonst kumulativ ~1/3 des Portfolios). Spiegelt
         # PaperPortfolio.total_fees_usd der Live-Engine (10-bps-Ära).
         _fee = _coerce_float(payload.get("fee_usd")) or 0.0
+        _is_today = bool(today_utc) and (
+            (_coerce_str(payload.get("timestamp_utc")) or filled_at or "").startswith(
+                today_utc or ""
+            )
+        )
+        if _is_today:
+            fills_today += 1
         if _coerce_float(payload.get("fee_bps_applied")) == 60.0:
             total_fees_artifact_usd += _fee
         else:
             total_fees_usd += _fee
+            if _is_today:
+                total_fees_today_usd += _fee
 
         stop_loss: float | None = None
         take_profit: float | None = None
@@ -500,6 +521,8 @@ def replay_paper_audit(audit_path: Path) -> AuditReplayResult:
         error=None,
         total_fees_usd=round(total_fees_usd, 8),
         total_fees_artifact_usd=round(total_fees_artifact_usd, 8),
+        total_fees_today_usd=round(total_fees_today_usd, 8),
+        fills_today=fills_today,
         filled_idempotency_keys=frozenset(filled_keys),
         skipped_events=tuple(skipped),
         lifecycle_history={
