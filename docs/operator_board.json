@@ -1,13 +1,14 @@
 {
-  "stand": "2026-06-23",
+  "stand": "2026-06-25",
   "note": "Kuratierter Operator-Board-Snapshot (SSOT) — deklarativ, NICHT live-berechnet. Vom Operator/Agenten hier gepflegt; das Dashboard liest diese Datei read-only über /dashboard/api/operator-board. Gates/Probleme kommen separat live aus den Truth-Chips (AcutePointsBoard), hier stehen Todos/Phasen/Verbesserungen.",
   "todos": [
-    { "text": "#313 Chain-Truth-KPI: Code vollständig + fail-closed (app/chain Adapter/Client/Cache, Fee-Truth-Shadow, ChainPanel auf /node, self-activating via APP_CHAIN_*). FOLGE/Ops: aktiviert sich erst, sobald bitcoind-RPC über WireGuard live ist — rein externe Infra (gated), kein Code-Rest.", "priority": "P2" },
-    { "text": "#318 Live/Replay-Umschaltung + Shadow/Live-Vergleich: FOLGE-Sprint (Architektur). Braucht Dual-Stream-Erfassung (Live ∥ Replay) + Orchestrator-Replay-Seam mit Counterfactual-Log; entry_mode ist heute global, nicht per-Zyklus. Shadow-Ledger-Datenbasis vorhanden, aber kein UI-gated Rest mehr.", "priority": "P3" }
+    { "text": "#318 Phase 2 — per-Zyklus Live/Replay-Umschaltung: GATED (kapital-nah/irreversibel, Phase-5-Gebiet, _run_once_guard erlaubt nur PAPER/SHADOW). Erfordert Operator-Go/No-Go. Empfehlung: NICHT automatisch umschalten — erst nach bewiesenem Edge (Gate G0) + Live-Gates. Phase 1 (read-only Counterfactual-Drift-Logger) läuft auf Resolver-Kadenz und sammelt genau die Drift-Evidenz für diese Entscheidung (artifacts/counterfactual_comparison.jsonl).", "priority": "P3" }
   ],
   "phases": [
     { "label": "Dashboard UI-Update 2026.06 — Phasen 0–4", "status": "done" },
-    { "label": "Backend-Backlog #313–#319 — UI-gated Reste erledigt (#314 Truth-Layer-KPIs vollständig, #316 Liquidationen frei via OKX+Binance, Datums-Locale-SSOT)", "status": "done" }
+    { "label": "Backend-Backlog #313–#319 — UI-gated Reste erledigt (#314 Truth-Layer-KPIs vollständig, #316 Liquidationen frei via OKX+Binance, Datums-Locale-SSOT)", "status": "done" },
+    { "label": "#313 Chain-Truth-KPI — LIVE auf Pi: eigene bitcoind über WireGuard erreichbar (/dashboard/api/chain state=ok, synced), Fee-Truth-Shadow zeichnet auf 15-min-Kadenz auf. Board-Annahme zur externen Infra-Wartezeit (gated) war stale.", "status": "done" },
+    { "label": "#318 Phase 1 — Counterfactual Live∥Replay-Drift-Logger (#438) gebaut UND in kai-shadow-resolver.service als 2. Step verdrahtet (read-only, flag-gated EXECUTION_DUAL_STREAM_DIAGNOSTICS, idempotent); schreibt Drift-Records auf Resolver-Kadenz.", "status": "done" }
   ],
   "improvements": []
 }
