@@ -22,24 +22,32 @@ _BOOKING_UNIT = Path("deploy/systemd/kai-oracle-earnings-booking.timer")
 _DEMAND_DIR = Path("artifacts")
 
 
-async def _probe_node(cfg: LightningSettings) -> tuple[bool, bool]:
-    """Return (node_reachable, macaroon_scope_minimal).
+async def _probe_node(cfg: LightningSettings) -> tuple[bool, bool, bool]:
+    """Return (node_reachable, macaroon_scope_minimal, macaroon_can_mint).
 
-    The macaroon probe attempts a RAW pay_invoice (bypassing the value-layer gate): it
-    MUST be permission-denied by the NODE — that proves the configured macaroon carries
-    no spend scope (defense-in-depth independent of the app gate, satoshi auflage 4)."""
+    Two RAW probes (bypassing the value-layer gate):
+    - pay_invoice MUST be permission-denied → proves NO spend scope (satoshi auflage 4);
+    - add_invoice MUST succeed → proves the macaroon CAN receive (invoices:write). A
+      readonly macaroon passes the no-spend check but cannot mint, which would 503 the
+      paid path — this catches that trap. The probe invoice is 1 sat, 60s expiry,
+      capital-free, and expires unpaid."""
     client = _build_client(cfg)
     try:
         await client.get_info()
     except LightningUnavailableError:
-        return False, False
+        return False, False, False
     try:
         await client.pay_invoice(payment_request="probe-not-a-real-invoice", fee_limit_sat=0)
         scope_minimal = False  # node ACCEPTED a spend attempt → macaroon too broad
     except LightningUnavailableError as exc:
         text = str(exc).lower()
         scope_minimal = "permission" in text or "403" in text
-    return True, scope_minimal
+    try:
+        await client.add_invoice(value_sat=1, memo="kai-preflight-mint-probe", expiry_seconds=60)
+        can_mint = True
+    except LightningUnavailableError:
+        can_mint = False  # no invoices:write (e.g. a readonly macaroon) → cannot receive
+    return True, scope_minimal, can_mint
 
 
 def _telemetry_writable() -> bool:
@@ -55,16 +63,18 @@ def _telemetry_writable() -> bool:
 
 async def _main() -> int:
     cfg = get_settings().lightning
+    reachable: bool | None
+    scope_minimal: bool | None
+    can_mint: bool | None
     if cfg.enabled:
-        reachable: bool | None
-        scope_minimal: bool | None
-        reachable, scope_minimal = await _probe_node(cfg)
+        reachable, scope_minimal, can_mint = await _probe_node(cfg)
     else:
-        reachable, scope_minimal = None, None  # node client inert → cannot probe
+        reachable, scope_minimal, can_mint = None, None, None  # node inert → cannot probe
     report = golive_preflight(
         cfg,
         node_reachable=reachable,
         macaroon_scope_minimal=scope_minimal,
+        macaroon_can_mint=can_mint,
         booking_unit_present=_BOOKING_UNIT.exists(),
         telemetry_writable=_telemetry_writable(),
     )
