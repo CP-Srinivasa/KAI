@@ -1,0 +1,18 @@
+[Unit]
+Description=KAI Asset-Rotation-Shadow — re-evaluate rotation decisions (daily)
+
+[Timer]
+# Paper closes accumulate slowly; a daily re-evaluation is the right cadence for
+# the hysteresis (sustained-weak over consecutive windows). The same-named
+# .service is auto-activated when the timer fires — deliberately NO `Requires=`
+# (a Requires= on a timer can strand it; Timer-Requires cascade lesson #414).
+# NOT enabled by default: the operator runs
+# `systemctl enable --now kai-asset-rotation-shadow.timer`.
+OnBootSec=15min
+OnUnitActiveSec=24h
+Persistent=true
+AccuracySec=10min
+RandomizedDelaySec=5min
+
+[Install]
+WantedBy=timers.target

@@ -62,3 +62,45 @@ def show(
         typer.echo(json.dumps({"available": False, "reason": "no_snapshot"}))
         return
     typer.echo(json.dumps(latest, indent=2))
+
+
+_AUDIT = Path("artifacts/paper_execution_audit.jsonl")
+_ROT_STATE = Path("artifacts/asset_rotation_state.json")
+_ROT_SHADOW = Path("artifacts/asset_rotation_shadow.jsonl")
+
+
+@universe_app.command("rotate-shadow")
+def rotate_shadow(
+    audit: Annotated[Path, typer.Option(help="Paper-execution audit JSONL.")] = _AUDIT,
+    state: Annotated[Path, typer.Option(help="Rotation FSM state JSON.")] = _ROT_STATE,
+    shadow_log: Annotated[Path, typer.Option(help="Rotation shadow JSONL.")] = _ROT_SHADOW,
+    last_n: Annotated[int, typer.Option(help="Closes window.")] = 200,
+) -> None:
+    """G1: evaluate asset-rotation decisions on paper data (shadow-only). No trades."""
+    from datetime import UTC, datetime
+
+    from app.learning.asset_rotation_shadow import run_rotation_shadow
+
+    record = run_rotation_shadow(
+        audit_path=audit,
+        state_path=state,
+        shadow_log_path=shadow_log,
+        last_n=last_n,
+        now=datetime.now(UTC),
+    )
+    typer.echo(json.dumps(record, indent=2))
+
+
+@universe_app.command("rotate-show")
+def rotate_show(
+    state: Annotated[Path, typer.Option(help="Rotation FSM state JSON.")] = _ROT_STATE,
+) -> None:
+    """Print the current per-asset rotation FSM state (offline)."""
+    from app.learning.asset_rotation_shadow import load_state
+
+    loaded = load_state(state)
+    out = {
+        sym: {"status": st.status.value, "flagged_runs": st.flagged_runs}
+        for sym, st in sorted(loaded.items())
+    }
+    typer.echo(json.dumps({"count": len(out), "assets": out}, indent=2))
