@@ -25,6 +25,7 @@ import { PremiumRuntimeBanner } from "@/components/panels/PremiumRuntimeBanner";
 import { DiversificationPanel } from "@/components/panels/DiversificationPanel";
 import { EdgeTruthPanel } from "@/components/panels/EdgeTruthPanel";
 import { ChurnPanel } from "@/components/panels/ChurnPanel";
+import { MomentumUniversePanel } from "@/components/panels/MomentumUniversePanel";
 import { Waterfall } from "@/components/viz/Waterfall";
 import { realizedToWaterfall } from "@/lib/pnlWaterfall";
 import { useCurrency } from "@/state/CurrencyProvider";
@@ -581,6 +582,11 @@ export function PortfolioPage() {
           Brutto-vor-Fees vs Netto-nach-Fees, Fee-Drag, Fees/Handelstag-Trend.
           Reine Messung (kein Min-Hold/Frequenz-Gate; Daten widerlegten beides). */}
       <ChurnPanel />
+
+      {/* G0 (/goal Momentum-Universe-Rotation): das aus EIGENEN Börsendaten
+          gebildete Universe (most-traded × best-performer) sicht-/nachvollziehbar.
+          READ-ONLY Sicht; Rotation + Edge-Messung folgen (G1/G2). */}
+      <MomentumUniversePanel />
 
       {/* 2026-05-25 Forensik-Patch: PreparedPanel ersetzt durch echte Visualisierung.
           Endpoint GET /operator/portfolio/realized-by-asset existiert jetzt,
