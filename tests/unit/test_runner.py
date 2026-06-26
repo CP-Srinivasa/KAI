@@ -155,3 +155,46 @@ def test_ts_momentum_hypotheses_present_and_directional() -> None:
     assert deciders["ts_momentum"](_row(0.05)) == 1
     assert deciders["ts_momentum"](_row(-0.05)) == -1
     assert deciders["ts_momentum"](_row(None)) == 0
+
+
+def test_risk_adjusted_and_trend_confirmed_momentum() -> None:
+    """Vol-scaled TSMOM trades only when momentum exceeds ~1 horizon-sigma;
+    trend-confirmed momentum trades only when ADX shows a trending regime."""
+    from app.analysis.features.feature_matrix import FeatureRow
+
+    deciders = dict(default_hypotheses())
+    assert "tsmom_vol_scaled" in deciders and "tsmom_adx_confirmed" in deciders
+
+    def _row(
+        *, trail: float | None, vol: float | None = None, adx: float | None = None
+    ) -> FeatureRow:
+        return FeatureRow(
+            timestamp_utc="t",
+            close=100.0,
+            log_return=None,
+            rsi_14=None,
+            adx_14=adx,
+            plus_di_14=None,
+            minus_di_14=None,
+            realized_vol_24=vol,
+            ema_12=None,
+            ema_26=None,
+            macd=None,
+            bollinger_z_20=None,
+            trail_return_20=trail,
+        )
+
+    vs = deciders["tsmom_vol_scaled"]
+    # z = trail / (vol * sqrt(20)); 0.10/(0.01*4.47) ≈ 2.24 → high conviction.
+    assert vs(_row(trail=0.10, vol=0.01)) == 1
+    assert vs(_row(trail=-0.10, vol=0.01)) == -1
+    # weak momentum vs vol → z≈0.22 < 1 → no trade.
+    assert vs(_row(trail=0.01, vol=0.01)) == 0
+    assert vs(_row(trail=0.10, vol=None)) == 0  # no vol → no trade
+    assert vs(_row(trail=None, vol=0.01)) == 0
+
+    ac = deciders["tsmom_adx_confirmed"]
+    assert ac(_row(trail=0.05, adx=30.0)) == 1  # trending → take momentum
+    assert ac(_row(trail=-0.05, adx=30.0)) == -1
+    assert ac(_row(trail=0.05, adx=20.0)) == 0  # not trending → stand aside
+    assert ac(_row(trail=0.05, adx=None)) == 0

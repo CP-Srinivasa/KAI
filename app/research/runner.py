@@ -19,12 +19,17 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import math
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
-from app.analysis.features.feature_matrix import FeatureRow, build_feature_matrix
+from app.analysis.features.feature_matrix import (
+    TRAIL_RETURN_WINDOW,
+    FeatureRow,
+    build_feature_matrix,
+)
 from app.analysis.features.forward_returns import compute_forward_return_bps
 from app.market_data.history_loader import FetchKlines, load_ohlcv_history
 from app.market_data.kline_windows import interval_to_ms
@@ -92,6 +97,30 @@ def default_hypotheses() -> list[tuple[str, Decider]]:
             return 0
         return 1 if r.trail_return_20 > 0.0 else -1
 
+    # Risk-adjusted TS-momentum (Moskowitz-Ooi-Pedersen): trade only HIGH-conviction
+    # momentum — the trailing return normalised to the horizon volatility
+    # (per-bar realized vol scaled to the lookback by sqrt(window)) must exceed
+    # ~1 sigma. Filters the weak/noisy momentum the raw-sign rule trades into the cost.
+    _vol_horizon = math.sqrt(float(TRAIL_RETURN_WINDOW))
+
+    def tsmom_vol_scaled(r: FeatureRow) -> int:
+        if r.trail_return_20 is None or r.realized_vol_24 is None or r.realized_vol_24 <= 0.0:
+            return 0
+        z = r.trail_return_20 / (r.realized_vol_24 * _vol_horizon)
+        if z > 1.0:
+            return 1
+        if z < -1.0:
+            return -1
+        return 0
+
+    # Trend-confirmed momentum: only take the momentum direction when the market is
+    # actually trending (ADX > 25). Momentum is a trend factor; gating it on trend
+    # strength is the textbook way to avoid trading it through chop.
+    def tsmom_adx_confirmed(r: FeatureRow) -> int:
+        if r.trail_return_20 is None or r.adx_14 is None or r.adx_14 < 25.0:
+            return 0
+        return 1 if r.trail_return_20 > 0.0 else -1
+
     return [
         ("rsi_oversold_long", rsi_oversold_long),
         ("rsi_overbought_short", rsi_overbought_short),
@@ -101,6 +130,8 @@ def default_hypotheses() -> list[tuple[str, Decider]]:
         ("adx_trend", adx_trend),
         ("ts_momentum_long", ts_momentum_long),
         ("ts_momentum", ts_momentum),
+        ("tsmom_vol_scaled", tsmom_vol_scaled),
+        ("tsmom_adx_confirmed", tsmom_adx_confirmed),
     ]
 
 
