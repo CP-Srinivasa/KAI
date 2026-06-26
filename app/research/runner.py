@@ -32,6 +32,7 @@ from app.analysis.features.feature_matrix import (
 )
 from app.analysis.features.forward_returns import compute_forward_return_bps
 from app.analysis.features.funding_align import FundingPoint
+from app.analysis.features.unlock_align import UnlockEvent
 from app.analysis.features.whale_flow_align import FlowPoint
 from app.market_data.history_loader import FetchKlines, load_ohlcv_history
 from app.market_data.kline_windows import interval_to_ms
@@ -195,6 +196,8 @@ async def run_symbol_search(
     funding: Sequence[FundingPoint] | None = None,
     coin_flows: Sequence[FlowPoint] | None = None,
     stable_flows: Sequence[FlowPoint] | None = None,
+    unlock_events: Sequence[UnlockEvent] | None = None,
+    unlock_max_supply: float | None = None,
 ) -> SymbolSearchResult:
     """Backfill one symbol and run the hypothesis search over it.
 
@@ -205,10 +208,18 @@ async def run_symbol_search(
     ``coin_flows`` / ``stable_flows`` (optional) are whale exchange-flow events
     (this asset's coin, and market-wide stablecoins) aligned causally onto the
     bars for the whale-flow hypotheses; omitted leaves those features None.
+
+    ``unlock_events`` / ``unlock_max_supply`` (optional) are this asset's scheduled
+    token unlocks for the unlock-pressure hypotheses; omitted leaves them None.
     """
     history = await load_ohlcv_history(symbol, timeframe, start_ms, end_ms, fetch)
     rows = build_feature_matrix(
-        history.candles, funding, coin_flows=coin_flows, stable_flows=stable_flows
+        history.candles,
+        funding,
+        coin_flows=coin_flows,
+        stable_flows=stable_flows,
+        unlock_events=unlock_events,
+        unlock_max_supply=unlock_max_supply,
     )
     closes = [c.close for c in history.candles]
     labels = compute_forward_return_bps(closes, horizon)

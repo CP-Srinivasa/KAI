@@ -20,6 +20,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 
 from app.analysis.features.funding_align import FundingPoint, align_funding_to_bars
+from app.analysis.features.unlock_align import UnlockEvent, align_unlock_to_bars
 from app.analysis.features.whale_flow_align import FlowPoint, align_flow_to_bars
 from app.analysis.indicators.adx import ADX_DEFAULT_PERIOD, compute_adx_di
 from app.analysis.indicators.bollinger import (
@@ -90,6 +91,12 @@ class FeatureRow:
     coin_netflow_z: float | None = None  # rolling z-score of coin netflow
     stable_netflow_usd: float | None = None  # trailing 24h net stablecoin flow (USD)
     stable_netflow_z: float | None = None  # rolling z-score of stablecoin netflow
+    # Scheduled token-unlock pressure approaching this bar (see unlock_align). The
+    # fraction of max supply scheduled to unlock in the next horizon, known as-of
+    # the bar (public schedule); only populated when unlock events + max supply are
+    # given, else None (OHLCV-only callers unaffected).
+    unlock_frac_fwd: float | None = None  # fraction of max supply unlocking in next horizon
+    unlock_frac_fwd_z: float | None = None  # rolling z-score of unlock pressure
 
 
 def build_feature_matrix(
@@ -98,6 +105,8 @@ def build_feature_matrix(
     *,
     coin_flows: Sequence[FlowPoint] | None = None,
     stable_flows: Sequence[FlowPoint] | None = None,
+    unlock_events: Sequence[UnlockEvent] | None = None,
+    unlock_max_supply: float | None = None,
 ) -> list[FeatureRow]:
     """Compose a causal feature matrix from an OHLCV series.
 
@@ -112,6 +121,10 @@ def build_feature_matrix(
         stable_flows: optional market-wide stablecoin exchange-flow events (same
             for every symbol). Aligned to a trailing-24h net + z. Both flow series
             default None → their fields stay None (existing callers unaffected).
+        unlock_events: optional scheduled token-unlock events for THIS asset, with
+            ``unlock_max_supply`` as the fraction denominator. Aligned to a forward
+            unlock-pressure fraction + z. Default None → unlock fields stay None.
+        unlock_max_supply: token max supply for unlock-fraction normalisation.
 
     Returns:
         One FeatureRow per candle (len == len(candles)); empty for empty input.
@@ -148,6 +161,11 @@ def build_feature_matrix(
     else:
         stable_netflow = [None] * n
         stable_netflow_z = [None] * n
+    if unlock_events:
+        unlock_frac, unlock_frac_z = align_unlock_to_bars(bar_ts, unlock_events, unlock_max_supply)
+    else:
+        unlock_frac = [None] * n
+        unlock_frac_z = [None] * n
 
     rows: list[FeatureRow] = []
     for i in range(n):
@@ -175,6 +193,8 @@ def build_feature_matrix(
                 coin_netflow_z=coin_netflow_z[i],
                 stable_netflow_usd=stable_netflow[i],
                 stable_netflow_z=stable_netflow_z[i],
+                unlock_frac_fwd=unlock_frac[i],
+                unlock_frac_fwd_z=unlock_frac_z[i],
             )
         )
     return rows

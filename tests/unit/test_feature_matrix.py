@@ -238,3 +238,40 @@ def test_whale_flow_no_lookahead_prefix_equals_full() -> None:
     for k in (30, 45, 59):
         prefix = build_feature_matrix(candles[:k], coin_flows=coin_flows, stable_flows=stable_flows)
         assert prefix == full[:k]
+
+
+def test_unlock_defaults_to_none_without_series() -> None:
+    # OHLCV-only callers (and every existing test) must leave unlock fields None.
+    candles = _make_candles(_closes_path(40))
+    for row in build_feature_matrix(candles):
+        assert row.unlock_frac_fwd is None
+        assert row.unlock_frac_fwd_z is None
+
+
+def test_unlock_aligns_and_populates() -> None:
+    from app.analysis.features.unlock_align import UnlockEvent
+
+    day = 86_400_000
+    closes = _closes_path(60)
+    candles = _iso_candles(closes, day)  # daily bars at day 0..59
+    events = [UnlockEvent(50 * day, 500.0)]  # one cliff at day 50
+    matrix = build_feature_matrix(candles, unlock_events=events, unlock_max_supply=1000.0)
+    # frac is always defined (max supply known); a bar 1–7 days before the cliff is hot.
+    assert matrix[45].unlock_frac_fwd == 0.5  # day50 within the 7d forward window
+    assert matrix[10].unlock_frac_fwd == 0.0  # far from any unlock → genuine zero
+
+
+def test_unlock_no_lookahead_prefix_equals_full() -> None:
+    # Integrity: the unlock feature uses only the (fixed) public schedule + bar
+    # time, never future prices — so truncating future candles cannot change any
+    # earlier row.
+    from app.analysis.features.unlock_align import UnlockEvent
+
+    day = 86_400_000
+    closes = _closes_path(60)
+    candles = _iso_candles(closes, day)
+    events = [UnlockEvent(20 * day, 300.0), UnlockEvent(50 * day, 500.0)]
+    full = build_feature_matrix(candles, unlock_events=events, unlock_max_supply=1000.0)
+    for k in (30, 45, 59):
+        prefix = build_feature_matrix(candles[:k], unlock_events=events, unlock_max_supply=1000.0)
+        assert prefix == full[:k]
