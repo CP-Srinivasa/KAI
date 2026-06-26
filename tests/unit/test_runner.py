@@ -198,3 +198,44 @@ def test_risk_adjusted_and_trend_confirmed_momentum() -> None:
     assert ac(_row(trail=-0.05, adx=30.0)) == -1
     assert ac(_row(trail=0.05, adx=20.0)) == 0  # not trending → stand aside
     assert ac(_row(trail=0.05, adx=None)) == 0
+
+
+def test_funding_conditioned_hypotheses() -> None:
+    """funding_fade fades funding extremes; tsmom_funding_filtered takes momentum
+    only when funding is not crowded against the trade. Both None-safe."""
+    from app.analysis.features.feature_matrix import FeatureRow
+
+    deciders = dict(default_hypotheses())
+    assert "funding_fade" in deciders and "tsmom_funding_filtered" in deciders
+
+    def _row(*, trail: float | None = None, fz: float | None = None) -> FeatureRow:
+        return FeatureRow(
+            timestamp_utc="t",
+            close=100.0,
+            log_return=None,
+            rsi_14=None,
+            adx_14=None,
+            plus_di_14=None,
+            minus_di_14=None,
+            realized_vol_24=None,
+            ema_12=None,
+            ema_26=None,
+            macd=None,
+            bollinger_z_20=None,
+            trail_return_20=trail,
+            funding_rate_z=fz,
+        )
+
+    fade = deciders["funding_fade"]
+    assert fade(_row(fz=3.0)) == -1  # crowded longs paying → fade short
+    assert fade(_row(fz=-3.0)) == 1  # crowded shorts → fade long
+    assert fade(_row(fz=0.5)) == 0  # not extreme → stand aside
+    assert fade(_row(fz=None)) == 0  # warm-up → no trade
+
+    filt = deciders["tsmom_funding_filtered"]
+    assert filt(_row(trail=0.05, fz=0.0)) == 1  # long momentum, funding not crowded
+    assert filt(_row(trail=0.05, fz=2.0)) == 0  # longs overcrowded → skip
+    assert filt(_row(trail=-0.05, fz=0.0)) == -1  # short momentum, funding not crowded
+    assert filt(_row(trail=-0.05, fz=-2.0)) == 0  # shorts overcrowded → skip
+    assert filt(_row(trail=None, fz=0.0)) == 0  # no momentum → no trade
+    assert filt(_row(trail=0.05, fz=None)) == 0  # no funding → no trade
