@@ -1,7 +1,11 @@
 # Goal: Momentum-Universe-Rotation + externe Cross-Check-Intelligence
 
-> Status: **G0 in Arbeit** (pure Ranking-Kern + dieses Dokument). Genehmigt vom Operator 2026-06-26.
-> Phasen G1–G5 folgen als eigene, kleine, reversible PRs. Kein Live-Kapital ohne separates Gate.
+> Status (2026-06-26): **G0–G5 gebaut, getestet, gemergt, auf Pi deployed & live.** G0 Universe-Panel
+> + Refresh-Timer · G1 Rotations-FSM (Hysterese auf echten Daten bewiesen) · G2 Feeder→Paper
+> (cohort-getaggt, G1→G2-Loop greift) · G3 Momentum-Bayes-Evidence (shadow/inert) + Eval-Pipeline ·
+> G4 Cross-Check (eigenes TA-Rating, ToS-konform) · G5 Cohort-Edge→Release-Recommendation (gated).
+> Edge-/Eval-Verdikte stehen ehrlich auf `insufficient`, bis genug `momentum_universe`-Trades
+> schließen. Promote zu Live-Sizing bleibt operator+edge-gegated. Genehmigt vom Operator 2026-06-26.
 
 ## Context (warum dieser Plan)
 KAI soll regelmäßig mit „den besten Coins zum Handeln" gefüttert werden: ein Universe der

@@ -1687,3 +1687,44 @@ def test_momentum_crosscheck_returns_latest(tmp_path: Path) -> None:
     assert body["available"] is True
     assert body["count"] == 1
     assert body["rows"][0]["symbol"] == "BTC/USDT"
+
+
+def test_momentum_edge_release_no_cohort(tmp_path: Path) -> None:
+    """G5: no momentum_universe closes → available=False, never 500."""
+    (tmp_path / "paper_execution_audit.jsonl").write_text("", encoding="utf-8")
+    app = _make_app()
+    with _patch_artifacts(tmp_path):
+        with TestClient(app) as client:
+            r = client.get("/dashboard/api/momentum-edge-release")
+    assert r.status_code == 200
+    assert r.json()["available"] is False
+
+
+def test_momentum_edge_release_disabled_when_few(tmp_path: Path) -> None:
+    """G5: a single cohort close → DISABLED (n < min_n, no defensible posterior)."""
+    audit = tmp_path / "paper_execution_audit.jsonl"
+    with audit.open("w", encoding="utf-8") as fh:
+        fh.write(
+            json.dumps(
+                {
+                    "event_type": "position_closed",
+                    "symbol": "BTC/USDT",
+                    "signal_source": "momentum_universe",
+                    "position_side": "long",
+                    "entry_price": 100.0,
+                    "exit_price": 102.0,
+                    "quantity": 1.0,
+                    "timestamp_utc": "2026-06-26T01:00:00Z",
+                    "trade_pnl_usd": 2.0,
+                    "reason": "tp",
+                }
+            )
+            + "\n"
+        )
+    app = _make_app()
+    with _patch_artifacts(tmp_path):
+        with TestClient(app) as client:
+            r = client.get("/dashboard/api/momentum-edge-release")
+    body = r.json()
+    assert body["available"] is True
+    assert body["recommended_mode"] == "disabled"
