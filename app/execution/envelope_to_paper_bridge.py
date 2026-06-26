@@ -54,6 +54,7 @@ from app.execution.intent_builder import build_executable_intent as _build_execu
 from app.execution.intent_builder import entry_bounds as _entry_bounds
 from app.execution.intent_builder import float_or_none as _float
 from app.execution.models import (
+    IllegalLifecycleTransition,
     OrderLifecycleState,
     make_lifecycle_transition,
 )
@@ -475,11 +476,27 @@ def _attach_lifecycle(
     correlation_id = str(rec.get("correlation_id") or rec.get("envelope_id") or "")
     rec["lifecycle_state"] = final_state.value
     rec["audit_reason"] = reason
-    rec["lifecycle_events"] = _lifecycle_events(
-        correlation_id=correlation_id,
-        states=states,
-        reason=reason,
-    )
+    # Resilienz (2026-06-26): die lifecycle_events-Annotation ist Audit-Metadaten —
+    # sie darf den Hochfrequenz-Entry-Watch NIEMALS crashen. Ein einzelner Satz mit
+    # illegaler Sequenz warf vorher IllegalLifecycleTransition, brach den ganzen
+    # Watcher-Lauf ab (exit 1) und ließ — via Restart=always + StartLimit 10/5min —
+    # kai-entry-watch.service dauerhaft `failed`. Stattdessen degradieren: loggen +
+    # Marker setzen (Modellierungs-Bug bleibt sichtbar), Dienst läuft weiter.
+    try:
+        rec["lifecycle_events"] = _lifecycle_events(
+            correlation_id=correlation_id,
+            states=states,
+            reason=reason,
+        )
+    except IllegalLifecycleTransition as exc:
+        logger.warning(
+            "[bridge] illegale Lifecycle-Sequenz für correlation_id=%s (%s) — "
+            "lifecycle_events leer + Marker, Watcher läuft weiter",
+            correlation_id,
+            exc,
+        )
+        rec["lifecycle_events"] = []
+        rec["lifecycle_events_error"] = str(exc)
 
 
 async def _fetch_price(symbol: str) -> float | None:
@@ -1727,10 +1744,20 @@ async def _process_one(
         _attach_lifecycle(
             rec,
             final_state=OrderLifecycleState.POSITION_OPEN,
+            # 2026-06-26: the duplicate envelope WAS actually opened (by the first
+            # process), so the lifecycle reaches POSITION_OPEN via the full legal
+            # path — same sequence as the success branch below. The previous
+            # shortcut [VALIDATED -> POSITION_OPEN] is an illegal transition and
+            # raised IllegalLifecycleTransition on every duplicate, crash-looping
+            # kai-entry-watch into a start-limit `failed` state.
             states=[
                 OrderLifecycleState.RECEIVED,
                 OrderLifecycleState.PARSED,
                 OrderLifecycleState.VALIDATED,
+                OrderLifecycleState.ENTRY_TRIGGERED,
+                OrderLifecycleState.ORDER_BUILDING,
+                OrderLifecycleState.ORDER_SUBMITTED,
+                OrderLifecycleState.ORDER_ACCEPTED,
                 OrderLifecycleState.POSITION_OPEN,
             ],
             reason="duplicate_fill_already_executed",
