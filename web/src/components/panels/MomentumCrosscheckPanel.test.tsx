@@ -17,9 +17,9 @@ const snapshot = {
   ts: "2026-06-26T15:00:00Z",
   count: 3,
   rows: [
-    { symbol: "LAB/USDT", rank: 1, momentum_score: 0.94, ta_label: "strong_buy", ta_score: 0.87, ta_trend: "up", rsi: 68, agreement: "agree_bullish" },
-    { symbol: "BTC/USDT", rank: 2, momentum_score: 0.59, ta_label: "strong_sell", ta_score: -0.98, ta_trend: "down", rsi: 28, agreement: "divergence" },
-    { symbol: "SLX/USDT", rank: 3, momentum_score: 0.98, ta_label: "unavailable", ta_score: null, ta_trend: "unavailable", rsi: null, agreement: "unavailable" },
+    { symbol: "LAB/USDT", rank: 1, momentum_score: 0.94, ta_label: "strong_buy", ta_score: 0.87, ta_trend: "up", rsi: 68, funding_bps: 8.0, funding_signal: "long_crowded", agreement: "agree_bullish" },
+    { symbol: "BTC/USDT", rank: 2, momentum_score: 0.59, ta_label: "strong_sell", ta_score: -0.98, ta_trend: "down", rsi: 28, funding_bps: -6.0, funding_signal: "short_crowded", agreement: "divergence" },
+    { symbol: "SLX/USDT", rank: 3, momentum_score: 0.98, ta_label: "unavailable", ta_score: null, ta_trend: "unavailable", rsi: null, funding_bps: null, funding_signal: "unavailable", agreement: "unavailable" },
   ],
 };
 
@@ -36,6 +36,8 @@ describe("MomentumCrosscheckPanel", () => {
     expect(text).toContain("Einig bullish"); // LAB agree_bullish
     expect(text).toContain("Divergenz"); // BTC divergence
     expect(text).toContain("1 Divergenz"); // genau eine Divergenz
+    expect(text).toContain("F +8.0"); // LAB funding (long_crowded)
+    expect(text).toContain("F -6.0"); // BTC funding (short_crowded)
   });
 
   it("ist fail-closed: leer → ehrliche 'noch kein Snapshot'", async () => {

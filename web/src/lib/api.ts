@@ -296,6 +296,8 @@ export type MomentumCrosscheckRow = {
   ta_score: number | null;
   ta_trend: string;
   rsi: number | null;
+  funding_bps: number | null;
+  funding_signal: string;
   agreement: string;
 };
 export type MomentumCrosscheck = {

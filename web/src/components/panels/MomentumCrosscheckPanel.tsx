@@ -103,6 +103,19 @@ export function MomentumCrosscheckPanel() {
               >
                 {r.ta_label}
               </span>
+              <span
+                className={cn(
+                  "w-16 shrink-0 text-right font-mono text-2xs tabular-nums",
+                  r.funding_signal === "long_crowded"
+                    ? "text-warn"
+                    : r.funding_signal === "short_crowded"
+                      ? "text-info"
+                      : "text-fg-subtle",
+                )}
+                title={`8h-Funding-Rate · ${r.funding_signal}`}
+              >
+                {r.funding_bps == null ? "F —" : `F ${r.funding_bps > 0 ? "+" : ""}${r.funding_bps.toFixed(1)}`}
+              </span>
               <span className={cn("flex-1 truncate text-right text-2xs font-medium", meta.tone)}>
                 {meta.label}
               </span>
@@ -133,7 +146,13 @@ export function MomentumCrosscheckPanel() {
             <p>
               <span className="text-warn">Divergenz</span> — hoher Momentum-Performer, den die TA als
               „sell" liest (Mean-Reversion-Risiko). <span className="text-pos">Einig bullish</span> —
-              beide bestätigen. Reine Sicht zum Abgleich; beeinflusst KEIN Sizing/Kapital.
+              beide bestätigen.
+            </p>
+            <p>
+              <span className="text-fg">F</span> = 8h-Funding-Rate (bps), keyless von der Börse.{" "}
+              <span className="text-warn">long_crowded</span> (≥ +5 bps) = überhitzte Longs zahlen
+              fürs Halten — dokumentierter Mean-Reversion-Druck; das verstärkt eine Divergenz. Reine
+              Sicht zum Abgleich; beeinflusst KEIN Sizing/Kapital.
             </p>
           </div>
         )}
