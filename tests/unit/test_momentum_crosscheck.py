@@ -119,3 +119,62 @@ class TestBuilderAndLedger:
 
     def test_read_latest_missing(self, tmp_path: Path) -> None:
         assert read_latest_crosscheck(tmp_path / "nope.jsonl") is None
+
+
+class _FundingSource(_FakeSource):
+    """OHLCV fake that also exposes get_funding_rate (like the exchange adapters)."""
+
+    def __init__(self, ohlcv: dict[str, list[OHLCV]], funding: dict[str, float]) -> None:
+        super().__init__(ohlcv)
+        self._funding = funding
+
+    async def get_funding_rate(self, symbol: str):  # type: ignore[no-untyped-def]
+        rate = self._funding.get(symbol)
+        if rate is None:
+            return None
+        return type("FR", (), {"rate": rate})()
+
+
+class TestFundingEnrichment:
+    def test_funding_bps_and_crowded_signal(self) -> None:
+        from app.market_data.ta_rating import TaRating
+
+        universe = [{"symbol": "BTC/USDT", "rank": 1, "momentum_score": 0.9}]
+        ratings = {"BTC/USDT": TaRating("buy", 0.3, 55.0, 1.0, 1.0, "up")}
+        # 0.0008 fraction = 8 bps per 8h → long_crowded (>= 5 bps).
+        rows = build_crosscheck_rows(universe, ratings, funding={"BTC/USDT": 0.0008})
+        assert rows[0]["funding_bps"] == 8.0
+        assert rows[0]["funding_signal"] == "long_crowded"
+
+    def test_short_crowded_and_neutral(self) -> None:
+        universe = [
+            {"symbol": "A/USDT", "rank": 1, "momentum_score": 0.5},
+            {"symbol": "B/USDT", "rank": 2, "momentum_score": 0.5},
+        ]
+        rows = build_crosscheck_rows(universe, {}, funding={"A/USDT": -0.0009, "B/USDT": 0.0001})
+        by = {r["symbol"]: r for r in rows}
+        assert by["A/USDT"]["funding_signal"] == "short_crowded"  # -9 bps
+        assert by["B/USDT"]["funding_signal"] == "neutral"  # +1 bp
+
+    def test_missing_funding_is_unavailable(self) -> None:
+        rows = build_crosscheck_rows([{"symbol": "X/USDT", "rank": 1, "momentum_score": 0.5}], {})
+        assert rows[0]["funding_bps"] is None
+        assert rows[0]["funding_signal"] == "unavailable"
+
+    async def test_builder_fetches_funding(self, tmp_path: Path) -> None:
+        from app.observability.momentum_universe import RankedSymbol
+        from app.observability.momentum_universe_ledger import append_snapshot
+
+        ledger = tmp_path / "u.jsonl"
+        append_snapshot(
+            ledger,
+            [RankedSymbol("BTC/USDT", 0.9, 0.9, 0.9, 1, {})],
+            now=datetime(2026, 6, 26, tzinfo=UTC),
+        )
+        src = _FundingSource(
+            {"BTC/USDT": _candles([float(100 + i) for i in range(40)])},
+            {"BTC/USDT": 0.0007},  # +7 bps → long_crowded
+        )
+        rows = await build_crosscheck(src, ledger_path=ledger, top_n=10)
+        assert rows[0]["funding_bps"] == 7.0
+        assert rows[0]["funding_signal"] == "long_crowded"
