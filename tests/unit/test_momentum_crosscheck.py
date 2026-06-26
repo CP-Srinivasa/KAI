@@ -178,3 +178,69 @@ class TestFundingEnrichment:
         rows = await build_crosscheck(src, ledger_path=ledger, top_n=10)
         assert rows[0]["funding_bps"] == 7.0
         assert rows[0]["funding_signal"] == "long_crowded"
+
+
+def _range_candles(closes: list[float], spread_pct: float) -> list[OHLCV]:
+    """Candles with a high-low spread = spread_pct of close (for ATR%/vol-regime)."""
+    return [
+        OHLCV(
+            symbol="X",
+            timestamp_utc=f"2026-06-{i + 1:02d}T00:00:00Z",
+            timeframe="1d",
+            open=c,
+            high=c * (1.0 + spread_pct / 200.0),
+            low=c * (1.0 - spread_pct / 200.0),
+            close=c,
+            volume=1.0,
+        )
+        for i, c in enumerate(closes)
+    ]
+
+
+class TestVolRegime:
+    def test_regime_thresholds_via_rows(self) -> None:
+        universe = [
+            {"symbol": "HI/USDT", "rank": 1, "momentum_score": 0.5},
+            {"symbol": "LO/USDT", "rank": 2, "momentum_score": 0.5},
+            {"symbol": "MID/USDT", "rank": 3, "momentum_score": 0.5},
+            {"symbol": "NA/USDT", "rank": 4, "momentum_score": 0.5},
+        ]
+        rows = build_crosscheck_rows(
+            universe, {}, vol={"HI/USDT": 12.0, "LO/USDT": 2.0, "MID/USDT": 5.0}
+        )
+        by = {r["symbol"]: r for r in rows}
+        assert by["HI/USDT"]["vol_regime"] == "high_vol"
+        assert by["LO/USDT"]["vol_regime"] == "low_vol"
+        assert by["MID/USDT"]["vol_regime"] == "normal"
+        assert by["NA/USDT"]["vol_regime"] == "unavailable"
+        assert by["NA/USDT"]["atr_pct"] is None
+
+    async def test_builder_computes_high_vol(self, tmp_path: Path) -> None:
+        from app.observability.momentum_universe import RankedSymbol
+        from app.observability.momentum_universe_ledger import append_snapshot
+
+        ledger = tmp_path / "u.jsonl"
+        append_snapshot(
+            ledger,
+            [RankedSymbol("BTC/USDT", 0.9, 0.9, 0.9, 1, {})],
+            now=datetime(2026, 6, 26, tzinfo=UTC),
+        )
+        # ~16% daily high-low spread → ATR% well above the 8% high-vol threshold.
+        src = _FakeSource({"BTC/USDT": _range_candles([float(100 + i) for i in range(40)], 16.0)})
+        rows = await build_crosscheck(src, ledger_path=ledger, top_n=10)
+        assert rows[0]["vol_regime"] == "high_vol"
+        assert rows[0]["atr_pct"] is not None and rows[0]["atr_pct"] > 8.0
+
+    async def test_builder_flat_is_low_vol(self, tmp_path: Path) -> None:
+        from app.observability.momentum_universe import RankedSymbol
+        from app.observability.momentum_universe_ledger import append_snapshot
+
+        ledger = tmp_path / "u.jsonl"
+        append_snapshot(
+            ledger,
+            [RankedSymbol("BTC/USDT", 0.9, 0.9, 0.9, 1, {})],
+            now=datetime(2026, 6, 26, tzinfo=UTC),
+        )
+        src = _FakeSource({"BTC/USDT": _candles([float(100 + i) for i in range(40)])})  # zero range
+        rows = await build_crosscheck(src, ledger_path=ledger, top_n=10)
+        assert rows[0]["vol_regime"] == "low_vol"
