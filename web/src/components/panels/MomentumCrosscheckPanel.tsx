@@ -116,6 +116,19 @@ export function MomentumCrosscheckPanel() {
               >
                 {r.funding_bps == null ? "F —" : `F ${r.funding_bps > 0 ? "+" : ""}${r.funding_bps.toFixed(1)}`}
               </span>
+              <span
+                className={cn(
+                  "w-14 shrink-0 text-right font-mono text-2xs tabular-nums",
+                  r.vol_regime === "high_vol"
+                    ? "text-warn"
+                    : r.vol_regime === "low_vol"
+                      ? "text-pos"
+                      : "text-fg-subtle",
+                )}
+                title={`Tages-Volatilität (ATR%) · Regime: ${r.vol_regime}`}
+              >
+                {r.atr_pct == null ? "V —" : `V ${r.atr_pct.toFixed(1)}%`}
+              </span>
               <span className={cn("flex-1 truncate text-right text-2xs font-medium", meta.tone)}>
                 {meta.label}
               </span>
@@ -151,8 +164,14 @@ export function MomentumCrosscheckPanel() {
             <p>
               <span className="text-fg">F</span> = 8h-Funding-Rate (bps), keyless von der Börse.{" "}
               <span className="text-warn">long_crowded</span> (≥ +5 bps) = überhitzte Longs zahlen
-              fürs Halten — dokumentierter Mean-Reversion-Druck; das verstärkt eine Divergenz. Reine
-              Sicht zum Abgleich; beeinflusst KEIN Sizing/Kapital.
+              fürs Halten — dokumentierter Mean-Reversion-Druck; das verstärkt eine Divergenz.
+            </p>
+            <p>
+              <span className="text-fg">V</span> = Tages-Volatilität (ATR%) aus eigenem OHLCV.{" "}
+              <span className="text-warn">high_vol</span> (≥ 8%) = choppy → Momentum WENIGER
+              vertrauenswürdig; <span className="text-pos">low_vol</span> (≤ 3%) = ruhig/trendig →
+              vertrauenswürdiger (KAIs Edge ist regime-abhängig). Reine Sicht; beeinflusst KEIN
+              Sizing/Kapital.
             </p>
           </div>
         )}
