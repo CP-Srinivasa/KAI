@@ -1,0 +1,28 @@
+[Unit]
+Description=KAI Momentum-Universe-Refresh — build the own-data universe snapshot (Goal G0)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/ubuntu/ai_analyst_trading_bot
+Environment=PYTHONPATH=/home/ubuntu/ai_analyst_trading_bot
+EnvironmentFile=-/home/ubuntu/ai_analyst_trading_bot/.env
+
+# Decoupled refresh: writes artifacts/momentum_universe_candidates.jsonl — a
+# read-only "Sicht" snapshot (most-traded x best-performer from our OWN exchange
+# data, no scraping). NO trades, NO capital. "-" prefix: a failed refresh must
+# not propagate; build_universe is fail-soft and the refresher KEEPS the last
+# good snapshot on a dead source rather than overwriting it with an empty one.
+ExecStart=-/home/ubuntu/ai_analyst_trading_bot/.venv/bin/python /home/ubuntu/ai_analyst_trading_bot/scripts/momentum_universe_refresh.py
+
+StandardOutput=journal
+StandardError=journal
+# The script has an internal 120s asyncio deadline; this is the systemd backstop.
+TimeoutStartSec=180
+
+# Light: a handful of public REST calls (Bybit volume + per-symbol daily OHLCV).
+MemoryMax=192M
+CPUQuota=50%
