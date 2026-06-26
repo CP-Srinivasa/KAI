@@ -26,6 +26,7 @@ import { DiversificationPanel } from "@/components/panels/DiversificationPanel";
 import { EdgeTruthPanel } from "@/components/panels/EdgeTruthPanel";
 import { ChurnPanel } from "@/components/panels/ChurnPanel";
 import { MomentumUniversePanel } from "@/components/panels/MomentumUniversePanel";
+import { MomentumCrosscheckPanel } from "@/components/panels/MomentumCrosscheckPanel";
 import { Waterfall } from "@/components/viz/Waterfall";
 import { realizedToWaterfall } from "@/lib/pnlWaterfall";
 import { useCurrency } from "@/state/CurrencyProvider";
@@ -587,6 +588,11 @@ export function PortfolioPage() {
           gebildete Universe (most-traded × best-performer) sicht-/nachvollziehbar.
           READ-ONLY Sicht; Rotation + Edge-Messung folgen (G1/G2). */}
       <MomentumUniversePanel />
+
+      {/* G4 (externe Cross-Check-Lane): eigener Momentum-Rang vs eigenes TA-Rating
+          (ToS-konformer TradingView-Ersatz), Übereinstimmung/Divergenz sichtbar.
+          READ-ONLY Sicht; kein Sizing/Kapital. */}
+      <MomentumCrosscheckPanel />
 
       {/* 2026-05-25 Forensik-Patch: PreparedPanel ersetzt durch echte Visualisierung.
           Endpoint GET /operator/portfolio/realized-by-asset existiert jetzt,
