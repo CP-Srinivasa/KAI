@@ -32,6 +32,7 @@ from app.analysis.features.feature_matrix import (
 )
 from app.analysis.features.forward_returns import compute_forward_return_bps
 from app.analysis.features.funding_align import FundingPoint
+from app.analysis.features.whale_flow_align import FlowPoint
 from app.market_data.history_loader import FetchKlines, load_ohlcv_history
 from app.market_data.kline_windows import interval_to_ms
 from app.market_data.models import OHLCV
@@ -192,15 +193,23 @@ async def run_symbol_search(
     alpha: float = 0.05,
     min_trades: int = DEFAULT_MIN_TRADES,
     funding: Sequence[FundingPoint] | None = None,
+    coin_flows: Sequence[FlowPoint] | None = None,
+    stable_flows: Sequence[FlowPoint] | None = None,
 ) -> SymbolSearchResult:
     """Backfill one symbol and run the hypothesis search over it.
 
     ``funding`` (optional) is the settled funding history for the symbol; when
     given it is aligned causally onto the bars so funding-conditioned hypotheses
     have a signal. Omitted (or empty) leaves the funding features None.
+
+    ``coin_flows`` / ``stable_flows`` (optional) are whale exchange-flow events
+    (this asset's coin, and market-wide stablecoins) aligned causally onto the
+    bars for the whale-flow hypotheses; omitted leaves those features None.
     """
     history = await load_ohlcv_history(symbol, timeframe, start_ms, end_ms, fetch)
-    rows = build_feature_matrix(history.candles, funding)
+    rows = build_feature_matrix(
+        history.candles, funding, coin_flows=coin_flows, stable_flows=stable_flows
+    )
     closes = [c.close for c in history.candles]
     labels = compute_forward_return_bps(closes, horizon)
     report = search_hypotheses(
