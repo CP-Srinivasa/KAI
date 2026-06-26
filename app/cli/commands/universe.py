@@ -115,3 +115,26 @@ def feed_run() -> None:
 
     result = asyncio.run(run_momentum_feeder())
     typer.echo(json.dumps(result, indent=2))
+
+
+_COHORT_OUTCOMES = Path("artifacts/momentum_cohort_outcomes.jsonl")
+
+
+@universe_app.command("cohort-outcomes")
+def cohort_outcomes(
+    audit: Annotated[Path, typer.Option(help="Paper-execution audit JSONL.")] = _AUDIT,
+    out: Annotated[Path, typer.Option(help="Outcomes JSONL output path.")] = _COHORT_OUTCOMES,
+    cohort: Annotated[
+        str, typer.Option(help="signal_source cohort to extract.")
+    ] = "momentum_universe",
+) -> None:
+    """G3: extract resolved cohort outcomes (symbol/entry_ts/net_bps) for the evidence eval."""
+    from app.observability.edge_report import load_audit_events
+    from app.observability.momentum_cohort_outcomes import extract_cohort_outcomes
+
+    rows = extract_cohort_outcomes(load_audit_events(audit), cohort=cohort)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    with out.open("w", encoding="utf-8") as fh:
+        for row in rows:
+            fh.write(json.dumps(row) + "\n")
+    typer.echo(json.dumps({"cohort": cohort, "resolved": len(rows), "out": str(out)}, indent=2))
