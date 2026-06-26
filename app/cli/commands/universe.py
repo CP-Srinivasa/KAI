@@ -104,3 +104,14 @@ def rotate_show(
         for sym, st in sorted(loaded.items())
     }
     typer.echo(json.dumps({"count": len(out), "assets": out}, indent=2))
+
+
+@universe_app.command("feed-run")
+def feed_run() -> None:
+    """G2: feed the universe into PAPER once (gated by MOMENTUM_UNIVERSE_FEED_ENABLED)."""
+    import asyncio
+
+    from app.observability.momentum_universe_feeder import run_momentum_feeder
+
+    result = asyncio.run(run_momentum_feeder())
+    typer.echo(json.dumps(result, indent=2))
