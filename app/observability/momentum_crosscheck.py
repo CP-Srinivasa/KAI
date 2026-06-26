@@ -18,6 +18,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Protocol
 
+from app.market_data.indicators import compute_atr
 from app.market_data.models import OHLCV
 from app.market_data.ta_rating import TaRating, compute_ta_rating
 from app.observability.momentum_universe_ledger import read_latest
@@ -31,6 +32,11 @@ _TA_BEARISH = -0.15
 # |8h funding| >= 5 bps (0.05%) = crowded positioning (a documented mean-reversion
 # pressure: crowded longs pay to hold, which historically caps the move).
 _FUNDING_CROWDED_BPS = 5.0
+# Daily ATR as % of price: a regime lens. KAI's own edge finding is
+# regime-dependent (momentum carries in trend, reverts in chop), so a high-vol
+# (choppy) flag marks a momentum performer whose signal is LESS trustworthy.
+_VOL_HIGH_PCT = 8.0
+_VOL_LOW_PCT = 3.0
 
 
 class OhlcvSource(Protocol):
@@ -61,17 +67,42 @@ def _funding_signal(funding_bps: float | None) -> str:
     return "neutral"
 
 
+def _vol_regime(atr_pct: float | None) -> str:
+    if atr_pct is None:
+        return "unavailable"
+    if atr_pct >= _VOL_HIGH_PCT:
+        return "high_vol"  # choppy → momentum less trustworthy
+    if atr_pct <= _VOL_LOW_PCT:
+        return "low_vol"  # calm/trending → momentum more trustworthy
+    return "normal"
+
+
+def _atr_pct(candles: Sequence[OHLCV]) -> float | None:
+    """Daily ATR as a percent of the latest close (volatility regime lens)."""
+    atr = compute_atr(list(candles))
+    if atr is None:
+        return None
+    ordered = sorted(candles, key=lambda c: c.timestamp_utc)
+    last = ordered[-1].close if ordered else 0.0
+    if last <= 0:
+        return None
+    return round(atr / last * 100.0, 4)
+
+
 def build_crosscheck_rows(
     universe_rows: Sequence[Mapping[str, Any]],
     ratings: Mapping[str, TaRating],
     funding: Mapping[str, float] | None = None,
+    vol: Mapping[str, float] | None = None,
 ) -> list[dict[str, Any]]:
-    """Pure: combine universe rows with per-symbol TA ratings + funding + flags.
+    """Pure: combine universe rows with per-symbol TA ratings + funding + vol + flags.
 
     ``funding`` maps a symbol to its 8h funding rate as a FRACTION (0.0001 = 1 bp);
-    surfaced as ``funding_bps`` + a ``funding_signal`` (long_crowded/short_crowded).
+    surfaced as ``funding_bps`` + a ``funding_signal``. ``vol`` maps a symbol to its
+    daily ATR-percent; surfaced as ``atr_pct`` + a ``vol_regime`` (high/low/normal).
     """
     funding = funding or {}
+    vol = vol or {}
     out: list[dict[str, Any]] = []
     for row in universe_rows:
         symbol = row.get("symbol")
@@ -82,6 +113,7 @@ def build_crosscheck_rows(
         rsi = round(rating.rsi, 2) if (rating is not None and rating.rsi is not None) else None
         funding_rate = funding.get(symbol)
         funding_bps = round(funding_rate * 10_000.0, 4) if funding_rate is not None else None
+        atr_pct = vol.get(symbol)
         out.append(
             {
                 "symbol": symbol,
@@ -93,6 +125,8 @@ def build_crosscheck_rows(
                 "rsi": rsi,
                 "funding_bps": funding_bps,
                 "funding_signal": _funding_signal(funding_bps),
+                "atr_pct": round(atr_pct, 4) if atr_pct is not None else None,
+                "vol_regime": _vol_regime(atr_pct),
                 "agreement": _agreement(momentum_score, rating),
             }
         )
@@ -122,6 +156,7 @@ async def build_crosscheck(
     get_funding = getattr(source, "get_funding_rate", None)
     ratings: dict[str, TaRating] = {}
     funding: dict[str, float] = {}
+    vol: dict[str, float] = {}
     for row in rows:
         symbol = row.get("symbol") if isinstance(row, dict) else None
         if not isinstance(symbol, str) or not symbol:
@@ -133,6 +168,9 @@ async def build_crosscheck(
         rating = compute_ta_rating(candles)
         if rating is not None:
             ratings[symbol] = rating
+        atr_pct = _atr_pct(candles)  # same candles — no extra fetch
+        if atr_pct is not None:
+            vol[symbol] = atr_pct
         if callable(get_funding):
             try:
                 snap = await get_funding(symbol)
@@ -141,7 +179,7 @@ async def build_crosscheck(
             rate = getattr(snap, "rate", None)
             if isinstance(rate, (int, float)):
                 funding[symbol] = float(rate)
-    return build_crosscheck_rows(rows, ratings, funding=funding)
+    return build_crosscheck_rows(rows, ratings, funding=funding, vol=vol)
 
 
 def append_crosscheck(
