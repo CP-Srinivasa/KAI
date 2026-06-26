@@ -1,0 +1,20 @@
+[Unit]
+Description=KAI Momentum-Universe-Refresh — rebuild the universe snapshot (daily + intra-day)
+
+[Timer]
+# Daily candles → a daily rebuild is the right cadence; a 12h interval keeps the
+# snapshot fresh without hammering the exchange. The same-named .service is
+# auto-activated when the timer fires — deliberately NO `Requires=` here
+# (a Requires= on a timer can strand it; see the Timer-Requires cascade lesson,
+# #414). NOT enabled by default: the operator runs
+# `systemctl enable --now kai-momentum-universe-refresh.timer`.
+OnBootSec=10min
+OnUnitActiveSec=12h
+# Persistent: if the Pi was down during a slot, run once on next boot rather
+# than waiting a full interval.
+Persistent=true
+AccuracySec=5min
+RandomizedDelaySec=2min
+
+[Install]
+WantedBy=timers.target
