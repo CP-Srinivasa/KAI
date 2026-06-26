@@ -26,6 +26,9 @@ from app.core.evidence_settings import (
     LongShortRatioEvidenceSettings as LongShortRatioEvidenceSettings,
 )
 from app.core.evidence_settings import (
+    MomentumUniverseEvidenceSettings as MomentumUniverseEvidenceSettings,
+)
+from app.core.evidence_settings import (
     OpenInterestEvidenceSettings as OpenInterestEvidenceSettings,
 )
 from app.core.integrity_settings import IntegritySettings as IntegritySettings
@@ -1530,6 +1533,9 @@ class AppSettings(BaseSettings):
     # Sprint 2 — L2 on-chain (fee/mempool) evidence. Default-off, shadow-first,
     # direction-agnostic (B-003). Source = KAI's own L1 fee-shadow stream.
     l2_evidence: L2OnChainEvidenceSettings = Field(default_factory=L2OnChainEvidenceSettings)
+    momentum_evidence: MomentumUniverseEvidenceSettings = Field(
+        default_factory=MomentumUniverseEvidenceSettings
+    )
     # Asset-diversification / concentration guard. Default-off, shadow-first.
     diversification: DiversificationSettings = Field(default_factory=DiversificationSettings)
     # KYT transaction-risk prevention. Default-off, shadow-first.
