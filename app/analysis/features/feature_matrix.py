@@ -20,6 +20,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 
 from app.analysis.features.funding_align import FundingPoint, align_funding_to_bars
+from app.analysis.features.whale_flow_align import FlowPoint, align_flow_to_bars
 from app.analysis.indicators.adx import ADX_DEFAULT_PERIOD, compute_adx_di
 from app.analysis.indicators.bollinger import (
     BOLLINGER_DEFAULT_WINDOW,
@@ -80,11 +81,23 @@ class FeatureRow:
     # None (OHLCV-only callers and existing tests are unaffected).
     funding_rate: float | None = None  # as-of settled funding rate (fraction/8h)
     funding_rate_z: float | None = None  # rolling z-score of funding (regime-relative)
+    # Whale exchange-flow, aligned causally onto the bar (see whale_flow_align).
+    # ``coin_*`` = this asset's own coin flow to/from exchanges (inflow bearish);
+    # ``stable_*`` = market-wide stablecoin flow to/from exchanges (inflow = dry
+    # powder, bullish). Only populated when build_feature_matrix is given the
+    # respective flow series; otherwise None (OHLCV-only callers unaffected).
+    coin_netflow_usd: float | None = None  # trailing 24h net coin flow (USD, +inflow)
+    coin_netflow_z: float | None = None  # rolling z-score of coin netflow
+    stable_netflow_usd: float | None = None  # trailing 24h net stablecoin flow (USD)
+    stable_netflow_z: float | None = None  # rolling z-score of stablecoin netflow
 
 
 def build_feature_matrix(
     candles: list[OHLCV],
     funding: Sequence[FundingPoint] | None = None,
+    *,
+    coin_flows: Sequence[FlowPoint] | None = None,
+    stable_flows: Sequence[FlowPoint] | None = None,
 ) -> list[FeatureRow]:
     """Compose a causal feature matrix from an OHLCV series.
 
@@ -94,6 +107,11 @@ def build_feature_matrix(
             each bar gets the most recent funding rate settled at or before its
             OPEN timestamp (causal as-of join) plus a rolling funding z-score.
             When omitted, the funding fields stay None (OHLCV-only behaviour).
+        coin_flows: optional whale exchange-flow events for THIS asset's own coin
+            (inflow to exchanges signed +). Aligned to a trailing-24h net + z.
+        stable_flows: optional market-wide stablecoin exchange-flow events (same
+            for every symbol). Aligned to a trailing-24h net + z. Both flow series
+            default None → their fields stay None (existing callers unaffected).
 
     Returns:
         One FeatureRow per candle (len == len(candles)); empty for empty input.
@@ -105,6 +123,7 @@ def build_feature_matrix(
     highs = [c.high for c in candles]
     lows = [c.low for c in candles]
     closes = [c.close for c in candles]
+    bar_ts = [c.timestamp_utc for c in candles]
 
     log_ret = compute_log_returns(closes)
     rsi = compute_rsi(closes, period=RSI_DEFAULT_PERIOD)
@@ -115,12 +134,20 @@ def build_feature_matrix(
     boll = compute_bollinger_z(closes, window=BOLLINGER_DEFAULT_WINDOW)
     trail_ret = compute_trailing_returns(closes, TRAIL_RETURN_WINDOW)
     if funding:
-        funding_rate, funding_rate_z = align_funding_to_bars(
-            [c.timestamp_utc for c in candles], funding
-        )
+        funding_rate, funding_rate_z = align_funding_to_bars(bar_ts, funding)
     else:
         funding_rate = [None] * n
         funding_rate_z = [None] * n
+    if coin_flows:
+        coin_netflow, coin_netflow_z = align_flow_to_bars(bar_ts, coin_flows)
+    else:
+        coin_netflow = [None] * n
+        coin_netflow_z = [None] * n
+    if stable_flows:
+        stable_netflow, stable_netflow_z = align_flow_to_bars(bar_ts, stable_flows)
+    else:
+        stable_netflow = [None] * n
+        stable_netflow_z = [None] * n
 
     rows: list[FeatureRow] = []
     for i in range(n):
@@ -144,6 +171,10 @@ def build_feature_matrix(
                 trail_return_20=trail_ret[i],
                 funding_rate=funding_rate[i],
                 funding_rate_z=funding_rate_z[i],
+                coin_netflow_usd=coin_netflow[i],
+                coin_netflow_z=coin_netflow_z[i],
+                stable_netflow_usd=stable_netflow[i],
+                stable_netflow_z=stable_netflow_z[i],
             )
         )
     return rows

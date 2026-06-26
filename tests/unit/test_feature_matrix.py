@@ -194,3 +194,47 @@ def test_funding_aligns_causally_onto_bars() -> None:
         assert matrix[i].funding_rate == 0.0004
     # Length and close passthrough are unaffected by the funding overlay.
     assert len(matrix) == len(candles)
+
+
+def test_whale_flow_defaults_to_none_without_series() -> None:
+    # OHLCV-only callers (and every existing test) must leave whale fields None.
+    candles = _make_candles(_closes_path(40))
+    for row in build_feature_matrix(candles):
+        assert row.coin_netflow_usd is None
+        assert row.coin_netflow_z is None
+        assert row.stable_netflow_usd is None
+        assert row.stable_netflow_z is None
+
+
+def test_whale_flow_aligns_and_populates() -> None:
+    from app.analysis.features.whale_flow_align import FlowPoint
+
+    h = 3_600_000
+    closes = _closes_path(40)
+    candles = _iso_candles(closes, h)  # 1h bars at t=0..39h
+    # One coin inflow per hour from t=0 (lets the netflow z warm up and populate).
+    coin_flows = [FlowPoint(i * h, 100_000.0 + 1000.0 * i) for i in range(40)]
+    stable_flows = [FlowPoint(i * h, 50_000.0) for i in range(40)]
+    matrix = build_feature_matrix(candles, coin_flows=coin_flows, stable_flows=stable_flows)
+    # Early bar: defined netflow (an event exists) but z still warming up → may be None.
+    assert matrix[0].coin_netflow_usd is not None
+    # A late bar past the z warm-up is populated for both coin and stable.
+    assert matrix[-1].coin_netflow_z is not None
+    assert matrix[-1].stable_netflow_usd is not None
+
+
+def test_whale_flow_no_lookahead_prefix_equals_full() -> None:
+    # Integrity: truncating future candles must NOT change any earlier whale-flow
+    # feature. Alignment only admits events confirmed at/before each bar and the
+    # z-history grows monotonically — so earlier rows are invariant.
+    from app.analysis.features.whale_flow_align import FlowPoint
+
+    h = 3_600_000
+    closes = _closes_path(60)
+    candles = _iso_candles(closes, h)
+    coin_flows = [FlowPoint(i * h, 100_000.0 + (i % 7) * 5000.0) for i in range(60)]
+    stable_flows = [FlowPoint(i * h, 40_000.0 - (i % 5) * 3000.0) for i in range(60)]
+    full = build_feature_matrix(candles, coin_flows=coin_flows, stable_flows=stable_flows)
+    for k in (30, 45, 59):
+        prefix = build_feature_matrix(candles[:k], coin_flows=coin_flows, stable_flows=stable_flows)
+        assert prefix == full[:k]
