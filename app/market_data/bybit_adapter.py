@@ -23,6 +23,7 @@ Safety invariants (mirror CoinGeckoAdapter / BinanceAdapter):
 from __future__ import annotations
 
 import logging
+import math
 from datetime import UTC, datetime
 from typing import Any
 
@@ -89,6 +90,20 @@ def _ms_to_iso(raw: Any) -> str | None:
     if ms <= 0:
         return None
     return datetime.fromtimestamp(ms / 1000, tz=UTC).isoformat()
+
+
+# Map our canonical timeframe labels to Bybit v5 kline ``interval`` codes
+# (minutes as bare numbers; "D"/"W"/"M" for day/week/month).
+_KLINE_INTERVAL: dict[str, str] = {
+    "1m": "1",
+    "5m": "5",
+    "15m": "15",
+    "30m": "30",
+    "1h": "60",
+    "4h": "240",
+    "1d": "D",
+    "1w": "W",
+}
 
 
 class BybitAdapter(BaseMarketDataAdapter):
@@ -393,10 +408,62 @@ class BybitAdapter(BaseMarketDataAdapter):
         )
 
     async def get_ohlcv(self, symbol: str, timeframe: str = "1h", limit: int = 100) -> list[OHLCV]:
-        # OHLCV not required by the bridge; deliberate no-op so we keep
-        # the adapter surface minimal until a consumer actually needs it.
-        del symbol, timeframe, limit
-        return []
+        """Bybit v5 linear-perp klines, returned ASCENDING (oldest→newest).
+
+        First real consumer = the Momentum-Universe builder (multi-window returns
+        from daily closes). Bybit's ``/v5/market/kline`` returns rows newest-first
+        as ``[start_ms, open, high, low, close, volume, turnover]``; we map the
+        timeframe to Bybit's interval code, validate (drop non-finite /
+        non-positive / short rows), and re-order ascending. Fail-soft: an
+        unsupported timeframe, empty symbol, or dead source ⇒ ``[]`` (never raises).
+        """
+        bybit_sym = _normalize_symbol(symbol)
+        if not bybit_sym:
+            self.last_error = "empty_symbol"
+            return []
+        interval = _KLINE_INTERVAL.get(timeframe)
+        if interval is None:
+            self.last_error = f"unsupported_timeframe:{timeframe}"
+            return []
+        count = max(1, min(int(limit), 1000))
+        data = await self._get(
+            "/v5/market/kline",
+            {"category": "linear", "symbol": bybit_sym, "interval": interval, "limit": str(count)},
+        )
+        if data is None:
+            return []
+        rows = (data.get("result") or {}).get("list") or []
+        if not isinstance(rows, list):
+            self.last_error = "unexpected_kline_payload"
+            return []
+        canonical = _canonical_symbol(bybit_sym)
+        out: list[OHLCV] = []
+        for row in rows:
+            if not isinstance(row, (list, tuple)) or len(row) < 6:
+                continue
+            try:
+                start_ms = int(row[0])
+                o, h, low, c, v = (float(row[i]) for i in range(1, 6))
+            except (TypeError, ValueError):
+                continue
+            if not all(math.isfinite(x) for x in (o, h, low, c, v)):
+                continue
+            if min(o, h, low, c) <= 0 or v < 0:
+                continue
+            out.append(
+                OHLCV(
+                    symbol=canonical,
+                    timestamp_utc=datetime.fromtimestamp(start_ms / 1000, tz=UTC).isoformat(),
+                    timeframe=timeframe,
+                    open=o,
+                    high=h,
+                    low=low,
+                    close=c,
+                    volume=v,
+                )
+            )
+        out.reverse()  # Bybit yields newest-first; consumers expect ascending.
+        return out
 
     async def get_market_data_snapshot(self, symbol: str) -> MarketDataSnapshot:
         # Override default to surface bybit's last_error in the error field
