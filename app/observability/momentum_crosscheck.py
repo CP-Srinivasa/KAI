@@ -28,6 +28,9 @@ DEFAULT_CROSSCHECK_LEDGER = Path("artifacts/momentum_crosscheck.jsonl")
 _BULLISH_MOMENTUM = 0.5
 _TA_BULLISH = 0.15
 _TA_BEARISH = -0.15
+# |8h funding| >= 5 bps (0.05%) = crowded positioning (a documented mean-reversion
+# pressure: crowded longs pay to hold, which historically caps the move).
+_FUNDING_CROWDED_BPS = 5.0
 
 
 class OhlcvSource(Protocol):
@@ -48,11 +51,27 @@ def _agreement(momentum_score: float, rating: TaRating | None) -> str:
     return "neutral"
 
 
+def _funding_signal(funding_bps: float | None) -> str:
+    if funding_bps is None:
+        return "unavailable"
+    if funding_bps >= _FUNDING_CROWDED_BPS:
+        return "long_crowded"  # longs paying shorts → overheated longs (mean-reversion risk)
+    if funding_bps <= -_FUNDING_CROWDED_BPS:
+        return "short_crowded"
+    return "neutral"
+
+
 def build_crosscheck_rows(
     universe_rows: Sequence[Mapping[str, Any]],
     ratings: Mapping[str, TaRating],
+    funding: Mapping[str, float] | None = None,
 ) -> list[dict[str, Any]]:
-    """Pure: combine universe rows with per-symbol TA ratings + agreement flag."""
+    """Pure: combine universe rows with per-symbol TA ratings + funding + flags.
+
+    ``funding`` maps a symbol to its 8h funding rate as a FRACTION (0.0001 = 1 bp);
+    surfaced as ``funding_bps`` + a ``funding_signal`` (long_crowded/short_crowded).
+    """
+    funding = funding or {}
     out: list[dict[str, Any]] = []
     for row in universe_rows:
         symbol = row.get("symbol")
@@ -61,6 +80,8 @@ def build_crosscheck_rows(
         momentum_score = float(row.get("momentum_score", 0.0))
         rating = ratings.get(symbol)
         rsi = round(rating.rsi, 2) if (rating is not None and rating.rsi is not None) else None
+        funding_rate = funding.get(symbol)
+        funding_bps = round(funding_rate * 10_000.0, 4) if funding_rate is not None else None
         out.append(
             {
                 "symbol": symbol,
@@ -70,6 +91,8 @@ def build_crosscheck_rows(
                 "ta_score": round(rating.score, 6) if rating is not None else None,
                 "ta_trend": rating.trend if rating is not None else "unavailable",
                 "rsi": rsi,
+                "funding_bps": funding_bps,
+                "funding_signal": _funding_signal(funding_bps),
                 "agreement": _agreement(momentum_score, rating),
             }
         )
@@ -93,7 +116,12 @@ async def build_crosscheck(
     if not isinstance(universe, list) or not universe:
         return []
     rows = universe[:top_n]
+    # Funding is optional enrichment: only if the source exposes get_funding_rate
+    # (the exchange adapters do). A non-funding source (e.g. a pure OHLCV fake)
+    # simply yields no funding column — fail-soft, backward compatible.
+    get_funding = getattr(source, "get_funding_rate", None)
     ratings: dict[str, TaRating] = {}
+    funding: dict[str, float] = {}
     for row in rows:
         symbol = row.get("symbol") if isinstance(row, dict) else None
         if not isinstance(symbol, str) or not symbol:
@@ -101,11 +129,19 @@ async def build_crosscheck(
         try:
             candles = await source.get_ohlcv(symbol, "1d", lookback_days)
         except Exception:  # noqa: BLE001 — one bad symbol must not abort the cross-check
-            continue
+            candles = []
         rating = compute_ta_rating(candles)
         if rating is not None:
             ratings[symbol] = rating
-    return build_crosscheck_rows(rows, ratings)
+        if callable(get_funding):
+            try:
+                snap = await get_funding(symbol)
+            except Exception:  # noqa: BLE001 — funding is best-effort enrichment
+                snap = None
+            rate = getattr(snap, "rate", None)
+            if isinstance(rate, (int, float)):
+                funding[symbol] = float(rate)
+    return build_crosscheck_rows(rows, ratings, funding=funding)
 
 
 def append_crosscheck(
