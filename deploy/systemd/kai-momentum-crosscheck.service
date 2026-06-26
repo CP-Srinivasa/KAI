@@ -1,0 +1,26 @@
+[Unit]
+Description=KAI Momentum-Crosscheck — own momentum rank vs own-TA rating (Goal G4)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/ubuntu/ai_analyst_trading_bot
+Environment=PYTHONPATH=/home/ubuntu/ai_analyst_trading_bot
+EnvironmentFile=-/home/ubuntu/ai_analyst_trading_bot/.env
+
+# READ-ONLY informational cross-check: pairs the own-data universe momentum rank
+# with a ToS-compliant TA rating computed from our OWN OHLCV (no scraping, no
+# key) and writes artifacts/momentum_crosscheck.jsonl. NO trades, NO sizing.
+# "-" prefix: a failed run must not propagate (build is fail-soft).
+ExecStart=-/home/ubuntu/ai_analyst_trading_bot/.venv/bin/python /home/ubuntu/ai_analyst_trading_bot/scripts/momentum_crosscheck_refresh.py
+
+StandardOutput=journal
+StandardError=journal
+TimeoutStartSec=180
+
+# Light: top-N daily-OHLCV reads + pure indicator math.
+MemoryMax=256M
+CPUQuota=50%

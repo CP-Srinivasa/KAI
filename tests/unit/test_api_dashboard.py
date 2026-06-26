@@ -1655,3 +1655,35 @@ def test_momentum_universe_returns_latest_snapshot(tmp_path: Path) -> None:
     assert body["count"] == 2
     assert body["universe"][0]["symbol"] == "BTC/USDT"
     assert body["universe"][0]["rank"] == 1
+
+
+def test_momentum_crosscheck_empty_returns_unavailable(tmp_path: Path) -> None:
+    """G4: no cross-check snapshot yet → available=False, never 500."""
+    app = _make_app()
+    with _patch_artifacts(tmp_path):
+        with TestClient(app) as client:
+            r = client.get("/dashboard/api/momentum-crosscheck")
+    assert r.status_code == 200
+    assert r.json()["available"] is False
+
+
+def test_momentum_crosscheck_returns_latest(tmp_path: Path) -> None:
+    """G4: after a cross-check snapshot is persisted, the endpoint surfaces the rows."""
+    from datetime import UTC, datetime
+
+    from app.observability.momentum_crosscheck import append_crosscheck
+
+    ledger = tmp_path / "momentum_crosscheck.jsonl"
+    append_crosscheck(
+        ledger,
+        [{"symbol": "BTC/USDT", "rank": 1, "ta_label": "buy", "agreement": "agree_bullish"}],
+        now=datetime(2026, 6, 26, tzinfo=UTC),
+    )
+    app = _make_app()
+    with _patch_artifacts(tmp_path):
+        with TestClient(app) as client:
+            r = client.get("/dashboard/api/momentum-crosscheck")
+    body = r.json()
+    assert body["available"] is True
+    assert body["count"] == 1
+    assert body["rows"][0]["symbol"] == "BTC/USDT"

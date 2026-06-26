@@ -1380,6 +1380,36 @@ async def dashboard_momentum_universe_api() -> JSONResponse:
         )
 
 
+@router.get("/dashboard/api/momentum-crosscheck", tags=["dashboard"])
+async def dashboard_momentum_crosscheck_api() -> JSONResponse:
+    """G4: own momentum rank vs own-TA rating cross-check (informational).
+
+    READ-ONLY "Sicht": the latest cross-check snapshot — per universe symbol the
+    momentum percentile next to a ToS-compliant TA rating (computed from our OWN
+    OHLCV, no scraping) + an agreement/divergence flag. NO trades, NO sizing
+    effect. ``available=False`` when no snapshot exists yet. Fail-closed.
+    """
+    from app.observability.momentum_crosscheck import read_latest_crosscheck
+
+    try:
+        latest = read_latest_crosscheck(_ARTIFACTS / "momentum_crosscheck.jsonl")
+        if latest is None:
+            return JSONResponse(
+                content={"available": False, "reason": "no_snapshot"},
+                headers={"Cache-Control": "no-store, max-age=0"},
+            )
+        return JSONResponse(
+            content={"available": True, **latest},
+            headers={"Cache-Control": "no-store, max-age=0"},
+        )
+    except Exception:  # noqa: BLE001 — endpoint must never 500 the dashboard
+        logger.warning("dashboard_momentum_crosscheck_failed", exc_info=True)
+        return JSONResponse(
+            content={"available": False, "error": "momentum_crosscheck_unavailable"},
+            headers={"Cache-Control": "no-store, max-age=0"},
+        )
+
+
 @router.get("/dashboard/api/priority-gate", tags=["dashboard"])
 async def dashboard_priority_gate_api() -> JSONResponse:
     """D-184: operator-visibility for the D-182 priority-tier paper-fill gate.

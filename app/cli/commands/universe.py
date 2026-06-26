@@ -138,3 +138,38 @@ def cohort_outcomes(
         for row in rows:
             fh.write(json.dumps(row) + "\n")
     typer.echo(json.dumps({"cohort": cohort, "resolved": len(rows), "out": str(out)}, indent=2))
+
+
+_CROSSCHECK = Path("artifacts/momentum_crosscheck.jsonl")
+
+
+@universe_app.command("crosscheck")
+def crosscheck(
+    provider: Annotated[str, typer.Option(help="OHLCV source.")] = "bybit",
+    top_n: Annotated[int, typer.Option(help="Universe symbols to cross-check.")] = 15,
+    out: Annotated[Path, typer.Option(help="Cross-check ledger path.")] = _CROSSCHECK,
+) -> None:
+    """G4: own momentum rank vs own-TA rating cross-check (informational, no trades)."""
+    import asyncio
+    from datetime import UTC, datetime
+
+    from app.observability.momentum_crosscheck import append_crosscheck, build_crosscheck
+
+    source = _resolve_source(provider)
+    rows = asyncio.run(build_crosscheck(source, top_n=top_n))
+    record = append_crosscheck(out, rows, now=datetime.now(UTC))
+    typer.echo(json.dumps(record, indent=2))
+
+
+@universe_app.command("crosscheck-show")
+def crosscheck_show(
+    ledger: Annotated[Path, typer.Option(help="Cross-check ledger path.")] = _CROSSCHECK,
+) -> None:
+    """Print the latest persisted cross-check snapshot (offline)."""
+    from app.observability.momentum_crosscheck import read_latest_crosscheck
+
+    latest = read_latest_crosscheck(ledger)
+    if latest is None:
+        typer.echo(json.dumps({"available": False, "reason": "no_snapshot"}))
+        return
+    typer.echo(json.dumps(latest, indent=2))
