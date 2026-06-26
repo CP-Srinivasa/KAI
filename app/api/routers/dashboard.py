@@ -1350,6 +1350,36 @@ async def dashboard_n_overview_api() -> JSONResponse:
     return JSONResponse(content=payload, headers={"Cache-Control": "no-store, max-age=0"})
 
 
+@router.get("/dashboard/api/momentum-universe", tags=["dashboard"])
+async def dashboard_momentum_universe_api() -> JSONResponse:
+    """G0: the own-data Momentum-Universe (most-traded × best-performer).
+
+    READ-ONLY "Sicht": returns the latest persisted universe snapshot (ranked
+    symbols + volume/momentum/universe scores) from the candidates ledger. NO
+    trades, NO capital effect. ``available=False`` when no snapshot exists yet.
+    Fail-closed: never 500s the dashboard, never leaks the artifact path.
+    """
+    from app.observability.momentum_universe_ledger import read_latest
+
+    try:
+        latest = read_latest(_ARTIFACTS / "momentum_universe_candidates.jsonl")
+        if latest is None:
+            return JSONResponse(
+                content={"available": False, "reason": "no_snapshot"},
+                headers={"Cache-Control": "no-store, max-age=0"},
+            )
+        return JSONResponse(
+            content={"available": True, **latest},
+            headers={"Cache-Control": "no-store, max-age=0"},
+        )
+    except Exception:  # noqa: BLE001 — endpoint must never 500 the dashboard
+        logger.warning("dashboard_momentum_universe_failed", exc_info=True)
+        return JSONResponse(
+            content={"available": False, "error": "momentum_universe_unavailable"},
+            headers={"Cache-Control": "no-store, max-age=0"},
+        )
+
+
 @router.get("/dashboard/api/priority-gate", tags=["dashboard"])
 async def dashboard_priority_gate_api() -> JSONResponse:
     """D-184: operator-visibility for the D-182 priority-tier paper-fill gate.

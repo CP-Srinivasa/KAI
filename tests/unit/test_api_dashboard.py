@@ -1619,3 +1619,39 @@ def test_churn_cache_is_bounded(tmp_path: Path) -> None:
                 client.get(f"/dashboard/api/churn?since={day}")
 
     assert len(dashboard_mod._churn_cache) <= dashboard_mod._CHURN_CACHE_MAX
+
+
+def test_momentum_universe_empty_returns_unavailable(tmp_path: Path) -> None:
+    """G0: no snapshot yet → available=False, never 500."""
+    app = _make_app()
+    with _patch_artifacts(tmp_path):
+        with TestClient(app) as client:
+            r = client.get("/dashboard/api/momentum-universe")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["available"] is False
+    assert body["reason"] == "no_snapshot"
+
+
+def test_momentum_universe_returns_latest_snapshot(tmp_path: Path) -> None:
+    """G0: after a snapshot is persisted, the endpoint surfaces the ranked universe."""
+    from app.observability.momentum_universe import RankedSymbol
+    from app.observability.momentum_universe_ledger import append_snapshot
+
+    ledger = tmp_path / "momentum_universe_candidates.jsonl"
+    ranked = [
+        RankedSymbol("BTC/USDT", 0.91, 0.88, 0.95, 1, {"volume_score": 0.88}),
+        RankedSymbol("ETH/USDT", 0.40, 0.20, 0.55, 2, {}),
+    ]
+    append_snapshot(ledger, ranked, now=datetime(2026, 6, 1, tzinfo=UTC))
+
+    app = _make_app()
+    with _patch_artifacts(tmp_path):
+        with TestClient(app) as client:
+            r = client.get("/dashboard/api/momentum-universe")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["available"] is True
+    assert body["count"] == 2
+    assert body["universe"][0]["symbol"] == "BTC/USDT"
+    assert body["universe"][0]["rank"] == 1
