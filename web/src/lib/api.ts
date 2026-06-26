@@ -265,6 +265,27 @@ export function fetchChurnReport(signal?: AbortSignal): Promise<ChurnReport> {
   return apiGet<ChurnReport>("/dashboard/api/churn", { signal });
 }
 
+// G0 Momentum-Universe (eigene Börsendaten, most-traded × best-performer).
+// READ-ONLY Sicht — beeinflusst kein Sizing/Kapital. Scores sind Percentile [0,1].
+export type MomentumUniverseRow = {
+  symbol: string;
+  rank: number;
+  universe_score: number;
+  volume_score: number;
+  momentum_score: number;
+};
+export type MomentumUniverse = {
+  available: boolean;
+  ts?: string;
+  count?: number;
+  universe?: MomentumUniverseRow[];
+  reason?: string;
+  error?: string;
+};
+export function fetchMomentumUniverse(signal?: AbortSignal): Promise<MomentumUniverse> {
+  return apiGet<MomentumUniverse>("/dashboard/api/momentum-universe", { signal });
+}
+
 // L3 Audit-Integrität (OpenTimestamps-Anchoring, default-off). state:
 // disabled | no_anchor | ok | unavailable. proof_available = .ots vorhanden;
 // proof_state unterscheidet "pending" (Calendar-Commitment, noch nicht
