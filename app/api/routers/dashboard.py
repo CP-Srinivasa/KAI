@@ -1410,6 +1410,29 @@ async def dashboard_momentum_crosscheck_api() -> JSONResponse:
         )
 
 
+@router.get("/dashboard/api/momentum-edge-release", tags=["dashboard"])
+async def dashboard_momentum_edge_release_api() -> JSONResponse:
+    """G5: the momentum_universe cohort edge → EntryMode release recommendation.
+
+    READ-ONLY: measures the cohort's cost-netto edge from the paper audit and maps
+    it to a recommended EntryMode (DISABLED…LIVE_NORMAL). RECOMMENDATION ONLY —
+    a live recommendation always carries ``requires_operator_signoff``; this never
+    flips entry_mode and never touches capital. ``available=False`` until the
+    cohort has resolved closes. Fail-closed.
+    """
+    from app.risk.momentum_edge_release import build_momentum_release
+
+    try:
+        verdict = build_momentum_release(_PAPER_EXECUTION_AUDIT, min_n=30)
+        return JSONResponse(content=verdict, headers={"Cache-Control": "no-store, max-age=0"})
+    except Exception:  # noqa: BLE001 — endpoint must never 500 the dashboard
+        logger.warning("dashboard_momentum_edge_release_failed", exc_info=True)
+        return JSONResponse(
+            content={"available": False, "error": "momentum_edge_release_unavailable"},
+            headers={"Cache-Control": "no-store, max-age=0"},
+        )
+
+
 @router.get("/dashboard/api/priority-gate", tags=["dashboard"])
 async def dashboard_priority_gate_api() -> JSONResponse:
     """D-184: operator-visibility for the D-182 priority-tier paper-fill gate.

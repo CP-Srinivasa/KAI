@@ -173,3 +173,16 @@ def crosscheck_show(
         typer.echo(json.dumps({"available": False, "reason": "no_snapshot"}))
         return
     typer.echo(json.dumps(latest, indent=2))
+
+
+@universe_app.command("edge-release")
+def edge_release(
+    audit: Annotated[Path, typer.Option(help="Paper-execution audit JSONL.")] = _AUDIT,
+    min_n: Annotated[int, typer.Option(help="Min closes for a defensible posterior.")] = 30,
+    safety_margin_bps: Annotated[float, typer.Option(help="Net-edge safety margin (bps).")] = 0.0,
+) -> None:
+    """G5: momentum_universe cohort edge → EntryMode recommendation (gated, no auto-promote)."""
+    from app.risk.momentum_edge_release import build_momentum_release
+
+    verdict = build_momentum_release(audit, min_n=min_n, safety_margin_bps=safety_margin_bps)
+    typer.echo(json.dumps(verdict, indent=2))
