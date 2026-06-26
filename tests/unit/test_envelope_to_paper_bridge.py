@@ -888,3 +888,78 @@ async def test_premium_paper_execution_disabled_blocks_bridge(
     assert records[-1]["stage"] == "rejected_entry_mode"
     assert records[-1]["reason"] == "premium_paper_execution_disabled"
     assert records[-1]["reason_codes"] == ["ENTRY_MODE_DISABLED"]
+
+
+# ─── Lifecycle-Annotation: Crash-Resilienz + statischer Sequenz-Guard ─────────
+# Regression: kai-entry-watch.service crashte 2026-06-26 in einer Endlosschleife
+# (172 Restarts → StartLimit → `failed`), weil der Duplicate-Fill-Handler die
+# illegale Sequenz [VALIDATED -> POSITION_OPEN] annotierte und
+# IllegalLifecycleTransition den GANZEN Hochfrequenz-Watcher beendete.
+
+
+def test_attach_lifecycle_legal_sequence_records_events() -> None:
+    ols = bridge.OrderLifecycleState
+    rec: dict[str, Any] = {"correlation_id": "c1"}
+    bridge._attach_lifecycle(
+        rec,
+        final_state=ols.POSITION_OPEN,
+        states=[
+            ols.VALIDATED,
+            ols.ENTRY_TRIGGERED,
+            ols.ORDER_BUILDING,
+            ols.ORDER_SUBMITTED,
+            ols.ORDER_ACCEPTED,
+            ols.POSITION_OPEN,
+        ],
+        reason="paper_order_filled",
+    )
+    assert rec["lifecycle_state"] == "POSITION_OPEN"
+    assert len(rec["lifecycle_events"]) == 5  # 6 states -> 5 transitions
+    assert "lifecycle_events_error" not in rec
+
+
+def test_attach_lifecycle_illegal_sequence_degrades_not_crash() -> None:
+    """Eine illegale Sequenz darf den Watcher NICHT crashen — sie degradiert zu
+    leeren events + Marker statt zu IllegalLifecycleTransition (Fix 2026-06-26)."""
+    ols = bridge.OrderLifecycleState
+    rec: dict[str, Any] = {"correlation_id": "c2"}
+    bridge._attach_lifecycle(
+        rec,
+        final_state=ols.POSITION_OPEN,
+        states=[ols.VALIDATED, ols.POSITION_OPEN],  # genau der entry-watch-Crash
+        reason="duplicate_fill_already_executed",
+    )
+    assert rec["lifecycle_state"] == "POSITION_OPEN"  # finaler State trotzdem gesetzt
+    assert rec["lifecycle_events"] == []
+    assert "VALIDATED -> POSITION_OPEN" in rec["lifecycle_events_error"]
+
+
+def test_all_bridge_state_sequences_are_legal() -> None:
+    """Statischer Guard: JEDE states=[...]-Literal-Liste in der Bridge muss ein
+    legaler Pfad durch LIFECYCLE_TRANSITIONS sein. Hätte den entry-watch-Crash
+    2026-06-26 gefangen; verhindert Regressionen für ALLE Call-Sites."""
+    import ast
+    import inspect
+
+    from app.execution.normalized_signal import LIFECYCLE_TRANSITIONS, SignalStatus
+
+    src = Path(inspect.getfile(bridge)).read_text(encoding="utf-8")
+    tree = ast.parse(src)
+    illegal: list[str] = []
+    checked = 0
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.keyword)
+            and node.arg == "states"
+            and isinstance(node.value, ast.List)
+        ):
+            names = [e.attr for e in node.value.elts if isinstance(e, ast.Attribute)]
+            if len(names) != len(node.value.elts):
+                continue  # nicht-literale Liste -> nicht statisch prüfbar
+            checked += 1
+            seq = [SignalStatus[n] for n in names]
+            for a, b in zip(seq, seq[1:], strict=False):
+                if b not in LIFECYCLE_TRANSITIONS[a]:
+                    illegal.append(f"L{node.value.lineno}: {a.value} -> {b.value}")
+    assert checked >= 15, f"zu wenige states-Listen gefunden ({checked}) — Guard defekt?"
+    assert not illegal, f"illegale Lifecycle-Sequenzen in der Bridge: {illegal}"
