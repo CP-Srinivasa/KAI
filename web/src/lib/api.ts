@@ -298,6 +298,8 @@ export type MomentumCrosscheckRow = {
   rsi: number | null;
   funding_bps: number | null;
   funding_signal: string;
+  atr_pct: number | null;
+  vol_regime: string;
   agreement: string;
 };
 export type MomentumCrosscheck = {
