@@ -31,6 +31,7 @@ from app.analysis.features.feature_matrix import (
     build_feature_matrix,
 )
 from app.analysis.features.forward_returns import compute_forward_return_bps
+from app.analysis.features.funding_align import FundingPoint
 from app.market_data.history_loader import FetchKlines, load_ohlcv_history
 from app.market_data.kline_windows import interval_to_ms
 from app.market_data.models import OHLCV
@@ -121,6 +122,35 @@ def default_hypotheses() -> list[tuple[str, Decider]]:
             return 0
         return 1 if r.trail_return_20 > 0.0 else -1
 
+    # Funding-conditioned cohorts (perpetual carry/crowding). funding_rate_z is the
+    # regime-relative z-score of the as-of funding rate (None during warm-up → no
+    # trade). Read-only OHLCV+funding; no new data path in the entry loop.
+    #
+    # Fade funding extremes: very positive funding = crowded longs paying to hold →
+    # mean-revert short; very negative = crowded shorts → fade long. The classic
+    # perp-crowding contrarian.
+    def funding_fade(r: FeatureRow) -> int:
+        if r.funding_rate_z is None:
+            return 0
+        if r.funding_rate_z > 2.0:
+            return -1
+        if r.funding_rate_z < -2.0:
+            return 1
+        return 0
+
+    # Funding-filtered momentum: take the TS-momentum direction only when funding is
+    # NOT extreme against the position (long momentum only while longs are not
+    # overcrowded, and symmetrically for shorts) — a funding-conditioned slice of
+    # the momentum cohort, testing whether avoiding crowded entries rescues the edge.
+    def tsmom_funding_filtered(r: FeatureRow) -> int:
+        if r.trail_return_20 is None or r.funding_rate_z is None:
+            return 0
+        if r.trail_return_20 > 0.0 and r.funding_rate_z < 1.0:
+            return 1
+        if r.trail_return_20 < 0.0 and r.funding_rate_z > -1.0:
+            return -1
+        return 0
+
     return [
         ("rsi_oversold_long", rsi_oversold_long),
         ("rsi_overbought_short", rsi_overbought_short),
@@ -132,6 +162,8 @@ def default_hypotheses() -> list[tuple[str, Decider]]:
         ("ts_momentum", ts_momentum),
         ("tsmom_vol_scaled", tsmom_vol_scaled),
         ("tsmom_adx_confirmed", tsmom_adx_confirmed),
+        ("funding_fade", funding_fade),
+        ("tsmom_funding_filtered", tsmom_funding_filtered),
     ]
 
 
@@ -159,10 +191,16 @@ async def run_symbol_search(
     horizon: int = DEFAULT_HORIZON,
     alpha: float = 0.05,
     min_trades: int = DEFAULT_MIN_TRADES,
+    funding: Sequence[FundingPoint] | None = None,
 ) -> SymbolSearchResult:
-    """Backfill one symbol and run the hypothesis search over it."""
+    """Backfill one symbol and run the hypothesis search over it.
+
+    ``funding`` (optional) is the settled funding history for the symbol; when
+    given it is aligned causally onto the bars so funding-conditioned hypotheses
+    have a signal. Omitted (or empty) leaves the funding features None.
+    """
     history = await load_ohlcv_history(symbol, timeframe, start_ms, end_ms, fetch)
-    rows = build_feature_matrix(history.candles)
+    rows = build_feature_matrix(history.candles, funding)
     closes = [c.close for c in history.candles]
     labels = compute_forward_return_bps(closes, horizon)
     report = search_hypotheses(
@@ -302,6 +340,25 @@ def _resolve_cost_bps() -> float:
         return _FALLBACK_COST_BPS
 
 
+async def _load_funding(
+    fetch_history: Callable[[str, int, int], Awaitable[list[tuple[int, float]]]],
+    symbol: str,
+    start_ms: int,
+    end_ms: int,
+) -> list[FundingPoint]:
+    """Settled funding history for one symbol → FundingPoints; fail-soft to [].
+
+    A funding fetch failure must never abort the (OHLCV-driven) search — the
+    funding-conditioned hypotheses simply see no signal and contribute no trades.
+    """
+    try:
+        raw = await fetch_history(symbol, start_ms, end_ms)
+    except Exception as exc:  # noqa: BLE001 — funding is optional; degrade, never crash
+        logger.warning("funding history for %s failed: %s", symbol, exc)
+        return []
+    return [FundingPoint(settlement_ms=ms, rate=rate) for ms, rate in raw]
+
+
 async def main(
     universe: tuple[str, ...] = DEFAULT_UNIVERSE,
     timeframe: str = DEFAULT_TIMEFRAME,
@@ -311,6 +368,7 @@ async def main(
 ) -> int:
     """Live run: backfill the universe from Binance and search for edge."""
     from app.market_data.binance_adapter import BinanceAdapter
+    from app.market_data.binance_futures_adapter import BinanceFuturesAdapter
 
     lookback_days = max(1, min(lookback_days, MAX_LOOKBACK_DAYS))
     interval_to_ms(timeframe)  # validate timeframe early (raises on unsupported)
@@ -318,14 +376,24 @@ async def main(
     start_ms = end_ms - lookback_days * _MS_PER_DAY
 
     fetch = build_fetch(BinanceAdapter().get_ohlcv)
+    fetch_funding = BinanceFuturesAdapter().get_funding_rate_history
     cost_bps = _resolve_cost_bps()
     hypotheses = default_hypotheses()
 
     results: list[SymbolSearchResult] = []
     for symbol in universe:
+        funding = await _load_funding(fetch_funding, symbol, start_ms, end_ms)
         try:
             res = await run_symbol_search(
-                symbol, timeframe, start_ms, end_ms, fetch, hypotheses, cost_bps, horizon=horizon
+                symbol,
+                timeframe,
+                start_ms,
+                end_ms,
+                fetch,
+                hypotheses,
+                cost_bps,
+                horizon=horizon,
+                funding=funding,
             )
         except Exception as exc:  # noqa: BLE001 — one bad symbol must not kill the run
             logger.warning("symbol %s failed: %s", symbol, exc)

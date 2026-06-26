@@ -150,3 +150,47 @@ def test_no_lookahead_prefix_equals_full_prefix() -> None:
     for k in (30, 45, 59):
         prefix = build_feature_matrix(candles[:k])
         assert prefix == full[:k]
+
+
+def test_funding_defaults_to_none_without_series() -> None:
+    # OHLCV-only callers (and every existing test) must leave funding fields None.
+    candles = _make_candles(_closes_path(40))
+    for row in build_feature_matrix(candles):
+        assert row.funding_rate is None
+        assert row.funding_rate_z is None
+
+
+def _iso_candles(closes: list[float], step_ms: int) -> list[OHLCV]:
+    from datetime import UTC, datetime
+
+    return [
+        OHLCV(
+            symbol="BTC/USDT",
+            timestamp_utc=datetime.fromtimestamp(i * step_ms / 1000, tz=UTC).isoformat(),
+            timeframe="1h",
+            open=c,
+            high=c * 1.01,
+            low=c * 0.99,
+            close=c,
+            volume=1000.0,
+        )
+        for i, c in enumerate(closes)
+    ]
+
+
+def test_funding_aligns_causally_onto_bars() -> None:
+    from app.analysis.features.funding_align import FundingPoint
+
+    h = 3_600_000
+    closes = _closes_path(20)
+    candles = _iso_candles(closes, h)  # 1h bars at t=0..19h
+    # Funding settles at t=0 (0.0001) and t=8h (0.0004).
+    funding = [FundingPoint(0, 0.0001), FundingPoint(8 * h, 0.0004)]
+    matrix = build_feature_matrix(candles, funding)
+    # Bars 0..7 carry the first settlement; 8..19 the second (forward-fill, causal).
+    for i in range(8):
+        assert matrix[i].funding_rate == 0.0001
+    for i in range(8, 20):
+        assert matrix[i].funding_rate == 0.0004
+    # Length and close passthrough are unaffected by the funding overlay.
+    assert len(matrix) == len(candles)

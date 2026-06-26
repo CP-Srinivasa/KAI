@@ -16,8 +16,10 @@ in ``app.analysis.indicators`` and is reused verbatim (no re-implementation).
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 
+from app.analysis.features.funding_align import FundingPoint, align_funding_to_bars
 from app.analysis.indicators.adx import ADX_DEFAULT_PERIOD, compute_adx_di
 from app.analysis.indicators.bollinger import (
     BOLLINGER_DEFAULT_WINDOW,
@@ -73,13 +75,25 @@ class FeatureRow:
     # (the canonical TS-momentum signal, Liu-Tsyvinski-Wu). None during warm-up.
     # Defaulted so existing keyword/test constructors stay valid.
     trail_return_20: float | None = None
+    # Perpetual funding, aligned causally onto the bar (see funding_align). Only
+    # populated when build_feature_matrix is given a funding series; otherwise
+    # None (OHLCV-only callers and existing tests are unaffected).
+    funding_rate: float | None = None  # as-of settled funding rate (fraction/8h)
+    funding_rate_z: float | None = None  # rolling z-score of funding (regime-relative)
 
 
-def build_feature_matrix(candles: list[OHLCV]) -> list[FeatureRow]:
+def build_feature_matrix(
+    candles: list[OHLCV],
+    funding: Sequence[FundingPoint] | None = None,
+) -> list[FeatureRow]:
     """Compose a causal feature matrix from an OHLCV series.
 
     Args:
         candles: oldest-first OHLCV candles for a single symbol/timeframe.
+        funding: optional settled funding events for the same symbol. When given,
+            each bar gets the most recent funding rate settled at or before its
+            OPEN timestamp (causal as-of join) plus a rolling funding z-score.
+            When omitted, the funding fields stay None (OHLCV-only behaviour).
 
     Returns:
         One FeatureRow per candle (len == len(candles)); empty for empty input.
@@ -100,6 +114,13 @@ def build_feature_matrix(candles: list[OHLCV]) -> list[FeatureRow]:
     ema_slow = compute_ema(closes, period=EMA_SLOW_PERIOD)
     boll = compute_bollinger_z(closes, window=BOLLINGER_DEFAULT_WINDOW)
     trail_ret = compute_trailing_returns(closes, TRAIL_RETURN_WINDOW)
+    if funding:
+        funding_rate, funding_rate_z = align_funding_to_bars(
+            [c.timestamp_utc for c in candles], funding
+        )
+    else:
+        funding_rate = [None] * n
+        funding_rate_z = [None] * n
 
     rows: list[FeatureRow] = []
     for i in range(n):
@@ -121,6 +142,8 @@ def build_feature_matrix(candles: list[OHLCV]) -> list[FeatureRow]:
                 macd=macd,
                 bollinger_z_20=boll[i],
                 trail_return_20=trail_ret[i],
+                funding_rate=funding_rate[i],
+                funding_rate_z=funding_rate_z[i],
             )
         )
     return rows

@@ -192,3 +192,60 @@ async def test_binance_missing_field_returns_none(monkeypatch) -> None:
     adapter = BinanceFuturesAdapter()
     assert await adapter.get_funding_rate("BTC/USDT") is None
     assert adapter.last_error == "unexpected_payload"
+
+
+# ── Binance Futures: historical funding (research backfill) ────────────────────
+
+
+def _stub_get_json(adapter: BinanceFuturesAdapter, pages: list[object]) -> None:
+    """Make ``adapter._get_json`` return successive ``pages`` (then None)."""
+    seq = list(pages)
+
+    async def _fake(path: str, params: dict) -> object:
+        return seq.pop(0) if seq else None
+
+    adapter._get_json = _fake  # type: ignore[assignment, method-assign]
+
+
+@pytest.mark.asyncio
+async def test_funding_history_parses_sorts_and_filters_range() -> None:
+    adapter = BinanceFuturesAdapter()
+    _8h = 8 * 3_600_000
+    page = [
+        {"symbol": "BTCUSDT", "fundingTime": 2 * _8h, "fundingRate": "0.0003"},
+        {"symbol": "BTCUSDT", "fundingTime": 0, "fundingRate": "0.0001"},  # out of order
+        {"symbol": "BTCUSDT", "fundingTime": _8h, "fundingRate": "0.0002"},
+        {"symbol": "BTCUSDT", "fundingTime": 99 * _8h, "fundingRate": "0.9"},  # past end → dropped
+    ]
+    _stub_get_json(adapter, [page])  # single short page → no second fetch
+    out = await adapter.get_funding_rate_history("BTC/USDT", 0, 3 * _8h)
+    assert out == [(0, 0.0001), (_8h, 0.0002), (2 * _8h, 0.0003)]  # sorted, range-filtered
+
+
+@pytest.mark.asyncio
+async def test_funding_history_paginates_until_short_page() -> None:
+    adapter = BinanceFuturesAdapter()
+    _8h = 8 * 3_600_000
+    full = [
+        {"symbol": "BTCUSDT", "fundingTime": i * _8h, "fundingRate": "0.0001"} for i in range(1000)
+    ]  # exactly page_limit → triggers a second fetch
+    tail = [{"symbol": "BTCUSDT", "fundingTime": 1000 * _8h, "fundingRate": "0.0002"}]
+    _stub_get_json(adapter, [full, tail])
+    out = await adapter.get_funding_rate_history("BTC/USDT", 0, 2000 * _8h, page_limit=1000)
+    assert len(out) == 1001
+    assert out[0] == (0, 0.0001)
+    assert out[-1] == (1000 * _8h, 0.0002)
+
+
+@pytest.mark.asyncio
+async def test_funding_history_fail_soft_returns_empty() -> None:
+    adapter = BinanceFuturesAdapter()
+    _stub_get_json(adapter, [])  # _get_json → None on first call (transport error)
+    assert await adapter.get_funding_rate_history("BTC/USDT", 0, 1_000_000) == []
+
+
+@pytest.mark.asyncio
+async def test_funding_history_empty_symbol_returns_empty() -> None:
+    adapter = BinanceFuturesAdapter()
+    assert await adapter.get_funding_rate_history("", 0, 1_000_000) == []
+    assert adapter.last_error == "empty_symbol"

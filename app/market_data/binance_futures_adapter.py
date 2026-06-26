@@ -224,6 +224,73 @@ class BinanceFuturesAdapter(BaseMarketDataAdapter):
             source="binance",
         )
 
+    async def get_funding_rate_history(
+        self,
+        symbol: str,
+        start_ms: int,
+        end_ms: int,
+        *,
+        page_limit: int = 1000,
+        max_pages: int = 12,
+    ) -> list[tuple[int, float]]:
+        """Historical settled funding via ``GET /fapi/v1/fundingRate``.
+
+        Returns the realised funding settlements in ``[start_ms, end_ms]`` as
+        ``(settlement_ms, rate)`` tuples, oldest-first and de-duplicated by
+        settlement time. ``rate`` is a fraction per 8h interval (Binance native).
+
+        The endpoint is public (no auth), ascending by ``fundingTime`` and capped
+        at ``page_limit`` rows; with the 8h cadence ~3/day this paginates forward
+        by advancing ``startTime`` past the last settlement seen. Fail-safe: any
+        transport/HTTP/parse error stops paging and returns what was gathered
+        (possibly empty) — never raises, so research backfill degrades to
+        "no funding" rather than crashing.
+        """
+        sym = _normalize_symbol(symbol)
+        if not sym:
+            self.last_error = "empty_symbol"
+            return []
+        start = int(start_ms)
+        end = int(end_ms)
+        if end < start:
+            return []
+        collected: dict[int, float] = {}
+        cursor = start
+        for _ in range(max(1, max_pages)):
+            rows = await self._get_json(
+                "/fapi/v1/fundingRate",
+                {
+                    "symbol": sym,
+                    "startTime": str(cursor),
+                    "endTime": str(end),
+                    "limit": str(page_limit),
+                },
+            )
+            if not isinstance(rows, list) or not rows:
+                break
+            last_ft = cursor
+            for row in rows:
+                if not isinstance(row, dict):
+                    continue
+                rate = _opt_float(row.get("fundingRate"))
+                raw_ft = row.get("fundingTime")
+                try:
+                    ft_ms = int(raw_ft)  # type: ignore[arg-type]
+                except (TypeError, ValueError):
+                    continue
+                if rate is None or ft_ms < start or ft_ms > end:
+                    continue
+                collected[ft_ms] = rate
+                if ft_ms > last_ft:
+                    last_ft = ft_ms
+            if len(rows) < page_limit:
+                break  # last page (Binance returns < limit when exhausted)
+            nxt = last_ft + 1
+            if nxt <= cursor:
+                break  # no forward progress → stop (defensive against loops)
+            cursor = nxt
+        return [(ms, collected[ms]) for ms in sorted(collected)]
+
     async def get_open_interest(
         self, symbol: str, *, interval: str = "1h", window: int = 24
     ) -> OpenInterestSnapshot | None:
