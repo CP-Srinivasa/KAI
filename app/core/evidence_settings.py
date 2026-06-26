@@ -248,10 +248,45 @@ class L2OnChainEvidenceSettings(BaseSettings):
     min_window: int = Field(default=20, ge=2, le=10000)
 
 
+class MomentumUniverseEvidenceSettings(BaseSettings):
+    """G3 — own-data Momentum-Universe as a Bayesian evidence source.
+
+    Default-off, shadow-first, **direction-agnostic** (like L2/B-003). Source =
+    KAI's OWN universe snapshot ``artifacts/momentum_universe_candidates.jsonl``
+    (written by the G0 refresh) — no new provider, no key.
+
+      - ``enabled=False`` (default): no provider → SignalGenerator unchanged.
+      - ``enabled=True``: the provider reads the warm universe snapshot (Disk-Read,
+        no network), looks up the symbol's momentum percentile, writes it to
+        ``shadow_log_path``, and contributes ZERO while ``direction_aligned=0``.
+
+    ``direction_aligned`` stays 0 until ``scripts/evaluate_momentum_evidence.py``
+    learns a sign AND the operator promotes it (set to +1/-1 via env) — never a
+    hardcoded pro-/contra-trend prior. ``source_trust`` conservative (0.5);
+    raising it requires shadow-eval + operator sign-off + edge proof.
+    ``ttl_seconds``: if the newest snapshot is older, the provider yields no
+    evidence (fail-safe, e.g. the G0 refresh timer is down).
+    """
+
+    model_config = SettingsConfigDict(
+        env_prefix="APP_MOMENTUM_EVIDENCE_",
+        env_file=".env",
+        extra="ignore",
+    )
+
+    enabled: bool = Field(default=False)
+    source_trust: float = Field(default=0.5, ge=0.0, le=1.0)
+    direction_aligned: int = Field(default=0, ge=-1, le=1)
+    ttl_seconds: float = Field(default=90000.0, gt=0.0)  # ~25h (snapshot cadence is 12h)
+    ledger_path: Path = Field(default=Path("artifacts/momentum_universe_candidates.jsonl"))
+    shadow_log_path: Path = Field(default=Path("artifacts/momentum_evidence_shadow.jsonl"))
+
+
 __all__ = [
     "FundingEvidenceSettings",
     "HypeEvidenceSettings",
     "L2OnChainEvidenceSettings",
     "LongShortRatioEvidenceSettings",
+    "MomentumUniverseEvidenceSettings",
     "OpenInterestEvidenceSettings",
 ]

@@ -90,6 +90,7 @@ class EvidenceKind(StrEnum):
     SENTIMENT_OVERHEAT = "sentiment_overheat"
     LIQUIDATIONS = "liquidations"
     L2_ONCHAIN = "l2_onchain"  # Sprint 2: fee/mempool flow, direction-agnostic (B-003)
+    MOMENTUM = "momentum"  # G3: own-data universe momentum, direction-agnostic until learned
     MARKET_REGIME = "market_regime"
     SOURCE_TRUST = "source_trust"  # nur als Modulator; eigener Update-Beitrag = 0
 
@@ -114,6 +115,7 @@ _KIND_STRENGTH: Final[Mapping[EvidenceKind, float]] = {
     EvidenceKind.SENTIMENT_OVERHEAT: 0.6,
     EvidenceKind.LIQUIDATIONS: 1.1,
     EvidenceKind.L2_ONCHAIN: 0.7,  # conservative — shadow-first, edge-gated trust
+    EvidenceKind.MOMENTUM: 0.7,  # conservative — shadow-first, edge-gated trust (G3)
     EvidenceKind.MARKET_REGIME: 0.5,
     EvidenceKind.SOURCE_TRUST: 0.0,
 }
@@ -301,6 +303,9 @@ _CALIBRATORS: Final[Mapping[EvidenceKind, Callable[[float], float]]] = {
     # L2 on-chain: neutral saturation; the direction lives ONLY in
     # direction_aligned (data-driven, B-003) — never baked into the calibrator.
     EvidenceKind.L2_ONCHAIN: _calibrate_linear,
+    # Momentum (G3): neutral saturation; direction lives ONLY in direction_aligned
+    # (learned by scripts/evaluate_momentum_evidence.py) — never baked in here.
+    EvidenceKind.MOMENTUM: _calibrate_linear,
     EvidenceKind.MARKET_REGIME: _calibrate_regime,
     EvidenceKind.SOURCE_TRUST: _calibrate_zero,
 }
@@ -710,6 +715,39 @@ def build_l2_onchain_evidence(
         observed_at=observed_at,
         source_id=source_id,
         note=f"fee_pct={fee_percentile} mempool_pct={mempool_percentile} dir={direction_aligned}",
+    )
+
+
+def build_momentum_evidence(
+    *,
+    momentum_score: float | None,
+    direction_aligned: int = 0,
+    source_trust: float = 1.0,
+    observed_at: datetime | None = None,
+    source_id: str | None = None,
+) -> Evidence:
+    """Own-data universe momentum → Evidence. **DIRECTION-AGNOSTIC (G3).**
+
+    Like :func:`build_l2_onchain_evidence`: the magnitude is the momentum
+    *extremity* — how far the symbol's momentum percentile sits from the neutral
+    median (0.5), scaled to ``[0, 1]`` — while the direction is supplied by the
+    caller via ``direction_aligned`` (learned by
+    ``scripts/evaluate_momentum_evidence.py``, never hardcoded pro-/contra-trend).
+    v1 passes ``direction_aligned=0`` (undetermined) → zero contribution, so this
+    is a pure shadow measurement until the operator promotes a learned sign on
+    proof. A ``None`` score (symbol not in the universe yet) is treated as the
+    median → 0 extremity ("nothing to say"), never a fabricated signal.
+    """
+    score = momentum_score if momentum_score is not None else 0.5
+    value = _clamp(abs(score - 0.5) * 2.0, 0.0, 1.0)  # 0..1 momentum extremity from neutral
+    return Evidence(
+        kind=EvidenceKind.MOMENTUM,
+        value=value,
+        direction_aligned=direction_aligned,
+        source_trust=source_trust,
+        observed_at=observed_at,
+        source_id=source_id,
+        note=f"momentum_score={momentum_score} dir={direction_aligned}",
     )
 
 

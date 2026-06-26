@@ -35,6 +35,7 @@ from app.core.evidence_settings import (
     HypeEvidenceSettings,
     L2OnChainEvidenceSettings,
     LongShortRatioEvidenceSettings,
+    MomentumUniverseEvidenceSettings,
     OpenInterestEvidenceSettings,
 )
 from app.market_data.models import MarketDataPoint
@@ -45,6 +46,7 @@ from app.signals.hype_wiring import build_hype_evidence_provider
 from app.signals.l2_wiring import build_l2_onchain_evidence_provider
 from app.signals.ls_wiring import build_ls_evidence_provider
 from app.signals.models import SignalDirection
+from app.signals.momentum_wiring import build_momentum_evidence_provider
 from app.signals.oi_wiring import build_oi_evidence_provider
 
 if TYPE_CHECKING:
@@ -59,15 +61,15 @@ def build_composite_evidence_provider(
     ls_settings: LongShortRatioEvidenceSettings | None = None,
     hype_settings: HypeEvidenceSettings | None = None,
     l2_settings: L2OnChainEvidenceSettings | None = None,
+    momentum_settings: MomentumUniverseEvidenceSettings | None = None,
 ) -> ExtraEvidencesProvider | None:
     """Baue den kombinierten Extra-Evidences-Provider (oder ``None``).
 
-    Deterministische Reihenfolge der Sub-Provider: Funding → OI → LS → Hype → L2.
-    Fehlende ``ls_settings`` / ``hype_settings`` / ``l2_settings`` (Aufrufer
-    früherer Phasen) verhalten sich wie off — das Verhalten der jeweils älteren
-    Phasen bleibt unberührt.
+    Deterministische Reihenfolge der Sub-Provider: Funding → OI → LS → Hype → L2
+    → Momentum. Fehlende Settings (Aufrufer früherer Phasen) verhalten sich wie
+    off — das Verhalten der jeweils älteren Phasen bleibt unberührt.
     """
-    # Reihenfolge fixiert: Funding → OI → LS → Hype → L2 (neueste Quelle zuletzt).
+    # Reihenfolge fixiert: Funding → OI → LS → Hype → L2 → Momentum (neueste zuletzt).
     candidates: tuple[tuple[str, ExtraEvidencesProvider | None], ...] = (
         ("funding", build_funding_evidence_provider(funding_settings)),
         ("open_interest", build_oi_evidence_provider(oi_settings)),
@@ -82,6 +84,12 @@ def build_composite_evidence_provider(
         (
             "l2_onchain",
             build_l2_onchain_evidence_provider(l2_settings) if l2_settings is not None else None,
+        ),
+        (
+            "momentum",
+            build_momentum_evidence_provider(momentum_settings)
+            if momentum_settings is not None
+            else None,
         ),
     )
 
@@ -133,6 +141,7 @@ def build_composite_evidence_provider_from_settings(
         settings.ls_evidence,
         settings.hype_evidence,
         settings.l2_evidence,
+        settings.momentum_evidence,
     )
 
 
