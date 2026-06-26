@@ -286,6 +286,30 @@ export function fetchMomentumUniverse(signal?: AbortSignal): Promise<MomentumUni
   return apiGet<MomentumUniverse>("/dashboard/api/momentum-universe", { signal });
 }
 
+// G4 Cross-Check: own momentum rank vs own-TA rating (ToS-compliant, no scraping).
+// READ-ONLY informational — beeinflusst kein Sizing/Kapital.
+export type MomentumCrosscheckRow = {
+  symbol: string;
+  rank: number;
+  momentum_score: number;
+  ta_label: string;
+  ta_score: number | null;
+  ta_trend: string;
+  rsi: number | null;
+  agreement: string;
+};
+export type MomentumCrosscheck = {
+  available: boolean;
+  ts?: string;
+  count?: number;
+  rows?: MomentumCrosscheckRow[];
+  reason?: string;
+  error?: string;
+};
+export function fetchMomentumCrosscheck(signal?: AbortSignal): Promise<MomentumCrosscheck> {
+  return apiGet<MomentumCrosscheck>("/dashboard/api/momentum-crosscheck", { signal });
+}
+
 // L3 Audit-Integrität (OpenTimestamps-Anchoring, default-off). state:
 // disabled | no_anchor | ok | unavailable. proof_available = .ots vorhanden;
 // proof_state unterscheidet "pending" (Calendar-Commitment, noch nicht
