@@ -797,6 +797,26 @@ class TechnicalPaperSettings(BaseSettings):
     scheduler_interval_seconds: int = Field(default=300, ge=30)
 
 
+class MomentumUniverseFeedSettings(BaseSettings):
+    """G2 — feed the own-data Momentum-Universe into PAPER (measurement-first).
+
+    Default-off. When enabled, the feeder turns the top-N universe symbols (minus
+    those the G1 rotation FSM flagged/archived) into LONG paper signals tagged
+    ``analysis_source="momentum_universe"`` so ``edge-report`` can isolate the
+    cohort. NO capital — paper only; ``max_per_run`` bounds the per-tick burst.
+    """
+
+    model_config = SettingsConfigDict(
+        env_prefix="MOMENTUM_UNIVERSE_FEED_", env_file=".env", extra="ignore"
+    )
+
+    enabled: bool = Field(default=False)
+    top_n: int = Field(default=15, ge=1)
+    max_per_run: int = Field(default=5, ge=0)
+    scheduler_enabled: bool = Field(default=False)
+    scheduler_interval_seconds: int = Field(default=900, ge=30)
+
+
 class PremiumFastlaneSettings(BaseSettings):
     """30-day Premium-Telegram Fastlane (Goal 2026-06-05).
 
@@ -1487,6 +1507,9 @@ class AppSettings(BaseSettings):
         default_factory=RealAnalysisPaperSettings
     )
     technical_paper: TechnicalPaperSettings = Field(default_factory=TechnicalPaperSettings)
+    momentum_universe_feed: MomentumUniverseFeedSettings = Field(
+        default_factory=MomentumUniverseFeedSettings
+    )
     operator: OperatorSettings = Field(default_factory=OperatorSettings)
     tradingview: TradingViewSettings = Field(default_factory=TradingViewSettings)
     binance: BinanceMarketDataSettings = Field(default_factory=BinanceMarketDataSettings)
