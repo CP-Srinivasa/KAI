@@ -34,8 +34,9 @@ Universe scan status: when `APP_DIVERSIFICATION_UNIVERSE_SCAN_ENABLED=true`,
 the Pi cron additionally scans a diversified candidate set after BTC/ETH.
 This is a **Shadow/Canary scan**, not a re-enable decision: candidates still
 flow through the full `run-once` gates, and recent Pi ticks show
-`priority_rejected` rather than fills. Keep `EXECUTION_ENTRY_MODE=disabled`
-until `trading edge-gate` and operator review support a change.
+`priority_rejected` rather than fills. Live Pi posture (2026-06-29) is
+`EXECUTION_ENTRY_MODE=paper` (paper-learning); any promotion beyond paper still
+requires `trading edge-gate` and operator review.
 Pi observation 2026-06-05: `SOL/USDT XRP/USDT ADA/USDT LINK/USDT MATIC/USDT
 BTC/USDT` were scanned; the non-core candidates were `priority_rejected`.
 
@@ -62,7 +63,7 @@ bash scripts/paper_trading_cron.sh
 
 ```bash
 # Health + diagnostics
-python -m app.cli.main /status
+python -m app.cli.main alerts ops-status
 python -m app.cli.main alerts pending-annotations --limit 20 --min-age-hours 0
 python -m app.cli.main alerts tv4-quality-bar --output-path artifacts/ph5_hold/quality_bar_<YYYYMMDD>.json
 python -m app.cli.main alerts hold-report
