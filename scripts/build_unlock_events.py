@@ -13,8 +13,14 @@ fixed cliff/linear schedules, so this is small for the v1 universe — flagged, 
 ignored.
 
 Output (artifacts/research/unlock_events.json):
-    {"schema": 1, "tokens": {"APT": {"max_supply": <float|null>,
-                                       "events": [[event_ms, amount_tokens], ...]}, ...}}
+    {"schema": 2, "generated_at": "<UTC ISO>",
+     "tokens": {"APT": {"max_supply": <float|null>,
+                         "events": [[event_ms, amount_tokens], ...]}, ...}}
+
+``generated_at`` (schema 2) is the fetch time, so a consumer can tell HOW OLD the
+calendar is and flag a silently-dead refresh as stale instead of showing months-
+old data as if fresh. Older schema-1 artifacts (no ``generated_at``) are still
+read; the consumer treats a missing timestamp as "unknown age" → stale.
 
 Run: python scripts/build_unlock_events.py
 """
@@ -25,6 +31,7 @@ import argparse
 import json
 import logging
 import urllib.request
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -103,8 +110,12 @@ def build(universe: dict[str, str], out: Path, timeout: float) -> int:
         )
 
     out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(json.dumps({"schema": 1, "tokens": tokens}), encoding="utf-8")
-    logger.info("wrote %s (%d tokens)", out, len(tokens))
+    generated_at = datetime.now(UTC).isoformat()
+    out.write_text(
+        json.dumps({"schema": 2, "generated_at": generated_at, "tokens": tokens}),
+        encoding="utf-8",
+    )
+    logger.info("wrote %s (%d tokens, generated_at=%s)", out, len(tokens), generated_at)
     return 0
 
 

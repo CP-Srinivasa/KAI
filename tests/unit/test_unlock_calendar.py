@@ -5,7 +5,10 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from app.analysis.features.unlock_calendar import load_unlock_calendar
+from app.analysis.features.unlock_calendar import (
+    load_unlock_calendar,
+    read_generated_at,
+)
 
 _DAY = 86_400_000
 _NOW = 1_700_000_000_000  # fixed reference "now" in ms
@@ -117,3 +120,32 @@ def test_results_sorted_soonest_first(tmp_path: Path) -> None:
     )
     out = load_unlock_calendar(p, now_ms=_NOW)
     assert [e["symbol"] for e in out] == ["NEAR", "MID", "FAR"]
+
+
+# --- read_generated_at (schema-2 staleness timestamp) -----------------------
+
+
+def test_read_generated_at_returns_timestamp(tmp_path: Path) -> None:
+    p = _write(
+        tmp_path / "events.json",
+        {"schema": 2, "generated_at": "2026-06-29T15:48:06+00:00", "tokens": {}},
+    )
+    assert read_generated_at(p) == "2026-06-29T15:48:06+00:00"
+
+
+def test_read_generated_at_none_for_schema1_without_timestamp(tmp_path: Path) -> None:
+    # An old schema-1 artifact carries no build time → unknown age → caller stales it.
+    p = _write(tmp_path / "events.json", {"schema": 1, "tokens": {}})
+    assert read_generated_at(p) is None
+
+
+def test_read_generated_at_none_on_missing_or_corrupt(tmp_path: Path) -> None:
+    assert read_generated_at(tmp_path / "nope.json") is None
+    bad = tmp_path / "bad.json"
+    bad.write_text("{not json", encoding="utf-8")
+    assert read_generated_at(bad) is None
+
+
+def test_read_generated_at_none_on_nonstring(tmp_path: Path) -> None:
+    p = _write(tmp_path / "events.json", {"schema": 2, "generated_at": 12345, "tokens": {}})
+    assert read_generated_at(p) is None

@@ -1856,3 +1856,49 @@ def test_unlock_calendar_returns_upcoming_from_fixture(
     soon = body["tokens"][0]
     assert soon["days_until"] > 0
     assert soon["frac_of_max_supply"] == 0.05  # 50 / 1000
+    # schema-1 fixture has no generated_at → unknown age → flagged stale (honest).
+    assert body["stale"] is True
+    assert body["generated_at"] is None
+
+
+def _write_unlock_artifact(tmp_path: Path, generated_at: str | None) -> None:
+    research = tmp_path / "artifacts" / "research"
+    research.mkdir(parents=True)
+    now_ms = int(datetime.now(UTC).timestamp() * 1000)
+    doc: dict = {
+        "schema": 2,
+        "tokens": {"SOON": {"max_supply": 1000.0, "events": [[now_ms + 3 * 86_400_000, 50.0]]}},
+    }
+    if generated_at is not None:
+        doc["generated_at"] = generated_at
+    (research / "unlock_events.json").write_text(json.dumps(doc), encoding="utf-8")
+
+
+def test_unlock_calendar_fresh_artifact_not_stale(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _reset_unlock_calendar_cache()
+    _write_unlock_artifact(tmp_path, generated_at=datetime.now(UTC).isoformat())
+    monkeypatch.chdir(tmp_path)
+    app = _make_app()
+    with TestClient(app) as client:
+        body = client.get("/dashboard/api/unlock-calendar").json()
+    assert body["available"] is True
+    assert body["stale"] is False
+    assert body["age_days"] is not None and body["age_days"] < 1.0
+
+
+def test_unlock_calendar_old_artifact_flagged_stale(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _reset_unlock_calendar_cache()
+    old = (datetime.now(UTC) - timedelta(days=30)).isoformat()
+    _write_unlock_artifact(tmp_path, generated_at=old)
+    monkeypatch.chdir(tmp_path)
+    app = _make_app()
+    with TestClient(app) as client:
+        body = client.get("/dashboard/api/unlock-calendar").json()
+    # 30 days > 14-day threshold → stale, even though upcoming tokens exist.
+    assert body["available"] is True
+    assert body["stale"] is True
+    assert body["age_days"] is not None and body["age_days"] > 14.0

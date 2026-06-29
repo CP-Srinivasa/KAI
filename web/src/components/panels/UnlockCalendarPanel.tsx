@@ -1,4 +1,4 @@
-import { CalendarClock, Info } from "lucide-react";
+import { CalendarClock, Info, AlertTriangle } from "lucide-react";
 import { Card, CardHeader } from "@/components/ui/Primitives";
 import { useApi } from "@/lib/useApi";
 import { fetchUnlockCalendar, type UnlockCalendarEntry } from "@/lib/api";
@@ -67,6 +67,29 @@ export function UnlockCalendarPanel() {
   }
 
   const d = data.data;
+  // Honest staleness: the backend flags stale=true when the weekly refresh has
+  // not run in >14 days (or wrote no timestamp) — so a dead feed cannot look fresh.
+  const ageLabel =
+    d.age_days == null
+      ? "Stand unbekannt"
+      : d.age_days < 1
+        ? "Stand: heute"
+        : `Stand: vor ${d.age_days.toLocaleString("de-DE", { maximumFractionDigits: 0 })} Tagen`;
+  const staleBanner = d.stale ? (
+    <div className="mb-3 flex items-start gap-2 rounded-sm border border-warn/30 bg-warn/10 px-2.5 py-1.5">
+      <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-warn" />
+      <p className="text-3xs leading-snug text-warn">
+        Kalender möglicherweise veraltet ({ageLabel.toLowerCase()}) — der wöchentliche
+        Refresh ist seit über 14 Tagen nicht gelaufen. Werte mit Vorsicht lesen.
+      </p>
+    </div>
+  ) : null;
+  const freshnessFooter = (
+    <div className="mt-2 text-3xs text-fg-subtle">
+      {ageLabel}
+      {d.generated_at ? ` · Quelle: DefiLlama (${fmtDate(d.generated_at)})` : ""}
+    </div>
+  );
   const disclaimer = (
     <div className="mb-3 flex items-start gap-2 rounded-sm border border-line-subtle bg-bg-2 px-2.5 py-1.5">
       <Info className="mt-0.5 h-3.5 w-3.5 shrink-0 text-fg-subtle" />
@@ -84,6 +107,7 @@ export function UnlockCalendarPanel() {
       <Card padded>
         {header}
         {disclaimer}
+        {staleBanner}
         <div className="py-6 text-center text-sm text-fg-subtle">
           {d.error
             ? `Unlock-Kalender nicht verfügbar: ${d.error}`
@@ -97,6 +121,7 @@ export function UnlockCalendarPanel() {
     <Card padded>
       {header}
       {disclaimer}
+      {staleBanner}
       <ul className="divide-y divide-line-subtle">
         {d.tokens.map((t: UnlockCalendarEntry) => (
           <li key={t.symbol} className="flex items-center justify-between gap-3 py-2">
@@ -119,6 +144,7 @@ export function UnlockCalendarPanel() {
           </li>
         ))}
       </ul>
+      {freshnessFooter}
     </Card>
   );
 }

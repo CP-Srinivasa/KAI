@@ -1,0 +1,20 @@
+[Unit]
+Description=KAI Unlock-Refresh — rebuild the unlock calendar weekly
+# NOTE: deliberately NO `Requires=` here. Memory kai_timer_requires_cascade_20260624:
+# a Requires= on a timer can pull the timer down until reboot. systemd already
+# triggers kai-unlock-refresh.service by name convention — no Requires needed.
+
+[Timer]
+# Token vesting schedules move on a weeks-to-months cadence, so a weekly rebuild
+# keeps the calendar current with huge headroom under the 14-day stale threshold
+# (endpoint flags stale beyond that). OnBootSec also refreshes shortly after a
+# reboot so a Pi that was down over a slot is not left stale.
+OnBootSec=10min
+OnUnitActiveSec=1w
+# Persistent: if the Pi was off during the weekly slot, run once on next boot.
+Persistent=true
+AccuracySec=1h
+RandomizedDelaySec=5min
+
+[Install]
+WantedBy=timers.target
