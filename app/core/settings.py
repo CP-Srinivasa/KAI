@@ -598,6 +598,15 @@ class ExecutionSettings(BaseSettings):
     # ADR: docs/adr/0004-premium-signal-auto-fill.md
     operator_signal_premium_auto_fill_enabled: bool = Field(default=False)
 
+    # 2026-06-29 Entry-Guard (feat/entry-guard-canonical-priceability): when True
+    # the paper open-guard rejects opens on symbols whose LATEST eligibility verdict
+    # in ``artifacts/symbol_eligibility_audit.jsonl`` is ineligible (i.e. symbols
+    # with no canonical-venue / Binance market). Permissive default False → no
+    # behavior change on deploy; the controller enables it after verifying the
+    # eligibility ledger covers the problem symbols.
+    # env: EXECUTION_UNIVERSE_ELIGIBILITY_ENFORCE
+    universe_eligibility_enforce: bool = Field(default=False)
+
     @model_validator(mode="after")
     def validate_mode_guardrails(self) -> "ExecutionSettings":
         if self.live_enabled and self.mode is not ExecutionMode.LIVE:

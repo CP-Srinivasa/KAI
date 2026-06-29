@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from dataclasses import dataclass
+from pathlib import Path
 
 from app.trading.asset_universe import base_symbol
 
@@ -96,3 +97,36 @@ def evaluate_eligibility(
         reasons.append("below_min_history")
 
     return EligibilityVerdict(metrics.symbol, not reasons, reasons)
+
+
+def latest_ineligible_symbols(ledger_path: Path) -> set[str]:
+    """Symbols whose LATEST eligibility verdict is ineligible.
+
+    Returns an empty set if no ledger exists (permissive: never blocks a symbol
+    we have not evaluated). Delegates parsing entirely to
+    ``read_latest_eligibility`` (the SSOT) — no duplicate parsing here.
+    """
+    # Lazy import to avoid a module-level circular dependency: the ledger module
+    # imports EligibilityVerdict from this module, so we must import the ledger
+    # lazily from a function in this module.
+    from app.observability.symbol_eligibility_ledger import read_latest_eligibility
+
+    snapshot = read_latest_eligibility(ledger_path)
+    if snapshot is None:
+        return set()
+    verdicts = snapshot.get("verdicts") or []
+    return {
+        v["symbol"]
+        for v in verdicts
+        if isinstance(v, dict) and v.get("eligible") is False and v.get("symbol")
+    }
+
+
+def is_canonical_priceable(symbol: str, ineligible: set[str]) -> bool:
+    """False iff symbol is in the known-ineligible set.
+
+    Permissive default (True) for unknown symbols — we only block symbols
+    PROVEN off-venue/ineligible. An empty ineligible set means every symbol
+    is priceable (no blocking at all).
+    """
+    return symbol not in ineligible
