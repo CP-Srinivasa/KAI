@@ -1,14 +1,16 @@
 {
-  "stand": "2026-06-25",
+  "stand": "2026-06-29",
   "note": "Kuratierter Operator-Board-Snapshot (SSOT) — deklarativ, NICHT live-berechnet. Vom Operator/Agenten hier gepflegt; das Dashboard liest diese Datei read-only über /dashboard/api/operator-board. Gates/Probleme kommen separat live aus den Truth-Chips (AcutePointsBoard), hier stehen Todos/Phasen/Verbesserungen.",
   "todos": [
-    { "text": "#318 Phase 2 — per-Zyklus Live/Replay-Umschaltung: GATED (kapital-nah/irreversibel, Phase-5-Gebiet, _run_once_guard erlaubt nur PAPER/SHADOW). Erfordert Operator-Go/No-Go. Empfehlung: NICHT automatisch umschalten — erst nach bewiesenem Edge (Gate G0) + Live-Gates. Phase 1 (read-only Counterfactual-Drift-Logger) läuft auf Resolver-Kadenz und sammelt genau die Drift-Evidenz für diese Entscheidung (artifacts/counterfactual_comparison.jsonl).", "priority": "P3" }
+    { "text": "#318 Phase 2 — per-Zyklus Live/Replay-Umschaltung: bleibt GATED. Phase-1-Evidenz am 2026-06-29 reviewt (7144 Drift-Records + Gate-G0-Abgleich) → Verdikt NO-GO, dokumentiert in ADR 0010. Gründe: (1) Gate G0 nicht bestanden — Edge fragil (canonical-edge P=56,5% nur von 1 Ausreißer getragen, ohne Best-Trade P=25%); (2) materielle Live∥Replay-Drift auf dem Breit-Input-Pfad (technical_screener 40,5% >30bps, Median 56bps echt); (3) Drift-Metrik noch durch Screener-Entry-Preis-Bug kontaminiert. Geparkt bis Gate G0 (robuster Edge ohne Best-Trade, n>=100–200) + Drift-Metrik bereinigt. Switching-Policy auch dann: nie automatisch, immer Operator + signiert.", "priority": "P3" },
+    { "text": "#318 Folge — Datenqualität: technical_screener loggt für ~1,9% der Kandidaten einen Nicht-Preis (entry_live≈100–102 statt echtem Preis, z.B. ENA 101,98 vs 0,094) → verzerrt die Counterfactual-Drift-Statistik (92 absurde >1000bps-Records). Root-Cause im Screener-Entry-Preis-Pfad + Plausibilitäts-Guard im counterfactual_replay_logger (implausible Records als data_quality_suspect, aus Drift-Rate ausschließen). Macht Phase-1-Evidenz sauber; blockiert das NO-GO nicht.", "priority": "P3" }
   ],
   "phases": [
     { "label": "Dashboard UI-Update 2026.06 — Phasen 0–4", "status": "done" },
     { "label": "Backend-Backlog #313–#319 — UI-gated Reste erledigt (#314 Truth-Layer-KPIs vollständig, #316 Liquidationen frei via OKX+Binance, Datums-Locale-SSOT)", "status": "done" },
     { "label": "#313 Chain-Truth-KPI — LIVE auf Pi: eigene bitcoind über WireGuard erreichbar (/dashboard/api/chain state=ok, synced), Fee-Truth-Shadow zeichnet auf 15-min-Kadenz auf. Board-Annahme zur externen Infra-Wartezeit (gated) war stale.", "status": "done" },
-    { "label": "#318 Phase 1 — Counterfactual Live∥Replay-Drift-Logger (#438) gebaut UND in kai-shadow-resolver.service als 2. Step verdrahtet (read-only, flag-gated EXECUTION_DUAL_STREAM_DIAGNOSTICS, idempotent); schreibt Drift-Records auf Resolver-Kadenz.", "status": "done" }
+    { "label": "#318 Phase 1 — Counterfactual Live∥Replay-Drift-Logger (#438) gebaut UND in kai-shadow-resolver.service als 2. Step verdrahtet (read-only, flag-gated EXECUTION_DUAL_STREAM_DIAGNOSTICS, idempotent); schreibt Drift-Records auf Resolver-Kadenz.", "status": "done" },
+    { "label": "#318 Phase-1-Evidenz-Review (2026-06-29) → Phase-2-Verdikt NO-GO: 7144 Drift-Records ausgewertet (33,9% drift_exceeded, quellen-stratifiziert: technical_screener 41,4% vs autonomous_generator 0,7%) + Gate G0 fragil → Auto-Switch abgelehnt, in ADR 0010 mit Revisit-Bedingungen festgehalten. Phase 2 bleibt gated, nichts umgeschaltet.", "status": "done" }
   ],
   "improvements": []
 }
