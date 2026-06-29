@@ -388,6 +388,28 @@ def _close_src(
     return row
 
 
+def _close_cohort(
+    symbol: str,
+    entry: float,
+    exit_px: float,
+    ts: str,
+    pnl: float,
+    *,
+    signal_source: str,
+    document_id: str,
+) -> dict:
+    """A close whose stored signal_source AND originating document_id are both set.
+
+    Models a cohort-feeder close recorded BEFORE the 2026-06-29 forward attribution
+    fix: the cohort tag was mis-bucketed into ``signal_source`` (``autonomous_generator``)
+    but survives verbatim in ``document_id`` (``<cohort>_<SYM>``).
+    """
+    row = _close(symbol, entry, exit_px, ts, pnl)
+    row["signal_source"] = signal_source
+    row["document_id"] = document_id
+    return row
+
+
 def test_canonical_edge_sources_is_the_real_generator() -> None:
     assert CANONICAL_EDGE_SOURCES == frozenset({"autonomous_generator", "real_analysis"})
 
@@ -412,6 +434,61 @@ def test_source_allowlist_restricts_edge_to_canonical_sources() -> None:
     assert report.edge.trade_count == 2  # only the two canonical-source closes
     assert report.window.source_allowlist == ("autonomous_generator", "real_analysis")
     assert report.window.closes_excluded_by_source == 2
+
+
+def test_canonical_edge_excludes_mis_bucketed_cohort_close_via_document_id() -> None:
+    # A momentum_universe paper close that resolved BEFORE the 2026-06-29 forward
+    # attribution fix carries signal_source="autonomous_generator" (the taxonomy
+    # whitelist forgot the cohort) while the cohort tag still survives in
+    # document_id ("momentum_universe_<SYM>"). The canonical edge must NOT let that
+    # microcap outlier (+2799bps, à la the real SLX close) re-inflate the
+    # autonomous edge — same contamination class as the May-canary epoch leak,
+    # here via mis-attribution rather than epoch.
+    closes = [
+        _close_src(
+            "BTC/USDT", 100.0, 101.0, "2026-06-12T10:00:00+00:00", 1.0, "autonomous_generator"
+        ),
+        _close_cohort(
+            "SLX/USDT",
+            100.0,
+            128.0,
+            "2026-06-27T15:00:00+00:00",
+            28.0,
+            signal_source="autonomous_generator",
+            document_id="momentum_universe_SLXUSDT",
+        ),
+    ]
+    report = build_evidence_window(
+        loop_events=[], exec_events=closes, source_allowlist=CANONICAL_EDGE_SOURCES
+    )
+    assert report.edge.trade_count == 1  # only the genuine autonomous close
+    assert report.window.closes_excluded_by_source == 1
+    assert "SLX/USDT" not in {row.cohort_key for row in report.edge.per_symbol_net_bps}
+
+
+def test_cohort_allowlist_recovers_its_own_mis_bucketed_close_not_blanket_dropped() -> None:
+    # The exclusion recovers the TRUE source from document_id — it is NOT a blanket
+    # "drop anything tagged momentum_universe". A query that ALLOWS the cohort (the
+    # future G3-G7 cohort-edge gate) must KEEP the same close. This locks the
+    # invariant that the doc-id override is source-recovery, not source-deletion.
+    closes = [
+        _close_cohort(
+            "SLX/USDT",
+            100.0,
+            128.0,
+            "2026-06-27T15:00:00+00:00",
+            28.0,
+            signal_source="autonomous_generator",
+            document_id="momentum_universe_SLXUSDT",
+        ),
+    ]
+    report = build_evidence_window(
+        loop_events=[],
+        exec_events=closes,
+        source_allowlist=frozenset({"momentum_universe"}),
+    )
+    assert report.edge.trade_count == 1  # recovered as momentum_universe, in allowlist
+    assert report.window.closes_excluded_by_source == 0
 
 
 def test_no_source_allowlist_is_backward_compatible() -> None:
