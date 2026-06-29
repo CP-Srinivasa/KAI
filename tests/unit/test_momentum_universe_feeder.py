@@ -1,15 +1,9 @@
 """Tests for momentum_universe_feeder (G2) — feed universe → PAPER, cohort-tagged.
 
-Gated (default-off), capped, and gated by the G1 rotation FSM: symbols the FSM
-flagged/archived are NOT fed (closes the G1→G2 loop). Every fed cycle is tagged
-analysis_source="momentum_universe" so edge-report can isolate the cohort. The
-trading loop is injected so tests never touch the real pipeline.
-
-Throughput (2026-06-29): dedup is OPEN-POSITION-AWARE, not once-per-snapshot. A
-symbol is skipped only while it has an open position (re-feeding a held symbol
-would AVERAGE INTO it, not create a new closeable trade); a cap-rejected symbol
-(never opened) is RE-FED on the next tick so the hourly timer keeps competing for
-freed slots.
+Gated (default-off), capped, deduped, and gated by the G1 rotation FSM: symbols
+the FSM flagged/archived are NOT fed (closes the G1→G2 loop). Every fed cycle is
+tagged analysis_source="momentum_universe" so edge-report can isolate the cohort.
+The trading loop is injected so tests never touch the real pipeline.
 """
 
 from __future__ import annotations
@@ -65,6 +59,7 @@ class TestMomentumFeeder:
         res = await run_momentum_feeder(
             ledger_path=tmp_path / "u.jsonl",
             state_path=tmp_path / "s.json",
+            fed_path=tmp_path / "f.jsonl",
         )
         assert res == {"enabled": False}
 
@@ -73,6 +68,7 @@ class TestMomentumFeeder:
         res = await run_momentum_feeder(
             ledger_path=tmp_path / "missing.jsonl",
             state_path=tmp_path / "s.json",
+            fed_path=tmp_path / "f.jsonl",
         )
         assert res["fed"] == 0
         assert res["reason"] == "no_universe"
@@ -88,14 +84,12 @@ class TestMomentumFeeder:
         )
         state = tmp_path / "s.json"
         save_state(state, {"DOGE/USDT": AssetRotationState(AssetStatus.ROTATION_FLAGGED, 3)})
+        fed = tmp_path / "f.jsonl"
         calls, fake_cycle = _recorder()
         _patch_settings(monkeypatch)
 
         res = await run_momentum_feeder(
-            ledger_path=ledger,
-            state_path=state,
-            run_cycle=fake_cycle,
-            open_symbols_loader=lambda _p: set(),
+            ledger_path=ledger, state_path=state, fed_path=fed, run_cycle=fake_cycle
         )
         assert [c["symbol"] for c in calls] == ["BTC/USDT", "SOL/USDT"]  # DOGE flagged → skipped
         assert all(c["analysis_source"] == COHORT for c in calls)
@@ -115,92 +109,28 @@ class TestMomentumFeeder:
         res = await run_momentum_feeder(
             ledger_path=ledger,
             state_path=state,
+            fed_path=tmp_path / "f.jsonl",
             run_cycle=fake_cycle,
-            open_symbols_loader=lambda _p: set(),
         )
         assert res["fed"] == 0
         assert res["skipped_flagged"] == 1
         assert calls == []
 
-    async def test_skips_symbol_with_open_position(
-        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-    ) -> None:
-        """A symbol already holding an open position is skipped — re-feeding it
-        would average into the position instead of creating a new closeable trade."""
-        ledger = tmp_path / "u.jsonl"
-        append_snapshot(
-            ledger, _ranked("BTC/USDT", "ETH/USDT"), now=datetime(2026, 6, 26, tzinfo=UTC)
-        )
-        calls, fake_cycle = _recorder()
-        _patch_settings(monkeypatch)
-        res = await run_momentum_feeder(
-            ledger_path=ledger,
-            state_path=tmp_path / "s.json",
-            run_cycle=fake_cycle,
-            open_symbols_loader=lambda _p: {"BTC/USDT"},  # BTC already held
-        )
-        assert [c["symbol"] for c in calls] == ["ETH/USDT"]
-        assert res["fed"] == 1
-        assert res["skipped_open"] == 1
-
-    async def test_refeeds_cap_rejected_symbol_across_runs(
-        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-    ) -> None:
-        """The throughput fix: a symbol that never opened (e.g. cap-rejected) has
-        no open position, so it is RE-FED on the next tick — NOT permanently
-        skipped like the old once-per-snapshot dedup. This is what lets the hourly
-        timer keep competing for freed slots."""
+    async def test_dedup_across_runs(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         ledger = tmp_path / "u.jsonl"
         append_snapshot(ledger, _ranked("BTC/USDT"), now=datetime(2026, 6, 26, tzinfo=UTC))
+        fed = tmp_path / "f.jsonl"
         _patch_settings(monkeypatch)
         calls, fake_cycle = _recorder()
-        # Cap-rejected → never opens → stays absent from open positions across runs.
         first = await run_momentum_feeder(
-            ledger_path=ledger,
-            state_path=tmp_path / "s.json",
-            run_cycle=fake_cycle,
-            open_symbols_loader=lambda _p: set(),
+            ledger_path=ledger, state_path=tmp_path / "s.json", fed_path=fed, run_cycle=fake_cycle
         )
         second = await run_momentum_feeder(
-            ledger_path=ledger,
-            state_path=tmp_path / "s.json",
-            run_cycle=fake_cycle,
-            open_symbols_loader=lambda _p: set(),
+            ledger_path=ledger, state_path=tmp_path / "s.json", fed_path=fed, run_cycle=fake_cycle
         )
         assert first["fed"] == 1
-        assert second["fed"] == 1  # re-fed, not skipped_already
-        assert [c["symbol"] for c in calls] == ["BTC/USDT", "BTC/USDT"]
-
-    async def test_refed_after_position_closes(
-        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
-    ) -> None:
-        """Open → skipped; closed → re-fed. The symbol re-enters the running once
-        it frees its slot."""
-        ledger = tmp_path / "u.jsonl"
-        append_snapshot(ledger, _ranked("BTC/USDT"), now=datetime(2026, 6, 26, tzinfo=UTC))
-        _patch_settings(monkeypatch)
-        calls, fake_cycle = _recorder()
-        held: set[str] = {"BTC/USDT"}  # currently open
-
-        def loader(_p: Path) -> set[str]:
-            return set(held)
-
-        while_open = await run_momentum_feeder(
-            ledger_path=ledger,
-            state_path=tmp_path / "s.json",
-            run_cycle=fake_cycle,
-            open_symbols_loader=loader,
-        )
-        held.clear()  # position closed → slot freed
-        after_close = await run_momentum_feeder(
-            ledger_path=ledger,
-            state_path=tmp_path / "s.json",
-            run_cycle=fake_cycle,
-            open_symbols_loader=loader,
-        )
-        assert while_open["fed"] == 0
-        assert while_open["skipped_open"] == 1
-        assert after_close["fed"] == 1
+        assert second["fed"] == 0
+        assert second["skipped_already"] == 1
 
     async def test_max_per_run_caps(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         ledger = tmp_path / "u.jsonl"
@@ -214,8 +144,8 @@ class TestMomentumFeeder:
         res = await run_momentum_feeder(
             ledger_path=ledger,
             state_path=tmp_path / "s.json",
+            fed_path=tmp_path / "f.jsonl",
             run_cycle=fake_cycle,
-            open_symbols_loader=lambda _p: set(),
         )
         assert res["fed"] == 2
         assert len(calls) == 2
