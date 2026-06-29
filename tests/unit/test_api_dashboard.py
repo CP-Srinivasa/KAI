@@ -1728,3 +1728,63 @@ def test_momentum_edge_release_disabled_when_few(tmp_path: Path) -> None:
     body = r.json()
     assert body["available"] is True
     assert body["recommended_mode"] == "disabled"
+
+
+# ---------------------------------------------------------------------------
+# Unlock-calendar (ADR 0012 truth-pivot, Phase 2): read-only CONTEXT marker.
+# ---------------------------------------------------------------------------
+
+
+def _reset_unlock_calendar_cache() -> None:
+    """Clear the module-level TTL cache so each test sees a fresh build."""
+    dashboard_mod._unlock_calendar_cache.update(at=0.0, payload=None)
+
+
+def test_unlock_calendar_unavailable_without_artifact(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _reset_unlock_calendar_cache()
+    monkeypatch.chdir(tmp_path)  # no artifacts/research/unlock_events.json here
+    app = _make_app()
+    with TestClient(app) as client:
+        r = client.get("/dashboard/api/unlock-calendar")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["available"] is False
+    assert body["tokens"] == []
+
+
+def test_unlock_calendar_returns_upcoming_from_fixture(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _reset_unlock_calendar_cache()
+    research = tmp_path / "artifacts" / "research"
+    research.mkdir(parents=True)
+    now_ms = int(datetime.now(UTC).timestamp() * 1000)
+    day = 86_400_000
+    (research / "unlock_events.json").write_text(
+        json.dumps(
+            {
+                "schema": 1,
+                "tokens": {
+                    "PAST": {"max_supply": 1000.0, "events": [[now_ms - 5 * day, 10.0]]},
+                    "SOON": {"max_supply": 1000.0, "events": [[now_ms + 3 * day, 50.0]]},
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(tmp_path)
+    app = _make_app()
+    with TestClient(app) as client:
+        r = client.get("/dashboard/api/unlock-calendar")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["available"] is True
+    # The disclaimer must be present and explicitly NOT a directional signal.
+    assert "Kontext" in body["note"]
+    symbols = [t["symbol"] for t in body["tokens"]]
+    assert symbols == ["SOON"]  # past event filtered out
+    soon = body["tokens"][0]
+    assert soon["days_until"] > 0
+    assert soon["frac_of_max_supply"] == 0.05  # 50 / 1000

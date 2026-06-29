@@ -24,6 +24,7 @@ import { PremiumSignalTrail } from "@/components/panels/PremiumSignalTrail";
 import { PremiumRuntimeBanner } from "@/components/panels/PremiumRuntimeBanner";
 import { DiversificationPanel } from "@/components/panels/DiversificationPanel";
 import { EdgeTruthPanel } from "@/components/panels/EdgeTruthPanel";
+import { UnlockCalendarPanel } from "@/components/panels/UnlockCalendarPanel";
 import { ChurnPanel } from "@/components/panels/ChurnPanel";
 import { MomentumUniversePanel } from "@/components/panels/MomentumUniversePanel";
 import { MomentumCrosscheckPanel } from "@/components/panels/MomentumCrosscheckPanel";
@@ -578,6 +579,11 @@ export function PortfolioPage() {
           (canonical vs voller Stream, Quarantäne-Transparenz) — schließt die
           Lücke aus der Edge-Epochen-Forensik (canonical-Edge lag nur in der CLI). */}
       <EdgeTruthPanel />
+
+      {/* ADR 0012 truth-pivot (Phase 2): Unlock-Kalender als READ-ONLY Kontext-
+          Marker (nächste Token-Freischaltung je Coin, Tage + Anteil max_supply).
+          KONTEXT, KEIN SIGNAL — Unlocks als Richtung sind widerlegt (#487/#482). */}
+      <UnlockCalendarPanel />
 
       {/* /goal 2026-06-25 Churn-Frage: Fee-Effizienz sicht-/nachvollziehbar —
           Brutto-vor-Fees vs Netto-nach-Fees, Fee-Drag, Fees/Handelstag-Trend.
