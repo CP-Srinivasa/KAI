@@ -23,6 +23,11 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
+# Single source of truth for the ledger location, shared by the discovery runner
+# and the edge-validation gate's trial-count (so the count the gate deflates by is
+# the SAME ledger the engine appends to).
+DEFAULT_LEDGER_PATH = Path("artifacts/research/hypothesis_ledger.jsonl")
+
 
 def hypothesis_key(
     *,

@@ -14,6 +14,11 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
+from app.observability.falsification_verdict import (
+    DEFAULT_VERDICTS_PATH as _DEFAULT_VERDICTS_PATH,
+)
+from app.research.ledger import DEFAULT_LEDGER_PATH as _DEFAULT_HYPOTHESIS_LEDGER
+
 console = Console()
 
 trading_app = typer.Typer(
@@ -559,11 +564,22 @@ def trading_edge_validation(
         "--exec-audit-path",
         help="Append-only paper execution audit JSONL path",
     ),
-    trials: int = typer.Option(
-        ...,
+    trials: int | None = typer.Option(
+        None,
         "--trials",
-        help="Number of distinct hypotheses/configs ever evaluated (drives the DSR "
-        "deflation). Be honest: count EVERY rule/feature/threshold tried.",
+        help="OVERRIDE-FLOOR for the DSR trial count. Default: the distinct-hypothesis "
+        "count from the hypothesis ledger (honest, auditable). An override may only "
+        "RAISE that floor (untracked ad-hoc searches), never lower it.",
+    ),
+    ledger_path: str = typer.Option(
+        str(_DEFAULT_HYPOTHESIS_LEDGER),
+        "--ledger-path",
+        help="Hypothesis ledger JSONL the honest trial count is read from.",
+    ),
+    verdicts_path: str = typer.Option(
+        str(_DEFAULT_VERDICTS_PATH),
+        "--verdicts-path",
+        help="Append-only falsification-verdict ledger this run is recorded to.",
     ),
     min_n: int = typer.Option(100, "--min-n", help="Hard sample floor before promotion."),
     confidence: float = typer.Option(0.95, "--confidence", help="DSR / MinTRL confidence bar."),
@@ -575,17 +591,24 @@ def trading_edge_validation(
 ) -> None:
     """Statistical edge-validation gate for LIVE/capital promotion over the canonical edge.
 
-    READ-ONLY and a LIVE-PROMOTION tool ONLY — it never gates paper trading
-    (the paper-learning directive is binding; complementary to the operational
-    bleed-breaker ``app/risk/promotion_gate.py``). Restricts to the attributed
-    canonical sources, computes the per-trade net edge, and applies the pragmatic
-    14-point validation gate (sample floor, cost-net, Deflated Sharpe deflated by
-    ``--trials``, MinTRL, outlier-robustness). On the current n=51 canonical
-    cohort this MUST report NOT ready (n<100) — proving the gate refuses correctly
-    while blocking nothing in paper.
+    READ-ONLY on the trading runtime and a LIVE-PROMOTION tool ONLY — it never
+    gates paper trading (the paper-learning directive is binding). Restricts to the
+    attributed canonical sources, computes the per-trade net edge, and applies the
+    pragmatic 14-point validation gate (sample floor, cost-net, Deflated Sharpe,
+    MinTRL, outlier-robustness).
+
+    Trial count is read from the hypothesis ledger (``--ledger-path``) so the DSR
+    deflation rests on an AUDITABLE count, not a hand-entered one; ``--trials`` may
+    only raise that floor. Each run appends a tamper-evident verdict record to
+    ``--verdicts-path`` and (if ``APP_INTEGRITY_ENABLED``) anchors its digest via
+    OpenTimestamps — proving the verdict's existence-time + immutability (NOT
+    pre-registration). On the current canonical cohort this MUST report NOT ready
+    (n<100) — proving the gate refuses correctly while blocking nothing in paper.
     """
     import json as _json
+    from datetime import UTC, datetime
 
+    from app.core.integrity_settings import IntegritySettings
     from app.execution.cost_model import CostModel
     from app.observability.edge_report import (
         compute_trade_edge,
@@ -593,10 +616,24 @@ def trading_edge_validation(
         parse_closed_trades_with_exclusions,
     )
     from app.observability.edge_validation_gate import (
+        TrialCountUnavailableError,
         evaluate_edge_validation,
         render_edge_validation,
+        resolve_trial_count,
     )
     from app.observability.evidence_window import CANONICAL_EDGE_SOURCES
+    from app.observability.falsification_verdict import (
+        build_verdict_record,
+        record_and_anchor_verdict,
+    )
+    from app.research.ledger import HypothesisLedger
+
+    ledger_count = HypothesisLedger(Path(ledger_path)).tested_count()
+    try:
+        resolved = resolve_trial_count(ledger_count, trials)
+    except TrialCountUnavailableError as exc:
+        console.print(f"[red]edge-validation refused:[/red] {exc}")
+        raise typer.Exit(2) from exc
 
     events = load_audit_events(exec_audit_path)
     trades, _exclusions = parse_closed_trades_with_exclusions(
@@ -605,11 +642,49 @@ def trading_edge_validation(
     canonical = [t for t in trades if (t.signal_source or "unknown") in CANONICAL_EDGE_SOURCES]
     cm = CostModel()
     net_bps = [compute_trade_edge(t, cm, venue=venue).net_bps for t in canonical]
-    verdict = evaluate_edge_validation(net_bps, trials=trials, min_n=min_n, confidence=confidence)
+    verdict = evaluate_edge_validation(
+        net_bps, trials=resolved.trials, min_n=min_n, confidence=confidence
+    )
+
+    record = build_verdict_record(
+        verdict,
+        resolved=resolved,
+        exec_audit_path=exec_audit_path,
+        venue=venue,
+        net_bps=net_bps,
+        ledger_path=ledger_path,
+        recorded_at_utc=datetime.now(UTC).isoformat(),
+    )
+    digest, anchor = record_and_anchor_verdict(
+        record, verdicts_path=verdicts_path, settings=IntegritySettings()
+    )
+
     if as_json:
-        print(_json.dumps(verdict.to_dict(), indent=2))
-    else:
-        console.print(render_edge_validation(verdict))
+        out = verdict.to_dict()
+        out["trials_provenance"] = {
+            "trials_used": resolved.trials,
+            "source": resolved.source,
+            "ledger_count": resolved.ledger_count,
+            "override": resolved.override,
+            "clamped": resolved.clamped,
+        }
+        out["verdict_digest"] = digest
+        out["anchor"] = {"state": anchor.state, "proof_path": anchor.proof_path}
+        print(_json.dumps(out, indent=2))
+        return
+
+    console.print(render_edge_validation(verdict))
+    console.print(
+        f"trials={resolved.trials} (source={resolved.source}, ledger={resolved.ledger_count})"
+    )
+    if resolved.clamped:
+        console.print(
+            f"[yellow]--trials {resolved.override} was below the ledger floor "
+            f"{resolved.ledger_count}; clamped UP (you cannot under-report trials).[/yellow]"
+        )
+    console.print(f"verdict_digest={digest}  anchor={anchor.state}", highlight=False)
+    if anchor.proof_path:
+        console.print(f"proof={anchor.proof_path}", highlight=False)
 
 
 @trading_app.command("churn-report")
