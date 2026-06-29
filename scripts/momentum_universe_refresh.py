@@ -25,14 +25,23 @@ from app.observability.momentum_universe_builder import (  # noqa: E402
     build_universe,
 )
 from app.observability.momentum_universe_ledger import append_snapshot  # noqa: E402
+from app.observability.symbol_eligibility_ledger import (  # noqa: E402
+    append_eligibility_snapshot,
+)
+from app.trading.symbol_eligibility_fetch import build_eligibility  # noqa: E402
 
 _LEDGER = Path("artifacts/momentum_universe_candidates.jsonl")
+_ELIG_LEDGER = Path("artifacts/symbol_eligibility_audit.jsonl")
 _DEADLINE_S = 120.0
 _TOP_N = 15
 _UNIVERSE_LIMIT = 50
 
 
-async def _run(source: MomentumUniverseSource, ledger: Path) -> int:
+async def _run(
+    source: MomentumUniverseSource,
+    ledger: Path,
+    elig_ledger: Path,
+) -> int:
     ranked = await asyncio.wait_for(
         build_universe(source, top_n=_TOP_N, universe_limit=_UNIVERSE_LIMIT),
         _DEADLINE_S,
@@ -40,7 +49,21 @@ async def _run(source: MomentumUniverseSource, ledger: Path) -> int:
     if not ranked:
         print("momentum_universe_refresh: source unavailable — keeping last snapshot")
         return 0
-    record = append_snapshot(ledger, ranked, now=datetime.now(UTC))
+
+    # Shadow eligibility against the CANONICAL venue (Binance) — flags, never filters.
+    elig_map: dict[str, dict[str, object]] = {}
+    try:
+        from app.market_data.binance_adapter import BinanceAdapter
+
+        verdicts = await build_eligibility(BinanceAdapter(), [r.symbol for r in ranked])
+        append_eligibility_snapshot(elig_ledger, verdicts, now=datetime.now(UTC))
+        elig_map = {
+            v.symbol: {"eligible": v.eligible, "reasons": v.reasons} for v in verdicts
+        }
+    except Exception as exc:  # noqa: BLE001 — eligibility is shadow; never break the refresh
+        print(f"momentum_universe_refresh: eligibility skipped ({exc})", file=sys.stderr)
+
+    record = append_snapshot(ledger, ranked, now=datetime.now(UTC), eligibility=elig_map or None)
     print(f"momentum_universe_refresh: wrote {record['count']} symbols")
     return 0
 
@@ -49,7 +72,7 @@ def main() -> int:
     from app.market_data.bybit_adapter import BybitAdapter
 
     try:
-        return asyncio.run(_run(BybitAdapter(), _LEDGER))
+        return asyncio.run(_run(BybitAdapter(), _LEDGER, _ELIG_LEDGER))
     except Exception as exc:  # noqa: BLE001 — fail-safe: keep the last good snapshot
         print(f"momentum_universe_refresh failed: {exc}", file=sys.stderr)
         return 0
