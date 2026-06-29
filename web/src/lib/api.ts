@@ -228,6 +228,12 @@ export type UnlockCalendarEntry = {
 export type UnlockCalendar = {
   available: boolean;
   as_of_utc?: string;
+  /** Build-Zeit des Artefakts (DefiLlama-Abruf); null = unbekannt/altes Schema. */
+  generated_at?: string | null;
+  /** Alter des Artefakts in Tagen; null wenn generated_at fehlt. */
+  age_days?: number | null;
+  /** true = Refresh >14 Tage her oder kein Timestamp → Anzeige veraltet. */
+  stale?: boolean;
   /** Pflicht-Disclaimer, verbatim rendern: „Kontext, kein Signal". */
   note?: string;
   tokens: UnlockCalendarEntry[];

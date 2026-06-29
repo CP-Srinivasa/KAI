@@ -1,0 +1,30 @@
+[Unit]
+Description=KAI Unlock-Refresh — rebuild the read-only token-unlock calendar artifact (ADR 0012 Phase 2)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/ubuntu/ai_analyst_trading_bot
+Environment=PYTHONPATH=/home/ubuntu/ai_analyst_trading_bot
+EnvironmentFile=-/home/ubuntu/ai_analyst_trading_bot/.env
+
+# Read-only refresh: a handful of public DefiLlama GETs that rewrite
+# artifacts/research/unlock_events.json (now with a generated_at timestamp). The
+# dashboard only ever READS that file; nothing here touches sizing or trading.
+# "-" prefix: a failed refresh must not propagate — the dashboard keeps reading
+# the last artifact and flags it STALE once generated_at ages past the threshold
+# (honest staleness, no silent freshness on a dead feed).
+ExecStart=-/home/ubuntu/ai_analyst_trading_bot/.venv/bin/python /home/ubuntu/ai_analyst_trading_bot/scripts/build_unlock_events.py
+
+StandardOutput=journal
+StandardError=journal
+# build_unlock_events.py uses a 30s per-request timeout; this is the systemd
+# backstop so the unit can never wedge across the whole 12-source sweep.
+TimeoutStartSec=300
+
+# Refresh is light (12 public REST calls). Conservative caps.
+MemoryMax=128M
+CPUQuota=50%

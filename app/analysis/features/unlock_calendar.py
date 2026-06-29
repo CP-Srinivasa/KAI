@@ -63,10 +63,10 @@ def load_unlock_calendar(
 ) -> list[dict[str, Any]]:
     """Next upcoming unlock per token, soonest first. Fail-soft → [] on any error.
 
-    Reads the ``build_unlock_events.py`` artifact
-    (``{"schema": 1, "tokens": {SYM: {"max_supply", "events": [[ms, amt], ...]}}}``).
-    Tokens with no event after ``now_ms`` are omitted (the calendar shows only what
-    is still ahead). ``frac_of_max_supply`` is None when max supply is unknown.
+    Reads the ``build_unlock_events.py`` artifact (``{"schema", "generated_at"?,
+    "tokens": {SYM: {"max_supply", "events": [[ms, amt], ...]}}}``). Tokens with no
+    event after ``now_ms`` are omitted (the calendar shows only what is still
+    ahead). ``frac_of_max_supply`` is None when max supply is unknown.
     """
     if now_ms is None:
         now_ms = int(datetime.now(UTC).timestamp() * 1000)
@@ -87,3 +87,20 @@ def load_unlock_calendar(
             out.append(entry)
     out.sort(key=lambda e: e["event_ms"])
     return out
+
+
+def read_generated_at(path: Path = DEFAULT_EVENTS_PATH) -> str | None:
+    """Artifact build time (schema-2 ``generated_at``); None if absent/old/unreadable.
+
+    A missing timestamp (schema-1 artifact, or a dead refresh that never wrote one)
+    must read as "unknown age" so the consumer can flag the calendar STALE rather
+    than implying freshness. Fail-soft, no raise.
+    """
+    try:
+        doc = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if not isinstance(doc, dict):
+        return None
+    ts = doc.get("generated_at")
+    return ts if isinstance(ts, str) and ts else None

@@ -99,6 +99,10 @@ _MAKER_FLOOR_ROUNDTRIP_BPS = 4.0
 # 60 s cadence as Edge-Truth, so a short TTL keeps repeats cheap and consistent.
 _UNLOCK_CALENDAR_CACHE_TTL_S = 60.0
 _unlock_calendar_cache: dict[str, Any] = {"at": 0.0, "payload": None}
+# The kai-unlock-refresh timer rebuilds the artifact weekly; if it has not been
+# refreshed in 14 days (2 missed cycles) OR carries no build timestamp at all, the
+# calendar is flagged STALE so a silently-dead feed cannot masquerade as fresh.
+_UNLOCK_CALENDAR_STALE_DAYS = 14.0
 
 # Churn/Fee-Effizienz-Panel parst den (großen) Execution-Stream → cachen wie die
 # Edge-Truth (60 s), damit der 60 s-Poll nicht jedes Tick re-parst. Keyed by since.
@@ -1204,12 +1208,33 @@ async def dashboard_unlock_calendar_api() -> JSONResponse:
         return JSONResponse(content=cached, headers={"Cache-Control": "no-store, max-age=0"})
 
     try:
-        from app.analysis.features.unlock_calendar import load_unlock_calendar
+        from app.analysis.features.unlock_calendar import (
+            load_unlock_calendar,
+            read_generated_at,
+        )
 
         upcoming = load_unlock_calendar()
+        # Honest staleness: a missing/old build timestamp ⇒ stale (a dead refresh
+        # must NOT look fresh). generated_at is the artifact's build time, distinct
+        # from as_of_utc (when THIS response was rendered).
+        generated_at = read_generated_at()
+        age_days: float | None = None
+        stale = True
+        if generated_at is not None:
+            try:
+                built = datetime.fromisoformat(generated_at)
+                if built.tzinfo is None:
+                    built = built.replace(tzinfo=UTC)
+                age_days = (datetime.now(UTC) - built).total_seconds() / 86400.0
+                stale = age_days > _UNLOCK_CALENDAR_STALE_DAYS
+            except ValueError:
+                stale = True
         payload: dict[str, Any] = {
             "available": bool(upcoming),
             "as_of_utc": datetime.now(UTC).isoformat(),
+            "generated_at": generated_at,
+            "age_days": None if age_days is None else round(age_days, 1),
+            "stale": stale,
             # Anti-misread guard: this is context, never a trade call. The panel
             # renders this verbatim; do not soften it into signal language.
             "note": "Kontext, kein Signal — Unlocks als Richtung sind widerlegt (#487/#482).",
