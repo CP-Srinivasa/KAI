@@ -16,6 +16,10 @@ from typing import Annotated
 import typer
 
 from app.observability.momentum_universe_builder import MomentumUniverseSource
+from app.trading.symbol_eligibility import (
+    DEFAULT_MIN_HISTORY_DAYS,
+    DEFAULT_MIN_TURNOVER_USD,
+)
 
 universe_app = typer.Typer(help="Momentum-Universe (read-only) commands.", no_args_is_help=True)
 
@@ -197,8 +201,12 @@ def eligibility_run(
         Path, typer.Option(help="Universe snapshot to source symbols from.")
     ] = _DEFAULT_LEDGER,
     out: Annotated[Path, typer.Option(help="Eligibility ledger path.")] = _ELIG_LEDGER,
-    min_turnover_usd: Annotated[float, typer.Option(help="Min 24h turnover (USD).")] = 10_000_000.0,
-    min_history_days: Annotated[int, typer.Option(help="Min canonical-venue history (days).")] = 30,
+    min_turnover_usd: Annotated[
+        float, typer.Option(help="Min 24h turnover (USD).")
+    ] = DEFAULT_MIN_TURNOVER_USD,
+    min_history_days: Annotated[
+        int, typer.Option(help="Min canonical-venue history (days).")
+    ] = DEFAULT_MIN_HISTORY_DAYS,
 ) -> None:
     """Shadow-evaluate the latest universe's symbols against Binance. No trades, no filter."""
     from datetime import UTC, datetime

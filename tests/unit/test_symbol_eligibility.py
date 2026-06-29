@@ -67,10 +67,24 @@ def test_duplicate_of_self_is_not_flagged() -> None:
 
 
 def test_thresholds_are_parametrised() -> None:
-    assert DEFAULT_MIN_TURNOVER_USD == 10_000_000.0
+    assert DEFAULT_MIN_TURNOVER_USD == 3_000_000.0
     assert DEFAULT_MIN_HISTORY_DAYS == 30
     v = evaluate_eligibility(_m("FOO/USDT", 2e6, 365), min_turnover_usd=1e6)
     assert v.eligible is True
+
+
+def test_calibrated_turnover_admits_liquid_token_flags_microcap() -> None:
+    """Calibration (2026-06-30) against the live Binance USDT-pair distribution:
+    a WIF-level token (~5.4M/24h, ~91st pct of all USDT pairs) is genuinely
+    liquid and must pass the default floor; a true microcap (<3M) stays flagged.
+    The old 10M floor mis-flagged the liquid p90-p95 band."""
+    liquid = evaluate_eligibility(_m("WIF/USDT", 5_400_000.0, 365))
+    assert liquid.eligible is True
+    assert liquid.reasons == []
+
+    microcap = evaluate_eligibility(_m("DUST/USDT", 2_000_000.0, 365))
+    assert microcap.eligible is False
+    assert "below_min_turnover" in microcap.reasons
 
 
 def test_resolve_prefers_usdt_over_usdc() -> None:
