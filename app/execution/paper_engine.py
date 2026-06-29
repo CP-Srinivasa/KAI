@@ -17,6 +17,7 @@ from pathlib import Path
 
 from app.audit.stream_validation import PaperExecutionAuditStreamRow
 from app.core.file_lock import append_lock
+from app.core.settings import get_settings
 from app.core.symbol_guard import is_tradeable_symbol
 from app.execution.audit_replay import replay_paper_audit
 from app.execution.execution_protocol import executable_intent_to_paper_kwargs
@@ -39,6 +40,7 @@ from app.signals.models import (
     SignalStateMachine,
     SignalStateTransition,
 )
+from app.trading.symbol_eligibility import is_canonical_priceable, latest_ineligible_symbols
 
 logger = logging.getLogger(__name__)
 
@@ -686,6 +688,22 @@ class PaperExecutionEngine:
                 order.symbol,
             )
             return None
+
+        # 2026-06-29 Entry-Guard: reject opens on symbols with no canonical Binance
+        # market (off-venue microcaps fed by Bybit-universe feeder). Closes still pass
+        # so any pre-existing stuck position can be wound down. Permissive default:
+        # the gate is a no-op unless EXECUTION_UNIVERSE_ELIGIBILITY_ENFORCE=true.
+        if _opens and get_settings().execution.universe_eligibility_enforce:
+            _ineligible = latest_ineligible_symbols(
+                Path("artifacts/symbol_eligibility_audit.jsonl")
+            )
+            if not is_canonical_priceable(order.symbol, _ineligible):
+                logger.warning(
+                    "[PAPER] Rejecting open on non-priceable symbol %s "
+                    "(no canonical-venue market; UNIVERSE_ELIGIBILITY_ENFORCE)",
+                    order.symbol,
+                )
+                return None
 
         if order.position_side == "long" and order.side == "buy":
             # 2026-06-25 DQ-Fix: no long entry while a SHORT is open on the same
