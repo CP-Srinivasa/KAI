@@ -120,14 +120,18 @@ def is_quarantined(close_row: dict[str, object]) -> bool:
 def corruption_reason(close_row: dict[str, object]) -> str | None:
     """Unified corruption verdict for read-side edge/PnL aggregators.
 
-    Layers the two defences so EVERY edge path excludes the SAME set of corrupt
+    Layers the three defences so EVERY edge path excludes the SAME set of corrupt
     closes (2026-06-23 edge-epoch forensic — read aggregators that used only the
     generic phantom guard leaked the ETH off-market signature into realized PnL):
 
       1. the exact forensic ``quarantine_reason`` signatures (deterministic;
          catches known incidents that sit *under* the generic cap, e.g. the ETH
          off-market close at +55%);
-      2. the generic ``is_phantom_close`` return-magnitude guard (catches *new*,
+      2. remediation-stamped closes: a ``reason`` field of
+         ``"quarantine_off_venue_unpriceable"`` indicates a flat-close written by
+         the ``quarantine_offvenue_positions.py`` remediation script — these are
+         always corrupt (the position was never priceable on the canonical venue);
+      3. the generic ``is_phantom_close`` return-magnitude guard (catches *new*,
          not-yet-signatured price-source disagreements, e.g. MATIC at +364%).
 
     Returns the reason string (signature reason, else ``"phantom_implied_return"``)
@@ -138,6 +142,14 @@ def corruption_reason(close_row: dict[str, object]) -> str | None:
     sig = quarantine_reason(close_row)
     if sig is not None:
         return sig
+    # Layer 2: remediation-stamped off-venue flat-closes (2026-06-29). The
+    # position_closed ``reason`` field signals these explicitly so the edge calc
+    # excludes them without relying on a price-magnitude heuristic (entry==exit
+    # → no phantom return → the generic guard would miss them). Checked before
+    # the phantom guard so the definitive label "quarantine_off_venue_unpriceable"
+    # is returned, not the fallback "phantom_implied_return".
+    if close_row.get("reason") == "quarantine_off_venue_unpriceable":
+        return "quarantine_off_venue_unpriceable"
     # Lazy import (see module-top note) — breaks the bayes_quarantine ↔ app.execution cycle.
     from app.execution.phantom_filter import is_phantom_close
 
