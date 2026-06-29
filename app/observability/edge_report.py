@@ -203,6 +203,11 @@ class ClosedTrade:
     # NEO-P-20260603-001: signal-source attribution. "" / "unknown" for legacy
     # rows persisted before the attribution fields existed.
     signal_source: str = "unknown"
+    # 2026-06-29: originating analysis doc-id (e.g. "momentum_universe_SLXUSDT").
+    # Additive, defaults "" — lets cohort extractors recover trades whose coarse
+    # signal_source was mis-bucketed before the attribution fix, since the cohort
+    # name survives in the document_id even when signal_source does not.
+    document_id: str = ""
 
     @property
     def notional_usd(self) -> float:
@@ -1143,6 +1148,7 @@ def parse_closed_trades_with_exclusions(
                 timestamp_utc=str(ev.get("timestamp_utc", "")),
                 regime=str(regime),
                 signal_source=str(signal_source),
+                document_id=str(ev.get("document_id") or ev.get("source_id") or ""),
             )
         )
     return out, QuarantineExclusion(excluded_count=excluded, reasons=dict(reasons))

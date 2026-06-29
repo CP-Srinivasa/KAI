@@ -71,3 +71,50 @@ class TestExtractCohortOutcomes:
         events = [_close("BTC/USDT", "some_other", 100.0, 101.0, "2026-06-26T01:00:00Z")]
         assert extract_cohort_outcomes(events, cohort="some_other")[0]["symbol"] == "BTC/USDT"
         assert extract_cohort_outcomes(events, cohort="momentum_universe") == []
+
+    def test_recovers_mistagged_close_via_document_id_prefix(self) -> None:
+        """Backfill: a momentum close written BEFORE the forward attribution fix
+        carries signal_source='autonomous_generator' but document_id=
+        'momentum_universe_<SYM>'. The cohort tag survives only in document_id, so
+        extract_cohort_outcomes must recover it via the document_id prefix —
+        otherwise the 3 already-closed momentum trades stay invisible and the n>=30
+        gate waits days for naught."""
+        events = [
+            {
+                "event_type": "position_closed",
+                "symbol": "SLX/USDT",
+                "signal_source": "autonomous_generator",  # the mis-tag
+                "document_id": "momentum_universe_SLXUSDT",  # cohort survives here
+                "position_side": "long",
+                "entry_price": 100.0,
+                "exit_price": 102.0,
+                "quantity": 1.0,
+                "timestamp_utc": "2026-06-27T15:00:00Z",
+                "trade_pnl_usd": 2.0,
+                "reason": "take",
+            }
+        ]
+        out = extract_cohort_outcomes(events)
+        assert len(out) == 1
+        assert out[0]["symbol"] == "SLX/USDT"
+        assert isinstance(out[0]["net_bps"], float)
+
+    def test_document_id_prefix_does_not_overmatch_other_cohorts(self) -> None:
+        """The prefix recovery is scoped to '<cohort>_': a close from a different
+        cohort (document_id 'technical_paper_BTCUSDT') must NOT leak in."""
+        events = [
+            {
+                "event_type": "position_closed",
+                "symbol": "BTC/USDT",
+                "signal_source": "autonomous_generator",
+                "document_id": "technical_paper_BTCUSDT",
+                "position_side": "long",
+                "entry_price": 100.0,
+                "exit_price": 101.0,
+                "quantity": 1.0,
+                "timestamp_utc": "2026-06-27T15:00:00Z",
+                "trade_pnl_usd": 1.0,
+                "reason": "take",
+            }
+        ]
+        assert extract_cohort_outcomes(events) == []

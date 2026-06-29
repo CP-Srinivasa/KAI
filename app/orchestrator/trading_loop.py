@@ -32,6 +32,11 @@ from app.orchestrator.models import (
     _new_cycle_id,
     _now_utc,
 )
+from app.orchestrator.signal_source import (
+    SOURCE_CANARY_PROBE,
+    derive_autonomous_signal_source,
+    resolve_signal_source,
+)
 from app.risk.churn_killer import ChurnKillerConfig, ChurnVerdict, evaluate_churn_gate
 from app.risk.engine import RiskEngine
 from app.risk.models import RiskLimits
@@ -60,38 +65,9 @@ _ALLOWED_CONTROL_MODES = frozenset({ExecutionMode.PAPER, ExecutionMode.SHADOW})
 
 _TV_QUOTE_SUFFIXES = ("USDT", "USDC", "BUSD", "USD", "EUR", "BTC", "ETH")
 
-# NEO-P-002 (Weg B): ONE source taxonomy shared by the fill path (#132) and the
-# shadow path (#137). #137 used a second, divergent mapping in the shadow path
-# (event_type "control_plane" -> canary_probe, else "autonomous_loop"). That
-# split the fill bucket ("autonomous_generator") from the shadow bucket
-# ("autonomous_loop") for the very same real generator. This helper unifies BOTH
-# on the document_id-based detection so a single bucket name joins across fill,
-# close and shadow aggregations. "autonomous_loop" is never produced as a NEW
-# value again — it survives only as a read-back default for the 644 legacy
-# ledger rows (see legacy_counts in build_shadow_report).
-SOURCE_CANARY_PROBE = "canary_probe"
-SOURCE_AUTONOMOUS_GENERATOR = "autonomous_generator"
-SOURCE_UNKNOWN = ""
-# Goal 2026-06-10: hard source tag for decoupled real-analysis paper fills.
-# Excluded from edge/D-227/hit-rate headlines by default (B-002), like canary.
-SOURCE_REAL_ANALYSIS = "real_analysis"
-SOURCE_TECHNICAL_PAPER = "technical_paper"
-
-
-def derive_autonomous_signal_source(document_id: str | None) -> str:
-    """Map an originating document_id to its coarse autonomous source bucket.
-
-    Pure / no side effects. ``loop_control_*`` doc-ids are the hardcoded
-    control-plane canary probes; any other non-empty doc-id is the real
-    generator; ``""``/None means the origin is genuinely unknown — never
-    silently relabelled as a real signal (CLAUDE.md: no silent assumptions).
-    """
-    doc_id = document_id or ""
-    if doc_id.startswith("loop_control_"):
-        return SOURCE_CANARY_PROBE
-    if doc_id:
-        return SOURCE_AUTONOMOUS_GENERATOR
-    return SOURCE_UNKNOWN
+# Source taxonomy (SOURCE_* constants + derive_autonomous_signal_source +
+# resolve_signal_source) now lives in app/orchestrator/signal_source.py; the
+# names this module uses are imported above.
 
 
 # Sprint S7 god-file ratchet (D-234): paper-entry accounting lives in
@@ -681,20 +657,21 @@ class TradingLoop:
         # news doc id). signal_source is a coarse bucket so edge_report can split
         # canary-probe vs real-generator fills. "" stays the unknown default for
         # any path that does not set source_document_id.
-        # NEO-P-002 (Weg B): inline mapping replaced by the shared
-        # derive_autonomous_signal_source helper so fill + shadow use ONE taxonomy.
+        # NEO-P-002 (Weg B): ONE coarse source bucket, shared fill + shadow
+        # (app/orchestrator/signal_source.py). B-002: decoupled real_analysis /
+        # technical_paper feeds are hard-attributed at the SOURCE so reports
+        # exclude them from the honest forward edge like canary; any other explicit
+        # cohort tag (e.g. momentum_universe) gets its OWN bucket instead of the
+        # autonomous_generator default. Without this, momentum closes were
+        # invisible to extract_cohort_outcomes and wrongly counted in the
+        # canonical autonomous edge.
         attribution_doc_id = signal.source_document_id or analysis.document_id or ""
-        signal_source = derive_autonomous_signal_source(attribution_doc_id)
-        # B-002: a decoupled real-analysis paper fill is attributed hard as
-        # ``real_analysis`` at the SOURCE — so it flows through create_order →
-        # order_filled → position_closed and edge/D-227/hit-rate reports can
-        # exclude it from the headline exactly like the canary probe. Without this
-        # the real doc would map to ``autonomous_generator`` and pollute the
-        # honest forward-edge figure.
-        if real_analysis_feed:
-            signal_source = SOURCE_REAL_ANALYSIS
-        elif technical_paper_feed:
-            signal_source = SOURCE_TECHNICAL_PAPER
+        signal_source = resolve_signal_source(
+            attribution_doc_id,
+            real_analysis_feed=real_analysis_feed,
+            technical_paper_feed=technical_paper_feed,
+            analysis_source=analysis_source,
+        )
         # Goal 2026-06-10 (long+short): thread the position side through to the
         # engine. The autonomous loop historically only opened longs; for a SHORT
         # signal it emitted side="sell" WITHOUT position_side, so the engine read
