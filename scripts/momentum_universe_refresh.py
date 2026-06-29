@@ -33,6 +33,7 @@ from app.trading.symbol_eligibility_fetch import build_eligibility  # noqa: E402
 _LEDGER = Path("artifacts/momentum_universe_candidates.jsonl")
 _ELIG_LEDGER = Path("artifacts/symbol_eligibility_audit.jsonl")
 _DEADLINE_S = 120.0
+_ELIG_DEADLINE_S = 60.0
 _TOP_N = 15
 _UNIVERSE_LIMIT = 50
 
@@ -55,7 +56,9 @@ async def _run(
     try:
         from app.market_data.binance_adapter import BinanceAdapter
 
-        verdicts = await build_eligibility(BinanceAdapter(), [r.symbol for r in ranked])
+        verdicts = await asyncio.wait_for(
+            build_eligibility(BinanceAdapter(), [r.symbol for r in ranked]), _ELIG_DEADLINE_S
+        )
         append_eligibility_snapshot(elig_ledger, verdicts, now=datetime.now(UTC))
         elig_map = {v.symbol: {"eligible": v.eligible, "reasons": v.reasons} for v in verdicts}
     except Exception as exc:  # noqa: BLE001 — eligibility is shadow; never break the refresh

@@ -91,3 +91,18 @@ async def test_build_eligibility_short_history_ineligible() -> None:
     verdicts = await build_eligibility(FakeSource(history=10), ["ETH/USDT"], min_history_days=30)
     assert verdicts[0].eligible is False
     assert "below_min_history" in verdicts[0].reasons
+
+
+class FakeRaisingSource:
+    async def get_ticker(self, symbol):
+        raise RuntimeError("venue down")
+
+    async def get_ohlcv(self, symbol, timeframe="1d", limit=30):
+        raise RuntimeError("venue down")
+
+
+@pytest.mark.asyncio
+async def test_fetch_metrics_exception_yields_none() -> None:
+    m = await fetch_metrics(FakeRaisingSource(), "BTC/USDT", min_history_days=30)
+    assert m.turnover_24h_usd is None
+    assert m.history_days is None

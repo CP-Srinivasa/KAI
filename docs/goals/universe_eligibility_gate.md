@@ -102,6 +102,8 @@ vermischen und die Honesty-Trennung (kuratiert vs. gemessen) brechen.
 - Kein Dashboard-Panel in v1 (CLI + Ledger reichen zur Verifikation; Panel später).
 - Keine Enforce-Verdrahtung in v1 (shadow-first).
 
+⚠ Forward-Hinweis (Enforce-PR, Phase 2): Ein Snapshot, in dem ALLE Symbole `no_canonical_venue_data` sind, bedeutet Binance-Ausfall, nicht ein wertloses Universe — die Enforce-Logik MUSS diesen Fall als 'Venue down' behandeln und darf NIE das ganze Universe wegfiltern (no-op statt filter).
+
 ## Akzeptanzkriterien
 
 1. `evaluate_eligibility` pure + voll unit-getestet (liquidity/history/duplicate/no-data-Pfade).
