@@ -165,8 +165,28 @@ async def test_disabled_flag_is_hard_noop(monkeypatch: pytest.MonkeyPatch) -> No
 from datetime import datetime  # noqa: E402
 
 from app.observability.technical_screener_feed import (  # noqa: E402
+    prune_to_resolvable,
     resolve_decision_time_entry,
 )
+
+
+def test_prune_keeps_only_binance_spot_resolvable() -> None:
+    spot = frozenset({"BTCUSDT", "ETHUSDT"})
+    out = prune_to_resolvable(["BTC/USDT", "FARTCOIN/USDT", "ETH/USDT"], spot)
+    assert out == ["BTC/USDT", "ETH/USDT"]  # off-Binance FARTCOIN dropped
+
+
+def test_prune_none_spot_set_keeps_all() -> None:
+    # exchangeInfo fetch failed → fail-soft, keep the unfiltered universe.
+    syms = ["BTC/USDT", "XAU/USDT"]
+    assert prune_to_resolvable(syms, None) == syms
+
+
+def test_prune_all_miss_keeps_all_never_starves() -> None:
+    # An empty intersection (e.g. normalisation drift) must NOT empty the universe.
+    syms = ["FOO/USDT", "BAR/USDT"]
+    assert prune_to_resolvable(syms, frozenset({"BTCUSDT"})) == syms
+
 
 _TS = "2026-06-15T00:00:30+00:00"
 _TS_MS = int(datetime.fromisoformat(_TS).timestamp() * 1000)

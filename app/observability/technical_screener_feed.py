@@ -34,6 +34,7 @@ from app.observability.shadow_candidate_ledger import (
     ShadowCandidate,
     record_candidate,
 )
+from app.observability.shadow_resolver import to_binance_pair
 from app.signals.technical_screener import DEFAULT_LOOKBACK, screen_universe
 
 # Decision-time entry price uses the SAME source the shadow resolver later walks
@@ -302,6 +303,22 @@ def _configured_symbols(raw: str) -> list[str]:
     return parsed or list(DEFAULT_UNIVERSE)
 
 
+def prune_to_resolvable(symbols: list[str], spot_symbols: frozenset[str] | None) -> list[str]:
+    """Keep only symbols the shadow resolver can forward-resolve (Binance spot).
+
+    The dynamic universe (fallback-adapter top-volume, e.g. Bybit) is dominated by
+    exotic / non-Binance pairs (tokenized stocks, off-Binance memecoins) that the
+    Binance-spot forward-resolution can never resolve — they yield no measurable
+    shadow edge and only fallback-priced entries. ``spot_symbols`` None
+    (exchangeInfo fetch failed) → keep all (fail-soft). An all-miss (e.g. a
+    normalisation drift) also keeps all, never starving the screener.
+    """
+    if not spot_symbols:
+        return symbols
+    kept = [s for s in symbols if to_binance_pair(s) in spot_symbols]
+    return kept or symbols
+
+
 async def run_from_settings(adapter: _OhlcvSource | None = None) -> dict[str, object]:
     """Gated entrypoint for CLI / timer. No-op summary when the flag is OFF."""
     from app.core.settings import get_settings
@@ -326,7 +343,22 @@ async def run_from_settings(adapter: _OhlcvSource | None = None) -> dict[str, ob
             try:
                 dynamic = await fetch(min(alerts.technical_screener_top_n * 5, 200))
                 if dynamic:
-                    symbols = dynamic
+                    # Prune the AUTO universe to symbols the shadow resolver can
+                    # forward-resolve (Binance spot). Explicit operator lists are
+                    # never pruned (handled above). Fail-soft: exchangeInfo miss →
+                    # keep all. SHADOW-only; no execution/provider lock-in of the
+                    # ranking, which still uses the provider-open fallback adapter.
+                    from app.observability.shadow_resolver import binance_spot_symbols
+
+                    before = len(dynamic)
+                    symbols = prune_to_resolvable(dynamic, binance_spot_symbols())
+                    if len(symbols) != before:
+                        logger.info(
+                            "technical_screener.universe_pruned",
+                            before=before,
+                            kept=len(symbols),
+                            dropped=before - len(symbols),
+                        )
             except Exception as exc:  # noqa: BLE001 — never abort on a universe fetch
                 logger.warning("technical_screener.dynamic_universe_failed", error=str(exc)[:200])
 
