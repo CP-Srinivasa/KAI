@@ -6,17 +6,6 @@ isolate the cohort and measure it cost-netto. Closes the G1→G2 loop: a symbol
 the rotation FSM flagged (``ROTATION_FLAGGED``) or rotated out (``ARCHIVED``) is
 NOT fed. Default-off, paper only, NO capital. The trading-loop entrypoint is
 injectable so this stays unit-testable without the real pipeline.
-
-Throughput (2026-06-29): dedup is OPEN-POSITION-AWARE, not once-per-snapshot.
-A symbol is skipped only while it currently holds an open paper position — because
-the paper engine AVERAGES INTO an existing position rather than opening a second
-one (paper_engine ``create_order``), so re-feeding a held symbol would inflate the
-position instead of producing a new closeable cohort trade. A symbol that did NOT
-open (e.g. ``max_open_positions`` cap-rejected) has no position, so the hourly
-timer RE-FEEDS it next tick → momentum keeps competing for freed slots instead of
-self-throttling to one attempt per 12h universe snapshot. The 6-position cap
-(RISK_MAX_OPEN_POSITIONS) is untouched: the risk engine still rejects when full;
-we only stop pre-emptively skipping symbols that never opened.
 """
 
 from __future__ import annotations
@@ -39,26 +28,27 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_LEDGER_PATH = Path("artifacts/momentum_universe_candidates.jsonl")
 DEFAULT_STATE_PATH = Path("artifacts/asset_rotation_state.json")
-DEFAULT_PAPER_AUDIT = Path("artifacts/paper_execution_audit.jsonl")
+DEFAULT_FED_PATH = Path("artifacts/momentum_universe_fed.jsonl")
 
 COHORT = "momentum_universe"
 # Statuses that are NOT fed — the G1 rotation FSM has flagged or rotated them out.
 _SKIP_STATUSES = frozenset({AssetStatus.ROTATION_FLAGGED, AssetStatus.ARCHIVED})
 
 RunCycle = Callable[..., Awaitable[Any]]
-OpenSymbolsLoader = Callable[[Path], set[str]]
 
 
-def _load_open_symbols(paper_audit_path: Path) -> set[str]:
-    """Symbols with a currently-open paper position (any cohort), via the canonical
-    audit replay. A missing audit means no trades yet → no open positions."""
-    from app.execution.audit_replay import replay_paper_audit
-
+def _load_fed_ids(path: Path) -> set[str]:
     try:
-        result = replay_paper_audit(paper_audit_path)
-    except FileNotFoundError:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
         return set()
-    return set(result.positions.keys())
+    return {line.strip() for line in text.splitlines() if line.strip()}
+
+
+def _record_fed_id(fid: str, path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as fh:
+        fh.write(fid + "\n")
 
 
 def _build_analysis(symbol: str) -> AnalysisResult:
@@ -88,12 +78,11 @@ async def run_momentum_feeder(
     *,
     ledger_path: Path = DEFAULT_LEDGER_PATH,
     state_path: Path = DEFAULT_STATE_PATH,
-    paper_audit_path: Path = DEFAULT_PAPER_AUDIT,
+    fed_path: Path = DEFAULT_FED_PATH,
     now: datetime | None = None,
     run_cycle: RunCycle = run_trading_loop_once,
-    open_symbols_loader: OpenSymbolsLoader = _load_open_symbols,
 ) -> dict[str, Any]:
-    """Feed top-N universe symbols (minus rotated-out / currently-held) into PAPER."""
+    """Feed top-N universe symbols (minus rotated-out) into PAPER. Gated/capped/tagged."""
     settings = get_settings()
     cfg = settings.momentum_universe_feed
     if not cfg.enabled:
@@ -103,13 +92,12 @@ async def run_momentum_feeder(
     universe = snapshot.get("universe") if isinstance(snapshot, dict) else None
     if not isinstance(universe, list) or not universe:
         return {"enabled": True, "fed": 0, "reason": "no_universe"}
+    snap_ts = str(snapshot.get("ts", "")) if isinstance(snapshot, dict) else ""
 
     rotation_state = load_state(state_path)
-    # Skip symbols already holding an open position (re-feeding averages into it).
-    # Symbols that never opened are re-fed every tick → keep competing for slots.
-    held = open_symbols_loader(paper_audit_path)
+    fed_ids = _load_fed_ids(fed_path)
 
-    fed = skipped_flagged = skipped_open = failed = 0
+    fed = skipped_flagged = skipped_already = failed = 0
     for row in universe[: cfg.top_n]:
         symbol = row.get("symbol") if isinstance(row, dict) else None
         if not isinstance(symbol, str) or not symbol:
@@ -118,8 +106,9 @@ async def run_momentum_feeder(
         if state is not None and state.status in _SKIP_STATUSES:
             skipped_flagged += 1
             continue
-        if symbol in held:
-            skipped_open += 1
+        fid = f"{snap_ts}:{symbol}"
+        if fid in fed_ids:
+            skipped_already += 1
             continue
         try:
             await run_cycle(
@@ -128,7 +117,7 @@ async def run_momentum_feeder(
                 analysis_result=_build_analysis(symbol),
                 analysis_source=COHORT,
             )
-            held.add(symbol)  # don't re-consider within this same tick
+            _record_fed_id(fid, fed_path)
             fed += 1
         except Exception:  # noqa: BLE001 — one bad symbol must not abort the tick
             failed += 1
@@ -141,7 +130,7 @@ async def run_momentum_feeder(
         "enabled": True,
         "fed": fed,
         "skipped_flagged": skipped_flagged,
-        "skipped_open": skipped_open,
+        "skipped_already": skipped_already,
         "failed": failed,
         "universe_size": len(universe),
     }
