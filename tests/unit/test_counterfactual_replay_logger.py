@@ -75,6 +75,63 @@ def test_build_comparison_none_when_no_covering_bar_or_no_entry() -> None:
     assert build_comparison(_cand(0.0), [_BAR]) is None  # kein gültiger Entry
 
 
+def test_build_comparison_implausible_price_flagged_suspect_not_drift() -> None:
+    # entry_live 100000 vs Kline-Range [90,110]: >30% ausserhalb = Feed-/Einheiten-
+    # Glitch (z. B. ENA entry_live~100 vs echte 0.094), KEIN echter Markt-Drift.
+    rec = build_comparison(_cand(100_000.0), [_BAR], threshold_bps=30.0)
+    assert rec is not None
+    assert rec["data_quality_suspect"] is True
+    # Glitch darf NICHT als drift_exceeded zählen (verzerrt sonst die Statistik).
+    assert rec["drift_exceeded"] is False
+    assert rec["schema_version"] == "v2"
+
+
+def test_build_comparison_normal_out_of_range_not_suspect() -> None:
+    # 120 vs high 110 = ~909 bps: echter (kleiner) Out-of-Range-Drift, KEIN Glitch.
+    rec = build_comparison(_cand(120.0), [_BAR], threshold_bps=30.0)
+    assert rec is not None
+    assert rec["data_quality_suspect"] is False
+    assert rec["drift_exceeded"] is True
+
+
+def test_build_comparison_passes_through_gate_would_reject() -> None:
+    rej = build_comparison(_cand(100.0, gate_would_reject=True), [_BAR])
+    assert rej is not None
+    assert rej["gate_would_reject"] is True
+    # Kandidat ohne das Feld (z. B. autonomous_generator) → None (nicht erfunden).
+    plain = build_comparison(_cand(100.0), [_BAR])
+    assert plain is not None
+    assert plain["gate_would_reject"] is None
+
+
+def test_run_pass_counts_suspect_separately(tmp_path: Path) -> None:
+    ledger = tmp_path / "ledger.jsonl"
+    out = tmp_path / "cf.jsonl"
+    ledger.write_text(
+        "\n".join(
+            [
+                json.dumps(_cand(120.0, candidate_id="real")),  # echter Drift
+                json.dumps(_cand(100_000.0, candidate_id="glitch")),  # Glitch → suspect
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    def _fetch(_sym: str, _start: int, _end: int):
+        return [_BAR]
+
+    counts = run_counterfactual_pass(
+        fetch_klines=_fetch, now=_NOW, ledger_path=ledger, output_path=out, threshold_bps=30.0
+    )
+    assert counts["compared"] == 2
+    assert counts["exceeded"] == 1  # nur der echte Drift, NICHT der Glitch
+    assert counts["suspect"] == 1
+    # Beide Records werden geschrieben (nicht-destruktiv, audit-transparent).
+    written = [json.loads(ln) for ln in out.read_text(encoding="utf-8").splitlines() if ln.strip()]
+    assert len(written) == 2
+
+
 def test_run_pass_idempotent_and_counts(tmp_path: Path) -> None:
     ledger = tmp_path / "ledger.jsonl"
     out = tmp_path / "cf.jsonl"

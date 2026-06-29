@@ -39,6 +39,17 @@ OUTPUT_PATH = Path("artifacts/counterfactual_comparison.jsonl")
 # Konservativer Default-Schwellwert (ADR 0010): out-of-settled-range-Drift über
 # diesem bps-Betrag gilt als auffällig. Env: EXECUTION_DUAL_STREAM_DRIFT_BPS.
 DEFAULT_DRIFT_BPS = 30.0
+# Plausibilitäts-Grenze (Datenqualität): liegt der Live-Entry-Preis weiter als
+# dies AUSSERHALB der gesettelten 1m-Range, ist das kein Markt-Drift, sondern ein
+# Feed-/Einheiten-/Symbol-Glitch (z. B. der technical_screener loggte für gate-
+# rejected Nicht-Krypto-Symbole einen normalisierten ~100-Indexwert statt des echten
+# Preises; auch vereinzelt Exoten/Delisted wie FTT/BAR). 3000 bps = 30 % ausserhalb
+# der Minutenkline — physisch unmöglich als echter 1m-Drift (die Kline-Range selbst
+# fasst jede real gehandelte Bewegung der Minute). Solche Records werden als
+# ``data_quality_suspect`` markiert und NICHT als ``drift_exceeded`` gezählt, damit
+# der Glitch die Drift-Statistik nicht verzerrt. Begründete physische Konstante
+# (kein Runtime-Tuning nötig); per Funktionsparameter überschreibbar/testbar.
+SUSPECT_RANGE_BPS = 3000.0
 # Entry-Minute muss gesettelt (Kline geschlossen) sein, bevor verglichen wird.
 _MIN_AGE_S = 120
 
@@ -76,9 +87,16 @@ def build_comparison(
     bars: Sequence[Bar],
     *,
     threshold_bps: float = DEFAULT_DRIFT_BPS,
+    suspect_range_bps: float = SUSPECT_RANGE_BPS,
 ) -> dict[str, object] | None:
     """Live∥Replay-Vergleichszeile für einen Kandidaten (pur). None wenn nicht
-    vergleichbar (kein Entry-Preis / keine deckende Kline)."""
+    vergleichbar (kein Entry-Preis / keine deckende Kline).
+
+    Markiert physisch unmögliche Abweichungen (> ``suspect_range_bps`` ausserhalb
+    der gesettelten Range) als ``data_quality_suspect`` und zählt sie NICHT als
+    ``drift_exceeded`` — sie sind Feed-/Einheiten-Glitches, kein Markt-Drift.
+    Gibt ``gate_would_reject`` des Kandidaten durch (None falls unbekannt), damit
+    Konsumenten eine executable-only-Sicht bilden können."""
     entry_live = candidate.get("entry_price")
     if not isinstance(entry_live, (int, float)) or entry_live <= 0:
         return None
@@ -97,6 +115,8 @@ def build_comparison(
     else:
         nearest = high if live > high else low
         drift_to_range_bps = round((live - nearest) / nearest * 1e4, 2) if nearest > 0 else 0.0
+    suspect = abs(drift_to_range_bps) > suspect_range_bps
+    gate_would_reject = candidate.get("gate_would_reject")
     return {
         "candidate_id": candidate.get("candidate_id"),
         "symbol": candidate.get("symbol"),
@@ -111,9 +131,13 @@ def build_comparison(
         "in_settled_range": in_range,
         "drift_to_close_bps": drift_to_close_bps,
         "drift_to_range_bps": drift_to_range_bps,
-        "drift_exceeded": abs(drift_to_range_bps) > threshold_bps,
+        # Glitch zählt nicht als Drift; echter Out-of-Range-Drift schon.
+        "drift_exceeded": (not suspect) and abs(drift_to_range_bps) > threshold_bps,
+        "data_quality_suspect": suspect,
+        "gate_would_reject": bool(gate_would_reject) if gate_would_reject is not None else None,
         "threshold_bps": threshold_bps,
-        "schema_version": "v1",
+        "suspect_range_bps": suspect_range_bps,
+        "schema_version": "v2",
     }
 
 
@@ -152,6 +176,7 @@ def run_counterfactual_pass(
     *,
     fetch_klines: KlineFetcher,
     threshold_bps: float = DEFAULT_DRIFT_BPS,
+    suspect_range_bps: float = SUSPECT_RANGE_BPS,
     now: datetime | None = None,
     ledger_path: Path = LEDGER_PATH,
     output_path: Path = OUTPUT_PATH,
@@ -160,7 +185,9 @@ def run_counterfactual_pass(
     """Vergleiche Live vs. gesettelte Kline pro Kandidat (idempotent, fail-soft).
 
     Schreibt NUR nach ``output_path``. Mutiert keinen Live-/Paper-Zustand.
-    Returns counts {compared, exceeded, already, skipped_kind, skipped_recent, no_data}.
+    Returns counts {compared, exceeded, suspect, already, skipped_kind,
+    skipped_recent, no_data}. ``suspect`` zählt als Datenqualitäts-Glitch
+    erkannte Records (in ``compared`` enthalten, aber NICHT in ``exceeded``).
     """
     now = now or datetime.now(UTC)
     now_ms = int(now.timestamp() * 1000)
@@ -169,6 +196,7 @@ def run_counterfactual_pass(
     counts = {
         "compared": 0,
         "exceeded": 0,
+        "suspect": 0,
         "already": 0,
         "skipped_kind": 0,
         "skipped_recent": 0,
@@ -193,7 +221,9 @@ def run_counterfactual_pass(
         if not bars:
             counts["no_data"] += 1
             continue
-        record = build_comparison(c, bars, threshold_bps=threshold_bps)
+        record = build_comparison(
+            c, bars, threshold_bps=threshold_bps, suspect_range_bps=suspect_range_bps
+        )
         if record is None:
             counts["no_data"] += 1
             continue
@@ -205,6 +235,8 @@ def run_counterfactual_pass(
             counts["compared"] += 1
             if record["drift_exceeded"]:
                 counts["exceeded"] += 1
+            if record["data_quality_suspect"]:
+                counts["suspect"] += 1
         except OSError as exc:
             logger.warning("[counterfactual] write failed: %s", exc)
     return counts
@@ -213,6 +245,7 @@ def run_counterfactual_pass(
 __all__ = [
     "DEFAULT_DRIFT_BPS",
     "OUTPUT_PATH",
+    "SUSPECT_RANGE_BPS",
     "bar_covering",
     "build_comparison",
     "run_counterfactual_pass",
