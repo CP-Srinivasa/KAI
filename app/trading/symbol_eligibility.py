@@ -45,7 +45,12 @@ def resolve_duplicates(symbols: list[str]) -> dict[str, str]:
     return out
 
 
-DEFAULT_MIN_TURNOVER_USD: float = 10_000_000.0
+# Calibrated 2026-06-30 against the live Binance 24h turnover distribution of
+# all 615 USDT spot pairs: median ~0.5M, p90 ~4.9M, p95 ~11M. The prior 10M
+# floor kept only the top ~5.7% of pairs and mis-flagged genuinely liquid names
+# in the p90-p95 band (e.g. WIF at ~5.4M = ~91st pct). 3M sits in the p80-p90
+# gap, admits real liquidity with headroom, and still flags the illiquid tail.
+DEFAULT_MIN_TURNOVER_USD: float = 3_000_000.0
 DEFAULT_MIN_HISTORY_DAYS: int = 30
 
 
