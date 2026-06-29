@@ -67,3 +67,29 @@ def test_thresholds_are_parametrised() -> None:
     assert DEFAULT_MIN_HISTORY_DAYS == 30
     v = evaluate_eligibility(_m("FOO/USDT", 2e6, 365), min_turnover_usd=1e6)
     assert v.eligible is True
+
+
+from app.trading.symbol_eligibility import resolve_duplicates
+
+
+def test_resolve_prefers_usdt_over_usdc() -> None:
+    out = resolve_duplicates(["BTC/USDC", "BTC/USDT"])
+    assert out["BTC/USDT"] == "BTC/USDT"
+    assert out["BTC/USDC"] == "BTC/USDT"
+
+
+def test_resolve_prefers_spot_over_perp() -> None:
+    out = resolve_duplicates(["BTC/USDT:USDT", "BTC/USDT"])
+    assert out["BTC/USDT"] == "BTC/USDT"
+    assert out["BTC/USDT:USDT"] == "BTC/USDT"
+
+
+def test_resolve_keeps_distinct_bases_separate() -> None:
+    out = resolve_duplicates(["BTC/USDT", "ETH/USDT"])
+    assert out["BTC/USDT"] == "BTC/USDT"
+    assert out["ETH/USDT"] == "ETH/USDT"
+
+
+def test_resolve_single_member_is_canonical() -> None:
+    out = resolve_duplicates(["SOL/USDC"])
+    assert out["SOL/USDC"] == "SOL/USDC"

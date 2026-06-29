@@ -14,7 +14,34 @@ exchangeInfo gate).
 
 from __future__ import annotations
 
+from collections import defaultdict
 from dataclasses import dataclass
+
+from app.trading.asset_universe import base_symbol
+
+_QUOTE_RANK = {"USDT": 0, "USDC": 1, "USD": 2}
+
+
+def _canonical_sort_key(symbol: str) -> tuple[int, int, str]:
+    """Lower wins: preferred quote first, spot before perp, then lexical."""
+    s = symbol.strip().upper()
+    is_perp = 1 if ":" in s else 0
+    # Quote = segment after '/', before any ':' (perp suffix).
+    quote = s.split("/", 1)[1].split(":", 1)[0] if "/" in s else ""
+    return (_QUOTE_RANK.get(quote, 9), is_perp, s)
+
+
+def resolve_duplicates(symbols: list[str]) -> dict[str, str]:
+    """Map each symbol to the canonical variant of its base (pure)."""
+    groups: dict[str, list[str]] = defaultdict(list)
+    for s in symbols:
+        groups[base_symbol(s)].append(s)
+    out: dict[str, str] = {}
+    for members in groups.values():
+        canonical = min(members, key=_canonical_sort_key)
+        for m in members:
+            out[m] = canonical
+    return out
 
 DEFAULT_MIN_TURNOVER_USD: float = 10_000_000.0
 DEFAULT_MIN_HISTORY_DAYS: int = 30
