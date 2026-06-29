@@ -186,3 +186,55 @@ def edge_release(
 
     verdict = build_momentum_release(audit, min_n=min_n, safety_margin_bps=safety_margin_bps)
     typer.echo(json.dumps(verdict, indent=2))
+
+
+_ELIG_LEDGER = Path("artifacts/symbol_eligibility_audit.jsonl")
+
+
+@universe_app.command("eligibility-run")
+def eligibility_run(
+    ledger: Annotated[
+        Path, typer.Option(help="Universe snapshot to source symbols from.")
+    ] = _DEFAULT_LEDGER,
+    out: Annotated[Path, typer.Option(help="Eligibility ledger path.")] = _ELIG_LEDGER,
+    min_turnover_usd: Annotated[float, typer.Option(help="Min 24h turnover (USD).")] = 10_000_000.0,
+    min_history_days: Annotated[int, typer.Option(help="Min canonical-venue history (days).")] = 30,
+) -> None:
+    """Shadow-evaluate the latest universe's symbols against Binance. No trades, no filter."""
+    from datetime import UTC, datetime
+
+    from app.market_data.binance_adapter import BinanceAdapter
+    from app.observability.momentum_universe_ledger import read_latest
+    from app.observability.symbol_eligibility_ledger import append_eligibility_snapshot
+    from app.trading.symbol_eligibility_fetch import build_eligibility
+
+    latest = read_latest(ledger)
+    universe = latest.get("universe") if isinstance(latest, dict) else None
+    if not isinstance(universe, list) or not universe:
+        typer.echo(json.dumps({"available": False, "reason": "no_universe"}))
+        return
+    symbols = [row["symbol"] for row in universe if isinstance(row, dict) and "symbol" in row]
+    verdicts = asyncio.run(
+        build_eligibility(
+            BinanceAdapter(),
+            symbols,
+            min_turnover_usd=min_turnover_usd,
+            min_history_days=min_history_days,
+        )
+    )
+    record = append_eligibility_snapshot(out, verdicts, now=datetime.now(UTC))
+    typer.echo(json.dumps(record, indent=2))
+
+
+@universe_app.command("eligibility-show")
+def eligibility_show(
+    ledger: Annotated[Path, typer.Option(help="Eligibility ledger path.")] = _ELIG_LEDGER,
+) -> None:
+    """Print the latest persisted eligibility snapshot (offline)."""
+    from app.observability.symbol_eligibility_ledger import read_latest_eligibility
+
+    latest = read_latest_eligibility(ledger)
+    if latest is None:
+        typer.echo(json.dumps({"available": False, "reason": "no_snapshot"}))
+        return
+    typer.echo(json.dumps(latest, indent=2))

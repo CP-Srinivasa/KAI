@@ -62,3 +62,27 @@ class TestLedger:
         p = tmp_path / "nested" / "dir" / "u.jsonl"
         append_snapshot(p, _ranked(), now=datetime(2026, 6, 1, tzinfo=UTC))
         assert p.exists()
+
+
+def _ranked_elig() -> list[RankedSymbol]:
+    return [
+        RankedSymbol("BTC/USDT", 0.9, 0.9, 0.9, 1),
+        RankedSymbol("SLX/USDT", 0.8, 0.8, 0.8, 2),
+    ]
+
+
+def test_snapshot_without_eligibility_has_no_flag() -> None:
+    rec = snapshot_record(_ranked_elig(), now=datetime(2026, 6, 29, tzinfo=UTC))
+    assert "eligible" not in rec["universe"][0]
+
+
+def test_snapshot_embeds_eligibility_when_given() -> None:
+    elig = {
+        "BTC/USDT": {"eligible": True, "reasons": []},
+        "SLX/USDT": {"eligible": False, "reasons": ["no_canonical_venue_data"]},
+    }
+    rec = snapshot_record(_ranked_elig(), now=datetime(2026, 6, 29, tzinfo=UTC), eligibility=elig)
+    rows = {r["symbol"]: r for r in rec["universe"]}
+    assert rows["BTC/USDT"]["eligible"] is True
+    assert rows["SLX/USDT"]["eligible"] is False
+    assert rows["SLX/USDT"]["reasons"] == ["no_canonical_venue_data"]
