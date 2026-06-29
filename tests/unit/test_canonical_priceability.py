@@ -11,7 +11,6 @@ from pathlib import Path
 
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # 1. Settings flag — universe_eligibility_enforce
 # ---------------------------------------------------------------------------
@@ -34,9 +33,6 @@ def test_universe_eligibility_enforce_can_be_enabled_via_env(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("EXECUTION_UNIVERSE_ELIGIBILITY_ENFORCE", "true")
-    from importlib import reload
-
-    import app.core.settings as _mod
 
     # Bypass lru_cache by instantiating directly.
     from app.core.settings import ExecutionSettings
@@ -99,7 +95,9 @@ def test_latest_ineligible_symbols_uses_latest_snapshot(tmp_path: Path) -> None:
         "ts": "2026-06-01T00:00:00",
         "count": 1,
         "eligible_count": 0,
-        "verdicts": [{"symbol": "FOO/USDT", "eligible": False, "reasons": ["no_canonical_venue_data"]}],
+        "verdicts": [
+            {"symbol": "FOO/USDT", "eligible": False, "reasons": ["no_canonical_venue_data"]}
+        ],
     }
     # Second snapshot: FOO eligible (recovered).
     snap2 = {

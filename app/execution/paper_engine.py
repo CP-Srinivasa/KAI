@@ -19,7 +19,6 @@ from app.audit.stream_validation import PaperExecutionAuditStreamRow
 from app.core.file_lock import append_lock
 from app.core.settings import get_settings
 from app.core.symbol_guard import is_tradeable_symbol
-from app.trading.symbol_eligibility import is_canonical_priceable, latest_ineligible_symbols
 from app.execution.audit_replay import replay_paper_audit
 from app.execution.execution_protocol import executable_intent_to_paper_kwargs
 from app.execution.models import (
@@ -41,6 +40,7 @@ from app.signals.models import (
     SignalStateMachine,
     SignalStateTransition,
 )
+from app.trading.symbol_eligibility import is_canonical_priceable, latest_ineligible_symbols
 
 logger = logging.getLogger(__name__)
 

@@ -114,10 +114,12 @@ def latest_ineligible_symbols(ledger_path: Path) -> set[str]:
     snapshot = read_latest_eligibility(ledger_path)
     if snapshot is None:
         return set()
-    verdicts = snapshot.get("verdicts") or []
+    raw_verdicts = snapshot.get("verdicts")
+    if not isinstance(raw_verdicts, list):
+        return set()
     return {
         v["symbol"]
-        for v in verdicts
+        for v in raw_verdicts
         if isinstance(v, dict) and v.get("eligible") is False and v.get("symbol")
     }
 

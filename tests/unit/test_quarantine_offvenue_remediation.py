@@ -12,7 +12,6 @@ from pathlib import Path
 
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # Helpers: build minimal audit fixtures
 # ---------------------------------------------------------------------------
@@ -96,10 +95,11 @@ def _write_jsonl(path: Path, rows: list[dict]) -> None:
 def _import_script():
     """Import the remediation script module."""
     import importlib.util
-    import sys
     from pathlib import Path
 
-    script_path = Path(__file__).parent.parent.parent / "scripts" / "quarantine_offvenue_positions.py"
+    script_path = (
+        Path(__file__).parent.parent.parent / "scripts" / "quarantine_offvenue_positions.py"
+    )
     spec = importlib.util.spec_from_file_location("quarantine_offvenue_positions", script_path)
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
