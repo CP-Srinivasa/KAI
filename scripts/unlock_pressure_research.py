@@ -37,6 +37,7 @@ from app.analysis.features.feature_matrix import FeatureRow, build_feature_matri
 from app.analysis.features.forward_returns import compute_forward_return_bps
 from app.analysis.features.unlock_align import UnlockEvent
 from app.market_data.history_loader import load_ohlcv_history
+from app.research.confound import beta_neutral_forward_returns, timing_alpha_report
 from app.research.evaluate import search_hypotheses
 from app.research.ledger import HypothesisLedger
 from app.research.runner import (
@@ -59,6 +60,11 @@ MAX_LOOKBACK_DAYS = 730
 _MS_PER_DAY = 86_400_000
 DEFAULT_EVENTS = Path("artifacts/research/unlock_events.json")
 UNLOCK_NAMES = frozenset(n for n, _ in unlock_hypotheses())
+# Beta-neutral (drift-de-confounded) variants — the SAME unlock deciders under
+# distinct names so they get their own ledger keys and run in the SAME BH-FDR
+# batch against drift-de-meaned labels (confound control, app.research.confound).
+BN_UNLOCK_HYPOTHESES = [(f"{n}_beta_neutral", fn) for n, fn in unlock_hypotheses()]
+BN_UNLOCK_NAMES = frozenset(n for n, _ in BN_UNLOCK_HYPOTHESES)
 
 
 def _load_events(path: Path) -> dict[str, dict[str, Any]]:
@@ -73,53 +79,9 @@ def _load_events(path: Path) -> dict[str, dict[str, Any]]:
     return out
 
 
-def _confound_check(
-    per_symbol: dict[str, tuple[list[FeatureRow], list[float], int]],
-    horizon: int,
-    cost_bps: float,
-) -> list[dict[str, Any]]:
-    """Is "short into unlock" a real timing edge, or just alt-beta?
-
-    These alts trended down over 2024-26, so an ALWAYS-short would also profit.
-    Compare, per symbol at ``horizon``, the always-short net (the beta) vs the
-    unlock-timed short net (only z>1 bars). If ``timing_alpha`` ~ 0 across symbols
-    the "edge" is alt-beta, NOT unlock timing — the decisive scrutiny the BH-FDR
-    survival screen does not perform.
-    """
-    out: list[dict[str, Any]] = []
-    logger.info("CONFOUND (always-short vs unlock-timed-short net bps, h=%d):", horizon)
-    for pair, (rows, closes, _gap) in per_symbol.items():
-        labels = compute_forward_return_bps(closes, horizon)
-        all_fwd = [x for x in labels if x is not None]
-        timed = [
-            x
-            for i, r in enumerate(rows)
-            if r.unlock_frac_fwd_z is not None
-            and r.unlock_frac_fwd_z > 1.0
-            and (x := labels[i]) is not None
-        ]
-        if not all_fwd or not timed:
-            continue
-        base = -(sum(all_fwd) / len(all_fwd)) - cost_bps
-        timed_net = -(sum(timed) / len(timed)) - cost_bps
-        out.append(
-            {
-                "symbol": pair,
-                "n_timed": len(timed),
-                "always_short_net_bps": round(base, 2),
-                "unlock_timed_short_net_bps": round(timed_net, 2),
-                "timing_alpha_bps": round(timed_net - base, 2),
-            }
-        )
-        logger.info(
-            "  %-10s always_short=%+.1f  timed_short=%+.1f  timing_alpha=%+.1f (n=%d)",
-            pair,
-            base,
-            timed_net,
-            timed_net - base,
-            len(timed),
-        )
-    return out
+def _unlock_timed(r: FeatureRow) -> bool:
+    """Bar where upcoming unlock pressure is unusually high (z>1) — the timed set."""
+    return r.unlock_frac_fwd_z is not None and r.unlock_frac_fwd_z > 1.0
 
 
 async def run(
@@ -180,12 +142,20 @@ async def run(
         return 2
 
     universe = tuple(sorted(per_symbol))
-    confound = _confound_check(per_symbol, max(horizons), cost_bps)
+    confound = timing_alpha_report(
+        per_symbol,
+        max(horizons),
+        cost_bps,
+        timed=_unlock_timed,
+        side=-1,
+        label="unlock-timed short",
+    )
 
     ledger = HypothesisLedger(LEDGER_PATH)
     as_of = datetime.fromtimestamp(end_ms / 1000, tz=UTC).isoformat()
     report_horizons: list[dict[str, Any]] = []
     any_unlock_survivor = False
+    any_bn_survivor = False
 
     for horizon in horizons:
         results: list[SymbolSearchResult] = []
@@ -210,6 +180,34 @@ async def run(
         for entry in entries:
             ledger.record(entry)
 
+        # Confound control: the SAME unlock deciders against DRIFT-DE-MEANED labels
+        # in the same BH-FDR batch (honest cumulative trial count). A survivor here
+        # beat the alt-beta drift rather than riding it. In-sample baseline ⇒ a
+        # diagnostic, NOT a tradeable label (see app.research.confound).
+        bn_results: list[SymbolSearchResult] = []
+        for pair, (rows, closes, gap_bars) in per_symbol.items():
+            bn_labels = beta_neutral_forward_returns(compute_forward_return_bps(closes, horizon))
+            bn_report = search_hypotheses(
+                BN_UNLOCK_HYPOTHESES, rows, bn_labels, cost_bps, min_trades=min_trades
+            )
+            bn_results.append(SymbolSearchResult(pair, len(rows), gap_bars, bn_report))
+        bn_aggregates = summarize_universe(bn_results)
+        for entry in aggregates_to_ledger_entries(
+            bn_aggregates,
+            timeframe=TIMEFRAME,
+            horizon=horizon,
+            round_trip_cost_bps=cost_bps,
+            universe=universe,
+            min_trades=min_trades,
+            alpha=0.05,
+            as_of_utc=as_of,
+            lookback_days=lookback_days,
+            recorded_at_utc=as_of,
+        ):
+            ledger.record(entry)
+        bn_aggs = [a for a in bn_aggregates if a.name in BN_UNLOCK_NAMES]
+        any_bn_survivor |= any(a.n_symbols_survived > 0 for a in bn_aggs)
+
         unlock_aggs = [a for a in aggregates if a.name in UNLOCK_NAMES]
         any_unlock_survivor |= any(a.n_symbols_survived > 0 for a in unlock_aggs)
         report_horizons.append(
@@ -225,11 +223,21 @@ async def run(
                     }
                     for a in unlock_aggs
                 ],
+                "unlock_beta_neutral": [
+                    {
+                        "name": a.name,
+                        "symbols_survived": a.n_symbols_survived,
+                        "symbols_evaluated": a.n_symbols_evaluated,
+                        "mean_net_bps": round(a.mean_net_bps, 3),
+                        "total_trades": a.total_trades,
+                    }
+                    for a in bn_aggs
+                ],
             }
         )
-        for a in unlock_aggs:
+        for a in (*unlock_aggs, *bn_aggs):
             logger.info(
-                "h=%d %-22s survived=%d/%d mean_net=%+.2fbps trades=%d",
+                "h=%d %-30s survived=%d/%d mean_net=%+.2fbps trades=%d",
                 horizon,
                 a.name,
                 a.n_symbols_survived,
@@ -253,6 +261,15 @@ async def run(
                 "min_trades": min_trades,
                 "hypotheses_tested_cumulative": ledger.tested_count(),
                 "confound_check": {"horizon": max(horizons), "per_symbol": confound},
+                "beta_neutral_control": {
+                    "any_survivor": any_bn_survivor,
+                    "in_sample_baseline": True,
+                    "note": (
+                        "Drift-de-meaned labels (confound diagnostic, NOT a tradeable "
+                        "label). A survivor beat alt-beta, not just rode it; a tradeable "
+                        "claim still needs an out-of-sample baseline + full validation gate."
+                    ),
+                },
                 "horizons": report_horizons,
             },
             indent=2,
@@ -261,12 +278,13 @@ async def run(
     )
     logger.info("wrote %s", out_path)
     logger.info(
-        "VERDICT: %s unlock survivor across %s horizons -- %s",
+        "VERDICT: raw=%s / beta-neutral=%s unlock survivor across %s horizons -- %s",
         ">=1" if any_unlock_survivor else "0",
+        ">=1" if any_bn_survivor else "0",
         list(horizons),
-        "candidate(s) to scrutinize"
-        if any_unlock_survivor
-        else "no unlock-pressure edge (valid $0 result)",
+        "beta-neutral candidate(s) to scrutinize"
+        if any_bn_survivor
+        else "no de-confounded unlock-pressure edge (valid $0 result; raw survivors, if any, are alt-beta)",
     )
     return 0
 

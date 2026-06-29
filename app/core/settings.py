@@ -281,6 +281,13 @@ class RiskSettings(BaseSettings):
     # '{"chop_quiet":0.5,"breakout_up":1.0}'. Fokus, KEINE Gate-Lockerung.
     regime_size_enabled: bool = Field(default=False)
     regime_size_multipliers: dict[str, float] = Field(default_factory=dict)
+    # Unlock-proximity risk overlay (ADR 0012, Phase-3 SKELETON, wired in a later
+    # evidence-gated PR). RISK marker, never directional: may only DAMPEN size
+    # (mult in (0,1]); shadow_only ⇒ compute + audit-stamp, not apply. No-op in P0–2.
+    unlock_proximity_enabled: bool = Field(default=False)
+    unlock_proximity_shadow_only: bool = Field(default=True)
+    unlock_proximity_hours: float = Field(default=48.0)
+    unlock_proximity_multiplier: float = Field(default=0.5, ge=0.0, le=1.0)
     # DS-20260528-V2: minimum order notional (USD). Sizing uses remaining cash
     # as equity, so a nearly-deployed portfolio yields dust orders (~1e-16 units)
     # that fill but take no real position. Orders below this notional are rejected.

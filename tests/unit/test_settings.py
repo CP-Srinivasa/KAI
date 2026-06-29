@@ -43,6 +43,24 @@ def test_provider_settings_defaults():
     assert settings.openai_timeout > 0
 
 
+def test_risk_settings_unlock_proximity_defaults_off(monkeypatch):
+    # Phase-0 skeleton (ADR 0012 truth-pivot): the unlock-proximity risk overlay
+    # must be default-OFF + shadow-only so merging/deploying it is a pure no-op
+    # until the evidence-gated Phase 3 wires it in.
+    for key in (
+        "RISK_UNLOCK_PROXIMITY_ENABLED",
+        "RISK_UNLOCK_PROXIMITY_SHADOW_ONLY",
+        "RISK_UNLOCK_PROXIMITY_HOURS",
+        "RISK_UNLOCK_PROXIMITY_MULTIPLIER",
+    ):
+        monkeypatch.delenv(key, raising=False)
+    settings = RiskSettings(_env_file=None)
+    assert settings.unlock_proximity_enabled is False
+    assert settings.unlock_proximity_shadow_only is True
+    assert settings.unlock_proximity_hours == 48.0
+    assert 0.0 <= settings.unlock_proximity_multiplier <= 1.0
+
+
 def test_source_settings_defaults():
     settings = SourceSettings()
     assert settings.fetch_timeout > 0
