@@ -18,8 +18,45 @@ T0 = datetime(2026, 6, 2, 12, 0, 0, tzinfo=UTC)
 
 
 def test_pair_mapping() -> None:
-    assert sr._to_binance_pair("BTC/USDT") == "BTCUSDT"
-    assert sr._to_binance_pair("eth-usdt") == "ETHUSDT"
+    assert sr.to_binance_pair("BTC/USDT") == "BTCUSDT"
+    assert sr.to_binance_pair("eth-usdt") == "ETHUSDT"
+
+
+class _FakeResp:
+    def __init__(self, payload: object) -> None:
+        self._payload = payload
+
+    def __enter__(self) -> _FakeResp:
+        return self
+
+    def __exit__(self, *exc: object) -> bool:
+        return False
+
+    def read(self) -> bytes:
+        return json.dumps(self._payload).encode()
+
+
+def test_binance_spot_symbols_parses_trading_only(monkeypatch) -> None:
+    monkeypatch.setattr(sr, "_spot_symbols_cache", None)
+    info = {
+        "symbols": [
+            {"symbol": "BTCUSDT", "status": "TRADING"},
+            {"symbol": "ETHUSDT", "status": "TRADING"},
+            {"symbol": "DEADUSDT", "status": "BREAK"},  # non-trading → excluded
+        ]
+    }
+    monkeypatch.setattr(sr.urllib.request, "urlopen", lambda *a, **k: _FakeResp(info))
+    assert sr.binance_spot_symbols(force=True) == frozenset({"BTCUSDT", "ETHUSDT"})
+
+
+def test_binance_spot_symbols_failsoft_returns_none(monkeypatch) -> None:
+    monkeypatch.setattr(sr, "_spot_symbols_cache", None)
+
+    def boom(*a, **k):
+        raise OSError("down")
+
+    monkeypatch.setattr(sr.urllib.request, "urlopen", boom)
+    assert sr.binance_spot_symbols(force=True) is None
 
 
 def test_kline_fetch_failsoft_returns_none(monkeypatch) -> None:
