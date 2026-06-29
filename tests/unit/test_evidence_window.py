@@ -31,12 +31,54 @@ import json
 import pytest
 
 from app.execution.cost_model import CostModel
+from app.observability.edge_report import ClosedTrade
 from app.observability.evidence_window import (
     CANONICAL_EDGE_SOURCES,
     build_evidence_window,
     build_window_from_audit,
+    edge_source_of,
     render_window,
 )
+
+
+def _closed(signal_source: str, document_id: str) -> ClosedTrade:
+    return ClosedTrade(
+        symbol="SLX/USDT",
+        position_side="long",
+        entry_price=100.0,
+        exit_price=128.0,
+        quantity=1.0,
+        reason="tp",
+        trade_pnl_usd=28.0,
+        fee_usd=0.2,
+        timestamp_utc="2026-06-27T15:00:00+00:00",
+        signal_source=signal_source,
+        document_id=document_id,
+    )
+
+
+def test_edge_source_of_is_public_and_recovers_mis_bucketed_cohort() -> None:
+    # Public contract that ``trading edge-validation`` relies on to keep the
+    # anchored verdict's cohort canonical-clean (mirrors the canonical-edge engine).
+    momentum = _closed("autonomous_generator", "momentum_universe_SLXUSDT")
+    plain = _closed("autonomous_generator", "")
+    assert edge_source_of(momentum) == "momentum_universe"  # recovered → NOT canonical
+    assert edge_source_of(plain) == "autonomous_generator"  # unchanged → canonical
+
+
+def test_canonical_filter_excludes_mis_bucketed_cohort_close() -> None:
+    # The exact predicate edge-validation applies: a momentum microcap that closed
+    # mis-bucketed as autonomous_generator must NOT re-enter the canonical cohort.
+    trades = [
+        _closed("autonomous_generator", "momentum_universe_SLXUSDT"),  # foreign cohort
+        _closed("autonomous_generator", ""),  # genuine autonomous
+        _closed("real_analysis", ""),  # genuine canonical
+    ]
+    kept = [t for t in trades if edge_source_of(t) in CANONICAL_EDGE_SOURCES]
+    assert len(kept) == 2
+    assert all(edge_source_of(t) in CANONICAL_EDGE_SOURCES for t in kept)
+    assert all(t.document_id != "momentum_universe_SLXUSDT" for t in kept)
+
 
 # --- fixture builders ----------------------------------------------------------
 

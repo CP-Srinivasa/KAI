@@ -94,7 +94,7 @@ CANONICAL_EDGE_SOURCES: frozenset[str] = frozenset({"autonomous_generator", "rea
 _MIS_BUCKETED_COHORTS: tuple[str, ...] = (MOMENTUM_COHORT,)
 
 
-def _edge_source_of(trade: ClosedTrade) -> str:
+def edge_source_of(trade: ClosedTrade) -> str:
     """The trade's TRUE source for the edge source-filter.
 
     Recovers a cohort tag that survives in ``document_id`` when the stored
@@ -478,13 +478,13 @@ def build_evidence_window(
     # attributed sources. counts + safety above already saw every row, so this
     # shapes ONLY the edge. Closes the 2026-06-23 epoch contamination where
     # unattributed May-canary closes faked a positive ETH cohort, AND (via
-    # _edge_source_of) the 2026-06-29 mis-attribution where pre-fix cohort closes
+    # edge_source_of) the 2026-06-29 mis-attribution where pre-fix cohort closes
     # leaked into the autonomous edge under a stale signal_source.
     source_filter_tuple: tuple[str, ...] | None = None
     closes_excluded_by_source = 0
     if source_allowlist is not None:
         source_filter_tuple = tuple(sorted(source_allowlist))
-        kept = [t for t in closed if _edge_source_of(t) in source_allowlist]
+        kept = [t for t in closed if edge_source_of(t) in source_allowlist]
         closes_excluded_by_source = len(closed) - len(kept)
         closed = kept
 
