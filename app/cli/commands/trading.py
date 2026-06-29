@@ -621,7 +621,7 @@ def trading_edge_validation(
         render_edge_validation,
         resolve_trial_count,
     )
-    from app.observability.evidence_window import CANONICAL_EDGE_SOURCES
+    from app.observability.evidence_window import CANONICAL_EDGE_SOURCES, edge_source_of
     from app.observability.falsification_verdict import (
         build_verdict_record,
         record_and_anchor_verdict,
@@ -639,7 +639,11 @@ def trading_edge_validation(
     trades, _exclusions = parse_closed_trades_with_exclusions(
         events, implausible_move_threshold=implausible_threshold
     )
-    canonical = [t for t in trades if (t.signal_source or "unknown") in CANONICAL_EDGE_SOURCES]
+    # edge_source_of (not raw signal_source) recovers a foreign-cohort close that
+    # closed mis-bucketed as autonomous_generator before the 2026-06-29 attribution
+    # fix (#493). Without it the momentum microcaps re-contaminate the very edge the
+    # anchored verdict attests — same exclusion the canonical-edge engine applies.
+    canonical = [t for t in trades if edge_source_of(t) in CANONICAL_EDGE_SOURCES]
     cm = CostModel()
     net_bps = [compute_trade_edge(t, cm, venue=venue).net_bps for t in canonical]
     verdict = evaluate_edge_validation(
