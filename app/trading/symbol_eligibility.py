@@ -124,6 +124,38 @@ def latest_ineligible_symbols(ledger_path: Path) -> set[str]:
     }
 
 
+def latest_unpriceable_symbols(ledger_path: Path) -> set[str]:
+    """Symbols whose LATEST verdict is ineligible AND reason includes ``no_canonical_venue_data``.
+
+    Narrower than ``latest_ineligible_symbols``: only symbols with NO canonical
+    Binance market are returned.  Calibration-dependent reasons
+    (``below_min_turnover``, ``below_min_history``, ``duplicate_of:…``) are
+    excluded so liquid sub-threshold names (e.g. WIF) are never blocked by the
+    enforce gate.
+
+    Returns an empty set if the ledger is missing (same permissive default as
+    ``latest_ineligible_symbols``).
+    """
+    from app.observability.symbol_eligibility_ledger import read_latest_eligibility
+
+    snapshot = read_latest_eligibility(ledger_path)
+    if snapshot is None:
+        return set()
+    raw_verdicts = snapshot.get("verdicts")
+    if not isinstance(raw_verdicts, list):
+        return set()
+    return {
+        v["symbol"]
+        for v in raw_verdicts
+        if (
+            isinstance(v, dict)
+            and v.get("eligible") is False
+            and v.get("symbol")
+            and "no_canonical_venue_data" in (v.get("reasons") or [])
+        )
+    }
+
+
 def is_canonical_priceable(symbol: str, ineligible: set[str]) -> bool:
     """False iff symbol is in the known-ineligible set.
 
