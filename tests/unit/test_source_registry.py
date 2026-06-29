@@ -110,6 +110,8 @@ class TestSourceStatus:
             "silent",
             "archived",
             "pinned",
+            # Terminal operator-kill (2026-06-29): RETIRED, no outgoing FSM edge.
+            "retired",
         }
         assert {s.value for s in SourceStatus} == expected
 
