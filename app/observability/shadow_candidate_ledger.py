@@ -207,6 +207,13 @@ class ShadowCandidate:
     # candidate, once confluence is shown to add edge).
     tv_rating: float | None = None
     tv_contradiction: bool | None = None
+    # Herkunft des entry_price (Transparenz für die Shadow-Edge-Bewertung):
+    # "binance_1m_decision" = Decision-Time-Preis aus der GLEICHEN Binance-1m-Serie,
+    # auf der die Forward-Resolution läuft (venue-/timeframe-konsistent); ein
+    # anderer/fehlender Wert (z. B. "fallback_1h_last") markiert einen
+    # provider-offenen Fallback-Preis (kann venue-/timeframe-versetzt sein). None =
+    # nicht gesetzt (Alt-Records / Pfade, die das Feld nicht füllen).
+    entry_price_basis: str | None = None
     schema_version: str = "v2"
 
     @staticmethod

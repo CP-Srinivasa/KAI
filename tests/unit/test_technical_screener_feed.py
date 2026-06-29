@@ -65,6 +65,7 @@ async def test_feed_writes_shadow_candidates_and_forces_non_btc(tmp_path: Path) 
         min_strength=0.1,
         ledger_path=ledger,
         now_utc="2026-06-15T00:00:00+00:00",
+        entry_price_fetcher=lambda *_a: None,  # no network; deterministic 1h fallback
     )
 
     assert summary["enabled"] is True
@@ -104,6 +105,7 @@ async def test_bearish_technical_still_blocked_by_d142(tmp_path: Path) -> None:
         min_strength=0.1,
         ledger_path=ledger,
         now_utc="2026-06-15T00:00:00+00:00",
+        entry_price_fetcher=lambda *_a: None,
     )
     rows = [json.loads(line) for line in ledger.read_text(encoding="utf-8").splitlines()]
     weak = next((r for r in rows if r["symbol"] == "WEAK/USDT"), None)
@@ -123,6 +125,7 @@ async def test_no_write_mode(tmp_path: Path) -> None:
         min_strength=0.1,
         write=False,
         ledger_path=ledger,
+        entry_price_fetcher=lambda *_a: None,
     )
     assert int(summary["written"]) == 0  # type: ignore[call-overload]
     assert not ledger.exists()
@@ -143,6 +146,7 @@ async def test_fetch_error_drops_symbol_not_run(tmp_path: Path) -> None:
         min_strength=0.1,
         ledger_path=tmp_path / "s.jsonl",
         now_utc="2026-06-15T00:00:00+00:00",
+        entry_price_fetcher=lambda *_a: None,
     )
     assert summary["scanned"] == 2  # BAD dropped, run continued
 
@@ -152,3 +156,68 @@ async def test_disabled_flag_is_hard_noop(monkeypatch: pytest.MonkeyPatch) -> No
     summary = await run_from_settings(adapter=_FakeAdapter({}))
     # Default settings have the flag OFF → no-op, no fetch, no write.
     assert summary["enabled"] is False
+
+
+# --------------------------------------------------------------------------- #
+# Decision-time entry price (venue-consistent with the shadow resolver)
+# --------------------------------------------------------------------------- #
+
+from datetime import datetime  # noqa: E402
+
+from app.observability.technical_screener_feed import (  # noqa: E402
+    resolve_decision_time_entry,
+)
+
+_TS = "2026-06-15T00:00:30+00:00"
+_TS_MS = int(datetime.fromisoformat(_TS).timestamp() * 1000)
+_MIN_OPEN = _TS_MS - (_TS_MS % 60_000)
+
+
+def test_resolve_entry_uses_binance_bar_covering_decision_minute() -> None:
+    # Bar (open_ms, high, low, close) covering the decision minute → its close wins.
+    bars = [(_MIN_OPEN, 105.0, 95.0, 101.0)]
+    price, basis = resolve_decision_time_entry("SOL/USDT", _TS, 88.0, lambda *_a: bars)
+    assert price == 101.0
+    assert basis == "binance_1m_decision"
+
+
+def test_resolve_entry_falls_back_when_no_binance_data() -> None:
+    # Empty/None fetch (symbol not on Binance / transient) → provider-open fallback.
+    p1, b1 = resolve_decision_time_entry("XAU/USDT", _TS, 88.0, lambda *_a: None)
+    p2, b2 = resolve_decision_time_entry("XAU/USDT", _TS, 88.0, lambda *_a: [])
+    assert (p1, b1) == (88.0, "fallback_1h_last")
+    assert (p2, b2) == (88.0, "fallback_1h_last")
+
+
+def test_resolve_entry_falls_back_when_no_covering_bar_or_bad_ts() -> None:
+    far = [(_MIN_OPEN + 600_000, 105.0, 95.0, 101.0)]  # 10 min later → no cover
+    assert resolve_decision_time_entry("SOL/USDT", _TS, 88.0, lambda *_a: far) == (
+        88.0,
+        "fallback_1h_last",
+    )
+    assert resolve_decision_time_entry("SOL/USDT", "not-a-ts", 88.0, lambda *_a: far) == (
+        88.0,
+        "fallback_1h_last",
+    )
+
+
+@pytest.mark.asyncio
+async def test_feed_records_binance_decision_price_and_basis(tmp_path: Path) -> None:
+    adapter = _FakeAdapter({"BTC/USDT": _series(0.01), "SOL/USDT": _series(0.06)})
+    ledger = tmp_path / "shadow.jsonl"
+    # Fetcher returns a 1m bar covering the decision minute with a DISTINCT close
+    # (4242.0) — different from the 1h fallback close — so we can prove it is used.
+    summary = await run_technical_screen(
+        adapter,
+        symbols=["BTC/USDT", "SOL/USDT"],
+        min_strength=0.1,
+        ledger_path=ledger,
+        now_utc=_TS,
+        entry_price_fetcher=lambda _s, _a, _b: [(_MIN_OPEN, 4300.0, 4200.0, 4242.0)],
+    )
+    rows = [json.loads(line) for line in ledger.read_text(encoding="utf-8").splitlines()]
+    assert rows
+    assert all(r["entry_price"] == 4242.0 for r in rows)
+    assert all(r["entry_price_basis"] == "binance_1m_decision" for r in rows)
+    assert int(summary["entry_binance_1m"]) == len(rows)  # type: ignore[call-overload]
+    assert int(summary["entry_fallback_1h"]) == 0  # type: ignore[call-overload]
