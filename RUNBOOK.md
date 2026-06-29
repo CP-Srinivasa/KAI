@@ -117,6 +117,7 @@ Decision record: always in `DECISION_LOG.md` (compact, 1–N lines). No sprint-c
 - `monitor/*` is operator-trust-boundary (D-181) — file-system ACL is the trust line.
 - Provenance persistence pflicht (D-125/SAT-C-PROV-20260422-001): every outcome/audit row carries `source+version+signal_path_id+auth_method+ingest_event_id+provenance_hash`.
 - Zero-downtime key rotation for `ALERT_PROVENANCE_SECRET` via 4-phase runbook in `.env.example` (D-183).
+- Mainline (`claude/p7/reentry-ia-codex-cycle`) is branch-protected: a merge requires the 6 CI gates green — Tests, Type Check, Lint & Format Check, Security Scan, Frontend Build & Type-Check, Repo Hygiene & Secret Guard. No review requirement; admins exempt (`enforce_admins=false`) for hotfixes; not strict (no forced rebase). Repo auto-merge is enabled, so a PR with armed auto-merge lands itself once those checks pass. No merge-on-red.
 
 ## 6. Operator Dashboard (D-140)
 
