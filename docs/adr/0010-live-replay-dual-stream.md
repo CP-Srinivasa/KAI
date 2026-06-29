@@ -80,3 +80,70 @@ gegen Doppel-Fills. **Nicht autonom baubar** — berührt echtes Kapital, irreve
 ## Nächster konkreter Schritt
 Operator beantwortet Entscheidung (1)+(2) → dann Phase-1-Logger bauen (≈150 Z. +
 Tests, default-off). Phase 2 bleibt bis zu echtem Kapital/Live separat gegated.
+
+---
+
+## Phase-1-Evidenz-Review 2026-06-29 → **Phase-2-Verdikt: NO-GO** (bleibt gated)
+
+Die Phase-1-Evidenz ist jetzt belastbar akkumuliert. Auswertung des vollständigen
+Drift-Datensatzes (`artifacts/counterfactual_comparison.jsonl`, **7144 Records**,
+frisch bis 2026-06-29 12:08, alle `threshold_bps=30`) + Gate-G0-Abgleich
+(`trading canonical-edge`) am 2026-06-29 (alles gegen Pi-Mainline `e717054` verifiziert):
+
+### Drift-Befund (quellen-stratifiziert — das ist der Kern)
+- **Gesamt:** 33,9 % `drift_exceeded` (Live-Entry > 30 bps von gesettelter Kline-Range);
+  nur **15,5 % `in_settled_range`** (Live-Entry innerhalb der gesettelten 1m-Kline).
+- **Nach Quelle** (der entscheidende Schnitt):
+  | source | n | drift_exceeded |
+  |---|---|---|
+  | `technical_screener` | 5752 | **41,4 %** |
+  | `autonomous_loop` | 552 | 6,5 % |
+  | `autonomous_generator` | 840 | **0,7 %** |
+- Die Gesamt-„33,9 %" sind also **fast vollständig vom `technical_screener` getragen**,
+  nicht von der Edge-tragenden `autonomous_generator`-Quelle.
+- **Screener-Divergenz ist überwiegend echt:** 2294 plausible Exceedances (entry_live
+  im Sinn-Bereich), **Median 56 bps, Mittel 72 bps, max 781 bps** — der Screener-Entry-Preis
+  weicht material von der gesettelten Binance-Perp-Kline ab.
+- **Datenqualitäts-Kontaminante (klein, aber real):** 92 absurde Records mit
+  `drift_to_range_bps` > 1000 bps (1,29 %; bis 10,7 Mio bps) + ein
+  `entry_live ≈ 100–102`-Cluster (108 Records = 1,9 % des Screeners; ENA/XLM/WLD/ZEC,
+  z. B. ENA `entry_live=101,98` vs echte 0,094). Das sind **kein Slippage, sondern ein
+  Preis-/Einheiten-/Platzhalter-Bug im Screener-Entry-Pfad**, der die Drift-Statistik
+  nach oben verzerrt. Bereinigt (ohne >1000 bps): Gesamt 33,1 %; generator 0,1 %;
+  loop 6,5 %; screener 40,5 %.
+- **Ehrliches Caveat:** Die 0,1–0,7 % des `autonomous_generator` sind teils
+  **tautologisch** — der Generator speist bereits aus Binance-Klines, die der Replay
+  erneut holt. Es belegt „kein Feed-Mismatch", ist aber **schwache** Evidenz für echte
+  Ausführungs-Treue. Nicht überinterpretieren.
+
+### Gate G0 (Edge) — NICHT bestanden, fragil
+`trading canonical-edge` (2026-06-29): n=62, P(mu_net>0)=56,5 % — **aber vollständig von
+einem einzigen +2799 bps-Ausreißer getragen**: ohne Best-Trade fällt P auf **25,0 %**
+(mean −32 bps). Median −89 bps, net/notional −8,1 bps, Bootstrap-CI95 [−107; +146]
+überspannt Null. **Kein robuster Edge → Gate-G0-Vorbedingung für jeden Live-Flip nicht erfüllt.**
+
+### Gate-Zustand verifiziert (nichts ist offen)
+`EXECUTION_ENTRY_MODE=paper` (Live AUS), `_run_once_guard` erlaubt nur PAPER/SHADOW,
+Engine `live_enabled=False`, `EXECUTION_DUAL_STREAM_DIAGNOSTICS=true` (Phase-1-Logger an).
+
+### Verdikt: **NO-GO auf Phase-2-Auto-Switch** — drei unabhängige, je hinreichende Gründe
+1. **Gate G0 nicht bestanden** (Edge fragil/Einzel-Trade). Master-Regel: kein Live vor Gates.
+2. **Drift-Evidenz** belegt materielle Live∥Replay-Divergenz auf dem Breit-Input-Pfad
+   (Screener 40,5 %, Median 56 bps echt); per-Zyklus-Auto-Switch würde diese Divergenz
+   in Kapital-Entscheidungen injizieren.
+3. **Die Drift-Metrik selbst ist noch kontaminiert** (Screener-Entry-Preis-Bug) → muss
+   bereinigt werden, bevor die Zahl voll vertrauenswürdig ist.
+
+### Revisit-Bedingungen (wann „Go" überhaupt erwägbar wird)
+- **Gate G0 bestanden:** robuster Edge — P(mu_net>0) hoch **auch ohne** Best-Trade,
+  positiver Median **und** net/notional, n≥100–200 (Edge-Validierungs-Doktrin).
+- **Drift-Metrik bereinigt** (Screener-Entry-Preis-Bug behoben) + neu baselined; danach
+  zielführend pro Quelle/Symbol/Regime statt global lesen.
+- **Selbst dann:** Switching-Policy = **nie automatisch**, immer Operator + signiert
+  (ADR-§3-Default bestätigt).
+
+### Kleiner Folgeschritt (separat, gated NICHT das NO-GO)
+Root-Cause des `entry_live ≈ 100`-Kontaminanten im `technical_screener`-Entry-Preis-Pfad
++ Plausibilitäts-Guard im `counterfactual_replay_logger` (implausible Records als
+`data_quality_suspect` markieren, aus Drift-Rate ausschließen). Eigene kleine PR.
+Macht die Phase-1-Evidenz sauber; ändert das NO-GO nicht.
