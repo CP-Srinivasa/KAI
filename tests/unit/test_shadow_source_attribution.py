@@ -23,7 +23,7 @@ from app.observability.shadow_candidate_ledger import (
     record_candidate,
     resolve_pending,
 )
-from app.orchestrator.trading_loop import (
+from app.orchestrator.signal_source import (
     SOURCE_AUTONOMOUS_GENERATOR,
     SOURCE_CANARY_PROBE,
     SOURCE_UNKNOWN,

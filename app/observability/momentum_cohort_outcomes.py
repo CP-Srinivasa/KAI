@@ -34,9 +34,15 @@ def extract_cohort_outcomes(
 
     closed, _excluded = parse_closed_trades_with_exclusions(list(events))
     cost_model = CostModel()
+    doc_prefix = f"{cohort}_"
     out: list[dict[str, Any]] = []
     for trade in closed:
-        if trade.signal_source != cohort:
+        # Match the cohort by its coarse signal_source OR — for trades closed
+        # before the forward attribution fix (2026-06-29), when the cohort tag was
+        # mis-bucketed as ``autonomous_generator`` — by the document_id prefix the
+        # feeder always stamps (``momentum_universe_<SYM>``). Scoped to
+        # ``<cohort>_`` so a different cohort's doc-id never leaks in.
+        if trade.signal_source != cohort and not trade.document_id.startswith(doc_prefix):
             continue
         edge = compute_trade_edge(trade, cost_model, venue=venue)
         out.append(

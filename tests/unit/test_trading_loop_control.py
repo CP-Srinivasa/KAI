@@ -284,3 +284,62 @@ async def test_run_trading_loop_once_technical_paper_enabled_excluded_from_edge(
     label = next(r for r in rows if r["event_type"] == "paper_trade_label")
     assert label["feed_source"] == "technical_paper"
     assert label["source_name"] == "technical_paper"
+
+
+@pytest.mark.asyncio
+async def test_run_trading_loop_once_momentum_universe_tags_signal_source(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """G2 cohort attribution: a momentum_universe-tagged paper fill must carry
+    signal_source='momentum_universe' onto the order/close events so the G3
+    cohort-outcomes bridge can isolate it. Before the fix the explicit cohort tag
+    fell through the signal_source whitelist (only real_analysis/technical_paper
+    were special-cased) and was mislabelled 'autonomous_generator' — invisible to
+    extract_cohort_outcomes and wrongly counted in the canonical autonomous edge."""
+    from app.core.domain.document import AnalysisResult
+    from app.core.enums import EntryMode, SentimentLabel
+    from app.core.settings import AppSettings, ExecutionSettings
+
+    settings = AppSettings()
+    settings.execution = ExecutionSettings(entry_mode=EntryMode.PAPER)
+    monkeypatch.setattr("app.orchestrator.trading_loop.get_settings", lambda: settings)
+
+    # document_id mirrors the real momentum feeder (_build_analysis): non-empty,
+    # so the broken path resolves to 'autonomous_generator' (the bug) — the tag
+    # must override it.
+    analysis = AnalysisResult(
+        document_id="momentum_universe_BTCUSDT",
+        sentiment_label=SentimentLabel.BULLISH,
+        sentiment_score=0.9,
+        relevance_score=1.0,
+        impact_score=1.0,
+        confidence_score=0.9,
+        actionable=True,
+        novelty_score=0.0,
+        explanation_short="short explanation",
+        explanation_long="long explanation",
+    )
+
+    execution_audit = tmp_path / "exec_momentum.jsonl"
+    cycle = await run_trading_loop_once(
+        symbol="BTC/USDT",
+        mode="paper",
+        provider="mock",
+        analysis_result=analysis,
+        analysis_source="momentum_universe",
+        loop_audit_path=tmp_path / "loop_momentum.jsonl",
+        execution_audit_path=execution_audit,
+    )
+
+    assert cycle.status == CycleStatus.COMPLETED
+    rows = [
+        json.loads(line)
+        for line in execution_audit.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    # The entry fill carries the cohort source, so it propagates to position_closed
+    # (which extract_cohort_outcomes reads via signal_source).
+    filled = next(r for r in rows if r["event_type"] == "order_filled")
+    assert filled["source"] == "momentum_universe"
+    label = next(r for r in rows if r["event_type"] == "paper_trade_label")
+    assert label["source_name"] == "momentum_universe"
