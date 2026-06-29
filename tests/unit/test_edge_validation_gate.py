@@ -13,11 +13,58 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from app.observability.edge_validation_gate import evaluate_edge_validation
+import pytest
+
+from app.observability.edge_validation_gate import (
+    TrialCountUnavailableError,
+    evaluate_edge_validation,
+    resolve_trial_count,
+)
 
 
 def _crit(v, name: str) -> bool:
     return next(c.passed for c in v.criteria if c.name == name)
+
+
+# --- honest trial-count resolution (Component 1) -------------------------------
+# The ledger's distinct-hypothesis count is the floor for the DSR deflation; an
+# explicit --trials override may only RAISE it (untracked ad-hoc searches the
+# ledger never saw), never lower it — a too-low count fakes a passing DSR.
+
+
+def test_trial_count_defaults_to_ledger_when_no_override() -> None:
+    r = resolve_trial_count(ledger_count=42, override=None)
+    assert r.trials == 42
+    assert r.source == "ledger"
+    assert r.clamped is False
+
+
+def test_trial_count_override_above_ledger_wins() -> None:
+    r = resolve_trial_count(ledger_count=42, override=100)
+    assert r.trials == 100
+    assert r.source == "override"
+    assert r.clamped is False
+
+
+def test_trial_count_override_below_ledger_is_clamped_up() -> None:
+    r = resolve_trial_count(ledger_count=42, override=10)
+    assert r.trials == 42  # ledger floor wins — you cannot under-report trials
+    assert r.source == "ledger"
+    assert r.clamped is True
+
+
+def test_trial_count_empty_ledger_with_override_uses_override() -> None:
+    r = resolve_trial_count(ledger_count=0, override=7)
+    assert r.trials == 7
+    assert r.source == "override_no_ledger"
+    assert r.clamped is False
+
+
+def test_trial_count_empty_ledger_no_override_fails_closed() -> None:
+    # The worst case: no honest record AND no explicit count → never silently
+    # default to 1 (which would maximally inflate the DSR). Refuse.
+    with pytest.raises(TrialCountUnavailableError):
+        resolve_trial_count(ledger_count=0, override=None)
 
 
 def test_strong_single_trial_cohort_is_ready() -> None:

@@ -29,18 +29,53 @@ from app.observability.shadow_candidate_ledger import (
 logger = logging.getLogger(__name__)
 
 _BINANCE_KLINES = "https://api.binance.com/api/v3/klines"
+_BINANCE_EXCHANGE_INFO = "https://api.binance.com/api/v3/exchangeInfo"
 # Exotic / non-Binance-spot symbols seen in the audit cohort. Skipped early so a
 # guaranteed-404 is not even attempted (resolver leaves them pending).
 _NON_BINANCE_HINT = "USDT"
 
+# Per-process cache of the Binance-spot symbol universe (changes rarely; the
+# screener runs as a short oneshot so this is fetched ~once per run).
+_spot_symbols_cache: frozenset[str] | None = None
 
-def _to_binance_pair(symbol: str) -> str:
+
+def to_binance_pair(symbol: str) -> str:
+    """Normalise 'BTC/USDT' / 'btc-usdt' -> 'BTCUSDT' (Binance REST symbol form)."""
     return symbol.replace("/", "").replace("-", "").upper()
+
+
+def binance_spot_symbols(*, force: bool = False) -> frozenset[str] | None:
+    """TRADING Binance-spot symbols (e.g. ``{'BTCUSDT', ...}``), cached per process.
+
+    The shadow resolver forward-resolves on Binance-spot 1m klines, so a symbol
+    NOT in this set is never forward-resolvable — used to prune the screener's
+    dynamic universe to measurable candidates. Read-only public REST, no auth.
+    Fail-soft: returns ``None`` on any network/parse error (caller keeps the
+    unfiltered universe). ``force=True`` bypasses the cache.
+    """
+    global _spot_symbols_cache
+    if _spot_symbols_cache is not None and not force:
+        return _spot_symbols_cache
+    try:
+        # Fixed https Binance endpoint; no user-controlled scheme/host.
+        with urllib.request.urlopen(_BINANCE_EXCHANGE_INFO, timeout=10) as resp:  # noqa: S310  # nosec B310
+            raw = json.loads(resp.read().decode())
+        syms = frozenset(
+            str(s["symbol"]).upper()
+            for s in raw.get("symbols", [])
+            if s.get("status") == "TRADING" and s.get("symbol")
+        )
+    except Exception as exc:  # noqa: BLE001 — any network/parse error → unfiltered
+        logger.info("[shadow] exchangeInfo fetch failed: %s", exc)
+        return None
+    if syms:
+        _spot_symbols_cache = syms
+    return syms or None
 
 
 def binance_kline_fetcher(symbol: str, start_ms: int, end_ms: int) -> Sequence[Bar] | None:
     """Fetch 1m klines as (open_ms, high, low, close). None on any failure."""
-    pair = _to_binance_pair(symbol)
+    pair = to_binance_pair(symbol)
     url = (
         f"{_BINANCE_KLINES}?symbol={pair}&interval=1m"
         f"&startTime={int(start_ms)}&endTime={int(end_ms)}&limit=1000"
@@ -85,4 +120,9 @@ def resolve_with_binance(
     )
 
 
-__all__ = ["binance_kline_fetcher", "resolve_with_binance"]
+__all__ = [
+    "binance_kline_fetcher",
+    "binance_spot_symbols",
+    "resolve_with_binance",
+    "to_binance_pair",
+]

@@ -44,8 +44,13 @@ class AnchorResult:
 class Stamper(Protocol):
     name: str
 
-    def stamp(self, digest_hex: str, out_dir: Path) -> str:
-        """Produce a proof for ``digest_hex``; return the proof file path (or "")."""
+    def stamp(self, digest_hex: str, out_dir: Path, *, prefix: str = "audit") -> str:
+        """Produce a proof for ``digest_hex``; return the proof file path (or "").
+
+        ``prefix`` names the proof file (``<prefix>-<digest16>.ots``) so distinct
+        digest kinds (daily ``audit`` vs per-run ``verdict``) coexist in one
+        proofs_dir and are all picked up by the ``*.ots`` upgrade scan.
+        """
         ...
 
 
@@ -54,7 +59,7 @@ class NullStamper:
 
     name = "null"
 
-    def stamp(self, digest_hex: str, out_dir: Path) -> str:  # noqa: D102
+    def stamp(self, digest_hex: str, out_dir: Path, *, prefix: str = "audit") -> str:  # noqa: D102
         return ""
 
 
@@ -63,7 +68,7 @@ class OpenTimestampsStamper:
 
     name = "opentimestamps"
 
-    def stamp(self, digest_hex: str, out_dir: Path) -> str:  # noqa: D102
+    def stamp(self, digest_hex: str, out_dir: Path, *, prefix: str = "audit") -> str:  # noqa: D102
         try:
             import opentimestamps  # noqa: F401
             from opentimestamps.calendar import RemoteCalendar
@@ -104,7 +109,7 @@ class OpenTimestampsStamper:
         ctx = BytesSerializationContext()
         detached.serialize(ctx)
         out_dir.mkdir(parents=True, exist_ok=True)
-        proof_path = out_dir / f"audit-{digest_hex[:16]}.ots"
+        proof_path = out_dir / f"{prefix}-{digest_hex[:16]}.ots"
         proof_path.write_bytes(ctx.getbytes())
         return str(proof_path)
 
@@ -154,3 +159,45 @@ def anchor_audit_digest(cfg: IntegritySettings) -> AnchorResult:
     if proof:
         return AnchorResult(state="anchored", digest=ad.digest, proof_path=proof)
     return AnchorResult(state="recorded", digest=ad.digest)
+
+
+def anchor_record_digest(
+    digest_hex: str,
+    *,
+    settings: IntegritySettings,
+    prefix: str = "verdict",
+) -> AnchorResult:
+    """Anchor a caller-supplied record digest via the configured stamper.
+
+    Like :func:`anchor_audit_digest`, but for a digest computed elsewhere (e.g. a
+    falsification verdict) rather than the daily audit-paths digest. Respects the
+    same default-off ``IntegritySettings`` and never raises into the caller:
+
+    - ``enabled=False`` → ``disabled`` (nothing written).
+    - ``stamper="null"`` → ``recorded`` (the digest record JSON is written, no proof).
+    - ``stamper="opentimestamps"`` → ``anchored`` (``<prefix>-<digest16>.ots``).
+    """
+    if not settings.enabled:
+        return AnchorResult(state="disabled", digest=digest_hex)
+
+    out_dir = Path(settings.proofs_dir)
+    record = {
+        "ts": datetime.now(UTC).isoformat(),
+        "digest": digest_hex,
+        "prefix": prefix,
+        "stamper": settings.stamper,
+    }
+    try:
+        out_dir.mkdir(parents=True, exist_ok=True)
+        (out_dir / f"{prefix}-{digest_hex[:16]}.json").write_text(
+            json.dumps(record, indent=2, sort_keys=True), encoding="utf-8"
+        )
+        proof = _make_stamper(settings.stamper).stamp(digest_hex, out_dir, prefix=prefix)
+    except AnchorUnavailableError as exc:
+        return AnchorResult(state="error", digest=digest_hex, reason=str(exc))
+    except Exception as exc:  # noqa: BLE001 — anchoring must never crash the caller
+        return AnchorResult(state="error", digest=digest_hex, reason=f"unexpected: {exc}")
+
+    if proof:
+        return AnchorResult(state="anchored", digest=digest_hex, proof_path=proof)
+    return AnchorResult(state="recorded", digest=digest_hex)

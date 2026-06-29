@@ -17,6 +17,7 @@ always wins; the dynamic fetch is fail-soft (falls back to static on any error).
 
 from __future__ import annotations
 
+from collections.abc import Callable, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Protocol
@@ -29,10 +30,18 @@ from app.core.logging import get_logger
 from app.market_data.models import OHLCV
 from app.observability.shadow_candidate_ledger import (
     LEDGER_PATH,
+    Bar,
     ShadowCandidate,
     record_candidate,
 )
+from app.observability.shadow_resolver import to_binance_pair
 from app.signals.technical_screener import DEFAULT_LOOKBACK, screen_universe
+
+# Decision-time entry price uses the SAME source the shadow resolver later walks
+# (Binance 1m klines, ``binance_kline_fetcher``), so a screener candidate's entry
+# baseline and its forward resolution come from ONE consistent price series.
+EntryPriceFetcher = Callable[[str, int, int], Sequence[Bar] | None]
+_ENTRY_BAR_MS = 60_000
 
 logger = get_logger(__name__)
 
@@ -98,6 +107,43 @@ def _last_close(candles: list[OHLCV]) -> float | None:
     return sorted(candles, key=lambda c: c.timestamp_utc)[-1].close
 
 
+def _entry_ts_ms(ts_utc: str) -> int | None:
+    try:
+        return int(datetime.fromisoformat(ts_utc.replace("Z", "+00:00")).timestamp() * 1000)
+    except (ValueError, AttributeError):
+        return None
+
+
+def resolve_decision_time_entry(
+    symbol: str,
+    ts_utc: str,
+    fallback_close: float,
+    fetch_klines: EntryPriceFetcher,
+) -> tuple[float, str]:
+    """Entry price at the decision minute from the SAME venue the shadow resolver
+    uses (Binance 1m), so a screener candidate's entry baseline and its forward
+    resolution come from one consistent series.
+
+    WHY: the screener ranks on a fallback-adapter 1h series; its last close is a
+    stale cross-venue price that, compared against the Binance-1m forward
+    resolution, biases the screener's shadow edge by up to ~1h of drift. Sourcing
+    the entry from the Binance 1m bar covering ``ts_utc`` removes that bias.
+
+    Fail-soft + provider-open: any miss (symbol not on Binance, transient fetch
+    failure, unparseable ts, non-positive close) returns the provider-open
+    ``fallback_close`` with basis ``"fallback_1h_last"`` so no candidate is lost
+    and the entry basis stays transparent. SHADOW-only; touches no execution path.
+    """
+    ms = _entry_ts_ms(ts_utc)
+    if ms is not None:
+        bars = fetch_klines(symbol, ms - _ENTRY_BAR_MS, ms + _ENTRY_BAR_MS)
+        if bars:
+            for open_ms, _high, _low, close in sorted(bars, key=lambda b: b[0]):
+                if open_ms <= ms < open_ms + _ENTRY_BAR_MS and close > 0:
+                    return float(close), "binance_1m_decision"
+    return float(fallback_close), "fallback_1h_last"
+
+
 async def run_technical_screen(
     adapter: _OhlcvSource,
     *,
@@ -111,6 +157,7 @@ async def run_technical_screen(
     write: bool = True,
     ledger_path: Path = LEDGER_PATH,
     now_utc: str | None = None,
+    entry_price_fetcher: EntryPriceFetcher | None = None,
 ) -> dict[str, object]:
     """Fetch → screen → eligibility → SHADOW-record. Never executes anything.
 
@@ -121,6 +168,13 @@ async def run_technical_screen(
     """
     ts = now_utc or datetime.now(UTC).isoformat()
     limit = lookback + 5
+
+    if entry_price_fetcher is None:
+        # Default = the SAME public Binance 1m source the shadow resolver walks
+        # (read-only, no auth). Lazy import keeps the core feed import-light.
+        from app.observability.shadow_resolver import binance_kline_fetcher
+
+        entry_price_fetcher = binance_kline_fetcher
 
     btc_candles = await _safe_ohlcv(adapter, _BTC, timeframe, limit)
     candles_by_symbol: dict[str, list[OHLCV]] = {}
@@ -142,10 +196,21 @@ async def run_technical_screen(
     eligible = 0
     shorts_admitted = 0
     tv_contradictions = 0
+    entry_binance = 0
+    entry_fallback = 0
     for sig in signals:
         entry = _last_close(candles_by_symbol.get(sig.symbol, []))
         if entry is None or entry <= 0:
             continue
+        # Record the decision-time price from the resolver's venue (Binance 1m),
+        # fail-soft to the provider-open last close (basis-marked). SHADOW-only.
+        entry_price, entry_basis = resolve_decision_time_entry(
+            sig.symbol, ts, entry, entry_price_fetcher
+        )
+        if entry_basis == "binance_1m_decision":
+            entry_binance += 1
+        else:
+            entry_fallback += 1
         decision = evaluate_directional_eligibility(
             sentiment_label=sig.direction,
             affected_assets=[sig.symbol],
@@ -187,7 +252,7 @@ async def run_technical_screen(
             ts_utc=ts,
             symbol=sig.symbol,
             side=side,
-            entry_price=entry,
+            entry_price=entry_price,
             stop_price=None,
             take_price=None,
             source="technical_screener",
@@ -201,6 +266,7 @@ async def run_technical_screen(
             ),
             tv_rating=tv_rating,
             tv_contradiction=tv_contradiction,
+            entry_price_basis=entry_basis,
         )
         if write and record_candidate(candidate, path=ledger_path):
             written += 1
@@ -215,6 +281,8 @@ async def run_technical_screen(
         "shorts_admitted_shadow": shorts_admitted,
         "tv_contradictions": tv_contradictions,
         "btc_candles": len(btc_candles),
+        "entry_binance_1m": entry_binance,
+        "entry_fallback_1h": entry_fallback,
     }
     logger.info("technical_screener.run", **summary)
     return summary
@@ -233,6 +301,22 @@ async def _safe_ohlcv(
 def _configured_symbols(raw: str) -> list[str]:
     parsed = [s.strip().upper() for s in raw.split(",") if s.strip()]
     return parsed or list(DEFAULT_UNIVERSE)
+
+
+def prune_to_resolvable(symbols: list[str], spot_symbols: frozenset[str] | None) -> list[str]:
+    """Keep only symbols the shadow resolver can forward-resolve (Binance spot).
+
+    The dynamic universe (fallback-adapter top-volume, e.g. Bybit) is dominated by
+    exotic / non-Binance pairs (tokenized stocks, off-Binance memecoins) that the
+    Binance-spot forward-resolution can never resolve — they yield no measurable
+    shadow edge and only fallback-priced entries. ``spot_symbols`` None
+    (exchangeInfo fetch failed) → keep all (fail-soft). An all-miss (e.g. a
+    normalisation drift) also keeps all, never starving the screener.
+    """
+    if not spot_symbols:
+        return symbols
+    kept = [s for s in symbols if to_binance_pair(s) in spot_symbols]
+    return kept or symbols
 
 
 async def run_from_settings(adapter: _OhlcvSource | None = None) -> dict[str, object]:
@@ -259,7 +343,22 @@ async def run_from_settings(adapter: _OhlcvSource | None = None) -> dict[str, ob
             try:
                 dynamic = await fetch(min(alerts.technical_screener_top_n * 5, 200))
                 if dynamic:
-                    symbols = dynamic
+                    # Prune the AUTO universe to symbols the shadow resolver can
+                    # forward-resolve (Binance spot). Explicit operator lists are
+                    # never pruned (handled above). Fail-soft: exchangeInfo miss →
+                    # keep all. SHADOW-only; no execution/provider lock-in of the
+                    # ranking, which still uses the provider-open fallback adapter.
+                    from app.observability.shadow_resolver import binance_spot_symbols
+
+                    before = len(dynamic)
+                    symbols = prune_to_resolvable(dynamic, binance_spot_symbols())
+                    if len(symbols) != before:
+                        logger.info(
+                            "technical_screener.universe_pruned",
+                            before=before,
+                            kept=len(symbols),
+                            dropped=before - len(symbols),
+                        )
             except Exception as exc:  # noqa: BLE001 — never abort on a universe fetch
                 logger.warning("technical_screener.dynamic_universe_failed", error=str(exc)[:200])
 
