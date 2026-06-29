@@ -211,6 +211,32 @@ export function fetchEdgeVerdict(
   return apiGet<EdgeVerdict>(`/dashboard/api/edge-window?canonical=${canonical}`, { signal });
 }
 
+// Unlock-Kalender (ADR 0012 truth-pivot, Phase 2): KONTEXT, kein Signal. Zeigt
+// das nächste geplante Token-Unlock je Coin (Tage entfernt + Anteil max_supply)
+// aus dem öffentlichen DefiLlama-Artefakt — als Risiko-/Volatilitäts-Marker rund
+// um eine Cliff. Unlocks ALS Richtung sind widerlegt (#487/#482). READ-ONLY.
+export type UnlockCalendarEntry = {
+  symbol: string;
+  event_ms: number;
+  event_iso: string;
+  /** Tage bis zum nächsten Unlock (ab as_of_utc). */
+  days_until: number;
+  amount_tokens: number;
+  /** Anteil an max_supply; null wenn max_supply unbekannt. */
+  frac_of_max_supply: number | null;
+};
+export type UnlockCalendar = {
+  available: boolean;
+  as_of_utc?: string;
+  /** Pflicht-Disclaimer, verbatim rendern: „Kontext, kein Signal". */
+  note?: string;
+  tokens: UnlockCalendarEntry[];
+  error: string | null;
+};
+export function fetchUnlockCalendar(signal?: AbortSignal): Promise<UnlockCalendar> {
+  return apiGet<UnlockCalendar>("/dashboard/api/unlock-calendar", { signal });
+}
+
 // Churn / Fee-Effizienz (Operator /goal 2026-06-25): Brutto-vor-Fees vs
 // Netto-nach-Fees, Fee-Drag, Fees/Handelstag-Trend — aus den ECHTEN Audit-Fees
 // inkl. position_partial_closed (TP-Tiers). READ-ONLY, kein Handelseingriff.
