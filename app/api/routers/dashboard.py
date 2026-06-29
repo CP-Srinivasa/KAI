@@ -20,7 +20,7 @@ from fastapi import APIRouter, Depends
 from fastapi.responses import JSONResponse
 
 from app.alerts.hold_metrics import build_hold_metrics_report
-from app.api.deps import get_document_repo, get_source_repo
+from app.api.deps import get_document_repo, get_source_repo, get_source_repo_optional
 from app.audit.stream_validation import (
     AuditStreamName,
     AuditStreamReadResult,
@@ -2514,8 +2514,37 @@ async def dashboard_source_activity_api(
     return JSONResponse(content=payload, headers={"Cache-Control": "no-store, max-age=0"})
 
 
+def _attach_db_status(
+    ranked: list[dict[str, Any]], db_status_by_provider: dict[str, str]
+) -> list[dict[str, Any]]:
+    """Attach the REAL DB status (and a ``status_drift`` flag) to each ranked entry.
+
+    ``logical_status`` is a rank-derived heuristic written by the recalc job — it can
+    silently diverge from the actual lifecycle switch state in the DB (e.g. a source
+    DISABLED in the DB still shows rank-active). This joins the truth next to the
+    heuristic so the operator sees the real state. Join on ``source_name == provider``
+    (case-insensitive). ``db_status`` is ``None`` for non-DB sources (youtube /
+    tradingview_webhook etc.), which therefore never drift; ``status_drift`` is True
+    only when both are known and differ.
+    """
+    norm = {k.strip().lower(): v for k, v in db_status_by_provider.items() if k}
+    out: list[dict[str, Any]] = []
+    for e in ranked:
+        if not isinstance(e, dict):
+            continue
+        name = e.get("source_name")
+        db_status = norm.get(name.strip().lower()) if isinstance(name, str) else None
+        logical = e.get("logical_status")
+        drift = bool(db_status is not None and isinstance(logical, str) and db_status != logical)
+        out.append({**e, "db_status": db_status, "status_drift": drift})
+    return out
+
+
 @router.get("/dashboard/api/source-lifecycle", tags=["dashboard"])
-async def dashboard_source_lifecycle_api(events_limit: int = 15) -> JSONResponse:
+async def dashboard_source_lifecycle_api(
+    events_limit: int = 15,
+    repo: SourceRepository | None = Depends(get_source_repo_optional),  # noqa: B008
+) -> JSONResponse:
     """Read-only Source-Lifecycle-Ranking + jüngste Statuswechsel (Phase 4).
 
     Liest das vom ``source_lifecycle_recalc``-Job geschriebene
@@ -2524,6 +2553,9 @@ async def dashboard_source_lifecycle_api(events_limit: int = 15) -> JSONResponse
     die letzten ``events_limit`` Lifecycle-Audit-Events (newest-first). Anders als
     die Gate-gefilterte Top-5/Flop-5-Liste zeigt dieses Ranking AUCH provisorische
     Quellen (n unter Validierungs-Schwelle) — ehrlich markiert, nie als belastbar.
+    Jeder Ranking-Eintrag trägt zusätzlich den ECHTEN DB-Status (``db_status``) +
+    ein ``status_drift``-Flag, falls die Rang-Heuristik vom DB-Schaltzustand
+    abweicht (Truth-Join, report-only; der recalc-Lauf bleibt DB-frei).
     Fail-closed: fehlt/kaputt → ``available: false``, nie ein 500.
     """
     import json
@@ -2566,6 +2598,17 @@ async def dashboard_source_lifecycle_api(events_limit: int = 15) -> JSONResponse
     except Exception as exc:  # noqa: BLE001 — endpoint must never 500 the dashboard
         logger.warning("dashboard_source_lifecycle_failed", exc_info=True)
         payload["error"] = str(exc)
+
+    # Truth-join: attach the real DB status next to the rank-heuristic. Its own try
+    # so a DB hiccup degrades to "no db_status" instead of blanking the ranking.
+    if repo is not None and payload["ranked"]:
+        try:
+            db_sources = await repo.list()
+            db_map = {s.provider: s.status.value for s in db_sources if s.provider}
+            payload["ranked"] = _attach_db_status(payload["ranked"], db_map)
+        except Exception:  # noqa: BLE001 — report-only enrichment, never a 500
+            logger.warning("dashboard_source_lifecycle_db_join_failed", exc_info=True)
+
     return JSONResponse(content=payload, headers={"Cache-Control": "no-store, max-age=0"})
 
 

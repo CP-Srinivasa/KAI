@@ -82,6 +82,34 @@ def test_dedup_drops_known_url_provider_and_batch_dupes() -> None:
     assert reasons["not a url"] == "malformed_url"
 
 
+def test_dedup_skips_tombstoned_url_and_domain() -> None:
+    cands = [
+        _c("https://fresh.example/feed", "fresh"),
+        _c("https://Paywall.com/feed/", "paywall"),  # exact tombstoned URL (normalized)
+        _c("https://captcha.io/news", "captcha"),  # tombstoned by DOMAIN
+    ]
+    kept, dropped = dedup_against_registry(
+        cands,
+        existing_normalized_urls=set(),
+        existing_providers=set(),
+        tombstoned={"https://paywall.com/feed", "captcha.io"},
+    )
+    assert [c.provider for c in kept] == ["fresh"]
+    reasons = dict(dropped)
+    assert reasons["https://Paywall.com/feed/"] == "tombstoned_reject"
+    assert reasons["https://captcha.io/news"] == "tombstoned_reject"
+
+
+def test_dedup_default_has_no_tombstones() -> None:
+    # Backward compatible: omitting tombstoned keeps every non-duplicate candidate.
+    kept, _ = dedup_against_registry(
+        [_c("https://a.example/feed", "a")],
+        existing_normalized_urls=set(),
+        existing_providers=set(),
+    )
+    assert [c.provider for c in kept] == ["a"]
+
+
 def test_rank_scored_first_unprobed_last() -> None:
     a = ScoutProposal(url="u1", access="rss", source_type="rss_feed", provider="a", score=0.4)
     b = ScoutProposal(url="u2", access="rss", source_type="rss_feed", provider="b", score=0.9)

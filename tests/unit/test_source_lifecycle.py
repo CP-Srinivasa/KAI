@@ -42,3 +42,36 @@ def test_planned_cannot_skip_probation() -> None:
 def test_idempotent_no_op_allowed() -> None:
     assert can_transition(SourceStatus.ACTIVE, SourceStatus.ACTIVE)
     assert next_status(SourceStatus.ACTIVE, SourceStatus.ACTIVE) == SourceStatus.ACTIVE
+
+
+# --- RETIRED: operator-manual terminal kill (2026-06-29) ----------------------
+
+# The seven states the rotation FSM manages (keys of _TRANSITIONS).
+_FSM_STATES = [
+    SourceStatus.PLANNED,
+    SourceStatus.PROBATION,
+    SourceStatus.ACTIVE,
+    SourceStatus.SILENT,
+    SourceStatus.PINNED,
+    SourceStatus.ARCHIVED,
+    SourceStatus.DISABLED,
+]
+
+
+@pytest.mark.parametrize("origin", _FSM_STATES)
+def test_retire_reachable_from_every_fsm_state(origin: SourceStatus) -> None:
+    """An operator can retire a source from ANY lifecycle state — RETIRED is the
+    explicit 'kill forever' target reachable from every FSM state."""
+    assert can_transition(origin, SourceStatus.RETIRED)
+
+
+_NON_RETIRED = [s for s in SourceStatus.__members__.values() if s != SourceStatus.RETIRED]
+
+
+@pytest.mark.parametrize("target", _NON_RETIRED)
+def test_retired_is_terminal_no_return(target: SourceStatus) -> None:
+    """RETIRED is terminal: no transition back to any other state — the hard
+    'never re-onboard / never auto-resurrect' guarantee."""
+    assert not can_transition(SourceStatus.RETIRED, target)
+    with pytest.raises(ValueError):
+        next_status(SourceStatus.RETIRED, target)

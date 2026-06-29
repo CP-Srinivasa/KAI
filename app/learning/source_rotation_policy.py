@@ -73,6 +73,12 @@ def decide_rotation(
         ``RotationDecision`` mit Ziel-Status (oder ``None``), Begründung und
         fortgeschriebenem Zähler. Der Aufrufer prüft die FSM-Legalität separat.
     """
+    # Terminal: eine RETIRED-Quelle (operator-killed) wird NIE wieder bewegt —
+    # No-op, damit der Operator-Kill absolut bleibt (der FSM-Guard blockt es
+    # ohnehin, aber wir schlagen es gar nicht erst vor).
+    if current == SourceStatus.RETIRED:
+        return RotationDecision(None, "retired_terminal", 0)
+
     # Geschützt: pinned wird nie automatisch rotiert.
     if pinned or current == SourceStatus.PINNED:
         return RotationDecision(None, "protected_pinned", 0)

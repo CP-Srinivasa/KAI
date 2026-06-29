@@ -887,7 +887,9 @@ export type SourceRankEntry = {
   pinned: boolean;
   rotation_flagged: boolean;
   consecutive_top_runs: number;
-  logical_status: string; // active | silent | pinned
+  logical_status: string; // rank-heuristic status: active | silent | pinned
+  db_status?: string | null; // ECHTER DB-Lifecycle-Status (null = keine DB-Quelle)
+  status_drift?: boolean; // true wenn db_status != logical_status (Truth-Join)
   last_signal_at: string | null;
 };
 

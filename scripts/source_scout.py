@@ -30,6 +30,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app.core.settings import get_settings  # noqa: E402
+from app.learning.source_reject_tombstone import load_active_rejections  # noqa: E402
 from app.learning.source_scout import (  # noqa: E402
     ScoutProposal,
     dedup_against_registry,
@@ -42,6 +43,7 @@ from app.storage.repositories.source_repo import SourceRepository  # noqa: E402
 
 _SEED_PATH = Path("monitor/source_candidates_seed.json")
 _PROPOSALS_PATH = Path("monitor/source_proposals.jsonl")
+_REJECTED_TOMBSTONE_PATH = Path("monitor/source_rejected_candidates.jsonl")
 
 
 def _read_seed(path: Path) -> list[ScoutProposal]:
@@ -144,8 +146,12 @@ async def run_scout(*, force_probe: bool = False) -> int:
         return 0
 
     urls, providers = await _existing_registry()
+    tombstoned = load_active_rejections(_REJECTED_TOMBSTONE_PATH, datetime.now(UTC))
     kept, deduped = dedup_against_registry(
-        seed, existing_normalized_urls=urls, existing_providers=providers
+        seed,
+        existing_normalized_urls=urls,
+        existing_providers=providers,
+        tombstoned=tombstoned,
     )
 
     dead: list[tuple[str, str]] = []

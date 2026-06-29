@@ -133,6 +133,7 @@ class SourceStatus(StrEnum):
     SILENT = "silent"  # stopped delivering signals (auto-detected)
     ARCHIVED = "archived"  # rotated out — only via replace-when-ready gate
     PINNED = "pinned"  # durable top performer, never auto-demoted
+    RETIRED = "retired"  # operator-killed, TERMINAL — never auto-resurrected/re-onboarded
 
 
 class SentimentLabel(StrEnum):

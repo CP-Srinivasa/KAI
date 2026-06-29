@@ -59,6 +59,11 @@ from app.learning.source_onboarding import (  # noqa: E402
     execute_swaps,
     onboard_accepted,
 )
+from app.learning.source_reject_tombstone import (  # noqa: E402
+    append_rejection_tombstone,
+    is_tombstoned,
+    load_active_rejections,
+)
 from app.storage.jsonl_io import read_jsonl_tolerant  # noqa: E402
 
 logging.basicConfig(
@@ -258,18 +263,38 @@ def run_once(
     url_validator: Any = None,
     session_factory: Any = None,
     probation_state_path: Path | None = None,
+    rejected_tombstone_path: Path | None = None,
 ) -> dict[str, Any]:
     """One scheduler pass. Returns the run summary (also appended to runs_path).
 
     DRY (default / no ``session_factory``): gate + audit PROPOSED actions, no DB.
     LIVE (``enabled`` AND ``session_factory``): execute — onboard accepted as
     PROBATION + run graduation swaps — and audit them as ``executed=True``.
+
+    ``rejected_tombstone_path`` (when given) closes the re-proposal loop: candidates
+    under an active reject-tombstone are skipped BEFORE the intake gate, and every
+    fresh rejection is tombstoned with a cooldown so it is not re-gated next run.
     """
     proposals = read_proposals(proposals_path)
     ranking = _load_ranking(ranking_path)
     known = _known_urls_from_ranking(ranking)
 
+    # Drop candidates still inside a reject-cooldown before they hit the gate again.
+    tombstoned_skipped = 0
+    if rejected_tombstone_path is not None:
+        active = load_active_rejections(rejected_tombstone_path, now)
+        if active:
+            kept = [p for p in proposals if not is_tombstoned(p.url, active)]
+            tombstoned_skipped = len(proposals) - len(kept)
+            proposals = kept
+
     accepted, rejected = gate_proposals(proposals, known, url_validator=url_validator)
+
+    # Tombstone every fresh rejection so the scout/scheduler stop re-proposing it.
+    if rejected_tombstone_path is not None:
+        for url, reason in rejected:
+            append_rejection_tombstone(rejected_tombstone_path, url=url, reason=reason, now=now)
+
     pool = rotation_pool_from_ranking(ranking)
 
     mode = "live" if (enabled and session_factory is not None) else "dry"
@@ -372,6 +397,7 @@ def run_once(
         "accepted": len(accepted),
         "onboarded": onboarded,
         "rejected": len(rejected),
+        "tombstoned_skipped": tombstoned_skipped,
         "rejection_reasons": rejected[:20],
         "rotation_pool": len(pool),
         "graduation_swaps": len(plan.swaps),
@@ -407,6 +433,7 @@ def main() -> int:
         now=now,
         session_factory=factory,
         probation_state_path=_REPO_ROOT / "monitor" / "source_probation_state.json",
+        rejected_tombstone_path=_REPO_ROOT / "monitor" / "source_rejected_candidates.jsonl",
     )
     logger.info("discovery run (%s): %s", summary["mode"], summary)
     return 0
