@@ -12,7 +12,12 @@ This script:
     1. ``order_filled`` (close-side, side="sell", at avg_entry_price, fee=0)
        → replay sees the position closed on the next rehydration.
     2. ``position_closed`` (reason="quarantine_off_venue_unpriceable")
-       → ``corruption_reason`` classifies it corrupt → excluded from canonical edge.
+       → the tag is consumed by ``portfolio_read`` (realized-by-asset breakdown)
+       and the dashboard quality card; it does NOT drive canonical-edge exclusion.
+       Canonical-edge exclusion for these off-venue closes comes from the source
+       allowlist (``CANONICAL_EDGE_SOURCES={autonomous_generator,real_analysis}``):
+       their feeder source is not a canonical-edge source, so they are already
+       excluded from ``trading canonical-edge`` regardless of this tag.
 - Realized price-PnL is exactly 0 (exit == entry price). The already-booked
   ENTRY fee remains on the audit as an honest cost (it is NOT reversed).
 - IDs are deterministic (``quarantine_fill_<symbol_slug>`` etc.) — no random.
@@ -68,6 +73,11 @@ def plan_closes(
     replay = replay_paper_audit(audit_path)
 
     plans: list[dict] = []
+    # Thread a running cash total through the loop so that N closes produce a
+    # cumulative portfolio_cash == base + Σ recovered (not base + last-recovery).
+    # audit_replay applies portfolio_cash last-write-wins, so the plan ordering
+    # must be consistent with the append order in apply_closes.
+    running_cash = replay.cash_usd or 0.0
     for symbol in targets:
         pos = replay.positions.get(symbol)
         if pos is None:
@@ -83,7 +93,8 @@ def plan_closes(
         trade_pnl_usd = 0.0
         # Cash recovered at exit = qty * avg_entry (the cost we originally deducted).
         recovered_cash = qty * avg_entry
-        new_cash = (replay.cash_usd or 0.0) + recovered_cash
+        running_cash += recovered_cash
+        new_cash = running_cash
         # Cumulative realized_pnl_usd is unchanged (no price gain/loss).
         cumulative_pnl = replay.realized_pnl_usd
 
