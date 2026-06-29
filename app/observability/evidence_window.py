@@ -53,6 +53,7 @@ from app.learning.bayes_quarantine import QUARANTINE_SIGNATURES
 from app.observability.edge_report import (
     DEFAULT_IMPLAUSIBLE_MOVE_THRESHOLD,
     MIN_SAMPLE_FOR_P,
+    ClosedTrade,
     CohortEdge,
     QuarantineExclusion,
     aggregate_cohort,
@@ -60,6 +61,7 @@ from app.observability.edge_report import (
     compute_trade_edge,
     parse_closed_trades_with_exclusions,
 )
+from app.observability.momentum_cohort_outcomes import DEFAULT_COHORT as MOMENTUM_COHORT
 
 logger = logging.getLogger(__name__)
 
@@ -77,6 +79,35 @@ _VERSION = "evidence_window/1.0"
 # same generator (memory kai_edge_cohort_key_fix). Structural (attribution), not
 # date-magic, so it stays correct as new data arrives.
 CANONICAL_EDGE_SOURCES: frozenset[str] = frozenset({"autonomous_generator", "real_analysis"})
+
+# Cohort feeders tag each cycle with analysis_source, which — forward of the
+# 2026-06-29 attribution fix (app.orchestrator.signal_source) — becomes the close's
+# signal_source. But closes recorded BEFORE that fix fell through to the
+# ``autonomous_generator`` default while the cohort tag survived verbatim in the
+# document_id (``<cohort>_<SYM>``). The source filter must recover the TRUE source
+# from that prefix, else a foreign-cohort microcap (the real ``momentum_universe``
+# SLX +2799bps close) re-inflates the canonical autonomous edge — the same
+# contamination class as kai_edge_epoch_contamination_20260623, here via
+# mis-attribution rather than epoch. Mirrors the GENERIC branch of
+# resolve_signal_source: add a cohort feeder here when it ships, so the recurring
+# "the taxonomy whitelist forgot the new cohort" bug class stays closed.
+_MIS_BUCKETED_COHORTS: tuple[str, ...] = (MOMENTUM_COHORT,)
+
+
+def _edge_source_of(trade: ClosedTrade) -> str:
+    """The trade's TRUE source for the edge source-filter.
+
+    Recovers a cohort tag that survives in ``document_id`` when the stored
+    ``signal_source`` was mis-bucketed (pre-2026-06-29 cohort closes). This is
+    source-RECOVERY, not source-deletion: a query whose allowlist includes the
+    cohort (e.g. the G3-G7 cohort-edge gate) still keeps the close.
+    """
+    doc_id = trade.document_id or ""
+    for cohort in _MIS_BUCKETED_COHORTS:
+        if doc_id.startswith(f"{cohort}_"):
+            return cohort
+    return trade.signal_source
+
 
 # Loop statuses (must mirror app.orchestrator.models.CycleStatus). Kept as a
 # local mapping so a renamed status surfaces as an unmapped raw count rather than
@@ -446,12 +477,14 @@ def build_evidence_window(
     # Canonical-edge source filter: restrict the EDGE to the real generator's
     # attributed sources. counts + safety above already saw every row, so this
     # shapes ONLY the edge. Closes the 2026-06-23 epoch contamination where
-    # unattributed May-canary closes faked a positive ETH cohort.
+    # unattributed May-canary closes faked a positive ETH cohort, AND (via
+    # _edge_source_of) the 2026-06-29 mis-attribution where pre-fix cohort closes
+    # leaked into the autonomous edge under a stale signal_source.
     source_filter_tuple: tuple[str, ...] | None = None
     closes_excluded_by_source = 0
     if source_allowlist is not None:
         source_filter_tuple = tuple(sorted(source_allowlist))
-        kept = [t for t in closed if t.signal_source in source_allowlist]
+        kept = [t for t in closed if _edge_source_of(t) in source_allowlist]
         closes_excluded_by_source = len(closed) - len(kept)
         closed = kept
 
