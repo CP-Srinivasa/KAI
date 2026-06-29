@@ -13,7 +13,9 @@ runner = CliRunner()
 
 
 def test_eligibility_show_no_snapshot(tmp_path: Path) -> None:
-    result = runner.invoke(universe_app, ["eligibility-show", "--ledger", str(tmp_path / "x.jsonl")])
+    result = runner.invoke(
+        universe_app, ["eligibility-show", "--ledger", str(tmp_path / "x.jsonl")]
+    )
     assert result.exit_code == 0
     assert json.loads(result.stdout)["available"] is False
 

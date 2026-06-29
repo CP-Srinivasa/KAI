@@ -57,8 +57,11 @@ async def fetch_metrics(
         history = len(candles)
 
     return SymbolMetrics(
-        symbol=symbol, base=base, quote=quote,
-        turnover_24h_usd=turnover, history_days=history,
+        symbol=symbol,
+        base=base,
+        quote=quote,
+        turnover_24h_usd=turnover,
+        history_days=history,
     )
 
 

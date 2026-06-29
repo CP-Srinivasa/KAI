@@ -8,14 +8,18 @@ from app.trading.symbol_eligibility import (
     EligibilityVerdict,
     SymbolMetrics,
     evaluate_eligibility,
+    resolve_duplicates,
 )
 
 
 def _m(symbol: str, turnover: float | None, history: int | None) -> SymbolMetrics:
     base, _, quote = symbol.partition("/")
     return SymbolMetrics(
-        symbol=symbol, base=base, quote=quote,
-        turnover_24h_usd=turnover, history_days=history,
+        symbol=symbol,
+        base=base,
+        quote=quote,
+        turnover_24h_usd=turnover,
+        history_days=history,
     )
 
 
@@ -67,9 +71,6 @@ def test_thresholds_are_parametrised() -> None:
     assert DEFAULT_MIN_HISTORY_DAYS == 30
     v = evaluate_eligibility(_m("FOO/USDT", 2e6, 365), min_turnover_usd=1e6)
     assert v.eligible is True
-
-
-from app.trading.symbol_eligibility import resolve_duplicates
 
 
 def test_resolve_prefers_usdt_over_usdc() -> None:

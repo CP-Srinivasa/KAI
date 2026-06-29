@@ -80,15 +80,19 @@ def test_refresh_keeps_last_snapshot_when_source_dead(tmp_path: Path) -> None:
 def test_refresh_writes_eligibility_without_filtering(tmp_path, monkeypatch) -> None:
     import scripts.momentum_universe_refresh as refresh
 
-    ranked = [RankedSymbol("BTC/USDT", 0.9, 0.9, 0.9, 1),
-              RankedSymbol("SLX/USDT", 0.8, 0.8, 0.8, 2)]
+    ranked = [
+        RankedSymbol("BTC/USDT", 0.9, 0.9, 0.9, 1),
+        RankedSymbol("SLX/USDT", 0.8, 0.8, 0.8, 2),
+    ]
 
     async def _fake_build_universe(*a, **k):
         return ranked
 
     async def _fake_build_eligibility(source, symbols, **k):
-        return [EligibilityVerdict("BTC/USDT", True, []),
-                EligibilityVerdict("SLX/USDT", False, ["no_canonical_venue_data"])]
+        return [
+            EligibilityVerdict("BTC/USDT", True, []),
+            EligibilityVerdict("SLX/USDT", False, ["no_canonical_venue_data"]),
+        ]
 
     monkeypatch.setattr(refresh, "build_universe", _fake_build_universe)
     monkeypatch.setattr(refresh, "build_eligibility", _fake_build_eligibility)
@@ -100,6 +104,7 @@ def test_refresh_writes_eligibility_without_filtering(tmp_path, monkeypatch) -> 
 
     # Universe ledger keeps BOTH symbols (no filtering) but carries the flag.
     import json
+
     uni = json.loads(uni_ledger.read_text(encoding="utf-8").splitlines()[-1])
     assert uni["count"] == 2
     rows = {r["symbol"]: r for r in uni["universe"]}

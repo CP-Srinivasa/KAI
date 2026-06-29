@@ -10,15 +10,26 @@ from app.trading.symbol_eligibility_fetch import build_eligibility, fetch_metric
 
 def _ticker(symbol: str, last: float, volume: float) -> Ticker:
     return Ticker(
-        symbol=symbol, timestamp_utc="2026-06-29T00:00:00Z",
-        bid=last, ask=last, last=last, volume_24h=volume, change_pct_24h=0.0,
+        symbol=symbol,
+        timestamp_utc="2026-06-29T00:00:00Z",
+        bid=last,
+        ask=last,
+        last=last,
+        volume_24h=volume,
+        change_pct_24h=0.0,
     )
 
 
 def _candle(close: float) -> OHLCV:
     return OHLCV(
-        symbol="X", timestamp_utc="2026-06-01T00:00:00Z", timeframe="1d",
-        open=close, high=close, low=close, close=close, volume=1.0,
+        symbol="X",
+        timestamp_utc="2026-06-01T00:00:00Z",
+        timeframe="1d",
+        open=close,
+        high=close,
+        low=close,
+        close=close,
+        volume=1.0,
     )
 
 

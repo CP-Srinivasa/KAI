@@ -57,9 +57,7 @@ async def _run(
 
         verdicts = await build_eligibility(BinanceAdapter(), [r.symbol for r in ranked])
         append_eligibility_snapshot(elig_ledger, verdicts, now=datetime.now(UTC))
-        elig_map = {
-            v.symbol: {"eligible": v.eligible, "reasons": v.reasons} for v in verdicts
-        }
+        elig_map = {v.symbol: {"eligible": v.eligible, "reasons": v.reasons} for v in verdicts}
     except Exception as exc:  # noqa: BLE001 — eligibility is shadow; never break the refresh
         print(f"momentum_universe_refresh: eligibility skipped ({exc})", file=sys.stderr)
 

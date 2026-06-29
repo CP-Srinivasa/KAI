@@ -43,6 +43,7 @@ def resolve_duplicates(symbols: list[str]) -> dict[str, str]:
             out[m] = canonical
     return out
 
+
 DEFAULT_MIN_TURNOVER_USD: float = 10_000_000.0
 DEFAULT_MIN_HISTORY_DAYS: int = 30
 
