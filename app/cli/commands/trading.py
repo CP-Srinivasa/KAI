@@ -14,10 +14,12 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
+from app.observability.counterfactual_replay_logger import OUTPUT_PATH as _DEFAULT_CF_PATH
 from app.observability.falsification_verdict import (
     DEFAULT_VERDICTS_PATH as _DEFAULT_VERDICTS_PATH,
 )
 from app.research.ledger import DEFAULT_LEDGER_PATH as _DEFAULT_HYPOTHESIS_LEDGER
+from app.research.prereg_ledger import DEFAULT_PREREG_LEDGER_PATH as _DEFAULT_PREREG_LEDGER
 
 console = Console()
 
@@ -733,6 +735,156 @@ def trading_churn_report(
         console.print(render_churn_report(report))
     if not report.available:
         raise typer.Exit(1)
+
+
+@trading_app.command("counterfactual-report")
+def trading_counterfactual_report(
+    comparison_path: str = typer.Option(
+        str(_DEFAULT_CF_PATH),
+        "--comparison-path",
+        help="Counterfactual Live/Replay comparison JSONL (dual-stream logger output)",
+    ),
+    as_json: bool = typer.Option(False, "--json", help="Emit JSON instead of the table"),
+) -> None:
+    """Roll-up über die Counterfactual Live/Replay-Drift-Evidenz (#318 Phase 1).
+
+    READ-ONLY Mess-Artefakt, ändert KEIN Handelsverhalten. Aggregiert den
+    Dual-Stream-Logger-Output: wie viele Vergleiche über Schwelle driften, wie viele
+    datenqualitäts-suspekt (Glitch, NIE als Drift gezählt) sind, wie viele das
+    Entry-Priceability-Gate ablehnen würde (``gate_would_reject``, tri-state),
+    plus Drift-Verteilung (Perzentile von |drift_to_range_bps|) und
+    per-Symbol/per-Source-Aufschlüsselung.
+    """
+    import json as _json
+
+    from app.observability.counterfactual_report import (
+        build_counterfactual_report,
+        render_counterfactual_report,
+    )
+
+    report = build_counterfactual_report(comparison_path)
+    if as_json:
+        print(_json.dumps(report.to_dict(), indent=2))
+    else:
+        console.print(render_counterfactual_report(report))
+    if not report.available:
+        raise typer.Exit(1)
+
+
+@trading_app.command("prereg-register")
+def trading_prereg_register(
+    name: str = typer.Option(..., "--name", help="Short hypothesis name (e.g. funding_carry_long)"),
+    direction: str = typer.Option(..., "--direction", help="long | short | neutral"),
+    horizon: str = typer.Option(..., "--horizon", help="Forecast horizon (e.g. 24h, 4h, 7d)"),
+    success_criteria: str = typer.Option(
+        ...,
+        "--success-criteria",
+        help="Falsifiable pass bar fixed BEFORE data (e.g. 'net_mean_bps>0 at n>=200, DSR>=0.95')",
+    ),
+    sample_target: int = typer.Option(
+        ..., "--sample-target", help="Pre-committed sample-size target (n)"
+    ),
+    ledger_path: str = typer.Option(
+        str(_DEFAULT_PREREG_LEDGER), "--ledger-path", help="Pre-registration ledger JSONL"
+    ),
+    as_json: bool = typer.Option(False, "--json", help="Emit JSON instead of text"),
+) -> None:
+    """Register a falsifiable hypothesis BEFORE measuring it (anti-p-hacking, ADR 0012).
+
+    RECORD-ONLY / shadow: gates nothing, blocks no trade. Appends one auditable row
+    (deterministic ``prereg_id`` over the claim) to the pre-registration ledger so a
+    later edge claim can be checked against what was committed in advance.
+    Re-registering an identical claim is a no-op-by-identity (same ``prereg_id``) but
+    still records the new ``created_at_utc`` as a distinct row.
+    """
+    import json as _json
+    from datetime import UTC, datetime
+
+    from app.research.prereg_ledger import DIRECTIONS, PreRegistrationLedger, register
+
+    direction_norm = direction.strip().lower()
+    if direction_norm not in DIRECTIONS:
+        console.print(f"[red]prereg refused:[/red] --direction must be one of {DIRECTIONS}")
+        raise typer.Exit(2)
+    if sample_target <= 0:
+        console.print("[red]prereg refused:[/red] --sample-target must be > 0")
+        raise typer.Exit(2)
+
+    entry = register(
+        name=name,
+        direction=direction_norm,
+        horizon=horizon,
+        success_criteria=success_criteria,
+        sample_size_target=sample_target,
+        created_at_utc=datetime.now(UTC).isoformat(),
+    )
+    ledger = PreRegistrationLedger(Path(ledger_path))
+    already = ledger.is_registered(entry.prereg_id)
+    ledger.record(entry)
+
+    if as_json:
+        record = _json.loads(entry.to_json())
+        record["already_registered"] = already
+        record["ledger_path"] = ledger_path
+        print(_json.dumps(record, indent=2))
+        return
+
+    console.print(
+        f"[green]pre-registered[/green] prereg_id={entry.prereg_id} name={entry.name} "
+        f"direction={entry.direction} horizon={entry.horizon} n_target={entry.sample_size_target}"
+    )
+    if already:
+        console.print(
+            "[yellow]note:[/yellow] an identical claim was already registered (same prereg_id)."
+        )
+    console.print(f"criteria: {entry.success_criteria}")
+    console.print(f"ledger: {ledger_path}  total_registered={ledger.count()}")
+
+
+@trading_app.command("prereg-list")
+def trading_prereg_list(
+    ledger_path: str = typer.Option(
+        str(_DEFAULT_PREREG_LEDGER), "--ledger-path", help="Pre-registration ledger JSONL"
+    ),
+    as_json: bool = typer.Option(False, "--json", help="Emit JSON instead of the table"),
+) -> None:
+    """List pre-registered hypotheses (read-only)."""
+    import json as _json
+
+    from app.research.prereg_ledger import PreRegistrationLedger
+
+    ledger = PreRegistrationLedger(Path(ledger_path))
+    entries = ledger.entries()
+
+    if as_json:
+        print(_json.dumps([_json.loads(e.to_json()) for e in entries], indent=2))
+        if not entries:
+            raise typer.Exit(1)
+        return
+
+    if not entries:
+        console.print("[yellow]no pre-registrations recorded[/yellow]")
+        raise typer.Exit(1)
+
+    table = Table(
+        title=f"Pre-registered hypotheses ({len(entries)} rows, {ledger.count()} distinct)"
+    )
+    table.add_column("prereg_id")
+    table.add_column("name")
+    table.add_column("dir")
+    table.add_column("horizon")
+    table.add_column("n_target", justify="right")
+    table.add_column("created_at_utc")
+    for e in entries:
+        table.add_row(
+            e.prereg_id,
+            e.name,
+            e.direction,
+            e.horizon,
+            str(e.sample_size_target),
+            e.created_at_utc,
+        )
+    console.print(table)
 
 
 @trading_app.command("paper-portfolio-snapshot")
