@@ -54,6 +54,67 @@ class Criterion:
     detail: str
 
 
+class TrialCountUnavailableError(ValueError):
+    """No hypothesis-ledger entries AND no explicit trial-count override.
+
+    The DSR deflation needs the honest number of distinct hypotheses ever tried.
+    With neither an auditable ledger count nor an operator-supplied override there
+    is no honest number — and silently defaulting to 1 would maximally INFLATE the
+    deflated Sharpe (the exact fraud the gate exists to prevent). So: refuse.
+    """
+
+
+@dataclass(frozen=True)
+class ResolvedTrials:
+    """The trial count that will drive DSR deflation, plus its provenance."""
+
+    trials: int
+    source: str  # "ledger" | "override" | "override_no_ledger"
+    ledger_count: int
+    override: int | None
+    clamped: bool  # an override was given but fell below the ledger floor → raised
+
+
+def resolve_trial_count(ledger_count: int, override: int | None) -> ResolvedTrials:
+    """Honest trial count for DSR deflation. The ledger is the FLOOR.
+
+    The hypothesis ledger records every distinct (hypothesis x config) ever tested
+    — the garden-of-forking-paths N. An ``override`` may only RAISE that floor (to
+    account for untracked ad-hoc/notebook searches the ledger never saw); it can
+    never LOWER it, because under-reporting trials fakes a passing DSR. With an
+    empty ledger and no override there is no honest count → fail closed.
+    """
+    if override is not None and override < ledger_count:
+        # Override is below the auditable floor → clamp UP to the ledger.
+        return ResolvedTrials(
+            trials=ledger_count,
+            source="ledger",
+            ledger_count=ledger_count,
+            override=override,
+            clamped=True,
+        )
+    if override is not None:
+        return ResolvedTrials(
+            trials=override,
+            source="override" if ledger_count > 0 else "override_no_ledger",
+            ledger_count=ledger_count,
+            override=override,
+            clamped=False,
+        )
+    if ledger_count > 0:
+        return ResolvedTrials(
+            trials=ledger_count,
+            source="ledger",
+            ledger_count=ledger_count,
+            override=None,
+            clamped=False,
+        )
+    raise TrialCountUnavailableError(
+        "no hypothesis-ledger entries and no --trials override: cannot honestly "
+        "deflate the Sharpe (refusing to default to 1, which would inflate the DSR)"
+    )
+
+
 @dataclass(frozen=True)
 class EdgeValidationVerdict:
     """Outcome of the edge-validation gate. ``ready`` is the authoritative boolean."""

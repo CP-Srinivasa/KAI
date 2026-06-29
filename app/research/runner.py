@@ -38,7 +38,12 @@ from app.market_data.history_loader import FetchKlines, load_ohlcv_history
 from app.market_data.kline_windows import interval_to_ms
 from app.market_data.models import OHLCV
 from app.research.evaluate import SearchReport, search_hypotheses
-from app.research.ledger import HypothesisLedger, LedgerEntry, hypothesis_key
+from app.research.ledger import (
+    DEFAULT_LEDGER_PATH,
+    HypothesisLedger,
+    LedgerEntry,
+    hypothesis_key,
+)
 from app.research.samples import Decider
 
 logger = logging.getLogger(__name__)
@@ -50,7 +55,7 @@ DEFAULT_LOOKBACK_DAYS = 180
 MAX_LOOKBACK_DAYS = 730  # hard cap (~2y): bounds backfill cost / memory
 DEFAULT_MIN_TRADES = 50
 DEFAULT_ALPHA = 0.05
-LEDGER_PATH = Path("artifacts/research/hypothesis_ledger.jsonl")
+LEDGER_PATH = DEFAULT_LEDGER_PATH
 _MS_PER_DAY = 86_400_000
 _PAPER_VENUE = "paper"
 _FALLBACK_COST_BPS = 20.0  # 2 x 10bp/side paper, if CostModel/config is unavailable
