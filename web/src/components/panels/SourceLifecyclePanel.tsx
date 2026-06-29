@@ -74,6 +74,12 @@ function RankRow({ e, showRank = true }: { e: SourceRankEntry; showRank?: boolea
           Rotation
         </Badge>
       )}
+      {/* Truth-Join: ECHTER DB-Schaltzustand weicht von der Rang-Heuristik ab. */}
+      {e.status_drift && (
+        <Badge tone="warn" dot title={`DB-Status „${e.db_status}" ≠ Rang-Status „${e.logical_status}"`}>
+          DB: {e.db_status}
+        </Badge>
+      )}
       <span className="w-16 shrink-0 text-right font-mono tabular-nums text-2xs text-fg-subtle">
         {e.n} Sig.
       </span>

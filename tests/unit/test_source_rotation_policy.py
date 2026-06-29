@@ -29,6 +29,20 @@ def test_pinned_is_never_rotated() -> None:
     assert d2.target is None
 
 
+def test_retired_is_never_rotated() -> None:
+    """A RETIRED source is terminal — the policy must never propose any move for
+    it (even a tier/silent signal), so the operator-kill stays absolute."""
+    d = decide_rotation(
+        SourceStatus.RETIRED,
+        silent=False,
+        reliability_tier="neutral",
+        pinned=False,
+        prior_flagged_runs=0,
+    )
+    assert d.target is None
+    assert d.reason == "retired_terminal"
+
+
 def test_active_silent_goes_silent() -> None:
     d = decide_rotation(
         SourceStatus.ACTIVE,

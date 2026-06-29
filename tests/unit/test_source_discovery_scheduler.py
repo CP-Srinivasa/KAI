@@ -8,7 +8,7 @@ NO DB mutation. The SSRF validator is injected so the tests are offline/determin
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from scripts.source_discovery_scheduler import (
@@ -144,6 +144,46 @@ def test_run_once_dry_audits_proposals_and_writes_summary(tmp_path: Path) -> Non
     assert "discovery_intake_dry" in audit
     assert '"executed": false' in audit
     assert "to_status" in audit and "probation" in audit
+
+
+def test_run_once_tombstones_rejects_and_skips_them_next_run(tmp_path: Path) -> None:
+    (tmp_path / "monitor").mkdir()
+    (tmp_path / "artifacts").mkdir()
+    proposals = tmp_path / "monitor" / "source_proposals.jsonl"
+    proposals.write_text(
+        json.dumps({"url": "https://good.com/rss", "access": "rss", "source_type": "rss_feed"})
+        + "\n"
+        + json.dumps({"url": "https://login.com", "access": "login", "source_type": "website"})
+        + "\n",
+        encoding="utf-8",
+    )
+    ranking = tmp_path / "monitor" / "source_ranking.json"
+    ranking.write_text(json.dumps({"ranked": []}), encoding="utf-8")
+    runs_path = tmp_path / "monitor" / "source_discovery_runs.jsonl"
+    tomb = tmp_path / "monitor" / "source_rejected_candidates.jsonl"
+
+    common = {
+        "proposals_path": proposals,
+        "ranking_path": ranking,
+        "audit_dir": tmp_path / "artifacts",
+        "runs_path": runs_path,
+        "enabled": False,
+        "url_validator": _ok,
+        "rejected_tombstone_path": tomb,
+    }
+    # Run 1: the login candidate is rejected AND tombstoned.
+    s1 = run_once(now=_NOW, **common)
+    assert s1["rejected"] == 1
+    assert s1["tombstoned_skipped"] == 0
+    assert tomb.exists()
+    assert "login.com" in tomb.read_text(encoding="utf-8")
+
+    # Run 2 (next day): the tombstoned login candidate is skipped BEFORE gating —
+    # not re-rejected, not re-run through the intake gate.
+    s2 = run_once(now=_NOW + timedelta(days=1), **common)
+    assert s2["tombstoned_skipped"] == 1
+    assert s2["rejected"] == 0
+    assert s2["accepted"] == 1  # the rss feed is still accepted
 
 
 def test_run_once_no_inputs_is_empty_observe(tmp_path: Path) -> None:

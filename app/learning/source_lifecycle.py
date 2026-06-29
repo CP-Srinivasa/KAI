@@ -15,20 +15,40 @@ from __future__ import annotations
 
 from app.core.enums import SourceStatus
 
+# RETIRED (2026-06-29): operator-manual TERMINAL kill. Reachable from every
+# lifecycle state (an operator can retire a source from anywhere), but has NO
+# outgoing edges → no auto-resurrection and, combined with the status-blind
+# onboarding dedup, no re-onboarding. Makes "never again" a hard FSM guarantee
+# instead of relying on rotation-policy conservatism.
 _TRANSITIONS: dict[SourceStatus, frozenset[SourceStatus]] = {
-    SourceStatus.PLANNED: frozenset({SourceStatus.PROBATION, SourceStatus.DISABLED}),
+    SourceStatus.PLANNED: frozenset(
+        {SourceStatus.PROBATION, SourceStatus.DISABLED, SourceStatus.RETIRED}
+    ),
     SourceStatus.PROBATION: frozenset(
-        {SourceStatus.ACTIVE, SourceStatus.ARCHIVED, SourceStatus.DISABLED}
+        {SourceStatus.ACTIVE, SourceStatus.ARCHIVED, SourceStatus.DISABLED, SourceStatus.RETIRED}
     ),
     SourceStatus.ACTIVE: frozenset(
-        {SourceStatus.SILENT, SourceStatus.PINNED, SourceStatus.ARCHIVED, SourceStatus.DISABLED}
+        {
+            SourceStatus.SILENT,
+            SourceStatus.PINNED,
+            SourceStatus.ARCHIVED,
+            SourceStatus.DISABLED,
+            SourceStatus.RETIRED,
+        }
     ),
     SourceStatus.SILENT: frozenset(
-        {SourceStatus.ACTIVE, SourceStatus.ARCHIVED, SourceStatus.DISABLED}
+        {SourceStatus.ACTIVE, SourceStatus.ARCHIVED, SourceStatus.DISABLED, SourceStatus.RETIRED}
     ),
-    SourceStatus.PINNED: frozenset({SourceStatus.ACTIVE, SourceStatus.DISABLED}),
-    SourceStatus.ARCHIVED: frozenset({SourceStatus.PROBATION}),  # re-evaluation
-    SourceStatus.DISABLED: frozenset({SourceStatus.PROBATION, SourceStatus.ACTIVE}),
+    SourceStatus.PINNED: frozenset(
+        {SourceStatus.ACTIVE, SourceStatus.DISABLED, SourceStatus.RETIRED}
+    ),
+    SourceStatus.ARCHIVED: frozenset(
+        {SourceStatus.PROBATION, SourceStatus.RETIRED}
+    ),  # re-evaluation OR terminal kill
+    SourceStatus.DISABLED: frozenset(
+        {SourceStatus.PROBATION, SourceStatus.ACTIVE, SourceStatus.RETIRED}
+    ),
+    SourceStatus.RETIRED: frozenset(),  # TERMINAL — no return
 }
 
 LIFECYCLE_STATES: frozenset[SourceStatus] = frozenset(_TRANSITIONS) | {

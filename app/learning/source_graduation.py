@@ -25,6 +25,16 @@ from dataclasses import dataclass
 
 # Default evidence gates for graduation. Conservative: a candidate must survive a
 # few probation runs and actually deliver before it can displace an active source.
+#
+# KNOWN-STRUCTURALLY-CLOSED (ADR 0012, 2026-06-29): ``deliveries`` is the count of
+# resolved-DIRECTION outcomes a source produced on probation, which for news/RSS
+# sources is ~0 (they emit narrative, not resolvable directional signals). So this
+# gate effectively never opens for the dominant source class — graduation stays
+# inert. This is left UNCHANGED on purpose: under the NORTH_STAR pivot KAI is a
+# truth/falsification platform, not an alpha-bot, so we do NOT bend the delivery
+# attribution to force auto-promotion (that would manufacture an edge claim from a
+# source class we have not validated). When/if a delivery signal is genuinely
+# earned, raise it through the evidence path, not by lowering this gate.
 DEFAULT_MIN_PROBATION_RUNS: int = 3
 DEFAULT_MIN_DELIVERIES: int = 5
 

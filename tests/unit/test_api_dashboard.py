@@ -1486,6 +1486,74 @@ def test_source_lifecycle_api_returns_ranking_and_events(
     assert body["recent_events"][0]["to_status"] == "silent"
 
 
+def test_attach_db_status_flags_drift_and_handles_non_db_sources() -> None:
+    from app.api.routers.dashboard import _attach_db_status
+
+    ranked = [
+        {"source_name": "cryptoslate", "logical_status": "active"},  # DB says disabled → DRIFT
+        {"source_name": "thedefiant", "logical_status": "active"},  # DB agrees → no drift
+        {"source_name": "youtube_xyz", "logical_status": "active"},  # not in DB → db_status None
+    ]
+    db_map = {"cryptoslate": "disabled", "thedefiant": "active"}
+    out = _attach_db_status(ranked, db_map)
+
+    by_name = {e["source_name"]: e for e in out}
+    assert by_name["cryptoslate"]["db_status"] == "disabled"
+    assert by_name["cryptoslate"]["status_drift"] is True
+    assert by_name["thedefiant"]["db_status"] == "active"
+    assert by_name["thedefiant"]["status_drift"] is False
+    # A source with no DB row (e.g. youtube/tradingview_webhook) never drifts.
+    assert by_name["youtube_xyz"]["db_status"] is None
+    assert by_name["youtube_xyz"]["status_drift"] is False
+
+
+def test_attach_db_status_is_case_insensitive_on_provider() -> None:
+    from app.api.routers.dashboard import _attach_db_status
+
+    out = _attach_db_status(
+        [{"source_name": "CryptoSlate", "logical_status": "active"}],
+        {"cryptoslate": "disabled"},
+    )
+    assert out[0]["db_status"] == "disabled"
+    assert out[0]["status_drift"] is True
+
+
+def test_source_lifecycle_api_exposes_db_status_drift(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """End-to-end: a source that is DB-disabled but rank-active is flagged drifting."""
+    from types import SimpleNamespace
+
+    from app.api.deps import get_source_repo_optional
+    from app.core.enums import SourceStatus
+
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "monitor").mkdir()
+    (tmp_path / "monitor" / "source_ranking.json").write_text(
+        json.dumps(
+            {
+                "generated_at": "2026-06-29T12:00:00+00:00",
+                "ranked": [{"source_name": "cryptoslate", "logical_status": "active", "n": 9}],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    class _FakeRepo:
+        async def list(self, **_kw: object) -> list[object]:
+            return [SimpleNamespace(provider="cryptoslate", status=SourceStatus.DISABLED)]
+
+    app = _make_app()
+    app.dependency_overrides[get_source_repo_optional] = lambda: _FakeRepo()
+    with TestClient(app) as client:
+        body = client.get("/dashboard/api/source-lifecycle").json()
+
+    entry = body["ranked"][0]
+    assert entry["logical_status"] == "active"
+    assert entry["db_status"] == "disabled"
+    assert entry["status_drift"] is True
+
+
 def test_ln_channels_api_disabled_shape() -> None:
     """Default-off: /dashboard/api/ln/channels returns a fail-closed disabled shape.
 

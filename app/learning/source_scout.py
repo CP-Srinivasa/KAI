@@ -19,6 +19,7 @@ from dataclasses import dataclass, replace
 from datetime import datetime
 from email.utils import parsedate_to_datetime
 from typing import Any
+from urllib.parse import urlsplit
 
 from defusedxml.common import DefusedXmlException
 from defusedxml.ElementTree import ParseError
@@ -85,6 +86,14 @@ def feed_health_score(item_count: int | None, latest_age_days: float | None) -> 
     return round(0.7 * fresh + 0.3 * volume, 4)
 
 
+def _domain(normalized_url: str) -> str:
+    """Bare lower-cased host of an already-normalized URL ("" if unparseable)."""
+    try:
+        return urlsplit(normalized_url).netloc.lower()
+    except ValueError:
+        return ""
+
+
 def _local(tag: str) -> str:
     """Tag ohne Namespace (``{http://www.w3.org/2005/Atom}entry`` → ``entry``)."""
     return tag.rsplit("}", 1)[-1].lower()
@@ -139,11 +148,19 @@ def dedup_against_registry(
     *,
     existing_normalized_urls: set[str],
     existing_providers: set[str],
+    tombstoned: set[str] | None = None,
 ) -> tuple[list[ScoutProposal], list[tuple[str, str]]]:
-    """Wirf Kandidaten raus, die schon registriert sind (URL ODER provider-slug)
-    oder im Batch doppeln. Liefert (kept, dropped[(url, reason)]). Pur."""
+    """Wirf Kandidaten raus, die schon registriert sind (URL ODER provider-slug),
+    im Batch doppeln, ODER unter aktivem Reject-Tombstone stehen. Liefert
+    (kept, dropped[(url, reason)]). Pur.
+
+    ``tombstoned`` ist die Menge aktiver Reject-Keys (normalisierte URLs UND
+    Domains) aus ``source_reject_tombstone.load_active_rejections`` — so wird eine
+    bereits abgelehnte URL/Domain nicht jeden Lauf neu vorgeschlagen + neu durchs
+    Intake-Gate gejagt. Default leer = abwärtskompatibel."""
     known_urls = {normalize_url(u) for u in existing_normalized_urls}
     known_prov = {p.strip().lower() for p in existing_providers if p and p.strip()}
+    tomb = tombstoned or set()
     kept: list[ScoutProposal] = []
     dropped: list[tuple[str, str]] = []
     seen_urls: set[str] = set()
@@ -152,6 +169,9 @@ def dedup_against_registry(
         nu = normalize_url(c.url)
         if not nu:
             dropped.append((c.url, "malformed_url"))
+            continue
+        if tomb and (nu in tomb or _domain(nu) in tomb):
+            dropped.append((c.url, "tombstoned_reject"))
             continue
         if nu in known_urls or nu in seen_urls:
             dropped.append((c.url, "duplicate_url"))
