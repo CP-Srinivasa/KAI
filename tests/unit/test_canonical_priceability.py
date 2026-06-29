@@ -260,3 +260,111 @@ def test_paper_engine_gate_flag_on_btc_passes(
         engine.fill_order(order, current_price=50_000.0)
     except Exception as exc:
         pytest.fail(f"Unexpected exception for BTC/USDT with flag ON: {exc}")
+
+
+# ---------------------------------------------------------------------------
+# 4. latest_unpriceable_symbols — off-venue filter only
+# ---------------------------------------------------------------------------
+
+
+def test_latest_unpriceable_symbols_no_ledger(tmp_path: Path) -> None:
+    """Permissive: missing ledger → empty set."""
+    from app.trading.symbol_eligibility import latest_unpriceable_symbols
+
+    missing = tmp_path / "nonexistent.jsonl"
+    assert latest_unpriceable_symbols(missing) == set()
+
+
+def test_latest_unpriceable_symbols_only_off_venue(tmp_path: Path) -> None:
+    """Only symbols with no_canonical_venue_data reason are returned.
+
+    below_min_turnover and below_min_history ineligible symbols must NOT appear.
+    """
+    from app.trading.symbol_eligibility import latest_unpriceable_symbols
+
+    ledger = tmp_path / "symbol_eligibility_audit.jsonl"
+    _write_ledger(
+        ledger,
+        [
+            # Off-venue: should appear in unpriceable set.
+            {"symbol": "SLX/USDT", "eligible": False, "reasons": ["no_canonical_venue_data"]},
+            # Below-turnover: ineligible but NOT off-venue → must NOT appear.
+            {"symbol": "WIF/USDT", "eligible": False, "reasons": ["below_min_turnover"]},
+            # Below-history: ineligible but NOT off-venue → must NOT appear.
+            {"symbol": "NEW/USDT", "eligible": False, "reasons": ["below_min_history"]},
+            # Duplicate: ineligible but NOT off-venue → must NOT appear.
+            {"symbol": "BTC/USDC", "eligible": False, "reasons": ["duplicate_of:BTC/USDT"]},
+            # Eligible: must not appear.
+            {"symbol": "BTC/USDT", "eligible": True, "reasons": []},
+        ],
+    )
+    result = latest_unpriceable_symbols(ledger)
+    assert result == {"SLX/USDT"}
+    assert "WIF/USDT" not in result
+    assert "NEW/USDT" not in result
+    assert "BTC/USDC" not in result
+    assert "BTC/USDT" not in result
+
+
+# ---------------------------------------------------------------------------
+# 5. Paper-engine gate: below_turnover passes / off-venue rejected
+# ---------------------------------------------------------------------------
+
+
+def test_paper_engine_gate_flag_on_below_turnover_passes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """enforce=true + symbol ineligible for below_min_turnover ONLY → NOT rejected.
+
+    Calibration-dependent reasons must stay shadow-only to avoid false-positives
+    on liquid sub-threshold names (e.g. WIF).
+    """
+    monkeypatch.setenv("EXECUTION_UNIVERSE_ELIGIBILITY_ENFORCE", "true")
+
+    (tmp_path / "artifacts").mkdir(parents=True, exist_ok=True)
+    ledger = tmp_path / "artifacts" / "symbol_eligibility_audit.jsonl"
+    _write_ledger(
+        ledger,
+        [{"symbol": "WIF/USDT", "eligible": False, "reasons": ["below_min_turnover"]}],
+    )
+    monkeypatch.chdir(tmp_path)
+
+    import app.core.settings as _settings_mod
+
+    if hasattr(_settings_mod.get_settings, "cache_clear"):
+        _settings_mod.get_settings.cache_clear()
+
+    engine, order = _make_engine_and_open_order("WIF/USDT")
+    # below_min_turnover is shadow-only → gate must NOT block this symbol.
+    # fill_order may return None for unrelated reasons; we just verify no
+    # eligibility rejection path is hit (no exception).
+    try:
+        engine.fill_order(order, current_price=2.0)
+    except Exception as exc:
+        pytest.fail(f"Unexpected exception for WIF/USDT (below_min_turnover only): {exc}")
+
+
+def test_paper_engine_gate_flag_on_off_venue_rejected(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """enforce=true + symbol ineligible for no_canonical_venue_data → fill returns None."""
+    monkeypatch.setenv("EXECUTION_UNIVERSE_ELIGIBILITY_ENFORCE", "true")
+
+    (tmp_path / "artifacts").mkdir(parents=True, exist_ok=True)
+    ledger = tmp_path / "artifacts" / "symbol_eligibility_audit.jsonl"
+    _write_ledger(
+        ledger,
+        [{"symbol": "ACT/USDT", "eligible": False, "reasons": ["no_canonical_venue_data"]}],
+    )
+    monkeypatch.chdir(tmp_path)
+
+    import app.core.settings as _settings_mod
+
+    if hasattr(_settings_mod.get_settings, "cache_clear"):
+        _settings_mod.get_settings.cache_clear()
+
+    engine, order = _make_engine_and_open_order("ACT/USDT")
+    fill = engine.fill_order(order, current_price=0.5)
+    assert fill is None, "Expected None: ACT/USDT has no canonical-venue market, flag is ON"

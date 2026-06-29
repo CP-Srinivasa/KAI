@@ -40,7 +40,7 @@ from app.signals.models import (
     SignalStateMachine,
     SignalStateTransition,
 )
-from app.trading.symbol_eligibility import is_canonical_priceable, latest_ineligible_symbols
+from app.trading.symbol_eligibility import is_canonical_priceable, latest_unpriceable_symbols
 
 logger = logging.getLogger(__name__)
 
@@ -694,13 +694,13 @@ class PaperExecutionEngine:
         # so any pre-existing stuck position can be wound down. Permissive default:
         # the gate is a no-op unless EXECUTION_UNIVERSE_ELIGIBILITY_ENFORCE=true.
         if _opens and get_settings().execution.universe_eligibility_enforce:
-            _ineligible = latest_ineligible_symbols(
+            _unpriceable = latest_unpriceable_symbols(
                 Path("artifacts/symbol_eligibility_audit.jsonl")
             )
-            if not is_canonical_priceable(order.symbol, _ineligible):
+            if not is_canonical_priceable(order.symbol, _unpriceable):
                 logger.warning(
                     "[PAPER] Rejecting open on non-priceable symbol %s "
-                    "(no canonical-venue market; UNIVERSE_ELIGIBILITY_ENFORCE)",
+                    "(no canonical-venue market (unpriceable); UNIVERSE_ELIGIBILITY_ENFORCE)",
                     order.symbol,
                 )
                 return None
