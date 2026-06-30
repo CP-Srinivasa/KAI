@@ -32,6 +32,7 @@ import { Waterfall } from "@/components/viz/Waterfall";
 import { realizedToWaterfall } from "@/lib/pnlWaterfall";
 import { useCurrency } from "@/state/CurrencyProvider";
 import { formatNumber, type Currency } from "@/lib/money";
+import { computeEquityComposition } from "@/lib/portfolio";
 import { formatClock, formatShortDate } from "@/lib/time";
 
 /**
@@ -312,6 +313,12 @@ export function PortfolioPage() {
   // verlangt "keine automatische Umwandlung auf 0.01" für Display.
   const fmt$ = (v: number | null | undefined, digits?: number) =>
     v == null ? "—" : fmt(v, undefined, digits ?? priceDigits(v));
+  // Geldbeträge (Equity/Cash/PnL/Fees/Marktwert) sind KEINE Preise: immer 2
+  // Nachkommastellen über den kanonischen Money-Formatter. priceDigits ist nur
+  // für Sub-Cent-Instrumentpreise gedacht — auf einen 33,63€-PnL angewandt ergab
+  // es "33,6288€" (der 4-statt-2-Stellen-Bug, Operator 2026-06-30).
+  const money$ = (v: number | null | undefined, digits = 2) =>
+    v == null ? "—" : fmt(v, undefined, digits);
   // Retry transient blips fast (capital view shouldn't sit in "error" 30s).
   const snap = useApi(fetchPortfolioSnapshot, 30_000, [], { maxAttempts: 2, baseMs: 1500 });
   const exposure = useApi(fetchExposureSummary, 30_000, [], { maxAttempts: 2, baseMs: 1500 });
@@ -368,6 +375,13 @@ export function PortfolioPage() {
   // an Fees verschlingt und ob es stark variiert.
   const feesToday = snap.state === "ready" ? snap.data.total_fees_today_usd ?? 0 : 0;
   const fillsToday = snap.state === "ready" ? snap.data.fills_today ?? 0 : 0;
+  // Short-aware Zerlegung: der Cash-Saldo enthält Short-Erlöse (eine
+  // Verbindlichkeit, die beim Rückkauf wieder abfließt) → der „freie" Cash ist
+  // weniger als der Saldo. netPositionValue = Long-MW − Short-MW und ist exakt
+  // gleich (Equity − Cash) aus dem Backend; so wird die Identität
+  // „Cash + Netto-Position = Equity" im UI nachvollziehbar.
+  const { shortLiability } = computeEquityComposition(positions);
+  const netPositionValue = totalEquity - cash;
   // Stacked-Bar: nur die positiven Anteile, realized kann negativ sein → Anteil clamp.
   const denomForBar = Math.max(positionsValue + cash + Math.max(realized, 0), 1);
   const pctPositions = (positionsValue / denomForBar) * 100;
@@ -430,7 +444,7 @@ export function PortfolioPage() {
                   totalEquity > 0 ? "text-pos" : totalEquity < 0 ? "text-neg" : "text-fg",
                 )}
               >
-                {fmt$(totalEquity)}
+                {money$(totalEquity)}
               </div>
             </div>
             <div className="flex items-center gap-2">
@@ -442,70 +456,95 @@ export function PortfolioPage() {
             <div
               className="bg-info"
               style={{ width: `${pctPositions}%` }}
-              title={`In offenen Positionen: ${fmt$(positionsValue)}`}
+              title={`In offenen Positionen (brutto): ${money$(positionsValue)}`}
             />
             <div
               className="bg-pos"
               style={{ width: `${pctCash}%` }}
-              title={`Cash: ${fmt$(cash)}`}
+              title={`Cash-Saldo: ${money$(cash)}`}
             />
             <div
               className="bg-ai"
               style={{ width: `${pctRealized}%` }}
-              title={`Realized PnL (kumuliert positiv): ${fmt$(Math.max(realized, 0))}`}
+              title={`Realized PnL (kumuliert positiv): ${money$(Math.max(realized, 0))}`}
             />
           </div>
           <div className="mt-3 grid grid-cols-2 sm:grid-cols-3 gap-3 text-xs">
             <BucketLabel
               tone="info"
-              label="In Position (Marktwert)"
-              value={fmt$(positionsValue)}
-              sub={`${snap.data.position_count} offen`}
+              label="In Position (Brutto-MW)"
+              value={money$(positionsValue)}
+              sub={`${snap.data.position_count} offen · brutto Σ|Wert|`}
+              title="Summe der absoluten Positionswerte (Long + Short), unabhängig von der Richtung. Geht NICHT 1:1 in die Equity — siehe Netto-Position."
+            />
+            {/* Short-aware Netto-Beitrag: Long-MW − Short-MW. Macht die Identität
+                sichtbar (Cash + Netto-Position = Equity); ein Short ist eine
+                Verbindlichkeit, kein Vermögenswert. Operator 2026-06-30. */}
+            <BucketLabel
+              tone="info"
+              label="Netto-Position (short-aware)"
+              value={money$(netPositionValue)}
+              sub="Long − Short · Cash + dies = Equity"
+              title="Long-Marktwert minus Short-Marktwert. Shorts zählen negativ, weil sie zurückgekauft werden müssen. Cash + Netto-Position = Gesamt-Equity."
             />
             <BucketLabel
-              tone="pos"
-              label="Cash (frei)"
-              value={fmt$(cash)}
-              sub="liquide"
+              tone="info"
+              label="Cash (Konto-Saldo)"
+              value={money$(cash)}
+              sub={
+                shortLiability > 0
+                  ? `davon ${money$(shortLiability)} Short-Erlös — nicht frei`
+                  : "liquide"
+              }
+              title={
+                shortLiability > 0
+                  ? `Der Saldo enthält ${money$(shortLiability)} aus Short-Verkäufen — geliehenes Kapital, das beim Rückkauf wieder abfließt. Wirklich frei verfügbar ist nur der Rest, nicht der volle Saldo.`
+                  : undefined
+              }
             />
             <BucketLabel
               tone={realized < 0 ? "neg" : "ai"}
               label="Realisiert (G/V)"
-              value={`${realized >= 0 ? "+" : ""}${fmt$(realized)}`}
+              value={`${realized >= 0 ? "+" : ""}${money$(realized)}`}
               sub="kumuliert"
             />
             {/* Im Trade / unrealisiert — short-aware, grün bei Plus, rot bei Minus. */}
             <BucketLabel
               tone={unrealizedTotal > 0 ? "pos" : unrealizedTotal < 0 ? "neg" : "info"}
               label="Im Trade (unrealisiert)"
-              value={`${unrealizedTotal >= 0 ? "+" : ""}${fmt$(unrealizedTotal)}`}
+              value={`${unrealizedTotal >= 0 ? "+" : ""}${money$(unrealizedTotal)}`}
               sub={unrealizedTotal >= 0 ? "offener Gewinn" : "offener Verlust"}
             />
             <BucketLabel
               tone="neg"
               label="Fees ausgegeben"
-              value={fmt$(feesSpent)}
-              sub={
+              value={money$(feesSpent)}
+              sub="gesamt (Entry+Exit)"
+              title={
                 [
-                  "gesamt (Entry+Exit)",
-                  feesArtifact > 0 ? `+${fmt$(feesArtifact)} Mai-60bps-Artefakt ausgeschl.` : "",
-                  feesPhantom > 0 ? `+${fmt$(feesPhantom)} Phantom (nicht handelbar) ausgeschl.` : "",
+                  feesArtifact > 0
+                    ? `${money$(feesArtifact)} Mai-60bps-Artefakt ausgeschlossen (error-path-Tabelle v1.0.0, nicht real)`
+                    : "",
+                  feesPhantom > 0
+                    ? `${money$(feesPhantom)} Phantom-Fees ausgeschlossen (nicht-handelbare Self-Pair/Stablecoin-Symbole)`
+                    : "",
                 ]
                   .filter(Boolean)
-                  .join(" · ")
+                  .join(" · ") || undefined
               }
             />
             <BucketLabel
               tone="neg"
               label="Fees heute"
-              value={fmt$(feesToday)}
+              value={money$(feesToday)}
               sub={`${fillsToday} Fills heute (UTC)`}
             />
           </div>
           <p className="mt-3 pt-3 border-t border-line-subtle/40 text-2xs text-fg-subtle">
-            Gesamt-Equity = Cash + Marktwert offener Positionen (Short = Verbindlichkeit),
-            inkl. realisierter + unrealisierter G/V; Fees sind bereits abgezogen. Echtzeit aus
-            /operator/portfolio-snapshot.
+            Gesamt-Equity = Cash-Saldo + Netto-Position (Long-Marktwert − Short-Marktwert; Short
+            ist eine Rückkauf-Verbindlichkeit), inkl. realisierter + unrealisierter G/V; Fees sind
+            bereits abgezogen. Der Cash-Saldo enthält Short-Verkaufserlöse und ist daher nicht
+            vollständig „frei". Echtzeit aus /operator/portfolio-snapshot.
           </p>
         </Card>
       )}
@@ -544,7 +583,7 @@ export function PortfolioPage() {
               return (
                 <span
                   key={p.symbol}
-                  title={`Entry ${fmt$(p.avg_entry_price)} · Markt ${fmt$(p.market_price)} · Wert ${fmt$(p.market_value_usd)}`}
+                  title={`Entry ${fmt$(p.avg_entry_price)} · Markt ${fmt$(p.market_price)} · Wert ${money$(p.market_value_usd)}`}
                   className={cn(
                     "inline-flex items-baseline gap-1.5 rounded-sm border px-2 py-1 text-xs font-mono",
                     tone === "pos" && "border-pos/30 text-pos",
@@ -563,7 +602,7 @@ export function PortfolioPage() {
                   <span className="font-semibold">{p.symbol}</span>
                   <span>
                     {pnl >= 0 ? "+" : ""}
-                    {fmt$(pnl, 0)}
+                    {money$(pnl, 0)}
                   </span>
                 </span>
               );
@@ -634,14 +673,14 @@ export function PortfolioPage() {
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-4">
             <div className="rounded-md border border-line-subtle bg-bg-2 p-3">
               <div className="text-2xs uppercase tracking-wider text-fg-subtle font-semibold">Brutto-Exposure</div>
-              <div className="mt-1 font-mono text-xl font-semibold text-fg">{fmt$(exposure.data.gross_exposure_usd)}</div>
+              <div className="mt-1 font-mono text-xl font-semibold text-fg">{money$(exposure.data.gross_exposure_usd)}</div>
               <div className="mt-1 text-2xs text-fg-subtle leading-relaxed">
                 Summe aller absoluten Positionswerte — unabhängig von Long/Short.
               </div>
             </div>
             <div className="rounded-md border border-line-subtle bg-bg-2 p-3">
               <div className="text-2xs uppercase tracking-wider text-fg-subtle font-semibold">Netto-Exposure</div>
-              <div className="mt-1 font-mono text-xl font-semibold text-fg">{fmt$(exposure.data.net_exposure_usd)}</div>
+              <div className="mt-1 font-mono text-xl font-semibold text-fg">{money$(exposure.data.net_exposure_usd)}</div>
               <div className="mt-1 text-2xs text-fg-subtle leading-relaxed">
                 Long-Positionen minus Short — der Richtungs-Bias deines Portfolios.
               </div>
@@ -1013,10 +1052,10 @@ export function PortfolioPage() {
                           className="text-info"
                           title="Kein Live-Kurs vom Provider — angezeigt ist der Einstandswert (Menge × Einstieg), NICHT Live-bewertet."
                         >
-                          ≈ {fmt$(p.display_value_usd)}
+                          ≈ {money$(p.display_value_usd)}
                         </span>
                       ) : (
-                        fmt$(p.market_value_usd)
+                        money$(p.market_value_usd)
                       )}
                     </td>
                     <td className={cn(
@@ -1025,14 +1064,14 @@ export function PortfolioPage() {
                       unreal < 0 && "text-neg",
                     )}>
                       {unreal >= 0 && p.unrealized_pnl_usd != null ? "+" : ""}
-                      {fmt$(p.unrealized_pnl_usd)}
+                      {money$(p.unrealized_pnl_usd)}
                     </td>
                     <td className={cn(
                       "px-3 py-2 text-right font-mono",
                       realiz > 0 && "text-pos",
                       realiz < 0 && "text-neg",
                     )}>
-                      {fmt$(p.realized_pnl_usd)}
+                      {money$(p.realized_pnl_usd)}
                     </td>
                     <td className="px-3 py-2 text-right font-mono text-fg-subtle">{fmt$(p.stop_loss)}</td>
                     <td className="px-3 py-2 text-right font-mono text-fg-subtle">
@@ -1204,11 +1243,15 @@ function BucketLabel({
   label,
   value,
   sub,
+  title,
 }: {
   tone: "info" | "pos" | "ai" | "neg" | "muted";
   label: string;
   value: string;
   sub: string;
+  /** Optional hover-Erklärung (nativer Tooltip). Setzt einen dezenten ⓘ-Marker
+   *  neben das Label, damit der Operator weiß, dass es Details gibt. */
+  title?: string;
 }) {
   const accentBar =
     tone === "info" ? "bg-info"
@@ -1223,10 +1266,17 @@ function BucketLabel({
     : tone === "neg" ? "text-neg"
     : "text-fg-muted";
   return (
-    <div className="flex items-start gap-2">
+    <div className="flex items-start gap-2" title={title}>
       <span className={cn("mt-1 h-3 w-1 rounded-full shrink-0", accentBar)} aria-hidden />
       <div className="min-w-0">
-        <div className="text-2xs uppercase tracking-wider text-fg-subtle font-semibold">{label}</div>
+        <div className="text-2xs uppercase tracking-wider text-fg-subtle font-semibold">
+          {label}
+          {title && (
+            <span className="ml-1 cursor-help text-fg-subtle/70" aria-hidden>
+              ⓘ
+            </span>
+          )}
+        </div>
         <div className={cn("font-mono font-semibold text-base", accentText)}>{value}</div>
         <div className="text-2xs text-fg-subtle font-mono">{sub}</div>
       </div>

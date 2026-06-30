@@ -9,6 +9,7 @@ import {
   type PaperPosition,
 } from "@/lib/api";
 import { cn } from "@/lib/utils";
+import { computeEquityComposition } from "@/lib/portfolio";
 import { useCurrency } from "@/state/CurrencyProvider";
 
 // Quick-Win-Tiles: ersetzen die früheren PreparedPanel-Stubs (Portfolio Snapshot,
@@ -81,6 +82,11 @@ function Metric({ label, value, tone }: { label: string; value: string; tone?: "
 function PortfolioTile() {
   const { fmt } = useCurrency();
   const q = useApi(fetchPortfolioSnapshot, 30_000);
+  // Short-aware: der Cash-Saldo enthält Short-Erlöse (Verbindlichkeit). netPosition
+  // = Long-MW − Short-MW = (Equity − Cash); macht „Cash + Netto = Equity" sichtbar.
+  const snap = q.state === "ready" ? q.data : null;
+  const comp = snap ? computeEquityComposition(snap.positions) : null;
+  const netPositionValue = snap ? snap.total_equity_usd - snap.cash_usd : 0;
   return (
     <TileShell
       title="Portfolio Snapshot"
@@ -102,8 +108,16 @@ function PortfolioTile() {
               Positionen, short-aware), inkl. realisierter + unrealisierter G/V,
               Fees sind bereits abgezogen. */}
           <Metric label="Gesamt-Equity" value={fmt(q.data.total_equity_usd)} />
-          <Metric label="In Position (Marktwert)" value={fmt(q.data.total_market_value_usd)} />
-          <Metric label="Cash (frei)" value={fmt(q.data.cash_usd)} />
+          <Metric label="In Position (Brutto-MW)" value={fmt(q.data.total_market_value_usd)} />
+          {/* Short-aware Netto-Beitrag — Cash + Netto-Position = Equity. Short ist
+              eine Rückkauf-Verbindlichkeit, kein Vermögenswert. */}
+          <Metric label="Netto-Position (short-aware)" value={fmt(netPositionValue)} />
+          <Metric label="Cash (Konto-Saldo)" value={fmt(q.data.cash_usd)} />
+          {comp && comp.shortLiability > 0 && (
+            <p className="text-2xs text-fg-subtle">
+              davon {fmt(comp.shortLiability)} aus Short-Erlösen — geliehen, nicht frei
+            </p>
+          )}
           <Metric
             label="Realisiert (G/V)"
             value={fmt(q.data.realized_pnl_usd)}
