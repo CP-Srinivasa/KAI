@@ -83,6 +83,54 @@ def test_percentiles_exclude_suspect_glitch(tmp_path: Path) -> None:
     assert report.drift_abs_bps["max"] == 120.0
 
 
+def _v1_backlog_rows() -> list[dict[str, object]]:
+    """Pre-v2 records: stored ``drift_exceeded`` WITHOUT a ``data_quality_suspect``
+    field (the suspect gate did not exist yet). The physically-impossible
+    ~100-index glitch was therefore stored as a real drift."""
+    return [
+        {  # v1 real drift (moderate, plausible) — must stay counted
+            "symbol": "ENA/USDT",
+            "source": "technical_screener",
+            "in_settled_range": False,
+            "drift_to_range_bps": 80.0,
+            "drift_exceeded": True,
+            "schema_version": "v1",
+            "gate_would_reject": None,
+        },
+        {  # v1 glitch: live=~100 index vs sub-$1 settled → 10.7M bps, no suspect field
+            "symbol": "ENA/USDT",
+            "source": "technical_screener",
+            "in_settled_range": False,
+            "drift_to_range_bps": 10781534.4,
+            "drift_exceeded": True,
+            "schema_version": "v1",
+            "gate_would_reject": None,
+        },
+    ]
+
+
+def test_v1_glitch_reclassified_suspect_at_read_time(tmp_path: Path) -> None:
+    # Read-time plausibility: a record beyond the suspect range is a glitch even
+    # if the stored fields (v1 backlog) never flagged it. It must not inflate
+    # drift_exceeded, must count as suspect, and must stay out of the percentiles.
+    path = tmp_path / "cf.jsonl"
+    _write_jsonl(path, _v1_backlog_rows())
+
+    report = build_counterfactual_report(path)
+
+    assert report.drift_exceeded == 1  # only the 80 bps; the 10.7M glitch excluded
+    assert report.data_quality_suspect == 1  # the glitch, via read-time rule
+    assert report.drift_abs_bps["max"] == 80.0  # glitch kept out of the distribution
+
+    by_source = {row["source"]: row for row in report.by_source}
+    assert by_source["technical_screener"] == {
+        "source": "technical_screener",
+        "total": 2,
+        "drift_exceeded": 1,
+        "data_quality_suspect": 1,
+    }
+
+
 def test_by_symbol_and_by_source_breakdown(tmp_path: Path) -> None:
     path = tmp_path / "cf.jsonl"
     _write_jsonl(path, _rows())
