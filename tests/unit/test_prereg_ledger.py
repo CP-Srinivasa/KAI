@@ -117,3 +117,34 @@ def test_corrupt_line_is_skipped(tmp_path: Path) -> None:
 
 def test_default_path_under_artifacts_research() -> None:
     assert DEFAULT_PREREG_LEDGER_PATH.as_posix() == "artifacts/research/prereg_ledger.jsonl"
+
+
+def test_canonical_edge_claim_round_trips_through_the_ledger(tmp_path: Path) -> None:
+    from app.research.prereg_ledger import canonical_edge_claim, canonical_edge_prereg_id
+
+    claim = canonical_edge_claim(min_n=100, confidence=0.95)
+    assert claim["name"] == "canonical_edge"
+    assert claim["direction"] == "neutral"
+    assert claim["horizon"] == "per_trade"
+    assert claim["sample_size_target"] == 100
+    assert "n>=100" in claim["success_criteria"] and "DSR>=0.95" in claim["success_criteria"]
+
+    # The id the gate derives equals prereg_key over the shared claim.
+    pid = canonical_edge_prereg_id(min_n=100, confidence=0.95)
+    assert pid == prereg_key(**claim)  # type: ignore[arg-type]
+
+    # Recording via the SAME claim makes the gate's lookup resolve — no drift
+    # between what the operator registers and what edge-validation checks.
+    ledger = PreRegistrationLedger(tmp_path / "prereg.jsonl")
+    assert not ledger.is_registered(pid)
+    ledger.record(register(**claim, created_at_utc="2026-06-30T12:00:00+00:00"))  # type: ignore[arg-type]
+    assert ledger.is_registered(pid)
+
+
+def test_canonical_edge_id_tracks_the_gate_bars() -> None:
+    from app.research.prereg_ledger import canonical_edge_prereg_id
+
+    base = canonical_edge_prereg_id(min_n=100, confidence=0.95)
+    # A different sample floor or confidence is a different commitment → different id.
+    assert canonical_edge_prereg_id(min_n=200, confidence=0.95) != base
+    assert canonical_edge_prereg_id(min_n=100, confidence=0.99) != base
