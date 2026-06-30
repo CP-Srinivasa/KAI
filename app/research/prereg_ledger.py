@@ -118,6 +118,40 @@ def register(
     )
 
 
+# --------------------------------------------------------------------------- #
+# Canonical edge claim — the ONE pre-registration the edge-validation promotion
+# gate (LIVE/capital) looks up. Shared by the gate (to find its prereg) and by
+# the operator's registration call (to record the EXACT same claim), so the
+# deterministic prereg_id can never drift between recording and lookup.
+# --------------------------------------------------------------------------- #
+
+CANONICAL_EDGE_NAME = "canonical_edge"
+CANONICAL_EDGE_DIRECTION = "neutral"
+CANONICAL_EDGE_HORIZON = "per_trade"
+
+
+def canonical_edge_claim(*, min_n: int, confidence: float) -> dict[str, Any]:
+    """The single falsifiable claim the LIVE/capital promotion gate tests.
+
+    A neutral net-edge hypothesis whose pass bar mirrors the gate's own sample
+    floor (``min_n``) and DSR/MinTRL confidence — pre-registering it commits in
+    advance to the exact bar the gate later applies. Returns the kwargs accepted
+    by :func:`prereg_key` and :func:`register`.
+    """
+    return {
+        "name": CANONICAL_EDGE_NAME,
+        "direction": CANONICAL_EDGE_DIRECTION,
+        "horizon": CANONICAL_EDGE_HORIZON,
+        "success_criteria": f"net_mean_bps>0 at n>={int(min_n)}, DSR>={confidence}",
+        "sample_size_target": int(min_n),
+    }
+
+
+def canonical_edge_prereg_id(*, min_n: int, confidence: float) -> str:
+    """Deterministic ``prereg_id`` for the canonical edge claim at these gate bars."""
+    return prereg_key(**canonical_edge_claim(min_n=min_n, confidence=confidence))
+
+
 class PreRegistrationLedger:
     """Append-only JSONL ledger of pre-registered hypotheses."""
 
@@ -161,11 +195,16 @@ class PreRegistrationLedger:
 
 
 __all__ = [
+    "CANONICAL_EDGE_DIRECTION",
+    "CANONICAL_EDGE_HORIZON",
+    "CANONICAL_EDGE_NAME",
     "DEFAULT_PREREG_LEDGER_PATH",
     "DIRECTIONS",
     "SCHEMA",
     "PreRegistration",
     "PreRegistrationLedger",
+    "canonical_edge_claim",
+    "canonical_edge_prereg_id",
     "prereg_key",
     "register",
 ]

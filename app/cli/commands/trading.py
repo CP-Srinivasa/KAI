@@ -665,6 +665,38 @@ def trading_edge_validation(
         record, verdicts_path=verdicts_path, settings=IntegritySettings()
     )
 
+    # Pre-registration linkage (anti-p-hacking, ADR 0012): does this LIVE/capital
+    # promotion reference a hypothesis committed BEFORE the data was seen? The
+    # gate and the operator's registration share ``canonical_edge_claim`` so the
+    # derived id is identical on both sides — no hand-typed-string drift. Shadow
+    # by default (APP_PREREG_ENABLED=false → reported, never enforced).
+    from app.core.prereg_settings import PreRegSettings
+    from app.research.prereg_ledger import (
+        PreRegistrationLedger,
+        canonical_edge_claim,
+        canonical_edge_prereg_id,
+    )
+
+    prereg_cfg = PreRegSettings()
+    prereg_claim = canonical_edge_claim(min_n=min_n, confidence=confidence)
+    prereg_id = canonical_edge_prereg_id(min_n=min_n, confidence=confidence)
+    prereg_registered = PreRegistrationLedger(Path(prereg_cfg.ledger_path)).is_registered(prereg_id)
+    _sc = prereg_claim["success_criteria"]
+    prereg_register_cmd = (
+        "trading-bot trading prereg-register "
+        f"--name {prereg_claim['name']} --direction {prereg_claim['direction']} "
+        f"--horizon {prereg_claim['horizon']} "
+        f'--success-criteria "{_sc}" '
+        f"--sample-target {prereg_claim['sample_size_target']}"
+    )
+    prereg_status = {
+        "prereg_id": prereg_id,
+        "registered": prereg_registered,
+        "enforced": prereg_cfg.enabled,
+        "ledger_path": prereg_cfg.ledger_path,
+        "register_command": None if prereg_registered else prereg_register_cmd,
+    }
+
     if as_json:
         out = verdict.to_dict()
         out["trials_provenance"] = {
@@ -676,10 +708,21 @@ def trading_edge_validation(
         }
         out["verdict_digest"] = digest
         out["anchor"] = {"state": anchor.state, "proof_path": anchor.proof_path}
+        out["prereg"] = prereg_status
         print(_json.dumps(out, indent=2))
         return
 
     console.print(render_edge_validation(verdict))
+    if prereg_registered:
+        console.print(f"prereg: referenced (id={prereg_id})", highlight=False)
+    else:
+        _enforce = (
+            "would BLOCK promotion"
+            if prereg_cfg.enabled
+            else "not enforced (APP_PREREG_ENABLED=false)"
+        )
+        console.print(f"[yellow]prereg: MISSING (id={prereg_id}) -- {_enforce}[/yellow]")
+        console.print(f"  pre-register first: {prereg_register_cmd}", highlight=False)
     console.print(
         f"trials={resolved.trials} (source={resolved.source}, ledger={resolved.ledger_count})"
     )
