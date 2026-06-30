@@ -93,6 +93,29 @@ def _delivery_reclamation_enabled() -> bool:
         return False
 
 
+def _delivering_by_source(now: datetime) -> dict[str, bool]:
+    """source_name → sustained-delivering? read straight from the canonical store.
+
+    Reuses the recalc's window read + floor so the definition cannot drift. Lazy +
+    fail-soft: any failure → empty map → delivery-reclamation stays inert (no
+    regression). Keyed by source_name (== provider) so it lines up with probation
+    candidates that never appear in the alert-derived ranking.
+    """
+    try:
+        from datetime import timedelta
+
+        from scripts.source_lifecycle_recalc import (
+            DELIVERY_MIN_DOCS,
+            SILENT_AFTER_DAYS,
+            _document_count_by_source,
+        )
+
+        counts = _document_count_by_source(now - timedelta(days=SILENT_AFTER_DAYS))
+    except Exception:  # noqa: BLE001 — observability-only; never break the scheduler
+        return {}
+    return {name: True for name, c in counts.items() if c >= DELIVERY_MIN_DOCS}
+
+
 def _coerce_access(raw: Any) -> CandidateAccess:
     """Map a proposal's access string to the enum; unknown → fail-closed UNKNOWN."""
     try:
@@ -264,6 +287,9 @@ async def _execute_live(
     from app.storage.repositories.source_repo import SourceRepository
 
     evidence = _evidence_by_source(ranking)
+    # Probation sources are absent from the alert-derived ranking (no directional
+    # history), so their delivery evidence must come straight from the document store.
+    delivering = _delivering_by_source(now)
     runs_state = _load_probation_runs(probation_state_path)
     async with session_factory() as session:
         repo = SourceRepository(session)
@@ -273,7 +299,10 @@ async def _execute_live(
             if s.provider:
                 runs_state[s.provider] = runs_state.get(s.provider, 0) + 1
         probation_candidates = await build_probation_candidates(
-            repo, evidence_by_source=evidence, runs_by_source=runs_state
+            repo,
+            evidence_by_source=evidence,
+            runs_by_source=runs_state,
+            delivering_by_source=delivering,
         )
         plan = decide_graduation(
             probation_candidates,

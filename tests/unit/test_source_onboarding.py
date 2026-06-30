@@ -130,6 +130,29 @@ async def test_build_probation_candidates_carries_delivering_flag(session_factor
 
 
 @pytest.mark.asyncio
+async def test_delivering_by_source_overrides_and_covers_unranked(session_factory) -> None:
+    """The real case: a probation source absent from the alert ranking still gets its
+    delivery evidence from the document-store map (which takes precedence)."""
+    async with session_factory.begin() as session:
+        repo = SourceRepository(session)
+        # 'unranked' has NO ranking evidence at all (mirrors a #507 probation source).
+        await _seed(repo, "unranked", "https://efblog.org/feed/", SourceStatus.PROBATION)
+        await _seed(repo, "stale", "https://stale.com/feed/", SourceStatus.PROBATION)
+
+    async with session_factory() as session:
+        repo = SourceRepository(session)
+        cands = await build_probation_candidates(
+            repo,
+            evidence_by_source={},  # not in the alert-derived ranking
+            runs_by_source={"unranked": 5, "stale": 5},
+            delivering_by_source={"unranked": True},  # but the doc store sees delivery
+        )
+    by_name = {c.source: c for c in cands}
+    assert by_name["unranked"].delivering is True
+    assert by_name["stale"].delivering is False  # not in the map → fail-closed
+
+
+@pytest.mark.asyncio
 async def test_execute_swaps_promotes_and_archives(session_factory) -> None:
     async with session_factory.begin() as session:
         repo = SourceRepository(session)
