@@ -2098,16 +2098,19 @@ def load_trading_loop_cycles(audit_path: str | Path = _AUDIT_LOG) -> list[dict[s
         return []
 
     records: list[dict[str, object]] = []
-    for raw_line in path.read_text(encoding="utf-8").splitlines():
-        line = raw_line.strip()
-        if not line:
-            continue
-        try:
-            payload = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if isinstance(payload, dict):
-            records.append(payload)
+    # KAI-01: stream the (~27 MB) trading-loop audit line-by-line instead of
+    # ``read_text().splitlines()`` to avoid the full-file RAM peak on the Pi.
+    with path.open(encoding="utf-8") as handle:
+        for raw_line in handle:
+            line = raw_line.strip()
+            if not line:
+                continue
+            try:
+                payload = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(payload, dict):
+                records.append(payload)
     return records
 
 

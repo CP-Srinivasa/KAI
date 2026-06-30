@@ -772,17 +772,20 @@ def _load_jsonl(path: str | Path) -> list[dict[str, Any]]:
         logger.warning("[evidence_window] audit file not found: %s", p)
         return []
     out: list[dict[str, Any]] = []
-    for line in p.read_text(encoding="utf-8").splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        try:
-            obj = json.loads(line)
-        except json.JSONDecodeError:
-            logger.warning("[evidence_window] skipping malformed audit line in %s", p)
-            continue
-        if isinstance(obj, dict):
-            out.append(obj)
+    # KAI-01: stream the (multi-MB) audit file line-by-line instead of
+    # ``read_text().splitlines()`` to avoid the full-file RAM peak on the Pi.
+    with p.open(encoding="utf-8") as handle:
+        for raw in handle:
+            line = raw.strip()
+            if not line:
+                continue
+            try:
+                obj = json.loads(line)
+            except json.JSONDecodeError:
+                logger.warning("[evidence_window] skipping malformed audit line in %s", p)
+                continue
+            if isinstance(obj, dict):
+                out.append(obj)
     return out
 
 

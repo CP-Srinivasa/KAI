@@ -136,14 +136,29 @@ async def append_decision_instance(
 async def run_trading_loop_once(
     symbol: str = "BTC/USDT",
     mode: str = "paper",
-    provider: str = "mock",
+    provider: str | None = None,
     analysis_profile: str = "conservative",
     loop_audit_path: str = LOOP_AUDIT_DEFAULT_PATH,
     execution_audit_path: str = PAPER_EXECUTION_AUDIT_DEFAULT_PATH,
     freshness_threshold_seconds: float = 120.0,
     timeout_seconds: int = 10,
 ) -> dict[str, object]:
-    """Run one guarded paper/shadow cycle and append audit rows."""
+    """Run one guarded paper/shadow cycle and append audit rows.
+
+    ``provider`` must be named explicitly. A missing provider previously
+    defaulted to ``"mock"``, which silently wrote synthetic-price cycles into
+    the canonical ``paper_execution_audit``/``trading_loop_audit`` streams and
+    contaminated the quality/edge metrics. The HTTP run-once endpoint already
+    rejects this (``operator._validate_provider``); this is the same fail-loud
+    guard for the MCP/agent write path (F-02).
+    """
+    resolved_provider = (provider or "").strip()
+    if not resolved_provider:
+        raise ValueError(
+            "provider is required for run_trading_loop_once "
+            "(no implicit 'mock' fallback — it contaminates the canonical "
+            "paper/loop audit)"
+        )
     from app.orchestrator.trading_loop import run_trading_loop_once as run_once_cycle
 
     resolved_loop_audit = resolve_workspace_path(
@@ -163,7 +178,7 @@ async def run_trading_loop_once(
     cycle = await run_once_cycle(
         symbol=symbol,
         mode=mode,
-        provider=provider,
+        provider=resolved_provider,
         analysis_profile=analysis_profile,
         loop_audit_path=resolved_loop_audit,
         execution_audit_path=resolved_execution_audit,
@@ -193,7 +208,7 @@ async def run_trading_loop_once(
         params={
             "symbol": symbol,
             "mode": mode,
-            "provider": provider,
+            "provider": resolved_provider,
             "analysis_profile": analysis_profile,
             "loop_audit_path": str(resolved_loop_audit),
             "execution_audit_path": str(resolved_execution_audit),

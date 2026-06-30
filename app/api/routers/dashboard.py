@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import logging
 import time
+from collections import deque
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any, cast
@@ -32,6 +33,7 @@ from app.observability.dashboard_metric_registry import (
     build_dashboard_metric_registry,
     reconcile_dashboard_snapshot,
 )
+from app.storage.jsonl_io import iter_jsonl_tolerant
 from app.storage.repositories.document_repo import DocumentRepository
 from app.storage.repositories.source_repo import SourceRepository
 
@@ -144,20 +146,14 @@ def _validate_dashboard_stream(path: Path, stream: AuditStreamName) -> AuditStre
 
 
 def _load_jsonl(path: Path, tail: int = 0) -> list[dict[str, Any]]:
-    if not path.exists():
-        return []
-    rows: list[dict[str, Any]] = []
-    for raw in path.read_text(encoding="utf-8").splitlines():
-        line = raw.strip()
-        if not line:
-            continue
-        try:
-            obj = json.loads(line)
-            if isinstance(obj, dict):
-                rows.append(obj)
-        except json.JSONDecodeError:
-            continue
-    return rows[-tail:] if tail else rows
+    # KAI-01: stream line-by-line (constant intermediate memory) instead of
+    # ``read_text().splitlines()`` which peaks at hundreds of MB on the Pi for
+    # the multi-MB append-only audit files. ``tail`` is bounded via a deque so
+    # the tail path never materialises the whole file either.
+    rows = iter_jsonl_tolerant(path)
+    if tail > 0:
+        return list(deque(rows, maxlen=tail))
+    return list(rows)
 
 
 def _parse_iso_utc(value: object) -> datetime | None:
@@ -778,9 +774,11 @@ async def dashboard_quality_api() -> JSONResponse:
     for o in outcome_rows:
         outcomes_by_doc[o.get("document_id", "")] = o.get("outcome", "")
 
-    loop_rows = _load_jsonl(_TRADING_LOOP_AUDIT)
+    # KAI-01: the trading-loop audit is the largest file (~27 MB and growing)
+    # and is read here only to build a status histogram — stream and count
+    # without ever materialising the row list.
     status_counts: dict[str, int] = {}
-    for r in loop_rows:
+    for r in iter_jsonl_tolerant(_TRADING_LOOP_AUDIT):
         s = r.get("status", "unknown")
         status_counts[s] = status_counts.get(s, 0) + 1
 
