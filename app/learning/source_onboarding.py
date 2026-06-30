@@ -110,14 +110,22 @@ async def build_probation_candidates(
     *,
     evidence_by_source: dict[str, dict[str, Any]],
     runs_by_source: dict[str, int],
+    delivering_by_source: dict[str, bool] | None = None,
 ) -> list[ProbationCandidate]:
     """DB-PROBATION-Quellen + Ranking-Evidenz + Run-Zähler → Graduation-Inputs.
 
     ``evidence_by_source`` ist nach ``source_name`` (== provider) gekeyt; score =
-    Wilson-Untergrenze, deliveries = n (aufgelöste Signale), delivering = sustained
-    document delivery (Boolean-Floor, speist das delivery-reclamation-Tor). Quellen
-    ohne Evidenz bekommen score 0 / deliveries 0 / delivering False (fail-closed).
+    Wilson-Untergrenze, deliveries = n (aufgelöste Signale). Quellen ohne Evidenz
+    bekommen score 0 / deliveries 0 (fail-closed).
+
+    ``delivering`` (sustained document delivery, Boolean-Floor — speist das
+    delivery-reclamation-Tor) kommt aus ``delivering_by_source``, einem Read DIREKT
+    aus dem Dokument-Store: Probation-Quellen tauchen im alert-abgeleiteten Ranking
+    NICHT auf (keine Richtungs-Historie), liefern aber Dokumente — die Liefer-Evidenz
+    muss daher vom canonical store kommen, nicht aus ``evidence_by_source``. Fehlt die
+    Map, fällt es fail-closed auf das (meist leere) Ranking-Feld zurück.
     """
+    delivering_by_source = delivering_by_source or {}
     out: list[ProbationCandidate] = []
     for s in await repo.list(status=SourceStatus.PROBATION):
         name = (s.provider or "").strip()
@@ -126,13 +134,16 @@ async def build_probation_candidates(
         ev = evidence_by_source.get(name) or {}
         wl = ev.get("wilson_lower_95")
         n = ev.get("n")
+        delivering = delivering_by_source.get(name)
+        if delivering is None:
+            delivering = bool(ev.get("delivering"))
         out.append(
             ProbationCandidate(
                 source=name,
                 score=float(wl) if isinstance(wl, (int, float)) else 0.0,
                 deliveries=int(n) if isinstance(n, (int, float)) else 0,
                 runs=int(runs_by_source.get(name, 0)),
-                delivering=bool(ev.get("delivering")),
+                delivering=bool(delivering),
             )
         )
     return out
