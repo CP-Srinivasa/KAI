@@ -1,7 +1,15 @@
-"""Agent control surface — read-only inventory of Claude-Code-only agents.
+"""Agent control surface — read-only inventory of the agent roster (SSOT).
 
-Lists SENTR / Watchdog / Architect with honest status derived from a JSONL
-dropbox under `artifacts/agents/{slug}/`. No fake heartbeats, no mocks:
+``_AGENTS`` is the single source of truth for the roster (imported by the
+worker and the telegram menu). It lists all seven agents — three
+``wiring="autonomous"`` (SENTR / Watchdog / Architect, backed by
+``app/agents/worker.py`` HANDLERS) and four ``wiring="interactive"`` (DALI /
+Neo / Satoshi / KAI-Finder, Claude-Code-only, no worker handler). The ``wiring``
+field keeps the dashboard from implying autonomous execution an interactive
+agent never performs (F-06/KAI-05).
+
+Status is derived honestly from a JSONL dropbox under
+`artifacts/agents/{slug}/` — no fake heartbeats, no mocks:
 - `live`        — at least one finding/run JSONL within last 24h
 - `prepared`    — directory exists but no recent activity
 - `unavailable` — directory does not exist
@@ -38,12 +46,23 @@ class AgentDefinition(BaseModel):
     role: str
     modes: list[str]
     permissions: list[str]
+    # F-06/KAI-05: how the agent is actually driven, so the dashboard never
+    # implies a capability that is never executed.
+    #   "autonomous"  — backed by an app/agents/worker.py HANDLER; runs on the
+    #                   cron/systemd queue without a human in the loop.
+    #   "interactive" — a Claude-Code-only subagent; has NO worker handler, so an
+    #                   enqueued command is not auto-executed (it is run
+    #                   interactively). The contract test in
+    #                   tests/unit/test_agents_roster_contract.py pins this:
+    #                   every worker HANDLER agent must be "autonomous".
+    wiring: Literal["autonomous", "interactive"]
 
 
 _AGENTS: dict[str, AgentDefinition] = {
     "sentr": AgentDefinition(
         slug="sentr",
         name="SENTR",
+        wiring="autonomous",
         agent_id="a708ac129e9cf2569",
         role="Security & Inspection — prüft Code, Configs, Secrets, Auditierbarkeit",
         modes=["inspect", "report"],
@@ -52,6 +71,7 @@ _AGENTS: dict[str, AgentDefinition] = {
     "watchdog": AgentDefinition(
         slug="watchdog",
         name="Watchdog",
+        wiring="autonomous",
         agent_id=None,
         role="Health & Drift Monitor — Pipeline-Outputs, Quality-Bar, Regressionen",
         modes=["check", "report"],
@@ -60,6 +80,7 @@ _AGENTS: dict[str, AgentDefinition] = {
     "architect": AgentDefinition(
         slug="architect",
         name="Architect",
+        wiring="autonomous",
         agent_id="a14a2b53ba50ebadd",
         role="Architektur-Review & Propose — Module, Abhängigkeiten, Refactor-Vorschläge",
         modes=["review", "propose"],
@@ -68,6 +89,7 @@ _AGENTS: dict[str, AgentDefinition] = {
     "dali": AgentDefinition(
         slug="dali",
         name="DALI",
+        wiring="interactive",
         agent_id=None,
         role=(
             "Design-Audit & UI-Propose — Dashboard, Telegram-UI, Visual System, "
@@ -79,6 +101,7 @@ _AGENTS: dict[str, AgentDefinition] = {
     "neo": AgentDefinition(
         slug="neo",
         name="Neo",
+        wiring="interactive",
         agent_id=None,
         role=(
             "Code-Level Root-Cause & Refactor — Debugging, Concurrency/Races, "
@@ -90,6 +113,7 @@ _AGENTS: dict[str, AgentDefinition] = {
     "satoshi": AgentDefinition(
         slug="satoshi",
         name="Satoshi",
+        wiring="interactive",
         agent_id=None,
         role=(
             "Krypto & Custody — Signaturen/HMAC/Webhooks, Wallet/Seed, "
@@ -101,6 +125,7 @@ _AGENTS: dict[str, AgentDefinition] = {
     "kai-finder": AgentDefinition(
         slug="kai-finder",
         name="KAI-Finder",
+        wiring="interactive",
         agent_id=None,
         role=(
             "Quellen- & Daten-Discovery — neue Feeds/APIs recherchieren, "

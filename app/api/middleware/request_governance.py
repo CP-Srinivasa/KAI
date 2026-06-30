@@ -8,7 +8,9 @@ Provides:
 
 Security invariants:
 - Read-only output (no mutation)
-- Fail-closed on audit write errors (log, don't crash)
+- Body-size enforcement is fail-closed (oversized requests get 413 before routing)
+- Audit logging is best-effort / non-blocking: a write error is logged, the
+  request still proceeds (the audit trail is not on the request's critical path)
 - No trading semantics
 - No execution side effects
 """

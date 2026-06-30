@@ -604,18 +604,22 @@ async def get_operator_portfolio_snapshot(
     request: Request,
     response: Response,
     audit_path: str = "artifacts/paper_execution_audit.jsonl",
-    provider: str = "coingecko",
+    provider: str | None = None,
     freshness_threshold_seconds: float = 120.0,
     timeout_seconds: int = 10,
 ) -> dict[str, object]:
     """Canonical read-only paper portfolio snapshot."""
+    # F-05: default to the system provider (``fallback`` chain), not a hardcoded
+    # ``coingecko`` — coingecko-only reads left exotic/young symbols valueless
+    # (see settings.market_data_provider). The query param still overrides.
+    resolved_provider = provider or get_settings().market_data_provider
     return await _resolve_read_payload(
         request,
         response,
         error_code="portfolio_snapshot_unavailable",
         loader=lambda: mcp_server.get_paper_portfolio_snapshot(
             audit_path=audit_path,
-            provider=provider,
+            provider=resolved_provider,
             freshness_threshold_seconds=freshness_threshold_seconds,
             timeout_seconds=timeout_seconds,
         ),
@@ -627,18 +631,20 @@ async def get_operator_exposure_summary(
     request: Request,
     response: Response,
     audit_path: str = "artifacts/paper_execution_audit.jsonl",
-    provider: str = "coingecko",
+    provider: str | None = None,
     freshness_threshold_seconds: float = 120.0,
     timeout_seconds: int = 10,
 ) -> dict[str, object]:
     """Canonical read-only paper exposure summary."""
+    # F-05: default to the system provider (``fallback`` chain), not coingecko.
+    resolved_provider = provider or get_settings().market_data_provider
     return await _resolve_read_payload(
         request,
         response,
         error_code="exposure_summary_unavailable",
         loader=lambda: mcp_server.get_paper_exposure_summary(
             audit_path=audit_path,
-            provider=provider,
+            provider=resolved_provider,
             freshness_threshold_seconds=freshness_threshold_seconds,
             timeout_seconds=timeout_seconds,
         ),
