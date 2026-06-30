@@ -45,6 +45,20 @@ const flatPortfolio = {
   positions: [],
 };
 
+// A net-short book: cash is inflated by short-sale proceeds (a liability), so
+// the tile must flag the borrowed portion and show the short-aware net position.
+const shortBookPortfolio = {
+  ...flatPortfolio,
+  cash_usd: 34150,
+  total_market_value_usd: 13820,
+  total_equity_usd: 25112, // cash + (long 4035 − short 9785 = net −9038) ≈ 25112
+  position_count: 2,
+  positions: [
+    { symbol: "BTC/USDT", position_side: "short", market_value_usd: 9785 },
+    { symbol: "AAVE/USDT", position_side: "long", market_value_usd: 4035 },
+  ],
+};
+
 const flatExposure = {
   report_type: "paper_exposure_summary",
   priced_position_count: 0,
@@ -96,6 +110,26 @@ describe("LivePortfolioTiles", () => {
     expect((await screen.findAllByText(/Keine Cycles im Fenster/)).length).toBeGreaterThanOrEqual(
       1,
     );
+  });
+
+  it("flags borrowed short proceeds in cash and shows the short-aware net position", async () => {
+    fetchPortfolioSnapshot.mockResolvedValue(shortBookPortfolio);
+    fetchExposureSummary.mockResolvedValue(flatExposure);
+    fetchRecentCycles.mockResolvedValue({
+      report_type: "recent_cycles",
+      total_cycles: 0,
+      status_counts: {},
+      recent_cycles: [],
+    });
+
+    renderTiles();
+
+    // Cash is no longer painted as fully "frei": the short-erlös portion is flagged.
+    expect(
+      (await screen.findAllByText(/aus Short-Erlösen — geliehen, nicht frei/)).length,
+    ).toBeGreaterThanOrEqual(1);
+    expect((await screen.findAllByText(/Netto-Position/)).length).toBeGreaterThanOrEqual(1);
+    expect((await screen.findAllByText(/Cash \(Konto-Saldo\)/)).length).toBeGreaterThanOrEqual(1);
   });
 
   it("renders honest 'nicht erreichbar' on backend error", async () => {
