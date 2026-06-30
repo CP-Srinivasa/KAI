@@ -299,6 +299,22 @@
         "secret_scan_required": { "type": "boolean", "const": true }
       }
     },
+    "security_enforced": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "api_auth_required",
+        "RBAC_enabled",
+        "audit_log_immutable",
+        "encryption_at_rest_required"
+      ],
+      "properties": {
+        "api_auth_required": { "type": "boolean" },
+        "RBAC_enabled": { "type": "boolean" },
+        "audit_log_immutable": { "type": "boolean" },
+        "encryption_at_rest_required": { "type": "boolean" }
+      }
+    },
     "messaging_ux": {
       "type": "object",
       "additionalProperties": false,

@@ -417,18 +417,19 @@ Claude darf NICHT:
 
 ## Agent Roster (Claude-Code-only)
 
-Sechs operative Agenten — alle ausschließlich von Claude Code ausführbar, niemals durch Codex/Antigravity/externe LLMs:
+Sieben operative Agenten — alle ausschließlich von Claude Code ausführbar, niemals durch Codex/Antigravity/externe LLMs. SSOT: `app/api/routers/agents.py::_AGENTS`; Feld `wiring` trennt `autonomous` (Worker-Handler, cron-getrieben) von `interactive` (Claude-Code-only, kein Auto-Handler):
 
-- **SENTR** (`a708ac129e9cf2569`) — Security & Inspection. Modi: `inspect`, `report`.
-- **Watchdog** — Health & Drift Monitor. Modi: `check`, `report`.
-- **Architect** (`a14a2b53ba50ebadd`) — Architektur-Review & Propose. Modi: `review`, `propose`.
-- **DALI** — Design/UI-Audit & UI-Propose. Modi: `audit`, `propose`, `implement`. `implement` schreibt nie direkt — Patch-Proposal landet in `artifacts/agents/dali/proposals.jsonl`, Operator-Apply via regulären Dev-Flow.
-- **Neo** — Code-Tiefenanalyse, Root-Cause-Debugging, Refactor mit Risikoabwägung. Modi: `analyze`, `propose`, `implement`. `implement` nur bei explizitem Operator-Auftrag mit `proposal_id`. Audit-Spur in `artifacts/agents/neo/{findings,proposals,implementations}.jsonl`.
-- **SATOSHI** — Kryptographie, Wallet/Custody/Key-Material, Smart-Contract-Review, kryptographische Verifikation (Signaturen, HMAC, Webhooks), Tokenomics-vs-Onchain-Konsistenz, forensische Doc-/Provenance-Analyse, Threat-Models. Modi: `crypto-review`, `forensic`, `threat-model`, `propose`, `implement`. `implement` nur bei explizitem Operator-Auftrag; Krypto-Pfade/Key-Material/Approval-Mode niemals stillschweigend ändern.
+- **SENTR** (`a708ac129e9cf2569`) — Security & Inspection. `wiring=autonomous`. Modi: `inspect`, `report`.
+- **Watchdog** — Health & Drift Monitor. `wiring=autonomous`. Modi: `check`, `report`.
+- **Architect** (`a14a2b53ba50ebadd`) — Architektur-Review & Propose. `wiring=autonomous`. Modi: `review`, `propose`.
+- **DALI** — Design/UI-Audit & UI-Propose. `wiring=interactive`. `implement` schreibt nie direkt — Patch-Proposal landet in `artifacts/agents/dali/proposals.jsonl`, Operator-Apply via regulären Dev-Flow.
+- **Neo** — Code-Tiefenanalyse, Root-Cause-Debugging, Refactor mit Risikoabwägung. `wiring=interactive`. `implement` nur bei explizitem Operator-Auftrag mit `proposal_id`. Audit-Spur in `artifacts/agents/neo/{findings,proposals,implementations}.jsonl`.
+- **SATOSHI** — Kryptographie, Wallet/Custody/Key-Material, Smart-Contract-Review, kryptographische Verifikation (Signaturen, HMAC, Webhooks), Tokenomics-vs-Onchain-Konsistenz, forensische Doc-/Provenance-Analyse, Threat-Models. `wiring=interactive`. Krypto-Pfade/Key-Material/Approval-Mode niemals stillschweigend ändern.
+- **KAI-Finder** — Quellen-/Daten-Discovery (neue Feeds/APIs recherchieren, bewerten, vorschlagen). `wiring=interactive`. Modi: `search`, `propose`.
 
 Permissions: read + report; write nur über `app/agents/tools/guarded_write.py` mit Audit-Trail (Trading/Decision-Writes, artifacts-only).
-Dropbox: `artifacts/agents/{sentr,watchdog,architect,dali,neo,satoshi}/*.jsonl` (Status `live`/`prepared`/`unavailable`).
-Volle Definition: siehe `AGENTS.md` § Agent Roster.
+Dropbox: `artifacts/agents/{sentr,watchdog,architect,dali,neo,satoshi,kai-finder}/*.jsonl` (Status `live`/`prepared`/`unavailable`).
+Worker-`HANDLERS`-Agenten müssen `wiring="autonomous"` sein (Contract-Test `tests/unit/test_agents_roster_contract.py`). Volle Definition: siehe `AGENTS.md` § Agent Roster.
 
 ### Auto-Routing-Pflicht (verbindlich)
 

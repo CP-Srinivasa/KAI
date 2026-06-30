@@ -1806,6 +1806,23 @@ def build_runtime_config_payload(settings: AppSettings) -> dict[str, object]:
             "dependency_scan_required": True,
             "secret_scan_required": True,
         },
+        # F-07: the ``security`` block above is the policy *contract* (schema-
+        # pinned ``const: true`` = the platform's target controls). It does NOT
+        # claim every control is enforced at runtime. ``security_enforced``
+        # reports what KAI actually enforces today, so an operator or audit never
+        # mistakes policy intent for an active control. ``api_auth_required`` is
+        # true once an API key is set or the env is non-dev (auth.py refuses to
+        # boot without a key outside dev/test); RBAC, immutable audit and
+        # at-rest encryption are not implemented yet (honest false).
+        "security_enforced": {
+            "api_auth_required": (
+                bool(settings.api_key)
+                or settings.env.strip().lower() not in {"development", "dev", "test", "testing"}
+            ),
+            "RBAC_enabled": False,
+            "audit_log_immutable": False,
+            "encryption_at_rest_required": False,
+        },
         "messaging_ux": {
             "telegram_enabled": settings.alerts.telegram_enabled,
             "telegram_admin_chat_ids": settings.operator.admin_chat_id_list,

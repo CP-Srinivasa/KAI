@@ -33,9 +33,10 @@
 
 ## Agent Roster (D-141, 2026-04-15; erweitert auf 6)
 
-Alle **sechs** Agenten werden **ausschließlich von Claude Code** ausgeführt — nicht von Codex,
+Alle **sieben** Agenten werden **ausschließlich von Claude Code** ausgeführt — nicht von Codex,
 nicht von Antigravity, nicht von externen LLMs. Permissions-Boundary: read + report;
-write nur über `app/agents/tools/guarded_write.py` mit Audit-Trail.
+write nur über `app/agents/tools/guarded_write.py` mit Audit-Trail. Kanonische Roster-Quelle
+(SSOT) ist `app/api/routers/agents.py::_AGENTS` (von Worker + Telegram-Menü importiert).
 
 | Agent | ID | Modi | Rolle |
 |---|---|---|---|
@@ -43,11 +44,14 @@ write nur über `app/agents/tools/guarded_write.py` mit Audit-Trail.
 | **Watchdog** | — | `check`, `report` | Health/Drift-Monitor — verifiziert Pipeline-Outputs, Quality-Bar, Regressionen |
 | **Architect** | `a14a2b53ba50ebadd` | review, propose | Architektur/Struktur — bewertet Module, Abhängigkeiten, Refactor-Vorschläge |
 | **DALI** | — | `audit`, `propose`, `implement` | Design/UI — UI/UX-Audit, Redesign-Konzepte, Patch-Proposals für Dashboard, Telegram, Visual System |
-| **Neo** | — | `analyze`, `propose`, `implement` | Code-Tiefenanalyse — Root-Cause-Debugging, Concurrency, Datenfluss, Performance, Refactor mit Risikoabwägung |
-| **SATOSHI** | — | `crypto-review`, `forensic`, `threat-model`, `propose`, `implement` | Kryptographie/Wallet/Smart-Contract/Forensik — Signaturen, HMAC, Webhooks, Key-Material, Tokenomics-vs-Onchain, Doc-vs-Code-Konsistenz, Provenance, Threat-Models |
+| **Neo** | — | `analyze`, `fix` | Code-Tiefenanalyse — Root-Cause-Debugging, Concurrency, Datenfluss, Performance, Refactor mit Risikoabwägung |
+| **SATOSHI** | — | `review`, `verify` | Kryptographie/Wallet/Smart-Contract/Forensik — Signaturen, HMAC, Webhooks, Key-Material, Tokenomics-vs-Onchain, Doc-vs-Code-Konsistenz, Provenance, Threat-Models |
+| **KAI-Finder** | — | `search`, `propose` | Quellen-/Daten-Discovery — neue Feeds/APIs recherchieren, bewerten, vorschlagen (Legal/Stabilität/Kosten) |
+
+(Modi = API-Command-Surface `_AGENTS.modes`; die interaktiven `.claude/agents/*.md`-Subagenten können feingranularere Rollen haben.)
 
 **Dropbox-Pattern (honest by design):**
-- Findings/Reports: `artifacts/agents/{sentr,watchdog,architect,dali,neo,satoshi}/*.jsonl`
+- Findings/Reports: `artifacts/agents/{sentr,watchdog,architect,dali,neo,satoshi,kai-finder}/*.jsonl`
 - Status `live` = JSONL in den letzten 24h; `prepared` = Verzeichnis existiert, leer; `unavailable` = kein Verzeichnis
 - Kein Fake-Heartbeat, keine Mock-Daten
 
@@ -59,23 +63,27 @@ write nur über `app/agents/tools/guarded_write.py` mit Audit-Trail.
 
 **Master-Rules** (gelten für alle Agenten): CLAUDE.md Core Rules + Deploy-Regeln + Testing-Regeln.
 
-### Wiring-Realität (ehrlich, Stand 2026-06-01)
+### Wiring-Realität (ehrlich, Stand 2026-06-30)
 
-Der 6-Agenten-Roster existiert auf drei unterschiedlich tief verdrahteten Ebenen — das ist
-**bewusst so**, kein halbfertiges Feature. Wer den Code gegen die Doku prüft, soll die Grenze
-nicht erneut „entdecken" müssen:
+Der 7-Agenten-Roster existiert auf unterschiedlich tief verdrahteten Ebenen — das ist
+**bewusst so**, kein halbfertiges Feature. Die `_AGENTS`-SSOT macht die Grenze jetzt explizit
+über das Feld `wiring` (`autonomous` vs `interactive`), sodass das Dashboard keine autonome
+Ausführung suggeriert, die ein interaktiver Agent nie leistet. Der Contract-Test
+`tests/unit/test_agents_roster_contract.py` erzwingt: jeder Worker-`HANDLERS`-Agent **muss**
+`wiring="autonomous"` sein.
 
 | Ebene | Mechanismus | Verdrahtete Agenten |
 |---|---|---|
-| **Interaktive Claude-Code-Subagenten** | `.claude/agents/*.md` (on-demand vom Hauptagent dispatcht) | alle 6 (sentr, architecture-red-team≈Architect, dali, neo, satoshi) + data-quality-inspector, source-scout |
-| **Autonomer JSONL-Queue-Worker** | `app/agents/worker.py` (`HANDLERS`, cron/systemd-getrieben) | **3**: `watchdog` (check/report), `sentr` (inspect/report/kyt-review), `architect` (review/propose) |
-| **Dashboard-API-Surface** | `app/api/routers/agents.py` (`_AGENTS`) | **4**: sentr, watchdog, architect, dali |
+| **Dashboard-API-Surface (SSOT)** | `app/api/routers/agents.py` (`_AGENTS`) | **alle 7** (sentr, watchdog, architect, dali, neo, satoshi, kai-finder) — Feld `wiring` unterscheidet |
+| **Autonomer JSONL-Queue-Worker** (`wiring="autonomous"`) | `app/agents/worker.py` (`HANDLERS`, cron/systemd) | **3**: `watchdog` (check/report), `sentr` (inspect/report/kyt-review/governance-audit), `architect` (review/propose) |
+| **Interaktiv** (`wiring="interactive"`, kein Worker-Handler) | `.claude/agents/*.md`, vom Hauptagent on-demand dispatcht | **4**: dali, neo, satoshi, kai-finder |
 
-**Konsequenz / Designentscheidung:** DALI, Neo und SATOSHI laufen als **interaktive** Subagenten
-(Operator-/Hauptagent-getriggert), nicht als autonome Queue-Worker — für Design-/Tiefenanalyse-/
-Krypto-Reviews ist das die richtige Granularität (kein sinnvoller cron-Default). DALI ist im
-Dashboard-API gelistet (Status-Sichtbarkeit), Neo/SATOSHI bewusst nicht. Wer autonome
-Worker-Handler für Neo/SATOSHI/DALI will, ist ein eigener Sprint mit Tests — **kein offener Bug.**
+**Konsequenz / Designentscheidung:** DALI, Neo, SATOSHI und KAI-Finder laufen als **interaktive**
+Subagenten (Operator-/Hauptagent-getriggert), nicht als autonome Queue-Worker — für Design-/
+Tiefenanalyse-/Krypto-/Discovery-Reviews ist das die richtige Granularität (kein sinnvoller
+cron-Default). Sie sind im Dashboard-API gelistet (Status-Sichtbarkeit) und über `wiring`
+ehrlich als interaktiv markiert; eine an sie enqueuete Command fährt **kein** autonomer Handler
+aus. Autonome Worker-Handler für sie wären ein eigener Sprint mit Tests — **kein offener Bug.**
 
 ## Cross-Reference-Pattern (Gedankenaustausch)
 

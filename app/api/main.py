@@ -11,8 +11,17 @@ try:
 
     MultiPartParser.max_file_size = 50 * 1024 * 1024
     MultiPartParser.max_part_size = 50 * 1024 * 1024
-except Exception:  # pragma: no cover
-    pass
+except Exception as exc:  # pragma: no cover
+    # Don't fail app boot if Starlette internals move — but never swallow it
+    # silently: a no-op override means uploads >1 MB start 413-ing again with
+    # no trace. Log it so the regression is visible (F-11).
+    import logging
+
+    logging.getLogger(__name__).warning(
+        "MultiPart upload-limit override failed (Starlette internals changed?); "
+        "uploads >1MB may be rejected with 413: %s",
+        exc,
+    )
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware

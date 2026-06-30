@@ -719,8 +719,13 @@ async def dashboard_quality_api() -> JSONResponse:
             closes.append(r)
 
     def _close_pnl(r: dict[str, Any]) -> float:
+        # v2 rows carry the per-trade NET pnl (incl. fee) — the canonical value.
         if r.get("schema_version") == "v2":
             return float(r.get("trade_pnl_usd", 0.0))
+        # KAI-04: legacy v1 rows predate trade_pnl_usd, so this reconstructs a
+        # GROSS (pre-fee) approximation — knowingly a slight over-estimate on old
+        # rows only; new closes are all v2/net. Fees are not back-applied here to
+        # avoid inventing a per-trade fee model in the read path (NEO-P-106).
         return (float(r.get("exit_price", 0.0)) - float(r.get("entry_price", 0.0))) * float(
             r.get("quantity", 0.0)
         )
