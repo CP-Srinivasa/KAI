@@ -22,7 +22,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from app.observability.counterfactual_replay_logger import OUTPUT_PATH
+from app.observability.counterfactual_replay_logger import OUTPUT_PATH, SUSPECT_RANGE_BPS
 from app.storage.jsonl_io import read_jsonl_tolerant
 
 _PCTILES = (50, 90, 99)
@@ -43,6 +43,23 @@ def _num(value: object) -> float | None:
     return float(value)
 
 
+def _is_suspect(row: dict[str, Any]) -> bool:
+    """Read-time plausibility: a record is a data-quality glitch if the logger
+    flagged it OR if its out-of-range drift exceeds the physical suspect ceiling.
+
+    The second clause is what makes this report robust to the pre-v2 backlog:
+    v1 records were logged before the suspect gate existed, so an impossible
+    ~100-index-vs-sub-$1 drift (millions of bps) carries ``drift_exceeded=True``
+    and no ``data_quality_suspect`` field. Re-deriving the flag here keeps such
+    glitches out of the drift count and the percentile distribution regardless
+    of the schema version the record was written under.
+    """
+    if row.get("data_quality_suspect") is True:
+        return True
+    drift = _num(row.get("drift_to_range_bps"))
+    return drift is not None and abs(drift) > SUSPECT_RANGE_BPS
+
+
 def _breakdown(rows: list[dict[str, Any]], key: str) -> list[dict[str, Any]]:
     buckets: dict[str, dict[str, int]] = defaultdict(
         lambda: {"total": 0, "drift_exceeded": 0, "data_quality_suspect": 0}
@@ -52,9 +69,10 @@ def _breakdown(rows: list[dict[str, Any]], key: str) -> list[dict[str, Any]]:
         name = raw.strip() if isinstance(raw, str) and raw.strip() else "unknown"
         bucket = buckets[name]
         bucket["total"] += 1
-        if row.get("drift_exceeded") is True:
+        suspect = _is_suspect(row)
+        if row.get("drift_exceeded") is True and not suspect:
             bucket["drift_exceeded"] += 1
-        if row.get("data_quality_suspect") is True:
+        if suspect:
             bucket["data_quality_suspect"] += 1
     return [{key: name, **counts} for name, counts in sorted(buckets.items())]
 
@@ -98,8 +116,10 @@ def build_counterfactual_report(path: str | Path = OUTPUT_PATH) -> Counterfactua
     resolved = Path(path)
     rows = read_jsonl_tolerant(resolved)
 
-    drift_exceeded = sum(1 for r in rows if r.get("drift_exceeded") is True)
-    suspect = sum(1 for r in rows if r.get("data_quality_suspect") is True)
+    suspect = sum(1 for r in rows if _is_suspect(r))
+    # A read-time-suspect glitch is never a real drift, even if the stored
+    # ``drift_exceeded`` (v1 backlog) says otherwise.
+    drift_exceeded = sum(1 for r in rows if r.get("drift_exceeded") is True and not _is_suspect(r))
     in_range = sum(1 for r in rows if r.get("in_settled_range") is True)
     gate_reject = sum(1 for r in rows if r.get("gate_would_reject") is True)
     gate_unknown = sum(1 for r in rows if r.get("gate_would_reject") is None)
@@ -110,8 +130,7 @@ def build_counterfactual_report(path: str | Path = OUTPUT_PATH) -> Counterfactua
     drift_abs = sorted(
         abs(v)
         for r in rows
-        if r.get("data_quality_suspect") is not True
-        and (v := _num(r.get("drift_to_range_bps"))) is not None
+        if not _is_suspect(r) and (v := _num(r.get("drift_to_range_bps"))) is not None
     )
     pctiles: dict[str, float] = {f"p{q}": round(_percentile(drift_abs, q), 4) for q in _PCTILES}
     pctiles["max"] = round(drift_abs[-1], 4) if drift_abs else 0.0
