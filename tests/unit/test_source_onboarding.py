@@ -107,6 +107,29 @@ async def test_build_probation_candidates_uses_ranking_evidence(session_factory)
 
 
 @pytest.mark.asyncio
+async def test_build_probation_candidates_carries_delivering_flag(session_factory) -> None:
+    """The sustained-delivery floor flows into ProbationCandidate.delivering."""
+    async with session_factory.begin() as session:
+        repo = SourceRepository(session)
+        await _seed(repo, "ctel", "https://cointelegraph.com/rss", SourceStatus.PROBATION)
+        await _seed(repo, "quiet", "https://quiet.com/feed/", SourceStatus.PROBATION)
+
+    async with session_factory() as session:
+        repo = SourceRepository(session)
+        cands = await build_probation_candidates(
+            repo,
+            evidence_by_source={
+                "ctel": {"n": 0, "wilson_lower_95": 0.0, "delivering": True},
+                "quiet": {"n": 0, "wilson_lower_95": 0.0, "delivering": False},
+            },
+            runs_by_source={"ctel": 5, "quiet": 5},
+        )
+    by_name = {c.source: c for c in cands}
+    assert by_name["ctel"].delivering is True  # zero directional, but delivering
+    assert by_name["quiet"].delivering is False
+
+
+@pytest.mark.asyncio
 async def test_execute_swaps_promotes_and_archives(session_factory) -> None:
     async with session_factory.begin() as session:
         repo = SourceRepository(session)

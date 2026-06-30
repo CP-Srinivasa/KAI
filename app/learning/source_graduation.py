@@ -17,6 +17,23 @@ hold in BOTH dry and live mode, because they are computed here, not at execution
    minimum delivery count before it is even eligible.
 4. **No orphan archival** — a rotation source is archived ONLY as the partner of a
    graduation; an unmatched rotation source stays active (replace-only-when-ready).
+
+Two eligibility paths feed the same replace-only-when-ready machinery:
+
+* **Directional** (default) — the historical path: a candidate with enough resolved
+  directional outcomes (``deliveries``) replaces the weakest rotation source it is
+  *strictly better* than on the Wilson axis.
+* **Delivery-reclamation** (``allow_delivery_reclamation``, operator-gated, default
+  off) — a context/news source emits narrative, not resolvable directional signals,
+  so its ``deliveries`` is ~0 and the directional path never opens for it. Instead, a
+  source that *sustains document delivery* (a boolean floor computed upstream — the
+  engine here sees only ``delivering``, never document volume, so volume cannot be
+  gamed into a score) may reclaim a slot held by a **SILENT** (non-delivering) active
+  source. The comparison is single-axis and trivially monotone: *delivering replaces
+  non-delivering*. It NEVER touches a still-signalling directional source (that would
+  trade a measured edge-bearer for an unmeasured one), and it feeds NO trust/priority
+  modifier — so it manufactures no edge claim (ADR 0012). ``ACTIVE`` means curated/
+  rotatable, NOT validated/trusted.
 """
 
 from __future__ import annotations
@@ -47,6 +64,7 @@ class ProbationCandidate:
     score: float  # comparable quality score (e.g. Wilson-Lower of delivered signals)
     deliveries: int  # how many usable items it produced while on probation
     runs: int  # how many probation evaluation cycles it has survived
+    delivering: bool = False  # sustained document delivery (boolean floor, not volume)
 
 
 @dataclass(frozen=True)
@@ -55,6 +73,7 @@ class RotationCandidate:
 
     source: str
     score: float
+    silent: bool = False  # delivering NEITHER signals NOR documents → reclaimable
 
 
 @dataclass(frozen=True)
@@ -65,6 +84,7 @@ class GraduationSwap:
     archive: str
     promote_score: float
     archive_score: float
+    kind: str = "directional"  # "directional" | "delivery_reclamation"
 
 
 @dataclass(frozen=True)
@@ -81,32 +101,66 @@ def decide_graduation(
     *,
     min_probation_runs: int = DEFAULT_MIN_PROBATION_RUNS,
     min_deliveries: int = DEFAULT_MIN_DELIVERIES,
+    allow_delivery_reclamation: bool = False,
 ) -> GraduationPlan:
-    """Pair proven probation candidates with strictly-weaker rotation sources.
+    """Pair proven probation candidates with replaceable rotation sources.
 
-    Greedy + deterministic: the best eligible candidate replaces the weakest
-    rotation source, provided it scores strictly higher. Each rotation source is
-    consumed at most once. A candidate with no weaker rotation partner left is
-    skipped (``no_weaker_rotation_target``) — the active set is never expanded.
+    Greedy + deterministic over two ordered phases that share one ``consumed``
+    target set, so the active set never grows (1-in-1-out) regardless of path. The
+    **delivery phase runs first** because it is the constrained side (silent-only
+    targets); directional candidates are flexible and fill whatever remains:
+
+    1. **Delivery-reclamation** (only when ``allow_delivery_reclamation``) — a
+       candidate that is ``delivering`` but directionally thin reclaims a slot held by
+       a **SILENT** active source. Single-axis and monotone (delivering replaces
+       non-delivering): no Wilson comparison, no document-volume score, and silent-only
+       targets so a still-signalling source is never traded.
+    2. **Directional** — the best eligible candidate (``deliveries >= min_deliveries``)
+       replaces the weakest *still-free* rotation source it scores *strictly higher*
+       than. A candidate with no strictly-weaker partner left is skipped — the active
+       set is never expanded.
     """
-    eligible: list[ProbationCandidate] = []
+    directional_eligible: list[ProbationCandidate] = []
+    delivery_eligible: list[ProbationCandidate] = []
     skipped: list[tuple[str, str]] = []
     for c in probation_candidates:
         if c.runs < min_probation_runs:
             skipped.append((c.source, f"probation_runs<{min_probation_runs}"))
-        elif c.deliveries < min_deliveries:
-            skipped.append((c.source, f"deliveries<{min_deliveries}"))
+        elif c.deliveries >= min_deliveries:
+            directional_eligible.append(c)
+        elif allow_delivery_reclamation and c.delivering:
+            delivery_eligible.append(c)
         else:
-            eligible.append(c)
+            skipped.append((c.source, f"deliveries<{min_deliveries}"))
 
-    # Best candidate first; weakest rotation target first.
-    eligible.sort(key=lambda c: (-c.score, c.source))
-    remaining = sorted(rotation_pool, key=lambda r: (r.score, r.source))
-
+    consumed: set[str] = set()
     swaps: list[GraduationSwap] = []
-    for cand in eligible:
-        # The weakest still-available rotation target.
-        target = remaining[0] if remaining else None
+    weakest_first = sorted(rotation_pool, key=lambda r: (r.score, r.source))
+
+    # Phase 1 — delivery-reclamation: each delivering candidate takes one SILENT slot.
+    # Constrained side first (silent-only targets), so directional cannot starve it.
+    silent_targets = [r for r in weakest_first if r.silent]
+    delivery_eligible.sort(key=lambda c: c.source)
+    for i, cand in enumerate(delivery_eligible):
+        if i >= len(silent_targets):
+            skipped.append((cand.source, "no_silent_rotation_target"))
+            continue
+        slot = silent_targets[i]
+        consumed.add(slot.source)
+        swaps.append(
+            GraduationSwap(
+                promote=cand.source,
+                archive=slot.source,
+                promote_score=cand.score,
+                archive_score=slot.score,
+                kind="delivery_reclamation",
+            )
+        )
+
+    # Phase 2 — directional: best candidate first; weakest still-free target first.
+    directional_eligible.sort(key=lambda c: (-c.score, c.source))
+    for cand in directional_eligible:
+        target = next((r for r in weakest_first if r.source not in consumed), None)
         if target is None:
             skipped.append((cand.source, "no_rotation_target"))
             continue
@@ -114,15 +168,17 @@ def decide_graduation(
             # Not strictly better than even the weakest target → do not graduate.
             skipped.append((cand.source, "not_strictly_better_than_weakest_rotation"))
             continue
-        remaining.pop(0)
+        consumed.add(target.source)
         swaps.append(
             GraduationSwap(
                 promote=cand.source,
                 archive=target.source,
                 promote_score=cand.score,
                 archive_score=target.score,
+                kind="directional",
             )
         )
+
     return GraduationPlan(swaps=swaps, skipped=skipped)
 
 

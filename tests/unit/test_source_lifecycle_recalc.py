@@ -171,6 +171,31 @@ def test_no_signal_and_no_docs_is_still_silent() -> None:
     assert counts["silent"] == 1
 
 
+def test_sustained_delivering_flag_from_delivery_count() -> None:
+    # The sustained-delivery floor (>= DELIVERY_MIN_DOCS distinct docs in window)
+    # is a boolean on the ranking row — it feeds delivery-reclamation graduation,
+    # NOT silence and NOT any quality score.
+    from scripts.source_lifecycle_recalc import DELIVERY_MIN_DOCS
+
+    ranked = [
+        _entry("Heavy", rank=4, n=0, provisional=True, wilson=0.0, reliability_tier="insufficient"),
+        _entry(
+            "Trickle", rank=5, n=0, provisional=True, wilson=0.0, reliability_tier="insufficient"
+        ),
+    ]
+    last = {"Heavy": _NOW - timedelta(hours=1), "Trickle": _NOW - timedelta(hours=1)}
+    docs = {"Heavy": _NOW - timedelta(hours=1), "Trickle": _NOW - timedelta(hours=1)}
+    counts_in = {"Heavy": DELIVERY_MIN_DOCS, "Trickle": DELIVERY_MIN_DOCS - 1}
+    out, _counts, _events = build_lifecycle_ranking(
+        ranked, last, {}, _NOW, last_document=docs, delivery_count=counts_in
+    )
+    by_name = {e["source_name"]: e for e in out}
+    assert by_name["Heavy"]["sustained_delivering"] is True  # >= floor
+    assert by_name["Trickle"]["sustained_delivering"] is False  # below floor
+    # Floor is decoupled from silence/score: both are non-silent (delivering), same wilson.
+    assert by_name["Heavy"]["silent"] is False and by_name["Trickle"]["silent"] is False
+
+
 def test_provisional_source_never_pins_even_with_streak() -> None:
     """Rail 5: a provisional source ranks but can never be pinned."""
     ranked = [_entry("SmallButHot", rank=1, n=25, provisional=True, wilson=0.90)]

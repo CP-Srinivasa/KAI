@@ -114,8 +114,9 @@ async def build_probation_candidates(
     """DB-PROBATION-Quellen + Ranking-Evidenz + Run-Zähler → Graduation-Inputs.
 
     ``evidence_by_source`` ist nach ``source_name`` (== provider) gekeyt; score =
-    Wilson-Untergrenze, deliveries = n (aufgelöste Signale). Quellen ohne Evidenz
-    bekommen score 0 / deliveries 0 (graduieren so nicht — fail-closed).
+    Wilson-Untergrenze, deliveries = n (aufgelöste Signale), delivering = sustained
+    document delivery (Boolean-Floor, speist das delivery-reclamation-Tor). Quellen
+    ohne Evidenz bekommen score 0 / deliveries 0 / delivering False (fail-closed).
     """
     out: list[ProbationCandidate] = []
     for s in await repo.list(status=SourceStatus.PROBATION):
@@ -131,6 +132,7 @@ async def build_probation_candidates(
                 score=float(wl) if isinstance(wl, (int, float)) else 0.0,
                 deliveries=int(n) if isinstance(n, (int, float)) else 0,
                 runs=int(runs_by_source.get(name, 0)),
+                delivering=bool(ev.get("delivering")),
             )
         )
     return out
