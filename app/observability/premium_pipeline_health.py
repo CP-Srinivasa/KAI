@@ -48,9 +48,18 @@ DEFAULT_HEARTBEAT_MAX_AGE_SEC = 90
 # (no envelopes to process) don't append, so a stale audit-log does NOT
 # imply a dead pipeline. Threshold kept for diagnostic detail.
 DEFAULT_BRIDGE_AUDIT_INFO_AGE_SEC = 15 * 60
-# Poll-backstop writes the semantic canary every 90s by default. 3 minutes
-# allows one missed tick plus brief Telegram/network jitter.
-DEFAULT_SEMANTIC_CANARY_MAX_AGE_SEC = 3 * 60
+# Poll-backstop writes the semantic canary AFTER each 90s sleep PLUS two MTProto
+# GetHistory calls (replay_missed_messages + _latest_message_id). Those calls run
+# on a client with flood_sleep_threshold=300 (telegram_channel_worker.py), so a
+# single Telegram FloodWait auto-sleeps up to 300s *inside* one healthy iteration.
+# 2026-06-30: the old 3min threshold (=90s tick + 90s "brief jitter") was SMALLER
+# than that worst-case healthy inter-write period and false-positived whenever the
+# backstop polled a quiet channel into a FloodWait (semantic_canary FAIL @ 22:40,
+# system green). 8min = poll cycle (90s) + one max FloodWait (300s) + jitter (90s):
+# tolerates the bounded rate-limit backoff, still catches an UNBOUNDED loop hang
+# (the canary is the sole liveness guard for the backstop loop — the heartbeat is
+# a separate Telethon loop). gap>0 (real backlog) trips immediately, age-independent.
+DEFAULT_SEMANTIC_CANARY_MAX_AGE_SEC = 8 * 60
 
 _BRIDGE_LOG = Path("artifacts/bridge_pending_orders.jsonl")
 _HEARTBEAT_FILE = Path("artifacts/telegram_listener_heartbeat")

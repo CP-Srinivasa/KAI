@@ -202,6 +202,51 @@ def test_real_semantic_canary_check_with_gap_fails(tmp_path: Path):
     assert "gap=2" in result.detail
 
 
+def test_semantic_canary_tolerates_single_floodwait_backoff(tmp_path: Path):
+    """A converged canary stale by one FloodWait backoff (300s flood + 90s tick)
+    MUST pass under the default threshold — the backstop's MTProto calls run with
+    flood_sleep_threshold=300, so a healthy iteration can legitimately delay the
+    write past the old 3min limit (the 22:40 false-positive). Regression for that.
+    """
+    canary = tmp_path / "telegram_channel_semantic_canary.json"
+    canary.write_text(
+        json.dumps(
+            {
+                "checked_at": (datetime.now(UTC) - timedelta(seconds=390)).isoformat(),
+                "checkpoint_message_id": 23920,
+                "latest_message_id": 23920,
+                "gap": 0,
+            }
+        )
+    )
+    result = pph._check_semantic_canary(
+        max_age_seconds=pph.DEFAULT_SEMANTIC_CANARY_MAX_AGE_SEC, path=canary
+    )
+    assert result.ok is True
+
+
+def test_semantic_canary_still_catches_unbounded_loop_hang(tmp_path: Path):
+    """Beyond a bounded FloodWait the write gap implies the backstop loop hung
+    (no timeout, never raises → no self-heal). That MUST still fail — the canary
+    is the sole liveness guard for the poll-backstop loop.
+    """
+    canary = tmp_path / "telegram_channel_semantic_canary.json"
+    canary.write_text(
+        json.dumps(
+            {
+                "checked_at": (datetime.now(UTC) - timedelta(minutes=12)).isoformat(),
+                "checkpoint_message_id": 23920,
+                "latest_message_id": 23920,
+                "gap": 0,
+            }
+        )
+    )
+    result = pph._check_semantic_canary(
+        max_age_seconds=pph.DEFAULT_SEMANTIC_CANARY_MAX_AGE_SEC, path=canary
+    )
+    assert result.ok is False
+
+
 def test_real_audit_check_with_stale_log_stays_ok(tmp_path: Path):
     """Stale audit log MUST NOT trip failure — silent ticks don't write."""
     log = tmp_path / "bridge_pending_orders.jsonl"
