@@ -83,6 +83,16 @@ def _discovery_enabled() -> bool:
         return False
 
 
+def _delivery_reclamation_enabled() -> bool:
+    """Read the delivery-reclamation flag; default OFF (shadow only) on any failure."""
+    try:
+        from app.core.settings import SourceSettings
+
+        return bool(SourceSettings().graduation_delivery_reclamation_enabled)
+    except Exception:  # noqa: BLE001 — settings unavailable → shadow only
+        return False
+
+
 def _coerce_access(raw: Any) -> CandidateAccess:
     """Map a proposal's access string to the enum; unknown → fail-closed UNKNOWN."""
     try:
@@ -159,7 +169,10 @@ def _load_ranking(path: Path) -> dict[str, Any]:
 
 
 def rotation_pool_from_ranking(ranking: dict[str, Any]) -> list[RotationCandidate]:
-    """Active sources flagged for rotation → the replaceable pool (weakest first)."""
+    """Active sources flagged for rotation → the replaceable pool (weakest first).
+
+    Carries the ``silent`` flag so delivery-reclamation can target ONLY dead slots.
+    """
     pool: list[RotationCandidate] = []
     for e in ranking.get("ranked", []):
         if not isinstance(e, dict) or not e.get("rotation_flagged"):
@@ -169,7 +182,11 @@ def rotation_pool_from_ranking(ranking: dict[str, Any]) -> list[RotationCandidat
             continue
         wl = e.get("wilson_lower_95")
         pool.append(
-            RotationCandidate(source=name, score=float(wl) if isinstance(wl, (int, float)) else 0.0)
+            RotationCandidate(
+                source=name,
+                score=float(wl) if isinstance(wl, (int, float)) else 0.0,
+                silent=bool(e.get("silent")),
+            )
         )
     return pool
 
@@ -186,11 +203,19 @@ def _known_urls_from_ranking(ranking: dict[str, Any]) -> set[str]:
 
 
 def _evidence_by_source(ranking: dict[str, Any]) -> dict[str, dict[str, Any]]:
-    """source_name → {n, wilson_lower_95} aus dem Ranking (Probation-Evidenz)."""
+    """source_name → {n, wilson_lower_95, delivering} aus dem Ranking (Probation-Evidenz).
+
+    ``delivering`` (sustained document delivery, boolean floor) speist das
+    delivery-reclamation-Tor — getrennt von der direktionalen ``n``-Achse.
+    """
     out: dict[str, dict[str, Any]] = {}
     for e in ranking.get("ranked", []):
         if isinstance(e, dict) and isinstance(e.get("source_name"), str):
-            out[e["source_name"]] = {"n": e.get("n"), "wilson_lower_95": e.get("wilson_lower_95")}
+            out[e["source_name"]] = {
+                "n": e.get("n"),
+                "wilson_lower_95": e.get("wilson_lower_95"),
+                "delivering": bool(e.get("sustained_delivering")),
+            }
     return out
 
 
@@ -227,10 +252,15 @@ async def _execute_live(
     *,
     probation_state_path: Path | None,
     now: datetime,
-) -> tuple[list[Any], GraduationPlan, list[Any]]:
+    delivery_reclamation_enabled: bool,
+) -> tuple[list[Any], GraduationPlan, list[Any], list[tuple[str, str]]]:
     """Live DB-Execution (nur wenn der Kill-Switch scharf ist): Kandidaten als
     PROBATION anlegen, Probation-Run-Zähler fortschreiben, Graduation-Swaps
-    ausführen. Returns (onboard_results, plan, swap_results)."""
+    ausführen. Returns (onboard_results, plan, swap_results, delivery_shadow).
+
+    ``delivery_shadow`` listet IMMER die delivery-reclamation-Swaps, die mit dem Flag
+    ON laufen WÜRDEN (promote, archive) — auch wenn das Flag OFF ist —, damit der
+    Operator vor dem Armen sieht, was passieren würde."""
     from app.storage.repositories.source_repo import SourceRepository
 
     evidence = _evidence_by_source(ranking)
@@ -245,11 +275,20 @@ async def _execute_live(
         probation_candidates = await build_probation_candidates(
             repo, evidence_by_source=evidence, runs_by_source=runs_state
         )
-        plan = decide_graduation(probation_candidates, pool)
+        plan = decide_graduation(
+            probation_candidates,
+            pool,
+            allow_delivery_reclamation=delivery_reclamation_enabled,
+        )
+        # Shadow: what delivery-reclamation WOULD do if armed (never executed here).
+        shadow_plan = decide_graduation(probation_candidates, pool, allow_delivery_reclamation=True)
+        delivery_shadow = [
+            (s.promote, s.archive) for s in shadow_plan.swaps if s.kind == "delivery_reclamation"
+        ]
         swap_results = await execute_swaps(repo, plan.swaps)
         await session.commit()
     _save_probation_runs(probation_state_path, runs_state, now)
-    return onboard_results, plan, swap_results
+    return onboard_results, plan, swap_results, delivery_shadow
 
 
 def run_once(
@@ -264,6 +303,7 @@ def run_once(
     session_factory: Any = None,
     probation_state_path: Path | None = None,
     rejected_tombstone_path: Path | None = None,
+    delivery_reclamation_enabled: bool = False,
 ) -> dict[str, Any]:
     """One scheduler pass. Returns the run summary (also appended to runs_path).
 
@@ -300,9 +340,10 @@ def run_once(
     mode = "live" if (enabled and session_factory is not None) else "dry"
     onboarded = 0
     swaps_executed = 0
+    delivery_shadow: list[tuple[str, str]] = []
 
     if mode == "live":
-        onboard_results, plan, swap_results = asyncio.run(
+        onboard_results, plan, swap_results, delivery_shadow = asyncio.run(
             _execute_live(
                 session_factory,
                 accepted,
@@ -310,6 +351,7 @@ def run_once(
                 pool,
                 probation_state_path=probation_state_path,
                 now=now,
+                delivery_reclamation_enabled=delivery_reclamation_enabled,
             )
         )
         created_by_url = {r.url: r.created for r in onboard_results}
@@ -345,6 +387,7 @@ def run_once(
                         "archive": swap.archive,
                         "promote_score": swap.promote_score,
                         "archive_score": swap.archive_score,
+                        "kind": swap.kind,
                         "executed": done,
                         "detail": sr.reason,
                     },
@@ -384,6 +427,7 @@ def run_once(
                         "archive": swap.archive,
                         "promote_score": swap.promote_score,
                         "archive_score": swap.archive_score,
+                        "kind": swap.kind,
                         "executed": False,
                     },
                 ),
@@ -403,6 +447,8 @@ def run_once(
         "graduation_swaps": len(plan.swaps),
         "swaps_executed": swaps_executed,
         "graduation_skipped": plan.skipped[:20],
+        "delivery_reclamation_enabled": delivery_reclamation_enabled,
+        "delivery_reclamation_shadow": [list(p) for p in delivery_shadow[:20]],
     }
     runs_path.parent.mkdir(parents=True, exist_ok=True)
     with runs_path.open("a", encoding="utf-8") as fh:
@@ -434,6 +480,7 @@ def main() -> int:
         session_factory=factory,
         probation_state_path=_REPO_ROOT / "monitor" / "source_probation_state.json",
         rejected_tombstone_path=_REPO_ROOT / "monitor" / "source_rejected_candidates.jsonl",
+        delivery_reclamation_enabled=_delivery_reclamation_enabled(),
     )
     logger.info("discovery run (%s): %s", summary["mode"], summary)
     return 0

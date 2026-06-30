@@ -101,6 +101,43 @@ def test_rotation_pool_only_flagged_weakest_first() -> None:
     assert all(r.source != "keep" for r in pool)
 
 
+def test_rotation_pool_carries_silent_flag() -> None:
+    """Silent flag flows through so delivery-reclamation can target dead slots only."""
+    ranking = {
+        "ranked": [
+            {
+                "source_name": "dead",
+                "rotation_flagged": True,
+                "wilson_lower_95": 0.0,
+                "silent": True,
+            },
+            {
+                "source_name": "watch",
+                "rotation_flagged": True,
+                "wilson_lower_95": 0.4,
+                "silent": False,
+            },
+        ]
+    }
+    pool = {r.source: r for r in rotation_pool_from_ranking(ranking)}
+    assert pool["dead"].silent is True
+    assert pool["watch"].silent is False
+
+
+def test_evidence_by_source_carries_delivering() -> None:
+    from scripts.source_discovery_scheduler import _evidence_by_source
+
+    ranking = {
+        "ranked": [
+            {"source_name": "ctel", "n": 0, "wilson_lower_95": 0.0, "sustained_delivering": True},
+            {"source_name": "quiet", "n": 0, "wilson_lower_95": 0.0, "sustained_delivering": False},
+        ]
+    }
+    ev = _evidence_by_source(ranking)
+    assert ev["ctel"]["delivering"] is True
+    assert ev["quiet"]["delivering"] is False
+
+
 # ── run_once (dry, no DB) ──────────────────────────────────────────────────
 
 

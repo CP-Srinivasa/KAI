@@ -263,6 +263,15 @@ class SourceSettings(BaseSettings):
     # reviewable proposals file — onboarding stays gated by discovery_enabled.
     scout_enabled: bool = Field(default=False)
 
+    # Delivery-reclamation graduation kill-switch (NORTH_STAR/ADR 0012). OFF by
+    # default → the discovery scheduler still COMPUTES + audits which delivering
+    # probation sources WOULD reclaim a dead (silent) active slot (shadow), but
+    # executes no such swap. ON (SOURCE_GRADUATION_DELIVERY_RECLAMATION_ENABLED=true,
+    # and only when discovery_enabled) lets a SUSTAINED-delivering probation source
+    # replace a SILENT active source — single-axis, never touching a still-signalling
+    # source, never feeding trust/priority (no fabricated edge). Reversible + audited.
+    graduation_delivery_reclamation_enabled: bool = Field(default=False)
+
 
 class RiskSettings(BaseSettings):
     model_config = SettingsConfigDict(env_prefix="RISK_", env_file=".env", extra="ignore")

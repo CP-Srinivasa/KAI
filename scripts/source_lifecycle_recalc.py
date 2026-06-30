@@ -72,6 +72,11 @@ logger = logging.getLogger("source-lifecycle-recalc")
 
 # A source with no directional dispatch within this window is "silent".
 SILENT_AFTER_DAYS: int = 7
+# A source must deliver at least this many distinct documents within the silent
+# window to count as SUSTAINED-delivering (a boolean floor for delivery-reclamation
+# graduation — deliberately low: it only qualifies a source to reclaim a DEAD slot,
+# "clearly alive vs clearly dead", never a volume race; see source_graduation.py).
+DELIVERY_MIN_DOCS: int = 5
 # Consecutive top-tier runs required before a source can be pinned.
 PIN_MIN_CONSECUTIVE_RUNS: int = 3
 # A source must rank within this position (and be non-silent) to accrue a pin run.
@@ -166,6 +171,43 @@ def _last_document_by_source() -> dict[str, datetime]:
     return out
 
 
+def _document_count_by_source(since: datetime) -> dict[str, int]:
+    """Distinct documents delivered per source SINCE ``since`` (sync, read-only, fail-soft).
+
+    Same canonical store as ``_last_document_by_source``; counts rows in the window so
+    the engine can tell a SUSTAINED-delivering context source (eligible to reclaim a
+    dead slot) from one that emitted a single stray item. Any failure → empty map →
+    delivery-reclamation simply stays inert (no regression).
+    """
+    import sqlite3
+
+    db_path = _REPO_ROOT / "data" / "dev.db"
+    if not db_path.exists():
+        return {}
+    since_iso = since.astimezone(UTC).strftime("%Y-%m-%d %H:%M:%S")
+    try:
+        con = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+        try:
+            rows = con.execute(
+                "SELECT source_name, COUNT(*) FROM canonical_documents "
+                "WHERE source_name IS NOT NULL AND fetched_at >= ? GROUP BY source_name",
+                (since_iso,),
+            ).fetchall()
+        finally:
+            con.close()
+    except Exception:  # noqa: BLE001 — observability-only; never break the recalc
+        return {}
+    out: dict[str, int] = {}
+    for source_name, count in rows:
+        if not source_name:
+            continue
+        try:
+            out[str(source_name)] = int(count)
+        except (TypeError, ValueError):
+            continue
+    return out
+
+
 def _logical_status(*, silent: bool, pinned: bool) -> SourceStatus:
     """Map the engine's observed flags to a single logical lifecycle status.
 
@@ -237,6 +279,7 @@ def build_lifecycle_ranking(
     now: datetime,
     *,
     last_document: dict[str, datetime] | None = None,
+    delivery_count: dict[str, int] | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, int], list[LifecycleEvent]]:
     """Pure core: enrich the reliability ranking with lifecycle flags + events.
 
@@ -256,6 +299,7 @@ def build_lifecycle_ranking(
     """
     silent_cutoff = now - timedelta(days=SILENT_AFTER_DAYS)
     last_document = last_document or {}
+    delivery_count = delivery_count or {}
     out_ranked: list[dict[str, Any]] = []
     counts = {
         "ranked": 0,
@@ -283,6 +327,9 @@ def build_lifecycle_ranking(
         last_doc = last_document.get(source)
         delivering = last_doc is not None and last_doc >= silent_cutoff
         silent = no_signal and not delivering
+        # SUSTAINED delivery (boolean floor) qualifies a PROBATION source to reclaim a
+        # dead slot; it is NOT a quality score and never feeds trust/priority.
+        sustained_delivering = int(delivery_count.get(source, 0)) >= DELIVERY_MIN_DOCS
 
         prior_entry = prior.get(source)
         prior_runs = int((prior_entry or {}).get("consecutive_top_runs", 0) or 0)
@@ -312,6 +359,7 @@ def build_lifecycle_ranking(
                 "silent": silent,
                 "pinned": pinned,
                 "rotation_flagged": rotation_flagged,
+                "sustained_delivering": sustained_delivering,
                 "consecutive_top_runs": consecutive_top_runs,
                 "logical_status": new_status.value,
                 "last_signal_at": last_iso,
@@ -380,6 +428,7 @@ def main() -> int:
     ranked: list[dict[str, Any]] = raw_ranked if isinstance(raw_ranked, list) else []
     last_signal = _last_signal_by_source(audits, source_by_doc)
     last_document = _last_document_by_source()
+    delivery_count = _document_count_by_source(now - timedelta(days=SILENT_AFTER_DAYS))
 
     monitor_dir = _resolve_monitor_dir()
     ranking_path = monitor_dir / "source_ranking.json"
@@ -387,7 +436,7 @@ def main() -> int:
     audit_dir = _REPO_ROOT / "artifacts"
 
     out_ranked, counts, events = build_lifecycle_ranking(
-        ranked, last_signal, prior, now, last_document=last_document
+        ranked, last_signal, prior, now, last_document=last_document, delivery_count=delivery_count
     )
     for event in events:
         append_lifecycle_event(event, audit_dir)
