@@ -142,8 +142,33 @@ Engine `live_enabled=False`, `EXECUTION_DUAL_STREAM_DIAGNOSTICS=true` (Phase-1-L
 - **Selbst dann:** Switching-Policy = **nie automatisch**, immer Operator + signiert
   (ADR-§3-Default bestätigt).
 
-### Kleiner Folgeschritt (separat, gated NICHT das NO-GO)
-Root-Cause des `entry_live ≈ 100`-Kontaminanten im `technical_screener`-Entry-Preis-Pfad
-+ Plausibilitäts-Guard im `counterfactual_replay_logger` (implausible Records als
-`data_quality_suspect` markieren, aus Drift-Rate ausschließen). Eigene kleine PR.
-Macht die Phase-1-Evidenz sauber; ändert das NO-GO nicht.
+### Kleiner Folgeschritt — **RESOLVED 2026-06-30** (war: separat, gated NICHT das NO-GO)
+Root-Cause des `entry_live ≈ 100`-Kontaminanten + Plausibilitäts-Guard. Audit 2026-06-30
+(gegen Pi-Artifact `counterfactual_comparison.jsonl`, 7727 Records) ergab: **beide Hälften
+sind durch frühere PRs bereits erledigt** — kein neuer Code, sonst redundant.
+
+- **Wurzel (strukturell gefixt):** Die ~100-Werte stammten aus dem `technical_screener`,
+  als der Decision-Entry noch der **letzte 1h-Close des `fallback`-Providers** war — der
+  für (dynamic-universe-)Symbole eine normalisierte ~100-Indexreihe statt des echten
+  Preises lieferte. **#498** zieht den Decision-Entry jetzt venue-konsistent aus der
+  **Binance-1m-Kline** (gleiche Quelle wie der Shadow-Resolver), **#503** prunt das
+  Dynamic-Universe auf Binance-spot-resolvebare Symbole. Beleg: alle 89 ~100-Kontaminanten
+  sind `schema_version=v1`, ts **2026-06-16…06-26** (vor #498/#503); die 568 **v2**-Records
+  (seit 06-29, Screener weiterhin `enabled`) haben **0 Platzhalter** und echte Preise
+  (RE/ENA: 0,006…4045 statt ~100) → Screener *gefixt*, nicht nur aus.
+- **Plausi-Guard (live):** `counterfactual_replay_logger.build_comparison` (#516, `v2`)
+  markiert `|drift_to_range_bps| > SUSPECT_RANGE_BPS` (3000) als `data_quality_suspect`
+  und zählt es **nicht** als `drift_exceeded`; `trading counterfactual-report` wendet die
+  Plausibilität auch **read-time** auf v1-Altzeilen an → Report zeigt `suspect=92`,
+  `drift_exceeded=2335`, `max=780 bps` (statt roh 1,5 Mio). Die Phase-1-Evidenz ist
+  damit beim Lesen sauber.
+- **Bewusste Entscheidung — Roh-Artifact bleibt immutable:** Die 7159 v1-Roh-Zeilen tragen
+  weiterhin `data_quality_suspect=None`/v1-`drift_exceeded`, werden aber read-time
+  neutralisiert und von **keinem** Konsumenten literal gelesen (nur Writer + ein Kommentar).
+  Das Evidenz-Log wird nicht nachträglich umgeschrieben (Audit-Integrität); die saubere
+  Sicht liefert der Report. Eine optionale Einmal-Backfill-Migration ist möglich, aber
+  nicht nötig.
+- **Folge:** Die in „Drift-Befund"/Grund 3 zitierten Roh-Prozentsätze sind über den vollen
+  v1+v2-Stream gerechnet; die **kanonische, bereinigte** Drift-Sicht ist `counterfactual-report`
+  (read-time-plausibel). Grund 3 ist damit adressiert; das **NO-GO bleibt unverändert**
+  (Grund 1 Gate-G0 + Grund 2 echte Screener-Divergenz tragen es allein).
