@@ -447,11 +447,15 @@ export const PremiumSignalTrail = memo(function PremiumSignalTrail({
       setBusyEnv(entry.envelope_id);
       setActionError(null);
       try {
+        // Stable idempotency key per (action, envelope) — NOT Date.now(), which
+        // minted a fresh key on every click and made the backend dedup a no-op,
+        // so an accidental double-click fired the action twice. A stable key
+        // lets the server collapse the double-click into one action.
         if (action === "manual_fill") {
-          const key = `trail-fill-${entry.envelope_id}-${Date.now()}`;
+          const key = `trail-fill-${entry.envelope_id}`;
           await postManualFill(entry.envelope_id, key);
         } else {
-          const key = `trail-reprocess-${entry.envelope_id}-${Date.now()}`;
+          const key = `trail-reprocess-${entry.envelope_id}`;
           await postReprocess(entry.envelope_id, key);
         }
       } catch (e) {

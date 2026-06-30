@@ -209,8 +209,12 @@ async def manual_fill(req: ManualFillRequest) -> dict[str, Any]:
 
 @router.post("/reprocess")
 async def reprocess(req: ReprocessRequest) -> dict[str, Any]:
-    """Trigger a fresh bridge tick. envelope_id is informational only — the
-    bridge always scans the full pending set.
+    """Trigger a fresh bridge tick.
+
+    When ``envelope_id`` is given the tick is narrowed to that single pending
+    envelope ("reprocess this one"); narrowing can only reduce the work a tick
+    does, never fill something a full tick would not. Without ``envelope_id``
+    it runs a full bridge tick (same as the cron).
     """
     body = req.model_dump(exclude_none=True)
     cached = _check_idempotency(req.idempotency_key, "reprocess", body)
@@ -218,7 +222,7 @@ async def reprocess(req: ReprocessRequest) -> dict[str, Any]:
         return {**cached, "_idempotency_cached": True}
 
     try:
-        tick_result = await run_tick()
+        tick_result = await run_tick(only_envelope_id=req.envelope_id)
         result = {"status": "ok", "tick": tick_result.to_dict()}
     except Exception as exc:  # noqa: BLE001
         logger.warning("[premium-signals] reprocess tick failed: %s", exc)

@@ -542,8 +542,17 @@ def _apply_scale(payload: dict[str, object], factor: float) -> None:
 PriceProvider = Callable[[str], Awaitable[float | None]]
 
 
-async def run_tick(*, price_provider: PriceProvider | None = None) -> BridgeTickResult:
-    """One bridge tick: scan new envelopes, re-check pending ones, fill/expire."""
+async def run_tick(
+    *,
+    price_provider: PriceProvider | None = None,
+    only_envelope_id: str | None = None,
+) -> BridgeTickResult:
+    """One bridge tick: scan new envelopes, re-check pending ones, fill/expire.
+
+    ``only_envelope_id`` narrows the pending set to that single envelope (the
+    "reprocess this one" click) — it can only reduce a tick's work, never widen
+    it; ``None`` (the cron default) scans the full pending set unchanged.
+    """
     settings = get_settings()
     if not settings.execution.operator_signal_bridge_enabled:
         return BridgeTickResult(enabled=False)
@@ -558,6 +567,10 @@ async def run_tick(*, price_provider: PriceProvider | None = None) -> BridgeTick
     bridge_records = _read_jsonl(_BRIDGE_LOG)
     bridge_stages = _latest_bridge_stage_by_envelope(bridge_records)
     pending_signals = _collect_pending_signals(envelope_records, bridge_stages)
+    if only_envelope_id is not None:
+        pending_signals = [
+            rec for rec in pending_signals if rec.get("envelope_id") == only_envelope_id
+        ]
     result.envelopes_scanned = len(pending_signals)
 
     if not pending_signals:
@@ -693,6 +706,7 @@ async def backfill_run(
     engine.rehydrate_from_audit()
     risk = RiskEngine(_build_risk_limits())
 
+    backfill_max_age_hours = settings.premium_fastlane.backfill_max_age_hours
     for envelope in selected:
         await _process_one(
             envelope=envelope,
@@ -704,6 +718,7 @@ async def backfill_run(
             result=result,
             price_provider=price_provider,
             ignore_ttl=ignore_ttl,
+            backfill_max_age_hours=backfill_max_age_hours,
         )
 
     return result
@@ -720,6 +735,7 @@ async def _process_one(
     result: BridgeTickResult,
     price_provider: PriceProvider | None = None,
     ignore_ttl: bool = False,
+    backfill_max_age_hours: int = 0,
 ) -> None:
     envelope_id = str(envelope.get("envelope_id") or "")
     source = _extract_source(envelope)
@@ -775,6 +791,29 @@ async def _process_one(
     ts_raw = envelope.get("timestamp_utc")
     ts_str = ts_raw if isinstance(ts_raw, str) else None
     if ignore_ttl and _ttl_exceeded(ts_str, ttl_hours):
+        # Hard age cap: even an ignore_ttl backfill must not re-inject a signal
+        # older than backfill_max_age_hours — filling at a long-stale entry price
+        # would distort the canonical paper edge (A4). 0 disables the cap.
+        if backfill_max_age_hours > 0 and _ttl_exceeded(ts_str, backfill_max_age_hours):
+            rec = base("backfill_skipped_too_old")
+            rec["event"] = "premium_fastlane_backfill_skipped_too_old"
+            rec["ttl_hours"] = ttl_hours
+            rec["backfill_max_age_hours"] = backfill_max_age_hours
+            rec["origin_timestamp"] = ts_str
+            _attach_lifecycle(
+                rec,
+                final_state=OrderLifecycleState.EXPIRED,
+                states=[
+                    OrderLifecycleState.RECEIVED,
+                    OrderLifecycleState.PARSED,
+                    OrderLifecycleState.VALIDATED,
+                    OrderLifecycleState.EXPIRED,
+                ],
+                reason="backfill_age_exceeds_max",
+            )
+            _append_bridge_audit(rec)
+            result.expired += 1
+            return
         ttl_note = base("fastlane_ttl_backfill_allowed")
         ttl_note["event"] = "premium_fastlane_ttl_expired_but_backfill_allowed_for_paper"
         ttl_note["ttl_hours"] = ttl_hours

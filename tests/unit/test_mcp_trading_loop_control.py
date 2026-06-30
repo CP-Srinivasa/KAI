@@ -156,3 +156,26 @@ async def test_run_trading_loop_once_rejects_live_mode_fail_closed(
             loop_audit_path="artifacts/trading_loop_audit.jsonl",
             execution_audit_path="artifacts/paper_execution_audit.jsonl",
         )
+
+
+@pytest.mark.asyncio
+async def test_run_trading_loop_once_rejects_missing_provider(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """F-02: an omitted provider must fail loud — no implicit 'mock' fallback,
+    which silently contaminated the canonical paper/loop audit — and must write
+    no audit rows. The HTTP run-once path already rejects this; this pins the
+    MCP/agent write path to the same guard."""
+    _patch_workspace_root(monkeypatch, tmp_path)
+
+    with pytest.raises(ValueError, match="provider is required"):
+        await run_trading_loop_once(
+            symbol="BTC/USDT",
+            mode="paper",
+            loop_audit_path="artifacts/trading_loop_audit.jsonl",
+            execution_audit_path="artifacts/paper_execution_audit.jsonl",
+        )
+
+    assert not (tmp_path / "artifacts" / "trading_loop_audit.jsonl").exists()
+    assert not (tmp_path / "artifacts" / "paper_execution_audit.jsonl").exists()

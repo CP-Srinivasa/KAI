@@ -926,6 +926,12 @@ class PremiumFastlaneSettings(BaseSettings):
     # 30-day window so missed signals can be reprocessed; live is never affected
     # (the bridge is paper). Set False to make the backfill honour the live TTL.
     backfill_ignore_ttl_for_paper: bool = Field(default=True)
+    # Hard age cap that even ``backfill_ignore_ttl_for_paper`` cannot override:
+    # a signal older than this is NOT re-injected, because filling at a long-
+    # stale entry price would distort the canonical paper edge. Codifies the
+    # documented 30-day window (720h) as an enforced bound; 0 disables the cap
+    # (legacy unbounded behaviour).
+    backfill_max_age_hours: int = Field(default=720, ge=0)
 
     # ── Order / bracket policy ──
     duplicate_window_minutes: int = Field(default=180, ge=1)

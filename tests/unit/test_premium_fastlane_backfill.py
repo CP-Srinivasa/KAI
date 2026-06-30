@@ -187,6 +187,69 @@ async def test_ttl_ignored_for_paper_backfill(
 
 
 @pytest.mark.asyncio
+async def test_backfill_skips_signal_older_than_max_age(
+    tmp_artifacts: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A4: even with ignore_ttl, a signal older than backfill_max_age_hours is
+    NOT re-injected — filling at a long-stale entry price would distort the
+    canonical paper edge. It is skipped, counted as expired, and audited."""
+    _enable(monkeypatch)
+    monkeypatch.setenv("PREMIUM_FASTLANE_BACKFILL_MAX_AGE_HOURS", "24")
+    old_ts = (datetime.now(UTC) - timedelta(days=10)).isoformat()
+    env = _env(
+        env_id="ENV-ANCIENT",
+        symbol="BEAT/USDT",
+        entry_type="at",
+        entry=1.6810,
+        sl=1.6130,
+        targets=[1.6895, 1.6980],
+        msg_id=23999,
+        ts=old_ts,
+    )
+    _write(tmp_artifacts / "telegram_message_envelope.jsonl", env)
+    result = await backfill_run(symbols=["BEAT/USDT"], price_provider=_price(1.7451))
+    assert result.newly_pending == 0, result.to_dict()
+    assert result.filled == 0, result.to_dict()
+    assert result.expired == 1, result.to_dict()
+    events = [r.get("event") for r in _read(tmp_artifacts / "bridge_pending_orders.jsonl")]
+    assert "premium_fastlane_backfill_skipped_too_old" in events
+
+
+@pytest.mark.asyncio
+async def test_run_tick_only_envelope_id_narrows_scan(
+    tmp_artifacts: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A3: reprocess with envelope_id narrows the bridge tick to that single
+    pending envelope (truth: the UI 'reprocess this one' now does what it says).
+    Narrowing can only reduce the scanned set, never widen it."""
+    from app.execution.envelope_to_paper_bridge import run_tick
+
+    _enable(monkeypatch)
+    for env_id, symbol, msg in (
+        ("ENV-ONE", "ZZZ/USDT", 701),
+        ("ENV-TWO", "YYY/USDT", 702),
+    ):
+        _write(
+            tmp_artifacts / "telegram_message_envelope.jsonl",
+            _env(
+                env_id=env_id,
+                symbol=symbol,
+                entry_type="at",
+                entry=10.0,
+                sl=9.0,
+                targets=[11.0],
+                msg_id=msg,
+            ),
+        )
+
+    targeted = await run_tick(only_envelope_id="ENV-ONE", price_provider=_price(10.0))
+    assert targeted.envelopes_scanned == 1, targeted.to_dict()
+
+    missing = await run_tick(only_envelope_id="DOES-NOT-EXIST", price_provider=_price(10.0))
+    assert missing.envelopes_scanned == 0, missing.to_dict()
+
+
+@pytest.mark.asyncio
 async def test_backfill_fill_is_idempotent(
     tmp_artifacts: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

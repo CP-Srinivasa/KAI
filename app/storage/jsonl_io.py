@@ -20,7 +20,10 @@ flip to e.g. ``filelock`` does not require touching each call site.
 
 Public API:
 
-* :func:`read_jsonl_tolerant` — the canonical entry point.
+* :func:`read_jsonl_tolerant` — the canonical entry point (full read, with
+  the single retry-on-truncate policy; use when the latest line matters).
+* :func:`iter_jsonl_tolerant` — constant-memory streaming variant for
+  aggregation-only read paths (count/sum/tail) on large append-only files.
 * :func:`RETRY_SLEEP_SECONDS` — policy constant kept as module attribute
   so tests can monkey-patch it without touching import-order edge cases.
 """
@@ -29,6 +32,7 @@ from __future__ import annotations
 
 import json
 import time
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
@@ -112,3 +116,47 @@ def read_jsonl_tolerant(
         # whole list because of Python's ``-0 == 0``.
         return []
     return records[-tail:]
+
+
+def iter_jsonl_tolerant(
+    path: Path,
+    *,
+    dict_only: bool = True,
+) -> Iterator[dict[str, Any]]:
+    """Stream JSON objects from a JSONL file with constant memory.
+
+    Companion to :func:`read_jsonl_tolerant` for read paths that only need to
+    *aggregate* (count, sum, tail) and must not hold the whole file in RAM.
+    The dashboard polls multi-MB append-only audit files every few seconds; the
+    legacy ``path.read_text().splitlines()`` pattern peaks at hundreds of MB on
+    the Raspberry Pi for the ~27 MB ``trading_loop_audit.jsonl`` and is the
+    direct OOM risk this function exists to remove (KAI-01).
+
+    Policy (matches the non-retry parts of :func:`read_jsonl_tolerant`):
+
+    * Missing file → empty iterator.
+    * Any line that fails to JSON-decode is skipped — mid-file corruption and a
+      racing partial final line alike. Unlike :func:`read_jsonl_tolerant` there
+      is **no** sleep-and-reread retry: a partial final line from a concurrent
+      appender is simply skipped this pass and picked up on the next read. This
+      is safe for the repeated-poll aggregation callers and avoids both the full
+      re-read and any duplicate-yield risk. State-critical readers that must not
+      miss the latest line should keep using :func:`read_jsonl_tolerant`.
+    * When ``dict_only`` (default) non-dict JSON values are skipped, matching
+      the migrated call sites' legacy semantics.
+    """
+
+    if not path.exists():
+        return
+    with path.open(encoding="utf-8") as handle:
+        for raw in handle:
+            line = raw.strip()
+            if not line:
+                continue
+            try:
+                obj = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if dict_only and not isinstance(obj, dict):
+                continue
+            yield obj
