@@ -11,8 +11,9 @@ that cross-pollutes API-Key and webhook-credential failures.
 This module exposes:
   * :class:`FailureTracker` — instantiable, independent key spaces, same
     sliding-window semantics as the auth variant.
-  * :func:`client_ip` — best-effort client IP resolver for FastAPI requests,
-    honoring the Cloudflare and X-Forwarded-For headers used on the edge.
+  * :func:`client_ip` — trusted client IP resolver for FastAPI requests,
+    honoring only the Cloudflare ``Cf-Connecting-IP`` header (the spoofable
+    ``X-Forwarded-For`` is deliberately not trusted — F-01 / S-001).
 
 The ``app/security/auth.py`` variant is left in place on purpose — migrating
 it would be a cross-cutting refactor for no functional gain. A later cleanup
@@ -28,17 +29,19 @@ from fastapi import Request
 
 
 def client_ip(request: Request) -> str:
-    """Best-effort client IP. Prefer Cf-Connecting-IP, then X-Forwarded-For.
+    """Trusted client IP for the rate-limit bucket. ONLY ``Cf-Connecting-IP``
+    (set by the cloudflared tunnel) is trusted; otherwise the real socket peer.
 
-    The order matches ``app/security/auth.py::_client_ip`` so both guards see
-    the same identity for the same caller.
+    ``X-Forwarded-For`` is deliberately NOT trusted (F-01): no upstream strips
+    it here, so it is attacker-settable on the local/non-tunnel path. Keying the
+    limiter on it would let an attacker forge the key — lock out the operator's
+    IP, or rotate XFF to dodge the brute-force guard entirely. This mirrors
+    ``app/security/auth.py::_client_ip`` (S-001) so both guards derive the same
+    identity for the same caller.
     """
     cf = request.headers.get("Cf-Connecting-IP", "").strip()
     if cf:
         return cf
-    xff = request.headers.get("X-Forwarded-For", "").strip()
-    if xff:
-        return xff.split(",")[0].strip()
     if request.client is not None:
         return request.client.host
     return ""
