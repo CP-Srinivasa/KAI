@@ -1,9 +1,7 @@
 {
-  "stand": "2026-06-29",
+  "stand": "2026-06-30",
   "note": "Kuratierter Operator-Board-Snapshot (SSOT) — deklarativ, NICHT live-berechnet. Vom Operator/Agenten hier gepflegt; das Dashboard liest diese Datei read-only über /dashboard/api/operator-board. Gates/Probleme kommen separat live aus den Truth-Chips (AcutePointsBoard), hier stehen Todos/Phasen/Verbesserungen.",
-  "todos": [
-    { "text": "#318 Phase 2 — per-Zyklus Live/Replay-Umschaltung: bleibt GATED. Phase-1-Evidenz am 2026-06-29 reviewt (7144 Drift-Records + Gate-G0-Abgleich) → Verdikt NO-GO, dokumentiert in ADR 0010. Gründe: (1) Gate G0 nicht bestanden — Edge fragil (canonical-edge P=56,5% nur von 1 Ausreißer getragen, ohne Best-Trade P=25%); (2) materielle Live∥Replay-Drift auf dem Breit-Input-Pfad (technical_screener 40,5% >30bps, Median 56bps echt). Geparkt bis Gate G0 (robuster Edge ohne Best-Trade, n>=100–200). Switching-Policy auch dann: nie automatisch, immer Operator + signiert.", "priority": "P3" }
-  ],
+  "todos": [],
   "phases": [
     { "label": "Dashboard UI-Update 2026.06 — Phasen 0–4", "status": "done" },
     { "label": "Backend-Backlog #313–#319 — UI-gated Reste erledigt (#314 Truth-Layer-KPIs vollständig, #316 Liquidationen frei via OKX+Binance, Datums-Locale-SSOT)", "status": "done" },
