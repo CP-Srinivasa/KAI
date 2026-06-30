@@ -287,3 +287,18 @@ def test_client_ip_prefers_cf_connecting_ip() -> None:
     }
     request = StarletteRequest(scope)
     assert client_ip(request) == "203.0.113.5"
+
+
+def test_client_ip_ignores_spoofable_x_forwarded_for() -> None:
+    """F-01: without Cf-Connecting-IP a forged X-Forwarded-For must NOT become
+    the rate-limit key — keying on it would let an attacker lock out the operator
+    or rotate the header to dodge the limiter. Fall back to the socket peer."""
+    from starlette.requests import Request as StarletteRequest
+
+    scope: dict[str, Any] = {
+        "type": "http",
+        "headers": [(b"x-forwarded-for", b"1.2.3.4, 5.6.7.8")],
+        "client": ("192.168.1.50", 12345),
+    }
+    request = StarletteRequest(scope)
+    assert client_ip(request) == "192.168.1.50"
