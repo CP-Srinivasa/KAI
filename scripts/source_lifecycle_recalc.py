@@ -129,6 +129,43 @@ def _last_signal_by_source(
     return out
 
 
+def _last_document_by_source() -> dict[str, datetime]:
+    """Most recent document-fetch time per source (sync, read-only, fail-soft).
+
+    Read straight from the canonical document store so the lifecycle engine can
+    tell a still-delivering context source apart from one that has truly gone
+    dark. Any failure (missing DB, schema drift) returns an empty map → the
+    engine falls back to signal-only silence (prior behaviour, no regression).
+    """
+    import sqlite3
+
+    db_path = _REPO_ROOT / "data" / "dev.db"
+    if not db_path.exists():
+        return {}
+    try:
+        con = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+        try:
+            rows = con.execute(
+                "SELECT source_name, MAX(fetched_at) FROM canonical_documents "
+                "WHERE source_name IS NOT NULL GROUP BY source_name"
+            ).fetchall()
+        finally:
+            con.close()
+    except Exception:  # noqa: BLE001 — observability-only; never break the recalc
+        return {}
+    out: dict[str, datetime] = {}
+    for source_name, last in rows:
+        if not source_name or not last:
+            continue
+        dt = _parse_iso(str(last).replace(" ", "T"))
+        if dt is None:
+            continue
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=UTC)
+        out[str(source_name)] = dt
+    return out
+
+
 def _logical_status(*, silent: bool, pinned: bool) -> SourceStatus:
     """Map the engine's observed flags to a single logical lifecycle status.
 
@@ -198,18 +235,27 @@ def build_lifecycle_ranking(
     last_signal: dict[str, datetime],
     prior: dict[str, dict[str, Any]],
     now: datetime,
+    *,
+    last_document: dict[str, datetime] | None = None,
 ) -> tuple[list[dict[str, Any]], dict[str, int], list[LifecycleEvent]]:
     """Pure core: enrich the reliability ranking with lifecycle flags + events.
 
     Given the deterministic ``ranked`` list (from
     ``build_source_reliability_report``), each source's last directional signal
-    time, and the prior run's per-source state, computes for every source:
-    ``silent`` / ``pinned`` / ``rotation_flagged`` flags, a forward-carried
-    ``consecutive_top_runs`` counter, and the resulting logical status — then
-    emits one FSM-legal ``LifecycleEvent`` per status hop when the status changed.
-    No I/O: deterministic in (inputs, now), so it is fully unit-testable.
+    time, its last document-delivery time, and the prior run's per-source state,
+    computes for every source: ``silent`` / ``pinned`` / ``rotation_flagged``
+    flags, a forward-carried ``consecutive_top_runs`` counter, and the resulting
+    logical status — then emits one FSM-legal ``LifecycleEvent`` per status hop
+    when the status changed. No I/O: deterministic in (inputs, now), so it is
+    fully unit-testable.
+
+    ``last_document`` (optional, default empty → signal-only behaviour) lets a
+    source that still DELIVERS documents survive even with no recent directional
+    signal: under ADR 0012 document delivery is the value for context/news
+    sources, so silencing them for lack of trades is the Kontext!=Signal lens-trap.
     """
     silent_cutoff = now - timedelta(days=SILENT_AFTER_DAYS)
+    last_document = last_document or {}
     out_ranked: list[dict[str, Any]] = []
     counts = {
         "ranked": 0,
@@ -230,7 +276,13 @@ def build_lifecycle_ranking(
         reliability_tier = str(entry.get("reliability_tier", "insufficient"))
 
         last = last_signal.get(source)
-        silent = last is None or last < silent_cutoff
+        no_signal = last is None or last < silent_cutoff
+        # A source still delivering DOCUMENTS within the window is not silent,
+        # even without a recent directional signal (Kontext!=Signal, ADR 0012).
+        # Only a source dark on BOTH signals and documents is truly silent.
+        last_doc = last_document.get(source)
+        delivering = last_doc is not None and last_doc >= silent_cutoff
+        silent = no_signal and not delivering
 
         prior_entry = prior.get(source)
         prior_runs = int((prior_entry or {}).get("consecutive_top_runs", 0) or 0)
@@ -327,13 +379,16 @@ def main() -> int:
     raw_ranked = report.get("ranked", [])
     ranked: list[dict[str, Any]] = raw_ranked if isinstance(raw_ranked, list) else []
     last_signal = _last_signal_by_source(audits, source_by_doc)
+    last_document = _last_document_by_source()
 
     monitor_dir = _resolve_monitor_dir()
     ranking_path = monitor_dir / "source_ranking.json"
     prior = _load_prior_ranking(ranking_path)
     audit_dir = _REPO_ROOT / "artifacts"
 
-    out_ranked, counts, events = build_lifecycle_ranking(ranked, last_signal, prior, now)
+    out_ranked, counts, events = build_lifecycle_ranking(
+        ranked, last_signal, prior, now, last_document=last_document
+    )
     for event in events:
         append_lifecycle_event(event, audit_dir)
     transitions = len(events)

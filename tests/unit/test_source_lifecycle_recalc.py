@@ -140,6 +140,37 @@ def test_silent_source_flags_rotation_and_emits_event() -> None:
     assert [(e.from_status, e.to_status) for e in events] == [("active", "silent")]
 
 
+def test_delivering_docs_keeps_source_active_despite_signal_silence() -> None:
+    # cointelegraph case (2026-06-28): a high-volume context/news source with no
+    # recent DIRECTIONAL signal but still delivering DOCUMENTS must NOT be
+    # silenced — silencing it for lack of trades is the Kontext!=Signal lens-trap
+    # (ADR 0012). Document delivery keeps it active and un-flagged.
+    ranked = [
+        _entry(
+            "CtxNews", rank=3, n=18, provisional=True, wilson=0.386, reliability_tier="insufficient"
+        )
+    ]
+    last = {"CtxNews": _NOW - timedelta(days=30)}  # no directional signal in window
+    docs = {"CtxNews": _NOW - timedelta(hours=3)}  # but still delivering documents
+    out, counts, events = build_lifecycle_ranking(ranked, last, {}, _NOW, last_document=docs)
+    assert out[0]["silent"] is False
+    assert out[0]["rotation_flagged"] is False
+    assert out[0]["logical_status"] == "active"
+    assert counts["silent"] == 0
+    assert events == []
+
+
+def test_no_signal_and_no_docs_is_still_silent() -> None:
+    # A source dark on BOTH signals and documents has genuinely gone quiet →
+    # still silent (the doc-awareness only spares sources that still deliver).
+    ranked = [_entry("Dark", rank=1, n=30, provisional=True, wilson=0.40, reliability_tier="watch")]
+    last = {"Dark": _NOW - timedelta(days=30)}
+    docs = {"Dark": _NOW - timedelta(days=30)}  # documents also stale
+    out, counts, events = build_lifecycle_ranking(ranked, last, {}, _NOW, last_document=docs)
+    assert out[0]["silent"] is True
+    assert counts["silent"] == 1
+
+
 def test_provisional_source_never_pins_even_with_streak() -> None:
     """Rail 5: a provisional source ranks but can never be pinned."""
     ranked = [_entry("SmallButHot", rank=1, n=25, provisional=True, wilson=0.90)]
