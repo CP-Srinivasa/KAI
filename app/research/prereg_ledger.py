@@ -39,19 +39,24 @@ def prereg_key(
     horizon: str,
     success_criteria: str,
     sample_size_target: int,
+    gate: dict[str, Any] | None = None,
 ) -> str:
     """Deterministic 16-hex key for a pre-registered claim (creation-time-agnostic).
 
     Whitespace/case-normalised so a trivially-reformatted re-registration of the
     same claim collapses to the same identity (and is thus detectable as a repeat).
+    A machine-readable ``gate`` IS part of the claim: changing any threshold
+    changes the identity. Gate-less (free-text-era) claims keep their old ids.
     """
-    payload = {
+    payload: dict[str, Any] = {
         "name": name.strip().lower(),
         "direction": direction.strip().lower(),
         "horizon": horizon.strip().lower(),
         "success_criteria": " ".join(success_criteria.split()).lower(),
         "sample_size_target": int(sample_size_target),
     }
+    if gate is not None:
+        payload["gate"] = gate
     blob = json.dumps(payload, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(blob.encode("utf-8")).hexdigest()[:16]
 
@@ -68,6 +73,9 @@ class PreRegistration:
     sample_size_target: int
     created_at_utc: str
     schema: str = SCHEMA
+    # Optional machine-checkable pass bar (see app.research.prereg_gate); part of
+    # the claim identity when present. None for free-text-era claims.
+    gate: dict[str, Any] | None = None
 
     def to_json(self) -> str:
         return json.dumps(asdict(self), sort_keys=True, separators=(",", ":"))
@@ -75,6 +83,7 @@ class PreRegistration:
     @staticmethod
     def from_dict(d: dict[str, Any]) -> PreRegistration:
         """Reconstruct from a parsed JSON object (explicit, typed coercion)."""
+        gate = d.get("gate")
         return PreRegistration(
             prereg_id=str(d["prereg_id"]),
             name=str(d["name"]),
@@ -84,6 +93,7 @@ class PreRegistration:
             sample_size_target=int(d["sample_size_target"]),
             created_at_utc=str(d["created_at_utc"]),
             schema=str(d.get("schema", SCHEMA)),
+            gate=dict(gate) if isinstance(gate, dict) else None,
         )
 
 
@@ -95,6 +105,7 @@ def register(
     success_criteria: str,
     sample_size_target: int,
     created_at_utc: str,
+    gate: dict[str, Any] | None = None,
 ) -> PreRegistration:
     """Build a :class:`PreRegistration` with its deterministic ``prereg_id`` stamped.
 
@@ -106,6 +117,7 @@ def register(
         horizon=horizon,
         success_criteria=success_criteria,
         sample_size_target=sample_size_target,
+        gate=gate,
     )
     return PreRegistration(
         prereg_id=pid,
@@ -115,6 +127,7 @@ def register(
         success_criteria=" ".join(success_criteria.split()),
         sample_size_target=int(sample_size_target),
         created_at_utc=created_at_utc,
+        gate=gate,
     )
 
 

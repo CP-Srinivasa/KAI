@@ -64,3 +64,18 @@ def test_write_verdict_report_round_trips_from_disk(tmp_path: Path) -> None:
     assert "directional_news_forward_return" in json_path.name
     loaded = json.loads(json_path.read_text(encoding="utf-8"))
     assert verify_attestation(loaded["payload"], loaded["attestation"])
+
+
+def test_list_verdict_reports_reads_written_reports(tmp_path: Path) -> None:
+    from app.research.verdict_report import list_verdict_reports
+
+    out = tmp_path / "verdicts"
+    write_verdict_report(_report(), out)
+    (out / "junk.json").write_text("{not json", encoding="utf-8")  # skipped, no crash
+    rows = list_verdict_reports(out)
+    assert len(rows) == 1
+    r = rows[0]
+    assert r["hypothesis"] == "directional_news_forward_return"
+    assert r["prereg_id"] == "5872f817a2d1632d"
+    assert len(r["attestation_hash"]) == 64
+    assert list_verdict_reports(tmp_path / "missing") == []

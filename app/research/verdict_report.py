@@ -27,6 +27,9 @@ from app.truth.attestation import compute_attestation
 
 SCHEMA_VERSION = 1
 
+# Canonical location of attested verdict artifacts (CLI default + API listing).
+DEFAULT_VERDICTS_DIR = Path("artifacts/research/verdicts")
+
 
 def build_verdict_report(
     result: dict[str, Any],
@@ -121,9 +124,41 @@ def resolve_code_version(repo_root: Path | None = None) -> str:
         return "unknown"
 
 
+def list_verdict_reports(verdicts_dir: Path = DEFAULT_VERDICTS_DIR) -> list[dict[str, Any]]:
+    """Lightweight, newest-first listing of persisted verdict reports (read-only).
+
+    Corrupt/foreign files are skipped (never crash a listing); each row carries
+    enough to display and to re-verify: hypothesis, verdict, prereg link,
+    attestation hash, generated_at, file name.
+    """
+    if not verdicts_dir.is_dir():
+        return []
+    rows: list[dict[str, Any]] = []
+    for path in sorted(verdicts_dir.glob("*.json"), reverse=True):
+        try:
+            report = json.loads(path.read_text(encoding="utf-8"))
+            payload = report["payload"]
+            rows.append(
+                {
+                    "file": path.name,
+                    "hypothesis": str(payload["hypothesis"]),
+                    "verdict": str(payload["verdict"]),
+                    "prereg_id": payload.get("prereg_id"),
+                    "generated_at_utc": str(payload["generated_at_utc"]),
+                    "code_version": str(payload.get("code_version", "unknown")),
+                    "attestation_hash": str(report["attestation"]["hash"]),
+                }
+            )
+        except (ValueError, KeyError, OSError):
+            continue
+    return rows
+
+
 __all__ = [
+    "DEFAULT_VERDICTS_DIR",
     "SCHEMA_VERSION",
     "build_verdict_report",
+    "list_verdict_reports",
     "render_verdict_md",
     "resolve_code_version",
     "write_verdict_report",

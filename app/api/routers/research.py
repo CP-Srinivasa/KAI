@@ -113,3 +113,21 @@ async def get_research_signals(
         watchlist_boosts=watchlist_boosts,
     )
     return [c.to_json_dict() for c in candidates[:limit]]
+
+
+@router.get(
+    "/verdicts",
+    summary="List attested falsification verdicts",
+    description=(
+        "Read-only listing of the platform's attested verdict reports "
+        "(hypothesis, machine verdict, prereg link, SHA-256 attestation hash). "
+        "Each hash is recomputable from the report's canonical payload — "
+        "verifiable truth, no trust required."
+    ),
+)
+async def list_verdicts(
+    limit: Annotated[int, Query(ge=1, le=200)] = 50,
+) -> list[dict[str, Any]]:
+    from app.research.verdict_report import list_verdict_reports
+
+    return list_verdict_reports()[:limit]
