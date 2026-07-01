@@ -165,14 +165,24 @@ class WindowCounts:
 # === bucket: SAFETY ============================================================
 
 
+# The two 2026-05 migration fills carry the backfill marker ``fee_venue="legacy"``
+# — alarmed at discovery, investigated and documented benign on 2026-07-01
+# ("2 NON-PAPER FILLS = benigne Mai-legacy"). Acknowledged by EXACT order id so
+# any NEW non-paper fill (even one reusing the marker venue) still raises the
+# alarm. Growing this set is an operator decision via reviewed PR.
+ACKNOWLEDGED_NON_PAPER_ORDER_IDS = frozenset({"ord_24aa77e967be", "ord_4048a7fb20f8"})
+
+
 @dataclass(frozen=True)
 class WindowSafety:
     """Hard audit assertions. The whole point: prove no live leak happened.
 
     ``live_orders_attempted`` is DERIVED from the data (count of fills whose
-    venue is not a paper venue), not assumed to be 0. ``auto_promotions`` is
-    structurally 0 — this report and the edge gate never flip ``entry_mode``;
-    promotion is always an explicit operator action.
+    venue is not a paper venue), not assumed to be 0 — MINUS the explicitly
+    acknowledged, investigated legacy fills (``live_orders_acknowledged``),
+    which are still reported, never hidden. ``auto_promotions`` is structurally
+    0 — this report and the edge gate never flip ``entry_mode``; promotion is
+    always an explicit operator action.
     """
 
     live_orders_attempted: int
@@ -180,6 +190,7 @@ class WindowSafety:
     entry_mode_blocked: int
     auto_promotions: int
     non_paper_venues_seen: list[str]
+    live_orders_acknowledged: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -188,6 +199,7 @@ class WindowSafety:
             "entry_mode_blocked": self.entry_mode_blocked,
             "auto_promotions": self.auto_promotions,
             "non_paper_venues_seen": list(self.non_paper_venues_seen),
+            "live_orders_acknowledged": self.live_orders_acknowledged,
         }
 
 
@@ -611,20 +623,25 @@ def _build_safety(
         1 for ev in loop_list if str(ev.get("status", "")) == _STATUS_ENTRY_MODE_BLOCKED
     )
     live_attempts = 0
+    acknowledged = 0
     non_paper: set[str] = set()
     for ev in exec_list:
         if ev.get("event_type") != "order_filled":
             continue
         venue = str(ev.get("fee_venue", "") or ev.get("venue", ""))
         if not _is_paper_venue(venue):
+            if str(ev.get("order_id", "")) in ACKNOWLEDGED_NON_PAPER_ORDER_IDS:
+                acknowledged += 1
+                continue
             live_attempts += 1
             non_paper.add(venue or "<unknown>")
     derivation = (
         "count of order_filled events whose fee_venue/venue is not a paper venue "
-        "(paper|sim|empty). 0 confirms every fill in the window was simulated; the "
-        "paper engine also hard-blocks live_enabled=True at construction "
-        "(PaperExecutionEngine), so this is a defence-in-depth count, not the only "
-        "guard."
+        "(paper|sim|empty), excluding the explicitly acknowledged, investigated "
+        "legacy order ids (reported separately as live_orders_acknowledged). "
+        "0 confirms every fill in the window was simulated; the paper engine also "
+        "hard-blocks live_enabled=True at construction (PaperExecutionEngine), so "
+        "this is a defence-in-depth count, not the only guard."
     )
     return WindowSafety(
         live_orders_attempted=live_attempts,
@@ -633,6 +650,7 @@ def _build_safety(
         # structurally 0: neither this report nor the edge gate flips entry_mode.
         auto_promotions=0,
         non_paper_venues_seen=sorted(non_paper),
+        live_orders_acknowledged=acknowledged,
     )
 
 
@@ -751,6 +769,12 @@ def _build_notes(
             f"*** {safety.live_orders_attempted} NON-PAPER FILL(S) DETECTED "
             f"({', '.join(safety.non_paper_venues_seen)}) — investigate immediately. "
             "The window is supposed to be paper-only."
+        )
+    if safety.live_orders_acknowledged > 0:
+        notes.append(
+            f"{safety.live_orders_acknowledged} acknowledged legacy non-paper fill(s) "
+            "excluded from the alarm (investigated benign 2026-07-01, pinned by "
+            "order id in ACKNOWLEDGED_NON_PAPER_ORDER_IDS)."
         )
     if (
         edge.trade_count > 0
@@ -927,6 +951,11 @@ def render_window(report: EvidenceWindowReport) -> str:
 
     lines.append("SAFETY (hard audit assertions)")
     lines.append(f"  live_orders_attempted = {s.live_orders_attempted}   (MUST be 0)")
+    if s.live_orders_acknowledged:
+        lines.append(
+            f"  live_orders_acknowledged = {s.live_orders_acknowledged}   "
+            "(investigated legacy, pinned by order id)"
+        )
     lines.append(f"  entry_mode_blocked    = {s.entry_mode_blocked}")
     lines.append(f"  auto_promotions       = {s.auto_promotions}   (report flips nothing)")
     if s.non_paper_venues_seen:
