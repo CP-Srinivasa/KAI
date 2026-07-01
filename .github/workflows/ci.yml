@@ -2,7 +2,10 @@ name: CI
 
 on:
   push:
-    branches: ["**"]
+    # Nur Mainline: jeder PR-Branch löste sonst ZWEI komplette CI-Läufe aus
+    # (push- + pull_request-Event, ~16 Jobs pro PR) — PRs sind über den
+    # pull_request-Trigger weiterhin voll gegated (Operator-Entscheid 2026-07-01).
+    branches: ["claude/p7/reentry-ia-codex-cycle"]
   pull_request:
     branches: ["**"]
 
@@ -82,16 +85,37 @@ jobs:
       # im selben Worker (Modul-Fixtures/DB-Setups kollidieren nicht über Dateien
       # hinweg). -q überstimmt das -v aus addopts (Vollprotokoll bringt in CI
       # nichts und kostet Log-I/O; Failures bleiben voll sichtbar).
-      # tests/benchmarks läuft als EIGENER Step NACH dem xdist-Lauf: p95-Latenz-
-      # Asserts (ADR 0003, <50ms) unter xdist-Parallellast wären Flake-Kandidaten —
-      # die Messung braucht ruhige Kerne, wie im bisherigen Single-Thread-Lauf.
-      # Bewusst im selben (required) Tests-Job: das Latenz-Gate bleibt merge-blockend.
+      # tests/benchmarks läuft im Job "Benchmarks" (parallel, Required-Check).
       - run: pytest tests/ -q -n auto --dist loadfile --ignore=tests/benchmarks --cov=app --cov-report=xml
-      - run: pytest tests/benchmarks -q
       - uses: codecov/codecov-action@v5
         with:
           file: ./coverage.xml
           fail_ci_if_error: false
+
+  benchmarks:
+    # ADR-0003-Gate (DuckDB-Query-p95 <50ms) — eigener Job statt Step im Tests-Job:
+    # läuft PARALLEL (die thirty_day_db-Fixture kostete ~3 min im kritischen Pfad)
+    # und single-threaded, damit die p95-Messung nicht durch xdist-Nachbarlast
+    # verfälscht wird. Merge-blockend als Required-Check in der Branch-Protection
+    # (Operator-Entscheid 2026-07-01) — Gate-Härte unverändert.
+    name: Benchmarks
+    runs-on: ubuntu-latest
+    env:
+      APP_ENV: testing
+      TELEGRAM_ENABLED: "false"
+      EMAIL_ENABLED: "false"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('requirements.lock') }}
+      - run: pip install -r requirements.lock
+      - run: pip install -e . --no-deps
+      - run: pytest tests/benchmarks -q
 
   security:
     name: Security Scan
