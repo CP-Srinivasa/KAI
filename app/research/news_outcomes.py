@@ -41,12 +41,24 @@ from app.research.shadow_outcomes import parse_ts
 # News moves markets over hours-to-days, not seconds — deliberately LONGER than
 # the intraday canonical horizons. All are integer multiples of a 1h grid.
 NEWS_HORIZONS_S: tuple[int, ...] = (3600, 14400, 86400, 259200)  # 1h, 4h, 24h, 72h
+# MICRO construction: where news alpha would live if it exists at all — the first
+# minutes after publish, measured on a 1m grid. Falsifying THIS horizon band is
+# the honest test of "news direction carries signal" (vs. "still carries signal
+# 30-60min later, after every faster desk has priced it").
+MICRO_HORIZONS_S: tuple[int, ...] = (60, 300, 900, 1800, 3600)  # 1..60 min
 DEFAULT_TIMEFRAME = "1h"
+MICRO_TIMEFRAME = "1m"
+# The canonical hedge leg for the beta-neutral construction: side-adjusted
+# EXCESS return vs BTC (beta=1, parameter-free) strips the ~common market move
+# that dominates absolute altcoin returns and widens every CI.
+DEFAULT_HEDGE_SYMBOL = "BTC/USDT"
 # |fwd| at/above this is a delisted/bad-data sentinel, not a real return.
 DEFAULT_MAX_ABS_BPS = 5000.0
 # If the first candle open after the news is more than this far out, there is no
 # clean entry (data gap) — drop the event rather than enter stale.
 DEFAULT_MAX_ENTRY_LAG_S = 7200.0  # 2h
+# On the 1m grid a clean entry must exist within minutes, or the event is a gap.
+DEFAULT_MICRO_MAX_ENTRY_LAG_S = 300.0  # 5 min
 
 _BULL = {"bullish", "bull", "positive"}
 _BEAR = {"bearish", "bear", "negative"}
@@ -148,12 +160,18 @@ def forward_returns_for_event(
     horizons: tuple[int, ...] = NEWS_HORIZONS_S,
     max_entry_lag_s: float = DEFAULT_MAX_ENTRY_LAG_S,
     max_abs_bps: float = DEFAULT_MAX_ABS_BPS,
+    hedge: tuple[list[int], dict[int, OHLCV]] | None = None,
 ) -> dict[int, float | None] | None:
     """Side-adjusted open-to-open forward returns (bps) for one event.
 
     Entry = OPEN of the first candle opening at/after ``entry_ts`` (no look-ahead).
     Horizon return = ``(open[entry_open + h] / open[entry]) - 1`` in bps, multiplied
     by +1 (long) / -1 (short) so a positive value means the source's DIRECTION paid.
+    With ``hedge`` (an :func:`index_series` of the hedge symbol, e.g. BTC/USDT) the
+    return is the beta=1 EXCESS return ``r_asset - r_hedge`` over the SAME candle
+    grid — the hedge series must have a candle at the entry grid point (else the
+    event is dropped: no clean hedged entry) and at each horizon point (else that
+    horizon is ``None``).
     Returns ``None`` (drop the event) when there is no clean entry, the entry price
     is non-positive, or any horizon trips the delisted/bad-data sentinel. Horizons
     with no candle at the exact grid point are ``None``.
@@ -168,6 +186,12 @@ def forward_returns_for_event(
     entry_price = by_open[entry_open_ms].open
     if entry_price <= 0:
         return None
+    hedge_entry_price: float | None = None
+    if hedge is not None:
+        hedge_entry = hedge[1].get(entry_open_ms)
+        if hedge_entry is None or hedge_entry.open <= 0:
+            return None  # no clean hedged entry on the same grid
+        hedge_entry_price = hedge_entry.open
     sign = 1.0 if event.side == "long" else -1.0
     fwd: dict[int, float | None] = {}
     for h in horizons:
@@ -178,7 +202,15 @@ def forward_returns_for_event(
         raw_bps = (target.open / entry_price - 1.0) * 1e4
         if abs(raw_bps) >= max_abs_bps:  # delisted / bad-data sentinel, not signal
             return None
-        fwd[h] = sign * raw_bps
+        if hedge is not None:
+            hedge_target = hedge[1].get(entry_open_ms + h * 1000)
+            if hedge_target is None or hedge_entry_price is None:
+                fwd[h] = None
+                continue
+            hedge_bps = (hedge_target.open / hedge_entry_price - 1.0) * 1e4
+            fwd[h] = sign * (raw_bps - hedge_bps)
+        else:
+            fwd[h] = sign * raw_bps
     if all(v is None for v in fwd.values()):
         return None
     return fwd
@@ -191,6 +223,7 @@ def build_news_outcomes(
     horizons: tuple[int, ...] = NEWS_HORIZONS_S,
     max_entry_lag_s: float = DEFAULT_MAX_ENTRY_LAG_S,
     max_abs_bps: float = DEFAULT_MAX_ABS_BPS,
+    hedge_symbol: str | None = None,
 ) -> list[dict[str, Any]]:
     """Assemble the time-ordered directional-news outcome pool.
 
@@ -198,12 +231,25 @@ def build_news_outcomes(
     with SIDE-ADJUSTED forward returns. Events whose symbol has no OHLCV series, or
     that yield no usable forward return, are dropped. Sorted by ``entry_ts`` so a
     downstream moving-block bootstrap preserves autocorrelation.
+
+    With ``hedge_symbol`` every return is the beta=1 excess return vs that symbol
+    (its series must be present in ``series_by_symbol``, else ``ValueError``);
+    events ON the hedge symbol itself are skipped — they cannot be hedged against
+    themselves. The caller reports the skipped count visibly.
     """
+    hedge_idx: tuple[list[int], dict[int, OHLCV]] | None = None
+    if hedge_symbol is not None:
+        hedge_candles = series_by_symbol.get(hedge_symbol)
+        if not hedge_candles:
+            raise ValueError(f"hedge series missing for {hedge_symbol!r}")
+        hedge_idx = index_series(hedge_candles)
     indexed: dict[str, tuple[list[int], dict[int, OHLCV]]] = {
         sym: index_series(candles) for sym, candles in series_by_symbol.items()
     }
     out: list[dict[str, Any]] = []
     for e in events:
+        if hedge_symbol is not None and e.symbol == hedge_symbol:
+            continue  # hedge symbol cannot be hedged against itself
         idx = indexed.get(e.symbol)
         if idx is None or not idx[0]:
             continue
@@ -214,6 +260,7 @@ def build_news_outcomes(
             horizons=horizons,
             max_entry_lag_s=max_entry_lag_s,
             max_abs_bps=max_abs_bps,
+            hedge=hedge_idx,
         )
         if fwd is None:
             continue
@@ -230,6 +277,26 @@ def build_news_outcomes(
     return out
 
 
+def merge_event_windows(
+    windows: list[tuple[int, int]], *, gap_ms: int = 0
+) -> list[tuple[int, int]]:
+    """Merge overlapping/near [start_ms, end_ms] windows (for per-event 1m fetches).
+
+    News arrives in bursts; merging windows that overlap or sit within ``gap_ms``
+    of each other turns thousands of per-event fetches into a handful of ranged
+    fetches per symbol. Pure and order-independent.
+    """
+    if not windows:
+        return []
+    merged: list[tuple[int, int]] = []
+    for start, end in sorted(windows):
+        if merged and start <= merged[-1][1] + gap_ms:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+        else:
+            merged.append((start, end))
+    return merged
+
+
 def timeframe_interval_s(timeframe: str = DEFAULT_TIMEFRAME) -> int:
     """Candle interval in seconds for a timeframe (raises on unsupported)."""
     return interval_to_ms(timeframe) // 1000
@@ -243,9 +310,13 @@ def _coerce_ts(value: object) -> datetime | None:
 
 
 __all__ = [
+    "DEFAULT_HEDGE_SYMBOL",
     "DEFAULT_MAX_ABS_BPS",
     "DEFAULT_MAX_ENTRY_LAG_S",
+    "DEFAULT_MICRO_MAX_ENTRY_LAG_S",
     "DEFAULT_TIMEFRAME",
+    "MICRO_HORIZONS_S",
+    "MICRO_TIMEFRAME",
     "NEWS_HORIZONS_S",
     "NewsEvent",
     "build_news_outcomes",
@@ -254,6 +325,7 @@ __all__ = [
     "forward_returns_for_event",
     "index_series",
     "load_news_events",
+    "merge_event_windows",
     "sentiment_to_side",
     "timeframe_interval_s",
 ]

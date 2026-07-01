@@ -14,6 +14,7 @@ not a trust-flip — promotion stays operator- AND edge-gated downstream.
 
 from __future__ import annotations
 
+import math
 from collections import Counter, defaultdict
 from typing import Any
 
@@ -24,6 +25,10 @@ from app.research.shadow_evidence_eval import (
     DEFAULT_MAX_CONCENTRATION,
 )
 
+# A source contributes to the cross-source pooled estimate only with this many
+# observations at the horizon — below that its variance estimate is junk.
+MIN_POOL_N = 8
+
 
 def evaluate_cohort(
     outcomes: list[dict[str, Any]],
@@ -31,11 +36,14 @@ def evaluate_cohort(
     horizons: tuple[int, ...] = NEWS_HORIZONS_S,
     cost_bps: float = DEFAULT_COST_BPS,
     max_concentration: float = DEFAULT_MAX_CONCENTRATION,
+    cost_by_symbol: dict[str, float] | None = None,
 ) -> dict[str, Any]:
     """Score one cohort (all outcomes, or one source's) across horizons.
 
     ``outcomes`` must be time-ordered (as :func:`build_news_outcomes` returns) so the
-    moving-block bootstrap preserves autocorrelation.
+    moving-block bootstrap preserves autocorrelation. With ``cost_by_symbol`` the
+    cost bar is the cohort's mean PER-SYMBOL cost (venue floor + liquidity tier)
+    instead of one flat number — reported per horizon as ``cost_ref_bps``.
     """
     horizons_out: dict[int, dict[str, Any]] = {}
     actionable = False
@@ -50,8 +58,12 @@ def evaluate_cohort(
         if pairs:
             top = Counter(sym for _, sym in pairs).most_common(1)[0][1]
             sym_share = top / n
+        if cost_by_symbol and pairs:
+            cost_ref = sum(cost_by_symbol.get(sym, cost_bps) for _, sym in pairs) / n
+        else:
+            cost_ref = cost_bps
         is_actionable = (
-            mean >= cost_bps
+            mean >= cost_ref
             and p_pos is not None
             and p_pos > 0.95
             and sym_share <= max_concentration
@@ -63,6 +75,7 @@ def evaluate_cohort(
             "hit": round(hit, 3),
             "p_positive": p_pos,
             "top_symbol_share": round(sym_share, 3),
+            "cost_ref_bps": round(cost_ref, 2),
             "actionable": is_actionable,
         }
     return {
@@ -77,14 +90,65 @@ def evaluate_cohort(
     }
 
 
+def pool_sources(
+    by_source: dict[str, list[dict[str, Any]]],
+    horizon: int,
+    *,
+    min_pool_n: int = MIN_POOL_N,
+) -> dict[str, Any] | None:
+    """Inverse-variance-weighted fixed-effect pool of per-source means at one horizon.
+
+    Per-source cohorts are structurally underpowered (a few dozen events each);
+    pooling across sources answers the question the per-source tables cannot:
+    *does news direction carry ANY forward return at this horizon, using all
+    sources' evidence together?* Returns pooled mean/se, a normal-approximation
+    ``P(mean>0)``, and Cochran's Q / I² so cross-source heterogeneity (one source
+    driving everything) is visible instead of averaged away. ``None`` when fewer
+    than two sources qualify.
+    """
+    stats: list[tuple[str, float, float, int]] = []  # (source, mean, se, n)
+    for src, rows in by_source.items():
+        vals = [v for o in rows if (v := o["fwd"].get(horizon)) is not None]
+        n = len(vals)
+        if n < min_pool_n:
+            continue
+        mean = sum(vals) / n
+        var = sum((v - mean) ** 2 for v in vals) / (n - 1)
+        if var <= 0:
+            continue
+        stats.append((src, mean, math.sqrt(var / n), n))
+    if len(stats) < 2:
+        return None
+    weights = [1.0 / se**2 for _, _, se, _ in stats]
+    w_total = sum(weights)
+    pooled_mean = sum(w * m for w, (_, m, _, _) in zip(weights, stats, strict=True)) / w_total
+    pooled_se = math.sqrt(1.0 / w_total)
+    z = pooled_mean / pooled_se
+    p_positive = 0.5 * (1.0 + math.erf(z / math.sqrt(2.0)))
+    q = sum(w * (m - pooled_mean) ** 2 for w, (_, m, _, _) in zip(weights, stats, strict=True))
+    df = len(stats) - 1
+    i_squared = max(0.0, (q - df) / q) if q > 0 else 0.0
+    return {
+        "k_sources": len(stats),
+        "n_total": sum(n for _, _, _, n in stats),
+        "pooled_mean_bps": round(pooled_mean, 2),
+        "pooled_se_bps": round(pooled_se, 2),
+        "z": round(z, 2),
+        "p_positive_normal": round(p_positive, 4),
+        "i_squared": round(i_squared, 3),
+        "sources": [s for s, _, _, _ in stats],
+    }
+
+
 def evaluate_news(
     outcomes: list[dict[str, Any]],
     *,
     horizons: tuple[int, ...] = NEWS_HORIZONS_S,
     cost_bps: float = DEFAULT_COST_BPS,
     max_concentration: float = DEFAULT_MAX_CONCENTRATION,
+    cost_by_symbol: dict[str, float] | None = None,
 ) -> dict[str, Any]:
-    """Overall + per-source directional-news evaluation."""
+    """Overall + per-source + cross-source-pooled directional-news evaluation."""
     by_source: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for o in outcomes:
         by_source[str(o.get("source", "unknown"))].append(o)
@@ -94,9 +158,11 @@ def evaluate_news(
             horizons=horizons,
             cost_bps=cost_bps,
             max_concentration=max_concentration,
+            cost_by_symbol=cost_by_symbol,
         )
         for src, rows in by_source.items()
     }
+    pooled = {h: pool_sources(by_source, h) for h in horizons}
     return {
         "cost_bps": round(cost_bps, 2),
         "overall": evaluate_cohort(
@@ -104,8 +170,10 @@ def evaluate_news(
             horizons=horizons,
             cost_bps=cost_bps,
             max_concentration=max_concentration,
+            cost_by_symbol=cost_by_symbol,
         ),
         "per_source": per_source,
+        "pooled": pooled,
     }
 
 
@@ -117,8 +185,21 @@ def render(
 ) -> str:
     """Compact markdown: overall table + per-source tables with n>=``min_n``."""
     cost = res.get("cost_bps", DEFAULT_COST_BPS)
-    lines = [f"## Directional-news forward return (cost={cost}bps, side-adjusted)"]
+    lines = [f"## Directional-news forward return (base cost={cost}bps, side-adjusted)"]
     lines.append(_render_cohort("ALL sources", res["overall"], horizons))
+    pooled = res.get("pooled") or {}
+    pooled_lines = [
+        f"| {_horizon_label(h)} | {p['k_sources']} | {p['n_total']} | "
+        f"{p['pooled_mean_bps']}±{p['pooled_se_bps']} | {p['z']} | "
+        f"{p['p_positive_normal']} | {p['i_squared']} |"
+        for h in horizons
+        if (p := pooled.get(h)) is not None
+    ]
+    if pooled_lines:
+        lines.append("\n### Pooled across sources (IVW fixed-effect)")
+        lines.append("| horizon | k | n | mean±se (bps) | z | P(mean>0) | I² |")
+        lines.append("|---|---|---|---|---|---|---|")
+        lines.extend(pooled_lines)
     ranked = sorted(res["per_source"].items(), key=lambda kv: kv[1]["n"], reverse=True)
     shown = [(s, c) for s, c in ranked if c["n"] >= min_n]
     for src, cohort in shown:
@@ -131,17 +212,18 @@ def render(
 
 def _render_cohort(name: str, cohort: dict[str, Any], horizons: tuple[int, ...]) -> str:
     lines = [f"\n### {name} — n={cohort['n']}  →  {cohort['verdict']}"]
-    lines.append("| horizon | n | mean_bps | hit | P(mean>0) | top-sym% | act |")
-    lines.append("|---|---|---|---|---|---|---|")
+    lines.append("| horizon | n | mean_bps | hit | P(mean>0) | top-sym% | cost | act |")
+    lines.append("|---|---|---|---|---|---|---|---|")
     for h in horizons:
         r = cohort["horizons"][h]
         p = r["p_positive"]
         p_str = f"{p:.3f}" if p is not None else "n/a"
         act = "✅" if r["actionable"] else "—"
         label = _horizon_label(h)
+        cost_ref = r.get("cost_ref_bps", "-")
         lines.append(
             f"| {label} | {r['n']} | {r['mean_bps']} | {r['hit']} | "
-            f"{p_str} | {r['top_symbol_share']} | {act} |"
+            f"{p_str} | {r['top_symbol_share']} | {cost_ref} | {act} |"
         )
     return "\n".join(lines)
 
@@ -151,7 +233,9 @@ def _horizon_label(seconds: int) -> str:
         return f"{seconds // 86400}d"
     if seconds % 3600 == 0:
         return f"{seconds // 3600}h"
+    if seconds % 60 == 0:
+        return f"{seconds // 60}min"
     return f"{seconds}s"
 
 
-__all__ = ["evaluate_cohort", "evaluate_news", "render"]
+__all__ = ["MIN_POOL_N", "evaluate_cohort", "evaluate_news", "pool_sources", "render"]

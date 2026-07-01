@@ -98,3 +98,89 @@ def test_render_filters_small_sources_and_labels_horizons() -> None:
     assert "tiny" not in out  # below min_n
     assert "omitted" in out
     assert "1h" in out and "72d" not in out and "3d" in out  # horizon labels
+
+
+# ── per-symbol cost bar (liquidity tiers) ────────────────────────────────────
+
+
+def test_cohort_cost_by_symbol_moves_the_gate() -> None:
+    syms = ["BTC/USDT", "ETH/USDT"]
+    outcomes = [_outcome(30.0, symbol=syms[i % 2], i=i) for i in range(40)]
+    # cohort mean per-symbol cost = (10+30)/2 = 20 <= 30 mean -> actionable
+    cheap = evaluate_cohort(
+        outcomes, cost_bps=20.0, cost_by_symbol={"BTC/USDT": 10.0, "ETH/USDT": 30.0}
+    )
+    assert cheap["horizons"][_H]["cost_ref_bps"] == 20.0
+    assert cheap["horizons"][_H]["actionable"] is True
+    # punitive per-symbol costs push the bar above the mean -> not actionable
+    dear = evaluate_cohort(
+        outcomes, cost_bps=20.0, cost_by_symbol={"BTC/USDT": 40.0, "ETH/USDT": 60.0}
+    )
+    assert dear["horizons"][_H]["cost_ref_bps"] == 50.0
+    assert dear["horizons"][_H]["actionable"] is False
+
+
+def test_cohort_cost_falls_back_to_flat_for_unmapped_symbols() -> None:
+    outcomes = [_outcome(30.0, symbol="DOGE/USDT", i=i) for i in range(10)]
+    res = evaluate_cohort(outcomes, cost_bps=25.0, cost_by_symbol={"BTC/USDT": 10.0})
+    assert res["horizons"][_H]["cost_ref_bps"] == 25.0
+
+
+# ── cross-source pooling (IVW fixed-effect) ──────────────────────────────────
+
+
+def _noisy(bps: float, i: int) -> float:
+    return bps + (1.0 if i % 2 == 0 else -1.0)  # variance > 0, mean preserved
+
+
+def test_pool_sources_combines_consistent_sources() -> None:
+    from app.research.news_signal_eval import pool_sources
+
+    by_source = {
+        "a": [_outcome(_noisy(10.0, i), symbol="ETH/USDT", source="a", i=i) for i in range(12)],
+        "b": [_outcome(_noisy(10.0, i), symbol="SOL/USDT", source="b", i=i) for i in range(12)],
+        "tiny": [_outcome(50.0, symbol="XRP/USDT", source="tiny", i=i) for i in range(3)],
+    }
+    p = pool_sources(by_source, _H)
+    assert p is not None
+    assert p["k_sources"] == 2  # tiny excluded (< MIN_POOL_N)
+    assert p["n_total"] == 24
+    assert abs(p["pooled_mean_bps"] - 10.0) < 1.0
+    assert p["z"] > 1.96
+    assert p["p_positive_normal"] > 0.95
+    assert p["i_squared"] < 0.5  # consistent sources -> low heterogeneity
+
+
+def test_pool_sources_flags_heterogeneity() -> None:
+    from app.research.news_signal_eval import pool_sources
+
+    by_source = {
+        "up": [_outcome(_noisy(30.0, i), symbol="ETH/USDT", source="up", i=i) for i in range(12)],
+        "dn": [_outcome(_noisy(-30.0, i), symbol="SOL/USDT", source="dn", i=i) for i in range(12)],
+    }
+    p = pool_sources(by_source, _H)
+    assert p is not None
+    assert p["i_squared"] > 0.9  # opposite-sign sources = massive heterogeneity
+
+
+def test_pool_sources_none_below_two_qualifying() -> None:
+    from app.research.news_signal_eval import pool_sources
+
+    by_source = {
+        "only": [
+            _outcome(_noisy(10.0, i), symbol="ETH/USDT", source="only", i=i) for i in range(12)
+        ]
+    }
+    assert pool_sources(by_source, _H) is None
+    assert pool_sources({}, _H) is None
+
+
+def test_evaluate_news_includes_pooled_block_and_render_shows_it() -> None:
+    outcomes = [
+        _outcome(_noisy(10.0, i), symbol="ETH/USDT", source="a", i=i) for i in range(12)
+    ] + [_outcome(_noisy(10.0, i), symbol="SOL/USDT", source="b", i=i) for i in range(12)]
+    res = evaluate_news(outcomes, cost_bps=20.0)
+    assert res["pooled"][_H] is not None
+    assert res["pooled"][_H]["k_sources"] == 2
+    out = render(res, min_n=10)
+    assert "Pooled across sources" in out
